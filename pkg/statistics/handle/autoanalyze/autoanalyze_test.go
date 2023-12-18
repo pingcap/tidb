@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package autoanalyze
+package autoanalyze_test
 
 import (
 	"encoding/json"
@@ -25,7 +25,10 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util/test"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -79,9 +82,9 @@ func TestDisableAutoAnalyze(t *testing.T) {
 
 	// Set auto analyze ratio to 0.
 	tk.MustExec("set @@global.tidb_auto_analyze_ratio = 0")
-	AutoAnalyzeMinCnt = 0
+	autoanalyze.AutoAnalyzeMinCnt = 0
 	defer func() {
-		AutoAnalyzeMinCnt = 1000
+		autoanalyze.AutoAnalyzeMinCnt = 1000
 	}()
 	// Even auto analyze ratio is set to 0, we still need to analyze the unanalyzed tables.
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
@@ -104,9 +107,9 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	tk.MustExec("insert into t values(1)")
 	tk.MustExec("set @@global.tidb_analyze_version = 1")
 	do := dom
-	AutoAnalyzeMinCnt = 0
+	autoanalyze.AutoAnalyzeMinCnt = 0
 	defer func() {
-		AutoAnalyzeMinCnt = 1000
+		autoanalyze.AutoAnalyzeMinCnt = 1000
 	}()
 	h := do.StatsHandle()
 	err := h.HandleDDLEvent(<-h.DDLEventCh())
@@ -181,12 +184,12 @@ func TestTableAnalyzed(t *testing.T) {
 
 	require.NoError(t, h.Update(is))
 	statsTbl := h.GetTableStats(tableInfo)
-	require.False(t, TableAnalyzed(statsTbl))
+	require.False(t, autoanalyze.TableAnalyzed(statsTbl))
 
 	testKit.MustExec("analyze table t")
 	require.NoError(t, h.Update(is))
 	statsTbl = h.GetTableStats(tableInfo)
-	require.True(t, TableAnalyzed(statsTbl))
+	require.True(t, autoanalyze.TableAnalyzed(statsTbl))
 
 	h.Clear()
 	oriLease := h.Lease()
@@ -197,7 +200,7 @@ func TestTableAnalyzed(t *testing.T) {
 	}()
 	require.NoError(t, h.Update(is))
 	statsTbl = h.GetTableStats(tableInfo)
-	require.True(t, TableAnalyzed(statsTbl))
+	require.True(t, autoanalyze.TableAnalyzed(statsTbl))
 }
 
 func TestNeedAnalyzeTable(t *testing.T) {
@@ -267,7 +270,7 @@ func TestNeedAnalyzeTable(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		needAnalyze, reason := NeedAnalyzeTable(test.tbl, test.ratio)
+		needAnalyze, reason := autoanalyze.NeedAnalyzeTable(test.tbl, test.ratio)
 		require.Equal(t, test.result, needAnalyze)
 		require.True(t, strings.HasPrefix(reason, test.reason))
 	}
@@ -284,10 +287,10 @@ func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
 	require.NoError(t, h.Update(dom.InfoSchema()))
 	tk.MustExec("set @@global.tidb_analyze_skip_column_types = 'json,blob,mediumblob,text,mediumtext'")
 
-	originalVal := AutoAnalyzeMinCnt
-	AutoAnalyzeMinCnt = 0
+	originalVal := autoanalyze.AutoAnalyzeMinCnt
+	autoanalyze.AutoAnalyzeMinCnt = 0
 	defer func() {
-		AutoAnalyzeMinCnt = originalVal
+		autoanalyze.AutoAnalyzeMinCnt = originalVal
 	}()
 	require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()))
 	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%auto analyze table%'").Check(testkit.Rows("auto analyze table columns a, b, d with 256 buckets, 500 topn, 1 samplerate"))
@@ -316,7 +319,7 @@ func TestAutoAnalyzeOnEmptyTable(t *testing.T) {
 	// to pass the stats.Pseudo check in autoAnalyzeTable
 	tk.MustExec("analyze table t")
 	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
-	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(AutoAnalyzeMinCnt)))
+	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(autoanalyze.AutoAnalyzeMinCnt)))
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 
@@ -351,7 +354,7 @@ func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
 	// to pass the stats.Pseudo check in autoAnalyzeTable
 	tk.MustExec("analyze table t")
 	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
-	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(AutoAnalyzeMinCnt)))
+	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(autoanalyze.AutoAnalyzeMinCnt)))
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 
@@ -423,7 +426,7 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&test.CtxMatcher{}),
 		statsutil.UseCurrentSessionOpt,
-		SelectAnalyzeJobsOnCurrentInstanceSQL,
+		autoanalyze.SelectAnalyzeJobsOnCurrentInstanceSQL,
 		"127.0.0.1:4000",
 		gomock.Any(),
 	).Return(rows, nil, nil)
@@ -431,13 +434,13 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&test.CtxMatcher{}),
 		statsutil.UseCurrentSessionOpt,
-		BatchUpdateAnalyzeJobSQL,
+		autoanalyze.BatchUpdateAnalyzeJobSQL,
 		[]interface{}{
 			"1",
 		},
 	).Return(nil, nil, nil)
 
-	err := CleanupCorruptedAnalyzeJobsOnCurrentInstance(
+	err := autoanalyze.CleanupCorruptedAnalyzeJobsOnCurrentInstance(
 		mock.WrapAsSCtx(exec),
 		map[uint64]struct{}{
 			3: {},
@@ -450,21 +453,21 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&test.CtxMatcher{}),
 		statsutil.UseCurrentSessionOpt,
-		SelectAnalyzeJobsOnCurrentInstanceSQL,
+		autoanalyze.SelectAnalyzeJobsOnCurrentInstanceSQL,
 		"127.0.0.1:4000",
 	).Return(rows, nil, nil)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&test.CtxMatcher{}),
 		statsutil.UseCurrentSessionOpt,
-		BatchUpdateAnalyzeJobSQL,
+		autoanalyze.BatchUpdateAnalyzeJobSQL,
 		[]interface{}{
 			"1,3",
 		},
 	).Return(nil, nil, nil)
 
 	// No running analyze jobs on current instance.
-	err = CleanupCorruptedAnalyzeJobsOnCurrentInstance(
+	err = autoanalyze.CleanupCorruptedAnalyzeJobsOnCurrentInstance(
 		mock.WrapAsSCtx(exec),
 		map[uint64]struct{}{},
 	)
@@ -504,20 +507,20 @@ func TestCleanupCorruptedAnalyzeJobsOnDeadInstances(t *testing.T) {
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&test.CtxMatcher{}),
 		statsutil.UseCurrentSessionOpt,
-		SelectAnalyzeJobsSQL,
+		autoanalyze.SelectAnalyzeJobsSQL,
 		gomock.Any(),
 	).Return(rows, nil, nil)
 
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&test.CtxMatcher{}),
 		statsutil.UseCurrentSessionOpt,
-		BatchUpdateAnalyzeJobSQL,
+		autoanalyze.BatchUpdateAnalyzeJobSQL,
 		[]interface{}{
 			"2",
 		},
 	).Return(nil, nil, nil)
 
-	err := CleanupCorruptedAnalyzeJobsOnDeadInstances(
+	err := autoanalyze.CleanupCorruptedAnalyzeJobsOnDeadInstances(
 		mock.WrapAsSCtx(exec),
 	)
 	require.NoError(t, err)
@@ -526,15 +529,17 @@ func TestCleanupCorruptedAnalyzeJobsOnDeadInstances(t *testing.T) {
 func TestSkipAutoAnalyzeOutsideTheAvailableTime(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tt := time.Now().Add(-2 * time.Hour)
-	h, m := tt.Hour(), tt.Minute()
-	start := fmt.Sprintf("%02d:%02d +0000", h, m)
-	tt = time.Now().Add(-1 * time.Hour)
-	h, m = tt.Hour(), tt.Minute()
-	end := fmt.Sprintf("%02d:%02d +0000", h, m)
-	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", start))
-	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", end))
-
-	dom.SysProcTracker()
-	dom.InfoSchema()
+	ttStart := time.Now().Add(-2 * time.Hour)
+	ttEnd := time.Now().Add(-1 * time.Hour)
+	for i := 0; i < 2; i++ {
+		dbName := fmt.Sprintf("db%d", i)
+		tk.MustExec(fmt.Sprintf("create database %s", dbName))
+		for j := 0; j < 2; j++ {
+			tableName := fmt.Sprintf("table%d", j)
+			tk.MustExec(fmt.Sprintf("create table %s.%s (a int)", dbName, tableName))
+		}
+	}
+	se, err := dom.SysSessionPool().Get()
+	require.NoError(t, err)
+	require.False(t, autoanalyze.RandomPickOneTableAndTryAutoAnalyze(se.(sessionctx.Context), dom.StatsHandle(), dom.SysProcTracker(), dom.InfoSchema(), 0.6, variable.Dynamic, ttStart, ttEnd))
 }

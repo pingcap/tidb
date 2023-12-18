@@ -335,7 +335,7 @@ func HandleAutoAnalyze(
 	}
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 
-	return randomPickOneTableAndTryAutoAnalyze(
+	return RandomPickOneTableAndTryAutoAnalyze(
 		sctx,
 		statsHandle,
 		sysProcTracker,
@@ -347,12 +347,12 @@ func HandleAutoAnalyze(
 	)
 }
 
-// randomPickOneTableAndTryAutoAnalyze randomly picks one table and tries to analyze it.
+// RandomPickOneTableAndTryAutoAnalyze randomly picks one table and tries to analyze it.
 // 1. If the table is not analyzed, analyze it.
 // 2. If the table is analyzed, analyze it when "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio".
 // 3. If the table is analyzed, analyze its indices when the index is not analyzed.
 // 4. If the table is locked, skip it.
-func randomPickOneTableAndTryAutoAnalyze(
+func RandomPickOneTableAndTryAutoAnalyze(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sessionctx.SysProcTracker,
