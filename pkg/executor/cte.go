@@ -113,15 +113,24 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 
 // Close implements the Executor interface.
 func (e *CTEExec) Close() (err error) {
-	e.producer.resTbl.Lock()
-	if !e.producer.closed {
-		// closeProducer() only close seedExec and recursiveExec, will not touch resTbl.
-		// It means you can still read resTbl after call closeProducer().
-		// You can even call all three functions(openProducer/produce/closeProducer) in CTEExec.Next().
-		// Separating these three function calls is only to follow the abstraction of the volcano model.
-		err = e.producer.closeProducer()
-	}
-	e.producer.resTbl.Unlock()
+	func() {
+		e.producer.resTbl.Lock()
+		defer e.producer.resTbl.Unlock()
+		if !e.producer.closed {
+			failpoint.Inject("mock_cte_exec_panic_avoid_deadlock", func(v failpoint.Value) {
+				ok := v.(bool)
+				if ok {
+					// mock an oom panic, returning ErrMemoryExceedForQuery for error identification in recovery work.
+					panic(exeerrors.ErrMemoryExceedForQuery)
+				}
+			})
+			// closeProducer() only close seedExec and recursiveExec, will not touch resTbl.
+			// It means you can still read resTbl after call closeProducer().
+			// You can even call all three functions(openProducer/produce/closeProducer) in CTEExec.Next().
+			// Separating these three function calls is only to follow the abstraction of the volcano model.
+			err = e.producer.closeProducer()
+		}
+	}()
 	if err != nil {
 		return err
 	}
@@ -218,11 +227,11 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 }
 
 func (p *cteProducer) closeProducer() (err error) {
-	if err = p.seedExec.Close(); err != nil {
+	if err = exec.Close(p.seedExec); err != nil {
 		return err
 	}
 	if p.recursiveExec != nil {
-		if err = p.recursiveExec.Close(); err != nil {
+		if err = exec.Close(p.recursiveExec); err != nil {
 			return err
 		}
 		// `iterInTbl` and `resTbl` are shared by multiple operators,
@@ -414,7 +423,7 @@ func (p *cteProducer) computeRecursivePart(ctx context.Context) (err error) {
 			}
 			// Make sure iterInTbl is setup before Close/Open,
 			// because some executors will read iterInTbl in Open() (like IndexLookupJoin).
-			if err = p.recursiveExec.Close(); err != nil {
+			if err = exec.Close(p.recursiveExec); err != nil {
 				return
 			}
 			if err = exec.Open(ctx, p.recursiveExec); err != nil {
@@ -546,6 +555,16 @@ func (p *cteProducer) computeChunkHash(chk *chunk.Chunk) (sel []int, err error) 
 			hashBitMap[val] = true
 		}
 	} else {
+		// Length of p.sel is init as MaxChunkSize, but the row num of chunk may still exceeds MaxChunkSize.
+		// So needs to handle here to make sure len(p.sel) == chk.NumRows().
+		if len(p.sel) < numRows {
+			tmpSel := make([]int, numRows-len(p.sel))
+			for i := 0; i < len(tmpSel); i++ {
+				tmpSel[i] = i + len(p.sel)
+			}
+			p.sel = append(p.sel, tmpSel...)
+		}
+
 		// All rows is selected, sel will be [0....numRows).
 		// e.sel is setup when building executor.
 		sel = p.sel

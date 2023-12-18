@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 )
 
 func (cc *clientConn) onExtensionConnEvent(tp extension.ConnEventTp, err error) {
@@ -89,9 +90,7 @@ func (cc *clientConn) onExtensionStmtEnd(node interface{}, stmtCtxValid bool, er
 		// TODO: the `BinaryParam` is parsed two times: one in the `Execute` method and one here. It would be better to
 		// eliminate one of them by storing the parsed result.
 		typectx := ctx.GetSessionVars().StmtCtx.TypeCtx()
-		typectx = types.NewContext(typectx.Flags(), typectx.Location(), func(_ error) {
-			// ignore all warnings
-		})
+		typectx = types.NewContext(typectx.Flags(), typectx.Location(), contextutil.IgnoreWarn)
 		params, _ := param.ExecArgs(typectx, args)
 		info.executeStmt = &ast.ExecuteStmt{
 			PrepStmt:   prepared,

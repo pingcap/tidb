@@ -2226,7 +2226,7 @@ drop view v;
 create definer='root'@'localhost' view v as select * from (select a from t group by a) s;
 select * from v order by 1;
 -- error 1054
-SELECT `s`.`count(a)` FROM (SELECT COUNT(`a`) FROM `test`.`t`) AS `s`;
+SELECT `s`.`count(a)` FROM (SELECT COUNT(`a`) FROM `executor__executor`.`t`) AS `s`;
 drop view v;
 create definer='root'@'localhost' view v as select * from (select count(a) from t) s;
 select * from v;
@@ -2848,3 +2848,66 @@ select stmt_type from information_schema.statements_summary where digest_text = 
 
 set @@tidb_mem_quota_query=default;
 set global tidb_mem_oom_action=default;
+
+
+# TestTableLockPrivilege
+drop table if exists t;
+drop user if exists 'testuser'@'localhost';
+create table t(a int);
+create user 'testuser'@'localhost';
+
+connect (conn1, localhost, testuser,,);
+--error 1044
+LOCK TABLE executor__executor.t WRITE;
+
+connection default;
+GRANT LOCK TABLES ON executor__executor.* to 'testuser'@'localhost';
+
+connection conn1;
+--error 1142
+LOCK TABLE executor__executor.t WRITE;
+
+connection default;
+REVOKE ALL ON executor__executor.* FROM 'testuser'@'localhost';
+GRANT SELECT ON executor__executor.* to 'testuser'@'localhost';
+
+connection conn1;
+--error 1044
+LOCK TABLE executor__executor.t WRITE;
+
+connection default;
+GRANT LOCK TABLES ON executor__executor.* to 'testuser'@'localhost';
+
+connection conn1;
+LOCK TABLE executor__executor.t WRITE;
+
+connection default;
+drop database if exists test2;
+create database test2;
+create table test2.t2(a int);
+
+connection conn1;
+--error 1044
+LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
+
+connection default;
+GRANT LOCK TABLES ON test2.* to 'testuser'@'localhost';
+
+connection conn1;
+--error 1142
+LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
+
+connection default;
+GRANT SELECT ON test2.* to 'testuser'@'localhost';
+
+connection conn1;
+LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
+
+connection default;
+--replace_regex /server: .*session: .*/server: <server> session: <session>/
+--error 8020
+LOCK TABLE executor__executor.t WRITE, test2.t2 WRITE;
+
+disconnect conn1;
+unlock tables;
+drop user 'testuser'@'localhost';

@@ -211,6 +211,8 @@ const (
 	TableCheckConstraints = "CHECK_CONSTRAINTS"
 	// TableTiDBCheckConstraints is the list of CHECK constraints, with non-standard TiDB extensions.
 	TableTiDBCheckConstraints = "TIDB_CHECK_CONSTRAINTS"
+	// TableKeywords is the list of keywords.
+	TableKeywords = "KEYWORDS"
 	// TableTiDBParams is the list of all variables and configurations.
 	TableTiDBParams = "TIDB_PARAMS"
 )
@@ -323,6 +325,7 @@ var tableIDMap = map[string]int64{
 	TableRunawayWatches:                  autoid.InformationSchemaDBID + 89,
 	TableCheckConstraints:                autoid.InformationSchemaDBID + 90,
 	TableTiDBCheckConstraints:            autoid.InformationSchemaDBID + 91,
+	TableKeywords:                        autoid.InformationSchemaDBID + 92,
 	TableTiDBParams:                      autoid.InformationSchemaDBID + 92,
 }
 
@@ -930,6 +933,10 @@ var slowQueryCols = []columnInfo{
 	{name: variable.SlowLogPlanFromCache, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogPlanFromBinding, tp: mysql.TypeTiny, size: 1},
 	{name: variable.SlowLogHasMoreResults, tp: mysql.TypeTiny, size: 1},
+	{name: variable.SlowLogResourceGroup, tp: mysql.TypeVarchar, size: 64},
+	{name: variable.SlowLogRRU, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogWRU, tp: mysql.TypeDouble, size: 22},
+	{name: variable.SlowLogWaitRUDuration, tp: mysql.TypeDouble, size: 22},
 	{name: variable.SlowLogPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: variable.SlowLogPlanDigest, tp: mysql.TypeVarchar, size: 128},
 	{name: variable.SlowLogBinaryPlan, tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
@@ -1654,6 +1661,11 @@ var tableTiDBCheckConstraintsCols = []columnInfo{
 	{name: "TABLE_ID", tp: mysql.TypeLonglong, size: 21},
 }
 
+var tableKeywords = []columnInfo{
+	{name: "WORD", tp: mysql.TypeVarchar, size: 128},
+	{name: "RESERVED", tp: mysql.TypeLong, size: 11},
+}
+
 var tableTiDBParamsCols = []columnInfo{
 	{name: "COMPONENT", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "TYPE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
@@ -2209,6 +2221,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableRunawayWatches:                     tableRunawayWatchListCols,
 	TableCheckConstraints:                   tableCheckConstraintsCols,
 	TableTiDBCheckConstraints:               tableTiDBCheckConstraintsCols,
+	TableKeywords:                           tableKeywords,
 	TableTiDBParams:                         tableTiDBParamsCols,
 }
 

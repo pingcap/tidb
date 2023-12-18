@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -45,7 +46,6 @@ func TestBufferPool(t *testing.T) {
 		WithBlockNum(2),
 		WithAllocator(allocator),
 		WithBlockSize(1024),
-		WithLargeAllocThreshold(512),
 	)
 	defer pool.Destroy()
 
@@ -59,8 +59,8 @@ func TestBufferPool(t *testing.T) {
 	bytesBuf.AllocBytes(767)
 	require.Equal(t, 2, allocator.allocs)
 
-	largeBytes := bytesBuf.AllocBytes(513)
-	require.Equal(t, 513, len(largeBytes))
+	largeBytes := bytesBuf.AllocBytes(1025)
+	require.Equal(t, 1025, len(largeBytes))
 	require.Equal(t, 2, allocator.allocs)
 
 	require.Equal(t, 0, allocator.frees)
@@ -74,6 +74,45 @@ func TestBufferPool(t *testing.T) {
 	bytesBuf.Destroy()
 	require.Equal(t, 3, allocator.allocs)
 	require.Equal(t, 1, allocator.frees)
+}
+
+func TestPoolMemLimit(t *testing.T) {
+	limiter := NewLimiter(1024 + 2*sizeOfSlice)
+	// only allow to allocate one block
+	pool := NewPool(
+		WithBlockSize(1024),
+		WithPoolMemoryLimiter(limiter),
+	)
+	defer pool.Destroy()
+	buf := pool.NewBuffer()
+	buf.AllocBytes(512 - sizeOfSlice)
+	buf.AllocBytes(512 - sizeOfSlice)
+
+	buf2 := pool.NewBuffer()
+	done := make(chan struct{}, 1)
+	go func() {
+		buf2.AllocBytes(512)
+		buf2.Destroy()
+		done <- struct{}{}
+	}()
+
+	// sleep a while to make sure the goroutine is started
+	time.Sleep(50 * time.Millisecond)
+	require.Len(t, done, 0)
+	// reset will not release memory to pool
+	buf.Reset()
+	buf.AllocBytes(512 - sizeOfSlice)
+	buf.AllocBytes(512 - sizeOfSlice)
+	require.Len(t, done, 0)
+	// destroy will release memory to pool
+	buf.Destroy()
+	// wait buf2 to finish
+	require.Eventually(t, func() bool {
+		return len(done) > 0
+	}, time.Second, 10*time.Millisecond)
+	// after buf2 is finished, still can allocate memory from pool
+	buf.AllocBytes(1024 - sizeOfSlice)
+	buf.Destroy()
 }
 
 func TestBufferIsolation(t *testing.T) {
@@ -99,7 +138,7 @@ func TestBufferMemLimit(t *testing.T) {
 	pool := NewPool(WithBlockSize(10))
 	defer pool.Destroy()
 	// the actual memory limit is 10 bytes.
-	bytesBuf := pool.NewBuffer(WithMemoryLimit(5))
+	bytesBuf := pool.NewBuffer(WithBufferMemoryLimit(5))
 
 	got, _ := bytesBuf.AllocBytesWithSliceLocation(9)
 	require.NotNil(t, got)
@@ -107,9 +146,22 @@ func TestBufferMemLimit(t *testing.T) {
 	require.Nil(t, got)
 
 	bytesBuf.Destroy()
+	// test the buffer is still usable after destroy.
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(3)
+	require.NotNil(t, got)
 
 	// exactly 2 block
-	bytesBuf = pool.NewBuffer(WithMemoryLimit(20))
+	bytesBuf = pool.NewBuffer(WithBufferMemoryLimit(20))
+
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(9)
+	require.NotNil(t, got)
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(9)
+	require.NotNil(t, got)
+	got, _ = bytesBuf.AllocBytesWithSliceLocation(2)
+	require.Nil(t, got)
+
+	// after reset, can get same allocation again
+	bytesBuf.Reset()
 
 	got, _ = bytesBuf.AllocBytesWithSliceLocation(9)
 	require.NotNil(t, got)

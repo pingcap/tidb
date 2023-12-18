@@ -15,8 +15,12 @@
 package ddl
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
+	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 )
@@ -109,19 +113,16 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			}
 		}
 	case model.ActionTruncateTablePartition:
-		globalTableInfo, addedPartInfo, _ := t.GetTruncatePartitionInfo()
-		for _, def := range addedPartInfo.Definitions {
-			if err := h.statsWriter.InsertTableStats2KV(globalTableInfo, def.ID); err != nil {
-				return err
-			}
+		if err := h.onTruncatePartitions(t); err != nil {
+			return err
 		}
 	case model.ActionDropTablePartition:
-		// TODO: Update the modify count and count for the global table.
-		_, droppedPartitionInfo := t.GetDropPartitionInfo()
-		for _, def := range droppedPartitionInfo.Definitions {
-			if err := h.statsWriter.ResetTableStats2KVForDrop(def.ID); err != nil {
-				return err
-			}
+		if err := h.onDropPartitions(t); err != nil {
+			return err
+		}
+	case model.ActionExchangeTablePartition:
+		if err := h.onExchangeAPartition(t); err != nil {
+			return err
 		}
 	case model.ActionReorganizePartition:
 		globalTableInfo, addedPartInfo, _ := t.GetReorganizePartitionInfo()
@@ -157,6 +158,79 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 		return h.statsWriter.UpdateStatsVersion()
 	}
 	return nil
+}
+
+// updateStatsWithCountDeltaAndModifyCountDelta updates
+// the global stats with the given count delta and modify count delta.
+// Only used by some special DDLs, such as exchange partition.
+func updateStatsWithCountDeltaAndModifyCountDelta(
+	sctx sessionctx.Context,
+	tableID int64,
+	countDelta, modifyCountDelta int64,
+) error {
+	lockedTables, err := lockstats.QueryLockedTables(sctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	isLocked := false
+	if _, ok := lockedTables[tableID]; ok {
+		isLocked = true
+	}
+	startTS, err := util.GetStartTS(sctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if isLocked {
+		// For locked tables, it is possible that the record gets deleted. So it can be negative.
+		_, err = util.Exec(
+			sctx,
+			"INSERT INTO mysql.stats_table_locked "+
+				"(version, count, modify_count, table_id) "+
+				"VALUES (%?, %?, %?, %?) "+
+				"ON DUPLICATE KEY UPDATE "+
+				"version = VALUES(version), "+
+				"count = count + VALUES(count), "+
+				"modify_count = modify_count + VALUES(modify_count)",
+			startTS,
+			countDelta,
+			modifyCountDelta,
+			tableID,
+		)
+		return err
+	}
+
+	// Because count can not be negative, so we need to get the current and calculate the delta.
+	count, modifyCount, isNull, err := storage.StatsMetaCountAndModifyCount(sctx, tableID)
+	if err != nil {
+		return err
+	}
+	if isNull {
+		_, err = util.Exec(
+			sctx,
+			"INSERT INTO mysql.stats_meta "+
+				"(version, count, modify_count, table_id) "+
+				"VALUES (%?, GREATEST(0, %?), GREATEST(0, %?), %?)",
+			startTS,
+			countDelta,
+			modifyCountDelta,
+			tableID,
+		)
+	} else {
+		_, err = util.Exec(
+			sctx,
+			"UPDATE mysql.stats_meta SET "+
+				"version = %?, "+
+				"count = GREATEST(0, %?), "+
+				"modify_count = GREATEST(0, %?) "+
+				"WHERE table_id = %?",
+			startTS,
+			count+countDelta,
+			modifyCount+modifyCountDelta,
+			tableID,
+		)
+	}
+
+	return err
 }
 
 func (h *ddlHandlerImpl) getInitStateTableIDs(tblInfo *model.TableInfo) (ids []int64, err error) {

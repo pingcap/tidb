@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -138,15 +139,21 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 
 		col := table.ToColumn(colInfo)
 		if col.IsGenerated() {
-			expr, err := generatedexpr.ParseExpression(colInfo.GeneratedExprString)
+			genStr := colInfo.GeneratedExprString
+			expr, err := buildGeneratedExpr(tblInfo, genStr)
 			if err != nil {
 				return nil, err
 			}
-			expr, err = generatedexpr.SimpleResolveName(expr, tblInfo)
-			if err != nil {
-				return nil, err
-			}
-			col.GeneratedExpr = expr
+			col.GeneratedExpr = table.NewClonableExprNode(func() ast.ExprNode {
+				newExpr, err1 := buildGeneratedExpr(tblInfo, genStr)
+				if err1 != nil {
+					logutil.BgLogger().Warn("unexpected parse generated string error",
+						zap.String("generatedStr", genStr),
+						zap.Error(err1))
+					return expr
+				}
+				return newExpr
+			}, expr)
 		}
 		// default value is expr.
 		if col.DefaultIsExpr {
@@ -175,6 +182,18 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 		return &t, nil
 	}
 	return newPartitionedTable(&t, tblInfo)
+}
+
+func buildGeneratedExpr(tblInfo *model.TableInfo, genExpr string) (ast.ExprNode, error) {
+	expr, err := generatedexpr.ParseExpression(genExpr)
+	if err != nil {
+		return nil, err
+	}
+	expr, err = generatedexpr.SimpleResolveName(expr, tblInfo)
+	if err != nil {
+		return nil, err
+	}
+	return expr, nil
 }
 
 // initTableCommon initializes a TableCommon struct.
@@ -1014,7 +1033,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			_, err = txn.Get(ctx, key)
 		}
 		if err == nil {
-			handleStr := getDuplicateErrorHandleString(t, recordID, r)
+			handleStr := getDuplicateErrorHandleString(t.Meta(), recordID, r)
 			return recordID, kv.ErrKeyExists.FastGenByArgs(handleStr, t.Meta().Name.String()+".PRIMARY")
 		} else if !kv.ErrNotExist.Equal(err) {
 			return recordID, err
@@ -1147,6 +1166,8 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 		}
 		var dupErr error
 		if !skipCheck && v.Meta().Unique {
+			// Make error message consistent with MySQL.
+			tablecodec.TruncateIndexValues(t.meta, v.Meta(), indexVals)
 			entryKey, err := genIndexKeyStr(indexVals)
 			if err != nil {
 				return nil, err
@@ -1536,6 +1557,7 @@ func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals
 	if _, err := idx.Create(ctx, txn, vals, h, rsData, opts...); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
+			tablecodec.TruncateIndexValues(t.meta, idx.Meta(), vals)
 			entryKey, err1 := genIndexKeyStr(vals)
 			if err1 != nil {
 				// if genIndexKeyStr failed, return the original error.
@@ -1982,29 +2004,25 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 	return nil
 }
 
-func getDuplicateErrorHandleString(t table.Table, handle kv.Handle, row []types.Datum) string {
+func getDuplicateErrorHandleString(tblInfo *model.TableInfo, handle kv.Handle, row []types.Datum) string {
 	if handle.IsInt() {
 		return kv.GetDuplicateErrorHandleString(handle)
 	}
-	var pk table.Index
-	for _, idx := range t.Indices() {
-		if idx.Meta().Primary {
-			pk = idx
-			break
-		}
-	}
-	if pk == nil {
+	pkIdx := FindPrimaryIndex(tblInfo)
+	if pkIdx == nil {
 		return kv.GetDuplicateErrorHandleString(handle)
 	}
-	var err error
-	str := make([]string, len(pk.Meta().Columns))
-	for i, col := range pk.Meta().Columns {
-		str[i], err = row[col.Offset].ToString()
-		if err != nil {
-			return kv.GetDuplicateErrorHandleString(handle)
-		}
+	pkDts := make([]types.Datum, 0, len(pkIdx.Columns))
+	for _, idxCol := range pkIdx.Columns {
+		pkDts = append(pkDts, row[idxCol.Offset])
 	}
-	return strings.Join(str, "-")
+	tablecodec.TruncateIndexValues(tblInfo, pkIdx, pkDts)
+	entryKey, err := genIndexKeyStr(pkDts)
+	if err != nil {
+		// if genIndexKeyStr failed, return DuplicateErrorHandleString.
+		return kv.GetDuplicateErrorHandleString(handle)
+	}
+	return entryKey
 }
 
 func init() {

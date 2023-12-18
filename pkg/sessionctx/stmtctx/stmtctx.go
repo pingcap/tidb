@@ -183,7 +183,6 @@ type StatementContext struct {
 	DupKeyAsWarning               bool
 	BadNullAsWarning              bool
 	DividedByZeroAsWarning        bool
-	OverflowAsWarning             bool
 	ErrAutoincReadFailedAsWarning bool
 	InShowWarning                 bool
 	UseCache                      bool
@@ -427,7 +426,7 @@ type StatementContext struct {
 // NewStmtCtx creates a new statement context
 func NewStmtCtx() *StatementContext {
 	sc := &StatementContext{}
-	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc.AppendWarning)
+	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
 	return sc
 }
 
@@ -435,14 +434,14 @@ func NewStmtCtx() *StatementContext {
 func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	intest.AssertNotNil(tz)
 	sc := &StatementContext{}
-	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc.AppendWarning)
+	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
 	return sc
 }
 
 // Reset resets a statement context
 func (sc *StatementContext) Reset() {
 	*sc = StatementContext{
-		typeCtx: types.NewContext(types.DefaultStmtFlags, time.UTC, sc.AppendWarning),
+		typeCtx: types.NewContext(types.DefaultStmtFlags, time.UTC, sc),
 	}
 }
 
@@ -470,7 +469,7 @@ func (sc *StatementContext) TypeCtx() types.Context {
 // ErrCtx returns the error context
 // TODO: add a cache to the `ErrCtx` if needed, though it's not a big burden to generate `ErrCtx` everytime.
 func (sc *StatementContext) ErrCtx() errctx.Context {
-	ctx := errctx.NewContext(sc.AppendWarning)
+	ctx := errctx.NewContext(sc)
 
 	if sc.TypeFlags().IgnoreTruncateErr() {
 		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
@@ -478,9 +477,6 @@ func (sc *StatementContext) ErrCtx() errctx.Context {
 		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
 	}
 
-	if sc.OverflowAsWarning {
-		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupOverflow, errctx.LevelWarn)
-	}
 	return ctx
 }
 
@@ -508,6 +504,16 @@ func (sc *StatementContext) HandleError(err error) error {
 	}
 	errCtx := sc.ErrCtx()
 	return errCtx.HandleError(err)
+}
+
+// HandleErrorWithAlias handles the error based on `ErrCtx()`
+func (sc *StatementContext) HandleErrorWithAlias(internalErr, err, warnErr error) error {
+	intest.AssertNotNil(sc)
+	if sc == nil {
+		return err
+	}
+	errCtx := sc.ErrCtx()
+	return errCtx.HandleErrorWithAlias(internalErr, err, warnErr)
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -784,13 +790,13 @@ func (sc *StatementContext) SetSkipPlanCache(reason error) {
 	sc.UseCache = false
 	switch sc.CacheType {
 	case DefaultNoCache:
-		sc.AppendWarning(errors.New("unknown cache type"))
+		sc.AppendWarning(errors.NewNoStackError("unknown cache type"))
 	case SessionPrepared:
-		sc.AppendWarning(errors.Errorf("skip prepared plan-cache: %s", reason.Error()))
+		sc.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: %s", reason.Error()))
 	case SessionNonPrepared:
 		if sc.InExplainStmt && sc.ExplainFormat == "plan_cache" {
 			// use "plan_cache" rather than types.ExplainFormatPlanCache to avoid import cycle
-			sc.AppendWarning(errors.Errorf("skip non-prepared plan-cache: %s", reason.Error()))
+			sc.AppendWarning(errors.NewNoStackErrorf("skip non-prepared plan-cache: %s", reason.Error()))
 		}
 	}
 }
@@ -1052,19 +1058,6 @@ func (sc *StatementContext) AppendExtraError(warn error) {
 	}
 }
 
-// HandleOverflow treats ErrOverflow as warnings or returns the error based on the StmtCtx.OverflowAsWarning state.
-func (sc *StatementContext) HandleOverflow(err error, warnErr error) error {
-	if err == nil {
-		return nil
-	}
-
-	if sc.OverflowAsWarning {
-		sc.AppendWarning(warnErr)
-		return nil
-	}
-	return err
-}
-
 // resetMuForRetry resets the changed states of sc.mu during execution.
 func (sc *StatementContext) resetMuForRetry() {
 	sc.mu.Lock()
@@ -1173,8 +1166,7 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 		flags |= model.FlagIgnoreTruncate
 	} else if sc.TypeFlags().TruncateAsWarning() {
 		flags |= model.FlagTruncateAsWarning
-	}
-	if sc.OverflowAsWarning {
+		// TODO: remove this flag from TiKV.
 		flags |= model.FlagOverflowAsWarning
 	}
 	if sc.TypeFlags().IgnoreZeroInDate() {
@@ -1241,7 +1233,6 @@ func (sc *StatementContext) InitFromPBFlagAndTz(flags uint64, tz *time.Location)
 	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
 	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
 	sc.InDeleteStmt = (flags & model.FlagInUpdateOrDeleteStmt) > 0
-	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
 	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
 	sc.SetTimeZone(tz)
 	sc.SetTypeFlags(types.DefaultStmtFlags.

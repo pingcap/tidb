@@ -45,6 +45,7 @@ import (
 	"io"
 	"net"
 	"os/user"
+	"runtime"
 	"runtime/pprof"
 	"runtime/trace"
 	"strconv"
@@ -98,6 +99,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
@@ -120,6 +122,11 @@ var (
 	statusCompressionLevel     = "Compression_level"
 )
 
+var (
+	// ConnectionInMemCounterForTest is a variable to count live connection object
+	ConnectionInMemCounterForTest = atomic.Int64{}
+)
+
 // newClientConn creates a *clientConn object.
 func newClientConn(s *Server) *clientConn {
 	cc := &clientConn{
@@ -134,7 +141,13 @@ func newClientConn(s *Server) *clientConn {
 		quit:         make(chan struct{}),
 		ppEnabled:    s.cfg.ProxyProtocol.Networks != "",
 	}
-	variable.RegisterStatistics(cc)
+
+	if intest.InTest {
+		ConnectionInMemCounterForTest.Add(1)
+		runtime.SetFinalizer(cc, func(*clientConn) {
+			ConnectionInMemCounterForTest.Add(-1)
+		})
+	}
 	return cc
 }
 
@@ -169,8 +182,9 @@ type clientConn struct {
 	lastActive    time.Time             // last active time
 	authPlugin    string                // default authentication plugin
 	isUnixSocket  bool                  // connection is Unix Socket file
-	rsEncoder     *column.ResultEncoder // rsEncoder is used to encode the string result to different charsets.
-	inputDecoder  *util2.InputDecoder   // inputDecoder is used to decode the different charsets of incoming strings to utf-8.
+	closeOnce     sync.Once             // closeOnce is used to make sure clientConn closes only once
+	rsEncoder     *column.ResultEncoder // rsEncoder is used to encode the string result to different charsets
+	inputDecoder  *util2.InputDecoder   // inputDecoder is used to decode the different charsets of incoming strings to utf-8
 	socketCredUID uint32                // UID from the other end of the Unix Socket
 	// mu is used for cancelling the execution of current transaction.
 	mu struct {
@@ -349,28 +363,31 @@ func (cc *clientConn) Close() error {
 	return closeConn(cc, connections)
 }
 
-// closeConn should be idempotent.
+// closeConn is idempotent and thread-safe.
 // It will be called on the same `clientConn` more than once to avoid connection leak.
 func closeConn(cc *clientConn, connections int) error {
-	metrics.ConnGauge.Set(float64(connections))
-	if cc.connectionID > 0 {
-		cc.server.dom.ReleaseConnID(cc.connectionID)
-		cc.connectionID = 0
-	}
-	if cc.bufReadConn != nil {
-		err := cc.bufReadConn.Close()
-		if err != nil {
-			// We need to expect connection might have already disconnected.
-			// This is because closeConn() might be called after a connection read-timeout.
-			logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
+	var err error
+	cc.closeOnce.Do(func() {
+		metrics.ConnGauge.Set(float64(connections))
+		if cc.connectionID > 0 {
+			cc.server.dom.ReleaseConnID(cc.connectionID)
+			cc.connectionID = 0
 		}
-	}
-	// Close statements and session
-	// This will release advisory locks, row locks, etc.
-	if ctx := cc.getCtx(); ctx != nil {
-		return ctx.Close()
-	}
-	return nil
+		if cc.bufReadConn != nil {
+			err := cc.bufReadConn.Close()
+			if err != nil {
+				// We need to expect connection might have already disconnected.
+				// This is because closeConn() might be called after a connection read-timeout.
+				logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
+			}
+		}
+		// Close statements and session
+		// This will release advisory locks, row locks, etc.
+		if ctx := cc.getCtx(); ctx != nil {
+			err = ctx.Close()
+		}
+	})
+	return err
 }
 
 func (cc *clientConn) closeWithoutLock() error {
@@ -454,6 +471,14 @@ func (cc *clientConn) writePacket(data []byte) error {
 		}
 	})
 	return cc.pkt.WritePacket(data)
+}
+
+func (cc *clientConn) getWaitTimeout(ctx context.Context) uint64 {
+	sessVars := cc.ctx.GetSessionVars()
+	if sessVars.InTxn() && sessVars.IdleTransactionTimeout > 0 {
+		return uint64(sessVars.IdleTransactionTimeout)
+	}
+	return cc.getSessionVarsWaitTimeout(ctx)
 }
 
 // getSessionVarsWaitTimeout get session variable wait_timeout
@@ -958,9 +983,7 @@ func (cc *clientConn) initConnect(ctx context.Context) error {
 					break
 				}
 			}
-			if err := rs.Close(); err != nil {
-				return err
-			}
+			rs.Close()
 		}
 	}
 	logutil.Logger(ctx).Debug("init_connect complete")
@@ -1029,7 +1052,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		cc.alloc.Reset()
 		// close connection when idle time is more than wait_timeout
 		// default 28800(8h), FIXME: should not block at here when we kill the connection.
-		waitTimeout := cc.getSessionVarsWaitTimeout(ctx)
+		waitTimeout := cc.getWaitTimeout(ctx)
 		cc.pkt.SetReadTimeout(time.Duration(waitTimeout) * time.Second)
 		start := time.Now()
 		data, err := cc.readPacket()
@@ -2016,6 +2039,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) (bool, error) {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
+	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
 	cc.audit(plugin.Starting)
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
@@ -2025,7 +2049,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	// - If the rs is nil and err is not nil, the detachment will be done in
 	//   the `handleNoDelay`.
 	if rs != nil {
-		defer terror.Call(rs.Close)
+		defer rs.Close()
 	}
 	if err != nil {
 		// If error is returned during the planner phase or the executor.Open
@@ -2293,7 +2317,7 @@ func (cc *clientConn) writeChunks(ctx context.Context, rs resultset.ResultSet, b
 			stmtDetail.WriteSQLRespDuration += time.Since(start)
 		}
 	}
-	if err := rs.Close(); err != nil {
+	if err := rs.Finish(); err != nil {
 		return false, err
 	}
 
@@ -2594,8 +2618,10 @@ func (cc *clientConn) Flush(ctx context.Context) error {
 	return cc.flush(ctx)
 }
 
+type compressionStats struct{}
+
 // Stats returns the connection statistics.
-func (*clientConn) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
+func (*compressionStats) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
 	m := make(map[string]interface{}, 3)
 
 	switch vars.CompressionAlgorithm {
@@ -2625,6 +2651,10 @@ func (*clientConn) Stats(vars *variable.SessionVars) (map[string]interface{}, er
 }
 
 // GetScope gets the status variables scope.
-func (*clientConn) GetScope(_ string) variable.ScopeFlag {
+func (*compressionStats) GetScope(_ string) variable.ScopeFlag {
 	return variable.ScopeSession
+}
+
+func init() {
+	variable.RegisterStatistics(&compressionStats{})
 }

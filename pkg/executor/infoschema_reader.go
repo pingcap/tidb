@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -201,6 +202,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromCheckConstraints(sctx, dbs)
 		case infoschema.TableTiDBCheckConstraints:
 			err = e.setDataFromTiDBCheckConstraints(sctx, dbs)
+		case infoschema.TableKeywords:
+			err = e.setDataFromKeywords()
 		case infoschema.TableTiDBParams:
 			err = e.setDataFromTiDBParams(sctx)
 		}
@@ -1736,7 +1739,7 @@ func (*memtableRetriever) getRegionsInfoForSingleTable(ctx context.Context, help
 	if err != nil {
 		return nil, err
 	}
-	return pdCli.GetRegionsByKeyRange(ctx, sk, ek, -1)
+	return pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(sk, ek), -1)
 }
 
 func (e *memtableRetriever) setNewTiKVRegionStatusCol(region *pd.RegionInfo, table *helper.TableInfo) {
@@ -3436,6 +3439,16 @@ func (e *memtableRetriever) setDataFromResourceGroups() error {
 			)
 			rows = append(rows, row)
 		}
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromKeywords() error {
+	rows := make([][]types.Datum, 0, len(parser.Keywords))
+	for _, kw := range parser.Keywords {
+		row := types.MakeDatums(kw.Word, kw.Reserved)
+		rows = append(rows, row)
 	}
 	e.rows = rows
 	return nil

@@ -68,34 +68,25 @@ type VecExpr interface {
 	Vectorized() bool
 
 	// VecEvalInt evaluates this expression in a vectorized manner.
-	VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	VecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// VecEvalReal evaluates this expression in a vectorized manner.
-	VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	VecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// VecEvalString evaluates this expression in a vectorized manner.
-	VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	VecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// VecEvalDecimal evaluates this expression in a vectorized manner.
-	VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	VecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// VecEvalTime evaluates this expression in a vectorized manner.
-	VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	VecEvalTime(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// VecEvalDuration evaluates this expression in a vectorized manner.
-	VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	VecEvalDuration(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// VecEvalJSON evaluates this expression in a vectorized manner.
-	VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
-}
-
-// ReverseExpr contains all resersed evaluation methods.
-type ReverseExpr interface {
-	// SupportReverseEval checks whether the builtinFunc support reverse evaluation.
-	SupportReverseEval() bool
-
-	// ReverseEval evaluates the only one column value with given function result.
-	ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error)
+	VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 }
 
 // TraverseAction define the interface for action when traversing down an expression.
@@ -108,39 +99,33 @@ type Expression interface {
 	fmt.Stringer
 	goJSON.Marshaler
 	VecExpr
-	ReverseExpr
 	CollationInfo
 
 	Traverse(TraverseAction) Expression
 
-	// EvalWithInnerCtx evaluates expression with inner ctx.
-	// Deprecated: This function is only used during refactoring, please do not use it in new code.
-	// TODO: remove this method after refactoring.
-	EvalWithInnerCtx(row chunk.Row) (types.Datum, error)
-
 	// Eval evaluates an expression through a row.
-	Eval(ctx sessionctx.Context, row chunk.Row) (types.Datum, error)
+	Eval(ctx EvalContext, row chunk.Row) (types.Datum, error)
 
 	// EvalInt returns the int64 representation of expression.
-	EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error)
+	EvalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error)
 
 	// EvalReal returns the float64 representation of expression.
-	EvalReal(ctx sessionctx.Context, row chunk.Row) (val float64, isNull bool, err error)
+	EvalReal(ctx EvalContext, row chunk.Row) (val float64, isNull bool, err error)
 
 	// EvalString returns the string representation of expression.
-	EvalString(ctx sessionctx.Context, row chunk.Row) (val string, isNull bool, err error)
+	EvalString(ctx EvalContext, row chunk.Row) (val string, isNull bool, err error)
 
 	// EvalDecimal returns the decimal representation of expression.
-	EvalDecimal(ctx sessionctx.Context, row chunk.Row) (val *types.MyDecimal, isNull bool, err error)
+	EvalDecimal(ctx EvalContext, row chunk.Row) (val *types.MyDecimal, isNull bool, err error)
 
 	// EvalTime returns the DATE/DATETIME/TIMESTAMP representation of expression.
-	EvalTime(ctx sessionctx.Context, row chunk.Row) (val types.Time, isNull bool, err error)
+	EvalTime(ctx EvalContext, row chunk.Row) (val types.Time, isNull bool, err error)
 
 	// EvalDuration returns the duration representation of expression.
-	EvalDuration(ctx sessionctx.Context, row chunk.Row) (val types.Duration, isNull bool, err error)
+	EvalDuration(ctx EvalContext, row chunk.Row) (val types.Duration, isNull bool, err error)
 
 	// EvalJSON returns the JSON representation of expression.
-	EvalJSON(ctx sessionctx.Context, row chunk.Row) (val types.BinaryJSON, isNull bool, err error)
+	EvalJSON(ctx EvalContext, row chunk.Row) (val types.BinaryJSON, isNull bool, err error)
 
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
@@ -149,12 +134,14 @@ type Expression interface {
 	Clone() Expression
 
 	// Equal checks whether two expressions are equal.
-	Equal(ctx sessionctx.Context, e Expression) bool
+	Equal(ctx EvalContext, e Expression) bool
 
 	// IsCorrelated checks if this expression has correlated key.
 	IsCorrelated() bool
 
 	// ConstItem checks if this expression is constant item, regardless of query evaluation state.
+	// If the argument `acrossCtxs` is true,
+	// it will check if this expression returns a constant value even across multiple contexts.
 	// An expression is constant item if it:
 	// refers no tables.
 	// refers no correlated column.
@@ -162,7 +149,7 @@ type Expression interface {
 	// refers no non-deterministic functions.
 	// refers no statement parameters.
 	// refers no param markers when prepare plan cache is enabled.
-	ConstItem(sc *stmtctx.StatementContext) bool
+	ConstItem(acrossCtx bool) bool
 
 	// Decorrelate try to decorrelate the expression by schema.
 	Decorrelate(schema *Schema) Expression
@@ -174,16 +161,16 @@ type Expression interface {
 	resolveIndices(schema *Schema) error
 
 	// ResolveIndicesByVirtualExpr resolves indices by the given schema in terms of virual expression. It will copy the original expression and return the copied one.
-	ResolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *Schema) (Expression, bool)
+	ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) (Expression, bool)
 
 	// resolveIndicesByVirtualExpr is called inside the `ResolveIndicesByVirtualExpr` It will perform on the expression itself.
-	resolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *Schema) bool
+	resolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) bool
 
 	// RemapColumn remaps columns with provided mapping and returns new expression
 	RemapColumn(map[int64]*Column) (Expression, error)
 
 	// ExplainInfo returns operator information to be explained.
-	ExplainInfo() string
+	ExplainInfo(ctx EvalContext) string
 
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
@@ -267,7 +254,7 @@ func HandleOverflowOnSelection(sc *stmtctx.StatementContext, val int64, err erro
 // indicates bool result of the expression list, the second returned value indicates
 // whether the result of the expression list is null, it can only be true when the
 // first returned values is false.
-func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, bool, error) {
+func EvalBool(ctx EvalContext, exprList CNFExprs, row chunk.Row) (bool, bool, error) {
 	hasNull := false
 	for _, expr := range exprList {
 		data, err := expr.Eval(ctx, row)
@@ -341,7 +328,7 @@ func deallocateZeroSlice(isZero []int8) {
 }
 
 // VecEvalBool does the same thing as EvalBool but it works in a vectorized manner.
-func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
+func VecEvalBool(ctx EvalContext, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
 	// If input.Sel() != nil, we will call input.SetSel(nil) to clear the sel slice in input chunk.
 	// After the function finished, then we reset the input.Sel().
 	// The caller will handle the input.Sel() and selected slices.
@@ -555,7 +542,7 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalT
 	return nil
 }
 
-func implicitEvalReal(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
+func implicitEvalReal(ctx EvalContext, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
 	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
 		err = expr.VecEvalReal(ctx, input, result)
 	} else {
@@ -584,7 +571,7 @@ func implicitEvalReal(ctx sessionctx.Context, expr Expression, input *chunk.Chun
 // the environment variables and whether the expression can be vectorized.
 // Note: the input argument `evalType` is needed because of that when `expr` is
 // of the hybrid type(ENUM/SET/BIT), we need the invoker decide the actual EvalType.
-func EvalExpr(ctx sessionctx.Context, expr Expression, evalType types.EvalType, input *chunk.Chunk, result *chunk.Column) (err error) {
+func EvalExpr(ctx EvalContext, expr Expression, evalType types.EvalType, input *chunk.Chunk, result *chunk.Column) (err error) {
 	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
 		switch evalType {
 		case types.ETInt:
@@ -1045,7 +1032,6 @@ func NewValuesFunc(ctx sessionctx.Context, offset int, retTp *types.FieldType) *
 		FuncName: model.NewCIStr(ast.Values),
 		RetType:  retTp,
 		Function: bt,
-		ctx:      ctx,
 	}
 }
 
@@ -1083,9 +1069,10 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 
 		// string functions.
 		// ast.Bin, ast.Unhex, ast.Locate, ast.Ord, ast.Lpad, ast.Rpad,
-		// ast.Trim, ast.FromBase64, ast.ToBase64, ast.Upper, ast.Lower, ast.InsertFunc,
+		// ast.Trim, ast.FromBase64, ast.ToBase64, ast.InsertFunc,
 		// ast.MakeSet, ast.SubstringIndex, ast.Instr, ast.Quote, ast.Oct,
 		// ast.FindInSet, ast.Repeat,
+		ast.Upper, ast.Lower,
 		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS, ast.Replace, ast.ASCII, ast.Hex,
 		ast.Reverse, ast.LTrim, ast.RTrim, ast.Strcmp, ast.Space, ast.Elt, ast.Field,
 		InternalFuncFromBinary, InternalFuncToBinary, ast.Mid, ast.Substring, ast.Substr, ast.CharLength,
@@ -1173,7 +1160,7 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 
 		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
 		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
-		ast.JSONLength, ast.JSONExtract, ast.JSONUnquote, ast.JSONArray, ast.Repeat,
+		ast.JSONLength, ast.JSONDepth, ast.JSONExtract, ast.JSONUnquote, ast.JSONArray, ast.Repeat,
 		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
 		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format, ast.Elt,
 		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad,
@@ -1185,12 +1172,6 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_IfNullDuration,
 			tipb.ScalarFuncSig_IfDuration,
 			tipb.ScalarFuncSig_CaseWhenDuration:
-			return false
-		case tipb.ScalarFuncSig_JsonUnquoteSig:
-			// TiFlash json_unquote now only supports json string generated by cast(json as string)
-			if childFunc, ok := function.GetArgs()[0].(*ScalarFunction); ok {
-				return childFunc.Function.PbCode() == tipb.ScalarFuncSig_CastJsonAsString
-			}
 			return false
 		}
 		return true
@@ -1237,6 +1218,9 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			return function.GetArgs()[0].GetType().GetType() != mysql.TypeYear
 		case tipb.ScalarFuncSig_CastTimeAsDuration:
 			return retType.GetType() == mysql.TypeDuration
+		case tipb.ScalarFuncSig_CastIntAsJson, tipb.ScalarFuncSig_CastRealAsJson, tipb.ScalarFuncSig_CastDecimalAsJson, tipb.ScalarFuncSig_CastStringAsJson,
+			tipb.ScalarFuncSig_CastTimeAsJson, tipb.ScalarFuncSig_CastDurationAsJson, tipb.ScalarFuncSig_CastJsonAsJson:
+			return true
 		}
 	case ast.DateAdd, ast.AddDate:
 		switch function.Function.PbCode() {
@@ -1340,7 +1324,9 @@ func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
 	}
 
 	if ret {
-		ret = IsPushDownEnabled(sf.FuncName.L, storeType)
+		funcFullName := fmt.Sprintf("%s.%s", sf.FuncName.L, strings.ToLower(sf.Function.PbCode().String()))
+		// Aside from checking function name, also check the pb name in case only the specific push down is disabled.
+		ret = IsPushDownEnabled(sf.FuncName.L, storeType) && IsPushDownEnabled(funcFullName, storeType)
 	}
 	return ret
 }
@@ -1395,10 +1381,11 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 			storageName = "storage layer"
 		}
 		warnErr := errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") is not supported to push down to " + storageName + " now.")
-		if pc.sc.InExplainStmt {
-			pc.sc.AppendWarning(warnErr)
+		sc := pc.ctx.GetSessionVars().StmtCtx
+		if sc.InExplainStmt {
+			sc.AppendWarning(warnErr)
 		} else {
-			pc.sc.AppendExtraWarning(warnErr)
+			sc.AppendExtraWarning(warnErr)
 		}
 		return false
 	}
@@ -1423,25 +1410,26 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, canEnumPush bool) bool {
 	if storeType == kv.TiFlash {
+		sc := pc.ctx.GetSessionVars().StmtCtx
 		switch expr.GetType().GetType() {
 		case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
 			if expr.GetType().GetType() == mysql.TypeEnum && canEnumPush {
 				break
 			}
 			warnErr := errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().GetType()) + "'.")
-			if pc.sc.InExplainStmt {
-				pc.sc.AppendWarning(warnErr)
+			if sc.InExplainStmt {
+				sc.AppendWarning(warnErr)
 			} else {
-				pc.sc.AppendExtraWarning(warnErr)
+				sc.AppendExtraWarning(warnErr)
 			}
 			return false
 		case mysql.TypeNewDecimal:
 			if !expr.GetType().IsDecimalValid() {
 				warnErr := errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType().GetFlen()) + "','" + strconv.Itoa(expr.GetType().GetDecimal()) + "').")
-				if pc.sc.InExplainStmt {
-					pc.sc.AppendWarning(warnErr)
+				if sc.InExplainStmt {
+					sc.AppendWarning(warnErr)
 				} else {
-					pc.sc.AppendExtraWarning(warnErr)
+					sc.AppendExtraWarning(warnErr)
 				}
 				return false
 			}
@@ -1461,8 +1449,8 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, ca
 }
 
 // PushDownExprsWithExtraInfo split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
-func PushDownExprsWithExtraInfo(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) (pushed []Expression, remained []Expression) {
-	pc := PbConverter{sc: sc, client: client}
+func PushDownExprsWithExtraInfo(ctx EvalContext, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) (pushed []Expression, remained []Expression) {
+	pc := PbConverter{ctx: ctx, client: client}
 	for _, expr := range exprs {
 		if canExprPushDown(expr, pc, storeType, canEnumPush) {
 			pushed = append(pushed, expr)
@@ -1474,19 +1462,19 @@ func PushDownExprsWithExtraInfo(sc *stmtctx.StatementContext, exprs []Expression
 }
 
 // PushDownExprs split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
-func PushDownExprs(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
-	return PushDownExprsWithExtraInfo(sc, exprs, client, storeType, false)
+func PushDownExprs(ctx EvalContext, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
+	return PushDownExprsWithExtraInfo(ctx, exprs, client, storeType, false)
 }
 
 // CanExprsPushDownWithExtraInfo return true if all the expr in exprs can be pushed down
-func CanExprsPushDownWithExtraInfo(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) bool {
-	_, remained := PushDownExprsWithExtraInfo(sc, exprs, client, storeType, canEnumPush)
+func CanExprsPushDownWithExtraInfo(ctx EvalContext, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) bool {
+	_, remained := PushDownExprsWithExtraInfo(ctx, exprs, client, storeType, canEnumPush)
 	return len(remained) == 0
 }
 
 // CanExprsPushDown return true if all the expr in exprs can be pushed down
-func CanExprsPushDown(sc *stmtctx.StatementContext, exprs []Expression, client kv.Client, storeType kv.StoreType) bool {
-	return CanExprsPushDownWithExtraInfo(sc, exprs, client, storeType, false)
+func CanExprsPushDown(ctx EvalContext, exprs []Expression, client kv.Client, storeType kv.StoreType) bool {
+	return CanExprsPushDownWithExtraInfo(ctx, exprs, client, storeType, false)
 }
 
 // wrapWithIsTrue wraps `arg` with istrue function if the return type of expr is not
@@ -1521,7 +1509,6 @@ func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapF
 		FuncName: model.NewCIStr(ast.IsTruthWithoutNull),
 		Function: f,
 		RetType:  f.getRetTp(),
-		ctx:      ctx,
 	}
 	if keepNull {
 		sf.FuncName = model.NewCIStr(ast.IsTruthWithNull)

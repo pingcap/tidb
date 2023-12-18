@@ -41,7 +41,7 @@ func PbTypeToFieldType(tp *tipb.FieldType) *types.FieldType {
 
 func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *tipb.FieldType, args []Expression) (f builtinFunc, e error) {
 	fieldTp := PbTypeToFieldType(tp)
-	base, err := newBaseBuiltinFuncWithFieldType(ctx, fieldTp, args)
+	base, err := newBaseBuiltinFuncWithFieldType(fieldTp, args)
 	if err != nil {
 		return nil, err
 	}
@@ -1100,7 +1100,6 @@ func newDistSQLFunctionBySig(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig,
 		FuncName: model.NewCIStr(fmt.Sprintf("sig_%T", f)),
 		Function: f,
 		RetType:  f.getRetTp(),
-		ctx:      ctx,
 	}, nil
 }
 
