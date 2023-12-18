@@ -29,6 +29,7 @@ import (
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
@@ -206,22 +207,22 @@ func TestEmptyContent(t *testing.T) {
 }
 
 func TestSwitchMode(t *testing.T) {
-	st, clean := NewS3WithBucketAndPrefix(t, "test", "testprefix")
-	defer clean()
-
+	st := storage.NewMemStorage()
 	// Prepare
 	fileSize := 1024 * 1024
-	err := st.WriteFile(context.Background(), "testfile", make([]byte, fileSize))
+	err := st.WriteFile(context.Background(), "/testfile", make([]byte, fileSize))
 	require.NoError(t, err)
 
 	newRsc := func() storage.ExternalFileReader {
-		rsc, err := st.Open(context.Background(), "testfile", nil)
+		rsc, err := st.Open(context.Background(), "/testfile", nil)
 		require.NoError(t, err)
 		return rsc
 	}
-
+	pool := membuf.NewPool()
 	ConcurrentReaderBufferSizePerConc = 100
 	br, err := newByteReader(context.Background(), newRsc(), 100)
+	require.NoError(t, err)
+	br.enableConcurrentRead(st, "/testfile", 100, 100, pool.NewBuffer())
 
 	seed := time.Now().Unix()
 	rand.Seed(uint64(seed))
@@ -256,7 +257,6 @@ func TestSwitchMode(t *testing.T) {
 		totalCnt += len(y)
 	}
 	require.Equal(t, fileSize, totalCnt)
-
 }
 
 // NewS3WithBucketAndPrefix creates a new S3Storage for testing.
