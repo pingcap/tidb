@@ -288,7 +288,7 @@ func (w *GCSWriter) finalizeXMLMPU() error {
 	}
 
 	if resp.StatusCode() != http.StatusOK {
-		return fmt.Errorf("POST request returned non-OK status: %d", resp.StatusCode())
+		return fmt.Errorf("POST request returned non-OK status: %d, body: %s", resp.StatusCode(), resp.String())
 	}
 	return nil
 }
