@@ -18,8 +18,11 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
@@ -52,18 +55,21 @@ type parallelHashAggSpillHelper struct {
 		isAllPartialWorkerFinished bool
 	}
 
-	// partitionNeedRestore int
-
+	memTracker     *memory.Tracker
 	diskTracker    *disk.Tracker
 	isPartialStage int32
 	hasError       int32
+
+	// These agg functions are partial agg functions that are same with partial workers'.
+	// They only be used for restoring data that are spilled to disk in partial stage.
+	aggFuncsForRestoring []aggfuncs.AggFunc
 
 	// When spill is triggered, all partial workers should stop
 	// and we can ensure this when the spill action gets write lock.
 	syncLock sync.RWMutex
 }
 
-func newSpillHelper() *parallelHashAggSpillHelper {
+func newSpillHelper(tracker *memory.Tracker, aggFuncsForRestoring []aggfuncs.AggFunc) *parallelHashAggSpillHelper {
 	mu := new(sync.Mutex)
 	return &parallelHashAggSpillHelper{
 		lock: struct {
@@ -83,8 +89,10 @@ func newSpillHelper() *parallelHashAggSpillHelper {
 			nextPartitionIdx:           spilledPartitionNum - 1,
 			isAllPartialWorkerFinished: false,
 		},
-		isPartialStage: partialStageFlag,
-		hasError:       0,
+		memTracker:           tracker,
+		isPartialStage:       partialStageFlag,
+		hasError:             0,
+		aggFuncsForRestoring: aggFuncsForRestoring,
 	}
 }
 
@@ -184,6 +192,100 @@ func (p *parallelHashAggSpillHelper) checkError() bool {
 // We need to set error with atmoic as multi partial workers may access it.
 func (p *parallelHashAggSpillHelper) setError() {
 	atomic.StoreInt32(&p.hasError, hasErrorFlag)
+}
+
+func (p *parallelHashAggSpillHelper) restoreOnePartition(ctx sessionctx.Context) (*aggfuncs.AggPartialResultMapper, error) {
+	restoredData := make(aggfuncs.AggPartialResultMapper)
+	bInMap := 0
+
+	restoredPartitionIdx, isSuccess := p.getNextPartition()
+	if !isSuccess {
+		return nil, nil
+	}
+
+	spilledFilesIO := p.getListInDisks(restoredPartitionIdx)
+	for _, spilledFile := range spilledFilesIO {
+		memDelta, err := p.restoreFromOneSpillFile(ctx, &restoredData, spilledFile, &bInMap)
+		if err != nil {
+			return nil, err
+		}
+
+		p.memTracker.Consume(memDelta)
+	}
+	return &restoredData, nil
+}
+
+func (p *parallelHashAggSpillHelper) restoreFromOneSpillFile(ctx sessionctx.Context, restoreadData *aggfuncs.AggPartialResultMapper, diskIO *chunk.DataInDiskByChunks, bInMap *int) (int64, error) {
+	totalMemDelta := int64(0)
+	chunkNum := diskIO.NumChunks()
+	aggFuncNum := len(p.aggFuncsForRestoring)
+	processRowContext := &processRowContext{
+		ctx:                    ctx,
+		chunk:                  nil, // Will be set in the loop
+		rowPos:                 0,   // Will be set in the loop
+		keyColPos:              aggFuncNum,
+		aggFuncNum:             aggFuncNum,
+		restoreadData:          restoreadData,
+		partialResultsRestored: make([][]aggfuncs.PartialResult, aggFuncNum),
+		bInMap:                 bInMap,
+	}
+	for i := 0; i < chunkNum; i++ {
+		chunk, err := diskIO.GetChunk(i)
+		if err != nil {
+			return totalMemDelta, err
+		}
+
+		// Deserialize bytes to agg function's meta data
+		for aggPos, aggFunc := range p.aggFuncsForRestoring {
+			partialResult, memDelta := aggFunc.DeserializePartialResult(chunk)
+			processRowContext.partialResultsRestored[aggPos] = partialResult
+			totalMemDelta += memDelta
+		}
+
+		// Merge or create results
+		rowNum := chunk.NumRows()
+		processRowContext.chunk = chunk
+		for rowPos := 0; rowPos < rowNum; rowPos++ {
+			processRowContext.rowPos = rowPos
+			memDelta, err := p.processRow(processRowContext)
+			if err != nil {
+				return totalMemDelta, err
+			}
+			totalMemDelta += memDelta
+		}
+	}
+	return totalMemDelta, nil
+}
+
+func (p *parallelHashAggSpillHelper) processRow(context *processRowContext) (int64, error) {
+	totalMemDelta := int64(0)
+	key := context.chunk.GetRow(context.rowPos).GetString(context.keyColPos)
+	prs, ok := (*context.restoreadData)[key]
+	if ok {
+		// The key has appeared before, merge results.
+		for aggPos := 0; aggPos < context.aggFuncNum; aggPos++ {
+			memDelta, err := p.aggFuncsForRestoring[aggPos].MergePartialResult(context.ctx, context.partialResultsRestored[aggPos][context.rowPos], prs[aggPos])
+			if err != nil {
+				return totalMemDelta, err
+			}
+			totalMemDelta += memDelta
+		}
+	} else {
+		totalMemDelta += int64(len(key))
+
+		if len(*context.restoreadData)+1 > (1<<*context.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
+			p.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << *context.bInMap))
+			(*context.bInMap)++
+		}
+
+		results := make([]aggfuncs.PartialResult, context.aggFuncNum)
+		(*context.restoreadData)[key] = results
+
+		for aggPos := 0; aggPos < context.aggFuncNum; aggPos++ {
+			results[aggPos] = context.partialResultsRestored[aggPos][context.rowPos]
+		}
+	}
+	return totalMemDelta, nil
 }
 
 func isInSpillMode(inSpillMode *uint32) bool {

@@ -56,10 +56,6 @@ type HashAggFinalWorker struct {
 	isSpilledTriggered      bool
 	restoredAggResultMapper *aggfuncs.AggPartialResultMapper
 
-	// These agg functions are partial agg functions that are same with partial workers'.
-	// They only be used for restoring data that are spilled to disk in partial stage.
-	aggFuncsForRestoring []aggfuncs.AggFunc
-
 	restoredMemDelta int64
 }
 
@@ -227,101 +223,6 @@ func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
 	}
 }
 
-func (w *HashAggFinalWorker) processRow(context *processRowContext) (int64, error) {
-	totalMemDelta := int64(0)
-	key := context.chunk.GetRow(context.rowPos).GetString(context.keyColPos)
-	prs, ok := (*context.restoreadData)[key]
-	if ok {
-		// The key has appeared before, merge results.
-		for aggPos := 0; aggPos < context.aggFuncNum; aggPos++ {
-			memDelta, err := w.aggFuncsForRestoring[aggPos].MergePartialResult(context.ctx, context.partialResultsRestored[aggPos][context.rowPos], prs[aggPos])
-			if err != nil {
-				return totalMemDelta, err
-			}
-			totalMemDelta += memDelta
-		}
-	} else {
-		totalMemDelta += int64(len(key))
-
-		if len(*context.restoreadData)+1 > (1<<*context.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-			w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << *context.bInMap))
-			(*context.bInMap)++
-		}
-
-		results := make([]aggfuncs.PartialResult, context.aggFuncNum)
-		(*context.restoreadData)[key] = results
-
-		for aggPos := 0; aggPos < context.aggFuncNum; aggPos++ {
-			results[aggPos] = context.partialResultsRestored[aggPos][context.rowPos]
-		}
-	}
-	return totalMemDelta, nil
-}
-
-func (w *HashAggFinalWorker) restoreFromOneSpillFile(ctx sessionctx.Context, restoreadData *aggfuncs.AggPartialResultMapper, diskIO *chunk.DataInDiskByChunks, bInMap *int) (int64, error) {
-	totalMemDelta := int64(0)
-	chunkNum := diskIO.NumChunks()
-	aggFuncNum := len(w.aggFuncsForRestoring)
-	processRowContext := &processRowContext{
-		ctx:                    ctx,
-		chunk:                  nil, // Will be set in the loop
-		rowPos:                 0,   // Will be set in the loop
-		keyColPos:              aggFuncNum,
-		aggFuncNum:             aggFuncNum,
-		restoreadData:          restoreadData,
-		partialResultsRestored: make([][]aggfuncs.PartialResult, aggFuncNum),
-		bInMap:                 bInMap,
-	}
-	for i := 0; i < chunkNum; i++ {
-		chunk, err := diskIO.GetChunk(i)
-		if err != nil {
-			return totalMemDelta, err
-		}
-
-		// Deserialize bytes to agg function's meta data
-		for aggPos, aggFunc := range w.aggFuncsForRestoring {
-			partialResult, memDelta := aggFunc.DeserializePartialResult(chunk)
-			processRowContext.partialResultsRestored[aggPos] = partialResult
-			totalMemDelta += memDelta
-		}
-
-		// Merge or create results
-		rowNum := chunk.NumRows()
-		processRowContext.chunk = chunk
-		for rowPos := 0; rowPos < rowNum; rowPos++ {
-			processRowContext.rowPos = rowPos
-			memDelta, err := w.processRow(processRowContext)
-			if err != nil {
-				return totalMemDelta, err
-			}
-			totalMemDelta += memDelta
-		}
-	}
-	return totalMemDelta, nil
-}
-
-func (w *HashAggFinalWorker) restoreOnePartition(ctx sessionctx.Context) (bool, error) {
-	restoredData := make(aggfuncs.AggPartialResultMapper)
-	bInMap := 0
-
-	restoredPartitionIdx, isSuccess := w.spillHelper.getNextPartition()
-	if !isSuccess {
-		return false, nil
-	}
-
-	spilledFilesIO := w.spillHelper.getListInDisks(restoredPartitionIdx)
-	for _, spilledFile := range spilledFilesIO {
-		memDelta, err := w.restoreFromOneSpillFile(ctx, &restoredData, spilledFile, &bInMap)
-		if err != nil {
-			return false, err
-		}
-
-		w.memTracker.Consume(memDelta)
-	}
-	w.restoredAggResultMapper = &restoredData
-	return true, nil
-}
-
 func (w *HashAggFinalWorker) mergeResultsAndSend(ctx sessionctx.Context) (bool, error) {
 	spillContinue, err := w.consumeIntermData(ctx)
 	if err != nil {
@@ -369,14 +270,15 @@ func (w *HashAggFinalWorker) handleSpilledData(ctx sessionctx.Context) {
 		return
 	}
 
+	var err error
 	for {
-		hasData, err := w.restoreOnePartition(ctx)
+		w.restoredAggResultMapper, err = w.spillHelper.restoreOnePartition(ctx)
 		if err != nil {
 			w.outputCh <- &AfFinalResult{err: err}
 			return
 		}
 
-		if !hasData {
+		if w.restoredAggResultMapper == nil {
 			return
 		}
 

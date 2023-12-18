@@ -334,7 +334,6 @@ func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 			rowBuffer:               make([]types.Datum, 0, e.Schema().Len()),
 			mutableRow:              chunk.MutRowFromTypes(exec.RetTypes(e)),
 			groupKeys:               make([][]byte, 0, 8),
-			aggFuncsForRestoring:    e.PartialAggFuncs,
 			restoredMemDelta:        0,
 			spillHelper:             e.spillHelper,
 			isSpilledTriggered:      false,
@@ -378,7 +377,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 	e.finalWorkers = make([]HashAggFinalWorker, finalConcurrency)
 	e.initRuntimeStats()
 
-	e.spillHelper = newSpillHelper()
+	e.spillHelper = newSpillHelper(e.memTracker, e.PartialAggFuncs)
 	e.initPartialWorkers(partialConcurrency, finalConcurrency, ctx)
 	e.initFinalWorkers(finalConcurrency)
 
