@@ -89,15 +89,6 @@ type VecExpr interface {
 	VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 }
 
-// ReverseExpr contains all resersed evaluation methods.
-type ReverseExpr interface {
-	// SupportReverseEval checks whether the builtinFunc support reverse evaluation.
-	SupportReverseEval() bool
-
-	// ReverseEval evaluates the only one column value with given function result.
-	ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error)
-}
-
 // TraverseAction define the interface for action when traversing down an expression.
 type TraverseAction interface {
 	Transform(Expression) Expression
@@ -108,7 +99,6 @@ type Expression interface {
 	fmt.Stringer
 	goJSON.Marshaler
 	VecExpr
-	ReverseExpr
 	CollationInfo
 
 	Traverse(TraverseAction) Expression
@@ -150,6 +140,8 @@ type Expression interface {
 	IsCorrelated() bool
 
 	// ConstItem checks if this expression is constant item, regardless of query evaluation state.
+	// If the argument `acrossCtxs` is true,
+	// it will check if this expression returns a constant value even across multiple contexts.
 	// An expression is constant item if it:
 	// refers no tables.
 	// refers no correlated column.
@@ -157,7 +149,7 @@ type Expression interface {
 	// refers no non-deterministic functions.
 	// refers no statement parameters.
 	// refers no param markers when prepare plan cache is enabled.
-	ConstItem(sc *stmtctx.StatementContext) bool
+	ConstItem(acrossCtx bool) bool
 
 	// Decorrelate try to decorrelate the expression by schema.
 	Decorrelate(schema *Schema) Expression

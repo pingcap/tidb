@@ -322,7 +322,8 @@ func HandleBinaryLiteral(ctx sessionctx.Context, expr Expression, ec *ExprCollat
 				return expr
 			}
 			return BuildToBinaryFunction(ctx, expr)
-		} else if argChs == charset.CharsetBin && dstChs != charset.CharsetBin {
+		} else if argChs == charset.CharsetBin && dstChs != charset.CharsetBin &&
+			expr.GetType().GetType() != mysql.TypeNull {
 			ft := expr.GetType().Clone()
 			ft.SetCharset(ec.Charset)
 			ft.SetCollate(ec.Collation)

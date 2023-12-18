@@ -89,20 +89,49 @@ func run(pass *analysis.Pass) (interface{}, error) {
 						continue
 					}
 				case v.Tok == token.CONST && len(v.Specs) > 1:
-					lastSpec := v.Specs[len(v.Specs)-1]
-					v2, ok := lastSpec.(*ast.ValueSpec)
-					if !ok {
-						continue
+					for _, spec := range v.Specs {
+						v2, ok := spec.(*ast.ValueSpec)
+						if !ok {
+							continue
+						}
+						if len(v2.Names) != 1 {
+							continue
+						}
+						name := v2.Names[0].Name
+						if !strings.HasPrefix(name, "version") {
+							continue
+						}
+
+						valInName, err := strconv.Atoi(name[len("version"):])
+						if err != nil {
+							continue
+						}
+
+						if valInName < maxVerVariable {
+							pass.Reportf(spec.Pos(), "version variable %q is not valid, we should have a increment list of version variables", name)
+							continue
+						}
+
+						maxVerVariable = valInName
+						maxVerVariablePos = v2.Names[0].Pos()
+
+						if len(v2.Values) != 1 {
+							pass.Reportf(spec.Pos(), "the value of version variable %q must be specified explicitly", name)
+							continue
+						}
+
+						valStr := v2.Values[0].(*ast.BasicLit).Value
+						val, err := strconv.Atoi(valStr)
+						if err != nil {
+							pass.Reportf(spec.Pos(), "unexpected value of version variable %q: %q", name, valStr)
+							continue
+						}
+
+						if val != valInName {
+							pass.Reportf(spec.Pos(), "the value of version variable %q must be '%d', but now is '%d'", name, valInName, val)
+							continue
+						}
 					}
-					if len(v2.Names) != 1 {
-						continue
-					}
-					name := v2.Names[0].Name
-					maxVerVariable, err = strconv.Atoi(name[len("version"):])
-					if err != nil {
-						continue
-					}
-					maxVerVariablePos = v2.Names[0].Pos()
 				}
 			case *ast.FuncDecl:
 				name := v.Name.Name

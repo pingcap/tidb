@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -96,21 +95,6 @@ func (sf *ScalarFunction) GetArgs() []Expression {
 // Vectorized returns if this expression supports vectorized evaluation.
 func (sf *ScalarFunction) Vectorized() bool {
 	return sf.Function.vectorized() && sf.Function.isChildrenVectorized()
-}
-
-// SupportReverseEval returns if this expression supports reversed evaluation.
-func (sf *ScalarFunction) SupportReverseEval() bool {
-	switch sf.RetType.GetType() {
-	case mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong,
-		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
-		return sf.Function.supportReverseEval() && sf.Function.isChildrenReversed()
-	}
-	return false
-}
-
-// ReverseEval evaluates the only one column value with given function result.
-func (sf *ScalarFunction) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
-	return sf.Function.reverseEval(sc, res, rType)
 }
 
 // String implements fmt.Stringer interface.
@@ -365,13 +349,13 @@ func (sf *ScalarFunction) IsCorrelated() bool {
 }
 
 // ConstItem implements Expression interface.
-func (sf *ScalarFunction) ConstItem(sc *stmtctx.StatementContext) bool {
+func (sf *ScalarFunction) ConstItem(acrossCtx bool) bool {
 	// Note: some unfoldable functions are deterministic, we use unFoldableFunctions here for simplification.
 	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
 		return false
 	}
 	for _, arg := range sf.GetArgs() {
-		if !arg.ConstItem(sc) {
+		if !arg.ConstItem(acrossCtx) {
 			return false
 		}
 	}

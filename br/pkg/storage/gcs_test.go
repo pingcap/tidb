@@ -302,7 +302,7 @@ func TestNewGCSStorage(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "", gcs.CredentialsBlob)
 	}
-
+	mustReportCredErr = true
 	{
 		fakeCredentialsFile, err := os.CreateTemp(testDir, "fakeCredentialsFile")
 		require.NoError(t, err)
@@ -382,7 +382,22 @@ func TestNewGCSStorage(t *testing.T) {
 		})
 		require.Error(t, err)
 	}
-
+	// without http client
+	{
+		gcs := &backuppb.GCS{
+			Bucket:          bucketName,
+			Prefix:          "a/b",
+			StorageClass:    "NEARLINE",
+			PredefinedAcl:   "private",
+			CredentialsBlob: `{"type": "service_account"}`,
+		}
+		_, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
+			SendCredentials:  false,
+			CheckPermissions: []Permission{AccessBuckets},
+		})
+		require.NoError(t, err)
+	}
+	mustReportCredErr = false
 	{
 		gcs := &backuppb.GCS{
 			Bucket:          bucketName,
@@ -399,22 +414,6 @@ func TestNewGCSStorage(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "", gcs.CredentialsBlob)
 		require.Equal(t, "a/b/x", s.objectName("x"))
-	}
-
-	// without http client
-	{
-		gcs := &backuppb.GCS{
-			Bucket:          bucketName,
-			Prefix:          "a/b",
-			StorageClass:    "NEARLINE",
-			PredefinedAcl:   "private",
-			CredentialsBlob: `{"type": "service_account"}`,
-		}
-		_, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
-			SendCredentials:  false,
-			CheckPermissions: []Permission{AccessBuckets},
-		})
-		require.NoError(t, err)
 	}
 }
 

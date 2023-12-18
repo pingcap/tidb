@@ -200,7 +200,9 @@ func GlobalInfoSyncerInit(
 	skipRegisterToDashBoard bool,
 ) (*InfoSyncer, error) {
 	if pdHTTPCli != nil {
-		pdHTTPCli = pdHTTPCli.WithRespHandler(pdResponseHandler)
+		pdHTTPCli = pdHTTPCli.
+			WithCallerID("tidb-info-syncer").
+			WithRespHandler(pdResponseHandler)
 	}
 	is := &InfoSyncer{
 		etcdCli:           etcdCli,

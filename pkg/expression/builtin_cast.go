@@ -542,7 +542,7 @@ func convertJSON2Tp(evalType types.EvalType) func(*stmtctx.StatementContext, typ
 				return nil, ErrInvalidJSONForFuncIndex
 			}
 			jsonToInt, err := types.ConvertJSONToInt(sc.TypeCtx(), item, mysql.HasUnsignedFlag(tp.GetFlag()), tp.GetType())
-			err = sc.HandleOverflow(err, err)
+			err = sc.HandleError(err)
 			if mysql.HasUnsignedFlag(tp.GetFlag()) {
 				return uint64(jsonToInt), err
 			}
@@ -705,7 +705,7 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row)
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	res, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), res, b.tp)
-	err = sc.HandleOverflow(err, err)
+	err = sc.HandleError(err)
 	return res, isNull, err
 }
 
@@ -790,7 +790,7 @@ func (b *builtinCastIntAsDurationSig) evalDuration(ctx EvalContext, row chunk.Ro
 	dur, err := types.NumberToDuration(val, b.tp.GetDecimal())
 	if err != nil {
 		if types.ErrOverflow.Equal(err) {
-			err = ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
+			err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 		}
 		if types.ErrTruncatedWrongVal.Equal(err) {
 			err = ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
@@ -987,7 +987,7 @@ func (b *builtinCastRealAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (res i
 		res = int64(uintVal)
 	}
 	if types.ErrOverflow.Equal(err) {
-		err = ctx.GetSessionVars().StmtCtx.HandleOverflow(err, err)
+		err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 	}
 	return res, isNull, err
 }
@@ -1012,7 +1012,7 @@ func (b *builtinCastRealAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 		err = res.FromFloat64(val)
 		if types.ErrOverflow.Equal(err) {
 			warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0])
-			err = ctx.GetSessionVars().StmtCtx.HandleOverflow(err, warnErr)
+			err = ctx.GetSessionVars().StmtCtx.HandleErrorWithAlias(err, err, warnErr)
 		} else if types.ErrTruncated.Equal(err) {
 			// This behavior is consistent with MySQL.
 			err = nil
@@ -1023,7 +1023,7 @@ func (b *builtinCastRealAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	res, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), res, b.tp)
-	err = sc.HandleOverflow(err, err)
+	err = sc.HandleError(err)
 	return res, false, err
 }
 
@@ -1136,7 +1136,7 @@ func (b *builtinCastDecimalAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	res, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), res, b.tp)
-	err = sc.HandleOverflow(err, err)
+	err = sc.HandleError(err)
 	return res, false, err
 }
 
@@ -1175,7 +1175,7 @@ func (b *builtinCastDecimalAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (re
 
 	if types.ErrOverflow.Equal(err) {
 		warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", val)
-		err = ctx.GetSessionVars().StmtCtx.HandleOverflow(err, warnErr)
+		err = ctx.GetSessionVars().StmtCtx.HandleErrorWithAlias(err, err, warnErr)
 	}
 
 	return res, false, err
@@ -1343,7 +1343,7 @@ func (*builtinCastStringAsIntSig) handleOverflow(ctx EvalContext, origRes int64,
 			res = int64(uval)
 		}
 		warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", origStr)
-		err = sc.HandleOverflow(origErr, warnErr)
+		err = sc.HandleErrorWithAlias(origErr, origErr, warnErr)
 	}
 	return
 }
@@ -1461,7 +1461,7 @@ func (b *builtinCastStringAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.R
 		}
 	}
 	res, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), res, b.tp)
-	err = sc.HandleOverflow(err, err)
+	err = sc.HandleError(err)
 	return res, false, err
 }
 
@@ -1607,7 +1607,7 @@ func (b *builtinCastTimeAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	res, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), val.ToNumber(), b.tp)
-	err = sc.HandleOverflow(err, err)
+	err = sc.HandleError(err)
 	return res, false, err
 }
 
@@ -1747,7 +1747,7 @@ func (b *builtinCastDurationAsDecimalSig) evalDecimal(ctx EvalContext, row chunk
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	res, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), val.ToNumber(), b.tp)
-	err = sc.HandleOverflow(err, err)
+	err = sc.HandleError(err)
 	return res, false, err
 }
 
@@ -1850,7 +1850,7 @@ func (b *builtinCastJSONAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (res i
 	}
 	sc := ctx.GetSessionVars().StmtCtx
 	res, err = types.ConvertJSONToInt64(sc.TypeCtx(), val, mysql.HasUnsignedFlag(b.tp.GetFlag()))
-	err = sc.HandleOverflow(err, err)
+	err = sc.HandleError(err)
 	return
 }
 
@@ -1895,7 +1895,7 @@ func (b *builtinCastJSONAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 		return res, false, err
 	}
 	res, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), res, b.tp)
-	err = sc.HandleOverflow(err, err)
+	err = sc.HandleError(err)
 	return res, false, err
 }
 
@@ -2233,7 +2233,7 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	tp.AddFlag(expr.GetType().GetFlag() & (mysql.UnsignedFlag | mysql.NotNullFlag))
 	castExpr := BuildCastFunction(ctx, expr, tp)
 	// For const item, we can use find-grained precision and scale by the result.
-	if castExpr.ConstItem(ctx.GetSessionVars().StmtCtx) {
+	if castExpr.ConstItem(ctx.GetSessionVars().StmtCtx.UseCache) {
 		val, isnull, err := castExpr.EvalDecimal(ctx, chunk.Row{})
 		if !isnull && err == nil {
 			precision, frac := val.PrecisionAndFrac()

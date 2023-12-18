@@ -79,7 +79,7 @@ func buildStringParam(ctx EvalContext, bf *baseBuiltinFunc, idx int, input *chun
 	}
 
 	// Check if this is a const value
-	if bf.args[idx].ConstItem(ctx.GetSessionVars().StmtCtx) {
+	if bf.args[idx].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache) {
 		// Initialize the const
 		var isConstNull bool
 		pa.defaultStrVal, isConstNull, err = bf.args[idx].EvalString(ctx, chunk.Row{})
@@ -111,7 +111,7 @@ func buildIntParam(ctx EvalContext, bf *baseBuiltinFunc, idx int, input *chunk.C
 	}
 
 	// Check if this is a const value
-	if bf.args[idx].ConstItem(ctx.GetSessionVars().StmtCtx) {
+	if bf.args[idx].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache) {
 		// Initialize the const
 		var isConstNull bool
 		pa.defaultIntVal, isConstNull, err = bf.args[idx].EvalInt(ctx, chunk.Row{})
