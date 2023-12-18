@@ -62,7 +62,7 @@ func MergeOverlappingFilesV2(
 		store,
 		int64(rangeGroupSize),
 		math.MaxInt64,
-		4*1024*1024*1024,
+		int64(4*size.GB),
 		math.MaxInt64,
 		checkHotspot,
 	)
@@ -90,7 +90,7 @@ func MergeOverlappingFilesV2(
 	loaded := &memKVsAndBuffers{}
 	curStart := kv.Key(startKey).Clone()
 	var curEnd kv.Key
-	var maxKey kv.Key
+	var maxKey, minKey kv.Key
 
 	for {
 		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err := splitter.SplitOneRangesGroup()
@@ -142,6 +142,9 @@ func MergeOverlappingFilesV2(
 		logutil.Logger(ctx).Info("writing in MergeOverlappingFiles",
 			zap.Duration("cost time", time.Since(now)),
 			zap.Any("key len", len(loaded.keys)))
+		if len(minKey) == 0 {
+			minKey = kv.Key(loaded.keys[0]).Clone()
+		}
 		maxKey = kv.Key(loaded.keys[len(loaded.keys)-1]).Clone()
 		curStart = curEnd.Clone()
 		loaded.keys = nil
@@ -157,20 +160,16 @@ func MergeOverlappingFilesV2(
 	stat.Filenames = append(stat.Filenames,
 		[2]string{writer.dataFile, writer.statFile})
 
-	stat.build([]kv.Key{startKey}, []kv.Key{curEnd})
+	stat.build([]kv.Key{minKey}, []kv.Key{curEnd})
 	if onClose != nil {
 		onClose(&WriterSummary{
 			WriterID:           writer.writerID,
 			Seq:                0,
-			Min:                startKey,
+			Min:                minKey,
 			Max:                maxKey,
 			TotalSize:          writer.totalSize,
 			MultipleFilesStats: []MultipleFilesStat{stat},
 		})
 	}
-	err = writer.Close(ctx)
-	if err != nil {
-		return err
-	}
-	return nil
+	return writer.Close(ctx)
 }
