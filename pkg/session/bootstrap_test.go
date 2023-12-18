@@ -1566,7 +1566,7 @@ func TestTiDBStoreBatchSizeUpgradeFrom650To660(t *testing.T) {
 }
 
 func TestTiDBUpgradeToVer136(t *testing.T) {
-	store, dom := CreateStoreAndBootstrap(t)
+	store, _ := CreateStoreAndBootstrap(t)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
@@ -1593,7 +1593,7 @@ func TestTiDBUpgradeToVer136(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/reorgMetaRecordFastReorgDisabled"))
 	})
 	MustExec(t, seV135, "set global tidb_ddl_enable_fast_reorg = 1")
-	dom, err = BootstrapSession(store)
+	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	ver, err = getBootstrapVersion(seV135)
 	require.NoError(t, err)
