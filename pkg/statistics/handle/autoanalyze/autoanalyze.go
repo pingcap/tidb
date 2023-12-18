@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -342,6 +343,8 @@ func HandleAutoAnalyze(
 		is,
 		autoAnalyzeRatio,
 		pruneMode,
+		start,
+		end,
 	)
 }
 
@@ -357,6 +360,7 @@ func randomPickOneTableAndTryAutoAnalyze(
 	is infoschema.InfoSchema,
 	autoAnalyzeRatio float64,
 	pruneMode variable.PartitionPruneMode,
+	start, end time.Time,
 ) bool {
 	dbs := is.AllSchemaNames()
 	// Shuffle the database and table slice to randomize the order of analyzing tables.
@@ -391,7 +395,13 @@ func randomPickOneTableAndTryAutoAnalyze(
 		})
 
 		// We need to check every partition of every table to see if it needs to be analyzed.
-		for _, tbl := range tbls {
+		for idx, tbl := range tbls {
+			if idx%10 == 0 || intest.InTest {
+				if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
+					statslogutil.StatsLogger().Info("auto analyze stopped", zap.String("reason", "not in the available time period"))
+					return false
+				}
+			}
 			// If table locked, skip analyze all partitions of the table.
 			// FIXME: This check is not accurate, because other nodes may change the table lock status at any time.
 			if _, ok := lockedTables[tbl.Meta().ID]; ok {
