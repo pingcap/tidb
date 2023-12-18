@@ -209,6 +209,7 @@ func TestEmptyContent(t *testing.T) {
 
 func TestSwitchMode(t *testing.T) {
 	seed := time.Now().Unix()
+	// seed := 1702880814
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
 	st := storage.NewMemStorage()
@@ -243,7 +244,7 @@ func TestSwitchMode(t *testing.T) {
 	err = writer.Close(ctx)
 	require.NoError(t, err)
 	pool := membuf.NewPool()
-	ConcurrentReaderBufferSizePerConc = rand.Intn(300) + 1
+	ConcurrentReaderBufferSizePerConc = rand.Intn(100) + 1
 	kvReader, err := newKVReader(context.Background(), "/test/0/one-file", st, 0, 64*1024)
 	require.NoError(t, err)
 	kvReader.byteReader.enableConcurrentRead(st, "/test/0/one-file", 100, ConcurrentReaderBufferSizePerConc, pool.NewBuffer())
