@@ -1588,7 +1588,7 @@ func TestTiDBUpgradeToVer136(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(ver135), ver)
 
-	MustExec(t, seV135, fmt.Sprintf("ALTER TABLE mysql.tidb_background_subtask DROP INDEX idx_task_key;"))
+	MustExec(t, seV135, "ALTER TABLE mysql.tidb_background_subtask DROP INDEX idx_task_key;")
 	require.NoError(t, dom.DDL().StateSyncer().UpdateGlobalState(context.Background(), &syncer.StateInfo{State: syncer.StateUpgrading}))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/reorgMetaRecordFastReorgDisabled", `return`))
 	t.Cleanup(func() {
