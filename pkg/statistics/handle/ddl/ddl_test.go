@@ -790,6 +790,58 @@ func TestRemovePartitioning(t *testing.T) {
 	require.Equal(t, versionP3, rows[3][0].(string))
 }
 
+func TestAddPartitioning(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	// Create a table without partitioning.
+	testKit.MustExec(`
+		create table t (
+			a int,
+			b int,
+			primary key(a),
+			index idx(b)
+		)
+	`)
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	h.DumpStatsDeltaToKV(true)
+	testKit.MustExec("analyze table t")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(
+		model.NewCIStr("test"), model.NewCIStr("t"),
+	)
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	// Check the global stats meta before add partitioning.
+	testKit.MustQuery(
+		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
+	).Check(
+		testkit.Rows("5 0"),
+	)
+
+	// Add partitioning.
+	testKit.MustExec("alter table t partition by hash(a) partitions 3")
+	// Find the add partitioning event.
+	addPartitioningEvent := findEvent(h.DDLEventCh(), model.ActionAlterTablePartitioning)
+	err = h.HandleDDLEvent(addPartitioningEvent)
+	require.NoError(t, err)
+	// Check the global stats meta make sure the count and modify count are not changed.
+	// Get new table id after remove partitioning.
+	is = do.InfoSchema()
+	tbl, err = is.TableByName(
+		model.NewCIStr("test"), model.NewCIStr("t"),
+	)
+	require.NoError(t, err)
+	tableInfo = tbl.Meta()
+	testKit.MustQuery(
+		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
+	).Check(
+		testkit.Rows("5 0"),
+	)
+}
+
 func findEvent(eventCh <-chan *util.DDLEvent, eventType model.ActionType) *util.DDLEvent {
 	// Find the target event.
 	for {
