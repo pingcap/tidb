@@ -93,7 +93,7 @@ func (m *MPPErrRecovery) Recovery(info *RecoveryInfo) error {
 			return h.doRecovery(info)
 		}
 	}
-	return nil
+	return errors.New("no handler to recovery this type of mpp err")
 }
 
 type errHandler interface {
