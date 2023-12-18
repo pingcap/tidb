@@ -3000,15 +3000,12 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		tblInfo.Partition.AddingDefinitions = nil
 		tblInfo.Partition.DDLState = model.StateNone
 
+		var oldTblID int64
 		if job.Type != model.ActionReorganizePartition {
 			// ALTER TABLE ... PARTITION BY
 			// REMOVE PARTITIONING
-			// New Table ID, so needs to recreate the table by drop+create.
-			oldTblID := tblInfo.ID
-			// Overloading the NewTableID here with the oldTblID instead,
-			// for keeping the old global statistics
-			statisticsPartInfo.NewTableID = oldTblID
-			droppedPartInfo.NewTableID = oldTblID
+			// Sotring the old table ID, used for updating statistics.
+			oldTblID = tblInfo.ID
 			// TODO: Handle bundles?
 			// TODO: Add concurrent test!
 			// TODO: Will this result in big gaps?
@@ -3068,7 +3065,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// Include the old table ID, if changed, which may contain global statistics,
 		// so it can be reused for the new (non)partitioned table.
 		event, err := newStatsDDLEventForJob(
-			job.Type, tblInfo, statisticsPartInfo, droppedPartInfo,
+			job.Type, oldTblID, tblInfo, statisticsPartInfo, droppedPartInfo,
 		)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -3088,6 +3085,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 // It is used for reorganize partition, add partitioning and remove partitioning.
 func newStatsDDLEventForJob(
 	jobType model.ActionType,
+	oldTblID int64,
 	tblInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 	droppedPartInfo *model.PartitionInfo,
@@ -3107,6 +3105,7 @@ func newStatsDDLEventForJob(
 		)
 	case model.ActionRemovePartitioning:
 		event = statsutil.NewRemovePartitioningEvent(
+			oldTblID,
 			tblInfo,
 			droppedPartInfo,
 		)

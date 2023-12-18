@@ -157,10 +157,10 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 		// as data distribution differs even if total count remains the same.
 		// However, we can omit updating count and modify count here,
 		// as the new table will be analyzed soon due to lack of existing statistics.
-		// Note: newSingleTableInfo refers to the new table info,
-		// and droppedPartInfo.NewTableID refers to the old table ID (see onReorganizePartition).
-		newSingleTableInfo, droppedPartInfo := t.GetRemovePartitioningInfo()
-		if err := h.statsWriter.ChangeGlobalStatsID(droppedPartInfo.NewTableID, newSingleTableInfo.ID); err != nil {
+		oldTblID,
+			newSingleTableInfo,
+			droppedPartInfo := t.GetRemovePartitioningInfo()
+		if err := h.statsWriter.ChangeGlobalStatsID(oldTblID, newSingleTableInfo.ID); err != nil {
 			return err
 		}
 
