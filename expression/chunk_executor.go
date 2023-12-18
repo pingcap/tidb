@@ -15,21 +15,13 @@
 package expression
 
 import (
-<<<<<<< HEAD:expression/chunk_executor.go
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-=======
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/util/logutil"
+	"github.com/pingcap/tidb/sessionctx"
 	"go.uber.org/zap"
->>>>>>> fb9d2203b99 (expression: enum/set could be invalid during evaluation (#49543)):pkg/expression/chunk_executor.go
 )
 
 // Vectorizable checks whether a list of expressions can employ vectorized execution.
