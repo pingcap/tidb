@@ -22,7 +22,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -61,10 +60,6 @@ const (
 	// InvalidASType is int value for invalid check.
 	InvalidASType
 )
-
-var topoFetcherHttpCli = &http.Client{
-	Timeout: time.Second * 40,
-}
 
 const (
 	// DefAWSAutoScalerAddr is the default address for AWS AutoScaler.
@@ -252,7 +247,7 @@ func (f *MockTopoFetcher) fetchTopo() error {
 }
 
 func httpGetAndParseResp(url string) ([]byte, error) {
-	resp, err := topoFetcherHttpCli.Get(url)
+	resp, err := http.Get(url)
 	if err != nil {
 		logutil.BgLogger().Error(err.Error())
 		return nil, errTopoFetcher.GenWithStackByArgs(httpGetFailedErrMsg)
