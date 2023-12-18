@@ -13,6 +13,7 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
+        "//pkg/statistics/handle/lockstats",
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/util",
         "//pkg/types",
@@ -32,7 +33,11 @@ go_test(
     timeout = "short",
     srcs = ["autoanalyze_test.go"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 6,
+=======
+    shard_count = 10,
+>>>>>>> 23953a7cbe8 (statistics: only query locks once (#49473))
     deps = [
         ":autoanalyze",
         "//pkg/parser/model",

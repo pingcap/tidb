@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
@@ -162,6 +163,17 @@ func HandleAutoAnalyze(sctx sessionctx.Context,
 	rd.Shuffle(len(dbs), func(i, j int) {
 		dbs[i], dbs[j] = dbs[j], dbs[i]
 	})
+	// Query locked tables once to minimize overhead.
+	// Outdated lock info is acceptable as we verify table lock status pre-analysis.
+	lockedTables, err := lockstats.QueryLockedTables(sctx)
+	if err != nil {
+		statslogutil.StatsLogger().Error(
+			"check table lock failed",
+			zap.Error(err),
+		)
+		return false
+	}
+
 	for _, db := range dbs {
 		if util.IsMemOrSysDB(strings.ToLower(db)) {
 			continue
@@ -176,6 +188,7 @@ func HandleAutoAnalyze(sctx sessionctx.Context,
 		})
 
 		// We need to check every partition of every table to see if it needs to be analyzed.
+<<<<<<< HEAD
 		tidsAndPids := make([]int64, 0, len(tbls))
 		for _, tbl := range tbls {
 			tidsAndPids = append(tidsAndPids, tbl.Meta().ID)
@@ -197,6 +210,8 @@ func HandleAutoAnalyze(sctx sessionctx.Context,
 			continue
 		}
 
+=======
+>>>>>>> 23953a7cbe8 (statistics: only query locks once (#49473))
 		for _, tbl := range tbls {
 			// If table locked, skip analyze all partitions of the table.
 			// FIXME: This check is not accurate, because other nodes may change the table lock status at any time.
