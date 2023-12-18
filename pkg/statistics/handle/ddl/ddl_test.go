@@ -704,6 +704,92 @@ func TestExchangeAPartition(t *testing.T) {
 	)
 }
 
+func TestRemovePartitioning(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	// Create a table with 4 partitions.
+	testKit.MustExec(`
+		create table t (
+			a int,
+			b int,
+			primary key(a),
+			index idx(b)
+		)
+		partition by range (a) (
+			partition p0 values less than (6),
+			partition p1 values less than (11),
+			partition p2 values less than (16),
+			partition p3 values less than (21)
+		)
+	`)
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	h.DumpStatsDeltaToKV(true)
+
+	testKit.MustExec("analyze table t")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(
+		model.NewCIStr("test"), model.NewCIStr("t"),
+	)
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	for _, def := range pi.Definitions {
+		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		require.False(t, statsTbl.Pseudo)
+	}
+
+	// Get all partitions' stats update version.
+	partitionP0ID := pi.Definitions[0].ID
+	partitionP1ID := pi.Definitions[1].ID
+	partitionP2ID := pi.Definitions[2].ID
+	partitionP3ID := pi.Definitions[3].ID
+	// Get it from stats_meta first.
+	rows := testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id in (?, ?, ?, ?) order by table_id",
+		partitionP0ID, partitionP1ID, partitionP2ID, partitionP3ID,
+	).Rows()
+	require.Len(t, rows, 4)
+	versionP0 := rows[0][0].(string)
+	versionP1 := rows[1][0].(string)
+	versionP2 := rows[2][0].(string)
+	versionP3 := rows[3][0].(string)
+
+	// Remove partitioning.
+	testKit.MustExec("alter table t remove partitioning")
+	// Find the remove partitioning event.
+	removePartitioningEvent := findEvent(h.DDLEventCh(), model.ActionRemovePartitioning)
+	err = h.HandleDDLEvent(removePartitioningEvent)
+	require.NoError(t, err)
+	// Check the global stats meta make sure the count and modify count are not changed.
+	// Get new table id after remove partitioning.
+	is = do.InfoSchema()
+	tbl, err = is.TableByName(
+		model.NewCIStr("test"), model.NewCIStr("t"),
+	)
+	require.NoError(t, err)
+	tableInfo = tbl.Meta()
+	testKit.MustQuery(
+		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
+	).Check(
+		testkit.Rows("5 0"),
+	)
+
+	// Check the update versions are changed.
+	rows = testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id in (?, ?, ?, ?) order by table_id",
+		partitionP0ID, partitionP1ID, partitionP2ID, partitionP3ID,
+	).Rows()
+	require.Len(t, rows, 4)
+	// FIXME: The version should be changed after we remove partitioning.
+	require.Equal(t, versionP0, rows[0][0].(string))
+	require.Equal(t, versionP1, rows[1][0].(string))
+	require.Equal(t, versionP2, rows[2][0].(string))
+	require.Equal(t, versionP3, rows[3][0].(string))
+}
+
 func findEvent(eventCh <-chan *util.DDLEvent, eventType model.ActionType) *util.DDLEvent {
 	// Find the target event.
 	for {
