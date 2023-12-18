@@ -212,8 +212,8 @@ func (r *byteReader) readNBytes(n int) ([]byte, error) {
 	if n > int(size.GB) {
 		return nil, errors.Errorf("read %d bytes from external storage, exceed max limit %d", n, size.GB)
 	}
-	if n < 0 {
-		return nil, errors.Errorf("read %d bytes from external storage", n)
+	if n <= 0 {
+		return nil, errors.Errorf("illegal n (%d) when reading from external storage", n)
 	}
 	auxBuf := make([]byte, n)
 	for _, b := range bs {
