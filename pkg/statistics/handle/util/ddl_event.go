@@ -247,19 +247,25 @@ func (e *DDLEvent) GetTruncatePartitionInfo() (
 // NewAddPartitioningEvent creates a new ddl event that converts a single table to a partitioned table.
 // For example, `alter table t partition by range (c1) (partition p1 values less than (10))`.
 func NewAddPartitioningEvent(
+	oldSingleTableID int64,
 	newGlobalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 ) *DDLEvent {
 	return &DDLEvent{
-		tp:        model.ActionAlterTablePartitioning,
-		tableInfo: newGlobalTableInfo,
-		partInfo:  addedPartInfo,
+		tp:         model.ActionAlterTablePartitioning,
+		oldTableID: oldSingleTableID,
+		tableInfo:  newGlobalTableInfo,
+		partInfo:   addedPartInfo,
 	}
 }
 
 // GetAddPartitioningInfo gets the table info of the table that is converted to a partitioned table.
-func (e *DDLEvent) GetAddPartitioningInfo() (newGlobalTableInfo *model.TableInfo, addedPartInfo *model.PartitionInfo) {
-	return e.tableInfo, e.partInfo
+func (e *DDLEvent) GetAddPartitioningInfo() (
+	oldSingleTableID int64,
+	newGlobalTableInfo *model.TableInfo,
+	addedPartInfo *model.PartitionInfo,
+) {
+	return e.oldTableID, e.tableInfo, e.partInfo
 }
 
 // NewRemovePartitioningEvent creates a new ddl event that converts a partitioned table to a single table.

@@ -3100,6 +3100,7 @@ func newStatsDDLEventForJob(
 		)
 	case model.ActionAlterTablePartitioning:
 		event = statsutil.NewAddPartitioningEvent(
+			oldTblID,
 			tblInfo,
 			addedPartInfo,
 		)

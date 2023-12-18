@@ -134,7 +134,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			// Do not update global stats, since the data have not changed!
 		}
 	case model.ActionAlterTablePartitioning:
-		globalTableInfo, addedPartInfo := t.GetAddPartitioningInfo()
+		oldSingleTableID, globalTableInfo, addedPartInfo := t.GetAddPartitioningInfo()
 		// Add new partition stats.
 		// For new partitions, it's crucial to correctly insert the count and modify count correctly.
 		// However, this is challenging due to the need to know the count of the new partitions.
@@ -147,10 +147,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			}
 		}
 		// Change id for global stats, since the data has not changed!
-		// Note that globalTableInfo is the new table info
-		// and addedPartInfo.NewTableID is actually the old table ID!
-		// (see onReorganizePartition)
-		return h.statsWriter.ChangeGlobalStatsID(addedPartInfo.NewTableID, globalTableInfo.ID)
+		return h.statsWriter.ChangeGlobalStatsID(oldSingleTableID, globalTableInfo.ID)
 	case model.ActionRemovePartitioning:
 		// Update id for global stats due to new table creation.
 		// It's important to insert and modify count accurately
