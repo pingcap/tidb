@@ -67,6 +67,7 @@ func readAllData(
 		return err
 	}
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	eg.SetLimit(30)
 	for i := range dataFiles {
 		i := i
 		eg.Go(func() error {
