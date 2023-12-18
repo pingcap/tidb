@@ -326,7 +326,7 @@ var tableIDMap = map[string]int64{
 	TableCheckConstraints:                autoid.InformationSchemaDBID + 90,
 	TableTiDBCheckConstraints:            autoid.InformationSchemaDBID + 91,
 	TableKeywords:                        autoid.InformationSchemaDBID + 92,
-	TableTiDBParams:                      autoid.InformationSchemaDBID + 92,
+	TableTiDBParams:                      autoid.InformationSchemaDBID + 93,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
