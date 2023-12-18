@@ -364,7 +364,8 @@ func randomPickOneTableAndTryAutoAnalyze(
 	rd.Shuffle(len(dbs), func(i, j int) {
 		dbs[i], dbs[j] = dbs[j], dbs[i]
 	})
-	// Only query the locked tables once to reduce the overhead.
+	// Query locked tables once to minimize overhead.
+	// Outdated lock info is acceptable as we verify table lock status pre-analysis.
 	lockedTables, err := lockstats.QueryLockedTables(sctx)
 	if err != nil {
 		statslogutil.StatsLogger().Error(
