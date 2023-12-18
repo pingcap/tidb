@@ -42,6 +42,8 @@ go_test(
         "//pkg/domain/infosync",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/statistics/handle/util",
         "//pkg/statistics/handle/util/test",
