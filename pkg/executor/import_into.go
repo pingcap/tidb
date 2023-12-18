@@ -274,6 +274,7 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	if err2 != nil {
 		return err2
 	}
+	//nolint: errcheck
 	defer ti.Close()
 	selectedRowCh := make(chan importer.QueryRow)
 	ti.SetSelectedRowCh(selectedRowCh)
