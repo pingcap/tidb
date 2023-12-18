@@ -73,3 +73,12 @@ rename table t to t1;
 alter table t nocache;
 drop table if exists t;
 
+# TestNonStrictCreateTableOverflowError
+drop table if exists t;
+-- error 1067
+create table t (d int default '18446744073709551616' );
+set sql_mode='';
+-- enable_warnings
+create table t (d int default '18446744073709551616' );
+-- disable_warnings
+set sql_mode=DEFAULT;

@@ -58,6 +58,13 @@ const (
 	History = "history"
 )
 
+const (
+	// TypeNormal indicates the binding is a normal binding.
+	TypeNormal string = ""
+	// TypeUniversal indicates the binding is a universal binding.
+	TypeUniversal string = "u"
+)
+
 // Binding stores the basic bind hint info.
 type Binding struct {
 	BindSQL string
@@ -76,6 +83,8 @@ type Binding struct {
 	ID         string `json:"-"`
 	SQLDigest  string
 	PlanDigest string
+	// Type indicates the type of this binding, currently only 2 types: "" for normal and "u" for universal bindings.
+	Type string
 }
 
 func (b *Binding) isSame(rb *Binding) bool {
@@ -182,7 +191,7 @@ func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 		if err != nil {
 			return err
 		}
-		if sctx != nil {
+		if sctx != nil && bind.Type == TypeNormal {
 			paramChecker := &paramMarkerChecker{}
 			stmt.Accept(paramChecker)
 			if !paramChecker.hasParamMarker {

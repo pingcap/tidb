@@ -40,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
@@ -1506,24 +1506,24 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		logutil.BgLogger().Info("dist task executor manager stopped")
 	}()
 
-	var dispatcherManager *dispatcher.Manager
+	var schedulerManager *scheduler.Manager
 	startDispatchIfNeeded := func() {
-		if dispatcherManager != nil && dispatcherManager.Inited() {
+		if schedulerManager != nil && schedulerManager.Initialized() {
 			return
 		}
 		var err error
-		dispatcherManager, err = dispatcher.NewManager(ctx, taskManager, serverID)
+		schedulerManager, err = scheduler.NewManager(ctx, taskManager, serverID)
 		if err != nil {
-			logutil.BgLogger().Error("failed to create a dist task dispatcher manager", zap.Error(err))
+			logutil.BgLogger().Error("failed to create a dist task scheduler manager", zap.Error(err))
 			return
 		}
-		dispatcherManager.Start()
+		schedulerManager.Start()
 	}
 	stopDispatchIfNeeded := func() {
-		if dispatcherManager != nil && dispatcherManager.Inited() {
-			logutil.BgLogger().Info("stopping dist task dispatcher manager because the current node is not DDL owner anymore", zap.String("id", do.ddl.GetID()))
-			dispatcherManager.Stop()
-			logutil.BgLogger().Info("dist task dispatcher manager stopped", zap.String("id", do.ddl.GetID()))
+		if schedulerManager != nil && schedulerManager.Initialized() {
+			logutil.BgLogger().Info("stopping dist task scheduler manager because the current node is not DDL owner anymore", zap.String("id", do.ddl.GetID()))
+			schedulerManager.Stop()
+			logutil.BgLogger().Info("dist task scheduler manager stopped", zap.String("id", do.ddl.GetID()))
 		}
 	}
 

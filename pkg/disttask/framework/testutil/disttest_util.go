@@ -22,10 +22,10 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/stretchr/testify/require"
@@ -33,7 +33,7 @@ import (
 )
 
 // RegisterTaskMeta initialize mock components for dist task.
-func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, dispatcherHandle dispatcher.Extension, testContext *TestContext, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) {
+func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, schedulerHandle scheduler.Extension, testContext *TestContext, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) {
 	mockExtension := mock.NewMockExtension(ctrl)
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
 	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
@@ -57,24 +57,24 @@ func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, dispatcherHandle di
 	mockExtension.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
 	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
-	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, dispatcherHandle)
+	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, schedulerHandle)
 }
 
-func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, mockExtension taskexecutor.Extension, mockCleanup dispatcher.CleanUpRoutine, dispatcherHandle dispatcher.Extension) {
+func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, mockExtension taskexecutor.Extension, mockCleanup scheduler.CleanUpRoutine, schedulerHandle scheduler.Extension) {
 	t.Cleanup(func() {
-		dispatcher.ClearDispatcherFactory()
-		dispatcher.ClearDispatcherCleanUpFactory()
+		scheduler.ClearSchedulerFactory()
+		scheduler.ClearSchedulerCleanUpFactory()
 		taskexecutor.ClearTaskExecutors()
 	})
-	dispatcher.RegisterDispatcherFactory(taskType,
-		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
-			baseDispatcher := dispatcher.NewBaseDispatcher(ctx, taskMgr, serverID, task)
-			baseDispatcher.Extension = dispatcherHandle
-			return baseDispatcher
+	scheduler.RegisterSchedulerFactory(taskType,
+		func(ctx context.Context, taskMgr scheduler.TaskManager, serverID string, task *proto.Task) scheduler.Scheduler {
+			baseScheduler := scheduler.NewBaseScheduler(ctx, taskMgr, serverID, task)
+			baseScheduler.Extension = schedulerHandle
+			return baseScheduler
 		})
 
-	dispatcher.RegisterDispatcherCleanUpFactory(taskType,
-		func() dispatcher.CleanUpRoutine {
+	scheduler.RegisterSchedulerCleanUpFactory(taskType,
+		func() scheduler.CleanUpRoutine {
 			return mockCleanup
 		})
 
@@ -88,7 +88,7 @@ func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, mockExtension 
 }
 
 // RegisterRollbackTaskMeta register rollback task meta.
-func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, mockDispatcher dispatcher.Extension, testContext *TestContext) {
+func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, mockScheduler scheduler.Extension, testContext *TestContext) {
 	mockExtension := mock.NewMockExtension(ctrl)
 	mockExecutor := mockexecute.NewMockSubtaskExecutor(ctrl)
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
@@ -111,11 +111,11 @@ func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, mockDispatc
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockExecutor, nil).AnyTimes()
 	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
 
-	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, mockDispatcher)
+	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, mockScheduler)
 	testContext.RollbackCnt.Store(0)
 }
 
-// DispatchTask dispatch one task.
+// DispatchTask schedule one task.
 func DispatchTask(ctx context.Context, t *testing.T, taskKey string) *proto.Task {
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
@@ -146,7 +146,7 @@ func WaitTaskExit(ctx context.Context, t *testing.T, taskKey string) *proto.Task
 	return task
 }
 
-// DispatchTaskAndCheckSuccess dispatch one task and check if it is succeed.
+// DispatchTaskAndCheckSuccess schedule one task and check if it is succeed.
 func DispatchTaskAndCheckSuccess(ctx context.Context, t *testing.T, taskKey string, testContext *TestContext, checkResultFn func(t *testing.T, testContext *TestContext)) {
 	task := DispatchTask(ctx, t, taskKey)
 	require.Equal(t, proto.TaskStateSucceed, task.State)
@@ -163,7 +163,7 @@ func DispatchTaskAndCheckSuccess(ctx context.Context, t *testing.T, taskKey stri
 	testContext.M = sync.Map{}
 }
 
-// DispatchAndCancelTask dispatch one task then cancel it.
+// DispatchAndCancelTask schedule one task then cancel it.
 func DispatchAndCancelTask(ctx context.Context, t *testing.T, taskKey string, testContext *TestContext) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunCancel", "1*return(1)"))
 	defer func() {
@@ -177,7 +177,7 @@ func DispatchAndCancelTask(ctx context.Context, t *testing.T, taskKey string, te
 	})
 }
 
-// DispatchTaskAndCheckState dispatch one task and check the task state.
+// DispatchTaskAndCheckState schedule one task and check the task state.
 func DispatchTaskAndCheckState(ctx context.Context, t *testing.T, taskKey string, testContext *TestContext, state proto.TaskState) {
 	task := DispatchTask(ctx, t, taskKey)
 	require.Equal(t, state, task.State)
@@ -187,7 +187,7 @@ func DispatchTaskAndCheckState(ctx context.Context, t *testing.T, taskKey string
 	})
 }
 
-// DispatchMultiTasksAndOneFail dispatches multiple tasks and force one task failed.
+// DispatchMultiTasksAndOneFail schedulees multiple tasks and force one task failed.
 // TODO(ywqzzy): run tasks with multiple types.
 func DispatchMultiTasksAndOneFail(ctx context.Context, t *testing.T, num int, testContext *TestContext) {
 	mgr, err := storage.GetTaskManager()

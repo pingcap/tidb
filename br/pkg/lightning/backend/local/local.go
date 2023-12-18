@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1186,7 +1187,7 @@ func (local *Backend) generateAndSendJob(
 
 	logger.Debug("the ranges length write to tikv", zap.Int("length", len(jobRanges)))
 
-	eg, egCtx := errgroup.WithContext(ctx)
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 
 	dataAndRangeCh := make(chan common.DataAndRange)
 	conn := local.WorkerConcurrency
@@ -1604,7 +1605,7 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 		ctx2, workerCancel = context.WithCancel(ctx)
 		// workerCtx.Done() means workflow is canceled by error. It may be caused
 		// by calling workerCancel() or workers in workGroup meets error.
-		workGroup, workerCtx = errgroup.WithContext(ctx2)
+		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(ctx2)
 		firstErr             common.OnceError
 		// jobToWorkerCh and jobFromWorkerCh are unbuffered so jobs will not be
 		// owned by them.
