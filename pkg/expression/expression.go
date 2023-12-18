@@ -140,6 +140,8 @@ type Expression interface {
 	IsCorrelated() bool
 
 	// ConstItem checks if this expression is constant item, regardless of query evaluation state.
+	// If the argument `acrossCtxs` is true,
+	// it will check if this expression returns a constant value even across multiple contexts.
 	// An expression is constant item if it:
 	// refers no tables.
 	// refers no correlated column.
@@ -147,7 +149,7 @@ type Expression interface {
 	// refers no non-deterministic functions.
 	// refers no statement parameters.
 	// refers no param markers when prepare plan cache is enabled.
-	ConstItem(sc *stmtctx.StatementContext) bool
+	ConstItem(acrossCtx bool) bool
 
 	// Decorrelate try to decorrelate the expression by schema.
 	Decorrelate(schema *Schema) Expression
