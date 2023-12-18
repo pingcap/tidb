@@ -88,17 +88,6 @@ cast('61qw' as decimal)
 61
 Level	Code	Message
 Warning	1292	Truncated incorrect DECIMAL value: '61qw'
-<<<<<<< HEAD
-=======
-drop table if exists t;
-create table t (y year);
-insert into t values (cast('14:15' as time));
-select 1 from t where y = YEAR(CURDATE());
-1
-1
-select cast(cast('14:15' as time) as year) = YEAR(CURDATE());
-cast(cast('14:15' as time) as year) = YEAR(CURDATE())
-1
 explain select null as a union all select 'a' as a;
 id	estRows	task	access object	operator info
 Union_8	2.00	root		
@@ -110,4 +99,3 @@ select null as a union all select 'a' as a;
 a
 NULL
 a
->>>>>>> 3a7bd532a26 (expression: ignore `TypeNULL` in `HandleBinaryLiteral` (#49527))
