@@ -257,7 +257,7 @@ func (r *RPCResult) StrategyForRetryGoError() RetryStrategy {
 	// we should unwrap the error or we cannot get the write gRPC status.
 	if gRPCErr, ok := status.FromError(errors.Cause(r.Err)); ok {
 		switch gRPCErr.Code() {
-		case codes.Unavailable, codes.Aborted, codes.ResourceExhausted:
+		case codes.Unavailable, codes.Aborted, codes.ResourceExhausted, codes.DeadlineExceeded:
 			return StrategyFromThisRegion
 		}
 	}

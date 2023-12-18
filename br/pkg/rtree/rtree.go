@@ -16,6 +16,7 @@ type Range struct {
 	StartKey []byte
 	EndKey   []byte
 	Files    []*backuppb.File
+	Size     uint64
 }
 
 // BytesAndKeys returns total bytes and keys in a range.
