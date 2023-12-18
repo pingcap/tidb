@@ -137,7 +137,6 @@ go_test(
         "//pkg/bindinfo",
         "//pkg/config",
         "//pkg/ddl",
-        "//pkg/ddl/syncer",
         "//pkg/domain",
         "//pkg/executor",
         "//pkg/expression",
