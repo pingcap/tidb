@@ -513,6 +513,6 @@ var ReorgRetryableErrCodes = map[uint16]struct{}{
 	mysql.ErrTxnRetryable:              {},
 	mysql.ErrNotOwner:                  {},
 
-	// Temporarily network partition may cause pk commit failed.
+	// Temporary network partitioning may cause pk commit failure.
 	uint16(terror.CodeResultUndetermined): {},
 }
