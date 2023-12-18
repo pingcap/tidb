@@ -317,7 +317,7 @@ func (r *byteReader) reload() error {
 func (r *byteReader) closeConcurrentReader() (reloadCnt, offsetInOldBuffer int) {
 	r.logger.Info("drop data in closeConcurrentReader",
 		zap.Int("reloadCnt", r.concurrentReader.reloadCnt),
-		zap.Int("dropBytes", len(r.curBuf[r.curBufIdx])-r.curBufOffset),
+		zap.Int("dropBytes", r.concurrentReader.bufSizePerConc*(len(r.curBuf)-r.curBufIdx)-r.curBufOffset),
 		zap.Int("curBufIdx", r.curBufIdx),
 	)
 	r.concurrentReader.largeBufferPool.Destroy()
