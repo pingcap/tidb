@@ -114,7 +114,7 @@ func newMemLimitErrHandler(useAutoScaler bool) *memLimitErrHandler {
 }
 
 func (h *memLimitErrHandler) chooseErrHandler(mppErr error) bool {
-	if strings.Contains(mppErr.Error(), "Memory Limit") && h.useAutoScaler {
+	if strings.Contains(mppErr.Error(), "Memory limit") && h.useAutoScaler {
 		return true
 	}
 	return false
