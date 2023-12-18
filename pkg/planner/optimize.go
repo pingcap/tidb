@@ -576,8 +576,47 @@ func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Nod
 	return p, nil
 }
 
-// ExtractSelectAndNormalizeDigest extract the select statement and normalize it.
-func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string, forBinding bool) (ast.StmtNode, string, string, error) {
+// NormalizeStmtForPlanCache normalizes a statement for plan cache.
+// This function skips Explain and complete DB name automatically, and each literal will be normalized as a placeholder '?'.
+//
+//	e.g. `explain select * from t where a in (1, 2, 3)` --> `select * from test.t where a in (?, ?, ?)`
+func NormalizeStmtForPlanCache(stmtNode ast.StmtNode, specifiedDB string) (stmt ast.StmtNode, normalizedStmt, sqlDigest string, err error) {
+	return normalizeStmt(stmtNode, specifiedDB, 0)
+}
+
+// NormalizeStmtForBinding normalizes a statement for binding.
+// This function skips Explain automatically, and literals in in-lists will be normalized as '...'.
+// For normal bindings, DB name will be completed automatically:
+//
+//	e.g. `select * from t where a in (1, 2, 3)` --> `select * from test.t where a in (...)`
+//
+// For universal bindings, DB name will be ignored:
+//
+//	e.g. `select * from test.t where a in (1, 2, 3)` --> `select * from t where a in (...)`
+func NormalizeStmtForBinding(stmtNode ast.StmtNode, specifiedDB string, isUniversalBinding bool) (stmt ast.StmtNode, normalizedStmt, sqlDigest string, err error) {
+	if isUniversalBinding {
+		return normalizeStmt(stmtNode, specifiedDB, 2)
+	}
+	return normalizeStmt(stmtNode, specifiedDB, 1)
+}
+
+// flag 0 is for plan cache, 1 is for normal bindings and 2 is for universal bindings.
+// see comments in NormalizeStmtForPlanCache and NormalizeStmtForBinding.
+func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, flag int) (stmt ast.StmtNode, normalizedStmt, sqlDigest string, err error) {
+	normalize := func(n ast.StmtNode) (normalizedStmt, sqlDigest string) {
+		core.EraseLastSemicolon(n)
+		var digest *parser.Digest
+		switch flag {
+		case 0:
+			normalizedStmt, digest = parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(n, specifiedDB, n.Text()))
+		case 1:
+			normalizedStmt, digest = parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(n, specifiedDB, n.Text()))
+		case 2:
+			normalizedStmt, digest = parser.NormalizeDigestForBinding(utilparser.RestoreWithoutDB(n))
+		}
+		return normalizedStmt, digest.String()
+	}
+
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
 		// This function is only used to find bind record.
@@ -590,32 +629,10 @@ func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string,
 		}
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
-			var normalizeSQL string
-			if forBinding {
-				// Apply additional binding rules if enabled
-				normalizeSQL = parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()))
-			} else {
-				normalizeSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()))
-			}
-			normalizeSQL = core.EraseLastSemicolonInSQL(normalizeSQL)
-			hash := parser.DigestNormalized(normalizeSQL)
-			return x.Stmt, normalizeSQL, hash.String(), nil
+			normalizeSQL, digest := normalize(x.Stmt)
+			return x.Stmt, normalizeSQL, digest, nil
 		case *ast.SetOprStmt:
-			core.EraseLastSemicolon(x)
-			var normalizeExplainSQL string
-			var explainSQL string
-			if specifiledDB != "" {
-				explainSQL = utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text())
-			} else {
-				explainSQL = x.Text()
-			}
-
-			if forBinding {
-				// Apply additional binding rules
-				normalizeExplainSQL = parser.NormalizeForBinding(explainSQL)
-			} else {
-				normalizeExplainSQL = parser.Normalize(x.Text())
-			}
+			normalizeExplainSQL, _ := normalize(x)
 
 			idx := strings.Index(normalizeExplainSQL, "select")
 			parenthesesIdx := strings.Index(normalizeExplainSQL, "(")
@@ -632,7 +649,6 @@ func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string,
 			return x.Stmt, normalizeSQL, hash.String(), nil
 		}
 	case *ast.SelectStmt, *ast.SetOprStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
-		core.EraseLastSemicolon(x)
 		// This function is only used to find bind record.
 		// For some SQLs, such as `explain select * from t`, they will be entered here many times,
 		// but some of them do not want to obtain bind record.
@@ -641,17 +657,8 @@ func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string,
 		if len(x.Text()) == 0 {
 			return x, "", "", nil
 		}
-
-		var normalizedSQL string
-		var hash *parser.Digest
-		if forBinding {
-			// Apply additional binding rules
-			normalizedSQL, hash = parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
-		} else {
-			normalizedSQL, hash = parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
-		}
-
-		return x, normalizedSQL, hash.String(), nil
+		normalizedSQL, digest := normalize(x)
+		return x, normalizedSQL, digest, nil
 	}
 	return nil, "", "", nil
 }
@@ -661,24 +668,41 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return nil, "", nil
 	}
-	stmtNode, normalizedSQL, sqlDigest, err := ExtractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB, true)
+	stmtNode, normalizedSQL, sqlDigest, err := NormalizeStmtForBinding(stmt, ctx.GetSessionVars().CurrentDB, false)
 	if err != nil || stmtNode == nil {
 		return nil, "", err
 	}
+	var normalizedSQLUni, sqlDigestUni string
+	if ctx.GetSessionVars().EnableUniversalBinding {
+		_, normalizedSQLUni, sqlDigestUni, err = NormalizeStmtForBinding(stmt, ctx.GetSessionVars().CurrentDB, true)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+
+	// the priority: session normal > session universal > global normal > global universal
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-	bindRecord := sessionHandle.GetSessionBinding(sqlDigest, normalizedSQL, "")
-	if bindRecord != nil {
-		if bindRecord.HasEnabledBinding() {
+	if bindRecord := sessionHandle.GetSessionBinding(sqlDigest, normalizedSQL, ""); bindRecord != nil && bindRecord.HasEnabledBinding() {
+		return bindRecord, metrics.ScopeSession, nil
+	}
+	if ctx.GetSessionVars().EnableUniversalBinding {
+		if bindRecord := sessionHandle.GetSessionBinding(sqlDigestUni, normalizedSQLUni, ""); bindRecord != nil && bindRecord.HasEnabledBinding() {
 			return bindRecord, metrics.ScopeSession, nil
 		}
-		return nil, "", nil
 	}
 	globalHandle := domain.GetDomain(ctx).BindHandle()
 	if globalHandle == nil {
 		return nil, "", nil
 	}
-	bindRecord = globalHandle.GetGlobalBinding(sqlDigest, normalizedSQL, "")
-	return bindRecord, metrics.ScopeGlobal, nil
+	if bindRecord := globalHandle.GetGlobalBinding(sqlDigest, normalizedSQL, ""); bindRecord != nil && bindRecord.HasEnabledBinding() {
+		return bindRecord, metrics.ScopeGlobal, nil
+	}
+	if ctx.GetSessionVars().EnableUniversalBinding {
+		if bindRecord := globalHandle.GetGlobalBinding(sqlDigestUni, normalizedSQLUni, ""); bindRecord != nil && bindRecord.HasEnabledBinding() {
+			return bindRecord, metrics.ScopeGlobal, nil
+		}
+	}
+	return nil, "", nil
 }
 
 func handleInvalidBinding(ctx context.Context, sctx sessionctx.Context, level string, bindRecord bindinfo.BindRecord) {
@@ -871,5 +895,5 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 func init() {
 	core.OptimizeAstNode = Optimize
 	core.IsReadOnly = IsReadOnly
-	core.ExtractSelectAndNormalizeDigest = ExtractSelectAndNormalizeDigest
+	core.NormalizeStmtForPlanCache = NormalizeStmtForPlanCache
 }

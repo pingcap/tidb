@@ -2233,7 +2233,7 @@ func WrapWithCastAsDecimal(ctx sessionctx.Context, expr Expression) Expression {
 	tp.AddFlag(expr.GetType().GetFlag() & (mysql.UnsignedFlag | mysql.NotNullFlag))
 	castExpr := BuildCastFunction(ctx, expr, tp)
 	// For const item, we can use find-grained precision and scale by the result.
-	if castExpr.ConstItem(ctx.GetSessionVars().StmtCtx) {
+	if castExpr.ConstItem(ctx.GetSessionVars().StmtCtx.UseCache) {
 		val, isnull, err := castExpr.EvalDecimal(ctx, chunk.Row{})
 		if !isnull && err == nil {
 			precision, frac := val.PrecisionAndFrac()

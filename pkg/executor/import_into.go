@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	fstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
-	"github.com/pingcap/tidb/pkg/executor/asyncloaddata"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -133,11 +132,11 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	groupCtx = kv.WithInternalSourceType(groupCtx, kv.InternalDistTask)
 
 	param := &importer.JobImportParam{
-		Job:      &asyncloaddata.Job{},
+		Job:      &importer.Job{},
 		Group:    group,
 		GroupCtx: groupCtx,
 		Done:     make(chan struct{}),
-		Progress: asyncloaddata.NewProgress(false),
+		Progress: importer.NewProgress(),
 	}
 	distImporter, err := e.getJobImporter(ctx, param)
 	if err != nil {

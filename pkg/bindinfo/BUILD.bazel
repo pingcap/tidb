@@ -58,7 +58,7 @@ go_test(
     embed = [":bindinfo"],
     flaky = True,
     race = "on",
-    shard_count = 41,
+    shard_count = 43,
     deps = [
         "//pkg/bindinfo/internal",
         "//pkg/config",

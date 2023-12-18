@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -173,7 +172,7 @@ func (col *CorrelatedColumn) IsCorrelated() bool {
 }
 
 // ConstItem implements Expression interface.
-func (col *CorrelatedColumn) ConstItem(_ *stmtctx.StatementContext) bool {
+func (col *CorrelatedColumn) ConstItem(_ bool) bool {
 	return false
 }
 
@@ -516,7 +515,7 @@ func (col *Column) IsCorrelated() bool {
 }
 
 // ConstItem implements Expression interface.
-func (col *Column) ConstItem(_ *stmtctx.StatementContext) bool {
+func (col *Column) ConstItem(_ bool) bool {
 	return false
 }
 
