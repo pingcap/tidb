@@ -7368,6 +7368,7 @@ func newReorgMetaFromVariables(d *ddl, job *model.Job, sctx sessionctx.Context) 
 				zap.String("category", "ddl"), zap.Stringer("job", job))
 		}
 		reorgMeta.IsDistReorg = false
+		reorgMeta.IsFastReorg = false
 	}
 	return reorgMeta, nil
 }
