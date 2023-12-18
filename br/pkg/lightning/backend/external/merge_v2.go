@@ -50,9 +50,9 @@ func MergeOverlappingFilesV2(
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	rangeGroupSize := 4 * size.GB
-	failpoint.Inject("mockRangeGroupSize", func(val failpoint.Value) {
-		rangeGroupSize = uint64(val.(int))
+	rangesGroupSize := 4 * size.GB
+	failpoint.Inject("mockRangesGroupSize", func(val failpoint.Value) {
+		rangesGroupSize = uint64(val.(int))
 	})
 
 	splitter, err := NewRangeSplitter(
@@ -60,7 +60,7 @@ func MergeOverlappingFilesV2(
 		dataFiles,
 		statFiles,
 		store,
-		int64(rangeGroupSize),
+		int64(rangesGroupSize),
 		math.MaxInt64,
 		int64(4*size.GB),
 		math.MaxInt64,
@@ -80,10 +80,20 @@ func MergeOverlappingFilesV2(
 			store,
 			newFilePrefix,
 			writerID)
+	defer func() {
+		err = splitter.Close()
+		if err != nil {
+			logutil.Logger(ctx).Warn("close range splitter failed", zap.Error(err))
+		}
+		err = writer.Close(ctx)
+		if err != nil {
+			logutil.Logger(ctx).Warn("close writer failed", zap.Error(err))
+		}
+	}()
 
 	err = writer.Init(ctx, partSize)
 	if err != nil {
-		return nil
+		return err
 	}
 
 	bufPool := membuf.NewPool()
@@ -115,8 +125,7 @@ func MergeOverlappingFilesV2(
 		if err != nil {
 			return err
 		}
-		logutil.Logger(ctx).Info("reading external storage in MergeOverlappingFiles",
-			zap.Duration("cost time", time.Since(now)))
+		readTime := time.Since(now)
 		now = time.Now()
 		sorty.MaxGor = uint64(concurrency)
 		sorty.Sort(len(loaded.keys), func(i, k, r, s int) bool {
@@ -129,9 +138,7 @@ func MergeOverlappingFilesV2(
 			}
 			return false
 		})
-		logutil.Logger(ctx).Info("sorting in MergeOverlappingFiles",
-			zap.Duration("cost time", time.Since(now)),
-			zap.Any("key len", len(loaded.keys)))
+		sortTime := time.Since(now)
 		now = time.Now()
 		for i, key := range loaded.keys {
 			err = writer.WriteRow(ctx, key, loaded.values[i])
@@ -139,9 +146,13 @@ func MergeOverlappingFilesV2(
 				return err
 			}
 		}
-		logutil.Logger(ctx).Info("writing in MergeOverlappingFiles",
-			zap.Duration("cost time", time.Since(now)),
-			zap.Any("key len", len(loaded.keys)))
+		writeTime := time.Since(now)
+		logutil.Logger(ctx).Info("sort one group in MergeOverlappingFiles",
+			zap.Duration("read time", readTime),
+			zap.Duration("sort time", sortTime),
+			zap.Duration("write time", writeTime),
+			zap.Int("key len", len(loaded.keys)))
+
 		if len(minKey) == 0 {
 			minKey = kv.Key(loaded.keys[0]).Clone()
 		}
@@ -171,5 +182,5 @@ func MergeOverlappingFilesV2(
 			MultipleFilesStats: []MultipleFilesStat{stat},
 		})
 	}
-	return writer.Close(ctx)
+	return
 }

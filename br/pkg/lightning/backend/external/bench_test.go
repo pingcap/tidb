@@ -361,7 +361,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 	}
 	writer := builder.BuildOneFile(
 		s.store, filePath, "writerID")
-	_ = writer.Init(ctx, 20*1024*1024)
+	intest.AssertNoError(writer.Init(ctx, 20*1024*1024))
 	key, val, _ := s.source.next()
 	for key != nil {
 		err := writer.WriteRow(ctx, key, val)
@@ -371,8 +371,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 	if s.beforeWriterClose != nil {
 		s.beforeWriterClose()
 	}
-	err := writer.Close(ctx)
-	intest.AssertNoError(err)
+	intest.AssertNoError(writer.Close(ctx))
 	if s.afterWriterClose != nil {
 		s.afterWriterClose()
 	}

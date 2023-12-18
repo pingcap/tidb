@@ -231,7 +231,6 @@ func (b *WriterBuilder) BuildOneFile(
 		filenamePrefix: filenamePrefix,
 		writerID:       writerID,
 		kvStore:        nil,
-		onClose:        b.onClose,
 		closed:         false,
 	}
 	return ret

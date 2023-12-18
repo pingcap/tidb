@@ -118,7 +118,6 @@ func mergeOverlappingFilesInternal(
 		SetWriterBatchCount(writeBatchCount).
 		SetPropKeysDistance(propKeysDist).
 		SetPropSizeDistance(propSizeDist).
-		SetOnCloseFunc(onClose).
 		BuildOneFile(store, newFilePrefix, writerID)
 	err = writer.Init(ctx, partSize)
 	if err != nil {

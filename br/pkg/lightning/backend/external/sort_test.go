@@ -150,7 +150,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	}
 
 	for _, group := range dataGroup {
-		MergeOverlappingFiles(
+		require.NoError(t, MergeOverlappingFiles(
 			ctx,
 			group,
 			memStore,
@@ -164,7 +164,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 			closeFn,
 			1,
 			true,
-		)
+		))
 	}
 
 	// 3. read and sort step
@@ -182,10 +182,10 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 	multiStats := make([]MultipleFilesStat, 0, 100)
 	randomSize := (rand.Intn(500) + 1) * 1000
 
-	failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/external/mockRangeGroupSize",
+	failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/external/mockRangesGroupSize",
 		"return("+strconv.Itoa(randomSize)+")")
 	t.Cleanup(func() {
-		failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/external/mockRangeGroupSize")
+		failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/external/mockRangesGroupSize")
 	})
 	datas := make([]string, 0, 100)
 	stats := make([]string, 0, 100)
@@ -248,7 +248,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 	}
 
 	for i, group := range dataGroup {
-		MergeOverlappingFilesV2(
+		require.NoError(t, MergeOverlappingFilesV2(
 			ctx,
 			group,
 			statGroup[i],
@@ -264,7 +264,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 			2,
 			closeFn1,
 			1,
-			true)
+			true))
 	}
 
 	// 3. read and sort step

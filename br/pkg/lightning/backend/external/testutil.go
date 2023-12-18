@@ -149,7 +149,7 @@ func splitDataStatAndKeys(datas []string, stats []string, multiStats []MultipleF
 	statGroup := make([][]string, 0, 10)
 
 	start := 0
-	step := 1000
+	step := 2 * multiFileStatNum
 	for start < len(datas) {
 		end := start + step
 		if end > len(datas) {
