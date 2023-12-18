@@ -594,6 +594,31 @@ func TestImportIntoRestore(t *testing.T) {
 			sourceSQL: "IMPORT INTO `t` from '/file.csv' with fields_terminated_by=_UTF8MB4'\t', detached, thread=1",
 			expectSQL: "IMPORT INTO `t` FROM '/file.csv' WITH fields_terminated_by=_UTF8MB4'\t', detached, thread=1",
 		},
+		{
+			// SelectStmt
+			sourceSQL: "IMPORT INTO `t` from select * from xx",
+			expectSQL: "IMPORT INTO `t` FROM SELECT * FROM `xx`",
+		},
+		{
+			// SelectStmtWithClause
+			sourceSQL: "IMPORT INTO `t` from with `c` as (select * from `xx`) select * from `c` with thread=1",
+			expectSQL: "IMPORT INTO `t` FROM WITH `c` AS (SELECT * FROM `xx`) SELECT * FROM `c` WITH thread=1",
+		},
+		{
+			// SetOprStmt
+			sourceSQL: "IMPORT INTO `t` from select * from `xx` union select * from `yy` with thread=1",
+			expectSQL: "IMPORT INTO `t` FROM SELECT * FROM `xx` UNION SELECT * FROM `yy` WITH thread=1",
+		},
+		{
+			// SetOprStmt
+			sourceSQL: "IMPORT INTO `t` from with `c` as (select * from `xx`) select * from `c` union select * from `c` with thread=1",
+			expectSQL: "IMPORT INTO `t` FROM WITH `c` AS (SELECT * FROM `xx`) SELECT * FROM `c` UNION SELECT * FROM `c` WITH thread=1",
+		},
+		{
+			// SubSelect
+			sourceSQL: "IMPORT INTO `t` from (select * from xx)",
+			expectSQL: "IMPORT INTO `t` FROM (SELECT * FROM `xx`)",
+		},
 	}
 	extractNodeFunc := func(node Node) Node {
 		return node.(*ImportIntoStmt)

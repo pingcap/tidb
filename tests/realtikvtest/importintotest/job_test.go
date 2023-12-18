@@ -462,7 +462,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforeSortChunk"))
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/syncAfterJobStarted"))
 	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforePostProcess", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/waitCtxDone", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/executor/importer/waitCtxDone", "return(true)")
 	result2 := s.tk.MustQuery(fmt.Sprintf(`import into t2 FROM 'gs://test_cancel_job/t.csv?endpoint=%s' with detached`,
 		gcsEndpoint)).Rows()
 	s.Len(result2, 1)

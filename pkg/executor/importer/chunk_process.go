@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikv"
@@ -227,6 +228,7 @@ type ChunkProcessor interface {
 
 type baseChunkProcessor struct {
 	enc         *chunkEncoder
+	deliver     *dataDeliver
 	logger      *zap.Logger
 	kvCodec     tikv.Codec
 	deliverLoop func(ctx context.Context) error
@@ -234,9 +236,6 @@ type baseChunkProcessor struct {
 
 	// initialized when Process
 	metrics *metric.Common
-
-	checksum        verify.KVChecksum
-	deliverTotalDur time.Duration
 }
 
 func (p *baseChunkProcessor) Process(ctx context.Context) (err error) {
@@ -245,8 +244,8 @@ func (p *baseChunkProcessor) Process(ctx context.Context) (err error) {
 		task.End(zap.ErrorLevel, err,
 			zap.Duration("readDur", p.enc.readTotalDur),
 			zap.Duration("encodeDur", p.enc.encodeTotalDur),
-			zap.Duration("deliverDur", p.deliverTotalDur),
-			zap.Object("checksum", &p.checksum),
+			zap.Duration("deliverDur", p.deliver.deliverTotalDur),
+			zap.Object("checksum", &p.deliver.checksum),
 		)
 		if err == nil && p.metrics != nil {
 			p.metrics.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Inc()
@@ -258,6 +257,7 @@ func (p *baseChunkProcessor) Process(ctx context.Context) (err error) {
 
 	if metrics, ok := metric.GetCommonMetric(ctx); ok {
 		p.enc.metrics = metrics
+		p.deliver.metrics = metrics
 		p.metrics = p.enc.metrics
 	}
 
@@ -271,7 +271,7 @@ func (p *baseChunkProcessor) Process(ctx context.Context) (err error) {
 	})
 
 	err2 := group.Wait()
-	p.enc.chunkInfo.Checksum.Add(&p.checksum)
+	p.enc.chunkInfo.Checksum.Add(&p.deliver.checksum)
 	return err2
 }
 
@@ -279,10 +279,6 @@ func (p *baseChunkProcessor) Process(ctx context.Context) (err error) {
 // each chunk processor will have a pair of encode and deliver routine.
 type localSortChunkProcessor struct {
 	*baseChunkProcessor
-	kvsCh         chan []deliveredRow
-	diskQuotaLock *syncutil.RWMutex
-	dataWriter    backend.EngineWriter
-	indexWriter   backend.EngineWriter
 }
 
 var _ ChunkProcessor = &localSortChunkProcessor{}
@@ -300,34 +296,54 @@ func NewLocalSortChunkProcessor(
 	indexWriter backend.EngineWriter,
 ) ChunkProcessor {
 	chunkLogger := logger.With(zap.String("key", chunk.GetKey()))
-	cp := &localSortChunkProcessor{
+	cp := &localSortChunkProcessor{}
+	deliver := &dataDeliver{
+		logger:        chunkLogger,
+		kvCodec:       kvCodec,
 		diskQuotaLock: diskQuotaLock,
 		kvsCh:         make(chan []deliveredRow, maxKVQueueSize),
 		dataWriter:    dataWriter,
 		indexWriter:   indexWriter,
 	}
 	cp.baseChunkProcessor = &baseChunkProcessor{
+		deliver: deliver,
 		enc: &chunkEncoder{
 			parser:    parser,
 			chunkInfo: chunk,
 			logger:    chunkLogger,
 			encoder:   encoder,
 			kvCodec:   kvCodec,
-			sendFn:    cp.sendEncodedData,
+			sendFn:    deliver.sendEncodedData,
 		},
 		logger:      chunkLogger,
 		kvCodec:     kvCodec,
-		deliverLoop: cp.deliverLoop,
-		encodeDone:  cp.encodeDone,
+		deliverLoop: deliver.deliverLoop,
+		encodeDone:  deliver.encodeDone,
 	}
 	return cp
 }
 
-func (p *localSortChunkProcessor) encodeDone(context.Context) {
+type dataDeliver struct {
+	logger  *zap.Logger
+	kvCodec tikv.Codec
+
+	// initialized when Process
+	metrics *metric.Common
+
+	checksum        verify.KVChecksum
+	deliverTotalDur time.Duration
+
+	kvsCh         chan []deliveredRow
+	diskQuotaLock *syncutil.RWMutex
+	dataWriter    backend.EngineWriter
+	indexWriter   backend.EngineWriter
+}
+
+func (p *dataDeliver) encodeDone(context.Context) {
 	close(p.kvsCh)
 }
 
-func (p *localSortChunkProcessor) sendEncodedData(ctx context.Context, kvs []deliveredRow) error {
+func (p *dataDeliver) sendEncodedData(ctx context.Context, kvs []deliveredRow) error {
 	select {
 	case p.kvsCh <- kvs:
 		return nil
@@ -336,7 +352,7 @@ func (p *localSortChunkProcessor) sendEncodedData(ctx context.Context, kvs []del
 	}
 }
 
-func (p *localSortChunkProcessor) deliverLoop(ctx context.Context) error {
+func (p *dataDeliver) deliverLoop(ctx context.Context) error {
 	kvBatch := newDeliverKVBatch(p.kvCodec)
 
 	var (
@@ -416,6 +432,182 @@ func (p *localSortChunkProcessor) deliverLoop(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// chunkEncoder encode data chunk(either a data file or part of a file).
+type queryChunkEncoder struct {
+	rowCh     chan QueryRow
+	chunkInfo *checkpoints.ChunkCheckpoint
+	logger    *zap.Logger
+	encoder   KVEncoder
+	sendFn    func(ctx context.Context, kvs []deliveredRow) error
+
+	// total duration takes by read/encode/deliver.
+	readTotalDur   time.Duration
+	encodeTotalDur time.Duration
+	metrics        *metric.Common
+}
+
+func (p *queryChunkEncoder) encodeLoop(ctx context.Context) error {
+	var err error
+	reachEOF := false
+	var encodedRowsCounter prometheus.Counter
+	if p.metrics != nil {
+		// table name doesn't matter here, all those metrics will have task-id label.
+		encodedRowsCounter = p.metrics.RowsCounter.WithLabelValues(metric.StateRestored, "")
+	}
+
+	for !reachEOF {
+		var readDur, encodeDur time.Duration
+		canDeliver := false
+		rowBatch := make([]deliveredRow, 0, MinDeliverRowCnt)
+		var rowCount, kvSize uint64
+	outLoop:
+		for !canDeliver {
+			readDurStart := time.Now()
+			var (
+				lastRow QueryRow
+				rowID   int64
+				ok      bool
+			)
+			select {
+			case lastRow, ok = <-p.rowCh:
+				if !ok {
+					reachEOF = true
+					break outLoop
+				}
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			readDur += time.Since(readDurStart)
+			encodeDurStart := time.Now()
+			// sql -> kv
+			kvs, encodeErr := p.encoder.Encode(lastRow.Data, lastRow.ID)
+			encodeDur += time.Since(encodeDurStart)
+
+			if encodeErr != nil {
+				err = common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(p.chunkInfo.GetKey(), rowID)
+			}
+			if err != nil {
+				return err
+			}
+
+			rowBatch = append(rowBatch, deliveredRow{kvs: kvs})
+			kvSize += kvs.Size()
+			rowCount++
+			// pebble cannot allow > 4.0G kv in one batch.
+			// we will meet pebble panic when import sql file and each kv has the size larger than 4G / maxKvPairsCnt.
+			// so add this check.
+			if kvSize >= MinDeliverBytes || len(rowBatch) >= MinDeliverRowCnt {
+				canDeliver = true
+			}
+		}
+
+		p.encodeTotalDur += encodeDur
+		p.readTotalDur += readDur
+		if p.metrics != nil {
+			p.metrics.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
+			p.metrics.RowReadSecondsHistogram.Observe(readDur.Seconds())
+			encodedRowsCounter.Add(float64(rowCount))
+		}
+
+		if len(rowBatch) > 0 {
+			if err = p.sendFn(ctx, rowBatch); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+// QueryRow is a row from query result.
+type QueryRow struct {
+	ID   int64
+	Data []types.Datum
+}
+
+type queryChunkProcessor struct {
+	enc         *queryChunkEncoder
+	deliver     *dataDeliver
+	logger      *zap.Logger
+	deliverLoop func(ctx context.Context) error
+	encodeDone  func(ctx context.Context)
+
+	// initialized when Process
+	metrics *metric.Common
+}
+
+func newQueryChunkProcessor(
+	rowCh chan QueryRow,
+	encoder KVEncoder,
+	kvCodec tikv.Codec,
+	chunk *checkpoints.ChunkCheckpoint,
+	logger *zap.Logger,
+	diskQuotaLock *syncutil.RWMutex,
+	dataWriter backend.EngineWriter,
+	indexWriter backend.EngineWriter,
+) ChunkProcessor {
+	chunkLogger := logger.With(zap.String("key", chunk.GetKey()))
+	deliver := &dataDeliver{
+		logger:        chunkLogger,
+		kvCodec:       kvCodec,
+		diskQuotaLock: diskQuotaLock,
+		kvsCh:         make(chan []deliveredRow, maxKVQueueSize),
+		dataWriter:    dataWriter,
+		indexWriter:   indexWriter,
+	}
+	cp := &queryChunkProcessor{
+		deliver: deliver,
+		enc: &queryChunkEncoder{
+			rowCh:     rowCh,
+			chunkInfo: chunk,
+			logger:    chunkLogger,
+			encoder:   encoder,
+			sendFn:    deliver.sendEncodedData,
+		},
+		logger:      chunkLogger,
+		deliverLoop: deliver.deliverLoop,
+		encodeDone:  deliver.encodeDone,
+	}
+	return cp
+}
+
+func (p *queryChunkProcessor) Process(ctx context.Context) (err error) {
+	task := log.BeginTask(p.logger, "process chunk")
+	defer func() {
+		task.End(zap.ErrorLevel, err,
+			zap.Duration("readDur", p.enc.readTotalDur),
+			zap.Duration("encodeDur", p.enc.encodeTotalDur),
+			zap.Duration("deliverDur", p.deliver.deliverTotalDur),
+			zap.Object("checksum", &p.deliver.checksum),
+		)
+		if err == nil && p.metrics != nil {
+			p.metrics.ChunkCounter.WithLabelValues(metric.ChunkStateFinished).Inc()
+		}
+	}()
+	//if err2 := p.enc.initProgress(); err2 != nil {
+	//	return err2
+	//}
+
+	if metrics, ok := metric.GetCommonMetric(ctx); ok {
+		p.enc.metrics = metrics
+		p.deliver.metrics = metrics
+		p.metrics = p.enc.metrics
+	}
+
+	group, gCtx := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		return p.deliverLoop(gCtx)
+	})
+	group.Go(func() error {
+		defer p.encodeDone(gCtx)
+		return p.enc.encodeLoop(gCtx)
+	})
+
+	err2 := group.Wait()
+	p.enc.chunkInfo.Checksum.Add(&p.deliver.checksum)
+	return err2
 }
 
 // IndexRouteWriter is a writer for index when using global sort.

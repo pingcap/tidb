@@ -1030,14 +1030,26 @@ func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Execut
 		return nil
 	}
 
-	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
-	exec, err := newImportIntoExec(base, b.ctx, v, tbl)
+	var (
+		selectExec exec.Executor
+		base       exec.BaseExecutor
+	)
+	if v.SelectPlan != nil {
+		selectExec = b.build(v.SelectPlan)
+		if b.err != nil {
+			return nil
+		}
+		base = exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), selectExec)
+	} else {
+		base = exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
+	}
+	executor, err := newImportIntoExec(base, selectExec, b.ctx, v, tbl)
 	if err != nil {
 		b.err = err
 		return nil
 	}
 
-	return exec
+	return executor
 }
 
 func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) exec.Executor {

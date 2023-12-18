@@ -45,7 +45,16 @@ import (
 )
 
 func TestInitDefaultOptions(t *testing.T) {
-	plan := &Plan{}
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/mockNumCpu", "return(10)"))
+	plan := &Plan{
+		DataSourceType: DataSourceTypeQuery,
+	}
+	plan.initDefaultOptions()
+	require.Equal(t, int64(1), plan.ThreadCnt)
+
+	plan = &Plan{
+		DataSourceType: DataSourceTypeFile,
+	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/mockNumCpu", "return(1)"))
 	variable.CloudStorageURI.Store("s3://bucket/path")
 	t.Cleanup(func() {
@@ -168,13 +177,19 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 
 func TestAdjustOptions(t *testing.T) {
 	plan := &Plan{
-		DiskQuota:     1,
-		ThreadCnt:     100000000,
-		MaxWriteSpeed: 10,
+		DiskQuota:      1,
+		ThreadCnt:      100000000,
+		MaxWriteSpeed:  10,
+		DataSourceType: DataSourceTypeFile,
 	}
 	plan.adjustOptions()
 	require.Equal(t, int64(runtime.GOMAXPROCS(0)), plan.ThreadCnt)
 	require.Equal(t, config.ByteSize(10), plan.MaxWriteSpeed) // not adjusted
+
+	plan.ThreadCnt = 100000000
+	plan.DataSourceType = DataSourceTypeQuery
+	plan.adjustOptions()
+	require.Equal(t, int64(2*runtime.GOMAXPROCS(0)), plan.ThreadCnt)
 }
 
 func TestAdjustDiskQuota(t *testing.T) {
@@ -390,4 +405,11 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm"), 0o400))
 	c.Path = path.Join(tempDir, "server-*.csv")
 	require.NoError(t, c.InitDataFiles(ctx))
+}
+
+func TestGetDataSourceType(t *testing.T) {
+	require.Equal(t, DataSourceTypeQuery, getDataSourceType(&plannercore.ImportInto{
+		SelectPlan: &plannercore.PhysicalSelection{},
+	}))
+	require.Equal(t, DataSourceTypeFile, getDataSourceType(&plannercore.ImportInto{}))
 }
