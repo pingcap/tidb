@@ -135,9 +135,13 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 		}
 	case model.ActionAlterTablePartitioning:
 		globalTableInfo, addedPartInfo := t.GetAddPartitioningInfo()
-		// Add partitioning
+		// Add new partition stats.
+		// For new partitions, it's crucial to correctly insert the count and modify count correctly.
+		// However, this is challenging due to the need to know the count of the new partitions.
+		// It's acceptable to not update it immediately,
+		// as the new partitions will be analyzed shortly due to the absence of statistics for them.
+		// The auto-analyze worker will handle them in the near future.
 		for _, def := range addedPartInfo.Definitions {
-			// TODO: Should we trigger analyze instead of adding 0s?
 			if err := h.statsWriter.InsertTableStats2KV(globalTableInfo, def.ID); err != nil {
 				return err
 			}
