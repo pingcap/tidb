@@ -156,7 +156,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	var holdCap uint64 = 2048
 	enableMPPRecovery := true
 	if e.dummy {
-		enableMPPRecovery = false;
+		enableMPPRecovery = false
 	}
 	e.mppErrRecovery = mpperr.NewMPPErrRecovery(config.GetGlobalConfig().UseAutoScaler,
 		holdCap, enableMPPRecovery, e.memTracker)
@@ -185,7 +185,7 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 			})
 			if err != nil {
 				logutil.BgLogger().Info("recovery mpp error failed", zap.Any("mppErr", mppErr),
-				zap.Any("recoveryErr", err))
+					zap.Any("recoveryErr", err))
 				return mppErr
 			}
 

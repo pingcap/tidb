@@ -3,9 +3,9 @@ package mpperr
 import (
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 )
 
@@ -21,7 +21,7 @@ type MPPErrRecovery struct {
 
 // RecoveryInfo contains info that can help recovery error.
 type RecoveryInfo struct {
-	MPPErr  error
+	MPPErr error
 
 	// Nodes that involved into MPP computation.
 	NodeCnt int
@@ -30,9 +30,9 @@ type RecoveryInfo struct {
 // NewMPPErrRecovery returns new instance of MPPErrRecovery.
 func NewMPPErrRecovery(useAutoScaler bool, holderCap uint64, enable bool, parent *memory.Tracker) *MPPErrRecovery {
 	return &MPPErrRecovery{
-		enable:   enable,
-		handlers: []errHandler{newMemLimitErrHandler(useAutoScaler)},
-		holder:   newMPPResultHolder(holderCap, parent),
+		enable:         enable,
+		handlers:       []errHandler{newMemLimitErrHandler(useAutoScaler)},
+		holder:         newMPPResultHolder(holderCap, parent),
 		maxRecoveryCnt: 3,
 	}
 }
@@ -40,7 +40,7 @@ func NewMPPErrRecovery(useAutoScaler bool, holderCap uint64, enable bool, parent
 // CanHoldResult tells whether we can insert intermediate results.
 func (m *MPPErrRecovery) CanHoldResult(chk *chunk.Chunk) bool {
 	return m.enable && m.holder.capacity > 0 && !m.holder.alreadyFulled &&
-	(chk == nil || (uint64(chk.NumRows()) + m.holder.curRows <= m.holder.capacity))
+		(chk == nil || (uint64(chk.NumRows())+m.holder.curRows <= m.holder.capacity))
 }
 
 // HoldResult tries to hold mpp result. You should call CanHoldResult to check first.
@@ -74,6 +74,7 @@ func (m *MPPErrRecovery) ResetHolder() {
 //  1. Already return result to client because holder is full.
 //  2. Recovery method of this kind of error not implemented or error is not recoveryable.
 //  3. Retry time exceeds maxRecoveryCnt.
+//
 // Return err when got err when trying to recovery.
 func (m *MPPErrRecovery) Recovery(info *RecoveryInfo) error {
 	if info == nil || info.MPPErr == nil {
@@ -132,17 +133,17 @@ func (h *memLimitErrHandler) doRecovery(info *RecoveryInfo) error {
 }
 
 type mppResultHolder struct {
-	capacity   uint64
+	capacity      uint64
 	alreadyFulled bool
-	curRows    uint64
-	chks       []*chunk.Chunk
-	memTracker *memory.Tracker
+	curRows       uint64
+	chks          []*chunk.Chunk
+	memTracker    *memory.Tracker
 }
 
 func newMPPResultHolder(holderCap uint64, parent *memory.Tracker) *mppResultHolder {
 	return &mppResultHolder{
-		capacity: holderCap,
-		chks:     []*chunk.Chunk{},
+		capacity:   holderCap,
+		chks:       []*chunk.Chunk{},
 		memTracker: memory.NewTracker(parent.Label(), 0),
 	}
 }
