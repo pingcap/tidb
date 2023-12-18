@@ -222,7 +222,7 @@ type uploadBase struct {
 
 const (
 	defaultRetry           = 3
-	defaultSignedURLExpiry = 1 * time.Hour
+	defaultSignedURLExpiry = 6 * time.Hour
 
 	gcsMinimumChunkSize = 5 * 1024 * 1024        // 5 MB
 	gcsMaximumChunkSize = 5 * 1024 * 1024 * 1024 // 5 GB
@@ -321,11 +321,11 @@ func (w *GCSWriter) cancel() error {
 	client := resty.New()
 	resp, err := client.R().Delete(u)
 	if err != nil {
-		return fmt.Errorf("POST request failed: %s", err)
+		return fmt.Errorf("DELETE request failed: %s", err)
 	}
 
-	if resp.StatusCode() != http.StatusOK {
-		return fmt.Errorf("POST request returned non-OK status: %d", resp.StatusCode())
+	if resp.StatusCode() != http.StatusNoContent {
+		return fmt.Errorf("DELETE request returned non-204 status: %d", resp.StatusCode())
 	}
 
 	return nil
