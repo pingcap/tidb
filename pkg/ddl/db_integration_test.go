@@ -1653,7 +1653,6 @@ func TestDefaultColumnWithUUID(t *testing.T) {
 			"  `c1` varbinary(16) DEFAULT uuid_to_bin(uuid()),\n" +
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-
 }
 
 func TestChangingDBCharset(t *testing.T) {
