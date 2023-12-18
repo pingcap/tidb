@@ -87,6 +87,7 @@ func (m *MPPErrRecovery) Recovery(info *RecoveryInfo) error {
 		return errors.Errorf("exceeds max recovery cnt: cur: %v, max: %v", m.curRecoveryCnt, m.maxRecoveryCnt)
 	}
 
+	m.curRecoveryCnt++
 
 	for _, h := range m.handlers {
 		if h.chooseErrHandler(info.MPPErr) {
