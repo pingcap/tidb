@@ -63,5 +63,8 @@ func (sm *slotManager) unReserve(taskID int64) {
 
 // canReserve is used to check whether the instance has enough slots to run the task.
 func (sm *slotManager) canReserve(task *proto.Task) bool {
+	sm.Lock()
+	defer sm.Unlock()
+
 	return sm.available >= task.Concurrency
 }
