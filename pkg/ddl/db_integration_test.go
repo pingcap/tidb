@@ -1606,6 +1606,56 @@ func TestDefaultColumnWithRand(t *testing.T) {
 	tk.MustGetErrCode("CREATE TABLE t3 (c int, c1 int default a_function_not_supported_yet());", errno.ErrDefValGeneratedNamedFunctionIsNotAllowed)
 }
 
+func TestDefaultColumnWithUUID(t *testing.T) {
+	// Related issue: https://github.com/pingcap/tidb/issues/33870
+	store := testkit.CreateMockStoreWithSchemaLease(t, testLease)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("USE test")
+	tk.MustExec("DROP TABLE IF EXISTS u1,u2")
+
+	// create table
+	tk.MustExec("CREATE TABLE u1 (id INT PRIMARY KEY, c1 VARCHAR(36) DEFAULT UUID())")
+	tk.MustExec("CREATE TABLE u2 (id INT PRIMARY KEY, c1 VARBINARY(16) DEFAULT UUID_TO_BIN(UUID()))")
+
+	// alter table, not supported for now.
+	tk.MustGetErrCode("ALTER TABLE u1 ADD COLUMN c2 VARCHAR(36) DEFAULT (UUID())",
+		errno.ErrBinlogUnsafeSystemFunction)
+	tk.MustGetErrCode("ALTER TABLE u2 ADD COLUMN c2 VARBINARY(16) DEFAULT UUID_TO_BIN(UUID(), 1)",
+		errno.ErrBinlogUnsafeSystemFunction)
+
+	// insert records
+	tk.MustExec("INSERT INTO u1(id) VALUES (1),(2),(3)")
+	tk.MustExec("INSERT INTO u2(id) VALUES (1),(2),(3)")
+
+	queryStmts := []string{
+		"SELECT IS_UUID(c1) FROM u1",
+		"SELECT IS_UUID(BIN_TO_UUID(c1)) FROM u2",
+	}
+	for _, queryStmt := range queryStmts {
+		r := tk.MustQuery(queryStmt).Rows()
+		for _, row := range r {
+			d, ok := row[0].(int)
+			if ok {
+				require.Equal(t, 1, d)
+			}
+		}
+	}
+
+	tk.MustQuery("SHOW CREATE TABLE u1").Check(testkit.Rows(
+		"u1 CREATE TABLE `u1` (\n" +
+			"  `id` int(11) NOT NULL,\n" +
+			"  `c1` varchar(36) DEFAULT uuid(),\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustQuery("SHOW CREATE TABLE u2").Check(testkit.Rows(
+		"u2 CREATE TABLE `u2` (\n" +
+			"  `id` int(11) NOT NULL,\n" +
+			"  `c1` varbinary(16) DEFAULT uuid_to_bin(uuid()),\n" +
+			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n" +
+			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+
+}
+
 func TestChangingDBCharset(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithDDLChecker())
 
