@@ -177,7 +177,7 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if mppErr := e.respIter.Next(ctx, tmpChk); mppErr != nil {
 			err := e.mppErrRecovery.Recovery(&mpperr.RecoveryInfo{
 				MPPErr:  mppErr,
-				TaskCnt: e.nodeCnt,
+				NodeCnt: e.nodeCnt,
 			})
 			if err != nil {
 				logutil.BgLogger().Info("recovery mpp error failed", zap.Any("mppErr", mppErr),

@@ -8,6 +8,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 )
 
+// MPPErrRecovery tries to recovery mpp error.
 type MPPErrRecovery struct {
 	enable   bool
 	handlers []errHandler
@@ -17,11 +18,15 @@ type MPPErrRecovery struct {
 	maxRecoveryCnt uint32
 }
 
+// RecoveryInfo contains info that can help recovery error.
 type RecoveryInfo struct {
 	MPPErr  error
-	TaskCnt int
+
+	// Nodes that involved into MPP computation.
+	NodeCnt int
 }
 
+// NewMPPErrRecovery returns new instance of MPPErrRecovery.
 func NewMPPErrRecovery(useAutoScaler bool, holderCap uint64, enable bool) *MPPErrRecovery {
 	return &MPPErrRecovery{
 		enable:   enable,
@@ -32,20 +37,23 @@ func NewMPPErrRecovery(useAutoScaler bool, holderCap uint64, enable bool) *MPPEr
 	}
 }
 
+// CanHoldResult tells whether we can insert intermediate results.
 func (m *MPPErrRecovery) CanHoldResult() bool {
 	return m.enable && m.holder.capacity > 0 && !m.holder.full
 }
 
-// HoldResult tries to hold mpp result.
+// HoldResult tries to hold mpp result. You should call CanHoldResult to check first.
 // Return true when hold success, return false if cannot hold anymore.
 func (m *MPPErrRecovery) HoldResult(chk *chunk.Chunk) bool {
-	return m.enable && m.holder.insert(chk)
+	return m.holder.insert(chk)
 }
 
+// NumHoldChk returns the number of chunk holded.
 func (m *MPPErrRecovery) NumHoldChk() int {
 	return len(m.holder.chks)
 }
 
+// PopFrontChk pop one chunk.
 func (m *MPPErrRecovery) PopFrontChk() *chunk.Chunk {
 	if !m.enable || len(m.holder.chks) == 0 {
 		return nil
@@ -61,7 +69,7 @@ func (m *MPPErrRecovery) ResetHolder() {
 	m.holder.reset()
 }
 
-// Recovery try to recovery error. Reasons that cannot recovery:
+// Recovery tries to recovery error. Reasons that cannot recovery:
 //  1. already return result to client because holder is full.
 //  2. recovery method of this kind of error not implemented or error is not recoveryable.
 //  3. 
@@ -115,7 +123,7 @@ func (h *memLimitErrHandler) chooseErrHandler(mppErr error) bool {
 func (h *memLimitErrHandler) doRecovery(info *RecoveryInfo) error {
 	// Ignore fetched topo, because AutoScaler will keep the topo for a while.
 	// And will use the new topo when dispatch mpp task again.
-	if _, err := tiflashcompute.GetGlobalTopoFetcher().RecoveryAndGetTopo(tiflashcompute.RecoveryTypeMemLimit, info.TaskCnt); err != nil {
+	if _, err := tiflashcompute.GetGlobalTopoFetcher().RecoveryAndGetTopo(tiflashcompute.RecoveryTypeMemLimit, info.NodeCnt); err != nil {
 		return err
 	}
 	return nil
