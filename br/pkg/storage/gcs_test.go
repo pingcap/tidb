@@ -10,9 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"runtime/pprof"
 	"testing"
-	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -479,25 +477,6 @@ func openTestingStorage(t *testing.T) ExternalStorage {
 
 func TestMultiPartUpload(t *testing.T) {
 	ctx := context.Background()
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(time.Second):
-				file, err := os.Create(fmt.Sprintf("heap-%d.prof", time.Now().Unix()))
-				require.NoError(t, err)
-				err = pprof.WriteHeapProfile(file)
-				require.NoError(t, err)
-				err = file.Close()
-				require.NoError(t, err)
-			}
-		}
-	}()
 
 	s := openTestingStorage(t)
 	if _, ok := s.(*GCSStorage); !ok {
@@ -519,7 +498,4 @@ func TestMultiPartUpload(t *testing.T) {
 	require.NoError(t, err)
 	cmp := bytes.Compare(data, got)
 	require.Zero(t, cmp)
-
-	cancel()
-	<-done
 }
