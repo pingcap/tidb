@@ -145,6 +145,9 @@ type localMppCoordinator struct {
 	enableCollectExecutionInfo bool
 	reportExecutionInfo        bool // if each mpp task needs to report execution info directly to coordinator through ReportMPPTaskStatus
 
+	// Record max task cnt among all the fragments.
+	// This is the number of nodes that involved in MPP computation.
+	maxTaskCnt int
 }
 
 // NewLocalMPPCoordinator creates a new localMppCoordinator instance
@@ -188,6 +191,9 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 		dagReq.EncodeType = tipb.EncodeType_TypeCHBlock
 	} else {
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
+	}
+	if c.maxTaskCnt < len(pf.ExchangeSender.Tasks) {
+		c.maxTaskCnt = len(pf.ExchangeSender.Tasks)
 	}
 	for _, mppTask := range pf.ExchangeSender.Tasks {
 		if mppTask.PartitionTableIDs != nil {
@@ -744,4 +750,8 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 	go c.dispatchAll(ctxChild)
 
 	return c, kvRanges, nil
+}
+
+func (c *localMppCoordinator) GetNodeCnt() int {
+	return c.maxTaskCnt
 }

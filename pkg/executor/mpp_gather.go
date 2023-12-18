@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/mpp"
@@ -34,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/config"
 	"go.uber.org/zap"
 )
 
@@ -82,6 +82,9 @@ type MPPGather struct {
 	dummy    bool
 
 	mppErrRecovery *mpperr.MPPErrRecovery
+
+	// Only for MemLimit err recovery for now.
+	nodeCnt int
 }
 
 func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
@@ -122,6 +125,7 @@ func (e *MPPGather) setupRespIter(ctx context.Context, isRecoverying bool) error
 	if err != nil {
 		return errors.Trace(err)
 	}
+	e.nodeCnt = coord.GetNodeCnt()
 	e.respIter = distsql.GenSelectResultFromResponse(e.Ctx(), e.RetFieldTypes(), planIDs, e.ID(), resp)
 	return nil
 }
@@ -171,19 +175,19 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 		tmpChk := exec.NewFirstChunk(e)
 
 		if mppErr := e.respIter.Next(ctx, tmpChk); mppErr != nil {
-			canRecovery, err := e.mppErrRecovery.Recovery(mppErr)
+			err := e.mppErrRecovery.Recovery(&mpperr.RecoveryInfo{
+				MPPErr:  mppErr,
+				TaskCnt: e.nodeCnt,
+			})
 			if err != nil {
-				logutil.BgLogger().Info("try recovery mpp error failed", zap.Any("mppErr", mppErr),
+				logutil.BgLogger().Info("recovery mpp error failed", zap.Any("mppErr", mppErr),
 					zap.Any("recoveryErr", err))
 				return mppErr
-			}
-			if !canRecovery {
-				break
 			}
 
 			// mppErr recovery succeed, start to dispatch MPPTask again.
 			e.setupRespIter(ctx, true)
-			e.mppErrRecovery.Reset()
+			e.mppErrRecovery.ResetHolder()
 			continue
 		}
 

@@ -12,6 +12,14 @@ type MPPErrRecovery struct {
 	enable   bool
 	handlers []errHandler
 	holder   *mppResultHolder
+
+	curRecoveryCnt uint32
+	maxRecoveryCnt uint32
+}
+
+type RecoveryInfo struct {
+	MPPErr  error
+	TaskCnt int
 }
 
 func NewMPPErrRecovery(useAutoScaler bool, holderCap uint64, enable bool) *MPPErrRecovery {
@@ -19,11 +27,13 @@ func NewMPPErrRecovery(useAutoScaler bool, holderCap uint64, enable bool) *MPPEr
 		enable:   enable,
 		handlers: []errHandler{newMemLimitErrHandler(useAutoScaler)},
 		holder:   newMPPResultHolder(holderCap),
+		// todo: sys var
+		maxRecoveryCnt: 3,
 	}
 }
 
 func (m *MPPErrRecovery) CanHoldResult() bool {
-	return m.enable && m.holder.capacity > 0 && !m.holder.holdFailed
+	return m.enable && m.holder.capacity > 0 && !m.holder.full
 }
 
 // HoldResult tries to hold mpp result.
@@ -47,48 +57,45 @@ func (m *MPPErrRecovery) PopFrontChk() *chunk.Chunk {
 
 // Reset reset the dynamic data, like chk and recovery cnt.
 // Will not touch other metadata, like enable.
-func (m *MPPErrRecovery) Reset() {
-	for _, h := range m.handlers {
-		h.reset()
-	}
+func (m *MPPErrRecovery) ResetHolder() {
 	m.holder.reset()
 }
 
-// Recovery try to recovery error.
-// Return true if can recovery, otherwise return false. Reasons that cannot recovery:
-//  1. already return result to client.
+// Recovery try to recovery error. Reasons that cannot recovery:
+//  1. already return result to client because holder is full.
 //  2. recovery method of this kind of error not implemented or error is not recoveryable.
-//
+//  3. 
 // Return err when got err when trying to recovery.
-func (m *MPPErrRecovery) Recovery(mppErr error) (bool, error) {
-	if mppErr == nil {
-		return false, nil
+func (m *MPPErrRecovery) Recovery(info *RecoveryInfo) error {
+	if info == nil || info.MPPErr == nil {
+		return errors.New("RecoveryInfo is nil of mppErr is nil")
 	}
 
-	if m.holder.holdFailed {
-		return false, nil
+	if m.holder.full {
+		return errors.New("mpp result holder is full")
 	}
+
+	if m.curRecoveryCnt >= m.maxRecoveryCnt {
+		return errors.Errorf("exceeds max recovery cnt: cur: %v, max: %v", m.curRecoveryCnt, m.maxRecoveryCnt)
+	}
+
 
 	for _, h := range m.handlers {
-		if h.chooseErrHandler(mppErr) {
-			return h.doRecovery()
+		if h.chooseErrHandler(info.MPPErr) {
+			return h.doRecovery(info)
 		}
 	}
-	return false, nil
+	return nil
 }
 
 type errHandler interface {
 	chooseErrHandler(mppErr error) bool
-	doRecovery() (bool, error)
-	reset()
+	doRecovery(info *RecoveryInfo) error
 }
 
 var _ errHandler = &memLimitErrHandler{}
 
 type memLimitErrHandler struct {
-	curRecoveryCnt uint32
-	maxRecoveryCnt uint32
-
 	useAutoScaler bool
 }
 
@@ -105,29 +112,20 @@ func (h *memLimitErrHandler) chooseErrHandler(mppErr error) bool {
 	return false
 }
 
-func (h *memLimitErrHandler) doRecovery() (bool, error) {
-	if h.curRecoveryCnt >= h.maxRecoveryCnt {
-		return false, errors.Errorf("exceeds max recovery cnt: cur: %v, max: %v", h.curRecoveryCnt, h.maxRecoveryCnt)
-	}
-
+func (h *memLimitErrHandler) doRecovery(info *RecoveryInfo) error {
 	// Ignore fetched topo, because AutoScaler will keep the topo for a while.
 	// And will use the new topo when dispatch mpp task again.
-	_, err := tiflashcompute.GetGlobalTopoFetcher().FetchAndGetTopo(tiflashcompute.RecoveryTypeMemLimit)
-	if err != nil {
-		return true, err
+	if _, err := tiflashcompute.GetGlobalTopoFetcher().RecoveryAndGetTopo(tiflashcompute.RecoveryTypeMemLimit, info.TaskCnt); err != nil {
+		return err
 	}
-	return true, nil
-}
-
-func (h *memLimitErrHandler) reset() {
-	h.curRecoveryCnt = 0
+	return nil
 }
 
 type mppResultHolder struct {
 	// todo
 	// memTracker *
 	capacity   uint64
-	holdFailed bool
+	full bool
 	curRows    uint64
 	chks       []*chunk.Chunk
 }
@@ -141,7 +139,7 @@ func newMPPResultHolder(holderCap uint64) *mppResultHolder {
 
 func (h *mppResultHolder) insert(chk *chunk.Chunk) bool {
 	if h.curRows+uint64(chk.NumRows()) >= h.capacity {
-		h.holdFailed = true
+		h.full = true
 		return false
 	}
 
