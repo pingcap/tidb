@@ -157,6 +157,7 @@ func (w *GCSWriter) readChunk(ch chan chunk) {
 					w.err.Store(err)
 				}
 			}
+			part.buf = nil
 			w.appendMPUPart(part)
 			data.cleanup()
 		}
