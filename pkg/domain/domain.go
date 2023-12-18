@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"math"
 	"math/rand"
+	"os"
+	"runtime/pprof"
 	"sort"
 	"strconv"
 	"strings"
@@ -2414,7 +2416,9 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
 	readMemTricker := time.NewTicker(memory.ReadMemInterval)
 	statsHandle := do.StatsHandle()
+	heapDumpTicker := time.NewTicker(time.Second)
 	defer func() {
+		heapDumpTicker.Stop()
 		dumpColStatsUsageTicker.Stop()
 		gcStatsTicker.Stop()
 		deltaUpdateTicker.Stop()
@@ -2424,8 +2428,23 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	}()
 	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 
+	heapDumpFolder := fmt.Sprintf("/var/lib/tidb/log/heap_%d", time.Now().Unix())
+	heapDumpCnt := 0
 	for {
 		select {
+		case <-heapDumpTicker.C:
+			file, err := os.Create(fmt.Sprintf("%s/%d", heapDumpFolder, heapDumpCnt))
+			if err != nil {
+				logutil.BgLogger().Error("create heap dump file failed", zap.Error(err))
+				file.Close()
+				continue
+			}
+			heapDumpCnt = (heapDumpCnt + 1) % 10
+			err = pprof.Lookup("heap").WriteTo(file, 0)
+			if err != nil {
+				logutil.BgLogger().Error("write heap dump file failed", zap.Error(err))
+			}
+			file.Close()
 		case <-do.exit:
 			do.updateStatsWorkerExitPreprocessing(statsHandle, owner)
 			return

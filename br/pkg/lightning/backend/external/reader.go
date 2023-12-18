@@ -97,7 +97,14 @@ func readOneFile(
 	concurrency uint64,
 	bufPool *membuf.Pool,
 	output *memKVsAndBuffers,
-) error {
+) (err error) {
+	taskLogger := log.BeginTask(logutil.Logger(ctx).With(zap.String("file", dataFile)), "read one data")
+	taskLogger.Info("start",
+		zap.Uint64("start-offset", startOffset),
+		zap.Uint64("concurrency", concurrency))
+	defer func() {
+		taskLogger.End(zap.ErrorLevel, err)
+	}()
 	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_one_file")
 
 	ts := time.Now()
