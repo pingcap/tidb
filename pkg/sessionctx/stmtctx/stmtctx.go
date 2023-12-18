@@ -183,7 +183,6 @@ type StatementContext struct {
 	DupKeyAsWarning               bool
 	BadNullAsWarning              bool
 	DividedByZeroAsWarning        bool
-	OverflowAsWarning             bool
 	ErrAutoincReadFailedAsWarning bool
 	InShowWarning                 bool
 	UseCache                      bool
@@ -478,9 +477,6 @@ func (sc *StatementContext) ErrCtx() errctx.Context {
 		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
 	}
 
-	if sc.OverflowAsWarning {
-		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupOverflow, errctx.LevelWarn)
-	}
 	return ctx
 }
 
@@ -508,6 +504,16 @@ func (sc *StatementContext) HandleError(err error) error {
 	}
 	errCtx := sc.ErrCtx()
 	return errCtx.HandleError(err)
+}
+
+// HandleErrorWithAlias handles the error based on `ErrCtx()`
+func (sc *StatementContext) HandleErrorWithAlias(internalErr, err, warnErr error) error {
+	intest.AssertNotNil(sc)
+	if sc == nil {
+		return err
+	}
+	errCtx := sc.ErrCtx()
+	return errCtx.HandleErrorWithAlias(internalErr, err, warnErr)
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -1052,19 +1058,6 @@ func (sc *StatementContext) AppendExtraError(warn error) {
 	}
 }
 
-// HandleOverflow treats ErrOverflow as warnings or returns the error based on the StmtCtx.OverflowAsWarning state.
-func (sc *StatementContext) HandleOverflow(err error, warnErr error) error {
-	if err == nil {
-		return nil
-	}
-
-	if sc.OverflowAsWarning {
-		sc.AppendWarning(warnErr)
-		return nil
-	}
-	return err
-}
-
 // resetMuForRetry resets the changed states of sc.mu during execution.
 func (sc *StatementContext) resetMuForRetry() {
 	sc.mu.Lock()
@@ -1173,8 +1166,7 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 		flags |= model.FlagIgnoreTruncate
 	} else if sc.TypeFlags().TruncateAsWarning() {
 		flags |= model.FlagTruncateAsWarning
-	}
-	if sc.OverflowAsWarning {
+		// TODO: remove this flag from TiKV.
 		flags |= model.FlagOverflowAsWarning
 	}
 	if sc.TypeFlags().IgnoreZeroInDate() {
@@ -1241,7 +1233,6 @@ func (sc *StatementContext) InitFromPBFlagAndTz(flags uint64, tz *time.Location)
 	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
 	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
 	sc.InDeleteStmt = (flags & model.FlagInUpdateOrDeleteStmt) > 0
-	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
 	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
 	sc.SetTimeZone(tz)
 	sc.SetTypeFlags(types.DefaultStmtFlags.

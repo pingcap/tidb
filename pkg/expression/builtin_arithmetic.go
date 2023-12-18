@@ -843,7 +843,7 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(ctx EvalContext, row chun
 	}
 	if err == types.ErrOverflow {
 		newErr := errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c)
-		err = sc.HandleOverflow(newErr, newErr)
+		err = sc.HandleError(newErr)
 	}
 	if err != nil {
 		return 0, true, err

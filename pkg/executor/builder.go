@@ -925,12 +925,6 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 			BaseExecutor:         exec.NewBaseExecutor(b.ctx, v.Schema(), 0),
 			QueryWatchOptionList: s.QueryWatchOptionList,
 		}
-	case *ast.LoadDataActionStmt:
-		return &LoadDataActionExec{
-			BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, 0),
-			tp:           s.Tp,
-			jobID:        s.JobID,
-		}
 	case *ast.ImportIntoActionStmt:
 		return &ImportIntoActionExec{
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, 0),
