@@ -248,8 +248,9 @@ func TestSwitchMode(t *testing.T) {
 	require.NoError(t, err)
 	kvReader.byteReader.enableConcurrentRead(st, "/test/0/one-file", 100, ConcurrentReaderBufferSizePerConc, pool.NewBuffer())
 	modeUseCon := false
+	i := 0
 	for {
-		if rand.Intn(2) == 0 {
+		if rand.Intn(5) == 0 {
 			if modeUseCon {
 				kvReader.byteReader.switchConcurrentMode(false)
 				modeUseCon = false
@@ -258,11 +259,14 @@ func TestSwitchMode(t *testing.T) {
 				modeUseCon = true
 			}
 		}
-		_, _, err := kvReader.nextKV()
+		key, val, err := kvReader.nextKV()
 		if err == io.EOF {
 			break
 		}
 		require.NoError(t, err)
+		require.Equal(t, kvs[i].Key, key)
+		require.Equal(t, kvs[i].Val, val)
+		i++
 	}
 }
 
