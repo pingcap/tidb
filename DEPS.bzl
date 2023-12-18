@@ -5463,37 +5463,17 @@ def go_deps():
         name = "com_sourcegraph_sourcegraph_appdash",
         build_file_proto_mode = "disable_global",
         importpath = "sourcegraph.com/sourcegraph/appdash",
-<<<<<<< HEAD
-        sum = "h1:ucqkfpjg9WzSUubAO62csmucvxl4/JeW3F4I4909XkM=",
+        replace = "github.com/sourcegraph/appdash",
+        sum = "h1:IJ3DuWHPTJrsqtIqjfdmPTELdTFGefvrOa2eTeRBleQ=",
         version = "v0.0.0-20190731080439-ebfcffb1b5c0",
-=======
-        sha256 = "c46b442fa40d2af48e08064f4c16ae3712953a9988cd0f7588fcf5e4fc7a2fed",
-        strip_prefix = "github.com/sourcegraph/appdash@v0.0.0-20190731080439-ebfcffb1b5c0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/sourcegraph/appdash/com_github_sourcegraph_appdash-v0.0.0-20190731080439-ebfcffb1b5c0.zip",
-            "http://ats.apps.svc/gomod/github.com/sourcegraph/appdash/com_github_sourcegraph_appdash-v0.0.0-20190731080439-ebfcffb1b5c0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/sourcegraph/appdash/com_github_sourcegraph_appdash-v0.0.0-20190731080439-ebfcffb1b5c0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/sourcegraph/appdash/com_github_sourcegraph_appdash-v0.0.0-20190731080439-ebfcffb1b5c0.zip",
-        ],
->>>>>>> 3a7bd532a26 (expression: ignore `TypeNULL` in `HandleBinaryLiteral` (#49527))
     )
     go_repository(
         name = "com_sourcegraph_sourcegraph_appdash_data",
         build_file_proto_mode = "disable_global",
         importpath = "sourcegraph.com/sourcegraph/appdash-data",
-<<<<<<< HEAD
-        sum = "h1:e1sMhtVq9AfcEy8AXNb8eSg6gbzfdpYhoNqnPJa+GzI=",
+        replace = "github.com/sourcegraph/appdash-data",
+        sum = "h1:8ZnTA26bBOoPkAbbitKPgNlpw0Bwt7ZlpYgZWHWJR/w=",
         version = "v0.0.0-20151005221446-73f23eafcf67",
-=======
-        sha256 = "59b71fa8cdb0fe2b1c02739ccf2daeaf28f2e22c4b178cdc8e1b902ad1022bc0",
-        strip_prefix = "github.com/sourcegraph/appdash-data@v0.0.0-20151005221446-73f23eafcf67",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/sourcegraph/appdash-data/com_github_sourcegraph_appdash_data-v0.0.0-20151005221446-73f23eafcf67.zip",
-            "http://ats.apps.svc/gomod/github.com/sourcegraph/appdash-data/com_github_sourcegraph_appdash_data-v0.0.0-20151005221446-73f23eafcf67.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/sourcegraph/appdash-data/com_github_sourcegraph_appdash_data-v0.0.0-20151005221446-73f23eafcf67.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/sourcegraph/appdash-data/com_github_sourcegraph_appdash_data-v0.0.0-20151005221446-73f23eafcf67.zip",
-        ],
->>>>>>> 3a7bd532a26 (expression: ignore `TypeNULL` in `HandleBinaryLiteral` (#49527))
     )
     go_repository(
         name = "com_stathat_c_consistent",
