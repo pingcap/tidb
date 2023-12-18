@@ -3,6 +3,7 @@ package mpperr
 import (
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
@@ -27,12 +28,11 @@ type RecoveryInfo struct {
 }
 
 // NewMPPErrRecovery returns new instance of MPPErrRecovery.
-func NewMPPErrRecovery(useAutoScaler bool, holderCap uint64, enable bool) *MPPErrRecovery {
+func NewMPPErrRecovery(useAutoScaler bool, holderCap uint64, enable bool, parent *memory.Tracker) *MPPErrRecovery {
 	return &MPPErrRecovery{
 		enable:   enable,
 		handlers: []errHandler{newMemLimitErrHandler(useAutoScaler)},
-		holder:   newMPPResultHolder(holderCap),
-		// todo: sys var
+		holder:   newMPPResultHolder(holderCap, parent),
 		maxRecoveryCnt: 3,
 	}
 }
@@ -60,6 +60,7 @@ func (m *MPPErrRecovery) PopFrontChk() *chunk.Chunk {
 	}
 	chk := m.holder.chks[0]
 	m.holder.chks = m.holder.chks[1:]
+	m.holder.memTracker.Consume(-chk.MemoryUsage())
 	return chk
 }
 
@@ -135,12 +136,14 @@ type mppResultHolder struct {
 	alreadyFulled bool
 	curRows    uint64
 	chks       []*chunk.Chunk
+	memTracker *memory.Tracker
 }
 
-func newMPPResultHolder(holderCap uint64) *mppResultHolder {
+func newMPPResultHolder(holderCap uint64, parent *memory.Tracker) *mppResultHolder {
 	return &mppResultHolder{
 		capacity: holderCap,
 		chks:     []*chunk.Chunk{},
+		memTracker: memory.NewTracker(parent.Label(), 0),
 	}
 }
 
@@ -151,10 +154,12 @@ func (h *mppResultHolder) insert(chk *chunk.Chunk) {
 	if h.curRows+uint64(chk.NumRows()) >= h.capacity {
 		h.alreadyFulled = true
 	}
+	h.memTracker.Consume(chk.MemoryUsage())
 }
 
 func (h *mppResultHolder) reset() {
 	h.alreadyFulled = false
 	h.curRows = 0
 	h.chks = h.chks[:0]
+	h.memTracker.Detach()
 }

@@ -158,7 +158,8 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	if e.dummy {
 		enableMPPRecovery = false;
 	}
-	e.mppErrRecovery = mpperr.NewMPPErrRecovery(config.GetGlobalConfig().UseAutoScaler, holdCap, enableMPPRecovery)
+	e.mppErrRecovery = mpperr.NewMPPErrRecovery(config.GetGlobalConfig().UseAutoScaler,
+		holdCap, enableMPPRecovery, e.memTracker)
 	return nil
 }
 
