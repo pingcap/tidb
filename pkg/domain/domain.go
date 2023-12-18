@@ -2429,6 +2429,10 @@ func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager)
 	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 
 	heapDumpFolder := fmt.Sprintf("/var/lib/tidb/log/heap_%d", time.Now().Unix())
+	err := os.MkdirAll(heapDumpFolder, 0755)
+	if err != nil {
+		logutil.BgLogger().Error("create heap dump folder failed", zap.Error(err))
+	}
 	heapDumpCnt := 0
 	for {
 		select {
