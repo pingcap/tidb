@@ -16,7 +16,11 @@ package bindinfo_test
 
 import (
 	"fmt"
+	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -211,4 +215,26 @@ func TestUniversalBindingSwitch(t *testing.T) {
 	tk3.MustQuery(`select @@tidb_opt_enable_universal_binding`).Check(testkit.Rows("0"))
 	tk3.MustQuery(`show session variables like 'tidb_opt_enable_universal_binding'`).Check(testkit.Rows("tidb_opt_enable_universal_binding OFF"))
 	tk3.MustQuery(`show global variables like 'tidb_opt_enable_universal_binding'`).Check(testkit.Rows("tidb_opt_enable_universal_binding OFF"))
+}
+
+func TestUniversalBindingGC(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
+
+	tk.MustExec(`create global universal binding using select /*+ use_index(t, b) */ * from t`)
+	require.Equal(t, showBinding(tk, "show global bindings"),
+		[][]interface{}{{"select * from `t`", "SELECT /*+ use_index(`t` `b`)*/ * FROM `t`", "", "enabled", "manual", "u", "e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7"}})
+	tk.MustExec(`drop global binding for sql digest 'e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7'`)
+	require.Equal(t, showBinding(tk, "show global bindings"), [][]interface{}{}) // empty
+	tk.MustQuery(`select bind_sql, status, type from mysql.bind_info where source != 'builtin'`).Check(
+		testkit.Rows("SELECT /*+ use_index(`t` `b`)*/ * FROM `t` deleted u")) // status=deleted
+
+	updateTime := time.Now().Add(-(15 * bindinfo.Lease))
+	updateTimeStr := types.NewTime(types.FromGoTime(updateTime), mysql.TypeTimestamp, 3).String()
+	tk.MustExec(fmt.Sprintf("update mysql.bind_info set update_time = '%v' where source != 'builtin'", updateTimeStr))
+	bindHandle := bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
+	require.NoError(t, bindHandle.GCGlobalBinding())
+	tk.MustQuery(`select bind_sql, status, type from mysql.bind_info where source != 'builtin'`).Check(testkit.Rows()) // empty after GC
 }
