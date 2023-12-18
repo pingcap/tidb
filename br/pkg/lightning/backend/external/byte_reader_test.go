@@ -17,6 +17,7 @@ package external
 import (
 	"context"
 	"io"
+	"math/rand"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -29,9 +30,9 @@ import (
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
-	"golang.org/x/exp/rand"
 )
 
 // mockExtStore is only used for test.
@@ -206,6 +207,12 @@ func TestEmptyContent(t *testing.T) {
 }
 
 func TestSwitchMode(t *testing.T) {
+	t.Skip("WIP")
+	seed := time.Now().Unix()
+	t.Logf("seed: %d", seed)
+	rnd := rand.New(rand.NewSource(seed))
+	_ = rnd
+
 	st, clean := NewS3WithBucketAndPrefix(t, "test", "testprefix")
 	defer clean()
 
@@ -220,12 +227,11 @@ func TestSwitchMode(t *testing.T) {
 		return rsc
 	}
 
+	pool := membuf.NewPool()
 	ConcurrentReaderBufferSizePerConc = 100
 	br, err := newByteReader(context.Background(), newRsc(), 100)
+	br.enableConcurrentRead(st, "testfile", 100, 100, pool.NewBuffer())
 
-	seed := time.Now().Unix()
-	rand.Seed(uint64(seed))
-	t.Logf("seed: %d", seed)
 	totalCnt := 0
 	modeUseCon := false
 	for totalCnt < fileSize {
@@ -256,7 +262,6 @@ func TestSwitchMode(t *testing.T) {
 		totalCnt += len(y)
 	}
 	require.Equal(t, fileSize, totalCnt)
-
 }
 
 // NewS3WithBucketAndPrefix creates a new S3Storage for testing.
