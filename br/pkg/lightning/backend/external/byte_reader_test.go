@@ -209,7 +209,7 @@ func TestEmptyContent(t *testing.T) {
 func TestSwitchMode(t *testing.T) {
 	st := storage.NewMemStorage()
 	// Prepare
-	fileSize := 1024 * 1024
+	fileSize := 1024 * 1024 * 40
 	err := st.WriteFile(context.Background(), "/testfile", make([]byte, fileSize))
 	require.NoError(t, err)
 
@@ -219,14 +219,14 @@ func TestSwitchMode(t *testing.T) {
 		return rsc
 	}
 	pool := membuf.NewPool()
-	ConcurrentReaderBufferSizePerConc = 100
-	br, err := newByteReader(context.Background(), newRsc(), 100)
-	require.NoError(t, err)
-	br.enableConcurrentRead(st, "/testfile", 100, 100, pool.NewBuffer())
-
+	// ConcurrentReaderBufferSizePerConc = rand.Intn(300) + 1
 	seed := time.Now().Unix()
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
+	br, err := newByteReader(context.Background(), newRsc(), 64*1024)
+	require.NoError(t, err)
+	br.enableConcurrentRead(st, "/testfile", 100, ConcurrentReaderBufferSizePerConc, pool.NewBuffer())
+
 	totalCnt := 0
 	modeUseCon := false
 	for totalCnt < fileSize {
@@ -239,7 +239,7 @@ func TestSwitchMode(t *testing.T) {
 				modeUseCon = true
 			}
 		}
-		n := rand.Intn(100)
+		n := rand.Intn(300)
 		if n == 0 {
 			n = 1
 		}
