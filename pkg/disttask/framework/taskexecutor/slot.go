@@ -33,7 +33,7 @@ type slotManager struct {
 
 type slotInfo struct {
 	taskID int
-	// priority will be used in the feature
+	// priority will be used in future
 	priority  int
 	slotCount int
 }
