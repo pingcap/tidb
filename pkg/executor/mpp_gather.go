@@ -84,6 +84,7 @@ type MPPGather struct {
 	mppErrRecovery *mpperr.MPPErrRecovery
 
 	// Only for MemLimit err recovery for now.
+	// AutoScaler use this value as hint to scale out CN.
 	nodeCnt int
 }
 
@@ -98,7 +99,6 @@ func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
 func (e *MPPGather) setupRespIter(ctx context.Context, isRecoverying bool) error {
 	if isRecoverying {
 		// If we are trying to recovery from MPP error, needs to cleanup some resources.
-
 		// Sanity check.
 		if e.dummy {
 			return errors.New("should not reset mpp resp iter for dummy table")
@@ -152,8 +152,13 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	// todo: sys var: hold_row_num, enable_hold_mpp_res
-	e.mppErrRecovery = mpperr.NewMPPErrRecovery(config.GetGlobalConfig().UseAutoScaler, 2048, !e.dummy)
+
+	var holdCap uint64 = 2048
+	enableMPPRecovery := true
+	if e.dummy {
+		enableMPPRecovery = false;
+	}
+	e.mppErrRecovery = mpperr.NewMPPErrRecovery(config.GetGlobalConfig().UseAutoScaler, holdCap, enableMPPRecovery)
 	return nil
 }
 
@@ -170,10 +175,8 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 
-	for e.mppErrRecovery.CanHoldResult() {
-		// todo: if use chk allocator, how to return chk back to allocator.
+	for e.mppErrRecovery.CanHoldResult(nil) {
 		tmpChk := exec.NewFirstChunk(e)
-
 		if mppErr := e.respIter.Next(ctx, tmpChk); mppErr != nil {
 			err := e.mppErrRecovery.Recovery(&mpperr.RecoveryInfo{
 				MPPErr:  mppErr,
@@ -181,13 +184,14 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 			})
 			if err != nil {
 				logutil.BgLogger().Info("recovery mpp error failed", zap.Any("mppErr", mppErr),
-					zap.Any("recoveryErr", err))
+				zap.Any("recoveryErr", err))
 				return mppErr
 			}
 
 			logutil.BgLogger().Info("recovery mpp error succeed, begin next retry", zap.Any("mppErr", mppErr))
 			e.setupRespIter(ctx, true)
 			e.mppErrRecovery.ResetHolder()
+
 			continue
 		}
 
@@ -195,16 +199,13 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 			break
 		}
 
-		if !e.mppErrRecovery.HoldResult(tmpChk) {
-			return errors.New("hold mpp result failed")
-		}
+		e.mppErrRecovery.HoldResult(tmpChk)
 	}
 
 	if e.mppErrRecovery.NumHoldChk() != 0 {
 		if tmpChk := e.mppErrRecovery.PopFrontChk(); tmpChk == nil {
 			return errors.New("cannot get chunk from mpp result holder")
 		} else {
-			// todo swap because the requested chk may be from allocator.
 			chk.SwapColumns(tmpChk)
 		}
 	} else if err := e.respIter.Next(ctx, chk); err != nil {

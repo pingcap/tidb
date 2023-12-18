@@ -38,14 +38,14 @@ func NewMPPErrRecovery(useAutoScaler bool, holderCap uint64, enable bool) *MPPEr
 }
 
 // CanHoldResult tells whether we can insert intermediate results.
-func (m *MPPErrRecovery) CanHoldResult() bool {
-	return m.enable && m.holder.capacity > 0 && !m.holder.full
+func (m *MPPErrRecovery) CanHoldResult(chk *chunk.Chunk) bool {
+	return m.enable && m.holder.capacity > 0 && !m.holder.alreadyFulled &&
+	(chk == nil || (uint64(chk.NumRows()) + m.holder.curRows <= m.holder.capacity))
 }
 
 // HoldResult tries to hold mpp result. You should call CanHoldResult to check first.
-// Return true when hold success, return false if cannot hold anymore.
-func (m *MPPErrRecovery) HoldResult(chk *chunk.Chunk) bool {
-	return m.holder.insert(chk)
+func (m *MPPErrRecovery) HoldResult(chk *chunk.Chunk) {
+	m.holder.insert(chk)
 }
 
 // NumHoldChk returns the number of chunk holded.
@@ -70,16 +70,16 @@ func (m *MPPErrRecovery) ResetHolder() {
 }
 
 // Recovery tries to recovery error. Reasons that cannot recovery:
-//  1. already return result to client because holder is full.
-//  2. recovery method of this kind of error not implemented or error is not recoveryable.
-//  3. 
+//  1. Already return result to client because holder is full.
+//  2. Recovery method of this kind of error not implemented or error is not recoveryable.
+//  3. Retry time exceeds maxRecoveryCnt.
 // Return err when got err when trying to recovery.
 func (m *MPPErrRecovery) Recovery(info *RecoveryInfo) error {
 	if info == nil || info.MPPErr == nil {
 		return errors.New("RecoveryInfo is nil of mppErr is nil")
 	}
 
-	if m.holder.full {
+	if m.holder.alreadyFulled {
 		return errors.New("mpp result holder is full")
 	}
 
@@ -131,10 +131,8 @@ func (h *memLimitErrHandler) doRecovery(info *RecoveryInfo) error {
 }
 
 type mppResultHolder struct {
-	// todo
-	// memTracker *
 	capacity   uint64
-	full bool
+	alreadyFulled bool
 	curRows    uint64
 	chks       []*chunk.Chunk
 }
@@ -146,17 +144,17 @@ func newMPPResultHolder(holderCap uint64) *mppResultHolder {
 	}
 }
 
-func (h *mppResultHolder) insert(chk *chunk.Chunk) bool {
-	if h.curRows+uint64(chk.NumRows()) >= h.capacity {
-		h.full = true
-		return false
-	}
-
+func (h *mppResultHolder) insert(chk *chunk.Chunk) {
 	h.chks = append(h.chks, chk)
 	h.curRows += uint64(chk.NumRows())
-	return true
+
+	if h.curRows+uint64(chk.NumRows()) >= h.capacity {
+		h.alreadyFulled = true
+	}
 }
 
 func (h *mppResultHolder) reset() {
+	h.alreadyFulled = false
+	h.curRows = 0
 	h.chks = h.chks[:0]
 }
