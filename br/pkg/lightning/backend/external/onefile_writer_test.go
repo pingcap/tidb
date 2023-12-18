@@ -66,7 +66,7 @@ func TestOnefileWriterBasic(t *testing.T) {
 	}
 
 	for _, item := range kvs {
-		require.Error(t, writer.WriteRow(ctx, item.Key, item.Val))
+		require.NoError(t, writer.WriteRow(ctx, item.Key, item.Val))
 	}
 
 	require.NoError(t, writer.Close(ctx))
