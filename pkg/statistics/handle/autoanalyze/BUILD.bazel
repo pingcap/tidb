@@ -35,10 +35,10 @@ go_test(
     name = "autoanalyze_test",
     timeout = "short",
     srcs = ["autoanalyze_test.go"],
+    embed = [":autoanalyze"],
     flaky = True,
     shard_count = 10,
     deps = [
-        ":autoanalyze",
         "//pkg/domain/infosync",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
