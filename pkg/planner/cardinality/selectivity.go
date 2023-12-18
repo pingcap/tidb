@@ -177,7 +177,11 @@ func Selectivity(
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			selectivity := cnt / float64(coll.RealtimeCount)
+			realtimeCnt := coll.RealtimeCount
+			if !idxStats.IsInvalid(ctx, coll.Pseudo) {
+				realtimeCnt, _ = coll.GetScaledRealtimeAndModifyCnt(idxStats.TotalRowCount())
+			}
+			selectivity := cnt / float64(realtimeCnt)
 			nodes = append(nodes, &StatsNode{
 				Tp:          IndexType,
 				ID:          id,
@@ -820,10 +824,11 @@ func getEqualCondSelectivity(sctx sessionctx.Context, coll *statistics.HistColl,
 	}
 	val := types.NewBytesDatum(bytes)
 	if outOfRangeOnIndex(idx, val) {
+		realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idx.TotalRowCount())
 		// When the value is out of range, we could not found this value in the CM Sketch,
 		// so we use heuristic methods to estimate the selectivity.
 		if idx.NDV > 0 && coverAll {
-			return outOfRangeEQSelectivity(sctx, idx.NDV, coll.RealtimeCount, int64(idx.TotalRowCount())), nil
+			return outOfRangeEQSelectivity(sctx, idx.NDV, realtimeCnt, int64(idx.TotalRowCount())), nil
 		}
 		// The equal condition only uses prefix columns of the index.
 		colIDs := coll.Idx2ColumnIDs[idx.ID]
@@ -836,7 +841,7 @@ func getEqualCondSelectivity(sctx sessionctx.Context, coll *statistics.HistColl,
 				ndv = max(ndv, col.Histogram.NDV)
 			}
 		}
-		return outOfRangeEQSelectivity(sctx, ndv, coll.RealtimeCount, int64(idx.TotalRowCount())), nil
+		return outOfRangeEQSelectivity(sctx, ndv, realtimeCnt, int64(idx.TotalRowCount())), nil
 	}
 
 	minRowCount, crossValidSelectivity, err := crossValidationSelectivity(sctx, coll, idx, usedColsLen, idxPointRange)

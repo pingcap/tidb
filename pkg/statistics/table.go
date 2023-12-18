@@ -432,6 +432,15 @@ func (coll *HistColl) GetAnalyzeRowCount() float64 {
 	return -1
 }
 
+func (coll *HistColl) GetScaledRealtimeAndModifyCnt(scaleTarget float64) (realtimeCnt, modifyCnt int64) {
+	analyzeRowCount := coll.GetAnalyzeRowCount()
+	if analyzeRowCount <= 0 {
+		return coll.RealtimeCount, coll.ModifyCount
+	}
+	scale := scaleTarget / analyzeRowCount
+	return int64(float64(coll.RealtimeCount) * scale), int64(float64(coll.ModifyCount) * scale)
+}
+
 // GetStatsHealthy calculates stats healthy if the table stats is not pseudo.
 // If the table stats is pseudo, it returns 0, false, otherwise it returns stats healthy, true.
 func (t *Table) GetStatsHealthy() (int64, bool) {
