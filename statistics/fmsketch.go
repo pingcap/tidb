@@ -16,6 +16,7 @@ package statistics
 
 import (
 	"hash"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/sessionctx/stmtctx"
@@ -26,8 +27,6 @@ import (
 	"golang.org/x/exp/maps"
 )
 
-<<<<<<< HEAD
-=======
 var murmur3Pool = sync.Pool{
 	New: func() any {
 		return murmur3.New64()
@@ -43,7 +42,6 @@ var fmSketchPool = sync.Pool{
 	},
 }
 
->>>>>>> bb49dc17021 (statstics: reuse fmsketch (#47070))
 // FMSketch is used to count the number of distinct elements in a set.
 type FMSketch struct {
 	hashset  map[uint64]bool
@@ -54,17 +52,9 @@ type FMSketch struct {
 
 // NewFMSketch returns a new FM sketch.
 func NewFMSketch(maxSize int) *FMSketch {
-<<<<<<< HEAD
-	return &FMSketch{
-		hashset:  make(map[uint64]bool),
-		maxSize:  maxSize,
-		hashFunc: murmur3.New64(),
-	}
-=======
 	result := fmSketchPool.Get().(*FMSketch)
 	result.maxSize = maxSize
 	return result
->>>>>>> bb49dc17021 (statstics: reuse fmsketch (#47070))
 }
 
 // Copy makes a copy for current FMSketch.
@@ -74,17 +64,7 @@ func (s *FMSketch) Copy() *FMSketch {
 	}
 	result := NewFMSketch(s.maxSize)
 	for key, value := range s.hashset {
-<<<<<<< HEAD
-		hashset[key] = value
-	}
-	return &FMSketch{
-		hashset:  hashset,
-		mask:     s.mask,
-		maxSize:  s.maxSize,
-		hashFunc: murmur3.New64(),
-=======
 		result.hashset[key] = value
->>>>>>> bb49dc17021 (statstics: reuse fmsketch (#47070))
 	}
 	result.mask = s.mask
 	return result
@@ -119,8 +99,10 @@ func (s *FMSketch) InsertValue(sc *stmtctx.StatementContext, value types.Datum) 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	s.hashFunc.Reset()
-	_, err = s.hashFunc.Write(bytes)
+	hashFunc := murmur3Pool.Get().(hash.Hash64)
+	hashFunc.Reset()
+	defer murmur3Pool.Put(hashFunc)
+	_, err = hashFunc.Write(bytes)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -131,7 +113,9 @@ func (s *FMSketch) InsertValue(sc *stmtctx.StatementContext, value types.Datum) 
 // InsertRowValue inserts multi-column values to the sketch.
 func (s *FMSketch) InsertRowValue(sc *stmtctx.StatementContext, values []types.Datum) error {
 	b := make([]byte, 0, 8)
-	s.hashFunc.Reset()
+	hashFunc := murmur3Pool.Get().(hash.Hash64)
+	hashFunc.Reset()
+	defer murmur3Pool.Put(hashFunc)
 	for _, v := range values {
 		b = b[:0]
 		b, err := codec.EncodeValue(sc, b, v)

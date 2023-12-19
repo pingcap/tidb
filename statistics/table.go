@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 )
 
@@ -488,7 +489,6 @@ func (t *Table) IsOutdated() bool {
 	return false
 }
 
-<<<<<<< HEAD
 // ColumnGreaterRowCount estimates the row count where the column greater than value.
 func (t *Table) ColumnGreaterRowCount(sctx sessionctx.Context, value types.Datum, colID int64) float64 {
 	c, ok := t.Columns[colID]
@@ -823,7 +823,8 @@ func GetOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 		}
 	}
 	return len(ran.LowVal)
-=======
+}
+
 // ReleaseAndPutToPool releases data structures of Table and put itself back to pool.
 func (t *Table) ReleaseAndPutToPool() {
 	for _, col := range t.Columns {
@@ -834,7 +835,6 @@ func (t *Table) ReleaseAndPutToPool() {
 		idx.FMSketch.DestroyAndPutToPool()
 	}
 	maps.Clear(t.Indices)
->>>>>>> bb49dc17021 (statstics: reuse fmsketch (#47070))
 }
 
 // ID2UniqueID generates a new HistColl whose `Columns` is built from UniqueID of given columns.

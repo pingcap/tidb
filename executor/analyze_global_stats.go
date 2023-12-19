@@ -53,20 +53,13 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 	for globalStatsID := range globalStatsMap {
 		globalStatsTableIDs[globalStatsID.tableID] = struct{}{}
 	}
-<<<<<<< HEAD
-	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-	for tableID := range globalStatsTableIDs {
-		tableAllPartitionStats := make(map[int64]*statistics.Table)
-=======
 
-	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
+	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	tableIDs := make(map[int64]struct{}, len(globalStatsTableIDs))
 	tableAllPartitionStats := make(map[int64]*statistics.Table)
 	for tableID := range globalStatsTableIDs {
 		tableIDs[tableID] = struct{}{}
 		maps.Clear(tableAllPartitionStats)
-
->>>>>>> bb49dc17021 (statstics: reuse fmsketch (#47070))
 		for globalStatsID, info := range globalStatsMap {
 			if globalStatsID.tableID != tableID {
 				continue
