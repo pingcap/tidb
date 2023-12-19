@@ -139,6 +139,12 @@ type indexHintInfo struct {
 	matched bool
 }
 
+func (hint *indexHintInfo) match(dbName, tblName model.CIStr) bool {
+	return hint.tblName.L == tblName.L &&
+		(hint.dbName.L == dbName.L ||
+			hint.dbName.L == "*") // for universal bindings, e.g. *.t
+}
+
 func (hint *indexHintInfo) hintTypeString() string {
 	switch hint.indexHint.HintType {
 	case ast.HintUse:
@@ -322,7 +328,9 @@ func (*tableHintInfo) matchTableName(tables []*hintTableInfo, hintTables []hintT
 			if table == nil {
 				continue
 			}
-			if curEntry.dbName.L == table.dbName.L && curEntry.tblName.L == table.tblName.L && table.selectOffset == curEntry.selectOffset {
+			if (curEntry.dbName.L == table.dbName.L || curEntry.dbName.L == "*") &&
+				curEntry.tblName.L == table.tblName.L &&
+				table.selectOffset == curEntry.selectOffset {
 				hintTables[i].matched = true
 				hintMatched = true
 				break
@@ -1454,7 +1462,7 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	indexHintsLen := len(indexHints)
 	if tableHints != nil {
 		for i, hint := range tableHints.indexHintList {
-			if hint.dbName.L == dbName.L && hint.tblName.L == tblName.L {
+			if hint.match(dbName, tblName) {
 				indexHints = append(indexHints, hint.indexHint)
 				tableHints.indexHintList[i].matched = true
 			}

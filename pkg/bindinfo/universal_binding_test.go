@@ -37,6 +37,21 @@ func showBinding(tk *testkit.TestKit, showStmt string) [][]interface{} {
 	return result
 }
 
+func removeAllBindings(tk *testkit.TestKit, global bool) {
+	scope := "session"
+	if global {
+		scope = "global"
+	}
+	res := showBinding(tk, fmt.Sprintf("show %v bindings", scope))
+	for _, r := range res {
+		if r[4] == "builtin" {
+			continue
+		}
+		tk.MustExec(fmt.Sprintf("drop %v binding for sql digest '%v'", scope, r[6]))
+	}
+	tk.MustQuery(fmt.Sprintf("show %v bindings", scope)).Check(testkit.Rows()) // empty
+}
+
 func TestUniversalBindingBasic(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
@@ -64,10 +79,12 @@ func TestUniversalBindingBasic(t *testing.T) {
 					tk.MustExec("use " + useDB)
 					for _, testDB := range []string{"", "test.", "test1.", "test2."} {
 						tk.MustExec(`set @@tidb_opt_enable_universal_binding=1`) // enabled
-						tk.MustUseIndex(fmt.Sprintf("select * from %vt", testDB), idx)
+						require.True(t, tk.MustUseIndex(fmt.Sprintf("select * from %vt", testDB), idx))
 						tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+						require.True(t, tk.MustUseIndex(fmt.Sprintf("select * from %vt", testDB), idx))
+						tk.MustQuery(`show warnings`).Check(testkit.Rows())      // no warning
 						tk.MustExec(`set @@tidb_opt_enable_universal_binding=0`) // disabled
-						tk.MustUseIndex(fmt.Sprintf("select * from %vt", testDB), idx)
+						tk.MustQuery(fmt.Sprintf("select * from %vt", testDB))
 						tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
 					}
 				}
@@ -259,4 +276,158 @@ func TestUniversalBindingGC(t *testing.T) {
 	bindHandle := bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
 	require.NoError(t, bindHandle.GCGlobalBinding())
 	tk.MustQuery(`select bind_sql, status, type from mysql.bind_info where source != 'builtin'`).Check(testkit.Rows()) // empty after GC
+}
+
+func TestUniversalBindingHints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+
+	for _, db := range []string{"db1", "db2", "db3"} {
+		tk.MustExec(`create database ` + db)
+		tk.MustExec(`use ` + db)
+		tk.MustExec(`create table t1 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
+		tk.MustExec(`create table t2 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
+		tk.MustExec(`create table t3 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
+	}
+	tk.MustExec(`set @@tidb_opt_enable_universal_binding=1`)
+
+	for _, c := range []struct {
+		binding   string
+		qTemplate string
+	}{
+		// use index
+		{`create universal binding using select /*+ use_index(t1, c) */ * from t1 where a=1`,
+			`select * from %st1 where a=1000`},
+		{`create universal binding using select /*+ use_index(t1, c) */ * from t1 where d<1`,
+			`select * from %st1 where d<10000`},
+		{`create universal binding using select /*+ use_index(t1, c) */ * from t1, t2 where t1.d<1`,
+			`select * from %st1, t2 where t1.d<100`},
+		{`create universal binding using select /*+ use_index(t1, c) */ * from t1, t2 where t1.d<1`,
+			`select * from t1, %st2 where t1.d<100`},
+		{`create universal binding using select /*+ use_index(t1, c), use_index(t2, a) */ * from t1, t2 where t1.d<1`,
+			`select * from %st1, t2 where t1.d<100`},
+		{`create universal binding using select /*+ use_index(t1, c), use_index(t2, a) */ * from t1, t2 where t1.d<1`,
+			`select * from t1, %st2 where t1.d<100`},
+		{`create universal binding using select /*+ use_index(t1, c), use_index(t2, a) */ * from t1, t2, t3 where t1.d<1`,
+			`select * from %st1, t2, t3 where t1.d<100`},
+		{`create universal binding using select /*+ use_index(t1, c), use_index(t2, a) */ * from t1, t2, t3 where t1.d<1`,
+			`select * from t1, t2, %st3 where t1.d<100`},
+
+		// ignore index
+		{`create universal binding using select /*+ ignore_index(t1, b) */ * from t1 where b=1`,
+			`select * from %st1 where b=1000`},
+		{`create universal binding using select /*+ ignore_index(t1, b) */ * from t1 where b>1`,
+			`select * from %st1 where b>1000`},
+		{`create universal binding using select /*+ ignore_index(t1, b) */ * from t1 where b in (1,2)`,
+			`select * from %st1 where b in (1)`},
+		{`create universal binding using select /*+ ignore_index(t1, b) */ * from t1 where b in (1,2)`,
+			`select * from %st1 where b in (1,2,3,4,5)`},
+
+		// order index hint
+		{`create universal binding using select /*+ order_index(t1, a) */ a from t1 where a<10 order by a limit 10`,
+			`select a from %st1 where a<10000 order by a limit 10`},
+		{`create universal binding using select /*+ order_index(t1, b) */ b from t1 where b>10 order by b limit 1111`,
+			`select b from %st1 where b>2 order by b limit 10`},
+
+		// no order index hint
+		{`create universal binding using select /*+ no_order_index(t1, c) */ c from t1 where c<10 order by c limit 10`,
+			`select c from %st1 where c<10000 order by c limit 10`},
+		{`create universal binding using select /*+ no_order_index(t1, d) */ d from t1 where d>10 order by d limit 1111`,
+			`select d from %st1 where d>2 order by d limit 10`},
+
+		// agg hint
+		{`create universal binding using select /*+ hash_agg() */ count(*) from t1 group by a`,
+			`select count(*) from %st1 group by a`},
+		{`create universal binding using select /*+ stream_agg() */ count(*) from t1 group by b`,
+			`select count(*) from %st1 group by b`},
+
+		// to_cop hint
+		{`create universal binding using select /*+ agg_to_cop() */ sum(a) from t1`,
+			`select sum(a) from %st1`},
+		{`create universal binding using select /*+ limit_to_cop() */ a from t1 limit 10`,
+			`select a from %st1 limit 101`},
+
+		// index merge hint
+		{`create universal binding using select /*+ use_index_merge(t1, c, d) */ * from t1 where c=1 or d=1`,
+			`select * from %st1 where c=1000 or d=1000`},
+		{`create universal binding using select /*+ no_index_merge() */ * from t1 where a=1 or b=1`,
+			`select * from %st1 where a=1000 or b=1000`},
+
+		// join type hint
+		{`create universal binding using select /*+ hash_join(t1) */ * from t1, t2 where t1.a=t2.a`,
+			`select * from %st1, t2 where t1.a=t2.a`},
+		{`create universal binding using select /*+ hash_join(t2) */ * from t1, t2 where t1.a=t2.a`,
+			`select * from t1, %st2 where t1.a=t2.a`},
+		{`create universal binding using select /*+ hash_join(t2) */ * from t1, t2, t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		{`create universal binding using select /*+ hash_join_build(t1) */ * from t1, t2 where t1.a=t2.a`,
+			`select * from t1, %st2 where t1.a=t2.a`},
+		{`create universal binding using select /*+ hash_join_probe(t1) */ * from t1, t2 where t1.a=t2.a`,
+			`select * from t1, %st2 where t1.a=t2.a`},
+		{`create universal binding using select /*+ merge_join(t1) */ * from t1, t2 where t1.a=t2.a`,
+			`select * from %st1, t2 where t1.a=t2.a`},
+		{`create universal binding using select /*+ merge_join(t2) */ * from t1, t2 where t1.a=t2.a`,
+			`select * from t1, %st2 where t1.a=t2.a`},
+		{`create universal binding using select /*+ merge_join(t2) */ * from t1, t2, t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		{`create universal binding using select /*+ inl_join(t1) */ * from t1, t2 where t1.a=t2.a`,
+			`select * from %st1, t2 where t1.a=t2.a`},
+		{`create universal binding using select /*+ inl_join(t2) */ * from t1, t2 where t1.a=t2.a`,
+			`select * from t1, %st2 where t1.a=t2.a`},
+		{`create universal binding using select /*+ inl_join(t2) */ * from t1, t2, t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+
+		// TODO: no_xxx_join hints are not compatible with bindings, fix later.
+		// no join type hint
+		//{`create universal binding using select /*+ no_hash_join(t1) */ * from t1, t2 where t1.b=t2.b`,
+		//	`select * from %st1, t2 where t1.b=t2.b`},
+		//{`create universal binding using select /*+ no_hash_join(t2) */ * from t1, t2 where t1.c=t2.c`,
+		//	`select * from t1, %st2 where t1.c=t2.c`},
+		//{`create universal binding using select /*+ no_hash_join(t2) */ * from t1, t2, t3 where t1.a=t2.a and t3.b=t2.b`,
+		//	`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		//{`create universal binding using select /*+ no_merge_join(t1) */ * from t1, t2 where t1.b=t2.b`,
+		//	`select * from %st1, t2 where t1.b=t2.b`},
+		//{`create universal binding using select /*+ no_merge_join(t2) */ * from t1, t2 where t1.c=t2.c`,
+		//	`select * from t1, %st2 where t1.c=t2.c`},
+		//{`create universal binding using select /*+ no_merge_join(t2) */ * from t1, t2, t3 where t1.a=t2.a and t3.b=t2.b`,
+		//	`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		//{`create universal binding using select /*+ no_index_join(t1) */ * from t1, t2 where t1.b=t2.b`,
+		//	`select * from %st1, t2 where t1.b=t2.b`},
+		//{`create universal binding using select /*+ no_index_join(t2) */ * from t1, t2 where t1.c=t2.c`,
+		//	`select * from t1, %st2 where t1.c=t2.c`},
+		//{`create universal binding using select /*+ no_index_join(t2) */ * from t1, t2, t3 where t1.a=t2.a and t3.b=t2.b`,
+		//	`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+
+		// join order hint
+		{`create universal binding using select /*+ leading(t2) */ * from t1, t2 where t1.b=t2.b`,
+			`select * from %st1, t2 where t1.b=t2.b`},
+		{`create universal binding using select /*+ leading(t2) */ * from t1, t2 where t1.c=t2.c`,
+			`select * from t1, %st2 where t1.c=t2.c`},
+		{`create universal binding using select /*+ leading(t2, t1) */ * from t1, t2 where t1.c=t2.c`,
+			`select * from t1, %st2 where t1.c=t2.c`},
+		{`create universal binding using select /*+ leading(t1, t2) */ * from t1, t2 where t1.c=t2.c`,
+			`select * from t1, %st2 where t1.c=t2.c`},
+		{`create universal binding using select /*+ leading(t1) */ * from t1, t2, t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		{`create universal binding using select /*+ leading(t2) */ * from t1, t2, t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		{`create universal binding using select /*+ leading(t2,t3) */ * from t1, t2, t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		{`create universal binding using select /*+ leading(t2,t3,t1) */ * from t1, t2, t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+	} {
+		removeAllBindings(tk, false)
+		tk.MustExec(c.binding)
+		for _, currentDB := range []string{"db1", "db2", "db3"} {
+			tk.MustExec(`use ` + currentDB)
+			for _, db := range []string{"db1.", "db2.", "db3.", ""} {
+				query := fmt.Sprintf(c.qTemplate, db)
+				tk.MustExec(query)
+				tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+				tk.MustExec(query)
+				tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+			}
+		}
+	}
 }
