@@ -57,7 +57,11 @@ go_test(
     embed = [":bindinfo"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 43,
+=======
+    shard_count = 48,
+>>>>>>> 7d33d0d226e (parser: ignore schema name if WithoutSchemaNameFlag is set when restoring hints (#49587))
     deps = [
         "//pkg/bindinfo/internal",
         "//pkg/config",
