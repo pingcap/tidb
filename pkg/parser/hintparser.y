@@ -358,7 +358,12 @@ TableOptimizerHintOpt:
 		parser.warnUnsupportedHint($1)
 		$$ = nil
 	}
-|	hintIdentifier '(' Identifier ')'
+|	hintIdentifier '(' PartitionList ')'
+	{
+		parser.warnUnsupportedHint($1)
+		$$ = nil
+	}
+|	hintIdentifier '(' PartitionList CommaOpt hintIntLit ')'
 	{
 		parser.warnUnsupportedHint($1)
 		$$ = nil
