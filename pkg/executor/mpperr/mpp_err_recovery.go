@@ -30,9 +30,10 @@ type RecoveryInfo struct {
 // NewMPPErrRecovery returns new instance of MPPErrRecovery.
 func NewMPPErrRecovery(useAutoScaler bool, holderCap uint64, enable bool, parent *memory.Tracker) *MPPErrRecovery {
 	return &MPPErrRecovery{
-		enable:         enable,
-		handlers:       []errHandler{newMemLimitErrHandler(useAutoScaler)},
-		holder:         newMPPResultHolder(holderCap, parent),
+		enable:   enable,
+		handlers: []errHandler{newMemLimitErrHandler(useAutoScaler)},
+		holder:   newMPPResultHolder(holderCap, parent),
+		// Default recovery 3 time.
 		maxRecoveryCnt: 3,
 	}
 }

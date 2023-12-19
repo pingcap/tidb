@@ -153,13 +153,24 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		return err
 	}
 
-	var holdCap uint64 = 2048
+	// Default hold 3 chunks.
+	holdCap := 3 * e.Ctx().GetSessionVars().MaxChunkSize
+
 	enableMPPRecovery := true
+	useAutoScaler := config.GetGlobalConfig().UseAutoScaler
+	disaggTiFlash := config.GetGlobalConfig().DisaggregatedTiFlash
+
+	// For now, mpp err recovery only support MemLimit, which is only useful when AutoScaler is used.
+	// So disable recovery in normal case.
+	if !disaggTiFlash || !useAutoScaler {
+		enableMPPRecovery = false
+	}
+	// For cache table, will not dispatch tasks to TiFlash, so no need to recovery.
 	if e.dummy {
 		enableMPPRecovery = false
 	}
-	e.mppErrRecovery = mpperr.NewMPPErrRecovery(config.GetGlobalConfig().UseAutoScaler,
-		holdCap, enableMPPRecovery, e.memTracker)
+
+	e.mppErrRecovery = mpperr.NewMPPErrRecovery(useAutoScaler, uint64(holdCap), enableMPPRecovery, e.memTracker)
 	return nil
 }
 
@@ -232,6 +243,9 @@ func (e *MPPGather) Close() error {
 	mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherID: e.gatherID})
 	if err != nil {
 		return err
+	}
+	if e.mppErrRecovery != nil {
+		e.mppErrRecovery.ResetHolder()
 	}
 	return nil
 }
