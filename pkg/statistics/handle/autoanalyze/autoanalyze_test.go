@@ -38,6 +38,65 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+func TestAutoAnalyzeLockedTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (1)")
+	h := dom.StatsHandle()
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	require.NoError(t, err)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	// Lock the table.
+	tk.MustExec("lock stats t")
+	is := dom.InfoSchema()
+	require.NoError(t, h.Update(is))
+	autoanalyze.AutoAnalyzeMinCnt = 0
+	defer func() {
+		autoanalyze.AutoAnalyzeMinCnt = 1000
+	}()
+	// Try to analyze the locked table, it should not analyze the table.
+	require.False(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+
+	// Unlock the table.
+	tk.MustExec("unlock stats t")
+	// Try again, it should analyze the table.
+	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+}
+
+func TestDisableAutoAnalyze(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (1)")
+	h := dom.StatsHandle()
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	require.NoError(t, err)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	is := dom.InfoSchema()
+	require.NoError(t, h.Update(is))
+
+	// Set auto analyze ratio to 0.
+	tk.MustExec("set @@global.tidb_auto_analyze_ratio = 0")
+	autoanalyze.AutoAnalyzeMinCnt = 0
+	defer func() {
+		autoanalyze.AutoAnalyzeMinCnt = 1000
+	}()
+	// Even auto analyze ratio is set to 0, we still need to analyze the unanalyzed tables.
+	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+	require.NoError(t, h.Update(is))
+
+	// Try again, it should not analyze the table because it's already analyzed and auto analyze ratio is 0.
+	require.False(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+
+	// Index analyze doesn't depend on auto analyze ratio. Only control by tidb_enable_auto_analyze.
+	// Even auto analyze ratio is set to 0, we still need to analyze the newly created index.
+	tk.MustExec("alter table t add index ia(a)")
+	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+}
+
 func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

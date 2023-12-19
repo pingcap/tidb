@@ -1499,7 +1499,7 @@ func (p *rangePruner) extractDataForPrune(sctx sessionctx.Context, expr expressi
 	// the constExpr may not a really constant when coming here.
 	// Suppose the partition expression is 'a + b' and we have a condition 'a = 2',
 	// the constExpr is '2 + b' after the replacement which we can't evaluate.
-	if !constExpr.ConstItem(sctx.GetSessionVars().StmtCtx) {
+	if !constExpr.ConstItem(sctx.GetSessionVars().StmtCtx.UseCache) {
 		return ret, false
 	}
 	c, isNull, err := constExpr.EvalInt(sctx, chunk.Row{})
@@ -1688,7 +1688,7 @@ func (s *partitionProcessor) resolveOptimizeHint(ds *DataSource, partitionName m
 	}
 	if ds.preferStoreType&preferTiFlash != 0 && ds.preferStoreType&preferTiKV != 0 {
 		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(
-			errors.New("hint `read_from_storage` has conflict storage type for the partition " + partitionName.L))
+			errors.NewNoStackError("hint `read_from_storage` has conflict storage type for the partition " + partitionName.L))
 	}
 
 	return s.resolveAccessPaths(ds)

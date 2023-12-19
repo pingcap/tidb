@@ -1570,6 +1570,16 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			retType:      types.NewFieldType(mysql.TypeInt24),
 			args:         []Expression{intColumn, intColumn},
 		},
+		{
+			functionName: ast.Upper,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn},
+		},
+		{
+			functionName: ast.Lower,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn},
+		},
 	}
 
 	ctx := mock.NewContext()

@@ -53,7 +53,7 @@ func (p *mockVecPlusIntBuiltinFunc) releaseBuf(buf *chunk.Column) {
 	}
 }
 
-func (p *mockVecPlusIntBuiltinFunc) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (p *mockVecPlusIntBuiltinFunc) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := p.allocBuf(n)
 	if err != nil {
@@ -218,7 +218,7 @@ func (p *mockBuiltinDouble) vectorized() bool {
 	return p.enableVec
 }
 
-func (p *mockBuiltinDouble) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (p *mockBuiltinDouble) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := p.args[0].VecEvalInt(ctx, input, result); err != nil {
 		return err
 	}
@@ -229,7 +229,7 @@ func (p *mockBuiltinDouble) vecEvalInt(ctx sessionctx.Context, input *chunk.Chun
 	return nil
 }
 
-func (p *mockBuiltinDouble) vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (p *mockBuiltinDouble) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := p.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
@@ -240,7 +240,7 @@ func (p *mockBuiltinDouble) vecEvalReal(ctx sessionctx.Context, input *chunk.Chu
 	return nil
 }
 
-func (p *mockBuiltinDouble) vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (p *mockBuiltinDouble) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	var buf *chunk.Column
 	var err error
 	if buf, err = p.baseBuiltinFunc.bufAllocator.get(); err != nil {
@@ -258,7 +258,7 @@ func (p *mockBuiltinDouble) vecEvalString(ctx sessionctx.Context, input *chunk.C
 	return nil
 }
 
-func (p *mockBuiltinDouble) vecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (p *mockBuiltinDouble) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := p.args[0].VecEvalDecimal(ctx, input, result); err != nil {
 		return err
 	}
@@ -273,7 +273,7 @@ func (p *mockBuiltinDouble) vecEvalDecimal(ctx sessionctx.Context, input *chunk.
 	return nil
 }
 
-func (p *mockBuiltinDouble) vecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (p *mockBuiltinDouble) vecEvalTime(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := p.args[0].VecEvalTime(ctx, input, result); err != nil {
 		return err
 	}
@@ -290,7 +290,7 @@ func (p *mockBuiltinDouble) vecEvalTime(ctx sessionctx.Context, input *chunk.Chu
 	return nil
 }
 
-func (p *mockBuiltinDouble) vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (p *mockBuiltinDouble) vecEvalDuration(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if err := p.args[0].VecEvalDuration(ctx, input, result); err != nil {
 		return err
 	}
@@ -301,7 +301,7 @@ func (p *mockBuiltinDouble) vecEvalDuration(ctx sessionctx.Context, input *chunk
 	return nil
 }
 
-func (p *mockBuiltinDouble) vecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (p *mockBuiltinDouble) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	var buf *chunk.Column
 	var err error
 	if buf, err = p.baseBuiltinFunc.bufAllocator.get(); err != nil {
@@ -330,7 +330,7 @@ func (p *mockBuiltinDouble) vecEvalJSON(ctx sessionctx.Context, input *chunk.Chu
 	return nil
 }
 
-func (p *mockBuiltinDouble) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (p *mockBuiltinDouble) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	v, isNull, err := p.args[0].EvalInt(ctx, row)
 	if err != nil {
 		return 0, false, err
@@ -338,7 +338,7 @@ func (p *mockBuiltinDouble) evalInt(ctx sessionctx.Context, row chunk.Row) (int6
 	return v * 2, isNull, nil
 }
 
-func (p *mockBuiltinDouble) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (p *mockBuiltinDouble) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	v, isNull, err := p.args[0].EvalReal(ctx, row)
 	if err != nil {
 		return 0, false, err
@@ -346,7 +346,7 @@ func (p *mockBuiltinDouble) evalReal(ctx sessionctx.Context, row chunk.Row) (flo
 	return v * 2, isNull, nil
 }
 
-func (p *mockBuiltinDouble) evalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
+func (p *mockBuiltinDouble) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	v, isNull, err := p.args[0].EvalString(ctx, row)
 	if err != nil {
 		return "", false, err
@@ -354,7 +354,7 @@ func (p *mockBuiltinDouble) evalString(ctx sessionctx.Context, row chunk.Row) (s
 	return v + v, isNull, nil
 }
 
-func (p *mockBuiltinDouble) evalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
+func (p *mockBuiltinDouble) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
 	v, isNull, err := p.args[0].EvalDecimal(ctx, row)
 	if err != nil {
 		return nil, false, err
@@ -366,7 +366,7 @@ func (p *mockBuiltinDouble) evalDecimal(ctx sessionctx.Context, row chunk.Row) (
 	return r, isNull, nil
 }
 
-func (p *mockBuiltinDouble) evalTime(ctx sessionctx.Context, row chunk.Row) (types.Time, bool, error) {
+func (p *mockBuiltinDouble) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
 	v, isNull, err := p.args[0].EvalTime(ctx, row)
 	if err != nil {
 		return types.ZeroTime, false, err
@@ -379,7 +379,7 @@ func (p *mockBuiltinDouble) evalTime(ctx sessionctx.Context, row chunk.Row) (typ
 	return v, isNull, err
 }
 
-func (p *mockBuiltinDouble) evalDuration(ctx sessionctx.Context, row chunk.Row) (types.Duration, bool, error) {
+func (p *mockBuiltinDouble) evalDuration(ctx EvalContext, row chunk.Row) (types.Duration, bool, error) {
 	v, isNull, err := p.args[0].EvalDuration(ctx, row)
 	if err != nil {
 		return types.Duration{}, false, err
@@ -388,7 +388,7 @@ func (p *mockBuiltinDouble) evalDuration(ctx sessionctx.Context, row chunk.Row) 
 	return v, isNull, err
 }
 
-func (p *mockBuiltinDouble) evalJSON(ctx sessionctx.Context, row chunk.Row) (types.BinaryJSON, bool, error) {
+func (p *mockBuiltinDouble) evalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, bool, error) {
 	j, isNull, err := p.args[0].EvalJSON(ctx, row)
 	if err != nil {
 		return types.BinaryJSON{}, false, err
@@ -535,7 +535,7 @@ func checkVecEval(t *testing.T, eType types.EvalType, sel []int, result *chunk.C
 	}
 }
 
-func vecEvalType(ctx sessionctx.Context, f builtinFunc, eType types.EvalType, input *chunk.Chunk, result *chunk.Column) error {
+func vecEvalType(ctx EvalContext, f builtinFunc, eType types.EvalType, input *chunk.Chunk, result *chunk.Column) error {
 	switch eType {
 	case types.ETInt:
 		return f.vecEvalInt(ctx, input, result)
@@ -624,7 +624,7 @@ func TestDoubleVec2Row(t *testing.T) {
 	}
 }
 
-func evalRows(b *testing.B, ctx sessionctx.Context, it *chunk.Iterator4Chunk, eType types.EvalType, result *chunk.Column, rowDouble builtinFunc) {
+func evalRows(b *testing.B, ctx EvalContext, it *chunk.Iterator4Chunk, eType types.EvalType, result *chunk.Column, rowDouble builtinFunc) {
 	switch eType {
 	case types.ETInt:
 		for i := 0; i < b.N; i++ {

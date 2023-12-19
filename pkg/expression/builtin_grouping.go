@@ -227,7 +227,7 @@ func (b *BuiltinGroupingImplSig) grouping(groupingID uint64) int64 {
 }
 
 // evalInt evals a builtinGroupingSig.
-func (b *BuiltinGroupingImplSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *BuiltinGroupingImplSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	if !b.isMetaInited {
 		return 0, false, errors.Errorf("Meta data is not initialized")
 	}
@@ -259,7 +259,7 @@ func (b *BuiltinGroupingImplSig) groupingVec(groupingIds *chunk.Column, rowNum i
 	}
 }
 
-func (b *BuiltinGroupingImplSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *BuiltinGroupingImplSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	if !b.isMetaInited {
 		return errors.Errorf("Meta data is not initialized")
 	}

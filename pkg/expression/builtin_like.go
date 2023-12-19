@@ -70,7 +70,7 @@ func (b *builtinLikeSig) Clone() builtinFunc {
 
 // evalInt evals a builtinLikeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/string-comparison-functions.html#operator_like
-func (b *builtinLikeSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinLikeSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	valStr, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -87,7 +87,7 @@ func (b *builtinLikeSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, 
 	memorization := func() {
 		if b.pattern == nil {
 			b.pattern = b.collator().Pattern()
-			if b.args[1].ConstItem(ctx.GetSessionVars().StmtCtx) && b.args[2].ConstItem(ctx.GetSessionVars().StmtCtx) {
+			if b.args[1].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache) && b.args[2].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache) {
 				b.pattern.Compile(patternStr, byte(escape))
 				b.isMemorizedPattern = true
 			}

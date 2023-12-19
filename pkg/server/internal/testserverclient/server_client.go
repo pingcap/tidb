@@ -28,6 +28,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1006,6 +1007,204 @@ func columnsAsExpected(t *testing.T, columns []*sql.NullString, expected []strin
 	for i := 0; i < len(columns); i++ {
 		require.Equal(t, expected[i], columns[i].String)
 	}
+}
+
+func (cli *TestServerClient) RunTestLoadDataInTransaction(t *testing.T) {
+	fp, err := os.CreateTemp("", "load_data_test.csv")
+	require.NoError(t, err)
+	path := fp.Name()
+
+	require.NotNil(t, fp)
+	defer func() {
+		err = fp.Close()
+		require.NoError(t, err)
+		err = os.Remove(path)
+		require.NoError(t, err)
+	}()
+
+	_, err = fp.WriteString("1")
+	require.NoError(t, err)
+
+	// load file in transaction can be rolled back
+	cli.RunTestsOnNewDB(
+		t, func(config *mysql.Config) {
+			config.AllowAllFiles = true
+			config.Params["sql_mode"] = "''"
+		}, "LoadDataInTransaction", func(dbt *testkit.DBTestKit) {
+			dbt.MustExec("create table t (a int)")
+			txn, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			txn.Exec("insert into t values (100)") // `load data` doesn't commit current txn
+			_, err = txn.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+			require.NoError(t, err)
+			rows, err := txn.Query("select * from t")
+			require.NoError(t, err)
+			cli.CheckRows(t, rows, "100\n1")
+			err = txn.Rollback()
+			require.NoError(t, err)
+			rows = dbt.MustQuery("select * from t")
+			cli.CheckRows(t, rows)
+		},
+	)
+
+	// load file in transaction doesn't commit until the transaction is committed
+	cli.RunTestsOnNewDB(
+		t, func(config *mysql.Config) {
+			config.AllowAllFiles = true
+			config.Params["sql_mode"] = "''"
+		}, "LoadDataInTransaction", func(dbt *testkit.DBTestKit) {
+			dbt.MustExec("create table t (a int)")
+			txn, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			_, err = txn.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+			require.NoError(t, err)
+			rows, err := txn.Query("select * from t")
+			require.NoError(t, err)
+			cli.CheckRows(t, rows, "1")
+			err = txn.Commit()
+			require.NoError(t, err)
+			rows = dbt.MustQuery("select * from t")
+			cli.CheckRows(t, rows, "1")
+		},
+	)
+
+	// load file in auto commit mode should succeed
+	cli.RunTestsOnNewDB(
+		t, func(config *mysql.Config) {
+			config.AllowAllFiles = true
+			config.Params["sql_mode"] = "''"
+		}, "LoadDataInAutoCommit", func(dbt *testkit.DBTestKit) {
+			dbt.MustExec("create table t (a int)")
+			dbt.MustExec(fmt.Sprintf("load data local infile %q into table t", path))
+			txn, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			rows, _ := txn.Query("select * from t")
+			cli.CheckRows(t, rows, "1")
+		},
+	)
+
+	// load file in a pessimistic transaction,
+	// should acquire locks when after its execution and before it commits.
+	// The lock should be observed by another transaction that is attempting to acquire the same
+	// lock.
+	dbName := "LoadDataInPessimisticTransaction"
+	cli.RunTestsOnNewDB(
+		t, func(config *mysql.Config) {
+			config.AllowAllFiles = true
+			config.Params["sql_mode"] = "''"
+		}, dbName, func(dbt *testkit.DBTestKit) {
+			dbt.MustExec("set @@global.tidb_txn_mode = 'pessimistic'")
+			dbt.MustExec("create table t (a int primary key)")
+			txn, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			_, err = txn.Exec(fmt.Sprintf("USE `%s`;", dbName))
+			require.NoError(t, err)
+			_, err = txn.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+			require.NoError(t, err)
+			rows, err := txn.Query("select * from t")
+			require.NoError(t, err)
+			cli.CheckRows(t, rows, "1")
+
+			var wg sync.WaitGroup
+			wg.Add(1)
+			txn2Locked := make(chan struct{}, 1)
+			failed := make(chan struct{}, 1)
+			go func() {
+				time.Sleep(2 * time.Second)
+				select {
+				case <-txn2Locked:
+					failed <- struct{}{}
+				default:
+				}
+
+				err2 := txn.Commit()
+				require.NoError(t, err2)
+				wg.Done()
+			}()
+			txn2, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			_, err = txn2.Exec(fmt.Sprintf("USE `%s`;", dbName))
+			require.NoError(t, err)
+			_, err = txn2.Exec("select * from t where a = 1 for update")
+			require.NoError(t, err)
+			txn2Locked <- struct{}{}
+			wg.Wait()
+			txn2.Rollback()
+			select {
+			case <-failed:
+				require.Fail(t, "txn2 should not be able to acquire the lock")
+			default:
+			}
+
+			require.NoError(t, err)
+			rows = dbt.MustQuery("select * from t")
+			cli.CheckRows(t, rows, "1")
+		},
+	)
+
+	dbName = "LoadDataInExplicitTransaction"
+	cli.RunTestsOnNewDB(
+		t, func(config *mysql.Config) {
+			config.AllowAllFiles = true
+			config.Params["sql_mode"] = "''"
+		}, dbName, func(dbt *testkit.DBTestKit) {
+			// in optimistic txn, one should not block another
+			dbt.MustExec("set @@global.tidb_txn_mode = 'optimistic'")
+			dbt.MustExec("create table t (a int primary key)")
+			txn1, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			txn2, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			_, err = txn1.Exec(fmt.Sprintf("USE `%s`;", dbName))
+			require.NoError(t, err)
+			_, err = txn2.Exec(fmt.Sprintf("USE `%s`;", dbName))
+			require.NoError(t, err)
+			_, err = txn1.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+			require.NoError(t, err)
+			_, err = txn2.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+			require.NoError(t, err)
+			err = txn1.Commit()
+			require.NoError(t, err)
+			err = txn2.Commit()
+			require.ErrorContains(t, err, "Write conflict")
+			rows := dbt.MustQuery("select * from t")
+			cli.CheckRows(t, rows, "1")
+		},
+	)
+
+	cli.RunTestsOnNewDB(
+		t, func(config *mysql.Config) {
+			config.AllowAllFiles = true
+			config.Params["sql_mode"] = "''"
+		}, "LoadDataFromServerFile", func(dbt *testkit.DBTestKit) {
+			dbt.MustExec("create table t (a int)")
+			_, err = dbt.GetDB().Exec(fmt.Sprintf("load data infile %q into table t", path))
+			require.ErrorContains(t, err, "Don't support load data from tidb-server's disk.")
+		},
+	)
+
+	// The test is intended to test if the load data statement correctly cleans up its
+	//  resources after execution, and does not affect following statements.
+	// For example, the 1st load data builds the reader and finishes.
+	// The 2nd load data should not be able to access the reader, especially when it should fail
+	cli.RunTestsOnNewDB(
+		t, func(config *mysql.Config) {
+			config.AllowAllFiles = true
+			config.Params["sql_mode"] = "''"
+		}, "LoadDataCleanup", func(dbt *testkit.DBTestKit) {
+			dbt.MustExec("create table t (a int)")
+			txn, err := dbt.GetDB().Begin()
+			require.NoError(t, err)
+			_, err = txn.Exec(fmt.Sprintf("load data local infile %q into table t", path))
+			require.NoError(t, err)
+			_, err = txn.Exec("load data local infile '/tmp/does_not_exist' into table t")
+			require.ErrorContains(t, err, "no such file or directory")
+			err = txn.Commit()
+			require.NoError(t, err)
+			rows := dbt.MustQuery("select * from t")
+			cli.CheckRows(t, rows, "1")
+		},
+	)
 }
 
 func (cli *TestServerClient) RunTestLoadData(t *testing.T, server *server.Server) {
