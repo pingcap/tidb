@@ -352,6 +352,7 @@ func HandleAutoAnalyze(
 // 2. If the table is analyzed, analyze it when "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio".
 // 3. If the table is analyzed, analyze its indices when the index is not analyzed.
 // 4. If the table is locked, skip it.
+// Exposed solely for testing.
 func RandomPickOneTableAndTryAutoAnalyze(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
