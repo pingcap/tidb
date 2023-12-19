@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/pingcap/tidb/tests/realtikvtest/addindextestutil"
 )
 
 func init() {
@@ -28,29 +29,14 @@ func init() {
 	})
 }
 
-func initTest(t *testing.T) *suiteContext {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("drop database if exists addindex;")
-	tk.MustExec("create database addindex;")
-	tk.MustExec("use addindex;")
-	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
-
-	ctx := newSuiteContext(t, tk, store)
-	createTable(tk)
-	insertRows(tk)
-	initWorkloadParams(ctx)
-	return ctx
-}
-
 func TestCreateNonUniqueIndex(t *testing.T) {
 	var colIDs = [][]int{
 		{1, 4, 7, 10, 13, 16, 19, 22, 25},
 		{2, 5, 8, 11, 14, 17, 20, 23, 26},
 		{3, 6, 9, 12, 15, 18, 21, 24, 27},
 	}
-	ctx := initTest(t)
-	testOneColFrame(ctx, colIDs, addIndexNonUnique)
+	ctx := addindextestutil.InitTest(t)
+	addindextestutil.TestOneColFrame(ctx, colIDs, addindextestutil.AddIndexNonUnique)
 }
 
 func TestCreateUniqueIndex(t *testing.T) {
@@ -59,18 +45,18 @@ func TestCreateUniqueIndex(t *testing.T) {
 		{2, 9, 11, 17},
 		{3, 12, 25},
 	}
-	ctx := initTest(t)
-	testOneColFrame(ctx, colIDs, addIndexUnique)
+	ctx := addindextestutil.InitTest(t)
+	addindextestutil.TestOneColFrame(ctx, colIDs, addindextestutil.AddIndexUnique)
 }
 
 func TestCreatePrimaryKey(t *testing.T) {
-	ctx := initTest(t)
-	testOneIndexFrame(ctx, 0, addIndexPK)
+	ctx := addindextestutil.InitTest(t)
+	addindextestutil.TestOneIndexFrame(ctx, 0, addindextestutil.AddIndexPK)
 }
 
 func TestCreateGenColIndex(t *testing.T) {
-	ctx := initTest(t)
-	testOneIndexFrame(ctx, 29, addIndexGenCol)
+	ctx := addindextestutil.InitTest(t)
+	addindextestutil.TestOneIndexFrame(ctx, 29, addindextestutil.AddIndexGenCol)
 }
 
 func TestCreateMultiColsIndex(t *testing.T) {
@@ -97,8 +83,8 @@ func TestCreateMultiColsIndex(t *testing.T) {
 			{18, 21, 24, 27},
 		}
 	}
-	ctx := initTest(t)
-	testTwoColsFrame(ctx, coliIDs, coljIDs, addIndexMultiCols)
+	ctx := addindextestutil.InitTest(t)
+	addindextestutil.TestTwoColsFrame(ctx, coliIDs, coljIDs, addindextestutil.AddIndexMultiCols)
 }
 
 func TestAddForeignKeyWithAutoCreateIndex(t *testing.T) {

@@ -16,11 +16,7 @@ package infosync
 
 import (
 	"context"
-	"encoding/hex"
-	"encoding/json"
-	"fmt"
 
-	"github.com/pingcap/errors"
 	pd "github.com/tikv/pd/client/http"
 )
 
@@ -55,32 +51,21 @@ func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (P
 	if err != nil {
 		return PlacementScheduleStatePending, err
 	}
-
-	if is.etcdCli == nil {
+	if is.pdHTTPCli == nil {
 		return PlacementScheduleStatePending, nil
 	}
-
-	addrs := is.etcdCli.Endpoints()
-
-	if len(addrs) == 0 {
-		return PlacementScheduleStatePending, errors.Errorf("pd unavailable")
+	state, err := is.pdHTTPCli.GetRegionsReplicatedStateByKeyRange(ctx, pd.NewKeyRange(startKey, endKey))
+	if err != nil || len(state) == 0 {
+		return PlacementScheduleStatePending, err
 	}
-
-	res, err := doRequest(ctx, "GetReplicationState", addrs, fmt.Sprintf("%s/replicated?startKey=%s&endKey=%s", pd.Regions, hex.EncodeToString(startKey), hex.EncodeToString(endKey)), "GET", nil)
-	if err == nil && res != nil {
-		st := PlacementScheduleStatePending
-		// it should not fail
-		var state string
-		_ = json.Unmarshal(res, &state)
-		switch state {
-		case "REPLICATED":
-			st = PlacementScheduleStateScheduled
-		case "INPROGRESS":
-			st = PlacementScheduleStateInProgress
-		case "PENDING":
-			st = PlacementScheduleStatePending
-		}
-		return st, nil
+	st := PlacementScheduleStatePending
+	switch state {
+	case "REPLICATED":
+		st = PlacementScheduleStateScheduled
+	case "INPROGRESS":
+		st = PlacementScheduleStateInProgress
+	case "PENDING":
+		st = PlacementScheduleStatePending
 	}
-	return PlacementScheduleStatePending, err
+	return st, nil
 }

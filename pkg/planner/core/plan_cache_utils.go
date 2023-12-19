@@ -57,8 +57,8 @@ var (
 	// PreparedPlanCacheMaxMemory stores the max memory size defined in the global config "performance-server-memory-quota".
 	PreparedPlanCacheMaxMemory = *atomic2.NewUint64(math.MaxUint64)
 
-	// ExtractSelectAndNormalizeDigest extract the select statement and normalize it.
-	ExtractSelectAndNormalizeDigest func(stmtNode ast.StmtNode, specifiledDB string, forBinding bool) (ast.StmtNode, string, string, error)
+	// NormalizeStmtForPlanCache extract the select statement and normalize it.
+	NormalizeStmtForPlanCache func(stmtNode ast.StmtNode, specifiledDB string) (ast.StmtNode, string, string, error)
 )
 
 type paramMarkerExtractor struct {
@@ -90,9 +90,13 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		return nil, nil, 0, ErrPrepareDDL
 	}
 
-	switch paramStmt.(type) {
+	switch stmt := paramStmt.(type) {
 	case *ast.ImportIntoStmt, *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDMLStmt:
 		return nil, nil, 0, ErrUnsupportedPs
+	case *ast.SelectStmt:
+		if stmt.SelectIntoOpt != nil {
+			return nil, nil, 0, ErrUnsupportedPs
+		}
 	}
 
 	// Prepare parameters should NOT over 2 bytes(MaxUint16)
@@ -143,9 +147,9 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 			cacheable = true // it is already checked here
 		}
 		if !cacheable {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip prepared plan-cache: " + reason))
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: " + reason))
 		}
-		selectStmtNode, normalizedSQL4PC, digest4PC, err = ExtractSelectAndNormalizeDigest(paramStmt, vars.CurrentDB, false)
+		selectStmtNode, normalizedSQL4PC, digest4PC, err = NormalizeStmtForPlanCache(paramStmt, vars.CurrentDB)
 		if err != nil || selectStmtNode == nil {
 			normalizedSQL4PC = ""
 			digest4PC = ""

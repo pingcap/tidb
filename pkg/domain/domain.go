@@ -40,9 +40,9 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -131,7 +132,7 @@ type Domain struct {
 	store           kv.Storage
 	infoCache       *infoschema.InfoCache
 	privHandle      *privileges.Handle
-	bindHandle      atomic.Pointer[bindinfo.BindHandle]
+	bindHandle      atomic.Value
 	statsHandle     atomic.Pointer[handle.Handle]
 	statsLease      time.Duration
 	ddl             ddl.DDL
@@ -1040,7 +1041,7 @@ func (do *Domain) Close() {
 	}
 	do.wg.Wait()
 	do.sysSessionPool.Close()
-	variable.UnregisterStatistics(do.bindHandle.Load())
+	variable.UnregisterStatistics(do.BindHandle())
 	if do.onClose != nil {
 		do.onClose()
 	}
@@ -1477,7 +1478,7 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 		errMsg := fmt.Sprintf("TiDB node ID( = %s ) not found in available TiDB nodes list", do.ddl.GetID())
 		return errors.New(errMsg)
 	}
-	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, serverID, taskManager)
+	executorManager, err := taskexecutor.NewManagerBuilder().BuildManager(ctx, serverID, taskManager)
 	if err != nil {
 		return err
 	}
@@ -1487,42 +1488,42 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 		defer func() {
 			storage.SetTaskManager(nil)
 		}()
-		do.distTaskFrameworkLoop(ctx, taskManager, schedulerManager, serverID)
+		do.distTaskFrameworkLoop(ctx, taskManager, executorManager, serverID)
 	}, "distTaskFrameworkLoop")
 	return nil
 }
 
-func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, schedulerManager *scheduler.Manager, serverID string) {
-	err := schedulerManager.Start()
+func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, executorManager *taskexecutor.Manager, serverID string) {
+	err := executorManager.Start()
 	if err != nil {
-		logutil.BgLogger().Error("dist task scheduler manager start failed", zap.Error(err))
+		logutil.BgLogger().Error("dist task executor manager start failed", zap.Error(err))
 		return
 	}
-	logutil.BgLogger().Info("dist task scheduler manager started")
+	logutil.BgLogger().Info("dist task executor manager started")
 	defer func() {
-		logutil.BgLogger().Info("stopping dist task scheduler manager")
-		schedulerManager.Stop()
-		logutil.BgLogger().Info("dist task scheduler manager stopped")
+		logutil.BgLogger().Info("stopping dist task executor manager")
+		executorManager.Stop()
+		logutil.BgLogger().Info("dist task executor manager stopped")
 	}()
 
-	var dispatcherManager *dispatcher.Manager
+	var schedulerManager *scheduler.Manager
 	startDispatchIfNeeded := func() {
-		if dispatcherManager != nil && dispatcherManager.Inited() {
+		if schedulerManager != nil && schedulerManager.Initialized() {
 			return
 		}
 		var err error
-		dispatcherManager, err = dispatcher.NewManager(ctx, taskManager, serverID)
+		schedulerManager, err = scheduler.NewManager(ctx, taskManager, serverID)
 		if err != nil {
-			logutil.BgLogger().Error("failed to create a dist task dispatcher manager", zap.Error(err))
+			logutil.BgLogger().Error("failed to create a dist task scheduler manager", zap.Error(err))
 			return
 		}
-		dispatcherManager.Start()
+		schedulerManager.Start()
 	}
 	stopDispatchIfNeeded := func() {
-		if dispatcherManager != nil && dispatcherManager.Inited() {
-			logutil.BgLogger().Info("stopping dist task dispatcher manager because the current node is not DDL owner anymore", zap.String("id", do.ddl.GetID()))
-			dispatcherManager.Stop()
-			logutil.BgLogger().Info("dist task dispatcher manager stopped", zap.String("id", do.ddl.GetID()))
+		if schedulerManager != nil && schedulerManager.Initialized() {
+			logutil.BgLogger().Info("stopping dist task scheduler manager because the current node is not DDL owner anymore", zap.String("id", do.ddl.GetID()))
+			schedulerManager.Stop()
+			logutil.BgLogger().Info("dist task scheduler manager stopped", zap.String("id", do.ddl.GetID()))
 		}
 	}
 
@@ -1832,8 +1833,12 @@ func (do *Domain) PrivilegeHandle() *privileges.Handle {
 }
 
 // BindHandle returns domain's bindHandle.
-func (do *Domain) BindHandle() *bindinfo.BindHandle {
-	return do.bindHandle.Load()
+func (do *Domain) BindHandle() bindinfo.GlobalBindingHandle {
+	v := do.bindHandle.Load()
+	if v == nil {
+		return nil
+	}
+	return v.(bindinfo.GlobalBindingHandle)
 }
 
 // LoadBindInfoLoop create a goroutine loads BindInfo in a loop, it should
@@ -1841,11 +1846,11 @@ func (do *Domain) BindHandle() *bindinfo.BindHandle {
 func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve sessionctx.Context) error {
 	ctxForHandle.GetSessionVars().InRestrictedSQL = true
 	ctxForEvolve.GetSessionVars().InRestrictedSQL = true
-	if !do.bindHandle.CompareAndSwap(nil, bindinfo.NewBindHandle(ctxForHandle)) {
-		do.bindHandle.Load().Reset(ctxForHandle)
+	if !do.bindHandle.CompareAndSwap(nil, bindinfo.NewGlobalBindingHandle(do.sysSessionPool)) {
+		do.BindHandle().Reset()
 	}
 
-	err := do.bindHandle.Load().Update(true)
+	err := do.BindHandle().Update(true)
 	if err != nil || bindinfo.Lease == 0 {
 		return err
 	}
@@ -1874,7 +1879,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				owner.Cancel()
 				return
 			case <-bindWorkerTicker.C:
-				bindHandle := do.bindHandle.Load()
+				bindHandle := do.BindHandle()
 				err := bindHandle.Update(false)
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
@@ -1889,7 +1894,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				if !owner.IsOwner() {
 					continue
 				}
-				err := do.bindHandle.Load().GCGlobalBinding()
+				err := do.BindHandle().GCGlobalBinding()
 				if err != nil {
 					logutil.BgLogger().Error("GC bind record failed", zap.Error(err))
 				}
@@ -2258,7 +2263,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	do.SetStatsUpdating(true)
 	do.wg.Run(func() { do.updateStatsWorker(ctx, owner) }, "updateStatsWorker")
 	do.wg.Run(func() { do.autoAnalyzeWorker(owner) }, "autoAnalyzeWorker")
-	do.wg.Run(func() { do.gcAnalyzeHistory(owner) }, "gcAnalyzeHistory")
+	do.wg.Run(func() { do.analyzeJobsCleanupWorker(owner) }, "analyzeJobsCleanupWorker")
 	return nil
 }
 
@@ -2371,7 +2376,7 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 				continue
 			}
 			if err := handle.GCIndexUsage(); err != nil {
-				statslogutil.StatsLogger.Error("gc index usage failed", zap.Error(err))
+				statslogutil.StatsLogger().Error("gc index usage failed", zap.Error(err))
 			}
 		}
 	}
@@ -2475,30 +2480,80 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	}
 }
 
-func (do *Domain) gcAnalyzeHistory(owner owner.Manager) {
-	defer util.Recover(metrics.LabelDomain, "gcAnalyzeHistory", nil, false)
+// analyzeJobsCleanupWorker is a background worker that periodically performs two main tasks:
+//
+//  1. Garbage Collection: It removes outdated analyze jobs from the statistics handle.
+//     This operation is performed every hour and only if the current instance is the owner.
+//     Analyze jobs older than 7 days are considered outdated and are removed.
+//
+//  2. Cleanup: It cleans up corrupted analyze jobs.
+//     A corrupted analyze job is one that is in a 'pending' or 'running' state,
+//     but is associated with a TiDB instance that is either not currently running or has been restarted.
+//     This operation is performed every 100 stats leases.
+//     It first retrieves the list of current analyze processes, then removes any analyze job
+//     that is not associated with a current process. Additionally, if the current instance is the owner,
+//     it also cleans up corrupted analyze jobs on dead instances.
+func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
+	defer util.Recover(metrics.LabelDomain, "analyzeJobsCleanupWorker", nil, false)
+	// For GC.
 	const gcInterval = time.Hour
-	statsHandle := do.StatsHandle()
+	const DaysToKeep = 7
 	gcTicker := time.NewTicker(gcInterval)
+	// For clean up.
+	// Default stats lease is 3 * time.Second.
+	// So cleanupInterval is 100 * 3 * time.Second = 5 * time.Minute.
+	var cleanupInterval = do.statsLease * 100
+	cleanupTicker := time.NewTicker(cleanupInterval)
 	defer func() {
 		gcTicker.Stop()
-		logutil.BgLogger().Info("gcAnalyzeHistory exited.")
+		cleanupTicker.Stop()
+		logutil.BgLogger().Info("analyzeJobsCleanupWorker exited.")
 	}()
+	statsHandle := do.StatsHandle()
 	for {
 		select {
 		case <-gcTicker.C:
+			// Only the owner should perform this operation.
 			if owner.IsOwner() {
-				const DaysToKeep = 7
 				updateTime := time.Now().AddDate(0, 0, -DaysToKeep)
 				err := statsHandle.DeleteAnalyzeJobs(updateTime)
 				if err != nil {
 					logutil.BgLogger().Warn("gc analyze history failed", zap.Error(err))
 				}
 			}
+		case <-cleanupTicker.C:
+			sm := do.InfoSyncer().GetSessionManager()
+			if sm == nil {
+				continue
+			}
+			analyzeProcessIDs := make(map[uint64]struct{}, 8)
+			for _, process := range sm.ShowProcessList() {
+				if isAnalyzeTableSQL(process.Info) {
+					analyzeProcessIDs[process.ID] = struct{}{}
+				}
+			}
+
+			err := statsHandle.CleanupCorruptedAnalyzeJobsOnCurrentInstance(analyzeProcessIDs)
+			if err != nil {
+				logutil.BgLogger().Warn("cleanup analyze jobs on current instance failed", zap.Error(err))
+			}
+
+			if owner.IsOwner() {
+				err = statsHandle.CleanupCorruptedAnalyzeJobsOnDeadInstances()
+				if err != nil {
+					logutil.BgLogger().Warn("cleanup analyze jobs on dead instances failed", zap.Error(err))
+				}
+			}
 		case <-do.exit:
 			return
 		}
 	}
+}
+
+func isAnalyzeTableSQL(sql string) bool {
+	// Get rid of the comments.
+	normalizedSQL := parser.Normalize(sql)
+	return strings.HasPrefix(normalizedSQL, "analyze table")
 }
 
 // ExpensiveQueryHandle returns the expensive query handle.

@@ -254,37 +254,214 @@ PARTITION BY RANGE ( a ) (
 			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
 			require.False(t, statsTbl.Pseudo)
 		}
-
-		truncatePartition := "alter table t truncate partition p4"
-		testKit.MustExec(truncatePartition)
-		is = do.InfoSchema()
-		tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-		require.NoError(t, err)
-		tableInfo = tbl.Meta()
-		err = h.HandleDDLEvent(<-h.DDLEventCh())
-		require.NoError(t, err)
-		require.Nil(t, h.Update(is))
-		pi = tableInfo.GetPartitionInfo()
-		for _, def := range pi.Definitions {
-			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-			require.False(t, statsTbl.Pseudo)
-		}
-
-		reorganizePartition := "alter table t reorganize partition p0,p1 into (partition p0 values less than (11))"
-		testKit.MustExec(reorganizePartition)
-		is = do.InfoSchema()
-		tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
-		require.NoError(t, err)
-		tableInfo = tbl.Meta()
-		err = h.HandleDDLEvent(<-h.DDLEventCh())
-		require.NoError(t, err)
-		require.Nil(t, h.Update(is))
-		pi = tableInfo.GetPartitionInfo()
-		for _, def := range pi.Definitions {
-			statsTbl := h.GetPartitionStats(tableInfo, def.ID)
-			require.False(t, statsTbl.Pseudo)
-		}
 	}
+}
+
+func TestReorgPartitions(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec(`
+		create table t (
+			a int,
+			b int,
+			primary key(a),
+			index idx(b)
+		)
+		partition by range (a) (
+			partition p0 values less than (6),
+			partition p1 values less than (11),
+			partition p2 values less than (16),
+			partition p3 values less than (21)
+		)
+	`)
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	testKit.MustExec("analyze table t")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(
+		model.NewCIStr("test"), model.NewCIStr("t"),
+	)
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	for _, def := range pi.Definitions {
+		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		require.False(t, statsTbl.Pseudo)
+	}
+	err = h.Update(is)
+	require.NoError(t, err)
+	// Get all the partition IDs.
+	partitionIDs := make(map[int64]struct{}, len(pi.Definitions))
+	for _, def := range pi.Definitions {
+		partitionIDs[def.ID] = struct{}{}
+	}
+
+	// Get partition p0 and p1's stats update version.
+	partitionP0ID := pi.Definitions[0].ID
+	partitionP1ID := pi.Definitions[1].ID
+	// Get it from stats_meat first.
+	rows := testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id in (?, ?) order by table_id", partitionP0ID, partitionP1ID,
+	).Rows()
+	require.Len(t, rows, 2)
+	versionP0 := rows[0][0].(string)
+	versionP1 := rows[1][0].(string)
+
+	// Reorganize two partitions.
+	testKit.MustExec("alter table t reorganize partition p0, p1 into (partition p0 values less than (11))")
+	// Find the reorganize partition event.
+	reorganizePartitionEvent := findEvent(h.DDLEventCh(), model.ActionReorganizePartition)
+	err = h.HandleDDLEvent(reorganizePartitionEvent)
+	require.NoError(t, err)
+	require.Nil(t, h.Update(is))
+
+	// Check the version again.
+	rows = testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id in (?, ?) order by table_id", partitionP0ID, partitionP1ID,
+	).Rows()
+	require.Len(t, rows, 2)
+	require.NotEqual(t, versionP0, rows[0][0].(string))
+	require.NotEqual(t, versionP1, rows[1][0].(string))
+}
+
+func TestTruncateAPartition(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec(`
+		create table t (
+			a int,
+			b int,
+			primary key(a),
+			index idx(b)
+		)
+		partition by range (a) (
+			partition p0 values less than (6),
+			partition p1 values less than (11),
+			partition p2 values less than (16),
+			partition p3 values less than (21)
+		)
+	`)
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	testKit.MustExec("analyze table t")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(
+		model.NewCIStr("test"), model.NewCIStr("t"),
+	)
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	for _, def := range pi.Definitions {
+		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		require.False(t, statsTbl.Pseudo)
+	}
+	err = h.Update(is)
+	require.NoError(t, err)
+
+	// Get partition p0's stats update version.
+	partitionID := pi.Definitions[0].ID
+	// Get it from stats_meat first.
+	rows := testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?", partitionID,
+	).Rows()
+	require.Len(t, rows, 1)
+	version := rows[0][0].(string)
+
+	testKit.MustExec("alter table t truncate partition p0")
+	// Find the truncate partition event.
+	truncatePartitionEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTablePartition)
+	err = h.HandleDDLEvent(truncatePartitionEvent)
+	require.NoError(t, err)
+	// Check global stats meta.
+	// Because we have truncated a partition, the count should be 5 - 2 = 3 and the modify count should be 2.
+	testKit.MustQuery(
+		"select count, modify_count from mysql.stats_meta where table_id = ?", tableInfo.ID,
+	).Check(
+		testkit.Rows("3 2"),
+	)
+
+	// Check the version again.
+	rows = testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?", partitionID,
+	).Rows()
+	require.Len(t, rows, 1)
+	// Version gets updated after truncate the partition.
+	require.NotEqual(t, version, rows[0][0].(string))
+}
+
+func TestTruncatePartitions(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec(`
+		create table t (
+			a int,
+			b int,
+			primary key(a),
+			index idx(b)
+		)
+		partition by range (a) (
+			partition p0 values less than (6),
+			partition p1 values less than (11),
+			partition p2 values less than (16),
+			partition p3 values less than (21)
+		)
+	`)
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	testKit.MustExec("analyze table t")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(
+		model.NewCIStr("test"), model.NewCIStr("t"),
+	)
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	for _, def := range pi.Definitions {
+		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		require.False(t, statsTbl.Pseudo)
+	}
+	err = h.Update(is)
+	require.NoError(t, err)
+
+	// Get partition p0 and p1's stats update version.
+	partitionP0ID := pi.Definitions[0].ID
+	partitionP1ID := pi.Definitions[1].ID
+	// Get it from stats_meat first.
+	rows := testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id in (?, ?) order by table_id", partitionP0ID, partitionP1ID,
+	).Rows()
+	require.Len(t, rows, 2)
+	versionP0 := rows[0][0].(string)
+	versionP1 := rows[1][0].(string)
+
+	// Truncate two partitions.
+	testKit.MustExec("alter table t truncate partition p0, p1")
+	// Find the truncate partition event.
+	truncatePartitionEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTablePartition)
+	err = h.HandleDDLEvent(truncatePartitionEvent)
+	require.NoError(t, err)
+	// Check global stats meta.
+	// Because we have truncated two partitions, the count should be 5 - 2 - 1  = 2 and the modify count should be 3.
+	testKit.MustQuery(
+		"select count, modify_count from mysql.stats_meta where table_id = ?", tableInfo.ID,
+	).Check(
+		testkit.Rows("2 3"),
+	)
+
+	// Check the version again.
+	rows = testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id in (?, ?) order by table_id", partitionP0ID, partitionP1ID,
+	).Rows()
+	require.Len(t, rows, 2)
+	// Version gets updated after truncate the partition.
+	require.NotEqual(t, versionP0, rows[0][0].(string))
+	require.NotEqual(t, versionP1, rows[1][0].(string))
 }
 
 func TestDropAPartition(t *testing.T) {
@@ -325,21 +502,268 @@ func TestDropAPartition(t *testing.T) {
 
 	testKit.MustExec("alter table t drop partition p0")
 	// Find the drop partition event.
-	var dropPartitionEvent *util.DDLEvent
-	for {
-		event := <-h.DDLEventCh()
-		if event.GetType() == model.ActionDropTablePartition {
-			dropPartitionEvent = event
-			break
-		}
-	}
+	dropPartitionEvent := findEvent(h.DDLEventCh(), model.ActionDropTablePartition)
+
 	err = h.HandleDDLEvent(dropPartitionEvent)
 	require.NoError(t, err)
 	// Check the global stats meta.
 	// Because we have dropped a partition, the count should be 3 and the modify count should be 2.
 	testKit.MustQuery(
-		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
+		"select count, modify_count from mysql.stats_meta where table_id = ?", tableInfo.ID,
 	).Check(
 		testkit.Rows("3 2"),
 	)
+
+	// Get partition p0's stats update version.
+	partitionID := pi.Definitions[0].ID
+	// Get it from stats_meta first.
+	rows := testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?", partitionID,
+	).Rows()
+	require.Len(t, rows, 1)
+	version := rows[0][0].(string)
+
+	// Check the update version is changed.
+	rows = testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?", tableInfo.ID,
+	).Rows()
+	require.Len(t, rows, 1)
+	require.NotEqual(t, version, rows[0][0].(string))
+}
+
+func TestDropPartitions(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec(`
+		create table t (
+			a int,
+			b int,
+			primary key(a),
+			index idx(b)
+		)
+		partition by range (a) (
+			partition p0 values less than (6),
+			partition p1 values less than (11),
+			partition p2 values less than (16),
+			partition p3 values less than (21)
+		)
+	`)
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	testKit.MustExec("analyze table t")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(
+		model.NewCIStr("test"), model.NewCIStr("t"),
+	)
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	for _, def := range pi.Definitions {
+		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		require.False(t, statsTbl.Pseudo)
+	}
+	err = h.Update(is)
+	require.NoError(t, err)
+
+	// Get partition p0 and p1's stats update version.
+	partitionP0ID := pi.Definitions[0].ID
+	partitionP1ID := pi.Definitions[1].ID
+	// Get it from stats_meat first.
+	rows := testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id in (?, ?) order by table_id",
+		partitionP0ID, partitionP1ID,
+	).Rows()
+	require.Len(t, rows, 2)
+	versionP0 := rows[0][0].(string)
+	versionP1 := rows[1][0].(string)
+
+	// Drop partition p0 and p1.
+	testKit.MustExec("alter table t drop partition p0,p1")
+	// Find the drop partition event.
+	dropPartitionEvent := findEvent(h.DDLEventCh(), model.ActionDropTablePartition)
+
+	err = h.HandleDDLEvent(dropPartitionEvent)
+	require.NoError(t, err)
+
+	// Check the global stats meta.
+	// Because we have dropped two partitions,
+	// the count should be 5 - 2 - 1 = 2 and the modify count should be 2 +1 = 3.
+	testKit.MustQuery(
+		"select count, modify_count from mysql.stats_meta where table_id = ?", tableInfo.ID,
+	).Check(
+		testkit.Rows("2 3"),
+	)
+
+	// Check the update versions are changed.
+	rows = testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id in (?, ?) order by table_id",
+		partitionP0ID, partitionP1ID,
+	).Rows()
+	require.Len(t, rows, 2)
+	require.NotEqual(t, versionP0, rows[0][0].(string))
+	require.NotEqual(t, versionP1, rows[1][0].(string))
+}
+
+func TestExchangeAPartition(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	// Create a table with 4 partitions.
+	testKit.MustExec(`
+		create table t (
+			a int,
+			b int,
+			primary key(a),
+			index idx(b)
+		)
+		partition by range (a) (
+			partition p0 values less than (6),
+			partition p1 values less than (11),
+			partition p2 values less than (16),
+			partition p3 values less than (21)
+		)
+	`)
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	h.DumpStatsDeltaToKV(true)
+
+	testKit.MustExec("analyze table t")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(
+		model.NewCIStr("test"), model.NewCIStr("t"),
+	)
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	for _, def := range pi.Definitions {
+		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		require.False(t, statsTbl.Pseudo)
+	}
+	// Create a normal table to exchange partition.
+	testKit.MustExec("drop table if exists t1")
+	testKit.MustExec("create table t1 (a int, b int, primary key(a), index idx(b))")
+	// Insert some data which meets the condition of the partition p0.
+	testKit.MustExec("insert into t1 values (1,2),(2,2),(3,2),(4,2),(5,2)")
+	err = h.DumpStatsDeltaToKV(true)
+	require.NoError(t, err)
+
+	testKit.MustExec("analyze table t1")
+	is = do.InfoSchema()
+	tbl1, err := is.TableByName(
+		model.NewCIStr("test"), model.NewCIStr("t1"),
+	)
+	require.NoError(t, err)
+	tableInfo1 := tbl1.Meta()
+	statsTbl1 := h.GetTableStats(tableInfo1)
+	require.False(t, statsTbl1.Pseudo)
+
+	// Check the global stats meta before exchange partition.
+	testKit.MustQuery(
+		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
+	).Check(
+		testkit.Rows("5 0"),
+	)
+
+	// Exchange partition p0 with table t1.
+	testKit.MustExec("alter table t exchange partition p0 with table t1")
+	// Find the exchange partition event.
+	exchangePartitionEvent := findEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
+	err = h.HandleDDLEvent(exchangePartitionEvent)
+	require.NoError(t, err)
+	// Check the global stats meta.
+	// Because we have exchanged a partition, the count should be 5 and the modify count should be 5(table) + 2(partition).
+	// 5 -> Five rows are added to table 't' as 't1' is included as a new partition.
+	// 2 -> Two rows are removed from table 't' as partition 'p0' is no longer a part of it.
+	testKit.MustQuery(
+		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
+	).Check(
+		testkit.Rows("8 7"),
+	)
+
+	// Create another normal table with no data to exchange partition.
+	testKit.MustExec("drop table if exists t2")
+	testKit.MustExec("create table t2 (a int, b int, primary key(a), index idx(b))")
+	testKit.MustExec("analyze table t2")
+	is = do.InfoSchema()
+	tbl2, err := is.TableByName(
+		model.NewCIStr("test"), model.NewCIStr("t2"),
+	)
+	require.NoError(t, err)
+	tableInfo2 := tbl2.Meta()
+	statsTbl2 := h.GetTableStats(tableInfo2)
+	require.False(t, statsTbl2.Pseudo)
+	err = h.Update(do.InfoSchema())
+	require.NoError(t, err)
+
+	// Insert some data to partition p1 before exchange partition.
+	testKit.MustExec("insert into t values (7,2),(8,2),(9,2),(10,2)")
+	err = h.DumpStatsDeltaToKV(true)
+	require.NoError(t, err)
+	testKit.MustQuery(
+		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
+	).Check(
+		// modify_count = 7 + 4 = 11
+		testkit.Rows("12 11"),
+	)
+
+	testKit.MustExec("alter table t exchange partition p1 with table t2")
+	// Find the exchange partition event.
+	exchangePartitionEvent = findEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
+	err = h.HandleDDLEvent(exchangePartitionEvent)
+	require.NoError(t, err)
+	// Check the global stats meta.
+	testKit.MustQuery(
+		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
+	).Check(
+		// count = 12 - 5(old partition) + 0(new table) = 7
+		// modify_count = 11 + 5(old partition) + 0(new table) - 4(old partition) = 12
+		// 5 -> Five rows are removed from table 't' as partition 'p1' is no longer a part of it.
+		// 0 -> No rows are added to table 't' as 't2' is added as a partition to it.
+		// 4 -> Four rows are subtracted from table 't' due to the insertion of four rows into partition 'p1'.
+		testkit.Rows("7 12"),
+	)
+
+	// Test if the global stats is accidentally dropped.
+	// Create another normal table with no data to exchange partition.
+	testKit.MustExec("drop table if exists t3")
+	testKit.MustExec("create table t3 (a int, b int, primary key(a), index idx(b))")
+	testKit.MustExec("analyze table t3")
+	is = do.InfoSchema()
+	tbl3, err := is.TableByName(
+		model.NewCIStr("test"), model.NewCIStr("t3"),
+	)
+	require.NoError(t, err)
+	tableInfo3 := tbl3.Meta()
+	statsTbl3 := h.GetTableStats(tableInfo3)
+	require.False(t, statsTbl3.Pseudo)
+	err = h.Update(do.InfoSchema())
+	require.NoError(t, err)
+
+	testKit.MustExec("alter table t exchange partition p2 with table t3")
+	// Drop the global stats.
+	testKit.MustExec(fmt.Sprintf("delete from mysql.stats_meta where table_id = %d", tableInfo.ID))
+	// Find the exchange partition event.
+	exchangePartitionEvent = findEvent(h.DDLEventCh(), model.ActionExchangeTablePartition)
+	err = h.HandleDDLEvent(exchangePartitionEvent)
+	require.NoError(t, err)
+	// Check the global stats meta.
+	testKit.MustQuery(
+		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
+	).Check(
+		// Insert the global stats back.
+		testkit.Rows("0 1"),
+	)
+}
+
+func findEvent(eventCh <-chan *util.DDLEvent, eventType model.ActionType) *util.DDLEvent {
+	// Find the target event.
+	for {
+		event := <-eventCh
+		if event.GetType() == eventType {
+			return event
+		}
+	}
 }

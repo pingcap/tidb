@@ -1146,6 +1146,7 @@ func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
 		for i, sr := range nh.history {
 			st := sr.st
 			s.sessionVars.StmtCtx = sr.stmtCtx
+			s.sessionVars.StmtCtx.CTEStorageMap = map[int]*executor.CTEStorages{}
 			s.sessionVars.StmtCtx.ResetForRetry()
 			s.sessionVars.PlanCacheParams.Reset()
 			schemaVersion, err = st.RebuildPlan(ctx)
@@ -1862,6 +1863,7 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 	metrics.SessionRestrictedSQLCounter.Inc()
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, tikvutil.ExecDetailsKey, &tikvutil.ExecDetails{})
+	ctx = context.WithValue(ctx, tikvutil.RUDetailsCtxKey, tikvutil.NewRUDetails())
 	rs, err := se.ExecuteStmt(ctx, stmtNode)
 	if err != nil {
 		se.sessionVars.StmtCtx.AppendError(err)
@@ -2441,18 +2443,31 @@ type execStmtResult struct {
 	sqlexec.RecordSet
 	se     *session
 	sql    sqlexec.Statement
+	once   sync.Once
 	closed bool
+}
+
+func (rs *execStmtResult) Finish() error {
+	var err error
+	rs.once.Do(func() {
+		var err1 error
+		if f, ok := rs.RecordSet.(interface{ Finish() error }); ok {
+			err1 = f.Finish()
+		}
+		err2 := finishStmt(context.Background(), rs.se, err, rs.sql)
+		err = stderrs.Join(err1, err2)
+	})
+	return err
 }
 
 func (rs *execStmtResult) Close() error {
 	if rs.closed {
 		return nil
 	}
-	se := rs.se
-	err := rs.RecordSet.Close()
-	err = finishStmt(context.Background(), se, err, rs.sql)
+	err1 := rs.Finish()
+	err2 := rs.RecordSet.Close()
 	rs.closed = true
-	return err
+	return stderrs.Join(err1, err2)
 }
 
 // rollbackOnError makes sure the next statement starts a new transaction with the latest InfoSchema.
@@ -2587,7 +2602,7 @@ func (s *session) Close() {
 	telemetry.GlobalBuiltinFunctionsUsage.Collect(s.GetBuiltinFunctionUsage())
 	bindValue := s.Value(bindinfo.SessionBindInfoKeyType)
 	if bindValue != nil {
-		bindValue.(*bindinfo.SessionHandle).Close()
+		bindValue.(bindinfo.SessionBindingHandle).Close()
 	}
 	ctx := context.WithValue(context.TODO(), inCloseSession{}, struct{}{})
 	s.RollbackTxn(ctx)
@@ -3590,7 +3605,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	s.sessionVars.BinlogClient = binloginfo.GetPumpsClient()
 	s.txn.init()
 
-	sessionBindHandle := bindinfo.NewSessionBindHandle()
+	sessionBindHandle := bindinfo.NewSessionBindingHandle()
 	s.SetValue(bindinfo.SessionBindInfoKeyType, sessionBindHandle)
 	s.SetSessionStatesHandler(sessionstates.StateBinding, sessionBindHandle)
 	return s, nil

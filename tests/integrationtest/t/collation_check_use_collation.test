@@ -10,7 +10,6 @@ CREATE TABLE `t1` (
 );
 insert into t values ("A");
 # Ignore error for the disabled new-collation case.
---error 1265
 insert into t1 values ("a");
 select a as a_col from t where t.a = all (select a collate utf8mb4_general_ci from t1);
 select a as a_col from t where t.a != any (select a collate utf8mb4_general_ci from t1);
@@ -29,7 +28,7 @@ drop table if exists t;
 create table t(a enum('a', 'b') charset utf8mb4 collate utf8mb4_general_ci, b varchar(20));
 insert into t values ("b", "c");
 # Ignore error for the disabled new-collation case.
---error 1265
+--error 0,1265
 insert into t values ("B", "b");
 select * from t where 'B' collate utf8mb4_general_ci in (a);
 select * from t where 'B' collate utf8mb4_bin in (a);
@@ -57,7 +56,7 @@ drop table if exists t;
 create table t(a set('a', 'b') charset utf8mb4 collate utf8mb4_general_ci, b varchar(20));
 insert into t values ("b", "c");
 # Ignore error for the disabled new-collation case.
---error 1265
+--error 0,1265
 insert into t values ("B", "b");
 select * from t where 'B' collate utf8mb4_general_ci in (a);
 select * from t where 'B' collate utf8mb4_bin in (a);

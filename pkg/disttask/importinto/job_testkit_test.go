@@ -23,6 +23,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -52,7 +53,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 	}
 	bytes, err := json.Marshal(taskMeta)
 	require.NoError(t, err)
-	taskID, err := manager.AddNewGlobalTask(ctx, importinto.TaskKey(111), proto.ImportInto, 1, bytes)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(111), proto.ImportInto, 1, bytes)
 	require.NoError(t, err)
 	importStepMetas := []*importinto.ImportStepMeta{
 		{
@@ -69,8 +70,8 @@ func TestGetTaskImportedRows(t *testing.T) {
 	for _, m := range importStepMetas {
 		bytes, err := json.Marshal(m)
 		require.NoError(t, err)
-		require.NoError(t, manager.AddNewSubTask(ctx, taskID, importinto.StepImport,
-			"", bytes, proto.ImportInto, false))
+		testutil.CreateSubTask(t, manager, taskID, importinto.StepImport,
+			"", bytes, proto.ImportInto, 11, false)
 	}
 	rows, err := importinto.GetTaskImportedRows(ctx, 111)
 	require.NoError(t, err)
@@ -84,7 +85,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 	}
 	bytes, err = json.Marshal(taskMeta)
 	require.NoError(t, err)
-	taskID, err = manager.AddNewGlobalTask(ctx, importinto.TaskKey(222), proto.ImportInto, 1, bytes)
+	taskID, err = manager.CreateTask(ctx, importinto.TaskKey(222), proto.ImportInto, 1, bytes)
 	require.NoError(t, err)
 	ingestStepMetas := []*importinto.WriteIngestStepMeta{
 		{
@@ -101,8 +102,8 @@ func TestGetTaskImportedRows(t *testing.T) {
 	for _, m := range ingestStepMetas {
 		bytes, err := json.Marshal(m)
 		require.NoError(t, err)
-		require.NoError(t, manager.AddNewSubTask(ctx, taskID, importinto.StepWriteAndIngest,
-			"", bytes, proto.ImportInto, false))
+		testutil.CreateSubTask(t, manager, taskID, importinto.StepWriteAndIngest,
+			"", bytes, proto.ImportInto, 11, false)
 	}
 	rows, err = importinto.GetTaskImportedRows(ctx, 222)
 	require.NoError(t, err)
