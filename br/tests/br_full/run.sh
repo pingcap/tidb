@@ -18,10 +18,11 @@ set -eu
 DB="$TEST_NAME"
 TABLE="usertable"
 DB_COUNT=3
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 for i in $(seq $DB_COUNT); do
     run_sql "CREATE DATABASE $DB${i};"
-    go-ycsb load mysql -P tests/$TEST_NAME/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB${i}
+    go-ycsb load mysql -P $CUR/workload -p mysql.host=$TIDB_IP -p mysql.port=$TIDB_PORT -p mysql.user=root -p mysql.db=$DB${i}
 done
 
 for i in $(seq $DB_COUNT); do
@@ -52,7 +53,7 @@ test_log="${TEST_DIR}/${DB}_test.log"
 error_str="not read from or written to within the timeout period"
 unset BR_LOG_TO_TERM
 
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/backup/backup-storage-error=1*return(\"connection refused\")->1*return(\"InternalError\");github.com/pingcap/tidb/br/pkg/backup/backup-timeout-error=1*return(\"<Code>RequestTimeout</Code>\")->1*return(\"not read from or written to within the timeout period\")"
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/backup/backup-storage-error=1*return(\"connection refused\")->1*return(\"InternalError\");github.com/pingcap/tidb/br/pkg/backup/backup-timeout-error=1*return(\"<Code>RequestTimeout</Code>\")->1*return(\"not read from or written to within the timeout period\")->1*return(\"<Code>InvalidPart</Code>\")->1*return(\"end of file before message length reached\")"
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB-lz4" --concurrency 4 --compression lz4 --log-file $test_log
 export GO_FAILPOINTS=""
 size_lz4=$(du -d 0 $TEST_DIR/$DB-lz4 | awk '{print $1}')

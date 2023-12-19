@@ -19,13 +19,13 @@ import (
 	"path"
 	"testing"
 
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
 
-func TestBackupAndRestore(t *testing.T) {
+func initTestKit(t *testing.T) *testkit.TestKit {
 	if !*realtikvtest.WithRealTiKV {
 		t.Skip("only run BR SQL integration test with tikv store")
 	}
@@ -38,6 +38,11 @@ func TestBackupAndRestore(t *testing.T) {
 	config.StoreGlobalConfig(cfg)
 
 	tk := testkit.NewTestKit(t, store)
+	return tk
+}
+
+func TestBackupAndRestore(t *testing.T) {
+	tk := initTestKit(t)
 	tk.MustExec("create database if not exists br")
 	tk.MustExec("use br")
 	tk.MustExec("create table t1(v int)")

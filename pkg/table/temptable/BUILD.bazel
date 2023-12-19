@@ -1,0 +1,60 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "temptable",
+    srcs = [
+        "ddl.go",
+        "infoschema.go",
+        "interceptor.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/table/temptable",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/meta",
+        "//pkg/meta/autoid",
+        "//pkg/parser/ast",
+        "//pkg/parser/model",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/store/driver/txn",
+        "//pkg/table",
+        "//pkg/table/tables",
+        "//pkg/tablecodec",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_tikv_client_go_v2//tikv",
+    ],
+)
+
+go_test(
+    name = "temptable_test",
+    timeout = "short",
+    srcs = [
+        "ddl_test.go",
+        "interceptor_test.go",
+        "main_test.go",
+    ],
+    embed = [":temptable"],
+    flaky = True,
+    shard_count = 16,
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/kv",
+        "//pkg/meta/autoid",
+        "//pkg/parser/model",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx",
+        "//pkg/store/driver/txn",
+        "//pkg/store/mockstore",
+        "//pkg/table",
+        "//pkg/tablecodec",
+        "//pkg/testkit/testsetup",
+        "//pkg/types",
+        "//pkg/util/codec",
+        "//pkg/util/mock",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

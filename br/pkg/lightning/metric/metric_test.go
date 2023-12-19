@@ -17,10 +17,11 @@ package metric_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
-	"github.com/pingcap/tidb/util/promutil"
+	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -53,9 +54,34 @@ func TestRecordEngineCount(t *testing.T) {
 }
 
 func TestMetricsRegister(t *testing.T) {
-	m := metric.NewMetrics(promutil.NewDefaultFactory())
+	getMetricCount := func(r *prometheus.Registry) int {
+		ch := make(chan *prometheus.Desc)
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			r.Describe(ch)
+			close(ch)
+		}()
+		var count int
+		for range ch {
+			count++
+		}
+		wg.Wait()
+		return count
+	}
+	cm := metric.NewCommon(promutil.NewDefaultFactory(), "test", "", nil)
 	r := prometheus.NewRegistry()
+	require.Zero(t, getMetricCount(r))
+	cm.RegisterTo(r)
+	require.Equal(t, 8, getMetricCount(r))
+	cm.UnregisterFrom(r)
+	require.Zero(t, getMetricCount(r))
+
+	m := metric.NewMetrics(promutil.NewDefaultFactory())
+	r = prometheus.NewRegistry()
 	m.RegisterTo(r)
+	require.Equal(t, 22, getMetricCount(r))
 	assert.True(t, r.Unregister(m.ImporterEngineCounter))
 	assert.True(t, r.Unregister(m.IdleWorkersGauge))
 	assert.True(t, r.Unregister(m.KvEncoderCounter))
@@ -75,8 +101,10 @@ func TestMetricsRegister(t *testing.T) {
 	assert.True(t, r.Unregister(m.BlockDeliverBytesHistogram))
 	assert.True(t, r.Unregister(m.BlockDeliverKVPairsHistogram))
 	assert.True(t, r.Unregister(m.ChecksumSecondsHistogram))
+	assert.True(t, r.Unregister(m.SSTSecondsHistogram))
 	assert.True(t, r.Unregister(m.LocalStorageUsageBytesGauge))
 	assert.True(t, r.Unregister(m.ProgressGauge))
+	require.Zero(t, getMetricCount(r))
 }
 
 func TestMetricsUnregister(t *testing.T) {
@@ -103,13 +131,26 @@ func TestMetricsUnregister(t *testing.T) {
 	assert.False(t, r.Unregister(m.BlockDeliverBytesHistogram))
 	assert.False(t, r.Unregister(m.BlockDeliverKVPairsHistogram))
 	assert.False(t, r.Unregister(m.ChecksumSecondsHistogram))
+	assert.False(t, r.Unregister(m.SSTSecondsHistogram))
 	assert.False(t, r.Unregister(m.LocalStorageUsageBytesGauge))
 	assert.False(t, r.Unregister(m.ProgressGauge))
 }
 
 func TestContext(t *testing.T) {
-	ctx := metric.NewContext(context.Background(), metric.NewMetrics(promutil.NewDefaultFactory()))
+	metrics := metric.NewMetrics(promutil.NewDefaultFactory())
+	ctx := metric.WithMetric(context.Background(), metrics)
 	m, ok := metric.FromContext(ctx)
 	require.True(t, ok)
 	require.NotNil(t, m)
+	m2, ok := metric.GetCommonMetric(ctx)
+	require.True(t, ok)
+	require.NotNil(t, m2)
+
+	ctx = metric.WithCommonMetric(context.Background(), metrics.Common)
+	m, ok = metric.FromContext(ctx)
+	require.False(t, ok)
+	require.Nil(t, m)
+	m2, ok = metric.GetCommonMetric(ctx)
+	require.True(t, ok)
+	require.NotNil(t, m2)
 }

@@ -30,9 +30,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/importer/mock"
 	ropts "github.com/pingcap/tidb/br/pkg/lightning/importer/opts"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 	pqt_buf_src "github.com/xitongsys/parquet-go-source/buffer"
 	pqtwriter "github.com/xitongsys/parquet-go/writer"
@@ -79,7 +79,6 @@ func TestGetPreInfoGenerateTableInfo(t *testing.T) {
 	createTblSQL := fmt.Sprintf("create table `%s`.`%s` (a varchar(16) not null, b varchar(8) default 'DEFA')", schemaName, tblName)
 	tblInfo, err := newTableInfo(createTblSQL, 1)
 	require.Nil(t, err)
-	t.Logf("%+v", tblInfo)
 	require.Equal(t, model.NewCIStr(tblName), tblInfo.Name)
 	require.Equal(t, len(tblInfo.Columns), 2)
 	require.Equal(t, model.NewCIStr("a"), tblInfo.Columns[0].Name)
@@ -404,7 +403,6 @@ INSERT INTO db01.tbl01 (ival, sval) VALUES (444, 'ddd');`
 		theDataInfo := testDataInfos[i]
 		cols, rowDatums, err := ig.ReadFirstNRowsByFileMeta(ctx, dataFile.FileMeta, theDataInfo.FirstN)
 		require.Nil(t, err)
-		t.Logf("%v, %v", cols, rowDatums)
 		require.Equal(t, theDataInfo.ExpectColumns, cols)
 		require.Equal(t, theDataInfo.ExpectFirstRowDatums, rowDatums)
 	}
@@ -759,7 +757,10 @@ func TestGetPreInfoIsTableEmpty(t *testing.T) {
 	require.NoError(t, err)
 	lnConfig := config.NewConfig()
 	lnConfig.TikvImporter.Backend = config.BackendLocal
-	targetGetter, err := NewTargetInfoGetterImpl(lnConfig, db)
+	_, err = NewTargetInfoGetterImpl(lnConfig, db, nil)
+	require.ErrorContains(t, err, "pd client is required when using local backend")
+	lnConfig.TikvImporter.Backend = config.BackendTiDB
+	targetGetter, err := NewTargetInfoGetterImpl(lnConfig, db, nil)
 	require.NoError(t, err)
 	require.Equal(t, lnConfig, targetGetter.cfg)
 

@@ -25,19 +25,20 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	_ "github.com/pingcap/tidb/pkg/planner/core" // to setup expression.EvalAstExpr. Otherwise we cannot parse the default value
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -453,6 +454,40 @@ func TestEncodeMissingAutoValue(t *testing.T) {
 		require.Equalf(t, pairsExpect, pairs, "test table info: %+v", testTblInfo)
 		require.Equalf(t, rowID, tbl.Allocators(lkv.GetEncoderSe(encoder)).Get(testTblInfo.AllocType).Base(), "test table info: %+v", testTblInfo)
 	}
+}
+
+func TestEncodeExpressionColumn(t *testing.T) {
+	tblInfo := mockTableInfo(t, "create table t (id varchar(40) not null DEFAULT uuid(), unique key `u_id` (`id`));")
+	tbl, err := tables.TableFromMeta(lkv.NewPanickingAllocators(0), tblInfo)
+	require.NoError(t, err)
+
+	encoder, err := lkv.NewTableKVEncoder(&encode.EncodingConfig{
+		Table: tbl,
+		SessionOptions: encode.SessionOptions{
+			SQLMode: mysql.ModeStrictAllTables,
+			SysVars: map[string]string{
+				"tidb_row_format_version": "2",
+			},
+		},
+		Logger: log.L(),
+	}, nil)
+	require.NoError(t, err)
+
+	strDatumForID := types.NewStringDatum("1")
+	actualDatum, err := lkv.GetActualDatum(encoder, tbl.Cols()[0], 70, &strDatumForID)
+	require.NoError(t, err)
+	require.Equal(t, strDatumForID, actualDatum)
+
+	actualDatum, err = lkv.GetActualDatum(encoder, tbl.Cols()[0], 70, nil)
+	require.NoError(t, err)
+	require.Equal(t, types.KindString, actualDatum.Kind())
+	require.Len(t, actualDatum.GetString(), 36) // uuid length
+
+	actualDatum2, err := lkv.GetActualDatum(encoder, tbl.Cols()[0], 70, nil)
+	require.NoError(t, err)
+	require.Equal(t, types.KindString, actualDatum2.Kind())
+	require.Len(t, actualDatum2.GetString(), 36)
+	require.NotEqual(t, actualDatum.GetString(), actualDatum2.GetString()) // check different uuid
 }
 
 func mockTableInfo(t *testing.T, createSQL string) *model.TableInfo {

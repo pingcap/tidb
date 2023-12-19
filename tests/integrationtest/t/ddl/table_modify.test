@@ -1,0 +1,72 @@
+# TestCreateTable
+drop table if exists t;
+CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );
+CREATE TABLE IF NOT EXISTS `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );
+show create table t;
+drop table t;
+-- error 1115
+CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg;
+CREATE TABLE `collateTest` (`a` int, `b` varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+show create table collateTest;
+-- error 1253
+CREATE TABLE `collateTest2` (`a` int) CHARSET utf8 COLLATE utf8mb4_unicode_ci;
+-- error 1302
+CREATE TABLE `collateTest3` (`a` int) COLLATE utf8mb4_unicode_ci CHARSET utf8;
+CREATE TABLE `collateTest4` (`a` int) COLLATE utf8_uniCOde_ci;
+show create table collateTest4;
+create database test2 default charset utf8 collate utf8_general_ci;
+use test2;
+create table dbCollateTest (a varchar(10));
+show create table dbCollateTest;
+-- error 1291
+create table t_enum (a enum('e','e'));
+-- error 1115
+create table t_enum (a enum('e','E')) charset=utf7 collate=utf8_general_ci;
+-- error 1115
+create table t_enum (a enum('abc','Abc')) charset=utf7 collate=utf8_general_ci;
+-- error 1115
+create table t_enum (a enum('e','E')) charset=utf7 collate=utf8_unicode_ci;
+-- error 1115
+create table t_enum (a enum('ss','ß')) charset=utf7 collate=utf8_unicode_ci;
+-- error 1115
+create table t_enum (a enum('æ','ae')) charset=utf7mb4 collate=utf8mb4_0900_ai_ci;
+-- error 1291
+create table t_enum (a set('e','e'));
+-- error 1115
+create table t_enum (a set('e','E')) charset=utf7 collate=utf8_general_ci;
+-- error 1115
+create table t_enum (a set('abc','Abc')) charset=utf7 collate=utf8_general_ci;
+-- error 1115
+create table t_enum (a enum('B','b')) charset=utf7 collate=utf8_general_ci;
+-- error 1115
+create table t_enum (a set('e','E')) charset=utf7 collate=utf8_unicode_ci;
+-- error 1115
+create table t_enum (a set('ss','ß')) charset=utf7 collate=utf8_unicode_ci;
+-- error 1115
+create table t_enum (a enum('ss','ß')) charset=utf7 collate=utf8_unicode_ci;
+-- error 1115
+create table t_enum (a set('æ','ae')) charset=utf7mb4 collate=utf8mb4_0900_ai_ci;
+CREATE TABLE x (a INT) ENGINE = MyISAM;
+CREATE TABLE y (a INT) ENGINE = MyISAM;
+-- error 8232
+CREATE TABLE z (a INT) ENGINE = MERGE UNION = (x, y);
+-- error 8232
+ALTER TABLE x UNION = (y);
+drop table x;
+drop table y;
+CREATE TABLE x (a INT) ENGINE = MyISAM;
+CREATE TABLE y (a INT) ENGINE = MyISAM;
+-- error 8233
+CREATE TABLE z (a INT) ENGINE = MERGE INSERT_METHOD=LAST;
+-- error 8233
+ALTER TABLE x INSERT_METHOD=LAST;
+drop table x;
+drop table y;
+drop database test2;
+use ddl__table_modify;
+
+# TestUnsupportedAlterTableOption
+drop table if exists t;
+create table t(a char(10) not null,b char(20)) shard_row_id_bits=6;
+-- error 8200
+alter table t pre_split_regions=6;

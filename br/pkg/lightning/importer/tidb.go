@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"maps"
 	"math"
 	"strconv"
 	"strings"
@@ -26,17 +27,17 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/format"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 // TiDBManager is a wrapper of *sql.DB which provides some helper methods for
@@ -65,22 +66,23 @@ func DBFromConfig(ctx context.Context, dsn config.DBStore) (*sql.DB, error) {
 	}
 
 	vars := map[string]string{
-		"tidb_build_stats_concurrency":       strconv.Itoa(dsn.BuildStatsConcurrency),
-		"tidb_distsql_scan_concurrency":      strconv.Itoa(dsn.DistSQLScanConcurrency),
-		"tidb_index_serial_scan_concurrency": strconv.Itoa(dsn.IndexSerialScanConcurrency),
-		"tidb_checksum_table_concurrency":    strconv.Itoa(dsn.ChecksumTableConcurrency),
+		variable.TiDBBuildStatsConcurrency:      strconv.Itoa(dsn.BuildStatsConcurrency),
+		variable.TiDBDistSQLScanConcurrency:     strconv.Itoa(dsn.DistSQLScanConcurrency),
+		variable.TiDBIndexSerialScanConcurrency: strconv.Itoa(dsn.IndexSerialScanConcurrency),
+		variable.TiDBChecksumTableConcurrency:   strconv.Itoa(dsn.ChecksumTableConcurrency),
 
 		// after https://github.com/pingcap/tidb/pull/17102 merge,
 		// we need set session to true for insert auto_random value in TiDB Backend
-		"allow_auto_random_explicit_insert": "1",
+		variable.TiDBAllowAutoRandExplicitInsert: "1",
 		// allow use _tidb_rowid in sql statement
-		"tidb_opt_write_row_id": "1",
+		variable.TiDBOptWriteRowID: "1",
 		// always set auto-commit to ON
-		"autocommit": "1",
+		variable.AutoCommit: "1",
 		// always set transaction mode to optimistic
-		"tidb_txn_mode": "optimistic",
+		variable.TiDBTxnMode: "optimistic",
 		// disable foreign key checks
-		"foreign_key_checks": "0",
+		variable.ForeignKeyChecks:              "0",
+		variable.TiDBExplicitRequestSourceType: util.ExplicitTypeLightning,
 	}
 
 	if dsn.Vars != nil {
@@ -235,32 +237,8 @@ func LoadSchemaInfo(
 	return result, nil
 }
 
-// ObtainGCLifeTime obtains the current GC lifetime.
-func ObtainGCLifeTime(ctx context.Context, db *sql.DB) (string, error) {
-	var gcLifeTime string
-	err := common.SQLWithRetry{DB: db, Logger: log.FromContext(ctx)}.QueryRow(
-		ctx,
-		"obtain GC lifetime",
-		"SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
-		&gcLifeTime,
-	)
-	return gcLifeTime, err
-}
-
-// UpdateGCLifeTime updates the current GC lifetime.
-func UpdateGCLifeTime(ctx context.Context, db *sql.DB, gcLifeTime string) error {
-	sql := common.SQLWithRetry{
-		DB:     db,
-		Logger: log.FromContext(ctx).With(zap.String("gcLifeTime", gcLifeTime)),
-	}
-	return sql.Exec(ctx, "update GC lifetime",
-		"UPDATE mysql.tidb SET VARIABLE_VALUE = ? WHERE VARIABLE_NAME = 'tikv_gc_life_time'",
-		gcLifeTime,
-	)
-}
-
 // ObtainImportantVariables obtains the important variables from TiDB.
-func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBVars bool) map[string]string {
+func ObtainImportantVariables(ctx context.Context, db *sql.DB, needTiDBVars bool) map[string]string {
 	var query strings.Builder
 	query.WriteString("SHOW VARIABLES WHERE Variable_name IN ('")
 	first := true
@@ -279,7 +257,8 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBV
 		}
 	}
 	query.WriteString("')")
-	kvs, err := g.QueryStringsWithLog(ctx, query.String(), "obtain system variables", log.FromContext(ctx))
+	exec := common.SQLWithRetry{DB: db, Logger: log.FromContext(ctx)}
+	kvs, err := exec.QueryStringRows(ctx, "obtain system variables", query.String())
 	if err != nil {
 		// error is not fatal
 		log.FromContext(ctx).Warn("obtain system variables failed, use default variables instead", log.ShortError(err))
@@ -307,14 +286,11 @@ func ObtainImportantVariables(ctx context.Context, g glue.SQLExecutor, needTiDBV
 }
 
 // ObtainNewCollationEnabled obtains the new collation enabled status from TiDB.
-func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) (bool, error) {
+func ObtainNewCollationEnabled(ctx context.Context, db *sql.DB) (bool, error) {
 	newCollationEnabled := false
-	newCollationVal, err := g.ObtainStringWithLog(
-		ctx,
-		"SELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'",
-		"obtain new collation enabled",
-		log.FromContext(ctx),
-	)
+	var newCollationVal string
+	exec := common.SQLWithRetry{DB: db, Logger: log.FromContext(ctx)}
+	err := exec.QueryRow(ctx, "obtain new collation enabled", "SELECT variable_value FROM mysql.tidb WHERE variable_name = 'new_collation_enabled'", &newCollationVal)
 	if err == nil && newCollationVal == "True" {
 		newCollationEnabled = true
 	} else if errors.ErrorEqual(err, sql.ErrNoRows) {
@@ -329,21 +305,21 @@ func ObtainNewCollationEnabled(ctx context.Context, g glue.SQLExecutor) (bool, e
 // AlterAutoIncrement rebase the table auto increment id
 //
 // NOTE: since tidb can make sure the auto id is always be rebase even if the `incr` value is smaller
-// the the auto incremanet base in tidb side, we needn't fetch currently auto increment value here.
+// than the auto increment base in tidb side, we needn't fetch currently auto increment value here.
 // See: https://github.com/pingcap/tidb/blob/64698ef9a3358bfd0fdc323996bb7928a56cadca/ddl/ddl_api.go#L2528-L2533
-func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName string, incr uint64) error {
-	var query string
+func AlterAutoIncrement(ctx context.Context, db *sql.DB, tableName string, incr uint64) error {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName), zap.Uint64("auto_increment", incr))
+	base := adjustIDBase(incr)
+	var forceStr string
 	if incr > math.MaxInt64 {
 		// automatically set max value
 		logger.Warn("auto_increment out of the maximum value TiDB supports, automatically set to the max", zap.Uint64("auto_increment", incr))
-		incr = math.MaxInt64
-		query = fmt.Sprintf("ALTER TABLE %s FORCE AUTO_INCREMENT=%d", tableName, incr)
-	} else {
-		query = fmt.Sprintf("ALTER TABLE %s AUTO_INCREMENT=%d", tableName, incr)
+		forceStr = "FORCE"
 	}
+	query := fmt.Sprintf("ALTER TABLE %s %s AUTO_INCREMENT=%d", tableName, forceStr, base)
 	task := logger.Begin(zap.InfoLevel, "alter table auto_increment")
-	err := g.ExecuteWithLog(ctx, query, "alter table auto_increment", logger)
+	exec := common.SQLWithRetry{DB: db, Logger: logger}
+	err := exec.Exec(ctx, "alter table auto_increment", query)
 	task.End(zap.ErrorLevel, err)
 	if err != nil {
 		task.Error(
@@ -354,8 +330,15 @@ func AlterAutoIncrement(ctx context.Context, g glue.SQLExecutor, tableName strin
 	return errors.Annotatef(err, "%s", query)
 }
 
+func adjustIDBase(incr uint64) int64 {
+	if incr > math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return int64(incr)
+}
+
 // AlterAutoRandom rebase the table auto random id
-func AlterAutoRandom(ctx context.Context, g glue.SQLExecutor, tableName string, randomBase uint64, maxAutoRandom uint64) error {
+func AlterAutoRandom(ctx context.Context, db *sql.DB, tableName string, randomBase uint64, maxAutoRandom uint64) error {
 	logger := log.FromContext(ctx).With(zap.String("table", tableName), zap.Uint64("auto_random", randomBase))
 	if randomBase == maxAutoRandom+1 {
 		// insert a tuple with key maxAutoRandom
@@ -365,9 +348,11 @@ func AlterAutoRandom(ctx context.Context, g glue.SQLExecutor, tableName string, 
 		logger.Warn("auto_random out of the maximum value TiDB supports")
 		return nil
 	}
+	// if new base is smaller than current, this query will success with a warning
 	query := fmt.Sprintf("ALTER TABLE %s AUTO_RANDOM_BASE=%d", tableName, randomBase)
 	task := logger.Begin(zap.InfoLevel, "alter table auto_random")
-	err := g.ExecuteWithLog(ctx, query, "alter table auto_random_base", logger)
+	exec := common.SQLWithRetry{DB: db, Logger: logger}
+	err := exec.Exec(ctx, "alter table auto_random_base", query)
 	task.End(zap.ErrorLevel, err)
 	if err != nil {
 		task.Error(

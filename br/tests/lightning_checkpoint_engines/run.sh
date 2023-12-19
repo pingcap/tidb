@@ -15,9 +15,10 @@
 # limitations under the License.
 
 set -eux
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 do_run_lightning() {
-    run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-engines.log" --config "tests/$TEST_NAME/$1.toml"
+    run_lightning --enable-checkpoint=1 --log-file "$TEST_DIR/lightning-checkpoint-engines.log" --config "$CUR/$1.toml"
 }
 
 check_cluster_version 4 0 0 'local backend'

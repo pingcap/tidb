@@ -14,8 +14,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/trace"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/util/metricsutil"
+	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"sourcegraph.com/sourcegraph/appdash"
@@ -77,12 +77,12 @@ func printWorkaroundOnFullRestoreError(command *cobra.Command, err error) {
 	fmt.Println("#######################################################################")
 	switch {
 	case errors.ErrorEqual(err, berrors.ErrRestoreNotFreshCluster):
-		fmt.Println("# the target cluster is not fresh, br cannot restore system tables.")
+		fmt.Println("# the target cluster is not fresh, cannot restore.")
+		fmt.Println("# you can drop existing databases and tables and start restore again")
 	case errors.ErrorEqual(err, berrors.ErrRestoreIncompatibleSys):
 		fmt.Println("# the target cluster is not compatible with the backup data,")
-		fmt.Println("# br cannot restore system tables.")
+		fmt.Println("# you can remove 'with-sys-table' flag to skip restoring system tables")
 	}
-	fmt.Println("# you can remove 'with-sys-table' flag to skip restoring system tables")
 	fmt.Println("#######################################################################")
 }
 
@@ -103,6 +103,26 @@ func runRestoreRawCommand(command *cobra.Command, cmdName string) error {
 	}
 	if err := task.RunRestoreRaw(GetDefaultContext(), gluetikv.Glue{}, cmdName, &cfg); err != nil {
 		log.Error("failed to restore raw kv", zap.Error(err))
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func runRestoreTxnCommand(command *cobra.Command, cmdName string) error {
+	cfg := task.Config{LogProgress: HasLogFile()}
+	if err := cfg.ParseFromFlags(command.Flags()); err != nil {
+		command.SilenceUsage = false
+		return errors.Trace(err)
+	}
+
+	ctx := GetDefaultContext()
+	if cfg.EnableOpenTracing {
+		var store *appdash.MemoryStore
+		ctx, store = trace.TracerStartSpan(ctx)
+		defer trace.TracerFinishSpan(ctx, store)
+	}
+	if err := task.RunRestoreTxn(GetDefaultContext(), gluetikv.Glue{}, cmdName, &cfg); err != nil {
+		log.Error("failed to restore txn kv", zap.Error(err))
 		return errors.Trace(err)
 	}
 	return nil
@@ -132,6 +152,7 @@ func NewRestoreCommand() *cobra.Command {
 		newDBRestoreCommand(),
 		newTableRestoreCommand(),
 		newRawRestoreCommand(),
+		newTxnRestoreCommand(),
 		newStreamRestoreCommand(),
 	)
 	task.DefineRestoreFlags(command.PersistentFlags())
@@ -186,6 +207,20 @@ func newRawRestoreCommand() *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return runRestoreRawCommand(cmd, task.RawRestoreCmd)
+		},
+	}
+
+	task.DefineRawRestoreFlags(command)
+	return command
+}
+
+func newTxnRestoreCommand() *cobra.Command {
+	command := &cobra.Command{
+		Use:   "txn",
+		Short: "(experimental) restore txn kv to TiKV cluster",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runRestoreTxnCommand(cmd, task.TxnRestoreCmd)
 		},
 	}
 

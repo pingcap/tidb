@@ -1,0 +1,41 @@
+# TestPlanCache
+set tidb_enable_prepared_plan_cache=1;
+set tidb_enable_ordered_result_mode=1;
+drop table if exists t;
+create table t (a int primary key, b int, c int, d int, key(b));
+prepare s1 from 'select * from t where a > ? limit 10';
+set @a = 10;
+execute s1 using @a;
+select @@last_plan_from_cache;
+execute s1 using @a;
+select @@last_plan_from_cache;
+set tidb_enable_prepared_plan_cache=DEFAULT;
+set tidb_enable_ordered_result_mode=DEFAULT;
+
+
+# TestSQLBinding
+set tidb_enable_ordered_result_mode=1;
+set tidb_opt_limit_push_down_threshold=0;
+drop table if exists t;
+create table t (a int primary key, b int, c int, d int, key(b));
+explain select * from t where a > 0 limit 1;
+create session binding for select * from t where a>0 limit 1 using select * from t use index(b) where a>0 limit 1;
+explain select * from t where a > 0 limit 1;
+set tidb_enable_ordered_result_mode=DEFAULT;
+set tidb_opt_limit_push_down_threshold=DEFAULT;
+
+
+# TestClusteredIndex
+set tidb_enable_ordered_result_mode=1;
+set tidb_enable_clustered_index = 'ON';
+drop table if exists t;
+CREATE TABLE t (a int,b int,c int, PRIMARY KEY (a,b));
+explain format=brief select * from t limit 10;
+set tidb_enable_ordered_result_mode=DEFAULT;
+set tidb_enable_clustered_index = DEFAULT;
+
+
+# TestStableResultSwitch
+show variables where variable_name like 'tidb_enable_ordered_result_mode';
+
+

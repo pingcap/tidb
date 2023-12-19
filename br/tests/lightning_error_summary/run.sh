@@ -45,10 +45,10 @@ check_contains 'sum(k): 32'
 
 # Verify the log contains the expected messages at the last few lines
 tail -20 "$TEST_DIR/lightning-error-summary.log" > "$TEST_DIR/lightning-error-summary.tail"
-grep -Fq '["tables failed to be imported"] [count=2]' "$TEST_DIR/lightning-error-summary.tail"
-grep -Fq '[-] [table=`error_summary`.`a`] [status=checksum] [error="[Lighting:Restore:ErrChecksumMismatch]checksum mismatched' "$TEST_DIR/lightning-error-summary.tail"
-grep -Fq '[-] [table=`error_summary`.`c`] [status=checksum] [error="[Lighting:Restore:ErrChecksumMismatch]checksum mismatched' "$TEST_DIR/lightning-error-summary.tail"
-! grep -Fq '[-] [table=`error_summary`.`b`] [status=checksum] [error="[Lighting:Restore:ErrChecksumMismatch]checksum mismatched' "$TEST_DIR/lightning-error-summary.tail"
+check_contains '["tables failed to be imported"] [count=2]' "$TEST_DIR/lightning-error-summary.tail"
+check_contains '[-] [table=`error_summary`.`a`] [status=checksum] [error="[Lighting:Restore:ErrChecksumMismatch]checksum mismatched' "$TEST_DIR/lightning-error-summary.tail"
+check_contains '[-] [table=`error_summary`.`c`] [status=checksum] [error="[Lighting:Restore:ErrChecksumMismatch]checksum mismatched' "$TEST_DIR/lightning-error-summary.tail"
+check_not_contains '[-] [table=`error_summary`.`b`] [status=checksum] [error="[Lighting:Restore:ErrChecksumMismatch]checksum mismatched' "$TEST_DIR/lightning-error-summary.tail"
 
 # Now check the error log when the checkpoint is not cleaned.
 
@@ -61,10 +61,10 @@ set -e
 [ "$ERRORCODE" -ne 0 ]
 
 tail -100 "$TEST_DIR/lightning-error-summary.log" > "$TEST_DIR/lightning-error-summary.tail"
-grep -Fq 'TiDB Lightning has failed last time. To prevent data loss, this run will stop now' "$TEST_DIR/lightning-error-summary.tail"
-grep -Fq './tidb-lightning-ctl --checkpoint-error-destroy='"'"'`error_summary`.`a`'"'"' --config=...' "$TEST_DIR/lightning-error-summary.tail"
-grep -Fq './tidb-lightning-ctl --checkpoint-error-destroy='"'"'`error_summary`.`c`'"'"' --config=...' "$TEST_DIR/lightning-error-summary.tail"
-! grep -Fq './tidb-lightning-ctl --checkpoint-error-destroy='"'"'`error_summary`.`b`'"'"' --config=...' "$TEST_DIR/lightning-error-summary.tail"
-grep -Fq 'checkpoint-error-destroy=all --config=...` to start from scratch' "$TEST_DIR/lightning-error-summary.tail"
-grep -Fq 'For details of this failure, read the log file' "$TEST_DIR/lightning-error-summary.tail"
-grep -Fq 'PREVIOUS run' "$TEST_DIR/lightning-error-summary.tail"
+check_contains 'TiDB Lightning has failed last time. To prevent data loss, this run will stop now' "$TEST_DIR/lightning-error-summary.tail"
+check_contains './tidb-lightning-ctl --checkpoint-error-destroy='"'"'`error_summary`.`a`'"'"' --config=...' "$TEST_DIR/lightning-error-summary.tail"
+check_contains './tidb-lightning-ctl --checkpoint-error-destroy='"'"'`error_summary`.`c`'"'"' --config=...' "$TEST_DIR/lightning-error-summary.tail"
+check_not_contains './tidb-lightning-ctl --checkpoint-error-destroy='"'"'`error_summary`.`b`'"'"' --config=...' "$TEST_DIR/lightning-error-summary.tail"
+check_contains 'checkpoint-error-destroy=all --config=...` to start from scratch' "$TEST_DIR/lightning-error-summary.tail"
+check_contains 'For details of this failure, read the log file' "$TEST_DIR/lightning-error-summary.tail"
+check_contains 'PREVIOUS run' "$TEST_DIR/lightning-error-summary.tail"

@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "membuf",
-    srcs = ["buffer.go"],
+    srcs = [
+        "buffer.go",
+        "limiter.go",
+    ],
     importpath = "github.com/pingcap/tidb/br/pkg/membuf",
     visibility = ["//visibility:public"],
 )
@@ -10,8 +13,15 @@ go_library(
 go_test(
     name = "membuf_test",
     timeout = "short",
-    srcs = ["buffer_test.go"],
+    srcs = [
+        "buffer_test.go",
+        "limiter_test.go",
+    ],
     embed = [":membuf"],
     flaky = True,
-    deps = ["@com_github_stretchr_testify//require"],
+    shard_count = 6,
+    deps = [
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_atomic//:atomic",
+    ],
 )

@@ -6,7 +6,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/lightning/metric",
     visibility = ["//visibility:public"],
     deps = [
-        "//util/promutil",
+        "//pkg/util/promutil",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_prometheus_client_model//go",
     ],
@@ -17,9 +17,10 @@ go_test(
     timeout = "short",
     srcs = ["metric_test.go"],
     flaky = True,
+    shard_count = 6,
     deps = [
         ":metric",
-        "//util/promutil",
+        "//pkg/util/promutil",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",

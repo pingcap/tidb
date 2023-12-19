@@ -16,6 +16,8 @@
 
 set -euE
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 check_row_count() {
     run_sql "select count(*) from test.$1;"
     check_contains "count(*): $2"
@@ -27,7 +29,7 @@ for BACKEND in local tidb; do
     fi
     run_sql 'DROP DATABASE IF EXISTS test'
     run_sql 'CREATE DATABASE test'
-    run_sql "source tests/$TEST_NAME/db.sql;" -D test
+    run_sql "source $CUR/db.sql;" -D test
 
     run_lightning --backend $BACKEND
 

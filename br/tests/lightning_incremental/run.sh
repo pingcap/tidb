@@ -16,6 +16,8 @@
 
 set -eu
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 check_cluster_version 4 0 0 "incremental restore" || exit 0
 
 run_lightning_and_check_meta() {
@@ -57,7 +59,7 @@ run_sql "SELECT sum(pk) from incr.uk_auto_inc;"
 check_contains "sum(pk): 6"
 
 # incrementally import all data in data1
-run_lightning_and_check_meta -d "tests/$TEST_NAME/data1"
+run_lightning_and_check_meta -d "$CUR/data1"
 
 for tbl in auto_random pk_auto_inc rowid_uk_inc uk_auto_inc; do
   run_sql "SELECT count(*) from incr.$tbl"

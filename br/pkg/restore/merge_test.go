@@ -15,10 +15,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore"
-	"github.com/pingcap/tidb/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,12 +46,14 @@ func (fb *fileBulder) build(tableID, indexID, num, bytes, kv int) (files []*back
 	if indexID != 0 {
 		lowVal := types.NewIntDatum(fb.startKeyOffset - 10)
 		highVal := types.NewIntDatum(fb.startKeyOffset)
-		sc := &stmtctx.StatementContext{TimeZone: time.UTC}
-		lowValue, err := codec.EncodeKey(sc, nil, lowVal)
+		sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+		lowValue, err := codec.EncodeKey(sc.TimeZone(), nil, lowVal)
+		err = sc.HandleError(err)
 		if err != nil {
 			panic(err)
 		}
-		highValue, err := codec.EncodeKey(sc, nil, highVal)
+		highValue, err := codec.EncodeKey(sc.TimeZone(), nil, highVal)
+		err = sc.HandleError(err)
 		if err != nil {
 			panic(err)
 		}

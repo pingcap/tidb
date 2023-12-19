@@ -8,43 +8,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	ropts "github.com/pingcap/tidb/br/pkg/lightning/importer/opts"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/lightning/precheck"
+	pd "github.com/tikv/pd/client"
 )
-
-// CheckItemID is the ID of a precheck item
-type CheckItemID string
-
-// CheckItemID constants
-const (
-	CheckLargeDataFile            CheckItemID = "CHECK_LARGE_DATA_FILES"
-	CheckSourcePermission         CheckItemID = "CHECK_SOURCE_PERMISSION"
-	CheckTargetTableEmpty         CheckItemID = "CHECK_TARGET_TABLE_EMPTY"
-	CheckSourceSchemaValid        CheckItemID = "CHECK_SOURCE_SCHEMA_VALID"
-	CheckCheckpoints              CheckItemID = "CHECK_CHECKPOINTS"
-	CheckCSVHeader                CheckItemID = "CHECK_CSV_HEADER"
-	CheckTargetClusterSize        CheckItemID = "CHECK_TARGET_CLUSTER_SIZE"
-	CheckTargetClusterEmptyRegion CheckItemID = "CHECK_TARGET_CLUSTER_EMPTY_REGION"
-	CheckTargetClusterRegionDist  CheckItemID = "CHECK_TARGET_CLUSTER_REGION_DISTRIBUTION"
-	CheckTargetClusterVersion     CheckItemID = "CHECK_TARGET_CLUSTER_VERSION"
-	CheckLocalDiskPlacement       CheckItemID = "CHECK_LOCAL_DISK_PLACEMENT"
-	CheckLocalTempKVDir           CheckItemID = "CHECK_LOCAL_TEMP_KV_DIR"
-	CheckTargetUsingCDCPITR       CheckItemID = "CHECK_TARGET_USING_CDC_PITR"
-)
-
-// CheckResult is the result of a precheck item
-type CheckResult struct {
-	Item     CheckItemID
-	Severity CheckType
-	Passed   bool
-	Message  string
-}
-
-// PrecheckItem is the interface for precheck items
-type PrecheckItem interface {
-	// Check checks whether it meet some prerequisites for importing
-	// If the check is skipped, the returned `CheckResult` is nil
-	Check(ctx context.Context) (*CheckResult, error)
-	GetCheckItemID() CheckItemID
-}
 
 type precheckContextKey string
 
@@ -57,14 +23,21 @@ func WithPrecheckKey(ctx context.Context, key precheckContextKey, val any) conte
 
 // PrecheckItemBuilder is used to build precheck items
 type PrecheckItemBuilder struct {
-	cfg           *config.Config
-	dbMetas       []*mydump.MDDatabaseMeta
-	preInfoGetter PreImportInfoGetter
-	checkpointsDB checkpoints.DB
+	cfg                *config.Config
+	dbMetas            []*mydump.MDDatabaseMeta
+	preInfoGetter      PreImportInfoGetter
+	checkpointsDB      checkpoints.DB
+	pdLeaderAddrGetter func() string
 }
 
 // NewPrecheckItemBuilderFromConfig creates a new PrecheckItemBuilder from config
-func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, opts ...ropts.PrecheckItemBuilderOption) (*PrecheckItemBuilder, error) {
+// pdCli **must not** be nil for local backend
+func NewPrecheckItemBuilderFromConfig(
+	ctx context.Context,
+	cfg *config.Config,
+	pdCli pd.Client,
+	opts ...ropts.PrecheckItemBuilderOption,
+) (*PrecheckItemBuilder, error) {
 	var gerr error
 	builderCfg := new(ropts.PrecheckItemBuilderConfig)
 	for _, o := range opts {
@@ -74,7 +47,7 @@ func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, o
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	targetInfoGetter, err := NewTargetInfoGetterImpl(cfg, targetDB)
+	targetInfoGetter, err := NewTargetInfoGetterImpl(cfg, targetDB, pdCli)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -104,7 +77,7 @@ func NewPrecheckItemBuilderFromConfig(ctx context.Context, cfg *config.Config, o
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, cpdb), gerr
+	return NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, cpdb, pdCli), gerr
 }
 
 // NewPrecheckItemBuilder creates a new PrecheckItemBuilder
@@ -113,44 +86,53 @@ func NewPrecheckItemBuilder(
 	dbMetas []*mydump.MDDatabaseMeta,
 	preInfoGetter PreImportInfoGetter,
 	checkpointsDB checkpoints.DB,
+	pdCli pd.Client,
 ) *PrecheckItemBuilder {
+	leaderAddrGetter := func() string {
+		return cfg.TiDB.PdAddr
+	}
+	// in tests we may not have a pdCli
+	if pdCli != nil {
+		leaderAddrGetter = pdCli.GetLeaderAddr
+	}
 	return &PrecheckItemBuilder{
-		cfg:           cfg,
-		dbMetas:       dbMetas,
-		preInfoGetter: preInfoGetter,
-		checkpointsDB: checkpointsDB,
+		cfg:                cfg,
+		dbMetas:            dbMetas,
+		preInfoGetter:      preInfoGetter,
+		checkpointsDB:      checkpointsDB,
+		pdLeaderAddrGetter: leaderAddrGetter,
 	}
 }
 
-// BuildPrecheckItem builds a PrecheckItem by the given checkID
-func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID CheckItemID) (PrecheckItem, error) {
+// BuildPrecheckItem builds a Checker by the given checkID
+func (b *PrecheckItemBuilder) BuildPrecheckItem(checkID precheck.CheckItemID) (precheck.Checker, error) {
 	switch checkID {
-	case CheckLargeDataFile:
+	case precheck.CheckLargeDataFile:
 		return NewLargeFileCheckItem(b.cfg, b.dbMetas), nil
-	case CheckSourcePermission:
+	case precheck.CheckSourcePermission:
 		return NewStoragePermissionCheckItem(b.cfg), nil
-	case CheckTargetTableEmpty:
+	case precheck.CheckTargetTableEmpty:
 		return NewTableEmptyCheckItem(b.cfg, b.preInfoGetter, b.dbMetas, b.checkpointsDB), nil
-	case CheckSourceSchemaValid:
+	case precheck.CheckSourceSchemaValid:
 		return NewSchemaCheckItem(b.cfg, b.preInfoGetter, b.dbMetas, b.checkpointsDB), nil
-	case CheckCheckpoints:
+	case precheck.CheckCheckpoints:
 		return NewCheckpointCheckItem(b.cfg, b.preInfoGetter, b.dbMetas, b.checkpointsDB), nil
-	case CheckCSVHeader:
+	case precheck.CheckCSVHeader:
 		return NewCSVHeaderCheckItem(b.cfg, b.preInfoGetter, b.dbMetas), nil
-	case CheckTargetClusterSize:
+	case precheck.CheckTargetClusterSize:
 		return NewClusterResourceCheckItem(b.preInfoGetter), nil
-	case CheckTargetClusterEmptyRegion:
+	case precheck.CheckTargetClusterEmptyRegion:
 		return NewEmptyRegionCheckItem(b.preInfoGetter, b.dbMetas), nil
-	case CheckTargetClusterRegionDist:
+	case precheck.CheckTargetClusterRegionDist:
 		return NewRegionDistributionCheckItem(b.preInfoGetter, b.dbMetas), nil
-	case CheckTargetClusterVersion:
+	case precheck.CheckTargetClusterVersion:
 		return NewClusterVersionCheckItem(b.preInfoGetter, b.dbMetas), nil
-	case CheckLocalDiskPlacement:
+	case precheck.CheckLocalDiskPlacement:
 		return NewLocalDiskPlacementCheckItem(b.cfg), nil
-	case CheckLocalTempKVDir:
+	case precheck.CheckLocalTempKVDir:
 		return NewLocalTempKVDirCheckItem(b.cfg, b.preInfoGetter, b.dbMetas), nil
-	case CheckTargetUsingCDCPITR:
-		return NewCDCPITRCheckItem(b.cfg), nil
+	case precheck.CheckTargetUsingCDCPITR:
+		return NewCDCPITRCheckItem(b.cfg, b.pdLeaderAddrGetter), nil
 	default:
 		return nil, errors.Errorf("unsupported check item: %v", checkID)
 	}

@@ -18,10 +18,11 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
@@ -250,4 +251,42 @@ func TestAssertionWhenPessimisticLockLost(t *testing.T) {
 	tk1.MustExec("insert into t values (1, 'a') on duplicate key update val = concat(val, 'a')")
 	err := tk1.ExecToErr("commit")
 	require.NotContains(t, err.Error(), "assertion")
+}
+
+func TestSelectLockForPartitionTable(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk1 := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+
+	tk1.MustExec("use test")
+	tk1.MustExec("create table t(a int, b int, c int, key idx(a, b, c)) PARTITION BY HASH (c) PARTITIONS 10")
+	tk1.MustExec("insert into t values (1, 1, 1), (2, 2, 2), (3, 3, 3)")
+	tk1.MustExec("analyze table t")
+	tk1.MustExec("begin")
+	tk1.MustHavePlan("select * from t use index(idx) where a = 1 and b = 1 order by a limit 1 for update", "IndexLookUp")
+	tk1.MustExec("select * from t use index(idx) where a = 1 and b = 1 order by a limit 1 for update")
+	ch := make(chan bool, 1)
+	go func() {
+		tk2.MustExec("use test")
+		tk2.MustExec("begin")
+		ch <- false
+		// block here, until tk1 finish
+		tk2.MustExec("select * from t use index(idx) where a = 1 and b = 1 order by a limit 1 for update")
+		ch <- true
+	}()
+
+	res := <-ch
+	// Sleep here to make sure SelectLock stmt is executed
+	time.Sleep(10 * time.Millisecond)
+
+	select {
+	case res = <-ch:
+	default:
+	}
+	require.False(t, res)
+
+	tk1.MustExec("commit")
+	// wait until tk2 finished
+	res = <-ch
+	require.True(t, res)
 }

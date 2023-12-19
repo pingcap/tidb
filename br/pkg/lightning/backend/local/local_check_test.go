@@ -18,20 +18,17 @@ import (
 	"context"
 	"testing"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/coreos/go-semver/semver"
-	"github.com/golang/mock/gomock"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCheckRequirementsTiFlash(t *testing.T) {
-	controller := gomock.NewController(t)
-	defer controller.Finish()
-	glue := mock.NewMockGlue(controller)
-	exec := mock.NewMockSQLExecutor(controller)
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
 	ctx := context.Background()
 
 	dbMetas := []*mydump.MDDatabaseMeta{
@@ -68,10 +65,11 @@ func TestCheckRequirementsTiFlash(t *testing.T) {
 	}
 	checkCtx := &backend.CheckCtx{DBMetas: dbMetas}
 
-	glue.EXPECT().GetSQLExecutor().Return(exec)
-	exec.EXPECT().QueryStringsWithLog(ctx, local.TiFlashReplicaQueryForTest, gomock.Any(), gomock.Any()).
-		Return([][]string{{"db", "tbl"}, {"test", "t1"}, {"test1", "tbl"}}, nil)
+	mock.ExpectQuery(local.TiFlashReplicaQueryForTest).WillReturnRows(sqlmock.NewRows([]string{"db", "tbl"}).
+		AddRow("db", "tbl").
+		AddRow("test", "t1").
+		AddRow("test1", "tbl"))
 
-	err := local.CheckTiFlashVersionForTest(ctx, glue, checkCtx, *semver.New("4.0.2"))
+	err = local.CheckTiFlashVersionForTest(ctx, db, checkCtx, *semver.New("4.0.2"))
 	require.Regexp(t, "^lightning local backend doesn't support TiFlash in this TiDB version. conflict tables: \\[`test`.`t1`, `test1`.`tbl`\\]", err.Error())
 }

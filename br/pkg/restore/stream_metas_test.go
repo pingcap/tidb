@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -149,7 +150,8 @@ func TestTruncateLog(t *testing.T) {
 	require.NoError(t, fakeStreamBackup(l))
 
 	s := restore.StreamMetadataSet{
-		Helper: stream.NewMetadataHelper(),
+		Helper:                    stream.NewMetadataHelper(),
+		MetadataDownloadBatchSize: 128,
 	}
 	require.NoError(t, s.LoadFrom(ctx, l))
 
@@ -221,7 +223,8 @@ func TestTruncateLogV2(t *testing.T) {
 	require.NoError(t, fakeStreamBackupV2(l))
 
 	s := restore.StreamMetadataSet{
-		Helper: stream.NewMetadataHelper(),
+		Helper:                    stream.NewMetadataHelper(),
+		MetadataDownloadBatchSize: 128,
 	}
 	require.NoError(t, s.LoadFrom(ctx, l))
 
@@ -300,6 +303,7 @@ func TestTruncateSafepoint(t *testing.T) {
 }
 
 func TestTruncateSafepointForGCS(t *testing.T) {
+	require.True(t, intest.InTest)
 	ctx := context.Background()
 	opts := fakestorage.Options{
 		NoListener: true,
@@ -1188,7 +1192,8 @@ func TestTruncate1(t *testing.T) {
 			for _, until := range ts.until {
 				t.Logf("case %d, param %d, until %d", i, j, until)
 				metas := restore.StreamMetadataSet{
-					Helper: stream.NewMetadataHelper(),
+					Helper:                    stream.NewMetadataHelper(),
+					MetadataDownloadBatchSize: 128,
 				}
 				err := generateFiles(ctx, s, cs.metas, tmpDir)
 				require.NoError(t, err)
@@ -1703,7 +1708,8 @@ func TestTruncate2(t *testing.T) {
 			for _, until := range ts.until {
 				t.Logf("case %d, param %d, until %d", i, j, until)
 				metas := restore.StreamMetadataSet{
-					Helper: stream.NewMetadataHelper(),
+					Helper:                    stream.NewMetadataHelper(),
+					MetadataDownloadBatchSize: 128,
 				}
 				err := generateFiles(ctx, s, cs.metas, tmpDir)
 				require.NoError(t, err)
@@ -2086,7 +2092,8 @@ func TestTruncate3(t *testing.T) {
 			for _, until := range ts.until {
 				t.Logf("case %d, param %d, until %d", i, j, until)
 				metas := restore.StreamMetadataSet{
-					Helper: stream.NewMetadataHelper(),
+					Helper:                    stream.NewMetadataHelper(),
+					MetadataDownloadBatchSize: 128,
 				}
 				err := generateFiles(ctx, s, cs.metas, tmpDir)
 				require.NoError(t, err)
@@ -2298,7 +2305,8 @@ func TestCalculateShiftTS(t *testing.T) {
 			for _, until := range ts.until {
 				t.Logf("case %d, param %d, until %d", i, j, until)
 				metas := restore.StreamMetadataSet{
-					Helper: stream.NewMetadataHelper(),
+					Helper:                    stream.NewMetadataHelper(),
+					MetadataDownloadBatchSize: 128,
 				}
 				err := generateFiles(ctx, s, cs.metas, tmpDir)
 				require.NoError(t, err)

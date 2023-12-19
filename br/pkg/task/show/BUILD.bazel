@@ -1,0 +1,42 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "show",
+    srcs = ["cmd.go"],
+    importpath = "github.com/pingcap/tidb/br/pkg/task/show",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/errors",
+        "//br/pkg/logutil",
+        "//br/pkg/metautil",
+        "//br/pkg/storage",
+        "//br/pkg/task",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_tikv_client_go_v2//oracle",
+    ],
+)
+
+go_test(
+    name = "show_test",
+    timeout = "short",
+    srcs = ["cmd_test.go"],
+    data = glob(["testdata/**"]),
+    embedsrcs = [
+        "testdata/full-schema.meta",
+        "testdata/v2/backupmeta",
+        "testdata/v2/backupmeta.schema.000000001",
+        "testdata/v2-enc/backupmeta",
+        "testdata/v2-enc/backupmeta.schema.000000001",
+    ],
+    flaky = True,
+    shard_count = 4,
+    deps = [
+        ":show",
+        "//pkg/testkit",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_kvproto//pkg/encryptionpb",
+        "@com_github_stretchr_testify//require",
+    ],
+)

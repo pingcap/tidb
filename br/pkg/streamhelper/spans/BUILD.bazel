@@ -12,7 +12,7 @@ go_library(
     deps = [
         "//br/pkg/logutil",
         "//br/pkg/utils",
-        "//kv",
+        "//pkg/kv",
         "@com_github_google_btree//:btree",
     ],
 )
@@ -26,6 +26,7 @@ go_test(
         "value_sorted_test.go",
     ],
     flaky = True,
+    shard_count = 4,
     deps = [
         ":spans",
         "@com_github_stretchr_testify//require",

@@ -17,6 +17,7 @@
 set -eux
 DB="s3_test"
 TABLE="tbl"
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 check_cluster_version 4 0 0 'local backend' || exit 0
 
@@ -138,7 +139,7 @@ function test_import_with_checkpoint() {
         return 1
     fi
     local SOURCE_DIR="s3://$BUCKET/?endpoint=http%3A//127.0.0.1%3A9900&access_key=$MINIO_ACCESS_KEY&secret_access_key=$MINIO_SECRET_KEY&force_path_style=true"
-    if ! run_lightning -d "$SOURCE_DIR" --backend local --config "tests/$TEST_NAME/config_s3_checkpoint.toml" 2> /dev/null; then
+    if ! run_lightning -d "$SOURCE_DIR" --backend local --config "$CUR/config_s3_checkpoint.toml" 2> /dev/null; then
         echo "run lightning failed" >&2
 	return 2
     fi
@@ -183,7 +184,7 @@ function test_import_using_manual_path_config() {
     # no touch empty file for parquet files
 
     local SOURCE_DIR="s3://${bucket_02}/${sub_path_02}?endpoint=http%3A//127.0.0.1%3A9900&access_key=$MINIO_ACCESS_KEY&secret_access_key=$MINIO_SECRET_KEY&force_path_style=true"
-    if ! run_lightning -d "${SOURCE_DIR}" --backend local --config "tests/$TEST_NAME/config_manual_files.toml" 2> /dev/null; then
+    if ! run_lightning -d "${SOURCE_DIR}" --backend local --config "$CUR/config_manual_files.toml" 2> /dev/null; then
         echo "run lightning failed" >&2
         return 2
     fi
