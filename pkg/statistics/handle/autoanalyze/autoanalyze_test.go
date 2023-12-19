@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -364,4 +366,32 @@ func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+}
+
+func TestSkipAutoAnalyzeOutsideTheAvailableTime(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	ttStart := time.Now().Add(-2 * time.Hour)
+	ttEnd := time.Now().Add(-1 * time.Hour)
+	for i := 0; i < 2; i++ {
+		dbName := fmt.Sprintf("db%d", i)
+		tk.MustExec(fmt.Sprintf("create database %s", dbName))
+		for j := 0; j < 2; j++ {
+			tableName := fmt.Sprintf("table%d", j)
+			tk.MustExec(fmt.Sprintf("create table %s.%s (a int)", dbName, tableName))
+		}
+	}
+	se, err := dom.SysSessionPool().Get()
+	require.NoError(t, err)
+	require.False(t,
+		autoanalyze.RandomPickOneTableAndTryAutoAnalyze(
+			se.(sessionctx.Context),
+			dom.StatsHandle(),
+			dom.InfoSchema(),
+			0.6,
+			variable.Dynamic,
+			ttStart,
+			ttEnd,
+		),
+	)
 }
