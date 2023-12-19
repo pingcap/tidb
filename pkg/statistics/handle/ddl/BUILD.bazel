@@ -6,6 +6,7 @@ go_library(
         "ddl.go",
         "drop_partition.go",
         "exchange_partition.go",
+        "reorganize_partition.go",
         "truncate_partition.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/statistics/handle/ddl",
@@ -30,7 +31,7 @@ go_test(
     timeout = "short",
     srcs = ["ddl_test.go"],
     flaky = True,
-    shard_count = 9,
+    shard_count = 10,
     deps = [
         "//pkg/parser/model",
         "//pkg/planner/cardinality",
