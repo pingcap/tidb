@@ -75,14 +75,17 @@ const (
 
 var errTopoFetcher = dbterror.ClassUtil.NewStd(errno.ErrInternal)
 
+// RecoveryType is for MPPErrRecovery.
 type RecoveryType uint32
 
 const (
-	RecoveryTypeNull = iota
+	// RecoveryTypeNull means no need to recovery error.
+	RecoveryTypeNull RecoveryType = iota
+	// RecoveryTypeMemLimit means need to recovery MemLimit error.
 	RecoveryTypeMemLimit
 )
 
-func (r *RecoveryType) ToString() (string, error) {
+func (r *RecoveryType) toString() (string, error) {
 	if *r == RecoveryTypeNull {
 		return "Null", nil
 	} else if *r == RecoveryTypeMemLimit {
@@ -190,7 +193,8 @@ func (f *MockTopoFetcher) FetchAndGetTopo() ([]string, error) {
 	return curTopo, nil
 }
 
-func (f *MockTopoFetcher) RecoveryAndGetTopo(recovery RecoveryType, oriCNCnt int) ([]string, error) {
+// RecoveryAndGetTopo implements TopoFetcher interface.
+func (*MockTopoFetcher) RecoveryAndGetTopo(RecoveryType, int) ([]string, error) {
 	return nil, errors.New("RecoveryAndGetTopo not implemented")
 }
 
@@ -433,7 +437,7 @@ func (f *AWSTopoFetcher) fetchTopo(recovery RecoveryType, oriCNCnt int) error {
 	para.Add("tidbclusterid", f.clusterID)
 
 	if recovery == RecoveryTypeMemLimit {
-		msg, err := recovery.ToString()
+		msg, err := recovery.toString()
 		if err != nil {
 			return err
 		}
@@ -481,6 +485,7 @@ func (*TestTopoFetcher) FetchAndGetTopo() ([]string, error) {
 	return []string{}, nil
 }
 
-func (f *TestTopoFetcher) RecoveryAndGetTopo(recovery RecoveryType, oriCNCnt int) ([]string, error) {
+// RecoveryAndGetTopo implements TopoFetcher interface.
+func (*TestTopoFetcher) RecoveryAndGetTopo(RecoveryType, int) ([]string, error) {
 	return nil, errors.New("RecoveryAndGetTopo not implemented")
 }

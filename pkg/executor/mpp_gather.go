@@ -81,7 +81,7 @@ type MPPGather struct {
 	kvRanges []kv.KeyRange
 	dummy    bool
 
-	mppErrRecovery *mpperr.MPPErrRecovery
+	mppErrRecovery *mpperr.RecoveryHandler
 
 	// Only for MemLimit err recovery for now.
 	// AutoScaler use this value as hint to scale out CN.
@@ -170,7 +170,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		enableMPPRecovery = false
 	}
 
-	e.mppErrRecovery = mpperr.NewMPPErrRecovery(useAutoScaler, uint64(holdCap), enableMPPRecovery, e.memTracker)
+	e.mppErrRecovery = mpperr.NewRecoveryHandler(useAutoScaler, uint64(holdCap), enableMPPRecovery, e.memTracker)
 	return nil
 }
 
@@ -195,13 +195,16 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 				NodeCnt: e.nodeCnt,
 			})
 			if err != nil {
-				logutil.BgLogger().Info("recovery mpp error failed", zap.Any("mppErr", mppErr),
+				logutil.BgLogger().Error("recovery mpp error failed", zap.Any("mppErr", mppErr),
 					zap.Any("recoveryErr", err))
 				return mppErr
 			}
 
 			logutil.BgLogger().Info("recovery mpp error succeed, begin next retry", zap.Any("mppErr", mppErr))
-			e.setupRespIter(ctx, true)
+			if err = e.setupRespIter(ctx, true); err != nil {
+				logutil.BgLogger().Error("setup resp iter when recovery mpp err failed", zap.Any("err", err))
+				return mppErr
+			}
 			e.mppErrRecovery.ResetHolder()
 
 			continue
@@ -215,11 +218,11 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 	}
 
 	if e.mppErrRecovery.NumHoldChk() != 0 {
+		var tmpChk *chunk.Chunk
 		if tmpChk := e.mppErrRecovery.PopFrontChk(); tmpChk == nil {
 			return errors.New("cannot get chunk from mpp result holder")
-		} else {
-			chk.SwapColumns(tmpChk)
 		}
+		chk.SwapColumns(tmpChk)
 	} else if err := e.respIter.Next(ctx, chk); err != nil {
 		return err
 	}

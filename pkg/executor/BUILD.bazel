@@ -128,6 +128,7 @@ go_library(
         "//pkg/executor/lockstats",
         "//pkg/executor/metrics",
         "//pkg/executor/mppcoordmanager",
+        "//pkg/executor/mpperr",
         "//pkg/executor/sortexec",
         "//pkg/expression",
         "//pkg/expression/aggregation",
