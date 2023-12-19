@@ -642,7 +642,7 @@ func (e *Engine) ingestSSTLoop() {
 					}
 					ingestMetas := metas.metas
 					if e.config.Compact {
-						newMeta, err := e.sstIngester.mergeSSTs(metas.metas, e.sstDir)
+						newMeta, err := e.sstIngester.mergeSSTs(metas.metas, e.sstDir, e.config.BlockSize)
 						if err != nil {
 							e.setError(err)
 							return
@@ -1504,7 +1504,7 @@ func (h *sstIterHeap) Next() ([]byte, []byte, error) {
 // sstIngester is a interface used to merge and ingest SST files.
 // it's a interface mainly used for test convenience
 type sstIngester interface {
-	mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
+	mergeSSTs(metas []*sstMeta, dir string, blockSize int) (*sstMeta, error)
 	ingest([]*sstMeta) error
 }
 
@@ -1512,7 +1512,7 @@ type dbSSTIngester struct {
 	e *Engine
 }
 
-func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error) {
+func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string, blockSize int) (*sstMeta, error) {
 	if len(metas) == 0 {
 		return nil, errors.New("sst metas is empty")
 	} else if len(metas) == 1 {
@@ -1561,7 +1561,7 @@ func (i dbSSTIngester) mergeSSTs(metas []*sstMeta, dir string) (*sstMeta, error)
 	heap.Init(mergeIter)
 
 	name := filepath.Join(dir, fmt.Sprintf("%s.sst", uuid.New()))
-	writer, err := newSSTWriter(name, 16*1024)
+	writer, err := newSSTWriter(name, blockSize)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
