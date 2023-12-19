@@ -217,6 +217,28 @@ func TestUniversalBindingSwitch(t *testing.T) {
 	tk3.MustQuery(`show global variables like 'tidb_opt_enable_universal_binding'`).Check(testkit.Rows("tidb_opt_enable_universal_binding OFF"))
 }
 
+func TestUniversalBindingDBInHints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t1 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
+	tk.MustExec(`create table t2 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
+	tk.MustExec(`create table t3 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
+
+	tk.MustExec(`create universal binding using select /*+ use_index(test.t, a) */ * from t`)
+	tk.MustExec(`create universal binding using select /*+ leading(t1, test.t2) */ * from t1, t2 where t1.a=t2.a`)
+	tk.MustExec(`create universal binding using select /*+ leading(test.t1, test.t2, test.t3) */ * from t1, t2 where t1.a=t2.a and t2.b=t3.b`)
+
+	// use_index(test.t, a) --> use_index(t, a)
+	// leading(t1, test.t2) --> leading(t1, t2)
+	// leading(test.t1, test.t2, test.t3) --> leading(t1, t2, t3)
+	rs := showBinding(tk, "show bindings")
+	require.Equal(t, len(rs), 3)
+	require.Equal(t, rs[0][1], "SELECT /*+ leading(`t1`, `t2`)*/ * FROM (`t1`) JOIN `t2` WHERE `t1`.`a` = `t2`.`a`")
+	require.Equal(t, rs[1][1], "SELECT /*+ leading(`t1`, `t2`, `t3`)*/ * FROM (`t1`) JOIN `t2` WHERE `t1`.`a` = `t2`.`a` AND `t2`.`b` = `t3`.`b`")
+	require.Equal(t, rs[2][1], "SELECT /*+ use_index(`t` `a`)*/ * FROM `t`")
+}
+
 func TestUniversalBindingGC(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
