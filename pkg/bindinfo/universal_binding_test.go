@@ -279,6 +279,18 @@ func TestUniversalBindingHints(t *testing.T) {
 			`select * from %st1 where a=1000`},
 		{`create universal binding using select /*+ use_index(t1, c) */ * from t1 where d<1`,
 			`select * from %st1 where d<10000`},
+		{`create universal binding using select /*+ use_index(t1, c) */ * from t1, t2 where t1.d<1`,
+			`select * from %st1, t2 where t1.d<100`},
+		{`create universal binding using select /*+ use_index(t1, c) */ * from t1, t2 where t1.d<1`,
+			`select * from t1, %st2 where t1.d<100`},
+		{`create universal binding using select /*+ use_index(t1, c), use_index(t2, a) */ * from t1, t2 where t1.d<1`,
+			`select * from %st1, t2 where t1.d<100`},
+		{`create universal binding using select /*+ use_index(t1, c), use_index(t2, a) */ * from t1, t2 where t1.d<1`,
+			`select * from t1, %st2 where t1.d<100`},
+		{`create universal binding using select /*+ use_index(t1, c), use_index(t2, a) */ * from t1, t2, t3 where t1.d<1`,
+			`select * from %st1, t2, t3 where t1.d<100`},
+		{`create universal binding using select /*+ use_index(t1, c), use_index(t2, a) */ * from t1, t2, t3 where t1.d<1`,
+			`select * from t1, t2, %st3 where t1.d<100`},
 
 		// ignore index
 		{`create universal binding using select /*+ ignore_index(t1, b) */ * from t1 where b=1`,
@@ -344,6 +356,7 @@ func TestUniversalBindingHints(t *testing.T) {
 		{`create universal binding using select /*+ inl_join(t2) */ * from t1, t2, t3 where t1.a=t2.a and t3.b=t2.b`,
 			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
 
+		// TODO: no_xxx_join hints are not compatible with bindings, fix later.
 		// no join type hint
 		//{`create universal binding using select /*+ no_hash_join(t1) */ * from t1, t2 where t1.b=t2.b`,
 		//	`select * from %st1, t2 where t1.b=t2.b`},
@@ -365,6 +378,22 @@ func TestUniversalBindingHints(t *testing.T) {
 		//	`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
 
 		// join order hint
+		{`create universal binding using select /*+ leading(t2) */ * from t1, t2 where t1.b=t2.b`,
+			`select * from %st1, t2 where t1.b=t2.b`},
+		{`create universal binding using select /*+ leading(t2) */ * from t1, t2 where t1.c=t2.c`,
+			`select * from t1, %st2 where t1.c=t2.c`},
+		{`create universal binding using select /*+ leading(t2, t1) */ * from t1, t2 where t1.c=t2.c`,
+			`select * from t1, %st2 where t1.c=t2.c`},
+		{`create universal binding using select /*+ leading(t1, t2) */ * from t1, t2 where t1.c=t2.c`,
+			`select * from t1, %st2 where t1.c=t2.c`},
+		{`create universal binding using select /*+ leading(t1) */ * from t1, t2, t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		{`create universal binding using select /*+ leading(t2) */ * from t1, t2, t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		{`create universal binding using select /*+ leading(t2,t3) */ * from t1, t2, t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
+		{`create universal binding using select /*+ leading(t2,t3,t1) */ * from t1, t2, t3 where t1.a=t2.a and t3.b=t2.b`,
+			`select * from t1, %st2, t3 where t1.a=t2.a and t3.b=t2.b`},
 	} {
 		removeAllBindings(tk, false)
 		tk.MustExec(c.binding)
