@@ -689,16 +689,12 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 			if err != nil {
 				return false, err
 			}
-			timeValue := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, types.MaxFsp)
+			timeValue := types.NewTime(types.FromGoTime(t.In(tz)), mysql.TypeTimestamp, types.MaxFsp)
 			if checker != nil {
 				valid := checker.isTimeValid(timeValue)
 				if !valid {
 					return valid, nil
 				}
-			}
-			if t.Location() != tz {
-				t = t.In(tz)
-				timeValue = types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, types.MaxFsp)
 			}
 			row[columnIdx] = types.NewTimeDatum(timeValue)
 			return true, nil
