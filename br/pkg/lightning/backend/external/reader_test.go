@@ -98,6 +98,8 @@ func TestReadAllOneFile(t *testing.T) {
 		}
 	}
 
+	require.NoError(t, w.Close(ctx))
+
 	slices.SortFunc(kvs, func(i, j common.KvPair) int {
 		return bytes.Compare(i.Key, j.Key)
 	})

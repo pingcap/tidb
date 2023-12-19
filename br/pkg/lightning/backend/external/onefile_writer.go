@@ -47,8 +47,7 @@ type OneFileWriter struct {
 	dataWriter     storage.ExternalFileWriter
 	statWriter     storage.ExternalFileWriter
 
-	onClose OnCloseFunc
-	closed  bool
+	closed bool
 
 	logger *zap.Logger
 }

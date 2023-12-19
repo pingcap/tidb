@@ -231,7 +231,6 @@ func (b *WriterBuilder) BuildOneFile(
 		filenamePrefix: filenamePrefix,
 		writerID:       writerID,
 		kvStore:        nil,
-		onClose:        b.onClose,
 		closed:         false,
 	}
 	return ret
@@ -488,7 +487,6 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	w.recordMinMax(minKey, maxKey, uint64(w.kvSize))
 
 	// maintain 500-batch statistics
-
 	l := len(w.multiFileStats)
 	w.multiFileStats[l-1].Filenames = append(w.multiFileStats[l-1].Filenames,
 		[2]string{dataFile, statFile},
