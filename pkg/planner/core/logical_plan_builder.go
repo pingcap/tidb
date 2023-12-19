@@ -4119,9 +4119,9 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			aggHints.preferAggToCop = true
 		case HintUseIndex, HintIgnoreIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex:
 			dbName := hint.Tables[0].DBName
-			if dbName.L == "" {
-				dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
-			}
+			//if dbName.L == "" {
+			//	dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+			//}
 			var hintType ast.IndexHintType
 			switch hint.HintName.L {
 			case HintUseIndex:
@@ -4154,9 +4154,9 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			}
 		case HintIndexMerge:
 			dbName := hint.Tables[0].DBName
-			if dbName.L == "" {
-				dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
-			}
+			//if dbName.L == "" {
+			//	dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+			//}
 			indexMergeHintList = append(indexMergeHintList, indexHintInfo{
 				dbName:     dbName,
 				tblName:    hint.Tables[0].TableName,
