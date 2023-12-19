@@ -92,7 +92,7 @@ type Engine struct {
 	importedKVCount *atomic.Int64
 }
 
-const memLimit = 12 * 1024 * 1024 * 1024
+const memLimit = 16 * 1024 * 1024 * 1024
 
 // NewExternalEngine creates an (external) engine.
 func NewExternalEngine(
@@ -293,9 +293,9 @@ func (e *Engine) LoadIngestData(
 	regionRanges []common.Range,
 	outCh chan<- common.DataAndRange,
 ) error {
-	// TODO: need update currently we assume the region size is 96MB and will download 96MB*40 = 3.8GB
+	// currently we assume the region size is 96MB and will download 96MB*40 = 3.8GB
 	// data at once
-	regionBatchSize := 10
+	regionBatchSize := 40
 	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
 		regionBatchSize = val.(int)
 	})
