@@ -541,5 +541,16 @@ func TestSkipAutoAnalyzeOutsideTheAvailableTime(t *testing.T) {
 	}
 	se, err := dom.SysSessionPool().Get()
 	require.NoError(t, err)
-	require.False(t, autoanalyze.RandomPickOneTableAndTryAutoAnalyze(se.(sessionctx.Context), dom.StatsHandle(), dom.SysProcTracker(), dom.InfoSchema(), 0.6, variable.Dynamic, ttStart, ttEnd))
+	require.False(t,
+		autoanalyze.RandomPickOneTableAndTryAutoAnalyze(
+			se.(sessionctx.Context),
+			dom.StatsHandle(),
+			dom.SysProcTracker(),
+			dom.InfoSchema(),
+			0.6,
+			variable.Dynamic,
+			ttStart,
+			ttEnd,
+		),
+	)
 }

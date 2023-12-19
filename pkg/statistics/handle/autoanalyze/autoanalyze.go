@@ -396,6 +396,8 @@ func RandomPickOneTableAndTryAutoAnalyze(
 
 		// We need to check every partition of every table to see if it needs to be analyzed.
 		for _, tbl := range tbls {
+			// Sometimes the tables are too many. Auto-analyze will take too much time on it.
+			// so we need to check the available time.
 			if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
 				return false
 			}
