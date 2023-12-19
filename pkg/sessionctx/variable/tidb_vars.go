@@ -605,6 +605,9 @@ const (
 	// TiDBEvolvePlanBaselines indicates whether the evolution of plan baselines is enabled.
 	TiDBEvolvePlanBaselines = "tidb_evolve_plan_baselines"
 
+	// TiDBOptEnableUniversalBinding indicates whether to enable the universal binding.
+	TiDBOptEnableUniversalBinding = "tidb_opt_enable_universal_binding"
+
 	// TiDBEnableExtendedStats indicates whether the extended statistics feature is enabled.
 	TiDBEnableExtendedStats = "tidb_enable_extended_stats"
 
