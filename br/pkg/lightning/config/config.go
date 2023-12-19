@@ -216,6 +216,13 @@ func (d *DBStore) adjust(
 			d.Port = int(settings.Port)
 		}
 		if len(d.PdAddr) == 0 {
+			// verify that it is not a empty string
+			pdAddrs := strings.Split(settings.Path, ",")
+			for _, ip := range pdAddrs {
+				if net.ParseIP(ip) == nil {
+					return common.ErrInvalidConfig.GenWithStack("invalid `pd address` setting")
+				}
+			}
 			d.PdAddr = settings.Path
 		}
 	}
