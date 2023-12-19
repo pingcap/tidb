@@ -193,6 +193,7 @@ func (r *byteReader) switchToConcurrentReader() error {
 	return nil
 }
 
+<<<<<<< HEAD
 // readNBytes reads the next n bytes from the reader and returns a buffer slice containing those bytes.
 // The returned slice (pointer) can not be used after r.reset. In the same interval of r.reset,
 // byteReader guarantees that the returned slice (pointer) will point to the same content
@@ -204,6 +205,25 @@ func (r *byteReader) readNBytes(n int) (*[]byte, error) {
 		ret := &b
 		r.retPointers = append(r.retPointers, ret)
 		return ret, nil
+=======
+// readNBytes reads the next n bytes from the reader and returns a buffer slice
+// containing those bytes. The content of returned slice may be changed after
+// next call.
+func (r *byteReader) readNBytes(n int) ([]byte, error) {
+	readLen, bs := r.next(n)
+	if readLen == n && len(bs) == 1 {
+		return bs[0], nil
+	}
+	// need to flatten bs
+	if n <= 0 {
+		return nil, errors.Errorf("illegal n (%d) when reading from external storage", n)
+	}
+	if n > int(size.GB) {
+		return nil, errors.Errorf("read %d bytes from external storage, exceed max limit %d", n, size.GB)
+	}
+	if n <= 0 {
+		return nil, errors.Errorf("illegal n (%d) when reading from external storage", n)
+>>>>>>> b8fe33aa472 (storage: support parallel write for gcs (#49545))
 	}
 	// If the reader has fewer than n bytes remaining in current buffer,
 	// `auxBuf` is used as a container instead.
