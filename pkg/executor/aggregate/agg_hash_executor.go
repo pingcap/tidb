@@ -382,7 +382,8 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 	e.initFinalWorkers(finalConcurrency)
 
 	isTrackerEnabled := e.Ctx().GetSessionVars().TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load()
-	if isTrackerEnabled {
+	isParallelHashAggSpillEnabled := e.Ctx().GetSessionVars().EnableConcurrentHashaggSpill
+	if isTrackerEnabled && isParallelHashAggSpillEnabled {
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
 		e.diskTracker.AttachTo(sessionVars.StmtCtx.DiskTracker)
 		e.spillHelper.diskTracker = e.diskTracker

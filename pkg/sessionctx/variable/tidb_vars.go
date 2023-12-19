@@ -923,6 +923,9 @@ const (
 	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
 	// Please see comments of SessionVars.OptObjective for details.
 	TiDBOptObjective = "tidb_opt_objective"
+
+	// TiDBEnableConcurrentHashaggSpill is the name of the `tidb_enable_concurrent_hashagg_spill` system variable
+	TiDBEnableConcurrentHashaggSpill = "tidb_enable_concurrent_hashagg_spill"
 )
 
 // TiDB vars that have only global scope
@@ -1298,6 +1301,7 @@ const (
 	DefTiDBStatsLoadSyncWait                       = 100
 	DefTiDBStatsLoadPseudoTimeout                  = true
 	DefSysdateIsNow                                = false
+	DefTiDBEnableConcurrentHashaggSpill            = true
 	DefTiDBEnableMutationChecker                   = false
 	DefTiDBTxnAssertionLevel                       = AssertionOffStr
 	DefTiDBIgnorePreparedCacheCloseStmt            = false
