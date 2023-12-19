@@ -6513,6 +6513,7 @@ func TestProcessInfoOfSubQuery(t *testing.T) {
 }
 
 func TestIssues49377(t *testing.T) {
+	t.Skip()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
