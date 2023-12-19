@@ -136,24 +136,17 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 	case model.ActionAlterTablePartitioning:
 		oldSingleTableID, globalTableInfo, addedPartInfo := t.GetAddPartitioningInfo()
 		// Add new partition stats.
-		// For new partitions, it's crucial to correctly insert the count and modify count correctly.
-		// However, this is challenging due to the need to know the count of the new partitions.
-		// It's acceptable to not update it immediately,
-		// as the new partitions will be analyzed shortly due to the absence of statistics for them.
-		// The auto-analyze worker will handle them in the near future.
 		for _, def := range addedPartInfo.Definitions {
 			if err := h.statsWriter.InsertTableStats2KV(globalTableInfo, def.ID); err != nil {
 				return err
 			}
 		}
 		// Change id for global stats, since the data has not changed!
+		// Note: This operation will update all tables related to statistics with the new ID.
 		return h.statsWriter.ChangeGlobalStatsID(oldSingleTableID, globalTableInfo.ID)
 	case model.ActionRemovePartitioning:
-		// Update id for global stats due to new table creation.
-		// It's important to insert and modify count accurately
-		// as data distribution differs even if total count remains the same.
-		// However, we can omit updating count and modify count here,
-		// as the new table will be analyzed soon due to lack of existing statistics.
+		// Change id for global stats, since the data has not changed!
+		// Note: This operation will update all tables related to statistics with the new ID.
 		oldTblID,
 			newSingleTableInfo,
 			droppedPartInfo := t.GetRemovePartitioningInfo()
