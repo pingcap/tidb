@@ -353,6 +353,16 @@ TableOptimizerHintOpt:
 			HintData: model.NewCIStr($4),
 		}
 	}
+|	hintIdentifier '(' QueryBlockOpt hintIntLit ')'
+	{
+		parser.warnUnsupportedHint($1)
+		$$ = nil
+	}
+|	hintIdentifier '(' Identifier ')'
+	{
+		parser.warnUnsupportedHint($1)
+		$$ = nil
+	}
 |   hintIdentifier '(' Identifier '=' Value ')'
 	{
 		parser.warnUnsupportedHint($1)
