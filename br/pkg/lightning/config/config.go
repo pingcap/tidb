@@ -215,7 +215,9 @@ func (d *DBStore) adjust(
 		if d.Port <= 0 {
 			d.Port = int(settings.Port)
 		}
-		d.PdAddr = settings.Path
+		if len(d.PdAddr) == 0 {
+			d.PdAddr = settings.Path
+		}
 	}
 
 	if d.Port <= 0 {
