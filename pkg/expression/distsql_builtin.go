@@ -669,7 +669,7 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_RegexpLikeSig:
 		f = &builtinRegexpLikeFuncSig{regexpBaseFuncSig{base, regexpMemorizedSig{nil, nil}, sync.Once{}}}
 	case tipb.ScalarFuncSig_RegexpSubstrSig:
-		f = &builtinRegexpSubstrFuncSig{regexpBaseFuncSig{base, regexpMemorizedSig{nil, nil}, sync.Once{}}}
+		f = &builtinRegexpSubstrFuncSig{regexpNewBaseFuncSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_RegexpInStrSig:
 		f = &builtinRegexpInStrFuncSig{regexpBaseFuncSig{base, regexpMemorizedSig{nil, nil}, sync.Once{}}}
 	case tipb.ScalarFuncSig_RegexpReplaceSig:

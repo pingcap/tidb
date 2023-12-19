@@ -17,8 +17,10 @@ package expression
 import (
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -159,6 +161,71 @@ func TestDisplayName(t *testing.T) {
 	require.Equal(t, "IS TRUE", GetDisplayName(ast.IsTruthWithoutNull))
 	require.Equal(t, "abs", GetDisplayName("abs"))
 	require.Equal(t, "other_unknown_func", GetDisplayName("other_unknown_func"))
+}
+
+func TestBuiltinFuncCache(t *testing.T) {
+	cache := builtinFuncCache[int]{}
+	ctx := createContext(t)
+
+	// ok should be false when no cache present
+	v, ok := cache.getCache(ctx.GetSessionVars().StmtCtx.CtxID())
+	require.Equal(t, 0, v)
+	require.False(t, ok)
+
+	// getCache should not init cache
+	v, ok = cache.getCache(ctx.GetSessionVars().StmtCtx.CtxID())
+	require.Equal(t, 0, v)
+	require.False(t, ok)
+
+	var invoked atomic.Int64
+	returnError := false
+	construct := func() (int, error) {
+		invoked.Add(1)
+		if returnError {
+			return 128, errors.New("mockError")
+		}
+		return 100 + int(invoked.Load()), nil
+	}
+
+	// the first getOrInitCache should init cache
+	v, err := cache.getOrInitCache(ctx, construct)
+	require.NoError(t, err)
+	require.Equal(t, 101, v)
+	require.Equal(t, int64(1), invoked.Load())
+
+	// get should return the cache
+	v, ok = cache.getCache(ctx.GetSessionVars().StmtCtx.CtxID())
+	require.Equal(t, 101, v)
+	require.True(t, ok)
+
+	// the second should use the cached one
+	v, err = cache.getOrInitCache(ctx, construct)
+	require.NoError(t, err)
+	require.Equal(t, 101, v)
+	require.Equal(t, int64(1), invoked.Load())
+
+	// if ctxID changed, should re-init cache
+	ctx = createContext(t)
+	v, err = cache.getOrInitCache(ctx, construct)
+	require.NoError(t, err)
+	require.Equal(t, 102, v)
+	require.Equal(t, int64(2), invoked.Load())
+	v, ok = cache.getCache(ctx.GetSessionVars().StmtCtx.CtxID())
+	require.Equal(t, 102, v)
+	require.True(t, ok)
+
+	// error should be returned
+	ctx = createContext(t)
+	returnError = true
+	v, err = cache.getOrInitCache(ctx, construct)
+	require.Equal(t, 0, v)
+	require.EqualError(t, err, "mockError")
+
+	// error should not be cached
+	returnError = false
+	v, err = cache.getOrInitCache(ctx, construct)
+	require.NoError(t, err)
+	require.Equal(t, 104, v)
 }
 
 // newFunctionForTest creates a new ScalarFunction using funcName and arguments,

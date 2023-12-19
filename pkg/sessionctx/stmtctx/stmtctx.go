@@ -147,6 +147,8 @@ func (rf *ReferenceCount) UnFreeze() {
 	atomic.StoreInt32((*int32)(rf), ReferenceCountNoReference)
 }
 
+var stmtCtxIDGenerator atomic.Uint64
+
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
@@ -155,6 +157,8 @@ type StatementContext struct {
 	_ nocopy.NoCopy
 
 	_ constructor.Constructor `ctor:"NewStmtCtx,NewStmtCtxWithTimeZone,Reset"`
+
+	ctxID uint64
 
 	// 	typeCtx is used to indicate how to make the type conversation.
 	typeCtx types.Context
@@ -425,7 +429,9 @@ type StatementContext struct {
 
 // NewStmtCtx creates a new statement context
 func NewStmtCtx() *StatementContext {
-	sc := &StatementContext{}
+	sc := &StatementContext{
+		ctxID: stmtCtxIDGenerator.Add(1),
+	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
 	return sc
 }
@@ -433,7 +439,9 @@ func NewStmtCtx() *StatementContext {
 // NewStmtCtxWithTimeZone creates a new StatementContext with the given timezone
 func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	intest.AssertNotNil(tz)
-	sc := &StatementContext{}
+	sc := &StatementContext{
+		ctxID: stmtCtxIDGenerator.Add(1),
+	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
 	return sc
 }
@@ -441,8 +449,14 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 // Reset resets a statement context
 func (sc *StatementContext) Reset() {
 	*sc = StatementContext{
+		ctxID:   stmtCtxIDGenerator.Add(1),
 		typeCtx: types.NewContext(types.DefaultStmtFlags, time.UTC, sc),
 	}
+}
+
+// CtxID returns the context id of the statement
+func (sc *StatementContext) CtxID() uint64 {
+	return sc.ctxID
 }
 
 // TimeZone returns the timezone of the type context
