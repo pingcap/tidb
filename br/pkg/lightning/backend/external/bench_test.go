@@ -940,6 +940,7 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 		64*1024,
 		mergeOutput,
 		DefaultBlockSize,
+		DefaultMemSizeLimit,
 		8*1024,
 		1*size.MB,
 		8*1024,

@@ -98,7 +98,6 @@ func GetAllFileNames(
 
 			// extract the parent dir
 			bs := hack.Slice(path)
-			logutil.BgLogger().Info("ywq test bs", zap.Any("bs", bs))
 			lastIdx := bytes.LastIndexByte(bs, '/')
 			secondLastIdx := bytes.LastIndexByte(bs[:lastIdx], '/')
 			parentDir := path[secondLastIdx+1 : lastIdx]

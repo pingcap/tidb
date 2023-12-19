@@ -148,7 +148,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 		startKey = BytesMin(startKey, s.Min.Clone())
 		endKey = BytesMax(endKey, s.Max.Clone().Next())
 	}
-
+	mergeMemSize := (rand.Intn(10) + 1) * 100
 	for _, group := range dataGroup {
 		require.NoError(t, MergeOverlappingFiles(
 			ctx,
@@ -157,7 +157,8 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 			int64(5*size.MB),
 			100,
 			"/test2",
-			100,
+			mergeMemSize,
+			uint64(mergeMemSize),
 			8*1024,
 			100,
 			2,
