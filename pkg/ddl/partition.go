@@ -3004,7 +3004,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		if job.Type != model.ActionReorganizePartition {
 			// ALTER TABLE ... PARTITION BY
 			// REMOVE PARTITIONING
-			// Sotring the old table ID, used for updating statistics.
+			// Storing the old table ID, used for updating statistics.
 			oldTblID = tblInfo.ID
 			// TODO: Handle bundles?
 			// TODO: Add concurrent test!
