@@ -94,7 +94,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 		logCtx:    logutil.WithFields(context.Background()),
 		newPool:   b.newPool,
 		slotManager: &slotManager{
-			executorSlotInfos: make(map[int64]*slotInfo, 0),
+			executorSlotInfos: make(map[int64]*slotInfo),
 			available:         cpu.GetCPUCount(),
 		},
 	}
@@ -222,7 +222,7 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 		}
 		logutil.Logger(m.logCtx).Info("detect new subtask", zap.Int64("task-id", task.ID))
 
-		if !m.slotManager.canReserve(task) {
+		if !m.slotManager.canAlloc(task) {
 			failpoint.Inject("taskTick", func() {
 				<-onRunnableTasksTick
 			})
@@ -231,14 +231,13 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 		m.addHandlingTask(task.ID)
 		t := task
 		err = m.executorPool.Run(func() {
-			m.slotManager.reserve(t)
-			defer m.slotManager.unReserve(t.ID)
+			m.slotManager.alloc(t)
+			defer m.slotManager.free(t.ID)
 			m.onRunnableTask(t)
 			m.removeHandlingTask(t.ID)
 		})
 		// pool closed.
 		if err != nil {
-			m.slotManager.unReserve(t.ID)
 			m.removeHandlingTask(task.ID)
 			m.logErr(err)
 			return

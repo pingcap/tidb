@@ -38,7 +38,7 @@ type slotInfo struct {
 	slotCount int
 }
 
-func (sm *slotManager) reserve(task *proto.Task) {
+func (sm *slotManager) alloc(task *proto.Task) {
 	sm.Lock()
 	defer sm.Unlock()
 	sm.executorSlotInfos[task.ID] = &slotInfo{
@@ -50,7 +50,7 @@ func (sm *slotManager) reserve(task *proto.Task) {
 	sm.available -= task.Concurrency
 }
 
-func (sm *slotManager) unReserve(taskID int64) {
+func (sm *slotManager) free(taskID int64) {
 	sm.Lock()
 	defer sm.Unlock()
 
@@ -62,9 +62,9 @@ func (sm *slotManager) unReserve(taskID int64) {
 }
 
 // canReserve is used to check whether the instance has enough slots to run the task.
-func (sm *slotManager) canReserve(task *proto.Task) bool {
-	sm.Lock()
-	defer sm.Unlock()
+func (sm *slotManager) canAlloc(task *proto.Task) bool {
+	sm.RLock()
+	defer sm.RUnlock()
 
 	return sm.available >= task.Concurrency
 }
