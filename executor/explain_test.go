@@ -339,6 +339,8 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 		sql      string
 		expected []string
 	}
+	tk.MustQuery("select * from t_unistore_act_rows").Sort().Check(testkit.Rows("1 0", "1 0",
+		"2 0", "2 1"))
 
 	tests := []testStruct{
 		{
