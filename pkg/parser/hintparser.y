@@ -353,12 +353,12 @@ TableOptimizerHintOpt:
 			HintData: model.NewCIStr($4),
 		}
 	}
-|	hintIdentifier '(' QueryBlockOpt hintIntLit ')'
+|	hintIdentifier '(' QueryBlockOpt hintIntLit ')' /* The hints below are pseudo hint. They are unsupported hints */
 	{
 		parser.warnUnsupportedHint($1)
 		$$ = nil
 	}
-|	hintIdentifier '(' PartitionList ')' /* The hints below are pseudo hint. They are unsupported hints */
+|	hintIdentifier '(' PartitionList ')'
 	{
 		parser.warnUnsupportedHint($1)
 		$$ = nil
