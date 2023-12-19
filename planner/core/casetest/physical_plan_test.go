@@ -2434,7 +2434,6 @@ func TestCountStarForTiFlash(t *testing.T) {
 }
 
 func TestIssues49377Plan(t *testing.T) {
-	t.Skip()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
