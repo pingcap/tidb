@@ -79,7 +79,7 @@ func TestAdjustPdAddrAndPort(t *testing.T) {
 	err := cfg.Adjust(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, 4444, cfg.TiDB.Port)
-	require.Equal(t, "123.45.67.89:1234", cfg.TiDB.PdAddr)
+	require.Equal(t, "123.45.67.89:1234,56.78.90.12:3456", cfg.TiDB.PdAddr)
 }
 
 func TestPausePDSchedulerScope(t *testing.T) {
