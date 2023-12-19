@@ -1454,7 +1454,7 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	indexHintsLen := len(indexHints)
 	if tableHints != nil {
 		for i, hint := range tableHints.indexHintList {
-			if hint.dbName.L == dbName.L && hint.tblName.L == tblName.L {
+			if (hint.dbName.L == dbName.L || hint.dbName.L == "") && hint.tblName.L == tblName.L {
 				indexHints = append(indexHints, hint.indexHint)
 				tableHints.indexHintList[i].matched = true
 			}
