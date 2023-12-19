@@ -93,7 +93,7 @@ type Engine struct {
 	importedKVCount *atomic.Int64
 }
 
-const memLimit = 16 * 1024 * 1024 * 1024
+const memLimit = 12 * 1024 * 1024 * 1024
 
 // NewExternalEngine creates an (external) engine.
 func NewExternalEngine(
