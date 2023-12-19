@@ -6109,13 +6109,13 @@ def go_deps():
         name = "com_github_prometheus_prometheus",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/prometheus/prometheus",
-        sha256 = "57ac0b06c05da5d42f831e52250f3bc63d2fc6785cd9f21ca79534f1900aeb19",
-        strip_prefix = "github.com/prometheus/prometheus@v0.48.0",
+        sha256 = "942dba743bc78a6933cc9c2fbcc3d1d301254d3fd343975476ecd73573866f6e",
+        strip_prefix = "github.com/prometheus/prometheus@v0.48.1",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/prometheus/prometheus/com_github_prometheus_prometheus-v0.48.0.zip",
-            "http://ats.apps.svc/gomod/github.com/prometheus/prometheus/com_github_prometheus_prometheus-v0.48.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/prometheus/prometheus/com_github_prometheus_prometheus-v0.48.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/prometheus/prometheus/com_github_prometheus_prometheus-v0.48.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/prometheus/prometheus/com_github_prometheus_prometheus-v0.48.1.zip",
+            "http://ats.apps.svc/gomod/github.com/prometheus/prometheus/com_github_prometheus_prometheus-v0.48.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/prometheus/prometheus/com_github_prometheus_prometheus-v0.48.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/prometheus/prometheus/com_github_prometheus_prometheus-v0.48.1.zip",
         ],
     )
     go_repository(
