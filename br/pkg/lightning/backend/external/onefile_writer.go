@@ -65,7 +65,7 @@ func (w *OneFileWriter) initWriter(ctx context.Context, partSize int64) (
 	w.statWriter, err = w.store.Create(ctx, w.statFile, &storage.WriterOption{Concurrency: 20, PartSize: int64(5 * size.MB)})
 	if err != nil {
 		w.logger.Info("create stat writer failed",
-			zap.Error("err", w.writerID))
+			zap.Error(err))
 		err = w.dataWriter.Close(ctx)
 		return err
 	}
@@ -105,6 +105,7 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 			return err
 		}
 		w.rc.reset()
+		// the new prop should have the seem offset with kvStore.
 		w.rc.currProp.offset = w.kvStore.offset
 	}
 	binary.BigEndian.AppendUint64(buf[:0], uint64(keyLen))
