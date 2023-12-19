@@ -139,9 +139,9 @@ func TestIssue49033(t *testing.T) {
 	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a;")
 	tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIssue49033", "return"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/executor/testIssue49033", "return"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testIssue49033"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/testIssue49033"))
 	}()
 
 	rs, err := tk.Exec("select /*+ INL_HASH_JOIN(s) */ * from t join s on t.a=s.a order by t.a;")
