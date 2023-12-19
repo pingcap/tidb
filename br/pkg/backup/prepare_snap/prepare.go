@@ -10,8 +10,10 @@ import (
 	"github.com/pingcap/errors"
 	brpb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -92,6 +94,28 @@ func New(env Env) *Preparer {
 	return prep
 }
 
+func (p *Preparer) MarshalLogObject(om zapcore.ObjectEncoder) error {
+	om.AddInt("inflight_requests", len(p.inflightReqs))
+	for _, r := range p.inflightReqs {
+		om.AddString("simple_inflight_region", region{maybeID: r.Id, startKey: r.StartKey, endKey: r.EndKey}.String())
+		break
+	}
+	om.AddInt("failed_requests", len(p.failedRegions))
+	for _, r := range p.failedRegions {
+		om.AddString("simple_failed_region", r.String())
+		break
+	}
+	om.AddArray("connected_stores", zapcore.ArrayMarshalerFunc(func(ae zapcore.ArrayEncoder) error {
+		for id := range p.clients {
+			ae.AppendUint64(id)
+		}
+		return nil
+	}))
+	om.AddInt("retry_time", p.retryTime)
+	om.AddBool("wait_apply_finished", p.waitApplyFinished)
+	return nil
+}
+
 // DriveLoopAndWaitPrepare drives the state machine and block the
 // current goroutine until we are safe to start taking snapshot.
 //
@@ -101,6 +125,9 @@ func New(env Env) *Preparer {
 // This state will continue even this function returns, until `Finalize` invoked.
 // Splitting, ingesting and conf changing will all be blocked.
 func (p *Preparer) DriveLoopAndWaitPrepare(ctx context.Context) error {
+	logutil.CL(ctx).Info("Start drive the loop.", zap.Duration("retry_backoff", p.RetryBackoff),
+		zap.Int("retry_limit", p.RetryLimit),
+		zap.Duration("lease_duration", p.LeaseDuration))
 	p.retryTime = 0
 	if err := p.prepareConnections(ctx); err != nil {
 		return errors.Annotate(err, "failed to prepare connections")
@@ -147,6 +174,17 @@ func (p *Preparer) Finalize(ctx context.Context) error {
 	}
 }
 
+func (p *Preparer) batchEvents(evts *[]event) {
+	for {
+		select {
+		case evt := <-p.eventChan:
+			*evts = append(*evts, evt)
+		default:
+			return
+		}
+	}
+}
+
 // WaitAndHandleNextEvent is exported for test usage.
 // This waits the next event (wait apply done, errors, etc..) of preparing.
 // Generally `DriveLoopAndWaitPrepare` is all you need.
@@ -158,9 +196,13 @@ func (p *Preparer) WaitAndHandleNextEvent(ctx context.Context) error {
 		return ctx.Err()
 	case evt := <-p.eventChan:
 		logutil.CL(ctx).Debug("received event", zap.Stringer("event", evt))
-		err := p.onEvent(ctx, evt)
-		if err != nil {
-			return errors.Annotatef(err, "failed to handle event %v", evt)
+		events := []event{evt}
+		p.batchEvents(&events)
+		for _, evt := range events {
+			err := p.onEvent(ctx, evt)
+			if err != nil {
+				return errors.Annotatef(err, "failed to handle event %v", evt)
+			}
 		}
 		return p.MaybeFinish(ctx)
 	case <-p.retryChan():
@@ -215,7 +257,6 @@ func (p *Preparer) onEvent(ctx context.Context, e event) error {
 				zap.Stringer("old_region", item.(region)),
 				zap.Stringer("new_region", r))
 		}
-		logutil.CL(ctx).Info("wait apply for a region done.", zap.Stringer("region", e.region))
 	default:
 		return errors.Annotatef(unsupported(), "unsupported event type %d", e.ty)
 	}
@@ -235,8 +276,7 @@ func (p *Preparer) retryChan() <-chan time.Time {
 // If we can, this will set `p.waitApplyFinished` to true.
 // Generally `DriveLoopAndWaitPrepare` is all you need, you may not want to call this.
 func (p *Preparer) MaybeFinish(ctx context.Context) error {
-	logutil.CL(ctx).Info("Checking the progress of our work.",
-		zap.Int("inflight_reqs", len(p.inflightReqs)), zap.Int("failed_ranges", len(p.failedRegions)))
+	logutil.CL(ctx).Info("Checking the progress of our work.", zap.Object("current", p))
 	if len(p.inflightReqs) == 0 && len(p.failedRegions) == 0 {
 		holes := p.checkHole()
 		if len(holes) == 0 {
@@ -253,6 +293,7 @@ func (p *Preparer) MaybeFinish(ctx context.Context) error {
 }
 
 func (p *Preparer) checkHole() []region {
+	log.Info("Start checking the hole.", zap.Int("len", p.waitApplyDoneRegions.Len()))
 	if p.waitApplyDoneRegions.Len() == 0 {
 		return []region{{}}
 	}
