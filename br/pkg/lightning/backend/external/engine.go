@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
-	"runtime"
 	"sort"
 	"sync"
 	"time"
@@ -294,8 +293,6 @@ func (e *Engine) LoadIngestData(
 	regionRanges []common.Range,
 	outCh chan<- common.DataAndRange,
 ) error {
-	// TODO(lance6716): just try to avoid OOM 😭
-	runtime.GC()
 	// currently we assume the region size is 96MB and will download 96MB*40 = 3.8GB
 	// data at once
 	regionBatchSize := 40
