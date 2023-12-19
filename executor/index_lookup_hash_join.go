@@ -232,7 +232,7 @@ func (e *IndexNestedLoopHashJoin) Next(ctx context.Context, req *chunk.Chunk) er
 func (e *IndexNestedLoopHashJoin) runInOrder(ctx context.Context, req *chunk.Chunk) error {
 	for {
 		if e.isDryUpTasks(ctx) {
-			return nil
+			return e.panicErr
 		}
 		if e.curTask.err != nil {
 			return e.curTask.err
@@ -328,12 +328,8 @@ func (e *IndexNestedLoopHashJoin) Close() error {
 	e.joinChkResourceCh = nil
 	e.finished.Store(false)
 	e.prepared = false
-<<<<<<< HEAD:executor/index_lookup_hash_join.go
-	return e.baseExecutor.Close()
-=======
 	e.ctxWithCancel = nil
-	return e.BaseExecutor.Close()
->>>>>>> 9f612e3762a (pkg/executor: fix the hang issue in indexHashJoin (#49218)):pkg/executor/index_lookup_hash_join.go
+	return e.baseExecutor.Close()
 }
 
 func (ow *indexHashJoinOuterWorker) run(ctx context.Context) {
