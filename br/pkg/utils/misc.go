@@ -34,7 +34,9 @@ const (
 	// (How about network partition between TiKV and PD? Even that is rare.)
 	// Also note that the offline threshold in PD is 20s, see
 	// https://github.com/tikv/pd/blob/c40e319f50822678cda71ae62ee2fd70a9cac010/pkg/core/store.go#L523
-	storeDisconnectionDuration = 100 * time.Second
+
+	// After talk to PD members 100s is not a safe number. set it to 600s
+	storeDisconnectionDuration = 600 * time.Second
 )
 
 // IsTypeCompatible checks whether type target is compatible with type src

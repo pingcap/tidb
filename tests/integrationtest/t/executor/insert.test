@@ -1615,3 +1615,14 @@ create table t1(c1 decimal(6,4), primary key(c1));
 insert into t1 set c1 = 0.1;
 insert into t1 set c1 = 0.1 on duplicate key update c1 = 1;
 select * from t1 use index(primary);
+
+# TestNonStrictInsertOverflowValue
+drop table if exists t;
+create table t (d int);
+-- error 1690
+insert into t values (cast('18446744073709551616' as unsigned));
+set sql_mode='';
+--enable_warnings
+insert into t values (cast('18446744073709551616' as unsigned));
+--disable_warnings
+set sql_mode=DEFAULT;

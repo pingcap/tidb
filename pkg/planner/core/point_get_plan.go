@@ -546,7 +546,7 @@ func TryFastPlan(ctx sessionctx.Context, node ast.Node) (p Plan) {
 		defer func() {
 			vars := ctx.GetSessionVars()
 			if vars.SelectLimit != math2.MaxUint64 && p != nil {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("sql_select_limit is set, so point get plan is not activated"))
+				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("sql_select_limit is set, so point get plan is not activated"))
 				p = nil
 			}
 			if vars.StmtCtx.EnableOptimizeTrace && p != nil {

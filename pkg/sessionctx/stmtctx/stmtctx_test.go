@@ -94,15 +94,14 @@ func TestStatementContextPushDownFLags(t *testing.T) {
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InDeleteStmt = true }), 16},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InSelectStmt = true }), 32},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true)) }), 1},
-		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true)) }), 2},
-		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.OverflowAsWarning = true }), 64},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true)) }), 66},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true)) }), 128},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.DividedByZeroAsWarning = true }), 256},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InLoadDataStmt = true }), 1024},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) {
 			sc.InSelectStmt = true
 			sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
-		}), 34},
+		}), 98},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) {
 			sc.DividedByZeroAsWarning = true
 			sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
@@ -385,4 +384,12 @@ func TestResetStmtCtx(t *testing.T) {
 	require.Equal(t, 1, len(warnings))
 	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
 	require.Equal(t, "err2", warnings[0].Err.Error())
+}
+
+func BenchmarkErrCtx(b *testing.B) {
+	sc := stmtctx.NewStmtCtx()
+
+	for i := 0; i < b.N; i++ {
+		sc.ErrCtx()
+	}
 }

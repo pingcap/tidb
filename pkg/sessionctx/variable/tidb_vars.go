@@ -298,6 +298,9 @@ const (
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
 
+	// TiDBAnalyzeDistSQLScanConcurrency is used to set the concurrency of a distsql scan task for analyze statement.
+	TiDBAnalyzeDistSQLScanConcurrency = "tidb_analyze_distsql_scan_concurrency"
+
 	// TiDBOptInSubqToJoinAndAgg is used to enable/disable the optimizer rule of rewriting IN subquery.
 	TiDBOptInSubqToJoinAndAgg = "tidb_opt_insubq_to_join_and_agg"
 
@@ -601,6 +604,9 @@ const (
 
 	// TiDBEvolvePlanBaselines indicates whether the evolution of plan baselines is enabled.
 	TiDBEvolvePlanBaselines = "tidb_evolve_plan_baselines"
+
+	// TiDBOptEnableUniversalBinding indicates whether to enable the universal binding.
+	TiDBOptEnableUniversalBinding = "tidb_opt_enable_universal_binding"
 
 	// TiDBEnableExtendedStats indicates whether the extended statistics feature is enabled.
 	TiDBEnableExtendedStats = "tidb_enable_extended_stats"
@@ -1141,6 +1147,7 @@ const (
 	DefIndexJoinBatchSize                          = 25000
 	DefIndexLookupSize                             = 20000
 	DefDistSQLScanConcurrency                      = 15
+	DefAnalyzeDistSQLScanConcurrency               = 4
 	DefBuildStatsConcurrency                       = 2
 	DefBuildSamplingStatsConcurrency               = 2
 	DefAutoAnalyzeRatio                            = 0.5

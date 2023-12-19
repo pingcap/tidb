@@ -155,7 +155,7 @@ func (b *extensionFuncSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *extensionFuncSig) evalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
+func (b *extensionFuncSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	if b.EvalTp == types.ETString {
 		fnCtx := newExtensionFnContext(ctx, b)
 		return b.EvalStringFunc(fnCtx, row)
@@ -163,7 +163,7 @@ func (b *extensionFuncSig) evalString(ctx sessionctx.Context, row chunk.Row) (st
 	return b.baseBuiltinFunc.evalString(ctx, row)
 }
 
-func (b *extensionFuncSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *extensionFuncSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	if b.EvalTp == types.ETInt {
 		fnCtx := newExtensionFnContext(ctx, b)
 		return b.EvalIntFunc(fnCtx, row)
@@ -173,11 +173,11 @@ func (b *extensionFuncSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64
 
 type extensionFnContext struct {
 	context.Context
-	ctx sessionctx.Context
+	ctx EvalContext
 	sig *extensionFuncSig
 }
 
-func newExtensionFnContext(ctx sessionctx.Context, sig *extensionFuncSig) extensionFnContext {
+func newExtensionFnContext(ctx EvalContext, sig *extensionFuncSig) extensionFnContext {
 	return extensionFnContext{Context: context.TODO(), ctx: ctx, sig: sig}
 }
 

@@ -37,6 +37,7 @@ type SQLBindExec struct {
 	collation    string
 	db           string
 	isGlobal     bool
+	isUniversal  bool // for universal binding
 	bindAst      ast.StmtNode
 	newStatus    string
 	source       string // by manual or from history, only in create stmt
@@ -82,7 +83,7 @@ func (e *SQLBindExec) dropSQLBind() error {
 		}
 	}
 	if !e.isGlobal {
-		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 		err := handle.DropSessionBinding(e.normdOrigSQL, e.db, bindInfo)
 		return err
 	}
@@ -96,7 +97,7 @@ func (e *SQLBindExec) dropSQLBindByDigest() error {
 		return errors.New("sql digest is empty")
 	}
 	if !e.isGlobal {
-		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 		err := handle.DropSessionBindingByDigest(e.sqlDigest)
 		return err
 	}
@@ -143,6 +144,11 @@ func (e *SQLBindExec) createSQLBind() error {
 		e.Ctx().GetSessionVars().StmtCtx = saveStmtCtx
 	}()
 
+	bindingType := bindinfo.TypeNormal
+	if e.isUniversal {
+		bindingType = bindinfo.TypeUniversal
+	}
+
 	bindInfo := bindinfo.Binding{
 		BindSQL:    e.bindSQL,
 		Charset:    e.charset,
@@ -151,6 +157,7 @@ func (e *SQLBindExec) createSQLBind() error {
 		Source:     e.source,
 		SQLDigest:  e.sqlDigest,
 		PlanDigest: e.planDigest,
+		Type:       bindingType,
 	}
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,
@@ -158,7 +165,7 @@ func (e *SQLBindExec) createSQLBind() error {
 		Bindings:    []bindinfo.Binding{bindInfo},
 	}
 	if !e.isGlobal {
-		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 		return handle.CreateSessionBinding(e.Ctx(), record)
 	}
 	return domain.GetDomain(e.Ctx()).BindHandle().CreateGlobalBinding(e.Ctx(), record)

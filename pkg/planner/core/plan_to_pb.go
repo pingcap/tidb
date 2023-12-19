@@ -248,9 +248,9 @@ func (p *PhysicalTableScan) ToPB(ctx sessionctx.Context, storeType kv.StoreType)
 	tsExec.KeepOrder = &keepOrder
 	tsExec.IsFastScan = &(ctx.GetSessionVars().TiFlashFastScan)
 
-	if len(p.lateMaterializationFilterCondition) > 0 {
+	if len(p.LateMaterializationFilterCondition) > 0 {
 		client := ctx.GetClient()
-		conditions, err := expression.ExpressionsToPBList(ctx, p.lateMaterializationFilterCondition, client)
+		conditions, err := expression.ExpressionsToPBList(ctx, p.LateMaterializationFilterCondition, client)
 		if err != nil {
 			return nil, err
 		}
@@ -287,9 +287,9 @@ func (p *PhysicalTableScan) partitionTableScanToPBForFlash(ctx sessionctx.Contex
 		telemetry.CurrentTiflashTableScanWithFastScanCount.Inc()
 	}
 
-	if len(p.lateMaterializationFilterCondition) > 0 {
+	if len(p.LateMaterializationFilterCondition) > 0 {
 		client := ctx.GetClient()
-		conditions, err := expression.ExpressionsToPBList(ctx, p.lateMaterializationFilterCondition, client)
+		conditions, err := expression.ExpressionsToPBList(ctx, p.LateMaterializationFilterCondition, client)
 		if err != nil {
 			return nil, err
 		}
