@@ -393,6 +393,69 @@ func TestTruncateAPartition(t *testing.T) {
 	require.NotEqual(t, version, rows[0][0].(string))
 }
 
+func TestTruncateAHashPartition(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec(`
+		create table t (
+			a bigint,
+			b int,
+			primary key(a),
+			index idx(b)
+		)
+		partition by hash(a) partitions 4
+	`)
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	testKit.MustExec("analyze table t")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(
+		model.NewCIStr("test"), model.NewCIStr("t"),
+	)
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	require.NotNil(t, pi)
+	for _, def := range pi.Definitions {
+		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		require.False(t, statsTbl.Pseudo)
+	}
+	err = h.Update(is)
+	require.NoError(t, err)
+
+	// Get partition p0's stats update version.
+	partitionID := pi.Definitions[0].ID
+	// Get it from stats_meat first.
+	rows := testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?", partitionID,
+	).Rows()
+	require.Len(t, rows, 1)
+	version := rows[0][0].(string)
+
+	testKit.MustExec("alter table t truncate partition p0")
+	// Find the truncate partition event.
+	truncatePartitionEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTablePartition)
+	err = h.HandleDDLEvent(truncatePartitionEvent)
+	require.NoError(t, err)
+	// Check global stats meta.
+	// Because we have truncated a partition, the count should be 5 - 1 = 4 and the modify count should be 1.
+	testKit.MustQuery(
+		"select count, modify_count from mysql.stats_meta where table_id = ?", tableInfo.ID,
+	).Check(
+		testkit.Rows("4 1"),
+	)
+
+	// Check the version again.
+	rows = testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?", partitionID,
+	).Rows()
+	require.Len(t, rows, 1)
+	// Version gets updated after truncate the partition.
+	require.NotEqual(t, version, rows[0][0].(string))
+}
+
 func TestTruncatePartitions(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
