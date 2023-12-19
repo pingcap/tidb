@@ -358,7 +358,7 @@ TableOptimizerHintOpt:
 		parser.warnUnsupportedHint($1)
 		$$ = nil
 	}
-|	hintIdentifier '(' PartitionList ')'
+|	hintIdentifier '(' PartitionList ')' /* The hints below are pseudo hint. They are unsupported hints */
 	{
 		parser.warnUnsupportedHint($1)
 		$$ = nil
