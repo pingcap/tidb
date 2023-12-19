@@ -396,7 +396,6 @@ func RandomPickOneTableAndTryAutoAnalyze(
 		// We need to check every partition of every table to see if it needs to be analyzed.
 		for _, tbl := range tbls {
 			if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
-				statslogutil.StatsLogger().Info("auto analyze stopped", zap.String("reason", "not in the available time period"))
 				return false
 			}
 			// If table locked, skip analyze all partitions of the table.
