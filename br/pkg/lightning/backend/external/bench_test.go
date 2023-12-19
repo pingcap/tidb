@@ -15,6 +15,7 @@
 package external
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -25,11 +26,14 @@ import (
 	"runtime"
 	"runtime/pprof"
 	"slices"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/docker/go-units"
+	"github.com/google/uuid"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -1005,4 +1009,51 @@ func testCompareMergeWithContent(
 func TestMergeBench(t *testing.T) {
 	testCompareMergeWithContent(t, createAscendingFiles, mergeStep)
 	testCompareMergeWithContent(t, createEvenlyDistributedFiles, mergeStep)
+}
+
+func TestReadAllOneFile1(t *testing.T) {
+	// seed := time.Now().Unix()
+	// rand.Seed(uint64(seed))
+	// t.Logf("seed: %d", seed)
+	ctx := context.Background()
+	store := openTestingStorage(t)
+	cleanOldFiles(ctx, store, "/test")
+
+	// ywq todo
+	memSizeLimit := (100) * 1024 * 1024
+	writers := make([]*OneFileWriter, 10)
+	for i := 0; i < 10; i++ {
+		writers[i] = NewWriterBuilder().
+			SetPropSizeDistance(100).
+			SetPropKeysDistance(2).
+			SetMemorySizeLimit(uint64(memSizeLimit)).
+			BuildOneFile(store, "/test", strconv.Itoa(i))
+		require.NoError(t, writers[i].Init(ctx, int64(5*size.MB)))
+	}
+
+	kvCnt := rand.Intn(10) + 20000000
+	kvs := make([]common.KvPair, kvCnt)
+	for i := 0; i < kvCnt; i++ {
+		kvs[i] = common.KvPair{
+			Key: []byte(uuid.New().String()),
+			Val: []byte("56789"),
+		}
+	}
+
+	slices.SortFunc(kvs, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
+	})
+
+	for i := 0; i < kvCnt; i++ {
+		require.NoError(t, writers[i%10].WriteRow(ctx, kvs[i].Key, kvs[i].Val))
+	}
+
+	for i := 0; i < 10; i++ {
+		require.NoError(t, writers[i].Close(ctx))
+	}
+
+	datas, stats, err := GetAllFileNames(ctx, store, "/test")
+	require.NoError(t, err)
+
+	testReadAndCompare(ctx, t, kvs, store, datas, stats, kvs[0].Key, memSizeLimit)
 }

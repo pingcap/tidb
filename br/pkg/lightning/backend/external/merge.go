@@ -217,9 +217,5 @@ func mergeOverlappingFilesV2(
 		})
 	}
 
-	err = writer.Close(ctx)
-	if err != nil {
-		return err
-	}
-	return nil
+	return writer.Close(ctx)
 }

@@ -513,3 +513,34 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 	require.Less(t, delta, uint64(4*1024*1024*1024))
 	_ = iter.Close()
 }
+
+func TestMergePropIter(t *testing.T) {
+	ctx := context.Background()
+	store := storage.NewMemStorage()
+
+	// 2 files, check hotspot is 0 -> nil -> 1 -> 0 -> 1
+	keys := [][]string{
+		{"key00", "key01", "key02", "key06", "key07"},
+		{"key03", "key04", "key05", "key08", "key09"},
+	}
+	value := make([]byte, 5)
+	filenames := []string{"/test0", "/test1"}
+	for i, filename := range filenames {
+		writer, err := store.Create(ctx, filename, nil)
+		require.NoError(t, err)
+		rc := &rangePropertiesCollector{
+			propSizeDist: 100,
+			propKeysDist: 2,
+		}
+		rc.reset()
+		kvStore, err := NewKeyValueStore(ctx, writer, rc)
+		require.NoError(t, err)
+		for _, k := range keys[i] {
+			err = kvStore.addEncodedData(getEncodedData([]byte(k), value))
+			require.NoError(t, err)
+		}
+		kvStore.Close()
+		err = writer.Close(ctx)
+		require.NoError(t, err)
+	}
+}

@@ -19,9 +19,11 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -46,7 +48,7 @@ func TestReadAllDataBasic(t *testing.T) {
 		Build(memStore, "/test", "0")
 
 	writer := NewEngineWriter(w)
-	kvCnt := rand.Intn(10) + 10000
+	kvCnt := rand.Intn(10) + 10000000
 	kvs := make([]common.KvPair, kvCnt)
 	for i := 0; i < kvCnt; i++ {
 		kvs[i] = common.KvPair{
@@ -75,32 +77,38 @@ func TestReadAllOneFile(t *testing.T) {
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
-	memSizeLimit := (rand.Intn(10) + 1) * 400
+	// ywq todo
+	memSizeLimit := (100) * 1024 * 1024
+	writers := make([]*OneFileWriter, 10)
+	for i := 0; i < 10; i++ {
+		writers[i] = NewWriterBuilder().
+			SetPropSizeDistance(100).
+			SetPropKeysDistance(2).
+			SetMemorySizeLimit(uint64(memSizeLimit)).
+			BuildOneFile(memStore, "/test", strconv.Itoa(i))
+		require.NoError(t, writers[i].Init(ctx, int64(5*size.MB)))
+	}
 
-	w := NewWriterBuilder().
-		SetPropSizeDistance(100).
-		SetPropKeysDistance(2).
-		SetMemorySizeLimit(uint64(memSizeLimit)).
-		BuildOneFile(memStore, "/test", "0")
-
-	require.NoError(t, w.Init(ctx, int64(5*size.MB)))
-
-	kvCnt := rand.Intn(10) + 10000
+	kvCnt := rand.Intn(10) + 200000000
 	kvs := make([]common.KvPair, kvCnt)
 	for i := 0; i < kvCnt; i++ {
 		kvs[i] = common.KvPair{
-			Key: []byte(fmt.Sprintf("key%05d", i)),
+			Key: []byte(uuid.New().String()),
 			Val: []byte("56789"),
 		}
-		require.NoError(t, w.WriteRow(ctx, kvs[i].Key, kvs[i].Val))
 	}
-
-	err := w.Close(ctx)
-	require.NoError(t, err)
 
 	slices.SortFunc(kvs, func(i, j common.KvPair) int {
 		return bytes.Compare(i.Key, j.Key)
 	})
+
+	for i := 0; i < kvCnt; i++ {
+		require.NoError(t, writers[i%10].WriteRow(ctx, kvs[i].Key, kvs[i].Val))
+	}
+
+	for i := 0; i < 10; i++ {
+		require.NoError(t, writers[i].Close(ctx))
+	}
 
 	datas, stats, err := GetAllFileNames(ctx, memStore, "")
 	require.NoError(t, err)

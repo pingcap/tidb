@@ -150,7 +150,7 @@ func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
 		err = err1
 		return
 	}
-	// 4. close stat writer.
+	// 3. close stat writer.
 	err2 := w.statWriter.Close(ctx)
 	if err2 != nil {
 		w.logger.Error("Close stat writer failed", zap.Error(err))
