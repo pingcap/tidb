@@ -592,7 +592,7 @@ func testMergeSSTs(t *testing.T, kvs [][]common.KvPair, meta *sstMeta) {
 
 	createSSTWriter := func() (*sstWriter, error) {
 		path := filepath.Join(f.sstDir, uuid.New().String()+".sst")
-		writer, err := newSSTWriter(path)
+		writer, err := newSSTWriter(path, 16*1024)
 		if err != nil {
 			return nil, err
 		}
