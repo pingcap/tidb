@@ -44,10 +44,9 @@ var fmSketchPool = sync.Pool{
 
 // FMSketch is used to count the number of distinct elements in a set.
 type FMSketch struct {
-	hashset  map[uint64]bool
-	mask     uint64
-	maxSize  int
-	hashFunc hash.Hash64
+	hashset map[uint64]bool
+	mask    uint64
+	maxSize int
 }
 
 // NewFMSketch returns a new FM sketch.
@@ -106,7 +105,7 @@ func (s *FMSketch) InsertValue(sc *stmtctx.StatementContext, value types.Datum) 
 	if err != nil {
 		return errors.Trace(err)
 	}
-	s.insertHashValue(s.hashFunc.Sum64())
+	s.insertHashValue(hashFunc.Sum64())
 	return nil
 }
 
@@ -122,12 +121,12 @@ func (s *FMSketch) InsertRowValue(sc *stmtctx.StatementContext, values []types.D
 		if err != nil {
 			return err
 		}
-		_, err = s.hashFunc.Write(b)
+		_, err = hashFunc.Write(b)
 		if err != nil {
 			return err
 		}
 	}
-	s.insertHashValue(s.hashFunc.Sum64())
+	s.insertHashValue(hashFunc.Sum64())
 	return nil
 }
 

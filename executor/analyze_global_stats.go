@@ -55,10 +55,8 @@ func (e *AnalyzeExec) handleGlobalStats(ctx context.Context, needGlobalStats boo
 	}
 
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-	tableIDs := make(map[int64]struct{}, len(globalStatsTableIDs))
 	tableAllPartitionStats := make(map[int64]*statistics.Table)
 	for tableID := range globalStatsTableIDs {
-		tableIDs[tableID] = struct{}{}
 		maps.Clear(tableAllPartitionStats)
 		for globalStatsID, info := range globalStatsMap {
 			if globalStatsID.tableID != tableID {
