@@ -284,6 +284,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			mergeResult.collector.Base().Count, e.tableID.TableID, e.tableID.PartitionID, e.tableID.IsPartitionTable(),
 			"merge subMergeWorker in AnalyzeColumnsExecV2", -1)
 		e.memTracker.Consume(rootRowCollector.Base().MemSize - oldRootCollectorSize - mergeResult.collector.Base().MemSize)
+		mergeResult.collector.DestroyAndPutToPool()
 	}
 	defer e.memTracker.Release(rootRowCollector.Base().MemSize)
 	if err != nil {
@@ -634,6 +635,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(resultCh chan<- *samplingMergeResu
 		subCollectorSize := subCollector.Base().MemSize
 		e.memTracker.Consume(newRetCollectorSize - oldRetCollectorSize - subCollectorSize)
 		e.memTracker.Release(dataSize + colRespSize)
+		subCollector.DestroyAndPutToPool()
 	}
 	resultCh <- &samplingMergeResult{collector: retCollector}
 }

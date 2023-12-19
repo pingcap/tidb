@@ -37,6 +37,7 @@ type RowSampleCollector interface {
 	MergeCollector(collector RowSampleCollector)
 	sampleRow(row []types.Datum, rng *rand.Rand)
 	Base() *baseCollector
+	DestroyAndPutToPool()
 }
 
 type baseCollector struct {
@@ -214,6 +215,12 @@ func (s *RowSampleBuilder) Collect() (RowSampleCollector, error) {
 	}
 }
 
+func (s *baseCollector) destroyAndPutToPool() {
+	for _, sketch := range s.FMSketches {
+		sketch.DestroyAndPutToPool()
+	}
+}
+
 func (s *baseCollector) collectColumns(sc *stmtctx.StatementContext, cols []types.Datum, sizes []int64) error {
 	for i, col := range cols {
 		if col.IsNull() {
@@ -373,6 +380,11 @@ func (s *ReservoirRowSampleCollector) MergeCollector(subCollector RowSampleColle
 	}
 }
 
+// DestroyAndPutToPool implements the interface RowSampleCollector.
+func (s *ReservoirRowSampleCollector) DestroyAndPutToPool() {
+	s.baseCollector.destroyAndPutToPool()
+}
+
 // RowSamplesToProto converts the samp slice to the pb struct.
 func RowSamplesToProto(samples WeightedRowSampleHeap) []*tipb.RowSample {
 	if len(samples) == 0 {
@@ -455,4 +467,9 @@ func (s *BernoulliRowSampleCollector) MergeCollector(subCollector RowSampleColle
 // Base implements the interface RowSampleCollector.
 func (s *BernoulliRowSampleCollector) Base() *baseCollector {
 	return s.baseCollector
+}
+
+// DestroyAndPutToPool implements the interface RowSampleCollector.
+func (s *BernoulliRowSampleCollector) DestroyAndPutToPool() {
+	s.baseCollector.destroyAndPutToPool()
 }
