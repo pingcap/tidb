@@ -178,6 +178,7 @@ func TestShowViaSQL(t *testing.T) {
 	err := os.WriteFile(metaPath, FullMeta, 0o444)
 	req.NoError(err)
 
+	tk.MustExec("set @@time_zone='+08:00'")
 	res := tk.MustQuery(fmt.Sprintf("SHOW BACKUP METADATA FROM 'local://%s'", tempBackup))
 	fmt.Printf("%#v", res.Sort().Rows())
 	res.Sort().Check([][]interface{}{
