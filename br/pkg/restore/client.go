@@ -1202,7 +1202,7 @@ func (rc *Client) RestoreSSTFiles(
 	var leftFiles []*backuppb.File
 	for rangeFiles, leftFiles = drainFilesByRange(files, rc.fileImporter.supportMultiIngest); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles, rc.fileImporter.supportMultiIngest) {
 		filesReplica := rangeFiles
-		rc.workerPool.ApplyOnErrorGroup(eg,
+		eg.Go(
 			func() error {
 				fileStart := time.Now()
 				defer func() {
@@ -1248,7 +1248,7 @@ func (rc *Client) RestoreRaw(
 
 	for _, file := range files {
 		fileReplica := file
-		rc.workerPool.ApplyOnErrorGroup(eg,
+		eg.Go(
 			func() error {
 				defer updateCh.Inc()
 				return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
