@@ -285,7 +285,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			groupByItems:         e.GroupByItems,
 			chk:                  exec.TryNewCacheChunk(e.Children(0)),
 			groupKey:             make([][]byte, 0, 8),
-			getNewTmpChunkFunc: func() *chunk.Chunk {
+			getNewSpillChunkFunc: func() *chunk.Chunk {
 				base := e.Base()
 				return chunk.New(spillChunkFieldTypes, base.InitCap(), base.MaxChunkSize())
 			},

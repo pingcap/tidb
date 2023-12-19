@@ -59,10 +59,16 @@ type HashAggFinalWorker struct {
 	restoredMemDelta int64
 }
 
-func (w *HashAggFinalWorker) getInputFromDisk() (input *aggfuncs.AggPartialResultMapper, ok bool, spillContinue bool) {
-	ret := w.restoredAggResultMapper
-	w.restoredAggResultMapper = nil
-	return ret, true, false
+func (w *HashAggFinalWorker) getInputFromDisk(sctx sessionctx.Context) (input *aggfuncs.AggPartialResultMapper, ok bool, err error) {
+	ret, err := w.spillHelper.restoreOnePartition(sctx)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if ret == nil {
+		return nil, false, nil
+	}
+	return ret, true, nil
 }
 
 func (w *HashAggFinalWorker) getPartialInput() (input *aggfuncs.AggPartialResultMapper, ok bool) {
@@ -85,15 +91,22 @@ func (w *HashAggFinalWorker) initBInMap() {
 	}
 }
 
-func (w *HashAggFinalWorker) getInputData() (*aggfuncs.AggPartialResultMapper, bool, bool) {
+func (w *HashAggFinalWorker) getInputData(sctx sessionctx.Context) (*aggfuncs.AggPartialResultMapper, bool, error) {
 	waitStart := time.Now()
 	defer w.increaseWaitTime(waitStart)
+
+	var input *aggfuncs.AggPartialResultMapper
+	var ok bool
+	var err error
+
 	if w.isSpilledTriggered {
-		// Only one partition is restored each time, so we should execute in this loop only once.
-		return w.getInputFromDisk()
+		input, ok, err = w.getInputFromDisk(sctx)
+	} else {
+		input, ok = w.getPartialInput()
 	}
-	input, ok := w.getPartialInput()
-	return input, ok, true
+
+	w.intestDuringRun(&input, &ok, &err)
+	return input, ok, err
 }
 
 func (w *HashAggFinalWorker) handleFirstInput(input *aggfuncs.AggPartialResultMapper) {
@@ -146,17 +159,13 @@ func (w *HashAggFinalWorker) handleNewGroupKey(key string, value []aggfuncs.Part
 	w.partialResultMap[key] = value
 }
 
-func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (spillContinue bool, err error) {
+func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) error {
 	defer func() { w.isFirstInput = true }()
 
-	var input *aggfuncs.AggPartialResultMapper
-	var ok bool
-	continueLoop := true
-
-	for continueLoop {
-		input, ok, continueLoop = w.getInputData()
-		if !ok {
-			return false, nil
+	for {
+		input, ok, err := w.getInputData(sctx)
+		if !ok || err != nil {
+			return err
 		}
 
 		// As the w.partialResultMap is empty when we get the first input.
@@ -169,18 +178,15 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (spillCo
 		failpoint.Inject("ConsumeRandomPanic", nil)
 
 		if err := w.mergeInputIntoResultMap(sctx, input); err != nil {
-			return false, err
+			return err
 		}
 	}
-	return true, nil
 }
 
 func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 	waitStart := time.Now()
 	result, finished := w.receiveFinalResultHolder()
-	if w.stats != nil {
-		w.stats.WaitTime += int64(time.Since(waitStart))
-	}
+	w.increaseWaitTime(waitStart)
 	if finished {
 		return
 	}
@@ -209,9 +215,7 @@ func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 	}
 
 	w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
-	if w.stats != nil {
-		w.stats.ExecTime += int64(time.Since(execStart))
-	}
+	w.increaseExecTime(execStart)
 }
 
 func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
@@ -223,15 +227,15 @@ func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
 	}
 }
 
-func (w *HashAggFinalWorker) mergeResultsAndSend(ctx sessionctx.Context) (bool, error) {
-	spillContinue, err := w.consumeIntermData(ctx)
+func (w *HashAggFinalWorker) mergeResultsAndSend(ctx sessionctx.Context) error {
+	err := w.consumeIntermData(ctx)
 	if err != nil {
 		w.outputCh <- &AfFinalResult{err: err}
-		return false, err
+		return err
 	}
 
 	w.loadFinalResult(ctx)
-	return spillContinue, nil
+	return nil
 }
 
 func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup) {
@@ -246,12 +250,13 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 
 	w.isSpilledTriggered = w.spillHelper.isSpillTriggered()
 	if w.isSpilledTriggered {
-		w.handleSpilledData(ctx)
-	} else {
-		_, err := w.mergeResultsAndSend(ctx)
-		if err != nil {
+		if w.spillHelper.checkError() {
 			return
 		}
+	}
+	err := w.mergeResultsAndSend(ctx)
+	if err != nil {
+		return
 	}
 }
 
@@ -265,36 +270,6 @@ func (w *HashAggFinalWorker) cleanup(start time.Time, waitGroup *sync.WaitGroup)
 	waitGroup.Done()
 }
 
-func (w *HashAggFinalWorker) handleSpilledData(ctx sessionctx.Context) {
-	if w.spillHelper.checkError() {
-		return
-	}
-
-	var err error
-	for {
-		w.restoredAggResultMapper, err = w.spillHelper.restoreOnePartition(ctx)
-		if err != nil {
-			w.outputCh <- &AfFinalResult{err: err}
-			return
-		}
-
-		if w.restoredAggResultMapper == nil {
-			return
-		}
-
-		failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
-			if val.(bool) {
-				w.intestDuringRun()
-			}
-		})
-
-		spillContinue, err := w.mergeResultsAndSend(ctx)
-		if err != nil || !spillContinue {
-			return
-		}
-	}
-}
-
 func intestBeforeStart() {
 	num := rand.Intn(50)
 	if num == 0 {
@@ -304,15 +279,21 @@ func intestBeforeStart() {
 	}
 }
 
-func (w *HashAggFinalWorker) intestDuringRun() {
-	num := rand.Intn(10000)
-	if num < 7 {
-		panic("Intest panic: final worker is panicked when running")
-	} else if num < 14 {
-		time.Sleep(1 * time.Millisecond)
-	} else if num < 21 {
-		w.memTracker.Consume(1000000)
-	} else if num < 28 {
-		w.outputCh <- &AfFinalResult{err: errors.Errorf("Random fail is triggered in final worker")}
-	}
+func (w *HashAggFinalWorker) intestDuringRun(input **aggfuncs.AggPartialResultMapper, ok *bool, err *error) {
+	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
+		if val.(bool) {
+			num := rand.Intn(10000)
+			if num < 5 {
+				panic("Intest panic: final worker is panicked when running")
+			} else if num < 10 {
+				time.Sleep(1 * time.Millisecond)
+			} else if num < 15 {
+				w.memTracker.Consume(1000000)
+			} else if num < 20 {
+				*ok = false
+				*input = nil
+				*err = errors.New("Random fail is triggered in final worker")
+			}
+		}
+	})
 }
