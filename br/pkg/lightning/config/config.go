@@ -219,7 +219,7 @@ func (d *DBStore) adjust(
 			// verify that it is not a empty string
 			pdAddrs := strings.Split(settings.Path, ",")
 			for _, ip := range pdAddrs {
-				if net.ParseIP(ip) == nil {
+				if ip == "" {
 					return common.ErrInvalidConfig.GenWithStack("invalid `pd address` setting")
 				}
 			}
