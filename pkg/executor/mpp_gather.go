@@ -219,7 +219,7 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 	if e.mppErrRecovery.NumHoldChk() != 0 {
 		var tmpChk *chunk.Chunk
-		if tmpChk := e.mppErrRecovery.PopFrontChk(); tmpChk == nil {
+		if tmpChk = e.mppErrRecovery.PopFrontChk(); tmpChk == nil {
 			return errors.New("cannot get chunk from mpp result holder")
 		}
 		chk.SwapColumns(tmpChk)
