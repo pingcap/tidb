@@ -125,13 +125,8 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			return err
 		}
 	case model.ActionReorganizePartition:
-		globalTableInfo, addedPartInfo, _ := t.GetReorganizePartitionInfo()
-		for _, def := range addedPartInfo.Definitions {
-			// TODO: Should we trigger analyze instead of adding 0s?
-			if err := h.statsWriter.InsertTableStats2KV(globalTableInfo, def.ID); err != nil {
-				return err
-			}
-			// Do not update global stats, since the data have not changed!
+		if err := h.onReorganizePartitions(t); err != nil {
+			return err
 		}
 	case model.ActionAlterTablePartitioning:
 		oldSingleTableID, globalTableInfo, addedPartInfo := t.GetAddPartitioningInfo()
