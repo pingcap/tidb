@@ -284,7 +284,7 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 		return newFlushStorageWriter(wc, &emptyFlusher{}, wc), nil
 	}
 	uri := s.objectName(name)
-	// 5 MB is the minimum part size for GCS.
+	// 5MB is the minimum part size for GCS.
 	partSize := int64(gcsMinimumChunkSize)
 	if wo.PartSize > partSize {
 		partSize = wo.PartSize

@@ -486,6 +486,16 @@ func (w *Writer) flushSortedKVs(ctx context.Context) (string, string, error) {
 	if err != nil {
 		return "", "", err
 	}
+	defer func() {
+		// close the writers when meet error. If no error happens, writers will
+		// be closed outside and assigned to nil.
+		if dataWriter != nil {
+			_ = dataWriter.Close(ctx)
+		}
+		if statWriter != nil {
+			_ = statWriter.Close(ctx)
+		}
+	}()
 	kvStore, err := NewKeyValueStore(ctx, dataWriter, w.rc)
 	if err != nil {
 		return "", "", err
@@ -506,10 +516,12 @@ func (w *Writer) flushSortedKVs(ctx context.Context) (string, string, error) {
 		return "", "", err
 	}
 	err = dataWriter.Close(ctx)
+	dataWriter = nil
 	if err != nil {
 		return "", "", err
 	}
 	err = statWriter.Close(ctx)
+	statWriter = nil
 	if err != nil {
 		return "", "", err
 	}
