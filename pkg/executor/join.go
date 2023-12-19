@@ -332,7 +332,7 @@ func (w *buildWorker) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chun
 		if w.hashJoinCtx.finished.Load() {
 			return
 		}
-		chk := sessVars.GetNewChunkWithCapacity(w.buildSideExec.Base().RetFieldTypes(), sessVars.MaxChunkSize, sessVars.MaxChunkSize, w.hashJoinCtx.allocPool)
+		chk := sessVars.GetNewChunkWithCapacity(w.buildSideExec.RetFieldTypes(), sessVars.MaxChunkSize, sessVars.MaxChunkSize, w.hashJoinCtx.allocPool)
 		err = exec.Next(ctx, w.buildSideExec, chk)
 		if err != nil {
 			errCh <- errors.Trace(err)
@@ -1355,7 +1355,7 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 // aggExecutorTreeInputEmpty checks whether the executor tree returns empty if without aggregate operators.
 // Note that, the prerequisite is that this executor tree has been executed already and it returns one row.
 func aggExecutorTreeInputEmpty(e exec.Executor) bool {
-	children := e.Base().AllChildren()
+	children := e.AllChildren()
 	if len(children) == 0 {
 		return false
 	}
