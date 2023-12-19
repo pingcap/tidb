@@ -93,7 +93,8 @@ func MergeOverlappingFilesV2(
 
 	err = writer.Init(ctx, partSize)
 	if err != nil {
-		return err
+		logutil.Logger(ctx).Warn("init writer failed", zap.Error(err))
+		return
 	}
 
 	bufPool := membuf.NewPool()
@@ -103,16 +104,17 @@ func MergeOverlappingFilesV2(
 	var maxKey, minKey kv.Key
 
 	for {
-		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err := splitter.SplitOneRangesGroup()
-		if err != nil {
-			return err
+		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err1 := splitter.SplitOneRangesGroup()
+		if err1 != nil {
+			logutil.Logger(ctx).Warn("split one ranges group failed", zap.Error(err1))
+			return
 		}
 		curEnd = kv.Key(endKeyOfGroup).Clone()
 		if len(endKeyOfGroup) == 0 {
 			curEnd = kv.Key(endKey).Clone()
 		}
 		now := time.Now()
-		err = readAllData(
+		err1 = readAllData(
 			ctx,
 			store,
 			dataFilesOfGroup,
@@ -122,8 +124,9 @@ func MergeOverlappingFilesV2(
 			bufPool,
 			loaded,
 		)
-		if err != nil {
-			return err
+		if err1 != nil {
+			logutil.Logger(ctx).Warn("read all data failed", zap.Error(err1))
+			return
 		}
 		readTime := time.Since(now)
 		now = time.Now()
@@ -141,9 +144,10 @@ func MergeOverlappingFilesV2(
 		sortTime := time.Since(now)
 		now = time.Now()
 		for i, key := range loaded.keys {
-			err = writer.WriteRow(ctx, key, loaded.values[i])
-			if err != nil {
-				return err
+			err1 = writer.WriteRow(ctx, key, loaded.values[i])
+			if err1 != nil {
+				logutil.Logger(ctx).Warn("write one row to writer failed", zap.Error(err1))
+				return
 			}
 		}
 		writeTime := time.Since(now)
