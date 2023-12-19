@@ -15,7 +15,6 @@
 package external
 
 import (
-	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -26,20 +25,19 @@ import (
 	"runtime"
 	"runtime/pprof"
 	"slices"
-	"strconv"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/docker/go-units"
-	"github.com/google/uuid"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -766,6 +764,7 @@ var (
 	concurrency  = flag.Int("concurrency", 100, "concurrency")
 	memoryLimit  = flag.Int("memory-limit", 64*units.MiB, "memory limit")
 	skipCreate   = flag.Bool("skip-create", false, "skip create files")
+	fileName     = flag.String("file-name", "test", "test")
 )
 
 func TestReadFileConcurrently(t *testing.T) {
@@ -1011,49 +1010,20 @@ func TestMergeBench(t *testing.T) {
 	testCompareMergeWithContent(t, createEvenlyDistributedFiles, mergeStep)
 }
 
-func TestReadAllOneFile1(t *testing.T) {
-	// seed := time.Now().Unix()
-	// rand.Seed(uint64(seed))
-	// t.Logf("seed: %d", seed)
+func TestReadStatFile(t *testing.T) {
 	ctx := context.Background()
 	store := openTestingStorage(t)
-	cleanOldFiles(ctx, store, "/test")
+	rd, _ := newStatsReader(ctx, store, *fileName, 4096)
+	for {
 
-	// ywq todo
-	memSizeLimit := (100) * 1024 * 1024
-	writers := make([]*OneFileWriter, 10)
-	for i := 0; i < 10; i++ {
-		writers[i] = NewWriterBuilder().
-			SetPropSizeDistance(100).
-			SetPropKeysDistance(2).
-			SetMemorySizeLimit(uint64(memSizeLimit)).
-			BuildOneFile(store, "/test", strconv.Itoa(i))
-		require.NoError(t, writers[i].Init(ctx, int64(5*size.MB)))
-	}
-
-	kvCnt := rand.Intn(10) + 20000000
-	kvs := make([]common.KvPair, kvCnt)
-	for i := 0; i < kvCnt; i++ {
-		kvs[i] = common.KvPair{
-			Key: []byte(uuid.New().String()),
-			Val: []byte("56789"),
+		prop, err := rd.nextProp()
+		if err == io.EOF {
+			break
 		}
+		logutil.BgLogger().Info("read one prop",
+			zap.Int("prop len", prop.len()),
+			zap.Int("prop offset", int(prop.offset)),
+			zap.Int("prop size", int(prop.size)),
+			zap.Int("prop keys", int(prop.keys)))
 	}
-
-	slices.SortFunc(kvs, func(i, j common.KvPair) int {
-		return bytes.Compare(i.Key, j.Key)
-	})
-
-	for i := 0; i < kvCnt; i++ {
-		require.NoError(t, writers[i%10].WriteRow(ctx, kvs[i].Key, kvs[i].Val))
-	}
-
-	for i := 0; i < 10; i++ {
-		require.NoError(t, writers[i].Close(ctx))
-	}
-
-	datas, stats, err := GetAllFileNames(ctx, store, "/test")
-	require.NoError(t, err)
-
-	testReadAndCompare(ctx, t, kvs, store, datas, stats, kvs[0].Key, memSizeLimit)
 }
