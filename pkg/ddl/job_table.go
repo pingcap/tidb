@@ -601,7 +601,13 @@ func getDDLReorgHandle(se *sess.Session, job *model.Job) (element *meta.Element,
 		TypeKey: tp,
 	}
 	startKey = rows[0].GetBytes(2)
+	if len(startKey) == 0 {
+		startKey = nil
+	}
 	endKey = rows[0].GetBytes(3)
+	if len(endKey) == 0 {
+		endKey = nil
+	}
 	physicalTableID = rows[0].GetInt64(4)
 	return
 }

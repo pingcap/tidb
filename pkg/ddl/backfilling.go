@@ -386,13 +386,18 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 func splitTableRanges(t table.PhysicalTable, store kv.Storage, startKey, endKey kv.Key, limit int) ([]kv.KeyRange, error) {
 	logutil.BgLogger().Info("split table range from PD", zap.String("category", "ddl"),
 		zap.Int64("physicalTableID", t.GetPhysicalID()),
-		zap.String("start key", hex.EncodeToString(startKey)),
-		zap.String("end key", hex.EncodeToString(endKey)))
+		zap.String("start key", hex.EncodeToString(startKey)), zap.Int("len", len([]byte(startKey))), zap.Bool("is empty", startKey == nil),
+		zap.String("end key", hex.EncodeToString(endKey)), zap.Int("len", len([]byte(endKey))), zap.Bool("is empty", endKey == nil))
 	kvRange := kv.KeyRange{StartKey: startKey, EndKey: endKey}
 	s, ok := store.(tikv.Storage)
 	if !ok {
 		// Only support split ranges in tikv.Storage now.
 		return []kv.KeyRange{kvRange}, nil
+	}
+
+	if len(startKey) == 0 && len(endKey) == 0 {
+		logutil.BgLogger().Warn("xxx----xx11")
+		return []kv.KeyRange{}, nil
 	}
 
 	maxSleep := 10000 // ms
@@ -673,7 +678,12 @@ func (dc *ddlCtx) writePhysicalTableRecord(sessPool *sess.Pool, t table.Physical
 	if err := dc.isReorgRunnable(reorgInfo.Job.ID, false); err != nil {
 		return errors.Trace(err)
 	}
+	logutil.BgLogger().Warn("xxx------xx", zap.String("job", job.String()),
+		zap.String("start key", hex.EncodeToString(startKey)), zap.Int("len", len([]byte(startKey))), zap.Bool("is empty", startKey == nil),
+		zap.String("end key", hex.EncodeToString(endKey)), zap.Int("len", len([]byte(endKey))), zap.Bool("is empty", endKey == nil))
 	if startKey == nil && endKey == nil {
+		// if (startKey == nil && endKey == nil) || (len(startKey) == 0 && len(endKey) == 0) {
+		// logutil.BgLogger().Warn("xxx----xx11")
 		return nil
 	}
 

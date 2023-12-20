@@ -746,6 +746,11 @@ func getReorgInfo(ctx *JobContext, d *ddlCtx, rh *reorgHandler, job *model.Job, 
 			}
 			return &info, errors.Trace(err)
 		}
+		if start == nil || end == nil {
+			logutil.BgLogger().Warn("xxx------", zap.String("job", job.String()),
+				zap.String("start key", hex.EncodeToString(start)), zap.Int("len", len([]byte(start))), zap.Bool("is empty", start == nil),
+				zap.String("end key", hex.EncodeToString(end)), zap.Int("len", len([]byte(end))), zap.Bool("is empty", end == nil))
+		}
 	}
 	info.Job = job
 	info.d = d
