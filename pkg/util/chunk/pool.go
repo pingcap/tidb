@@ -34,7 +34,6 @@ func getChunkFromPool(initCap int, fields []*types.FieldType) *Chunk {
 	pool, ok := globalChunkPool[initCap]
 	globalChunkPoolMutex.RUnlock()
 	if ok {
-
 		return pool.GetChunk(fields)
 	}
 	globalChunkPoolMutex.Lock()
