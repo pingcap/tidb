@@ -142,7 +142,7 @@ func (pc *PbConverter) encodeDatum(ft *types.FieldType, d types.Datum) (tipb.Exp
 	case types.KindMysqlTime:
 		if pc.client.IsRequestTypeSupported(kv.ReqTypeDAG, int64(tipb.ExprType_MysqlTime)) {
 			tp = tipb.ExprType_MysqlTime
-			sc := pc.ctx.GetSessionVars().StmtCtx
+			sc := evalVars(pc.ctx).StmtCtx
 			val, err := codec.EncodeMySQLTime(sc.TimeZone(), d.GetMysqlTime(), ft.GetType(), nil)
 			err = sc.HandleError(err)
 			if err != nil {

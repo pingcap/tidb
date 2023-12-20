@@ -1143,7 +1143,7 @@ func (e *selExec) next() (*chunk.Chunk, error) {
 					if err != nil {
 						return nil, errors.Trace(err)
 					}
-					isBool, err = expression.HandleOverflowOnSelection(e.sctx.GetSessionVars().StmtCtx, isBool, err)
+					isBool, err = expression.HandleOverflowOnSelection(expression.NewEvalVars(e.sctx.(sessionctx.Context).GetSessionVars()).StmtCtx, isBool, err)
 					if err != nil {
 						return nil, errors.Trace(err)
 					}

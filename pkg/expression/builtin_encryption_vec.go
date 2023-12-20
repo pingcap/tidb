@@ -72,7 +72,7 @@ func (b *builtinAesDecryptSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 	}
 
 	isWarning := !b.ivRequired && len(b.args) == 3
-	isConstKey := b.args[1].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache)
+	isConstKey := b.args[1].ConstItem(evalVars(ctx).StmtCtx.UseCache)
 
 	var key []byte
 	if isConstKey {
@@ -80,7 +80,7 @@ func (b *builtinAesDecryptSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 	}
 
 	result.ReserveString(n)
-	stmtCtx := ctx.GetSessionVars().StmtCtx
+	stmtCtx := evalVars(ctx).StmtCtx
 	for i := 0; i < n; i++ {
 		// According to doc: If either function argument is NULL, the function returns NULL.
 		if strBuf.IsNull(i) || keyBuf.IsNull(i) {
@@ -158,7 +158,7 @@ func (b *builtinAesEncryptIVSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 		return errors.Errorf("unsupported block encryption mode - %v", b.modeName)
 	}
 
-	isConst := b.args[1].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache)
+	isConst := b.args[1].ConstItem(evalVars(ctx).StmtCtx.UseCache)
 	var key []byte
 	if isConst {
 		key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(0), b.keySize)
@@ -331,7 +331,7 @@ func (b *builtinAesDecryptIVSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 		return errors.Errorf("unsupported block encryption mode - %v", b.modeName)
 	}
 
-	isConst := b.args[1].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache)
+	isConst := b.args[1].ConstItem(evalVars(ctx).StmtCtx.UseCache)
 	var key []byte
 	if isConst {
 		key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(0), b.keySize)
@@ -672,13 +672,13 @@ func (b *builtinAesEncryptSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 	}
 
 	isWarning := !b.ivRequired && len(b.args) == 3
-	isConst := b.args[1].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache)
+	isConst := b.args[1].ConstItem(evalVars(ctx).StmtCtx.UseCache)
 	var key []byte
 	if isConst {
 		key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(0), b.keySize)
 	}
 
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {
 		// According to doc: If either function argument is NULL, the function returns NULL.
@@ -736,7 +736,7 @@ func (b *builtinPasswordSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 
 		// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
 		// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("PASSWORD"))
+		evalVars(ctx).StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("PASSWORD"))
 
 		result.AppendString(auth.EncodePasswordBytes(passBytes))
 	}
@@ -793,7 +793,7 @@ func (b *builtinUncompressSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 	}
 
 	result.ReserveString(n)
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
@@ -836,7 +836,7 @@ func (b *builtinUncompressedLengthSig) vectorized() bool {
 }
 
 func (b *builtinUncompressedLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 	nr := input.NumRows()
 	payloadBuf, err := b.bufAllocator.get()
 	if err != nil {
@@ -887,7 +887,7 @@ func (b *builtinValidatePasswordStrengthSig) vecEvalInt(ctx EvalContext, input *
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	globalVars := ctx.GetSessionVars().GlobalVarsAccessor
+	globalVars := evalVars(ctx).GlobalVarsAccessor
 	enableValidation := false
 	validation, err := globalVars.GetGlobalSysVar(variable.ValidatePasswordEnable)
 	if err != nil {

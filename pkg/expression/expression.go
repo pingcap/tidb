@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
@@ -243,7 +242,7 @@ func ExprNotNull(expr Expression) bool {
 //
 //	INSERT INTO t VALUES ("999999999999999999");
 //	SELECT * FROM t WHERE v;
-func HandleOverflowOnSelection(sc *stmtctx.StatementContext, val int64, err error) (int64, error) {
+func HandleOverflowOnSelection(sc *StmtCtx, val int64, err error) (int64, error) {
 	if sc.InSelectStmt && err != nil && types.ErrOverflow.Equal(err) {
 		return -1, nil
 	}
@@ -274,9 +273,9 @@ func EvalBool(ctx EvalContext, exprList CNFExprs, row chunk.Row) (bool, bool, er
 			continue
 		}
 
-		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		i, err := data.ToBool(evalVars(ctx).StmtCtx.TypeCtx())
 		if err != nil {
-			i, err = HandleOverflowOnSelection(ctx.GetSessionVars().StmtCtx, i, err)
+			i, err = HandleOverflowOnSelection(evalVars(ctx).StmtCtx, i, err)
 			if err != nil {
 				return false, false, err
 			}
@@ -374,7 +373,7 @@ func VecEvalBool(ctx EvalContext, exprList CNFExprs, input *chunk.Chunk, selecte
 			return nil, nil, err
 		}
 
-		err = toBool(ctx.GetSessionVars().StmtCtx, tp, eType, buf, sel, isZero)
+		err = toBool(evalVars(ctx).StmtCtx, tp, eType, buf, sel, isZero)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -414,7 +413,7 @@ func VecEvalBool(ctx EvalContext, exprList CNFExprs, input *chunk.Chunk, selecte
 	return selected, nulls, nil
 }
 
-func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
+func toBool(sc *StmtCtx, tp *types.FieldType, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
 	switch eType {
 	case types.ETInt:
 		i64s := buf.Int64s()
@@ -543,7 +542,7 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalT
 }
 
 func implicitEvalReal(ctx EvalContext, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
-	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
+	if expr.Vectorized() && evalVars(ctx).EnableVectorizedExpression {
 		err = expr.VecEvalReal(ctx, input, result)
 	} else {
 		ind, n := 0, input.NumRows()
@@ -572,7 +571,7 @@ func implicitEvalReal(ctx EvalContext, expr Expression, input *chunk.Chunk, resu
 // Note: the input argument `evalType` is needed because of that when `expr` is
 // of the hybrid type(ENUM/SET/BIT), we need the invoker decide the actual EvalType.
 func EvalExpr(ctx EvalContext, expr Expression, evalType types.EvalType, input *chunk.Chunk, result *chunk.Column) (err error) {
-	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
+	if expr.Vectorized() && evalVars(ctx).EnableVectorizedExpression {
 		switch evalType {
 		case types.ETInt:
 			err = expr.VecEvalInt(ctx, input, result)
@@ -1381,7 +1380,7 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 			storageName = "storage layer"
 		}
 		warnErr := errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") is not supported to push down to " + storageName + " now.")
-		sc := pc.ctx.GetSessionVars().StmtCtx
+		sc := evalVars(pc.ctx).StmtCtx
 		if sc.InExplainStmt {
 			sc.AppendWarning(warnErr)
 		} else {
@@ -1410,7 +1409,7 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 
 func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, canEnumPush bool) bool {
 	if storeType == kv.TiFlash {
-		sc := pc.ctx.GetSessionVars().StmtCtx
+		sc := evalVars(pc.ctx).StmtCtx
 		switch expr.GetType().GetType() {
 		case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
 			if expr.GetType().GetType() == mysql.TypeEnum && canEnumPush {

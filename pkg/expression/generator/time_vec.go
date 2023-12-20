@@ -62,7 +62,7 @@ import (
 			{{ template "SetNull" . }}
 			continue
 		}{{ end }}
-		sc := ctx.GetSessionVars().StmtCtx
+		sc := evalVars(ctx).StmtCtx
 		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, {{if eq .Output.TypeName "String"}}getFsp4TimeAddSub{{else}}types.GetFsp{{end}}(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -171,9 +171,9 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 		// calculate
 	{{ if or (eq .SigName "builtinAddDatetimeAndDurationSig") (eq .SigName "builtinSubDatetimeAndDurationSig") }}
 		{{ if eq $.FuncName "AddTime" }}
-		output, err := arg0.Add(ctx.GetSessionVars().StmtCtx.TypeCtx(), types.Duration{Duration: arg1, Fsp: -1})
+		output, err := arg0.Add(evalVars(ctx).StmtCtx.TypeCtx(), types.Duration{Duration: arg1, Fsp: -1})
 		{{ else }}
-		sc := ctx.GetSessionVars().StmtCtx
+		sc := evalVars(ctx).StmtCtx
 		arg1Duration := types.Duration{Duration: arg1, Fsp: -1}
 		output, err := arg0.Add(sc.TypeCtx(), arg1Duration.Neg())
 		{{ end }}
@@ -190,7 +190,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 			result.SetNull(i, true) // fixed: true
 			continue
 		}
-		sc := ctx.GetSessionVars().StmtCtx
+		sc := evalVars(ctx).StmtCtx
 		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -231,7 +231,7 @@ func (b *{{.SigName}}) vecEval{{ .Output.TypeName }}(ctx EvalContext, input *chu
 		}
 		{{ end }}
 	{{ else if or (eq .SigName "builtinAddStringAndDurationSig") (eq .SigName "builtinSubStringAndDurationSig") }}
-		sc := ctx.GetSessionVars().StmtCtx
+		sc := evalVars(ctx).StmtCtx
 		fsp1 := b.args[1].GetType().GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		var output string
@@ -415,7 +415,7 @@ func (b *{{.SigName}}) vecEvalDuration(ctx EvalContext, input *chunk.Chunk, resu
 			)
 		{{- end }}
 		{{- if or (or $AIsString $BIsString) (and $AIsTime $BIsTime) }}
-			stmtCtx := ctx.GetSessionVars().StmtCtx
+			stmtCtx := evalVars(ctx).StmtCtx
 		{{- end }}
 	for i:=0; i<n ; i++{
 		if result.IsNull(i) {

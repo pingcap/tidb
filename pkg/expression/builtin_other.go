@@ -761,7 +761,7 @@ func (b *builtinSetStringVarSig) Clone() builtinFunc {
 
 func (b *builtinSetStringVarSig) evalString(ctx EvalContext, row chunk.Row) (res string, isNull bool, err error) {
 	var varName string
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := evalVars(ctx)
 	varName, isNull, err = b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
@@ -791,7 +791,7 @@ func (b *builtinSetRealVarSig) Clone() builtinFunc {
 
 func (b *builtinSetRealVarSig) evalReal(ctx EvalContext, row chunk.Row) (res float64, isNull bool, err error) {
 	var varName string
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := evalVars(ctx)
 	varName, isNull, err = b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -818,7 +818,7 @@ func (b *builtinSetDecimalVarSig) Clone() builtinFunc {
 }
 
 func (b *builtinSetDecimalVarSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := evalVars(ctx)
 	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return nil, isNull, err
@@ -845,7 +845,7 @@ func (b *builtinSetIntVarSig) Clone() builtinFunc {
 }
 
 func (b *builtinSetIntVarSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := evalVars(ctx)
 	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -872,7 +872,7 @@ func (b *builtinSetTimeVarSig) Clone() builtinFunc {
 }
 
 func (b *builtinSetTimeVarSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := evalVars(ctx)
 	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
@@ -954,7 +954,7 @@ func (b *builtinGetStringVarSig) Clone() builtinFunc {
 }
 
 func (b *builtinGetStringVarSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := evalVars(ctx)
 	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
@@ -1006,7 +1006,7 @@ func (b *builtinGetIntVarSig) Clone() builtinFunc {
 }
 
 func (b *builtinGetIntVarSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := evalVars(ctx)
 	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -1046,7 +1046,7 @@ func (b *builtinGetRealVarSig) Clone() builtinFunc {
 }
 
 func (b *builtinGetRealVarSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := evalVars(ctx)
 	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -1086,7 +1086,7 @@ func (b *builtinGetDecimalVarSig) Clone() builtinFunc {
 }
 
 func (b *builtinGetDecimalVarSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := evalVars(ctx)
 	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return nil, isNull, err
@@ -1134,7 +1134,7 @@ func (b *builtinGetTimeVarSig) Clone() builtinFunc {
 }
 
 func (b *builtinGetTimeVarSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := evalVars(ctx)
 	varName, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return types.ZeroTime, isNull, err
@@ -1195,7 +1195,7 @@ func (b *builtinValuesIntSig) Clone() builtinFunc {
 // evalInt evals a builtinValuesIntSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesIntSig) evalInt(ctx EvalContext, _ chunk.Row) (int64, bool, error) {
-	row := ctx.GetSessionVars().CurrInsertValues
+	row := evalVars(ctx).CurrInsertValues
 	if row.IsEmpty() {
 		return 0, true, nil
 	}
@@ -1210,7 +1210,7 @@ func (b *builtinValuesIntSig) evalInt(ctx EvalContext, _ chunk.Row) (int64, bool
 		}
 		if len(val) < 8 {
 			var binary types.BinaryLiteral = val
-			v, err := binary.ToInt(ctx.GetSessionVars().StmtCtx.TypeCtx())
+			v, err := binary.ToInt(evalVars(ctx).StmtCtx.TypeCtx())
 			if err != nil {
 				return 0, true, errors.Trace(err)
 			}
@@ -1236,7 +1236,7 @@ func (b *builtinValuesRealSig) Clone() builtinFunc {
 // evalReal evals a builtinValuesRealSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesRealSig) evalReal(ctx EvalContext, _ chunk.Row) (float64, bool, error) {
-	row := ctx.GetSessionVars().CurrInsertValues
+	row := evalVars(ctx).CurrInsertValues
 	if row.IsEmpty() {
 		return 0, true, nil
 	}
@@ -1267,7 +1267,7 @@ func (b *builtinValuesDecimalSig) Clone() builtinFunc {
 // evalDecimal evals a builtinValuesDecimalSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesDecimalSig) evalDecimal(ctx EvalContext, _ chunk.Row) (*types.MyDecimal, bool, error) {
-	row := ctx.GetSessionVars().CurrInsertValues
+	row := evalVars(ctx).CurrInsertValues
 	if row.IsEmpty() {
 		return &types.MyDecimal{}, true, nil
 	}
@@ -1295,7 +1295,7 @@ func (b *builtinValuesStringSig) Clone() builtinFunc {
 // evalString evals a builtinValuesStringSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesStringSig) evalString(ctx EvalContext, _ chunk.Row) (string, bool, error) {
-	row := ctx.GetSessionVars().CurrInsertValues
+	row := evalVars(ctx).CurrInsertValues
 	if row.IsEmpty() {
 		return "", true, nil
 	}
@@ -1332,7 +1332,7 @@ func (b *builtinValuesTimeSig) Clone() builtinFunc {
 // evalTime evals a builtinValuesTimeSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesTimeSig) evalTime(ctx EvalContext, _ chunk.Row) (types.Time, bool, error) {
-	row := ctx.GetSessionVars().CurrInsertValues
+	row := evalVars(ctx).CurrInsertValues
 	if row.IsEmpty() {
 		return types.ZeroTime, true, nil
 	}
@@ -1360,7 +1360,7 @@ func (b *builtinValuesDurationSig) Clone() builtinFunc {
 // evalDuration evals a builtinValuesDurationSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesDurationSig) evalDuration(ctx EvalContext, _ chunk.Row) (types.Duration, bool, error) {
-	row := ctx.GetSessionVars().CurrInsertValues
+	row := evalVars(ctx).CurrInsertValues
 	if row.IsEmpty() {
 		return types.Duration{}, true, nil
 	}
@@ -1389,7 +1389,7 @@ func (b *builtinValuesJSONSig) Clone() builtinFunc {
 // evalJSON evals a builtinValuesJSONSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_values
 func (b *builtinValuesJSONSig) evalJSON(ctx EvalContext, _ chunk.Row) (types.BinaryJSON, bool, error) {
-	row := ctx.GetSessionVars().CurrInsertValues
+	row := evalVars(ctx).CurrInsertValues
 	if row.IsEmpty() {
 		return types.BinaryJSON{}, true, nil
 	}
@@ -1473,7 +1473,7 @@ func (b *builtinGetParamStringSig) Clone() builtinFunc {
 }
 
 func (b *builtinGetParamStringSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := evalVars(ctx)
 	idx, isNull, err := b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err

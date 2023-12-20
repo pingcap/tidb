@@ -140,7 +140,7 @@ func (b *builtinSleepSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 		return 0, isNull, err
 	}
 
-	sessVars := ctx.GetSessionVars()
+	sessVars := evalVars(ctx)
 	if isNull || val < 0 {
 		// for insert ignore stmt, the StrictSQLMode and ignoreErr should both be considered.
 		if !sessVars.StmtCtx.BadNullAsWarning {
@@ -217,7 +217,7 @@ func (b *builtinLockSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, e
 	// So users are aware, we also attach a warning.
 	if timeout < 0 || timeout > maxTimeout {
 		err := errTruncatedWrongValue.GenWithStackByArgs("get_lock", strconv.FormatInt(timeout, 10))
-		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		evalVars(ctx).StmtCtx.AppendWarning(err)
 		timeout = maxTimeout
 	}
 

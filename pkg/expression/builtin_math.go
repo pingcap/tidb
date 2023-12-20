@@ -888,7 +888,7 @@ func (b *builtinLog1ArgSig) evalReal(ctx EvalContext, row chunk.Row) (float64, b
 		return 0, isNull, err
 	}
 	if val <= 0 {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
+		evalVars(ctx).StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 		return 0, true, nil
 	}
 	return math.Log(val), false, nil
@@ -918,7 +918,7 @@ func (b *builtinLog2ArgsSig) evalReal(ctx EvalContext, row chunk.Row) (float64, 
 	}
 
 	if val1 <= 0 || val1 == 1 || val2 <= 0 {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
+		evalVars(ctx).StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 		return 0, true, nil
 	}
 
@@ -960,7 +960,7 @@ func (b *builtinLog2Sig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool
 		return 0, isNull, err
 	}
 	if val <= 0 {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
+		evalVars(ctx).StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 		return 0, true, nil
 	}
 	return math.Log2(val), false, nil
@@ -1001,7 +1001,7 @@ func (b *builtinLog10Sig) evalReal(ctx EvalContext, row chunk.Row) (float64, boo
 		return 0, isNull, err
 	}
 	if val <= 0 {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
+		evalVars(ctx).StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 		return 0, true, nil
 	}
 	return math.Log10(val), false, nil

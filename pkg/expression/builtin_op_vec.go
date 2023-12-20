@@ -85,7 +85,7 @@ func (b *builtinLogicOrSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resu
 	}
 	defer b.bufAllocator.put(buf)
 
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 	beforeWarns := sc.WarningCount()
 	err = b.args[1].VecEvalInt(ctx, input, buf)
 	afterWarns := sc.WarningCount()
@@ -380,7 +380,7 @@ func (b *builtinLogicAndSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 	}
 	defer b.bufAllocator.put(buf1)
 
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 	beforeWarns := sc.WarningCount()
 	err = b.args[1].VecEvalInt(ctx, input, buf1)
 	afterWarns := sc.WarningCount()

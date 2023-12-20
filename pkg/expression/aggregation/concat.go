@@ -17,6 +17,7 @@ package aggregation
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -123,7 +124,7 @@ func (cf *concatFunction) GetResult(evalCtx *AggEvaluateContext) (d types.Datum)
 
 func (cf *concatFunction) ResetContext(ctx expression.EvalContext, evalCtx *AggEvaluateContext) {
 	if cf.HasDistinct {
-		evalCtx.DistinctChecker = createDistinctChecker(ctx.GetSessionVars().StmtCtx)
+		evalCtx.DistinctChecker = createDistinctChecker(expression.NewEvalVars(ctx.(sessionctx.Context).GetSessionVars()).StmtCtx)
 	}
 	evalCtx.Ctx = ctx
 	evalCtx.Buffer = nil

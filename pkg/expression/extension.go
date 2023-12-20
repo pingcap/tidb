@@ -199,19 +199,19 @@ func (b extensionFnContext) EvalArgs(row chunk.Row) ([]types.Datum, error) {
 }
 
 func (b extensionFnContext) ConnectionInfo() *variable.ConnectionInfo {
-	return b.ctx.GetSessionVars().ConnectionInfo
+	return evalVars(b.ctx).ConnectionInfo
 }
 
 func (b extensionFnContext) User() *auth.UserIdentity {
-	return b.ctx.GetSessionVars().User
+	return evalVars(b.ctx).User
 }
 
 func (b extensionFnContext) ActiveRoles() []*auth.RoleIdentity {
-	return b.ctx.GetSessionVars().ActiveRoles
+	return evalVars(b.ctx).ActiveRoles
 }
 
 func (b extensionFnContext) CurrentDB() string {
-	return b.ctx.GetSessionVars().CurrentDB
+	return evalVars(b.ctx).CurrentDB
 }
 
 func init() {

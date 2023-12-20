@@ -36,7 +36,7 @@ func (b *builtinLog1ArgSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, res
 			continue
 		}
 		if f64s[i] <= 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
+			evalVars(ctx).StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		} else {
 			f64s[i] = math.Log(f64s[i])
@@ -59,7 +59,7 @@ func (b *builtinLog2Sig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result
 			continue
 		}
 		if f64s[i] <= 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
+			evalVars(ctx).StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		} else {
 			f64s[i] = math.Log2(f64s[i])
@@ -82,7 +82,7 @@ func (b *builtinLog10Sig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, resul
 			continue
 		}
 		if f64s[i] <= 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
+			evalVars(ctx).StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		} else {
 			f64s[i] = math.Log10(f64s[i])
@@ -478,7 +478,7 @@ func (b *builtinLog2ArgsSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, re
 			continue
 		}
 		if d[i] <= 0 || d[i] == 1 || x[i] <= 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
+			evalVars(ctx).StmtCtx.AppendWarning(ErrInvalidArgumentForLogarithm)
 			result.SetNull(i, true)
 		}
 		d[i] = math.Log(x[i]) / math.Log(d[i])

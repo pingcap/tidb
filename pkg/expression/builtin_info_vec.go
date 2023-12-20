@@ -34,7 +34,7 @@ func (b *builtinDatabaseSig) vectorized() bool {
 func (b *builtinDatabaseSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
-	currentDB := ctx.GetSessionVars().CurrentDB
+	currentDB := evalVars(ctx).CurrentDB
 	result.ReserveString(n)
 	if currentDB == "" {
 		for i := 0; i < n; i++ {
@@ -54,7 +54,7 @@ func (b *builtinConnectionIDSig) vectorized() bool {
 
 func (b *builtinConnectionIDSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	data := ctx.GetSessionVars()
+	data := evalVars(ctx)
 	if data == nil {
 		return errors.Errorf("Missing session variable in `builtinConnectionIDSig.vecEvalInt`")
 	}
@@ -91,7 +91,7 @@ func (b *builtinRowCountSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 	n := input.NumRows()
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-	res := ctx.GetSessionVars().StmtCtx.PrevAffectedRows
+	res := evalVars(ctx).StmtCtx.PrevAffectedRows
 	for i := 0; i < n; i++ {
 		i64s[i] = res
 	}
@@ -107,7 +107,7 @@ func (b *builtinCurrentUserSig) vectorized() bool {
 func (b *builtinCurrentUserSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
-	data := ctx.GetSessionVars()
+	data := evalVars(ctx)
 	result.ReserveString(n)
 	if data == nil || data.User == nil {
 		return errors.Errorf("Missing session variable when eval builtin")
@@ -123,7 +123,7 @@ func (b *builtinCurrentResourceGroupSig) vectorized() bool {
 }
 
 func (b *builtinCurrentResourceGroupSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	data := ctx.GetSessionVars()
+	data := evalVars(ctx)
 	if data == nil {
 		return errors.Errorf("Missing session variable when eval builtin")
 	}
@@ -144,7 +144,7 @@ func (b *builtinCurrentRoleSig) vectorized() bool {
 func (b *builtinCurrentRoleSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 
-	data := ctx.GetSessionVars()
+	data := evalVars(ctx)
 	if data == nil || data.ActiveRoles == nil {
 		return errors.Errorf("Missing session variable when eval builtin")
 	}
@@ -177,7 +177,7 @@ func (b *builtinUserSig) vectorized() bool {
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_user
 func (b *builtinUserSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	data := ctx.GetSessionVars()
+	data := evalVars(ctx)
 	if data == nil || data.User == nil {
 		return errors.Errorf("Missing session variable when eval builtin")
 	}
@@ -212,7 +212,7 @@ func (b *builtinFoundRowsSig) vectorized() bool {
 }
 
 func (b *builtinFoundRowsSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	data := ctx.GetSessionVars()
+	data := evalVars(ctx)
 	if data == nil {
 		return errors.Errorf("Missing session variable when eval builtin")
 	}
@@ -304,7 +304,7 @@ func (b *builtinLastInsertIDSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 	n := input.NumRows()
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-	res := int64(ctx.GetSessionVars().StmtCtx.PrevLastInsertID)
+	res := int64(evalVars(ctx).StmtCtx.PrevLastInsertID)
 	for i := 0; i < n; i++ {
 		i64s[i] = res
 	}
@@ -322,7 +322,7 @@ func (b *builtinLastInsertIDWithIDSig) vecEvalInt(ctx EvalContext, input *chunk.
 	i64s := result.Int64s()
 	for i := len(i64s) - 1; i >= 0; i-- {
 		if !result.IsNull(i) {
-			ctx.GetSessionVars().SetLastInsertID(uint64(i64s[i]))
+			evalVars(ctx).SetLastInsertID(uint64(i64s[i]))
 			break
 		}
 	}

@@ -1646,7 +1646,7 @@ func (b *builtinCoalesceIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 	beforeWarns := sc.WarningCount()
 	for j := 0; j < len(b.args); j++ {
 		err := b.args[j].VecEvalInt(ctx, input, buf1)
@@ -1703,7 +1703,7 @@ func (b *builtinCoalesceRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 	beforeWarns := sc.WarningCount()
 	for j := 0; j < len(b.args); j++ {
 		err := b.args[j].VecEvalReal(ctx, input, buf1)
@@ -1760,7 +1760,7 @@ func (b *builtinCoalesceDecimalSig) vecEvalDecimal(ctx EvalContext, input *chunk
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 	beforeWarns := sc.WarningCount()
 	for j := 0; j < len(b.args); j++ {
 		err := b.args[j].VecEvalDecimal(ctx, input, buf1)
@@ -1811,7 +1811,7 @@ func (b *builtinCoalesceStringSig) vecEvalString(ctx EvalContext, input *chunk.C
 	argLen := len(b.args)
 
 	bufs := make([]*chunk.Column, argLen)
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 	beforeWarns := sc.WarningCount()
 	for i := 0; i < argLen; i++ {
 		buf, err := b.bufAllocator.get()
@@ -1880,7 +1880,7 @@ func (b *builtinCoalesceTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 	beforeWarns := sc.WarningCount()
 	for j := 0; j < len(b.args); j++ {
 		err := b.args[j].VecEvalTime(ctx, input, buf1)
@@ -1939,7 +1939,7 @@ func (b *builtinCoalesceDurationSig) vecEvalDuration(ctx EvalContext, input *chu
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 	beforeWarns := sc.WarningCount()
 	for j := 0; j < len(b.args); j++ {
 		err := b.args[j].VecEvalDuration(ctx, input, buf1)
@@ -1990,7 +1990,7 @@ func (b *builtinCoalesceJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk
 	argLen := len(b.args)
 
 	bufs := make([]*chunk.Column, argLen)
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 	beforeWarns := sc.WarningCount()
 	for i := 0; i < argLen; i++ {
 		buf, err := b.bufAllocator.get()

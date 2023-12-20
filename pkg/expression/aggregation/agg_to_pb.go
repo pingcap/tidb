@@ -130,7 +130,7 @@ func AggFuncToPBExpr(sctx expression.EvalContext, client kv.Client, aggFunc *Agg
 			orderBy = append(orderBy, pbArg)
 		}
 		// encode GroupConcatMaxLen
-		gcMaxLen, err := sctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), variable.GroupConcatMaxLen)
+		gcMaxLen, err := expression.NewEvalVars(sctx.(sessionctx.Context).GetSessionVars()).GetSessionOrGlobalSystemVar(context.Background(), variable.GroupConcatMaxLen)
 		if err != nil {
 			return nil, errors.Errorf("Error happened when buildGroupConcat: no system variable named '%s'", variable.GroupConcatMaxLen)
 		}

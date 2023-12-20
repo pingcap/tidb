@@ -2330,7 +2330,7 @@ func (b *builtinCharSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 	}
 	encBuf := &bytes.Buffer{}
 	enc := charset.FindEncoding(b.tp.GetCharset())
-	hasStrictMode := ctx.GetSessionVars().StrictSQLMode
+	hasStrictMode := evalVars(ctx).SQLMode.HasStrictMode()
 	for i := 0; i < n; i++ {
 		bigints = bigints[0:0]
 		for j := 0; j < l-1; j++ {
@@ -2342,7 +2342,7 @@ func (b *builtinCharSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 		dBytes := b.convertToBytes(bigints)
 		resultBytes, err := enc.Transform(encBuf, dBytes, charset.OpDecode)
 		if err != nil {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			evalVars(ctx).StmtCtx.AppendWarning(err)
 			if hasStrictMode {
 				result.AppendNull()
 				continue
@@ -2972,10 +2972,10 @@ func formatDecimal(sctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result
 			// FORMAT(x, d)
 		} else if localeBuf.IsNull(i) {
 			// FORMAT(x, d, NULL)
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs("NULL"))
+			evalVars(sctx).StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs("NULL"))
 		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
 			// TODO: support other locales.
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs(localeBuf.GetString(i)))
+			evalVars(sctx).StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs(localeBuf.GetString(i)))
 		}
 
 		xStr := roundFormatArgs(x.String(), int(d))
@@ -3012,10 +3012,10 @@ func formatReal(sctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result *c
 			// FORMAT(x, d)
 		} else if localeBuf.IsNull(i) {
 			// FORMAT(x, d, NULL)
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs("NULL"))
+			evalVars(sctx).StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs("NULL"))
 		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
 			// TODO: support other locales.
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs(localeBuf.GetString(i)))
+			evalVars(sctx).StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs(localeBuf.GetString(i)))
 		}
 
 		xStr := roundFormatArgs(strconv.FormatFloat(x, 'f', -1, 64), int(d))

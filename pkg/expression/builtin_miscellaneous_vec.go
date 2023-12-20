@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/vitess"
 )
@@ -321,7 +320,7 @@ func (b *builtinSleepSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 		isNull := buf.IsNull(i)
 		val := buf.GetFloat64(i)
 
-		sessVars := ctx.GetSessionVars()
+		sessVars := evalVars(ctx)
 		if isNull || val < 0 {
 			// for insert ignore stmt, the StrictSQLMode and ignoreErr should both be considered.
 			if !sessVars.StmtCtx.BadNullAsWarning {
@@ -347,7 +346,7 @@ func (b *builtinSleepSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 	return nil
 }
 
-func doSleep(secs float64, sessVars *variable.SessionVars) (isKilled bool) {
+func doSleep(secs float64, sessVars *EvalVars) (isKilled bool) {
 	if secs <= 0.0 {
 		return false
 	}

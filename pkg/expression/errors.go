@@ -74,9 +74,9 @@ func handleInvalidTimeError(ctx EvalContext, err error) error {
 		types.ErrDatetimeFunctionOverflow.Equal(err) || types.ErrIncorrectDatetimeValue.Equal(err)) {
 		return err
 	}
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 	err = sc.HandleTruncate(err)
-	if ctx.GetSessionVars().StrictSQLMode && (sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt) {
+	if evalVars(ctx).SQLMode.HasStrictMode() && (sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt) {
 		return err
 	}
 	return nil
@@ -84,12 +84,12 @@ func handleInvalidTimeError(ctx EvalContext, err error) error {
 
 // handleDivisionByZeroError reports error or warning depend on the context.
 func handleDivisionByZeroError(ctx EvalContext) error {
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 	if sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt {
-		if !ctx.GetSessionVars().SQLMode.HasErrorForDivisionByZeroMode() {
+		if !evalVars(ctx).SQLMode.HasErrorForDivisionByZeroMode() {
 			return nil
 		}
-		if ctx.GetSessionVars().StrictSQLMode && !sc.DividedByZeroAsWarning {
+		if evalVars(ctx).SQLMode.HasStrictMode() && !sc.DividedByZeroAsWarning {
 			return ErrDivisionByZero
 		}
 	}
@@ -100,7 +100,7 @@ func handleDivisionByZeroError(ctx EvalContext) error {
 // handleAllowedPacketOverflowed reports error or warning depend on the context.
 func handleAllowedPacketOverflowed(ctx EvalContext, exprName string, maxAllowedPacketSize uint64) error {
 	err := errWarnAllowedPacketOverflowed.GenWithStackByArgs(exprName, maxAllowedPacketSize)
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 
 	// insert|update|delete ignore ...
 	if sc.TypeFlags().TruncateAsWarning() {
@@ -108,7 +108,7 @@ func handleAllowedPacketOverflowed(ctx EvalContext, exprName string, maxAllowedP
 		return nil
 	}
 
-	if ctx.GetSessionVars().StrictSQLMode && (sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt) {
+	if evalVars(ctx).SQLMode.HasStrictMode() && (sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt) {
 		return err
 	}
 	sc.AppendWarning(err)

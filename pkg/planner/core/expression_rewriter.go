@@ -2314,7 +2314,7 @@ func hasCurrentDatetimeDefault(col *table.Column) bool {
 }
 
 func decodeKeyFromString(ctx expression.EvalContext, s string) string {
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := expression.NewEvalVars(ctx.(sessionctx.Context).GetSessionVars()).StmtCtx
 	key, err := hex.DecodeString(s)
 	if err != nil {
 		sc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
@@ -2337,7 +2337,7 @@ func decodeKeyFromString(ctx expression.EvalContext, s string) string {
 		return s
 	}
 	tbl, _ := infoschema.FindTableByTblOrPartID(is, tableID)
-	loc := ctx.GetSessionVars().Location()
+	loc := expression.NewEvalVars(ctx.(sessionctx.Context).GetSessionVars()).Location()
 	if tablecodec.IsRecordKey(key) {
 		ret, err := decodeRecordKey(key, tableID, tbl, loc)
 		if err != nil {

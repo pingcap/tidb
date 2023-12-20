@@ -82,7 +82,7 @@ func (b *builtinArithmeticDivideDecimalSig) vecEvalDecimal(ctx EvalContext, inpu
 	y := buf.Decimals()
 	var to types.MyDecimal
 	var frac int
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -395,7 +395,7 @@ func (b *builtinArithmeticMinusIntSig) vecEvalInt(ctx EvalContext, input *chunk.
 	rhi64s := rh.Int64s()
 	resulti64s := result.Int64s()
 
-	forceToSigned := ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode()
+	forceToSigned := evalVars(ctx).SQLMode.HasNoUnsignedSubtractionMode()
 	isLHSUnsigned := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
 	isRHSUnsigned := mysql.HasUnsignedFlag(b.args[1].GetType().GetFlag())
 
@@ -576,7 +576,7 @@ func (b *builtinArithmeticIntDivideDecimalSig) vectorized() bool {
 }
 
 func (b *builtinArithmeticIntDivideDecimalSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 	n := input.NumRows()
 	var err error
 	var buf [2]*chunk.Column

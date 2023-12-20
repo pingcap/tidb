@@ -414,7 +414,7 @@ func VectorizedFilterConsiderNull(ctx EvalContext, filters []Expression, iterato
 	input := iterator.GetChunk()
 	sel := input.Sel()
 	var err error
-	if canVectorized && ctx.GetSessionVars().EnableVectorizedExpression {
+	if canVectorized && evalVars(ctx).EnableVectorizedExpression {
 		selected, isNull, err = vectorizedFilter(ctx, filters, iterator, selected, isNull)
 	} else {
 		selected, isNull, err = rowBasedFilter(ctx, filters, iterator, selected, isNull)

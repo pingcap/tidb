@@ -16,7 +16,7 @@ package aggregation
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/mvmap"
@@ -27,11 +27,11 @@ type distinctChecker struct {
 	existingKeys *mvmap.MVMap
 	key          []byte
 	vals         [][]byte
-	sc           *stmtctx.StatementContext
+	sc           *expression.StmtCtx
 }
 
 // createDistinctChecker creates a new distinct checker.
-func createDistinctChecker(sc *stmtctx.StatementContext) *distinctChecker {
+func createDistinctChecker(sc *expression.StmtCtx) *distinctChecker {
 	return &distinctChecker{
 		existingKeys: mvmap.NewMVMap(),
 		sc:           sc,

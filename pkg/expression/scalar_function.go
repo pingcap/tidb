@@ -406,7 +406,7 @@ func (sf *ScalarFunction) Eval(ctx EvalContext, row chunk.Row) (d types.Datum, e
 		str, isNull, err = sf.EvalString(ctx, row)
 		if !isNull && err == nil && tp.GetType() == mysql.TypeEnum {
 			res, err = types.ParseEnum(tp.GetElems(), str, tp.GetCollate())
-			if sc := ctx.GetSessionVars().StmtCtx; sc != nil {
+			if sc := evalVars(ctx).StmtCtx; sc != nil {
 				err = sc.HandleTruncate(err)
 			}
 		} else {

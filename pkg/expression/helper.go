@@ -165,7 +165,7 @@ func getStmtTimestamp(ctx EvalContext) (time.Time, error) {
 	})
 
 	if ctx != nil {
-		staleTSO, err := ctx.GetSessionVars().StmtCtx.GetStaleTSO()
+		staleTSO, err := evalVars(ctx).StmtCtx.GetStaleTSO()
 		if staleTSO != 0 && err == nil {
 			return oracle.GetTimeFromTS(staleTSO), nil
 		} else if err != nil {
@@ -179,7 +179,7 @@ func getStmtTimestamp(ctx EvalContext) (time.Time, error) {
 		return now, nil
 	}
 
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := evalVars(ctx)
 	timestampStr, err := sessionVars.GetSessionOrGlobalSystemVar(context.Background(), "timestamp")
 	if err != nil {
 		return now, err

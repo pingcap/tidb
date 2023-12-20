@@ -48,7 +48,7 @@ func (e *defaultEvaluator) run(ctx EvalContext, input, output *chunk.Chunk) erro
 	iter := chunk.NewIterator4Chunk(input)
 	if e.vectorizable {
 		for i := range e.outputIdxes {
-			if ctx.GetSessionVars().EnableVectorizedExpression && e.exprs[i].Vectorized() {
+			if evalVars(ctx).EnableVectorizedExpression && e.exprs[i].Vectorized() {
 				if err := evalOneVec(ctx, e.exprs[i], input, output, e.outputIdxes[i]); err != nil {
 					return err
 				}

@@ -62,7 +62,7 @@ func (b *builtinAddDatetimeAndDurationSig) vecEvalTime(ctx EvalContext, input *c
 
 		// calculate
 
-		output, err := arg0.Add(ctx.GetSessionVars().StmtCtx.TypeCtx(), types.Duration{Duration: arg1, Fsp: -1})
+		output, err := arg0.Add(evalVars(ctx).StmtCtx.TypeCtx(), types.Duration{Duration: arg1, Fsp: -1})
 
 		if err != nil {
 			return err
@@ -121,7 +121,7 @@ func (b *builtinAddDatetimeAndStringSig) vecEvalTime(ctx EvalContext, input *chu
 			result.SetNull(i, true) // fixed: true
 			continue
 		}
-		sc := ctx.GetSessionVars().StmtCtx
+		sc := evalVars(ctx).StmtCtx
 		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -247,7 +247,7 @@ func (b *builtinAddDurationAndStringSig) vecEvalDuration(ctx EvalContext, input 
 			result.SetNull(i, true) // fixed: true
 			continue
 		}
-		sc := ctx.GetSessionVars().StmtCtx
+		sc := evalVars(ctx).StmtCtx
 		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -315,7 +315,7 @@ func (b *builtinAddStringAndDurationSig) vecEvalString(ctx EvalContext, input *c
 
 		// calculate
 
-		sc := ctx.GetSessionVars().StmtCtx
+		sc := evalVars(ctx).StmtCtx
 		fsp1 := b.args[1].GetType().GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		var output string
@@ -405,7 +405,7 @@ func (b *builtinAddStringAndStringSig) vecEvalString(ctx EvalContext, input *chu
 
 		// calculate
 
-		sc := ctx.GetSessionVars().StmtCtx
+		sc := evalVars(ctx).StmtCtx
 		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, getFsp4TimeAddSub(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -565,7 +565,7 @@ func (b *builtinAddDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 			result.AppendNull() // fixed: false
 			continue
 		}
-		sc := ctx.GetSessionVars().StmtCtx
+		sc := evalVars(ctx).StmtCtx
 		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, getFsp4TimeAddSub(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -675,7 +675,7 @@ func (b *builtinSubDatetimeAndDurationSig) vecEvalTime(ctx EvalContext, input *c
 
 		// calculate
 
-		sc := ctx.GetSessionVars().StmtCtx
+		sc := evalVars(ctx).StmtCtx
 		arg1Duration := types.Duration{Duration: arg1, Fsp: -1}
 		output, err := arg0.Add(sc.TypeCtx(), arg1Duration.Neg())
 
@@ -736,7 +736,7 @@ func (b *builtinSubDatetimeAndStringSig) vecEvalTime(ctx EvalContext, input *chu
 			result.SetNull(i, true) // fixed: true
 			continue
 		}
-		sc := ctx.GetSessionVars().StmtCtx
+		sc := evalVars(ctx).StmtCtx
 		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -861,7 +861,7 @@ func (b *builtinSubDurationAndStringSig) vecEvalDuration(ctx EvalContext, input 
 			result.SetNull(i, true) // fixed: true
 			continue
 		}
-		sc := ctx.GetSessionVars().StmtCtx
+		sc := evalVars(ctx).StmtCtx
 		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, types.GetFsp(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -929,7 +929,7 @@ func (b *builtinSubStringAndDurationSig) vecEvalString(ctx EvalContext, input *c
 
 		// calculate
 
-		sc := ctx.GetSessionVars().StmtCtx
+		sc := evalVars(ctx).StmtCtx
 		fsp1 := b.args[1].GetType().GetDecimal()
 		arg1Duration := types.Duration{Duration: arg1, Fsp: fsp1}
 		var output string
@@ -1019,7 +1019,7 @@ func (b *builtinSubStringAndStringSig) vecEvalString(ctx EvalContext, input *chu
 
 		// calculate
 
-		sc := ctx.GetSessionVars().StmtCtx
+		sc := evalVars(ctx).StmtCtx
 		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, getFsp4TimeAddSub(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -1179,7 +1179,7 @@ func (b *builtinSubDateAndStringSig) vecEvalString(ctx EvalContext, input *chunk
 			result.AppendNull() // fixed: false
 			continue
 		}
-		sc := ctx.GetSessionVars().StmtCtx
+		sc := evalVars(ctx).StmtCtx
 		arg1Duration, _, err := types.ParseDuration(sc.TypeCtx(), arg1, getFsp4TimeAddSub(arg1))
 		if err != nil {
 			if terror.ErrorEqual(err, types.ErrTruncatedWrongVal) {
@@ -1285,7 +1285,7 @@ func (b *builtinTimeStringTimeDiffSig) vecEvalDuration(ctx EvalContext, input *c
 
 	result.MergeNulls(buf0, buf1)
 	arg0 := buf0.Times()
-	stmtCtx := ctx.GetSessionVars().StmtCtx
+	stmtCtx := evalVars(ctx).StmtCtx
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -1340,7 +1340,7 @@ func (b *builtinDurationStringTimeDiffSig) vecEvalDuration(ctx EvalContext, inpu
 		lhs types.Duration
 		rhs types.Duration
 	)
-	stmtCtx := ctx.GetSessionVars().StmtCtx
+	stmtCtx := evalVars(ctx).StmtCtx
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -1445,7 +1445,7 @@ func (b *builtinStringTimeTimeDiffSig) vecEvalDuration(ctx EvalContext, input *c
 
 	result.MergeNulls(buf0, buf1)
 	arg1 := buf1.Times()
-	stmtCtx := ctx.GetSessionVars().StmtCtx
+	stmtCtx := evalVars(ctx).StmtCtx
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -1500,7 +1500,7 @@ func (b *builtinStringDurationTimeDiffSig) vecEvalDuration(ctx EvalContext, inpu
 		lhs types.Duration
 		rhs types.Duration
 	)
-	stmtCtx := ctx.GetSessionVars().StmtCtx
+	stmtCtx := evalVars(ctx).StmtCtx
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -1556,7 +1556,7 @@ func (b *builtinStringStringTimeDiffSig) vecEvalDuration(ctx EvalContext, input 
 	}
 
 	result.MergeNulls(buf0, buf1)
-	stmtCtx := ctx.GetSessionVars().StmtCtx
+	stmtCtx := evalVars(ctx).StmtCtx
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -1624,7 +1624,7 @@ func (b *builtinTimeTimeTimeDiffSig) vecEvalDuration(ctx EvalContext, input *chu
 	result.MergeNulls(buf0, buf1)
 	arg0 := buf0.Times()
 	arg1 := buf1.Times()
-	stmtCtx := ctx.GetSessionVars().StmtCtx
+	stmtCtx := evalVars(ctx).StmtCtx
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue

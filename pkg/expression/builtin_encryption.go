@@ -166,7 +166,7 @@ func (b *builtinAesDecryptSig) evalString(ctx EvalContext, row chunk.Row) (strin
 	}
 	if !b.ivRequired && len(b.args) == 3 {
 		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
+		evalVars(ctx).StmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
 	}
 
 	key := encrypt.DeriveKeyMySQL([]byte(keyStr), b.keySize)
@@ -300,7 +300,7 @@ func (b *builtinAesEncryptSig) evalString(ctx EvalContext, row chunk.Row) (strin
 	}
 	if !b.ivRequired && len(b.args) == 3 {
 		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
+		evalVars(ctx).StmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
 	}
 
 	key := encrypt.DeriveKeyMySQL([]byte(keyStr), b.keySize)
@@ -539,7 +539,7 @@ func (b *builtinPasswordSig) evalString(ctx EvalContext, row chunk.Row) (val str
 
 	// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
 	// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
-	ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("PASSWORD"))
+	evalVars(ctx).StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("PASSWORD"))
 
 	return auth.EncodePassword(pass), false, nil
 }
@@ -933,7 +933,7 @@ func (b *builtinUncompressSig) Clone() builtinFunc {
 // evalString evals UNCOMPRESS(compressed_string).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompress
 func (b *builtinUncompressSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 	payload, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
@@ -990,7 +990,7 @@ func (b *builtinUncompressedLengthSig) Clone() builtinFunc {
 // evalInt evals UNCOMPRESSED_LENGTH(str).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompressed-length
 func (b *builtinUncompressedLengthSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 	payload, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, true, err
@@ -1036,7 +1036,7 @@ func (b *builtinValidatePasswordStrengthSig) Clone() builtinFunc {
 // evalInt evals VALIDATE_PASSWORD_STRENGTH(str).
 // See https://dev.mysql.com/doc/refman/8.0/en/encryption-functions.html#function_validate-password-strength
 func (b *builtinValidatePasswordStrengthSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
-	globalVars := ctx.GetSessionVars().GlobalVarsAccessor
+	globalVars := evalVars(ctx).GlobalVarsAccessor
 	str, isNull, err := b.args[0].EvalString(ctx, row)
 	if err != nil || isNull {
 		return 0, true, err
@@ -1052,7 +1052,7 @@ func (b *builtinValidatePasswordStrengthSig) evalInt(ctx EvalContext, row chunk.
 }
 
 func (b *builtinValidatePasswordStrengthSig) validateStr(ctx EvalContext, str string, globalVars *variable.GlobalVarAccessor) (int64, bool, error) {
-	if warn, err := pwdValidator.ValidateUserNameInPassword(str, ctx.GetSessionVars()); err != nil {
+	if warn, err := pwdValidator.ValidateUserNameInPassword(str, evalVars(ctx).User, evalVars(ctx).GlobalVarsAccessor); err != nil {
 		return 0, true, err
 	} else if len(warn) > 0 {
 		return 0, false, nil

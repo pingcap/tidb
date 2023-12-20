@@ -634,7 +634,7 @@ func (b *builtinGreatestCmpStringAsTimeSig) vectorized() bool {
 }
 
 func (b *builtinGreatestCmpStringAsTimeSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 	n := input.NumRows()
 
 	dstStrings := make([]string, n)
@@ -715,7 +715,7 @@ func (b *builtinLeastCmpStringAsTimeSig) vectorized() bool {
 }
 
 func (b *builtinLeastCmpStringAsTimeSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 	n := input.NumRows()
 
 	dstStrings := make([]string, n)
@@ -837,7 +837,7 @@ func (b *builtinGreatestTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk
 			}
 		}
 	}
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
 	for rowIdx := 0; rowIdx < n; rowIdx++ {
 		resTimes := result.Times()
@@ -878,7 +878,7 @@ func (b *builtinLeastTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk, r
 			}
 		}
 	}
-	sc := ctx.GetSessionVars().StmtCtx
+	sc := evalVars(ctx).StmtCtx
 	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
 	for rowIdx := 0; rowIdx < n; rowIdx++ {
 		resTimes := result.Times()

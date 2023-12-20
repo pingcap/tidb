@@ -126,7 +126,7 @@ func (b *builtinGetParamStringSig) vectorized() bool {
 }
 
 func (b *builtinGetParamStringSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := evalVars(ctx)
 	n := input.NumRows()
 	idx, err := b.bufAllocator.get()
 	if err != nil {
@@ -178,7 +178,7 @@ func (b *builtinSetStringVarSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 		return err
 	}
 	result.ReserveString(n)
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := evalVars(ctx)
 	_, collation := sessionVars.GetCharsetInfo()
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
@@ -217,7 +217,7 @@ func (b *builtinSetIntVarSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	}
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := evalVars(ctx)
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.SetNull(i, true)
@@ -255,7 +255,7 @@ func (b *builtinSetRealVarSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, 
 	}
 	result.ResizeFloat64(n, false)
 	f64s := result.Float64s()
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := evalVars(ctx)
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.SetNull(i, true)
@@ -293,7 +293,7 @@ func (b *builtinSetDecimalVarSig) vecEvalDecimal(ctx EvalContext, input *chunk.C
 	}
 	result.ResizeDecimal(n, false)
 	decs := result.Decimals()
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := evalVars(ctx)
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) || buf1.IsNull(i) {
 			result.SetNull(i, true)
@@ -330,7 +330,7 @@ func (b *builtinGetStringVarSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 		return err
 	}
 	result.ReserveString(n)
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := evalVars(ctx)
 	for i := 0; i < n; i++ {
 		if buf0.IsNull(i) {
 			result.AppendNull()
@@ -367,7 +367,7 @@ func (b *builtinGetIntVarSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf0)
 	i64s := result.Int64s()
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := evalVars(ctx)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -399,7 +399,7 @@ func (b *builtinGetRealVarSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, 
 	result.ResizeFloat64(n, false)
 	result.MergeNulls(buf0)
 	f64s := result.Float64s()
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := evalVars(ctx)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
@@ -431,7 +431,7 @@ func (b *builtinGetDecimalVarSig) vecEvalDecimal(ctx EvalContext, input *chunk.C
 	result.ResizeDecimal(n, false)
 	result.MergeNulls(buf0)
 	decs := result.Decimals()
-	sessionVars := ctx.GetSessionVars()
+	sessionVars := evalVars(ctx)
 	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue

@@ -118,7 +118,7 @@ func (b *builtinDatabaseSig) Clone() builtinFunc {
 // evalString evals a builtinDatabaseSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html
 func (b *builtinDatabaseSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	currentDB := ctx.GetSessionVars().CurrentDB
+	currentDB := evalVars(ctx).CurrentDB
 	return currentDB, currentDB == "", nil
 }
 
@@ -153,7 +153,7 @@ func (b *builtinFoundRowsSig) Clone() builtinFunc {
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_found-rows
 // TODO: SQL_CALC_FOUND_ROWS and LIMIT not support for now, We will finish in another PR.
 func (b *builtinFoundRowsSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
-	data := ctx.GetSessionVars()
+	data := evalVars(ctx)
 	if data == nil {
 		return 0, true, errors.Errorf("Missing session variable when eval builtin")
 	}
@@ -190,7 +190,7 @@ func (b *builtinCurrentUserSig) Clone() builtinFunc {
 // evalString evals a builtinCurrentUserSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_current-user
 func (b *builtinCurrentUserSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	data := ctx.GetSessionVars()
+	data := evalVars(ctx)
 	if data == nil || data.User == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
@@ -227,7 +227,7 @@ func (b *builtinCurrentRoleSig) Clone() builtinFunc {
 // evalString evals a builtinCurrentUserSig.
 // See https://dev.mysql.com/doc/refman/8.0/en/information-functions.html#function_current-role
 func (b *builtinCurrentRoleSig) evalString(ctx EvalContext, row chunk.Row) (res string, isNull bool, err error) {
-	data := ctx.GetSessionVars()
+	data := evalVars(ctx)
 	if data == nil || data.ActiveRoles == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
@@ -276,7 +276,7 @@ func (b *builtinCurrentResourceGroupSig) Clone() builtinFunc {
 }
 
 func (b *builtinCurrentResourceGroupSig) evalString(ctx EvalContext, row chunk.Row) (val string, isNull bool, err error) {
-	data := ctx.GetSessionVars()
+	data := evalVars(ctx)
 	if data == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
@@ -313,7 +313,7 @@ func (b *builtinUserSig) Clone() builtinFunc {
 // evalString evals a builtinUserSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_user
 func (b *builtinUserSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	data := ctx.GetSessionVars()
+	data := evalVars(ctx)
 	if data == nil || data.User == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
@@ -348,7 +348,7 @@ func (b *builtinConnectionIDSig) Clone() builtinFunc {
 }
 
 func (b *builtinConnectionIDSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
-	data := ctx.GetSessionVars()
+	data := evalVars(ctx)
 	if data == nil {
 		return 0, true, errors.Errorf("Missing session variable `builtinConnectionIDSig.evalInt`")
 	}
@@ -397,7 +397,7 @@ func (b *builtinLastInsertIDSig) Clone() builtinFunc {
 // evalInt evals LAST_INSERT_ID().
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_last-insert-id.
 func (b *builtinLastInsertIDSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
-	res = int64(ctx.GetSessionVars().StmtCtx.PrevLastInsertID)
+	res = int64(evalVars(ctx).StmtCtx.PrevLastInsertID)
 	return res, false, nil
 }
 
@@ -419,7 +419,7 @@ func (b *builtinLastInsertIDWithIDSig) evalInt(ctx EvalContext, row chunk.Row) (
 		return res, isNull, err
 	}
 
-	ctx.GetSessionVars().SetLastInsertID(uint64(res))
+	evalVars(ctx).SetLastInsertID(uint64(res))
 	return res, false, nil
 }
 
@@ -786,7 +786,7 @@ func (b *builtinRowCountSig) Clone() builtinFunc {
 // evalInt evals ROW_COUNT().
 // See https://dev.mysql.com/doc/refman/5.7/en/information-functions.html#function_row-count.
 func (b *builtinRowCountSig) evalInt(ctx EvalContext, row chunk.Row) (res int64, isNull bool, err error) {
-	res = ctx.GetSessionVars().StmtCtx.PrevAffectedRows
+	res = evalVars(ctx).StmtCtx.PrevAffectedRows
 	return res, false, nil
 }
 
@@ -906,7 +906,7 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(ctx EvalContext, row chunk.R
 		if len(digestsStr) > errMsgMaxLength {
 			digestsStr = digestsStr[:errMsgMaxLength] + "..."
 		}
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errIncorrectArgs.GenWithStack("The argument can't be unmarshalled as JSON array: '%s'", digestsStr))
+		evalVars(ctx).StmtCtx.AppendWarning(errIncorrectArgs.GenWithStack("The argument can't be unmarshalled as JSON array: '%s'", digestsStr))
 		return "", true, nil
 	}
 
@@ -923,7 +923,7 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(ctx EvalContext, row chunk.R
 
 	// Querying may take some time and it takes a context.Context as argument, which is not available here.
 	// We simply create a context with a timeout here.
-	timeout := time.Duration(ctx.GetSessionVars().MaxExecutionTime) * time.Millisecond
+	timeout := time.Duration(evalVars(ctx).MaxExecutionTime) * time.Millisecond
 	if timeout == 0 || timeout > 20*time.Second {
 		timeout = 20 * time.Second
 	}
@@ -935,7 +935,7 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(ctx EvalContext, row chunk.R
 			return "", true, errUnknown.GenWithStack("Retrieving cancelled internally with error: %v", err)
 		}
 
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknown.GenWithStack("Retrieving statements information failed with error: %v", err))
+		evalVars(ctx).StmtCtx.AppendWarning(errUnknown.GenWithStack("Retrieving statements information failed with error: %v", err))
 		return "", true, nil
 	}
 
@@ -958,7 +958,7 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(ctx EvalContext, row chunk.R
 
 	resultStr, err := json.Marshal(result)
 	if err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknown.GenWithStack("Marshalling result as JSON failed with error: %v", err))
+		evalVars(ctx).StmtCtx.AppendWarning(errUnknown.GenWithStack("Marshalling result as JSON failed with error: %v", err))
 		return "", true, nil
 	}
 
@@ -1063,7 +1063,7 @@ func (b *builtinTiDBDecodeBinaryPlanSig) evalString(ctx EvalContext, row chunk.R
 	}
 	planTree, err := plancodec.DecodeBinaryPlan(planString)
 	if err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		evalVars(ctx).StmtCtx.AppendWarning(err)
 		return "", false, nil
 	}
 	return planTree, false, nil
@@ -1103,7 +1103,7 @@ func (b *builtinNextValSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool
 	}
 	db, seq := getSchemaAndSequence(sequenceName)
 	if len(db) == 0 {
-		db = ctx.GetSessionVars().CurrentDB
+		db = evalVars(ctx).CurrentDB
 	}
 	// Check the tableName valid.
 	sequence, err := util.GetSequenceByName(ctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(seq))
@@ -1112,8 +1112,8 @@ func (b *builtinNextValSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool
 	}
 	// Do the privilege check.
 	checker := privilege.GetPrivilegeManager(ctx)
-	user := ctx.GetSessionVars().User
-	if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db, seq, "", mysql.InsertPriv) {
+	user := evalVars(ctx).User
+	if checker != nil && !checker.RequestVerification(evalVars(ctx).ActiveRoles, db, seq, "", mysql.InsertPriv) {
 		return 0, false, errSequenceAccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, seq)
 	}
 	nextVal, err := sequence.GetSequenceNextVal(ctx, db, seq)
@@ -1121,7 +1121,7 @@ func (b *builtinNextValSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool
 		return 0, false, err
 	}
 	// update the sequenceState.
-	ctx.GetSessionVars().SequenceState.UpdateState(sequence.GetSequenceID(), nextVal)
+	evalVars(ctx).SequenceState.UpdateState(sequence.GetSequenceID(), nextVal)
 	return nextVal, false, nil
 }
 
@@ -1159,7 +1159,7 @@ func (b *builtinLastValSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool
 	}
 	db, seq := getSchemaAndSequence(sequenceName)
 	if len(db) == 0 {
-		db = ctx.GetSessionVars().CurrentDB
+		db = evalVars(ctx).CurrentDB
 	}
 	// Check the tableName valid.
 	sequence, err := util.GetSequenceByName(ctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(seq))
@@ -1168,11 +1168,11 @@ func (b *builtinLastValSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool
 	}
 	// Do the privilege check.
 	checker := privilege.GetPrivilegeManager(ctx)
-	user := ctx.GetSessionVars().User
-	if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db, seq, "", mysql.SelectPriv) {
+	user := evalVars(ctx).User
+	if checker != nil && !checker.RequestVerification(evalVars(ctx).ActiveRoles, db, seq, "", mysql.SelectPriv) {
 		return 0, false, errSequenceAccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, seq)
 	}
-	return ctx.GetSessionVars().SequenceState.GetLastValue(sequence.GetSequenceID())
+	return evalVars(ctx).SequenceState.GetLastValue(sequence.GetSequenceID())
 }
 
 type setValFunctionClass struct {
@@ -1209,7 +1209,7 @@ func (b *builtinSetValSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 	}
 	db, seq := getSchemaAndSequence(sequenceName)
 	if len(db) == 0 {
-		db = ctx.GetSessionVars().CurrentDB
+		db = evalVars(ctx).CurrentDB
 	}
 	// Check the tableName valid.
 	sequence, err := util.GetSequenceByName(ctx.GetInfoSchema(), model.NewCIStr(db), model.NewCIStr(seq))
@@ -1218,8 +1218,8 @@ func (b *builtinSetValSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool,
 	}
 	// Do the privilege check.
 	checker := privilege.GetPrivilegeManager(ctx)
-	user := ctx.GetSessionVars().User
-	if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, db, seq, "", mysql.InsertPriv) {
+	user := evalVars(ctx).User
+	if checker != nil && !checker.RequestVerification(evalVars(ctx).ActiveRoles, db, seq, "", mysql.InsertPriv) {
 		return 0, false, errSequenceAccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, seq)
 	}
 	setValue, isNull, err := b.args[1].EvalInt(ctx, row)

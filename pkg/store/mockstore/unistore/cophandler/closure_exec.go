@@ -796,7 +796,7 @@ func (e *closureExecutor) processSelection(needCollectDetail bool) (gotRow bool,
 			gotRow = false
 		} else {
 			isTrue, err := d.ToBool(e.sctx.GetSessionVars().StmtCtx.TypeCtx())
-			isTrue, err = expression.HandleOverflowOnSelection(e.sctx.GetSessionVars().StmtCtx, isTrue, err)
+			isTrue, err = expression.HandleOverflowOnSelection(expression.NewEvalVars(e.sctx.(sessionctx.Context).GetSessionVars()).StmtCtx, isTrue, err)
 			if err != nil {
 				return false, errors.Trace(err)
 			}

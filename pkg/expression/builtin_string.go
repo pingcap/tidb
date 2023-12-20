@@ -2411,8 +2411,8 @@ func (b *builtinCharSig) evalString(ctx EvalContext, row chunk.Row) (string, boo
 	enc := charset.FindEncoding(b.tp.GetCharset())
 	res, err := enc.Transform(nil, dBytes, charset.OpDecode)
 	if err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-		if ctx.GetSessionVars().StrictSQLMode {
+		evalVars(ctx).StmtCtx.AppendWarning(err)
+		if evalVars(ctx).SQLMode.HasStrictMode() {
 			return "", true, nil
 		}
 	}
@@ -3404,9 +3404,9 @@ func (b *builtinFormatWithLocaleSig) evalString(ctx EvalContext, row chunk.Row) 
 		return "", false, err
 	}
 	if isNull {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs("NULL"))
+		evalVars(ctx).StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs("NULL"))
 	} else if !strings.EqualFold(locale, "en_US") { // TODO: support other locales.
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs(locale))
+		evalVars(ctx).StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs(locale))
 	}
 	locale = "en_US"
 	formatString, err := mysql.GetLocaleFormatFunction(locale)(x, d)
@@ -4036,7 +4036,7 @@ func (b *builtinWeightStringSig) evalString(ctx EvalContext, row chunk.Row) (str
 		lenStr := len(str)
 		if b.length < lenStr {
 			tpInfo := fmt.Sprintf("BINARY(%d)", b.length)
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errTruncatedWrongValue.GenWithStackByArgs(tpInfo, str))
+			evalVars(ctx).StmtCtx.AppendWarning(errTruncatedWrongValue.GenWithStackByArgs(tpInfo, str))
 			str = str[:b.length]
 		} else if b.length > lenStr {
 			if uint64(b.length-lenStr) > b.maxAllowedPacket {
