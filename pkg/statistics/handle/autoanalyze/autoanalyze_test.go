@@ -25,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -37,6 +39,33 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/mock/gomock"
 )
+
+func TestAutoAnalyzeLockedTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (1)")
+	h := dom.StatsHandle()
+	err := h.HandleDDLEvent(<-h.DDLEventCh())
+	require.NoError(t, err)
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	// Lock the table.
+	tk.MustExec("lock stats t")
+	is := dom.InfoSchema()
+	require.NoError(t, h.Update(is))
+	autoanalyze.AutoAnalyzeMinCnt = 0
+	defer func() {
+		autoanalyze.AutoAnalyzeMinCnt = 1000
+	}()
+	// Try to analyze the locked table, it should not analyze the table.
+	require.False(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+
+	// Unlock the table.
+	tk.MustExec("unlock stats t")
+	// Try again, it should analyze the table.
+	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+}
 
 func TestDisableAutoAnalyze(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
@@ -495,4 +524,33 @@ func TestCleanupCorruptedAnalyzeJobsOnDeadInstances(t *testing.T) {
 		mock.WrapAsSCtx(exec),
 	)
 	require.NoError(t, err)
+}
+
+func TestSkipAutoAnalyzeOutsideTheAvailableTime(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	ttStart := time.Now().Add(-2 * time.Hour)
+	ttEnd := time.Now().Add(-1 * time.Hour)
+	for i := 0; i < 2; i++ {
+		dbName := fmt.Sprintf("db%d", i)
+		tk.MustExec(fmt.Sprintf("create database %s", dbName))
+		for j := 0; j < 2; j++ {
+			tableName := fmt.Sprintf("table%d", j)
+			tk.MustExec(fmt.Sprintf("create table %s.%s (a int)", dbName, tableName))
+		}
+	}
+	se, err := dom.SysSessionPool().Get()
+	require.NoError(t, err)
+	require.False(t,
+		autoanalyze.RandomPickOneTableAndTryAutoAnalyze(
+			se.(sessionctx.Context),
+			dom.StatsHandle(),
+			dom.SysProcTracker(),
+			dom.InfoSchema(),
+			0.6,
+			variable.Dynamic,
+			ttStart,
+			ttEnd,
+		),
+	)
 }
