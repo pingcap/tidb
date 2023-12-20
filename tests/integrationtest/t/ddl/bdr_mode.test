@@ -120,6 +120,48 @@ create database bdr_mode;
 use bdr_mode;
 admin set bdr role primary;
 
+create table t(a int);
+alter table t add column b int;
+-- error 8263
+alter table t drop column b;
+alter table t add index idx_a(a);
+alter table t alter index idx_a invisible;
+alter table t alter index idx_a visible;
+alter table t rename index idx_a to idx_a_2;
+alter table t drop index idx_a_2;
+
+create table t2(a int, primary key (a));
+-- error 8263
+rename table t to t3, t2 to t4;
+-- error 8263
+alter table t add foreign key (a) references t2(a);
+admin set bdr role none;
+alter table t add foreign key (a) references t2(a);
+admin set bdr role primary;
+-- error 8263
+alter table t drop foreign key fk_1;
+admin set bdr role none;
+alter table t drop foreign key fk_1;
+alter table t drop index fk_1;
+admin set bdr role primary;
+-- error 8263
+truncate table t2;
+-- error 8263
+drop table t2;
+
+alter table t modify column a bigint;
+-- error 8263
+alter table t auto_increment = 6000;
+alter table t alter column a set default 1;
+-- error 8263
+alter table t shard_row_id_bits = 4;
+alter table t comment = 'test';
+admin set bdr role none;
+drop table t;
+drop table t2;
+admin set bdr role primary;
+
+# add partition
 create table t(a int) partition by range(a) (
 		  partition p0 values less than (5),
 		  partition p1 values less than (10),
@@ -264,6 +306,7 @@ create database bdr_mode;
 use bdr_mode;
 admin set bdr role secondary;
 
+# add partition
 -- error 8263
 create table t(a int) partition by range(a) (
 		  partition p0 values less than (5),
