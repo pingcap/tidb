@@ -477,6 +477,24 @@ func TestWriteNoError(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestMultiUploadErrorNotOverwritten(t *testing.T) {
+	s := createS3Suite(t)
+	ctx := aws.BackgroundContext()
+
+	s.s3.EXPECT().
+		CreateMultipartUploadWithContext(ctx, gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("mock error"))
+
+	w, err := s.storage.Create(ctx, "file", &WriterOption{Concurrency: 2})
+	require.NoError(t, err)
+	// data should be larger than 5MB to trigger CreateMultipartUploadWithContext path
+	data := make([]byte, 5*1024*1024+6716)
+	n, err := w.Write(ctx, data)
+	require.NoError(t, err)
+	require.Equal(t, 5*1024*1024+6716, n)
+	require.ErrorContains(t, w.Close(ctx), "mock error")
+}
+
 // TestReadNoError ensures the ReadFile API issues a GetObject request and correctly
 // read the entire body.
 func TestReadNoError(t *testing.T) {
