@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
-	pd "github.com/tikv/pd/client/http"
 	pdhttp "github.com/tikv/pd/client/http"
 )
 
@@ -273,7 +272,7 @@ func TestStoreInfo(t *testing.T) {
 		_ context.Context, addr string, prefix string, _ *http.Client, _ string, _ []byte,
 	) ([]byte, error) {
 		require.Equal(t,
-			fmt.Sprintf("http://mock%s", pd.StoreByID(1)),
+			fmt.Sprintf("http://mock%s", pdhttp.StoreByID(1)),
 			fmt.Sprintf("%s%s", addr, prefix))
 		ret, err := json.Marshal(storeInfo)
 		require.NoError(t, err)
