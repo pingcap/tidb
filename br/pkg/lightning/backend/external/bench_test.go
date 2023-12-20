@@ -33,9 +33,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -777,6 +779,7 @@ var (
 	concurrency  = flag.Int("concurrency", 100, "concurrency")
 	memoryLimit  = flag.Int("memory-limit", 64*units.MiB, "memory limit")
 	skipCreate   = flag.Bool("skip-create", false, "skip create files")
+	fileName     = flag.String("file-name", "test", "file name for tests")
 )
 
 func TestReadFileConcurrently(t *testing.T) {
@@ -953,6 +956,7 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 		64*1024,
 		mergeOutput,
 		DefaultBlockSize,
+		DefaultMemSizeLimit,
 		8*1024,
 		1*size.MB,
 		8*1024,
@@ -1077,4 +1081,22 @@ func TestMergeBench(t *testing.T) {
 	testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, mergeStep)
 	testCompareMergeWithContent(t, 8, createAscendingFiles, newMergeStep)
 	testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, newMergeStep)
+}
+
+func TestReadStatFile(t *testing.T) {
+	ctx := context.Background()
+	store := openTestingStorage(t)
+	rd, _ := newStatsReader(ctx, store, *fileName, 4096)
+	for {
+
+		prop, err := rd.nextProp()
+		if err == io.EOF {
+			break
+		}
+		logutil.BgLogger().Info("read one prop",
+			zap.Int("prop len", prop.len()),
+			zap.Int("prop offset", int(prop.offset)),
+			zap.Int("prop size", int(prop.size)),
+			zap.Int("prop keys", int(prop.keys)))
+	}
 }
