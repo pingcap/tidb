@@ -193,6 +193,7 @@ func TestShowViaSQL(t *testing.T) {
 		{"tpcc", "warehouse", "0", "0", "<nil>", "2023-04-10 11:18:21"},
 	})
 
+	// Test result in different time_zone
 	tk.MustExec("set @@time_zone='-08:00'")
 	res = tk.MustQuery(fmt.Sprintf("SHOW BACKUP METADATA FROM 'local://%s'", tempBackup))
 	fmt.Printf("%#v", res.Sort().Rows())
