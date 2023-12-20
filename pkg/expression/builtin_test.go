@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -161,6 +162,35 @@ func TestDisplayName(t *testing.T) {
 	require.Equal(t, "IS TRUE", GetDisplayName(ast.IsTruthWithoutNull))
 	require.Equal(t, "abs", GetDisplayName("abs"))
 	require.Equal(t, "other_unknown_func", GetDisplayName("other_unknown_func"))
+}
+
+func TestBuiltinFuncCacheConcurrency(t *testing.T) {
+	cache := builtinFuncCache[int]{}
+	ctx := createContext(t)
+
+	var invoked atomic.Int64
+	construct := func() (int, error) {
+		invoked.Add(1)
+		time.Sleep(time.Millisecond)
+		return 100 + int(invoked.Load()), nil
+	}
+
+	var wg sync.WaitGroup
+	concurrency := 8
+	wg.Add(concurrency)
+	for i := 0; i < concurrency; i++ {
+		go func() {
+			defer wg.Done()
+			v, err := cache.getOrInitCache(ctx, construct)
+			// all goroutines should get the same value
+			require.NoError(t, err)
+			require.Equal(t, 101, v)
+		}()
+	}
+
+	wg.Wait()
+	// construct will only be called once even in concurrency
+	require.Equal(t, int64(1), invoked.Load())
 }
 
 func TestBuiltinFuncCache(t *testing.T) {

@@ -429,11 +429,7 @@ type StatementContext struct {
 
 // NewStmtCtx creates a new statement context
 func NewStmtCtx() *StatementContext {
-	sc := &StatementContext{
-		ctxID: stmtCtxIDGenerator.Add(1),
-	}
-	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
-	return sc
+	return NewStmtCtxWithTimeZone(time.UTC)
 }
 
 // NewStmtCtxWithTimeZone creates a new StatementContext with the given timezone
