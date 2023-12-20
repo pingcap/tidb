@@ -1816,17 +1816,17 @@ var defaultSysVars = []*SysVar{
 	// Keeping tidb_enable_list_partition here, to give errors if setting it to anything other than ON
 	{Scope: ScopeGlobal | ScopeSession, Name: "tidb_enable_list_partition", Value: On, Type: TypeBool, Validation: func(_ *SessionVars, normalizedValue, _ string, _ ScopeFlag) (string, error) {
 		if !TiDBOptOn(normalizedValue) {
-			return normalizedValue, errors.Errorf("tidb_enable_list_partition is now always on, and cannot be turned off.")
+			return normalizedValue, errors.Errorf("tidb_enable_list_partition is now always on, and cannot be turned off")
 		}
 		return normalizedValue, nil
 	}, SetSession: func(_ *SessionVars, val string) error {
 		if !TiDBOptOn(val) {
-			return errors.Errorf("tidb_enable_list_partition is now always on, and cannot be turned off.")
+			return errors.Errorf("tidb_enable_list_partition is now always on, and cannot be turned off")
 		}
 		return nil
 	}, SetGlobal: func(_ context.Context, _ *SessionVars, val string) error {
 		if !TiDBOptOn(val) {
-			return errors.Errorf("tidb_enable_list_partition is now always on, and cannot be turned off.")
+			return errors.Errorf("tidb_enable_list_partition is now always on, and cannot be turned off")
 		}
 		return nil
 	}},
