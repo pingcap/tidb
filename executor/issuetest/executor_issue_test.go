@@ -1462,22 +1462,18 @@ func TestIssue42662(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/servermemorylimit/issue42662_2"))
 }
 
-func TestIssue46522(t *testing.T) {
+func TestIssue49369(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk1 := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk1.MustExec("use test;")
-
-	tk.MustExec("create table issue46522 (id int primary key);")
-	tk.MustExec("insert into issue46522 values (1);")
-	tk.MustExec("set @@tidb_disable_txn_auto_retry = off;")
-	tk.MustExec("begin optimistic;")
-	tk.MustExec("insert into issue46522 with t1 as (select id+1 from issue46522 where id = 1) select * from t1;")
-
-	tk1.MustExec("begin optimistic;")
-	tk1.MustExec("update issue46522 set id = id + 1;")
-	tk1.MustExec("commit;")
-
-	tk.MustExec("commit;")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists issue49369;")
+	tk.MustExec("CREATE TABLE `issue49369` (\n" +
+		"`x` varchar(32) COLLATE utf8mb4_bin DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;")
+	err := tk.ExecToErr("insert into issue49369   select round(cast('88888899999999999888888888888888888888888888888888888.11111111111111111111' as decimal(18,12)) * cast('88888899999999999888888888888888888888888888888888888.11111111111111111111' as decimal(42,18)) );")
+	require.EqualError(t, err, "[types:1690]DECIMAL value is out of range in '(18, 12)'")
+	tk.MustExec("set @@sql_mode = ''")
+	tk.MustExec("insert into issue49369   select round(cast('88888899999999999888888888888888888888888888888888888.11111111111111111111' as decimal(18,12)) * cast('88888899999999999888888888888888888888888888888888888.11111111111111111111' as decimal(42,18)) );")
+	tk.MustQuery("select * from issue49369").Check(testkit.Rows("999999999999999999000000000000"))
+	tk.MustExec("set @@sql_mode = default")
 }

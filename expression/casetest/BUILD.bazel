@@ -6,10 +6,12 @@ go_test(
     srcs = [
         "constant_propagation_test.go",
         "flag_simplify_test.go",
+        "issue_test.go",
         "main_test.go",
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+    shard_count = 3,
     deps = [
         "//config",
         "//testkit",
