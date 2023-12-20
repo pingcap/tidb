@@ -238,7 +238,7 @@ select /*+ unknown_hint(c1)*/ 1;
 1
 1
 Level	Code	Message
-Warning	1064	Optimizer hint syntax error at line 1 column 23 near "unknown_hint(c1)*/" 
+Warning	8061	Optimizer hint unknown_hint is not supported by TiDB and is ignored
 select 1 from /*+ test1() */ t;
 1
 Level	Code	Message
