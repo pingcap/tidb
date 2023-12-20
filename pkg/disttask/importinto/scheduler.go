@@ -35,12 +35,12 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/backoff"
+	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -201,7 +201,7 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle scheduler.TaskHandle,
 	task *proto.Task,
-	serverInfos []*infosync.ServerInfo,
+	serverInfos []string,
 	nextStep proto.Step,
 ) (
 	resSubtaskMeta [][]byte, err error) {
@@ -331,17 +331,17 @@ func (sch *ImportSchedulerExt) OnDone(ctx context.Context, handle scheduler.Task
 }
 
 // GetEligibleInstances implements scheduler.Extension interface.
-func (*ImportSchedulerExt) GetEligibleInstances(ctx context.Context, task *proto.Task) ([]*infosync.ServerInfo, bool, error) {
+func (*ImportSchedulerExt) GetEligibleInstances(_ context.Context, task *proto.Task) ([]string, error) {
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(task.Meta, taskMeta)
 	if err != nil {
-		return nil, true, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	if len(taskMeta.EligibleInstances) > 0 {
-		return taskMeta.EligibleInstances, false, nil
+	res := make([]string, 0, len(taskMeta.EligibleInstances))
+	for _, instance := range taskMeta.EligibleInstances {
+		res = append(res, disttaskutil.GenerateExecID(instance))
 	}
-	serverInfo, err := scheduler.GenerateTaskExecutorNodes(ctx)
-	return serverInfo, true, err
+	return res, nil
 }
 
 // IsRetryableErr implements scheduler.Extension interface.
@@ -406,11 +406,11 @@ type importScheduler struct {
 }
 
 func newImportScheduler(ctx context.Context, taskMgr scheduler.TaskManager,
-	serverID string, task *proto.Task) scheduler.Scheduler {
+	nodeMgr *scheduler.NodeManager, task *proto.Task) scheduler.Scheduler {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 	sch := importScheduler{
-		BaseScheduler: scheduler.NewBaseScheduler(subCtx, taskMgr, serverID, task),
+		BaseScheduler: scheduler.NewBaseScheduler(subCtx, taskMgr, nodeMgr, task),
 	}
 	return &sch
 }

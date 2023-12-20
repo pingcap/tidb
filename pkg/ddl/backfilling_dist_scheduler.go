@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -70,7 +69,7 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle scheduler.TaskHandle,
 	task *proto.Task,
-	serverInfo []*infosync.ServerInfo,
+	serverInfo []string,
 	nextStep proto.Step,
 ) (taskMeta [][]byte, err error) {
 	logger := logutil.BgLogger().With(
@@ -181,12 +180,8 @@ func (*BackfillingSchedulerExt) OnDone(_ context.Context, _ scheduler.TaskHandle
 }
 
 // GetEligibleInstances implements scheduler.Extension interface.
-func (*BackfillingSchedulerExt) GetEligibleInstances(ctx context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-	serverInfos, err := scheduler.GenerateTaskExecutorNodes(ctx)
-	if err != nil {
-		return nil, true, err
-	}
-	return serverInfos, true, nil
+func (*BackfillingSchedulerExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]string, error) {
+	return nil, nil
 }
 
 // IsRetryableErr implements scheduler.Extension.IsRetryableErr interface.
@@ -201,10 +196,10 @@ type LitBackfillScheduler struct {
 }
 
 func newLitBackfillScheduler(ctx context.Context, d *ddl, taskMgr scheduler.TaskManager,
-	serverID string, task *proto.Task) scheduler.Scheduler {
+	nodeMgr *scheduler.NodeManager, task *proto.Task) scheduler.Scheduler {
 	sch := LitBackfillScheduler{
 		d:             d,
-		BaseScheduler: scheduler.NewBaseScheduler(ctx, taskMgr, serverID, task),
+		BaseScheduler: scheduler.NewBaseScheduler(ctx, taskMgr, nodeMgr, task),
 	}
 	return &sch
 }

@@ -18,7 +18,6 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 )
@@ -95,7 +94,7 @@ type Extension interface {
 	// 	1. task is pending and entering it's first step.
 	// 	2. subtasks scheduled has all finished with no error.
 	// when next step is StepDone, it should return nil, nil.
-	OnNextSubtasksBatch(ctx context.Context, h TaskHandle, task *proto.Task, serverInfo []*infosync.ServerInfo, step proto.Step) (subtaskMetas [][]byte, err error)
+	OnNextSubtasksBatch(ctx context.Context, h TaskHandle, task *proto.Task, execIDs []string, step proto.Step) (subtaskMetas [][]byte, err error)
 
 	// OnDone is called when task is done, either finished successfully or failed
 	// with error.
@@ -105,8 +104,10 @@ type Extension interface {
 
 	// GetEligibleInstances is used to get the eligible instances for the task.
 	// on certain condition we may want to use some instances to do the task, such as instances with more disk.
-	// The bool return value indicates whether filter instances by role.
-	GetEligibleInstances(ctx context.Context, task *proto.Task) ([]*infosync.ServerInfo, bool, error)
+	// if returned instances is empty, it means all instances are eligible.
+	// TODO: run import from server disk using framework makes this logic complicated,
+	// the instance might not be managed by framework.
+	GetEligibleInstances(ctx context.Context, task *proto.Task) ([]string, error)
 
 	// IsRetryableErr is used to check whether the error occurred in scheduler is retryable.
 	IsRetryableErr(err error) bool
@@ -118,7 +119,7 @@ type Extension interface {
 }
 
 // schedulerFactoryFn is used to create a scheduler.
-type schedulerFactoryFn func(ctx context.Context, taskMgr TaskManager, serverID string, task *proto.Task) Scheduler
+type schedulerFactoryFn func(ctx context.Context, taskMgr TaskManager, nodeMgr *NodeManager, task *proto.Task) Scheduler
 
 var schedulerFactoryMap = struct {
 	syncutil.RWMutex

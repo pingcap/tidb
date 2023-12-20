@@ -20,12 +20,8 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
-	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -43,13 +39,13 @@ func TestCleanUpRoutine(t *testing.T) {
 	defer ctrl.Finish()
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "scheduler_manager")
-	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
+	mockCleanupRoutine := mock.NewMockCleanUpRoutine(ctrl)
 
-	sch, mgr := MockSchedulerManager(t, ctrl, pool, getNumberExampleSchedulerExt(ctrl), mockCleanupRountine)
-	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	sch, mgr := MockSchedulerManager(t, ctrl, pool, getNumberExampleSchedulerExt(ctrl), mockCleanupRoutine)
+	mockCleanupRoutine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	require.NoError(t, mgr.StartManager(ctx, ":4000", ""))
 	sch.Start()
 	defer sch.Stop()
-	require.NoError(t, mgr.StartManager(ctx, ":4000", "background"))
 	taskID, err := mgr.CreateTask(ctx, "test", proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
 
@@ -84,69 +80,4 @@ func TestCleanUpRoutine(t *testing.T) {
 		require.NoError(t, err)
 		return len(tasks) != 0
 	}, time.Second*10, time.Millisecond*300)
-}
-
-func TestManageLiveNodes(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-	mockTaskMgr := mock.NewMockTaskManager(ctrl)
-	schMgr, err := scheduler.NewManager(
-		util.WithInternalSourceType(context.Background(), "scheduler"),
-		mockTaskMgr,
-		"1",
-	)
-	require.NoError(t, err)
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTaskExecutorNodes", "return()"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTaskExecutorNodes"))
-	})
-
-	scheduler.MockServerInfo = []*infosync.ServerInfo{
-		{Port: 4000},
-	}
-
-	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return(nil, errors.New("mock error"))
-	require.Equal(t, 0, schMgr.ManageLiveNodes())
-	require.True(t, ctrl.Satisfied())
-	// no change
-	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]string{":4000"}, nil)
-	require.Equal(t, 0, schMgr.ManageLiveNodes())
-	require.True(t, ctrl.Satisfied())
-	// run again, return fast
-	require.Equal(t, 0, schMgr.ManageLiveNodes())
-	require.True(t, ctrl.Satisfied())
-
-	// scale out 1 node
-	scheduler.MockServerInfo = []*infosync.ServerInfo{
-		{Port: 4000},
-		{Port: 4001},
-	}
-
-	// fail on clean
-	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]string{":4000", ":4001", ":4002"}, nil)
-	mockTaskMgr.EXPECT().CleanUpMeta(gomock.Any(), gomock.Any()).Return(errors.New("mock error"))
-	require.Equal(t, 0, schMgr.ManageLiveNodes())
-	require.True(t, ctrl.Satisfied())
-	// remove 1 node
-	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]string{":4000", ":4001", ":4002"}, nil)
-	mockTaskMgr.EXPECT().CleanUpMeta(gomock.Any(), gomock.Any()).Return(nil)
-	require.Equal(t, 1, schMgr.ManageLiveNodes())
-	require.True(t, ctrl.Satisfied())
-	// run again, return fast
-	require.Equal(t, 0, schMgr.ManageLiveNodes())
-	require.True(t, ctrl.Satisfied())
-
-	// scale in 1 node
-	scheduler.MockServerInfo = []*infosync.ServerInfo{
-		{Port: 4000},
-	}
-
-	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]string{":4000", ":4001", ":4002"}, nil)
-	mockTaskMgr.EXPECT().CleanUpMeta(gomock.Any(), gomock.Any()).Return(nil)
-	require.Equal(t, 2, schMgr.ManageLiveNodes())
-	require.True(t, ctrl.Satisfied())
-	// run again, return fast
-	require.Equal(t, 0, schMgr.ManageLiveNodes())
-	require.True(t, ctrl.Satisfied())
 }

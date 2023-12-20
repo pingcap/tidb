@@ -15,6 +15,7 @@
 package scheduler
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
@@ -43,12 +44,20 @@ func (sm *Manager) DoCleanUpRoutine() {
 	sm.doCleanupTask()
 }
 
-func (sm *Manager) ManageLiveNodes() int {
-	return sm.manageLiveNodes()
-}
-
 func (s *BaseScheduler) OnNextStage() (err error) {
 	return s.onNextStage()
+}
+
+func (s *BaseScheduler) DoBalanceSubtasks(eligibleNodes []string) error {
+	return s.doBalanceSubtasks(eligibleNodes)
+}
+
+func NewNodeManager() *NodeManager {
+	return newNodeManager()
+}
+
+func (nm *NodeManager) RefreshManagedNodes(ctx context.Context, taskMgr TaskManager) {
+	nm.refreshManagedNodes(ctx, taskMgr)
 }
 
 func TestMain(m *testing.M) {

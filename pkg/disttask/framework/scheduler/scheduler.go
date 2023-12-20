@@ -41,8 +41,8 @@ const (
 	DefaultSubtaskConcurrency = 16
 	// MaxSubtaskConcurrency is the maximum concurrency for handling subtask.
 	MaxSubtaskConcurrency = 256
-	// DefaultLiveNodesCheckInterval is the tick interval of fetching all server infos from etcs.
-	DefaultLiveNodesCheckInterval = 2
+	// defaultBalanceSubtaskTicks is the tick interval of fetching all server infos from etcs.
+	defaultBalanceSubtaskTicks = 2
 	// for a cancelled task, it's terminal state is reverted or reverted_failed,
 	// so we use a special error message to indicate that the task is cancelled
 	// by user.
@@ -86,20 +86,14 @@ type Scheduler interface {
 type BaseScheduler struct {
 	ctx     context.Context
 	taskMgr TaskManager
+	nodeMgr *NodeManager
 	Task    *proto.Task
 	logCtx  context.Context
-	// serverID, it's value is ip:port now.
-	serverID string
 	// when RegisterSchedulerFactory, the factory MUST initialize this fields.
 	Extension
 
-	// For subtasks rebalance.
-	// LiveNodes will fetch and store all live nodes every liveNodeInterval ticks.
-	LiveNodes             []*infosync.ServerInfo
-	liveNodeFetchInterval int
-	// liveNodeFetchTick is the tick variable.
-	liveNodeFetchTick int
-	// TaskNodes stores the id of current task executor nodes.
+	balanceSubtaskTick int
+	// TaskNodes stores the exec id of current task executor nodes.
 	TaskNodes []string
 	// rand is for generating random selection of nodes.
 	rand *rand.Rand
@@ -109,20 +103,17 @@ type BaseScheduler struct {
 var MockOwnerChange func()
 
 // NewBaseScheduler creates a new BaseScheduler.
-func NewBaseScheduler(ctx context.Context, taskMgr TaskManager, serverID string, task *proto.Task) *BaseScheduler {
+func NewBaseScheduler(ctx context.Context, taskMgr TaskManager, nodeMgr *NodeManager, task *proto.Task) *BaseScheduler {
 	logCtx := logutil.WithFields(context.Background(), zap.Int64("task-id", task.ID),
 		zap.Stringer("task-type", task.Type))
 	return &BaseScheduler{
-		ctx:                   ctx,
-		taskMgr:               taskMgr,
-		Task:                  task,
-		logCtx:                logCtx,
-		serverID:              serverID,
-		LiveNodes:             nil,
-		liveNodeFetchInterval: DefaultLiveNodesCheckInterval,
-		liveNodeFetchTick:     0,
-		TaskNodes:             nil,
-		rand:                  rand.New(rand.NewSource(time.Now().UnixNano())),
+		ctx:       ctx,
+		taskMgr:   taskMgr,
+		nodeMgr:   nodeMgr,
+		Task:      task,
+		logCtx:    logCtx,
+		TaskNodes: nil,
+		rand:      rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
@@ -350,7 +341,7 @@ func (s *BaseScheduler) onRunning() error {
 		return s.onNextStage()
 	}
 
-	if err := s.BalanceSubtasks(); err != nil {
+	if err := s.balanceSubtasks(); err != nil {
 		return err
 	}
 	// Wait all subtasks in this stage finishes.
@@ -365,9 +356,8 @@ func (s *BaseScheduler) onFinished() error {
 	return s.taskMgr.TransferSubTasks2History(s.ctx, s.Task.ID)
 }
 
-// BalanceSubtasks check the liveNode num every liveNodeFetchInterval then rebalance subtasks.
-func (s *BaseScheduler) BalanceSubtasks() error {
-	// 1. init TaskNodes if needes.
+// balanceSubtasks check the liveNode num every liveNodeFetchInterval then rebalance subtasks.
+func (s *BaseScheduler) balanceSubtasks() error {
 	if len(s.TaskNodes) == 0 {
 		var err error
 		s.TaskNodes, err = s.taskMgr.GetTaskExecutorIDsByTaskIDAndStep(s.ctx, s.Task.ID, s.Task.Step)
@@ -375,63 +365,32 @@ func (s *BaseScheduler) BalanceSubtasks() error {
 			return err
 		}
 	}
-	s.liveNodeFetchTick++
-	if s.liveNodeFetchTick == s.liveNodeFetchInterval {
-		// 2. update LiveNodes.
-		s.liveNodeFetchTick = 0
-		serverInfos, err := GenerateTaskExecutorNodes(s.ctx)
+	s.balanceSubtaskTick++
+	if s.balanceSubtaskTick == defaultBalanceSubtaskTicks {
+		s.balanceSubtaskTick = 0
+		eligibleNodes, err := s.getEligibleNodes()
 		if err != nil {
 			return err
 		}
-
-		eligibleServerInfos, filter, err := s.GetEligibleInstances(s.ctx, s.Task)
-		if err != nil {
-			return err
+		if len(eligibleNodes) > 0 {
+			return s.doBalanceSubtasks(eligibleNodes)
 		}
-		if filter {
-			eligibleServerInfos, err = s.filterByRole(eligibleServerInfos)
-			if err != nil {
-				return err
-			}
-		}
-		newInfos := serverInfos[:0]
-		for _, m := range serverInfos {
-			found := false
-			for _, n := range eligibleServerInfos {
-				if m.ID == n.ID {
-					found = true
-					break
-				}
-			}
-			if found {
-				newInfos = append(newInfos, m)
-			}
-		}
-		s.LiveNodes = newInfos
-		// 3. balance subtasks.
-		if len(s.LiveNodes) > 0 {
-			return s.ReDispatchSubtasks()
-		}
-		return nil
 	}
 	return nil
 }
 
-func (s *BaseScheduler) replaceTaskNodes() {
-	s.TaskNodes = s.TaskNodes[:0]
-	for _, serverInfo := range s.LiveNodes {
-		s.TaskNodes = append(s.TaskNodes, disttaskutil.GenerateExecID(serverInfo))
-	}
-}
-
-// ReDispatchSubtasks make count of subtasks on each liveNodes balanced and clean up subtasks on dead nodes.
+// DoBalanceSubtasks make count of subtasks on each liveNodes balanced and clean up subtasks on dead nodes.
 // TODO(ywqzzy): refine to make it easier for testing.
-func (s *BaseScheduler) ReDispatchSubtasks() error {
+func (s *BaseScheduler) doBalanceSubtasks(eligibleNodes []string) error {
+	eligibleNodeMap := make(map[string]struct{}, len(eligibleNodes))
+	for _, n := range eligibleNodes {
+		eligibleNodeMap[n] = struct{}{}
+	}
 	// 1. find out nodes need to clean subtasks.
 	deadNodes := make([]string, 0)
 	deadNodesMap := make(map[string]bool, 0)
 	for _, node := range s.TaskNodes {
-		if !disttaskutil.MatchServerInfo(s.LiveNodes, node) {
+		if _, ok := eligibleNodeMap[node]; !ok {
 			deadNodes = append(deadNodes, node)
 			deadNodesMap[node] = true
 		}
@@ -451,10 +410,9 @@ func (s *BaseScheduler) ReDispatchSubtasks() error {
 		subtasks = append(subtasks, subtasksOnDeadNodes...)
 	}
 	// 3. group subtasks for each task executor.
-	subtasksOnTaskExecutor := make(map[string][]*proto.Subtask, len(s.LiveNodes)+len(deadNodes))
-	for _, node := range s.LiveNodes {
-		execID := disttaskutil.GenerateExecID(node)
-		subtasksOnTaskExecutor[execID] = make([]*proto.Subtask, 0)
+	subtasksOnTaskExecutor := make(map[string][]*proto.Subtask, len(eligibleNodes)+len(deadNodes))
+	for _, node := range eligibleNodes {
+		subtasksOnTaskExecutor[node] = make([]*proto.Subtask, 0)
 	}
 	for _, subtask := range subtasks {
 		subtasksOnTaskExecutor[subtask.ExecID] = append(
@@ -462,17 +420,17 @@ func (s *BaseScheduler) ReDispatchSubtasks() error {
 			subtask)
 	}
 	// 4. prepare subtasks that need to rebalance to other nodes.
-	averageSubtaskCnt := len(subtasks) / len(s.LiveNodes)
+	averageSubtaskCnt := len(subtasks) / len(eligibleNodes)
 	rebalanceSubtasks := make([]*proto.Subtask, 0)
 	for k, v := range subtasksOnTaskExecutor {
 		if ok := deadNodesMap[k]; ok {
 			rebalanceSubtasks = append(rebalanceSubtasks, v...)
 			continue
 		}
-		// When no tidb scale-in/out and averageSubtaskCnt*len(s.LiveNodes) < len(subtasks),
+		// When no tidb scale-in/out and averageSubtaskCnt*len(eligibleNodes) < len(subtasks),
 		// no need to send subtask to other nodes.
 		// eg: tidb1 with 3 subtasks, tidb2 with 2 subtasks, subtasks are balanced now.
-		if averageSubtaskCnt*len(s.LiveNodes) < len(subtasks) && len(s.TaskNodes) == len(s.LiveNodes) {
+		if averageSubtaskCnt*len(eligibleNodes) < len(subtasks) && len(s.TaskNodes) == len(eligibleNodes) {
 			if len(v) > averageSubtaskCnt+1 {
 				rebalanceSubtasks = append(rebalanceSubtasks, v[0:len(v)-averageSubtaskCnt]...)
 			}
@@ -501,8 +459,7 @@ func (s *BaseScheduler) ReDispatchSubtasks() error {
 	// 7. rebalance rest subtasks evenly to liveNodes.
 	liveNodeIdx := 0
 	for rebalanceIdx < len(rebalanceSubtasks) {
-		node := s.LiveNodes[liveNodeIdx]
-		rebalanceSubtasks[rebalanceIdx].ExecID = disttaskutil.GenerateExecID(node)
+		rebalanceSubtasks[rebalanceIdx].ExecID = eligibleNodes[liveNodeIdx]
 		rebalanceIdx++
 		liveNodeIdx++
 	}
@@ -511,9 +468,9 @@ func (s *BaseScheduler) ReDispatchSubtasks() error {
 	if err = s.taskMgr.UpdateSubtasksExecIDs(s.ctx, s.Task.ID, subtasks); err != nil {
 		return err
 	}
-	logutil.Logger(s.logCtx).Info("rebalance subtasks",
+	logutil.Logger(s.logCtx).Info("balance subtasks",
 		zap.Stringers("subtasks-rebalanced", subtasks))
-	s.replaceTaskNodes()
+	s.TaskNodes = append([]string{}, eligibleNodes...)
 	return nil
 }
 
@@ -594,16 +551,9 @@ func (s *BaseScheduler) onNextStage() (err error) {
 		}
 	}
 
-	serverNodes, filter, err := s.GetEligibleInstances(s.ctx, s.Task)
+	serverNodes, err := s.getEligibleNodes()
 	if err != nil {
 		return err
-	}
-	logutil.Logger(s.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
-	if filter {
-		serverNodes, err = s.filterByRole(serverNodes)
-		if err != nil {
-			return err
-		}
 	}
 	logutil.Logger(s.logCtx).Info("eligible instances", zap.Int("num", len(serverNodes)))
 	if len(serverNodes) == 0 {
@@ -619,26 +569,38 @@ func (s *BaseScheduler) onNextStage() (err error) {
 	return s.scheduleSubTask(nextStep, metas, serverNodes)
 }
 
+// getEligibleNodes returns the eligible(live) nodes for the task.
+// if the task can only be scheduled to some specific nodes, return them directly,
+// we don't care liveliness of them.
+func (s *BaseScheduler) getEligibleNodes() ([]string, error) {
+	serverNodes, err := s.GetEligibleInstances(s.ctx, s.Task)
+	if err != nil {
+		return nil, err
+	}
+	logutil.Logger(s.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
+	if len(serverNodes) == 0 {
+		serverNodes = append([]string{}, s.nodeMgr.getManagedNodes()...)
+	}
+	return serverNodes, nil
+}
+
 func (s *BaseScheduler) scheduleSubTask(
 	subtaskStep proto.Step,
 	metas [][]byte,
-	serverNodes []*infosync.ServerInfo) error {
+	serverNodes []string) error {
 	logutil.Logger(s.logCtx).Info("schedule subtasks",
 		zap.Stringer("state", s.Task.State),
 		zap.Int64("step", int64(s.Task.Step)),
 		zap.Int("concurrency", s.Task.Concurrency),
 		zap.Int("subtasks", len(metas)))
-	s.TaskNodes = make([]string, len(serverNodes))
-	for i := range serverNodes {
-		s.TaskNodes[i] = disttaskutil.GenerateExecID(serverNodes[i])
-	}
+	s.TaskNodes = serverNodes
 	var size uint64
 	subTasks := make([]*proto.Subtask, 0, len(metas))
 	for i, meta := range metas {
 		// we assign the subtask to the instance in a round-robin way.
 		// TODO: assign the subtask to the instance according to the system load of each nodes
 		pos := i % len(serverNodes)
-		instanceID := disttaskutil.GenerateExecID(serverNodes[pos])
+		instanceID := serverNodes[pos]
 		logutil.Logger(s.logCtx).Debug("create subtasks", zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(
 			subtaskStep, s.Task.ID, s.Task.Type, instanceID, s.Task.Concurrency, meta, i+1))
@@ -714,27 +676,6 @@ func GenerateTaskExecutorNodes(ctx context.Context) (serverNodes []*infosync.Ser
 		serverNodes = append(serverNodes, serverInfo)
 	}
 	return serverNodes, nil
-}
-
-func (s *BaseScheduler) filterByRole(infos []*infosync.ServerInfo) ([]*infosync.ServerInfo, error) {
-	nodes, err := s.taskMgr.GetManagedNodes(s.ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	nodeMap := make(map[string]struct{}, len(nodes))
-	for _, node := range nodes {
-		nodeMap[node] = struct{}{}
-	}
-
-	res := make([]*infosync.ServerInfo, 0, len(nodes))
-	for _, info := range infos {
-		_, ok := nodeMap[disttaskutil.GenerateExecID(info)]
-		if ok {
-			res = append(res, info)
-		}
-	}
-	return res, nil
 }
 
 // GetAllTaskExecutorIDs gets all the task executor IDs.

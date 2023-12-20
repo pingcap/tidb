@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
-	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"go.uber.org/zap"
@@ -84,6 +83,7 @@ type Manager struct {
 	wg          tidbutil.WaitGroupWrapper
 	gPool       *spool.Pool
 	slotMgr     *slotManager
+	nodeMgr     *NodeManager
 	initialized bool
 	// serverID, it's value is ip:port now.
 	serverID string
@@ -94,8 +94,6 @@ type Manager struct {
 		syncutil.RWMutex
 		schedulers map[int64]Scheduler
 	}
-	// prevLiveNodes is used to record the live nodes in last checking.
-	prevLiveNodes map[string]struct{}
 }
 
 // NewManager creates a scheduler struct.
@@ -104,6 +102,7 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) (*Man
 		taskMgr:  taskMgr,
 		serverID: serverID,
 		slotMgr:  newSlotManager(),
+		nodeMgr:  newNodeManager(),
 	}
 	gPool, err := spool.NewPool("schedule_pool", int32(proto.MaxConcurrentTask), util.DistTask, spool.WithBlocking(true))
 	if err != nil {
@@ -122,10 +121,18 @@ func (sm *Manager) Start() {
 	failpoint.Inject("disableSchedulerManager", func() {
 		failpoint.Return()
 	})
+	// init cached managed nodes
+	sm.nodeMgr.refreshManagedNodes(sm.ctx, sm.taskMgr)
+
 	sm.wg.Run(sm.scheduleTaskLoop)
 	sm.wg.Run(sm.gcSubtaskHistoryTableLoop)
 	sm.wg.Run(sm.cleanupTaskLoop)
-	sm.wg.Run(sm.manageLiveNodesLoop)
+	sm.wg.Run(func() {
+		sm.nodeMgr.maintainLiveNodesLoop(sm.ctx, sm.taskMgr)
+	})
+	sm.wg.Run(func() {
+		sm.nodeMgr.refreshManagedNodesLoop(sm.ctx, sm.taskMgr)
+	})
 	sm.initialized = true
 }
 
@@ -256,7 +263,7 @@ func (sm *Manager) startScheduler(basicTask *proto.Task, reservedExecID string) 
 	}
 
 	schedulerFactory := getSchedulerFactory(task.Type)
-	scheduler := schedulerFactory(sm.ctx, sm.taskMgr, sm.serverID, task)
+	scheduler := schedulerFactory(sm.ctx, sm.taskMgr, sm.nodeMgr, task)
 	if err = scheduler.Init(); err != nil {
 		logutil.BgLogger().Error("init scheduler failed", zap.Error(err))
 		sm.failTask(task.ID, task.State, err)
@@ -295,19 +302,6 @@ func (sm *Manager) cleanupTaskLoop() {
 	}
 }
 
-func (sm *Manager) manageLiveNodesLoop() {
-	ticker := time.NewTicker(2 * checkTaskFinishedInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-sm.ctx.Done():
-			return
-		case <-ticker.C:
-			sm.manageLiveNodes()
-		}
-	}
-}
-
 // WaitCleanUpFinished is used to sync the test.
 var WaitCleanUpFinished = make(chan struct{})
 
@@ -341,56 +335,6 @@ func (sm *Manager) doCleanupTask() {
 	logutil.Logger(sm.ctx).Info("cleanUp routine success")
 }
 
-// manageLiveNodes manages live node info in dist_framework_meta table, and return
-// number of nodes that's removed from it.
-// see recoverMetaLoop in task executor for when node is insert into dist_framework_meta.
-func (sm *Manager) manageLiveNodes() int {
-	// Safe to discard errors since this function can be called at regular intervals.
-	serverInfos, err := GenerateTaskExecutorNodes(sm.ctx)
-	if err != nil {
-		logutil.BgLogger().Warn("generate task executor nodes met error")
-		return 0
-	}
-	nodeChanged := len(serverInfos) != len(sm.prevLiveNodes)
-	currLiveNodes := make(map[string]struct{}, len(serverInfos))
-	for _, info := range serverInfos {
-		execID := disttaskutil.GenerateExecID(info)
-		if _, ok := sm.prevLiveNodes[execID]; !ok {
-			nodeChanged = true
-		}
-		currLiveNodes[execID] = struct{}{}
-	}
-	if !nodeChanged {
-		return 0
-	}
-
-	oldNodes, err := sm.taskMgr.GetAllNodes(sm.ctx)
-	if err != nil {
-		logutil.BgLogger().Warn("get all nodes met error")
-		return 0
-	}
-
-	deadNodes := make([]string, 0)
-	for _, nodeID := range oldNodes {
-		if _, ok := currLiveNodes[nodeID]; !ok {
-			deadNodes = append(deadNodes, nodeID)
-		}
-	}
-	if len(deadNodes) == 0 {
-		sm.prevLiveNodes = currLiveNodes
-		return 0
-	}
-	logutil.BgLogger().Info("delete dead nodes from dist_framework_meta",
-		zap.Int("dead-nodes", len(deadNodes)))
-	err = sm.taskMgr.DeleteDeadNodes(sm.ctx, deadNodes)
-	if err != nil {
-		logutil.BgLogger().Warn("delete dead nodes from dist_framework_meta failed")
-		return 0
-	}
-	sm.prevLiveNodes = currLiveNodes
-	return len(deadNodes)
-}
-
 func (sm *Manager) cleanUpFinishedTasks(tasks []*proto.Task) error {
 	cleanedTasks := make([]*proto.Task, 0)
 	var firstErr error
@@ -418,5 +362,5 @@ func (sm *Manager) cleanUpFinishedTasks(tasks []*proto.Task) error {
 
 // MockScheduler mock one scheduler for one task, only used for tests.
 func (sm *Manager) MockScheduler(task *proto.Task) *BaseScheduler {
-	return NewBaseScheduler(sm.ctx, sm.taskMgr, sm.serverID, task)
+	return NewBaseScheduler(sm.ctx, sm.taskMgr, sm.nodeMgr, task)
 }
