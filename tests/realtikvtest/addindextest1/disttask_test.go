@@ -48,6 +48,15 @@ func init() {
 }
 
 func TestAddIndexDistBasic(t *testing.T) {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	dumpChan := make(chan struct{})
+	defer func() {
+		close(dumpChan)
+		wg.Wait()
+	}()
+	go testkit.DebugDumpOnTimeout(&wg, dumpChan, 7*time.Minute)
+
 	// mock that we only have 1 cpu, add-index task can be scheduled as usual
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(1)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/testSetLastTaskID", `return(true)`))
@@ -154,15 +163,6 @@ func TestAddIndexDistCancel(t *testing.T) {
 }
 
 func TestAddIndexDistPauseAndResume(t *testing.T) {
-	var wg sync.WaitGroup
-	wg.Add(1)
-	dumpChan := make(chan struct{})
-	defer func() {
-		close(dumpChan)
-		wg.Wait()
-	}()
-	go testkit.DebugDumpOnTimeout(&wg, dumpChan, 1*time.Minute)
-
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	if store.Name() != "TiKV" {
 		t.Skip("TiKV store only")
