@@ -353,7 +353,8 @@ TableOptimizerHintOpt:
 			HintData: model.NewCIStr($4),
 		}
 	}
-|	hintIdentifier '(' QueryBlockOpt hintIntLit ')' /* The hints below are pseudo hint. They are unsupported hints */
+|	hintIdentifier '(' QueryBlockOpt hintIntLit ')'
+	/* The hints below are pseudo hint. They are unsupported hints */
 	{
 		parser.warnUnsupportedHint($1)
 		$$ = nil
@@ -368,7 +369,7 @@ TableOptimizerHintOpt:
 		parser.warnUnsupportedHint($1)
 		$$ = nil
 	}
-|   hintIdentifier '(' Identifier '=' Value ')'
+|	hintIdentifier '(' Identifier '=' Value ')'
 	{
 		parser.warnUnsupportedHint($1)
 		$$ = nil
