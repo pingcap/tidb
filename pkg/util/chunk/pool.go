@@ -27,6 +27,8 @@ var (
 	globalChunkPool = make(map[int]*Pool)
 )
 
+// getChunkFromPool gets a Chunk from the Pool. In fact, initCap is the size of the bucket in the histogram.
+// so it will not have too many difference value.
 func getChunkFromPool(initCap int, fields []*types.FieldType) *Chunk {
 	globalChunkPoolMutex.RLock()
 	pool, ok := globalChunkPool[initCap]
