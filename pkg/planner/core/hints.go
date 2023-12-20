@@ -273,25 +273,20 @@ func (info *tableHintInfo) ifPreferNoIndexMergeJoin(tableNames ...*hintTableInfo
 }
 
 func (info *tableHintInfo) ifPreferTiFlash(tableName *hintTableInfo) *hintTableInfo {
-	if tableName == nil {
-		return nil
-	}
-	for i, tbl := range info.tiflashTables {
-		if tableName.dbName.L == tbl.dbName.L && tableName.tblName.L == tbl.tblName.L && tbl.selectOffset == tableName.selectOffset {
-			info.tiflashTables[i].matched = true
-			return &tbl
-		}
-	}
-	return nil
+	return info.matchTiKVOrTiFlash(tableName, info.tiflashTables)
 }
 
 func (info *tableHintInfo) ifPreferTiKV(tableName *hintTableInfo) *hintTableInfo {
+	return info.matchTiKVOrTiFlash(tableName, info.tikvTables)
+}
+
+func (info *tableHintInfo) matchTiKVOrTiFlash(tableName *hintTableInfo, hintTables []hintTableInfo) *hintTableInfo {
 	if tableName == nil {
 		return nil
 	}
-	for i, tbl := range info.tikvTables {
+	for i, tbl := range hintTables {
 		if tableName.dbName.L == tbl.dbName.L && tableName.tblName.L == tbl.tblName.L && tbl.selectOffset == tableName.selectOffset {
-			info.tikvTables[i].matched = true
+			hintTables[i].matched = true
 			return &tbl
 		}
 	}
