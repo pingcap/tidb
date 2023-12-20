@@ -192,4 +192,19 @@ func TestShowViaSQL(t *testing.T) {
 		{"tpcc", "stock", "0", "0", "<nil>", "2023-04-10 11:18:21"},
 		{"tpcc", "warehouse", "0", "0", "<nil>", "2023-04-10 11:18:21"},
 	})
+
+	tk.MustExec("set @@time_zone='-08:00'")
+	res = tk.MustQuery(fmt.Sprintf("SHOW BACKUP METADATA FROM 'local://%s'", tempBackup))
+	fmt.Printf("%#v", res.Sort().Rows())
+	res.Sort().Check([][]interface{}{
+		{"tpcc", "customer", "0", "0", "<nil>", "2023-04-09 19:18:21"},
+		{"tpcc", "district", "0", "0", "<nil>", "2023-04-09 19:18:21"},
+		{"tpcc", "history", "0", "0", "<nil>", "2023-04-09 19:18:21"},
+		{"tpcc", "item", "0", "0", "<nil>", "2023-04-09 19:18:21"},
+		{"tpcc", "new_order", "0", "0", "<nil>", "2023-04-09 19:18:21"},
+		{"tpcc", "order_line", "0", "0", "<nil>", "2023-04-09 19:18:21"},
+		{"tpcc", "orders", "0", "0", "<nil>", "2023-04-09 19:18:21"},
+		{"tpcc", "stock", "0", "0", "<nil>", "2023-04-09 19:18:21"},
+		{"tpcc", "warehouse", "0", "0", "<nil>", "2023-04-09 19:18:21"},
+	})
 }
