@@ -1862,7 +1862,8 @@ func parseExpr(p *parser.Parser, exprStr string) (ast.ExprNode, error) {
 	exprStr = "select " + exprStr
 	stmts, _, err := p.ParseSQL(exprStr)
 	if err != nil {
-		return nil, util.SyntaxWarn(err)
+		// if you want to use warn like an error, trace the stack info by yourself.
+		return nil, errors.Trace(util.SyntaxWarn(err))
 	}
 	fields := stmts[0].(*ast.SelectStmt).Fields.Fields
 	return fields[0].Expr, nil
