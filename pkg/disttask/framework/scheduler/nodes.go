@@ -106,7 +106,6 @@ func (nm *NodeManager) maintainLiveNodes(ctx context.Context, taskMgr TaskManage
 		return
 	}
 	nm.prevLiveNodes = currLiveNodes
-	return
 }
 
 func (nm *NodeManager) refreshManagedNodesLoop(ctx context.Context, taskMgr TaskManager) {
