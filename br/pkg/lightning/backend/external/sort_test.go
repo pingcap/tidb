@@ -148,7 +148,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 		startKey = BytesMin(startKey, s.Min.Clone())
 		endKey = BytesMax(endKey, s.Max.Clone().Next())
 	}
-	mergeMemSize := (rand.Intn(10) + 1) * 100
+	mergeMemSize := (rand.Intn(10) + 1) * 100 // use random mergeMemSize to test different memLimit of writer.
 	for _, group := range dataGroup {
 		require.NoError(t, MergeOverlappingFiles(
 			ctx,

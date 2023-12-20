@@ -105,7 +105,7 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 			return err
 		}
 		w.rc.reset()
-		// the new prop should have the seem offset with kvStore.
+		// the new prop should have the same offset with kvStore.
 		w.rc.currProp.offset = w.kvStore.offset
 	}
 	binary.BigEndian.AppendUint64(buf[:0], uint64(keyLen))
