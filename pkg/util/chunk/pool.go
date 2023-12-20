@@ -30,11 +30,11 @@ var (
 func getChunkFromPool(initCap int, fields []*types.FieldType) *Chunk {
 	globalChunkPoolMutex.RLock()
 	pool, ok := globalChunkPool[initCap]
+	globalChunkPoolMutex.RUnlock()
 	if ok {
-		globalChunkPoolMutex.RUnlock()
+
 		return pool.GetChunk(fields)
 	}
-	globalChunkPoolMutex.RUnlock()
 	globalChunkPoolMutex.Lock()
 	defer globalChunkPoolMutex.Unlock()
 	globalChunkPool[initCap] = NewPool(initCap)
@@ -44,12 +44,11 @@ func getChunkFromPool(initCap int, fields []*types.FieldType) *Chunk {
 func putChunkFromPool(initCap int, fields []*types.FieldType, chk *Chunk) {
 	globalChunkPoolMutex.RLock()
 	pool, ok := globalChunkPool[initCap]
+	globalChunkPoolMutex.RUnlock()
 	if ok {
-		globalChunkPoolMutex.RUnlock()
 		pool.PutChunk(fields, chk)
 		return
 	}
-	globalChunkPoolMutex.RUnlock()
 	globalChunkPoolMutex.Lock()
 	defer globalChunkPoolMutex.Unlock()
 	globalChunkPool[initCap] = NewPool(initCap)
