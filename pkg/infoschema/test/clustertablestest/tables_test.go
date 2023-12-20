@@ -1494,22 +1494,22 @@ func TestTiDBParams(t *testing.T) {
 	tk.MustExec("use information_schema")
 
 	// global/session variable
-	tk.MustQuery("select * from tidb_params where name like '%authentication_ldap_sasl_bind_root_pwd%'").Check(testkit.Rows("tidb VAR authentication_ldap_sasl_bind_root_pwd * GLOBAL   <nil> <nil> <nil> 1 0 0"))
-	tk.MustQuery(`SELECT * FROM tidb_params WHERE name = 'tidb_txn_mode'`).Check(testkit.Rows("tidb VAR tidb_txn_mode * SESSION,GLOBAL pessimistic  <nil> <nil> pessimistic,optimistic 1 0 1"))
-	tk.MustQuery(`SELECT * FROM tidb_params WHERE name = 'tidb_checksum_table_concurrency'`).Check(testkit.Rows("tidb VAR tidb_checksum_table_concurrency * SESSION 4 4 1 256 <nil> 0 0 1"))
+	tk.MustQuery("select * from tidb_params where param_name like '%authentication_ldap_sasl_bind_root_pwd%'").Check(testkit.Rows("tidb VAR authentication_ldap_sasl_bind_root_pwd * GLOBAL   <nil> <nil> <nil> 1 0 0 <nil>"))
+	tk.MustQuery(`SELECT * FROM tidb_params WHERE param_name = 'tidb_txn_mode'`).Check(testkit.Rows("tidb VAR tidb_txn_mode * SESSION,GLOBAL pessimistic  <nil> <nil> pessimistic,optimistic 1 0 1 <nil>"))
+	tk.MustQuery(`SELECT * FROM tidb_params WHERE param_name = 'tidb_checksum_table_concurrency'`).Check(testkit.Rows("tidb VAR tidb_checksum_table_concurrency * SESSION 4 4 1 256 <nil> 0 0 1 <nil>"))
 
 	// instance variable
-	tk.MustQuery(`SELECT * FROM tidb_params WHERE name = 'tidb_expensive_query_time_threshold'`).Check(testkit.Rows("tidb VAR tidb_expensive_query_time_threshold  INSTANCE 60 60 10 2147483647 <nil> 0 1 0"))
+	tk.MustQuery(`SELECT * FROM tidb_params WHERE param_name = 'tidb_expensive_query_time_threshold'`).Check(testkit.Rows("tidb VAR tidb_expensive_query_time_threshold  INSTANCE 60 60 10 2147483647 <nil> 0 1 0 <nil>"))
 
 	// update global variable
 	tk.MustExec("SET GLOBAL innodb_compression_level = 8;")
-	tk.MustQuery(`SELECT * FROM tidb_params WHERE name = 'innodb_compression_level'`).Check(testkit.Rows("tidb VAR innodb_compression_level * GLOBAL 8 6 <nil> <nil> <nil> 1 0 0"))
+	tk.MustQuery(`SELECT * FROM tidb_params WHERE param_name = 'innodb_compression_level'`).Check(testkit.Rows("tidb VAR innodb_compression_level * GLOBAL 8 6 <nil> <nil> <nil> 1 0 0 IS_NOOP"))
 
 	// config
-	tk.MustQuery(`SELECT * FROM tidb_params WHERE name = 'key1'`).Check(testkit.Rows(
-		fmt.Sprintf("tidb CONFIG key1 %s INSTANCE value1 default_value1 <nil> <nil> <nil> 0 1 0", address),
-		fmt.Sprintf("tikv CONFIG key1 %s INSTANCE value1 default_value1 <nil> <nil> <nil> 0 1 0", address),
-		fmt.Sprintf("tiflash CONFIG key1 %s INSTANCE value1 default_value1 <nil> <nil> <nil> 0 1 0", address),
-		fmt.Sprintf("pd CONFIG key1 %s INSTANCE value1 default_value1 <nil> <nil> <nil> 0 1 0", address),
+	tk.MustQuery(`SELECT * FROM tidb_params WHERE param_name = 'key1'`).Check(testkit.Rows(
+		fmt.Sprintf("tidb CONFIG key1 %s INSTANCE value1 default_value1 <nil> <nil> <nil> 0 1 0 <nil>", address),
+		fmt.Sprintf("tikv CONFIG key1 %s INSTANCE value1 default_value1 <nil> <nil> <nil> 0 1 0 <nil>", address),
+		fmt.Sprintf("tiflash CONFIG key1 %s INSTANCE value1 default_value1 <nil> <nil> <nil> 0 1 0 <nil>", address),
+		fmt.Sprintf("pd CONFIG key1 %s INSTANCE value1 default_value1 <nil> <nil> <nil> 0 1 0 <nil>", address),
 	))
 }
