@@ -232,6 +232,7 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 		})
 		// pool closed.
 		if err != nil {
+			m.slotManager.free(t.ID)
 			m.removeHandlingTask(task.ID)
 			m.logErr(err)
 			return
