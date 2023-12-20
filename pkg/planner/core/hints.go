@@ -280,7 +280,7 @@ func (info *tableHintInfo) ifPreferTiKV(tableName *hintTableInfo) *hintTableInfo
 	return info.matchTiKVOrTiFlash(tableName, info.tikvTables)
 }
 
-func (info *tableHintInfo) matchTiKVOrTiFlash(tableName *hintTableInfo, hintTables []hintTableInfo) *hintTableInfo {
+func (*tableHintInfo) matchTiKVOrTiFlash(tableName *hintTableInfo, hintTables []hintTableInfo) *hintTableInfo {
 	if tableName == nil {
 		return nil
 	}
