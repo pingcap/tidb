@@ -111,7 +111,7 @@ func TestAggPushDownEngine(t *testing.T) {
 		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"))
 }
 
-func TestIssue15110(t *testing.T) {
+func TestIssue15110And49616(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -145,6 +145,15 @@ func TestIssue15110(t *testing.T) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("explain format = 'brief' SELECT count(*) FROM crm_rd_150m dataset_48 WHERE (CASE WHEN (month(dataset_48.customer_first_date)) <= 30 THEN '新客' ELSE NULL END) IS NOT NULL;")
+
+	// for #49616
+	tk.MustExec(`use test`)
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
+	tk.MustExec(`create table t1 (k int, a int)`)
+	tk.MustExec(`create table t2 (k int, b int, key(k))`)
+	tk.MustHavePlan(`select /*+ tidb_inlj(t2, t1) */ *
+  from t2 left join t1 on t1.k=t2.k
+  where a>0 or (a=0 and b>0)`, `IndexJoin`)
 }
 
 func TestKeepOrderHintWithBinding(t *testing.T) {
@@ -1972,17 +1981,6 @@ func TestLeastGretestStringPushDownToTiFlash(t *testing.T) {
 		{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 	}
 	tk.MustQuery("explain select greatest(a, b) from t;").CheckAt([]int{0, 2, 4}, rows)
-}
-
-func TestIssue49616(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`create table t1 (k int, a int)`)
-	tk.MustExec(`create table t2 (k int, b int, key(k))`)
-	tk.MustHavePlan(`select /*+ tidb_inlj(t2, t1) */ *
-  from t2 left join t1 on t1.k=t2.k
-  where a>0 or (a=0 and b>0)`, `IndexJoin`)
 }
 
 func TestTiFlashReadForWriteStmt(t *testing.T) {
