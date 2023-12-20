@@ -959,6 +959,51 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 	)
 }
 
+func newMergeStep(t *testing.T, s *mergeTestSuite) {
+	ctx := context.Background()
+	datas, _, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
+	intest.AssertNoError(err)
+
+	mergeOutput := "merge_output"
+	totalSize := atomic.NewUint64(0)
+	onClose := func(s *WriterSummary) {
+		totalSize.Add(s.TotalSize)
+	}
+	if s.beforeMerge != nil {
+		s.beforeMerge()
+	}
+
+	now := time.Now()
+	err = mergeOverlappingFilesV2(
+		ctx,
+		datas,
+		s.store,
+		int64(5*size.MB),
+		64*1024,
+		mergeOutput,
+		"test",
+		DefaultMemSizeLimit,
+		DefaultBlockSize,
+		8*1024,
+		1*size.MB,
+		8*1024,
+		onClose,
+		s.mergeIterHotspot,
+	)
+
+	intest.AssertNoError(err)
+	if s.afterMerge != nil {
+		s.afterMerge()
+	}
+	elapsed := time.Since(now)
+	t.Logf(
+		"merge speed for %d bytes in %s, speed: %.2f MB/s",
+		totalSize.Load(),
+		elapsed,
+		float64(totalSize.Load())/elapsed.Seconds()/1024/1024,
+	)
+}
+
 func testCompareMergeWithContent(
 	t *testing.T,
 	createFn func(store storage.ExternalStorage, fileSize int, fileCount int, objectPrefix string) int,
@@ -1005,4 +1050,6 @@ func testCompareMergeWithContent(
 func TestMergeBench(t *testing.T) {
 	testCompareMergeWithContent(t, createAscendingFiles, mergeStep)
 	testCompareMergeWithContent(t, createEvenlyDistributedFiles, mergeStep)
+	testCompareMergeWithContent(t, createAscendingFiles, newMergeStep)
+	testCompareMergeWithContent(t, createEvenlyDistributedFiles, newMergeStep)
 }
