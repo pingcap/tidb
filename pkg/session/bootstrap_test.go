@@ -2299,7 +2299,7 @@ func TestTiDBUpgradeToVer181(t *testing.T) {
 	res = MustExecToRecodeSet(t, seCurVer, `select type from mysql.bind_info where source!='builtin'`)
 	chk = res.NewChunk(nil)
 	require.NoError(t, res.Next(context.Background(), chk))
-	require.Equal(t, chk.NumRows(), 2) // 2 bindings
+	require.Equal(t, chk.NumRows(), 2)               // 2 bindings
 	require.Equal(t, chk.GetRow(0).GetString(0), "") // it means this binding is a normal binding
 	require.Equal(t, chk.GetRow(1).GetString(0), "")
 	require.NoError(t, res.Close())
