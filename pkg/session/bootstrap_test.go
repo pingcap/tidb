@@ -2303,5 +2303,4 @@ func TestTiDBUpgradeToVer181(t *testing.T) {
 	require.Equal(t, chk.GetRow(0).GetString(0), "") // it means this binding is a normal binding
 	require.Equal(t, chk.GetRow(1).GetString(0), "")
 	require.NoError(t, res.Close())
-
 }
