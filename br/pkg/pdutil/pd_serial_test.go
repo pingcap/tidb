@@ -12,7 +12,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client/http"
+	pdhttp "github.com/tikv/pd/client/http"
 )
 
 func TestScheduler(t *testing.T) {
@@ -306,37 +306,43 @@ func TestPauseSchedulersByKeyRange(t *testing.T) {
 		if deleted {
 			return
 		}
-		if r.Method == http.MethodDelete {
-			ruleID := strings.TrimPrefix(r.URL.Path, pd.RegionLabelRule+"/")
-			delete(labelExpires, ruleID)
+		switch r.Method {
+		case http.MethodPatch:
+			var patch pdhttp.LabelRulePatch
+			err := json.NewDecoder(r.Body).Decode(&patch)
+			require.NoError(t, err)
+			require.Len(t, patch.SetRules, 0)
+			require.Len(t, patch.DeleteRules, 1)
+			delete(labelExpires, patch.DeleteRules[0])
 			deleted = true
-			return
-		}
-		var labelRule LabelRule
-		err := json.NewDecoder(r.Body).Decode(&labelRule)
-		require.NoError(t, err)
-		require.Len(t, labelRule.Labels, 1)
-		regionLabel := labelRule.Labels[0]
-		require.Equal(t, "schedule", regionLabel.Key)
-		require.Equal(t, "deny", regionLabel.Value)
-		reqTTL, err := time.ParseDuration(regionLabel.TTL)
-		require.NoError(t, err)
-		if reqTTL == 0 {
-			delete(labelExpires, labelRule.ID)
-		} else {
-			require.Equal(t, ttl, reqTTL)
-			if expire, ok := labelExpires[labelRule.ID]; ok {
-				require.True(t, expire.After(time.Now()), "should not expire before now")
+		case http.MethodPost:
+			var labelRule LabelRule
+			err := json.NewDecoder(r.Body).Decode(&labelRule)
+			require.NoError(t, err)
+			require.Len(t, labelRule.Labels, 1)
+			regionLabel := labelRule.Labels[0]
+			require.Equal(t, "schedule", regionLabel.Key)
+			require.Equal(t, "deny", regionLabel.Value)
+			reqTTL, err := time.ParseDuration(regionLabel.TTL)
+			require.NoError(t, err)
+			if reqTTL == 0 {
+				delete(labelExpires, labelRule.ID)
+			} else {
+				require.Equal(t, ttl, reqTTL)
+				if expire, ok := labelExpires[labelRule.ID]; ok {
+					require.True(t, expire.After(time.Now()), "should not expire before now")
+				}
+				labelExpires[labelRule.ID] = time.Now().Add(ttl)
 			}
-			labelExpires[labelRule.ID] = time.Now().Add(ttl)
 		}
 	}))
 	defer httpSrv.Close()
 
-	pdController := &PdController{addrs: []string{httpSrv.URL}, cli: http.DefaultClient}
+	pdHTTPCli := pdhttp.NewClient("test", []string{httpSrv.URL})
+	defer pdHTTPCli.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	done, err := pdController.pauseSchedulerByKeyRangeWithTTL(ctx, []byte{0, 0, 0, 0}, []byte{0xff, 0xff, 0xff, 0xff}, ttl)
+	done, err := pauseSchedulerByKeyRangeWithTTL(ctx, pdHTTPCli, []byte{0, 0, 0, 0}, []byte{0xff, 0xff, 0xff, 0xff}, ttl)
 	require.NoError(t, err)
 	time.Sleep(ttl * 3)
 	cancel()
