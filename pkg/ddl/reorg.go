@@ -200,7 +200,7 @@ func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 			return dbterror.ErrCancelledDDLJob
 		}
 
-		rc = w.newReorgCtx(job.ID, job.State, job.GetRowCount())
+		rc = w.newReorgCtx(reorgInfo.Job.ID, reorgInfo.Job.GetRowCount())
 		w.wg.Add(1)
 		go func() {
 			defer w.wg.Done()

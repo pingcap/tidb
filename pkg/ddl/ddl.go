@@ -513,7 +513,7 @@ func (dc *ddlCtx) getReorgCtx(jobID int64) *reorgCtx {
 	return dc.reorgCtx.reorgCtxMap[jobID]
 }
 
-func (dc *ddlCtx) newReorgCtx(jobID int64, jobState model.JobState, rowCount int64) *reorgCtx {
+func (dc *ddlCtx) newReorgCtx(jobID int64, rowCount int64) *reorgCtx {
 	dc.reorgCtx.Lock()
 	defer dc.reorgCtx.Unlock()
 	existedRC, ok := dc.reorgCtx.reorgCtxMap[jobID]
@@ -521,11 +521,9 @@ func (dc *ddlCtx) newReorgCtx(jobID int64, jobState model.JobState, rowCount int
 		existedRC.references.Add(1)
 		return existedRC
 	}
-	rc := &reorgCtx{
-		doneCh:   make(chan error, 1),
-		rowCount: rowCount,
-		jobState: jobState,
-	}
+	rc := &reorgCtx{}
+	rc.doneCh = make(chan error, 1)
+	// initial reorgCtx
 	rc.setRowCount(rowCount)
 	rc.mu.warnings = make(map[errors.ErrorID]*terror.Error)
 	rc.mu.warningsCount = make(map[errors.ErrorID]int64)
