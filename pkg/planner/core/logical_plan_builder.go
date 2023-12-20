@@ -5018,7 +5018,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	if err != nil {
 		return nil, err
 	}
-	if b.isForUpdateRead && dbName.L == "test" && tn.Name.L == "order_line" {
+	if b.isForUpdateRead && dbName.L == "tpcc" && tn.Name.L == "order_line" {
 		return nil, domain.ErrInfoSchemaChanged.GenWithStack("public column %s has changed", tn.Name.L)
 	}
 
