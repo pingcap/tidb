@@ -199,6 +199,5 @@ SELECT * from tableA where SUBSTRING_INDEX(tableA.columnC, '_', 1) = tableA.colu
 		sqlDigest,
 		planDigest,
 	).Rows()
-	// FIXME: the origin_sql should be inserted.
-	require.Len(t, rows, 0)
+	require.Len(t, rows, 1)
 }
