@@ -89,6 +89,11 @@ const (
 	GlobalConfigSourceID     = "source_id"
 )
 
+// ScopeFlagStrs is the names of ScopeFlag
+var ScopeFlagStrs = []string{
+	"NONE", "SESSION", "GLOBAL", "INSTANCE",
+}
+
 func (s ScopeFlag) String() string {
 	var scopes []string
 	if s == ScopeNone {

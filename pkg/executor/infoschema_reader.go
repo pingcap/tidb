@@ -3481,6 +3481,11 @@ func (e *memtableRetriever) setDataFromTiDBParams(ctx sessionctx.Context) error 
 				instance = serverInfo.IP
 			}
 		}
+		scopeSet, err := types.ParseSet(variable.ScopeFlagStrs, sv.Scope.String(), mysql.DefaultCollationName)
+		if err != nil {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			continue
+		}
 		isClusterDynamic := false
 		if sv.HasGlobalScope() {
 			isClusterDynamic = true
@@ -3493,12 +3498,24 @@ func (e *memtableRetriever) setDataFromTiDBParams(ctx sessionctx.Context) error 
 		if sv.HasSessionScope() {
 			isSessionDynamic = true
 		}
+		extras := make([]string, 0, 2)
+		if sv.HasNoneScope() || sv.ReadOnly {
+			extras = append(extras, "IS_READONLY")
+		}
+		if sv.IsNoop {
+			extras = append(extras, "IS_NOOP")
+		}
+		extrasSet, err := types.ParseSet([]string{"IS_NOOP", "IS_READONLY"}, strings.Join(extras, ","), mysql.DefaultCollationName)
+		if err != nil {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			continue
+		}
 		row := types.MakeDatums(
 			"tidb",
 			"VAR",
 			sv.Name,
 			instance,
-			sv.Scope.String(),
+			scopeSet,
 			currentVal,
 			sv.Value,
 			sv.MinValue,
@@ -3507,6 +3524,7 @@ func (e *memtableRetriever) setDataFromTiDBParams(ctx sessionctx.Context) error 
 			isClusterDynamic,
 			isInstDynamic,
 			isSessionDynamic,
+			extrasSet,
 		)
 		// min and max value is only supported for numeric types
 		if !(sv.Type == variable.TypeUnsigned || sv.Type == variable.TypeInt || sv.Type == variable.TypeFloat) {
@@ -3516,6 +3534,9 @@ func (e *memtableRetriever) setDataFromTiDBParams(ctx sessionctx.Context) error 
 		if sv.Type == variable.TypeEnum {
 			possibleValues := strings.Join(sv.PossibleValues, ",")
 			row[9].SetString(possibleValues, mysql.DefaultCollationName)
+		}
+		if len(extras) == 0 {
+			row[13].SetNull()
 		}
 		rows = append(rows, row)
 	}
@@ -3613,12 +3634,17 @@ func (e *memtableRetriever) setDataFromTiDBParams(ctx sessionctx.Context) error 
 					}
 					defaultValue = string(tmp)
 				}
+				scopeSet, err := types.ParseSet(variable.ScopeFlagStrs, variable.ScopeInstance.String(), mysql.DefaultCollationName)
+				if err != nil {
+					ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+					continue
+				}
 				rows = append(rows, types.MakeDatums(
 					typ,
 					"CONFIG",
 					dv.Name,
 					address,
-					variable.ScopeInstance.String(),
+					scopeSet,
 					value,
 					defaultValue,
 					nil,
@@ -3627,6 +3653,7 @@ func (e *memtableRetriever) setDataFromTiDBParams(ctx sessionctx.Context) error 
 					false,
 					true,
 					false,
+					nil,
 				))
 			}
 			ch <- result{idx: idx, rows: rows}

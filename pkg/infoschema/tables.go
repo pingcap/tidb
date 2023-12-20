@@ -352,7 +352,7 @@ type columnInfo struct {
 func buildColumnInfo(col columnInfo) *model.ColumnInfo {
 	mCharset := charset.CharsetBin
 	mCollation := charset.CharsetBin
-	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob || col.tp == mysql.TypeLongBlob || col.tp == mysql.TypeEnum {
+	if col.tp == mysql.TypeVarchar || col.tp == mysql.TypeBlob || col.tp == mysql.TypeLongBlob || col.tp == mysql.TypeEnum || col.tp == mysql.TypeSet {
 		mCharset = charset.CharsetUTF8MB4
 		mCollation = charset.CollationUTF8MB4
 	}
@@ -1671,7 +1671,7 @@ var tableTiDBParamsCols = []columnInfo{
 	{name: "TYPE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "PARAM_NAME", tp: mysql.TypeVarchar, size: 256, flag: mysql.NotNullFlag},
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 64},
-	{name: "SCOPE", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "SCOPE", tp: mysql.TypeSet, enumElems: variable.ScopeFlagStrs, flag: mysql.NotNullFlag},
 	{name: "VALUE", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
 	{name: "DEFAULT_VALUE", tp: mysql.TypeVarchar, size: 64},
 	{name: "MIN_VALUE", tp: mysql.TypeLonglong, size: 64},
@@ -1680,6 +1680,7 @@ var tableTiDBParamsCols = []columnInfo{
 	{name: "IS_CLUSTER_DYNAMIC", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, deflt: 0},
 	{name: "IS_INST_DYNAMIC", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, deflt: 0},
 	{name: "IS_SESS_DYNAMIC", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, deflt: 0},
+	{name: "EXTRAS", tp: mysql.TypeSet, enumElems: []string{"IS_NOOP", "IS_READONLY"}},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
