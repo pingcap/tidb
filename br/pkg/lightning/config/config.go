@@ -1459,7 +1459,7 @@ func NewConfig() *Config {
 			DiskQuota:               ByteSize(math.MaxInt64),
 			DuplicateResolution:     DupeResAlgNone,
 			PausePDSchedulerScope:   PausePDSchedulerScopeTable,
-			BlockSize:               8192,
+			BlockSize:               16 * 1024,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,
