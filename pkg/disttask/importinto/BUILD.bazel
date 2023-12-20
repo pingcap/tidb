@@ -57,6 +57,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/backoff",
         "//pkg/util/dbterror/exeerrors",
+        "//pkg/util/disttask",
         "//pkg/util/etcd",
         "//pkg/util/logutil",
         "//pkg/util/mathutil",

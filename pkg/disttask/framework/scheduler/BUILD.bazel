@@ -4,6 +4,7 @@ go_library(
     name = "scheduler",
     srcs = [
         "interface.go",
+        "nodes.go",
         "scheduler.go",
         "scheduler_manager.go",
         "slots.go",
@@ -12,6 +13,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/disttask/framework/scheduler",
     visibility = ["//visibility:public"],
     deps = [
+        "//br/pkg/lightning/log",
         "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
@@ -39,6 +41,7 @@ go_test(
     timeout = "short",
     srcs = [
         "main_test.go",
+        "nodes_test.go",
         "rebalance_test.go",
         "scheduler_manager_test.go",
         "scheduler_test.go",
@@ -47,7 +50,7 @@ go_test(
     embed = [":scheduler"],
     flaky = True,
     race = "off",
-    shard_count = 23,
+    shard_count = 24,
     deps = [
         "//pkg/config",
         "//pkg/disttask/framework/mock",
