@@ -439,6 +439,10 @@ func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expr
 		sc.InNullRejectCheck = false
 	}()
 	for _, cond := range expression.SplitCNFItems(expr) {
+		if isNullRejectedSpecially(ctx, schema, expr) {
+			return true
+		}
+
 		result := expression.EvaluateExprWithNull(ctx, schema, cond)
 		x, ok := result.(*expression.Constant)
 		if !ok {
@@ -448,6 +452,47 @@ func isNullRejected(ctx sessionctx.Context, schema *expression.Schema, expr expr
 			return true
 		} else if isTrue, err := x.Value.ToBool(sc); err == nil && isTrue == 0 {
 			return true
+		}
+	}
+	return false
+}
+
+// isNullRejectedSpecially handles some null-rejected cases specially, since the current in
+// EvaluateExprWithNull is too strict for some cases, e.g. #49616.
+func isNullRejectedSpecially(ctx sessionctx.Context, schema *expression.Schema, expr expression.Expression) bool {
+	return specialNullRejectedCase1(ctx, schema, expr) // only 1 case now
+}
+
+// specialNullRejectedCase1 is mainly for #49616.
+// Case1 specially handles `null-rejected OR (null-rejected AND {others})`, then no matter what the result
+// of `{others}` is (True, False or Null), the result of this predicate is null, so this predicate is null-rejected.
+func specialNullRejectedCase1(ctx sessionctx.Context, schema *expression.Schema, expr expression.Expression) bool {
+	isFunc := func(e expression.Expression, lowerFuncName string) *expression.ScalarFunction {
+		f, ok := e.(*expression.ScalarFunction)
+		if !ok {
+			return nil
+		}
+		if f.FuncName.L == lowerFuncName {
+			return f
+		}
+		return nil
+	}
+	orFunc := isFunc(expr, ast.LogicOr)
+	if orFunc == nil {
+		return false
+	}
+	for i := 0; i < 2; i++ {
+		andFunc := isFunc(orFunc.GetArgs()[i], ast.LogicAnd)
+		if andFunc == nil {
+			continue
+		}
+		if !isNullRejected(ctx, schema, orFunc.GetArgs()[1-i]) {
+			continue // the other side should be null-rejected: null-rejected OR (... AND ...)
+		}
+		for _, andItem := range expression.SplitCNFItems(andFunc) {
+			if isNullRejected(ctx, schema, andItem) {
+				return true // hit the case in the comment: null-rejected OR (null-rejected AND ...)
+			}
 		}
 	}
 	return false
