@@ -258,6 +258,9 @@ func (m *Manager) onPausingTasks(tasks []*proto.Task) error {
 		if err := m.taskTable.PauseSubtasks(m.ctx, m.id, task.ID); err != nil {
 			return err
 		}
+		// remove handling task, then when the task is resumed,
+		//  manager will trigger another task_executor to execute the subtasks of the task.
+		m.removeHandlingTask(task.ID)
 	}
 	return nil
 }
