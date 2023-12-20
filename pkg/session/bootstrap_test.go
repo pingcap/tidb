@@ -2245,3 +2245,63 @@ func TestTiDBUpgradeToVer179(t *testing.T) {
 
 	dom.Close()
 }
+
+func TestTiDBUpgradeToVer181(t *testing.T) {
+	store, _ := CreateStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	// init to v180
+	ver180 := version180
+	seV180 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver180))
+	require.NoError(t, err)
+	MustExec(t, seV180, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver180))
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	unsetStoreBootstrapped(store.UUID())
+
+	// create some bindings at v180
+	MustExec(t, seV180, "use test")
+	MustExec(t, seV180, "create table t (a int, b int, key(a), key(b))")
+	MustExec(t, seV180, `create global binding using select /*+ use_index(t, a) */ * from t where a=1`)
+	MustExec(t, seV180, `create global binding using select /*+ use_index(t, b) */ * from t where b=1`)
+
+	// upgrade to ver181
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// the default value of `tidb_opt_enable_universal_binding` should be `off`.
+	res := MustExecToRecodeSet(t, seCurVer, `show variables like 'tidb_opt_enable_universal_binding'`)
+	chk := res.NewChunk(nil)
+	require.NoError(t, res.Next(context.Background(), chk))
+	require.Equal(t, chk.NumRows(), 1)
+	require.Equal(t, chk.GetRow(0).GetString(1), "OFF")
+	require.NoError(t, res.Close())
+
+	res = MustExecToRecodeSet(t, seCurVer, `show global variables like 'tidb_opt_enable_universal_binding'`)
+	chk = res.NewChunk(nil)
+	require.NoError(t, res.Next(context.Background(), chk))
+	require.Equal(t, chk.NumRows(), 1)
+	require.Equal(t, chk.GetRow(0).GetString(1), "OFF")
+	require.NoError(t, res.Close())
+
+	// a new column `type` in `mysql.bind_info` and all previous bindings values are empty ''.
+	res = MustExecToRecodeSet(t, seCurVer, `select type from mysql.bind_info where source!='builtin'`)
+	chk = res.NewChunk(nil)
+	require.NoError(t, res.Next(context.Background(), chk))
+	require.Equal(t, chk.NumRows(), 2) // 2 bindings
+	require.Equal(t, chk.GetRow(0).GetString(0), "") // it means this binding is a normal binding
+	require.Equal(t, chk.GetRow(1).GetString(0), "")
+	require.NoError(t, res.Close())
+
+}
