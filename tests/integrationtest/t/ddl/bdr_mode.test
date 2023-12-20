@@ -104,7 +104,7 @@ create view v as select 1 as b;
 drop view v;
 
 alter table t charset utf8mb4 collate utf8mb4_unicode_ci;
-alter database bdr_mode default character set = utf8mb4;
+alter database bdr_mode default character set = utf8;
 drop database bdr_mode;
 
 # resource group
@@ -245,8 +245,8 @@ drop view v;
 
 -- error 8263
 alter table t charset utf8mb4 collate utf8mb4_unicode_ci;
-# -- error 8263
-alter database bdr_mode default character set = utf8mb4;
+-- error 8263
+alter database bdr_mode default character set = utf8;
 admin set bdr role none;
 drop database bdr_mode;
 admin set bdr role primary;
@@ -408,8 +408,8 @@ drop view v;
 
 -- error 8263
 alter table t charset utf8mb4 collate utf8mb4_unicode_ci;
-# -- error 8263
-alter database bdr_mode default character set = utf8mb4;
+-- error 8263
+alter database bdr_mode default character set = utf8;
 -- error 8263
 drop database bdr_mode;
 admin set bdr role none;
@@ -525,7 +525,7 @@ create view v as select 1 as b;
 drop view v;
 
 alter table t charset utf8mb4 collate utf8mb4_unicode_ci;
-alter database bdr_mode default character set = utf8mb4;
+alter database bdr_mode default character set = utf8;
 drop database bdr_mode;
 
 # resource group
