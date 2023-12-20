@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# The current dockerfile is only used for development purposes. If used in a 
+# production environment, please refer to https://github.com/PingCAP-QE/artifacts/blob/main/dockerfiles/cd/builders/tidb/Dockerfile.
+
 # Builder image
 FROM golang:1.21 as builder
 WORKDIR /tidb
