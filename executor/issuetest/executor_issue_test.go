@@ -1461,3 +1461,23 @@ func TestIssue42662(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/executor/issue42662_1"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/util/servermemorylimit/issue42662_2"))
 }
+
+func TestIssue46522(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk1 := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk1.MustExec("use test;")
+
+	tk.MustExec("create table issue46522 (id int primary key);")
+	tk.MustExec("insert into issue46522 values (1);")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = off;")
+	tk.MustExec("begin optimistic;")
+	tk.MustExec("insert into issue46522 with t1 as (select id+1 from issue46522 where id = 1) select * from t1;")
+
+	tk1.MustExec("begin optimistic;")
+	tk1.MustExec("update issue46522 set id = id + 1;")
+	tk1.MustExec("commit;")
+
+	tk.MustExec("commit;")
+}
