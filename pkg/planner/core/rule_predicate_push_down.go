@@ -490,7 +490,7 @@ func specialNullRejectedCase1(ctx sessionctx.Context, schema *expression.Schema,
 		if !isNullRejected(ctx, schema, orFunc.GetArgs()[1-i]) {
 			continue // the other side should be null-rejected: null-rejected OR (... AND ...)
 		}
-		for _, andItem := range expression.FlattenCNFConditions(andFunc) {
+		for _, andItem := range expression.SplitCNFItems(andFunc) {
 			if isNullRejected(ctx, schema, andItem) {
 				return true // hit the case in the comment: null-rejected OR (null-rejected AND ...)
 			}
