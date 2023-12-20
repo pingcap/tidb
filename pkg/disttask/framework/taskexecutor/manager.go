@@ -41,10 +41,6 @@ var (
 	recoverMetaInterval = 90 * time.Second
 	retrySQLTimes       = 30
 	retrySQLInterval    = 500 * time.Millisecond
-
-	// for test
-	onRunnableTasksTick = make(chan struct{})
-	onRunnableTaskTick  = make(chan struct{})
 )
 
 // ManagerBuilder is used to build a Manager.
@@ -223,15 +219,13 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 		logutil.Logger(m.logCtx).Info("detect new subtask", zap.Int64("task-id", task.ID))
 
 		if !m.slotManager.canAlloc(task) {
-			failpoint.Inject("taskTick", func() {
-				<-onRunnableTasksTick
-			})
+			logutil.Logger(m.logCtx).Warn("subtask has been rejected", zap.Int64("task-id", task.ID))
 			continue
 		}
 		m.addHandlingTask(task.ID)
+		m.slotManager.alloc(task)
 		t := task
 		err = m.executorPool.Run(func() {
-			m.slotManager.alloc(t)
 			defer m.slotManager.free(t.ID)
 			m.onRunnableTask(t)
 			m.removeHandlingTask(t.ID)
@@ -242,10 +236,6 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 			m.logErr(err)
 			return
 		}
-
-		failpoint.Inject("taskTick", func() {
-			<-onRunnableTasksTick
-		})
 	}
 }
 
@@ -422,10 +412,6 @@ func (m *Manager) onRunnableTask(task *proto.Task) {
 		if err != nil {
 			logutil.Logger(m.logCtx).Error("failed to handle task", zap.Error(err))
 		}
-
-		failpoint.Inject("taskTick", func() {
-			<-onRunnableTaskTick
-		})
 	}
 }
 
