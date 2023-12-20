@@ -20,13 +20,14 @@ import (
 	"io"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 func readAllData(
@@ -65,12 +66,13 @@ func readAllData(
 	if err != nil {
 		return err
 	}
-	var eg errgroup.Group
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	// TODO(lance6716): limit the concurrency of eg to 30 does not help
 	for i := range dataFiles {
 		i := i
 		eg.Go(func() error {
-			return readOneFile(
-				ctx,
+			err2 := readOneFile(
+				egCtx,
 				storage,
 				dataFiles[i],
 				startKey,
@@ -80,6 +82,7 @@ func readAllData(
 				bufPool,
 				output,
 			)
+			return errors.Annotatef(err2, "failed to read file %s", dataFiles[i])
 		})
 	}
 	return eg.Wait()

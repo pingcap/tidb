@@ -5195,7 +5195,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	var indexMergeHints []indexHintInfo
 	if hints := b.TableHints(); hints != nil {
 		for i, hint := range hints.indexMergeHintList {
-			if hint.tblName.L == tblName.L && hint.dbName.L == dbName.L {
+			if hint.match(dbName, tblName) {
 				hints.indexMergeHintList[i].matched = true
 				// check whether the index names in IndexMergeHint are valid.
 				invalidIdxNames := make([]string, 0, len(hint.indexHint.IndexNames))

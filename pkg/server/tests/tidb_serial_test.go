@@ -70,6 +70,12 @@ func TestLoadData1(t *testing.T) {
 	ts.RunTestLoadDataForSlowLog(t)
 }
 
+func TestLoadDataInTransaction(t *testing.T) {
+	ts := createTidbTestSuite(t)
+
+	ts.RunTestLoadDataInTransaction(t)
+}
+
 func TestConfigDefaultValue(t *testing.T) {
 	ts := createTidbTestSuite(t)
 

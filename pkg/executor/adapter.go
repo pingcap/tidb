@@ -177,8 +177,7 @@ func (a *recordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 		return exec.NewFirstChunk(a.executor)
 	}
 
-	base := a.executor.Base()
-	return alloc.Alloc(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize())
+	return alloc.Alloc(a.executor.RetFieldTypes(), a.executor.InitCap(), a.executor.MaxChunkSize())
 }
 
 func (a *recordSet) Finish() error {
@@ -886,8 +885,7 @@ func (c *chunkRowRecordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 		return exec.NewFirstChunk(c.e)
 	}
 
-	base := c.e.Base()
-	return alloc.Alloc(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize())
+	return alloc.Alloc(c.e.RetFieldTypes(), c.e.InitCap(), c.e.MaxChunkSize())
 }
 
 func (c *chunkRowRecordSet) Close() error {
