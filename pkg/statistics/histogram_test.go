@@ -17,6 +17,7 @@ package statistics
 import (
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -37,7 +38,7 @@ func TestTruncateHistogram(t *testing.T) {
 }
 
 func TestValueToString4InvalidKey(t *testing.T) {
-	bytes, err := codec.EncodeKey(nil, nil, types.NewDatum(1), types.NewDatum(0.5))
+	bytes, err := codec.EncodeKey(time.UTC, nil, types.NewDatum(1), types.NewDatum(0.5))
 	require.NoError(t, err)
 	// Append invalid flag.
 	bytes = append(bytes, 20)
@@ -63,9 +64,9 @@ type topN4Test struct {
 func genHist4Test(t *testing.T, buckets []*bucket4Test, totColSize int64) *Histogram {
 	h := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), len(buckets), totColSize)
 	for _, bucket := range buckets {
-		lower, err := codec.EncodeKey(nil, nil, types.NewIntDatum(bucket.lower))
+		lower, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(bucket.lower))
 		require.NoError(t, err)
-		upper, err := codec.EncodeKey(nil, nil, types.NewIntDatum(bucket.upper))
+		upper, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(bucket.upper))
 		require.NoError(t, err)
 		di, du := types.NewBytesDatum(lower), types.NewBytesDatum(upper)
 		h.AppendBucketWithNDV(&di, &du, bucket.count, bucket.repeat, bucket.ndv)
@@ -275,6 +276,170 @@ func TestMergePartitionLevelHist(t *testing.T) {
 			},
 			expBucketNumber: 3,
 		},
+		{
+			// issue#49023
+			partitionHists: [][]*bucket4Test{
+				{
+					// Col(1) = [1, 4,|| 6, 9, 9,|| 12, 12, 12,|| 13, 14, 15]
+					{
+						lower:  1,
+						upper:  4,
+						count:  2,
+						repeat: 1,
+						ndv:    2,
+					},
+					{
+						lower:  6,
+						upper:  9,
+						count:  5,
+						repeat: 2,
+						ndv:    2,
+					},
+					{
+						lower:  12,
+						upper:  12,
+						count:  5,
+						repeat: 3,
+						ndv:    1,
+					},
+					{
+						lower:  13,
+						upper:  15,
+						count:  11,
+						repeat: 1,
+						ndv:    3,
+					},
+				},
+				// Col(2) = [2, 5,|| 6, 7, 7,|| 11, 11, 11,|| 13, 14, 17]
+				{
+					{
+						lower:  2,
+						upper:  5,
+						count:  2,
+						repeat: 1,
+						ndv:    2,
+					},
+					{
+						lower:  6,
+						upper:  7,
+						count:  2,
+						repeat: 2,
+						ndv:    2,
+					},
+					{
+						lower:  11,
+						upper:  11,
+						count:  8,
+						repeat: 3,
+						ndv:    1,
+					},
+					{
+						lower:  13,
+						upper:  17,
+						count:  11,
+						repeat: 1,
+						ndv:    3,
+					},
+				},
+				// Col(3) = [2, 5,|| 6, 7, 7,|| 11, 11, 11,|| 13, 14, 17]
+				{
+					{
+						lower:  2,
+						upper:  5,
+						count:  2,
+						repeat: 1,
+						ndv:    2,
+					},
+					{
+						lower:  6,
+						upper:  7,
+						count:  2,
+						repeat: 2,
+						ndv:    2,
+					},
+					{
+						lower:  11,
+						upper:  11,
+						count:  8,
+						repeat: 3,
+						ndv:    1,
+					},
+					{
+						lower:  13,
+						upper:  17,
+						count:  11,
+						repeat: 1,
+						ndv:    3,
+					},
+				},
+				// Col(4) = [2, 5,|| 6, 7, 7,|| 11, 11, 11,|| 13, 14, 17]
+				{
+					{
+						lower:  2,
+						upper:  5,
+						count:  2,
+						repeat: 1,
+						ndv:    2,
+					},
+					{
+						lower:  6,
+						upper:  7,
+						count:  2,
+						repeat: 2,
+						ndv:    2,
+					},
+					{
+						lower:  11,
+						upper:  11,
+						count:  8,
+						repeat: 3,
+						ndv:    1,
+					},
+					{
+						lower:  13,
+						upper:  17,
+						count:  11,
+						repeat: 1,
+						ndv:    3,
+					},
+				},
+			},
+			totColSize: []int64{11, 11, 11, 11},
+			popedTopN: []topN4Test{
+				{
+					data:  18,
+					count: 5,
+				},
+				{
+					data:  4,
+					count: 6,
+				},
+			},
+			expHist: []*bucket4Test{
+				{
+					lower:  1,
+					upper:  9,
+					count:  17,
+					repeat: 2,
+					ndv:    10,
+				},
+				{
+					lower:  11,
+					upper:  11,
+					count:  35,
+					repeat: 9,
+					ndv:    1,
+				},
+				{
+					lower:  11,
+					upper:  18,
+					count:  55,
+					repeat: 5,
+					ndv:    8,
+				},
+			},
+			expBucketNumber: 3,
+		},
 	}
 
 	for _, tt := range tests {
@@ -288,7 +453,7 @@ func TestMergePartitionLevelHist(t *testing.T) {
 		sc := ctx.GetSessionVars().StmtCtx
 		poped := make([]TopNMeta, 0, len(tt.popedTopN))
 		for _, top := range tt.popedTopN {
-			b, err := codec.EncodeKey(sc, nil, types.NewIntDatum(top.data))
+			b, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(top.data))
 			require.NoError(t, err)
 			tmp := TopNMeta{
 				Encoded: b,
@@ -375,9 +540,9 @@ func TestIndexQueryBytes(t *testing.T) {
 	sc := ctx.GetSessionVars().StmtCtx
 	idx := &Index{Info: &model.IndexInfo{Columns: []*model.IndexColumn{{Name: model.NewCIStr("a"), Offset: 0}}}}
 	idx.Histogram = *NewHistogram(0, 15, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
-	low, err1 := codec.EncodeKey(sc, nil, types.NewBytesDatum([]byte("0")))
+	low, err1 := codec.EncodeKey(sc.TimeZone(), nil, types.NewBytesDatum([]byte("0")))
 	require.NoError(t, err1)
-	high, err2 := codec.EncodeKey(sc, nil, types.NewBytesDatum([]byte("3")))
+	high, err2 := codec.EncodeKey(sc.TimeZone(), nil, types.NewBytesDatum([]byte("3")))
 	require.NoError(t, err2)
 	idx.Bounds.AppendBytes(0, low)
 	idx.Bounds.AppendBytes(0, high)
@@ -464,19 +629,19 @@ func TestStandardizeForV2AnalyzeIndex(t *testing.T) {
 	// 2. prepare the actual Histogram input
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
-	val0, err := codec.EncodeKey(sc, nil, types.NewIntDatum(111))
+	val0, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(111))
 	require.NoError(t, err)
-	val1, err := codec.EncodeKey(sc, nil, types.NewIntDatum(123))
+	val1, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(123))
 	require.NoError(t, err)
-	val2, err := codec.EncodeKey(sc, nil, types.NewIntDatum(34567))
+	val2, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(34567))
 	require.NoError(t, err)
-	val3, err := codec.EncodeKey(sc, nil, types.NewIntDatum(5))
+	val3, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(5))
 	require.NoError(t, err)
-	val4, err := codec.EncodeKey(sc, nil, types.NewIntDatum(876))
+	val4, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(876))
 	require.NoError(t, err)
-	val5, err := codec.EncodeKey(sc, nil, types.NewIntDatum(990))
+	val5, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(990))
 	require.NoError(t, err)
-	val6, err := codec.EncodeKey(sc, nil, types.NewIntDatum(95))
+	val6, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(95))
 	require.NoError(t, err)
 	val0Bytes := types.NewBytesDatum(val0)
 	val1Bytes := types.NewBytesDatum(val1)
@@ -556,7 +721,7 @@ func TestVerifyHistsBinarySearchRemoveValAndRemoveVals(t *testing.T) {
 	require.Equal(t, data1, data2)
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
-	b, err := codec.EncodeKey(sc, nil, types.NewIntDatum(150))
+	b, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(150))
 	require.NoError(t, err)
 	tmp := TopNMeta{
 		Encoded: b,

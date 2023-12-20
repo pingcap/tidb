@@ -642,7 +642,7 @@ func generateIntDatum(dimension, num int) ([]types.Datum, error) {
 				data[dimension-k-1].SetInt64(int64(j % num))
 				j = j / num
 			}
-			bytes, err := codec.EncodeKey(sc, nil, data...)
+			bytes, err := codec.EncodeKey(sc.TimeZone(), nil, data...)
 			if err != nil {
 				return nil, err
 			}
@@ -1048,7 +1048,7 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 	require.NoError(t, err)
 	idxValues := make([]types.Datum, 0)
 	for _, val := range colValues {
-		b, err := codec.EncodeKey(sc, nil, val)
+		b, err := codec.EncodeKey(sc.TimeZone(), nil, val)
 		require.NoError(t, err)
 		idxValues = append(idxValues, types.NewBytesDatum(b))
 	}

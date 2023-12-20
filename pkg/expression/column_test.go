@@ -47,7 +47,7 @@ func TestColumn(t *testing.T) {
 	require.True(t, corCol.EqualColumn(corCol))
 	require.False(t, corCol.EqualColumn(invalidCorCol))
 	require.True(t, corCol.IsCorrelated())
-	require.False(t, corCol.ConstItem(nil))
+	require.False(t, corCol.ConstItem(false))
 	require.True(t, col.EqualColumn(corCol.Decorrelate(schema)))
 	require.True(t, invalidCorCol.EqualColumn(invalidCorCol.Decorrelate(schema)))
 
@@ -102,12 +102,12 @@ func TestColumnHashCode(t *testing.T) {
 	col1 := &Column{
 		UniqueID: 12,
 	}
-	require.EqualValues(t, []byte{0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc}, col1.HashCode(nil))
+	require.EqualValues(t, []byte{0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc}, col1.HashCode())
 
 	col2 := &Column{
 		UniqueID: 2,
 	}
-	require.EqualValues(t, []byte{0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2}, col2.HashCode(nil))
+	require.EqualValues(t, []byte{0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2}, col2.HashCode())
 }
 
 func TestColumn2Expr(t *testing.T) {

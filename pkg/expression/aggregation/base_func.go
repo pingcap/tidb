@@ -145,7 +145,7 @@ func (a *baseFuncDesc) typeInfer4ApproxPercentile(ctx sessionctx.Context) error 
 		return errors.New("APPROX_PERCENTILE should take 2 arguments")
 	}
 
-	if !a.Args[1].ConstItem(ctx.GetSessionVars().StmtCtx) {
+	if !a.Args[1].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache) {
 		return errors.New("APPROX_PERCENTILE should take a constant expression as percentage argument")
 	}
 	percent, isNull, err := a.Args[1].EvalInt(ctx, chunk.Row{})
@@ -212,6 +212,11 @@ func (a *baseFuncDesc) TypeInfer4AvgSum(avgRetType *types.FieldType) {
 	if avgRetType.GetType() == mysql.TypeNewDecimal {
 		a.RetTp.SetFlen(mathutil.Min(mysql.MaxDecimalWidth, a.RetTp.GetFlen()+22))
 	}
+}
+
+// TypeInfer4FinalCount infers the type of sum agg which is rewritten from final count agg run on MPP mode.
+func (a *baseFuncDesc) TypeInfer4FinalCount(finalCountRetType *types.FieldType) {
+	a.RetTp = finalCountRetType.Clone()
 }
 
 // typeInfer4Avg should returns a "decimal", otherwise it returns a "double".

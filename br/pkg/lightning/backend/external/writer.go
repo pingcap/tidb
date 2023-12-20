@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -51,6 +52,8 @@ var (
 const (
 	// DefaultMemSizeLimit is the default memory size limit for writer.
 	DefaultMemSizeLimit = 256 * size.MB
+	// DefaultBlockSize is the default block size for writer.
+	DefaultBlockSize = 16 * units.MiB
 )
 
 // rangePropertiesCollector collects range properties for each range. The zero
@@ -119,6 +122,7 @@ func NewWriterBuilder() *WriterBuilder {
 // SetMemorySizeLimit sets the memory size limit of the writer. When accumulated
 // data size exceeds this limit, the writer will flush data as a file to external
 // storage.
+// When the writer is OneFileWriter SetMemorySizeLimit sets the preAllocated memory buffer size.
 func (b *WriterBuilder) SetMemorySizeLimit(size uint64) *WriterBuilder {
 	b.memSizeLimit = size
 	return b
@@ -175,6 +179,10 @@ func (b *WriterBuilder) Build(
 	if b.keyDupeEncoding {
 		keyAdapter = common.DupDetectKeyAdapter{}
 	}
+	p := membuf.NewPool(
+		membuf.WithBlockNum(0),
+		membuf.WithBlockSize(b.blockSize),
+	)
 	ret := &Writer{
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
@@ -184,12 +192,11 @@ func (b *WriterBuilder) Build(
 		},
 		memSizeLimit:   b.memSizeLimit,
 		store:          store,
-		kvBuffer:       newPreAllocKVBuf(b.memSizeLimit, b.blockSize),
+		kvBuffer:       p.NewBuffer(membuf.WithBufferMemoryLimit(b.memSizeLimit)),
 		currentSeq:     0,
 		filenamePrefix: filenamePrefix,
 		keyAdapter:     keyAdapter,
 		writerID:       writerID,
-		kvStore:        nil,
 		onClose:        b.onClose,
 		closed:         false,
 		multiFileStats: make([]MultipleFilesStat, 1),
@@ -197,6 +204,34 @@ func (b *WriterBuilder) Build(
 		fileMaxKeys:    make([]tidbkv.Key, 0, multiFileStatNum),
 	}
 	ret.multiFileStats[0].Filenames = make([][2]string, 0, multiFileStatNum)
+
+	return ret
+}
+
+// BuildOneFile builds a new one file Writer. The writer will create only one file under the prefix
+// of "{prefix}/{writerID}".
+func (b *WriterBuilder) BuildOneFile(
+	store storage.ExternalStorage,
+	prefix string,
+	writerID string,
+) *OneFileWriter {
+	filenamePrefix := filepath.Join(prefix, writerID)
+	p := membuf.NewPool(membuf.WithBlockNum(0), membuf.WithBlockSize(b.blockSize))
+
+	ret := &OneFileWriter{
+		rc: &rangePropertiesCollector{
+			props:        make([]*rangeProperty, 0, 1024),
+			currProp:     &rangeProperty{},
+			propSizeDist: b.propSizeDist,
+			propKeysDist: b.propKeysDist,
+		},
+		kvBuffer:       p.NewBuffer(membuf.WithBufferMemoryLimit(b.memSizeLimit)),
+		store:          store,
+		filenamePrefix: filenamePrefix,
+		writerID:       writerID,
+		kvStore:        nil,
+		closed:         false,
+	}
 	return ret
 }
 
@@ -249,12 +284,6 @@ func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
 	return GetMaxOverlapping(points)
 }
 
-type kvLocation struct {
-	blockIdx int32
-	offset   int32
-	length   int32
-}
-
 // Writer is used to write data into external storage.
 type Writer struct {
 	store          storage.ExternalStorage
@@ -263,13 +292,12 @@ type Writer struct {
 	filenamePrefix string
 	keyAdapter     common.KeyAdapter
 
-	kvStore *KeyValueStore
-	rc      *rangePropertiesCollector
+	rc *rangePropertiesCollector
 
 	memSizeLimit uint64
 
-	kvBuffer    *preAllocKVBuf
-	kvLocations []kvLocation
+	kvBuffer    *membuf.Buffer
+	kvLocations []membuf.SliceLocation
 	kvSize      int64
 
 	onClose OnCloseFunc
@@ -299,27 +327,23 @@ func (w *Writer) WriteRow(ctx context.Context, idxKey, idxVal []byte, handle tid
 	}
 	encodedKeyLen := keyAdapter.EncodedLen(idxKey, rowID)
 	length := encodedKeyLen + len(idxVal) + lengthBytes*2
-	blockIdx, dataBuf, off, allocated := w.kvBuffer.Alloc(length)
-	if !allocated {
+	dataBuf, loc := w.kvBuffer.AllocBytesWithSliceLocation(length)
+	if dataBuf == nil {
 		if err := w.flushKVs(ctx, false); err != nil {
 			return err
 		}
-		blockIdx, dataBuf, off, allocated = w.kvBuffer.Alloc(length)
+		dataBuf, loc = w.kvBuffer.AllocBytesWithSliceLocation(length)
 		// we now don't support KV larger than blockSize
-		if !allocated {
+		if dataBuf == nil {
 			return errors.Errorf("failed to allocate kv buffer: %d", length)
 		}
 	}
 	binary.BigEndian.AppendUint64(dataBuf[:0], uint64(encodedKeyLen))
-	keyAdapter.Encode(dataBuf[lengthBytes:lengthBytes:lengthBytes+encodedKeyLen], idxKey, rowID)
-	binary.BigEndian.AppendUint64(dataBuf[lengthBytes+encodedKeyLen:lengthBytes+encodedKeyLen], uint64(len(idxVal)))
-	copy(dataBuf[lengthBytes*2+encodedKeyLen:], idxVal)
+	binary.BigEndian.AppendUint64(dataBuf[:lengthBytes], uint64(len(idxVal)))
+	keyAdapter.Encode(dataBuf[2*lengthBytes:2*lengthBytes:2*lengthBytes+encodedKeyLen], idxKey, rowID)
+	copy(dataBuf[2*lengthBytes+encodedKeyLen:], idxVal)
 
-	w.kvLocations = append(w.kvLocations, kvLocation{
-		blockIdx: blockIdx,
-		offset:   off,
-		length:   int32(length)},
-	)
+	w.kvLocations = append(w.kvLocations, loc)
 	w.kvSize += int64(encodedKeyLen + len(idxVal))
 	w.batchSize += uint64(length)
 	return nil
@@ -338,7 +362,7 @@ func (w *Writer) Close(ctx context.Context) error {
 		return errors.Errorf("writer %s has been closed", w.writerID)
 	}
 	w.closed = true
-	defer w.kvBuffer.destroy()
+	defer w.kvBuffer.Destroy()
 	err := w.flushKVs(ctx, true)
 	if err != nil {
 		return err
@@ -353,7 +377,6 @@ func (w *Writer) Close(ctx context.Context) error {
 		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
 
 	w.kvLocations = nil
-
 	w.onClose(&WriterSummary{
 		WriterID:           w.writerID,
 		Seq:                w.currentSeq,
@@ -375,103 +398,58 @@ func (w *Writer) recordMinMax(newMin, newMax tidbkv.Key, size uint64) {
 	w.totalSize += size
 }
 
+const flushKVsRetryTimes = 3
+
 func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 	if len(w.kvLocations) == 0 {
 		return nil
 	}
 
-	logger := logutil.Logger(ctx)
-	dataFile, statFile, dataWriter, statWriter, err := w.createStorageWriter(ctx)
-	if err != nil {
-		return err
-	}
-
-	var (
-		savedBytes                  uint64
-		statSize                    int
-		sortDuration, writeDuration time.Duration
-		writeStartTime              time.Time
+	logger := logutil.Logger(ctx).With(
+		zap.String("writer-id", w.writerID),
+		zap.Int("sequence-number", w.currentSeq),
 	)
-	savedBytes = w.batchSize
-	startTs := time.Now()
-
-	getSpeed := func(n uint64, dur float64, isBytes bool) string {
-		if dur == 0 {
-			return "-"
-		}
-		if isBytes {
-			return units.BytesSize(float64(n) / dur)
-		}
-		return units.HumanSize(float64(n) / dur)
-	}
-	kvCnt := len(w.kvLocations)
-	defer func() {
-		w.currentSeq++
-		err1, err2 := dataWriter.Close(ctx), statWriter.Close(ctx)
-		if err != nil {
-			return
-		}
-		if err1 != nil {
-			logger.Error("close data writer failed", zap.Error(err1))
-			err = err1
-			return
-		}
-		if err2 != nil {
-			logger.Error("close stat writer failed", zap.Error(err2))
-			err = err2
-			return
-		}
-		writeDuration = time.Since(writeStartTime)
-		logger.Info("flush kv",
-			zap.Uint64("bytes", savedBytes),
-			zap.Int("kv-cnt", kvCnt),
-			zap.Int("stat-size", statSize),
-			zap.Duration("sort-time", sortDuration),
-			zap.Duration("write-time", writeDuration),
-			zap.String("sort-speed(kv/s)", getSpeed(uint64(kvCnt), sortDuration.Seconds(), false)),
-			zap.String("write-speed(bytes/s)", getSpeed(savedBytes, writeDuration.Seconds(), true)),
-			zap.String("writer-id", w.writerID),
-		)
-		metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("write").Observe(writeDuration.Seconds())
-		metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("write").Observe(float64(savedBytes) / 1024.0 / 1024.0 / writeDuration.Seconds())
-		metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort_and_write").Observe(time.Since(startTs).Seconds())
-		metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort_and_write").Observe(float64(savedBytes) / 1024.0 / 1024.0 / time.Since(startTs).Seconds())
-	}()
-
 	sortStart := time.Now()
-	slices.SortFunc(w.kvLocations, func(i, j kvLocation) int {
+	slices.SortFunc(w.kvLocations, func(i, j membuf.SliceLocation) int {
 		return bytes.Compare(w.getKeyByLoc(i), w.getKeyByLoc(j))
 	})
-	sortDuration = time.Since(sortStart)
-
-	writeStartTime = time.Now()
+	sortDuration := time.Since(sortStart)
 	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort").Observe(sortDuration.Seconds())
-	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort").Observe(float64(savedBytes) / 1024.0 / 1024.0 / sortDuration.Seconds())
-	w.kvStore, err = NewKeyValueStore(ctx, dataWriter, w.rc)
-	if err != nil {
-		return err
-	}
+	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort").Observe(float64(w.batchSize) / 1024.0 / 1024.0 / sortDuration.Seconds())
 
-	for _, pair := range w.kvLocations {
-		err = w.kvStore.addEncodedData(w.getEncodedKVData(pair))
-		if err != nil {
-			return err
+	writeStartTime := time.Now()
+	var dataFile, statFile string
+	for i := 0; i < flushKVsRetryTimes; i++ {
+		dataFile, statFile, err = w.flushSortedKVs(ctx)
+		if err == nil {
+			break
 		}
+		logger.Warn("flush sorted kv failed",
+			zap.Error(err),
+			zap.Int("retry-count", i),
+		)
 	}
-
-	w.kvStore.Close()
-	encodedStat := w.rc.encode()
-	statSize = len(encodedStat)
-	_, err = statWriter.Write(ctx, encodedStat)
 	if err != nil {
 		return err
 	}
+	writeDuration := time.Since(writeStartTime)
+	kvCnt := len(w.kvLocations)
+	logger.Info("flush kv",
+		zap.Uint64("bytes", w.batchSize),
+		zap.Int("kv-cnt", kvCnt),
+		zap.Duration("sort-time", sortDuration),
+		zap.Duration("write-time", writeDuration),
+		zap.String("sort-speed(kv/s)", getSpeed(uint64(kvCnt), sortDuration.Seconds(), false)),
+		zap.String("writer-id", w.writerID),
+	)
+	totalDuration := time.Since(sortStart)
+	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("sort_and_write").Observe(totalDuration.Seconds())
+	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("sort_and_write").Observe(float64(w.batchSize) / 1024.0 / 1024.0 / totalDuration.Seconds())
 
 	minKey, maxKey := w.getKeyByLoc(w.kvLocations[0]), w.getKeyByLoc(w.kvLocations[len(w.kvLocations)-1])
 	w.recordMinMax(minKey, maxKey, uint64(w.kvSize))
 
 	// maintain 500-batch statistics
-
 	l := len(w.multiFileStats)
 	w.multiFileStats[l-1].Filenames = append(w.multiFileStats[l-1].Filenames,
 		[2]string{dataFile, statFile},
@@ -489,21 +467,80 @@ func (w *Writer) flushKVs(ctx context.Context, fromClose bool) (err error) {
 
 	w.kvLocations = w.kvLocations[:0]
 	w.kvSize = 0
-	w.kvBuffer.reset()
+	w.kvBuffer.Reset()
 	w.rc.reset()
 	w.batchSize = 0
+	w.currentSeq++
 	return nil
 }
 
-func (w *Writer) getEncodedKVData(pos kvLocation) []byte {
-	block := w.kvBuffer.blocks[pos.blockIdx]
-	return block[pos.offset : pos.offset+pos.length]
+func (w *Writer) flushSortedKVs(ctx context.Context) (string, string, error) {
+	logger := logutil.Logger(ctx).With(
+		zap.String("writer-id", w.writerID),
+		zap.Int("sequence-number", w.currentSeq),
+	)
+	writeStartTime := time.Now()
+	dataFile, statFile, dataWriter, statWriter, err := w.createStorageWriter(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	defer func() {
+		// close the writers when meet error. If no error happens, writers will
+		// be closed outside and assigned to nil.
+		if dataWriter != nil {
+			_ = dataWriter.Close(ctx)
+		}
+		if statWriter != nil {
+			_ = statWriter.Close(ctx)
+		}
+	}()
+	kvStore, err := NewKeyValueStore(ctx, dataWriter, w.rc)
+	if err != nil {
+		return "", "", err
+	}
+
+	for _, pair := range w.kvLocations {
+		err = kvStore.addEncodedData(w.kvBuffer.GetSlice(pair))
+		if err != nil {
+			return "", "", err
+		}
+	}
+
+	kvStore.Close()
+	encodedStat := w.rc.encode()
+	statSize := len(encodedStat)
+	_, err = statWriter.Write(ctx, encodedStat)
+	if err != nil {
+		return "", "", err
+	}
+	err = dataWriter.Close(ctx)
+	dataWriter = nil
+	if err != nil {
+		return "", "", err
+	}
+	err = statWriter.Close(ctx)
+	statWriter = nil
+	if err != nil {
+		return "", "", err
+	}
+
+	writeDuration := time.Since(writeStartTime)
+	logger.Info("flush sorted kv",
+		zap.Uint64("bytes", w.batchSize),
+		zap.Int("stat-size", statSize),
+		zap.Duration("write-time", writeDuration),
+		zap.String("write-speed(bytes/s)", getSpeed(w.batchSize, writeDuration.Seconds(), true)),
+	)
+	metrics.GlobalSortWriteToCloudStorageDuration.WithLabelValues("write").Observe(writeDuration.Seconds())
+	metrics.GlobalSortWriteToCloudStorageRate.WithLabelValues("write").Observe(float64(w.batchSize) / 1024.0 / 1024.0 / writeDuration.Seconds())
+
+	return dataFile, statFile, nil
 }
 
-func (w *Writer) getKeyByLoc(pos kvLocation) []byte {
-	block := w.kvBuffer.blocks[pos.blockIdx]
-	keyLen := binary.BigEndian.Uint64(block[pos.offset : pos.offset+lengthBytes])
-	return block[pos.offset+lengthBytes : uint64(pos.offset)+lengthBytes+keyLen]
+func (w *Writer) getKeyByLoc(loc membuf.SliceLocation) []byte {
+	block := w.kvBuffer.GetSlice(loc)
+	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
+	return block[2*lengthBytes : 2*lengthBytes+keyLen]
 }
 
 func (w *Writer) createStorageWriter(ctx context.Context) (
@@ -512,12 +549,12 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	err error,
 ) {
 	dataPath := filepath.Join(w.filenamePrefix, strconv.Itoa(w.currentSeq))
-	dataWriter, err := w.store.Create(ctx, dataPath, &storage.WriterOption{Concurrency: 20})
+	dataWriter, err := w.store.Create(ctx, dataPath, &storage.WriterOption{Concurrency: 20, PartSize: (int64)(5 * size.MB)})
 	if err != nil {
 		return "", "", nil, nil, err
 	}
 	statPath := filepath.Join(w.filenamePrefix+statSuffix, strconv.Itoa(w.currentSeq))
-	statsWriter, err := w.store.Create(ctx, statPath, &storage.WriterOption{Concurrency: 20})
+	statsWriter, err := w.store.Create(ctx, statPath, &storage.WriterOption{Concurrency: 20, PartSize: (int64)(5 * size.MB)})
 	if err != nil {
 		_ = dataWriter.Close(ctx)
 		return "", "", nil, nil, err

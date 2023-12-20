@@ -38,3 +38,5 @@ bazel-tidb
 .ijwb/
 /oom_record/
 *.log.json
+genkeyword
+test_coverage

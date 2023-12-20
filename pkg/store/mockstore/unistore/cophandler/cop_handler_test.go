@@ -118,7 +118,7 @@ func prepareTestTableData(keyNumber int, tableID int64) (*data, error) {
 	for i := 0; i < keyNumber; i++ {
 		datum := types.MakeDatums(i, "abc", 10.0)
 		rows[int64(i)] = datum
-		rowEncodedData, err := tablecodec.EncodeRow(stmtCtx, datum, colIds, nil, nil, encoder)
+		rowEncodedData, err := tablecodec.EncodeRow(stmtCtx.TimeZone(), datum, colIds, nil, nil, encoder)
 		if err != nil {
 			return nil, err
 		}
@@ -181,10 +181,10 @@ func isPrefixNext(key []byte, expected []byte) bool {
 func newDagContext(t require.TestingT, store *testStore, keyRanges []kv.KeyRange, dagReq *tipb.DAGRequest, startTs uint64) *dagContext {
 	tz, err := timeutil.ConstructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
 	require.NoError(t, err)
-	sc := flagsAndTzToStatementContext(dagReq.Flags, tz)
+	sctx := flagsAndTzToSessionContext(dagReq.Flags, tz)
 	txn := store.db.NewTransaction(false)
 	dagCtx := &dagContext{
-		evalContext: &evalContext{sc: sc},
+		evalContext: &evalContext{sctx: sctx},
 		dbReader:    dbreader.NewDBReader(nil, []byte{255}, txn),
 		lockStore:   store.locks,
 		dagReq:      dagReq,

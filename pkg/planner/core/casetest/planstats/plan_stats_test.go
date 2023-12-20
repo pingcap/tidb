@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
-	utilstats "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -268,10 +268,17 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 	neededColumn := model.StatsLoadItem{TableItemID: model.TableItemID{TableID: tableInfo.ID, ID: tableInfo.Columns[0].ID, IsIndex: false}, FullLoad: true}
 	resultCh := make(chan stmtctx.StatsLoadResult, 1)
 	timeout := time.Duration(1<<63 - 1)
+<<<<<<< HEAD
 	task := &utilstats.NeededItemTask{
 		Item:      neededColumn,
 		ResultCh:  resultCh,
 		ToTimeout: time.Now().Local().Add(timeout),
+=======
+	task := &types.NeededItemTask{
+		TableItemID: neededColumn,
+		ResultCh:    resultCh,
+		ToTimeout:   time.Now().Local().Add(timeout),
+>>>>>>> master
 	}
 	dom.StatsHandle().AppendNeededItem(task, timeout) // make channel queue full
 	sql := "select * from t where c>1"

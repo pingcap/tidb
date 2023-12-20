@@ -3,8 +3,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "util",
     srcs = [
+        "auto_analyze_proc_id_generator.go",
         "ddl_event.go",
-        "interfaces.go",
+        "lease_getter.go",
+        "pool.go",
         "table_info.go",
         "util.go",
     ],
@@ -17,12 +19,9 @@ go_library(
         "//pkg/parser/model",
         "//pkg/parser/terror",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
-        "//pkg/statistics",
+        "//pkg/statistics/handle/logutil",
         "//pkg/table",
-        "//pkg/types",
-        "//pkg/util",
         "//pkg/util/chunk",
         "//pkg/util/intest",
         "//pkg/util/sqlexec",
@@ -32,6 +31,8 @@ go_library(
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_tiancaiamao_gp//:gp",
         "@com_github_tikv_client_go_v2//oracle",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
     ],
 )
 

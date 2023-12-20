@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -43,17 +44,17 @@ type Aggregation interface {
 	GetResult(evalCtx *AggEvaluateContext) types.Datum
 
 	// CreateContext creates a new AggEvaluateContext for the aggregation function.
-	CreateContext(sc *stmtctx.StatementContext) *AggEvaluateContext
+	CreateContext(ctx expression.EvalContext) *AggEvaluateContext
 
 	// ResetContext resets the content of the evaluate context.
-	ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext)
+	ResetContext(ctx expression.EvalContext, evalCtx *AggEvaluateContext)
 }
 
 // NewDistAggFunc creates new Aggregate function for mock tikv.
-func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *stmtctx.StatementContext) (Aggregation, error) {
+func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, ctx sessionctx.Context) (Aggregation, error) {
 	args := make([]expression.Expression, 0, len(expr.Children))
 	for _, child := range expr.Children {
-		arg, err := expression.PBToExpr(child, fieldTps, sc)
+		arg, err := expression.PBToExpr(ctx, child, fieldTps)
 		if err != nil {
 			return nil, err
 		}
@@ -86,6 +87,7 @@ func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, sc *stmtctx.St
 
 // AggEvaluateContext is used to store intermediate result when calculating aggregate functions.
 type AggEvaluateContext struct {
+	Ctx             expression.EvalContext
 	DistinctChecker *distinctChecker
 	Count           int64
 	Value           types.Datum
@@ -125,24 +127,25 @@ func newAggFunc(funcName string, args []expression.Expression, hasDistinct bool)
 }
 
 // CreateContext implements Aggregation interface.
-func (af *aggFunction) CreateContext(sc *stmtctx.StatementContext) *AggEvaluateContext {
-	evalCtx := &AggEvaluateContext{}
+func (af *aggFunction) CreateContext(ctx expression.EvalContext) *AggEvaluateContext {
+	evalCtx := &AggEvaluateContext{Ctx: ctx}
 	if af.HasDistinct {
-		evalCtx.DistinctChecker = createDistinctChecker(sc)
+		evalCtx.DistinctChecker = createDistinctChecker(ctx.GetSessionVars().StmtCtx)
 	}
 	return evalCtx
 }
 
-func (af *aggFunction) ResetContext(sc *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
+func (af *aggFunction) ResetContext(ctx expression.EvalContext, evalCtx *AggEvaluateContext) {
 	if af.HasDistinct {
-		evalCtx.DistinctChecker = createDistinctChecker(sc)
+		evalCtx.DistinctChecker = createDistinctChecker(ctx.GetSessionVars().StmtCtx)
 	}
+	evalCtx.Ctx = ctx
 	evalCtx.Value.SetNull()
 }
 
 func (af *aggFunction) updateSum(ctx types.Context, evalCtx *AggEvaluateContext, row chunk.Row) error {
 	a := af.Args[0]
-	value, err := a.Eval(row)
+	value, err := a.Eval(evalCtx.Ctx, row)
 	if err != nil {
 		return err
 	}

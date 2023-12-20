@@ -50,6 +50,7 @@ go_library(
         "constant.go",
         "constant_fold.go",
         "constant_propagation.go",
+        "context.go",
         "distsql_builtin.go",
         "errors.go",
         "evaluator.go",
@@ -70,6 +71,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
+        "//pkg/errctx",
         "//pkg/errno",
         "//pkg/extension",
         "//pkg/kv",
@@ -101,7 +103,6 @@ go_library(
         "//pkg/util/intset",
         "//pkg/util/logutil",
         "//pkg/util/mathutil",
-        "//pkg/util/mock",
         "//pkg/util/parser",
         "//pkg/util/password-validation",
         "//pkg/util/plancodec",

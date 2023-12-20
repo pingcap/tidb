@@ -21,10 +21,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/auth"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -559,6 +562,7 @@ func TestUpdateBindInfo(t *testing.T) {
 
 	MustExec(t, se, "alter table mysql.bind_info drop column if exists plan_digest")
 	MustExec(t, se, "alter table mysql.bind_info drop column if exists sql_digest")
+	MustExec(t, se, "alter table mysql.bind_info drop column if exists type")
 	for _, bindCase := range bindCases {
 		sql := fmt.Sprintf("insert into mysql.bind_info values('%s', '%s', '%s', 'enabled', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')",
 			bindCase.originText,
@@ -599,6 +603,7 @@ func TestUpdateDuplicateBindInfo(t *testing.T) {
 	se := CreateSessionAndSetID(t, store)
 	MustExec(t, se, "alter table mysql.bind_info drop column if exists plan_digest")
 	MustExec(t, se, "alter table mysql.bind_info drop column if exists sql_digest")
+	MustExec(t, se, "alter table mysql.bind_info drop column if exists type")
 
 	MustExec(t, se, `insert into mysql.bind_info values('select * from t', 'select /*+ use_index(t, idx_a)*/ * from t', 'test', 'enabled', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 	// The latest one.
@@ -851,71 +856,77 @@ func TestIndexMergeUpgradeFrom300To540(t *testing.T) {
 	require.Equal(t, int64(0), row.GetInt64(0))
 }
 
-func TestIndexMergeUpgradeFrom400To540(t *testing.T) {
-	for i := 0; i < 2; i++ {
-		func() {
-			ctx := context.Background()
-			store, dom := CreateStoreAndBootstrap(t)
-			defer func() { require.NoError(t, store.Close()) }()
+// We set tidb_enable_index_merge as on.
+// And after upgrade to 5.x, tidb_enable_index_merge should remains to be on.
+func TestIndexMergeUpgradeFrom400To540Enable(t *testing.T) {
+	testIndexMergeUpgradeFrom400To540(t, true)
+}
 
-			// upgrade from 4.0.0 to 5.4+.
-			ver400 := 46
-			seV4 := CreateSessionAndSetID(t, store)
-			txn, err := store.Begin()
-			require.NoError(t, err)
-			m := meta.NewMeta(txn)
-			err = m.FinishBootstrap(int64(ver400))
-			require.NoError(t, err)
-			err = txn.Commit(context.Background())
-			require.NoError(t, err)
-			MustExec(t, seV4, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver400))
-			MustExec(t, seV4, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", variable.Off, variable.TiDBEnableIndexMerge))
-			MustExec(t, seV4, "commit")
-			unsetStoreBootstrapped(store.UUID())
-			ver, err := getBootstrapVersion(seV4)
-			require.NoError(t, err)
-			require.Equal(t, int64(ver400), ver)
+func TestIndexMergeUpgradeFrom400To540Disable(t *testing.T) {
+	testIndexMergeUpgradeFrom400To540(t, false)
+}
 
-			// We are now in 4.0.0, tidb_enable_index_merge is off.
-			res := MustExecToRecodeSet(t, seV4, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
-			chk := res.NewChunk(nil)
-			err = res.Next(ctx, chk)
-			require.NoError(t, err)
-			require.Equal(t, 1, chk.NumRows())
-			row := chk.GetRow(0)
-			require.Equal(t, 2, row.Len())
-			require.Equal(t, variable.Off, row.GetString(1))
+func testIndexMergeUpgradeFrom400To540(t *testing.T, enable bool) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
 
-			if i == 0 {
-				// For the first time, We set tidb_enable_index_merge as on.
-				// And after upgrade to 5.x, tidb_enable_index_merge should remains to be on.
-				// For the second it should be off.
-				MustExec(t, seV4, "set global tidb_enable_index_merge = on")
-			}
-			dom.Close()
-			// Upgrade to 5.x.
-			domCurVer, err := BootstrapSession(store)
-			require.NoError(t, err)
-			defer domCurVer.Close()
-			seCurVer := CreateSessionAndSetID(t, store)
-			ver, err = getBootstrapVersion(seCurVer)
-			require.NoError(t, err)
-			require.Equal(t, currentBootstrapVersion, ver)
+	// upgrade from 4.0.0 to 5.4+.
+	ver400 := 46
+	seV4 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver400))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	MustExec(t, seV4, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver400))
+	MustExec(t, seV4, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", variable.Off, variable.TiDBEnableIndexMerge))
+	MustExec(t, seV4, "commit")
+	unsetStoreBootstrapped(store.UUID())
+	ver, err := getBootstrapVersion(seV4)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver400), ver)
 
-			// We are now in 5.x, tidb_enable_index_merge should be on because we enable it in 4.0.0.
-			res = MustExecToRecodeSet(t, seCurVer, "select @@tidb_enable_index_merge")
-			chk = res.NewChunk(nil)
-			err = res.Next(ctx, chk)
-			require.NoError(t, err)
-			require.Equal(t, 1, chk.NumRows())
-			row = chk.GetRow(0)
-			require.Equal(t, 1, row.Len())
-			if i == 0 {
-				require.Equal(t, int64(1), row.GetInt64(0))
-			} else {
-				require.Equal(t, int64(0), row.GetInt64(0))
-			}
-		}()
+	// We are now in 4.0.0, tidb_enable_index_merge is off.
+	res := MustExecToRecodeSet(t, seV4, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", variable.TiDBEnableIndexMerge))
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, 2, row.Len())
+	require.Equal(t, variable.Off, row.GetString(1))
+
+	if enable {
+		// For the first time, We set tidb_enable_index_merge as on.
+		// And after upgrade to 5.x, tidb_enable_index_merge should remains to be on.
+		// For the second it should be off.
+		MustExec(t, seV4, "set global tidb_enable_index_merge = on")
+	}
+	dom.Close()
+	// Upgrade to 5.x.
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err = getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// We are now in 5.x, tidb_enable_index_merge should be on because we enable it in 4.0.0.
+	res = MustExecToRecodeSet(t, seCurVer, "select @@tidb_enable_index_merge")
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row = chk.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	if enable {
+		require.Equal(t, int64(1), row.GetInt64(0))
+	} else {
+		require.Equal(t, int64(0), row.GetInt64(0))
 	}
 }
 
@@ -927,6 +938,7 @@ func TestUpgradeToVer85(t *testing.T) {
 	se := CreateSessionAndSetID(t, store)
 	MustExec(t, se, "alter table mysql.bind_info drop column if exists plan_digest")
 	MustExec(t, se, "alter table mysql.bind_info drop column if exists sql_digest")
+	MustExec(t, se, "alter table mysql.bind_info drop column if exists type")
 
 	MustExec(t, se, `insert into mysql.bind_info values('select * from t', 'select /*+ use_index(t, idx_a)*/ * from t', 'test', 'using', '2021-01-04 14:50:58.257', '2021-01-04 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
 	MustExec(t, se, `insert into mysql.bind_info values('select * from t1', 'select /*+ use_index(t1, idx_a)*/ * from t1', 'test', 'enabled', '2021-01-05 14:50:58.257', '2021-01-05 14:50:58.257', 'utf8', 'utf8_general_ci', 'manual')`)
@@ -1575,10 +1587,18 @@ func TestTiDBUpgradeToVer136(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(ver135), ver)
 
+	MustExec(t, seV135, "ALTER TABLE mysql.tidb_background_subtask DROP INDEX idx_task_key;")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/reorgMetaRecordFastReorgDisabled", `return`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/reorgMetaRecordFastReorgDisabled"))
+	})
+	MustExec(t, seV135, "set global tidb_ddl_enable_fast_reorg = 1")
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	ver, err = getBootstrapVersion(seV135)
 	require.NoError(t, err)
+	require.True(t, ddl.LastReorgMetaFastReorgDisabled)
+
 	require.Less(t, int64(ver135), ver)
 	dom.Close()
 }
@@ -1590,7 +1610,7 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 	}()
 
 	ver139 := version139
-	resetTo139 := func(s Session) {
+	resetTo139 := func(s sessiontypes.Session) {
 		txn, err := store.Begin()
 		require.NoError(t, err)
 		m := meta.NewMeta(txn)
@@ -2000,11 +2020,11 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 	// create some bindings at version174
 	MustExec(t, seV174, "use test")
 	MustExec(t, seV174, "create table t (a int, b int, c int, key(c))")
-	MustExec(t, seV174, "insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:35.319', 'utf8', 'utf8_general_ci', 'manual', '', '')")
-	MustExec(t, seV174, "insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:36.319', 'utf8', 'utf8_general_ci', 'manual', '', '')")
-	MustExec(t, seV174, "insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? ) and `b` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:37.319', '2023-09-13 14:41:38.319', 'utf8', 'utf8_general_ci', 'manual', '', '')")
+	MustExec(t, seV174, "insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:35.319', 'utf8', 'utf8_general_ci', 'manual', '', '', '')")
+	MustExec(t, seV174, "insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:36.319', 'utf8', 'utf8_general_ci', 'manual', '', '', '')")
+	MustExec(t, seV174, "insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? ) and `b` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:37.319', '2023-09-13 14:41:38.319', 'utf8', 'utf8_general_ci', 'manual', '', '', '')")
 
-	showBindings := func(s Session) (records []string) {
+	showBindings := func(s sessiontypes.Session) (records []string) {
 		MustExec(t, s, "admin reload bindings")
 		res := MustExecToRecodeSet(t, s, "show global bindings")
 		chk := res.NewChunk(nil)
@@ -2043,7 +2063,7 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 	require.Equal(t, []string{"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3):select * from `test` . `t` where `a` in ( ... ) and `b` in ( ... )",
 		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1):select * from `test` . `t` where `a` in ( ... )"}, bindings)
 
-	planFromBinding := func(s Session, q string) {
+	planFromBinding := func(s sessiontypes.Session, q string) {
 		MustExec(t, s, q)
 		res := MustExecToRecodeSet(t, s, "select @@last_plan_from_binding")
 		chk := res.NewChunk(nil)
@@ -2224,4 +2244,63 @@ func TestTiDBUpgradeToVer179(t *testing.T) {
 	require.NoError(t, r.Close())
 
 	dom.Close()
+}
+
+func TestTiDBUpgradeToVer181(t *testing.T) {
+	store, _ := CreateStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	// init to v180
+	ver180 := version180
+	seV180 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMeta(txn)
+	err = m.FinishBootstrap(int64(ver180))
+	require.NoError(t, err)
+	MustExec(t, seV180, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver180))
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	unsetStoreBootstrapped(store.UUID())
+
+	// create some bindings at v180
+	MustExec(t, seV180, "use test")
+	MustExec(t, seV180, "create table t (a int, b int, key(a), key(b))")
+	MustExec(t, seV180, `create global binding using select /*+ use_index(t, a) */ * from t where a=1`)
+	MustExec(t, seV180, `create global binding using select /*+ use_index(t, b) */ * from t where b=1`)
+
+	// upgrade to ver181
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := getBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// the default value of `tidb_opt_enable_universal_binding` should be `off`.
+	res := MustExecToRecodeSet(t, seCurVer, `show variables like 'tidb_opt_enable_universal_binding'`)
+	chk := res.NewChunk(nil)
+	require.NoError(t, res.Next(context.Background(), chk))
+	require.Equal(t, chk.NumRows(), 1)
+	require.Equal(t, chk.GetRow(0).GetString(1), "OFF")
+	require.NoError(t, res.Close())
+
+	res = MustExecToRecodeSet(t, seCurVer, `show global variables like 'tidb_opt_enable_universal_binding'`)
+	chk = res.NewChunk(nil)
+	require.NoError(t, res.Next(context.Background(), chk))
+	require.Equal(t, chk.NumRows(), 1)
+	require.Equal(t, chk.GetRow(0).GetString(1), "OFF")
+	require.NoError(t, res.Close())
+
+	// a new column `type` in `mysql.bind_info` and all previous bindings values are empty ''.
+	res = MustExecToRecodeSet(t, seCurVer, `select type from mysql.bind_info where source!='builtin'`)
+	chk = res.NewChunk(nil)
+	require.NoError(t, res.Next(context.Background(), chk))
+	require.Equal(t, chk.NumRows(), 2)               // 2 bindings
+	require.Equal(t, chk.GetRow(0).GetString(0), "") // it means this binding is a normal binding
+	require.Equal(t, chk.GetRow(1).GetString(0), "")
+	require.NoError(t, res.Close())
 }

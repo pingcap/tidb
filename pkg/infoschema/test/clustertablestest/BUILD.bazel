@@ -9,7 +9,7 @@ go_test(
         "tables_test.go",
     ],
     flaky = True,
-    shard_count = 45,
+    shard_count = 46,
     deps = [
         "//pkg/config",
         "//pkg/domain",
@@ -50,6 +50,7 @@ go_test(
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_pd_client//http",
         "@org_golang_google_grpc//:grpc",

@@ -48,7 +48,7 @@ func (ds *DataSource) generateIndexMergePath() error {
 	defer func() {
 		if len(ds.indexMergeHints) > 0 && warningMsg != "" {
 			ds.indexMergeHints = nil
-			stmtCtx.AppendWarning(errors.Errorf(warningMsg))
+			stmtCtx.AppendWarning(errors.NewNoStackError(warningMsg))
 			logutil.BgLogger().Debug(warningMsg)
 		}
 	}()
@@ -124,7 +124,7 @@ func (ds *DataSource) generateNormalIndexPartialPaths4DNF(dnfItems []expression.
 		cnfItems := expression.SplitCNFItems(item)
 		pushedDownCNFItems := make([]expression.Expression, 0, len(cnfItems))
 		for _, cnfItem := range cnfItems {
-			if expression.CanExprsPushDown(ds.SCtx().GetSessionVars().StmtCtx,
+			if expression.CanExprsPushDown(ds.SCtx(),
 				[]expression.Expression{cnfItem},
 				ds.SCtx().GetClient(),
 				kv.TiKV,
@@ -166,7 +166,7 @@ func (ds *DataSource) generateNormalIndexPartialPaths4DNF(dnfItems []expression.
 			partialPath.TableFilters = nil
 		}
 		// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
-		if len(partialPath.IndexFilters) != 0 && !expression.CanExprsPushDown(ds.SCtx().GetSessionVars().StmtCtx, partialPath.IndexFilters, ds.SCtx().GetClient(), kv.TiKV) {
+		if len(partialPath.IndexFilters) != 0 && !expression.CanExprsPushDown(ds.SCtx(), partialPath.IndexFilters, ds.SCtx().GetClient(), kv.TiKV) {
 			needSelection = true
 			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
 			partialPath.IndexFilters = nil
@@ -199,7 +199,7 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 
 			pushedDownCNFItems := make([]expression.Expression, 0, len(cnfItems))
 			for _, cnfItem := range cnfItems {
-				if expression.CanExprsPushDown(ds.SCtx().GetSessionVars().StmtCtx,
+				if expression.CanExprsPushDown(ds.SCtx(),
 					[]expression.Expression{cnfItem},
 					ds.SCtx().GetClient(),
 					kv.TiKV,
@@ -418,7 +418,7 @@ func (ds *DataSource) buildIndexMergeOrPath(
 	// Global index is not compatible with IndexMergeReaderExecutor.
 	for i := range partialPaths {
 		if partialPaths[i].Index != nil && partialPaths[i].Index.Global {
-			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.New("global index is not compatible with index merge, so ignore it"))
+			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("global index is not compatible with index merge, so ignore it"))
 			return nil
 		}
 	}
@@ -429,12 +429,12 @@ func (ds *DataSource) buildIndexMergeOrPath(
 			shouldKeepCurrentFilter = true
 		}
 		// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
-		if len(path.IndexFilters) != 0 && !expression.CanExprsPushDown(ds.SCtx().GetSessionVars().StmtCtx, path.IndexFilters, ds.SCtx().GetClient(), kv.TiKV) {
+		if len(path.IndexFilters) != 0 && !expression.CanExprsPushDown(ds.SCtx(), path.IndexFilters, ds.SCtx().GetClient(), kv.TiKV) {
 			shouldKeepCurrentFilter = true
 			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
 			path.IndexFilters = nil
 		}
-		if len(path.TableFilters) != 0 && !expression.CanExprsPushDown(ds.SCtx().GetSessionVars().StmtCtx, path.TableFilters, ds.SCtx().GetClient(), kv.TiKV) {
+		if len(path.TableFilters) != 0 && !expression.CanExprsPushDown(ds.SCtx(), path.TableFilters, ds.SCtx().GetClient(), kv.TiKV) {
 			shouldKeepCurrentFilter = true
 			path.TableFilters = nil
 		}
@@ -531,7 +531,7 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int, usedAccessMa
 			// since idx2's access cond has already been covered by idx1.
 			containRelation := true
 			for _, access := range originalPath.AccessConds {
-				if _, ok := usedAccessMap[string(access.HashCode(ds.SCtx().GetSessionVars().StmtCtx))]; !ok {
+				if _, ok := usedAccessMap[string(access.HashCode())]; !ok {
 					// some condition is not covered in previous mv index partial path, use it!
 					containRelation = false
 					break
@@ -542,8 +542,8 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int, usedAccessMa
 			}
 			// for this picked normal index, mark its access conds.
 			for _, access := range originalPath.AccessConds {
-				if _, ok := usedAccessMap[string(access.HashCode(ds.SCtx().GetSessionVars().StmtCtx))]; !ok {
-					usedAccessMap[string(access.HashCode(ds.SCtx().GetSessionVars().StmtCtx))] = access
+				if _, ok := usedAccessMap[string(access.HashCode())]; !ok {
+					usedAccessMap[string(access.HashCode())] = access
 				}
 			}
 		}
@@ -570,7 +570,7 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int, usedAccessMa
 		coveredConds = append(coveredConds, path.AccessConds...)
 		for i, cond := range path.IndexFilters {
 			// IndexFilters can be covered by partial path if it can be pushed down to TiKV.
-			if !expression.CanExprsPushDown(ds.SCtx().GetSessionVars().StmtCtx, []expression.Expression{cond}, ds.SCtx().GetClient(), kv.TiKV) {
+			if !expression.CanExprsPushDown(ds.SCtx(), []expression.Expression{cond}, ds.SCtx().GetClient(), kv.TiKV) {
 				path.IndexFilters = append(path.IndexFilters[:i], path.IndexFilters[i+1:]...)
 				notCoveredConds = append(notCoveredConds, cond)
 			} else {
@@ -586,11 +586,11 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int, usedAccessMa
 		// avoid wrong deduplication.
 		notCoveredHashCodeSet := make(map[string]struct{})
 		for _, cond := range notCoveredConds {
-			hashCode := string(cond.HashCode(ds.SCtx().GetSessionVars().StmtCtx))
+			hashCode := string(cond.HashCode())
 			notCoveredHashCodeSet[hashCode] = struct{}{}
 		}
 		for _, cond := range coveredConds {
-			hashCode := string(cond.HashCode(ds.SCtx().GetSessionVars().StmtCtx))
+			hashCode := string(cond.HashCode())
 			if _, ok := notCoveredHashCodeSet[hashCode]; !ok {
 				hashCodeSet[hashCode] = struct{}{}
 			}
@@ -603,7 +603,7 @@ func (ds *DataSource) generateIndexMergeAndPaths(normalPathCnt int, usedAccessMa
 	// Remove covered filters from finalFilters and deduplicate finalFilters.
 	dedupedFinalFilters := make([]expression.Expression, 0, len(finalFilters))
 	for _, cond := range finalFilters {
-		hashCode := string(cond.HashCode(ds.SCtx().GetSessionVars().StmtCtx))
+		hashCode := string(cond.HashCode())
 		if _, ok := hashCodeSet[hashCode]; !ok {
 			dedupedFinalFilters = append(dedupedFinalFilters, cond)
 			hashCodeSet[hashCode] = struct{}{}
@@ -778,7 +778,7 @@ func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, in
 			//		And(path1, path2, And(path3, path4)) => And(path1, path2, path3, path4, merge(table-action like filter)
 			if len(partialPaths) == 1 || isIntersection {
 				for _, accessF := range accessFilters {
-					usedAccessCondsMap[string(accessF.HashCode(ds.SCtx().GetSessionVars().StmtCtx))] = accessF
+					usedAccessCondsMap[string(accessF.HashCode())] = accessF
 				}
 				mvAndPartialPath = append(mvAndPartialPath, partialPaths...)
 			}
@@ -811,7 +811,7 @@ func (ds *DataSource) generateIndexMerge4NormalIndex(regularPathCount int, index
 			// PushDownExprs() will append extra warnings, which is annoying. So we reset warnings here.
 			warnings := stmtCtx.GetWarnings()
 			extraWarnings := stmtCtx.GetExtraWarnings()
-			_, remaining := expression.PushDownExprs(stmtCtx, indexMergeConds, ds.SCtx().GetClient(), kv.UnSpecified)
+			_, remaining := expression.PushDownExprs(ds.SCtx(), indexMergeConds, ds.SCtx().GetClient(), kv.UnSpecified)
 			stmtCtx.SetWarnings(warnings)
 			stmtCtx.SetExtraWarnings(extraWarnings)
 			if len(remaining) > 0 {
@@ -1065,7 +1065,7 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 	// collect the remained CNF conditions
 	var remainedCNFs []expression.Expression
 	for _, CNFItem := range indexMergeConds {
-		if _, ok := usedAccessMap[string(CNFItem.HashCode(ds.SCtx().GetSessionVars().StmtCtx))]; !ok {
+		if _, ok := usedAccessMap[string(CNFItem.HashCode())]; !ok {
 			remainedCNFs = append(remainedCNFs, CNFItem)
 		}
 	}

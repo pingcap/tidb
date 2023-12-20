@@ -174,7 +174,7 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 	}
 	// Wait all workers to finish before Close() is called.
 	// Otherwise we may got data race.
-	err := e.outerExec.Close()
+	err := exec.Close(e.outerExec)
 
 	if e.RuntimeStats() != nil {
 		runtimeStats := newJoinRuntimeStats()
@@ -282,7 +282,9 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	for _, col := range e.corCols[id] {
 		*col.Data = e.outerRow[id].GetDatum(col.Index, col.RetType)
 		if e.useCache {
-			if key, err = codec.EncodeKey(e.Ctx().GetSessionVars().StmtCtx, key, *col.Data); err != nil {
+			key, err = codec.EncodeKey(e.Ctx().GetSessionVars().StmtCtx.TimeZone(), key, *col.Data)
+			err = e.Ctx().GetSessionVars().StmtCtx.HandleError(err)
+			if err != nil {
 				return err
 			}
 		}
@@ -302,7 +304,7 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	}
 
 	err = exec.Open(ctx, e.innerExecs[id])
-	defer terror.Call(e.innerExecs[id].Close)
+	defer func() { terror.Log(exec.Close(e.innerExecs[id])) }()
 	if err != nil {
 		return err
 	}

@@ -56,7 +56,7 @@ func (s *basePropConstSolver) insertCol(col *Column) {
 // tryToUpdateEQList tries to update the eqList. When the eqList has store this column with a different constant, like
 // a = 1 and a = 2, we set the second return value to false.
 func (s *basePropConstSolver) tryToUpdateEQList(col *Column, con *Constant) (bool, bool) {
-	if con.ConstItem(s.ctx.GetSessionVars().StmtCtx) && con.Value.IsNull() {
+	if con.ConstItem(s.ctx.GetSessionVars().StmtCtx.UseCache) && con.Value.IsNull() {
 		return false, true
 	}
 	id := s.getColID(col)
@@ -212,7 +212,7 @@ func (s *propConstSolver) propagateConstantEQ() {
 		}
 		for i, cond := range s.conditions {
 			if !visited[i] {
-				s.conditions[i] = ColumnSubstitute(cond, NewSchema(cols...), cons)
+				s.conditions[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
 			}
 		}
 	}
@@ -353,7 +353,7 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
 	s.conditions = propagateConstantDNF(s.ctx, s.conditions)
-	s.conditions = RemoveDupExprs(s.ctx, s.conditions)
+	s.conditions = RemoveDupExprs(s.conditions)
 	return s.conditions
 }
 
@@ -470,7 +470,7 @@ func (s *propOuterJoinConstSolver) propagateConstantEQ() {
 		}
 		for i, cond := range s.joinConds {
 			if !visited[i+lenFilters] {
-				s.joinConds[i] = ColumnSubstitute(cond, NewSchema(cols...), cons)
+				s.joinConds[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
 			}
 		}
 	}

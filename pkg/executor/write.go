@@ -268,7 +268,7 @@ func addUnchangedKeysForLockByRow(
 				return count, err
 			}
 			unchangedUniqueKey, _, err := tablecodec.GenIndexKey(
-				stmtCtx,
+				stmtCtx.TimeZone(),
 				idx.TableMeta(),
 				meta,
 				physicalID,
@@ -276,6 +276,7 @@ func addUnchangedKeysForLockByRow(
 				h,
 				nil,
 			)
+			err = stmtCtx.HandleError(err)
 			if err != nil {
 				return count, err
 			}

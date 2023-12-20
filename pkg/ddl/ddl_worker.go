@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -537,7 +538,11 @@ func needUpdateRawArgs(job *model.Job, meetErr bool) bool {
 	return true
 }
 
-func jobNeedGC(job *model.Job) bool {
+// JobNeedGC is called to determine whether delete-ranges need to be generated for the provided job.
+//
+// NOTICE: BR also uses jobNeedGC to determine whether delete-ranges need to be generated for the provided job.
+// Therefore, please make sure any modification is compatible with BR.
+func JobNeedGC(job *model.Job) bool {
 	if !job.IsCancelled() {
 		if job.Warning != nil && dbterror.ErrCantDropFieldOrKey.Equal(job.Warning) {
 			// For the field/key not exists warnings, there is no need to
@@ -557,7 +562,7 @@ func jobNeedGC(job *model.Job) bool {
 		case model.ActionMultiSchemaChange:
 			for i, sub := range job.MultiSchemaInfo.SubJobs {
 				proxyJob := sub.ToProxyJob(job, i)
-				needGC := jobNeedGC(&proxyJob)
+				needGC := JobNeedGC(&proxyJob)
 				if needGC {
 					return true
 				}
@@ -574,9 +579,10 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	startTime := time.Now()
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+		markJobFinish(job)
 	}()
 
-	if jobNeedGC(job) {
+	if JobNeedGC(job) {
 		err = w.delRangeManager.addDelRangeJob(w.ctx, job)
 		if err != nil {
 			return errors.Trace(err)
@@ -617,6 +623,15 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	w.removeJobCtx(job)
 	err = AddHistoryDDLJob(w.sess, t, job, updateRawArgs)
 	return errors.Trace(err)
+}
+
+func markJobFinish(job *model.Job) {
+	if (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
+		job.ReorgMeta != nil &&
+		job.ReorgMeta.IsFastReorg &&
+		ingest.LitBackCtxMgr != nil {
+		ingest.LitBackCtxMgr.MarkJobFinish()
+	}
 }
 
 func (w *worker) writeDDLSeqNum(job *model.Job) {

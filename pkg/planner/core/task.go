@@ -1111,7 +1111,7 @@ func (p *PhysicalTopN) canExpressionConvertedToPB(storeTp kv.StoreType) bool {
 	for _, item := range p.ByItems {
 		exprs = append(exprs, item.Expr)
 	}
-	return expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, exprs, p.SCtx().GetClient(), storeTp)
+	return expression.CanExprsPushDown(p.SCtx(), exprs, p.SCtx().GetClient(), storeTp)
 }
 
 // containVirtualColumn checks whether TopN.ByItems contains virtual generated columns.
@@ -1212,12 +1212,12 @@ func (p *PhysicalExpand) attach2Task(tasks ...task) task {
 func (p *PhysicalProjection) attach2Task(tasks ...task) task {
 	t := tasks[0].copy()
 	if cop, ok := t.(*copTask); ok {
-		if (len(cop.rootTaskConds) == 0 && len(cop.idxMergePartPlans) == 0) && expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.Exprs, p.SCtx().GetClient(), cop.getStoreType()) {
+		if (len(cop.rootTaskConds) == 0 && len(cop.idxMergePartPlans) == 0) && expression.CanExprsPushDown(p.SCtx(), p.Exprs, p.SCtx().GetClient(), cop.getStoreType()) {
 			copTask := attachPlan2Task(p, cop)
 			return copTask
 		}
 	} else if mpp, ok := t.(*mppTask); ok {
-		if expression.CanExprsPushDown(p.SCtx().GetSessionVars().StmtCtx, p.Exprs, p.SCtx().GetClient(), kv.TiFlash) {
+		if expression.CanExprsPushDown(p.SCtx(), p.Exprs, p.SCtx().GetClient(), kv.TiFlash) {
 			p.SetChildren(mpp.p)
 			mpp.p = p
 			return mpp
@@ -1274,8 +1274,7 @@ func (p *PhysicalUnionAll) attach2Task(tasks ...task) task {
 
 func (sel *PhysicalSelection) attach2Task(tasks ...task) task {
 	if mppTask, _ := tasks[0].(*mppTask); mppTask != nil { // always push to mpp task.
-		sc := sel.SCtx().GetSessionVars().StmtCtx
-		if expression.CanExprsPushDown(sc, sel.Conditions, sel.SCtx().GetClient(), kv.TiFlash) {
+		if expression.CanExprsPushDown(sel.SCtx(), sel.Conditions, sel.SCtx().GetClient(), kv.TiFlash) {
 			return attachPlan2Task(sel, mppTask.copy())
 		}
 	}
@@ -1302,7 +1301,7 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 			ret = false
 			break
 		}
-		if !expression.CanExprsPushDownWithExtraInfo(sc, aggFunc.Args, client, storeType, aggFunc.Name == ast.AggFuncSum) {
+		if !expression.CanExprsPushDownWithExtraInfo(sctx, aggFunc.Args, client, storeType, aggFunc.Name == ast.AggFuncSum) {
 			reason = "arguments of AggFunc `" + aggFunc.Name + "` contains unsupported exprs"
 			ret = false
 			break
@@ -1313,7 +1312,7 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 			for _, item := range aggFunc.OrderByItems {
 				exprs = append(exprs, item.Expr)
 			}
-			if !expression.CanExprsPushDownWithExtraInfo(sc, exprs, client, storeType, false) {
+			if !expression.CanExprsPushDownWithExtraInfo(sctx, exprs, client, storeType, false) {
 				reason = "arguments of AggFunc `" + aggFunc.Name + "` contains unsupported exprs in order-by clause"
 				ret = false
 				break
@@ -1330,7 +1329,7 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 		reason = "groupByItems contain virtual columns, which is not supported now"
 		ret = false
 	}
-	if ret && !expression.CanExprsPushDown(sc, groupByItems, client, storeType) {
+	if ret && !expression.CanExprsPushDown(sctx, groupByItems, client, storeType) {
 		reason = "groupByItems contain unsupported exprs"
 		ret = false
 	}
@@ -1340,7 +1339,7 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 		if storeType == kv.UnSpecified {
 			storageName = "storage layer"
 		}
-		warnErr := errors.New("Aggregation can not be pushed to " + storageName + " because " + reason)
+		warnErr := errors.NewNoStackError("Aggregation can not be pushed to " + storageName + " because " + reason)
 		if sc.InExplainStmt {
 			sc.AppendWarning(warnErr)
 		} else {
@@ -1791,7 +1790,7 @@ func (p *basePhysicalAgg) canUse3Stage4MultiDistinctAgg() (can bool, gss express
 	}
 	compressed := groupingSets.Merge()
 	if len(compressed) != len(groupingSets) {
-		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Some grouping sets should be merged"))
+		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Some grouping sets should be merged"))
 		// todo arenatlx: some grouping set should be merged which is not supported by now temporarily.
 		return false, nil
 	}
@@ -1807,7 +1806,7 @@ func (p *basePhysicalAgg) canUse3Stage4MultiDistinctAgg() (can bool, gss express
 				groupingSetOffset := groupingSets.TargetOne(fun.Args)
 				if groupingSetOffset == -1 {
 					// todo: if we couldn't find a existed current valid group layout, we need to copy the column out from being filled with null value.
-					p.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("couldn't find a proper group set for normal agg"))
+					p.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("couldn't find a proper group set for normal agg"))
 					return false, nil
 				}
 				// starting with 1

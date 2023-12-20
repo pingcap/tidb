@@ -34,14 +34,17 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
+	"go.uber.org/zap"
 )
 
 // Histogram represents statistics for a column or index.
@@ -116,7 +119,7 @@ func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType,
 		NullCount:         nullCount,
 		LastUpdateVersion: version,
 		Tp:                tp,
-		Bounds:            chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 2*bucketSize),
+		Bounds:            chunk.NewChunkFromPoolWithCapacity([]*types.FieldType{tp}, 2*bucketSize),
 		Buckets:           make([]Bucket, 0, bucketSize),
 		TotColSize:        totColSize,
 	}
@@ -215,6 +218,14 @@ func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType
 // Len is the number of buckets in the histogram.
 func (hg *Histogram) Len() int {
 	return len(hg.Buckets)
+}
+
+// DestroyAndPutToPool resets the FMSketch and puts it to the pool.
+func (hg *Histogram) DestroyAndPutToPool() {
+	if hg == nil {
+		return
+	}
+	hg.Bounds.Destroy(len(hg.Buckets), []*types.FieldType{hg.Tp})
 }
 
 // HistogramEqual tests if two histograms are equal.
@@ -648,11 +659,13 @@ func validRange(sc *stmtctx.StatementContext, ran *ranger.Range, encoded bool) b
 		low, high = ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()
 	} else {
 		var err error
-		low, err = codec.EncodeKey(sc, nil, ran.LowVal[0])
+		low, err = codec.EncodeKey(sc.TimeZone(), nil, ran.LowVal[0])
+		err = sc.HandleError(err)
 		if err != nil {
 			return false
 		}
-		high, err = codec.EncodeKey(sc, nil, ran.HighVal[0])
+		high, err = codec.EncodeKey(sc.TimeZone(), nil, ran.HighVal[0])
+		err = sc.HandleError(err)
 		if err != nil {
 			return false
 		}
@@ -1088,17 +1101,6 @@ func (hg *Histogram) Copy() *Histogram {
 	return &newHist
 }
 
-// RemoveUpperBound removes the upper bound from histogram.
-// It is used when merge stats for incremental analyze.
-func (hg *Histogram) RemoveUpperBound() *Histogram {
-	hg.Buckets[hg.Len()-1].Count -= hg.Buckets[hg.Len()-1].Repeat
-	hg.Buckets[hg.Len()-1].Repeat = 0
-	if hg.NDV > 0 {
-		hg.NDV--
-	}
-	return hg
-}
-
 // TruncateHistogram truncates the histogram to `numBkt` buckets.
 func (hg *Histogram) TruncateHistogram(numBkt int) *Histogram {
 	hist := hg.Copy()
@@ -1184,6 +1186,10 @@ func newbucket4MergingForRecycle() *bucket4Merging {
 }
 
 func releasebucket4MergingForRecycle(b *bucket4Merging) {
+	b.disjointNDV = 0
+	b.Repeat = 0
+	b.NDV = 0
+	b.Count = 0
 	bucket4MergingPool.Put(b)
 }
 
@@ -1262,7 +1268,9 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 	// _______left____|
 	// illegal order.
 	if upperCompare < 0 {
-		return nil, errors.Errorf("illegal bucket order")
+		err := errors.Errorf("illegal bucket order")
+		statslogutil.StatsLogger().Warn("fail to mergeBucketNDV", zap.Error(err))
+		return nil, err
 	}
 	//  ___right_|
 	//  ___left__|
@@ -1276,7 +1284,9 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 		//         |__left____|
 		// illegal order.
 		if lowerCompare < 0 {
-			return nil, errors.Errorf("illegal bucket order")
+			err := errors.Errorf("illegal bucket order")
+			statslogutil.StatsLogger().Warn("fail to mergeBucketNDV", zap.Error(err))
+			return nil, err
 		}
 		// |___right___|
 		// |____left___|
@@ -1367,6 +1377,9 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	right := buckets[len(buckets)-1].Clone()
 
 	totNDV := int64(0)
+	intest.Assert(res.Count == 0, "Count in the new bucket4Merging should be 0")
+	intest.Assert(res.Repeat == 0, "Repeat in the new bucket4Merging should be 0")
+	intest.Assert(res.NDV == 0, "NDV in the new bucket4Merging bucket4Merging should be 0")
 	for i := len(buckets) - 1; i >= 0; i-- {
 		totNDV += buckets[i].NDV
 		res.Count += buckets[i].Count
@@ -1469,7 +1482,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	tail := 0
 	for i := range buckets {
 		if buckets[i].Count != 0 {
-			buckets[tail] = buckets[i]
+			buckets[tail], buckets[i] = buckets[i], buckets[tail]
 			tail++
 		}
 	}

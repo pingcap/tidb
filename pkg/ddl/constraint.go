@@ -148,6 +148,13 @@ func checkAddCheckConstraint(t *meta.Meta, job *model.Job) (*model.DBInfo, *mode
 		}
 		// if not, that means constraint was in intermediate state.
 	}
+
+	err = checkConstraintNamesNotExists(t, schemaID, []*model.ConstraintInfo{constraintInfo1})
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, nil, nil, nil, err
+	}
+
 	return dbInfo, tblInfo, constraintInfo2, constraintInfo1, nil
 }
 

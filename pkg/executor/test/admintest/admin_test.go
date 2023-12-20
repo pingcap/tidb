@@ -1243,7 +1243,7 @@ func TestCheckFailReport(t *testing.T) {
 
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx(), nil, types.NewBytesDatum([]byte{1, 0, 1, 0, 0, 1, 1}))
+		encoded, err := codec.EncodeKey(time.UTC, nil, types.NewBytesDatum([]byte{1, 0, 1, 0, 0, 1, 1}))
 		require.NoError(t, err)
 		hd, err := kv.NewCommonHandle(encoded)
 		require.NoError(t, err)
@@ -1635,7 +1635,7 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	r := regexp.MustCompile(pattern)
 
 	getCommonHandle := func(randomRow int) *kv.CommonHandle {
-		h, err := codec.EncodeKey(sc, nil, types.MakeDatums(randomRow)...)
+		h, err := codec.EncodeKey(sc.TimeZone(), nil, types.MakeDatums(randomRow)...)
 		require.NoError(t, err)
 		ch, err := kv.NewCommonHandle(h)
 		require.NoError(t, err)

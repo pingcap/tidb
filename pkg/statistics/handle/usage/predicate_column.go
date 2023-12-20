@@ -24,15 +24,16 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	utilstats "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-// statsUsageImpl implements utilstats.StatsUsage.
+// statsUsageImpl implements statstypes.StatsUsage.
 type statsUsageImpl struct {
-	statsHandle utilstats.StatsHandle
+	statsHandle statstypes.StatsHandle
 
 	// idxUsageListHead contains all the index usage collectors required by session.
 	idxUsageListHead *SessionIndexUsageCollector
@@ -41,8 +42,8 @@ type statsUsageImpl struct {
 	*SessionStatsList
 }
 
-// NewStatsUsageImpl creates a utilstats.StatsUsage.
-func NewStatsUsageImpl(statsHandle utilstats.StatsHandle) utilstats.StatsUsage {
+// NewStatsUsageImpl creates a statstypes.StatsUsage.
+func NewStatsUsageImpl(statsHandle statstypes.StatsHandle) statstypes.StatsUsage {
 	return &statsUsageImpl{
 		statsHandle:      statsHandle,
 		idxUsageListHead: newSessionIndexUsageCollector(nil),
@@ -50,7 +51,7 @@ func NewStatsUsageImpl(statsHandle utilstats.StatsHandle) utilstats.StatsUsage {
 }
 
 // LoadColumnStatsUsage returns all columns' usage information.
-func (u *statsUsageImpl) LoadColumnStatsUsage(loc *time.Location) (colStatsMap map[model.TableItemID]utilstats.ColStatsTimeInfo, err error) {
+func (u *statsUsageImpl) LoadColumnStatsUsage(loc *time.Location) (colStatsMap map[model.TableItemID]statstypes.ColStatsTimeInfo, err error) {
 	err = utilstats.CallWithSCtx(u.statsHandle.SPool(), func(sctx sessionctx.Context) error {
 		colStatsMap, err = LoadColumnStatsUsage(sctx, loc)
 		return err
@@ -77,7 +78,7 @@ func (u *statsUsageImpl) CollectColumnsInExtendedStats(tableID int64) (columnIDs
 }
 
 // LoadColumnStatsUsage loads column stats usage information from disk.
-func LoadColumnStatsUsage(sctx sessionctx.Context, loc *time.Location) (map[model.TableItemID]utilstats.ColStatsTimeInfo, error) {
+func LoadColumnStatsUsage(sctx sessionctx.Context, loc *time.Location) (map[model.TableItemID]statstypes.ColStatsTimeInfo, error) {
 	disableTime, err := getDisableColumnTrackingTime(sctx)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -87,13 +88,13 @@ func LoadColumnStatsUsage(sctx sessionctx.Context, loc *time.Location) (map[mode
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	colStatsMap := make(map[model.TableItemID]utilstats.ColStatsTimeInfo, len(rows))
+	colStatsMap := make(map[model.TableItemID]statstypes.ColStatsTimeInfo, len(rows))
 	for _, row := range rows {
 		if row.IsNull(0) || row.IsNull(1) {
 			continue
 		}
 		tblColID := model.TableItemID{TableID: row.GetInt64(0), ID: row.GetInt64(1), IsIndex: false}
-		var statsUsage utilstats.ColStatsTimeInfo
+		var statsUsage statstypes.ColStatsTimeInfo
 		if !row.IsNull(2) {
 			gt, err := row.GetTime(2).GoTime(time.UTC)
 			if err != nil {

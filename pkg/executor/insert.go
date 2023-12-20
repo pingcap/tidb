@@ -327,7 +327,7 @@ func (e *InsertExec) Close() error {
 	defer e.memTracker.ReplaceBytesUsed(0)
 	e.setMessage()
 	if e.SelectExec != nil {
-		return e.SelectExec.Close()
+		return exec.Close(e.SelectExec)
 	}
 	return nil
 }
@@ -367,7 +367,7 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 		evalBufferTypes = append(evalBufferTypes, &(col.FieldType))
 	}
 	if extraLen > 0 {
-		evalBufferTypes = append(evalBufferTypes, e.SelectExec.Base().RetFieldTypes()[e.rowLen:]...)
+		evalBufferTypes = append(evalBufferTypes, e.SelectExec.RetFieldTypes()[e.rowLen:]...)
 	}
 	for _, col := range e.Table.Cols() {
 		evalBufferTypes = append(evalBufferTypes, &(col.FieldType))
@@ -398,19 +398,20 @@ func (e *InsertExec) doDupRowUpdate(ctx context.Context, handle kv.Handle, oldRo
 
 	// Update old row when the key is duplicated.
 	e.evalBuffer4Dup.SetDatums(e.row4Update...)
-	sc := e.Ctx().GetSessionVars().StmtCtx
+	sctx := e.Ctx()
+	sc := sctx.GetSessionVars().StmtCtx
 	warnCnt := int(sc.WarningCount())
 	for _, col := range cols {
 		if col.LazyErr != nil {
 			return col.LazyErr
 		}
-		val, err1 := col.Expr.Eval(e.evalBuffer4Dup.ToRow())
+		val, err1 := col.Expr.Eval(sctx, e.evalBuffer4Dup.ToRow())
 		if err1 != nil {
 			return err1
 		}
 		c := col.Col.ToInfo()
 		c.Name = col.ColName
-		e.row4Update[col.Col.Index], err1 = table.CastValue(e.Ctx(), val, c, false, false)
+		e.row4Update[col.Col.Index], err1 = table.CastValue(sctx, val, c, false, false)
 		if err1 != nil {
 			return err1
 		}

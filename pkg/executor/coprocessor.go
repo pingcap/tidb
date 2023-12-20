@@ -82,7 +82,7 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 	}
 
 	chk := exec.TryNewCacheChunk(e)
-	tps := e.Base().RetFieldTypes()
+	tps := e.RetFieldTypes()
 	var totalChunks, partChunks []tipb.Chunk
 	memTracker := h.sctx.GetSessionVars().StmtCtx.MemTracker
 	for {
@@ -103,7 +103,7 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 		}
 		totalChunks = append(totalChunks, partChunks...)
 	}
-	if err := e.Close(); err != nil {
+	if err := exec.Close(e); err != nil {
 		return h.buildErrorResponse(err)
 	}
 	return h.buildUnaryResponse(totalChunks)
@@ -125,7 +125,7 @@ func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *co
 	}
 
 	chk := exec.TryNewCacheChunk(e)
-	tps := e.Base().RetFieldTypes()
+	tps := e.RetFieldTypes()
 	for {
 		chk.Reset()
 		if err = exec.Next(ctx, e, chk); err != nil {
@@ -277,11 +277,13 @@ func (h *CoprocessorDAGHandler) encodeDefault(chk *chunk.Chunk, tps []*types.Fie
 	stmtCtx := h.sctx.GetSessionVars().StmtCtx
 	requestedRow := make([]byte, 0)
 	chunks := []tipb.Chunk{}
+	errCtx := stmtCtx.ErrCtx()
 	for i := 0; i < chk.NumRows(); i++ {
 		requestedRow = requestedRow[:0]
 		row := chk.GetRow(i)
 		for _, ordinal := range colOrdinal {
-			data, err := codec.EncodeValue(stmtCtx, nil, row.GetDatum(int(ordinal), tps[ordinal]))
+			data, err := codec.EncodeValue(stmtCtx.TimeZone(), nil, row.GetDatum(int(ordinal), tps[ordinal]))
+			err = errCtx.HandleError(err)
 			if err != nil {
 				return nil, err
 			}

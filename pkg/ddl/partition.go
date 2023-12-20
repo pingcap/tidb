@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/pkg/config"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -535,7 +534,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		}
 		// Note that linear hash is simply ignored, and creates non-linear hash/key.
 		if s.Linear {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("LINEAR %s is not supported, using non-linear %s instead", s.Tp.String(), s.Tp.String())))
+			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.FastGen(fmt.Sprintf("LINEAR %s is not supported, using non-linear %s instead", s.Tp.String(), s.Tp.String())))
 		}
 		if s.Tp == model.PartitionTypeHash || len(s.ColumnNames) != 0 {
 			enable = true
@@ -543,11 +542,11 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	}
 
 	if !enable {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.Tp)))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.FastGen(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.Tp)))
 		return nil
 	}
 	if s.Sub != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported subpartitioning, only using %v partitioning", s.Tp)))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.FastGen(fmt.Sprintf("Unsupported subpartitioning, only using %v partitioning", s.Tp)))
 	}
 
 	pi := &model.PartitionInfo{
@@ -611,7 +610,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 
 	for _, index := range tbInfo.Indices {
 		if index.Unique && !checkUniqueKeyIncludePartKey(partCols, index.Columns) {
-			index.Global = config.GetGlobalConfig().EnableGlobalIndex
+			index.Global = ctx.GetSessionVars().EnableGlobalIndex
 		}
 	}
 	return nil
@@ -772,11 +771,19 @@ func getPartitionIntervalFromTable(ctx sessionctx.Context, tbInfo *model.TableIn
 }
 
 // comparePartitionAstAndModel compares a generated *ast.PartitionOptions and a *model.PartitionInfo
-func comparePartitionAstAndModel(ctx sessionctx.Context, pAst *ast.PartitionOptions, pModel *model.PartitionInfo) error {
+func comparePartitionAstAndModel(ctx sessionctx.Context, pAst *ast.PartitionOptions, pModel *model.PartitionInfo, partCol *model.ColumnInfo) error {
 	a := pAst.Definitions
 	m := pModel.Definitions
 	if len(pAst.Definitions) != len(pModel.Definitions) {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("INTERVAL partitioning: number of partitions generated != partition defined (%d != %d)", len(a), len(m))
+	}
+
+	evalFn := func(expr ast.ExprNode) (types.Datum, error) {
+		val, err := expression.EvalAstExpr(ctx, ast.NewValueExpr(expr, "", ""))
+		if err != nil || partCol == nil {
+			return val, err
+		}
+		return val.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &partCol.FieldType)
 	}
 	for i := range pAst.Definitions {
 		// Allow options to differ! (like Placement Rules)
@@ -800,16 +807,19 @@ func comparePartitionAstAndModel(ctx sessionctx.Context, pAst *ast.PartitionOpti
 		if len(lessThan) > 1 && lessThan[:1] == "'" && lessThan[len(lessThan)-1:] == "'" {
 			lessThan = driver.UnwrapFromSingleQuotes(lessThan)
 		}
-		cmpExpr := &ast.BinaryOperationExpr{
-			Op: opcode.EQ,
-			L:  ast.NewValueExpr(lessThan, "", ""),
-			R:  generatedExpr,
-		}
-		cmp, err := expression.EvalAstExpr(ctx, cmpExpr)
+		lessThanVal, err := evalFn(ast.NewValueExpr(lessThan, "", ""))
 		if err != nil {
 			return err
 		}
-		if cmp.GetInt64() != 1 {
+		generatedExprVal, err := evalFn(generatedExpr)
+		if err != nil {
+			return err
+		}
+		cmp, err := lessThanVal.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &generatedExprVal, collate.GetBinaryCollator())
+		if err != nil {
+			return err
+		}
+		if cmp != 0 {
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs(fmt.Sprintf("INTERVAL partitioning: LESS THAN for partition %s differs between generated and defined", m[i].Name.O))
 		}
 	}
@@ -984,7 +994,7 @@ func generatePartitionDefinitionsFromInterval(ctx sessionctx.Context, partOption
 		// Seems valid, so keep the defined so that the user defined names are kept etc.
 		partOptions.Definitions = definedPartDefs
 	} else if len(tbInfo.Partition.Definitions) > 0 {
-		err := comparePartitionAstAndModel(ctx, partOptions, tbInfo.Partition)
+		err := comparePartitionAstAndModel(ctx, partOptions, tbInfo.Partition, partCol)
 		if err != nil {
 			return err
 		}
@@ -1058,6 +1068,12 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 	if err != nil {
 		return err
 	}
+	if partCol != nil {
+		lastVal, err = lastVal.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &partCol.FieldType)
+		if err != nil {
+			return err
+		}
+	}
 	var partDefs []*ast.PartitionDefinition
 	if len(partitionOptions.Definitions) != 0 {
 		partDefs = partitionOptions.Definitions
@@ -1100,6 +1116,12 @@ func GeneratePartDefsFromInterval(ctx sessionctx.Context, tp ast.AlterTableType,
 		currVal, err = expression.EvalAstExpr(ctx, currExpr)
 		if err != nil {
 			return err
+		}
+		if partCol != nil {
+			currVal, err = currVal.ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), &partCol.FieldType)
+			if err != nil {
+				return err
+			}
 		}
 		cmp, err := currVal.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &lastVal, collate.GetBinaryCollator())
 		if err != nil {
@@ -1691,7 +1713,7 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
-				eval, err := expr.Eval(chunk.Row{})
+				eval, err := expr.Eval(ctx, chunk.Row{})
 				if err != nil {
 					return nil, errors.Trace(err)
 				}
@@ -1887,14 +1909,14 @@ func getTableInfoWithOriginalPartitions(t *model.TableInfo, oldIDs []int64, newI
 	return nt
 }
 
-func dropLabelRules(_ *ddlCtx, schemaName, tableName string, partNames []string) error {
+func dropLabelRules(d *ddlCtx, schemaName, tableName string, partNames []string) error {
 	deleteRules := make([]string, 0, len(partNames))
 	for _, partName := range partNames {
 		deleteRules = append(deleteRules, fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, schemaName, tableName, partName))
 	}
 	// delete batch rules
 	patch := label.NewRulePatch([]*label.Rule{}, deleteRules)
-	return infosync.UpdateLabelRules(context.TODO(), patch)
+	return infosync.UpdateLabelRules(d.ctx, patch)
 }
 
 // onDropTablePartition deletes old partition meta.
@@ -2572,6 +2594,9 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	// exchange table meta id
 	pt.ExchangePartitionInfo = nil
+	// Used below to update the partitioned table's stats meta.
+	originalPartitionDef := partDef.Clone()
+	originalNt := nt.Clone()
 	partDef.ID, nt.ID = nt.ID, partDef.ID
 
 	err = t.UpdateTable(ptSchemaID, pt)
@@ -2675,6 +2700,12 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, pt)
+	exchangePartitionEvent := statsutil.NewExchangePartitionEvent(
+		pt,
+		&model.PartitionInfo{Definitions: []model.PartitionDefinition{originalPartitionDef}},
+		originalNt,
+	)
+	asyncNotifyEvent(d, exchangePartitionEvent)
 	return ver, nil
 }
 
@@ -2969,14 +3000,12 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		tblInfo.Partition.AddingDefinitions = nil
 		tblInfo.Partition.DDLState = model.StateNone
 
+		var oldTblID int64
 		if job.Type != model.ActionReorganizePartition {
 			// ALTER TABLE ... PARTITION BY
 			// REMOVE PARTITIONING
-			// New Table ID, so needs to recreate the table by drop+create.
-			oldTblID := tblInfo.ID
-			// Overloading the NewTableID here with the oldTblID instead,
-			// for keeping the old global statistics
-			statisticsPartInfo.NewTableID = oldTblID
+			// Storing the old table ID, used for updating statistics.
+			oldTblID = tblInfo.ID
 			// TODO: Handle bundles?
 			// TODO: Add concurrent test!
 			// TODO: Will this result in big gaps?
@@ -3036,7 +3065,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// Include the old table ID, if changed, which may contain global statistics,
 		// so it can be reused for the new (non)partitioned table.
 		event, err := newStatsDDLEventForJob(
-			job.Type, tblInfo, statisticsPartInfo, droppedPartInfo,
+			job.Type, oldTblID, tblInfo, statisticsPartInfo, droppedPartInfo,
 		)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -3056,6 +3085,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 // It is used for reorganize partition, add partitioning and remove partitioning.
 func newStatsDDLEventForJob(
 	jobType model.ActionType,
+	oldTblID int64,
 	tblInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 	droppedPartInfo *model.PartitionInfo,
@@ -3070,13 +3100,15 @@ func newStatsDDLEventForJob(
 		)
 	case model.ActionAlterTablePartitioning:
 		event = statsutil.NewAddPartitioningEvent(
+			oldTblID,
 			tblInfo,
 			addedPartInfo,
 		)
 	case model.ActionRemovePartitioning:
 		event = statsutil.NewRemovePartitioningEvent(
+			oldTblID,
 			tblInfo,
-			addedPartInfo,
+			droppedPartInfo,
 		)
 	default:
 		return nil, errors.Errorf("unknown job type: %s", jobType.String())
@@ -3785,11 +3817,11 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 				if tblInfo.IsCommonHandle {
 					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
 				}
-				if !config.GetGlobalConfig().EnableGlobalIndex {
+				if !sctx.GetSessionVars().EnableGlobalIndex {
 					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
 				}
 			}
-			if !config.GetGlobalConfig().EnableGlobalIndex {
+			if !sctx.GetSessionVars().EnableGlobalIndex {
 				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 			}
 		}

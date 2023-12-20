@@ -82,7 +82,7 @@ func TestReturnValues(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk.MustQuery("select * from t where a = 'b' for update").Check(testkit.Rows("b 2"))
 	tid := external.GetTableByName(t, tk, "test", "t").Meta().ID
-	idxVal, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewStringDatum("b"))
+	idxVal, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, types.NewStringDatum("b"))
 	require.NoError(t, err)
 	pk := tablecodec.EncodeIndexSeekKey(tid, 1, idxVal)
 	txnCtx := tk.Session().GetSessionVars().TxnCtx
@@ -226,39 +226,6 @@ func TestPartitionMemCacheReadLock(t *testing.T) {
 	tk.MustQuery("select _tidb_rowid from point where id = -2").Check(testkit.Rows("2"))
 
 	mustExecDDL(tk, t, "unlock tables", dom)
-}
-
-func TestPointGetWriteLock(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableTableLock = true
-	})
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table point (id int primary key, c int, d varchar(10), unique c_d (c, d))")
-	tk.MustExec("insert point values (1, 1, 'a')")
-	tk.MustExec("insert point values (2, 2, 'b')")
-	tk.MustExec("lock tables point write")
-	tk.MustQuery(`select * from point where id = 1;`).Check(testkit.Rows(
-		`1 1 a`,
-	))
-	rows := tk.MustQuery("explain analyze select * from point where id = 1").Rows()
-	require.Len(t, rows, 1)
-	explain := fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*num_rpc.*", explain)
-	tk.MustExec("unlock tables")
-
-	tk.MustExec("update point set c = 3 where id = 1")
-	tk.MustExec("lock tables point write")
-	tk.MustQuery(`select * from point where id = 1;`).Check(testkit.Rows(
-		`1 3 a`,
-	))
-	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
-	require.Len(t, rows, 1)
-	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*num_rpc.*", explain)
-	tk.MustExec("unlock tables")
 }
 
 func TestPointGetLockExistKey(t *testing.T) {

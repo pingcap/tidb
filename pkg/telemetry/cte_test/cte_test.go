@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
@@ -95,7 +96,7 @@ type testSuite struct {
 	store       kv.Storage
 	dom         *domain.Domain
 	etcdCluster *integration.ClusterV3
-	se          session.Session
+	se          sessiontypes.Session
 	close       func()
 }
 

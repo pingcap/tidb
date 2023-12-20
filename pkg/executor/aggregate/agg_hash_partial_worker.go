@@ -33,7 +33,7 @@ type HashAggPartialWorker struct {
 	baseHashAggWorker
 
 	inputCh        chan *chunk.Chunk
-	outputChs      []chan *AggPartialResultMapper
+	outputChs      []chan *aggfuncs.AggPartialResultMapper
 	globalOutputCh chan *AfFinalResult
 	giveBackCh     chan<- *HashAggInput
 	BInMaps        []int
@@ -42,7 +42,7 @@ type HashAggPartialWorker struct {
 	partialResultNumInRow int
 
 	// Length of this map is equal to the number of final workers
-	partialResultsMap []AggPartialResultMapper
+	partialResultsMap []aggfuncs.AggPartialResultMapper
 	groupByItems      []expression.Expression
 	groupKey          [][]byte
 	// chk stores the input data from child,

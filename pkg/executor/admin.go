@@ -216,7 +216,7 @@ func (e *RecoverIndexExec) columnsTypes() []*types.FieldType {
 
 // Open implements the Executor Open interface.
 func (e *RecoverIndexExec) Open(ctx context.Context) error {
-	if err := exec.Open(ctx, e.BaseExecutor.Base()); err != nil {
+	if err := exec.Open(ctx, &e.BaseExecutor); err != nil {
 		return err
 	}
 
@@ -416,9 +416,10 @@ func (e *RecoverIndexExec) buildIndexedValues(row chunk.Row, idxVals []types.Dat
 		idxVals = idxVals[:idxValLen]
 	}
 
+	sctx := e.Ctx()
 	for i, col := range e.index.Meta().Columns {
 		if e.table.Meta().Columns[col.Offset].IsGenerated() {
-			val, err := e.cols[col.Offset].EvalVirtualColumn(row)
+			val, err := e.cols[col.Offset].EvalVirtualColumn(sctx, row)
 			if err != nil {
 				return nil, err
 			}

@@ -38,7 +38,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 	tikvutil "github.com/tikv/client-go/v2/util"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -260,7 +259,7 @@ type allocator struct {
 	base  int64
 	end   int64
 	store kv.Storage
-	// dbID is current database's ID.
+	// dbID is database ID where it was created.
 	dbID          int64
 	tbID          int64
 	tbVersion     uint16
@@ -574,12 +573,12 @@ func newSinglePointAlloc(r Requirement, dbID, tblID int64, isUnsigned bool) *sin
 		isUnsigned: isUnsigned,
 		keyspaceID: keyspaceID,
 	}
-	if r.GetEtcdClient() == nil {
+	if r.AutoIDClient() == nil {
 		// Only for test in mockstore
-		spa.clientDiscover = clientDiscover{}
+		spa.ClientDiscover = &ClientDiscover{}
 		spa.mu.AutoIDAllocClient = MockForTest(r.Store())
 	} else {
-		spa.clientDiscover = clientDiscover{etcdCli: r.GetEtcdClient()}
+		spa.ClientDiscover = r.AutoIDClient()
 	}
 
 	// mockAutoIDChange failpoint is not implemented in this allocator, so fallback to use the default one.
@@ -594,7 +593,7 @@ func newSinglePointAlloc(r Requirement, dbID, tblID int64, isUnsigned bool) *sin
 // Requirement is the parameter required by NewAllocator
 type Requirement interface {
 	Store() kv.Storage
-	GetEtcdClient() *clientv3.Client
+	AutoIDClient() *ClientDiscover
 }
 
 // NewAllocator returns a new auto increment id generator on the store.
@@ -654,7 +653,7 @@ func NewSequenceAllocator(store kv.Storage, dbID, tbID int64, info *model.Sequen
 // NewAllocatorsFromTblInfo creates an array of allocators of different types with the information of model.TableInfo.
 func NewAllocatorsFromTblInfo(r Requirement, schemaID int64, tblInfo *model.TableInfo) Allocators {
 	var allocs []Allocator
-	dbID := tblInfo.GetDBID(schemaID)
+	dbID := tblInfo.GetAutoIDSchemaID(schemaID)
 	idCacheOpt := CustomAutoIncCacheOption(tblInfo.AutoIdCache)
 	tblVer := AllocOptionTableInfoVersion(tblInfo.Version)
 

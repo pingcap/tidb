@@ -23,14 +23,17 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // ExplainInfo implements the Expression interface.
-func (expr *ScalarFunction) ExplainInfo() string {
-	return expr.explainInfo(false)
+func (expr *ScalarFunction) ExplainInfo(ctx EvalContext) string {
+	return expr.explainInfo(ctx, false)
 }
 
-func (expr *ScalarFunction) explainInfo(normalized bool) string {
+func (expr *ScalarFunction) explainInfo(ctx EvalContext, normalized bool) string {
+	// we only need ctx for non-normalized explain info.
+	intest.Assert(normalized || ctx != nil)
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "%s(", expr.FuncName.L)
 	switch expr.FuncName.L {
@@ -39,7 +42,8 @@ func (expr *ScalarFunction) explainInfo(normalized bool) string {
 			if normalized {
 				buffer.WriteString(arg.ExplainNormalizedInfo())
 			} else {
-				buffer.WriteString(arg.ExplainInfo())
+				intest.Assert(ctx != nil)
+				buffer.WriteString(arg.ExplainInfo(ctx))
 			}
 			buffer.WriteString(", ")
 			buffer.WriteString(expr.RetType.String())
@@ -49,7 +53,8 @@ func (expr *ScalarFunction) explainInfo(normalized bool) string {
 			if normalized {
 				buffer.WriteString(arg.ExplainNormalizedInfo())
 			} else {
-				buffer.WriteString(arg.ExplainInfo())
+				intest.Assert(ctx != nil)
+				buffer.WriteString(arg.ExplainInfo(ctx))
 			}
 			if i+1 < len(expr.GetArgs()) {
 				buffer.WriteString(", ")
@@ -62,7 +67,7 @@ func (expr *ScalarFunction) explainInfo(normalized bool) string {
 
 // ExplainNormalizedInfo implements the Expression interface.
 func (expr *ScalarFunction) ExplainNormalizedInfo() string {
-	return expr.explainInfo(true)
+	return expr.explainInfo(nil, true)
 }
 
 // ExplainNormalizedInfo4InList implements the Expression interface.
@@ -90,32 +95,37 @@ func (expr *ScalarFunction) ExplainNormalizedInfo4InList() string {
 	return buffer.String()
 }
 
-// ExplainInfo implements the Expression interface.
-func (col *Column) ExplainInfo() string {
+// ColumnExplainInfo returns the explained info for column.
+func (col *Column) ColumnExplainInfo(normalized bool) string {
+	if normalized {
+		if col.OrigName != "" {
+			return col.OrigName
+		}
+		return "?"
+	}
 	return col.String()
+}
+
+// ExplainInfo implements the Expression interface.
+func (col *Column) ExplainInfo(ctx EvalContext) string {
+	return col.ColumnExplainInfo(false)
 }
 
 // ExplainNormalizedInfo implements the Expression interface.
 func (col *Column) ExplainNormalizedInfo() string {
-	if col.OrigName != "" {
-		return col.OrigName
-	}
-	return "?"
+	return col.ColumnExplainInfo(true)
 }
 
 // ExplainNormalizedInfo4InList implements the Expression interface.
 func (col *Column) ExplainNormalizedInfo4InList() string {
-	if col.OrigName != "" {
-		return col.OrigName
-	}
-	return "?"
+	return col.ColumnExplainInfo(true)
 }
 
 // ExplainInfo implements the Expression interface.
-func (expr *Constant) ExplainInfo() string {
-	dt, err := expr.Eval(chunk.Row{})
+func (expr *Constant) ExplainInfo(ctx EvalContext) string {
+	dt, err := expr.Eval(ctx, chunk.Row{})
 	if err != nil {
-		return "not recognized const vanue"
+		return "not recognized const value"
 	}
 	return expr.format(dt)
 }
@@ -179,16 +189,17 @@ func ExplainExpressionList(exprs []Expression, schema *Schema) string {
 // SortedExplainExpressionList generates explain information for a list of expressions in order.
 // In some scenarios, the expr's order may not be stable when executing multiple times.
 // So we add a sort to make its explain result stable.
-func SortedExplainExpressionList(exprs []Expression) []byte {
-	return sortedExplainExpressionList(exprs, false, false)
+func SortedExplainExpressionList(ctx EvalContext, exprs []Expression) []byte {
+	return sortedExplainExpressionList(ctx, exprs, false, false)
 }
 
 // SortedExplainExpressionListIgnoreInlist generates explain information for a list of expressions in order.
 func SortedExplainExpressionListIgnoreInlist(exprs []Expression) []byte {
-	return sortedExplainExpressionList(exprs, false, true)
+	return sortedExplainExpressionList(nil, exprs, false, true)
 }
 
-func sortedExplainExpressionList(exprs []Expression, normalized bool, ignoreInlist bool) []byte {
+func sortedExplainExpressionList(ctx EvalContext, exprs []Expression, normalized bool, ignoreInlist bool) []byte {
+	intest.Assert(ignoreInlist || normalized || ctx != nil)
 	buffer := bytes.NewBufferString("")
 	exprInfos := make([]string, 0, len(exprs))
 	for _, expr := range exprs {
@@ -197,7 +208,8 @@ func sortedExplainExpressionList(exprs []Expression, normalized bool, ignoreInli
 		} else if normalized {
 			exprInfos = append(exprInfos, expr.ExplainNormalizedInfo())
 		} else {
-			exprInfos = append(exprInfos, expr.ExplainInfo())
+			intest.Assert(ctx != nil)
+			exprInfos = append(exprInfos, expr.ExplainInfo(ctx))
 		}
 	}
 	slices.Sort(exprInfos)
@@ -212,7 +224,7 @@ func sortedExplainExpressionList(exprs []Expression, normalized bool, ignoreInli
 
 // SortedExplainNormalizedExpressionList is same like SortedExplainExpressionList, but use for generating normalized information.
 func SortedExplainNormalizedExpressionList(exprs []Expression) []byte {
-	return sortedExplainExpressionList(exprs, true, false)
+	return sortedExplainExpressionList(nil, exprs, true, false)
 }
 
 // SortedExplainNormalizedScalarFuncList is same like SortedExplainExpressionList, but use for generating normalized information.
@@ -221,14 +233,14 @@ func SortedExplainNormalizedScalarFuncList(exprs []*ScalarFunction) []byte {
 	for i := range exprs {
 		expressions[i] = exprs[i]
 	}
-	return sortedExplainExpressionList(expressions, true, false)
+	return sortedExplainExpressionList(nil, expressions, true, false)
 }
 
 // ExplainColumnList generates explain information for a list of columns.
-func ExplainColumnList(cols []*Column) []byte {
+func ExplainColumnList(ctx EvalContext, cols []*Column) []byte {
 	buffer := bytes.NewBufferString("")
 	for i, col := range cols {
-		buffer.WriteString(col.ExplainInfo())
+		buffer.WriteString(col.ExplainInfo(ctx))
 		if i+1 < len(cols) {
 			buffer.WriteString(", ")
 		}

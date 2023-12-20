@@ -496,6 +496,7 @@ var tokenMap = map[string]int{
 	"LOCATION":                 location,
 	"LOCK":                     lock,
 	"LOCKED":                   locked,
+	"LOG":                      log,
 	"LOGS":                     logs,
 	"LONG":                     long,
 	"LONGBLOB":                 longblobType,
@@ -843,6 +844,7 @@ var tokenMap = map[string]int{
 	"UNDEFINED":                undefined,
 	"UNICODE":                  unicodeSym,
 	"UNION":                    union,
+	"UNIVERSAL":                universal,
 	"UNIQUE":                   unique,
 	"UNKNOWN":                  unknown,
 	"UNLOCK":                   unlock,
@@ -899,7 +901,7 @@ var tokenMap = map[string]int{
 	"REUSE":                    reuse,
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html for details.
+// See https://dev.mysql.com/doc/refman/8.0/en/function-resolution.html for details.
 // ADDDATE, SESSION_USER, SUBDATE, and SYSTEM_USER are exceptions because they are actually recognized as
 // identifiers even in `create table adddate (a int)`.
 var btFuncTokenMap = map[string]int{

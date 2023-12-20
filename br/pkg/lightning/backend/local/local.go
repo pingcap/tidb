@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1186,10 +1187,16 @@ func (local *Backend) generateAndSendJob(
 
 	logger.Debug("the ranges length write to tikv", zap.Int("length", len(jobRanges)))
 
-	eg, egCtx := errgroup.WithContext(ctx)
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 
 	dataAndRangeCh := make(chan common.DataAndRange)
-	for i := 0; i < local.WorkerConcurrency; i++ {
+	conn := local.WorkerConcurrency
+	if _, ok := engine.(*external.Engine); ok {
+		// currently external engine will generate a large IngestData, se we lower the
+		// concurrency to pass backpressure to the LoadIngestData goroutine to avoid OOM
+		conn = 1
+	}
+	for i := 0; i < conn; i++ {
 		eg.Go(func() error {
 			for {
 				select {
@@ -1598,7 +1605,7 @@ func (local *Backend) doImport(ctx context.Context, engine common.Engine, region
 		ctx2, workerCancel = context.WithCancel(ctx)
 		// workerCtx.Done() means workflow is canceled by error. It may be caused
 		// by calling workerCancel() or workers in workGroup meets error.
-		workGroup, workerCtx = errgroup.WithContext(ctx2)
+		workGroup, workerCtx = util.NewErrorGroupWithRecoverWithCtx(ctx2)
 		firstErr             common.OnceError
 		// jobToWorkerCh and jobFromWorkerCh are unbuffered so jobs will not be
 		// owned by them.
@@ -1761,6 +1768,12 @@ func (local *Backend) ResetEngine(ctx context.Context, engineUUID uuid.UUID) err
 		if err = local.allocateTSIfNotExists(ctx, localEngine); err != nil {
 			return errors.Trace(err)
 		}
+		failpoint.Inject("mockAllocateTSErr", func() {
+			// mock generate timestamp error when reset engine.
+			localEngine.TS = 0
+			mockGRPCErr, _ := status.FromError(errors.Errorf("mock generate timestamp error"))
+			failpoint.Return(errors.Trace(mockGRPCErr.Err()))
+		})
 	}
 	localEngine.pendingFileSize.Store(0)
 

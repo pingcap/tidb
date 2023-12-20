@@ -151,7 +151,7 @@ func closeAll(objs ...Closeable) error {
 func rebuildIndexRanges(ctx sessionctx.Context, is *plannercore.PhysicalIndexScan, idxCols []*expression.Column, colLens []int) (ranges []*ranger.Range, err error) {
 	access := make([]expression.Expression, 0, len(is.AccessCondition))
 	for _, cond := range is.AccessCondition {
-		newCond, err1 := expression.SubstituteCorCol2Constant(cond)
+		newCond, err1 := expression.SubstituteCorCol2Constant(ctx, cond)
 		if err1 != nil {
 			return nil, err1
 		}
@@ -339,7 +339,7 @@ func (e *IndexReaderExecutor) open(ctx context.Context, kvRanges []kv.KeyRange) 
 		if err != nil {
 			return err
 		}
-		pbConditions, err := expression.ExpressionsToPBList(e.Ctx().GetSessionVars().StmtCtx, []expression.Expression{inCondition}, e.Ctx().GetClient())
+		pbConditions, err := expression.ExpressionsToPBList(e.Ctx(), []expression.Expression{inCondition}, e.Ctx().GetClient())
 		if err != nil {
 			return err
 		}
@@ -1216,7 +1216,8 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 			datums = append(datums, row.GetDatum(idx, e.handleCols[i].RetType))
 		}
 		tablecodec.TruncateIndexValues(e.table.Meta(), e.primaryKeyIndex, datums)
-		handleEncoded, err = codec.EncodeKey(e.Ctx().GetSessionVars().StmtCtx, nil, datums...)
+		handleEncoded, err = codec.EncodeKey(e.Ctx().GetSessionVars().StmtCtx.TimeZone(), nil, datums...)
+		err = e.Ctx().GetSessionVars().StmtCtx.HandleError(err)
 		if err != nil {
 			return nil, err
 		}
@@ -1454,7 +1455,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		logutil.Logger(ctx).Error("build table reader failed", zap.Error(err))
 		return err
 	}
-	defer terror.Call(tableReader.Close)
+	defer func() { terror.Log(exec.Close(tableReader)) }()
 
 	if w.checkIndexValue != nil {
 		return w.compareData(ctx, task, tableReader)

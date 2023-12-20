@@ -437,7 +437,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	}
 	maxChunkSize := ow.ctx.GetSessionVars().MaxChunkSize
 	for requiredRows > task.outerResult.Len() {
-		chk := ow.ctx.GetSessionVars().GetNewChunkWithCapacity(ow.outerCtx.rowTypes, maxChunkSize, maxChunkSize, ow.executor.Base().AllocPool)
+		chk := ow.executor.NewChunkWithCapacity(ow.outerCtx.rowTypes, maxChunkSize, maxChunkSize)
 		chk = chk.SetRequiredRows(requiredRows, maxChunkSize)
 		err := exec.Next(ctx, ow.executor, chk)
 		if err != nil {
@@ -468,7 +468,11 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	}
 	task.encodedLookUpKeys = make([]*chunk.Chunk, task.outerResult.NumChunks())
 	for i := range task.encodedLookUpKeys {
-		task.encodedLookUpKeys[i] = ow.ctx.GetSessionVars().GetNewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeBlob)}, task.outerResult.GetChunk(i).NumRows(), task.outerResult.GetChunk(i).NumRows(), ow.executor.Base().AllocPool)
+		task.encodedLookUpKeys[i] = ow.executor.NewChunkWithCapacity(
+			[]*types.FieldType{types.NewFieldType(mysql.TypeBlob)},
+			task.outerResult.GetChunk(i).NumRows(),
+			task.outerResult.GetChunk(i).NumRows(),
+		)
 	}
 	return task, nil
 }
@@ -576,7 +580,8 @@ func (iw *innerWorker) constructLookupContent(task *lookUpJoinTask) ([]*indexJoi
 				continue
 			}
 			keyBuf = keyBuf[:0]
-			keyBuf, err = codec.EncodeKey(iw.ctx.GetSessionVars().StmtCtx, keyBuf, dHashKey...)
+			keyBuf, err = codec.EncodeKey(iw.ctx.GetSessionVars().StmtCtx.TimeZone(), keyBuf, dHashKey...)
+			err = iw.ctx.GetSessionVars().StmtCtx.HandleError(err)
 			if err != nil {
 				if terror.ErrorEqual(err, types.ErrWrongValue) {
 					// we ignore rows with invalid datetime
@@ -696,7 +701,7 @@ func (iw *innerWorker) fetchInnerResults(ctx context.Context, task *lookUpJoinTa
 	}
 	innerExec, err := iw.readerBuilder.buildExecutorForIndexJoin(ctx, lookUpContent, iw.indexRanges, iw.keyOff2IdxOff, iw.nextColCompareFilters, true, iw.memTracker, iw.lookup.finished)
 	if innerExec != nil {
-		defer terror.Call(innerExec.Close)
+		defer func() { terror.Log(exec.Close(innerExec)) }()
 	}
 	if err != nil {
 		return err
@@ -747,7 +752,8 @@ func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
 			for _, keyCol := range iw.hashCols {
 				d := innerRow.GetDatum(keyCol, iw.rowTypes[keyCol])
 				var err error
-				keyBuf, err = codec.EncodeKey(iw.ctx.GetSessionVars().StmtCtx, keyBuf, d)
+				keyBuf, err = codec.EncodeKey(iw.ctx.GetSessionVars().StmtCtx.TimeZone(), keyBuf, d)
+				err = iw.ctx.GetSessionVars().StmtCtx.HandleError(err)
 				if err != nil {
 					return err
 				}
