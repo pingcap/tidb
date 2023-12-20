@@ -161,6 +161,8 @@ func TestInsertPlanReplayerStatus(t *testing.T) {
 		columnC VARCHAR(255)
 	)`)
 
+	// This is a single quote in the sql.
+	// We should escape it correctly.
 	sql := `
 SELECT * from tableA where SUBSTRING_INDEX(tableA.columnC, '_', 1) = tableA.columnA
 `
@@ -193,7 +195,8 @@ SELECT * from tableA where SUBSTRING_INDEX(tableA.columnC, '_', 1) = tableA.colu
 	// assert memory task consumed
 	require.Len(t, prHandle.GetTasks(), 0)
 
-	// Check the plan_replayer_status
+	// Check the plan_replayer_status.
+	// We should store the origin sql correctly.
 	rows := tk.MustQuery(
 		"select * from mysql.plan_replayer_status where sql_digest = ? and plan_digest = ? and origin_sql is not null",
 		sqlDigest,
