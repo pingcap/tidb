@@ -21,17 +21,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const (
-	managerID = "test"
-	taskID    = int64(1)
-	taskID2   = int64(2)
-)
-
 func TestSlotManager(t *testing.T) {
 	sm := slotManager{
 		executorSlotInfos: make(map[int64]*slotInfo),
 		available:         10,
 	}
+
+	var (
+		taskID  = int64(1)
+		taskID2 = int64(2)
+	)
 
 	task := &proto.Task{
 		ID:          taskID,
