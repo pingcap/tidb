@@ -168,9 +168,11 @@ func insertPlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, reco
 
 func insertPlanReplayerErrorStatusRecord(ctx context.Context, sctx sessionctx.Context, instance string, record PlanReplayerStatusRecord) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	_, _, err := exec.ExecRestrictedSQL(ctx, nil, fmt.Sprintf(
-		"insert into mysql.plan_replayer_status (sql_digest, plan_digest, origin_sql, fail_reason, instance) values ('%s','%s','%s','%s','%s')",
-		record.SQLDigest, record.PlanDigest, record.OriginSQL, record.FailedReason, instance))
+	_, _, err := exec.ExecRestrictedSQL(
+		ctx, nil,
+		"insert into mysql.plan_replayer_status (sql_digest, plan_digest, origin_sql, fail_reason, instance) values (%?,%?,%?,%?,%?)",
+		record.SQLDigest, record.PlanDigest, record.OriginSQL, record.FailedReason, instance,
+	)
 	if err != nil {
 		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
 			zap.Error(err))
