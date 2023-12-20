@@ -2548,6 +2548,7 @@ admin show bdr role;
 --error 1064
 admin set bdr role test_err;
 admin show bdr role;
+admin set bdr role none;
 
 # TestCompileOutOfMemoryQuota
 # Test for issue: https://github.com/pingcap/tidb/issues/38322

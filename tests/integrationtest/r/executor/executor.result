@@ -4296,6 +4296,7 @@ Error 1064 (42000): You have an error in your SQL syntax; check the manual that 
 admin show bdr role;
 BDR_ROLE
 local_only
+admin set bdr role none;
 set global tidb_mem_oom_action='CANCEL';
 drop table if exists t, t1;
 create table t(a int, b int, index idx(a));
