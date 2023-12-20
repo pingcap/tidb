@@ -1,7 +1,12 @@
-# TestNoneRole
-admin set bdr role none;
+# NOTE:
+# 1. lock/unlock table is a experimental feature, and it need be configured
+#       in configuration file. So we do not test it.
+# 2. ActionAlterTableStatsOptions is not used.
+
+# *******TestNoneRole*******
 create database bdr_mode;
 use bdr_mode;
+admin set bdr role none;
 create table t(a int);
 alter table t add column b int;
 alter table t drop column b;
@@ -27,11 +32,11 @@ alter table t shard_row_id_bits = 4;
 alter table t comment = 'test';
 drop table t;
 
-# add/exchange/truncate/drop partition
 create table t(a int) partition by range(a) (
 		  partition p0 values less than (5),
 		  partition p1 values less than (10),
 		  partition p2 values less than (15));
+# add partition
 alter table t add partition (partition p3 values less than (100));
 
 # placement rule
@@ -67,20 +72,15 @@ drop placement policy pp1;
 
 create table t(a int);
 # add/alter/drop constraint
+set global tidb_enable_check_constraint=ON;
 alter table t add constraint `a_check` check(a > 0);
 alter table t alter constraint `a_check` enforced;
 alter table t drop constraint `a_check`;
+set global tidb_enable_check_constraint=OFF;
 
 # cache
 alter table t cache;
 alter table t nocache;
-
-# alter stats 
-set @@tidb_enable_extended_stats = ON;
-create table stats(a int, b int);
-alter table stats add stats_extended s1 correlation(a,b);
-alter table stats drop stats_extended s1;
-drop table stats;
 
 # alter ttl
 CREATE TABLE ttl_test (created_at datetime) TTL = `created_at` + INTERVAL 5 DAY;
@@ -103,9 +103,6 @@ drop sequence seq;
 create view v as select 1 as b;
 drop view v;
 
-lock tables t read;
-unlock tables;
-
 alter table t charset utf8mb4 collate utf8mb4_unicode_ci;
 alter database bdr_mode default character set = utf8mb4;
 drop database bdr_mode;
@@ -118,14 +115,316 @@ alter resource group rg1 ru_per_sec = 200;
 drop user user1;
 drop resource group if exists rg1;
 
-# TestPrimaryRole
+# *******TestPrimaryRole*******
+create database bdr_mode;
+use bdr_mode;
 admin set bdr role primary;
 
+create table t(a int) partition by range(a) (
+		  partition p0 values less than (5),
+		  partition p1 values less than (10),
+		  partition p2 values less than (15));
+alter table t add partition (partition p3 values less than (100));
 
-# TestSecondaryRole
+# placement rule
+create placement policy pp4 followers=4;
+-- error 8263
+alter table t placement policy=pp4;
+-- error 8263
+alter table t partition p3 placement policy=pp4;
+-- error 8263
+alter database bdr_mode placement policy=pp4;
+alter placement policy pp4 followers=3;
+-- error 8263
+alter table t placement policy=default;
+-- error 8263
+alter table t partition p3 placement policy=default;
+-- error 8263
+alter database bdr_mode placement policy=default;
+drop placement policy pp4;
+
+-- error 8263
+alter table t attributes="merge_option=allow";
+-- error 8263
+alter table t partition p3 attributes="key1=value1";
+
+# exchange/truncate/drop partition
+create table t2(a int);
+-- error 8263
+alter table t exchange partition p0 with table t2;
+-- error 8263
+alter table t truncate partition p0;
+-- error 8263
+alter table t reorganize partition p0 into
+(
+    partition p4 values less than (0),
+    partition p5 values less than (5)
+);
+-- error 8263
+alter table t drop partition p0;
+admin set bdr role none;
+drop table t2;
+admin set bdr role primary;
+
+create placement policy pp1 followers=1;
+-- error 8263
+alter table t partition by range (a) (partition p0 values less than (1000000), partition pMax values less than (maxvalue) placement policy pp1);
+admin set bdr role none;
+drop table t;
+admin set bdr role primary;
+drop placement policy pp1;
+
+create table t(a int);
+# add/alter/drop constraint
+set global tidb_enable_check_constraint=ON;
+-- error 8263
+alter table t add constraint `a_check` check(a > 0);
+admin set bdr role none;
+alter table t add constraint `a_check` check(a > 0);
+admin set bdr role primary;
+-- error 8263
+alter table t alter constraint `a_check` enforced;
+-- error 8263
+alter table t drop constraint `a_check`;
+admin set bdr role none;
+alter table t drop constraint `a_check`;
+admin set bdr role primary;
+set global tidb_enable_check_constraint=OFF;
+
+# cache
+-- error 8263
+alter table t cache;
+admin set bdr role none;
+alter table t cache;
+admin set bdr role primary;
+-- error 8263
+alter table t nocache;
+admin set bdr role none;
+alter table t nocache;
+admin set bdr role primary;
+
+# alter ttl
+CREATE TABLE ttl_test (created_at datetime) TTL = `created_at` + INTERVAL 5 DAY;
+ALTER TABLE ttl_test TTL = `created_at` + INTERVAL 2 YEAR;
+alter table ttl_test remove ttl;
+admin set bdr role none;
+drop table ttl_test;
+admin set bdr role primary;
+
+-- error 8263
+alter table t add primary key (a);
+admin set bdr role none;
+alter table t add primary key (a);
+admin set bdr role primary;
+alter table t drop primary key;
+-- error 8263
+alter table t auto_id_cache = 10;
+
+create table t_random(a bigint auto_random, primary key (a));
+-- error 8263
+alter table t_random auto_random_base = 10;
+admin set bdr role none;
+drop table t_random;
+admin set bdr role primary;
+
+-- error 8263
+create sequence seq;
+admin set bdr role none;
+create sequence seq;
+admin set bdr role primary;
+-- error 8263
+alter sequence seq restart;
+-- error 8263
+drop sequence seq;
+admin set bdr role none;
+drop sequence seq;
+admin set bdr role primary;
+
+create view v as select 1 as b;
+drop view v;
+
+-- error 8263
+alter table t charset utf8mb4 collate utf8mb4_unicode_ci;
+# -- error 8263
+alter database bdr_mode default character set = utf8mb4;
+admin set bdr role none;
+drop database bdr_mode;
+admin set bdr role primary;
+
+# resource group
+create resource group rg1 ru_per_sec = 100;
+create user user1;
+alter user `user1` resource group `rg1`;
+alter resource group rg1 ru_per_sec = 200;
+drop user user1;
+drop resource group if exists rg1;
+
+# *******TestSecondaryRole*******
+create database bdr_mode;
+use bdr_mode;
 admin set bdr role secondary;
 
-# TestLocalOnlyRole
+-- error 8263
+create table t(a int) partition by range(a) (
+		  partition p0 values less than (5),
+		  partition p1 values less than (10),
+		  partition p2 values less than (15));
+admin set bdr role none;
+create table t(a int) partition by range(a) (
+		  partition p0 values less than (5),
+		  partition p1 values less than (10),
+		  partition p2 values less than (15));
+admin set bdr role secondary;
+-- error 8263
+alter table t add partition (partition p3 values less than (100));
+
+# placement rule
+create placement policy pp4 followers=4;
+-- error 8263
+alter table t placement policy=pp4;
+-- error 8263
+alter table t partition p2 placement policy=pp4;
+-- error 8263
+alter database bdr_mode placement policy=pp4;
+alter placement policy pp4 followers=3;
+-- error 8263
+alter table t placement policy=default;
+-- error 8263
+alter table t partition p2 placement policy=default;
+-- error 8263
+alter database bdr_mode placement policy=default;
+drop placement policy pp4;
+
+-- error 8263
+alter table t attributes="merge_option=allow";
+-- error 8263
+alter table t partition p2 attributes="key1=value1";
+
+# exchange/truncate/drop partition
+admin set bdr role none;
+create table t2(a int);
+admin set bdr role secondary;
+-- error 8263
+alter table t exchange partition p0 with table t2;
+-- error 8263
+alter table t truncate partition p0;
+-- error 8263
+alter table t reorganize partition p0 into
+(
+    partition p4 values less than (0),
+    partition p5 values less than (5)
+);
+-- error 8263
+alter table t drop partition p2;
+admin set bdr role none;
+drop table t2;
+admin set bdr role secondary;
+
+create placement policy pp1 followers=1;
+-- error 8263
+alter table t partition by range (a) (partition p0 values less than (1000000), partition pMax values less than (maxvalue) placement policy pp1);
+admin set bdr role none;
+drop table t;
+admin set bdr role secondary;
+drop placement policy pp1;
+
+admin set bdr role none;
+create table t(a int);
+admin set bdr role secondary;
+# add/alter/drop constraint
+set global tidb_enable_check_constraint=ON;
+-- error 8263
+alter table t add constraint `a_check` check(a > 0);
+admin set bdr role none;
+alter table t add constraint `a_check` check(a > 0);
+admin set bdr role secondary;
+-- error 8263
+alter table t alter constraint `a_check` enforced;
+-- error 8263
+alter table t drop constraint `a_check`;
+admin set bdr role none;
+alter table t drop constraint `a_check`;
+admin set bdr role secondary;
+set global tidb_enable_check_constraint=OFF;
+
+# cache
+-- error 8263
+alter table t cache;
+admin set bdr role none;
+alter table t cache;
+admin set bdr role secondary;
+-- error 8263
+alter table t nocache;
+admin set bdr role none;
+alter table t nocache;
+
+# alter ttl
+CREATE TABLE ttl_test (created_at datetime) TTL = `created_at` + INTERVAL 5 DAY;
+admin set bdr role secondary;
+-- error 8263
+ALTER TABLE ttl_test TTL = `created_at` + INTERVAL 2 YEAR;
+-- error 8263
+alter table ttl_test remove ttl;
+-- error 8263
+drop table ttl_test;
+
+-- error 8263
+alter table t add primary key (a);
+admin set bdr role none;
+alter table t add primary key (a);
+admin set bdr role secondary;
+-- error 8263
+alter table t drop primary key;
+admin set bdr role none;
+alter table t drop primary key;
+admin set bdr role secondary;
+-- error 8263
+alter table t auto_id_cache = 10;
+
+admin set bdr role none;
+create table t_random(a bigint auto_random, primary key (a));
+admin set bdr role secondary;
+-- error 8263
+alter table t_random auto_random_base = 10;
+admin set bdr role none;
+drop table t_random;
+admin set bdr role secondary;
+
+-- error 8263
+create sequence seq;
+admin set bdr role none;
+create sequence seq;
+admin set bdr role secondary;
+-- error 8263
+alter sequence seq restart;
+-- error 8263
+drop sequence seq;
+admin set bdr role none;
+drop sequence seq;
+admin set bdr role secondary;
+
+create view v as select 1 as b;
+drop view v;
+
+-- error 8263
+alter table t charset utf8mb4 collate utf8mb4_unicode_ci;
+# -- error 8263
+alter database bdr_mode default character set = utf8mb4;
+-- error 8263
+drop database bdr_mode;
+admin set bdr role none;
+drop database bdr_mode;
+admin set bdr role secondary;
+
+# resource group
+create resource group rg1 ru_per_sec = 100;
+create user user1;
+alter user `user1` resource group `rg1`;
+alter resource group rg1 ru_per_sec = 200;
+drop user user1;
+drop resource group if exists rg1;
+
+# *******TestLocalOnlyRole*******
 admin set bdr role local_only;
 create database bdr_mode;
 use bdr_mode;
@@ -154,7 +453,7 @@ alter table t shard_row_id_bits = 4;
 alter table t comment = 'test';
 drop table t;
 
-# add/exchange/truncate/drop partition
+# add partition
 create table t(a int) partition by range(a) (
 		  partition p0 values less than (5),
 		  partition p1 values less than (10),
@@ -194,20 +493,15 @@ drop placement policy pp1;
 
 create table t(a int);
 # add/alter/drop constraint
+set global tidb_enable_check_constraint=ON;
 alter table t add constraint `a_check` check(a > 0);
 alter table t alter constraint `a_check` enforced;
 alter table t drop constraint `a_check`;
+set global tidb_enable_check_constraint=OFF;
 
 # cache
 alter table t cache;
 alter table t nocache;
-
-# alter stats 
-set @@tidb_enable_extended_stats = ON;
-create table stats(a int, b int);
-alter table stats add stats_extended s1 correlation(a,b);
-alter table stats drop stats_extended s1;
-drop table stats;
 
 # alter ttl
 CREATE TABLE ttl_test (created_at datetime) TTL = `created_at` + INTERVAL 5 DAY;
@@ -229,9 +523,6 @@ drop sequence seq;
 
 create view v as select 1 as b;
 drop view v;
-
-lock tables t read;
-unlock tables;
 
 alter table t charset utf8mb4 collate utf8mb4_unicode_ci;
 alter database bdr_mode default character set = utf8mb4;
