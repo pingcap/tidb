@@ -771,13 +771,12 @@ func createAscendingFiles(
 }
 
 var (
-	objectPrefix     = flag.String("object-prefix", "ascending", "object prefix")
-	fileSize         = flag.Int("file-size", 50*units.MiB, "file size")
-	fileCount        = flag.Int("file-count", 24, "file count")
-	concurrency      = flag.Int("concurrency", 100, "concurrency")
-	mergeConcurrency = flag.Int("merge-concurrency", 1, "merge concurrency")
-	memoryLimit      = flag.Int("memory-limit", 64*units.MiB, "memory limit")
-	skipCreate       = flag.Bool("skip-create", false, "skip create files")
+	objectPrefix = flag.String("object-prefix", "ascending", "object prefix")
+	fileSize     = flag.Int("file-size", 50*units.MiB, "file size")
+	fileCount    = flag.Int("file-count", 24, "file count")
+	concurrency  = flag.Int("concurrency", 100, "concurrency")
+	memoryLimit  = flag.Int("memory-limit", 64*units.MiB, "memory limit")
+	skipCreate   = flag.Bool("skip-create", false, "skip create files")
 )
 
 func TestReadFileConcurrently(t *testing.T) {
@@ -968,9 +967,10 @@ func mergeStep(t *testing.T, s *mergeTestSuite) {
 	}
 	elapsed := time.Since(now)
 	t.Logf(
-		"merge speed for %d bytes in %s, speed: %.2f MB/s",
+		"merge speed for %d bytes in %s with %d concurrency, speed: %.2f MB/s",
 		totalSize.Load(),
 		elapsed,
+		s.concurrency,
 		float64(totalSize.Load())/elapsed.Seconds()/1024/1024,
 	)
 }
@@ -1024,6 +1024,7 @@ func newMergeStep(t *testing.T, s *mergeTestSuite) {
 
 func testCompareMergeWithContent(
 	t *testing.T,
+	concurrency int,
 	createFn func(store storage.ExternalStorage, fileSize int, fileCount int, objectPrefix string) (int, kv.Key, kv.Key),
 	fn func(t *testing.T, suite *mergeTestSuite)) {
 	store := openTestingStorage(t)
@@ -1052,7 +1053,7 @@ func testCompareMergeWithContent(
 	suite := &mergeTestSuite{
 		store:            store,
 		totalKVCnt:       kvCnt,
-		concurrency:      *mergeConcurrency,
+		concurrency:      concurrency,
 		memoryLimit:      *memoryLimit,
 		beforeMerge:      beforeTest,
 		afterMerge:       afterTest,
@@ -1066,8 +1067,14 @@ func testCompareMergeWithContent(
 }
 
 func TestMergeBench(t *testing.T) {
-	testCompareMergeWithContent(t, createAscendingFiles, mergeStep)
-	testCompareMergeWithContent(t, createEvenlyDistributedFiles, mergeStep)
-	testCompareMergeWithContent(t, createAscendingFiles, newMergeStep)
-	testCompareMergeWithContent(t, createEvenlyDistributedFiles, newMergeStep)
+	testCompareMergeWithContent(t, 1, createAscendingFiles, mergeStep)
+	testCompareMergeWithContent(t, 1, createEvenlyDistributedFiles, mergeStep)
+	testCompareMergeWithContent(t, 2, createAscendingFiles, mergeStep)
+	testCompareMergeWithContent(t, 2, createEvenlyDistributedFiles, mergeStep)
+	testCompareMergeWithContent(t, 4, createAscendingFiles, mergeStep)
+	testCompareMergeWithContent(t, 4, createEvenlyDistributedFiles, mergeStep)
+	testCompareMergeWithContent(t, 8, createAscendingFiles, mergeStep)
+	testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, mergeStep)
+	testCompareMergeWithContent(t, 8, createAscendingFiles, newMergeStep)
+	testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, newMergeStep)
 }
