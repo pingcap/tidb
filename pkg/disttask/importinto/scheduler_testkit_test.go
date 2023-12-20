@@ -92,9 +92,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	// to import stage, job should be running
 	d := sch.MockScheduler(task)
 	ext := importinto.ImportSchedulerExt{}
-	serverInfos, _, err := ext.GetEligibleInstances(context.Background(), task)
-	require.NoError(t, err)
-	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, serverInfos, ext.GetNextStep(task))
+	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(task)
@@ -115,7 +113,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 		require.NoError(t, manager.FinishSubtask(ctx, s.ExecID, s.ID, []byte("{}")))
 	}
 	// to post-process stage, job should be running and in validating step
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, serverInfos, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(task)
@@ -125,7 +123,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "validating", gotJobInfo.Step)
 	// on next stage, job should be finished
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, serverInfos, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 0)
 	task.Step = ext.GetNextStep(task)
@@ -239,9 +237,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	ext := importinto.ImportSchedulerExt{
 		GlobalSort: true,
 	}
-	serverInfos, _, err := ext.GetEligibleInstances(context.Background(), task)
-	require.NoError(t, err)
-	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, serverInfos, ext.GetNextStep(task))
+	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 2)
 	task.Step = ext.GetNextStep(task)
@@ -298,7 +294,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort"))
 	})
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, serverInfos, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(task)
@@ -336,7 +332,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/mockWriteIngestSpecs"))
 	})
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, serverInfos, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 2)
 	task.Step = ext.GetNextStep(task)
@@ -346,7 +342,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "importing", gotJobInfo.Step)
 	// on next stage, to post-process stage
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, serverInfos, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(task)
@@ -356,7 +352,7 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "validating", gotJobInfo.Step)
 	// next stage, done
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, serverInfos, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 0)
 	task.Step = ext.GetNextStep(task)
