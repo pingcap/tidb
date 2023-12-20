@@ -421,6 +421,12 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 			} else if ast.DeniedByBDR(ast.BDRRole(bdrRole), job.Type) {
 				return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 			}
+			if (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
+				(ast.BDRRole(bdrRole) == ast.BDRRolePrimary || ast.BDRRole(bdrRole) == ast.BDRRoleSecondary) &&
+				len(job.Args) >= 1 && job.Args[0].(bool) {
+				// job.Args[0] is unique when job.Type is ActionAddIndex or ActionAddPrimaryKey.
+				return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
+			}
 		}
 
 		setJobStateToQueueing(job)

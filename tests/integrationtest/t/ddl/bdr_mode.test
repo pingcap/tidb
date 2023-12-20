@@ -90,6 +90,8 @@ drop table ttl_test;
 
 alter table t add primary key (a);
 alter table t drop primary key;
+alter table t add unique index (a);
+alter table t drop index a;
 alter table t auto_id_cache = 10;
 
 create table t_random(a bigint auto_random, primary key (a));
@@ -259,6 +261,8 @@ admin set bdr role none;
 alter table t add primary key (a);
 admin set bdr role primary;
 alter table t drop primary key;
+-- error 8263
+alter table t add unique index (a);
 -- error 8263
 alter table t auto_id_cache = 10;
 
@@ -481,6 +485,8 @@ admin set bdr role none;
 alter table t drop primary key;
 admin set bdr role secondary;
 -- error 8263
+alter table t add unique index (a);
+-- error 8263
 alter table t auto_id_cache = 10;
 
 admin set bdr role none;
@@ -613,6 +619,8 @@ drop table ttl_test;
 
 alter table t add primary key (a);
 alter table t drop primary key;
+alter table t add unique index (a);
+alter table t drop index a;
 alter table t auto_id_cache = 10;
 
 create table t_random(a bigint auto_random, primary key (a));
