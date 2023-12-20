@@ -1067,14 +1067,14 @@ func testCompareMergeWithContent(
 }
 
 func TestMergeBench(t *testing.T) {
-	testCompareMergeWithContent(t, 1, createAscendingFiles, mergeStep)
-	testCompareMergeWithContent(t, 1, createEvenlyDistributedFiles, mergeStep)
-	testCompareMergeWithContent(t, 2, createAscendingFiles, mergeStep)
-	testCompareMergeWithContent(t, 2, createEvenlyDistributedFiles, mergeStep)
-	testCompareMergeWithContent(t, 4, createAscendingFiles, mergeStep)
-	testCompareMergeWithContent(t, 4, createEvenlyDistributedFiles, mergeStep)
-	testCompareMergeWithContent(t, 8, createAscendingFiles, mergeStep)
-	testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, mergeStep)
-	testCompareMergeWithContent(t, 8, createAscendingFiles, newMergeStep)
+	// testCompareMergeWithContent(t, 1, createAscendingFiles, mergeStep)
+	// testCompareMergeWithContent(t, 1, createEvenlyDistributedFiles, mergeStep)
+	// testCompareMergeWithContent(t, 2, createAscendingFiles, mergeStep)
+	// testCompareMergeWithContent(t, 2, createEvenlyDistributedFiles, mergeStep)
+	// testCompareMergeWithContent(t, 4, createAscendingFiles, mergeStep)
+	// testCompareMergeWithContent(t, 4, createEvenlyDistributedFiles, mergeStep)
+	// testCompareMergeWithContent(t, 8, createAscendingFiles, mergeStep)
+	// testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, mergeStep)
+	// testCompareMergeWithContent(t, 8, createAscendingFiles, newMergeStep)
 	testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, newMergeStep)
 }

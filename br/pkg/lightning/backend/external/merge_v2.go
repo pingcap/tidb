@@ -3,7 +3,9 @@ package external
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
+	"runtime"
 	"time"
 
 	"github.com/jfcg/sorty/v2"
@@ -16,6 +18,21 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 )
+
+func printMemoryUsage() {
+	// 获取内存使用信息
+	memStats := runtime.MemStats{}
+	runtime.ReadMemStats(&memStats)
+
+	// 打印内存占用情况
+	logutil.BgLogger().Info(fmt.Sprintf("Total Memory: %d bytes\n", memStats.TotalAlloc))
+	logutil.BgLogger().Info(fmt.Sprintf("Heap Usage: %d bytes\n", memStats.HeapAlloc))
+	logutil.BgLogger().Info(fmt.Sprintf("HeapIdle: %d bytes\n", memStats.HeapIdle))
+	logutil.BgLogger().Info(fmt.Sprintf("HeapInuse: %d bytes\n", memStats.HeapInuse))
+	logutil.BgLogger().Info(fmt.Sprintf("Stack Inuse: %d bytes\n", memStats.StackInuse))
+	logutil.BgLogger().Info(fmt.Sprintf("MSpan Inuse: %d bytes\n", memStats.MSpanInuse))
+	logutil.BgLogger().Info(fmt.Sprintf("GCNum: %d\n", memStats.NumGC))
+}
 
 // MergeOverlappingFilesV2 reads from given files whose key range may overlap
 // and writes to new sorted, nonoverlapping files.
@@ -38,6 +55,18 @@ func MergeOverlappingFilesV2(
 	concurrency int,
 	checkHotspot bool,
 ) (err error) {
+
+	// 定义打印内存使用情况的周期（以秒为单位）
+	interval := 2
+
+	// 启动一个定时循环，每隔指定的时间间隔调用 printMemoryUsage 函数
+	go func() {
+		for {
+			time.Sleep(time.Duration(interval) * time.Second)
+			printMemoryUsage()
+		}
+	}()
+
 	task := log.BeginTask(logutil.Logger(ctx).With(
 		zap.Int("data-file-count", len(dataFiles)),
 		zap.Int("stat-file-count", len(statFiles)),
@@ -188,3 +217,6 @@ func MergeOverlappingFilesV2(
 	}
 	return
 }
+
+// ywq todo multi threaded.
+// todo not use buf
