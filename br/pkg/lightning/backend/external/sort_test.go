@@ -148,7 +148,9 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 		startKey = BytesMin(startKey, s.Min.Clone())
 		endKey = BytesMax(endKey, s.Max.Clone().Next())
 	}
-	mergeMemSize := (rand.Intn(10) + 1) * 100 // use random mergeMemSize to test different memLimit of writer.
+	mergeMemSize := (rand.Intn(10) + 1) * 100
+	// use random mergeMemSize to test different memLimit of writer.
+	// reproduce one bug, see https://github.com/pingcap/tidb/issues/49590
 	for _, group := range dataGroup {
 		require.NoError(t, MergeOverlappingFiles(
 			ctx,
