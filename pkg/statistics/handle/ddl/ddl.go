@@ -129,26 +129,32 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			return err
 		}
 	case model.ActionAlterTablePartitioning:
-		globalTableInfo, addedPartInfo := t.GetAddPartitioningInfo()
-		// Add partitioning
+		oldSingleTableID, globalTableInfo, addedPartInfo := t.GetAddPartitioningInfo()
+		// Add new partition stats.
 		for _, def := range addedPartInfo.Definitions {
-			// TODO: Should we trigger analyze instead of adding 0s?
 			if err := h.statsWriter.InsertTableStats2KV(globalTableInfo, def.ID); err != nil {
 				return err
 			}
 		}
 		// Change id for global stats, since the data has not changed!
-		// Note that globalTableInfo is the new table info
-		// and addedPartInfo.NewTableID is actually the old table ID!
-		// (see onReorganizePartition)
-		return h.statsWriter.ChangeGlobalStatsID(addedPartInfo.NewTableID, globalTableInfo.ID)
+		// Note: This operation will update all tables related to statistics with the new ID.
+		return h.statsWriter.ChangeGlobalStatsID(oldSingleTableID, globalTableInfo.ID)
 	case model.ActionRemovePartitioning:
 		// Change id for global stats, since the data has not changed!
-		// Note that newSingleTableInfo is the new table info
-		// and droppedPartInfo.NewTableID is actually the old table ID!
-		// (see onReorganizePartition)
-		newSingleTableInfo, droppedPartInfo := t.GetRemovePartitioningInfo()
-		return h.statsWriter.ChangeGlobalStatsID(droppedPartInfo.NewTableID, newSingleTableInfo.ID)
+		// Note: This operation will update all tables related to statistics with the new ID.
+		oldTblID,
+			newSingleTableInfo,
+			droppedPartInfo := t.GetRemovePartitioningInfo()
+		if err := h.statsWriter.ChangeGlobalStatsID(oldTblID, newSingleTableInfo.ID); err != nil {
+			return err
+		}
+
+		// Remove partition stats.
+		for _, def := range droppedPartInfo.Definitions {
+			if err := h.statsWriter.ResetTableStats2KVForDrop(def.ID); err != nil {
+				return err
+			}
+		}
 	case model.ActionFlashbackCluster:
 		return h.statsWriter.UpdateStatsVersion()
 	}
