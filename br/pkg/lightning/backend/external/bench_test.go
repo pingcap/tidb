@@ -763,7 +763,7 @@ var (
 	concurrency  = flag.Int("concurrency", 100, "concurrency")
 	memoryLimit  = flag.Int("memory-limit", 64*units.MiB, "memory limit")
 	skipCreate   = flag.Bool("skip-create", false, "skip create files")
-	fileName     = flag.String("file-name", "test", "test")
+	fileName     = flag.String("file-name", "test", "file name for tests")
 )
 
 func TestReadFileConcurrently(t *testing.T) {
