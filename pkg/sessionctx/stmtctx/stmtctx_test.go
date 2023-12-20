@@ -386,6 +386,28 @@ func TestResetStmtCtx(t *testing.T) {
 	require.Equal(t, "err2", warnings[0].Err.Error())
 }
 
+func TestStmtCtxID(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	currentID := sc.CtxID()
+
+	cases := []struct {
+		fn func() *stmtctx.StatementContext
+	}{
+		{func() *stmtctx.StatementContext { return stmtctx.NewStmtCtx() }},
+		{func() *stmtctx.StatementContext { return stmtctx.NewStmtCtxWithTimeZone(time.Local) }},
+		{func() *stmtctx.StatementContext {
+			sc.Reset()
+			return sc
+		}},
+	}
+
+	for _, c := range cases {
+		ctxID := c.fn().CtxID()
+		require.Greater(t, ctxID, currentID)
+		currentID = ctxID
+	}
+}
+
 func BenchmarkErrCtx(b *testing.B) {
 	sc := stmtctx.NewStmtCtx()
 
