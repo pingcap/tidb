@@ -17,10 +17,7 @@ package external
 import (
 	"context"
 	"encoding/binary"
-	"fmt"
-	"os"
 	"path/filepath"
-	"runtime/pprof"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/membuf"
@@ -56,16 +53,16 @@ type OneFileWriter struct {
 }
 
 // initWriter inits the underlying dataFile/statFile path, dataWriter/statWriter for OneFileWriter.
-func (w *OneFileWriter) initWriter(ctx context.Context, partSize int64) (
+func (w *OneFileWriter) initWriter(ctx context.Context, partSize int64, concurrency int) (
 	err error,
 ) {
 	w.dataFile = filepath.Join(w.filenamePrefix, "one-file")
-	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{Concurrency: 20, PartSize: partSize})
+	w.dataWriter, err = w.store.Create(ctx, w.dataFile, &storage.WriterOption{Concurrency: concurrency, PartSize: partSize})
 	if err != nil {
 		return err
 	}
 	w.statFile = filepath.Join(w.filenamePrefix+statSuffix, "one-file")
-	w.statWriter, err = w.store.Create(ctx, w.statFile, &storage.WriterOption{Concurrency: 20, PartSize: int64(5 * size.MB)})
+	w.statWriter, err = w.store.Create(ctx, w.statFile, &storage.WriterOption{Concurrency: concurrency, PartSize: int64(5 * size.MB)})
 	if err != nil {
 		_ = w.dataWriter.Close(ctx)
 		return err
@@ -75,9 +72,9 @@ func (w *OneFileWriter) initWriter(ctx context.Context, partSize int64) (
 }
 
 // Init inits the OneFileWriter and its underlying KeyValueStore.
-func (w *OneFileWriter) Init(ctx context.Context, partSize int64) (err error) {
+func (w *OneFileWriter) Init(ctx context.Context, partSize int64, concurrency int) (err error) {
 	w.logger = logutil.Logger(ctx)
-	err = w.initWriter(ctx, partSize)
+	err = w.initWriter(ctx, partSize, concurrency)
 	if err != nil {
 		return err
 	}
@@ -85,7 +82,7 @@ func (w *OneFileWriter) Init(ctx context.Context, partSize int64) (err error) {
 	return err
 }
 
-var idx int = 0
+// var idx int = 0
 
 // WriteRow implements ingest.Writer.
 func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) error {
@@ -94,12 +91,12 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 	length := len(idxKey) + len(idxVal) + lengthBytes*2
 	buf, _ := w.kvBuffer.AllocBytesWithSliceLocation(length)
 	if buf == nil {
-		file, _ := os.Create(fmt.Sprintf("heap-profile-%d.prof", idx))
-		idx++
-		// intest.AssertNoError(err)
-		// check heap profile to see the memory usage is expected
-		_ = pprof.WriteHeapProfile(file)
-		// intest.AssertNoError(err)
+		// file, _ := os.Create(fmt.Sprintf("heap-profile-%d.prof", idx))
+		// idx++
+		// // intest.AssertNoError(err)
+		// // check heap profile to see the memory usage is expected
+		// _ = pprof.WriteHeapProfile(file)
+		// // intest.AssertNoError(err)
 		w.kvBuffer.Reset()
 		buf, _ = w.kvBuffer.AllocBytesWithSliceLocation(length)
 		// we now don't support KV larger than blockSize

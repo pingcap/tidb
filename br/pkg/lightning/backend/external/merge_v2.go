@@ -5,7 +5,8 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"runtime"
+	"os"
+	"runtime/pprof"
 	"time"
 
 	"github.com/jfcg/sorty/v2"
@@ -19,20 +20,18 @@ import (
 	"go.uber.org/zap"
 )
 
-func printMemoryUsage() {
-	// 获取内存使用信息
-	memStats := runtime.MemStats{}
-	runtime.ReadMemStats(&memStats)
+// func printMemoryUsage() {
+// 	memStats := runtime.MemStats{}
+// 	runtime.ReadMemStats(&memStats)
 
-	// 打印内存占用情况
-	logutil.BgLogger().Info(fmt.Sprintf("Total Memory: %d bytes\n", memStats.TotalAlloc))
-	logutil.BgLogger().Info(fmt.Sprintf("Heap Usage: %d bytes\n", memStats.HeapAlloc))
-	logutil.BgLogger().Info(fmt.Sprintf("HeapIdle: %d bytes\n", memStats.HeapIdle))
-	logutil.BgLogger().Info(fmt.Sprintf("HeapInuse: %d bytes\n", memStats.HeapInuse))
-	logutil.BgLogger().Info(fmt.Sprintf("Stack Inuse: %d bytes\n", memStats.StackInuse))
-	logutil.BgLogger().Info(fmt.Sprintf("MSpan Inuse: %d bytes\n", memStats.MSpanInuse))
-	logutil.BgLogger().Info(fmt.Sprintf("GCNum: %d\n", memStats.NumGC))
-}
+// 	logutil.BgLogger().Info(fmt.Sprintf("Total Memory: %d bytes\n", memStats.TotalAlloc/1024/1024))
+// 	logutil.BgLogger().Info(fmt.Sprintf("Heap Usage: %d bytes\n", memStats.HeapAlloc/1024/1024))
+// 	logutil.BgLogger().Info(fmt.Sprintf("HeapIdle: %d bytes\n", memStats.HeapIdle/1024/1024))
+// 	logutil.BgLogger().Info(fmt.Sprintf("HeapInuse: %d bytes\n", memStats.HeapInuse/1024/1024))
+// 	logutil.BgLogger().Info(fmt.Sprintf("Stack Inuse: %d bytes\n", memStats.StackInuse/1024/1024))
+// 	logutil.BgLogger().Info(fmt.Sprintf("MSpan Inuse: %d bytes\n", memStats.MSpanInuse/1024/1024))
+// 	logutil.BgLogger().Info(fmt.Sprintf("GCNum: %d\n", memStats.NumGC))
+// }
 
 // MergeOverlappingFilesV2 reads from given files whose key range may overlap
 // and writes to new sorted, nonoverlapping files.
@@ -53,19 +52,18 @@ func MergeOverlappingFilesV2(
 	propKeysDist uint64,
 	onClose OnCloseFunc,
 	concurrency int,
+	writerConcurrency int,
 	checkHotspot bool,
 ) (err error) {
 
-	// 定义打印内存使用情况的周期（以秒为单位）
-	interval := 2
+	// interval := 100
 
-	// 启动一个定时循环，每隔指定的时间间隔调用 printMemoryUsage 函数
-	go func() {
-		for {
-			time.Sleep(time.Duration(interval) * time.Second)
-			printMemoryUsage()
-		}
-	}()
+	// go func() {
+	// 	for {
+	// 		time.Sleep(time.Duration(interval) * time.Millisecond)
+	// 		printMemoryUsage()
+	// 	}
+	// }()
 
 	task := log.BeginTask(logutil.Logger(ctx).With(
 		zap.Int("data-file-count", len(dataFiles)),
@@ -74,6 +72,7 @@ func MergeOverlappingFilesV2(
 		zap.Binary("end-key", endKey),
 		zap.String("new-file-prefix", newFilePrefix),
 		zap.Int("concurrency", concurrency),
+		zap.Int("writer concurrency", writerConcurrency),
 	), "merge overlapping files")
 	defer func() {
 		task.End(zap.ErrorLevel, err)
@@ -120,7 +119,7 @@ func MergeOverlappingFilesV2(
 		}
 	}()
 
-	err = writer.Init(ctx, partSize)
+	err = writer.Init(ctx, partSize, writerConcurrency)
 	if err != nil {
 		logutil.Logger(ctx).Warn("init writer failed", zap.Error(err))
 		return
@@ -131,8 +130,9 @@ func MergeOverlappingFilesV2(
 	curStart := kv.Key(startKey).Clone()
 	var curEnd kv.Key
 	var maxKey, minKey kv.Key
-
+	idx := 0
 	for {
+		now := time.Now()
 		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err1 := splitter.SplitOneRangesGroup()
 		if err1 != nil {
 			logutil.Logger(ctx).Warn("split one ranges group failed", zap.Error(err1))
@@ -142,7 +142,8 @@ func MergeOverlappingFilesV2(
 		if len(endKeyOfGroup) == 0 {
 			curEnd = kv.Key(endKey).Clone()
 		}
-		now := time.Now()
+		splitTime := time.Since(now)
+		now = time.Now()
 		err1 = readAllData(
 			ctx,
 			store,
@@ -171,6 +172,9 @@ func MergeOverlappingFilesV2(
 			return false
 		})
 		sortTime := time.Since(now)
+		file, _ := os.Create(fmt.Sprintf("heap-profile-test-%d.prof", idx))
+		idx++
+		_ = pprof.WriteHeapProfile(file)
 		now = time.Now()
 		for i, key := range loaded.keys {
 			err1 = writer.WriteRow(ctx, key, loaded.values[i])
@@ -181,10 +185,12 @@ func MergeOverlappingFilesV2(
 		}
 		writeTime := time.Since(now)
 		logutil.Logger(ctx).Info("sort one group in MergeOverlappingFiles",
+			zap.Duration("split time", splitTime),
 			zap.Duration("read time", readTime),
 			zap.Duration("sort time", sortTime),
 			zap.Duration("write time", writeTime),
 			zap.Int("key len", len(loaded.keys)))
+		now = time.Now()
 
 		if len(minKey) == 0 {
 			minKey = kv.Key(loaded.keys[0]).Clone()
@@ -194,11 +200,14 @@ func MergeOverlappingFilesV2(
 		loaded.keys = nil
 		loaded.values = nil
 		loaded.memKVBuffers = nil
-
+		logutil.Logger(ctx).Info("release time",
+			zap.Duration("time", time.Since(now)))
 		if len(endKeyOfGroup) == 0 {
 			break
 		}
 	}
+
+	now := time.Now()
 
 	var stat MultipleFilesStat
 	stat.Filenames = append(stat.Filenames,
@@ -215,6 +224,8 @@ func MergeOverlappingFilesV2(
 			MultipleFilesStats: []MultipleFilesStat{stat},
 		})
 	}
+	logutil.Logger(ctx).Info("close time",
+		zap.Duration("time", time.Since(now)))
 	return
 }
 

@@ -264,6 +264,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 			2,
 			closeFn1,
 			1,
+			1,
 			true))
 	}
 

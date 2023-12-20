@@ -83,7 +83,7 @@ func TestReadAllOneFile(t *testing.T) {
 		SetMemorySizeLimit(uint64(memSizeLimit)).
 		BuildOneFile(memStore, "/test", "0")
 
-	require.NoError(t, w.Init(ctx, int64(5*size.MB)))
+	require.NoError(t, w.Init(ctx, int64(5*size.MB), 20))
 
 	kvCnt := rand.Intn(10) + 10000
 	kvs := make([]common.KvPair, kvCnt)

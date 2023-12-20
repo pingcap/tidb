@@ -119,7 +119,7 @@ func mergeOverlappingFilesInternal(
 		SetPropKeysDistance(propKeysDist).
 		SetPropSizeDistance(propSizeDist).
 		BuildOneFile(store, newFilePrefix, writerID)
-	err = writer.Init(ctx, partSize)
+	err = writer.Init(ctx, partSize, 20)
 	if err != nil {
 		return nil
 	}

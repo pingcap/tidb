@@ -50,7 +50,7 @@ func TestOnefileWriterBasic(t *testing.T) {
 		SetPropKeysDistance(2).
 		BuildOneFile(memStore, "/test", "0")
 
-	require.NoError(t, writer.Init(ctx, 5*1024*1024))
+	require.NoError(t, writer.Init(ctx, 5*1024*1024, 20))
 
 	kvCnt := 100
 	kvs := make([]common.KvPair, kvCnt)
@@ -121,7 +121,7 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 		SetPropKeysDistance(keysDistance).
 		BuildOneFile(memStore, "/"+prefix, "0")
 
-	require.NoError(t, writer.Init(ctx, 5*1024*1024))
+	require.NoError(t, writer.Init(ctx, 5*1024*1024, 20))
 	kvs := make([]common.KvPair, 0, kvCnt)
 	for i := 0; i < kvCnt; i++ {
 		kvs = append(kvs, common.KvPair{
@@ -267,7 +267,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		SetMemorySizeLimit(1000).
 		BuildOneFile(memStore, "/test", "0")
 
-	require.NoError(t, writer.Init(ctx, 5*1024*1024))
+	require.NoError(t, writer.Init(ctx, 5*1024*1024, 20))
 
 	kvCnt := 100000
 	expectedTotalSize := 0
