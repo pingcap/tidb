@@ -60,6 +60,7 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/sessionctx/variable",
         "//pkg/statistics/handle",
+        "//pkg/statistics/handle/types",
         "//pkg/store/pdtypes",
         "//pkg/tablecodec",
         "//pkg/util",

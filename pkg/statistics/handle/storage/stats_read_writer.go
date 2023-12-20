@@ -33,6 +33,7 @@ import (
 	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -456,6 +457,47 @@ func (s *statsReadWriter) DumpHistoricalStatsBySnapshot(
 	return jsonTbl, fallbackTbls, nil
 }
 
+// DumpStatsTOJSONBySnapshotFunc dumps statistic to json and call the function for each partition statistic.
+// Notice: It might call the function `fn` with nil jsontable.
+func (s *statsReadWriter) DumpStatsToJSONBySnapshotFunc(
+	ctx context.Context,
+	dbName string,
+	tableInfo *model.TableInfo,
+	snapshot uint64,
+	fn func(ctx context.Context, jsonTable *statsutil.JSONTable, physicalID int64) error,
+) error {
+	pi := tableInfo.GetPartitionInfo()
+	if pi == nil {
+		jsonTable, err := s.TableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return fn(ctx, jsonTable, tableInfo.ID)
+	}
+
+	for _, def := range pi.Definitions {
+		tbl, err := s.TableStatsToJSON(dbName, tableInfo, def.ID, snapshot)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if tbl == nil {
+			continue
+		}
+		if err := fn(ctx, tbl, def.ID); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	// dump its global-stats if existed
+	tbl, err := s.TableStatsToJSON(dbName, tableInfo, tableInfo.ID, snapshot)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if tbl != nil {
+		return fn(ctx, tbl, tableInfo.ID)
+	}
+	return nil
+}
+
 // DumpStatsToJSONBySnapshot dumps statistic to json.
 func (s *statsReadWriter) DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*util.JSONTable, error) {
 	pruneMode, err := util.GetCurrentPruneMode(s.statsHandler.SPool())
@@ -555,25 +597,63 @@ func (s *statsReadWriter) TableStatsToJSON(dbName string, tableInfo *model.Table
 // TestLoadStatsErr is only for test.
 type TestLoadStatsErr struct{}
 
-// LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
-// In final, it will also udpate the stats cache.
-func (s *statsReadWriter) LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema,
-	jsonTbl *util.JSONTable, concurrencyForPartition int) error {
-	if err := s.LoadStatsFromJSONNoUpdate(ctx, is, jsonTbl, concurrencyForPartition); err != nil {
-		return errors.Trace(err)
-	}
-	return errors.Trace(s.statsHandler.Update(is))
-}
-
-// LoadStatsFromJSONNoUpdate will load statistic from JSONTable, and save it to the storage.
-func (s *statsReadWriter) LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema,
-	jsonTbl *util.JSONTable, concurrencyForPartition int) error {
+func (s *statsReadWriter) LoadStatsFromJSONConcurrency(
+	ctx context.Context,
+	tableInfo *model.TableInfo,
+	taskCh chan *statstypes.PartitionStatisticLoadTask,
+	concurrencyForPartition int,
+) error {
 	nCPU := runtime.GOMAXPROCS(0)
 	if concurrencyForPartition == 0 {
 		concurrencyForPartition = (nCPU + 1) / 2 // default
 	}
 	concurrencyForPartition = min(concurrencyForPartition, nCPU) // for safety
 
+	var wg sync.WaitGroup
+	e := new(atomic.Pointer[error])
+	for i := 0; i < concurrencyForPartition; i++ {
+		wg.Add(1)
+		s.statsHandler.GPool().Go(func() {
+			defer func() {
+				if r := recover(); r != nil {
+					err := fmt.Errorf("%v", r)
+					e.CompareAndSwap(nil, &err)
+				}
+				wg.Done()
+			}()
+
+			for tbl := range taskCh {
+				if tbl == nil {
+					continue
+				}
+
+				loadFunc := s.loadStatsFromJSON
+				if intest.InTest && ctx.Value(TestLoadStatsErr{}) != nil {
+					loadFunc = ctx.Value(TestLoadStatsErr{}).(func(*model.TableInfo, int64, *util.JSONTable) error)
+				}
+
+				err := loadFunc(tableInfo, tbl.PhysicalID, tbl.JsonTable)
+				if err != nil {
+					e.CompareAndSwap(nil, &err)
+					return
+				}
+				if e.Load() != nil {
+					return
+				}
+			}
+		})
+	}
+	wg.Wait()
+	if e.Load() != nil {
+		return *e.Load()
+	}
+
+	return nil
+}
+
+// LoadStatsFromJSONNoUpdate will load statistic from JSONTable, and save it to the storage.
+func (s *statsReadWriter) LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema,
+	jsonTbl *util.JSONTable, concurrencyForPartition int) error {
 	table, err := is.TableByName(model.NewCIStr(jsonTbl.DatabaseName), model.NewCIStr(jsonTbl.TableName))
 	if err != nil {
 		return errors.Trace(err)
@@ -587,59 +667,39 @@ func (s *statsReadWriter) LoadStatsFromJSONNoUpdate(ctx context.Context, is info
 		}
 	} else {
 		// load partition statistics concurrently
-		taskCh := make(chan model.PartitionDefinition, len(pi.Definitions))
+		taskCh := make(chan *statstypes.PartitionStatisticLoadTask, len(pi.Definitions)+1)
 		for _, def := range pi.Definitions {
-			taskCh <- def
-		}
-		close(taskCh)
-		var wg sync.WaitGroup
-		e := new(atomic.Pointer[error])
-		for i := 0; i < concurrencyForPartition; i++ {
-			wg.Add(1)
-			s.statsHandler.GPool().Go(func() {
-				defer func() {
-					if r := recover(); r != nil {
-						err := fmt.Errorf("%v", r)
-						e.CompareAndSwap(nil, &err)
-					}
-					wg.Done()
-				}()
-
-				for def := range taskCh {
-					tbl := jsonTbl.Partitions[def.Name.L]
-					if tbl == nil {
-						continue
-					}
-
-					loadFunc := s.loadStatsFromJSON
-					if intest.InTest && ctx.Value(TestLoadStatsErr{}) != nil {
-						loadFunc = ctx.Value(TestLoadStatsErr{}).(func(*model.TableInfo, int64, *util.JSONTable) error)
-					}
-
-					err := loadFunc(tableInfo, def.ID, tbl)
-					if err != nil {
-						e.CompareAndSwap(nil, &err)
-						return
-					}
-					if e.Load() != nil {
-						return
-					}
+			tbl := jsonTbl.Partitions[def.Name.L]
+			if tbl != nil {
+				taskCh <- &statstypes.PartitionStatisticLoadTask{
+					PhysicalID: def.ID,
+					JsonTable:  tbl,
 				}
-			})
+			}
 		}
-		wg.Wait()
-		if e.Load() != nil {
-			return *e.Load()
-		}
-
 		// load global-stats if existed
 		if globalStats, ok := jsonTbl.Partitions[util.TiDBGlobalStats]; ok {
-			if err := s.loadStatsFromJSON(tableInfo, tableInfo.ID, globalStats); err != nil {
-				return errors.Trace(err)
+			taskCh <- &statstypes.PartitionStatisticLoadTask{
+				PhysicalID: tableInfo.ID,
+				JsonTable:  globalStats,
 			}
+		}
+		close(taskCh)
+		if err := s.LoadStatsFromJSONConcurrency(ctx, tableInfo, taskCh, concurrencyForPartition); err != nil {
+			return errors.Trace(err)
 		}
 	}
 	return nil
+}
+
+// LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
+// In final, it will also udpate the stats cache.
+func (s *statsReadWriter) LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema,
+	jsonTbl *util.JSONTable, concurrencyForPartition int) error {
+	if err := s.LoadStatsFromJSONNoUpdate(ctx, is, jsonTbl, concurrencyForPartition); err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(s.statsHandler.Update(is))
 }
 
 func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physicalID int64, jsonTbl *util.JSONTable) error {

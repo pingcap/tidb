@@ -77,7 +77,7 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 	cases := []struct {
 		cfgSchemas map[string]struct{}
 		cfgTables  map[string]struct{}
-		backupDBs  map[string]*utils.Database
+		backupDBs  map[string]*metautil.Database
 	}{
 		{
 			cfgSchemas: map[string]struct{}{
@@ -167,7 +167,7 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 	}
 }
 
-func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) map[string]*utils.Database {
+func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) map[string]*metautil.Database {
 	testDir := t.TempDir()
 	store, err := storage.NewLocalStorage(testDir)
 	require.NoError(t, err)
@@ -236,7 +236,7 @@ func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) 
 	err = store.WriteFile(ctx, metautil.MetaFile, data)
 	require.NoError(t, err)
 
-	dbs, err := utils.LoadBackupTables(
+	dbs, err := metautil.LoadBackupTables(
 		ctx,
 		metautil.NewMetaReader(
 			meta,
