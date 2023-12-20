@@ -15,8 +15,6 @@
 package statistics
 
 import (
-	"strconv"
-
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -168,8 +166,8 @@ func (c *Column) IsInvalid(
 		if (!c.IsStatsInitialized() || c.IsLoadNeeded()) && stmtctx != nil {
 			if stmtctx.StatsLoad.Timeout > 0 {
 				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
-					zap.String("table_id", strconv.FormatInt(c.PhysicalID, 10)),
-					zap.String("column_id", strconv.FormatInt(c.Info.ID, 10)),
+					zap.Int64("table_id", c.PhysicalID),
+					zap.Int64("column_id", c.Info.ID),
 					zap.String("column_name", c.Info.Name.O))
 			}
 			// In some tests, the c.Info is not set, so we add this check here.
