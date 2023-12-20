@@ -1163,6 +1163,13 @@ func (cc *clientConn) Run(ctx context.Context) {
 			return
 		}
 
+		// Should check InTxn() to avoid execute `begin` stmt.
+		if cc.server.inShutdownMode.Load() {
+			if !cc.ctx.GetSessionVars().InTxn() {
+				return
+			}
+		}
+
 		if !atomic.CompareAndSwapInt32(&cc.status, connStatusReading, connStatusDispatching) {
 			return
 		}
