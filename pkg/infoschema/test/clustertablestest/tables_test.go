@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
@@ -1037,7 +1038,7 @@ func TestStmtSummaryInternalQuery(t *testing.T) {
 		"where digest_text like \"select `original_sql` , `bind_sql` , `default_db` , status%\""
 	tk.MustQuery(sql).Check(testkit.Rows(
 		"select `original_sql` , `bind_sql` , `default_db` , status , `create_time` , `update_time` , charset , " +
-			"collation , source , `sql_digest` , `plan_digest` from `mysql` . `bind_info` where `update_time` > ? order by `update_time` , `create_time`"))
+			"collation , source , `sql_digest` , `plan_digest` , type from `mysql` . `bind_info` where `update_time` > ? order by `update_time` , `create_time`"))
 
 	// Test for issue #21642.
 	tk.MustQuery(`select tidb_version()`)
@@ -1214,8 +1215,12 @@ func TestTiDBTrx(t *testing.T) {
 	memDBTracker := memory.NewTracker(memory.LabelForMemDB, -1)
 	memDBTracker.Consume(19)
 	tk.Session().GetSessionVars().MemDBFootprint = memDBTracker
+
+	t1 := time.Date(2021, 5, 7, 4, 56, 48, 1000000, time.UTC)
+	t2 := time.Date(2021, 5, 20, 13, 16, 35, 778000000, time.UTC)
+
 	sm.TxnInfo[0] = &txninfo.TxnInfo{
-		StartTS:          424768545227014155,
+		StartTS:          oracle.GoTimeToTS(t1),
 		CurrentSQLDigest: digest.String(),
 		State:            txninfo.TxnIdle,
 		EntriesCount:     1,
@@ -1226,7 +1231,7 @@ func TestTiDBTrx(t *testing.T) {
 
 	blockTime2 := time.Date(2021, 05, 20, 13, 18, 30, 123456000, time.Local)
 	sm.TxnInfo[1] = &txninfo.TxnInfo{
-		StartTS:          425070846483628033,
+		StartTS:          oracle.GoTimeToTS(t2),
 		CurrentSQLDigest: "",
 		AllSQLDigests:    []string{"sql1", "sql2", digest.String()},
 		State:            txninfo.TxnLockAcquiring,
@@ -1252,8 +1257,11 @@ func TestTiDBTrx(t *testing.T) {
 	ALL_SQL_DIGESTS,
 	RELATED_TABLE_IDS
 	from information_schema.TIDB_TRX`).Check(testkit.Rows(
-		"424768545227014155 2021-05-07 12:56:48.001000 "+digest.String()+" update `test_tidb_trx` set `i` = `i` + ? Idle <nil> 1 19 2 root test [] ",
-		"425070846483628033 2021-05-20 21:16:35.778000 <nil> <nil> LockWaiting 2021-05-20 13:18:30.123456 0 19 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"] "))
+		"424768545227014144 "+t1.Local().Format(types.TimeFSPFormat)+" "+digest.String()+" update `test_tidb_trx` set `i` = `i` + ? Idle <nil> 1 19 2 root test [] ",
+		"425070846483628032 "+t2.Local().Format(types.TimeFSPFormat)+" <nil> <nil> LockWaiting "+
+			// `WAITING_START_TIME` will not be affected by time_zone, it is in memory and we assume that the system time zone will not change.
+			blockTime2.Format(types.TimeFSPFormat)+
+			" 0 19 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"] "))
 
 	rows := tk.MustQuery(`select WAITING_TIME from information_schema.TIDB_TRX where WAITING_TIME is not null`)
 	require.Len(t, rows.Rows(), 1)

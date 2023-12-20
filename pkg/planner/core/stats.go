@@ -435,9 +435,9 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 			}
 		}
 		if ds.SCtx().GetSessionVars().StmtCtx.InVerboseExplain {
-			ds.SCtx().GetSessionVars().StmtCtx.AppendNote(errors.New(sb.String()))
+			ds.SCtx().GetSessionVars().StmtCtx.AppendNote(errors.NewNoStackError(sb.String()))
 		} else {
-			ds.SCtx().GetSessionVars().StmtCtx.AppendExtraNote(errors.New(sb.String()))
+			ds.SCtx().GetSessionVars().StmtCtx.AppendExtraNote(errors.NewNoStackError(sb.String()))
 		}
 	}
 	return nil

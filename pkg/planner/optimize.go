@@ -93,7 +93,7 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 	ok, reason := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
 	if !ok {
 		if !isExplain && stmtCtx.InExplainStmt && stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
-			stmtCtx.AppendWarning(errors.Errorf("skip non-prepared plan-cache: %s", reason))
+			stmtCtx.AppendWarning(errors.NewNoStackErrorf("skip non-prepared plan-cache: %s", reason))
 		}
 		return nil, nil, false, nil
 	}
@@ -321,7 +321,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			}
 		}
 		if bestPlanFromBind == nil {
-			sessVars.StmtCtx.AppendWarning(errors.New("no plan generated from bindings"))
+			sessVars.StmtCtx.AppendWarning(errors.NewNoStackError("no plan generated from bindings"))
 		} else {
 			bestPlan = bestPlanFromBind
 			sessVars.StmtCtx.StmtHints = bindStmtHints
@@ -331,12 +331,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			sessVars.StmtCtx.BindSQL = chosenBinding.BindSQL
 			sessVars.FoundInBinding = true
 			if sessVars.StmtCtx.InVerboseExplain {
-				sessVars.StmtCtx.AppendNote(errors.Errorf("Using the bindSQL: %v", chosenBinding.BindSQL))
+				sessVars.StmtCtx.AppendNote(errors.NewNoStackErrorf("Using the bindSQL: %v", chosenBinding.BindSQL))
 			} else {
-				sessVars.StmtCtx.AppendExtraNote(errors.Errorf("Using the bindSQL: %v", chosenBinding.BindSQL))
+				sessVars.StmtCtx.AppendExtraNote(errors.NewNoStackErrorf("Using the bindSQL: %v", chosenBinding.BindSQL))
 			}
 			if len(tableHints) > 0 {
-				sessVars.StmtCtx.AppendWarning(errors.Errorf("The system ignores the hints in the current query and uses the hints specified in the bindSQL: %v", chosenBinding.BindSQL))
+				sessVars.StmtCtx.AppendWarning(errors.NewNoStackErrorf("The system ignores the hints in the current query and uses the hints specified in the bindSQL: %v", chosenBinding.BindSQL))
 			}
 		}
 		// Restore the hint to avoid changing the stmt node.
@@ -576,8 +576,47 @@ func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Nod
 	return p, nil
 }
 
-// ExtractSelectAndNormalizeDigest extract the select statement and normalize it.
-func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string, forBinding bool) (ast.StmtNode, string, string, error) {
+// NormalizeStmtForPlanCache normalizes a statement for plan cache.
+// This function skips Explain and complete DB name automatically, and each literal will be normalized as a placeholder '?'.
+//
+//	e.g. `explain select * from t where a in (1, 2, 3)` --> `select * from test.t where a in (?, ?, ?)`
+func NormalizeStmtForPlanCache(stmtNode ast.StmtNode, specifiedDB string) (stmt ast.StmtNode, normalizedStmt, sqlDigest string, err error) {
+	return normalizeStmt(stmtNode, specifiedDB, 0)
+}
+
+// NormalizeStmtForBinding normalizes a statement for binding.
+// This function skips Explain automatically, and literals in in-lists will be normalized as '...'.
+// For normal bindings, DB name will be completed automatically:
+//
+//	e.g. `select * from t where a in (1, 2, 3)` --> `select * from test.t where a in (...)`
+//
+// For universal bindings, DB name will be ignored:
+//
+//	e.g. `select * from test.t where a in (1, 2, 3)` --> `select * from t where a in (...)`
+func NormalizeStmtForBinding(stmtNode ast.StmtNode, specifiedDB string, isUniversalBinding bool) (stmt ast.StmtNode, normalizedStmt, sqlDigest string, err error) {
+	if isUniversalBinding {
+		return normalizeStmt(stmtNode, specifiedDB, 2)
+	}
+	return normalizeStmt(stmtNode, specifiedDB, 1)
+}
+
+// flag 0 is for plan cache, 1 is for normal bindings and 2 is for universal bindings.
+// see comments in NormalizeStmtForPlanCache and NormalizeStmtForBinding.
+func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, flag int) (stmt ast.StmtNode, normalizedStmt, sqlDigest string, err error) {
+	normalize := func(n ast.StmtNode) (normalizedStmt, sqlDigest string) {
+		core.EraseLastSemicolon(n)
+		var digest *parser.Digest
+		switch flag {
+		case 0:
+			normalizedStmt, digest = parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(n, specifiedDB, n.Text()))
+		case 1:
+			normalizedStmt, digest = parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(n, specifiedDB, n.Text()))
+		case 2:
+			normalizedStmt, digest = parser.NormalizeDigestForBinding(utilparser.RestoreWithoutDB(n))
+		}
+		return normalizedStmt, digest.String()
+	}
+
 	switch x := stmtNode.(type) {
 	case *ast.ExplainStmt:
 		// This function is only used to find bind record.
@@ -590,32 +629,10 @@ func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string,
 		}
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
-			var normalizeSQL string
-			if forBinding {
-				// Apply additional binding rules if enabled
-				normalizeSQL = parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()))
-			} else {
-				normalizeSQL = parser.Normalize(utilparser.RestoreWithDefaultDB(x.Stmt, specifiledDB, x.Text()))
-			}
-			normalizeSQL = core.EraseLastSemicolonInSQL(normalizeSQL)
-			hash := parser.DigestNormalized(normalizeSQL)
-			return x.Stmt, normalizeSQL, hash.String(), nil
+			normalizeSQL, digest := normalize(x.Stmt)
+			return x.Stmt, normalizeSQL, digest, nil
 		case *ast.SetOprStmt:
-			core.EraseLastSemicolon(x)
-			var normalizeExplainSQL string
-			var explainSQL string
-			if specifiledDB != "" {
-				explainSQL = utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text())
-			} else {
-				explainSQL = x.Text()
-			}
-
-			if forBinding {
-				// Apply additional binding rules
-				normalizeExplainSQL = parser.NormalizeForBinding(explainSQL)
-			} else {
-				normalizeExplainSQL = parser.Normalize(x.Text())
-			}
+			normalizeExplainSQL, _ := normalize(x)
 
 			idx := strings.Index(normalizeExplainSQL, "select")
 			parenthesesIdx := strings.Index(normalizeExplainSQL, "(")
@@ -632,7 +649,6 @@ func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string,
 			return x.Stmt, normalizeSQL, hash.String(), nil
 		}
 	case *ast.SelectStmt, *ast.SetOprStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
-		core.EraseLastSemicolon(x)
 		// This function is only used to find bind record.
 		// For some SQLs, such as `explain select * from t`, they will be entered here many times,
 		// but some of them do not want to obtain bind record.
@@ -641,17 +657,8 @@ func ExtractSelectAndNormalizeDigest(stmtNode ast.StmtNode, specifiledDB string,
 		if len(x.Text()) == 0 {
 			return x, "", "", nil
 		}
-
-		var normalizedSQL string
-		var hash *parser.Digest
-		if forBinding {
-			// Apply additional binding rules
-			normalizedSQL, hash = parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
-		} else {
-			normalizedSQL, hash = parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(x, specifiledDB, x.Text()))
-		}
-
-		return x, normalizedSQL, hash.String(), nil
+		normalizedSQL, digest := normalize(x)
+		return x, normalizedSQL, digest, nil
 	}
 	return nil, "", "", nil
 }
@@ -661,24 +668,41 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return nil, "", nil
 	}
-	stmtNode, normalizedSQL, sqlDigest, err := ExtractSelectAndNormalizeDigest(stmt, ctx.GetSessionVars().CurrentDB, true)
+	stmtNode, normalizedSQL, sqlDigest, err := NormalizeStmtForBinding(stmt, ctx.GetSessionVars().CurrentDB, false)
 	if err != nil || stmtNode == nil {
 		return nil, "", err
 	}
+	var normalizedSQLUni, sqlDigestUni string
+	if ctx.GetSessionVars().EnableUniversalBinding {
+		_, normalizedSQLUni, sqlDigestUni, err = NormalizeStmtForBinding(stmt, ctx.GetSessionVars().CurrentDB, true)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+
+	// the priority: session normal > session universal > global normal > global universal
 	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-	bindRecord := sessionHandle.GetSessionBinding(sqlDigest, normalizedSQL, "")
-	if bindRecord != nil {
-		if bindRecord.HasEnabledBinding() {
+	if bindRecord := sessionHandle.GetSessionBinding(sqlDigest, normalizedSQL, ""); bindRecord != nil && bindRecord.HasEnabledBinding() {
+		return bindRecord, metrics.ScopeSession, nil
+	}
+	if ctx.GetSessionVars().EnableUniversalBinding {
+		if bindRecord := sessionHandle.GetSessionBinding(sqlDigestUni, normalizedSQLUni, ""); bindRecord != nil && bindRecord.HasEnabledBinding() {
 			return bindRecord, metrics.ScopeSession, nil
 		}
-		return nil, "", nil
 	}
 	globalHandle := domain.GetDomain(ctx).BindHandle()
 	if globalHandle == nil {
 		return nil, "", nil
 	}
-	bindRecord = globalHandle.GetGlobalBinding(sqlDigest, normalizedSQL, "")
-	return bindRecord, metrics.ScopeGlobal, nil
+	if bindRecord := globalHandle.GetGlobalBinding(sqlDigest, normalizedSQL, ""); bindRecord != nil && bindRecord.HasEnabledBinding() {
+		return bindRecord, metrics.ScopeGlobal, nil
+	}
+	if ctx.GetSessionVars().EnableUniversalBinding {
+		if bindRecord := globalHandle.GetGlobalBinding(sqlDigestUni, normalizedSQLUni, ""); bindRecord != nil && bindRecord.HasEnabledBinding() {
+			return bindRecord, metrics.ScopeGlobal, nil
+		}
+	}
+	return nil, "", nil
 }
 
 func handleInvalidBinding(ctx context.Context, sctx sessionctx.Context, level string, bindRecord bindinfo.BindRecord) {
@@ -739,16 +763,16 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 			// Not all session variables are permitted for use with SET_VAR
 			sysVar := variable.GetSysVar(setVarHint.VarName)
 			if sysVar == nil {
-				warns = append(warns, core.ErrUnresolvedHintName.GenWithStackByArgs(setVarHint.VarName, hint.HintName.String()))
+				warns = append(warns, core.ErrUnresolvedHintName.FastGenByArgs(setVarHint.VarName, hint.HintName.String()))
 				continue
 			}
 			if !sysVar.IsHintUpdatableVerfied {
-				warns = append(warns, core.ErrNotHintUpdatable.GenWithStackByArgs(setVarHint.VarName))
+				warns = append(warns, core.ErrNotHintUpdatable.FastGenByArgs(setVarHint.VarName))
 			}
 			// If several hints with the same variable name appear in the same statement, the first one is applied and the others are ignored with a warning
 			if _, ok := setVars[setVarHint.VarName]; ok {
 				msg := fmt.Sprintf("%s(%s=%s)", hint.HintName.String(), setVarHint.VarName, setVarHint.Value)
-				warns = append(warns, core.ErrWarnConflictingHint.GenWithStackByArgs(msg))
+				warns = append(warns, core.ErrWarnConflictingHint.FastGenByArgs(msg))
 				continue
 			}
 			setVars[setVarHint.VarName] = setVarHint.Value
@@ -762,19 +786,19 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	if memoryQuotaHintCnt != 0 {
 		memoryQuotaHint := hints[hintOffs["memory_quota"]]
 		if memoryQuotaHintCnt > 1 {
-			warn := errors.Errorf("MEMORY_QUOTA() is defined more than once, only the last definition takes effect: MEMORY_QUOTA(%v)", memoryQuotaHint.HintData.(int64))
+			warn := errors.NewNoStackErrorf("MEMORY_QUOTA() is defined more than once, only the last definition takes effect: MEMORY_QUOTA(%v)", memoryQuotaHint.HintData.(int64))
 			warns = append(warns, warn)
 		}
 		// Executor use MemoryQuota <= 0 to indicate no memory limit, here use < 0 to handle hint syntax error.
 		if memoryQuota := memoryQuotaHint.HintData.(int64); memoryQuota < 0 {
 			delete(hintOffs, "memory_quota")
-			warn := errors.New("The use of MEMORY_QUOTA hint is invalid, valid usage: MEMORY_QUOTA(10 MB) or MEMORY_QUOTA(10 GB)")
+			warn := errors.NewNoStackError("The use of MEMORY_QUOTA hint is invalid, valid usage: MEMORY_QUOTA(10 MB) or MEMORY_QUOTA(10 GB)")
 			warns = append(warns, warn)
 		} else {
 			stmtHints.HasMemQuotaHint = true
 			stmtHints.MemQuotaQuery = memoryQuota
 			if memoryQuota == 0 {
-				warn := errors.New("Setting the MEMORY_QUOTA to 0 means no memory limit")
+				warn := errors.NewNoStackError("Setting the MEMORY_QUOTA to 0 means no memory limit")
 				warns = append(warns, warn)
 			}
 		}
@@ -783,7 +807,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	if useToJAHintCnt != 0 {
 		useToJAHint := hints[hintOffs["use_toja"]]
 		if useToJAHintCnt > 1 {
-			warn := errors.Errorf("USE_TOJA() is defined more than once, only the last definition takes effect: USE_TOJA(%v)", useToJAHint.HintData.(bool))
+			warn := errors.NewNoStackErrorf("USE_TOJA() is defined more than once, only the last definition takes effect: USE_TOJA(%v)", useToJAHint.HintData.(bool))
 			warns = append(warns, warn)
 		}
 		stmtHints.HasAllowInSubqToJoinAndAggHint = true
@@ -793,7 +817,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	if useCascadesHintCnt != 0 {
 		useCascadesHint := hints[hintOffs["use_cascades"]]
 		if useCascadesHintCnt > 1 {
-			warn := errors.Errorf("USE_CASCADES() is defined more than once, only the last definition takes effect: USE_CASCADES(%v)", useCascadesHint.HintData.(bool))
+			warn := errors.NewNoStackErrorf("USE_CASCADES() is defined more than once, only the last definition takes effect: USE_CASCADES(%v)", useCascadesHint.HintData.(bool))
 			warns = append(warns, warn)
 		}
 		stmtHints.HasEnableCascadesPlannerHint = true
@@ -802,7 +826,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	// Handle NO_INDEX_MERGE
 	if noIndexMergeHintCnt != 0 {
 		if noIndexMergeHintCnt > 1 {
-			warn := errors.New("NO_INDEX_MERGE() is defined more than once, only the last definition takes effect")
+			warn := errors.NewNoStackError("NO_INDEX_MERGE() is defined more than once, only the last definition takes effect")
 			warns = append(warns, warn)
 		}
 		stmtHints.NoIndexMergeHint = true
@@ -810,7 +834,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	// Handle straight_join
 	if straightJoinHintCnt != 0 {
 		if straightJoinHintCnt > 1 {
-			warn := errors.New("STRAIGHT_JOIN() is defined more than once, only the last definition takes effect")
+			warn := errors.NewNoStackError("STRAIGHT_JOIN() is defined more than once, only the last definition takes effect")
 			warns = append(warns, warn)
 		}
 		stmtHints.StraightJoinOrder = true
@@ -818,7 +842,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	// Handle READ_CONSISTENT_REPLICA
 	if readReplicaHintCnt != 0 {
 		if readReplicaHintCnt > 1 {
-			warn := errors.New("READ_CONSISTENT_REPLICA() is defined more than once, only the last definition takes effect")
+			warn := errors.NewNoStackError("READ_CONSISTENT_REPLICA() is defined more than once, only the last definition takes effect")
 			warns = append(warns, warn)
 		}
 		stmtHints.HasReplicaReadHint = true
@@ -828,7 +852,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	if maxExecutionTimeCnt != 0 {
 		maxExecutionTime := hints[hintOffs["max_execution_time"]]
 		if maxExecutionTimeCnt > 1 {
-			warn := errors.Errorf("MAX_EXECUTION_TIME() is defined more than once, only the last definition takes effect: MAX_EXECUTION_TIME(%v)", maxExecutionTime.HintData.(uint64))
+			warn := errors.NewNoStackErrorf("MAX_EXECUTION_TIME() is defined more than once, only the last definition takes effect: MAX_EXECUTION_TIME(%v)", maxExecutionTime.HintData.(uint64))
 			warns = append(warns, warn)
 		}
 		stmtHints.HasMaxExecutionTime = true
@@ -838,7 +862,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	if resourceGroupHintCnt != 0 {
 		resourceGroup := hints[hintOffs["resource_group"]]
 		if resourceGroupHintCnt > 1 {
-			warn := errors.Errorf("RESOURCE_GROUP() is defined more than once, only the last definition takes effect: RESOURCE_GROUP(%v)", resourceGroup.HintData.(string))
+			warn := errors.NewNoStackErrorf("RESOURCE_GROUP() is defined more than once, only the last definition takes effect: RESOURCE_GROUP(%v)", resourceGroup.HintData.(string))
 			warns = append(warns, warn)
 		}
 		stmtHints.HasResourceGroup = true
@@ -847,13 +871,13 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 	// Handle NTH_PLAN
 	if forceNthPlanCnt != 0 {
 		if forceNthPlanCnt > 1 {
-			warn := errors.Errorf("NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(%v)", forceNthPlan.HintData.(int64))
+			warn := errors.NewNoStackErrorf("NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(%v)", forceNthPlan.HintData.(int64))
 			warns = append(warns, warn)
 		}
 		stmtHints.ForceNthPlan = forceNthPlan.HintData.(int64)
 		if stmtHints.ForceNthPlan < 1 {
 			stmtHints.ForceNthPlan = -1
-			warn := errors.Errorf("the hintdata for NTH_PLAN() is too small, hint ignored")
+			warn := errors.NewNoStackError("the hintdata for NTH_PLAN() is too small, hint ignored")
 			warns = append(warns, warn)
 		}
 	} else {
@@ -871,5 +895,5 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 func init() {
 	core.OptimizeAstNode = Optimize
 	core.IsReadOnly = IsReadOnly
-	core.ExtractSelectAndNormalizeDigest = ExtractSelectAndNormalizeDigest
+	core.NormalizeStmtForPlanCache = NormalizeStmtForPlanCache
 }

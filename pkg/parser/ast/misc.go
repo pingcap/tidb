@@ -3588,45 +3588,6 @@ func (n *BRIEStmt) SecureText() string {
 	return sb.String()
 }
 
-type LoadDataActionTp int
-
-const (
-	LoadDataPause LoadDataActionTp = iota
-	LoadDataResume
-	LoadDataCancel
-	LoadDataDrop
-)
-
-// LoadDataActionStmt represent PAUSE/RESUME/CANCEL/DROP LOAD DATA JOB statement.
-type LoadDataActionStmt struct {
-	stmtNode
-
-	Tp    LoadDataActionTp
-	JobID int64
-}
-
-func (n *LoadDataActionStmt) Accept(v Visitor) (Node, bool) {
-	newNode, _ := v.Enter(n)
-	return v.Leave(newNode)
-}
-
-func (n *LoadDataActionStmt) Restore(ctx *format.RestoreCtx) error {
-	switch n.Tp {
-	case LoadDataPause:
-		ctx.WriteKeyWord("PAUSE LOAD DATA JOB ")
-	case LoadDataResume:
-		ctx.WriteKeyWord("RESUME LOAD DATA JOB ")
-	case LoadDataCancel:
-		ctx.WriteKeyWord("CANCEL LOAD DATA JOB ")
-	case LoadDataDrop:
-		ctx.WriteKeyWord("DROP LOAD DATA JOB ")
-	default:
-		return errors.Errorf("invalid load data action type: %d", n.Tp)
-	}
-	ctx.WritePlainf("%d", n.JobID)
-	return nil
-}
-
 type ImportIntoActionTp string
 
 const (
@@ -3734,9 +3695,11 @@ type HintTable struct {
 }
 
 func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
-	if ht.DBName.L != "" {
-		ctx.WriteName(ht.DBName.String())
-		ctx.WriteKeyWord(".")
+	if !ctx.Flags.HasWithoutSchemaNameFlag() {
+		if ht.DBName.L != "" {
+			ctx.WriteName(ht.DBName.String())
+			ctx.WriteKeyWord(".")
+		}
 	}
 	ctx.WriteName(ht.TableName.String())
 	if ht.QBName.L != "" {
@@ -3787,7 +3750,9 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(n.HintData.(string))
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
-	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join", "broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "leading":
+	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join",
+		"broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "leading", "no_hash_join", "no_merge_join",
+		"no_index_join", "no_index_hash_join", "no_index_merge_join":
 		for i, table := range n.Tables {
 			if i != 0 {
 				ctx.WritePlain(", ")

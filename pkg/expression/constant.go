@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -423,8 +422,8 @@ func (c *Constant) IsCorrelated() bool {
 }
 
 // ConstItem implements Expression interface.
-func (c *Constant) ConstItem(sc *stmtctx.StatementContext) bool {
-	return !sc.UseCache || (c.DeferredExpr == nil && c.ParamMarker == nil)
+func (c *Constant) ConstItem(acrossCtx bool) bool {
+	return !acrossCtx || (c.DeferredExpr == nil && c.ParamMarker == nil)
 }
 
 // Decorrelate implements Expression interface.
@@ -497,19 +496,6 @@ func (c *Constant) Vectorized() bool {
 		return c.DeferredExpr.Vectorized()
 	}
 	return true
-}
-
-// SupportReverseEval checks whether the builtinFunc support reverse evaluation.
-func (c *Constant) SupportReverseEval() bool {
-	if c.DeferredExpr != nil {
-		return c.DeferredExpr.SupportReverseEval()
-	}
-	return true
-}
-
-// ReverseEval evaluates the only one column value with given function result.
-func (c *Constant) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
-	return c.Value, nil
 }
 
 // Coercibility returns the coercibility value which is used to check collations.

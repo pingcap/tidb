@@ -925,12 +925,6 @@ func (b *executorBuilder) buildSimple(v *plannercore.Simple) exec.Executor {
 			BaseExecutor:         exec.NewBaseExecutor(b.ctx, v.Schema(), 0),
 			QueryWatchOptionList: s.QueryWatchOptionList,
 		}
-	case *ast.LoadDataActionStmt:
-		return &LoadDataActionExec{
-			BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, 0),
-			tp:           s.Tp,
-			jobID:        s.JobID,
-		}
 	case *ast.ImportIntoActionStmt:
 		return &ImportIntoActionExec{
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, nil, 0),
@@ -3469,7 +3463,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 	}
 
 	if len(partitions) == 0 {
-		return &TableDualExec{BaseExecutor: *ret.Base()}
+		return &TableDualExec{BaseExecutor: ret.BaseExecutor}
 	}
 
 	// Sort the partition is necessary to make the final multiple partition key ranges ordered.
@@ -4473,7 +4467,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		}
 		return e, nil
 	}
-	ret := &TableDualExec{BaseExecutor: *e.Base()}
+	ret := &TableDualExec{BaseExecutor: e.BaseExecutor}
 	err = exec.Open(ctx, ret)
 	return ret, err
 }
@@ -4550,7 +4544,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		}
 		return e, err
 	}
-	ret := &TableDualExec{BaseExecutor: *e.Base()}
+	ret := &TableDualExec{BaseExecutor: e.BaseExecutor}
 	err = exec.Open(ctx, ret)
 	return ret, err
 }
@@ -4919,6 +4913,7 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) exec.Exec
 		collation:    v.Collation,
 		db:           v.Db,
 		isGlobal:     v.IsGlobal,
+		isUniversal:  v.IsUniversal,
 		bindAst:      v.BindStmt,
 		newStatus:    v.NewStatus,
 		source:       v.Source,
@@ -5119,8 +5114,8 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		}
 		capacity = len(e.handles)
 	}
-	e.Base().SetInitCap(capacity)
-	e.Base().SetMaxChunkSize(capacity)
+	e.SetInitCap(capacity)
+	e.SetMaxChunkSize(capacity)
 	e.buildVirtualColumnInfo()
 	return e
 }
@@ -5302,7 +5297,7 @@ func (b *executorBuilder) buildCTE(v *plannercore.PhysicalCTE) exec.Executor {
 		}
 
 		// Setup storages.
-		tps := seedExec.Base().RetFieldTypes()
+		tps := seedExec.RetFieldTypes()
 		resTbl = cteutil.NewStorageRowContainer(tps, chkSize)
 		if err := resTbl.OpenAndRef(); err != nil {
 			b.err = err

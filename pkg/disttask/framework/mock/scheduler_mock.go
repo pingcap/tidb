@@ -413,6 +413,48 @@ func (mr *MockTaskManagerMockRecorder) ResumeSubtasks(arg0, arg1 any) *gomock.Ca
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResumeSubtasks", reflect.TypeOf((*MockTaskManager)(nil).ResumeSubtasks), arg0, arg1)
 }
 
+// SucceedTask mocks base method.
+func (m *MockTaskManager) SucceedTask(arg0 context.Context, arg1 int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SucceedTask", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SucceedTask indicates an expected call of SucceedTask.
+func (mr *MockTaskManagerMockRecorder) SucceedTask(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SucceedTask", reflect.TypeOf((*MockTaskManager)(nil).SucceedTask), arg0, arg1)
+}
+
+// SwitchTaskStep mocks base method.
+func (m *MockTaskManager) SwitchTaskStep(arg0 context.Context, arg1 *proto.Task, arg2 proto.TaskState, arg3 proto.Step, arg4 []*proto.Subtask) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SwitchTaskStep", arg0, arg1, arg2, arg3, arg4)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SwitchTaskStep indicates an expected call of SwitchTaskStep.
+func (mr *MockTaskManagerMockRecorder) SwitchTaskStep(arg0, arg1, arg2, arg3, arg4 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SwitchTaskStep", reflect.TypeOf((*MockTaskManager)(nil).SwitchTaskStep), arg0, arg1, arg2, arg3, arg4)
+}
+
+// SwitchTaskStepInBatch mocks base method.
+func (m *MockTaskManager) SwitchTaskStepInBatch(arg0 context.Context, arg1 *proto.Task, arg2 proto.TaskState, arg3 proto.Step, arg4 []*proto.Subtask) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SwitchTaskStepInBatch", arg0, arg1, arg2, arg3, arg4)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SwitchTaskStepInBatch indicates an expected call of SwitchTaskStepInBatch.
+func (mr *MockTaskManagerMockRecorder) SwitchTaskStepInBatch(arg0, arg1, arg2, arg3, arg4 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SwitchTaskStepInBatch", reflect.TypeOf((*MockTaskManager)(nil).SwitchTaskStepInBatch), arg0, arg1, arg2, arg3, arg4)
+}
+
 // TransferSubTasks2History mocks base method.
 func (m *MockTaskManager) TransferSubTasks2History(arg0 context.Context, arg1 int64) error {
 	m.ctrl.T.Helper()

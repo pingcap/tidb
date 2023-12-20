@@ -181,6 +181,7 @@ func (d *ddl) CreateSchemaWithInfo(
 	is := d.GetInfoSchemaWithInterceptor(ctx)
 	_, ok := is.SchemaByName(dbInfo.Name)
 	if ok {
+		// since this error may be seen as error, keep it stack info.
 		err := infoschema.ErrDatabaseExists.GenWithStackByArgs(dbInfo.Name)
 		switch onExist {
 		case OnExistIgnore:
@@ -782,13 +783,13 @@ func buildColumnsAndConstraints(
 				// No warning for BOOL-like tinyint(1)
 				if colDef.Tp.GetFlen() != types.UnspecifiedLength && colDef.Tp.GetFlen() != 1 {
 					ctx.GetSessionVars().StmtCtx.AppendWarning(
-						dbterror.ErrWarnDeprecatedIntegerDisplayWidth.GenWithStackByArgs(),
+						dbterror.ErrWarnDeprecatedIntegerDisplayWidth.FastGenByArgs(),
 					)
 				}
 			case mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
 				if colDef.Tp.GetFlen() != types.UnspecifiedLength {
 					ctx.GetSessionVars().StmtCtx.AppendWarning(
-						dbterror.ErrWarnDeprecatedIntegerDisplayWidth.GenWithStackByArgs(),
+						dbterror.ErrWarnDeprecatedIntegerDisplayWidth.FastGenByArgs(),
 					)
 				}
 			}
@@ -800,7 +801,7 @@ func buildColumnsAndConstraints(
 		col.State = model.StatePublic
 		if mysql.HasZerofillFlag(col.GetFlag()) {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(
-				dbterror.ErrWarnDeprecatedZerofill.GenWithStackByArgs(),
+				dbterror.ErrWarnDeprecatedZerofill.FastGenByArgs(),
 			)
 		}
 		constraints = append(constraints, cts...)
@@ -1016,7 +1017,7 @@ func checkColumnDefaultValue(ctx sessionctx.Context, col *table.Column, value in
 				value = `null`
 			}
 			sc := ctx.GetSessionVars().StmtCtx
-			sc.AppendWarning(dbterror.ErrBlobCantHaveDefault.GenWithStackByArgs(col.Name.O))
+			sc.AppendWarning(dbterror.ErrBlobCantHaveDefault.FastGenByArgs(col.Name.O))
 			return hasDefaultValue, value, nil
 		}
 		// In strict SQL mode or default value is not an empty string.
@@ -1230,10 +1231,10 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 					col.FieldType.SetCollate(v.StrValue)
 				}
 			case ast.ColumnOptionFulltext:
-				ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt.GenWithStackByArgs())
+				ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
 			case ast.ColumnOptionCheck:
 				if !variable.EnableCheckConstraint.Load() {
-					ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("the switch of check constraint is off"))
+					ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("the switch of check constraint is off"))
 				} else {
 					// Check the column CHECK constraint dependency lazily, after fill all the name.
 					// Extract column constraint from column option.
@@ -1929,7 +1930,7 @@ func setTableAutoRandomBits(ctx sessionctx.Context, tbInfo *model.TableInfo, col
 				return dbterror.ErrInvalidAutoRandom.FastGenByArgs(autoid.AutoRandomIncrementalBitsTooSmall)
 			}
 			msg := fmt.Sprintf(autoid.AutoRandomAvailableAllocTimesNote, shardFmt.IncrementalBitsCapacity())
-			ctx.GetSessionVars().StmtCtx.AppendNote(errors.Errorf(msg))
+			ctx.GetSessionVars().StmtCtx.AppendNote(errors.NewNoStackError(msg))
 		}
 	}
 	return nil
@@ -2040,7 +2041,7 @@ func BuildTableInfo(
 		}
 
 		if constr.Tp == ast.ConstraintFulltext {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt.GenWithStackByArgs())
+			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt.FastGenByArgs())
 			continue
 		}
 
@@ -2062,7 +2063,7 @@ func BuildTableInfo(
 		// check constraint
 		if constr.Tp == ast.ConstraintCheck {
 			if !variable.EnableCheckConstraint.Load() {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("the switch of check constraint is off"))
+				ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("the switch of check constraint is off"))
 				continue
 			}
 			// Since column check constraint dependency has been done in columnDefToCol.
@@ -2948,7 +2949,7 @@ func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 	}
 	gap := time.Until(oracle.GetTimeFromTS(nowTS)).Abs()
 	if gap > 1*time.Second {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Gap between local time and PD TSO is %s, please check PD/system time", gap))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Gap between local time and PD TSO is %s, please check PD/system time", gap))
 	}
 	job := &model.Job{
 		Type:       model.ActionFlashbackCluster,
@@ -3741,7 +3742,7 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 				sctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrTableCantHandleFt)
 			case ast.ConstraintCheck:
 				if !variable.EnableCheckConstraint.Load() {
-					sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("the switch of check constraint is off"))
+					sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("the switch of check constraint is off"))
 				} else {
 					err = d.CreateCheckConstraint(sctx, ident, model.NewCIStr(constr.Name), spec.Constraint)
 				}
@@ -3842,13 +3843,13 @@ func (d *ddl) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt *ast
 			err = d.AlterIndexVisibility(sctx, ident, spec.IndexName, spec.Visibility)
 		case ast.AlterTableAlterCheck:
 			if !variable.EnableCheckConstraint.Load() {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("the switch of check constraint is off"))
+				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("the switch of check constraint is off"))
 			} else {
 				err = d.AlterCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name), spec.Constraint.Enforced)
 			}
 		case ast.AlterTableDropCheck:
 			if !variable.EnableCheckConstraint.Load() {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("the switch of check constraint is off"))
+				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("the switch of check constraint is off"))
 			} else {
 				err = d.DropCheckConstraint(sctx, ident, model.NewCIStr(spec.Constraint.Name))
 			}
@@ -3929,7 +3930,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 		}
 		if newBase != newBaseTemp {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(
-				fmt.Errorf("Can't reset AUTO_INCREMENT to %d without FORCE option, using %d instead",
+				errors.NewNoStackErrorf("Can't reset AUTO_INCREMENT to %d without FORCE option, using %d instead",
 					newBase, newBaseTemp,
 				))
 		}
@@ -4428,7 +4429,7 @@ func (d *ddl) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Ident, sp
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
 	if err == nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("The statistics of new partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now"))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The statistics of new partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now"))
 	}
 	return errors.Trace(err)
 }
@@ -4493,7 +4494,7 @@ func (d *ddl) ReorganizePartitions(ctx sessionctx.Context, ident ast.Ident, spec
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
 	if err == nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now"))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The statistics of related partitions will be outdated after reorganizing partitions. Please use 'ANALYZE TABLE' statement if you want to update it now"))
 	}
 	return errors.Trace(err)
 }
@@ -5071,7 +5072,7 @@ func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ctx.GetSessionVars().StmtCtx.AppendWarning(fmt.Errorf("after the exchange, please analyze related table of the exchange to update statistics"))
+	ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("after the exchange, please analyze related table of the exchange to update statistics"))
 	err = d.callHookOnChanged(job, err)
 	return errors.Trace(err)
 }
@@ -5914,7 +5915,7 @@ func (d *ddl) ChangeColumn(ctx context.Context, sctx sessionctx.Context, ident a
 	job, err := d.getModifiableColumnJob(ctx, sctx, ident, spec.OldColumnName.Name, spec)
 	if err != nil {
 		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
-			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.GenWithStackByArgs(spec.OldColumnName.Name, ident.Name))
+			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.FastGenByArgs(spec.OldColumnName.Name, ident.Name))
 			return nil
 		}
 		return errors.Trace(err)
@@ -6006,7 +6007,7 @@ func (d *ddl) ModifyColumn(ctx context.Context, sctx sessionctx.Context, ident a
 	job, err := d.getModifiableColumnJob(ctx, sctx, ident, originalColName, spec)
 	if err != nil {
 		if infoschema.ErrColumnNotExists.Equal(err) && spec.IfExists {
-			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.GenWithStackByArgs(originalColName, ident.Name))
+			sctx.GetSessionVars().StmtCtx.AppendNote(infoschema.ErrColumnNotExists.FastGenByArgs(originalColName, ident.Name))
 			return nil
 		}
 		return errors.Trace(err)
@@ -6413,7 +6414,7 @@ func (d *ddl) AlterTableAddStatistics(ctx sessionctx.Context, ident ast.Ident, s
 			return infoschema.ErrColumnNotExists.GenWithStackByArgs(colName.Name, ident.Name)
 		}
 		if stats.StatsType == ast.StatsTypeCorrelation && tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()) {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("No need to create correlation statistics on the integer primary key column"))
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("No need to create correlation statistics on the integer primary key column"))
 			return nil
 		}
 		if _, exist := colIDSet[col.ID]; exist {
@@ -7131,7 +7132,7 @@ func (d *ddl) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName m
 		Priority:       ctx.GetSessionVars().DDLReorgPriority,
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
-	reorgMeta, err := newReorgMetaFromVariables(d, job, ctx)
+	reorgMeta, err := newReorgMetaFromVariables(job, ctx)
 	if err != nil {
 		return err
 	}
@@ -7389,7 +7390,7 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 		Collate:        coll,
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
-	reorgMeta, err := newReorgMetaFromVariables(d, job, ctx)
+	reorgMeta, err := newReorgMetaFromVariables(job, ctx)
 	if err != nil {
 		return err
 	}
@@ -7405,23 +7406,29 @@ func (d *ddl) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast.Inde
 	return errors.Trace(err)
 }
 
-func newReorgMetaFromVariables(d *ddl, job *model.Job, sctx sessionctx.Context) (*model.DDLReorgMeta, error) {
+func newReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) (*model.DDLReorgMeta, error) {
 	reorgMeta := NewDDLReorgMeta(sctx)
 	reorgMeta.IsDistReorg = variable.EnableDistTask.Load()
 	reorgMeta.IsFastReorg = variable.EnableFastReorg.Load()
 	if reorgMeta.IsDistReorg && !reorgMeta.IsFastReorg {
 		return nil, dbterror.ErrUnsupportedDistTask
 	}
-	isUpgradingSysDB := d.stateSyncer.IsUpgradingState() && hasSysDB(job)
-	if isUpgradingSysDB {
+	if hasSysDB(job) {
 		if reorgMeta.IsDistReorg {
-			logutil.BgLogger().Info("cannot use distributed task execution because the job on system DB is in upgrade state",
+			logutil.BgLogger().Info("cannot use distributed task execution on system DB",
 				zap.String("category", "ddl"), zap.Stringer("job", job))
 		}
 		reorgMeta.IsDistReorg = false
+		reorgMeta.IsFastReorg = false
+		failpoint.Inject("reorgMetaRecordFastReorgDisabled", func(_ failpoint.Value) {
+			LastReorgMetaFastReorgDisabled = true
+		})
 	}
 	return reorgMeta, nil
 }
+
+// LastReorgMetaFastReorgDisabled is used for test.
+var LastReorgMetaFastReorgDisabled bool
 
 func buildFKInfo(fkName model.CIStr, keys []*ast.IndexPartSpecification, refer *ast.ReferenceDef, cols []*table.Column) (*model.FKInfo, error) {
 	if len(keys) != len(refer.IndexPartSpecifications) {
@@ -7772,6 +7779,7 @@ func validateCommentLength(vars *variable.SessionVars, name string, comment *str
 	if len(*comment) > maxLen {
 		err := errTooLongComment.GenWithStackByArgs(name, maxLen)
 		if vars.StrictSQLMode {
+			// may be treated like an error.
 			return "", err
 		}
 		vars.StmtCtx.AppendWarning(err)
@@ -8204,7 +8212,7 @@ func (d *ddl) OrderByColumns(ctx sessionctx.Context, ident ast.Ident) error {
 		return errors.Trace(err)
 	}
 	if tb.Meta().GetPkColInfo() != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("ORDER BY ignored as there is a user-defined clustered index in the table '%s'", ident.Name))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("ORDER BY ignored as there is a user-defined clustered index in the table '%s'", ident.Name))
 	}
 	return nil
 }
@@ -8509,7 +8517,7 @@ func handleDatabasePlacement(ctx sessionctx.Context, dbInfo *model.DBInfo) error
 	if sessVars.PlacementMode == variable.PlacementModeIgnore {
 		dbInfo.PlacementPolicyRef = nil
 		sessVars.StmtCtx.AppendNote(
-			fmt.Errorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+			errors.NewNoStackErrorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
 		)
 		return nil
 	}
@@ -8523,7 +8531,7 @@ func handleTablePlacement(ctx sessionctx.Context, tbInfo *model.TableInfo) error
 	sessVars := ctx.GetSessionVars()
 	if sessVars.PlacementMode == variable.PlacementModeIgnore && removeTablePlacement(tbInfo) {
 		sessVars.StmtCtx.AppendNote(
-			fmt.Errorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+			errors.NewNoStackErrorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
 		)
 		return nil
 	}
@@ -8550,7 +8558,7 @@ func handlePartitionPlacement(ctx sessionctx.Context, partInfo *model.PartitionI
 	sessVars := ctx.GetSessionVars()
 	if sessVars.PlacementMode == variable.PlacementModeIgnore && removePartitionPlacement(partInfo) {
 		sessVars.StmtCtx.AppendNote(
-			fmt.Errorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+			errors.NewNoStackErrorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
 		)
 		return nil
 	}
@@ -8570,7 +8578,7 @@ func checkIgnorePlacementDDL(ctx sessionctx.Context) bool {
 	sessVars := ctx.GetSessionVars()
 	if sessVars.PlacementMode == variable.PlacementModeIgnore {
 		sessVars.StmtCtx.AppendNote(
-			fmt.Errorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
+			errors.NewNoStackErrorf("Placement is ignored when TIDB_PLACEMENT_MODE is '%s'", variable.PlacementModeIgnore),
 		)
 		return true
 	}
@@ -8588,7 +8596,7 @@ func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceG
 
 	if _, ok := d.GetInfoSchemaWithInterceptor(ctx).ResourceGroupByName(groupName); ok {
 		if stmt.IfNotExists {
-			err = infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
+			err = infoschema.ErrResourceGroupExists.FastGenByArgs(groupName)
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
 			return nil
 		}
@@ -8942,9 +8950,9 @@ func checkTooBigFieldLengthAndTryAutoConvert(tp *types.FieldType, colName string
 				return err
 			}
 			if tp.GetCharset() == charset.CharsetBin {
-				sessVars.StmtCtx.AppendWarning(dbterror.ErrAutoConvert.GenWithStackByArgs(colName, "VARBINARY", "BLOB"))
+				sessVars.StmtCtx.AppendWarning(dbterror.ErrAutoConvert.FastGenByArgs(colName, "VARBINARY", "BLOB"))
 			} else {
-				sessVars.StmtCtx.AppendWarning(dbterror.ErrAutoConvert.GenWithStackByArgs(colName, "VARCHAR", "TEXT"))
+				sessVars.StmtCtx.AppendWarning(dbterror.ErrAutoConvert.FastGenByArgs(colName, "VARCHAR", "TEXT"))
 			}
 		}
 	}

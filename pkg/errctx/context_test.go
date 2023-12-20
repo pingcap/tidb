@@ -38,7 +38,7 @@ func TestContext(t *testing.T) {
 	require.Equal(t, ctx.HandleErrorWithAlias(testInternalErr, testErr, testWarn), testErr)
 
 	// set level to "warn"
-	newCtx := ctx.WithErrGroupLevel(errctx.ErrGroupOverflow, errctx.LevelWarn)
+	newCtx := ctx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
 	// ctx is not affected
 	require.Equal(t, ctx.HandleErrorWithAlias(testInternalErr, testErr, testWarn), testErr)
 	// newCtx will handle the error as a warn

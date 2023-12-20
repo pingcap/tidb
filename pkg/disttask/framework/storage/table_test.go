@@ -17,30 +17,36 @@ package storage_test
 import (
 	"context"
 	"fmt"
+	"sort"
 	"testing"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
-	"go.uber.org/goleak"
 )
 
-func TestMain(m *testing.M) {
-	testsetup.SetupForCommonTest()
-	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
-	}
-	goleak.VerifyTestMain(m, opts...)
+func GetTaskManager(t *testing.T, pool *pools.ResourcePool) *storage.TaskManager {
+	manager := storage.NewTaskManager(pool)
+	storage.SetTaskManager(manager)
+	manager, err := storage.GetTaskManager()
+	require.NoError(t, err)
+	return manager
+}
+
+func checkTaskStateStep(t *testing.T, task *proto.Task, state proto.TaskState, step proto.Step) {
+	require.Equal(t, state, task.State)
+	require.Equal(t, step, task.Step)
 }
 
 func TestTaskTable(t *testing.T) {
@@ -65,6 +71,8 @@ func TestTaskTable(t *testing.T) {
 	require.Equal(t, proto.StepInit, task.Step)
 	require.Equal(t, []byte("test"), task.Meta)
 	require.GreaterOrEqual(t, task.CreateTime, timeBeforeCreate)
+	require.Zero(t, task.StartTime)
+	require.Zero(t, task.StateUpdateTime)
 	require.Nil(t, task.Error)
 
 	task2, err := gm.GetTaskByID(ctx, 1)
@@ -128,6 +136,203 @@ func TestTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskStateFailed, task.State)
 	require.ErrorContains(t, task.Error, "test error")
+
+	// succeed a pending task, no effect
+	id, err = gm.CreateTask(ctx, "key-success", "test", 4, []byte("test"))
+	require.NoError(t, err)
+	require.NoError(t, gm.SucceedTask(ctx, id))
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	checkTaskStateStep(t, task, proto.TaskStatePending, proto.StepInit)
+	// succeed a running task
+	require.NoError(t, gm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil))
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	checkTaskStateStep(t, task, proto.TaskStateRunning, proto.StepOne)
+	startTime := time.Unix(time.Now().Unix(), 0)
+	require.NoError(t, gm.SucceedTask(ctx, id))
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	checkTaskStateStep(t, task, proto.TaskStateSucceed, proto.StepDone)
+	require.GreaterOrEqual(t, task.StateUpdateTime, startTime)
+}
+
+func checkAfterSwitchStep(t *testing.T, startTime time.Time, task *proto.Task, subtasks []*proto.Subtask, step proto.Step) {
+	tm, err := storage.GetTaskManager()
+	require.NoError(t, err)
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "table_test")
+
+	checkTaskStateStep(t, task, proto.TaskStateRunning, step)
+	require.GreaterOrEqual(t, task.StartTime, startTime)
+	require.GreaterOrEqual(t, task.StateUpdateTime, startTime)
+	gotSubtasks, err := tm.GetSubtasksByStepAndState(ctx, task.ID, task.Step, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Len(t, gotSubtasks, len(subtasks))
+	sort.Slice(gotSubtasks, func(i, j int) bool {
+		return gotSubtasks[i].Ordinal < gotSubtasks[j].Ordinal
+	})
+	for i := 0; i < len(gotSubtasks); i++ {
+		subtask := gotSubtasks[i]
+		require.Equal(t, []byte(fmt.Sprintf("%d", i)), subtask.Meta)
+		require.Equal(t, i+1, subtask.Ordinal)
+		require.Equal(t, 11, subtask.Concurrency)
+		require.Equal(t, ":4000", subtask.ExecID)
+		require.Equal(t, proto.TaskTypeExample, subtask.Type)
+		require.GreaterOrEqual(t, subtask.CreateTime, startTime)
+	}
+}
+
+func TestSwitchTaskStep(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
+	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
+	})
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	tm := GetTaskManager(t, pool)
+	defer pool.Close()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "table_test")
+
+	taskID, err := tm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
+	require.NoError(t, err)
+	task, err := tm.GetTaskByID(ctx, taskID)
+	require.NoError(t, err)
+	checkTaskStateStep(t, task, proto.TaskStatePending, proto.StepInit)
+	subtasksStepOne := make([]*proto.Subtask, 3)
+	for i := 0; i < len(subtasksStepOne); i++ {
+		subtasksStepOne[i] = proto.NewSubtask(proto.StepOne, taskID, proto.TaskTypeExample,
+			":4000", 11, []byte(fmt.Sprintf("%d", i)), i+1)
+	}
+	startTime := time.Unix(time.Now().Unix(), 0)
+	task.Meta = []byte("changed meta")
+	require.NoError(t, tm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, subtasksStepOne))
+	task, err = tm.GetTaskByID(ctx, taskID)
+	require.NoError(t, err)
+	require.Equal(t, []byte("changed meta"), task.Meta)
+	checkAfterSwitchStep(t, startTime, task, subtasksStepOne, proto.StepOne)
+	// switch step again, no effect
+	require.NoError(t, tm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, subtasksStepOne))
+	task, err = tm.GetTaskByID(ctx, taskID)
+	require.NoError(t, err)
+	checkAfterSwitchStep(t, startTime, task, subtasksStepOne, proto.StepOne)
+	// switch step to step two
+	time.Sleep(time.Second)
+	taskStartTime := task.StartTime
+	subtasksStepTwo := make([]*proto.Subtask, 3)
+	for i := 0; i < len(subtasksStepTwo); i++ {
+		subtasksStepTwo[i] = proto.NewSubtask(proto.StepTwo, taskID, proto.TaskTypeExample,
+			":4000", 11, []byte(fmt.Sprintf("%d", i)), i+1)
+	}
+	require.NoError(t, tk.Session().GetSessionVars().SetSystemVar(variable.TiDBMemQuotaQuery, "1024"))
+	require.NoError(t, tm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepTwo, subtasksStepTwo))
+	value, ok := tk.Session().GetSessionVars().GetSystemVar(variable.TiDBMemQuotaQuery)
+	require.True(t, ok)
+	require.Equal(t, "1024", value)
+	task, err = tm.GetTaskByID(ctx, taskID)
+	require.NoError(t, err)
+	// start time should not change
+	require.Equal(t, taskStartTime, task.StartTime)
+	checkAfterSwitchStep(t, startTime, task, subtasksStepTwo, proto.StepTwo)
+}
+
+func TestSwitchTaskStepInBatch(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
+	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
+	})
+
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	tm := GetTaskManager(t, pool)
+	defer pool.Close()
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "table_test")
+
+	// normal flow
+	prepare := func(taskKey string) (*proto.Task, []*proto.Subtask) {
+		taskID, err := tm.CreateTask(ctx, taskKey, "test", 4, []byte("test"))
+		require.NoError(t, err)
+		task, err := tm.GetTaskByID(ctx, taskID)
+		require.NoError(t, err)
+		checkTaskStateStep(t, task, proto.TaskStatePending, proto.StepInit)
+		subtasks := make([]*proto.Subtask, 3)
+		for i := 0; i < len(subtasks); i++ {
+			subtasks[i] = proto.NewSubtask(proto.StepOne, taskID, proto.TaskTypeExample,
+				":4000", 11, []byte(fmt.Sprintf("%d", i)), i+1)
+		}
+		return task, subtasks
+	}
+	startTime := time.Unix(time.Now().Unix(), 0)
+	task1, subtasks1 := prepare("key1")
+	require.NoError(t, tm.SwitchTaskStepInBatch(ctx, task1, proto.TaskStateRunning, proto.StepOne, subtasks1))
+	task1, err := tm.GetTaskByID(ctx, task1.ID)
+	require.NoError(t, err)
+	checkAfterSwitchStep(t, startTime, task1, subtasks1, proto.StepOne)
+
+	// mock another dispatcher inserted some subtasks
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/waitBeforeInsertSubtasks", `1*return(true)`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/storage/waitBeforeInsertSubtasks"))
+	})
+	task2, subtasks2 := prepare("key2")
+	go func() {
+		storage.TestChannel <- struct{}{}
+		tk2 := testkit.NewTestKit(t, store)
+		subtask := subtasks2[0]
+		_, err = storage.ExecSQL(ctx, tk2.Session(), `
+			insert into mysql.tidb_background_subtask(
+				step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary)
+			values (%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')`,
+			subtask.Step, subtask.TaskID, subtask.ExecID, subtask.Meta,
+			proto.TaskStatePending, proto.Type2Int(subtask.Type), subtask.Concurrency, subtask.Ordinal)
+		require.NoError(t, err)
+		storage.TestChannel <- struct{}{}
+	}()
+	err = tm.SwitchTaskStepInBatch(ctx, task2, proto.TaskStateRunning, proto.StepOne, subtasks2)
+	require.ErrorIs(t, err, kv.ErrKeyExists)
+	task2, err = tm.GetTaskByID(ctx, task2.ID)
+	require.NoError(t, err)
+	checkTaskStateStep(t, task2, proto.TaskStatePending, proto.StepInit)
+	gotSubtasks, err := tm.GetSubtasksByStepAndState(ctx, task2.ID, proto.StepOne, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Len(t, gotSubtasks, 1)
+	// run again, should success
+	require.NoError(t, tm.SwitchTaskStepInBatch(ctx, task2, proto.TaskStateRunning, proto.StepOne, subtasks2))
+	task2, err = tm.GetTaskByID(ctx, task2.ID)
+	require.NoError(t, err)
+	checkAfterSwitchStep(t, startTime, task2, subtasks2, proto.StepOne)
+
+	// mock subtasks unstable
+	task3, subtasks3 := prepare("key3")
+	for i := 0; i < 2; i++ {
+		subtask := subtasks3[i]
+		_, err = storage.ExecSQL(ctx, tk.Session(), `
+			insert into mysql.tidb_background_subtask(
+				step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary)
+			values (%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')`,
+			subtask.Step, subtask.TaskID, subtask.ExecID, subtask.Meta,
+			proto.TaskStatePending, proto.Type2Int(subtask.Type), subtask.Concurrency, subtask.Ordinal)
+		require.NoError(t, err)
+	}
+	err = tm.SwitchTaskStepInBatch(ctx, task3, proto.TaskStateRunning, proto.StepOne, subtasks3[:1])
+	require.ErrorIs(t, err, storage.ErrUnstableSubtasks)
+	require.ErrorContains(t, err, "expected 1, got 2")
 }
 
 func TestGetTopUnfinishedTasks(t *testing.T) {

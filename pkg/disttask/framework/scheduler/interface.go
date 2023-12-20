@@ -41,6 +41,19 @@ type TaskManager interface {
 	// FailTask updates task state to Failed and updates task error.
 	FailTask(ctx context.Context, taskID int64, currentState proto.TaskState, taskErr error) error
 	PauseTask(ctx context.Context, taskKey string) (bool, error)
+	// SwitchTaskStep switches the task to the next step and add subtasks in one
+	// transaction. It will change task state too if we're switch from InitStep to
+	// next step.
+	SwitchTaskStep(ctx context.Context, task *proto.Task, nextState proto.TaskState, nextStep proto.Step, subtasks []*proto.Subtask) error
+	// SwitchTaskStepInBatch similar to SwitchTaskStep, but it will insert subtasks
+	// in batch, and task step change will be in a separate transaction.
+	// Note: subtasks of this step must be stable, i.e. count, order and content
+	// should be the same on each try, else the subtasks inserted might be messed up.
+	// And each subtask of this step must be different, to handle the network
+	// partition or owner change.
+	SwitchTaskStepInBatch(ctx context.Context, task *proto.Task, nextState proto.TaskState, nextStep proto.Step, subtasks []*proto.Subtask) error
+	// SucceedTask updates a task to success state.
+	SucceedTask(ctx context.Context, taskID int64) error
 	// GetUsedSlotsOnNodes returns the used slots on nodes that have subtask scheduled.
 	// subtasks of each task on one node is only accounted once as we don't support
 	// running them concurrently.

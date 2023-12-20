@@ -1003,7 +1003,8 @@ func TestLoadDataPrivilege(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`GRANT INSERT on *.* to 'test_load'@'localhost'`)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil, nil))
-	tk.MustExec("LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' INTO TABLE t_load")
+	err = tk.ExecToErr("LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' INTO TABLE t_load")
+	require.ErrorContains(t, err, "reader is nil")
 
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`GRANT INSERT on *.* to 'test_load'@'localhost'`)
