@@ -411,7 +411,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 			if tableAlias == nil {
 				continue
 			}
-			if hintTbl.dbName.L == tableAlias.dbName.L && hintTbl.tblName.L == tableAlias.tblName.L && hintTbl.selectOffset == tableAlias.selectOffset {
+			if (hintTbl.dbName.L == tableAlias.dbName.L || hintTbl.dbName.L == "*") && hintTbl.tblName.L == tableAlias.tblName.L && hintTbl.selectOffset == tableAlias.selectOffset {
 				match = true
 				leadingJoinGroup = append(leadingJoinGroup, joinGroup)
 				leftJoinGroup = append(leftJoinGroup[:i], leftJoinGroup[i+1:]...)

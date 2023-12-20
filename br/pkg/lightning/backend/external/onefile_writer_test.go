@@ -50,8 +50,7 @@ func TestOnefileWriterBasic(t *testing.T) {
 		SetPropKeysDistance(2).
 		BuildOneFile(memStore, "/test", "0")
 
-	err := writer.Init(ctx, 5*1024*1024)
-	require.NoError(t, err)
+	require.NoError(t, writer.Init(ctx, 5*1024*1024))
 
 	kvCnt := 100
 	kvs := make([]common.KvPair, kvCnt)
@@ -67,12 +66,10 @@ func TestOnefileWriterBasic(t *testing.T) {
 	}
 
 	for _, item := range kvs {
-		err := writer.WriteRow(ctx, item.Key, item.Val)
-		require.NoError(t, err)
+		require.NoError(t, writer.WriteRow(ctx, item.Key, item.Val))
 	}
 
-	err = writer.Close(ctx)
-	require.NoError(t, err)
+	require.NoError(t, writer.Close(ctx))
 
 	bufSize := rand.Intn(100) + 1
 	kvReader, err := newKVReader(ctx, "/test/0/one-file", memStore, 0, bufSize)
@@ -124,8 +121,7 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 		SetPropKeysDistance(keysDistance).
 		BuildOneFile(memStore, "/"+prefix, "0")
 
-	err := writer.Init(ctx, 5*1024*1024)
-	require.NoError(t, err)
+	require.NoError(t, writer.Init(ctx, 5*1024*1024))
 	kvs := make([]common.KvPair, 0, kvCnt)
 	for i := 0; i < kvCnt; i++ {
 		kvs = append(kvs, common.KvPair{
@@ -134,11 +130,9 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 		})
 	}
 	for _, item := range kvs {
-		err := writer.WriteRow(ctx, item.Key, item.Val)
-		require.NoError(t, err)
+		require.NoError(t, writer.WriteRow(ctx, item.Key, item.Val))
 	}
-	err = writer.Close(ctx)
-	require.NoError(t, err)
+	require.NoError(t, writer.Close(ctx))
 
 	bufSize := rand.Intn(100) + 1
 	kvReader, err := newKVReader(ctx, "/"+prefix+"/0/one-file", memStore, 0, bufSize)
@@ -177,7 +171,7 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 	require.NoError(t, statReader.Close())
 }
 
-func TestMergeOverlappingFilesV2(t *testing.T) {
+func TestMergeOverlappingFilesInternal(t *testing.T) {
 	// 1. Write to 5 files.
 	// 2. merge 5 files into one file.
 	// 3. read one file and check result.
@@ -197,13 +191,11 @@ func TestMergeOverlappingFilesV2(t *testing.T) {
 			v-- // insert a duplicate key.
 		}
 		key, val := []byte{byte(v)}, []byte{byte(v)}
-		err := writer.WriteRow(ctx, key, val, dbkv.IntHandle(i))
-		require.NoError(t, err)
+		require.NoError(t, writer.WriteRow(ctx, key, val, dbkv.IntHandle(i)))
 	}
-	err := writer.Close(ctx)
-	require.NoError(t, err)
+	require.NoError(t, writer.Close(ctx))
 
-	err = mergeOverlappingFilesV2(
+	require.NoError(t, mergeOverlappingFilesInternal(
 		ctx,
 		[]string{"/test/0/0", "/test/0/1", "/test/0/2", "/test/0/3", "/test/0/4"},
 		memStore,
@@ -218,8 +210,7 @@ func TestMergeOverlappingFilesV2(t *testing.T) {
 		2,
 		nil,
 		true,
-	)
-	require.NoError(t, err)
+	))
 
 	keys := make([][]byte, 0, kvCount)
 	values := make([][]byte, 0, kvCount)
@@ -276,8 +267,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		SetMemorySizeLimit(1000).
 		BuildOneFile(memStore, "/test", "0")
 
-	err := writer.Init(ctx, 5*1024*1024)
-	require.NoError(t, err)
+	require.NoError(t, writer.Init(ctx, 5*1024*1024))
 
 	kvCnt := 100000
 	expectedTotalSize := 0
@@ -301,17 +291,15 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	})
 
 	for _, item := range kvs {
-		err := writer.WriteRow(ctx, item.Key, item.Val)
-		require.NoError(t, err)
+		require.NoError(t, writer.WriteRow(ctx, item.Key, item.Val))
 	}
-	err = writer.Close(ctx)
-	require.NoError(t, err)
+	require.NoError(t, writer.Close(ctx))
 
 	var resSummary *WriterSummary
 	onClose := func(summary *WriterSummary) {
 		resSummary = summary
 	}
-	err = mergeOverlappingFilesV2(
+	require.NoError(t, mergeOverlappingFilesInternal(
 		ctx,
 		[]string{"/test/0/one-file"},
 		memStore,
@@ -326,8 +314,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		2,
 		onClose,
 		true,
-	)
-	require.NoError(t, err)
+	))
 
 	bufSize := rand.Intn(100) + 1
 	kvReader, err := newKVReader(ctx, "/test2/mergeID/one-file", memStore, 0, bufSize)

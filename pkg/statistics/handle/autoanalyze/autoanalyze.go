@@ -34,10 +34,10 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -299,21 +299,6 @@ func getAutoAnalyzeParameters(sctx sessionctx.Context) map[string]string {
 	return parameters
 }
 
-func getAllTidsAndPids(tbls []table.Table) []int64 {
-	tidsAndPids := make([]int64, 0, len(tbls))
-	for _, tbl := range tbls {
-		tidsAndPids = append(tidsAndPids, tbl.Meta().ID)
-		tblInfo := tbl.Meta()
-		pi := tblInfo.GetPartitionInfo()
-		if pi != nil {
-			for _, def := range pi.Definitions {
-				tidsAndPids = append(tidsAndPids, def.ID)
-			}
-		}
-	}
-	return tidsAndPids
-}
-
 // HandleAutoAnalyze analyzes the newly created table or index.
 func HandleAutoAnalyze(
 	sctx sessionctx.Context,
@@ -350,28 +335,32 @@ func HandleAutoAnalyze(
 	}
 	pruneMode := variable.PartitionPruneMode(sctx.GetSessionVars().PartitionPruneMode.Load())
 
-	return randomPickOneTableAndTryAutoAnalyze(
+	return RandomPickOneTableAndTryAutoAnalyze(
 		sctx,
 		statsHandle,
 		sysProcTracker,
 		is,
 		autoAnalyzeRatio,
 		pruneMode,
+		start,
+		end,
 	)
 }
 
-// randomPickOneTableAndTryAutoAnalyze randomly picks one table and tries to analyze it.
+// RandomPickOneTableAndTryAutoAnalyze randomly picks one table and tries to analyze it.
 // 1. If the table is not analyzed, analyze it.
 // 2. If the table is analyzed, analyze it when "tbl.ModifyCount/tbl.Count > autoAnalyzeRatio".
 // 3. If the table is analyzed, analyze its indices when the index is not analyzed.
 // 4. If the table is locked, skip it.
-func randomPickOneTableAndTryAutoAnalyze(
+// Exposed solely for testing.
+func RandomPickOneTableAndTryAutoAnalyze(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sessionctx.SysProcTracker,
 	is infoschema.InfoSchema,
 	autoAnalyzeRatio float64,
 	pruneMode variable.PartitionPruneMode,
+	start, end time.Time,
 ) bool {
 	dbs := is.AllSchemaNames()
 	// Shuffle the database and table slice to randomize the order of analyzing tables.
@@ -379,6 +368,17 @@ func randomPickOneTableAndTryAutoAnalyze(
 	rd.Shuffle(len(dbs), func(i, j int) {
 		dbs[i], dbs[j] = dbs[j], dbs[i]
 	})
+	// Query locked tables once to minimize overhead.
+	// Outdated lock info is acceptable as we verify table lock status pre-analysis.
+	lockedTables, err := lockstats.QueryLockedTables(sctx)
+	if err != nil {
+		statslogutil.StatsLogger().Error(
+			"check table lock failed",
+			zap.Error(err),
+		)
+		return false
+	}
+
 	for _, db := range dbs {
 		// Ignore the memory and system database.
 		if util.IsMemOrSysDB(strings.ToLower(db)) {
@@ -394,18 +394,13 @@ func randomPickOneTableAndTryAutoAnalyze(
 			tbls[i], tbls[j] = tbls[j], tbls[i]
 		})
 
-		tidsAndPids := getAllTidsAndPids(tbls)
-		lockedTables, err := statsHandle.GetLockedTables(tidsAndPids...)
-		if err != nil {
-			statslogutil.StatsLogger().Error(
-				"check table lock failed",
-				zap.Error(err),
-			)
-			continue
-		}
-
 		// We need to check every partition of every table to see if it needs to be analyzed.
 		for _, tbl := range tbls {
+			// Sometimes the tables are too many. Auto-analyze will take too much time on it.
+			// so we need to check the available time.
+			if !timeutil.WithinDayTimePeriod(start, end, time.Now()) {
+				return false
+			}
 			// If table locked, skip analyze all partitions of the table.
 			// FIXME: This check is not accurate, because other nodes may change the table lock status at any time.
 			if _, ok := lockedTables[tbl.Meta().ID]; ok {
