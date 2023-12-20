@@ -17,9 +17,7 @@ package addindextest
 import (
 	"context"
 	"fmt"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -48,15 +46,6 @@ func init() {
 }
 
 func TestAddIndexDistBasic(t *testing.T) {
-	var wg sync.WaitGroup
-	wg.Add(1)
-	dumpChan := make(chan struct{})
-	defer func() {
-		close(dumpChan)
-		wg.Wait()
-	}()
-	go testkit.DebugDumpOnTimeout(&wg, dumpChan, 7*time.Minute)
-
 	// mock that we only have 1 cpu, add-index task can be scheduled as usual
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(1)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/testSetLastTaskID", `return(true)`))
