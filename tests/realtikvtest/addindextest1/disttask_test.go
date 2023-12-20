@@ -17,7 +17,9 @@ package addindextest
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -152,7 +154,15 @@ func TestAddIndexDistCancel(t *testing.T) {
 }
 
 func TestAddIndexDistPauseAndResume(t *testing.T) {
-	t.Skip("unstable") // TODO(tangenta): fix this unstable test
+	var wg sync.WaitGroup
+	wg.Add(1)
+	dumpChan := make(chan struct{})
+	defer func() {
+		close(dumpChan)
+		wg.Wait()
+	}()
+	go testkit.DebugDumpOnTimeout(&wg, dumpChan, 1*time.Minute)
+
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	if store.Name() != "TiKV" {
 		t.Skip("TiKV store only")
