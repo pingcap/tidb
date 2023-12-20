@@ -175,6 +175,11 @@ func insertPlanReplayerErrorStatusRecord(ctx context.Context, sctx sessionctx.Co
 	)
 	if err != nil {
 		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
+			zap.String("sqlDigest", record.SQLDigest),
+			zap.String("planDigest", record.PlanDigest),
+			zap.String("sql", record.OriginSQL),
+			zap.String("failReason", record.FailedReason),
+			zap.String("instance", instance),
 			zap.Error(err))
 	}
 }
@@ -189,8 +194,13 @@ func insertPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionctx.
 	)
 	if err != nil {
 		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
+			zap.String("sqlDigest", record.SQLDigest),
+			zap.String("planDigest", record.PlanDigest),
 			zap.String("sql", record.OriginSQL),
-			zap.Error(err))
+			zap.String("token", record.Token),
+			zap.String("instance", instance),
+			zap.Error(err),
+		)
 		// try insert record without original sql
 		_, _, err = exec.ExecRestrictedSQL(
 			ctx,
@@ -202,7 +212,10 @@ func insertPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionctx.
 			logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
 				zap.String("sqlDigest", record.SQLDigest),
 				zap.String("planDigest", record.PlanDigest),
-				zap.Error(err))
+				zap.String("token", record.Token),
+				zap.String("instance", instance),
+				zap.Error(err),
+			)
 		}
 	}
 }
