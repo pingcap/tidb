@@ -207,7 +207,7 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 		// shouldKeepCurrentFilter means the partial paths can't cover the current filter completely, so we must add
 		// the current filter into a Selection after partial paths.
 		shouldKeepCurrentFilter := false
-		var partialPaths = make([]*util.AccessPath, 0, usedIndexCount)
+		var partialAlternativePaths = make([][]*util.AccessPath, 0, usedIndexCount)
 		dnfItems := expression.FlattenDNFConditions(sf)
 		for _, item := range dnfItems {
 			cnfItems := expression.SplitCNFItems(item)
@@ -227,48 +227,29 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 
 			itemPaths := ds.accessPathsForConds(pushedDownCNFItems, usedIndexCount)
 			if len(itemPaths) == 0 {
-				partialPaths = nil
+				partialAlternativePaths = nil
 				break
 			}
-			partialPath := ds.buildIndexMergePartialPath(itemPaths)
-			if partialPath == nil {
-				partialPaths = nil
-				break
-			}
-			partialPaths = append(partialPaths, partialPath)
+			// we don't prune other possible index merge path here.
+			// keep all the possible index merge partial paths here to let the property choose.
+			partialAlternativePaths = append(partialAlternativePaths, itemPaths)
 		}
-		// If all of the partialPaths use the same index, we will not use the indexMerge.
-		singlePath := true
-		for i := len(partialPaths) - 1; i >= 1; i-- {
-			if partialPaths[i].Index != partialPaths[i-1].Index {
-				singlePath = false
-				break
+		// If all the partialPaths use the same index, we will not use the indexMerge.
+		indexMap := make(map[int64]struct{}, 1)
+		for i := len(partialAlternativePaths) - 1; i >= 0; i-- {
+			for j := len(partialAlternativePaths[i]) - 1; j >= 0; j-- {
+				indexMap[partialAlternativePaths[i][j].Index.ID] = struct{}{}
 			}
 		}
-		if singlePath {
+		if len(indexMap) == 1 {
 			continue
 		}
-		if len(partialPaths) > 1 {
-			possiblePath := ds.buildIndexMergeOrPath(filters, partialPaths, i, shouldKeepCurrentFilter)
+		if len(partialAlternativePaths) > 1 {
+			possiblePath := ds.buildIndexMergeOrPath(filters, partialAlternativePaths, i, shouldKeepCurrentFilter)
 			if possiblePath == nil {
 				return nil
 			}
-
-			accessConds := make([]expression.Expression, 0, len(partialPaths))
-			for _, p := range partialPaths {
-				indexCondsForP := p.AccessConds[:]
-				indexCondsForP = append(indexCondsForP, p.IndexFilters...)
-				if len(indexCondsForP) > 0 {
-					accessConds = append(accessConds, expression.ComposeCNFCondition(ds.SCtx().GetExprCtx(), indexCondsForP...))
-				}
-			}
-			accessDNF := expression.ComposeDNFCondition(ds.SCtx().GetExprCtx(), accessConds...)
-			sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, []expression.Expression{accessDNF}, nil)
-			if err != nil {
-				logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
-				sel = SelectionFactor
-			}
-			possiblePath.CountAfterAccess = sel * ds.tableStats.RowCount
+			// only after all partial path is determined, can the countAfterAccess be done, delay it to converging.
 			ds.possibleAccessPaths = append(ds.possibleAccessPaths, possiblePath)
 		}
 	}
@@ -420,45 +401,32 @@ func (*DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.AccessPat
 // buildIndexMergeOrPath generates one possible IndexMergePath.
 func (ds *DataSource) buildIndexMergeOrPath(
 	filters []expression.Expression,
-	partialPaths []*util.AccessPath,
+	partialAlternativePaths [][]*util.AccessPath,
 	current int,
 	shouldKeepCurrentFilter bool,
 ) *util.AccessPath {
-	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths}
+	indexMergePath := &util.AccessPath{PartialAlternativeIndexPaths: partialAlternativePaths}
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[:current]...)
 	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current+1:]...)
 	// If global index exists, index merge is not allowed.
 	// Global index is not compatible with IndexMergeReaderExecutor.
-	for i := range partialPaths {
-		if partialPaths[i].Index != nil && partialPaths[i].Index.Global {
-			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("global index is not compatible with index merge, so ignore it"))
+	for i := range partialAlternativePaths {
+		// if one path's all alternatives are global index, warning it.
+		allGlobal := true
+		for _, oneAlternative := range partialAlternativePaths[i] {
+			if oneAlternative.Index != nil && !oneAlternative.Index.Global {
+				allGlobal = false
+			}
+		}
+		if allGlobal {
+			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.New("global index is not compatible with index merge, so ignore it"))
 			return nil
 		}
 	}
 
-	for _, path := range partialPaths {
-		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
-		if len(path.TableFilters) > 0 {
-			shouldKeepCurrentFilter = true
-		}
-		// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
-		if len(path.IndexFilters) != 0 && !expression.CanExprsPushDown(ds.SCtx().GetExprCtx(), path.IndexFilters, ds.SCtx().GetClient(), kv.TiKV) {
-			shouldKeepCurrentFilter = true
-			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
-			path.IndexFilters = nil
-		}
-		if len(path.TableFilters) != 0 && !expression.CanExprsPushDown(ds.SCtx().GetExprCtx(), path.TableFilters, ds.SCtx().GetClient(), kv.TiKV) {
-			shouldKeepCurrentFilter = true
-			path.TableFilters = nil
-		}
-	}
-
-	// Keep this filter as a part of table filters for safety if it has any parameter.
-	if expression.MaybeOverOptimized4PlanCache(ds.SCtx().GetExprCtx(), filters[current:current+1]) {
-		shouldKeepCurrentFilter = true
-	}
 	if shouldKeepCurrentFilter {
-		indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current])
+		// this filter will be merged into indexPath's table filters when converging.
+		indexMergePath.ShouldBeKeptCurrentFilter = filters[current]
 	}
 	return indexMergePath
 }

@@ -492,6 +492,9 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 		return nil, err
 	}
 
+	if strings.HasPrefix(ds.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain format='verbose' select * from t where a=1 or b=1 order by c") {
+		fmt.Println(1)
+	}
 	if err := ds.generateIndexMergePath(); err != nil {
 		return nil, err
 	}

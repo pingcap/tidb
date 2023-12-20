@@ -43,6 +43,39 @@ func TestPlanCacheForIntersectionIndexMerge(t *testing.T) {
 	require.True(t, tk.HasPlanForLastExecution("IndexMerge"))
 }
 
+func TestIndexMergeWithOrderProperty(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, key a(a), key b(b), key ac(a, c), key bc(b, c))")
+
+	tk.MustExec("")
+
+	var (
+		input  []string
+		output []struct {
+			SQL    string
+			Plan   []string
+			Result []string
+		}
+	)
+	planSuiteData := core.GetIndexMergeSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+			output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(ts).Sort().Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery(ts).Sort().Check(testkit.Rows(output[i].Result...))
+		// Expect no warnings.
+		tk.MustQuery("show warnings").Check(testkit.Rows())
+	}
+
+}
+
 func TestHintForIntersectionIndexMerge(t *testing.T) {
 	store, domain := testkit.CreateMockStoreAndDomain(t)
 	handle := domain.StatsHandle()

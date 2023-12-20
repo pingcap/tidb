@@ -15,6 +15,7 @@
 package util
 
 import (
+	"github.com/pingcap/tidb/pkg/planner/property"
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -51,6 +52,11 @@ type AccessPath struct {
 	// PartialIndexPaths store all index access paths.
 	// If there are extra filters, store them in TableFilters.
 	PartialIndexPaths []*AccessPath
+	// For every dnf/cnf item, there maybe several matched partial index paths to be determined later in property detecting and cost model.
+	PartialAlternativeIndexPaths [][]*AccessPath
+	// ShouldBeKeptCurrentFilter indicates that there are some expression inside this dnf that couldn't be pushed down, and we should keep the entire dnf above.
+	ShouldBeKeptCurrentFilter expression.Expression
+
 	// IndexMergeIsIntersection means whether it's intersection type or union type IndexMerge path.
 	// It's only valid for a IndexMerge path.
 	// Intersection type is for expressions connected by `AND` and union type is for `OR`.
@@ -74,6 +80,55 @@ type AccessPath struct {
 
 	// Maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
 	IsUkShardIndexPath bool
+}
+
+func (path *AccessPath) matchProperty(prop *property.PhysicalProperty) bool {
+	if !path.IsIndexMergePath() {
+		return false
+	}
+	if len(path.PartialIndexPaths) > 0 {
+
+	}
+	if len(path.PartialAlternativeIndexPaths) > 0 {
+
+	}
+	return false
+}
+
+func (path *AccessPath) convergeIndexMerge(prop *property.PhysicalProperty) {
+	// step1: choose the right alternative index partial path for every dnf/cnf item, converging them up as an index merge path.
+
+	// adjust table filter after every partial path is determined.
+	//for _, path := range path.PartialAlternativeIndexPaths {
+	//	// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
+	//	if len(path.TableFilters) > 0 {
+	//		shouldKeepCurrentFilter = true
+	//	}
+	//	// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
+	//	if len(path.IndexFilters) != 0 && !expression.CanExprsPushDown(ds.SCtx().GetSessionVars().StmtCtx, path.IndexFilters, ds.SCtx().GetClient(), kv.TiKV) {
+	//		shouldKeepCurrentFilter = true
+	//		// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
+	//		path.IndexFilters = nil
+	//	}
+	//	if len(path.TableFilters) != 0 && !expression.CanExprsPushDown(ds.SCtx().GetSessionVars().StmtCtx, path.TableFilters, ds.SCtx().GetClient(), kv.TiKV) {
+	//		shouldKeepCurrentFilter = true
+	//		path.TableFilters = nil
+	//	}
+	//}
+	//
+	//// Keep this filter as a part of table filters for safety if it has any parameter.
+	//if expression.MaybeOverOptimized4PlanCache(ds.SCtx(), filters[current:current+1]) {
+	//	shouldKeepCurrentFilter = true
+	//}
+	//if shouldKeepCurrentFilter {
+	//	indexMergePath.TableFilters = append(indexMergePath.TableFilters, filters[current])
+	//}
+}
+
+type IndexMergeAccessPath interface {
+	converge(prop *property.PhysicalProperty)
+	matchProperty(prop *property.PhysicalProperty)
+	countAfterAccess(prop *property.PhysicalProperty) float64
 }
 
 // Clone returns a deep copy of the original AccessPath.
@@ -116,6 +171,11 @@ func (path *AccessPath) Clone() *AccessPath {
 // IsTablePath returns true if it's IntHandlePath or CommonHandlePath.
 func (path *AccessPath) IsTablePath() bool {
 	return path.IsIntHandlePath || path.IsCommonHandlePath
+}
+
+// IsIndexMergePath returns true if it's Index Merge Path.
+func (path *AccessPath) IsIndexMergePath() bool {
+	return len(path.PartialIndexPaths) > 0 || len(path.PartialAlternativeIndexPaths) > 0
 }
 
 // SplitCorColAccessCondFromFilters move the necessary filter in the form of index_col = corrlated_col to access conditions.

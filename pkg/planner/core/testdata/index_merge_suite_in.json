@@ -39,5 +39,12 @@
       "select /*+ use_index_merge(t3, ia, ibc, id, ie) */ * from t3 where a > 10 and b = 20 and c < 35 and d < 45 and e = 100",
       "select /*+ use_index_merge(t4, ia, ibc, id, ie) */ * from t4 where a > 10 and b = 20 and c < 35 and d in (1,3,8,9) and e = 100"
     ]
+  },
+  {
+    "name": "TestIndexMergeWithOrderProperty",
+    "cases": [
+      "select * from t where a=1 or b=1 order by c; -- 1. auto pick the most suitable index ac and bc",
+      "select /*+ use_index_merge(t, ac, bc) */ * from t where a=1 or b=1 order by c; -- 2. hint instruction to pick the suitable index ac and bc"
+    ]
   }
 ]

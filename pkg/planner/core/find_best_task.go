@@ -15,6 +15,7 @@
 package core
 
 import (
+	"cmp"
 	"fmt"
 	"math"
 	"slices"
@@ -839,6 +840,137 @@ func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.Physical
 	return isMatchProp
 }
 
+func (ds *DataSource) matchPropForIndexMergeAlternatives(path *util.AccessPath, prop *property.PhysicalProperty) (*util.AccessPath, bool) {
+	// target:
+	//	1: index merge case, try to match the every alternative partial path to the order property as long as
+	//	possible, and generate that property-matched index merge path out if any.
+	//	2: If the prop is empty (means no sort requirement), we will generate a random index partial combination
+	//	path from all alternatives in case that no index merge path comes out.
+
+	// Execution part doesn't support the merge operation for intersection case yet.
+	if path.IndexMergeIsIntersection {
+		return nil, false
+	}
+	noSortItem := prop.IsSortItemEmpty()
+	allSame, _ := prop.AllSameOrder()
+	if !allSame {
+		return nil, false
+	}
+	// step1: match the property from all the index partial alternative paths.
+	determinedIndexPartialPaths := make([]*util.AccessPath, 0, len(path.PartialAlternativeIndexPaths))
+	usedIndexMap := make(map[int64]struct{}, 1)
+	matchIdxes := make([]int, 0, 1)
+	for _, oneItemAlternatives := range path.PartialAlternativeIndexPaths {
+		matchIdxes = matchIdxes[:0]
+		for i, oneIndexAlternativePath := range oneItemAlternatives {
+			// if there is some sort items and this path doesn't match this prop, continue.
+			if !noSortItem && !ds.isMatchProp(oneIndexAlternativePath, prop) {
+				continue
+			}
+			// two possibility here:
+			// 1. no sort items requirement.
+			// 2. matched with sorted items.
+			matchIdxes = append(matchIdxes, i)
+		}
+		if len(matchIdxes) == 0 {
+			// if all index alternative of one of the cnf item's couldn't match the sort property,
+			// the entire index merge union path can be ignored for this sort property, return false.
+			return nil, false
+		}
+		if len(matchIdxes) > 1 {
+			// if matchIdxes greater than 1, we should sort this match alternative path by its CountAfterAccess.
+			slices.SortFunc(matchIdxes, func(a, b int) int {
+				lhsCountAfter := oneItemAlternatives[a].CountAfterAccess
+				if len(oneItemAlternatives[a].IndexFilters) > 0 {
+					lhsCountAfter = oneItemAlternatives[a].CountAfterIndex
+				}
+				rhsCountAfter := oneItemAlternatives[b].CountAfterAccess
+				if len(oneItemAlternatives[b].IndexFilters) > 0 {
+					rhsCountAfter = oneItemAlternatives[b].CountAfterIndex
+				}
+				return cmp.Compare(lhsCountAfter, rhsCountAfter)
+			})
+		}
+
+		found := false
+		// pick a most suitable index partial alternative from all matched alternative paths according to asc CountAfterAccess,
+		// By this way, a distinguished one is better.
+		for _, oneIdx := range matchIdxes {
+			if _, ok := usedIndexMap[oneItemAlternatives[oneIdx].Index.ID]; !ok {
+				// try to avoid all index partial paths are all about a single index.
+				determinedIndexPartialPaths = append(determinedIndexPartialPaths, oneItemAlternatives[oneIdx].Clone())
+				usedIndexMap[oneItemAlternatives[oneIdx].Index.ID] = struct{}{}
+				found = true
+				break
+			}
+		}
+		if !found {
+			// just pick the same name index (just using the first one is ok), in case that there may be some other
+			// picked distinctive index path for other partial paths latter.
+			determinedIndexPartialPaths = append(determinedIndexPartialPaths, oneItemAlternatives[0].Clone())
+			// uedIndexMap[oneItemAlternatives[oneIdx].Index.ID] = struct{}{} must already be colored.
+		}
+	}
+	if len(usedIndexMap) == 1 {
+		// if all partial path are using a same index, meaningless and fail over.
+		return nil, false
+	}
+	// step2: gen a new **concrete** index merge path.
+	indexMergePath := &util.AccessPath{
+		PartialIndexPaths:        determinedIndexPartialPaths,
+		IndexMergeIsIntersection: false,
+	}
+	// path.ShouldBeKeptCurrentFilter record that whether there are some part of the cnf item couldn't be pushed down to tikv already.
+	shouldKeepCurrentFilter := path.ShouldBeKeptCurrentFilter != nil
+	for _, path := range determinedIndexPartialPaths {
+		// If any partial path contains table filters, we need to keep the whole DNF filter in the Selection.
+		if len(path.TableFilters) > 0 {
+			shouldKeepCurrentFilter = true
+		}
+		// If any partial path's index filter cannot be pushed to TiKV, we should keep the whole DNF filter.
+		if len(path.IndexFilters) != 0 && !expression.CanExprsPushDown(ds.SCtx(), path.IndexFilters, ds.SCtx().GetClient(), kv.TiKV) {
+			shouldKeepCurrentFilter = true
+			// Clear IndexFilter, the whole filter will be put in indexMergePath.TableFilters.
+			path.IndexFilters = nil
+		}
+		if len(path.TableFilters) != 0 && !expression.CanExprsPushDown(ds.SCtx(), path.TableFilters, ds.SCtx().GetClient(), kv.TiKV) {
+			shouldKeepCurrentFilter = true
+			path.TableFilters = nil
+		}
+	}
+	// Keep this filter as a part of table filters for safety if it has any parameter.
+	if expression.MaybeOverOptimized4PlanCache(ds.SCtx(), []expression.Expression{path.ShouldBeKeptCurrentFilter}) {
+		shouldKeepCurrentFilter = true
+	}
+	if shouldKeepCurrentFilter {
+		// add the cnf expression back as table filer.
+		indexMergePath.TableFilters = append(indexMergePath.TableFilters, path.ShouldBeKeptCurrentFilter)
+	}
+
+	// step3: after the index merge path is determined, compute the countAfterAccess as usual.
+	accessConds := make([]expression.Expression, 0, len(determinedIndexPartialPaths))
+	for _, p := range determinedIndexPartialPaths {
+		indexCondsForP := p.AccessConds[:]
+		indexCondsForP = append(indexCondsForP, p.IndexFilters...)
+		if len(indexCondsForP) > 0 {
+			accessConds = append(accessConds, expression.ComposeCNFCondition(ds.SCtx(), indexCondsForP...))
+		}
+	}
+	accessDNF := expression.ComposeDNFCondition(ds.SCtx(), accessConds...)
+	sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, []expression.Expression{accessDNF}, nil)
+	if err != nil {
+		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
+		sel = SelectionFactor
+	}
+	indexMergePath.CountAfterAccess = sel * ds.tableStats.RowCount
+	if noSortItem {
+		// since there is no sort property, index merge case is generated by random combination, each alternative with the lower/lowest
+		// countAfterAccess, here the returned matchProperty should be false.
+		return indexMergePath, false
+	}
+	return indexMergePath, true
+}
+
 func (ds *DataSource) isMatchPropForIndexMerge(path *util.AccessPath, prop *property.PhysicalProperty) bool {
 	// Execution part doesn't support the merge operation for intersection case yet.
 	if path.IndexMergeIsIntersection {
@@ -871,6 +1003,16 @@ func (ds *DataSource) getIndexCandidate(path *util.AccessPath, prop *property.Ph
 	return candidate
 }
 
+func (ds *DataSource) convergeIndexMergeCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
+	// since the all index path alternative paths is collected and undetermined, and we should determine a possible and concrete path for this prop.
+	possiblePath, match := ds.matchPropForIndexMergeAlternatives(path, prop)
+	if possiblePath == nil {
+		return nil
+	}
+	candidate := &candidatePath{path: possiblePath, isMatchProp: match}
+	return candidate
+}
+
 func (ds *DataSource) getIndexMergeCandidate(path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.isMatchProp = ds.isMatchPropForIndexMerge(path, prop)
@@ -884,6 +1026,14 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 	for _, path := range ds.possibleAccessPaths {
 		// We should check whether the possible access path is valid first.
 		if path.StoreType != kv.TiFlash && prop.IsFlashProp() {
+			continue
+		}
+		if len(path.PartialAlternativeIndexPaths) > 0 {
+			// OR normal index merge path, try to determine every index partial path for this property.
+			candidate := ds.convergeIndexMergeCandidate(path, prop)
+			if candidate != nil {
+				candidates = append(candidates, candidate)
+			}
 			continue
 		}
 		if path.PartialIndexPaths != nil {

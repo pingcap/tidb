@@ -432,5 +432,32 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestIndexMergeWithOrderProperty",
+    "Cases": [
+      {
+        "SQL": "select * from t where a=1 or b=1 order by c; -- 1. auto pick the most suitable index ac and bc",
+        "Plan": [
+          "Projection 19.99 root  test.t.a, test.t.b, test.t.c",
+          "└─IndexMerge 19.99 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:ac(a, c) range:[1,1], keep order:true, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:bc(b, c) range:[1,1], keep order:true, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t, ac, bc) */ * from t where a=1 or b=1 order by c; -- 2. hint instruction to pick the suitable index ac and bc",
+        "Plan": [
+          "Sort 0.00 root  test.t.c",
+          "└─IndexMerge 19.99 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:ac(a, c) range:[1,1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:bc(b, c) range:[1,1], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      }
+    ]
   }
 ]
