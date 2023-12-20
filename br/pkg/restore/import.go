@@ -45,7 +45,7 @@ import (
 const (
 	importScanRegionTime = 20 * time.Second
 	gRPCBackOffMaxDelay  = 3 * time.Second
-	gRPCTimeOut          = 25 * time.Minute
+	gRPCTimeOut          = 125 * time.Minute
 )
 
 // ImporterClient is used to import a file to TiKV.
@@ -682,23 +682,22 @@ func (importer *FileImporter) downloadSST(
 		logutil.Region(regionInfo.Region),
 		logutil.Leader(regionInfo.Leader),
 	)
+	workerCh := importer.storeWorkerPoolMap[regionInfo.Leader.GetStoreId()]
+	defer func() {
+		workerCh <- struct{}{}
+	}()
+	<-workerCh
 
 	var atomicResp atomic.Value
 	eg, ectx := errgroup.WithContext(ctx)
 	for _, p := range regionInfo.Region.GetPeers() {
 		peer := p
 		eg.Go(func() error {
-			importer.storeWorkerPoolRWLock.RLock()
-			workerCh := importer.storeWorkerPoolMap[peer.GetStoreId()]
 			statis := importer.storeStatisticMap[peer.GetStoreId()]
 			defer func() {
 				atomic.AddInt64(statis, -1)
-				workerCh <- struct{}{}
-				importer.storeWorkerPoolRWLock.RUnlock()
 			}()
-			_ = <-workerCh
 			atomic.AddInt64(statis, 1)
-
 			var err error
 			var resp *import_sstpb.DownloadResponse
 			for i := 0; i < 5; i += 1 {
@@ -711,7 +710,6 @@ func (importer *FileImporter) downloadSST(
 					}
 					return errors.Trace(err)
 				}
-
 				break
 			}
 			if err != nil {
