@@ -401,7 +401,7 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 		}
 	}
 	if len(unLoadVars) > 0 {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("variables set failed:%s", strings.Join(unLoadVars, ",")))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("variables set failed:%s", strings.Join(unLoadVars, ",")))
 	}
 	return nil
 }

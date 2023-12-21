@@ -117,7 +117,7 @@ func (e *SQLBindExec) setBindingStatus() error {
 	}
 	ok, err := domain.GetDomain(e.Ctx()).BindHandle().SetGlobalBindingStatus(e.normdOrigSQL, bindInfo, e.newStatus)
 	if err == nil && !ok {
-		warningMess := errors.New("There are no bindings can be set the status. Please check the SQL text")
+		warningMess := errors.NewNoStackError("There are no bindings can be set the status. Please check the SQL text")
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(warningMess)
 	}
 	return err
@@ -126,7 +126,7 @@ func (e *SQLBindExec) setBindingStatus() error {
 func (e *SQLBindExec) setBindingStatusByDigest() error {
 	ok, err := domain.GetDomain(e.Ctx()).BindHandle().SetGlobalBindingStatusByDigest(e.newStatus, e.sqlDigest)
 	if err == nil && !ok {
-		warningMess := errors.New("There are no bindings can be set the status. Please check the SQL text")
+		warningMess := errors.NewNoStackError("There are no bindings can be set the status. Please check the SQL text")
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(warningMess)
 	}
 	return err
