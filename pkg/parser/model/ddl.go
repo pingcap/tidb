@@ -216,7 +216,7 @@ var ActionBDRMap = map[ActionType]DDLBDRType{
 	ActionShardRowID:                    UnsafeDDL,
 	ActionModifyTableComment:            SafeDDL,
 	ActionRenameIndex:                   SafeDDL, // rename any index
-	ActionAddTablePartition:             SafeDDL, // append a new partition in a range partitioned table. (no data movement)
+	ActionAddTablePartition:             SafeDDL,
 	ActionDropTablePartition:            UnsafeDDL,
 	ActionCreateView:                    UnmanagementDDL,
 	ActionModifyTableCharsetAndCollate:  UnsafeDDL,

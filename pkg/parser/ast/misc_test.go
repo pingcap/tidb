@@ -837,6 +837,28 @@ func TestDeniedByBDR(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		assert.Equal(t, tc.expected, ast.DeniedByBDR(tc.role, tc.action), fmt.Sprintf("role: %v, action: %v", tc.role, tc.action))
+		assert.Equal(t, tc.expected, ast.DeniedByBDR(tc.role, tc.action, nil), fmt.Sprintf("role: %v, action: %v", tc.role, tc.action))
+	}
+
+	// test special cases
+	testCases2 := []struct {
+		role     ast.BDRRole
+		action   model.ActionType
+		job      *model.Job
+		expected bool
+	}{
+		{
+			role:   ast.BDRRolePrimary,
+			action: model.ActionAddPrimaryKey,
+			job: &model.Job{
+				Type: model.ActionAddPrimaryKey,
+				Args: []interface{}{true},
+			},
+			expected: true,
+		},
+	}
+
+	for _, tc := range testCases2 {
+		assert.Equal(t, tc.expected, ast.DeniedByBDR(tc.role, tc.action, tc.job), fmt.Sprintf("role: %v, action: %v", tc.role, tc.action))
 	}
 }

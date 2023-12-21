@@ -2357,13 +2357,35 @@ const (
 )
 
 // DeniedByBDR checks whether the DDL is denied by BDR.
-func DeniedByBDR(role BDRRole, action model.ActionType) bool {
+func DeniedByBDR(role BDRRole, action model.ActionType, job *model.Job) (denied bool) {
 	ddlType, ok := model.ActionBDRMap[action]
 	switch role {
 	case BDRRolePrimary:
 		if !ok {
 			return true
 		}
+
+		// Can't add unique index on primary role.
+		if job != nil && (action == model.ActionAddIndex || action == model.ActionAddPrimaryKey) &&
+			len(job.Args) >= 1 && job.Args[0].(bool) {
+			// job.Args[0] is unique when job.Type is ActionAddIndex or ActionAddPrimaryKey.
+			return true
+		}
+
+		// add or update comments for column, change default values of one particular column
+		// which is allowed on primary role. Other modify column operations are denied.
+		// nolint:staticcheck
+		if job != nil && action == model.ActionModifyColumn {
+			// TODO
+		}
+
+		// add a new column to table that it’s nullable or with default value,
+		// which is allowed on primary role. Other add column operations are denied.
+		// nolint:staticcheck
+		if job != nil && action == model.ActionAddColumn {
+			// TODO
+		}
+
 		if ddlType == model.SafeDDL || ddlType == model.UnmanagementDDL {
 			return false
 		}
@@ -2378,6 +2400,7 @@ func DeniedByBDR(role BDRRole, action model.ActionType) bool {
 		// if user do not set bdr role, we will not deny any ddl as `none`
 		return false
 	}
+
 	return true
 }
 

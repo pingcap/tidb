@@ -411,20 +411,14 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		job.BDRRole = bdrRole
 
 		// BDR mode only affects the DDL not from CDC
-		if job.CDCWriteSource == 0 {
+		if job.CDCWriteSource == 0 && bdrRole != string(ast.BDRRoleNone) {
 			if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
 				for _, subJob := range job.MultiSchemaInfo.SubJobs {
-					if ast.DeniedByBDR(ast.BDRRole(bdrRole), subJob.Type) {
+					if ast.DeniedByBDR(ast.BDRRole(bdrRole), subJob.Type, job) {
 						return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 					}
 				}
-			} else if ast.DeniedByBDR(ast.BDRRole(bdrRole), job.Type) {
-				return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
-			}
-			if (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
-				(ast.BDRRole(bdrRole) == ast.BDRRolePrimary || ast.BDRRole(bdrRole) == ast.BDRRoleSecondary) &&
-				len(job.Args) >= 1 && job.Args[0].(bool) {
-				// job.Args[0] is unique when job.Type is ActionAddIndex or ActionAddPrimaryKey.
+			} else if ast.DeniedByBDR(ast.BDRRole(bdrRole), job.Type, job) {
 				return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 			}
 		}
