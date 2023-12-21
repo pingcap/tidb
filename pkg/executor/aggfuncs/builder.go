@@ -147,6 +147,9 @@ func buildApproxCountDistinct(aggFuncDesc *aggregation.AggFuncDesc, ordinal int)
 func getEvalTypeForApproxPercentile(aggFuncDesc *aggregation.AggFuncDesc) types.EvalType {
 	evalType := aggFuncDesc.Args[0].GetType().EvalType()
 	argType := aggFuncDesc.Args[0].GetType().GetType()
+
+	// When argType == mysql.TypeEnum, the field flag may be set with mysql.EnumSetAsIntFlag
+	// and the evalType will be set to types.ETInt, it's an unexpected behavior.
 	if argType == mysql.TypeEnum || argType == mysql.TypeBit {
 		evalType = types.ETString
 	}
