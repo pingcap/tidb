@@ -1956,7 +1956,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		KeyspaceID:          keyspaceID,
 		RUDetail:            ruDetail,
 		// TODO: use sessVars.StmtCtx.ResourceGroupName
-		ResourceGroupName: sessVars.ResourceGroupName,
+		ResourceGroupName: sessVars.StmtCtx.ResourceGroupName,
 	}
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)
