@@ -86,17 +86,60 @@ func TestDDLTable(t *testing.T) {
 	require.Nil(t, h.Update(is))
 	statsTbl = h.GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
+}
 
-	testKit.MustExec("truncate table t1")
-	is = do.InfoSchema()
-	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
+func TestTruncateTablePartition(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int)")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	tableInfo = tbl.Meta()
-	err = h.HandleDDLEvent(<-h.DDLEventCh())
+	tableInfo := tbl.Meta()
+	h := do.StatsHandle()
+	// Insert some data.
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
+	testKit.MustExec("analyze table t")
+	err = h.Update(do.InfoSchema())
 	require.NoError(t, err)
-	require.Nil(t, h.Update(is))
-	statsTbl = h.GetTableStats(tableInfo)
+	statsTbl := h.GetTableStats(tableInfo)
 	require.False(t, statsTbl.Pseudo)
+
+	// Get stats update version.
+	rows := testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?",
+		tableInfo.ID,
+	).Rows()
+	require.Len(t, rows, 1)
+	version := rows[0][0].(string)
+
+	// Truncate table.
+	testKit.MustExec("truncate table t")
+
+	// Find the truncate table partition event.
+	truncateTableEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTable)
+	err = h.HandleDDLEvent(truncateTableEvent)
+	require.NoError(t, err)
+
+	// Get new table info.
+	is = do.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	newTableInfo := tbl.Meta()
+	// Get new added table's stats meta.
+	rows = testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?", newTableInfo.ID,
+	).Rows()
+	require.Len(t, rows, 1)
+
+	// Check the version again.
+	rows = testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id = ?", tableInfo.ID,
+	).Rows()
+	require.Len(t, rows, 1)
+	// FIXME: Version gets updated after truncate the table.
+	require.Equal(t, version, rows[0][0].(string))
 }
 
 func TestDDLHistogram(t *testing.T) {
