@@ -17,6 +17,7 @@ package bindinfo
 import (
 	"errors"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -31,7 +32,7 @@ import (
 type bindCache struct {
 	lock        sync.Mutex
 	cache       *kvcache.SimpleLRUCache
-	memCapacity int64
+	memCapacity atomic.Int64
 	memTracker  *memory.Tracker // track memory usage.
 }
 
@@ -54,10 +55,11 @@ func newBindCache() *bindCache {
 	// the underlying LRUCache to max to close its memory control
 	cache := kvcache.NewSimpleLRUCache(mathutil.MaxUint, 0, 0)
 	c := bindCache{
-		cache:       cache,
-		memCapacity: variable.MemQuotaBindingCache.Load(),
-		memTracker:  memory.NewTracker(memory.LabelForBindCache, -1),
+		cache: cache,
+
+		memTracker: memory.NewTracker(memory.LabelForBindCache, -1),
 	}
+	c.memCapacity.Store(variable.MemQuotaBindingCache.Load())
 	return &c
 }
 
@@ -95,7 +97,7 @@ func (c *bindCache) getCopiedVal(key bindCacheKey) []*BindRecord {
 // The set operation will return error message when the memory usage of binding_cache exceeds its capacity.
 func (c *bindCache) set(key bindCacheKey, value []*BindRecord) (ok bool, err error) {
 	mem := calcBindCacheKVMem(key, value)
-	if mem > c.memCapacity { // ignore this kv pair if its size is too large
+	if mem > c.memCapacity.Load() { // ignore this kv pair if its size is too large
 		err = errors.New("The memory usage of all available bindings exceeds the cache's mem quota. As a result, all available bindings cannot be held on the cache. Please increase the value of the system variable 'tidb_mem_quota_binding_cache' and execute 'admin reload bindings' to ensure that all bindings exist in the cache and can be used normally")
 		return
 	}
@@ -104,7 +106,7 @@ func (c *bindCache) set(key bindCacheKey, value []*BindRecord) (ok bool, err err
 		// Remove the origin key-value pair.
 		mem -= calcBindCacheKVMem(key, bindRecords)
 	}
-	for mem+c.memTracker.BytesConsumed() > c.memCapacity {
+	for mem+c.memTracker.BytesConsumed() > c.memCapacity.Load() {
 		err = errors.New("The memory usage of all available bindings exceeds the cache's mem quota. As a result, all available bindings cannot be held on the cache. Please increase the value of the system variable 'tidb_mem_quota_binding_cache' and execute 'admin reload bindings' to ensure that all bindings exist in the cache and can be used normally")
 		evictedKey, evictedValue, evicted := c.cache.RemoveOldest()
 		if !evicted {
@@ -114,8 +116,7 @@ func (c *bindCache) set(key bindCacheKey, value []*BindRecord) (ok bool, err err
 	}
 	c.memTracker.Consume(mem)
 	c.cache.Put(key, value)
-	ok = true
-	return
+	return true, err
 }
 
 // delete remove an item from the cache. It's not thread-safe.
@@ -170,8 +171,7 @@ func (c *bindCache) GetAllBindings() []*BindRecord {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	values := c.cache.Values()
-	//nolint: prealloc
-	var bindRecords []*BindRecord
+	bindRecords := make([]*BindRecord, 0, len(values))
 	for _, vals := range values {
 		bindRecords = append(bindRecords, vals.([]*BindRecord)...)
 	}
@@ -224,10 +224,8 @@ func (c *bindCache) RemoveBinding(sqlDigest string, meta *BindRecord) {
 // SetMemCapacity sets the memory capacity for the cache.
 // The function is thread-safe.
 func (c *bindCache) SetMemCapacity(capacity int64) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
 	// Only change the capacity size without affecting the cached bindRecord
-	c.memCapacity = capacity
+	c.memCapacity.Load()
 }
 
 // GetMemUsage get the memory Usage for the cache.
@@ -241,9 +239,7 @@ func (c *bindCache) GetMemUsage() int64 {
 // GetMemCapacity get the memory capacity for the cache.
 // The function is thread-safe.
 func (c *bindCache) GetMemCapacity() int64 {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	return c.memCapacity
+	return c.memCapacity.Load()
 }
 
 // Copy copies a new bindCache from the origin cache.
