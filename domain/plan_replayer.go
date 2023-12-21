@@ -157,33 +157,54 @@ func insertPlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, reco
 
 func insertPlanReplayerErrorStatusRecord(ctx context.Context, sctx sessionctx.Context, instance string, record PlanReplayerStatusRecord) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	_, _, err := exec.ExecRestrictedSQL(ctx, nil, fmt.Sprintf(
-		"insert into mysql.plan_replayer_status (sql_digest, plan_digest, origin_sql, fail_reason, instance) values ('%s','%s','%s','%s','%s')",
-		record.SQLDigest, record.PlanDigest, record.OriginSQL, record.FailedReason, instance))
+	_, _, err := exec.ExecRestrictedSQL(
+		ctx, nil,
+		"insert into mysql.plan_replayer_status (sql_digest, plan_digest, origin_sql, fail_reason, instance) values (%?,%?,%?,%?,%?)",
+		record.SQLDigest, record.PlanDigest, record.OriginSQL, record.FailedReason, instance,
+	)
 	if err != nil {
 		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
+			zap.String("sqlDigest", record.SQLDigest),
+			zap.String("planDigest", record.PlanDigest),
+			zap.String("sql", record.OriginSQL),
+			zap.String("failReason", record.FailedReason),
+			zap.String("instance", instance),
 			zap.Error(err))
 	}
 }
 
 func insertPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionctx.Context, instance string, record PlanReplayerStatusRecord) {
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
-	_, _, err := exec.ExecRestrictedSQL(ctx, nil, fmt.Sprintf(
-		"insert into mysql.plan_replayer_status (sql_digest, plan_digest, origin_sql, token, instance) values ('%s','%s','%s','%s','%s')",
-		record.SQLDigest, record.PlanDigest, record.OriginSQL, record.Token, instance))
+	_, _, err := exec.ExecRestrictedSQL(
+		ctx,
+		nil,
+		"insert into mysql.plan_replayer_status (sql_digest, plan_digest, origin_sql, token, instance) values (%?,%?,%?,%?,%?)",
+		record.SQLDigest, record.PlanDigest, record.OriginSQL, record.Token, instance,
+	)
 	if err != nil {
 		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
+			zap.String("sqlDigest", record.SQLDigest),
+			zap.String("planDigest", record.PlanDigest),
 			zap.String("sql", record.OriginSQL),
-			zap.Error(err))
+			zap.String("token", record.Token),
+			zap.String("instance", instance),
+			zap.Error(err),
+		)
 		// try insert record without original sql
-		_, _, err = exec.ExecRestrictedSQL(ctx, nil, fmt.Sprintf(
-			"insert into mysql.plan_replayer_status (sql_digest, plan_digest, token, instance) values ('%s','%s','%s','%s')",
-			record.SQLDigest, record.PlanDigest, record.Token, instance))
+		_, _, err = exec.ExecRestrictedSQL(
+			ctx,
+			nil,
+			"insert into mysql.plan_replayer_status (sql_digest, plan_digest, token, instance) values (%?,%?,%?,%?)",
+			record.SQLDigest, record.PlanDigest, record.Token, instance,
+		)
 		if err != nil {
 			logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
 				zap.String("sqlDigest", record.SQLDigest),
 				zap.String("planDigest", record.PlanDigest),
-				zap.Error(err))
+				zap.String("token", record.Token),
+				zap.String("instance", instance),
+				zap.Error(err),
+			)
 		}
 	}
 }
