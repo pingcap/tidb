@@ -663,17 +663,17 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_IlikeSig:
 		f = &builtinIlikeSig{base, nil, false, sync.Once{}}
 	case tipb.ScalarFuncSig_RegexpSig:
-		f = &builtinRegexpLikeFuncSig{regexpBaseFuncSig{base, regexpMemorizedSig{nil, nil}, sync.Once{}}}
+		f = &builtinRegexpLikeFuncSig{regexpNewBaseFuncSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_RegexpUTF8Sig:
-		f = &builtinRegexpLikeFuncSig{regexpBaseFuncSig{base, regexpMemorizedSig{nil, nil}, sync.Once{}}}
+		f = &builtinRegexpLikeFuncSig{regexpNewBaseFuncSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_RegexpLikeSig:
-		f = &builtinRegexpLikeFuncSig{regexpBaseFuncSig{base, regexpMemorizedSig{nil, nil}, sync.Once{}}}
+		f = &builtinRegexpLikeFuncSig{regexpNewBaseFuncSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_RegexpSubstrSig:
 		f = &builtinRegexpSubstrFuncSig{regexpNewBaseFuncSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_RegexpInStrSig:
-		f = &builtinRegexpInStrFuncSig{regexpBaseFuncSig{base, regexpMemorizedSig{nil, nil}, sync.Once{}}}
+		f = &builtinRegexpInStrFuncSig{regexpNewBaseFuncSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_RegexpReplaceSig:
-		f = &builtinRegexpReplaceFuncSig{regexpBaseFuncSig{base, regexpMemorizedSig{nil, nil}, sync.Once{}}, make([]Instruction, 0), nil, sync.Once{}, false}
+		f = &builtinRegexpReplaceFuncSig{regexpNewBaseFuncSig: regexpNewBaseFuncSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_JsonExtractSig:
 		f = &builtinJSONExtractSig{base}
 	case tipb.ScalarFuncSig_JsonUnquoteSig:
