@@ -18,6 +18,7 @@ import (
 	"context"
 	"slices"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/util/cpu"
@@ -28,7 +29,7 @@ type taskStripes struct {
 	stripes int
 }
 
-// slotManager is used to manage the resource slots and stripes.
+// SlotManager is used to manage the resource slots and stripes.
 //
 // Slot is the resource unit of dist framework on each node, each slot represents
 // 1 cpu core, 1/total-core of memory, 1/total-core of disk, etc.
@@ -45,7 +46,7 @@ type taskStripes struct {
 //
 // Dist framework will try to allocate resource by slots and stripes, and give
 // quota to subtask, but subtask can determine what to conform.
-type slotManager struct {
+type SlotManager struct {
 	// Capacity is the total number of slots and stripes.
 	// TODO: we assume that all nodes managed by dist framework are isomorphic,
 	// but dist owner might run on normal node where the capacity might not be
@@ -70,26 +71,25 @@ type slotManager struct {
 	// 	to schedule lower priority task, but next step of A has many subtasks.
 	// once initialized, the length of usedSlots should be equal to number of nodes
 	// managed by dist framework.
-	usedSlots map[string]int
+	usedSlots atomic.Pointer[map[string]int]
 }
 
-// newSlotManager creates a new slotManager.
-func newSlotManager() *slotManager {
-	return &slotManager{
+// newSlotManager creates a new SlotManager.
+func newSlotManager() *SlotManager {
+	usedSlots := make(map[string]int)
+	sm := &SlotManager{
 		capacity:      cpu.GetCPUCount(),
 		task2Index:    make(map[int64]int),
 		reservedSlots: make(map[string]int),
-		usedSlots:     make(map[string]int),
 	}
+	sm.usedSlots.Store(&usedSlots)
+	return sm
 }
 
 // Update updates the used slots on each node.
 // TODO: on concurrent call, update once.
-func (sm *slotManager) update(ctx context.Context, taskMgr TaskManager) error {
-	nodes, err := taskMgr.GetManagedNodes(ctx)
-	if err != nil {
-		return err
-	}
+func (sm *SlotManager) update(ctx context.Context, nodeMgr *NodeManager, taskMgr TaskManager) error {
+	nodes := nodeMgr.getManagedNodes()
 	slotsOnNodes, err := taskMgr.GetUsedSlotsOnNodes(ctx)
 	if err != nil {
 		return err
@@ -98,9 +98,8 @@ func (sm *slotManager) update(ctx context.Context, taskMgr TaskManager) error {
 	for _, node := range nodes {
 		newUsedSlots[node] = slotsOnNodes[node]
 	}
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	sm.usedSlots = newUsedSlots
+
+	sm.usedSlots.Store(&newUsedSlots)
 	return nil
 }
 
@@ -110,10 +109,11 @@ func (sm *slotManager) update(ctx context.Context, taskMgr TaskManager) error {
 // as usedSlots is updated asynchronously, it might return false even if there
 // are enough resources, or return true on resource shortage when some task
 // scheduled subtasks.
-func (sm *slotManager) canReserve(task *proto.Task) (execID string, ok bool) {
+func (sm *SlotManager) canReserve(task *proto.Task) (execID string, ok bool) {
+	usedSlots := *sm.usedSlots.Load()
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	if len(sm.usedSlots) == 0 {
+	if len(usedSlots) == 0 {
 		// no node managed by dist framework
 		return "", false
 	}
@@ -129,7 +129,7 @@ func (sm *slotManager) canReserve(task *proto.Task) (execID string, ok bool) {
 		return "", true
 	}
 
-	for id, count := range sm.usedSlots {
+	for id, count := range usedSlots {
 		if count+sm.reservedSlots[id]+task.Concurrency <= sm.capacity {
 			return id, true
 		}
@@ -139,7 +139,7 @@ func (sm *slotManager) canReserve(task *proto.Task) (execID string, ok bool) {
 
 // Reserve reserves resources for a task.
 // Reserve and UnReserve should be called in pair with same parameters.
-func (sm *slotManager) reserve(task *proto.Task, execID string) {
+func (sm *SlotManager) reserve(task *proto.Task, execID string) {
 	taskClone := *task
 
 	sm.mu.Lock()
@@ -158,7 +158,7 @@ func (sm *slotManager) reserve(task *proto.Task, execID string) {
 }
 
 // UnReserve un-reserve resources for a task.
-func (sm *slotManager) unReserve(task *proto.Task, execID string) {
+func (sm *SlotManager) unReserve(task *proto.Task, execID string) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	idx, ok := sm.task2Index[task.ID]
@@ -177,4 +177,16 @@ func (sm *slotManager) unReserve(task *proto.Task, execID string) {
 			delete(sm.reservedSlots, execID)
 		}
 	}
+}
+
+func (sm *SlotManager) getNodesOfEnoughSlots(concurrency int) map[string]struct{} {
+	// content of usedSlots is never changed directly, so it's safe to read it.
+	usedSlots := *sm.usedSlots.Load()
+	result := make(map[string]struct{}, len(usedSlots))
+	for n, slots := range usedSlots {
+		if slots+concurrency <= sm.capacity {
+			result[n] = struct{}{}
+		}
+	}
+	return result
 }

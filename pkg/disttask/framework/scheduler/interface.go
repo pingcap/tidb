@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 )
@@ -94,13 +95,13 @@ type Extension interface {
 	// 	1. task is pending and entering it's first step.
 	// 	2. subtasks scheduled has all finished with no error.
 	// when next step is StepDone, it should return nil, nil.
-	OnNextSubtasksBatch(ctx context.Context, h TaskHandle, task *proto.Task, execIDs []string, step proto.Step) (subtaskMetas [][]byte, err error)
+	OnNextSubtasksBatch(ctx context.Context, h storage.TaskHandle, task *proto.Task, execIDs []string, step proto.Step) (subtaskMetas [][]byte, err error)
 
 	// OnDone is called when task is done, either finished successfully or failed
 	// with error.
 	// if the task is failed when initializing scheduler, or it's an unknown task,
 	// we don't call this function.
-	OnDone(ctx context.Context, h TaskHandle, task *proto.Task) error
+	OnDone(ctx context.Context, h storage.TaskHandle, task *proto.Task) error
 
 	// GetEligibleInstances is used to get the eligible instances for the task.
 	// on certain condition we may want to use some instances to do the task, such as instances with more disk.
@@ -118,8 +119,15 @@ type Extension interface {
 	GetNextStep(task *proto.Task) proto.Step
 }
 
+// Param is used to pass parameters when creating scheduler.
+type Param struct {
+	taskMgr TaskManager
+	nodeMgr *NodeManager
+	slotMgr *SlotManager
+}
+
 // schedulerFactoryFn is used to create a scheduler.
-type schedulerFactoryFn func(ctx context.Context, taskMgr TaskManager, nodeMgr *NodeManager, task *proto.Task) Scheduler
+type schedulerFactoryFn func(ctx context.Context, task *proto.Task, param Param) Scheduler
 
 var schedulerFactoryMap = struct {
 	syncutil.RWMutex

@@ -1,0 +1,158 @@
+// Copyright 2023 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package scheduler
+
+import (
+	"context"
+	"testing"
+	"time"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	mockDispatch "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/mock/gomock"
+)
+
+func TestDispatcherOnNextStage(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	taskMgr := mock.NewMockTaskManager(ctrl)
+	schExt := mockDispatch.NewMockExtension(ctrl)
+
+	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+	task := proto.Task{
+		ID:    1,
+		State: proto.TaskStatePending,
+		Step:  proto.StepInit,
+	}
+	cloneTask := task
+	nodeMgr := NewNodeManager()
+	sch := NewBaseScheduler(ctx, &cloneTask, Param{
+		taskMgr: taskMgr,
+		nodeMgr: nodeMgr,
+		slotMgr: newSlotManager(),
+	})
+	sch.Extension = schExt
+
+	// test next step is done
+	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepDone)
+	schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("done err"))
+	require.ErrorContains(t, sch.OnNextStage(), "done err")
+	require.True(t, ctrl.Satisfied())
+	// we update task step before OnDone
+	require.Equal(t, proto.StepDone, sch.Task.Step)
+	*sch.Task = task
+	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepDone)
+	schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	taskMgr.EXPECT().SucceedTask(gomock.Any(), gomock.Any()).Return(nil)
+	require.NoError(t, sch.OnNextStage())
+	require.True(t, ctrl.Satisfied())
+
+	// GetEligibleInstances err
+	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
+	schExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, errors.New("GetEligibleInstances err"))
+	require.ErrorContains(t, sch.OnNextStage(), "GetEligibleInstances err")
+	require.True(t, ctrl.Satisfied())
+	// GetEligibleInstances no instance
+	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
+	schExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
+	require.ErrorContains(t, sch.OnNextStage(), "no available TiDB node to dispatch subtasks")
+	require.True(t, ctrl.Satisfied())
+
+	serverNodes := []string{":4000"}
+	// OnNextSubtasksBatch err
+	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
+	schExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(serverNodes, nil)
+	schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(nil, errors.New("OnNextSubtasksBatch err"))
+	schExt.EXPECT().IsRetryableErr(gomock.Any()).Return(true)
+	require.ErrorContains(t, sch.OnNextStage(), "OnNextSubtasksBatch err")
+	require.True(t, ctrl.Satisfied())
+
+	bak := kv.TxnTotalSizeLimit.Load()
+	t.Cleanup(func() {
+		kv.TxnTotalSizeLimit.Store(bak)
+	})
+
+	// dispatch in batch
+	subtaskMetas := [][]byte{
+		[]byte(`{"xx": "1"}`),
+		[]byte(`{"xx": "2"}`),
+	}
+	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
+	schExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(serverNodes, nil)
+	schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(subtaskMetas, nil)
+	taskMgr.EXPECT().SwitchTaskStepInBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	kv.TxnTotalSizeLimit.Store(1)
+	require.NoError(t, sch.OnNextStage())
+	require.True(t, ctrl.Satisfied())
+	// met unstable subtasks
+	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
+	schExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(serverNodes, nil)
+	schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(subtaskMetas, nil)
+	taskMgr.EXPECT().SwitchTaskStepInBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(errors.Annotatef(storage.ErrUnstableSubtasks, "expected %d, got %d",
+			2, 100))
+	kv.TxnTotalSizeLimit.Store(1)
+	startTime := time.Now()
+	err := sch.OnNextStage()
+	require.ErrorIs(t, err, storage.ErrUnstableSubtasks)
+	require.ErrorContains(t, err, "expected 2, got 100")
+	require.WithinDuration(t, startTime, time.Now(), 10*time.Second)
+	require.True(t, ctrl.Satisfied())
+
+	// dispatch in one txn
+	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
+	schExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(serverNodes, nil)
+	schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		Return(subtaskMetas, nil)
+	taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	kv.TxnTotalSizeLimit.Store(config.DefTxnTotalSizeLimit)
+	require.NoError(t, sch.OnNextStage())
+	require.True(t, ctrl.Satisfied())
+}
+
+func TestSchedulerAdjustEligibleNodes(t *testing.T) {
+	slotMgr := newSlotManager()
+	slotMgr.capacity = 16
+	sch := &BaseScheduler{
+		Task: &proto.Task{
+			Concurrency: 10,
+		},
+		Param: Param{
+			slotMgr: slotMgr,
+		},
+	}
+
+	allNodes := []string{":4000", ":4001", ":4002"}
+	require.Equal(t, allNodes, sch.adjustEligibleNodes(allNodes))
+
+	usedSlots := map[string]int{
+		":4000": 12,
+		":4001": 4,
+		":4003": 0, // stale node
+	}
+	slotMgr.usedSlots.Store(&usedSlots)
+	require.Equal(t, []string{":4001"}, sch.adjustEligibleNodes(allNodes))
+}

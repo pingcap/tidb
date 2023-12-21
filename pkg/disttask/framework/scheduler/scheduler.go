@@ -60,14 +60,6 @@ var (
 	RetrySQLMaxInterval = 30 * time.Second
 )
 
-// TaskHandle provides the interface for operations needed by Scheduler.
-// Then we can use scheduler's function in Scheduler interface.
-type TaskHandle interface {
-	// GetPreviousSubtaskMetas gets previous subtask metas.
-	GetPreviousSubtaskMetas(taskID int64, step proto.Step) ([][]byte, error)
-	storage.SessionExecutor
-}
-
 // Scheduler manages the lifetime of a task
 // including submitting subtasks and updating the status of a task.
 type Scheduler interface {
@@ -84,11 +76,10 @@ type Scheduler interface {
 // BaseScheduler is the base struct for Scheduler.
 // each task type embed this struct and implement the Extension interface.
 type BaseScheduler struct {
-	ctx     context.Context
-	taskMgr TaskManager
-	nodeMgr *NodeManager
-	Task    *proto.Task
-	logCtx  context.Context
+	ctx context.Context
+	Param
+	Task   *proto.Task
+	logCtx context.Context
 	// when RegisterSchedulerFactory, the factory MUST initialize this fields.
 	Extension
 
@@ -103,13 +94,12 @@ type BaseScheduler struct {
 var MockOwnerChange func()
 
 // NewBaseScheduler creates a new BaseScheduler.
-func NewBaseScheduler(ctx context.Context, taskMgr TaskManager, nodeMgr *NodeManager, task *proto.Task) *BaseScheduler {
+func NewBaseScheduler(ctx context.Context, task *proto.Task, param Param) *BaseScheduler {
 	logCtx := logutil.WithFields(context.Background(), zap.Int64("task-id", task.ID),
 		zap.Stringer("task-type", task.Type))
 	return &BaseScheduler{
 		ctx:       ctx,
-		taskMgr:   taskMgr,
-		nodeMgr:   nodeMgr,
+		Param:     param,
 		Task:      task,
 		logCtx:    logCtx,
 		TaskNodes: nil,
@@ -395,7 +385,7 @@ func (s *BaseScheduler) doBalanceSubtasks(eligibleNodes []string) error {
 			deadNodesMap[node] = true
 		}
 	}
-	// 2. get subtasks for each node before rebalance.
+	// 2. get subtasks for each node before balance.
 	subtasks, err := s.taskMgr.GetSubtasksByStepAndState(s.ctx, s.Task.ID, s.Task.Step, proto.TaskStatePending)
 	if err != nil {
 		return err
@@ -465,11 +455,11 @@ func (s *BaseScheduler) doBalanceSubtasks(eligibleNodes []string) error {
 	}
 
 	// 8. update subtasks and do clean up logic.
-	if err = s.taskMgr.UpdateSubtasksExecIDs(s.ctx, s.Task.ID, subtasks); err != nil {
+	if err = s.taskMgr.UpdateSubtasksExecIDs(s.ctx, s.Task.ID, rebalanceSubtasks); err != nil {
 		return err
 	}
 	logutil.Logger(s.logCtx).Info("balance subtasks",
-		zap.Stringers("subtasks-rebalanced", subtasks))
+		zap.Stringers("subtasks-rebalanced", rebalanceSubtasks))
 	s.TaskNodes = append([]string{}, eligibleNodes...)
 	return nil
 }
@@ -584,6 +574,22 @@ func (s *BaseScheduler) getEligibleNodes() ([]string, error) {
 	return serverNodes, nil
 }
 
+// we schedule subtasks to the nodes with enough slots first, if no such nodes,
+// schedule to all nodes.
+func (s *BaseScheduler) adjustEligibleNodes(serverNodes []string) []string {
+	result := make([]string, 0, len(serverNodes))
+	nodesOfEnoughSlots := s.slotMgr.getNodesOfEnoughSlots(s.Task.Concurrency)
+	for _, n := range serverNodes {
+		if _, ok := nodesOfEnoughSlots[n]; ok {
+			result = append(result, n)
+		}
+	}
+	if len(result) == 0 {
+		result = serverNodes
+	}
+	return result
+}
+
 func (s *BaseScheduler) scheduleSubTask(
 	subtaskStep proto.Step,
 	metas [][]byte,
@@ -594,13 +600,20 @@ func (s *BaseScheduler) scheduleSubTask(
 		zap.Int("concurrency", s.Task.Concurrency),
 		zap.Int("subtasks", len(metas)))
 	s.TaskNodes = serverNodes
+
+	// the scheduled node of the subtask might not be optimal, as we run all
+	// scheduler in parallel, and update might be called too many times.
+	if err := s.slotMgr.update(s.ctx, s.nodeMgr, s.taskMgr); err != nil {
+		return err
+	}
+	eligibleNodes := s.adjustEligibleNodes(serverNodes)
 	var size uint64
 	subTasks := make([]*proto.Subtask, 0, len(metas))
 	for i, meta := range metas {
 		// we assign the subtask to the instance in a round-robin way.
 		// TODO: assign the subtask to the instance according to the system load of each nodes
-		pos := i % len(serverNodes)
-		instanceID := serverNodes[pos]
+		pos := i % len(eligibleNodes)
+		instanceID := eligibleNodes[pos]
 		logutil.Logger(s.logCtx).Debug("create subtasks", zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(
 			subtaskStep, s.Task.ID, s.Task.Type, instanceID, s.Task.Concurrency, meta, i+1))

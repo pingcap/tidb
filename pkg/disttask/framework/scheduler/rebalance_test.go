@@ -59,8 +59,8 @@ func scaleTest(t *testing.T,
 	if len(testCase.cleanedNodes) > 0 {
 		mockTaskMgr.EXPECT().GetSubtasksByExecIdsAndStepAndState(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
 	}
-	nodeMgr := scheduler.NewNodeManager()
-	sch := scheduler.NewBaseScheduler(ctx, mockTaskMgr, nodeMgr, &proto.Task{Step: proto.StepInit, ID: int64(id)})
+	sch := scheduler.NewBaseScheduler(ctx, &proto.Task{Step: proto.StepInit, ID: int64(id)},
+		scheduler.NewParam(mockTaskMgr, scheduler.NewNodeManager(), scheduler.NewSlotManager()))
 	sch.TaskNodes = testCase.taskNodes
 	require.NoError(t, sch.DoBalanceSubtasks(testCase.liveNodes))
 	slices.SortFunc(sch.TaskNodes, func(i, j string) int {
@@ -83,9 +83,9 @@ func balanceTest(t *testing.T,
 		nil)
 	mockTaskMgr.EXPECT().DeleteDeadNodes(ctx, gomock.Any()).Return(nil).AnyTimes()
 
-	nodeMgr := scheduler.NewNodeManager()
 	mockTaskMgr.EXPECT().UpdateSubtasksExecIDs(ctx, int64(id), testCase.subtasks).Return(nil).AnyTimes()
-	sch := scheduler.NewBaseScheduler(ctx, mockTaskMgr, nodeMgr, &proto.Task{Step: proto.StepInit, ID: int64(id)})
+	sch := scheduler.NewBaseScheduler(ctx, &proto.Task{Step: proto.StepInit, ID: int64(id)},
+		scheduler.NewParam(mockTaskMgr, scheduler.NewNodeManager(), scheduler.NewSlotManager()))
 	sch.TaskNodes = testCase.taskNodes
 	require.NoError(t, sch.DoBalanceSubtasks(testCase.liveNodes))
 	slices.SortFunc(sch.TaskNodes, func(i, j string) int {

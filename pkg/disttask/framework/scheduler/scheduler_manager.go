@@ -82,7 +82,7 @@ type Manager struct {
 	taskMgr     TaskManager
 	wg          tidbutil.WaitGroupWrapper
 	gPool       *spool.Pool
-	slotMgr     *slotManager
+	slotMgr     *SlotManager
 	nodeMgr     *NodeManager
 	initialized bool
 	// serverID, it's value is ip:port now.
@@ -198,7 +198,7 @@ func (sm *Manager) scheduleTaskLoop() {
 			continue
 		}
 
-		if err = sm.slotMgr.update(sm.ctx, sm.taskMgr); err != nil {
+		if err = sm.slotMgr.update(sm.ctx, sm.nodeMgr, sm.taskMgr); err != nil {
 			logutil.BgLogger().Warn("update used slot failed", zap.Error(err))
 			continue
 		}
@@ -263,7 +263,11 @@ func (sm *Manager) startScheduler(basicTask *proto.Task, reservedExecID string) 
 	}
 
 	schedulerFactory := getSchedulerFactory(task.Type)
-	scheduler := schedulerFactory(sm.ctx, sm.taskMgr, sm.nodeMgr, task)
+	scheduler := schedulerFactory(sm.ctx, task, Param{
+		taskMgr: sm.taskMgr,
+		nodeMgr: sm.nodeMgr,
+		slotMgr: sm.slotMgr,
+	})
 	if err = scheduler.Init(); err != nil {
 		logutil.BgLogger().Error("init scheduler failed", zap.Error(err))
 		sm.failTask(task.ID, task.State, err)
@@ -362,5 +366,9 @@ func (sm *Manager) cleanUpFinishedTasks(tasks []*proto.Task) error {
 
 // MockScheduler mock one scheduler for one task, only used for tests.
 func (sm *Manager) MockScheduler(task *proto.Task) *BaseScheduler {
-	return NewBaseScheduler(sm.ctx, sm.taskMgr, sm.nodeMgr, task)
+	return NewBaseScheduler(sm.ctx, task, Param{
+		taskMgr: sm.taskMgr,
+		nodeMgr: sm.nodeMgr,
+		slotMgr: sm.slotMgr,
+	})
 }
