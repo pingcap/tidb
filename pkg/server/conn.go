@@ -358,7 +358,15 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 func (cc *clientConn) Close() error {
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
-	delete(cc.server.resourceGroupMap, cc.getCtx().GetSessionVars().ResourceGroupName)
+	if ctx := cc.getCtx(); ctx != nil {
+		name := ctx.GetSessionVars().ResourceGroupName
+		count := cc.server.resourceGroupMap[name]
+		if count <= 1 {
+			delete(cc.server.resourceGroupMap, name)
+		} else {
+			cc.server.resourceGroupMap[name]--
+		}
+	}
 	cc.server.rwlock.Unlock()
 	return closeConn(cc, cc.server.resourceGroupMap)
 }
@@ -395,7 +403,13 @@ func closeConn(cc *clientConn, connections map[string]int) error {
 
 func (cc *clientConn) closeWithoutLock() error {
 	delete(cc.server.clients, cc.connectionID)
-	delete(cc.server.resourceGroupMap, cc.getCtx().GetSessionVars().ResourceGroupName)
+	name := cc.getCtx().GetSessionVars().ResourceGroupName
+	count := cc.server.resourceGroupMap[name]
+	if count <= 1 {
+		delete(cc.server.resourceGroupMap, name)
+	} else {
+		cc.server.resourceGroupMap[name]--
+	}
 	return closeConn(cc, cc.server.resourceGroupMap)
 }
 
@@ -1177,9 +1191,9 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	}
 
 	vars := cc.getCtx().GetSessionVars()
-	resource_group := vars.ResourceGroupName
+	resourceGroupName := vars.ResourceGroupName
 	var counter prometheus.Counter
-	if len(resource_group) == 0 {
+	if len(resourceGroupName) == 0 {
 		if err != nil && int(cmd) < len(server_metrics.QueryTotalCountErr) {
 			counter = server_metrics.QueryTotalCountErr[cmd]
 		} else if err == nil && int(cmd) < len(server_metrics.QueryTotalCountOk) {
@@ -1192,9 +1206,9 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	} else {
 		label := strconv.Itoa(int(cmd))
 		if err != nil {
-			metrics.QueryTotalCounter.WithLabelValues(label, "Error", resource_group).Inc()
+			metrics.QueryTotalCounter.WithLabelValues(label, "Error", resourceGroupName).Inc()
 		} else {
-			metrics.QueryTotalCounter.WithLabelValues(label, "OK", resource_group).Inc()
+			metrics.QueryTotalCounter.WithLabelValues(label, "OK", resourceGroupName).Inc()
 		}
 	}
 
