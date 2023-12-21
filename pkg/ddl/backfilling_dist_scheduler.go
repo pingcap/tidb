@@ -69,7 +69,7 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle scheduler.TaskHandle,
 	task *proto.Task,
-	serverInfo []string,
+	execIDs []string,
 	nextStep proto.Step,
 ) (taskMeta [][]byte, err error) {
 	logger := logutil.BgLogger().With(
@@ -95,7 +95,7 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 		if tblInfo.Partition != nil {
 			return generatePartitionPlan(tblInfo)
 		}
-		return generateNonPartitionPlan(sch.d, tblInfo, job, sch.GlobalSort, len(serverInfo))
+		return generateNonPartitionPlan(sch.d, tblInfo, job, sch.GlobalSort, len(execIDs))
 	case StepMergeSort:
 		res, err := generateMergePlan(taskHandle, task, logger)
 		if err != nil {

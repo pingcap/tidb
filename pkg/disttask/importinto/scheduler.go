@@ -201,7 +201,7 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 	ctx context.Context,
 	taskHandle scheduler.TaskHandle,
 	task *proto.Task,
-	serverInfos []string,
+	execIDs []string,
 	nextStep proto.Step,
 ) (
 	resSubtaskMeta [][]byte, err error) {
@@ -290,7 +290,7 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 		PreviousSubtaskMetas: previousSubtaskMetas,
 		GlobalSort:           sch.GlobalSort,
 		NextTaskStep:         nextStep,
-		ExecuteNodesCnt:      len(serverInfos),
+		ExecuteNodesCnt:      len(execIDs),
 	}
 	logicalPlan := &LogicalPlan{}
 	if err := logicalPlan.FromTaskMeta(task.Meta); err != nil {
