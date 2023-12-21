@@ -3510,7 +3510,7 @@ func (e *memtableRetriever) setDataFromTiDBParams(ctx sessionctx.Context) error 
 			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			continue
 		}
-		extrasJson, err := types.ParseBinaryJSONFromString(string(extrasData))
+		extrasJSON, err := types.ParseBinaryJSONFromString(string(extrasData))
 		if err != nil {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			continue
@@ -3529,7 +3529,7 @@ func (e *memtableRetriever) setDataFromTiDBParams(ctx sessionctx.Context) error 
 			isClusterDynamic,
 			isInstDynamic,
 			isSessionDynamic,
-			extrasJson,
+			extrasJSON,
 		)
 		// min and max value is only supported for numeric types
 		if !(sv.Type == variable.TypeUnsigned || sv.Type == variable.TypeInt || sv.Type == variable.TypeFloat) {
