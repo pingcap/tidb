@@ -2131,3 +2131,13 @@ insert into t1 set c1 = 0.1 on duplicate key update c1 = 1;
 select * from t1 use index(primary);
 c1
 1.0000
+drop table if exists t;
+create table t (d int);
+insert into t values (cast('18446744073709551616' as unsigned));
+Error 1690 (22003): BIGINT UNSIGNED value is out of range in '18446744073709551616'
+set sql_mode='';
+insert into t values (cast('18446744073709551616' as unsigned));
+Level	Code	Message
+Warning	1264	Out of range value for column 'd' at row 1
+Warning	1292	Truncated incorrect INTEGER value: '18446744073709551616'
+set sql_mode=DEFAULT;

@@ -28,6 +28,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/gogo/protobuf/proto"
@@ -37,10 +38,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -53,11 +54,8 @@ type baseBuiltinFunc struct {
 	pbCode       tipb.ScalarFuncSig
 	ctor         collate.Collator
 
-	childrenVectorized bool
-	childrenReversed   bool
-
+	childrenVectorized     bool
 	childrenVectorizedOnce *sync.Once
-	childrenReversedOnce   *sync.Once
 
 	collationInfo
 }
@@ -121,7 +119,6 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	bf := baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
-		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
 		tp:   tp,
@@ -208,7 +205,6 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
-		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
 		tp:   fieldType,
@@ -270,7 +266,6 @@ func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, a
 	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
-		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
 		tp:   fieldType,
@@ -286,14 +281,10 @@ func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, a
 
 // newBaseBuiltinFuncWithFieldType create BaseBuiltinFunc with FieldType charset and collation.
 // do not check and compute collation.
-func newBaseBuiltinFuncWithFieldType(ctx sessionctx.Context, tp *types.FieldType, args []Expression) (baseBuiltinFunc, error) {
-	if ctx == nil {
-		return baseBuiltinFunc{}, errors.New("unexpected nil session ctx")
-	}
+func newBaseBuiltinFuncWithFieldType(tp *types.FieldType, args []Expression) (baseBuiltinFunc, error) {
 	bf := baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
-		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
 		tp:   tp,
@@ -307,85 +298,64 @@ func (b *baseBuiltinFunc) getArgs() []Expression {
 	return b.args
 }
 
-func (*baseBuiltinFunc) vecEvalInt(sessionctx.Context, *chunk.Chunk, *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalInt(EvalContext, *chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalInt() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) vecEvalReal(sessionctx.Context, *chunk.Chunk, *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalReal(EvalContext, *chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalReal() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) vecEvalString(sessionctx.Context, *chunk.Chunk, *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalString(EvalContext, *chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalString() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) vecEvalDecimal(sessionctx.Context, *chunk.Chunk, *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalDecimal(EvalContext, *chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalDecimal() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) vecEvalTime(sessionctx.Context, *chunk.Chunk, *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalTime(EvalContext, *chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalTime() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) vecEvalDuration(sessionctx.Context, *chunk.Chunk, *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalDuration(EvalContext, *chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalDuration() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) vecEvalJSON(sessionctx.Context, *chunk.Chunk, *chunk.Column) error {
+func (*baseBuiltinFunc) vecEvalJSON(EvalContext, *chunk.Chunk, *chunk.Column) error {
 	return errors.Errorf("baseBuiltinFunc.vecEvalJSON() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) evalInt(sessionctx.Context, chunk.Row) (int64, bool, error) {
+func (*baseBuiltinFunc) evalInt(EvalContext, chunk.Row) (int64, bool, error) {
 	return 0, false, errors.Errorf("baseBuiltinFunc.evalInt() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) evalReal(sessionctx.Context, chunk.Row) (float64, bool, error) {
+func (*baseBuiltinFunc) evalReal(EvalContext, chunk.Row) (float64, bool, error) {
 	return 0, false, errors.Errorf("baseBuiltinFunc.evalReal() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) evalString(sessionctx.Context, chunk.Row) (string, bool, error) {
+func (*baseBuiltinFunc) evalString(EvalContext, chunk.Row) (string, bool, error) {
 	return "", false, errors.Errorf("baseBuiltinFunc.evalString() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) evalDecimal(sessionctx.Context, chunk.Row) (*types.MyDecimal, bool, error) {
+func (*baseBuiltinFunc) evalDecimal(EvalContext, chunk.Row) (*types.MyDecimal, bool, error) {
 	return nil, false, errors.Errorf("baseBuiltinFunc.evalDecimal() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) evalTime(sessionctx.Context, chunk.Row) (types.Time, bool, error) {
+func (*baseBuiltinFunc) evalTime(EvalContext, chunk.Row) (types.Time, bool, error) {
 	return types.ZeroTime, false, errors.Errorf("baseBuiltinFunc.evalTime() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) evalDuration(sessionctx.Context, chunk.Row) (types.Duration, bool, error) {
+func (*baseBuiltinFunc) evalDuration(EvalContext, chunk.Row) (types.Duration, bool, error) {
 	return types.Duration{}, false, errors.Errorf("baseBuiltinFunc.evalDuration() should never be called, please contact the TiDB team for help")
 }
 
-func (*baseBuiltinFunc) evalJSON(sessionctx.Context, chunk.Row) (types.BinaryJSON, bool, error) {
+func (*baseBuiltinFunc) evalJSON(EvalContext, chunk.Row) (types.BinaryJSON, bool, error) {
 	return types.BinaryJSON{}, false, errors.Errorf("baseBuiltinFunc.evalJSON() should never be called, please contact the TiDB team for help")
 }
 
 func (*baseBuiltinFunc) vectorized() bool {
 	return false
-}
-
-func (*baseBuiltinFunc) supportReverseEval() bool {
-	return false
-}
-
-func (b *baseBuiltinFunc) isChildrenReversed() bool {
-	b.childrenReversedOnce.Do(func() {
-		b.childrenReversed = true
-		for _, arg := range b.args {
-			if !arg.SupportReverseEval() {
-				b.childrenReversed = false
-				break
-			}
-		}
-	})
-	return b.childrenReversed
-}
-
-func (*baseBuiltinFunc) reverseEval(*stmtctx.StatementContext, types.Datum, types.RoundingType) (types.Datum, error) {
-	return types.Datum{}, errors.Errorf("baseBuiltinFunc.reverseEvalInt() should never be called, please contact the TiDB team for help")
 }
 
 func (b *baseBuiltinFunc) isChildrenVectorized() bool {
@@ -417,7 +387,7 @@ func (b *baseBuiltinFunc) getRetTp() *types.FieldType {
 	return b.tp
 }
 
-func (b *baseBuiltinFunc) equal(ctx sessionctx.Context, fun builtinFunc) bool {
+func (b *baseBuiltinFunc) equal(ctx EvalContext, fun builtinFunc) bool {
 	funArgs := fun.getArgs()
 	if len(funArgs) != len(b.args) {
 		return false
@@ -439,7 +409,6 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	b.pbCode = from.pbCode
 	b.bufAllocator = newLocalColumnPool()
 	b.childrenVectorizedOnce = new(sync.Once)
-	b.childrenReversedOnce = new(sync.Once)
 	b.ctor = from.ctor
 }
 
@@ -484,62 +453,49 @@ type vecBuiltinFunc interface {
 	isChildrenVectorized() bool
 
 	// vecEvalInt evaluates this builtin function in a vectorized manner.
-	vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// vecEvalReal evaluates this builtin function in a vectorized manner.
-	vecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// vecEvalString evaluates this builtin function in a vectorized manner.
-	vecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// vecEvalDecimal evaluates this builtin function in a vectorized manner.
-	vecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// vecEvalTime evaluates this builtin function in a vectorized manner.
-	vecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	vecEvalTime(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// vecEvalDuration evaluates this builtin function in a vectorized manner.
-	vecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	vecEvalDuration(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// vecEvalJSON evaluates this builtin function in a vectorized manner.
-	vecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
-}
-
-// reverseBuiltinFunc evaluates the exactly one column value in the function when given a result for expression.
-// For example, the builtinFunc is builtinArithmeticPlusRealSig(2.3, builtinArithmeticMinusRealSig(Column, 3.4))
-// when given the result like 1.0, then the ReverseEval should evaluate the column value 1.0 - 2.3 + 3.4 = 2.1
-type reverseBuiltinFunc interface {
-	// supportReverseEval checks whether the builtinFunc support reverse evaluation.
-	supportReverseEval() bool
-	// isChildrenReversed checks whether the builtinFunc's children support reverse evaluation.
-	isChildrenReversed() bool
-	// reverseEval evaluates the only one column value with given function result.
-	reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error)
+	vecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 }
 
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
 	vecBuiltinFunc
-	reverseBuiltinFunc
 
 	// evalInt evaluates int result of builtinFunc by given row.
-	evalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error)
+	evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error)
 	// evalReal evaluates real representation of builtinFunc by given row.
-	evalReal(ctx sessionctx.Context, row chunk.Row) (val float64, isNull bool, err error)
+	evalReal(ctx EvalContext, row chunk.Row) (val float64, isNull bool, err error)
 	// evalString evaluates string representation of builtinFunc by given row.
-	evalString(ctx sessionctx.Context, row chunk.Row) (val string, isNull bool, err error)
+	evalString(ctx EvalContext, row chunk.Row) (val string, isNull bool, err error)
 	// evalDecimal evaluates decimal representation of builtinFunc by given row.
-	evalDecimal(ctx sessionctx.Context, row chunk.Row) (val *types.MyDecimal, isNull bool, err error)
+	evalDecimal(ctx EvalContext, row chunk.Row) (val *types.MyDecimal, isNull bool, err error)
 	// evalTime evaluates DATE/DATETIME/TIMESTAMP representation of builtinFunc by given row.
-	evalTime(ctx sessionctx.Context, row chunk.Row) (val types.Time, isNull bool, err error)
+	evalTime(ctx EvalContext, row chunk.Row) (val types.Time, isNull bool, err error)
 	// evalDuration evaluates duration representation of builtinFunc by given row.
-	evalDuration(ctx sessionctx.Context, row chunk.Row) (val types.Duration, isNull bool, err error)
+	evalDuration(ctx EvalContext, row chunk.Row) (val types.Duration, isNull bool, err error)
 	// evalJSON evaluates JSON representation of builtinFunc by given row.
-	evalJSON(ctx sessionctx.Context, row chunk.Row) (val types.BinaryJSON, isNull bool, err error)
+	evalJSON(ctx EvalContext, row chunk.Row) (val types.BinaryJSON, isNull bool, err error)
 	// getArgs returns the arguments expressions.
 	getArgs() []Expression
 	// equal check if this function equals to another function.
-	equal(sessionctx.Context, builtinFunc) bool
+	equal(EvalContext, builtinFunc) bool
 	// getRetTp returns the return type of the built-in function.
 	getRetTp() *types.FieldType
 	// setPbCode sets pbCode for signature.
@@ -1058,11 +1014,51 @@ func (b *baseBuiltinFunc) MemoryUsage() (sum int64) {
 	if b.childrenVectorizedOnce != nil {
 		sum += onceSize
 	}
-	if b.childrenReversedOnce != nil {
-		sum += onceSize
-	}
 	for _, e := range b.args {
 		sum += e.MemoryUsage()
 	}
 	return
+}
+
+type builtinFuncCacheItem[T any] struct {
+	ctxID uint64
+	item  T
+}
+
+type builtinFuncCache[T any] struct {
+	sync.Mutex
+	cached atomic.Pointer[builtinFuncCacheItem[T]]
+}
+
+func (c *builtinFuncCache[T]) getCache(ctxID uint64) (v T, ok bool) {
+	if p := c.cached.Load(); p != nil && p.ctxID == ctxID {
+		return p.item, true
+	}
+	return v, false
+}
+
+func (c *builtinFuncCache[T]) getOrInitCache(ctx EvalContext, constructCache func() (T, error)) (T, error) {
+	intest.Assert(constructCache != nil)
+	ctxID := ctx.GetSessionVars().StmtCtx.CtxID()
+	if item, ok := c.getCache(ctxID); ok {
+		return item, nil
+	}
+
+	c.Lock()
+	defer c.Unlock()
+	if item, ok := c.getCache(ctxID); ok {
+		return item, nil
+	}
+
+	item, err := constructCache()
+	if err != nil {
+		var def T
+		return def, err
+	}
+
+	c.cached.Store(&builtinFuncCacheItem[T]{
+		ctxID: ctxID,
+		item:  item,
+	})
+	return item, nil
 }

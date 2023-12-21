@@ -633,3 +633,17 @@ set @@tidb_mem_quota_query=128;
 explain select ps_partkey, sum(ps_supplycost * ps_availqty) as value from partsupp, supplier, nation where ps_suppkey = s_suppkey and s_nationkey = n_nationkey and n_name = 'MOZAMBIQUE' group by ps_partkey having sum(ps_supplycost * ps_availqty) > ( select sum(ps_supplycost * ps_availqty) * 0.0001000000 from partsupp, supplier, nation where ps_suppkey = s_suppkey and s_nationkey = n_nationkey and n_name = 'MOZAMBIQUE' ) order by value desc;
 SET GLOBAL tidb_mem_oom_action = DEFAULT;
 set @@tidb_mem_quota_query=default;
+
+
+# TestIssue49369
+drop table if exists issue49369;
+CREATE TABLE `issue49369` (
+  `x` varchar(32) COLLATE utf8mb4_bin DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+--error 1690
+insert into t   select round(cast('88888899999999999888888888888888888888888888888888888.11111111111111111111' as decimal(18,12)) * cast('88888899999999999888888888888888888888888888888888888.11111111111111111111' as decimal(42,18)) );
+set @@sql_mode = '';
+insert into t   select round(cast('88888899999999999888888888888888888888888888888888888.11111111111111111111' as decimal(18,12)) * cast('88888899999999999888888888888888888888888888888888888.11111111111111111111' as decimal(42,18)) );
+show warnings;
+select * from t;
+set @@sql_mode = default;

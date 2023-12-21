@@ -212,8 +212,7 @@ func (*globalPanicOnExceed) GetPriority() int64 {
 
 // newList creates a new List to buffer current executor's result.
 func newList(e exec.Executor) *chunk.List {
-	base := e.Base()
-	return chunk.NewList(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize())
+	return chunk.NewList(e.RetFieldTypes(), e.InitCap(), e.MaxChunkSize())
 }
 
 // CommandDDLJobsExec is the general struct for Cancel/Pause/Resume commands on
@@ -873,7 +872,7 @@ func (e *CheckTableExec) Close() error {
 	var firstErr error
 	close(e.exitCh)
 	for _, src := range e.srcs {
-		if err := src.Close(); err != nil && firstErr == nil {
+		if err := exec.Close(src); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -1473,7 +1472,7 @@ func init() {
 			return nil, e.err
 		}
 		err := exec.Open(ctx, executor)
-		defer terror.Call(executor.Close)
+		defer func() { terror.Log(exec.Close(executor)) }()
 		if err != nil {
 			return nil, err
 		}
@@ -1943,7 +1942,7 @@ func (e *UnionExec) Close() error {
 	// promised to exit when reaching here (e.childIDChan been closed).
 	var firstErr error
 	for i := 0; i <= e.mu.maxOpenedChildID; i++ {
-		if err := e.Children(i).Close(); err != nil && firstErr == nil {
+		if err := exec.Close(e.Children(i)); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -1989,6 +1988,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.OptimizerCETrace = nil
 	sc.IsSyncStatsFailed = false
 	sc.IsExplainAnalyzeDML = false
+	sc.ResourceGroupName = vars.ResourceGroupName
 	// Firstly we assume that UseDynamicPruneMode can be enabled according session variable, then we will check other conditions
 	// in PlanBuilder.buildDataSource
 	if ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
@@ -2142,12 +2142,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.SelectStmt:
 		sc.InSelectStmt = true
 
-		// see https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sql-mode-strict
-		// said "For statements such as SELECT that do not change data, invalid values
-		// generate a warning in strict mode, not an error."
-		// and https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
-		sc.OverflowAsWarning = true
-
 		// Return warning for truncate error in selection.
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithTruncateAsWarning(true).
@@ -2160,7 +2154,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.WeakConsistency = isWeakConsistencyRead(ctx, stmt)
 	case *ast.SetOprStmt:
 		sc.InSelectStmt = true
-		sc.OverflowAsWarning = true
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithTruncateAsWarning(true).
 			WithIgnoreZeroInDate(true).
@@ -2384,7 +2377,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		w.e.err.CompareAndSwap(nil, &err)
 	}
 
-	se, err := w.e.Base().GetSysSession()
+	se, err := w.e.BaseExecutor.GetSysSession()
 	if err != nil {
 		trySaveErr(err)
 		return
@@ -2392,7 +2385,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	restoreCtx := w.initSessCtx(se)
 	defer func() {
 		restoreCtx()
-		w.e.Base().ReleaseSysSession(ctx, se)
+		w.e.BaseExecutor.ReleaseSysSession(ctx, se)
 	}()
 
 	var pkCols []string

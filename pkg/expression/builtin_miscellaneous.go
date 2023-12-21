@@ -134,7 +134,7 @@ func (b *builtinSleepSig) Clone() builtinFunc {
 
 // evalInt evals a builtinSleepSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_sleep
-func (b *builtinSleepSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinSleepSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if err != nil {
 		return 0, isNull, err
@@ -191,7 +191,7 @@ func (b *builtinLockSig) Clone() builtinFunc {
 
 // evalInt evals a builtinLockSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_get-lock
-func (b *builtinLockSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinLockSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	lockName, isNull, err := b.args[0].EvalString(ctx, row)
 	if err != nil {
 		return 0, isNull, err
@@ -274,7 +274,7 @@ func (b *builtinReleaseLockSig) Clone() builtinFunc {
 
 // evalInt evals a builtinReleaseLockSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-lock
-func (b *builtinReleaseLockSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinReleaseLockSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	lockName, isNull, err := b.args[0].EvalString(ctx, row)
 	if err != nil {
 		return 0, isNull, err
@@ -361,7 +361,7 @@ func (b *builtinDecimalAnyValueSig) Clone() builtinFunc {
 
 // evalDecimal evals a builtinDecimalAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
-func (b *builtinDecimalAnyValueSig) evalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
+func (b *builtinDecimalAnyValueSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
 	return b.args[0].EvalDecimal(ctx, row)
 }
 
@@ -377,7 +377,7 @@ func (b *builtinDurationAnyValueSig) Clone() builtinFunc {
 
 // evalDuration evals a builtinDurationAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
-func (b *builtinDurationAnyValueSig) evalDuration(ctx sessionctx.Context, row chunk.Row) (types.Duration, bool, error) {
+func (b *builtinDurationAnyValueSig) evalDuration(ctx EvalContext, row chunk.Row) (types.Duration, bool, error) {
 	return b.args[0].EvalDuration(ctx, row)
 }
 
@@ -393,7 +393,7 @@ func (b *builtinIntAnyValueSig) Clone() builtinFunc {
 
 // evalInt evals a builtinIntAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
-func (b *builtinIntAnyValueSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinIntAnyValueSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	return b.args[0].EvalInt(ctx, row)
 }
 
@@ -409,7 +409,7 @@ func (b *builtinJSONAnyValueSig) Clone() builtinFunc {
 
 // evalJSON evals a builtinJSONAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
-func (b *builtinJSONAnyValueSig) evalJSON(ctx sessionctx.Context, row chunk.Row) (types.BinaryJSON, bool, error) {
+func (b *builtinJSONAnyValueSig) evalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, bool, error) {
 	return b.args[0].EvalJSON(ctx, row)
 }
 
@@ -425,7 +425,7 @@ func (b *builtinRealAnyValueSig) Clone() builtinFunc {
 
 // evalReal evals a builtinRealAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
-func (b *builtinRealAnyValueSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinRealAnyValueSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	return b.args[0].EvalReal(ctx, row)
 }
 
@@ -441,7 +441,7 @@ func (b *builtinStringAnyValueSig) Clone() builtinFunc {
 
 // evalString evals a builtinStringAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
-func (b *builtinStringAnyValueSig) evalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
+func (b *builtinStringAnyValueSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	return b.args[0].EvalString(ctx, row)
 }
 
@@ -457,7 +457,7 @@ func (b *builtinTimeAnyValueSig) Clone() builtinFunc {
 
 // evalTime evals a builtinTimeAnyValueSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_any-value
-func (b *builtinTimeAnyValueSig) evalTime(ctx sessionctx.Context, row chunk.Row) (types.Time, bool, error) {
+func (b *builtinTimeAnyValueSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
 	return b.args[0].EvalTime(ctx, row)
 }
 
@@ -500,7 +500,7 @@ func (b *builtinInetAtonSig) Clone() builtinFunc {
 
 // evalInt evals a builtinInetAtonSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet-aton
-func (b *builtinInetAtonSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinInetAtonSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(ctx, row)
 	if err != nil || isNull {
 		return 0, true, err
@@ -580,7 +580,7 @@ func (b *builtinInetNtoaSig) Clone() builtinFunc {
 
 // evalString evals a builtinInetNtoaSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet-ntoa
-func (b *builtinInetNtoaSig) evalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
+func (b *builtinInetNtoaSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	val, isNull, err := b.args[0].EvalInt(ctx, row)
 	if err != nil || isNull {
 		return "", true, err
@@ -633,7 +633,7 @@ func (b *builtinInet6AtonSig) Clone() builtinFunc {
 
 // evalString evals a builtinInet6AtonSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-aton
-func (b *builtinInet6AtonSig) evalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
+func (b *builtinInet6AtonSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	val, isNull, err := b.args[0].EvalString(ctx, row)
 	if err != nil || isNull {
 		return "", true, err
@@ -708,7 +708,7 @@ func (b *builtinInet6NtoaSig) Clone() builtinFunc {
 
 // evalString evals a builtinInet6NtoaSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_inet6-ntoa
-func (b *builtinInet6NtoaSig) evalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
+func (b *builtinInet6NtoaSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	val, isNull, err := b.args[0].EvalString(ctx, row)
 	if err != nil || isNull {
 		return "", true, err
@@ -753,7 +753,7 @@ func (b *builtinFreeLockSig) Clone() builtinFunc {
 }
 
 // See https://dev.mysql.com/doc/refman/8.0/en/locking-functions.html#function_is-free-lock
-func (b *builtinFreeLockSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinFreeLockSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	lockName, isNull, err := b.args[0].EvalString(ctx, row)
 	if err != nil {
 		return 0, true, err
@@ -809,7 +809,7 @@ func (b *builtinIsIPv4Sig) Clone() builtinFunc {
 
 // evalInt evals a builtinIsIPv4Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4
-func (b *builtinIsIPv4Sig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinIsIPv4Sig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(ctx, row)
 	if err != nil || isNull {
 		return 0, err != nil, err
@@ -877,7 +877,7 @@ func (b *builtinIsIPv4CompatSig) Clone() builtinFunc {
 
 // evalInt evals Is_IPv4_Compat
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-compat
-func (b *builtinIsIPv4CompatSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinIsIPv4CompatSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(ctx, row)
 	if err != nil || isNull {
 		return 0, err != nil, err
@@ -926,7 +926,7 @@ func (b *builtinIsIPv4MappedSig) Clone() builtinFunc {
 
 // evalInt evals Is_IPv4_Mapped
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv4-mapped
-func (b *builtinIsIPv4MappedSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinIsIPv4MappedSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(ctx, row)
 	if err != nil || isNull {
 		return 0, err != nil, err
@@ -975,7 +975,7 @@ func (b *builtinIsIPv6Sig) Clone() builtinFunc {
 
 // evalInt evals a builtinIsIPv6Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_is-ipv6
-func (b *builtinIsIPv6Sig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinIsIPv6Sig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(ctx, row)
 	if err != nil || isNull {
 		return 0, err != nil, err
@@ -1015,7 +1015,7 @@ func (b *builtinUsedLockSig) Clone() builtinFunc {
 }
 
 // See https://dev.mysql.com/doc/refman/8.0/en/locking-functions.html#function_is-used-lock
-func (b *builtinUsedLockSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinUsedLockSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	lockName, isNull, err := b.args[0].EvalString(ctx, row)
 	if err != nil {
 		return 0, isNull, err
@@ -1068,7 +1068,7 @@ func (b *builtinIsUUIDSig) Clone() builtinFunc {
 
 // evalInt evals a builtinIsUUIDSig.
 // See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_is-uuid
-func (b *builtinIsUUIDSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinIsUUIDSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalString(ctx, row)
 	if err != nil || isNull {
 		return 0, isNull, err
@@ -1138,7 +1138,7 @@ func (b *builtinNameConstDecimalSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinNameConstDecimalSig) evalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
+func (b *builtinNameConstDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
 	return b.args[1].EvalDecimal(ctx, row)
 }
 
@@ -1152,7 +1152,7 @@ func (b *builtinNameConstIntSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinNameConstIntSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinNameConstIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	return b.args[1].EvalInt(ctx, row)
 }
 
@@ -1166,7 +1166,7 @@ func (b *builtinNameConstRealSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinNameConstRealSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinNameConstRealSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	return b.args[1].EvalReal(ctx, row)
 }
 
@@ -1180,7 +1180,7 @@ func (b *builtinNameConstStringSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinNameConstStringSig) evalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
+func (b *builtinNameConstStringSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	return b.args[1].EvalString(ctx, row)
 }
 
@@ -1194,7 +1194,7 @@ func (b *builtinNameConstJSONSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinNameConstJSONSig) evalJSON(ctx sessionctx.Context, row chunk.Row) (types.BinaryJSON, bool, error) {
+func (b *builtinNameConstJSONSig) evalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, bool, error) {
 	return b.args[1].EvalJSON(ctx, row)
 }
 
@@ -1208,7 +1208,7 @@ func (b *builtinNameConstDurationSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinNameConstDurationSig) evalDuration(ctx sessionctx.Context, row chunk.Row) (types.Duration, bool, error) {
+func (b *builtinNameConstDurationSig) evalDuration(ctx EvalContext, row chunk.Row) (types.Duration, bool, error) {
 	return b.args[1].EvalDuration(ctx, row)
 }
 
@@ -1222,7 +1222,7 @@ func (b *builtinNameConstTimeSig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinNameConstTimeSig) evalTime(ctx sessionctx.Context, row chunk.Row) (types.Time, bool, error) {
+func (b *builtinNameConstTimeSig) evalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
 	return b.args[1].EvalTime(ctx, row)
 }
 
@@ -1255,7 +1255,7 @@ func (b *builtinReleaseAllLocksSig) Clone() builtinFunc {
 
 // evalInt evals a builtinReleaseAllLocksSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_release-all-locks
-func (b *builtinReleaseAllLocksSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinReleaseAllLocksSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	count := ctx.ReleaseAllAdvisoryLocks()
 	return int64(count), false, nil
 }
@@ -1293,7 +1293,7 @@ func (b *builtinUUIDSig) Clone() builtinFunc {
 
 // evalString evals a builtinUUIDSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/miscellaneous-functions.html#function_uuid
-func (b *builtinUUIDSig) evalString(ctx sessionctx.Context, row chunk.Row) (d string, isNull bool, err error) {
+func (b *builtinUUIDSig) evalString(ctx EvalContext, row chunk.Row) (d string, isNull bool, err error) {
 	var id uuid.UUID
 	id, err = uuid.NewUUID()
 	if err != nil {
@@ -1344,7 +1344,7 @@ func (b *builtinVitessHashSig) Clone() builtinFunc {
 }
 
 // evalInt evals VITESS_HASH(int64).
-func (b *builtinVitessHashSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinVitessHashSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	shardKeyInt, isNull, err := b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return 0, true, err
@@ -1392,7 +1392,7 @@ func (b *builtinUUIDToBinSig) Clone() builtinFunc {
 
 // evalString evals UUID_TO_BIN(string_uuid, swap_flag).
 // See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_uuid-to-bin
-func (b *builtinUUIDToBinSig) evalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
+func (b *builtinUUIDToBinSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	val, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
@@ -1461,7 +1461,7 @@ func (b *builtinBinToUUIDSig) Clone() builtinFunc {
 
 // evalString evals BIN_TO_UUID(binary_uuid, swap_flag).
 // See https://dev.mysql.com/doc/refman/8.0/en/miscellaneous-functions.html#function_bin-to-uuid
-func (b *builtinBinToUUIDSig) evalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
+func (b *builtinBinToUUIDSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	val, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
@@ -1544,7 +1544,7 @@ func (b *builtinTidbShardSig) Clone() builtinFunc {
 }
 
 // evalInt evals tidb_shard(int64).
-func (b *builtinTidbShardSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinTidbShardSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	shardKeyInt, isNull, err := b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return 0, true, err

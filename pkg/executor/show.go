@@ -389,6 +389,7 @@ func (e *ShowExec) fetchShowBind() error {
 				hint.Charset,
 				hint.Collation,
 				hint.Source,
+				hint.Type,
 				hint.SQLDigest,
 				hint.PlanDigest,
 			})

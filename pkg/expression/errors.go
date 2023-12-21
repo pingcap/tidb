@@ -17,7 +17,6 @@ package expression
 import (
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	pmysql "github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
@@ -69,7 +68,7 @@ var (
 )
 
 // handleInvalidTimeError reports error or warning depend on the context.
-func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
+func handleInvalidTimeError(ctx EvalContext, err error) error {
 	if err == nil || !(types.ErrWrongValue.Equal(err) || types.ErrWrongValueForType.Equal(err) ||
 		types.ErrTruncatedWrongVal.Equal(err) || types.ErrInvalidWeekModeFormat.Equal(err) ||
 		types.ErrDatetimeFunctionOverflow.Equal(err) || types.ErrIncorrectDatetimeValue.Equal(err)) {
@@ -84,7 +83,7 @@ func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
 }
 
 // handleDivisionByZeroError reports error or warning depend on the context.
-func handleDivisionByZeroError(ctx sessionctx.Context) error {
+func handleDivisionByZeroError(ctx EvalContext) error {
 	sc := ctx.GetSessionVars().StmtCtx
 	if sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt {
 		if !ctx.GetSessionVars().SQLMode.HasErrorForDivisionByZeroMode() {
@@ -99,7 +98,7 @@ func handleDivisionByZeroError(ctx sessionctx.Context) error {
 }
 
 // handleAllowedPacketOverflowed reports error or warning depend on the context.
-func handleAllowedPacketOverflowed(ctx sessionctx.Context, exprName string, maxAllowedPacketSize uint64) error {
+func handleAllowedPacketOverflowed(ctx EvalContext, exprName string, maxAllowedPacketSize uint64) error {
 	err := errWarnAllowedPacketOverflowed.GenWithStackByArgs(exprName, maxAllowedPacketSize)
 	sc := ctx.GetSessionVars().StmtCtx
 
