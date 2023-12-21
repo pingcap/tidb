@@ -69,8 +69,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	// 1.1 OnNextSubtasksBatch
 	task.Step = sch.GetNextStep(task)
 	require.Equal(t, ddl.StepReadIndex, task.Step)
-	serverInfos, _, err := sch.GetEligibleInstances(context.Background(), task)
-	require.NoError(t, err)
+	serverInfos := []string{":4000"}
 	metas, err := sch.OnNextSubtasksBatch(context.Background(), nil, task, serverInfos, task.Step)
 	require.NoError(t, err)
 	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
@@ -173,8 +172,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	taskID, err := mgr.CreateTask(ctx, task.Key, proto.Backfill, 1, task.Meta)
 	require.NoError(t, err)
 	task.ID = taskID
-	serverInfos, _, err := sch.GetEligibleInstances(context.Background(), task)
-	require.NoError(t, err)
+	serverInfos := []string{":4000"}
 
 	// 1. to read-index stage
 	subtaskMetas, err := sch.OnNextSubtasksBatch(ctx, sch, task, serverInfos, sch.GetNextStep(task))
