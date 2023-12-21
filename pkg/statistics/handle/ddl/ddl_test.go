@@ -138,8 +138,8 @@ func TestTruncateTablePartition(t *testing.T) {
 		"select version from mysql.stats_meta where table_id = ?", tableInfo.ID,
 	).Rows()
 	require.Len(t, rows, 1)
-	// FIXME: Version gets updated after truncate the table.
-	require.Equal(t, version, rows[0][0].(string))
+	// Version gets updated after truncate the table.
+	require.NotEqual(t, version, rows[0][0].(string))
 }
 
 func TestDDLHistogram(t *testing.T) {

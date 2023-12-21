@@ -61,7 +61,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			}
 		}
 	case model.ActionTruncateTable:
-		newTableInfo, _ := t.GetTruncateTableInfo()
+		newTableInfo, droppedTableInfo := t.GetTruncateTableInfo()
 		ids, err := h.getInitStateTableIDs(newTableInfo)
 		if err != nil {
 			return err
@@ -70,6 +70,11 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			if err := h.statsWriter.InsertTableStats2KV(newTableInfo, id); err != nil {
 				return err
 			}
+		}
+
+		// Remove the old table stats.
+		if err := h.statsWriter.ResetTableStats2KVForDrop(droppedTableInfo.ID); err != nil {
+			return err
 		}
 	case model.ActionDropTable:
 		droppedTableInfo := t.GetDropTableInfo()
