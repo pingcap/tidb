@@ -106,12 +106,6 @@ type RetryInfo struct {
 	LastRcReadTS           uint64
 }
 
-// ReuseChunkPool save Alloc object
-type ReuseChunkPool struct {
-	mu    sync.Mutex
-	Alloc chunk.Allocator
-}
-
 // Clean does some clean work.
 func (r *RetryInfo) Clean() {
 	r.autoIncrementIDs.clean()
@@ -1459,10 +1453,10 @@ type SessionVars struct {
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	OptPrefixIndexSingleScan bool
 
-	// ChunkPool Several chunks and columns are cached
-	ChunkPool ReuseChunkPool
-	// EnableReuseCheck indicates  request chunk whether use chunk alloc
-	EnableReuseCheck bool
+	// chunkPool Several chunks and columns are cached
+	chunkPool chunk.Allocator
+	// EnableReuseChunk indicates  request chunk whether use chunk alloc
+	EnableReuseChunk bool
 
 	// EnableAdvancedJoinHint indicates whether the join method hint is compatible with join order hint.
 	EnableAdvancedJoinHint bool
@@ -1611,19 +1605,13 @@ func (s *SessionVars) IsPlanReplayerCaptureEnabled() bool {
 	return s.EnablePlanReplayerCapture || s.EnablePlanReplayedContinuesCapture
 }
 
-// GetNewChunkWithCapacity Attempt to request memory from the chunk pool
-// thread safety
-func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacity int, maxCachesize int, pool chunk.Allocator) *chunk.Chunk {
-	if pool == nil {
-		return chunk.New(fields, capacity, maxCachesize)
+// GetChunkAllocator returns a vaid chunk allocator.
+func (s *SessionVars) GetChunkAllocator() chunk.Allocator {
+	if s.chunkPool == nil {
+		return chunk.NewEmptyAllocator()
 	}
-	s.ChunkPool.mu.Lock()
-	defer s.ChunkPool.mu.Unlock()
-	if pool.CheckReuseAllocSize() && (!s.GetUseChunkAlloc()) {
-		s.StmtCtx.SetUseChunkAlloc()
-	}
-	chk := pool.Alloc(fields, capacity, maxCachesize)
-	return chk
+
+	return s.chunkPool
 }
 
 // ExchangeChunkStatus give the status to preUseChunkAlloc
@@ -1638,35 +1626,38 @@ func (s *SessionVars) GetUseChunkAlloc() bool {
 
 // SetAlloc Attempt to set the buffer pool address
 func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
-	if !s.EnableReuseCheck {
+	if !s.EnableReuseChunk {
+		s.chunkPool = nil
 		return
 	}
-	s.ChunkPool.Alloc = alloc
+	if alloc == nil {
+		s.chunkPool = nil
+		return
+	}
+	s.chunkPool = chunk.NewReuseHookAllocator(
+		chunk.NewSyncAllocator(alloc),
+		func() {
+			s.StmtCtx.SetUseChunkAlloc()
+		},
+	)
 }
 
-// IsAllocValid check if chunk reuse is enable or ChunkPool is inused.
+// IsAllocValid check if chunk reuse is enable or chunkPool is inused.
 func (s *SessionVars) IsAllocValid() bool {
-	if !s.EnableReuseCheck {
+	if !s.EnableReuseChunk {
 		return false
 	}
-	s.ChunkPool.mu.Lock()
-	defer s.ChunkPool.mu.Unlock()
-	return s.ChunkPool.Alloc != nil
+	return s.chunkPool != nil
 }
 
-// ClearAlloc indicates stop reuse chunk
-func (s *SessionVars) ClearAlloc(alloc *chunk.Allocator, b bool) {
-	if !b {
-		s.ChunkPool.Alloc = nil
+// ClearAlloc indicates stop reuse chunk. If `hasErr` is true, it'll also recreate the `alloc` in parameter.
+func (s *SessionVars) ClearAlloc(alloc *chunk.Allocator, hasErr bool) {
+	if !hasErr {
+		s.chunkPool = nil
 		return
 	}
 
-	// If an error is reported, re-apply for alloc
-	// Prevent the goroutine left before, affecting the execution of the next sql
-	// issuse 38918
-	s.ChunkPool.mu.Lock()
-	s.ChunkPool.Alloc = nil
-	s.ChunkPool.mu.Unlock()
+	s.chunkPool = nil
 	*alloc = chunk.NewAllocator()
 }
 
@@ -2027,9 +2018,9 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableTiFlashReadForWriteStmt: true,
 		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
 		HookContext:                   hctx,
-		EnableReuseCheck:              DefTiDBEnableReusechunk,
+		EnableReuseChunk:              DefTiDBEnableReusechunk,
 		preUseChunkAlloc:              DefTiDBUseAlloc,
-		ChunkPool:                     ReuseChunkPool{Alloc: nil},
+		chunkPool:                     nil,
 		mppExchangeCompressionMode:    DefaultExchangeCompressionMode,
 		mppVersion:                    kv.MppVersionUnspecified,
 		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
