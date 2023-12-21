@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -52,21 +53,23 @@ func (b *builtinIlikeSig) canMemorize(param *funcParam) bool {
 	return param.getCol() == nil
 }
 
-func (b *builtinIlikeSig) tryToMemorize(param *funcParam, escape int64) {
+func (b *builtinIlikeSig) tryToVecMemorize(ctx EvalContext, param *funcParam, escape int64) (collate.WildcardPattern, bool) {
 	if !b.canMemorize(param) {
-		return
+		return nil, false
 	}
 
-	memorization := func() {
-		if b.pattern == nil {
-			b.pattern = collate.ConvertAndGetBinCollation(b.collation).Pattern()
-			b.pattern.Compile(param.getStringVal(0), byte(escape))
-			b.isMemorizedPattern = true
-		}
+	pattern, err := b.patternCache.getOrInitCache(ctx, func() (collate.WildcardPattern, error) {
+		pattern := collate.ConvertAndGetBinCollation(b.collation).Pattern()
+		pattern.Compile(param.getStringVal(0), byte(escape))
+		return pattern, nil
+	})
+
+	intest.AssertNoError(err)
+	if err != nil {
+		return nil, false
 	}
 
-	// Only be executed once to achieve thread-safe
-	b.once.Do(memorization)
+	return pattern, true
 }
 
 func (b *builtinIlikeSig) getEscape(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) (int64, bool, error) {
@@ -149,7 +152,7 @@ func (b *builtinIlikeSig) constVec(pattern collate.WildcardPattern, expr string,
 	return nil
 }
 
-func (b *builtinIlikeSig) ilikeWithMemorization(exprParam *funcParam, rowNum int, result *chunk.Column) error {
+func (b *builtinIlikeSig) ilikeWithMemorization(pattern collate.WildcardPattern, exprParam *funcParam, rowNum int, result *chunk.Column) error {
 	result.ResizeInt64(rowNum, false)
 	result.MergeNulls(exprParam.getCol())
 	i64s := result.Int64s()
@@ -157,7 +160,7 @@ func (b *builtinIlikeSig) ilikeWithMemorization(exprParam *funcParam, rowNum int
 		if result.IsNull(i) {
 			continue
 		}
-		match := b.pattern.DoMatch(exprParam.getStringVal(i))
+		match := pattern.DoMatch(exprParam.getStringVal(i))
 		i64s[i] = boolToInt64(match)
 	}
 	return nil
@@ -196,11 +199,11 @@ func (b *builtinIlikeSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 	b.lowerExpr(params[0], rowNum)
 	escape = b.lowerPattern(params[1], rowNum, escape)
 
-	b.tryToMemorize(params[1], escape)
-	if !b.isMemorizedPattern {
-		pattern := collate.ConvertAndGetBinCollation(b.collation).Pattern()
+	pattern, ok := b.tryToVecMemorize(ctx, params[1], escape)
+	if !ok {
+		pattern = collate.ConvertAndGetBinCollation(b.collation).Pattern()
 		return b.ilikeWithoutMemorization(pattern, params, rowNum, escape, result)
 	}
 
-	return b.ilikeWithMemorization(params[0], rowNum, result)
+	return b.ilikeWithMemorization(pattern, params[0], rowNum, result)
 }

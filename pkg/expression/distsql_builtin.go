@@ -17,7 +17,6 @@ package expression
 import (
 	"fmt"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -659,9 +658,9 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_UUID:
 		f = &builtinUUIDSig{base}
 	case tipb.ScalarFuncSig_LikeSig:
-		f = &builtinLikeSig{base, nil, false, sync.Once{}}
+		f = &builtinLikeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IlikeSig:
-		f = &builtinIlikeSig{base, nil, false, sync.Once{}}
+		f = &builtinIlikeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_RegexpSig:
 		f = &builtinRegexpLikeFuncSig{regexpBaseFuncSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_RegexpUTF8Sig:
