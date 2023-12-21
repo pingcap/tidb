@@ -225,7 +225,7 @@ func (c *bindCache) RemoveBinding(sqlDigest string, meta *BindRecord) {
 // The function is thread-safe.
 func (c *bindCache) SetMemCapacity(capacity int64) {
 	// Only change the capacity size without affecting the cached bindRecord
-	c.memCapacity.Load()
+	c.memCapacity.Store(capacity)
 }
 
 // GetMemUsage get the memory Usage for the cache.
