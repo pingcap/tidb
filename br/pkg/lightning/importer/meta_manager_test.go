@@ -121,7 +121,7 @@ func TestAllocTableRowIDsSingleTable(t *testing.T) {
 		{int64(1), int64(0), int64(0), uint64(0), uint64(0), uint64(0), "initialized"},
 	}
 	nextID := int64(1)
-	updateArgs := []driver.Value{"`test`.`table_meta`", int64(0), int64(10), "restore", int64(1), int64(1)}
+	updateArgs := []driver.Value{int64(0), int64(10), "restore", int64(1), int64(1)}
 	s.prepareMock(rows, &nextID, updateArgs, nil, nil, false)
 
 	ck, rowIDBase, err := s.mgr.AllocTableRowIDs(ctx, 10)
@@ -140,7 +140,7 @@ func TestAllocTableRowIDsSingleTableAutoIDNot0(t *testing.T) {
 		{int64(1), int64(0), int64(0), uint64(0), uint64(0), uint64(0), "initialized"},
 	}
 	nextID := int64(999)
-	updateArgs := []driver.Value{"`test`.`table_meta`", int64(998), int64(1008), "allocated", int64(1), int64(1)}
+	updateArgs := []driver.Value{int64(998), int64(1008), "allocated", int64(1), int64(1)}
 	newStatus := "restore"
 	s.prepareMock(rows, &nextID, updateArgs, nil, &newStatus, false)
 
@@ -162,7 +162,7 @@ func TestAllocTableRowIDsSingleTableContainsData(t *testing.T) {
 	}
 	nextID := int64(999)
 	checksum := verification.MakeKVChecksum(1, 2, 3)
-	updateArgs := []driver.Value{"`test`.`table_meta`", int64(998), int64(1008), "allocated", int64(1), int64(1)}
+	updateArgs := []driver.Value{int64(998), int64(1008), "allocated", int64(1), int64(1)}
 	s.prepareMock(rows, &nextID, updateArgs, &checksum, nil, false)
 
 	ck, rowIDBase, err := s.mgr.AllocTableRowIDs(ctx, 10)
@@ -186,7 +186,7 @@ func TestAllocTableRowIDsSingleTableSkipChecksum(t *testing.T) {
 	}
 	nextID := int64(999)
 	newStatus := "restore"
-	updateArgs := []driver.Value{"`test`.`table_meta`", int64(998), int64(1008), "allocated", int64(1), int64(1)}
+	updateArgs := []driver.Value{int64(998), int64(1008), "allocated", int64(1), int64(1)}
 	s.prepareMock(rows, &nextID, updateArgs, nil, &newStatus, false)
 
 	ck, rowIDBase, err := s.mgr.AllocTableRowIDs(ctx, 10)
@@ -242,7 +242,7 @@ func TestAllocTableRowIDsMultiTasksInit(t *testing.T) {
 		{int64(2), int64(0), int64(0), uint64(0), uint64(0), uint64(0), "initialized"},
 	}
 	nextID := int64(1)
-	updateArgs := []driver.Value{"`test`.`table_meta`", int64(0), int64(10), "restore", int64(1), int64(1)}
+	updateArgs := []driver.Value{int64(0), int64(10), "restore", int64(1), int64(1)}
 	s.prepareMock(rows, &nextID, updateArgs, nil, nil, false)
 
 	ck, rowIDBase, err := s.mgr.AllocTableRowIDs(ctx, 10)
@@ -261,7 +261,7 @@ func TestAllocTableRowIDsMultiTasksAllocated(t *testing.T) {
 		{int64(1), int64(0), int64(0), uint64(0), uint64(0), uint64(0), metaStatusInitial.String()},
 		{int64(2), int64(0), int64(100), uint64(0), uint64(0), uint64(0), metaStatusRowIDAllocated.String()},
 	}
-	updateArgs := []driver.Value{"`test`.`table_meta`", int64(100), int64(110), "restore", int64(1), int64(1)}
+	updateArgs := []driver.Value{int64(100), int64(110), "restore", int64(1), int64(1)}
 	s.prepareMock(rows, nil, updateArgs, nil, nil, false)
 
 	ck, rowIDBase, err := s.mgr.AllocTableRowIDs(ctx, 10)
@@ -279,8 +279,8 @@ func TestAllocTableRowIDsRetryOnTableInChecksum(t *testing.T) {
 	s.mockDB.ExpectExec("SET SESSION tidb_txn_mode = 'pessimistic';").
 		WillReturnResult(sqlmock.NewResult(int64(0), int64(0)))
 	s.mockDB.ExpectBegin()
-	s.mockDB.ExpectQuery("\\QSELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status from ? WHERE table_id = ? FOR UPDATE\\E").
-		WithArgs("`test`.`table_meta`", int64(1)).
+	s.mockDB.ExpectQuery("\\QSELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status from `test`.`table_meta` WHERE table_id = ? FOR UPDATE\\E").
+		WithArgs(int64(1)).
 		WillReturnError(errors.New("mock err"))
 	s.mockDB.ExpectRollback()
 	// should not retry
@@ -296,7 +296,7 @@ func TestAllocTableRowIDsRetryOnTableInChecksum(t *testing.T) {
 		{int64(1), int64(0), int64(0), uint64(0), uint64(0), uint64(0), metaStatusInitial.String()},
 		{int64(2), int64(0), int64(100), uint64(0), uint64(0), uint64(0), metaStatusRowIDAllocated.String()},
 	}
-	updateArgs := []driver.Value{"`test`.`table_meta`", int64(100), int64(110), "restore", int64(1), int64(1)}
+	updateArgs := []driver.Value{int64(100), int64(110), "restore", int64(1), int64(1)}
 	s.prepareMockInner(rows, nil, updateArgs, nil, nil, false)
 
 	// fail, retry and success
@@ -322,7 +322,7 @@ func (s *metaMgrSuite) prepareMockInner(rowsVal [][]driver.Value, nextRowID *int
 		rows = rows.AddRow(r...)
 	}
 	s.mockDB.ExpectQuery("\\QSELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status from ? WHERE table_id = ? FOR UPDATE\\E").
-		WithArgs("`test`.`table_meta`", int64(1)).
+		WithArgs(int64(1)).
 		WillReturnRows(rows)
 
 	if nextRowID != nil {
@@ -332,7 +332,7 @@ func (s *metaMgrSuite) prepareMockInner(rowsVal [][]driver.Value, nextRowID *int
 	}
 
 	if len(updateArgs) > 0 {
-		s.mockDB.ExpectExec("\\Qupdate ? set row_id_base = ?, row_id_max = ?, status = ? where table_id = ? and task_id = ?\\E").
+		s.mockDB.ExpectExec("\\Qupdate `test`.`table_meta` set row_id_base = ?, row_id_max = ?, status = ? where table_id = ? and task_id = ?\\E").
 			WithArgs(updateArgs...).
 			WillReturnResult(sqlmock.NewResult(int64(0), int64(1)))
 	}
