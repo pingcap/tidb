@@ -144,6 +144,25 @@ func buildApproxCountDistinct(aggFuncDesc *aggregation.AggFuncDesc, ordinal int)
 	return nil
 }
 
+func getEvalTypeForApproxPercentile(aggFuncDesc *aggregation.AggFuncDesc) types.EvalType {
+	arg0FieldType := aggFuncDesc.Args[0].GetType()
+	hasEnumSetAsIntFlag := (arg0FieldType.GetFlag() & mysql.EnumSetAsIntFlag) > 0
+	if hasEnumSetAsIntFlag {
+		arg0FieldType.DelFlag(mysql.EnumSetAsIntFlag)
+	}
+
+	evalType := arg0FieldType.EvalType()
+	if aggFuncDesc.Args[0].GetType().GetType() == mysql.TypeBit {
+		evalType = types.ETString // same as other aggregate function
+	}
+
+	if hasEnumSetAsIntFlag {
+		arg0FieldType.SetFlag(mysql.EnumSetAsIntFlag)
+	}
+
+	return evalType
+}
+
 func buildApproxPercentile(sctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	if aggFuncDesc.Mode == aggregation.DedupMode {
 		return nil
@@ -159,10 +178,7 @@ func buildApproxPercentile(sctx sessionctx.Context, aggFuncDesc *aggregation.Agg
 
 	base := basePercentile{percent: int(percent), baseAggFunc: baseAggFunc{args: aggFuncDesc.Args, ordinal: ordinal}}
 
-	evalType := aggFuncDesc.Args[0].GetType().EvalType()
-	if aggFuncDesc.Args[0].GetType().GetType() == mysql.TypeBit {
-		evalType = types.ETString // same as other aggregate function
-	}
+	evalType := getEvalTypeForApproxPercentile(aggFuncDesc)
 	switch aggFuncDesc.Mode {
 	case aggregation.CompleteMode, aggregation.Partial1Mode, aggregation.FinalMode:
 		switch evalType {

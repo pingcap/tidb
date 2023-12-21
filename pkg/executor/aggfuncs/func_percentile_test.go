@@ -46,7 +46,9 @@ func TestPercentile(t *testing.T) {
 			testAggFunc(t, test)
 		})
 	}
+}
 
+func TestFix26807(t *testing.T) {
 	data := testSlice{}
 	want := 28
 	for i := 1; i <= want; i++ {
@@ -56,4 +58,10 @@ func TestPercentile(t *testing.T) {
 		index := aggfuncs.PercentileForTesting(data, 100)
 		require.Equal(t, want, data[index])
 	}
+}
+
+func TestFix40463(t *testing.T) {
+	test := buildAggTester(ast.AggFuncApproxPercentile, mysql.TypeEnum, 5, nil, nil)
+	test.dataType.AddFlag(mysql.EnumSetAsIntFlag)
+	testAggFunc(t, test)
 }
