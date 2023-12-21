@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/testkit"
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
@@ -265,4 +267,37 @@ func TestReplicationWriter(t *testing.T) {
 	require.Equal(t, err.Error(), ReadOnlyErrMsg)
 	<-timer.C
 	done <- struct{}{}
+}
+
+func TestInternalSQL(t *testing.T) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	defer func() {
+		tk.MustExec("set global tidb_restricted_read_only=default");
+		tk.MustExec("set global tidb_super_read_only=default");
+	}()
+
+	runSQL := func() {
+		sql := "select 1 from dual";
+		_, err := tk.Session().ExecuteInternal(ctx, sql)
+		require.NoError(t, err)
+	}
+
+	tk.MustExec("set global tidb_restricted_read_only=On");
+	tk.MustExec("set global tidb_super_read_only=On");
+	runSQL()
+
+	tk.MustExec("set global tidb_restricted_read_only=Off");
+	tk.MustExec("set global tidb_super_read_only=On");
+	runSQL()
+
+	tk.MustExec("set global tidb_restricted_read_only=On");
+	tk.MustMatchErrMsg("set global tidb_super_read_only=Off",
+	    "can't turn off tidb_super_read_only when tidb_restricted_read_only is on")
+
+	tk.MustExec("set global tidb_restricted_read_only=Off");
+	tk.MustExec("set global tidb_super_read_only=Off");
+	runSQL()
 }
