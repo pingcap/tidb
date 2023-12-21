@@ -127,32 +127,32 @@ const (
 
 // IndexNestedLoopJoinTables stores hint information about index nested loop join.
 type IndexNestedLoopJoinTables struct {
-	INLJTables  []HintTableInfo
-	INLHJTables []HintTableInfo
-	INLMJTables []HintTableInfo
+	INLJTables  []TableInfo
+	INLHJTables []TableInfo
+	INLMJTables []TableInfo
 }
 
 // TableHintInfo stores all table-level hint information.
 type TableHintInfo struct {
 	IndexNestedLoopJoinTables
 	NoIndexJoinTables   IndexNestedLoopJoinTables
-	SortMergeJoinTables []HintTableInfo
-	BroadcastJoinTables []HintTableInfo
-	ShuffleJoinTables   []HintTableInfo
-	HashJoinTables      []HintTableInfo
-	NoHashJoinTables    []HintTableInfo
-	NoMergeJoinTables   []HintTableInfo
+	SortMergeJoinTables []TableInfo
+	BroadcastJoinTables []TableInfo
+	ShuffleJoinTables   []TableInfo
+	HashJoinTables      []TableInfo
+	NoHashJoinTables    []TableInfo
+	NoMergeJoinTables   []TableInfo
 	IndexHintList       []IndexHintInfo
-	TiFlashTables       []HintTableInfo
-	TiKVTables          []HintTableInfo
+	TiFlashTables       []TableInfo
+	TiKVTables          []TableInfo
 	AggHints            AggHintInfo
 	IndexMergeHintList  []IndexHintInfo
 	TimeRangeHint       ast.HintTimeRange
 	LimitHints          LimitHintInfo
 	MergeHints          MergeHintInfo
-	LeadingJoinOrder    []HintTableInfo
-	HJBuildTables       []HintTableInfo
-	HJProbeTables       []HintTableInfo
+	LeadingJoinOrder    []TableInfo
+	HJBuildTables       []TableInfo
+	HJProbeTables       []TableInfo
 }
 
 // LimitHintInfo stores limit hint information.
@@ -165,8 +165,8 @@ type MergeHintInfo struct {
 	PreferMerge bool
 }
 
-// HintTableInfo indicates which table this hint should take effect on.
-type HintTableInfo struct {
+// TableInfo indicates which table this hint should take effect on.
+type TableInfo struct {
 	DBName       model.CIStr   // the database name
 	TblName      model.CIStr   // the table name
 	Partitions   []model.CIStr // partition information
@@ -227,86 +227,86 @@ type AggHintInfo struct {
 }
 
 // IfPreferMergeJoin checks whether the join hint is merge join.
-func (info *TableHintInfo) IfPreferMergeJoin(tableNames ...*HintTableInfo) bool {
+func (info *TableHintInfo) IfPreferMergeJoin(tableNames ...*TableInfo) bool {
 	return info.MatchTableName(tableNames, info.SortMergeJoinTables)
 }
 
 // IfPreferBroadcastJoin checks whether the join hint is broadcast join.
-func (info *TableHintInfo) IfPreferBroadcastJoin(tableNames ...*HintTableInfo) bool {
+func (info *TableHintInfo) IfPreferBroadcastJoin(tableNames ...*TableInfo) bool {
 	return info.MatchTableName(tableNames, info.BroadcastJoinTables)
 }
 
 // IfPreferShuffleJoin checks whether the join hint is shuffle join.
-func (info *TableHintInfo) IfPreferShuffleJoin(tableNames ...*HintTableInfo) bool {
+func (info *TableHintInfo) IfPreferShuffleJoin(tableNames ...*TableInfo) bool {
 	return info.MatchTableName(tableNames, info.ShuffleJoinTables)
 }
 
 // IfPreferHashJoin checks whether the join hint is hash join.
-func (info *TableHintInfo) IfPreferHashJoin(tableNames ...*HintTableInfo) bool {
+func (info *TableHintInfo) IfPreferHashJoin(tableNames ...*TableInfo) bool {
 	return info.MatchTableName(tableNames, info.HashJoinTables)
 }
 
 // IfPreferNoHashJoin checks whether the join hint is no hash join.
-func (info *TableHintInfo) IfPreferNoHashJoin(tableNames ...*HintTableInfo) bool {
+func (info *TableHintInfo) IfPreferNoHashJoin(tableNames ...*TableInfo) bool {
 	return info.MatchTableName(tableNames, info.NoHashJoinTables)
 }
 
 // IfPreferNoMergeJoin checks whether the join hint is no merge join.
-func (info *TableHintInfo) IfPreferNoMergeJoin(tableNames ...*HintTableInfo) bool {
+func (info *TableHintInfo) IfPreferNoMergeJoin(tableNames ...*TableInfo) bool {
 	return info.MatchTableName(tableNames, info.NoMergeJoinTables)
 }
 
 // IfPreferHJBuild checks whether the join hint is hash join build side.
-func (info *TableHintInfo) IfPreferHJBuild(tableNames ...*HintTableInfo) bool {
+func (info *TableHintInfo) IfPreferHJBuild(tableNames ...*TableInfo) bool {
 	return info.MatchTableName(tableNames, info.HJBuildTables)
 }
 
 // IfPreferHJProbe checks whether the join hint is hash join probe side.
-func (info *TableHintInfo) IfPreferHJProbe(tableNames ...*HintTableInfo) bool {
+func (info *TableHintInfo) IfPreferHJProbe(tableNames ...*TableInfo) bool {
 	return info.MatchTableName(tableNames, info.HJProbeTables)
 }
 
 // IfPreferINLJ checks whether the join hint is index nested loop join.
-func (info *TableHintInfo) IfPreferINLJ(tableNames ...*HintTableInfo) bool {
+func (info *TableHintInfo) IfPreferINLJ(tableNames ...*TableInfo) bool {
 	return info.MatchTableName(tableNames, info.IndexNestedLoopJoinTables.INLJTables)
 }
 
 // IfPreferINLHJ checks whether the join hint is index nested loop hash join.
-func (info *TableHintInfo) IfPreferINLHJ(tableNames ...*HintTableInfo) bool {
+func (info *TableHintInfo) IfPreferINLHJ(tableNames ...*TableInfo) bool {
 	return info.MatchTableName(tableNames, info.IndexNestedLoopJoinTables.INLHJTables)
 }
 
 // IfPreferINLMJ checks whether the join hint is index nested loop merge join.
-func (info *TableHintInfo) IfPreferINLMJ(tableNames ...*HintTableInfo) bool {
+func (info *TableHintInfo) IfPreferINLMJ(tableNames ...*TableInfo) bool {
 	return info.MatchTableName(tableNames, info.IndexNestedLoopJoinTables.INLMJTables)
 }
 
 // IfPreferNoIndexJoin checks whether the join hint is no index join.
-func (info *TableHintInfo) IfPreferNoIndexJoin(tableNames ...*HintTableInfo) bool {
+func (info *TableHintInfo) IfPreferNoIndexJoin(tableNames ...*TableInfo) bool {
 	return info.MatchTableName(tableNames, info.NoIndexJoinTables.INLJTables)
 }
 
 // IfPreferNoIndexHashJoin checks whether the join hint is no index hash join.
-func (info *TableHintInfo) IfPreferNoIndexHashJoin(tableNames ...*HintTableInfo) bool {
+func (info *TableHintInfo) IfPreferNoIndexHashJoin(tableNames ...*TableInfo) bool {
 	return info.MatchTableName(tableNames, info.NoIndexJoinTables.INLHJTables)
 }
 
 // IfPreferNoIndexMergeJoin checks whether the join hint is no index merge join.
-func (info *TableHintInfo) IfPreferNoIndexMergeJoin(tableNames ...*HintTableInfo) bool {
+func (info *TableHintInfo) IfPreferNoIndexMergeJoin(tableNames ...*TableInfo) bool {
 	return info.MatchTableName(tableNames, info.NoIndexJoinTables.INLMJTables)
 }
 
 // IfPreferTiFlash checks whether the hint hit the need of TiFlash.
-func (info *TableHintInfo) IfPreferTiFlash(tableName *HintTableInfo) *HintTableInfo {
+func (info *TableHintInfo) IfPreferTiFlash(tableName *TableInfo) *TableInfo {
 	return info.matchTiKVOrTiFlash(tableName, info.TiFlashTables)
 }
 
 // IfPreferTiKV checks whether the hint hit the need of TiKV.
-func (info *TableHintInfo) IfPreferTiKV(tableName *HintTableInfo) *HintTableInfo {
+func (info *TableHintInfo) IfPreferTiKV(tableName *TableInfo) *TableInfo {
 	return info.matchTiKVOrTiFlash(tableName, info.TiKVTables)
 }
 
-func (*TableHintInfo) matchTiKVOrTiFlash(tableName *HintTableInfo, hintTables []HintTableInfo) *HintTableInfo {
+func (*TableHintInfo) matchTiKVOrTiFlash(tableName *TableInfo, hintTables []TableInfo) *TableInfo {
 	if tableName == nil {
 		return nil
 	}
@@ -327,7 +327,7 @@ func (*TableHintInfo) matchTiKVOrTiFlash(tableName *HintTableInfo, hintTables []
 // Which it joins on with depend on sequence of traverse
 // and without reorder, user might adjust themselves.
 // This is similar to MySQL hints.
-func (*TableHintInfo) MatchTableName(tables []*HintTableInfo, hintTables []HintTableInfo) bool {
+func (*TableHintInfo) MatchTableName(tables []*TableInfo, hintTables []TableInfo) bool {
 	hintMatched := false
 	for _, table := range tables {
 		for i, curEntry := range hintTables {
@@ -364,16 +364,16 @@ func RemoveDuplicatedHints(hints []*ast.TableOptimizerHint) []*ast.TableOptimize
 	return res
 }
 
-// TableNames2HintTableInfo converts table names to HintTableInfo.
-func TableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTables []ast.HintTable, p *BlockHintProcessor, currentOffset int) []HintTableInfo {
+// TableNames2HintTableInfo converts table names to TableInfo.
+func TableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTables []ast.HintTable, p *BlockHintProcessor, currentOffset int) []TableInfo {
 	if len(hintTables) == 0 {
 		return nil
 	}
-	hintTableInfos := make([]HintTableInfo, 0, len(hintTables))
+	hintTableInfos := make([]TableInfo, 0, len(hintTables))
 	defaultDBName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
 	isInapplicable := false
 	for _, hintTable := range hintTables {
-		tableInfo := HintTableInfo{
+		tableInfo := TableInfo{
 			DBName:       hintTable.DBName,
 			TblName:      hintTable.TableName,
 			Partitions:   hintTable.PartitionList,
@@ -400,7 +400,7 @@ func TableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTable
 	return hintTableInfos
 }
 
-func restore2TableHint(hintTables ...HintTableInfo) string {
+func restore2TableHint(hintTables ...TableInfo) string {
 	buffer := bytes.NewBufferString("")
 	for i, table := range hintTables {
 		buffer.WriteString(table.TblName.L)
@@ -422,7 +422,7 @@ func restore2TableHint(hintTables ...HintTableInfo) string {
 }
 
 // Restore2JoinHint restores join hint to string.
-func Restore2JoinHint(hintType string, hintTables []HintTableInfo) string {
+func Restore2JoinHint(hintType string, hintTables []TableInfo) string {
 	if len(hintTables) == 0 {
 		return strings.ToUpper(hintType)
 	}
@@ -439,7 +439,7 @@ func Restore2IndexHint(hintType string, hintIndex IndexHintInfo) string {
 	buffer := bytes.NewBufferString("/*+ ")
 	buffer.WriteString(strings.ToUpper(hintType))
 	buffer.WriteString("(")
-	buffer.WriteString(restore2TableHint(HintTableInfo{
+	buffer.WriteString(restore2TableHint(TableInfo{
 		DBName:     hintIndex.DBName,
 		TblName:    hintIndex.TblName,
 		Partitions: hintIndex.Partitions,
@@ -457,7 +457,7 @@ func Restore2IndexHint(hintType string, hintIndex IndexHintInfo) string {
 }
 
 // Restore2StorageHint restores storage hint to string.
-func Restore2StorageHint(tiflashTables, tikvTables []HintTableInfo) string {
+func Restore2StorageHint(tiflashTables, tikvTables []TableInfo) string {
 	buffer := bytes.NewBufferString("/*+ ")
 	buffer.WriteString(strings.ToUpper(HintReadFromStorage))
 	buffer.WriteString("(")
@@ -479,7 +479,7 @@ func Restore2StorageHint(tiflashTables, tikvTables []HintTableInfo) string {
 }
 
 // ExtractUnmatchedTables extracts unmatched tables from hintTables.
-func ExtractUnmatchedTables(hintTables []HintTableInfo) []string {
+func ExtractUnmatchedTables(hintTables []TableInfo) []string {
 	var tableNames []string
 	for _, table := range hintTables {
 		if !table.Matched {

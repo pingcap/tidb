@@ -623,7 +623,7 @@ func (p *LogicalJoin) ExtractOnCondition(
 // extractTableAlias returns table alias of the LogicalPlan's columns.
 // It will return nil when there are multiple table alias, because the alias is only used to check if
 // the logicalPlan Match some optimizer hints, and hints are not expected to take effect in this case.
-func extractTableAlias(p Plan, parentOffset int) *h.HintTableInfo {
+func extractTableAlias(p Plan, parentOffset int) *h.TableInfo {
 	if len(p.OutputNames()) > 0 && p.OutputNames()[0].TblName.L != "" {
 		firstName := p.OutputNames()[0]
 		for _, name := range p.OutputNames() {
@@ -645,7 +645,7 @@ func extractTableAlias(p Plan, parentOffset int) *h.HintTableInfo {
 		if dbName.L == "" {
 			dbName = model.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
 		}
-		return &h.HintTableInfo{DBName: dbName, TblName: firstName.TblName, SelectOffset: blockOffset}
+		return &h.TableInfo{DBName: dbName, TblName: firstName.TblName, SelectOffset: blockOffset}
 	}
 	return nil
 }
@@ -787,7 +787,7 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *h.TableHintInfo) {
 	}
 	// set the join order
 	if hintInfo.LeadingJoinOrder != nil {
-		p.preferJoinOrder = hintInfo.MatchTableName([]*h.HintTableInfo{lhsAlias, rhsAlias}, hintInfo.LeadingJoinOrder)
+		p.preferJoinOrder = hintInfo.MatchTableName([]*h.TableInfo{lhsAlias, rhsAlias}, hintInfo.LeadingJoinOrder)
 	}
 	// set hintInfo for further usage if this hint info can be used.
 	if p.preferJoinType != 0 || p.preferJoinOrder {
@@ -862,11 +862,11 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *h.TableHintInfo) {
 		return
 	}
 
-	var alias *h.HintTableInfo
+	var alias *h.TableInfo
 	if len(ds.TableAsName.L) != 0 {
-		alias = &h.HintTableInfo{DBName: ds.DBName, TblName: *ds.TableAsName, SelectOffset: ds.SelectBlockOffset()}
+		alias = &h.TableInfo{DBName: ds.DBName, TblName: *ds.TableAsName, SelectOffset: ds.SelectBlockOffset()}
 	} else {
-		alias = &h.HintTableInfo{DBName: ds.DBName, TblName: ds.tableInfo.Name, SelectOffset: ds.SelectBlockOffset()}
+		alias = &h.TableInfo{DBName: ds.DBName, TblName: ds.tableInfo.Name, SelectOffset: ds.SelectBlockOffset()}
 	}
 	if hintTbl := hintInfo.IfPreferTiKV(alias); hintTbl != nil {
 		for _, path := range ds.possibleAccessPaths {
@@ -3959,18 +3959,18 @@ func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) 
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLevel int) {
 	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel)
 	var (
-		sortMergeTables, inljTables, inlhjTables, inlmjTables, hashJoinTables, bcTables []h.HintTableInfo
-		noIndexJoinTables, noIndexHashJoinTables, noIndexMergeJoinTables                []h.HintTableInfo
-		noHashJoinTables, noMergeJoinTables                                             []h.HintTableInfo
-		shuffleJoinTables                                                               []h.HintTableInfo
+		sortMergeTables, inljTables, inlhjTables, inlmjTables, hashJoinTables, bcTables []h.TableInfo
+		noIndexJoinTables, noIndexHashJoinTables, noIndexMergeJoinTables                []h.TableInfo
+		noHashJoinTables, noMergeJoinTables                                             []h.TableInfo
+		shuffleJoinTables                                                               []h.TableInfo
 		indexHintList, indexMergeHintList                                               []h.IndexHintInfo
-		tiflashTables, tikvTables                                                       []h.HintTableInfo
+		tiflashTables, tikvTables                                                       []h.TableInfo
 		aggHints                                                                        h.AggHintInfo
 		timeRangeHint                                                                   ast.HintTimeRange
 		limitHints                                                                      h.LimitHintInfo
 		MergeHints                                                                      h.MergeHintInfo
-		leadingJoinOrder                                                                []h.HintTableInfo
-		hjBuildTables, hjProbeTables                                                    []h.HintTableInfo
+		leadingJoinOrder                                                                []h.TableInfo
+		hjBuildTables, hjProbeTables                                                    []h.TableInfo
 		leadingHintCnt                                                                  int
 	)
 	for _, hint := range hints {
@@ -4182,7 +4182,7 @@ func (b *PlanBuilder) appendUnmatchedIndexHintWarning(indexHints []h.IndexHintIn
 	}
 }
 
-func (b *PlanBuilder) appendUnmatchedJoinHintWarning(joinType string, joinTypeAlias string, hintTables []h.HintTableInfo) {
+func (b *PlanBuilder) appendUnmatchedJoinHintWarning(joinType string, joinTypeAlias string, hintTables []h.TableInfo) {
 	unMatchedTables := h.ExtractUnmatchedTables(hintTables)
 	if len(unMatchedTables) == 0 {
 		return
@@ -4196,7 +4196,7 @@ func (b *PlanBuilder) appendUnmatchedJoinHintWarning(joinType string, joinTypeAl
 	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
 }
 
-func (b *PlanBuilder) appendUnmatchedStorageHintWarning(tiflashTables, tikvTables []h.HintTableInfo) {
+func (b *PlanBuilder) appendUnmatchedStorageHintWarning(tiflashTables, tikvTables []h.TableInfo) {
 	unMatchedTiFlashTables := h.ExtractUnmatchedTables(tiflashTables)
 	unMatchedTiKVTables := h.ExtractUnmatchedTables(tikvTables)
 	if len(unMatchedTiFlashTables)+len(unMatchedTiKVTables) == 0 {
