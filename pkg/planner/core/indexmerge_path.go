@@ -419,7 +419,7 @@ func (ds *DataSource) buildIndexMergeOrPath(
 			}
 		}
 		if allGlobal {
-			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.New("global index is not compatible with index merge, so ignore it"))
+			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("global index is not compatible with index merge, so ignore it"))
 			return nil
 		}
 	}
