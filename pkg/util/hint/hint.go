@@ -393,7 +393,7 @@ func TableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTable
 	}
 	if isInapplicable {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(
-			fmt.Errorf("Optimizer Hint %s is inapplicable on specified Partitions",
+			fmt.Errorf("Optimizer Hint %s is inapplicable on specified partitions",
 				Restore2JoinHint(hintName, hintTableInfos)))
 		return nil
 	}
