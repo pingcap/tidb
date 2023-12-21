@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -168,7 +169,7 @@ type LogicalJoin struct {
 	StraightJoin  bool
 
 	// hintInfo stores the join algorithm hint information specified by client.
-	hintInfo            *tableHintInfo
+	hintInfo            *h.TableHintInfo
 	preferJoinType      uint
 	preferJoinOrder     bool
 	leftPreferJoinType  uint
@@ -958,7 +959,7 @@ type LogicalAggregation struct {
 	GroupByItems []expression.Expression
 
 	// aggHints stores aggregation hint information.
-	aggHints aggHintInfo
+	aggHints h.AggHintInfo
 
 	possibleProperties [][]*expression.Column
 	inputCount         float64 // inputCount is the input count of this plan.
@@ -1453,7 +1454,7 @@ type DataSource struct {
 	logicalSchemaProducer
 
 	astIndexHints []*ast.IndexHint
-	IndexHints    []indexHintInfo
+	IndexHints    []h.IndexHintInfo
 	table         table.Table
 	tableInfo     *model.TableInfo
 	Columns       []*model.ColumnInfo
@@ -1461,7 +1462,7 @@ type DataSource struct {
 
 	TableAsName *model.CIStr
 	// indexMergeHints are the hint for indexmerge.
-	indexMergeHints []indexHintInfo
+	indexMergeHints []h.IndexHintInfo
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
 	// allConds contains all the filters on this table. For now it's maintained
@@ -1951,7 +1952,7 @@ type LogicalTopN struct {
 	PartitionBy []property.SortItem // This is used for enhanced topN optimization
 	Offset      uint64
 	Count       uint64
-	limitHints  limitHintInfo
+	limitHints  h.LimitHintInfo
 }
 
 // GetPartitionBy returns partition by fields
@@ -1980,7 +1981,7 @@ type LogicalLimit struct {
 	PartitionBy []property.SortItem // This is used for enhanced topN optimization
 	Offset      uint64
 	Count       uint64
-	limitHints  limitHintInfo
+	limitHints  h.LimitHintInfo
 	IsPartial   bool
 }
 

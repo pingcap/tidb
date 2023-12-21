@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -1615,7 +1616,7 @@ func pruneUseBinarySearch(lessThan lessThanDataInt, data dataForPrune, unsigned 
 
 func (*partitionProcessor) resolveAccessPaths(ds *DataSource) error {
 	possiblePaths, err := getPossibleAccessPaths(
-		ds.SCtx(), &tableHintInfo{indexMergeHintList: ds.indexMergeHints, indexHintList: ds.IndexHints},
+		ds.SCtx(), &h.TableHintInfo{IndexMergeHintList: ds.indexMergeHints, IndexHintList: ds.IndexHints},
 		ds.astIndexHints, ds.table, ds.DBName, ds.tableInfo.Name, ds.isForUpdateRead, true)
 	if err != nil {
 		return err
@@ -1631,12 +1632,12 @@ func (*partitionProcessor) resolveAccessPaths(ds *DataSource) error {
 func (s *partitionProcessor) resolveOptimizeHint(ds *DataSource, partitionName model.CIStr) error {
 	// index hint
 	if len(ds.IndexHints) > 0 {
-		newIndexHint := make([]indexHintInfo, 0, len(ds.IndexHints))
+		newIndexHint := make([]h.IndexHintInfo, 0, len(ds.IndexHints))
 		for _, idxHint := range ds.IndexHints {
-			if len(idxHint.partitions) == 0 {
+			if len(idxHint.Partitions) == 0 {
 				newIndexHint = append(newIndexHint, idxHint)
 			} else {
-				for _, p := range idxHint.partitions {
+				for _, p := range idxHint.Partitions {
 					if p.String() == partitionName.String() {
 						newIndexHint = append(newIndexHint, idxHint)
 						break
@@ -1649,12 +1650,12 @@ func (s *partitionProcessor) resolveOptimizeHint(ds *DataSource, partitionName m
 
 	// index merge hint
 	if len(ds.indexMergeHints) > 0 {
-		newIndexMergeHint := make([]indexHintInfo, 0, len(ds.indexMergeHints))
+		newIndexMergeHint := make([]h.IndexHintInfo, 0, len(ds.indexMergeHints))
 		for _, idxHint := range ds.indexMergeHints {
-			if len(idxHint.partitions) == 0 {
+			if len(idxHint.Partitions) == 0 {
 				newIndexMergeHint = append(newIndexMergeHint, idxHint)
 			} else {
-				for _, p := range idxHint.partitions {
+				for _, p := range idxHint.Partitions {
 					if p.String() == partitionName.String() {
 						newIndexMergeHint = append(newIndexMergeHint, idxHint)
 						break
@@ -1715,17 +1716,17 @@ func appendWarnForUnknownPartitions(ctx sessionctx.Context, hintName string, unk
 
 func (*partitionProcessor) checkHintsApplicable(ds *DataSource, partitionSet set.StringSet) {
 	for _, idxHint := range ds.IndexHints {
-		unknownPartitions := checkTableHintsApplicableForPartition(idxHint.partitions, partitionSet)
-		appendWarnForUnknownPartitions(ds.SCtx(), restore2IndexHint(idxHint.hintTypeString(), idxHint), unknownPartitions)
+		unknownPartitions := checkTableHintsApplicableForPartition(idxHint.Partitions, partitionSet)
+		appendWarnForUnknownPartitions(ds.SCtx(), h.Restore2IndexHint(idxHint.HintTypeString(), idxHint), unknownPartitions)
 	}
 	for _, idxMergeHint := range ds.indexMergeHints {
-		unknownPartitions := checkTableHintsApplicableForPartition(idxMergeHint.partitions, partitionSet)
-		appendWarnForUnknownPartitions(ds.SCtx(), restore2IndexHint(HintIndexMerge, idxMergeHint), unknownPartitions)
+		unknownPartitions := checkTableHintsApplicableForPartition(idxMergeHint.Partitions, partitionSet)
+		appendWarnForUnknownPartitions(ds.SCtx(), h.Restore2IndexHint(h.HintIndexMerge, idxMergeHint), unknownPartitions)
 	}
 	unknownPartitions := checkTableHintsApplicableForPartition(ds.preferPartitions[preferTiKV], partitionSet)
 	unknownPartitions = append(unknownPartitions,
 		checkTableHintsApplicableForPartition(ds.preferPartitions[preferTiFlash], partitionSet)...)
-	appendWarnForUnknownPartitions(ds.SCtx(), HintReadFromStorage, unknownPartitions)
+	appendWarnForUnknownPartitions(ds.SCtx(), h.HintReadFromStorage, unknownPartitions)
 }
 
 func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.PartitionInfo, or partitionRangeOR, opt *logicalOptimizeOp) (LogicalPlan, error) {
