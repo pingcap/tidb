@@ -168,9 +168,21 @@ func initSessCtx(
 	sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
 	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
+<<<<<<< HEAD
 	sessCtx.GetSessionVars().StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
 	sessCtx.GetSessionVars().StmtCtx.NoZeroDate = sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().ResourceGroupName = resGroupName
+=======
+
+	typeFlags := types.StrictFlags.
+		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
+		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()).
+		WithCastTimeToYearThroughConcat(true)
+	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags)
+	sessCtx.GetSessionVars().StmtCtx.ResourceGroupName = resGroupName
+
+>>>>>>> b27587e9b69 (session: add resource group name in stmt context (#49422))
 	// Prevent initializing the mock context in the workers concurrently.
 	// For details, see https://github.com/pingcap/tidb/issues/40879.
 	if _, ok := sessCtx.(*mock.Context); ok {
@@ -192,9 +204,14 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 	badNullAsWarn := sv.StmtCtx.BadNullAsWarning
 	overflowAsWarn := sv.StmtCtx.OverflowAsWarning
 	dividedZeroAsWarn := sv.StmtCtx.DividedByZeroAsWarning
+<<<<<<< HEAD
 	ignoreZeroInDate := sv.StmtCtx.IgnoreZeroInDate
 	noZeroDate := sv.StmtCtx.NoZeroDate
 	resGroupName := sv.ResourceGroupName
+=======
+	typeFlags := sv.StmtCtx.TypeFlags()
+	resGroupName := sv.StmtCtx.ResourceGroupName
+>>>>>>> b27587e9b69 (session: add resource group name in stmt context (#49422))
 	return func(usedSessCtx sessionctx.Context) {
 		uv := usedSessCtx.GetSessionVars()
 		uv.RowEncoder.Enable = rowEncoder
@@ -203,9 +220,14 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 		uv.StmtCtx.BadNullAsWarning = badNullAsWarn
 		uv.StmtCtx.OverflowAsWarning = overflowAsWarn
 		uv.StmtCtx.DividedByZeroAsWarning = dividedZeroAsWarn
+<<<<<<< HEAD
 		uv.StmtCtx.IgnoreZeroInDate = ignoreZeroInDate
 		uv.StmtCtx.NoZeroDate = noZeroDate
 		uv.ResourceGroupName = resGroupName
+=======
+		uv.StmtCtx.SetTypeFlags(typeFlags)
+		uv.StmtCtx.ResourceGroupName = resGroupName
+>>>>>>> b27587e9b69 (session: add resource group name in stmt context (#49422))
 	}
 }
 
