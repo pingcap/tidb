@@ -22,9 +22,9 @@ import (
 	"testing"
 	"time"
 
+	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
-	_ "github.com/go-sql-driver/mysql"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
@@ -237,8 +237,8 @@ func TestInternalSQL(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	defer func() {
-		tk.MustExec("set global tidb_restricted_read_only=default");
-		tk.MustExec("set global tidb_super_read_only=default");
+		tk.MustExec("set global tidb_restricted_read_only=default")
+		tk.MustExec("set global tidb_super_read_only=default")
 	}()
 
 	runSQL := func() {
@@ -247,7 +247,7 @@ func TestInternalSQL(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	tk.MustExec("set global tidb_restricted_read_only=On");
-	tk.MustExec("set global tidb_super_read_only=On");
+	tk.MustExec("set global tidb_restricted_read_only=On")
+	tk.MustExec("set global tidb_super_read_only=On")
 	runSQL()
 }
