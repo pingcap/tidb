@@ -179,7 +179,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
 
-	// testSortWithNewMerge(t, MergeOverlappingFilesV2)
+	testSortWithNewMerge(t, MergeOverlappingFilesV2)
 	testSortWithNewMerge(t, MergeOverlappingFilesOpt)
 }
 
