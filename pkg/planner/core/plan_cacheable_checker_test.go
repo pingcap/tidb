@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -197,7 +198,7 @@ func TestCacheable(t *testing.T) {
 	require.True(t, c)
 
 	stmt.(*ast.DeleteStmt).TableHints = append(stmt.(*ast.DeleteStmt).TableHints, &ast.TableOptimizerHint{
-		HintName: model.NewCIStr(core.HintIgnorePlanCache),
+		HintName: model.NewCIStr(hint.HintIgnorePlanCache),
 	})
 	require.False(t, core.Cacheable(stmt, is))
 
@@ -253,7 +254,7 @@ func TestCacheable(t *testing.T) {
 	require.True(t, c)
 
 	stmt.(*ast.UpdateStmt).TableHints = append(stmt.(*ast.UpdateStmt).TableHints, &ast.TableOptimizerHint{
-		HintName: model.NewCIStr(core.HintIgnorePlanCache),
+		HintName: model.NewCIStr(hint.HintIgnorePlanCache),
 	})
 	require.False(t, core.Cacheable(stmt, is))
 
@@ -318,7 +319,7 @@ func TestCacheable(t *testing.T) {
 	require.True(t, core.Cacheable(stmt, is))
 
 	stmt.(*ast.SelectStmt).TableHints = append(stmt.(*ast.SelectStmt).TableHints, &ast.TableOptimizerHint{
-		HintName: model.NewCIStr(core.HintIgnorePlanCache),
+		HintName: model.NewCIStr(hint.HintIgnorePlanCache),
 	})
 	require.False(t, core.Cacheable(stmt, is))
 
