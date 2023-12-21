@@ -608,6 +608,13 @@ func (importer *FileImporter) download(
 	)
 	errDownload := utils.WithRetry(ctx, func() error {
 		var e error
+		workerCh := importer.storeWorkerPoolMap[regionInfo.Leader.GetStoreId()]
+		defer func() {
+			workerCh <- struct{}{}
+			log.Info("worker returned", logutil.Region(regionInfo.Region))
+		}()
+		<-workerCh
+
 		for i, f := range remainFiles {
 			var downloadMeta *import_sstpb.SSTMeta
 			if importer.isRawKvMode {
@@ -676,17 +683,12 @@ func (importer *FileImporter) downloadSST(
 		CipherInfo:     cipher,
 		StorageCacheId: importer.cacheKey,
 	}
-	log.Debug("download SST",
+	log.Info("download SST",
 		logutil.SSTMeta(&sstMeta),
 		logutil.File(file),
 		logutil.Region(regionInfo.Region),
 		logutil.Leader(regionInfo.Leader),
 	)
-	workerCh := importer.storeWorkerPoolMap[regionInfo.Leader.GetStoreId()]
-	defer func() {
-		workerCh <- struct{}{}
-	}()
-	<-workerCh
 
 	var atomicResp atomic.Value
 	eg, ectx := errgroup.WithContext(ctx)
@@ -722,7 +724,7 @@ func (importer *FileImporter) downloadSST(
 				return errors.Trace(berrors.ErrKVRangeIsEmpty)
 			}
 
-			log.Debug("download from peer",
+			log.Info("download from peer",
 				logutil.Region(regionInfo.Region),
 				logutil.Peer(peer),
 				logutil.Key("resp-range-start", resp.Range.Start),
