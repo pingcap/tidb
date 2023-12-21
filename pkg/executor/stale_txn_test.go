@@ -46,7 +46,7 @@ func TestExactStalenessTransaction(t *testing.T) {
 			preSQL:           "begin",
 			sql:              `START TRANSACTION READ ONLY AS OF TIMESTAMP '2020-09-06 00:00:00';`,
 			IsStaleness:      true,
-			expectPhysicalTS: 1599321600000,
+			expectPhysicalTS: time.Date(2020, 9, 6, 0, 0, 0, 0, time.Local).UnixMilli(),
 			zone:             "sh",
 		},
 		{
@@ -61,7 +61,7 @@ func TestExactStalenessTransaction(t *testing.T) {
 			preSQL:           "begin",
 			sql:              `START TRANSACTION READ ONLY AS OF TIMESTAMP tidb_bounded_staleness('2015-09-21 00:07:01', NOW());`,
 			IsStaleness:      true,
-			expectPhysicalTS: 1442765221000,
+			expectPhysicalTS: time.Date(2015, 9, 21, 0, 7, 1, 0, time.Local).UnixMilli(),
 			zone:             "bj",
 		},
 		{

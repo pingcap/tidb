@@ -395,12 +395,12 @@ func TestIgnoreAllErrorCheckpoints_SQL(t *testing.T) {
 
 	s.mock.ExpectBegin()
 	s.mock.
-		ExpectExec("UPDATE `mock-schema`\\.engine_v\\d+ SET status = 30 WHERE 'all' = \\? AND status <= 25").
-		WithArgs(sqlmock.AnyArg()).
+		ExpectExec("UPDATE \\?\\.\\? SET status = \\? WHERE \\? = \\? AND status <= \\?").
+		WithArgs("`mock-schema`", checkpoints.CheckpointTableNameEngine, checkpoints.CheckpointStatusLoaded, "'all'", sqlmock.AnyArg(), 25).
 		WillReturnResult(sqlmock.NewResult(5, 3))
 	s.mock.
-		ExpectExec("UPDATE `mock-schema`\\.table_v\\d+ SET status = 30 WHERE 'all' = \\? AND status <= 25").
-		WithArgs(sqlmock.AnyArg()).
+		ExpectExec("UPDATE \\?\\.\\? SET status = \\? WHERE \\? = \\? AND status <= \\?").
+		WithArgs("`mock-schema`", checkpoints.CheckpointTableNameTable, checkpoints.CheckpointStatusLoaded, "'all'", sqlmock.AnyArg(), 25).
 		WillReturnResult(sqlmock.NewResult(6, 2))
 	s.mock.ExpectCommit()
 
@@ -413,12 +413,12 @@ func TestIgnoreOneErrorCheckpoint(t *testing.T) {
 
 	s.mock.ExpectBegin()
 	s.mock.
-		ExpectExec("UPDATE `mock-schema`\\.engine_v\\d+ SET status = 30 WHERE table_name = \\? AND status <= 25").
-		WithArgs("`db1`.`t2`").
+		ExpectExec("UPDATE \\?\\.\\? SET status = \\? WHERE \\? = \\? AND status <= \\?").
+		WithArgs("`mock-schema`", checkpoints.CheckpointTableNameEngine, checkpoints.CheckpointStatusLoaded, "table_name", "`db1`.`t2`", 25).
 		WillReturnResult(sqlmock.NewResult(5, 2))
 	s.mock.
-		ExpectExec("UPDATE `mock-schema`\\.table_v\\d+ SET status = 30 WHERE table_name = \\? AND status <= 25").
-		WithArgs("`db1`.`t2`").
+		ExpectExec("UPDATE \\?\\.\\? SET status = \\? WHERE \\? = \\? AND status <= \\?").
+		WithArgs("`mock-schema`", checkpoints.CheckpointTableNameTable, checkpoints.CheckpointStatusLoaded, "table_name", "`db1`.`t2`", 25).
 		WillReturnResult(sqlmock.NewResult(6, 1))
 	s.mock.ExpectCommit()
 

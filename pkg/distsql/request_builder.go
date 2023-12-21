@@ -309,7 +309,7 @@ func (builder *RequestBuilder) SetFromSessionVars(sv *variable.SessionVars) *Req
 	builder.RequestSource.RequestSourceType = sv.RequestSourceType
 	builder.RequestSource.ExplicitRequestSourceType = sv.ExplicitRequestSourceType
 	builder.StoreBatchSize = sv.StoreBatchSize
-	builder.Request.ResourceGroupName = sv.ResourceGroupName
+	builder.Request.ResourceGroupName = sv.StmtCtx.ResourceGroupName
 	builder.Request.StoreBusyThreshold = sv.LoadBasedReplicaReadThreshold
 	builder.Request.RunawayChecker = sv.StmtCtx.RunawayChecker
 	builder.Request.TiKVClientReadTimeout = sv.GetTiKVClientReadTimeout()

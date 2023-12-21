@@ -162,5 +162,14 @@ check_contains "count(*): 0"
 run_sql "select count(*) from mysql.role_edges where to_user='cloud_admin'"
 check_contains "count(*): 0"
 
+echo "--> full cluster restore with --filter, need to flush privileges"
+restart_services
+run_br restore full --filter "*.*" --filter "!__TiDB_BR_Temporary*.*" --filter "!mysql.*" --filter "mysql.bind_info" --filter "mysql.user" --filter "mysql.db" --filter "mysql.tables_priv" --filter "mysql.columns_priv" --filter "mysql.global_priv" --filter "mysql.global_grants" --filter "mysql.default_roles" --filter "mysql.role_edges" --filter "!sys.*" --filter "!INFORMATION_SCHEMA.*" --filter "!PERFORMANCE_SCHEMA.*" --filter "!METRICS_SCHEMA.*" --filter "!INSPECTION_SCHEMA.*" --with-sys-table --log-file $br_log_file -s "local://$backup_dir"
+# BR executes `FLUSH PRIVILEGES` already
+run_sql_as user1 "123456" "select count(*) from db1.t1"
+check_contains "count(*): 2"
+run_sql_as user1 "123456" "select count(*) from db2.t1"
+check_contains "count(*): 2"
+
 echo "clean up kept backup"
 rm -rf $backup_dir $incr_backup_dir

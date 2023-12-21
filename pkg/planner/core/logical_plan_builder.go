@@ -70,101 +70,6 @@ import (
 )
 
 const (
-	// TiDBMergeJoin is hint enforce merge join.
-	TiDBMergeJoin = "tidb_smj"
-	// HintSMJ is hint enforce merge join.
-	HintSMJ = "merge_join"
-	// HintNoMergeJoin is the hint to enforce the query not to use merge join.
-	HintNoMergeJoin = "no_merge_join"
-
-	// TiDBBroadCastJoin indicates applying broadcast join by force.
-	TiDBBroadCastJoin = "tidb_bcj"
-	// HintBCJ indicates applying broadcast join by force.
-	HintBCJ = "broadcast_join"
-	// HintShuffleJoin indicates applying shuffle join by force.
-	HintShuffleJoin = "shuffle_join"
-
-	// HintStraightJoin causes TiDB to join tables in the order in which they appear in the FROM clause.
-	HintStraightJoin = "straight_join"
-	// HintLeading specifies the set of tables to be used as the prefix in the execution plan.
-	HintLeading = "leading"
-
-	// TiDBIndexNestedLoopJoin is hint enforce index nested loop join.
-	TiDBIndexNestedLoopJoin = "tidb_inlj"
-	// HintINLJ is hint enforce index nested loop join.
-	HintINLJ = "inl_join"
-	// HintINLHJ is hint enforce index nested loop hash join.
-	HintINLHJ = "inl_hash_join"
-	// HintINLMJ is hint enforce index nested loop merge join.
-	HintINLMJ = "inl_merge_join"
-	// HintNoIndexJoin is the hint to enforce the query not to use index join.
-	HintNoIndexJoin = "no_index_join"
-	// HintNoIndexHashJoin is the hint to enforce the query not to use index hash join.
-	HintNoIndexHashJoin = "no_index_hash_join"
-	// HintNoIndexMergeJoin is the hint to enforce the query not to use index merge join.
-	HintNoIndexMergeJoin = "no_index_merge_join"
-	// TiDBHashJoin is hint enforce hash join.
-	TiDBHashJoin = "tidb_hj"
-	// HintNoHashJoin is the hint to enforce the query not to use hash join.
-	HintNoHashJoin = "no_hash_join"
-	// HintHJ is hint enforce hash join.
-	HintHJ = "hash_join"
-	// HintHashJoinBuild is hint enforce hash join's build side
-	HintHashJoinBuild = "hash_join_build"
-	// HintHashJoinProbe is hint enforce hash join's probe side
-	HintHashJoinProbe = "hash_join_probe"
-	// HintHashAgg is hint enforce hash aggregation.
-	HintHashAgg = "hash_agg"
-	// HintStreamAgg is hint enforce stream aggregation.
-	HintStreamAgg = "stream_agg"
-	// HintMPP1PhaseAgg enforces the optimizer to use the mpp-1phase aggregation.
-	HintMPP1PhaseAgg = "mpp_1phase_agg"
-	// HintMPP2PhaseAgg enforces the optimizer to use the mpp-2phase aggregation.
-	HintMPP2PhaseAgg = "mpp_2phase_agg"
-	// HintUseIndex is hint enforce using some indexes.
-	HintUseIndex = "use_index"
-	// HintIgnoreIndex is hint enforce ignoring some indexes.
-	HintIgnoreIndex = "ignore_index"
-	// HintForceIndex make optimizer to use this index even if it thinks a table scan is more efficient.
-	HintForceIndex = "force_index"
-	// HintOrderIndex is hint enforce using some indexes and keep the index's order.
-	HintOrderIndex = "order_index"
-	// HintNoOrderIndex is hint enforce using some indexes and not keep the index's order.
-	HintNoOrderIndex = "no_order_index"
-	// HintAggToCop is hint enforce pushing aggregation to coprocessor.
-	HintAggToCop = "agg_to_cop"
-	// HintReadFromStorage is hint enforce some tables read from specific type of storage.
-	HintReadFromStorage = "read_from_storage"
-	// HintTiFlash is a label represents the tiflash storage type.
-	HintTiFlash = "tiflash"
-	// HintTiKV is a label represents the tikv storage type.
-	HintTiKV = "tikv"
-	// HintIndexMerge is a hint to enforce using some indexes at the same time.
-	HintIndexMerge = "use_index_merge"
-	// HintTimeRange is a hint to specify the time range for metrics summary tables
-	HintTimeRange = "time_range"
-	// HintIgnorePlanCache is a hint to enforce ignoring plan cache
-	HintIgnorePlanCache = "ignore_plan_cache"
-	// HintLimitToCop is a hint enforce pushing limit or topn to coprocessor.
-	HintLimitToCop = "limit_to_cop"
-	// HintMerge is a hint which can switch turning inline for the CTE.
-	HintMerge = "merge"
-	// HintSemiJoinRewrite is a hint to force we rewrite the semi join operator as much as possible.
-	HintSemiJoinRewrite = "semi_join_rewrite"
-	// HintNoDecorrelate indicates a LogicalApply not to be decorrelated.
-	HintNoDecorrelate = "no_decorrelate"
-
-	// HintMemoryQuota sets the memory limit for a query
-	HintMemoryQuota = "memory_quota"
-	// HintUseToja is a hint to optimize `in (select ...)` subquery into `join`
-	HintUseToja = "use_toja"
-	// HintNoIndexMerge is a hint to disable index merge
-	HintNoIndexMerge = "no_index_merge"
-	// HintMaxExecutionTime specifies the max allowed execution time in milliseconds
-	HintMaxExecutionTime = "max_execution_time"
-)
-
-const (
 	// ErrExprInSelect  is in select fields for the error of ErrFieldNotInGroupBy
 	ErrExprInSelect = "SELECT list"
 	// ErrExprInOrderBy  is in order by items for the error of ErrFieldNotInGroupBy
@@ -5195,7 +5100,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	var indexMergeHints []indexHintInfo
 	if hints := b.TableHints(); hints != nil {
 		for i, hint := range hints.indexMergeHintList {
-			if hint.tblName.L == tblName.L && hint.dbName.L == dbName.L {
+			if hint.match(dbName, tblName) {
 				hints.indexMergeHintList[i].matched = true
 				// check whether the index names in IndexMergeHint are valid.
 				invalidIdxNames := make([]string, 0, len(hint.indexHint.IndexNames))

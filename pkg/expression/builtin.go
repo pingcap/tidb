@@ -28,6 +28,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/gogo/protobuf/proto"
@@ -40,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -1016,4 +1018,47 @@ func (b *baseBuiltinFunc) MemoryUsage() (sum int64) {
 		sum += e.MemoryUsage()
 	}
 	return
+}
+
+type builtinFuncCacheItem[T any] struct {
+	ctxID uint64
+	item  T
+}
+
+type builtinFuncCache[T any] struct {
+	sync.Mutex
+	cached atomic.Pointer[builtinFuncCacheItem[T]]
+}
+
+func (c *builtinFuncCache[T]) getCache(ctxID uint64) (v T, ok bool) {
+	if p := c.cached.Load(); p != nil && p.ctxID == ctxID {
+		return p.item, true
+	}
+	return v, false
+}
+
+func (c *builtinFuncCache[T]) getOrInitCache(ctx EvalContext, constructCache func() (T, error)) (T, error) {
+	intest.Assert(constructCache != nil)
+	ctxID := ctx.GetSessionVars().StmtCtx.CtxID()
+	if item, ok := c.getCache(ctxID); ok {
+		return item, nil
+	}
+
+	c.Lock()
+	defer c.Unlock()
+	if item, ok := c.getCache(ctxID); ok {
+		return item, nil
+	}
+
+	item, err := constructCache()
+	if err != nil {
+		var def T
+		return def, err
+	}
+
+	c.cached.Store(&builtinFuncCacheItem[T]{
+		ctxID: ctxID,
+		item:  item,
+	})
+	return item, nil
 }

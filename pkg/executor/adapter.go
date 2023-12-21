@@ -177,8 +177,7 @@ func (a *recordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 		return exec.NewFirstChunk(a.executor)
 	}
 
-	base := a.executor.Base()
-	return alloc.Alloc(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize())
+	return alloc.Alloc(a.executor.RetFieldTypes(), a.executor.InitCap(), a.executor.MaxChunkSize())
 }
 
 func (a *recordSet) Finish() error {
@@ -557,7 +556,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		stmtCtx := sctx.GetSessionVars().StmtCtx
 		_, planDigest := GetPlanDigest(stmtCtx)
 		_, digest := stmtCtx.SQLDigest()
-		stmtCtx.RunawayChecker = domain.GetDomain(sctx).RunawayManager().DeriveChecker(sctx.GetSessionVars().ResourceGroupName, stmtCtx.OriginalSQL, digest.String(), planDigest.String())
+		stmtCtx.RunawayChecker = domain.GetDomain(sctx).RunawayManager().DeriveChecker(sctx.GetSessionVars().StmtCtx.ResourceGroupName, stmtCtx.OriginalSQL, digest.String(), planDigest.String())
 		if err := stmtCtx.RunawayChecker.BeforeExecutor(); err != nil {
 			return nil, err
 		}
@@ -886,8 +885,7 @@ func (c *chunkRowRecordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 		return exec.NewFirstChunk(c.e)
 	}
 
-	base := c.e.Base()
-	return alloc.Alloc(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize())
+	return alloc.Alloc(c.e.RetFieldTypes(), c.e.InitCap(), c.e.MaxChunkSize())
 }
 
 func (c *chunkRowRecordSet) Close() error {
@@ -1620,7 +1618,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		UsedStats:         stmtCtx.GetUsedStatsInfo(false),
 		IsSyncStatsFailed: stmtCtx.IsSyncStatsFailed,
 		Warnings:          collectWarningsForSlowLog(stmtCtx),
-		ResourceGroupName: sessVars.ResourceGroupName,
+		ResourceGroupName: sessVars.StmtCtx.ResourceGroupName,
 		RRU:               ruDetails.RRU(),
 		WRU:               ruDetails.WRU(),
 		WaitRUDuration:    ruDetails.RUWaitDuration(),
