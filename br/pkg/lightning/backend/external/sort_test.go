@@ -175,10 +175,15 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 }
 
 func TestGlobalSortLocalWithMergeV2(t *testing.T) {
-	// 1. write data step
 	seed := time.Now().Unix()
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
+
+	// testSortWithNewMerge(t, MergeOverlappingFilesV2)
+	testSortWithNewMerge(t, MergeOverlappingFilesOpt)
+}
+
+func testSortWithNewMerge(t *testing.T, mergeFunc func(ctx context.Context, dataFiles []string, statFiles []string, store storage.ExternalStorage, startKey []byte, endKey []byte, partSize int64, newFilePrefix string, writerID string, blockSize int, writeBatchCount uint64, propSizeDist uint64, propKeysDist uint64, onClose OnCloseFunc, concurrency int, writerConcurrency int, checkHotspot bool) (err error)) {
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
 	memSizeLimit := (rand.Intn(10) + 1) * 400
@@ -203,6 +208,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 		}
 	}
 
+	// 1. write data step
 	w := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
@@ -251,7 +257,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 	}
 
 	for i, group := range dataGroup {
-		require.NoError(t, MergeOverlappingFilesV2(
+		require.NoError(t, mergeFunc(
 			ctx,
 			group,
 			statGroup[i],
@@ -267,7 +273,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 			2,
 			closeFn1,
 			1,
-			1,
+			2,
 			true))
 	}
 

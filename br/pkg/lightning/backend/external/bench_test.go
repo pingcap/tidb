@@ -927,6 +927,7 @@ type mergeTestSuite struct {
 	totalKVCnt        int
 	concurrency       int
 	writerConcurrency int
+	mergeConcurrency  int
 	memoryLimit       int
 	mergeIterHotspot  bool
 	minKey            kv.Key
@@ -1029,9 +1030,58 @@ func newMergeStep(t *testing.T, s *mergeTestSuite) {
 	)
 }
 
+func newMergeStepOpt(t *testing.T, s *mergeTestSuite) {
+	ctx := context.Background()
+	datas, stats, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
+	intest.AssertNoError(err)
+
+	mergeOutput := "merge_output"
+	totalSize := atomic.NewUint64(0)
+	onClose := func(s *WriterSummary) {
+		totalSize.Add(s.TotalSize)
+	}
+	if s.beforeMerge != nil {
+		s.beforeMerge()
+	}
+
+	now := time.Now()
+	err = MergeOverlappingFilesOpt(
+		ctx,
+		datas,
+		stats,
+		s.store,
+		s.minKey,
+		s.maxKey.Next(),
+		int64(5*size.MB),
+		mergeOutput,
+		"test",
+		DefaultBlockSize,
+		8*1024,
+		1*size.MB,
+		8*1024,
+		onClose,
+		s.concurrency,
+		s.mergeConcurrency,
+		s.mergeIterHotspot,
+	)
+
+	intest.AssertNoError(err)
+	if s.afterMerge != nil {
+		s.afterMerge()
+	}
+	elapsed := time.Since(now)
+	t.Logf(
+		"new merge speed for %d bytes in %s, speed: %.2f MB/s",
+		totalSize.Load(),
+		elapsed,
+		float64(totalSize.Load())/elapsed.Seconds()/1024/1024,
+	)
+}
+
 func testCompareMergeWithContent(
 	t *testing.T,
 	concurrency int,
+	mergeConcurrency int,
 	createFn func(store storage.ExternalStorage, fileSize int, fileCount int, objectPrefix string) (int, kv.Key, kv.Key),
 	fn func(t *testing.T, suite *mergeTestSuite)) {
 	store := openTestingStorage(t)
@@ -1062,6 +1112,7 @@ func testCompareMergeWithContent(
 		totalKVCnt:        kvCnt,
 		concurrency:       concurrency,
 		writerConcurrency: *writerConcurrency,
+		mergeConcurrency:  mergeConcurrency,
 		memoryLimit:       *memoryLimit,
 		beforeMerge:       beforeTest,
 		afterMerge:        afterTest,
@@ -1075,16 +1126,22 @@ func testCompareMergeWithContent(
 }
 
 func TestMergeBench(t *testing.T) {
-	testCompareMergeWithContent(t, 1, createAscendingFiles, mergeStep)
-	testCompareMergeWithContent(t, 1, createEvenlyDistributedFiles, mergeStep)
-	testCompareMergeWithContent(t, 2, createAscendingFiles, mergeStep)
-	testCompareMergeWithContent(t, 2, createEvenlyDistributedFiles, mergeStep)
-	testCompareMergeWithContent(t, 4, createAscendingFiles, mergeStep)
-	testCompareMergeWithContent(t, 4, createEvenlyDistributedFiles, mergeStep)
-	testCompareMergeWithContent(t, 8, createAscendingFiles, mergeStep)
-	testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, mergeStep)
-	testCompareMergeWithContent(t, 8, createAscendingFiles, newMergeStep)
-	testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, newMergeStep)
+	// testCompareMergeWithContent(t, 1, 0, createAscendingFiles, mergeStep)
+	// testCompareMergeWithContent(t, 1, 0,createEvenlyDistributedFiles, mergeStep)
+	// testCompareMergeWithContent(t, 2, 0, createAscendingFiles, mergeStep)
+	// testCompareMergeWithContent(t, 2, 0, createEvenlyDistributedFiles, mergeStep)
+	// testCompareMergeWithContent(t, 4, 0,createAscendingFiles, mergeStep)
+	// testCompareMergeWithContent(t, 4, 0, createEvenlyDistributedFiles, mergeStep)
+	// testCompareMergeWithContent(t, 8, 0, createAscendingFiles, mergeStep)
+	// testCompareMergeWithContent(t, 8, 0, createEvenlyDistributedFiles, mergeStep)
+	// testCompareMergeWithContent(t, 8, 0,createAscendingFiles, newMergeStep)
+	// testCompareMergeWithContent(t, 8, 0,createEvenlyDistributedFiles, newMergeStep)
+	testCompareMergeWithContent(t, 8, 1, createAscendingFiles, newMergeStepOpt)
+	testCompareMergeWithContent(t, 8, 1, createEvenlyDistributedFiles, newMergeStepOpt)
+	testCompareMergeWithContent(t, 8, 2, createAscendingFiles, newMergeStepOpt)
+	testCompareMergeWithContent(t, 8, 2, createEvenlyDistributedFiles, newMergeStepOpt)
+	testCompareMergeWithContent(t, 8, 4, createAscendingFiles, newMergeStepOpt)
+	testCompareMergeWithContent(t, 8, 4, createEvenlyDistributedFiles, newMergeStepOpt)
 }
 
 func TestReadStatFile(t *testing.T) {

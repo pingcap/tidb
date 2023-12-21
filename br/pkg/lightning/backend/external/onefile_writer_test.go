@@ -362,7 +362,7 @@ func TestOnefilePropOffset(t *testing.T) {
 		SetMemorySizeLimit(uint64(memSizeLimit)).
 		BuildOneFile(memStore, "/test", "0")
 
-	require.NoError(t, writer.Init(ctx, 5*1024*1024))
+	require.NoError(t, writer.Init(ctx, 5*1024*1024, 20))
 
 	kvCnt := 10000
 	kvs := make([]common.KvPair, kvCnt)
