@@ -395,12 +395,12 @@ func TestIgnoreAllErrorCheckpoints_SQL(t *testing.T) {
 
 	s.mock.ExpectBegin()
 	s.mock.
-		ExpectExec(`\QUPDATE ?.? SET status = ? WHERE ? = ? AND status <= ?\E`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		ExpectExec("UPDATE \\?\\.\\? SET status = \\? WHERE \\? = \\? AND status <= \\?").
+		WithArgs("`mock-schema`", checkpoints.CheckpointTableNameEngine, checkpoints.CheckpointStatusLoaded, "'all'", sqlmock.AnyArg(), 25).
 		WillReturnResult(sqlmock.NewResult(5, 3))
 	s.mock.
-		ExpectExec(`\QUPDATE ?.? SET status = ? WHERE ? = ? AND status <= ?\E`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		ExpectExec("UPDATE \\?\\.\\? SET status = \\? WHERE \\? = \\? AND status <= \\?").
+		WithArgs("`mock-schema`", checkpoints.CheckpointTableNameTable, checkpoints.CheckpointStatusLoaded, "'all'", sqlmock.AnyArg(), 25).
 		WillReturnResult(sqlmock.NewResult(6, 2))
 	s.mock.ExpectCommit()
 
@@ -413,12 +413,12 @@ func TestIgnoreOneErrorCheckpoint(t *testing.T) {
 
 	s.mock.ExpectBegin()
 	s.mock.
-		ExpectExec("\\QUPDATE ?.? SET status = ? WHERE ? = ? AND status <= ?\\E").
-		WithArgs("`mock-schema`", sqlmock.AnyArg(), 30, "table_name", "`db1`.`t2`", 25).
+		ExpectExec("UPDATE \\?\\.\\? SET status = \\? WHERE \\? = \\? AND status <= \\?").
+		WithArgs("`mock-schema`", checkpoints.CheckpointTableNameEngine, checkpoints.CheckpointStatusLoaded, "table_name", "`db1`.`t2`", 25).
 		WillReturnResult(sqlmock.NewResult(5, 2))
 	s.mock.
-		ExpectExec(`\QUPDATE ?.? SET status = ? WHERE ? = ? AND status <= ?\E`).
-		WithArgs("`mock-schema`", sqlmock.AnyArg(), 30, "table_name", "`db1`.`t2`", 25).
+		ExpectExec("UPDATE \\?\\.\\? SET status = \\? WHERE \\? = \\? AND status <= \\?").
+		WithArgs("`mock-schema`", checkpoints.CheckpointTableNameTable, checkpoints.CheckpointStatusLoaded, "table_name", "`db1`.`t2`", 25).
 		WillReturnResult(sqlmock.NewResult(6, 1))
 	s.mock.ExpectCommit()
 
