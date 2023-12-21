@@ -127,7 +127,11 @@ go_test(
     ],
     embed = [":domain"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 23,
+=======
+    shard_count = 25,
+>>>>>>> 11aefee7211 (domain: do not use fmt.Sprint to format SQL (#49620))
     deps = [
         "//pkg/config",
         "//pkg/ddl",
