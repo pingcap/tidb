@@ -42,7 +42,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/hint"
-	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
@@ -542,7 +541,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 		return v, true
 	}
 
-	noDecorrelate := hintFlags&h.HintFlagNoDecorrelate > 0
+	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
 	if noDecorrelate && len(extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())) == 0 {
 		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))
@@ -845,13 +844,13 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 	}
 	np = er.popExistsSubPlan(np)
 
-	noDecorrelate := hintFlags&h.HintFlagNoDecorrelate > 0
+	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
 	if noDecorrelate && len(extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())) == 0 {
 		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))
 		noDecorrelate = false
 	}
-	semiJoinRewrite := hintFlags&h.HintFlagSemiJoinRewrite > 0
+	semiJoinRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
 	if semiJoinRewrite && noDecorrelate {
 		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
 			"NO_DECORRELATE() and SEMI_JOIN_REWRITE() are in conflict. Both will be ineffective."))
@@ -1018,7 +1017,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	lt, rt := lexpr.GetType(), rexpr.GetType()
 	collFlag := collate.CompatibleCollate(lt.GetCollate(), rt.GetCollate())
 
-	noDecorrelate := hintFlags&h.HintFlagNoDecorrelate > 0
+	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
 	corCols := extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())
 	if len(corCols) == 0 && noDecorrelate {
 		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
@@ -1079,7 +1078,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 	}
 	np = er.b.buildMaxOneRow(np)
 
-	noDecorrelate := hintFlags&h.HintFlagNoDecorrelate > 0
+	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
 	if noDecorrelate && len(extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())) == 0 {
 		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))

@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	h "github.com/pingcap/tidb/pkg/util/hint"
-	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 )
 
 // GenHintsFromFlatPlan generates hints from a FlatPhysicalPlan.
@@ -28,12 +27,12 @@ func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
 	if len(flat.Main) == 0 {
 		return nil
 	}
-	nodeTp := utilhint.TypeSelect
+	nodeTp := h.TypeSelect
 	switch flat.Main[0].Origin.(type) {
 	case *Update:
-		nodeTp = utilhint.TypeUpdate
+		nodeTp = h.TypeUpdate
 	case *Delete:
-		nodeTp = utilhint.TypeDelete
+		nodeTp = h.TypeDelete
 	}
 	var hints []*ast.TableOptimizerHint
 	selectPlan, _ := flat.Main.GetSelectPlan()
@@ -98,7 +97,7 @@ func extractTableAsName(p PhysicalPlan) (*model.CIStr, *model.CIStr) {
 	return nil, nil
 }
 
-func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, nodeType utilhint.NodeType, children ...PhysicalPlan) (res []*ast.TableOptimizerHint) {
+func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, nodeType h.NodeType, children ...PhysicalPlan) (res []*ast.TableOptimizerHint) {
 	if parentOffset == -1 {
 		return res
 	}
@@ -125,7 +124,7 @@ func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, no
 		if tableName == nil || tableName.L == "" {
 			continue
 		}
-		qbName, err := utilhint.GenerateQBName(nodeType, blockOffset)
+		qbName, err := h.GenerateQBName(nodeType, blockOffset)
 		if err != nil {
 			continue
 		}
@@ -139,8 +138,8 @@ func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, no
 	return res
 }
 
-func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, storeType kv.StoreType, res []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
-	qbName, err := utilhint.GenerateQBName(nodeType, p.SelectBlockOffset())
+func genHintsFromSingle(p PhysicalPlan, nodeType h.NodeType, storeType kv.StoreType, res []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
+	qbName, err := h.GenerateQBName(nodeType, p.SelectBlockOffset())
 	if err != nil {
 		return res
 	}

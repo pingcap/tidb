@@ -60,7 +60,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
-	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/replayer"
@@ -1804,9 +1803,9 @@ func getEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPla
 			// some hints like 'memory_quota' cannot be extracted from the PhysicalPlan directly,
 			// so we have to iterate all hints from the customer and keep some other necessary hints.
 			switch tableHint.HintName.L {
-			case h.HintMemoryQuota, h.HintUseToja, h.HintNoIndexMerge,
-				h.HintMaxExecutionTime, h.HintIgnoreIndex, h.HintReadFromStorage,
-				h.HintMerge, h.HintSemiJoinRewrite, h.HintNoDecorrelate:
+			case hint.HintMemoryQuota, hint.HintUseToja, hint.HintNoIndexMerge,
+				hint.HintMaxExecutionTime, hint.HintIgnoreIndex, hint.HintReadFromStorage,
+				hint.HintMerge, hint.HintSemiJoinRewrite, hint.HintNoDecorrelate:
 				hints = append(hints, tableHint)
 			}
 		}
