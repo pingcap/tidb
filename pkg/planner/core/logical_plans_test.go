@@ -1004,7 +1004,7 @@ func checkUniqueKeys(p LogicalPlan, t *testing.T, ans map[int][][]string, sql st
 			testdata.OnRecord(func() {
 				keyList[i][j] = p.Schema().Keys[i][j].String()
 			})
-			require.Equal(t, keyList[i][j], p.Schema().Keys[i][j].String(), fmt.Sprintf("for %s, %v %v, column dosen't match", sql, p.ID(), keyList[i]))
+			require.Equal(t, keyList[i][j], p.Schema().Keys[i][j].String(), fmt.Sprintf("for %s, %v %v, column dosen't Match", sql, p.ID(), keyList[i]))
 		}
 	}
 	testdata.OnRecord(func() {

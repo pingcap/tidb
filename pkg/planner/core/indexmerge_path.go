@@ -271,10 +271,10 @@ func (ds *DataSource) isInIndexMergeHints(name string) bool {
 		return true
 	}
 	for _, hint := range ds.indexMergeHints {
-		if hint.indexHint == nil || len(hint.indexHint.IndexNames) == 0 {
+		if hint.IndexHint == nil || len(hint.IndexHint.IndexNames) == 0 {
 			return true
 		}
-		for _, hintName := range hint.indexHint.IndexNames {
+		for _, hintName := range hint.IndexHint.IndexNames {
 			if strings.EqualFold(strings.ToLower(name), strings.ToLower(hintName.String())) {
 				return true
 			}
@@ -286,10 +286,10 @@ func (ds *DataSource) isInIndexMergeHints(name string) bool {
 // indexMergeHintsHasSpecifiedIdx returns true if there's IndexMerge hint, and it has specified index names.
 func (ds *DataSource) indexMergeHintsHasSpecifiedIdx() bool {
 	for _, hint := range ds.indexMergeHints {
-		if hint.indexHint == nil || len(hint.indexHint.IndexNames) == 0 {
+		if hint.IndexHint == nil || len(hint.IndexHint.IndexNames) == 0 {
 			continue
 		}
-		if len(hint.indexHint.IndexNames) > 0 {
+		if len(hint.IndexHint.IndexNames) > 0 {
 			return true
 		}
 	}
@@ -299,10 +299,10 @@ func (ds *DataSource) indexMergeHintsHasSpecifiedIdx() bool {
 // indexMergeHintsHasSpecifiedIdx return true if the input index name is specified in the IndexMerge hint.
 func (ds *DataSource) isSpecifiedInIndexMergeHints(name string) bool {
 	for _, hint := range ds.indexMergeHints {
-		if hint.indexHint == nil || len(hint.indexHint.IndexNames) == 0 {
+		if hint.IndexHint == nil || len(hint.IndexHint.IndexNames) == 0 {
 			continue
 		}
-		for _, hintName := range hint.indexHint.IndexNames {
+		for _, hintName := range hint.IndexHint.IndexNames {
 			if strings.EqualFold(strings.ToLower(name), strings.ToLower(hintName.String())) {
 				return true
 			}

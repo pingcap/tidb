@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
@@ -541,7 +542,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 		return v, true
 	}
 
-	noDecorrelate := hintFlags&HintFlagNoDecorrelate > 0
+	noDecorrelate := hintFlags&h.HintFlagNoDecorrelate > 0
 	if noDecorrelate && len(extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())) == 0 {
 		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))
@@ -629,7 +630,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.Expression, np LogicalPlan, useMin bool, cmpFunc string, all, markNoDecorrelate bool) {
 	plan4Agg := LogicalAggregation{}.Init(er.sctx, er.b.getSelectOffset())
 	if hint := er.b.TableHints(); hint != nil {
-		plan4Agg.aggHints = hint.aggHints
+		plan4Agg.aggHints = hint.AggHints
 	}
 	plan4Agg.SetChildren(np)
 
@@ -760,7 +761,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 		AggFuncs: []*aggregation.AggFuncDesc{maxFunc, countFunc},
 	}.Init(er.sctx, er.b.getSelectOffset())
 	if hint := er.b.TableHints(); hint != nil {
-		plan4Agg.aggHints = hint.aggHints
+		plan4Agg.aggHints = hint.AggHints
 	}
 	plan4Agg.SetChildren(np)
 	maxResultCol := &expression.Column{
@@ -797,7 +798,7 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
 	}.Init(er.sctx, er.b.getSelectOffset())
 	if hint := er.b.TableHints(); hint != nil {
-		plan4Agg.aggHints = hint.aggHints
+		plan4Agg.aggHints = hint.AggHints
 	}
 	plan4Agg.SetChildren(np)
 	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
@@ -844,13 +845,13 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 	}
 	np = er.popExistsSubPlan(np)
 
-	noDecorrelate := hintFlags&HintFlagNoDecorrelate > 0
+	noDecorrelate := hintFlags&h.HintFlagNoDecorrelate > 0
 	if noDecorrelate && len(extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())) == 0 {
 		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))
 		noDecorrelate = false
 	}
-	semiJoinRewrite := hintFlags&HintFlagSemiJoinRewrite > 0
+	semiJoinRewrite := hintFlags&h.HintFlagSemiJoinRewrite > 0
 	if semiJoinRewrite && noDecorrelate {
 		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
 			"NO_DECORRELATE() and SEMI_JOIN_REWRITE() are in conflict. Both will be ineffective."))
@@ -1017,7 +1018,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	lt, rt := lexpr.GetType(), rexpr.GetType()
 	collFlag := collate.CompatibleCollate(lt.GetCollate(), rt.GetCollate())
 
-	noDecorrelate := hintFlags&HintFlagNoDecorrelate > 0
+	noDecorrelate := hintFlags&h.HintFlagNoDecorrelate > 0
 	corCols := extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())
 	if len(corCols) == 0 && noDecorrelate {
 		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
@@ -1078,7 +1079,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 	}
 	np = er.b.buildMaxOneRow(np)
 
-	noDecorrelate := hintFlags&HintFlagNoDecorrelate > 0
+	noDecorrelate := hintFlags&h.HintFlagNoDecorrelate > 0
 	if noDecorrelate && len(extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())) == 0 {
 		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))

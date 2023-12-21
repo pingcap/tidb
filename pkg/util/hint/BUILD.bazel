@@ -2,7 +2,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "hint",
-    srcs = ["hint_processor.go"],
+    srcs = [
+        "hint.go",
+        "hint_processor.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/util/hint",
     visibility = ["//visibility:public"],
     deps = [
