@@ -1446,6 +1446,7 @@ type SessionVars struct {
 	shardRand *rand.Rand
 
 	// Resource group name
+	// NOTE: all statement relate opeartion should use StmtCtx.ResourceGroupName instead.
 	ResourceGroupName string
 
 	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
@@ -1961,7 +1962,12 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
 		TiFlashComputeDispatchPolicy:  tiflashcompute.DispatchPolicyConsistentHash,
 	}
+<<<<<<< HEAD:sessionctx/variable/session.go
 	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
+=======
+	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
+	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
+>>>>>>> b27587e9b69 (session: add resource group name in stmt context (#49422)):pkg/sessionctx/variable/session.go
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            DefIndexLookupConcurrency,
 		indexSerialScanConcurrency:        DefIndexSerialScanConcurrency,

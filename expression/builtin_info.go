@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+<<<<<<< HEAD:expression/builtin_info.go
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -35,6 +36,20 @@ import (
 	"github.com/pingcap/tidb/util/chunk"
 	"github.com/pingcap/tidb/util/plancodec"
 	"github.com/pingcap/tidb/util/printer"
+=======
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/privilege"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/printer"
+>>>>>>> b27587e9b69 (session: add resource group name in stmt context (#49422)):pkg/expression/builtin_info.go
 	"github.com/pingcap/tipb/go-tipb"
 	"golang.org/x/exp/slices"
 )
@@ -279,7 +294,20 @@ func (b *builtinCurrentResourceGroupSig) evalString(row chunk.Row) (res string, 
 	if data == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
-	return data.ResourceGroupName, false, nil
+
+	return getHintResourceGroupName(data), false, nil
+}
+
+// get statement resource group name with hint in consideration
+// NOTE: because function `CURRENT_RESOURCE_GROUP()` maybe evaluated in optimizer
+// before we assign the hint value to StmtCtx.ResourceGroupName, so we have to
+// explicitly check the hint here.
+func getHintResourceGroupName(vars *variable.SessionVars) string {
+	groupName := vars.StmtCtx.ResourceGroupName
+	if vars.StmtCtx.HasResourceGroup {
+		groupName = vars.StmtCtx.StmtHints.ResourceGroup
+	}
+	return groupName
 }
 
 type userFunctionClass struct {

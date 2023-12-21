@@ -124,7 +124,12 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
 		SetMemTracker(e.memTracker).
+<<<<<<< HEAD:executor/analyze_col.go
 		SetResourceGroupName(e.ctx.GetSessionVars().ResourceGroupName).
+=======
+		SetResourceGroupName(e.ctx.GetSessionVars().StmtCtx.ResourceGroupName).
+		SetExplicitRequestSourceType(e.ctx.GetSessionVars().ExplicitRequestSourceType).
+>>>>>>> b27587e9b69 (session: add resource group name in stmt context (#49422)):pkg/executor/analyze_col.go
 		Build()
 	if err != nil {
 		return nil, err

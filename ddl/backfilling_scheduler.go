@@ -154,15 +154,57 @@ func initSessCtx(sessCtx sessionctx.Context, sqlMode mysql.SQLMode, tzLocation *
 	sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
 	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
+<<<<<<< HEAD:ddl/backfilling_scheduler.go
 	sessCtx.GetSessionVars().StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
 	sessCtx.GetSessionVars().StmtCtx.NoZeroDate = sqlMode.HasStrictMode()
+=======
+
+	typeFlags := types.StrictFlags.
+		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
+		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()).
+		WithCastTimeToYearThroughConcat(true)
+	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags)
+	sessCtx.GetSessionVars().StmtCtx.ResourceGroupName = resGroupName
+
+>>>>>>> b27587e9b69 (session: add resource group name in stmt context (#49422)):pkg/ddl/backfilling_scheduler.go
 	// Prevent initializing the mock context in the workers concurrently.
 	// For details, see https://github.com/pingcap/tidb/issues/40879.
 	_ = sessCtx.GetDomainInfoSchema()
 	return nil
 }
 
+<<<<<<< HEAD:ddl/backfilling_scheduler.go
 func (b *txnBackfillScheduler) expectedWorkerSize() (size int) {
+=======
+func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context) {
+	sv := sessCtx.GetSessionVars()
+	rowEncoder := sv.RowEncoder.Enable
+	sqlMode := sv.SQLMode
+	var timezone *time.Location
+	if sv.TimeZone != nil {
+		// Copy the content of timezone instead of pointer because it may be changed.
+		tz := *sv.TimeZone
+		timezone = &tz
+	}
+	badNullAsWarn := sv.StmtCtx.BadNullAsWarning
+	dividedZeroAsWarn := sv.StmtCtx.DividedByZeroAsWarning
+	typeFlags := sv.StmtCtx.TypeFlags()
+	resGroupName := sv.StmtCtx.ResourceGroupName
+	return func(usedSessCtx sessionctx.Context) {
+		uv := usedSessCtx.GetSessionVars()
+		uv.RowEncoder.Enable = rowEncoder
+		uv.SQLMode = sqlMode
+		uv.TimeZone = timezone
+		uv.StmtCtx.BadNullAsWarning = badNullAsWarn
+		uv.StmtCtx.DividedByZeroAsWarning = dividedZeroAsWarn
+		uv.StmtCtx.SetTypeFlags(typeFlags)
+		uv.StmtCtx.ResourceGroupName = resGroupName
+	}
+}
+
+func (*txnBackfillScheduler) expectedWorkerSize() (size int) {
+>>>>>>> b27587e9b69 (session: add resource group name in stmt context (#49422)):pkg/ddl/backfilling_scheduler.go
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
 	return mathutil.Min(workerCnt, maxBackfillWorkerSize)
 }

@@ -156,7 +156,12 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 		SetStartTS(startTS).
 		SetKeepOrder(true).
 		SetConcurrency(e.concurrency).
+<<<<<<< HEAD:executor/analyze_idx.go
 		SetResourceGroupName(e.ctx.GetSessionVars().ResourceGroupName).
+=======
+		SetResourceGroupName(e.ctx.GetSessionVars().StmtCtx.ResourceGroupName).
+		SetExplicitRequestSourceType(e.ctx.GetSessionVars().ExplicitRequestSourceType).
+>>>>>>> b27587e9b69 (session: add resource group name in stmt context (#49422)):pkg/executor/analyze_idx.go
 		Build()
 	if err != nil {
 		return err

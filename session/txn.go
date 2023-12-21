@@ -308,7 +308,11 @@ func (txn *LazyTxn) changePendingToValid(ctx context.Context, sctx sessionctx.Co
 		txn.mu.TxnInfo.AllSQLDigests)
 
 	// set resource group name for kv request such as lock pessimistic keys.
+<<<<<<< HEAD:session/txn.go
 	txn.SetOption(kv.ResourceGroupName, sctx.GetSessionVars().ResourceGroupName)
+=======
+	kv.SetTxnResourceGroup(txn, sctx.GetSessionVars().StmtCtx.ResourceGroupName)
+>>>>>>> b27587e9b69 (session: add resource group name in stmt context (#49422)):pkg/session/txn.go
 
 	return nil
 }

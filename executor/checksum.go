@@ -246,7 +246,12 @@ func (c *checksumContext) buildTableRequest(ctx sessionctx.Context, tableID int6
 		SetChecksumRequest(checksum).
 		SetStartTS(c.StartTs).
 		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency()).
+<<<<<<< HEAD:executor/checksum.go
 		SetResourceGroupName(ctx.GetSessionVars().ResourceGroupName).
+=======
+		SetResourceGroupName(ctx.GetSessionVars().StmtCtx.ResourceGroupName).
+		SetExplicitRequestSourceType(ctx.GetSessionVars().ExplicitRequestSourceType).
+>>>>>>> b27587e9b69 (session: add resource group name in stmt context (#49422)):pkg/executor/checksum.go
 		Build()
 }
 
@@ -264,7 +269,12 @@ func (c *checksumContext) buildIndexRequest(ctx sessionctx.Context, tableID int6
 		SetChecksumRequest(checksum).
 		SetStartTS(c.StartTs).
 		SetConcurrency(ctx.GetSessionVars().DistSQLScanConcurrency()).
+<<<<<<< HEAD:executor/checksum.go
 		SetResourceGroupName(ctx.GetSessionVars().ResourceGroupName).
+=======
+		SetResourceGroupName(ctx.GetSessionVars().StmtCtx.ResourceGroupName).
+		SetExplicitRequestSourceType(ctx.GetSessionVars().ExplicitRequestSourceType).
+>>>>>>> b27587e9b69 (session: add resource group name in stmt context (#49422)):pkg/executor/checksum.go
 		Build()
 }
 

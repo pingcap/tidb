@@ -1590,7 +1590,12 @@ func (s *session) SetProcessInfo(sql string, t time.Time, command byte, maxExecu
 		IndexNames:            s.sessionVars.StmtCtx.IndexNames,
 		MaxExecutionTime:      maxExecutionTime,
 		RedactSQL:             s.sessionVars.EnableRedactLog,
+<<<<<<< HEAD:session/session.go
 		ResourceGroupName:     s.sessionVars.ResourceGroupName,
+=======
+		ResourceGroupName:     s.sessionVars.StmtCtx.ResourceGroupName,
+		SessionAlias:          s.sessionVars.SessionAlias,
+>>>>>>> b27587e9b69 (session: add resource group name in stmt context (#49422)):pkg/session/session.go
 	}
 	oldPi := s.ShowProcess()
 	if p == nil {
@@ -1932,8 +1937,14 @@ func (s *session) ExecRestrictedStmt(ctx context.Context, stmtNode ast.StmtNode,
 		return nil, nil, err
 	}
 
+<<<<<<< HEAD:session/session.go
 	for _, dbName := range GetDBNames(se.GetSessionVars()) {
 		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
+=======
+	vars := se.GetSessionVars()
+	for _, dbName := range GetDBNames(vars) {
+		metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.StmtCtx.ResourceGroupName).Observe(time.Since(startTime).Seconds())
+>>>>>>> b27587e9b69 (session: add resource group name in stmt context (#49422)):pkg/session/session.go
 	}
 	return rows, rs.Fields(), err
 }
@@ -2107,8 +2118,14 @@ func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFu
 			return nil, nil, err
 		}
 
+<<<<<<< HEAD:session/session.go
 		for _, dbName := range GetDBNames(se.GetSessionVars()) {
 			metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName).Observe(time.Since(startTime).Seconds())
+=======
+		vars := se.GetSessionVars()
+		for _, dbName := range GetDBNames(vars) {
+			metrics.QueryDurationHistogram.WithLabelValues(metrics.LblInternal, dbName, vars.StmtCtx.ResourceGroupName).Observe(time.Since(startTime).Seconds())
+>>>>>>> b27587e9b69 (session: add resource group name in stmt context (#49422)):pkg/session/session.go
 		}
 		return rows, rs.Fields(), err
 	})
@@ -2203,28 +2220,29 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	}
 	s.setRequestSource(ctx, stmtLabel, stmtNode)
 
+<<<<<<< HEAD:session/session.go
 	// Backup the original resource group name since sql hint might change it during optimization
 	originalResourceGroup := sessVars.ResourceGroupName
 
+=======
+>>>>>>> b27587e9b69 (session: add resource group name in stmt context (#49422)):pkg/session/session.go
 	// Transform abstract syntax tree to a physical plan(stored in executor.ExecStmt).
 	compiler := executor.Compiler{Ctx: s}
 	stmt, err := compiler.Compile(ctx, stmtNode)
-	// session resource-group might be changed by query hint, ensure restore it back when
-	// the execution finished.
-	if sessVars.ResourceGroupName != originalResourceGroup {
+	// check if resource group hint is valid, can't do this in planner.Optimize because we can access
+	// infoschema there.
+	if sessVars.StmtCtx.ResourceGroupName != sessVars.ResourceGroupName {
 		// if target resource group doesn't exist, fallback to the origin resource group.
-		if _, ok := domain.GetDomain(s).InfoSchema().ResourceGroupByName(model.NewCIStr(sessVars.ResourceGroupName)); !ok {
-			logutil.Logger(ctx).Warn("Unknown resource group from hint", zap.String("name", sessVars.ResourceGroupName))
-			sessVars.ResourceGroupName = originalResourceGroup
-			// if we are in a txn, should also reset the txn resource group.
+		if _, ok := domain.GetDomain(s).InfoSchema().ResourceGroupByName(model.NewCIStr(sessVars.StmtCtx.ResourceGroupName)); !ok {
+			logutil.Logger(ctx).Warn("Unknown resource group from hint", zap.String("name", sessVars.StmtCtx.ResourceGroupName))
+			sessVars.StmtCtx.ResourceGroupName = sessVars.ResourceGroupName
 			if txn, err := s.Txn(false); err == nil && txn != nil && txn.Valid() {
+<<<<<<< HEAD:session/session.go
 				txn.SetOption(kv.ResourceGroupName, originalResourceGroup)
+=======
+				kv.SetTxnResourceGroup(txn, sessVars.ResourceGroupName)
+>>>>>>> b27587e9b69 (session: add resource group name in stmt context (#49422)):pkg/session/session.go
 			}
-		} else {
-			defer func() {
-				// Restore the resource group for the session
-				sessVars.ResourceGroupName = originalResourceGroup
-			}()
 		}
 	}
 	if err != nil {
@@ -2273,7 +2291,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	// Observe the resource group query total counter if the resource control is enabled and the
 	// current session is attached with a resource group.
-	resourceGroupName := s.GetSessionVars().ResourceGroupName
+	resourceGroupName := s.GetSessionVars().StmtCtx.ResourceGroupName
 	if len(resourceGroupName) > 0 {
 		metrics.ResourceGroupQueryTotalCounter.WithLabelValues(resourceGroupName).Inc()
 	}
