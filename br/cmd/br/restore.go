@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/trace"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/spf13/cobra"
@@ -37,6 +38,9 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 			return errors.Trace(err)
 		}
 	}
+
+	// have to skip grant table, in order to NotifyUpdatePrivilege in binary mode
+	config.GetGlobalConfig().Security.SkipGrantTable = true
 
 	ctx := GetDefaultContext()
 	if cfg.EnableOpenTracing {
