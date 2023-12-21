@@ -101,10 +101,7 @@ func TryLockRemote(ctx context.Context, storage ExternalStorage, path, hint stri
 	}
 
 	meta := MakeLockMeta(hint)
-	if err := putLockMeta(ctx, storage, path, meta); err != nil {
-		return err
-	}
-	return nil
+	return putLockMeta(ctx, storage, path, meta)
 }
 
 // UnlockRemote removes the lock file at the specified path.
