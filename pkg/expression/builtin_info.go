@@ -906,7 +906,7 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(ctx EvalContext, row chunk.R
 		if len(digestsStr) > errMsgMaxLength {
 			digestsStr = digestsStr[:errMsgMaxLength] + "..."
 		}
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errIncorrectArgs.GenWithStack("The argument can't be unmarshalled as JSON array: '%s'", digestsStr))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errIncorrectArgs.FastGen("The argument can't be unmarshalled as JSON array: '%s'", digestsStr))
 		return "", true, nil
 	}
 
@@ -935,7 +935,7 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(ctx EvalContext, row chunk.R
 			return "", true, errUnknown.GenWithStack("Retrieving cancelled internally with error: %v", err)
 		}
 
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknown.GenWithStack("Retrieving statements information failed with error: %v", err))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknown.FastGen("Retrieving statements information failed with error: %v", err))
 		return "", true, nil
 	}
 
@@ -958,7 +958,7 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(ctx EvalContext, row chunk.R
 
 	resultStr, err := json.Marshal(result)
 	if err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknown.GenWithStack("Marshalling result as JSON failed with error: %v", err))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknown.FastGen("Marshalling result as JSON failed with error: %v", err))
 		return "", true, nil
 	}
 
