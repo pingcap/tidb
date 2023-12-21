@@ -1278,6 +1278,15 @@ func TestIssue15110(t *testing.T) {
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
 	tk.MustExec("explain format = 'brief' SELECT count(*) FROM crm_rd_150m dataset_48 WHERE (CASE WHEN (month(dataset_48.customer_first_date)) <= 30 THEN '新客' ELSE NULL END) IS NOT NULL;")
+
+	// for #49616
+	tk.MustExec(`use test`)
+	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
+	tk.MustExec(`create table t1 (k int, a int)`)
+	tk.MustExec(`create table t2 (k int, b int, key(k))`)
+	tk.MustUseIndex(`select /*+ tidb_inlj(t2, t1) */ *
+  from t2 left join t1 on t1.k=t2.k
+  where a>0 or (a=0 and b>0)`, "k")
 }
 
 func TestReadFromStorageHint(t *testing.T) {
