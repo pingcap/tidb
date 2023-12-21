@@ -311,6 +311,7 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, er
 		}
 		dataFiles := kvMeta.GetDataFiles()
 		statFiles := kvMeta.GetStatFiles()
+
 		startKeys := make([]tidbkv.Key, 0, 10)
 		endKeys := make([]tidbkv.Key, 0, 10)
 
@@ -318,13 +319,12 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, er
 		for ; i < len(kvMeta.MultipleFilesStats)-1; i += 2 {
 			startKey := external.BytesMin(kvMeta.MultipleFilesStats[i].MinKey, kvMeta.MultipleFilesStats[i+1].MinKey)
 			endKey := external.BytesMax(kvMeta.MultipleFilesStats[i].MaxKey, kvMeta.MultipleFilesStats[i+1].MaxKey)
-			endKey = tidbkv.Key(endKey).Next()
-			startKeys = append(startKeys, startKey)
-			endKeys = append(endKeys, endKey)
+			startKeys = append(startKeys, tidbkv.Key(startKey).Clone())
+			endKeys = append(endKeys, tidbkv.Key(endKey).Next().Clone())
 		}
 		if i == len(kvMeta.MultipleFilesStats)-1 {
-			startKeys = append(startKeys, kvMeta.MultipleFilesStats[i].MinKey)
-			endKeys = append(endKeys, kvMeta.MultipleFilesStats[i].MaxKey.Next())
+			startKeys = append(startKeys, kvMeta.MultipleFilesStats[i].MinKey.Clone())
+			endKeys = append(endKeys, kvMeta.MultipleFilesStats[i].MaxKey.Next().Clone())
 		}
 
 		length := len(dataFiles)
@@ -340,8 +340,8 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, er
 					DataFiles: dataFiles[start:end],
 					StatFiles: statFiles[start:end],
 					SortedKVMeta: external.SortedKVMeta{
-						StartKey: startKeys[i],
-						EndKey:   endKeys[i],
+						StartKey: startKeys[i].Clone(),
+						EndKey:   endKeys[i].Clone(),
 					},
 				},
 			})

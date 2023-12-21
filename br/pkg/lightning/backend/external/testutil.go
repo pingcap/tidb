@@ -136,13 +136,13 @@ func splitDataStatAndKeys(datas []string, stats []string, multiStats []MultipleF
 	for ; i < len(multiStats)-1; i += 2 {
 		startKey := BytesMin(multiStats[i].MinKey, multiStats[i+1].MinKey)
 		endKey := BytesMax(multiStats[i].MaxKey, multiStats[i+1].MaxKey)
-		endKey = dbkv.Key(endKey).Next().Clone()
+		endKey = dbkv.Key(endKey).Next()
 		startKeys = append(startKeys, startKey)
 		endKeys = append(endKeys, endKey)
 	}
 	if i == len(multiStats)-1 {
-		startKeys = append(startKeys, multiStats[i].MinKey.Clone())
-		endKeys = append(endKeys, dbkv.Key(multiStats[i].MaxKey).Next().Clone())
+		startKeys = append(startKeys, multiStats[i].MinKey)
+		endKeys = append(endKeys, dbkv.Key(multiStats[i].MaxKey).Next())
 	}
 
 	dataGroup := make([][]string, 0, 10)

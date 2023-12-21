@@ -204,16 +204,16 @@ type readerGroup struct {
 
 func getGroups(ctx context.Context, splitter *RangeSplitter, startKey kv.Key, endKey kv.Key) ([]*readerGroup, error) {
 	readerGroups := make([]*readerGroup, 0, 10)
-	curStart := startKey
+	curStart := startKey.Clone()
 
 	for {
 		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err := splitter.SplitOneRangesGroup()
 		if err != nil {
 			return nil, err
 		}
-		curEnd := endKeyOfGroup
+		curEnd := kv.Key(endKeyOfGroup).Clone()
 		if len(endKeyOfGroup) == 0 {
-			curEnd = endKey
+			curEnd = endKey.Clone()
 		}
 		readerGroups = append(readerGroups, &readerGroup{
 			dataFiles: dataFilesOfGroup,
@@ -222,7 +222,7 @@ func getGroups(ctx context.Context, splitter *RangeSplitter, startKey kv.Key, en
 			endKey:    kv.Key(curEnd).Clone(),
 		})
 
-		curStart = curEnd
+		curStart = kv.Key(curEnd).Clone()
 		if len(endKeyOfGroup) == 0 {
 			break
 		}
