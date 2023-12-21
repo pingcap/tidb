@@ -272,9 +272,10 @@ type limitJobTask struct {
 
 // ddl is used to handle the statements that define the structure or schema of the database.
 type ddl struct {
-	m          sync.RWMutex
-	wg         tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
-	limitJobCh chan *limitJobTask
+	m            sync.RWMutex
+	wg           tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
+	limitJobCh   chan *limitJobTask
+	limitV2JobCh chan *limitJobTask
 
 	*ddlCtx
 	sessPool          *sess.Pool
@@ -283,8 +284,10 @@ type ddl struct {
 	// used in the concurrency ddl.
 	reorgWorkerPool      *workerPool
 	generalDDLWorkerPool *workerPool
+	localWorkerPool      *workerPool
 	// get notification if any DDL coming.
 	ddlJobCh chan struct{}
+	taskCh   chan *limitJobTask
 }
 
 // waitSchemaSyncedController is to control whether to waitSchemaSynced or not.
@@ -668,8 +671,10 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	d := &ddl{
 		ddlCtx:            ddlCtx,
 		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
+		limitV2JobCh:      make(chan *limitJobTask, batchAddingJobs),
 		enableTiFlashPoll: atomicutil.NewBool(true),
 		ddlJobCh:          make(chan struct{}, 100),
+		taskCh:            make(chan *limitJobTask, batchAddingJobs),
 	}
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
@@ -733,12 +738,14 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 	reorgCnt := min(max(runtime.GOMAXPROCS(0)/4, 1), reorgWorkerCnt)
 	d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(addIdxWorker), reorgCnt, reorgCnt, 0), reorg)
 	d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), general)
+	d.localWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), reorgCnt, reorgCnt, 0), general)
 	failpoint.Inject("NoDDLDispatchLoop", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return()
 		}
 	})
 	d.wg.Run(d.startDispatchLoop)
+	d.wg.Run(d.startLocalWorkerLoop)
 }
 
 // Start implements DDL.Start interface.
@@ -1035,7 +1042,11 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 	task := &limitJobTask{job, make(chan error), nil}
-	d.limitJobCh <- task
+	if job.Version == variable.DefTiDBDDLV2 {
+		d.limitV2JobCh <- task
+	} else {
+		d.limitJobCh <- task
+	}
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
 		if val.(bool) {
@@ -1043,7 +1054,11 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			// The same job will be put to the DDL queue twice.
 			job = job.Clone()
 			task1 := &limitJobTask{job, make(chan error), nil}
-			d.limitJobCh <- task1
+			if job.Version == variable.DefTiDBDDLV2 {
+				d.limitV2JobCh <- task1
+			} else {
+				d.limitJobCh <- task1
+			}
 			// The second job result is used for test.
 			task = task1
 		}
@@ -1062,6 +1077,9 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// Notice worker that we push a new job and wait the job done.
 	d.asyncNotifyWorker(d.ddlJobCh, addingDDLJobConcurrent, job.ID, job.Type.String())
 	logutil.BgLogger().Info("start DDL job", zap.String("category", "ddl"), zap.String("job", job.String()), zap.String("query", job.Query))
+	if job.Version == variable.DefTiDBDDLV2 {
+		return nil
+	}
 
 	var historyJob *model.Job
 	jobID := job.ID

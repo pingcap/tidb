@@ -221,10 +221,42 @@ func (d *ddl) limitDDLJobs() {
 				tasks = append(tasks, <-d.limitJobCh)
 			}
 			d.addBatchDDLJobs(tasks)
+		case task := <-d.limitV2JobCh:
+			tasks = tasks[:0]
+			jobLen := len(d.limitJobCh)
+			tasks = append(tasks, task)
+			for i := 0; i < jobLen; i++ {
+				tasks = append(tasks, <-d.limitJobCh)
+			}
+			d.addBatchDDLV2Jobs(tasks)
 		case <-d.ctx.Done():
 			return
 		}
 	}
+}
+
+func (d *ddl) checkFlashbackJobInQueue(t *meta.Meta) error {
+	jobs, err := t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, job := range jobs {
+		if job.Type == model.ActionFlashbackCluster {
+			return errors.Errorf("Can't add ddl job, have flashback cluster job")
+		}
+	}
+	return nil
+}
+
+func (d *ddl) checkFlashBackJobInTable(se sessionctx.Context) error {
+	job, err := getJobsBySQL(sess.NewSession(se), JobTable, fmt.Sprintf("type = %d", model.ActionFlashbackCluster))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(job) != 0 {
+		return errors.Errorf("Can't add ddl job, have flashback cluster job")
+	}
+	return nil
 }
 
 // addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL queue.
@@ -253,6 +285,73 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	} else {
 		logutil.BgLogger().Info("add DDL jobs", zap.String("category", "ddl"), zap.Int("batch count", len(tasks)), zap.String("jobs", jobs), zap.Bool("table", toTable))
 	}
+}
+
+// addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL queue.
+func (d *ddl) addBatchDDLV2Jobs(tasks []*limitJobTask) {
+	err := d.addBatchDDLJobs2LocalWorker(tasks)
+	if err != nil {
+		for _, task := range tasks {
+			task.err <- err
+		}
+	}
+	if err != nil {
+		logutil.BgLogger().Warn("add DDL jobs failed", zap.String("category", "ddl"), zap.Error(err))
+	} else {
+		logutil.BgLogger().Info("add DDL jobs", zap.String("category", "ddl"), zap.Int("batch count", len(tasks)))
+	}
+
+}
+
+func (d *ddl) addBatchDDLJobs2LocalWorker(tasks []*limitJobTask) error {
+	var (
+		ids     []int64
+		err     error
+		startTS uint64
+	)
+
+	toTable := !variable.DDLForce2Queue.Load()
+	if toTable {
+		se, err := d.sessPool.Get()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer d.sessPool.Put(se)
+		if err := d.checkFlashBackJobInTable(se); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	err = kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		ids, err = t.GenGlobalIDs(len(tasks))
+		if err != nil {
+			return errors.Trace(err)
+		}
+		startTS = txn.StartTS()
+		if !toTable {
+			return d.checkFlashbackJobInQueue(t)
+		}
+		return nil
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for i, task := range tasks {
+		job := task.job
+		job.StartTS = startTS
+		job.ID = ids[i]
+		job.Encode(true)
+		setJobStateToQueueing(job)
+
+		injectModifyJobArgFailPoint(job)
+	}
+	for _, task := range tasks {
+		d.taskCh <- task
+	}
+	return nil
 }
 
 // buildJobDependence sets the curjob's dependency-ID.
@@ -295,14 +394,8 @@ func (d *ddl) addBatchDDLJobs2Queue(tasks []*limitJobTask) error {
 			return errors.Trace(err)
 		}
 
-		jobs, err := t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
-		if err != nil {
+		if err := d.checkFlashbackJobInQueue(t); err != nil {
 			return errors.Trace(err)
-		}
-		for _, job := range jobs {
-			if job.Type == model.ActionFlashbackCluster {
-				return errors.Errorf("Can't add ddl job, have flashback cluster job")
-			}
 		}
 
 		for i, task := range tasks {
@@ -366,12 +459,8 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		return errors.Trace(err)
 	}
 	defer d.sessPool.Put(se)
-	job, err := getJobsBySQL(sess.NewSession(se), JobTable, fmt.Sprintf("type = %d", model.ActionFlashbackCluster))
-	if err != nil {
+	if err := d.checkFlashBackJobInTable(se); err != nil {
 		return errors.Trace(err)
-	}
-	if len(job) != 0 {
-		return errors.Errorf("Can't add ddl job, have flashback cluster job")
 	}
 
 	var (
@@ -491,6 +580,9 @@ func (w *worker) updateDDLJob(job *model.Job, meetErr bool) error {
 	if !updateRawArgs {
 		w.jobLogger(job).Info("meet something wrong before update DDL job, shouldn't update raw args",
 			zap.String("job", job.String()))
+	}
+	if job.Version == variable.DefTiDBDDLV2 {
+		return errors.Trace(insertDDLJobs2Table(w.sess, updateRawArgs, job))
 	}
 	return errors.Trace(updateDDLJob2Table(w.sess, job, updateRawArgs))
 }
@@ -822,9 +914,11 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	// set request source type to DDL type
 	txn.SetOption(kv.RequestSourceType, jobContext.ddlJobSourceType())
 
+	logutil.BgLogger().Info("before run ddl job")
 	// If running job meets error, we will save this error in job Error
 	// and retry later if the job is not cancelled.
 	schemaVer, runJobErr = w.runDDLJob(d, t, job)
+	logutil.BgLogger().Info("after run ddl job")
 
 	d.mu.RLock()
 	d.mu.hook.OnJobRunAfter(job)
@@ -850,13 +944,17 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		schemaVer = 0
 	}
 
-	err = w.registerMDLInfo(job, schemaVer)
-	if err != nil {
-		w.sess.Rollback()
-		d.unlockSchemaVersion(job.ID)
-		return 0, err
+	if job.Version != variable.DefTiDBDDLV2 {
+		err = w.registerMDLInfo(job, schemaVer)
+		if err != nil {
+			w.sess.Rollback()
+			d.unlockSchemaVersion(job.ID)
+			return 0, err
+		}
 	}
+	logutil.BgLogger().Info("before update ddl job")
 	err = w.updateDDLJob(job, runJobErr != nil)
+	logutil.BgLogger().Info("after update ddl job")
 	if err = w.handleUpdateJobError(t, job, err); err != nil {
 		w.sess.Rollback()
 		d.unlockSchemaVersion(job.ID)
@@ -870,7 +968,9 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	w.registerSync(job)
+	if job.Version != variable.DefTiDBDDLV2 {
+		w.registerSync(job)
+	}
 
 	// If error is non-retryable, we can ignore the sleep.
 	if runJobErr != nil && errorIsRetryable(runJobErr, job) {

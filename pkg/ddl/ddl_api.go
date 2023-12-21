@@ -2602,6 +2602,13 @@ func setTemporaryType(_ sessionctx.Context, tbInfo *model.TableInfo, s *ast.Crea
 	return nil
 }
 
+func CanCreateTableV2(tbInfo *model.TableInfo) (can bool) {
+	if variable.DDLVersion.Load() != variable.DefTiDBDDLV2 {
+		return false
+	}
+	return len(tbInfo.ForeignKeys) == 0
+}
+
 // createTableWithInfoJob returns the table creation job.
 // WARNING: it may return a nil job, which means you don't need to submit any DDL job.
 // WARNING!!!: if retainID == true, it will not allocate ID by itself. That means if the caller
@@ -2742,6 +2749,10 @@ func (d *ddl) CreateTableWithInfo(
 	}
 	if job == nil {
 		return nil
+	}
+
+	if CanCreateTableV2(tbInfo) {
+		job.Version = variable.DefTiDBDDLV2
 	}
 
 	err = d.DoDDLJob(ctx, job)

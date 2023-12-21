@@ -245,6 +245,36 @@ func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 	})
 }
 
+func (d *ddl) startLocalWorkerLoop() {
+	ticker := time.NewTicker(dispatchLoopWaitingDuration)
+	defer ticker.Stop()
+	for {
+		if isChanClosed(d.ctx.Done()) {
+			return
+		}
+		select {
+		case <-d.ctx.Done():
+			return
+		case task, ok := <-d.taskCh:
+			if !ok {
+				return
+			}
+			wk, err := d.localWorkerPool.get()
+			if err != nil {
+				return
+			}
+			for wk == nil {
+				time.Sleep(dispatchLoopWaitingDuration)
+				wk, err = d.localWorkerPool.get()
+				if err != nil {
+					return
+				}
+			}
+			d.delivery2LocalWorker(wk, d.localWorkerPool, task)
+		}
+	}
+}
+
 func (d *ddl) startDispatchLoop() {
 	sessCtx, err := d.sessPool.Get()
 	if err != nil {
@@ -358,6 +388,34 @@ func (d *ddl) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*
 }
 
 // delivery2worker owns the worker, need to put it back to the pool in this function.
+func (d *ddl) delivery2LocalWorker(wk *worker, pool *workerPool, task *limitJobTask) {
+	job := task.job
+	logutil.BgLogger().Info("delivery2LocalWorker", zap.String("job", job.String()))
+	d.wg.Run(func() {
+		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
+		defer func() {
+			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
+		}()
+
+		schemaVer, err := wk.HandleDDLJobTable(d.ddlCtx, job)
+		pool.put(wk)
+		if err != nil {
+			logutil.BgLogger().Info("handle ddl job failed", zap.String("category", "ddl"), zap.Error(err), zap.String("job", job.String()))
+		} else {
+			failpoint.Inject("mockDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
+				if val.(bool) {
+					if mockDDLErrOnce == 0 {
+						mockDDLErrOnce = schemaVer
+						failpoint.Return()
+					}
+				}
+			})
+		}
+		task.err <- err
+	})
+}
+
+// delivery2worker owns the worker, need to put it back to the pool in this function.
 func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 	injectFailPointForGetJob(job)
 	d.runningJobs.add(job)
@@ -369,7 +427,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 		}()
 		// check if this ddl job is synced to all servers.
-		if !job.NotStarted() && (!d.isSynced(job) || !d.maybeAlreadyRunOnce(job.ID)) {
+		if job.Version != variable.DefTiDBDDLV2 && !job.NotStarted() && (!d.isSynced(job) || !d.maybeAlreadyRunOnce(job.ID)) {
 			if variable.EnableMDL.Load() {
 				exist, version, err := checkMDLInfo(job.ID, d.sessPool)
 				if err != nil {
@@ -406,7 +464,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 		pool.put(wk)
 		if err != nil {
 			logutil.BgLogger().Info("handle ddl job failed", zap.String("category", "ddl"), zap.Error(err), zap.String("job", job.String()))
-		} else {
+		} else if job.Version != variable.DefTiDBDDLV2 {
 			failpoint.Inject("mockDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
 				if val.(bool) {
 					if mockDDLErrOnce == 0 {
