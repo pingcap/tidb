@@ -431,24 +431,23 @@ func TestDestroyAllErrorCheckpoints_SQL(t *testing.T) {
 
 	s.mock.ExpectBegin()
 	s.mock.
-		ExpectQuery(`\QSELECT t.table_name, COALESCE(MIN(e.engine_id), 0), COALESCE(MAX(e.engine_id), -1) FROM ?.? t
-			LEFT JOIN ?.? e ON t.table_name = e.table_name WHERE ? = ? AND t.status <= ? GROUP BY t.table_name\E`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		ExpectQuery("\\QSELECT t.table_name, COALESCE(MIN(e.engine_id), 0), COALESCE(MAX(e.engine_id), -1) FROM `mock-schema`.table_v8 t LEFT JOIN `mock-schema`.engine_v5 e ON t.table_name = e.table_name WHERE ? = ? AND t.status <= ? GROUP BY t.table_name\\E").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(
 			sqlmock.NewRows([]string{"table_name", "__min__", "__max__"}).
 				AddRow("`db1`.`t2`", -1, 0),
 		)
 	s.mock.
-		ExpectExec(`\QDELETE FROM ?.? WHERE table_name IN (SELECT table_name FROM ?.? WHERE ? = ? AND status <= ?)\E`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		ExpectExec("\\QDELETE FROM `mock-schema`.chunk_v5 WHERE table_name IN (SELECT table_name FROM `mock-schema`.table_v8 WHERE ? = ? AND status <= ?)\\E").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 5))
 	s.mock.
-		ExpectExec(`\QDELETE FROM ?.? WHERE table_name IN (SELECT table_name FROM ?.? WHERE ? = ? AND status <= ?)\E`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		ExpectExec("\\QDELETE FROM `mock-schema`.engine_v5 WHERE table_name IN (SELECT table_name FROM `mock-schema`.table_v8 WHERE ? = ? AND status <= ?)\\E").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 3))
 	s.mock.
-		ExpectExec(`\QDELETE FROM ?.? WHERE ? = ? AND status <= ?\E`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		ExpectExec("\\QDELETE FROM `mock-schema`.table_v8 WHERE ? = ? AND status <= ?\\E").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 2))
 	s.mock.ExpectCommit()
 
@@ -466,24 +465,23 @@ func TestDestroyOneErrorCheckpoints(t *testing.T) {
 
 	s.mock.ExpectBegin()
 	s.mock.
-		ExpectQuery(`\QSELECT t.table_name, COALESCE(MIN(e.engine_id), 0), COALESCE(MAX(e.engine_id), -1) FROM ?.? t
-			LEFT JOIN ?.? e ON t.table_name = e.table_name WHERE ? = ? AND t.status <= ? GROUP BY t.table_name\E`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		ExpectQuery("\\QSELECT t.table_name, COALESCE(MIN(e.engine_id), 0), COALESCE(MAX(e.engine_id), -1) FROM `mock-schema`.table_v8 t LEFT JOIN `mock-schema`.engine_v5 e ON t.table_name = e.table_name WHERE ? = ? AND t.status <= ? GROUP BY t.table_name\\E").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(
 			sqlmock.NewRows([]string{"table_name", "__min__", "__max__"}).
 				AddRow("`db1`.`t2`", -1, 0),
 		)
 	s.mock.
-		ExpectExec(`\QDELETE FROM ?.? WHERE table_name IN (SELECT table_name FROM ?.? WHERE ? = ? AND status <= ?)\E`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		ExpectExec("\\QDELETE FROM `mock-schema`.chunk_v5 WHERE table_name IN (SELECT table_name FROM `mock-schema`.table_v8 WHERE ? = ? AND status <= ?)\\E").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 5))
 	s.mock.
-		ExpectExec(`\QDELETE FROM ?.? WHERE table_name IN (SELECT table_name FROM ?.? WHERE ? = ? AND status <= ?)\E`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		ExpectExec("\\QDELETE FROM `mock-schema`.engine_v5 WHERE table_name IN (SELECT table_name FROM `mock-schema`.table_v8 WHERE ? = ? AND status <= ?)\\E").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 3))
 	s.mock.
-		ExpectExec(`\QDELETE FROM ?.? WHERE ? = ? AND status <= ?\E`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		ExpectExec("\\QDELETE FROM `mock-schema`.table_v8 WHERE ? = ? AND status <= ?\\E").
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 2))
 	s.mock.ExpectCommit()
 
