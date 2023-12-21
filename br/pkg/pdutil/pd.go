@@ -406,7 +406,6 @@ func (p *PdController) getRegionCountWith(
 	return 0, errors.Trace(err)
 }
 
-// TODO(lance6716): good start!
 // GetStoreInfo returns the info of store with the specified id.
 func (p *PdController) GetStoreInfo(ctx context.Context, storeID uint64) (*pdtypes.StoreInfo, error) {
 	return p.getStoreInfoWith(ctx, pdRequest, storeID)
