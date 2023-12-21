@@ -1211,7 +1211,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 
 	vars := cc.getCtx().GetSessionVars()
 	for _, dbName := range session.GetDBNames(vars) {
-		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, vars.ResourceGroupName).Observe(cost.Seconds())
+		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
 	}
 }
 
@@ -1550,93 +1550,6 @@ func (cc *clientConn) writeReq(ctx context.Context, filePath string) error {
 	}
 
 	return cc.flush(ctx)
-}
-
-// handleLoadData does the additional work after processing the 'load data' query.
-// It sends client a file path, then reads the file content from client, inserts data into database.
-func (cc *clientConn) handleLoadData(ctx context.Context, loadDataWorker *executor.LoadDataWorker) error {
-	// If the server handles the load data request, the client has to set the ClientLocalFiles capability.
-	if cc.capability&mysql.ClientLocalFiles == 0 {
-		return servererr.ErrNotAllowedCommand
-	}
-	if loadDataWorker == nil {
-		return errors.New("load data info is empty")
-	}
-	infile := loadDataWorker.GetInfilePath()
-	err := cc.writeReq(ctx, infile)
-	if err != nil {
-		return err
-	}
-
-	var (
-		// use Pipe to convert cc.readPacket to io.Reader
-		r, w    = io.Pipe()
-		drained bool
-		wg      sync.WaitGroup
-	)
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		//nolint: errcheck
-		defer w.Close()
-
-		var (
-			data []byte
-			err2 error
-		)
-		for {
-			if len(data) == 0 {
-				data, err2 = cc.readPacket()
-				if err2 != nil {
-					w.CloseWithError(err2)
-					return
-				}
-				// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
-				if len(data) == 0 {
-					drained = true
-					return
-				}
-			}
-
-			n, err3 := w.Write(data)
-			if err3 != nil {
-				logutil.Logger(ctx).Error("write data meet error", zap.Error(err3))
-				return
-			}
-			data = data[n:]
-		}
-	}()
-
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalLoadData)
-	err = loadDataWorker.LoadLocal(ctx, r)
-	_ = r.Close()
-	wg.Wait()
-
-	if err != nil {
-		if !drained {
-			logutil.Logger(ctx).Info("not drained yet, try reading left data from client connection")
-		}
-		// drain the data from client conn util empty packet received, otherwise the connection will be reset
-		// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_com_query_response_local_infile_request.html
-		for !drained {
-			// check kill flag again, let the draining loop could quit if empty packet could not be received
-			if atomic.CompareAndSwapUint32(&loadDataWorker.UserSctx.GetSessionVars().SQLKiller.Signal, 1, 0) {
-				logutil.Logger(ctx).Warn("receiving kill, stop draining data, connection may be reset")
-				return exeerrors.ErrQueryInterrupted
-			}
-			curData, err1 := cc.readPacket()
-			if err1 != nil {
-				logutil.Logger(ctx).Error("drain reading left data encounter errors", zap.Error(err1))
-				break
-			}
-			if len(curData) == 0 {
-				drained = true
-				logutil.Logger(ctx).Info("draining finished for error", zap.Error(err))
-				break
-			}
-		}
-	}
-	return err
 }
 
 // getDataFromPath gets file contents from file path.
@@ -2036,12 +1949,28 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 
 // The first return value indicates whether the call of handleStmt has no side effect and can be retried.
 // Currently, the first return value is used to fall back to TiKV when TiFlash is down.
-func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns []stmtctx.SQLWarn, lastStmt bool) (bool, error) {
+func (cc *clientConn) handleStmt(
+	ctx context.Context, stmt ast.StmtNode,
+	warns []stmtctx.SQLWarn, lastStmt bool,
+) (bool, error) {
 	ctx = context.WithValue(ctx, execdetails.StmtExecDetailKey, &execdetails.StmtExecDetails{})
 	ctx = context.WithValue(ctx, util.ExecDetailsKey, &util.ExecDetails{})
 	ctx = context.WithValue(ctx, util.RUDetailsCtxKey, util.NewRUDetails())
 	reg := trace.StartRegion(ctx, "ExecuteStmt")
 	cc.audit(plugin.Starting)
+
+	// if stmt is load data stmt, store the channel that reads from the conn
+	// into the ctx for executor to use
+	if s, ok := stmt.(*ast.LoadDataStmt); ok {
+		if s.FileLocRef == ast.FileLocClient {
+			err := cc.preprocessLoadDataLocal(ctx)
+			defer cc.postprocessLoadDataLocal()
+			if err != nil {
+				return false, err
+			}
+		}
+	}
+
 	rs, err := cc.ctx.ExecuteStmt(ctx, stmt)
 	reg.End()
 	// - If rs is not nil, the statement tracker detachment from session tracker
@@ -2051,6 +1980,7 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	if rs != nil {
 		defer rs.Close()
 	}
+
 	if err != nil {
 		// If error is returned during the planner phase or the executor.Open
 		// phase, the rs will be nil, and StmtCtx.MemTracker StmtCtx.DiskTracker
@@ -2088,17 +2018,92 @@ func (cc *clientConn) handleStmt(ctx context.Context, stmt ast.StmtNode, warns [
 	return false, err
 }
 
+// Preprocess LOAD DATA. Load data from a local file requires reading from the connection.
+// The function pass a builder to build the connection reader to the context,
+// which will be used in LoadDataExec.
+func (cc *clientConn) preprocessLoadDataLocal(ctx context.Context) error {
+	if cc.capability&mysql.ClientLocalFiles == 0 {
+		return servererr.ErrNotAllowedCommand
+	}
+
+	var readerBuilder executor.LoadDataReaderBuilder = func(filepath string) (
+		io.ReadCloser, error,
+	) {
+		err := cc.writeReq(ctx, filepath)
+		if err != nil {
+			return nil, err
+		}
+
+		drained := false
+		r, w := io.Pipe()
+
+		go func() {
+			var errOccurred error
+
+			defer func() {
+				if errOccurred != nil {
+					// Continue reading packets to drain the connection
+					for !drained {
+						data, err := cc.readPacket()
+						if err != nil {
+							logutil.Logger(ctx).Error(
+								"drain connection failed in load data",
+								zap.Error(err),
+							)
+							break
+						}
+						if len(data) == 0 {
+							drained = true
+						}
+					}
+				}
+				err := w.CloseWithError(errOccurred)
+				if err != nil {
+					logutil.Logger(ctx).Error(
+						"close pipe failed in `load data`",
+						zap.Error(err),
+					)
+				}
+			}()
+
+			for {
+				data, err := cc.readPacket()
+				if err != nil {
+					errOccurred = err
+					return
+				}
+
+				if len(data) == 0 {
+					drained = true
+					return
+				}
+
+				// Write all content in `data`
+				for len(data) > 0 {
+					n, err := w.Write(data)
+					if err != nil {
+						errOccurred = err
+						return
+					}
+					data = data[n:]
+				}
+			}
+		}()
+
+		return r, nil
+	}
+
+	cc.ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
+
+	return nil
+}
+
+func (cc *clientConn) postprocessLoadDataLocal() {
+	cc.ctx.ClearValue(executor.LoadDataReaderBuilderKey)
+}
+
 func (cc *clientConn) handleFileTransInConn(ctx context.Context, status uint16) (bool, error) {
 	handled := false
-	loadDataInfo := cc.ctx.Value(executor.LoadDataVarKey)
-	if loadDataInfo != nil {
-		handled = true
-		defer cc.ctx.SetValue(executor.LoadDataVarKey, nil)
-		//nolint:forcetypeassert
-		if err := cc.handleLoadData(ctx, loadDataInfo.(*executor.LoadDataWorker)); err != nil {
-			return handled, err
-		}
-	}
 
 	loadStats := cc.ctx.Value(executor.LoadStatsVarKey)
 	if loadStats != nil {

@@ -212,8 +212,7 @@ func (*globalPanicOnExceed) GetPriority() int64 {
 
 // newList creates a new List to buffer current executor's result.
 func newList(e exec.Executor) *chunk.List {
-	base := e.Base()
-	return chunk.NewList(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize())
+	return chunk.NewList(e.RetFieldTypes(), e.InitCap(), e.MaxChunkSize())
 }
 
 // CommandDDLJobsExec is the general struct for Cancel/Pause/Resume commands on
@@ -1989,6 +1988,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.OptimizerCETrace = nil
 	sc.IsSyncStatsFailed = false
 	sc.IsExplainAnalyzeDML = false
+	sc.ResourceGroupName = vars.ResourceGroupName
 	// Firstly we assume that UseDynamicPruneMode can be enabled according session variable, then we will check other conditions
 	// in PlanBuilder.buildDataSource
 	if ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
@@ -2377,7 +2377,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		w.e.err.CompareAndSwap(nil, &err)
 	}
 
-	se, err := w.e.Base().GetSysSession()
+	se, err := w.e.BaseExecutor.GetSysSession()
 	if err != nil {
 		trySaveErr(err)
 		return
@@ -2385,7 +2385,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	restoreCtx := w.initSessCtx(se)
 	defer func() {
 		restoreCtx()
-		w.e.Base().ReleaseSysSession(ctx, se)
+		w.e.BaseExecutor.ReleaseSysSession(ctx, se)
 	}()
 
 	var pkCols []string

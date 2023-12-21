@@ -47,8 +47,7 @@ type OneFileWriter struct {
 	dataWriter     storage.ExternalFileWriter
 	statWriter     storage.ExternalFileWriter
 
-	onClose OnCloseFunc
-	closed  bool
+	closed bool
 
 	logger *zap.Logger
 }
@@ -65,7 +64,9 @@ func (w *OneFileWriter) initWriter(ctx context.Context, partSize int64) (
 	w.statFile = filepath.Join(w.filenamePrefix+statSuffix, "one-file")
 	w.statWriter, err = w.store.Create(ctx, w.statFile, &storage.WriterOption{Concurrency: 20, PartSize: int64(5 * size.MB)})
 	if err != nil {
-		_ = w.dataWriter.Close(ctx)
+		w.logger.Info("create stat writer failed",
+			zap.Error(err))
+		err = w.dataWriter.Close(ctx)
 		return err
 	}
 	w.logger.Info("one file writer", zap.String("data-file", w.dataFile), zap.String("stat-file", w.statFile))
@@ -104,6 +105,8 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 			return err
 		}
 		w.rc.reset()
+		// the new prop should have the same offset with kvStore.
+		w.rc.currProp.offset = w.kvStore.offset
 	}
 	binary.BigEndian.AppendUint64(buf[:0], uint64(keyLen))
 	binary.BigEndian.AppendUint64(buf[lengthBytes:lengthBytes], uint64(len(idxVal)))
@@ -150,7 +153,7 @@ func (w *OneFileWriter) closeImpl(ctx context.Context) (err error) {
 		err = err1
 		return
 	}
-	// 4. close stat writer.
+	// 3. close stat writer.
 	err2 := w.statWriter.Close(ctx)
 	if err2 != nil {
 		w.logger.Error("Close stat writer failed", zap.Error(err))

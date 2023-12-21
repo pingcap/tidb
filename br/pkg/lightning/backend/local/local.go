@@ -56,7 +56,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -64,6 +63,7 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -466,7 +466,8 @@ type Backend struct {
 	engines        sync.Map // sync version of map[uuid.UUID]*Engine
 	externalEngine map[uuid.UUID]common.Engine
 
-	pdCtl            *pdutil.PdController
+	pdCli            pd.Client
+	pdHTTPCli        pdhttp.Client
 	splitCli         split.SplitClient
 	tikvCli          *tikvclient.KVStore
 	tls              *common.TLS
@@ -502,11 +503,19 @@ func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 	return pebble.Open(dbPath, opts)
 }
 
+const (
+	pdCliMaxMsgSize = int(128 * units.MiB) // pd.ScanRegion may return a large response
+)
+
 var (
 	// RunInTest indicates whether the current process is running in test.
 	RunInTest bool
 	// LastAlloc is the last ID allocator.
-	LastAlloc manual.Allocator
+	LastAlloc      manual.Allocator
+	maxCallMsgSize = []grpc.DialOption{
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(pdCliMaxMsgSize)),
+		grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(pdCliMaxMsgSize)),
+	}
 )
 
 // NewBackend creates new connections to tikv.
@@ -523,11 +532,20 @@ func NewBackend(
 		}
 	}()
 	config.adjust()
-	pdCtl, err := pdutil.NewPdController(ctx, config.PDAddr, tls.TLSConfig(), tls.ToPDSecurityOption())
+	pdAddrs := strings.Split(config.PDAddr, ",")
+	pdCli, err := pd.NewClientWithContext(
+		ctx, pdAddrs, tls.ToPDSecurityOption(),
+		pd.WithGRPCDialOptions(maxCallMsgSize...),
+		// If the time too short, we may scatter a region many times, because
+		// the interface `ScatterRegions` may time out.
+		pd.WithCustomTimeoutOption(60*time.Second),
+		pd.WithMaxErrorRetry(3),
+	)
 	if err != nil {
 		return nil, common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 	}
-	splitCli := split.NewSplitClient(pdCtl.GetPDClient(), tls.TLSConfig(), false)
+	pdHTTPCli := pdhttp.NewClient("lightning", pdAddrs, pdhttp.WithTLSConfig(tls.TLSConfig()))
+	splitCli := split.NewSplitClient(pdCli, tls.TLSConfig(), false)
 
 	shouldCreate := true
 	if config.CheckpointEnabled {
@@ -562,9 +580,9 @@ func NewBackend(
 
 	var pdCliForTiKV *tikvclient.CodecPDClient
 	if config.KeyspaceName == "" {
-		pdCliForTiKV = tikvclient.NewCodecPDClient(tikvclient.ModeTxn, pdCtl.GetPDClient())
+		pdCliForTiKV = tikvclient.NewCodecPDClient(tikvclient.ModeTxn, pdCli)
 	} else {
-		pdCliForTiKV, err = tikvclient.NewCodecPDClientWithKeyspace(tikvclient.ModeTxn, pdCtl.GetPDClient(), config.KeyspaceName)
+		pdCliForTiKV, err = tikvclient.NewCodecPDClientWithKeyspace(tikvclient.ModeTxn, pdCli, config.KeyspaceName)
 		if err != nil {
 			return nil, common.ErrCreatePDClient.Wrap(err).GenWithStackByArgs()
 		}
@@ -595,7 +613,8 @@ func NewBackend(
 	local := &Backend{
 		engines:          sync.Map{},
 		externalEngine:   map[uuid.UUID]common.Engine{},
-		pdCtl:            pdCtl,
+		pdCli:            pdCli,
+		pdHTTPCli:        pdHTTPCli,
 		splitCli:         splitCli,
 		tikvCli:          tikvCli,
 		tls:              tls,
@@ -635,7 +654,7 @@ func (local *Backend) TotalMemoryConsume() int64 {
 }
 
 func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
-	stores, err := local.pdCtl.GetPDClient().GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := local.pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -802,7 +821,8 @@ func (local *Backend) Close() {
 		}
 	}
 	_ = local.tikvCli.Close()
-	local.pdCtl.Close()
+	local.pdHTTPCli.Close()
+	local.pdCli.Close()
 }
 
 // FlushEngine ensure the written data is saved successfully, to make sure no data lose after restart
@@ -933,7 +953,7 @@ func (local *Backend) allocateTSIfNotExists(ctx context.Context, engine *Engine)
 	if engine.TS > 0 {
 		return nil
 	}
-	physical, logical, err := local.pdCtl.GetPDClient().GetTS(ctx)
+	physical, logical, err := local.pdCli.GetTS(ctx)
 	if err != nil {
 		return err
 	}
@@ -953,7 +973,7 @@ func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig
 		if err != nil {
 			return err
 		}
-		physical, logical, err := local.pdCtl.GetPDClient().GetTS(ctx)
+		physical, logical, err := local.pdCli.GetTS(ctx)
 		if err != nil {
 			return err
 		}
@@ -1400,6 +1420,27 @@ func (*Backend) isRetryableImportTiKVError(err error) bool {
 	return common.IsRetryableError(err)
 }
 
+func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
+	logger := log.FromContext(ctx)
+	capacity, err := units.RAMInBytes(store.Status.Capacity)
+	if err != nil {
+		logger.Warn("failed to parse capacity",
+			zap.String("capacity", store.Status.Capacity), zap.Error(err))
+		return nil
+	}
+	available, err := units.RAMInBytes(store.Status.Available)
+	if err != nil {
+		logger.Warn("failed to parse available",
+			zap.String("available", store.Status.Available), zap.Error(err))
+		return nil
+	}
+	ratio := available * 100 / capacity
+	if ratio < 10 {
+		return errors.Errorf("the remaining storage capacity of TiKV(%s) is less than 10%%; please increase the storage capacity of TiKV and try again", store.Store.Address)
+	}
+	return nil
+}
+
 // executeJob handles a regionJob and tries to convert it to ingested stage.
 // If non-retryable error occurs, it will return the error.
 // If retryable error occurs, it will return nil and caller should check the stage
@@ -1414,26 +1455,14 @@ func (local *Backend) executeJob(
 	})
 	if local.ShouldCheckTiKV {
 		for _, peer := range job.region.Region.GetPeers() {
-			var (
-				store *pdtypes.StoreInfo
-				err   error
-			)
-			for i := 0; i < maxRetryTimes; i++ {
-				store, err = local.pdCtl.GetStoreInfo(ctx, peer.StoreId)
-				if err != nil {
-					continue
-				}
-				if store.Status.Capacity > 0 {
-					// The available disk percent of TiKV
-					ratio := store.Status.Available * 100 / store.Status.Capacity
-					if ratio < 10 {
-						return errors.Errorf("the remaining storage capacity of TiKV(%s) is less than 10%%; please increase the storage capacity of TiKV and try again", store.Store.Address)
-					}
-				}
-				break
-			}
+			store, err := local.pdHTTPCli.GetStore(ctx, peer.StoreId)
 			if err != nil {
 				log.FromContext(ctx).Error("failed to get StoreInfo from pd http api", zap.Error(err))
+				continue
+			}
+			err = checkDiskAvail(ctx, store)
+			if err != nil {
+				return err
 			}
 		}
 	}
@@ -1502,7 +1531,7 @@ func (local *Backend) ImportEngine(
 		log.FromContext(ctx).Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
 		return nil
 	}
-	kvRegionSplitSize, kvRegionSplitKeys, err := GetRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
+	kvRegionSplitSize, kvRegionSplitKeys, err := GetRegionSplitSizeKeys(ctx, local.pdCli, local.tls)
 	if err == nil {
 		if kvRegionSplitSize > regionSplitSize {
 			regionSplitSize = kvRegionSplitSize
@@ -1532,7 +1561,7 @@ func (local *Backend) ImportEngine(
 		if len(regionRanges[len(regionRanges)-1].End) > 0 {
 			endKey = codec.EncodeBytes(nil, regionRanges[len(regionRanges)-1].End)
 		}
-		done, err := local.pdCtl.PauseSchedulersByKeyRange(subCtx, startKey, endKey)
+		done, err := pdutil.PauseSchedulersByKeyRange(subCtx, local.pdHTTPCli, startKey, endKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1582,7 +1611,7 @@ func (local *Backend) ImportEngine(
 
 // GetRegionSplitSizeKeys gets the region split size and keys from PD.
 func (local *Backend) GetRegionSplitSizeKeys(ctx context.Context) (finalSize int64, finalKeys int64, err error) {
-	return GetRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
+	return GetRegionSplitSizeKeys(ctx, local.pdCli, local.tls)
 }
 
 // expose these variables to unit test.
@@ -1865,7 +1894,7 @@ func (local *Backend) LocalWriter(_ context.Context, cfg *backend.LocalWriterCon
 // This function will spawn a goroutine to keep switch mode periodically until the context is done.
 // The return done channel is used to notify the caller that the background goroutine is exited.
 func (local *Backend) SwitchModeByKeyRanges(ctx context.Context, ranges []common.Range) (<-chan struct{}, error) {
-	switcher := NewTiKVModeSwitcher(local.tls, local.pdCtl.GetPDClient(), log.FromContext(ctx).Logger)
+	switcher := NewTiKVModeSwitcher(local.tls, local.pdCli, log.FromContext(ctx).Logger)
 	done := make(chan struct{})
 
 	keyRanges := make([]*sst.Range, 0, len(ranges))
@@ -1959,11 +1988,6 @@ func (local *Backend) EngineFileSizes() (res []backend.EngineFileSize) {
 		return true
 	})
 	return
-}
-
-// GetPDClient returns the PD client.
-func (local *Backend) GetPDClient() pd.Client {
-	return local.pdCtl.GetPDClient()
 }
 
 var getSplitConfFromStoreFunc = getSplitConfFromStore

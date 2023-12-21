@@ -15,279 +15,307 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/pkg/kv"
+	"fmt"
+	"strings"
+
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 )
 
-// GenHintsFromFlatPlan generates hints from a FlatPhysicalPlan.
-func GenHintsFromFlatPlan(flat *FlatPhysicalPlan) []*ast.TableOptimizerHint {
-	if len(flat.Main) == 0 {
+// Hint flags listed here are used by PlanBuilder.subQueryHintFlags.
+const (
+	// TiDBMergeJoin is hint enforce merge join.
+	TiDBMergeJoin = "tidb_smj"
+	// HintSMJ is hint enforce merge join.
+	HintSMJ = "merge_join"
+	// HintNoMergeJoin is the hint to enforce the query not to use merge join.
+	HintNoMergeJoin = "no_merge_join"
+
+	// TiDBBroadCastJoin indicates applying broadcast join by force.
+	TiDBBroadCastJoin = "tidb_bcj"
+	// HintBCJ indicates applying broadcast join by force.
+	HintBCJ = "broadcast_join"
+	// HintShuffleJoin indicates applying shuffle join by force.
+	HintShuffleJoin = "shuffle_join"
+
+	// HintStraightJoin causes TiDB to join tables in the order in which they appear in the FROM clause.
+	HintStraightJoin = "straight_join"
+	// HintLeading specifies the set of tables to be used as the prefix in the execution plan.
+	HintLeading = "leading"
+
+	// TiDBIndexNestedLoopJoin is hint enforce index nested loop join.
+	TiDBIndexNestedLoopJoin = "tidb_inlj"
+	// HintINLJ is hint enforce index nested loop join.
+	HintINLJ = "inl_join"
+	// HintINLHJ is hint enforce index nested loop hash join.
+	HintINLHJ = "inl_hash_join"
+	// HintINLMJ is hint enforce index nested loop merge join.
+	HintINLMJ = "inl_merge_join"
+	// HintNoIndexJoin is the hint to enforce the query not to use index join.
+	HintNoIndexJoin = "no_index_join"
+	// HintNoIndexHashJoin is the hint to enforce the query not to use index hash join.
+	HintNoIndexHashJoin = "no_index_hash_join"
+	// HintNoIndexMergeJoin is the hint to enforce the query not to use index merge join.
+	HintNoIndexMergeJoin = "no_index_merge_join"
+	// TiDBHashJoin is hint enforce hash join.
+	TiDBHashJoin = "tidb_hj"
+	// HintNoHashJoin is the hint to enforce the query not to use hash join.
+	HintNoHashJoin = "no_hash_join"
+	// HintHJ is hint enforce hash join.
+	HintHJ = "hash_join"
+	// HintHashJoinBuild is hint enforce hash join's build side
+	HintHashJoinBuild = "hash_join_build"
+	// HintHashJoinProbe is hint enforce hash join's probe side
+	HintHashJoinProbe = "hash_join_probe"
+	// HintHashAgg is hint enforce hash aggregation.
+	HintHashAgg = "hash_agg"
+	// HintStreamAgg is hint enforce stream aggregation.
+	HintStreamAgg = "stream_agg"
+	// HintMPP1PhaseAgg enforces the optimizer to use the mpp-1phase aggregation.
+	HintMPP1PhaseAgg = "mpp_1phase_agg"
+	// HintMPP2PhaseAgg enforces the optimizer to use the mpp-2phase aggregation.
+	HintMPP2PhaseAgg = "mpp_2phase_agg"
+	// HintUseIndex is hint enforce using some indexes.
+	HintUseIndex = "use_index"
+	// HintIgnoreIndex is hint enforce ignoring some indexes.
+	HintIgnoreIndex = "ignore_index"
+	// HintForceIndex make optimizer to use this index even if it thinks a table scan is more efficient.
+	HintForceIndex = "force_index"
+	// HintOrderIndex is hint enforce using some indexes and keep the index's order.
+	HintOrderIndex = "order_index"
+	// HintNoOrderIndex is hint enforce using some indexes and not keep the index's order.
+	HintNoOrderIndex = "no_order_index"
+	// HintAggToCop is hint enforce pushing aggregation to coprocessor.
+	HintAggToCop = "agg_to_cop"
+	// HintReadFromStorage is hint enforce some tables read from specific type of storage.
+	HintReadFromStorage = "read_from_storage"
+	// HintTiFlash is a label represents the tiflash storage type.
+	HintTiFlash = "tiflash"
+	// HintTiKV is a label represents the tikv storage type.
+	HintTiKV = "tikv"
+	// HintIndexMerge is a hint to enforce using some indexes at the same time.
+	HintIndexMerge = "use_index_merge"
+	// HintTimeRange is a hint to specify the time range for metrics summary tables
+	HintTimeRange = "time_range"
+	// HintIgnorePlanCache is a hint to enforce ignoring plan cache
+	HintIgnorePlanCache = "ignore_plan_cache"
+	// HintLimitToCop is a hint enforce pushing limit or topn to coprocessor.
+	HintLimitToCop = "limit_to_cop"
+	// HintMerge is a hint which can switch turning inline for the CTE.
+	HintMerge = "merge"
+	// HintSemiJoinRewrite is a hint to force we rewrite the semi join operator as much as possible.
+	HintSemiJoinRewrite = "semi_join_rewrite"
+	// HintNoDecorrelate indicates a LogicalApply not to be decorrelated.
+	HintNoDecorrelate = "no_decorrelate"
+
+	// HintMemoryQuota sets the memory limit for a query
+	HintMemoryQuota = "memory_quota"
+	// HintUseToja is a hint to optimize `in (select ...)` subquery into `join`
+	HintUseToja = "use_toja"
+	// HintNoIndexMerge is a hint to disable index merge
+	HintNoIndexMerge = "no_index_merge"
+	// HintMaxExecutionTime specifies the max allowed execution time in milliseconds
+	HintMaxExecutionTime = "max_execution_time"
+
+	// HintFlagSemiJoinRewrite corresponds to HintSemiJoinRewrite.
+	HintFlagSemiJoinRewrite uint64 = 1 << iota
+	// HintFlagNoDecorrelate corresponds to HintNoDecorrelate.
+	HintFlagNoDecorrelate
+)
+
+type indexNestedLoopJoinTables struct {
+	inljTables  []hintTableInfo
+	inlhjTables []hintTableInfo
+	inlmjTables []hintTableInfo
+}
+
+type tableHintInfo struct {
+	indexNestedLoopJoinTables
+	noIndexJoinTables   indexNestedLoopJoinTables
+	sortMergeJoinTables []hintTableInfo
+	broadcastJoinTables []hintTableInfo
+	shuffleJoinTables   []hintTableInfo
+	hashJoinTables      []hintTableInfo
+	noHashJoinTables    []hintTableInfo
+	noMergeJoinTables   []hintTableInfo
+	indexHintList       []indexHintInfo
+	tiflashTables       []hintTableInfo
+	tikvTables          []hintTableInfo
+	aggHints            aggHintInfo
+	indexMergeHintList  []indexHintInfo
+	timeRangeHint       ast.HintTimeRange
+	limitHints          limitHintInfo
+	MergeHints          MergeHintInfo
+	leadingJoinOrder    []hintTableInfo
+	hjBuildTables       []hintTableInfo
+	hjProbeTables       []hintTableInfo
+}
+
+type limitHintInfo struct {
+	preferLimitToCop bool
+}
+
+// MergeHintInfo ...one bool flag for cte
+type MergeHintInfo struct {
+	preferMerge bool
+}
+
+type hintTableInfo struct {
+	dbName       model.CIStr
+	tblName      model.CIStr
+	partitions   []model.CIStr
+	selectOffset int
+	matched      bool
+}
+
+type indexHintInfo struct {
+	dbName     model.CIStr
+	tblName    model.CIStr
+	partitions []model.CIStr
+	indexHint  *ast.IndexHint
+	// Matched indicates whether this index hint
+	// has been successfully applied to a DataSource.
+	// If an indexHintInfo is not matched after building
+	// a Select statement, we will generate a warning for it.
+	matched bool
+}
+
+func (hint *indexHintInfo) match(dbName, tblName model.CIStr) bool {
+	return hint.tblName.L == tblName.L &&
+		(hint.dbName.L == dbName.L ||
+			hint.dbName.L == "*") // for universal bindings, e.g. *.t
+}
+
+func (hint *indexHintInfo) hintTypeString() string {
+	switch hint.indexHint.HintType {
+	case ast.HintUse:
+		return "use_index"
+	case ast.HintIgnore:
+		return "ignore_index"
+	case ast.HintForce:
+		return "force_index"
+	}
+	return ""
+}
+
+// indexString formats the indexHint as dbName.tableName[, indexNames].
+func (hint *indexHintInfo) indexString() string {
+	var indexListString string
+	indexList := make([]string, len(hint.indexHint.IndexNames))
+	for i := range hint.indexHint.IndexNames {
+		indexList[i] = hint.indexHint.IndexNames[i].L
+	}
+	if len(indexList) > 0 {
+		indexListString = fmt.Sprintf(", %s", strings.Join(indexList, ", "))
+	}
+	return fmt.Sprintf("%s.%s%s", hint.dbName, hint.tblName, indexListString)
+}
+
+type aggHintInfo struct {
+	preferAggType  uint
+	preferAggToCop bool
+}
+
+func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.sortMergeJoinTables)
+}
+
+func (info *tableHintInfo) ifPreferBroadcastJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.broadcastJoinTables)
+}
+
+func (info *tableHintInfo) ifPreferShuffleJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.shuffleJoinTables)
+}
+
+func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.hashJoinTables)
+}
+
+func (info *tableHintInfo) ifPreferNoHashJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.noHashJoinTables)
+}
+
+func (info *tableHintInfo) ifPreferNoMergeJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.noMergeJoinTables)
+}
+
+func (info *tableHintInfo) ifPreferHJBuild(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.hjBuildTables)
+}
+
+func (info *tableHintInfo) ifPreferHJProbe(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.hjProbeTables)
+}
+
+func (info *tableHintInfo) ifPreferINLJ(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables.inljTables)
+}
+
+func (info *tableHintInfo) ifPreferINLHJ(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables.inlhjTables)
+}
+
+func (info *tableHintInfo) ifPreferINLMJ(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables.inlmjTables)
+}
+
+func (info *tableHintInfo) ifPreferNoIndexJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.noIndexJoinTables.inljTables)
+}
+
+func (info *tableHintInfo) ifPreferNoIndexHashJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.noIndexJoinTables.inlhjTables)
+}
+
+func (info *tableHintInfo) ifPreferNoIndexMergeJoin(tableNames ...*hintTableInfo) bool {
+	return info.matchTableName(tableNames, info.noIndexJoinTables.inlmjTables)
+}
+
+func (info *tableHintInfo) ifPreferTiFlash(tableName *hintTableInfo) *hintTableInfo {
+	return info.matchTiKVOrTiFlash(tableName, info.tiflashTables)
+}
+
+func (info *tableHintInfo) ifPreferTiKV(tableName *hintTableInfo) *hintTableInfo {
+	return info.matchTiKVOrTiFlash(tableName, info.tikvTables)
+}
+
+func (*tableHintInfo) matchTiKVOrTiFlash(tableName *hintTableInfo, hintTables []hintTableInfo) *hintTableInfo {
+	if tableName == nil {
 		return nil
 	}
-	nodeTp := utilhint.TypeSelect
-	switch flat.Main[0].Origin.(type) {
-	case *Update:
-		nodeTp = utilhint.TypeUpdate
-	case *Delete:
-		nodeTp = utilhint.TypeDelete
+	for i, tbl := range hintTables {
+		if tableName.dbName.L == tbl.dbName.L && tableName.tblName.L == tbl.tblName.L && tbl.selectOffset == tableName.selectOffset {
+			hintTables[i].matched = true
+			return &tbl
+		}
 	}
-	var hints []*ast.TableOptimizerHint
-	selectPlan, _ := flat.Main.GetSelectPlan()
-	if len(selectPlan) == 0 || !selectPlan[0].IsPhysicalPlan {
-		return nil
-	}
-	for _, op := range selectPlan {
-		p := op.Origin.(PhysicalPlan)
-		hints = genHintsFromSingle(p, nodeTp, op.StoreType, hints)
-	}
-	for _, cte := range flat.CTEs {
-		for i, op := range cte {
-			if i == 0 || !op.IsRoot {
+	return nil
+}
+
+// matchTableName checks whether the hint hit the need.
+// Only need either side matches one on the list.
+// Even though you can put 2 tables on the list,
+// it doesn't mean optimizer will reorder to make them
+// join directly.
+// Which it joins on with depend on sequence of traverse
+// and without reorder, user might adjust themselves.
+// This is similar to MySQL hints.
+func (*tableHintInfo) matchTableName(tables []*hintTableInfo, hintTables []hintTableInfo) bool {
+	hintMatched := false
+	for _, table := range tables {
+		for i, curEntry := range hintTables {
+			if table == nil {
 				continue
 			}
-			p := op.Origin.(PhysicalPlan)
-			hints = genHintsFromSingle(p, nodeTp, op.StoreType, hints)
-		}
-	}
-	return removeDuplicatedHints(hints)
-}
-
-// GenHintsFromPhysicalPlan generates hints from physical plan.
-func GenHintsFromPhysicalPlan(p Plan) []*ast.TableOptimizerHint {
-	flat := FlattenPhysicalPlan(p, false)
-	return GenHintsFromFlatPlan(flat)
-}
-
-func getTableName(tblName model.CIStr, asName *model.CIStr) model.CIStr {
-	if asName != nil && asName.L != "" {
-		return *asName
-	}
-	return tblName
-}
-
-func extractTableAsName(p PhysicalPlan) (*model.CIStr, *model.CIStr) {
-	if len(p.Children()) > 1 {
-		return nil, nil
-	}
-	switch x := p.(type) {
-	case *PhysicalTableReader:
-		ts := x.TablePlans[0].(*PhysicalTableScan)
-		if ts.TableAsName.L != "" {
-			return &ts.DBName, ts.TableAsName
-		}
-		return &ts.DBName, &ts.Table.Name
-	case *PhysicalIndexReader:
-		is := x.IndexPlans[0].(*PhysicalIndexScan)
-		if is.TableAsName.L != "" {
-			return &is.DBName, is.TableAsName
-		}
-		return &is.DBName, &is.Table.Name
-	case *PhysicalIndexLookUpReader:
-		is := x.IndexPlans[0].(*PhysicalIndexScan)
-		if is.TableAsName.L != "" {
-			return &is.DBName, is.TableAsName
-		}
-		return &is.DBName, &is.Table.Name
-	case *PhysicalSort, *PhysicalSelection, *PhysicalUnionScan, *PhysicalProjection:
-		return extractTableAsName(p.Children()[0])
-	}
-	return nil, nil
-}
-
-func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, nodeType utilhint.NodeType, children ...PhysicalPlan) (res []*ast.TableOptimizerHint) {
-	if parentOffset == -1 {
-		return res
-	}
-	for _, child := range children {
-		blockOffset := child.SelectBlockOffset()
-		if blockOffset == -1 {
-			continue
-		}
-		var dbName, tableName *model.CIStr
-		if blockOffset != parentOffset {
-			var blockAsNames []ast.HintTable
-			if p := sctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
-				blockAsNames = *p
-			}
-			if blockOffset >= len(blockAsNames) {
-				continue
-			}
-			hintTable := blockAsNames[blockOffset]
-			// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
-			dbName, tableName, blockOffset = &hintTable.DBName, &hintTable.TableName, parentOffset
-		} else {
-			dbName, tableName = extractTableAsName(child)
-		}
-		if tableName == nil || tableName.L == "" {
-			continue
-		}
-		qbName, err := utilhint.GenerateQBName(nodeType, blockOffset)
-		if err != nil {
-			continue
-		}
-		res = append(res, &ast.TableOptimizerHint{
-			QBName:   qbName,
-			HintName: model.NewCIStr(joinType),
-			Tables:   []ast.HintTable{{DBName: *dbName, TableName: *tableName}},
-		})
-		break
-	}
-	return res
-}
-
-func genHintsFromSingle(p PhysicalPlan, nodeType utilhint.NodeType, storeType kv.StoreType, res []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
-	qbName, err := utilhint.GenerateQBName(nodeType, p.SelectBlockOffset())
-	if err != nil {
-		return res
-	}
-	switch pp := p.(type) {
-	case *PhysicalLimit, *PhysicalTopN:
-		if storeType == kv.TiKV {
-			res = append(res, &ast.TableOptimizerHint{
-				QBName:   qbName,
-				HintName: model.NewCIStr(HintLimitToCop),
-			})
-		}
-	case *PhysicalTableReader:
-		tbl, ok := pp.TablePlans[0].(*PhysicalTableScan)
-		if !ok {
-			return res
-		}
-		if tbl.StoreType == kv.TiFlash {
-			res = append(res, &ast.TableOptimizerHint{
-				QBName:   qbName,
-				HintName: model.NewCIStr(HintReadFromStorage),
-				HintData: model.NewCIStr(kv.TiFlash.Name()),
-				Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
-			})
-		} else {
-			res = append(res, &ast.TableOptimizerHint{
-				QBName:   qbName,
-				HintName: model.NewCIStr(HintUseIndex),
-				Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
-			})
-			if tbl.Table.PKIsHandle || tbl.Table.IsCommonHandle { // it's a primary key
-				orderHint := HintOrderIndex
-				if !tbl.KeepOrder {
-					orderHint = HintNoOrderIndex
-				}
-				res = append(res, &ast.TableOptimizerHint{
-					QBName:   qbName,
-					HintName: model.NewCIStr(orderHint),
-					Tables:   []ast.HintTable{{DBName: tbl.DBName, TableName: getTableName(tbl.Table.Name, tbl.TableAsName)}},
-					Indexes:  []model.CIStr{model.NewCIStr("primary")},
-				})
+			if (curEntry.dbName.L == table.dbName.L || curEntry.dbName.L == "*") &&
+				curEntry.tblName.L == table.tblName.L &&
+				table.selectOffset == curEntry.selectOffset {
+				hintTables[i].matched = true
+				hintMatched = true
+				break
 			}
 		}
-	case *PhysicalIndexLookUpReader:
-		index := pp.IndexPlans[0].(*PhysicalIndexScan)
-		res = append(res, &ast.TableOptimizerHint{
-			QBName:   qbName,
-			HintName: model.NewCIStr(HintUseIndex),
-			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
-			Indexes:  []model.CIStr{index.Index.Name},
-		})
-		orderHint := HintOrderIndex
-		if !index.KeepOrder {
-			orderHint = HintNoOrderIndex
-		}
-		res = append(res, &ast.TableOptimizerHint{
-			QBName:   qbName,
-			HintName: model.NewCIStr(orderHint),
-			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
-			Indexes:  []model.CIStr{index.Index.Name},
-		})
-	case *PhysicalIndexReader:
-		index := pp.IndexPlans[0].(*PhysicalIndexScan)
-		res = append(res, &ast.TableOptimizerHint{
-			QBName:   qbName,
-			HintName: model.NewCIStr(HintUseIndex),
-			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
-			Indexes:  []model.CIStr{index.Index.Name},
-		})
-		orderHint := HintOrderIndex
-		if !index.KeepOrder {
-			orderHint = HintNoOrderIndex
-		}
-		res = append(res, &ast.TableOptimizerHint{
-			QBName:   qbName,
-			HintName: model.NewCIStr(orderHint),
-			Tables:   []ast.HintTable{{DBName: index.DBName, TableName: getTableName(index.Table.Name, index.TableAsName)}},
-			Indexes:  []model.CIStr{index.Index.Name},
-		})
-	case *PhysicalIndexMergeReader:
-		indexs := make([]model.CIStr, 0, 2)
-		var tableName model.CIStr
-		var tableAsName *model.CIStr
-		for _, partialPlan := range pp.PartialPlans {
-			if index, ok := partialPlan[0].(*PhysicalIndexScan); ok {
-				indexs = append(indexs, index.Index.Name)
-				tableName = index.Table.Name
-				tableAsName = index.TableAsName
-			} else {
-				indexName := model.NewCIStr("PRIMARY")
-				indexs = append(indexs, indexName)
-			}
-		}
-		res = append(res, &ast.TableOptimizerHint{
-			QBName:   qbName,
-			HintName: model.NewCIStr(HintIndexMerge),
-			Tables:   []ast.HintTable{{TableName: getTableName(tableName, tableAsName)}},
-			Indexes:  indexs,
-		})
-	case *PhysicalHashAgg:
-		res = append(res, &ast.TableOptimizerHint{
-			QBName:   qbName,
-			HintName: model.NewCIStr(HintHashAgg),
-		})
-		if storeType == kv.TiKV {
-			res = append(res, &ast.TableOptimizerHint{
-				QBName:   qbName,
-				HintName: model.NewCIStr(HintAggToCop),
-			})
-		}
-	case *PhysicalStreamAgg:
-		res = append(res, &ast.TableOptimizerHint{
-			QBName:   qbName,
-			HintName: model.NewCIStr(HintStreamAgg),
-		})
-		if storeType == kv.TiKV {
-			res = append(res, &ast.TableOptimizerHint{
-				QBName:   qbName,
-				HintName: model.NewCIStr(HintAggToCop),
-			})
-		}
-	case *PhysicalMergeJoin:
-		res = append(res, getJoinHints(p.SCtx(), HintSMJ, p.SelectBlockOffset(), nodeType, pp.children...)...)
-	case *PhysicalHashJoin:
-		// TODO: support the hash_join_build and hash_join_probe hint for auto capture
-		res = append(res, getJoinHints(p.SCtx(), HintHJ, p.SelectBlockOffset(), nodeType, pp.children...)...)
-	case *PhysicalIndexJoin:
-		res = append(res, getJoinHints(p.SCtx(), HintINLJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
-	case *PhysicalIndexMergeJoin:
-		res = append(res, getJoinHints(p.SCtx(), HintINLMJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
-	case *PhysicalIndexHashJoin:
-		res = append(res, getJoinHints(p.SCtx(), HintINLHJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
 	}
-	return res
-}
-
-func removeDuplicatedHints(hints []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
-	if len(hints) < 2 {
-		return hints
-	}
-	m := make(map[string]struct{}, len(hints))
-	res := make([]*ast.TableOptimizerHint, 0, len(hints))
-	for _, hint := range hints {
-		key := utilhint.RestoreTableOptimizerHint(hint)
-		if _, ok := m[key]; ok {
-			continue
-		}
-		m[key] = struct{}{}
-		res = append(res, hint)
-	}
-	return res
+	return hintMatched
 }

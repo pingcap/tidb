@@ -534,7 +534,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		}
 		// Note that linear hash is simply ignored, and creates non-linear hash/key.
 		if s.Linear {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("LINEAR %s is not supported, using non-linear %s instead", s.Tp.String(), s.Tp.String())))
+			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.FastGen(fmt.Sprintf("LINEAR %s is not supported, using non-linear %s instead", s.Tp.String(), s.Tp.String())))
 		}
 		if s.Tp == model.PartitionTypeHash || len(s.ColumnNames) != 0 {
 			enable = true
@@ -542,11 +542,11 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	}
 
 	if !enable {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.Tp)))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.FastGen(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.Tp)))
 		return nil
 	}
 	if s.Sub != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported subpartitioning, only using %v partitioning", s.Tp)))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.FastGen(fmt.Sprintf("Unsupported subpartitioning, only using %v partitioning", s.Tp)))
 	}
 
 	pi := &model.PartitionInfo{
@@ -3000,14 +3000,12 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		tblInfo.Partition.AddingDefinitions = nil
 		tblInfo.Partition.DDLState = model.StateNone
 
+		var oldTblID int64
 		if job.Type != model.ActionReorganizePartition {
 			// ALTER TABLE ... PARTITION BY
 			// REMOVE PARTITIONING
-			// New Table ID, so needs to recreate the table by drop+create.
-			oldTblID := tblInfo.ID
-			// Overloading the NewTableID here with the oldTblID instead,
-			// for keeping the old global statistics
-			statisticsPartInfo.NewTableID = oldTblID
+			// Storing the old table ID, used for updating statistics.
+			oldTblID = tblInfo.ID
 			// TODO: Handle bundles?
 			// TODO: Add concurrent test!
 			// TODO: Will this result in big gaps?
@@ -3067,7 +3065,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// Include the old table ID, if changed, which may contain global statistics,
 		// so it can be reused for the new (non)partitioned table.
 		event, err := newStatsDDLEventForJob(
-			job.Type, tblInfo, statisticsPartInfo, droppedPartInfo,
+			job.Type, oldTblID, tblInfo, statisticsPartInfo, droppedPartInfo,
 		)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -3087,6 +3085,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 // It is used for reorganize partition, add partitioning and remove partitioning.
 func newStatsDDLEventForJob(
 	jobType model.ActionType,
+	oldTblID int64,
 	tblInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 	droppedPartInfo *model.PartitionInfo,
@@ -3101,13 +3100,15 @@ func newStatsDDLEventForJob(
 		)
 	case model.ActionAlterTablePartitioning:
 		event = statsutil.NewAddPartitioningEvent(
+			oldTblID,
 			tblInfo,
 			addedPartInfo,
 		)
 	case model.ActionRemovePartitioning:
 		event = statsutil.NewRemovePartitioningEvent(
+			oldTblID,
 			tblInfo,
-			addedPartInfo,
+			droppedPartInfo,
 		)
 	default:
 		return nil, errors.Errorf("unknown job type: %s", jobType.String())
