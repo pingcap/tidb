@@ -139,17 +139,14 @@ func (b *builtinArithmeticModIntUnsignedUnsignedSig) vecEvalInt(ctx EvalContext,
 	rhi64s := rh.Int64s()
 
 	for i := 0; i < len(lhi64s); i++ {
+		if lh.IsNull(i) || rh.IsNull(i) {
+			result.SetNull(i, true)
+			continue
+		}
 		if rhi64s[i] == 0 {
-			if rh.IsNull(i) {
-				continue
-			}
 			if err := handleDivisionByZeroError(ctx); err != nil {
 				return err
 			}
-			rh.SetNull(i, true)
-			continue
-		}
-		if lh.IsNull(i) {
 			rh.SetNull(i, true)
 			continue
 		}
@@ -183,17 +180,14 @@ func (b *builtinArithmeticModIntUnsignedSignedSig) vecEvalInt(ctx EvalContext, i
 	rhi64s := rh.Int64s()
 
 	for i := 0; i < len(lhi64s); i++ {
+		if lh.IsNull(i) || rh.IsNull(i) {
+			result.SetNull(i, true)
+			continue
+		}
 		if rhi64s[i] == 0 {
-			if rh.IsNull(i) {
-				continue
-			}
 			if err := handleDivisionByZeroError(ctx); err != nil {
 				return err
 			}
-			rh.SetNull(i, true)
-			continue
-		}
-		if lh.IsNull(i) {
 			rh.SetNull(i, true)
 			continue
 		}
@@ -231,17 +225,14 @@ func (b *builtinArithmeticModIntSignedUnsignedSig) vecEvalInt(ctx EvalContext, i
 	rhi64s := rh.Int64s()
 
 	for i := 0; i < len(lhi64s); i++ {
+		if lh.IsNull(i) || rh.IsNull(i) {
+			result.SetNull(i, true)
+			continue
+		}
 		if rhi64s[i] == 0 {
-			if rh.IsNull(i) {
-				continue
-			}
 			if err := handleDivisionByZeroError(ctx); err != nil {
 				return err
 			}
-			rh.SetNull(i, true)
-			continue
-		}
-		if lh.IsNull(i) {
 			rh.SetNull(i, true)
 			continue
 		}
@@ -279,17 +270,14 @@ func (b *builtinArithmeticModIntSignedSignedSig) vecEvalInt(ctx EvalContext, inp
 	rhi64s := rh.Int64s()
 
 	for i := 0; i < len(lhi64s); i++ {
+		if lh.IsNull(i) || rh.IsNull(i) {
+			result.SetNull(i, true)
+			continue
+		}
 		if rhi64s[i] == 0 {
-			if rh.IsNull(i) {
-				continue
-			}
 			if err := handleDivisionByZeroError(ctx); err != nil {
 				return err
 			}
-			rh.SetNull(i, true)
-			continue
-		}
-		if lh.IsNull(i) {
 			rh.SetNull(i, true)
 			continue
 		}
@@ -432,17 +420,17 @@ func (b *builtinArithmeticModRealSig) vecEvalReal(ctx EvalContext, input *chunk.
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[1].VecEvalReal(ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
 		return err
 	}
-	if err := b.args[0].VecEvalReal(ctx, input, result); err != nil {
+	if err := b.args[1].VecEvalReal(ctx, input, buf); err != nil {
 		return err
 	}
 	result.MergeNulls(buf)
 	x := result.Float64s()
 	y := buf.Float64s()
 	for i := 0; i < n; i++ {
-		if buf.IsNull(i) {
+		if buf.IsNull(i) || result.IsNull(i) {
 			continue
 		}
 		if y[i] == 0 {
@@ -481,7 +469,7 @@ func (b *builtinArithmeticModDecimalSig) vecEvalDecimal(ctx EvalContext, input *
 	y := buf.Decimals()
 	var to types.MyDecimal
 	for i := 0; i < n; i++ {
-		if result.IsNull(i) {
+		if result.IsNull(i) || buf.IsNull(i) {
 			continue
 		}
 		err = types.DecimalMod(&x[i], &y[i], &to)
