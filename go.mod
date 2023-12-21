@@ -206,3 +206,10 @@ replace github.com/pingcap/tidb/parser => ./parser
 
 // fix potential security issue(CVE-2020-26160) introduced by indirect dependency.
 replace github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
+
+replace (
+	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
+	// Please remove these dependencies.
+	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
+	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
+)
