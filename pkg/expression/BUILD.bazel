@@ -61,6 +61,7 @@ go_library(
         "function_traits.go",
         "grouping_sets.go",
         "helper.go",
+        "infer_pushdown.go",
         "scalar_function.go",
         "schema.go",
         "simple_rewriter.go",
