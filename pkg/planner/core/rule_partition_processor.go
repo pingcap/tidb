@@ -1710,7 +1710,7 @@ func appendWarnForUnknownPartitions(ctx sessionctx.Context, hintName string, unk
 		return
 	}
 
-	warning := fmt.Errorf("unknown Partitions (%s) in optimizer hint %s", strings.Join(unknownPartitions, ","), hintName)
+	warning := fmt.Errorf("unknown partitions (%s) in optimizer hint %s", strings.Join(unknownPartitions, ","), hintName)
 	ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
 }
 
