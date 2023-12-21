@@ -23,8 +23,6 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
@@ -229,6 +227,44 @@ func TestRestrictionWithConnectionPool(t *testing.T) {
 	case success := <-done:
 		require.True(t, success)
 	}
+}
+
+func TestReplicationWriter(t *testing.T) {
+	s := createReadOnlySuite(t)
+	_, err := s.db.Exec("set global tidb_restricted_read_only=0")
+	require.NoError(t, err)
+	_, err = s.db.Exec("drop table if exists t")
+	require.NoError(t, err)
+	_, err = s.db.Exec("create table t (a int)")
+	require.NoError(t, err)
+
+	conn, err := s.rdb.Conn(context.Background())
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, conn.Close())
+	}()
+	done := make(chan struct{})
+	go func(conn *sql.Conn) {
+		ticker := time.NewTicker(50 * time.Millisecond)
+		for {
+			select {
+			case t1 := <-ticker.C:
+				_, err := conn.ExecContext(context.Background(), fmt.Sprintf("insert into t values (%d)", t1.Nanosecond()))
+				require.NoError(t, err)
+			case <-done:
+				return
+			}
+		}
+	}(conn)
+	time.Sleep(1 * time.Second)
+	timer := time.NewTimer(3 * time.Second)
+	_, err = s.db.Exec("set global tidb_restricted_read_only=1")
+	require.NoError(t, err)
+	// SUPER user can't write
+	_, err = s.db.Exec("insert into t values (1)")
+	require.Equal(t, err.Error(), ReadOnlyErrMsg)
+	<-timer.C
+	done <- struct{}{}
 }
 
 func TestInternalSQL(t *testing.T) {
