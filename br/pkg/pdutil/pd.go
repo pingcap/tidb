@@ -957,6 +957,7 @@ type KeyRangeRule struct {
 	EndKeyHex   string `json:"end_key"`   // hex format end key, for marshal/unmarshal
 }
 
+<<<<<<< HEAD
 // CreateOrUpdateRegionLabelRule creates or updates a region label rule.
 func (p *PdController) CreateOrUpdateRegionLabelRule(ctx context.Context, rule LabelRule) error {
 	reqData, err := json.Marshal(&rule)
@@ -1014,8 +1015,28 @@ func (p *PdController) PauseSchedulersByKeyRange(ctx context.Context, startKey, 
 
 func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context, startKey, endKey []byte, ttl time.Duration) (_done <-chan struct{}, err error) {
 	rule := LabelRule{
+=======
+// PauseSchedulersByKeyRange will pause schedulers for regions in the specific key range.
+// This function will spawn a goroutine to keep pausing schedulers periodically until the context is done.
+// The return done channel is used to notify the caller that the background goroutine is exited.
+func PauseSchedulersByKeyRange(
+	ctx context.Context,
+	pdHTTPCli pdhttp.Client,
+	startKey, endKey []byte,
+) (done <-chan struct{}, err error) {
+	return pauseSchedulerByKeyRangeWithTTL(ctx, pdHTTPCli, startKey, endKey, pauseTimeout)
+}
+
+func pauseSchedulerByKeyRangeWithTTL(
+	ctx context.Context,
+	pdHTTPCli pdhttp.Client,
+	startKey, endKey []byte,
+	ttl time.Duration,
+) (<-chan struct{}, error) {
+	rule := &pdhttp.LabelRule{
+>>>>>>> e4489f7729a (lightning: use PD HTTP client (#49599))
 		ID: uuid.New().String(),
-		Labels: []RegionLabel{{
+		Labels: []pdhttp.RegionLabel{{
 			Key:   "schedule",
 			Value: "deny",
 			TTL:   ttl.String(),
@@ -1029,7 +1050,8 @@ func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context, star
 		}},
 	}
 	done := make(chan struct{})
-	if err := p.CreateOrUpdateRegionLabelRule(ctx, rule); err != nil {
+
+	if err := pdHTTPCli.SetRegionLabelRule(ctx, rule); err != nil {
 		close(done)
 		return nil, errors.Trace(err)
 	}
@@ -1042,7 +1064,7 @@ func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context, star
 		for {
 			select {
 			case <-ticker.C:
-				if err := p.CreateOrUpdateRegionLabelRule(ctx, rule); err != nil {
+				if err := pdHTTPCli.SetRegionLabelRule(ctx, rule); err != nil {
 					if berrors.IsContextCanceled(err) {
 						break loop
 					}
@@ -1057,7 +1079,8 @@ func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context, star
 		defer cancel()
 		// Set ttl to 0 to remove the rule.
 		rule.Labels[0].TTL = time.Duration(0).String()
-		if err := p.DeleteRegionLabelRule(recoverCtx, rule.ID); err != nil {
+		deleteRule := &pdhttp.LabelRulePatch{DeleteRules: []string{rule.ID}}
+		if err := pdHTTPCli.PatchRegionLabelRules(recoverCtx, deleteRule); err != nil {
 			log.Warn("failed to delete region label rule, the rule will be removed after ttl expires",
 				zap.String("rule-id", rule.ID), zap.Duration("ttl", ttl), zap.Error(err))
 		}

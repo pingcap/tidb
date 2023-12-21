@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/infoschema"
 	"github.com/pingcap/tidb/parser/model"
 	"github.com/pingcap/tidb/parser/mysql"
@@ -64,9 +65,19 @@ import (
 	"github.com/pingcap/tidb/util/engine"
 	"github.com/pingcap/tidb/util/mathutil"
 	tikverror "github.com/tikv/client-go/v2/error"
+=======
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/engine"
+>>>>>>> e4489f7729a (lightning: use PD HTTP client (#49599))
 	"github.com/tikv/client-go/v2/oracle"
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -393,6 +404,73 @@ type local struct {
 	shouldCheckWriteStall bool
 }
 
+<<<<<<< HEAD
+=======
+// NewBackendConfig creates a new BackendConfig.
+func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resourceGroupName, taskType string, raftKV2SwitchModeDuration time.Duration) BackendConfig {
+	return BackendConfig{
+		PDAddr:                      cfg.TiDB.PdAddr,
+		LocalStoreDir:               cfg.TikvImporter.SortedKVDir,
+		MaxConnPerStore:             cfg.TikvImporter.RangeConcurrency,
+		ConnCompressType:            cfg.TikvImporter.CompressKVPairs,
+		WorkerConcurrency:           cfg.TikvImporter.RangeConcurrency * 2,
+		KVWriteBatchSize:            int64(cfg.TikvImporter.SendKVSize),
+		RegionSplitBatchSize:        cfg.TikvImporter.RegionSplitBatchSize,
+		RegionSplitConcurrency:      cfg.TikvImporter.RegionSplitConcurrency,
+		CheckpointEnabled:           cfg.Checkpoint.Enable,
+		MemTableSize:                int(cfg.TikvImporter.EngineMemCacheSize),
+		LocalWriterMemCacheSize:     int64(cfg.TikvImporter.LocalWriterMemCacheSize),
+		ShouldCheckTiKV:             cfg.App.CheckRequirements,
+		DupeDetectEnabled:           cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone,
+		DuplicateDetectOpt:          common.DupDetectOpt{ReportErrOnDup: cfg.TikvImporter.DuplicateResolution == config.DupeResAlgErr},
+		StoreWriteBWLimit:           int(cfg.TikvImporter.StoreWriteBWLimit),
+		ShouldCheckWriteStall:       cfg.Cron.SwitchMode.Duration == 0,
+		MaxOpenFiles:                maxOpenFiles,
+		KeyspaceName:                keyspaceName,
+		PausePDSchedulerScope:       cfg.TikvImporter.PausePDSchedulerScope,
+		ResourceGroupName:           resourceGroupName,
+		TaskType:                    taskType,
+		RaftKV2SwitchModeDuration:   raftKV2SwitchModeDuration,
+		DisableAutomaticCompactions: true,
+	}
+}
+
+func (c *BackendConfig) adjust() {
+	c.MaxOpenFiles = max(c.MaxOpenFiles, openFilesLowerThreshold)
+}
+
+// Backend is a local backend.
+type Backend struct {
+	engines        sync.Map // sync version of map[uuid.UUID]*Engine
+	externalEngine map[uuid.UUID]common.Engine
+
+	pdCli            pd.Client
+	pdHTTPCli        pdhttp.Client
+	splitCli         split.SplitClient
+	tikvCli          *tikvclient.KVStore
+	tls              *common.TLS
+	regionSizeGetter TableRegionSizeGetter
+	tikvCodec        tikvclient.Codec
+
+	BackendConfig
+
+	supportMultiIngest  bool
+	duplicateDB         *pebble.DB
+	keyAdapter          common.KeyAdapter
+	importClientFactory ImportClientFactory
+
+	bufferPool   *membuf.Pool
+	metrics      *metric.Common
+	writeLimiter StoreWriteLimiter
+	logger       log.Logger
+	// This mutex is used to do some mutual exclusion work in the backend, flushKVs() in writer for now.
+	mu sync.Mutex
+}
+
+var _ DiskUsage = (*Backend)(nil)
+var _ backend.Backend = (*Backend)(nil)
+
+>>>>>>> e4489f7729a (lightning: use PD HTTP client (#49599))
 func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 	dbPath := filepath.Join(storeDir, duplicateDBName)
 	// TODO: Optimize the opts for better write.
@@ -404,17 +482,26 @@ func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 	return pebble.Open(dbPath, opts)
 }
 
+const (
+	pdCliMaxMsgSize = int(128 * units.MiB) // pd.ScanRegion may return a large response
+)
+
 var (
 	// RunInTest indicates whether the current process is running in test.
 	RunInTest bool
 	// LastAlloc is the last ID allocator.
-	LastAlloc manual.Allocator
+	LastAlloc      manual.Allocator
+	maxCallMsgSize = []grpc.DialOption{
+		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(pdCliMaxMsgSize)),
+		grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(pdCliMaxMsgSize)),
+	}
 )
 
 // NewLocalBackend creates new connections to tikv.
 func NewLocalBackend(
 	ctx context.Context,
 	tls *common.TLS,
+<<<<<<< HEAD
 	cfg *config.Config,
 	g glue.Glue,
 	maxOpenFiles int,
@@ -424,10 +511,32 @@ func NewLocalBackend(
 	rangeConcurrency := cfg.TikvImporter.RangeConcurrency
 
 	pdCtl, err := pdutil.NewPdController(ctx, cfg.TiDB.PdAddr, tls.TLSConfig(), tls.ToPDSecurityOption())
+=======
+	config BackendConfig,
+	regionSizeGetter TableRegionSizeGetter,
+) (b *Backend, err error) {
+	var duplicateDB *pebble.DB
+	defer func() {
+		if err != nil && duplicateDB != nil {
+			_ = duplicateDB.Close()
+		}
+	}()
+	config.adjust()
+	pdAddrs := strings.Split(config.PDAddr, ",")
+	pdCli, err := pd.NewClientWithContext(
+		ctx, pdAddrs, tls.ToPDSecurityOption(),
+		pd.WithGRPCDialOptions(maxCallMsgSize...),
+		// If the time too short, we may scatter a region many times, because
+		// the interface `ScatterRegions` may time out.
+		pd.WithCustomTimeoutOption(60*time.Second),
+		pd.WithMaxErrorRetry(3),
+	)
+>>>>>>> e4489f7729a (lightning: use PD HTTP client (#49599))
 	if err != nil {
 		return backend.MakeBackend(nil), common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 	}
-	splitCli := split.NewSplitClient(pdCtl.GetPDClient(), tls.TLSConfig(), false)
+	pdHTTPCli := pdhttp.NewClient("lightning", pdAddrs, pdhttp.WithTLSConfig(tls.TLSConfig()))
+	splitCli := split.NewSplitClient(pdCli, tls.TLSConfig(), false)
 
 	shouldCreate := true
 	if cfg.Checkpoint.Enable {
@@ -460,8 +569,24 @@ func NewLocalBackend(
 	if err != nil {
 		return backend.MakeBackend(nil), common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
+<<<<<<< HEAD
 	rpcCli := tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()))
 	pdCliForTiKV := &tikvclient.CodecPDClient{Client: pdCtl.GetPDClient()}
+=======
+
+	var pdCliForTiKV *tikvclient.CodecPDClient
+	if config.KeyspaceName == "" {
+		pdCliForTiKV = tikvclient.NewCodecPDClient(tikvclient.ModeTxn, pdCli)
+	} else {
+		pdCliForTiKV, err = tikvclient.NewCodecPDClientWithKeyspace(tikvclient.ModeTxn, pdCli, config.KeyspaceName)
+		if err != nil {
+			return nil, common.ErrCreatePDClient.Wrap(err).GenWithStackByArgs()
+		}
+	}
+
+	tikvCodec := pdCliForTiKV.GetCodec()
+	rpcCli := tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()), tikvclient.WithCodec(tikvCodec))
+>>>>>>> e4489f7729a (lightning: use PD HTTP client (#49599))
 	tikvCli, err := tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, rpcCli)
 	if err != nil {
 		return backend.MakeBackend(nil), common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
@@ -483,6 +608,7 @@ func NewLocalBackend(
 		alloc.RefCnt = new(atomic.Int64)
 		LastAlloc = alloc
 	}
+<<<<<<< HEAD
 	local := &local{
 		engines:  sync.Map{},
 		pdCtl:    pdCtl,
@@ -491,6 +617,18 @@ func NewLocalBackend(
 		tls:      tls,
 		pdAddr:   cfg.TiDB.PdAddr,
 		g:        g,
+=======
+	local := &Backend{
+		engines:          sync.Map{},
+		externalEngine:   map[uuid.UUID]common.Engine{},
+		pdCli:            pdCli,
+		pdHTTPCli:        pdHTTPCli,
+		splitCli:         splitCli,
+		tikvCli:          tikvCli,
+		tls:              tls,
+		regionSizeGetter: regionSizeGetter,
+		tikvCodec:        tikvCodec,
+>>>>>>> e4489f7729a (lightning: use PD HTTP client (#49599))
 
 		localStoreDir:     localFile,
 		rangeConcurrency:  worker.NewPool(ctx, rangeConcurrency, "range"),
@@ -538,8 +676,13 @@ func (local *local) TotalMemoryConsume() int64 {
 	return memConsume + local.bufferPool.TotalSize()
 }
 
+<<<<<<< HEAD
 func (local *local) checkMultiIngestSupport(ctx context.Context) error {
 	stores, err := local.pdCtl.GetPDClient().GetAllStores(ctx, pd.WithExcludeTombstone())
+=======
+func (local *Backend) checkMultiIngestSupport(ctx context.Context) error {
+	stores, err := local.pdCli.GetAllStores(ctx, pd.WithExcludeTombstone())
+>>>>>>> e4489f7729a (lightning: use PD HTTP client (#49599))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -704,7 +847,8 @@ func (local *local) Close() {
 		}
 	}
 	_ = local.tikvCli.Close()
-	local.pdCtl.Close()
+	local.pdHTTPCli.Close()
+	local.pdCli.Close()
 }
 
 // FlushEngine ensure the written data is saved successfully, to make sure no data lose after restart
@@ -832,7 +976,7 @@ func (local *local) allocateTSIfNotExists(ctx context.Context, engine *Engine) e
 	if engine.TS > 0 {
 		return nil
 	}
-	physical, logical, err := local.pdCtl.GetPDClient().GetTS(ctx)
+	physical, logical, err := local.pdCli.GetTS(ctx)
 	if err != nil {
 		return err
 	}
@@ -842,7 +986,47 @@ func (local *local) allocateTSIfNotExists(ctx context.Context, engine *Engine) e
 }
 
 // CloseEngine closes backend engine by uuid.
+<<<<<<< HEAD
 func (local *local) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
+=======
+func (local *Backend) CloseEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
+	if externalCfg := cfg.External; externalCfg != nil {
+		storeBackend, err := storage.ParseBackend(externalCfg.StorageURI, nil)
+		if err != nil {
+			return err
+		}
+		store, err := storage.NewWithDefaultOpt(ctx, storeBackend)
+		if err != nil {
+			return err
+		}
+		physical, logical, err := local.pdCli.GetTS(ctx)
+		if err != nil {
+			return err
+		}
+		ts := oracle.ComposeTS(physical, logical)
+		externalEngine := external.NewExternalEngine(
+			store,
+			externalCfg.DataFiles,
+			externalCfg.StatFiles,
+			externalCfg.StartKey,
+			externalCfg.EndKey,
+			externalCfg.SplitKeys,
+			externalCfg.RegionSplitSize,
+			local.keyAdapter,
+			local.DupeDetectEnabled,
+			local.duplicateDB,
+			local.DuplicateDetectOpt,
+			local.WorkerConcurrency,
+			ts,
+			externalCfg.TotalFileSize,
+			externalCfg.TotalKVCount,
+			externalCfg.CheckHotspot,
+		)
+		local.externalEngine[engineUUID] = externalEngine
+		return nil
+	}
+
+>>>>>>> e4489f7729a (lightning: use PD HTTP client (#49599))
 	// flush mem table to storage, to free memory,
 	// ask others' advise, looks like unnecessary, but with this we can control memory precisely.
 	engineI, ok := local.engines.Load(engineUUID)
@@ -1427,7 +1611,36 @@ func (local *local) isRetryableImportTiKVError(err error) bool {
 	return common.IsRetryableError(err)
 }
 
+<<<<<<< HEAD
 func (local *local) writeAndIngestPairs(
+=======
+func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
+	logger := log.FromContext(ctx)
+	capacity, err := units.RAMInBytes(store.Status.Capacity)
+	if err != nil {
+		logger.Warn("failed to parse capacity",
+			zap.String("capacity", store.Status.Capacity), zap.Error(err))
+		return nil
+	}
+	available, err := units.RAMInBytes(store.Status.Available)
+	if err != nil {
+		logger.Warn("failed to parse available",
+			zap.String("available", store.Status.Available), zap.Error(err))
+		return nil
+	}
+	ratio := available * 100 / capacity
+	if ratio < 10 {
+		return errors.Errorf("the remaining storage capacity of TiKV(%s) is less than 10%%; please increase the storage capacity of TiKV and try again", store.Store.Address)
+	}
+	return nil
+}
+
+// executeJob handles a regionJob and tries to convert it to ingested stage.
+// If non-retryable error occurs, it will return the error.
+// If retryable error occurs, it will return nil and caller should check the stage
+// of the regionJob to determine what to do with it.
+func (local *Backend) executeJob(
+>>>>>>> e4489f7729a (lightning: use PD HTTP client (#49599))
 	ctx context.Context,
 	engine *Engine,
 	region *split.RegionInfo,
@@ -1435,6 +1648,7 @@ func (local *local) writeAndIngestPairs(
 	regionSplitSize int64,
 	regionSplitKeys int64,
 ) error {
+<<<<<<< HEAD
 	var err error
 
 loopWrite:
@@ -1535,6 +1749,22 @@ loopWrite:
 				log.FromContext(ctx).Warn("batch ingest fail after retry, will retry import full range", log.ShortError(err),
 					logutil.Region(region.Region), zap.Reflect("meta", ingestMetas))
 				return errors.Trace(err)
+=======
+	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
+		failpoint.Return(
+			errors.New("the remaining storage capacity of TiKV is less than 10%%; please increase the storage capacity of TiKV and try again"))
+	})
+	if local.ShouldCheckTiKV {
+		for _, peer := range job.region.Region.GetPeers() {
+			store, err := local.pdHTTPCli.GetStore(ctx, peer.StoreId)
+			if err != nil {
+				log.FromContext(ctx).Error("failed to get StoreInfo from pd http api", zap.Error(err))
+				continue
+			}
+			err = checkDiskAvail(ctx, store)
+			if err != nil {
+				return err
+>>>>>>> e4489f7729a (lightning: use PD HTTP client (#49599))
 			}
 		}
 
@@ -1634,7 +1864,11 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		log.FromContext(ctx).Info("engine contains no kv, skip import", zap.Stringer("engine", engineUUID))
 		return nil
 	}
+<<<<<<< HEAD
 	kvRegionSplitSize, kvRegionSplitKeys, err := getRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
+=======
+	kvRegionSplitSize, kvRegionSplitKeys, err := GetRegionSplitSizeKeys(ctx, local.pdCli, local.tls)
+>>>>>>> e4489f7729a (lightning: use PD HTTP client (#49599))
 	if err == nil {
 		if kvRegionSplitSize > regionSplitSize {
 			regionSplitSize = kvRegionSplitSize
@@ -1663,7 +1897,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		if len(ranges[len(ranges)-1].end) > 0 {
 			endKey = codec.EncodeBytes(nil, ranges[len(ranges)-1].end)
 		}
-		done, err := local.pdCtl.PauseSchedulersByKeyRange(subCtx, startKey, endKey)
+		done, err := pdutil.PauseSchedulersByKeyRange(subCtx, local.pdHTTPCli, startKey, endKey)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1685,6 +1919,7 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		}
 		log.FromContext(ctx).Info("import engine unfinished ranges", zap.Int("count", len(unfinishedRanges)))
 
+<<<<<<< HEAD
 		// if all the kv can fit in one region, skip split regions. TiDB will split one region for
 		// the table when table is created.
 		needSplit := len(unfinishedRanges) > 1 || lfTotalSize > regionSplitSize || lfLength > regionSplitKeys
@@ -1692,6 +1927,12 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		failpoint.Inject("failToSplit", func(_ failpoint.Value) {
 			needSplit = true
 		})
+=======
+// GetRegionSplitSizeKeys gets the region split size and keys from PD.
+func (local *Backend) GetRegionSplitSizeKeys(ctx context.Context) (finalSize int64, finalKeys int64, err error) {
+	return GetRegionSplitSizeKeys(ctx, local.pdCli, local.tls)
+}
+>>>>>>> e4489f7729a (lightning: use PD HTTP client (#49599))
 
 		backOffTime := 10 * time.Second
 		maxbackoffTime := 120 * time.Second
@@ -1975,7 +2216,56 @@ func (local *local) LocalWriter(ctx context.Context, cfg *backend.LocalWriterCon
 	return openLocalWriter(cfg, engine, local.localWriterMemCacheSize, local.bufferPool.NewBuffer())
 }
 
+<<<<<<< HEAD
 func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, cacheSize int64, kvBuffer *membuf.Buffer) (*Writer, error) {
+=======
+// SwitchModeByKeyRanges will switch tikv mode for regions in the specific key range for multirocksdb.
+// This function will spawn a goroutine to keep switch mode periodically until the context is done.
+// The return done channel is used to notify the caller that the background goroutine is exited.
+func (local *Backend) SwitchModeByKeyRanges(ctx context.Context, ranges []common.Range) (<-chan struct{}, error) {
+	switcher := NewTiKVModeSwitcher(local.tls, local.pdCli, log.FromContext(ctx).Logger)
+	done := make(chan struct{})
+
+	keyRanges := make([]*sst.Range, 0, len(ranges))
+	for _, r := range ranges {
+		startKey := r.Start
+		if len(r.Start) > 0 {
+			startKey = codec.EncodeBytes(nil, r.Start)
+		}
+		endKey := r.End
+		if len(r.End) > 0 {
+			endKey = codec.EncodeBytes(nil, r.End)
+		}
+		keyRanges = append(keyRanges, &sst.Range{
+			Start: startKey,
+			End:   endKey,
+		})
+	}
+
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(local.BackendConfig.RaftKV2SwitchModeDuration)
+		defer ticker.Stop()
+		switcher.ToImportMode(ctx, keyRanges...)
+	loop:
+		for {
+			select {
+			case <-ctx.Done():
+				break loop
+			case <-ticker.C:
+				switcher.ToImportMode(ctx, keyRanges...)
+			}
+		}
+		// Use a new context to avoid the context is canceled by the caller.
+		recoverCtx, cancel := context.WithTimeout(context.Background(), time.Second*5)
+		defer cancel()
+		switcher.ToNormalMode(recoverCtx, keyRanges...)
+	}()
+	return done, nil
+}
+
+func openLocalWriter(cfg *backend.LocalWriterConfig, engine *Engine, tikvCodec tikvclient.Codec, cacheSize int64, kvBuffer *membuf.Buffer) (*Writer, error) {
+>>>>>>> e4489f7729a (lightning: use PD HTTP client (#49599))
 	w := &Writer{
 		engine:             engine,
 		memtableSizeLimit:  cacheSize,

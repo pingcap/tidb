@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/membuf"
-	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidbkv "github.com/pingcap/tidb/kv"
@@ -56,7 +55,11 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+<<<<<<< HEAD
 	"go.uber.org/zap"
+=======
+	"github.com/tikv/pd/client/http"
+>>>>>>> e4489f7729a (lightning: use PD HTTP client (#49599))
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -1198,11 +1201,14 @@ func TestMultiIngest(t *testing.T) {
 			err:                testCase.err,
 			multiIngestCheckFn: testCase.multiIngestSupport,
 		}
-		pdCtl := &pdutil.PdController{}
-		pdCtl.SetPDClient(&mockPdClient{stores: stores})
 
+<<<<<<< HEAD
 		local := &local{
 			pdCtl: pdCtl,
+=======
+		local := &Backend{
+			pdCli: &mockPdClient{stores: stores},
+>>>>>>> e4489f7729a (lightning: use PD HTTP client (#49599))
 			importClientFactory: &mockImportClientFactory{
 				stores: allStores,
 				createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
@@ -1484,6 +1490,7 @@ func TestIngestFailOnFirstBatch(t *testing.T) {
 	f.db.Store(db)
 	err := db.Set([]byte("a"), []byte("a"), nil)
 	require.NoError(t, err)
+<<<<<<< HEAD
 	require.False(t, local.supportMultiIngest)
 	err = local.writeAndIngestPairs(ctx, f, &split.RegionInfo{
 		Region: &metapb.Region{
@@ -1500,4 +1507,654 @@ func TestIngestFailOnFirstBatch(t *testing.T) {
 	require.ErrorContains(t, err, "Suspended { time_to_lease_expire: 1.204s }")
 	require.Equal(t, []uint64{1}, apiInvokeRecorder["Write"])
 	require.Equal(t, []uint64{1, 1, 1, 1, 1}, apiInvokeRecorder["Ingest"])
+=======
+	require.Len(t, jobCh, 10)
+	for i := 0; i < 10; i++ {
+		job := <-jobCh
+		require.Equal(t, []byte{byte(i + 1)}, job.keyRange.Start)
+		require.Equal(t, []byte{byte(i + 2)}, job.keyRange.End)
+		jobWg.Done()
+	}
+	jobWg.Wait()
+}
+
+func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
+	t.Skip("skip due to the delay of dynamic region feature, and external engine changed its behaviour")
+	backup := external.LargeRegionSplitDataThreshold
+	external.LargeRegionSplitDataThreshold = 1
+	t.Cleanup(func() {
+		external.LargeRegionSplitDataThreshold = backup
+	})
+
+	ctx := context.Background()
+	local := &Backend{
+		splitCli: initTestSplitClient(
+			[][]byte{{1}, {11}},      // we have one big region
+			panicSplitRegionClient{}, // make sure no further split region
+		),
+	}
+	local.BackendConfig.WorkerConcurrency = 1
+	bigRegionRange := []common.Range{{Start: []byte{1}, End: []byte{11}}}
+
+	keys := make([][]byte, 0, 10)
+	value := make([][]byte, 0, 10)
+	for i := byte(1); i <= 10; i++ {
+		keys = append(keys, []byte{i})
+		value = append(value, []byte{i})
+	}
+	memStore := storage.NewMemStorage()
+
+	dataFiles, statFiles, err := external.MockExternalEngine(memStore, keys, value)
+	require.NoError(t, err)
+
+	extEngine := external.NewExternalEngine(
+		memStore,
+		dataFiles,
+		statFiles,
+		[]byte{1},
+		[]byte{10},
+		[][]byte{{1}, {11}},
+		1<<30,
+		common.NoopKeyAdapter{},
+		false,
+		nil,
+		common.DupDetectOpt{},
+		10,
+		123,
+		456,
+		789,
+		true,
+	)
+
+	jobCh := make(chan *regionJob, 10)
+	jobWg := sync.WaitGroup{}
+	err = local.generateAndSendJob(
+		ctx,
+		extEngine,
+		bigRegionRange,
+		10*units.GB,
+		1<<30,
+		jobCh,
+		&jobWg,
+	)
+	require.NoError(t, err)
+	require.Len(t, jobCh, 10)
+	for i := 0; i < 10; i++ {
+		job := <-jobCh
+		require.Equal(t, []byte{byte(i + 1)}, job.keyRange.Start)
+		require.Equal(t, []byte{byte(i + 2)}, job.keyRange.End)
+		firstKey, lastKey, err := job.ingestData.GetFirstAndLastKey(nil, nil)
+		require.NoError(t, err)
+		require.Equal(t, []byte{byte(i + 1)}, firstKey)
+		require.Equal(t, []byte{byte(i + 1)}, lastKey)
+		jobWg.Done()
+	}
+	jobWg.Wait()
+}
+
+func getSuccessInjectedBehaviour() []injectedBehaviour {
+	return []injectedBehaviour{
+		{
+			write: injectedWriteBehaviour{
+				result: &tikvWriteResult{
+					remainingStartKey: nil,
+				},
+			},
+		},
+		{
+			ingest: injectedIngestBehaviour{
+				nextStage: ingested,
+			},
+		},
+	}
+}
+
+func getNeedRescanWhenIngestBehaviour() []injectedBehaviour {
+	return []injectedBehaviour{
+		{
+			write: injectedWriteBehaviour{
+				result: &tikvWriteResult{
+					remainingStartKey: nil,
+				},
+			},
+		},
+		{
+			ingest: injectedIngestBehaviour{
+				nextStage: needRescan,
+				err:       common.ErrKVEpochNotMatch,
+			},
+		},
+	}
+}
+
+func TestDoImport(t *testing.T) {
+	backup := maxRetryBackoffSecond
+	maxRetryBackoffSecond = 1
+	t.Cleanup(func() {
+		maxRetryBackoffSecond = backup
+	})
+
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/fakeRegionJobs", "return()")
+	t.Cleanup(func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/fakeRegionJobs")
+	})
+
+	// test that
+	// - one job need rescan when ingest
+	// - one job need retry when write
+
+	initRanges := []common.Range{
+		{Start: []byte{'a'}, End: []byte{'b'}},
+		{Start: []byte{'b'}, End: []byte{'c'}},
+		{Start: []byte{'c'}, End: []byte{'d'}},
+	}
+	fakeRegionJobs = map[[2]string]struct {
+		jobs []*regionJob
+		err  error
+	}{
+		{"a", "b"}: {
+			jobs: []*regionJob{
+				{
+					keyRange:   common.Range{Start: []byte{'a'}, End: []byte{'b'}},
+					ingestData: &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
+				},
+			},
+		},
+		{"b", "c"}: {
+			jobs: []*regionJob{
+				{
+					keyRange:   common.Range{Start: []byte{'b'}, End: []byte{'c'}},
+					ingestData: &Engine{},
+					injected: []injectedBehaviour{
+						{
+							write: injectedWriteBehaviour{
+								result: &tikvWriteResult{
+									remainingStartKey: []byte{'b', '2'},
+								},
+							},
+						},
+						{
+							ingest: injectedIngestBehaviour{
+								nextStage: ingested,
+							},
+						},
+						{
+							write: injectedWriteBehaviour{
+								result: &tikvWriteResult{
+									remainingStartKey: nil,
+								},
+							},
+						},
+						{
+							ingest: injectedIngestBehaviour{
+								nextStage: ingested,
+							},
+						},
+					},
+				},
+			},
+		},
+		{"c", "d"}: {
+			jobs: []*regionJob{
+				{
+					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
+					ingestData: &Engine{},
+					injected:   getNeedRescanWhenIngestBehaviour(),
+				},
+				{
+					keyRange:   common.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
+					ingestData: &Engine{},
+					injected: []injectedBehaviour{
+						{
+							write: injectedWriteBehaviour{
+								// a retryable error
+								err: status.Error(codes.Unknown, "is not fully replicated"),
+							},
+						},
+					},
+				},
+			},
+		},
+		{"c", "c2"}: {
+			jobs: []*regionJob{
+				{
+					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
+					ingestData: &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
+				},
+			},
+		},
+		{"c2", "d"}: {
+			jobs: []*regionJob{
+				{
+					keyRange:   common.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
+					ingestData: &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
+				},
+			},
+		},
+	}
+
+	ctx := context.Background()
+	l := &Backend{
+		BackendConfig: BackendConfig{
+			WorkerConcurrency: 2,
+		},
+	}
+	e := &Engine{}
+	err := l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	require.NoError(t, err)
+	for _, v := range fakeRegionJobs {
+		for _, job := range v.jobs {
+			require.Len(t, job.injected, 0)
+		}
+	}
+
+	// test first call to generateJobForRange meet error
+
+	fakeRegionJobs = map[[2]string]struct {
+		jobs []*regionJob
+		err  error
+	}{
+		{"a", "b"}: {
+			jobs: []*regionJob{
+				{
+					keyRange:   common.Range{Start: []byte{'a'}, End: []byte{'b'}},
+					ingestData: &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
+				},
+			},
+		},
+		{"b", "c"}: {
+			err: errors.New("meet error when generateJobForRange"),
+		},
+	}
+	err = l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	require.ErrorContains(t, err, "meet error when generateJobForRange")
+
+	// test second call to generateJobForRange (needRescan) meet error
+
+	fakeRegionJobs = map[[2]string]struct {
+		jobs []*regionJob
+		err  error
+	}{
+		{"a", "b"}: {
+			jobs: []*regionJob{
+				{
+					keyRange:   common.Range{Start: []byte{'a'}, End: []byte{'a', '2'}},
+					ingestData: &Engine{},
+					injected:   getNeedRescanWhenIngestBehaviour(),
+				},
+				{
+					keyRange:   common.Range{Start: []byte{'a', '2'}, End: []byte{'b'}},
+					ingestData: &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
+				},
+			},
+		},
+		{"b", "c"}: {
+			jobs: []*regionJob{
+				{
+					keyRange:   common.Range{Start: []byte{'b'}, End: []byte{'c'}},
+					ingestData: &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
+				},
+			},
+		},
+		{"c", "d"}: {
+			jobs: []*regionJob{
+				{
+					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'d'}},
+					ingestData: &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
+				},
+			},
+		},
+		{"a", "a2"}: {
+			err: errors.New("meet error when generateJobForRange again"),
+		},
+	}
+	err = l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	require.ErrorContains(t, err, "meet error when generateJobForRange again")
+
+	// test write meet unretryable error
+	maxRetryBackoffSecond = 100
+	l.WorkerConcurrency = 1
+	fakeRegionJobs = map[[2]string]struct {
+		jobs []*regionJob
+		err  error
+	}{
+		{"a", "b"}: {
+			jobs: []*regionJob{
+				{
+					keyRange:   common.Range{Start: []byte{'a'}, End: []byte{'b'}},
+					ingestData: &Engine{},
+					retryCount: maxWriteAndIngestRetryTimes - 1,
+					injected:   getSuccessInjectedBehaviour(),
+				},
+			},
+		},
+		{"b", "c"}: {
+			jobs: []*regionJob{
+				{
+					keyRange:   common.Range{Start: []byte{'b'}, End: []byte{'c'}},
+					ingestData: &Engine{},
+					retryCount: maxWriteAndIngestRetryTimes - 1,
+					injected:   getSuccessInjectedBehaviour(),
+				},
+			},
+		},
+		{"c", "d"}: {
+			jobs: []*regionJob{
+				{
+					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'d'}},
+					ingestData: &Engine{},
+					retryCount: maxWriteAndIngestRetryTimes - 2,
+					injected: []injectedBehaviour{
+						{
+							write: injectedWriteBehaviour{
+								// unretryable error
+								err: errors.New("fatal error"),
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	err = l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	require.ErrorContains(t, err, "fatal error")
+	for _, v := range fakeRegionJobs {
+		for _, job := range v.jobs {
+			require.Len(t, job.injected, 0)
+		}
+	}
+}
+
+func TestRegionJobResetRetryCounter(t *testing.T) {
+	backup := maxRetryBackoffSecond
+	maxRetryBackoffSecond = 1
+	t.Cleanup(func() {
+		maxRetryBackoffSecond = backup
+	})
+
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/fakeRegionJobs", "return()")
+	t.Cleanup(func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/fakeRegionJobs")
+	})
+
+	// test that job need rescan when ingest
+
+	initRanges := []common.Range{
+		{Start: []byte{'c'}, End: []byte{'d'}},
+	}
+	fakeRegionJobs = map[[2]string]struct {
+		jobs []*regionJob
+		err  error
+	}{
+		{"c", "d"}: {
+			jobs: []*regionJob{
+				{
+					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
+					ingestData: &Engine{},
+					injected:   getNeedRescanWhenIngestBehaviour(),
+					retryCount: maxWriteAndIngestRetryTimes,
+				},
+				{
+					keyRange:   common.Range{Start: []byte{'c', '2'}, End: []byte{'d'}},
+					ingestData: &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
+					retryCount: maxWriteAndIngestRetryTimes,
+				},
+			},
+		},
+		{"c", "c2"}: {
+			jobs: []*regionJob{
+				{
+					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'c', '2'}},
+					ingestData: &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
+				},
+			},
+		},
+	}
+
+	ctx := context.Background()
+	l := &Backend{
+		BackendConfig: BackendConfig{
+			WorkerConcurrency: 2,
+		},
+	}
+	e := &Engine{}
+	err := l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	require.NoError(t, err)
+	for _, v := range fakeRegionJobs {
+		for _, job := range v.jobs {
+			require.Len(t, job.injected, 0)
+		}
+	}
+}
+
+func TestCtxCancelIsIgnored(t *testing.T) {
+	backup := maxRetryBackoffSecond
+	maxRetryBackoffSecond = 1
+	t.Cleanup(func() {
+		maxRetryBackoffSecond = backup
+	})
+
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/fakeRegionJobs", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/beforeGenerateJob", "sleep(1000)")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
+	t.Cleanup(func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/fakeRegionJobs")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/beforeGenerateJob")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace")
+	})
+
+	initRanges := []common.Range{
+		{Start: []byte{'c'}, End: []byte{'d'}},
+		{Start: []byte{'d'}, End: []byte{'e'}},
+	}
+	fakeRegionJobs = map[[2]string]struct {
+		jobs []*regionJob
+		err  error
+	}{
+		{"c", "d"}: {
+			jobs: []*regionJob{
+				{
+					keyRange:   common.Range{Start: []byte{'c'}, End: []byte{'d'}},
+					ingestData: &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
+				},
+			},
+		},
+		{"d", "e"}: {
+			jobs: []*regionJob{
+				{
+					keyRange:   common.Range{Start: []byte{'d'}, End: []byte{'e'}},
+					ingestData: &Engine{},
+					injected:   getSuccessInjectedBehaviour(),
+				},
+			},
+		},
+	}
+
+	ctx := context.Background()
+	l := &Backend{
+		BackendConfig: BackendConfig{
+			WorkerConcurrency: 1,
+		},
+	}
+	e := &Engine{}
+	err := l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	require.ErrorContains(t, err, "the remaining storage capacity of TiKV")
+}
+
+func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
+	backup := maxRetryBackoffSecond
+	maxRetryBackoffSecond = 1
+	t.Cleanup(func() {
+		maxRetryBackoffSecond = backup
+	})
+
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/sendDummyJob", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockGetFirstAndLastKey", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace", "return()")
+	t.Cleanup(func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/sendDummyJob")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/mockGetFirstAndLastKey")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/WriteToTiKVNotEnoughDiskSpace")
+	})
+
+	initRanges := []common.Range{
+		{Start: []byte{'c'}, End: []byte{'d'}},
+	}
+
+	ctx := context.Background()
+	l := &Backend{
+		BackendConfig: BackendConfig{
+			WorkerConcurrency: 1,
+		},
+		splitCli: initTestSplitClient(
+			[][]byte{{1}, {11}},
+			panicSplitRegionClient{},
+		),
+	}
+	e := &Engine{}
+	err := l.doImport(ctx, e, initRanges, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	require.ErrorContains(t, err, "the remaining storage capacity of TiKV")
+}
+
+func TestExternalEngine(t *testing.T) {
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipStartWorker", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/injectVariables", "return()")
+	_ = failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/external/LoadIngestDataBatchSize", "return(2)")
+	t.Cleanup(func() {
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipSplitAndScatter")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/skipStartWorker")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/local/injectVariables")
+		_ = failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/external/LoadIngestDataBatchSize")
+	})
+	ctx := context.Background()
+	dir := t.TempDir()
+	storageURI := "file://" + filepath.ToSlash(dir)
+	storeBackend, err := storage.ParseBackend(storageURI, nil)
+	require.NoError(t, err)
+	extStorage, err := storage.New(ctx, storeBackend, nil)
+	require.NoError(t, err)
+	keys := make([][]byte, 100)
+	values := make([][]byte, 100)
+	for i := range keys {
+		keys[i] = []byte(fmt.Sprintf("key%06d", i))
+		values[i] = []byte(fmt.Sprintf("value%06d", i))
+	}
+	// simple append 0x00
+	endKey := make([]byte, len(keys[99])+1)
+	copy(endKey, keys[99])
+
+	dataFiles, statFiles, err := external.MockExternalEngine(extStorage, keys, values)
+	require.NoError(t, err)
+
+	externalCfg := &backend.ExternalEngineConfig{
+		StorageURI:    storageURI,
+		DataFiles:     dataFiles,
+		StatFiles:     statFiles,
+		StartKey:      keys[0],
+		EndKey:        endKey,
+		SplitKeys:     [][]byte{keys[20], keys[30], keys[50], keys[60], keys[80], keys[90]},
+		TotalFileSize: int64(config.SplitRegionSize) + 1,
+		TotalKVCount:  int64(config.SplitRegionKeys) + 1,
+	}
+	engineUUID := uuid.New()
+	local := &Backend{
+		BackendConfig: BackendConfig{
+			WorkerConcurrency: 2,
+		},
+		splitCli: initTestSplitClient([][]byte{
+			keys[0], keys[50], endKey,
+		}, nil),
+		pdCli:          &mockPdClient{},
+		externalEngine: map[uuid.UUID]common.Engine{},
+		keyAdapter:     common.NoopKeyAdapter{},
+	}
+	jobs := make([]*regionJob, 0, 5)
+
+	jobToWorkerCh := make(chan *regionJob, 10)
+	testJobToWorkerCh = jobToWorkerCh
+
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 5; i++ {
+			jobs = append(jobs, <-jobToWorkerCh)
+			testJobWg.Done()
+		}
+	}()
+	go func() {
+		err2 := local.CloseEngine(
+			ctx,
+			&backend.EngineConfig{External: externalCfg},
+			engineUUID,
+		)
+		require.NoError(t, err2)
+		err2 = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+		require.NoError(t, err2)
+		close(done)
+	}()
+
+	<-done
+
+	// no jobs left in the channel
+	require.Len(t, jobToWorkerCh, 0)
+
+	sort.Slice(jobs, func(i, j int) bool {
+		return bytes.Compare(jobs[i].keyRange.Start, jobs[j].keyRange.Start) < 0
+	})
+	expectedKeyRanges := []common.Range{
+		{Start: keys[0], End: keys[30]},
+		{Start: keys[30], End: keys[50]},
+		{Start: keys[50], End: keys[60]},
+		{Start: keys[60], End: keys[90]},
+		{Start: keys[90], End: endKey},
+	}
+	kvIdx := 0
+	for i, job := range jobs {
+		require.Equal(t, expectedKeyRanges[i], job.keyRange)
+		iter := job.ingestData.NewIter(ctx, job.keyRange.Start, job.keyRange.End, nil)
+		for iter.First(); iter.Valid(); iter.Next() {
+			require.Equal(t, keys[kvIdx], iter.Key())
+			require.Equal(t, values[kvIdx], iter.Value())
+			kvIdx++
+		}
+		require.NoError(t, iter.Error())
+		require.NoError(t, iter.Close())
+	}
+	require.Equal(t, 100, kvIdx)
+}
+
+func TestGetExternalEngineKVStatistics(t *testing.T) {
+	b := Backend{
+		externalEngine: map[uuid.UUID]common.Engine{},
+	}
+	// non existent uuid
+	size, count := b.GetExternalEngineKVStatistics(uuid.New())
+	require.Zero(t, size)
+	require.Zero(t, count)
+>>>>>>> e4489f7729a (lightning: use PD HTTP client (#49599))
+}
+
+func TestCheckDiskAvail(t *testing.T) {
+	store := &http.StoreInfo{Status: http.StoreStatus{Capacity: "100 GB", Available: "50 GB"}}
+	ctx := context.Background()
+	err := checkDiskAvail(ctx, store)
+	require.NoError(t, err)
 }
