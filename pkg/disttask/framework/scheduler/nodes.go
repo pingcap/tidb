@@ -35,7 +35,9 @@ var (
 type NodeManager struct {
 	// prevLiveNodes is used to record the live nodes in last checking.
 	prevLiveNodes map[string]struct{}
-	managedNodes  atomic.Pointer[[]string]
+	// managedNodes is the cached nodes managed by the framework.
+	// see TaskManager.GetManagedNodes for more details.
+	managedNodes atomic.Pointer[[]string]
 }
 
 func newNodeManager() *NodeManager {

@@ -69,8 +69,8 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	// 1.1 OnNextSubtasksBatch
 	task.Step = sch.GetNextStep(task)
 	require.Equal(t, ddl.StepReadIndex, task.Step)
-	serverInfos := []string{":4000"}
-	metas, err := sch.OnNextSubtasksBatch(context.Background(), nil, task, serverInfos, task.Step)
+	execIDs := []string{":4000"}
+	metas, err := sch.OnNextSubtasksBatch(context.Background(), nil, task, execIDs, task.Step)
 	require.NoError(t, err)
 	require.Equal(t, len(tblInfo.Partition.Definitions), len(metas))
 	for i, par := range tblInfo.Partition.Definitions {
@@ -83,7 +83,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	task.State = proto.TaskStateRunning
 	task.Step = sch.GetNextStep(task)
 	require.Equal(t, proto.StepDone, task.Step)
-	metas, err = sch.OnNextSubtasksBatch(context.Background(), nil, task, serverInfos, task.Step)
+	metas, err = sch.OnNextSubtasksBatch(context.Background(), nil, task, execIDs, task.Step)
 	require.NoError(t, err)
 	require.Len(t, metas, 0)
 
@@ -95,7 +95,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	// 2.1 empty table
 	tk.MustExec("create table t1(id int primary key, v int)")
 	task = createAddIndexTask(t, dom, "test", "t1", proto.Backfill, false)
-	metas, err = sch.OnNextSubtasksBatch(context.Background(), nil, task, serverInfos, task.Step)
+	metas, err = sch.OnNextSubtasksBatch(context.Background(), nil, task, execIDs, task.Step)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
 	// 2.2 non empty table.
@@ -107,7 +107,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	task = createAddIndexTask(t, dom, "test", "t2", proto.Backfill, false)
 	// 2.2.1 stepInit
 	task.Step = sch.GetNextStep(task)
-	metas, err = sch.OnNextSubtasksBatch(context.Background(), nil, task, serverInfos, task.Step)
+	metas, err = sch.OnNextSubtasksBatch(context.Background(), nil, task, execIDs, task.Step)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(metas))
 	require.Equal(t, ddl.StepReadIndex, task.Step)
@@ -115,7 +115,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	task.State = proto.TaskStateRunning
 	task.Step = sch.GetNextStep(task)
 	require.Equal(t, proto.StepDone, task.Step)
-	metas, err = sch.OnNextSubtasksBatch(context.Background(), nil, task, serverInfos, task.Step)
+	metas, err = sch.OnNextSubtasksBatch(context.Background(), nil, task, execIDs, task.Step)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(metas))
 }
@@ -172,10 +172,10 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	taskID, err := mgr.CreateTask(ctx, task.Key, proto.Backfill, 1, task.Meta)
 	require.NoError(t, err)
 	task.ID = taskID
-	serverInfos := []string{":4000"}
+	execIDs := []string{":4000"}
 
 	// 1. to read-index stage
-	subtaskMetas, err := sch.OnNextSubtasksBatch(ctx, sch, task, serverInfos, sch.GetNextStep(task))
+	subtaskMetas, err := sch.OnNextSubtasksBatch(ctx, sch, task, execIDs, sch.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(task)
@@ -215,7 +215,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
 	})
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, serverInfos, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(task)
@@ -254,13 +254,13 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockWriteIngest"))
 	})
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, serverInfos, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(task)
 	require.Equal(t, ddl.StepWriteAndIngest, task.Step)
 	// 4. to done stage.
-	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, serverInfos, ext.GetNextStep(task))
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 0)
 	task.Step = ext.GetNextStep(task)
