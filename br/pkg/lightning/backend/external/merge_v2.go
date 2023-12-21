@@ -202,8 +202,8 @@ type readerGroup struct {
 	endKey    kv.Key
 }
 
-func getGroups(ctx context.Context, splitter *RangeSplitter, startKey kv.Key, endKey kv.Key) ([]readerGroup, error) {
-	readerGroups := make([]readerGroup, 0, 10)
+func getGroups(ctx context.Context, splitter *RangeSplitter, startKey kv.Key, endKey kv.Key) ([]*readerGroup, error) {
+	readerGroups := make([]*readerGroup, 0, 10)
 	curStart := startKey
 
 	for {
@@ -215,7 +215,7 @@ func getGroups(ctx context.Context, splitter *RangeSplitter, startKey kv.Key, en
 		if len(endKeyOfGroup) == 0 {
 			curEnd = endKey
 		}
-		readerGroups = append(readerGroups, readerGroup{
+		readerGroups = append(readerGroups, &readerGroup{
 			dataFiles: dataFilesOfGroup,
 			statFiles: statFilesOfGroup,
 			startKey:  curStart.Clone(),
@@ -301,20 +301,32 @@ func MergeOverlappingFilesOpt(
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(mergeConcurrency)
 	partSize = max(int64(5*size.MB), partSize+int64(1*size.MB))
-	for i, group := range groups {
-		group := group
+	groupCountPerCon := math.Ceil(float64(len(groups)) / float64(mergeConcurrency))
+
+	start := 0
+	i := 0
+	for ; i < mergeConcurrency-1; i++ {
+		curGroups := groups[start : start+int(groupCountPerCon)]
 		i := i
 		eg.Go(func() error {
-			return runOneGroup(egCtx, store, group, partSize, newFilePrefix, fmt.Sprintf("%s%d", writerID, i), blockSize, propSizeDist, propKeysDist, concurrency, onClose)
+			return runGroups(egCtx, store, curGroups, partSize, newFilePrefix, fmt.Sprintf("%s%d", writerID, i), blockSize, propSizeDist, propKeysDist, concurrency, onClose)
+		})
+		start += int(groupCountPerCon)
+	}
+	if start < len(groups) {
+		i := i
+		curGroups := groups[start:]
+		eg.Go(func() error {
+			return runGroups(egCtx, store, curGroups, partSize, newFilePrefix, fmt.Sprintf("%s%d", writerID, i), blockSize, propSizeDist, propKeysDist, concurrency, onClose)
 		})
 	}
 	return eg.Wait()
 }
 
-func runOneGroup(
+func runGroups(
 	ctx context.Context,
 	store storage.ExternalStorage,
-	rdGroup readerGroup,
+	rdGroups []*readerGroup,
 	partSize int64,
 	newFilePrefix string,
 	writerID string,
@@ -323,13 +335,14 @@ func runOneGroup(
 	propKeysDist uint64,
 	concurrency int,
 	onClose OnCloseFunc) (err error) {
+	// todo count file num
 	task := log.BeginTask(logutil.Logger(ctx).With(
 		zap.String("writer-id", writerID),
-		zap.Int("file-count", len(rdGroup.dataFiles)),
 	), "merge one group of overlapping files")
 	defer func() {
 		task.End(zap.ErrorLevel, err)
 	}()
+
 	writer := NewWriterBuilder().
 		SetMemorySizeLimit(DefaultMemSizeLimit*2).
 		SetBlockSize(blockSize).
@@ -345,73 +358,81 @@ func runOneGroup(
 			logutil.Logger(ctx).Warn("close writer failed", zap.Error(err))
 		}
 	}()
+
 	err = writer.Init(ctx, partSize, 20)
 	if err != nil {
 		return
 	}
 
-	bufPool := membuf.NewPool()
-	loaded := &memKVsAndBuffers{}
-	now := time.Now()
-	err = readAllData(
-		ctx,
-		store,
-		rdGroup.dataFiles,
-		rdGroup.statFiles,
-		rdGroup.startKey,
-		rdGroup.endKey,
-		bufPool,
-		loaded,
-	)
-	if err != nil {
-		return
-	}
-	readTime := time.Since(now)
-	now = time.Now()
-	sorty.MaxGor = uint64(concurrency)
-	sorty.Sort(len(loaded.keys), func(i, k, r, s int) bool {
-		if bytes.Compare(loaded.keys[i], loaded.keys[k]) < 0 { // strict comparator like < or >
-			if r != s {
-				loaded.keys[r], loaded.keys[s] = loaded.keys[s], loaded.keys[r]
-				loaded.values[r], loaded.values[s] = loaded.values[s], loaded.values[r]
-			}
-			return true
-		}
-		return false
-	})
-	sortTime := time.Since(now)
-
-	now = time.Now()
-	for i, key := range loaded.keys {
-		err = writer.WriteRow(ctx, key, loaded.values[i])
+	var maxKey kv.Key
+	for i, rdGroup := range rdGroups {
+		bufPool := membuf.NewPool()
+		loaded := &memKVsAndBuffers{}
+		now := time.Now()
+		err = readAllData(
+			ctx,
+			store,
+			rdGroup.dataFiles,
+			rdGroup.statFiles,
+			rdGroup.startKey,
+			rdGroup.endKey,
+			bufPool,
+			loaded,
+		)
 		if err != nil {
-			return err
+			return
 		}
-	}
-	writeTime := time.Since(now)
+		readTime := time.Since(now)
+		now = time.Now()
+		sorty.MaxGor = uint64(concurrency)
+		sorty.Sort(len(loaded.keys), func(i, k, r, s int) bool {
+			if bytes.Compare(loaded.keys[i], loaded.keys[k]) < 0 { // strict comparator like < or >
+				if r != s {
+					loaded.keys[r], loaded.keys[s] = loaded.keys[s], loaded.keys[r]
+					loaded.values[r], loaded.values[s] = loaded.values[s], loaded.values[r]
+				}
+				return true
+			}
+			return false
+		})
+		sortTime := time.Since(now)
 
-	logutil.Logger(ctx).Info("sort one group in MergeOverlappingFiles",
-		zap.Duration("read time", readTime),
-		zap.Duration("sort time", sortTime),
-		zap.Duration("write time", writeTime),
-		zap.Int("key len", len(loaded.keys)))
+		now = time.Now()
+		for i, key := range loaded.keys {
+			err = writer.WriteRow(ctx, key, loaded.values[i])
+			if err != nil {
+				return err
+			}
+		}
+		writeTime := time.Since(now)
+
+		logutil.Logger(ctx).Info("sort one group in MergeOverlappingFiles",
+			zap.Duration("read time", readTime),
+			zap.Duration("sort time", sortTime),
+			zap.Duration("write time", writeTime),
+			zap.Int("key len", len(loaded.keys)))
+		if i == len(rdGroups)-1 {
+			maxKey = kv.Key(loaded.keys[len(loaded.keys)-1]).Clone()
+		}
+
+		loaded.keys = nil
+		loaded.values = nil
+		loaded.memKVBuffers = nil
+	}
 
 	var stat MultipleFilesStat
 	stat.Filenames = append(stat.Filenames,
 		[2]string{writer.dataFile, writer.statFile})
-	stat.build([]kv.Key{rdGroup.startKey}, []kv.Key{loaded.keys[len(loaded.keys)-1]})
+	stat.build([]kv.Key{rdGroups[0].startKey}, []kv.Key{maxKey})
 	if onClose != nil {
 		onClose(&WriterSummary{
 			WriterID:           writer.writerID,
 			Seq:                0,
-			Min:                rdGroup.startKey,
-			Max:                loaded.keys[len(loaded.keys)-1],
+			Min:                rdGroups[0].startKey,
+			Max:                maxKey,
 			TotalSize:          writer.totalSize,
 			MultipleFilesStats: []MultipleFilesStat{stat},
 		})
 	}
-	loaded.keys = nil
-	loaded.values = nil
-	loaded.memKVBuffers = nil
 	return
 }
