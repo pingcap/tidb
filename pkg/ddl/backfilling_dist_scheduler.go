@@ -420,6 +420,8 @@ func generateMergePlan(
 		return nil, err
 	}
 	multiStats := make([]external.MultipleFilesStat, 0, 100)
+	dataFiles := make([]string, 0, 100)
+	statFiles := make([]string, 0, 100)
 	for _, bs := range subTaskMetas {
 		var subtask BackfillSubTaskMeta
 		err = json.Unmarshal(bs, &subtask)
@@ -427,6 +429,12 @@ func generateMergePlan(
 			return nil, err
 		}
 		multiStats = append(multiStats, subtask.MultipleFilesStats...)
+		for _, stat := range subtask.MultipleFilesStats {
+			for _, files := range stat.Filenames {
+				dataFiles = append(dataFiles, files[0])
+				statFiles = append(statFiles, files[1])
+			}
+		}
 	}
 	if skipMergeSort(multiStats) {
 		logger.Info("skip merge sort")
@@ -434,14 +442,26 @@ func generateMergePlan(
 	}
 
 	// generate merge sort plan.
-	_, _, _, dataFiles, _, err := getSummaryFromLastStep(taskHandle, task.ID, StepReadIndex)
-	if err != nil {
-		return nil, err
+	startKeys := make([]kv.Key, 0, 10)
+	endKeys := make([]kv.Key, 0, 10)
+
+	i := 0
+	for ; i < len(multiStats)-1; i += 2 {
+		startKey := external.BytesMin(multiStats[i].MinKey, multiStats[i+1].MinKey)
+		endKey := external.BytesMax(multiStats[i].MaxKey, multiStats[i+1].MaxKey)
+		endKey = kv.Key(endKey).Next()
+		startKeys = append(startKeys, startKey)
+		endKeys = append(endKeys, endKey)
+	}
+	if i == len(multiStats)-1 {
+		startKeys = append(startKeys, multiStats[i].MinKey)
+		endKeys = append(endKeys, kv.Key(multiStats[i].MaxKey).Next())
 	}
 
 	start := 0
 	step := external.MergeSortFileCountStep
 	metaArr := make([][]byte, 0, 16)
+	i = 0
 	for start < len(dataFiles) {
 		end := start + step
 		if end > len(dataFiles) {
@@ -449,6 +469,11 @@ func generateMergePlan(
 		}
 		m := &BackfillSubTaskMeta{
 			DataFiles: dataFiles[start:end],
+			StatFiles: statFiles[start:end],
+			SortedKVMeta: external.SortedKVMeta{
+				StartKey: startKeys[i],
+				EndKey:   endKeys[i],
+			},
 		}
 		metaBytes, err := json.Marshal(m)
 		if err != nil {
@@ -457,6 +482,7 @@ func generateMergePlan(
 		metaArr = append(metaArr, metaBytes)
 
 		start = end
+		i++
 	}
 	return metaArr, nil
 }

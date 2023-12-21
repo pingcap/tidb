@@ -285,13 +285,14 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 }
 
 func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat) bool {
-	failpoint.Inject("forceMergeSort", func(val failpoint.Value) {
-		in := val.(string)
-		if in == kvGroup || in == "*" {
-			failpoint.Return(false)
-		}
-	})
-	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
+	return false
+	// failpoint.Inject("forceMergeSort", func(val failpoint.Value) {
+	// 	in := val.(string)
+	// 	if in == kvGroup || in == "*" {
+	// 		failpoint.Return(false)
+	// 	}
+	// })
+	// return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
 }
 
 func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, error) {
@@ -309,7 +310,25 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, er
 			continue
 		}
 		dataFiles := kvMeta.GetDataFiles()
+		statFiles := kvMeta.GetStatFiles()
+		startKeys := make([]tidbkv.Key, 0, 10)
+		endKeys := make([]tidbkv.Key, 0, 10)
+
+		i := 0
+		for ; i < len(kvMeta.MultipleFilesStats)-1; i += 2 {
+			startKey := external.BytesMin(kvMeta.MultipleFilesStats[i].MinKey, kvMeta.MultipleFilesStats[i+1].MinKey)
+			endKey := external.BytesMax(kvMeta.MultipleFilesStats[i].MaxKey, kvMeta.MultipleFilesStats[i+1].MaxKey)
+			endKey = tidbkv.Key(endKey).Next()
+			startKeys = append(startKeys, startKey)
+			endKeys = append(endKeys, endKey)
+		}
+		if i == len(kvMeta.MultipleFilesStats)-1 {
+			startKeys = append(startKeys, kvMeta.MultipleFilesStats[i].MinKey)
+			endKeys = append(endKeys, kvMeta.MultipleFilesStats[i].MaxKey.Next())
+		}
+
 		length := len(dataFiles)
+		i = 0
 		for start := 0; start < length; start += step {
 			end := start + step
 			if end > length {
@@ -319,8 +338,14 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, er
 				MergeSortStepMeta: &MergeSortStepMeta{
 					KVGroup:   kvGroup,
 					DataFiles: dataFiles[start:end],
+					StatFiles: statFiles[start:end],
+					SortedKVMeta: external.SortedKVMeta{
+						StartKey: startKeys[i],
+						EndKey:   endKeys[i],
+					},
 				},
 			})
+			i++
 		}
 	}
 	return result, nil

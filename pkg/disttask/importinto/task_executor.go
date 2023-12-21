@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -309,20 +310,22 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	logger.Info("merge sort partSize", zap.String("size", units.BytesSize(float64(m.partSize))))
 
-	return external.MergeOverlappingFiles(
+	return external.MergeOverlappingFilesOpt(
 		ctx,
 		sm.DataFiles,
+		sm.StatFiles,
 		m.controller.GlobalSortStore,
+		sm.StartKey,
+		sm.EndKey,
 		m.partSize,
-		64*1024,
 		prefix,
+		uuid.NewString(),
 		getKVGroupBlockSize(sm.KVGroup),
-		external.DefaultMemSizeLimit,
 		8*1024,
 		1*size.MB,
-		8*1024,
 		onClose,
 		int(m.taskMeta.Plan.ThreadCnt),
+		2, // decided by bench test.
 		false)
 }
 

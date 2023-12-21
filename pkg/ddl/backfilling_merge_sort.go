@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -99,20 +100,23 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		return err
 	}
 
-	return external.MergeOverlappingFiles(
+	return external.MergeOverlappingFilesOpt(
 		ctx,
 		sm.DataFiles,
+		sm.StatFiles,
 		store,
+		sm.StartKey,
+		sm.EndKey,
 		int64(partSize),
-		64*1024,
 		prefix,
+		uuid.NewString(),
 		external.DefaultBlockSize,
-		external.DefaultMemSizeLimit,
-		8*1024,
 		1*size.MB,
 		8*1024,
 		onClose,
-		int(variable.GetDDLReorgWorkerCounter()), true)
+		int(variable.GetDDLReorgWorkerCounter()),
+		2, // decided by bench test.
+		false)
 }
 
 func (*mergeSortExecutor) Cleanup(ctx context.Context) error {

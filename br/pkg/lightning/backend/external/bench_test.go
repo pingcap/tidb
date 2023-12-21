@@ -1008,7 +1008,6 @@ func newMergeStep(t *testing.T, s *mergeTestSuite) {
 		mergeOutput,
 		"test",
 		DefaultBlockSize,
-		8*1024,
 		1*size.MB,
 		8*1024,
 		onClose,
@@ -1056,7 +1055,6 @@ func newMergeStepOpt(t *testing.T, s *mergeTestSuite) {
 		mergeOutput,
 		"test",
 		DefaultBlockSize,
-		8*1024,
 		1*size.MB,
 		8*1024,
 		onClose,
@@ -1071,7 +1069,7 @@ func newMergeStepOpt(t *testing.T, s *mergeTestSuite) {
 	}
 	elapsed := time.Since(now)
 	t.Logf(
-		"new merge speed for %d bytes in %s, speed: %.2f MB/s",
+		"new merge parallel speed for %d bytes in %s, speed: %.2f MB/s",
 		totalSize.Load(),
 		elapsed,
 		float64(totalSize.Load())/elapsed.Seconds()/1024/1024,
@@ -1126,16 +1124,16 @@ func testCompareMergeWithContent(
 }
 
 func TestMergeBench(t *testing.T) {
-	// testCompareMergeWithContent(t, 1, 0, createAscendingFiles, mergeStep)
-	// testCompareMergeWithContent(t, 1, 0,createEvenlyDistributedFiles, mergeStep)
-	// testCompareMergeWithContent(t, 2, 0, createAscendingFiles, mergeStep)
-	// testCompareMergeWithContent(t, 2, 0, createEvenlyDistributedFiles, mergeStep)
-	// testCompareMergeWithContent(t, 4, 0,createAscendingFiles, mergeStep)
-	// testCompareMergeWithContent(t, 4, 0, createEvenlyDistributedFiles, mergeStep)
-	// testCompareMergeWithContent(t, 8, 0, createAscendingFiles, mergeStep)
-	// testCompareMergeWithContent(t, 8, 0, createEvenlyDistributedFiles, mergeStep)
-	// testCompareMergeWithContent(t, 8, 0,createAscendingFiles, newMergeStep)
-	// testCompareMergeWithContent(t, 8, 0,createEvenlyDistributedFiles, newMergeStep)
+	testCompareMergeWithContent(t, 1, 0, createAscendingFiles, mergeStep)
+	testCompareMergeWithContent(t, 1, 0, createEvenlyDistributedFiles, mergeStep)
+	testCompareMergeWithContent(t, 2, 0, createAscendingFiles, mergeStep)
+	testCompareMergeWithContent(t, 2, 0, createEvenlyDistributedFiles, mergeStep)
+	testCompareMergeWithContent(t, 4, 0, createAscendingFiles, mergeStep)
+	testCompareMergeWithContent(t, 4, 0, createEvenlyDistributedFiles, mergeStep)
+	testCompareMergeWithContent(t, 8, 0, createAscendingFiles, mergeStep)
+	testCompareMergeWithContent(t, 8, 0, createEvenlyDistributedFiles, mergeStep)
+	// testCompareMergeWithContent(t, 8, 0, createAscendingFiles, newMergeStep)
+	// testCompareMergeWithContent(t, 8, 0, createEvenlyDistributedFiles, newMergeStep)
 	testCompareMergeWithContent(t, 8, 1, createAscendingFiles, newMergeStepOpt)
 	testCompareMergeWithContent(t, 8, 1, createEvenlyDistributedFiles, newMergeStepOpt)
 	testCompareMergeWithContent(t, 8, 2, createAscendingFiles, newMergeStepOpt)

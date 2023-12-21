@@ -5,8 +5,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"os"
-	"runtime/pprof"
 	"time"
 
 	"github.com/jfcg/sorty/v2"
@@ -15,25 +13,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
-	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
-
-// func printMemoryUsage() {
-// 	memStats := runtime.MemStats{}
-// 	runtime.ReadMemStats(&memStats)
-
-// 	logutil.BgLogger().Info(fmt.Sprintf("Total Memory: %d bytes\n", memStats.TotalAlloc/1024/1024))
-// 	logutil.BgLogger().Info(fmt.Sprintf("Heap Usage: %d bytes\n", memStats.HeapAlloc/1024/1024))
-// 	logutil.BgLogger().Info(fmt.Sprintf("HeapIdle: %d bytes\n", memStats.HeapIdle/1024/1024))
-// 	logutil.BgLogger().Info(fmt.Sprintf("HeapInuse: %d bytes\n", memStats.HeapInuse/1024/1024))
-// 	logutil.BgLogger().Info(fmt.Sprintf("Stack Inuse: %d bytes\n", memStats.StackInuse/1024/1024))
-// 	logutil.BgLogger().Info(fmt.Sprintf("MSpan Inuse: %d bytes\n", memStats.MSpanInuse/1024/1024))
-// 	logutil.BgLogger().Info(fmt.Sprintf("GCNum: %d\n", memStats.NumGC))
-// }
 
 // MergeOverlappingFilesV2 reads from given files whose key range may overlap
 // and writes to new sorted, nonoverlapping files.
@@ -49,7 +33,6 @@ func MergeOverlappingFilesV2(
 	newFilePrefix string,
 	writerID string,
 	blockSize int,
-	writeBatchCount uint64,
 	propSizeDist uint64,
 	propKeysDist uint64,
 	onClose OnCloseFunc,
@@ -57,16 +40,6 @@ func MergeOverlappingFilesV2(
 	writerConcurrency int,
 	checkHotspot bool,
 ) (err error) {
-
-	// interval := 100
-
-	// go func() {
-	// 	for {
-	// 		time.Sleep(time.Duration(interval) * time.Millisecond)
-	// 		printMemoryUsage()
-	// 	}
-	// }()
-
 	task := log.BeginTask(logutil.Logger(ctx).With(
 		zap.Int("data-file-count", len(dataFiles)),
 		zap.Int("stat-file-count", len(statFiles)),
@@ -111,16 +84,18 @@ func MergeOverlappingFilesV2(
 			newFilePrefix,
 			writerID)
 	defer func() {
-		err = splitter.Close()
-		if err != nil {
+		err1 := splitter.Close()
+		if err1 != nil {
+			err = err1
 			logutil.Logger(ctx).Warn("close range splitter failed", zap.Error(err))
 		}
-		err = writer.Close(ctx)
-		if err != nil {
+		err1 = writer.Close(ctx)
+		if err1 != nil {
+			err = err1
 			logutil.Logger(ctx).Warn("close writer failed", zap.Error(err))
 		}
 	}()
-
+	partSize = max(int64(5*size.MB), partSize+int64(1*size.MB))
 	err = writer.Init(ctx, partSize, writerConcurrency)
 	if err != nil {
 		logutil.Logger(ctx).Warn("init writer failed", zap.Error(err))
@@ -132,7 +107,6 @@ func MergeOverlappingFilesV2(
 	curStart := kv.Key(startKey).Clone()
 	var curEnd kv.Key
 	var maxKey, minKey kv.Key
-	idx := 0
 	for {
 		now := time.Now()
 		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err1 := splitter.SplitOneRangesGroup()
@@ -174,9 +148,6 @@ func MergeOverlappingFilesV2(
 			return false
 		})
 		sortTime := time.Since(now)
-		file, _ := os.Create(fmt.Sprintf("heap-profile-test-%d.prof", idx))
-		idx++
-		_ = pprof.WriteHeapProfile(file)
 		now = time.Now()
 		for i, key := range loaded.keys {
 			err1 = writer.WriteRow(ctx, key, loaded.values[i])
@@ -192,7 +163,6 @@ func MergeOverlappingFilesV2(
 			zap.Duration("sort time", sortTime),
 			zap.Duration("write time", writeTime),
 			zap.Int("key len", len(loaded.keys)))
-		now = time.Now()
 
 		if len(minKey) == 0 {
 			minKey = kv.Key(loaded.keys[0]).Clone()
@@ -202,14 +172,10 @@ func MergeOverlappingFilesV2(
 		loaded.keys = nil
 		loaded.values = nil
 		loaded.memKVBuffers = nil
-		logutil.Logger(ctx).Info("release time",
-			zap.Duration("time", time.Since(now)))
 		if len(endKeyOfGroup) == 0 {
 			break
 		}
 	}
-
-	now := time.Now()
 
 	var stat MultipleFilesStat
 	stat.Filenames = append(stat.Filenames,
@@ -226,8 +192,6 @@ func MergeOverlappingFilesV2(
 			MultipleFilesStats: []MultipleFilesStat{stat},
 		})
 	}
-	logutil.Logger(ctx).Info("close time",
-		zap.Duration("time", time.Since(now)))
 	return
 }
 
@@ -255,7 +219,7 @@ func getGroups(ctx context.Context, splitter *RangeSplitter, startKey kv.Key, en
 			dataFiles: dataFilesOfGroup,
 			statFiles: statFilesOfGroup,
 			startKey:  curStart.Clone(),
-			endKey:    tidbkv.Key(curEnd).Clone(),
+			endKey:    kv.Key(curEnd).Clone(),
 		})
 
 		curStart = curEnd
@@ -266,6 +230,9 @@ func getGroups(ctx context.Context, splitter *RangeSplitter, startKey kv.Key, en
 	return readerGroups, nil
 }
 
+// MergeOverlappingFilesOpt reads from given files whose key range may overlap
+// and writes to new sorted, nonoverlapping files.
+// Using concurrency * (readAllData and writer).
 func MergeOverlappingFilesOpt(
 	ctx context.Context,
 	dataFiles []string,
@@ -277,7 +244,6 @@ func MergeOverlappingFilesOpt(
 	newFilePrefix string,
 	writerID string,
 	blockSize int,
-	writeBatchCount uint64,
 	propSizeDist uint64,
 	propKeysDist uint64,
 	onClose OnCloseFunc,
@@ -298,7 +264,7 @@ func MergeOverlappingFilesOpt(
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	rangesGroupSize := 2 * size.GB
+	rangesGroupSize := 1 * size.GB
 	failpoint.Inject("mockRangesGroupSize", func(val failpoint.Value) {
 		rangesGroupSize = uint64(val.(int))
 	})
@@ -314,15 +280,24 @@ func MergeOverlappingFilesOpt(
 		math.MaxInt64,
 		checkHotspot,
 	)
+	defer func() {
+		err1 := splitter.Close()
+		if err != nil {
+			err = err1
+			logutil.Logger(ctx).Warn("close range splitter failed", zap.Error(err))
+		}
+	}()
 	if err != nil {
-		return err
+		logutil.Logger(ctx).Warn("new range splitter failed", zap.Error(err))
+		return
 	}
 
 	groups, err := getGroups(ctx, splitter, startKey, endKey)
 	if err != nil {
+		logutil.Logger(ctx).Warn("get data groups failed", zap.Error(err))
 		return err
 	}
-	logutil.Logger(ctx).Info("get groups", zap.Int("len", len(groups)))
+	logutil.Logger(ctx).Info("get file groups for merge step", zap.Int("len", len(groups)))
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(mergeConcurrency)
 	partSize = max(int64(5*size.MB), partSize+int64(1*size.MB))
@@ -364,14 +339,15 @@ func runOneGroup(
 		BuildOneFile(store, newFilePrefix, writerID)
 
 	defer func() {
-		err = writer.Close(ctx)
-		if err != nil {
+		err1 := writer.Close(ctx)
+		if err1 != nil {
+			err = err1
 			logutil.Logger(ctx).Warn("close writer failed", zap.Error(err))
 		}
 	}()
 	err = writer.Init(ctx, partSize, 20)
 	if err != nil {
-		return nil
+		return
 	}
 
 	bufPool := membuf.NewPool()
@@ -388,7 +364,7 @@ func runOneGroup(
 		loaded,
 	)
 	if err != nil {
-		return err
+		return
 	}
 	readTime := time.Since(now)
 	now = time.Now()
@@ -423,7 +399,7 @@ func runOneGroup(
 	var stat MultipleFilesStat
 	stat.Filenames = append(stat.Filenames,
 		[2]string{writer.dataFile, writer.statFile})
-	stat.build([]tidbkv.Key{rdGroup.startKey}, []tidbkv.Key{loaded.keys[len(loaded.keys)-1]})
+	stat.build([]kv.Key{rdGroup.startKey}, []kv.Key{loaded.keys[len(loaded.keys)-1]})
 	if onClose != nil {
 		onClose(&WriterSummary{
 			WriterID:           writer.writerID,

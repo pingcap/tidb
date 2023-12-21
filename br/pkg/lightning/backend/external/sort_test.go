@@ -73,7 +73,7 @@ func TestGlobalSortLocalBasic(t *testing.T) {
 	kvs := make([]common.KvPair, kvCnt)
 	for i := 0; i < kvCnt; i++ {
 		kvs[i] = common.KvPair{
-			Key: []byte(uuid.New().String()),
+			Key: []byte(uuid.NewString()),
 			Val: []byte("56789"),
 		}
 	}
@@ -183,7 +183,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 	testSortWithNewMerge(t, MergeOverlappingFilesOpt)
 }
 
-func testSortWithNewMerge(t *testing.T, mergeFunc func(ctx context.Context, dataFiles []string, statFiles []string, store storage.ExternalStorage, startKey []byte, endKey []byte, partSize int64, newFilePrefix string, writerID string, blockSize int, writeBatchCount uint64, propSizeDist uint64, propKeysDist uint64, onClose OnCloseFunc, concurrency int, writerConcurrency int, checkHotspot bool) (err error)) {
+func testSortWithNewMerge(t *testing.T, mergeFunc func(ctx context.Context, dataFiles []string, statFiles []string, store storage.ExternalStorage, startKey []byte, endKey []byte, partSize int64, newFilePrefix string, writerID string, blockSize int, propSizeDist uint64, propKeysDist uint64, onClose OnCloseFunc, concurrency int, writerConcurrency int, checkHotspot bool) (err error)) {
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
 	memSizeLimit := (rand.Intn(10) + 1) * 400
@@ -268,7 +268,6 @@ func testSortWithNewMerge(t *testing.T, mergeFunc func(ctx context.Context, data
 			"/test2",
 			uuid.NewString(),
 			100,
-			8*1024,
 			100,
 			2,
 			closeFn1,
