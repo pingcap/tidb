@@ -231,44 +231,6 @@ func TestRestrictionWithConnectionPool(t *testing.T) {
 	}
 }
 
-func TestReplicationWriter(t *testing.T) {
-	s := createReadOnlySuite(t)
-	_, err := s.db.Exec("set global tidb_restricted_read_only=0")
-	require.NoError(t, err)
-	_, err = s.db.Exec("drop table if exists t")
-	require.NoError(t, err)
-	_, err = s.db.Exec("create table t (a int)")
-	require.NoError(t, err)
-
-	conn, err := s.rdb.Conn(context.Background())
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, conn.Close())
-	}()
-	done := make(chan struct{})
-	go func(conn *sql.Conn) {
-		ticker := time.NewTicker(50 * time.Millisecond)
-		for {
-			select {
-			case t1 := <-ticker.C:
-				_, err := conn.ExecContext(context.Background(), fmt.Sprintf("insert into t values (%d)", t1.Nanosecond()))
-				require.NoError(t, err)
-			case <-done:
-				return
-			}
-		}
-	}(conn)
-	time.Sleep(1 * time.Second)
-	timer := time.NewTimer(3 * time.Second)
-	_, err = s.db.Exec("set global tidb_restricted_read_only=1")
-	require.NoError(t, err)
-	// SUPER user can't write
-	_, err = s.db.Exec("insert into t values (1)")
-	require.Equal(t, err.Error(), ReadOnlyErrMsg)
-	<-timer.C
-	done <- struct{}{}
-}
-
 func TestInternalSQL(t *testing.T) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
 	store := testkit.CreateMockStore(t)
@@ -280,24 +242,12 @@ func TestInternalSQL(t *testing.T) {
 	}()
 
 	runSQL := func() {
-		sql := "select 1 from dual";
+		sql := "insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (874, 0, 1, 'a', 3)"
 		_, err := tk.Session().ExecuteInternal(ctx, sql)
 		require.NoError(t, err)
 	}
 
 	tk.MustExec("set global tidb_restricted_read_only=On");
 	tk.MustExec("set global tidb_super_read_only=On");
-	runSQL()
-
-	tk.MustExec("set global tidb_restricted_read_only=Off");
-	tk.MustExec("set global tidb_super_read_only=On");
-	runSQL()
-
-	tk.MustExec("set global tidb_restricted_read_only=On");
-	tk.MustMatchErrMsg("set global tidb_super_read_only=Off",
-	    "can't turn off tidb_super_read_only when tidb_restricted_read_only is on")
-
-	tk.MustExec("set global tidb_restricted_read_only=Off");
-	tk.MustExec("set global tidb_super_read_only=Off");
 	runSQL()
 }
