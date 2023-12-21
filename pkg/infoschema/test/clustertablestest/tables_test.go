@@ -1503,7 +1503,7 @@ func TestTiDBParams(t *testing.T) {
 
 	// update global variable
 	tk.MustExec("SET GLOBAL innodb_compression_level = 8;")
-	tk.MustQuery(`SELECT * FROM tidb_params WHERE param_name = 'innodb_compression_level'`).Check(testkit.Rows("tidb VAR innodb_compression_level * GLOBAL 8 6 <nil> <nil> <nil> 1 0 0 IS_NOOP"))
+	tk.MustQuery(`SELECT * FROM tidb_params WHERE param_name = 'innodb_compression_level'`).Check(testkit.Rows("tidb VAR innodb_compression_level * GLOBAL 8 6 <nil> <nil> <nil> 1 0 0 [\"IS_NOOP\"]"))
 
 	// config
 	tk.MustQuery(`SELECT * FROM tidb_params WHERE param_name = 'key1'`).Check(testkit.Rows(

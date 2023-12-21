@@ -1341,4 +1341,8 @@ func TestGetGlobalConfigDetail(t *testing.T) {
 	d, err := GetGlobalConfigDetail()
 	require.NoError(t, err)
 	require.NotNil(t, d)
+	require.True(t, len(d) > 0)
+	for _, v := range d {
+		require.Equal(t, v.Value, v.DefaultValue)
+	}
 }

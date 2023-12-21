@@ -1680,7 +1680,7 @@ var tableTiDBParamsCols = []columnInfo{
 	{name: "IS_CLUSTER_DYNAMIC", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, deflt: 0},
 	{name: "IS_INST_DYNAMIC", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, deflt: 0},
 	{name: "IS_SESS_DYNAMIC", tp: mysql.TypeTiny, size: 1, flag: mysql.NotNullFlag, deflt: 0},
-	{name: "EXTRAS", tp: mysql.TypeSet, enumElems: []string{"IS_NOOP", "IS_READONLY"}},
+	{name: "EXTRAS", tp: mysql.TypeJSON, size: 64},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.

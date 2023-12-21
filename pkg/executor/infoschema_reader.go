@@ -3505,7 +3505,12 @@ func (e *memtableRetriever) setDataFromTiDBParams(ctx sessionctx.Context) error 
 		if sv.IsNoop {
 			extras = append(extras, "IS_NOOP")
 		}
-		extrasSet, err := types.ParseSet([]string{"IS_NOOP", "IS_READONLY"}, strings.Join(extras, ","), mysql.DefaultCollationName)
+		extrasData, err := json.Marshal(extras)
+		if err != nil {
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			continue
+		}
+		extrasJson, err := types.ParseBinaryJSONFromString(string(extrasData))
 		if err != nil {
 			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 			continue
@@ -3524,7 +3529,7 @@ func (e *memtableRetriever) setDataFromTiDBParams(ctx sessionctx.Context) error 
 			isClusterDynamic,
 			isInstDynamic,
 			isSessionDynamic,
-			extrasSet,
+			extrasJson,
 		)
 		// min and max value is only supported for numeric types
 		if !(sv.Type == variable.TypeUnsigned || sv.Type == variable.TypeInt || sv.Type == variable.TypeFloat) {
