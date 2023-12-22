@@ -79,7 +79,7 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joi
 			// Getting here means that there is no join condition between the table used in the leading hint and other tables
 			// For example: select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a cross join t3
 			// We can not let table t3 join first.
-			s.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("leading hint is inapplicable, check if the leading hint table has join conditions with other tables"))
+			s.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("leading hint is inapplicable, check if the leading hint table has join conditions with other tables"))
 		}
 		cartesianGroup = append(cartesianGroup, newNode.p)
 	}

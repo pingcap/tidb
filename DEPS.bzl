@@ -3392,8 +3392,8 @@ def go_deps():
         name = "com_github_pingcap_errors",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/errors",
-        sum = "h1:m5ZsBa5o/0CkzZXfXLaThzKuR85SnHHetqBCpzQ30h8=",
-        version = "v0.11.5-0.20221009092201-b66cddb77c32",
+        sum = "h1:yqyP+k0mgRPpXJQDOCrtaG2YZym0ZDD+vt5JzlBUkrw=",
+        version = "v0.11.5-0.20231212100244-799fae176cfb",
     )
     go_repository(
         name = "com_github_pingcap_failpoint",
