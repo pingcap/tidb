@@ -63,7 +63,7 @@ func (nm *NodeManager) maintainLiveNodesLoop(ctx context.Context, taskMgr TaskMa
 }
 
 // maintainLiveNodes manages live node info in dist_framework_meta table
-// see recoverMetaLoop in task executor for when node is insert into dist_framework_meta.
+// see recoverMetaLoop in task executor for when node is inserted into dist_framework_meta.
 func (nm *NodeManager) maintainLiveNodes(ctx context.Context, taskMgr TaskManager) {
 	// Safe to discard errors since this function can be called at regular intervals.
 	serverInfos, err := GenerateTaskExecutorNodes(ctx)
