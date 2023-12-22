@@ -249,16 +249,15 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			topNs = append(topNs, collectors[i].TopN)
 		}
 		for j, s := range collectors[i].Samples {
-			samples := collectors[i].Samples[j]
-			samples.Ordinal = j
-			samples.Value, err = tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
+			s.Ordinal = j
+			s.Value, err = tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
 			if err != nil {
 				return nil, nil, nil, nil, nil, err
 			}
 			// When collation is enabled, we store the Key representation of the sampling data. So we set it to kind `Bytes` here
 			// to avoid to convert it to its Key representation once more.
-			if samples.Value.Kind() == types.KindString {
-				samples.Value.SetBytes(samples.Value.GetBytes())
+			if s.Value.Kind() == types.KindString {
+				s.Value.SetBytes(s.Value.GetBytes())
 			}
 		}
 		var hg *statistics.Histogram
