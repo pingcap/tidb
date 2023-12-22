@@ -16,6 +16,7 @@ package scheduler
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -45,35 +46,55 @@ var WaitTaskFinished = make(chan struct{})
 func (sm *Manager) getSchedulerCount() int {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	return len(sm.mu.schedulers)
+	return len(sm.mu.schedulerMap)
 }
 
 func (sm *Manager) addScheduler(taskID int64, scheduler Scheduler) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	sm.mu.schedulers[taskID] = scheduler
+	sm.mu.schedulerMap[taskID] = scheduler
+	sm.mu.schedulers = append(sm.mu.schedulers, scheduler)
+	slices.SortFunc(sm.mu.schedulers, func(i, j Scheduler) int {
+		return i.GetTask().Compare(j.GetTask())
+	})
 }
 
 func (sm *Manager) hasScheduler(taskID int64) bool {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	_, ok := sm.mu.schedulers[taskID]
+	_, ok := sm.mu.schedulerMap[taskID]
 	return ok
 }
 
 func (sm *Manager) delScheduler(taskID int64) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	delete(sm.mu.schedulers, taskID)
+	delete(sm.mu.schedulerMap, taskID)
+	for i, scheduler := range sm.mu.schedulers {
+		if scheduler.GetTask().ID == taskID {
+			sm.mu.schedulers = append(sm.mu.schedulers[:i], sm.mu.schedulers[i+1:]...)
+			break
+		}
+	}
 }
 
 func (sm *Manager) clearSchedulers() {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	sm.mu.schedulers = make(map[int64]Scheduler)
+	sm.mu.schedulerMap = make(map[int64]Scheduler)
+	sm.mu.schedulers = sm.mu.schedulers[:0]
 }
 
-// Manager manage a bunch of schedulers.
+// getSchedulers returns a copy of schedulers.
+func (sm *Manager) getSchedulers() []Scheduler {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	res := make([]Scheduler, len(sm.mu.schedulers))
+	copy(res, sm.mu.schedulers)
+	return res
+}
+
+// Manager manage a bunch of schedulerMap.
 // Scheduler schedule and monitor tasks.
 // The scheduling task number is limited by size of gPool.
 type Manager struct {
@@ -84,6 +105,7 @@ type Manager struct {
 	gPool       *spool.Pool
 	slotMgr     *SlotManager
 	nodeMgr     *NodeManager
+	balancer    *balancer
 	initialized bool
 	// serverID, it's value is ip:port now.
 	serverID string
@@ -92,7 +114,9 @@ type Manager struct {
 
 	mu struct {
 		syncutil.RWMutex
-		schedulers map[int64]Scheduler
+		schedulerMap map[int64]Scheduler
+		// in task order
+		schedulers []Scheduler
 	}
 }
 
@@ -110,13 +134,18 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) (*Man
 	}
 	schedulerManager.gPool = gPool
 	schedulerManager.ctx, schedulerManager.cancel = context.WithCancel(ctx)
-	schedulerManager.mu.schedulers = make(map[int64]Scheduler)
+	schedulerManager.mu.schedulerMap = make(map[int64]Scheduler)
 	schedulerManager.finishCh = make(chan struct{}, proto.MaxConcurrentTask)
+	schedulerManager.balancer = newBalancer(Param{
+		taskMgr: taskMgr,
+		nodeMgr: schedulerManager.nodeMgr,
+		slotMgr: schedulerManager.slotMgr,
+	})
 
 	return schedulerManager, nil
 }
 
-// Start the schedulerManager, start the scheduleTaskLoop to start multiple schedulers.
+// Start the schedulerManager, start the scheduleTaskLoop to start multiple schedulerMap.
 func (sm *Manager) Start() {
 	failpoint.Inject("disableSchedulerManager", func() {
 		failpoint.Return()
@@ -132,6 +161,9 @@ func (sm *Manager) Start() {
 	})
 	sm.wg.Run(func() {
 		sm.nodeMgr.refreshManagedNodesLoop(sm.ctx, sm.taskMgr)
+	})
+	sm.wg.Run(func() {
+		sm.balancer.balanceLoop(sm.ctx, sm)
 	})
 	sm.initialized = true
 }

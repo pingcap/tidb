@@ -217,3 +217,19 @@ func TestSlotManagerUpdate(t *testing.T) {
 		"tidb-1": 12,
 	}, *sm.usedSlots.Load())
 }
+
+func TestSchedulerAdjustEligibleNodes(t *testing.T) {
+	slotMgr := newSlotManager()
+	slotMgr.capacity = 16
+
+	allNodes := []string{":4000", ":4001", ":4002"}
+	require.Equal(t, allNodes, slotMgr.adjustEligibleNodes(allNodes, 10))
+
+	usedSlots := map[string]int{
+		":4000": 12,
+		":4001": 4,
+		":4003": 0, // stale node
+	}
+	slotMgr.usedSlots.Store(&usedSlots)
+	require.Equal(t, []string{":4001"}, slotMgr.adjustEligibleNodes(allNodes, 10))
+}

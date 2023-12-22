@@ -40,10 +40,6 @@ func (s *BaseScheduler) OnNextStage() (err error) {
 	return s.onNextStage()
 }
 
-func (s *BaseScheduler) DoBalanceSubtasks(eligibleNodes []string) error {
-	return s.doBalanceSubtasks(eligibleNodes)
-}
-
 func NewNodeManager() *NodeManager {
 	return newNodeManager()
 }

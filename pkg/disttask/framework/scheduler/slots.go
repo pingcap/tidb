@@ -179,13 +179,33 @@ func (sm *SlotManager) unReserve(task *proto.Task, execID string) {
 	}
 }
 
-func (sm *SlotManager) getNodesOfEnoughSlots(concurrency int) map[string]struct{} {
-	// content of usedSlots is never changed directly, so it's safe to read it.
+func (sm *SlotManager) getCapacity() int {
+	return sm.capacity
+}
+
+// we schedule subtasks to the nodes with enough slots first, if no such nodes,
+// schedule to all nodes.
+func (sm *SlotManager) adjustEligibleNodes(eligibleNodes []string, concurrency int) []string {
 	usedSlots := *sm.usedSlots.Load()
-	result := make(map[string]struct{}, len(usedSlots))
+	nodes := filterNodesWithEnoughSlots(usedSlots, sm.capacity, eligibleNodes, concurrency)
+	if len(nodes) == 0 {
+		nodes = eligibleNodes
+	}
+	return nodes
+}
+
+func filterNodesWithEnoughSlots(usedSlots map[string]int, capacity int, eligibleNodes []string, concurrency int) []string {
+	nodesOfEnoughSlots := make(map[string]struct{}, len(usedSlots))
 	for n, slots := range usedSlots {
-		if slots+concurrency <= sm.capacity {
-			result[n] = struct{}{}
+		if slots+concurrency <= capacity {
+			nodesOfEnoughSlots[n] = struct{}{}
+		}
+	}
+
+	result := make([]string, 0, len(eligibleNodes))
+	for _, n := range eligibleNodes {
+		if _, ok := nodesOfEnoughSlots[n]; ok {
+			result = append(result, n)
 		}
 	}
 	return result

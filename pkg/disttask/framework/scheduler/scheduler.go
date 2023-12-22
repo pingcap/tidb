@@ -71,6 +71,9 @@ type Scheduler interface {
 	ExecuteTask()
 	// Close closes the scheduler, should be called if Init returns nil.
 	Close()
+	// GetTask returns the task that the scheduler is managing.
+	GetTask() *proto.Task
+	Extension
 }
 
 // BaseScheduler is the base struct for Scheduler.
@@ -118,6 +121,11 @@ func (s *BaseScheduler) ExecuteTask() {
 
 // Close closes the scheduler.
 func (*BaseScheduler) Close() {
+}
+
+// GetTask implements the Scheduler interface.
+func (s *BaseScheduler) GetTask() *proto.Task {
+	return s.Task
 }
 
 // refreshTask fetch task state from tidb_global_task table.
@@ -328,9 +336,6 @@ func (s *BaseScheduler) onRunning() error {
 		return s.onNextStage()
 	}
 
-	if err := s.balanceSubtasks(); err != nil {
-		return err
-	}
 	// Wait all subtasks in this stage finishes.
 	s.OnTick(s.ctx, s.Task)
 	logutil.Logger(s.logCtx).Debug("on running state, this task keeps current state", zap.Stringer("state", s.Task.State))
@@ -341,85 +346,6 @@ func (s *BaseScheduler) onFinished() error {
 	metrics.UpdateMetricsForFinishTask(s.Task)
 	logutil.Logger(s.logCtx).Debug("schedule task, task is finished", zap.Stringer("state", s.Task.State))
 	return s.taskMgr.TransferSubTasks2History(s.ctx, s.Task.ID)
-}
-
-// balanceSubtasks check the liveNode num every liveNodeFetchInterval then rebalance subtasks.
-func (s *BaseScheduler) balanceSubtasks() error {
-	s.balanceSubtaskTick++
-	if s.balanceSubtaskTick == defaultBalanceSubtaskTicks {
-		s.balanceSubtaskTick = 0
-		eligibleNodes, err := s.getEligibleNodes()
-		if err != nil {
-			return err
-		}
-		if len(eligibleNodes) > 0 {
-			return s.doBalanceSubtasks(eligibleNodes)
-		}
-	}
-	return nil
-}
-
-// DoBalanceSubtasks make count of subtasks on each liveNodes balanced and clean up subtasks on dead nodes.
-// TODO(ywqzzy): refine to make it easier for testing.
-func (s *BaseScheduler) doBalanceSubtasks(eligibleNodes []string) error {
-	eligibleNodeMap := make(map[string]struct{}, len(eligibleNodes))
-	for _, n := range eligibleNodes {
-		eligibleNodeMap[n] = struct{}{}
-	}
-
-	subtasks, err := s.taskMgr.GetActiveSubtasks(s.ctx, s.Task.ID)
-	if err != nil {
-		return err
-	}
-	averageSubtaskCnt := (len(subtasks) + len(eligibleNodes) - 1) / len(eligibleNodes)
-	executorSubtasks := make(map[string][]*proto.Subtask, len(eligibleNodes))
-	executorPendingCnts := make(map[string]int, len(eligibleNodes))
-	for _, node := range eligibleNodes {
-		executorSubtasks[node] = make([]*proto.Subtask, 0, averageSubtaskCnt)
-	}
-	for _, subtask := range subtasks {
-		// put running subtask in the front of slice.
-		// if subtask fail-over, it's possible that there are multiple running
-		// subtasks for one task executor.
-		if subtask.State == proto.TaskStateRunning {
-			executorSubtasks[subtask.ExecID] = append([]*proto.Subtask{subtask}, executorSubtasks[subtask.ExecID]...)
-		} else {
-			executorSubtasks[subtask.ExecID] = append(executorSubtasks[subtask.ExecID], subtask)
-			executorPendingCnts[subtask.ExecID]++
-		}
-	}
-
-	subtasksNeedSchedule := make([]*proto.Subtask, 0)
-	for k, v := range executorSubtasks {
-		if _, ok := eligibleNodeMap[k]; !ok {
-			// dead node
-			subtasksNeedSchedule = append(subtasksNeedSchedule, v...)
-			continue
-		}
-		if len(v) > averageSubtaskCnt {
-			cnt := min(executorPendingCnts[k], len(v)-averageSubtaskCnt)
-			subtasksNeedSchedule = append(subtasksNeedSchedule, v[len(v)-cnt:]...)
-			executorSubtasks[k] = v[:len(v)-cnt]
-		}
-	}
-	if len(subtasksNeedSchedule) == 0 {
-		return nil
-	}
-
-	fillIdx := 0
-	for _, node := range eligibleNodes {
-		sts := executorSubtasks[node]
-		for i := len(sts); i <= averageSubtaskCnt && fillIdx < len(subtasksNeedSchedule); i++ {
-			subtasksNeedSchedule[fillIdx].ExecID = node
-			fillIdx++
-		}
-	}
-
-	if err = s.taskMgr.UpdateSubtasksExecIDs(s.ctx, subtasksNeedSchedule); err != nil {
-		return err
-	}
-	logutil.Logger(s.logCtx).Info("balance subtasks", zap.Stringers("balanced-cnt", subtasksNeedSchedule))
-	return nil
 }
 
 // updateTask update the task in tidb_global_task table.
@@ -499,59 +425,28 @@ func (s *BaseScheduler) onNextStage() (err error) {
 		}
 	}
 
-	serverNodes, err := s.getEligibleNodes()
+	eligibleNodes, err := getEligibleNodes(s.ctx, s, s.nodeMgr)
 	if err != nil {
 		return err
 	}
-	logutil.Logger(s.logCtx).Info("eligible instances", zap.Int("num", len(serverNodes)))
-	if len(serverNodes) == 0 {
+	logutil.Logger(s.logCtx).Info("eligible instances", zap.Int("num", len(eligibleNodes)))
+	if len(eligibleNodes) == 0 {
 		return errors.New("no available TiDB node to dispatch subtasks")
 	}
 
-	metas, err := s.OnNextSubtasksBatch(s.ctx, s, s.Task, serverNodes, nextStep)
+	metas, err := s.OnNextSubtasksBatch(s.ctx, s, s.Task, eligibleNodes, nextStep)
 	if err != nil {
 		logutil.Logger(s.logCtx).Warn("generate part of subtasks failed", zap.Error(err))
 		return s.handlePlanErr(err)
 	}
 
-	return s.scheduleSubTask(nextStep, metas, serverNodes)
-}
-
-// getEligibleNodes returns the eligible(live) nodes for the task.
-// if the task can only be scheduled to some specific nodes, return them directly,
-// we don't care liveliness of them.
-func (s *BaseScheduler) getEligibleNodes() ([]string, error) {
-	serverNodes, err := s.GetEligibleInstances(s.ctx, s.Task)
-	if err != nil {
-		return nil, err
-	}
-	logutil.Logger(s.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
-	if len(serverNodes) == 0 {
-		serverNodes = append([]string{}, s.nodeMgr.getManagedNodes()...)
-	}
-	return serverNodes, nil
-}
-
-// we schedule subtasks to the nodes with enough slots first, if no such nodes,
-// schedule to all nodes.
-func (s *BaseScheduler) adjustEligibleNodes(serverNodes []string) []string {
-	result := make([]string, 0, len(serverNodes))
-	nodesOfEnoughSlots := s.slotMgr.getNodesOfEnoughSlots(s.Task.Concurrency)
-	for _, n := range serverNodes {
-		if _, ok := nodesOfEnoughSlots[n]; ok {
-			result = append(result, n)
-		}
-	}
-	if len(result) == 0 {
-		result = serverNodes
-	}
-	return result
+	return s.scheduleSubTask(nextStep, metas, eligibleNodes)
 }
 
 func (s *BaseScheduler) scheduleSubTask(
 	subtaskStep proto.Step,
 	metas [][]byte,
-	serverNodes []string) error {
+	eligibleNodes []string) error {
 	logutil.Logger(s.logCtx).Info("schedule subtasks",
 		zap.Stringer("state", s.Task.State),
 		zap.Int64("step", int64(s.Task.Step)),
@@ -564,14 +459,14 @@ func (s *BaseScheduler) scheduleSubTask(
 	if err := s.slotMgr.update(s.ctx, s.nodeMgr, s.taskMgr); err != nil {
 		return err
 	}
-	eligibleNodes := s.adjustEligibleNodes(serverNodes)
+	adjustedEligibleNodes := s.slotMgr.adjustEligibleNodes(eligibleNodes, s.Task.Concurrency)
 	var size uint64
 	subTasks := make([]*proto.Subtask, 0, len(metas))
 	for i, meta := range metas {
 		// we assign the subtask to the instance in a round-robin way.
 		// TODO: assign the subtask to the instance according to the system load of each nodes
-		pos := i % len(eligibleNodes)
-		instanceID := eligibleNodes[pos]
+		pos := i % len(adjustedEligibleNodes)
+		instanceID := adjustedEligibleNodes[pos]
 		logutil.Logger(s.logCtx).Debug("create subtasks", zap.String("instanceID", instanceID))
 		subTasks = append(subTasks, proto.NewSubtask(
 			subtaskStep, s.Task.ID, s.Task.Type, instanceID, s.Task.Concurrency, meta, i+1))
@@ -701,4 +596,19 @@ func (s *BaseScheduler) WithNewTxn(ctx context.Context, fn func(se sessionctx.Co
 // IsCancelledErr checks if the error is a cancelled error.
 func IsCancelledErr(err error) bool {
 	return strings.Contains(err.Error(), taskCancelMsg)
+}
+
+// getEligibleNodes returns the eligible(live) nodes for the task.
+// if the task can only be scheduled to some specific nodes, return them directly,
+// we don't care liveliness of them.
+func getEligibleNodes(ctx context.Context, sch Scheduler, nodeMgr *NodeManager) ([]string, error) {
+	serverNodes, err := sch.GetEligibleInstances(ctx, sch.GetTask())
+	if err != nil {
+		return nil, err
+	}
+	logutil.BgLogger().Debug("eligible instances", zap.Int("num", len(serverNodes)))
+	if len(serverNodes) == 0 {
+		serverNodes = append([]string{}, nodeMgr.getManagedNodes()...)
+	}
+	return serverNodes, nil
 }

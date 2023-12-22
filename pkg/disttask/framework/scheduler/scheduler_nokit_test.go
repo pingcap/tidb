@@ -133,26 +133,67 @@ func TestDispatcherOnNextStage(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 }
 
-func TestSchedulerAdjustEligibleNodes(t *testing.T) {
-	slotMgr := newSlotManager()
-	slotMgr.capacity = 16
-	sch := &BaseScheduler{
-		Task: &proto.Task{
-			Concurrency: 10,
-		},
-		Param: Param{
-			slotMgr: slotMgr,
-		},
+func TestManagerSchedulersOrdered(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mgr, err := NewManager(context.Background(), nil, "1")
+	require.NoError(t, err)
+	for i := 1; i <= 5; i++ {
+		task := &proto.Task{
+			ID: int64(i * 10),
+		}
+		mockScheduler := mock.NewMockScheduler(ctrl)
+		mockScheduler.EXPECT().GetTask().Return(task).AnyTimes()
+		mgr.addScheduler(task.ID, mockScheduler)
 	}
-
-	allNodes := []string{":4000", ":4001", ":4002"}
-	require.Equal(t, allNodes, sch.adjustEligibleNodes(allNodes))
-
-	usedSlots := map[string]int{
-		":4000": 12,
-		":4001": 4,
-		":4003": 0, // stale node
+	ordered := func(schedulers []Scheduler) bool {
+		for i := 1; i < len(schedulers); i++ {
+			if schedulers[i-1].GetTask().Compare(schedulers[i].GetTask()) >= 0 {
+				return false
+			}
+		}
+		return true
 	}
-	slotMgr.usedSlots.Store(&usedSlots)
-	require.Equal(t, []string{":4001"}, sch.adjustEligibleNodes(allNodes))
+	require.Len(t, mgr.getSchedulers(), 5)
+	require.True(t, ordered(mgr.getSchedulers()))
+
+	task35 := &proto.Task{
+		ID: int64(35),
+	}
+	mockScheduler35 := mock.NewMockScheduler(ctrl)
+	mockScheduler35.EXPECT().GetTask().Return(task35).AnyTimes()
+
+	mgr.delScheduler(30)
+	require.False(t, mgr.hasScheduler(30))
+	mgr.addScheduler(task35.ID, mockScheduler35)
+	require.True(t, mgr.hasScheduler(35))
+	require.Len(t, mgr.getSchedulers(), 5)
+	require.True(t, ordered(mgr.getSchedulers()))
+}
+
+func TestGetEligibleNodes(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	ctx := context.Background()
+	mockSch := mock.NewMockScheduler(ctrl)
+	mockSch.EXPECT().GetTask().Return(&proto.Task{ID: 1}).AnyTimes()
+
+	nodeMgr := newNodeManager()
+	mockSch.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock err"))
+	_, err := getEligibleNodes(ctx, mockSch, nodeMgr)
+	require.ErrorContains(t, err, "mock err")
+	require.True(t, ctrl.Satisfied())
+
+	mockSch.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return([]string{":4000"}, nil)
+	nodes, err := getEligibleNodes(ctx, mockSch, nodeMgr)
+	require.NoError(t, err)
+	require.Equal(t, []string{":4000"}, nodes)
+	require.True(t, ctrl.Satisfied())
+
+	mockSch.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
+	nodeMgr.managedNodes.Store(&[]string{":4000", ":4001"})
+	nodes, err = getEligibleNodes(ctx, mockSch, nodeMgr)
+	require.NoError(t, err)
+	require.Equal(t, []string{":4000", ":4001"}, nodes)
+	require.True(t, ctrl.Satisfied())
 }
