@@ -332,7 +332,7 @@ func generateWriteIngestSpecs(planCtx planner.PlanCtx, p *LogicalPlan) ([]planne
 	if err2 != nil {
 		return nil, err2
 	}
-	if err2 = controller.InitDataStore(ctx); err2 != nil {
+	if err2 = controller.InitDataStore(ctx, true); err2 != nil {
 		return nil, err2
 	}
 	// kvMetas contains data kv meta and all index kv metas.

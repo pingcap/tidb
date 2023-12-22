@@ -901,7 +901,7 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 }
 
 // InitDataStore initializes the data store.
-func (e *LoadDataController) InitDataStore(ctx context.Context) error {
+func (e *LoadDataController) InitDataStore(ctx context.Context, keepAlive bool) error {
 	u, err2 := storage.ParseRawURL(e.Path)
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
@@ -913,7 +913,7 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 	} else {
 		u.Path = ""
 	}
-	s, err := e.initExternalStore(ctx, u, plannercore.ImportIntoDataSource)
+	s, err := e.initExternalStore(ctx, u, plannercore.ImportIntoDataSource, keepAlive)
 	if err != nil {
 		return err
 	}
@@ -926,7 +926,7 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target,
 				err3.Error())
 		}
-		s, err = e.initExternalStore(ctx, cloudStorageURL, target)
+		s, err = e.initExternalStore(ctx, cloudStorageURL, target, keepAlive)
 		if err != nil {
 			return err
 		}
@@ -934,13 +934,14 @@ func (e *LoadDataController) InitDataStore(ctx context.Context) error {
 	}
 	return nil
 }
-func (*LoadDataController) initExternalStore(ctx context.Context, u *url.URL, target string) (storage.ExternalStorage, error) {
+func (e *LoadDataController) initExternalStore(ctx context.Context, u *url.URL, target string, keepAlive bool) (storage.ExternalStorage, error) {
 	b, err2 := storage.ParseBackendFromURL(u, nil)
 	if err2 != nil {
 		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, GetMsgFromBRError(err2))
 	}
 
-	s, err := storage.NewWithDefaultOpt(ctx, b)
+	s, err := storage.NewWithKeepAlive(ctx, b, keepAlive)
+
 	if err != nil {
 		return nil, exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(target, GetMsgFromBRError(err))
 	}
@@ -992,7 +993,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			"Glob pattern error: "+err2.Error())
 	}
 
-	if err2 = e.InitDataStore(ctx); err2 != nil {
+	if err2 = e.InitDataStore(ctx, false); err2 != nil {
 		return err2
 	}
 

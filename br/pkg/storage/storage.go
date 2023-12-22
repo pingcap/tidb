@@ -197,6 +197,14 @@ func NewWithDefaultOpt(ctx context.Context, backend *backuppb.StorageBackend) (E
 	return New(ctx, backend, &opts)
 }
 
+func NewWithKeepAlive(ctx context.Context, backend *backuppb.StorageBackend, keepAlive bool) (ExternalStorage, error) {
+	var opts ExternalStorageOptions
+	if gcs := backend.GetGcs(); gcs != nil && !keepAlive {
+		opts.HTTPClient = gcsHttpClientForThroughput()
+	}
+	return New(ctx, backend, &opts)
+}
+
 // NewFromURL creates an ExternalStorage from URL.
 func NewFromURL(ctx context.Context, uri string) (ExternalStorage, error) {
 	if len(uri) == 0 {

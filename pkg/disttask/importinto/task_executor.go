@@ -74,7 +74,7 @@ func getTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (*i
 	if err != nil {
 		return nil, err
 	}
-	if err = controller.InitDataStore(ctx); err != nil {
+	if err = controller.InitDataStore(ctx, false); err != nil {
 		return nil, err
 	}
 
@@ -275,7 +275,7 @@ func (m *mergeSortStepExecutor) Init(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err = controller.InitDataStore(ctx); err != nil {
+	if err = controller.InitDataStore(ctx, false); err != nil {
 		return err
 	}
 	m.controller = controller
