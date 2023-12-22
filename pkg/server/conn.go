@@ -1170,10 +1170,47 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		return
 	}
 
+	sessionVar := cc.ctx.GetSessionVars()
+	stmtType := sessionVar.StmtCtx.StmtType
+	sqlType := metrics.LblGeneral
+	if stmtType != "" {
+		sqlType = stmtType
+	}
+
 	var counter prometheus.Counter
 	if err != nil && int(cmd) < len(server_metrics.QueryTotalCountErr) {
 		counter = server_metrics.QueryTotalCountErr[cmd]
+		// Further breakdown of queryTotalCountErr by sqlType.
+		if cmd == mysql.ComQuery {
+			switch sqlType {
+			case "Insert":
+				counter = server_metrics.QueryTotalCountSQLTypeBreakdownErr["Insert"]
+			case "Replace":
+				counter = server_metrics.QueryTotalCountSQLTypeBreakdownErr["Replace"]
+			case "Delete":
+				counter = server_metrics.QueryTotalCountSQLTypeBreakdownErr["Delete"]
+			case "Update":
+				counter = server_metrics.QueryTotalCountSQLTypeBreakdownErr["Update"]
+			case "Select":
+				counter = server_metrics.QueryTotalCountSQLTypeBreakdownErr["Select"]
+			}
+		}
 	} else if err == nil && int(cmd) < len(server_metrics.QueryTotalCountOk) {
+		// Further breakdown of queryTotalCountOk by sqlType.
+		if cmd == mysql.ComQuery {
+			switch sqlType {
+			case "Insert":
+				counter = server_metrics.QueryTotalCountSQLTypeBreakdownOk["Insert"]
+			case "Replace":
+				counter = server_metrics.QueryTotalCountSQLTypeBreakdownOk["Replace"]
+			case "Delete":
+				counter = server_metrics.QueryTotalCountSQLTypeBreakdownOk["Delete"]
+			case "Update":
+				counter = server_metrics.QueryTotalCountSQLTypeBreakdownOk["Update"]
+			case "Select":
+				counter = server_metrics.QueryTotalCountSQLTypeBreakdownOk["Select"]
+			}
+		}
 		counter = server_metrics.QueryTotalCountOk[cmd]
 	}
 	if counter != nil {
@@ -1188,15 +1225,8 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	}
 
 	cost := time.Since(startTime)
-	sessionVar := cc.ctx.GetSessionVars()
 	affectedRows := cc.ctx.AffectedRows()
 	cc.ctx.GetTxnWriteThroughputSLI().FinishExecuteStmt(cost, affectedRows, sessionVar.InTxn())
-
-	stmtType := sessionVar.StmtCtx.StmtType
-	sqlType := metrics.LblGeneral
-	if stmtType != "" {
-		sqlType = stmtType
-	}
 
 	switch sqlType {
 	case "Insert":
