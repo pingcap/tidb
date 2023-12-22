@@ -279,13 +279,10 @@ func TestInternalSQL(t *testing.T) {
 		tk.MustExec("set global tidb_super_read_only=default")
 	}()
 
-	runSQL := func() {
-		sql := "insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (874, 0, 1, 'a', 3)"
-		_, err := tk.Session().ExecuteInternal(ctx, sql)
-		require.NoError(t, err)
-	}
-
 	tk.MustExec("set global tidb_restricted_read_only=On")
 	tk.MustExec("set global tidb_super_read_only=On")
-	runSQL()
+
+	sql := "insert into mysql.stats_top_n (table_id, is_index, hist_id, value, count) values (874, 0, 1, 'a', 3)"
+	_, err := tk.Session().ExecuteInternal(ctx, sql)
+	require.NoError(t, err)
 }
