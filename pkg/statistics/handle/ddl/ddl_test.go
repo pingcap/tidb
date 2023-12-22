@@ -88,7 +88,7 @@ func TestDDLTable(t *testing.T) {
 	require.False(t, statsTbl.Pseudo)
 }
 
-func TestTruncateTablePartition(t *testing.T) {
+func TestTruncateTable(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
