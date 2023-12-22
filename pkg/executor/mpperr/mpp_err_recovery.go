@@ -53,9 +53,13 @@ func NewRecoveryHandler(useAutoScaler bool, holderCap uint64, enable bool, paren
 }
 
 // CanHoldResult tells whether we can insert intermediate results.
-func (m *RecoveryHandler) CanHoldResult(chk *chunk.Chunk) bool {
-	return m.enable && m.holder.capacity > 0 && !m.holder.alreadyFulled &&
-		(chk == nil || (uint64(chk.NumRows())+m.holder.curRows <= m.holder.capacity))
+func (m *RecoveryHandler) Enabled() bool {
+	return m.enable
+}
+
+// CanHoldResult tells whether we can insert intermediate results.
+func (m *RecoveryHandler) CanHoldResult() bool {
+	return m.holder.capacity > 0 && !m.holder.alreadyFulled
 }
 
 // HoldResult tries to hold mpp result. You should call CanHoldResult to check first.
@@ -66,6 +70,11 @@ func (m *RecoveryHandler) HoldResult(chk *chunk.Chunk) {
 // NumHoldChk returns the number of chunk holded.
 func (m *RecoveryHandler) NumHoldChk() int {
 	return len(m.holder.chks)
+}
+
+// NumHoldRows returns the number of chunk holded.
+func (m *RecoveryHandler) NumHoldRows() uint64 {
+	return m.holder.curRows
 }
 
 // PopFrontChk pop one chunk.
@@ -85,6 +94,11 @@ func (m *RecoveryHandler) ResetHolder() {
 	m.holder.reset()
 }
 
+// RecoveryCnt returns the recovery count.
+func (m *RecoveryHandler) RecoveryCnt() uint32 {
+	return m.curRecoveryCnt
+}
+
 // Recovery tries to recovery error. Reasons that cannot recovery:
 //  1. Already return result to client because holder is full.
 //  2. Recovery method of this kind of error not implemented or error is not recoveryable.
@@ -92,6 +106,10 @@ func (m *RecoveryHandler) ResetHolder() {
 //
 // Return err when got err when trying to recovery.
 func (m *RecoveryHandler) Recovery(info *RecoveryInfo) error {
+	if !m.enable {
+		return errors.New("mpp err recovery is not enabled")
+	}
+
 	if info == nil || info.MPPErr == nil {
 		return errors.New("RecoveryInfo is nil of mppErr is nil")
 	}

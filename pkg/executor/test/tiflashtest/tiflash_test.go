@@ -1871,3 +1871,61 @@ func checkMPPInExplain(t *testing.T, tk *testkit.TestKit, sql string) {
 	res := resBuff.String()
 	require.Contains(t, res, "mpp[tiflash]")
 }
+
+func TestMPPRecovery(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(a int not null primary key, b int not null) partition by hash(a) partitions 2")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+
+	checkStrs := []string{"0 0"}
+	insertStr := "insert into t values(0, 0)"
+	for i := 1; i < 1500; i++ {
+		insertStr += fmt.Sprintf(",(%d, %d)", i, i)
+		checkStrs = append(checkStrs, fmt.Sprintf("%d %d", i, i))
+	}
+	tk.MustExec(insertStr)
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+
+	sql := "select * from t order by 1, 2"
+
+	// Test when mpp err recovery is disabled.
+	tk.MustExec("set @@tidb_max_chunk_size = default")
+	tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
+	tk.MustExec("set @@tidb_max_chunk_size = 32")
+	tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/force_enable_mpp_err_recovery", "return()")
+
+	// Test different chunk size.
+	tk.MustExec("set @@tidb_max_chunk_size = default")
+	tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
+	tk.MustExec("set @@tidb_max_chunk_size = 32")
+	tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
+
+	// // Test exceeds max recovery cnt.
+	// // If got error for 5 times, will report mpp err.
+	// errMsg := "mock mpp err"
+	// tk.MustExec("set @@tidb_max_chunk_size = 32")
+	// failpoint.Enable("github.com/pingcap/tidb/pkg/executor/test_mpp_err_times", "return(5)")
+	// tk.MustContainErrMsg(sql, errMsg)
+	// failpoint.Disable("github.com/pingcap/tidb/pkg/executor/test_mpp_err_times")
+
+	// // Test hold logic.
+	// // Default hold 4 * MaxChunkSize rows.
+	// tk.MustExec("set @@tidb_max_chunk_size = 32")
+	// expectedHoldRows := 4 * 32
+	// failpoint.Enable("github.com/pingcap/tidb/pkg/executor/test_mpp_err_recovery_hold_size",
+	//     fmt.Sprintf("return(%d, %d)", expectedHoldRows, expectedHoldRows))
+	// tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
+	// failpoint.Disable("github.com/pingcap/tidb/pkg/executor/test_mpp_err_recovery_hold_size")
+
+	failpoint.Disable("github.com/pingcap/tidb/pkg/executor/force_enable_mpp_err_recovery")
+	tk.MustExec("set @@tidb_max_chunk_size = default")
+}
