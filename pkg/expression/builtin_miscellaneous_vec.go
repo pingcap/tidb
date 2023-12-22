@@ -327,7 +327,7 @@ func (b *builtinSleepSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 			if !sessVars.StmtCtx.BadNullAsWarning {
 				return errIncorrectArgs.GenWithStackByArgs("sleep")
 			}
-			err := errIncorrectArgs.GenWithStackByArgs("sleep")
+			err := errIncorrectArgs.FastGenByArgs("sleep")
 			sessVars.StmtCtx.AppendWarning(err)
 			continue
 		}

@@ -166,7 +166,7 @@ func (b *builtinAesDecryptSig) evalString(ctx EvalContext, row chunk.Row) (strin
 	}
 	if !b.ivRequired && len(b.args) == 3 {
 		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.FastGenByArgs("IV"))
 	}
 
 	key := encrypt.DeriveKeyMySQL([]byte(keyStr), b.keySize)
@@ -300,7 +300,7 @@ func (b *builtinAesEncryptSig) evalString(ctx EvalContext, row chunk.Row) (strin
 	}
 	if !b.ivRequired && len(b.args) == 3 {
 		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.FastGenByArgs("IV"))
 	}
 
 	key := encrypt.DeriveKeyMySQL([]byte(keyStr), b.keySize)
@@ -539,7 +539,7 @@ func (b *builtinPasswordSig) evalString(ctx EvalContext, row chunk.Row) (val str
 
 	// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
 	// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
-	ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("PASSWORD"))
+	ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("PASSWORD"))
 
 	return auth.EncodePassword(pass), false, nil
 }

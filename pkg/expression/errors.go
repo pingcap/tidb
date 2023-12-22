@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"github.com/pingcap/errors"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	pmysql "github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -99,7 +100,7 @@ func handleDivisionByZeroError(ctx EvalContext) error {
 
 // handleAllowedPacketOverflowed reports error or warning depend on the context.
 func handleAllowedPacketOverflowed(ctx EvalContext, exprName string, maxAllowedPacketSize uint64) error {
-	err := errWarnAllowedPacketOverflowed.GenWithStackByArgs(exprName, maxAllowedPacketSize)
+	err := errWarnAllowedPacketOverflowed.FastGenByArgs(exprName, maxAllowedPacketSize)
 	sc := ctx.GetSessionVars().StmtCtx
 
 	// insert|update|delete ignore ...
@@ -109,7 +110,7 @@ func handleAllowedPacketOverflowed(ctx EvalContext, exprName string, maxAllowedP
 	}
 
 	if ctx.GetSessionVars().StrictSQLMode && (sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt) {
-		return err
+		return errors.Trace(err)
 	}
 	sc.AppendWarning(err)
 	return nil
