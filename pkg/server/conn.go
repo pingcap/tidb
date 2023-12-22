@@ -358,27 +358,26 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 func (cc *clientConn) Close() error {
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
+	resourceGroupName, count := "", 0
 	if ctx := cc.getCtx(); ctx != nil {
-		name := ctx.GetSessionVars().ResourceGroupName
-		count := cc.server.ConnNumByResourceGroup[name]
+		resourceGroupName = ctx.GetSessionVars().ResourceGroupName
+		count = cc.server.ConnNumByResourceGroup[resourceGroupName]
 		if count <= 1 {
-			delete(cc.server.ConnNumByResourceGroup, name)
+			delete(cc.server.ConnNumByResourceGroup, resourceGroupName)
 		} else {
-			cc.server.ConnNumByResourceGroup[name]--
+			cc.server.ConnNumByResourceGroup[resourceGroupName]--
 		}
 	}
 	cc.server.rwlock.Unlock()
-	return closeConn(cc, cc.server.ConnNumByResourceGroup)
+	return closeConn(cc, resourceGroupName, count)
 }
 
 // closeConn is idempotent and thread-safe.
 // It will be called on the same `clientConn` more than once to avoid connection leak.
-func closeConn(cc *clientConn, connections map[string]int) error {
+func closeConn(cc *clientConn, resourceGroupName string, count int) error {
 	var err error
 	cc.closeOnce.Do(func() {
-		for name, count := range connections {
-			metrics.ConnGauge.WithLabelValues(name).Set(float64(count))
-		}
+		metrics.ConnGauge.WithLabelValues(resourceGroupName).Set(float64(count))
 
 		if cc.connectionID > 0 {
 			cc.server.dom.ReleaseConnID(cc.connectionID)
@@ -410,7 +409,7 @@ func (cc *clientConn) closeWithoutLock() error {
 	} else {
 		cc.server.ConnNumByResourceGroup[name]--
 	}
-	return closeConn(cc, cc.server.ConnNumByResourceGroup)
+	return closeConn(cc, name, count-1)
 }
 
 // writeInitialHandshake sends server version, connection ID, server capability, collation, server status

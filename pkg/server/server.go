@@ -596,8 +596,6 @@ func (s *Server) Close() {
 func (s *Server) registerConn(conn *clientConn) bool {
 	s.rwlock.Lock()
 	defer s.rwlock.Unlock()
-	// connections := len(s.clients)
-
 	connections := make(map[string]int, 0)
 	for _, conn := range s.clients {
 		resourceGroup := conn.getCtx().GetSessionVars().ResourceGroupName
@@ -607,7 +605,10 @@ func (s *Server) registerConn(conn *clientConn) bool {
 	logger := logutil.BgLogger()
 	if s.inShutdownMode.Load() {
 		logger.Info("close connection directly when shutting down")
-		terror.Log(closeConn(conn, connections))
+		for resourceGroupName, count := range s.ConnNumByResourceGroup {
+			metrics.ConnGauge.WithLabelValues(resourceGroupName).Set(float64(count))
+		}
+		terror.Log(closeConn(conn, "", 0))
 		return false
 	}
 	s.clients[conn.connectionID] = conn
