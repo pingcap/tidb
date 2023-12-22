@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 startup --host_jvm_args=-Xmx5g
+=======
+startup --host_jvm_args=-Xmx8g
+>>>>>>> 6f45f81f3d4 (statistics/handle: refine the condition of dumping stats delta (#41133))
 startup --unlimit_coredumps
 
 run:ci --color=yes
