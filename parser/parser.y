@@ -9754,15 +9754,21 @@ SetOprStmtWoutLimitOrderBy:
 		}
 		var setOprList2 []ast.Node
 		var with2 *ast.WithClause
+		var limit2 *ast.Limit
+		var orderBy2 *ast.OrderByClause
 		switch x := $3.(*ast.SubqueryExpr).Query.(type) {
 		case *ast.SelectStmt:
 			setOprList2 = []ast.Node{x}
 			with2 = x.With
 		case *ast.SetOprStmt:
+		    // child setOprStmt's limit and order should also make sense
+		    // we should separate it out from other normal SetOprSelectList.
 			setOprList2 = x.SelectList.Selects
 			with2 = x.With
+			limit2 = x.Limit
+			orderBy2 = x.OrderBy
 		}
-		nextSetOprList := &ast.SetOprSelectList{Selects: setOprList2, With: with2}
+		nextSetOprList := &ast.SetOprSelectList{Selects: setOprList2, With: with2, Limit: limit2, OrderBy: orderBy2}
 		nextSetOprList.AfterSetOperator = $2.(*ast.SetOprType)
 		setOprList := append(setOprList1, nextSetOprList)
 		setOpr := &ast.SetOprStmt{SelectList: &ast.SetOprSelectList{Selects: setOprList}}

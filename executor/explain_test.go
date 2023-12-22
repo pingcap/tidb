@@ -569,3 +569,37 @@ func TestExplainJSON(t *testing.T) {
 		}
 	}
 }
+
+func TestIssues49377(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists employee")
+	tk.MustExec("create table employee (employee_id int, name varchar(20), dept_id int)")
+	tk.MustExec("insert into employee values (1, 'Furina', 1), (2, 'Klee', 1), (3, 'Eula', 1), (4, 'Diluc', 2), (5, 'Tartaglia', 2)")
+
+	tk.MustQuery("select 1,1,1 union all ( " +
+		"(select * from employee where dept_id = 1) " +
+		"union all  " +
+		"(select * from employee where dept_id = 1 order by employee_id) " +
+		"order by 1 limit 1 " +
+		");").Sort().Check(testkit.Rows("1 1 1", "1 Furina 1"))
+
+	tk.MustQuery("select 1,1,1 union all ( " +
+		"(select * from employee where dept_id = 1) " +
+		"union all  " +
+		"(select * from employee where dept_id = 1 order by employee_id) " +
+		"order by 1" +
+		");").Sort().Check(testkit.Rows("1 1 1", "1 Furina 1", "1 Furina 1", "2 Klee 1", "2 Klee 1", "3 Eula 1", "3 Eula 1"))
+
+	tk.MustQuery("select * from employee where dept_id = 1 " +
+		"union all " +
+		"(select * from employee where dept_id = 1 order by employee_id) " +
+		"union all" +
+		"(" +
+		"select * from employee where dept_id = 1 " +
+		"union all " +
+		"(select * from employee where dept_id = 1 order by employee_id) " +
+		"limit 1" +
+		");").Sort().Check(testkit.Rows("1 Furina 1", "1 Furina 1", "1 Furina 1", "2 Klee 1", "2 Klee 1", "3 Eula 1", "3 Eula 1"))
+}
