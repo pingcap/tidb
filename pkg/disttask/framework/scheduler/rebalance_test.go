@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -33,7 +32,7 @@ import (
 
 type scaleTestCase struct {
 	subtasks          []*proto.Subtask
-	liveNodes         []*infosync.ServerInfo
+	liveNodes         []string
 	taskNodes         []string
 	cleanedNodes      []string
 	expectedTaskNodes []string
@@ -42,7 +41,7 @@ type scaleTestCase struct {
 
 type balanceTestCase struct {
 	subtasks         []*proto.Subtask
-	liveNodes        []*infosync.ServerInfo
+	liveNodes        []string
 	taskNodes        []string
 	expectedSubtasks []*proto.Subtask
 }
@@ -56,14 +55,14 @@ func scaleTest(t *testing.T,
 		testCase.subtasks,
 		nil)
 	mockTaskMgr.EXPECT().UpdateSubtasksExecIDs(ctx, int64(id), testCase.subtasks).Return(nil).AnyTimes()
-	mockTaskMgr.EXPECT().CleanUpMeta(ctx, testCase.cleanedNodes).Return(nil).AnyTimes()
+	mockTaskMgr.EXPECT().DeleteDeadNodes(ctx, testCase.cleanedNodes).Return(nil).AnyTimes()
 	if len(testCase.cleanedNodes) > 0 {
 		mockTaskMgr.EXPECT().GetSubtasksByExecIdsAndStepAndState(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
 	}
-	sch := scheduler.NewBaseScheduler(ctx, mockTaskMgr, "server", &proto.Task{Step: proto.StepInit, ID: int64(id)})
-	sch.LiveNodes = testCase.liveNodes
+	nodeMgr := scheduler.NewNodeManager()
+	sch := scheduler.NewBaseScheduler(ctx, mockTaskMgr, nodeMgr, &proto.Task{Step: proto.StepInit, ID: int64(id)})
 	sch.TaskNodes = testCase.taskNodes
-	require.NoError(t, sch.ReDispatchSubtasks())
+	require.NoError(t, sch.DoBalanceSubtasks(testCase.liveNodes))
 	slices.SortFunc(sch.TaskNodes, func(i, j string) int {
 		return strings.Compare(i, j)
 	})
@@ -82,13 +81,13 @@ func balanceTest(t *testing.T,
 	mockTaskMgr.EXPECT().GetSubtasksByStepAndState(ctx, int64(id), proto.StepInit, proto.TaskStatePending).Return(
 		testCase.subtasks,
 		nil)
-	mockTaskMgr.EXPECT().CleanUpMeta(ctx, gomock.Any()).Return(nil).AnyTimes()
+	mockTaskMgr.EXPECT().DeleteDeadNodes(ctx, gomock.Any()).Return(nil).AnyTimes()
 
+	nodeMgr := scheduler.NewNodeManager()
 	mockTaskMgr.EXPECT().UpdateSubtasksExecIDs(ctx, int64(id), testCase.subtasks).Return(nil).AnyTimes()
-	sch := scheduler.NewBaseScheduler(ctx, mockTaskMgr, "server", &proto.Task{Step: proto.StepInit, ID: int64(id)})
-	sch.LiveNodes = testCase.liveNodes
+	sch := scheduler.NewBaseScheduler(ctx, mockTaskMgr, nodeMgr, &proto.Task{Step: proto.StepInit, ID: int64(id)})
 	sch.TaskNodes = testCase.taskNodes
-	require.NoError(t, sch.ReDispatchSubtasks())
+	require.NoError(t, sch.DoBalanceSubtasks(testCase.liveNodes))
 	slices.SortFunc(sch.TaskNodes, func(i, j string) int {
 		return strings.Compare(i, j)
 	})
@@ -116,7 +115,7 @@ func TestScaleOutNodes(t *testing.T) {
 				{ExecID: "1.1.1.1:4000"},
 				{ExecID: "1.1.1.1:4000"},
 				{ExecID: "1.1.1.1:4000"}},
-			[]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}, {IP: "1.1.1.2", Port: 4000}},
+			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]string{"1.1.1.1:4000"},
 			[]string{},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
@@ -132,7 +131,7 @@ func TestScaleOutNodes(t *testing.T) {
 				{ExecID: "1.1.1.1:4000"},
 				{ExecID: "1.1.1.1:4000"},
 				{ExecID: "1.1.1.1:4000"}},
-			[]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}, {IP: "1.1.1.2", Port: 4000}},
+			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]string{"1.1.1.1:4000"},
 			[]string{},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
@@ -148,7 +147,7 @@ func TestScaleOutNodes(t *testing.T) {
 				{ExecID: "1.1.1.2:4000"},
 				{ExecID: "1.1.1.1:4000"},
 				{ExecID: "1.1.1.1:4000"}},
-			[]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}, {IP: "1.1.1.2", Port: 4000}, {IP: "1.1.1.3", Port: 4000}, {IP: "1.1.1.4", Port: 4000}},
+			[]string{"1.1.1.1:4000", "1.1.1.2:4000", "1.1.1.3:4000", "1.1.1.4:4000"},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]string{},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000", "1.1.1.3:4000", "1.1.1.4:4000"},
@@ -170,7 +169,7 @@ func TestScaleOutNodes(t *testing.T) {
 				{ExecID: "1.1.1.1:4000"},
 				{ExecID: "1.1.1.1:4000"},
 				{ExecID: "1.1.1.1:4000"}},
-			[]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}, {IP: "1.1.1.2", Port: 4000}, {IP: "1.1.1.3", Port: 4000}, {IP: "1.1.1.4", Port: 4000}},
+			[]string{"1.1.1.1:4000", "1.1.1.2:4000", "1.1.1.3:4000", "1.1.1.4:4000"},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]string{},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000", "1.1.1.3:4000", "1.1.1.4:4000"},
@@ -192,7 +191,7 @@ func TestScaleOutNodes(t *testing.T) {
 				{ExecID: "1.1.1.2:4000"},
 				{ExecID: "1.1.1.1:4000"},
 				{ExecID: "1.1.1.1:4000"}},
-			[]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}, {IP: "1.1.1.2", Port: 4000}, {IP: "1.1.1.3", Port: 4000}},
+			[]string{"1.1.1.1:4000", "1.1.1.2:4000", "1.1.1.3:4000"},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]string{},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000", "1.1.1.3:4000"},
@@ -209,7 +208,7 @@ func TestScaleOutNodes(t *testing.T) {
 				{ExecID: "1.1.1.1:4000"},
 				{ExecID: "1.1.1.1:4000"},
 				{ExecID: "1.1.1.1:4000"}},
-			[]*infosync.ServerInfo{{IP: "1.1.1.2", Port: 4000}, {IP: "1.1.1.3", Port: 4000}},
+			[]string{"1.1.1.2:4000", "1.1.1.3:4000"},
 			[]string{"1.1.1.1:4000"},
 			[]string{"1.1.1.1:4000"},
 			[]string{"1.1.1.2:4000", "1.1.1.3:4000"},
@@ -226,7 +225,7 @@ func TestScaleOutNodes(t *testing.T) {
 				{ExecID: "1.1.1.1:4000"},
 				{ExecID: "1.1.1.2:4000"},
 				{ExecID: "1.1.1.2:4000"}},
-			[]*infosync.ServerInfo{{IP: "1.1.1.2", Port: 4000}, {IP: "1.1.1.3", Port: 4000}},
+			[]string{"1.1.1.2:4000", "1.1.1.3:4000"},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]string{"1.1.1.1:4000"},
 			[]string{"1.1.1.2:4000", "1.1.1.3:4000"},
@@ -243,7 +242,7 @@ func TestScaleOutNodes(t *testing.T) {
 				{ExecID: "1.1.1.1:4000"},
 				{ExecID: "1.1.1.2:4000"},
 				{ExecID: "1.1.1.2:4000"}},
-			[]*infosync.ServerInfo{{IP: "1.1.1.3", Port: 4000}, {IP: "1.1.1.4", Port: 4000}},
+			[]string{"1.1.1.3:4000", "1.1.1.4:4000"},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]string{"1.1.1.3:4000", "1.1.1.4:4000"},
@@ -260,7 +259,7 @@ func TestScaleOutNodes(t *testing.T) {
 				{ExecID: "1.1.1.1:4000"},
 				{ExecID: "1.1.1.2:4000"},
 				{ExecID: "1.1.1.2:4000"}},
-			[]*infosync.ServerInfo{{IP: "1.1.1.2", Port: 4000}, {IP: "1.1.1.3", Port: 4000}, {IP: "1.1.1.4", Port: 4000}},
+			[]string{"1.1.1.2:4000", "1.1.1.3:4000", "1.1.1.4:4000"},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]string{"1.1.1.1:4000"},
 			[]string{"1.1.1.2:4000", "1.1.1.3:4000", "1.1.1.4:4000"},
@@ -279,7 +278,7 @@ func TestScaleOutNodes(t *testing.T) {
 				{ExecID: "1.1.1.2:4000"},
 				{ExecID: "1.1.1.2:4000"},
 				{ExecID: "1.1.1.1:4000"}},
-			[]*infosync.ServerInfo{{IP: "1.1.1.2", Port: 4000}, {IP: "1.1.1.3", Port: 4000}, {IP: "1.1.1.4", Port: 4000}},
+			[]string{"1.1.1.2:4000", "1.1.1.3:4000", "1.1.1.4:4000"},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]string{"1.1.1.1:4000"},
 			[]string{"1.1.1.2:4000", "1.1.1.3:4000", "1.1.1.4:4000"},
@@ -298,7 +297,7 @@ func TestScaleOutNodes(t *testing.T) {
 				{ExecID: "1.1.1.2:4000"},
 				{ExecID: "1.1.1.2:4000"},
 				{ExecID: "1.1.1.2:4000"}},
-			[]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}, {IP: "1.1.1.3", Port: 4000}, {IP: "1.1.1.4", Port: 4000}, {IP: "1.1.1.5", Port: 4000}, {IP: "1.1.1.6", Port: 4000}},
+			[]string{"1.1.1.1:4000", "1.1.1.3:4000", "1.1.1.4:4000", "1.1.1.5:4000", "1.1.1.6:4000"},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]string{"1.1.1.2:4000"},
 			[]string{"1.1.1.1:4000", "1.1.1.3:4000", "1.1.1.4:4000", "1.1.1.5:4000", "1.1.1.6:4000"},
@@ -333,7 +332,7 @@ func TestScaleInNodes(t *testing.T) {
 				{ExecID: "1.1.1.1:4000"},
 				{ExecID: "1.1.1.2:4000"},
 				{ExecID: "1.1.1.2:4000"}},
-			[]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}},
+			[]string{"1.1.1.1:4000"},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]string{"1.1.1.2:4000"},
 			[]string{"1.1.1.1:4000"},
@@ -350,7 +349,7 @@ func TestScaleInNodes(t *testing.T) {
 				{ExecID: "1.1.1.1:4000"},
 				{ExecID: "1.1.1.2:4000"},
 				{ExecID: "1.1.1.2:4000"}},
-			[]*infosync.ServerInfo{{IP: "1.1.1.3", Port: 4000}},
+			[]string{"1.1.1.3:4000"},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]string{"1.1.1.3:4000"},
@@ -373,7 +372,7 @@ func TestScaleInNodes(t *testing.T) {
 				{ExecID: "1.1.1.8:4000"},
 				{ExecID: "1.1.1.9:4000"},
 				{ExecID: "1.1.1.10:4000"}},
-			[]*infosync.ServerInfo{{IP: "1.1.1.2", Port: 4000}, {IP: "1.1.1.3", Port: 4000}},
+			[]string{"1.1.1.2:4000", "1.1.1.3:4000"},
 			[]string{
 				"1.1.1.1:4000",
 				"1.1.1.2:4000",
@@ -421,7 +420,7 @@ func TestScaleInNodes(t *testing.T) {
 				{ExecID: "1.1.1.2:4000"},
 				{ExecID: "1.1.1.2:4000"},
 				{ExecID: "1.1.1.2:4000"}},
-			[]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}},
+			[]string{"1.1.1.1:4000"},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]string{"1.1.1.2:4000"},
 			[]string{"1.1.1.1:4000"},
@@ -443,7 +442,7 @@ func TestScaleInNodes(t *testing.T) {
 	}
 }
 
-func TestRebalanceWithoutScale(t *testing.T) {
+func TestBalanceWithoutScale(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	gtk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -461,7 +460,7 @@ func TestRebalanceWithoutScale(t *testing.T) {
 				{ExecID: "1.1.1.2:4000"},
 				{ExecID: "1.1.1.2:4000"},
 				{ExecID: "1.1.1.2:4000"}},
-			[]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}, {IP: "1.1.1.2", Port: 4000}},
+			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]*proto.Subtask{
 				{ExecID: "1.1.1.1:4000"},
@@ -478,7 +477,7 @@ func TestRebalanceWithoutScale(t *testing.T) {
 				{ExecID: "1.1.1.2:4000"},
 				{ExecID: "1.1.1.2:4000"},
 				{ExecID: "1.1.1.3:4000"}},
-			[]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}, {IP: "1.1.1.2", Port: 4000}, {IP: "1.1.1.3", Port: 4000}},
+			[]string{"1.1.1.1:4000", "1.1.1.2:4000", "1.1.1.3:4000"},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000", "1.1.1.3:4000"},
 			[]*proto.Subtask{
 				{ExecID: "1.1.1.1:4000"},
@@ -496,7 +495,7 @@ func TestRebalanceWithoutScale(t *testing.T) {
 				{ExecID: "1.1.1.2:4000"},
 				{ExecID: "1.1.1.2:4000"},
 				{ExecID: "1.1.1.2:4000"}},
-			[]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}, {IP: "1.1.1.2", Port: 4000}},
+			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]*proto.Subtask{
 				{ExecID: "1.1.1.1:4000"},
@@ -513,9 +512,7 @@ func TestRebalanceWithoutScale(t *testing.T) {
 				{ExecID: "1.1.1.1:4000"},
 				{ExecID: "1.1.1.1:4000"},
 				{ExecID: "1.1.1.1:4000"}},
-			[]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}, {IP: "1.1.1.2", Port: 4000},
-				{IP: "1.1.1.3", Port: 4000}, {IP: "1.1.1.4", Port: 4000},
-				{IP: "1.1.1.5", Port: 4000}, {IP: "1.1.1.6", Port: 4000}},
+			[]string{"1.1.1.1:4000", "1.1.1.2:4000", "1.1.1.3:4000", "1.1.1.4:4000", "1.1.1.5:4000", "1.1.1.6:4000"},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000", "1.1.1.3:4000", "1.1.1.4:4000", "1.1.1.5:4000", "1.1.1.6:4000"},
 			[]*proto.Subtask{
 				{ExecID: "1.1.1.1:4000"},
@@ -532,7 +529,7 @@ func TestRebalanceWithoutScale(t *testing.T) {
 				{ExecID: "1.1.1.2:4000"},
 				{ExecID: "1.1.1.2:4000"},
 				{ExecID: "1.1.1.2:4000"}},
-			[]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}, {IP: "1.1.1.2", Port: 4000}},
+			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]*proto.Subtask{
 				{ExecID: "1.1.1.1:4000"},
@@ -548,7 +545,7 @@ func TestRebalanceWithoutScale(t *testing.T) {
 				{ExecID: "1.1.1.1:4000"},
 				{ExecID: "1.1.1.2:4000"},
 				{ExecID: "1.1.1.2:4000"}},
-			[]*infosync.ServerInfo{{IP: "1.1.1.1", Port: 4000}, {IP: "1.1.1.2", Port: 4000}},
+			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]string{"1.1.1.1:4000", "1.1.1.2:4000"},
 			[]*proto.Subtask{
 				{ExecID: "1.1.1.1:4000"},

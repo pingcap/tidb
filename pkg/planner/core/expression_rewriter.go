@@ -68,7 +68,7 @@ func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expressi
 	if s, ok := sctx.GetInfoSchema().(infoschema.InfoSchema); ok {
 		is = s
 	}
-	b, savedBlockNames := NewPlanBuilder().Init(sctx, is, &hint.BlockHintProcessor{})
+	b, savedBlockNames := NewPlanBuilder().Init(sctx, is, &hint.QBHintHandler{})
 	b.allowBuildCastArray = allowCastArray
 	fakePlan := LogicalTableDual{}.Init(sctx, 0)
 	if schema != nil {

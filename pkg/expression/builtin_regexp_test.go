@@ -1229,7 +1229,7 @@ func TestRegexpCache(t *testing.T) {
 	ctx := createContext(t)
 
 	// if the pattern or match type is not constant, it should not be cached
-	sig := regexpNewBaseFuncSig{}
+	sig := regexpBaseFuncSig{}
 	sig.args = []Expression{&Column{}, &Column{}, &Constant{}}
 	reg, err := sig.getRegexp(ctx, "abc", "", 2)
 	require.NoError(t, err)
@@ -1269,7 +1269,7 @@ func TestRegexpCache(t *testing.T) {
 	require.False(t, ok)
 
 	// if pattern and match type are both constant, it should be cached
-	sig = regexpNewBaseFuncSig{}
+	sig = regexpBaseFuncSig{}
 	sig.args = []Expression{&Column{}, &Constant{ParamMarker: &ParamMarker{}}, &Constant{ParamMarker: &ParamMarker{}}}
 	reg, err = sig.getRegexp(ctx, "ccc", "", 2)
 	require.NoError(t, err)
@@ -1280,7 +1280,7 @@ func TestRegexpCache(t *testing.T) {
 	require.Same(t, reg, reg2)
 	require.Equal(t, "ccc", reg2.String())
 
-	sig = regexpNewBaseFuncSig{}
+	sig = regexpBaseFuncSig{}
 	sig.args = []Expression{&Column{}, &Constant{ParamMarker: &ParamMarker{}}, &Constant{ParamMarker: &ParamMarker{}}}
 	reg, ok, err = sig.tryVecMemorizedRegexp(ctx, []*funcParam{
 		{defaultStrVal: "x"},

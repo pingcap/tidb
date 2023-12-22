@@ -1380,7 +1380,7 @@ func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType
 		if storeType == kv.UnSpecified {
 			storageName = "storage layer"
 		}
-		warnErr := errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") is not supported to push down to " + storageName + " now.")
+		warnErr := errors.NewNoStackError("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") is not supported to push down to " + storageName + " now.")
 		sc := pc.ctx.GetSessionVars().StmtCtx
 		if sc.InExplainStmt {
 			sc.AppendWarning(warnErr)
@@ -1416,7 +1416,7 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, ca
 			if expr.GetType().GetType() == mysql.TypeEnum && canEnumPush {
 				break
 			}
-			warnErr := errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().GetType()) + "'.")
+			warnErr := errors.NewNoStackError("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().GetType()) + "'.")
 			if sc.InExplainStmt {
 				sc.AppendWarning(warnErr)
 			} else {
@@ -1425,7 +1425,7 @@ func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, ca
 			return false
 		case mysql.TypeNewDecimal:
 			if !expr.GetType().IsDecimalValid() {
-				warnErr := errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType().GetFlen()) + "','" + strconv.Itoa(expr.GetType().GetDecimal()) + "').")
+				warnErr := errors.NewNoStackError("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType().GetFlen()) + "','" + strconv.Itoa(expr.GetType().GetDecimal()) + "').")
 				if sc.InExplainStmt {
 					sc.AppendWarning(warnErr)
 				} else {
