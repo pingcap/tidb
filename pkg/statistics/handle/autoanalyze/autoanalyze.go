@@ -116,7 +116,7 @@ const BatchUpdateAnalyzeJobSQL = `UPDATE mysql.analyze_jobs
             SET state = 'failed',
             fail_reason = 'TiDB Server is down when running the analyze job',
             process_id = NULL
-            WHERE id IN (%s)`
+            WHERE id IN %s`
 
 func tenMinutesAgo() string {
 	return time.Now().Add(-10 * time.Minute).UTC().Format(types.TimeFormat)
@@ -145,7 +145,7 @@ func CleanupCorruptedAnalyzeJobsOnCurrentInstance(
 		return errors.Trace(err)
 	}
 
-	jobIDs := make([]string, 0, len(rows))
+	jobIDs := make([]uint64, 0, len(rows))
 	for _, row := range rows {
 		// The process ID is typically non-null for running or pending jobs.
 		// However, in rare cases(I don't which case), it may be null. Therefore, it's necessary to check its value.
@@ -155,7 +155,7 @@ func CleanupCorruptedAnalyzeJobsOnCurrentInstance(
 			// They don't belong to current instance any more.
 			if _, ok := currentRunningProcessIDs[processID]; !ok {
 				jobID := row.GetUint64(0)
-				jobIDs = append(jobIDs, strconv.FormatUint(jobID, 10))
+				jobIDs = append(jobIDs, jobID)
 			}
 		}
 	}
@@ -164,14 +164,15 @@ func CleanupCorruptedAnalyzeJobsOnCurrentInstance(
 	if len(jobIDs) > 0 {
 		_, _, err = statsutil.ExecRows(
 			sctx,
-			fmt.Sprintf(BatchUpdateAnalyzeJobSQL, strings.Join(jobIDs, ",")),
+			BatchUpdateAnalyzeJobSQL,
+			jobIDs,
 		)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		statslogutil.StatsLogger().Info(
 			"clean up the potentially corrupted analyze jobs from current instance",
-			zap.Strings("jobIDs", jobIDs),
+			zap.Uint64s("jobIDs", jobIDs),
 		)
 	}
 
@@ -205,14 +206,14 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 		instances[instance] = struct{}{}
 	}
 
-	jobIDs := make([]string, 0, len(rows))
+	jobIDs := make([]uint64, 0, len(rows))
 	for _, row := range rows {
 		// If the instance is not in instances, we need to clean up the job.
 		// It means the instance is down or the instance is not in the cluster any more.
 		instance := row.GetString(1)
 		if _, ok := instances[instance]; !ok {
 			jobID := row.GetUint64(0)
-			jobIDs = append(jobIDs, strconv.FormatUint(jobID, 10))
+			jobIDs = append(jobIDs, jobID)
 		}
 	}
 
@@ -220,14 +221,15 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 	if len(jobIDs) > 0 {
 		_, _, err = statsutil.ExecRows(
 			sctx,
-			fmt.Sprintf(BatchUpdateAnalyzeJobSQL, strings.Join(jobIDs, ",")),
+			BatchUpdateAnalyzeJobSQL,
+			jobIDs,
 		)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		statslogutil.StatsLogger().Info(
 			"clean up the potentially corrupted analyze jobs from dead instances",
-			zap.Strings("jobIDs", jobIDs),
+			zap.Uint64s("jobIDs", jobIDs),
 		)
 	}
 
