@@ -86,7 +86,7 @@ check-parallel:
 		xargs -0 grep -F -n "t.Parallel()" || \
 		! echo "Error: all the go tests should be run in serial."
 
-CLEAN_UT_BINARY := find . -name '*.test.bin'| xargs rm
+CLEAN_UT_BINARY := find . -name '*.test.bin'| xargs rm -f
 
 clean: failpoint-disable
 	$(GO) clean -i ./...
