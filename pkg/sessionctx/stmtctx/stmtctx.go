@@ -164,10 +164,7 @@ type StatementContext struct {
 	typeCtx types.Context
 
 	// errCtx is used to indicate how to handle the errors
-	errCtx struct {
-		once sync.Once
-		errctx.Context
-	}
+	errCtx errctx.Context
 
 	// Set the following variables before execution
 	StmtHints
@@ -445,6 +442,7 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 		ctxID: stmtCtxIDGenerator.Add(1),
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
+	sc.initErrCtx()
 	return sc
 }
 
@@ -454,6 +452,7 @@ func (sc *StatementContext) Reset() {
 		ctxID:   stmtCtxIDGenerator.Add(1),
 		typeCtx: types.NewContext(types.DefaultStmtFlags, time.UTC, sc),
 	}
+	sc.initErrCtx()
 }
 
 // CtxID returns the context id of the statement
@@ -490,18 +489,12 @@ func (sc *StatementContext) initErrCtx() {
 	} else if sc.TypeFlags().TruncateAsWarning() {
 		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
 	}
-	sc.errCtx.Context = ctx
-}
-
-func (sc *StatementContext) invalidateErrCtxCache() {
-	sc.errCtx.once = sync.Once{}
+	sc.errCtx = ctx
 }
 
 // ErrCtx returns the error context
 func (sc *StatementContext) ErrCtx() errctx.Context {
-	sc.errCtx.once.Do(sc.initErrCtx)
-
-	return sc.errCtx.Context
+	return sc.errCtx
 }
 
 // TypeFlags returns the type flags
@@ -512,7 +505,7 @@ func (sc *StatementContext) TypeFlags() types.Flags {
 // SetTypeFlags sets the type flags
 func (sc *StatementContext) SetTypeFlags(flags types.Flags) {
 	sc.typeCtx = sc.typeCtx.WithFlags(flags)
-	sc.invalidateErrCtxCache()
+	sc.initErrCtx()
 }
 
 // HandleTruncate ignores or returns the error based on the TypeContext inside.
