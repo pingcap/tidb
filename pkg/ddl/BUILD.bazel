@@ -29,6 +29,7 @@ go_library(
         "ddl.go",
         "ddl_algorithm.go",
         "ddl_api.go",
+        "ddl_running_jobs.go",
         "ddl_tiflash_api.go",
         "ddl_worker.go",
         "ddl_workerpool.go",
