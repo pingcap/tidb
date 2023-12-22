@@ -148,9 +148,9 @@ func getEvalTypeForApproxPercentile(aggFuncDesc *aggregation.AggFuncDesc) types.
 	evalType := aggFuncDesc.Args[0].GetType().EvalType()
 	argType := aggFuncDesc.Args[0].GetType().GetType()
 
-	// When argType == mysql.TypeEnum or argType == mysql.TypeSet, the field flag
-	// may be set with mysql.EnumSetAsIntFlag and the evalType will be set to types.ETInt,
-	// it's an unexpected behavior.
+	// Sometimes `mysql.EnumSetAsIntFlag` may be set to true, such as when join,
+	// which is unexpected for `buildApproxPercentile` and `mysql.TypeEnum` and `mysql.TypeSet` will return unexpected `ETInt` here,
+	// so here `evalType` are forcibly set to `ETString`.
 	if argType == mysql.TypeEnum || argType == mysql.TypeSet || argType == mysql.TypeBit {
 		evalType = types.ETString
 	}
