@@ -165,6 +165,7 @@ var (
 )
 
 // Compare compares two tasks by task order.
+// returns < 0 represents priority of t is higher than other.
 func (t *Task) Compare(other *Task) int {
 	if t.Priority != other.Priority {
 		return t.Priority - other.Priority

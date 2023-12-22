@@ -90,7 +90,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 		logCtx:    logutil.WithFields(context.Background()),
 		newPool:   b.newPool,
 		slotManager: &slotManager{
-			executorSlotInfos: make(map[int64]*slotInfo),
+			executorSlotInfos: make(map[int64]*proto.Task),
 			available:         cpu.GetCPUCount(),
 		},
 	}
@@ -218,7 +218,9 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 		}
 		logutil.Logger(m.logCtx).Info("detect new subtask", zap.Int64("task-id", task.ID))
 
-		if !m.slotManager.canAlloc(task) {
+		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task)
+		m.onCanceledTasks(context.Background(), tasksNeedFree)
+		if !canAlloc {
 			logutil.Logger(m.logCtx).Warn("subtask has been rejected", zap.Int64("task-id", task.ID))
 			continue
 		}

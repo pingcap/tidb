@@ -323,8 +323,8 @@ func TestSlotManagerInManager(t *testing.T) {
 
 	// task1 alloc resource success
 	require.Equal(t, 0, m.slotManager.available)
-	require.Equal(t, map[int64]*slotInfo{
-		taskID1: {taskID: int(taskID1), slotCount: 10},
+	require.Equal(t, map[int64]*proto.Task{
+		taskID1: task1,
 	}, m.slotManager.executorSlotInfos)
 	ch <- struct{}{}
 
