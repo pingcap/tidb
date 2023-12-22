@@ -7006,13 +7006,13 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sha256 = "9014dab48be05b7e00e00d79ae3ff8846f30b2349d6e7dbaf68c8fc30adc68e1",
-        strip_prefix = "github.com/hawkingrei/client-go/v2@v2.0.0-alpha.0.20231222122913-8a226c8e17ff",
+        sha256 = "7ed27ba2ff5724a20385edbb51e5f598af075a2360400bf17991f0fb458fb4f5",
+        strip_prefix = "github.com/hawkingrei/client-go/v2@v2.0.0-alpha.0.20231222125025-b2285c966031",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/hawkingrei/client-go/v2/com_github_hawkingrei_client_go_v2-v2.0.0-alpha.0.20231222122913-8a226c8e17ff.zip",
-            "http://ats.apps.svc/gomod/github.com/hawkingrei/client-go/v2/com_github_hawkingrei_client_go_v2-v2.0.0-alpha.0.20231222122913-8a226c8e17ff.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/hawkingrei/client-go/v2/com_github_hawkingrei_client_go_v2-v2.0.0-alpha.0.20231222122913-8a226c8e17ff.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/hawkingrei/client-go/v2/com_github_hawkingrei_client_go_v2-v2.0.0-alpha.0.20231222122913-8a226c8e17ff.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/hawkingrei/client-go/v2/com_github_hawkingrei_client_go_v2-v2.0.0-alpha.0.20231222125025-b2285c966031.zip",
+            "http://ats.apps.svc/gomod/github.com/hawkingrei/client-go/v2/com_github_hawkingrei_client_go_v2-v2.0.0-alpha.0.20231222125025-b2285c966031.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/hawkingrei/client-go/v2/com_github_hawkingrei_client_go_v2-v2.0.0-alpha.0.20231222125025-b2285c966031.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/hawkingrei/client-go/v2/com_github_hawkingrei_client_go_v2-v2.0.0-alpha.0.20231222125025-b2285c966031.zip",
         ],
     )
     go_repository(
