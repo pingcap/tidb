@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -2106,19 +2107,19 @@ func (p *LogicalJoin) handleForceIndexJoinHints(prop *property.PhysicalProperty,
 	// If the required property is not empty, we will enforce it and try the hint again.
 	// So we only need to generate warning message when the property is empty.
 	if prop.IsSortItemEmpty() {
-		var indexJoinTables, indexHashJoinTables, indexMergeJoinTables []hintTableInfo
+		var indexJoinTables, indexHashJoinTables, indexMergeJoinTables []h.TableInfo
 		if p.hintInfo != nil {
-			t := p.hintInfo.indexNestedLoopJoinTables
-			indexJoinTables, indexHashJoinTables, indexMergeJoinTables = t.inljTables, t.inlhjTables, t.inlmjTables
+			t := p.hintInfo.IndexNestedLoopJoinTables
+			indexJoinTables, indexHashJoinTables, indexMergeJoinTables = t.INLJTables, t.INLHJTables, t.INLMJTables
 		}
 		var errMsg string
 		switch {
 		case p.preferAny(preferLeftAsINLJInner, preferRightAsINLJInner): // prefer index join
-			errMsg = fmt.Sprintf("Optimizer Hint %s or %s is inapplicable", restore2JoinHint(HintINLJ, indexJoinTables), restore2JoinHint(TiDBIndexNestedLoopJoin, indexJoinTables))
+			errMsg = fmt.Sprintf("Optimizer Hint %s or %s is inapplicable", h.Restore2JoinHint(h.HintINLJ, indexJoinTables), h.Restore2JoinHint(h.TiDBIndexNestedLoopJoin, indexJoinTables))
 		case p.preferAny(preferLeftAsINLHJInner, preferRightAsINLHJInner): // prefer index hash join
-			errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLHJ, indexHashJoinTables))
+			errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", h.Restore2JoinHint(h.HintINLHJ, indexHashJoinTables))
 		case p.preferAny(preferLeftAsINLMJInner, preferRightAsINLMJInner): // prefer index merge join
-			errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", restore2JoinHint(HintINLMJ, indexMergeJoinTables))
+			errMsg = fmt.Sprintf("Optimizer Hint %s is inapplicable", h.Restore2JoinHint(h.HintINLMJ, indexMergeJoinTables))
 		}
 		// Append inapplicable reason.
 		if len(p.EqualConditions) == 0 {
@@ -2664,10 +2665,10 @@ func pushLimitOrTopNForcibly(p LogicalPlan) bool {
 	var preferPushDown *bool
 	switch lp := p.(type) {
 	case *LogicalTopN:
-		preferPushDown = &lp.limitHints.preferLimitToCop
+		preferPushDown = &lp.limitHints.PreferLimitToCop
 		meetThreshold = lp.Count+lp.Offset <= uint64(lp.SCtx().GetSessionVars().LimitPushDownThreshold)
 	case *LogicalLimit:
-		preferPushDown = &lp.limitHints.preferLimitToCop
+		preferPushDown = &lp.limitHints.PreferLimitToCop
 		meetThreshold = true // always push Limit down in this case since it has no side effect
 	default:
 		return false
@@ -3085,7 +3086,7 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 		if !la.canPushToCop(kv.TiKV) || !la.SCtx().GetSessionVars().AllowDistinctAggPushDown {
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
-	} else if !la.aggHints.preferAggToCop {
+	} else if !la.aggHints.PreferAggToCop {
 		taskTypes = append(taskTypes, property.RootTaskType)
 	}
 	for _, taskTp := range taskTypes {
@@ -3166,7 +3167,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 			} else if !la.distinctArgsMeetsProperty() {
 				continue
 			}
-		} else if !la.aggHints.preferAggToCop {
+		} else if !la.aggHints.PreferAggToCop {
 			taskTypes = append(taskTypes, property.RootTaskType)
 		}
 		if !la.canPushToCop(kv.TiKV) && !la.canPushToCop(kv.TiFlash) {
@@ -3192,7 +3193,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 	}
 	// If STREAM_AGG hint is existed, it should consider enforce stream aggregation,
 	// because we can't trust possibleChildProperty completely.
-	if (la.aggHints.preferAggType & preferStreamAgg) > 0 {
+	if (la.aggHints.PreferAggType & preferStreamAgg) > 0 {
 		streamAggs = append(streamAggs, la.getEnforcedStreamAggs(prop)...)
 	}
 	return streamAggs
@@ -3326,9 +3327,9 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 	// handle MPP Agg hints
 	var preferMode AggMppRunMode
 	var prefer bool
-	if la.aggHints.preferAggType&preferMPP1PhaseAgg > 0 {
+	if la.aggHints.PreferAggType&preferMPP1PhaseAgg > 0 {
 		preferMode, prefer = Mpp1Phase, true
-	} else if la.aggHints.preferAggType&preferMPP2PhaseAgg > 0 {
+	} else if la.aggHints.PreferAggType&preferMPP2PhaseAgg > 0 {
 		preferMode, prefer = Mpp2Phase, true
 	}
 	if prefer {
@@ -3370,7 +3371,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 			// if variable does allow DistinctAggPushDown, but OP itself can't be pushed down to tikv, just produce root task type.
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
-	} else if !la.aggHints.preferAggToCop {
+	} else if !la.aggHints.PreferAggToCop {
 		taskTypes = append(taskTypes, property.RootTaskType)
 	}
 	if !la.canPushToCop(kv.TiKV) && !canPushDownToTiFlash {
@@ -3381,11 +3382,11 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	} else {
 		hasMppHints := false
 		var errMsg string
-		if la.aggHints.preferAggType&preferMPP1PhaseAgg > 0 {
+		if la.aggHints.PreferAggType&preferMPP1PhaseAgg > 0 {
 			errMsg = "The agg can not push down to the MPP side, the MPP_1PHASE_AGG() hint is invalid"
 			hasMppHints = true
 		}
-		if la.aggHints.preferAggType&preferMPP2PhaseAgg > 0 {
+		if la.aggHints.PreferAggType&preferMPP2PhaseAgg > 0 {
 			errMsg = "The agg can not push down to the MPP side, the MPP_2PHASE_AGG() hint is invalid"
 			hasMppHints = true
 		}
@@ -3412,28 +3413,28 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	return hashAggs
 }
 
-// ResetHintIfConflicted resets the aggHints.preferAggType if they are conflicted,
-// and returns the two preferAggType hints.
+// ResetHintIfConflicted resets the aggHints.PreferAggType if they are conflicted,
+// and returns the two PreferAggType hints.
 func (la *LogicalAggregation) ResetHintIfConflicted() (preferHash bool, preferStream bool) {
-	preferHash = (la.aggHints.preferAggType & preferHashAgg) > 0
-	preferStream = (la.aggHints.preferAggType & preferStreamAgg) > 0
+	preferHash = (la.aggHints.PreferAggType & preferHashAgg) > 0
+	preferStream = (la.aggHints.PreferAggType & preferStreamAgg) > 0
 	if preferHash && preferStream {
 		errMsg := "Optimizer aggregation hints are conflicted"
 		warning := ErrInternal.FastGen(errMsg)
 		la.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
-		la.aggHints.preferAggType = 0
+		la.aggHints.PreferAggType = 0
 		preferHash, preferStream = false, false
 	}
 	return
 }
 
 func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
-	if la.aggHints.preferAggToCop {
+	if la.aggHints.PreferAggToCop {
 		if !la.canPushToCop(kv.TiKV) {
 			errMsg := "Optimizer Hint AGG_TO_COP is inapplicable"
 			warning := ErrInternal.FastGen(errMsg)
 			la.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
-			la.aggHints.preferAggToCop = false
+			la.aggHints.PreferAggToCop = false
 		}
 	}
 

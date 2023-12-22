@@ -210,7 +210,7 @@ type PlanBuilder struct {
 	colMapper map[*ast.ColumnNameExpr]int
 	// visitInfo is used for privilege check.
 	visitInfo     []visitInfo
-	tableHintInfo []tableHintInfo
+	tableHintInfo []hint.TableHintInfo
 	// optFlag indicates the flags of the optimizer rules.
 	optFlag uint64
 	// capFlag indicates the capability flags.
@@ -1052,7 +1052,7 @@ func getLatestIndexInfo(ctx sessionctx.Context, id int64, startVer int64) (map[i
 	return latestIndexes, true, nil
 }
 
-func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
+func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *hint.TableHintInfo, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1131,10 +1131,10 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	// Extract comment-style index hint like /*+ INDEX(t, idx1, idx2) */.
 	indexHintsLen := len(indexHints)
 	if tableHints != nil {
-		for i, hint := range tableHints.indexHintList {
-			if hint.match(dbName, tblName) {
-				indexHints = append(indexHints, hint.indexHint)
-				tableHints.indexHintList[i].matched = true
+		for i, hint := range tableHints.IndexHintList {
+			if hint.Match(dbName, tblName) {
+				indexHints = append(indexHints, hint.IndexHint)
+				tableHints.IndexHintList[i].Matched = true
 			}
 		}
 	}
@@ -2826,6 +2826,9 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 }
 
 func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
+	if as.NoWriteToBinLog {
+		return nil, dbterror.ErrNotSupportedYet.GenWithStackByArgs("[NO_WRITE_TO_BINLOG | LOCAL]")
+	}
 	if as.Incremental {
 		return nil, errors.Errorf("the incremental analyze feature has already been removed in TiDB v7.5.0, so this will have no effect")
 	}
