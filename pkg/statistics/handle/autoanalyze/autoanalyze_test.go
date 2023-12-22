@@ -438,7 +438,7 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 		gomock.All(&test.CtxMatcher{}),
 		statsutil.UseCurrentSessionOpt,
 		autoanalyze.BatchUpdateAnalyzeJobSQL,
-		[]interface{}{[]uint64{1}},
+		[]interface{}{[]string{"1"}},
 	).Return(nil, nil, nil)
 
 	err := autoanalyze.CleanupCorruptedAnalyzeJobsOnCurrentInstance(
@@ -462,7 +462,7 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 		gomock.All(&test.CtxMatcher{}),
 		statsutil.UseCurrentSessionOpt,
 		autoanalyze.BatchUpdateAnalyzeJobSQL,
-		[]interface{}{[]uint64{1, 3}},
+		[]interface{}{[]string{"1", "3"}},
 	).Return(nil, nil, nil)
 
 	// No running analyze jobs on current instance.
@@ -519,7 +519,7 @@ func TestCleanupCorruptedAnalyzeJobsOnDeadInstances(t *testing.T) {
 		gomock.All(&test.CtxMatcher{}),
 		statsutil.UseCurrentSessionOpt,
 		autoanalyze.BatchUpdateAnalyzeJobSQL,
-		[]interface{}{[]uint64{2}},
+		[]interface{}{[]string{"2"}},
 	).Return(nil, nil, nil)
 
 	err := autoanalyze.CleanupCorruptedAnalyzeJobsOnDeadInstances(
