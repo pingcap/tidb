@@ -1061,7 +1061,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 
 				// Batch/PointGet plans may be over-optimized, like `a>=1(?) and a<=1(?)` --> `a=1` --> PointGet(a=1).
 				// For safety, prevent these plans from the plan cache here.
-				if !pointGetTask.invalid() && expression.MaybeOverOptimized4PlanCache(ds.ctx, candidate.path.AccessConds) && !ds.isSafePointGetPlan4PlanCache(candidate.path) {
+				if !pointGetTask.invalid() && expression.MaybeOverOptimized4PlanCache(ds.ctx, candidate.path.AccessConds) && !isSafePointGetPath4PlanCache(ds.ctx, candidate.path) {
 					ds.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("Batch/PointGet plans may be over-optimized"))
 				}
 
@@ -1142,26 +1142,6 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	}
 
 	return
-}
-
-func (ds *DataSource) isSafePointGetPlan4PlanCache(path *util.AccessPath) bool {
-	// PointGet might contain some over-optimized assumptions, like `a>=1 and a<=1` --> `a=1`, but
-	// these assumptions may be broken after parameters change.
-
-	// safe scenario 1: each column corresponds to a single EQ, `a=1 and b=2 and c=3` --> `[1, 2, 3]`
-	if len(path.Ranges) > 0 && path.Ranges[0].Width() == len(path.AccessConds) {
-		for _, accessCond := range path.AccessConds {
-			f, ok := accessCond.(*expression.ScalarFunction)
-			if !ok {
-				return false
-			}
-			if f.FuncName.L != ast.EQ {
-				return false
-			}
-		}
-		return true
-	}
-	return false
 }
 
 func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, candidate *candidatePath, _ *physicalOptimizeOp) (task task, err error) {

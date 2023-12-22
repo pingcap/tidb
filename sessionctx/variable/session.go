@@ -1348,6 +1348,9 @@ var (
 	TiDBOptFixControl44855 uint64 = 44855
 	// TiDBOptFixControl46177 controls whether to explore enforced plans for DataSource if it has already found an unenforced plan.
 	TiDBOptFixControl46177 uint64 = 46177
+	// TiDBOptFixControl44830 controls whether to allow to cache Batch/PointGet from some complex scenarios.
+	// See #44830 for more details.
+	TiDBOptFixControl44830 uint64 = 44830
 )
 
 // GetOptimizerFixControlValue returns the specified value of the optimizer fix control.
