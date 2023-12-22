@@ -347,6 +347,7 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, er
 			})
 			i++
 		}
+		logutil.BgLogger().Info("ywq test merge step meta", zap.Any("result", result))
 	}
 	return result, nil
 }

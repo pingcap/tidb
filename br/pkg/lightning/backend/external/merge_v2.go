@@ -204,16 +204,16 @@ type readerGroup struct {
 
 func getGroups(ctx context.Context, splitter *RangeSplitter, startKey kv.Key, endKey kv.Key) ([]*readerGroup, error) {
 	readerGroups := make([]*readerGroup, 0, 10)
-	curStart := startKey.Clone()
+	curStart := startKey
 
 	for {
 		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err := splitter.SplitOneRangesGroup()
 		if err != nil {
 			return nil, err
 		}
-		curEnd := kv.Key(endKeyOfGroup).Clone()
+		curEnd := endKeyOfGroup
 		if len(endKeyOfGroup) == 0 {
-			curEnd = endKey.Clone()
+			curEnd = endKey
 		}
 		readerGroups = append(readerGroups, &readerGroup{
 			dataFiles: dataFilesOfGroup,
@@ -222,7 +222,8 @@ func getGroups(ctx context.Context, splitter *RangeSplitter, startKey kv.Key, en
 			endKey:    kv.Key(curEnd).Clone(),
 		})
 
-		curStart = kv.Key(curEnd).Clone()
+		logutil.BgLogger().Info("ywq test keys", zap.Binary("start", curStart), zap.Binary("end", curEnd))
+		curStart = curEnd
 		if len(endKeyOfGroup) == 0 {
 			break
 		}
@@ -280,6 +281,7 @@ func MergeOverlappingFilesOpt(
 		math.MaxInt64,
 		checkHotspot,
 	)
+
 	defer func() {
 		err1 := splitter.Close()
 		if err != nil {
@@ -287,17 +289,21 @@ func MergeOverlappingFilesOpt(
 			logutil.Logger(ctx).Warn("close range splitter failed", zap.Error(err))
 		}
 	}()
+
 	if err != nil {
 		logutil.Logger(ctx).Warn("new range splitter failed", zap.Error(err))
 		return
 	}
 
-	groups, err := getGroups(ctx, splitter, startKey, endKey)
+	groups, err := getGroups(ctx, splitter, kv.Key(startKey).Clone(), kv.Key(endKey).Clone())
 	if err != nil {
 		logutil.Logger(ctx).Warn("get data groups failed", zap.Error(err))
 		return err
 	}
 	logutil.Logger(ctx).Info("get file groups for merge step", zap.Int("len", len(groups)))
+	for _, g := range groups {
+		logutil.BgLogger().Info("ywq test groups", zap.Binary("startKey", g.startKey), zap.Binary("endKey", g.endKey))
+	}
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(mergeConcurrency)
 	partSize = max(int64(5*size.MB), partSize+int64(1*size.MB))
@@ -306,8 +312,8 @@ func MergeOverlappingFilesOpt(
 	start := 0
 	i := 0
 	for ; i < mergeConcurrency-1; i++ {
-		curGroups := groups[start : start+int(groupCountPerCon)]
 		i := i
+		curGroups := groups[start : start+int(groupCountPerCon)]
 		eg.Go(func() error {
 			return runGroups(egCtx, store, curGroups, partSize, newFilePrefix, fmt.Sprintf("%s%d", writerID, i), blockSize, propSizeDist, propKeysDist, concurrency, onClose)
 		})
