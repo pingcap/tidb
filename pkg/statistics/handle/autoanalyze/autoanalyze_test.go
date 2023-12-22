@@ -402,6 +402,9 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 			makeFailpointRes(t, getMockedServerInfo()["s1"]),
 		),
 	)
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetServerInfo")
+	}()
 
 	// Create a new chunk with capacity for three fields
 	c := chunk.NewChunkWithCapacity([]*types.FieldType{
@@ -483,6 +486,11 @@ func TestCleanupCorruptedAnalyzeJobsOnDeadInstances(t *testing.T) {
 			makeFailpointRes(t, getMockedServerInfo()),
 		),
 	)
+	defer func() {
+		require.NoError(
+			t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo"),
+		)
+	}()
 	// Create a new chunk with capacity for three fields
 	c := chunk.NewChunkWithCapacity([]*types.FieldType{
 		types.NewFieldType(mysql.TypeLonglong), // id
