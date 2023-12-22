@@ -116,7 +116,7 @@ const BatchUpdateAnalyzeJobSQL = `UPDATE mysql.analyze_jobs
             SET state = 'failed',
             fail_reason = 'TiDB Server is down when running the analyze job',
             process_id = NULL
-            WHERE id IN (%?)`
+            WHERE id IN (%s)`
 
 func tenMinutesAgo() string {
 	return time.Now().Add(-10 * time.Minute).UTC().Format(types.TimeFormat)
@@ -164,8 +164,7 @@ func CleanupCorruptedAnalyzeJobsOnCurrentInstance(
 	if len(jobIDs) > 0 {
 		_, _, err = statsutil.ExecRows(
 			sctx,
-			BatchUpdateAnalyzeJobSQL,
-			strings.Join(jobIDs, ","),
+			fmt.Sprintf(BatchUpdateAnalyzeJobSQL, strings.Join(jobIDs, ",")),
 		)
 		if err != nil {
 			return errors.Trace(err)
@@ -221,8 +220,7 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 	if len(jobIDs) > 0 {
 		_, _, err = statsutil.ExecRows(
 			sctx,
-			BatchUpdateAnalyzeJobSQL,
-			strings.Join(jobIDs, ","),
+			fmt.Sprintf(BatchUpdateAnalyzeJobSQL, strings.Join(jobIDs, ",")),
 		)
 		if err != nil {
 			return errors.Trace(err)

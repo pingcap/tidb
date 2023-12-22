@@ -460,10 +460,7 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&test.CtxMatcher{}),
 		statsutil.UseCurrentSessionOpt,
-		autoanalyze.BatchUpdateAnalyzeJobSQL,
-		[]interface{}{
-			"1,3",
-		},
+		fmt.Sprintf(autoanalyze.BatchUpdateAnalyzeJobSQL, []interface{}{"1,3"}),
 	).Return(nil, nil, nil)
 
 	// No running analyze jobs on current instance.
