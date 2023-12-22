@@ -73,6 +73,8 @@ func (sg *Pool) Get() (sessionctx.Context, error) {
 	ctx.GetSessionVars().SetStatusFlag(mysql.ServerStatusAutocommit, true)
 	ctx.GetSessionVars().InRestrictedSQL = true
 	infosync.StoreInternalSession(ctx)
+	logutil.BgLogger().Warn("xxx get--------",
+		zap.String("ctx", fmt.Sprintf("%p", ctx)))
 	return ctx, nil
 }
 
@@ -81,6 +83,7 @@ func (sg *Pool) Put(ctx sessionctx.Context) {
 	if sg.resPool == nil {
 		return
 	}
+	logutil.BgLogger().Warn("xxx put--------", zap.String("ctx", fmt.Sprintf("%p", ctx)))
 
 	// no need to protect sg.resPool, even the sg.resPool is closed, the ctx still need to
 	// Put into resPool, because when resPool is closing, it will wait all the ctx returns, then resPool finish closing.
