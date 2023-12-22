@@ -142,6 +142,85 @@ func TestTruncateTable(t *testing.T) {
 	require.NotEqual(t, version, rows[0][0].(string))
 }
 
+func TestTruncateAPartitionedTable(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := do.StatsHandle()
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec(`
+		create table t (
+			a int,
+			b int,
+			primary key(a),
+			index idx(b)
+		)
+		partition by range (a) (
+			partition p0 values less than (6),
+			partition p1 values less than (11)
+		)
+	`)
+	testKit.MustExec("insert into t values (1,2),(2,2),(6,2)")
+	testKit.MustExec("analyze table t")
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(
+		model.NewCIStr("test"), model.NewCIStr("t"),
+	)
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	pi := tableInfo.GetPartitionInfo()
+	require.NotNil(t, pi)
+	for _, def := range pi.Definitions {
+		statsTbl := h.GetPartitionStats(tableInfo, def.ID)
+		require.False(t, statsTbl.Pseudo)
+	}
+	err = h.Update(is)
+	require.NoError(t, err)
+
+	// Get partition p0's and p1's stats update version.
+	partitionP0ID := pi.Definitions[0].ID
+	partitionP1ID := pi.Definitions[1].ID
+	// Get it from stats_meat first.
+	rows := testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id in (?, ?) order by table_id", partitionP0ID, partitionP1ID,
+	).Rows()
+	require.Len(t, rows, 2)
+	versionP0 := rows[0][0].(string)
+	versionP1 := rows[1][0].(string)
+
+	// Truncate the whole table.
+	testKit.MustExec("truncate table t")
+	// Find the truncate table event.
+	truncateTableEvent := findEvent(h.DDLEventCh(), model.ActionTruncateTable)
+	err = h.HandleDDLEvent(truncateTableEvent)
+	require.NoError(t, err)
+
+	// Get new table info.
+	is = do.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	newTableInfo := tbl.Meta()
+	// Get all new added partitions ID.
+	newPartitionIDs := make([]int64, 0, len(newTableInfo.Partition.Definitions))
+	for _, def := range newTableInfo.Partition.Definitions {
+		newPartitionIDs = append(newPartitionIDs, def.ID)
+	}
+	// Check new added table's stats meta.
+	rows = testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id in (?, ?) order by table_id", newPartitionIDs[0], newPartitionIDs[1],
+	).Rows()
+	require.Len(t, rows, 2)
+
+	// Check the version again.
+	rows = testKit.MustQuery(
+		"select version from mysql.stats_meta where table_id in (?, ?) order by table_id", partitionP0ID, partitionP1ID,
+	).Rows()
+	require.Len(t, rows, 2)
+	// Version gets updated after truncate the table.
+	require.NotEqual(t, versionP0, rows[0][0].(string))
+	require.NotEqual(t, versionP1, rows[1][0].(string))
+}
+
 func TestDDLHistogram(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
