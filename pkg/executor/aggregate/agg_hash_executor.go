@@ -261,11 +261,11 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 	baseRetTypeNum := len(e.Base().RetFieldTypes())
 	spillChunkFieldTypes := make([]*types.FieldType, baseRetTypeNum+1)
 	for i := 0; i < baseRetTypeNum; i++ {
-		spillChunkFieldTypes[i] = types.NewFieldType(mysql.TypeBit)
+		spillChunkFieldTypes[i] = types.NewFieldType(mysql.TypeVarString)
 	}
 	spillChunkFieldTypes[baseRetTypeNum] = types.NewFieldType(mysql.TypeString)
 
-	runningWorkerWaiter := &sync.WaitGroup{}
+	runningPartialWorkerWaiter := &sync.WaitGroup{}
 	for i := 0; i < partialConcurrency; i++ {
 		partialResultsMap := make([]aggfuncs.AggPartialResultMapper, finalConcurrency)
 		for i := 0; i < finalConcurrency; i++ {
@@ -292,7 +292,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			spillChunkFieldTypes:  spillChunkFieldTypes,
 			spillSerializeHelpers: aggfuncs.NewSerializeHelper(),
 			isSpillPrepared:       false,
-			runningWorkerWaiter:   runningWorkerWaiter,
+			runningWorkerWaiter:   runningPartialWorkerWaiter,
 			spillHelper:           e.spillHelper,
 		}
 
@@ -318,7 +318,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 		e.inputCh <- input
 	}
 
-	runningWorkerWaiter.Add(partialConcurrency)
+	runningPartialWorkerWaiter.Add(partialConcurrency)
 }
 
 func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {

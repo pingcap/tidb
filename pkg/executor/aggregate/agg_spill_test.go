@@ -241,7 +241,6 @@ func TestGetCorrectResult(t *testing.T) {
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/enableAggSpillIntest", `return(false)`)
 	rowNum := rand.Intn(300000)
 	ndv := rand.Intn(100000)
 	col1, col2 := generateData(rowNum, ndv)

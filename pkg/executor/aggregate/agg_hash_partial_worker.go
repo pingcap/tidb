@@ -302,7 +302,6 @@ func (w *HashAggPartialWorker) shuffleIntermData(finalConcurrency int) {
 
 func (w *HashAggPartialWorker) prepareForSpill() {
 	if !w.isSpillPrepared {
-		w.isSpillPrepared = true
 		w.tmpChksForSpill = make([]*chunk.Chunk, spilledPartitionNum)
 		w.spilledChunksIO = make([]*chunk.DataInDiskByChunks, spilledPartitionNum)
 		for i := 0; i < spilledPartitionNum; i++ {
@@ -312,6 +311,7 @@ func (w *HashAggPartialWorker) prepareForSpill() {
 				w.spilledChunksIO[i].GetDiskTracker().AttachTo(w.spillHelper.diskTracker)
 			}
 		}
+		w.isSpillPrepared = true
 	}
 }
 
