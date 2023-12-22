@@ -32,7 +32,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-const maxStatsJsonTableSize = 32 * 1024 * 1024 // 32 MiB
+var maxStatsJsonTableSize = 32 * 1024 * 1024 // 32 MiB
 
 func getStatsFileName(physicalID int64) string {
 	return fmt.Sprintf("backupmeta.schema.stats.%09d", physicalID)
@@ -78,6 +78,10 @@ func (s *StatsWriter) writeStatsFileAndClear(ctx context.Context, physicalID int
 
 	encryptedContent, iv, err := Encrypt(content, s.cipher)
 	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := s.storage.WriteFile(ctx, fileName, encryptedContent); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -142,6 +146,7 @@ func RestoreStats(
 	rewriteIDMap map[int64]int64,
 	taskCh chan<- *statstypes.PartitionStatisticLoadTask,
 ) error {
+	defer close(taskCh)
 	eg, ectx := errgroup.WithContext(ctx)
 	downloadWorkerpool := utils.NewWorkerPool(4, "download stats for each partition")
 	for _, statsFileIndex := range statsFileIndexes {
