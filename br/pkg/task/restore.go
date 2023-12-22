@@ -442,7 +442,6 @@ func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
 
 func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *RestoreConfig) error {
 	client.SetRateLimit(cfg.RateLimit)
-	client.SetConcurrency(uint(cfg.Concurrency))
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetGranularity(cfg.Granularity)
 	if cfg.Online {
@@ -460,6 +459,7 @@ func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *Re
 	if err != nil {
 		return errors.Trace(err)
 	}
+	client.SetConcurrency(uint(cfg.Concurrency))
 	return nil
 }
 
