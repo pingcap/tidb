@@ -30,6 +30,38 @@ import (
 	"go.uber.org/zap"
 )
 
+func getFilesReadConcurrency(
+	ctx context.Context,
+	storage storage.ExternalStorage,
+	statsFiles []string,
+	startKey, endKey []byte,
+) ([]uint64, []uint64, error) {
+	result := make([]uint64, len(statsFiles))
+	startOffs, err := seekPropsOffsets(ctx, startKey, statsFiles, storage, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	endOffs, err := seekPropsOffsets(ctx, endKey, statsFiles, storage, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	for i := range statsFiles {
+		if endOffs[i] < startOffs[i] {
+			result[i] = 1
+		} else {
+			result[i] = (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
+		}
+		result[i] = max(result[i], 1)
+		logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
+			zap.String("filename", statsFiles[i]),
+			zap.Uint64("startOffset", startOffs[i]),
+			zap.Uint64("endOffset", endOffs[i]),
+			zap.Uint64("expected concurrency", result[i]),
+		)
+	}
+	return result, startOffs, nil
+}
+
 func readAllData(
 	ctx context.Context,
 	storage storage.ExternalStorage,

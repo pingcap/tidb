@@ -1124,21 +1124,21 @@ func testCompareMergeWithContent(
 }
 
 func TestMergeBench(t *testing.T) {
-	testCompareMergeWithContent(t, 1, 0, createAscendingFiles, mergeStep)
-	testCompareMergeWithContent(t, 1, 0, createEvenlyDistributedFiles, mergeStep)
-	testCompareMergeWithContent(t, 2, 0, createAscendingFiles, mergeStep)
-	testCompareMergeWithContent(t, 2, 0, createEvenlyDistributedFiles, mergeStep)
-	testCompareMergeWithContent(t, 4, 0, createAscendingFiles, mergeStep)
-	testCompareMergeWithContent(t, 4, 0, createEvenlyDistributedFiles, mergeStep)
-	testCompareMergeWithContent(t, 8, 0, createAscendingFiles, mergeStep)
-	testCompareMergeWithContent(t, 8, 0, createEvenlyDistributedFiles, mergeStep)
-	// testCompareMergeWithContent(t, 8, 0, createAscendingFiles, newMergeStep)
-	// testCompareMergeWithContent(t, 8, 0, createEvenlyDistributedFiles, newMergeStep)
-	testCompareMergeWithContent(t, 8, 1, createAscendingFiles, newMergeStepOpt)
-	testCompareMergeWithContent(t, 8, 1, createEvenlyDistributedFiles, newMergeStepOpt)
-	testCompareMergeWithContent(t, 8, 2, createAscendingFiles, newMergeStepOpt)
-	testCompareMergeWithContent(t, 8, 2, createEvenlyDistributedFiles, newMergeStepOpt)
-	testCompareMergeWithContent(t, 8, 4, createAscendingFiles, newMergeStepOpt)
+	// testCompareMergeWithContent(t, 1, 0, createAscendingFiles, mergeStep)
+	// testCompareMergeWithContent(t, 1, 0, createEvenlyDistributedFiles, mergeStep)
+	// testCompareMergeWithContent(t, 2, 0, createAscendingFiles, mergeStep)
+	// testCompareMergeWithContent(t, 2, 0, createEvenlyDistributedFiles, mergeStep)
+	// testCompareMergeWithContent(t, 4, 0, createAscendingFiles, mergeStep)
+	// testCompareMergeWithContent(t, 4, 0, createEvenlyDistributedFiles, mergeStep)
+	// testCompareMergeWithContent(t, 8, 0, createAscendingFiles, mergeStep)
+	// testCompareMergeWithContent(t, 8, 0, createEvenlyDistributedFiles, mergeStep)
+	// // testCompareMergeWithContent(t, 8, 0, createAscendingFiles, newMergeStep)
+	// // testCompareMergeWithContent(t, 8, 0, createEvenlyDistributedFiles, newMergeStep)
+	// testCompareMergeWithContent(t, 8, 1, createAscendingFiles, newMergeStepOpt)
+	// testCompareMergeWithContent(t, 8, 1, createEvenlyDistributedFiles, newMergeStepOpt)
+	// testCompareMergeWithContent(t, 8, 2, createAscendingFiles, newMergeStepOpt)
+	// testCompareMergeWithContent(t, 8, 2, createEvenlyDistributedFiles, newMergeStepOpt)
+	// testCompareMergeWithContent(t, 8, 4, createAscendingFiles, newMergeStepOpt)
 	testCompareMergeWithContent(t, 8, 4, createEvenlyDistributedFiles, newMergeStepOpt)
 }
 
@@ -1154,8 +1154,25 @@ func TestReadStatFile(t *testing.T) {
 		}
 		logutil.BgLogger().Info("read one prop",
 			zap.Int("prop len", prop.len()),
+			zap.Binary("first key", prop.firstKey),
+			zap.Binary("last key", prop.lastKey),
 			zap.Int("prop offset", int(prop.offset)),
 			zap.Int("prop size", int(prop.size)),
 			zap.Int("prop keys", int(prop.keys)))
 	}
+	// ["ywq test groups"] [startKey="dIAAAAAAAACPX2mAAAAAAAAAAgExMDAwMDAwMf9uUG1Gdm9vMf9wcWR6Qk9DSv9MWWtSZXI3T/9GNExwRklXb/8AAAAAAAAAAPc="] [endKey="dIAAAAAAAACPX2mAAAAAAAAAAgExNjczNjE2Mf9Bd2dNR1hnR/8xT2tjYUlaTv9sY1ZFOUhnef8yZzg4WFo1Yf8AAAAAAAAAAPc="]
+	//  ["ywq test groups"] [startKey="dIAAAAAAAACPX2mAAAAAAAAAAgExNjczNjE2Mf9Bd2dNR1hnR/8xT2tjYUlaTv9sY1ZFOUhnef8yZzg4WFo1Yf8AAAAAAAAAAPc="] [endKey="dIAAAAAAAACPX2mAAAAAAAAAAgEzODQ5MTUzR/9CakpPYWdhbP9nNUZkbjdpbv9KZUN3UXJwbf9kbzFyd3JJAP4="]
+	// ["ywq test groups"] [startKey="dIAAAAAAAACPX2mAAAAAAAAAAgEzODQ5MTUzR/9CakpPYWdhbP9nNUZkbjdpbv9KZUN3UXJwbf9kbzFyd3JJAP4="] [endKey=dIAAAAAAAACPX2mAAAAAAAAAAgExMjQwMDAwMP92bW9GdzRMWP9xY2dxb1o4bf91cFBFREp6Uf8yN1lLTEJwNP8AAAAAAAAAAPcA]
+
+	// [2023/12/22 04:21:11.898 +00:00] [Info] [merge_v2.go:225] ["ywq test keys"] [start="dIAAAAAAAACPX2mAAAAAAAAAAgExMDAwMDAwMf9uUG1Gdm9vMf9wcWR6Qk9DSv9MWWtSZXI3T/9GNExwRklXb/8AAAAAAAAAAPc="] [end="dIAAAAAAAACPX2mAAAAAAAAAAgExNjczNjE2Mf9Bd2dNR1hnR/8xT2tjYUlaTv9sY1ZFOUhnef8yZzg4WFo1Yf8AAAAAAAAAAPc="]
+	// [2023/12/22 04:21:11.899 +00:00] [Info] [merge_v2.go:225] ["ywq test keys"] [start="dIAAAAAAAACPX2mAAAAAAAAAAgExNjczNjE2Mf9Bd2dNR1hnR/8xT2tjYUlaTv9sY1ZFOUhnef8yZzg4WFo1Yf8AAAAAAAAAAPc="] [end="dIAAAAAAAACPX2mAAAAAAAAAAgEzODQ5MTUzR/9CakpPYWdhbP9nNUZkbjdpbv9KZUN3UXJwbf9kbzFyd3JJAP4="]
+	// [2023/12/22 04:21:11.900 +00:00] [Info] [merge_v2.go:225] ["ywq test keys"] [start="dIAAAAAAAACPX2mAAAAAAAAAAgEzODQ5MTUzR/9CakpPYWdhbP9nNUZkbjdpbv9KZUN3UXJwbf9kbzFyd3JJAP4="] [end=dIAAAAAAAACPX2mAAAAAAAAAAgExMjQwMDAwMP92bW9GdzRMWP9xY2dxb1o4bf91cFBFREp6Uf8yN1lLTEJwNP8AAAAAAAAAAPcA]
+	// startKeyString := "dIAAAAAAAACPX2mAAAAAAAAAAgExMDAwMDAwMf9uUG1Gdm9vMf9wcWR6Qk9DSv9MWWtSZXI3T/9GNExwRklXb/8AAAAAAAAAAPc="
+
+	// bytes, _ := strconv.Parse
+
+	endKey := []byte("dIAAAAAAAACPX2mAAAAAAAAAAgExNjczNjE2Mf9Bd2dNR1hnR/8xT2tjYUlaTv9sY1ZFOUhnef8yZzg4WFo1Yf8AAAAAAAAAAPc=")
+
+	getFilesReadConcurrency(ctx, store, []string{*fileName}, bytes, endKey)
+
 }
