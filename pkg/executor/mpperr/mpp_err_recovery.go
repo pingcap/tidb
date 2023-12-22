@@ -167,7 +167,7 @@ func (h *mppResultHolder) insert(chk *chunk.Chunk) {
 	h.chks = append(h.chks, chk)
 	h.curRows += uint64(chk.NumRows())
 
-	if h.curRows+uint64(chk.NumRows()) >= h.capacity {
+	if h.curRows >= h.capacity {
 		h.alreadyFulled = true
 	}
 	h.memTracker.Consume(chk.MemoryUsage())
