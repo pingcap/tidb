@@ -15,19 +15,11 @@
 package scheduler
 
 import (
-	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"go.uber.org/goleak"
 )
-
-// SchedulerForTest exports for testing.
-type SchedulerManagerForTest interface {
-	GetRunningTaskCnt() int
-	DelRunningTask(id int64)
-	DoCleanUpRoutine()
-}
 
 // GetRunningGTaskCnt implements Scheduler.GetRunningGTaskCnt interface.
 func (sm *Manager) GetRunningTaskCnt() int {
@@ -54,10 +46,6 @@ func (s *BaseScheduler) DoBalanceSubtasks(eligibleNodes []string) error {
 
 func NewNodeManager() *NodeManager {
 	return newNodeManager()
-}
-
-func (nm *NodeManager) RefreshManagedNodes(ctx context.Context, taskMgr TaskManager) {
-	nm.refreshManagedNodes(ctx, taskMgr)
 }
 
 func TestMain(m *testing.M) {
