@@ -101,21 +101,24 @@ func NewRangeSplitter(
 	memStore := storage.NewMemStorage()
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	eg.SetLimit(1000)
-	for _, file := range statFiles {
+	statWithSlash := make([]string, len(statFiles))
+	for i, file := range statFiles {
+		i := i
 		file := file
+		statWithSlash[i] = "/" + file
 		eg.Go(func() error {
 			content, err := externalStorage.ReadFile(egCtx, file)
 			if err != nil {
 				return err
 			}
-			return memStore.WriteFile(egCtx, file, content)
+			return memStore.WriteFile(egCtx, statWithSlash[i], content)
 		})
 	}
 	if err := eg.Wait(); err != nil {
 		return nil, err
 	}
 
-	propIter, err := NewMergePropIter(ctx, statFiles, memStore, checkHotSpot)
+	propIter, err := NewMergePropIter(ctx, statWithSlash, memStore, checkHotSpot)
 	if err != nil {
 		return nil, err
 	}
