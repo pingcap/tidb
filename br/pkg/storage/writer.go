@@ -2,11 +2,11 @@ package storage
 
 import (
 	"bytes"
-	"compress/gzip"
 	"context"
 	"io"
 
-	"github.com/golang/snappy"
+	"github.com/klauspost/compress/gzip"
+	"github.com/klauspost/compress/snappy"
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -26,6 +26,13 @@ const (
 	// Zstd will compress given bytes in zstd format.
 	Zstd
 )
+
+// DecompressConfig is the config used for decompression.
+type DecompressConfig struct {
+	// ZStdDecodeConcurrency only used for ZStd decompress, see WithDecoderConcurrency.
+	// if not 1, ZStd will decode file asynchronously.
+	ZStdDecodeConcurrency int
+}
 
 type flusher interface {
 	Flush() error
@@ -86,14 +93,18 @@ func newCompressWriter(compressType CompressType, w io.Writer) simpleCompressWri
 	}
 }
 
-func newCompressReader(compressType CompressType, r io.Reader) (io.Reader, error) {
+func newCompressReader(compressType CompressType, cfg DecompressConfig, r io.Reader) (io.Reader, error) {
 	switch compressType {
 	case Gzip:
 		return gzip.NewReader(r)
 	case Snappy:
 		return snappy.NewReader(r), nil
 	case Zstd:
-		return zstd.NewReader(r)
+		options := []zstd.DOption{}
+		if cfg.ZStdDecodeConcurrency > 0 {
+			options = append(options, zstd.WithDecoderConcurrency(cfg.ZStdDecodeConcurrency))
+		}
+		return zstd.NewReader(r, options...)
 	default:
 		return nil, nil
 	}

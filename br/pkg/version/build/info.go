@@ -8,9 +8,9 @@ import (
 	"runtime"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/util/israce"
-	"github.com/pingcap/tidb/util/versioninfo"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util/israce"
+	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"go.uber.org/zap"
 )
 
@@ -27,7 +27,7 @@ func getReleaseVersion() string {
 	if mysql.TiDBReleaseVersion != "None" {
 		return mysql.TiDBReleaseVersion
 	}
-	return "v6.0.0-master"
+	return "v7.0.0-master"
 }
 
 // AppName is a name of a built binary.

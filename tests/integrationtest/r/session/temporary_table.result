@@ -1,0 +1,763 @@
+drop table if exists tmp1;
+create temporary table tmp1 (id int primary key auto_increment, u int unique, v int);
+insert into tmp1 (u, v) values(11, 101);
+insert into tmp1 (u, v) values(12, 102);
+insert into tmp1 values(3, 13, 102);
+select * from tmp1 where id=1;
+id	u	v
+1	11	101
+select * from tmp1 where id=2;
+id	u	v
+2	12	102
+select * from tmp1 where id=3;
+id	u	v
+3	13	102
+select * from tmp1 where id=99;
+id	u	v
+insert into tmp1 values(1, 999, 9999);
+Error 1062 (23000): Duplicate entry '1' for key 'tmp1.PRIMARY'
+select * from tmp1 where id=1;
+id	u	v
+1	11	101
+select * from tmp1 where id=2;
+id	u	v
+2	12	102
+select * from tmp1 where id=3;
+id	u	v
+3	13	102
+select * from tmp1 where id=99;
+id	u	v
+insert into tmp1 values(99, 11, 999);
+Error 1062 (23000): Duplicate entry '11' for key 'tmp1.u'
+select * from tmp1 where id=1;
+id	u	v
+1	11	101
+select * from tmp1 where id=2;
+id	u	v
+2	12	102
+select * from tmp1 where id=3;
+id	u	v
+3	13	102
+select * from tmp1 where id=99;
+id	u	v
+begin;
+insert into tmp1 values(1, 999, 9999);
+Error 1062 (23000): Duplicate entry '1' for key 'tmp1.PRIMARY'
+select * from tmp1 where id=1;
+id	u	v
+1	11	101
+select * from tmp1 where id=2;
+id	u	v
+2	12	102
+select * from tmp1 where id=3;
+id	u	v
+3	13	102
+select * from tmp1 where id=99;
+id	u	v
+insert into tmp1 values(99, 11, 9999);
+Error 1062 (23000): Duplicate entry '11' for key 'tmp1.u'
+select * from tmp1 where id=1;
+id	u	v
+1	11	101
+select * from tmp1 where id=2;
+id	u	v
+2	12	102
+select * from tmp1 where id=3;
+id	u	v
+3	13	102
+select * from tmp1 where id=99;
+id	u	v
+insert into tmp1 values(4, 14, 104);
+select * from tmp1 where id=4;
+id	u	v
+4	14	104
+insert into tmp1 values(4, 999, 9999);
+Error 1062 (23000): Duplicate entry '4' for key 'tmp1.PRIMARY'
+insert into tmp1 values(99, 14, 9999);
+Error 1062 (23000): Duplicate entry '14' for key 'tmp1.u'
+select * from tmp1 where id=1;
+id	u	v
+1	11	101
+select * from tmp1 where id=2;
+id	u	v
+2	12	102
+select * from tmp1 where id=3;
+id	u	v
+3	13	102
+select * from tmp1 where id=99;
+id	u	v
+commit;
+select * from tmp1 where id=1;
+id	u	v
+1	11	101
+select * from tmp1 where id=2;
+id	u	v
+2	12	102
+select * from tmp1 where id=3;
+id	u	v
+3	13	102
+select * from tmp1 where id=99;
+id	u	v
+select * from tmp1 where id=4;
+id	u	v
+4	14	104
+begin;
+insert into tmp1 values(5, 15, 105);
+select * from tmp1 where id=5;
+id	u	v
+5	15	105
+rollback;
+select * from tmp1 where id=5;
+id	u	v
+drop table if exists t, tl;
+create global temporary table t (c1 int, c2 mediumtext) on commit delete rows;
+create temporary table tl (c1 int, c2 mediumtext);
+select @@global.tidb_tmp_table_max_size;
+@@global.tidb_tmp_table_max_size
+67108864
+set @@global.tidb_tmp_table_max_size = 123;
+Level	Code	Message
+Warning	1292	Truncated incorrect tidb_tmp_table_max_size value: '123'
+set @@session.tidb_tmp_table_max_size = 2097152;
+set @@session.tidb_tmp_table_max_size = 1048576;
+select @@global.tidb_tmp_table_max_size;
+@@global.tidb_tmp_table_max_size
+1048576
+begin;
+insert into t values (1, repeat('x', 512*1024));
+insert into t values (1, repeat('x', 512*1024));
+insert into t values (1, repeat('x', 512*1024));
+Error 1114 (HY000): The table 't' is full
+rollback;
+begin;
+insert into tl values (1, repeat('x', 512*1024));
+insert into tl values (1, repeat('x', 512*1024));
+insert into tl values (1, repeat('x', 512*1024));
+Error 1114 (HY000): The table 'tl' is full
+rollback;
+insert into tl values (1, repeat('x', 512*1024));
+begin;
+insert into tl values (1, repeat('x', 512*1024));
+insert into tl values (1, repeat('x', 512*1024));
+Error 1114 (HY000): The table 'tl' is full
+rollback;
+drop table if exists g_tmp;
+create global temporary table g_tmp (a int primary key, b int, c int, index i_b(b)) on commit delete rows;
+begin;
+insert into g_tmp values (3, 3, 3);
+insert into g_tmp values (4, 7, 9);
+select * from g_tmp;
+a	b	c
+3	3	3
+4	7	9
+select b from g_tmp where b > 3;
+b
+7
+select c from g_tmp where b = 3;
+c
+3
+select * from g_tmp where a = 3;
+a	b	c
+3	3	3
+select * from g_tmp where a in (2,3,4);
+a	b	c
+3	3	3
+4	7	9
+commit;
+select * from g_tmp;
+a	b	c
+drop table if exists tmp1;
+create temporary table tmp1 (id int primary key auto_increment, u int unique, v int);
+insert into tmp1 values(1, 11, 101);
+insert into tmp1 values(2, 12, 102);
+insert ignore into tmp1 values(1, 100, 1000) on duplicate key update u=12;
+Level	Code	Message
+Warning	1062	Duplicate entry '12' for key 'tmp1.u'
+select * from tmp1 where id=1;
+id	u	v
+1	11	101
+insert into tmp1 values(2, 100, 1000) on duplicate key update v=202;
+select * from tmp1 where id=2;
+id	u	v
+2	12	202
+insert into tmp1 values(3, 13, 103) on duplicate key update v=203;
+select * from tmp1 where id=3;
+id	u	v
+3	13	103
+begin;
+insert ignore into tmp1 values(1, 100, 1000) on duplicate key update u=12;
+Level	Code	Message
+Warning	1062	Duplicate entry '12' for key 'tmp1.u'
+select * from tmp1 where id=1;
+id	u	v
+1	11	101
+insert into tmp1 values(2, 100, 1000) on duplicate key update v=302;
+select * from tmp1 where id=2;
+id	u	v
+2	12	302
+insert into tmp1 values(4, 14, 104) on duplicate key update v=204;
+select * from tmp1 where id=4;
+id	u	v
+4	14	104
+rollback;
+select * from tmp1;
+id	u	v
+1	11	101
+2	12	202
+3	13	103
+begin;
+insert ignore into tmp1 values(1, 100, 1000) on duplicate key update u=12;
+Level	Code	Message
+Warning	1062	Duplicate entry '12' for key 'tmp1.u'
+insert into tmp1 values(2, 100, 1000) on duplicate key update v=302;
+insert into tmp1 values(4, 14, 104) on duplicate key update v=204;
+commit;
+select * from tmp1;
+id	u	v
+1	11	101
+2	12	302
+3	13	103
+4	14	104
+drop table if exists tmp1;
+create temporary table tmp1 (id int primary key auto_increment, u int unique, v int);
+insert into tmp1 values(1, 11, 101);
+insert into tmp1 values(2, 12, 102);
+insert into tmp1 values(3, 13, 103);
+replace into tmp1 values(1, 12, 1000);
+select * from tmp1;
+id	u	v
+1	12	1000
+3	13	103
+replace into tmp1 values(4, 14, 104);
+select * from tmp1 where id=4;
+id	u	v
+4	14	104
+begin;
+replace into tmp1 values(1, 13, 999);
+select * from tmp1;
+id	u	v
+1	13	999
+4	14	104
+replace into tmp1 values(5, 15, 105);
+select * from tmp1 where id=5;
+id	u	v
+5	15	105
+rollback;
+select * from tmp1;
+id	u	v
+1	12	1000
+3	13	103
+4	14	104
+begin;
+replace into tmp1 values(1, 13, 999);
+replace into tmp1 values(5, 15, 105);
+commit;
+select * from tmp1;
+id	u	v
+1	13	999
+4	14	104
+5	15	105
+drop table if exists tmp1;
+create temporary table tmp1 (id int primary key auto_increment, u int unique, v int);
+insert into tmp1 values(1, 11, 101);
+insert into tmp1 values(2, 12, 102);
+insert into tmp1 values(4, 14, 104);
+select * from tmp1 where id=1;
+id	u	v
+1	11	101
+select * from tmp1 where u=11;
+id	u	v
+1	11	101
+select * from tmp1 where id=2;
+id	u	v
+2	12	102
+select * from tmp1 where u=12;
+id	u	v
+2	12	102
+begin;
+select * from tmp1 where id=1;
+id	u	v
+1	11	101
+select * from tmp1 where u=11;
+id	u	v
+1	11	101
+select * from tmp1 where id=2;
+id	u	v
+2	12	102
+select * from tmp1 where u=12;
+id	u	v
+2	12	102
+insert into tmp1 values(3, 13, 103);
+select * from tmp1 where id=3;
+id	u	v
+3	13	103
+select * from tmp1 where u=13;
+id	u	v
+3	13	103
+update tmp1 set v=999 where id=2;
+select * from tmp1 where id=2;
+id	u	v
+2	12	999
+delete from tmp1 where id=4;
+select * from tmp1 where id=4;
+id	u	v
+select * from tmp1 where u=14;
+id	u	v
+commit;
+select * from tmp1 where id=3;
+id	u	v
+3	13	103
+select * from tmp1 where u=13;
+id	u	v
+3	13	103
+select * from tmp1 where id=2;
+id	u	v
+2	12	999
+select * from tmp1 where id=4;
+id	u	v
+select * from tmp1 where u=14;
+id	u	v
+drop table if exists tmp1;
+create temporary table tmp1 (id int primary key auto_increment, u int unique, v int);
+insert into tmp1 values(1, 11, 101);
+insert into tmp1 values(2, 12, 102);
+insert into tmp1 values(3, 13, 103);
+insert into tmp1 values(4, 14, 104);
+select * from tmp1 where id in (1, 3);
+id	u	v
+1	11	101
+3	13	103
+select * from tmp1 where u in (11, 13);
+id	u	v
+1	11	101
+3	13	103
+select * from tmp1 where id in (1, 3, 5);
+id	u	v
+1	11	101
+3	13	103
+select * from tmp1 where u in (11, 13, 15);
+id	u	v
+1	11	101
+3	13	103
+begin;
+select * from tmp1 where id in (1, 3);
+id	u	v
+1	11	101
+3	13	103
+select * from tmp1 where u in (11, 13);
+id	u	v
+1	11	101
+3	13	103
+select * from tmp1 where id in (1, 3, 5);
+id	u	v
+1	11	101
+3	13	103
+select * from tmp1 where u in (11, 13, 15);
+id	u	v
+1	11	101
+3	13	103
+insert into tmp1 values(6, 16, 106);
+select * from tmp1 where id in (1, 6);
+id	u	v
+1	11	101
+6	16	106
+select * from tmp1 where u in (11, 16);
+id	u	v
+1	11	101
+6	16	106
+update tmp1 set v=999 where id=3;
+select * from tmp1 where id in (1, 3);
+id	u	v
+1	11	101
+3	13	999
+select * from tmp1 where u in (11, 13);
+id	u	v
+1	11	101
+3	13	999
+delete from tmp1 where id=4;
+select * from tmp1 where id in (1, 4);
+id	u	v
+1	11	101
+select * from tmp1 where u in (11, 14);
+id	u	v
+1	11	101
+commit;
+select * from tmp1 where id in (1, 3, 6);
+id	u	v
+1	11	101
+3	13	999
+6	16	106
+select * from tmp1 where u in (11, 13, 16);
+id	u	v
+1	11	101
+3	13	999
+6	16	106
+select * from tmp1 where id in (1, 4);
+id	u	v
+1	11	101
+select * from tmp1 where u in (11, 14);
+id	u	v
+1	11	101
+drop table if exists tmp1;
+create temporary table tmp1 (id int primary key auto_increment, u int unique, v int);
+insert into tmp1 values(1, 101, 1001), (3, 113, 1003), (5, 105, 1005), (7, 117, 1007), (9, 109, 1009),(10, 110, 1010), (12, 112, 1012), (14, 114, 1014), (16, 116, 1016), (18, 118, 1018);
+select * from tmp1 where id>3 order by id;
+id	u	v
+5	105	1005
+7	117	1007
+9	109	1009
+10	110	1010
+12	112	1012
+14	114	1014
+16	116	1016
+18	118	1018
+select /*+ use_index(tmp1, u) */ * from tmp1 where u>101 order by u;
+id	u	v
+5	105	1005
+9	109	1009
+10	110	1010
+12	112	1012
+3	113	1003
+14	114	1014
+16	116	1016
+7	117	1007
+18	118	1018
+select /*+ use_index(tmp1, u) */ id,u from tmp1 where u>101 order by id;
+id	u
+3	113
+5	105
+7	117
+9	109
+10	110
+12	112
+14	114
+16	116
+18	118
+select /*+ use_index_merge(tmp1, primary, u) */ * from tmp1 where id>5 or u>110 order by u;
+id	u	v
+9	109	1009
+10	110	1010
+12	112	1012
+3	113	1003
+14	114	1014
+16	116	1016
+7	117	1007
+18	118	1018
+Level	Code	Message
+Warning	1105	IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table.
+begin;
+select * from tmp1 where id>3 order by id;
+id	u	v
+5	105	1005
+7	117	1007
+9	109	1009
+10	110	1010
+12	112	1012
+14	114	1014
+16	116	1016
+18	118	1018
+select /*+ use_index(tmp1, u) */ * from tmp1 where u>101 order by u;
+id	u	v
+5	105	1005
+9	109	1009
+10	110	1010
+12	112	1012
+3	113	1003
+14	114	1014
+16	116	1016
+7	117	1007
+18	118	1018
+select /*+ use_index(tmp1, u) */ id,u from tmp1 where u>101 order by id;
+id	u
+3	113
+5	105
+7	117
+9	109
+10	110
+12	112
+14	114
+16	116
+18	118
+select /*+ use_index_merge(tmp1, primary, u) */ * from tmp1 where id>5 or u>110 order by u;
+id	u	v
+9	109	1009
+10	110	1010
+12	112	1012
+3	113	1003
+14	114	1014
+16	116	1016
+7	117	1007
+18	118	1018
+Level	Code	Message
+Warning	1105	IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table.
+insert into tmp1 values(2, 100, 1002);
+insert into tmp1 values(4, 104, 1004);
+insert into tmp1 values(11, 111, 1011);
+update tmp1 set v=9999 where id=7;
+update tmp1 set u=132 where id=12;
+delete from tmp1 where id=16;
+rollback;
+select * from tmp1 where id>3 order by id;
+id	u	v
+5	105	1005
+7	117	1007
+9	109	1009
+10	110	1010
+12	112	1012
+14	114	1014
+16	116	1016
+18	118	1018
+select /*+ use_index(tmp1, u) */ * from tmp1 where u>101 order by u;
+id	u	v
+5	105	1005
+9	109	1009
+10	110	1010
+12	112	1012
+3	113	1003
+14	114	1014
+16	116	1016
+7	117	1007
+18	118	1018
+select /*+ use_index(tmp1, u) */ id,u from tmp1 where u>101 order by id;
+id	u
+3	113
+5	105
+7	117
+9	109
+10	110
+12	112
+14	114
+16	116
+18	118
+select /*+ use_index_merge(tmp1, primary, u) */ * from tmp1 where id>5 or u>110 order by u;
+id	u	v
+9	109	1009
+10	110	1010
+12	112	1012
+3	113	1003
+14	114	1014
+16	116	1016
+7	117	1007
+18	118	1018
+Level	Code	Message
+Warning	1105	IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table.
+begin;
+insert into tmp1 values(2, 100, 1002);
+insert into tmp1 values(4, 104, 1004);
+insert into tmp1 values(11, 111, 1011);
+update tmp1 set v=9999 where id=7;
+update tmp1 set u=132 where id=12;
+delete from tmp1 where id=16;
+select * from tmp1 where id>3 order by id;
+id	u	v
+4	104	1004
+5	105	1005
+7	117	9999
+9	109	1009
+10	110	1010
+11	111	1011
+12	132	1012
+14	114	1014
+18	118	1018
+select /*+ use_index(tmp1, u) */ * from tmp1 where u>101 order by u;
+id	u	v
+4	104	1004
+5	105	1005
+9	109	1009
+10	110	1010
+11	111	1011
+3	113	1003
+14	114	1014
+7	117	9999
+18	118	1018
+12	132	1012
+select /*+ use_index(tmp1, u) */ id,u from tmp1 where u>101 order by id;
+id	u
+3	113
+4	104
+5	105
+7	117
+9	109
+10	110
+11	111
+12	132
+14	114
+18	118
+select /*+ use_index_merge(tmp1, primary, u) */ * from tmp1 where id>5 or u>110 order by u;
+id	u	v
+9	109	1009
+10	110	1010
+11	111	1011
+3	113	1003
+14	114	1014
+7	117	9999
+18	118	1018
+12	132	1012
+Level	Code	Message
+Warning	1105	IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table.
+commit;
+select * from tmp1 where id>3 order by id;
+id	u	v
+4	104	1004
+5	105	1005
+7	117	9999
+9	109	1009
+10	110	1010
+11	111	1011
+12	132	1012
+14	114	1014
+18	118	1018
+select /*+ use_index(tmp1, u) */ * from tmp1 where u>101 order by u;
+id	u	v
+4	104	1004
+5	105	1005
+9	109	1009
+10	110	1010
+11	111	1011
+3	113	1003
+14	114	1014
+7	117	9999
+18	118	1018
+12	132	1012
+select /*+ use_index(tmp1, u) */ id,u from tmp1 where u>101 order by id;
+id	u
+3	113
+4	104
+5	105
+7	117
+9	109
+10	110
+11	111
+12	132
+14	114
+18	118
+select /*+ use_index_merge(tmp1, primary, u) */ * from tmp1 where id>5 or u>110 order by u;
+id	u	v
+9	109	1009
+10	110	1010
+11	111	1011
+3	113	1003
+14	114	1014
+7	117	9999
+18	118	1018
+12	132	1012
+Level	Code	Message
+Warning	1105	IndexMerge is inapplicable or disabled. Cannot use IndexMerge on temporary table.
+drop table if exists t1;
+drop sequence if exists s1;
+drop view if exists v1;
+create table t1 (a int);
+show create table t1;
+Table	Create Table
+t1	CREATE TABLE `t1` (
+  `a` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+create view v1 as select 1;
+show create view v1;
+View	Create View	character_set_client	collation_connection
+v1	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v1` (`1`) AS SELECT 1 AS `1`	utf8mb4	utf8mb4_general_ci
+show create table v1;
+View	Create View	character_set_client	collation_connection
+v1	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v1` (`1`) AS SELECT 1 AS `1`	utf8mb4	utf8mb4_general_ci
+create sequence s1;
+show create sequence s1;
+Sequence	Create Sequence
+s1	CREATE SEQUENCE `s1` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB
+show create table s1;
+Sequence	Create Sequence
+s1	CREATE SEQUENCE `s1` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB
+create temporary table t1 (ct1 int);
+show create table t1;
+Table	Create Table
+t1	CREATE TEMPORARY TABLE `t1` (
+  `ct1` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+create temporary table v1 (cv1 int);
+show create view v1;
+View	Create View	character_set_client	collation_connection
+v1	CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`%` SQL SECURITY DEFINER VIEW `v1` (`1`) AS SELECT 1 AS `1`	utf8mb4	utf8mb4_general_ci
+show create table v1;
+Table	Create Table
+v1	CREATE TEMPORARY TABLE `v1` (
+  `cv1` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+create temporary table s1 (cs1 int);
+show create sequence s1;
+Table	Create Table
+s1	CREATE SEQUENCE `s1` start with 1 minvalue 1 maxvalue 9223372036854775806 increment by 1 cache 1000 nocycle ENGINE=InnoDB
+show create table s1;
+Table	Create Table
+s1	CREATE TEMPORARY TABLE `s1` (
+  `cs1` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop view v1;
+show create view v1;
+Error 1146 (42S02): Table 'session__temporary_table.v1' doesn't exist
+show create table v1;
+Table	Create Table
+v1	CREATE TEMPORARY TABLE `v1` (
+  `cv1` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop sequence s1;
+show create sequence s1;
+Error 1146 (42S02): Table 'session__temporary_table.s1' doesn't exist
+show create table s1;
+Table	Create Table
+s1	CREATE TEMPORARY TABLE `s1` (
+  `cs1` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop sequence if exists s1;
+drop view if exists v1;
+drop table if exists t1;
+drop table if exists tmp1;
+create temporary table tmp1 (id int primary key auto_increment, u int unique, v int);
+insert into tmp1 values(1, 11, 101);
+insert into tmp1 values(2, 12, 102);
+insert ignore into tmp1 values(1, 100, 1000);
+Level	Code	Message
+Warning	1062	Duplicate entry '1' for key 'tmp1.PRIMARY'
+select * from tmp1 where id=1;
+id	u	v
+1	11	101
+insert ignore into tmp1 values(5, 15, 105);
+select * from tmp1 where id=5;
+id	u	v
+5	15	105
+begin;
+insert ignore into tmp1 values(1, 100, 1000);
+Level	Code	Message
+Warning	1062	Duplicate entry '1' for key 'tmp1.PRIMARY'
+select * from tmp1 where id=1;
+id	u	v
+1	11	101
+insert ignore into tmp1 values(3, 13, 103);
+select * from tmp1 where id=3;
+id	u	v
+3	13	103
+insert ignore into tmp1 values(3, 100, 1000);
+Level	Code	Message
+Warning	1062	Duplicate entry '3' for key 'tmp1.PRIMARY'
+select * from tmp1 where id=3;
+id	u	v
+3	13	103
+rollback;
+select * from tmp1;
+id	u	v
+1	11	101
+2	12	102
+5	15	105
+begin;
+insert ignore into tmp1 values(1, 100, 1000);
+Level	Code	Message
+Warning	1062	Duplicate entry '1' for key 'tmp1.PRIMARY'
+insert ignore into tmp1 values(3, 13, 103);
+insert ignore into tmp1 values(3, 100, 1000);
+Level	Code	Message
+Warning	1062	Duplicate entry '3' for key 'tmp1.PRIMARY'
+commit;
+select * from tmp1;
+id	u	v
+1	11	101
+2	12	102
+3	13	103
+5	15	105

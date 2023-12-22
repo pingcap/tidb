@@ -161,9 +161,10 @@ func newStreamCheckCommand() *cobra.Command {
 
 func newStreamAdvancerCommand() *cobra.Command {
 	command := &cobra.Command{
-		Use:   "advancer",
-		Short: "Start a central worker for advancing the checkpoint. (only for debuging, this subcommand should be integrated to TiDB)",
-		Args:  cobra.NoArgs,
+		Use: "advancer",
+		Short: "Start a central worker for advancing the checkpoint. " +
+			"(only for debuging, this subcommand should be integrated to TiDB)",
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return streamCommand(cmd, task.StreamCtl)
 		},

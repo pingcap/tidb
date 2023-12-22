@@ -1,0 +1,6 @@
+[tikv-importer]
+range-concurrency = 1
+send-kv-size = "10b"
+
+[mydumper.csv]
+header = false

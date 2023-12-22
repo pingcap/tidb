@@ -1,0 +1,75 @@
+# TestSkipLockALotOfTables
+set @@tidb_analyze_version = 1;
+drop table if exists t, a, x, y, z;
+create table t(a int, b varchar(10), index idx_b (b));
+create table a(a int, b varchar(10), index idx_b (b));
+create table x(a int, b varchar(10), index idx_b (b));
+create table y(a int, b varchar(10), index idx_b (b));
+create table z(a int, b varchar(10), index idx_b (b));
+lock stats statistics__lock_table_stats.t, statistics__lock_table_stats.a, statistics__lock_table_stats.x, statistics__lock_table_stats.y, statistics__lock_table_stats.z;
+--enable_warnings;
+lock stats statistics__lock_table_stats.t, statistics__lock_table_stats.a, statistics__lock_table_stats.x, statistics__lock_table_stats.y, statistics__lock_table_stats.z;
+--disable_warnings;
+unlock stats statistics__lock_table_stats.t, statistics__lock_table_stats.a, statistics__lock_table_stats.x, statistics__lock_table_stats.y, statistics__lock_table_stats.z;
+set @@tidb_analyze_version = default;
+
+# TestShowStatsLockedTablePrivilege
+set @@tidb_analyze_version = 1;
+drop table if exists t;
+create table t(a int, b varchar(10), index idx_b (b));
+analyze table t;
+lock stats t;
+show stats_locked;
+drop user if exists myuser@localhost;
+create user myuser@localhost;
+grant insert on mysql.* to myuser@localhost;
+# Without privilege.
+connect (conn1,localhost,myuser,,mysql);
+connection conn1;
+-- error 1142
+show stats_locked;
+connection default;
+# Grant SELECT privilege.
+grant select on mysql.* to myuser@localhost;
+flush privileges;
+# Try again.
+connection conn1;
+show stats_locked;
+disconnect conn1;
+unlock stats t;
+connection default;
+
+# TestLockAndUnlockTablePrivilege
+set @@tidb_analyze_version = 1;
+drop table if exists t;
+create table t(a int, b varchar(10), index idx_b (b));
+analyze table t;
+lock stats t;
+select count(*) from mysql.stats_table_locked;
+unlock stats t;
+select count(*) from mysql.stats_table_locked;
+drop user if exists myuser@localhost;
+create user myuser@localhost;
+grant delete on statistics__lock_table_stats.* to myuser@localhost;
+connect (conn1,localhost,myuser,,statistics__lock_table_stats);
+connection conn1;
+-- error 1142
+lock stats t;
+-- error 1142
+unlock stats t;
+connection default;
+grant insert on statistics__lock_table_stats.* to myuser@localhost;
+flush privileges;
+connection conn1;
+-- error 1142
+lock stats t;
+-- error 1142
+unlock stats t;
+connection default;
+grant select on statistics__lock_table_stats.* to myuser@localhost;
+flush privileges;
+connection conn1;
+lock stats t;
+unlock stats t;
+connection default;
+set @@tidb_analyze_version = default;

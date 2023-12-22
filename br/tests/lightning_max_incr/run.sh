@@ -16,6 +16,7 @@
 
 set -eux
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 check_cluster_version 4 0 0 'local backend' || exit 0
 
 ENGINE_COUNT=6
@@ -42,7 +43,7 @@ cleanup
 
 # db.test contains key that is less than int64 - 1
 # while db.test1 contains key that equals int64 - 1
-run_lightning --sorted-kv-dir "$TEST_DIR/sst" --config "tests/$TEST_NAME/config.toml" --log-file "$TEST_DIR/lightning.log"
+run_lightning --sorted-kv-dir "$TEST_DIR/sst" --config "$CUR/config.toml" --log-file "$TEST_DIR/lightning.log"
 check_result
 # successfully insert: max key has not reached maximum
 run_sql 'INSERT INTO db.test(b) VALUES(11);'

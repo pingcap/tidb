@@ -16,7 +16,12 @@
 
 set -eux
 
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 mkdir -p "$TEST_DIR/data"
+
+run_sql "DROP DATABASE IF EXISTS test;"
+run_sql "DROP TABLE IF EXISTS test.t;"
 
 cat <<EOF >"$TEST_DIR/data/test-schema-create.sql"
 CREATE DATABASE test;
@@ -38,7 +43,7 @@ done
 set -x
 
 start=$(date +%s)
-run_lightning --backend local -d "$TEST_DIR/data" --config "tests/$TEST_NAME/config.toml"
+run_lightning --backend local -d "$TEST_DIR/data" --config "$CUR/config.toml"
 end=$(date +%s)
 take=$((end - start))
 

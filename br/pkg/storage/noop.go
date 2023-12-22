@@ -13,6 +13,11 @@ func (*noopStorage) DeleteFile(_ context.Context, _ string) error {
 	return nil
 }
 
+// DeleteFiles deletes the files in storage
+func (*noopStorage) DeleteFiles(_ context.Context, _ []string) error {
+	return nil
+}
+
 // WriteFile file to storage.
 func (*noopStorage) WriteFile(_ context.Context, _ string, _ []byte) error {
 	return nil
@@ -29,7 +34,7 @@ func (*noopStorage) FileExists(_ context.Context, _ string) (bool, error) {
 }
 
 // Open a Reader by file path.
-func (*noopStorage) Open(_ context.Context, _ string) (ExternalFileReader, error) {
+func (*noopStorage) Open(_ context.Context, _ string, _ *ReaderOption) (ExternalFileReader, error) {
 	return noopReader{}, nil
 }
 
@@ -43,7 +48,7 @@ func (*noopStorage) URI() string {
 }
 
 // Create implements ExternalStorage interface.
-func (*noopStorage) Create(_ context.Context, _ string) (ExternalFileWriter, error) {
+func (*noopStorage) Create(_ context.Context, _ string, _ *WriterOption) (ExternalFileWriter, error) {
 	return &noopWriter{}, nil
 }
 
@@ -68,6 +73,10 @@ func (noopReader) Close() error {
 
 func (noopReader) Seek(offset int64, _ int) (int64, error) {
 	return offset, nil
+}
+
+func (noopReader) GetFileSize() (int64, error) {
+	return 0, nil
 }
 
 type noopWriter struct{}

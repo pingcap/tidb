@@ -15,6 +15,7 @@
 # limitations under the License.
 
 set -eu
+CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 DB="$TEST_NAME"
 
 VOTER_COUNT=$((TIKV_COUNT-1))
@@ -30,7 +31,7 @@ run_pd_ctl -u https://$PD_ADDR store label $random_store_id '$mode' 'read_only'
 
 # set placement rule to add a learner replica for each region in the read only store
 run_pd_ctl -u https://$PD_ADDR config placement-rules rule-bundle load --out=$TEST_DIR/default_rules.json
-cat tests/br_replica_read/placement_rule_with_learner_template.json | jq  ".[].rules[0].count = $VOTER_COUNT" > $TEST_DIR/placement_rule_with_learner.json
+cat $CUR/placement_rule_with_learner_template.json | jq  ".[].rules[0].count = $VOTER_COUNT" > $TEST_DIR/placement_rule_with_learner.json
 run_pd_ctl -u https://$PD_ADDR config placement-rules rule-bundle save --in $TEST_DIR/placement_rule_with_learner.json
 sleep 3 # wait for PD to apply the placement rule
 

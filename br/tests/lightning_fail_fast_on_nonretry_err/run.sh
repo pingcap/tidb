@@ -9,7 +9,7 @@ export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/backend/local/Wri
 start_time=$(date +'%s')
 run_lightning --backend local > $out_file_name 2>&1 || true
 export GO_FAILPOINTS=""
-check_contains "The available disk of TiKV"
+check_contains "the remaining storage capacity of TiKV"
 used_time=$(($(date +'%s') - $start_time))
 echo "time used to run lightning ${used_time}s"
 # writeAndIngestByRanges will retry for at least 810s on retryable error

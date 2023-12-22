@@ -7,6 +7,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -26,9 +27,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
@@ -70,7 +71,7 @@ type Mgr struct {
 }
 
 func GetAllTiKVStoresWithRetry(ctx context.Context,
-	pdClient pd.Client,
+	pdClient util.StoreMeta,
 	storeBehavior util.StoreBehavior,
 ) ([]*metapb.Store, error) {
 	stores := make([]*metapb.Store, 0)
@@ -108,7 +109,7 @@ func checkStoresAlive(ctx context.Context,
 	// Check live tikv.
 	stores, err := util.GetAllTiKVStores(ctx, pdclient, storeBehavior)
 	if err != nil {
-		log.Error("fail to get store", zap.Error(err))
+		log.Error("failed to get store", zap.Error(err))
 		return errors.Trace(err)
 	}
 
@@ -149,7 +150,7 @@ func NewMgr(
 
 	controller, err := pdutil.NewPdController(ctx, pdAddrs, tlsConf, securityOption)
 	if err != nil {
-		log.Error("fail to create pd controller", zap.Error(err))
+		log.Error("failed to create pd controller", zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 	if checkRequirements {
@@ -244,6 +245,11 @@ func (mgr *Mgr) GetTLSConfig() *tls.Config {
 	return mgr.StoreManager.TLSConfig()
 }
 
+// GetStore gets the tikvStore.
+func (mgr *Mgr) GetStore() tikv.Storage {
+	return mgr.tikvStore
+}
+
 // GetLockResolver gets the LockResolver.
 func (mgr *Mgr) GetLockResolver() *txnlock.LockResolver {
 	return mgr.tikvStore.GetLockResolver()
@@ -281,7 +287,8 @@ func (mgr *Mgr) GetTS(ctx context.Context) (uint64, error) {
 	return oracle.ComposeTS(p, l), nil
 }
 
-// GetMergeRegionSizeAndCount returns the tikv config `coprocessor.region-split-size` and `coprocessor.region-split-key`.
+// GetMergeRegionSizeAndCount returns the tikv config
+// `coprocessor.region-split-size` and `coprocessor.region-split-key`.
 // returns the default config when failed.
 func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context, client *http.Client) (uint64, uint64) {
 	regionSplitSize := DefaultMergeRegionSizeBytes
@@ -386,7 +393,7 @@ func handleTiKVAddress(store *metapb.Store, httpPrefix string) (*url.URL, error)
 	// but in sometimes we may not get the correct status address from PD.
 	if statusUrl.Hostname() != nodeUrl.Hostname() {
 		// if not matched, we use the address as default, but change the port
-		addr.Host = nodeUrl.Hostname() + ":" + statusUrl.Port()
+		addr.Host = net.JoinHostPort(nodeUrl.Hostname(), statusUrl.Port())
 		log.Warn("store address and status address mismatch the host, we will use the store address as hostname",
 			zap.Uint64("store", store.Id),
 			zap.String("status address", statusAddr),

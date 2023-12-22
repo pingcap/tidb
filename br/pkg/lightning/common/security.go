@@ -20,10 +20,11 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/httputil"
-	"github.com/pingcap/tidb/util"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc"
@@ -31,6 +32,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+// TLS is a wrapper around a TLS configuration.
 type TLS struct {
 	caPath    string
 	certPath  string
@@ -87,8 +89,15 @@ func NewTLSFromMockServer(server *httptest.Server) *TLS {
 	}
 }
 
+// GetMockTLSUrl returns tls's host for mock test
+func GetMockTLSUrl(tls *TLS) string {
+	return tls.url
+}
+
 // WithHost creates a new TLS instance with the host replaced.
 func (tc *TLS) WithHost(host string) *TLS {
+	host = strings.TrimPrefix(host, "http://")
+	host = strings.TrimPrefix(host, "https://")
 	var url string
 	if tc.inner != nil {
 		url = "https://" + host
@@ -116,6 +125,7 @@ func (tc *TLS) WrapListener(l net.Listener) net.Listener {
 	return tls.NewListener(l, tc.inner)
 }
 
+// GetJSON performs a GET request to the given path and unmarshals the response
 func (tc *TLS) GetJSON(ctx context.Context, path string, v interface{}) error {
 	return GetJSON(ctx, tc.client, tc.url+path, v)
 }
@@ -143,6 +153,7 @@ func (tc *TLS) ToTiKVSecurityConfig() config.Security {
 	}
 }
 
+// TLSConfig returns the underlying TLS configuration.
 func (tc *TLS) TLSConfig() *tls.Config {
 	return tc.inner
 }

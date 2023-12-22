@@ -4,11 +4,16 @@
 
 set -eux
 
+echo "testing checksum-error..."
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/importer/checksum-error=1*return()"
+
 run_sql 'DROP DATABASE IF EXISTS routes_a0;'
 run_sql 'DROP DATABASE IF EXISTS routes_a1;'
 run_sql 'DROP DATABASE IF EXISTS routes_b;'
 
 run_lightning
+
+echo "test checksum-error success!"
 
 run_sql 'SELECT count(1), sum(x) FROM routes_b.u;'
 check_contains 'count(1): 4'

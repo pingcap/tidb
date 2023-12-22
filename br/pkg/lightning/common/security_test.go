@@ -16,6 +16,7 @@ package common_test
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -26,6 +27,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client/http"
 )
 
 func respondPathHandler(w http.ResponseWriter, req *http.Request) {
@@ -68,6 +70,49 @@ func TestGetJSONSecure(t *testing.T) {
 	err = tls.GetJSON(ctx, "/dddd", &result)
 	require.NoError(t, err)
 	require.Equal(t, "/dddd", result.Path)
+}
+
+func TestWithHost(t *testing.T) {
+	mockTLSServer := httptest.NewTLSServer(http.HandlerFunc(respondPathHandler))
+	defer mockTLSServer.Close()
+	mockServer := httptest.NewServer(http.HandlerFunc(respondPathHandler))
+	defer mockServer.Close()
+
+	testCases := []struct {
+		expected string
+		host     string
+		secure   bool
+	}{
+		{
+			"https://127.0.0.1:2379",
+			"http://127.0.0.1:2379",
+			true,
+		},
+		{
+			"http://127.0.0.1:2379",
+			"https://127.0.0.1:2379",
+			false,
+		},
+		{
+			fmt.Sprintf("http://127.0.0.1:2379%s", pd.Stores),
+			fmt.Sprintf("127.0.0.1:2379%s", pd.Stores),
+			false,
+		},
+		{
+			"https://127.0.0.1:2379",
+			"127.0.0.1:2379",
+			true,
+		},
+	}
+
+	for _, testCase := range testCases {
+		server := mockServer
+		if testCase.secure {
+			server = mockTLSServer
+		}
+		tls := common.NewTLSFromMockServer(server)
+		require.Equal(t, testCase.expected, common.GetMockTLSUrl(tls.WithHost(testCase.host)))
+	}
 }
 
 func TestInvalidTLS(t *testing.T) {

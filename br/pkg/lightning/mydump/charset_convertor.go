@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"golang.org/x/text/encoding"
+	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
@@ -60,7 +61,7 @@ func NewCharsetConvertor(dataCharacterSet, dataInvalidCharReplace string) (*Char
 
 func (cc *CharsetConvertor) initDecoder() error {
 	switch cc.sourceCharacterSet {
-	case config.Binary, config.UTF8MB4:
+	case config.Binary, config.UTF8MB4, config.ASCII:
 		return nil
 	case config.GB18030:
 		cc.decoder = simplifiedchinese.GB18030.NewDecoder()
@@ -68,19 +69,29 @@ func (cc *CharsetConvertor) initDecoder() error {
 	case config.GBK:
 		cc.decoder = simplifiedchinese.GBK.NewDecoder()
 		return nil
+	case config.Latin1:
+		// use Windows1252 (not ISO 8859-1) to decode Latin1
+		// https://dev.mysql.com/doc/refman/8.0/en/charset-we-sets.html
+		cc.decoder = charmap.Windows1252.NewDecoder()
+		return nil
 	}
 	return errors.Errorf("not support %s as the conversion source yet", cc.sourceCharacterSet)
 }
 
 func (cc *CharsetConvertor) initEncoder() error {
 	switch cc.sourceCharacterSet {
-	case config.Binary, config.UTF8MB4:
+	case config.Binary, config.UTF8MB4, config.ASCII:
 		return nil
 	case config.GB18030:
 		cc.encoder = simplifiedchinese.GB18030.NewEncoder()
 		return nil
 	case config.GBK:
 		cc.encoder = simplifiedchinese.GBK.NewEncoder()
+		return nil
+	case config.Latin1:
+		// use Windows1252 (not ISO 8859-1) to encode Latin1
+		// https://dev.mysql.com/doc/refman/8.0/en/charset-we-sets.html
+		cc.encoder = charmap.Windows1252.NewEncoder()
 		return nil
 	}
 	return errors.Errorf("not support %s as the conversion source yet", cc.sourceCharacterSet)
@@ -105,7 +116,9 @@ func (cc *CharsetConvertor) Decode(src string) (string, error) {
 func (cc *CharsetConvertor) precheck(src string) bool {
 	// No need to convert the charset encoding, just return the original data.
 	if len(src) == 0 || cc == nil ||
-		cc.sourceCharacterSet == config.Binary || cc.sourceCharacterSet == config.UTF8MB4 ||
+		cc.sourceCharacterSet == config.Binary ||
+		cc.sourceCharacterSet == config.UTF8MB4 ||
+		cc.sourceCharacterSet == config.ASCII ||
 		cc.decoder == nil || cc.encoder == nil {
 		return false
 	}

@@ -10,3 +10,6 @@ schema = "tidb_lightning_checkpoint_test_cpch"
 driver = "file"
 dsn = "/tmp/backup_restore_test/cpch.pb"
 keep-after-success = true
+
+[post-restore]
+analyze = false

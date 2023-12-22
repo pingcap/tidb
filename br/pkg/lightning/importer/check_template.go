@@ -19,25 +19,20 @@ import (
 
 	"github.com/jedib0t/go-pretty/v6/table"
 	"github.com/jedib0t/go-pretty/v6/text"
+	"github.com/pingcap/tidb/br/pkg/lightning/precheck"
 )
 
-type CheckType string
-
-const (
-	Critical CheckType = "critical"
-	Warn     CheckType = "performance"
-)
-
+// Template is the interface for lightning check.
 type Template interface {
 	// Collect mainly collect performance related checks' results and critical level checks' results.
 	// If the performance is not as expect or one of critical check not passed. it will stop import task.
-	Collect(t CheckType, passed bool, msg string)
+	Collect(t precheck.CheckType, passed bool, msg string)
 
 	// Success represents the whole check has passed or not.
 	Success() bool
 
 	// FailedCount represents (the warn check failed count, the critical check failed count)
-	FailedCount(t CheckType) int
+	FailedCount(t precheck.CheckType) int
 
 	// Output print all checks results.
 	Output() string
@@ -46,8 +41,10 @@ type Template interface {
 	FailedMsg() string
 }
 
+// SimpleTemplate is a simple template for lightning check.
 type SimpleTemplate struct {
-	count               int
+	count int
+	// export them for test
 	warnFailedCount     int
 	criticalFailedCount int
 	normalMsgs          []string // only used in unit test now
@@ -55,6 +52,7 @@ type SimpleTemplate struct {
 	t                   table.Writer
 }
 
+// NewSimpleTemplate returns a simple template.
 func NewSimpleTemplate() Template {
 	t := table.NewWriter()
 	t.AppendHeader(table.Row{"#", "Check Item", "Type", "Passed"})
@@ -69,21 +67,23 @@ func NewSimpleTemplate() Template {
 	}
 }
 
+// FailedMsg returns the error msg for the failed check.
 func (c *SimpleTemplate) FailedMsg() string {
 	return strings.Join(c.criticalMsgs, ";\n")
 }
 
-func (c *SimpleTemplate) Collect(t CheckType, passed bool, msg string) {
+// Collect mainly collect performance related checks' results and critical level checks' results.
+func (c *SimpleTemplate) Collect(t precheck.CheckType, passed bool, msg string) {
 	c.count++
 	if !passed {
 		switch t {
-		case Critical:
+		case precheck.Critical:
 			c.criticalFailedCount++
-		case Warn:
+		case precheck.Warn:
 			c.warnFailedCount++
 		}
 	}
-	if !passed && t == Critical {
+	if !passed && t == precheck.Critical {
 		c.criticalMsgs = append(c.criticalMsgs, msg)
 	} else {
 		c.normalMsgs = append(c.normalMsgs, msg)
@@ -92,30 +92,33 @@ func (c *SimpleTemplate) Collect(t CheckType, passed bool, msg string) {
 	c.t.AppendSeparator()
 }
 
+// Success represents the whole check has passed or not.
 func (c *SimpleTemplate) Success() bool {
 	return c.criticalFailedCount == 0
 }
 
-func (c *SimpleTemplate) FailedCount(t CheckType) int {
-	if t == Warn {
+// FailedCount represents (the warn check failed count, the critical check failed count)
+func (c *SimpleTemplate) FailedCount(t precheck.CheckType) int {
+	if t == precheck.Warn {
 		return c.warnFailedCount
 	}
-	if t == Critical {
+	if t == precheck.Critical {
 		return c.criticalFailedCount
 	}
 	return 0
 }
 
+// Output print all checks results.
 func (c *SimpleTemplate) Output() string {
 	c.t.SetAllowedRowLength(170)
 	c.t.SetRowPainter(func(row table.Row) text.Colors {
 		if passed, ok := row[3].(bool); ok {
 			if !passed {
-				if typ, ok := row[2].(CheckType); ok {
-					if typ == Warn {
+				if typ, ok := row[2].(precheck.CheckType); ok {
+					if typ == precheck.Warn {
 						return text.Colors{text.FgYellow}
 					}
-					if typ == Critical {
+					if typ == precheck.Critical {
 						return text.Colors{text.FgRed}
 					}
 				}

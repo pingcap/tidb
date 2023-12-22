@@ -23,10 +23,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/encrypt"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/encrypt"
 	"go.uber.org/zap"
 )
 
@@ -55,9 +55,9 @@ const (
 	MetaV2
 )
 
-// CreateMetaFileName is the name of meta file.
-func CreateMetaFileName(ts uint64) string {
-	return fmt.Sprintf("%s_%d", MetaFile, ts)
+// PitrIDMapsFilename is filename that used to save id maps in pitr.
+func PitrIDMapsFilename(clusterID, restoreTS uint64) string {
+	return fmt.Sprintf("%s/pitr_id_map.cluster_id:%d.restored_ts:%d", "pitr_id_maps", clusterID, restoreTS)
 }
 
 // Encrypt encrypts the content according to CipherInfo.
@@ -129,8 +129,8 @@ func walkLeafMetaFile(
 
 		checksum := sha256.Sum256(decryptContent)
 		if !bytes.Equal(node.Sha256, checksum[:]) {
-			return errors.Annotatef(berrors.ErrInvalidMetaFile,
-				"checksum mismatch expect %x, got %x", node.Sha256, checksum[:])
+			return berrors.ErrInvalidMetaFile.GenWithStackByArgs(fmt.Sprintf(
+				"checksum mismatch expect %x, got %x", node.Sha256, checksum[:]))
 		}
 
 		child := &backuppb.MetaFile{}
@@ -153,7 +153,7 @@ type Table struct {
 	TotalBytes      uint64
 	Files           []*backuppb.File
 	TiFlashReplicas int
-	Stats           *handle.JSONTable
+	Stats           *util.JSONTable
 }
 
 // NoChecksum checks whether the table has a calculated checksum.
@@ -274,31 +274,57 @@ func (reader *MetaReader) ReadDDLs(ctx context.Context) ([]byte, error) {
 	}
 }
 
+type readSchemaConfig struct {
+	skipFiles bool
+}
+
+// ReadSchemaOption describes some extra option of reading the config.
+type ReadSchemaOption func(*readSchemaConfig)
+
+// SkipFiles is the configuration which will make the schema reader skip all files.
+// This is useful when only schema information is needed.
+func SkipFiles(conf *readSchemaConfig) {
+	conf.skipFiles = true
+}
+
+// GetBasic returns a basic copy of the backup meta.
+func (reader *MetaReader) GetBasic() backuppb.BackupMeta {
+	return *reader.backupMeta
+}
+
 // ReadSchemasFiles reads the schema and datafiles from the backupmeta.
 // This function is compatible with the old backupmeta.
-func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *Table) error {
+func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *Table, opts ...ReadSchemaOption) error {
 	ch := make(chan interface{}, MaxBatchSize)
 	errCh := make(chan error, 1)
 	go func() {
+		defer close(ch)
 		if err := reader.readSchemas(ctx, func(s *backuppb.Schema) { ch <- s }); err != nil {
 			errCh <- errors.Trace(err)
 		}
-		close(ch)
 	}()
+
+	cfg := readSchemaConfig{}
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 
 	// It's not easy to balance memory and time costs for current structure.
 	// put all files in memory due to https://github.com/pingcap/br/issues/705
-	fileMap := make(map[int64][]*backuppb.File)
-	outputFn := func(file *backuppb.File) {
-		tableID := tablecodec.DecodeTableID(file.GetStartKey())
-		if tableID == 0 {
-			log.Panic("tableID must not equal to 0", logutil.File(file))
+	var fileMap map[int64][]*backuppb.File
+	if !cfg.skipFiles {
+		fileMap = make(map[int64][]*backuppb.File)
+		outputFn := func(file *backuppb.File) {
+			tableID := tablecodec.DecodeTableID(file.GetStartKey())
+			if tableID == 0 {
+				log.Panic("tableID must not equal to 0", logutil.File(file))
+			}
+			fileMap[tableID] = append(fileMap[tableID], file)
 		}
-		fileMap[tableID] = append(fileMap[tableID], file)
-	}
-	err := reader.readDataFiles(ctx, outputFn)
-	if err != nil {
-		return errors.Trace(err)
+		err := reader.readDataFiles(ctx, outputFn)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	for {
@@ -318,9 +344,9 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 					return errors.Trace(err)
 				}
 			}
-			var stats *handle.JSONTable
+			var stats *util.JSONTable
 			if s.Stats != nil {
-				stats = &handle.JSONTable{}
+				stats = &util.JSONTable{}
 				if err := json.Unmarshal(s.Stats, stats); err != nil {
 					return errors.Trace(err)
 				}
@@ -336,14 +362,16 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 				Stats:           stats,
 			}
 			if tableInfo != nil {
-				if files, ok := fileMap[tableInfo.ID]; ok {
-					table.Files = append(table.Files, files...)
-				}
-				if tableInfo.Partition != nil {
-					// Partition table can have many table IDs (partition IDs).
-					for _, p := range tableInfo.Partition.Definitions {
-						if files, ok := fileMap[p.ID]; ok {
-							table.Files = append(table.Files, files...)
+				if fileMap != nil {
+					if files, ok := fileMap[tableInfo.ID]; ok {
+						table.Files = append(table.Files, files...)
+					}
+					if tableInfo.Partition != nil {
+						// Partition table can have many table IDs (partition IDs).
+						for _, p := range tableInfo.Partition.Definitions {
+							if files, ok := fileMap[p.ID]; ok {
+								table.Files = append(table.Files, files...)
+							}
 						}
 					}
 				}
@@ -517,6 +545,9 @@ type MetaWriter struct {
 
 	// records the total datafile size
 	totalDataFileSize int
+
+	// records the total metafile size for backupmeta v2
+	totalMetaFileSize int
 }
 
 // NewMetaWriter creates MetaWriter.
@@ -654,6 +685,9 @@ func (writer *MetaWriter) FlushBackupMeta(ctx context.Context) error {
 		writer.backupMeta.Version = MetaV1
 	}
 
+	// update the total size of backup files (include data files and meta files)
+	writer.backupMeta.BackupSize = writer.MetaFilesSize() + writer.ArchiveSize() + uint64(writer.backupMeta.Size())
+
 	// Flush the writer.backupMeta to storage
 	backupMetaData, err := proto.Marshal(writer.backupMeta)
 	if err != nil {
@@ -734,6 +768,7 @@ func (writer *MetaWriter) flushMetasV2(ctx context.Context, op AppendOp) error {
 		return errors.Trace(err)
 	}
 
+	writer.totalMetaFileSize += len(encyptedContent)
 	if err = writer.storage.WriteFile(ctx, fname, encyptedContent); err != nil {
 		return errors.Trace(err)
 	}
@@ -759,6 +794,12 @@ func (writer *MetaWriter) ArchiveSize() uint64 {
 	}
 	total += uint64(writer.totalDataFileSize)
 	return total
+}
+
+// MetaFilesSize represents the size of meta files from backupmeta v2,
+// must be called after everything finishes by `FinishWriteMetas`.
+func (writer *MetaWriter) MetaFilesSize() uint64 {
+	return uint64(writer.totalMetaFileSize)
 }
 
 // Backupmeta clones a backupmeta.

@@ -1,0 +1,204 @@
+# TestRealAsFloatMode
+drop table if exists t;
+create table t (a real);
+desc t;
+drop table if exists t;
+set sql_mode='REAL_AS_FLOAT';
+create table t (a real);
+desc t;
+set @@sql_mode=default;
+
+# TestPipesAsConcatMode
+SET sql_mode='PIPES_AS_CONCAT';
+SELECT 'hello' || 'world';
+set @@sql_mode=default;
+
+# TestIssue22387
+set sql_mode='';
+-- error 1690
+select 12 - cast(15 as unsigned);
+set sql_mode='NO_UNSIGNED_SUBTRACTION';
+select 12 - cast(15 as unsigned);
+set @@sql_mode=default;
+
+# TestIssue22389
+set sql_mode='NO_UNSIGNED_SUBTRACTION';
+DROP TABLE IF EXISTS tb5;
+create table tb5(a bigint, b bigint);
+insert into tb5 values (10, -9223372036854775808);
+-- error 1690
+select a - b from tb5;
+set sql_mode='';
+-- error 1690
+select a - b from tb5;
+set @@sql_mode=default;
+
+# TestIssue22390
+set sql_mode='';
+DROP TABLE IF EXISTS tb5;
+create table tb5(a bigint, b bigint);
+insert into tb5 values (10, -9223372036854775808);
+-- error 1690
+select a - b from tb5;
+set sql_mode='NO_UNSIGNED_SUBTRACTION';
+-- error 1690
+select a - b from tb5;
+set @@sql_mode=default;
+
+# TestIssue22442
+set sql_mode='';
+select cast(-1 as unsigned) - cast(-1 as unsigned);
+set sql_mode='NO_UNSIGNED_SUBTRACTION';
+select cast(-1 as unsigned) - cast(-1 as unsigned);
+set @@sql_mode=default;
+
+# TestIssue22444
+set sql_mode='NO_UNSIGNED_SUBTRACTION';
+select cast(-1 as unsigned) - cast(-10000 as unsigned);
+set sql_mode='';
+select cast(-1 as unsigned) - cast(-10000 as unsigned);
+set @@sql_mode=default;
+
+# TestIssue22445
+set sql_mode='NO_UNSIGNED_SUBTRACTION';
+select cast(-12 as unsigned) - cast(-1 as unsigned);
+set sql_mode='';
+-- error 1690
+select cast(-12 as unsigned) - cast(-1 as unsigned);
+set @@sql_mode=default;
+
+# TestIssue22446
+set sql_mode='NO_UNSIGNED_SUBTRACTION';
+select cast(-1 as unsigned) - 9223372036854775808;
+set sql_mode='';
+select cast(-1 as unsigned) - 9223372036854775808;
+set @@sql_mode=default;
+
+# TestIssue22447
+set sql_mode='NO_UNSIGNED_SUBTRACTION';
+select 9223372036854775808 - cast(-1 as unsigned);
+set sql_mode='';
+-- error 1690
+select 9223372036854775808 - cast(-1 as unsigned);
+set @@sql_mode=default;
+
+# TestNoUnsignedSubtractionMode
+set sql_mode='NO_UNSIGNED_SUBTRACTION';
+SELECT CAST(0 as UNSIGNED) - 1;
+-- error 1690
+SELECT CAST(-1 as UNSIGNED) - cast(9223372036854775807 as unsigned);
+-- error 1690
+SELECT CAST(0 as UNSIGNED) - cast(9223372036854775809 as unsigned);
+SELECT CAST(0 as UNSIGNED) - cast(9223372036854775808 as unsigned);
+SELECT CAST(-1 as UNSIGNED) - cast(-9223372036854775808 as unsigned);
+SELECT cast(0 as unsigned) - cast(9223372036854775808 as unsigned);
+-- error 1690
+SELECT -9223372036854775808 - (1);
+-- error 1690
+SELECT 1 - (-9223372036854775808);
+-- error 1690
+SELECT 1 - (-9223372036854775807);
+-- error 1690
+SELECT CAST(-12 as UNSIGNED) - (-1);
+-- error 1690
+SELECT CAST(9223372036854775808 as UNSIGNED) - (0);
+-- error 1690
+SELECT CAST(-1 as UNSIGNED) - (9223372036854775807);
+-- error 1690
+SELECT CAST(9223372036854775808 as UNSIGNED) - 0;
+SELECT CAST(-1 as UNSIGNED) - (9223372036854775808);
+-- error 1690
+SELECT CAST(1 as UNSIGNED) - (-9223372036854775808);
+-- error 1690
+SELECT CAST(1 as UNSIGNED) - (-9223372036854775807);
+SELECT CAST(1 as UNSIGNED) - (-9223372036854775806);
+select cast(0 as unsigned) - 9223372036854775807;
+-- error 1690
+SELECT CAST(1 as SIGNED) - cast(9223372036854775810 as unsigned);
+-- error 1690
+SELECT CAST(-1 as SIGNED) - cast(9223372036854775808 as unsigned);
+-- error 1690
+SELECT CAST(-9223372036854775807 as SIGNED) - cast(-1 as unsigned);
+-- error 1690
+SELECT CAST(-1 as SIGNED) - cast(9223372036854775808 as unsigned);
+select 0 - cast(9223372036854775807 as unsigned);
+SELECT CAST(1 as SIGNED) - cast(9223372036854775809 as unsigned);
+SELECT CAST(-1 as SIGNED) - cast(9223372036854775807 as unsigned);
+-- error 1690
+SELECT 1 - CAST(18446744073709551615 as UNSIGNED);
+-- error 1690
+SELECT CAST(-1 as UNSIGNED) - 1;
+SELECT CAST(9223372036854775808 as UNSIGNED) - 1;
+set @@sql_mode=default;
+
+# TestHighNotPrecedenceMode
+drop table if exists t1;
+create table t1 (a int);
+insert into t1 values (0),(1),(NULL);
+SELECT * FROM t1 WHERE NOT a BETWEEN 2 AND 3;
+SELECT NOT 1 BETWEEN -5 AND 5;
+set sql_mode='high_not_precedence';
+SELECT * FROM t1 WHERE NOT a BETWEEN 2 AND 3;
+SELECT NOT 1 BETWEEN -5 AND 5;
+set @@sql_mode=default;
+
+# TestIgnoreSpaceMode
+set sql_mode='';
+CREATE TABLE COUNT (a bigint);
+DROP TABLE COUNT;
+CREATE TABLE `COUNT` (a bigint);
+DROP TABLE COUNT;
+-- error 1064
+CREATE TABLE COUNT(a bigint);
+CREATE TABLE types__const.COUNT(a bigint);
+DROP TABLE COUNT;
+CREATE TABLE BIT_AND (a bigint);
+DROP TABLE BIT_AND;
+CREATE TABLE `BIT_AND` (a bigint);
+DROP TABLE BIT_AND;
+-- error 1064
+CREATE TABLE BIT_AND(a bigint);
+CREATE TABLE types__const.BIT_AND(a bigint);
+DROP TABLE BIT_AND;
+CREATE TABLE NOW (a bigint);
+DROP TABLE NOW;
+CREATE TABLE `NOW` (a bigint);
+DROP TABLE NOW;
+-- error 1064
+CREATE TABLE NOW(a bigint);
+CREATE TABLE types__const.NOW(a bigint);
+DROP TABLE NOW;
+set sql_mode='IGNORE_SPACE';
+-- error 1064
+CREATE TABLE COUNT (a bigint);
+CREATE TABLE `COUNT` (a bigint);
+DROP TABLE COUNT;
+-- error 1064
+CREATE TABLE COUNT(a bigint);
+CREATE TABLE types__const.COUNT(a bigint);
+DROP TABLE COUNT;
+-- error 1064
+CREATE TABLE BIT_AND (a bigint);
+CREATE TABLE `BIT_AND` (a bigint);
+DROP TABLE BIT_AND;
+-- error 1064
+CREATE TABLE BIT_AND(a bigint);
+CREATE TABLE types__const.BIT_AND(a bigint);
+DROP TABLE BIT_AND;
+-- error 1064
+CREATE TABLE NOW (a bigint);
+CREATE TABLE `NOW` (a bigint);
+DROP TABLE NOW;
+-- error 1064
+CREATE TABLE NOW(a bigint);
+CREATE TABLE types__const.NOW(a bigint);
+DROP TABLE NOW;
+set @@sql_mode=default;
+
+# TestNoBackslashEscapesMode
+set sql_mode='';
+SELECT '\\';
+set sql_mode='NO_BACKSLASH_ESCAPES';
+SELECT '\\';
+set @@sql_mode=default;
+

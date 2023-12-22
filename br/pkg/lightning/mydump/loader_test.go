@@ -19,19 +19,23 @@ import (
 	"compress/gzip"
 	"context"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	md "github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	filter "github.com/pingcap/tidb/util/table-filter"
-	router "github.com/pingcap/tidb/util/table-router"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
+	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"github.com/xitongsys/parquet-go/parquet"
+	"github.com/xitongsys/parquet-go/writer"
 )
 
 type testMydumpLoaderSuite struct {
@@ -688,6 +692,23 @@ func TestRouter(t *testing.T) {
 	}
 }
 
+func TestRoutesPanic(t *testing.T) {
+	s := newTestMydumpLoaderSuite(t)
+	s.cfg.Routes = []*router.TableRule{
+		{
+			SchemaPattern: "test1",
+			TargetSchema:  "test",
+		},
+	}
+
+	s.touch(t, "test1.dump_test.001.sql")
+	s.touch(t, "test1.dump_test.002.sql")
+	s.touch(t, "test1.dump_test.003.sql")
+
+	_, err := md.NewMyDumpLoader(context.Background(), s.cfg)
+	require.NoError(t, err)
+}
+
 func TestBadRouterRule(t *testing.T) {
 	s := newTestMydumpLoaderSuite(t)
 
@@ -1085,4 +1106,63 @@ func TestSampleFileCompressRatio(t *testing.T) {
 	}, store)
 	require.NoError(t, err)
 	require.InDelta(t, ratio, 5000.0/float64(bf.Len()), 1e-5)
+}
+
+func TestSampleParquetDataSize(t *testing.T) {
+	s := newTestMydumpLoaderSuite(t)
+	store, err := storage.NewLocalStorage(s.sourceDir)
+	require.NoError(t, err)
+
+	type row struct {
+		ID    int64  `parquet:"name=id, type=INT64"`
+		Key   string `parquet:"name=key, type=BYTE_ARRAY, encoding=PLAIN_DICTIONARY"`
+		Value string `parquet:"name=value, type=BYTE_ARRAY, encoding=PLAIN_DICTIONARY"`
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	byteArray := make([]byte, 0, 40*1024)
+	bf := bytes.NewBuffer(byteArray)
+	pwriter, err := writer.NewParquetWriterFromWriter(bf, new(row), 4)
+	require.NoError(t, err)
+	pwriter.RowGroupSize = 128 * 1024 * 1024 //128M
+	pwriter.PageSize = 8 * 1024              //8K
+	pwriter.CompressionType = parquet.CompressionCodec_SNAPPY
+	seed := time.Now().Unix()
+	t.Logf("seed: %d. To reproduce the random behaviour, manually set `rand.New(rand.NewSource(seed))`", seed)
+	rnd := rand.New(rand.NewSource(seed))
+	totalRowSize := 0
+	for i := 0; i < 1000; i++ {
+		kl := rnd.Intn(20) + 1
+		key := make([]byte, kl)
+		kl, err = rnd.Read(key)
+		require.NoError(t, err)
+		vl := rnd.Intn(20) + 1
+		value := make([]byte, vl)
+		vl, err = rnd.Read(value)
+		require.NoError(t, err)
+
+		totalRowSize += kl + vl + 8
+		row := row{
+			ID:    int64(i),
+			Key:   string(key[:kl]),
+			Value: string(value[:vl]),
+		}
+		err = pwriter.Write(row)
+		require.NoError(t, err)
+	}
+	err = pwriter.WriteStop()
+	require.NoError(t, err)
+
+	fileName := "test_1.t1.parquet"
+	err = store.WriteFile(ctx, fileName, bf.Bytes())
+	require.NoError(t, err)
+
+	size, err := md.SampleParquetDataSize(ctx, md.SourceFileMeta{
+		Path: fileName,
+	}, store)
+	require.NoError(t, err)
+	// expected error within 10%, so delta = totalRowSize / 10
+	require.InDelta(t, totalRowSize, size, float64(totalRowSize)/10)
 }

@@ -111,11 +111,13 @@ func (ops ConsoleOperations) StartProgressBar(title string, total int, extraFiel
 	return ops.startProgressBarOverTTY(title, total, extraFields...)
 }
 
-func (ops ConsoleOperations) startProgressBarOverDummy(title string, total int, extraFields ...ExtraField) ProgressWaiter {
+func (ops ConsoleOperations) startProgressBarOverDummy(title string, total int,
+	extraFields ...ExtraField) ProgressWaiter {
 	return noOPWaiter{utils.StartProgress(context.TODO(), title, int64(total), true, nil)}
 }
 
-func (ops ConsoleOperations) startProgressBarOverTTY(title string, total int, extraFields ...ExtraField) ProgressWaiter {
+func (ops ConsoleOperations) startProgressBarOverTTY(title string, total int,
+	extraFields ...ExtraField) ProgressWaiter {
 	pb := mpb.New(mpb.WithOutput(ops.Out()), mpb.WithRefreshRate(400*time.Millisecond))
 	bar := adjustTotal(pb, title, total, extraFields...)
 
@@ -142,7 +144,8 @@ func buildProgressBar(pb *mpb.Progress, title string, total int, extraFields ...
 	greenTitle := color.GreenString(title)
 	return pb.New(int64(total),
 		// Play as if the old BR style.
-		mpb.BarStyle().Lbound("<").Filler("-").Padding(".").Rbound(">").Tip("-", "\\", "|", "/", "-").TipOnComplete("-"),
+		mpb.BarStyle().Lbound("<").Filler("-").Padding(".").Rbound(">").
+			Tip("-", "\\", "|", "/", "-").TipOnComplete("-"),
 		mpb.BarFillerMiddleware(func(bf mpb.BarFiller) mpb.BarFiller {
 			return mpb.BarFillerFunc(func(w io.Writer, reqWidth int, stat decor.Statistics) {
 				if stat.Aborted || stat.Completed {
@@ -151,19 +154,22 @@ func buildProgressBar(pb *mpb.Progress, title string, total int, extraFields ...
 				bf.Fill(w, reqWidth, stat)
 			})
 		}),
-		mpb.PrependDecorators(decor.OnAbort(decor.OnComplete(decor.Name(greenTitle), fmt.Sprintf("%s  ::", title)), fmt.Sprintf("%s  ::", title))),
-		mpb.AppendDecorators(decor.OnAbort(decor.Any(cbOnComplete(decor.NewPercentage("%02.2f"), printFinalMessage(extraFields))), color.RedString("ABORTED"))),
+		mpb.PrependDecorators(decor.OnAbort(decor.OnComplete(decor.Name(greenTitle),
+			fmt.Sprintf("%s  ::", title)), fmt.Sprintf("%s  ::", title))),
+		mpb.AppendDecorators(decor.OnAbort(decor.Any(cbOnComplete(decor.NewPercentage("%02.2f"),
+			printFinalMessage(extraFields))), color.RedString("ABORTED"))),
 	)
 }
 
 var (
-	spinnerDoneText string = fmt.Sprintf("... %s", color.GreenString("DONE"))
+	spinnerDoneText = fmt.Sprintf("... %s", color.GreenString("DONE"))
 )
 
 func buildOneTaskBar(pb *mpb.Progress, title string, total int) *mpb.Bar {
 	return pb.New(int64(total),
 		mpb.NopStyle(),
 		mpb.PrependDecorators(decor.Name(title)),
-		mpb.AppendDecorators(decor.OnAbort(decor.OnComplete(decor.Spinner(spinnerText), spinnerDoneText), color.RedString("ABORTED"))),
+		mpb.AppendDecorators(decor.OnAbort(decor.OnComplete(decor.Spinner(spinnerText), spinnerDoneText),
+			color.RedString("ABORTED"))),
 	)
 }

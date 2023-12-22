@@ -39,6 +39,12 @@
       "id": "table",
       "name": "Table",
       "version": ""
+    },
+    {
+      "type": "panel",
+      "id": "bargauge",
+      "name": "Bar gauge",
+      "version": ""
     }
   ],
   "annotations": {
@@ -103,15 +109,36 @@
               "expr": "rate(tikv_import_write_chunk_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "write from lightning",
-              "refId": "B"
+              "legendFormat": "write from lightning-importer-{{instance}}",
+              "refId": "A"
             },
             {
               "expr": "sum(rate(tikv_import_upload_chunk_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m]))",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "upload to tikv",
+              "legendFormat": "upload to tikv-importer-{{instance}}",
+              "refId": "B"
+            },
+            {
+              "expr": "rate(lightning_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", state=\"imported\"}[1m])",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "write to tikv-lightning-{{instance}}",
               "refId": "C"
+            },
+            {
+              "expr": "rate(lightning_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", state=\"restored\"}[1m])",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "read from source-lightning-{{instance}}",
+              "refId": "D"
+            },
+            {
+              "expr": "rate(lightning_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", state=\"written\"}[1m])",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "write to local-lightning-{{instance}}",
+              "refId": "E"
             }
           ],
           "thresholds": [],
@@ -238,157 +265,150 @@
       "height": 250,
       "panels": [
         {
-          "cacheTimeout": null,
-          "colorBackground": false,
-          "colorValue": false,
-          "colors": [
-            "#d44a3a",
-            "rgba(237, 129, 40, 0.89)",
-            "#299c46"
-          ],
           "datasource": "${DS_LIGHTNING}",
-          "decimals": null,
-          "format": "percentunit",
-          "gauge": {
-            "maxValue": 1,
-            "minValue": 0,
-            "show": true,
-            "thresholdLabels": false,
-            "thresholdMarkers": false
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [
+                {
+                  "options": {
+                    "match": "null",
+                    "result": {
+                      "text": "N/A"
+                    }
+                  },
+                  "type": "special"
+                }
+              ],
+              "max": 1,
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#d44a3a",
+                    "value": null
+                  },
+                  {
+                    "color": "rgba(237, 129, 40, 0.89)",
+                    "value": 0
+                  },
+                  {
+                    "color": "#299c46",
+                    "value": 0
+                  }
+                ]
+              },
+              "unit": "percentunit"
+            },
+            "overrides": []
           },
           "id": 4,
-          "interval": null,
           "links": [],
-          "mappingType": 1,
-          "mappingTypes": [
-            {
-              "name": "value to text",
-              "value": 1
-            },
-            {
-              "name": "range to text",
-              "value": 2
-            }
-          ],
           "maxDataPoints": 100,
-          "nullPointMode": "connected",
-          "nullText": null,
-          "postfix": "",
-          "postfixFontSize": "50%",
-          "prefix": "",
-          "prefixFontSize": "50%",
-          "rangeMaps": [
-            {
-              "from": "null",
-              "text": "N/A",
-              "to": "null"
-            }
-          ],
-          "span": 3,
-          "sparkline": {
-            "fillColor": "rgba(31, 118, 189, 0.18)",
-            "full": true,
-            "lineColor": "rgb(31, 120, 193)",
-            "show": false
+          "options": {
+            "displayMode": "gradient",
+            "minVizHeight": 10,
+            "minVizWidth": 0,
+            "orientation": "horizontal",
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showUnfilled": true
           },
-          "tableColumn": "",
+          "pluginVersion": "9.2.4",
           "targets": [
             {
               "expr": "lightning_chunks{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", state=\"finished\"} / ignoring(state) lightning_chunks{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", state=\"estimated\"}",
               "format": "time_series",
               "instant": false,
+              "interval": "",
               "intervalFactor": 2,
+              "legendFormat": "{{instance}}",
               "refId": "A"
             }
           ],
-          "thresholds": "0,0",
           "title": "Import Progress",
-          "type": "singlestat",
-          "valueFontSize": "80%",
-          "valueMaps": [
-            {
-              "op": "=",
-              "text": "N/A",
-              "value": "null"
-            }
-          ],
-          "valueName": "current"
+          "type": "bargauge"
         },
         {
-          "cacheTimeout": null,
-          "colorBackground": false,
-          "colorValue": false,
-          "colors": [
-            "#d44a3a",
-            "rgba(237, 129, 40, 0.89)",
-            "#299c46"
-          ],
           "datasource": "${DS_LIGHTNING}",
-          "format": "percentunit",
-          "gauge": {
-            "maxValue": 1,
-            "minValue": 0,
-            "show": true,
-            "thresholdLabels": false,
-            "thresholdMarkers": false
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [
+                {
+                  "options": {
+                    "match": "null",
+                    "result": {
+                      "text": "N/A"
+                    }
+                  },
+                  "type": "special"
+                }
+              ],
+              "max": 1,
+              "min": 0,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "#d44a3a",
+                    "value": null
+                  },
+                  {
+                    "color": "rgba(237, 129, 40, 0.89)",
+                    "value": 0
+                  },
+                  {
+                    "color": "#299c46",
+                    "value": 0
+                  }
+                ]
+              },
+              "unit": "percentunit"
+            },
+            "overrides": []
           },
           "id": 12,
-          "interval": null,
           "links": [],
-          "mappingType": 1,
-          "mappingTypes": [
-            {
-              "name": "value to text",
-              "value": 1
-            },
-            {
-              "name": "range to text",
-              "value": 2
-            }
-          ],
           "maxDataPoints": 100,
-          "nullPointMode": "connected",
-          "nullText": null,
-          "postfix": "",
-          "postfixFontSize": "50%",
-          "prefix": "",
-          "prefixFontSize": "50%",
-          "rangeMaps": [
-            {
-              "from": "null",
-              "text": "N/A",
-              "to": "null"
-            }
-          ],
-          "span": 3,
-          "sparkline": {
-            "fillColor": "rgba(31, 118, 189, 0.18)",
-            "full": false,
-            "lineColor": "rgb(31, 120, 193)",
-            "show": false
+          "options": {
+            "displayMode": "gradient",
+            "minVizHeight": 10,
+            "minVizWidth": 0,
+            "orientation": "horizontal",
+            "reduceOptions": {
+              "calcs": [
+                "mean"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "showUnfilled": true
           },
-          "tableColumn": "",
+          "pluginVersion": "9.2.4",
           "targets": [
             {
               "expr": "lightning_tables{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", state=\"completed\"} / ignoring(state) lightning_tables{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", state=\"pending\"}",
               "format": "time_series",
               "instant": false,
               "intervalFactor": 1,
+              "legendFormat": "{{instance}}",
+              "range": true,
               "refId": "A"
             }
           ],
-          "thresholds": "0,0",
           "title": "Checksum progress",
-          "type": "singlestat",
-          "valueFontSize": "80%",
-          "valueMaps": [
-            {
-              "op": "=",
-              "text": "N/A",
-              "value": "null"
-            }
-          ],
-          "valueName": "avg"
+          "type": "bargauge"
         },
         {
           "columns": [
@@ -517,10 +537,10 @@
               "refId": "A"
             },
             {
-              "expr": "go_memstats_heap_inuse_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"lightning\"}",
+              "expr": "go_memstats_heap_inuse_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb-lightning\"}",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "lightning heap",
+              "legendFormat": "lightning heap-{{instance}}",
               "refId": "B"
             }
           ],
@@ -592,7 +612,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "go_goroutines{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"lightning\"}",
+              "expr": "go_goroutines{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb-lightning\"}",
               "format": "time_series",
               "instant": false,
               "intervalFactor": 2,
@@ -671,17 +691,17 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "rate(process_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"lightning\"}[30s])*100",
+              "expr": "rate(process_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb-lightning\"}[30s])*100",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "Lightning",
+              "legendFormat": "Lightning-{{instance}}",
               "refId": "A"
             },
             {
               "expr": "rate(process_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tikv-importer\"}[30s])*100",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "Importer",
+              "legendFormat": "Importer-{{instance}}",
               "refId": "B"
             }
           ],
@@ -1376,15 +1396,29 @@
               "expr": "rate(tikv_import_range_delivery_duration_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(tikv_import_range_delivery_duration_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "range deliver",
+              "legendFormat": "range deliver-importer-{{instance}}",
               "refId": "A"
             },
             {
               "expr": "rate(tikv_import_sst_delivery_duration_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(tikv_import_sst_delivery_duration_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "SST file deliver",
+              "legendFormat": "SST file deliver-importer-{{instance}}",
               "refId": "B"
+            },
+            {
+              "expr": "rate(lightning_row_kv_deliver_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(lightning_row_kv_deliver_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "row deliver-lightning-{{instance}}",
+              "refId": "C"
+            },
+            {
+              "expr": "rate(lightning_block_deliver_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(lightning_block_deliver_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "legendFormat": "block deliver-lightning-{{instance}}",
+              "refId": "D"
             }
           ],
           "thresholds": [],
@@ -1461,34 +1495,57 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "rate(tikv_import_split_sst_duration_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(tikv_import_split_sst_duration_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])",
+              "expr": "rate(tikv_import_sst_chunk_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])",
+              "legendFormat": "SST size-importer-{{instance}}",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "Split SST",
-              "refId": "C"
+              "refId": "A"
+            },
+            {
+              "expr": "rate(tikv_import_split_sst_duration_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(tikv_import_split_sst_duration_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])",
+              "legendFormat": "Split SST-importer-{{instance}}",
+              "format": "time_series",
+              "intervalFactor": 2,
+              "refId": "B"
             },
             {
               "expr": "rate(tikv_import_sst_upload_duration_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(tikv_import_sst_upload_duration_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])",
+              "legendFormat": "SST upload-importer-{{instance}}",
               "format": "time_series",
-              "interval": "",
               "intervalFactor": 2,
-              "legendFormat": "SST upload",
-              "refId": "D"
+              "refId": "C"
             },
             {
               "expr": "rate(tikv_import_sst_ingest_duration_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s]) / rate(tikv_import_sst_ingest_duration_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])",
+              "legendFormat": "SST ingest-importer-{{instance}}",
               "format": "time_series",
               "instant": false,
               "intervalFactor": 2,
-              "legendFormat": "SST ingest",
+              "refId": "D"
+            },
+            {
+              "expr": "rate(lightning_sst_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", kind=\"split\"}[30s]) / rate(lightning_sst_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", kind=\"split\"}[30s])\n",
+              "legendFormat": "Region split and scatter-lightning-{{instance}}",
+              "format": "time_series",
+              "instant": false,
+              "intervalFactor": 2,
               "refId": "E"
             },
             {
-              "expr": "rate(tikv_import_sst_chunk_bytes_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[30s])",
+              "expr": "rate(lightning_sst_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", kind=\"write\"}[30s]) / rate(lightning_sst_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", kind=\"write\"}[30s])\n",
+              "legendFormat": "SST write-lightning-{{instance}}",
               "format": "time_series",
+              "instant": false,
               "intervalFactor": 2,
-              "legendFormat": "SST size",
-              "refId": "A"
+              "refId": "F"
+            },
+            {
+              "expr": "rate(lightning_sst_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", kind=\"ingest\"}[30s]) / rate(lightning_sst_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", kind=\"ingest\"}[30s])",
+              "legendFormat": "SST ingest-lightning-{{instance}}",
+              "format": "time_series",
+              "instant": false,
+              "intervalFactor": 2,
+              "refId": "G"
             }
           ],
           "thresholds": [],

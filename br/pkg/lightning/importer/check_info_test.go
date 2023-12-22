@@ -27,21 +27,21 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
-	"github.com/pingcap/tidb/br/pkg/lightning/glue"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/br/pkg/lightning/precheck"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	tmock "github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	tmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
-const passed CheckType = "pass"
+const passed precheck.CheckType = "pass"
 
 func TestCheckCSVHeader(t *testing.T) {
 	dir := t.TempDir()
@@ -59,7 +59,7 @@ func TestCheckCSVHeader(t *testing.T) {
 	cases := []struct {
 		ignoreColumns []*config.IgnoreColumns
 		// empty msg means check pass
-		level   CheckType
+		level   precheck.CheckType
 		Sources map[string][]*tableSource
 	}{
 
@@ -99,7 +99,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		{
 			nil,
 
-			Warn,
+			precheck.Warn,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -115,7 +115,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		{
 			nil,
 
-			Warn,
+			precheck.Warn,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -132,7 +132,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		{
 			nil,
 
-			Warn,
+			precheck.Warn,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -148,7 +148,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		{
 			nil,
 
-			Critical,
+			precheck.Critical,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -171,7 +171,7 @@ func TestCheckCSVHeader(t *testing.T) {
 					Columns: []string{"a"},
 				},
 			},
-			Warn,
+			precheck.Warn,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -194,7 +194,7 @@ func TestCheckCSVHeader(t *testing.T) {
 					Columns: []string{"a"},
 				},
 			},
-			Critical,
+			precheck.Critical,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -217,7 +217,7 @@ func TestCheckCSVHeader(t *testing.T) {
 					Columns: []string{"a"},
 				},
 			},
-			Warn,
+			precheck.Warn,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -234,7 +234,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		// non unique key, but data type inconsistent
 		{
 			nil,
-			Critical,
+			precheck.Critical,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -257,7 +257,7 @@ func TestCheckCSVHeader(t *testing.T) {
 					Columns: []string{"a"},
 				},
 			},
-			Warn,
+			precheck.Warn,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -274,7 +274,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		// multiple tables, test the choose priority
 		{
 			nil,
-			Critical,
+			precheck.Critical,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -297,7 +297,7 @@ func TestCheckCSVHeader(t *testing.T) {
 		},
 		{
 			nil,
-			Critical,
+			precheck.Critical,
 			map[string][]*tableSource{
 				"db": {
 					{
@@ -412,6 +412,7 @@ func TestCheckCSVHeader(t *testing.T) {
 			dbMetas,
 			preInfoGetter,
 			nil,
+			nil,
 		)
 		preInfoGetter.dbInfosCache = rc.dbInfos
 		err = rc.checkCSVHeader(ctx)
@@ -465,6 +466,7 @@ func TestCheckTableEmpty(t *testing.T) {
 		dbMetas,
 		preInfoGetter,
 		nil,
+		nil,
 	)
 
 	rc := &Controller{
@@ -482,17 +484,17 @@ func TestCheckTableEmpty(t *testing.T) {
 	err := rc.checkTableEmpty(ctx)
 	require.NoError(t, err)
 
-	// test incremental mode
+	// test parallel mode
 	rc.cfg.TikvImporter.Backend = config.BackendLocal
-	rc.cfg.TikvImporter.IncrementalImport = true
+	rc.cfg.TikvImporter.ParallelImport = true
 	err = rc.checkTableEmpty(ctx)
 	require.NoError(t, err)
 
-	rc.cfg.TikvImporter.IncrementalImport = false
+	rc.cfg.TikvImporter.ParallelImport = false
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 	mock.MatchExpectationsInOrder(false)
-	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+	targetInfoGetter.db = db
 	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
 	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl2` USE INDEX\\(\\) LIMIT 1").
@@ -507,7 +509,7 @@ func TestCheckTableEmpty(t *testing.T) {
 	// single table contains data
 	db, mock, err = sqlmock.New()
 	require.NoError(t, err)
-	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+	targetInfoGetter.db = db
 	mock.MatchExpectationsInOrder(false)
 	// test auto retry retryable error
 	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` USE INDEX\\(\\) LIMIT 1").
@@ -530,7 +532,7 @@ func TestCheckTableEmpty(t *testing.T) {
 	// multi tables contains data
 	db, mock, err = sqlmock.New()
 	require.NoError(t, err)
-	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+	targetInfoGetter.db = db
 	mock.MatchExpectationsInOrder(false)
 	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl1` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).AddRow(1))
@@ -574,7 +576,7 @@ func TestCheckTableEmpty(t *testing.T) {
 	rc.precheckItemBuilder.checkpointsDB = rc.checkpointsDB
 	db, mock, err = sqlmock.New()
 	require.NoError(t, err)
-	targetInfoGetter.targetDBGlue = glue.NewExternalTiDBGlue(db, mysql.ModeNone)
+	targetInfoGetter.db = db
 	// only need to check the one that is not in checkpoint
 	mock.ExpectQuery("SELECT 1 FROM `test1`.`tbl2` USE INDEX\\(\\) LIMIT 1").
 		WillReturnRows(sqlmock.NewRows([]string{""}).RowError(0, sql.ErrNoRows))
@@ -621,6 +623,7 @@ func TestLocalResource(t *testing.T) {
 		cfg,
 		nil,
 		preInfoGetter,
+		nil,
 		nil,
 	)
 	rc := &Controller{

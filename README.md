@@ -1,13 +1,43 @@
+<div align="center">
+
+<a href='https://www.pingcap.com/?utm_source=github&utm_medium=tidb'>
 <img src="docs/tidb-logo-with-text.png" alt="TiDB, a distributed SQL database" height=100></img>
+</a>
+<br></br>
 
 [![LICENSE](https://img.shields.io/github/license/pingcap/tidb.svg)](https://github.com/pingcap/tidb/blob/master/LICENSE)
 [![Language](https://img.shields.io/badge/Language-Go-blue.svg)](https://golang.org/)
-[![Build Status](https://prow.tidb.net/badge.svg?jobs=pingcap/tidb/merged_*)](https://prow.tidb.net/?repo=pingcap%2Ftidb&type=postsubmit)
+[![Build Status](https://prow.tidb.net/badge.svg?jobs=pingcap/tidb/merged_build)](https://prow.tidb.net/?repo=pingcap%2Ftidb&type=postsubmit&job=pingcap%2Ftidb%2Fmerged_build)
 [![Go Report Card](https://goreportcard.com/badge/github.com/pingcap/tidb)](https://goreportcard.com/report/github.com/pingcap/tidb)
 [![GitHub release](https://img.shields.io/github/tag/pingcap/tidb.svg?label=release)](https://github.com/pingcap/tidb/releases)
 [![GitHub release date](https://img.shields.io/github/release-date/pingcap/tidb.svg)](https://github.com/pingcap/tidb/releases)
 [![Coverage Status](https://codecov.io/gh/pingcap/tidb/branch/master/graph/badge.svg)](https://codecov.io/gh/pingcap/tidb)
 [![GoDoc](https://img.shields.io/badge/Godoc-reference-blue.svg)](https://godoc.org/github.com/pingcap/tidb)
+
+<div>  
+  
+[![Official Website](<https://img.shields.io/badge/-Visit%20the%20Official%20Website%20%E2%86%92-rgb(21,204,116)?style=for-the-badge>)](https://www.pingcap.com/?utm_source=github&utm_medium=tidb_readme)
+[![Playground](<https://img.shields.io/badge/-Try%20It%20Online%20%E2%86%92-rgb(84,56,255)?style=for-the-badge>)](https://play.tidbcloud.com/?utm_source=github&utm_medium=tidb_readme)
+
+</div>
+
+---
+
+<div>
+    <a href="https://twitter.com/tidb_developer"><img src="https://img.shields.io/badge/- @TiDB__Developer -424549?style=social&logo=twitter" height=25></a>
+    &nbsp;
+    <a href="https://ask.pingcap.com/"><img src="https://img.shields.io/badge/- Forum -red?style=social&logo=discourse" height=25></a>
+    &nbsp;
+    <a href="https://discord.gg/KVRZBR2DrG?utm_source=github"><img src="https://img.shields.io/badge/- Discord -red?style=social&logo=discord" height=25></a>
+    &nbsp;
+    <a href="https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb"><img src="https://img.shields.io/badge/-Slack-red?style=social&logo=slack" height=25></a>
+    &nbsp;
+    <a href="https://stackoverflow.com/questions/tagged/tidb"><img src="https://img.shields.io/badge/-Stack Overflow-red?style=social&logo=stackoverflow" height=25></a>
+</div>
+
+<br />
+
+</div> 
 
 ## What is TiDB?
 
@@ -16,6 +46,8 @@ TiDB (/’taɪdiːbi:/, "Ti" stands for Titanium) is an open-source distributed 
 - [Key features](https://docs.pingcap.com/tidb/stable/overview#key-features)
 - [Architecture](#architecture)
 - [MySQL compatibility](https://docs.pingcap.com/tidb/stable/mysql-compatibility)
+
+See what TiDB is capable ONLINE at [TiDB Playground](https://play.tidbcloud.com/?utm_source=github&utm_medium=tidb_readme).
 
 For more details and latest updates, see [TiDB documentation](https://docs.pingcap.com/tidb/stable) and [release notes](https://docs.pingcap.com/tidb/dev/release-notes).
 
@@ -45,6 +77,7 @@ You can join the following groups or channels to discuss or ask questions about 
 
 - Seek help when you use TiDB
   - TiDB Forum: [English](https://ask.pingcap.com/), [Chinese](https://asktug.com)
+  - [Discord](https://discord.gg/KVRZBR2DrG?utm_source=github)
   - Slack channels: [#everyone](https://slack.tidb.io/invite?team=tidb-community&channel=everyone&ref=pingcap-tidb) (English), [#tidb-japan](https://slack.tidb.io/invite?team=tidb-community&channel=tidb-japan&ref=github-tidb) (Japanese)
   - [Stack Overflow](https://stackoverflow.com/questions/tagged/tidb) (questions tagged with #tidb)
 - Discuss TiDB's implementation and design
@@ -64,6 +97,13 @@ Contributions are welcomed and greatly appreciated. You can get started with one
 [<img src="docs/contribution-map.png" alt="contribution-map" width="180">](https://github.com/pingcap/tidb-map/blob/master/maps/contribution-map.md#tidb-is-an-open-source-distributed-htap-database-compatible-with-the-mysql-protocol)
 
 Every contributor is welcome to claim your contribution swag by filling in and submitting this [form](https://forms.pingcap.com/f/tidb-contribution-swag).
+
+<a href="https://next.ossinsight.io/widgets/official/compose-activity-trends?repo_id=41986369" target="_blank" style="display: block" align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://next.ossinsight.io/widgets/official/compose-activity-trends/thumbnail.png?repo_id=41986369&image_size=auto&color_scheme=dark" width="822" height="auto">
+    <img alt="Activity Trends of pingcap/tidb - Last 28 days" src="https://next.ossinsight.io/widgets/official/compose-activity-trends/thumbnail.png?repo_id=41986369&image_size=auto&color_scheme=light" width="822" height="auto">
+  </picture>
+</a>
 
 ## Case studies
 

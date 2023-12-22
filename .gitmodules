@@ -1,0 +1,3 @@
+[submodule "extension/enterprise"]
+	path = pkg/extension/enterprise
+	url = git@github.com:pingcap-inc/enterprise-extensions.git

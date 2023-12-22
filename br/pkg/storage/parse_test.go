@@ -56,6 +56,16 @@ func TestCreateStorage(t *testing.T) {
 	require.Equal(t, "https://s3.example.com", s3.Endpoint)
 	require.False(t, s3.ForcePathStyle)
 
+	s, err = ParseBackend("ks3://bucket2/prefix/", s3opt)
+	require.NoError(t, err)
+	s3 = s.GetS3()
+	require.NotNil(t, s3)
+	require.Equal(t, "bucket2", s3.Bucket)
+	require.Equal(t, "prefix", s3.Prefix)
+	require.Equal(t, "https://s3.example.com", s3.Endpoint)
+	require.Equal(t, ks3SDKProvider, s3.Provider)
+	require.False(t, s3.ForcePathStyle)
+
 	// nolint:lll
 	s, err = ParseBackend(`s3://bucket3/prefix/path?endpoint=https://127.0.0.1:9000&force_path_style=0&SSE=aws:kms&sse-kms-key-id=TestKey&xyz=abc`, nil)
 	require.NoError(t, err)
@@ -136,6 +146,12 @@ func TestCreateStorage(t *testing.T) {
 	require.Equal(t, "more/prefix", gcs.Prefix)
 	require.Equal(t, "https://gcs.example.com/", gcs.Endpoint)
 	require.Equal(t, "fakeCredentials", gcs.CredentialsBlob)
+
+	s, err = ParseBackend("gcs://bucket?endpoint=http://127.0.0.1/", gcsOpt)
+	require.NoError(t, err)
+	gcs = s.GetGcs()
+	require.NotNil(t, gcs)
+	require.Equal(t, "http://127.0.0.1/", gcs.Endpoint)
 
 	err = os.WriteFile(fakeCredentialsFile, []byte("fakeCreds2"), credFilePerm)
 	require.NoError(t, err)
@@ -258,5 +274,38 @@ func TestParseRawURL(t *testing.T) {
 		require.Equal(t, 1, len(storageURL.Query()["secret-access-key"]))
 		secretAccessKey := storageURL.Query()["secret-access-key"][0]
 		require.Equal(t, c.secretAccessKey, secretAccessKey)
+	}
+}
+
+func TestIsLocal(t *testing.T) {
+	type args struct {
+		path string
+	}
+	tests := []struct {
+		name   string
+		args   args
+		want   bool
+		errStr string
+	}{
+		{"local", args{":"}, false, "missing protocol scheme"},
+		{"local", args{"~/tmp/file"}, true, ""},
+		{"local", args{"."}, true, ""},
+		{"local", args{".."}, true, ""},
+		{"local", args{"./tmp/file"}, true, ""},
+		{"local", args{"/tmp/file"}, true, ""},
+		{"local", args{"local:///tmp/file"}, true, ""},
+		{"local", args{"file:///tmp/file"}, true, ""},
+		{"local", args{"s3://bucket/tmp/file"}, false, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := IsLocalPath(tt.args.path)
+			if tt.errStr != "" {
+				require.ErrorContains(t, err, tt.errStr)
+			} else {
+				require.NoError(t, err)
+			}
+			require.Equal(t, got, tt.want)
+		})
 	}
 }

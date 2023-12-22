@@ -1,0 +1,121 @@
+drop table if exists t, abclmn;
+create table t(id int, abctime int,DATETIME_PRECISION int);
+create table abclmn(a int);
+select TABLE_NAME from information_schema.columns where table_schema = 'planner__core__memtable_predicate_extractor' and column_name like 'i%';
+TABLE_NAME
+t
+select TABLE_NAME from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and column_name like 'I%';
+TABLE_NAME
+t
+select TABLE_NAME from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and column_name like 'ID';
+TABLE_NAME
+t
+select TABLE_NAME from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and column_name like 'id';
+TABLE_NAME
+t
+select column_name from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and (column_name like 'i%' or column_name like '%d');
+column_name
+id
+select column_name from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and (column_name like 'abc%' and column_name like '%time');
+column_name
+abctime
+select TABLE_NAME, column_name from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and column_name like '%time';
+TABLE_NAME	column_name
+t	abctime
+describe t;
+Field	Type	Null	Key	Default	Extra
+id	int(11)	YES		NULL	
+abctime	int(11)	YES		NULL	
+DATETIME_PRECISION	int(11)	YES		NULL	
+describe t id;
+Field	Type	Null	Key	Default	Extra
+id	int(11)	YES		NULL	
+describe t ID;
+Field	Type	Null	Key	Default	Extra
+id	int(11)	YES		NULL	
+describe t 'I%';
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near "'I%';" 
+describe t I%;
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 13 near "%;" 
+show columns from t like 'abctime';
+Field	Type	Null	Key	Default	Extra
+abctime	int(11)	YES		NULL	
+show columns from t like 'ABCTIME';
+Field	Type	Null	Key	Default	Extra
+abctime	int(11)	YES		NULL	
+show columns from t like 'abc%';
+Field	Type	Null	Key	Default	Extra
+abctime	int(11)	YES		NULL	
+show columns from t like 'ABC%';
+Field	Type	Null	Key	Default	Extra
+abctime	int(11)	YES		NULL	
+show columns from t like '%ime';
+Field	Type	Null	Key	Default	Extra
+abctime	int(11)	YES		NULL	
+show columns from t like '%IME';
+Field	Type	Null	Key	Default	Extra
+abctime	int(11)	YES		NULL	
+show columns in t like '%ime';
+Field	Type	Null	Key	Default	Extra
+abctime	int(11)	YES		NULL	
+show columns in t like '%IME';
+Field	Type	Null	Key	Default	Extra
+abctime	int(11)	YES		NULL	
+show fields in t like '%ime';
+Field	Type	Null	Key	Default	Extra
+abctime	int(11)	YES		NULL	
+show fields in t like '%IME';
+Field	Type	Null	Key	Default	Extra
+abctime	int(11)	YES		NULL	
+show columns from t where field like '%time';
+Field	Type	Null	Key	Default	Extra
+abctime	int(11)	YES		NULL	
+show columns from t where field = 'abctime';
+Field	Type	Null	Key	Default	Extra
+abctime	int(11)	YES		NULL	
+show columns in t where field = 'abctime';
+Field	Type	Null	Key	Default	Extra
+abctime	int(11)	YES		NULL	
+show fields from t where field = 'abctime';
+Field	Type	Null	Key	Default	Extra
+abctime	int(11)	YES		NULL	
+show fields in t where field = 'abctime';
+Field	Type	Null	Key	Default	Extra
+abctime	int(11)	YES		NULL	
+explain t;
+Field	Type	Null	Key	Default	Extra
+id	int(11)	YES		NULL	
+abctime	int(11)	YES		NULL	
+DATETIME_PRECISION	int(11)	YES		NULL	
+show columns from t like id;
+Error 1054 (42S22): Unknown column 'id' in 'where clause'
+show columns from t like `id`;
+Error 1054 (42S22): Unknown column 'id' in 'where clause'
+show tables like 't';
+Tables_in_planner__core__memtable_predicate_extractor (t)
+t
+show tables like 'T';
+Tables_in_planner__core__memtable_predicate_extractor (T)
+t
+show tables like 'ABCLMN';
+Tables_in_planner__core__memtable_predicate_extractor (ABCLMN)
+abclmn
+show tables like 'ABC%';
+Tables_in_planner__core__memtable_predicate_extractor (ABC%)
+abclmn
+show tables like '%lmn';
+Tables_in_planner__core__memtable_predicate_extractor (%lmn)
+abclmn
+show full tables like '%lmn';
+Tables_in_planner__core__memtable_predicate_extractor (%lmn)	Table_type
+abclmn	BASE TABLE
+show tables like T;
+Error 1054 (42S22): Unknown column 't' in 'where clause'
+show tables like `T`;
+Error 1054 (42S22): Unknown column 't' in 'where clause'
+drop table if exists _bar, bar;
+create table _bar (id int);
+create table bar (id int);
+show tables like '\_%';
+Tables_in_planner__core__memtable_predicate_extractor (\_%)
+_bar

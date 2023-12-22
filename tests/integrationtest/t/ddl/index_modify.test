@@ -1,0 +1,27 @@
+# TestAddMultiColumnsIndexClusterIndex
+set tidb_enable_clustered_index = ON;
+drop table if exists t;
+create table t (a int, b varchar(10), c int, primary key (a, b));
+insert into t values (1, '1', 1), (2, '2', NULL), (3, '3', 3);
+create index idx on t (a, c);
+admin check index t idx;
+admin check table t;
+insert into t values (5, '5', 5), (6, '6', NULL);
+admin check index t idx;
+admin check table t;
+set tidb_enable_clustered_index = default;
+
+# TestAddIndexWithDupCols
+drop table if exists test_add_index_with_dup;
+create table test_add_index_with_dup (a int, b int);
+-- error 1060
+create index c on test_add_index_with_dup(b, a, b);
+-- error 1060
+create index c on test_add_index_with_dup(b, a, B);
+-- error 1060
+alter table test_add_index_with_dup add index c (b, a, b);
+-- error 1060
+alter table test_add_index_with_dup add index c (b, a, B);
+drop table test_add_index_with_dup;
+
+
