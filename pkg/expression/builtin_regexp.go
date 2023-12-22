@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"sync"
 	"unicode/utf8"
 
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -67,18 +66,18 @@ var validMatchType = set.NewStringSet(
 	flagS, // The . character matches line terminators
 )
 
-type regexpNewBaseFuncSig struct {
+type regexpBaseFuncSig struct {
 	baseBuiltinFunc
 	memorizedRegexp builtinFuncCache[regexpMemorizedSig]
 }
 
 // check binary collation, not xxx_bin collation!
-func (re *regexpNewBaseFuncSig) isBinaryCollation() bool {
+func (re *regexpBaseFuncSig) isBinaryCollation() bool {
 	return re.collation == charset.CollationBin && re.charset == charset.CharsetBin
 }
 
-func (re *regexpNewBaseFuncSig) clone() *regexpNewBaseFuncSig {
-	newSig := &regexpNewBaseFuncSig{}
+func (re *regexpBaseFuncSig) clone() *regexpBaseFuncSig {
+	newSig := &regexpBaseFuncSig{}
 	newSig.cloneFrom(&re.baseBuiltinFunc)
 	return newSig
 }
@@ -88,7 +87,7 @@ func (re *regexpNewBaseFuncSig) clone() *regexpNewBaseFuncSig {
 //  2. pattern is const and there is no match type argument
 //
 // return true: need, false: needless
-func (re *regexpNewBaseFuncSig) canMemorizeRegexp(matchTypeIdx int) bool {
+func (re *regexpBaseFuncSig) canMemorizeRegexp(matchTypeIdx int) bool {
 	// If the pattern and match type are both constants, we can cache the regexp into memory.
 	// Notice that the above two arguments are not required to be constant across contexts because the cache is only
 	// valid when the two context ids are the same.
@@ -97,7 +96,7 @@ func (re *regexpNewBaseFuncSig) canMemorizeRegexp(matchTypeIdx int) bool {
 }
 
 // buildRegexp builds a new `*regexp.Regexp` from the pattern and matchType
-func (re *regexpNewBaseFuncSig) buildRegexp(pattern string, matchType string) (reg *regexp.Regexp, err error) {
+func (re *regexpBaseFuncSig) buildRegexp(pattern string, matchType string) (reg *regexp.Regexp, err error) {
 	matchType, err = getRegexpMatchType(matchType, re.collation)
 	if err != nil {
 		return nil, err
@@ -119,7 +118,7 @@ func (re *regexpNewBaseFuncSig) buildRegexp(pattern string, matchType string) (r
 // getRegexp returns the Regexp which can be used by the current function.
 // If the pattern and matchType arguments are both constant, the `*regexp.Regexp` object will be cached in memory.
 // The next call of `getRegexp` will return the cached regexp if it is present and the context id is equal
-func (re *regexpNewBaseFuncSig) getRegexp(ctx EvalContext, pattern string, matchType string, matchTypeIdx int) (*regexp.Regexp, error) {
+func (re *regexpBaseFuncSig) getRegexp(ctx EvalContext, pattern string, matchType string, matchTypeIdx int) (*regexp.Regexp, error) {
 	if !re.canMemorizeRegexp(matchTypeIdx) {
 		return re.buildRegexp(pattern, matchType)
 	}
@@ -136,7 +135,7 @@ func (re *regexpNewBaseFuncSig) getRegexp(ctx EvalContext, pattern string, match
 	return sig.memorizedRegexp, sig.memorizedErr
 }
 
-func (re *regexpNewBaseFuncSig) tryVecMemorizedRegexp(ctx EvalContext, params []*funcParam, matchTypeIdx int, nRows int) (*regexp.Regexp, bool, error) {
+func (re *regexpBaseFuncSig) tryVecMemorizedRegexp(ctx EvalContext, params []*funcParam, matchTypeIdx int, nRows int) (*regexp.Regexp, bool, error) {
 	// Check memorization
 	if nRows == 0 || !re.canMemorizeRegexp(matchTypeIdx) {
 		return nil, false, nil
@@ -158,27 +157,6 @@ func (re *regexpNewBaseFuncSig) tryVecMemorizedRegexp(ctx EvalContext, params []
 	}
 
 	return sig.memorizedRegexp, true, sig.memorizedErr
-}
-
-type regexpBaseFuncSig struct {
-	baseBuiltinFunc
-	regexpMemorizedSig
-	once sync.Once
-}
-
-// check binary collation, not xxx_bin collation!
-func (re *regexpBaseFuncSig) isBinaryCollation() bool {
-	return re.collation == charset.CollationBin && re.charset == charset.CharsetBin
-}
-
-func (re *regexpBaseFuncSig) clone() *regexpBaseFuncSig {
-	newSig := &regexpBaseFuncSig{once: sync.Once{}}
-	if re.memorizedRegexp != nil {
-		newSig.memorizedRegexp = re.memorizedRegexp
-	}
-	newSig.memorizedErr = re.memorizedErr
-	newSig.cloneFrom(&re.baseBuiltinFunc)
-	return newSig
 }
 
 // If characters specifying contradictory options are specified
@@ -218,92 +196,6 @@ func getRegexpMatchType(userInputMatchType string, collation string) (string, er
 	return flag, nil
 }
 
-// To get a unified compile interface in initMemoizedRegexp, we need to process many things in genCompile
-func (re *regexpBaseFuncSig) genCompile(matchType string) (func(string) (*regexp.Regexp, error), error) {
-	matchType, err := getRegexpMatchType(matchType, re.baseBuiltinFunc.collation)
-	if err != nil {
-		return nil, err
-	}
-
-	return func(pat string) (*regexp.Regexp, error) {
-		if len(matchType) == 0 {
-			return regexp.Compile(pat)
-		}
-		return regexp.Compile(fmt.Sprintf("(?%s)%s", matchType, pat))
-	}, nil
-}
-
-func (re *regexpBaseFuncSig) genRegexp(pat string, matchType string) (*regexp.Regexp, error) {
-	if len(pat) == 0 {
-		return nil, ErrRegexp.GenWithStackByArgs(emptyPatternErr)
-	}
-
-	if re.isMemorizedRegexpInitialized() {
-		return re.memorizedRegexp, re.memorizedErr
-	}
-
-	var err error
-
-	// Generate compiler first
-	compile, err := re.genCompile(matchType)
-	if err != nil {
-		return nil, err
-	}
-
-	return compile(pat)
-}
-
-// we can memorize the regexp when:
-//  1. pattern and match type are constant
-//  2. pattern is const and there is no match type argument
-//
-// return true: need, false: needless
-func (re *regexpBaseFuncSig) canMemorize(ctx EvalContext, matchTypeIdx int) bool {
-	return re.args[patternIdx].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache) && (len(re.args) <= matchTypeIdx || re.args[matchTypeIdx].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache))
-}
-
-func (re *regexpBaseFuncSig) initMemoizedRegexp(params []*funcParam, matchTypeIdx int) error {
-	pat := params[patternIdx].getStringVal(0)
-	if len(pat) == 0 {
-		return ErrRegexp.GenWithStackByArgs(emptyPatternErr)
-	}
-
-	// Generate compile
-	compile, err := re.genCompile(params[matchTypeIdx].getStringVal(0))
-	if err != nil {
-		return ErrRegexp.GenWithStackByArgs(err)
-	}
-
-	// Compile this constant pattern, so that we can avoid this repeated work
-	re.memorize(compile, pat)
-
-	return re.memorizedErr
-}
-
-// As multiple threads may memorize regexp and cause data race, only the first thread
-// who gets the lock is permitted to do the memorization and others should wait for him
-// until the memorization has been finished.
-func (re *regexpBaseFuncSig) tryToMemorize(ctx EvalContext, params []*funcParam, matchTypeIdx int, n int) error {
-	// Check memorization
-	if n == 0 || !re.canMemorize(ctx, matchTypeIdx) {
-		return nil
-	}
-
-	var err error
-	memorize := func() {
-		if re.isMemorizedRegexpInitialized() {
-			err = nil
-			return
-		}
-
-		err = re.initMemoizedRegexp(params, matchTypeIdx)
-	}
-
-	re.once.Do(memorize)
-
-	return err
-}
-
 // https://dev.mysql.com/doc/refman/8.0/en/regexp.html#function_regexp-like
 type regexpLikeFunctionClass struct {
 	baseFunctionClass
@@ -326,7 +218,7 @@ func (c *regexpLikeFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 
 	bf.tp.SetFlen(1)
 	sig := builtinRegexpLikeFuncSig{
-		regexpNewBaseFuncSig: regexpNewBaseFuncSig{baseBuiltinFunc: bf},
+		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
 	}
 
 	sig.setPbCode(tipb.ScalarFuncSig_RegexpLikeSig)
@@ -335,12 +227,12 @@ func (c *regexpLikeFunctionClass) getFunction(ctx sessionctx.Context, args []Exp
 }
 
 type builtinRegexpLikeFuncSig struct {
-	regexpNewBaseFuncSig
+	regexpBaseFuncSig
 }
 
 func (re *builtinRegexpLikeFuncSig) Clone() builtinFunc {
 	newSig := &builtinRegexpLikeFuncSig{}
-	newSig.regexpNewBaseFuncSig = *re.regexpNewBaseFuncSig.clone()
+	newSig.regexpBaseFuncSig = *re.regexpBaseFuncSig.clone()
 	return newSig
 }
 
@@ -461,7 +353,7 @@ func (c *regexpSubstrFunctionClass) getFunction(ctx sessionctx.Context, args []E
 	argType := args[0].GetType()
 	bf.tp.SetFlen(argType.GetFlen())
 	sig := builtinRegexpSubstrFuncSig{
-		regexpNewBaseFuncSig: regexpNewBaseFuncSig{baseBuiltinFunc: bf},
+		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
 	}
 	sig.setPbCode(tipb.ScalarFuncSig_RegexpSubstrSig)
 
@@ -473,7 +365,7 @@ func (c *regexpSubstrFunctionClass) getFunction(ctx sessionctx.Context, args []E
 }
 
 type builtinRegexpSubstrFuncSig struct {
-	regexpNewBaseFuncSig
+	regexpBaseFuncSig
 }
 
 func (re *builtinRegexpSubstrFuncSig) vectorized() bool {
@@ -482,7 +374,7 @@ func (re *builtinRegexpSubstrFuncSig) vectorized() bool {
 
 func (re *builtinRegexpSubstrFuncSig) Clone() builtinFunc {
 	newSig := &builtinRegexpSubstrFuncSig{}
-	newSig.regexpNewBaseFuncSig = *re.regexpNewBaseFuncSig.clone()
+	newSig.regexpBaseFuncSig = *re.regexpBaseFuncSig.clone()
 	return newSig
 }
 
@@ -752,7 +644,7 @@ func (c *regexpInStrFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 
 	bf.tp.SetFlen(mysql.MaxIntWidth)
 	sig := builtinRegexpInStrFuncSig{
-		regexpNewBaseFuncSig: regexpNewBaseFuncSig{baseBuiltinFunc: bf},
+		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
 	}
 	sig.setPbCode(tipb.ScalarFuncSig_RegexpInStrSig)
 
@@ -764,12 +656,12 @@ func (c *regexpInStrFunctionClass) getFunction(ctx sessionctx.Context, args []Ex
 }
 
 type builtinRegexpInStrFuncSig struct {
-	regexpNewBaseFuncSig
+	regexpBaseFuncSig
 }
 
 func (re *builtinRegexpInStrFuncSig) Clone() builtinFunc {
 	newSig := &builtinRegexpInStrFuncSig{}
-	newSig.regexpNewBaseFuncSig = *re.regexpNewBaseFuncSig.clone()
+	newSig.regexpBaseFuncSig = *re.regexpBaseFuncSig.clone()
 	return newSig
 }
 
@@ -1092,7 +984,7 @@ func (c *regexpReplaceFunctionClass) getFunction(ctx sessionctx.Context, args []
 	argType := args[0].GetType()
 	bf.tp.SetFlen(argType.GetFlen())
 	sig := builtinRegexpReplaceFuncSig{
-		regexpNewBaseFuncSig: regexpNewBaseFuncSig{baseBuiltinFunc: bf},
+		regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: bf},
 	}
 	sig.setPbCode(tipb.ScalarFuncSig_RegexpReplaceSig)
 
@@ -1120,7 +1012,7 @@ func (ins *Instruction) getCaptureGroupStr(str []byte, matchedRes []int) ([]byte
 }
 
 type builtinRegexpReplaceFuncSig struct {
-	regexpNewBaseFuncSig
+	regexpBaseFuncSig
 	instCache builtinFuncCache[[]Instruction]
 }
 
@@ -1145,7 +1037,7 @@ func (re *builtinRegexpReplaceFuncSig) vectorized() bool {
 
 func (re *builtinRegexpReplaceFuncSig) Clone() builtinFunc {
 	newSig := &builtinRegexpReplaceFuncSig{}
-	newSig.regexpNewBaseFuncSig = *re.regexpNewBaseFuncSig.clone()
+	newSig.regexpBaseFuncSig = *re.regexpBaseFuncSig.clone()
 	return newSig
 }
 
