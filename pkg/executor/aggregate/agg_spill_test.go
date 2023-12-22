@@ -237,6 +237,7 @@ func TestGetCorrectResult(t *testing.T) {
 	ctx.GetSessionVars().MaxChunkSize = 32
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, hardLimitBytesNum)
 	ctx.GetSessionVars().TrackAggregateMemoryUsage = true
+	ctx.GetSessionVars().EnableConcurrentHashaggSpill = true
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 
