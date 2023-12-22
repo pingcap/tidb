@@ -97,6 +97,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("Failed to create keywords.go: %s", err)
 	}
+	err = keywordsFile.Truncate(0)
+	if err != nil {
+		log.Fatalf("Failed to create keywords.go: %s", err)
+	}
 	_, err = keywordsFile.WriteString(fileStart)
 	if err != nil {
 		log.Fatalf("Failed to write fileStart to keywords.go: %s", err)

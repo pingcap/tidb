@@ -2651,7 +2651,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 		if *sampleRate < 0 {
 			*sampleRate, sampleRateReason = b.getAdjustedSampleRate(task)
 			if task.PartitionName != "" {
-				sc.AppendNote(errors.Errorf(
+				sc.AppendNote(errors.NewNoStackErrorf(
 					`Analyze use auto adjusted sample rate %f for table %s.%s's partition %s, reason to use this rate is "%s"`,
 					*sampleRate,
 					task.DBName,
@@ -2660,7 +2660,7 @@ func (b *executorBuilder) buildAnalyzeSamplingPushdown(
 					sampleRateReason,
 				))
 			} else {
-				sc.AppendNote(errors.Errorf(
+				sc.AppendNote(errors.NewNoStackErrorf(
 					`Analyze use auto adjusted sample rate %f for table %s.%s, reason to use this rate is "%s"`,
 					*sampleRate,
 					task.DBName,
@@ -3409,7 +3409,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 	useTiFlash := useMPP || useTiFlashBatchCop
 	if useTiFlash {
 		if _, isTiDBZoneLabelSet := config.GetGlobalConfig().Labels[placement.DCLabelKey]; b.ctx.GetSessionVars().TiFlashReplicaRead != tiflash.AllReplicas && !isTiDBZoneLabelSet {
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("the variable tiflash_replica_read is ignored, because the entry TiDB[%s] does not set the zone attribute and tiflash_replica_read is '%s'", config.GetGlobalConfig().AdvertiseAddress, tiflash.GetTiFlashReplicaRead(b.ctx.GetSessionVars().TiFlashReplicaRead)))
+			b.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("the variable tiflash_replica_read is ignored, because the entry TiDB[%s] does not set the zone attribute and tiflash_replica_read is '%s'", config.GetGlobalConfig().AdvertiseAddress, tiflash.GetTiFlashReplicaRead(b.ctx.GetSessionVars().TiFlashReplicaRead)))
 		}
 	}
 	if useMPP {

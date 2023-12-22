@@ -1610,16 +1610,17 @@ func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, table
 		colName = columnTableName
 	}
 
-	query := "UPDATE ?.? SET status = ? WHERE ? = ? AND status <= ?"
 	s := common.SQLWithRetry{
 		DB:     cpdb.db,
 		Logger: log.FromContext(ctx).With(zap.String("table", tableName)),
 	}
 	err := s.Transact(ctx, "ignore error checkpoints", func(c context.Context, tx *sql.Tx) error {
-		if _, e := tx.ExecContext(c, query, cpdb.schema, CheckpointTableNameEngine, CheckpointStatusLoaded, colName, tableName, CheckpointStatusMaxInvalid); e != nil {
+		query := fmt.Sprintf("UPDATE %s.%s SET status = ? WHERE ? = ? AND status <= ?", cpdb.schema, CheckpointTableNameEngine)
+		if _, e := tx.ExecContext(c, query, CheckpointStatusLoaded, colName, tableName, CheckpointStatusMaxInvalid); e != nil {
 			return errors.Trace(e)
 		}
-		if _, e := tx.ExecContext(c, query, cpdb.schema, CheckpointTableNameTable, CheckpointStatusLoaded, colName, tableName, CheckpointStatusMaxInvalid); e != nil {
+		query = fmt.Sprintf("UPDATE %s.%s SET status = ? WHERE ? = ? AND status <= ?", cpdb.schema, CheckpointTableNameTable)
+		if _, e := tx.ExecContext(c, query, CheckpointStatusLoaded, colName, tableName, CheckpointStatusMaxInvalid); e != nil {
 			return errors.Trace(e)
 		}
 		return nil

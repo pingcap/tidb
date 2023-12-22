@@ -1803,10 +1803,9 @@ func getEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPla
 			// some hints like 'memory_quota' cannot be extracted from the PhysicalPlan directly,
 			// so we have to iterate all hints from the customer and keep some other necessary hints.
 			switch tableHint.HintName.L {
-			case plannercore.HintMemoryQuota, plannercore.HintUseToja, plannercore.HintNoIndexMerge,
-				plannercore.HintMaxExecutionTime,
-				plannercore.HintIgnoreIndex, plannercore.HintReadFromStorage, plannercore.HintMerge,
-				plannercore.HintSemiJoinRewrite, plannercore.HintNoDecorrelate:
+			case hint.HintMemoryQuota, hint.HintUseToja, hint.HintNoIndexMerge,
+				hint.HintMaxExecutionTime, hint.HintIgnoreIndex, hint.HintReadFromStorage,
+				hint.HintMerge, hint.HintSemiJoinRewrite, hint.HintNoDecorrelate:
 				hints = append(hints, tableHint)
 			}
 		}
