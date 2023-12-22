@@ -177,13 +177,33 @@
       {
         "SQL": "explain select /*+ READ_FROM_STORAGE(TIFLASH[s]) */ a from s where a = 10 and b is null; -- index path huristic rule will prune tiflash path",
         "Plan": [
-          "TableReader_12 0.10 root  data:ExchangeSender_11",
-          "└─ExchangeSender_11 0.10 mpp[tiflash]  ExchangeType: PassThrough",
+          "TableReader_9 0.10 root  data:ExchangeSender_8",
+          "└─ExchangeSender_8 0.10 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection_5 0.10 mpp[tiflash]  test.s.a",
-          "    └─Selection_10 0.10 mpp[tiflash]  eq(test.s.a, 10), isnull(test.s.b)",
-          "      └─TableFullScan_9 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
+          "    └─Selection_7 0.10 mpp[tiflash]  eq(test.s.a, 10), isnull(test.s.b)",
+          "      └─TableFullScan_6 10000.00 mpp[tiflash] table:s keep order:false, stats:pseudo"
         ],
         "Warn": null
+      },
+      {
+        "SQL": "explain select /*+ read_from_storage(tiflash[t3]) */ * from t3 where sala='a' and id =1; -- once hinted, walk with tiflash range scan",
+        "Plan": [
+          "TableReader_9 1.00 root  data:TableRangeScan_8",
+          "└─TableRangeScan_8 1.00 cop[tiflash] table:t3, partition:p1 range:[1 \"a\",1 \"a\"], keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "disable dynamic pruning due to t3 has no global stats",
+          "MPP mode may be blocked because table `t3`is a partition table which is not supported when `@@tidb_partition_prune_mode=static`."
+        ]
+      },
+      {
+        "SQL": "explain select * from t3 where sala='a' and id =1; -- once not hinted, walk with tikv point get",
+        "Plan": [
+          "Point_Get_6 1.00 root table:t3, partition:p1, clustered index:PRIMARY(id, sala) "
+        ],
+        "Warn": [
+          "disable dynamic pruning due to t3 has no global stats"
+        ]
       }
     ]
   },
