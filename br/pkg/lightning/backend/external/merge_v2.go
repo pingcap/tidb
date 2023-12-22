@@ -410,12 +410,12 @@ func runGroups(
 				return err
 			}
 		}
-		writeTime := time.Since(now)
+		writeRowTime := time.Since(now)
 
 		logutil.Logger(ctx).Info("sort one group in MergeOverlappingFiles",
 			zap.Duration("read time", readTime),
 			zap.Duration("sort time", sortTime),
-			zap.Duration("write time", writeTime),
+			zap.Duration("write row time", writeRowTime),
 			zap.Int("key len", len(loaded.keys)))
 		if i == len(rdGroups)-1 {
 			maxKey = kv.Key(loaded.keys[len(loaded.keys)-1]).Clone()
