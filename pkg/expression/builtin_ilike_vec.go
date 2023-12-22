@@ -16,7 +16,6 @@ package expression
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -70,11 +69,11 @@ func (b *builtinIlikeSig) tryToMemorize(param *funcParam, escape int64) {
 	b.once.Do(memorization)
 }
 
-func (b *builtinIlikeSig) getEscape(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) (int64, bool, error) {
+func (b *builtinIlikeSig) getEscape(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) (int64, bool, error) {
 	rowNum := input.NumRows()
 	escape := int64('\\')
 
-	if !b.args[2].ConstItem(ctx.GetSessionVars().StmtCtx) {
+	if !b.args[2].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache) {
 		return escape, true, errors.Errorf("escape should be const")
 	}
 
@@ -120,7 +119,7 @@ func (b *builtinIlikeSig) lowerPattern(param *funcParam, rowNum int, escape int6
 	return escape
 }
 
-func (b *builtinIlikeSig) vecVec(params []*funcParam, rowNum int, escape int64, result *chunk.Column) error {
+func (b *builtinIlikeSig) vecVec(pattern collate.WildcardPattern, params []*funcParam, rowNum int, escape int64, result *chunk.Column) error {
 	result.ResizeInt64(rowNum, false)
 	result.MergeNulls(params[0].getCol(), params[1].getCol())
 	i64s := result.Int64s()
@@ -128,14 +127,14 @@ func (b *builtinIlikeSig) vecVec(params []*funcParam, rowNum int, escape int64, 
 		if result.IsNull(i) {
 			continue
 		}
-		b.pattern.Compile(params[1].getStringVal(i), byte(escape))
-		match := b.pattern.DoMatch(params[0].getStringVal(i))
+		pattern.Compile(params[1].getStringVal(i), byte(escape))
+		match := pattern.DoMatch(params[0].getStringVal(i))
 		i64s[i] = boolToInt64(match)
 	}
 	return nil
 }
 
-func (b *builtinIlikeSig) constVec(expr string, param *funcParam, rowNum int, escape int64, result *chunk.Column) error {
+func (b *builtinIlikeSig) constVec(pattern collate.WildcardPattern, expr string, param *funcParam, rowNum int, escape int64, result *chunk.Column) error {
 	result.ResizeInt64(rowNum, false)
 	result.MergeNulls(param.getCol())
 	i64s := result.Int64s()
@@ -143,8 +142,8 @@ func (b *builtinIlikeSig) constVec(expr string, param *funcParam, rowNum int, es
 		if result.IsNull(i) {
 			continue
 		}
-		b.pattern.Compile(param.getStringVal(i), byte(escape))
-		match := b.pattern.DoMatch(expr)
+		pattern.Compile(param.getStringVal(i), byte(escape))
+		match := pattern.DoMatch(expr)
 		i64s[i] = boolToInt64(match)
 	}
 	return nil
@@ -164,15 +163,15 @@ func (b *builtinIlikeSig) ilikeWithMemorization(exprParam *funcParam, rowNum int
 	return nil
 }
 
-func (b *builtinIlikeSig) ilikeWithoutMemorization(params []*funcParam, rowNum int, escape int64, result *chunk.Column) error {
+func (b *builtinIlikeSig) ilikeWithoutMemorization(pattern collate.WildcardPattern, params []*funcParam, rowNum int, escape int64, result *chunk.Column) error {
 	if params[0].getCol() == nil {
-		return b.constVec(params[0].getStringVal(0), params[1], rowNum, escape, result)
+		return b.constVec(pattern, params[0].getStringVal(0), params[1], rowNum, escape, result)
 	}
 
-	return b.vecVec(params, rowNum, escape, result)
+	return b.vecVec(pattern, params, rowNum, escape, result)
 }
 
-func (b *builtinIlikeSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinIlikeSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	rowNum := input.NumRows()
 	params := make([]*funcParam, 0, 3)
 	defer releaseBuffers(&b.baseBuiltinFunc, params)
@@ -199,8 +198,8 @@ func (b *builtinIlikeSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk,
 
 	b.tryToMemorize(params[1], escape)
 	if !b.isMemorizedPattern {
-		b.pattern = collate.ConvertAndGetBinCollation(b.collation).Pattern()
-		return b.ilikeWithoutMemorization(params, rowNum, escape, result)
+		pattern := collate.ConvertAndGetBinCollation(b.collation).Pattern()
+		return b.ilikeWithoutMemorization(pattern, params, rowNum, escape, result)
 	}
 
 	return b.ilikeWithMemorization(params[0], rowNum, result)

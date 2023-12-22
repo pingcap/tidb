@@ -108,7 +108,7 @@ func TestConstant(t *testing.T) {
 	ctx := createContext(t)
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	require.False(t, NewZero().IsCorrelated())
-	require.True(t, NewZero().ConstItem(sc))
+	require.True(t, NewZero().ConstItem(sc.UseCache))
 	require.True(t, NewZero().Decorrelate(nil).Equal(ctx, NewZero()))
 	require.Equal(t, []byte{0x0, 0x8, 0x0}, NewZero().HashCode())
 	require.False(t, NewZero().Equal(ctx, NewOne()))
@@ -136,13 +136,13 @@ func TestIsBinaryLiteral(t *testing.T) {
 func TestConstItem(t *testing.T) {
 	ctx := createContext(t)
 	sf := newFunctionWithMockCtx(ast.Rand)
-	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
+	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx.UseCache))
 	sf = newFunctionWithMockCtx(ast.UUID)
-	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
+	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx.UseCache))
 	sf = newFunctionWithMockCtx(ast.GetParam, NewOne())
-	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
+	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx.UseCache))
 	sf = newFunctionWithMockCtx(ast.Abs, NewOne())
-	require.True(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
+	require.True(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx.UseCache))
 }
 
 func TestVectorizable(t *testing.T) {

@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -3348,4 +3349,66 @@ func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
 	err = db.Ping()
 	require.NotNil(t, err)
 	db.Close()
+}
+
+func TestConnectionWillNotLeak(t *testing.T) {
+	cfg := util2.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.ReportStatus = false
+	// Setup proxy protocol config
+	cfg.ProxyProtocol.Networks = "*"
+	cfg.ProxyProtocol.Fallbackable = false
+
+	ts := createTidbTestSuite(t)
+
+	cli := testserverclient.NewTestServerClient()
+	cli.Port = testutil.GetPortFromTCPAddr(ts.server.ListenAddr())
+	dsn := cli.GetDSN(func(config *mysql.Config) {
+		config.User = "root"
+		config.DBName = "test"
+	})
+	db, err := sql.Open("mysql", dsn)
+	require.Nil(t, err)
+	db.SetMaxOpenConns(100)
+	db.SetMaxIdleConns(0)
+
+	// create 100 connections
+	conns := make([]*sql.Conn, 0, 100)
+	for len(conns) < 100 {
+		conn, err := db.Conn(context.Background())
+		require.NoError(t, err)
+		conns = append(conns, conn)
+	}
+	require.Eventually(t, func() bool {
+		runtime.GC()
+		return server2.ConnectionInMemCounterForTest.Load() == int64(100)
+	}, time.Minute, time.Millisecond*100)
+
+	// run a simple query on each connection and close it
+	// this cannot ensure the connection will not leak for any kinds of requests
+	var wg sync.WaitGroup
+	for _, conn := range conns {
+		wg.Add(1)
+		conn := conn
+		go func() {
+			rows, err := conn.QueryContext(context.Background(), "SELECT 2023")
+			require.NoError(t, err)
+			var result int
+			require.True(t, rows.Next())
+			require.NoError(t, rows.Scan(&result))
+			require.Equal(t, result, 2023)
+			require.NoError(t, rows.Close())
+			// `db.Close` will not close already grabbed connection, so it's still needed to close the connection here.
+			require.NoError(t, conn.Close())
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+
+	require.NoError(t, db.Close())
+	require.Eventually(t, func() bool {
+		runtime.GC()
+		count := server2.ConnectionInMemCounterForTest.Load()
+		return count == 0
+	}, time.Minute, time.Millisecond*100)
 }

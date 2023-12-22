@@ -1339,7 +1339,7 @@ func CheckAggCanPushCop(sctx sessionctx.Context, aggFuncs []*aggregation.AggFunc
 		if storeType == kv.UnSpecified {
 			storageName = "storage layer"
 		}
-		warnErr := errors.New("Aggregation can not be pushed to " + storageName + " because " + reason)
+		warnErr := errors.NewNoStackError("Aggregation can not be pushed to " + storageName + " because " + reason)
 		if sc.InExplainStmt {
 			sc.AppendWarning(warnErr)
 		} else {
@@ -1790,7 +1790,7 @@ func (p *basePhysicalAgg) canUse3Stage4MultiDistinctAgg() (can bool, gss express
 	}
 	compressed := groupingSets.Merge()
 	if len(compressed) != len(groupingSets) {
-		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Some grouping sets should be merged"))
+		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Some grouping sets should be merged"))
 		// todo arenatlx: some grouping set should be merged which is not supported by now temporarily.
 		return false, nil
 	}
@@ -1806,7 +1806,7 @@ func (p *basePhysicalAgg) canUse3Stage4MultiDistinctAgg() (can bool, gss express
 				groupingSetOffset := groupingSets.TargetOne(fun.Args)
 				if groupingSetOffset == -1 {
 					// todo: if we couldn't find a existed current valid group layout, we need to copy the column out from being filled with null value.
-					p.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("couldn't find a proper group set for normal agg"))
+					p.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("couldn't find a proper group set for normal agg"))
 					return false, nil
 				}
 				// starting with 1

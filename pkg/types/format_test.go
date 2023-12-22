@@ -20,11 +20,12 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/stretchr/testify/require"
 )
 
 func TestTimeFormatMethod(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.IgnoreWarn)
 	tblDate := []struct {
 		Input  string
 		Format string
@@ -78,7 +79,7 @@ func TestTimeFormatMethod(t *testing.T) {
 }
 
 func TestStrToDate(t *testing.T) {
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, func(err error) {})
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.IgnoreWarn)
 	tests := []struct {
 		input  string
 		format string

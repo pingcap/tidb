@@ -619,18 +619,40 @@ func TestDeleteRangeQuery(t *testing.T) {
 
 	client.RunGCRowsLoader(ctx)
 
-	client.InsertDeleteRangeForTable(2, []int64{3})
-	client.InsertDeleteRangeForTable(4, []int64{5, 6})
-
-	elementID := int64(1)
-	client.InsertDeleteRangeForIndex(7, &elementID, 8, []int64{1})
-	client.InsertDeleteRangeForIndex(9, &elementID, 10, []int64{1, 2})
+	client.RecordDeleteRange(&stream.PreDelRangeQuery{
+		Sql: "INSERT IGNORE INTO mysql.gc_delete_range VALUES (%?, %?, %?, %?, %?), (%?, %?, %?, %?, %?)",
+		ParamsList: []stream.DelRangeParams{
+			{
+				JobID:    1,
+				ElemID:   1,
+				StartKey: "a",
+				EndKey:   "b",
+			},
+			{
+				JobID:    1,
+				ElemID:   2,
+				StartKey: "b",
+				EndKey:   "c",
+			},
+		},
+	})
 
 	querys := client.GetGCRows()
-	require.Equal(t, querys[0], "INSERT IGNORE INTO mysql.gc_delete_range VALUES (2, 1, '748000000000000003', '748000000000000004', %[1]d)")
-	require.Equal(t, querys[1], "INSERT IGNORE INTO mysql.gc_delete_range VALUES (4, 1, '748000000000000005', '748000000000000006', %[1]d),(4, 2, '748000000000000006', '748000000000000007', %[1]d)")
-	require.Equal(t, querys[2], "INSERT IGNORE INTO mysql.gc_delete_range VALUES (7, 1, '7480000000000000085f698000000000000001', '7480000000000000085f698000000000000002', %[1]d)")
-	require.Equal(t, querys[3], "INSERT IGNORE INTO mysql.gc_delete_range VALUES (9, 2, '74800000000000000a5f698000000000000001', '74800000000000000a5f698000000000000002', %[1]d),(9, 3, '74800000000000000a5f698000000000000002', '74800000000000000a5f698000000000000003', %[1]d)")
+	require.Equal(t, len(querys), 1)
+	require.Equal(t, querys[0].Sql, "INSERT IGNORE INTO mysql.gc_delete_range VALUES (%?, %?, %?, %?, %?), (%?, %?, %?, %?, %?)")
+	require.Equal(t, len(querys[0].ParamsList), 2)
+	require.Equal(t, querys[0].ParamsList[0], stream.DelRangeParams{
+		JobID:    1,
+		ElemID:   1,
+		StartKey: "a",
+		EndKey:   "b",
+	})
+	require.Equal(t, querys[0].ParamsList[1], stream.DelRangeParams{
+		JobID:    1,
+		ElemID:   2,
+		StartKey: "b",
+		EndKey:   "c",
+	})
 }
 
 func MockEmptySchemasReplace() *stream.SchemasReplace {
@@ -641,7 +663,6 @@ func MockEmptySchemasReplace() *stream.SchemasReplace {
 		nil,
 		9527,
 		filter.All(),
-		nil,
 		nil,
 		nil,
 		nil,

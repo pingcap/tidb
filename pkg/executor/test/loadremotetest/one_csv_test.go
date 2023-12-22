@@ -85,6 +85,47 @@ func (s *mockGCSSuite) TestLoadCSV() {
 	s.tk.MustContainErrMsg(sql, "Don't support load data from tidb-server's disk. Or if you want to load local data via client, the path of INFILE '/etc/passwd' needs to specify the clause of LOCAL first")
 }
 
+func (s *mockGCSSuite) TestLoadCsvInTransaction() {
+	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
+	s.tk.MustExec("CREATE DATABASE load_csv;")
+	s.tk.MustExec("CREATE TABLE load_csv.t (i INT, s varchar(32));")
+
+	s.server.CreateObject(
+		fakestorage.Object{
+			ObjectAttrs: fakestorage.ObjectAttrs{
+				BucketName: "test-load-csv",
+				Name:       "data.csv",
+			},
+			Content: []byte("100, test100\n101, hello\n102, 😄😄😄😄😄\n104, bye"),
+		},
+	)
+
+	s.tk.MustExec("begin pessimistic")
+	sql := fmt.Sprintf(
+		`LOAD DATA INFILE 'gs://test-load-csv/data.csv?endpoint=%s' INTO TABLE load_csv.t `+
+			"FIELDS TERMINATED BY ','",
+		gcsEndpoint,
+	)
+	// test: load data stmt doesn't commit it
+	s.tk.MustExec("insert into load_csv.t values (1, 'a')")
+	s.tk.MustExec(sql)
+	s.tk.MustQuery("select i from load_csv.t order by i").Check(
+		testkit.Rows(
+			"1", "100", "101",
+			"102", "104",
+		),
+	)
+	// load data can be rolled back
+	s.tk.MustExec("rollback")
+	s.tk.MustQuery("select * from load_csv.t").Check(testkit.Rows())
+
+	// load data commit
+	s.tk.MustExec("begin pessimistic")
+	s.tk.MustExec(sql)
+	s.tk.MustExec("commit")
+	s.tk.MustQuery("select i from load_csv.t").Check(testkit.Rows("100", "101", "102", "104"))
+}
+
 func (s *mockGCSSuite) TestIgnoreNLines() {
 	s.tk.MustExec("DROP DATABASE IF EXISTS load_csv;")
 	s.tk.MustExec("CREATE DATABASE load_csv;")

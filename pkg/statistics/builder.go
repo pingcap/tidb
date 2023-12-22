@@ -401,10 +401,10 @@ func BuildHistAndTopN(
 					if foundTwice {
 						datumString, err := firstTimeSample.ToString()
 						if err != nil {
-							statslogutil.StatsLogger.Error("try to convert datum to string failed", zap.Error(err))
+							statslogutil.StatsLogger().Error("try to convert datum to string failed", zap.Error(err))
 						}
 
-						statslogutil.StatsLogger.Warn(
+						statslogutil.StatsLogger().Warn(
 							"invalid sample data",
 							zap.Bool("isColumn", isColumn),
 							zap.Int64("columnID", id),

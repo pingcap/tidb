@@ -510,11 +510,11 @@ func (e *showMetaExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		req.AppendInt64(2, int64(table.KVCount))
 		req.AppendInt64(3, int64(table.KVSize))
 		if res.StartVersion > 0 {
-			req.AppendTime(4, types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, 0))
+			req.AppendTime(4, types.NewTime(types.FromGoTime(startTime.In(e.Ctx().GetSessionVars().Location())), mysql.TypeDatetime, 0))
 		} else {
 			req.AppendNull(4)
 		}
-		req.AppendTime(5, types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, 0))
+		req.AppendTime(5, types.NewTime(types.FromGoTime(endTime.In(e.Ctx().GetSessionVars().Location())), mysql.TypeDatetime, 0))
 	}
 	return nil
 }

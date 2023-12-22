@@ -293,6 +293,7 @@ const (
 		source VARCHAR(10) NOT NULL DEFAULT 'unknown',
 		sql_digest varchar(64),
 		plan_digest varchar(64),
+		type varchar(64) NOT NULL DEFAULT '',
 		INDEX sql_index(original_sql(700),default_db(68)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
@@ -575,7 +576,7 @@ const (
 		type VARCHAR(256) NOT NULL,
 		dispatcher_id VARCHAR(256),
 		state VARCHAR(64) NOT NULL,
-		priority INT NOT NULL,
+		priority INT DEFAULT 1,
 		create_time TIMESTAMP,
 		start_time TIMESTAMP,
 		state_update_time TIMESTAMP,
@@ -595,7 +596,7 @@ const (
 		type VARCHAR(256) NOT NULL,
 		dispatcher_id VARCHAR(256),
 		state VARCHAR(64) NOT NULL,
-		priority INT NOT NULL,
+		priority INT DEFAULT 1,
 		create_time TIMESTAMP,
 		start_time TIMESTAMP,
 		state_update_time TIMESTAMP,
@@ -1035,14 +1036,18 @@ const (
 
 	// version 180
 	//   add priority/create_time/end_time to `mysql.tidb_global_task`/`mysql.tidb_global_task_history`
-	//   add concurrency/priority/create_time/end_time to `mysql.tidb_background_subtask`/`mysql.tidb_background_subtask_history`
-	//   add idx_exec_id(exec_id) to `mysql.tidb_background_subtask`
+	//   add concurrency/create_time/end_time/digest to `mysql.tidb_background_subtask`/`mysql.tidb_background_subtask_history`
+	//   add idx_exec_id(exec_id), uk_digest to `mysql.tidb_background_subtask`
 	version180 = 180
+
+	// version 181
+	//   add a new `type` column on mysql.bind_info, which is for universal binding #48875.
+	version181 = 181
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version180
+var currentBootstrapVersion int64 = version181
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1198,6 +1203,7 @@ var (
 		upgradeToVer178,
 		upgradeToVer179,
 		upgradeToVer180,
+		upgradeToVer181,
 	}
 )
 
@@ -2021,7 +2027,7 @@ func upgradeToVer67(s sessiontypes.Session, ver int64) {
 		return
 	}
 	bindMap := make(map[string]bindInfo)
-	h := &bindinfo.BindHandle{}
+	h := bindinfo.NewGlobalBindingHandle(nil)
 	var err error
 	mustExecute(s, "BEGIN PESSIMISTIC")
 
@@ -2916,21 +2922,31 @@ func upgradeToVer180(s sessiontypes.Session, ver int64) {
 	if ver >= version180 {
 		return
 	}
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `priority` INT NOT NULL AFTER `state`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `priority` INT DEFAULT 1 AFTER `state`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `create_time` TIMESTAMP AFTER `priority`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
-	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `priority` INT NOT NULL AFTER `state`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `priority` INT DEFAULT 1 AFTER `state`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `create_time` TIMESTAMP AFTER `priority`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `concurrency` INT AFTER `checkpoint`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `create_time` TIMESTAMP AFTER `concurrency`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `ordinal` int AFTER `meta`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `concurrency` INT AFTER `checkpoint`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `create_time` TIMESTAMP AFTER `concurrency`", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `ordinal` int AFTER `meta`", infoschema.ErrColumnExists)
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD INDEX idx_exec_id(exec_id)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD UNIQUE INDEX uk_task_key_step_ordinal(task_key, step, ordinal)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer181(s sessiontypes.Session, ver int64) {
+	if ver >= version181 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN `type` VARCHAR(64) NOT NULL DEFAULT ''", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s sessiontypes.Session) {

@@ -17,6 +17,7 @@ package domain
 import (
 	"context"
 	"fmt"
+	"maps"
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -25,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 // The sysvar cache replaces the GlobalVariableCache.

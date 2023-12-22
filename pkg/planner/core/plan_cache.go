@@ -38,6 +38,7 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -154,13 +155,16 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	stmtAst := stmt.PreparedAst
-	stmtCtx.UseCache = stmt.StmtCacheable
+	cacheEnabled := false
 	if isNonPrepared {
 		stmtCtx.CacheType = stmtctx.SessionNonPrepared
+		cacheEnabled = sctx.GetSessionVars().EnableNonPreparedPlanCache // plan-cache might be disabled after prepare.
 	} else {
 		stmtCtx.CacheType = stmtctx.SessionPrepared
+		cacheEnabled = sctx.GetSessionVars().EnablePreparedPlanCache
 	}
-	if !stmt.StmtCacheable {
+	stmtCtx.UseCache = stmt.StmtCacheable && cacheEnabled
+	if !stmt.StmtCacheable && stmt.UncacheableReason != "" {
 		stmtCtx.SetSkipPlanCache(errors.New(stmt.UncacheableReason))
 	}
 
@@ -355,7 +359,7 @@ func RebuildPlan4CachedPlan(p Plan) (ok bool) {
 	sc.InPreparedPlanBuilding = true
 	defer func() { sc.InPreparedPlanBuilding = false }()
 	if err := rebuildRange(p); err != nil {
-		sc.AppendWarning(errors.Errorf("skip plan-cache: plan rebuild failed, %s", err.Error()))
+		sc.AppendWarning(errors.NewNoStackErrorf("skip plan-cache: plan rebuild failed, %s", err.Error()))
 		return false // fail to rebuild ranges
 	}
 	if !sc.UseCache {
@@ -796,12 +800,12 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, stmt *PlanCacheStmt) (string,
 	if sctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return "", ignore
 	}
-	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 	bindRecord := sessionHandle.GetSessionBinding(stmt.SQLDigest4PC, stmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
 		enabledBinding := bindRecord.FindEnabledBinding()
 		if enabledBinding != nil {
-			ignore = enabledBinding.Hint.ContainTableHint(HintIgnorePlanCache)
+			ignore = enabledBinding.Hint.ContainTableHint(h.HintIgnorePlanCache)
 			return enabledBinding.BindSQL, ignore
 		}
 	}
@@ -813,7 +817,7 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, stmt *PlanCacheStmt) (string,
 	if bindRecord != nil {
 		enabledBinding := bindRecord.FindEnabledBinding()
 		if enabledBinding != nil {
-			ignore = enabledBinding.Hint.ContainTableHint(HintIgnorePlanCache)
+			ignore = enabledBinding.Hint.ContainTableHint(h.HintIgnorePlanCache)
 			return enabledBinding.BindSQL, ignore
 		}
 	}

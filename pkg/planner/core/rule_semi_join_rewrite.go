@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
 type semiJoinRewriter struct {
@@ -51,14 +52,14 @@ func (smj *semiJoinRewriter) recursivePlan(p LogicalPlan) (LogicalPlan, error) {
 	join, ok := p.(*LogicalJoin)
 	// If it's not a join, or not a (outer) semi join. We just return it since no optimization is needed.
 	// Actually the check of the preferRewriteSemiJoin is a superset of checking the join type. We remain them for a better understanding.
-	if !ok || !(join.JoinType == SemiJoin || join.JoinType == LeftOuterSemiJoin) || (join.preferJoinType&preferRewriteSemiJoin == 0) {
+	if !ok || !(join.JoinType == SemiJoin || join.JoinType == LeftOuterSemiJoin) || (join.preferJoinType&h.PreferRewriteSemiJoin == 0) {
 		return p, nil
 	}
 	// The preferRewriteSemiJoin flag only be used here. We should reset it in order to not affect other parts.
-	join.preferJoinType &= ^preferRewriteSemiJoin
+	join.preferJoinType &= ^h.PreferRewriteSemiJoin
 
 	if join.JoinType == LeftOuterSemiJoin {
-		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("SEMI_JOIN_REWRITE() is inapplicable for LeftOuterSemiJoin."))
+		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("SEMI_JOIN_REWRITE() is inapplicable for LeftOuterSemiJoin."))
 		return p, nil
 	}
 
@@ -66,7 +67,7 @@ func (smj *semiJoinRewriter) recursivePlan(p LogicalPlan) (LogicalPlan, error) {
 
 	// If there's left condition or other condition, we cannot rewrite
 	if len(join.LeftConditions) > 0 || len(join.OtherConditions) > 0 {
-		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("SEMI_JOIN_REWRITE() is inapplicable for SemiJoin with left conditions or other conditions."))
+		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("SEMI_JOIN_REWRITE() is inapplicable for SemiJoin with left conditions or other conditions."))
 		return p, nil
 	}
 

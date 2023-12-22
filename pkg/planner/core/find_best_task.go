@@ -38,6 +38,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/tracing"
@@ -1118,7 +1119,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 	pruningInfo := ds.getPruningInfo(candidates, prop)
 	defer func() {
 		if err == nil && t != nil && !t.invalid() && pruningInfo != "" {
-			warnErr := errors.New(pruningInfo)
+			warnErr := errors.NewNoStackError(pruningInfo)
 			if ds.SCtx().GetSessionVars().StmtCtx.InVerboseExplain {
 				ds.SCtx().GetSessionVars().StmtCtx.AppendNote(warnErr)
 			} else {
@@ -1257,10 +1258,10 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			}
 		}
 		if path.IsTablePath() {
-			if ds.preferStoreType&preferTiFlash != 0 && path.StoreType == kv.TiKV {
+			if ds.preferStoreType&h.PreferTiFlash != 0 && path.StoreType == kv.TiKV {
 				continue
 			}
-			if ds.preferStoreType&preferTiKV != 0 && path.StoreType == kv.TiFlash {
+			if ds.preferStoreType&h.PreferTiKV != 0 && path.StoreType == kv.TiFlash {
 				continue
 			}
 			var tblTask task
@@ -1290,7 +1291,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 			continue
 		}
 		// TiFlash storage do not support index scan.
-		if ds.preferStoreType&preferTiFlash != 0 {
+		if ds.preferStoreType&h.PreferTiFlash != 0 {
 			continue
 		}
 		idxTask, err := ds.convertToIndexScan(prop, candidate, opt)

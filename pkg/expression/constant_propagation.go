@@ -56,7 +56,7 @@ func (s *basePropConstSolver) insertCol(col *Column) {
 // tryToUpdateEQList tries to update the eqList. When the eqList has store this column with a different constant, like
 // a = 1 and a = 2, we set the second return value to false.
 func (s *basePropConstSolver) tryToUpdateEQList(col *Column, con *Constant) (bool, bool) {
-	if con.ConstItem(s.ctx.GetSessionVars().StmtCtx) && con.Value.IsNull() {
+	if con.ConstItem(s.ctx.GetSessionVars().StmtCtx.UseCache) && con.Value.IsNull() {
 		return false, true
 	}
 	id := s.getColID(col)

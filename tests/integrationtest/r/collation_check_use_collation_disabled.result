@@ -30,7 +30,6 @@ drop table if exists t;
 create table t(a enum('a', 'b') charset utf8mb4 collate utf8mb4_general_ci, b varchar(20));
 insert into t values ("b", "c");
 insert into t values ("B", "b");
-Error 1265 (01000): Data truncated for column 'a' at row 1
 select * from t where 'B' collate utf8mb4_general_ci in (a);
 a	b
 select * from t where 'B' collate utf8mb4_bin in (a);
@@ -80,7 +79,6 @@ drop table if exists t;
 create table t(a set('a', 'b') charset utf8mb4 collate utf8mb4_general_ci, b varchar(20));
 insert into t values ("b", "c");
 insert into t values ("B", "b");
-Error 1265 (01000): Data truncated for column 'a' at row 1
 select * from t where 'B' collate utf8mb4_general_ci in (a);
 a	b
 select * from t where 'B' collate utf8mb4_bin in (a);
