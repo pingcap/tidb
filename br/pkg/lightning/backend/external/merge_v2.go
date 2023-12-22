@@ -211,9 +211,9 @@ func getGroups(ctx context.Context, splitter *RangeSplitter, startKey kv.Key, en
 		if err != nil {
 			return nil, err
 		}
-		curEnd := endKeyOfGroup
+		curEnd := kv.Key(endKeyOfGroup).Clone()
 		if len(endKeyOfGroup) == 0 {
-			curEnd = endKey
+			curEnd = kv.Key(endKey).Clone()
 		}
 		readerGroups = append(readerGroups, &readerGroup{
 			dataFiles: dataFilesOfGroup,
