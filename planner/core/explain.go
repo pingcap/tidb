@@ -174,10 +174,11 @@ func (p *PhysicalTableScan) ExplainNormalizedInfo() string {
 func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	var buffer strings.Builder
 	if len(p.rangeInfo) > 0 {
-		// TODO: deal with normalized case
-		buffer.WriteString("range: decided by ")
-		buffer.WriteString(p.rangeInfo)
-		buffer.WriteString(", ")
+		if !normalized {
+			buffer.WriteString("range: decided by ")
+			buffer.WriteString(p.rangeInfo)
+			buffer.WriteString(", ")
+		}
 	} else if p.haveCorCol() {
 		if normalized {
 			buffer.WriteString("range: decided by ")
