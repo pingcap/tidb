@@ -21,6 +21,7 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/util"
 )
 
 type exhaustedHeapElem struct {
@@ -97,7 +98,24 @@ func NewRangeSplitter(
 	maxRangeSize, maxRangeKeys int64,
 	checkHotSpot bool,
 ) (*RangeSplitter, error) {
-	propIter, err := NewMergePropIter(ctx, statFiles, externalStorage, checkHotSpot)
+	memStore := storage.NewMemStorage()
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	eg.SetLimit(1000)
+	for _, file := range statFiles {
+		file := file
+		eg.Go(func() error {
+			content, err := externalStorage.ReadFile(egCtx, file)
+			if err != nil {
+				return err
+			}
+			return memStore.WriteFile(egCtx, file, content)
+		})
+	}
+	if err := eg.Wait(); err != nil {
+		return nil, err
+	}
+
+	propIter, err := NewMergePropIter(ctx, statFiles, memStore, checkHotSpot)
 	if err != nil {
 		return nil, err
 	}
