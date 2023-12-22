@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
@@ -118,19 +117,6 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("set global tidb_server_memory_limit_sess_min_size = %v", originalVal3))
 	}()
 
-	// clean child trackers
-	oldChildTrackers := executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
-	for _, tracker := range oldChildTrackers {
-		tracker.Detach()
-	}
-	defer func() {
-		for _, tracker := range oldChildTrackers {
-			tracker.AttachTo(executor.GlobalAnalyzeMemoryTracker)
-		}
-	}()
-	childTrackers := executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
-	require.Len(t, childTrackers, 0)
-
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int)")
 	tk.MustExec("insert into t select 1")
@@ -171,16 +157,10 @@ func TestGlobalMemoryControlForAutoAnalyze(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockAnalyzeMergeWorkerSlowConsume"))
 	}()
 	tk.MustQuery("select 1")
-	childTrackers = executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
-	require.Len(t, childTrackers, 0)
-
 	h.HandleAutoAnalyze(dom.InfoSchema())
 	rs := tk.MustQuery("select fail_reason from mysql.analyze_jobs where table_name=? and state=? limit 1", "t", "failed")
 	failReason := rs.Rows()[0][0].(string)
 	require.True(t, strings.Contains(failReason, "Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again."))
-
-	childTrackers = executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
-	require.Len(t, childTrackers, 0)
 }
 
 func TestMemQuotaAnalyze(t *testing.T) {
@@ -198,7 +178,7 @@ func TestMemQuotaAnalyze(t *testing.T) {
 	tk.MustExec("insert ignore into tbl_2 values ( 84923,113,-973946646,406140,25040,51,'THQdwkQvppWZnULm',5469507709881346105,94,'oGNmoxLLgHkdyDCT' );")
 	tk.MustExec("insert ignore into tbl_2 values ( 0,-104,-488745187,-1941015,-2646,39,'jyKxfs',-5307175470406648836,46,'KZpfjFounVgFeRPa' );")
 	tk.MustExec("insert ignore into tbl_2 values ( 4,97,2105289255,1034363,28385,192,'',4429378142102752351,8,'jOk' );")
-	tk.MustExec("set global tidb_mem_quota_analyze=128;")
+	tk.MustExec("set global tidb_mem_quota_query=64;")
 	tk.MustExecToErr("analyze table tbl_2;")
 }
 
@@ -208,6 +188,6 @@ func TestMemQuotaAnalyze2(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table tbl_2 ( col_20 decimal default 84232 , col_21 tinyint not null , col_22 int default 80814394 , col_23 mediumint default -8036687 not null , col_24 smallint default 9185 not null , col_25 tinyint unsigned default 65 , col_26 char(115) default 'ZyfroRODMbNDRZnPNRW' not null , col_27 bigint not null , col_28 tinyint not null , col_29 char(130) default 'UMApsVgzHblmY' , primary key idx_14 ( col_28,col_22 ) , unique key idx_15 ( col_24,col_22 ) , key idx_16 ( col_21,col_20,col_24,col_25,col_27,col_28,col_26,col_29 ) , key idx_17 ( col_24,col_25 ) , unique key idx_18 ( col_25,col_23,col_29,col_27,col_26,col_22 ) , key idx_19 ( col_25,col_22,col_26,col_23 ) , unique key idx_20 ( col_22,col_24,col_28,col_29,col_26,col_20 ) , key idx_21 ( col_25,col_24,col_26,col_29,col_27,col_22,col_28 ) );")
 	tk.MustExec("insert ignore into tbl_2 values ( 942,33,-1915007317,3408149,-3699,193,'Trywdis',1876334369465184864,115,null );")
-	tk.MustExec("set global tidb_mem_quota_analyze=128;")
+	tk.MustExec("set global tidb_mem_quota_query=128;")
 	tk.MustExecToErr("analyze table tbl_2;")
 }

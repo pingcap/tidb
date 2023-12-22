@@ -1547,10 +1547,6 @@ var (
 )
 
 var (
-	// SetMemQuotaAnalyze is the func registered by global/subglobal tracker to set memory quota.
-	SetMemQuotaAnalyze func(quota int64) = nil
-	// GetMemQuotaAnalyze is the func registered by global/subglobal tracker to get memory quota.
-	GetMemQuotaAnalyze func() int64 = nil
 	// SetStatsCacheCapacity is the func registered by domain to set statsCache memory quota.
 	SetStatsCacheCapacity atomic.Pointer[func(int64)]
 	// SetPDClientDynamicOption is the func registered by domain
