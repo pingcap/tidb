@@ -128,44 +128,72 @@ const (
 )
 
 const (
-	// Hint flag for join
+	// PreferINLJ indicates that the optimizer prefers to use index nested loop join.
 	PreferINLJ uint = 1 << iota
+	// PreferINLHJ indicates that the optimizer prefers to use index nested loop hash join.
 	PreferINLHJ
+	// PreferINLMJ indicates that the optimizer prefers to use index nested loop merge join.
 	PreferINLMJ
+	// PreferHJBuild indicates that the optimizer prefers to use hash join.
 	PreferHJBuild
+	// PreferHJProbe indicates that the optimizer prefers to use hash join.
 	PreferHJProbe
+	// PreferHashJoin indicates that the optimizer prefers to use hash join.
 	PreferHashJoin
+	// PreferNoHashJoin indicates that the optimizer prefers not to use hash join.
 	PreferNoHashJoin
+	// PreferMergeJoin indicates that the optimizer prefers to use merge join.
 	PreferMergeJoin
+	// PreferNoMergeJoin indicates that the optimizer prefers not to use merge join.
 	PreferNoMergeJoin
+	// PreferNoIndexJoin indicates that the optimizer prefers not to use index join.
 	PreferNoIndexJoin
+	// PreferNoIndexHashJoin indicates that the optimizer prefers not to use index hash join.
 	PreferNoIndexHashJoin
+	// PreferNoIndexMergeJoin indicates that the optimizer prefers not to use index merge join.
 	PreferNoIndexMergeJoin
+	// PreferBCJoin indicates that the optimizer prefers to use broadcast join.
 	PreferBCJoin
+	// PreferShuffleJoin indicates that the optimizer prefers to use shuffle join.
 	PreferShuffleJoin
+	// PreferRewriteSemiJoin indicates that the optimizer prefers to rewrite semi join.
 	PreferRewriteSemiJoin
 
-	// Hint flag to specify the join with direction
+	// PreferLeftAsINLJInner indicates that the optimizer prefers to use left child as inner child of index nested loop join.
 	PreferLeftAsINLJInner
+	// PreferRightAsINLJInner indicates that the optimizer prefers to use right child as inner child of index nested loop join.
 	PreferRightAsINLJInner
+	// PreferLeftAsINLHJInner indicates that the optimizer prefers to use left child as inner child of index nested loop hash join.
 	PreferLeftAsINLHJInner
+	// PreferRightAsINLHJInner indicates that the optimizer prefers to use right child as inner child of index nested loop hash join.
 	PreferRightAsINLHJInner
+	// PreferLeftAsINLMJInner indicates that the optimizer prefers to use left child as inner child of index nested loop merge join.
 	PreferLeftAsINLMJInner
+	// PreferRightAsINLMJInner indicates that the optimizer prefers to use right child as inner child of index nested loop merge join.
 	PreferRightAsINLMJInner
+	// PreferLeftAsHJBuild indicates that the optimizer prefers to use left child as build child of hash join.
 	PreferLeftAsHJBuild
+	// PreferRightAsHJBuild indicates that the optimizer prefers to use right child as build child of hash join.
 	PreferRightAsHJBuild
+	// PreferLeftAsHJProbe indicates that the optimizer prefers to use left child as probe child of hash join.
 	PreferLeftAsHJProbe
+	// PreferRightAsHJProbe indicates that the optimizer prefers to use right child as probe child of hash join.
 	PreferRightAsHJProbe
 
-	// Hint flag for Agg
+	// PreferHashAgg indicates that the optimizer prefers to use hash aggregation.
 	PreferHashAgg
+	// PreferStreamAgg indicates that the optimizer prefers to use stream aggregation.
 	PreferStreamAgg
+	// PreferMPP1PhaseAgg indicates that the optimizer prefers to use 1-phase aggregation.
 	PreferMPP1PhaseAgg
+	// PreferMPP2PhaseAgg indicates that the optimizer prefers to use 2-phase aggregation.
 	PreferMPP2PhaseAgg
 )
 
 const (
+	// PreferTiKV indicates that the optimizer prefers to use TiKV layer.
 	PreferTiKV = 1 << iota
+	// PreferTiFlash indicates that the optimizer prefers to use TiFlash layer.
 	PreferTiFlash
 )
 
