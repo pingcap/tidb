@@ -84,8 +84,6 @@ type BaseScheduler struct {
 	Extension
 
 	balanceSubtaskTick int
-	// TaskNodes stores the exec id of current task executor nodes.
-	TaskNodes []string
 	// rand is for generating random selection of nodes.
 	rand *rand.Rand
 }
@@ -98,12 +96,11 @@ func NewBaseScheduler(ctx context.Context, task *proto.Task, param Param) *BaseS
 	logCtx := logutil.WithFields(context.Background(), zap.Int64("task-id", task.ID),
 		zap.Stringer("task-type", task.Type))
 	return &BaseScheduler{
-		ctx:       ctx,
-		Param:     param,
-		Task:      task,
-		logCtx:    logCtx,
-		TaskNodes: nil,
-		rand:      rand.New(rand.NewSource(time.Now().UnixNano())),
+		ctx:    ctx,
+		Param:  param,
+		Task:   task,
+		logCtx: logCtx,
+		rand:   rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
@@ -348,13 +345,6 @@ func (s *BaseScheduler) onFinished() error {
 
 // balanceSubtasks check the liveNode num every liveNodeFetchInterval then rebalance subtasks.
 func (s *BaseScheduler) balanceSubtasks() error {
-	if len(s.TaskNodes) == 0 {
-		var err error
-		s.TaskNodes, err = s.taskMgr.GetTaskExecutorIDsByTaskIDAndStep(s.ctx, s.Task.ID, s.Task.Step)
-		if err != nil {
-			return err
-		}
-	}
 	s.balanceSubtaskTick++
 	if s.balanceSubtaskTick == defaultBalanceSubtaskTicks {
 		s.balanceSubtaskTick = 0
@@ -376,91 +366,59 @@ func (s *BaseScheduler) doBalanceSubtasks(eligibleNodes []string) error {
 	for _, n := range eligibleNodes {
 		eligibleNodeMap[n] = struct{}{}
 	}
-	// 1. find out nodes need to clean subtasks.
-	deadNodes := make([]string, 0)
-	deadNodesMap := make(map[string]bool, 0)
-	for _, node := range s.TaskNodes {
-		if _, ok := eligibleNodeMap[node]; !ok {
-			deadNodes = append(deadNodes, node)
-			deadNodesMap[node] = true
-		}
-	}
-	// 2. get subtasks for each node before balance.
-	subtasks, err := s.taskMgr.GetSubtasksByStepAndState(s.ctx, s.Task.ID, s.Task.Step, proto.TaskStatePending)
+
+	subtasks, err := s.taskMgr.GetActiveSubtasks(s.ctx, s.Task.ID)
 	if err != nil {
 		return err
 	}
-	if len(deadNodes) != 0 {
-		/// get subtask from deadNodes, since there might be some running subtasks on deadNodes.
-		/// In this case, all subtasks on deadNodes are in running/pending state.
-		subtasksOnDeadNodes, err := s.taskMgr.GetSubtasksByExecIdsAndStepAndState(s.ctx, deadNodes, s.Task.ID, s.Task.Step, proto.TaskStateRunning)
-		if err != nil {
-			return err
-		}
-		subtasks = append(subtasks, subtasksOnDeadNodes...)
-	}
-	// 3. group subtasks for each task executor.
-	subtasksOnTaskExecutor := make(map[string][]*proto.Subtask, len(eligibleNodes)+len(deadNodes))
+	averageSubtaskCnt := (len(subtasks) + len(eligibleNodes) - 1) / len(eligibleNodes)
+	executorSubtasks := make(map[string][]*proto.Subtask, len(eligibleNodes))
+	executorPendingCnts := make(map[string]int, len(eligibleNodes))
 	for _, node := range eligibleNodes {
-		subtasksOnTaskExecutor[node] = make([]*proto.Subtask, 0)
+		executorSubtasks[node] = make([]*proto.Subtask, 0, averageSubtaskCnt)
 	}
 	for _, subtask := range subtasks {
-		subtasksOnTaskExecutor[subtask.ExecID] = append(
-			subtasksOnTaskExecutor[subtask.ExecID],
-			subtask)
-	}
-	// 4. prepare subtasks that need to rebalance to other nodes.
-	averageSubtaskCnt := len(subtasks) / len(eligibleNodes)
-	rebalanceSubtasks := make([]*proto.Subtask, 0)
-	for k, v := range subtasksOnTaskExecutor {
-		if ok := deadNodesMap[k]; ok {
-			rebalanceSubtasks = append(rebalanceSubtasks, v...)
-			continue
+		// put running subtask in the front of slice.
+		// if subtask fail-over, it's possible that there are multiple running
+		// subtasks for one task executor.
+		if subtask.State == proto.TaskStateRunning {
+			executorSubtasks[subtask.ExecID] = append([]*proto.Subtask{subtask}, executorSubtasks[subtask.ExecID]...)
+		} else {
+			executorSubtasks[subtask.ExecID] = append(executorSubtasks[subtask.ExecID], subtask)
+			executorPendingCnts[subtask.ExecID]++
 		}
-		// When no tidb scale-in/out and averageSubtaskCnt*len(eligibleNodes) < len(subtasks),
-		// no need to send subtask to other nodes.
-		// eg: tidb1 with 3 subtasks, tidb2 with 2 subtasks, subtasks are balanced now.
-		if averageSubtaskCnt*len(eligibleNodes) < len(subtasks) && len(s.TaskNodes) == len(eligibleNodes) {
-			if len(v) > averageSubtaskCnt+1 {
-				rebalanceSubtasks = append(rebalanceSubtasks, v[0:len(v)-averageSubtaskCnt]...)
-			}
+	}
+
+	subtasksNeedSchedule := make([]*proto.Subtask, 0)
+	for k, v := range executorSubtasks {
+		if _, ok := eligibleNodeMap[k]; !ok {
+			// dead node
+			subtasksNeedSchedule = append(subtasksNeedSchedule, v...)
 			continue
 		}
 		if len(v) > averageSubtaskCnt {
-			rebalanceSubtasks = append(rebalanceSubtasks, v[0:len(v)-averageSubtaskCnt]...)
+			cnt := min(executorPendingCnts[k], len(v)-averageSubtaskCnt)
+			subtasksNeedSchedule = append(subtasksNeedSchedule, v[len(v)-cnt:]...)
+			executorSubtasks[k] = v[:len(v)-cnt]
 		}
 	}
-	// 5. skip rebalance.
-	if len(rebalanceSubtasks) == 0 {
+	if len(subtasksNeedSchedule) == 0 {
 		return nil
 	}
-	// 6.rebalance subtasks to other nodes.
-	rebalanceIdx := 0
-	for k, v := range subtasksOnTaskExecutor {
-		if ok := deadNodesMap[k]; !ok {
-			if len(v) < averageSubtaskCnt {
-				for i := 0; i < averageSubtaskCnt-len(v) && rebalanceIdx < len(rebalanceSubtasks); i++ {
-					rebalanceSubtasks[rebalanceIdx].ExecID = k
-					rebalanceIdx++
-				}
-			}
+
+	fillIdx := 0
+	for _, node := range eligibleNodes {
+		sts := executorSubtasks[node]
+		for i := len(sts); i <= averageSubtaskCnt && fillIdx < len(subtasksNeedSchedule); i++ {
+			subtasksNeedSchedule[fillIdx].ExecID = node
+			fillIdx++
 		}
 	}
-	// 7. rebalance rest subtasks evenly to liveNodes.
-	liveNodeIdx := 0
-	for rebalanceIdx < len(rebalanceSubtasks) {
-		rebalanceSubtasks[rebalanceIdx].ExecID = eligibleNodes[liveNodeIdx]
-		rebalanceIdx++
-		liveNodeIdx++
-	}
 
-	// 8. update subtasks and do clean up logic.
-	if err = s.taskMgr.UpdateSubtasksExecIDs(s.ctx, s.Task.ID, rebalanceSubtasks); err != nil {
+	if err = s.taskMgr.UpdateSubtasksExecIDs(s.ctx, subtasksNeedSchedule); err != nil {
 		return err
 	}
-	logutil.Logger(s.logCtx).Info("balance subtasks",
-		zap.Stringers("subtasks-rebalanced", rebalanceSubtasks))
-	s.TaskNodes = append([]string{}, eligibleNodes...)
+	logutil.Logger(s.logCtx).Info("balance subtasks", zap.Stringers("balanced-cnt", subtasksNeedSchedule))
 	return nil
 }
 
@@ -599,10 +557,10 @@ func (s *BaseScheduler) scheduleSubTask(
 		zap.Int64("step", int64(s.Task.Step)),
 		zap.Int("concurrency", s.Task.Concurrency),
 		zap.Int("subtasks", len(metas)))
-	s.TaskNodes = serverNodes
 
 	// the scheduled node of the subtask might not be optimal, as we run all
-	// scheduler in parallel, and update might be called too many times.
+	// scheduler in parallel, and update might be called too many times when
+	// multiple tasks are switching to next step.
 	if err := s.slotMgr.update(s.ctx, s.nodeMgr, s.taskMgr); err != nil {
 		return err
 	}

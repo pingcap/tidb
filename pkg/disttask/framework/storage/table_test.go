@@ -594,7 +594,7 @@ func TestSubTaskTable(t *testing.T) {
 	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	subtasks[0].ExecID = "tidb2"
-	require.NoError(t, sm.UpdateSubtasksExecIDs(ctx, 5, subtasks))
+	require.NoError(t, sm.UpdateSubtasksExecIDs(ctx, subtasks))
 	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, "tidb2", subtasks[0].ExecID)
@@ -603,7 +603,7 @@ func TestSubTaskTable(t *testing.T) {
 	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	subtasks[0].ExecID = "tidb3"
-	require.NoError(t, sm.UpdateSubtasksExecIDs(ctx, 5, subtasks))
+	require.NoError(t, sm.UpdateSubtasksExecIDs(ctx, subtasks))
 	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, "tidb3", subtasks[0].ExecID)
@@ -615,7 +615,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.Equal(t, "tidb3", subtasks[0].ExecID)
 	subtasks[0].ExecID = "tidb2"
 	// update success
-	require.NoError(t, sm.UpdateSubtasksExecIDs(ctx, 5, subtasks))
+	require.NoError(t, sm.UpdateSubtasksExecIDs(ctx, subtasks))
 	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 5, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, "tidb2", subtasks[0].ExecID)

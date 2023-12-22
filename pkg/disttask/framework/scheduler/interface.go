@@ -60,11 +60,13 @@ type TaskManager interface {
 	// we only consider pending/running subtasks, subtasks related to revert are
 	// not considered.
 	GetUsedSlotsOnNodes(ctx context.Context) (map[string]int, error)
+	// GetActiveSubtasks returns subtasks of the task that are in pending/running state.
+	GetActiveSubtasks(ctx context.Context, taskID int64) ([]*proto.Subtask, error)
 	GetSubtaskInStatesCnt(ctx context.Context, taskID int64, states ...interface{}) (int64, error)
 	ResumeSubtasks(ctx context.Context, taskID int64) error
 	CollectSubTaskError(ctx context.Context, taskID int64) ([]error, error)
 	TransferSubTasks2History(ctx context.Context, taskID int64) error
-	UpdateSubtasksExecIDs(ctx context.Context, taskID int64, subtasks []*proto.Subtask) error
+	UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.Subtask) error
 	// GetManagedNodes returns the nodes managed by dist framework and can be used
 	// to execute tasks. If there are any nodes with background role, we use them,
 	// else we use nodes without role.

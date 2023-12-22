@@ -602,11 +602,12 @@ func (stm *TaskManager) PrintSubtaskInfo(ctx context.Context, taskID int64) {
 	}
 }
 
-func (stm *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64, step proto.Step) ([]*proto.Subtask, error) {
+// GetActiveSubtasks implements TaskManager.GetActiveSubtasks.
+func (stm *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64) ([]*proto.Subtask, error) {
 	rs, err := stm.executeSQLWithNewSession(ctx, `
 		select `+basicSubtaskColumns+` from mysql.tidb_background_subtask
-		where task_key = %? and step = %? and state in (%?, %?)`,
-		taskID, step, proto.TaskStatePending, proto.TaskStateRunning)
+		where task_key = %? and state in (%?, %?)`,
+		taskID, proto.TaskStatePending, proto.TaskStateRunning)
 	if err != nil {
 		return nil, err
 	}
@@ -809,19 +810,18 @@ func (stm *TaskManager) IsTaskExecutorCanceled(ctx context.Context, execID strin
 }
 
 // UpdateSubtasksExecIDs update subtasks' execID.
-func (stm *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, taskID int64, subtasks []*proto.Subtask) error {
+func (stm *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.Subtask) error {
 	// skip the update process.
 	if len(subtasks) == 0 {
 		return nil
 	}
 	err := stm.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		for _, subtask := range subtasks {
-			_, err := ExecSQL(ctx, se,
-				"update mysql.tidb_background_subtask set exec_id = %? where id = %? and state = %? and task_key = %?",
-				subtask.ExecID,
-				subtask.ID,
-				subtask.State,
-				taskID)
+			_, err := ExecSQL(ctx, se, `
+				update mysql.tidb_background_subtask
+				set exec_id = %?
+				where id = %? and state = %?`,
+				subtask.ExecID, subtask.ID, subtask.State)
 			if err != nil {
 				return err
 			}
