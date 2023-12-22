@@ -223,7 +223,7 @@ func getGroups(ctx context.Context, splitter *RangeSplitter, startKey kv.Key, en
 		})
 
 		logutil.BgLogger().Info("ywq test keys", zap.Binary("start", curStart), zap.Binary("end", curEnd))
-		curStart = curEnd
+		curStart = kv.Key(curEnd).Clone()
 		if len(endKeyOfGroup) == 0 {
 			break
 		}
