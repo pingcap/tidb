@@ -14,7 +14,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/br/pkg/utils/pipeline"
 	"go.uber.org/zap"
 )
 
@@ -51,7 +50,7 @@ type Batcher struct {
 	// sendCh is for communiate with sendWorker.
 	sendCh chan<- SendType
 	// outCh is for output the restored table, so it can be sent to do something like checksum.
-	outCh chan *CreatedTable
+	outCh chan<- *CreatedTable
 
 	updateCh glue.Progress
 
@@ -61,40 +60,6 @@ type Batcher struct {
 	size               int32
 
 	checkpointSetWithTableID map[int64]map[string]struct{}
-}
-
-func (b *Batcher) Name() string {
-	return "import"
-}
-
-func (b *Batcher) Size() int {
-	return 0
-}
-
-func (b *Batcher) MainLoop(ctx pipeline.Context[CreatedTable], input <-chan TableWithRange) {
-	defer ctx.Finish()
-
-	for {
-		select {
-		case <-ctx.Done():
-			ctx.EmitErr(ctx.Err())
-			return
-		case in, ok := <-input:
-			if !ok {
-				b.Close()
-				input = nil
-				continue
-			}
-			b.Add(in)
-		case out, ok := <-b.outCh:
-			if !ok {
-				return
-			}
-			if !pipeline.TryEmit(ctx, *out) {
-				return
-			}
-		}
-	}
 }
 
 // Len calculate the current size of this batcher.
@@ -145,7 +110,7 @@ func NewBatcher(
 	manager ContextManager,
 	errCh chan<- error,
 	updateCh glue.Progress,
-) *Batcher {
+) (*Batcher, chan *CreatedTable) {
 	outCh := DefaultOutputTableChan()
 	sendChan := make(chan SendType, 2)
 	b := &Batcher{
@@ -166,7 +131,7 @@ func NewBatcher(
 	go b.contextCleaner(ctx, restoredTables)
 	sink := chanTableSink{restoredTables, errCh}
 	sender.PutSink(sink)
-	return b
+	return b, outCh
 }
 
 // EnableAutoCommit enables the batcher commit batch periodically even batcher size isn't big enough.

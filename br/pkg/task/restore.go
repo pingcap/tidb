@@ -27,9 +27,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/br/pkg/utils/pipeline"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -894,7 +894,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// We make bigger errCh so we won't block on multi-part failed.
 	errCh := make(chan error, 32)
 
-	creatingTables := pipeline.Traced(restore.NewCreateTablesPipe(client, mgr.GetDomain(), tables, newTS))
+	tableStream := client.GoCreateTables(ctx, mgr.GetDomain(), tables, newTS, errCh)
 
 	if len(files) == 0 {
 		log.Info("no files, empty databases and tables are restored")
@@ -914,7 +914,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 
 		// Hijack the tableStream and rewrite the rewrite rules.
-		creatingTables = pipeline.AppendFunc(creatingTables, func(t restore.CreatedTable) restore.CreatedTable {
+		tableStream = util.ChanMap(tableStream, func(t restore.CreatedTable) restore.CreatedTable {
 			// Set the keyspace info for the checksum requests
 			t.RewriteRule.OldKeyspace = oldKeyspace
 			t.RewriteRule.NewKeyspace = newKeyspace
@@ -928,7 +928,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	if cfg.tiflashRecorder != nil {
-		creatingTables = pipeline.AppendFunc(creatingTables, func(t restore.CreatedTable) restore.CreatedTable {
+		tableStream = util.ChanMap(tableStream, func(t restore.CreatedTable) restore.CreatedTable {
 			if cfg.tiflashRecorder != nil {
 				cfg.tiflashRecorder.Rewrite(t.OldTable.Info.ID, t.Table.ID)
 			}
@@ -939,7 +939,8 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	tableFileMap := restore.MapTableToFiles(files)
 	log.Debug("mapped table to files", zap.Any("result map", tableFileMap))
 
-	rangeStream := pipeline.Append(creatingTables, restore.NewValidateAndMerge(tableFileMap, mergeRegionSize, mergeRegionCount))
+	rangeStream := restore.GoValidateFileRanges(
+		ctx, tableStream, tableFileMap, mergeRegionSize, mergeRegionCount, errCh)
 
 	rangeSize := restore.EstimateRangeSize(files)
 	summary.CollectInt("restore ranges", rangeSize)
@@ -981,23 +982,21 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 	manager := restore.NewBRContextManager(client)
-	batcher := restore.NewBatcher(ctx, sender, manager, errCh, updateCh)
+	batcher, afterTableRestoredCh := restore.NewBatcher(ctx, sender, manager, errCh, updateCh)
 	batcher.SetCheckpoint(checkpointSetWithTableID)
 	batcher.SetThreshold(batchSize)
 	batcher.EnableAutoCommit(ctx, cfg.BatchFlushInterval)
-	afterRestoreStream := pipeline.Append(rangeStream,
-		pipeline.Traced[restore.TableWithRange, restore.CreatedTable](batcher))
+	go restoreTableStream(ctx, rangeStream, batcher, errCh)
 
-	var finish pipeline.Worker[restore.CreatedTable, restore.CreatedTable]
-	// Checksum
+	var finish <-chan struct{}
+	postHandleCh := afterTableRestoredCh
+
+	// pipeline checksum and load stats
 	if cfg.Checksum {
-		afterChecksum := pipeline.AppendMainLoopFunc(afterRestoreStream, func(ctx pipeline.Context[restore.CreatedTable], input <-chan restore.CreatedTable) {
-			client.GoValidateChecksum(
-				ctx, input, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
-		})
+		afterTableCheckesumedCh := client.GoValidateChecksum(
+			ctx, afterTableRestoredCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
 		afterTableLoadStatsCh := client.GoUpdateMetaAndLoadStats(ctx, afterTableCheckesumedCh, errCh)
 		postHandleCh = afterTableLoadStatsCh
-
 	}
 
 	// pipeline wait Tiflash synced
@@ -1026,12 +1025,15 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}()
 
-	pipeMgr := pipeline.Execute(ctx, finish)
-	_, err = pipeMgr.Collect(ctx)
+	select {
+	case err = <-errCh:
+		err = multierr.Append(err, multierr.Combine(restore.Exhaust(errCh)...))
+	case <-finish:
+	}
 
 	// If any error happened, return now.
 	if err != nil {
-		return errors.Annotatef(err, "during waiting the pipeline finish")
+		return errors.Trace(err)
 	}
 
 	// The cost of rename user table / replace into system table wouldn't be so high.

@@ -63,3 +63,19 @@ func (f CtxFunc[In, Out]) MainLoop(ctx Context[Out], input <-chan In) {
 func AppendCtxFunc[In, Out, Out2 any](w Worker[In, Out], f func(Context[Out2], Out) bool) Worker[In, Out2] {
 	return Append[In, Out, Out2](w, CtxFunc[Out, Out2](f))
 }
+
+type MainLoopFunc[In, Out any] func(ctx Context[Out], input <-chan In)
+
+func (f MainLoopFunc[In, Out]) MainLoop(ctx Context[Out], input <-chan In) {
+	f(ctx, input)
+}
+
+func AppendMainLoopFunc[In, Out, Out2 any](w Worker[In, Out], f func(ctx Context[Out2], input <-chan Out)) Worker[In, Out2] {
+	return Append[In, Out, Out2](w, MainLoopFunc[Out, Out2](f))
+}
+
+type Indriect[In, Out any] struct{ inner Worker[In, Out] }
+
+func (i Indriect[In, Out]) MainLoop(ctx Context[Out], input <-chan In) {
+	i.inner.MainLoop(ctx, input)
+}
