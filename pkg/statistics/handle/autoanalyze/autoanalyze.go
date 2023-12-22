@@ -116,7 +116,7 @@ const BatchUpdateAnalyzeJobSQL = `UPDATE mysql.analyze_jobs
             SET state = 'failed',
             fail_reason = 'TiDB Server is down when running the analyze job',
             process_id = NULL
-            WHERE id IN %?`
+            WHERE id IN (%?)`
 
 func tenMinutesAgo() string {
 	return time.Now().Add(-10 * time.Minute).UTC().Format(types.TimeFormat)
