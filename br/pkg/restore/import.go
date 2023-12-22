@@ -679,6 +679,7 @@ func (importer *FileImporter) downloadSST(
 ) ([]*import_sstpb.SSTMeta, error) {
 	var mu sync.Mutex
 	downloadMetas := make([]*import_sstpb.SSTMeta, 0, len(files))
+	downloadMetasMap := make(map[string]*import_sstpb.SSTMeta)
 	eg, ectx := errgroup.WithContext(ctx)
 	for _, p := range regionInfo.Region.GetPeers() {
 		peer := p
@@ -727,7 +728,7 @@ func (importer *FileImporter) downloadSST(
 				sstMeta.Range.Start = TruncateTS(resp.Range.GetStart())
 				sstMeta.Range.End = TruncateTS(resp.Range.GetEnd())
 				mu.Lock()
-				downloadMetas = append(downloadMetas, sstMeta)
+				downloadMetasMap[file.String()] = sstMeta
 				mu.Unlock()
 			}
 			return nil
@@ -736,7 +737,9 @@ func (importer *FileImporter) downloadSST(
 	if err := eg.Wait(); err != nil {
 		return nil, err
 	}
-
+	for _, sstMeta := range downloadMetasMap {
+		downloadMetas = append(downloadMetas, sstMeta)
+	}
 	return downloadMetas, nil
 }
 
