@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
 type gcSubstituter struct {
@@ -63,7 +64,7 @@ func collectGenerateColumn(lp LogicalPlan, exprToColumn ExprColumnMap) {
 	// detect the read_from_storage(tiflash) hints, since virtual column will
 	// block the mpp task spreading (only supporting MPP table scan), causing
 	// mpp plan fail the cost comparison with tikv index plan.
-	if ds.preferStoreType&preferTiFlash != 0 {
+	if ds.preferStoreType&h.PreferTiFlash != 0 {
 		return
 	}
 	for _, p := range ds.possibleAccessPaths {
