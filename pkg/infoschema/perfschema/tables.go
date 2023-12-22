@@ -343,7 +343,7 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGorout
 	for _, server := range servers {
 		statusAddr := server.StatusAddr
 		if len(statusAddr) == 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("TiKV node %s does not contain status address", server.Address))
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("TiKV node %s does not contain status address", server.Address))
 			continue
 		}
 
