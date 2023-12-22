@@ -240,7 +240,7 @@ type PlanBuilder struct {
 	//   If we meet a subquery, it's clearly that it's a independent problem so we just pop one map out when we finish building the subquery.
 	handleHelper *handleColHelper
 
-	hintProcessor *hint.BlockHintProcessor
+	hintProcessor *hint.QBHintHandler
 	// selectOffset is the offsets of current processing select stmts.
 	selectOffset []int
 
@@ -442,7 +442,7 @@ func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
 // PlannerSelectBlockAsName should be restored after using this builder.
 // This is The comman code pattern to use it:
 // NewPlanBuilder().Init(sctx, is, processor)
-func (b *PlanBuilder) Init(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) (*PlanBuilder, []ast.HintTable) {
+func (b *PlanBuilder) Init(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.QBHintHandler) (*PlanBuilder, []ast.HintTable) {
 	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName.Load()
 	if processor == nil {
 		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&[]ast.HintTable{})

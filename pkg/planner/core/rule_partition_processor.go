@@ -1667,27 +1667,27 @@ func (s *partitionProcessor) resolveOptimizeHint(ds *DataSource, partitionName m
 	}
 
 	// read from storage hint
-	if ds.preferStoreType&preferTiKV > 0 {
-		if len(ds.preferPartitions[preferTiKV]) > 0 {
-			ds.preferStoreType ^= preferTiKV
-			for _, p := range ds.preferPartitions[preferTiKV] {
+	if ds.preferStoreType&h.PreferTiKV > 0 {
+		if len(ds.preferPartitions[h.PreferTiKV]) > 0 {
+			ds.preferStoreType ^= h.PreferTiKV
+			for _, p := range ds.preferPartitions[h.PreferTiKV] {
 				if p.String() == partitionName.String() {
-					ds.preferStoreType |= preferTiKV
+					ds.preferStoreType |= h.PreferTiKV
 				}
 			}
 		}
 	}
-	if ds.preferStoreType&preferTiFlash > 0 {
-		if len(ds.preferPartitions[preferTiFlash]) > 0 {
-			ds.preferStoreType ^= preferTiFlash
-			for _, p := range ds.preferPartitions[preferTiFlash] {
+	if ds.preferStoreType&h.PreferTiFlash > 0 {
+		if len(ds.preferPartitions[h.PreferTiFlash]) > 0 {
+			ds.preferStoreType ^= h.PreferTiFlash
+			for _, p := range ds.preferPartitions[h.PreferTiFlash] {
 				if p.String() == partitionName.String() {
-					ds.preferStoreType |= preferTiFlash
+					ds.preferStoreType |= h.PreferTiFlash
 				}
 			}
 		}
 	}
-	if ds.preferStoreType&preferTiFlash != 0 && ds.preferStoreType&preferTiKV != 0 {
+	if ds.preferStoreType&h.PreferTiFlash != 0 && ds.preferStoreType&h.PreferTiKV != 0 {
 		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(
 			errors.NewNoStackError("hint `read_from_storage` has conflict storage type for the partition " + partitionName.L))
 	}
@@ -1723,9 +1723,9 @@ func (*partitionProcessor) checkHintsApplicable(ds *DataSource, partitionSet set
 		unknownPartitions := checkTableHintsApplicableForPartition(idxMergeHint.Partitions, partitionSet)
 		appendWarnForUnknownPartitions(ds.SCtx(), h.Restore2IndexHint(h.HintIndexMerge, idxMergeHint), unknownPartitions)
 	}
-	unknownPartitions := checkTableHintsApplicableForPartition(ds.preferPartitions[preferTiKV], partitionSet)
+	unknownPartitions := checkTableHintsApplicableForPartition(ds.preferPartitions[h.PreferTiKV], partitionSet)
 	unknownPartitions = append(unknownPartitions,
-		checkTableHintsApplicableForPartition(ds.preferPartitions[preferTiFlash], partitionSet)...)
+		checkTableHintsApplicableForPartition(ds.preferPartitions[h.PreferTiFlash], partitionSet)...)
 	appendWarnForUnknownPartitions(ds.SCtx(), h.HintReadFromStorage, unknownPartitions)
 }
 

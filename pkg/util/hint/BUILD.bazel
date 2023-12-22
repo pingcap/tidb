@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "hint.go",
         "hint_processor.go",
+        "hint_query_block.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/hint",
     visibility = ["//visibility:public"],
