@@ -127,6 +127,48 @@ const (
 	HintFlagNoDecorrelate
 )
 
+const (
+	// Hint flag for join
+	PreferINLJ uint = 1 << iota
+	PreferINLHJ
+	PreferINLMJ
+	PreferHJBuild
+	PreferHJProbe
+	PreferHashJoin
+	PreferNoHashJoin
+	PreferMergeJoin
+	PreferNoMergeJoin
+	PreferNoIndexJoin
+	PreferNoIndexHashJoin
+	PreferNoIndexMergeJoin
+	PreferBCJoin
+	PreferShuffleJoin
+	PreferRewriteSemiJoin
+
+	// Hint flag to specify the join with direction
+	PreferLeftAsINLJInner
+	PreferRightAsINLJInner
+	PreferLeftAsINLHJInner
+	PreferRightAsINLHJInner
+	PreferLeftAsINLMJInner
+	PreferRightAsINLMJInner
+	PreferLeftAsHJBuild
+	PreferRightAsHJBuild
+	PreferLeftAsHJProbe
+	PreferRightAsHJProbe
+
+	// Hint flag for Agg
+	PreferHashAgg
+	PreferStreamAgg
+	PreferMPP1PhaseAgg
+	PreferMPP2PhaseAgg
+)
+
+const (
+	PreferTiKV = 1 << iota
+	PreferTiFlash
+)
+
 // IndexNestedLoopJoinTables stores hint information about index nested loop join.
 type IndexNestedLoopJoinTables struct {
 	INLJTables  []TableInfo

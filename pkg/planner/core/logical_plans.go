@@ -117,48 +117,6 @@ func (tp JoinType) String() string {
 	return "unsupported join type"
 }
 
-const (
-	// Hint flag for join
-	preferINLJ uint = 1 << iota
-	preferINLHJ
-	preferINLMJ
-	preferHJBuild
-	preferHJProbe
-	preferHashJoin
-	preferNoHashJoin
-	preferMergeJoin
-	preferNoMergeJoin
-	preferNoIndexJoin
-	preferNoIndexHashJoin
-	preferNoIndexMergeJoin
-	preferBCJoin
-	preferShuffleJoin
-	preferRewriteSemiJoin
-
-	// Hint flag to specify the join with direction
-	preferLeftAsINLJInner
-	preferRightAsINLJInner
-	preferLeftAsINLHJInner
-	preferRightAsINLHJInner
-	preferLeftAsINLMJInner
-	preferRightAsINLMJInner
-	preferLeftAsHJBuild
-	preferRightAsHJBuild
-	preferLeftAsHJProbe
-	preferRightAsHJProbe
-
-	// Hint flag for Agg
-	preferHashAgg
-	preferStreamAgg
-	preferMPP1PhaseAgg
-	preferMPP2PhaseAgg
-)
-
-const (
-	preferTiKV = 1 << iota
-	preferTiFlash
-)
-
 // LogicalJoin is the logical join plan.
 type LogicalJoin struct {
 	logicalSchemaProducer

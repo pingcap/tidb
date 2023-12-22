@@ -657,116 +657,116 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *h.TableHintInfo) {
 	lhsAlias := extractTableAlias(p.children[0], p.SelectBlockOffset())
 	rhsAlias := extractTableAlias(p.children[1], p.SelectBlockOffset())
 	if hintInfo.IfPreferMergeJoin(lhsAlias) {
-		p.preferJoinType |= preferMergeJoin
-		p.leftPreferJoinType |= preferMergeJoin
+		p.preferJoinType |= h.PreferMergeJoin
+		p.leftPreferJoinType |= h.PreferMergeJoin
 	}
 	if hintInfo.IfPreferMergeJoin(rhsAlias) {
-		p.preferJoinType |= preferMergeJoin
-		p.rightPreferJoinType |= preferMergeJoin
+		p.preferJoinType |= h.PreferMergeJoin
+		p.rightPreferJoinType |= h.PreferMergeJoin
 	}
 	if hintInfo.IfPreferNoMergeJoin(lhsAlias) {
-		p.preferJoinType |= preferNoMergeJoin
-		p.leftPreferJoinType |= preferNoMergeJoin
+		p.preferJoinType |= h.PreferNoMergeJoin
+		p.leftPreferJoinType |= h.PreferNoMergeJoin
 	}
 	if hintInfo.IfPreferNoMergeJoin(rhsAlias) {
-		p.preferJoinType |= preferNoMergeJoin
-		p.rightPreferJoinType |= preferNoMergeJoin
+		p.preferJoinType |= h.PreferNoMergeJoin
+		p.rightPreferJoinType |= h.PreferNoMergeJoin
 	}
 	if hintInfo.IfPreferBroadcastJoin(lhsAlias) {
-		p.preferJoinType |= preferBCJoin
-		p.leftPreferJoinType |= preferBCJoin
+		p.preferJoinType |= h.PreferBCJoin
+		p.leftPreferJoinType |= h.PreferBCJoin
 	}
 	if hintInfo.IfPreferBroadcastJoin(rhsAlias) {
-		p.preferJoinType |= preferBCJoin
-		p.rightPreferJoinType |= preferBCJoin
+		p.preferJoinType |= h.PreferBCJoin
+		p.rightPreferJoinType |= h.PreferBCJoin
 	}
 	if hintInfo.IfPreferShuffleJoin(lhsAlias) {
-		p.preferJoinType |= preferShuffleJoin
-		p.leftPreferJoinType |= preferShuffleJoin
+		p.preferJoinType |= h.PreferShuffleJoin
+		p.leftPreferJoinType |= h.PreferShuffleJoin
 	}
 	if hintInfo.IfPreferShuffleJoin(rhsAlias) {
-		p.preferJoinType |= preferShuffleJoin
-		p.rightPreferJoinType |= preferShuffleJoin
+		p.preferJoinType |= h.PreferShuffleJoin
+		p.rightPreferJoinType |= h.PreferShuffleJoin
 	}
 	if hintInfo.IfPreferHashJoin(lhsAlias) {
-		p.preferJoinType |= preferHashJoin
-		p.leftPreferJoinType |= preferHashJoin
+		p.preferJoinType |= h.PreferHashJoin
+		p.leftPreferJoinType |= h.PreferHashJoin
 	}
 	if hintInfo.IfPreferHashJoin(rhsAlias) {
-		p.preferJoinType |= preferHashJoin
-		p.rightPreferJoinType |= preferHashJoin
+		p.preferJoinType |= h.PreferHashJoin
+		p.rightPreferJoinType |= h.PreferHashJoin
 	}
 	if hintInfo.IfPreferNoHashJoin(lhsAlias) {
-		p.preferJoinType |= preferNoHashJoin
-		p.leftPreferJoinType |= preferNoHashJoin
+		p.preferJoinType |= h.PreferNoHashJoin
+		p.leftPreferJoinType |= h.PreferNoHashJoin
 	}
 	if hintInfo.IfPreferNoHashJoin(rhsAlias) {
-		p.preferJoinType |= preferNoHashJoin
-		p.rightPreferJoinType |= preferNoHashJoin
+		p.preferJoinType |= h.PreferNoHashJoin
+		p.rightPreferJoinType |= h.PreferNoHashJoin
 	}
 	if hintInfo.IfPreferINLJ(lhsAlias) {
-		p.preferJoinType |= preferLeftAsINLJInner
-		p.leftPreferJoinType |= preferINLJ
+		p.preferJoinType |= h.PreferLeftAsINLJInner
+		p.leftPreferJoinType |= h.PreferINLJ
 	}
 	if hintInfo.IfPreferINLJ(rhsAlias) {
-		p.preferJoinType |= preferRightAsINLJInner
-		p.rightPreferJoinType |= preferINLJ
+		p.preferJoinType |= h.PreferRightAsINLJInner
+		p.rightPreferJoinType |= h.PreferINLJ
 	}
 	if hintInfo.IfPreferINLHJ(lhsAlias) {
-		p.preferJoinType |= preferLeftAsINLHJInner
-		p.leftPreferJoinType |= preferINLHJ
+		p.preferJoinType |= h.PreferLeftAsINLHJInner
+		p.leftPreferJoinType |= h.PreferINLHJ
 	}
 	if hintInfo.IfPreferINLHJ(rhsAlias) {
-		p.preferJoinType |= preferRightAsINLHJInner
-		p.rightPreferJoinType |= preferINLHJ
+		p.preferJoinType |= h.PreferRightAsINLHJInner
+		p.rightPreferJoinType |= h.PreferINLHJ
 	}
 	if hintInfo.IfPreferINLMJ(lhsAlias) {
-		p.preferJoinType |= preferLeftAsINLMJInner
-		p.leftPreferJoinType |= preferINLMJ
+		p.preferJoinType |= h.PreferLeftAsINLMJInner
+		p.leftPreferJoinType |= h.PreferINLMJ
 	}
 	if hintInfo.IfPreferINLMJ(rhsAlias) {
-		p.preferJoinType |= preferRightAsINLMJInner
-		p.rightPreferJoinType |= preferINLMJ
+		p.preferJoinType |= h.PreferRightAsINLMJInner
+		p.rightPreferJoinType |= h.PreferINLMJ
 	}
 	if hintInfo.IfPreferNoIndexJoin(lhsAlias) {
-		p.preferJoinType |= preferNoIndexJoin
-		p.leftPreferJoinType |= preferNoIndexJoin
+		p.preferJoinType |= h.PreferNoIndexJoin
+		p.leftPreferJoinType |= h.PreferNoIndexJoin
 	}
 	if hintInfo.IfPreferNoIndexJoin(rhsAlias) {
-		p.preferJoinType |= preferNoIndexJoin
-		p.rightPreferJoinType |= preferNoIndexJoin
+		p.preferJoinType |= h.PreferNoIndexJoin
+		p.rightPreferJoinType |= h.PreferNoIndexJoin
 	}
 	if hintInfo.IfPreferNoIndexHashJoin(lhsAlias) {
-		p.preferJoinType |= preferNoIndexHashJoin
-		p.leftPreferJoinType |= preferNoIndexHashJoin
+		p.preferJoinType |= h.PreferNoIndexHashJoin
+		p.leftPreferJoinType |= h.PreferNoIndexHashJoin
 	}
 	if hintInfo.IfPreferNoIndexHashJoin(rhsAlias) {
-		p.preferJoinType |= preferNoIndexHashJoin
-		p.rightPreferJoinType |= preferNoIndexHashJoin
+		p.preferJoinType |= h.PreferNoIndexHashJoin
+		p.rightPreferJoinType |= h.PreferNoIndexHashJoin
 	}
 	if hintInfo.IfPreferNoIndexMergeJoin(lhsAlias) {
-		p.preferJoinType |= preferNoIndexMergeJoin
-		p.leftPreferJoinType |= preferNoIndexMergeJoin
+		p.preferJoinType |= h.PreferNoIndexMergeJoin
+		p.leftPreferJoinType |= h.PreferNoIndexMergeJoin
 	}
 	if hintInfo.IfPreferNoIndexMergeJoin(rhsAlias) {
-		p.preferJoinType |= preferNoIndexMergeJoin
-		p.rightPreferJoinType |= preferNoIndexMergeJoin
+		p.preferJoinType |= h.PreferNoIndexMergeJoin
+		p.rightPreferJoinType |= h.PreferNoIndexMergeJoin
 	}
 	if hintInfo.IfPreferHJBuild(lhsAlias) {
-		p.preferJoinType |= preferLeftAsHJBuild
-		p.leftPreferJoinType |= preferHJBuild
+		p.preferJoinType |= h.PreferLeftAsHJBuild
+		p.leftPreferJoinType |= h.PreferHJBuild
 	}
 	if hintInfo.IfPreferHJBuild(rhsAlias) {
-		p.preferJoinType |= preferRightAsHJBuild
-		p.rightPreferJoinType |= preferHJBuild
+		p.preferJoinType |= h.PreferRightAsHJBuild
+		p.rightPreferJoinType |= h.PreferHJBuild
 	}
 	if hintInfo.IfPreferHJProbe(lhsAlias) {
-		p.preferJoinType |= preferLeftAsHJProbe
-		p.leftPreferJoinType |= preferHJProbe
+		p.preferJoinType |= h.PreferLeftAsHJProbe
+		p.leftPreferJoinType |= h.PreferHJProbe
 	}
 	if hintInfo.IfPreferHJProbe(rhsAlias) {
-		p.preferJoinType |= preferRightAsHJProbe
-		p.rightPreferJoinType |= preferHJProbe
+		p.preferJoinType |= h.PreferRightAsHJProbe
+		p.rightPreferJoinType |= h.PreferHJProbe
 	}
 	hasConflict := false
 	if !p.SCtx().GetSessionVars().EnableAdvancedJoinHint || p.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
@@ -798,44 +798,44 @@ func setPreferredJoinTypeFromOneSide(preferJoinType uint, isLeft bool) (resJoinT
 	if preferJoinType == 0 {
 		return
 	}
-	if preferJoinType&preferINLJ > 0 {
-		preferJoinType &= ^preferINLJ
+	if preferJoinType&h.PreferINLJ > 0 {
+		preferJoinType &= ^h.PreferINLJ
 		if isLeft {
-			resJoinType |= preferLeftAsINLJInner
+			resJoinType |= h.PreferLeftAsINLJInner
 		} else {
-			resJoinType |= preferRightAsINLJInner
+			resJoinType |= h.PreferRightAsINLJInner
 		}
 	}
-	if preferJoinType&preferINLHJ > 0 {
-		preferJoinType &= ^preferINLHJ
+	if preferJoinType&h.PreferINLHJ > 0 {
+		preferJoinType &= ^h.PreferINLHJ
 		if isLeft {
-			resJoinType |= preferLeftAsINLHJInner
+			resJoinType |= h.PreferLeftAsINLHJInner
 		} else {
-			resJoinType |= preferRightAsINLHJInner
+			resJoinType |= h.PreferRightAsINLHJInner
 		}
 	}
-	if preferJoinType&preferINLMJ > 0 {
-		preferJoinType &= ^preferINLMJ
+	if preferJoinType&h.PreferINLMJ > 0 {
+		preferJoinType &= ^h.PreferINLMJ
 		if isLeft {
-			resJoinType |= preferLeftAsINLMJInner
+			resJoinType |= h.PreferLeftAsINLMJInner
 		} else {
-			resJoinType |= preferRightAsINLMJInner
+			resJoinType |= h.PreferRightAsINLMJInner
 		}
 	}
-	if preferJoinType&preferHJBuild > 0 {
-		preferJoinType &= ^preferHJBuild
+	if preferJoinType&h.PreferHJBuild > 0 {
+		preferJoinType &= ^h.PreferHJBuild
 		if isLeft {
-			resJoinType |= preferLeftAsHJBuild
+			resJoinType |= h.PreferLeftAsHJBuild
 		} else {
-			resJoinType |= preferRightAsHJBuild
+			resJoinType |= h.PreferRightAsHJBuild
 		}
 	}
-	if preferJoinType&preferHJProbe > 0 {
-		preferJoinType &= ^preferHJProbe
+	if preferJoinType&h.PreferHJProbe > 0 {
+		preferJoinType &= ^h.PreferHJProbe
 		if isLeft {
-			resJoinType |= preferLeftAsHJProbe
+			resJoinType |= h.PreferLeftAsHJProbe
 		} else {
-			resJoinType |= preferRightAsHJProbe
+			resJoinType |= h.PreferRightAsHJProbe
 		}
 	}
 	resJoinType |= preferJoinType
@@ -870,12 +870,12 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *h.TableHintInfo) {
 	if hintTbl := hintInfo.IfPreferTiKV(alias); hintTbl != nil {
 		for _, path := range ds.possibleAccessPaths {
 			if path.StoreType == kv.TiKV {
-				ds.preferStoreType |= preferTiKV
-				ds.preferPartitions[preferTiKV] = hintTbl.Partitions
+				ds.preferStoreType |= h.PreferTiKV
+				ds.preferPartitions[h.PreferTiKV] = hintTbl.Partitions
 				break
 			}
 		}
-		if ds.preferStoreType&preferTiKV == 0 {
+		if ds.preferStoreType&h.PreferTiKV == 0 {
 			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
 				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
 				ds.DBName.O, ds.table.Meta().Name.O, kv.TiKV.Name(), ds.SCtx().GetSessionVars().GetIsolationReadEngines())
@@ -898,12 +898,12 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *h.TableHintInfo) {
 		}
 		for _, path := range ds.possibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
-				ds.preferStoreType |= preferTiFlash
-				ds.preferPartitions[preferTiFlash] = hintTbl.Partitions
+				ds.preferStoreType |= h.PreferTiFlash
+				ds.preferPartitions[h.PreferTiFlash] = hintTbl.Partitions
 				break
 			}
 		}
-		if ds.preferStoreType&preferTiFlash == 0 {
+		if ds.preferStoreType&h.PreferTiFlash == 0 {
 			errMsg := fmt.Sprintf("No available path for table %s.%s with the store type %s of the hint /*+ read_from_storage */, "+
 				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
 				ds.DBName.O, ds.table.Meta().Name.O, kv.TiFlash.Name(), ds.SCtx().GetSessionVars().GetIsolationReadEngines())
@@ -4010,17 +4010,17 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		case h.HintNoIndexMergeJoin:
 			noIndexMergeJoinTables = append(noIndexMergeJoinTables, h.TableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case h.HintMPP1PhaseAgg:
-			aggHints.PreferAggType |= preferMPP1PhaseAgg
+			aggHints.PreferAggType |= h.PreferMPP1PhaseAgg
 		case h.HintMPP2PhaseAgg:
-			aggHints.PreferAggType |= preferMPP2PhaseAgg
+			aggHints.PreferAggType |= h.PreferMPP2PhaseAgg
 		case h.HintHashJoinBuild:
 			hjBuildTables = append(hjBuildTables, h.TableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case h.HintHashJoinProbe:
 			hjProbeTables = append(hjProbeTables, h.TableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
 		case h.HintHashAgg:
-			aggHints.PreferAggType |= preferHashAgg
+			aggHints.PreferAggType |= h.PreferHashAgg
 		case h.HintStreamAgg:
-			aggHints.PreferAggType |= preferStreamAgg
+			aggHints.PreferAggType |= h.PreferStreamAgg
 		case h.HintAggToCop:
 			aggHints.PreferAggToCop = true
 		case h.HintUseIndex, h.HintIgnoreIndex, h.HintForceIndex, h.HintOrderIndex, h.HintNoOrderIndex:
@@ -5757,7 +5757,7 @@ func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan LogicalPlan, onConditio
 	// Apply forces to choose hash join currently, so don't worry the hints will take effect if the semi join is in one apply.
 	joinPlan.setPreferredJoinTypeAndOrder(b.TableHints())
 	if forceRewrite {
-		joinPlan.preferJoinType |= preferRewriteSemiJoin
+		joinPlan.preferJoinType |= h.PreferRewriteSemiJoin
 		b.optFlag |= flagSemiJoinRewrite
 	}
 	return joinPlan, nil
@@ -7428,19 +7428,19 @@ func getInnerFromParenthesesAndUnaryPlus(expr ast.ExprNode) ast.ExprNode {
 // containDifferentJoinTypes checks whether `preferJoinType` contains different
 // join types.
 func containDifferentJoinTypes(preferJoinType uint) bool {
-	preferJoinType &= ^preferNoHashJoin
-	preferJoinType &= ^preferNoMergeJoin
-	preferJoinType &= ^preferNoIndexJoin
-	preferJoinType &= ^preferNoIndexHashJoin
-	preferJoinType &= ^preferNoIndexMergeJoin
+	preferJoinType &= ^h.PreferNoHashJoin
+	preferJoinType &= ^h.PreferNoMergeJoin
+	preferJoinType &= ^h.PreferNoIndexJoin
+	preferJoinType &= ^h.PreferNoIndexHashJoin
+	preferJoinType &= ^h.PreferNoIndexMergeJoin
 
-	inlMask := preferRightAsINLJInner ^ preferLeftAsINLJInner
-	inlhjMask := preferRightAsINLHJInner ^ preferLeftAsINLHJInner
-	inlmjMask := preferRightAsINLMJInner ^ preferLeftAsINLMJInner
-	hjRightBuildMask := preferRightAsHJBuild ^ preferLeftAsHJProbe
-	hjLeftBuildMask := preferLeftAsHJBuild ^ preferRightAsHJProbe
+	inlMask := h.PreferRightAsINLJInner ^ h.PreferLeftAsINLJInner
+	inlhjMask := h.PreferRightAsINLHJInner ^ h.PreferLeftAsINLHJInner
+	inlmjMask := h.PreferRightAsINLMJInner ^ h.PreferLeftAsINLMJInner
+	hjRightBuildMask := h.PreferRightAsHJBuild ^ h.PreferLeftAsHJProbe
+	hjLeftBuildMask := h.PreferLeftAsHJBuild ^ h.PreferRightAsHJProbe
 
-	mppMask := preferShuffleJoin ^ preferBCJoin
+	mppMask := h.PreferShuffleJoin ^ h.PreferBCJoin
 	mask := inlMask ^ inlhjMask ^ inlmjMask ^ hjRightBuildMask ^ hjLeftBuildMask
 	onesCount := bits.OnesCount(preferJoinType & ^mask & ^mppMask)
 	if onesCount > 1 || onesCount == 1 && preferJoinType&mask > 0 {
@@ -7467,7 +7467,7 @@ func containDifferentJoinTypes(preferJoinType uint) bool {
 }
 
 func hasMPPJoinHints(preferJoinType uint) bool {
-	return (preferJoinType&preferBCJoin > 0) || (preferJoinType&preferShuffleJoin > 0)
+	return (preferJoinType&h.PreferBCJoin > 0) || (preferJoinType&h.PreferShuffleJoin > 0)
 }
 
 // isJoinHintSupportedInMPPMode is used to check if the specified join hint is available under MPP mode.
@@ -7475,9 +7475,9 @@ func isJoinHintSupportedInMPPMode(preferJoinType uint) bool {
 	if preferJoinType == 0 {
 		return true
 	}
-	mppMask := preferShuffleJoin ^ preferBCJoin
+	mppMask := h.PreferShuffleJoin ^ h.PreferBCJoin
 	// Currently, TiFlash only supports HASH JOIN, so the hint for HASH JOIN is available while other join method hints are forbidden.
-	joinMethodHintSupportedByTiflash := preferHashJoin ^ preferLeftAsHJBuild ^ preferRightAsHJBuild ^ preferLeftAsHJProbe ^ preferRightAsHJProbe
+	joinMethodHintSupportedByTiflash := h.PreferHashJoin ^ h.PreferLeftAsHJBuild ^ h.PreferRightAsHJBuild ^ h.PreferLeftAsHJProbe ^ h.PreferRightAsHJProbe
 	onesCount := bits.OnesCount(preferJoinType & ^joinMethodHintSupportedByTiflash & ^mppMask)
 	return onesCount < 1
 }
