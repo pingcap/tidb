@@ -16,7 +16,6 @@ package core
 
 import (
 	"fmt"
-	h "github.com/pingcap/tidb/pkg/util/hint"
 	"math"
 	"slices"
 	"strings"
@@ -39,6 +38,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tidb/pkg/util/tracing"
