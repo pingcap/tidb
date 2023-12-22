@@ -20,7 +20,8 @@ import (
 	"github.com/pingcap/tidb/sessionctx"
 	"github.com/pingcap/tidb/types"
 	"github.com/pingcap/tidb/util/chunk"
-	"github.com/pkg/errors"
+	"github.com/pingcap/tidb/util/logutil"
+	"go.uber.org/zap"
 )
 
 // Vectorizable checks whether a list of expressions can employ vectorized execution.
@@ -182,7 +183,11 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 				} else {
 					enum, err := types.ParseEnumName(ft.GetElems(), result.GetString(i), ft.GetCollate())
 					if err != nil {
-						return errors.Errorf("Wrong enum value parsed during evaluation")
+						logutil.BgLogger().Debug("Wrong enum name parsed during evaluation",
+							zap.String("The name to be parsed in the ENUM", result.GetString(i)),
+							zap.Strings("The valid names in the ENUM", ft.GetElems()),
+							zap.Error(err),
+						)
 					}
 					buf.AppendEnum(enum)
 				}
@@ -198,7 +203,11 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 				} else {
 					set, err := types.ParseSetName(ft.GetElems(), result.GetString(i), ft.GetCollate())
 					if err != nil {
-						return errors.Errorf("Wrong set value parsed during evaluation")
+						logutil.BgLogger().Debug("Wrong set name parsed during evaluation",
+							zap.String("The name to be parsed in the SET", result.GetString(i)),
+							zap.Strings("The valid names in the SET", ft.GetElems()),
+							zap.Error(err),
+						)
 					}
 					buf.AppendSet(set)
 				}
