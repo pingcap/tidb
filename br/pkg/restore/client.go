@@ -1206,7 +1206,7 @@ func (rc *Client) RestoreSSTFiles(
 	var leftFiles []*backuppb.File
 	for rangeFiles, leftFiles = drainFilesByRange(files, rc.fileImporter.supportMultiIngest); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles, rc.fileImporter.supportMultiIngest) {
 		filesReplica := rangeFiles
-		rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+		eg.Go(func() error {
 			fileStart := time.Now()
 			defer func() {
 				log.Info("import files done", logutil.Files(filesReplica),
