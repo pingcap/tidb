@@ -475,8 +475,12 @@ func (rc *Client) GetFilesInRawRange(startKey []byte, endKey []byte, cf string) 
 
 // SetConcurrency sets the concurrency of dbs tables files.
 func (rc *Client) SetConcurrency(c uint) {
-	log.Info("new worker pool", zap.Uint("currency-count", c))
-	rc.workerPool = utils.NewWorkerPool(c, "file")
+	if rc.storeCount <= 0 {
+		log.Fatal("uninitical store count")
+	}
+	totalCount := c * uint(rc.storeCount)
+	log.Info("new worker pool", zap.Uint("currency-per-store", c), zap.Uint("total", totalCount))
+	rc.workerPool = utils.NewWorkerPool(totalCount, "file")
 	rc.concurrencyPerStore = c
 }
 
@@ -1202,16 +1206,15 @@ func (rc *Client) RestoreSSTFiles(
 	var leftFiles []*backuppb.File
 	for rangeFiles, leftFiles = drainFilesByRange(files, rc.fileImporter.supportMultiIngest); len(rangeFiles) != 0; rangeFiles, leftFiles = drainFilesByRange(leftFiles, rc.fileImporter.supportMultiIngest) {
 		filesReplica := rangeFiles
-		eg.Go(
-			func() error {
-				fileStart := time.Now()
-				defer func() {
-					log.Info("import files done", logutil.Files(filesReplica),
-						zap.Duration("take", time.Since(fileStart)))
-					updateCh.Inc()
-				}()
-				return rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rewriteRules, rc.cipher, rc.backupMeta.ApiVersion)
-			})
+		rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+			fileStart := time.Now()
+			defer func() {
+				log.Info("import files done", logutil.Files(filesReplica),
+					zap.Duration("take", time.Since(fileStart)))
+				updateCh.Inc()
+			}()
+			return rc.fileImporter.ImportSSTFiles(ectx, filesReplica, rewriteRules, rc.cipher, rc.backupMeta.ApiVersion)
+		})
 	}
 
 	if err := eg.Wait(); err != nil {
