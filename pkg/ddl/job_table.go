@@ -84,8 +84,8 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 		not = ""
 		label = "get_job_reorg"
 	}
-	const getJobSQL = `select job_meta, processing from mysql.tidb_ddl_job where job_id in 
-		(select min(job_id) from mysql.tidb_ddl_job group by schema_ids, table_ids, processing) 
+	const getJobSQL = `select job_meta, processing from mysql.tidb_ddl_job where job_id in
+		(select min(job_id) from mysql.tidb_ddl_job group by schema_ids, table_ids, processing)
 		and %s reorg %s order by processing desc, job_id`
 	var excludedJobIDs string
 	if ids := d.runningJobs.allIDs(); len(ids) > 0 {
@@ -104,11 +104,6 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 		err = job.Decode(jobBinary)
 		if err != nil {
 			return nil, errors.Trace(err)
-		}
-
-		if tp != reorg {
-			logutil.BgLogger().Info("get general job",
-				zap.Int64("jobID", job.ID), zap.String("type", job.Type.String()))
 		}
 
 		isRunnable, err := d.processJobDuringUpgrade(se, &job)
