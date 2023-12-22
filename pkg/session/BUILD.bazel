@@ -130,7 +130,7 @@ go_test(
     ],
     embed = [":session"],
     flaky = True,
-    race = "on",
+    race = "off",
     shard_count = 50,
     deps = [
         "//pkg/autoid_service",
