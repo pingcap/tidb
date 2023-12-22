@@ -1145,11 +1145,6 @@ func TestTiDBCostModelInNewCluster(t *testing.T) {
 }
 
 func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
-	// This test is used to check when upgrading a cluster from v3.x to the latest version, the default
-	// value of tidb_cost_model_version is 1.
-	// But this test is too slow now since it has to execute all updateToVerXX functions from v3.0.0 to the latest version.
-	// Currently, v3.x is too old, so we skip this test.
-	t.Skip("too slow and unnecessary")
 	ctx := context.Background()
 	store, _ := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
