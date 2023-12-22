@@ -61,9 +61,10 @@ func seekPropsOffsets(
 	moved := false
 	for iter.Next() {
 		p := iter.prop()
-		propKey := kv.Key(p.firstKey)
+		propKey := kv.Key(p.firstKey).Clone()
 		if propKey.Cmp(start) > 0 {
 			if !moved {
+				logger.Info("ywq test key", zap.Binary("startKey", start), zap.Binary("propKey", propKey))
 				return nil, fmt.Errorf("start key %s is too small for stat files %v, propKey %s",
 					start.String(),
 					paths,
