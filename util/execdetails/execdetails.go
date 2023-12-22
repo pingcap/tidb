@@ -543,13 +543,9 @@ func (e *basicCopRuntimeStats) Merge(rs RuntimeStats) {
 	e.threads += tmp.threads
 	e.totalTasks += tmp.totalTasks
 	if tmp.procTimes.Size() == 0 {
-		e.procTimes.Add(Duration(tmp.consume))
+		e.procTimes.Add(Duration(tmp.consume.Load()))
 	} else {
-<<<<<<< HEAD
 		e.procTimes.MergePercentile(&tmp.procTimes)
-=======
-		e.procTimes = append(e.procTimes, time.Duration(tmp.consume.Load()))
->>>>>>> ed86b9c7419 (execdetails: fix data race in the BasicRuntimeStats (#42338))
 	}
 	e.tiflashScanContext.Merge(tmp.tiflashScanContext)
 }
@@ -614,15 +610,9 @@ func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
 func (crs *CopRuntimeStats) MergeBasicStats() (procTimes Percentile[Duration], totalTime time.Duration, totalTasks, totalLoops, totalThreads int32, totalTiFlashScanContext TiFlashScanContext) {
 	totalTiFlashScanContext = TiFlashScanContext{}
 	for _, instanceStats := range crs.stats {
-<<<<<<< HEAD
 		procTimes.MergePercentile(&instanceStats.procTimes)
-		totalTime += time.Duration(instanceStats.consume)
-		totalLoops += instanceStats.loop
-=======
-		procTimes = append(procTimes, instanceStats.procTimes...)
 		totalTime += time.Duration(instanceStats.consume.Load())
 		totalLoops += instanceStats.loop.Load()
->>>>>>> ed86b9c7419 (execdetails: fix data race in the BasicRuntimeStats (#42338))
 		totalThreads += instanceStats.threads
 		totalTiFlashScanContext.Merge(instanceStats.tiflashScanContext)
 		totalTasks += instanceStats.totalTasks
