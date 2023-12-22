@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "core",
+    srcs = ["indexmerge_path.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/core",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_tidb_pkg_parser//ast:go_default_library",
+        "@com_github_pingcap_tidb_pkg_parser//charset:go_default_library",
+        "@com_github_pingcap_tidb_pkg_parser//model:go_default_library",
+        "@com_github_pingcap_tidb_pkg_parser//mysql:go_default_library",
+        "@org_uber_go_zap//:zap",
+    ],
+)
