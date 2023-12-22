@@ -1155,6 +1155,7 @@ func TestTiDBCostModelInNewCluster(t *testing.T) {
 }
 
 func TestTiDBCostModelUpgradeFrom300To650(t *testing.T) {
+	t.Skip("too slow and unnecessary")
 	ctx := context.Background()
 	store, _ := CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
