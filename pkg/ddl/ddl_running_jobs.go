@@ -122,7 +122,7 @@ func (j *runningJobs) allIDs() string {
 func (j *runningJobs) updateInternalRunningJobIDs() {
 	var sb strings.Builder
 	i := 0
-	for id, _ := range j.ids {
+	for id := range j.ids {
 		sb.WriteString(strconv.Itoa(int(id)))
 		if i != len(j.ids)-1 {
 			sb.WriteString(",")
