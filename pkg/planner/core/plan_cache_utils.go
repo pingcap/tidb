@@ -168,7 +168,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	var p Plan
-	destBuilder, _ := NewPlanBuilder().Init(sctx, ret.InfoSchema, &hint.BlockHintProcessor{})
+	destBuilder, _ := NewPlanBuilder().Init(sctx, ret.InfoSchema, &hint.QBHintHandler{})
 	p, err = destBuilder.Build(ctx, paramStmt)
 	if err != nil {
 		return nil, nil, 0, err

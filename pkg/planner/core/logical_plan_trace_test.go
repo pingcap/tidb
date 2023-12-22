@@ -411,7 +411,7 @@ func TestSingleRuleTraceStep(t *testing.T) {
 		sctx := MockContext()
 		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
 		sctx.GetSessionVars().AllowAggPushDown = true
-		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.QBHintHandler{})
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		ctx := context.TODO()
 		p, err := builder.Build(ctx, stmt)

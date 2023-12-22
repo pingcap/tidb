@@ -4145,66 +4145,10 @@ func (b *PlanBuilder) popVisitInfo() {
 
 func (b *PlanBuilder) popTableHints() {
 	hintInfo := b.tableHintInfo[len(b.tableHintInfo)-1]
-	b.appendUnmatchedIndexHintWarning(hintInfo.IndexHintList, false)
-	b.appendUnmatchedIndexHintWarning(hintInfo.IndexMergeHintList, true)
-	b.appendUnmatchedJoinHintWarning(h.HintINLJ, h.TiDBIndexNestedLoopJoin, hintInfo.IndexNestedLoopJoinTables.INLJTables)
-	b.appendUnmatchedJoinHintWarning(h.HintINLHJ, "", hintInfo.IndexNestedLoopJoinTables.INLHJTables)
-	b.appendUnmatchedJoinHintWarning(h.HintINLMJ, "", hintInfo.IndexNestedLoopJoinTables.INLMJTables)
-	b.appendUnmatchedJoinHintWarning(h.HintSMJ, h.TiDBMergeJoin, hintInfo.SortMergeJoinTables)
-	b.appendUnmatchedJoinHintWarning(h.HintBCJ, h.TiDBBroadCastJoin, hintInfo.BroadcastJoinTables)
-	b.appendUnmatchedJoinHintWarning(h.HintShuffleJoin, h.HintShuffleJoin, hintInfo.ShuffleJoinTables)
-	b.appendUnmatchedJoinHintWarning(h.HintHJ, h.TiDBHashJoin, hintInfo.HashJoinTables)
-	b.appendUnmatchedJoinHintWarning(h.HintHashJoinBuild, "", hintInfo.HJBuildTables)
-	b.appendUnmatchedJoinHintWarning(h.HintHashJoinProbe, "", hintInfo.HJProbeTables)
-	b.appendUnmatchedJoinHintWarning(h.HintLeading, "", hintInfo.LeadingJoinOrder)
-	b.appendUnmatchedStorageHintWarning(hintInfo.TiFlashTables, hintInfo.TiKVTables)
+	for _, warning := range h.CollectUnmatchedHintWarnings(hintInfo) {
+		b.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+	}
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
-}
-
-func (b *PlanBuilder) appendUnmatchedIndexHintWarning(indexHints []h.IndexHintInfo, usedForIndexMerge bool) {
-	for _, hint := range indexHints {
-		if !hint.Matched {
-			var hintTypeString string
-			if usedForIndexMerge {
-				hintTypeString = "use_index_merge"
-			} else {
-				hintTypeString = hint.HintTypeString()
-			}
-			errMsg := fmt.Sprintf("%s(%s) is inapplicable, check whether the table(%s.%s) exists",
-				hintTypeString,
-				hint.IndexString(),
-				hint.DBName,
-				hint.TblName,
-			)
-			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(errMsg))
-		}
-	}
-}
-
-func (b *PlanBuilder) appendUnmatchedJoinHintWarning(joinType string, joinTypeAlias string, hintTables []h.TableInfo) {
-	unMatchedTables := h.ExtractUnmatchedTables(hintTables)
-	if len(unMatchedTables) == 0 {
-		return
-	}
-	if len(joinTypeAlias) != 0 {
-		joinTypeAlias = fmt.Sprintf(" or %s", h.Restore2JoinHint(joinTypeAlias, hintTables))
-	}
-
-	errMsg := fmt.Sprintf("There are no matching table names for (%s) in optimizer hint %s%s. Maybe you can use the table alias name",
-		strings.Join(unMatchedTables, ", "), h.Restore2JoinHint(joinType, hintTables), joinTypeAlias)
-	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
-}
-
-func (b *PlanBuilder) appendUnmatchedStorageHintWarning(tiflashTables, tikvTables []h.TableInfo) {
-	unMatchedTiFlashTables := h.ExtractUnmatchedTables(tiflashTables)
-	unMatchedTiKVTables := h.ExtractUnmatchedTables(tikvTables)
-	if len(unMatchedTiFlashTables)+len(unMatchedTiKVTables) == 0 {
-		return
-	}
-	errMsg := fmt.Sprintf("There are no matching table names for (%s) in optimizer hint %s. Maybe you can use the table alias name",
-		strings.Join(append(unMatchedTiFlashTables, unMatchedTiKVTables...), ", "),
-		h.Restore2StorageHint(tiflashTables, tikvTables))
-	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(errMsg))
 }
 
 // TableHints returns the *TableHintInfo of PlanBuilder.
@@ -5020,7 +4964,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		// Get the hints belong to the current view.
 		currentQBNameMap4View := make(map[string][]ast.HintTable)
 		currentViewHints := make(map[string][]*ast.TableOptimizerHint)
-		for qbName, viewQBNameHintTable := range b.hintProcessor.QbNameMap4View {
+		for qbName, viewQBNameHintTable := range b.hintProcessor.ViewQBNameToTable {
 			if len(viewQBNameHintTable) == 0 {
 				continue
 			}
@@ -5040,8 +4984,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 				// It means the hint belong the current view, the first view name in hint is matched.
 				// Because of the nested views, so we should check the left table list in hint when build the data source from the view inside the current view.
 				currentQBNameMap4View[qbName] = viewQBNameHintTable[1:]
-				currentViewHints[qbName] = b.hintProcessor.QbHints4View[qbName]
-				b.hintProcessor.QbNameUsed4View[qbName] = struct{}{}
+				currentViewHints[qbName] = b.hintProcessor.ViewQBNameToHints[qbName]
+				b.hintProcessor.ViewQBNameUsed[qbName] = struct{}{}
 			}
 		}
 		return b.BuildDataSourceFromView(ctx, dbName, tableInfo, currentQBNameMap4View, currentViewHints)
@@ -5577,7 +5521,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 		b.buildingCTE = o
 	}()
 
-	hintProcessor := &h.BlockHintProcessor{Ctx: b.ctx}
+	hintProcessor := &h.QBHintHandler{Ctx: b.ctx}
 	selectNode.Accept(hintProcessor)
 	currentQbNameMap4View := make(map[string][]ast.HintTable)
 	currentQbHints4View := make(map[string][]*ast.TableOptimizerHint)
@@ -5607,11 +5551,11 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 		}
 	}
 
-	hintProcessor.QbNameMap4View = qbNameMap4View
-	hintProcessor.QbHints4View = viewHints
-	hintProcessor.QbNameUsed4View = make(map[string]struct{})
-	hintProcessor.QbHints = currentQbHints
-	hintProcessor.QbNameMap = currentQbNameMap
+	hintProcessor.ViewQBNameToTable = qbNameMap4View
+	hintProcessor.ViewQBNameToHints = viewHints
+	hintProcessor.ViewQBNameUsed = make(map[string]struct{})
+	hintProcessor.SelOffsetToHints = currentQbHints
+	hintProcessor.QBNameToSelOffset = currentQbNameMap
 
 	originHintProcessor := b.hintProcessor
 	originPlannerSelectBlockAsName := b.ctx.GetSessionVars().PlannerSelectBlockAsName.Load()
