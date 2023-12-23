@@ -153,9 +153,10 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 	var handleFms *statistics.FMSketch
 	var handleTopn *statistics.TopN
 	statsVer := statistics.Version1
+	analyzeOptCMSketchDepth, analyzeOptCMSketchWidth := int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth])
 	if e.analyzePB.Tp == tipb.AnalyzeType_TypeMixed {
 		handleHist = &statistics.Histogram{}
-		handleCms = statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth]))
+		handleCms = statistics.NewCMSketch(analyzeOptCMSketchDepth, analyzeOptCMSketchWidth)
 		handleTopn = statistics.NewTopN(int(e.opts[ast.AnalyzeOptNumTopN]))
 		handleFms = statistics.NewFMSketch(maxSketchSize)
 		if e.analyzePB.IdxReq.Version != nil {
@@ -169,7 +170,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 			IsMerger:      true,
 			FMSketch:      statistics.NewFMSketch(maxSketchSize),
 			MaxSampleSize: int64(e.opts[ast.AnalyzeOptNumSamples]),
-			CMSketch:      statistics.NewCMSketch(int32(e.opts[ast.AnalyzeOptCMSketchDepth]), int32(e.opts[ast.AnalyzeOptCMSketchWidth])),
+			CMSketch:      statistics.NewCMSketch(analyzeOptCMSketchDepth, analyzeOptCMSketchWidth),
 		}
 	}
 	for {
