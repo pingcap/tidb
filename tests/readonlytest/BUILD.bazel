@@ -9,7 +9,13 @@ go_test(
     ],
     flaky = True,
     deps = [
+<<<<<<< HEAD
         "//testkit/testsetup",
+=======
+        "//pkg/kv",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+>>>>>>> cb7d2b7df71 (session: fix wrong test logic of tidb_super_read_only (#49660))
         "@com_github_go_sql_driver_mysql//:mysql",
         "@com_github_stretchr_testify//require",
         "@io_opencensus_go//stats/view",
