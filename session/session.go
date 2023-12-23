@@ -538,6 +538,21 @@ func (s *session) doCommit(ctx context.Context) error {
 	if s.txn.IsReadOnly() {
 		return nil
 	}
+<<<<<<< HEAD:session/session.go
+=======
+	// check if the cluster is read-only
+	if !s.sessionVars.InRestrictedSQL && (variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load()) {
+		// It is not internal SQL, and the cluster has one of RestrictedReadOnly or SuperReadOnly
+		// We need to privilege check again: a privilege check occurred during planning, but we need
+		// to prevent the case that a long running auto-commit statement is now trying to commit.
+		pm := privilege.GetPrivilegeManager(s)
+		roles := s.sessionVars.ActiveRoles
+		if pm != nil && !pm.HasExplicitlyGrantedDynamicPrivilege(roles, "RESTRICTED_REPLICA_WRITER_ADMIN", false) {
+			s.RollbackTxn(ctx)
+			return plannercore.ErrSQLInReadOnlyMode
+		}
+	}
+>>>>>>> cb7d2b7df71 (session: fix wrong test logic of tidb_super_read_only (#49660)):pkg/session/session.go
 	err := s.checkPlacementPolicyBeforeCommit()
 	if err != nil {
 		return err
