@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
-	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"go.uber.org/zap"
@@ -84,6 +83,7 @@ type Manager struct {
 	wg          tidbutil.WaitGroupWrapper
 	gPool       *spool.Pool
 	slotMgr     *slotManager
+	nodeMgr     *NodeManager
 	initialized bool
 	// serverID, it's value is ip:port now.
 	serverID string
@@ -102,6 +102,7 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) (*Man
 		taskMgr:  taskMgr,
 		serverID: serverID,
 		slotMgr:  newSlotManager(),
+		nodeMgr:  newNodeManager(),
 	}
 	gPool, err := spool.NewPool("schedule_pool", int32(proto.MaxConcurrentTask), util.DistTask, spool.WithBlocking(true))
 	if err != nil {
@@ -120,9 +121,18 @@ func (sm *Manager) Start() {
 	failpoint.Inject("disableSchedulerManager", func() {
 		failpoint.Return()
 	})
+	// init cached managed nodes
+	sm.nodeMgr.refreshManagedNodes(sm.ctx, sm.taskMgr)
+
 	sm.wg.Run(sm.scheduleTaskLoop)
 	sm.wg.Run(sm.gcSubtaskHistoryTableLoop)
-	sm.wg.Run(sm.cleanUpLoop)
+	sm.wg.Run(sm.cleanupTaskLoop)
+	sm.wg.Run(func() {
+		sm.nodeMgr.maintainLiveNodesLoop(sm.ctx, sm.taskMgr)
+	})
+	sm.wg.Run(func() {
+		sm.nodeMgr.refreshManagedNodesLoop(sm.ctx, sm.taskMgr)
+	})
 	sm.initialized = true
 }
 
@@ -167,7 +177,7 @@ func (sm *Manager) scheduleTaskLoop() {
 			continue
 		}
 
-		scheduleableTasks := make([]*proto.Task, 0, len(tasks))
+		schedulableTasks := make([]*proto.Task, 0, len(tasks))
 		for _, task := range tasks {
 			if sm.hasScheduler(task.ID) {
 				continue
@@ -182,9 +192,9 @@ func (sm *Manager) scheduleTaskLoop() {
 				sm.failTask(task.ID, task.State, errors.New("unknown task type"))
 				continue
 			}
-			scheduleableTasks = append(scheduleableTasks, task)
+			schedulableTasks = append(schedulableTasks, task)
 		}
-		if len(scheduleableTasks) == 0 {
+		if len(schedulableTasks) == 0 {
 			continue
 		}
 
@@ -192,7 +202,7 @@ func (sm *Manager) scheduleTaskLoop() {
 			logutil.BgLogger().Warn("update used slot failed", zap.Error(err))
 			continue
 		}
-		for _, task := range scheduleableTasks {
+		for _, task := range schedulableTasks {
 			taskCnt = sm.getSchedulerCount()
 			if taskCnt >= proto.MaxConcurrentTask {
 				break
@@ -253,7 +263,7 @@ func (sm *Manager) startScheduler(basicTask *proto.Task, reservedExecID string) 
 	}
 
 	schedulerFactory := getSchedulerFactory(task.Type)
-	scheduler := schedulerFactory(sm.ctx, sm.taskMgr, sm.serverID, task)
+	scheduler := schedulerFactory(sm.ctx, sm.taskMgr, sm.nodeMgr, task)
 	if err = scheduler.Init(); err != nil {
 		logutil.BgLogger().Error("init scheduler failed", zap.Error(err))
 		sm.failTask(task.ID, task.State, err)
@@ -275,7 +285,7 @@ func (sm *Manager) startScheduler(basicTask *proto.Task, reservedExecID string) 
 	})
 }
 
-func (sm *Manager) cleanUpLoop() {
+func (sm *Manager) cleanupTaskLoop() {
 	logutil.Logger(sm.ctx).Info("cleanUp loop start")
 	ticker := time.NewTicker(defaultCleanUpInterval)
 	defer ticker.Stop()
@@ -285,9 +295,9 @@ func (sm *Manager) cleanUpLoop() {
 			logutil.BgLogger().Info("cleanUp loop exits", zap.Error(sm.ctx.Err()))
 			return
 		case <-sm.finishCh:
-			sm.doCleanUpRoutine()
+			sm.doCleanupTask()
 		case <-ticker.C:
-			sm.doCleanUpRoutine()
+			sm.doCleanupTask()
 		}
 	}
 }
@@ -295,15 +305,11 @@ func (sm *Manager) cleanUpLoop() {
 // WaitCleanUpFinished is used to sync the test.
 var WaitCleanUpFinished = make(chan struct{})
 
-// doCleanUpRoutine processes clean up routine defined by each type of tasks and cleanUpMeta.
+// doCleanupTask processes clean up routine defined by each type of tasks and cleanUpMeta.
 // For example:
 //
 //	tasks with global sort should clean up tmp files stored on S3.
-func (sm *Manager) doCleanUpRoutine() {
-	cnt := sm.CleanUpMeta()
-	if cnt != 0 {
-		logutil.BgLogger().Info("clean up nodes in framework meta since nodes shutdown", zap.Int("cnt", cnt))
-	}
+func (sm *Manager) doCleanupTask() {
 	tasks, err := sm.taskMgr.GetTasksInStates(
 		sm.ctx,
 		proto.TaskStateFailed,
@@ -327,39 +333,6 @@ func (sm *Manager) doCleanUpRoutine() {
 		WaitCleanUpFinished <- struct{}{}
 	})
 	logutil.Logger(sm.ctx).Info("cleanUp routine success")
-}
-
-// CleanUpMeta clean up old node info in dist_framework_meta table.
-func (sm *Manager) CleanUpMeta() int {
-	// Safe to discard errors since this function can be called at regular intervals.
-	serverInfos, err := GenerateTaskExecutorNodes(sm.ctx)
-	if err != nil {
-		logutil.BgLogger().Warn("generate task executor nodes met error")
-		return 0
-	}
-
-	oldNodes, err := sm.taskMgr.GetAllNodes(sm.ctx)
-	if err != nil {
-		logutil.BgLogger().Warn("get all nodes met error")
-		return 0
-	}
-
-	cleanNodes := make([]string, 0)
-	for _, nodeID := range oldNodes {
-		if ok := disttaskutil.MatchServerInfo(serverInfos, nodeID); !ok {
-			cleanNodes = append(cleanNodes, nodeID)
-		}
-	}
-	if len(cleanNodes) == 0 {
-		return 0
-	}
-	logutil.BgLogger().Info("start to clean up dist_framework_meta")
-	err = sm.taskMgr.CleanUpMeta(sm.ctx, cleanNodes)
-	if err != nil {
-		logutil.BgLogger().Warn("clean up dist_framework_meta met error")
-		return 0
-	}
-	return len(cleanNodes)
 }
 
 func (sm *Manager) cleanUpFinishedTasks(tasks []*proto.Task) error {
@@ -389,5 +362,5 @@ func (sm *Manager) cleanUpFinishedTasks(tasks []*proto.Task) error {
 
 // MockScheduler mock one scheduler for one task, only used for tests.
 func (sm *Manager) MockScheduler(task *proto.Task) *BaseScheduler {
-	return NewBaseScheduler(sm.ctx, sm.taskMgr, sm.serverID, task)
+	return NewBaseScheduler(sm.ctx, sm.taskMgr, sm.nodeMgr, task)
 }

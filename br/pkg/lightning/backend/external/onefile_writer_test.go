@@ -344,3 +344,54 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	require.Equal(t, expected.MaxOverlappingNum, resSummary.MultipleFilesStats[0].MaxOverlappingNum)
 	require.EqualValues(t, expectedTotalSize, resSummary.TotalSize)
 }
+
+func TestOnefilePropOffset(t *testing.T) {
+	seed := time.Now().Unix()
+	rand.Seed(uint64(seed))
+	t.Logf("seed: %d", seed)
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+	memSizeLimit := (rand.Intn(10) + 1) * 200
+
+	// 1. write into one file.
+	// 2. read stat file and check offset ascending.
+	writer := NewWriterBuilder().
+		SetPropSizeDistance(100).
+		SetPropKeysDistance(2).
+		SetBlockSize(memSizeLimit).
+		SetMemorySizeLimit(uint64(memSizeLimit)).
+		BuildOneFile(memStore, "/test", "0")
+
+	require.NoError(t, writer.Init(ctx, 5*1024*1024))
+
+	kvCnt := 10000
+	kvs := make([]common.KvPair, kvCnt)
+	for i := 0; i < kvCnt; i++ {
+		randLen := rand.Intn(10) + 1
+		kvs[i].Key = make([]byte, randLen)
+		_, err := rand.Read(kvs[i].Key)
+		require.NoError(t, err)
+		randLen = rand.Intn(10) + 1
+		kvs[i].Val = make([]byte, randLen)
+		_, err = rand.Read(kvs[i].Val)
+		require.NoError(t, err)
+	}
+
+	for _, item := range kvs {
+		require.NoError(t, writer.WriteRow(ctx, item.Key, item.Val))
+	}
+
+	require.NoError(t, writer.Close(ctx))
+
+	rd, err := newStatsReader(ctx, memStore, "/test/0_stat/one-file", 4096)
+	require.NoError(t, err)
+	lastOffset := uint64(0)
+	for {
+		prop, err := rd.nextProp()
+		if err == io.EOF {
+			break
+		}
+		require.GreaterOrEqual(t, prop.offset, lastOffset)
+		lastOffset = prop.offset
+	}
+}

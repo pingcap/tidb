@@ -1482,7 +1482,7 @@ func TestVisitInfo(t *testing.T) {
 		// TODO: to fix, Table 'test.ttt' doesn't exist
 		_ = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		sctx := MockContext()
-		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.QBHintHandler{})
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		builder.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 		_, err = builder.Build(context.TODO(), stmt)
@@ -1566,7 +1566,7 @@ func TestUnion(t *testing.T) {
 		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err)
 		sctx := MockContext()
-		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.QBHintHandler{})
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		plan, err := builder.Build(ctx, stmt)
 		testdata.OnRecord(func() {
@@ -1608,7 +1608,7 @@ func TestTopNPushDown(t *testing.T) {
 		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err)
 		sctx := MockContext()
-		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.QBHintHandler{})
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, err := builder.Build(ctx, stmt)
 		require.NoError(t, err)
@@ -1695,7 +1695,7 @@ func TestOuterJoinEliminator(t *testing.T) {
 		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err)
 		sctx := MockContext()
-		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.QBHintHandler{})
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, err := builder.Build(ctx, stmt)
 		require.NoError(t, err)
@@ -1735,7 +1735,7 @@ func TestSelectView(t *testing.T) {
 		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err)
 		sctx := MockContext()
-		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.QBHintHandler{})
 		p, err := builder.Build(ctx, stmt)
 		require.NoError(t, err)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1842,7 +1842,7 @@ func (s *plannerSuiteWithOptimizeVars) optimize(ctx context.Context, sql string)
 			return nil, nil, err
 		}
 	}
-	builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.QBHintHandler{})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	p, err := builder.Build(ctx, stmt)
 	if err != nil {
@@ -1944,7 +1944,7 @@ func TestSkylinePruning(t *testing.T) {
 		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err)
 		sctx := MockContext()
-		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.QBHintHandler{})
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, err := builder.Build(ctx, stmt)
 		if err != nil {
@@ -2053,7 +2053,7 @@ func TestUpdateEQCond(t *testing.T) {
 		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err)
 		sctx := MockContext()
-		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.QBHintHandler{})
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, err := builder.Build(ctx, stmt)
 		require.NoError(t, err)
@@ -2077,7 +2077,7 @@ func TestConflictedJoinTypeHints(t *testing.T) {
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
-	builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.QBHintHandler{})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	p, err := builder.Build(ctx, stmt)
 	require.NoError(t, err)
@@ -2104,7 +2104,7 @@ func TestSimplyOuterJoinWithOnlyOuterExpr(t *testing.T) {
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
-	builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.QBHintHandler{})
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	p, err := builder.Build(ctx, stmt)
 	require.NoError(t, err)
@@ -2300,7 +2300,7 @@ func TestRollupExpand(t *testing.T) {
 	// manual builder
 	s.ctx.GetSessionVars().PlanID.Store(0)
 	s.ctx.GetSessionVars().PlanColumnID.Store(0)
-	builder, _ := NewPlanBuilder().Init(s.ctx, s.is, &hint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder().Init(s.ctx, s.is, &hint.QBHintHandler{})
 	p, err := builder.Build(ctx, stmt)
 	require.NoError(t, err)
 

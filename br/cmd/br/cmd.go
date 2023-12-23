@@ -36,6 +36,7 @@ var (
 		"*.*",
 		fmt.Sprintf("!%s.*", utils.TemporaryDBName("*")),
 		"!mysql.*",
+		"mysql.bind_info",
 		"mysql.user",
 		"mysql.db",
 		"mysql.tables_priv",
