@@ -645,13 +645,13 @@ func (importer *FileImporter) buildDownloadRequest(
 	rewriteRules *RewriteRules,
 	regionInfo *split.RegionInfo,
 	cipher *backuppb.CipherInfo,
-) (*import_sstpb.DownloadRequest, *import_sstpb.SSTMeta, error) {
+) (*import_sstpb.DownloadRequest, import_sstpb.SSTMeta, error) {
 	uid := uuid.New()
 	id := uid[:]
 	// Get the rewrite rule for the file.
 	fileRule := findMatchedRewriteRule(file, rewriteRules)
 	if fileRule == nil {
-		return nil, nil, errors.Trace(berrors.ErrKVRewriteRuleNotFound)
+		return nil, import_sstpb.SSTMeta{}, errors.Trace(berrors.ErrKVRewriteRuleNotFound)
 	}
 	rule := import_sstpb.RewriteRule{
 		OldKeyPrefix: encodeKeyPrefix(fileRule.GetOldKeyPrefix()),
@@ -667,7 +667,7 @@ func (importer *FileImporter) buildDownloadRequest(
 		CipherInfo:     cipher,
 		StorageCacheId: importer.cacheKey,
 	}
-	return req, &sstMeta, nil
+	return req, sstMeta, nil
 }
 
 func (importer *FileImporter) downloadSST(
@@ -679,7 +679,7 @@ func (importer *FileImporter) downloadSST(
 ) ([]*import_sstpb.SSTMeta, error) {
 	var mu sync.Mutex
 	downloadMetas := make([]*import_sstpb.SSTMeta, 0, len(files))
-	downloadMetasMap := make(map[string]*import_sstpb.SSTMeta)
+	downloadMetasMap := make(map[string]import_sstpb.SSTMeta)
 	resultMetasMap := make(map[string]*import_sstpb.SSTMeta)
 	downloadReqsMap := make(map[string]*import_sstpb.DownloadRequest)
 	for _, file := range files {
@@ -737,14 +737,15 @@ func (importer *FileImporter) downloadSST(
 					zap.Bool("resp-isempty", resp.IsEmpty),
 					zap.Uint32("resp-crc32", resp.Crc32),
 				)
+				mu.Lock()
 				sstMeta, ok := downloadMetasMap[file.Name]
 				if !ok {
+					mu.Unlock()
 					return errors.New("not found file key for download sstMeta")
 				}
 				sstMeta.Range.Start = TruncateTS(resp.Range.GetStart())
 				sstMeta.Range.End = TruncateTS(resp.Range.GetEnd())
-				mu.Lock()
-				resultMetasMap[file.Name] = sstMeta
+				resultMetasMap[file.Name] = &sstMeta
 				mu.Unlock()
 			}
 			return nil
