@@ -170,7 +170,14 @@ func openAndGetFirstElem[
 func newMergeIter[
 	T heapElem,
 	R sortedReader[T],
-](ctx context.Context, readerOpeners []readerOpenerFn[T, R], checkHotspot bool) (*mergeIter[T, R], error) {
+](
+	ctx context.Context,
+	readerOpeners []readerOpenerFn[T, R],
+	checkHotspot bool,
+) (*mergeIter[T, R], error) {
+	if len(readerOpeners) == 0 {
+		return nil, errors.New("no reader openers")
+	}
 	logger := logutil.Logger(ctx)
 
 	readers, firstElements, err := openAndGetFirstElem(readerOpeners...)
@@ -373,7 +380,7 @@ func newLimitSizeMergeIter[
 
 func (i *limitSizeMergeIter[T, R]) next() (ok bool, closeReaderIdx int) {
 	ok, closeReaderIdx = i.mergeIter.next()
-	if !ok || closeReaderIdx == -1 {
+	if closeReaderIdx == -1 {
 		return
 	}
 	// limitSizeMergeIter will try to open next reader when one reader is closed.
@@ -404,8 +411,13 @@ func (i *limitSizeMergeIter[T, R]) next() (ok bool, closeReaderIdx int) {
 			elem:      e,
 			readerIdx: newReaderIdx,
 		})
-		heap.Fix(&i.mergeIter.h, newReaderIdx)
+		heap.Fix(&i.mergeIter.h, len(i.mergeIter.h)-1)
 		i.weightSum += weight
+		// we need to call next once because mergeIter doesn't use h[0] as current value,
+		// but a separate curr field
+		if !ok && i.mergeIter.h.Len() == 1 {
+			ok, _ = i.mergeIter.next()
+		}
 	}
 	return
 }
@@ -695,6 +707,7 @@ func (i *MergePropIter) prop() *rangeProperty {
 	return i.iter.curr
 }
 
+// TODO(lance6716): need to adapt 2-level iter
 func (i *MergePropIter) readerIndex() int {
 	return i.iter.lastReaderIdx
 }

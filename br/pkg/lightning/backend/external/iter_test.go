@@ -513,3 +513,62 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 	require.Less(t, delta, uint64(4*1024*1024*1024))
 	_ = iter.Close()
 }
+
+type myInt int
+
+func (m myInt) sortKey() []byte {
+	return []byte{byte(m)}
+}
+
+func (m myInt) cloneInnerFields() {}
+
+func (m myInt) len() int { return 1 }
+
+type intReader struct {
+	ints []int
+}
+
+func (i *intReader) path() string { return "" }
+
+func (i *intReader) next() (myInt, error) {
+	if len(i.ints) == 0 {
+		return 0, io.EOF
+	}
+	ret := i.ints[0]
+	i.ints = i.ints[1:]
+	return myInt(ret), nil
+}
+
+func (i *intReader) switchConcurrentMode(bool) error { return nil }
+
+func (i *intReader) close() error { return nil }
+
+func TestLimitSizeMergeIter(t *testing.T) {
+	ctx := context.Background()
+	readerOpeners := []readerOpenerFn[myInt, *intReader]{
+		func() (**intReader, error) {
+			r := &intReader{[]int{1, 2, 3}}
+			return &r, nil
+		},
+		func() (**intReader, error) {
+			r := &intReader{[]int{4, 5, 6}}
+			return &r, nil
+		},
+		func() (**intReader, error) {
+			r := &intReader{[]int{7, 8, 9}}
+			return &r, nil
+		},
+	}
+	weight := []int64{1, 1, 1}
+	for limit := int64(1); limit <= 4; limit++ {
+		i, err := newLimitSizeMergeIter(ctx, readerOpeners, weight, limit)
+		require.NoError(t, err)
+		var got []int
+		ok, _ := i.next()
+		for ok {
+			got = append(got, int(i.curr))
+			ok, _ = i.next()
+		}
+		require.Equal(t, []int{1, 2, 3, 4, 5, 6, 7, 8, 9}, got)
+	}
+}
