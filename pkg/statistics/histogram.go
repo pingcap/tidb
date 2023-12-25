@@ -16,10 +16,10 @@ package statistics
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
 	"math"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -1163,7 +1163,7 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 			}
 		}
 	}
-	sort.SliceStable(dataCnts, func(i, j int) bool { return dataCnts[i].cnt >= dataCnts[j].cnt })
+	slices.SortStableFunc(dataCnts, func(a, b dataCnt) int { return -cmp.Compare(a.cnt, b.cnt) })
 	if len(dataCnts) > int(numTopN) {
 		dataCnts = dataCnts[:numTopN]
 	}
