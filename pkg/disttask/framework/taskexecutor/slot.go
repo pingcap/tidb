@@ -24,23 +24,27 @@ import (
 // slotManager is used to manage the slots of the executor.
 type slotManager struct {
 	sync.RWMutex
-	executorSlotInfos map[int64]*proto.Task
+	// slotIndex is the index of the task
+	taskID2SlotIndex map[int64]int
+	// executorSlotInfos is used to record the task that is running on the executor.
+	executorSlotInfos []*proto.Task
 
 	// The number of slots that can be used by the executor.
 	// It is always equal to CPU cores of the instance.
 	available int
-
-	taskWaitAlloc *proto.Task
 }
 
 func (sm *slotManager) alloc(task *proto.Task) {
 	sm.Lock()
 	defer sm.Unlock()
-	if sm.taskWaitAlloc != nil && sm.taskWaitAlloc.Compare(task) == 0 {
-		sm.taskWaitAlloc = nil
-	}
-	sm.executorSlotInfos[task.ID] = task
 
+	sm.executorSlotInfos = append(sm.executorSlotInfos, task)
+	slices.SortFunc(sm.executorSlotInfos, func(a, b *proto.Task) int {
+		return b.Compare(a)
+	})
+	for index, slotInfo := range sm.executorSlotInfos {
+		sm.taskID2SlotIndex[slotInfo.ID] = index
+	}
 	sm.available -= task.Concurrency
 }
 
@@ -48,10 +52,16 @@ func (sm *slotManager) free(taskID int64) {
 	sm.Lock()
 	defer sm.Unlock()
 
-	slotInfo, ok := sm.executorSlotInfos[taskID]
-	if ok {
-		delete(sm.executorSlotInfos, taskID)
-		sm.available += slotInfo.Concurrency
+	index, ok := sm.taskID2SlotIndex[taskID]
+	if !ok {
+		return
+	}
+	sm.available += sm.executorSlotInfos[index].Concurrency
+	sm.executorSlotInfos = append(sm.executorSlotInfos[:index], sm.executorSlotInfos[index+1:]...)
+
+	delete(sm.taskID2SlotIndex, taskID)
+	for index, slotInfo := range sm.executorSlotInfos {
+		sm.taskID2SlotIndex[slotInfo.ID] = index
 	}
 }
 
@@ -60,43 +70,19 @@ func (sm *slotManager) canAlloc(task *proto.Task) (canAlloc bool, tasksNeedFree 
 	sm.RLock()
 	defer sm.RUnlock()
 
-	// If a task is waiting for allocation, we can't allocate the lower priority task.
-	if sm.taskWaitAlloc != nil && sm.taskWaitAlloc.Compare(task) < 0 {
-		return false, nil
-	}
-
 	if sm.available >= task.Concurrency {
-		// If the upcoming task's priority is higher than the task waiting for allocation,
-		// we need free the task waiting for allocation.
-		if sm.taskWaitAlloc != nil && sm.taskWaitAlloc.Compare(task) > 0 {
-			sm.taskWaitAlloc = nil
-		}
 		return true, nil
 	}
 
-	// If the task is waiting for allocation, we do not need to free any task again.
-	if sm.taskWaitAlloc != nil && sm.taskWaitAlloc.Compare(task) == 0 {
-		return false, nil
-	}
-
-	allSlotInfos := make([]*proto.Task, 0, len(sm.executorSlotInfos))
-	for _, slotInfo := range sm.executorSlotInfos {
-		allSlotInfos = append(allSlotInfos, slotInfo)
-	}
-	slices.SortFunc(allSlotInfos, func(a, b *proto.Task) int {
-		return a.Compare(b)
-	})
-
 	usedSlots := 0
-	for _, slotInfo := range allSlotInfos {
+	for _, slotInfo := range sm.executorSlotInfos {
 		if slotInfo.Compare(task) < 0 {
 			continue
 		}
 		tasksNeedFree = append(tasksNeedFree, slotInfo)
 		usedSlots += slotInfo.Concurrency
 		if sm.available+usedSlots >= task.Concurrency {
-			sm.taskWaitAlloc = task
-			return false, tasksNeedFree
+			return true, tasksNeedFree
 		}
 	}
 
