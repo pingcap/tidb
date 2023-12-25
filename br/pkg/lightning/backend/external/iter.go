@@ -20,6 +20,7 @@ import (
 	"context"
 	"io"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -85,7 +86,7 @@ func (h *mergeHeap[T]) Pop() interface{} {
 type mergeIter[T heapElem, R sortedReader[T]] struct {
 	h             mergeHeap[T]
 	readers       []*R
-	curr          T
+	curr          T // TODO(lance6716): why we don't use h[0] as curr?
 	lastReaderIdx int
 	err           error
 
@@ -108,7 +109,7 @@ type readerOpenerFn[T heapElem, R sortedReader[T]] func() (*R, error)
 func openAndGetFirstElem[
 	T heapElem,
 	R sortedReader[T],
-](openers []readerOpenerFn[T, R]) ([]*R, []T, error) {
+](openers ...readerOpenerFn[T, R]) ([]*R, []T, error) {
 	wg := errgroup.Group{}
 	mayNilReaders := make([]*R, len(openers))
 	closeReaders := func() {
@@ -172,7 +173,7 @@ func newMergeIter[
 ](ctx context.Context, readerOpeners []readerOpenerFn[T, R], checkHotspot bool) (*mergeIter[T, R], error) {
 	logger := logutil.Logger(ctx)
 
-	readers, firstElements, err := openAndGetFirstElem(readerOpeners)
+	readers, firstElements, err := openAndGetFirstElem(readerOpeners...)
 	if err != nil {
 		return nil, err
 	}
@@ -234,13 +235,11 @@ func (i *mergeIter[T, R]) close() error {
 	return firstErr
 }
 
-func (i *mergeIter[T, R]) currElem() T {
-	return i.curr
-}
-
-// next forwards the iterator to the next element. It returns false if there is
-// no available element.
-func (i *mergeIter[T, R]) next() bool {
+// next forwards the iterator to the next element. ok == false if there is no
+// available element. readerClosed >=0 means that reader is closed after last
+// invocation, -1 means no reader is closed.
+func (i *mergeIter[T, R]) next() (ok bool, closeReaderIdx int) {
+	closeReaderIdx = -1
 	if i.lastReaderIdx >= 0 {
 		if i.checkHotspot {
 			i.hotspotMap[i.lastReaderIdx] = i.hotspotMap[i.lastReaderIdx] + 1
@@ -274,7 +273,7 @@ func (i *mergeIter[T, R]) next() bool {
 					err := (*rp).switchConcurrentMode(isHotspot)
 					if err != nil {
 						i.err = err
-						return false
+						return false, closeReaderIdx
 					}
 				}
 				i.checkHotspotCnt = 0
@@ -300,23 +299,115 @@ func (i *mergeIter[T, R]) next() bool {
 			}
 			i.readers[i.lastReaderIdx] = nil
 			delete(i.hotspotMap, i.lastReaderIdx)
+			closeReaderIdx = i.lastReaderIdx
 		default:
 			i.logger.Error("failed to read next element",
 				zap.String("path", rd.path()),
 				zap.Error(err))
 			i.err = err
-			return false
+			return false, closeReaderIdx
 		}
 	}
 	i.lastReaderIdx = -1
 
 	if i.h.Len() == 0 {
-		return false
+		return false, closeReaderIdx
 	}
 	currMergeElem := heap.Pop(&i.h).(mergeHeapElem[T])
 	i.curr = currMergeElem.elem
 	i.lastReaderIdx = currMergeElem.readerIdx
-	return true
+	return true, closeReaderIdx
+}
+
+// limitSizeMergeIter acts like a mergeIter, except that
+//
+// - When create it will only open the first some readers whose weight sum is
+// under the limit.
+//
+// - When the reader is closed, it will try to open next readers.
+type limitSizeMergeIter[T heapElem, R sortedReader[T]] struct {
+	*mergeIter[T, R]
+	readerOpeners []readerOpenerFn[T, R]
+	weights       []int64
+	nextReaderIdx int
+	weightSum     int64
+	limit         int64
+}
+
+func newLimitSizeMergeIter[
+	T heapElem,
+	R sortedReader[T],
+](
+	ctx context.Context,
+	readerOpeners []readerOpenerFn[T, R],
+	weights []int64,
+	limit int64,
+) (*limitSizeMergeIter[T, R], error) {
+	if limit <= 0 {
+		return nil, errors.Errorf("limit must be positive, got %d", limit)
+	}
+	end := 0
+	cur := int64(0)
+	for ; end < len(weights); end++ {
+		if cur+weights[end] > limit {
+			break
+		}
+		cur += weights[end]
+	}
+	iter, err := newMergeIter(ctx, readerOpeners[:end], false)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	i := &limitSizeMergeIter[T, R]{
+		mergeIter:     iter,
+		readerOpeners: readerOpeners,
+		weights:       weights,
+		nextReaderIdx: end,
+		limit:         limit,
+	}
+	for j := 0; j < end; j++ {
+		i.weightSum += weights[j]
+	}
+	return i, nil
+}
+
+func (i *limitSizeMergeIter[T, R]) next() (ok bool, closeReaderIdx int) {
+	ok, closeReaderIdx = i.mergeIter.next()
+	if !ok || closeReaderIdx == -1 {
+		return
+	}
+	// limitSizeMergeIter will try to open next reader when one reader is closed.
+	i.weightSum -= i.weights[closeReaderIdx]
+
+	for i.nextReaderIdx < len(i.readerOpeners) {
+		weight := i.weights[i.nextReaderIdx]
+		if i.weightSum+weight > i.limit {
+			return
+		}
+
+		opener := i.readerOpeners[i.nextReaderIdx]
+		i.nextReaderIdx++
+		newReaders, firstElements, err := openAndGetFirstElem(opener)
+		if err != nil {
+			i.mergeIter.err = err
+			return false, closeReaderIdx
+		}
+		newReader := newReaders[0]
+		newReaderIdx := len(i.mergeIter.readers)
+		i.mergeIter.readers = append(i.mergeIter.readers, newReader)
+		if newReader == nil {
+			// maybe this reader has no content, just skip it
+			continue
+		}
+		e := firstElements[0]
+		i.mergeIter.h = append(i.mergeIter.h, mergeHeapElem[T]{
+			elem:      e,
+			readerIdx: newReaderIdx,
+		})
+		heap.Fix(&i.mergeIter.h, newReaderIdx)
+		i.weightSum += weight
+	}
+	return
 }
 
 // begin instantiations of mergeIter
@@ -422,7 +513,8 @@ func (i *MergeKVIter) Error() error {
 
 // Next moves the iterator to the next position. When it returns false, the iterator is not usable.
 func (i *MergeKVIter) Next() bool {
-	return i.iter.next()
+	ok, _ := i.iter.next()
+	return ok
 }
 
 // Key returns the current key.
@@ -478,12 +570,73 @@ func (p statReaderProxy) close() error {
 	return p.r.Close()
 }
 
+// mergePropBaseIter handles one MultipleFilesStat and use limitSizeMergeIter to
+// run heap sort on it. Also, it's a sortedReader of *rangeProperty that can be
+// used by MergePropIter to handle multiple MultipleFilesStat.
+type mergePropBaseIter struct {
+	iter *limitSizeMergeIter[*rangeProperty, statReaderProxy]
+}
+
+func newMergePropBaseIter(
+	ctx context.Context,
+	multiStat MultipleFilesStat,
+	exStorage storage.ExternalStorage,
+) (*mergePropBaseIter, error) {
+	// we have no time to open the next reader before we get the next value for
+	// limitSizeMergeIter, so we directly open one more reader. If we don't do this,
+	// considering:
+	//
+	// [1, 11, ...
+	// [2, 12, ...
+	// [3, 13, ...
+	//
+	// we limit the size to 2, so after read 2, the next read will be 11 and then we
+	// insert the third reader into heap. TODO: refine limitSizeMergeIter and mergeIter
+	// to support this.
+	limit := multiStat.MaxOverlappingNum + 1
+	readerOpeners := make([]readerOpenerFn[*rangeProperty, statReaderProxy], 0, len(multiStat.Filenames))
+	for _, filePair := range multiStat.Filenames {
+		path := filePair[1]
+		readerOpeners = append(readerOpeners, func() (*statReaderProxy, error) {
+			rd, err := newStatsReader(ctx, exStorage, path, 4096)
+			if err != nil {
+				return nil, err
+			}
+			return &statReaderProxy{p: filePair[1], r: rd}, nil
+		})
+	}
+	weight := make([]int64, len(readerOpeners))
+	for i := range weight {
+		weight[i] = 1
+	}
+	i, err := newLimitSizeMergeIter(ctx, readerOpeners, weight, limit)
+	return &mergePropBaseIter{iter: i}, err
+}
+
+func (m mergePropBaseIter) path() string {
+	// TODO(lance6716): implement me
+	return "mergePropBaseIter"
+}
+
+func (m mergePropBaseIter) next() (*rangeProperty, error) {
+	ok, _ := m.iter.next()
+	if !ok {
+		return nil, m.iter.err
+	}
+	return m.iter.curr, nil
+}
+
+func (m mergePropBaseIter) switchConcurrentMode(bool) error {
+	return nil
+}
+
+func (m mergePropBaseIter) close() error {
+	return m.iter.close()
+}
+
 // MergePropIter is an iterator that merges multiple range properties from different files.
 type MergePropIter struct {
-	iter      *mergeIter[*rangeProperty, statReaderProxy]
-	ctx       context.Context
-	extStore  storage.ExternalStorage
-	multiStat []MultipleFilesStat
+	iter *limitSizeMergeIter[*rangeProperty, mergePropBaseIter]
 }
 
 // NewMergePropIter creates a new MergePropIter.
@@ -500,46 +653,30 @@ func NewMergePropIter(
 	ctx context.Context,
 	multiStat []MultipleFilesStat,
 	exStorage storage.ExternalStorage,
-	checkHotSpot bool,
+	_ bool,
 ) (*MergePropIter, error) {
-	// caller will make sure maximum overlapping is less than the threshold, so we
-	// need to open at most #threshold files.
-	fileNum := len(multiStat[0].Filenames)
-	endMultiStatIdx := 1
-	for ; endMultiStatIdx < len(multiStat); endMultiStatIdx++ {
-		m := multiStat[endMultiStatIdx]
-		if fileNum+len(m.Filenames) > int(MergeSortOverlapThreshold) {
-			break
-		}
-		fileNum += len(m.Filenames)
-	}
-	paths := make([]string, 0, fileNum)
-	for i := 0; i < endMultiStatIdx; i++ {
-		m := multiStat[i]
-		for _, filePair := range m.Filenames {
-			// [0] is data file, [1] is stat file
-			paths = append(paths, filePair[1])
-		}
-	}
-
-	readerOpeners := make([]readerOpenerFn[*rangeProperty, statReaderProxy], 0, len(paths))
-	for i := range paths {
-		i := i
-		readerOpeners = append(readerOpeners, func() (*statReaderProxy, error) {
-			rd, err := newStatsReader(ctx, exStorage, paths[i], 4096)
+	readerOpeners := make([]readerOpenerFn[*rangeProperty, mergePropBaseIter], 0, len(multiStat))
+	for _, m := range multiStat {
+		m := m
+		readerOpeners = append(readerOpeners, func() (*mergePropBaseIter, error) {
+			baseIter, err := newMergePropBaseIter(ctx, m, exStorage)
 			if err != nil {
 				return nil, err
 			}
-			return &statReaderProxy{p: paths[i], r: rd}, nil
+			return baseIter, nil
 		})
 	}
+	weight := make([]int64, len(multiStat))
+	for i := range weight {
+		weight[i] = multiStat[i].MaxOverlappingNum
+	}
 
-	it, err := newMergeIter[*rangeProperty, statReaderProxy](ctx, readerOpeners, checkHotSpot)
+	// see the comment of newMergePropBaseIter why we need to raise the limit
+	limit := MergeSortOverlapThreshold * 2
+
+	it, err := newLimitSizeMergeIter(ctx, readerOpeners, weight, limit)
 	return &MergePropIter{
-		iter:      it,
-		ctx:       ctx,
-		multiStat: multiStat[endMultiStatIdx:],
-		extStore:  exStorage,
+		iter: it,
 	}, err
 }
 
@@ -550,51 +687,8 @@ func (i *MergePropIter) Error() error {
 
 // Next moves the iterator to the next position.
 func (i *MergePropIter) Next() bool {
-	ret := i.iter.next()
-	if len(i.multiStat) == 0 || !ret {
-		return ret
-	}
-
-	// should insert next MultipleFilesStat into heap to sort
-	if i.iter.h.Len()+1+len(i.multiStat[0].Filenames) <= int(MergeSortOverlapThreshold) {
-		m := i.multiStat[0]
-		i.multiStat = i.multiStat[1:]
-
-		readerOpeners := make([]readerOpenerFn[*rangeProperty, statReaderProxy], 0, len(m.Filenames))
-		for _, filePair := range m.Filenames {
-			// [0] is data file, [1] is stat file
-			path := filePair[1]
-			readerOpeners = append(readerOpeners, func() (*statReaderProxy, error) {
-				rd, err := newStatsReader(i.ctx, i.extStore, path, 4096)
-				if err != nil {
-					return nil, err
-				}
-				return &statReaderProxy{p: path, r: rd}, nil
-			})
-		}
-
-		newReaders, firstElements, err := openAndGetFirstElem(readerOpeners)
-		if err != nil {
-			i.iter.err = err
-			return false
-		}
-
-		for j, rp := range newReaders {
-			newReaderIdx := len(i.iter.readers)
-			i.iter.readers = append(i.iter.readers, rp)
-			// the reader has no content and is closed by openAndGetFirstElem
-			if rp == nil {
-				continue
-			}
-			e := firstElements[j]
-			i.iter.h = append(i.iter.h, mergeHeapElem[*rangeProperty]{
-				elem:      e,
-				readerIdx: newReaderIdx,
-			})
-			heap.Fix(&i.iter.h, newReaderIdx)
-		}
-	}
-	return true
+	ok, _ := i.iter.next()
+	return ok
 }
 
 func (i *MergePropIter) prop() *rangeProperty {
