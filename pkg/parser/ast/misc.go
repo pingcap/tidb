@@ -2350,7 +2350,6 @@ type HandleRange struct {
 type BDRRole string
 
 const (
-	BDRRoleNone      BDRRole = "none"
 	BDRRolePrimary   BDRRole = "primary"
 	BDRRoleSecondary BDRRole = "secondary"
 	BDRRoleLocalOnly BDRRole = "local_only"
@@ -2648,8 +2647,6 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	case AdminSetBDRRole:
 		switch n.BDRRole {
-		case BDRRoleNone:
-			ctx.WriteKeyWord("SET BDR ROLE NONE")
 		case BDRRolePrimary:
 			ctx.WriteKeyWord("SET BDR ROLE PRIMARY")
 		case BDRRoleSecondary:

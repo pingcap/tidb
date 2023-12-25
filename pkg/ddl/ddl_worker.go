@@ -376,7 +376,7 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 
 	var (
 		startTS = uint64(0)
-		bdrRole = string(ast.BDRRoleNone)
+		bdrRole = string(ast.BDRRoleLocalOnly)
 	)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
@@ -406,12 +406,12 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		job.StartTS = startTS
 		job.ID = ids[i]
 		if len(bdrRole) == 0 {
-			bdrRole = string(ast.BDRRoleNone)
+			bdrRole = string(ast.BDRRoleLocalOnly)
 		}
 		job.BDRRole = bdrRole
 
 		// BDR mode only affects the DDL not from CDC
-		if job.CDCWriteSource == 0 && bdrRole != string(ast.BDRRoleNone) {
+		if job.CDCWriteSource == 0 && bdrRole != string(ast.BDRRoleLocalOnly) {
 			if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
 				for _, subJob := range job.MultiSchemaInfo.SubJobs {
 					if ast.DeniedByBDR(ast.BDRRole(bdrRole), subJob.Type, job) {
