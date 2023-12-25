@@ -461,7 +461,7 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			plannerSelectBlockAsName = *p
 		}
 		if len(plannerSelectBlockAsName) > 0 && !isTableName {
-			plannerSelectBlockAsName[p.SelectOffset()] = ast.HintTable{DBName: p.OutputNames()[0].DBName, TableName: p.OutputNames()[0].TblName}
+			plannerSelectBlockAsName[p.QBOffset()] = ast.HintTable{DBName: p.OutputNames()[0].DBName, TableName: p.OutputNames()[0].TblName}
 		}
 		// Duplicate column name in one table is not allowed.
 		// "select * from (select 1, 1) as a;" is duplicate
@@ -631,7 +631,7 @@ func extractTableAlias(p Plan, parentOffset int) *h.TableInfo {
 				return nil
 			}
 		}
-		selectOffset := p.SelectOffset()
+		selectOffset := p.QBOffset()
 		var blockAsNames []ast.HintTable
 		if p := p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
 			blockAsNames = *p
@@ -654,8 +654,8 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *h.TableHintInfo) {
 		return
 	}
 
-	lhsAlias := extractTableAlias(p.children[0], p.SelectOffset())
-	rhsAlias := extractTableAlias(p.children[1], p.SelectOffset())
+	lhsAlias := extractTableAlias(p.children[0], p.QBOffset())
+	rhsAlias := extractTableAlias(p.children[1], p.QBOffset())
 	if hintInfo.IfPreferMergeJoin(lhsAlias) {
 		p.preferJoinType |= h.PreferMergeJoin
 		p.leftPreferJoinType |= h.PreferMergeJoin
@@ -863,9 +863,9 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *h.TableHintInfo) {
 
 	var alias *h.TableInfo
 	if len(ds.TableAsName.L) != 0 {
-		alias = &h.TableInfo{DBName: ds.DBName, TblName: *ds.TableAsName, SelectOffset: ds.SelectOffset()}
+		alias = &h.TableInfo{DBName: ds.DBName, TblName: *ds.TableAsName, SelectOffset: ds.QBOffset()}
 	} else {
-		alias = &h.TableInfo{DBName: ds.DBName, TblName: ds.tableInfo.Name, SelectOffset: ds.SelectOffset()}
+		alias = &h.TableInfo{DBName: ds.DBName, TblName: ds.tableInfo.Name, SelectOffset: ds.QBOffset()}
 	}
 	if hintTbl := hintInfo.IfPreferTiKV(alias); hintTbl != nil {
 		for _, path := range ds.possibleAccessPaths {
@@ -1824,7 +1824,7 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggr
 	plan4Agg := LogicalAggregation{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, child.Schema().Len()),
 		GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length]),
-	}.Init(b.ctx, child.SelectOffset())
+	}.Init(b.ctx, child.QBOffset())
 	if hint := b.TableHints(); hint != nil {
 		plan4Agg.aggHints = hint.AggHints
 	}
@@ -5719,7 +5719,7 @@ func setIsInApplyForCTE(p LogicalPlan, apSchema *expression.Schema) {
 
 func (b *PlanBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 	// The query block of the MaxOneRow operator should be the same as that of its child.
-	maxOneRow := LogicalMaxOneRow{}.Init(b.ctx, p.SelectOffset())
+	maxOneRow := LogicalMaxOneRow{}.Init(b.ctx, p.QBOffset())
 	maxOneRow.SetChildren(p)
 	return maxOneRow
 }

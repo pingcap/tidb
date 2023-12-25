@@ -204,8 +204,8 @@ func (*MockDataPhysicalPlan) Stats() *property.StatsInfo {
 	return nil
 }
 
-// SelectBlockOffset returns 0
-func (*MockDataPhysicalPlan) SelectOffset() int {
+// QBOffset returns 0
+func (*MockDataPhysicalPlan) QBOffset() int {
 	return 0
 }
 

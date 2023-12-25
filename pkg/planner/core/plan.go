@@ -67,7 +67,8 @@ type Plan interface {
 	// SetOutputNames sets the outputting name by the given slice.
 	SetOutputNames(names types.NameSlice)
 
-	SelectOffset() int
+	// QBOffset is query block offset.
+	QBOffset() int
 
 	BuildPlanTrace() *tracing.PlanTrace
 }
@@ -94,7 +95,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 	sort := PhysicalSort{
 		ByItems:       make([]*util.ByItems, 0, len(p.SortItems)),
 		IsPartialSort: p.IsSortItemAllForPartition(),
-	}.Init(ctx, tsk.plan().StatsInfo(), tsk.plan().SelectOffset(), sortReqProp)
+	}.Init(ctx, tsk.plan().StatsInfo(), tsk.plan().QBOffset(), sortReqProp)
 	for _, col := range p.SortItems {
 		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
 	}
@@ -159,7 +160,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 		DataSources:  []PhysicalPlan{dataSource},
 		SplitterType: PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{byItems},
-	}.Init(ctx, pp.StatsInfo(), pp.SelectOffset(), reqProp)
+	}.Init(ctx, pp.StatsInfo(), pp.QBOffset(), reqProp)
 	return shuffle
 }
 
@@ -196,7 +197,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		DataSources:  []PhysicalPlan{dataSource},
 		SplitterType: PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{util.CloneExprs(pp.GroupByItems)},
-	}.Init(ctx, pp.StatsInfo(), pp.SelectOffset(), reqProp)
+	}.Init(ctx, pp.StatsInfo(), pp.QBOffset(), reqProp)
 	return shuffle
 }
 
@@ -235,7 +236,7 @@ func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx sessionctx.Context) 
 		DataSources:  dataSources,
 		SplitterType: PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{leftByItemArray, rightByItemArray},
-	}.Init(ctx, pp.StatsInfo(), pp.SelectOffset(), reqProp)
+	}.Init(ctx, pp.StatsInfo(), pp.QBOffset(), reqProp)
 	return shuffle
 }
 
@@ -734,12 +735,12 @@ func (p *logicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, chil
 	}
 }
 
-func newBaseLogicalPlan(ctx sessionctx.Context, tp string, self LogicalPlan, offset int) baseLogicalPlan {
+func newBaseLogicalPlan(ctx sessionctx.Context, tp string, self LogicalPlan, selectOffset int) baseLogicalPlan {
 	return baseLogicalPlan{
 		taskMap:      make(map[string]task),
 		taskMapBak:   make([]string, 0, 10),
 		taskMapBakTS: make([]uint64, 0, 10),
-		Plan:         base.NewBasePlan(ctx, tp, offset),
+		Plan:         base.NewBasePlan(ctx, tp, selectOffset),
 		self:         self,
 	}
 }

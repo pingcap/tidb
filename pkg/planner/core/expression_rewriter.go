@@ -881,7 +881,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 				ctx:            ctx,
 				is:             er.b.is,
 				outputColIDs:   []int64{newColID},
-			}.Init(er.b.ctx, np.SelectOffset())
+			}.Init(er.b.ctx, np.QBOffset())
 			scalarSubQ := &ScalarSubQueryExpr{
 				scalarSubqueryColID: newColID,
 				evalCtx:             subqueryCtx,
@@ -1117,7 +1117,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 			scalarSubQuery: physicalPlan,
 			ctx:            ctx,
 			is:             er.b.is,
-		}.Init(er.b.ctx, np.SelectOffset())
+		}.Init(er.b.ctx, np.QBOffset())
 		newColIDs := make([]int64, 0, np.Schema().Len())
 		newScalarSubQueryExprs := make([]expression.Expression, 0, np.Schema().Len())
 		for _, col := range np.Schema().Columns {

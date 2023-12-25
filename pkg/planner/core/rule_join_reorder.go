@@ -316,7 +316,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 		if schemaChanged {
 			proj := LogicalProjection{
 				Exprs: expression.Column2Exprs(originalSchema.Columns),
-			}.Init(p.SCtx(), p.SelectOffset())
+			}.Init(p.SCtx(), p.QBOffset())
 			// Clone the schema here, because the schema may be changed by column pruning rules.
 			proj.SetSchema(originalSchema.Clone())
 			proj.SetChildren(p)
@@ -408,7 +408,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 	for _, hintTbl := range hintInfo.LeadingJoinOrder {
 		match := false
 		for i, joinGroup := range leftJoinGroup {
-			tableAlias := extractTableAlias(joinGroup, joinGroup.SelectOffset())
+			tableAlias := extractTableAlias(joinGroup, joinGroup.QBOffset())
 			if tableAlias == nil {
 				continue
 			}
@@ -426,7 +426,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 		// consider query block alias: select /*+ leading(t1, t2) */ * from (select ...) t1, t2 ...
 		groupIdx := -1
 		for i, joinGroup := range leftJoinGroup {
-			blockOffset := joinGroup.SelectOffset()
+			blockOffset := joinGroup.QBOffset()
 			if blockOffset > 1 && blockOffset < len(queryBlockNames) {
 				blockName := queryBlockNames[blockOffset]
 				if hintTbl.DBName.L == blockName.DBName.L && hintTbl.TblName.L == blockName.TableName.L {
@@ -602,7 +602,7 @@ func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []Logi
 	if len(s.otherConds) > 0 {
 		additionSelection := LogicalSelection{
 			Conditions: s.otherConds,
-		}.Init(cartesianJoinGroup[0].SCtx(), cartesianJoinGroup[0].SelectOffset())
+		}.Init(cartesianJoinGroup[0].SCtx(), cartesianJoinGroup[0].QBOffset())
 		additionSelection.SetChildren(cartesianJoinGroup[0])
 		cartesianJoinGroup[0] = additionSelection
 	}
@@ -610,8 +610,8 @@ func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []Logi
 }
 
 func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild LogicalPlan) *LogicalJoin {
-	offset := lChild.SelectOffset()
-	if offset != rChild.SelectOffset() {
+	offset := lChild.QBOffset()
+	if offset != rChild.QBOffset() {
 		offset = -1
 	}
 	join := LogicalJoin{

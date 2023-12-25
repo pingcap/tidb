@@ -541,7 +541,7 @@ func prunePhysicalColumnForHashJoinChild(sctx sessionctx.Context, hashJoin *Phys
 		ch := sender.children[0]
 		proj := PhysicalProjection{
 			Exprs: usedExprs,
-		}.Init(sctx, ch.StatsInfo(), ch.SelectOffset())
+		}.Init(sctx, ch.StatsInfo(), ch.QBOffset())
 
 		proj.SetSchema(prunedSchema)
 		proj.SetChildren(ch)

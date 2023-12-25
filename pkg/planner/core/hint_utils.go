@@ -102,7 +102,7 @@ func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, no
 		return res
 	}
 	for _, child := range children {
-		selectOffset := child.SelectOffset()
+		selectOffset := child.QBOffset()
 		if selectOffset == -1 {
 			continue
 		}
@@ -139,7 +139,7 @@ func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, no
 }
 
 func genHintsFromSingle(p PhysicalPlan, nodeType h.NodeType, storeType kv.StoreType, res []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
-	qbName, err := h.GenerateQBName(nodeType, p.SelectOffset())
+	qbName, err := h.GenerateQBName(nodeType, p.QBOffset())
 	if err != nil {
 		return res
 	}
@@ -261,16 +261,16 @@ func genHintsFromSingle(p PhysicalPlan, nodeType h.NodeType, storeType kv.StoreT
 			})
 		}
 	case *PhysicalMergeJoin:
-		res = append(res, getJoinHints(p.SCtx(), h.HintSMJ, p.SelectOffset(), nodeType, pp.children...)...)
+		res = append(res, getJoinHints(p.SCtx(), h.HintSMJ, p.QBOffset(), nodeType, pp.children...)...)
 	case *PhysicalHashJoin:
 		// TODO: support the hash_join_build and hash_join_probe hint for auto capture
-		res = append(res, getJoinHints(p.SCtx(), h.HintHJ, p.SelectOffset(), nodeType, pp.children...)...)
+		res = append(res, getJoinHints(p.SCtx(), h.HintHJ, p.QBOffset(), nodeType, pp.children...)...)
 	case *PhysicalIndexJoin:
-		res = append(res, getJoinHints(p.SCtx(), h.HintINLJ, p.SelectOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+		res = append(res, getJoinHints(p.SCtx(), h.HintINLJ, p.QBOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
 	case *PhysicalIndexMergeJoin:
-		res = append(res, getJoinHints(p.SCtx(), h.HintINLMJ, p.SelectOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+		res = append(res, getJoinHints(p.SCtx(), h.HintINLMJ, p.QBOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
 	case *PhysicalIndexHashJoin:
-		res = append(res, getJoinHints(p.SCtx(), h.HintINLHJ, p.SelectOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+		res = append(res, getJoinHints(p.SCtx(), h.HintINLHJ, p.QBOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
 	}
 	return res
 }
