@@ -94,7 +94,7 @@ func (sm *Manager) getSchedulers() []Scheduler {
 	return res
 }
 
-// Manager manage a bunch of schedulerMap.
+// Manager manage a bunch of schedulers.
 // Scheduler schedule and monitor tasks.
 // The scheduling task number is limited by size of gPool.
 type Manager struct {
@@ -145,7 +145,7 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) (*Man
 	return schedulerManager, nil
 }
 
-// Start the schedulerManager, start the scheduleTaskLoop to start multiple schedulerMap.
+// Start the schedulerManager, start the scheduleTaskLoop to start multiple schedulers.
 func (sm *Manager) Start() {
 	failpoint.Inject("disableSchedulerManager", func() {
 		failpoint.Return()

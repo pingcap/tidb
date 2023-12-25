@@ -42,7 +42,7 @@ type balancer struct {
 	Param
 
 	// a helper temporary map to record the used slots of each node during balance
-	// to avoid passing too many parameters.
+	// to avoid passing it around.
 	currUsedSlots map[string]int
 }
 
@@ -146,7 +146,7 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 	subtasksNeedSchedule := make([]*proto.Subtask, 0)
 	for k, v := range executorSubtasks {
 		if _, ok := adjustedNodeMap[k]; !ok {
-			// dead node
+			// dead node or not have enough slots
 			subtasksNeedSchedule = append(subtasksNeedSchedule, v...)
 			delete(executorSubtasks, k)
 			continue
