@@ -442,6 +442,7 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 		ctxID: stmtCtxIDGenerator.Add(1),
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
+	sc.initErrCtx()
 	return sc
 }
 
@@ -451,6 +452,7 @@ func (sc *StatementContext) Reset() {
 		ctxID:   stmtCtxIDGenerator.Add(1),
 		typeCtx: types.NewContext(types.DefaultStmtFlags, time.UTC, sc),
 	}
+	sc.initErrCtx()
 }
 
 // CtxID returns the context id of the statement
@@ -479,9 +481,7 @@ func (sc *StatementContext) TypeCtx() types.Context {
 	return sc.typeCtx
 }
 
-// ErrCtx returns the error context
-// TODO: add a cache to the `ErrCtx` if needed, though it's not a big burden to generate `ErrCtx` everytime.
-func (sc *StatementContext) ErrCtx() errctx.Context {
+func (sc *StatementContext) initErrCtx() {
 	ctx := errctx.NewContext(sc)
 
 	if sc.TypeFlags().IgnoreTruncateErr() {
@@ -489,8 +489,12 @@ func (sc *StatementContext) ErrCtx() errctx.Context {
 	} else if sc.TypeFlags().TruncateAsWarning() {
 		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
 	}
+	sc.errCtx = ctx
+}
 
-	return ctx
+// ErrCtx returns the error context
+func (sc *StatementContext) ErrCtx() errctx.Context {
+	return sc.errCtx
 }
 
 // TypeFlags returns the type flags
@@ -501,6 +505,7 @@ func (sc *StatementContext) TypeFlags() types.Flags {
 // SetTypeFlags sets the type flags
 func (sc *StatementContext) SetTypeFlags(flags types.Flags) {
 	sc.typeCtx = sc.typeCtx.WithFlags(flags)
+	sc.initErrCtx()
 }
 
 // HandleTruncate ignores or returns the error based on the TypeContext inside.

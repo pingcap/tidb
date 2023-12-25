@@ -2972,10 +2972,10 @@ func formatDecimal(sctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result
 			// FORMAT(x, d)
 		} else if localeBuf.IsNull(i) {
 			// FORMAT(x, d, NULL)
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs("NULL"))
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
 		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
 			// TODO: support other locales.
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs(localeBuf.GetString(i)))
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.FastGenByArgs(localeBuf.GetString(i)))
 		}
 
 		xStr := roundFormatArgs(x.String(), int(d))
@@ -3012,10 +3012,10 @@ func formatReal(sctx EvalContext, xBuf *chunk.Column, dInt64s []int64, result *c
 			// FORMAT(x, d)
 		} else if localeBuf.IsNull(i) {
 			// FORMAT(x, d, NULL)
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs("NULL"))
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.FastGenByArgs("NULL"))
 		} else if !strings.EqualFold(localeBuf.GetString(i), "en_US") {
 			// TODO: support other locales.
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.GenWithStackByArgs(localeBuf.GetString(i)))
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errUnknownLocale.FastGenByArgs(localeBuf.GetString(i)))
 		}
 
 		xStr := roundFormatArgs(strconv.FormatFloat(x, 'f', -1, 64), int(d))

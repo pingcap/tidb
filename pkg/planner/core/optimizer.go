@@ -175,7 +175,7 @@ type logicalOptRule interface {
 func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node ast.Node, infoSchema infoschema.InfoSchema) (Plan, error) {
 	sctx.GetSessionVars().PlanID.Store(0)
 	sctx.GetSessionVars().PlanColumnID.Store(0)
-	builder, _ := NewPlanBuilder().Init(sctx, infoSchema, &utilhint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder().Init(sctx, infoSchema, &utilhint.QBHintHandler{})
 	p, err := builder.Build(ctx, node)
 	if err != nil {
 		return nil, err
