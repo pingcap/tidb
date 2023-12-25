@@ -517,6 +517,31 @@ func LoadNeededHistograms(sctx sessionctx.Context, statsCache statstypes.StatsCa
 	return nil
 }
 
+// CleanFakeItemsForShowHistInFlights cleans the invalid inserted items.
+func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
+	items := statistics.HistogramNeededItems.AllItems()
+	reallyNeeded := 0
+	for _, item := range items {
+		tbl, ok := statsCache.Get(item.TableID)
+		if !ok {
+			statistics.HistogramNeededItems.Delete(item)
+			continue
+		}
+		loadNeeded := false
+		if item.IsIndex {
+			_, loadNeeded = tbl.IndexIsLoadNeeded(item.ID)
+		} else {
+			_, loadNeeded = tbl.ColumnIsLoadNeeded(item.ID)
+		}
+		if !loadNeeded {
+			statistics.HistogramNeededItems.Delete(item)
+			continue
+		}
+		reallyNeeded++
+	}
+	return reallyNeeded
+}
+
 func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.StatsCache, col model.TableItemID, loadFMSketch bool) (err error) {
 	tbl, ok := statsCache.Get(col.TableID)
 	if !ok {

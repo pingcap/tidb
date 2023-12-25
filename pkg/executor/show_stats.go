@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statsStorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/tikv/client-go/v2/oracle"
@@ -531,7 +532,8 @@ func (e *ShowExec) appendTableForStatsHealthy(dbName, tblName, partitionName str
 }
 
 func (e *ShowExec) fetchShowHistogramsInFlight() {
-	e.appendRow([]interface{}{statistics.HistogramNeededItems.Length()})
+	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
+	e.appendRow([]interface{}{statsStorage.CleanFakeItemsForShowHistInFlights(statsHandle)})
 }
 
 func (e *ShowExec) fetchShowAnalyzeStatus(ctx context.Context) error {
