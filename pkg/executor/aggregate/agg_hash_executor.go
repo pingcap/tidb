@@ -258,7 +258,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 }
 
 func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrency int, ctx sessionctx.Context) {
-	baseRetTypeNum := len(e.Base().RetFieldTypes())
+	baseRetTypeNum := len(e.RetFieldTypes())
 	spillChunkFieldTypes := make([]*types.FieldType, baseRetTypeNum+1)
 	for i := 0; i < baseRetTypeNum; i++ {
 		spillChunkFieldTypes[i] = types.NewFieldType(mysql.TypeVarString)
@@ -286,8 +286,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			chk:                  exec.TryNewCacheChunk(e.Children(0)),
 			groupKey:             make([][]byte, 0, 8),
 			getNewSpillChunkFunc: func() *chunk.Chunk {
-				base := e.Base()
-				return chunk.New(spillChunkFieldTypes, base.InitCap(), base.MaxChunkSize())
+				return chunk.New(spillChunkFieldTypes, e.InitCap(), e.MaxChunkSize())
 			},
 			spillChunkFieldTypes:  spillChunkFieldTypes,
 			spillSerializeHelpers: aggfuncs.NewSerializeHelper(),
@@ -356,7 +355,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 	finalConcurrency := sessionVars.HashAggFinalConcurrency()
 
 	if partialConcurrency == 0 || finalConcurrency == 0 {
-		return errors.New("partialConcurrency or finalConcurrency is 0.")
+		return errors.New("partialConcurrency or finalConcurrency is 0")
 	}
 
 	e.IsChildReturnEmpty = true

@@ -226,15 +226,14 @@ func (e *HashAggExec) ActionSpill() memory.ActionOnExceed {
 			}
 		}
 		return e.spillAction
-	} else {
-		if e.parallelAggSpillAction == nil {
-			e.parallelAggSpillAction = &ParallelAggSpillDiskAction{
-				e:           e,
-				spillHelper: e.spillHelper,
-			}
-		}
-		return e.parallelAggSpillAction
 	}
+	if e.parallelAggSpillAction == nil {
+		e.parallelAggSpillAction = &ParallelAggSpillDiskAction{
+			e:           e,
+			spillHelper: e.spillHelper,
+		}
+	}
+	return e.parallelAggSpillAction
 }
 
 type processRowContext struct {
