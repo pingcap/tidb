@@ -1482,6 +1482,8 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	tail := 0
 	for i := range buckets {
 		if buckets[i].Count != 0 {
+			// To enable reusing the back of the slice,
+			// we need to shift the non-empty buckets to the front.
 			buckets[tail], buckets[i] = buckets[i], buckets[tail]
 			tail++
 		}
