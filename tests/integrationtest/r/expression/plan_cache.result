@@ -96,11 +96,16 @@ create table t1 (a varchar(40));
 insert into t1 values ('C1'),('R1');
 insert into mysql.expr_pushdown_blacklist values('regexp_like', 'tikv,tiflash,tidb', 'for test');
 insert into mysql.expr_pushdown_blacklist values('regexp_substr', 'tikv,tiflash,tidb', 'for test');
+insert into mysql.expr_pushdown_blacklist values('regexp_instr', 'tikv,tiflash,tidb', 'for test');
+insert into mysql.expr_pushdown_blacklist values('regexp_replace', 'tikv,tiflash,tidb', 'for test');
 admin reload expr_pushdown_blacklist;
 set tidb_enable_vectorized_expression=ON;
 prepare stmt1 from 'select a from t1 where a rlike ?';
 prepare stmt2 from 'select a, regexp_substr(a, ?) from t1 order by a asc';
+prepare stmt3 from 'select a, regexp_instr(a, ?) from t1 order by a asc';
+prepare stmt4 from 'select a, regexp_replace(a, ?, ?) from t1 order by a asc';
 set @a='^C.*';
+set @r='xxxx';
 execute stmt1 using @a;
 a
 C1
@@ -108,6 +113,19 @@ execute stmt2 using @a;
 a	regexp_substr(a, ?)
 C1	C1
 R1	NULL
+execute stmt3 using @a;
+a	regexp_instr(a, ?)
+C1	1
+R1	0
+execute stmt4 using @a, @r;
+a	regexp_replace(a, ?, ?)
+C1	xxxx
+R1	R1
+set @r='yyyy';
+execute stmt4 using @a, @r;
+a	regexp_replace(a, ?, ?)
+C1	yyyy
+R1	R1
 set @a='^R.*';
 execute stmt1 using @a;
 a
@@ -116,8 +134,17 @@ execute stmt2 using @a;
 a	regexp_substr(a, ?)
 C1	NULL
 R1	R1
+execute stmt3 using @a;
+a	regexp_instr(a, ?)
+C1	0
+R1	1
+execute stmt4 using @a, @r;
+a	regexp_replace(a, ?, ?)
+C1	C1
+R1	yyyy
 set tidb_enable_vectorized_expression=OFF;
 set @a='^C.*';
+set @r='xxxx';
 execute stmt1 using @a;
 a
 C1
@@ -125,6 +152,19 @@ execute stmt2 using @a;
 a	regexp_substr(a, ?)
 C1	C1
 R1	NULL
+execute stmt3 using @a;
+a	regexp_instr(a, ?)
+C1	1
+R1	0
+execute stmt4 using @a, @r;
+a	regexp_replace(a, ?, ?)
+C1	xxxx
+R1	R1
+set @r='yyyy';
+execute stmt4 using @a, @r;
+a	regexp_replace(a, ?, ?)
+C1	yyyy
+R1	R1
 set @a='^R.*';
 execute stmt1 using @a;
 a
@@ -133,6 +173,14 @@ execute stmt2 using @a;
 a	regexp_substr(a, ?)
 C1	NULL
 R1	R1
+execute stmt3 using @a;
+a	regexp_instr(a, ?)
+C1	0
+R1	1
+execute stmt4 using @a, @r;
+a	regexp_replace(a, ?, ?)
+C1	C1
+R1	yyyy
 delete from mysql.expr_pushdown_blacklist where name like 'regexp%' and store_type = 'tikv,tiflash,tidb' and reason = 'for test';
 admin reload expr_pushdown_blacklist;
 set tidb_enable_prepared_plan_cache=default;

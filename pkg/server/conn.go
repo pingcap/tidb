@@ -1211,7 +1211,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 
 	vars := cc.getCtx().GetSessionVars()
 	for _, dbName := range session.GetDBNames(vars) {
-		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, vars.ResourceGroupName).Observe(cost.Seconds())
+		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
 	}
 }
 

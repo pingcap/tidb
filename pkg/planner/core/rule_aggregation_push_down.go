@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
 type aggregationPushDownSolver struct {
@@ -249,7 +250,7 @@ func (*aggregationPushDownSolver) decompose(ctx sessionctx.Context, aggFunc *agg
 // process it temporarily. If not, We will add additional group by columns and first row functions. We make a new aggregation operator.
 // If the pushed aggregation is grouped by unique key, it's no need to push it down.
 func (a *aggregationPushDownSolver) tryToPushDownAgg(oldAgg *LogicalAggregation, aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column,
-	join *LogicalJoin, childIdx int, aggHints aggHintInfo, blockOffset int, opt *logicalOptimizeOp) (_ LogicalPlan, err error) {
+	join *LogicalJoin, childIdx int, aggHints h.AggHintInfo, blockOffset int, opt *logicalOptimizeOp) (_ LogicalPlan, err error) {
 	child := join.children[childIdx]
 	if aggregation.IsAllFirstRow(aggFuncs) {
 		return child, nil
@@ -326,7 +327,7 @@ func (*aggregationPushDownSolver) checkAllArgsColumn(fun *aggregation.AggFuncDes
 //  1. https://github.com/pingcap/tidb/issues/16355, push avg & distinct functions across join
 //  2. remove this method and use splitPartialAgg instead for clean code.
 func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc,
-	gbyCols []*expression.Column, aggHints aggHintInfo, blockOffset int, nullGenerating bool) (*LogicalAggregation, error) {
+	gbyCols []*expression.Column, aggHints h.AggHintInfo, blockOffset int, nullGenerating bool) (*LogicalAggregation, error) {
 	agg := LogicalAggregation{
 		GroupByItems: expression.Column2Exprs(gbyCols),
 		aggHints:     aggHints,

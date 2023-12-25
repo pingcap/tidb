@@ -39,13 +39,13 @@ func TestCleanUpRoutine(t *testing.T) {
 	defer ctrl.Finish()
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "scheduler_manager")
-	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
+	mockCleanupRoutine := mock.NewMockCleanUpRoutine(ctrl)
 
-	sch, mgr := MockSchedulerManager(t, ctrl, pool, getNumberExampleSchedulerExt(ctrl), mockCleanupRountine)
-	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	sch, mgr := MockSchedulerManager(t, ctrl, pool, getNumberExampleSchedulerExt(ctrl), mockCleanupRoutine)
+	mockCleanupRoutine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	require.NoError(t, mgr.StartManager(ctx, ":4000", ""))
 	sch.Start()
 	defer sch.Stop()
-	require.NoError(t, mgr.StartManager(ctx, ":4000", "background"))
 	taskID, err := mgr.CreateTask(ctx, "test", proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
 
@@ -80,32 +80,4 @@ func TestCleanUpRoutine(t *testing.T) {
 		require.NoError(t, err)
 		return len(tasks) != 0
 	}, time.Second*10, time.Millisecond*300)
-}
-
-func TestCleanUpMeta(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	gtk := testkit.NewTestKit(t, store)
-	pool := pools.NewResourcePool(func() (pools.Resource, error) {
-		return gtk.Session(), nil
-	}, 1, 1, time.Second)
-	defer pool.Close()
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-	mockTaskMgr := mock.NewMockTaskManager(ctrl)
-	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
-	schMgr := MockSchedulerManagerWithMockTaskMgr(t, ctrl, pool, mockTaskMgr, getNumberExampleSchedulerExt(ctrl), mockCleanupRountine)
-
-	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]string{":4000", ":4001"}, nil)
-	mockTaskMgr.EXPECT().CleanUpMeta(gomock.Any(), gomock.Any()).Return(nil)
-	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	require.Equal(t, 1, schMgr.CleanUpMeta())
-
-	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]string{":4000"}, nil)
-	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	require.Equal(t, 0, schMgr.CleanUpMeta())
-
-	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]string{":4000", ":4001", ":4003"}, nil)
-	mockTaskMgr.EXPECT().CleanUpMeta(gomock.Any(), gomock.Any()).Return(nil)
-	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	require.Equal(t, 2, schMgr.CleanUpMeta())
 }

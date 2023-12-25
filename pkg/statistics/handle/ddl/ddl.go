@@ -51,7 +51,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 	switch t.GetType() {
 	case model.ActionCreateTable:
 		newTableInfo := t.GetCreateTableInfo()
-		ids, err := h.getInitStateTableIDs(newTableInfo)
+		ids, err := h.getTableIDs(newTableInfo)
 		if err != nil {
 			return err
 		}
@@ -61,8 +61,8 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			}
 		}
 	case model.ActionTruncateTable:
-		newTableInfo, _ := t.GetTruncateTableInfo()
-		ids, err := h.getInitStateTableIDs(newTableInfo)
+		newTableInfo, droppedTableInfo := t.GetTruncateTableInfo()
+		ids, err := h.getTableIDs(newTableInfo)
 		if err != nil {
 			return err
 		}
@@ -71,9 +71,20 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 				return err
 			}
 		}
+
+		// Remove the old table stats.
+		droppedIDs, err := h.getTableIDs(droppedTableInfo)
+		if err != nil {
+			return err
+		}
+		for _, id := range droppedIDs {
+			if err := h.statsWriter.ResetTableStats2KVForDrop(id); err != nil {
+				return err
+			}
+		}
 	case model.ActionDropTable:
 		droppedTableInfo := t.GetDropTableInfo()
-		ids, err := h.getInitStateTableIDs(droppedTableInfo)
+		ids, err := h.getTableIDs(droppedTableInfo)
 		if err != nil {
 			return err
 		}
@@ -84,7 +95,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 		}
 	case model.ActionAddColumn:
 		newTableInfo, newColumnInfo := t.GetAddColumnInfo()
-		ids, err := h.getInitStateTableIDs(newTableInfo)
+		ids, err := h.getTableIDs(newTableInfo)
 		if err != nil {
 			return err
 		}
@@ -96,7 +107,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 	case model.ActionModifyColumn:
 		newTableInfo, modifiedColumnInfo := t.GetModifyColumnInfo()
 
-		ids, err := h.getInitStateTableIDs(newTableInfo)
+		ids, err := h.getTableIDs(newTableInfo)
 		if err != nil {
 			return err
 		}
@@ -234,7 +245,7 @@ func updateStatsWithCountDeltaAndModifyCountDelta(
 	return err
 }
 
-func (h *ddlHandlerImpl) getInitStateTableIDs(tblInfo *model.TableInfo) (ids []int64, err error) {
+func (h *ddlHandlerImpl) getTableIDs(tblInfo *model.TableInfo) (ids []int64, err error) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil {
 		return []int64{tblInfo.ID}, nil

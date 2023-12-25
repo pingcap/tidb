@@ -408,6 +408,17 @@ func TestStmtCtxID(t *testing.T) {
 	}
 }
 
+func TestErrCtx(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	// the default errCtx
+	err := types.ErrTruncated
+	require.Error(t, sc.HandleError(err))
+
+	// reset the types flags will re-initialize the error flag
+	sc.SetTypeFlags(types.DefaultStmtFlags | types.FlagTruncateAsWarning)
+	require.NoError(t, sc.HandleError(err))
+}
+
 func BenchmarkErrCtx(b *testing.B) {
 	sc := stmtctx.NewStmtCtx()
 

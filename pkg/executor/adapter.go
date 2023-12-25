@@ -556,7 +556,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		stmtCtx := sctx.GetSessionVars().StmtCtx
 		_, planDigest := GetPlanDigest(stmtCtx)
 		_, digest := stmtCtx.SQLDigest()
-		stmtCtx.RunawayChecker = domain.GetDomain(sctx).RunawayManager().DeriveChecker(sctx.GetSessionVars().ResourceGroupName, stmtCtx.OriginalSQL, digest.String(), planDigest.String())
+		stmtCtx.RunawayChecker = domain.GetDomain(sctx).RunawayManager().DeriveChecker(sctx.GetSessionVars().StmtCtx.ResourceGroupName, stmtCtx.OriginalSQL, digest.String(), planDigest.String())
 		if err := stmtCtx.RunawayChecker.BeforeExecutor(); err != nil {
 			return nil, err
 		}
@@ -1618,7 +1618,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		UsedStats:         stmtCtx.GetUsedStatsInfo(false),
 		IsSyncStatsFailed: stmtCtx.IsSyncStatsFailed,
 		Warnings:          collectWarningsForSlowLog(stmtCtx),
-		ResourceGroupName: sessVars.ResourceGroupName,
+		ResourceGroupName: sessVars.StmtCtx.ResourceGroupName,
 		RRU:               ruDetails.RRU(),
 		WRU:               ruDetails.WRU(),
 		WaitRUDuration:    ruDetails.RUWaitDuration(),
@@ -1803,10 +1803,9 @@ func getEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPla
 			// some hints like 'memory_quota' cannot be extracted from the PhysicalPlan directly,
 			// so we have to iterate all hints from the customer and keep some other necessary hints.
 			switch tableHint.HintName.L {
-			case plannercore.HintMemoryQuota, plannercore.HintUseToja, plannercore.HintNoIndexMerge,
-				plannercore.HintMaxExecutionTime,
-				plannercore.HintIgnoreIndex, plannercore.HintReadFromStorage, plannercore.HintMerge,
-				plannercore.HintSemiJoinRewrite, plannercore.HintNoDecorrelate:
+			case hint.HintMemoryQuota, hint.HintUseToja, hint.HintNoIndexMerge,
+				hint.HintMaxExecutionTime, hint.HintIgnoreIndex, hint.HintReadFromStorage,
+				hint.HintMerge, hint.HintSemiJoinRewrite, hint.HintNoDecorrelate:
 				hints = append(hints, tableHint)
 			}
 		}
