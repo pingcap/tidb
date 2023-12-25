@@ -442,18 +442,10 @@ type Job struct {
 	// Collate is the collation the DDL Job is created.
 	Collate string `json:"collate"`
 
-	// AffectedSchemaNames indicates which schema is affected by this job.
-	// The value is stored in lower case and keep unchanged after initialization.
-	//   []string{""} means no schema is affected.
-	//   []string{"*"} means all schemas are affected.
-	//   nil means fallback to use []string{job.SchemaName}
-	AffectedSchemaNames []string `json:"affected_schema_names"`
-	// AffectedTableNames indicates which table is affected by this job.
-	// The value is stored in lower case and keep unchanged after initialization.
-	//   []string{""} means no table is affected.
-	//   []string{"*"} means all the tables in corresponding schema are affected.
-	//   nil means fallback to use []string{job.TableName}
-	AffectedTableNames []string `json:"affected_table_names"`
+	// InvolvingSchemaInfo indicates the schema info involved in the job.
+	// nil means fallback to use job.SchemaName/TableName.
+	// Keep unchanged after initialization.
+	InvolvingSchemaInfo []InvolvingSchemaInfo `json:"involving_schema_info"`
 
 	// AdminOperator indicates where the Admin command comes, by the TiDB
 	// itself (AdminCommandBySystem) or by user (AdminCommandByEndUser).
@@ -462,6 +454,20 @@ type Job struct {
 	// TraceInfo indicates the information for SQL tracing
 	TraceInfo *TraceInfo `json:"trace_info"`
 }
+
+// InvolvingSchemaInfo returns the schema info involved in the job.
+// The value should be stored in lower case.
+type InvolvingSchemaInfo struct {
+	Database string `json:"database"`
+	Table    string `json:"table"`
+}
+
+const (
+	// InvolvingAll means all schemas/tables are affected.
+	InvolvingAll = "*"
+	// InvolvingNone means no schema/table is affected.
+	InvolvingNone = ""
+)
 
 // FinishTableJob is called when a job is finished.
 // It updates the job's state information and adds tblInfo to the binlog.
