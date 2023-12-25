@@ -425,7 +425,7 @@ func (s *BaseScheduler) onNextStage() (err error) {
 		}
 	}
 
-	eligibleNodes, err := getEligibleNodes(s.ctx, s, s.nodeMgr)
+	eligibleNodes, err := getEligibleNodes(s.ctx, s, s.nodeMgr.getManagedNodes())
 	if err != nil {
 		return err
 	}
@@ -601,14 +601,14 @@ func IsCancelledErr(err error) bool {
 // getEligibleNodes returns the eligible(live) nodes for the task.
 // if the task can only be scheduled to some specific nodes, return them directly,
 // we don't care liveliness of them.
-func getEligibleNodes(ctx context.Context, sch Scheduler, nodeMgr *NodeManager) ([]string, error) {
+func getEligibleNodes(ctx context.Context, sch Scheduler, managedNodes []string) ([]string, error) {
 	serverNodes, err := sch.GetEligibleInstances(ctx, sch.GetTask())
 	if err != nil {
 		return nil, err
 	}
 	logutil.BgLogger().Debug("eligible instances", zap.Int("num", len(serverNodes)))
 	if len(serverNodes) == 0 {
-		serverNodes = append([]string{}, nodeMgr.getManagedNodes()...)
+		serverNodes = managedNodes
 	}
 	return serverNodes, nil
 }

@@ -137,7 +137,10 @@ func (nm *NodeManager) refreshManagedNodes(ctx context.Context, taskMgr TaskMana
 }
 
 // GetManagedNodes returns the nodes managed by the framework.
-// The returned map is read-only, don't write to it.
+// return a copy of the managed nodes.
 func (nm *NodeManager) getManagedNodes() []string {
-	return *nm.managedNodes.Load()
+	nodes := *nm.managedNodes.Load()
+	res := make([]string, len(nodes))
+	copy(res, nodes)
+	return res
 }

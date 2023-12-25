@@ -65,6 +65,9 @@ func (b *balancer) balanceLoop(ctx context.Context, sm *Manager) {
 }
 
 func (b *balancer) balance(ctx context.Context, sm *Manager) {
+	// we will use currUsedSlots to calculate adjusted eligible nodes during balance,
+	// it's initial value depends on the managed nodes, to have a consistent view,
+	// DO NOT call getManagedNodes twice during 1 balance.
 	managedNodes := b.nodeMgr.getManagedNodes()
 	b.currUsedSlots = make(map[string]int, len(managedNodes))
 	for _, n := range managedNodes {
@@ -73,7 +76,7 @@ func (b *balancer) balance(ctx context.Context, sm *Manager) {
 
 	schedulers := sm.getSchedulers()
 	for _, sch := range schedulers {
-		if err := b.balanceSubtasks(ctx, sch); err != nil {
+		if err := b.balanceSubtasks(ctx, sch, managedNodes); err != nil {
 			logutil.Logger(ctx).Warn("failed to balance subtasks",
 				zap.Int64("task-id", sch.GetTask().ID), log.ShortError(err))
 			return
@@ -81,9 +84,9 @@ func (b *balancer) balance(ctx context.Context, sm *Manager) {
 	}
 }
 
-func (b *balancer) balanceSubtasks(ctx context.Context, sch Scheduler) error {
+func (b *balancer) balanceSubtasks(ctx context.Context, sch Scheduler, managedNodes []string) error {
 	task := sch.GetTask()
-	eligibleNodes, err := getEligibleNodes(ctx, sch, b.nodeMgr)
+	eligibleNodes, err := getEligibleNodes(ctx, sch, managedNodes)
 	if err != nil {
 		return err
 	}
@@ -98,26 +101,29 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err == nil {
-			b.updateUsedNodes(subtasks)
-		}
-	}()
-
 	if len(subtasks) == 0 {
 		return nil
 	}
 
+	// balance subtasks only to nodes with enough slots, from the view of all
+	// managed nodes, subtasks of task might not be balanced.
 	adjustedNodes := filterNodesWithEnoughSlots(b.currUsedSlots, b.slotMgr.getCapacity(),
 		eligibleNodes, subtasks[0].Concurrency)
 	if len(adjustedNodes) == 0 {
-		// no node has enough slots to run the subtasks, skip balance.
+		// no node has enough slots to run the subtasks, skip balance and skip
+		// update used slots.
 		return nil
 	}
 	adjustedNodeMap := make(map[string]struct{}, len(adjustedNodes))
 	for _, n := range adjustedNodes {
 		adjustedNodeMap[n] = struct{}{}
 	}
+
+	defer func() {
+		if err == nil {
+			b.updateUsedNodes(subtasks)
+		}
+	}()
 
 	averageSubtaskCnt := (len(subtasks) + len(adjustedNodes) - 1) / len(adjustedNodes)
 	executorSubtasks := make(map[string][]*proto.Subtask, len(adjustedNodes))
