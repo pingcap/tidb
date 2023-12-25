@@ -80,19 +80,19 @@ func (j *runningJobs) checkRunnable(job *model.Job) bool {
 func checkConflict(runningInvolveInfo, jobInvolveInfo model.InvolvingSchemaInfo) bool {
 	dbName, tblName := runningInvolveInfo.Database, runningInvolveInfo.Table
 	jobDBName, jobTblName := jobInvolveInfo.Database, jobInvolveInfo.Table
-	if dbName == "*" {
-		return jobDBName != ""
+	if dbName == model.InvolvingAll {
+		return jobDBName != model.InvolvingNone
 	}
-	if dbName == "" {
+	if dbName == model.InvolvingNone {
 		return false
 	}
 	if dbName != jobDBName {
 		return false
 	}
-	if tblName == "*" {
-		return jobTblName != ""
+	if tblName == model.InvolvingAll {
+		return jobTblName != model.InvolvingNone
 	}
-	if tblName == "" {
+	if tblName == model.InvolvingNone {
 		return false
 	}
 	return tblName == jobTblName
