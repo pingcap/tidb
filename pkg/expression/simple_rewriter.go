@@ -94,7 +94,7 @@ func ParseSimpleExprsWithNames(ctx sessionctx.Context, exprStr string, schema *S
 		stmts, warns, err = parser.New().ParseSQL(exprStr)
 	}
 	if err != nil {
-		return nil, util.SyntaxWarn(err)
+		return nil, errors.Trace(util.SyntaxWarn(err))
 	}
 	for _, warn := range warns {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))

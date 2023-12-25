@@ -49,7 +49,6 @@ package expression
 import (
 	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -62,7 +61,7 @@ import (
 
 var builtinCaseWhenVec = template.Must(template.New("builtinCaseWhenVec").Parse(`
 {{ range .Sigs }}{{ with .Arg0 }}
-func (b *builtinCaseWhen{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinCaseWhen{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	{{- if .Fixed }}
 	result.Resize{{ .TypeNameInColumn }}(n, false)
@@ -101,7 +100,7 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(ctx sess
 	return nil
 }
 
-func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinCaseWhen{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	args, l := b.getArgs(), len(b.getArgs())
 	whens := make([]*chunk.Column, l/2)
@@ -228,7 +227,7 @@ func (b *builtinCaseWhen{{ .TypeName }}Sig) vectorized() bool {
 
 var builtinIfNullVec = template.Must(template.New("builtinIfNullVec").Parse(`
 {{ range .Sigs }}{{ with .Arg0 }}
-func (b *builtinIfNull{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinIfNull{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	{{- if .Fixed }}
 	result.Resize{{ .TypeNameInColumn }}(n, false)
@@ -267,7 +266,7 @@ func (b *builtinIfNull{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(ctx sessio
 	return nil
 }
 
-func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinIfNull{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	{{- if .Fixed }}
 	if err := b.args[0].VecEval{{ .TypeName }}(ctx, input, result); err != nil {
@@ -344,7 +343,7 @@ func (b *builtinIfNull{{ .TypeName }}Sig) vectorized() bool {
 
 var builtinIfVec = template.Must(template.New("builtinIfVec").Parse(`
 {{ range .Sigs }}{{ with .Arg0 }}
-func (b *builtinIf{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinIf{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	{{- if .Fixed }}
 	result.Resize{{ .TypeNameInColumn }}(n, false)
@@ -383,7 +382,7 @@ func (b *builtinIf{{ .TypeName }}Sig) fallbackEval{{ .TypeName }}(ctx sessionctx
 	return nil
 }
 
-func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinIf{{ .TypeName }}Sig) vecEval{{ .TypeName }}(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {

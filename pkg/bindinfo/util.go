@@ -17,10 +17,10 @@ package bindinfo
 import (
 	"context"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -45,13 +45,8 @@ func execRows(sctx sessionctx.Context, sql string, args ...interface{}) (rows []
 		[]sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, sql, args...)
 }
 
-// finishTransaction will execute `commit` when error is nil, otherwise `rollback`.
-func finishTransaction(sctx sessionctx.Context, err error) error {
-	if err == nil {
-		_, _, err = execRows(sctx, "COMMIT")
-	} else {
-		_, _, err1 := execRows(sctx, "ROLLBACK")
-		terror.Log(errors.Trace(err1))
-	}
-	return errors.Trace(err)
+// SessionPool is used to recycle sessionctx.
+type SessionPool interface {
+	Get() (pools.Resource, error)
+	Put(pools.Resource)
 }

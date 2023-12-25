@@ -59,7 +59,7 @@ func createInfosSchemaClusterTableSuite(t *testing.T) *infosSchemaClusterTableSu
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(
 		t,
-		mockstore.WithTiKVOptions(tikv.WithPDHTTPClient([]string{s.mockAddr})),
+		mockstore.WithTiKVOptions(tikv.WithPDHTTPClient("infoschema-cluster-table-test", []string{s.mockAddr})),
 	)
 	s.rpcServer, s.listenAddr = setUpRPCService(t, s.dom, "127.0.0.1:0")
 	s.startTime = time.Now()

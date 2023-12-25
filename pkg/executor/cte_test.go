@@ -53,9 +53,7 @@ func TestCTEIssue49096(t *testing.T) {
 	sql := "insert into t2 with cte1 as ( " +
 		"select c1 from t1) " +
 		"select c1 from cte1 natural join (select * from cte1 where c1 > 0) cte2 order by c1;"
-	err := tk.ExecToErr(sql)
-	require.NotNil(t, err)
-	require.Equal(t, "[executor:8175]Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=%d]", err.Error())
+	tk.MustExec(sql) // No deadlock
 }
 
 func TestSpillToDisk(t *testing.T) {

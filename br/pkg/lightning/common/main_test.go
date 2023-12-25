@@ -27,6 +27,9 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
+		goleak.IgnoreTopFunction("net.(*Resolver).lookupIPAddr.func2"),
+		goleak.IgnoreTopFunction("net.(*Resolver).goLookupIPCNAMEOrder.func4"),
+		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 	}
 	goleak.VerifyTestMain(m, opts...)
 }

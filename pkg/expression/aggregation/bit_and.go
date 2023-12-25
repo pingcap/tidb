@@ -17,7 +17,7 @@ package aggregation
 import (
 	"math"
 
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -27,13 +27,13 @@ type bitAndFunction struct {
 	aggFunction
 }
 
-func (bf *bitAndFunction) CreateContext(ctx sessionctx.Context) *AggEvaluateContext {
+func (bf *bitAndFunction) CreateContext(ctx expression.EvalContext) *AggEvaluateContext {
 	evalCtx := bf.aggFunction.CreateContext(ctx)
 	evalCtx.Value.SetUint64(math.MaxUint64)
 	return evalCtx
 }
 
-func (*bitAndFunction) ResetContext(ctx sessionctx.Context, evalCtx *AggEvaluateContext) {
+func (*bitAndFunction) ResetContext(ctx expression.EvalContext, evalCtx *AggEvaluateContext) {
 	evalCtx.Ctx = ctx
 	evalCtx.Value.SetUint64(math.MaxUint64)
 }

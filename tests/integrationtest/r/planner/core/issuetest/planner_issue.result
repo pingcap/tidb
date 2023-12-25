@@ -313,3 +313,22 @@ a	length(a)
 select *,length(a) from t2 where a like '测试';
 a	length(a)
 测试	4
+drop view if exists v1;
+create view v1(id) as
+with recursive cte(a) as (select 1 union select a+1 from cte where a<3)
+select * from cte;
+create table test2(id int,value int);
+insert into test2 values(1,1),(2,2),(3,3),(4,4),(5,5);
+update test2
+set value=0
+where test2.id in
+(
+select * from v1
+);
+select * from test2;
+id	value
+1	0
+2	0
+3	0
+4	4
+5	5

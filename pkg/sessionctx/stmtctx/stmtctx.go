@@ -147,6 +147,8 @@ func (rf *ReferenceCount) UnFreeze() {
 	atomic.StoreInt32((*int32)(rf), ReferenceCountNoReference)
 }
 
+var stmtCtxIDGenerator atomic.Uint64
+
 // StatementContext contains variables for a statement.
 // It should be reset before executing a statement.
 type StatementContext struct {
@@ -155,6 +157,8 @@ type StatementContext struct {
 	_ nocopy.NoCopy
 
 	_ constructor.Constructor `ctor:"NewStmtCtx,NewStmtCtxWithTimeZone,Reset"`
+
+	ctxID uint64
 
 	// 	typeCtx is used to indicate how to make the type conversation.
 	typeCtx types.Context
@@ -183,7 +187,6 @@ type StatementContext struct {
 	DupKeyAsWarning               bool
 	BadNullAsWarning              bool
 	DividedByZeroAsWarning        bool
-	OverflowAsWarning             bool
 	ErrAutoincReadFailedAsWarning bool
 	InShowWarning                 bool
 	UseCache                      bool
@@ -250,18 +253,21 @@ type StatementContext struct {
 	MaxRowID  int64
 
 	// Copied from SessionVars.TimeZone.
-	Priority         mysql.PriorityEnum
-	NotFillCache     bool
-	MemTracker       *memory.Tracker
-	DiskTracker      *disk.Tracker
-	RunawayChecker   *resourcegroup.RunawayChecker
-	IsTiFlash        atomic2.Bool
-	RuntimeStatsColl *execdetails.RuntimeStatsColl
-	TableIDs         []int64
-	IndexNames       []string
-	StmtType         string
-	OriginalSQL      string
-	digestMemo       struct {
+	Priority     mysql.PriorityEnum
+	NotFillCache bool
+	MemTracker   *memory.Tracker
+	DiskTracker  *disk.Tracker
+	// per statement resource group name
+	// hint /* +ResourceGroup(name) */ can change the statement group name
+	ResourceGroupName string
+	RunawayChecker    *resourcegroup.RunawayChecker
+	IsTiFlash         atomic2.Bool
+	RuntimeStatsColl  *execdetails.RuntimeStatsColl
+	TableIDs          []int64
+	IndexNames        []string
+	StmtType          string
+	OriginalSQL       string
+	digestMemo        struct {
 		sync.Once
 		normalized string
 		digest     *parser.Digest
@@ -426,24 +432,32 @@ type StatementContext struct {
 
 // NewStmtCtx creates a new statement context
 func NewStmtCtx() *StatementContext {
-	sc := &StatementContext{}
-	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc.AppendWarning)
-	return sc
+	return NewStmtCtxWithTimeZone(time.UTC)
 }
 
 // NewStmtCtxWithTimeZone creates a new StatementContext with the given timezone
 func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	intest.AssertNotNil(tz)
-	sc := &StatementContext{}
-	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc.AppendWarning)
+	sc := &StatementContext{
+		ctxID: stmtCtxIDGenerator.Add(1),
+	}
+	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
+	sc.initErrCtx()
 	return sc
 }
 
 // Reset resets a statement context
 func (sc *StatementContext) Reset() {
 	*sc = StatementContext{
-		typeCtx: types.NewContext(types.DefaultStmtFlags, time.UTC, sc.AppendWarning),
+		ctxID:   stmtCtxIDGenerator.Add(1),
+		typeCtx: types.NewContext(types.DefaultStmtFlags, time.UTC, sc),
 	}
+	sc.initErrCtx()
+}
+
+// CtxID returns the context id of the statement
+func (sc *StatementContext) CtxID() uint64 {
+	return sc.ctxID
 }
 
 // TimeZone returns the timezone of the type context
@@ -467,21 +481,20 @@ func (sc *StatementContext) TypeCtx() types.Context {
 	return sc.typeCtx
 }
 
-// ErrCtx returns the error context
-// TODO: add a cache to the `ErrCtx` if needed, though it's not a big burden to generate `ErrCtx` everytime.
-func (sc *StatementContext) ErrCtx() errctx.Context {
-	ctx := errctx.NewContext(sc.AppendWarning)
+func (sc *StatementContext) initErrCtx() {
+	ctx := errctx.NewContext(sc)
 
 	if sc.TypeFlags().IgnoreTruncateErr() {
 		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
 	} else if sc.TypeFlags().TruncateAsWarning() {
 		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
 	}
+	sc.errCtx = ctx
+}
 
-	if sc.OverflowAsWarning {
-		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupOverflow, errctx.LevelWarn)
-	}
-	return ctx
+// ErrCtx returns the error context
+func (sc *StatementContext) ErrCtx() errctx.Context {
+	return sc.errCtx
 }
 
 // TypeFlags returns the type flags
@@ -492,6 +505,7 @@ func (sc *StatementContext) TypeFlags() types.Flags {
 // SetTypeFlags sets the type flags
 func (sc *StatementContext) SetTypeFlags(flags types.Flags) {
 	sc.typeCtx = sc.typeCtx.WithFlags(flags)
+	sc.initErrCtx()
 }
 
 // HandleTruncate ignores or returns the error based on the TypeContext inside.
@@ -508,6 +522,16 @@ func (sc *StatementContext) HandleError(err error) error {
 	}
 	errCtx := sc.ErrCtx()
 	return errCtx.HandleError(err)
+}
+
+// HandleErrorWithAlias handles the error based on `ErrCtx()`
+func (sc *StatementContext) HandleErrorWithAlias(internalErr, err, warnErr error) error {
+	intest.AssertNotNil(sc)
+	if sc == nil {
+		return err
+	}
+	errCtx := sc.ErrCtx()
+	return errCtx.HandleErrorWithAlias(internalErr, err, warnErr)
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -784,13 +808,13 @@ func (sc *StatementContext) SetSkipPlanCache(reason error) {
 	sc.UseCache = false
 	switch sc.CacheType {
 	case DefaultNoCache:
-		sc.AppendWarning(errors.New("unknown cache type"))
+		sc.AppendWarning(errors.NewNoStackError("unknown cache type"))
 	case SessionPrepared:
-		sc.AppendWarning(errors.Errorf("skip prepared plan-cache: %s", reason.Error()))
+		sc.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: %s", reason.Error()))
 	case SessionNonPrepared:
 		if sc.InExplainStmt && sc.ExplainFormat == "plan_cache" {
 			// use "plan_cache" rather than types.ExplainFormatPlanCache to avoid import cycle
-			sc.AppendWarning(errors.Errorf("skip non-prepared plan-cache: %s", reason.Error()))
+			sc.AppendWarning(errors.NewNoStackErrorf("skip non-prepared plan-cache: %s", reason.Error()))
 		}
 	}
 }
@@ -1052,19 +1076,6 @@ func (sc *StatementContext) AppendExtraError(warn error) {
 	}
 }
 
-// HandleOverflow treats ErrOverflow as warnings or returns the error based on the StmtCtx.OverflowAsWarning state.
-func (sc *StatementContext) HandleOverflow(err error, warnErr error) error {
-	if err == nil {
-		return nil
-	}
-
-	if sc.OverflowAsWarning {
-		sc.AppendWarning(warnErr)
-		return nil
-	}
-	return err
-}
-
 // resetMuForRetry resets the changed states of sc.mu during execution.
 func (sc *StatementContext) resetMuForRetry() {
 	sc.mu.Lock()
@@ -1173,8 +1184,7 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 		flags |= model.FlagIgnoreTruncate
 	} else if sc.TypeFlags().TruncateAsWarning() {
 		flags |= model.FlagTruncateAsWarning
-	}
-	if sc.OverflowAsWarning {
+		// TODO: remove this flag from TiKV.
 		flags |= model.FlagOverflowAsWarning
 	}
 	if sc.TypeFlags().IgnoreZeroInDate() {
@@ -1241,7 +1251,6 @@ func (sc *StatementContext) InitFromPBFlagAndTz(flags uint64, tz *time.Location)
 	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
 	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
 	sc.InDeleteStmt = (flags & model.FlagInUpdateOrDeleteStmt) > 0
-	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
 	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
 	sc.SetTimeZone(tz)
 	sc.SetTypeFlags(types.DefaultStmtFlags.
