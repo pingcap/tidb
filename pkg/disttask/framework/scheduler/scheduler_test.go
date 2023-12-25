@@ -273,6 +273,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	ctx = util.WithInternalSourceType(ctx, "scheduler")
 
 	sch, mgr := MockSchedulerManager(t, ctrl, pool, getNumberExampleSchedulerExt(ctrl), nil)
+	require.NoError(t, mgr.StartManager(ctx, ":4000", "background"))
 	sch.Start()
 	defer func() {
 		sch.Stop()
@@ -281,8 +282,6 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 			proto.MaxConcurrentTask = originalConcurrency
 		}
 	}()
-
-	require.NoError(t, mgr.StartManager(ctx, ":4000", "background"))
 
 	// 3s
 	cnt := 60
@@ -539,6 +538,10 @@ func TestManagerDispatchLoop(t *testing.T) {
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 			idx := counter.Load()
 			mockScheduler = mock.NewMockScheduler(ctrl)
+			// below 2 are for balancer loop, it's async, cannot determine how
+			// many times it will be called.
+			mockScheduler.EXPECT().GetTask().Return(task).AnyTimes()
+			mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 			mockScheduler.EXPECT().Init().Return(nil)
 			mockScheduler.EXPECT().ExecuteTask().Do(func() {
 				require.NoError(t, taskMgr.WithNewSession(func(se sessionctx.Context) error {

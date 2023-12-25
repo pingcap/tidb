@@ -183,7 +183,7 @@ func (sm *Manager) Initialized() bool {
 	return sm.initialized
 }
 
-// scheduleTaskLoop schedulees the tasks.
+// scheduleTaskLoop schedules the tasks.
 func (sm *Manager) scheduleTaskLoop() {
 	logutil.BgLogger().Info("schedule task loop start")
 	ticker := time.NewTicker(checkTaskRunningInterval)

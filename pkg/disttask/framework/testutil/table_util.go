@@ -29,6 +29,10 @@ import (
 
 // InitTableTest inits needed components for table_test.
 func InitTableTest(t *testing.T) (*storage.TaskManager, context.Context) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
+	}()
 	pool := getResourcePool(t)
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "table_test")

@@ -17,6 +17,7 @@ package storage_test
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"testing"
 	"time"
@@ -417,6 +418,36 @@ func TestGetUsedSlotsOnNodes(t *testing.T) {
 	}, slotsOnNodes)
 }
 
+func TestGetActiveSubtasks(t *testing.T) {
+	tm, ctx := testutil.InitTableTest(t)
+	id, err := tm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
+	require.NoError(t, err)
+	require.Equal(t, int64(1), id)
+	task, err := tm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+
+	subtasks := make([]*proto.Subtask, 0, 3)
+	for i := 0; i < 3; i++ {
+		subtasks = append(subtasks,
+			proto.NewSubtask(proto.StepOne, id, "test", fmt.Sprintf("tidb%d", i), 8, []byte("{}}"), i+1),
+		)
+	}
+	require.NoError(t, tm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, subtasks))
+	require.NoError(t, tm.FinishSubtask(ctx, "tidb0", 1, []byte("{}}")))
+	require.NoError(t, tm.StartSubtask(ctx, 2))
+
+	activeSubtasks, err := tm.GetActiveSubtasks(ctx, task.ID)
+	require.NoError(t, err)
+	require.Len(t, activeSubtasks, 2)
+	slices.SortFunc(activeSubtasks, func(i, j *proto.Subtask) int {
+		return int(i.ID - j.ID)
+	})
+	require.Equal(t, int64(2), activeSubtasks[0].ID)
+	require.Equal(t, proto.TaskStateRunning, activeSubtasks[0].State)
+	require.Equal(t, int64(3), activeSubtasks[1].ID)
+	require.Equal(t, proto.TaskStatePending, activeSubtasks[1].State)
+}
+
 func TestSubTaskTable(t *testing.T) {
 	sm, ctx := testutil.InitTableTest(t)
 	timeBeforeCreate := time.Unix(time.Now().Unix(), 0)
@@ -436,6 +467,7 @@ func TestSubTaskTable(t *testing.T) {
 				Concurrency: 11,
 				ExecID:      "tidb1",
 				Meta:        []byte("test"),
+				Ordinal:     1,
 			},
 		}, proto.TaskStatePending,
 	)
@@ -448,7 +480,6 @@ func TestSubTaskTable(t *testing.T) {
 	subtask, err := sm.GetFirstSubtaskInStates(ctx, "tidb1", 1, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, proto.StepInit, subtask.Step)
-	require.Equal(t, int64(1), subtask.TaskID)
 	require.Equal(t, proto.TaskTypeExample, subtask.Type)
 	require.Equal(t, int64(1), subtask.TaskID)
 	require.Equal(t, proto.TaskStatePending, subtask.State)
@@ -456,6 +487,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.Equal(t, []byte("test"), subtask.Meta)
 	require.Equal(t, 11, subtask.Concurrency)
 	require.GreaterOrEqual(t, subtask.CreateTime, timeBeforeCreate)
+	require.Equal(t, 0, subtask.Ordinal)
 	require.Zero(t, subtask.StartTime)
 	require.Zero(t, subtask.UpdateTime)
 	require.Equal(t, "{}", subtask.Summary)
