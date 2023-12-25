@@ -182,8 +182,8 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
 
-	// testSortWithNewMerge(t, MergeOverlappingFilesV2)
-	testSortWithNewMerge(t, MergeOverlappingFilesOpt)
+	testSortWithNewMerge(t, MergeOverlappingFilesV2)
+	// testSortWithNewMerge(t, MergeOverlappingFilesOpt)
 }
 
 func testSortWithNewMerge(t *testing.T, mergeFunc func(ctx context.Context, dataFiles []string, statFiles []string, store storage.ExternalStorage, startKey []byte, endKey []byte, partSize int64, newFilePrefix string, writerID string, blockSize int, propSizeDist uint64, propKeysDist uint64, onClose OnCloseFunc, concurrency int, writerConcurrency int, checkHotspot bool) (err error)) {

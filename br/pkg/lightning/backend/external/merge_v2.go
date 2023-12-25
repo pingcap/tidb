@@ -120,13 +120,15 @@ func MergeOverlappingFilesV2(
 		}
 		splitTime := time.Since(now)
 		now = time.Now()
+		logutil.Logger(ctx).Info("ywq test cmp", zap.Any("cmp", bytes.Compare(curStart, curEnd)))
+
 		err1 = readAllData(
 			ctx,
 			store,
 			dataFilesOfGroup,
 			statFilesOfGroup,
-			curStart,
-			curEnd,
+			curStart.Clone(),
+			curEnd.Clone(),
 			bufPool,
 			loaded,
 		)
