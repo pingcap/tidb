@@ -971,13 +971,13 @@ func (r *PushSelDownJoin) Match(expr *memo.ExprIter) bool {
 // buildChildSelectionGroup builds a new childGroup if the pushed down condition is not empty.
 func buildChildSelectionGroup(
 	sctx sessionctx.Context,
-	blockOffset int,
+	selectOffset int,
 	conditions []expression.Expression,
 	childGroup *memo.Group) *memo.Group {
 	if len(conditions) == 0 {
 		return childGroup
 	}
-	newSel := plannercore.LogicalSelection{Conditions: conditions}.Init(sctx, blockOffset)
+	newSel := plannercore.LogicalSelection{Conditions: conditions}.Init(sctx, selectOffset)
 	groupExpr := memo.NewGroupExpr(newSel)
 	groupExpr.SetChildren(childGroup)
 	newChild := memo.NewGroupWithSchema(groupExpr, childGroup.Prop.Schema)
@@ -1000,12 +1000,12 @@ func (r *PushSelDownJoin) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 	}
 
 	// TODO: Update EqualConditions like what we have done in the method join.updateEQCond() before.
-	leftGroup = buildChildSelectionGroup(sctx, sel.SelectBlockOffset(), leftCond, leftGroup)
-	rightGroup = buildChildSelectionGroup(sctx, sel.SelectBlockOffset(), rightCond, rightGroup)
+	leftGroup = buildChildSelectionGroup(sctx, sel.SelectOffset(), leftCond, leftGroup)
+	rightGroup = buildChildSelectionGroup(sctx, sel.SelectOffset(), rightCond, rightGroup)
 	newJoinExpr := memo.NewGroupExpr(newJoin)
 	newJoinExpr.SetChildren(leftGroup, rightGroup)
 	if len(remainCond) > 0 {
-		newSel := plannercore.LogicalSelection{Conditions: remainCond}.Init(sctx, sel.SelectBlockOffset())
+		newSel := plannercore.LogicalSelection{Conditions: remainCond}.Init(sctx, sel.SelectOffset())
 		newSel.Conditions = remainCond
 		newSelExpr := memo.NewGroupExpr(newSel)
 		newSelExpr.SetChildren(memo.NewGroupWithSchema(newJoinExpr, old.Children[0].Prop.Schema))

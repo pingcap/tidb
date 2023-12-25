@@ -67,7 +67,7 @@ type Plan interface {
 	// SetOutputNames sets the outputting name by the given slice.
 	SetOutputNames(names types.NameSlice)
 
-	SelectBlockOffset() int
+	SelectOffset() int
 
 	BuildPlanTrace() *tracing.PlanTrace
 }
@@ -94,7 +94,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 	sort := PhysicalSort{
 		ByItems:       make([]*util.ByItems, 0, len(p.SortItems)),
 		IsPartialSort: p.IsSortItemAllForPartition(),
-	}.Init(ctx, tsk.plan().StatsInfo(), tsk.plan().SelectBlockOffset(), sortReqProp)
+	}.Init(ctx, tsk.plan().StatsInfo(), tsk.plan().SelectOffset(), sortReqProp)
 	for _, col := range p.SortItems {
 		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
 	}
@@ -159,7 +159,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 		DataSources:  []PhysicalPlan{dataSource},
 		SplitterType: PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{byItems},
-	}.Init(ctx, pp.StatsInfo(), pp.SelectBlockOffset(), reqProp)
+	}.Init(ctx, pp.StatsInfo(), pp.SelectOffset(), reqProp)
 	return shuffle
 }
 
@@ -196,7 +196,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		DataSources:  []PhysicalPlan{dataSource},
 		SplitterType: PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{util.CloneExprs(pp.GroupByItems)},
-	}.Init(ctx, pp.StatsInfo(), pp.SelectBlockOffset(), reqProp)
+	}.Init(ctx, pp.StatsInfo(), pp.SelectOffset(), reqProp)
 	return shuffle
 }
 
@@ -235,7 +235,7 @@ func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx sessionctx.Context) 
 		DataSources:  dataSources,
 		SplitterType: PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{leftByItemArray, rightByItemArray},
-	}.Init(ctx, pp.StatsInfo(), pp.SelectBlockOffset(), reqProp)
+	}.Init(ctx, pp.StatsInfo(), pp.SelectOffset(), reqProp)
 	return shuffle
 }
 

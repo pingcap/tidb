@@ -43,6 +43,13 @@ type QBHintHandler struct {
 	selectStmtOffset int
 }
 
+// NewQBHintHandler creates a QBHintHandler.
+func NewQBHintHandler(ctx sessionctx.Context) *QBHintHandler {
+	return &QBHintHandler{
+		Ctx: ctx,
+	}
+}
+
 // MaxSelectStmtOffset returns the current stmt offset.
 func (p *QBHintHandler) MaxSelectStmtOffset() int {
 	return p.selectStmtOffset
@@ -289,8 +296,8 @@ func (p *QBHintHandler) GetCurrentStmtHints(hints []*ast.TableOptimizerHint, cur
 }
 
 // GenerateQBName builds QBName from offset.
-func GenerateQBName(nodeType NodeType, blockOffset int) (model.CIStr, error) {
-	if blockOffset == 0 {
+func GenerateQBName(nodeType NodeType, selectOffset int) (model.CIStr, error) {
+	if selectOffset == 0 {
 		if nodeType == TypeDelete {
 			return model.NewCIStr(defaultDeleteBlockName), nil
 		}
@@ -299,5 +306,5 @@ func GenerateQBName(nodeType NodeType, blockOffset int) (model.CIStr, error) {
 		}
 		return model.NewCIStr(""), fmt.Errorf("Unexpected NodeType %d when block offset is 0", nodeType)
 	}
-	return model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, blockOffset)), nil
+	return model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, selectOffset)), nil
 }

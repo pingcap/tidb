@@ -461,7 +461,7 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			plannerSelectBlockAsName = *p
 		}
 		if len(plannerSelectBlockAsName) > 0 && !isTableName {
-			plannerSelectBlockAsName[p.SelectBlockOffset()] = ast.HintTable{DBName: p.OutputNames()[0].DBName, TableName: p.OutputNames()[0].TblName}
+			plannerSelectBlockAsName[p.SelectOffset()] = ast.HintTable{DBName: p.OutputNames()[0].DBName, TableName: p.OutputNames()[0].TblName}
 		}
 		// Duplicate column name in one table is not allowed.
 		// "select * from (select 1, 1) as a;" is duplicate
@@ -631,20 +631,20 @@ func extractTableAlias(p Plan, parentOffset int) *h.TableInfo {
 				return nil
 			}
 		}
-		blockOffset := p.SelectBlockOffset()
+		selectOffset := p.SelectOffset()
 		var blockAsNames []ast.HintTable
 		if p := p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
 			blockAsNames = *p
 		}
 		// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
-		if blockOffset != parentOffset && blockAsNames != nil && blockAsNames[blockOffset].TableName.L != "" {
-			blockOffset = parentOffset
+		if selectOffset != parentOffset && blockAsNames != nil && blockAsNames[selectOffset].TableName.L != "" {
+			selectOffset = parentOffset
 		}
 		dbName := firstName.DBName
 		if dbName.L == "" {
 			dbName = model.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
 		}
-		return &h.TableInfo{DBName: dbName, TblName: firstName.TblName, SelectOffset: blockOffset}
+		return &h.TableInfo{DBName: dbName, TblName: firstName.TblName, SelectOffset: selectOffset}
 	}
 	return nil
 }
@@ -654,8 +654,8 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *h.TableHintInfo) {
 		return
 	}
 
-	lhsAlias := extractTableAlias(p.children[0], p.SelectBlockOffset())
-	rhsAlias := extractTableAlias(p.children[1], p.SelectBlockOffset())
+	lhsAlias := extractTableAlias(p.children[0], p.SelectOffset())
+	rhsAlias := extractTableAlias(p.children[1], p.SelectOffset())
 	if hintInfo.IfPreferMergeJoin(lhsAlias) {
 		p.preferJoinType |= h.PreferMergeJoin
 		p.leftPreferJoinType |= h.PreferMergeJoin
@@ -863,9 +863,9 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *h.TableHintInfo) {
 
 	var alias *h.TableInfo
 	if len(ds.TableAsName.L) != 0 {
-		alias = &h.TableInfo{DBName: ds.DBName, TblName: *ds.TableAsName, SelectOffset: ds.SelectBlockOffset()}
+		alias = &h.TableInfo{DBName: ds.DBName, TblName: *ds.TableAsName, SelectOffset: ds.SelectOffset()}
 	} else {
-		alias = &h.TableInfo{DBName: ds.DBName, TblName: ds.tableInfo.Name, SelectOffset: ds.SelectBlockOffset()}
+		alias = &h.TableInfo{DBName: ds.DBName, TblName: ds.tableInfo.Name, SelectOffset: ds.SelectOffset()}
 	}
 	if hintTbl := hintInfo.IfPreferTiKV(alias); hintTbl != nil {
 		for _, path := range ds.possibleAccessPaths {
@@ -1824,7 +1824,7 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggr
 	plan4Agg := LogicalAggregation{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, child.Schema().Len()),
 		GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length]),
-	}.Init(b.ctx, child.SelectBlockOffset())
+	}.Init(b.ctx, child.SelectOffset())
 	if hint := b.TableHints(); hint != nil {
 		plan4Agg.aggHints = hint.AggHints
 	}
@@ -5521,7 +5521,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 		b.buildingCTE = o
 	}()
 
-	hintProcessor := &h.QBHintHandler{Ctx: b.ctx}
+	hintProcessor := h.NewQBHintHandler(b.ctx)
 	selectNode.Accept(hintProcessor)
 	currentQbNameMap4View := make(map[string][]ast.HintTable)
 	currentQbHints4View := make(map[string][]*ast.TableOptimizerHint)
@@ -5719,7 +5719,7 @@ func setIsInApplyForCTE(p LogicalPlan, apSchema *expression.Schema) {
 
 func (b *PlanBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 	// The query block of the MaxOneRow operator should be the same as that of its child.
-	maxOneRow := LogicalMaxOneRow{}.Init(b.ctx, p.SelectBlockOffset())
+	maxOneRow := LogicalMaxOneRow{}.Init(b.ctx, p.SelectOffset())
 	maxOneRow.SetChildren(p)
 	return maxOneRow
 }

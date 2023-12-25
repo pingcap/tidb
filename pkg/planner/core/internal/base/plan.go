@@ -29,21 +29,21 @@ import (
 
 // Plan Should be used as embedded struct in Plan implementations.
 type Plan struct {
-	ctx         sessionctx.Context
-	stats       *property.StatsInfo
-	tp          string
-	id          int
-	blockOffset int
+	ctx          sessionctx.Context
+	stats        *property.StatsInfo
+	tp           string
+	id           int
+	selectOffset int
 }
 
 // NewBasePlan creates a new base plan.
 func NewBasePlan(ctx sessionctx.Context, tp string, offset int) Plan {
 	id := ctx.GetSessionVars().PlanID.Add(1)
 	return Plan{
-		tp:          tp,
-		id:          int(id),
-		ctx:         ctx,
-		blockOffset: offset,
+		tp:           tp,
+		id:           int(id),
+		ctx:          ctx,
+		selectOffset: offset,
 	}
 }
 
@@ -108,9 +108,9 @@ func (p *Plan) SetTP(tp string) {
 	p.tp = tp
 }
 
-// SelectBlockOffset is to get the select block offset.
-func (p *Plan) SelectBlockOffset() int {
-	return p.blockOffset
+// SelectOffset is to get the select block offset.
+func (p *Plan) SelectOffset() int {
+	return p.selectOffset
 }
 
 // SetStats sets the stats
