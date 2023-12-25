@@ -126,7 +126,7 @@ func checkCollation(vars *SessionVars, normalizedValue string, originalValue str
 
 func checkCharacterSet(normalizedValue string, argName string) (string, error) {
 	if normalizedValue == "" {
-		return normalizedValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(argName, "NULL"))
+		return normalizedValue, errors.Trace(ErrWrongValueForVar.FastGenByArgs(argName, "NULL"))
 	}
 	cs, err := charset.GetCharsetInfo(normalizedValue)
 	if err != nil {
@@ -137,14 +137,14 @@ func checkCharacterSet(normalizedValue string, argName string) (string, error) {
 
 // checkReadOnly requires TiDBEnableNoopFuncs=1 for the same scope otherwise an error will be returned.
 func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag, offlineMode bool) (string, error) {
-	errMsg := ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
+	errMsg := ErrFunctionsNoopImpl.FastGenByArgs("READ ONLY")
 	if offlineMode {
-		errMsg = ErrFunctionsNoopImpl.GenWithStackByArgs("OFFLINE MODE")
+		errMsg = ErrFunctionsNoopImpl.FastGenByArgs("OFFLINE MODE")
 	}
 	if TiDBOptOn(normalizedValue) {
 		if scope == ScopeSession && vars.NoopFuncsMode != OnInt {
 			if vars.NoopFuncsMode == OffInt {
-				return Off, errMsg
+				return Off, errors.Trace(errMsg)
 			}
 			vars.StmtCtx.AppendWarning(errMsg)
 		}
@@ -154,7 +154,7 @@ func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue stri
 				return originalValue, errUnknownSystemVariable.GenWithStackByArgs(TiDBEnableNoopFuncs)
 			}
 			if val == Off {
-				return Off, errMsg
+				return Off, errors.Trace(errMsg)
 			}
 			if val == Warn {
 				vars.StmtCtx.AppendWarning(errMsg)
@@ -166,7 +166,7 @@ func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue stri
 
 func checkIsolationLevel(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 	if normalizedValue == "SERIALIZABLE" || normalizedValue == "READ-UNCOMMITTED" {
-		returnErr := ErrUnsupportedIsolationLevel.GenWithStackByArgs(normalizedValue)
+		returnErr := ErrUnsupportedIsolationLevel.FastGenByArgs(normalizedValue)
 		if !TiDBOptOn(vars.systems[TiDBSkipIsolationLevelCheck]) {
 			return normalizedValue, ErrUnsupportedIsolationLevel.GenWithStackByArgs(normalizedValue)
 		}
@@ -388,7 +388,7 @@ func parseTimeZone(s string) (*time.Location, error) {
 func parseMemoryLimit(s *SessionVars, normalizedValue string, originalValue string) (byteSize uint64, normalizedStr string, err error) {
 	defer func() {
 		if err == nil && byteSize > 0 && byteSize < (512<<20) {
-			s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimit, originalValue))
+			s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(TiDBServerMemoryLimit, originalValue))
 			byteSize = 512 << 20
 			normalizedStr = "512MB"
 		}

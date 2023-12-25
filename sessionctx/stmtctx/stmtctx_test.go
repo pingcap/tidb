@@ -296,3 +296,121 @@ func TestStmtHintsClone(t *testing.T) {
 	}
 	require.Equal(t, hints, *hints.Clone())
 }
+<<<<<<< HEAD:sessionctx/stmtctx/stmtctx_test.go
+=======
+
+func TestNewStmtCtx(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
+	require.Same(t, time.UTC, sc.TimeZone())
+	require.Same(t, time.UTC, sc.TimeZone())
+	sc.AppendWarning(errors.NewNoStackError("err1"))
+	warnings := sc.GetWarnings()
+	require.Equal(t, 1, len(warnings))
+	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+	require.Equal(t, "err1", warnings[0].Err.Error())
+
+	tz := time.FixedZone("UTC+1", 2*60*60)
+	sc = stmtctx.NewStmtCtxWithTimeZone(tz)
+	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
+	require.Same(t, tz, sc.TimeZone())
+	require.Same(t, tz, sc.TimeZone())
+	sc.AppendWarning(errors.NewNoStackError("err2"))
+	warnings = sc.GetWarnings()
+	require.Equal(t, 1, len(warnings))
+	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+	require.Equal(t, "err2", warnings[0].Err.Error())
+}
+
+func TestSetStmtCtxTimeZone(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	require.Same(t, time.UTC, sc.TimeZone())
+	tz := time.FixedZone("UTC+1", 2*60*60)
+	sc.SetTimeZone(tz)
+	require.Same(t, tz, sc.TimeZone())
+}
+
+func TestSetStmtCtxTypeFlags(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
+
+	sc.SetTypeFlags(types.FlagAllowNegativeToUnsigned | types.FlagSkipASCIICheck)
+	require.Equal(t, types.FlagAllowNegativeToUnsigned|types.FlagSkipASCIICheck, sc.TypeFlags())
+	require.Equal(t, sc.TypeFlags(), sc.TypeFlags())
+
+	sc.SetTypeFlags(types.FlagSkipASCIICheck | types.FlagSkipUTF8Check | types.FlagTruncateAsWarning)
+	require.Equal(t, types.FlagSkipASCIICheck|types.FlagSkipUTF8Check|types.FlagTruncateAsWarning, sc.TypeFlags())
+	require.Equal(t, sc.TypeFlags(), sc.TypeFlags())
+}
+
+func TestResetStmtCtx(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
+
+	tz := time.FixedZone("UTC+1", 2*60*60)
+	sc.SetTimeZone(tz)
+	sc.SetTypeFlags(types.FlagAllowNegativeToUnsigned | types.FlagSkipASCIICheck)
+	sc.AppendWarning(errors.NewNoStackError("err1"))
+	sc.InRestrictedSQL = true
+	sc.StmtType = "Insert"
+
+	require.Same(t, tz, sc.TimeZone())
+	require.Equal(t, types.FlagAllowNegativeToUnsigned|types.FlagSkipASCIICheck, sc.TypeFlags())
+	require.Equal(t, 1, len(sc.GetWarnings()))
+
+	sc.Reset()
+	require.Same(t, time.UTC, sc.TimeZone())
+	require.Same(t, time.UTC, sc.TimeZone())
+	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
+	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
+	require.False(t, sc.InRestrictedSQL)
+	require.Empty(t, sc.StmtType)
+	require.Equal(t, 0, len(sc.GetWarnings()))
+	sc.AppendWarning(errors.NewNoStackError("err2"))
+	warnings := sc.GetWarnings()
+	require.Equal(t, 1, len(warnings))
+	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
+	require.Equal(t, "err2", warnings[0].Err.Error())
+}
+
+func TestStmtCtxID(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	currentID := sc.CtxID()
+
+	cases := []struct {
+		fn func() *stmtctx.StatementContext
+	}{
+		{func() *stmtctx.StatementContext { return stmtctx.NewStmtCtx() }},
+		{func() *stmtctx.StatementContext { return stmtctx.NewStmtCtxWithTimeZone(time.Local) }},
+		{func() *stmtctx.StatementContext {
+			sc.Reset()
+			return sc
+		}},
+	}
+
+	for _, c := range cases {
+		ctxID := c.fn().CtxID()
+		require.Greater(t, ctxID, currentID)
+		currentID = ctxID
+	}
+}
+
+func TestErrCtx(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	// the default errCtx
+	err := types.ErrTruncated
+	require.Error(t, sc.HandleError(err))
+
+	// reset the types flags will re-initialize the error flag
+	sc.SetTypeFlags(types.DefaultStmtFlags | types.FlagTruncateAsWarning)
+	require.NoError(t, sc.HandleError(err))
+}
+
+func BenchmarkErrCtx(b *testing.B) {
+	sc := stmtctx.NewStmtCtx()
+
+	for i := 0; i < b.N; i++ {
+		sc.ErrCtx()
+	}
+}
+>>>>>>> 116456ddfb1 (sessionctx: refactor sessionctx pkg's warning and note generation (#49760)):pkg/sessionctx/stmtctx/stmtctx_test.go
