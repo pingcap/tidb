@@ -248,7 +248,7 @@ type processRowContext struct {
 }
 
 func generateRandomError() error {
-	var err error = nil
+	var err error
 	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
 		if val.(bool) {
 			num := rand.Intn(1000)
