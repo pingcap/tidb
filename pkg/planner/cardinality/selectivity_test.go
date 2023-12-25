@@ -976,7 +976,7 @@ func TestIndexJoinInnerRowCountUpperBound(t *testing.T) {
 	idxValues := make([]types.Datum, 0, len(colValues))
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	for _, colV := range colValues {
-		b, err := codec.EncodeKey(sc, nil, colV)
+		b, err := codec.EncodeKey(sc.TimeZone(), nil, colV)
 		require.NoError(t, err)
 		idxValues = append(idxValues, types.NewBytesDatum(b))
 	}
