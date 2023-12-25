@@ -177,6 +177,13 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 		return nil
 	}
 
+	for i := 0; i < len(adjustedNodes) && remainder > 0; i++ {
+		if _, ok := executorWithOneMoreSubtask[adjustedNodes[i]]; !ok {
+			executorWithOneMoreSubtask[adjustedNodes[i]] = struct{}{}
+			remainder--
+		}
+	}
+
 	fillIdx := 0
 	for _, node := range adjustedNodes {
 		sts := executorSubtasks[node]
