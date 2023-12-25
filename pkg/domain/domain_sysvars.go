@@ -71,6 +71,8 @@ func (do *Domain) setPDClientDynamicOption(name, sVal string) {
 		variable.EnableTSOFollowerProxy.Store(val)
 	case variable.TiDBEnablePDFollowerHandle:
 		val := variable.TiDBOptOn(sVal)
+		// Note: EnableFollowerHandle is only used for region API now.
+		// If pd support more APIs in follower, the pd option may be changed.
 		err := do.updatePDClient(pd.EnableFollowerHandle, val)
 		if err != nil {
 			break
