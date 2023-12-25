@@ -18,14 +18,9 @@ import (
 	"testing"
 	"time"
 
-<<<<<<< HEAD
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/parser/types"
-=======
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/types"
->>>>>>> 7b8c876800e (log_backup: add lock for truncating (#49469))
 	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
 )
