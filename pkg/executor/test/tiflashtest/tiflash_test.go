@@ -1890,9 +1890,7 @@ func TestMPPRecovery(t *testing.T) {
 		checkStrs = append(checkStrs, fmt.Sprintf("%d %d", i, i))
 	}
 	tk.MustExec(insertStr)
-
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
-
 	sql := "select * from t order by 1, 2"
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_force_enable", "return()"))
