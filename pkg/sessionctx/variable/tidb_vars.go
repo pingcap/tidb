@@ -722,9 +722,8 @@ const (
 	// TiDBEnableTSOFollowerProxy indicates whether to enable the TSO Follower Proxy feature of PD client.
 	TiDBEnableTSOFollowerProxy = "tidb_enable_tso_follower_proxy"
 
-	// TiDBEnablePDFollowerHandle indicates whether to enable the TSO Follower Proxy feature of PD client.
-	// And PD client only allow follower servers handle API abount region info.
-	TiDBEnablePDFollowerHandle = "tidb_enable_pd_follower_handle"
+	// TiDBEnablePDFollowerHandle indicates whether to enable the PD Follower handle region API.
+	TiDBEnablePDFollowerHandle = "tidb_enable_pd_follower_handle_region_api"
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
@@ -1291,7 +1290,7 @@ const (
 	DefTiDBEnableLocalTxn                          = false
 	DefTiDBTSOClientBatchMaxWaitTime               = 0.0 // 0ms
 	DefTiDBEnableTSOFollowerProxy                  = false
-	DefTiDBEnablePDFollowerHandle                  = true
+	DefTiDBEnablePDFollowerHandle                  = false
 	DefTiDBEnableOrderedResultMode                 = false
 	DefTiDBEnablePseudoForOutdatedStats            = false
 	DefTiDBRegardNULLAsPoint                       = true

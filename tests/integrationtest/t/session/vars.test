@@ -35,6 +35,11 @@ set global tidb_enable_tso_follower_proxy = on;
 select @@tidb_enable_tso_follower_proxy;
 set global tidb_enable_tso_follower_proxy = off;
 select @@tidb_enable_tso_follower_proxy;
+select @@tidb_enable_pd_follower_handle_region_api;
+set global tidb_enable_pd_follower_handle_region_api = on;
+select @@tidb_enable_pd_follower_handle_region_api;
+set global tidb_enable_pd_follower_handle_region_api = off;
+select @@tidb_enable_pd_follower_handle_region_api;
 -- error 1229
 set tidb_tso_client_batch_max_wait_time = 0;
 set global tidb_enable_tso_follower_proxy = default;
