@@ -445,7 +445,7 @@ type Job struct {
 	// InvolvingSchemaInfo indicates the schema info involved in the job.
 	// nil means fallback to use job.SchemaName/TableName.
 	// Keep unchanged after initialization.
-	InvolvingSchemaInfo []InvolvingSchemaInfo `json:"involving_schema_info"`
+	InvolvingSchemaInfo []InvolvingSchemaInfo `json:"involving_schema_info,omitempty"`
 
 	// AdminOperator indicates where the Admin command comes, by the TiDB
 	// itself (AdminCommandBySystem) or by user (AdminCommandByEndUser).
