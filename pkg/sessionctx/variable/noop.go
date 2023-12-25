@@ -15,8 +15,9 @@
 package variable
 
 import (
-	"github.com/pingcap/errors"
 	"math"
+
+	"github.com/pingcap/errors"
 )
 
 // The following sysVars are noops.
