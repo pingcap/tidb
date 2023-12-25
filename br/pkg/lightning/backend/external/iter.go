@@ -640,6 +640,10 @@ func (m mergePropBaseIter) path() string {
 func (m mergePropBaseIter) next() (*rangeProperty, error) {
 	ok, _ := m.iter.next()
 	if !ok {
+		// TODO(lance6716): explain it?
+		if m.iter.err == nil {
+			return nil, io.EOF
+		}
 		return nil, m.iter.err
 	}
 	return m.iter.curr, nil
