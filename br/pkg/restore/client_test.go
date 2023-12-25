@@ -668,9 +668,7 @@ func TestDeleteRangeQuery(t *testing.T) {
 		for j := range expected_query.ParamsList {
 			require.Equal(t, expected_query.ParamsList[j], query.ParamsList[j])
 		}
-
 	}
-
 }
 
 func TestDeleteRangeQueryExec(t *testing.T) {
