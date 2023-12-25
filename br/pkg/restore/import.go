@@ -680,14 +680,15 @@ func (importer *FileImporter) downloadSST(
 	var mu sync.Mutex
 	downloadMetas := make([]*import_sstpb.SSTMeta, 0, len(files))
 	downloadMetasMap := make(map[string]*import_sstpb.SSTMeta)
+	resultMetasMap := make(map[string]*import_sstpb.SSTMeta)
 	downloadReqsMap := make(map[string]*import_sstpb.DownloadRequest)
 	for _, file := range files {
 		req, sstMeta, err := importer.buildDownloadRequest(file, rewriteRules, regionInfo, cipher)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		downloadMetasMap[file.String()] = sstMeta
-		downloadReqsMap[file.String()] = req
+		downloadMetasMap[file.Name] = sstMeta
+		downloadReqsMap[file.Name] = req
 	}
 
 	eg, ectx := errgroup.WithContext(ctx)
@@ -703,7 +704,7 @@ func (importer *FileImporter) downloadSST(
 			<-workerCh
 			atomic.AddInt64(statis, 1)
 			for _, file := range files {
-				req, ok := downloadReqsMap[file.String()]
+				req, ok := downloadReqsMap[file.Name]
 				if !ok {
 					return errors.New("not found file key for download request")
 				}
@@ -736,15 +737,14 @@ func (importer *FileImporter) downloadSST(
 					zap.Bool("resp-isempty", resp.IsEmpty),
 					zap.Uint32("resp-crc32", resp.Crc32),
 				)
-				mu.Lock()
-				sstMeta, ok := downloadMetasMap[file.String()]
+				sstMeta, ok := downloadMetasMap[file.Name]
 				if !ok {
-					mu.Unlock()
 					return errors.New("not found file key for download sstMeta")
 				}
 				sstMeta.Range.Start = TruncateTS(resp.Range.GetStart())
 				sstMeta.Range.End = TruncateTS(resp.Range.GetEnd())
-				downloadMetasMap[file.String()] = sstMeta
+				mu.Lock()
+				resultMetasMap[file.Name] = sstMeta
 				mu.Unlock()
 			}
 			return nil
@@ -753,7 +753,7 @@ func (importer *FileImporter) downloadSST(
 	if err := eg.Wait(); err != nil {
 		return nil, err
 	}
-	for _, sstMeta := range downloadMetasMap {
+	for _, sstMeta := range resultMetasMap {
 		downloadMetas = append(downloadMetas, sstMeta)
 	}
 	return downloadMetas, nil
