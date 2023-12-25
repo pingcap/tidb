@@ -30,6 +30,7 @@ import (
 
 	"github.com/joho/sqltocsv"
 	"github.com/pingcap/errors"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints/checkpointspb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
@@ -1615,9 +1616,15 @@ func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, table
 		Logger: log.FromContext(ctx).With(zap.String("table", tableName)),
 	}
 	err := s.Transact(ctx, "ignore error checkpoints", func(c context.Context, tx *sql.Tx) error {
+		if strings.ContainsRune(cpdb.schema, ';') || strings.ContainsRune(CheckpointTableNameEngine, ';') {
+			return berrors.ErrInvalidArgument
+		}
 		query := fmt.Sprintf("UPDATE %s.%s SET status = ? WHERE ? = ? AND status <= ?", cpdb.schema, CheckpointTableNameEngine)
 		if _, e := tx.ExecContext(c, query, CheckpointStatusLoaded, colName, tableName, CheckpointStatusMaxInvalid); e != nil {
 			return errors.Trace(e)
+		}
+		if strings.ContainsRune(cpdb.schema, ';') || strings.ContainsRune(CheckpointTableNameTable, ';') {
+			return berrors.ErrInvalidArgument
 		}
 		query = fmt.Sprintf("UPDATE %s.%s SET status = ? WHERE ? = ? AND status <= ?", cpdb.schema, CheckpointTableNameTable)
 		if _, e := tx.ExecContext(c, query, CheckpointStatusLoaded, colName, tableName, CheckpointStatusMaxInvalid); e != nil {
@@ -1674,6 +1681,9 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 	err := s.Transact(ctx, "destroy error checkpoints", func(c context.Context, tx *sql.Tx) error {
 		// Obtain the list of tables
 		targetTables = nil
+		if strings.ContainsRune(aliasedColName, ';') || strings.ContainsRune(tableName, ';') {
+			return berrors.ErrInvalidArgument
+		}
 		rows, e := tx.QueryContext(c, selectQuery, aliasedColName, tableName, CheckpointStatusMaxInvalid)
 		if e != nil {
 			return errors.Trace(e)
@@ -1692,11 +1702,22 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 		}
 
 		// Delete the checkpoints
+		if strings.ContainsRune(colName, ';') || strings.ContainsRune(tableName, ';') {
+			return berrors.ErrInvalidArgument
+		}
 		if _, e := tx.ExecContext(c, deleteChunkQuery, colName, tableName, CheckpointStatusMaxInvalid); e != nil {
 			return errors.Trace(e)
 		}
+
+		if strings.ContainsRune(colName, ';') || strings.ContainsRune(tableName, ';') {
+			return berrors.ErrInvalidArgument
+		}
 		if _, e := tx.ExecContext(c, deleteEngineQuery, colName, tableName, CheckpointStatusMaxInvalid); e != nil {
 			return errors.Trace(e)
+		}
+
+		if strings.ContainsRune(colName, ';') || strings.ContainsRune(tableName, ';') {
+			return berrors.ErrInvalidArgument
 		}
 		if _, e := tx.ExecContext(c, deleteTableQuery, colName, tableName, CheckpointStatusMaxInvalid); e != nil {
 			return errors.Trace(e)
