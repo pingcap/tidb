@@ -731,11 +731,13 @@ func (importer *FileImporter) downloadSST(
 
 				log.Info("download from peer",
 					logutil.Region(regionInfo.Region),
+					logutil.File(file),
 					logutil.Peer(peer),
 					logutil.Key("resp-range-start", resp.Range.Start),
 					logutil.Key("resp-range-end", resp.Range.Start),
 					zap.Bool("resp-isempty", resp.IsEmpty),
 					zap.Uint32("resp-crc32", resp.Crc32),
+					zap.Int("len files", len(files)),
 				)
 				mu.Lock()
 				sstMeta, ok := downloadMetasMap[file.Name]
