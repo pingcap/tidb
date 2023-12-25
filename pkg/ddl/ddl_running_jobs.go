@@ -41,17 +41,8 @@ func newRunningJobs() *runningJobs {
 func (j *runningJobs) add(job *model.Job) {
 	j.Lock()
 	defer j.Unlock()
-	j.ids[job.ID] = getInvolvingSchemaInfo(job)
+	j.ids[job.ID] = job.GetInvolvingSchemaInfo()
 	j.updateInternalRunningJobIDs()
-}
-
-func getInvolvingSchemaInfo(job *model.Job) []model.InvolvingSchemaInfo {
-	if len(job.InvolvingSchemaInfo) > 0 {
-		return job.InvolvingSchemaInfo
-	}
-	return []model.InvolvingSchemaInfo{
-		{Database: job.SchemaName, Table: job.TableName},
-	}
 }
 
 func (j *runningJobs) remove(job *model.Job) {
@@ -66,8 +57,7 @@ func (j *runningJobs) checkRunnable(job *model.Job) bool {
 	defer j.RUnlock()
 	for _, info := range j.ids {
 		for i := 0; i < len(info); i++ {
-			jobInfos := getInvolvingSchemaInfo(job)
-			for _, jobInfo := range jobInfos {
+			for _, jobInfo := range job.GetInvolvingSchemaInfo() {
 				if checkConflict(info[i], jobInfo) {
 					return false
 				}
