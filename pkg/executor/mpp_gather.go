@@ -16,9 +16,9 @@ package executor
 
 import (
 	"context"
-	"time"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -168,8 +168,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		return err
 	}
 
-	// Minus one because may hold the last chk additionally.
-	holdCap := (mppErrRecoveryHoldChkCap - 1) * e.Ctx().GetSessionVars().MaxChunkSize
+	holdCap := mppErrRecoveryHoldChkCap * e.Ctx().GetSessionVars().MaxChunkSize
 
 	enableMPPRecovery := true
 	useAutoScaler := config.GetGlobalConfig().UseAutoScaler
@@ -181,7 +180,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		enableMPPRecovery = false
 	}
 
-	failpoint.Inject("force_enable_mpp_err_recovery", func() {
+	failpoint.Inject("mpp_recovery_test_force_enable", func() {
 		enableMPPRecovery = true
 	})
 
@@ -205,24 +204,16 @@ func (e *MPPGather) nextWithRecovery(ctx context.Context) error {
 		return nil
 	}
 
-	var hold bool
 	for e.mppErrRecovery.CanHoldResult() {
 		tmpChk := exec.NewFirstChunk(e)
 		mppErr := e.respIter.Next(ctx, tmpChk)
 
 		// Mock recovery once.
-		failpoint.Inject("test_mpp_err_times", func(forceErrCnt failpoint.Value) {
-			// todo del
-			logutil.BgLogger().Info("gjt 0")
-			forceErrCntInt, ok := forceErrCnt.(int)
-			if !ok {
-				panic("cannot convert forceErrCnt to int")
-			}
+		failpoint.Inject("mpp_recovery_test_max_err_times", func(forceErrCnt failpoint.Value) {
+			forceErrCntInt := forceErrCnt.(int)
 			if e.mppErrRecovery.RecoveryCnt() < uint32(forceErrCntInt) {
 				mppErr = errors.New("mock mpp error")
 			}
-			// todo del
-			logutil.BgLogger().Info("gjt 1", zap.Any("rec cnt", e.mppErrRecovery.RecoveryCnt()), zap.Any("force rec cnt", forceErrCntInt))
 		})
 
 		if mppErr != nil {
@@ -232,7 +223,7 @@ func (e *MPPGather) nextWithRecovery(ctx context.Context) error {
 			})
 
 			// Mock recovery succeed.
-			failpoint.Inject("force_enable_mpp_err_recovery", func() {
+			failpoint.Inject("mpp_recovery_test_ignore_recovery_err", func() {
 				if recoveryErr == nil {
 					panic("mocked mpp err should got recovery err")
 				}
@@ -249,7 +240,7 @@ func (e *MPPGather) nextWithRecovery(ctx context.Context) error {
 			}
 
 			logutil.BgLogger().Info("recovery mpp error succeed, begin next retry",
-			    zap.Any("mppErr", mppErr), zap.Any("recovery cnt", e.mppErrRecovery.RecoveryCnt()))
+				zap.Any("mppErr", mppErr), zap.Any("recovery cnt", e.mppErrRecovery.RecoveryCnt()))
 
 			if err := e.setupRespIter(ctx, true); err != nil {
 				logutil.BgLogger().Error("setup resp iter when recovery mpp err failed", zap.Any("err", err))
@@ -264,28 +255,15 @@ func (e *MPPGather) nextWithRecovery(ctx context.Context) error {
 			break
 		}
 
-		// Always hold this result, then check if fulled in the for loop condition.
-		// So the held rows can exceeds capacity by one chk.
-		// (That's why we minus 1 for capacity when init mppErrRecovery)
-		// Because if check fulled before insertion, we still have to keep the last chk somewhere,
-		// because we have to return held chk in the order of insertion.
 		e.mppErrRecovery.HoldResult(tmpChk)
-		hold = true
 	}
 
-	failpoint.Inject("test_mpp_err_recovery_hold_size", func(num failpoint.Value) {
-		if !e.mppErrRecovery.Enabled() {
-			panic("should enable mpp err recovery")
-		}
-		if hold {
-			curRows := e.mppErrRecovery.NumHoldRows()
-			numInt, ok := num.(int)
-			if !ok {
-				panic("unexpected failpoint num value")
-			}
-			if curRows != uint64(numInt) {
-				panic(fmt.Sprintf("unexpected holding rows, cur: %d", curRows))
-			}
+	failpoint.Inject("mpp_recovery_test_hold_size", func(num failpoint.Value) {
+		// Note: this failpoint only execute once.
+		curRows := e.mppErrRecovery.NumHoldRows()
+		numInt := num.(int)
+		if curRows != uint64(numInt) {
+			panic(fmt.Sprintf("unexpected holding rows, cur: %d", curRows))
 		}
 	})
 	return nil

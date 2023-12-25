@@ -1877,7 +1877,7 @@ func TestMPPRecovery(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("create table t(a int not null primary key, b int not null) partition by hash(a) partitions 2")
+	tk.MustExec("create table t(a int, b int)")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tb := external.GetTableByName(t, tk, "test", "t")
 	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
@@ -1895,37 +1895,45 @@ func TestMPPRecovery(t *testing.T) {
 
 	sql := "select * from t order by 1, 2"
 
-	// Test when mpp err recovery is disabled.
-	tk.MustExec("set @@tidb_max_chunk_size = default")
-	tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
-	tk.MustExec("set @@tidb_max_chunk_size = 32")
-	tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_force_enable", "return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_ignore_recovery_err", "return()"))
+	// Test different chunk size. And force one mpp err.
+	{
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_max_err_times", "return(1)"))
 
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/force_enable_mpp_err_recovery", "return()")
+		tk.MustExec("set @@tidb_max_chunk_size = default")
+		tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
+		tk.MustExec("set @@tidb_max_chunk_size = 32")
+		tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
 
-	// Test different chunk size.
-	tk.MustExec("set @@tidb_max_chunk_size = default")
-	tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
-	tk.MustExec("set @@tidb_max_chunk_size = 32")
-	tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_max_err_times"))
+	}
 
-	// // Test exceeds max recovery cnt.
-	// // If got error for 5 times, will report mpp err.
-	// errMsg := "mock mpp err"
-	// tk.MustExec("set @@tidb_max_chunk_size = 32")
-	// failpoint.Enable("github.com/pingcap/tidb/pkg/executor/test_mpp_err_times", "return(5)")
-	// tk.MustContainErrMsg(sql, errMsg)
-	// failpoint.Disable("github.com/pingcap/tidb/pkg/executor/test_mpp_err_times")
+	// Test exceeds max recovery times. Default max times is 3.
+	{
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_max_err_times", "return(5)"))
 
-	// // Test hold logic.
-	// // Default hold 4 * MaxChunkSize rows.
-	// tk.MustExec("set @@tidb_max_chunk_size = 32")
-	// expectedHoldRows := 4 * 32
-	// failpoint.Enable("github.com/pingcap/tidb/pkg/executor/test_mpp_err_recovery_hold_size",
-	//     fmt.Sprintf("return(%d, %d)", expectedHoldRows, expectedHoldRows))
-	// tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
-	// failpoint.Disable("github.com/pingcap/tidb/pkg/executor/test_mpp_err_recovery_hold_size")
+		tk.MustExec("set @@tidb_max_chunk_size = 32")
+		err := tk.QueryToErr(sql)
+		strings.Contains(err.Error(), "mock mpp err")
 
-	failpoint.Disable("github.com/pingcap/tidb/pkg/executor/force_enable_mpp_err_recovery")
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_max_err_times"))
+	}
+
+	// Test hold logic. Default hold 4 * MaxChunkSize rows.
+	{
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_max_err_times", "return(0)"))
+
+		tk.MustExec("set @@tidb_max_chunk_size = 32")
+		expectedHoldRows := 4 * 32
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_hold_size", fmt.Sprintf("1*return(%d)", expectedHoldRows)))
+		tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_hold_size"))
+
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_max_err_times"))
+	}
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_ignore_recovery_err"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_force_enable"))
+
 	tk.MustExec("set @@tidb_max_chunk_size = default")
 }
