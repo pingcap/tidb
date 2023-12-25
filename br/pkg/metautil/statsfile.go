@@ -27,12 +27,15 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/statistics/handle"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"golang.org/x/sync/errgroup"
 )
 
 var maxStatsJsonTableSize = 32 * 1024 * 1024 // 32 MiB
+var inlineSize = 8 * 1024                    // 8 KiB
 
 func getStatsFileName(physicalID int64) string {
 	return fmt.Sprintf("backupmeta.schema.stats.%09d", physicalID)
@@ -47,9 +50,8 @@ type StatsWriter struct {
 	statsFileIndexes []*backuppb.StatsFileIndex
 
 	// temporary variables, clear after each flush
-	totalSize   int
-	statsFile   *backuppb.StatsFile
-	physicalIDs []int64
+	totalSize int
+	statsFile *backuppb.StatsFile
 }
 
 func newStatsWriter(
@@ -62,9 +64,8 @@ func newStatsWriter(
 
 		statsFileIndexes: make([]*backuppb.StatsFileIndex, 0),
 
-		totalSize:   0,
-		statsFile:   &backuppb.StatsFile{},
-		physicalIDs: make([]int64, 0),
+		totalSize: 0,
+		statsFile: &backuppb.StatsFile{},
 	}
 }
 
@@ -74,6 +75,12 @@ func (s *StatsWriter) writeStatsFileAndClear(ctx context.Context, physicalID int
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	if len(s.statsFileIndexes) == 0 && len(content) < inlineSize {
+		s.statsFileIndexes = append(s.statsFileIndexes, &backuppb.StatsFileIndex{InlineData: content})
+		return nil
+	}
+
 	checksum := sha256.Sum256(content)
 
 	encryptedContent, iv, err := Encrypt(content, s.cipher)
@@ -86,18 +93,16 @@ func (s *StatsWriter) writeStatsFileAndClear(ctx context.Context, physicalID int
 	}
 
 	s.statsFileIndexes = append(s.statsFileIndexes, &backuppb.StatsFileIndex{
-		Name:        fileName,
-		Sha256:      checksum[:],
-		SizeEnc:     uint64(len(encryptedContent)),
-		SizeOri:     uint64(len(content)),
-		CipherIv:    iv,
-		PhysicalIds: s.physicalIDs,
+		Name:     fileName,
+		Sha256:   checksum[:],
+		SizeEnc:  uint64(len(encryptedContent)),
+		SizeOri:  uint64(len(content)),
+		CipherIv: iv,
 	})
 
 	// clear the temporary variables
 	s.totalSize = 0
 	s.statsFile = &backuppb.StatsFile{}
-	s.physicalIDs = make([]int64, 0)
 	return nil
 }
 
@@ -112,7 +117,6 @@ func (s *StatsWriter) BackupStats(ctx context.Context, jsonTable *statsutil.JSON
 	}
 
 	s.totalSize += len(statsBytes)
-	s.physicalIDs = append(s.physicalIDs, physicalID)
 	s.statsFile.Blocks = append(s.statsFile.Blocks, &backuppb.StatsBlock{
 		PhysicalId: physicalID,
 		JsonTable:  statsBytes,
@@ -128,17 +132,38 @@ func (s *StatsWriter) BackupStats(ctx context.Context, jsonTable *statsutil.JSON
 }
 
 func (s *StatsWriter) BackupStatsDone(ctx context.Context) ([]*backuppb.StatsFileIndex, error) {
-	if len(s.physicalIDs) == 0 || s.totalSize == 0 {
+	if s.totalSize == 0 || len(s.statsFile.Blocks) == 0 {
 		return s.statsFileIndexes, nil
 	}
 
-	if err := s.writeStatsFileAndClear(ctx, s.physicalIDs[0]); err != nil {
+	if err := s.writeStatsFileAndClear(ctx, s.statsFile.Blocks[0].PhysicalId); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return s.statsFileIndexes, nil
 }
 
 func RestoreStats(
+	ctx context.Context,
+	storage storage.ExternalStorage,
+	cipher *backuppb.CipherInfo,
+	statsHandler *handle.Handle,
+	newTableInfo *model.TableInfo,
+	statsFileIndexes []*backuppb.StatsFileIndex,
+	rewriteIDMap map[int64]int64,
+) error {
+	eg, ectx := errgroup.WithContext(ctx)
+	taskCh := make(chan *statstypes.PartitionStatisticLoadTask, 8)
+	eg.Go(func() error {
+		return downloadStats(ectx, storage, cipher, statsFileIndexes, rewriteIDMap, taskCh)
+	})
+	eg.Go(func() error {
+		// NOTICE: skip updating cache after load stats from json
+		return statsHandler.LoadStatsFromJSONConcurrency(ectx, newTableInfo, taskCh, 0)
+	})
+	return eg.Wait()
+}
+
+func downloadStats(
 	ctx context.Context,
 	storage storage.ExternalStorage,
 	cipher *backuppb.CipherInfo,
@@ -155,24 +180,30 @@ func RestoreStats(
 		}
 		statsFile := statsFileIndex
 		downloadWorkerpool.ApplyOnErrorGroup(eg, func() error {
-			content, err := storage.ReadFile(ectx, statsFile.Name)
-			if err != nil {
-				return errors.Trace(err)
-			}
+			var statsContent []byte
+			if len(statsFile.InlineData) > 0 {
+				statsContent = statsFile.InlineData
+			} else {
+				content, err := storage.ReadFile(ectx, statsFile.Name)
+				if err != nil {
+					return errors.Trace(err)
+				}
 
-			decryptContent, err := Decrypt(content, cipher, statsFile.CipherIv)
-			if err != nil {
-				return errors.Trace(err)
-			}
+				decryptContent, err := Decrypt(content, cipher, statsFile.CipherIv)
+				if err != nil {
+					return errors.Trace(err)
+				}
 
-			checksum := sha256.Sum256(decryptContent)
-			if !bytes.Equal(statsFile.Sha256, checksum[:]) {
-				return berrors.ErrInvalidMetaFile.GenWithStackByArgs(fmt.Sprintf(
-					"checksum mismatch expect %x, got %x", statsFile.Sha256, checksum[:]))
+				checksum := sha256.Sum256(decryptContent)
+				if !bytes.Equal(statsFile.Sha256, checksum[:]) {
+					return berrors.ErrInvalidMetaFile.GenWithStackByArgs(fmt.Sprintf(
+						"checksum mismatch expect %x, got %x", statsFile.Sha256, checksum[:]))
+				}
+				statsContent = decryptContent
 			}
 
 			statsFileBlocks := &backuppb.StatsFile{}
-			if err := proto.Unmarshal(decryptContent, statsFileBlocks); err != nil {
+			if err := proto.Unmarshal(statsContent, statsFileBlocks); err != nil {
 				return errors.Trace(err)
 			}
 

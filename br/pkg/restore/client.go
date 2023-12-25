@@ -54,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
-	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -1802,17 +1801,8 @@ func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *Cre
 			)
 			start := time.Now()
 			rewriteIDMap := getTableIDMap(tbl.Table, tbl.OldTable.Info)
-			eg, ectx := errgroup.WithContext(ctx)
-			taskCh := make(chan *statstypes.PartitionStatisticLoadTask, 8)
-			eg.Go(func() error {
-				return metautil.RestoreStats(ectx, rc.storage, rc.cipher, oldTable.StatsFileIndexes, rewriteIDMap, taskCh)
-			})
-			eg.Go(func() error {
-				// NOTICE: skip updating cache after load stats from json
-				return rc.statsHandler.LoadStatsFromJSONConcurrency(ectx, tbl.Table, taskCh, 0)
-			})
-			if err := eg.Wait(); err != nil {
-				return err
+			if err := metautil.RestoreStats(ctx, rc.storage, rc.cipher, rc.statsHandler, tbl.Table, oldTable.StatsFileIndexes, rewriteIDMap); err != nil {
+				log.Error("analyze table failed", zap.Any("table", oldTable.StatsFileIndexes), zap.Error(err))
 			}
 			log.Info("restore statistic data done",
 				zap.Stringer("table", oldTable.Info.Name),

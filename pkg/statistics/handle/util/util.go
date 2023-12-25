@@ -249,16 +249,16 @@ func GetFullTableName(is infoschema.InfoSchema, tblInfo *model.TableInfo) string
 
 // JSONTable is used for dumping statistics.
 type JSONTable struct {
-	Columns           map[string]*JSONColumn `json:"columns"`
-	Indices           map[string]*JSONColumn `json:"indices"`
-	Partitions        map[string]*JSONTable  `json:"partitions"`
-	DatabaseName      string                 `json:"database_name"`
-	TableName         string                 `json:"table_name"`
-	ExtStats          []*JSONExtendedStats   `json:"ext_stats"`
-	Count             int64                  `json:"count"`
-	ModifyCount       int64                  `json:"modify_count"`
-	Version           uint64                 `json:"version"`
-	IsHistoricalStats bool                   `json:"is_historical_stats"`
+	Columns           map[string]*JSONColumn `json:"columns,omitempty"`
+	Indices           map[string]*JSONColumn `json:"indices,omitempty"`
+	Partitions        map[string]*JSONTable  `json:"partitions,omitempty"`
+	DatabaseName      string                 `json:"database_name,omitempty"`
+	TableName         string                 `json:"table_name,omitempty"`
+	ExtStats          []*JSONExtendedStats   `json:"ext_stats,omitempty"`
+	Count             int64                  `json:"count,omitempty"`
+	ModifyCount       int64                  `json:"modify_count,omitempty"`
+	Version           uint64                 `json:"version,omitempty"`
+	IsHistoricalStats bool                   `json:"is_historical_stats,omitempty"`
 }
 
 // JSONExtendedStats is used for dumping extended statistics.

@@ -124,11 +124,13 @@ func TestStatsWriter(t *testing.T) {
 
 		// set the maxStatsJsonTableSize less enough
 		maxStatsJsonTableSize = 1
+		inlineSize = 1
 		err := statsWriter.BackupStats(ctx, fakeJsonTables[1], 1)
 		require.NoError(t, err)
 
 		// set the maxStatsJsonTableSize back
 		maxStatsJsonTableSize = 32 * 1024 * 1024
+		inlineSize = 8 * 1024
 		err = statsWriter.BackupStats(ctx, fakeJsonTables[2], 2)
 		require.NoError(t, err)
 		statsFileIndexes, err := statsWriter.BackupStatsDone(ctx)
@@ -138,7 +140,7 @@ func TestStatsWriter(t *testing.T) {
 		eg, ectx := errgroup.WithContext(ctx)
 		taskCh := make(chan *types.PartitionStatisticLoadTask)
 		controlWorker.ApplyOnErrorGroup(eg, func() error {
-			return RestoreStats(ectx, stg, &cipher, statsFileIndexes, rewriteIDs, taskCh)
+			return downloadStats(ectx, stg, &cipher, statsFileIndexes, rewriteIDs, taskCh)
 		})
 		controlWorker.ApplyOnErrorGroup(eg, func() error {
 			for task := range taskCh {
