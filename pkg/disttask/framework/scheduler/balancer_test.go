@@ -27,253 +27,6 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-type scaleTestCase struct {
-	subtasks          []*proto.Subtask
-	liveNodes         []string
-	taskNodes         []string
-	cleanedNodes      []string
-	expectedTaskNodes []string
-	expectedSubtasks  []*proto.Subtask
-}
-
-func scaleTest(t *testing.T,
-	mockTaskMgr *mock.MockTaskManager,
-	testCase scaleTestCase,
-	id int) {
-	//ctx := context.Background()
-	//mockTaskMgr.EXPECT().GetSubtasksByStepAndState(ctx, int64(id), proto.StepInit, proto.TaskStatePending).Return(
-	//	testCase.subtasks,
-	//	nil)
-	//mockTaskMgr.EXPECT().UpdateSubtasksExecIDs(ctx, int64(id), testCase.subtasks).Return(nil).AnyTimes()
-	//mockTaskMgr.EXPECT().DeleteDeadNodes(ctx, testCase.cleanedNodes).Return(nil).AnyTimes()
-	//if len(testCase.cleanedNodes) > 0 {
-	//	mockTaskMgr.EXPECT().GetSubtasksByExecIdsAndStepAndState(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
-	//}
-	//sch := scheduler.NewBaseScheduler(ctx, &proto.Task{Step: proto.StepInit, ID: int64(id)},
-	//	scheduler.NewParam(mockTaskMgr, scheduler.NewNodeManager(), scheduler.NewSlotManager()))
-	//sch.TaskNodes = testCase.taskNodes
-	//require.NoError(t, sch.DoBalanceSubtasks(testCase.liveNodes))
-	//slices.SortFunc(sch.TaskNodes, func(i, j string) int {
-	//	return strings.Compare(i, j)
-	//})
-	//slices.SortFunc(testCase.subtasks, func(i, j *proto.Subtask) int {
-	//	return strings.Compare(i.ExecID, j.ExecID)
-	//})
-	//require.Equal(t, testCase.expectedTaskNodes, sch.TaskNodes)
-	//require.Equal(t, testCase.expectedSubtasks, testCase.subtasks)
-}
-
-func TestScaleOutNodes(t *testing.T) {
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-	mockTaskMgr := mock.NewMockTaskManager(ctrl)
-	testCases := []scaleTestCase{
-		// 1. scale out from 1 node to 2 nodes. 4 subtasks.
-		{
-			[]*proto.Subtask{
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"}},
-			[]string{"tidb1", "tidb2"},
-			[]string{"tidb1"},
-			[]string{},
-			[]string{"tidb1", "tidb2"},
-			[]*proto.Subtask{
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"},
-				{ExecID: "tidb2"},
-				{ExecID: "tidb2"}},
-		},
-		// 2. scale out from 1 node to 2 nodes. 3 subtasks.
-		{
-			[]*proto.Subtask{
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"}},
-			[]string{"tidb1", "tidb2"},
-			[]string{"tidb1"},
-			[]string{},
-			[]string{"tidb1", "tidb2"},
-			[]*proto.Subtask{
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"},
-				{ExecID: "tidb2"}},
-		},
-		// 3. scale out from 2 nodes to 4 nodes. 4 subtasks.
-		{
-			[]*proto.Subtask{
-				{ExecID: "tidb2"},
-				{ExecID: "tidb2"},
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"}},
-			[]string{"tidb1", "tidb2", "1.1.1.3:4000", "1.1.1.4:4000"},
-			[]string{"tidb1", "tidb2"},
-			[]string{},
-			[]string{"tidb1", "tidb2", "1.1.1.3:4000", "1.1.1.4:4000"},
-			[]*proto.Subtask{
-				{ExecID: "tidb1"},
-				{ExecID: "tidb2"},
-				{ExecID: "1.1.1.3:4000"},
-				{ExecID: "1.1.1.4:4000"}},
-		},
-		// 4. scale out from 2 nodes to 4 nodes. 9 subtasks.
-		{
-			[]*proto.Subtask{
-				{ExecID: "tidb2"},
-				{ExecID: "tidb2"},
-				{ExecID: "tidb2"},
-				{ExecID: "tidb2"},
-				{ExecID: "tidb2"},
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"}},
-			[]string{"tidb1", "tidb2", "1.1.1.3:4000", "1.1.1.4:4000"},
-			[]string{"tidb1", "tidb2"},
-			[]string{},
-			[]string{"tidb1", "tidb2", "1.1.1.3:4000", "1.1.1.4:4000"},
-			[]*proto.Subtask{
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"},
-				{ExecID: "tidb2"},
-				{ExecID: "tidb2"},
-				{ExecID: "1.1.1.3:4000"},
-				{ExecID: "1.1.1.3:4000"},
-				{ExecID: "1.1.1.4:4000"},
-				{ExecID: "1.1.1.4:4000"}},
-		},
-		// 5. scale out from 2 nodes to 3 nodes.
-		{
-			[]*proto.Subtask{
-				{ExecID: "tidb2"},
-				{ExecID: "tidb2"},
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"}},
-			[]string{"tidb1", "tidb2", "1.1.1.3:4000"},
-			[]string{"tidb1", "tidb2"},
-			[]string{},
-			[]string{"tidb1", "tidb2", "1.1.1.3:4000"},
-			[]*proto.Subtask{
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"},
-				{ExecID: "tidb2"},
-				{ExecID: "1.1.1.3:4000"}},
-		},
-		// 6. scale out from 1 node to another 2 node.
-		{
-			[]*proto.Subtask{
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"}},
-			[]string{"tidb2", "1.1.1.3:4000"},
-			[]string{"tidb1"},
-			[]string{"tidb1"},
-			[]string{"tidb2", "1.1.1.3:4000"},
-			[]*proto.Subtask{
-				{ExecID: "tidb2"},
-				{ExecID: "tidb2"},
-				{ExecID: "1.1.1.3:4000"},
-				{ExecID: "1.1.1.3:4000"}},
-		},
-		// 7. scale out from tidb1, tidb2 to tidb2, tidb3.
-		{
-			[]*proto.Subtask{
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"},
-				{ExecID: "tidb2"},
-				{ExecID: "tidb2"}},
-			[]string{"tidb2", "1.1.1.3:4000"},
-			[]string{"tidb1", "tidb2"},
-			[]string{"tidb1"},
-			[]string{"tidb2", "1.1.1.3:4000"},
-			[]*proto.Subtask{
-				{ExecID: "tidb2"},
-				{ExecID: "tidb2"},
-				{ExecID: "1.1.1.3:4000"},
-				{ExecID: "1.1.1.3:4000"}},
-		},
-		// 8. scale from tidb1, tidb2 to tidb3, tidb4.
-		{
-			[]*proto.Subtask{
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"},
-				{ExecID: "tidb2"},
-				{ExecID: "tidb2"}},
-			[]string{"1.1.1.3:4000", "1.1.1.4:4000"},
-			[]string{"tidb1", "tidb2"},
-			[]string{"tidb1", "tidb2"},
-			[]string{"1.1.1.3:4000", "1.1.1.4:4000"},
-			[]*proto.Subtask{
-				{ExecID: "1.1.1.3:4000"},
-				{ExecID: "1.1.1.3:4000"},
-				{ExecID: "1.1.1.4:4000"},
-				{ExecID: "1.1.1.4:4000"}},
-		},
-		// 9. scale from tidb1, tidb2 to tidb2, tidb3, tidb4.
-		{
-			[]*proto.Subtask{
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"},
-				{ExecID: "tidb2"},
-				{ExecID: "tidb2"}},
-			[]string{"tidb2", "1.1.1.3:4000", "1.1.1.4:4000"},
-			[]string{"tidb1", "tidb2"},
-			[]string{"tidb1"},
-			[]string{"tidb2", "1.1.1.3:4000", "1.1.1.4:4000"},
-			[]*proto.Subtask{
-				{ExecID: "tidb2"},
-				{ExecID: "tidb2"},
-				{ExecID: "1.1.1.3:4000"},
-				{ExecID: "1.1.1.4:4000"}},
-		},
-		// 10. scale form tidb1, tidb2 to tidb2, tidb3, tidb4.
-		{
-
-			[]*proto.Subtask{
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"},
-				{ExecID: "tidb2"},
-				{ExecID: "tidb2"},
-				{ExecID: "tidb1"}},
-			[]string{"tidb2", "1.1.1.3:4000", "1.1.1.4:4000"},
-			[]string{"tidb1", "tidb2"},
-			[]string{"tidb1"},
-			[]string{"tidb2", "1.1.1.3:4000", "1.1.1.4:4000"},
-			[]*proto.Subtask{
-				{ExecID: "tidb2"},
-				{ExecID: "tidb2"},
-				{ExecID: "1.1.1.3:4000"},
-				{ExecID: "1.1.1.3:4000"},
-				{ExecID: "1.1.1.4:4000"}},
-		},
-		// 11. scale from tidb1(2 subtasks), tidb2(3 subtasks), tidb3(0 subtasks) to tidb1, tidb3, tidb4, tidb5, tidb6.
-		{
-			[]*proto.Subtask{
-				{ExecID: "tidb1"},
-				{ExecID: "tidb1"},
-				{ExecID: "tidb2"},
-				{ExecID: "tidb2"},
-				{ExecID: "tidb2"}},
-			[]string{"tidb1", "1.1.1.3:4000", "1.1.1.4:4000", "1.1.1.5:4000", "1.1.1.6:4000"},
-			[]string{"tidb1", "tidb2"},
-			[]string{"tidb2"},
-			[]string{"tidb1", "1.1.1.3:4000", "1.1.1.4:4000", "1.1.1.5:4000", "1.1.1.6:4000"},
-			[]*proto.Subtask{
-				{ExecID: "tidb1"},
-				{ExecID: "1.1.1.3:4000"},
-				{ExecID: "1.1.1.4:4000"},
-				{ExecID: "1.1.1.5:4000"},
-				{ExecID: "1.1.1.6:4000"}},
-		},
-	}
-	for i, testCase := range testCases {
-		scaleTest(t, mockTaskMgr, testCase, i+1)
-	}
-}
-
 type balanceTestCase struct {
 	subtasks          []*proto.Subtask
 	eligibleNodes     []string
@@ -515,6 +268,115 @@ func TestBalanceOneTask(t *testing.T) {
 		require.Equal(t, map[string]int{"tidb1": 0, "tidb2": 0}, b.currUsedSlots)
 		require.True(t, ctrl.Satisfied())
 	})
+}
+
+func TestBalanceMultipleTasks(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockTaskMgr := mock.NewMockTaskManager(ctrl)
+
+	taskCases := []struct {
+		subtasks, expectedSubtasks []*proto.Subtask
+	}{
+		// task 1 is balanced
+		// used slots will be {tidb1: 8, tidb2: 8, tidb3: 0}
+		{
+			subtasks: []*proto.Subtask{
+				{ID: 1, ExecID: "tidb1", Concurrency: 8, State: proto.TaskStateRunning},
+				{ID: 2, ExecID: "tidb2", Concurrency: 8, State: proto.TaskStateRunning},
+			},
+			expectedSubtasks: []*proto.Subtask{
+				{ID: 1, ExecID: "tidb1", Concurrency: 8, State: proto.TaskStateRunning},
+				{ID: 2, ExecID: "tidb2", Concurrency: 8, State: proto.TaskStateRunning},
+			},
+		},
+		// task 2 require balance
+		// used slots will be {tidb1: 16, tidb2: 16, tidb3: 8}
+		{
+			subtasks: []*proto.Subtask{
+				{ID: 3, ExecID: "tidb1", Concurrency: 8, State: proto.TaskStateRunning},
+				{ID: 4, ExecID: "tidb4", Concurrency: 8, State: proto.TaskStateRunning},
+				{ID: 5, ExecID: "tidb4", Concurrency: 8, State: proto.TaskStatePending},
+			},
+			expectedSubtasks: []*proto.Subtask{
+				{ID: 3, ExecID: "tidb1", Concurrency: 8, State: proto.TaskStateRunning},
+				{ID: 4, ExecID: "tidb2", Concurrency: 8, State: proto.TaskStateRunning},
+				{ID: 5, ExecID: "tidb3", Concurrency: 8, State: proto.TaskStatePending},
+			},
+		},
+		// task 3 require balance, but no eligible node, so it's not balanced, and
+		// used slots are not updated
+		// used slots will be {tidb1: 16, tidb2: 16, tidb3: 8}
+		{
+			subtasks: []*proto.Subtask{
+				{ID: 6, ExecID: "tidb4", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 7, ExecID: "tidb4", Concurrency: 16, State: proto.TaskStatePending},
+			},
+			expectedSubtasks: []*proto.Subtask{
+				{ID: 6, ExecID: "tidb4", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 7, ExecID: "tidb4", Concurrency: 16, State: proto.TaskStatePending},
+			},
+		},
+		// task 4 require balance
+		// used slots will be {tidb1: 16, tidb2: 16, tidb3: 16}
+		{
+			subtasks: []*proto.Subtask{
+				{ID: 8, ExecID: "tidb1", Concurrency: 8, State: proto.TaskStatePending},
+			},
+			expectedSubtasks: []*proto.Subtask{
+				{ID: 8, ExecID: "tidb3", Concurrency: 8, State: proto.TaskStatePending},
+			},
+		},
+	}
+	ctx := context.Background()
+
+	manager, err := NewManager(ctx, mockTaskMgr, "1")
+	require.NoError(t, err)
+	manager.slotMgr.capacity = 16
+	manager.nodeMgr.managedNodes.Store(&[]string{"tidb1", "tidb2", "tidb3"})
+	b := newBalancer(Param{
+		taskMgr: manager.taskMgr,
+		nodeMgr: manager.nodeMgr,
+		slotMgr: manager.slotMgr,
+	})
+	for i := range taskCases {
+		taskID := int64(i + 1)
+		sch := mock.NewMockScheduler(ctrl)
+		sch.EXPECT().GetTask().Return(&proto.Task{ID: taskID}).AnyTimes()
+		manager.addScheduler(taskID, sch)
+	}
+	require.Len(t, manager.getSchedulers(), 4)
+
+	// fail fast if balance failed on some task
+	manager.getSchedulers()[0].(*mock.MockScheduler).EXPECT().
+		GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock error"))
+	b.balance(ctx, manager)
+	require.True(t, ctrl.Satisfied())
+
+	// balance multiple tasks
+	for i, c := range taskCases {
+		taskID := int64(i + 1)
+		if !assert.ObjectsAreEqual(c.subtasks, c.expectedSubtasks) {
+			gomock.InOrder(
+				manager.getSchedulers()[i].(*mock.MockScheduler).EXPECT().
+					GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil),
+				mockTaskMgr.EXPECT().GetActiveSubtasks(gomock.Any(), taskID).Return(c.subtasks, nil),
+				mockTaskMgr.EXPECT().UpdateSubtasksExecIDs(gomock.Any(), gomock.Any()).Return(nil),
+			)
+		} else {
+			gomock.InOrder(
+				manager.getSchedulers()[i].(*mock.MockScheduler).EXPECT().
+					GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil),
+				mockTaskMgr.EXPECT().GetActiveSubtasks(gomock.Any(), taskID).Return(c.subtasks, nil),
+			)
+		}
+	}
+	b.balance(ctx, manager)
+	require.Equal(t, map[string]int{"tidb1": 16, "tidb2": 16, "tidb3": 16}, b.currUsedSlots)
+	require.True(t, ctrl.Satisfied())
+	for _, c := range taskCases {
+		require.Equal(t, c.expectedSubtasks, c.subtasks)
+	}
 }
 
 func TestBalancerUpdateUsedNodes(t *testing.T) {
