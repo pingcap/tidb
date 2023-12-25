@@ -61,6 +61,7 @@ type TaskManager interface {
 	// not considered.
 	GetUsedSlotsOnNodes(ctx context.Context) (map[string]int, error)
 	// GetActiveSubtasks returns subtasks of the task that are in pending/running state.
+	// the returned subtasks only contains some fields, see row2SubtaskBasic.
 	GetActiveSubtasks(ctx context.Context, taskID int64) ([]*proto.Subtask, error)
 	GetSubtaskInStatesCnt(ctx context.Context, taskID int64, states ...interface{}) (int64, error)
 	ResumeSubtasks(ctx context.Context, taskID int64) error
