@@ -1043,7 +1043,7 @@ const (
 	//   add a new `type` column on mysql.bind_info, which is for universal binding #48875.
 	version181 = 181
 
-	// vresion 182
+	// version 182
 	//   add column `bdr_role` to `mysql.tidb_ddl_job` and `mysql.tidb_ddl_history`.
 	version182 = 182
 )

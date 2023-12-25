@@ -197,88 +197,17 @@ const (
 )
 
 // ActionBDRMap is the map of DDL ActionType to DDLBDRType.
-var ActionBDRMap = map[ActionType]DDLBDRType{
-	ActionCreateSchema:                  SafeDDL,
-	ActionDropSchema:                    UnsafeDDL,
-	ActionCreateTable:                   SafeDDL,
-	ActionDropTable:                     UnsafeDDL,
-	ActionAddColumn:                     SafeDDL, // add a new column to table if it’s nullable or with default value.
-	ActionDropColumn:                    UnsafeDDL,
-	ActionAddIndex:                      SafeDDL, //add non-unique index
-	ActionDropIndex:                     SafeDDL,
-	ActionAddForeignKey:                 UnsafeDDL,
-	ActionDropForeignKey:                UnsafeDDL,
-	ActionTruncateTable:                 UnsafeDDL,
-	ActionModifyColumn:                  SafeDDL, // add or update comments for column, change default values of one particular column
-	ActionRebaseAutoID:                  UnsafeDDL,
-	ActionRenameTable:                   UnsafeDDL,
-	ActionSetDefaultValue:               SafeDDL,
-	ActionShardRowID:                    UnsafeDDL,
-	ActionModifyTableComment:            SafeDDL,
-	ActionRenameIndex:                   SafeDDL, // rename any index
-	ActionAddTablePartition:             SafeDDL,
-	ActionDropTablePartition:            UnsafeDDL,
-	ActionCreateView:                    UnmanagementDDL,
-	ActionModifyTableCharsetAndCollate:  UnsafeDDL,
-	ActionTruncateTablePartition:        UnsafeDDL,
-	ActionDropView:                      UnmanagementDDL,
-	ActionRecoverTable:                  UnsafeDDL,
-	ActionModifySchemaCharsetAndCollate: UnsafeDDL,
-	ActionLockTable:                     UnsafeDDL,
-	ActionUnlockTable:                   UnsafeDDL,
-	ActionRepairTable:                   UnsafeDDL,
-	ActionSetTiFlashReplica:             UnsafeDDL,
-	ActionUpdateTiFlashReplicaStatus:    UnsafeDDL,
-	ActionAddPrimaryKey:                 UnsafeDDL,
-	ActionDropPrimaryKey:                SafeDDL,
-	ActionCreateSequence:                UnsafeDDL,
-	ActionAlterSequence:                 UnsafeDDL,
-	ActionDropSequence:                  UnsafeDDL,
-	ActionModifyTableAutoIdCache:        UnsafeDDL, //nolint:revive
-	ActionRebaseAutoRandomBase:          UnsafeDDL,
-	ActionAlterIndexVisibility:          SafeDDL,
-	ActionExchangeTablePartition:        UnsafeDDL,
-	ActionAddCheckConstraint:            UnsafeDDL,
-	ActionDropCheckConstraint:           UnsafeDDL,
-	ActionAlterCheckConstraint:          UnsafeDDL,
-
-	__DEPRECATED_ActionAlterTableAlterPartition: UnknownDDL, // Deprecated
-
-	ActionRenameTables:                  UnsafeDDL,
-	ActionAlterTableAttributes:          UnsafeDDL,
-	ActionAlterTablePartitionAttributes: UnsafeDDL,
-	ActionCreatePlacementPolicy:         UnmanagementDDL,
-	ActionAlterPlacementPolicy:          UnmanagementDDL,
-	ActionDropPlacementPolicy:           UnmanagementDDL,
-	ActionAlterTablePartitionPlacement:  UnsafeDDL,
-	ActionModifySchemaDefaultPlacement:  UnsafeDDL,
-	ActionAlterTablePlacement:           UnsafeDDL,
-	ActionAlterCacheTable:               UnsafeDDL,
-	ActionAlterTableStatsOptions:        UnsafeDDL,
-	ActionAlterNoCacheTable:             UnsafeDDL,
-	ActionCreateTables:                  SafeDDL,
-	ActionMultiSchemaChange:             UnsafeDDL,
-	ActionFlashbackCluster:              UnsafeDDL,
-	ActionRecoverSchema:                 UnsafeDDL,
-	ActionReorganizePartition:           UnsafeDDL,
-	ActionAlterTTLInfo:                  SafeDDL,
-	ActionAlterTTLRemove:                SafeDDL,
-	ActionCreateResourceGroup:           UnmanagementDDL,
-	ActionAlterResourceGroup:            UnmanagementDDL,
-	ActionDropResourceGroup:             UnmanagementDDL,
-	ActionAlterTablePartitioning:        UnsafeDDL,
-	ActionRemovePartitioning:            UnsafeDDL,
-}
+var ActionBDRMap = map[ActionType]DDLBDRType{}
 
 // BDRActionMap is the map of DDLBDRType to ActionType (reversed from ActionBDRMap).
 var BDRActionMap = map[DDLBDRType][]ActionType{
 	SafeDDL: {
 		ActionCreateSchema,
 		ActionCreateTable,
-		ActionAddColumn,
-		ActionAddIndex,
+		ActionAddColumn, // add a new column to table if it’s nullable or with default value.
+		ActionAddIndex,  //add non-unique index
 		ActionDropIndex,
-		ActionModifyColumn,
+		ActionModifyColumn, // add or update comments for column, change default values of one particular column
 		ActionSetDefaultValue,
 		ActionModifyTableComment,
 		ActionRenameIndex,
@@ -1175,4 +1104,12 @@ type AffectedOption struct {
 	TableID     int64 `json:"table_id"`
 	OldTableID  int64 `json:"old_table_id"`
 	OldSchemaID int64 `json:"old_schema_id"`
+}
+
+func init() {
+	for bdrType, v := range BDRActionMap {
+		for _, action := range v {
+			ActionBDRMap[action] = bdrType
+		}
+	}
 }
