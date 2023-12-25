@@ -1743,9 +1743,9 @@ func (s *SessionVars) RaiseWarningWhenMPPEnforced(warning string) {
 		return
 	}
 	if s.StmtCtx.InExplainStmt {
-		s.StmtCtx.AppendWarning(errors.New(warning))
+		s.StmtCtx.AppendWarning(errors.NewNoStackError(warning))
 	} else {
-		s.StmtCtx.AppendExtraWarning(errors.New(warning))
+		s.StmtCtx.AppendExtraWarning(errors.NewNoStackError(warning))
 	}
 }
 
