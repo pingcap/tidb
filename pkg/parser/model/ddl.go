@@ -885,6 +885,16 @@ func (job *Job) IsRollbackable() bool {
 	return true
 }
 
+// GetInvolvingSchemaInfo returns the schema info involved in the job.
+func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
+	if len(job.InvolvingSchemaInfo) > 0 {
+		return job.InvolvingSchemaInfo
+	}
+	return []InvolvingSchemaInfo{
+		{Database: job.SchemaName, Table: job.TableName},
+	}
+}
+
 // JobState is for job state.
 type JobState int32
 

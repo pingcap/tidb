@@ -138,10 +138,8 @@ func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool
 }
 
 func hasSysDB(job *model.Job) bool {
-	sNames := job2SchemaNames(job)
-	// TODO: Handle for the name is empty, like ActionCreatePlacementPolicy.
-	for _, name := range sNames {
-		if tidb_util.IsSysDB(name) {
+	for _, info := range job.GetInvolvingSchemaInfo() {
+		if tidb_util.IsSysDB(info.Database) {
 			return true
 		}
 	}
