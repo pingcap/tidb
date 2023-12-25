@@ -267,7 +267,7 @@ type StatsReadWriter interface {
 	// then tidb-server will reload automatic.
 	UpdateStatsVersion() error
 
-	// ResetTableStats2KVForDrop updates the version of mysql.stats_meta,
+	// UpdateStatsMetaVersionForGC updates the version of mysql.stats_meta,
 	// ensuring it is greater than the last garbage collection (GC) time.
 	// The GC worker deletes old stats based on a safe time point,
 	// calculated as now() - 10 * max(stats lease, ddl lease).
@@ -287,7 +287,7 @@ type StatsReadWriter interface {
 	// For instance, if a table was created at time 90, and it's now time 200,
 	// with the last GC time at 95 and the safe time point at 100,
 	// updating the version beyond 95 ensures eventual deletion of stats.
-	ResetTableStats2KVForDrop(physicalID int64) (err error)
+	UpdateStatsMetaVersionForGC(physicalID int64) (err error)
 
 	// ChangeGlobalStatsID changes the global stats ID.
 	ChangeGlobalStatsID(from, to int64) (err error)
