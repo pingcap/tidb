@@ -41,6 +41,10 @@ type RecoveryInfo struct {
 	NodeCnt int
 }
 
+const (
+	memLimitErrPattern = "Memory limit"
+)
+
 // NewRecoveryHandler returns new instance of RecoveryHandler.
 func NewRecoveryHandler(useAutoScaler bool, holderCap uint64, enable bool, parent *memory.Tracker) *RecoveryHandler {
 	return &RecoveryHandler{
@@ -52,7 +56,7 @@ func NewRecoveryHandler(useAutoScaler bool, holderCap uint64, enable bool, paren
 	}
 }
 
-// CanHoldResult tells whether we can insert intermediate results.
+// Enabled return true when mpp err recovery enabled.
 func (m *RecoveryHandler) Enabled() bool {
 	return m.enable
 }
@@ -62,7 +66,7 @@ func (m *RecoveryHandler) CanHoldResult() bool {
 	return m.holder.capacity > 0 && !m.holder.alreadyFulled
 }
 
-// HoldResult tries to hold mpp result. You should call CanHoldResult to check first.
+// HoldResult tries to hold mpp result. You should call Enabled() and CanHoldResult() to check first.
 func (m *RecoveryHandler) HoldResult(chk *chunk.Chunk) {
 	m.holder.insert(chk)
 }
@@ -150,7 +154,7 @@ func newMemLimitHandlerImpl(useAutoScaler bool) *memLimitHandlerImpl {
 }
 
 func (h *memLimitHandlerImpl) chooseHandlerImpl(mppErr error) bool {
-	if strings.Contains(mppErr.Error(), "Memory limit") && h.useAutoScaler {
+	if strings.Contains(mppErr.Error(), memLimitErrPattern) && h.useAutoScaler {
 		return true
 	}
 	return false
@@ -158,7 +162,7 @@ func (h *memLimitHandlerImpl) chooseHandlerImpl(mppErr error) bool {
 
 func (*memLimitHandlerImpl) doRecovery(info *RecoveryInfo) error {
 	// Ignore fetched topo, because AutoScaler will keep the topo for a while.
-	// And will use the new topo when dispatch mpp task again.
+	// And the new topo will be fetched when dispatch mpp task again.
 	if _, err := tiflashcompute.GetGlobalTopoFetcher().RecoveryAndGetTopo(tiflashcompute.RecoveryTypeMemLimit, info.NodeCnt); err != nil {
 		return err
 	}

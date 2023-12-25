@@ -41,7 +41,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// So we can hold most 4 * MaxChunkSize rows.
+// For mpp err recovery, hold at most 4 * MaxChunkSize rows.
 const mppErrRecoveryHoldChkCap = 4
 
 func useMPPExecution(ctx sessionctx.Context, tr *plannercore.PhysicalTableReader) bool {
@@ -108,7 +108,7 @@ func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
 	return ids
 }
 
-func (e *MPPGather) setupRespIter(ctx context.Context, isRecoverying bool) error {
+func (e *MPPGather) setupRespIter(ctx context.Context, isRecoverying bool) (err error) {
 	if isRecoverying {
 		// If we are trying to recovery from MPP error, needs to cleanup some resources.
 		// Sanity check.
@@ -128,17 +128,14 @@ func (e *MPPGather) setupRespIter(ctx context.Context, isRecoverying bool) error
 	planIDs := collectPlanIDS(e.originalPlan, nil)
 	e.gatherID = allocMPPGatherID(e.Ctx())
 	coord := e.buildCoordinator(planIDs)
-	err := mppcoordmanager.InstanceMPPCoordinatorManager.Register(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherID: e.gatherID}, coord)
-	if err != nil {
+	if err = mppcoordmanager.InstanceMPPCoordinatorManager.Register(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherID: e.gatherID}, coord); err != nil {
 		return err
 	}
 	var resp kv.Response
-	resp, e.kvRanges, err = coord.Execute(ctx)
-	if err != nil {
+	if resp, e.kvRanges, err = coord.Execute(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	e.nodeCnt = coord.GetNodeCnt()
-	if e.nodeCnt <= 0 {
+	if e.nodeCnt = coord.GetNodeCnt(); e.nodeCnt <= 0 {
 		return errors.Errorf("tiflash node count should be greater than zero: %v", e.nodeCnt)
 	}
 	e.respIter = distsql.GenSelectResultFromResponse(e.Ctx(), e.RetFieldTypes(), planIDs, e.ID(), resp)
@@ -163,14 +160,12 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		_, e.kvRanges, err = plannercore.GenerateRootMPPTasks(e.Ctx(), e.startTS, e.gatherID, e.mppQueryID, sender, e.is)
 		return err
 	}
-	err = e.setupRespIter(ctx, false)
-	if err != nil {
+	if err = e.setupRespIter(ctx, false); err != nil {
 		return err
 	}
 
-	holdCap := mppErrRecoveryHoldChkCap * e.Ctx().GetSessionVars().MaxChunkSize
-
 	enableMPPRecovery := true
+	holdCap := mppErrRecoveryHoldChkCap * e.Ctx().GetSessionVars().MaxChunkSize
 	useAutoScaler := config.GetGlobalConfig().UseAutoScaler
 	disaggTiFlash := config.GetGlobalConfig().DisaggregatedTiFlash
 
@@ -208,7 +203,7 @@ func (e *MPPGather) nextWithRecovery(ctx context.Context) error {
 		tmpChk := exec.NewFirstChunk(e)
 		mppErr := e.respIter.Next(ctx, tmpChk)
 
-		// Mock recovery once.
+		// Mock recovery n times.
 		failpoint.Inject("mpp_recovery_test_max_err_times", func(forceErrCnt failpoint.Value) {
 			forceErrCntInt := forceErrCnt.(int)
 			if e.mppErrRecovery.RecoveryCnt() < uint32(forceErrCntInt) {
@@ -222,13 +217,12 @@ func (e *MPPGather) nextWithRecovery(ctx context.Context) error {
 				NodeCnt: e.nodeCnt,
 			})
 
-			// Mock recovery succeed.
+			// Mock recovery succeed, ignore no recovery handler err.
 			failpoint.Inject("mpp_recovery_test_ignore_recovery_err", func() {
 				if recoveryErr == nil {
 					panic("mocked mpp err should got recovery err")
 				}
 				if strings.Contains(recoveryErr.Error(), "no handler to recovery") {
-					// Ignore there is no recovery handler for mocked mpp err.
 					recoveryErr = nil
 				}
 			})
@@ -240,7 +234,7 @@ func (e *MPPGather) nextWithRecovery(ctx context.Context) error {
 			}
 
 			logutil.BgLogger().Info("recovery mpp error succeed, begin next retry",
-				zap.Any("mppErr", mppErr), zap.Any("recovery cnt", e.mppErrRecovery.RecoveryCnt()))
+				zap.Any("mppErr", mppErr), zap.Any("recoveryCnt", e.mppErrRecovery.RecoveryCnt()))
 
 			if err := e.setupRespIter(ctx, true); err != nil {
 				logutil.BgLogger().Error("setup resp iter when recovery mpp err failed", zap.Any("err", err))
