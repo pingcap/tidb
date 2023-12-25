@@ -186,7 +186,11 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 				// if we are in a txn, should update the txn resource name to let the txn
 				// commit with the hint resource group.
 				if txn, err := sctx.Txn(false); err == nil && txn != nil && txn.Valid() {
+<<<<<<< HEAD:planner/optimize.go
 					txn.SetOption(kv.ResourceGroupName, sessVars.ResourceGroupName)
+=======
+					kv.SetTxnResourceGroup(txn, sessVars.StmtCtx.ResourceGroupName)
+>>>>>>> 946bcfca140 (stmtsummary: add request-units info in statements_summary (#49504)):pkg/planner/optimize.go
 				}
 			} else {
 				err := infoschema.ErrResourceGroupSupportDisabled
