@@ -104,32 +104,24 @@ type mergeIter[T heapElem, R sortedReader[T]] struct {
 // readerOpenerFn is a function that opens a sorted reader.
 type readerOpenerFn[T heapElem, R sortedReader[T]] func() (*R, error)
 
-// newMergeIter creates a merge iterator for multiple sorted reader opener
-// functions.
-func newMergeIter[
+// openAndGetFirstElem opens readers in parallel and reads the first element.
+func openAndGetFirstElem[
 	T heapElem,
 	R sortedReader[T],
-](ctx context.Context, readerOpeners []readerOpenerFn[T, R], checkHotspot bool) (*mergeIter[T, R], error) {
-	logger := logutil.Logger(ctx)
-	readers := make([]*R, len(readerOpeners))
+](openers []readerOpenerFn[T, R]) ([]*R, []T, error) {
+	wg := errgroup.Group{}
+	mayNilReaders := make([]*R, len(openers))
 	closeReaders := func() {
-		for _, rp := range readers {
+		for _, rp := range mayNilReaders {
 			if rp == nil {
 				continue
 			}
 			r := *rp
-			err := r.close()
-			if err != nil {
-				logger.Warn("failed to close reader",
-					zap.String("path", r.path()),
-					zap.Error(err))
-			}
+			_ = r.close()
 		}
 	}
 
-	// Open readers in parallel.
-	wg := errgroup.Group{}
-	for i, f := range readerOpeners {
+	for i, f := range openers {
 		i := i
 		f := f
 		wg.Go(func() error {
@@ -137,17 +129,51 @@ func newMergeIter[
 			switch err {
 			case nil:
 			case io.EOF:
-				// will leave a nil reader in `readers` when reader is empty
+				// will leave a nil reader in `mayNilReaders`
 				return nil
 			default:
 				return err
 			}
-			readers[i] = rd
+			mayNilReaders[i] = rd
 			return nil
 		})
 	}
 	if err := wg.Wait(); err != nil {
 		closeReaders()
+		return nil, nil, err
+	}
+
+	elements := make([]T, len(mayNilReaders))
+	for j, rp := range mayNilReaders {
+		if rp == nil {
+			continue
+		}
+		rd := *rp
+		e, err := rd.next()
+		if err == io.EOF {
+			_ = rd.close()
+			mayNilReaders[j] = nil
+			continue
+		}
+		if err != nil {
+			closeReaders()
+			return nil, nil, err
+		}
+		elements[j] = e
+	}
+	return mayNilReaders, elements, nil
+}
+
+// newMergeIter creates a merge iterator for multiple sorted reader opener
+// functions.
+func newMergeIter[
+	T heapElem,
+	R sortedReader[T],
+](ctx context.Context, readerOpeners []readerOpenerFn[T, R], checkHotspot bool) (*mergeIter[T, R], error) {
+	logger := logutil.Logger(ctx)
+
+	readers, firstElements, err := openAndGetFirstElem(readerOpeners)
+	if err != nil {
 		return nil, err
 	}
 
@@ -161,30 +187,12 @@ func newMergeIter[
 	}
 	sampleKeySize := 0
 	sampleKeyCnt := 0
-	for j := range i.readers {
-		if i.readers[j] == nil {
+	for j, rp := range i.readers {
+		// the reader has no content and is closed by openAndGetFirstElem
+		if rp == nil {
 			continue
 		}
-		rd := *i.readers[j]
-		e, err := rd.next()
-		if err == io.EOF {
-			closeErr := rd.close()
-			if closeErr != nil {
-				i.logger.Warn("failed to close reader",
-					zap.String("path", rd.path()),
-					zap.Error(closeErr))
-			}
-			i.readers[j] = nil
-			continue
-		}
-		if err != nil {
-			closeErr := i.close()
-			if closeErr != nil {
-				i.logger.Warn("failed to close merge iterator",
-					zap.Error(closeErr))
-			}
-			return nil, err
-		}
+		e := firstElements[j]
 		i.h = append(i.h, mergeHeapElem[T]{
 			elem:      e,
 			readerIdx: j,
@@ -472,16 +480,48 @@ func (p statReaderProxy) close() error {
 
 // MergePropIter is an iterator that merges multiple range properties from different files.
 type MergePropIter struct {
-	iter *mergeIter[*rangeProperty, statReaderProxy]
+	iter      *mergeIter[*rangeProperty, statReaderProxy]
+	ctx       context.Context
+	extStore  storage.ExternalStorage
+	multiStat []MultipleFilesStat
 }
 
 // NewMergePropIter creates a new MergePropIter.
+//
+// Input MultipleFilesStat should be processed by functions like
+// MergeOverlappingFiles to reduce overlapping to less than
+// MergeSortOverlapThreshold. MergePropIter will only open needed
+// MultipleFilesStat when iterates, and input MultipleFilesStat must guarantee
+// its order can be process from left to right.
+//
+// MergePropIter will flatten the filenames in MultipleFilesStat so
+// MergePropIter.readerIndex can be used to get the current file.
 func NewMergePropIter(
 	ctx context.Context,
-	paths []string,
+	multiStat []MultipleFilesStat,
 	exStorage storage.ExternalStorage,
 	checkHotSpot bool,
 ) (*MergePropIter, error) {
+	// caller will make sure maximum overlapping is less than the threshold, so we
+	// need to open at most #threshold files.
+	fileNum := len(multiStat[0].Filenames)
+	endMultiStatIdx := 1
+	for ; endMultiStatIdx < len(multiStat); endMultiStatIdx++ {
+		m := multiStat[endMultiStatIdx]
+		if fileNum+len(m.Filenames) > int(MergeSortOverlapThreshold) {
+			break
+		}
+		fileNum += len(m.Filenames)
+	}
+	paths := make([]string, 0, fileNum)
+	for i := 0; i < endMultiStatIdx; i++ {
+		m := multiStat[i]
+		for _, filePair := range m.Filenames {
+			// [0] is data file, [1] is stat file
+			paths = append(paths, filePair[1])
+		}
+	}
+
 	readerOpeners := make([]readerOpenerFn[*rangeProperty, statReaderProxy], 0, len(paths))
 	for i := range paths {
 		i := i
@@ -495,7 +535,12 @@ func NewMergePropIter(
 	}
 
 	it, err := newMergeIter[*rangeProperty, statReaderProxy](ctx, readerOpeners, checkHotSpot)
-	return &MergePropIter{iter: it}, err
+	return &MergePropIter{
+		iter:      it,
+		ctx:       ctx,
+		multiStat: multiStat[endMultiStatIdx:],
+		extStore:  exStorage,
+	}, err
 }
 
 // Error returns the error of the iterator.
@@ -505,7 +550,51 @@ func (i *MergePropIter) Error() error {
 
 // Next moves the iterator to the next position.
 func (i *MergePropIter) Next() bool {
-	return i.iter.next()
+	ret := i.iter.next()
+	if len(i.multiStat) == 0 || !ret {
+		return ret
+	}
+
+	// should insert next MultipleFilesStat into heap to sort
+	if i.iter.h.Len()+1+len(i.multiStat[0].Filenames) <= int(MergeSortOverlapThreshold) {
+		m := i.multiStat[0]
+		i.multiStat = i.multiStat[1:]
+
+		readerOpeners := make([]readerOpenerFn[*rangeProperty, statReaderProxy], 0, len(m.Filenames))
+		for _, filePair := range m.Filenames {
+			// [0] is data file, [1] is stat file
+			path := filePair[1]
+			readerOpeners = append(readerOpeners, func() (*statReaderProxy, error) {
+				rd, err := newStatsReader(i.ctx, i.extStore, path, 4096)
+				if err != nil {
+					return nil, err
+				}
+				return &statReaderProxy{p: path, r: rd}, nil
+			})
+		}
+
+		newReaders, firstElements, err := openAndGetFirstElem(readerOpeners)
+		if err != nil {
+			i.iter.err = err
+			return false
+		}
+
+		for j, rp := range newReaders {
+			newReaderIdx := len(i.iter.readers)
+			i.iter.readers = append(i.iter.readers, rp)
+			// the reader has no content and is closed by openAndGetFirstElem
+			if rp == nil {
+				continue
+			}
+			e := firstElements[j]
+			i.iter.h = append(i.iter.h, mergeHeapElem[*rangeProperty]{
+				elem:      e,
+				readerIdx: newReaderIdx,
+			})
+			heap.Fix(&i.iter.h, newReaderIdx)
+		}
+	}
+	return true
 }
 
 func (i *MergePropIter) prop() *rangeProperty {

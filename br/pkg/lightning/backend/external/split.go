@@ -85,21 +85,29 @@ type RangeSplitter struct {
 }
 
 // NewRangeSplitter creates a new RangeSplitter.
-// `dataFiles` and `statFiles` must be corresponding to each other.
 // `rangesGroupSize` and `rangesGroupKeys` controls the total range group
 // size of one `SplitOneRangesGroup` invocation, while `rangeSize` and
 // `rangeKeys` controls the size of one range.
 func NewRangeSplitter(
 	ctx context.Context,
-	dataFiles, statFiles []string,
+	multiFileStat []MultipleFilesStat,
 	externalStorage storage.ExternalStorage,
 	rangesGroupSize, rangesGroupKeys int64,
 	maxRangeSize, maxRangeKeys int64,
 	checkHotSpot bool,
 ) (*RangeSplitter, error) {
-	propIter, err := NewMergePropIter(ctx, statFiles, externalStorage, checkHotSpot)
+	propIter, err := NewMergePropIter(ctx, multiFileStat, externalStorage, checkHotSpot)
 	if err != nil {
 		return nil, err
+	}
+
+	dataFiles := make([]string, 0, 1000)
+	statFiles := make([]string, 0, 1000)
+	for _, m := range multiFileStat {
+		for _, filePair := range m.Filenames {
+			dataFiles = append(dataFiles, filePair[0])
+			statFiles = append(statFiles, filePair[1])
+		}
 	}
 
 	return &RangeSplitter{

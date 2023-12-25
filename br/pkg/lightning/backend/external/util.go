@@ -48,7 +48,13 @@ func seekPropsOffsets(
 	defer func() {
 		task.End(zapcore.ErrorLevel, err)
 	}()
-	iter, err := NewMergePropIter(ctx, paths, exStorage, checkHotSpot)
+
+	// adapt the NewMergePropIter argument types
+	multiFileStat := MultipleFilesStat{Filenames: make([][2]string, 0, len(paths))}
+	for _, path := range paths {
+		multiFileStat.Filenames = append(multiFileStat.Filenames, [2]string{"", path})
+	}
+	iter, err := NewMergePropIter(ctx, []MultipleFilesStat{multiFileStat}, exStorage, checkHotSpot)
 	if err != nil {
 		return nil, err
 	}
