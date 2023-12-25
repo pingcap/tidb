@@ -19,6 +19,7 @@ import (
 	"context"
 	stderrors "errors"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"math"
 	"runtime/pprof"
 	"slices"
@@ -2220,6 +2221,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(reuseObj)
 	}
 
+	sc.ForcePlanCache = fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false)
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount
