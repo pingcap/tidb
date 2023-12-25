@@ -24,7 +24,7 @@ type LockMeta struct {
 }
 
 func (l LockMeta) String() string {
-	return fmt.Sprintf("Locked(at: %s, host: %s, pid: %d, hint: %s)", l.LockedAt.Format(time.DateTime), l.LockerHost, l.LockerPID, l.Hint)
+	return fmt.Sprintf("Locked(at: %s, host: %s, pid: %d, hint: %s)", l.LockedAt.Format("2006-01-02 15:04:05"), l.LockerHost, l.LockerPID, l.Hint)
 }
 
 // ErrLocked is the error returned when the lock is held by others.
