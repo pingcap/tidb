@@ -49,6 +49,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -1404,7 +1405,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		}
 	}
 	sessVars.PrevStmt = FormatSQL(a.GetTextToLog(false))
-
+	a.recordLastQueryInfo(err)
 	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
 	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
 	if sessVars.InRestrictedSQL {
@@ -1445,6 +1446,33 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		}
 		if sessVars.TxnCtx.FairLockingEffective {
 			executor_metrics.FairLockingTxnEffectiveCount.Inc()
+		}
+	}
+}
+
+func (a *ExecStmt) recordLastQueryInfo(err error) {
+	sessVars := a.Ctx.GetSessionVars()
+	// Record diagnostic information for DML statements
+	recordLastQuery := false
+	switch typ := a.StmtNode.(type) {
+	case *ast.ShowStmt:
+		recordLastQuery = typ.Tp != ast.ShowSessionStates
+	case *ast.ExecuteStmt, ast.DMLNode:
+		recordLastQuery = true
+	}
+	// Keep the previous queryInfo for `show session_states` because the statement needs to encode it.
+	failpoint.Inject("mockRUConsumption", func(_ failpoint.Value) {
+		sessVars.LastRUConsumption = float64(len(sessVars.StmtCtx.OriginalSQL))
+	})
+	if recordLastQuery {
+		sessVars.LastQueryInfo = sessionstates.QueryInfo{
+			TxnScope:          sessVars.CheckAndGetTxnScope(),
+			StartTS:           sessVars.TxnCtx.StartTS,
+			ForUpdateTS:       sessVars.TxnCtx.GetForUpdateTS(),
+			LastRUConsumption: sessVars.LastRUConsumption,
+		}
+		if err != nil {
+			sessVars.LastQueryInfo.ErrMsg = err.Error()
 		}
 	}
 }
@@ -1893,6 +1921,11 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	tikvExecDetailRaw := a.GoCtx.Value(util.ExecDetailsKey)
 	if tikvExecDetailRaw != nil {
 		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
+	}
+	var ruDetail *util.RUDetails
+	if ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
+		ruDetail = ruDetailRaw.(*util.RUDetails)
+		sessVars.LastRUConsumption = ruDetail.RRU() + ruDetail.WRU()
 	}
 
 	if stmtCtx.WaitLockLeaseTime > 0 {
