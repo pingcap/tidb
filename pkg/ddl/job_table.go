@@ -540,23 +540,6 @@ func job2UniqueIDs(job *model.Job, schema bool) string {
 	return strconv.FormatInt(job.TableID, 10)
 }
 
-func job2SchemaNames(job *model.Job) []string {
-	if job.Type == model.ActionRenameTable {
-		var oldSchemaID int64
-		var oldSchemaName model.CIStr
-		var tableName model.CIStr
-		// TODO: Handle this error
-		_ = job.DecodeArgs(&oldSchemaID, &tableName, &oldSchemaName)
-		names := make([]string, 0, 2)
-		names = append(names, strings.ToLower(job.SchemaName))
-		names = append(names, oldSchemaName.O)
-		return names
-	}
-	// TODO: consider about model.ActionRenameTables and model.ActionExchangeTablePartition, which need to get the schema names.
-
-	return []string{job.SchemaName}
-}
-
 func (w *worker) deleteDDLJob(job *model.Job) error {
 	sql := fmt.Sprintf("delete from mysql.tidb_ddl_job where job_id = %d", job.ID)
 	_, err := w.sess.Execute(context.Background(), sql, "delete_job")
