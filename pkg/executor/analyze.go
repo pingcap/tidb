@@ -292,7 +292,7 @@ func warnLockedTableMsg(sessionVars *variable.SessionVars, needAnalyzeTableCnt u
 		} else {
 			msg = "skip analyze locked table: %s"
 		}
-		sessionVars.StmtCtx.AppendWarning(errors.Errorf(msg, tables))
+		sessionVars.StmtCtx.AppendWarning(errors.NewNoStackErrorf(msg, tables))
 	}
 }
 

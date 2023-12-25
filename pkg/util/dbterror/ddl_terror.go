@@ -19,6 +19,7 @@ import (
 
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	parser_mysql "github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 )
 
 var (
@@ -511,4 +512,7 @@ var ReorgRetryableErrCodes = map[uint16]struct{}{
 	mysql.ErrWriteConflictInTiDB:       {},
 	mysql.ErrTxnRetryable:              {},
 	mysql.ErrNotOwner:                  {},
+
+	// Temporary network partitioning may cause pk commit failure.
+	uint16(terror.CodeResultUndetermined): {},
 }

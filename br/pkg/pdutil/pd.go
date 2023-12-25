@@ -967,7 +967,13 @@ func PauseSchedulersByKeyRange(
 	pdHTTPCli pdhttp.Client,
 	startKey, endKey []byte,
 ) (done <-chan struct{}, err error) {
-	return pauseSchedulerByKeyRangeWithTTL(ctx, pdHTTPCli, startKey, endKey, pauseTimeout)
+	done, err = pauseSchedulerByKeyRangeWithTTL(ctx, pdHTTPCli, startKey, endKey, pauseTimeout)
+	// Wait for the rule to take effect because the PD operator is processed asynchronously.
+	// To synchronize this, checking the operator status may not be enough. For details, see
+	// https://github.com/pingcap/tidb/issues/49477.
+	// Let's use two times default value of `patrol-region-interval` from PD configuration.
+	<-time.After(20 * time.Millisecond)
+	return
 }
 
 func pauseSchedulerByKeyRangeWithTTL(

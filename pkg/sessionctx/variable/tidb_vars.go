@@ -942,7 +942,7 @@ const (
 	TiDBGCLifetime = "tidb_gc_life_time"
 	// TiDBGCConcurrency sets the concurrency of garbage collection. -1 = AUTO value
 	TiDBGCConcurrency = "tidb_gc_concurrency"
-	// TiDBGCScanLockMode enables the green GC feature (default)
+	// TiDBGCScanLockMode enables the green GC feature (deprecated)
 	TiDBGCScanLockMode = "tidb_gc_scan_lock_mode"
 	// TiDBGCMaxWaitTime sets max time for gc advances the safepoint delayed by active transactions
 	TiDBGCMaxWaitTime = "tidb_gc_max_wait_time"
