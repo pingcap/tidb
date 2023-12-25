@@ -228,7 +228,7 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 //  2. does has enough data to spill
 //  3. trigger at final stage
 //
-// TODO continous consume in another goroutine
+// TODO continuous consume in another goroutine
 func TestGetCorrectResult(t *testing.T) {
 	hardLimitBytesNum := int64(1000000)
 
