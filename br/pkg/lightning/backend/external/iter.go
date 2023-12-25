@@ -594,18 +594,25 @@ func newMergePropBaseIter(
 	multiStat MultipleFilesStat,
 	exStorage storage.ExternalStorage,
 ) (*mergePropBaseIter, error) {
-	// we have no time to open the next reader before we get the next value for
-	// limitSizeMergeIter, so we directly open one more reader. If we don't do this,
-	// considering:
-	//
-	// [1, 11, ...
-	// [2, 12, ...
-	// [3, 13, ...
-	//
-	// we limit the size to 2, so after read 2, the next read will be 11 and then we
-	// insert the third reader into heap. TODO: refine limitSizeMergeIter and mergeIter
-	// to support this.
-	limit := multiStat.MaxOverlappingNum + 1
+	var limit int64
+	if multiStat.MaxOverlappingNum <= 0 {
+		// make it an easy usage that caller don't need to set it
+		limit = int64(len(multiStat.Filenames))
+	} else {
+		// we have no time to open the next reader before we get the next value for
+		// limitSizeMergeIter, so we directly open one more reader. If we don't do this,
+		// considering:
+		//
+		// [1, 11, ...
+		// [2, 12, ...
+		// [3, 13, ...
+		//
+		// we limit the size to 2, so after read 2, the next read will be 11 and then we
+		// insert the third reader into heap. TODO: refine limitSizeMergeIter and mergeIter
+		// to support this.
+		limit = multiStat.MaxOverlappingNum + 1
+	}
+
 	readerOpeners := make([]readerOpenerFn[*rangeProperty, statReaderProxy], 0, len(multiStat.Filenames))
 	for _, filePair := range multiStat.Filenames {
 		path := filePair[1]
@@ -707,9 +714,10 @@ func (i *MergePropIter) prop() *rangeProperty {
 	return i.iter.curr
 }
 
-// TODO(lance6716): need to adapt 2-level iter
-func (i *MergePropIter) readerIndex() int {
-	return i.iter.lastReaderIdx
+// readerIndex returns the indices of last accessed 2 level reader.
+func (i *MergePropIter) readerIndex() (int, int) {
+	idx := i.iter.lastReaderIdx
+	return idx, i.iter.readers[idx].iter.lastReaderIdx
 }
 
 // Close closes the iterator.

@@ -528,6 +528,8 @@ type intReader struct {
 	ints []int
 }
 
+const errInt = -1
+
 func (i *intReader) path() string { return "" }
 
 func (i *intReader) next() (myInt, error) {
@@ -536,6 +538,9 @@ func (i *intReader) next() (myInt, error) {
 	}
 	ret := i.ints[0]
 	i.ints = i.ints[1:]
+	if ret == errInt {
+		return 0, fmt.Errorf("mock error")
+	}
 	return myInt(ret), nil
 }
 
@@ -545,21 +550,23 @@ func (i *intReader) close() error { return nil }
 
 func TestLimitSizeMergeIter(t *testing.T) {
 	ctx := context.Background()
-	readerOpeners := []readerOpenerFn[myInt, *intReader]{
-		func() (**intReader, error) {
-			r := &intReader{[]int{1, 2, 3}}
-			return &r, nil
-		},
-		func() (**intReader, error) {
-			r := &intReader{[]int{4, 5, 6}}
-			return &r, nil
-		},
-		func() (**intReader, error) {
-			r := &intReader{[]int{7, 8, 9}}
-			return &r, nil
-		},
+	buildOpener := func(in [][]int) []readerOpenerFn[myInt, *intReader] {
+		ret := make([]readerOpenerFn[myInt, *intReader], 0, len(in))
+		for _, ints := range in {
+			ints := ints
+			ret = append(ret, func() (**intReader, error) {
+				r := &intReader{ints}
+				return &r, nil
+			})
+		}
+		return ret
 	}
+	readerOpeners := buildOpener([][]int{
+		{1, 2, 3}, {4, 5, 6}, {7, 8, 9},
+	})
 	weight := []int64{1, 1, 1}
+
+	oneToNine := []int{1, 2, 3, 4, 5, 6, 7, 8, 9}
 	for limit := int64(1); limit <= 4; limit++ {
 		i, err := newLimitSizeMergeIter(ctx, readerOpeners, weight, limit)
 		require.NoError(t, err)
@@ -569,6 +576,33 @@ func TestLimitSizeMergeIter(t *testing.T) {
 			got = append(got, int(i.curr))
 			ok, _ = i.next()
 		}
-		require.Equal(t, []int{1, 2, 3, 4, 5, 6, 7, 8, 9}, got)
+		require.NoError(t, i.err)
+		require.Equal(t, oneToNine, got)
+
+		for errIdx := 1; errIdx <= 9; errIdx++ {
+			nums := make([]int, 9)
+			for i := range nums {
+				nums[i] = i + 1
+				if nums[i] == errIdx {
+					nums[i] = errInt
+				}
+			}
+			readerOpeners := buildOpener([][]int{nums[:3], nums[3:6], nums[6:]})
+			i, err = newLimitSizeMergeIter(ctx, readerOpeners, weight, limit)
+			if err != nil {
+				require.EqualError(t, err, "mock error")
+				continue
+			}
+			var got []int
+			ok, _ = i.next()
+			for ok {
+				got = append(got, int(i.curr))
+				ok, _ = i.next()
+			}
+			require.ErrorContains(t, i.err, "mock error")
+			require.Less(t, len(got), 9)
+		}
 	}
 }
+
+// TODO(lance6716): test about non-even weights

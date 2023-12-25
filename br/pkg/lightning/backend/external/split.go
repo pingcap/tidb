@@ -63,13 +63,12 @@ type RangeSplitter struct {
 	rangeSize       int64
 	rangeKeys       int64
 
-	propIter  *MergePropIter
-	dataFiles []string
-	statFiles []string
+	propIter      *MergePropIter
+	multiFileStat []MultipleFilesStat
 
-	// filename -> index in dataFiles/statFiles
-	activeDataFiles             map[string]int
-	activeStatFiles             map[string]int
+	// filename -> 2 level index in dataFiles/statFiles
+	activeDataFiles             map[string][2]int
+	activeStatFiles             map[string][2]int
 	curGroupSize                int64
 	curGroupKeys                int64
 	curRangeSize                int64
@@ -101,23 +100,13 @@ func NewRangeSplitter(
 		return nil, err
 	}
 
-	dataFiles := make([]string, 0, 1000)
-	statFiles := make([]string, 0, 1000)
-	for _, m := range multiFileStat {
-		for _, filePair := range m.Filenames {
-			dataFiles = append(dataFiles, filePair[0])
-			statFiles = append(statFiles, filePair[1])
-		}
-	}
-
 	return &RangeSplitter{
 		rangesGroupSize: rangesGroupSize,
 		rangesGroupKeys: rangesGroupKeys,
 		propIter:        propIter,
-		dataFiles:       dataFiles,
-		statFiles:       statFiles,
-		activeDataFiles: make(map[string]int),
-		activeStatFiles: make(map[string]int),
+		multiFileStat:   multiFileStat,
+		activeDataFiles: make(map[string][2]int),
+		activeStatFiles: make(map[string][2]int),
 
 		rangeSize:         maxRangeSize,
 		rangeKeys:         maxRangeKeys,
@@ -173,11 +162,12 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 			})
 		}
 
-		fileIdx := r.propIter.readerIndex()
-		dataFilePath := r.dataFiles[fileIdx]
-		statFilePath := r.statFiles[fileIdx]
-		r.activeDataFiles[dataFilePath] = fileIdx
-		r.activeStatFiles[statFilePath] = fileIdx
+		idx, idx2 := r.propIter.readerIndex()
+		filePair := r.multiFileStat[idx].Filenames[idx2]
+		dataFilePath := filePair[0]
+		statFilePath := filePair[1]
+		r.activeDataFiles[dataFilePath] = [2]int{idx, idx2}
+		r.activeStatFiles[statFilePath] = [2]int{idx, idx2}
 		r.lastDataFile = dataFilePath
 		r.lastStatFile = statFilePath
 		r.lastHeapSize = heapSize
@@ -222,8 +212,8 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 	}
 
 	retDataFiles, retStatFiles = r.cloneActiveFiles()
-	r.activeDataFiles = make(map[string]int)
-	r.activeStatFiles = make(map[string]int)
+	r.activeDataFiles = make(map[string][2]int)
+	r.activeStatFiles = make(map[string][2]int)
 	return nil, retDataFiles, retStatFiles, r.takeSplitKeys(), r.propIter.Error()
 }
 
@@ -233,14 +223,24 @@ func (r *RangeSplitter) cloneActiveFiles() (data []string, stat []string) {
 		dataFiles = append(dataFiles, path)
 	}
 	slices.SortFunc(dataFiles, func(i, j string) int {
-		return r.activeDataFiles[i] - r.activeDataFiles[j]
+		iInts := r.activeDataFiles[i]
+		jInts := r.activeDataFiles[j]
+		if iInts[0] != jInts[0] {
+			return iInts[0] - jInts[0]
+		}
+		return iInts[1] - jInts[1]
 	})
 	statFiles := make([]string, 0, len(r.activeStatFiles))
 	for path := range r.activeStatFiles {
 		statFiles = append(statFiles, path)
 	}
 	slices.SortFunc(statFiles, func(i, j string) int {
-		return r.activeStatFiles[i] - r.activeStatFiles[j]
+		iInts := r.activeStatFiles[i]
+		jInts := r.activeStatFiles[j]
+		if iInts[0] != jInts[0] {
+			return iInts[0] - jInts[0]
+		}
+		return iInts[1] - jInts[1]
 	})
 	return dataFiles, statFiles
 }

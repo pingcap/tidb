@@ -79,7 +79,8 @@ func seekPropsOffsets(
 			return offsets, nil
 		}
 		moved = true
-		offsets[iter.readerIndex()] = p.offset
+		_, idx := iter.readerIndex()
+		offsets[idx] = p.offset
 	}
 	if iter.Error() != nil {
 		return nil, iter.Error()
