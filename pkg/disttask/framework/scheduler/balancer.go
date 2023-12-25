@@ -174,7 +174,7 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 	if err = b.taskMgr.UpdateSubtasksExecIDs(ctx, subtasksNeedSchedule); err != nil {
 		return err
 	}
-	logutil.BgLogger().Info("balance subtasks", zap.Stringers("balanced-cnt", subtasksNeedSchedule))
+	logutil.BgLogger().Info("balance subtasks", zap.Stringers("subtasks", subtasksNeedSchedule))
 	return nil
 }
 
