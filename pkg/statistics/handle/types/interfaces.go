@@ -271,6 +271,9 @@ type StatsReadWriter interface {
 	// ensuring it is greater than the last garbage collection (GC) time.
 	// The GC worker deletes old stats based on a safe time point,
 	// calculated as now() - 10 * max(stats lease, ddl lease).
+	// The range [last GC time, safe time point) is chosen to prevent
+	// the simultaneous deletion of numerous stats, minimizing potential
+	// performance issues.
 	// This function ensures the version is updated beyond the last GC time,
 	// allowing the GC worker to delete outdated stats.
 	//
