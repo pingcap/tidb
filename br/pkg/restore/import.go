@@ -729,25 +729,28 @@ func (importer *FileImporter) downloadSST(
 					return errors.Trace(berrors.ErrKVRangeIsEmpty)
 				}
 
-				log.Info("download from peer",
-					logutil.Region(regionInfo.Region),
-					logutil.File(file),
-					logutil.Peer(peer),
-					logutil.Key("resp-range-start", resp.Range.Start),
-					logutil.Key("resp-range-end", resp.Range.Start),
-					zap.Bool("resp-isempty", resp.IsEmpty),
-					zap.Uint32("resp-crc32", resp.Crc32),
-					zap.Int("len files", len(files)),
-				)
 				mu.Lock()
 				sstMeta, ok := downloadMetasMap[file.Name]
 				if !ok {
 					mu.Unlock()
 					return errors.New("not found file key for download sstMeta")
 				}
-				sstMeta.Range.Start = TruncateTS(resp.Range.GetStart())
-				sstMeta.Range.End = TruncateTS(resp.Range.GetEnd())
+				sstMeta.Range = &import_sstpb.Range{
+					Start: TruncateTS(resp.Range.GetStart()),
+					End:   TruncateTS(resp.Range.GetEnd()),
+				}
 				resultMetasMap[file.Name] = &sstMeta
+
+				log.Info("download from peer",
+					logutil.Region(regionInfo.Region),
+					logutil.File(file),
+					logutil.Peer(peer),
+					logutil.Key("resp-range-start", resp.Range.Start),
+					logutil.Key("resp-range-end", resp.Range.End),
+					zap.Bool("resp-isempty", resp.IsEmpty),
+					zap.Uint32("resp-crc32", resp.Crc32),
+					zap.Int("len files", len(files)),
+				)
 				mu.Unlock()
 			}
 			return nil
