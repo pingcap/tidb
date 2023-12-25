@@ -125,11 +125,12 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 		}
 	}()
 
-	averageSubtaskCnt := (len(subtasks) + len(adjustedNodes) - 1) / len(adjustedNodes)
+	averageSubtaskCnt := len(subtasks) / len(adjustedNodes)
+	averageSubtaskRemainder := len(subtasks) - averageSubtaskCnt*len(adjustedNodes)
 	executorSubtasks := make(map[string][]*proto.Subtask, len(adjustedNodes))
 	executorPendingCnts := make(map[string]int, len(adjustedNodes))
 	for _, node := range adjustedNodes {
-		executorSubtasks[node] = make([]*proto.Subtask, 0, averageSubtaskCnt)
+		executorSubtasks[node] = make([]*proto.Subtask, 0, averageSubtaskCnt+1)
 	}
 	for _, subtask := range subtasks {
 		// put running subtask in the front of slice.
@@ -144,6 +145,8 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 	}
 
 	subtasksNeedSchedule := make([]*proto.Subtask, 0)
+	remainder := averageSubtaskRemainder
+	executorWithOneMoreSubtask := make(map[string]struct{}, remainder)
 	for k, v := range executorSubtasks {
 		if _, ok := adjustedNodeMap[k]; !ok {
 			// dead node or not have enough slots
@@ -151,7 +154,19 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 			delete(executorSubtasks, k)
 			continue
 		}
-		if len(v) > averageSubtaskCnt {
+		if remainder > 0 {
+			// first remainder nodes will get 1 more subtask.
+			if len(v) >= averageSubtaskCnt+1 {
+				needScheduleCnt := len(v) - (averageSubtaskCnt + 1)
+				// running subtasks are never balanced.
+				needScheduleCnt = min(executorPendingCnts[k], needScheduleCnt)
+				subtasksNeedSchedule = append(subtasksNeedSchedule, v[len(v)-needScheduleCnt:]...)
+				executorSubtasks[k] = v[:len(v)-needScheduleCnt]
+
+				executorWithOneMoreSubtask[k] = struct{}{}
+				remainder--
+			}
+		} else if len(v) > averageSubtaskCnt {
 			// running subtasks are never balanced.
 			cnt := min(executorPendingCnts[k], len(v)-averageSubtaskCnt)
 			subtasksNeedSchedule = append(subtasksNeedSchedule, v[len(v)-cnt:]...)
@@ -165,7 +180,11 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 	fillIdx := 0
 	for _, node := range adjustedNodes {
 		sts := executorSubtasks[node]
-		for i := len(sts); i < averageSubtaskCnt && fillIdx < len(subtasksNeedSchedule); i++ {
+		targetSubtaskCnt := averageSubtaskCnt
+		if _, ok := executorWithOneMoreSubtask[node]; ok {
+			targetSubtaskCnt = averageSubtaskCnt + 1
+		}
+		for i := len(sts); i < targetSubtaskCnt && fillIdx < len(subtasksNeedSchedule); i++ {
 			subtasksNeedSchedule[fillIdx].ExecID = node
 			fillIdx++
 		}

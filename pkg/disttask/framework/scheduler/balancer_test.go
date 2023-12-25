@@ -63,6 +63,25 @@ func TestBalanceOneTask(t *testing.T) {
 			},
 			expectedUsedSlots: map[string]int{"tidb1": 16, "tidb2": 16},
 		},
+		// balanced case 2, make sure the remainder calculate part is right, so we don't
+		// balance subtasks to 2:2:0
+		{
+			subtasks: []*proto.Subtask{
+				{ID: 1, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStateRunning},
+				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 3, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 4, ExecID: "tidb3", Concurrency: 16, State: proto.TaskStatePending},
+			},
+			eligibleNodes: []string{"tidb1", "tidb2", "tidb3"},
+			initUsedSlots: map[string]int{"tidb1": 0, "tidb2": 0, "tidb3": 0},
+			expectedSubtasks: []*proto.Subtask{
+				{ID: 1, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStateRunning},
+				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 3, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 4, ExecID: "tidb3", Concurrency: 16, State: proto.TaskStatePending},
+			},
+			expectedUsedSlots: map[string]int{"tidb1": 16, "tidb2": 16, "tidb3": 16},
+		},
 		// no eligible nodes to run those subtasks, leave it unbalanced.
 		// used slots will not be changed.
 		{
@@ -147,6 +166,25 @@ func TestBalanceOneTask(t *testing.T) {
 				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
 				{ID: 4, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
 				{ID: 5, ExecID: "tidb3", Concurrency: 16, State: proto.TaskStatePending},
+			},
+			expectedUsedSlots: map[string]int{"tidb1": 16, "tidb2": 16, "tidb3": 16},
+		},
+		// scale out case 2: balance from 4 to 2:1:1
+		// this case checks the remainder part is right, so we don't balance it as 2:2:0.
+		{
+			subtasks: []*proto.Subtask{
+				{ID: 1, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStateRunning},
+				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 4, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
+			},
+			eligibleNodes: []string{"tidb1", "tidb2", "tidb3"},
+			initUsedSlots: map[string]int{"tidb1": 0, "tidb2": 0, "tidb3": 0},
+			expectedSubtasks: []*proto.Subtask{
+				{ID: 1, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStateRunning},
+				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 3, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 4, ExecID: "tidb3", Concurrency: 16, State: proto.TaskStatePending},
 			},
 			expectedUsedSlots: map[string]int{"tidb1": 16, "tidb2": 16, "tidb3": 16},
 		},
