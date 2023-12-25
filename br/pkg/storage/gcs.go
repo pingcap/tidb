@@ -294,6 +294,7 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 		return nil, errors.Trace(err)
 	}
 	fw := newFlushStorageWriter(w, &emptyFlusher{}, w)
+	// ywq todo check add compression
 	bw := newBufferedWriter(fw, int(partSize), NoCompression)
 	return bw, nil
 }

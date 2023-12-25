@@ -1171,8 +1171,7 @@ func TestReadStatFile(t *testing.T) {
 
 	// bytes, _ := strconv.Parse
 
-	endKey := []byte("dIAAAAAAAACPX2mAAAAAAAAAAgExNjczNjE2Mf9Bd2dNR1hnR/8xT2tjYUlaTv9sY1ZFOUhnef8yZzg4WFo1Yf8AAAAAAAAAAPc=")
+	// endKey := []byte("dIAAAAAAAACPX2mAAAAAAAAAAgExNjczNjE2Mf9Bd2dNR1hnR/8xT2tjYUlaTv9sY1ZFOUhnef8yZzg4WFo1Yf8AAAAAAAAAAPc=")
 
-	getFilesReadConcurrency(ctx, store, []string{*fileName}, bytes, endKey)
-
+	// getFilesReadConcurrency(ctx, store, []string{*fileName}, bytes, endKey)
 }

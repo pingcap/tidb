@@ -167,7 +167,6 @@ func MergeOverlappingFilesV2(
 		if len(minKey) == 0 {
 			minKey = kv.Key(loaded.keys[0]).Clone()
 		}
-		maxKey = kv.Key(loaded.keys[len(loaded.keys)-1]).Clone()
 		curStart = curEnd.Clone()
 		loaded.keys = nil
 		loaded.values = nil

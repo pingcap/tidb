@@ -99,7 +99,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
-	memSizeLimit := (rand.Intn(10) + 1) * 400
+	memSizeLimit := (rand.Intn(10) + 1) * 40
 
 	w := NewWriterBuilder().
 		SetPropSizeDistance(100).
