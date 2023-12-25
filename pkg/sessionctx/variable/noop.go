@@ -15,6 +15,7 @@
 package variable
 
 import (
+	"github.com/pingcap/errors"
 	"math"
 )
 
@@ -196,11 +197,11 @@ var noopSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLAutoIsNull, Value: Off, Type: TypeBool, IsHintUpdatableVerfied: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		// checkSQLAutoIsNull requires TiDBEnableNoopFuncs != OFF for the same scope otherwise an error will be returned.
 		// See also https://github.com/pingcap/tidb/issues/28230
-		errMsg := ErrFunctionsNoopImpl.GenWithStackByArgs("sql_auto_is_null")
+		errMsg := ErrFunctionsNoopImpl.FastGenByArgs("sql_auto_is_null")
 		if TiDBOptOn(normalizedValue) {
 			if scope == ScopeSession && vars.NoopFuncsMode != OnInt {
 				if vars.NoopFuncsMode == OffInt {
-					return Off, errMsg
+					return Off, errors.Trace(errMsg)
 				}
 				vars.StmtCtx.AppendWarning(errMsg)
 			}
@@ -210,7 +211,7 @@ var noopSysVars = []*SysVar{
 					return originalValue, errUnknownSystemVariable.GenWithStackByArgs(TiDBEnableNoopFuncs)
 				}
 				if val == Off {
-					return Off, errMsg
+					return Off, errors.Trace(errMsg)
 				}
 				if val == Warn {
 					vars.StmtCtx.AppendWarning(errMsg)
