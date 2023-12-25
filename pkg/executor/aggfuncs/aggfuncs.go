@@ -109,6 +109,8 @@ var (
 
 	// All the AggFunc implementations for "JSON_OBJECTAGG" are listed here
 	_ AggFunc = (*jsonObjectAgg)(nil)
+
+	// _ AggFunc = (*)
 )
 
 const (

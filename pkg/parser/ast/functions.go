@@ -780,6 +780,8 @@ const (
 	AggFuncApproxCountDistinct = "approx_count_distinct"
 	// AggFuncApproxPercentile is the name of approx_percentile function.
 	AggFuncApproxPercentile = "approx_percentile"
+
+	AggFuncPercentileCont = "percentile_cont"
 )
 
 // AggregateFuncExpr represents aggregate function expression.

@@ -31,11 +31,11 @@ const (
 )
 
 var (
-	_ partialResult4Percentile = partialResult4PercentileInt{}
-	_ partialResult4Percentile = partialResult4PercentileReal{}
-	_ partialResult4Percentile = partialResult4PercentileDecimal{}
-	_ partialResult4Percentile = partialResult4PercentileTime{}
-	_ partialResult4Percentile = partialResult4PercentileDuration{}
+	_ partialResult4Percentile[int64]           = partialResult4PercentileInt{}
+	_ partialResult4Percentile[float64]         = partialResult4PercentileReal{}
+	_ partialResult4Percentile[types.MyDecimal] = partialResult4PercentileDecimal{}
+	_ partialResult4Percentile[types.Time]      = partialResult4PercentileTime{}
+	_ partialResult4Percentile[types.Duration]  = partialResult4PercentileDuration{}
 )
 
 func percentile(data sort.Interface, percent int) int {
@@ -45,6 +45,30 @@ func percentile(data sort.Interface, percent int) int {
 		k = data.Len()
 	}
 	return selection.Select(data, k)
+}
+
+func percentileCont[T ~int64 | ~float64](data partialResult4Percentile[T], percent int) float64 {
+	// The following is the formula for calculating the continuous percentile:
+	// RN = (1 + (percent / 100 * (N - 1))
+	// CRN = Ceil(RN)
+	// FRN = Floor(RN)
+	// If (CRN = FRN = RN) then the result is:
+	//   (value at row RN)
+	// Otherwise the result is:
+	//   (CRN - RN) * (value at row FRN) + (RN - FRN) * (value at row CRN)
+	rn := 1 + (float64(percent) / 100 * float64(data.Len()-1))
+	crn := math.Ceil(rn)
+	frn := math.Floor(rn)
+
+	if rn == crn && rn == frn {
+		idx := selection.Select(data, int(rn))
+		return float64(data.Get(idx))
+	}
+
+	frnVal := float64(data.Get(selection.Select(data, int(frn))))
+	crnVal := float64(data.Get(selection.Select(data, int(crn))))
+
+	return (crn-rn)*frnVal + (rn-frn)*crnVal
 }
 
 type basePercentile struct {
@@ -68,10 +92,11 @@ func (e *basePercentile) AppendFinalResult2Chunk(_ sessionctx.Context, _ Partial
 	return nil
 }
 
-type partialResult4Percentile interface {
+type partialResult4Percentile[T any] interface {
 	sort.Interface
 
 	MemSize() int64
+	Get(i int) T
 }
 
 type partialResult4PercentileInt []int64
@@ -84,6 +109,18 @@ func (p partialResult4PercentileInt) MemSize() int64 {
 	return DefSliceSize + int64(len(p))*DefInt64Size
 }
 
+func (p partialResult4PercentileInt) Get(i int) int64 {
+	return p[i]
+}
+
+type partialResult4PercentileIntDesc struct {
+	partialResult4PercentileInt
+}
+
+func (p partialResult4PercentileIntDesc) Less(i, j int) bool {
+	return p.partialResult4PercentileInt[i] > p.partialResult4PercentileInt[j]
+}
+
 type partialResult4PercentileReal []float64
 
 func (p partialResult4PercentileReal) Len() int           { return len(p) }
@@ -92,6 +129,18 @@ func (p partialResult4PercentileReal) Less(i, j int) bool { return p[i] < p[j] }
 
 func (p partialResult4PercentileReal) MemSize() int64 {
 	return DefSliceSize + int64(len(p))*DefFloat64Size
+}
+
+func (p partialResult4PercentileReal) Get(i int) float64 {
+	return p[i]
+}
+
+type partialResult4PercentileRealDesc struct {
+	partialResult4PercentileReal
+}
+
+func (p partialResult4PercentileRealDesc) Less(i, j int) bool {
+	return p.partialResult4PercentileReal[i] > p.partialResult4PercentileReal[j]
 }
 
 // TODO: use []*types.MyDecimal to prevent massive value copy
@@ -105,6 +154,10 @@ func (p partialResult4PercentileDecimal) MemSize() int64 {
 	return DefSliceSize + int64(len(p))*int64(types.MyDecimalStructSize)
 }
 
+func (p partialResult4PercentileDecimal) Get(i int) types.MyDecimal {
+	return p[i]
+}
+
 type partialResult4PercentileTime []types.Time
 
 func (p partialResult4PercentileTime) Len() int           { return len(p) }
@@ -115,6 +168,10 @@ func (p partialResult4PercentileTime) MemSize() int64 {
 	return DefSliceSize + int64(len(p))*DefInt64Size
 }
 
+func (p partialResult4PercentileTime) Get(i int) types.Time {
+	return p[i]
+}
+
 type partialResult4PercentileDuration []types.Duration
 
 func (p partialResult4PercentileDuration) Len() int           { return len(p) }
@@ -123,6 +180,10 @@ func (p partialResult4PercentileDuration) Less(i, j int) bool { return p[i].Comp
 
 func (p partialResult4PercentileDuration) MemSize() int64 {
 	return DefSliceSize + int64(len(p))*DefInt64Size
+}
+
+func (p partialResult4PercentileDuration) Get(i int) types.Duration {
+	return p[i]
 }
 
 type percentileOriginal4Int struct {
@@ -178,6 +239,27 @@ func (e *percentileOriginal4Int) AppendFinalResult2Chunk(_ sessionctx.Context, p
 	return nil
 }
 
+type percentileCont4Int struct {
+	percentileOriginal4Int
+	OrderByDesc bool
+}
+
+func (e *percentileCont4Int) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4PercentileInt)(pr)
+	if len(*p) == 0 {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+	var result float64
+	if e.OrderByDesc {
+		result = percentileCont[int64](partialResult4PercentileIntDesc{*p}, e.percent)
+	} else {
+		result = percentileCont[int64](p, e.percent)
+	}
+	chk.AppendFloat64(e.ordinal, result)
+	return nil
+}
+
 type percentileOriginal4Real struct {
 	basePercentile
 }
@@ -228,6 +310,27 @@ func (e *percentileOriginal4Real) AppendFinalResult2Chunk(_ sessionctx.Context, 
 	}
 	index := percentile(*p, e.percent)
 	chk.AppendFloat64(e.ordinal, (*p)[index])
+	return nil
+}
+
+type percentileCont4Real struct {
+	percentileOriginal4Real
+	OrderByDesc bool
+}
+
+func (e *percentileCont4Real) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
+	p := (*partialResult4PercentileReal)(pr)
+	if len(*p) == 0 {
+		chk.AppendNull(e.ordinal)
+		return nil
+	}
+	var result float64
+	if e.OrderByDesc {
+		result = percentileCont[float64](partialResult4PercentileRealDesc{*p}, e.percent)
+	} else {
+		result = percentileCont[float64](p, e.percent)
+	}
+	chk.AppendFloat64(e.ordinal, result)
 	return nil
 }
 

@@ -300,7 +300,7 @@ func (a *AggFuncDesc) evalNullValueInOuterJoin4BitOr(ctx sessionctx.Context, sch
 func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool) error {
 	var removeNotNull bool
 	switch a.Name {
-	case ast.AggFuncCount, ast.AggFuncApproxCountDistinct, ast.AggFuncApproxPercentile,
+	case ast.AggFuncCount, ast.AggFuncApproxCountDistinct, ast.AggFuncApproxPercentile, ast.AggFuncPercentileCont,
 		ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor,
 		ast.WindowFuncFirstValue, ast.WindowFuncLastValue, ast.WindowFuncNthValue, ast.WindowFuncRowNumber,
 		ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncCumeDist, ast.WindowFuncNtile, ast.WindowFuncPercentRank,
