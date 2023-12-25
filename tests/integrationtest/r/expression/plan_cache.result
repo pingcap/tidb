@@ -186,6 +186,53 @@ admin reload expr_pushdown_blacklist;
 set tidb_enable_prepared_plan_cache=default;
 set tidb_enable_vectorized_expression=default;
 set tidb_enable_prepared_plan_cache=ON;
+drop table if exists t1;
+create table t1 (a varchar(40));
+insert into t1 values ('C1'),('R1'),('c1'),('r1');
+insert into mysql.expr_pushdown_blacklist values('like', 'tikv,tiflash,tidb', 'for test');
+insert into mysql.expr_pushdown_blacklist values('ilike', 'tikv,tiflash,tidb', 'for test');
+admin reload expr_pushdown_blacklist;
+set tidb_enable_vectorized_expression=ON;
+prepare stmt1 from 'select a from t1 where a like ? order by a asc';
+prepare stmt2 from 'select a from t1 where a ilike ? order by a asc';
+set @a='%C%';
+execute stmt1 using @a;
+a
+C1
+execute stmt2 using @a;
+a
+C1
+c1
+set @a='%R%';
+execute stmt1 using @a;
+a
+R1
+execute stmt2 using @a;
+a
+R1
+r1
+set tidb_enable_vectorized_expression=OFF;
+set @a='%C%';
+execute stmt1 using @a;
+a
+C1
+execute stmt2 using @a;
+a
+C1
+c1
+set @a='%R%';
+execute stmt1 using @a;
+a
+R1
+execute stmt2 using @a;
+a
+R1
+r1
+delete from mysql.expr_pushdown_blacklist where name in ('like', 'ilike') and store_type = 'tikv,tiflash,tidb' and reason = 'for test';
+admin reload expr_pushdown_blacklist;
+set tidb_enable_prepared_plan_cache=default;
+set tidb_enable_vectorized_expression=default;
+set tidb_enable_prepared_plan_cache=ON;
 drop table if exists t;
 create table t(col_int int);
 insert into t values(null);

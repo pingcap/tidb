@@ -165,7 +165,7 @@ func CleanupCorruptedAnalyzeJobsOnCurrentInstance(
 		_, _, err = statsutil.ExecRows(
 			sctx,
 			BatchUpdateAnalyzeJobSQL,
-			strings.Join(jobIDs, ","),
+			jobIDs,
 		)
 		if err != nil {
 			return errors.Trace(err)
@@ -222,7 +222,7 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 		_, _, err = statsutil.ExecRows(
 			sctx,
 			BatchUpdateAnalyzeJobSQL,
-			strings.Join(jobIDs, ","),
+			jobIDs,
 		)
 		if err != nil {
 			return errors.Trace(err)

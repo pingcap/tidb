@@ -507,7 +507,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		return nil
 	}
 	// check if the cluster is read-only
-	if !s.sessionVars.InRestrictedSQL && variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load() {
+	if !s.sessionVars.InRestrictedSQL && (variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load()) {
 		// It is not internal SQL, and the cluster has one of RestrictedReadOnly or SuperReadOnly
 		// We need to privilege check again: a privilege check occurred during planning, but we need
 		// to prevent the case that a long running auto-commit statement is now trying to commit.

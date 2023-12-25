@@ -150,7 +150,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		defer debugtrace.LeaveContextCommon(sctx)
 	}
 
-	if !sctx.GetSessionVars().InRestrictedSQL && variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load() {
+	if !sctx.GetSessionVars().InRestrictedSQL && (variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load()) {
 		allowed, err := allowInReadOnlyMode(sctx, node)
 		if err != nil {
 			return nil, nil, err
@@ -195,7 +195,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 				// if we are in a txn, should update the txn resource name to let the txn
 				// commit with the hint resource group.
 				if txn, err := sctx.Txn(false); err == nil && txn != nil && txn.Valid() {
-					kv.SetTxnResourceGroup(txn, sessVars.ResourceGroupName)
+					kv.SetTxnResourceGroup(txn, sessVars.StmtCtx.ResourceGroupName)
 				}
 			} else {
 				err := infoschema.ErrResourceGroupSupportDisabled
@@ -392,7 +392,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 func OptimizeForForeignKeyCascade(ctx context.Context, sctx sessionctx.Context, node ast.StmtNode, is infoschema.InfoSchema) (core.Plan, error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
-	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
+	hintProcessor := &hint.QBHintHandler{Ctx: sctx}
 	builder.Init(sctx, is, hintProcessor)
 	p, err := builder.Build(ctx, node)
 	if err != nil {
@@ -474,7 +474,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	// build logical plan
-	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
+	hintProcessor := &hint.QBHintHandler{Ctx: sctx}
 	node.Accept(hintProcessor)
 	defer hintProcessor.HandleUnusedViewHints()
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
