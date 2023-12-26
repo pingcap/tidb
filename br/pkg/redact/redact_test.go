@@ -11,7 +11,6 @@ import (
 )
 
 func TestRedact(t *testing.T) {
-
 	redacted, secret := "?", "secret"
 
 	redact.InitRedact(false)
