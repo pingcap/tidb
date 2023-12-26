@@ -191,7 +191,7 @@ func testSortWithNewMerge(t *testing.T, mergeFunc func(ctx context.Context, data
 	memStore := storage.NewMemStorage()
 	memSizeLimit := (rand.Intn(10) + 1) * 400
 	multiStats := make([]MultipleFilesStat, 0, 100)
-	randomSize := (rand.Intn(500) + 1) * 1000
+	randomSize := (rand.Intn(500) + 1) * 40
 
 	failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/external/mockRangesGroupSize",
 		"return("+strconv.Itoa(randomSize)+")")

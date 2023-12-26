@@ -57,6 +57,7 @@ func MergeOverlappingFilesV2(
 	failpoint.Inject("mockRangesGroupSize", func(val failpoint.Value) {
 		rangesGroupSize = uint64(val.(int))
 	})
+	logutil.BgLogger().Info("ywq test group size", zap.Any("size", rangesGroupSize))
 
 	splitter, err := NewRangeSplitter(
 		ctx,
@@ -118,7 +119,7 @@ func MergeOverlappingFilesV2(
 			logutil.BgLogger().Info("ywq test....")
 			curEnd = endKey
 		} else {
-			endKey = kv.Key(endKeyOfGroup).Clone()
+			curEnd = kv.Key(endKeyOfGroup).Clone()
 		}
 
 		splitTime := time.Since(now)
@@ -127,10 +128,10 @@ func MergeOverlappingFilesV2(
 			zap.Any("cmp", bytes.Compare(curStart, curEnd)),
 			zap.Binary("start", curStart),
 			zap.Binary("end", curEnd))
-		// if curStart.Cmp(curEnd) >= 0 {
-		// 	logutil.Logger(ctx).Info("ywq test wtf cmp", zap.Any("cmp", bytes.Compare(curStart, curEnd)))
-		// 	panic(nil)
-		// }
+		if curStart.Cmp(curEnd) >= 0 {
+			logutil.Logger(ctx).Info("ywq test wtf cmp", zap.Any("cmp", bytes.Compare(curStart, curEnd)))
+			panic(nil)
+		}
 		err1 = readAllData(
 			ctx,
 			store,
@@ -178,6 +179,7 @@ func MergeOverlappingFilesV2(
 		if len(minKey) == 0 {
 			minKey = kv.Key(loaded.keys[0]).Clone()
 		}
+		maxKey = kv.Key(loaded.keys[len(loaded.keys)-1]).Clone()
 		curStart = curEnd
 		loaded.keys = nil
 		loaded.values = nil
@@ -279,6 +281,8 @@ func MergeOverlappingFilesOpt(
 	failpoint.Inject("mockRangesGroupSize", func(val failpoint.Value) {
 		rangesGroupSize = uint64(val.(int))
 	})
+
+	logutil.BgLogger().Info("ywq test group size", zap.Any("size", rangesGroupSize))
 
 	splitter, err := NewRangeSplitter(
 		ctx,

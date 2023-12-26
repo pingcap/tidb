@@ -442,37 +442,33 @@ func generateMergePlan(
 	}
 
 	// generate merge sort plan.
-	startKeys := make([]kv.Key, 0, 10)
-	endKeys := make([]kv.Key, 0, 10)
+	metaArr := make([][]byte, 0, 16)
 
 	i := 0
 	for ; i < len(multiStats)-1; i += 2 {
-		startKey := external.BytesMin(multiStats[i].MinKey, multiStats[i+1].MinKey)
-		endKey := external.BytesMax(multiStats[i].MaxKey, multiStats[i+1].MaxKey)
-		endKey = kv.Key(endKey).Next()
-		startKeys = append(startKeys, startKey)
-		endKeys = append(endKeys, endKey)
-	}
-	if i == len(multiStats)-1 {
-		startKeys = append(startKeys, multiStats[i].MinKey)
-		endKeys = append(endKeys, kv.Key(multiStats[i].MaxKey).Next())
-	}
+		startKey := kv.Key(external.BytesMin(multiStats[i].MinKey, multiStats[i+1].MinKey)).Clone()
+		endKey := kv.Key(external.BytesMax(multiStats[i].MaxKey.Next(), multiStats[i+1].MaxKey.Next())).Clone()
 
-	start := 0
-	step := external.MergeSortFileCountStep
-	metaArr := make([][]byte, 0, 16)
-	i = 0
-	for start < len(dataFiles) {
-		end := start + step
-		if end > len(dataFiles) {
-			end = len(dataFiles)
+		var dataFiles []string
+		var statFiles []string
+		for _, files := range multiStats[i].Filenames {
+			dataFiles = append(dataFiles, files[0])
+			statFiles = append(statFiles, files[1])
+		}
+		for _, files := range multiStats[i+1].Filenames {
+			dataFiles = append(dataFiles, files[0])
+			statFiles = append(statFiles, files[1])
+		}
+		if startKey.Cmp(endKey) < 0 {
+			return nil, errors.Errorf("invalid kv range, startKey: %s, endKey: %s",
+				hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 		}
 		m := &BackfillSubTaskMeta{
-			DataFiles: dataFiles[start:end],
-			StatFiles: statFiles[start:end],
+			DataFiles: dataFiles,
+			StatFiles: statFiles,
 			SortedKVMeta: external.SortedKVMeta{
-				StartKey: startKeys[i],
-				EndKey:   endKeys[i],
+				StartKey: startKey,
+				EndKey:   endKey,
 			},
 		}
 		metaBytes, err := json.Marshal(m)
@@ -481,8 +477,33 @@ func generateMergePlan(
 		}
 		metaArr = append(metaArr, metaBytes)
 
-		start = end
-		i++
+	}
+	if i == len(multiStats)-1 {
+		startKey := multiStats[i].MinKey.Clone()
+		endKey := multiStats[i].MaxKey.Next().Clone()
+		var dataFiles []string
+		var statFiles []string
+		for _, files := range multiStats[i].Filenames {
+			dataFiles = append(dataFiles, files[0])
+			statFiles = append(statFiles, files[1])
+		}
+		if startKey.Cmp(endKey) < 0 {
+			return nil, errors.Errorf("invalid kv range, startKey: %s, endKey: %s",
+				hex.EncodeToString(startKey), hex.EncodeToString(endKey))
+		}
+		m := &BackfillSubTaskMeta{
+			DataFiles: dataFiles,
+			StatFiles: statFiles,
+			SortedKVMeta: external.SortedKVMeta{
+				StartKey: startKey,
+				EndKey:   endKey,
+			},
+		}
+		metaBytes, err := json.Marshal(m)
+		if err != nil {
+			return nil, err
+		}
+		metaArr = append(metaArr, metaBytes)
 	}
 	return metaArr, nil
 }
