@@ -1267,10 +1267,11 @@ func (b *PlanBuilder) buildSelection(ctx context.Context, p LogicalPlan, where a
 		expressions = append(expressions, expr)
 	}
 	cnfExpres := make([]expression.Expression, 0)
+	useCache := b.ctx.GetSessionVars().StmtCtx.UseCache
 	for _, expr := range expressions {
 		cnfItems := expression.SplitCNFItems(expr)
 		for _, item := range cnfItems {
-			if con, ok := item.(*expression.Constant); ok && con.ConstItem(b.ctx.GetSessionVars().StmtCtx.UseCache) {
+			if con, ok := item.(*expression.Constant); ok && expression.ConstExprConsiderPlanCache(con, useCache) {
 				ret, _, err := expression.EvalBool(b.ctx, expression.CNFExprs{con}, chunk.Row{})
 				if err != nil {
 					return nil, errors.Trace(err)

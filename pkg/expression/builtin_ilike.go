@@ -95,7 +95,7 @@ func (b *builtinIlikeSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 	patternStr = string(patternStrBytes)
 
 	var pattern collate.WildcardPattern
-	if b.args[1].ConstItem(false) && b.args[2].ConstItem(false) {
+	if b.args[1].ConstLevel() >= ConstOnlyInContext && b.args[2].ConstLevel() >= ConstOnlyInContext {
 		pattern, err = b.patternCache.getOrInitCache(ctx, func() (collate.WildcardPattern, error) {
 			ret := collate.ConvertAndGetBinCollation(b.collation).Pattern()
 			ret.Compile(patternStr, byte(escape))
