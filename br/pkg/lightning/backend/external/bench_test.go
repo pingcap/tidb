@@ -1145,30 +1145,47 @@ func TestMergeBench(t *testing.T) {
 }
 
 func TestReadStatFile(t *testing.T) {
-	ctx := context.Background()
-	store := openTestingStorage(t)
-	rd, _ := newStatsReader(ctx, store, *fileName, 4096)
-	for {
+	// ctx := context.Background()
+	// store := openTestingStorage(t)
+	// rd, _ := newStatsReader(ctx, store, *fileName, 4096)
+	// for {
 
-		prop, err := rd.nextProp()
-		if err == io.EOF {
-			break
-		}
-		logutil.BgLogger().Info("read one prop",
-			zap.Int("prop len", prop.len()),
-			zap.Binary("first key", prop.firstKey),
-			zap.Binary("last key", prop.lastKey),
-			zap.Int("prop offset", int(prop.offset)),
-			zap.Int("prop size", int(prop.size)),
-			zap.Int("prop keys", int(prop.keys)))
-	}
-	str := "dIAAAAAAAABuX3IBMTA1MDAwMDH/b1JVMTE2RWX/aWUxOTk5dVL/Z21ObEFiWHL/cExNcDFFYzn/AAAAAAAAAAD3"
+	// 	prop, err := rd.nextProp()
+	// 	if err == io.EOF {
+	// 		break
+	// 	}
+	// 	logutil.BgLogger().Info("read one prop",
+	// 		zap.Int("prop len", prop.len()),
+	// 		zap.Binary("first key", prop.firstKey),
+	// 		zap.Binary("last key", prop.lastKey),
+	// 		zap.Int("prop offset", int(prop.offset)),
+	// 		zap.Int("prop size", int(prop.size)),
+	// 		zap.Int("prop keys", int(prop.keys)))
+	// }
+	str := "dIAAAAAAAABuX3IBMTAyNjE2MTD/VkxqcHZpSXL/blFERUt1OXD/eHhlOUlUYVP/U3RJRFdHc3L/AAAAAAAAAAD3"
 	key, _ := base64.RawStdEncoding.DecodeString(str)
-	offset, _ := seekPropsOffsets(ctx, key, []string{*fileName}, store, false)
-	logutil.BgLogger().Info("ywq test start off", zap.Any("off", offset))
-	str = "dIAAAAAAAABuX3IBMTAyNjE2MTD/VkxqcHZpSXL/blFERUt1OXD/eHhlOUlUYVP/U3RJRFdHc3L/AAAAAAAAAAD3"
+	// offset, _ := seekPropsOffsets(ctx, key, []string{*fileName}, store, false)
+	// logutil.BgLogger().Info("ywq test start off", zap.Any("off", offset))
+	str = "dIAAAAAAAABuX3IBMTUyMDAwMDD/cVc0c3Bkcmb/NExsb1pEaXX/Q3hFT2YwSG3/enpoZUZ1QUz/AAAAAAAAAAD3AA=="
+	// str = "dIAAAAAAAABuX3IBMTAyNjE2MTD/VkxqcHZpSXL/blFERUt1OXD/eHhlOUlUYVP/U3RJRFdHc3L/AAAAAAAAAAD3"
 	endkey, _ := base64.RawStdEncoding.DecodeString(str)
-	offset, _ = seekPropsOffsets(ctx, endkey, []string{*fileName}, store, false)
-	logutil.BgLogger().Info("ywq test end off", zap.Any("off", offset))
+	// offset, _ = seekPropsOffsets(ctx, endkey, []string{*fileName}, store, false)
+	// logutil.BgLogger().Info("ywq test end off", zap.Any("off", offset))
 	logutil.BgLogger().Info("ywq test compare", zap.Any("cmp", bytes.Compare(key, endkey)))
+
+	start1, _ := base64.RawStdEncoding.DecodeString("dIAAAAAAAACPX2mAAAAAAAAAAgExMDAwMDAwMf9uUG1Gdm9vMf9wcWR6Qk9DSv9MWWtSZXI3T/9GNExwRklXb/8AAAAAAAAAAPc=")
+	end1, _ := base64.RawStdEncoding.DecodeString("dIAAAAAAAACPX2mAAAAAAAAAAgExNjczNjE2Mf9Bd2dNR1hnR/8xT2tjYUlaTv9sY1ZFOUhnef8yZzg4WFo1Yf8AAAAAAAAAAPc=")
+	logutil.BgLogger().Info("ywq test compare", zap.Any("cmp1", bytes.Compare(start1, end1)))
+
+	start2, _ := base64.RawStdEncoding.DecodeString("dIAAAAAAAACPX2mAAAAAAAAAAgExNjczNjE2Mf9Bd2dNR1hnR/8xT2tjYUlaTv9sY1ZFOUhnef8yZzg4WFo1Yf8AAAAAAAAAAPc=")
+	end2, _ := base64.RawStdEncoding.DecodeString("dIAAAAAAAACPX2mAAAAAAAAAAgEzODQ5MTUzR/9CakpPYWdhbP9nNUZkbjdpbv9KZUN3UXJwbf9kbzFyd3JJAP4=")
+	logutil.BgLogger().Info("ywq test compare", zap.Any("cmp2", bytes.Compare(start2, end2)))
+
+	start3, _ := base64.RawStdEncoding.DecodeString("dIAAAAAAAACPX2mAAAAAAAAAAgEzODQ5MTUzR/9CakpPYWdhbP9nNUZkbjdpbv9KZUN3UXJwbf9kbzFyd3JJAP4=")
+	end3, _ := base64.RawStdEncoding.DecodeString("dIAAAAAAAACPX2mAAAAAAAAAAgExMjQwMDAwMP92bW9GdzRMWP9xY2dxb1o4bf91cFBFREp6Uf8yN1lLTEJwNP8AAAAAAAAAAPcA")
+	logutil.BgLogger().Info("ywq test compare", zap.Any("cmp3", bytes.Compare(start3, end3)))
+
+	start4, _ := base64.RawStdEncoding.DecodeString("dIAAAAAAAACPX2mAAAAAAAAAAgExMDAwMDAwMf9uUG1Gdm9vMf9wcWR6Qk9DSv9MWWtSZXI3T/9GNExwRklXb/8AAAAAAAAAAPc=")
+	end4, _ := base64.RawStdEncoding.DecodeString("dIAAAAAAAACPX2mAAAAAAAAAAgExMjQwMDAwMP92bW9GdzRMWP9xY2dxb1o4bf91cFBFREp6Uf8yN1lLTEJwNP8AAAAAAAAAAPcA")
+	logutil.BgLogger().Info("ywq test compare", zap.Any("cmp4", bytes.Compare(start4, end4)))
 }

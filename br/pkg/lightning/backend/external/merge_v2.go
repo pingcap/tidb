@@ -114,14 +114,23 @@ func MergeOverlappingFilesV2(
 			logutil.Logger(ctx).Warn("split one ranges group failed", zap.Error(err1))
 			return
 		}
-		curEnd = kv.Key(endKeyOfGroup).Clone()
 		if len(endKeyOfGroup) == 0 {
-			curEnd = kv.Key(endKey).Clone()
+			logutil.BgLogger().Info("ywq test....")
+			curEnd = endKey
+		} else {
+			endKey = kv.Key(endKeyOfGroup).Clone()
 		}
+
 		splitTime := time.Since(now)
 		now = time.Now()
-		logutil.Logger(ctx).Info("ywq test cmp", zap.Any("cmp", bytes.Compare(curStart, curEnd)))
-
+		logutil.Logger(ctx).Info("ywq test cmp",
+			zap.Any("cmp", bytes.Compare(curStart, curEnd)),
+			zap.Binary("start", curStart),
+			zap.Binary("end", curEnd))
+		// if curStart.Cmp(curEnd) >= 0 {
+		// 	logutil.Logger(ctx).Info("ywq test wtf cmp", zap.Any("cmp", bytes.Compare(curStart, curEnd)))
+		// 	panic(nil)
+		// }
 		err1 = readAllData(
 			ctx,
 			store,
@@ -169,7 +178,7 @@ func MergeOverlappingFilesV2(
 		if len(minKey) == 0 {
 			minKey = kv.Key(loaded.keys[0]).Clone()
 		}
-		curStart = curEnd.Clone()
+		curStart = curEnd
 		loaded.keys = nil
 		loaded.values = nil
 		loaded.memKVBuffers = nil

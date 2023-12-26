@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/hex"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -45,8 +44,8 @@ var (
 	// MergeSortOverlapThreshold is the threshold of overlap between sorted kv files.
 	// if the overlap ratio is greater than this threshold, we will merge the files.
 	MergeSortOverlapThreshold int64 = 1000
-	// MergeSortFileCountStep is the step of file count when we split the sorted kv files. Equal to 2 * multiFileStatNum
-	MergeSortFileCountStep = 2 * multiFileStatNum
+	// MergeSortFileCountStep is the step of file count when we split the sorted kv files.
+	MergeSortFileCountStep = 1000
 )
 
 const (
@@ -373,8 +372,8 @@ func (w *Writer) Close(ctx context.Context) error {
 	logutil.Logger(ctx).Info("close writer",
 		zap.String("writerID", w.writerID),
 		zap.Int("kv-cnt-cap", cap(w.kvLocations)),
-		zap.String("minKey", hex.EncodeToString(w.minKey)),
-		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
+		zap.Binary("minKey", w.minKey),
+		zap.Binary("maxKey", w.maxKey))
 
 	w.kvLocations = nil
 	w.onClose(&WriterSummary{

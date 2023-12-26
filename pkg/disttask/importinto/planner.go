@@ -318,9 +318,9 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, er
 		i := 0
 		for ; i < len(kvMeta.MultipleFilesStats)-1; i += 2 {
 			startKey := external.BytesMin(kvMeta.MultipleFilesStats[i].MinKey, kvMeta.MultipleFilesStats[i+1].MinKey)
-			endKey := external.BytesMax(kvMeta.MultipleFilesStats[i].MaxKey, kvMeta.MultipleFilesStats[i+1].MaxKey)
+			endKey := external.BytesMax(kvMeta.MultipleFilesStats[i].MaxKey.Next(), kvMeta.MultipleFilesStats[i+1].MaxKey.Next())
 			startKeys = append(startKeys, tidbkv.Key(startKey).Clone())
-			endKeys = append(endKeys, tidbkv.Key(endKey).Next().Clone())
+			endKeys = append(endKeys, tidbkv.Key(endKey).Clone())
 		}
 		if i == len(kvMeta.MultipleFilesStats)-1 {
 			startKeys = append(startKeys, kvMeta.MultipleFilesStats[i].MinKey.Clone())
@@ -333,6 +333,10 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, er
 			end := start + step
 			if end > length {
 				end = length
+			}
+			if startKeys[i].Cmp(endKeys[i]) < 0 {
+				return nil, errors.Errorf("invalid kv range, startKey: %s, endKey: %s",
+					hex.EncodeToString(startKeys[i]), hex.EncodeToString(endKeys[i]))
 			}
 			result = append(result, &MergeSortSpec{
 				MergeSortStepMeta: &MergeSortStepMeta{
@@ -347,8 +351,8 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, er
 			})
 			i++
 		}
-		logutil.BgLogger().Info("ywq test merge step meta", zap.Any("result", result))
 	}
+	logutil.BgLogger().Info("ywq test merge step meta", zap.Any("result", result))
 	return result, nil
 }
 

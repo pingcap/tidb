@@ -88,6 +88,7 @@ func testReadAndCompare(
 			}
 			return false
 		})
+		require.NotEmpty(t, loaded.keys)
 		for i, key := range loaded.keys {
 			require.EqualValues(t, kvs[kvIdx].Key, key)
 			require.EqualValues(t, kvs[kvIdx].Val, loaded.values[i])
