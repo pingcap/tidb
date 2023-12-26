@@ -47,6 +47,26 @@ type baseAvgDecimal struct {
 	baseAggFunc
 }
 
+func (e *baseAvgDecimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4AvgDecimal)(partialResult)
+	resBuf := spillHelper.serializePartialResult4AvgDecimal(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *baseAvgDecimal) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *baseAvgDecimal) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4AvgDecimal)(pr)
+	success := helper.deserializePartialResult4AvgDecimal(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type partialResult4AvgDecimal struct {
 	sum   types.MyDecimal
 	count int64
@@ -318,6 +338,26 @@ func (e *baseAvgFloat64) AppendFinalResult2Chunk(_ sessionctx.Context, pr Partia
 		chk.AppendFloat64(e.ordinal, p.sum/float64(p.count))
 	}
 	return nil
+}
+
+func (e *baseAvgFloat64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4AvgFloat64)(partialResult)
+	resBuf := spillHelper.serializePartialResult4AvgFloat64(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *baseAvgFloat64) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *baseAvgFloat64) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4AvgFloat64)(pr)
+	success := helper.deserializePartialResult4AvgFloat64(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type avgOriginal4Float64HighPrecision struct {

@@ -1557,6 +1557,8 @@ type SetOprSelectList struct {
 	With             *WithClause
 	AfterSetOperator *SetOprType
 	Selects          []Node
+	Limit            *Limit
+	OrderBy          *OrderByClause
 }
 
 // Restore implements Node interface.
@@ -2978,6 +2980,7 @@ const (
 	ShowCreateResourceGroup
 	ShowImportJobs
 	ShowCreateProcedure
+	ShowBinlogStatus
 )
 
 const (
@@ -3067,6 +3070,8 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 
 	ctx.WriteKeyWord("SHOW ")
 	switch n.Tp {
+	case ShowBinlogStatus:
+		ctx.WriteKeyWord("BINARY LOG STATUS")
 	case ShowCreateTable:
 		ctx.WriteKeyWord("CREATE TABLE ")
 		if err := n.Table.Restore(ctx); err != nil {

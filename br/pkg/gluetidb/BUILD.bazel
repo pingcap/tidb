@@ -18,6 +18,7 @@ go_library(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/session",
+        "//pkg/session/types",
         "//pkg/sessionctx",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",

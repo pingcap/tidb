@@ -163,7 +163,7 @@ func TestGetVar(t *testing.T) {
 		}
 		fn, err := BuildGetVarFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...))[0], tp)
 		require.NoError(t, err)
-		d, err := fn.Eval(chunk.Row{})
+		d, err := fn.Eval(ctx, chunk.Row{})
 		require.NoError(t, err)
 		require.Equal(t, tc.res, d.GetValue())
 	}

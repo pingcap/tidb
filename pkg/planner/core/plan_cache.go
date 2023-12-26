@@ -38,6 +38,7 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -57,7 +58,7 @@ func SetParameterValuesIntoSCtx(sctx sessionctx.Context, isNonPrep bool, markers
 	vars := sctx.GetSessionVars()
 	vars.PlanCacheParams.Reset()
 	for i, usingParam := range params {
-		val, err := usingParam.Eval(chunk.Row{})
+		val, err := usingParam.Eval(sctx, chunk.Row{})
 		if err != nil {
 			return err
 		}
@@ -154,13 +155,16 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 	sessVars := sctx.GetSessionVars()
 	stmtCtx := sessVars.StmtCtx
 	stmtAst := stmt.PreparedAst
-	stmtCtx.UseCache = stmt.StmtCacheable
+	cacheEnabled := false
 	if isNonPrepared {
 		stmtCtx.CacheType = stmtctx.SessionNonPrepared
+		cacheEnabled = sctx.GetSessionVars().EnableNonPreparedPlanCache // plan-cache might be disabled after prepare.
 	} else {
 		stmtCtx.CacheType = stmtctx.SessionPrepared
+		cacheEnabled = sctx.GetSessionVars().EnablePreparedPlanCache
 	}
-	if !stmt.StmtCacheable {
+	stmtCtx.UseCache = stmt.StmtCacheable && cacheEnabled
+	if !stmt.StmtCacheable && stmt.UncacheableReason != "" {
 		stmtCtx.SetSkipPlanCache(errors.New(stmt.UncacheableReason))
 	}
 
@@ -355,7 +359,7 @@ func RebuildPlan4CachedPlan(p Plan) (ok bool) {
 	sc.InPreparedPlanBuilding = true
 	defer func() { sc.InPreparedPlanBuilding = false }()
 	if err := rebuildRange(p); err != nil {
-		sc.AppendWarning(errors.Errorf("skip plan-cache: plan rebuild failed, %s", err.Error()))
+		sc.AppendWarning(errors.NewNoStackErrorf("skip plan-cache: plan rebuild failed, %s", err.Error()))
 		return false // fail to rebuild ranges
 	}
 	if !sc.UseCache {
@@ -490,7 +494,7 @@ func rebuildRange(p Plan) error {
 			return errors.New("point get for partition table can not use plan cache")
 		}
 		if x.HandleConstant != nil {
-			dVal, err := convertConstant2Datum(sc, x.HandleConstant, x.handleFieldType)
+			dVal, err := convertConstant2Datum(sctx, x.HandleConstant, x.handleFieldType)
 			if err != nil {
 				return err
 			}
@@ -503,7 +507,7 @@ func rebuildRange(p Plan) error {
 		}
 		for i, param := range x.IndexConstants {
 			if param != nil {
-				dVal, err := convertConstant2Datum(sc, param, x.ColsFieldType[i])
+				dVal, err := convertConstant2Datum(sctx, param, x.ColsFieldType[i])
 				if err != nil {
 					return err
 				}
@@ -556,7 +560,7 @@ func rebuildRange(p Plan) error {
 		}
 		for i, param := range x.HandleParams {
 			if param != nil {
-				dVal, err := convertConstant2Datum(sc, param, x.HandleType)
+				dVal, err := convertConstant2Datum(sctx, param, x.HandleType)
 				if err != nil {
 					return err
 				}
@@ -573,7 +577,7 @@ func rebuildRange(p Plan) error {
 			}
 			for j, param := range params {
 				if param != nil {
-					dVal, err := convertConstant2Datum(sc, param, x.IndexColTypes[j])
+					dVal, err := convertConstant2Datum(sctx, param, x.IndexColTypes[j])
 					if err != nil {
 						return err
 					}
@@ -614,17 +618,18 @@ func rebuildRange(p Plan) error {
 	return nil
 }
 
-func convertConstant2Datum(sc *stmtctx.StatementContext, con *expression.Constant, target *types.FieldType) (*types.Datum, error) {
-	val, err := con.Eval(chunk.Row{})
+func convertConstant2Datum(ctx sessionctx.Context, con *expression.Constant, target *types.FieldType) (*types.Datum, error) {
+	val, err := con.Eval(ctx, chunk.Row{})
 	if err != nil {
 		return nil, err
 	}
-	dVal, err := val.ConvertTo(sc.TypeCtx(), target)
+	tc := ctx.GetSessionVars().StmtCtx.TypeCtx()
+	dVal, err := val.ConvertTo(tc, target)
 	if err != nil {
 		return nil, err
 	}
 	// The converted result must be same as original datum.
-	cmp, err := dVal.Compare(sc.TypeCtx(), &val, collate.GetCollator(target.GetCollate()))
+	cmp, err := dVal.Compare(tc, &val, collate.GetCollator(target.GetCollate()))
 	if err != nil || cmp != 0 {
 		return nil, errors.New("Convert constant to datum is failed, because the constant has changed after the covert")
 	}
@@ -795,12 +800,12 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, stmt *PlanCacheStmt) (string,
 	if sctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return "", ignore
 	}
-	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-	bindRecord := sessionHandle.GetBindRecord(stmt.SQLDigest4PC, stmt.NormalizedSQL4PC, "")
+	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
+	bindRecord := sessionHandle.GetSessionBinding(stmt.SQLDigest4PC, stmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
 		enabledBinding := bindRecord.FindEnabledBinding()
 		if enabledBinding != nil {
-			ignore = enabledBinding.Hint.ContainTableHint(HintIgnorePlanCache)
+			ignore = enabledBinding.Hint.ContainTableHint(h.HintIgnorePlanCache)
 			return enabledBinding.BindSQL, ignore
 		}
 	}
@@ -808,11 +813,11 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, stmt *PlanCacheStmt) (string,
 	if globalHandle == nil {
 		return "", ignore
 	}
-	bindRecord = globalHandle.GetBindRecord(stmt.SQLDigest4PC, stmt.NormalizedSQL4PC, "")
+	bindRecord = globalHandle.GetGlobalBinding(stmt.SQLDigest4PC, stmt.NormalizedSQL4PC, "")
 	if bindRecord != nil {
 		enabledBinding := bindRecord.FindEnabledBinding()
 		if enabledBinding != nil {
-			ignore = enabledBinding.Hint.ContainTableHint(HintIgnorePlanCache)
+			ignore = enabledBinding.Hint.ContainTableHint(h.HintIgnorePlanCache)
 			return enabledBinding.BindSQL, ignore
 		}
 	}

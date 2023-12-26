@@ -20,8 +20,10 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -62,9 +64,10 @@ func seekPropsOffsets(
 		propKey := kv.Key(p.firstKey)
 		if propKey.Cmp(start) > 0 {
 			if !moved {
-				return nil, fmt.Errorf("start key %s is too small for stat files %v",
+				return nil, fmt.Errorf("start key %s is too small for stat files %v, propKey %s",
 					start.String(),
 					paths,
+					propKey.String(),
 				)
 			}
 			return offsets, nil
@@ -291,4 +294,14 @@ func BytesMax(a, b []byte) []byte {
 		return a
 	}
 	return b
+}
+
+func getSpeed(n uint64, dur float64, isBytes bool) string {
+	if dur == 0 {
+		return "-"
+	}
+	if isBytes {
+		return units.BytesSize(float64(n) / dur)
+	}
+	return strconv.FormatFloat(float64(n)/dur, 'f', 4, 64)
 }

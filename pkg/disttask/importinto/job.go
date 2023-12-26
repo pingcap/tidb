@@ -28,10 +28,13 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -106,14 +109,14 @@ func (ti *DistImporter) ImportTask(task *proto.Task) {
 	ti.Group.Go(func() error {
 		defer close(ti.Done)
 		// task is run using distribute framework, so we only wait for the task to finish.
-		return handle.WaitGlobalTask(ti.GroupCtx, task)
+		return handle.WaitTask(ti.GroupCtx, task.ID)
 	})
 }
 
 // Result implements JobImporter.Result.
-func (ti *DistImporter) Result() importer.JobImportResult {
+func (ti *DistImporter) Result(ctx context.Context) importer.JobImportResult {
 	var result importer.JobImportResult
-	taskMeta, err := getTaskMeta(ti.jobID)
+	taskMeta, err := getTaskMeta(ctx, ti.jobID)
 	if err != nil {
 		return result
 	}
@@ -135,15 +138,16 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 	if ti.instance != nil {
 		instances = append(instances, ti.instance)
 	}
-	// we use globalTaskManager to submit task, user might not have the privilege to system tables.
-	globalTaskManager, err := storage.GetTaskManager()
+	// we use taskManager to submit task, user might not have the privilege to system tables.
+	taskManager, err := storage.GetTaskManager()
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return 0, nil, err
 	}
 
 	var jobID, taskID int64
 	plan := ti.plan
-	if err = globalTaskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
+	if err = taskManager.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		var err2 error
 		exec := se.(sqlexec.SQLExecutor)
 		// If 2 client try to execute IMPORT INTO concurrently, there's chance that both of them will pass the check.
@@ -189,23 +193,24 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 	}); err != nil {
 		return 0, nil, err
 	}
-
-	globalTask, err := globalTaskManager.GetGlobalTaskByID(taskID)
+	task, err := taskManager.GetTaskByID(ctx, taskID)
 	if err != nil {
 		return 0, nil, err
 	}
-	if globalTask == nil {
-		return 0, nil, errors.Errorf("cannot find global task with ID %d", taskID)
+	if task == nil {
+		return 0, nil, errors.Errorf("cannot find task with ID %d", taskID)
 	}
+
+	metrics.UpdateMetricsForAddTask(task)
 	// update logger with task id.
 	ti.jobID = jobID
 	ti.taskID = taskID
-	ti.logger = ti.logger.With(zap.Int64("task-id", globalTask.ID))
+	ti.logger = ti.logger.With(zap.Int64("task-id", task.ID))
 
-	ti.logger.Info("job submitted to global task queue",
+	ti.logger.Info("job submitted to task queue",
 		zap.Int64("job-id", jobID), zap.Int64("thread-cnt", plan.ThreadCnt))
 
-	return jobID, globalTask, nil
+	return jobID, task, nil
 }
 
 func (*DistImporter) taskKey() string {
@@ -218,21 +223,22 @@ func (ti *DistImporter) JobID() int64 {
 	return ti.jobID
 }
 
-func getTaskMeta(jobID int64) (*TaskMeta, error) {
-	globalTaskManager, err := storage.GetTaskManager()
+func getTaskMeta(ctx context.Context, jobID int64) (*TaskMeta, error) {
+	taskManager, err := storage.GetTaskManager()
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return nil, err
 	}
 	taskKey := TaskKey(jobID)
-	globalTask, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	task, err := taskManager.GetTaskByKey(ctx, taskKey)
 	if err != nil {
 		return nil, err
 	}
-	if globalTask == nil {
-		return nil, errors.Errorf("cannot find global task with key %s", taskKey)
+	if task == nil {
+		return nil, errors.Errorf("cannot find task with key %s", taskKey)
 	}
 	var taskMeta TaskMeta
-	if err := json.Unmarshal(globalTask.Meta, &taskMeta); err != nil {
+	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return &taskMeta, nil
@@ -240,18 +246,19 @@ func getTaskMeta(jobID int64) (*TaskMeta, error) {
 
 // GetTaskImportedRows gets the number of imported rows of a job.
 // Note: for finished job, we can get the number of imported rows from task meta.
-func GetTaskImportedRows(jobID int64) (uint64, error) {
-	globalTaskManager, err := storage.GetTaskManager()
+func GetTaskImportedRows(ctx context.Context, jobID int64) (uint64, error) {
+	taskManager, err := storage.GetTaskManager()
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return 0, err
 	}
 	taskKey := TaskKey(jobID)
-	task, err := globalTaskManager.GetGlobalTaskByKey(taskKey)
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	if err != nil {
 		return 0, err
 	}
 	if task == nil {
-		return 0, errors.Errorf("cannot find global task with key %s", taskKey)
+		return 0, errors.Errorf("cannot find task with key %s", taskKey)
 	}
 	taskMeta := TaskMeta{}
 	if err = json.Unmarshal(task.Meta, &taskMeta); err != nil {
@@ -259,7 +266,7 @@ func GetTaskImportedRows(jobID int64) (uint64, error) {
 	}
 	var importedRows uint64
 	if taskMeta.Plan.CloudStorageURI == "" {
-		subtasks, err := globalTaskManager.GetSubtasksForImportInto(task.ID, StepImport)
+		subtasks, err := taskManager.GetSubtasksForImportInto(ctx, task.ID, StepImport)
 		if err != nil {
 			return 0, err
 		}
@@ -271,7 +278,7 @@ func GetTaskImportedRows(jobID int64) (uint64, error) {
 			importedRows += subtaskMeta.Result.LoadedRowCnt
 		}
 	} else {
-		subtasks, err := globalTaskManager.GetSubtasksForImportInto(task.ID, StepWriteAndIngest)
+		subtasks, err := taskManager.GetSubtasksForImportInto(ctx, task.ID, StepWriteAndIngest)
 		if err != nil {
 			return 0, err
 		}

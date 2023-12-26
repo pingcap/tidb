@@ -40,13 +40,13 @@ func TestMergePartTopN2GlobalTopNWithoutHists(t *testing.T) {
 		// Construct TopN, should be key(1, 1) -> 2, key(1, 2) -> 2, key(1, 3) -> 3.
 		topN := statistics.NewTopN(3)
 		{
-			key1, err := codec.EncodeKey(sc, nil, types.NewIntDatum(1), types.NewIntDatum(1))
+			key1, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(1), types.NewIntDatum(1))
 			require.NoError(t, err)
 			topN.AppendTopN(key1, 2)
-			key2, err := codec.EncodeKey(sc, nil, types.NewIntDatum(1), types.NewIntDatum(2))
+			key2, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(1), types.NewIntDatum(2))
 			require.NoError(t, err)
 			topN.AppendTopN(key2, 2)
-			key3, err := codec.EncodeKey(sc, nil, types.NewIntDatum(1), types.NewIntDatum(3))
+			key3, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(1), types.NewIntDatum(3))
 			require.NoError(t, err)
 			topN.AppendTopN(key3, 3)
 		}
@@ -73,14 +73,14 @@ func TestMergePartTopN2GlobalTopNWithHists(t *testing.T) {
 		// Construct TopN, should be key1 -> 2, key2 -> 2, key3 -> 3.
 		topN := statistics.NewTopN(3)
 		{
-			key1, err := codec.EncodeKey(sc, nil, types.NewIntDatum(1))
+			key1, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(1))
 			require.NoError(t, err)
 			topN.AppendTopN(key1, 2)
-			key2, err := codec.EncodeKey(sc, nil, types.NewIntDatum(2))
+			key2, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(2))
 			require.NoError(t, err)
 			topN.AppendTopN(key2, 2)
 			if i%2 == 0 {
-				key3, err := codec.EncodeKey(sc, nil, types.NewIntDatum(3))
+				key3, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(3))
 				require.NoError(t, err)
 				topN.AppendTopN(key3, 3)
 			}

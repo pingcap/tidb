@@ -19,6 +19,7 @@ import (
 	"math"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -130,7 +131,8 @@ func getIndexRowCountForStatsV1(sctx sessionctx.Context, coll *statistics.HistCo
 		var selectivity float64
 		// use CM Sketch to estimate the equal conditions
 		if rangeVals == nil {
-			bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition]...)
+			bytes, err := codec.EncodeKey(sc.TimeZone(), nil, ran.LowVal[:rangePosition]...)
+			err = sc.HandleError(err)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -139,14 +141,16 @@ func getIndexRowCountForStatsV1(sctx sessionctx.Context, coll *statistics.HistCo
 				return 0, errors.Trace(err)
 			}
 		} else {
-			bytes, err := codec.EncodeKey(sc, nil, ran.LowVal[:rangePosition-1]...)
+			bytes, err := codec.EncodeKey(sc.TimeZone(), nil, ran.LowVal[:rangePosition-1]...)
+			err = sc.HandleError(err)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
 			prefixLen := len(bytes)
 			for _, val := range rangeVals {
 				bytes = bytes[:prefixLen]
-				bytes, err = codec.EncodeKey(sc, bytes, val)
+				bytes, err = codec.EncodeKey(sc.TimeZone(), bytes, val)
+				err = sc.HandleError(err)
 				if err != nil {
 					return 0, err
 				}
@@ -223,11 +227,13 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 	isSingleCol := len(idx.Info.Columns) == 1
 	for _, indexRange := range indexRanges {
 		var count float64
-		lb, err := codec.EncodeKey(sc, nil, indexRange.LowVal...)
+		lb, err := codec.EncodeKey(sc.TimeZone(), nil, indexRange.LowVal...)
+		err = sc.HandleError(err)
 		if err != nil {
 			return 0, err
 		}
-		rb, err := codec.EncodeKey(sc, nil, indexRange.HighVal...)
+		rb, err := codec.EncodeKey(sc.TimeZone(), nil, indexRange.HighVal...)
+		err = sc.HandleError(err)
 		if err != nil {
 			return 0, err
 		}
@@ -341,7 +347,7 @@ func getIndexRowCountForStatsV2(sctx sessionctx.Context, idx *statistics.Index, 
 	return totalCount, nil
 }
 
-var nullKeyBytes, _ = codec.EncodeKey(nil, nil, types.NewDatum(nil))
+var nullKeyBytes, _ = codec.EncodeKey(time.UTC, nil, types.NewDatum(nil))
 
 func equalRowCountOnIndex(sctx sessionctx.Context, idx *statistics.Index, b []byte, realtimeRowCount int64) (result float64) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {

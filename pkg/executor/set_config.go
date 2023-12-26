@@ -33,9 +33,9 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
+	pd "github.com/tikv/pd/client/http"
 )
 
 // SetConfigExec executes 'SET CONFIG' statement.
@@ -112,7 +112,7 @@ func (s *SetConfigExec) Next(_ context.Context, req *chunk.Chunk) error {
 		var url string
 		switch serverInfo.ServerType {
 		case "pd":
-			url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), serverInfo.StatusAddr, pdapi.Config)
+			url = fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), serverInfo.StatusAddr, pd.Config)
 		case "tikv":
 			url = fmt.Sprintf("%s://%s/config", util.InternalHTTPSchema(), serverInfo.StatusAddr)
 		case "tiflash":

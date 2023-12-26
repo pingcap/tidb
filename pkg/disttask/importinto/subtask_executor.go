@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/etcd"
@@ -134,11 +135,12 @@ func verifyChecksum(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostPr
 		<-ctx.Done()
 	})
 
-	globalTaskManager, err := storage.GetTaskManager()
+	taskManager, err := storage.GetTaskManager()
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return err
 	}
-	remoteChecksum, err := checksumTable(ctx, globalTaskManager, taskMeta, logger)
+	remoteChecksum, err := checksumTable(ctx, taskManager, taskMeta, logger)
 	if err != nil {
 		if taskMeta.Plan.Checksum != config.OpLevelOptional {
 			return err
@@ -245,16 +247,16 @@ func setBackoffWeight(se sessionctx.Context, taskMeta *TaskMeta, logger *zap.Log
 }
 
 type autoIDRequirement struct {
-	store   kv.Storage
-	etcdCli *clientv3.Client
+	store     kv.Storage
+	autoidCli *autoid.ClientDiscover
 }
 
 func (r *autoIDRequirement) Store() kv.Storage {
 	return r.store
 }
 
-func (r *autoIDRequirement) GetEtcdClient() *clientv3.Client {
-	return r.etcdCli
+func (r *autoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
+	return r.autoidCli
 }
 
 func rebaseAllocatorBases(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
@@ -294,10 +296,12 @@ func rebaseAllocatorBases(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *
 		return errors.Trace(err)
 	}
 	etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(kvStore.GetCodec()))
-	r := autoIDRequirement{store: kvStore, etcdCli: etcdCli}
+	autoidCli := autoid.NewClientDiscover(etcdCli)
+	r := autoIDRequirement{store: kvStore, autoidCli: autoidCli}
 	err = common.RebaseTableAllocators(ctx, subtaskMeta.MaxIDs, &r, taskMeta.Plan.DBID, taskMeta.Plan.DesiredTableInfo)
 	if err1 := etcdCli.Close(); err1 != nil {
 		logger.Info("close etcd client error", zap.Error(err1))
 	}
+	autoidCli.ResetConn(nil)
 	return errors.Trace(err)
 }

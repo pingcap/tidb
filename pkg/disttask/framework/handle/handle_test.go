@@ -23,6 +23,7 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -34,37 +35,46 @@ import (
 )
 
 func TestHandle(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
+	})
+
 	ctx := context.Background()
+	ctx = util.WithInternalSourceType(ctx, "handle_test")
+
 	store := testkit.CreateMockStore(t)
 	gtk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
 		return gtk.Session(), nil
 	}, 1, 1, time.Second)
 	defer pool.Close()
-	mgr := storage.NewTaskManager(util.WithInternalSourceType(ctx, "taskManager"), pool)
+	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
 
-	// no dispatcher registered
-	err := handle.SubmitAndRunGlobalTask(ctx, "1", proto.TaskTypeExample, 2, []byte("byte"))
+	// no scheduler registered
+	err := handle.SubmitAndWaitTask(ctx, "1", proto.TaskTypeExample, 2, []byte("byte"))
 	require.Error(t, err)
 
-	task, err := mgr.GetGlobalTaskByID(1)
+	task, err := mgr.GetTaskByID(ctx, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), task.ID)
 	require.Equal(t, "1", task.Key)
 	require.Equal(t, proto.TaskTypeExample, task.Type)
-	// no dispatcher registered
+	// no scheduler registered
 	require.Equal(t, proto.TaskStateFailed, task.State)
 	require.Equal(t, proto.StepInit, task.Step)
-	require.Equal(t, uint64(2), task.Concurrency)
+	require.Equal(t, 2, task.Concurrency)
 	require.Equal(t, []byte("byte"), task.Meta)
 
-	require.NoError(t, handle.CancelGlobalTask("1"))
+	require.NoError(t, handle.CancelTask(ctx, "1"))
 
-	task, err = handle.SubmitGlobalTask("2", proto.TaskTypeExample, 2, []byte("byte"))
+	task, err = handle.SubmitTask(ctx, "2", proto.TaskTypeExample, 2, []byte("byte"))
 	require.NoError(t, err)
-	require.NoError(t, handle.PauseTask("2"))
-	require.NoError(t, handle.ResumeTask("2"))
+	require.Equal(t, int64(2), task.ID)
+	require.Equal(t, "2", task.Key)
+	require.NoError(t, handle.PauseTask(ctx, "2"))
+	require.NoError(t, handle.ResumeTask(ctx, "2"))
 }
 
 func TestRunWithRetry(t *testing.T) {

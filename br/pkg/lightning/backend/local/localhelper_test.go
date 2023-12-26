@@ -796,7 +796,7 @@ func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
 	keys := [][]byte{[]byte(""), tableStartKey}
 	// pre split 2 regions
 	for i := int64(0); i < 2; i++ {
-		keyBytes, err := codec.EncodeKey(stmtCtx, nil, types.NewIntDatum(i))
+		keyBytes, err := codec.EncodeKey(stmtCtx.TimeZone(), nil, types.NewIntDatum(i))
 		require.NoError(t, err)
 		h, err := kv.NewCommonHandle(keyBytes)
 		require.NoError(t, err)
@@ -818,7 +818,7 @@ func doTestBatchSplitByRangesWithClusteredIndex(t *testing.T, hook clientHook) {
 	rangeKeys := make([][]byte, 0, 20+1)
 	for i := int64(0); i < 2; i++ {
 		for j := int64(0); j < 10; j++ {
-			keyBytes, err := codec.EncodeKey(stmtCtx, nil, types.NewIntDatum(i), types.NewIntDatum(j*10000))
+			keyBytes, err := codec.EncodeKey(stmtCtx.TimeZone(), nil, types.NewIntDatum(i), types.NewIntDatum(j*10000))
 			require.NoError(t, err)
 			h, err := kv.NewCommonHandle(keyBytes)
 			require.NoError(t, err)

@@ -24,9 +24,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -2339,36 +2337,6 @@ func TestPrivilegeCheckInForeignKeyCascade(t *testing.T) {
 	}
 }
 
-func TestTableLockInForeignKeyCascade(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
-	tk.MustExec("set @@foreign_key_checks=1")
-	tk.MustExec("use test")
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-	tk2.MustExec("set @@foreign_key_checks=1")
-	// enable table lock
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableTableLock = true
-	})
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.EnableTableLock = false
-		})
-	}()
-	tk.MustExec("create table t1 (id int key);")
-	tk.MustExec("create table t2 (id int key, foreign key fk (id) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE);")
-	tk.MustExec("insert into t1 values (1), (2), (3);")
-	tk.MustExec("insert into t2 values (1), (2), (3);")
-	tk.MustExec("lock table t2 read;")
-	tk2.MustGetDBError("delete from t1 where id = 1", infoschema.ErrTableLocked)
-	tk.MustExec("unlock tables;")
-	tk2.MustExec("delete from t1 where id = 1")
-	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("2", "3"))
-	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("2", "3"))
-}
-
 func TestForeignKeyIssue39732(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2507,32 +2475,4 @@ func TestForeignKeyAndLockView(t *testing.T) {
 	tk.MustQuery("select CURRENT_SQL_DIGEST from information_schema.tidb_trx where state='LockWaiting' and db='test'").Check(testkit.Rows(digest.String()))
 	tk.MustGetErrMsg("update t1 set id=2", "[executor:1213]Deadlock found when trying to get lock; try restarting transaction")
 	wg.Wait()
-}
-
-func TestForeignKeyAndMemoryTracker(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@foreign_key_checks=1")
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (id int auto_increment key, pid int, name varchar(200), index(pid));")
-	tk.MustExec("insert into t1 (name) values ('abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz');")
-	for i := 0; i < 8; i++ {
-		tk.MustExec("insert into t1 (name) select name from t1;")
-	}
-	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("256"))
-	tk.MustExec("update t1 set pid=1 where id>1")
-	tk.MustExec("alter table t1 add foreign key (pid) references t1 (id) on update cascade")
-	tk.MustQuery("select sum(id) from t1").Check(testkit.Rows("32896"))
-	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
-	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
-	tk.MustExec("set @@tidb_mem_quota_query=40960;")
-	// foreign key cascade behaviour will exceed memory quota.
-	err := tk.ExecToErr("update t1 set id=id+100000 where id=1")
-	require.Error(t, err)
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
-	tk.MustQuery("select id,pid from t1 where id = 1").Check(testkit.Rows("1 <nil>"))
-	tk.MustExec("set @@foreign_key_checks=0")
-	// After disable foreign_key_checks, following DML will execute successful.
-	tk.MustExec("update t1 set id=id+100000 where id=1")
-	tk.MustQuery("select id,pid from t1 where id<3 or pid is null order by id").Check(testkit.Rows("2 1", "100001 <nil>"))
 }

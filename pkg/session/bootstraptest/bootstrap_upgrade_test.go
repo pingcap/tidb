@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/session"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	tidb_util "github.com/pingcap/tidb/pkg/util"
@@ -228,7 +229,8 @@ func TestUpgradeVersion75(t *testing.T) {
 }
 
 func TestUpgradeVersionMockLatest(t *testing.T) {
-	session.WithMockUpgrade = true
+	mock := true
+	session.WithMockUpgrade = &mock
 
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
@@ -291,7 +293,8 @@ func TestUpgradeVersionMockLatest(t *testing.T) {
 
 // TestUpgradeVersionWithUpgradeHTTPOp tests SupportUpgradeHTTPOpVer upgrade SupportUpgradeHTTPOpVer++ with HTTP op.
 func TestUpgradeVersionWithUpgradeHTTPOp(t *testing.T) {
-	session.WithMockUpgrade = true
+	mock := true
+	session.WithMockUpgrade = &mock
 	session.MockUpgradeToVerLatestKind = session.MockSimpleUpgradeToVerLatest
 
 	store, dom := session.CreateStoreAndBootstrap(t)
@@ -339,7 +342,8 @@ func TestUpgradeVersionWithUpgradeHTTPOp(t *testing.T) {
 
 // TestUpgradeVersionWithoutUpgradeHTTPOp tests SupportUpgradeHTTPOpVer upgrade SupportUpgradeHTTPOpVer++ without HTTP op.
 func TestUpgradeVersionWithoutUpgradeHTTPOp(t *testing.T) {
-	session.WithMockUpgrade = true
+	mock := true
+	session.WithMockUpgrade = &mock
 	session.MockUpgradeToVerLatestKind = session.MockSimpleUpgradeToVerLatest
 
 	store, dom := session.CreateStoreAndBootstrap(t)
@@ -440,7 +444,7 @@ func TestUpgradeVersionForPausedJob(t *testing.T) {
 }
 
 // checkDDLJobExecSucc is used to make sure the DDL operation is successful.
-func checkDDLJobExecSucc(t *testing.T, se session.Session, jobID int64) {
+func checkDDLJobExecSucc(t *testing.T, se sessiontypes.Session, jobID int64) {
 	sql := fmt.Sprintf(" admin show ddl jobs where job_id=%d", jobID)
 	suc := false
 	for i := 0; i < 20; i++ {
@@ -463,7 +467,8 @@ func checkDDLJobExecSucc(t *testing.T, se session.Session, jobID int64) {
 // Then we do re-upgrade(This operation will pause all DDL jobs by the system).
 func TestUpgradeVersionForSystemPausedJob(t *testing.T) {
 	// Mock a general and a reorg job in boostrap.
-	session.WithMockUpgrade = true
+	mock := true
+	session.WithMockUpgrade = &mock
 	session.MockUpgradeToVerLatestKind = session.MockSimpleUpgradeToVerLatest
 
 	store, dom := session.CreateStoreAndBootstrap(t)
@@ -682,7 +687,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 
 	tc := session.TestCallback{Cnt: atomicutil.NewInt32(0)}
 	sql := "select job_meta, processing from mysql.tidb_ddl_job where job_id in (select min(job_id) from mysql.tidb_ddl_job group by schema_ids, table_ids, processing) order by processing desc, job_id"
-	tc.OnBootstrapBeforeExported = func(s session.Session) {
+	tc.OnBootstrapBeforeExported = func(s sessiontypes.Session) {
 		rows, err := execute(context.Background(), s, sql)
 		require.NoError(t, err)
 		require.Len(t, rows, 0)
@@ -705,7 +710,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 		}()
 		<-ch
 	}
-	checkDDLJobState := func(s session.Session) {
+	checkDDLJobState := func(s sessiontypes.Session) {
 		rows, err := execute(context.Background(), s, sql)
 		require.NoError(t, err)
 		for _, row := range rows {
@@ -723,7 +728,7 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 		}
 	}
 	// Before every test bootstrap(DDL operation), we add a user and a system DB's DDL operations.
-	tc.OnBootstrapExported = func(s session.Session) {
+	tc.OnBootstrapExported = func(s sessiontypes.Session) {
 		var query1, query2 string
 		switch tc.Cnt.Load() % 2 {
 		case 0:
@@ -741,12 +746,13 @@ func TestUpgradeWithPauseDDL(t *testing.T) {
 		checkDDLJobState(s)
 	}
 
-	tc.OnBootstrapAfterExported = func(s session.Session) {
+	tc.OnBootstrapAfterExported = func(s sessiontypes.Session) {
 		checkDDLJobState(s)
 	}
 	session.TestHook = tc
 
-	session.WithMockUpgrade = true
+	mock := true
+	session.WithMockUpgrade = &mock
 	seV := session.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)

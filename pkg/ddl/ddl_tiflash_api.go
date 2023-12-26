@@ -35,11 +35,11 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	pd "github.com/tikv/pd/client/http"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -111,7 +111,7 @@ func NewPollTiFlashBackoffContext(minThreshold, maxThreshold TiFlashTick, capaci
 
 // TiFlashManagementContext is the context for TiFlash Replica Management
 type TiFlashManagementContext struct {
-	TiFlashStores map[int64]helper.StoreStat
+	TiFlashStores map[int64]pd.StoreInfo
 	PollCounter   uint64
 	Backoff       *PollTiFlashBackoffContext
 	// tables waiting for updating progress after become available.
@@ -206,7 +206,7 @@ func NewTiFlashManagementContext() (*TiFlashManagementContext, error) {
 	}
 	return &TiFlashManagementContext{
 		PollCounter:            0,
-		TiFlashStores:          make(map[int64]helper.StoreStat),
+		TiFlashStores:          make(map[int64]pd.StoreInfo),
 		Backoff:                c,
 		UpdatingProgressTables: list.New(),
 	}, nil
@@ -293,7 +293,7 @@ func LoadTiFlashReplicaInfo(tblInfo *model.TableInfo, tableList *[]TiFlashReplic
 }
 
 // UpdateTiFlashHTTPAddress report TiFlash's StatusAddress's port to Pd's etcd.
-func (d *ddl) UpdateTiFlashHTTPAddress(store *helper.StoreStat) error {
+func (d *ddl) UpdateTiFlashHTTPAddress(store *pd.StoreInfo) error {
 	host, _, err := net.SplitHostPort(store.Store.StatusAddress)
 	if err != nil {
 		return errors.Trace(err)
@@ -338,7 +338,7 @@ func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 	if err != nil {
 		return err
 	}
-	pollTiFlashContext.TiFlashStores = make(map[int64]helper.StoreStat)
+	pollTiFlashContext.TiFlashStores = make(map[int64]pd.StoreInfo)
 	for _, store := range tikvStats.Stores {
 		for _, l := range store.Store.Labels {
 			if l.Key == "engine" && l.Value == "tiflash" {

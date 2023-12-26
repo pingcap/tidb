@@ -138,6 +138,7 @@ func ExecArgs(typectx types.Context, binaryParams []BinaryParam) (params []expre
 			continue
 
 		case mysql.TypeDuration:
+			fsp := 0
 			switch len(binaryParams[i].Val) {
 			case 0:
 				tmp = "0"
@@ -155,13 +156,14 @@ func ExecArgs(typectx types.Context, binaryParams []BinaryParam) (params []expre
 					return
 				}
 				_, tmp = binaryDurationWithMS(1, binaryParams[i].Val, isNegative)
+				fsp = types.MaxFsp
 			default:
 				err = mysql.ErrMalformPacket
 				return
 			}
 			// TODO: generate the duration datum directly
 			var dur types.Duration
-			dur, _, err = types.ParseDuration(typectx, tmp.(string), types.MaxFsp)
+			dur, _, err = types.ParseDuration(typectx, tmp.(string), fsp)
 			err = typectx.HandleTruncate(err)
 			if err != nil {
 				return

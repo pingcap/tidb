@@ -57,12 +57,19 @@ const (
 		exec_expired timestamp,
 		state varchar(64) not null,
 		checkpoint longblob not null,
+		concurrency int,
+		create_time timestamp,
 		start_time bigint,
 		state_update_time bigint,
+		end_time TIMESTAMP,
 		meta longblob,
+		ordinal int,
 		error BLOB,
 		summary json,
-		key idx_task_key(task_key))`
+		key idx_task_key(task_key),
+		key idx_exec_id(exec_id),
+		unique uk_task_key_step_ordinal(task_key, step, ordinal)
+	)`
 	// BackgroundSubtaskHistoryTableSQL is the CREATE TABLE SQL of `tidb_background_subtask_history`.
 	BackgroundSubtaskHistoryTableSQL = `create table tidb_background_subtask_history (
 	 	id bigint not null auto_increment primary key,
@@ -75,9 +82,13 @@ const (
 		exec_expired timestamp,
 		state varchar(64) not null,
 		checkpoint longblob not null,
+		concurrency int,
+		create_time timestamp,
 		start_time bigint,
 		state_update_time bigint,
+		end_time TIMESTAMP,
 		meta longblob,
+		ordinal int,
 		error BLOB,
 		summary json,
 		key idx_task_key(task_key),

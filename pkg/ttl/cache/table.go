@@ -379,7 +379,7 @@ func (t *PhysicalTable) splitRawKeyRanges(ctx context.Context, store tikv.Storag
 var emptyBytesHandleKey kv.Key
 
 func init() {
-	key, err := codec.EncodeKey(nil, nil, types.NewBytesDatum(nil))
+	key, err := codec.EncodeKey(time.UTC, nil, types.NewBytesDatum(nil))
 	terror.MustNil(err)
 	emptyBytesHandleKey = key
 }

@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
@@ -307,6 +308,22 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 		selected, uniqueBest, refinedBest *util.AccessPath
 		isRefinedPath                     bool
 	)
+	// step1: if user prefer tiFlash store type, tiFlash path should always be built anyway ahead.
+	var tiflashPath *util.AccessPath
+	if ds.preferStoreType&h.PreferTiFlash != 0 {
+		for _, path := range ds.possibleAccessPaths {
+			if path.StoreType == kv.TiFlash {
+				err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
+				if err != nil {
+					return err
+				}
+				path.IsSingleScan = true
+				tiflashPath = path
+				break
+			}
+		}
+	}
+	// step2: kv path should follow the heuristic rules.
 	for _, path := range ds.possibleAccessPaths {
 		if path.IsTablePath() {
 			err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
@@ -318,7 +335,9 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 			ds.deriveIndexPathStats(path, ds.pushedDownConds, false)
 			path.IsSingleScan = ds.isSingleScan(path.FullIdxCols, path.FullIdxColLens)
 		}
+		// step: 3
 		// Try some heuristic rules to select access path.
+		// tiFlash path also have table-range-scan (range point like here) to be heuristic treated.
 		if len(path.Ranges) == 0 {
 			selected = path
 			break
@@ -338,7 +357,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 	if selected == nil && len(uniqueIdxsWithDoubleScan) > 0 {
 		uniqueIdxAccessCols := make([]util.Col2Len, 0, len(uniqueIdxsWithDoubleScan))
 		for _, uniqueIdx := range uniqueIdxsWithDoubleScan {
-			uniqueIdxAccessCols = append(uniqueIdxAccessCols, uniqueIdx.GetCol2LenFromAccessConds())
+			uniqueIdxAccessCols = append(uniqueIdxAccessCols, uniqueIdx.GetCol2LenFromAccessConds(ds.SCtx()))
 			// Find the unique index with the minimal number of ranges as `uniqueBest`.
 			if uniqueBest == nil || len(uniqueIdx.Ranges) < len(uniqueBest.Ranges) {
 				uniqueBest = uniqueIdx
@@ -353,7 +372,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 		// Hence, for each index in `singleScanIdxs`, we check whether it is better than some index in `uniqueIdxsWithDoubleScan`.
 		// If yes, the index is a refined one. We find the refined index with the minimal number of ranges as `refineBest`.
 		for _, singleScanIdx := range singleScanIdxs {
-			col2Len := singleScanIdx.GetCol2LenFromAccessConds()
+			col2Len := singleScanIdx.GetCol2LenFromAccessConds(ds.SCtx())
 			for _, uniqueIdxCol2Len := range uniqueIdxAccessCols {
 				accessResult, comparable1 := util.CompareCol2Len(col2Len, uniqueIdxCol2Len)
 				if comparable1 && accessResult == 1 {
@@ -381,13 +400,15 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 	// heuristic rule pruning other path should consider hint prefer.
 	// If no hints and some path matches a heuristic rule, just remove other possible paths.
 	if selected != nil {
-		// if user wanna tiFlash read, while current heuristic choose a TiKV path. so we shouldn't prune other paths.
-		keep := ds.preferStoreType&preferTiFlash != 0 && selected.StoreType != kv.TiFlash
-		if keep {
-			return nil
-		}
 		ds.possibleAccessPaths[0] = selected
 		ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
+		// if user wanna tiFlash read, while current heuristic choose a TiKV path. so we shouldn't prune tiFlash path.
+		keep := ds.preferStoreType&h.PreferTiFlash != 0 && selected.StoreType != kv.TiFlash
+		if keep {
+			// also keep tiflash path as well.
+			ds.possibleAccessPaths = append(ds.possibleAccessPaths, tiflashPath)
+			return nil
+		}
 		var tableName string
 		if ds.TableAsName.O == "" {
 			tableName = ds.tableInfo.Name.O
@@ -415,9 +436,9 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 			}
 		}
 		if ds.SCtx().GetSessionVars().StmtCtx.InVerboseExplain {
-			ds.SCtx().GetSessionVars().StmtCtx.AppendNote(errors.New(sb.String()))
+			ds.SCtx().GetSessionVars().StmtCtx.AppendNote(errors.NewNoStackError(sb.String()))
 		} else {
-			ds.SCtx().GetSessionVars().StmtCtx.AppendExtraNote(errors.New(sb.String()))
+			ds.SCtx().GetSessionVars().StmtCtx.AppendExtraNote(errors.NewNoStackError(sb.String()))
 		}
 	}
 	return nil
@@ -987,7 +1008,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 			p.cte.seedPartLogicalPlan = newSel
 			p.cte.optFlag |= flagPredicatePushDown
 		}
-		p.cte.seedPartLogicalPlan, p.cte.seedPartPhysicalPlan, _, err = DoOptimizeAndLogicAsRet(context.TODO(), p.SCtx(), p.cte.optFlag, p.cte.seedPartLogicalPlan)
+		p.cte.seedPartLogicalPlan, p.cte.seedPartPhysicalPlan, _, err = doOptimize(context.TODO(), p.SCtx(), p.cte.optFlag, p.cte.seedPartLogicalPlan)
 		if err != nil {
 			return nil, err
 		}

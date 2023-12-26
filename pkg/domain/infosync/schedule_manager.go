@@ -15,56 +15,21 @@
 package infosync
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
-	"path"
 	"sync"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
-	clientv3 "go.etcd.io/etcd/client/v3"
+	pd "github.com/tikv/pd/client/http"
 )
 
 // ScheduleManager manages schedule configs
 type ScheduleManager interface {
-	GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error)
-	SetPDScheduleConfig(ctx context.Context, config map[string]interface{}) error
+	GetScheduleConfig(ctx context.Context) (map[string]interface{}, error)
+	SetScheduleConfig(ctx context.Context, config map[string]interface{}) error
 }
 
 // PDScheduleManager manages schedule with pd
 type PDScheduleManager struct {
-	etcdCli *clientv3.Client
-}
-
-// GetPDScheduleConfig get schedule config from pd
-func (sm *PDScheduleManager) GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
-	ret, err := doRequest(ctx, "GetPDSchedule", sm.etcdCli.Endpoints(), path.Join(pdapi.Config, "schedule"), "GET", nil)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	var schedule map[string]interface{}
-	if err = json.Unmarshal(ret, &schedule); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	return schedule, nil
-}
-
-// SetPDScheduleConfig set schedule config to pd
-func (sm *PDScheduleManager) SetPDScheduleConfig(ctx context.Context, config map[string]interface{}) error {
-	configJSON, err := json.Marshal(config)
-	if err != nil {
-		return err
-	}
-
-	_, err = doRequest(ctx, "SetPDSchedule", sm.etcdCli.Endpoints(), path.Join(pdapi.Config, "schedule"), "POST", bytes.NewReader(configJSON))
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	return nil
+	pd.Client
 }
 
 type mockScheduleManager struct {
@@ -72,8 +37,8 @@ type mockScheduleManager struct {
 	schedules map[string]interface{}
 }
 
-// GetPDScheduleConfig get schedule config from schedules map
-func (mm *mockScheduleManager) GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
+// GetScheduleConfig get schedule config from schedules map
+func (mm *mockScheduleManager) GetScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
 	mm.Lock()
 
 	schedules := make(map[string]interface{})
@@ -85,8 +50,8 @@ func (mm *mockScheduleManager) GetPDScheduleConfig(ctx context.Context) (map[str
 	return schedules, nil
 }
 
-// SetPDScheduleConfig set schedule config to schedules map
-func (mm *mockScheduleManager) SetPDScheduleConfig(ctx context.Context, config map[string]interface{}) error {
+// SetScheduleConfig set schedule config to schedules map
+func (mm *mockScheduleManager) SetScheduleConfig(ctx context.Context, config map[string]interface{}) error {
 	mm.Lock()
 
 	if mm.schedules == nil {

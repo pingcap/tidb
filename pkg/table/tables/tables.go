@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -138,15 +139,21 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 
 		col := table.ToColumn(colInfo)
 		if col.IsGenerated() {
-			expr, err := generatedexpr.ParseExpression(colInfo.GeneratedExprString)
+			genStr := colInfo.GeneratedExprString
+			expr, err := buildGeneratedExpr(tblInfo, genStr)
 			if err != nil {
 				return nil, err
 			}
-			expr, err = generatedexpr.SimpleResolveName(expr, tblInfo)
-			if err != nil {
-				return nil, err
-			}
-			col.GeneratedExpr = expr
+			col.GeneratedExpr = table.NewClonableExprNode(func() ast.ExprNode {
+				newExpr, err1 := buildGeneratedExpr(tblInfo, genStr)
+				if err1 != nil {
+					logutil.BgLogger().Warn("unexpected parse generated string error",
+						zap.String("generatedStr", genStr),
+						zap.Error(err1))
+					return expr
+				}
+				return newExpr
+			}, expr)
 		}
 		// default value is expr.
 		if col.DefaultIsExpr {
@@ -175,6 +182,18 @@ func TableFromMeta(allocs autoid.Allocators, tblInfo *model.TableInfo) (table.Ta
 		return &t, nil
 	}
 	return newPartitionedTable(&t, tblInfo)
+}
+
+func buildGeneratedExpr(tblInfo *model.TableInfo, genExpr string) (ast.ExprNode, error) {
+	expr, err := generatedexpr.ParseExpression(genExpr)
+	if err != nil {
+		return nil, err
+	}
+	expr, err = generatedexpr.SimpleResolveName(expr, tblInfo)
+	if err != nil {
+		return nil, err
+	}
+	return expr, nil
 }
 
 // initTableCommon initializes a TableCommon struct.
@@ -549,7 +568,8 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	key := t.RecordKey(h)
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
 	checksums, writeBufs.RowValBuf = t.calcChecksums(sctx, h, checksumData, writeBufs.RowValBuf)
-	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
+	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
+	err = sc.HandleError(err)
 	if err != nil {
 		return err
 	}
@@ -601,12 +621,12 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	}
 	colSize := make(map[int64]int64, len(t.Cols()))
 	for id, col := range t.Cols() {
-		size, err := codec.EstimateValueSize(sc, newData[id])
+		size, err := codec.EstimateValueSize(sc.TypeCtx(), newData[id])
 		if err != nil {
 			continue
 		}
 		newLen := size - 1
-		size, err = codec.EstimateValueSize(sc, oldData[id])
+		size, err = codec.EstimateValueSize(sc.TypeCtx(), oldData[id])
 		if err != nil {
 			continue
 		}
@@ -855,7 +875,8 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			}
 			tablecodec.TruncateIndexValues(tblInfo, pkIdx, pkDts)
 			var handleBytes []byte
-			handleBytes, err = codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, pkDts...)
+			handleBytes, err = codec.EncodeKey(sctx.GetSessionVars().StmtCtx.TimeZone(), nil, pkDts...)
+			err = sctx.GetSessionVars().StmtCtx.HandleError(err)
 			if err != nil {
 				return
 			}
@@ -987,7 +1008,8 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 		zap.Stringer("key", key))
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
 	checksums, writeBufs.RowValBuf = t.calcChecksums(sctx, recordID, checksumData, writeBufs.RowValBuf)
-	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc, row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
+	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
+	err = sc.HandleError(err)
 	if err != nil {
 		return nil, err
 	}
@@ -1011,7 +1033,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 			_, err = txn.Get(ctx, key)
 		}
 		if err == nil {
-			handleStr := getDuplicateErrorHandleString(t, recordID, r)
+			handleStr := getDuplicateErrorHandleString(t.Meta(), recordID, r)
 			return recordID, kv.ErrKeyExists.FastGenByArgs(handleStr, t.Meta().Name.String()+".PRIMARY")
 		} else if !kv.ErrNotExist.Equal(err) {
 			return recordID, err
@@ -1098,7 +1120,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 
 	colSize := make(map[int64]int64, len(r))
 	for id, col := range t.Cols() {
-		size, err := codec.EstimateValueSize(sc, r[id])
+		size, err := codec.EstimateValueSize(sc.TypeCtx(), r[id])
 		if err != nil {
 			continue
 		}
@@ -1144,6 +1166,8 @@ func (t *TableCommon) addIndices(sctx sessionctx.Context, recordID kv.Handle, r 
 		}
 		var dupErr error
 		if !skipCheck && v.Meta().Unique {
+			// Make error message consistent with MySQL.
+			tablecodec.TruncateIndexValues(t.meta, v.Meta(), indexVals)
 			entryKey, err := genIndexKeyStr(indexVals)
 			if err != nil {
 				return nil, err
@@ -1373,7 +1397,7 @@ func (t *TableCommon) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []type
 	}
 	colSize := make(map[int64]int64, len(t.Cols()))
 	for id, col := range t.Cols() {
-		size, err := codec.EstimateValueSize(sc, r[id])
+		size, err := codec.EstimateValueSize(sc.TypeCtx(), r[id])
 		if err != nil {
 			continue
 		}
@@ -1389,11 +1413,13 @@ func (t *TableCommon) addInsertBinlog(ctx sessionctx.Context, h kv.Handle, row [
 	if err != nil {
 		return err
 	}
-	pk, err := codec.EncodeValue(ctx.GetSessionVars().StmtCtx, nil, handleData...)
+	pk, err := codec.EncodeValue(ctx.GetSessionVars().StmtCtx.TimeZone(), nil, handleData...)
+	err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 	if err != nil {
 		return err
 	}
-	value, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx, row, colIDs, nil, nil)
+	value, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx.TimeZone(), row, colIDs, nil, nil)
+	err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 	if err != nil {
 		return err
 	}
@@ -1404,11 +1430,13 @@ func (t *TableCommon) addInsertBinlog(ctx sessionctx.Context, h kv.Handle, row [
 }
 
 func (t *TableCommon) addUpdateBinlog(ctx sessionctx.Context, oldRow, newRow []types.Datum, colIDs []int64) error {
-	old, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx, oldRow, colIDs, nil, nil)
+	old, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx.TimeZone(), oldRow, colIDs, nil, nil)
+	err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 	if err != nil {
 		return err
 	}
-	newVal, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx, newRow, colIDs, nil, nil)
+	newVal, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx.TimeZone(), newRow, colIDs, nil, nil)
+	err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 	if err != nil {
 		return err
 	}
@@ -1420,7 +1448,8 @@ func (t *TableCommon) addUpdateBinlog(ctx sessionctx.Context, oldRow, newRow []t
 }
 
 func (t *TableCommon) addDeleteBinlog(ctx sessionctx.Context, r []types.Datum, colIDs []int64) error {
-	data, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx, r, colIDs, nil, nil)
+	data, err := tablecodec.EncodeOldRow(ctx.GetSessionVars().StmtCtx.TimeZone(), r, colIDs, nil, nil)
+	err = ctx.GetSessionVars().StmtCtx.HandleError(err)
 	if err != nil {
 		return err
 	}
@@ -1528,6 +1557,7 @@ func (t *TableCommon) buildIndexForRow(ctx sessionctx.Context, h kv.Handle, vals
 	if _, err := idx.Create(ctx, txn, vals, h, rsData, opts...); err != nil {
 		if kv.ErrKeyExists.Equal(err) {
 			// Make error message consistent with MySQL.
+			tablecodec.TruncateIndexValues(t.meta, idx.Meta(), vals)
 			entryKey, err1 := genIndexKeyStr(vals)
 			if err1 != nil {
 				// if genIndexKeyStr failed, return the original error.
@@ -1974,29 +2004,25 @@ func FindIndexByColName(t table.Table, name string) table.Index {
 	return nil
 }
 
-func getDuplicateErrorHandleString(t table.Table, handle kv.Handle, row []types.Datum) string {
+func getDuplicateErrorHandleString(tblInfo *model.TableInfo, handle kv.Handle, row []types.Datum) string {
 	if handle.IsInt() {
 		return kv.GetDuplicateErrorHandleString(handle)
 	}
-	var pk table.Index
-	for _, idx := range t.Indices() {
-		if idx.Meta().Primary {
-			pk = idx
-			break
-		}
-	}
-	if pk == nil {
+	pkIdx := FindPrimaryIndex(tblInfo)
+	if pkIdx == nil {
 		return kv.GetDuplicateErrorHandleString(handle)
 	}
-	var err error
-	str := make([]string, len(pk.Meta().Columns))
-	for i, col := range pk.Meta().Columns {
-		str[i], err = row[col.Offset].ToString()
-		if err != nil {
-			return kv.GetDuplicateErrorHandleString(handle)
-		}
+	pkDts := make([]types.Datum, 0, len(pkIdx.Columns))
+	for _, idxCol := range pkIdx.Columns {
+		pkDts = append(pkDts, row[idxCol.Offset])
 	}
-	return strings.Join(str, "-")
+	tablecodec.TruncateIndexValues(tblInfo, pkIdx, pkDts)
+	entryKey, err := genIndexKeyStr(pkDts)
+	if err != nil {
+		// if genIndexKeyStr failed, return DuplicateErrorHandleString.
+		return kv.GetDuplicateErrorHandleString(handle)
+	}
+	return entryKey
 }
 
 func init() {
@@ -2314,7 +2340,8 @@ func SetPBColumnsDefaultValue(ctx sessionctx.Context, pbColumns []*tipb.ColumnIn
 			return err
 		}
 
-		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(sessVars.StmtCtx, nil, d)
+		pbColumns[i].DefaultVal, err = tablecodec.EncodeValue(sessVars.StmtCtx.TimeZone(), nil, d)
+		err = sessVars.StmtCtx.HandleError(err)
 		if err != nil {
 			return err
 		}

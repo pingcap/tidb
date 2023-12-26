@@ -100,11 +100,6 @@ split table t by ('aaa', 100.0), ('qqq', 20.0), ('zzz', 100.0), ('zzz', 1000.0);
 TOTAL_SPLIT_REGION	SCATTER_FINISH_RATIO
 3	1
 drop table t;
-create table t (a int, b int, c int, d int, primary key(a, c, d));
-split table t between (0, 0, 0) and (0, 0, 1) regions 1000;
-TOTAL_SPLIT_REGION	SCATTER_FINISH_RATIO
-999	1
-drop table t;
 create table t (a int, b int, c int, d int, primary key(d, a, c));
 split table t by (0, 0, 0), (1, 2, 3), (65535, 65535, 65535);
 TOTAL_SPLIT_REGION	SCATTER_FINISH_RATIO
@@ -116,5 +111,5 @@ Error 1265 (01000): Incorrect value: '' for column 'b'
 drop table t;
 CREATE TABLE t (`id` varchar(10) NOT NULL, primary key (`id`) CLUSTERED);
 split table t index `primary` between (0) and (1000) regions 2;
-Error 1176 (42000): Key 'primary' doesn't exist in table 't'
+Error 1176 (42000): unable to split clustered index, please split table instead.
 set tidb_enable_clustered_index=default;

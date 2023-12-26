@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/util/benchdaily"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -43,7 +44,7 @@ import (
 var smallCount = 100
 var bigCount = 10000
 
-func prepareBenchSession() (Session, *domain.Domain, kv.Storage) {
+func prepareBenchSession() (sessiontypes.Session, *domain.Domain, kv.Storage) {
 	config.UpdateGlobal(func(cfg *config.Config) {
 		cfg.Instance.EnableSlowLog.Store(false)
 	})
@@ -65,7 +66,7 @@ func prepareBenchSession() (Session, *domain.Domain, kv.Storage) {
 	return se, domain, store
 }
 
-func prepareBenchData(se Session, colType string, valueFormat string, valueCount int) {
+func prepareBenchData(se sessiontypes.Session, colType string, valueFormat string, valueCount int) {
 	mustExecute(se, "drop table if exists t")
 	mustExecute(se, fmt.Sprintf("create table t (pk int primary key auto_increment, col %s, index idx (col))", colType))
 	mustExecute(se, "begin")
@@ -75,7 +76,7 @@ func prepareBenchData(se Session, colType string, valueFormat string, valueCount
 	mustExecute(se, "commit")
 }
 
-func prepareNonclusteredBenchData(se Session, colType string, valueFormat string, valueCount int) {
+func prepareNonclusteredBenchData(se sessiontypes.Session, colType string, valueFormat string, valueCount int) {
 	mustExecute(se, "drop table if exists t")
 	mustExecute(se, fmt.Sprintf("create table t (pk int primary key /*T![clustered_index] NONCLUSTERED */ auto_increment, col %s, index idx (col))", colType))
 	mustExecute(se, "begin")
@@ -85,7 +86,7 @@ func prepareNonclusteredBenchData(se Session, colType string, valueFormat string
 	mustExecute(se, "commit")
 }
 
-func prepareSortBenchData(se Session, colType string, valueFormat string, valueCount int) {
+func prepareSortBenchData(se sessiontypes.Session, colType string, valueFormat string, valueCount int) {
 	mustExecute(se, "drop table if exists t")
 	mustExecute(se, fmt.Sprintf("create table t (pk int primary key auto_increment, col %s)", colType))
 	mustExecute(se, "begin")
@@ -100,7 +101,7 @@ func prepareSortBenchData(se Session, colType string, valueFormat string, valueC
 	mustExecute(se, "commit")
 }
 
-func prepareJoinBenchData(se Session, colType string, valueFormat string, valueCount int) {
+func prepareJoinBenchData(se sessiontypes.Session, colType string, valueFormat string, valueCount int) {
 	mustExecute(se, "drop table if exists t")
 	mustExecute(se, fmt.Sprintf("create table t (pk int primary key auto_increment, col %s)", colType))
 	mustExecute(se, "begin")
@@ -125,7 +126,7 @@ func readResult(ctx context.Context, rs sqlexec.RecordSet, count int) {
 	rs.Close()
 }
 
-func hasPlan(ctx context.Context, b *testing.B, se Session, plan string) {
+func hasPlan(ctx context.Context, b *testing.B, se sessiontypes.Session, plan string) {
 	find := false
 	rs, err := se.Execute(ctx, "explain select * from t where col = 'hello 64'")
 	if err != nil {

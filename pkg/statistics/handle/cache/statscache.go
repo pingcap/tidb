@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/metrics"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -35,11 +36,11 @@ import (
 type StatsCacheImpl struct {
 	atomic.Pointer[StatsCache]
 
-	statsHandle util.StatsHandle
+	statsHandle types.StatsHandle
 }
 
 // NewStatsCacheImpl creates a new StatsCache.
-func NewStatsCacheImpl(statsHandle util.StatsHandle) (util.StatsCache, error) {
+func NewStatsCacheImpl(statsHandle types.StatsHandle) (types.StatsCache, error) {
 	newCache, err := NewStatsCache()
 	if err != nil {
 		return nil, err
@@ -52,7 +53,7 @@ func NewStatsCacheImpl(statsHandle util.StatsHandle) (util.StatsCache, error) {
 }
 
 // NewStatsCacheImplForTest creates a new StatsCache for test.
-func NewStatsCacheImplForTest() (util.StatsCache, error) {
+func NewStatsCacheImplForTest() (types.StatsCache, error) {
 	return NewStatsCacheImpl(nil)
 }
 
@@ -100,7 +101,7 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 		tbl, err := s.statsHandle.TableStatsFromStorage(tableInfo, physicalID, false, 0)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
-			statslogutil.StatsLogger.Error("error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
+			statslogutil.StatsLogger().Error("error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
 			continue
 		}
 		if tbl == nil {
@@ -119,7 +120,7 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 }
 
 // Replace replaces this cache.
-func (s *StatsCacheImpl) Replace(cache util.StatsCache) {
+func (s *StatsCacheImpl) Replace(cache types.StatsCache) {
 	x := cache.(*StatsCacheImpl)
 	s.replace(x.Load())
 }

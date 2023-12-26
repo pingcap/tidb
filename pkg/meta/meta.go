@@ -78,6 +78,7 @@ var (
 	mPolicyGlobalID      = []byte("PolicyGlobalID")
 	mPolicyMagicByte     = CurrentMagicByteVer
 	mDDLTableVersion     = []byte("DDLTableVersion")
+	mBDRRole             = []byte("BDRRole")
 	mMetaDataLock        = []byte("metadataLock")
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
@@ -680,10 +681,23 @@ func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 	return m.txn.HSet(dbKey, tableKey, data)
 }
 
+// SetBDRRole write BDR role into storage.
+func (m *Meta) SetBDRRole(role string) error {
+	return errors.Trace(m.txn.Set(mBDRRole, []byte(role)))
+}
+
+// GetBDRRole get BDR role from storage.
+func (m *Meta) GetBDRRole() (string, error) {
+	v, err := m.txn.Get(mBDRRole)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return string(v), nil
+}
+
 // SetDDLTables write a key into storage.
 func (m *Meta) SetDDLTables(ddlTableVersion DDLTableVersion) error {
-	err := m.txn.Set(mDDLTableVersion, ddlTableVersion.Bytes())
-	return errors.Trace(err)
+	return errors.Trace(m.txn.Set(mDDLTableVersion, ddlTableVersion.Bytes()))
 }
 
 // CheckDDLTableVersion check if the tables related to concurrent DDL exists.
@@ -942,6 +956,38 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 		}
 
 		tbInfo := &model.TableInfo{}
+		err = json.Unmarshal(r.Value, tbInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		tables = append(tables, tbInfo)
+	}
+
+	return tables, nil
+}
+
+// ListSimpleTables shows all simple tables in database.
+func (m *Meta) ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error) {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	res, err := m.txn.HGetAll(dbKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tables := make([]*model.TableNameInfo, 0, len(res)/2)
+	for _, r := range res {
+		// only handle table meta
+		tableKey := string(r.Field)
+		if !strings.HasPrefix(tableKey, mTablePrefix) {
+			continue
+		}
+
+		tbInfo := &model.TableNameInfo{}
 		err = json.Unmarshal(r.Value, tbInfo)
 		if err != nil {
 			return nil, errors.Trace(err)

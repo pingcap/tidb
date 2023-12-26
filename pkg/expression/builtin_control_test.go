@@ -131,7 +131,7 @@ func TestIfNull(t *testing.T) {
 	for _, tt := range tbl {
 		f, err := newFunctionForTest(ctx, ast.Ifnull, primitiveValsToConstants(ctx, []interface{}{tt.arg1, tt.arg2})...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if tt.getErr {
 			require.Error(t, err)
 		} else {

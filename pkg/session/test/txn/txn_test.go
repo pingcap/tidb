@@ -316,32 +316,6 @@ func TestAutoCommitRespectsReadOnly(t *testing.T) {
 	tk1.MustExec("SET GLOBAL tidb_super_read_only = 0")
 }
 
-func TestRetryForCurrentTxn(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("create table history (a int)")
-	tk.MustExec("insert history values (1)")
-
-	// Firstly, enable retry.
-	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
-	tk.MustExec("begin")
-	tk.MustExec("update history set a = 2")
-	// Disable retry now.
-	tk.MustExec("set tidb_disable_txn_auto_retry = 1")
-
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk1.MustExec("update history set a = 3")
-
-	tk.MustExec("commit")
-	tk.MustQuery("select * from history").Check(testkit.Rows("2"))
-}
-
 func TestBatchCommit(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	setTxnTk := testkit.NewTestKit(t, store)
@@ -603,29 +577,4 @@ func TestInTrans(t *testing.T) {
 	require.True(t, txn.Valid())
 	tk.MustExec("rollback")
 	require.False(t, txn.Valid())
-}
-
-func TestCommitRetryCount(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-
-	tk1.MustExec("create table no_retry (id int)")
-	tk1.MustExec("insert into no_retry values (1)")
-	tk1.MustExec("set @@tidb_retry_limit = 0")
-
-	tk1.MustExec("begin")
-	tk1.MustExec("update no_retry set id = 2")
-
-	tk2.MustExec("begin")
-	tk2.MustExec("update no_retry set id = 3")
-	tk2.MustExec("commit")
-
-	// No auto retry because retry limit is set to 0.
-	require.Error(t, tk1.ExecToErr("commit"))
 }

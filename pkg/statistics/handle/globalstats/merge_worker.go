@@ -43,8 +43,11 @@ type topnStatsMergeWorker struct {
 	respCh chan<- *TopnStatsMergeResponse
 	// the stats in the wrapper should only be read during the worker
 	statsWrapper *StatsWrapper
+	// Different TopN structures may hold the same value, we have to merge them.
+	counter map[hack.MutableString]float64
 	// shardMutex is used to protect `statsWrapper.AllHg`
 	shardMutex []sync.Mutex
+	mu         sync.Mutex
 }
 
 // NewTopnStatsMergeWorker returns topn merge worker
@@ -54,8 +57,9 @@ func NewTopnStatsMergeWorker(
 	wrapper *StatsWrapper,
 	killer *sqlkiller.SQLKiller) *topnStatsMergeWorker {
 	worker := &topnStatsMergeWorker{
-		taskCh: taskCh,
-		respCh: respCh,
+		taskCh:  taskCh,
+		respCh:  respCh,
+		counter: make(map[hack.MutableString]float64),
 	}
 	worker.statsWrapper = wrapper
 	worker.shardMutex = make([]sync.Mutex, len(wrapper.AllHg))
@@ -79,15 +83,11 @@ func NewTopnStatsMergeTask(start, end int) *TopnStatsMergeTask {
 
 // TopnStatsMergeResponse indicates topn merge worker response
 type TopnStatsMergeResponse struct {
-	Err       error
-	TopN      *statistics.TopN
-	PopedTopn []statistics.TopNMeta
+	Err error
 }
 
 // Run runs topn merge like statistics.MergePartTopN2GlobalTopN
-func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
-	n uint32,
-	version int) {
+func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool, version int) {
 	for task := range worker.taskCh {
 		start := task.start
 		end := task.end
@@ -95,18 +95,14 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 		allTopNs := worker.statsWrapper.AllTopN
 		allHists := worker.statsWrapper.AllHg
 		resp := &TopnStatsMergeResponse{}
-		if statistics.CheckEmptyTopNs(checkTopNs) {
-			worker.respCh <- resp
-			return
-		}
+
 		partNum := len(allTopNs)
-		// Different TopN structures may hold the same value, we have to merge them.
-		counter := make(map[hack.MutableString]float64)
+
 		// datumMap is used to store the mapping from the string type to datum type.
 		// The datum is used to find the value in the histogram.
 		datumMap := statistics.NewDatumMapCache()
-
 		for i, topN := range checkTopNs {
+			i = i + start
 			if err := worker.killer.HandleSignal(); err != nil {
 				resp.Err = err
 				worker.respCh <- resp
@@ -117,12 +113,15 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 			}
 			for _, val := range topN.TopN {
 				encodedVal := hack.String(val.Encoded)
-				_, exists := counter[encodedVal]
-				counter[encodedVal] += float64(val.Count)
+				worker.mu.Lock()
+				_, exists := worker.counter[encodedVal]
+				worker.counter[encodedVal] += float64(val.Count)
 				if exists {
+					worker.mu.Unlock()
 					// We have already calculated the encodedVal from the histogram, so just continue to next topN value.
 					continue
 				}
+				worker.mu.Unlock()
 				// We need to check whether the value corresponding to encodedVal is contained in other partition-level stats.
 				// 1. Check the topN first.
 				// 2. If the topN doesn't contain the value corresponding to encodedVal. We should check the histogram.
@@ -146,31 +145,26 @@ func (worker *topnStatsMergeWorker) Run(timeZone *time.Location, isIndex bool,
 						}
 						datum = d
 					}
+					worker.shardMutex[j].Lock()
 					// Get the row count which the value is equal to the encodedVal from histogram.
 					count, _ := allHists[j].EqualRowCount(nil, datum, isIndex)
 					if count != 0 {
-						counter[encodedVal] += count
 						// Remove the value corresponding to encodedVal from the histogram.
-						worker.shardMutex[j].Lock()
 						worker.statsWrapper.AllHg[j].BinarySearchRemoveVal(statistics.TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
-						worker.shardMutex[j].Unlock()
+					}
+					worker.shardMutex[j].Unlock()
+					if count != 0 {
+						worker.mu.Lock()
+						worker.counter[encodedVal] += count
+						worker.mu.Unlock()
 					}
 				}
 			}
 		}
-		numTop := len(counter)
-		if numTop == 0 {
-			worker.respCh <- resp
-			continue
-		}
-		sorted := make([]statistics.TopNMeta, 0, numTop)
-		for value, cnt := range counter {
-			data := hack.Slice(string(value))
-			sorted = append(sorted, statistics.TopNMeta{Encoded: data, Count: uint64(cnt)})
-		}
-		globalTopN, leftTopN := statistics.GetMergedTopNFromSortedSlice(sorted, n)
-		resp.TopN = globalTopN
-		resp.PopedTopn = leftTopN
 		worker.respCh <- resp
 	}
+}
+
+func (worker *topnStatsMergeWorker) Result() map[hack.MutableString]float64 {
+	return worker.counter
 }

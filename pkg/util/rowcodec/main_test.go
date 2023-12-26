@@ -16,8 +16,8 @@ package rowcodec
 
 import (
 	"testing"
+	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -36,7 +36,7 @@ func TestMain(m *testing.M) {
 
 // EncodeFromOldRow encodes a row from an old-format row.
 // this method will be used in test.
-func EncodeFromOldRow(encoder *Encoder, sc *stmtctx.StatementContext, oldRow, buf []byte) ([]byte, error) {
+func EncodeFromOldRow(encoder *Encoder, loc *time.Location, oldRow, buf []byte) ([]byte, error) {
 	if len(oldRow) > 0 && oldRow[0] == CodecVer {
 		return oldRow, nil
 	}
@@ -56,7 +56,7 @@ func EncodeFromOldRow(encoder *Encoder, sc *stmtctx.StatementContext, oldRow, bu
 		encoder.appendColVal(colID, &d)
 	}
 	numCols, notNullIdx := encoder.reformatCols()
-	err := encoder.encodeRowCols(sc, numCols, notNullIdx)
+	err := encoder.encodeRowCols(loc, numCols, notNullIdx)
 	if err != nil {
 		return nil, err
 	}

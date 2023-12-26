@@ -331,7 +331,7 @@ func (*PushSelDownTiKVSingleGather) OnTransform(old *memo.ExprIter) (newExprs []
 	childGroup := old.Children[0].Children[0].Group
 	var pushed, remained []expression.Expression
 	sctx := sg.SCtx()
-	pushed, remained = expression.PushDownExprs(sctx.GetSessionVars().StmtCtx, sel.Conditions, sctx.GetClient(), kv.TiKV)
+	pushed, remained = expression.PushDownExprs(sctx, sel.Conditions, sctx.GetClient(), kv.TiKV)
 	if len(pushed) == 0 {
 		return nil, false, false, nil
 	}
@@ -549,8 +549,9 @@ func (*PushSelDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.
 	}
 	canBePushed := make([]expression.Expression, 0, len(sel.Conditions))
 	canNotBePushed := make([]expression.Expression, 0, len(sel.Conditions))
+	ctx := sel.SCtx()
 	for _, cond := range sel.Conditions {
-		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(cond, projSchema, proj.Exprs, true)
+		substituted, hasFailed, newFilter := expression.ColumnSubstituteImpl(ctx, cond, projSchema, proj.Exprs, true)
 		if substituted && !hasFailed && !expression.HasGetSetVarFunc(newFilter) {
 			canBePushed = append(canBePushed, newFilter)
 		} else {
@@ -938,8 +939,8 @@ func (*pushDownJoin) predicatePushDown(
 	default:
 		// TODO: Enhance this rule to deal with Semi/SmiAnti Joins.
 	}
-	leftCond = expression.RemoveDupExprs(sctx, leftCond)
-	rightCond = expression.RemoveDupExprs(sctx, rightCond)
+	leftCond = expression.RemoveDupExprs(leftCond)
+	rightCond = expression.RemoveDupExprs(rightCond)
 
 	return
 }
@@ -1121,7 +1122,7 @@ func (*EliminateProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gr
 
 	oldCols := old.GetExpr().Group.Prop.Schema.Columns
 	for i, col := range child.Group.Prop.Schema.Columns {
-		if !col.Equal(nil, oldCols[i]) {
+		if !col.EqualColumn(oldCols[i]) {
 			return nil, false, false, nil
 		}
 	}
@@ -1168,7 +1169,7 @@ func (*MergeAdjacentProjection) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	replace := make(map[string]*expression.Column)
 	for i, col := range childGroup.Prop.Schema.Columns {
 		if colOrigin, ok := child.Exprs[i].(*expression.Column); ok {
-			replace[string(col.HashCode(nil))] = colOrigin
+			replace[string(col.HashCode())] = colOrigin
 		}
 	}
 
@@ -1303,15 +1304,16 @@ func (*PushTopNDownProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo
 	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
 	childGroup := old.Children[0].GetExpr().Children[0]
 
+	ctx := topN.SCtx()
 	newTopN := plannercore.LogicalTopN{
 		Offset: topN.Offset,
 		Count:  topN.Count,
-	}.Init(topN.SCtx(), topN.SelectBlockOffset())
+	}.Init(ctx, topN.SelectBlockOffset())
 
 	newTopN.ByItems = make([]*util.ByItems, 0, len(topN.ByItems))
 	for _, by := range topN.ByItems {
 		newTopN.ByItems = append(newTopN.ByItems, &util.ByItems{
-			Expr: expression.ColumnSubstitute(by.Expr, old.Children[0].Group.Prop.Schema, proj.Exprs),
+			Expr: expression.ColumnSubstitute(ctx, by.Expr, old.Children[0].Group.Prop.Schema, proj.Exprs),
 			Desc: by.Desc,
 		})
 	}
@@ -1522,9 +1524,10 @@ func (*MergeAggregationProjection) OnTransform(old *memo.ExprIter) (newExprs []*
 	proj := old.Children[0].GetExpr().ExprNode.(*plannercore.LogicalProjection)
 	projSchema := old.Children[0].GetExpr().Schema()
 
+	ctx := oldAgg.SCtx()
 	groupByItems := make([]expression.Expression, len(oldAgg.GroupByItems))
 	for i, item := range oldAgg.GroupByItems {
-		groupByItems[i] = expression.ColumnSubstitute(item, projSchema, proj.Exprs)
+		groupByItems[i] = expression.ColumnSubstitute(ctx, item, projSchema, proj.Exprs)
 	}
 
 	aggFuncs := make([]*aggregation.AggFuncDesc, len(oldAgg.AggFuncs))
@@ -1532,7 +1535,7 @@ func (*MergeAggregationProjection) OnTransform(old *memo.ExprIter) (newExprs []*
 		aggFuncs[i] = aggFunc.Clone()
 		newArgs := make([]expression.Expression, len(aggFunc.Args))
 		for j, arg := range aggFunc.Args {
-			newArgs[j] = expression.ColumnSubstitute(arg, projSchema, proj.Exprs)
+			newArgs[j] = expression.ColumnSubstitute(ctx, arg, projSchema, proj.Exprs)
 		}
 		aggFuncs[i].Args = newArgs
 	}
@@ -1540,7 +1543,7 @@ func (*MergeAggregationProjection) OnTransform(old *memo.ExprIter) (newExprs []*
 	newAgg := plannercore.LogicalAggregation{
 		GroupByItems: groupByItems,
 		AggFuncs:     aggFuncs,
-	}.Init(oldAgg.SCtx(), oldAgg.SelectBlockOffset())
+	}.Init(ctx, oldAgg.SelectBlockOffset())
 
 	newAggExpr := memo.NewGroupExpr(newAgg)
 	newAggExpr.SetChildren(old.Children[0].GetExpr().Children...)

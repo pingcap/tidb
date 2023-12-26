@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func newTestKitWithRoot(t *testing.T, store kv.Storage) *testkit.TestKit {
@@ -431,11 +432,16 @@ func TestSlowQuery(t *testing.T) {
 			"1",
 			"0",
 			"0",
+			"default",
+			"0",
+			"0",
+			"0",
 			"abcd",
 			"60e9378c746d9a2be1c791047e008967cf252eb6de9167ad3aa6098fa2d523f4",
 			"",
 			"update t set i = 2;",
-			"select * from t_slim;"},
+			"select * from t_slim;",
+		},
 		{"2021-09-08 14:39:54.506967",
 			"427578666238083075",
 			"root",
@@ -505,6 +511,10 @@ func TestSlowQuery(t *testing.T) {
 			"0",
 			"0",
 			"0",
+			"0",
+			"rg1",
+			"96.66703066666668",
+			"3182.424414062492",
 			"0",
 			"",
 			"",
@@ -1028,7 +1038,7 @@ func TestStmtSummaryInternalQuery(t *testing.T) {
 		"where digest_text like \"select `original_sql` , `bind_sql` , `default_db` , status%\""
 	tk.MustQuery(sql).Check(testkit.Rows(
 		"select `original_sql` , `bind_sql` , `default_db` , status , `create_time` , `update_time` , charset , " +
-			"collation , source , `sql_digest` , `plan_digest` from `mysql` . `bind_info` where `update_time` > ? order by `update_time` , `create_time`"))
+			"collation , source , `sql_digest` , `plan_digest` , type from `mysql` . `bind_info` where `update_time` > ? order by `update_time` , `create_time`"))
 
 	// Test for issue #21642.
 	tk.MustQuery(`select tidb_version()`)
@@ -1205,8 +1215,12 @@ func TestTiDBTrx(t *testing.T) {
 	memDBTracker := memory.NewTracker(memory.LabelForMemDB, -1)
 	memDBTracker.Consume(19)
 	tk.Session().GetSessionVars().MemDBFootprint = memDBTracker
+
+	t1 := time.Date(2021, 5, 7, 4, 56, 48, 1000000, time.UTC)
+	t2 := time.Date(2021, 5, 20, 13, 16, 35, 778000000, time.UTC)
+
 	sm.TxnInfo[0] = &txninfo.TxnInfo{
-		StartTS:          424768545227014155,
+		StartTS:          oracle.GoTimeToTS(t1),
 		CurrentSQLDigest: digest.String(),
 		State:            txninfo.TxnIdle,
 		EntriesCount:     1,
@@ -1217,7 +1231,7 @@ func TestTiDBTrx(t *testing.T) {
 
 	blockTime2 := time.Date(2021, 05, 20, 13, 18, 30, 123456000, time.Local)
 	sm.TxnInfo[1] = &txninfo.TxnInfo{
-		StartTS:          425070846483628033,
+		StartTS:          oracle.GoTimeToTS(t2),
 		CurrentSQLDigest: "",
 		AllSQLDigests:    []string{"sql1", "sql2", digest.String()},
 		State:            txninfo.TxnLockAcquiring,
@@ -1243,8 +1257,11 @@ func TestTiDBTrx(t *testing.T) {
 	ALL_SQL_DIGESTS,
 	RELATED_TABLE_IDS
 	from information_schema.TIDB_TRX`).Check(testkit.Rows(
-		"424768545227014155 2021-05-07 12:56:48.001000 "+digest.String()+" update `test_tidb_trx` set `i` = `i` + ? Idle <nil> 1 19 2 root test [] ",
-		"425070846483628033 2021-05-20 21:16:35.778000 <nil> <nil> LockWaiting 2021-05-20 13:18:30.123456 0 19 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"] "))
+		"424768545227014144 "+t1.Local().Format(types.TimeFSPFormat)+" "+digest.String()+" update `test_tidb_trx` set `i` = `i` + ? Idle <nil> 1 19 2 root test [] ",
+		"425070846483628032 "+t2.Local().Format(types.TimeFSPFormat)+" <nil> <nil> LockWaiting "+
+			// `WAITING_START_TIME` will not be affected by time_zone, it is in memory and we assume that the system time zone will not change.
+			blockTime2.Format(types.TimeFSPFormat)+
+			" 0 19 10 user1 db1 [\"sql1\",\"sql2\",\""+digest.String()+"\"] "))
 
 	rows := tk.MustQuery(`select WAITING_TIME from information_schema.TIDB_TRX where WAITING_TIME is not null`)
 	require.Len(t, rows.Rows(), 1)
@@ -1416,4 +1433,12 @@ func TestAddFieldsForBinding(t *testing.T) {
 	require.Equal(t, rows[0][6], "utf8mb4_bin")
 	require.Equal(t, rows[0][7], "use_index(@`sel_1` `test`.`t` ), ignore_index(`t` `a`)")
 	require.Equal(t, rows[0][8], "select * from `t` where `a` = ?")
+}
+
+func TestClusterInfoTime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("SELECT START_TIME+1 FROM information_schema.CLUSTER_INFO")
+	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
+	require.Nil(t, warnings)
 }

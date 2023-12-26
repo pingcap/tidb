@@ -17,6 +17,7 @@ package types
 import (
 	"time"
 
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
@@ -61,6 +62,8 @@ const (
 	FlagSkipUTF8Check
 	// FlagSkipUTF8MB4Check indicates to skip the UTF8MB4 check when converting the value to an UTF8 string.
 	FlagSkipUTF8MB4Check
+	// FlagCastTimeToYearThroughConcat indicates to cast time to year through concatenation. For example, `00:19:59` will be converted to '1959'
+	FlagCastTimeToYearThroughConcat
 )
 
 // AllowNegativeToUnsigned indicates whether the flag `FlagAllowNegativeToUnsigned` is set
@@ -180,20 +183,33 @@ func (f Flags) WithIgnoreZeroDateErr(ignore bool) Flags {
 	return f &^ FlagIgnoreZeroDateErr
 }
 
+// CastTimeToYearThroughConcat whether `FlagCastTimeToYearThroughConcat` is set
+func (f Flags) CastTimeToYearThroughConcat() bool {
+	return f&FlagCastTimeToYearThroughConcat != 0
+}
+
+// WithCastTimeToYearThroughConcat returns a new flags with `FlagCastTimeToYearThroughConcat` set/unset according to the flag parameter
+func (f Flags) WithCastTimeToYearThroughConcat(flag bool) Flags {
+	if flag {
+		return f | FlagCastTimeToYearThroughConcat
+	}
+	return f &^ FlagCastTimeToYearThroughConcat
+}
+
 // Context provides the information when converting between different types.
 type Context struct {
-	flags           Flags
-	loc             *time.Location
-	appendWarningFn func(err error)
+	flags       Flags
+	loc         *time.Location
+	warnHandler contextutil.WarnHandler
 }
 
 // NewContext creates a new `Context`
-func NewContext(flags Flags, loc *time.Location, appendWarningFn func(err error)) Context {
-	intest.Assert(loc != nil && appendWarningFn != nil)
+func NewContext(flags Flags, loc *time.Location, handler contextutil.WarnHandler) Context {
+	intest.Assert(loc != nil && handler != nil)
 	return Context{
-		flags:           flags,
-		loc:             loc,
-		appendWarningFn: appendWarningFn,
+		flags:       flags,
+		loc:         loc,
+		warnHandler: handler,
 	}
 }
 
@@ -211,7 +227,7 @@ func (c *Context) WithFlags(f Flags) Context {
 
 // WithLocation returns a new context with the given location
 func (c *Context) WithLocation(loc *time.Location) Context {
-	intest.Assert(loc)
+	intest.AssertNotNil(loc)
 	ctx := *c
 	ctx.loc = loc
 	return ctx
@@ -219,7 +235,7 @@ func (c *Context) WithLocation(loc *time.Location) Context {
 
 // Location returns the location of the context
 func (c *Context) Location() *time.Location {
-	intest.Assert(c.loc)
+	intest.AssertNotNil(c.loc)
 	if c.loc == nil {
 		// c.loc should always not be nil, just make the code safe here.
 		return time.UTC
@@ -227,18 +243,13 @@ func (c *Context) Location() *time.Location {
 	return c.loc
 }
 
-// AppendWarning appends the error to warning. If the inner `appendWarningFn` is nil, do nothing.
+// AppendWarning appends the error to warning. If the inner `warnHandler` is nil, do nothing.
 func (c *Context) AppendWarning(err error) {
-	intest.Assert(c.appendWarningFn != nil)
-	if fn := c.appendWarningFn; fn != nil {
-		// appendWarningFn should always not be nil, check fn != nil here to just make code safe.
-		fn(err)
+	intest.Assert(c.warnHandler != nil)
+	if w := c.warnHandler; w != nil {
+		// warnHandler should always not be nil, check fn != nil here to just make code safe.
+		w.AppendWarning(err)
 	}
-}
-
-// AppendWarningFunc returns the inner `appendWarningFn`
-func (c *Context) AppendWarningFunc() func(err error) {
-	return c.appendWarningFn
 }
 
 // DefaultStmtFlags is the default flags for statement context with the flag `FlagAllowNegativeToUnsigned` set.
@@ -247,6 +258,10 @@ func (c *Context) AppendWarningFunc() func(err error) {
 const DefaultStmtFlags = StrictFlags | FlagAllowNegativeToUnsigned | FlagIgnoreZeroDateErr
 
 // DefaultStmtNoWarningContext is the context with default statement flags without any other special configuration
-var DefaultStmtNoWarningContext = NewContext(DefaultStmtFlags, time.UTC, func(_ error) {
-	// the error is ignored
-})
+var DefaultStmtNoWarningContext = NewContext(DefaultStmtFlags, time.UTC, contextutil.IgnoreWarn)
+
+// StrictContext is the most strict context which returns every error it meets
+//
+// this context should never append warnings
+// However, the implementation of `types` may still append some warnings. TODO: remove them in the future.
+var StrictContext = NewContext(StrictFlags, time.UTC, contextutil.IgnoreWarn)

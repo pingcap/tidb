@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -614,9 +615,9 @@ func (e *SimpleExec) executeBegin(ctx context.Context, s *ast.BeginStmt) error {
 	if s.ReadOnly {
 		noopFuncsMode := e.Ctx().GetSessionVars().NoopFuncsMode
 		if s.AsOf == nil && noopFuncsMode != variable.OnInt {
-			err := expression.ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
+			err := expression.ErrFunctionsNoopImpl.FastGenByArgs("READ ONLY")
 			if noopFuncsMode == variable.OffInt {
-				return err
+				return errors.Trace(err)
 			}
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
 		}
@@ -1143,7 +1144,7 @@ func (e *SimpleExec) executeCreateUser(ctx context.Context, s *ast.CreateUserStm
 				}
 				return exeerrors.ErrCannotUser.GenWithStackByArgs("CREATE USER", user)
 			}
-			err := infoschema.ErrUserAlreadyExists.GenWithStackByArgs(user)
+			err := infoschema.ErrUserAlreadyExists.FastGenByArgs(user)
 			e.Ctx().GetSessionVars().StmtCtx.AppendNote(err)
 			continue
 		}
@@ -1915,7 +1916,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		switch authTokenOptionHandler {
 		case noNeedAuthTokenOptions:
 			if len(authTokenOptions) > 0 {
-				err := errors.New("TOKEN_ISSUER is not needed for the auth plugin")
+				err := errors.NewNoStackError("TOKEN_ISSUER is not needed for the auth plugin")
 				e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
 			}
 		case OptionalAuthTokenOptions:
@@ -1930,7 +1931,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 					fields = append(fields, alterField{authTokenOption.Type.String() + "=%?", authTokenOption.Value})
 				}
 			} else {
-				err := errors.New("Auth plugin 'tidb_auth_plugin' needs TOKEN_ISSUER")
+				err := errors.NewNoStackError("Auth plugin 'tidb_auth_plugin' needs TOKEN_ISSUER")
 				e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
 			}
 		}
@@ -1977,7 +1978,7 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			return exeerrors.ErrCannotUser.GenWithStackByArgs("ALTER USER", strings.Join(failedUsers, ","))
 		}
 		for _, user := range failedUsers {
-			err := infoschema.ErrUserDropExists.GenWithStackByArgs(user)
+			err := infoschema.ErrUserDropExists.FastGenByArgs(user)
 			e.Ctx().GetSessionVars().StmtCtx.AppendNote(err)
 		}
 	}
@@ -2238,7 +2239,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 				failedUsers = append(failedUsers, user.String())
 				break
 			}
-			e.Ctx().GetSessionVars().StmtCtx.AppendNote(infoschema.ErrUserDropExists.GenWithStackByArgs(user))
+			e.Ctx().GetSessionVars().StmtCtx.AppendNote(infoschema.ErrUserDropExists.FastGenByArgs(user))
 		}
 
 		// Certain users require additional privileges in order to be modified.
@@ -2473,7 +2474,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
 		pwd = auth.NewHashPassword(s.Password, authplugin)
 	case mysql.AuthSocket:
-		e.Ctx().GetSessionVars().StmtCtx.AppendNote(exeerrors.ErrSetPasswordAuthPlugin.GenWithStackByArgs(u, h))
+		e.Ctx().GetSessionVars().StmtCtx.AppendNote(exeerrors.ErrSetPasswordAuthPlugin.FastGenByArgs(u, h))
 		pwd = ""
 	default:
 		pwd = auth.EncodePassword(s.Password)
@@ -2540,7 +2541,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 			}
 			sm.Kill(s.ConnectionID, s.Query, false)
 		} else {
-			err := errors.New("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
+			err := errors.NewNoStackError("Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 		return nil
@@ -2559,7 +2560,7 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 
 	gcid, isTruncated, err := globalconn.ParseConnID(s.ConnectionID)
 	if err != nil {
-		err1 := errors.New("Parse ConnectionID failed: " + err.Error())
+		err1 := errors.NewNoStackError("Parse ConnectionID failed: " + err.Error())
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err1)
 		return nil
 	}
@@ -2568,14 +2569,14 @@ func (e *SimpleExec) executeKillStmt(ctx context.Context, s *ast.KillStmt) error
 		logutil.BgLogger().Warn(message, zap.Uint64("conn", s.ConnectionID))
 		// Notice that this warning cannot be seen if KILL is triggered by "CTRL-C" of mysql client,
 		//   as the KILL is sent by a new connection.
-		err := errors.New(message)
+		err := errors.NewNoStackError(message)
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err)
 		return nil
 	}
 
 	if gcid.ServerID != sm.ServerID() {
 		if err := killRemoteConn(ctx, e.Ctx(), &gcid, s.Query); err != nil {
-			err1 := errors.New("KILL remote connection failed: " + err.Error())
+			err1 := errors.NewNoStackError("KILL remote connection failed: " + err.Error())
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(err1)
 		}
 	} else {
@@ -2786,6 +2787,8 @@ func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
 		return e.executeAdminReloadStatistics(s)
 	case ast.AdminFlushPlanCache:
 		return e.executeAdminFlushPlanCache(s)
+	case ast.AdminSetBDRRole:
+		return e.executeAdminSetBDRRole(s)
 	}
 	return nil
 }
@@ -2808,7 +2811,7 @@ func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {
 		return errors.New("Do not support the 'admin flush global scope.'")
 	}
 	if !e.Ctx().GetSessionVars().EnablePreparedPlanCache {
-		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New("The plan cache is disable. So there no need to flush the plan cache"))
+		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("The plan cache is disable. So there no need to flush the plan cache"))
 		return nil
 	}
 	now := types.NewTime(types.FromGoTime(time.Now().In(e.Ctx().GetSessionVars().StmtCtx.TimeZone())), mysql.TypeTimestamp, 3)
@@ -2820,6 +2823,16 @@ func (e *SimpleExec) executeAdminFlushPlanCache(s *ast.AdminStmt) error {
 		domain.GetDomain(e.Ctx()).SetExpiredTimeStamp4PC(now)
 	}
 	return nil
+}
+
+func (e *SimpleExec) executeAdminSetBDRRole(s *ast.AdminStmt) error {
+	if s.Tp != ast.AdminSetBDRRole {
+		return errors.New("This AdminStmt is not ADMIN SET BDR_ROLE")
+	}
+
+	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnAdmin), e.Ctx().GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+		return errors.Trace(meta.NewMeta(txn).SetBDRRole(string(s.BDRRole)))
+	})
 }
 
 func (e *SimpleExec) executeSetResourceGroupName(s *ast.SetResourceGroupStmt) error {

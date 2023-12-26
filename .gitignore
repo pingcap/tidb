@@ -6,7 +6,6 @@ coverage.out
 *.iml
 *.swp
 *.log
-*.test.bin
 tags
 profile.coverprofile
 mysql_tester
@@ -38,3 +37,5 @@ bazel-tidb
 .ijwb/
 /oom_record/
 *.log.json
+genkeyword
+test_coverage

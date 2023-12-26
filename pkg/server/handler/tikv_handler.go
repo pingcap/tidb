@@ -98,7 +98,8 @@ func (t *TikvHandlerTool) GetHandle(tb table.PhysicalTable, params map[string]st
 		}
 		tablecodec.TruncateIndexValues(tblInfo, pkIdx, pkDts)
 		var handleBytes []byte
-		handleBytes, err = codec.EncodeKey(sc, nil, pkDts...)
+		handleBytes, err = codec.EncodeKey(sc.TimeZone(), nil, pkDts...)
+		err = sc.HandleError(err)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

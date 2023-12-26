@@ -42,6 +42,7 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/errno"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
@@ -71,6 +72,7 @@ type TableImporter struct {
 	logger    log.Logger
 	kvStore   tidbkv.Storage
 	etcdCli   *clientv3.Client
+	autoidCli *autoid.ClientDiscover
 
 	// dupIgnoreRows tracks the rowIDs of rows that are duplicated and should be ignored.
 	dupIgnoreRows extsort.ExternalSorter
@@ -95,6 +97,7 @@ func NewTableImporter(
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
 	}
+	autoidCli := autoid.NewClientDiscover(etcdCli)
 
 	return &TableImporter{
 		tableName:     tableName,
@@ -105,6 +108,7 @@ func NewTableImporter(
 		alloc:         idAlloc,
 		kvStore:       kvStore,
 		etcdCli:       etcdCli,
+		autoidCli:     autoidCli,
 		logger:        logger.With(zap.String("table", tableName)),
 		ignoreColumns: ignoreColumns,
 	}, nil
@@ -328,9 +332,9 @@ func (tr *TableImporter) Store() tidbkv.Storage {
 	return tr.kvStore
 }
 
-// GetEtcdClient implements the autoid.Requirement interface.
-func (tr *TableImporter) GetEtcdClient() *clientv3.Client {
-	return tr.etcdCli
+// AutoIDClient implements the autoid.Requirement interface.
+func (tr *TableImporter) AutoIDClient() *autoid.ClientDiscover {
+	return tr.autoidCli
 }
 
 // RebaseChunkRowIDs rebase the row id of the chunks.
@@ -765,6 +769,13 @@ ChunkLoop:
 			break
 		}
 
+		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+			// TODO: use the compressed size of the chunk to conduct memory control
+			if _, err = getChunkCompressedSizeForParquet(ctx, chunk, rc.store); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+
 		restoreWorker := rc.regionWorkers.Apply()
 		wg.Add(1)
 		go func(w *worker.Worker, cr *chunkProcessor) {
@@ -987,6 +998,7 @@ func (tr *TableImporter) postProcess(
 	defer rc.checksumWorks.Recycle(w)
 
 	shouldSkipAnalyze := false
+	estimatedModifyCnt := 100_000_000
 	if cp.Status < checkpoints.CheckpointStatusChecksumSkipped {
 		// 4. do table checksum
 		var localChecksum verify.KVChecksum
@@ -995,6 +1007,11 @@ func (tr *TableImporter) postProcess(
 				localChecksum.Add(&chunk.Checksum)
 			}
 		}
+		indexNum := len(tr.tableInfo.Core.Indices)
+		if common.TableHasAutoRowID(tr.tableInfo.Core) {
+			indexNum++
+		}
+		estimatedModifyCnt = int(localChecksum.SumKVS()) / (1 + indexNum)
 		tr.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 
 		// 4.5. do duplicate detection.
@@ -1135,6 +1152,9 @@ func (tr *TableImporter) postProcess(
 	if cp.Status < checkpoints.CheckpointStatusAnalyzeSkipped {
 		switch {
 		case shouldSkipAnalyze || rc.cfg.PostRestore.Analyze == config.OpLevelOff:
+			if !shouldSkipAnalyze {
+				updateStatsMeta(ctx, rc.db, tr.tableInfo.ID, estimatedModifyCnt)
+			}
 			tr.logger.Info("skip analyze")
 			if err := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, nil, checkpoints.CheckpointStatusAnalyzeSkipped); err != nil {
 				return false, errors.Trace(err)
@@ -1158,6 +1178,70 @@ func (tr *TableImporter) postProcess(
 	}
 
 	return true, nil
+}
+
+func getChunkCompressedSizeForParquet(
+	ctx context.Context,
+	chunk *checkpoints.ChunkCheckpoint,
+	store storage.ExternalStorage,
+) (int64, error) {
+	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{})
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	parser, err := mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
+	if err != nil {
+		_ = reader.Close()
+		return 0, errors.Trace(err)
+	}
+	//nolint: errcheck
+	defer parser.Close()
+	err = parser.Reader.ReadFooter()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	rowGroups := parser.Reader.Footer.GetRowGroups()
+	var maxRowGroupSize int64
+	for _, rowGroup := range rowGroups {
+		var rowGroupSize int64
+		columnChunks := rowGroup.GetColumns()
+		for _, columnChunk := range columnChunks {
+			columnChunkSize := columnChunk.MetaData.GetTotalCompressedSize()
+			rowGroupSize += columnChunkSize
+		}
+		maxRowGroupSize = max(maxRowGroupSize, rowGroupSize)
+	}
+	return maxRowGroupSize, nil
+}
+
+func updateStatsMeta(ctx context.Context, db *sql.DB, tableID int64, count int) {
+	s := common.SQLWithRetry{
+		DB:     db,
+		Logger: log.FromContext(ctx).With(zap.Int64("tableID", tableID)),
+	}
+	err := s.Transact(ctx, "update stats_meta", func(ctx context.Context, tx *sql.Tx) error {
+		rs, err := tx.ExecContext(ctx, `
+update mysql.stats_meta
+	set modify_count = ?,
+		count = ?,
+		version = @@tidb_current_ts
+	where table_id = ?;
+`, count, count, tableID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		affected, err := rs.RowsAffected()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if affected == 0 {
+			return errors.Errorf("record with table_id %d not found", tableID)
+		}
+		return nil
+	})
+	if err != nil {
+		s.Logger.Warn("failed to update stats_meta", zap.Error(err))
+	}
 }
 
 func parseColumnPermutations(

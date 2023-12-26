@@ -73,9 +73,6 @@ func (d *ddl) RemoveReorgCtx(id int64) {
 	d.removeReorgCtx(id)
 }
 
-// JobNeedGCForTest is only used for test.
-var JobNeedGCForTest = jobNeedGC
-
 func createMockStore(t *testing.T) kv.Storage {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
