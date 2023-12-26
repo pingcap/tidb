@@ -32,7 +32,7 @@ import (
 // QBHintHandler is used to handle this cases.
 type QBHintHandler struct {
 	QBNameToSelOffset map[string]int                    // map[QBName]SelectOffset
-	SelOffsetToHints  map[int][]*ast.TableOptimizerHint // map[SelectOffset]Hints
+	QBOffsetToHints   map[int][]*ast.TableOptimizerHint // map[QueryBlockOffset]Hints
 
 	// Used for the view's hint
 	ViewQBNameToTable map[string][]ast.HintTable           // map[QBName]TableInfo
@@ -275,8 +275,8 @@ func (p *QBHintHandler) isHint4View(hint *ast.TableOptimizerHint) bool {
 
 // GetCurrentStmtHints extracts all hints that take effects at current stmt.
 func (p *QBHintHandler) GetCurrentStmtHints(hints []*ast.TableOptimizerHint, currentOffset int) []*ast.TableOptimizerHint {
-	if p.SelOffsetToHints == nil {
-		p.SelOffsetToHints = make(map[int][]*ast.TableOptimizerHint)
+	if p.QBOffsetToHints == nil {
+		p.QBOffsetToHints = make(map[int][]*ast.TableOptimizerHint)
 	}
 	for _, hint := range hints {
 		if hint.HintName.L == hintQBName {
@@ -290,9 +290,9 @@ func (p *QBHintHandler) GetCurrentStmtHints(hints []*ast.TableOptimizerHint, cur
 			}
 			continue
 		}
-		p.SelOffsetToHints[offset] = append(p.SelOffsetToHints[offset], hint)
+		p.QBOffsetToHints[offset] = append(p.QBOffsetToHints[offset], hint)
 	}
-	return p.SelOffsetToHints[currentOffset]
+	return p.QBOffsetToHints[currentOffset]
 }
 
 // GenerateQBName builds QBName from offset.

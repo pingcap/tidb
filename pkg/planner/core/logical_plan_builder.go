@@ -5554,7 +5554,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	hintProcessor.ViewQBNameToTable = qbNameMap4View
 	hintProcessor.ViewQBNameToHints = viewHints
 	hintProcessor.ViewQBNameUsed = make(map[string]struct{})
-	hintProcessor.SelOffsetToHints = currentQbHints
+	hintProcessor.QBOffsetToHints = currentQbHints
 	hintProcessor.QBNameToSelOffset = currentQbNameMap
 
 	originHintProcessor := b.hintProcessor
