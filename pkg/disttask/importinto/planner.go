@@ -324,7 +324,7 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, er
 				dataFiles = append(dataFiles, files[0])
 				statFiles = append(statFiles, files[1])
 			}
-			if startKey.Cmp(endKey) < 0 {
+			if startKey.Cmp(endKey) > 0 {
 				return nil, errors.Errorf("invalid kv range, startKey: %s, endKey: %s",
 					hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 			}
@@ -349,7 +349,7 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, er
 				dataFiles = append(dataFiles, files[0])
 				statFiles = append(statFiles, files[1])
 			}
-			if startKey.Cmp(endKey) < 0 {
+			if startKey.Cmp(endKey) > 0 {
 				return nil, errors.Errorf("invalid kv range, startKey: %s, endKey: %s",
 					hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 			}
