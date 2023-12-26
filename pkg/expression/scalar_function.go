@@ -206,9 +206,9 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	noopFuncsMode := ctx.GetSessionVars().NoopFuncsMode
 	if noopFuncsMode != variable.OnInt {
 		if _, ok := noopFuncs[funcName]; ok {
-			err := ErrFunctionsNoopImpl.GenWithStackByArgs(funcName)
+			err := ErrFunctionsNoopImpl.FastGenByArgs(funcName)
 			if noopFuncsMode == variable.OffInt {
-				return nil, err
+				return nil, errors.Trace(err)
 			}
 			// NoopFuncsMode is Warn, append an error
 			ctx.GetSessionVars().StmtCtx.AppendWarning(err)

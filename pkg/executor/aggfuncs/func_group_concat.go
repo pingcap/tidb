@@ -75,7 +75,7 @@ func (e *baseGroupConcat4String) handleTruncateError(sctx sessionctx.Context) (e
 		if !sctx.GetSessionVars().StmtCtx.TypeFlags().TruncateAsWarning() {
 			return expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].String())
 		}
-		sctx.GetSessionVars().StmtCtx.AppendWarning(expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].String()))
+		sctx.GetSessionVars().StmtCtx.AppendWarning(expression.ErrCutValueGroupConcat.FastGenByArgs(e.args[0].String()))
 	}
 	return nil
 }

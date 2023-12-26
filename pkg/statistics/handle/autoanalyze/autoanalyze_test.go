@@ -25,6 +25,8 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
@@ -400,6 +402,9 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 			makeFailpointRes(t, getMockedServerInfo()["s1"]),
 		),
 	)
+	defer func() {
+		failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetServerInfo")
+	}()
 
 	// Create a new chunk with capacity for three fields
 	c := chunk.NewChunkWithCapacity([]*types.FieldType{
@@ -433,9 +438,7 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 		gomock.All(&test.CtxMatcher{}),
 		statsutil.UseCurrentSessionOpt,
 		autoanalyze.BatchUpdateAnalyzeJobSQL,
-		[]interface{}{
-			"1",
-		},
+		[]interface{}{[]string{"1"}},
 	).Return(nil, nil, nil)
 
 	err := autoanalyze.CleanupCorruptedAnalyzeJobsOnCurrentInstance(
@@ -459,9 +462,7 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 		gomock.All(&test.CtxMatcher{}),
 		statsutil.UseCurrentSessionOpt,
 		autoanalyze.BatchUpdateAnalyzeJobSQL,
-		[]interface{}{
-			"1,3",
-		},
+		[]interface{}{[]string{"1", "3"}},
 	).Return(nil, nil, nil)
 
 	// No running analyze jobs on current instance.
@@ -484,6 +485,11 @@ func TestCleanupCorruptedAnalyzeJobsOnDeadInstances(t *testing.T) {
 			makeFailpointRes(t, getMockedServerInfo()),
 		),
 	)
+	defer func() {
+		require.NoError(
+			t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo"),
+		)
+	}()
 	// Create a new chunk with capacity for three fields
 	c := chunk.NewChunkWithCapacity([]*types.FieldType{
 		types.NewFieldType(mysql.TypeLonglong), // id
@@ -513,13 +519,40 @@ func TestCleanupCorruptedAnalyzeJobsOnDeadInstances(t *testing.T) {
 		gomock.All(&test.CtxMatcher{}),
 		statsutil.UseCurrentSessionOpt,
 		autoanalyze.BatchUpdateAnalyzeJobSQL,
-		[]interface{}{
-			"2",
-		},
+		[]interface{}{[]string{"2"}},
 	).Return(nil, nil, nil)
 
 	err := autoanalyze.CleanupCorruptedAnalyzeJobsOnDeadInstances(
 		mock.WrapAsSCtx(exec),
 	)
 	require.NoError(t, err)
+}
+
+func TestSkipAutoAnalyzeOutsideTheAvailableTime(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	ttStart := time.Now().Add(-2 * time.Hour)
+	ttEnd := time.Now().Add(-1 * time.Hour)
+	for i := 0; i < 2; i++ {
+		dbName := fmt.Sprintf("db%d", i)
+		tk.MustExec(fmt.Sprintf("create database %s", dbName))
+		for j := 0; j < 2; j++ {
+			tableName := fmt.Sprintf("table%d", j)
+			tk.MustExec(fmt.Sprintf("create table %s.%s (a int)", dbName, tableName))
+		}
+	}
+	se, err := dom.SysSessionPool().Get()
+	require.NoError(t, err)
+	require.False(t,
+		autoanalyze.RandomPickOneTableAndTryAutoAnalyze(
+			se.(sessionctx.Context),
+			dom.StatsHandle(),
+			dom.SysProcTracker(),
+			dom.InfoSchema(),
+			0.6,
+			variable.Dynamic,
+			ttStart,
+			ttEnd,
+		),
+	)
 }
