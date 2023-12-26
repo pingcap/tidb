@@ -160,6 +160,10 @@ func (p *parallelHashAggSpillHelper) isInSpillingNoLock() bool {
 	return p.lock.isSpilling == isSpillingFlag
 }
 
+func (p *parallelHashAggSpillHelper) setIsSpillingNoLock() {
+	p.lock.isSpilling = isSpillingFlag
+}
+
 func (p *parallelHashAggSpillHelper) setIsSpilling() {
 	p.lock.mu.Lock()
 	defer p.lock.mu.Unlock()
@@ -333,7 +337,7 @@ type ParallelAggSpillDiskAction struct {
 	memory.BaseOOMAction
 	e           *HashAggExec
 	spillHelper *parallelHashAggSpillHelper
-	once        sync.Once
+	spillTimes  atomic.Int32
 }
 
 // Action set HashAggExec spill mode.
@@ -347,6 +351,10 @@ func (p *ParallelAggSpillDiskAction) Action(t *memory.Tracker) {
 	}
 }
 
+func (p *ParallelAggSpillDiskAction) checkRestriction(t *memory.Tracker) bool {
+	return hasEnoughDataToSpill(p.e.memTracker, t) && p.spillTimes.Load() < maxSpillTimes
+}
+
 // Return false if we should keep executing.
 func (p *ParallelAggSpillDiskAction) actionImpl(t *memory.Tracker) bool {
 	p.spillHelper.lock.mu.Lock()
@@ -358,13 +366,17 @@ func (p *ParallelAggSpillDiskAction) actionImpl(t *memory.Tracker) bool {
 		return false
 	}
 
-	if !p.spillHelper.isSpillTriggeredNoLock() && hasEnoughDataToSpill(p.e.memTracker, t) {
-		p.once.Do(func() {
+	if p.checkRestriction(t) {
+		if !p.spillHelper.isInSpillingNoLock() {
+			p.spillHelper.setIsSpillingNoLock()
 			go func() {
 				p.doActionForParallelHashAgg(t)
+				p.spillTimes.Add(1)
+				p.spillHelper.resetIsSpilling()
 				p.spillHelper.lock.cond.Broadcast()
 			}()
-		})
+		}
+
 		return false
 	}
 
@@ -388,10 +400,8 @@ func (*ParallelAggSpillDiskAction) GetPriority() int64 {
 
 // syncLock has been held outside of this function
 func (p *ParallelAggSpillDiskAction) doActionForParallelHashAgg(t *memory.Tracker) {
-	p.spillHelper.setIsSpilling()
 	p.spillHelper.syncLock.Lock()
 	defer p.spillHelper.syncLock.Unlock()
-	defer p.spillHelper.resetIsSpilling()
 	if p.spillHelper.checkError() {
 		return
 	}
@@ -406,6 +416,7 @@ func (p *ParallelAggSpillDiskAction) doActionForParallelHashAgg(t *memory.Tracke
 	}
 
 	logutil.BgLogger().Info(spillLogInfo,
+		zap.Uint32("spillTimes", uint32(p.spillTimes.Load())),
 		zap.Int64("consumed", t.BytesConsumed()),
 		zap.Int64("quota", t.GetBytesLimit()))
 
