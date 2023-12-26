@@ -53,8 +53,9 @@ type AccessPath struct {
 	PartialIndexPaths []*AccessPath
 	// For every dnf/cnf item, there maybe several matched partial index paths to be determined later in property detecting and cost model.
 	PartialAlternativeIndexPaths [][]*AccessPath
+	ShouldBeKeptCurrentFilter    bool
 	// ShouldBeKeptCurrentFilter indicates that there are some expression inside this dnf that couldn't be pushed down, and we should keep the entire dnf above.
-	ShouldBeKeptCurrentFilter expression.Expression
+	ShouldBeKeptCurrentFilterExpression expression.Expression
 
 	// IndexMergeIsIntersection means whether it's intersection type or union type IndexMerge path.
 	// It's only valid for a IndexMerge path.
