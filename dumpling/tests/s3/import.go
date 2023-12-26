@@ -9,11 +9,9 @@ import (
 	"net"
 	"os"
 	"strconv"
-	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/spf13/cobra"
 	"golang.org/x/sync/errgroup"
 )
@@ -68,9 +66,6 @@ func main() {
 			return errors.Trace(err)
 		}
 
-		if strings.ContainsRune(table, ';') {
-			return berrors.ErrInvalidArgument
-		}
 		query := fmt.Sprintf("insert into %s values('aaaaaaaaaa')", table)
 		for i := 1; i < 10000; i++ {
 			query += ",('aaaaaaaaaa')"
