@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/extension"
@@ -1192,7 +1193,7 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 	vars := cc.getCtx().GetSessionVars()
 	resourceGroupName := vars.ResourceGroupName
 	var counter prometheus.Counter
-	if len(resourceGroupName) == 0 {
+	if len(resourceGroupName) == 0 || resourceGroupName == resourcegroup.DefaultResourceGroupName {
 		if err != nil && int(cmd) < len(server_metrics.QueryTotalCountErr) {
 			counter = server_metrics.QueryTotalCountErr[cmd]
 		} else if err == nil && int(cmd) < len(server_metrics.QueryTotalCountOk) {

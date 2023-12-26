@@ -111,9 +111,9 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	})
 
 	if preparedObj != nil {
-		CountStmtNode(preparedObj.PreparedAst.Stmt, sessVars.InRestrictedSQL, sessVars.ResourceGroupName)
+		CountStmtNode(preparedObj.PreparedAst.Stmt, sessVars.InRestrictedSQL, stmtCtx.ResourceGroup)
 	} else {
-		CountStmtNode(stmtNode, sessVars.InRestrictedSQL, sessVars.ResourceGroupName)
+		CountStmtNode(stmtNode, sessVars.InRestrictedSQL, stmtCtx.ResourceGroup)
 	}
 	var lowerPriority bool
 	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {
