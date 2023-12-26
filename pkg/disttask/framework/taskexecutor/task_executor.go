@@ -256,9 +256,13 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 			}
 		} else {
 			// subtask.State == proto.TaskStatePending
-			s.startSubtaskAndUpdateState(runCtx, subtask)
+			owned := s.startSubtaskAndUpdateState(runCtx, subtask)
 			if err := s.getError(); err != nil {
 				logutil.Logger(s.logCtx).Warn("startSubtaskAndUpdateState meets error", zap.Error(err))
+				continue
+			}
+			if !owned {
+				logutil.Logger(s.logCtx).Warn("subtask not owned by current task executor", zap.Error(err))
 				continue
 			}
 		}
@@ -530,22 +534,25 @@ func (s *BaseTaskExecutor) resetError() {
 	s.mu.handled = false
 }
 
-func (s *BaseTaskExecutor) startSubtaskAndUpdateState(ctx context.Context, subtask *proto.Subtask) {
-	metrics.DecDistTaskSubTaskCnt(subtask)
-	metrics.EndDistTaskSubTask(subtask)
-	s.startSubtask(ctx, subtask.ID)
-	subtask.State = proto.TaskStateRunning
-	metrics.IncDistTaskSubTaskCnt(subtask)
-	metrics.StartDistTaskSubTask(subtask)
+func (s *BaseTaskExecutor) startSubtaskAndUpdateState(ctx context.Context, subtask *proto.Subtask) bool {
+	owned := s.startSubtask(ctx, subtask.ID)
+	if owned {
+		metrics.DecDistTaskSubTaskCnt(subtask)
+		metrics.EndDistTaskSubTask(subtask)
+		subtask.State = proto.TaskStateRunning
+		metrics.IncDistTaskSubTaskCnt(subtask)
+		metrics.StartDistTaskSubTask(subtask)
+	}
+	return owned
 }
 
-func (s *BaseTaskExecutor) updateSubtaskStateAndErrorImpl(ctx context.Context, tidbID string, subtaskID int64, state proto.TaskState, subTaskErr error) {
+func (s *BaseTaskExecutor) updateSubtaskStateAndErrorImpl(ctx context.Context, execID string, subtaskID int64, state proto.TaskState, subTaskErr error) {
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	logger := logutil.Logger(s.logCtx)
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	err := handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
-			return true, s.taskTable.UpdateSubtaskStateAndError(ctx, tidbID, subtaskID, state, subTaskErr)
+			return true, s.taskTable.UpdateSubtaskStateAndError(ctx, execID, subtaskID, state, subTaskErr)
 		},
 	)
 	if err != nil {
@@ -553,18 +560,23 @@ func (s *BaseTaskExecutor) updateSubtaskStateAndErrorImpl(ctx context.Context, t
 	}
 }
 
-func (s *BaseTaskExecutor) startSubtask(ctx context.Context, subtaskID int64) {
+func (s *BaseTaskExecutor) startSubtask(ctx context.Context, subtaskID int64) bool {
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	logger := logutil.Logger(s.logCtx)
+	owned := false
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	err := handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
-			return true, s.taskTable.StartSubtask(ctx, subtaskID)
+			var err error
+			owned, err = s.taskTable.StartSubtask(ctx, subtaskID, s.id)
+			return true, err
 		},
 	)
 	if err != nil {
 		s.onError(err)
 	}
+
+	return owned
 }
 
 func (s *BaseTaskExecutor) finishSubtask(ctx context.Context, subtask *proto.Subtask) {

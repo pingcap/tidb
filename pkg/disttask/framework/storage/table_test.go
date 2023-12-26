@@ -491,6 +491,10 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, true, owned)
 
+	owned, err = sm.StartSubtask(ctx, 1, "tidb2")
+	require.NoError(t, err)
+	require.Equal(t, false, owned)
+
 	subtask, err = sm.GetFirstSubtaskInStates(ctx, "tidb1", 1, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Nil(t, subtask)
