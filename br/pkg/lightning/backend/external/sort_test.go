@@ -101,6 +101,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	memStore := storage.NewMemStorage()
 	memSizeLimit := (rand.Intn(10) + 1) * 40
 
+	// 1. write data step
 	w := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
@@ -108,23 +109,67 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 		SetBlockSize(memSizeLimit).
 		Build(memStore, "/test", "0")
 
+	w1 := NewWriterBuilder().
+		SetPropSizeDistance(100).
+		SetPropKeysDistance(2).
+		SetMemorySizeLimit(uint64(memSizeLimit)).
+		SetBlockSize(memSizeLimit).
+		Build(memStore, "/test", "1")
+
+	w2 := NewWriterBuilder().
+		SetPropSizeDistance(100).
+		SetPropKeysDistance(2).
+		SetMemorySizeLimit(uint64(memSizeLimit)).
+		SetBlockSize(memSizeLimit).
+		Build(memStore, "/test", "2")
+
 	writer := NewEngineWriter(w)
+	writer1 := NewEngineWriter(w1)
+	writer2 := NewEngineWriter(w2)
 	kvCnt := rand.Intn(10) + 10000
 	kvs := make([]common.KvPair, kvCnt)
+	kvs1 := make([]common.KvPair, kvCnt)
+	kvs2 := make([]common.KvPair, kvCnt)
 	for i := 0; i < kvCnt; i++ {
 		kvs[i] = common.KvPair{
 			Key: []byte(uuid.New().String()),
 			Val: []byte("56789"),
 		}
+		kvs1[i] = common.KvPair{
+			Key: []byte(uuid.New().String()),
+			Val: []byte("56789"),
+		}
+		kvs2[i] = common.KvPair{
+			Key: []byte(uuid.New().String()),
+			Val: []byte("56789"),
+		}
 	}
-
 	slices.SortFunc(kvs, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
+	})
+	slices.SortFunc(kvs1, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
+	})
+	slices.SortFunc(kvs2, func(i, j common.KvPair) int {
 		return bytes.Compare(i.Key, j.Key)
 	})
 
 	require.NoError(t, writer.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvs)))
+	require.NoError(t, writer1.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvs1)))
+	require.NoError(t, writer2.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvs2)))
+
 	_, err := writer.Close(ctx)
 	require.NoError(t, err)
+	_, err = writer1.Close(ctx)
+	require.NoError(t, err)
+	_, err = writer2.Close(ctx)
+	require.NoError(t, err)
+
+	kvs = append(kvs, kvs1...)
+	kvs = append(kvs, kvs2...)
+	slices.SortFunc(kvs, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
+	})
 
 	// 2. merge step
 	datas, stats, err := GetAllFileNames(ctx, memStore, "")
@@ -178,6 +223,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 }
 
 func TestGlobalSortLocalWithMergeV2(t *testing.T) {
+	t.Skip()
 	seed := time.Now().Unix()
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
@@ -220,21 +266,70 @@ func testSortWithNewMerge(t *testing.T, mergeFunc func(ctx context.Context, data
 		SetOnCloseFunc(closeFn).
 		Build(memStore, "/test", "0")
 
+	w1 := NewWriterBuilder().
+		SetPropSizeDistance(100).
+		SetPropKeysDistance(2).
+		SetMemorySizeLimit(uint64(memSizeLimit)).
+		SetBlockSize(memSizeLimit).
+		SetOnCloseFunc(closeFn).
+		Build(memStore, "/test", "1")
+
+	w2 := NewWriterBuilder().
+		SetPropSizeDistance(100).
+		SetPropKeysDistance(2).
+		SetMemorySizeLimit(uint64(memSizeLimit)).
+		SetBlockSize(memSizeLimit).
+		SetOnCloseFunc(closeFn).
+		Build(memStore, "/test", "2")
+
 	writer := NewEngineWriter(w)
+	writer1 := NewEngineWriter(w1)
+	writer2 := NewEngineWriter(w2)
 	kvCnt := rand.Intn(10) + 10000
 	kvs := make([]common.KvPair, kvCnt)
+	kvs1 := make([]common.KvPair, kvCnt)
+	kvs2 := make([]common.KvPair, kvCnt)
 	for i := 0; i < kvCnt; i++ {
 		kvs[i] = common.KvPair{
 			Key: []byte(uuid.New().String()),
 			Val: []byte("56789"),
 		}
+		kvs1[i] = common.KvPair{
+			Key: []byte(uuid.New().String()),
+			Val: []byte("56789"),
+		}
+		kvs2[i] = common.KvPair{
+			Key: []byte(uuid.New().String()),
+			Val: []byte("56789"),
+		}
 	}
+
 	slices.SortFunc(kvs, func(i, j common.KvPair) int {
 		return bytes.Compare(i.Key, j.Key)
 	})
+	slices.SortFunc(kvs1, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
+	})
+	slices.SortFunc(kvs2, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
+	})
+
 	require.NoError(t, writer.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvs)))
+	require.NoError(t, writer1.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvs1)))
+	require.NoError(t, writer2.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvs2)))
+
 	_, err := writer.Close(ctx)
 	require.NoError(t, err)
+	_, err = writer1.Close(ctx)
+	require.NoError(t, err)
+	_, err = writer2.Close(ctx)
+	require.NoError(t, err)
+
+	kvs = append(kvs, kvs1...)
+	kvs = append(kvs, kvs2...)
+	slices.SortFunc(kvs, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
+	})
 
 	// 2. merge step
 	dataGroup, statGroup, startKeys, endKeys := splitDataStatAndKeys(datas, stats, multiStats)

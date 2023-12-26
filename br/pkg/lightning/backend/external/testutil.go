@@ -134,31 +134,36 @@ func splitDataStatAndKeys(datas []string, stats []string, multiStats []MultipleF
 	startKeys := make([]dbkv.Key, 0, 10)
 	endKeys := make([]dbkv.Key, 0, 10)
 	i := 0
+	dataGroup := make([][]string, 0, 10)
+	statGroup := make([][]string, 0, 10)
 	for ; i < len(multiStats)-1; i += 2 {
 		startKey := BytesMin(multiStats[i].MinKey, multiStats[i+1].MinKey)
 		endKey := BytesMax(multiStats[i].MaxKey, multiStats[i+1].MaxKey)
 		endKey = dbkv.Key(endKey).Next()
 		startKeys = append(startKeys, startKey)
 		endKeys = append(endKeys, endKey)
+		var datas, stats []string
+		for _, files := range multiStats[i].Filenames {
+			datas = append(datas, files[0])
+			stats = append(stats, files[1])
+		}
+		for _, files := range multiStats[i+1].Filenames {
+			datas = append(datas, files[0])
+			stats = append(stats, files[1])
+		}
+		dataGroup = append(dataGroup, datas)
+		statGroup = append(statGroup, stats)
 	}
 	if i == len(multiStats)-1 {
 		startKeys = append(startKeys, multiStats[i].MinKey)
 		endKeys = append(endKeys, dbkv.Key(multiStats[i].MaxKey).Next())
-	}
-
-	dataGroup := make([][]string, 0, 10)
-	statGroup := make([][]string, 0, 10)
-
-	start := 0
-	step := 2 * multiFileStatNum
-	for start < len(datas) {
-		end := start + step
-		if end > len(datas) {
-			end = len(datas)
+		for _, files := range multiStats[i].Filenames {
+			datas = append(datas, files[0])
+			stats = append(stats, files[1])
 		}
-		dataGroup = append(dataGroup, datas[start:end])
-		statGroup = append(statGroup, stats[start:end])
-		start = end
+		dataGroup = append(dataGroup, datas)
+		statGroup = append(statGroup, stats)
 	}
+
 	return dataGroup, statGroup, startKeys, endKeys
 }
