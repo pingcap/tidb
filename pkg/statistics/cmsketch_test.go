@@ -266,3 +266,21 @@ func TestSortTopnMeta(t *testing.T) {
 	SortTopnMeta(data)
 	require.Equal(t, uint64(2), data[0].Count)
 }
+
+func TestTopNScale(t *testing.T) {
+	for _, scaleFactor := range []float64{0.0001, 0.9999, 1.1111, 1.9999, 4.9999, 5.1111, 9.99} {
+		var data []TopNMeta
+		sumCount := uint64(0)
+		for i := 0; i < 20; i++ {
+			cnt := uint64(rand.Intn(100000))
+			data = append(data, TopNMeta{
+				Count: cnt,
+			})
+			sumCount += cnt
+		}
+		topN := TopN{TopN: data}
+		topN.Scale(scaleFactor)
+		sumCount = uint64(float64(sumCount) * scaleFactor)
+		require.Less(t, float64(topN.TotalCount()-sumCount)/float64(sumCount), 0.0001)
+	}
+}
