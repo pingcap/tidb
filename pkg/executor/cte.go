@@ -204,7 +204,7 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 		// For non-recursive CTE, the result will be put into resTbl directly.
 		// So no need to build iterOutTbl.
 		// Construct iterOutTbl in Open() instead of buildCTE(), because its destruct is in Close().
-		recursiveTypes := p.recursiveExec.Base().RetFieldTypes()
+		recursiveTypes := p.recursiveExec.RetFieldTypes()
 		p.iterOutTbl = cteutil.NewStorageRowContainer(recursiveTypes, cteExec.MaxChunkSize())
 		if err = p.iterOutTbl.OpenAndRef(); err != nil {
 			return err
@@ -214,7 +214,7 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 	if p.isDistinct {
 		p.hashTbl = newConcurrentMapHashTable()
 		p.hCtx = &hashContext{
-			allTypes: cteExec.Base().RetFieldTypes(),
+			allTypes: cteExec.RetFieldTypes(),
 		}
 		// We use all columns to compute hash.
 		p.hCtx.keyColIdx = make([]int, len(p.hCtx.allTypes))

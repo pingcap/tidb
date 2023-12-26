@@ -21,18 +21,17 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // ExplainInfo implements the Expression interface.
-func (expr *ScalarFunction) ExplainInfo(ctx sessionctx.Context) string {
+func (expr *ScalarFunction) ExplainInfo(ctx EvalContext) string {
 	return expr.explainInfo(ctx, false)
 }
 
-func (expr *ScalarFunction) explainInfo(ctx sessionctx.Context, normalized bool) string {
+func (expr *ScalarFunction) explainInfo(ctx EvalContext, normalized bool) string {
 	// we only need ctx for non-normalized explain info.
 	intest.Assert(normalized || ctx != nil)
 	var buffer bytes.Buffer
@@ -108,7 +107,7 @@ func (col *Column) ColumnExplainInfo(normalized bool) string {
 }
 
 // ExplainInfo implements the Expression interface.
-func (col *Column) ExplainInfo(sessionctx.Context) string {
+func (col *Column) ExplainInfo(ctx EvalContext) string {
 	return col.ColumnExplainInfo(false)
 }
 
@@ -123,7 +122,7 @@ func (col *Column) ExplainNormalizedInfo4InList() string {
 }
 
 // ExplainInfo implements the Expression interface.
-func (expr *Constant) ExplainInfo(ctx sessionctx.Context) string {
+func (expr *Constant) ExplainInfo(ctx EvalContext) string {
 	dt, err := expr.Eval(ctx, chunk.Row{})
 	if err != nil {
 		return "not recognized const value"
@@ -190,7 +189,7 @@ func ExplainExpressionList(exprs []Expression, schema *Schema) string {
 // SortedExplainExpressionList generates explain information for a list of expressions in order.
 // In some scenarios, the expr's order may not be stable when executing multiple times.
 // So we add a sort to make its explain result stable.
-func SortedExplainExpressionList(ctx sessionctx.Context, exprs []Expression) []byte {
+func SortedExplainExpressionList(ctx EvalContext, exprs []Expression) []byte {
 	return sortedExplainExpressionList(ctx, exprs, false, false)
 }
 
@@ -199,7 +198,7 @@ func SortedExplainExpressionListIgnoreInlist(exprs []Expression) []byte {
 	return sortedExplainExpressionList(nil, exprs, false, true)
 }
 
-func sortedExplainExpressionList(ctx sessionctx.Context, exprs []Expression, normalized bool, ignoreInlist bool) []byte {
+func sortedExplainExpressionList(ctx EvalContext, exprs []Expression, normalized bool, ignoreInlist bool) []byte {
 	intest.Assert(ignoreInlist || normalized || ctx != nil)
 	buffer := bytes.NewBufferString("")
 	exprInfos := make([]string, 0, len(exprs))
@@ -238,7 +237,7 @@ func SortedExplainNormalizedScalarFuncList(exprs []*ScalarFunction) []byte {
 }
 
 // ExplainColumnList generates explain information for a list of columns.
-func ExplainColumnList(ctx sessionctx.Context, cols []*Column) []byte {
+func ExplainColumnList(ctx EvalContext, cols []*Column) []byte {
 	buffer := bytes.NewBufferString("")
 	for i, col := range cols {
 		buffer.WriteString(col.ExplainInfo(ctx))

@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	mockDispatch "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"go.uber.org/mock/gomock"
 )
 
@@ -30,8 +29,8 @@ func GetMockBasicSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
 	mockScheduler := mockDispatch.NewMockExtension(ctrl)
 	mockScheduler.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
 	mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-			return generateTaskExecutorNodes4Test()
+		func(_ context.Context, _ *proto.Task) ([]string, error) {
+			return nil, nil
 		},
 	).AnyTimes()
 	mockScheduler.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
@@ -48,7 +47,7 @@ func GetMockBasicSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
 		},
 	).AnyTimes()
 	mockScheduler.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ scheduler.TaskHandle, task *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
+		func(_ context.Context, _ scheduler.TaskHandle, task *proto.Task, _ []string, _ proto.Step) (metas [][]byte, err error) {
 			if task.Step == proto.StepInit {
 				return [][]byte{
 					[]byte("task1"),
@@ -74,8 +73,8 @@ func GetMockHATestSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
 	mockScheduler := mockDispatch.NewMockExtension(ctrl)
 	mockScheduler.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
 	mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-			return generateTaskExecutorNodes4Test()
+		func(_ context.Context, _ *proto.Task) ([]string, error) {
+			return nil, nil
 		},
 	).AnyTimes()
 	mockScheduler.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
@@ -92,7 +91,7 @@ func GetMockHATestSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
 		},
 	).AnyTimes()
 	mockScheduler.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ scheduler.TaskHandle, task *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
+		func(_ context.Context, _ scheduler.TaskHandle, task *proto.Task, _ []string, _ proto.Step) (metas [][]byte, err error) {
 			if task.Step == proto.StepInit {
 				return [][]byte{
 					[]byte("task1"),
@@ -125,36 +124,26 @@ func GetMockHATestSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
 	return mockScheduler
 }
 
-func generateTaskExecutorNodes4Test() ([]*infosync.ServerInfo, bool, error) {
-	serverInfos := infosync.MockGlobalServerInfoManagerEntry.GetAllServerInfo()
-	if len(serverInfos) == 0 {
-		return nil, true, errors.New("not found instance")
-	}
-
-	serverNodes := make([]*infosync.ServerInfo, 0, len(serverInfos))
-	for _, serverInfo := range serverInfos {
-		serverNodes = append(serverNodes, serverInfo)
-	}
-	return serverNodes, true, nil
-}
-
 // GetPlanNotRetryableErrSchedulerExt returns mock scheduler.Extension which will generate non retryable error when planning.
 func GetPlanNotRetryableErrSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
 	mockScheduler := mockDispatch.NewMockExtension(ctrl)
 	mockScheduler.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
 	mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-			return generateTaskExecutorNodes4Test()
+		func(_ context.Context, _ *proto.Task) ([]string, error) {
+			return nil, nil
 		},
 	).AnyTimes()
 	mockScheduler.EXPECT().IsRetryableErr(gomock.Any()).Return(false).AnyTimes()
 	mockScheduler.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
 		func(task *proto.Task) proto.Step {
+			if task.Step == proto.StepInit {
+				return proto.StepOne
+			}
 			return proto.StepDone
 		},
 	).AnyTimes()
 	mockScheduler.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ scheduler.TaskHandle, _ *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
+		func(_ context.Context, _ scheduler.TaskHandle, _ *proto.Task, _ []string, _ proto.Step) (metas [][]byte, err error) {
 			return nil, errors.New("not retryable err")
 		},
 	).AnyTimes()
@@ -168,8 +157,8 @@ func GetPlanErrSchedulerExt(ctrl *gomock.Controller, testContext *TestContext) s
 	mockScheduler := mockDispatch.NewMockExtension(ctrl)
 	mockScheduler.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
 	mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-			return generateTaskExecutorNodes4Test()
+		func(_ context.Context, _ *proto.Task) ([]string, error) {
+			return nil, nil
 		},
 	).AnyTimes()
 	mockScheduler.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
@@ -186,7 +175,7 @@ func GetPlanErrSchedulerExt(ctrl *gomock.Controller, testContext *TestContext) s
 		},
 	).AnyTimes()
 	mockScheduler.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ scheduler.TaskHandle, task *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
+		func(_ context.Context, _ scheduler.TaskHandle, task *proto.Task, _ []string, _ proto.Step) (metas [][]byte, err error) {
 			if task.Step == proto.StepInit {
 				if testContext.CallTime == 0 {
 					testContext.CallTime++
@@ -219,8 +208,8 @@ func GetMockRollbackSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
 	mockScheduler := mockDispatch.NewMockExtension(ctrl)
 	mockScheduler.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
 	mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-			return generateTaskExecutorNodes4Test()
+		func(_ context.Context, _ *proto.Task) ([]string, error) {
+			return nil, nil
 		},
 	).AnyTimes()
 	mockScheduler.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
@@ -235,7 +224,7 @@ func GetMockRollbackSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
 		},
 	).AnyTimes()
 	mockScheduler.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ scheduler.TaskHandle, task *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
+		func(_ context.Context, _ scheduler.TaskHandle, task *proto.Task, _ []string, _ proto.Step) (metas [][]byte, err error) {
 			if task.Step == proto.StepInit {
 				return [][]byte{
 					[]byte("task1"),
@@ -256,8 +245,8 @@ func GetMockDynamicDispatchExt(ctrl *gomock.Controller) scheduler.Extension {
 	mockScheduler := mockDispatch.NewMockExtension(ctrl)
 	mockScheduler.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
 	mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
-			return generateTaskExecutorNodes4Test()
+		func(_ context.Context, _ *proto.Task) ([]string, error) {
+			return nil, nil
 		},
 	).AnyTimes()
 	mockScheduler.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
@@ -274,7 +263,7 @@ func GetMockDynamicDispatchExt(ctrl *gomock.Controller) scheduler.Extension {
 		},
 	).AnyTimes()
 	mockScheduler.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ scheduler.TaskHandle, task *proto.Task, _ []*infosync.ServerInfo, _ proto.Step) (metas [][]byte, err error) {
+		func(_ context.Context, _ scheduler.TaskHandle, task *proto.Task, _ []string, _ proto.Step) (metas [][]byte, err error) {
 			if task.Step == proto.StepInit {
 				return [][]byte{
 					[]byte("task"),

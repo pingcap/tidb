@@ -206,7 +206,7 @@ func (h *globalBindingHandle) Update(fullLoad bool) (err error) {
 		timeCondition = fmt.Sprintf("WHERE update_time>'%s'", lastUpdateTime.String())
 	}
 	selectStmt := fmt.Sprintf(`SELECT original_sql, bind_sql, default_db, status, create_time,
-       update_time, charset, collation, source, sql_digest, plan_digest FROM mysql.bind_info
+       update_time, charset, collation, source, sql_digest, plan_digest, type FROM mysql.bind_info
        %s ORDER BY update_time, create_time`, timeCondition)
 
 	return h.callWithSCtx(false, func(sctx sessionctx.Context) error {
@@ -239,7 +239,7 @@ func (h *globalBindingHandle) Update(fullLoad bool) (err error) {
 			}
 
 			if err != nil {
-				logutil.BgLogger().Debug("failed to generate bind record from data row", zap.String("category", "sql-bind"), zap.Error(err))
+				logutil.BgLogger().Warn("failed to generate bind record from data row", zap.String("category", "sql-bind"), zap.Error(err))
 				continue
 			}
 
@@ -302,7 +302,7 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, recor
 			record.Bindings[i].UpdateTime = now
 
 			// Insert the BindRecord to the storage.
-			_, err = exec(sctx, `INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
+			_, err = exec(sctx, `INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
 				record.OriginalSQL,
 				record.Bindings[i].BindSQL,
 				record.Db,
@@ -314,6 +314,7 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, recor
 				record.Bindings[i].Source,
 				record.Bindings[i].SQLDigest,
 				record.Bindings[i].PlanDigest,
+				record.Bindings[i].Type,
 			)
 			if err != nil {
 				return err
@@ -601,6 +602,7 @@ func newBindRecord(sctx sessionctx.Context, row chunk.Row) (string, *BindRecord,
 		Source:     row.GetString(8),
 		SQLDigest:  row.GetString(9),
 		PlanDigest: row.GetString(10),
+		Type:       row.GetString(11),
 	}
 	bindRecord := &BindRecord{
 		OriginalSQL: row.GetString(0),

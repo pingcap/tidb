@@ -108,7 +108,7 @@ func TestConstant(t *testing.T) {
 	ctx := createContext(t)
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	require.False(t, NewZero().IsCorrelated())
-	require.True(t, NewZero().ConstItem(sc))
+	require.True(t, NewZero().ConstItem(sc.UseCache))
 	require.True(t, NewZero().Decorrelate(nil).Equal(ctx, NewZero()))
 	require.Equal(t, []byte{0x0, 0x8, 0x0}, NewZero().HashCode())
 	require.False(t, NewZero().Equal(ctx, NewOne()))
@@ -134,15 +134,30 @@ func TestIsBinaryLiteral(t *testing.T) {
 }
 
 func TestConstItem(t *testing.T) {
-	ctx := createContext(t)
-	sf := newFunctionWithMockCtx(ast.Rand)
-	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
-	sf = newFunctionWithMockCtx(ast.UUID)
-	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
-	sf = newFunctionWithMockCtx(ast.GetParam, NewOne())
-	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
-	sf = newFunctionWithMockCtx(ast.Abs, NewOne())
-	require.True(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
+	const noConst int = 0
+	const constInCtx int = 1
+	const constStrict int = 2
+
+	ctxConst := NewZero()
+	ctxConst.DeferredExpr = newFunctionWithMockCtx(ast.UnixTimestamp)
+	for _, c := range []struct {
+		exp       Expression
+		constItem int
+	}{
+		{newFunctionWithMockCtx(ast.Rand), noConst},
+		{newFunctionWithMockCtx(ast.UUID), noConst},
+		{newFunctionWithMockCtx(ast.GetParam, NewOne()), noConst},
+		{newFunctionWithMockCtx(ast.Abs, NewOne()), constStrict},
+		{newFunctionWithMockCtx(ast.Abs, newColumn(1)), noConst},
+		{newFunctionWithMockCtx(ast.Plus, NewOne(), NewOne()), constStrict},
+		{newFunctionWithMockCtx(ast.Plus, newColumn(1), NewOne()), noConst},
+		{newFunctionWithMockCtx(ast.Plus, NewOne(), newColumn(1)), noConst},
+		{newFunctionWithMockCtx(ast.Plus, NewOne(), newColumn(1)), noConst},
+		{newFunctionWithMockCtx(ast.Plus, NewOne(), ctxConst), constInCtx},
+	} {
+		require.Equal(t, c.constItem >= constInCtx, c.exp.ConstItem(false), c.exp.String())
+		require.Equal(t, c.constItem >= constStrict, c.exp.ConstItem(true), c.exp.String())
+	}
 }
 
 func TestVectorizable(t *testing.T) {

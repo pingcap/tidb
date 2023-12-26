@@ -1207,8 +1207,8 @@ func TestShowBindingDigestField(t *testing.T) {
 	tk.MustExec("create binding for select * from t1, t2 where t1.id = t2.id using select /*+ merge_join(t1, t2)*/ * from t1, t2 where t1.id = t2.id")
 	result := tk.MustQuery("show bindings;")
 	rows := result.Rows()[0]
-	require.Equal(t, len(rows), 11)
-	require.Equal(t, rows[9], "ac1ceb4eb5c01f7c03e29b7d0d6ab567e563f4c93164184cde218f20d07fd77c")
+	require.Equal(t, len(rows), 12)
+	require.Equal(t, rows[10], "ac1ceb4eb5c01f7c03e29b7d0d6ab567e563f4c93164184cde218f20d07fd77c")
 	tk.MustExec("drop binding for select * from t1, t2 where t1.id = t2.id")
 	result = tk.MustQuery("show bindings;")
 	require.Equal(t, len(result.Rows()), 0)
@@ -1216,8 +1216,8 @@ func TestShowBindingDigestField(t *testing.T) {
 	tk.MustExec("create global binding for select * from t1, t2 where t1.id = t2.id using select /*+ merge_join(t1, t2)*/ * from t1, t2 where t1.id = t2.id")
 	result = tk.MustQuery("show global bindings;")
 	rows = result.Rows()[0]
-	require.Equal(t, len(rows), 11)
-	require.Equal(t, rows[9], "ac1ceb4eb5c01f7c03e29b7d0d6ab567e563f4c93164184cde218f20d07fd77c")
+	require.Equal(t, len(rows), 12)
+	require.Equal(t, rows[10], "ac1ceb4eb5c01f7c03e29b7d0d6ab567e563f4c93164184cde218f20d07fd77c")
 	tk.MustExec("drop global binding for select * from t1, t2 where t1.id = t2.id")
 	result = tk.MustQuery("show global bindings;")
 	require.Equal(t, len(result.Rows()), 0)

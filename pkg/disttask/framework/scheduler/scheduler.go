@@ -22,11 +22,14 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util/backoff"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -38,8 +41,8 @@ const (
 	DefaultSubtaskConcurrency = 16
 	// MaxSubtaskConcurrency is the maximum concurrency for handling subtask.
 	MaxSubtaskConcurrency = 256
-	// DefaultLiveNodesCheckInterval is the tick interval of fetching all server infos from etcs.
-	DefaultLiveNodesCheckInterval = 2
+	// defaultBalanceSubtaskTicks is the tick interval of fetching all server infos from etcs.
+	defaultBalanceSubtaskTicks = 2
 	// for a cancelled task, it's terminal state is reverted or reverted_failed,
 	// so we use a special error message to indicate that the task is cancelled
 	// by user.
@@ -60,8 +63,6 @@ var (
 // TaskHandle provides the interface for operations needed by Scheduler.
 // Then we can use scheduler's function in Scheduler interface.
 type TaskHandle interface {
-	// GetPreviousTaskExecutorIDs gets previous task executor IDs.
-	GetPreviousTaskExecutorIDs(_ context.Context, taskID int64, step proto.Step) ([]string, error)
 	// GetPreviousSubtaskMetas gets previous subtask metas.
 	GetPreviousSubtaskMetas(taskID int64, step proto.Step) ([][]byte, error)
 	storage.SessionExecutor
@@ -85,20 +86,14 @@ type Scheduler interface {
 type BaseScheduler struct {
 	ctx     context.Context
 	taskMgr TaskManager
+	nodeMgr *NodeManager
 	Task    *proto.Task
 	logCtx  context.Context
-	// serverID, it's value is ip:port now.
-	serverID string
 	// when RegisterSchedulerFactory, the factory MUST initialize this fields.
 	Extension
 
-	// For subtasks rebalance.
-	// LiveNodes will fetch and store all live nodes every liveNodeInterval ticks.
-	LiveNodes             []*infosync.ServerInfo
-	liveNodeFetchInterval int
-	// liveNodeFetchTick is the tick variable.
-	liveNodeFetchTick int
-	// TaskNodes stores the id of current task executor nodes.
+	balanceSubtaskTick int
+	// TaskNodes stores the exec id of current task executor nodes.
 	TaskNodes []string
 	// rand is for generating random selection of nodes.
 	rand *rand.Rand
@@ -108,20 +103,17 @@ type BaseScheduler struct {
 var MockOwnerChange func()
 
 // NewBaseScheduler creates a new BaseScheduler.
-func NewBaseScheduler(ctx context.Context, taskMgr TaskManager, serverID string, task *proto.Task) *BaseScheduler {
+func NewBaseScheduler(ctx context.Context, taskMgr TaskManager, nodeMgr *NodeManager, task *proto.Task) *BaseScheduler {
 	logCtx := logutil.WithFields(context.Background(), zap.Int64("task-id", task.ID),
 		zap.Stringer("task-type", task.Type))
 	return &BaseScheduler{
-		ctx:                   ctx,
-		taskMgr:               taskMgr,
-		Task:                  task,
-		logCtx:                logCtx,
-		serverID:              serverID,
-		LiveNodes:             nil,
-		liveNodeFetchInterval: DefaultLiveNodesCheckInterval,
-		liveNodeFetchTick:     0,
-		TaskNodes:             nil,
-		rand:                  rand.New(rand.NewSource(time.Now().UnixNano())),
+		ctx:       ctx,
+		taskMgr:   taskMgr,
+		nodeMgr:   nodeMgr,
+		Task:      task,
+		logCtx:    logCtx,
+		TaskNodes: nil,
+		rand:      rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
@@ -349,7 +341,7 @@ func (s *BaseScheduler) onRunning() error {
 		return s.onNextStage()
 	}
 
-	if err := s.BalanceSubtasks(); err != nil {
+	if err := s.balanceSubtasks(); err != nil {
 		return err
 	}
 	// Wait all subtasks in this stage finishes.
@@ -364,9 +356,8 @@ func (s *BaseScheduler) onFinished() error {
 	return s.taskMgr.TransferSubTasks2History(s.ctx, s.Task.ID)
 }
 
-// BalanceSubtasks check the liveNode num every liveNodeFetchInterval then rebalance subtasks.
-func (s *BaseScheduler) BalanceSubtasks() error {
-	// 1. init TaskNodes if needes.
+// balanceSubtasks check the liveNode num every liveNodeFetchInterval then rebalance subtasks.
+func (s *BaseScheduler) balanceSubtasks() error {
 	if len(s.TaskNodes) == 0 {
 		var err error
 		s.TaskNodes, err = s.taskMgr.GetTaskExecutorIDsByTaskIDAndStep(s.ctx, s.Task.ID, s.Task.Step)
@@ -374,63 +365,32 @@ func (s *BaseScheduler) BalanceSubtasks() error {
 			return err
 		}
 	}
-	s.liveNodeFetchTick++
-	if s.liveNodeFetchTick == s.liveNodeFetchInterval {
-		// 2. update LiveNodes.
-		s.liveNodeFetchTick = 0
-		serverInfos, err := GenerateTaskExecutorNodes(s.ctx)
+	s.balanceSubtaskTick++
+	if s.balanceSubtaskTick == defaultBalanceSubtaskTicks {
+		s.balanceSubtaskTick = 0
+		eligibleNodes, err := s.getEligibleNodes()
 		if err != nil {
 			return err
 		}
-
-		eligibleServerInfos, filter, err := s.GetEligibleInstances(s.ctx, s.Task)
-		if err != nil {
-			return err
+		if len(eligibleNodes) > 0 {
+			return s.doBalanceSubtasks(eligibleNodes)
 		}
-		if filter {
-			eligibleServerInfos, err = s.filterByRole(eligibleServerInfos)
-			if err != nil {
-				return err
-			}
-		}
-		newInfos := serverInfos[:0]
-		for _, m := range serverInfos {
-			found := false
-			for _, n := range eligibleServerInfos {
-				if m.ID == n.ID {
-					found = true
-					break
-				}
-			}
-			if found {
-				newInfos = append(newInfos, m)
-			}
-		}
-		s.LiveNodes = newInfos
-		// 3. balance subtasks.
-		if len(s.LiveNodes) > 0 {
-			return s.ReDispatchSubtasks()
-		}
-		return nil
 	}
 	return nil
 }
 
-func (s *BaseScheduler) replaceTaskNodes() {
-	s.TaskNodes = s.TaskNodes[:0]
-	for _, serverInfo := range s.LiveNodes {
-		s.TaskNodes = append(s.TaskNodes, disttaskutil.GenerateExecID(serverInfo.IP, serverInfo.Port))
-	}
-}
-
-// ReDispatchSubtasks make count of subtasks on each liveNodes balanced and clean up subtasks on dead nodes.
+// DoBalanceSubtasks make count of subtasks on each liveNodes balanced and clean up subtasks on dead nodes.
 // TODO(ywqzzy): refine to make it easier for testing.
-func (s *BaseScheduler) ReDispatchSubtasks() error {
+func (s *BaseScheduler) doBalanceSubtasks(eligibleNodes []string) error {
+	eligibleNodeMap := make(map[string]struct{}, len(eligibleNodes))
+	for _, n := range eligibleNodes {
+		eligibleNodeMap[n] = struct{}{}
+	}
 	// 1. find out nodes need to clean subtasks.
 	deadNodes := make([]string, 0)
 	deadNodesMap := make(map[string]bool, 0)
 	for _, node := range s.TaskNodes {
-		if !disttaskutil.MatchServerInfo(s.LiveNodes, node) {
+		if _, ok := eligibleNodeMap[node]; !ok {
 			deadNodes = append(deadNodes, node)
 			deadNodesMap[node] = true
 		}
@@ -450,10 +410,9 @@ func (s *BaseScheduler) ReDispatchSubtasks() error {
 		subtasks = append(subtasks, subtasksOnDeadNodes...)
 	}
 	// 3. group subtasks for each task executor.
-	subtasksOnTaskExecutor := make(map[string][]*proto.Subtask, len(s.LiveNodes)+len(deadNodes))
-	for _, node := range s.LiveNodes {
-		execID := disttaskutil.GenerateExecID(node.IP, node.Port)
-		subtasksOnTaskExecutor[execID] = make([]*proto.Subtask, 0)
+	subtasksOnTaskExecutor := make(map[string][]*proto.Subtask, len(eligibleNodes)+len(deadNodes))
+	for _, node := range eligibleNodes {
+		subtasksOnTaskExecutor[node] = make([]*proto.Subtask, 0)
 	}
 	for _, subtask := range subtasks {
 		subtasksOnTaskExecutor[subtask.ExecID] = append(
@@ -461,17 +420,17 @@ func (s *BaseScheduler) ReDispatchSubtasks() error {
 			subtask)
 	}
 	// 4. prepare subtasks that need to rebalance to other nodes.
-	averageSubtaskCnt := len(subtasks) / len(s.LiveNodes)
+	averageSubtaskCnt := len(subtasks) / len(eligibleNodes)
 	rebalanceSubtasks := make([]*proto.Subtask, 0)
 	for k, v := range subtasksOnTaskExecutor {
 		if ok := deadNodesMap[k]; ok {
 			rebalanceSubtasks = append(rebalanceSubtasks, v...)
 			continue
 		}
-		// When no tidb scale-in/out and averageSubtaskCnt*len(s.LiveNodes) < len(subtasks),
+		// When no tidb scale-in/out and averageSubtaskCnt*len(eligibleNodes) < len(subtasks),
 		// no need to send subtask to other nodes.
 		// eg: tidb1 with 3 subtasks, tidb2 with 2 subtasks, subtasks are balanced now.
-		if averageSubtaskCnt*len(s.LiveNodes) < len(subtasks) && len(s.TaskNodes) == len(s.LiveNodes) {
+		if averageSubtaskCnt*len(eligibleNodes) < len(subtasks) && len(s.TaskNodes) == len(eligibleNodes) {
 			if len(v) > averageSubtaskCnt+1 {
 				rebalanceSubtasks = append(rebalanceSubtasks, v[0:len(v)-averageSubtaskCnt]...)
 			}
@@ -500,8 +459,7 @@ func (s *BaseScheduler) ReDispatchSubtasks() error {
 	// 7. rebalance rest subtasks evenly to liveNodes.
 	liveNodeIdx := 0
 	for rebalanceIdx < len(rebalanceSubtasks) {
-		node := s.LiveNodes[liveNodeIdx]
-		rebalanceSubtasks[rebalanceIdx].ExecID = disttaskutil.GenerateExecID(node.IP, node.Port)
+		rebalanceSubtasks[rebalanceIdx].ExecID = eligibleNodes[liveNodeIdx]
 		rebalanceIdx++
 		liveNodeIdx++
 	}
@@ -510,12 +468,9 @@ func (s *BaseScheduler) ReDispatchSubtasks() error {
 	if err = s.taskMgr.UpdateSubtasksExecIDs(s.ctx, s.Task.ID, subtasks); err != nil {
 		return err
 	}
-	logutil.Logger(s.logCtx).Info("rebalance subtasks",
+	logutil.Logger(s.logCtx).Info("balance subtasks",
 		zap.Stringers("subtasks-rebalanced", subtasks))
-	if err = s.taskMgr.CleanUpMeta(s.ctx, deadNodes); err != nil {
-		return err
-	}
-	s.replaceTaskNodes()
+	s.TaskNodes = append([]string{}, eligibleNodes...)
 	return nil
 }
 
@@ -527,13 +482,6 @@ func (s *BaseScheduler) updateTask(taskState proto.TaskState, newSubTasks []*pro
 	if !VerifyTaskStateTransform(prevState, taskState) {
 		return errors.Errorf("invalid task state transform, from %s to %s", prevState, taskState)
 	}
-
-	failpoint.Inject("cancelBeforeUpdate", func() {
-		err := s.taskMgr.CancelTask(s.ctx, s.Task.ID)
-		if err != nil {
-			logutil.Logger(s.logCtx).Error("cancel task failed", zap.Error(err))
-		}
-	})
 
 	var retryable bool
 	for i := 0; i < retryTimes; i++ {
@@ -570,30 +518,30 @@ func (s *BaseScheduler) onErrHandlingStage(receiveErrs []error) error {
 		subTasks = make([]*proto.Subtask, 0, len(instanceIDs))
 		for _, id := range instanceIDs {
 			// reverting subtasks belong to the same step as current active step.
-			subTasks = append(subTasks, proto.NewSubtask(s.Task.Step, s.Task.ID, s.Task.Type, id, s.Task.Concurrency, []byte("{}")))
+			subTasks = append(subTasks, proto.NewSubtask(
+				s.Task.Step, s.Task.ID, s.Task.Type, id,
+				s.Task.Concurrency, proto.EmptyMeta, 0))
 		}
 	}
 	return s.updateTask(proto.TaskStateReverting, subTasks, RetrySQLTimes)
 }
 
-func (*BaseScheduler) nextStepSubtaskScheduled(*proto.Task) bool {
-	// TODO: will implement it when we we support schedule subtask by batch.
-	// since subtask meta might be too large to save in one transaction.
-	return true
-}
-
 func (s *BaseScheduler) onNextStage() (err error) {
-	/// dynamic schedule subtasks.
-	failpoint.Inject("mockDynamicDispatchErr", func() {
-		failpoint.Return(errors.New("mockDynamicDispatchErr"))
-	})
-
 	nextStep := s.GetNextStep(s.Task)
 	logutil.Logger(s.logCtx).Info("onNextStage",
 		zap.Int64("current-step", int64(s.Task.Step)),
 		zap.Int64("next-step", int64(nextStep)))
 
-	// 1. Adjust the task's concurrency.
+	if nextStep == proto.StepDone {
+		s.Task.Step = nextStep
+		s.Task.StateUpdateTime = time.Now().UTC()
+		if err = s.OnDone(s.ctx, s, s.Task); err != nil {
+			return errors.Trace(err)
+		}
+		return s.taskMgr.SucceedTask(s.ctx, s.Task.ID)
+	}
+
+	// Adjust the task's concurrency.
 	if s.Task.State == proto.TaskStatePending {
 		if s.Task.Concurrency == 0 {
 			s.Task.Concurrency = DefaultSubtaskConcurrency
@@ -602,113 +550,90 @@ func (s *BaseScheduler) onNextStage() (err error) {
 			s.Task.Concurrency = MaxSubtaskConcurrency
 		}
 	}
-	defer func() {
-		if err != nil {
-			return
-		}
-		// invariant: task.Step always means the most recent step that all
-		// corresponding subtasks have been saved to system table.
-		//
-		// when all subtasks of task.Step is finished, we call OnNextSubtasksBatch
-		// to generate subtasks of next step. after all subtasks of next step are
-		// saved to system table, we will update task.Step to next step, so the
-		// invariant hols.
-		// see nextStepSubtaskScheduled for why we don't update task and subtasks
-		// in a single transaction.
-		if s.nextStepSubtaskScheduled(s.Task) {
-			currStep := s.Task.Step
-			s.Task.Step = nextStep
-			// When all subtasks scheduled and processed, mark task as succeeds.
-			taskState := proto.TaskStateRunning
-			if s.Task.Step == proto.StepDone {
-				taskState = proto.TaskStateSucceed
-				if err = s.OnDone(s.ctx, s, s.Task); err != nil {
-					err = errors.Trace(err)
-					return
-				}
-			} else {
-				logutil.Logger(s.logCtx).Info("move to next stage",
-					zap.Int64("from", int64(currStep)), zap.Int64("to", int64(s.Task.Step)))
-			}
-			s.Task.StateUpdateTime = time.Now().UTC()
-			err = s.updateTask(taskState, nil, RetrySQLTimes)
-		}
-	}()
 
-	for {
-		// 3. generate a batch of subtasks.
-		/// select all available TiDB nodes for task.
-		serverNodes, filter, err := s.GetEligibleInstances(s.ctx, s.Task)
-		logutil.Logger(s.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
-
-		if err != nil {
-			return err
-		}
-		if filter {
-			serverNodes, err = s.filterByRole(serverNodes)
-			if err != nil {
-				return err
-			}
-		}
-		logutil.Logger(s.logCtx).Info("eligible instances", zap.Int("num", len(serverNodes)))
-		if len(serverNodes) == 0 {
-			return errors.New("no available TiDB node to schedule subtasks")
-		}
-
-		metas, err := s.OnNextSubtasksBatch(s.ctx, s, s.Task, serverNodes, nextStep)
-		if err != nil {
-			logutil.Logger(s.logCtx).Warn("generate part of subtasks failed", zap.Error(err))
-			return s.handlePlanErr(err)
-		}
-
-		failpoint.Inject("mockDynamicDispatchErr1", func() {
-			failpoint.Return(errors.New("mockDynamicDispatchErr1"))
-		})
-
-		// 4. schedule batch of subtasks to EligibleInstances.
-		err = s.scheduleSubTask(nextStep, metas, serverNodes)
-		if err != nil {
-			return err
-		}
-
-		if s.nextStepSubtaskScheduled(s.Task) {
-			break
-		}
-
-		failpoint.Inject("mockDynamicDispatchErr2", func() {
-			failpoint.Return(errors.New("mockDynamicDispatchErr2"))
-		})
+	serverNodes, err := s.getEligibleNodes()
+	if err != nil {
+		return err
 	}
-	return nil
+	logutil.Logger(s.logCtx).Info("eligible instances", zap.Int("num", len(serverNodes)))
+	if len(serverNodes) == 0 {
+		return errors.New("no available TiDB node to dispatch subtasks")
+	}
+
+	metas, err := s.OnNextSubtasksBatch(s.ctx, s, s.Task, serverNodes, nextStep)
+	if err != nil {
+		logutil.Logger(s.logCtx).Warn("generate part of subtasks failed", zap.Error(err))
+		return s.handlePlanErr(err)
+	}
+
+	return s.scheduleSubTask(nextStep, metas, serverNodes)
+}
+
+// getEligibleNodes returns the eligible(live) nodes for the task.
+// if the task can only be scheduled to some specific nodes, return them directly,
+// we don't care liveliness of them.
+func (s *BaseScheduler) getEligibleNodes() ([]string, error) {
+	serverNodes, err := s.GetEligibleInstances(s.ctx, s.Task)
+	if err != nil {
+		return nil, err
+	}
+	logutil.Logger(s.logCtx).Debug("eligible instances", zap.Int("num", len(serverNodes)))
+	if len(serverNodes) == 0 {
+		serverNodes = append([]string{}, s.nodeMgr.getManagedNodes()...)
+	}
+	return serverNodes, nil
 }
 
 func (s *BaseScheduler) scheduleSubTask(
 	subtaskStep proto.Step,
 	metas [][]byte,
-	serverNodes []*infosync.ServerInfo) error {
+	serverNodes []string) error {
 	logutil.Logger(s.logCtx).Info("schedule subtasks",
 		zap.Stringer("state", s.Task.State),
 		zap.Int64("step", int64(s.Task.Step)),
 		zap.Int("concurrency", s.Task.Concurrency),
 		zap.Int("subtasks", len(metas)))
-	s.TaskNodes = make([]string, len(serverNodes))
-	for i := range serverNodes {
-		s.TaskNodes[i] = disttaskutil.GenerateExecID(serverNodes[i].IP, serverNodes[i].Port)
-	}
+	s.TaskNodes = serverNodes
+	var size uint64
 	subTasks := make([]*proto.Subtask, 0, len(metas))
 	for i, meta := range metas {
 		// we assign the subtask to the instance in a round-robin way.
 		// TODO: assign the subtask to the instance according to the system load of each nodes
 		pos := i % len(serverNodes)
-		instanceID := disttaskutil.GenerateExecID(serverNodes[pos].IP, serverNodes[pos].Port)
+		instanceID := serverNodes[pos]
 		logutil.Logger(s.logCtx).Debug("create subtasks", zap.String("instanceID", instanceID))
-		subTasks = append(subTasks, proto.NewSubtask(subtaskStep, s.Task.ID, s.Task.Type, instanceID, s.Task.Concurrency, meta))
+		subTasks = append(subTasks, proto.NewSubtask(
+			subtaskStep, s.Task.ID, s.Task.Type, instanceID, s.Task.Concurrency, meta, i+1))
+
+		size += uint64(len(meta))
 	}
 	failpoint.Inject("cancelBeforeUpdateTask", func() {
-		_ = s.updateTask(proto.TaskStateCancelling, subTasks, RetrySQLTimes)
+		_ = s.taskMgr.CancelTask(s.ctx, s.Task.ID)
 	})
 
-	return s.updateTask(s.Task.State, subTasks, RetrySQLTimes)
+	// as other fields and generated key and index KV takes space too, we limit
+	// the size of subtasks to 80% of the transaction limit.
+	limit := max(uint64(float64(kv.TxnTotalSizeLimit.Load())*0.8), 1)
+	fn := s.taskMgr.SwitchTaskStep
+	if size >= limit {
+		// On default, transaction size limit is controlled by tidb_mem_quota_query
+		// which is 1G on default, so it's unlikely to reach this limit, but in
+		// case user set txn-total-size-limit explicitly, we insert in batch.
+		logutil.Logger(s.logCtx).Info("subtasks size exceed limit, will insert in batch",
+			zap.Uint64("size", size), zap.Uint64("limit", limit))
+		fn = s.taskMgr.SwitchTaskStepInBatch
+	}
+
+	backoffer := backoff.NewExponential(RetrySQLInterval, 2, RetrySQLMaxInterval)
+	return handle.RunWithRetry(s.ctx, RetrySQLTimes, backoffer, logutil.Logger(s.logCtx),
+		func(ctx context.Context) (bool, error) {
+			err := fn(s.ctx, s.Task, proto.TaskStateRunning, subtaskStep, subTasks)
+			if errors.Cause(err) == storage.ErrUnstableSubtasks {
+				return false, err
+			}
+			return true, err
+		},
+	)
 }
 
 func (s *BaseScheduler) handlePlanErr(err error) error {
@@ -753,27 +678,6 @@ func GenerateTaskExecutorNodes(ctx context.Context) (serverNodes []*infosync.Ser
 	return serverNodes, nil
 }
 
-func (s *BaseScheduler) filterByRole(infos []*infosync.ServerInfo) ([]*infosync.ServerInfo, error) {
-	nodes, err := s.taskMgr.GetManagedNodes(s.ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	nodeMap := make(map[string]struct{}, len(nodes))
-	for _, node := range nodes {
-		nodeMap[node] = struct{}{}
-	}
-
-	res := make([]*infosync.ServerInfo, 0, len(nodes))
-	for _, info := range infos {
-		_, ok := nodeMap[disttaskutil.GenerateExecID(info.IP, info.Port)]
-		if ok {
-			res = append(res, info)
-		}
-	}
-	return res, nil
-}
-
 // GetAllTaskExecutorIDs gets all the task executor IDs.
 func (s *BaseScheduler) GetAllTaskExecutorIDs(ctx context.Context, task *proto.Task) ([]string, error) {
 	// We get all servers instead of eligible servers here
@@ -811,11 +715,6 @@ func (s *BaseScheduler) GetPreviousSubtaskMetas(taskID int64, step proto.Step) (
 		previousSubtaskMetas = append(previousSubtaskMetas, subtask.Meta)
 	}
 	return previousSubtaskMetas, nil
-}
-
-// GetPreviousTaskExecutorIDs gets task executor IDs that run previous step.
-func (s *BaseScheduler) GetPreviousTaskExecutorIDs(_ context.Context, taskID int64, step proto.Step) ([]string, error) {
-	return s.taskMgr.GetTaskExecutorIDsByTaskIDAndStep(s.ctx, taskID, step)
 }
 
 // WithNewSession executes the function with a new session.

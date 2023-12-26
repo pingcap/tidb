@@ -20,7 +20,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
 )
@@ -40,7 +42,11 @@ func InitTestContext(t *testing.T, nodeNum int) (context.Context, *gomock.Contro
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "scheduler")
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
+	})
 
 	return ctx, ctrl, &TestContext{}, testkit.NewDistExecutionContext(t, nodeNum)
 }

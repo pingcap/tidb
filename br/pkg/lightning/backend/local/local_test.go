@@ -46,7 +46,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/membuf"
-	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -60,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"github.com/tikv/pd/client/http"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/encoding"
@@ -1058,11 +1058,9 @@ func TestMultiIngest(t *testing.T) {
 			err:                testCase.err,
 			multiIngestCheckFn: testCase.multiIngestSupport,
 		}
-		pdCtl := &pdutil.PdController{}
-		pdCtl.SetPDClient(&mockPdClient{stores: stores})
 
 		local := &Backend{
-			pdCtl: pdCtl,
+			pdCli: &mockPdClient{stores: stores},
 			importClientFactory: &mockImportClientFactory{
 				stores: allStores,
 				createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
@@ -2308,8 +2306,6 @@ func TestExternalEngine(t *testing.T) {
 		TotalKVCount:  int64(config.SplitRegionKeys) + 1,
 	}
 	engineUUID := uuid.New()
-	pdCtl := &pdutil.PdController{}
-	pdCtl.SetPDClient(&mockPdClient{})
 	local := &Backend{
 		BackendConfig: BackendConfig{
 			WorkerConcurrency: 2,
@@ -2317,7 +2313,7 @@ func TestExternalEngine(t *testing.T) {
 		splitCli: initTestSplitClient([][]byte{
 			keys[0], keys[50], endKey,
 		}, nil),
-		pdCtl:          pdCtl,
+		pdCli:          &mockPdClient{},
 		externalEngine: map[uuid.UUID]common.Engine{},
 		keyAdapter:     common.NoopKeyAdapter{},
 	}
@@ -2383,4 +2379,11 @@ func TestGetExternalEngineKVStatistics(t *testing.T) {
 	size, count := b.GetExternalEngineKVStatistics(uuid.New())
 	require.Zero(t, size)
 	require.Zero(t, count)
+}
+
+func TestCheckDiskAvail(t *testing.T) {
+	store := &http.StoreInfo{Status: http.StoreStatus{Capacity: "100 GB", Available: "50 GB"}}
+	ctx := context.Background()
+	err := checkDiskAvail(ctx, store)
+	require.NoError(t, err)
 }
