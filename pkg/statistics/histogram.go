@@ -16,10 +16,10 @@ package statistics
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
 	"math"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -176,11 +176,12 @@ func (hg *Histogram) updateLastBucket(upper *types.Datum, count, repeat int64, n
 	hg.Bounds.TruncateTo(2*l - 1)
 	hg.Bounds.AppendDatum(0, upper)
 	// The sampling case doesn't hold NDV since the low sampling rate. So check the NDV here.
-	if needBucketNDV && hg.Buckets[l-1].NDV > 0 {
-		hg.Buckets[l-1].NDV++
+	bucket := &hg.Buckets[l-1]
+	if needBucketNDV && bucket.NDV > 0 {
+		bucket.NDV++
 	}
-	hg.Buckets[l-1].Count = count
-	hg.Buckets[l-1].Repeat = repeat
+	bucket.Count = count
+	bucket.Repeat = repeat
 }
 
 // DecodeTo decodes the histogram bucket values into `tp`.
@@ -321,15 +322,17 @@ func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 			lowIdx = midIdx + 1
 			continue
 		}
-		if hg.Buckets[midIdx].NDV > 0 {
-			hg.Buckets[midIdx].NDV--
+		midbucket := &hg.Buckets[midIdx]
+
+		if midbucket.NDV > 0 {
+			midbucket.NDV--
 		}
 		if cmpResult == 0 {
-			hg.Buckets[midIdx].Repeat = 0
+			midbucket.Repeat = 0
 		}
-		hg.Buckets[midIdx].Count -= int64(valCntPairs.Count)
-		if hg.Buckets[midIdx].Count < 0 {
-			hg.Buckets[midIdx].Count = 0
+		midbucket.Count -= int64(valCntPairs.Count)
+		if midbucket.Count < 0 {
+			midbucket.Count = 0
 		}
 		found = true
 		break
@@ -1160,7 +1163,7 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 			}
 		}
 	}
-	sort.SliceStable(dataCnts, func(i, j int) bool { return dataCnts[i].cnt >= dataCnts[j].cnt })
+	slices.SortStableFunc(dataCnts, func(a, b dataCnt) int { return -cmp.Compare(a.cnt, b.cnt) })
 	if len(dataCnts) > int(numTopN) {
 		dataCnts = dataCnts[:numTopN]
 	}
