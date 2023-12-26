@@ -331,7 +331,7 @@ func (s *BaseTaskExecutor) runSubtask(ctx context.Context, subtaskExecutor execu
 
 	failpoint.Inject("mockTiDBPartitionThenResume", func(val failpoint.Value) {
 		if val.(bool) && (s.id == ":4000" || s.id == ":4001" || s.id == ":4002") {
-			_ = infosync.MockGlobalServerInfoManagerEntry.DeleteByID(s.id)
+			infosync.MockGlobalServerInfoManagerEntry.DeleteByExecID(s.id)
 			time.Sleep(20 * time.Second)
 		}
 	})

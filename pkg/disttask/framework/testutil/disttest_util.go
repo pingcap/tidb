@@ -16,7 +16,6 @@ package testutil
 
 import (
 	"context"
-	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
@@ -40,10 +39,8 @@ func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, schedulerHandle sch
 		mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
 			func(ctx context.Context, subtask *proto.Subtask) error {
 				switch subtask.Step {
-				case proto.StepOne:
-					testContext.M.Store("0", "0")
-				case proto.StepTwo:
-					testContext.M.Store("1", "1")
+				case proto.StepOne, proto.StepTwo:
+					testContext.CollectSubtask(subtask)
 				default:
 					panic("invalid step")
 				}
@@ -100,8 +97,8 @@ func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, mockSchedul
 		},
 	).AnyTimes()
 	mockExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ *proto.Subtask) error {
-			testContext.M.Store("1", "1")
+		func(_ context.Context, subtask *proto.Subtask) error {
+			testContext.CollectSubtask(subtask)
 			return nil
 		}).AnyTimes()
 	mockExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
@@ -130,31 +127,4 @@ func WaitTaskDoneOrPaused(ctx context.Context, t *testing.T, taskKey string) *pr
 	})
 	require.NoError(t, err)
 	return task
-}
-
-// DispatchTaskAndCheckSuccess schedule one task and check if it is succeeded.
-func DispatchTaskAndCheckSuccess(ctx context.Context, t *testing.T, taskKey string, testContext *TestContext, checkResultFn func(t *testing.T, testContext *TestContext)) {
-	task := SubmitAndWaitTask(ctx, t, taskKey)
-	require.Equal(t, proto.TaskStateSucceed, task.State)
-	if checkResultFn == nil {
-		v, ok := testContext.M.Load("1")
-		require.Equal(t, true, ok)
-		require.Equal(t, "1", v)
-		v, ok = testContext.M.Load("0")
-		require.Equal(t, true, ok)
-		require.Equal(t, "0", v)
-		return
-	}
-	checkResultFn(t, testContext)
-	testContext.M = sync.Map{}
-}
-
-// DispatchTaskAndCheckState schedule one task and check the task state.
-func DispatchTaskAndCheckState(ctx context.Context, t *testing.T, taskKey string, testContext *TestContext, state proto.TaskState) {
-	task := SubmitAndWaitTask(ctx, t, taskKey)
-	require.Equal(t, state, task.State)
-	testContext.M.Range(func(key, value interface{}) bool {
-		testContext.M.Delete(key)
-		return true
-	})
 }

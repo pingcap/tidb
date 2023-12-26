@@ -16,11 +16,13 @@ package testutil
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -49,4 +51,25 @@ func InitTestContext(t *testing.T, nodeNum int) (context.Context, *gomock.Contro
 	})
 
 	return ctx, ctrl, &TestContext{}, testkit.NewDistExecutionContext(t, nodeNum)
+}
+
+// CollectSubtask collects subtask info
+func (c *TestContext) CollectSubtask(subtask *proto.Subtask) {
+	key := getTaskStepKey(subtask.TaskID, subtask.Step)
+	actual, _ := c.M.LoadOrStore(key, &atomic.Int32{})
+	actual.(*atomic.Int32).Add(1)
+}
+
+// CollectedSubtaskCnt returns the collected subtask count.
+func (c *TestContext) CollectedSubtaskCnt(taskID int64, step proto.Step) int {
+	key := getTaskStepKey(taskID, step)
+	if actual, ok := c.M.Load(key); ok {
+		return int(actual.(*atomic.Int32).Load())
+	}
+	return -1
+}
+
+// getTaskStepKey returns the key of a task step.
+func getTaskStepKey(id int64, step proto.Step) string {
+	return fmt.Sprintf("%d/%d", id, step)
 }

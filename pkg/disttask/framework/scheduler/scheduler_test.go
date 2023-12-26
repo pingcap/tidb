@@ -639,7 +639,7 @@ func TestManagerDispatchLoop(t *testing.T) {
 			idx := counter.Load()
 			mockScheduler = mock.NewMockScheduler(ctrl)
 			mockScheduler.EXPECT().Init().Return(nil)
-			mockScheduler.EXPECT().ExecuteTask().Do(func() {
+			mockScheduler.EXPECT().ScheduleTask().Do(func() {
 				require.NoError(t, taskMgr.WithNewSession(func(se sessionctx.Context) error {
 					_, err := storage.ExecSQL(ctx, se, "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
 						proto.TaskStateRunning, proto.StepOne, task.ID)

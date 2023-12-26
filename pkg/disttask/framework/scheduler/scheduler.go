@@ -528,7 +528,7 @@ func (s *BaseScheduler) onErrHandlingStage(receiveErrs []error) error {
 
 func (s *BaseScheduler) onNextStage() (err error) {
 	nextStep := s.GetNextStep(s.Task)
-	logutil.Logger(s.logCtx).Info("onNextStage",
+	logutil.Logger(s.logCtx).Info("on next step",
 		zap.Int64("current-step", int64(s.Task.Step)),
 		zap.Int64("next-step", int64(nextStep)))
 
@@ -539,16 +539,6 @@ func (s *BaseScheduler) onNextStage() (err error) {
 			return errors.Trace(err)
 		}
 		return s.taskMgr.SucceedTask(s.ctx, s.Task.ID)
-	}
-
-	// Adjust the task's concurrency.
-	if s.Task.State == proto.TaskStatePending {
-		if s.Task.Concurrency == 0 {
-			s.Task.Concurrency = DefaultSubtaskConcurrency
-		}
-		if s.Task.Concurrency > MaxSubtaskConcurrency {
-			s.Task.Concurrency = MaxSubtaskConcurrency
-		}
 	}
 
 	serverNodes, err := s.getEligibleNodes()
