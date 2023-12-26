@@ -50,7 +50,11 @@ func TestJobSize(t *testing.T) {
 - SubJob.ToProxyJob()
 `
 	job := model.Job{}
+<<<<<<< HEAD:parser/model/ddl_test.go
 	require.Equal(t, 328, int(unsafe.Sizeof(job)), msg)
+=======
+	require.Equal(t, 360, int(unsafe.Sizeof(job)), msg)
+>>>>>>> 2dfbaa8264f (ddl: set jobs dependency by schema and table name (#49699)):pkg/parser/model/ddl_test.go
 }
 
 func TestBackfillMetaCodec(t *testing.T) {
