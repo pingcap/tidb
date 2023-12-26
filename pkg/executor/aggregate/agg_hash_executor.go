@@ -607,7 +607,7 @@ func (e *HashAggExec) resetSpillMode() {
 	e.executed = e.numOfSpilledChks == e.dataInDisk.NumChunks() // No data is spilling again, all data have been processed.
 	e.numOfSpilledChks = e.dataInDisk.NumChunks()
 	e.memTracker.ReplaceBytesUsed(setSize)
-	atomic.StoreUint32(&e.inSpillMode, 0)
+	atomic.StoreUint32(&e.inSpillMode, notSpillMode)
 }
 
 // execute fetches Chunks from src and update each aggregate function for each row in Chunk.
@@ -650,7 +650,7 @@ func (e *HashAggExec) execute(ctx context.Context) (err error) {
 		for j := 0; j < e.childResult.NumRows(); j++ {
 			groupKey := string(e.groupKeyBuffer[j]) // do memory copy here, because e.groupKeyBuffer may be reused.
 			if !e.groupSet.Exist(groupKey) {
-				if atomic.LoadUint32(&e.inSpillMode) == 1 && e.groupSet.Count() > 0 {
+				if isInSpillMode(&e.inSpillMode) && e.groupSet.Count() > 0 {
 					sel = append(sel, j)
 					continue
 				}

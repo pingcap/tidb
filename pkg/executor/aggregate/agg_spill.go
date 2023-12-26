@@ -38,8 +38,8 @@ const (
 	spilledPartitionNum = 256
 	spillTasksDoneFlag  = -1
 
-	spillMode    = 0
-	notSpillMode = 1
+	notSpillMode = 0
+	spillMode    = 1
 
 	spillLogInfo string = "memory exceeds quota, set aggregate mode to spill-mode"
 )
@@ -308,13 +308,13 @@ type AggSpillDiskAction struct {
 
 // Action set HashAggExec spill mode.
 func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
-	if isInSpillMode(&a.e.inSpillMode) && hasEnoughDataToSpill(a.e.memTracker, t) && a.spillTimes < maxSpillTimes {
+	if !isInSpillMode(&a.e.inSpillMode) && hasEnoughDataToSpill(a.e.memTracker, t) && a.spillTimes < maxSpillTimes {
 		a.spillTimes++
 		logutil.BgLogger().Info(spillLogInfo,
 			zap.Uint32("spillTimes", a.spillTimes),
 			zap.Int64("consumed", t.BytesConsumed()),
 			zap.Int64("quota", t.GetBytesLimit()))
-		atomic.StoreUint32(&a.e.inSpillMode, 1)
+		atomic.StoreUint32(&a.e.inSpillMode, spillMode)
 		memory.QueryForceDisk.Add(1)
 		return
 	}
