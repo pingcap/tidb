@@ -117,6 +117,7 @@ func SubmitAndWaitTask(ctx context.Context, t *testing.T, taskKey string) *proto
 	return WaitTaskDoneOrPaused(ctx, t, taskKey)
 }
 
+// WaitTaskDoneOrPaused wait task done or paused.
 func WaitTaskDoneOrPaused(ctx context.Context, t *testing.T, taskKey string) *proto.Task {
 	taskMgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
