@@ -117,7 +117,7 @@ func (s *MockSchemaSyncer) OwnerCheckAllVersions(ctx context.Context, jobID int6
 
 	failpoint.Inject("mockOwnerCheckAllVersionSlow", func(val failpoint.Value) {
 		if v, ok := val.(int); ok && v == int(jobID) {
-			time.Sleep(1 * time.Second)
+			time.Sleep(2 * time.Second)
 		}
 	})
 
