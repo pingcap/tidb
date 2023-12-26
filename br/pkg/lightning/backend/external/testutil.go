@@ -93,12 +93,12 @@ func testReadAndCompare(
 			require.EqualValues(t, kvs[kvIdx].Val, loaded.values[i])
 			kvIdx++
 		}
+		curStart = curEnd.Clone()
 
 		// release
 		loaded.keys = nil
 		loaded.values = nil
 		loaded.memKVBuffers = nil
-		curStart = curEnd.Clone()
 
 		if len(endKeyOfGroup) == 0 {
 			break
@@ -126,4 +126,38 @@ func splitDataAndStatFiles(datas []string, stats []string) ([][]string, [][]stri
 		start = end
 	}
 	return dataGroup, statGroup
+}
+
+// split data&stat files, startKeys and endKeys into groups for new merge step.
+func splitDataStatAndKeys(datas []string, stats []string, multiStats []MultipleFilesStat) ([][]string, [][]string, []dbkv.Key, []dbkv.Key) {
+	startKeys := make([]dbkv.Key, 0, 10)
+	endKeys := make([]dbkv.Key, 0, 10)
+	i := 0
+	for ; i < len(multiStats)-1; i += 2 {
+		startKey := BytesMin(multiStats[i].MinKey, multiStats[i+1].MinKey)
+		endKey := BytesMax(multiStats[i].MaxKey, multiStats[i+1].MaxKey)
+		endKey = dbkv.Key(endKey).Next().Clone()
+		startKeys = append(startKeys, startKey)
+		endKeys = append(endKeys, endKey)
+	}
+	if i == len(multiStats)-1 {
+		startKeys = append(startKeys, multiStats[i].MinKey.Clone())
+		endKeys = append(endKeys, dbkv.Key(multiStats[i].MaxKey).Next().Clone())
+	}
+
+	dataGroup := make([][]string, 0, 10)
+	statGroup := make([][]string, 0, 10)
+
+	start := 0
+	step := 2 * multiFileStatNum
+	for start < len(datas) {
+		end := start + step
+		if end > len(datas) {
+			end = len(datas)
+		}
+		dataGroup = append(dataGroup, datas[start:end])
+		statGroup = append(statGroup, stats[start:end])
+		start = end
+	}
+	return dataGroup, statGroup, startKeys, endKeys
 }

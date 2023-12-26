@@ -12,7 +12,6 @@ go_library(
     deps = [
         "//pkg/util/logutil",
         "@com_github_aws_aws_sdk_go//aws/awserr",
-        "@com_github_aws_aws_sdk_go//aws/request",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@org_golang_google_grpc//codes",

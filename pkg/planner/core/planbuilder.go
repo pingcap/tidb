@@ -15,7 +15,6 @@
 package core
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -82,93 +81,6 @@ type visitInfo struct {
 	dynamicWithGrant bool
 }
 
-type indexNestedLoopJoinTables struct {
-	inljTables  []hintTableInfo
-	inlhjTables []hintTableInfo
-	inlmjTables []hintTableInfo
-}
-
-type tableHintInfo struct {
-	indexNestedLoopJoinTables
-	noIndexJoinTables   indexNestedLoopJoinTables
-	sortMergeJoinTables []hintTableInfo
-	broadcastJoinTables []hintTableInfo
-	shuffleJoinTables   []hintTableInfo
-	hashJoinTables      []hintTableInfo
-	noHashJoinTables    []hintTableInfo
-	noMergeJoinTables   []hintTableInfo
-	indexHintList       []indexHintInfo
-	tiflashTables       []hintTableInfo
-	tikvTables          []hintTableInfo
-	aggHints            aggHintInfo
-	indexMergeHintList  []indexHintInfo
-	timeRangeHint       ast.HintTimeRange
-	limitHints          limitHintInfo
-	MergeHints          MergeHintInfo
-	leadingJoinOrder    []hintTableInfo
-	hjBuildTables       []hintTableInfo
-	hjProbeTables       []hintTableInfo
-}
-
-type limitHintInfo struct {
-	preferLimitToCop bool
-}
-
-// MergeHintInfo ...one bool flag for cte
-type MergeHintInfo struct {
-	preferMerge bool
-}
-
-type hintTableInfo struct {
-	dbName       model.CIStr
-	tblName      model.CIStr
-	partitions   []model.CIStr
-	selectOffset int
-	matched      bool
-}
-
-type indexHintInfo struct {
-	dbName     model.CIStr
-	tblName    model.CIStr
-	partitions []model.CIStr
-	indexHint  *ast.IndexHint
-	// Matched indicates whether this index hint
-	// has been successfully applied to a DataSource.
-	// If an indexHintInfo is not matched after building
-	// a Select statement, we will generate a warning for it.
-	matched bool
-}
-
-func (hint *indexHintInfo) hintTypeString() string {
-	switch hint.indexHint.HintType {
-	case ast.HintUse:
-		return "use_index"
-	case ast.HintIgnore:
-		return "ignore_index"
-	case ast.HintForce:
-		return "force_index"
-	}
-	return ""
-}
-
-// indexString formats the indexHint as dbName.tableName[, indexNames].
-func (hint *indexHintInfo) indexString() string {
-	var indexListString string
-	indexList := make([]string, len(hint.indexHint.IndexNames))
-	for i := range hint.indexHint.IndexNames {
-		indexList[i] = hint.indexHint.IndexNames[i].L
-	}
-	if len(indexList) > 0 {
-		indexListString = fmt.Sprintf(", %s", strings.Join(indexList, ", "))
-	}
-	return fmt.Sprintf("%s.%s%s", hint.dbName, hint.tblName, indexListString)
-}
-
-type aggHintInfo struct {
-	preferAggType  uint
-	preferAggToCop bool
-}
-
 // QueryTimeRange represents a time range specified by TIME_RANGE hint
 type QueryTimeRange struct {
 	From time.Time
@@ -189,232 +101,6 @@ func (tr *QueryTimeRange) MemoryUsage() (sum int64) {
 	}
 
 	return emptyQueryTimeRangeSize
-}
-
-func tableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTables []ast.HintTable, p *hint.BlockHintProcessor, currentOffset int) []hintTableInfo {
-	if len(hintTables) == 0 {
-		return nil
-	}
-	hintTableInfos := make([]hintTableInfo, 0, len(hintTables))
-	defaultDBName := model.NewCIStr(ctx.GetSessionVars().CurrentDB)
-	isInapplicable := false
-	for _, hintTable := range hintTables {
-		tableInfo := hintTableInfo{
-			dbName:       hintTable.DBName,
-			tblName:      hintTable.TableName,
-			partitions:   hintTable.PartitionList,
-			selectOffset: p.GetHintOffset(hintTable.QBName, currentOffset),
-		}
-		if tableInfo.dbName.L == "" {
-			tableInfo.dbName = defaultDBName
-		}
-		switch hintName {
-		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ, TiDBHashJoin, HintHJ, HintLeading:
-			if len(tableInfo.partitions) > 0 {
-				isInapplicable = true
-			}
-		}
-		hintTableInfos = append(hintTableInfos, tableInfo)
-	}
-	if isInapplicable {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(
-			fmt.Errorf("Optimizer Hint %s is inapplicable on specified partitions",
-				restore2JoinHint(hintName, hintTableInfos)))
-		return nil
-	}
-	return hintTableInfos
-}
-
-func (info *tableHintInfo) ifPreferMergeJoin(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.sortMergeJoinTables)
-}
-
-func (info *tableHintInfo) ifPreferBroadcastJoin(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.broadcastJoinTables)
-}
-
-func (info *tableHintInfo) ifPreferShuffleJoin(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.shuffleJoinTables)
-}
-
-func (info *tableHintInfo) ifPreferHashJoin(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.hashJoinTables)
-}
-
-func (info *tableHintInfo) ifPreferNoHashJoin(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.noHashJoinTables)
-}
-
-func (info *tableHintInfo) ifPreferNoMergeJoin(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.noMergeJoinTables)
-}
-
-func (info *tableHintInfo) ifPreferHJBuild(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.hjBuildTables)
-}
-
-func (info *tableHintInfo) ifPreferHJProbe(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.hjProbeTables)
-}
-
-func (info *tableHintInfo) ifPreferINLJ(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables.inljTables)
-}
-
-func (info *tableHintInfo) ifPreferINLHJ(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables.inlhjTables)
-}
-
-func (info *tableHintInfo) ifPreferINLMJ(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.indexNestedLoopJoinTables.inlmjTables)
-}
-
-func (info *tableHintInfo) ifPreferNoIndexJoin(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.noIndexJoinTables.inljTables)
-}
-
-func (info *tableHintInfo) ifPreferNoIndexHashJoin(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.noIndexJoinTables.inlhjTables)
-}
-
-func (info *tableHintInfo) ifPreferNoIndexMergeJoin(tableNames ...*hintTableInfo) bool {
-	return info.matchTableName(tableNames, info.noIndexJoinTables.inlmjTables)
-}
-
-func (info *tableHintInfo) ifPreferTiFlash(tableName *hintTableInfo) *hintTableInfo {
-	if tableName == nil {
-		return nil
-	}
-	for i, tbl := range info.tiflashTables {
-		if tableName.dbName.L == tbl.dbName.L && tableName.tblName.L == tbl.tblName.L && tbl.selectOffset == tableName.selectOffset {
-			info.tiflashTables[i].matched = true
-			return &tbl
-		}
-	}
-	return nil
-}
-
-func (info *tableHintInfo) ifPreferTiKV(tableName *hintTableInfo) *hintTableInfo {
-	if tableName == nil {
-		return nil
-	}
-	for i, tbl := range info.tikvTables {
-		if tableName.dbName.L == tbl.dbName.L && tableName.tblName.L == tbl.tblName.L && tbl.selectOffset == tableName.selectOffset {
-			info.tikvTables[i].matched = true
-			return &tbl
-		}
-	}
-	return nil
-}
-
-// matchTableName checks whether the hint hit the need.
-// Only need either side matches one on the list.
-// Even though you can put 2 tables on the list,
-// it doesn't mean optimizer will reorder to make them
-// join directly.
-// Which it joins on with depend on sequence of traverse
-// and without reorder, user might adjust themselves.
-// This is similar to MySQL hints.
-func (*tableHintInfo) matchTableName(tables []*hintTableInfo, hintTables []hintTableInfo) bool {
-	hintMatched := false
-	for _, table := range tables {
-		for i, curEntry := range hintTables {
-			if table == nil {
-				continue
-			}
-			if curEntry.dbName.L == table.dbName.L && curEntry.tblName.L == table.tblName.L && table.selectOffset == curEntry.selectOffset {
-				hintTables[i].matched = true
-				hintMatched = true
-				break
-			}
-		}
-	}
-	return hintMatched
-}
-
-func restore2TableHint(hintTables ...hintTableInfo) string {
-	buffer := bytes.NewBufferString("")
-	for i, table := range hintTables {
-		buffer.WriteString(table.tblName.L)
-		if len(table.partitions) > 0 {
-			buffer.WriteString(" PARTITION(")
-			for j, partition := range table.partitions {
-				if j > 0 {
-					buffer.WriteString(", ")
-				}
-				buffer.WriteString(partition.L)
-			}
-			buffer.WriteString(")")
-		}
-		if i < len(hintTables)-1 {
-			buffer.WriteString(", ")
-		}
-	}
-	return buffer.String()
-}
-
-func restore2JoinHint(hintType string, hintTables []hintTableInfo) string {
-	if len(hintTables) == 0 {
-		return strings.ToUpper(hintType)
-	}
-	buffer := bytes.NewBufferString("/*+ ")
-	buffer.WriteString(strings.ToUpper(hintType))
-	buffer.WriteString("(")
-	buffer.WriteString(restore2TableHint(hintTables...))
-	buffer.WriteString(") */")
-	return buffer.String()
-}
-
-func restore2IndexHint(hintType string, hintIndex indexHintInfo) string {
-	buffer := bytes.NewBufferString("/*+ ")
-	buffer.WriteString(strings.ToUpper(hintType))
-	buffer.WriteString("(")
-	buffer.WriteString(restore2TableHint(hintTableInfo{
-		dbName:     hintIndex.dbName,
-		tblName:    hintIndex.tblName,
-		partitions: hintIndex.partitions,
-	}))
-	if hintIndex.indexHint != nil && len(hintIndex.indexHint.IndexNames) > 0 {
-		for i, indexName := range hintIndex.indexHint.IndexNames {
-			if i > 0 {
-				buffer.WriteString(",")
-			}
-			buffer.WriteString(" " + indexName.L)
-		}
-	}
-	buffer.WriteString(") */")
-	return buffer.String()
-}
-
-func restore2StorageHint(tiflashTables, tikvTables []hintTableInfo) string {
-	buffer := bytes.NewBufferString("/*+ ")
-	buffer.WriteString(strings.ToUpper(HintReadFromStorage))
-	buffer.WriteString("(")
-	if len(tiflashTables) > 0 {
-		buffer.WriteString("tiflash[")
-		buffer.WriteString(restore2TableHint(tiflashTables...))
-		buffer.WriteString("]")
-		if len(tikvTables) > 0 {
-			buffer.WriteString(", ")
-		}
-	}
-	if len(tikvTables) > 0 {
-		buffer.WriteString("tikv[")
-		buffer.WriteString(restore2TableHint(tikvTables...))
-		buffer.WriteString("]")
-	}
-	buffer.WriteString(") */")
-	return buffer.String()
-}
-
-func extractUnmatchedTables(hintTables []hintTableInfo) []string {
-	var tableNames []string
-	for _, table := range hintTables {
-		if !table.matched {
-			tableNames = append(tableNames, table.tblName.O)
-		}
-	}
-	return tableNames
 }
 
 // clauseCode indicates in which clause the column is currently.
@@ -509,14 +195,6 @@ const (
 	handlingScalarSubquery
 )
 
-// Hint flags listed here are used by PlanBuilder.subQueryHintFlags.
-const (
-	// HintFlagSemiJoinRewrite corresponds to HintSemiJoinRewrite.
-	HintFlagSemiJoinRewrite uint64 = 1 << iota
-	// HintFlagNoDecorrelate corresponds to HintNoDecorrelate.
-	HintFlagNoDecorrelate
-)
-
 // PlanBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
 type PlanBuilder struct {
@@ -532,7 +210,7 @@ type PlanBuilder struct {
 	colMapper map[*ast.ColumnNameExpr]int
 	// visitInfo is used for privilege check.
 	visitInfo     []visitInfo
-	tableHintInfo []tableHintInfo
+	tableHintInfo []hint.TableHintInfo
 	// optFlag indicates the flags of the optimizer rules.
 	optFlag uint64
 	// capFlag indicates the capability flags.
@@ -562,9 +240,9 @@ type PlanBuilder struct {
 	//   If we meet a subquery, it's clearly that it's a independent problem so we just pop one map out when we finish building the subquery.
 	handleHelper *handleColHelper
 
-	hintProcessor *hint.BlockHintProcessor
-	// selectOffset is the offsets of current processing select stmts.
-	selectOffset []int
+	hintProcessor *hint.QBHintHandler
+	// qbOffset is the offsets of current processing select stmts.
+	qbOffset []int
 
 	// SelectLock need this information to locate the lock on partitions.
 	partitionedTable []table.PartitionedTable
@@ -710,18 +388,18 @@ func (b *PlanBuilder) GetOptFlag() uint64 {
 }
 
 func (b *PlanBuilder) getSelectOffset() int {
-	if len(b.selectOffset) > 0 {
-		return b.selectOffset[len(b.selectOffset)-1]
+	if len(b.qbOffset) > 0 {
+		return b.qbOffset[len(b.qbOffset)-1]
 	}
 	return -1
 }
 
 func (b *PlanBuilder) pushSelectOffset(offset int) {
-	b.selectOffset = append(b.selectOffset, offset)
+	b.qbOffset = append(b.qbOffset, offset)
 }
 
 func (b *PlanBuilder) popSelectOffset() {
-	b.selectOffset = b.selectOffset[:len(b.selectOffset)-1]
+	b.qbOffset = b.qbOffset[:len(b.qbOffset)-1]
 }
 
 // PlanBuilderOpt is used to adjust the plan builder.
@@ -764,7 +442,7 @@ func NewPlanBuilder(opts ...PlanBuilderOpt) *PlanBuilder {
 // PlannerSelectBlockAsName should be restored after using this builder.
 // This is The comman code pattern to use it:
 // NewPlanBuilder().Init(sctx, is, processor)
-func (b *PlanBuilder) Init(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.BlockHintProcessor) (*PlanBuilder, []ast.HintTable) {
+func (b *PlanBuilder) Init(sctx sessionctx.Context, is infoschema.InfoSchema, processor *hint.QBHintHandler) (*PlanBuilder, []ast.HintTable) {
 	savedBlockNames := sctx.GetSessionVars().PlannerSelectBlockAsName.Load()
 	if processor == nil {
 		sctx.GetSessionVars().PlannerSelectBlockAsName.Store(&[]ast.HintTable{})
@@ -1174,14 +852,25 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 	if err != nil {
 		return nil, errors.Errorf("binding failed: %v", err)
 	}
-	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(originNode, bindableStmt.Schema, bindableStmt.Query))
+
+	restoredSQL := utilparser.RestoreWithDefaultDB(originNode, bindableStmt.Schema, bindableStmt.Query)
+	bindSQL = utilparser.RestoreWithDefaultDB(hintNode, bindableStmt.Schema, hintNode.Text())
+	db := utilparser.GetDefaultDB(originNode, bindableStmt.Schema)
+	if v.IsUniversal { // hide schema name if it's universal binding
+		restoredSQL = utilparser.RestoreWithoutDB(originNode)
+		bindSQL = utilparser.RestoreWithoutDB(hintNode)
+		db = ""
+	}
+	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(restoredSQL)
+
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
 		NormdOrigSQL: normdOrigSQL,
-		BindSQL:      utilparser.RestoreWithDefaultDB(hintNode, bindableStmt.Schema, hintNode.Text()),
+		BindSQL:      bindSQL,
 		IsGlobal:     v.GlobalScope,
+		IsUniversal:  v.IsUniversal,
 		BindStmt:     hintNode,
-		Db:           utilparser.GetDefaultDB(originNode, bindableStmt.Schema),
+		Db:           db,
 		Charset:      bindableStmt.Charset,
 		Collation:    bindableStmt.Collation,
 		Source:       bindinfo.History,
@@ -1374,7 +1063,7 @@ func getLatestIndexInfo(ctx sessionctx.Context, id int64, startVer int64) (map[i
 	return latestIndexes, true, nil
 }
 
-func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
+func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *hint.TableHintInfo, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName model.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
 	tp := kv.TiKV
@@ -1453,10 +1142,10 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *tableHintInfo, i
 	// Extract comment-style index hint like /*+ INDEX(t, idx1, idx2) */.
 	indexHintsLen := len(indexHints)
 	if tableHints != nil {
-		for i, hint := range tableHints.indexHintList {
-			if hint.dbName.L == dbName.L && hint.tblName.L == tblName.L {
-				indexHints = append(indexHints, hint.indexHint)
-				tableHints.indexHintList[i].matched = true
+		for i, hint := range tableHints.IndexHintList {
+			if hint.Match(dbName, tblName) {
+				indexHints = append(indexHints, hint.IndexHint)
+				tableHints.IndexHintList[i].Matched = true
 			}
 		}
 	}
@@ -3004,7 +2693,7 @@ func generateIndexTasks(idx *model.IndexInfo, as *ast.AnalyzeTableStmt, tblInfo 
 }
 
 // CMSketchSizeLimit indicates the size limit of CMSketch.
-var CMSketchSizeLimit = kv.TxnEntrySizeLimit / binary.MaxVarintLen32
+var CMSketchSizeLimit = kv.TxnEntrySizeLimit.Load() / binary.MaxVarintLen32
 
 var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumBuckets:    1024,
@@ -3148,6 +2837,9 @@ func handleAnalyzeOptions(opts []ast.AnalyzeOpt, statsVer int) (map[ast.AnalyzeO
 }
 
 func (b *PlanBuilder) buildAnalyze(as *ast.AnalyzeTableStmt) (Plan, error) {
+	if as.NoWriteToBinLog {
+		return nil, dbterror.ErrNotSupportedYet.GenWithStackByArgs("[NO_WRITE_TO_BINLOG | LOCAL]")
+	}
 	if as.Incremental {
 		return nil, errors.Errorf("the incremental analyze feature has already been removed in TiDB v7.5.0, so this will have no effect")
 	}

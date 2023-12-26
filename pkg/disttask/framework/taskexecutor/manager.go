@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -72,12 +73,13 @@ type Manager struct {
 		handlingTasks map[int64]context.CancelCauseFunc
 	}
 	// id, it's the same as server id now, i.e. host:port.
-	id      string
-	wg      tidbutil.WaitGroupWrapper
-	ctx     context.Context
-	cancel  context.CancelFunc
-	logCtx  context.Context
-	newPool func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
+	id          string
+	wg          tidbutil.WaitGroupWrapper
+	ctx         context.Context
+	cancel      context.CancelFunc
+	logCtx      context.Context
+	newPool     func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
+	slotManager *slotManager
 }
 
 // BuildManager builds a Manager.
@@ -87,6 +89,10 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 		taskTable: taskTable,
 		logCtx:    logutil.WithFields(context.Background()),
 		newPool:   b.newPool,
+		slotManager: &slotManager{
+			executorSlotInfos: make(map[int64]*slotInfo),
+			available:         cpu.GetCPUCount(),
+		},
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.handlingTasks = make(map[int64]context.CancelCauseFunc)
@@ -196,6 +202,7 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 		return
 	}
 	tasks = m.filterAlreadyHandlingTasks(tasks)
+
 	for _, task := range tasks {
 		exist, err := m.taskTable.HasSubtasksInStates(m.ctx, m.id, task.ID, task.Step,
 			proto.TaskStatePending, proto.TaskStateRevertPending,
@@ -210,14 +217,22 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 			continue
 		}
 		logutil.Logger(m.logCtx).Info("detect new subtask", zap.Int64("task-id", task.ID))
+
+		if !m.slotManager.canAlloc(task) {
+			logutil.Logger(m.logCtx).Warn("subtask has been rejected", zap.Int64("task-id", task.ID))
+			continue
+		}
 		m.addHandlingTask(task.ID)
+		m.slotManager.alloc(task)
 		t := task
 		err = m.executorPool.Run(func() {
+			defer m.slotManager.free(t.ID)
 			m.onRunnableTask(t)
 			m.removeHandlingTask(t.ID)
 		})
 		// pool closed.
 		if err != nil {
+			m.slotManager.free(t.ID)
 			m.removeHandlingTask(task.ID)
 			m.logErr(err)
 			return

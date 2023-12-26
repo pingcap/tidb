@@ -89,7 +89,7 @@ func (rs *resultReorder) injectSort(lp LogicalPlan) LogicalPlan {
 	}
 	sort := LogicalSort{
 		ByItems: byItems,
-	}.Init(lp.SCtx(), lp.SelectBlockOffset())
+	}.Init(lp.SCtx(), lp.QueryBlockOffset())
 	sort.SetChildren(lp)
 	return sort
 }

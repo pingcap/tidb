@@ -150,7 +150,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		defer debugtrace.LeaveContextCommon(sctx)
 	}
 
-	if !sctx.GetSessionVars().InRestrictedSQL && variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load() {
+	if !sctx.GetSessionVars().InRestrictedSQL && (variable.RestrictedReadOnly.Load() || variable.VarTiDBSuperReadOnly.Load()) {
 		allowed, err := allowInReadOnlyMode(sctx, node)
 		if err != nil {
 			return nil, nil, err
@@ -188,15 +188,14 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	defer func() {
-		// Override the resource group if necessary
-		// TODO: we didn't check the existence of the hinted resource group now to save the cost per query
+		// Override the resource group if the hint is set.
 		if retErr == nil && sessVars.StmtCtx.StmtHints.HasResourceGroup {
 			if variable.EnableResourceControl.Load() {
-				sessVars.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
+				sessVars.StmtCtx.ResourceGroupName = sessVars.StmtCtx.StmtHints.ResourceGroup
 				// if we are in a txn, should update the txn resource name to let the txn
 				// commit with the hint resource group.
 				if txn, err := sctx.Txn(false); err == nil && txn != nil && txn.Valid() {
-					kv.SetTxnResourceGroup(txn, sessVars.ResourceGroupName)
+					kv.SetTxnResourceGroup(txn, sessVars.StmtCtx.ResourceGroupName)
 				}
 			} else {
 				err := infoschema.ErrResourceGroupSupportDisabled
@@ -368,7 +367,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if sessVars.EvolvePlanBaselines && bestPlanFromBind != nil &&
 		sessVars.SelectLimit == math.MaxUint64 { // do not evolve this query if sql_select_limit is enabled
 		// Check bestPlanFromBind firstly to avoid nil stmtNode.
-		if _, ok := stmtNode.(*ast.SelectStmt); ok && !bindRecord.Bindings[0].Hint.ContainTableHint(core.HintReadFromStorage) {
+		if _, ok := stmtNode.(*ast.SelectStmt); ok && !bindRecord.Bindings[0].Hint.ContainTableHint(hint.HintReadFromStorage) {
 			sessVars.StmtCtx.StmtHints = originStmtHints
 			defPlan, _, _, err := optimize(ctx, sctx, node, is)
 			if err != nil {
@@ -376,8 +375,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 				return bestPlan, names, nil
 			}
 			defPlanHints := core.GenHintsFromPhysicalPlan(defPlan)
-			for _, hint := range defPlanHints {
-				if hint.HintName.String() == core.HintReadFromStorage {
+			for _, h := range defPlanHints {
+				if h.HintName.String() == hint.HintReadFromStorage {
 					return bestPlan, names, nil
 				}
 			}
@@ -393,7 +392,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 func OptimizeForForeignKeyCascade(ctx context.Context, sctx sessionctx.Context, node ast.StmtNode, is infoschema.InfoSchema) (core.Plan, error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
-	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
+	hintProcessor := hint.NewQBHintHandler(sctx)
 	builder.Init(sctx, is, hintProcessor)
 	p, err := builder.Build(ctx, node)
 	if err != nil {
@@ -475,7 +474,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	// build logical plan
-	hintProcessor := &hint.BlockHintProcessor{Ctx: sctx}
+	hintProcessor := hint.NewQBHintHandler(sctx)
 	node.Accept(hintProcessor)
 	defer hintProcessor.HandleUnusedViewHints()
 	builder := planBuilderPool.Get().(*core.PlanBuilder)

@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -86,7 +87,7 @@ func (s *partitionProcessor) rewriteDataSource(lp LogicalPlan, opt *logicalOptim
 				us := LogicalUnionScan{
 					conditions: p.conditions,
 					handleCols: p.handleCols,
-				}.Init(ua.SCtx(), ua.SelectBlockOffset())
+				}.Init(ua.SCtx(), ua.QueryBlockOffset())
 				us.SetChildren(child)
 				children = append(children, us)
 			}
@@ -469,7 +470,7 @@ func (s *partitionProcessor) processHashOrKeyPartition(ds *DataSource, pi *model
 	if used != nil {
 		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi), opt)
 	}
-	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.SelectBlockOffset())
+	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	tableDual.schema = ds.Schema()
 	appendNoPartitionChildTraceStep(ds, tableDual, opt)
 	return tableDual, nil
@@ -1018,7 +1019,7 @@ func (s *partitionProcessor) processListPartition(ds *DataSource, pi *model.Part
 	if used != nil {
 		return s.makeUnionAllChildren(ds, pi, convertToRangeOr(used, pi), opt)
 	}
-	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.SelectBlockOffset())
+	tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	tableDual.schema = ds.Schema()
 	appendNoPartitionChildTraceStep(ds, tableDual, opt)
 	return tableDual, nil
@@ -1615,7 +1616,7 @@ func pruneUseBinarySearch(lessThan lessThanDataInt, data dataForPrune, unsigned 
 
 func (*partitionProcessor) resolveAccessPaths(ds *DataSource) error {
 	possiblePaths, err := getPossibleAccessPaths(
-		ds.SCtx(), &tableHintInfo{indexMergeHintList: ds.indexMergeHints, indexHintList: ds.IndexHints},
+		ds.SCtx(), &h.TableHintInfo{IndexMergeHintList: ds.indexMergeHints, IndexHintList: ds.IndexHints},
 		ds.astIndexHints, ds.table, ds.DBName, ds.tableInfo.Name, ds.isForUpdateRead, true)
 	if err != nil {
 		return err
@@ -1631,12 +1632,12 @@ func (*partitionProcessor) resolveAccessPaths(ds *DataSource) error {
 func (s *partitionProcessor) resolveOptimizeHint(ds *DataSource, partitionName model.CIStr) error {
 	// index hint
 	if len(ds.IndexHints) > 0 {
-		newIndexHint := make([]indexHintInfo, 0, len(ds.IndexHints))
+		newIndexHint := make([]h.IndexHintInfo, 0, len(ds.IndexHints))
 		for _, idxHint := range ds.IndexHints {
-			if len(idxHint.partitions) == 0 {
+			if len(idxHint.Partitions) == 0 {
 				newIndexHint = append(newIndexHint, idxHint)
 			} else {
-				for _, p := range idxHint.partitions {
+				for _, p := range idxHint.Partitions {
 					if p.String() == partitionName.String() {
 						newIndexHint = append(newIndexHint, idxHint)
 						break
@@ -1649,12 +1650,12 @@ func (s *partitionProcessor) resolveOptimizeHint(ds *DataSource, partitionName m
 
 	// index merge hint
 	if len(ds.indexMergeHints) > 0 {
-		newIndexMergeHint := make([]indexHintInfo, 0, len(ds.indexMergeHints))
+		newIndexMergeHint := make([]h.IndexHintInfo, 0, len(ds.indexMergeHints))
 		for _, idxHint := range ds.indexMergeHints {
-			if len(idxHint.partitions) == 0 {
+			if len(idxHint.Partitions) == 0 {
 				newIndexMergeHint = append(newIndexMergeHint, idxHint)
 			} else {
-				for _, p := range idxHint.partitions {
+				for _, p := range idxHint.Partitions {
 					if p.String() == partitionName.String() {
 						newIndexMergeHint = append(newIndexMergeHint, idxHint)
 						break
@@ -1666,27 +1667,27 @@ func (s *partitionProcessor) resolveOptimizeHint(ds *DataSource, partitionName m
 	}
 
 	// read from storage hint
-	if ds.preferStoreType&preferTiKV > 0 {
-		if len(ds.preferPartitions[preferTiKV]) > 0 {
-			ds.preferStoreType ^= preferTiKV
-			for _, p := range ds.preferPartitions[preferTiKV] {
+	if ds.preferStoreType&h.PreferTiKV > 0 {
+		if len(ds.preferPartitions[h.PreferTiKV]) > 0 {
+			ds.preferStoreType ^= h.PreferTiKV
+			for _, p := range ds.preferPartitions[h.PreferTiKV] {
 				if p.String() == partitionName.String() {
-					ds.preferStoreType |= preferTiKV
+					ds.preferStoreType |= h.PreferTiKV
 				}
 			}
 		}
 	}
-	if ds.preferStoreType&preferTiFlash > 0 {
-		if len(ds.preferPartitions[preferTiFlash]) > 0 {
-			ds.preferStoreType ^= preferTiFlash
-			for _, p := range ds.preferPartitions[preferTiFlash] {
+	if ds.preferStoreType&h.PreferTiFlash > 0 {
+		if len(ds.preferPartitions[h.PreferTiFlash]) > 0 {
+			ds.preferStoreType ^= h.PreferTiFlash
+			for _, p := range ds.preferPartitions[h.PreferTiFlash] {
 				if p.String() == partitionName.String() {
-					ds.preferStoreType |= preferTiFlash
+					ds.preferStoreType |= h.PreferTiFlash
 				}
 			}
 		}
 	}
-	if ds.preferStoreType&preferTiFlash != 0 && ds.preferStoreType&preferTiKV != 0 {
+	if ds.preferStoreType&h.PreferTiFlash != 0 && ds.preferStoreType&h.PreferTiKV != 0 {
 		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(
 			errors.NewNoStackError("hint `read_from_storage` has conflict storage type for the partition " + partitionName.L))
 	}
@@ -1715,17 +1716,17 @@ func appendWarnForUnknownPartitions(ctx sessionctx.Context, hintName string, unk
 
 func (*partitionProcessor) checkHintsApplicable(ds *DataSource, partitionSet set.StringSet) {
 	for _, idxHint := range ds.IndexHints {
-		unknownPartitions := checkTableHintsApplicableForPartition(idxHint.partitions, partitionSet)
-		appendWarnForUnknownPartitions(ds.SCtx(), restore2IndexHint(idxHint.hintTypeString(), idxHint), unknownPartitions)
+		unknownPartitions := checkTableHintsApplicableForPartition(idxHint.Partitions, partitionSet)
+		appendWarnForUnknownPartitions(ds.SCtx(), h.Restore2IndexHint(idxHint.HintTypeString(), idxHint), unknownPartitions)
 	}
 	for _, idxMergeHint := range ds.indexMergeHints {
-		unknownPartitions := checkTableHintsApplicableForPartition(idxMergeHint.partitions, partitionSet)
-		appendWarnForUnknownPartitions(ds.SCtx(), restore2IndexHint(HintIndexMerge, idxMergeHint), unknownPartitions)
+		unknownPartitions := checkTableHintsApplicableForPartition(idxMergeHint.Partitions, partitionSet)
+		appendWarnForUnknownPartitions(ds.SCtx(), h.Restore2IndexHint(h.HintIndexMerge, idxMergeHint), unknownPartitions)
 	}
-	unknownPartitions := checkTableHintsApplicableForPartition(ds.preferPartitions[preferTiKV], partitionSet)
+	unknownPartitions := checkTableHintsApplicableForPartition(ds.preferPartitions[h.PreferTiKV], partitionSet)
 	unknownPartitions = append(unknownPartitions,
-		checkTableHintsApplicableForPartition(ds.preferPartitions[preferTiFlash], partitionSet)...)
-	appendWarnForUnknownPartitions(ds.SCtx(), HintReadFromStorage, unknownPartitions)
+		checkTableHintsApplicableForPartition(ds.preferPartitions[h.PreferTiFlash], partitionSet)...)
+	appendWarnForUnknownPartitions(ds.SCtx(), h.HintReadFromStorage, unknownPartitions)
 }
 
 func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.PartitionInfo, or partitionRangeOR, opt *logicalOptimizeOp) (LogicalPlan, error) {
@@ -1742,7 +1743,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			}
 			// Not a deep copy.
 			newDataSource := *ds
-			newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.SelectBlockOffset())
+			newDataSource.baseLogicalPlan = newBaseLogicalPlan(ds.SCtx(), plancodec.TypeTableScan, &newDataSource, ds.QueryBlockOffset())
 			newDataSource.schema = ds.schema.Clone()
 			newDataSource.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 			copy(newDataSource.Columns, ds.Columns)
@@ -1766,7 +1767,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 
 	if len(children) == 0 {
 		// No result after table pruning.
-		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.SelectBlockOffset())
+		tableDual := LogicalTableDual{RowCount: 0}.Init(ds.SCtx(), ds.QueryBlockOffset())
 		tableDual.schema = ds.Schema()
 		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, tableDual, children, opt)
 		return tableDual, nil
@@ -1776,7 +1777,7 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 		appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, children[0], children, opt)
 		return children[0], nil
 	}
-	unionAll := LogicalPartitionUnionAll{}.Init(ds.SCtx(), ds.SelectBlockOffset())
+	unionAll := LogicalPartitionUnionAll{}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	unionAll.SetChildren(children...)
 	unionAll.SetSchema(ds.schema.Clone())
 	appendMakeUnionAllChildrenTranceStep(ds, usedDefinition, unionAll, children, opt)

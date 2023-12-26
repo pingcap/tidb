@@ -1491,6 +1491,7 @@ type SessionVars struct {
 	shardRand *rand.Rand
 
 	// Resource group name
+	// NOTE: all statement relate opeartion should use StmtCtx.ResourceGroupName instead.
 	ResourceGroupName string
 
 	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
@@ -1571,6 +1572,10 @@ type SessionVars struct {
 
 	CompressionAlgorithm int
 	CompressionLevel     int
+
+	// TxnEntrySizeLimit indicates indicates the max size of a entry in membuf. The default limit (from config) will be
+	// overwritten if this value is not 0.
+	TxnEntrySizeLimit uint64
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -1741,9 +1746,9 @@ func (s *SessionVars) RaiseWarningWhenMPPEnforced(warning string) {
 		return
 	}
 	if s.StmtCtx.InExplainStmt {
-		s.StmtCtx.AppendWarning(errors.New(warning))
+		s.StmtCtx.AppendWarning(errors.NewNoStackError(warning))
 	} else {
-		s.StmtCtx.AppendExtraWarning(errors.New(warning))
+		s.StmtCtx.AppendExtraWarning(errors.NewNoStackError(warning))
 	}
 }
 
@@ -2035,6 +2040,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 	}
+	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            DefIndexLookupConcurrency,

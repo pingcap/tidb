@@ -269,7 +269,7 @@ func validCompareConstantPredicate(candidatePredicate expression.Expression) boo
 func addCandidateSelection(currentPlan LogicalPlan, currentChildIdx int, parentPlan LogicalPlan,
 	candidatePredicates []expression.Expression, opt *logicalOptimizeOp) (newRoot LogicalPlan) {
 	// generate a new selection for candidatePredicates
-	selection := LogicalSelection{Conditions: candidatePredicates}.Init(currentPlan.SCtx(), currentPlan.SelectBlockOffset())
+	selection := LogicalSelection{Conditions: candidatePredicates}.Init(currentPlan.SCtx(), currentPlan.QueryBlockOffset())
 	// add selection above of p
 	if parentPlan == nil {
 		newRoot = selection

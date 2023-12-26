@@ -1080,6 +1080,56 @@ func TestQuickBinding(t *testing.T) {
 	}
 }
 
+// for testing, only returns Original_sql, Bind_sql, Default_db, Status, Source, Type, Sql_digest
+func showBinding(tk *testkit.TestKit, showStmt string) [][]interface{} {
+	rows := tk.MustQuery(showStmt).Sort().Rows()
+	result := make([][]interface{}, len(rows))
+	for i, r := range rows {
+		result[i] = append(result[i], r[:4]...)
+		result[i] = append(result[i], r[8:11]...)
+	}
+	return result
+}
+
+func TestUniversalBindingFromHistory(t *testing.T) {
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, c int, key(a), key(b), key(c))`)
+	tk.MustExec(`select /*+ use_index(t, b) */ a from t where a=1`)
+	tk.MustExec(`select /*+ use_index(t, c) */ b from t where b=1`)
+
+	planDigest := tk.MustQuery(`select plan_digest from information_schema.statements_summary where query_sample_text='select /*+ use_index(t, b) */ a from t where a=1'`).Rows()
+	tk.MustExec(fmt.Sprintf("create global universal binding from history using plan digest '%s'", planDigest[0][0].(string)))
+	planDigest = tk.MustQuery(`select plan_digest from information_schema.statements_summary where query_sample_text='select /*+ use_index(t, c) */ b from t where b=1'`).Rows()
+	tk.MustExec(fmt.Sprintf("create global universal binding from history using plan digest '%s'", planDigest[0][0].(string)))
+
+	require.Equal(t, showBinding(tk, `show global bindings`), [][]interface{}{
+		{"select `a` from `t` where `a` = ?", "SELECT /*+ use_index(@`sel_1` `t` `b`) no_order_index(@`sel_1` `t` `b`)*/ `a` FROM `t` WHERE `a` = 1", "", "enabled", "history", "u", "f8e294e078ed195998dee6717e71499d6a14b8e0f405952af8d0a5b24d0cae30"},
+		{"select `b` from `t` where `b` = ?", "SELECT /*+ use_index(@`sel_1` `t` `c`) no_order_index(@`sel_1` `t` `c`)*/ `b` FROM `t` WHERE `b` = 1", "", "enabled", "history", "u", "cfb4dd59c4c75ff1ee126236c6bd365f7d04f6120990d922e75aa47ae8bd94eb"},
+	})
+
+	tk.MustExec(`admin reload bindings`)
+	tk.MustExec(`set @@tidb_opt_enable_universal_binding=1`)
+	tk.MustExec(`create database test2`)
+	tk.MustExec(`use test2`)
+	tk.MustExec(`create table t (a int, b int, c int, key(a), key(b), key(c))`)
+	tk.MustExec(`select a from t where a=10`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustExec(`select b from t where b=10`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustExec(`select b from test.t where b=10`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+}
+
 func TestCreateBindingFromHistory(t *testing.T) {
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)

@@ -95,7 +95,7 @@ func TestPhysicalOptimizeWithTraceEnabled(t *testing.T) {
 		sctx := core.MockContext()
 		sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
 		sctx.GetSessionVars().CostModelVersion = 2
-		builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), &hint.BlockHintProcessor{})
+		builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), hint.NewQBHintHandler(nil))
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
 		plan, err := builder.Build(context.TODO(), stmt)
 		require.NoError(t, err)
@@ -154,7 +154,7 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	}()
 	sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
 	sctx.GetSessionVars().AllowAggPushDown = true
-	builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), &hint.BlockHintProcessor{})
+	builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), hint.NewQBHintHandler(nil))
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
 	plan, err := builder.Build(context.TODO(), stmt)
 	require.NoError(t, err)
@@ -220,7 +220,7 @@ func TestPhysicalOptimizerTraceChildrenNotDuplicated(t *testing.T) {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
 	sctx.GetSessionVars().StmtCtx.EnableOptimizeTrace = true
-	builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), &hint.BlockHintProcessor{})
+	builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), hint.NewQBHintHandler(nil))
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
 	plan, err := builder.Build(context.TODO(), stmt)
 	require.NoError(t, err)

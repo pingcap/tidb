@@ -21,30 +21,31 @@ import (
 	"go.uber.org/goleak"
 )
 
-// SchedulerForTest exports for testing.
-type SchedulerManagerForTest interface {
-	GetRunningTaskCnt() int
-	DelRunningTask(id int64)
-	DoCleanUpRoutine()
-}
-
 // GetRunningGTaskCnt implements Scheduler.GetRunningGTaskCnt interface.
-func (dm *Manager) GetRunningTaskCnt() int {
-	return dm.getSchedulerCount()
+func (sm *Manager) GetRunningTaskCnt() int {
+	return sm.getSchedulerCount()
 }
 
 // DelRunningGTask implements Scheduler.DelRunningGTask interface.
-func (dm *Manager) DelRunningTask(id int64) {
-	dm.delScheduler(id)
+func (sm *Manager) DelRunningTask(id int64) {
+	sm.delScheduler(id)
 }
 
 // DoCleanUpRoutine implements Scheduler.DoCleanUpRoutine interface.
-func (dm *Manager) DoCleanUpRoutine() {
-	dm.doCleanUpRoutine()
+func (sm *Manager) DoCleanUpRoutine() {
+	sm.doCleanupTask()
 }
 
 func (s *BaseScheduler) OnNextStage() (err error) {
 	return s.onNextStage()
+}
+
+func (s *BaseScheduler) DoBalanceSubtasks(eligibleNodes []string) error {
+	return s.doBalanceSubtasks(eligibleNodes)
+}
+
+func NewNodeManager() *NodeManager {
+	return newNodeManager()
 }
 
 func TestMain(m *testing.M) {

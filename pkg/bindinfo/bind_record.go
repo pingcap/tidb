@@ -187,7 +187,12 @@ func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 		if (bind.Hint != nil && bind.ID != "") || bind.Status == deleted {
 			continue
 		}
-		hintsSet, stmt, warns, err := hint.ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation, br.Db)
+		dbName := br.Db
+		if bind.Type == TypeUniversal {
+			dbName = "*" // ues '*' for universal bindings
+		}
+
+		hintsSet, stmt, warns, err := hint.ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation, dbName)
 		if err != nil {
 			return err
 		}
