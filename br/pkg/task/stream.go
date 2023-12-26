@@ -955,7 +955,10 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	if err := storage.TryLockRemote(ctx, extStorage, truncateLockPath, hintOnTruncateLock); err != nil {
 		return err
 	}
+	// NOTE: the `return` is in a clousure which is an argument.
+	// I guess this should be a bug of the linter.
 	defer utils.WithCleanUp(&err, 10*time.Second, func(ctx context.Context) error {
+		//nolint: all_revive,revive
 		return storage.UnlockRemote(ctx, extStorage, truncateLockPath)
 	})
 
