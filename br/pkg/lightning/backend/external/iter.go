@@ -250,9 +250,9 @@ func (i *mergeIter[T, R]) close() error {
 // exhausted, i.err will be nil instead of io.EOF. For other errors, i.err will
 // be set.
 //
-// readerClosed >=0 means that reader is closed after last
-// invocation, -1 means no reader is closed.
-func (i *mergeIter[T, R]) next() (ok bool, closeReaderIdx int) {
+// closeReaderIdx >= 0 means that reader is closed after last invocation, -1
+// means no reader is closed.
+func (i *mergeIter[T, R]) next() (closeReaderIdx int, ok bool) {
 	closeReaderIdx = -1
 	if i.lastReaderIdx >= 0 {
 		if i.checkHotspot {
@@ -287,7 +287,7 @@ func (i *mergeIter[T, R]) next() (ok bool, closeReaderIdx int) {
 					err := (*rp).switchConcurrentMode(isHotspot)
 					if err != nil {
 						i.err = err
-						return false, closeReaderIdx
+						return closeReaderIdx, false
 					}
 				}
 				i.checkHotspotCnt = 0
@@ -319,18 +319,18 @@ func (i *mergeIter[T, R]) next() (ok bool, closeReaderIdx int) {
 				zap.String("path", rd.path()),
 				zap.Error(err))
 			i.err = err
-			return false, closeReaderIdx
+			return closeReaderIdx, false
 		}
 	}
 	i.lastReaderIdx = -1
 
 	if i.h.Len() == 0 {
-		return false, closeReaderIdx
+		return closeReaderIdx, false
 	}
 	currMergeElem := heap.Pop(&i.h).(mergeHeapElem[T])
 	i.curr = currMergeElem.elem
 	i.lastReaderIdx = currMergeElem.readerIdx
-	return true, closeReaderIdx
+	return closeReaderIdx, true
 }
 
 // limitSizeMergeIter acts like a mergeIter, except that each reader has a weight
@@ -377,17 +377,15 @@ func newLimitSizeMergeIter[
 		mergeIter:     iter,
 		readerOpeners: readerOpeners,
 		weights:       weights,
+		weightSum:     cur,
 		nextReaderIdx: end,
 		limit:         limit,
-	}
-	for j := 0; j < end; j++ {
-		i.weightSum += weights[j]
 	}
 	return i, nil
 }
 
 func (i *limitSizeMergeIter[T, R]) next() (ok bool, closeReaderIdx int) {
-	ok, closeReaderIdx = i.mergeIter.next()
+	closeReaderIdx, ok = i.mergeIter.next()
 	if closeReaderIdx == -1 {
 		return
 	}
@@ -424,7 +422,7 @@ func (i *limitSizeMergeIter[T, R]) next() (ok bool, closeReaderIdx int) {
 		// we need to call next once because mergeIter doesn't use h[0] as current value,
 		// but a separate curr field
 		if !ok && i.mergeIter.h.Len() == 1 {
-			ok, _ = i.mergeIter.next()
+			_, ok = i.mergeIter.next()
 		}
 	}
 	return
@@ -533,7 +531,7 @@ func (i *MergeKVIter) Error() error {
 
 // Next moves the iterator to the next position. When it returns false, the iterator is not usable.
 func (i *MergeKVIter) Next() bool {
-	ok, _ := i.iter.next()
+	_, ok := i.iter.next()
 	return ok
 }
 
