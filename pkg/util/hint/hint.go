@@ -19,9 +19,11 @@ import (
 	"fmt"
 	"strings"
 
+	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
 // Hint flags listed here are used by PlanBuilder.subQueryHintFlags.
@@ -125,6 +127,76 @@ const (
 	HintFlagNoDecorrelate
 )
 
+const (
+	// PreferINLJ indicates that the optimizer prefers to use index nested loop join.
+	PreferINLJ uint = 1 << iota
+	// PreferINLHJ indicates that the optimizer prefers to use index nested loop hash join.
+	PreferINLHJ
+	// PreferINLMJ indicates that the optimizer prefers to use index nested loop merge join.
+	PreferINLMJ
+	// PreferHJBuild indicates that the optimizer prefers to use hash join.
+	PreferHJBuild
+	// PreferHJProbe indicates that the optimizer prefers to use hash join.
+	PreferHJProbe
+	// PreferHashJoin indicates that the optimizer prefers to use hash join.
+	PreferHashJoin
+	// PreferNoHashJoin indicates that the optimizer prefers not to use hash join.
+	PreferNoHashJoin
+	// PreferMergeJoin indicates that the optimizer prefers to use merge join.
+	PreferMergeJoin
+	// PreferNoMergeJoin indicates that the optimizer prefers not to use merge join.
+	PreferNoMergeJoin
+	// PreferNoIndexJoin indicates that the optimizer prefers not to use index join.
+	PreferNoIndexJoin
+	// PreferNoIndexHashJoin indicates that the optimizer prefers not to use index hash join.
+	PreferNoIndexHashJoin
+	// PreferNoIndexMergeJoin indicates that the optimizer prefers not to use index merge join.
+	PreferNoIndexMergeJoin
+	// PreferBCJoin indicates that the optimizer prefers to use broadcast join.
+	PreferBCJoin
+	// PreferShuffleJoin indicates that the optimizer prefers to use shuffle join.
+	PreferShuffleJoin
+	// PreferRewriteSemiJoin indicates that the optimizer prefers to rewrite semi join.
+	PreferRewriteSemiJoin
+
+	// PreferLeftAsINLJInner indicates that the optimizer prefers to use left child as inner child of index nested loop join.
+	PreferLeftAsINLJInner
+	// PreferRightAsINLJInner indicates that the optimizer prefers to use right child as inner child of index nested loop join.
+	PreferRightAsINLJInner
+	// PreferLeftAsINLHJInner indicates that the optimizer prefers to use left child as inner child of index nested loop hash join.
+	PreferLeftAsINLHJInner
+	// PreferRightAsINLHJInner indicates that the optimizer prefers to use right child as inner child of index nested loop hash join.
+	PreferRightAsINLHJInner
+	// PreferLeftAsINLMJInner indicates that the optimizer prefers to use left child as inner child of index nested loop merge join.
+	PreferLeftAsINLMJInner
+	// PreferRightAsINLMJInner indicates that the optimizer prefers to use right child as inner child of index nested loop merge join.
+	PreferRightAsINLMJInner
+	// PreferLeftAsHJBuild indicates that the optimizer prefers to use left child as build child of hash join.
+	PreferLeftAsHJBuild
+	// PreferRightAsHJBuild indicates that the optimizer prefers to use right child as build child of hash join.
+	PreferRightAsHJBuild
+	// PreferLeftAsHJProbe indicates that the optimizer prefers to use left child as probe child of hash join.
+	PreferLeftAsHJProbe
+	// PreferRightAsHJProbe indicates that the optimizer prefers to use right child as probe child of hash join.
+	PreferRightAsHJProbe
+
+	// PreferHashAgg indicates that the optimizer prefers to use hash aggregation.
+	PreferHashAgg
+	// PreferStreamAgg indicates that the optimizer prefers to use stream aggregation.
+	PreferStreamAgg
+	// PreferMPP1PhaseAgg indicates that the optimizer prefers to use 1-phase aggregation.
+	PreferMPP1PhaseAgg
+	// PreferMPP2PhaseAgg indicates that the optimizer prefers to use 2-phase aggregation.
+	PreferMPP2PhaseAgg
+)
+
+const (
+	// PreferTiKV indicates that the optimizer prefers to use TiKV layer.
+	PreferTiKV = 1 << iota
+	// PreferTiFlash indicates that the optimizer prefers to use TiFlash layer.
+	PreferTiFlash
+)
+
 // IndexNestedLoopJoinTables stores hint information about index nested loop join.
 type IndexNestedLoopJoinTables struct {
 	INLJTables  []TableInfo
@@ -133,6 +205,7 @@ type IndexNestedLoopJoinTables struct {
 }
 
 // TableHintInfo stores all table-level hint information.
+// TableHintInfo is just another representation of ast.TableOptimizerHint, which is easier for the planner to use.
 type TableHintInfo struct {
 	IndexNestedLoopJoinTables
 	NoIndexJoinTables   IndexNestedLoopJoinTables
@@ -365,7 +438,7 @@ func RemoveDuplicatedHints(hints []*ast.TableOptimizerHint) []*ast.TableOptimize
 }
 
 // TableNames2HintTableInfo converts table names to TableInfo.
-func TableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTables []ast.HintTable, p *BlockHintProcessor, currentOffset int) []TableInfo {
+func TableNames2HintTableInfo(ctx sessionctx.Context, hintName string, hintTables []ast.HintTable, p *QBHintHandler, currentOffset int) []TableInfo {
 	if len(hintTables) == 0 {
 		return nil
 	}
@@ -487,4 +560,75 @@ func ExtractUnmatchedTables(hintTables []TableInfo) []string {
 		}
 	}
 	return tableNames
+}
+
+var (
+	errInternal = dbterror.ClassOptimizer.NewStd(mysql.ErrInternal)
+)
+
+// CollectUnmatchedHintWarnings collects warnings for unmatched hints from this TableHintInfo.
+func CollectUnmatchedHintWarnings(hintInfo TableHintInfo) (warnings []error) {
+	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.IndexHintList, false)...)
+	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.IndexMergeHintList, true)...)
+	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintINLJ, TiDBIndexNestedLoopJoin, hintInfo.IndexNestedLoopJoinTables.INLJTables)...)
+	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintINLHJ, "", hintInfo.IndexNestedLoopJoinTables.INLHJTables)...)
+	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintINLMJ, "", hintInfo.IndexNestedLoopJoinTables.INLMJTables)...)
+	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintSMJ, TiDBMergeJoin, hintInfo.SortMergeJoinTables)...)
+	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintBCJ, TiDBBroadCastJoin, hintInfo.BroadcastJoinTables)...)
+	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintShuffleJoin, HintShuffleJoin, hintInfo.ShuffleJoinTables)...)
+	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintHJ, TiDBHashJoin, hintInfo.HashJoinTables)...)
+	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintHashJoinBuild, "", hintInfo.HJBuildTables)...)
+	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintHashJoinProbe, "", hintInfo.HJProbeTables)...)
+	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintLeading, "", hintInfo.LeadingJoinOrder)...)
+	warnings = append(warnings, collectUnmatchedStorageHintWarning(hintInfo.TiFlashTables, hintInfo.TiKVTables)...)
+	return warnings
+}
+
+func collectUnmatchedIndexHintWarning(indexHints []IndexHintInfo, usedForIndexMerge bool) (warnings []error) {
+	for _, hint := range indexHints {
+		if !hint.Matched {
+			var hintTypeString string
+			if usedForIndexMerge {
+				hintTypeString = "use_index_merge"
+			} else {
+				hintTypeString = hint.HintTypeString()
+			}
+			errMsg := fmt.Sprintf("%s(%s) is inapplicable, check whether the table(%s.%s) exists",
+				hintTypeString,
+				hint.IndexString(),
+				hint.DBName,
+				hint.TblName,
+			)
+			warnings = append(warnings, errInternal.FastGen(errMsg))
+		}
+	}
+	return warnings
+}
+
+func collectUnmatchedJoinHintWarning(joinType string, joinTypeAlias string, hintTables []TableInfo) (warnings []error) {
+	unMatchedTables := ExtractUnmatchedTables(hintTables)
+	if len(unMatchedTables) == 0 {
+		return
+	}
+	if len(joinTypeAlias) != 0 {
+		joinTypeAlias = fmt.Sprintf(" or %s", Restore2JoinHint(joinTypeAlias, hintTables))
+	}
+
+	errMsg := fmt.Sprintf("There are no matching table names for (%s) in optimizer hint %s%s. Maybe you can use the table alias name",
+		strings.Join(unMatchedTables, ", "), Restore2JoinHint(joinType, hintTables), joinTypeAlias)
+	warnings = append(warnings, errInternal.GenWithStack(errMsg))
+	return warnings
+}
+
+func collectUnmatchedStorageHintWarning(tiflashTables, tikvTables []TableInfo) (warnings []error) {
+	unMatchedTiFlashTables := ExtractUnmatchedTables(tiflashTables)
+	unMatchedTiKVTables := ExtractUnmatchedTables(tikvTables)
+	if len(unMatchedTiFlashTables)+len(unMatchedTiKVTables) == 0 {
+		return
+	}
+	errMsg := fmt.Sprintf("There are no matching table names for (%s) in optimizer hint %s. Maybe you can use the table alias name",
+		strings.Join(append(unMatchedTiFlashTables, unMatchedTiKVTables...), ", "),
+		Restore2StorageHint(tiflashTables, tikvTables))
+	warnings = append(warnings, errInternal.GenWithStack(errMsg))
+	return warnings
 }

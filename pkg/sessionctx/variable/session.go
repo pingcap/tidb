@@ -1569,6 +1569,10 @@ type SessionVars struct {
 
 	CompressionAlgorithm int
 	CompressionLevel     int
+
+	// TxnEntrySizeLimit indicates indicates the max size of a entry in membuf. The default limit (from config) will be
+	// overwritten if this value is not 0.
+	TxnEntrySizeLimit uint64
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -1739,9 +1743,9 @@ func (s *SessionVars) RaiseWarningWhenMPPEnforced(warning string) {
 		return
 	}
 	if s.StmtCtx.InExplainStmt {
-		s.StmtCtx.AppendWarning(errors.New(warning))
+		s.StmtCtx.AppendWarning(errors.NewNoStackError(warning))
 	} else {
-		s.StmtCtx.AppendExtraWarning(errors.New(warning))
+		s.StmtCtx.AppendExtraWarning(errors.NewNoStackError(warning))
 	}
 }
 

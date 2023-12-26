@@ -267,9 +267,30 @@ type StatsReadWriter interface {
 	// then tidb-server will reload automatic.
 	UpdateStatsVersion() error
 
-	// ResetTableStats2KVForDrop update the version of mysql.stats_meta.
-	// Then GC worker will delete the old version of stats.
-	ResetTableStats2KVForDrop(physicalID int64) (err error)
+	// UpdateStatsMetaVersionForGC updates the version of mysql.stats_meta,
+	// ensuring it is greater than the last garbage collection (GC) time.
+	// The GC worker deletes old stats based on a safe time point,
+	// calculated as now() - 10 * max(stats lease, ddl lease).
+	// The range [last GC time, safe time point) is chosen to prevent
+	// the simultaneous deletion of numerous stats, minimizing potential
+	// performance issues.
+	// This function ensures the version is updated beyond the last GC time,
+	// allowing the GC worker to delete outdated stats.
+	//
+	// Explanation:
+	// - ddl lease: 10
+	// - stats lease: 3
+	// - safe time point: now() - 10 * 10 = now() - 100
+	// - now: 200
+	// - last GC time: 90
+	// - [last GC time, safe time point) = [90, 100)
+	// - To trigger stats deletion, the version must be updated beyond 90.
+	//
+	// This safeguards scenarios where a table remains unchanged for an extended period.
+	// For instance, if a table was created at time 90, and it's now time 200,
+	// with the last GC time at 95 and the safe time point at 100,
+	// updating the version beyond 95 ensures eventual deletion of stats.
+	UpdateStatsMetaVersionForGC(physicalID int64) (err error)
 
 	// ChangeGlobalStatsID changes the global stats ID.
 	ChangeGlobalStatsID(from, to int64) (err error)

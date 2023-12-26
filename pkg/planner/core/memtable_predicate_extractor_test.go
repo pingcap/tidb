@@ -44,7 +44,7 @@ func getLogicalMemTable(t *testing.T, dom *domain.Domain, se sessiontypes.Sessio
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	builder, _ := plannercore.NewPlanBuilder().Init(se, dom.InfoSchema(), &hint.BlockHintProcessor{})
+	builder, _ := plannercore.NewPlanBuilder().Init(se, dom.InfoSchema(), &hint.QBHintHandler{})
 	plan, err := builder.Build(ctx, stmt)
 	require.NoError(t, err)
 
