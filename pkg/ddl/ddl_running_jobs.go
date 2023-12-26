@@ -28,21 +28,29 @@ import (
 
 type runningJobs struct {
 	sync.RWMutex
-	ids           map[int64][]model.InvolvingSchemaInfo
+	ids           map[int64]struct{}
+	runningSchema map[string]map[string]struct{} // database -> table -> struct{}
 	runningJobIDs string
 }
 
 func newRunningJobs() *runningJobs {
 	return &runningJobs{
-		ids: make(map[int64][]model.InvolvingSchemaInfo),
+		ids:           make(map[int64]struct{}),
+		runningSchema: make(map[string]map[string]struct{}),
 	}
 }
 
 func (j *runningJobs) add(job *model.Job) {
 	j.Lock()
 	defer j.Unlock()
-	j.ids[job.ID] = job.GetInvolvingSchemaInfo()
+	j.ids[job.ID] = struct{}{}
 	j.updateInternalRunningJobIDs()
+	for _, info := range job.GetInvolvingSchemaInfo() {
+		if _, ok := j.runningSchema[info.Database]; !ok {
+			j.runningSchema[info.Database] = make(map[string]struct{})
+		}
+		j.runningSchema[info.Database][info.Table] = struct{}{}
+	}
 }
 
 func (j *runningJobs) remove(job *model.Job) {
@@ -50,42 +58,39 @@ func (j *runningJobs) remove(job *model.Job) {
 	defer j.Unlock()
 	delete(j.ids, job.ID)
 	j.updateInternalRunningJobIDs()
+	for _, info := range job.GetInvolvingSchemaInfo() {
+		if db, ok := j.runningSchema[info.Database]; ok {
+			delete(db, info.Table)
+		}
+		if len(j.runningSchema[info.Database]) == 0 {
+			delete(j.runningSchema, info.Database)
+		}
+	}
 }
 
 func (j *runningJobs) checkRunnable(job *model.Job) bool {
 	j.RLock()
 	defer j.RUnlock()
-	for _, info := range j.ids {
-		for i := 0; i < len(info); i++ {
-			for _, jobInfo := range job.GetInvolvingSchemaInfo() {
-				if checkConflict(info[i], jobInfo) {
-					return false
-				}
+	for _, info := range job.GetInvolvingSchemaInfo() {
+		if _, ok := j.runningSchema[model.InvolvingAll]; ok {
+			return false
+		}
+		if info.Database == model.InvolvingNone {
+			continue
+		}
+		if tbls, ok := j.runningSchema[info.Database]; ok {
+			if _, ok := tbls[model.InvolvingAll]; ok {
+				return false
+			}
+			if info.Table == model.InvolvingNone {
+				continue
+			}
+			if _, ok := tbls[info.Table]; ok {
+				return false
 			}
 		}
 	}
 	return true
-}
-
-func checkConflict(runningInvolveInfo, jobInvolveInfo model.InvolvingSchemaInfo) bool {
-	dbName, tblName := runningInvolveInfo.Database, runningInvolveInfo.Table
-	jobDBName, jobTblName := jobInvolveInfo.Database, jobInvolveInfo.Table
-	if dbName == model.InvolvingAll {
-		return jobDBName != model.InvolvingNone
-	}
-	if dbName == model.InvolvingNone {
-		return false
-	}
-	if dbName != jobDBName {
-		return false
-	}
-	if tblName == model.InvolvingAll {
-		return jobTblName != model.InvolvingNone
-	}
-	if tblName == model.InvolvingNone {
-		return false
-	}
-	return tblName == jobTblName
 }
 
 func (j *runningJobs) allIDs() string {
