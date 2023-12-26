@@ -33,9 +33,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -1138,4 +1140,22 @@ func TestMergeBench(t *testing.T) {
 	testCompareMergeWithContent(t, 8, 2, createEvenlyDistributedFiles, newMergeStepOpt)
 	testCompareMergeWithContent(t, 8, 4, createAscendingFiles, newMergeStepOpt)
 	testCompareMergeWithContent(t, 8, 4, createEvenlyDistributedFiles, newMergeStepOpt)
+}
+
+func TestReadStatFile(t *testing.T) {
+	ctx := context.Background()
+	store := openTestingStorage(t)
+	rd, _ := newStatsReader(ctx, store, *fileName, 4096)
+	for {
+
+		prop, err := rd.nextProp()
+		if err == io.EOF {
+			break
+		}
+		logutil.BgLogger().Info("read one prop",
+			zap.Int("prop len", prop.len()),
+			zap.Int("prop offset", int(prop.offset)),
+			zap.Int("prop size", int(prop.size)),
+			zap.Int("prop keys", int(prop.keys)))
+	}
 }

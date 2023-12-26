@@ -17,7 +17,6 @@ package external
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"slices"
 	"strconv"
 	"testing"
@@ -29,10 +28,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 	"golang.org/x/exp/rand"
 )
 
@@ -375,15 +372,4 @@ func testSortWithNewMerge(t *testing.T, mergeFunc func(ctx context.Context, data
 
 	// 3. read and sort step
 	testReadAndCompare(ctx, t, kvs, memStore, lastStepDatas, lastStepStats, startKey, memSizeLimit)
-}
-
-func TestKey(t *testing.T) {
-	res, _ := hex.DecodeString("3634ff444869726752336cff3768626236684376ff4a41365159775250ff584f6a516b776c6fff0000000000000000f7000000000010370000000000000000480000")
-	logutil.BgLogger().Info("binary", zap.Any("test", res))
-
-	b1 := []byte("dIAAAAAAAACPX2mAAAAAAAAAAgExMDAwMDAwMf9uUG1Gdm9vMf9wcWR6Qk9DSv9MWWtSZXI3T/9GNExwRklXb/8AAAAAAAAAAPc=")
-	b2 := []byte("dIAAAAAAAACPX2mAAAAAAAAAAgExNjczNjE2Mf9Bd2dNR1hnR/8xT2tjYUlaTv9sY1ZFOUhnef8yZzg4WFo1Yf8AAAAAAAAAAPc=")
-
-	logutil.BgLogger().Info("ywq test", zap.Any("cmp", bytes.Compare(b1, b2)))
-
 }

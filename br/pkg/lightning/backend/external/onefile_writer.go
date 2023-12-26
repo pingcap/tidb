@@ -84,8 +84,6 @@ func (w *OneFileWriter) Init(ctx context.Context, partSize int64, concurrency in
 	return err
 }
 
-// var idx int = 0
-
 // WriteRow implements ingest.Writer.
 func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) error {
 	// 1. encode data and write to kvStore.
@@ -93,12 +91,6 @@ func (w *OneFileWriter) WriteRow(ctx context.Context, idxKey, idxVal []byte) err
 	length := len(idxKey) + len(idxVal) + lengthBytes*2
 	buf, _ := w.kvBuffer.AllocBytesWithSliceLocation(length)
 	if buf == nil {
-		// file, _ := os.Create(fmt.Sprintf("heap-profile-%d.prof", idx))
-		// idx++
-		// // intest.AssertNoError(err)
-		// // check heap profile to see the memory usage is expected
-		// _ = pprof.WriteHeapProfile(file)
-		// // intest.AssertNoError(err)
 		w.kvBuffer.Reset()
 		buf, _ = w.kvBuffer.AllocBytesWithSliceLocation(length)
 		// we now don't support KV larger than blockSize

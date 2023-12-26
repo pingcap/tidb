@@ -22,6 +22,7 @@ import (
 // MergeOverlappingFilesV2 reads from given files whose key range may overlap
 // and writes to new sorted, nonoverlapping files.
 // Using 1 readAllData and 1 writer.
+// Not used for now.
 func MergeOverlappingFilesV2(
 	ctx context.Context,
 	dataFiles []string,
@@ -57,7 +58,6 @@ func MergeOverlappingFilesV2(
 	failpoint.Inject("mockRangesGroupSize", func(val failpoint.Value) {
 		rangesGroupSize = uint64(val.(int))
 	})
-	logutil.BgLogger().Info("ywq test group size", zap.Any("size", rangesGroupSize))
 
 	splitter, err := NewRangeSplitter(
 		ctx,
@@ -116,7 +116,6 @@ func MergeOverlappingFilesV2(
 			return
 		}
 		if len(endKeyOfGroup) == 0 {
-			logutil.BgLogger().Info("ywq test....")
 			curEnd = endKey
 		} else {
 			curEnd = kv.Key(endKeyOfGroup).Clone()
@@ -124,13 +123,12 @@ func MergeOverlappingFilesV2(
 
 		splitTime := time.Since(now)
 		now = time.Now()
-		logutil.Logger(ctx).Info("ywq test cmp",
-			zap.Any("cmp", bytes.Compare(curStart, curEnd)),
-			zap.Binary("start", curStart),
-			zap.Binary("end", curEnd))
 		if curStart.Cmp(curEnd) >= 0 {
-			logutil.Logger(ctx).Info("ywq test wtf cmp", zap.Any("cmp", bytes.Compare(curStart, curEnd)))
-			panic(nil)
+			err = fmt.Errorf("start key %s is larger than end key %s",
+				curStart.String(),
+				curEnd.String())
+			logutil.Logger(ctx).Error("met error when merging overlapping files", zap.Error(err))
+			return
 		}
 		err1 = readAllData(
 			ctx,
@@ -234,7 +232,6 @@ func getGroups(ctx context.Context, splitter *RangeSplitter, startKey kv.Key, en
 			endKey:    kv.Key(curEnd).Clone(),
 		})
 
-		logutil.BgLogger().Info("ywq test keys", zap.Binary("start", curStart), zap.Binary("end", curEnd))
 		curStart = kv.Key(curEnd).Clone()
 		if len(endKeyOfGroup) == 0 {
 			break
@@ -282,8 +279,6 @@ func MergeOverlappingFilesOpt(
 		rangesGroupSize = uint64(val.(int))
 	})
 
-	logutil.BgLogger().Info("ywq test group size", zap.Any("size", rangesGroupSize))
-
 	splitter, err := NewRangeSplitter(
 		ctx,
 		dataFiles,
@@ -315,9 +310,6 @@ func MergeOverlappingFilesOpt(
 		return err
 	}
 	logutil.Logger(ctx).Info("get file groups for merge step", zap.Int("len", len(groups)))
-	for _, g := range groups {
-		logutil.BgLogger().Info("ywq test groups", zap.Binary("startKey", g.startKey), zap.Binary("endKey", g.endKey))
-	}
 	eg, egCtx := errgroup.WithContext(ctx)
 	eg.SetLimit(mergeConcurrency)
 	partSize = max(int64(5*size.MB), partSize+int64(1*size.MB))
