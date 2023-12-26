@@ -222,7 +222,7 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 		logutil.Logger(m.logCtx).Info("detect new subtask", zap.Int64("task-id", task.ID))
 
 		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task)
-		if tasksNeedFree != nil {
+		if len(tasksNeedFree) > 0 {
 			m.cancelTasks(tasksNeedFree)
 			// do not handle the tasks with lower priority if current task is waiting tasks free.
 			break
