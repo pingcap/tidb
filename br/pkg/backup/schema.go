@@ -255,5 +255,6 @@ func (s *schemaInfo) encodeToSchema() (*backuppb.Schema, error) {
 		TotalKvs:   s.totalKvs,
 		TotalBytes: s.totalBytes,
 		Stats:      statsBytes,
+		StatsIndex: s.statsIndex,
 	}, nil
 }

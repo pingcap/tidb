@@ -6252,13 +6252,13 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sha256 = "5abf0a942a4df6cdc327215ce899463212dc76989b70e9625f7cbad9b77234ae",
-        strip_prefix = "github.com/leavrth/kvproto@v0.0.0-20231220040253-cc85a1127c0c",
+        sha256 = "9e322f5bf15ba173e4aa8b59c5232d2f3b6395559a62d4f2bdfc905492b231d6",
+        strip_prefix = "github.com/leavrth/kvproto@v0.0.0-20231225102844-92f54165f2e8",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/leavrth/kvproto/com_github_leavrth_kvproto-v0.0.0-20231220040253-cc85a1127c0c.zip",
-            "http://ats.apps.svc/gomod/github.com/leavrth/kvproto/com_github_leavrth_kvproto-v0.0.0-20231220040253-cc85a1127c0c.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/leavrth/kvproto/com_github_leavrth_kvproto-v0.0.0-20231220040253-cc85a1127c0c.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/leavrth/kvproto/com_github_leavrth_kvproto-v0.0.0-20231220040253-cc85a1127c0c.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/leavrth/kvproto/com_github_leavrth_kvproto-v0.0.0-20231225102844-92f54165f2e8.zip",
+            "http://ats.apps.svc/gomod/github.com/leavrth/kvproto/com_github_leavrth_kvproto-v0.0.0-20231225102844-92f54165f2e8.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/leavrth/kvproto/com_github_leavrth_kvproto-v0.0.0-20231225102844-92f54165f2e8.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/leavrth/kvproto/com_github_leavrth_kvproto-v0.0.0-20231225102844-92f54165f2e8.zip",
         ],
     )
     go_repository(

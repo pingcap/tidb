@@ -505,6 +505,10 @@ func (rc *Client) SetCurrentTS(ts uint64) {
 	rc.currentTS = ts
 }
 
+func (rc *Client) SetExternalStorage(s storage.ExternalStorage) {
+	rc.storage = s
+}
+
 func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
 	var err error
 	rc.storage, err = storage.New(ctx, backend, opts)

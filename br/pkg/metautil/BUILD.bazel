@@ -16,6 +16,7 @@ go_library(
         "//br/pkg/summary",
         "//br/pkg/utils",
         "//pkg/parser/model",
+        "//pkg/statistics/handle",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
         "//pkg/tablecodec",
