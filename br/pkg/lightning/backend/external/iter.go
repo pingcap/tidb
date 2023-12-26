@@ -40,6 +40,8 @@ type heapElem interface {
 
 type sortedReader[T heapElem] interface {
 	path() string
+	// next returns the next element in the reader. If there is no more element,
+	// it returns io.EOF.
 	next() (T, error)
 	// When `need` is changed from false to true, the reader should prefetch more
 	// data than usual when local cache is used up. It's used when one reader is more
@@ -242,8 +244,13 @@ func (i *mergeIter[T, R]) close() error {
 	return firstErr
 }
 
-// next forwards the iterator to the next element. ok == false if there is no
-// available element. readerClosed >=0 means that reader is closed after last
+// next forwards the iterator to the next element.
+//
+// ok == false if there is no available element, and if the iterator is
+// exhausted, i.err will be nil instead of io.EOF. For other errors, i.err will
+// be set.
+//
+// readerClosed >=0 means that reader is closed after last
 // invocation, -1 means no reader is closed.
 func (i *mergeIter[T, R]) next() (ok bool, closeReaderIdx int) {
 	closeReaderIdx = -1
@@ -326,12 +333,13 @@ func (i *mergeIter[T, R]) next() (ok bool, closeReaderIdx int) {
 	return true, closeReaderIdx
 }
 
-// limitSizeMergeIter acts like a mergeIter, except that
+// limitSizeMergeIter acts like a mergeIter, except that each reader has a weight
+// and it will try to open more readers with the total weight doesn't exceed the
+// limit.
 //
-// - When create it will only open the first some readers whose weight sum is
-// under the limit.
-//
-// - When the reader is closed, it will try to open next readers.
+// Because it's like a mergeIter it's expected to iterate in ascending order,
+// caller should set a proper limit to do not block opening new readers
+// containing the next minimum element.
 type limitSizeMergeIter[T heapElem, R sortedReader[T]] struct {
 	*mergeIter[T, R]
 	readerOpeners []readerOpenerFn[T, R]
@@ -634,7 +642,6 @@ func newMergePropBaseIter(
 }
 
 func (m mergePropBaseIter) path() string {
-	// TODO(lance6716): implement me
 	return "mergePropBaseIter"
 }
 
@@ -644,7 +651,7 @@ func (m mergePropBaseIter) next() (*rangeProperty, error) {
 		*m.closeReaderFlag = true
 	}
 	if !ok {
-		// TODO(lance6716): explain it?
+		// TODO(lance6716): explain it??
 		if m.iter.err == nil {
 			return nil, io.EOF
 		}
@@ -672,11 +679,9 @@ type MergePropIter struct {
 // Input MultipleFilesStat should be processed by functions like
 // MergeOverlappingFiles to reduce overlapping to less than
 // MergeSortOverlapThreshold. MergePropIter will only open needed
-// MultipleFilesStat when iterates, and input MultipleFilesStat must guarantee
-// its order can be process from left to right.
-//
-// MergePropIter will flatten the filenames in MultipleFilesStat so
-// MergePropIter.readerIndex can be used to get the current file.
+// MultipleFilesStat and its Filenames when iterates, and input MultipleFilesStat
+// must guarantee its order and its Filename order can be process from left to
+// right.
 func NewMergePropIter(
 	ctx context.Context,
 	multiStat []MultipleFilesStat,
