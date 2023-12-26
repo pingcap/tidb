@@ -879,14 +879,15 @@ func (ds *DataSource) matchPropForIndexMergeAlternatives(path *util.AccessPath, 
 		}
 		if len(matchIdxes) > 1 {
 			// if matchIdxes greater than 1, we should sort this match alternative path by its CountAfterAccess.
+			tmpOneItemAlternatives := oneItemAlternatives
 			slices.SortFunc(matchIdxes, func(a, b int) int {
-				lhsCountAfter := oneItemAlternatives[a].CountAfterAccess
-				if len(oneItemAlternatives[a].IndexFilters) > 0 {
-					lhsCountAfter = oneItemAlternatives[a].CountAfterIndex
+				lhsCountAfter := tmpOneItemAlternatives[a].CountAfterAccess
+				if len(tmpOneItemAlternatives[a].IndexFilters) > 0 {
+					lhsCountAfter = tmpOneItemAlternatives[a].CountAfterIndex
 				}
-				rhsCountAfter := oneItemAlternatives[b].CountAfterAccess
-				if len(oneItemAlternatives[b].IndexFilters) > 0 {
-					rhsCountAfter = oneItemAlternatives[b].CountAfterIndex
+				rhsCountAfter := tmpOneItemAlternatives[b].CountAfterAccess
+				if len(tmpOneItemAlternatives[b].IndexFilters) > 0 {
+					rhsCountAfter = tmpOneItemAlternatives[b].CountAfterIndex
 				}
 				return cmp.Compare(lhsCountAfter, rhsCountAfter)
 			})
