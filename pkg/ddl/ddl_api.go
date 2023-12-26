@@ -6927,14 +6927,13 @@ func (d *ddl) renameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 	}
 
 	job := &model.Job{
-		SchemaID:   schemas[1].ID,
-		TableID:    tableIDs[0],
-		SchemaName: schemas[1].Name.L,
-		Type:       model.ActionRenameTables,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{oldSchemaIDs, newSchemaIDs, tableNames, tableIDs, oldSchemaNames, oldTableNames},
-		CtxVars:    []interface{}{append(oldSchemaIDs, newSchemaIDs...), tableIDs},
-
+		SchemaID:            schemas[1].ID,
+		TableID:             tableIDs[0],
+		SchemaName:          schemas[1].Name.L,
+		Type:                model.ActionRenameTables,
+		BinlogInfo:          &model.HistoryInfo{},
+		Args:                []interface{}{oldSchemaIDs, newSchemaIDs, tableNames, tableIDs, oldSchemaNames, oldTableNames},
+		CtxVars:             []interface{}{append(oldSchemaIDs, newSchemaIDs...), tableIDs},
 		InvolvingSchemaInfo: involveSchemaInfo,
 	}
 
@@ -8612,7 +8611,6 @@ func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceG
 		Type:       model.ActionCreateResourceGroup,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{groupInfo, false},
-
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: model.InvolvingNone,
 			Table:    model.InvolvingNone,
@@ -8663,7 +8661,6 @@ func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGr
 		Type:       model.ActionDropResourceGroup,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{groupName},
-
 		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
 			Database: model.InvolvingNone,
 			Table:    model.InvolvingNone,
