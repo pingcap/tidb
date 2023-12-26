@@ -53,7 +53,7 @@ const UnCommitIndexKVFlag byte = '1'
 // Those limits is enforced to make sure the transaction can be well handled by TiKV.
 var (
 	// TxnEntrySizeLimit is limit of single entry size (len(key) + len(value)).
-	TxnEntrySizeLimit uint64 = config.DefTxnEntrySizeLimit
+	TxnEntrySizeLimit = atomic.NewUint64(config.DefTxnEntrySizeLimit)
 	// TxnTotalSizeLimit is limit of the sum of all entry size.
 	TxnTotalSizeLimit = atomic.NewUint64(config.DefTxnTotalSizeLimit)
 )

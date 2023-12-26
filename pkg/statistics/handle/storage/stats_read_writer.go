@@ -162,9 +162,9 @@ func (s *statsReadWriter) ChangeGlobalStatsID(from, to int64) (err error) {
 	}, util.FlagWrapTxn)
 }
 
-// ResetTableStats2KVForDrop update the version of mysql.stats_meta.
-// Then GC worker will delete the old version of stats.
-func (s *statsReadWriter) ResetTableStats2KVForDrop(physicalID int64) (err error) {
+// UpdateStatsMetaVersionForGC update the version of mysql.stats_meta.
+// See more details in the interface definition.
+func (s *statsReadWriter) UpdateStatsMetaVersionForGC(physicalID int64) (err error) {
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {

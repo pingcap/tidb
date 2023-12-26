@@ -852,14 +852,25 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 	if err != nil {
 		return nil, errors.Errorf("binding failed: %v", err)
 	}
-	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(originNode, bindableStmt.Schema, bindableStmt.Query))
+
+	restoredSQL := utilparser.RestoreWithDefaultDB(originNode, bindableStmt.Schema, bindableStmt.Query)
+	bindSQL = utilparser.RestoreWithDefaultDB(hintNode, bindableStmt.Schema, hintNode.Text())
+	db := utilparser.GetDefaultDB(originNode, bindableStmt.Schema)
+	if v.IsUniversal { // hide schema name if it's universal binding
+		restoredSQL = utilparser.RestoreWithoutDB(originNode)
+		bindSQL = utilparser.RestoreWithoutDB(hintNode)
+		db = ""
+	}
+	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(restoredSQL)
+
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
 		NormdOrigSQL: normdOrigSQL,
-		BindSQL:      utilparser.RestoreWithDefaultDB(hintNode, bindableStmt.Schema, hintNode.Text()),
+		BindSQL:      bindSQL,
 		IsGlobal:     v.GlobalScope,
+		IsUniversal:  v.IsUniversal,
 		BindStmt:     hintNode,
-		Db:           utilparser.GetDefaultDB(originNode, bindableStmt.Schema),
+		Db:           db,
 		Charset:      bindableStmt.Charset,
 		Collation:    bindableStmt.Collation,
 		Source:       bindinfo.History,
@@ -2682,7 +2693,7 @@ func generateIndexTasks(idx *model.IndexInfo, as *ast.AnalyzeTableStmt, tblInfo 
 }
 
 // CMSketchSizeLimit indicates the size limit of CMSketch.
-var CMSketchSizeLimit = kv.TxnEntrySizeLimit / binary.MaxVarintLen32
+var CMSketchSizeLimit = kv.TxnEntrySizeLimit.Load() / binary.MaxVarintLen32
 
 var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
 	ast.AnalyzeOptNumBuckets:    1024,
