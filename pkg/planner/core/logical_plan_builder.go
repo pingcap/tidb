@@ -461,7 +461,7 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			plannerSelectBlockAsName = *p
 		}
 		if len(plannerSelectBlockAsName) > 0 && !isTableName {
-			plannerSelectBlockAsName[p.SelectBlockOffset()] = ast.HintTable{DBName: p.OutputNames()[0].DBName, TableName: p.OutputNames()[0].TblName}
+			plannerSelectBlockAsName[p.QueryBlockOffset()] = ast.HintTable{DBName: p.OutputNames()[0].DBName, TableName: p.OutputNames()[0].TblName}
 		}
 		// Duplicate column name in one table is not allowed.
 		// "select * from (select 1, 1) as a;" is duplicate
@@ -631,20 +631,20 @@ func extractTableAlias(p Plan, parentOffset int) *h.TableInfo {
 				return nil
 			}
 		}
-		blockOffset := p.SelectBlockOffset()
+		qbOffset := p.QueryBlockOffset()
 		var blockAsNames []ast.HintTable
 		if p := p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
 			blockAsNames = *p
 		}
 		// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
-		if blockOffset != parentOffset && blockAsNames != nil && blockAsNames[blockOffset].TableName.L != "" {
-			blockOffset = parentOffset
+		if qbOffset != parentOffset && blockAsNames != nil && blockAsNames[qbOffset].TableName.L != "" {
+			qbOffset = parentOffset
 		}
 		dbName := firstName.DBName
 		if dbName.L == "" {
 			dbName = model.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
 		}
-		return &h.TableInfo{DBName: dbName, TblName: firstName.TblName, SelectOffset: blockOffset}
+		return &h.TableInfo{DBName: dbName, TblName: firstName.TblName, SelectOffset: qbOffset}
 	}
 	return nil
 }
@@ -654,8 +654,8 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *h.TableHintInfo) {
 		return
 	}
 
-	lhsAlias := extractTableAlias(p.children[0], p.SelectBlockOffset())
-	rhsAlias := extractTableAlias(p.children[1], p.SelectBlockOffset())
+	lhsAlias := extractTableAlias(p.children[0], p.QueryBlockOffset())
+	rhsAlias := extractTableAlias(p.children[1], p.QueryBlockOffset())
 	if hintInfo.IfPreferMergeJoin(lhsAlias) {
 		p.preferJoinType |= h.PreferMergeJoin
 		p.leftPreferJoinType |= h.PreferMergeJoin
@@ -863,9 +863,9 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *h.TableHintInfo) {
 
 	var alias *h.TableInfo
 	if len(ds.TableAsName.L) != 0 {
-		alias = &h.TableInfo{DBName: ds.DBName, TblName: *ds.TableAsName, SelectOffset: ds.SelectBlockOffset()}
+		alias = &h.TableInfo{DBName: ds.DBName, TblName: *ds.TableAsName, SelectOffset: ds.QueryBlockOffset()}
 	} else {
-		alias = &h.TableInfo{DBName: ds.DBName, TblName: ds.tableInfo.Name, SelectOffset: ds.SelectBlockOffset()}
+		alias = &h.TableInfo{DBName: ds.DBName, TblName: ds.tableInfo.Name, SelectOffset: ds.QueryBlockOffset()}
 	}
 	if hintTbl := hintInfo.IfPreferTiKV(alias); hintTbl != nil {
 		for _, path := range ds.possibleAccessPaths {
@@ -1824,7 +1824,7 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggr
 	plan4Agg := LogicalAggregation{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, child.Schema().Len()),
 		GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length]),
-	}.Init(b.ctx, child.SelectBlockOffset())
+	}.Init(b.ctx, child.QueryBlockOffset())
 	if hint := b.TableHints(); hint != nil {
 		plan4Agg.aggHints = hint.AggHints
 	}
@@ -4440,7 +4440,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		// 1. The select is top level query, order should be honored
 		// 2. The query has LIMIT clause
 		// 3. The control flag requires keeping ORDER BY explicitly
-		if len(b.selectOffset) == 1 || sel.Limit != nil || !b.ctx.GetSessionVars().RemoveOrderbyInSubquery {
+		if len(b.qbOffset) == 1 || sel.Limit != nil || !b.ctx.GetSessionVars().RemoveOrderbyInSubquery {
 			if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
 				p, err = b.buildSortWithCheck(ctx, p, sel.OrderBy.Items, orderMap, windowMapper, projExprs, oldLen, sel.Distinct)
 			} else {
@@ -5521,7 +5521,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 		b.buildingCTE = o
 	}()
 
-	hintProcessor := &h.QBHintHandler{Ctx: b.ctx}
+	hintProcessor := h.NewQBHintHandler(b.ctx)
 	selectNode.Accept(hintProcessor)
 	currentQbNameMap4View := make(map[string][]ast.HintTable)
 	currentQbHints4View := make(map[string][]*ast.TableOptimizerHint)
@@ -5530,21 +5530,21 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 
 	for qbName, viewQbNameHint := range qbNameMap4View {
 		// Check whether the view hint belong the current view or its nested views.
-		selectOffset := -1
+		qbOffset := -1
 		if len(viewQbNameHint) == 0 {
-			selectOffset = 1
+			qbOffset = 1
 		} else if len(viewQbNameHint) == 1 && viewQbNameHint[0].TableName.L == "" {
-			selectOffset = hintProcessor.GetHintOffset(viewQbNameHint[0].QBName, -1)
+			qbOffset = hintProcessor.GetHintOffset(viewQbNameHint[0].QBName, -1)
 		} else {
 			currentQbNameMap4View[qbName] = viewQbNameHint
 			currentQbHints4View[qbName] = viewHints[qbName]
 		}
 
-		if selectOffset != -1 {
+		if qbOffset != -1 {
 			// If the hint belongs to the current view and not belongs to it's nested views, we should convert the view hint to the normal hint.
 			// After we convert the view hint to the normal hint, it can be reused the origin hint's infrastructure.
-			currentQbHints[selectOffset] = viewHints[qbName]
-			currentQbNameMap[qbName] = selectOffset
+			currentQbHints[qbOffset] = viewHints[qbName]
+			currentQbNameMap[qbName] = qbOffset
 
 			delete(qbNameMap4View, qbName)
 			delete(viewHints, qbName)
@@ -5554,7 +5554,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 	hintProcessor.ViewQBNameToTable = qbNameMap4View
 	hintProcessor.ViewQBNameToHints = viewHints
 	hintProcessor.ViewQBNameUsed = make(map[string]struct{})
-	hintProcessor.SelOffsetToHints = currentQbHints
+	hintProcessor.QBOffsetToHints = currentQbHints
 	hintProcessor.QBNameToSelOffset = currentQbNameMap
 
 	originHintProcessor := b.hintProcessor
@@ -5719,7 +5719,7 @@ func setIsInApplyForCTE(p LogicalPlan, apSchema *expression.Schema) {
 
 func (b *PlanBuilder) buildMaxOneRow(p LogicalPlan) LogicalPlan {
 	// The query block of the MaxOneRow operator should be the same as that of its child.
-	maxOneRow := LogicalMaxOneRow{}.Init(b.ctx, p.SelectBlockOffset())
+	maxOneRow := LogicalMaxOneRow{}.Init(b.ctx, p.QueryBlockOffset())
 	maxOneRow.SetChildren(p)
 	return maxOneRow
 }

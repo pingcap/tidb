@@ -929,6 +929,9 @@ const (
 	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
 	// Please see comments of SessionVars.OptObjective for details.
 	TiDBOptObjective = "tidb_opt_objective"
+
+	// TiDBTxnEntrySizeLimit indicates the max size of a entry in membuf.
+	TiDBTxnEntrySizeLimit = "tidb_txn_entry_size_limit"
 )
 
 // TiDB vars that have only global scope
@@ -1444,6 +1447,7 @@ const (
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
 	DefTiDBIdleTransactionTimeout                     = 0
+	DefTiDBTxnEntrySizeLimit                          = 0
 )
 
 // Process global variables.
@@ -1544,6 +1548,7 @@ var (
 	SchemaVersionCacheLimit   = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
 	CloudStorageURI           = atomic.NewString("")
 	IgnoreInlistPlanDigest    = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
+	TxnEntrySizeLimit         = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
 )
 
 var (
