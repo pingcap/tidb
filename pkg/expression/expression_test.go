@@ -16,12 +16,10 @@ package expression
 
 import (
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
@@ -106,9 +104,8 @@ func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
 
 func TestConstant(t *testing.T) {
 	ctx := createContext(t)
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	require.False(t, NewZero().IsCorrelated())
-	require.True(t, NewZero().ConstItem(sc.UseCache))
+	require.True(t, NewZero().ConstItem(true))
 	require.True(t, NewZero().Decorrelate(nil).Equal(ctx, NewZero()))
 	require.Equal(t, []byte{0x0, 0x8, 0x0}, NewZero().HashCode())
 	require.False(t, NewZero().Equal(ctx, NewOne()))
