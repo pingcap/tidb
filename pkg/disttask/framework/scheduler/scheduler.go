@@ -501,13 +501,13 @@ func (s *BaseScheduler) ReDispatchSubtasks() error {
 		}
 	}
 	// 7. rebalance rest subtasks evenly to liveNodes.
-	// liveNodeIdx := 0
-	// for rebalanceIdx < len(rebalanceSubtasks) {
-	// 	node := s.LiveNodes[liveNodeIdx]
-	// 	rebalanceSubtasks[rebalanceIdx].ExecID = disttaskutil.GenerateExecID(node.IP, node.Port)
-	// 	rebalanceIdx++
-	// 	liveNodeIdx++
-	// }
+	liveNodeIdx := 0
+	for rebalanceIdx < len(rebalanceSubtasks) {
+		node := s.LiveNodes[liveNodeIdx]
+		rebalanceSubtasks[rebalanceIdx].ExecID = disttaskutil.GenerateExecID(node.IP, node.Port)
+		rebalanceIdx++
+		liveNodeIdx++
+	}
 
 	// 8. update subtasks and do clean up logic.
 	if err = s.taskMgr.UpdateSubtasksExecIDs(s.ctx, s.Task.ID, subtasks); err != nil {

@@ -61,7 +61,7 @@ func seekPropsOffsets(
 	moved := false
 	for iter.Next() {
 		p := iter.prop()
-		propKey := kv.Key(p.firstKey).Clone()
+		propKey := kv.Key(p.firstKey)
 		if propKey.Cmp(start) > 0 {
 			if !moved {
 				return nil, fmt.Errorf("start key %s is too small for stat files %v, propKey %s",
