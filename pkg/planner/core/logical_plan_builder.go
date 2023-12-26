@@ -631,20 +631,20 @@ func extractTableAlias(p Plan, parentOffset int) *h.TableInfo {
 				return nil
 			}
 		}
-		selectOffset := p.QBOffset()
+		qbOffset := p.QBOffset()
 		var blockAsNames []ast.HintTable
 		if p := p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
 			blockAsNames = *p
 		}
 		// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
-		if selectOffset != parentOffset && blockAsNames != nil && blockAsNames[selectOffset].TableName.L != "" {
-			selectOffset = parentOffset
+		if qbOffset != parentOffset && blockAsNames != nil && blockAsNames[qbOffset].TableName.L != "" {
+			qbOffset = parentOffset
 		}
 		dbName := firstName.DBName
 		if dbName.L == "" {
 			dbName = model.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
 		}
-		return &h.TableInfo{DBName: dbName, TblName: firstName.TblName, SelectOffset: selectOffset}
+		return &h.TableInfo{DBName: dbName, TblName: firstName.TblName, SelectOffset: qbOffset}
 	}
 	return nil
 }
@@ -4440,7 +4440,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		// 1. The select is top level query, order should be honored
 		// 2. The query has LIMIT clause
 		// 3. The control flag requires keeping ORDER BY explicitly
-		if len(b.selectOffset) == 1 || sel.Limit != nil || !b.ctx.GetSessionVars().RemoveOrderbyInSubquery {
+		if len(b.qbOffset) == 1 || sel.Limit != nil || !b.ctx.GetSessionVars().RemoveOrderbyInSubquery {
 			if b.ctx.GetSessionVars().SQLMode.HasOnlyFullGroupBy() {
 				p, err = b.buildSortWithCheck(ctx, p, sel.OrderBy.Items, orderMap, windowMapper, projExprs, oldLen, sel.Distinct)
 			} else {
@@ -5530,21 +5530,21 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 
 	for qbName, viewQbNameHint := range qbNameMap4View {
 		// Check whether the view hint belong the current view or its nested views.
-		selectOffset := -1
+		qbOffset := -1
 		if len(viewQbNameHint) == 0 {
-			selectOffset = 1
+			qbOffset = 1
 		} else if len(viewQbNameHint) == 1 && viewQbNameHint[0].TableName.L == "" {
-			selectOffset = hintProcessor.GetHintOffset(viewQbNameHint[0].QBName, -1)
+			qbOffset = hintProcessor.GetHintOffset(viewQbNameHint[0].QBName, -1)
 		} else {
 			currentQbNameMap4View[qbName] = viewQbNameHint
 			currentQbHints4View[qbName] = viewHints[qbName]
 		}
 
-		if selectOffset != -1 {
+		if qbOffset != -1 {
 			// If the hint belongs to the current view and not belongs to it's nested views, we should convert the view hint to the normal hint.
 			// After we convert the view hint to the normal hint, it can be reused the origin hint's infrastructure.
-			currentQbHints[selectOffset] = viewHints[qbName]
-			currentQbNameMap[qbName] = selectOffset
+			currentQbHints[qbOffset] = viewHints[qbName]
+			currentQbNameMap[qbName] = qbOffset
 
 			delete(qbNameMap4View, qbName)
 			delete(viewHints, qbName)

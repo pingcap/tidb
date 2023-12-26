@@ -102,29 +102,29 @@ func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, no
 		return res
 	}
 	for _, child := range children {
-		selectOffset := child.QBOffset()
-		if selectOffset == -1 {
+		qbOffset := child.QBOffset()
+		if qbOffset == -1 {
 			continue
 		}
 		var dbName, tableName *model.CIStr
-		if selectOffset != parentOffset {
+		if qbOffset != parentOffset {
 			var blockAsNames []ast.HintTable
 			if p := sctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
 				blockAsNames = *p
 			}
-			if selectOffset >= len(blockAsNames) {
+			if qbOffset >= len(blockAsNames) {
 				continue
 			}
-			hintTable := blockAsNames[selectOffset]
+			hintTable := blockAsNames[qbOffset]
 			// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
-			dbName, tableName, selectOffset = &hintTable.DBName, &hintTable.TableName, parentOffset
+			dbName, tableName, qbOffset = &hintTable.DBName, &hintTable.TableName, parentOffset
 		} else {
 			dbName, tableName = extractTableAsName(child)
 		}
 		if tableName == nil || tableName.L == "" {
 			continue
 		}
-		qbName, err := h.GenerateQBName(nodeType, selectOffset)
+		qbName, err := h.GenerateQBName(nodeType, qbOffset)
 		if err != nil {
 			continue
 		}

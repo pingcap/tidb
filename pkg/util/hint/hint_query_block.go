@@ -296,8 +296,8 @@ func (p *QBHintHandler) GetCurrentStmtHints(hints []*ast.TableOptimizerHint, cur
 }
 
 // GenerateQBName builds QBName from offset.
-func GenerateQBName(nodeType NodeType, selectOffset int) (model.CIStr, error) {
-	if selectOffset == 0 {
+func GenerateQBName(nodeType NodeType, qbOffset int) (model.CIStr, error) {
+	if qbOffset == 0 {
 		if nodeType == TypeDelete {
 			return model.NewCIStr(defaultDeleteBlockName), nil
 		}
@@ -306,5 +306,5 @@ func GenerateQBName(nodeType NodeType, selectOffset int) (model.CIStr, error) {
 		}
 		return model.NewCIStr(""), fmt.Errorf("Unexpected NodeType %d when block offset is 0", nodeType)
 	}
-	return model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, selectOffset)), nil
+	return model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, qbOffset)), nil
 }

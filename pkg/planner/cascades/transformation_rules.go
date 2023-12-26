@@ -971,13 +971,13 @@ func (r *PushSelDownJoin) Match(expr *memo.ExprIter) bool {
 // buildChildSelectionGroup builds a new childGroup if the pushed down condition is not empty.
 func buildChildSelectionGroup(
 	sctx sessionctx.Context,
-	selectOffset int,
+	qbOffset int,
 	conditions []expression.Expression,
 	childGroup *memo.Group) *memo.Group {
 	if len(conditions) == 0 {
 		return childGroup
 	}
-	newSel := plannercore.LogicalSelection{Conditions: conditions}.Init(sctx, selectOffset)
+	newSel := plannercore.LogicalSelection{Conditions: conditions}.Init(sctx, qbOffset)
 	groupExpr := memo.NewGroupExpr(newSel)
 	groupExpr.SetChildren(childGroup)
 	newChild := memo.NewGroupWithSchema(groupExpr, childGroup.Prop.Schema)

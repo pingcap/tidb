@@ -68,6 +68,9 @@ type Plan interface {
 	SetOutputNames(names types.NameSlice)
 
 	// QBOffset is query block offset.
+	// For example, in query
+	//		`select /*+ use_index(@sel_2 t2, a) */ * from t1, (select a*2 as b from t2) tx where a>b`
+	// the hint should be applied on the sub-query, whose query block is 2.
 	QBOffset() int
 
 	BuildPlanTrace() *tracing.PlanTrace
@@ -735,12 +738,12 @@ func (p *logicalSchemaProducer) BuildKeyInfo(selfSchema *expression.Schema, chil
 	}
 }
 
-func newBaseLogicalPlan(ctx sessionctx.Context, tp string, self LogicalPlan, selectOffset int) baseLogicalPlan {
+func newBaseLogicalPlan(ctx sessionctx.Context, tp string, self LogicalPlan, qbOffset int) baseLogicalPlan {
 	return baseLogicalPlan{
 		taskMap:      make(map[string]task),
 		taskMapBak:   make([]string, 0, 10),
 		taskMapBakTS: make([]uint64, 0, 10),
-		Plan:         base.NewBasePlan(ctx, tp, selectOffset),
+		Plan:         base.NewBasePlan(ctx, tp, qbOffset),
 		self:         self,
 	}
 }
