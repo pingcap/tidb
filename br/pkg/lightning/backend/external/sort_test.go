@@ -240,20 +240,13 @@ func testSortWithNewMerge(t *testing.T, mergeFunc func(ctx context.Context, data
 	t.Cleanup(func() {
 		failpoint.Disable("github.com/pingcap/tidb/br/pkg/lightning/backend/external/mockRangesGroupSize")
 	})
-	datas := make([]string, 0, 100)
-	stats := make([]string, 0, 100)
 	// prepare meta for merge step.
 	closeFn := func(s *WriterSummary) {
 		multiStats = append(multiStats, s.MultipleFilesStats...)
-		for _, stat := range s.MultipleFilesStats {
-			for i := range stat.Filenames {
-				datas = append(datas, stat.Filenames[i][0])
-				stats = append(stats, stat.Filenames[i][1])
-			}
-		}
 	}
 
 	// 1. write data step
+	// TODO(ywqzzy): refactor.
 	w := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
@@ -328,7 +321,7 @@ func testSortWithNewMerge(t *testing.T, mergeFunc func(ctx context.Context, data
 	})
 
 	// 2. merge step
-	dataGroup, statGroup, startKeys, endKeys := splitDataStatAndKeys(datas, stats, multiStats)
+	dataGroup, statGroup, startKeys, endKeys := splitDataStatAndKeys(multiStats)
 	lastStepDatas := make([]string, 0, 10)
 	lastStepStats := make([]string, 0, 10)
 	var startKey, endKey dbkv.Key
