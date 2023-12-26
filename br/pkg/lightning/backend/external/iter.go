@@ -586,7 +586,8 @@ func (p statReaderProxy) close() error {
 // run heap sort on it. Also, it's a sortedReader of *rangeProperty that can be
 // used by MergePropIter to handle multiple MultipleFilesStat.
 type mergePropBaseIter struct {
-	iter *limitSizeMergeIter[*rangeProperty, statReaderProxy]
+	iter            *limitSizeMergeIter[*rangeProperty, statReaderProxy]
+	closeReaderFlag *bool
 }
 
 func newMergePropBaseIter(
@@ -638,7 +639,10 @@ func (m mergePropBaseIter) path() string {
 }
 
 func (m mergePropBaseIter) next() (*rangeProperty, error) {
-	ok, _ := m.iter.next()
+	ok, closeReaderIdx := m.iter.next()
+	if m.closeReaderFlag != nil && closeReaderIdx >= 0 {
+		*m.closeReaderFlag = true
+	}
 	if !ok {
 		// TODO(lance6716): explain it?
 		if m.iter.err == nil {
@@ -659,7 +663,8 @@ func (m mergePropBaseIter) close() error {
 
 // MergePropIter is an iterator that merges multiple range properties from different files.
 type MergePropIter struct {
-	iter *limitSizeMergeIter[*rangeProperty, mergePropBaseIter]
+	iter                *limitSizeMergeIter[*rangeProperty, mergePropBaseIter]
+	baseCloseReaderFlag *bool
 }
 
 // NewMergePropIter creates a new MergePropIter.
@@ -678,6 +683,7 @@ func NewMergePropIter(
 	exStorage storage.ExternalStorage,
 	_ bool,
 ) (*MergePropIter, error) {
+	closeReaderFlag := false
 	readerOpeners := make([]readerOpenerFn[*rangeProperty, mergePropBaseIter], 0, len(multiStat))
 	for _, m := range multiStat {
 		m := m
@@ -686,6 +692,7 @@ func NewMergePropIter(
 			if err != nil {
 				return nil, err
 			}
+			baseIter.closeReaderFlag = &closeReaderFlag
 			return baseIter, nil
 		})
 	}
@@ -699,7 +706,8 @@ func NewMergePropIter(
 
 	it, err := newLimitSizeMergeIter(ctx, readerOpeners, weight, limit)
 	return &MergePropIter{
-		iter: it,
+		iter:                it,
+		baseCloseReaderFlag: &closeReaderFlag,
 	}, err
 }
 
@@ -710,6 +718,7 @@ func (i *MergePropIter) Error() error {
 
 // Next moves the iterator to the next position.
 func (i *MergePropIter) Next() bool {
+	*i.baseCloseReaderFlag = false
 	ok, _ := i.iter.next()
 	return ok
 }

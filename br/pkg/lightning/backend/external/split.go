@@ -76,7 +76,6 @@ type RangeSplitter struct {
 	recordSplitKeyAfterNextProp bool
 	lastDataFile                string
 	lastStatFile                string
-	lastHeapSize                int
 	lastRangeProperty           *rangeProperty
 	willExhaustHeap             exhaustedHeap
 
@@ -152,9 +151,8 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 		r.curGroupKeys += int64(prop.keys)
 		r.curRangeKeys += int64(prop.keys)
 
-		// a tricky way to detect source file will exhaust
-		heapSize := r.propIter.iter.h.Len()
-		if heapSize < r.lastHeapSize {
+		// if this Next call will close the last reader
+		if *r.propIter.baseCloseReaderFlag {
 			heap.Push(&r.willExhaustHeap, exhaustedHeapElem{
 				key:      r.lastRangeProperty.lastKey,
 				dataFile: r.lastDataFile,
@@ -170,7 +168,6 @@ func (r *RangeSplitter) SplitOneRangesGroup() (
 		r.activeStatFiles[statFilePath] = [2]int{idx, idx2}
 		r.lastDataFile = dataFilePath
 		r.lastStatFile = statFilePath
-		r.lastHeapSize = heapSize
 		r.lastRangeProperty = prop
 
 		for r.willExhaustHeap.Len() > 0 &&

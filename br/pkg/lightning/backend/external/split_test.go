@@ -241,7 +241,7 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 		"/mock-test/3/0", "/mock-test/3/1",
 	}, dataFiles123)
 
-	multiFileStat := mockOneMultiFileStat(statFiles123, statFiles123)
+	multiFileStat := mockOneMultiFileStat(dataFiles123, statFiles123)
 	// group keys = 2, region keys = 1
 	splitter, err := NewRangeSplitter(
 		ctx, multiFileStat, memStore, 1000, 2, 1000, 1, true,
