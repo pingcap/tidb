@@ -59,6 +59,7 @@ func (wp *workerPool) get() (*worker, error) {
 	}
 
 	worker := resource.(*worker)
+	logutil.BgLogger().Warn("xxx------ get", zap.Stringer("wk", worker))
 	return worker, nil
 }
 
@@ -70,6 +71,7 @@ func (wp *workerPool) put(wk *worker) {
 
 	// no need to protect wp.resPool, even the wp.resPool is closed, the ctx still need to
 	// put into resPool, because when resPool is closing, it will wait all the ctx returns, then resPool finish closing.
+	logutil.BgLogger().Warn("xxx------ put", zap.Stringer("wk", wk))
 	wp.resPool.Put(wk)
 }
 
