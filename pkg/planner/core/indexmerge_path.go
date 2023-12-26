@@ -15,6 +15,7 @@
 package core
 
 import (
+	"github.com/pingcap/tidb/pkg/statistics"
 	"math"
 	"slices"
 	"strings"
@@ -686,11 +687,11 @@ func (ds *DataSource) generateMVIndexPartialPath4Or(normalPathCnt int, indexMerg
 			}
 			// for every cnfCond, try to map it into possible mv index path.
 			// remainingFilters is not cared here, because it will be all suspended on the table side.
-			accessFilters, remainingFilters := ds.collectFilters4MVIndex(cnfConds, idxCols)
+			accessFilters, remainingFilters := collectFilters4MVIndex(ds.SCtx(), cnfConds, idxCols)
 			if len(accessFilters) == 0 {
 				continue
 			}
-			paths, isIntersection, ok, err := ds.buildPartialPaths4MVIndex(accessFilters, idxCols, onePossibleMVIndexPath.Index)
+			paths, isIntersection, ok, err := buildPartialPaths4MVIndex(ds.SCtx(), accessFilters, idxCols, onePossibleMVIndexPath.Index, ds.tableStats.HistColl)
 			if err != nil {
 				logutil.BgLogger().Debug("build index merge partial mv index paths failed", zap.Error(err))
 				return nil, nil, false, err
@@ -762,7 +763,7 @@ func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, in
 			// derive each mutation access filters
 			accessFilters[mvColOffset] = mvFilterMu
 
-			partialPaths, isIntersection, ok, err := ds.buildPartialPaths4MVIndex(accessFilters, idxCols, possibleMVIndexPaths[idx].Index)
+			partialPaths, isIntersection, ok, err := buildPartialPaths4MVIndex(ds.SCtx(), accessFilters, idxCols, possibleMVIndexPaths[idx].Index, ds.tableStats.HistColl)
 			if err != nil {
 				logutil.BgLogger().Debug("build index merge partial mv index paths failed", zap.Error(err))
 				return nil, nil, err
@@ -876,12 +877,12 @@ func (ds *DataSource) generateIndexMergeOnDNF4MVIndex(normalPathCnt int, filters
 					mvIndexFilters = expression.FlattenCNFConditions(sf) // (1 member of (a) and b=1) --> [(1 member of (a)), b=1]
 				}
 
-				accessFilters, remainingFilters := ds.collectFilters4MVIndex(mvIndexFilters, idxCols)
+				accessFilters, remainingFilters := collectFilters4MVIndex(ds.SCtx(), mvIndexFilters, idxCols)
 				if len(accessFilters) == 0 || len(remainingFilters) > 0 { // limitation 1
 					cannotFit = true
 					break
 				}
-				paths, isIntersection, ok, err := ds.buildPartialPaths4MVIndex(accessFilters, idxCols, ds.possibleAccessPaths[idx].Index)
+				paths, isIntersection, ok, err := buildPartialPaths4MVIndex(ds.SCtx(), accessFilters, idxCols, ds.possibleAccessPaths[idx].Index, ds.tableStats.HistColl)
 				if err != nil {
 					return nil, err
 				}
@@ -1111,12 +1112,12 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 			continue
 		}
 
-		accessFilters, remainingFilters := ds.collectFilters4MVIndex(filters, idxCols)
+		accessFilters, remainingFilters := collectFilters4MVIndex(ds.SCtx(), filters, idxCols)
 		if len(accessFilters) == 0 { // cannot use any filter on this MVIndex
 			continue
 		}
 
-		partialPaths, isIntersection, ok, err := ds.buildPartialPaths4MVIndex(accessFilters, idxCols, ds.possibleAccessPaths[idx].Index)
+		partialPaths, isIntersection, ok, err := buildPartialPaths4MVIndex(ds.SCtx(), accessFilters, idxCols, ds.possibleAccessPaths[idx].Index, ds.tableStats.HistColl)
 		if err != nil {
 			return err
 		}
@@ -1152,9 +1153,18 @@ func (*DataSource) buildPartialPathUp4MVIndex(partialPaths []*util.AccessPath, i
 // buildPartialPaths4MVIndex builds partial paths by using these accessFilters upon this MVIndex.
 // The accessFilters must be corresponding to these idxCols.
 // OK indicates whether it builds successfully. These partial paths should be ignored if ok==false.
-func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expression,
-	idxCols []*expression.Column, mvIndex *model.IndexInfo) (
-	partialPaths []*util.AccessPath, isIntersection bool, ok bool, err error) {
+func buildPartialPaths4MVIndex(
+	sctx sessionctx.Context,
+	accessFilters []expression.Expression,
+	idxCols []*expression.Column,
+	mvIndex *model.IndexInfo,
+	histColl *statistics.HistColl,
+) (
+	partialPaths []*util.AccessPath,
+	isIntersection bool,
+	ok bool,
+	err error,
+) {
 	var virColID = -1
 	for i := range idxCols {
 		// index column may contain other virtual column.
@@ -1167,7 +1177,7 @@ func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expre
 		return nil, false, false, nil
 	}
 	if len(accessFilters) <= virColID { // no filter related to the vir-col, build a partial path directly.
-		partialPath, ok, err := ds.buildPartialPath4MVIndex(accessFilters, idxCols, mvIndex)
+		partialPath, ok, err := buildPartialPath4MVIndex(sctx, accessFilters, idxCols, mvIndex, histColl)
 		return []*util.AccessPath{partialPath}, false, ok, err
 	}
 
@@ -1193,21 +1203,21 @@ func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expre
 		virColVals = append(virColVals, v)
 	case ast.JSONContains: // (json_contains(a->'$.zip', '[1, 2, 3]')
 		isIntersection = true
-		virColVals, ok = jsonArrayExpr2Exprs(ds.SCtx(), sf.GetArgs()[1], jsonType)
+		virColVals, ok = jsonArrayExpr2Exprs(sctx, sf.GetArgs()[1], jsonType)
 		if !ok || len(virColVals) == 0 { // json_contains(JSON, '[]') is TRUE
 			return nil, false, false, nil
 		}
 	case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
 		var jsonPathIdx int
-		if sf.GetArgs()[0].Equal(ds.SCtx(), targetJSONPath) {
+		if sf.GetArgs()[0].Equal(sctx, targetJSONPath) {
 			jsonPathIdx = 0 // (json_overlaps(a->'$.zip', '[1, 2, 3]')
-		} else if sf.GetArgs()[1].Equal(ds.SCtx(), targetJSONPath) {
+		} else if sf.GetArgs()[1].Equal(sctx, targetJSONPath) {
 			jsonPathIdx = 1 // (json_overlaps('[1, 2, 3]', a->'$.zip')
 		} else {
 			return nil, false, false, nil
 		}
 		var ok bool
-		virColVals, ok = jsonArrayExpr2Exprs(ds.SCtx(), sf.GetArgs()[1-jsonPathIdx], jsonType)
+		virColVals, ok = jsonArrayExpr2Exprs(sctx, sf.GetArgs()[1-jsonPathIdx], jsonType)
 		if !ok || len(virColVals) == 0 { // forbid empty array for safety
 			return nil, false, false, nil
 		}
@@ -1223,7 +1233,7 @@ func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expre
 
 	for _, v := range virColVals {
 		// rewrite json functions to EQ to calculate range, `(1 member of j)` -> `j=1`.
-		eq, err := expression.NewFunction(ds.SCtx(), ast.EQ, types.NewFieldType(mysql.TypeTiny), virCol, v)
+		eq, err := expression.NewFunction(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), virCol, v)
 		if err != nil {
 			return nil, false, false, err
 		}
@@ -1231,7 +1241,7 @@ func (ds *DataSource) buildPartialPaths4MVIndex(accessFilters []expression.Expre
 		copy(newAccessFilters, accessFilters)
 		newAccessFilters[virColID] = eq
 
-		partialPath, ok, err := ds.buildPartialPath4MVIndex(newAccessFilters, idxCols, mvIndex)
+		partialPath, ok, err := buildPartialPath4MVIndex(sctx, newAccessFilters, idxCols, mvIndex, histColl)
 		if !ok || err != nil {
 			return nil, false, ok, err
 		}
@@ -1249,7 +1259,13 @@ func isSafeTypeConversion4MVIndexRange(valType, mvIndexType *types.FieldType) (s
 }
 
 // buildPartialPath4MVIndex builds a partial path on this MVIndex with these accessFilters.
-func (ds *DataSource) buildPartialPath4MVIndex(accessFilters []expression.Expression, idxCols []*expression.Column, mvIndex *model.IndexInfo) (*util.AccessPath, bool, error) {
+func buildPartialPath4MVIndex(
+	sctx sessionctx.Context,
+	accessFilters []expression.Expression,
+	idxCols []*expression.Column,
+	mvIndex *model.IndexInfo,
+	histColl *statistics.HistColl,
+) (*util.AccessPath, bool, error) {
 	partialPath := &util.AccessPath{Index: mvIndex}
 	partialPath.Ranges = ranger.FullRange()
 	for i := 0; i < len(idxCols); i++ {
@@ -1259,7 +1275,7 @@ func (ds *DataSource) buildPartialPath4MVIndex(accessFilters []expression.Expres
 		partialPath.FullIdxColLens = append(partialPath.FullIdxColLens, mvIndex.Columns[i].Length)
 		partialPath.NoPruneFullIdxCols = append(partialPath.NoPruneFullIdxCols, idxCols[i])
 	}
-	if err := ds.detachCondAndBuildRangeForPath(partialPath, accessFilters); err != nil {
+	if err := detachCondAndBuildRangeForPath(sctx, partialPath, accessFilters, histColl); err != nil {
 		return nil, false, err
 	}
 	if len(partialPath.AccessConds) != len(accessFilters) || len(partialPath.TableFilters) > 0 {
@@ -1302,7 +1318,7 @@ func (ds *DataSource) prepareCols4MVIndex(mvIndex *model.IndexInfo) (idxCols []*
 // collectFilters4MVIndex splits these filters into 2 parts where accessFilters can be used to access this index directly.
 // For idx(x, cast(a as array), z), `x=1 and (2 member of a) and z=1 and x+z>0` is split to:
 // accessFilters: `x=1 and (2 member of a) and z=1`, remaining: `x+z>0`.
-func (ds *DataSource) collectFilters4MVIndex(filters []expression.Expression, idxCols []*expression.Column) (accessFilters, remainingFilters []expression.Expression) {
+func collectFilters4MVIndex(sctx sessionctx.Context, filters []expression.Expression, idxCols []*expression.Column) (accessFilters, remainingFilters []expression.Expression) {
 	usedAsAccess := make([]bool, len(filters))
 	for _, col := range idxCols {
 		found := false
@@ -1310,7 +1326,7 @@ func (ds *DataSource) collectFilters4MVIndex(filters []expression.Expression, id
 			if usedAsAccess[i] {
 				continue
 			}
-			if ds.checkFilter4MVIndexColumn(f, col) {
+			if checkFilter4MVIndexColumn(sctx, f, col) {
 				accessFilters = append(accessFilters, f)
 				usedAsAccess[i] = true
 				found = true
@@ -1379,7 +1395,7 @@ func (ds *DataSource) collectFilters4MVIndexMutations(filters []expression.Expre
 			if usedAsAccess[i] {
 				continue
 			}
-			if ds.checkFilter4MVIndexColumn(f, col) {
+			if checkFilter4MVIndexColumn(ds.SCtx(), f, col) {
 				if col.VirtualExpr != nil && col.VirtualExpr.GetType().IsArray() {
 					// assert jsonColOffset should always be the same.
 					// if the filter is from virtual expression, it means it is about the mv json col.
@@ -1405,7 +1421,7 @@ func (ds *DataSource) collectFilters4MVIndexMutations(filters []expression.Expre
 }
 
 // checkFilter4MVIndexColumn checks whether this filter can be used as an accessFilter to access the MVIndex column.
-func (ds *DataSource) checkFilter4MVIndexColumn(filter expression.Expression, idxCol *expression.Column) bool {
+func checkFilter4MVIndexColumn(sctx sessionctx.Context, filter expression.Expression, idxCol *expression.Column) bool {
 	sf, ok := filter.(*expression.ScalarFunction)
 	if !ok {
 		return false
@@ -1417,12 +1433,12 @@ func (ds *DataSource) checkFilter4MVIndexColumn(filter expression.Expression, id
 		}
 		switch sf.FuncName.L {
 		case ast.JSONMemberOf: // (1 member of a)
-			return targetJSONPath.Equal(ds.SCtx(), sf.GetArgs()[1])
+			return targetJSONPath.Equal(sctx, sf.GetArgs()[1])
 		case ast.JSONContains: // json_contains(a, '1')
-			return targetJSONPath.Equal(ds.SCtx(), sf.GetArgs()[0])
+			return targetJSONPath.Equal(sctx, sf.GetArgs()[0])
 		case ast.JSONOverlaps: // json_overlaps(a, '1') or json_overlaps('1', a)
-			return targetJSONPath.Equal(ds.SCtx(), sf.GetArgs()[0]) ||
-				targetJSONPath.Equal(ds.SCtx(), sf.GetArgs()[1])
+			return targetJSONPath.Equal(sctx, sf.GetArgs()[0]) ||
+				targetJSONPath.Equal(sctx, sf.GetArgs()[1])
 		default:
 			return false
 		}
@@ -1445,7 +1461,7 @@ func (ds *DataSource) checkFilter4MVIndexColumn(filter expression.Expression, id
 		if argCol == nil || argConst == nil {
 			return false
 		}
-		if argCol.Equal(ds.SCtx(), idxCol) {
+		if argCol.Equal(sctx, idxCol) {
 			return true
 		}
 	}
