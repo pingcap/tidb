@@ -37,10 +37,15 @@ import (
 var (
 	executorPoolSize int32 = 4
 	// same as scheduler
-	checkTime           = 300 * time.Millisecond
-	recoverMetaInterval = 90 * time.Second
-	retrySQLTimes       = 30
-	retrySQLInterval    = 500 * time.Millisecond
+	checkTime               = 300 * time.Millisecond
+	recoverMetaInterval     = 90 * time.Second
+	retrySQLTimes           = 30
+	retrySQLInterval        = 500 * time.Millisecond
+	unfinishedSubtaskStates = []interface{}{
+		proto.TaskStatePending, proto.TaskStateRevertPending,
+		// for the case that the tidb is restarted when the subtask is running.
+		proto.TaskStateRunning, proto.TaskStateReverting,
+	}
 )
 
 // ManagerBuilder is used to build a Manager.
@@ -205,10 +210,7 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 	tasks = m.filterAlreadyHandlingTasks(tasks)
 
 	for _, task := range tasks {
-		exist, err := m.taskTable.HasSubtasksInStates(m.ctx, m.id, task.ID, task.Step,
-			proto.TaskStatePending, proto.TaskStateRevertPending,
-			// for the case that the tidb is restarted when the subtask is running.
-			proto.TaskStateRunning, proto.TaskStateReverting)
+		exist, err := m.taskTable.HasSubtasksInStates(m.ctx, m.id, task.ID, task.Step, unfinishedSubtaskStates...)
 		if err != nil {
 			logutil.Logger(m.logCtx).Error("check subtask exist failed", zap.Error(err))
 			m.logErr(err)
@@ -221,7 +223,7 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 
 		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task)
 		if tasksNeedFree != nil {
-			m.onCanceledTasks(context.Background(), tasksNeedFree)
+			m.cancelTasks(tasksNeedFree)
 			// do not handle the tasks with lower priority if current task is waiting tasks free.
 			break
 		}
@@ -321,6 +323,19 @@ func (m *Manager) cancelAllRunningTasks() {
 	}
 }
 
+func (m *Manager) cancelTasks(tasks []*proto.Task) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, task := range tasks {
+		logutil.Logger(m.logCtx).Info("cancelTasks", zap.Any("task_id", task.ID))
+		if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
+			// Pause all running subtasks, don't mark subtasks as canceled.
+			// Should not change the subtask's state.
+			cancel(nil)
+		}
+	}
+}
+
 // filterAlreadyHandlingTasks filters the tasks that are already handled.
 func (m *Manager) filterAlreadyHandlingTasks(tasks []*proto.Task) []*proto.Task {
 	m.mu.RLock()
@@ -383,7 +398,7 @@ func (m *Manager) onRunnableTask(task *proto.Task) {
 				}
 			}()
 		})
-		task, err := m.taskTable.GetTaskByID(m.ctx, task.ID)
+		task, err = m.taskTable.GetTaskByID(m.ctx, task.ID)
 		if err != nil {
 			m.logErr(err)
 			return
@@ -396,12 +411,8 @@ func (m *Manager) onRunnableTask(task *proto.Task) {
 				zap.Int64("task-id", task.ID), zap.Int64("step", int64(task.Step)), zap.Stringer("state", task.State))
 			return
 		}
-		if exist, err := m.taskTable.HasSubtasksInStates(
-			m.ctx,
-			m.id, task.ID, task.Step,
-			proto.TaskStatePending, proto.TaskStateRevertPending,
-			// for the case that the tidb is restarted when the subtask is running.
-			proto.TaskStateRunning, proto.TaskStateReverting); err != nil {
+		if exist, err := m.taskTable.HasSubtasksInStates(m.ctx, m.id, task.ID, task.Step,
+			unfinishedSubtaskStates...); err != nil {
 			m.logErr(err)
 			return
 		} else if !exist {
@@ -409,6 +420,11 @@ func (m *Manager) onRunnableTask(task *proto.Task) {
 		}
 		switch task.State {
 		case proto.TaskStateRunning:
+			if taskCtx.Err() != nil {
+				logutil.Logger(m.logCtx).Info("onRunnableTask exit for taskCtx.Done",
+					zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type), zap.Error(taskCtx.Err()))
+				return
+			}
 			// use taskCtx for canceling.
 			err = executor.Run(taskCtx, task)
 		case proto.TaskStatePausing:
