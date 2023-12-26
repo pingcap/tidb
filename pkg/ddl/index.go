@@ -2101,7 +2101,7 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 			if err != nil {
 				return err
 			}
-			err = handle.WaitTask(ctx, task.ID)
+			err = waitTask(ctx, task.ID)
 			if err := w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
 				if dbterror.ErrPausedDDLJob.Equal(err) {
 					logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.Error(err))
@@ -2136,7 +2136,7 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 
 		g.Go(func() error {
 			defer close(done)
-			err := handle.SubmitAndWaitTask(ctx, taskKey, taskType, concurrency, metaData)
+			err := submitAndWaitTask(ctx, taskKey, taskType, concurrency, metaData)
 			failpoint.Inject("pauseAfterDistTaskFinished", func() {
 				MockDMLExecutionOnTaskFinished()
 			})
@@ -2207,6 +2207,41 @@ func (w *worker) updateJobRowCount(taskKey string, jobID int64) {
 		return
 	}
 	w.getReorgCtx(jobID).setRowCount(rowCount)
+}
+
+// submitAndWaitTask submits a task and wait for it to finish.
+func submitAndWaitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, taskMeta []byte) error {
+	task, err := handle.SubmitTask(ctx, taskKey, taskType, concurrency, taskMeta)
+	if err != nil {
+		return err
+	}
+	return waitTask(ctx, task.ID)
+}
+
+// waitTask waits for a task done or paused.
+// this API returns error if task failed or cancelled.
+func waitTask(ctx context.Context, id int64) error {
+	logger := logutil.Logger(ctx).With(zap.Int64("task-id", id))
+	found, err := handle.WaitTask(ctx, id, func(t *proto.Task) bool {
+		return t.IsDone() || t.State == proto.TaskStatePaused
+	})
+	if err != nil {
+		return err
+	}
+
+	switch found.State {
+	case proto.TaskStateSucceed:
+		return nil
+	case proto.TaskStateReverted:
+		logger.Error("task reverted", zap.Error(found.Error))
+		return found.Error
+	case proto.TaskStatePaused:
+		logger.Error("task paused")
+		return nil
+	case proto.TaskStateFailed:
+		return errors.Errorf("task stopped with state %s, err %v", found.State, found.Error)
+	}
+	return nil
 }
 
 func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysicalTableID int64) (int64, kv.Key, kv.Key, error) {

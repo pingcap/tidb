@@ -279,7 +279,7 @@ func (sm *Manager) startScheduler(basicTask *proto.Task, reservedExecID string) 
 			sm.slotMgr.unReserve(basicTask, reservedExecID)
 		}()
 		metrics.UpdateMetricsForRunTask(task)
-		scheduler.ExecuteTask()
+		scheduler.ScheduleTask()
 		logutil.BgLogger().Info("task finished", zap.Int64("task-id", task.ID))
 		sm.finishCh <- struct{}{}
 	})

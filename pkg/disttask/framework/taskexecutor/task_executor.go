@@ -157,7 +157,7 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 		zap.Int("concurrency", task.Concurrency),
 		zap.Float64("mem-limit-percent", gctuner.GlobalMemoryLimitTuner.GetPercentage()),
 		zap.String("server-mem-limit", memory.ServerMemoryLimitOriginText.Load()),
-	), "schedule step")
+	), "execute task")
 	// log as info level, subtask might be cancelled, let caller check it.
 	defer func() {
 		stepLogger.End(zap.InfoLevel, resErr)

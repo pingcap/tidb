@@ -61,32 +61,6 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, co
 	return task, nil
 }
 
-// WaitTask waits for a task done or paused.
-// this API returns error if task failed or cancelled.
-func WaitTask(ctx context.Context, id int64) error {
-	logger := logutil.Logger(ctx).With(zap.Int64("task-id", id))
-	found, err := waitTask(ctx, id, func(t *proto.Task) bool {
-		return t.IsDone() || t.State == proto.TaskStatePaused
-	})
-	if err != nil {
-		return err
-	}
-
-	switch found.State {
-	case proto.TaskStateSucceed:
-		return nil
-	case proto.TaskStateReverted:
-		logger.Error("task reverted", zap.Error(found.Error))
-		return found.Error
-	case proto.TaskStatePaused:
-		logger.Error("task paused")
-		return nil
-	case proto.TaskStateFailed:
-		return errors.Errorf("task stopped with state %s, err %v", found.State, found.Error)
-	}
-	return nil
-}
-
 // WaitTaskDoneByKey waits for a task done by task key.
 func WaitTaskDoneByKey(ctx context.Context, taskKey string) error {
 	taskManager, err := storage.GetTaskManager()
@@ -100,13 +74,14 @@ func WaitTaskDoneByKey(ctx context.Context, taskKey string) error {
 	if task == nil {
 		return errors.Errorf("cannot find task with key %s", taskKey)
 	}
-	_, err = waitTask(ctx, task.ID, func(t *proto.Task) bool {
+	_, err = WaitTask(ctx, task.ID, func(t *proto.Task) bool {
 		return t.IsDone()
 	})
 	return err
 }
 
-func waitTask(ctx context.Context, id int64, matchFn func(*proto.Task) bool) (*proto.Task, error) {
+// WaitTask waits for a task until it meets the matchFn.
+func WaitTask(ctx context.Context, id int64, matchFn func(*proto.Task) bool) (*proto.Task, error) {
 	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return nil, err
@@ -134,15 +109,6 @@ func waitTask(ctx context.Context, id int64, matchFn func(*proto.Task) bool) (*p
 			}
 		}
 	}
-}
-
-// SubmitAndWaitTask submits a task and wait for it to finish.
-func SubmitAndWaitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, taskMeta []byte) error {
-	task, err := SubmitTask(ctx, taskKey, taskType, concurrency, taskMeta)
-	if err != nil {
-		return err
-	}
-	return WaitTask(ctx, task.ID)
 }
 
 // CancelTask cancels a task.

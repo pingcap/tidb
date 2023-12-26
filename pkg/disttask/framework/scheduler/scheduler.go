@@ -75,8 +75,8 @@ type Scheduler interface {
 	// if Init returns error, scheduler manager will fail the task directly,
 	// so the returned error should be a fatal error.
 	Init() error
-	// ExecuteTask start to schedule a task.
-	ExecuteTask()
+	// ScheduleTask schedules the task execution step by step.
+	ScheduleTask()
 	// Close closes the scheduler, should be called if Init returns nil.
 	Close()
 }
@@ -122,9 +122,9 @@ func (*BaseScheduler) Init() error {
 	return nil
 }
 
-// ExecuteTask implements the Scheduler interface.
-func (s *BaseScheduler) ExecuteTask() {
-	logutil.Logger(s.logCtx).Info("execute one task",
+// ScheduleTask implements the Scheduler interface.
+func (s *BaseScheduler) ScheduleTask() {
+	logutil.Logger(s.logCtx).Info("schedule task",
 		zap.Stringer("state", s.Task.State), zap.Int("concurrency", s.Task.Concurrency))
 	s.scheduleTask()
 }

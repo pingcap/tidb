@@ -15,45 +15,44 @@
 package framework_test
 
 import (
+	"fmt"
+	"math/rand"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
-func TestFrameworkBasic(t *testing.T) {
-	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
+func TestFrameworkRandomOwnerChange(t *testing.T) {
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 5)
 	defer ctrl.Finish()
+	seed := time.Now().UnixNano()
+	t.Logf("seed: %d", seed)
+	random := rand.New(rand.NewSource(seed))
 
 	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
-	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key1", testContext, nil)
-	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key2", testContext, nil)
-	distContext.SetOwner(0)
-	time.Sleep(2 * time.Second) // make sure owner changed
-	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key3", testContext, nil)
-	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key4", testContext, nil)
-	distContext.SetOwner(1)
-	time.Sleep(2 * time.Second) // make sure owner changed
-	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key5", testContext, nil)
-	distContext.Close()
-}
-
-func TestFramework3Server(t *testing.T) {
-	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
-	defer ctrl.Finish()
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
-	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key1", testContext, nil)
-	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key2", testContext, nil)
-	distContext.SetOwner(0)
-	time.Sleep(2 * time.Second) // make sure owner changed
-	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key3", testContext, nil)
-	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key4", testContext, nil)
+	var wg util.WaitGroupWrapper
+	for i := 0; i < 10; i++ {
+		taskKey := fmt.Sprintf("key%d", i)
+		wg.Run(func() {
+			testutil.DispatchTaskAndCheckSuccess(ctx, t, taskKey, testContext, nil)
+		})
+	}
+	wg.Run(func() {
+		for i := 0; i < 3; i++ {
+			time.Sleep(time.Duration(random.Intn(500)) * time.Millisecond)
+			distContext.SetOwner(int(random.Int31n(5)))
+		}
+	})
+	wg.Wait()
 	distContext.Close()
 }
 
@@ -111,7 +110,17 @@ func TestFrameworkCancelGTask(t *testing.T) {
 	defer ctrl.Finish()
 
 	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
-	testutil.DispatchAndCancelTask(ctx, t, "key1", testContext)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunCancel", "1*return(1)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunCancel"))
+	}()
+	task := testutil.SubmitAndWaitTask(ctx, t, "key1")
+	require.Equal(t, proto.TaskStateReverted, task.State)
+	testContext.M.Range(func(key, value interface{}) bool {
+		testContext.M.Delete(key)
+		return true
+	})
 	distContext.Close()
 }
 
@@ -220,7 +229,32 @@ func TestMultiTasks(t *testing.T) {
 	testContext := &testutil.TestContext{}
 	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
 
-	testutil.DispatchMultiTasksAndOneFail(ctx, t, 3, testContext)
+	taskCnt := 3
+	tasks := make([]*proto.Task, taskCnt)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunErr", "1*return(true)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunErr"))
+	})
+
+	for i := 0; i < taskCnt; i++ {
+		task, err := handle.SubmitTask(ctx, fmt.Sprintf("key%d", i), proto.TaskTypeExample, 1, nil)
+		require.NoError(t, err)
+		tasks[i] = task
+	}
+	failCount := 0
+	for i := 0; i < taskCnt; i++ {
+		gotTask := testutil.WaitTaskDoneOrPaused(ctx, t, tasks[i].Key)
+		if gotTask.State == proto.TaskStateReverted {
+			failCount++
+		}
+	}
+	require.Equal(t, 1, failCount)
+
+	testContext.M.Range(func(key, value interface{}) bool {
+		testContext.M.Delete(key)
+		return true
+	})
+
 	distContext.Close()
 }
 
