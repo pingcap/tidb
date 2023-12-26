@@ -553,7 +553,7 @@ type Job struct {
 	// TraceInfo indicates the information for SQL tracing
 	TraceInfo *TraceInfo `json:"trace_info"`
 
-	// BDRRole indicates the role of BDR cluste when executing this DDL.
+	// BDRRole indicates the role of BDR cluster when executing this DDL.
 	BDRRole string `json:"bdr_role"`
 
 	// CDCWriteSource indicates the source of CDC write.
