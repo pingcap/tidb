@@ -45,7 +45,7 @@ import (
 const (
 	importScanRegionTime = 20 * time.Second
 	gRPCBackOffMaxDelay  = 3 * time.Second
-	gRPCTimeOut          = 125 * time.Minute
+	gRPCTimeOut          = 15 * time.Minute
 )
 
 // ImporterClient is used to import a file to TiKV.
