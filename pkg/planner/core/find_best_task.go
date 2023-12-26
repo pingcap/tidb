@@ -897,10 +897,14 @@ func (ds *DataSource) matchPropForIndexMergeAlternatives(path *util.AccessPath, 
 		// pick a most suitable index partial alternative from all matched alternative paths according to asc CountAfterAccess,
 		// By this way, a distinguished one is better.
 		for _, oneIdx := range matchIdxes {
-			if _, ok := usedIndexMap[oneItemAlternatives[oneIdx].Index.ID]; !ok {
+			indexId := oneItemAlternatives[oneIdx].Index.ID
+			if oneItemAlternatives[oneIdx].IsTablePath() {
+				indexId = -1
+			}
+			if _, ok := usedIndexMap[indexId]; !ok {
 				// try to avoid all index partial paths are all about a single index.
 				determinedIndexPartialPaths = append(determinedIndexPartialPaths, oneItemAlternatives[oneIdx].Clone())
-				usedIndexMap[oneItemAlternatives[oneIdx].Index.ID] = struct{}{}
+				usedIndexMap[indexId] = struct{}{}
 				found = true
 				break
 			}

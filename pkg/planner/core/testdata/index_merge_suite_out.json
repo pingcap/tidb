@@ -457,6 +457,28 @@
           "  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Result": null
+      },
+      {
+        "SQL": "select * from t2 where a=1 or b=1 order by c; -- 3. if one of the index order path can't satisfied, back to normal choice",
+        "Plan": [
+          "Sort 19.99 root  test.t2.c",
+          "└─IndexMerge 19.99 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": null
+      },
+      {
+        "SQL": "select /*+ use_index_merge(t, ac, b) */ * from t where a=1 or b=1 order by c; -- 4. hint to use ac strongly, but sort OP is still needed",
+        "Plan": [
+          "Sort 0.00 root  test.t.c",
+          "└─IndexMerge 19.99 root  type: union",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:ac(a, c) range:[1,1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Result": null
       }
     ]
   }

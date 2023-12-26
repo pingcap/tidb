@@ -238,7 +238,13 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 		indexMap := make(map[int64]struct{}, 1)
 		for i := len(partialAlternativePaths) - 1; i >= 0; i-- {
 			for j := len(partialAlternativePaths[i]) - 1; j >= 0; j-- {
-				indexMap[partialAlternativePaths[i][j].Index.ID] = struct{}{}
+				if partialAlternativePaths[i][j].IsTablePath() {
+					// table path
+					indexMap[-1] = struct{}{}
+				} else {
+					// index path
+					indexMap[partialAlternativePaths[i][j].Index.ID] = struct{}{}
+				}
 			}
 		}
 		if len(indexMap) == 1 {
@@ -414,6 +420,10 @@ func (ds *DataSource) buildIndexMergeOrPath(
 		// if one path's all alternatives are global index, warning it.
 		allGlobal := true
 		for _, oneAlternative := range partialAlternativePaths[i] {
+			// once we have a table alternative path
+			if oneAlternative.IsTablePath() {
+				allGlobal = false
+			}
 			if oneAlternative.Index != nil && !oneAlternative.Index.Global {
 				allGlobal = false
 			}

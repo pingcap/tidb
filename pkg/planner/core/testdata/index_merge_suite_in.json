@@ -44,7 +44,9 @@
     "name": "TestIndexMergeWithOrderProperty",
     "cases": [
       "select * from t where a=1 or b=1 order by c; -- 1. auto pick the most suitable index ac and bc",
-      "select /*+ use_index_merge(t, ac, bc) */ * from t where a=1 or b=1 order by c; -- 2. hint instruction to pick the suitable index ac and bc"
+      "select /*+ use_index_merge(t, ac, bc) */ * from t where a=1 or b=1 order by c; -- 2. hint instruction to pick the suitable index ac and bc",
+      "select * from t2 where a=1 or b=1 order by c; -- 3. if one of the index order path can't satisfied, back to normal choice",
+      "select /*+ use_index_merge(t, ac, b) */ * from t where a=1 or b=1 order by c; -- 4. hint to use ac strongly, but sort OP is still needed"
     ]
   }
 ]

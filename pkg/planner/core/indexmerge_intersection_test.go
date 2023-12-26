@@ -49,6 +49,7 @@ func TestIndexMergeWithOrderProperty(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int, key a(a), key b(b), key ac(a, c), key bc(b, c))")
+	tk.MustExec("create table t2 (a int, b int, c int, key a(a), key b(b), key ac(a, c))")
 
 	tk.MustExec("")
 
@@ -73,7 +74,6 @@ func TestIndexMergeWithOrderProperty(t *testing.T) {
 		// Expect no warnings.
 		tk.MustQuery("show warnings").Check(testkit.Rows())
 	}
-
 }
 
 func TestHintForIntersectionIndexMerge(t *testing.T) {
