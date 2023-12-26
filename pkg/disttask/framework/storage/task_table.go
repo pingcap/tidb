@@ -687,12 +687,29 @@ func (stm *TaskManager) HasSubtasksInStates(ctx context.Context, tidbID string, 
 }
 
 // StartSubtask updates the subtask state to running.
-func (stm *TaskManager) StartSubtask(ctx context.Context, subtaskID int64) error {
-	_, err := stm.executeSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
-		set state = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
-		where id = %?`,
-		proto.TaskStateRunning, subtaskID)
-	return err
+func (stm *TaskManager) StartSubtask(ctx context.Context, subtaskID int64, tidbID string) (bool, error) {
+	// owned means the task executor can own and run the subtask without any other task executor running it.
+	owned := false
+	err := stm.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		vars := se.GetSessionVars()
+		_, err := ExecSQL(ctx,
+			se,
+			`update mysql.tidb_background_subtask
+			 set state = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
+			 where id = %? and exec_id = %?`,
+			proto.TaskStateRunning,
+			subtaskID,
+			tidbID)
+		if err != nil {
+			return err
+		}
+		if vars.StmtCtx.AffectedRows() != 0 {
+			owned = true
+		}
+		return nil
+	})
+
+	return owned, err
 }
 
 // StartManager insert the manager information into dist_framework_meta.
@@ -864,7 +881,7 @@ func (stm *TaskManager) SwitchTaskStep(
 		}
 		if vars.StmtCtx.AffectedRows() == 0 {
 			// on network partition or owner change, there might be multiple
-			// dispatchers for the same task, if other dispatcher has switched
+			// schedulers for the same task, if other scheduler has switched
 			// the task to next step, skip the update process.
 			// Or when there is no such task.
 			return nil

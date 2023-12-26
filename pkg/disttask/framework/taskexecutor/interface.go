@@ -29,7 +29,7 @@ type TaskTable interface {
 	GetSubtasksByStepAndStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...interface{}) ([]*proto.Subtask, error)
 	GetFirstSubtaskInStates(ctx context.Context, instanceID string, taskID int64, step proto.Step, states ...interface{}) (*proto.Subtask, error)
 	StartManager(ctx context.Context, tidbID string, role string) error
-	StartSubtask(ctx context.Context, subtaskID int64) error
+	StartSubtask(ctx context.Context, subtaskID int64, tidbID string) (bool, error)
 	UpdateSubtaskStateAndError(ctx context.Context, tidbID string, subtaskID int64, state proto.TaskState, err error) error
 	FinishSubtask(ctx context.Context, tidbID string, subtaskID int64, meta []byte) error
 
