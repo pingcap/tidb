@@ -333,7 +333,7 @@ func (d *sqlDigester) reduceLit(currTok *token) {
 	if d.isGenericList(last2) {
 		d.tokens.popBack(2)
 		currTok.tok = genericSymbolList
-		currTok.lit = "..."
+		currTok.lit = "?,?,?"
 		return
 	}
 
@@ -342,7 +342,7 @@ func (d *sqlDigester) reduceLit(currTok *token) {
 	if d.isGenericLists(last4) {
 		d.tokens.popBack(4)
 		currTok.tok = genericSymbolList
-		currTok.lit = "..."
+		currTok.lit = "?,?,?"
 		return
 	}
 
@@ -386,7 +386,7 @@ func (d *sqlDigester) reduceInListWithSingleLiteral(currTok *token) {
 		last3[2].tok == genericSymbol &&
 		d.isRightParen(*currTok) {
 		d.tokens.popBack(1)
-		d.tokens.pushBack(token{genericSymbolList, "..."})
+		d.tokens.pushBack(token{genericSymbolList, "?,?,?"})
 		return
 	}
 }

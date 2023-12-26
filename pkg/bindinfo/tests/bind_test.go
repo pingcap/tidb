@@ -369,7 +369,7 @@ func TestBindingInListWithSingleLiteral(t *testing.T) {
 	_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
 	binding, matched := dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 	require.True(t, matched)
-	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` in ( ... )", binding.OriginalSQL)
+	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` in ( ?,?,? )", binding.OriginalSQL)
 	require.Equal(t, "SELECT `a`,`b` FROM `test`.`t` USE INDEX (`ib`) WHERE `a` IN (1,2,3)", binding.BindSQL)
 	require.Equal(t, "test", binding.Db)
 	require.Equal(t, bindinfo.Enabled, binding.Status)
@@ -377,6 +377,42 @@ func TestBindingInListWithSingleLiteral(t *testing.T) {
 	require.NotNil(t, binding.Collation)
 	require.NotNil(t, binding.CreateTime)
 	require.NotNil(t, binding.UpdateTime)
+
+}
+
+// TestBindingInListWithSingleLiteral tests sql with "IN (Lit)", fixes #44298
+func TestIssue43192(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c int, d int, key(a))`)
+
+	// binding created with `in (?)` can work for `in (?,?,?)`
+	tk.MustQuery(`select a from t where a in (1, 2, 3)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
+	tk.MustExec(`create binding for select a from t where a in (1) using select a from t where a in (1)`)
+	tk.MustQuery(`select a from t where a in (1, 2, 3)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select a from t where a in (1, 2)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select a from t where a in (1)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	check := func(scope, sql, binding string) {
+		r := tk.MustQuery(fmt.Sprintf("show %s bindings", scope)).Rows()
+		require.Equal(t, len(r), 1)
+		require.Equal(t, r[0][0].(string), sql)
+		require.Equal(t, r[0][1].(string), binding)
+	}
+	check("", "select `a` from `test` . `t` where `a` in ( ?,?,? )", "SELECT `a` FROM `test`.`t` WHERE `a` IN (1)")
+	tk.MustExec(`drop binding for select a from t where a in (1)`)
+	tk.MustExec(`create binding for select a from t where a in ( ?,?,? ) using select a from t where a in (1)`)
+	check("", "select `a` from `test` . `t` where `a` in ( ?,?,? )", "SELECT `a` FROM `test`.`t` WHERE `a` IN (1)")
+	tk.MustQuery(`select a from t where a in (1, 2, 3)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select a from t where a in (1, 2)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select a from t where a in (1)`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
 }
 
 func TestBestPlanInBaselines(t *testing.T) {
@@ -736,10 +772,10 @@ func TestSimplifiedCreateBinding(t *testing.T) {
 	check("", "select * from `test` . `t` where `a` < ?", "SELECT /*+ use_index(`t` `a`)*/ * FROM `test`.`t` WHERE `a` < 10")
 	tk.MustExec(`drop binding for select * from t where a<10`)
 	tk.MustExec(`create global binding using select /*+ use_index(t, a) */ * from t where a in (1)`)
-	check("global", "select * from `test` . `t` where `a` in ( ... )", "SELECT /*+ use_index(`t` `a`)*/ * FROM `test`.`t` WHERE `a` IN (1)")
+	check("global", "select * from `test` . `t` where `a` in ( ?,?,? )", "SELECT /*+ use_index(`t` `a`)*/ * FROM `test`.`t` WHERE `a` IN (1)")
 	tk.MustExec(`drop global binding for select * from t where a in (1)`)
 	tk.MustExec(`create global binding using select /*+ use_index(t, a) */ * from t where a in (1,2,3)`)
-	check("global", "select * from `test` . `t` where `a` in ( ... )", "SELECT /*+ use_index(`t` `a`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3)")
+	check("global", "select * from `test` . `t` where `a` in ( ?,?,? )", "SELECT /*+ use_index(`t` `a`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3)")
 	tk.MustExec(`drop global binding for select * from t where a in (1,2,3)`)
 }
 
