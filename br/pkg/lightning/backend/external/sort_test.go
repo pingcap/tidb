@@ -251,11 +251,9 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 	}
 
 	for i, group := range dataGroup {
-		_ = group
-		_ = statGroup
 		require.NoError(t, MergeOverlappingFilesV2(
 			ctx,
-			nil, // FIXME
+			mockOneMultiFileStat(group, statGroup[i]),
 			memStore,
 			startKeys[i],
 			endKeys[i],
