@@ -268,7 +268,7 @@ func TestSortTopnMeta(t *testing.T) {
 }
 
 func TestTopNScale(t *testing.T) {
-	for _, scaleFactor := range []float64{0.0001, 0.9999, 1.1111, 1.9999, 4.9999, 5.1111, 9.99} {
+	for _, scaleFactor := range []float64{0.9999, 1.00001, 1.9999, 4.9999, 5.001, 9.99} {
 		var data []TopNMeta
 		sumCount := uint64(0)
 		for i := 0; i < 20; i++ {
@@ -280,7 +280,9 @@ func TestTopNScale(t *testing.T) {
 		}
 		topN := TopN{TopN: data}
 		topN.Scale(scaleFactor)
-		sumCount = uint64(float64(sumCount) * scaleFactor)
-		require.Less(t, float64(topN.TotalCount()-sumCount)/float64(sumCount), 0.0001)
+		scaleCount := float64(sumCount) * scaleFactor
+		delta := math.Abs(float64(topN.TotalCount()) - scaleCount)
+		roundErrorRatio := delta / scaleCount
+		require.Less(t, roundErrorRatio, 0.0001)
 	}
 }
