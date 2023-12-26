@@ -177,7 +177,6 @@ func (gs *tidbSession) Execute(ctx context.Context, sql string) error {
 }
 
 func (gs *tidbSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error {
-	log.Info("run sql", zap.String("sql", sql))
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	rs, err := gs.se.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
