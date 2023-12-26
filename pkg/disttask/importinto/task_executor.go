@@ -310,7 +310,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	logger.Info("merge sort partSize", zap.String("size", units.BytesSize(float64(m.partSize))))
 
-	return external.MergeOverlappingFilesV2(
+	return external.MergeOverlappingFilesOpt(
 		ctx,
 		sm.DataFiles,
 		sm.StatFiles,
@@ -325,7 +325,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		1*size.MB,
 		onClose,
 		int(m.taskMeta.Plan.ThreadCnt),
-		2, // decided by bench test.
+		4, // decided by bench test.
 		false)
 }
 
