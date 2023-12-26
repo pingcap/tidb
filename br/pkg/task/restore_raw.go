@@ -89,6 +89,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	keepaliveCfg.PermitWithoutStream = true
 	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, true)
 	client.SetRateLimit(cfg.RateLimit)
+	client.SetCacheSize(cfg.CacheSize)
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetConcurrency(uint(cfg.Concurrency))
 	if cfg.Online {

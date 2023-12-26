@@ -39,6 +39,7 @@ const (
 	flagOnline      = "online"
 	flagNoSchema    = "no-schema"
 	flagGranularity = "granularity"
+	flagCacheSize   = "cache-size"
 
 	// FlagMergeRegionSizeBytes is the flag name of merge small regions by size
 	FlagMergeRegionSizeBytes = "merge-region-size-bytes"
@@ -92,6 +93,7 @@ const (
 type RestoreCommonConfig struct {
 	Online      bool   `json:"online" toml:"online"`
 	Granularity string `json:"granularity" toml:"granularity"`
+	CacheSize   int64  `json:"cache-size" toml:"cache-size"`
 
 	// MergeSmallRegionSizeBytes is the threshold of merging small regions (Default 96MB, region split size).
 	// MergeSmallRegionKeyCount is the threshold of merging smalle regions (Default 960_000, region split key count).
@@ -117,6 +119,10 @@ func (cfg *RestoreCommonConfig) adjust() {
 	if len(cfg.Granularity) == 0 {
 		cfg.Granularity = string(restore.FineGrained)
 	}
+	if cfg.CacheSize == 0 {
+		cfg.CacheSize = 1
+	}
+
 }
 
 // DefineRestoreCommonFlags defines common flags for the restore command.
@@ -124,6 +130,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	// TODO remove experimental tag if it's stable
 	flags.Bool(flagOnline, false, "(experimental) Whether online when restore")
 	flags.String(flagGranularity, string(restore.FineGrained), "(experimental) Whether split & scatter regions using fine-grained way during restore")
+	flags.Int64(flagCacheSize, 4, "(experimental) the cache storage shared count of fileImporter.")
 	flags.Uint32(flagConcurrency, 128, "The size of thread pool on BR that executes tasks, "+
 		"where each task restores one SST file to TiKV")
 	flags.Uint64(FlagMergeRegionSizeBytes, conn.DefaultMergeRegionSizeBytes,
@@ -155,6 +162,10 @@ func (cfg *RestoreCommonConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	cfg.Granularity, err = flags.GetString(flagGranularity)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.CacheSize, err = flags.GetInt64(flagCacheSize)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -443,6 +454,7 @@ func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
 func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *RestoreConfig) error {
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
+	client.SetCacheSize(cfg.CacheSize)
 	client.SetGranularity(cfg.Granularity)
 	if cfg.Online {
 		client.EnableOnline()

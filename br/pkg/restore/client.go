@@ -89,6 +89,7 @@ type Client struct {
 	fileImporter        FileImporter
 	rawKVClient         *RawKVBatchClient
 	concurrencyPerStore uint
+	cacheSize           int64
 	workerPool          *utils.WorkerPool
 	tlsConf             *tls.Config
 	keepaliveConf       keepalive.ClientParameters
@@ -279,6 +280,14 @@ func (rc *Client) SetCrypter(crypter *backuppb.CipherInfo) {
 	rc.cipher = crypter
 }
 
+func (rc *Client) SetCacheSize(c int64) {
+	if c <= 0 {
+		c = 1
+	}
+	log.Info("set cache size", zap.Int64("size", c))
+	rc.cacheSize = c
+}
+
 // SetPolicyMap set policyMap.
 func (rc *Client) SetPolicyMap(p *sync.Map) {
 	rc.policyMap = p
@@ -370,7 +379,7 @@ func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBack
 
 	metaClient := split.NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, storeWorkerPoolMap, storeStatisticMap)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, storeWorkerPoolMap, storeStatisticMap, rc.cacheSize)
 	rc.fileImporter.InitStatis(ctx)
 }
 
@@ -1086,7 +1095,7 @@ func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient ImporterClient,
 	rc.SetRateLimit(42)
 	rc.SetConcurrency(concurrency)
 	rc.hasSpeedLimited = false
-	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, nil, nil)
+	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, nil, nil, 4)
 	return rc.setSpeedLimit(ctx, rc.rateLimit)
 }
 

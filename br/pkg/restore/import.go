@@ -266,6 +266,7 @@ func NewFileImporter(
 	isRawKv bool,
 	storeWorkerPoolMap map[uint64]chan struct{},
 	storeStatisticMap map[uint64]*int64,
+	cacheSize int64,
 ) FileImporter {
 	return FileImporter{
 		metaClient:         metaClient,
@@ -274,7 +275,7 @@ func NewFileImporter(
 		importClient:       importClient,
 		storeStatisticMap:  storeStatisticMap,
 		storeWorkerPoolMap: storeWorkerPoolMap,
-		cacheKey:           fmt.Sprintf("BR-%d", rand.Int63()%32),
+		cacheKey:           fmt.Sprintf("BR-%d", rand.Int63()%cacheSize),
 	}
 }
 
