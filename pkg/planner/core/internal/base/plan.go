@@ -108,8 +108,8 @@ func (p *Plan) SetTP(tp string) {
 	p.tp = tp
 }
 
-// QBOffset is to get the select block offset.
-func (p *Plan) QBOffset() int {
+// QueryBlockOffset is to get the select block offset.
+func (p *Plan) QueryBlockOffset() int {
 	return p.qbBlock
 }
 

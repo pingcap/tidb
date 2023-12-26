@@ -67,11 +67,11 @@ type Plan interface {
 	// SetOutputNames sets the outputting name by the given slice.
 	SetOutputNames(names types.NameSlice)
 
-	// QBOffset is query block offset.
+	// QueryBlockOffset is query block offset.
 	// For example, in query
 	//		`select /*+ use_index(@sel_2 t2, a) */ * from t1, (select a*2 as b from t2) tx where a>b`
 	// the hint should be applied on the sub-query, whose query block is 2.
-	QBOffset() int
+	QueryBlockOffset() int
 
 	BuildPlanTrace() *tracing.PlanTrace
 }
@@ -98,7 +98,7 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 	sort := PhysicalSort{
 		ByItems:       make([]*util.ByItems, 0, len(p.SortItems)),
 		IsPartialSort: p.IsSortItemAllForPartition(),
-	}.Init(ctx, tsk.plan().StatsInfo(), tsk.plan().QBOffset(), sortReqProp)
+	}.Init(ctx, tsk.plan().StatsInfo(), tsk.plan().QueryBlockOffset(), sortReqProp)
 	for _, col := range p.SortItems {
 		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: col.Col, Desc: col.Desc})
 	}
@@ -163,7 +163,7 @@ func optimizeByShuffle4Window(pp *PhysicalWindow, ctx sessionctx.Context) *Physi
 		DataSources:  []PhysicalPlan{dataSource},
 		SplitterType: PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{byItems},
-	}.Init(ctx, pp.StatsInfo(), pp.QBOffset(), reqProp)
+	}.Init(ctx, pp.StatsInfo(), pp.QueryBlockOffset(), reqProp)
 	return shuffle
 }
 
@@ -200,7 +200,7 @@ func optimizeByShuffle4StreamAgg(pp *PhysicalStreamAgg, ctx sessionctx.Context) 
 		DataSources:  []PhysicalPlan{dataSource},
 		SplitterType: PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{util.CloneExprs(pp.GroupByItems)},
-	}.Init(ctx, pp.StatsInfo(), pp.QBOffset(), reqProp)
+	}.Init(ctx, pp.StatsInfo(), pp.QueryBlockOffset(), reqProp)
 	return shuffle
 }
 
@@ -239,7 +239,7 @@ func optimizeByShuffle4MergeJoin(pp *PhysicalMergeJoin, ctx sessionctx.Context) 
 		DataSources:  dataSources,
 		SplitterType: PartitionHashSplitterType,
 		ByItemArrays: [][]expression.Expression{leftByItemArray, rightByItemArray},
-	}.Init(ctx, pp.StatsInfo(), pp.QBOffset(), reqProp)
+	}.Init(ctx, pp.StatsInfo(), pp.QueryBlockOffset(), reqProp)
 	return shuffle
 }
 
