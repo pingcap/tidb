@@ -465,7 +465,8 @@ func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, place
 		return nil
 	}
 
-	if tb.Meta().TempTableType != model.TempTableNone {
+	tblInfo := tb.Meta()
+	if tblInfo.TempTableType != model.TempTableNone {
 		return errors.Trace(dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("placement"))
 	}
 
@@ -476,9 +477,9 @@ func (d *ddl) AlterTablePlacement(ctx sessionctx.Context, ident ast.Ident, place
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
-		TableID:    tb.Meta().ID,
+		TableID:    tblInfo.ID,
 		SchemaName: schema.Name.L,
-		TableName:  tb.Meta().Name.L,
+		TableName:  tblInfo.Name.L,
 		Type:       model.ActionAlterTablePlacement,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{placementPolicyRef},
@@ -641,6 +642,10 @@ func (d *ddl) RecoverSchema(ctx sessionctx.Context, recoverSchemaInfo *RecoverSc
 		Type:       model.ActionRecoverSchema,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{recoverSchemaInfo, recoverCheckFlagNone},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: recoverSchemaInfo.Name.L,
+			Table:    model.InvolvingAll,
+		}},
 	}
 	err := d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -2633,6 +2638,11 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 			return errors.Trace(fmt.Errorf("except table info"))
 		}
 		args = append(args, info)
+		jobs.InvolvingSchemaInfo = append(jobs.InvolvingSchemaInfo,
+			model.InvolvingSchemaInfo{
+				Database: dbName.L,
+				Table:    info.Name.L,
+			})
 	}
 	if len(args) == 0 {
 		return nil
@@ -2697,6 +2707,11 @@ func (d *ddl) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *mode
 		Type:       model.ActionCreatePlacementPolicy,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{policy, onExist == OnExistReplace},
+		// CREATE PLACEMENT does not affect any schemas or tables.
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: model.InvolvingNone,
+			Table:    model.InvolvingNone,
+		}},
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -2757,7 +2772,18 @@ func (d *ddl) FlashbackCluster(ctx sessionctx.Context, flashbackTS uint64) error
 			variable.Off, /* tidb_super_read_only */
 			0,            /* totalRegions */
 			0,            /* startTS */
+<<<<<<< HEAD:ddl/ddl_api.go
 			0 /* commitTS */},
+=======
+			0,            /* commitTS */
+			variable.On,  /* tidb_ttl_job_enable */
+			[]kv.KeyRange{} /* flashback key_ranges */},
+		// FLASHBACK CLUSTER affects all schemas and tables.
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: model.InvolvingAll,
+			Table:    model.InvolvingAll,
+		}},
+>>>>>>> 2dfbaa8264f (ddl: set jobs dependency by schema and table name (#49699)):pkg/ddl/ddl_api.go
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -3506,10 +3532,10 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	if err != nil {
 		return errors.Trace(err)
 	}
+	tbInfo := t.Meta()
 	var actionType model.ActionType
 	switch tp {
 	case autoid.AutoRandomType:
-		tbInfo := t.Meta()
 		pkCol := tbInfo.GetPkColInfo()
 		if tbInfo.AutoRandomBits == 0 || pkCol == nil {
 			return errors.Trace(dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(autoid.AutoRandomRebaseNotApplicable))
@@ -3543,9 +3569,9 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	}
 	job := &model.Job{
 		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
+		TableID:    tbInfo.ID,
 		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
+		TableName:  tbInfo.Name.L,
 		Type:       actionType,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{newBase, force},
@@ -3578,14 +3604,15 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if t.Meta().TempTableType != model.TempTableNone {
+	tbInfo := t.Meta()
+	if tbInfo.TempTableType != model.TempTableNone {
 		return dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
 	}
-	if uVal == t.Meta().ShardRowIDBits {
+	if uVal == tbInfo.ShardRowIDBits {
 		// Nothing need to do.
 		return nil
 	}
-	if uVal > 0 && t.Meta().HasClusteredIndex() {
+	if uVal > 0 && tbInfo.HasClusteredIndex() {
 		return dbterror.ErrUnsupportedShardRowIDBits
 	}
 	err = verifyNoOverflowShardBits(d.sessPool, t, uVal)
@@ -3595,9 +3622,9 @@ func (d *ddl) ShardRowID(ctx sessionctx.Context, tableIdent ast.Ident, uVal uint
 	job := &model.Job{
 		Type:       model.ActionShardRowID,
 		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
+		TableID:    tbInfo.ID,
 		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
+		TableName:  tbInfo.Name.L,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{uVal},
 	}
@@ -3755,6 +3782,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if err != nil {
 		return errors.Trace(err)
 	}
+	tbInfo := t.Meta()
 	if err = checkAddColumnTooManyColumns(len(t.Cols()) + 1); err != nil {
 		return errors.Trace(err)
 	}
@@ -3766,16 +3794,16 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 	if col == nil {
 		return nil
 	}
-	err = CheckAfterPositionExists(t.Meta(), spec.Position)
+	err = CheckAfterPositionExists(tbInfo, spec.Position)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	job := &model.Job{
 		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
+		TableID:    tbInfo.ID,
 		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
+		TableName:  tbInfo.Name.L,
 		Type:       model.ActionAddColumn,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{col, spec.Position, 0, spec.IfNotExists},
@@ -4258,6 +4286,10 @@ func (d *ddl) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Ident, sp
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{defID, ptSchema.ID, ptMeta.ID, partName, spec.WithValidation},
 		CtxVars:    []interface{}{[]int64{ntSchema.ID, ptSchema.ID}, []int64{ntMeta.ID, ptMeta.ID}},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{Database: ptSchema.Name.L, Table: ptMeta.Name.L},
+			{Database: ntSchema.Name.L, Table: ntMeta.Name.L},
+		},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -5991,6 +6023,10 @@ func (d *ddl) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Ident, 
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{schemas[0].ID, newIdent.Name, schemas[0].Name},
 		CtxVars:    []interface{}{[]int64{schemas[0].ID, schemas[1].ID}, []int64{tableID}},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{Database: schemas[0].Name.L, Table: oldIdent.Name.L},
+			{Database: schemas[1].Name.L, Table: newIdent.Name.L},
+		},
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -6006,6 +6042,7 @@ func (d *ddl) renameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 	newSchemaIDs := make([]int64, 0, len(oldIdents))
 	tableIDs := make([]int64, 0, len(oldIdents))
 	oldSchemaNames := make([]*model.CIStr, 0, len(oldIdents))
+	involveSchemaInfo := make([]model.InvolvingSchemaInfo, 0, len(oldIdents)*2)
 
 	var schemas []*model.DBInfo
 	var tableID int64
@@ -6030,16 +6067,22 @@ func (d *ddl) renameTables(ctx sessionctx.Context, oldIdents, newIdents []ast.Id
 		oldSchemaIDs = append(oldSchemaIDs, schemas[0].ID)
 		newSchemaIDs = append(newSchemaIDs, schemas[1].ID)
 		oldSchemaNames = append(oldSchemaNames, &schemas[0].Name)
+		involveSchemaInfo = append(involveSchemaInfo, model.InvolvingSchemaInfo{
+			Database: schemas[0].Name.L, Table: oldIdents[i].Name.L,
+		}, model.InvolvingSchemaInfo{
+			Database: schemas[1].Name.L, Table: newIdents[i].Name.L,
+		})
 	}
 
 	job := &model.Job{
-		SchemaID:   schemas[1].ID,
-		TableID:    tableIDs[0],
-		SchemaName: schemas[1].Name.L,
-		Type:       model.ActionRenameTables,
-		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{oldSchemaIDs, newSchemaIDs, tableNames, tableIDs, oldSchemaNames, oldTableNames},
-		CtxVars:    []interface{}{append(oldSchemaIDs, newSchemaIDs...), tableIDs},
+		SchemaID:            schemas[1].ID,
+		TableID:             tableIDs[0],
+		SchemaName:          schemas[1].Name.L,
+		Type:                model.ActionRenameTables,
+		BinlogInfo:          &model.HistoryInfo{},
+		Args:                []interface{}{oldSchemaIDs, newSchemaIDs, tableNames, tableIDs, oldSchemaNames, oldTableNames},
+		CtxVars:             []interface{}{append(oldSchemaIDs, newSchemaIDs...), tableIDs},
+		InvolvingSchemaInfo: involveSchemaInfo,
 	}
 
 	err = d.DoDDLJob(ctx, job)
@@ -6930,6 +6973,7 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		SessionID: ctx.GetSessionVars().ConnectionID,
 	}
 	uniqueTableID := make(map[int64]struct{})
+	involveSchemaInfo := make([]model.InvolvingSchemaInfo, 0, len(stmt.TableLocks))
 	// Check whether the table was already locked by another.
 	for _, tl := range stmt.TableLocks {
 		tb := tl.Table
@@ -6954,6 +6998,10 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		}
 		uniqueTableID[t.Meta().ID] = struct{}{}
 		lockTables = append(lockTables, model.TableLockTpInfo{SchemaID: schema.ID, TableID: t.Meta().ID, Tp: tl.Type})
+		involveSchemaInfo = append(involveSchemaInfo, model.InvolvingSchemaInfo{
+			Database: schema.Name.L,
+			Table:    t.Meta().Name.L,
+		})
 	}
 
 	unlockTables := ctx.GetAllTableLocks()
@@ -6968,6 +7016,8 @@ func (d *ddl) LockTables(ctx sessionctx.Context, stmt *ast.LockTablesStmt) error
 		Type:       model.ActionLockTable,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{arg},
+
+		InvolvingSchemaInfo: involveSchemaInfo,
 	}
 	// AddTableLock here is avoiding this job was executed successfully but the session was killed before return.
 	ctx.AddTableLock(lockTables)
@@ -7561,6 +7611,159 @@ func checkIgnorePlacementDDL(ctx sessionctx.Context) bool {
 	return false
 }
 
+<<<<<<< HEAD:ddl/ddl_api.go
+=======
+// AddResourceGroup implements the DDL interface, creates a resource group.
+func (d *ddl) AddResourceGroup(ctx sessionctx.Context, stmt *ast.CreateResourceGroupStmt) (err error) {
+	groupName := stmt.ResourceGroupName
+	groupInfo := &model.ResourceGroupInfo{Name: groupName, ResourceGroupSettings: model.NewResourceGroupSettings()}
+	groupInfo, err = buildResourceGroup(groupInfo, stmt.ResourceGroupOptionList)
+	if err != nil {
+		return err
+	}
+
+	if _, ok := d.GetInfoSchemaWithInterceptor(ctx).ResourceGroupByName(groupName); ok {
+		if stmt.IfNotExists {
+			err = infoschema.ErrResourceGroupExists.FastGenByArgs(groupName)
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return infoschema.ErrResourceGroupExists.GenWithStackByArgs(groupName)
+	}
+
+	if err := d.checkResourceGroupValidation(groupInfo); err != nil {
+		return err
+	}
+
+	logutil.BgLogger().Debug("create resource group", zap.String("name", groupName.O), zap.Stringer("resource group settings", groupInfo.ResourceGroupSettings))
+	groupIDs, err := d.genGlobalIDs(1)
+	if err != nil {
+		return err
+	}
+	groupInfo.ID = groupIDs[0]
+
+	job := &model.Job{
+		SchemaName: groupName.L,
+		Type:       model.ActionCreateResourceGroup,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{groupInfo, false},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: model.InvolvingNone,
+			Table:    model.InvolvingNone,
+		}},
+	}
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return err
+}
+
+func (*ddl) checkResourceGroupValidation(groupInfo *model.ResourceGroupInfo) error {
+	_, err := resourcegroup.NewGroupFromOptions(groupInfo.Name.L, groupInfo.ResourceGroupSettings)
+	return err
+}
+
+// DropResourceGroup implements the DDL interface.
+func (d *ddl) DropResourceGroup(ctx sessionctx.Context, stmt *ast.DropResourceGroupStmt) (err error) {
+	groupName := stmt.ResourceGroupName
+	if groupName.L == rg.DefaultResourceGroupName {
+		return resourcegroup.ErrDroppingInternalResourceGroup
+	}
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	// Check group existence.
+	group, ok := is.ResourceGroupByName(groupName)
+	if !ok {
+		err = infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(groupName)
+		if stmt.IfExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return err
+	}
+
+	// check to see if some user has dependency on the group
+	checker := privilege.GetPrivilegeManager(ctx)
+	if checker == nil {
+		return errors.New("miss privilege checker")
+	}
+	user, matched := checker.MatchUserResourceGroupName(groupName.L)
+	if matched {
+		err = errors.Errorf("user [%s] depends on the resource group to drop", user)
+		return err
+	}
+
+	job := &model.Job{
+		SchemaID:   group.ID,
+		SchemaName: group.Name.L,
+		Type:       model.ActionDropResourceGroup,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{groupName},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: model.InvolvingNone,
+			Table:    model.InvolvingNone,
+		}},
+	}
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return err
+}
+
+func buildResourceGroup(oldGroup *model.ResourceGroupInfo, options []*ast.ResourceGroupOption) (*model.ResourceGroupInfo, error) {
+	groupInfo := &model.ResourceGroupInfo{Name: oldGroup.Name, ID: oldGroup.ID, ResourceGroupSettings: model.NewResourceGroupSettings()}
+	if oldGroup.ResourceGroupSettings != nil {
+		*groupInfo.ResourceGroupSettings = *oldGroup.ResourceGroupSettings
+	}
+	for _, opt := range options {
+		err := SetDirectResourceGroupSettings(groupInfo, opt)
+		if err != nil {
+			return nil, err
+		}
+	}
+	groupInfo.ResourceGroupSettings.Adjust()
+	return groupInfo, nil
+}
+
+// AlterResourceGroup implements the DDL interface.
+func (d *ddl) AlterResourceGroup(ctx sessionctx.Context, stmt *ast.AlterResourceGroupStmt) (err error) {
+	groupName := stmt.ResourceGroupName
+	is := d.GetInfoSchemaWithInterceptor(ctx)
+	// Check group existence.
+	group, ok := is.ResourceGroupByName(groupName)
+	if !ok {
+		err := infoschema.ErrResourceGroupNotExists.GenWithStackByArgs(groupName)
+		if stmt.IfExists {
+			ctx.GetSessionVars().StmtCtx.AppendNote(err)
+			return nil
+		}
+		return err
+	}
+	newGroupInfo, err := buildResourceGroup(group, stmt.ResourceGroupOptionList)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if err := d.checkResourceGroupValidation(newGroupInfo); err != nil {
+		return err
+	}
+
+	logutil.BgLogger().Debug("alter resource group", zap.String("name", groupName.L), zap.Stringer("new resource group settings", newGroupInfo.ResourceGroupSettings))
+
+	job := &model.Job{
+		SchemaID:   newGroupInfo.ID,
+		SchemaName: newGroupInfo.Name.L,
+		Type:       model.ActionAlterResourceGroup,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{newGroupInfo},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: model.InvolvingNone,
+			Table:    model.InvolvingNone,
+		}},
+	}
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return err
+}
+
+>>>>>>> 2dfbaa8264f (ddl: set jobs dependency by schema and table name (#49699)):pkg/ddl/ddl_api.go
 func (d *ddl) CreatePlacementPolicy(ctx sessionctx.Context, stmt *ast.CreatePlacementPolicyStmt) (err error) {
 	if checkIgnorePlacementDDL(ctx) {
 		return nil
@@ -7615,6 +7818,10 @@ func (d *ddl) DropPlacementPolicy(ctx sessionctx.Context, stmt *ast.DropPlacemen
 		Type:       model.ActionDropPlacementPolicy,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{policyName},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: model.InvolvingNone,
+			Table:    model.InvolvingNone,
+		}},
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -7649,6 +7856,10 @@ func (d *ddl) AlterPlacementPolicy(ctx sessionctx.Context, stmt *ast.AlterPlacem
 		Type:       model.ActionAlterPlacementPolicy,
 		BinlogInfo: &model.HistoryInfo{},
 		Args:       []interface{}{newPolicyInfo},
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: model.InvolvingNone,
+			Table:    model.InvolvingNone,
+		}},
 	}
 	err = d.DoDDLJob(ctx, job)
 	err = d.callHookOnChanged(job, err)
@@ -7789,3 +8000,155 @@ func checkTooBigFieldLengthAndTryAutoConvert(tp *types.FieldType, colName string
 	}
 	return nil
 }
+<<<<<<< HEAD:ddl/ddl_api.go
+=======
+
+func (d *ddl) CreateCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrName model.CIStr, constr *ast.Constraint) error {
+	schema, t, err := d.getSchemaAndTableByIdent(ctx, ti)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if constraintInfo := t.Meta().FindConstraintInfoByName(constrName.L); constraintInfo != nil {
+		return infoschema.ErrCheckConstraintDupName.GenWithStackByArgs(constrName.L)
+	}
+
+	// allocate the temporary constraint name for dependency-check-error-output below.
+	constrNames := map[string]bool{}
+	for _, constr := range t.Meta().Constraints {
+		constrNames[constr.Name.L] = true
+	}
+	setEmptyCheckConstraintName(t.Meta().Name.L, constrNames, []*ast.Constraint{constr})
+
+	// existedColsMap can be used to check the existence of depended.
+	existedColsMap := make(map[string]struct{})
+	cols := t.Cols()
+	for _, v := range cols {
+		existedColsMap[v.Name.L] = struct{}{}
+	}
+	// check expression if supported
+	if ok, err := table.IsSupportedExpr(constr); !ok {
+		return err
+	}
+
+	dependedColsMap := findDependentColsInExpr(constr.Expr)
+	dependedCols := make([]model.CIStr, 0, len(dependedColsMap))
+	for k := range dependedColsMap {
+		if _, ok := existedColsMap[k]; !ok {
+			// The table constraint depended on a non-existed column.
+			return dbterror.ErrBadField.GenWithStackByArgs(k, "check constraint "+constr.Name+" expression")
+		}
+		dependedCols = append(dependedCols, model.NewCIStr(k))
+	}
+
+	// build constraint meta info.
+	tblInfo := t.Meta()
+
+	// check auto-increment column
+	if table.ContainsAutoIncrementCol(dependedCols, tblInfo) {
+		return dbterror.ErrCheckConstraintRefersAutoIncrementColumn.GenWithStackByArgs(constr.Name)
+	}
+	// check foreign key
+	if err := table.HasForeignKeyRefAction(tblInfo.ForeignKeys, nil, constr, dependedCols); err != nil {
+		return err
+	}
+	constraintInfo, err := buildConstraintInfo(tblInfo, dependedCols, constr, model.StateNone)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	// check if the expression is bool type
+	if err := table.IfCheckConstraintExprBoolType(constraintInfo, tblInfo); err != nil {
+		return err
+	}
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tblInfo.ID,
+		SchemaName: schema.Name.L,
+		TableName:  tblInfo.Name.L,
+		Type:       model.ActionAddCheckConstraint,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{constraintInfo},
+		Priority:   ctx.GetSessionVars().DDLReorgPriority,
+	}
+
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) DropCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrName model.CIStr) error {
+	is := d.infoCache.GetLatest()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists)
+	}
+	t, err := is.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
+	}
+	tblInfo := t.Meta()
+
+	constraintInfo := tblInfo.FindConstraintInfoByName(constrName.L)
+	if constraintInfo == nil {
+		return dbterror.ErrConstraintNotFound.GenWithStackByArgs(constrName)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tblInfo.ID,
+		SchemaName: schema.Name.L,
+		TableName:  tblInfo.Name.L,
+		Type:       model.ActionDropCheckConstraint,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{constrName},
+	}
+
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
+}
+
+func (d *ddl) AlterCheckConstraint(ctx sessionctx.Context, ti ast.Ident, constrName model.CIStr, enforced bool) error {
+	is := d.infoCache.GetLatest()
+	schema, ok := is.SchemaByName(ti.Schema)
+	if !ok {
+		return errors.Trace(infoschema.ErrDatabaseNotExists)
+	}
+	t, err := is.TableByName(ti.Schema, ti.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ti.Schema, ti.Name))
+	}
+	tblInfo := t.Meta()
+
+	constraintInfo := tblInfo.FindConstraintInfoByName(constrName.L)
+	if constraintInfo == nil {
+		return dbterror.ErrConstraintNotFound.GenWithStackByArgs(constrName)
+	}
+
+	job := &model.Job{
+		SchemaID:   schema.ID,
+		TableID:    tblInfo.ID,
+		SchemaName: schema.Name.L,
+		TableName:  tblInfo.Name.L,
+		Type:       model.ActionAlterCheckConstraint,
+		BinlogInfo: &model.HistoryInfo{},
+		Args:       []interface{}{constrName, enforced},
+	}
+
+	err = d.DoDDLJob(ctx, job)
+	err = d.callHookOnChanged(job, err)
+	return errors.Trace(err)
+}
+
+// NewDDLReorgMeta create a DDL ReorgMeta.
+func NewDDLReorgMeta(ctx sessionctx.Context) *model.DDLReorgMeta {
+	tzName, tzOffset := ddlutil.GetTimeZone(ctx)
+	return &model.DDLReorgMeta{
+		SQLMode:           ctx.GetSessionVars().SQLMode,
+		Warnings:          make(map[errors.ErrorID]*terror.Error),
+		WarningsCount:     make(map[errors.ErrorID]int64),
+		Location:          &model.TimeZoneLocation{Name: tzName, Offset: tzOffset},
+		ResourceGroupName: ctx.GetSessionVars().StmtCtx.ResourceGroupName,
+		Version:           model.CurrentReorgMetaVersion,
+	}
+}
+>>>>>>> 2dfbaa8264f (ddl: set jobs dependency by schema and table name (#49699)):pkg/ddl/ddl_api.go
