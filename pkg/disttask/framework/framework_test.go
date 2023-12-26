@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -48,7 +47,7 @@ func submitTaskAndCheckSuccess(ctx context.Context, t *testing.T, taskKey string
 	}
 }
 
-func TestFrameworkRandomOwnerChange(t *testing.T) {
+func TestRandomOwnerChangeWithMultipleTasks(t *testing.T) {
 	nodeCnt := 5
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, nodeCnt)
 	defer ctrl.Finish()
@@ -120,7 +119,10 @@ func TestFrameworkWithQuery(t *testing.T) {
 	defer ctrl.Finish()
 
 	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
-	submitTaskAndCheckSuccessForBasic(ctx, t, "key1", testContext)
+	var wg util.WaitGroupWrapper
+	wg.Run(func() {
+		submitTaskAndCheckSuccessForBasic(ctx, t, "key1", testContext)
+	})
 
 	tk := testkit.NewTestKit(t, distContext.Store)
 
@@ -133,6 +135,8 @@ func TestFrameworkWithQuery(t *testing.T) {
 	require.Greater(t, len(fields), 0)
 	require.Equal(t, "ifnull(a,b)", rs.Fields()[0].Column.Name.L)
 	require.NoError(t, rs.Close())
+
+	wg.Wait()
 	distContext.Close()
 }
 
@@ -179,7 +183,7 @@ func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
 	distContext.Close()
 }
 
-func TestOwnerChange(t *testing.T) {
+func TestOwnerChangeWhenSchedule(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
 	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
@@ -253,37 +257,6 @@ func TestFrameworkSetLabel(t *testing.T) {
 	// 5. set keyspace id.
 	tk.MustExec("update mysql.dist_framework_meta set keyspace_id = 16777216 where host = \":4001\"")
 	tk.MustQuery("select keyspace_id from mysql.dist_framework_meta where host = \":4001\"").Check(testkit.Rows("16777216"))
-
-	distContext.Close()
-}
-
-func TestMultiTasks(t *testing.T) {
-	ctx, ctrl, _, distContext := testutil.InitTestContext(t, 3)
-	defer ctrl.Finish()
-
-	testContext := &testutil.TestContext{}
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
-
-	taskCnt := 3
-	tasks := make([]*proto.Task, taskCnt)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunErr", "1*return(true)"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunErr"))
-	})
-
-	for i := 0; i < taskCnt; i++ {
-		task, err := handle.SubmitTask(ctx, fmt.Sprintf("key%d", i), proto.TaskTypeExample, 1, nil)
-		require.NoError(t, err)
-		tasks[i] = task
-	}
-	failCount := 0
-	for i := 0; i < taskCnt; i++ {
-		gotTask := testutil.WaitTaskDoneOrPaused(ctx, t, tasks[i].Key)
-		if gotTask.State == proto.TaskStateReverted {
-			failCount++
-		}
-	}
-	require.Equal(t, 1, failCount)
 
 	distContext.Close()
 }

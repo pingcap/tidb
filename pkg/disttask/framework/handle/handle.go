@@ -29,7 +29,21 @@ import (
 
 var (
 	checkTaskFinishInterval = 300 * time.Millisecond
+
+	// TaskChangedCh used to speed up task schedule, such as when task is submitted
+	// in the same node as the scheduler manager.
+	// put it here to avoid cyclic import.
+	TaskChangedCh = make(chan struct{}, 1)
 )
+
+// NotifyTaskChange is used to notify the scheduler manager that the task is changed,
+// either a new task is submitted or a task is finished.
+func NotifyTaskChange() {
+	select {
+	case TaskChangedCh <- struct{}{}:
+	default:
+	}
+}
 
 // SubmitTask submits a task.
 func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, taskMeta []byte) (*proto.Task, error) {
@@ -58,6 +72,7 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, co
 		}
 		metrics.UpdateMetricsForAddTask(task)
 	}
+	NotifyTaskChange()
 	return task, nil
 }
 
