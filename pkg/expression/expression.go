@@ -84,6 +84,20 @@ type TraverseAction interface {
 	Transform(Expression) Expression
 }
 
+// ConstLevel indicates the const level for an expression
+type ConstLevel uint
+
+const (
+	// ConstNone indicates the expression is not a constant expression.
+	// The evaluation result may be different for different input rows.
+	ConstNone ConstLevel = iota
+	// ConstOnlyInContext indicates the expression is only a constant for a same context.
+	ConstOnlyInContext
+	// ConstStrict indicates the expression is a constant expression.
+	// The evaluation result is always the same no matter the input context or rows.
+	ConstStrict
+)
+
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	fmt.Stringer
@@ -129,17 +143,8 @@ type Expression interface {
 	// IsCorrelated checks if this expression has correlated key.
 	IsCorrelated() bool
 
-	// ConstItem checks if this expression is constant item, regardless of query evaluation state.
-	// If the argument `acrossCtxs` is true,
-	// it will check if this expression returns a constant value even across multiple contexts.
-	// An expression is constant item if it:
-	// refers no tables.
-	// refers no correlated column.
-	// refers no subqueries that refers any tables.
-	// refers no non-deterministic functions.
-	// refers no statement parameters.
-	// refers no param markers when prepare plan cache is enabled.
-	ConstItem(acrossCtx bool) bool
+	// ConstLevel returns the const level of the expression.
+	ConstLevel() ConstLevel
 
 	// Decorrelate try to decorrelate the expression by schema.
 	Decorrelate(schema *Schema) Expression
