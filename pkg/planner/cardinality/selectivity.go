@@ -157,6 +157,10 @@ func Selectivity(
 	slices.Sort(idxIDs)
 	for _, id := range idxIDs {
 		idxStats := coll.Indices[id]
+		//idxInfo := idxStats.Info
+		//if idxInfo.MVIndex {
+		//	colIDs := coll.Idx2ColumnIDs[id]
+		//}
 		idxCols := findPrefixOfIndexByCol(ctx, extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxStats.ID])
 		if len(idxCols) > 0 {
 			lengths := make([]int, 0, len(idxCols))
@@ -947,3 +951,5 @@ func crossValidationSelectivity(
 	}
 	return minRowCount, crossValidationSelectivity, nil
 }
+
+// func getMVIndexStatsNode()

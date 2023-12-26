@@ -30,11 +30,12 @@ import (
 // AccessPath indicates the way we access a table: by using single index, or by using multiple indexes,
 // or just by using table scan.
 type AccessPath struct {
-	Index          *model.IndexInfo
-	FullIdxCols    []*expression.Column
-	FullIdxColLens []int
-	IdxCols        []*expression.Column
-	IdxColLens     []int
+	Index              *model.IndexInfo
+	FullIdxCols        []*expression.Column
+	FullIdxColLens     []int
+	NoPruneFullIdxCols []*expression.Column
+	IdxCols            []*expression.Column
+	IdxColLens         []int
 	// ConstCols indicates whether the column is constant under the given conditions for all index columns.
 	ConstCols []bool
 	Ranges    []*ranger.Range
@@ -84,6 +85,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		Index:                    path.Index.Clone(),
 		FullIdxCols:              CloneCols(path.FullIdxCols),
 		FullIdxColLens:           slices.Clone(path.FullIdxColLens),
+		NoPruneFullIdxCols:       CloneCols(path.NoPruneFullIdxCols),
 		IdxCols:                  CloneCols(path.IdxCols),
 		IdxColLens:               slices.Clone(path.IdxColLens),
 		ConstCols:                slices.Clone(path.ConstCols),

@@ -1257,6 +1257,7 @@ func (ds *DataSource) buildPartialPath4MVIndex(accessFilters []expression.Expres
 		partialPath.IdxColLens = append(partialPath.IdxColLens, mvIndex.Columns[i].Length)
 		partialPath.FullIdxCols = append(partialPath.FullIdxCols, idxCols[i])
 		partialPath.FullIdxColLens = append(partialPath.FullIdxColLens, mvIndex.Columns[i].Length)
+		partialPath.NoPruneFullIdxCols = append(partialPath.NoPruneFullIdxCols, idxCols[i])
 	}
 	if err := ds.detachCondAndBuildRangeForPath(partialPath, accessFilters); err != nil {
 		return nil, false, err

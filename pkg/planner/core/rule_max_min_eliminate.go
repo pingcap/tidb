@@ -121,6 +121,8 @@ func (a *maxMinEliminator) cloneSubPlans(plan LogicalPlan) LogicalPlan {
 		newDs.schema = p.schema.Clone()
 		newDs.Columns = make([]*model.ColumnInfo, len(p.Columns))
 		copy(newDs.Columns, p.Columns)
+		newDs.FullColumns = make([]*model.ColumnInfo, len(p.FullColumns))
+		copy(newDs.FullColumns, p.FullColumns)
 		newAccessPaths := make([]*util.AccessPath, 0, len(p.possibleAccessPaths))
 		for _, path := range p.possibleAccessPaths {
 			newPath := *path
