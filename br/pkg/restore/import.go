@@ -274,7 +274,7 @@ func NewFileImporter(
 		importClient:       importClient,
 		storeStatisticMap:  storeStatisticMap,
 		storeWorkerPoolMap: storeWorkerPoolMap,
-		cacheKey:           fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
+		cacheKey:           fmt.Sprintf("BR-%d", rand.Int63()%32),
 	}
 }
 
@@ -741,7 +741,7 @@ func (importer *FileImporter) downloadSST(
 				}
 				resultMetasMap[file.Name] = &sstMeta
 
-				log.Info("download from peer",
+				log.Debug("download from peer",
 					logutil.Region(regionInfo.Region),
 					logutil.File(file),
 					logutil.Peer(peer),

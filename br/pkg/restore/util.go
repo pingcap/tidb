@@ -236,7 +236,7 @@ func GetSSTMetaFromFile(
 			logutil.Key("endKey", rangeEnd))
 	}
 
-	log.Info("get sstMeta",
+	log.Debug("get sstMeta",
 		logutil.Region(region),
 		logutil.File(file),
 		logutil.Key("startKey", rangeStart),
