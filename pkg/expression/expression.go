@@ -18,7 +18,6 @@ import (
 	goJSON "encoding/json"
 	"fmt"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -1029,35 +1028,6 @@ func NewValuesFunc(ctx sessionctx.Context, offset int, retTp *types.FieldType) *
 func IsBinaryLiteral(expr Expression) bool {
 	con, ok := expr.(*Constant)
 	return ok && con.Value.Kind() == types.KindBinaryLiteral
-}
-
-// PushDownExprsWithExtraInfo split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
-func PushDownExprsWithExtraInfo(ctx EvalContext, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) (pushed []Expression, remained []Expression) {
-	pc := PbConverter{ctx: ctx, client: client}
-	for _, expr := range exprs {
-		if canExprPushDown(expr, pc, storeType, canEnumPush) {
-			pushed = append(pushed, expr)
-		} else {
-			remained = append(remained, expr)
-		}
-	}
-	return
-}
-
-// PushDownExprs split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
-func PushDownExprs(ctx EvalContext, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
-	return PushDownExprsWithExtraInfo(ctx, exprs, client, storeType, false)
-}
-
-// CanExprsPushDownWithExtraInfo return true if all the expr in exprs can be pushed down
-func CanExprsPushDownWithExtraInfo(ctx EvalContext, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) bool {
-	_, remained := PushDownExprsWithExtraInfo(ctx, exprs, client, storeType, canEnumPush)
-	return len(remained) == 0
-}
-
-// CanExprsPushDown return true if all the expr in exprs can be pushed down
-func CanExprsPushDown(ctx EvalContext, exprs []Expression, client kv.Client, storeType kv.StoreType) bool {
-	return CanExprsPushDownWithExtraInfo(ctx, exprs, client, storeType, false)
 }
 
 // wrapWithIsTrue wraps `arg` with istrue function if the return type of expr is not
