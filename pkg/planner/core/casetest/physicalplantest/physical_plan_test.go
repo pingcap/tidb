@@ -1359,6 +1359,9 @@ func TestIssue28316(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
+    require.Equal(t, output[i].Hints, hint.RestoreOptimizerHints(hints), comment)
+	}
+}
 
 func TestIndexJoinHint(t *testing.T) {
 	store := testkit.CreateMockStore(t)
