@@ -4862,7 +4862,7 @@ func (b *executorBuilder) buildShuffle(v *plannercore.PhysicalShuffle) *ShuffleE
 	for _, dataSource := range v.DataSources {
 		stub := plannercore.PhysicalShuffleReceiverStub{
 			DataSource: dataSource,
-		}.Init(b.ctx, dataSource.StatsInfo(), dataSource.SelectBlockOffset(), nil)
+		}.Init(b.ctx, dataSource.StatsInfo(), dataSource.QueryBlockOffset(), nil)
 		stub.SetSchema(dataSource.Schema())
 		stubs = append(stubs, stub)
 	}

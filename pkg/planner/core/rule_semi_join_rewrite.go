@@ -79,7 +79,7 @@ func (smj *semiJoinRewriter) recursivePlan(p LogicalPlan) (LogicalPlan, error) {
 	// But the aggregation we added may block the predicate push down since we've not maintained the functional dependency to pass the equiv class to guide the push down.
 	// So we create a selection before we build the aggregation.
 	if len(join.RightConditions) > 0 {
-		sel := LogicalSelection{Conditions: make([]expression.Expression, len(join.RightConditions))}.Init(p.SCtx(), innerChild.SelectBlockOffset())
+		sel := LogicalSelection{Conditions: make([]expression.Expression, len(join.RightConditions))}.Init(p.SCtx(), innerChild.QueryBlockOffset())
 		copy(sel.Conditions, join.RightConditions)
 		sel.SetChildren(innerChild)
 		innerChild = sel
@@ -88,7 +88,7 @@ func (smj *semiJoinRewriter) recursivePlan(p LogicalPlan) (LogicalPlan, error) {
 	subAgg := LogicalAggregation{
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, len(join.EqualConditions)),
 		GroupByItems: make([]expression.Expression, 0, len(join.EqualConditions)),
-	}.Init(p.SCtx(), p.Children()[1].SelectBlockOffset())
+	}.Init(p.SCtx(), p.Children()[1].QueryBlockOffset())
 
 	aggOutputCols := make([]*expression.Column, 0, len(join.EqualConditions))
 	for i := range join.EqualConditions {
@@ -111,14 +111,14 @@ func (smj *semiJoinRewriter) recursivePlan(p LogicalPlan) (LogicalPlan, error) {
 		preferJoinType:  join.preferJoinType,
 		preferJoinOrder: join.preferJoinOrder,
 		EqualConditions: make([]*expression.ScalarFunction, 0, len(join.EqualConditions)),
-	}.Init(p.SCtx(), p.SelectBlockOffset())
+	}.Init(p.SCtx(), p.QueryBlockOffset())
 	innerJoin.SetChildren(join.Children()[0], subAgg)
 	innerJoin.SetSchema(expression.MergeSchema(join.Children()[0].Schema(), subAgg.schema))
 	innerJoin.AttachOnConds(expression.ScalarFuncs2Exprs(join.EqualConditions))
 
 	proj := LogicalProjection{
 		Exprs: expression.Column2Exprs(join.Children()[0].Schema().Columns),
-	}.Init(p.SCtx(), p.SelectBlockOffset())
+	}.Init(p.SCtx(), p.QueryBlockOffset())
 	proj.SetChildren(innerJoin)
 	proj.SetSchema(join.Children()[0].Schema())
 

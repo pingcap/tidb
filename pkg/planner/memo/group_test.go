@@ -140,7 +140,7 @@ func TestGroupFingerPrint(t *testing.T) {
 	// Insert two LogicalSelections with same conditions but different order.
 	require.Len(t, sel.Conditions, 2)
 	newSelection := plannercore.LogicalSelection{
-		Conditions: make([]expression.Expression, 2)}.Init(sel.SCtx(), sel.SelectBlockOffset())
+		Conditions: make([]expression.Expression, 2)}.Init(sel.SCtx(), sel.QueryBlockOffset())
 	newSelection.Conditions[0], newSelection.Conditions[1] = sel.Conditions[1], sel.Conditions[0]
 	newGroupExpr4 := NewGroupExpr(sel)
 	newGroupExpr5 := NewGroupExpr(newSelection)

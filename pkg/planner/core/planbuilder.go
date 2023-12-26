@@ -241,8 +241,8 @@ type PlanBuilder struct {
 	handleHelper *handleColHelper
 
 	hintProcessor *hint.QBHintHandler
-	// selectOffset is the offsets of current processing select stmts.
-	selectOffset []int
+	// qbOffset is the offsets of current processing select stmts.
+	qbOffset []int
 
 	// SelectLock need this information to locate the lock on partitions.
 	partitionedTable []table.PartitionedTable
@@ -388,18 +388,18 @@ func (b *PlanBuilder) GetOptFlag() uint64 {
 }
 
 func (b *PlanBuilder) getSelectOffset() int {
-	if len(b.selectOffset) > 0 {
-		return b.selectOffset[len(b.selectOffset)-1]
+	if len(b.qbOffset) > 0 {
+		return b.qbOffset[len(b.qbOffset)-1]
 	}
 	return -1
 }
 
 func (b *PlanBuilder) pushSelectOffset(offset int) {
-	b.selectOffset = append(b.selectOffset, offset)
+	b.qbOffset = append(b.qbOffset, offset)
 }
 
 func (b *PlanBuilder) popSelectOffset() {
-	b.selectOffset = b.selectOffset[:len(b.selectOffset)-1]
+	b.qbOffset = b.qbOffset[:len(b.qbOffset)-1]
 }
 
 // PlanBuilderOpt is used to adjust the plan builder.
