@@ -219,6 +219,10 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	switch funcName {
 	case ast.If, ast.Ifnull, ast.Nullif:
 		// Do nothing. Because it will call InferType4ControlFuncs.
+	case ast.RowFunc:
+		// Do nothing. Because it shouldn't use ROW's args to infer null type.
+		// For example, expression ('abc', 1) = (null, 0). Null's type should be STRING, not INT.
+		// The type infer happens when converting the expression to ('abc' = null) and (1 = 0).
 	default:
 		typeInferForNull(funcArgs)
 	}
