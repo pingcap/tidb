@@ -93,6 +93,17 @@ func (ds *DataSource) generateIndexMergePath() error {
 		return err
 	}
 
+	// TODO
+	if len(ds.possibleAccessPaths) > regularPathCount && len(ds.allConds) > len(ds.pushedDownConds) {
+		var maxRowCount float64
+		for i := regularPathCount; i < len(ds.possibleAccessPaths); i++ {
+			maxRowCount = max(maxRowCount, ds.possibleAccessPaths[i].CountAfterAccess)
+		}
+		if ds.StatsInfo().RowCount > maxRowCount {
+			ds.SetStats(ds.tableStats.ScaleByExpectCnt(maxRowCount))
+		}
+	}
+
 	// If without hints, it means that `enableIndexMerge` is true
 	if len(ds.indexMergeHints) == 0 {
 		return nil
@@ -111,15 +122,6 @@ func (ds *DataSource) generateIndexMergePath() error {
 		ds.possibleAccessPaths = ds.possibleAccessPaths[oldIndexMergeCount:]
 	} else {
 		ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
-	}
-	minRowCount := ds.possibleAccessPaths[0].CountAfterAccess
-	for _, path := range ds.possibleAccessPaths {
-		if minRowCount < path.CountAfterAccess {
-			minRowCount = path.CountAfterAccess
-		}
-	}
-	if ds.StatsInfo().RowCount > minRowCount {
-		ds.SetStats(ds.tableStats.ScaleByExpectCnt(minRowCount))
 	}
 	return nil
 }
