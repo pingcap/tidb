@@ -222,13 +222,13 @@ func (ms *StreamMetadataSet) removeDataFilesAndUpdateMetadata(ctx context.Contex
 	num = int64(len(removed))
 
 	if ms.DryRun {
-		log.Debug("dry run, skip deletion ...")
+		log.Info("dry run, skip deletion ...")
 		return num, notDeleted, nil
 	}
 
 	// remove data file groups
 	for _, f := range removed {
-		log.Debug("Deleting file", zap.String("path", f.Path))
+		log.Info("Deleting file", zap.String("path", f.Path))
 		if err := storage.DeleteFile(ctx, f.Path); err != nil {
 			log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err))
 			notDeleted = append(notDeleted, f.Path)
@@ -249,6 +249,7 @@ func (ms *StreamMetadataSet) removeDataFilesAndUpdateMetadata(ctx context.Contex
 		ReplaceMetadata(meta, remainedDataFiles)
 
 		if ms.BeforeDoWriteBack != nil && ms.BeforeDoWriteBack(metaPath, meta) {
+			log.Info("Skipped writeback meta by the hook.", zap.String("meta", metaPath))
 			return num, notDeleted, nil
 		}
 
