@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -25,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -483,38 +483,45 @@ func rebuildRange(p Plan) error {
 				}
 			}
 		}
+		var partDef *model.PartitionDefinition
+		var isTableDual bool
 		/*
 			// The code should never run here as long as we're not using point get for partition table.
 			// And if we change the logic one day, here work as defensive programming to cache the error.
-			if x.PartitionInfo != nil {
+			if x.PhysPlanPartitionInfo != nil {
 				// TODO: relocate the partition after rebuilding range to make PlanCache support PointGet
 				return errors.New("point get for partition table can not use plan cache")
 			}
 		*/
+		//what := PartitionPruning(sctx, x.)
+		// TODO: Test partition pruning with _tidb_rowid!
 		if x.HandleConstant != nil {
 			// Integer PK <=> Handle
 			dVal, err := convertConstant2Datum(sctx, x.HandleConstant, x.handleFieldType)
 			if err != nil {
 				return err
 			}
+
 			// TODO: Also check non-clustered partitioned tables?
-			if x.PointPartitionInfo != nil {
+			if x.PartDef != nil {
 				// Single column PK <=> Must be the partitioning columns!
 				if !x.TblInfo.PKIsHandle {
+					panic("Oh well...")
 					return errors.New("point get for partition table can not use plan cache, PK is not handle")
 				}
 				// Re-calculate the pruning!
 				// TODO: Check how expressions are handled...
-				pointPartitionInfo, _, _, isTableDual := getPartitionInfo(sctx, x.TblInfo, []nameValuePair{{x.TblInfo.Columns[x.partitionColumnPos].Name.L, &x.TblInfo.Columns[x.partitionColumnPos].FieldType, *dVal, x.HandleConstant}})
+				partDef, _, _, isTableDual = getPartitionInfo(sctx, x.TblInfo, []nameValuePair{{x.TblInfo.Columns[x.partitionColumnPos].Name.L, &x.TblInfo.Columns[x.partitionColumnPos].FieldType, *dVal, x.HandleConstant}})
 				// TODO: Support isTableDual?
 				if isTableDual {
 					return errors.New("point get for partition table can not use plan cache, could not prune")
 				}
-				if pointPartitionInfo == nil {
+				if partDef == nil {
 					return errors.New("point get for partition table can not use plan cache, could not prune")
 				}
-				x.PointPartitionInfo = pointPartitionInfo
+				x.PartDef = partDef
 			}
+
 			iv, err := dVal.ToInt64(sc.TypeCtx())
 			if err != nil {
 				return err
@@ -523,6 +530,9 @@ func rebuildRange(p Plan) error {
 			return nil
 		}
 		for i, param := range x.IndexConstants {
+			if x.HandleConstant != nil {
+				panic("Is it possible?")
+			}
 			if param != nil {
 				// TODO: Can this happen with partitioned tables?
 				dVal, err := convertConstant2Datum(sctx, param, x.ColsFieldType[i])
@@ -530,7 +540,91 @@ func rebuildRange(p Plan) error {
 					return err
 				}
 				x.IndexValues[i] = *dVal
+				// TODO: Also check non-clustered partitioned tables?
+				if x.PartDef != nil &&
+					x.IndexInfo.Columns[i].Offset == x.partitionColumnPos {
+					// Single column PK <=> Must be the partitioning columns!
+					if !x.TblInfo.PKIsHandle {
+						return errors.New("point get for partition table can not use plan cache, PK is not handle")
+					}
+					// Re-calculate the pruning!
+					if x.IndexInfo.Columns[i].Name.L != x.TblInfo.Columns[x.partitionColumnPos].Name.L {
+						panic("oopsie!!")
+					}
+					// TODO: Check how expressions are handled...
+					partDef, _, _, isTableDual = getPartitionInfo(sctx, x.TblInfo, []nameValuePair{{x.TblInfo.Columns[x.partitionColumnPos].Name.L, &x.TblInfo.Columns[x.partitionColumnPos].FieldType, *dVal, x.IndexConstants[i]}})
+					// TODO: Support isTableDual?
+					if isTableDual {
+						return errors.New("point get for partition table can not use plan cache, could not prune")
+					}
+					if partDef == nil {
+						return errors.New("point get for partition table can not use plan cache, could not prune")
+					}
+					x.PartDef = partDef
+				}
 			}
+		}
+		// TODO: Also check non-clustered partitioned tables?
+		if x.PartDef != nil {
+			if partDef != nil {
+				panic("Already pruned?!?!")
+			}
+			// Single column PK <=> Must be the partitioning columns!
+			if !x.TblInfo.PKIsHandle {
+				return errors.New("point get for partition table can not use plan cache, PK is not handle")
+			}
+			// Re-calculate the pruning!
+			// For now, use the fully fledged pruner!
+			is := domain.GetDomain(sctx).InfoSchema()
+
+			tbl, ok := is.TableByID(x.TblInfo.ID)
+			if tbl == nil || !ok || tbl.GetPartitionedTable() == nil {
+				return errors.New("point get for partition table can not use plan cache, cannot get table")
+			}
+			// TODO: Can we access the partition names somehow? At least test with explicit partition selection
+			// TODO: There must be some way to reuse the columns and names?
+			//func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
+			var colNames types.NameSlice
+			for _, col := range x.Schema().Columns {
+				name := &types.FieldName{
+					ColName:     model.NewCIStr(col.OrigName),
+					OrigColName: model.NewCIStr(col.OrigName),
+					OrigTblName: x.TblInfo.Name,
+					TblName:     x.TblInfo.Name,
+					DBName:      model.NewCIStr(x.dbName),
+				}
+				colNames = append(colNames, name)
+			}
+
+			//func PartitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr,
+			//	columns []*expression.Column, names types.NameSlice) ([]int, error) {
+			parts, err := PartitionPruning(sctx, tbl.GetPartitionedTable(), x.AccessConditions, nil, x.Schema().Columns, colNames)
+			if err != nil {
+				return err
+			}
+			if len(parts) != 1 {
+				if len(parts) == 0 {
+					// TODO: Handle this, turn it into TableDual!
+					return errors.New("not matching any partition")
+				}
+				return errors.New("point_get cached query matches multiple partitions!")
+			}
+			x.PartDef = &x.TblInfo.GetPartitionInfo().Definitions[parts[0]]
+
+			/*
+				// TODO: Why is this neither a handleConst lookup or Index lookup?
+				// TODO: Check how expressions are handled...
+				partDef, _, _, isTableDual = getPartitionInfo(sctx, x.TblInfo, []nameValuePair{{x.TblInfo.Columns[x.partitionColumnPos].Name.L, &x.TblInfo.Columns[x.partitionColumnPos].FieldType, *dVal, x.C}})
+				// TODO: Support isTableDual?
+				if isTableDual {
+					return errors.New("point get for partition table can not use plan cache, could not prune")
+				}
+				if partDef == nil {
+					return errors.New("point get for partition table can not use plan cache, could not prune")
+				}
+				x.PartDef = partDef
+
+			*/
 		}
 		return nil
 	case *BatchPointGetPlan:

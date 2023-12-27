@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 )
 
+// TODO: Benchmark this function against the quick method in tryFastPath!
 // PartitionPruning finds all used partitions according to query conditions, it will
 // return nil if condition match none of partitions. The return value is a array of the
 // idx in the partition definitions array, use pi.Definitions[idx] to get the partition ID

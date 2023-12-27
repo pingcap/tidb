@@ -307,8 +307,8 @@ func (p *PointGetPlan) AccessObject() AccessObject {
 		Database: p.dbName,
 		Table:    p.TblInfo.Name.O,
 	}
-	if p.PointPartitionInfo != nil {
-		res.Partitions = []string{p.PointPartitionInfo.Name.O}
+	if p.PartDef != nil {
+		res.Partitions = []string{p.PartDef.Name.O}
 	}
 	if p.IndexInfo != nil {
 		index := IndexAccess{
@@ -353,7 +353,7 @@ func (p *BatchPointGetPlan) AccessObject() AccessObject {
 	return res
 }
 
-func getDynamicAccessPartition(sctx sessionctx.Context, tblInfo *model.TableInfo, partitionInfo *PartitionInfo, asName string) (res *DynamicPartitionAccessObject) {
+func getDynamicAccessPartition(sctx sessionctx.Context, tblInfo *model.TableInfo, partitionInfo *PhysPlanPartitionInfo, asName string) (res *DynamicPartitionAccessObject) {
 	pi := tblInfo.GetPartitionInfo()
 	if pi == nil || !sctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 		return nil
@@ -407,7 +407,7 @@ func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) AccessObject
 		if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
 			asName = ts.TableAsName.O
 		}
-		res := getDynamicAccessPartition(sctx, ts.Table, &p.PartitionInfo, asName)
+		res := getDynamicAccessPartition(sctx, ts.Table, &p.PhysPlanPartitionInfo, asName)
 		if res == nil {
 			return DynamicPartitionAccessObjects(nil)
 		}
@@ -415,7 +415,7 @@ func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) AccessObject
 	}
 	if len(p.PartitionInfos) == 1 {
 		ts := p.PartitionInfos[0].tableScan
-		partInfo := p.PartitionInfos[0].partitionInfo
+		partInfo := p.PartitionInfos[0].physPlanPartitionInfo
 		asName := ""
 		if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
 			asName = ts.TableAsName.O
@@ -433,7 +433,7 @@ func (p *PhysicalTableReader) accessObject(sctx sessionctx.Context) AccessObject
 			continue
 		}
 		ts := info.tableScan
-		partInfo := info.partitionInfo
+		partInfo := info.physPlanPartitionInfo
 		asName := ""
 		if ts.TableAsName != nil && len(ts.TableAsName.O) > 0 {
 			asName = ts.TableAsName.O

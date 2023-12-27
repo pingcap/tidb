@@ -92,7 +92,7 @@ type copTask struct {
 	rootTaskConds []expression.Expression
 
 	// For table partition.
-	partitionInfo PartitionInfo
+	physPlanPartitionInfo PhysPlanPartitionInfo
 
 	// expectCnt is the expected row count of upper task, 0 for unlimited.
 	// It's used for deciding whether using paging distsql.
@@ -189,7 +189,7 @@ func (t *copTask) MemoryUsage() (sum int64) {
 	}
 
 	sum = size.SizeOfInterface*(2+int64(cap(t.idxMergePartPlans)+cap(t.rootTaskConds))) + size.SizeOfBool*3 + size.SizeOfUint64 +
-		size.SizeOfPointer*(3+int64(cap(t.commonHandleCols)+cap(t.tblCols))) + size.SizeOfSlice*4 + t.partitionInfo.MemoryUsage()
+		size.SizeOfPointer*(3+int64(cap(t.commonHandleCols)+cap(t.tblCols))) + size.SizeOfSlice*4 + t.physPlanPartitionInfo.MemoryUsage()
 	if t.indexPlan != nil {
 		sum += t.indexPlan.MemoryUsage()
 	}
@@ -589,7 +589,7 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 		expectedCnt:      t.expectCnt,
 		keepOrder:        t.keepOrder,
 	}.Init(ctx, t.tablePlan.SelectBlockOffset())
-	p.PartitionInfo = t.partitionInfo
+	p.PartitionInfo = t.physPlanPartitionInfo
 	setTableScanToTableRowIDScan(p.tablePlan)
 	p.SetStats(t.tablePlan.StatsInfo())
 	// Do not inject the extra Projection even if t.needExtraProj is set, or the schema between the phase-1 agg and
@@ -693,7 +693,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 			AccessMVIndex:      t.idxMergeAccessMVIndex,
 			KeepOrder:          t.keepOrder,
 		}.Init(ctx, t.idxMergePartPlans[0].SelectBlockOffset())
-		p.PartitionInfo = t.partitionInfo
+		p.PartitionInfo = t.physPlanPartitionInfo
 		setTableScanToTableRowIDScan(p.tablePlan)
 		newTask.p = p
 		t.handleRootTaskConds(ctx, newTask)
@@ -710,7 +710,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		newTask = buildIndexLookUpTask(ctx, t)
 	} else if t.indexPlan != nil {
 		p := PhysicalIndexReader{indexPlan: t.indexPlan}.Init(ctx, t.indexPlan.SelectBlockOffset())
-		p.PartitionInfo = t.partitionInfo
+		p.PartitionInfo = t.physPlanPartitionInfo
 		p.SetStats(t.indexPlan.StatsInfo())
 		newTask.p = p
 	} else {
@@ -729,7 +729,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 			StoreType:      ts.StoreType,
 			IsCommonHandle: ts.Table.IsCommonHandle,
 		}.Init(ctx, t.tablePlan.SelectBlockOffset())
-		p.PartitionInfo = t.partitionInfo
+		p.PhysPlanPartitionInfo = t.physPlanPartitionInfo
 		p.SetStats(t.tablePlan.StatsInfo())
 
 		// If agg was pushed down in attach2Task(), the partial agg was placed on the top of tablePlan, the final agg was
@@ -2600,7 +2600,7 @@ func (t *mppTask) MemoryUsage() (sum int64) {
 func collectPartitionInfosFromMPPPlan(p *PhysicalTableReader, mppPlan PhysicalPlan) {
 	switch x := mppPlan.(type) {
 	case *PhysicalTableScan:
-		p.PartitionInfos = append(p.PartitionInfos, tableScanAndPartitionInfo{x, x.PartitionInfo})
+		p.PartitionInfos = append(p.PartitionInfos, tableScanAndPartitionInfo{x, x.PhysPlanPartitionInfo})
 	default:
 		for _, ch := range mppPlan.Children() {
 			collectPartitionInfosFromMPPPlan(p, ch)

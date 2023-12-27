@@ -5595,7 +5595,7 @@ func GetModifiableColumnJob(
 				newCol.FieldType.GetCharset() != col.FieldType.GetCharset() {
 				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStackByArgs("can't change the partitioning column, since it would require reorganize all partitions")
 			}
-			// Generate a new PartitionInfo and validate it together with the new column definition
+			// Generate a new PhysPlanPartitionInfo and validate it together with the new column definition
 			// Checks if all partition definition values are compatible.
 			// Similar to what buildRangePartitionDefinitions would do in terms of checks.
 
@@ -5621,11 +5621,11 @@ func GetModifiableColumnJob(
 			stmt, _, err := parser.New().ParseSQL("ALTER TABLE t " + buf.String())
 			if err != nil {
 				// Should never happen!
-				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("cannot parse generated PartitionInfo")
+				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("cannot parse generated PhysPlanPartitionInfo")
 			}
 			at, ok := stmt[0].(*ast.AlterTableStmt)
 			if !ok || len(at.Specs) != 1 || at.Specs[0].Partition == nil {
-				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("cannot parse generated PartitionInfo")
+				return nil, dbterror.ErrUnsupportedModifyColumn.GenWithStack("cannot parse generated PhysPlanPartitionInfo")
 			}
 			pAst := at.Specs[0].Partition
 			sv := sctx.GetSessionVars().StmtCtx

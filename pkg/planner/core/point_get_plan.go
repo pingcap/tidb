@@ -64,26 +64,27 @@ import (
 // This plan is much faster to build and to execute because it avoid the optimization and coprocessor cost.
 type PointGetPlan struct {
 	base.Plan
-	dbName             string
-	schema             *expression.Schema
-	TblInfo            *model.TableInfo
-	IndexInfo          *model.IndexInfo
-	PointPartitionInfo *model.PartitionDefinition
-	Handle             kv.Handle
-	HandleConstant     *expression.Constant
-	handleFieldType    *types.FieldType
-	IndexValues        []types.Datum
-	IndexConstants     []*expression.Constant
-	ColsFieldType      []*types.FieldType
-	IdxCols            []*expression.Column
-	IdxColLens         []int
-	AccessConditions   []expression.Expression
-	ctx                sessionctx.Context
-	UnsignedHandle     bool
-	IsTableDual        bool
-	Lock               bool
-	outputNames        []*types.FieldName
-	LockWaitTime       int64
+	dbName           string
+	schema           *expression.Schema
+	TblInfo          *model.TableInfo
+	IndexInfo        *model.IndexInfo
+	PartDef          *model.PartitionDefinition
+	Handle           kv.Handle
+	HandleConstant   *expression.Constant
+	handleFieldType  *types.FieldType
+	IndexValues      []types.Datum
+	IndexConstants   []*expression.Constant
+	ColsFieldType    []*types.FieldType
+	IdxCols          []*expression.Column
+	IdxColLens       []int
+	AccessConditions []expression.Expression
+	ctx              sessionctx.Context
+	UnsignedHandle   bool
+	IsTableDual      bool
+	Lock             bool
+	outputNames      []*types.FieldName
+	LockWaitTime     int64
+	// TODO: Add support for multi-column partitioning expressions.
 	partitionColumnPos int
 	Columns            []*model.ColumnInfo
 	cost               float64
@@ -269,8 +270,8 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 	if p.schema != nil {
 		sum += p.schema.MemoryUsage()
 	}
-	if p.PointPartitionInfo != nil {
-		sum += p.PointPartitionInfo.MemoryUsage()
+	if p.PartDef != nil {
+		sum += p.PartDef.MemoryUsage()
 	}
 	if p.HandleConstant != nil {
 		sum += p.HandleConstant.MemoryUsage()
@@ -657,7 +658,7 @@ func newBatchPointGetPlan(
 		var pos2PartitionDefinition = make(map[int]*model.PartitionDefinition)
 		partitionInfos := make([]*model.PartitionDefinition, 0, len(patternInExpr.List))
 		for i, item := range patternInExpr.List {
-			// SELECT * FROM t WHERE (key) in ((1), (2))
+			// SELECT * FROM t WHERE (key) in ((1), (2)) // TODO: extend this!
 			if p, ok := item.(*ast.ParenthesesExpr); ok {
 				item = p.Expr
 			}
@@ -1032,7 +1033,6 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 	if tbl == nil {
 		return nil
 	}
-	pi := tbl.GetPartitionInfo()
 
 	for _, col := range tbl.Columns {
 		// Do not handle generated columns.
@@ -1061,6 +1061,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 
 	var partitionInfo *model.PartitionDefinition
 	var pos int
+	pi := tbl.GetPartitionInfo()
 	if pi != nil {
 		partitionInfo, pos, _, isTableDual = getPartitionInfo(ctx, tbl, pairs)
 		if isTableDual {
@@ -1096,7 +1097,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.GetFlag())
 		p.handleFieldType = fieldType
 		p.HandleConstant = handlePair.con
-		p.PointPartitionInfo = partitionInfo
+		p.PartDef = partitionInfo
 		return p
 	} else if handlePair.value.Kind() != types.KindNull {
 		return nil
@@ -1150,8 +1151,8 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		p.IndexValues = idxValues
 		p.IndexConstants = idxConstant
 		p.ColsFieldType = colsFieldType
-		p.PointPartitionInfo = partitionInfo
-		if p.PointPartitionInfo != nil {
+		p.PartDef = partitionInfo
+		if p.PartDef != nil {
 			p.partitionColumnPos = findPartitionIdx(idxInfo, pos, pairs)
 		}
 		return p
@@ -1845,6 +1846,7 @@ func buildHandleCols(ctx sessionctx.Context, tbl *model.TableInfo, schema *expre
 	return &IntHandleCols{col: handleCol}
 }
 
+// TODO: Can this be replaced by the generic PartitionPruning function?
 func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) (*model.PartitionDefinition, int, int, bool) {
 	partitionExpr := getPartitionExpr(ctx, tbl)
 	if partitionExpr == nil {
