@@ -2,29 +2,29 @@ set tidb_cost_model_version=2;
 drop table if exists t;
 create table t(a varchar(10), b int, c int);
 show columns from t where true;
-Field	Type	Null	Key	Default	Extra
+Field	Null	Key	Default	Extra
 a	varchar(10)	YES		NULL	
 b	int(11)	YES		NULL	
 c	int(11)	YES		NULL	
 show columns from t where field = 'b';
-Field	Type	Null	Key	Default	Extra
+Field	Null	Key	Default	Extra
 b	int(11)	YES		NULL	
 show columns from t where field in (select 'b');
-Field	Type	Null	Key	Default	Extra
+Field	Null	Key	Default	Extra
 b	int(11)	YES		NULL	
 show columns from t where field in (select 'b') and true;
-Field	Type	Null	Key	Default	Extra
+Field	Null	Key	Default	Extra
 b	int(11)	YES		NULL	
 show columns from t where field in (select 'b') and false;
-Field	Type	Null	Key	Default	Extra
+Field	Null	Key	Default	Extra
 insert into t values('c', 0, 0);
 show columns from t where field < all (select a from t);
-Field	Type	Null	Key	Default	Extra
+Field	Null	Key	Default	Extra
 b	int(11)	YES		NULL	
 a	varchar(10)	YES		NULL	
 insert into t values('b', 0, 0);
 show columns from t where field < all (select a from t);
-Field	Type	Null	Key	Default	Extra
+Field	Null	Key	Default	Extra
 a	varchar(10)	YES		NULL	
 drop table if exists t;
 create table t(a int, b int);
@@ -428,10 +428,12 @@ KEY IDXM (COL3,COL2));
 insert into PK_MULTI_COL_5177(col1, col2, col3) values(0x00000000000000000000, 0x002B200DF5BA03E59F82, 1);
 select col1, col2 from PK_MULTI_COL_5177 where col1 = 0x00000000000000000000 and col2 in (0x002B200DF5BA03E59F82, 0x002B200DF5BA03E59F82, 0x002B200DF5BA03E59F82);
 col1	col2
-          	 + õºåŸ‚
+          	 + 
+ï¿½ï¿½åŸ‚
 select col1, col2 from PK_MULTI_COL_5177 where col1 = 0x00000000000000000000 and col2 = 0x002B200DF5BA03E59F82;
 col1	col2
-          	 + õºåŸ‚
+          	 + 
+ï¿½ï¿½åŸ‚
 drop table if exists t;
 create table t(a int, b int);
 select count(a) as b from t group by a order by b;
@@ -2919,7 +2921,7 @@ count(*)
 1
 select * from t where a=0x00A4EEF4FA55D6706ED5;
 a
- ¤îôúUÖpnÕ
+ ï¿½ï¿½ï¿½ï¿½Uï¿½pnï¿½
 drop table if exists BB;
 CREATE TABLE `BB` (
 `col_int` int(11) DEFAULT NULL,
@@ -3414,7 +3416,7 @@ update t set a = 'hig' where from_base64('invalidbase64');
 select * from t where from_base64('test');
 a
 update t set a = 'xyz' where from_base64('test');
-Error 1292 (22007): Truncated incorrect DOUBLE value: 'µë-'
+Error 1292 (22007): Truncated incorrect DOUBLE value: 'ï¿½ï¿½-'
 select * from t;
 a
 abc
@@ -4244,8 +4246,8 @@ select @@last_plan_from_binding;
 @@last_plan_from_binding
 1
 show global bindings where original_sql like '%planner__core__integration%';
-Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Type	Sql_digest	Plan_digest
-select * from `planner__core__integration` . `v2`	SELECT /*+ qb_name(`qb_v_2` , `v2`. `v1`@`sel_2`. `v`@`sel_2`. ``@`sel_2`) merge_join(`t1`@`qb_v_2`) stream_agg(@`qb_v_2`) qb_name(`qb_v_1` , `v2`. `v1`@`sel_2`. `v`@`sel_2`. ``@`sel_1`) merge_join(`t`@`qb_v_1`)*/ * FROM `planner__core__integration`.`v2`	planner__core__integration	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual		d1c36cc45519f8c3ec7ffd42ebcc49b1fe160d7a93e23d1568843517ac4009e6	
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from `planner__core__integration` . `v2`	SELECT /*+ qb_name(`qb_v_2` , `v2`. `v1`@`sel_2`. `v`@`sel_2`. ``@`sel_2`) merge_join(`t1`@`qb_v_2`) stream_agg(@`qb_v_2`) qb_name(`qb_v_1` , `v2`. `v1`@`sel_2`. `v`@`sel_2`. ``@`sel_1`) merge_join(`t`@`qb_v_1`)*/ * FROM `planner__core__integration`.`v2`	planner__core__integration	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	d1c36cc45519f8c3ec7ffd42ebcc49b1fe160d7a93e23d1568843517ac4009e6	
 drop global binding for select * from v2;
 select * from v2;
 a	b
@@ -4253,7 +4255,7 @@ select @@last_plan_from_binding;
 @@last_plan_from_binding
 0
 show global bindings where original_sql like '%planner__core__integration%';
-Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Type	Sql_digest	Plan_digest
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
 set tidb_cost_model_version=default;
 set tidb_cost_model_version=2;
 drop table if exists t1;
@@ -4272,8 +4274,8 @@ select @@last_plan_from_binding;
 @@last_plan_from_binding
 1
 show global bindings where original_sql like '%planner__core__integration%';
-Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Type	Sql_digest	Plan_digest
-select * from `planner__core__integration` . `t1` where `a` < ? order by `a` limit ?	SELECT /*+ order_index(`t1` `idx_a`)*/ * FROM `planner__core__integration`.`t1` WHERE `a` < 10 ORDER BY `a` LIMIT 1	planner__core__integration	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual		d91fc2fee71140e271779ae603bf13e793040345ad88a8e6ab1d8a5cf313e3fb	
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from `planner__core__integration` . `t1` where `a` < ? order by `a` limit ?	SELECT /*+ order_index(`t1` `idx_a`)*/ * FROM `planner__core__integration`.`t1` WHERE `a` < 10 ORDER BY `a` LIMIT 1	planner__core__integration	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	d91fc2fee71140e271779ae603bf13e793040345ad88a8e6ab1d8a5cf313e3fb	
 
 drop global binding for select * from t1 where a<10 order by a limit 1;
 select * from t1 where a<10 order by a limit 1;
@@ -4282,7 +4284,7 @@ select @@last_plan_from_binding;
 @@last_plan_from_binding
 0
 show global bindings where original_sql like '%planner__core__integration%';
-Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Type	Sql_digest	Plan_digest
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
 
 ## create binding for no_order_index hint
 create global binding for select * from t1 where a<10 order by a limit 1 using select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1;
@@ -4292,8 +4294,8 @@ select @@last_plan_from_binding;
 @@last_plan_from_binding
 1
 show global bindings where original_sql like '%planner__core__integration%';
-Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Type	Sql_digest	Plan_digest
-select * from `planner__core__integration` . `t1` where `a` < ? order by `a` limit ?	SELECT /*+ no_order_index(`t1` `idx_a`)*/ * FROM `planner__core__integration`.`t1` WHERE `a` < 10 ORDER BY `a` LIMIT 1	planner__core__integration	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual		d91fc2fee71140e271779ae603bf13e793040345ad88a8e6ab1d8a5cf313e3fb	
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from `planner__core__integration` . `t1` where `a` < ? order by `a` limit ?	SELECT /*+ no_order_index(`t1` `idx_a`)*/ * FROM `planner__core__integration`.`t1` WHERE `a` < 10 ORDER BY `a` LIMIT 1	planner__core__integration	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	d91fc2fee71140e271779ae603bf13e793040345ad88a8e6ab1d8a5cf313e3fb	
 
 drop global binding for select * from t1 where a<10 order by a limit 1;
 select * from t1 where a<10 order by a limit 1;
@@ -4302,7 +4304,7 @@ select @@last_plan_from_binding;
 @@last_plan_from_binding
 0
 show global bindings where original_sql like '%planner__core__integration%';
-Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Type	Sql_digest	Plan_digest
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
 set tidb_cost_model_version=default;
 drop table if exists t;
 set tidb_opt_fix_control='44262:ON';
