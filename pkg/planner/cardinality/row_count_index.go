@@ -458,11 +458,11 @@ func expBackoffEstimation(sctx sessionctx.Context, idx *statistics.Index, coll *
 				}
 				foundStats = true
 				count, err = GetRowCountByIndexRanges(sctx, coll, idxID, tmpRan)
-				realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idxStats.TotalRowCount())
-				selectivity = count / float64(realtimeCnt)
 				if err == nil {
 					break
 				}
+				realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idxStats.TotalRowCount())
+				selectivity = count / float64(realtimeCnt)
 			}
 		}
 		if !foundStats {
