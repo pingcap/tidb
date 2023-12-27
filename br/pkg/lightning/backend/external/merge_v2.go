@@ -274,7 +274,7 @@ func MergeOverlappingFilesOpt(
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	rangesGroupSize := 1 * size.GB
+	rangesGroupSize := size.GB / 2
 	failpoint.Inject("mockRangesGroupSize", func(val failpoint.Value) {
 		rangesGroupSize = uint64(val.(int))
 	})
