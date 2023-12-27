@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
-// GetAllTableName gets all table names from ast.Node.
-func GetAllTableName(in ast.Node) []*ast.TableName {
+// ExtractTableName gets all table names from ast.Node.
+func ExtractTableName(in ast.Node) []*ast.TableName {
 	collector := collectTableNamePool.Get().(*collectTableName)
 	defer collector.DestroyAndPutToPool()
 	in.Accept(collector)
