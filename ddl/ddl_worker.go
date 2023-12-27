@@ -943,10 +943,8 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 		waitTime := 2 * d.lease
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 		err := kv.RunInNewTxn(ctx, d.store, false, func(ctx context.Context, txn kv.Transaction) error {
-			d.runningJobs.Lock()
 			// We are not owner, return and retry checking later.
 			if !d.isOwner() || variable.EnableConcurrentDDL.Load() || d.waiting.Load() {
-				d.runningJobs.Unlock()
 				return nil
 			}
 
@@ -956,13 +954,10 @@ func (w *worker) handleDDLJobQueue(d *ddlCtx) error {
 			// We become the owner. Get the first job and run it.
 			job, err = w.getFirstDDLJob(t)
 			if job == nil || err != nil {
-				d.runningJobs.Unlock()
 				return errors.Trace(err)
 			}
-			d.runningJobs.ids[job.ID] = struct{}{}
-			d.runningJobs.Unlock()
-
-			defer d.deleteRunningDDLJobMap(job.ID)
+			d.runningJobs.add(job)
+			defer d.runningJobs.remove(job)
 
 			// only general ddls allowed to be executed when TiKV is disk full.
 			if w.tp == addIdxWorker && job.IsRunning() {

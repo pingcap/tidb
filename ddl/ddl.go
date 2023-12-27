@@ -630,11 +630,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
-<<<<<<< HEAD:ddl/ddl.go
-	ddlCtx.runningJobs.ids = make(map[int64]struct{})
 	ddlCtx.waiting = atomicutil.NewBool(false)
-=======
->>>>>>> 2dfbaa8264f (ddl: set jobs dependency by schema and table name (#49699)):pkg/ddl/ddl.go
 
 	d := &ddl{
 		ddlCtx:            ddlCtx,
