@@ -398,7 +398,7 @@ func isAcceptableRefferedKeyColumnChange(newCol, originalCol, childCol *model.Co
 		return false
 	}
 	if newCol.GetType() == mysql.TypeNewDecimal {
-		if newCol.GetFlen() != childCol.GetFlen() || newCol.GetDecimal() != childCol.GetDecimal() {
+		if newCol.GetFlen() != originalCol.GetFlen() || newCol.GetDecimal() != originalCol.GetDecimal() {
 			return false
 		}
 	}
