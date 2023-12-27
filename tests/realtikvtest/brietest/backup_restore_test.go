@@ -80,7 +80,7 @@ func TestRestoreMultiTables(t *testing.T) {
 	tableNum := 100
 	for i := 0; i < tableNum; i += 1 {
 		tk.MustExec(fmt.Sprintf("create table table_%d (a int primary key, b json, c varchar(20))", i))
-		tk.MustExec(fmt.Sprintf("insert into table_%d values (1, '{a: 1, b: 2}', '123')", i))
+		tk.MustExec(fmt.Sprintf("insert into table_%d values (1, '{\"a\": 1, \"b\": 2}', '123')", i))
 		tk.MustQuery(fmt.Sprintf("select count(*) from table_%d", i)).Check(testkit.Rows("1"))
 	}
 
