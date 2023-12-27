@@ -124,11 +124,6 @@ func (d *ddl) getGeneralJob(sess *session) (*model.Job, error) {
 	})
 }
 
-func (d *ddl) checkJobIsRunnable(sess *session, sql string) (bool, error) {
-	rows, err := sess.execute(context.Background(), sql, "check_runnable")
-	return len(rows) == 0, err
-}
-
 func (d *ddl) getReorgJob(sess *session) (*model.Job, error) {
 	return d.getJob(sess, reorg, func(job *model.Job) (bool, error) {
 		if !d.runningJobs.checkRunnable(job) {
