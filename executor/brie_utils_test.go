@@ -12,21 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package gluetidb
+package executor_test
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/glue"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/testkit"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -52,14 +55,15 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 		Name: model.NewCIStr("table_id_resued2"),
 	})
 
-	se := &tidbSession{se: tk.Session()}
+	sctx := tk.Session()
 
 	// keep/reused table id verification
-	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err := se.SplitBatchCreateTable(model.NewCIStr("test"), infos1, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
+	sctx.SetValue(sessionctx.QueryString, "skip")
+	err := executor.SplitBatchCreateTableForTest(sctx, model.NewCIStr("test"), infos1, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
 		return false
 	}))
 	require.NoError(t, err)
+	require.Equal(t, "skip", sctx.Value(sessionctx.QueryString))
 
 	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'table_id_resued1'").
 		Check(testkit.Rows("124"))
@@ -86,10 +90,11 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 	})
 
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	err = se.SplitBatchCreateTable(model.NewCIStr("test"), infos2, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
+	err = executor.SplitBatchCreateTableForTest(sctx, model.NewCIStr("test"), infos2, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
 		return true
 	}))
 	require.NoError(t, err)
+	require.Equal(t, "skip", sctx.Value(sessionctx.QueryString))
 
 	idGen, ok := tk.MustQuery(
 		"select tidb_table_id from information_schema.tables where table_name = 'table_id_new'").
@@ -102,10 +107,12 @@ func TestSplitBatchCreateTableWithTableId(t *testing.T) {
 	// a empty table info with len(info3) = 0
 	infos3 := []*model.TableInfo{}
 
-	err = se.SplitBatchCreateTable(model.NewCIStr("test"), infos3, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
+	originQueryString := sctx.Value(sessionctx.QueryString)
+	err = executor.SplitBatchCreateTableForTest(sctx, model.NewCIStr("test"), infos3, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
 		return false
 	}))
 	require.NoError(t, err)
+	require.Equal(t, originQueryString, sctx.Value(sessionctx.QueryString))
 }
 
 // batch create table with table id reused
@@ -134,16 +141,17 @@ func TestSplitBatchCreateTable(t *testing.T) {
 		Name: model.NewCIStr("tables_3"),
 	})
 
-	se := &tidbSession{se: tk.Session()}
+	sctx := tk.Session()
 
 	// keep/reused table id verification
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/RestoreBatchCreateTableEntryTooLarge", "return(1)"))
-	err := se.SplitBatchCreateTable(model.NewCIStr("test"), infos, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/RestoreBatchCreateTableEntryTooLarge", "return(1)"))
+	err := executor.SplitBatchCreateTableForTest(sctx, model.NewCIStr("test"), infos, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
 		return false
 	}))
-
 	require.NoError(t, err)
+	require.Equal(t, "skip", sctx.Value(sessionctx.QueryString))
+
 	tk.MustQuery("show tables like '%tables_%'").Check(testkit.Rows("tables_1", "tables_2", "tables_3"))
 	jobs := tk.MustQuery("admin show ddl jobs").Rows()
 	require.Greater(t, len(jobs), 3)
@@ -176,7 +184,7 @@ func TestSplitBatchCreateTable(t *testing.T) {
 	tk.MustQuery("select tidb_table_id from information_schema.tables where table_name = 'tables_3'").
 		Check(testkit.Rows("1236"))
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/RestoreBatchCreateTableEntryTooLarge"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/RestoreBatchCreateTableEntryTooLarge"))
 }
 
 // batch create table with table id reused
@@ -202,83 +210,113 @@ func TestSplitBatchCreateTableFailWithEntryTooLarge(t *testing.T) {
 		Name: model.NewCIStr("tables_3"),
 	})
 
-	se := &tidbSession{se: tk.Session()}
+	sctx := tk.Session()
 
 	tk.Session().SetValue(sessionctx.QueryString, "skip")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/ddl/RestoreBatchCreateTableEntryTooLarge", "return(0)"))
-	err := se.SplitBatchCreateTable(model.NewCIStr("test"), infos, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/RestoreBatchCreateTableEntryTooLarge", "return(0)"))
+	err := executor.SplitBatchCreateTableForTest(sctx, model.NewCIStr("test"), infos, ddl.AllocTableIDIf(func(ti *model.TableInfo) bool {
 		return true
 	}))
-
+	require.Equal(t, "skip", sctx.Value(sessionctx.QueryString))
 	require.True(t, kv.ErrEntryTooLarge.Equal(err))
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/RestoreBatchCreateTableEntryTooLarge"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/RestoreBatchCreateTableEntryTooLarge"))
 }
 
-=======
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/stretchr/testify/require"
-)
+func TestBRIECreateDatabase(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists db_1")
+	tk.MustExec("drop database if exists db_1")
 
->>>>>>> 8709bb53df5 (brie: support batch ddl for sql restore (#49089))
-func TestTheSessionIsoation(t *testing.T) {
-	req := require.New(t)
-	store, _ := testkit.CreateMockStoreAndDomain(t)
-	ctx := context.Background()
+	d := dom.DDL()
+	require.NotNil(t, d)
 
-	g := Glue{}
-	session, err := g.CreateSession(store)
-	req.NoError(err)
-
-	req.NoError(session.ExecuteInternal(ctx, "use test;"))
-	infos := []*model.TableInfo{}
-	infos = append(infos, &model.TableInfo{
-		Name: model.NewCIStr("tables_1"),
-		Columns: []*model.ColumnInfo{
-			{Name: model.NewCIStr("foo"), FieldType: *types.NewFieldType(types.KindBinaryLiteral), State: model.StatePublic},
-		},
-	})
-	infos = append(infos, &model.TableInfo{
-		Name: model.NewCIStr("tables_2"),
-		PlacementPolicyRef: &model.PolicyRefInfo{
-			Name: model.NewCIStr("threereplication"),
-		},
-		Columns: []*model.ColumnInfo{
-			{Name: model.NewCIStr("foo"), FieldType: *types.NewFieldType(types.KindBinaryLiteral), State: model.StatePublic},
-		},
-	})
-	infos = append(infos, &model.TableInfo{
-		Name: model.NewCIStr("tables_3"),
-		PlacementPolicyRef: &model.PolicyRefInfo{
-			Name: model.NewCIStr("fivereplication"),
-		},
-		Columns: []*model.ColumnInfo{
-			{Name: model.NewCIStr("foo"), FieldType: *types.NewFieldType(types.KindBinaryLiteral), State: model.StatePublic},
-		},
-	})
-	polices := []*model.PolicyInfo{
-		{
-			PlacementSettings: &model.PlacementSettings{
-				Followers: 4,
-			},
-			Name: model.NewCIStr("fivereplication"),
-		},
-		{
-			PlacementSettings: &model.PlacementSettings{
-				Followers: 2,
-			},
-			Name: model.NewCIStr("threereplication"),
-		},
+	sctx := tk.Session()
+	originQueryString := sctx.Value(sessionctx.QueryString)
+	schema1 := &model.DBInfo{
+		ID:      1230,
+		Name:    model.NewCIStr("db_1"),
+		Charset: "utf8mb4",
+		Collate: "utf8mb4_bin",
+		State:   model.StatePublic,
 	}
-	for _, pinfo := range polices {
-		before := session.(*tidbSession).se.GetInfoSchema().SchemaMetaVersion()
-		req.NoError(session.CreatePlacementPolicy(ctx, pinfo))
-		after := session.(*tidbSession).se.GetInfoSchema().SchemaMetaVersion()
-		req.Greater(after, before)
+	err := executor.BRIECreateDatabase(sctx, schema1, "/* from test */")
+	require.NoError(t, err)
+
+	schema2 := &model.DBInfo{
+		ID:      1240,
+		Name:    model.NewCIStr("db_2"),
+		Charset: "utf8mb4",
+		Collate: "utf8mb4_bin",
+		State:   model.StatePublic,
 	}
-	req.NoError(session.(glue.BatchCreateTableSession).CreateTables(ctx, map[string][]*model.TableInfo{
-		"test": infos,
-	}))
+	err = executor.BRIECreateDatabase(sctx, schema2, "")
+	require.NoError(t, err)
+	require.Equal(t, originQueryString, sctx.Value(sessionctx.QueryString))
+	tk.MustExec("use db_1")
+	tk.MustExec("use db_2")
+}
+
+func mockTableInfo(t *testing.T, sctx sessionctx.Context, createSQL string) *model.TableInfo {
+	node, err := parser.New().ParseOneStmt(createSQL, "", "")
+	require.NoError(t, err)
+	info, err := ddl.MockTableInfo(sctx, node.(*ast.CreateTableStmt), 1)
+	require.NoError(t, err)
+	info.State = model.StatePublic
+	return info
+}
+
+func TestBRIECreateTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists table_1")
+	tk.MustExec("drop table if exists table_2")
+
+	d := dom.DDL()
+	require.NotNil(t, d)
+
+	sctx := tk.Session()
+	originQueryString := sctx.Value(sessionctx.QueryString)
+	dbName := model.NewCIStr("test")
+	tableInfo := mockTableInfo(t, sctx, "create table test.table_1 (a int primary key, b json, c varchar(20))")
+	tableInfo.ID = 1230
+	err := executor.BRIECreateTable(sctx, dbName, tableInfo, "/* from test */")
+	require.NoError(t, err)
+
+	tableInfo.ID = 1240
+	tableInfo.Name = model.NewCIStr("table_2")
+	err = executor.BRIECreateTable(sctx, dbName, tableInfo, "")
+	require.NoError(t, err)
+	require.Equal(t, originQueryString, sctx.Value(sessionctx.QueryString))
+	tk.MustExec("desc table_1")
+	tk.MustExec("desc table_2")
+}
+
+func TestBRIECreateTables(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tableInfos := make([]*model.TableInfo, 100)
+	for i := range tableInfos {
+		tk.MustExec(fmt.Sprintf("drop table if exists table_%d", i))
+	}
+
+	d := dom.DDL()
+	require.NotNil(t, d)
+
+	sctx := tk.Session()
+	originQueryString := sctx.Value(sessionctx.QueryString)
+	for i := range tableInfos {
+		tableInfos[i] = mockTableInfo(t, sctx, fmt.Sprintf("create table test.table_%d (a int primary key, b json, c varchar(20))", i))
+		tableInfos[i].ID = 1230 + int64(i)
+	}
+	err := executor.BRIECreateTables(sctx, map[string][]*model.TableInfo{"test": tableInfos}, "/* from test */")
+	require.NoError(t, err)
+
+	require.Equal(t, originQueryString, sctx.Value(sessionctx.QueryString))
+	for i := range tableInfos {
+		tk.MustExec(fmt.Sprintf("desc table_%d", i))
+	}
 }

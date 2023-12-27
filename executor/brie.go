@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/task/show"
+<<<<<<< HEAD:executor/brie.go
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -50,6 +51,29 @@ import (
 	"github.com/pingcap/tidb/util/sqlexec"
 	"github.com/pingcap/tidb/util/syncutil"
 	filter "github.com/pingcap/tidb/util/table-filter"
+=======
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/printer"
+	"github.com/pingcap/tidb/pkg/util/sem"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/syncutil"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
+>>>>>>> 8709bb53df5 (brie: support batch ddl for sql restore (#49089)):pkg/executor/brie.go
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 )
@@ -94,6 +118,13 @@ func (p *brieTaskProgress) GetCurrent() int64 {
 // Close implements glue.Progress
 func (p *brieTaskProgress) Close() {
 	p.lock.Lock()
+<<<<<<< HEAD:executor/brie.go
+=======
+	current := atomic.LoadInt64(&p.current)
+	if current < p.total {
+		p.cmd = fmt.Sprintf("%s Canceled", p.cmd)
+	}
+>>>>>>> 8709bb53df5 (brie: support batch ddl for sql restore (#49089)):pkg/executor/brie.go
 	atomic.StoreInt64(&p.current, p.total)
 	p.lock.Unlock()
 }
@@ -452,7 +483,11 @@ func (e *BRIEExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	defer bq.releaseTask()
 
 	e.info.execTime = types.CurrentTime(mysql.TypeDatetime)
+<<<<<<< HEAD:executor/brie.go
 	glue := &tidbGlueSession{se: e.ctx, progress: progress, info: e.info}
+=======
+	glue := &tidbGlue{se: e.Ctx(), progress: progress, info: e.info}
+>>>>>>> 8709bb53df5 (brie: support batch ddl for sql restore (#49089)):pkg/executor/brie.go
 
 	switch e.info.kind {
 	case ast.BRIEKindBackup:
@@ -519,25 +554,91 @@ func (e *ShowExec) fetchShowBRIE(kind ast.BRIEKind) error {
 	return nil
 }
 
-type tidbGlueSession struct {
+type tidbGlue struct {
+	// the session context of the brie task
 	se       sessionctx.Context
 	progress *brieTaskProgress
 	info     *brieTaskInfo
 }
 
-// GetSessionCtx implements glue.Glue
-func (gs *tidbGlueSession) GetSessionCtx() sessionctx.Context {
-	return gs.se
-}
-
 // GetDomain implements glue.Glue
+<<<<<<< HEAD:executor/brie.go
 func (gs *tidbGlueSession) GetDomain(store kv.Storage) (*domain.Domain, error) {
+=======
+func (gs *tidbGlue) GetDomain(_ kv.Storage) (*domain.Domain, error) {
+>>>>>>> 8709bb53df5 (brie: support batch ddl for sql restore (#49089)):pkg/executor/brie.go
 	return domain.GetDomain(gs.se), nil
 }
 
 // CreateSession implements glue.Glue
+<<<<<<< HEAD:executor/brie.go
 func (gs *tidbGlueSession) CreateSession(store kv.Storage) (glue.Session, error) {
 	return gs, nil
+=======
+func (gs *tidbGlue) CreateSession(_ kv.Storage) (glue.Session, error) {
+	newSCtx, err := CreateSession(gs.se)
+	if err != nil {
+		return nil, err
+	}
+	return &tidbGlueSession{se: newSCtx}, nil
+}
+
+// Open implements glue.Glue
+func (gs *tidbGlue) Open(string, pd.SecurityOption) (kv.Storage, error) {
+	return gs.se.GetStore(), nil
+}
+
+// OwnsStorage implements glue.Glue
+func (*tidbGlue) OwnsStorage() bool {
+	return false
+}
+
+// StartProgress implements glue.Glue
+func (gs *tidbGlue) StartProgress(_ context.Context, cmdName string, total int64, _ bool) glue.Progress {
+	gs.progress.lock.Lock()
+	gs.progress.cmd = cmdName
+	gs.progress.total = total
+	atomic.StoreInt64(&gs.progress.current, 0)
+	gs.progress.lock.Unlock()
+	return gs.progress
+}
+
+// Record implements glue.Glue
+func (gs *tidbGlue) Record(name string, value uint64) {
+	switch name {
+	case "BackupTS":
+		gs.info.backupTS = value
+	case "RestoreTS":
+		gs.info.restoreTS = value
+	case "Size":
+		gs.info.archiveSize = value
+	}
+}
+
+func (*tidbGlue) GetVersion() string {
+	return "TiDB\n" + printer.GetTiDBInfo()
+}
+
+// UseOneShotSession implements glue.Glue
+func (gs *tidbGlue) UseOneShotSession(_ kv.Storage, _ bool, fn func(se glue.Session) error) error {
+	// In SQL backup, we don't need to close domain,
+	// but need to create an new session.
+	newSCtx, err := CreateSession(gs.se)
+	if err != nil {
+		return err
+	}
+	glueSession := &tidbGlueSession{se: newSCtx}
+	defer func() {
+		CloseSession(newSCtx)
+		log.Info("one shot session from brie closed")
+	}()
+	return fn(glueSession)
+}
+
+type tidbGlueSession struct {
+	// the session context of the brie task's subtask, such as `CREATE TABLE`.
+	se sessionctx.Context
+>>>>>>> 8709bb53df5 (brie: support batch ddl for sql restore (#49089)):pkg/executor/brie.go
 }
 
 // Execute implements glue.Session
@@ -558,6 +659,7 @@ func (gs *tidbGlueSession) ExecuteInternal(ctx context.Context, sql string, args
 }
 
 // CreateDatabase implements glue.Session
+<<<<<<< HEAD:executor/brie.go
 func (gs *tidbGlueSession) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
 	d := domain.GetDomain(gs.se).DDL()
 	// 512 is defaultCapOfCreateTable.
@@ -576,29 +678,31 @@ func (gs *tidbGlueSession) CreateDatabase(ctx context.Context, schema *model.DBI
 // CreateTable implements glue.Session
 func (gs *tidbGlueSession) CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	d := domain.GetDomain(gs.se).DDL()
+=======
+func (gs *tidbGlueSession) CreateDatabase(_ context.Context, schema *model.DBInfo) error {
+	return BRIECreateDatabase(gs.se, schema, "")
+}
 
-	// 512 is defaultCapOfCreateTable.
-	result := bytes.NewBuffer(make([]byte, 0, 512))
-	if err := ConstructResultOfShowCreateTable(gs.se, table, autoid.Allocators{}, result); err != nil {
-		return err
-	}
-	gs.se.SetValue(sessionctx.QueryString, result.String())
-	// Disable foreign key check when batch create tables.
-	gs.se.GetSessionVars().ForeignKeyChecks = false
+// CreateTable implements glue.Session
+func (gs *tidbGlueSession) CreateTable(_ context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+	return BRIECreateTable(gs.se, dbName, table, "", cs...)
+}
+>>>>>>> 8709bb53df5 (brie: support batch ddl for sql restore (#49089)):pkg/executor/brie.go
 
-	// Clone() does not clone partitions yet :(
-	table = table.Clone()
-	if table.Partition != nil {
-		newPartition := *table.Partition
-		newPartition.Definitions = append([]model.PartitionDefinition{}, table.Partition.Definitions...)
-		table.Partition = &newPartition
-	}
-
-	return d.CreateTableWithInfo(gs.se, dbName, table, append(cs, ddl.OnExistIgnore)...)
+// CreateTables implements glue.BatchCreateTableSession.
+func (gs *tidbGlueSession) CreateTables(_ context.Context,
+	tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+	return BRIECreateTables(gs.se, tables, "", cs...)
 }
 
 // CreatePlacementPolicy implements glue.Session
+<<<<<<< HEAD:executor/brie.go
 func (gs *tidbGlueSession) CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInfo) error {
+=======
+func (gs *tidbGlueSession) CreatePlacementPolicy(_ context.Context, policy *model.PolicyInfo) error {
+	originQueryString := gs.se.Value(sessionctx.QueryString)
+	defer gs.se.SetValue(sessionctx.QueryString, originQueryString)
+>>>>>>> 8709bb53df5 (brie: support batch ddl for sql restore (#49089)):pkg/executor/brie.go
 	gs.se.SetValue(sessionctx.QueryString, ConstructResultOfShowCreatePlacementPolicy(policy))
 	d := domain.GetDomain(gs.se).DDL()
 	// the default behaviour is ignoring duplicated policy during restore.
@@ -607,6 +711,10 @@ func (gs *tidbGlueSession) CreatePlacementPolicy(ctx context.Context, policy *mo
 
 // Close implements glue.Session
 func (gs *tidbGlueSession) Close() {
+<<<<<<< HEAD:executor/brie.go
+=======
+	CloseSession(gs.se)
+>>>>>>> 8709bb53df5 (brie: support batch ddl for sql restore (#49089)):pkg/executor/brie.go
 }
 
 // GetGlobalVariables implements glue.Session.
@@ -614,6 +722,7 @@ func (gs *tidbGlueSession) GetGlobalVariable(name string) (string, error) {
 	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
 }
 
+<<<<<<< HEAD:executor/brie.go
 // Open implements glue.Glue
 func (gs *tidbGlueSession) Open(string, pd.SecurityOption) (kv.Storage, error) {
 	return gs.se.GetStore(), nil
@@ -654,4 +763,9 @@ func (gs *tidbGlueSession) GetVersion() string {
 func (gs *tidbGlueSession) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(se glue.Session) error) error {
 	// in SQL backup. we don't need to close domain.
 	return fn(gs)
+=======
+// GetSessionCtx implements glue.Glue
+func (gs *tidbGlueSession) GetSessionCtx() sessionctx.Context {
+	return gs.se
+>>>>>>> 8709bb53df5 (brie: support batch ddl for sql restore (#49089)):pkg/executor/brie.go
 }
