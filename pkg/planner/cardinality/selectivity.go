@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	planutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
@@ -157,10 +159,31 @@ func Selectivity(
 	slices.Sort(idxIDs)
 	for _, id := range idxIDs {
 		idxStats := coll.Indices[id]
-		//idxInfo := idxStats.Info
-		//if idxInfo.MVIndex {
-		//	colIDs := coll.Idx2ColumnIDs[id]
-		//}
+		idxInfo := idxStats.Info
+		if idxInfo.MVIndex {
+			cols := id2Paths[idxStats.ID].NoPruneFullIdxCols
+			accessConds, _ := CollectFilters4MVIndex(ctx, remainedExprs, cols)
+			paths, isIntersection, ok, err := BuildPartialPaths4MVIndex(ctx, accessConds, cols, idxStats.Info, coll)
+			if err == nil && ok {
+				totalSelectivity := CalcTotalSelectivityForMVIdxPath(ctx, coll, paths, isIntersection)
+				var mask int64
+				for i := range remainedExprs {
+					for _, accessCond := range accessConds {
+						if exprs[i].Equal(ctx, accessCond) {
+							mask |= 1 << uint64(i)
+							break
+						}
+					}
+				}
+				nodes = append(nodes, &StatsNode{
+					Tp:          IndexType,
+					ID:          id,
+					mask:        mask,
+					numCols:     len(idxInfo.Columns),
+					Selectivity: totalSelectivity,
+				})
+			}
+		}
 		idxCols := findPrefixOfIndexByCol(ctx, extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxStats.ID])
 		if len(idxCols) > 0 {
 			lengths := make([]int, 0, len(idxCols))
@@ -423,6 +446,38 @@ OUTER:
 		ceTraceExpr(ctx, tableID, "Table Stats-Expression-CNF", totalExpr, ret*float64(coll.RealtimeCount))
 	}
 	return ret, nodes, nil
+}
+
+func CalcTotalSelectivityForMVIdxPath(
+	ctx sessionctx.Context,
+	coll *statistics.HistColl,
+	partialPaths []*planutil.AccessPath,
+	isIntersection bool,
+) float64 {
+	selectivities := make([]float64, 0, len(partialPaths))
+	for _, path := range partialPaths {
+		realtimeCnt := coll.RealtimeCount
+		idxStats := coll.Indices[path.Index.ID]
+		if !idxStats.IsInvalid(ctx, coll.Pseudo) {
+			realtimeCnt, _ = coll.GetScaledRealtimeAndModifyCnt(idxStats.TotalRowCount())
+		}
+		sel := path.CountAfterAccess / float64(realtimeCnt)
+		sel = mathutil.Clamp(sel, 0, 1)
+		selectivities = append(selectivities, sel)
+	}
+	var totalSelectivity float64
+	if isIntersection {
+		totalSelectivity = 1
+		for _, sel := range selectivities {
+			totalSelectivity *= sel
+		}
+	} else {
+		totalSelectivity = 0
+		for _, sel := range selectivities {
+			totalSelectivity = (sel + totalSelectivity) - totalSelectivity*sel
+		}
+	}
+	return totalSelectivity
 }
 
 // StatsNode is used for calculating selectivity.
@@ -952,4 +1007,26 @@ func crossValidationSelectivity(
 	return minRowCount, crossValidationSelectivity, nil
 }
 
-// func getMVIndexStatsNode()
+var (
+	CollectFilters4MVIndex func(
+		sctx sessionctx.Context,
+		filters []expression.Expression,
+		idxCols []*expression.Column,
+	) (
+		accessFilters,
+		remainingFilters []expression.Expression,
+	)
+
+	BuildPartialPaths4MVIndex func(
+		sctx sessionctx.Context,
+		accessFilters []expression.Expression,
+		idxCols []*expression.Column,
+		mvIndex *model.IndexInfo,
+		histColl *statistics.HistColl,
+	) (
+		partialPaths []*planutil.AccessPath,
+		isIntersection bool,
+		ok bool,
+		err error,
+	)
+)

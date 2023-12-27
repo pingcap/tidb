@@ -15,7 +15,6 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/pkg/statistics"
 	"math"
 	"slices"
 	"strings"
@@ -31,12 +30,18 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
 )
+
+func init() {
+	cardinality.CollectFilters4MVIndex = collectFilters4MVIndex
+	cardinality.BuildPartialPaths4MVIndex = buildPartialPaths4MVIndex
+}
 
 // generateIndexMergePath generates IndexMerge AccessPaths on this DataSource.
 func (ds *DataSource) generateIndexMergePath() error {
@@ -900,7 +905,12 @@ func (ds *DataSource) generateIndexMergeOnDNF4MVIndex(normalPathCnt int, filters
 			remainingFilters = append(remainingFilters, filters[:current]...)
 			remainingFilters = append(remainingFilters, filters[current+1:]...)
 
-			indexMergePath := ds.buildPartialPathUp4MVIndex(partialPaths, false, remainingFilters)
+			indexMergePath := ds.buildPartialPathUp4MVIndex(
+				partialPaths,
+				false,
+				remainingFilters,
+				ds.tableStats.HistColl,
+			)
 			mvIndexPaths = append(mvIndexPaths, indexMergePath)
 		}
 	}
@@ -1023,7 +1033,12 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 		if needSelection4MVIndex || needSelection4NormalIndex {
 			indexMergeTableFilters = indexMergeConds
 		}
-		mvp := ds.buildPartialPathUp4MVIndex(combinedPartialPaths, false, indexMergeTableFilters)
+		mvp := ds.buildPartialPathUp4MVIndex(
+			combinedPartialPaths,
+			false,
+			indexMergeTableFilters,
+			ds.tableStats.HistColl,
+		)
 		ds.possibleAccessPaths = append(ds.possibleAccessPaths, mvp)
 		return nil
 	}
@@ -1070,7 +1085,7 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 			remainedCNFs = append(remainedCNFs, CNFItem)
 		}
 	}
-	mvp := ds.buildPartialPathUp4MVIndex(combinedPartialPaths, true, remainedCNFs)
+	mvp := ds.buildPartialPathUp4MVIndex(combinedPartialPaths, true, remainedCNFs, ds.tableStats.HistColl)
 
 	ds.possibleAccessPaths = append(ds.possibleAccessPaths, mvp)
 	return nil
@@ -1125,28 +1140,34 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 			continue
 		}
 
-		ds.possibleAccessPaths = append(ds.possibleAccessPaths, ds.buildPartialPathUp4MVIndex(partialPaths, isIntersection, remainingFilters))
+		ds.possibleAccessPaths = append(ds.possibleAccessPaths, ds.buildPartialPathUp4MVIndex(
+			partialPaths,
+			isIntersection,
+			remainingFilters,
+			ds.tableStats.HistColl,
+		),
+		)
 	}
 	return nil
 }
 
 // buildPartialPathUp4MVIndex builds these partial paths up to a complete index merge path.
-func (*DataSource) buildPartialPathUp4MVIndex(partialPaths []*util.AccessPath, isIntersection bool, remainingFilters []expression.Expression) *util.AccessPath {
+func (ds *DataSource) buildPartialPathUp4MVIndex(
+	partialPaths []*util.AccessPath,
+	isIntersection bool,
+	remainingFilters []expression.Expression,
+	histColl *statistics.HistColl,
+) *util.AccessPath {
 	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths, IndexMergeAccessMVIndex: true}
 	indexMergePath.IndexMergeIsIntersection = isIntersection
 	indexMergePath.TableFilters = remainingFilters
-
-	// TODO: use a naive estimation strategy here now for simplicity, make it more accurate.
-	minEstRows, maxEstRows := math.MaxFloat64, -1.0
-	for _, p := range indexMergePath.PartialIndexPaths {
-		minEstRows = math.Min(minEstRows, p.CountAfterAccess)
-		maxEstRows = math.Max(maxEstRows, p.CountAfterAccess)
-	}
-	if indexMergePath.IndexMergeIsIntersection {
-		indexMergePath.CountAfterAccess = minEstRows
-	} else {
-		indexMergePath.CountAfterAccess = maxEstRows
-	}
+	indexMergePath.CountAfterAccess = float64(histColl.RealtimeCount) *
+		cardinality.CalcTotalSelectivityForMVIdxPath(
+			ds.SCtx(),
+			histColl,
+			partialPaths,
+			isIntersection,
+		)
 	return indexMergePath
 }
 
