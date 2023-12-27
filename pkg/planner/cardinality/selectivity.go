@@ -170,7 +170,7 @@ func Selectivity(
 			if err != nil || !ok {
 				continue
 			}
-			totalSelectivity := CalcTotalSelectivityForMVIdxPath(ctx, coll, paths, isIntersection)
+			totalSelectivity := CalcTotalSelectivityForMVIdxPath(coll, paths, isIntersection)
 			var mask int64
 			for i := range remainedExprs {
 				for _, accessCond := range accessConds {
@@ -451,7 +451,6 @@ OUTER:
 
 // CalcTotalSelectivityForMVIdxPath ...TODO
 func CalcTotalSelectivityForMVIdxPath(
-	ctx sessionctx.Context,
 	coll *statistics.HistColl,
 	partialPaths []*planutil.AccessPath,
 	isIntersection bool,

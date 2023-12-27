@@ -1163,12 +1163,7 @@ func (ds *DataSource) buildPartialPathUp4MVIndex(
 	indexMergePath.IndexMergeIsIntersection = isIntersection
 	indexMergePath.TableFilters = remainingFilters
 	indexMergePath.CountAfterAccess = float64(histColl.RealtimeCount) *
-		cardinality.CalcTotalSelectivityForMVIdxPath(
-			ds.SCtx(),
-			histColl,
-			partialPaths,
-			isIntersection,
-		)
+		cardinality.CalcTotalSelectivityForMVIdxPath(histColl, partialPaths, isIntersection)
 	return indexMergePath
 }
 
