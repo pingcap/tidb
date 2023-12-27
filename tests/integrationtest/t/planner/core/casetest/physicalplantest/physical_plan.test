@@ -374,10 +374,10 @@ explain format='brief' select * from t1 where a > 1 and b > 1;
 explain format='brief' select * from t2 use index(idx_a) where a > 1 and b > 1 and c > 1;
 
 # TestIssue47629
-drop table if exists t1, t2, t3
-create table t1 (a char(10))
-create table t2 (a char(10))
-create table t3 (a char(10) COLLATE utf8mb4_general_ci)
+drop table if exists t1, t2, t3;
+create table t1 (a char(10));
+create table t2 (a char(10));
+create table t3 (a char(10) COLLATE utf8mb4_general_ci);
 set session collation_connection=utf8_general_ci;
 explain format='brief' select * from t1, t2 where t1.a=t2.a and t2.a = 'a';
 explain format='brief' select * from t1, t3 where t1.a=t3.a and t3.a = 'a';

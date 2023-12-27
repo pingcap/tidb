@@ -1207,10 +1207,10 @@ Selection	370.37	root		gt(planner__core__casetest__physicalplantest__physical_pl
   ├─IndexRangeScan(Build)	3333.33	cop[tikv]	table:t2, index:idx_a(a)	range:(1,+inf], keep order:false, stats:pseudo
   └─Selection(Probe)	1111.11	cop[tikv]		gt(planner__core__casetest__physicalplantest__physical_plan.t2.c, 1)
     └─TableRowIDScan	3333.33	cop[tikv]	table:t2	keep order:false, stats:pseudo
-drop table if exists t1, t2, t3
-create table t1 (a char(10))
-create table t2 (a char(10))
-create table t3 (a char(10) COLLATE utf8mb4_general_ci)
+drop table if exists t1, t2, t3;
+create table t1 (a char(10));
+create table t2 (a char(10));
+create table t3 (a char(10) COLLATE utf8mb4_general_ci);
 set session collation_connection=utf8_general_ci;
 explain format='brief' select * from t1, t2 where t1.a=t2.a and t2.a = 'a';
 HashJoin 100.00 root  CARTESIAN inner join
