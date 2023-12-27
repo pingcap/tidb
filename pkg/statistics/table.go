@@ -434,12 +434,15 @@ func (coll *HistColl) GetAnalyzeRowCount() float64 {
 }
 
 // GetScaledRealtimeAndModifyCnt ...TODO
-func (coll *HistColl) GetScaledRealtimeAndModifyCnt(scaleTarget float64) (realtimeCnt, modifyCnt int64) {
+func (coll *HistColl) GetScaledRealtimeAndModifyCnt(idxStats *Index) (realtimeCnt, modifyCnt int64) {
+	if idxStats.Info == nil || !idxStats.Info.MVIndex {
+		return coll.RealtimeCount, coll.ModifyCount
+	}
 	analyzeRowCount := coll.GetAnalyzeRowCount()
 	if analyzeRowCount <= 0 {
 		return coll.RealtimeCount, coll.ModifyCount
 	}
-	scale := scaleTarget / analyzeRowCount
+	scale := idxStats.TotalRowCount() / analyzeRowCount
 	return int64(float64(coll.RealtimeCount) * scale), int64(float64(coll.ModifyCount) * scale)
 }
 

@@ -210,7 +210,7 @@ func Selectivity(
 			}
 			realtimeCnt := coll.RealtimeCount
 			if !idxStats.IsInvalid(ctx, coll.Pseudo) {
-				realtimeCnt, _ = coll.GetScaledRealtimeAndModifyCnt(idxStats.TotalRowCount())
+				realtimeCnt, _ = coll.GetScaledRealtimeAndModifyCnt(idxStats)
 			}
 			selectivity := cnt / float64(realtimeCnt)
 			nodes = append(nodes, &StatsNode{
@@ -464,7 +464,7 @@ func CalcTotalSelectivityForMVIdxPath(
 		realtimeCnt := coll.RealtimeCount
 		idxStats := coll.Indices[path.Index.ID]
 		if !idxStats.IsInvalid(ctx, coll.Pseudo) {
-			realtimeCnt, _ = coll.GetScaledRealtimeAndModifyCnt(idxStats.TotalRowCount())
+			realtimeCnt, _ = coll.GetScaledRealtimeAndModifyCnt(idxStats)
 		}
 		sel := path.CountAfterAccess / float64(realtimeCnt)
 		sel = mathutil.Clamp(sel, 0, 1)
@@ -888,7 +888,7 @@ func getEqualCondSelectivity(sctx sessionctx.Context, coll *statistics.HistColl,
 	}
 	val := types.NewBytesDatum(bytes)
 	if outOfRangeOnIndex(idx, val) {
-		realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idx.TotalRowCount())
+		realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idx)
 		// When the value is out of range, we could not found this value in the CM Sketch,
 		// so we use heuristic methods to estimate the selectivity.
 		if idx.NDV > 0 && coverAll {

@@ -74,7 +74,7 @@ func GetRowCountByIndexRanges(sctx sessionctx.Context, coll *statistics.HistColl
 		}
 		return result, err
 	}
-	realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx.TotalRowCount())
+	realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx)
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.RecordAnyValuesWithNames(sctx,
 			"Histogram NotNull Count", idx.Histogram.NotNullCount(),
@@ -119,7 +119,7 @@ func getIndexRowCountForStatsV1(sctx sessionctx.Context, coll *statistics.HistCo
 		// on single-column index, use previous way as well, because CMSketch does not contain null
 		// values in this case.
 		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
-			realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx.TotalRowCount())
+			realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx)
 			count, err := getIndexRowCountForStatsV2(sctx, idx, nil, []*ranger.Range{ran}, realtimeCnt, modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
@@ -461,7 +461,7 @@ func expBackoffEstimation(sctx sessionctx.Context, idx *statistics.Index, coll *
 				if err == nil {
 					break
 				}
-				realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idxStats.TotalRowCount())
+				realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idxStats)
 				selectivity = count / float64(realtimeCnt)
 			}
 		}
