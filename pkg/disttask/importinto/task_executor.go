@@ -325,7 +325,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		1*size.MB,
 		onClose,
 		int(m.taskMeta.Plan.ThreadCnt),
-		int(m.taskMeta.Plan.ThreadCnt)/5, // decided by bench test.
+		int(m.taskMeta.Plan.ThreadCnt)/6, // TODO: more bench.
 		false)
 }
 
