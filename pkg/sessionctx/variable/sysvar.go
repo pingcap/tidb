@@ -2419,7 +2419,7 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableReusechunk, Value: BoolToOnOff(DefTiDBEnableReusechunk), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
-			s.EnableReuseCheck = TiDBOptOn(val)
+			s.EnableReuseChunk = TiDBOptOn(val)
 			return nil
 		}},
 	{Scope: ScopeGlobal, Name: TiDBIgnoreInlistPlanDigest, Value: BoolToOnOff(DefTiDBIgnoreInlistPlanDigest), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
