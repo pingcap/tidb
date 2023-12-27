@@ -2974,6 +2974,13 @@ var defaultSysVars = []*SysVar{
 			s.IdleTransactionTimeout = tidbOptPositiveInt32(val, DefTiDBIdleTransactionTimeout)
 			return nil
 		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableObjectStats, Value: BoolToOnOff(DefTiDBEnableObjectStats), Type: TypeBool,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+			EnableObjectStats.Store(TiDBOptOn(s))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(EnableObjectStats.Load()), nil
+		}},
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {

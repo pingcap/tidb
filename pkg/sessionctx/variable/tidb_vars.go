@@ -1130,6 +1130,8 @@ const (
 	// Any idle transaction will be killed after being idle for `tidb_idle_transaction_timeout` seconds.
 	// This is similar to https://docs.percona.com/percona-server/5.7/management/innodb_kill_idle_trx.html and https://mariadb.com/kb/en/transaction-timeouts/
 	TiDBIdleTransactionTimeout = "tidb_idle_transaction_timeout"
+	// TiDBEnableObjectStats indicates whether to collect diagnostic data by index/tables/...
+	TiDBEnableObjectStats = "tidb_enable_object_stats"
 )
 
 // TiDB intentional limits
@@ -1448,6 +1450,7 @@ const (
 	DefTiDBSchemaVersionCacheLimit                    = 16
 	DefTiDBIdleTransactionTimeout                     = 0
 	DefTiDBTxnEntrySizeLimit                          = 0
+	DefTiDBEnableObjectStats                          = true
 )
 
 // Process global variables.
@@ -1549,6 +1552,7 @@ var (
 	CloudStorageURI           = atomic.NewString("")
 	IgnoreInlistPlanDigest    = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
 	TxnEntrySizeLimit         = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
+	EnableObjectStats         = atomic.NewBool(DefTiDBEnableObjectStats)
 )
 
 var (
