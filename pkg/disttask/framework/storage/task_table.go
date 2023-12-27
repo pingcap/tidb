@@ -233,14 +233,13 @@ func (stm *TaskManager) CreateTask(ctx context.Context, key string, tp proto.Tas
 }
 
 // CreateTaskWithSession adds a new task to task table with session.
-func (*TaskManager) CreateTaskWithSession(ctx context.Context, se sessionctx.Context, key string, tp proto.TaskType, concurrency int, meta []byte) (taskID int64, err error) {
-	cpuCount := cpu.GetCPUCount()
+func (stm *TaskManager) CreateTaskWithSession(ctx context.Context, se sessionctx.Context, key string, tp proto.TaskType, concurrency int, meta []byte) (taskID int64, err error) {
+	cpuCount, err := stm.GetCpuCountOfManagedNodes(ctx)
+	if err != nil {
+		return 0, err
+	}
 	if concurrency > cpuCount {
-		// current resource control cannot schedule tasks with concurrency larger
-		// than cpu count
-		// TODO: if we are submitting a task on a node that is not managed by
-		// disttask framework, the checked cpu-count might not right.
-		return 0, errors.Errorf("task concurrency(%d) larger than cpu count(%d)", concurrency, cpuCount)
+		return 0, errors.Errorf("task concurrency(%d) larger than cpu count(%d) of managed node", concurrency, cpuCount)
 	}
 	_, err = ExecSQL(ctx, se, `
 			insert into mysql.tidb_global_task(`+InsertTaskColumns+`)
@@ -696,10 +695,14 @@ func (stm *TaskManager) StartSubtask(ctx context.Context, subtaskID int64) error
 }
 
 // StartManager insert the manager information into dist_framework_meta.
+// if the record exists, update the cpu_count.
 func (stm *TaskManager) StartManager(ctx context.Context, tidbID string, role string) error {
-	_, err := stm.executeSQLWithNewSession(ctx, `insert into mysql.dist_framework_meta(host, role, keyspace_id)
-	SELECT %?, %?,-1
-    WHERE NOT EXISTS (SELECT 1 FROM mysql.dist_framework_meta WHERE host = %?)`, tidbID, role, tidbID)
+	cpuCount := cpu.GetCPUCount()
+	_, err := stm.executeSQLWithNewSession(ctx, `
+		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
+		values (%?, %?, %?, -1)
+		on duplicate key update cpu_count = %?`,
+		tidbID, role, cpuCount, cpuCount)
 	return err
 }
 
@@ -1249,36 +1252,58 @@ func (stm *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 }
 
 // GetManagedNodes implements scheduler.TaskManager interface.
-func (stm *TaskManager) GetManagedNodes(ctx context.Context) ([]string, error) {
+func (stm *TaskManager) GetManagedNodes(ctx context.Context) ([]proto.ManagedNode, error) {
+	nodes, err := stm.GetAllNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	nodeMap := make(map[string][]proto.ManagedNode, 2)
+	for _, node := range nodes {
+		nodeMap[node.Role] = append(nodeMap[node.Role], node)
+	}
+	if len(nodeMap["background"]) == 0 {
+		return nodeMap[""], nil
+	}
+	return nodeMap["background"], nil
+}
+
+// GetAllNodes gets nodes in dist_framework_meta.
+func (stm *TaskManager) GetAllNodes(ctx context.Context) ([]proto.ManagedNode, error) {
 	rs, err := stm.executeSQLWithNewSession(ctx, `
-		select host, role
+		select host, role, cpu_count
 		from mysql.dist_framework_meta
 		where role = 'background' or role = ''
 		order by host`)
 	if err != nil {
 		return nil, err
 	}
-	nodes := make(map[string][]string, 2)
+	nodes := make([]proto.ManagedNode, 0, len(rs))
 	for _, r := range rs {
 		role := r.GetString(1)
-		nodes[role] = append(nodes[role], r.GetString(0))
-	}
-	if len(nodes["background"]) == 0 {
-		return nodes[""], nil
-	}
-	return nodes["background"], nil
-}
-
-// GetAllNodes gets nodes in dist_framework_meta.
-func (stm *TaskManager) GetAllNodes(ctx context.Context) ([]string, error) {
-	rs, err := stm.executeSQLWithNewSession(ctx,
-		"select host from mysql.dist_framework_meta")
-	if err != nil {
-		return nil, err
-	}
-	nodes := make([]string, 0, len(rs))
-	for _, r := range rs {
-		nodes = append(nodes, r.GetString(0))
+		nodes = append(nodes, proto.ManagedNode{
+			ID:       r.GetString(0),
+			Role:     role,
+			CPUCount: int(r.GetInt64(2)),
+		})
 	}
 	return nodes, nil
+}
+
+// GetCpuCountOfManagedNodes gets the cpu count of managed nodes.
+func (stm *TaskManager) GetCpuCountOfManagedNodes(ctx context.Context) (int, error) {
+	nodes, err := stm.GetManagedNodes(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if len(nodes) == 0 {
+		return 0, errors.New("no managed nodes")
+	}
+	var cpuCount int
+	for _, n := range nodes {
+		if n.CPUCount > 0 {
+			cpuCount = n.CPUCount
+			break
+		}
+	}
+	return cpuCount, nil
 }

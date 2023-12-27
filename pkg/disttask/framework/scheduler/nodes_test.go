@@ -21,7 +21,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -102,18 +104,25 @@ func TestMaintainManagedNodes(t *testing.T) {
 	mockTaskMgr := mock.NewMockTaskManager(ctrl)
 	nodeMgr := newNodeManager()
 
+	slotMgr := newSlotManager()
 	mockTaskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return(nil, errors.New("mock error"))
-	nodeMgr.refreshManagedNodes(ctx, mockTaskMgr)
+	nodeMgr.refreshManagedNodes(ctx, mockTaskMgr, slotMgr)
+	require.Equal(t, cpu.GetCPUCount(), int(slotMgr.capacity.Load()))
 	require.Empty(t, nodeMgr.getManagedNodes())
 	require.True(t, ctrl.Satisfied())
 
-	mockTaskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return([]string{":4000", ":4001"}, nil)
-	nodeMgr.refreshManagedNodes(ctx, mockTaskMgr)
+	mockTaskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return([]proto.ManagedNode{
+		{ID: ":4000", CPUCount: 100},
+		{ID: ":4001", CPUCount: 100},
+	}, nil)
+	nodeMgr.refreshManagedNodes(ctx, mockTaskMgr, slotMgr)
 	require.Equal(t, []string{":4000", ":4001"}, nodeMgr.getManagedNodes())
+	require.Equal(t, 100, int(slotMgr.capacity.Load()))
 	require.True(t, ctrl.Satisfied())
 	mockTaskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return(nil, nil)
-	nodeMgr.refreshManagedNodes(ctx, mockTaskMgr)
+	nodeMgr.refreshManagedNodes(ctx, mockTaskMgr, slotMgr)
 	require.NotNil(t, nodeMgr.getManagedNodes())
 	require.Empty(t, nodeMgr.getManagedNodes())
+	require.Equal(t, 100, int(slotMgr.capacity.Load()))
 	require.True(t, ctrl.Satisfied())
 }
