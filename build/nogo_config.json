@@ -1072,7 +1072,8 @@
       "pkg/server/": "server code",
       "pkg/owner/": "owner code",
       "pkg/meta": "meta code",
-      "pkg/timer/": "timer code"
+      "pkg/timer/": "timer code",
+      "pkg/statistics/": "statistics code"
     }
   },
   "SA1029": {
