@@ -426,7 +426,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 				continue
 			}
 			// Only analyze the partition that has not been locked.
-			var partitionDefs []model.PartitionDefinition
+			partitionDefs := make([]model.PartitionDefinition, 0, len(pi.Definitions))
 			for _, def := range pi.Definitions {
 				if _, ok := lockedTables[def.ID]; !ok {
 					partitionDefs = append(partitionDefs, def)
