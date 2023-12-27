@@ -29,6 +29,8 @@ type TaskTable interface {
 	GetSubtasksByStepAndStates(ctx context.Context, execID string, taskID int64, step proto.Step, states ...interface{}) ([]*proto.Subtask, error)
 	GetFirstSubtaskInStates(ctx context.Context, instanceID string, taskID int64, step proto.Step, states ...interface{}) (*proto.Subtask, error)
 	StartManager(ctx context.Context, execID string, role string) error
+	// StartSubtask try to update the subtask's state to running if the subtask is owned by execID.
+	// If the update success, it means the execID's related task executor own the subtask.
 	StartSubtask(ctx context.Context, subtaskID int64, execID string) (bool, error)
 	UpdateSubtaskStateAndError(ctx context.Context, execID string, subtaskID int64, state proto.TaskState, err error) error
 	FinishSubtask(ctx context.Context, execID string, subtaskID int64, meta []byte) error

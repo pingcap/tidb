@@ -114,7 +114,6 @@ func SetTaskManager(is *TaskManager) {
 }
 
 // ExecSQL executes the sql and returns the result.
-// TODO: consider retry.
 func ExecSQL(ctx context.Context, se sessionctx.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
 	rs, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, args...)
 	if err != nil {
@@ -557,35 +556,20 @@ func (stm *TaskManager) UpdateErrorToSubtask(ctx context.Context, execID string,
 	if err == nil {
 		return nil
 	}
-	_, err1 := stm.executeSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
+	_, err1 := stm.executeSQLWithNewSession(ctx,
+		`update mysql.tidb_background_subtask
 		set state = %?, error = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
-		where exec_id = %? and task_key = %? and state in (%?, %?) limit 1;`,
-		proto.TaskStateFailed, serializeErr(err), execID, taskID, proto.TaskStatePending, proto.TaskStateRunning)
+		where exec_id = %? and 
+		task_key = %? and 
+		state in (%?, %?) 
+		limit 1;`,
+		proto.TaskStateFailed,
+		serializeErr(err),
+		execID,
+		taskID,
+		proto.TaskStatePending,
+		proto.TaskStateRunning)
 	return err1
-}
-
-// PrintSubtaskInfo log the subtask info by taskKey. Only used for UT.
-func (stm *TaskManager) PrintSubtaskInfo(ctx context.Context, taskID int64) {
-	rs, _ := stm.executeSQLWithNewSession(ctx,
-		`select `+subtaskColumns+` from mysql.tidb_background_subtask_history where task_key = %?`, taskID)
-	rs2, _ := stm.executeSQLWithNewSession(ctx,
-		`select `+subtaskColumns+` from mysql.tidb_background_subtask where task_key = %?`, taskID)
-	rs = append(rs, rs2...)
-
-	for _, r := range rs {
-		errBytes := r.GetBytes(13)
-		var err error
-		if len(errBytes) > 0 {
-			stdErr := errors.Normalize("")
-			err1 := stdErr.UnmarshalJSON(errBytes)
-			if err1 != nil {
-				err = err1
-			} else {
-				err = stdErr
-			}
-		}
-		logutil.BgLogger().Info(fmt.Sprintf("subTask: %v\n", row2SubTask(r)), zap.Error(err))
-	}
 }
 
 // GetSubtasksByStepAndState gets the subtask by step and state.
@@ -689,6 +673,7 @@ func (stm *TaskManager) HasSubtasksInStates(ctx context.Context, execID string, 
 // StartSubtask updates the subtask state to running.
 func (stm *TaskManager) StartSubtask(ctx context.Context, subtaskID int64, execID string) (bool, error) {
 	// owned means the task executor can own and run the subtask without any other task executor running it.
+	// when owned = false, the task executor should not run the subtask.
 	owned := false
 	err := stm.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		vars := se.GetSessionVars()

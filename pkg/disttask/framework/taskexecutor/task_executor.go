@@ -560,6 +560,9 @@ func (s *BaseTaskExecutor) updateSubtaskStateAndErrorImpl(ctx context.Context, e
 	}
 }
 
+// startSubtask try to change the state of the subtask to running.
+// If the subtask is not owned by the task executor,
+// the update will fail and task executor should not run the subtask.
 func (s *BaseTaskExecutor) startSubtask(ctx context.Context, subtaskID int64) bool {
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	logger := logutil.Logger(s.logCtx)
