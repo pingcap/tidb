@@ -126,7 +126,7 @@ type StatsAnalyze interface {
 	// their associated instances being removed from the current cluster.
 	CleanupCorruptedAnalyzeJobsOnDeadInstances() error
 
-	// HandleAutoAnalyze analyzes the outdated tables.
+	// HandleAutoAnalyze analyzes the outdated tables. (The change percent of the table exceeds the threshold)
 	// It also analyzes newly created tables and newly added indexes.
 	HandleAutoAnalyze() (analyzed bool)
 

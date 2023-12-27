@@ -236,7 +236,7 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 	return nil
 }
 
-// HandleAutoAnalyze analyzes the outdated tables.
+// HandleAutoAnalyze analyzes the outdated tables. (The change percent of the table exceeds the threshold)
 // It also analyzes newly created tables and newly added indexes.
 func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
 	_ = statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
