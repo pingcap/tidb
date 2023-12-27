@@ -346,13 +346,13 @@ def go_deps():
         name = "com_github_apache_thrift",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/apache/thrift",
-        sha256 = "50d5c610df30fa2a6039394d5142382b7d9938870dfb12ef46bddfa3da250893",
-        strip_prefix = "github.com/apache/thrift@v0.16.0",
+        sha256 = "95e53f518af5dd201a7efa773db81dfcf3077767f01c1943b00cdbfae355fb34",
+        strip_prefix = "github.com/apache/thrift@v0.13.1-0.20201008052519-daf620915714",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/apache/thrift/com_github_apache_thrift-v0.16.0.zip",
-            "http://ats.apps.svc/gomod/github.com/apache/thrift/com_github_apache_thrift-v0.16.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/apache/thrift/com_github_apache_thrift-v0.16.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/apache/thrift/com_github_apache_thrift-v0.16.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/apache/thrift/com_github_apache_thrift-v0.13.1-0.20201008052519-daf620915714.zip",
+            "http://ats.apps.svc/gomod/github.com/apache/thrift/com_github_apache_thrift-v0.13.1-0.20201008052519-daf620915714.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/apache/thrift/com_github_apache_thrift-v0.13.1-0.20201008052519-daf620915714.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/apache/thrift/com_github_apache_thrift-v0.13.1-0.20201008052519-daf620915714.zip",
         ],
     )
     go_repository(
@@ -1646,13 +1646,13 @@ def go_deps():
         name = "com_github_dustin_go_humanize",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/dustin/go-humanize",
-        sha256 = "319404ea84c8a4e2d3d83f30988b006e7dd04976de3e1a1a90484ad94679fa46",
-        strip_prefix = "github.com/dustin/go-humanize@v1.0.1",
+        sha256 = "e01916e082a6646ea12d7800d77af43045c27284ff2a0a77e3484509989cc107",
+        strip_prefix = "github.com/dustin/go-humanize@v1.0.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/dustin/go-humanize/com_github_dustin_go_humanize-v1.0.1.zip",
-            "http://ats.apps.svc/gomod/github.com/dustin/go-humanize/com_github_dustin_go_humanize-v1.0.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/dustin/go-humanize/com_github_dustin_go_humanize-v1.0.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/dustin/go-humanize/com_github_dustin_go_humanize-v1.0.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/dustin/go-humanize/com_github_dustin_go_humanize-v1.0.0.zip",
+            "http://ats.apps.svc/gomod/github.com/dustin/go-humanize/com_github_dustin_go_humanize-v1.0.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/dustin/go-humanize/com_github_dustin_go_humanize-v1.0.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/dustin/go-humanize/com_github_dustin_go_humanize-v1.0.0.zip",
         ],
     )
     go_repository(
