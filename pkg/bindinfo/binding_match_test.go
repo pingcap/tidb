@@ -15,15 +15,51 @@
 package bindinfo
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/stretchr/testify/require"
 )
 
+func getTableName(n []*ast.Node) []string {
+	var result []string
+	for _, v := range n {
+		var sb strings.Builder
+		restoreFlags := format.RestoreKeyWordLowercase
+		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+		switch node := (*v).(type) {
+		case *ast.TableName:
+			node.Restore(restoreCtx)
+			result = append(result, sb.String())
+		case *ast.ColumnName:
+			if node.Schema.String() != "" {
+				result = append(result, fmt.Sprintf("%s.%s", node.Schema.String(), node.Table.String()))
+			} else {
+				result = append(result, fmt.Sprintf("%s", node.Table.String()))
+			}
+		}
+	}
+	return result
+}
+
 func TestExtractTableName(t *testing.T) {
-	stmt, err := parser.New().ParseOneStmt("select /*+ HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t1.a=t2.a where t1.b is not null;", "", "")
-	require.NoError(t, err)
-	rs := ExtractTableName(stmt)
-	require.Equal(t, 5, len(rs))
+	tc := []struct {
+		sql    string
+		tables []string
+	}{
+		{
+			"select /*+ HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t1.a=t2.a where t1.b is not null;",
+			[]string{"t1", "t1", "t1", "t2", "t1"},
+		},
+	}
+	for _, tt := range tc {
+		stmt, err := parser.New().ParseOneStmt(tt.sql, "", "")
+		require.NoError(t, err)
+		rs := ExtractTableName(stmt)
+		require.Equal(t, tt.tables, getTableName(rs))
+	}
 }
