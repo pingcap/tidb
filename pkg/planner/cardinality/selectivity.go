@@ -453,6 +453,7 @@ OUTER:
 	return ret, nodes, nil
 }
 
+// CalcTotalSelectivityForMVIdxPath ...TODO
 func CalcTotalSelectivityForMVIdxPath(
 	ctx sessionctx.Context,
 	coll *statistics.HistColl,
@@ -1013,6 +1014,7 @@ func crossValidationSelectivity(
 }
 
 var (
+	// CollectFilters4MVIndex ...TODO
 	CollectFilters4MVIndex func(
 		sctx sessionctx.Context,
 		filters []expression.Expression,
@@ -1022,6 +1024,7 @@ var (
 		remainingFilters []expression.Expression,
 	)
 
+	// BuildPartialPaths4MVIndex ...TODO
 	BuildPartialPaths4MVIndex func(
 		sctx sessionctx.Context,
 		accessFilters []expression.Expression,

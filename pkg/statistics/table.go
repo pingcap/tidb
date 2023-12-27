@@ -433,6 +433,7 @@ func (coll *HistColl) GetAnalyzeRowCount() float64 {
 	return -1
 }
 
+// GetScaledRealtimeAndModifyCnt ...TODO
 func (coll *HistColl) GetScaledRealtimeAndModifyCnt(scaleTarget float64) (realtimeCnt, modifyCnt int64) {
 	analyzeRowCount := coll.GetAnalyzeRowCount()
 	if analyzeRowCount <= 0 {
@@ -702,6 +703,7 @@ func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
 	return true
 }
 
+// PrepareCols4MVIndex ...TODO
 var PrepareCols4MVIndex func(
 	tableInfo *model.TableInfo,
 	mvIndex *model.IndexInfo,
