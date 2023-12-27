@@ -79,7 +79,7 @@ func TestRestoreMultiTables(t *testing.T) {
 	tk.MustExec("use br")
 
 	tablesNameSet := make(map[string]struct{})
-	tableNum := 100
+	tableNum := 1000
 	for i := 0; i < tableNum; i += 1 {
 		tk.MustExec(fmt.Sprintf("create table table_%d (a int primary key, b json, c varchar(20))", i))
 		tk.MustExec(fmt.Sprintf("insert into table_%d values (1, '{\"a\": 1, \"b\": 2}', '123')", i))
@@ -98,13 +98,16 @@ func TestRestoreMultiTables(t *testing.T) {
 	// restore database with backup data
 	tk.MustQuery("restore database * from 'local://" + tmpDir + "'")
 	tk.MustExec("use br")
-	ddlCreateTables := tk.MustQuery("admin show ddl jobs where JOB_TYPE = 'create tables'").Rows()[0][2].(string)
-	require.NotEqual(t, "", ddlCreateTables)
+	ddlCreateTablesRows := tk.MustQuery("admin show ddl jobs where JOB_TYPE = 'create tables'").Rows()
 	cnt := 0
-	for _, table := range strings.Split(ddlCreateTables, ",") {
-		_, ok := tablesNameSet[table]
-		require.True(t, ok)
-		cnt += 1
+	for _, row := range ddlCreateTablesRows {
+		tables := row[2].(string)
+		require.NotEqual(t, "", tables)
+		for _, table := range strings.Split(tables, ",") {
+			_, ok := tablesNameSet[table]
+			require.True(t, ok)
+			cnt += 1
+		}
 	}
 	require.Equal(t, tableNum, cnt)
 	for i := 0; i < tableNum; i += 1 {
