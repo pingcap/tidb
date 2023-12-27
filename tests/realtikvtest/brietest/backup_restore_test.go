@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
@@ -77,11 +78,13 @@ func TestRestoreMultiTables(t *testing.T) {
 	tk.MustExec("create database if not exists br")
 	tk.MustExec("use br")
 
+	tablesNameSet := make(map[string]struct{})
 	tableNum := 100
 	for i := 0; i < tableNum; i += 1 {
 		tk.MustExec(fmt.Sprintf("create table table_%d (a int primary key, b json, c varchar(20))", i))
 		tk.MustExec(fmt.Sprintf("insert into table_%d values (1, '{\"a\": 1, \"b\": 2}', '123')", i))
 		tk.MustQuery(fmt.Sprintf("select count(*) from table_%d", i)).Check(testkit.Rows("1"))
+		tablesNameSet[fmt.Sprintf("table_%d", i)] = struct{}{}
 	}
 
 	tmpDir := path.Join(os.TempDir(), "bk1")
@@ -95,6 +98,15 @@ func TestRestoreMultiTables(t *testing.T) {
 	// restore database with backup data
 	tk.MustQuery("restore database * from 'local://" + tmpDir + "'")
 	tk.MustExec("use br")
+	ddlCreateTables := tk.MustQuery("admin show ddl jobs where JOB_TYPE = 'create tables'").Rows()[0][2].(string)
+	require.NotEqual(t, "", ddlCreateTables)
+	cnt := 0
+	for _, table := range strings.Split(ddlCreateTables, ",") {
+		_, ok := tablesNameSet[table]
+		require.True(t, ok)
+		cnt += 1
+	}
+	require.Equal(t, tableNum, cnt)
 	for i := 0; i < tableNum; i += 1 {
 		tk.MustQuery(fmt.Sprintf("select count(*) from table_%d", i)).Check(testkit.Rows("1"))
 	}

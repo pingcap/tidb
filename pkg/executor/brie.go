@@ -100,7 +100,7 @@ func (p *brieTaskProgress) Close() {
 	p.lock.Lock()
 	current := atomic.LoadInt64(&p.current)
 	if current < p.total {
-		p.cmd = fmt.Sprintf("%s Cancelled", p.cmd)
+		p.cmd = fmt.Sprintf("%s Canceled", p.cmd)
 	}
 	atomic.StoreInt64(&p.current, p.total)
 	p.lock.Unlock()
