@@ -3,15 +3,19 @@
 package gluetidb
 
 import (
-	"bytes"
 	"context"
+<<<<<<< HEAD
 	"strings"
+=======
+	"time"
+>>>>>>> 8709bb53df5 (brie: support batch ddl for sql restore (#49089))
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
@@ -22,6 +26,17 @@ import (
 	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
+=======
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/session"
+	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+>>>>>>> 8709bb53df5 (brie: support batch ddl for sql restore (#49089))
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -32,11 +47,7 @@ var (
 	_ glue.Glue        = Glue{}
 )
 
-const (
-	defaultCapOfCreateTable    = 512
-	defaultCapOfCreateDatabase = 64
-	brComment                  = `/*from(br)*/`
-)
+const brComment = `/*from(br)*/`
 
 // New makes a new tidb glue.
 func New() Glue {
@@ -192,17 +203,7 @@ func (gs *tidbSession) ExecuteInternal(ctx context.Context, sql string, args ...
 
 // CreateDatabase implements glue.Session.
 func (gs *tidbSession) CreateDatabase(ctx context.Context, schema *model.DBInfo) error {
-	d := domain.GetDomain(gs.se).DDL()
-	query, err := gs.showCreateDatabase(schema)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	gs.se.SetValue(sessionctx.QueryString, query)
-	schema = schema.Clone()
-	if len(schema.Charset) == 0 {
-		schema.Charset = mysql.DefaultCharset
-	}
-	return d.CreateSchemaWithInfo(gs.se, schema, ddl.OnExistIgnore)
+	return errors.Trace(executor.BRIECreateDatabase(gs.se, schema, brComment))
 }
 
 // CreatePlacementPolicy implements glue.Session.
@@ -213,6 +214,7 @@ func (gs *tidbSession) CreatePlacementPolicy(ctx context.Context, policy *model.
 	return d.CreatePlacementPolicyWithInfo(gs.se, policy, ddl.OnExistIgnore)
 }
 
+<<<<<<< HEAD
 // SplitBatchCreateTable provide a way to split batch into small batch when batch size is large than 6 MB.
 // The raft entry has limit size of 6 MB, a batch of CreateTables may hit this limitation
 // TODO: shall query string be set for each split batch create, it looks does not matter if we set once for all.
@@ -298,6 +300,18 @@ func (gs *tidbSession) CreateTable(ctx context.Context, dbName model.CIStr, tabl
 	}
 
 	return d.CreateTableWithInfo(gs.se, dbName, table, append(cs, ddl.OnExistIgnore)...)
+=======
+// CreateTables implements glue.BatchCreateTableSession.
+func (gs *tidbSession) CreateTables(_ context.Context,
+	tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+	return errors.Trace(executor.BRIECreateTables(gs.se, tables, brComment, cs...))
+}
+
+// CreateTable implements glue.Session.
+func (gs *tidbSession) CreateTable(_ context.Context, dbName model.CIStr,
+	table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
+	return errors.Trace(executor.BRIECreateTable(gs.se, dbName, table, brComment, cs...))
+>>>>>>> 8709bb53df5 (brie: support batch ddl for sql restore (#49089))
 }
 
 // Close implements glue.Session.
@@ -308,30 +322,6 @@ func (gs *tidbSession) Close() {
 // GetGlobalVariables implements glue.Session.
 func (gs *tidbSession) GetGlobalVariable(name string) (string, error) {
 	return gs.se.GetSessionVars().GlobalVarsAccessor.GetTiDBTableValue(name)
-}
-
-// showCreateTable shows the result of SHOW CREATE TABLE from a TableInfo.
-func (gs *tidbSession) showCreateTable(tbl *model.TableInfo) (string, error) {
-	table := tbl.Clone()
-	table.AutoIncID = 0
-	result := bytes.NewBuffer(make([]byte, 0, defaultCapOfCreateTable))
-	// this can never fail.
-	_, _ = result.WriteString(brComment)
-	if err := executor.ConstructResultOfShowCreateTable(gs.se, tbl, autoid.Allocators{}, result); err != nil {
-		return "", errors.Trace(err)
-	}
-	return result.String(), nil
-}
-
-// showCreateDatabase shows the result of SHOW CREATE DATABASE from a dbInfo.
-func (gs *tidbSession) showCreateDatabase(db *model.DBInfo) (string, error) {
-	result := bytes.NewBuffer(make([]byte, 0, defaultCapOfCreateDatabase))
-	// this can never fail.
-	_, _ = result.WriteString(brComment)
-	if err := executor.ConstructResultOfShowCreateDatabase(gs.se, db, true, result); err != nil {
-		return "", errors.Trace(err)
-	}
-	return result.String(), nil
 }
 
 func (gs *tidbSession) showCreatePlacementPolicy(policy *model.PolicyInfo) string {

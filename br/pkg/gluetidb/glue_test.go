@@ -16,11 +16,10 @@ package gluetidb
 
 import (
 	"context"
-	"strconv"
 	"testing"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
+<<<<<<< HEAD
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
@@ -209,6 +208,14 @@ func TestSplitBatchCreateTableFailWithEntryTooLarge(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/ddl/RestoreBatchCreateTableEntryTooLarge"))
 }
 
+=======
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/stretchr/testify/require"
+)
+
+>>>>>>> 8709bb53df5 (brie: support batch ddl for sql restore (#49089))
 func TestTheSessionIsoation(t *testing.T) {
 	req := require.New(t)
 	store, _ := testkit.CreateMockStoreAndDomain(t)
