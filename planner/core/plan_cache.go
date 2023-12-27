@@ -438,7 +438,7 @@ func rebuildRange(p Plan) error {
 				if err != nil {
 					return err
 				}
-				if len(ranges.Ranges) == 0 || len(ranges.AccessConds) != len(x.AccessConditions) {
+				if len(ranges.Ranges) != 1 || len(ranges.AccessConds) != len(x.AccessConditions) {
 					return errors.New("failed to rebuild range: the length of the range has changed")
 				}
 				for i := range x.IndexValues {
@@ -456,7 +456,7 @@ func rebuildRange(p Plan) error {
 					if err != nil {
 						return err
 					}
-					if len(ranges) == 0 {
+					if len(ranges) != 1 {
 						return errors.New("failed to rebuild range: the length of the range has changed")
 					}
 					x.Handle = kv.IntHandle(ranges[0].LowVal[0].GetInt64())
