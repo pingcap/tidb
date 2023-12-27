@@ -164,7 +164,8 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		return err
 	}
 
-	enableMPPRecovery := true
+    // For now, mpp err recovery only support MemLimit, which is only useful when AutoScaler is used.
+	enableMPPRecovery := config.GetGlobalConfig().UseAutoScaler && config.GetGlobalConfig().DisaggregatedTiFlash
 	holdCap := mppErrRecoveryHoldChkCap * e.Ctx().GetSessionVars().MaxChunkSize
 	useAutoScaler := config.GetGlobalConfig().UseAutoScaler
 	disaggTiFlash := config.GetGlobalConfig().DisaggregatedTiFlash
