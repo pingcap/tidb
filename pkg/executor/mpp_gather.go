@@ -165,16 +165,9 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	}
 
 	// For now, mpp err recovery only support MemLimit, which is only useful when AutoScaler is used.
-	enableMPPRecovery := config.GetGlobalConfig().UseAutoScaler && config.GetGlobalConfig().DisaggregatedTiFlash
+	disaggTiFlashWithAutoScaler := config.GetGlobalConfig().DisaggregatedTiFlash && config.GetGlobalConfig().UseAutoScaler
+	enableMPPRecovery := disaggTiFlashWithAutoScaler
 	holdCap := mppErrRecoveryHoldChkCap * e.Ctx().GetSessionVars().MaxChunkSize
-	useAutoScaler := config.GetGlobalConfig().UseAutoScaler
-	disaggTiFlash := config.GetGlobalConfig().DisaggregatedTiFlash
-
-	// For now, mpp err recovery only support MemLimit, which is only useful when AutoScaler is used.
-	// So disable recovery in normal case.
-	if !disaggTiFlash || !useAutoScaler {
-		enableMPPRecovery = false
-	}
 
 	failpoint.Inject("mpp_recovery_test_force_enable", func() {
 		enableMPPRecovery = true
@@ -185,7 +178,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		enableMPPRecovery = false
 	}
 
-	e.mppErrRecovery = mpperr.NewRecoveryHandler(useAutoScaler, uint64(holdCap), enableMPPRecovery, e.memTracker)
+	e.mppErrRecovery = mpperr.NewRecoveryHandler(disaggTiFlashWithAutoScaler, uint64(holdCap), enableMPPRecovery, e.memTracker)
 	return nil
 }
 
