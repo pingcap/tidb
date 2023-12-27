@@ -24,23 +24,19 @@ import (
 //		                            ┌────────┐
 //		                ┌───────────│resuming│◄────────┐
 //		                │           └────────┘         │
-//		                │           ┌───────┐       ┌──┴───┐
-//		                │ ┌────────►│pausing├──────►│paused│
-//		                │ │         └───────┘       └──────┘
-//		                ▼ │
-//		┌───────┐     ┌───┴───┐     ┌────────┐
+//		┌──────┐        │           ┌───────┐       ┌──┴───┐
+//		│failed│        │ ┌────────►│pausing├──────►│paused│
+//		└──────┘        │ │         └───────┘       └──────┘
+//		   ▲            ▼ │
+//		┌──┴────┐     ┌───┴───┐     ┌────────┐
 //		│pending├────►│running├────►│succeed │
-//		└──┬────┘     └───┬───┘     └────────┘
-//		   ▼              │         ┌──────────┐
-//		┌──────┐          ├────────►│cancelling│
-//		│failed│          │         └────┬─────┘
-//		└──────┘          │              ▼
-//		                  │         ┌─────────┐     ┌────────┐
-//		                  └────────►│reverting├────►│reverted│
-//		                            └────┬────┘     └────────┘
-//		                                 │          ┌─────────────┐
-//		                                 └─────────►│revert_failed│
-//		                                            └─────────────┘
+//		└──┬────┘     └──┬┬───┘     └────────┘
+//		   │             ││         ┌─────────┐     ┌────────┐
+//		   │             │└────────►│reverting├────►│reverted│
+//		   │             ▼          └────┬────┘     └────────┘
+//		   │          ┌──────────┐    ▲  │          ┌─────────────┐
+//		   └─────────►│cancelling├────┘  └─────────►│revert_failed│
+//		              └──────────┘                  └─────────────┘
 //	 1. succeed:		pending -> running -> succeed
 //	 2. failed:			pending -> running -> reverting -> reverted/revert_failed, pending -> failed
 //	 3. canceled:		pending -> running -> cancelling -> reverting -> reverted/revert_failed
@@ -141,14 +137,16 @@ type Task struct {
 	Step  Step
 	// Priority is the priority of task, the smaller value means the higher priority.
 	// valid range is [1, 1024], default is NormalPriority.
-	Priority    int
+	Priority int
+	// Concurrency controls the max resource usage of the task, i.e. the max number
+	// of slots the task can use on each node.
 	Concurrency int
 	CreateTime  time.Time
 
 	// depends on query, below fields might not be filled.
 
-	// DispatcherID is not used now.
-	DispatcherID    string
+	// SchedulerID is not used now.
+	SchedulerID     string
 	StartTime       time.Time
 	StateUpdateTime time.Time
 	Meta            []byte
@@ -160,6 +158,11 @@ func (t *Task) IsDone() bool {
 	return t.State == TaskStateSucceed || t.State == TaskStateReverted ||
 		t.State == TaskStateFailed
 }
+
+var (
+	// EmptyMeta is the empty meta of subtask.
+	EmptyMeta = []byte("{}")
+)
 
 // Compare compares two tasks by task order.
 func (t *Task) Compare(other *Task) int {
@@ -176,7 +179,7 @@ func (t *Task) Compare(other *Task) int {
 }
 
 // Subtask represents the subtask of distribute framework.
-// Each task is divided into multiple subtasks by dispatcher.
+// Each task is divided into multiple subtasks by scheduler.
 type Subtask struct {
 	ID   int64
 	Step Step
@@ -199,8 +202,13 @@ type Subtask struct {
 	// it can be used as subtask end time if the subtask is finished.
 	// it's 0 if it hasn't started yet.
 	UpdateTime time.Time
-	Meta       []byte
-	Summary    string
+	// Meta is the metadata of subtask, should not be nil.
+	// meta of different subtasks of same step must be different too.
+	Meta    []byte
+	Summary string
+	// Ordinal is the ordinal of subtask, should be unique for some task and step.
+	// starts from 1, for reverting subtask, it's NULL in database.
+	Ordinal int
 }
 
 func (t *Subtask) String() string {
@@ -215,15 +223,17 @@ func (t *Subtask) IsFinished() bool {
 }
 
 // NewSubtask create a new subtask.
-func NewSubtask(step Step, taskID int64, tp TaskType, execID string, concurrency int, meta []byte) *Subtask {
-	return &Subtask{
+func NewSubtask(step Step, taskID int64, tp TaskType, execID string, concurrency int, meta []byte, ordinal int) *Subtask {
+	s := &Subtask{
 		Step:        step,
 		Type:        tp,
 		TaskID:      taskID,
 		ExecID:      execID,
 		Concurrency: concurrency,
 		Meta:        meta,
+		Ordinal:     ordinal,
 	}
+	return s
 }
 
 // MinimalTask is the minimal task of distribute framework.

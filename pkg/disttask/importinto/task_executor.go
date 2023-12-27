@@ -35,7 +35,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/disttask/operator"
-	"github.com/pingcap/tidb/pkg/executor/asyncloaddata"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -81,8 +80,8 @@ func getTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (*i
 
 	return importer.NewTableImporter(&importer.JobImportParam{
 		GroupCtx: ctx,
-		Progress: asyncloaddata.NewProgress(false),
-		Job:      &asyncloaddata.Job{},
+		Progress: importer.NewProgress(),
+		Job:      &importer.Job{},
 	}, controller, taskID)
 }
 
@@ -133,7 +132,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		// Unlike in Lightning, we start an index engine for each subtask,
 		// whereas previously there was only a single index engine globally.
 		// This is because the executor currently does not have a post-processing mechanism.
-		// If we import the index in `cleanupSubtaskEnv`, the dispatcher will not wait for the import to complete.
+		// If we import the index in `cleanupSubtaskEnv`, the scheduler will not wait for the import to complete.
 		// Multiple index engines may suffer performance degradation due to range overlap.
 		// These issues will be alleviated after we integrate s3 sorter.
 		// engineID = -1, -2, -3, ...
@@ -146,7 +145,7 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		TableImporter:    s.tableImporter,
 		DataEngine:       dataEngine,
 		IndexEngine:      indexEngine,
-		Progress:         asyncloaddata.NewProgress(false),
+		Progress:         importer.NewProgress(),
 		Checksum:         &verification.KVChecksum{},
 		SortedDataMeta:   &external.SortedKVMeta{},
 		SortedIndexMetas: make(map[int64]*external.SortedKVMeta),
@@ -310,9 +309,21 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	logger.Info("merge sort partSize", zap.String("size", units.BytesSize(float64(m.partSize))))
 
-	return external.MergeOverlappingFiles(ctx, sm.DataFiles, m.controller.GlobalSortStore, m.partSize, 64*1024,
-		prefix, getKVGroupBlockSize(sm.KVGroup), 8*1024, 1*size.MB, 8*1024,
-		onClose, int(m.taskMeta.Plan.ThreadCnt), false)
+	return external.MergeOverlappingFiles(
+		ctx,
+		sm.DataFiles,
+		m.controller.GlobalSortStore,
+		m.partSize,
+		64*1024,
+		prefix,
+		getKVGroupBlockSize(sm.KVGroup),
+		external.DefaultMemSizeLimit,
+		8*1024,
+		1*size.MB,
+		8*1024,
+		onClose,
+		int(m.taskMeta.Plan.ThreadCnt),
+		false)
 }
 
 func (m *mergeSortStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {

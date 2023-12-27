@@ -26,10 +26,10 @@ import (
 func TestFrameworkRollback(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
 	defer ctrl.Finish()
-	testutil.RegisterRollbackTaskMeta(t, ctrl, testutil.GetMockRollbackDispatcherExt(ctrl), testContext)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/cancelTaskAfterRefreshTask", "2*return(true)"))
+	testutil.RegisterRollbackTaskMeta(t, ctrl, testutil.GetMockRollbackSchedulerExt(ctrl), testContext)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/cancelTaskAfterRefreshTask", "2*return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/cancelTaskAfterRefreshTask"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/cancelTaskAfterRefreshTask"))
 	}()
 
 	testutil.DispatchTaskAndCheckState(ctx, t, "key1", testContext, proto.TaskStateReverted)

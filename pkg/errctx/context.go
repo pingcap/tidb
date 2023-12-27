@@ -176,6 +176,4 @@ func init() {
 	for _, errCode := range truncateErrCodes {
 		errGroupMap[errCode] = ErrGroupTruncate
 	}
-
-	errGroupMap[errno.ErrDataOutOfRange] = ErrGroupOverflow
 }

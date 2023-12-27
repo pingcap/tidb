@@ -32,10 +32,10 @@ const (
 
 // status for task
 const (
-	DispatchingStatus = "dispatching"
-	WaitingStatus     = "waiting"
-	RunningStatus     = "running"
-	CompletedStatus   = "completed"
+	SchedulingStatus = "scheduling"
+	WaitingStatus    = "waiting"
+	RunningStatus    = "running"
+	CompletedStatus  = "completed"
 )
 
 var (
@@ -132,13 +132,13 @@ func UpdateMetricsForAddTask(task *proto.Task) {
 func UpdateMetricsForDispatchTask(id int64, taskType proto.TaskType) {
 	DistTaskGauge.WithLabelValues(taskType.String(), WaitingStatus).Dec()
 	DistTaskStarttimeGauge.DeleteLabelValues(taskType.String(), WaitingStatus, fmt.Sprint(id))
-	DistTaskStarttimeGauge.WithLabelValues(taskType.String(), DispatchingStatus, fmt.Sprint(id)).SetToCurrentTime()
+	DistTaskStarttimeGauge.WithLabelValues(taskType.String(), SchedulingStatus, fmt.Sprint(id)).SetToCurrentTime()
 }
 
 // UpdateMetricsForRunTask update metrics when a task starts running
 func UpdateMetricsForRunTask(task *proto.Task) {
-	DistTaskStarttimeGauge.DeleteLabelValues(task.Type.String(), DispatchingStatus, fmt.Sprint(task.ID))
-	DistTaskGauge.WithLabelValues(task.Type.String(), DispatchingStatus).Dec()
+	DistTaskStarttimeGauge.DeleteLabelValues(task.Type.String(), SchedulingStatus, fmt.Sprint(task.ID))
+	DistTaskGauge.WithLabelValues(task.Type.String(), SchedulingStatus).Dec()
 	DistTaskGauge.WithLabelValues(task.Type.String(), RunningStatus).Inc()
 }
 

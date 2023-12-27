@@ -353,7 +353,6 @@ func CastValue(ctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, r
 	}
 
 	err = sc.HandleTruncate(err)
-	err = sc.HandleOverflow(err, err)
 
 	if forceIgnoreTruncate {
 		err = nil

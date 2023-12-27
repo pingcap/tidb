@@ -18,7 +18,7 @@ go_library(
         "fragment.go",
         "handle_cols.go",
         "hashcode.go",
-        "hints.go",
+        "hint_utils.go",
         "indexmerge_path.go",
         "initialize.go",
         "logical_plan_builder.go",

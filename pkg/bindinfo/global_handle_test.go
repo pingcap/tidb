@@ -94,7 +94,7 @@ func TestBindingLastUpdateTimeWithInvalidBind(t *testing.T) {
 	require.Equal(t, updateTime0, "0000-00-00 00:00:00")
 
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t`', 'select * from `test` . `t` use index(`idx`)', 'test', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '', '', '')")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int)")
@@ -267,9 +267,9 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 
 	// Simulate creating bindings on other machines
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT /*+ USE_INDEX(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 10', 'test', 'deleted', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '', '', '')")
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT /*+ USE_INDEX(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 10', 'test', 'enabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '', '', '')")
 	dom.BindHandle().Clear()
 	tk.MustExec("set binding disabled for select * from t where a > 10")
 	tk.MustExec("admin reload bindings")
@@ -282,9 +282,9 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 
 	// Simulate creating bindings on other machines
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT * FROM `test`.`t` WHERE `a` > 10', 'test', 'deleted', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '', '', '')")
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT * FROM `test`.`t` WHERE `a` > 10', 'test', 'disabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '', '', '')")
 	dom.BindHandle().Clear()
 	tk.MustExec("set binding enabled for select * from t where a > 10")
 	tk.MustExec("admin reload bindings")

@@ -93,7 +93,6 @@ func (t *memoryLimitTuner) tuning() {
 				}
 				failpoint.Inject("mockUpdateGlobalVarDuringAdjustPercentage", func(val failpoint.Value) {
 					if val, ok := val.(bool); val && ok {
-						resetInterval = 5 * time.Second
 						time.Sleep(300 * time.Millisecond)
 						t.UpdateMemoryLimit()
 					}

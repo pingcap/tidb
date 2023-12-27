@@ -71,7 +71,6 @@ license:
 		--run_under="cd $(CURDIR) && " \
 		 @com_github_apache_skywalking_eyes//cmd/license-eye:license-eye --run_under="cd $(CURDIR) && "  -- -c ./.github/licenserc.yml  header check
 
-
 tidy:
 	@echo "go mod tidy"
 	./tools/check/check-tidy.sh
@@ -87,10 +86,13 @@ check-parallel:
 		xargs -0 grep -F -n "t.Parallel()" || \
 		! echo "Error: all the go tests should be run in serial."
 
+CLEAN_UT_BINARY := find . -name '*.test.bin'| xargs rm -f
+
 clean: failpoint-disable
 	$(GO) clean -i ./...
 	rm -rf $(TEST_COVERAGE_DIR)
-	
+	@$(CLEAN_UT_BINARY)
+
 # Split tests for CI to run `make test` in parallel.
 test: test_part_1 test_part_2
 	@>&2 echo "Great, all tests passed."
@@ -126,8 +128,6 @@ integrationtest: server_check
 
 ddltest:
 	@cd cmd/ddltest && $(GO) test --tags=deadllock,intest -o ../../bin/ddltest -c
-
-CLEAN_UT_BINARY := find . -name '*.test.bin'| xargs rm
 
 ut: tools/bin/ut tools/bin/xprog failpoint-enable
 	tools/bin/ut $(X) || { $(FAILPOINT_DISABLE); exit 1; }
@@ -267,7 +267,8 @@ tools/bin/vfsgendev:
 tools/bin/gotestsum:
 	GOBIN=$(shell pwd)/tools/bin $(GO) install gotest.tools/gotestsum@v1.8.1
 
-tools/bin/mockgen:
+# mockgen@v0.2.0 is imcompatible with v0.3.0, so install it always.
+mockgen:
 	GOBIN=$(shell pwd)/tools/bin $(GO) install go.uber.org/mock/mockgen@v0.3.0
 
 # Usage:
@@ -375,20 +376,20 @@ br_compatibility_test_prepare:
 br_compatibility_test:
 	@cd br && tests/run_compatible.sh run
 
-mock_s3iface: tools/bin/mockgen
+mock_s3iface: mockgen
 	tools/bin/mockgen -package mock github.com/aws/aws-sdk-go/service/s3/s3iface S3API > br/pkg/mock/s3iface.go
 
 # mock interface for lightning and IMPORT INTO
-mock_lightning: tools/bin/mockgen
+mock_lightning: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/lightning/backend Backend,EngineWriter,TargetInfoGetter,ChunkFlushStatus > br/pkg/mock/backend.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/lightning/backend/encode Encoder,EncodingBuilder,Rows,Row > br/pkg/mock/encode.go
 	tools/bin/mockgen -package mocklocal github.com/pingcap/tidb/br/pkg/lightning/backend/local DiskUsage,TiKVModeSwitcher > br/pkg/mock/mocklocal/local.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/utils TaskRegister > br/pkg/mock/task_register.go
 
-gen_mock: tools/bin/mockgen
+gen_mock: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor TaskTable,Pool,TaskExecutor,Extension > pkg/disttask/framework/mock/task_executor_mock.go
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/dispatcher Dispatcher,CleanUpRoutine,TaskManager > pkg/disttask/framework/mock/dispatcher_mock.go
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/dispatcher Extension > pkg/disttask/framework/dispatcher/mock/dispatcher_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/scheduler Scheduler,CleanUpRoutine,TaskManager > pkg/disttask/framework/mock/scheduler_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/scheduler Extension > pkg/disttask/framework/scheduler/mock/scheduler_mock.go
 	tools/bin/mockgen -package execute github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute SubtaskExecutor > pkg/disttask/framework/mock/execute/execute_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/importinto MiniTaskExecutor > pkg/disttask/importinto/mock/import_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/disttask/framework/planner LogicalPlan,PipelineSpec > pkg/disttask/framework/mock/plan_mock.go
