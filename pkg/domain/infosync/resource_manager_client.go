@@ -58,7 +58,7 @@ func NewMockResourceManagerClient() pd.ResourceManagerClient {
 
 var _ pd.ResourceManagerClient = (*mockResourceManagerClient)(nil)
 
-func (m *mockResourceManagerClient) ListResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, error) {
+func (m *mockResourceManagerClient) ListResourceGroups(ctx context.Context, opts ...pd.GetResourceGroupOption) ([]*rmpb.ResourceGroup, error) {
 	m.RLock()
 	defer m.RUnlock()
 	groups := make([]*rmpb.ResourceGroup, 0, len(m.groups))
@@ -68,7 +68,7 @@ func (m *mockResourceManagerClient) ListResourceGroups(ctx context.Context) ([]*
 	return groups, nil
 }
 
-func (m *mockResourceManagerClient) GetResourceGroup(ctx context.Context, name string) (*rmpb.ResourceGroup, error) {
+func (m *mockResourceManagerClient) GetResourceGroup(ctx context.Context, name string, opts ...pd.GetResourceGroupOption) (*rmpb.ResourceGroup, error) {
 	m.RLock()
 	defer m.RUnlock()
 	group, ok := m.groups[name]
