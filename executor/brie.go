@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -88,10 +87,6 @@ func (p *brieTaskProgress) GetCurrent() int64 {
 // Close implements glue.Progress
 func (p *brieTaskProgress) Close() {
 	p.lock.Lock()
-	current := atomic.LoadInt64(&p.current)
-	if current < p.total {
-		p.cmd = fmt.Sprintf("%s Canceled", p.cmd)
-	}
 	atomic.StoreInt64(&p.current, p.total)
 	p.lock.Unlock()
 }
