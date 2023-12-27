@@ -43,6 +43,10 @@ alter table t2 modify column a decimal(30, 15);
 Error 1832 (HY000): Cannot change column 'a': used in a foreign key constraint 'fk'
 alter table t2 modify column a decimal(5, 2);
 Error 1832 (HY000): Cannot change column 'a': used in a foreign key constraint 'fk'
+drop table t1, t2;
+create table t1 (a bigint(10) key);
+create table t2 (a bigint(10), constraint fk foreign key (a) references t1(a));
+alter table t2 modify column a bigint(5);
 set @@global.tidb_enable_foreign_key=default;
 set @@foreign_key_checks=default;
 set @@global.tidb_enable_foreign_key=1;
