@@ -90,11 +90,15 @@ type ConstLevel uint
 const (
 	// ConstNone indicates the expression is not a constant expression.
 	// The evaluation result may be different for different input rows.
+	// e.g. `col_a * 2`, `substring(col_b, 5, 3)`.
 	ConstNone ConstLevel = iota
 	// ConstOnlyInContext indicates the expression is only a constant for a same context.
+	// This is mainly for Plan Cache, e.g. `prepare st from 'select * from t where a<1+?'`, where 
+	// the value of `?` may change between different Contexts (executions).
 	ConstOnlyInContext
 	// ConstStrict indicates the expression is a constant expression.
 	// The evaluation result is always the same no matter the input context or rows.
+	// e.g. `1 + 2`, `substring("TiDB SQL Tutorial", 5, 3) + 'abcde'`
 	ConstStrict
 )
 
