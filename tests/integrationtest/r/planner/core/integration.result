@@ -2,29 +2,29 @@ set tidb_cost_model_version=2;
 drop table if exists t;
 create table t(a varchar(10), b int, c int);
 show columns from t where true;
-Field	Null	Key	Default	Extra
+Field	Type	Null	Key	Default	Extra
 a	varchar(10)	YES		NULL	
 b	int(11)	YES		NULL	
 c	int(11)	YES		NULL	
 show columns from t where field = 'b';
-Field	Null	Key	Default	Extra
+Field	Type	Null	Key	Default	Extra
 b	int(11)	YES		NULL	
 show columns from t where field in (select 'b');
-Field	Null	Key	Default	Extra
+Field	Type	Null	Key	Default	Extra
 b	int(11)	YES		NULL	
 show columns from t where field in (select 'b') and true;
-Field	Null	Key	Default	Extra
+Field	Type	Null	Key	Default	Extra
 b	int(11)	YES		NULL	
 show columns from t where field in (select 'b') and false;
-Field	Null	Key	Default	Extra
+Field	Type	Null	Key	Default	Extra
 insert into t values('c', 0, 0);
 show columns from t where field < all (select a from t);
-Field	Null	Key	Default	Extra
+Field	Type	Null	Key	Default	Extra
 b	int(11)	YES		NULL	
 a	varchar(10)	YES		NULL	
 insert into t values('b', 0, 0);
 show columns from t where field < all (select a from t);
-Field	Null	Key	Default	Extra
+Field	Type	Null	Key	Default	Extra
 a	varchar(10)	YES		NULL	
 drop table if exists t;
 create table t(a int, b int);
@@ -428,12 +428,10 @@ KEY IDXM (COL3,COL2));
 insert into PK_MULTI_COL_5177(col1, col2, col3) values(0x00000000000000000000, 0x002B200DF5BA03E59F82, 1);
 select col1, col2 from PK_MULTI_COL_5177 where col1 = 0x00000000000000000000 and col2 in (0x002B200DF5BA03E59F82, 0x002B200DF5BA03E59F82, 0x002B200DF5BA03E59F82);
 col1	col2
-          	 + 
-ï¿½ï¿½åŸ‚
+          	 + õºåŸ‚
 select col1, col2 from PK_MULTI_COL_5177 where col1 = 0x00000000000000000000 and col2 = 0x002B200DF5BA03E59F82;
 col1	col2
-          	 + 
-ï¿½ï¿½åŸ‚
+          	 + õºåŸ‚
 drop table if exists t;
 create table t(a int, b int);
 select count(a) as b from t group by a order by b;
@@ -2921,7 +2919,7 @@ count(*)
 1
 select * from t where a=0x00A4EEF4FA55D6706ED5;
 a
- ï¿½ï¿½ï¿½ï¿½Uï¿½pnï¿½
+ ¤îôúUÖpnÕ
 drop table if exists BB;
 CREATE TABLE `BB` (
 `col_int` int(11) DEFAULT NULL,
@@ -3416,7 +3414,7 @@ update t set a = 'hig' where from_base64('invalidbase64');
 select * from t where from_base64('test');
 a
 update t set a = 'xyz' where from_base64('test');
-Error 1292 (22007): Truncated incorrect DOUBLE value: 'ï¿½ï¿½-'
+Error 1292 (22007): Truncated incorrect DOUBLE value: 'µë-'
 select * from t;
 a
 abc
