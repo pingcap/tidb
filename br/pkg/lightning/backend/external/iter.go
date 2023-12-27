@@ -638,11 +638,11 @@ func newMergePropBaseIter(
 		i := 0
 		// newLimitSizeMergeIter will open #limit readers at the beginning, so we
 		// parallel open them
-		eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+		eg := util.NewErrorGroupWithRecover()
 		for ; i < int(limit); i++ {
 			path := multiStat.Filenames[i][1]
 			eg.Go(func() error {
-				rd, err := newStatsReader(egCtx, exStorage, path, 500*1024)
+				rd, err := newStatsReader(ctx, exStorage, path, 500*1024)
 				select {
 				case <-closeCh:
 					return errors.New("mergePropBaseIter is closed")
