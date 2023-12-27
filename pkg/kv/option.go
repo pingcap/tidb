@@ -110,7 +110,15 @@ const (
 	LoadBasedReplicaReadThreshold
 	// TiKVClientReadTimeout sets the timeout value for readonly kv request in milliseconds
 	TiKVClientReadTimeout
+	// SizeLimits sets the size limits of membuf
+	SizeLimits
 )
+
+// TxnSizeLimits is the argument type for `SizeLimits` option
+type TxnSizeLimits struct {
+	Entry uint64
+	Total uint64
+}
 
 // ReplicaReadType is the type of replica to read data from
 type ReplicaReadType byte

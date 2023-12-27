@@ -170,8 +170,7 @@ func (c *bindCache) GetAllBindings() []*BindRecord {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	values := c.cache.Values()
-	//nolint: prealloc
-	var bindRecords []*BindRecord
+	bindRecords := make([]*BindRecord, 0, len(values))
 	for _, vals := range values {
 		bindRecords = append(bindRecords, vals.([]*BindRecord)...)
 	}

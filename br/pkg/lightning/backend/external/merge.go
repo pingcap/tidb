@@ -23,6 +23,7 @@ func MergeOverlappingFiles(
 	readBufferSize int,
 	newFilePrefix string,
 	blockSize int,
+	memSizeLimit uint64,
 	writeBatchCount uint64,
 	propSizeDist uint64,
 	propKeysDist uint64,
@@ -61,7 +62,7 @@ func MergeOverlappingFiles(
 				readBufferSize,
 				newFilePrefix,
 				uuid.New().String(),
-				DefaultMemSizeLimit,
+				memSizeLimit,
 				blockSize,
 				writeBatchCount,
 				propSizeDist,
@@ -157,9 +158,5 @@ func mergeOverlappingFilesInternal(
 		})
 	}
 
-	err = writer.Close(ctx)
-	if err != nil {
-		return err
-	}
-	return nil
+	return writer.Close(ctx)
 }

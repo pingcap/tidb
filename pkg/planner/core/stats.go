@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
@@ -309,7 +310,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 	)
 	// step1: if user prefer tiFlash store type, tiFlash path should always be built anyway ahead.
 	var tiflashPath *util.AccessPath
-	if ds.preferStoreType&preferTiFlash != 0 {
+	if ds.preferStoreType&h.PreferTiFlash != 0 {
 		for _, path := range ds.possibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
 				err := ds.deriveTablePathStats(path, ds.pushedDownConds, false)
@@ -402,7 +403,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 		ds.possibleAccessPaths[0] = selected
 		ds.possibleAccessPaths = ds.possibleAccessPaths[:1]
 		// if user wanna tiFlash read, while current heuristic choose a TiKV path. so we shouldn't prune tiFlash path.
-		keep := ds.preferStoreType&preferTiFlash != 0 && selected.StoreType != kv.TiFlash
+		keep := ds.preferStoreType&h.PreferTiFlash != 0 && selected.StoreType != kv.TiFlash
 		if keep {
 			// also keep tiflash path as well.
 			ds.possibleAccessPaths = append(ds.possibleAccessPaths, tiflashPath)
@@ -1002,7 +1003,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 		// Build push-downed predicates.
 		if len(p.cte.pushDownPredicates) > 0 {
 			newCond := expression.ComposeDNFCondition(p.SCtx(), p.cte.pushDownPredicates...)
-			newSel := LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.SCtx(), p.cte.seedPartLogicalPlan.SelectBlockOffset())
+			newSel := LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.SCtx(), p.cte.seedPartLogicalPlan.QueryBlockOffset())
 			newSel.SetChildren(p.cte.seedPartLogicalPlan)
 			p.cte.seedPartLogicalPlan = newSel
 			p.cte.optFlag |= flagPredicatePushDown

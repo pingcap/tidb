@@ -45,7 +45,15 @@ import (
 // return a batch of rows, other than a single row in Volcano.
 // NOTE: Executors must call "chk.Reset()" before appending their results to it.
 type Executor interface {
-	Base() *BaseExecutor
+	NewChunk() *chunk.Chunk
+	NewChunkWithCapacity(fields []*types.FieldType, capacity int, maxCachesize int) *chunk.Chunk
+
+	RuntimeStats() *execdetails.BasicRuntimeStats
+
+	HandleSQLKillerSignal() error
+	RegisterSQLAndPlanInExecForTopSQL()
+
+	AllChildren() []Executor
 	Open(context.Context) error
 	Next(ctx context.Context, req *chunk.Chunk) error
 	Close() error
@@ -156,11 +164,6 @@ func (e *BaseExecutor) SetMaxChunkSize(size int) {
 	e.maxChunkSize = size
 }
 
-// Base returns the BaseExecutor of an executor, don't override this method!
-func (e *BaseExecutor) Base() *BaseExecutor {
-	return e
-}
-
 // Open initializes children recursively and "childrenResults" according to children's schemas.
 func (e *BaseExecutor) Open(ctx context.Context) error {
 	for _, child := range e.children {
@@ -239,23 +242,43 @@ func (e *BaseExecutor) ReleaseSysSession(ctx context.Context, sctx sessionctx.Co
 	sysSessionPool.Put(sctx.(pools.Resource))
 }
 
+// NewChunk creates a new chunk according to the executor configuration
+func (e *BaseExecutor) NewChunk() *chunk.Chunk {
+	return e.NewChunkWithCapacity(e.RetFieldTypes(), e.InitCap(), e.MaxChunkSize())
+}
+
+// NewChunkWithCapacity allows the caller to allocate the chunk with any types, capacity and max size in the pool
+func (e *BaseExecutor) NewChunkWithCapacity(fields []*types.FieldType, capacity int, maxCachesize int) *chunk.Chunk {
+	return e.ctx.GetSessionVars().GetNewChunkWithCapacity(fields, capacity, maxCachesize, e.AllocPool)
+}
+
+// HandleSQLKillerSignal handles the signal sent by SQLKiller
+func (e *BaseExecutor) HandleSQLKillerSignal() error {
+	return e.ctx.GetSessionVars().SQLKiller.HandleSignal()
+}
+
+// RegisterSQLAndPlanInExecForTopSQL registers the current SQL and Plan on top sql
+// TODO: consider whether it's appropriate to have this on executor
+func (e *BaseExecutor) RegisterSQLAndPlanInExecForTopSQL() {
+	sessVars := e.ctx.GetSessionVars()
+	if topsqlstate.TopSQLEnabled() && sessVars.StmtCtx.IsSQLAndPlanRegistered.CompareAndSwap(false, true) {
+		RegisterSQLAndPlanInExecForTopSQL(sessVars)
+	}
+}
+
 // TryNewCacheChunk tries to get a cached chunk
 func TryNewCacheChunk(e Executor) *chunk.Chunk {
-	base := e.Base()
-	s := base.Ctx().GetSessionVars()
-	return s.GetNewChunkWithCapacity(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize(), base.AllocPool)
+	return e.NewChunk()
 }
 
 // RetTypes returns all output column types.
 func RetTypes(e Executor) []*types.FieldType {
-	base := e.Base()
-	return base.RetFieldTypes()
+	return e.RetFieldTypes()
 }
 
 // NewFirstChunk creates a new chunk to buffer current executor's result.
 func NewFirstChunk(e Executor) *chunk.Chunk {
-	base := e.Base()
-	return chunk.New(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize())
+	return chunk.New(e.RetFieldTypes(), e.InitCap(), e.MaxChunkSize())
 }
 
 // Open is a wrapper function on e.Open(), it handles some common codes.
@@ -270,29 +293,26 @@ func Open(ctx context.Context, e Executor) (err error) {
 
 // Next is a wrapper function on e.Next(), it handles some common codes.
 func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
-	base := e.Base()
-	if base.RuntimeStats() != nil {
+	if e.RuntimeStats() != nil {
 		start := time.Now()
-		defer func() { base.RuntimeStats().Record(time.Since(start), req.NumRows()) }()
+		defer func() { e.RuntimeStats().Record(time.Since(start), req.NumRows()) }()
 	}
-	sessVars := base.Ctx().GetSessionVars()
-	if err := sessVars.SQLKiller.HandleSignal(); err != nil {
+
+	if err := e.HandleSQLKillerSignal(); err != nil {
 		return err
 	}
 
 	r, ctx := tracing.StartRegionEx(ctx, fmt.Sprintf("%T.Next", e))
 	defer r.End()
 
-	if topsqlstate.TopSQLEnabled() && sessVars.StmtCtx.IsSQLAndPlanRegistered.CompareAndSwap(false, true) {
-		RegisterSQLAndPlanInExecForTopSQL(sessVars)
-	}
+	e.RegisterSQLAndPlanInExecForTopSQL()
 	err := e.Next(ctx, req)
 
 	if err != nil {
 		return err
 	}
 	// recheck whether the session/query is killed during the Next()
-	return sessVars.SQLKiller.HandleSignal()
+	return e.HandleSQLKillerSignal()
 }
 
 // Close is a wrapper function on e.Close(), it handles some common codes.

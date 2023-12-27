@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
@@ -37,7 +38,7 @@ func extractJoinGroup(p LogicalPlan) *joinGroupResult {
 	joinMethodHintInfo := make(map[int]*joinMethodHint)
 	var (
 		group             []LogicalPlan
-		joinOrderHintInfo []*tableHintInfo
+		joinOrderHintInfo []*h.TableHintInfo
 		eqEdges           []*expression.ScalarFunction
 		otherConds        []expression.Expression
 		joinTypes         []*joinTypeWithExtMsg
@@ -273,7 +274,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"))
 		}
 
-		if leadingHintInfo != nil && leadingHintInfo.leadingJoinOrder != nil {
+		if leadingHintInfo != nil && leadingHintInfo.LeadingJoinOrder != nil {
 			if useGreedy {
 				ok, leftJoinGroup := baseGroupSolver.generateLeadingJoinGroup(curJoinGroup, leadingHintInfo, hasOuterJoin)
 				if !ok {
@@ -315,7 +316,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 		if schemaChanged {
 			proj := LogicalProjection{
 				Exprs: expression.Column2Exprs(originalSchema.Columns),
-			}.Init(p.SCtx(), p.SelectBlockOffset())
+			}.Init(p.SCtx(), p.QueryBlockOffset())
 			// Clone the schema here, because the schema may be changed by column pruning rules.
 			proj.SetSchema(originalSchema.Clone())
 			proj.SetChildren(p)
@@ -345,9 +346,9 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 // The Join Group {t1, t2, t3} contains two leading hints includes leading(t3) and leading(t1).
 // Although they are in different query blocks, they are conflicting.
 // In addition, the table alias 't4' cannot be recognized because of the join group.
-func checkAndGenerateLeadingHint(hintInfo []*tableHintInfo) (*tableHintInfo, bool) {
+func checkAndGenerateLeadingHint(hintInfo []*h.TableHintInfo) (*h.TableHintInfo, bool) {
 	leadingHintNum := len(hintInfo)
-	var leadingHintInfo *tableHintInfo
+	var leadingHintInfo *h.TableHintInfo
 	hasDiffLeadingHint := false
 	if leadingHintNum > 0 {
 		leadingHintInfo = hintInfo[0]
@@ -367,7 +368,7 @@ func checkAndGenerateLeadingHint(hintInfo []*tableHintInfo) (*tableHintInfo, boo
 
 type joinMethodHint struct {
 	preferredJoinMethod uint
-	joinMethodHintInfo  *tableHintInfo
+	joinMethodHintInfo  *h.TableHintInfo
 }
 
 // basicJoinGroupInfo represents basic information for a join group in the join reorder process.
@@ -384,7 +385,7 @@ type basicJoinGroupInfo struct {
 type joinGroupResult struct {
 	group             []LogicalPlan
 	hasOuterJoin      bool
-	joinOrderHintInfo []*tableHintInfo
+	joinOrderHintInfo []*h.TableHintInfo
 	*basicJoinGroupInfo
 }
 
@@ -396,7 +397,7 @@ type baseSingleGroupJoinOrderSolver struct {
 	*basicJoinGroupInfo
 }
 
-func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup []LogicalPlan, hintInfo *tableHintInfo, hasOuterJoin bool) (bool, []LogicalPlan) {
+func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup []LogicalPlan, hintInfo *h.TableHintInfo, hasOuterJoin bool) (bool, []LogicalPlan) {
 	var leadingJoinGroup []LogicalPlan
 	leftJoinGroup := make([]LogicalPlan, len(curJoinGroup))
 	copy(leftJoinGroup, curJoinGroup)
@@ -404,14 +405,14 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 	if p := s.ctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
 		queryBlockNames = *p
 	}
-	for _, hintTbl := range hintInfo.leadingJoinOrder {
+	for _, hintTbl := range hintInfo.LeadingJoinOrder {
 		match := false
 		for i, joinGroup := range leftJoinGroup {
-			tableAlias := extractTableAlias(joinGroup, joinGroup.SelectBlockOffset())
+			tableAlias := extractTableAlias(joinGroup, joinGroup.QueryBlockOffset())
 			if tableAlias == nil {
 				continue
 			}
-			if hintTbl.dbName.L == tableAlias.dbName.L && hintTbl.tblName.L == tableAlias.tblName.L && hintTbl.selectOffset == tableAlias.selectOffset {
+			if (hintTbl.DBName.L == tableAlias.DBName.L || hintTbl.DBName.L == "*") && hintTbl.TblName.L == tableAlias.TblName.L && hintTbl.SelectOffset == tableAlias.SelectOffset {
 				match = true
 				leadingJoinGroup = append(leadingJoinGroup, joinGroup)
 				leftJoinGroup = append(leftJoinGroup[:i], leftJoinGroup[i+1:]...)
@@ -425,10 +426,10 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 		// consider query block alias: select /*+ leading(t1, t2) */ * from (select ...) t1, t2 ...
 		groupIdx := -1
 		for i, joinGroup := range leftJoinGroup {
-			blockOffset := joinGroup.SelectBlockOffset()
+			blockOffset := joinGroup.QueryBlockOffset()
 			if blockOffset > 1 && blockOffset < len(queryBlockNames) {
 				blockName := queryBlockNames[blockOffset]
-				if hintTbl.dbName.L == blockName.DBName.L && hintTbl.tblName.L == blockName.TableName.L {
+				if hintTbl.DBName.L == blockName.DBName.L && hintTbl.TblName.L == blockName.TableName.L {
 					// this can happen when multiple join groups are from the same block, for example:
 					//   select /*+ leading(tx) */ * from (select * from t1, t2 ...) tx, ...
 					// `tx` is split to 2 join groups `t1` and `t2`, and they have the same block offset.
@@ -446,7 +447,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 			leftJoinGroup = append(leftJoinGroup[:groupIdx], leftJoinGroup[groupIdx+1:]...)
 		}
 	}
-	if len(leadingJoinGroup) != len(hintInfo.leadingJoinOrder) || leadingJoinGroup == nil {
+	if len(leadingJoinGroup) != len(hintInfo.LeadingJoinOrder) || leadingJoinGroup == nil {
 		return false, nil
 	}
 	leadingJoin := leadingJoinGroup[0]
@@ -601,7 +602,7 @@ func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []Logi
 	if len(s.otherConds) > 0 {
 		additionSelection := LogicalSelection{
 			Conditions: s.otherConds,
-		}.Init(cartesianJoinGroup[0].SCtx(), cartesianJoinGroup[0].SelectBlockOffset())
+		}.Init(cartesianJoinGroup[0].SCtx(), cartesianJoinGroup[0].QueryBlockOffset())
 		additionSelection.SetChildren(cartesianJoinGroup[0])
 		cartesianJoinGroup[0] = additionSelection
 	}
@@ -609,8 +610,8 @@ func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []Logi
 }
 
 func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild LogicalPlan) *LogicalJoin {
-	offset := lChild.SelectBlockOffset()
-	if offset != rChild.SelectBlockOffset() {
+	offset := lChild.QueryBlockOffset()
+	if offset != rChild.QueryBlockOffset() {
 		offset = -1
 	}
 	join := LogicalJoin{

@@ -316,13 +316,16 @@ func (stm *TaskManager) GetTopUnfinishedTasks(ctx context.Context) (task []*prot
 	return task, nil
 }
 
-// GetTasksInStates gets the tasks in the states.
+// GetTasksInStates gets the tasks in the states(order by priority asc, create_time acs, id asc).
 func (stm *TaskManager) GetTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error) {
 	if len(states) == 0 {
 		return task, nil
 	}
 
-	rs, err := stm.executeSQLWithNewSession(ctx, "select "+taskColumns+" from mysql.tidb_global_task where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", states...)
+	rs, err := stm.executeSQLWithNewSession(ctx,
+		"select "+taskColumns+" from mysql.tidb_global_task "+
+			"where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)"+
+			" order by priority asc, create_time asc, id asc", states...)
 	if err != nil {
 		return task, err
 	}
@@ -486,8 +489,8 @@ func row2SubTask(r chunk.Row) *proto.Subtask {
 	return subtask
 }
 
-// GetSubtasksInStates gets all subtasks by given states.
-func (stm *TaskManager) GetSubtasksInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...interface{}) ([]*proto.Subtask, error) {
+// GetSubtasksByStepAndStates gets all subtasks by given states.
+func (stm *TaskManager) GetSubtasksByStepAndStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...interface{}) ([]*proto.Subtask, error) {
 	args := []interface{}{tidbID, taskID, step}
 	args = append(args, states...)
 	rs, err := stm.executeSQLWithNewSession(ctx, `select `+subtaskColumns+` from mysql.tidb_background_subtask
@@ -799,8 +802,8 @@ func (stm *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, taskID int64,
 	return err
 }
 
-// CleanUpMeta cleanup the outdated row in dist_framework_meta when some tidb down.
-func (stm *TaskManager) CleanUpMeta(ctx context.Context, nodes []string) error {
+// DeleteDeadNodes deletes the dead nodes from mysql.dist_framework_meta.
+func (stm *TaskManager) DeleteDeadNodes(ctx context.Context, nodes []string) error {
 	if len(nodes) == 0 {
 		return nil
 	}

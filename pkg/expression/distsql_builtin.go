@@ -17,7 +17,6 @@ package expression
 import (
 	"fmt"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -659,21 +658,21 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_UUID:
 		f = &builtinUUIDSig{base}
 	case tipb.ScalarFuncSig_LikeSig:
-		f = &builtinLikeSig{base, nil, false, sync.Once{}}
+		f = &builtinLikeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IlikeSig:
-		f = &builtinIlikeSig{base, nil, false, sync.Once{}}
+		f = &builtinIlikeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_RegexpSig:
-		f = &builtinRegexpLikeFuncSig{regexpBaseFuncSig{base, regexpMemorizedSig{nil, nil}, sync.Once{}}}
+		f = &builtinRegexpLikeFuncSig{regexpBaseFuncSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_RegexpUTF8Sig:
-		f = &builtinRegexpLikeFuncSig{regexpBaseFuncSig{base, regexpMemorizedSig{nil, nil}, sync.Once{}}}
+		f = &builtinRegexpLikeFuncSig{regexpBaseFuncSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_RegexpLikeSig:
-		f = &builtinRegexpLikeFuncSig{regexpBaseFuncSig{base, regexpMemorizedSig{nil, nil}, sync.Once{}}}
+		f = &builtinRegexpLikeFuncSig{regexpBaseFuncSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_RegexpSubstrSig:
-		f = &builtinRegexpSubstrFuncSig{regexpBaseFuncSig{base, regexpMemorizedSig{nil, nil}, sync.Once{}}}
+		f = &builtinRegexpSubstrFuncSig{regexpBaseFuncSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_RegexpInStrSig:
-		f = &builtinRegexpInStrFuncSig{regexpBaseFuncSig{base, regexpMemorizedSig{nil, nil}, sync.Once{}}}
+		f = &builtinRegexpInStrFuncSig{regexpBaseFuncSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_RegexpReplaceSig:
-		f = &builtinRegexpReplaceFuncSig{regexpBaseFuncSig{base, regexpMemorizedSig{nil, nil}, sync.Once{}}, make([]Instruction, 0), nil, sync.Once{}, false}
+		f = &builtinRegexpReplaceFuncSig{regexpBaseFuncSig: regexpBaseFuncSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_JsonExtractSig:
 		f = &builtinJSONExtractSig{base}
 	case tipb.ScalarFuncSig_JsonUnquoteSig:
