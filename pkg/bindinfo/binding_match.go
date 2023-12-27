@@ -55,7 +55,7 @@ func (c *collectTableName) Enter(in ast.Node) (out ast.Node, skipChildren bool) 
 }
 
 // Leave implements Visitor interface.
-func (c *collectTableName) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (*collectTableName) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
