@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -594,6 +595,12 @@ func (p statReaderProxy) close() error {
 type mergePropBaseIter struct {
 	iter            *limitSizeMergeIter[*rangeProperty, statReaderProxy]
 	closeReaderFlag *bool
+	closeCh         chan struct{}
+}
+
+type readerAndError struct {
+	r   *statReaderProxy
+	err error
 }
 
 func newMergePropBaseIter(
@@ -619,16 +626,61 @@ func newMergePropBaseIter(
 		// to support this.
 		limit = multiStat.MaxOverlappingNum + 1
 	}
+	limit = min(limit, int64(len(multiStat.Filenames)))
+
+	// TODO(lance6716): explain it
+	preOpenLimit := limit * 8
+	preOpenLimit = min(preOpenLimit, int64(len(multiStat.Filenames)))
+	preOpenCh := make(chan readerAndError, preOpenLimit)
+	closeCh := make(chan struct{})
+	go func() {
+		defer close(preOpenCh)
+		i := 0
+		// newLimitSizeMergeIter will open #limit readers at the beginning, so we
+		// parallel open them
+		eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+		for ; i < int(limit); i++ {
+			path := multiStat.Filenames[i][1]
+			eg.Go(func() error {
+				rd, err := newStatsReader(egCtx, exStorage, path, 500*1024)
+				select {
+				case <-closeCh:
+					return errors.New("mergePropBaseIter is closed")
+				case preOpenCh <- readerAndError{r: &statReaderProxy{p: path, r: rd}, err: err}:
+				}
+				return err
+			})
+		}
+		if err := eg.Wait(); err != nil {
+			logutil.Logger(ctx).Error("newMergePropBaseIter failed to open stats reader", zap.Error(err))
+			return
+		}
+
+		// open the rest readers, sequentially should be OK
+		for ; i < len(multiStat.Filenames); i++ {
+			filePair := multiStat.Filenames[i]
+			path := filePair[1]
+			rd, err := newStatsReader(ctx, exStorage, path, 500*1024)
+			select {
+			case <-closeCh:
+				return
+			case preOpenCh <- readerAndError{r: &statReaderProxy{p: path, r: rd}, err: err}:
+			}
+		}
+	}()
 
 	readerOpeners := make([]readerOpenerFn[*rangeProperty, statReaderProxy], 0, len(multiStat.Filenames))
-	for _, filePair := range multiStat.Filenames {
-		path := filePair[1]
+	for range multiStat.Filenames {
 		readerOpeners = append(readerOpeners, func() (*statReaderProxy, error) {
-			rd, err := newStatsReader(ctx, exStorage, path, 4096)
-			if err != nil {
-				return nil, err
+			select {
+			case <-closeCh:
+				return nil, errors.New("mergePropBaseIter is closed")
+			case t, ok := <-preOpenCh:
+				if !ok {
+					return nil, errors.New("mergePropBaseIter is closed")
+				}
+				return t.r, t.err
 			}
-			return &statReaderProxy{p: filePair[1], r: rd}, nil
 		})
 	}
 	weight := make([]int64, len(readerOpeners))
@@ -636,7 +688,7 @@ func newMergePropBaseIter(
 		weight[i] = 1
 	}
 	i, err := newLimitSizeMergeIter(ctx, readerOpeners, weight, limit)
-	return &mergePropBaseIter{iter: i}, err
+	return &mergePropBaseIter{iter: i, closeCh: closeCh}, err
 }
 
 func (m mergePropBaseIter) path() string {
@@ -663,6 +715,7 @@ func (m mergePropBaseIter) switchConcurrentMode(bool) error {
 }
 
 func (m mergePropBaseIter) close() error {
+	close(m.closeCh)
 	return m.iter.close()
 }
 
