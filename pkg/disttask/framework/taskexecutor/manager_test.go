@@ -76,7 +76,7 @@ func TestManageTask(t *testing.T) {
 	m.addHandlingTask(2)
 	ctx1, cancel1 = context.WithCancelCause(context.Background())
 	m.registerCancelFunc(2, cancel1)
-	m.cancelTasks([]*proto.Task{{ID: 2}})
+	m.cancelTaskExecutors([]*proto.Task{{ID: 2}})
 	require.Equal(t, context.Canceled, ctx1.Err())
 
 	// test cancel.
@@ -325,7 +325,7 @@ func TestSlotManagerInManager(t *testing.T) {
 
 	// task1 alloc resource success
 	require.Equal(t, 0, m.slotManager.available)
-	require.Equal(t, []*proto.Task{task1}, m.slotManager.executorSlotInfos)
+	require.Equal(t, []*proto.Task{task1}, m.slotManager.executorTasks)
 	ch <- nil
 
 	// task1 succeed
@@ -334,7 +334,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	mockInternalExecutor.EXPECT().Close()
 	wg.Wait()
 	require.Equal(t, 10, m.slotManager.available)
-	require.Equal(t, 0, len(m.slotManager.executorSlotInfos))
+	require.Equal(t, 0, len(m.slotManager.executorTasks))
 	require.True(t, ctrl.Satisfied())
 
 	// ******** Test task occupation ********
@@ -374,7 +374,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	time.Sleep(2 * time.Second)
 	// task1 alloc resource success
 	require.Equal(t, 0, m.slotManager.available)
-	require.Equal(t, []*proto.Task{task1}, m.slotManager.executorSlotInfos)
+	require.Equal(t, []*proto.Task{task1}, m.slotManager.executorTasks)
 	require.True(t, ctrl.Satisfied())
 
 	// 2. task1 is occupied by task3, task1 start to pausing
@@ -387,7 +387,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	m.onRunnableTasks([]*proto.Task{task3, task2})
 	time.Sleep(2 * time.Second)
 	require.Equal(t, 0, m.slotManager.available)
-	require.Equal(t, []*proto.Task{task1}, m.slotManager.executorSlotInfos)
+	require.Equal(t, []*proto.Task{task1}, m.slotManager.executorTasks)
 	require.True(t, ctrl.Satisfied())
 
 	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID1).Return(task1, nil)
@@ -400,7 +400,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	ch <- context.Canceled
 	time.Sleep(time.Second)
 	require.Equal(t, 10, m.slotManager.available)
-	require.Len(t, m.slotManager.executorSlotInfos, 0)
+	require.Len(t, m.slotManager.executorTasks, 0)
 	require.True(t, ctrl.Satisfied())
 
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID3, proto.StepOne,
@@ -438,7 +438,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	m.onRunnableTasks([]*proto.Task{task3, task1, task2})
 	time.Sleep(2 * time.Second)
 	require.Equal(t, 8, m.slotManager.available)
-	require.Equal(t, 2, len(m.slotManager.executorSlotInfos))
+	require.Equal(t, 2, len(m.slotManager.executorTasks))
 	require.True(t, ctrl.Satisfied())
 
 	// 6. task3/task2 run success
@@ -452,6 +452,6 @@ func TestSlotManagerInManager(t *testing.T) {
 	ch <- nil
 	wg.Wait()
 	require.Equal(t, 10, m.slotManager.available)
-	require.Equal(t, 0, len(m.slotManager.executorSlotInfos))
+	require.Equal(t, 0, len(m.slotManager.executorTasks))
 	require.True(t, ctrl.Satisfied())
 }

@@ -24,13 +24,14 @@ import (
 // slotManager is used to manage the slots of the executor.
 type slotManager struct {
 	sync.RWMutex
-	// slotIndex is the index of the task
-	taskID2SlotIndex map[int64]int
-	// executorSlotInfos is used to record the task that is running on the executor.
-	executorSlotInfos []*proto.Task
+	// taskID2Index is the index of the task
+	taskID2Index map[int64]int
+	// executorTasks is used to record the tasks that is running on the executor,
+	// the slice is sorted in reverse task order.
+	executorTasks []*proto.Task
 
 	// The number of slots that can be used by the executor.
-	// It is always equal to CPU cores of the instance.
+	// Its initial value is always equal to CPU cores of the instance.
 	available int
 }
 
@@ -38,12 +39,12 @@ func (sm *slotManager) alloc(task *proto.Task) {
 	sm.Lock()
 	defer sm.Unlock()
 
-	sm.executorSlotInfos = append(sm.executorSlotInfos, task)
-	slices.SortFunc(sm.executorSlotInfos, func(a, b *proto.Task) int {
+	sm.executorTasks = append(sm.executorTasks, task)
+	slices.SortFunc(sm.executorTasks, func(a, b *proto.Task) int {
 		return b.Compare(a)
 	})
-	for index, slotInfo := range sm.executorSlotInfos {
-		sm.taskID2SlotIndex[slotInfo.ID] = index
+	for index, slotInfo := range sm.executorTasks {
+		sm.taskID2Index[slotInfo.ID] = index
 	}
 	sm.available -= task.Concurrency
 }
@@ -52,16 +53,16 @@ func (sm *slotManager) free(taskID int64) {
 	sm.Lock()
 	defer sm.Unlock()
 
-	index, ok := sm.taskID2SlotIndex[taskID]
+	index, ok := sm.taskID2Index[taskID]
 	if !ok {
 		return
 	}
-	sm.available += sm.executorSlotInfos[index].Concurrency
-	sm.executorSlotInfos = append(sm.executorSlotInfos[:index], sm.executorSlotInfos[index+1:]...)
+	sm.available += sm.executorTasks[index].Concurrency
+	sm.executorTasks = append(sm.executorTasks[:index], sm.executorTasks[index+1:]...)
 
-	delete(sm.taskID2SlotIndex, taskID)
-	for index, slotInfo := range sm.executorSlotInfos {
-		sm.taskID2SlotIndex[slotInfo.ID] = index
+	delete(sm.taskID2Index, taskID)
+	for index, slotInfo := range sm.executorTasks {
+		sm.taskID2Index[slotInfo.ID] = index
 	}
 }
 
@@ -75,9 +76,9 @@ func (sm *slotManager) canAlloc(task *proto.Task) (canAlloc bool, tasksNeedFree 
 	}
 
 	usedSlots := 0
-	for _, slotInfo := range sm.executorSlotInfos {
+	for _, slotInfo := range sm.executorTasks {
 		if slotInfo.Compare(task) < 0 {
-			continue
+			break
 		}
 		tasksNeedFree = append(tasksNeedFree, slotInfo)
 		usedSlots += slotInfo.Concurrency

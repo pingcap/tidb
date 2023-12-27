@@ -95,9 +95,9 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 		logCtx:    logutil.WithFields(context.Background()),
 		newPool:   b.newPool,
 		slotManager: &slotManager{
-			taskID2SlotIndex:  make(map[int64]int),
-			executorSlotInfos: make([]*proto.Task, 0),
-			available:         cpu.GetCPUCount(),
+			taskID2Index:  make(map[int64]int),
+			executorTasks: make([]*proto.Task, 0),
+			available:     cpu.GetCPUCount(),
 		},
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
@@ -223,13 +223,13 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 
 		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task)
 		if tasksNeedFree != nil {
-			m.cancelTasks(tasksNeedFree)
+			m.cancelTaskExecutors(tasksNeedFree)
 			// do not handle the tasks with lower priority if current task is waiting tasks free.
 			break
 		}
 
 		if !canAlloc {
-			logutil.Logger(m.logCtx).Warn("subtask has been rejected", zap.Int64("task-id", task.ID))
+			logutil.Logger(m.logCtx).Debug("subtask has been rejected", zap.Int64("task-id", task.ID))
 			continue
 		}
 		m.addHandlingTask(task.ID)
@@ -323,7 +323,7 @@ func (m *Manager) cancelAllRunningTasks() {
 	}
 }
 
-func (m *Manager) cancelTasks(tasks []*proto.Task) {
+func (m *Manager) cancelTaskExecutors(tasks []*proto.Task) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, task := range tasks {
