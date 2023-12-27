@@ -1363,7 +1363,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1095
+                    "TopN total count": 1096
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -1715,6 +1715,13 @@
                 ]
               },
               {
+                "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                  "CollPseudo": false,
+                  "IsInvalid": false,
+                  "TotalCount": 3080
+                }
+              },
+              {
                 "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
                   {
                     "ID": 2,
@@ -1876,6 +1883,13 @@
                     "Result": 1
                   }
                 ]
+              },
+              {
+                "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                  "CollPseudo": false,
+                  "IsInvalid": false,
+                  "TotalCount": 3080
+                }
               },
               {
                 "Expressions": [
@@ -2156,6 +2170,13 @@
                 ]
               },
               {
+                "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                  "CollPseudo": false,
+                  "IsInvalid": false,
+                  "TotalCount": 2980
+                }
+              },
+              {
                 "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
                   {
                     "ID": 2,
@@ -2247,6 +2268,13 @@
                 ]
               },
               {
+                "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                  "CollPseudo": false,
+                  "IsInvalid": false,
+                  "TotalCount": 2980
+                }
+              },
+              {
                 "Expressions": [
                   "eq(test.t.a, 100)",
                   "eq(test.t.b, 350)"
@@ -2292,7 +2320,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1095
+                    "TopN total count": 1096
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -2695,6 +2723,13 @@
                     "Result": 0
                   }
                 ]
+              },
+              {
+                "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                  "CollPseudo": false,
+                  "IsInvalid": false,
+                  "TotalCount": 3080
+                }
               },
               {
                 "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
@@ -3233,6 +3268,13 @@
                 ]
               },
               {
+                "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                  "CollPseudo": false,
+                  "IsInvalid": false,
+                  "TotalCount": 3080
+                }
+              },
+              {
                 "Expressions": [
                   "gt(test.t.b, 400)",
                   "lt(test.t.b, 403)"
@@ -3682,6 +3724,13 @@
                 ]
               },
               {
+                "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                  "CollPseudo": false,
+                  "IsInvalid": false,
+                  "TotalCount": 2980
+                }
+              },
+              {
                 "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
                   {
                     "ID": 2,
@@ -3791,6 +3840,13 @@
                     "Result": 1.8087248322147653
                   }
                 ]
+              },
+              {
+                "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
+                  "CollPseudo": false,
+                  "IsInvalid": false,
+                  "TotalCount": 2980
+                }
               },
               {
                 "Expressions": [
