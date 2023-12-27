@@ -39,7 +39,7 @@ func getTableName(n []*ast.Node) []string {
 			if node.Schema.String() != "" {
 				result = append(result, fmt.Sprintf("%s.%s", node.Schema.String(), node.Table.String()))
 			} else {
-				result = append(result, fmt.Sprintf("%s", node.Table.String()))
+				result = append(result, node.Table.String())
 			}
 		}
 	}
