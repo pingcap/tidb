@@ -13,3 +13,17 @@
 // limitations under the License.
 
 package bindinfo
+
+import (
+	"testing"
+
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/stretchr/testify/require"
+)
+
+func TestExtractTableName(t *testing.T) {
+	stmt, err := parser.New().ParseOneStmt("select /*+ HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t1.a=t2.a where t1.b is not null;", "", "")
+	require.NoError(t, err)
+	rs := ExtractTableName(stmt)
+	require.Equal(t, 5, len(rs))
+}

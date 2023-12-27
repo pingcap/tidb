@@ -21,7 +21,7 @@ import (
 )
 
 // ExtractTableName gets all table names from ast.Node.
-func ExtractTableName(in ast.Node) []*ast.TableName {
+func ExtractTableName(in ast.Node) []*ast.Node {
 	collector := collectTableNamePool.Get().(*collectTableName)
 	defer collector.DestroyAndPutToPool()
 	in.Accept(collector)
@@ -35,19 +35,20 @@ var collectTableNamePool = sync.Pool{
 }
 
 type collectTableName struct {
-	tableNames []*ast.TableName
+	tableNames []*ast.Node
 }
 
 func newCollectTableName() *collectTableName {
 	return &collectTableName{
-		tableNames: make([]*ast.TableName, 0, 4),
+		tableNames: make([]*ast.Node, 0, 4),
 	}
 }
 
 // Enter implements Visitor interface.
 func (c *collectTableName) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	if node, ok := in.(*ast.TableName); ok {
-		c.tableNames = append(c.tableNames, node)
+	switch node := in.(type) {
+	case *ast.TableName, *ast.ColumnName:
+		c.tableNames = append(c.tableNames, &node)
 	}
 	return in, false
 }
@@ -57,7 +58,7 @@ func (c *collectTableName) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
-func (c *collectTableName) GetResult() []*ast.TableName {
+func (c *collectTableName) GetResult() []*ast.Node {
 	return c.tableNames
 }
 
