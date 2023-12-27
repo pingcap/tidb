@@ -107,15 +107,13 @@ func (m *RecoveryHandler) RecoveryCnt() uint32 {
 //  1. Already return result to client because holder is full.
 //  2. Recovery method of this kind of error not implemented or error is not recoveryable.
 //  3. Retry time exceeds maxRecoveryCnt.
-//
-// Return err when got err when trying to recovery.
 func (m *RecoveryHandler) Recovery(info *RecoveryInfo) error {
 	if !m.enable {
 		return errors.New("mpp err recovery is not enabled")
 	}
 
 	if info == nil || info.MPPErr == nil {
-		return errors.New("RecoveryInfo is nil of mppErr is nil")
+		return errors.New("RecoveryInfo is nil or mppErr is nil")
 	}
 
 	if m.holder.alreadyFulled {

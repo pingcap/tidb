@@ -164,7 +164,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		return err
 	}
 
-    // For now, mpp err recovery only support MemLimit, which is only useful when AutoScaler is used.
+	// For now, mpp err recovery only support MemLimit, which is only useful when AutoScaler is used.
 	enableMPPRecovery := config.GetGlobalConfig().UseAutoScaler && config.GetGlobalConfig().DisaggregatedTiFlash
 	holdCap := mppErrRecoveryHoldChkCap * e.Ctx().GetSessionVars().MaxChunkSize
 	useAutoScaler := config.GetGlobalConfig().UseAutoScaler
@@ -180,7 +180,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		enableMPPRecovery = true
 	})
 
-	// For cache table, will not dispatch tasks to TiFlash, so no need to recovery.
+	// For cached table, will not dispatch tasks to TiFlash, so no need to recovery.
 	if e.dummy {
 		enableMPPRecovery = false
 	}
