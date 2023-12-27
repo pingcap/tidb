@@ -529,6 +529,13 @@ type TopN struct {
 	TopN []TopNMeta
 }
 
+// Scale scales the TopN by the given factor.
+func (c *TopN) Scale(scaleFactor float64) {
+	for i := range c.TopN {
+		c.TopN[i].Count = uint64(float64(c.TopN[i].Count) * scaleFactor)
+	}
+}
+
 // AppendTopN appends a topn into the TopN struct.
 func (c *TopN) AppendTopN(data []byte, count uint64) {
 	if c == nil {
