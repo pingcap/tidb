@@ -375,6 +375,7 @@ func BuildHistAndTopN(
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
+<<<<<<< HEAD
 		// For debugging invalid sample data.
 		var (
 			foundTwice      bool
@@ -418,12 +419,15 @@ func BuildHistAndTopN(
 				continue
 			}
 		}
+=======
+>>>>>>> 1fb5a9ae14a (planner: a better way to round scale factor when collecting TopN stats (#49808))
 	}
 
 	for i := 0; i < len(topNList); i++ {
 		topNList[i].Count *= uint64(sampleFactor)
 	}
 	topn := &TopN{TopN: topNList}
+	topn.Scale(sampleFactor)
 
 	if uint64(count) <= topn.TotalCount() || int(hg.NDV) <= len(topn.TopN) {
 		// TopN includes all sample data

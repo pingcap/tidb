@@ -78,7 +78,11 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":statistics"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 33,
+=======
+    shard_count = 35,
+>>>>>>> 1fb5a9ae14a (planner: a better way to round scale factor when collecting TopN stats (#49808))
     deps = [
         "//pkg/config",
         "//pkg/parser/ast",
