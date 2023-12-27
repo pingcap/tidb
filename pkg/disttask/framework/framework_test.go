@@ -205,7 +205,7 @@ func TestTaskExecutorDownBasic(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager", "4*return(\":4000\")"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown", "return(\":4000\")"))
 	submitTaskAndCheckSuccess(ctx, t, "😊", testContext, map[proto.Step]int{
-		proto.StepOne: 6, // each subtask will run twice before success
+		proto.StepOne: 3,
 		proto.StepTwo: 1,
 	})
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor"))
@@ -222,7 +222,7 @@ func TestTaskExecutorDownManyNodes(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager", "30*return(\":4000\")"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown", "return(\":4000\")"))
 	submitTaskAndCheckSuccess(ctx, t, "😊", testContext, map[proto.Step]int{
-		proto.StepOne: 6, // each subtask will run twice before success
+		proto.StepOne: 3,
 		proto.StepTwo: 1,
 	})
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor"))

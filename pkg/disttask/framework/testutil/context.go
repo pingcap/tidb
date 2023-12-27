@@ -31,8 +31,9 @@ import (
 
 // TestContext defines shared variables for disttask tests.
 type TestContext struct {
-	// for basic tests.
-	M sync.Map
+	sync.RWMutex
+	// taskID/step -> subtask map.
+	subtasksHasRun map[string]map[int64]struct{}
 	// for rollback tests.
 	RollbackCnt atomic.Int32
 	// for plan err handling tests.
@@ -50,23 +51,31 @@ func InitTestContext(t *testing.T, nodeNum int) (context.Context, *gomock.Contro
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
 	})
 
-	return ctx, ctrl, &TestContext{}, testkit.NewDistExecutionContext(t, nodeNum)
+	testCtx := &TestContext{
+		subtasksHasRun: make(map[string]map[int64]struct{}),
+	}
+	return ctx, ctrl, testCtx, testkit.NewDistExecutionContext(t, nodeNum)
 }
 
 // CollectSubtask collects subtask info
 func (c *TestContext) CollectSubtask(subtask *proto.Subtask) {
 	key := getTaskStepKey(subtask.TaskID, subtask.Step)
-	actual, _ := c.M.LoadOrStore(key, &atomic.Int32{})
-	actual.(*atomic.Int32).Add(1)
+	c.Lock()
+	defer c.Unlock()
+	m, ok := c.subtasksHasRun[key]
+	if !ok {
+		m = make(map[int64]struct{})
+		c.subtasksHasRun[key] = m
+	}
+	m[subtask.ID] = struct{}{}
 }
 
 // CollectedSubtaskCnt returns the collected subtask count.
 func (c *TestContext) CollectedSubtaskCnt(taskID int64, step proto.Step) int {
 	key := getTaskStepKey(taskID, step)
-	if actual, ok := c.M.Load(key); ok {
-		return int(actual.(*atomic.Int32).Load())
-	}
-	return -1
+	c.RLock()
+	defer c.RUnlock()
+	return len(c.subtasksHasRun[key])
 }
 
 // getTaskStepKey returns the key of a task step.
