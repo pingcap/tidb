@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
@@ -164,14 +165,21 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		return err
 	}
 
-	// For now, mpp err recovery only support MemLimit, which is only useful when AutoScaler is used.
+	holdCap := mathutil.Max(32, mppErrRecoveryHoldChkCap*e.Ctx().GetSessionVars().MaxChunkSize)
+
 	disaggTiFlashWithAutoScaler := config.GetGlobalConfig().DisaggregatedTiFlash && config.GetGlobalConfig().UseAutoScaler
+	// For now, mpp err recovery only support MemLimit, which is only useful when AutoScaler is used.
 	enableMPPRecovery := disaggTiFlashWithAutoScaler
-	holdCap := mppErrRecoveryHoldChkCap * e.Ctx().GetSessionVars().MaxChunkSize
 
 	failpoint.Inject("mpp_recovery_test_force_enable", func() {
 		enableMPPRecovery = true
 	})
+
+	// No need to recovery when can fallback to tikv.
+	_, allowTiFlashFallback := e.Ctx().GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
+	if allowTiFlashFallback {
+		enableMPPRecovery = false
+	}
 
 	// For cached table, will not dispatch tasks to TiFlash, so no need to recovery.
 	if e.dummy {
