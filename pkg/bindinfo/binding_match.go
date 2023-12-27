@@ -50,6 +50,7 @@ func (c *tableNameCollector) Enter(in ast.Node) (out ast.Node, skipChildren bool
 	switch node := in.(type) {
 	case *ast.TableName, *ast.ColumnName:
 		c.tableNames = append(c.tableNames, &node)
+		return in, true
 	}
 	return in, false
 }
