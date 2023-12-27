@@ -100,11 +100,14 @@ func NewRangeSplitter(
 ) (*RangeSplitter, error) {
 	logger := logutil.Logger(ctx)
 	overlaps := make([]int64, 0, len(multiFileStat))
+	fileNums := make([]int, 0, len(multiFileStat))
 	for _, m := range multiFileStat {
 		overlaps = append(overlaps, m.MaxOverlappingNum)
+		fileNums = append(fileNums, len(m.Filenames))
 	}
 	logger.Info("create range splitter",
 		zap.Int64s("overlaps", overlaps),
+		zap.Ints("fileNums", fileNums),
 		zap.Int64("rangesGroupSize", rangesGroupSize),
 		zap.Int64("rangesGroupKeys", rangesGroupKeys),
 		zap.Int64("maxRangeSize", maxRangeSize),
