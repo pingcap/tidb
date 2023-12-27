@@ -32,7 +32,7 @@ func showBinding(tk *testkit.TestKit, showStmt string) [][]interface{} {
 	result := make([][]interface{}, len(rows))
 	for i, r := range rows {
 		result[i] = append(result[i], r[:4]...)
-		result[i] = append(result[i], r[8:11]...)
+		result[i] = append(result[i], r[8:10]...)
 	}
 	return result
 }
@@ -47,7 +47,7 @@ func removeAllBindings(tk *testkit.TestKit, global bool) {
 		if r[4] == "builtin" {
 			continue
 		}
-		tk.MustExec(fmt.Sprintf("drop %v binding for sql digest '%v'", scope, r[6]))
+		tk.MustExec(fmt.Sprintf("drop %v binding for sql digest '%v'", scope, r[5]))
 	}
 	tk.MustQuery(fmt.Sprintf("show %v bindings", scope)).Check(testkit.Rows()) // empty
 }
