@@ -256,13 +256,15 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 			}
 		} else {
 			// subtask.State == proto.TaskStatePending
-			owned := s.startSubtaskAndUpdateState(runCtx, subtask)
-			if err := s.getError(); err != nil {
+			err := s.startSubtaskAndUpdateState(runCtx, subtask)
+			if err != nil {
 				logutil.Logger(s.logCtx).Warn("startSubtaskAndUpdateState meets error", zap.Error(err))
-				continue
-			}
-			if !owned {
-				logutil.Logger(s.logCtx).Warn("subtask not owned by current task executor", zap.Error(err))
+				// should ignore ErrSubtaskNotFound
+				// since the err only indicate that the subtask not owned by current task executor.
+				if err == storage.ErrSubtaskNotFound {
+					continue
+				}
+				s.onError(err)
 				continue
 			}
 		}
@@ -534,16 +536,16 @@ func (s *BaseTaskExecutor) resetError() {
 	s.mu.handled = false
 }
 
-func (s *BaseTaskExecutor) startSubtaskAndUpdateState(ctx context.Context, subtask *proto.Subtask) bool {
-	owned := s.startSubtask(ctx, subtask.ID)
-	if owned {
+func (s *BaseTaskExecutor) startSubtaskAndUpdateState(ctx context.Context, subtask *proto.Subtask) error {
+	err := s.startSubtask(ctx, subtask.ID)
+	if err == nil {
 		metrics.DecDistTaskSubTaskCnt(subtask)
 		metrics.EndDistTaskSubTask(subtask)
 		subtask.State = proto.TaskStateRunning
 		metrics.IncDistTaskSubTaskCnt(subtask)
 		metrics.StartDistTaskSubTask(subtask)
 	}
-	return owned
+	return err
 }
 
 func (s *BaseTaskExecutor) updateSubtaskStateAndErrorImpl(ctx context.Context, execID string, subtaskID int64, state proto.TaskState, subTaskErr error) {
@@ -563,23 +565,20 @@ func (s *BaseTaskExecutor) updateSubtaskStateAndErrorImpl(ctx context.Context, e
 // startSubtask try to change the state of the subtask to running.
 // If the subtask is not owned by the task executor,
 // the update will fail and task executor should not run the subtask.
-func (s *BaseTaskExecutor) startSubtask(ctx context.Context, subtaskID int64) bool {
+func (s *BaseTaskExecutor) startSubtask(ctx context.Context, subtaskID int64) error {
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	logger := logutil.Logger(s.logCtx)
-	owned := false
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
-	err := handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
+	return handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(ctx context.Context) (bool, error) {
-			var err error
-			owned, err = s.taskTable.StartSubtask(ctx, subtaskID, s.id)
+			err := s.taskTable.StartSubtask(ctx, subtaskID, s.id)
+			if err == storage.ErrSubtaskNotFound {
+				// No need to retry, record the error.
+				return false, err
+			}
 			return true, err
 		},
 	)
-	if err != nil {
-		s.onError(err)
-	}
-
-	return owned
 }
 
 func (s *BaseTaskExecutor) finishSubtask(ctx context.Context, subtask *proto.Subtask) {

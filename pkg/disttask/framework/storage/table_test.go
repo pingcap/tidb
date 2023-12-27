@@ -487,13 +487,11 @@ func TestSubTaskTable(t *testing.T) {
 
 	ts := time.Now()
 	time.Sleep(time.Second)
-	owned, err := sm.StartSubtask(ctx, 1, "tidb1")
+	err = sm.StartSubtask(ctx, 1, "tidb1")
 	require.NoError(t, err)
-	require.Equal(t, true, owned)
 
-	owned, err = sm.StartSubtask(ctx, 1, "tidb2")
-	require.NoError(t, err)
-	require.Equal(t, false, owned)
+	err = sm.StartSubtask(ctx, 1, "tidb2")
+	require.Error(t, storage.ErrSubtaskNotFound, err)
 
 	subtask, err = sm.GetFirstSubtaskInStates(ctx, "tidb1", 1, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
@@ -571,9 +569,9 @@ func TestSubTaskTable(t *testing.T) {
 	testutil.CreateSubTask(t, sm, 4, proto.StepInit, "for_test1", []byte("test"), proto.TaskTypeExample, 11, false)
 	subtask, err = sm.GetFirstSubtaskInStates(ctx, "for_test1", 4, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
-	owned, err = sm.StartSubtask(ctx, subtask.ID, "for_test1")
+	err = sm.StartSubtask(ctx, subtask.ID, "for_test1")
 	require.NoError(t, err)
-	require.Equal(t, true, owned)
+
 	subtask, err = sm.GetFirstSubtaskInStates(ctx, "for_test1", 4, proto.StepInit, proto.TaskStateRunning)
 	require.NoError(t, err)
 	require.Greater(t, subtask.StartTime, ts)

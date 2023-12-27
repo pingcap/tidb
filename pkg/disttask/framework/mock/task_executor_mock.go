@@ -193,12 +193,11 @@ func (mr *MockTaskTableMockRecorder) StartManager(arg0, arg1, arg2 any) *gomock.
 }
 
 // StartSubtask mocks base method.
-func (m *MockTaskTable) StartSubtask(arg0 context.Context, arg1 int64, arg2 string) (bool, error) {
+func (m *MockTaskTable) StartSubtask(arg0 context.Context, arg1 int64, arg2 string) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "StartSubtask", arg0, arg1, arg2)
-	ret0, _ := ret[0].(bool)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret0, _ := ret[0].(error)
+	return ret0
 }
 
 // StartSubtask indicates an expected call of StartSubtask.

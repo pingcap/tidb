@@ -63,6 +63,9 @@ var (
 	// unstable, i.e. count, order and content of the subtasks are changed on
 	// different call.
 	ErrUnstableSubtasks = errors.New("unstable subtasks")
+	// ErrSubtaskNotFound is the error when can't find subtask by subtask_id and execId,
+	// i.e. scheduler change the subtask's execId when subtask need to balance to other nodes.
+	ErrSubtaskNotFound = errors.New("subtask not found")
 )
 
 // SessionExecutor defines the interface for executing SQLs in a session.
@@ -671,10 +674,7 @@ func (stm *TaskManager) HasSubtasksInStates(ctx context.Context, execID string, 
 }
 
 // StartSubtask updates the subtask state to running.
-func (stm *TaskManager) StartSubtask(ctx context.Context, subtaskID int64, execID string) (bool, error) {
-	// owned means the task executor can own and run the subtask without any other task executor running it.
-	// when owned = false, the task executor should not run the subtask.
-	owned := false
+func (stm *TaskManager) StartSubtask(ctx context.Context, subtaskID int64, execID string) error {
 	err := stm.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		vars := se.GetSessionVars()
 		_, err := ExecSQL(ctx,
@@ -688,13 +688,12 @@ func (stm *TaskManager) StartSubtask(ctx context.Context, subtaskID int64, execI
 		if err != nil {
 			return err
 		}
-		if vars.StmtCtx.AffectedRows() != 0 {
-			owned = true
+		if vars.StmtCtx.AffectedRows() == 0 {
+			return ErrSubtaskNotFound
 		}
 		return nil
 	})
-
-	return owned, err
+	return err
 }
 
 // StartManager insert the manager information into dist_framework_meta.
