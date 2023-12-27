@@ -443,8 +443,8 @@ IndexMerge	0.00	root		type: intersection
   └─TableRowIDScan	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select (j->'$.int') from t where json_overlaps((j->'$.int'), '[1, 2, 3]');
 id	estRows	task	access object	operator info
-Projection	8000.00	root		json_extract(planner__core__indexmerge_path.t.j, $.int)->Column#5
-└─Selection	8000.00	root		json_overlaps(json_extract(planner__core__indexmerge_path.t.j, "$.int"), cast("[1, 2, 3]", json BINARY))
+Projection	23.98	root		json_extract(planner__core__indexmerge_path.t.j, $.int)->Column#5
+└─Selection	23.98	root		json_overlaps(json_extract(planner__core__indexmerge_path.t.j, "$.int"), cast("[1, 2, 3]", json BINARY))
   └─IndexMerge	29.97	root		type: union
     ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:i_int(cast(json_extract(`j`, _utf8mb4'$.int') as signed array))	range:[1,1], keep order:false, stats:pseudo
     ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:i_int(cast(json_extract(`j`, _utf8mb4'$.int') as signed array))	range:[2,2], keep order:false, stats:pseudo
@@ -452,7 +452,7 @@ Projection	8000.00	root		json_extract(planner__core__indexmerge_path.t.j, $.int)
     └─TableRowIDScan(Probe)	29.97	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where json_overlaps((j->'$.int'), '[1, 2, 3]');
 id	estRows	task	access object	operator info
-Selection	8000.00	root		json_overlaps(json_extract(planner__core__indexmerge_path.t.j, "$.int"), cast("[1, 2, 3]", json BINARY))
+Selection	23.98	root		json_overlaps(json_extract(planner__core__indexmerge_path.t.j, "$.int"), cast("[1, 2, 3]", json BINARY))
 └─IndexMerge	29.97	root		type: union
   ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:i_int(cast(json_extract(`j`, _utf8mb4'$.int') as signed array))	range:[1,1], keep order:false, stats:pseudo
   ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:i_int(cast(json_extract(`j`, _utf8mb4'$.int') as signed array))	range:[2,2], keep order:false, stats:pseudo
@@ -460,7 +460,7 @@ Selection	8000.00	root		json_overlaps(json_extract(planner__core__indexmerge_pat
   └─TableRowIDScan(Probe)	29.97	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'brief' select * from t where json_overlaps((j->'$.int'), '[1, 2, 3]') and a<10;
 id	estRows	task	access object	operator info
-Selection	2658.67	root		json_overlaps(json_extract(planner__core__indexmerge_path.t.j, "$.int"), cast("[1, 2, 3]", json BINARY))
+Selection	23.98	root		json_overlaps(json_extract(planner__core__indexmerge_path.t.j, "$.int"), cast("[1, 2, 3]", json BINARY))
 └─IndexMerge	9.96	root		type: union
   ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:i_int(cast(json_extract(`j`, _utf8mb4'$.int') as signed array))	range:[1,1], keep order:false, stats:pseudo
   ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:i_int(cast(json_extract(`j`, _utf8mb4'$.int') as signed array))	range:[2,2], keep order:false, stats:pseudo
