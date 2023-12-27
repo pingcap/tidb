@@ -223,7 +223,6 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 	return aggExec
 }
 
-// TODO multi trigger of spill
 // TODO trigger fallback when:
 //  1. we have triggered before
 //  2. does has enough data to spill
@@ -231,7 +230,7 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 //
 // TODO continuous consume in another goroutine
 func TestGetCorrectResult(t *testing.T) {
-	hardLimitBytesNum := int64(1000000)
+	hardLimitBytesNum := int64(5000000)
 
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().InitChunkSize = 32
@@ -249,27 +248,27 @@ func TestGetCorrectResult(t *testing.T) {
 	opt := getMockDataSourceParameters(ctx)
 	dataSource := buildMockDataSource(opt, col1, col2)
 
-	// for i := 0; i < 5; i++ {
-	aggExec := buildHashAggExecutor(t, ctx, dataSource)
-	dataSource.PrepareChunks()
-	tmpCtx := context.Background()
-	chk := exec.NewFirstChunk(aggExec)
-	resContainer := resultsContainer{}
-	aggExec.Open(tmpCtx)
+	for i := 0; i < 5; i++ {
+		aggExec := buildHashAggExecutor(t, ctx, dataSource)
+		dataSource.PrepareChunks()
+		tmpCtx := context.Background()
+		chk := exec.NewFirstChunk(aggExec)
+		resContainer := resultsContainer{}
+		aggExec.Open(tmpCtx)
 
-	for {
-		aggExec.Next(tmpCtx, chk)
-		if chk.NumRows() == 0 {
-			break
+		for {
+			aggExec.Next(tmpCtx, chk)
+			if chk.NumRows() == 0 {
+				break
+			}
+			resContainer.add(chk)
+			chk.Reset()
 		}
-		resContainer.add(chk)
-		chk.Reset()
-	}
-	aggExec.Close()
+		aggExec.Close()
 
-	require.True(t, aggExec.IsSpillTriggeredForTest())
-	require.True(t, resContainer.check(result))
-	// }
+		require.True(t, aggExec.IsSpillTriggeredForTest())
+		require.True(t, resContainer.check(result))
+	}
 }
 
 func TestRandomFail(t *testing.T) {

@@ -198,29 +198,32 @@ func (p *parallelHashAggSpillHelper) setError() {
 	atomic.StoreInt32(&p.hasError, hasErrorFlag)
 }
 
-func (p *parallelHashAggSpillHelper) restoreOnePartition(ctx sessionctx.Context) (*aggfuncs.AggPartialResultMapper, error) {
+func (p *parallelHashAggSpillHelper) restoreOnePartition(ctx sessionctx.Context) (aggfuncs.AggPartialResultMapper, int64, error) {
 	restoredData := make(aggfuncs.AggPartialResultMapper)
 	bInMap := 0
+	restoredMem := int64(0)
 
 	restoredPartitionIdx, isSuccess := p.getNextPartition()
 	if !isSuccess {
-		return nil, nil
+		return nil, restoredMem, nil
 	}
 
 	spilledFilesIO := p.getListInDisks(restoredPartitionIdx)
 	for _, spilledFile := range spilledFilesIO {
-		memDelta, err := p.restoreFromOneSpillFile(ctx, &restoredData, spilledFile, &bInMap)
+		memDelta, expandMem, err := p.restoreFromOneSpillFile(ctx, &restoredData, spilledFile, &bInMap)
 		if err != nil {
-			return nil, err
+			return nil, restoredMem, err
 		}
 
 		p.memTracker.Consume(memDelta)
+		restoredMem += memDelta + expandMem
 	}
-	return &restoredData, nil
+	return restoredData, restoredMem, nil
 }
 
-func (p *parallelHashAggSpillHelper) restoreFromOneSpillFile(ctx sessionctx.Context, restoreadData *aggfuncs.AggPartialResultMapper, diskIO *chunk.DataInDiskByChunks, bInMap *int) (int64, error) {
+func (p *parallelHashAggSpillHelper) restoreFromOneSpillFile(ctx sessionctx.Context, restoreadData *aggfuncs.AggPartialResultMapper, diskIO *chunk.DataInDiskByChunks, bInMap *int) (int64, int64, error) {
 	totalMemDelta := int64(0)
+	totalExpandMem := int64(0)
 	chunkNum := diskIO.NumChunks()
 	aggFuncNum := len(p.aggFuncsForRestoring)
 	processRowContext := &processRowContext{
@@ -236,7 +239,7 @@ func (p *parallelHashAggSpillHelper) restoreFromOneSpillFile(ctx sessionctx.Cont
 	for i := 0; i < chunkNum; i++ {
 		chunk, err := diskIO.GetChunk(i)
 		if err != nil {
-			return totalMemDelta, err
+			return totalMemDelta, totalExpandMem, err
 		}
 
 		// Deserialize bytes to agg function's meta data
@@ -251,18 +254,20 @@ func (p *parallelHashAggSpillHelper) restoreFromOneSpillFile(ctx sessionctx.Cont
 		processRowContext.chunk = chunk
 		for rowPos := 0; rowPos < rowNum; rowPos++ {
 			processRowContext.rowPos = rowPos
-			memDelta, err := p.processRow(processRowContext)
+			memDelta, expandMem, err := p.processRow(processRowContext)
 			if err != nil {
-				return totalMemDelta, err
+				return totalMemDelta, totalExpandMem, err
 			}
 			totalMemDelta += memDelta
+			totalExpandMem += expandMem
 		}
 	}
-	return totalMemDelta, nil
+	return totalMemDelta, totalExpandMem, nil
 }
 
-func (p *parallelHashAggSpillHelper) processRow(context *processRowContext) (int64, error) {
+func (p *parallelHashAggSpillHelper) processRow(context *processRowContext) (int64, int64, error) {
 	totalMemDelta := int64(0)
+	expandMem := int64(0)
 	key := context.chunk.GetRow(context.rowPos).GetString(context.keyColPos)
 	prs, ok := (*context.restoreadData)[key]
 	if ok {
@@ -270,7 +275,7 @@ func (p *parallelHashAggSpillHelper) processRow(context *processRowContext) (int
 		for aggPos := 0; aggPos < context.aggFuncNum; aggPos++ {
 			memDelta, err := p.aggFuncsForRestoring[aggPos].MergePartialResult(context.ctx, context.partialResultsRestored[aggPos][context.rowPos], prs[aggPos])
 			if err != nil {
-				return totalMemDelta, err
+				return totalMemDelta, 0, err
 			}
 			totalMemDelta += memDelta
 		}
@@ -278,7 +283,8 @@ func (p *parallelHashAggSpillHelper) processRow(context *processRowContext) (int
 		totalMemDelta += int64(len(key))
 
 		if len(*context.restoreadData)+1 > (1<<*context.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-			p.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << *context.bInMap))
+			expandMem = hack.DefBucketMemoryUsageForMapStrToSlice * (1 << *context.bInMap)
+			p.memTracker.Consume(expandMem)
 			(*context.bInMap)++
 		}
 
@@ -289,7 +295,7 @@ func (p *parallelHashAggSpillHelper) processRow(context *processRowContext) (int
 			results[aggPos] = context.partialResultsRestored[aggPos][context.rowPos]
 		}
 	}
-	return totalMemDelta, nil
+	return totalMemDelta, expandMem, nil
 }
 
 func isInSpillMode(inSpillMode *uint32) bool {

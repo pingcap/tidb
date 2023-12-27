@@ -17,6 +17,7 @@ package aggregate
 import (
 	"math/rand"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -52,7 +53,8 @@ type HashAggPartialWorker struct {
 	// Length of this map is equal to the number of final workers
 	// All data in one AggPartialResultMapper are specifically sent to a target final worker.
 	// e.g. all data in partialResultsMap[3] should be sent to final worker 3.
-	partialResultsMap []aggfuncs.AggPartialResultMapper
+	partialResultsMap    []aggfuncs.AggPartialResultMapper
+	partialResultsMapMem atomic.Int64
 
 	groupByItems []expression.Expression
 	groupKey     [][]byte
@@ -254,13 +256,16 @@ func (w *HashAggPartialWorker) getPartialResultsOfEachRow(groupKey [][]byte, fin
 
 		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
 		if len(mapper[finalWorkerIdx])+1 > (1<<w.BInMaps[finalWorkerIdx])*hack.LoadFactorNum/hack.LoadFactorDen {
-			w.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMaps[finalWorkerIdx]))
+			expandMem := hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMaps[finalWorkerIdx])
+			w.partialResultsMapMem.Add(int64(expandMem))
+			w.memTracker.Consume(int64(expandMem))
 			w.BInMaps[finalWorkerIdx]++
 		}
 
 		mapper[finalWorkerIdx][string(groupKey[i])] = w.partialResultsBuffer[lastIdx]
 		allMemDelta += int64(len(groupKey[i]))
 	}
+	w.partialResultsMapMem.Add(allMemDelta)
 	w.memTracker.Consume(allMemDelta)
 	return w.partialResultsBuffer
 }
@@ -291,6 +296,7 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, chk *
 		}
 	}
 	w.memTracker.Consume(allMemDelta)
+	w.partialResultsMapMem.Add(allMemDelta)
 	return nil
 }
 
@@ -363,8 +369,8 @@ func (w *HashAggPartialWorker) spillDataToDiskImpl() error {
 		w.partialResultsMap[i] = make(aggfuncs.AggPartialResultMapper)
 	}
 
-	w.memTracker.Consume(-w.partialResultsMem)
-	w.partialResultsMem = 0
+	w.memTracker.Consume(-w.partialResultsMapMem.Load())
+	w.partialResultsMapMem.Store(0)
 	for i := range w.BInMaps {
 		w.BInMaps[i] = 0
 	}

@@ -52,26 +52,29 @@ type HashAggFinalWorker struct {
 	finalResultHolderCh chan *chunk.Chunk
 	groupKeys           [][]byte
 
-	spillHelper             *parallelHashAggSpillHelper
-	isSpilledTriggered      bool
-	restoredAggResultMapper *aggfuncs.AggPartialResultMapper
+	spillHelper                *parallelHashAggSpillHelper
+	isSpilledTriggered         bool
+	restoredAggResultMapperMem int64
 
 	restoredMemDelta int64
 }
 
-func (w *HashAggFinalWorker) getInputFromDisk(sctx sessionctx.Context) (input *aggfuncs.AggPartialResultMapper, ok bool, err error) {
-	ret, err := w.spillHelper.restoreOnePartition(sctx)
+func (w *HashAggFinalWorker) getInputFromDisk(sctx sessionctx.Context) (ret aggfuncs.AggPartialResultMapper, ok bool, restoredMem int64, err error) {
+	ret, restoredMem, err = w.spillHelper.restoreOnePartition(sctx)
+	w.intestDuringRun(&ret, &ok, &err)
 	if err != nil {
-		return nil, false, err
+		return nil, false, restoredMem, err
 	}
 
 	if ret == nil {
-		return nil, false, nil
+		return nil, false, restoredMem, nil
 	}
-	return ret, true, nil
+	return ret, true, restoredMem, nil
 }
 
 func (w *HashAggFinalWorker) getPartialInput() (input *aggfuncs.AggPartialResultMapper, ok bool) {
+	waitStart := time.Now()
+	defer w.increaseWaitTime(waitStart)
 	select {
 	case <-w.finishCh:
 		return nil, false
@@ -89,24 +92,6 @@ func (w *HashAggFinalWorker) initBInMap() {
 	for mapLen > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 		w.BInMap++
 	}
-}
-
-func (w *HashAggFinalWorker) getInputData(sctx sessionctx.Context) (*aggfuncs.AggPartialResultMapper, bool, error) {
-	waitStart := time.Now()
-	defer w.increaseWaitTime(waitStart)
-
-	var input *aggfuncs.AggPartialResultMapper
-	var ok bool
-	var err error
-
-	if w.isSpilledTriggered {
-		input, ok, err = w.getInputFromDisk(sctx)
-	} else {
-		input, ok = w.getPartialInput()
-	}
-
-	w.intestDuringRun(&input, &ok, &err)
-	return input, ok, err
 }
 
 func (w *HashAggFinalWorker) handleFirstInput(input *aggfuncs.AggPartialResultMapper) {
@@ -163,9 +148,9 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) error {
 	defer func() { w.isFirstInput = true }()
 
 	for {
-		input, ok, err := w.getInputData(sctx)
-		if !ok || err != nil {
-			return err
+		input, ok := w.getPartialInput()
+		if !ok {
+			return nil
 		}
 
 		// As the w.partialResultMap is empty when we get the first input.
@@ -183,17 +168,8 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) error {
 	}
 }
 
-func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
-	waitStart := time.Now()
-	result, finished := w.receiveFinalResultHolder()
-	w.increaseWaitTime(waitStart)
-	if finished {
-		return
-	}
-
-	failpoint.Inject("ConsumeRandomPanic", nil)
-
-	execStart := time.Now()
+func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, result *chunk.Chunk) {
+	var finished bool
 	for _, results := range w.partialResultMap {
 		for j, af := range w.aggFuncs {
 			if err := af.AppendFinalResult2Chunk(sctx, results[j], result); err != nil {
@@ -213,9 +189,47 @@ func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 			}
 		}
 	}
+}
+
+func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
+	waitStart := time.Now()
+	result, finished := w.receiveFinalResultHolder()
+	w.increaseWaitTime(waitStart)
+	if finished {
+		return
+	}
+
+	failpoint.Inject("ConsumeRandomPanic", nil)
+
+	execStart := time.Now()
+	defer w.increaseExecTime(execStart)
+	if w.isSpilledTriggered {
+		var ok bool
+		var err error
+		for {
+			// As we restore data by partition, only one partition uses memory at the same time.
+			// So we need to release the memory usage of last partition.
+			w.memTracker.Consume(-w.restoredAggResultMapperMem)
+			w.partialResultMap, ok, w.restoredAggResultMapperMem, err = w.getInputFromDisk(sctx)
+			if err != nil {
+				w.outputCh <- &AfFinalResult{err: err}
+				return
+			}
+
+			if !ok {
+				w.partialResultMap = nil
+				w.memTracker.Consume(-w.restoredAggResultMapperMem)
+				break
+			}
+
+			w.generateResultAndSend(sctx, result)
+		}
+	} else {
+		w.generateResultAndSend(sctx, result)
+	}
 
 	w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
-	w.increaseExecTime(execStart)
+
 }
 
 func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
@@ -253,10 +267,13 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 		if w.spillHelper.checkError() {
 			return
 		}
-	}
-	err := w.mergeResultsAndSend(ctx)
-	if err != nil {
-		return
+
+		w.loadFinalResult(ctx)
+	} else {
+		err := w.mergeResultsAndSend(ctx)
+		if err != nil {
+			return
+		}
 	}
 }
 
@@ -279,7 +296,7 @@ func intestBeforeStart() {
 	}
 }
 
-func (w *HashAggFinalWorker) intestDuringRun(input **aggfuncs.AggPartialResultMapper, ok *bool, err *error) {
+func (w *HashAggFinalWorker) intestDuringRun(input *aggfuncs.AggPartialResultMapper, ok *bool, err *error) {
 	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
 		if val.(bool) {
 			num := rand.Intn(10000)
@@ -289,6 +306,7 @@ func (w *HashAggFinalWorker) intestDuringRun(input **aggfuncs.AggPartialResultMa
 				time.Sleep(1 * time.Millisecond)
 			} else if num < 15 {
 				w.memTracker.Consume(1000000)
+				w.restoredAggResultMapperMem += 1000000
 			} else if num < 20 {
 				*ok = false
 				*input = nil

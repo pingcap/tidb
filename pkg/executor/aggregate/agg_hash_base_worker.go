@@ -23,12 +23,11 @@ import (
 // baseHashAggWorker stores the common attributes of HashAggFinalWorker and HashAggPartialWorker.
 // nolint:structcheck
 type baseHashAggWorker struct {
-	ctx               sessionctx.Context
-	finishCh          <-chan struct{}
-	aggFuncs          []aggfuncs.AggFunc
-	maxChunkSize      int
-	stats             *AggWorkerStat
-	partialResultsMem int64
+	ctx          sessionctx.Context
+	finishCh     <-chan struct{}
+	aggFuncs     []aggfuncs.AggFunc
+	maxChunkSize int
+	stats        *AggWorkerStat
 
 	memTracker *memory.Tracker
 	BInMap     int // indicate there are 2^BInMap buckets in Golang Map.
@@ -37,13 +36,12 @@ type baseHashAggWorker struct {
 func newBaseHashAggWorker(ctx sessionctx.Context, finishCh <-chan struct{}, aggFuncs []aggfuncs.AggFunc,
 	maxChunkSize int, memTrack *memory.Tracker) baseHashAggWorker {
 	baseWorker := baseHashAggWorker{
-		ctx:               ctx,
-		finishCh:          finishCh,
-		aggFuncs:          aggFuncs,
-		maxChunkSize:      maxChunkSize,
-		memTracker:        memTrack,
-		BInMap:            0,
-		partialResultsMem: 0,
+		ctx:          ctx,
+		finishCh:     finishCh,
+		aggFuncs:     aggFuncs,
+		maxChunkSize: maxChunkSize,
+		memTracker:   memTrack,
+		BInMap:       0,
 	}
 	return baseWorker
 }
