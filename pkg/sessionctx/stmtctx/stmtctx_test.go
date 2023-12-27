@@ -317,7 +317,7 @@ func TestNewStmtCtx(t *testing.T) {
 	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 	require.Same(t, time.UTC, sc.TimeZone())
 	require.Same(t, time.UTC, sc.TimeZone())
-	sc.AppendWarning(errors.New("err1"))
+	sc.AppendWarning(errors.NewNoStackError("err1"))
 	warnings := sc.GetWarnings()
 	require.Equal(t, 1, len(warnings))
 	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
@@ -328,7 +328,7 @@ func TestNewStmtCtx(t *testing.T) {
 	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 	require.Same(t, tz, sc.TimeZone())
 	require.Same(t, tz, sc.TimeZone())
-	sc.AppendWarning(errors.New("err2"))
+	sc.AppendWarning(errors.NewNoStackError("err2"))
 	warnings = sc.GetWarnings()
 	require.Equal(t, 1, len(warnings))
 	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
@@ -363,7 +363,7 @@ func TestResetStmtCtx(t *testing.T) {
 	tz := time.FixedZone("UTC+1", 2*60*60)
 	sc.SetTimeZone(tz)
 	sc.SetTypeFlags(types.FlagAllowNegativeToUnsigned | types.FlagSkipASCIICheck)
-	sc.AppendWarning(errors.New("err1"))
+	sc.AppendWarning(errors.NewNoStackError("err1"))
 	sc.InRestrictedSQL = true
 	sc.StmtType = "Insert"
 
@@ -379,7 +379,7 @@ func TestResetStmtCtx(t *testing.T) {
 	require.False(t, sc.InRestrictedSQL)
 	require.Empty(t, sc.StmtType)
 	require.Equal(t, 0, len(sc.GetWarnings()))
-	sc.AppendWarning(errors.New("err2"))
+	sc.AppendWarning(errors.NewNoStackError("err2"))
 	warnings := sc.GetWarnings()
 	require.Equal(t, 1, len(warnings))
 	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
@@ -406,6 +406,17 @@ func TestStmtCtxID(t *testing.T) {
 		require.Greater(t, ctxID, currentID)
 		currentID = ctxID
 	}
+}
+
+func TestErrCtx(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
+	// the default errCtx
+	err := types.ErrTruncated
+	require.Error(t, sc.HandleError(err))
+
+	// reset the types flags will re-initialize the error flag
+	sc.SetTypeFlags(types.DefaultStmtFlags | types.FlagTruncateAsWarning)
+	require.NoError(t, sc.HandleError(err))
 }
 
 func BenchmarkErrCtx(b *testing.B) {

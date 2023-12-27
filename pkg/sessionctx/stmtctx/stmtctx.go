@@ -190,6 +190,7 @@ type StatementContext struct {
 	ErrAutoincReadFailedAsWarning bool
 	InShowWarning                 bool
 	UseCache                      bool
+	ForcePlanCache                bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.
 	CacheType                     PlanCacheType
 	BatchCheck                    bool
 	InNullRejectCheck             bool
@@ -253,18 +254,21 @@ type StatementContext struct {
 	MaxRowID  int64
 
 	// Copied from SessionVars.TimeZone.
-	Priority         mysql.PriorityEnum
-	NotFillCache     bool
-	MemTracker       *memory.Tracker
-	DiskTracker      *disk.Tracker
-	RunawayChecker   *resourcegroup.RunawayChecker
-	IsTiFlash        atomic2.Bool
-	RuntimeStatsColl *execdetails.RuntimeStatsColl
-	TableIDs         []int64
-	IndexNames       []string
-	StmtType         string
-	OriginalSQL      string
-	digestMemo       struct {
+	Priority     mysql.PriorityEnum
+	NotFillCache bool
+	MemTracker   *memory.Tracker
+	DiskTracker  *disk.Tracker
+	// per statement resource group name
+	// hint /* +ResourceGroup(name) */ can change the statement group name
+	ResourceGroupName string
+	RunawayChecker    *resourcegroup.RunawayChecker
+	IsTiFlash         atomic2.Bool
+	RuntimeStatsColl  *execdetails.RuntimeStatsColl
+	TableIDs          []int64
+	IndexNames        []string
+	StmtType          string
+	OriginalSQL       string
+	digestMemo        struct {
 		sync.Once
 		normalized string
 		digest     *parser.Digest
@@ -439,6 +443,7 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 		ctxID: stmtCtxIDGenerator.Add(1),
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
+	sc.initErrCtx()
 	return sc
 }
 
@@ -448,6 +453,7 @@ func (sc *StatementContext) Reset() {
 		ctxID:   stmtCtxIDGenerator.Add(1),
 		typeCtx: types.NewContext(types.DefaultStmtFlags, time.UTC, sc),
 	}
+	sc.initErrCtx()
 }
 
 // CtxID returns the context id of the statement
@@ -476,9 +482,7 @@ func (sc *StatementContext) TypeCtx() types.Context {
 	return sc.typeCtx
 }
 
-// ErrCtx returns the error context
-// TODO: add a cache to the `ErrCtx` if needed, though it's not a big burden to generate `ErrCtx` everytime.
-func (sc *StatementContext) ErrCtx() errctx.Context {
+func (sc *StatementContext) initErrCtx() {
 	ctx := errctx.NewContext(sc)
 
 	if sc.TypeFlags().IgnoreTruncateErr() {
@@ -486,8 +490,12 @@ func (sc *StatementContext) ErrCtx() errctx.Context {
 	} else if sc.TypeFlags().TruncateAsWarning() {
 		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
 	}
+	sc.errCtx = ctx
+}
 
-	return ctx
+// ErrCtx returns the error context
+func (sc *StatementContext) ErrCtx() errctx.Context {
+	return sc.errCtx
 }
 
 // TypeFlags returns the type flags
@@ -498,6 +506,7 @@ func (sc *StatementContext) TypeFlags() types.Flags {
 // SetTypeFlags sets the type flags
 func (sc *StatementContext) SetTypeFlags(flags types.Flags) {
 	sc.typeCtx = sc.typeCtx.WithFlags(flags)
+	sc.initErrCtx()
 }
 
 // HandleTruncate ignores or returns the error based on the TypeContext inside.
@@ -797,6 +806,12 @@ func (sc *StatementContext) SetSkipPlanCache(reason error) {
 	if !sc.UseCache {
 		return // avoid unnecessary warnings
 	}
+
+	if sc.ForcePlanCache {
+		sc.AppendWarning(errors.NewNoStackErrorf("force plan-cache: may use risky cached plan: %s", reason.Error()))
+		return
+	}
+
 	sc.UseCache = false
 	switch sc.CacheType {
 	case DefaultNoCache:
@@ -1267,10 +1282,10 @@ func (sc *StatementContext) RecordRangeFallback(rangeMaxSize int64) {
 	// If range fallback happens, it means ether the query is unreasonable(for example, several long IN lists) or tidb_opt_range_max_size is too small
 	// and the generated plan is probably suboptimal. In that case we don't put it into plan cache.
 	if sc.UseCache {
-		sc.SetSkipPlanCache(errors.Errorf("in-list is too long"))
+		sc.SetSkipPlanCache(errors.NewNoStackError("in-list is too long"))
 	}
 	if !sc.RangeFallback {
-		sc.AppendWarning(errors.Errorf("Memory capacity of %v bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen", rangeMaxSize))
+		sc.AppendWarning(errors.NewNoStackErrorf("Memory capacity of %v bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen", rangeMaxSize))
 		sc.RangeFallback = true
 	}
 }
