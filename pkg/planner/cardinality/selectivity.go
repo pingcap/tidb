@@ -187,7 +187,6 @@ func Selectivity(
 				numCols:     len(idxInfo.Columns),
 				Selectivity: totalSelectivity,
 			})
-
 		}
 		idxCols := findPrefixOfIndexByCol(ctx, extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxStats.ID])
 		if len(idxCols) > 0 {
