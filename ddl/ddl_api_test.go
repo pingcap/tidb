@@ -224,6 +224,8 @@ func TestCreateDropCreateTable(t *testing.T) {
 	tk.MustExec("use test")
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
+	tk.MustExec("set global tidb_enable_concurrent_ddl = 1;")
+	tk.MustExec("set global tidb_enable_metadata_lock = 1;")
 
 	tk.MustExec("create table t (a int);")
 
