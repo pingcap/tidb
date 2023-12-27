@@ -21,6 +21,8 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 type exhaustedHeapElem struct {
@@ -80,6 +82,8 @@ type RangeSplitter struct {
 	willExhaustHeap             exhaustedHeap
 
 	rangeSplitKeysBuf [][]byte
+
+	logger *zap.Logger
 }
 
 // NewRangeSplitter creates a new RangeSplitter.
@@ -94,6 +98,19 @@ func NewRangeSplitter(
 	maxRangeSize, maxRangeKeys int64,
 	checkHotSpot bool,
 ) (*RangeSplitter, error) {
+	logger := logutil.Logger(ctx)
+	overlaps := make([]int64, 0, len(multiFileStat))
+	for _, m := range multiFileStat {
+		overlaps = append(overlaps, m.MaxOverlappingNum)
+	}
+	logger.Info("create range splitter",
+		zap.Int64s("overlaps", overlaps),
+		zap.Int64("rangesGroupSize", rangesGroupSize),
+		zap.Int64("rangesGroupKeys", rangesGroupKeys),
+		zap.Int64("maxRangeSize", maxRangeSize),
+		zap.Int64("maxRangeKeys", maxRangeKeys),
+		zap.Bool("checkHotSpot", checkHotSpot),
+	)
 	propIter, err := NewMergePropIter(ctx, multiFileStat, externalStorage, checkHotSpot)
 	if err != nil {
 		return nil, err
@@ -110,12 +127,16 @@ func NewRangeSplitter(
 		rangeSize:         maxRangeSize,
 		rangeKeys:         maxRangeKeys,
 		rangeSplitKeysBuf: make([][]byte, 0, 16),
+
+		logger: logger,
 	}, nil
 }
 
 // Close release the resources of RangeSplitter.
 func (r *RangeSplitter) Close() error {
-	return r.propIter.Close()
+	err := r.propIter.Close()
+	r.logger.Info("close range splitter", zap.Error(err))
+	return err
 }
 
 // GetRangeSplitSize returns the expected size of one range.
