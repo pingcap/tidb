@@ -573,7 +573,7 @@ func (s *BaseTaskExecutor) startSubtask(ctx context.Context, subtaskID int64) er
 		func(ctx context.Context) (bool, error) {
 			err := s.taskTable.StartSubtask(ctx, subtaskID, s.id)
 			if err == storage.ErrSubtaskNotFound {
-				// No need to retry, record the error.
+				// No need to retry.
 				return false, err
 			}
 			return true, err
