@@ -98,6 +98,19 @@ func TestSlotManager(t *testing.T) {
 	// test the order of executorTasks
 	require.Equal(t, []*proto.Task{task4, task, task5, task3}, sm.executorTasks)
 	require.Equal(t, 6, sm.available)
+
+	task6 := &proto.Task{
+		ID:          6,
+		Priority:    0,
+		Concurrency: 8,
+	}
+	canAlloc, tasksNeedFree = sm.canAlloc(task6)
+	require.True(t, canAlloc)
+	require.Equal(t, []*proto.Task{task4, task}, tasksNeedFree)
+	task6.Concurrency++
+	canAlloc, tasksNeedFree = sm.canAlloc(task6)
+	require.False(t, canAlloc)
+	require.Nil(t, tasksNeedFree)
 	sm.free(task4.ID)
 	sm.free(task5.ID)
 
