@@ -465,21 +465,11 @@ type Job struct {
 	Charset string `json:"charset"`
 	// Collate is the collation the DDL Job is created.
 	Collate string `json:"collate"`
-<<<<<<< HEAD:parser/model/ddl.go
-=======
 
 	// InvolvingSchemaInfo indicates the schema info involved in the job.
 	// nil means fallback to use job.SchemaName/TableName.
 	// Keep unchanged after initialization.
 	InvolvingSchemaInfo []InvolvingSchemaInfo `json:"involving_schema_info,omitempty"`
-
-	// AdminOperator indicates where the Admin command comes, by the TiDB
-	// itself (AdminCommandBySystem) or by user (AdminCommandByEndUser).
-	AdminOperator AdminCommandOperator `json:"admin_operator"`
-
-	// TraceInfo indicates the information for SQL tracing
-	TraceInfo *TraceInfo `json:"trace_info"`
->>>>>>> 2dfbaa8264f (ddl: set jobs dependency by schema and table name (#49699)):pkg/parser/model/ddl.go
 }
 
 // InvolvingSchemaInfo returns the schema info involved in the job.
