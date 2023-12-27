@@ -36,9 +36,9 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
@@ -1883,6 +1884,7 @@ func (w *addIndexTxnWorker) BackfillData(handleRange reorgBackfillTask) (taskCtx
 		taskCtx.finishTS = txn.StartTS()
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
+		updateTxnEntrySizeLimitIfNeeded(txn)
 		txn.SetOption(kv.Priority, handleRange.priority)
 		if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(jobID); tagger != nil {
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
@@ -2090,8 +2092,8 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 		}
 		g.Go(func() error {
 			defer close(done)
-			backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
-			err := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logutil.BgLogger(),
+			backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
+			err := handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logutil.BgLogger(),
 				func(ctx context.Context) (bool, error) {
 					return true, handle.ResumeTask(w.ctx, taskKey)
 				},
@@ -2115,6 +2117,11 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 		}
 
 		job := reorgInfo.Job
+		workerCntLimit := int(variable.GetDDLReorgWorkerCounter())
+		concurrency := min(workerCntLimit, cpu.GetCPUCount())
+		logutil.BgLogger().Info("adjusted add-index task concurrency",
+			zap.Int("worker-cnt", workerCntLimit), zap.Int("task-concurrency", concurrency),
+			zap.String("task-key", taskKey))
 		taskMeta := &BackfillTaskMeta{
 			Job:             *reorgInfo.Job.Clone(),
 			EleIDs:          elemIDs,
@@ -2129,7 +2136,7 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 
 		g.Go(func() error {
 			defer close(done)
-			err := handle.SubmitAndWaitTask(ctx, taskKey, taskType, distPhysicalTableConcurrency, metaData)
+			err := handle.SubmitAndWaitTask(ctx, taskKey, taskType, concurrency, metaData)
 			failpoint.Inject("pauseAfterDistTaskFinished", func() {
 				MockDMLExecutionOnTaskFinished()
 			})
@@ -2364,6 +2371,7 @@ func (w *cleanUpIndexWorker) BackfillData(handleRange reorgBackfillTask) (taskCt
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
+		updateTxnEntrySizeLimitIfNeeded(txn)
 		txn.SetOption(kv.Priority, handleRange.priority)
 		if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(handleRange.getJobID()); tagger != nil {
 			txn.SetOption(kv.ResourceGroupTagger, tagger)

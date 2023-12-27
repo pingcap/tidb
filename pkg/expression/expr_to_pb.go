@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	ast "github.com/pingcap/tidb/pkg/parser/types"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -34,7 +33,7 @@ import (
 )
 
 // ExpressionsToPBList converts expressions to tipb.Expr list for new plan.
-func ExpressionsToPBList(ctx sessionctx.Context, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr, err error) {
+func ExpressionsToPBList(ctx EvalContext, exprs []Expression, client kv.Client) (pbExpr []*tipb.Expr, err error) {
 	pc := PbConverter{client: client, ctx: ctx}
 	for _, expr := range exprs {
 		v := pc.ExprToPB(expr)
@@ -49,11 +48,11 @@ func ExpressionsToPBList(ctx sessionctx.Context, exprs []Expression, client kv.C
 // PbConverter supplies methods to convert TiDB expressions to TiPB.
 type PbConverter struct {
 	client kv.Client
-	ctx    sessionctx.Context
+	ctx    EvalContext
 }
 
 // NewPBConverter creates a PbConverter.
-func NewPBConverter(client kv.Client, ctx sessionctx.Context) PbConverter {
+func NewPBConverter(client kv.Client, ctx EvalContext) PbConverter {
 	return PbConverter{client: client, ctx: ctx}
 }
 
@@ -278,7 +277,7 @@ func (pc PbConverter) scalarFuncToPBExpr(expr *ScalarFunction) *tipb.Expr {
 }
 
 // GroupByItemToPB converts group by items to pb.
-func GroupByItemToPB(ctx sessionctx.Context, client kv.Client, expr Expression) *tipb.ByItem {
+func GroupByItemToPB(ctx EvalContext, client kv.Client, expr Expression) *tipb.ByItem {
 	pc := PbConverter{client: client, ctx: ctx}
 	e := pc.ExprToPB(expr)
 	if e == nil {
@@ -288,7 +287,7 @@ func GroupByItemToPB(ctx sessionctx.Context, client kv.Client, expr Expression) 
 }
 
 // SortByItemToPB converts order by items to pb.
-func SortByItemToPB(ctx sessionctx.Context, client kv.Client, expr Expression, desc bool) *tipb.ByItem {
+func SortByItemToPB(ctx EvalContext, client kv.Client, expr Expression, desc bool) *tipb.ByItem {
 	pc := PbConverter{client: client, ctx: ctx}
 	e := pc.ExprToPB(expr)
 	if e == nil {

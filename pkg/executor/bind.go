@@ -37,6 +37,7 @@ type SQLBindExec struct {
 	collation    string
 	db           string
 	isGlobal     bool
+	isUniversal  bool // for universal binding
 	bindAst      ast.StmtNode
 	newStatus    string
 	source       string // by manual or from history, only in create stmt
@@ -116,7 +117,7 @@ func (e *SQLBindExec) setBindingStatus() error {
 	}
 	ok, err := domain.GetDomain(e.Ctx()).BindHandle().SetGlobalBindingStatus(e.normdOrigSQL, bindInfo, e.newStatus)
 	if err == nil && !ok {
-		warningMess := errors.New("There are no bindings can be set the status. Please check the SQL text")
+		warningMess := errors.NewNoStackError("There are no bindings can be set the status. Please check the SQL text")
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(warningMess)
 	}
 	return err
@@ -125,7 +126,7 @@ func (e *SQLBindExec) setBindingStatus() error {
 func (e *SQLBindExec) setBindingStatusByDigest() error {
 	ok, err := domain.GetDomain(e.Ctx()).BindHandle().SetGlobalBindingStatusByDigest(e.newStatus, e.sqlDigest)
 	if err == nil && !ok {
-		warningMess := errors.New("There are no bindings can be set the status. Please check the SQL text")
+		warningMess := errors.NewNoStackError("There are no bindings can be set the status. Please check the SQL text")
 		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(warningMess)
 	}
 	return err
@@ -143,6 +144,11 @@ func (e *SQLBindExec) createSQLBind() error {
 		e.Ctx().GetSessionVars().StmtCtx = saveStmtCtx
 	}()
 
+	bindingType := bindinfo.TypeNormal
+	if e.isUniversal {
+		bindingType = bindinfo.TypeUniversal
+	}
+
 	bindInfo := bindinfo.Binding{
 		BindSQL:    e.bindSQL,
 		Charset:    e.charset,
@@ -151,6 +157,7 @@ func (e *SQLBindExec) createSQLBind() error {
 		Source:     e.source,
 		SQLDigest:  e.sqlDigest,
 		PlanDigest: e.planDigest,
+		Type:       bindingType,
 	}
 	record := &bindinfo.BindRecord{
 		OriginalSQL: e.normdOrigSQL,

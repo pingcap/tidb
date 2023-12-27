@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"sync"
 	"time"
 
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 var (

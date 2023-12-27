@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/pkg/config"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -3488,8 +3487,13 @@ func (rc *Client) InsertGCRows(ctx context.Context) error {
 			// (job_id, elem_id, start_key, end_key, ts)
 			paramsList = append(paramsList, newJobID, params.ElemID, params.StartKey, params.EndKey, ts)
 		}
-		if err := rc.db.se.ExecuteInternal(ctx, query.Sql, paramsList...); err != nil {
-			return errors.Trace(err)
+		if len(paramsList) > 0 {
+			// trim the ',' behind the query.Sql if exists
+			// that's when the rewrite rule of the last table id is not exist
+			sql := strings.TrimSuffix(query.Sql, ",")
+			if err := rc.db.se.ExecuteInternal(ctx, sql, paramsList...); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
@@ -3544,11 +3548,6 @@ func (rc *Client) InitFullClusterRestore(explicitFilter bool) {
 	rc.fullClusterRestore = !explicitFilter && rc.IsFull()
 
 	log.Info("full cluster restore", zap.Bool("value", rc.fullClusterRestore))
-
-	if rc.fullClusterRestore {
-		// have to skip grant table, in order to NotifyUpdatePrivilege
-		config.GetGlobalConfig().Security.SkipGrantTable = true
-	}
 }
 
 func (rc *Client) IsFullClusterRestore() bool {

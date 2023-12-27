@@ -303,7 +303,6 @@ create table t1 (id int key auto_increment);
 insert into t1 values ();
 rename table t1 to t11;
 insert into t11 values ();
-## TODO(tiancaiamao): fix bug and uncomment here, rename table should not discard the cached AUTO_ID.
 select * from t11;
 
 ## auto_id_cache 1 use another implementation and do not have such bug.
@@ -317,7 +316,6 @@ create table t3 (id int key auto_increment) auto_id_cache 100;
 insert into t3 values ();
 rename table t3 to t33;
 insert into t33 values ();
-## TODO(tiancaiamao): fix bug and uncomment here, rename table should not discard the cached AUTO_ID.
 select * from t33;
 
 # TestAutoIDConstraint

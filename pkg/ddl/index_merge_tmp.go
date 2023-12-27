@@ -150,6 +150,7 @@ func (w *mergeIndexWorker) BackfillData(taskRange reorgBackfillTask) (taskCtx ba
 		errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 			taskCtx.addedCount = 0
 			taskCtx.scanCount = 0
+			updateTxnEntrySizeLimitIfNeeded(txn)
 			txn.SetOption(kv.Priority, taskRange.priority)
 			if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(taskRange.getJobID()); tagger != nil {
 				txn.SetOption(kv.ResourceGroupTagger, tagger)

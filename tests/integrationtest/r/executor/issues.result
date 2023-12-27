@@ -831,3 +831,22 @@ explain select ps_partkey, sum(ps_supplycost * ps_availqty) as value from partsu
 Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<num>]
 SET GLOBAL tidb_mem_oom_action = DEFAULT;
 set @@tidb_mem_quota_query=default;
+drop table if exists issue49369;
+CREATE TABLE `issue49369` (
+`x` varchar(32) COLLATE utf8mb4_bin DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+insert into t   select round(cast('88888899999999999888888888888888888888888888888888888.11111111111111111111' as decimal(18,12)) * cast('88888899999999999888888888888888888888888888888888888.11111111111111111111' as decimal(42,18)) );
+Error 1690 (22003): DECIMAL value is out of range in '(18, 12)'
+set @@sql_mode = '';
+insert into t   select round(cast('88888899999999999888888888888888888888888888888888888.11111111111111111111' as decimal(18,12)) * cast('88888899999999999888888888888888888888888888888888888.11111111111111111111' as decimal(42,18)) );
+show warnings;
+Level	Code	Message
+Warning	1690	DECIMAL value is out of range in '(18, 12)'
+Warning	1690	DECIMAL value is out of range in '(42, 18)'
+Warning	1690	%s value is out of range in '%s'
+select * from t;
+c
+1
+2
+2147483647
+set @@sql_mode = default;

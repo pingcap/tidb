@@ -80,7 +80,7 @@ func (e *SortExec) Close() error {
 		e.spillAction.SetFinished()
 	}
 	e.spillAction = nil
-	return e.Children(0).Close()
+	return exec.Close(e.Children(0))
 }
 
 // Open implements the Executor Open interface.

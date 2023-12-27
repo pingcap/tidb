@@ -25,6 +25,7 @@ import (
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikv"
@@ -191,7 +192,7 @@ type RunawayManager struct {
 	// activeGroup is used to manage the active runaway watches of resource group
 	activeGroup map[string]int64
 	activeLock  sync.RWMutex
-	metricsMap  map[string]prometheus.Counter
+	metricsMap  generic.SyncMap[string, prometheus.Counter]
 
 	resourceGroupCtl   *rmclient.ResourceGroupsController
 	serverID           string
@@ -225,7 +226,7 @@ func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serv
 		quarantineChan:        make(chan *QuarantineRecord, maxWatchRecordChannelSize),
 		staleQuarantineRecord: staleQuarantineChan,
 		activeGroup:           make(map[string]int64),
-		metricsMap:            make(map[string]prometheus.Counter),
+		metricsMap:            generic.NewSyncMap[string, prometheus.Counter](8),
 	}
 	m.insertionCancel = watchList.OnInsertion(func(ctx context.Context, i *ttlcache.Item[string, *QuarantineRecord]) {
 		m.activeLock.Lock()
@@ -256,10 +257,10 @@ func (rm *RunawayManager) DeriveChecker(resourceGroupName, originalSQL, sqlDiges
 	if group.RunawaySettings == nil && rm.activeGroup[resourceGroupName] == 0 {
 		return nil
 	}
-	counter, ok := rm.metricsMap[resourceGroupName]
+	counter, ok := rm.metricsMap.Load(resourceGroupName)
 	if !ok {
 		counter = metrics.RunawayCheckerCounter.WithLabelValues(resourceGroupName, "hit", "")
-		rm.metricsMap[resourceGroupName] = counter
+		rm.metricsMap.Store(resourceGroupName, counter)
 	}
 	counter.Inc()
 	return newRunawayChecker(rm, resourceGroupName, group.RunawaySettings, originalSQL, sqlDigest, planDigest)
