@@ -208,10 +208,7 @@ func Selectivity(
 			if err != nil {
 				return 0, nil, errors.Trace(err)
 			}
-			realtimeCnt := coll.RealtimeCount
-			if !idxStats.IsInvalid(ctx, coll.Pseudo) {
-				realtimeCnt, _ = coll.GetScaledRealtimeAndModifyCnt(idxStats)
-			}
+			realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idxStats)
 			selectivity := cnt / float64(realtimeCnt)
 			nodes = append(nodes, &StatsNode{
 				Tp:          IndexType,
@@ -461,11 +458,8 @@ func CalcTotalSelectivityForMVIdxPath(
 ) float64 {
 	selectivities := make([]float64, 0, len(partialPaths))
 	for _, path := range partialPaths {
-		realtimeCnt := coll.RealtimeCount
 		idxStats := coll.Indices[path.Index.ID]
-		if !idxStats.IsInvalid(ctx, coll.Pseudo) {
-			realtimeCnt, _ = coll.GetScaledRealtimeAndModifyCnt(idxStats)
-		}
+		realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idxStats)
 		sel := path.CountAfterAccess / float64(realtimeCnt)
 		sel = mathutil.Clamp(sel, 0, 1)
 		selectivities = append(selectivities, sel)

@@ -1715,13 +1715,6 @@
                 ]
               },
               {
-                "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
-                  "CollPseudo": false,
-                  "IsInvalid": false,
-                  "TotalCount": 3080
-                }
-              },
-              {
                 "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
                   {
                     "ID": 2,
@@ -1883,13 +1876,6 @@
                     "Result": 1
                   }
                 ]
-              },
-              {
-                "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
-                  "CollPseudo": false,
-                  "IsInvalid": false,
-                  "TotalCount": 3080
-                }
               },
               {
                 "Expressions": [
@@ -2170,13 +2156,6 @@
                 ]
               },
               {
-                "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
-                  "CollPseudo": false,
-                  "IsInvalid": false,
-                  "TotalCount": 2980
-                }
-              },
-              {
                 "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
                   {
                     "ID": 2,
@@ -2266,13 +2245,6 @@
                     "Result": 1.0335570469798658
                   }
                 ]
-              },
-              {
-                "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
-                  "CollPseudo": false,
-                  "IsInvalid": false,
-                  "TotalCount": 2980
-                }
               },
               {
                 "Expressions": [
@@ -2723,13 +2695,6 @@
                     "Result": 0
                   }
                 ]
-              },
-              {
-                "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
-                  "CollPseudo": false,
-                  "IsInvalid": false,
-                  "TotalCount": 3080
-                }
               },
               {
                 "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
@@ -3268,13 +3233,6 @@
                 ]
               },
               {
-                "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
-                  "CollPseudo": false,
-                  "IsInvalid": false,
-                  "TotalCount": 3080
-                }
-              },
-              {
                 "Expressions": [
                   "gt(test.t.b, 400)",
                   "lt(test.t.b, 403)"
@@ -3724,13 +3682,6 @@
                 ]
               },
               {
-                "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
-                  "CollPseudo": false,
-                  "IsInvalid": false,
-                  "TotalCount": 2980
-                }
-              },
-              {
                 "github.com/pingcap/tidb/pkg/planner/cardinality.GetRowCountByIndexRanges": [
                   {
                     "ID": 2,
@@ -3840,13 +3791,6 @@
                     "Result": 1.8087248322147653
                   }
                 ]
-              },
-              {
-                "github.com/pingcap/tidb/pkg/statistics.(*Index).IsInvalid": {
-                  "CollPseudo": false,
-                  "IsInvalid": false,
-                  "TotalCount": 2980
-                }
               },
               {
                 "Expressions": [

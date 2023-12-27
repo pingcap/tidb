@@ -435,7 +435,7 @@ func (coll *HistColl) GetAnalyzeRowCount() float64 {
 
 // GetScaledRealtimeAndModifyCnt ...TODO
 func (coll *HistColl) GetScaledRealtimeAndModifyCnt(idxStats *Index) (realtimeCnt, modifyCnt int64) {
-	if idxStats.Info == nil || !idxStats.Info.MVIndex {
+	if idxStats.Info == nil || !idxStats.Info.MVIndex || !idxStats.IsFullLoad() {
 		return coll.RealtimeCount, coll.ModifyCount
 	}
 	analyzeRowCount := coll.GetAnalyzeRowCount()
