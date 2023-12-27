@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/ddl/util/callback"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/meta"
 	"github.com/pingcap/tidb/parser/model"
@@ -245,7 +244,7 @@ func TestCreateDropCreateTable(t *testing.T) {
 			createTable = true
 		}
 	}
-	hook := &callback.TestDDLCallback{}
+	hook := &ddl.TestDDLCallback{Do: dom}
 	hook.OnJobUpdatedExported.Store(&onJobUpdated)
 	dom.DDL().SetHook(hook)
 	tk.MustExec("drop table t;")
