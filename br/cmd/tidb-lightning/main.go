@@ -26,6 +26,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/br/pkg/lightning/web"
+	"github.com/pingcap/tidb/pkg/util/memory"
+>>>>>>> d0d24aeef42 (br, lightning: call memory hook init in main() (#49843))
 	"go.uber.org/zap"
 )
 
@@ -37,6 +42,7 @@ func main() {
 	}
 
 	app := lightning.New(globalCfg)
+	memory.InitMemoryHook()
 
 	sc := make(chan os.Signal, 1)
 	signal.Notify(sc,
