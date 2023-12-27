@@ -117,13 +117,13 @@ func TestUniversalDuplicatedBinding(t *testing.T) {
 	tk.MustExec(`create global binding using select /*+ use_index(t, b) */ * from t`)
 	require.Equal(t, showBinding(tk, "show global bindings"),
 		[][]interface{}{{"select * from `t`", "SELECT /*+ use_index(`t` `b`)*/ * FROM `t`", "", "enabled", "manual", "e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7"},
-			{"select * from `test` . `t`", "SELECT /*+ use_index(`t` `b`)*/ * FROM `test`.`t`", "test", "enabled", "manual", "", "8b193b00413fdb910d39073e0d494c96ebf24d1e30b131ecdd553883d0e29b42"}})
+			{"select * from `test` . `t`", "SELECT /*+ use_index(`t` `b`)*/ * FROM `test`.`t`", "test", "enabled", "manual", "8b193b00413fdb910d39073e0d494c96ebf24d1e30b131ecdd553883d0e29b42"}})
 
 	// session bindings don't conflict with global bindings
 	tk.MustExec(`create session universal binding using select /*+ use_index(t, c) */ * from t`)
 	require.Equal(t, showBinding(tk, "show global bindings"),
 		[][]interface{}{{"select * from `t`", "SELECT /*+ use_index(`t` `b`)*/ * FROM `t`", "", "enabled", "manual", "e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7"},
-			{"select * from `test` . `t`", "SELECT /*+ use_index(`t` `b`)*/ * FROM `test`.`t`", "test", "enabled", "manual", "", "8b193b00413fdb910d39073e0d494c96ebf24d1e30b131ecdd553883d0e29b42"}})
+			{"select * from `test` . `t`", "SELECT /*+ use_index(`t` `b`)*/ * FROM `test`.`t`", "test", "enabled", "manual", "8b193b00413fdb910d39073e0d494c96ebf24d1e30b131ecdd553883d0e29b42"}})
 }
 
 func TestUniversalBindingPriority(t *testing.T) {
