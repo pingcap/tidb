@@ -15,6 +15,7 @@
 package bindinfo
 
 import (
+	"slices"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -59,7 +60,7 @@ func (c *collectTableName) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 func (c *collectTableName) GetResult() []*ast.Node {
-	return c.tableNames
+	return slices.Clone(c.tableNames)
 }
 
 func (c *collectTableName) DestroyAndPutToPool() {
