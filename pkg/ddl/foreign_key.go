@@ -350,8 +350,7 @@ func checkModifyColumnWithForeignKeyConstraint(is infoschema.InfoSchema, dbName 
 				if newCol.GetType() != childCol.GetType() {
 					return dbterror.ErrFKIncompatibleColumns.GenWithStackByArgs(childCol.Name, originalCol.Name, referredFK.ChildFKName)
 				}
-				if newCol.GetFlen() < childCol.GetFlen() || newCol.GetFlen() < originalCol.GetFlen() ||
-					(newCol.GetType() == mysql.TypeNewDecimal && (newCol.GetFlen() != childCol.GetFlen() || newCol.GetDecimal() != childCol.GetDecimal())) {
+				if !isAcceptableRefferedKeyColumnChange(newCol, originalCol, childCol) {
 					return dbterror.ErrForeignKeyColumnCannotChangeChild.GenWithStackByArgs(originalCol.Name, referredFK.ChildFKName, referredFK.ChildSchema.L+"."+referredFK.ChildTable.L)
 				}
 			}
@@ -377,6 +376,29 @@ func isAcceptableForeignKeyColumnChange(newCol, originalCol, referCol *model.Col
 	}
 	if newCol.GetType() == mysql.TypeNewDecimal {
 		if newCol.GetFlen() != originalCol.GetFlen() || newCol.GetDecimal() != originalCol.GetDecimal() {
+			return false
+		}
+	}
+
+	return true
+}
+
+func isAcceptableRefferedKeyColumnChange(newCol, originalCol, childCol *model.ColumnInfo) bool {
+	switch newCol.GetType() {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
+		// For integer data types, value from GetFlen indicates the minimum display width and is unrelated to the range of values a type can store.
+		// We don't have to prevent the length change. See: https://dev.mysql.com/doc/refman/8.0/en/numeric-type-syntax.html
+		return true
+	}
+
+	if newCol.GetFlen() < childCol.GetFlen() {
+		return false
+	}
+	if newCol.GetFlen() < originalCol.GetFlen() {
+		return false
+	}
+	if newCol.GetType() == mysql.TypeNewDecimal {
+		if newCol.GetFlen() != childCol.GetFlen() || newCol.GetDecimal() != childCol.GetDecimal() {
 			return false
 		}
 	}
