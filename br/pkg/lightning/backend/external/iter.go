@@ -630,7 +630,7 @@ func newMergePropBaseIter(
 	// TODO(lance6716): explain it
 	preOpenLimit := limit * 8
 	preOpenLimit = min(preOpenLimit, int64(len(multiStat.Filenames)))
-	preOpenCh := make(chan readerAndError, preOpenLimit-limit)
+	preOpenCh := make(chan chan readerAndError, preOpenLimit-limit)
 	closeCh := make(chan struct{})
 	go func() {
 		defer close(preOpenCh)
@@ -639,11 +639,20 @@ func newMergePropBaseIter(
 		for i := int(limit); i < len(multiStat.Filenames); i++ {
 			filePair := multiStat.Filenames[i]
 			path := filePair[1]
-			rd, err := newStatsReader(ctx, exStorage, path, 500*1024)
+			asyncTask := make(chan readerAndError, 1)
+			go func() {
+				defer close(asyncTask)
+				rd, err := newStatsReader(ctx, exStorage, path, 500*1024)
+				select {
+				case <-closeCh:
+					return
+				case asyncTask <- readerAndError{r: &statReaderProxy{p: path, r: rd}, err: err}:
+				}
+			}()
 			select {
 			case <-closeCh:
 				return
-			case preOpenCh <- readerAndError{r: &statReaderProxy{p: path, r: rd}, err: err}:
+			case preOpenCh <- asyncTask:
 			}
 		}
 	}()
@@ -666,11 +675,19 @@ func newMergePropBaseIter(
 			select {
 			case <-closeCh:
 				return nil, errors.New("mergePropBaseIter is closed")
-			case t, ok := <-preOpenCh:
+			case asyncTask, ok := <-preOpenCh:
 				if !ok {
 					return nil, errors.New("mergePropBaseIter is closed")
 				}
-				return t.r, t.err
+				select {
+				case <-closeCh:
+					return nil, errors.New("mergePropBaseIter is closed")
+				case t, ok := <-asyncTask:
+					if !ok {
+						return nil, errors.New("mergePropBaseIter is closed")
+					}
+					return t.r, t.err
+				}
 			}
 		})
 	}
@@ -692,7 +709,6 @@ func (m mergePropBaseIter) next() (*rangeProperty, error) {
 		*m.closeReaderFlag = true
 	}
 	if !ok {
-		// TODO(lance6716): explain it??
 		if m.iter.err == nil {
 			return nil, io.EOF
 		}
