@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -169,7 +168,7 @@ func openAndGetFirstElem[
 }
 
 // newMergeIter creates a merge iterator for multiple sorted reader opener
-// functions.
+// functions. mergeIter.readers will have same order as input readerOpeners.
 func newMergeIter[
 	T heapElem,
 	R sortedReader[T],
@@ -631,33 +630,13 @@ func newMergePropBaseIter(
 	// TODO(lance6716): explain it
 	preOpenLimit := limit * 8
 	preOpenLimit = min(preOpenLimit, int64(len(multiStat.Filenames)))
-	preOpenCh := make(chan readerAndError, preOpenLimit)
+	preOpenCh := make(chan readerAndError, preOpenLimit-limit)
 	closeCh := make(chan struct{})
 	go func() {
 		defer close(preOpenCh)
-		i := 0
-		// newLimitSizeMergeIter will open #limit readers at the beginning, so we
-		// parallel open them
-		eg := util.NewErrorGroupWithRecover()
-		for ; i < int(limit); i++ {
-			path := multiStat.Filenames[i][1]
-			eg.Go(func() error {
-				rd, err := newStatsReader(ctx, exStorage, path, 500*1024)
-				select {
-				case <-closeCh:
-					return errors.New("mergePropBaseIter is closed")
-				case preOpenCh <- readerAndError{r: &statReaderProxy{p: path, r: rd}, err: err}:
-				}
-				return err
-			})
-		}
-		if err := eg.Wait(); err != nil {
-			logutil.Logger(ctx).Error("newMergePropBaseIter failed to open stats reader", zap.Error(err))
-			return
-		}
-
-		// open the rest readers, sequentially should be OK
-		for ; i < len(multiStat.Filenames); i++ {
+		// newLimitSizeMergeIter will open #limit readers at the beginning, and for rest
+		// readers we open them in advance to avoid block when we need to open them.
+		for i := int(limit); i < len(multiStat.Filenames); i++ {
 			filePair := multiStat.Filenames[i]
 			path := filePair[1]
 			rd, err := newStatsReader(ctx, exStorage, path, 500*1024)
@@ -670,7 +649,19 @@ func newMergePropBaseIter(
 	}()
 
 	readerOpeners := make([]readerOpenerFn[*rangeProperty, statReaderProxy], 0, len(multiStat.Filenames))
-	for range multiStat.Filenames {
+	// first `limit` reader will be opened by newLimitSizeMergeIter
+	for i := 0; i < int(limit); i++ {
+		path := multiStat.Filenames[i][1]
+		readerOpeners = append(readerOpeners, func() (*statReaderProxy, error) {
+			rd, err := newStatsReader(ctx, exStorage, path, 500*1024)
+			if err != nil {
+				return nil, err
+			}
+			return &statReaderProxy{p: path, r: rd}, nil
+		})
+	}
+	// rest reader will be opened in above goroutine, just read them from channel
+	for i := int(limit); i < len(multiStat.Filenames); i++ {
 		readerOpeners = append(readerOpeners, func() (*statReaderProxy, error) {
 			select {
 			case <-closeCh:
