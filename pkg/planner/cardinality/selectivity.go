@@ -161,28 +161,33 @@ func Selectivity(
 		idxStats := coll.Indices[id]
 		idxInfo := idxStats.Info
 		if idxInfo.MVIndex {
-			cols := id2Paths[idxStats.ID].NoPruneFullIdxCols
+			cols := coll.MVIdx2Columns[id]
+			if len(cols) == 0 {
+				continue
+			}
 			accessConds, _ := CollectFilters4MVIndex(ctx, remainedExprs, cols)
 			paths, isIntersection, ok, err := BuildPartialPaths4MVIndex(ctx, accessConds, cols, idxStats.Info, coll)
-			if err == nil && ok {
-				totalSelectivity := CalcTotalSelectivityForMVIdxPath(ctx, coll, paths, isIntersection)
-				var mask int64
-				for i := range remainedExprs {
-					for _, accessCond := range accessConds {
-						if exprs[i].Equal(ctx, accessCond) {
-							mask |= 1 << uint64(i)
-							break
-						}
+			if err != nil || !ok {
+				continue
+			}
+			totalSelectivity := CalcTotalSelectivityForMVIdxPath(ctx, coll, paths, isIntersection)
+			var mask int64
+			for i := range remainedExprs {
+				for _, accessCond := range accessConds {
+					if exprs[i].Equal(ctx, accessCond) {
+						mask |= 1 << uint64(i)
+						break
 					}
 				}
-				nodes = append(nodes, &StatsNode{
-					Tp:          IndexType,
-					ID:          id,
-					mask:        mask,
-					numCols:     len(idxInfo.Columns),
-					Selectivity: totalSelectivity,
-				})
 			}
+			nodes = append(nodes, &StatsNode{
+				Tp:          IndexType,
+				ID:          id,
+				mask:        mask,
+				numCols:     len(idxInfo.Columns),
+				Selectivity: totalSelectivity,
+			})
+
 		}
 		idxCols := findPrefixOfIndexByCol(ctx, extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxStats.ID])
 		if len(idxCols) > 0 {

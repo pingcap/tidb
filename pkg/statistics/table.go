@@ -105,8 +105,9 @@ type HistColl struct {
 	// Idx2ColumnIDs maps the index id to its column ids. It's used to calculate the selectivity in planner.
 	Idx2ColumnIDs map[int64][]int64
 	// ColID2IdxIDs maps the column id to a list index ids whose first column is it. It's used to calculate the selectivity in planner.
-	ColID2IdxIDs map[int64][]int64
-	PhysicalID   int64
+	ColID2IdxIDs  map[int64][]int64
+	MVIdx2Columns map[int64][]*expression.Column
+	PhysicalID    int64
 	// TODO: add AnalyzeCount here
 	RealtimeCount int64 // RealtimeCount is the current table row count, maintained by applying stats delta based on AnalyzeCount.
 	ModifyCount   int64 // Total modify count in a table.
@@ -577,6 +578,7 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 	newIdxHistMap := make(map[int64]*Index)
 	idx2Columns := make(map[int64][]int64)
 	colID2IdxIDs := make(map[int64][]int64)
+	mvIdx2Columns := make(map[int64][]*expression.Column)
 	for id, idxHist := range coll.Indices {
 		idxInfo := idxID2idxInfo[id]
 		if idxInfo == nil {
@@ -597,6 +599,12 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 		colID2IdxIDs[ids[0]] = append(colID2IdxIDs[ids[0]], idxHist.ID)
 		newIdxHistMap[idxHist.ID] = idxHist
 		idx2Columns[idxHist.ID] = ids
+		if idxInfo.MVIndex {
+			cols, ok := PrepareCols4MVIndex(tblInfo, idxInfo, columns)
+			if ok {
+				mvIdx2Columns[id] = cols
+			}
+		}
 	}
 	for _, idxIDs := range colID2IdxIDs {
 		slices.Sort(idxIDs)
@@ -611,6 +619,7 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 		Indices:        newIdxHistMap,
 		ColID2IdxIDs:   colID2IdxIDs,
 		Idx2ColumnIDs:  idx2Columns,
+		MVIdx2Columns:  mvIdx2Columns,
 	}
 	return newColl
 }
@@ -692,3 +701,9 @@ func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
 	// This table has no statistics yet. We can directly return true.
 	return true
 }
+
+var PrepareCols4MVIndex func(
+	tableInfo *model.TableInfo,
+	mvIndex *model.IndexInfo,
+	tblCols []*expression.Column,
+) (idxCols []*expression.Column, ok bool)

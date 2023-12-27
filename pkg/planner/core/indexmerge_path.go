@@ -41,6 +41,7 @@ import (
 func init() {
 	cardinality.CollectFilters4MVIndex = collectFilters4MVIndex
 	cardinality.BuildPartialPaths4MVIndex = buildPartialPaths4MVIndex
+	statistics.PrepareCols4MVIndex = prepareCols4MVIndex
 }
 
 // generateIndexMergePath generates IndexMerge AccessPaths on this DataSource.
@@ -686,7 +687,7 @@ func (ds *DataSource) generateMVIndexPartialPath4Or(normalPathCnt int, indexMerg
 			bestNeedSelection    bool
 		)
 		for _, onePossibleMVIndexPath := range possibleMVIndexPaths {
-			idxCols, ok := ds.prepareCols4MVIndex(onePossibleMVIndexPath.Index)
+			idxCols, ok := prepareCols4MVIndex(ds.table.Meta(), onePossibleMVIndexPath.Index, ds.TblCols)
 			if !ok {
 				continue
 			}
@@ -754,7 +755,7 @@ func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, in
 	mvAndPartialPath := make([]*util.AccessPath, 0, len(possibleMVIndexPaths))
 	usedAccessCondsMap := make(map[string]expression.Expression, len(indexMergeConds))
 	for idx := 0; idx < len(possibleMVIndexPaths); idx++ {
-		idxCols, ok := ds.prepareCols4MVIndex(possibleMVIndexPaths[idx].Index)
+		idxCols, ok := prepareCols4MVIndex(ds.table.Meta(), possibleMVIndexPaths[idx].Index, ds.TblCols)
 		if !ok {
 			continue
 		}
@@ -861,7 +862,7 @@ func (ds *DataSource) generateIndexMergeOnDNF4MVIndex(normalPathCnt int, filters
 			continue // not a MVIndex path
 		}
 
-		idxCols, ok := ds.prepareCols4MVIndex(ds.possibleAccessPaths[idx].Index)
+		idxCols, ok := prepareCols4MVIndex(ds.table.Meta(), ds.possibleAccessPaths[idx].Index, ds.TblCols)
 		if !ok {
 			continue
 		}
@@ -1122,7 +1123,7 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 			continue // not a MVIndex path
 		}
 
-		idxCols, ok := ds.prepareCols4MVIndex(ds.possibleAccessPaths[idx].Index)
+		idxCols, ok := prepareCols4MVIndex(ds.table.Meta(), ds.possibleAccessPaths[idx].Index, ds.TblCols)
 		if !ok {
 			continue
 		}
@@ -1306,13 +1307,17 @@ func buildPartialPath4MVIndex(
 	return partialPath, true, nil
 }
 
-func (ds *DataSource) prepareCols4MVIndex(mvIndex *model.IndexInfo) (idxCols []*expression.Column, ok bool) {
+func prepareCols4MVIndex(
+	tableInfo *model.TableInfo,
+	mvIndex *model.IndexInfo,
+	tblCols []*expression.Column,
+) (idxCols []*expression.Column, ok bool) {
 	var virColNum = 0
 	for i := range mvIndex.Columns {
 		colOffset := mvIndex.Columns[i].Offset
-		colMeta := ds.table.Meta().Cols()[colOffset]
+		colMeta := tableInfo.Cols()[colOffset]
 		var col *expression.Column
-		for _, c := range ds.TblCols {
+		for _, c := range tblCols {
 			if c.ID == colMeta.ID {
 				col = c
 				break
