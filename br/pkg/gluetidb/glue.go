@@ -4,39 +4,20 @@ package gluetidb
 
 import (
 	"context"
-<<<<<<< HEAD
-	"strings"
-=======
-	"time"
->>>>>>> 8709bb53df5 (brie: support batch ddl for sql restore (#49089))
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetikv"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/executor"
 	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta/autoid"
 	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
 	"github.com/pingcap/tidb/session"
 	"github.com/pingcap/tidb/sessionctx"
-=======
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/session"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
-	"github.com/pingcap/tidb/pkg/sessionctx"
->>>>>>> 8709bb53df5 (brie: support batch ddl for sql restore (#49089))
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -49,7 +30,6 @@ var (
 
 const brComment = `/*from(br)*/`
 
-// New makes a new tidb glue.
 func New() Glue {
 	log.Debug("enabling no register config")
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -214,93 +194,6 @@ func (gs *tidbSession) CreatePlacementPolicy(ctx context.Context, policy *model.
 	return d.CreatePlacementPolicyWithInfo(gs.se, policy, ddl.OnExistIgnore)
 }
 
-<<<<<<< HEAD
-// SplitBatchCreateTable provide a way to split batch into small batch when batch size is large than 6 MB.
-// The raft entry has limit size of 6 MB, a batch of CreateTables may hit this limitation
-// TODO: shall query string be set for each split batch create, it looks does not matter if we set once for all.
-func (gs *tidbSession) SplitBatchCreateTable(schema model.CIStr, infos []*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
-	var err error
-	d := domain.GetDomain(gs.se).DDL()
-
-	if err = d.BatchCreateTableWithInfo(gs.se, schema, infos, append(cs, ddl.OnExistIgnore)...); kv.ErrEntryTooLarge.Equal(err) {
-		log.Info("entry too large, split batch create table", zap.Int("num table", len(infos)))
-		if len(infos) == 1 {
-			return err
-		}
-		mid := len(infos) / 2
-		err = gs.SplitBatchCreateTable(schema, infos[:mid], cs...)
-		if err != nil {
-			return err
-		}
-		err = gs.SplitBatchCreateTable(schema, infos[mid:], cs...)
-		if err != nil {
-			return err
-		}
-		return nil
-	}
-	return err
-}
-
-// CreateTables implements glue.BatchCreateTableSession.
-func (gs *tidbSession) CreateTables(ctx context.Context, tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
-	var dbName model.CIStr
-
-	// Disable foreign key check when batch create tables.
-	gs.se.GetSessionVars().ForeignKeyChecks = false
-	for db, tablesInDB := range tables {
-		dbName = model.NewCIStr(db)
-		queryBuilder := strings.Builder{}
-		cloneTables := make([]*model.TableInfo, 0, len(tablesInDB))
-		for _, table := range tablesInDB {
-			query, err := gs.showCreateTable(table)
-			if err != nil {
-				return errors.Trace(err)
-			}
-
-			queryBuilder.WriteString(query)
-			queryBuilder.WriteString(";")
-
-			table = table.Clone()
-			// Clone() does not clone partitions yet :(
-			if table.Partition != nil {
-				newPartition := *table.Partition
-				newPartition.Definitions = append([]model.PartitionDefinition{}, table.Partition.Definitions...)
-				table.Partition = &newPartition
-			}
-			cloneTables = append(cloneTables, table)
-		}
-		gs.se.SetValue(sessionctx.QueryString, queryBuilder.String())
-
-		if err := gs.SplitBatchCreateTable(dbName, cloneTables, cs...); err != nil {
-			//It is possible to failure when TiDB does not support model.ActionCreateTables.
-			//In this circumstance, BatchCreateTableWithInfo returns errno.ErrInvalidDDLJob,
-			//we fall back to old way that creating table one by one
-			log.Warn("batch create table from tidb failure", zap.Error(err))
-			return err
-		}
-	}
-
-	return nil
-}
-
-// CreateTable implements glue.Session.
-func (gs *tidbSession) CreateTable(ctx context.Context, dbName model.CIStr, table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
-	d := domain.GetDomain(gs.se).DDL()
-	query, err := gs.showCreateTable(table)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	gs.se.SetValue(sessionctx.QueryString, query)
-	// Clone() does not clone partitions yet :(
-	table = table.Clone()
-	if table.Partition != nil {
-		newPartition := *table.Partition
-		newPartition.Definitions = append([]model.PartitionDefinition{}, table.Partition.Definitions...)
-		table.Partition = &newPartition
-	}
-
-	return d.CreateTableWithInfo(gs.se, dbName, table, append(cs, ddl.OnExistIgnore)...)
-=======
 // CreateTables implements glue.BatchCreateTableSession.
 func (gs *tidbSession) CreateTables(_ context.Context,
 	tables map[string][]*model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
@@ -311,7 +204,6 @@ func (gs *tidbSession) CreateTables(_ context.Context,
 func (gs *tidbSession) CreateTable(_ context.Context, dbName model.CIStr,
 	table *model.TableInfo, cs ...ddl.CreateTableWithInfoConfigurier) error {
 	return errors.Trace(executor.BRIECreateTable(gs.se, dbName, table, brComment, cs...))
->>>>>>> 8709bb53df5 (brie: support batch ddl for sql restore (#49089))
 }
 
 // Close implements glue.Session.

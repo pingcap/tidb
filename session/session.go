@@ -156,6 +156,17 @@ var (
 	telemetryIndexMerge = metrics.TelemetryIndexMergeUsage
 )
 
+func init() {
+	executor.CreateSession = func(ctx sessionctx.Context) (sessionctx.Context, error) {
+		return CreateSession(ctx.GetStore())
+	}
+	executor.CloseSession = func(ctx sessionctx.Context) {
+		if se, ok := ctx.(Session); ok {
+			se.Close()
+		}
+	}
+}
+
 // Session context, it is consistent with the lifecycle of a client connection.
 type Session interface {
 	sessionctx.Context

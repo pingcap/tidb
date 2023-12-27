@@ -9,28 +9,14 @@ go_library(
         "//br/pkg/glue",
         "//br/pkg/gluetikv",
         "//br/pkg/logutil",
-<<<<<<< HEAD
         "//config",
         "//ddl",
         "//domain",
         "//executor",
         "//kv",
-        "//meta/autoid",
         "//parser/model",
-        "//parser/mysql",
         "//session",
         "//sessionctx",
-=======
-        "//pkg/config",
-        "//pkg/ddl",
-        "//pkg/domain",
-        "//pkg/executor",
-        "//pkg/kv",
-        "//pkg/parser/model",
-        "//pkg/session",
-        "//pkg/session/types",
-        "//pkg/sessionctx",
->>>>>>> 8709bb53df5 (brie: support batch ddl for sql restore (#49089))
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@com_github_tikv_pd_client//:client",
@@ -46,20 +32,9 @@ go_test(
     flaky = True,
     deps = [
         "//br/pkg/glue",
-<<<<<<< HEAD
-        "//ddl",
-        "//kv",
-        "//meta",
         "//parser/model",
-        "//sessionctx",
         "//testkit",
         "//types",
-        "@com_github_pingcap_failpoint//:failpoint",
-=======
-        "//pkg/parser/model",
-        "//pkg/testkit",
-        "//pkg/types",
->>>>>>> 8709bb53df5 (brie: support batch ddl for sql restore (#49089))
         "@com_github_stretchr_testify//require",
     ],
 )

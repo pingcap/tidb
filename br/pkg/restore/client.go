@@ -315,20 +315,7 @@ func (rc *Client) GetBatchDdlSize() uint {
 	return rc.batchDdlSize
 }
 
-<<<<<<< HEAD
-// Close a client.
-func (rc *Client) Close() {
-=======
-func (rc *Client) SetRewriteMode(mode RewriteMode) {
-	rc.rewriteMode = mode
-}
-
-func (rc *Client) GetRewriteMode() RewriteMode {
-	return rc.rewriteMode
-}
-
 func (rc *Client) closeConn() {
->>>>>>> 8709bb53df5 (brie: support batch ddl for sql restore (#49089))
 	// rc.db can be nil in raw kv mode.
 	if rc.db != nil {
 		rc.db.Close()
