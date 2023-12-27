@@ -59,7 +59,7 @@ func TestExtractTableName(t *testing.T) {
 	for _, tt := range tc {
 		stmt, err := parser.New().ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err)
-		rs := ExtractTableName(stmt)
+		rs := CollectTableNames(stmt)
 		require.Equal(t, tt.tables, getTableName(rs))
 	}
 }

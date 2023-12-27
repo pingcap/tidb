@@ -21,32 +21,32 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
-// ExtractTableName gets all table names from ast.Node.
-func ExtractTableName(in ast.Node) []*ast.Node {
-	collector := collectTableNamePool.Get().(*collectTableName)
+// CollectTableNames gets all table names from ast.Node.
+func CollectTableNames(in ast.Node) []*ast.Node {
+	collector := tableNameCollectorPool.Get().(*tableNameCollector)
 	defer collector.DestroyAndPutToPool()
 	in.Accept(collector)
 	return collector.GetResult()
 }
 
-var collectTableNamePool = sync.Pool{
+var tableNameCollectorPool = sync.Pool{
 	New: func() any {
 		return newCollectTableName()
 	},
 }
 
-type collectTableName struct {
+type tableNameCollector struct {
 	tableNames []*ast.Node
 }
 
-func newCollectTableName() *collectTableName {
-	return &collectTableName{
+func newCollectTableName() *tableNameCollector {
+	return &tableNameCollector{
 		tableNames: make([]*ast.Node, 0, 4),
 	}
 }
 
 // Enter implements Visitor interface.
-func (c *collectTableName) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
+func (c *tableNameCollector) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.TableName, *ast.ColumnName:
 		c.tableNames = append(c.tableNames, &node)
@@ -55,15 +55,15 @@ func (c *collectTableName) Enter(in ast.Node) (out ast.Node, skipChildren bool) 
 }
 
 // Leave implements Visitor interface.
-func (*collectTableName) Leave(in ast.Node) (out ast.Node, ok bool) {
+func (*tableNameCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
-func (c *collectTableName) GetResult() []*ast.Node {
+func (c *tableNameCollector) GetResult() []*ast.Node {
 	return slices.Clone(c.tableNames)
 }
 
-func (c *collectTableName) DestroyAndPutToPool() {
+func (c *tableNameCollector) DestroyAndPutToPool() {
 	clear(c.tableNames)
-	collectTableNamePool.Put(c)
+	tableNameCollectorPool.Put(c)
 }
