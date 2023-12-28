@@ -35,13 +35,13 @@ func TestNormalize(t *testing.T) {
 		{"select \\N", "select ?"},
 		{"SELECT `null`", "select `null`"},
 		{"select * from b where id = 1", "select * from `b` where `id` = ?"},
-		{"select 1 from b where id in (1, 3, '3', 1, 2, 3, 4)", "select ? from `b` where `id` in ( ... )"},
+		{"select 1 from b where id in (1, 3, '3', 1, 2, 3, 4)", "select ? from `b` where `id` in ( ?,?,? )"},
 		{"select 1 from b where id in (1, a, 4)", "select ? from `b` where `id` in ( ? , `a` , ? )"},
 		{"select 1 from b order by 2", "select ? from `b` order by 2"},
 		{"select /*+ a hint */ 1", "select ?"},
 		{"select /* a hint */ 1", "select ?"},
-		{"select truncate(1, 2)", "select truncate ( ... )"},
-		{"select -1 + - 2 + b - c + 0.2 + (-2) from c where d in (1, -2, +3)", "select ? + ? + `b` - `c` + ? + ( ? ) from `c` where `d` in ( ... )"},
+		{"select truncate(1, 2)", "select truncate ( ?,?,? )"},
+		{"select -1 + - 2 + b - c + 0.2 + (-2) from c where d in (1, -2, +3)", "select ? + ? + `b` - `c` + ? + ( ? ) from `c` where `d` in ( ?,?,? )"},
 		{"select * from t where a <= -1 and b < -2 and c = -3 and c > -4 and c >= -5 and e is 1", "select * from `t` where `a` <= ? and `b` < ? and `c` = ? and `c` > ? and `c` >= ? and `e` is ?"},
 		{"select count(a), b from t group by 2", "select count ( `a` ) , `b` from `t` group by 2"},
 		{"select count(a), b, c from t group by 2, 3", "select count ( `a` ) , `b` , `c` from `t` group by 2 , 3"},
@@ -60,13 +60,13 @@ func TestNormalize(t *testing.T) {
 		{"select * from t ignore index(", "select * from `t` ignore index"},
 		{"select /*+ ", "select "},
 		{"select 1 / 2", "select ? / ?"},
-		{"select * from t where a = 40 limit ?, ?", "select * from `t` where `a` = ? limit ..."},
+		{"select * from t where a = 40 limit ?, ?", "select * from `t` where `a` = ? limit ?,?,?"},
 		{"select * from t where a > ?", "select * from `t` where `a` > ?"},
 		{"select @a=b from t", "select @a = `b` from `t`"},
 		{"select * from `table", "select * from"},
-		{"Select * from t where (i, j) in ((1,1), (2,2))", "select * from `t` where ( `i` , `j` ) in ( ( ... ) )"},
-		{"insert into t values (1,1), (2,2)", "insert into `t` values ( ... )"},
-		{"insert into t values (1), (2)", "insert into `t` values ( ... )"},
+		{"Select * from t where (i, j) in ((1,1), (2,2))", "select * from `t` where ( `i` , `j` ) in ( ( ?,?,? ) )"},
+		{"insert into t values (1,1), (2,2)", "insert into `t` values ( ?,?,? )"},
+		{"insert into t values (1), (2)", "insert into `t` values ( ?,?,? )"},
 		{"insert into t values (1)", "insert into `t` values ( ? )"},
 	}
 	for _, test := range tests_for_generic_normalization_rules {
@@ -85,11 +85,11 @@ func TestNormalize(t *testing.T) {
 	}{
 		// Binding specific rules
 		// IN (Lit) => IN ( ... ) #44298
-		{"select * from t where a in (1)", "select * from `t` where `a` in ( ... )"},
-		{"select * from t where (a, b) in ((1, 1))", "select * from `t` where ( `a` , `b` ) in ( ( ... ) )"},
-		{"select * from t where (a, b) in ((1, 1), (2, 2))", "select * from `t` where ( `a` , `b` ) in ( ( ... ) )"},
-		{"select * from t where a in(1, 2)", "select * from `t` where `a` in ( ... )"},
-		{"select * from t where a in(1, 2, 3)", "select * from `t` where `a` in ( ... )"},
+		{"select * from t where a in (1)", "select * from `t` where `a` in ( ?,?,? )"},
+		{"select * from t where (a, b) in ((1, 1))", "select * from `t` where ( `a` , `b` ) in ( ( ?,?,? ) )"},
+		{"select * from t where (a, b) in ((1, 1), (2, 2))", "select * from `t` where ( `a` , `b` ) in ( ( ?,?,? ) )"},
+		{"select * from t where a in(1, 2)", "select * from `t` where `a` in ( ?,?,? )"},
+		{"select * from t where a in(1, 2, 3)", "select * from `t` where `a` in ( ?,?,? )"},
 	}
 	for _, test := range tests_for_binding_specific_rules {
 		normalized := parser.NormalizeForBinding(test.input)
@@ -113,13 +113,13 @@ func TestNormalizeKeepHint(t *testing.T) {
 		{"select \\N", "select ?"},
 		{"SELECT `null`", "select `null`"},
 		{"select * from b where id = 1", "select * from `b` where `id` = ?"},
-		{"select 1 from b where id in (1, 3, '3', 1, 2, 3, 4)", "select ? from `b` where `id` in ( ... )"},
+		{"select 1 from b where id in (1, 3, '3', 1, 2, 3, 4)", "select ? from `b` where `id` in ( ?,?,? )"},
 		{"select 1 from b where id in (1, a, 4)", "select ? from `b` where `id` in ( ? , `a` , ? )"},
 		{"select 1 from b order by 2", "select ? from `b` order by 2"},
 		{"select /*+ a hint */ 1", "select /*+ a hint */ ?"},
 		{"select /* a hint */ 1", "select ?"},
-		{"select truncate(1, 2)", "select truncate ( ... )"},
-		{"select -1 + - 2 + b - c + 0.2 + (-2) from c where d in (1, -2, +3)", "select ? + ? + `b` - `c` + ? + ( ? ) from `c` where `d` in ( ... )"},
+		{"select truncate(1, 2)", "select truncate ( ?,?,? )"},
+		{"select -1 + - 2 + b - c + 0.2 + (-2) from c where d in (1, -2, +3)", "select ? + ? + `b` - `c` + ? + ( ? ) from `c` where `d` in ( ?,?,? )"},
 		{"select * from t where a <= -1 and b < -2 and c = -3 and c > -4 and c >= -5 and e is 1", "select * from `t` where `a` <= ? and `b` < ? and `c` = ? and `c` > ? and `c` >= ? and `e` is ?"},
 		{"select count(a), b from t group by 2", "select count ( `a` ) , `b` from `t` group by 2"},
 		{"select count(a), b, c from t group by 2, 3", "select count ( `a` ) , `b` , `c` from `t` group by 2 , 3"},
@@ -138,7 +138,7 @@ func TestNormalizeKeepHint(t *testing.T) {
 		{"select * from t ignore index(", "select * from `t` ignore index ("},
 		{"select /*+ ", "select "},
 		{"select 1 / 2", "select ? / ?"},
-		{"select * from t where a = 40 limit ?, ?", "select * from `t` where `a` = ? limit ..."},
+		{"select * from t where a = 40 limit ?, ?", "select * from `t` where `a` = ? limit ?,?,?"},
 		{"select * from t where a > ?", "select * from `t` where `a` > ?"},
 		{"select @a=b from t", "select @a = `b` from `t`"},
 		{"select * from `table", "select * from"},
@@ -155,7 +155,7 @@ func TestNormalizeDigest(t *testing.T) {
 		normalized string
 		digest     string
 	}{
-		{"select 1 from b where id in (1, 3, '3', 1, 2, 3, 4)", "select ? from `b` where `id` in ( ... )", "e1c8cc2738f596dc24f15ef8eb55e0d902910d7298983496362a7b46dbc0b310"},
+		{"select 1 from b where id in (1, 3, '3', 1, 2, 3, 4)", "select ? from `b` where `id` in ( ?,?,? )", "8e76ccff2f4452654f6c9a7d8335c4d85e20231bd1e05fb90a6d6f49f62f8e56"},
 	}
 	for _, test := range tests {
 		normalized, digest := parser.NormalizeDigest(test.sql)

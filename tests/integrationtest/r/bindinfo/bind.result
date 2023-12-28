@@ -338,7 +338,7 @@ create binding for select * from t where a in(1,2) using select * from t where a
 create binding for select * from t where a in(1,2,3) using select * from t where a in(1,2,3);
 show bindings where default_db='bindinfo__bind';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Type	Sql_digest	Plan_digest
-select * from `bindinfo__bind` . `t` where `a` in ( ?,?,? )	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1,2,3)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual		7de35506acc15abc831113a6b9e6fc7a5d83bf1a83e0737eba82cd39edf7dab1	
+select * from `bindinfo__bind` . `t` where `a` in ( ?,?,? )	SELECT * FROM `bindinfo__bind`.`t` WHERE `a` IN (1,2,3)	bindinfo__bind	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	7de35506acc15abc831113a6b9e6fc7a5d83bf1a83e0737eba82cd39edf7dab1	
 drop binding for select * from t where a in(1);
 show bindings where default_db='bindinfo__bind';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
