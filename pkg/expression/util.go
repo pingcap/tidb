@@ -1800,3 +1800,18 @@ func ExprsToStringsForDisplay(exprs []Expression) []string {
 	}
 	return strs
 }
+
+// ConstExprConsiderPlanCache indicates whether the expression can be considered as a constant expression considering planCache.
+// If the expression is in plan cache, it should have a const level `ConstStrict` because it can be shared across statements.
+// If the expression is not in plan cache, `ConstOnlyInContext` is enough because it is only used in one statement.
+// Please notice that if the expression may be cached in other ways except plan cache, we should not use this function.
+func ConstExprConsiderPlanCache(expr Expression, inPlanCache bool) bool {
+	switch expr.ConstLevel() {
+	case ConstStrict:
+		return true
+	case ConstOnlyInContext:
+		return !inPlanCache
+	default:
+		return false
+	}
+}
