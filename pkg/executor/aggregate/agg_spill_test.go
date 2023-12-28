@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -234,10 +235,6 @@ func initCtx(ctx *mock.Context, newRootExceedAction *testutil.MockActionOnExceed
 	ctx.GetSessionVars().MemTracker.SetActionOnExceed(newRootExceedAction)
 }
 
-// TODO trigger fallback when:
-//  2. does has enough data to spill
-//  3. trigger at final stage
-//
 // TODO continuous consume in another goroutine
 func TestGetCorrectResult(t *testing.T) {
 	newRootExceedAction := new(testutil.MockActionOnExceed)
@@ -246,8 +243,8 @@ func TestGetCorrectResult(t *testing.T) {
 	ctx := mock.NewContext()
 	initCtx(ctx, newRootExceedAction, hardLimitBytesNum)
 
-	rowNum := rand.Intn(300000)
-	ndv := rand.Intn(100000)
+	rowNum := 100000 + rand.Intn(200000)
+	ndv := 50000 + rand.Intn(50000)
 	col1, col2 := generateData(rowNum, ndv)
 	result := generateResult(col1, col2)
 	opt := getMockDataSourceParameters(ctx)
@@ -271,10 +268,46 @@ func TestGetCorrectResult(t *testing.T) {
 		}
 		aggExec.Close()
 
+		log.Info(fmt.Sprintf("rowNum: %d, ndv: %d", rowNum, ndv))
 		require.True(t, aggExec.IsSpillTriggeredForTest())
 		require.True(t, resContainer.check(result))
 	}
 	require.Equal(t, 0, newRootExceedAction.GetTriggeredNum())
+}
+
+func TestFallBackAction(t *testing.T) {
+	newRootExceedAction := new(testutil.MockActionOnExceed)
+	hardLimitBytesNum := int64(6000000)
+
+	ctx := mock.NewContext()
+	initCtx(ctx, newRootExceedAction, hardLimitBytesNum)
+
+	// Consume lots of memory in advance to help to trigger fallback action.
+	ctx.GetSessionVars().MemTracker.Consume(int64(float64(hardLimitBytesNum) * 0.79))
+
+	rowNum := 100000 + rand.Intn(200000)
+	ndv := 50000 + rand.Intn(50000)
+	col1, col2 := generateData(rowNum, ndv)
+	opt := getMockDataSourceParameters(ctx)
+	dataSource := buildMockDataSource(opt, col1, col2)
+
+	aggExec := buildHashAggExecutor(t, ctx, dataSource)
+	dataSource.PrepareChunks()
+	tmpCtx := context.Background()
+	chk := exec.NewFirstChunk(aggExec)
+	resContainer := resultsContainer{}
+	aggExec.Open(tmpCtx)
+
+	for {
+		aggExec.Next(tmpCtx, chk)
+		if chk.NumRows() == 0 {
+			break
+		}
+		resContainer.add(chk)
+		chk.Reset()
+	}
+	aggExec.Close()
+	require.Less(t, 0, newRootExceedAction.GetTriggeredNum())
 }
 
 func TestRandomFail(t *testing.T) {
@@ -285,8 +318,8 @@ func TestRandomFail(t *testing.T) {
 	initCtx(ctx, newRootExceedAction, hardLimitBytesNum)
 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/enableAggSpillIntest", `return(true)`)
-	rowNum := rand.Intn(300000)
-	ndv := rand.Intn(100000)
+	rowNum := 100000 + rand.Intn(200000)
+	ndv := 50000 + rand.Intn(50000)
 	col1, col2 := generateData(rowNum, ndv)
 	opt := getMockDataSourceParameters(ctx)
 	dataSource := buildMockDataSource(opt, col1, col2)
