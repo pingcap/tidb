@@ -735,3 +735,38 @@ func TestEmptyBaseReader4LimitSizeMergeIter(t *testing.T) {
 	require.ErrorIs(t, err, io.EOF)
 	require.EqualValues(t, fileNum, store.openCnt.Load())
 }
+
+func TestCloseLimitSizeMergeIterHalfway(t *testing.T) {
+	fileNum := 10000
+	filenames := make([]string, fileNum)
+	for i := range filenames {
+		filenames[i] = fmt.Sprintf("/test%06d", i)
+	}
+	ctx := context.Background()
+	store := &trackOpenMemStorage{MemStorage: storage.NewMemStorage()}
+
+	for i, filename := range filenames {
+		writer, err := store.Create(ctx, filename, nil)
+		require.NoError(t, err)
+		prop := &rangeProperty{firstKey: []byte{byte(i)}}
+		buf := encodeMultiProps(nil, []*rangeProperty{prop})
+		_, err = writer.Write(ctx, buf)
+		require.NoError(t, err)
+		err = writer.Close(ctx)
+		require.NoError(t, err)
+	}
+
+	multiStat := MultipleFilesStat{MaxOverlappingNum: 1}
+	for _, f := range filenames {
+		multiStat.Filenames = append(multiStat.Filenames, [2]string{"", f})
+	}
+	iter, err := newMergePropBaseIter(ctx, multiStat, store)
+	require.NoError(t, err)
+
+	_, err = iter.next()
+	require.NoError(t, err)
+
+	err = iter.close()
+	require.NoError(t, err)
+	require.EqualValues(t, 0, store.opened.Load())
+}

@@ -19,6 +19,7 @@ import (
 	"container/heap"
 	"context"
 	"io"
+	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/membuf"
@@ -614,6 +615,7 @@ type mergePropBaseIter struct {
 	iter            *limitSizeMergeIter[*rangeProperty, statReaderProxy]
 	closeReaderFlag *bool
 	closeCh         chan struct{}
+	wg              *sync.WaitGroup
 }
 
 type readerAndError struct {
@@ -621,7 +623,7 @@ type readerAndError struct {
 	err error
 }
 
-var mergePropBaseIterEarlyClosed = errors.New("mergePropBaseIter is closed")
+var errMergePropBaseIterClosed = errors.New("mergePropBaseIter is closed")
 
 func newMergePropBaseIter(
 	ctx context.Context,
@@ -655,25 +657,45 @@ func newMergePropBaseIter(
 	preOpenLimit = min(preOpenLimit, int64(len(multiStat.Filenames)))
 	preOpenCh := make(chan chan readerAndError, preOpenLimit-limit)
 	closeCh := make(chan struct{})
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
 	go func() {
 		defer close(preOpenCh)
+		defer wg.Done()
 		// newLimitSizeMergeIter will open #limit readers at the beginning, and for rest
 		// readers we open them in advance to reduce block when we need to open them.
 		for i := int(limit); i < len(multiStat.Filenames); i++ {
 			filePair := multiStat.Filenames[i]
 			path := filePair[1]
 			asyncTask := make(chan readerAndError, 1)
+			wg.Add(1)
 			go func() {
 				defer close(asyncTask)
+				defer wg.Done()
 				rd, err := newStatsReader(ctx, exStorage, path, 500*1024)
 				select {
 				case <-closeCh:
+					_ = rd.Close()
 					return
 				case asyncTask <- readerAndError{r: &statReaderProxy{p: path, r: rd}, err: err}:
 				}
 			}()
 			select {
 			case <-closeCh:
+				// when close, no other methods is called simultaneously, so this goroutine can
+				// check the size of channel and drain all
+				for j := len(preOpenCh); j > 0; j-- {
+					asyncTask2 := <-preOpenCh
+					t, ok := <-asyncTask2
+					if !ok {
+						continue
+					}
+					_ = t.r.close()
+				}
+				t, ok := <-asyncTask
+				if ok {
+					_ = t.r.close()
+				}
 				return
 			case preOpenCh <- asyncTask:
 			}
@@ -697,17 +719,17 @@ func newMergePropBaseIter(
 		readerOpeners = append(readerOpeners, func() (*statReaderProxy, error) {
 			select {
 			case <-closeCh:
-				return nil, mergePropBaseIterEarlyClosed
+				return nil, errMergePropBaseIterClosed
 			case asyncTask, ok := <-preOpenCh:
 				if !ok {
-					return nil, mergePropBaseIterEarlyClosed
+					return nil, errMergePropBaseIterClosed
 				}
 				select {
 				case <-closeCh:
-					return nil, mergePropBaseIterEarlyClosed
+					return nil, errMergePropBaseIterClosed
 				case t, ok := <-asyncTask:
 					if !ok {
-						return nil, mergePropBaseIterEarlyClosed
+						return nil, errMergePropBaseIterClosed
 					}
 					return t.r, t.err
 				}
@@ -719,7 +741,7 @@ func newMergePropBaseIter(
 		weight[i] = 1
 	}
 	i, err := newLimitSizeMergeIter(ctx, readerOpeners, weight, limit)
-	return &mergePropBaseIter{iter: i, closeCh: closeCh}, err
+	return &mergePropBaseIter{iter: i, closeCh: closeCh, wg: wg}, err
 }
 
 func (m mergePropBaseIter) path() string {
@@ -744,8 +766,10 @@ func (m mergePropBaseIter) switchConcurrentMode(bool) error {
 	return nil
 }
 
+// close should not be called concurrently with next.
 func (m mergePropBaseIter) close() error {
 	close(m.closeCh)
+	m.wg.Wait()
 	return m.iter.close()
 }
 
