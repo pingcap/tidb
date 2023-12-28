@@ -112,8 +112,8 @@ func (m *Manager) initMeta() (err error) {
 		if err == nil {
 			break
 		}
-		if err = m.ctx.Err(); err != nil {
-			return err
+		if err1 := m.ctx.Err(); err1 != nil {
+			return err1
 		}
 		if i%10 == 0 {
 			logutil.Logger(m.logCtx).Warn("start manager failed",

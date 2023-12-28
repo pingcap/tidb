@@ -491,8 +491,8 @@ func (s *BaseScheduler) updateTask(taskState proto.TaskState, newSubTasks []*pro
 		if err == nil || !retryable {
 			break
 		}
-		if err := s.ctx.Err(); err != nil {
-			return err
+		if err1 := s.ctx.Err(); err1 != nil {
+			return err1
 		}
 		if i%10 == 0 {
 			logutil.Logger(s.logCtx).Warn("updateTask first failed", zap.Stringer("from", prevState), zap.Stringer("to", s.Task.State),
