@@ -175,22 +175,16 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	holdCap := mathutil.Max(32, mppErrRecoveryHoldChkCap*e.Ctx().GetSessionVars().MaxChunkSize)
 
 	disaggTiFlashWithAutoScaler := config.GetGlobalConfig().DisaggregatedTiFlash && config.GetGlobalConfig().UseAutoScaler
+	_, allowTiFlashFallback := e.Ctx().GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
 	// For now, mpp err recovery only support MemLimit, which is only useful when AutoScaler is used.
-	enableMPPRecovery := disaggTiFlashWithAutoScaler
+	// For cached table, will not dispatch tasks to TiFlash, so no need to recovery.
+	enableMPPRecovery := disaggTiFlashWithAutoScaler && !allowTiFlashFallback && !e.dummy
 
 	failpoint.Inject("mpp_recovery_test_mock_enable", func() {
-		enableMPPRecovery = true
+		if !e.dummy && !allowTiFlashFallback {
+			enableMPPRecovery = true
+		}
 	})
-
-	// No need to recovery when can fallback to tikv.
-	if _, allowTiFlashFallback := e.Ctx().GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]; allowTiFlashFallback {
-		enableMPPRecovery = false
-	}
-
-	// For cached table, will not dispatch tasks to TiFlash, so no need to recovery.
-	if e.dummy {
-		enableMPPRecovery = false
-	}
 
 	e.mppErrRecovery = mpperr.NewRecoveryHandler(disaggTiFlashWithAutoScaler, uint64(holdCap), enableMPPRecovery, e.memTracker)
 	return nil
