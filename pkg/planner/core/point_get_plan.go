@@ -59,6 +59,9 @@ import (
 	"go.uber.org/zap"
 )
 
+// GlobalWithoutColumnPos marks the index has no partition column.
+const GlobalWithoutColumnPos = -1
+
 // PointGetPlan is a fast plan for simple point get.
 // When we detect that the statement has a unique equal access condition, this plan is used.
 // This plan is much faster to build and to execute because it avoid the optimization and coprocessor cost.
@@ -1069,7 +1072,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 			return p
 		}
 		if partitionInfo == nil {
-			return nil
+			return checkTblIndexForPointPlan(ctx, tblName, schema, names, pairs, nil, pos, true, isTableDual, check)
 		}
 		// Take partition selection into consideration.
 		if len(tblName.PartitionNames) > 0 {
@@ -1100,14 +1103,43 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		return nil
 	}
 
+	return checkTblIndexForPointPlan(ctx, tblName, schema, names, pairs, partitionInfo, pos, false, isTableDual, check)
+}
+
+func checkTblIndexForPointPlan(ctx sessionctx.Context, tblName *ast.TableName, schema *expression.Schema,
+	names []*types.FieldName, pairs []nameValuePair, partitionInfo *model.PartitionDefinition,
+	pos int, globalIndexCheck, isTableDual, check bool) *PointGetPlan {
+	if globalIndexCheck {
+		// when partitions are specified or some partition is in ddl, not use point get plan for global index.
+		// TODO: Add partition ID filter for Global Index Point Get.
+		// partitions are specified in select stmt.
+		if len(tblName.PartitionNames) > 0 {
+			return nil
+		}
+		tbl := tblName.TableInfo
+		// some partition is in ddl.
+		if tbl == nil ||
+			len(tbl.GetPartitionInfo().AddingDefinitions) > 0 ||
+			len(tbl.GetPartitionInfo().DroppingDefinitions) > 0 {
+			return nil
+		}
+	}
 	check = check || ctx.GetSessionVars().IsIsolation(ast.ReadCommitted)
 	check = check && ctx.GetSessionVars().ConnectionID > 0
 	var latestIndexes map[int64]*model.IndexInfo
 	var err error
 
+	tbl := tblName.TableInfo
+	dbName := tblName.Schema.L
+	if dbName == "" {
+		dbName = ctx.GetSessionVars().CurrentDB
+	}
 	for _, idxInfo := range tbl.Indices {
 		if !idxInfo.Unique || idxInfo.State != model.StatePublic || idxInfo.Invisible || idxInfo.MVIndex ||
 			!indexIsAvailableByHints(idxInfo, tblName.IndexHints) {
+			continue
+		}
+		if globalIndexCheck && !idxInfo.Global {
 			continue
 		}
 		if isTableDual {
@@ -1997,6 +2029,9 @@ func getColumnPosInIndex(idx *model.IndexInfo, colName *model.CIStr) int {
 		if colName.L == idxCol.Name.L {
 			return i
 		}
+	}
+	if idx.Global {
+		return GlobalWithoutColumnPos
 	}
 	panic("unique index must include all partition columns")
 }
