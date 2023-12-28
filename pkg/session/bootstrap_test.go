@@ -1956,11 +1956,11 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 	MustExec(t, seV174, "use test")
 	MustExec(t, seV174, "create table t (a int, b int, c int, key(c))")
 	_, digest := parser.NormalizeDigestForBinding("SELECT * FROM `test`.`t` WHERE `a` IN (1,2,3)")
-	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:35.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
+	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ?,?,? )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:35.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
 	_, digest = parser.NormalizeDigestForBinding("SELECT * FROM `test`.`t` WHERE `a` IN (1)")
 	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1)', 'test', 'enabled', '2023-09-13 14:41:38.319', '2023-09-13 14:41:36.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
 	_, digest = parser.NormalizeDigestForBinding("SELECT * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)")
-	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? ) and `b` in ( ... )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:37.319', '2023-09-13 14:41:38.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
+	MustExec(t, seV174, fmt.Sprintf("insert into mysql.bind_info values ('select * from `test` . `t` where `a` in ( ? ) and `b` in ( ?,?,? )', 'SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3)', 'test', 'enabled', '2023-09-13 14:41:37.319', '2023-09-13 14:41:38.319', 'utf8', 'utf8_general_ci', 'manual', '%s', '')", digest.String()))
 
 	showBindings := func(s sessiontypes.Session) (records []string) {
 		MustExec(t, s, "admin reload bindings")
@@ -1982,10 +1982,10 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 		return
 	}
 	bindings := showBindings(seV174)
-	// on ver174, `in (1)` and `in (1,2,3)` have different normalized results: `in (?)` and `in (...)`
-	require.Equal(t, []string{"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3):select * from `test` . `t` where `a` in ( ? ) and `b` in ( ... )",
+	// on ver174, `in (1)` and `in (1,2,3)` have different normalized results: `in (?)` and `in (?,?,?)`
+	require.Equal(t, []string{"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3):select * from `test` . `t` where `a` in ( ? ) and `b` in ( ?,?,? )",
 		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1):select * from `test` . `t` where `a` in ( ? )",
-		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3):select * from `test` . `t` where `a` in ( ... )"}, bindings)
+		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1,2,3):select * from `test` . `t` where `a` in ( ?,?,? )"}, bindings)
 
 	// upgrade to ver175
 	domCurVer, err := BootstrapSession(store)
@@ -1996,10 +1996,10 @@ func TestTiDBBindingInListToVer175(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, currentBootstrapVersion, ver)
 
-	// `in (?)` becomes to `in ( ... )`
+	// `in (?)` becomes to `in ( ?,?,? )`
 	bindings = showBindings(seCurVer)
-	require.Equal(t, []string{"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3):select * from `test` . `t` where `a` in ( ... ) and `b` in ( ... )",
-		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1):select * from `test` . `t` where `a` in ( ... )"}, bindings)
+	require.Equal(t, []string{"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1) AND `b` IN (1,2,3):select * from `test` . `t` where `a` in ( ?,?,? ) and `b` in ( ?,?,? )",
+		"SELECT /*+ use_index(`t` `c`)*/ * FROM `test`.`t` WHERE `a` IN (1):select * from `test` . `t` where `a` in ( ?,?,? )"}, bindings)
 
 	planFromBinding := func(s sessiontypes.Session, q string) {
 		MustExec(t, s, q)
