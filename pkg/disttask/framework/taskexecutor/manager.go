@@ -114,7 +114,7 @@ func (m *Manager) initMeta() (err error) {
 		}
 		select {
 		case <-m.ctx.Done():
-			// We don't retry if outer context is canceled.
+			// We don't retry if the context is canceled.
 			return err
 		default:
 		}
