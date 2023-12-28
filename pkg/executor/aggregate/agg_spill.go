@@ -221,9 +221,7 @@ func (p *parallelHashAggSpillHelper) restoreOnePartition(ctx sessionctx.Context)
 	return restoredData, restoredMem, nil
 }
 
-func (p *parallelHashAggSpillHelper) restoreFromOneSpillFile(ctx sessionctx.Context, restoreadData *aggfuncs.AggPartialResultMapper, diskIO *chunk.DataInDiskByChunks, bInMap *int) (int64, int64, error) {
-	totalMemDelta := int64(0)
-	totalExpandMem := int64(0)
+func (p *parallelHashAggSpillHelper) restoreFromOneSpillFile(ctx sessionctx.Context, restoreadData *aggfuncs.AggPartialResultMapper, diskIO *chunk.DataInDiskByChunks, bInMap *int) (totalMemDelta int64, totalExpandMem int64, err error) {
 	chunkNum := diskIO.NumChunks()
 	aggFuncNum := len(p.aggFuncsForRestoring)
 	processRowContext := &processRowContext{
@@ -265,9 +263,7 @@ func (p *parallelHashAggSpillHelper) restoreFromOneSpillFile(ctx sessionctx.Cont
 	return totalMemDelta, totalExpandMem, nil
 }
 
-func (p *parallelHashAggSpillHelper) processRow(context *processRowContext) (int64, int64, error) {
-	totalMemDelta := int64(0)
-	expandMem := int64(0)
+func (p *parallelHashAggSpillHelper) processRow(context *processRowContext) (totalMemDelta int64, expandMem int64, err error) {
 	key := context.chunk.GetRow(context.rowPos).GetString(context.keyColPos)
 	prs, ok := (*context.restoreadData)[key]
 	if ok {
@@ -440,7 +436,7 @@ func (p *ParallelAggSpillDiskAction) spill() {
 				worker.processError(err)
 			}
 			waiter.Done()
-		}(&p.e.partialWorkers[i])
+		}(p.e.partialWorkers[i])
 	}
 
 	// Wait for the finish of spill

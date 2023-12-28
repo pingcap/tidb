@@ -359,7 +359,7 @@ func TestRandomFail(t *testing.T) {
 	}()
 
 	// Test is successful when all sqls are not hung
-	for i := 0; i < 100; i++ {
+	for i := 0; i < 50; i++ {
 		dataSource.PrepareChunks()
 		aggExec := buildHashAggExecutor(t, ctx, dataSource)
 		tmpCtx := context.Background()

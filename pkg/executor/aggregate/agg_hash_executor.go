@@ -108,8 +108,8 @@ type HashAggExec struct {
 	partialOutputChs []chan *aggfuncs.AggPartialResultMapper
 	inputCh          chan *HashAggInput
 	partialInputChs  []chan *chunk.Chunk
-	partialWorkers   []HashAggPartialWorker
-	finalWorkers     []HashAggFinalWorker
+	partialWorkers   []*HashAggPartialWorker
+	finalWorkers     []*HashAggFinalWorker
 	DefaultVal       *chunk.Chunk
 	childResult      *chunk.Chunk
 
@@ -308,7 +308,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			e.stats.PartialStats = append(e.stats.PartialStats, w.stats)
 		}
 		e.memTracker.Consume(w.chk.MemoryUsage())
-		e.partialWorkers[i] = w
+		e.partialWorkers[i] = &w
 		input := &HashAggInput{
 			chk:        exec.NewFirstChunk(e.Children(0)),
 			giveBackCh: w.inputCh,
@@ -343,7 +343,7 @@ func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 			w.stats = &AggWorkerStat{}
 			e.stats.FinalStats = append(e.stats.FinalStats, w.stats)
 		}
-		e.finalWorkers[i] = w
+		e.finalWorkers[i] = &w
 		e.finalWorkers[i].finalResultHolderCh <- exec.NewFirstChunk(e)
 	}
 }
@@ -371,8 +371,8 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 		e.partialOutputChs[i] = make(chan *aggfuncs.AggPartialResultMapper, partialConcurrency)
 	}
 
-	e.partialWorkers = make([]HashAggPartialWorker, partialConcurrency)
-	e.finalWorkers = make([]HashAggFinalWorker, finalConcurrency)
+	e.partialWorkers = make([]*HashAggPartialWorker, partialConcurrency)
+	e.finalWorkers = make([]*HashAggFinalWorker, finalConcurrency)
 	e.initRuntimeStats()
 
 	e.spillHelper = newSpillHelper(e.memTracker, e.PartialAggFuncs)
