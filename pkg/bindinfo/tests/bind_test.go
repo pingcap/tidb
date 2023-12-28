@@ -441,7 +441,7 @@ func TestBestPlanInBaselines(t *testing.T) {
 	_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
 	binding, matched := dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 	require.True(t, matched)
-	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` = ? limit ...", binding.OriginalSQL)
+	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` = ? limit ?,?,?", binding.OriginalSQL)
 	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `ia`)*/ `a`,`b` FROM `test`.`t` WHERE `a` = 1 LIMIT 0,1", binding.BindSQL)
 	require.Equal(t, "test", binding.Db)
 	require.Equal(t, bindinfo.Enabled, binding.Status)
