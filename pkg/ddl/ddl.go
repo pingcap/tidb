@@ -40,9 +40,9 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/syncer"
 	"github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -362,13 +362,9 @@ type ddlCtx struct {
 
 	*waitSchemaSyncedController
 	*schemaVersionManager
-	// recording the running jobs.
-	runningJobs struct {
-		sync.RWMutex
-		ids map[int64]struct{}
-	}
-	// It holds the running DDL jobs ID.
-	runningJobIDs []string
+
+	runningJobs *runningJobs
+
 	// reorgCtx is used for reorganization.
 	reorgCtx reorgContexts
 	// backfillCtx is used for backfill workers.
@@ -660,7 +656,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		autoidCli:                  opt.AutoIDClient,
 		schemaVersionManager:       newSchemaVersionManager(),
 		waitSchemaSyncedController: newWaitSchemaSyncedController(),
-		runningJobIDs:              make([]string, 0, jobRecordCapacity),
+		runningJobs:                newRunningJobs(),
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
 	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*JobContext)
@@ -668,7 +664,6 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
-	ddlCtx.runningJobs.ids = make(map[int64]struct{})
 
 	d := &ddl{
 		ddlCtx:            ddlCtx,
@@ -677,17 +672,17 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlJobCh:          make(chan struct{}, 100),
 	}
 
-	scheduler.RegisterTaskType(proto.Backfill,
-		func(ctx context.Context, id string, task *proto.Task, taskTable scheduler.TaskTable) scheduler.Scheduler {
-			return newBackfillDistScheduler(ctx, id, task, taskTable, d)
-		}, scheduler.WithSummary,
+	taskexecutor.RegisterTaskType(proto.Backfill,
+		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
+			return newBackfillDistExecutor(ctx, id, task, taskTable, d)
+		}, taskexecutor.WithSummary,
 	)
 
-	dispatcher.RegisterDispatcherFactory(proto.Backfill,
-		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
-			return newLitBackfillDispatcher(ctx, d, taskMgr, serverID, task)
+	scheduler.RegisterSchedulerFactory(proto.Backfill,
+		func(ctx context.Context, taskMgr scheduler.TaskManager, nodeMgr *scheduler.NodeManager, task *proto.Task) scheduler.Scheduler {
+			return newLitBackfillScheduler(ctx, d, taskMgr, nodeMgr, task)
 		})
-	dispatcher.RegisterDispatcherCleanUpFactory(proto.Backfill, newBackfillCleanUpS3)
+	scheduler.RegisterSchedulerCleanUpFactory(proto.Backfill, newBackfillCleanUpS3)
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL
 	variable.DisableDDL = d.DisableDDL

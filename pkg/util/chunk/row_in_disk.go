@@ -21,12 +21,9 @@ import (
 	"strconv"
 
 	errors2 "github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/checksum"
 	"github.com/pingcap/tidb/pkg/util/disk"
-	"github.com/pingcap/tidb/pkg/util/encrypt"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
@@ -41,61 +38,6 @@ type DataInDiskByRows struct {
 
 	dataFile   diskFileReaderWriter
 	offsetFile diskFileReaderWriter
-}
-
-// diskFileReaderWriter represents a Reader and a Writer for the temporary disk file.
-type diskFileReaderWriter struct {
-	disk *os.File
-	w    io.WriteCloser
-	// offWrite is the current offset for writing.
-	offWrite int64
-
-	checksumWriter *checksum.Writer
-	cipherWriter   *encrypt.Writer // cipherWriter is only enable when config SpilledFileEncryptionMethod is "aes128-ctr"
-
-	// ctrCipher stores the key and nonce using by aes encrypt io layer
-	ctrCipher *encrypt.CtrCipher
-}
-
-func (l *diskFileReaderWriter) initWithFileName(fileName string) (err error) {
-	l.disk, err = os.CreateTemp(config.GetGlobalConfig().TempStoragePath, fileName)
-	if err != nil {
-		return errors2.Trace(err)
-	}
-	var underlying io.WriteCloser = l.disk
-	if config.GetGlobalConfig().Security.SpilledFileEncryptionMethod != config.SpilledFileEncryptionMethodPlaintext {
-		// The possible values of SpilledFileEncryptionMethod are "plaintext", "aes128-ctr"
-		l.ctrCipher, err = encrypt.NewCtrCipher()
-		if err != nil {
-			return
-		}
-		l.cipherWriter = encrypt.NewWriter(l.disk, l.ctrCipher)
-		underlying = l.cipherWriter
-	}
-	l.checksumWriter = checksum.NewWriter(underlying)
-	l.w = l.checksumWriter
-	return
-}
-
-func (l *diskFileReaderWriter) getReader() io.ReaderAt {
-	var underlying io.ReaderAt = l.disk
-	if l.ctrCipher != nil {
-		underlying = NewReaderWithCache(encrypt.NewReader(l.disk, l.ctrCipher), l.cipherWriter.GetCache(), l.cipherWriter.GetCacheDataOffset())
-	}
-	if l.checksumWriter != nil {
-		underlying = NewReaderWithCache(checksum.NewReader(underlying), l.checksumWriter.GetCache(), l.checksumWriter.GetCacheDataOffset())
-	}
-	return underlying
-}
-
-func (l *diskFileReaderWriter) getSectionReader(off int64) *io.SectionReader {
-	checksumReader := l.getReader()
-	r := io.NewSectionReader(checksumReader, off, l.offWrite-off)
-	return r
-}
-
-func (l *diskFileReaderWriter) getWriter() io.Writer {
-	return l.w
 }
 
 var defaultChunkDataInDiskByRowsPath = "chunk.DataInDiskByRows"
@@ -141,7 +83,7 @@ func (l *DataInDiskByRows) Add(chk *Chunk) (err error) {
 	if chk.NumRows() == 0 {
 		return errors2.New("chunk appended to List should have at least 1 row")
 	}
-	if l.dataFile.disk == nil {
+	if l.dataFile.file == nil {
 		err = l.initDiskFile()
 		if err != nil {
 			return
@@ -255,14 +197,14 @@ func (l *DataInDiskByRows) NumChunks() int {
 
 // Close releases the disk resource.
 func (l *DataInDiskByRows) Close() error {
-	if l.dataFile.disk != nil {
+	if l.dataFile.file != nil {
 		l.diskTracker.Consume(-l.diskTracker.BytesConsumed())
-		terror.Call(l.dataFile.disk.Close)
-		terror.Log(os.Remove(l.dataFile.disk.Name()))
+		terror.Call(l.dataFile.file.Close)
+		terror.Log(os.Remove(l.dataFile.file.Name()))
 	}
-	if l.offsetFile.disk != nil {
-		terror.Call(l.offsetFile.disk.Close)
-		terror.Log(os.Remove(l.offsetFile.disk.Name()))
+	if l.offsetFile.file != nil {
+		terror.Call(l.offsetFile.file.Close)
+		terror.Log(os.Remove(l.offsetFile.file.Name()))
 	}
 	return nil
 }

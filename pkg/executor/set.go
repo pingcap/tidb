@@ -19,6 +19,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -137,13 +138,13 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		// The variable is a noop. For compatibility we allow it to still
 		// be changed, but we append a warning since users might be expecting
 		// something that's not going to happen.
-		sessionVars.StmtCtx.AppendWarning(exeerrors.ErrSettingNoopVariable.GenWithStackByArgs(sysVar.Name))
+		sessionVars.StmtCtx.AppendWarning(exeerrors.ErrSettingNoopVariable.FastGenByArgs(sysVar.Name))
 	}
 	if sysVar.HasInstanceScope() && !v.IsGlobal && sessionVars.EnableLegacyInstanceScope {
 		// For backward compatibility we will change the v.IsGlobal to true,
 		// and append a warning saying this will not be supported in future.
 		v.IsGlobal = true
-		sessionVars.StmtCtx.AppendWarning(exeerrors.ErrInstanceScope.GenWithStackByArgs(sysVar.Name))
+		sessionVars.StmtCtx.AppendWarning(exeerrors.ErrInstanceScope.FastGenByArgs(sysVar.Name))
 	}
 
 	if v.IsGlobal {
@@ -169,6 +170,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		logutil.BgLogger().Info("set global var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", showValStr))
 		if name == variable.TiDBServiceScope {
 			dom := domain.GetDomain(e.Ctx())
+			config.GetGlobalConfig().Instance.TiDBServiceScope = valStr
 			serverID := disttaskutil.GenerateSubtaskExecID(ctx, dom.DDL().GetID())
 			_, err = e.Ctx().(sqlexec.SQLExecutor).ExecuteInternal(ctx,
 				`replace into mysql.dist_framework_meta values(%?, %?, DEFAULT)`, serverID, valStr)

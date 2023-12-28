@@ -440,6 +440,7 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 		}
 		// Reduce this txn entry size.
 		job.BinlogInfo.Clean()
+		job.InvolvingSchemaInfo = nil
 		job.Error = toTError(err)
 		job.ErrorCount++
 		job.SchemaState = model.StateNone
@@ -538,7 +539,11 @@ func needUpdateRawArgs(job *model.Job, meetErr bool) bool {
 	return true
 }
 
-func jobNeedGC(job *model.Job) bool {
+// JobNeedGC is called to determine whether delete-ranges need to be generated for the provided job.
+//
+// NOTICE: BR also uses jobNeedGC to determine whether delete-ranges need to be generated for the provided job.
+// Therefore, please make sure any modification is compatible with BR.
+func JobNeedGC(job *model.Job) bool {
 	if !job.IsCancelled() {
 		if job.Warning != nil && dbterror.ErrCantDropFieldOrKey.Equal(job.Warning) {
 			// For the field/key not exists warnings, there is no need to
@@ -558,7 +563,7 @@ func jobNeedGC(job *model.Job) bool {
 		case model.ActionMultiSchemaChange:
 			for i, sub := range job.MultiSchemaInfo.SubJobs {
 				proxyJob := sub.ToProxyJob(job, i)
-				needGC := jobNeedGC(&proxyJob)
+				needGC := JobNeedGC(&proxyJob)
 				if needGC {
 					return true
 				}
@@ -578,7 +583,7 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 		markJobFinish(job)
 	}()
 
-	if jobNeedGC(job) {
+	if JobNeedGC(job) {
 		err = w.delRangeManager.addDelRangeJob(w.ctx, job)
 		if err != nil {
 			return errors.Trace(err)

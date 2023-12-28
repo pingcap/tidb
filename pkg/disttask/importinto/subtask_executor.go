@@ -135,12 +135,12 @@ func verifyChecksum(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostPr
 		<-ctx.Done()
 	})
 
-	globalTaskManager, err := storage.GetTaskManager()
+	taskManager, err := storage.GetTaskManager()
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return err
 	}
-	remoteChecksum, err := checksumTable(ctx, globalTaskManager, taskMeta, logger)
+	remoteChecksum, err := checksumTable(ctx, taskManager, taskMeta, logger)
 	if err != nil {
 		if taskMeta.Plan.Checksum != config.OpLevelOptional {
 			return err

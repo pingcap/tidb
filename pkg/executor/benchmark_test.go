@@ -653,6 +653,7 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Exec
 			concurrency:     uint(testCase.concurrency),
 			probeTypes:      exec.RetTypes(outerExec),
 			buildTypes:      exec.RetTypes(innerExec),
+			allocPool:       chunk.NewEmptyAllocator(),
 		},
 		probeSideTupleFetcher: &probeSideTupleFetcher{
 			probeSideExec: outerExec,
@@ -1751,7 +1752,7 @@ func BenchmarkAggPartialResultMapperMemoryUsage(b *testing.B) {
 		b.Run(fmt.Sprintf("MapRows %v", c.rowNum), func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
-				aggMap := make(aggregate.AggPartialResultMapper)
+				aggMap := make(aggfuncs.AggPartialResultMapper)
 				tempSlice := make([]aggfuncs.PartialResult, 10)
 				for num := 0; num < c.rowNum; num++ {
 					aggMap[strconv.Itoa(num)] = tempSlice

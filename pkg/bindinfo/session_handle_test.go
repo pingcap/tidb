@@ -74,13 +74,6 @@ func TestGlobalAndSessionBindingBothExist(t *testing.T) {
 	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin")
 	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
 	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "MergeJoin")
-
-	// PART2 : the dropped session binding should continue to block the effect of global binding
-	tk.MustExec("create global binding for SELECT * from t1,t2 where t1.id = t2.id using SELECT  /*+ TIDB_SMJ(t1, t2) */  * from t1,t2 where t1.id = t2.id")
-	tk.MustExec("drop binding for SELECT * from t1,t2 where t1.id = t2.id")
-	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin")
-	tk.MustExec("drop global binding for SELECT * from t1,t2 where t1.id = t2.id")
-	tk.MustHavePlan("SELECT * from t1,t2 where t1.id = t2.id", "HashJoin")
 }
 
 func TestSessionBinding(t *testing.T) {
@@ -116,7 +109,7 @@ func TestSessionBinding(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, testSQL.memoryUsage, pb.GetGauge().GetValue())
 
-		handle := tk.Session().Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
+		handle := tk.Session().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 		sqlDigest := parser.DigestNormalized(testSQL.originSQL).String()
 		bindData := handle.GetSessionBinding(sqlDigest, testSQL.originSQL, "test")
 		require.NotNil(t, bindData)

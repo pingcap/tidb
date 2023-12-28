@@ -298,6 +298,9 @@ const (
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
 
+	// TiDBAnalyzeDistSQLScanConcurrency is used to set the concurrency of a distsql scan task for analyze statement.
+	TiDBAnalyzeDistSQLScanConcurrency = "tidb_analyze_distsql_scan_concurrency"
+
 	// TiDBOptInSubqToJoinAndAgg is used to enable/disable the optimizer rule of rewriting IN subquery.
 	TiDBOptInSubqToJoinAndAgg = "tidb_opt_insubq_to_join_and_agg"
 
@@ -602,6 +605,9 @@ const (
 	// TiDBEvolvePlanBaselines indicates whether the evolution of plan baselines is enabled.
 	TiDBEvolvePlanBaselines = "tidb_evolve_plan_baselines"
 
+	// TiDBOptEnableUniversalBinding indicates whether to enable the universal binding.
+	TiDBOptEnableUniversalBinding = "tidb_opt_enable_universal_binding"
+
 	// TiDBEnableExtendedStats indicates whether the extended statistics feature is enabled.
 	TiDBEnableExtendedStats = "tidb_enable_extended_stats"
 
@@ -629,6 +635,9 @@ const (
 
 	// TiDBEnableClusteredIndex indicates if clustered index feature is enabled.
 	TiDBEnableClusteredIndex = "tidb_enable_clustered_index"
+
+	// TiDBEnableGlobalIndex means if we could create an global index on a partition table or not.
+	TiDBEnableGlobalIndex = "tidb_enable_global_index"
 
 	// TiDBPartitionPruneMode indicates the partition prune mode used.
 	TiDBPartitionPruneMode = "tidb_partition_prune_mode"
@@ -920,6 +929,9 @@ const (
 	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
 	// Please see comments of SessionVars.OptObjective for details.
 	TiDBOptObjective = "tidb_opt_objective"
+
+	// TiDBTxnEntrySizeLimit indicates the max size of a entry in membuf.
+	TiDBTxnEntrySizeLimit = "tidb_txn_entry_size_limit"
 )
 
 // TiDB vars that have only global scope
@@ -933,7 +945,7 @@ const (
 	TiDBGCLifetime = "tidb_gc_life_time"
 	// TiDBGCConcurrency sets the concurrency of garbage collection. -1 = AUTO value
 	TiDBGCConcurrency = "tidb_gc_concurrency"
-	// TiDBGCScanLockMode enables the green GC feature (default)
+	// TiDBGCScanLockMode enables the green GC feature (deprecated)
 	TiDBGCScanLockMode = "tidb_gc_scan_lock_mode"
 	// TiDBGCMaxWaitTime sets max time for gc advances the safepoint delayed by active transactions
 	TiDBGCMaxWaitTime = "tidb_gc_max_wait_time"
@@ -1114,6 +1126,10 @@ const (
 	// TiDBEnableTiFlashPipelineMode means if we should use pipeline model to execute query or not in tiflash.
 	// It's deprecated and setting it will not have any effect.
 	TiDBEnableTiFlashPipelineMode = "tidb_enable_tiflash_pipeline_model"
+	// TiDBIdleTransactionTimeout indicates the maximum time duration a transaction could be idle, unit is second.
+	// Any idle transaction will be killed after being idle for `tidb_idle_transaction_timeout` seconds.
+	// This is similar to https://docs.percona.com/percona-server/5.7/management/innodb_kill_idle_trx.html and https://mariadb.com/kb/en/transaction-timeouts/
+	TiDBIdleTransactionTimeout = "tidb_idle_transaction_timeout"
 )
 
 // TiDB intentional limits
@@ -1134,6 +1150,7 @@ const (
 	DefIndexJoinBatchSize                          = 25000
 	DefIndexLookupSize                             = 20000
 	DefDistSQLScanConcurrency                      = 15
+	DefAnalyzeDistSQLScanConcurrency               = 4
 	DefBuildStatsConcurrency                       = 2
 	DefBuildSamplingStatsConcurrency               = 2
 	DefAutoAnalyzeRatio                            = 0.5
@@ -1252,6 +1269,7 @@ const (
 	DefTiDBEnableCollectExecutionInfo              = true
 	DefTiDBAllowAutoRandExplicitInsert             = false
 	DefTiDBEnableClusteredIndex                    = ClusteredIndexDefModeOn
+	DefTiDBEnableGlobalIndex                       = false
 	DefTiDBRedactLog                               = false
 	DefTiDBRestrictedReadOnly                      = false
 	DefTiDBSuperReadOnly                           = false
@@ -1428,6 +1446,8 @@ const (
 	DefTiDBOptEnableHashJoin                          = true
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
+	DefTiDBIdleTransactionTimeout                     = 0
+	DefTiDBTxnEntrySizeLimit                          = 0
 )
 
 // Process global variables.
@@ -1528,6 +1548,7 @@ var (
 	SchemaVersionCacheLimit   = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
 	CloudStorageURI           = atomic.NewString("")
 	IgnoreInlistPlanDigest    = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
+	TxnEntrySizeLimit         = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
 )
 
 var (

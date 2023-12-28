@@ -322,18 +322,20 @@ func TestArithmeticalFunc2Pb(t *testing.T) {
 		require.Equalf(t, jsons[funcNames[i]], string(js), "%v\n", funcNames[i])
 	}
 
-	funcNames = []string{ast.IntDiv} // cannot be pushed down
-	for _, funcName := range funcNames {
-		fc, err := NewFunction(
-			mock.NewContext(),
-			funcName,
-			types.NewFieldType(mysql.TypeUnspecified),
-			genColumn(mysql.TypeDouble, 1),
-			genColumn(mysql.TypeDouble, 2))
-		require.NoError(t, err)
-		_, err = ExpressionsToPBList(ctx, []Expression{fc}, client)
-		require.Error(t, err)
-	}
+	// IntDiv
+	fc, err := NewFunction(
+		mock.NewContext(),
+		ast.IntDiv,
+		types.NewFieldType(mysql.TypeUnspecified),
+		genColumn(mysql.TypeLonglong, 1),
+		genColumn(mysql.TypeLonglong, 2))
+	require.NoError(t, err)
+	pbExprs, err = ExpressionsToPBList(ctx, []Expression{fc}, client)
+	require.NoError(t, err)
+	js, err := json.Marshal(pbExprs[0])
+	require.NoError(t, err)
+	expectedJs := "{\"tp\":10000,\"children\":[{\"tp\":201,\"val\":\"gAAAAAAAAAE=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":20,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false},{\"tp\":201,\"val\":\"gAAAAAAAAAI=\",\"sig\":0,\"field_type\":{\"tp\":8,\"flag\":0,\"flen\":20,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}],\"sig\":213,\"field_type\":{\"tp\":8,\"flag\":128,\"flen\":20,\"decimal\":0,\"collate\":-63,\"charset\":\"binary\",\"array\":false},\"has_distinct\":false}"
+	require.Equalf(t, expectedJs, string(js), "%v\n", ast.IntDiv)
 }
 
 func TestDateFunc2Pb(t *testing.T) {
@@ -540,8 +542,47 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// json_unquote's argument is not cast(json as string)
+	function, err = NewFunction(mock.NewContext(), ast.JSONUnquote, types.NewFieldType(mysql.TypeString), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// json_array
 	function, err = NewFunction(mock.NewContext(), ast.JSONArray, types.NewFieldType(mysql.TypeJSON), jsonColumn, jsonColumn, jsonColumn, jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// json_depth
+	function, err = NewFunction(mock.NewContext(), ast.JSONDepth, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// json_contains_path
+	function, err = NewFunction(mock.NewContext(), ast.JSONContainsPath, types.NewFieldType(mysql.TypeLonglong), jsonColumn, stringColumn, stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// json_valid
+	/// json_valid_others
+	function, err = NewFunction(mock.NewContext(), ast.JSONValid, types.NewFieldType(mysql.TypeLonglong), intColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	/// json_valid_json
+	function, err = NewFunction(mock.NewContext(), ast.JSONValid, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	/// json_valid_string
+	function, err = NewFunction(mock.NewContext(), ast.JSONValid, types.NewFieldType(mysql.TypeLonglong), stringColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// json_keys
+	/// 1 arg
+	function, err = NewFunction(mock.NewContext(), ast.JSONKeys, types.NewFieldType(mysql.TypeJSON), jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+	/// 2 args
+	function, err = NewFunction(mock.NewContext(), ast.JSONKeys, types.NewFieldType(mysql.TypeJSON), jsonColumn, stringColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -980,11 +1021,6 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 	exprs = exprs[:0]
 
-	// json_unquote's argument is not cast(json as string)
-	function, err = NewFunction(mock.NewContext(), ast.JSONUnquote, types.NewFieldType(mysql.TypeString), stringColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
-
 	// Substring2Args: can not be pushed
 	function, err = NewFunction(mock.NewContext(), ast.Substr, types.NewFieldType(mysql.TypeString), binaryStringColumn, intColumn)
 	require.NoError(t, err)
@@ -992,10 +1028,6 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 	// Substring3Args: can not be pushed
 	function, err = NewFunction(mock.NewContext(), ast.Substr, types.NewFieldType(mysql.TypeString), binaryStringColumn, intColumn, intColumn)
-	require.NoError(t, err)
-	exprs = append(exprs, function)
-
-	function, err = NewFunction(mock.NewContext(), ast.JSONDepth, types.NewFieldType(mysql.TypeLonglong), jsonColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
@@ -1568,6 +1600,16 @@ func TestExprPushDownToTiKV(t *testing.T) {
 			functionName: ast.Mod,
 			retType:      types.NewFieldType(mysql.TypeInt24),
 			args:         []Expression{intColumn, intColumn},
+		},
+		{
+			functionName: ast.Upper,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn},
+		},
+		{
+			functionName: ast.Lower,
+			retType:      types.NewFieldType(mysql.TypeString),
+			args:         []Expression{stringColumn},
 		},
 	}
 

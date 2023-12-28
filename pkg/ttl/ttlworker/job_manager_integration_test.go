@@ -226,7 +226,7 @@ func TestTTLAutoAnalyze(t *testing.T) {
 	is := dom.InfoSchema()
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(is))
-	require.True(t, h.HandleAutoAnalyze(is))
+	require.True(t, h.HandleAutoAnalyze())
 }
 
 func TestTriggerTTLJob(t *testing.T) {

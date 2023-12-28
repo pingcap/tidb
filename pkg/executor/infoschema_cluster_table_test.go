@@ -59,7 +59,7 @@ func createInfosSchemaClusterTableSuite(t *testing.T) *infosSchemaClusterTableSu
 	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(
 		t,
-		mockstore.WithTiKVOptions(tikv.WithPDHTTPClient([]string{s.mockAddr})),
+		mockstore.WithTiKVOptions(tikv.WithPDHTTPClient("infoschema-cluster-table-test", []string{s.mockAddr})),
 	)
 	s.rpcServer, s.listenAddr = setUpRPCService(t, s.dom, "127.0.0.1:0")
 	s.startTime = time.Now()
@@ -225,9 +225,12 @@ func TestTiDBClusterInfo(t *testing.T) {
 		row("tikv", "store1", "", "", ""),
 	))
 	startTime := types.NewTime(types.FromGoTime(s.startTime), mysql.TypeDatetime, 0).String()
-	tk.MustQuery("select type, instance, start_time from information_schema.cluster_info where type != 'tidb'").Check(testkit.Rows(
+	tk.MustQuery("select type, instance, start_time from information_schema.cluster_info where type = 'pd'").Check(testkit.Rows(
 		row("pd", mockAddr, startTime),
-		row("tikv", "store1", startTime),
+	))
+	// The start_time is filled in `dataForTiDBClusterInfo` function not always same as `s.startTime`.
+	tk.MustQuery("select type, instance from information_schema.cluster_info where type = 'tikv'").Check(testkit.Rows(
+		row("tikv", "store1"),
 	))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockStoreTombstone", `return(true)`))
@@ -290,13 +293,12 @@ func TestTikvRegionStatus(t *testing.T) {
 		mockAddr,
 	}
 	tk := testkit.NewTestKit(t, store)
-	restoreConfig := config.RestoreFunc()
-	defer restoreConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableGlobalIndex = true
-	})
 
 	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
 	tk.MustExec("drop table if exists test_t1")
 	tk.MustExec(`CREATE TABLE test_t1 ( a int(11) DEFAULT NULL, b int(11) DEFAULT NULL, c int(11) DEFAULT NULL)`)
 	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_ID, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t1'").Check(testkit.Rows(

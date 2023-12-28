@@ -15,13 +15,10 @@
 package placement
 
 import (
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client/http"
 	"gopkg.in/yaml.v2"
 )
@@ -31,102 +28,6 @@ const (
 	// AttributeEvictLeader is used to evict leader from a store.
 	attributeEvictLeader = "evict-leader"
 )
-
-// RuleGroupConfig defines basic config of rule group
-type RuleGroupConfig struct {
-	ID       string `json:"id"`
-	Index    int    `json:"index"`
-	Override bool   `json:"override"`
-}
-
-var (
-	_ json.Marshaler   = (*TiFlashRule)(nil)
-	_ json.Unmarshaler = (*TiFlashRule)(nil)
-)
-
-// TiFlashRule extends Rule with other necessary fields.
-type TiFlashRule struct {
-	GroupID        string
-	ID             string
-	Index          int
-	Override       bool
-	Role           pd.PeerRoleType
-	Count          int
-	Constraints    []pd.LabelConstraint
-	LocationLabels []string
-	IsolationLevel string
-	StartKey       []byte
-	EndKey         []byte
-}
-
-type tiFlashRule struct {
-	GroupID        string               `json:"group_id"`
-	ID             string               `json:"id"`
-	Index          int                  `json:"index,omitempty"`
-	Override       bool                 `json:"override,omitempty"`
-	Role           pd.PeerRoleType      `json:"role"`
-	Count          int                  `json:"count"`
-	Constraints    []pd.LabelConstraint `json:"label_constraints,omitempty"`
-	LocationLabels []string             `json:"location_labels,omitempty"`
-	IsolationLevel string               `json:"isolation_level,omitempty"`
-	StartKeyHex    string               `json:"start_key"`
-	EndKeyHex      string               `json:"end_key"`
-}
-
-// MarshalJSON implements json.Marshaler interface for TiFlashRule.
-func (r *TiFlashRule) MarshalJSON() ([]byte, error) {
-	return json.Marshal(&tiFlashRule{
-		GroupID:        r.GroupID,
-		ID:             r.ID,
-		Index:          r.Index,
-		Override:       r.Override,
-		Role:           r.Role,
-		Count:          r.Count,
-		Constraints:    r.Constraints,
-		LocationLabels: r.LocationLabels,
-		IsolationLevel: r.IsolationLevel,
-		StartKeyHex:    hex.EncodeToString(codec.EncodeBytes(nil, r.StartKey)),
-		EndKeyHex:      hex.EncodeToString(codec.EncodeBytes(nil, r.EndKey)),
-	})
-}
-
-// UnmarshalJSON implements json.Unmarshaler interface for TiFlashRule.
-func (r *TiFlashRule) UnmarshalJSON(bytes []byte) error {
-	var rule tiFlashRule
-	if err := json.Unmarshal(bytes, &rule); err != nil {
-		return err
-	}
-	*r = TiFlashRule{
-		GroupID:        rule.GroupID,
-		ID:             rule.ID,
-		Index:          rule.Index,
-		Override:       rule.Override,
-		Role:           rule.Role,
-		Count:          rule.Count,
-		Constraints:    rule.Constraints,
-		LocationLabels: rule.LocationLabels,
-		IsolationLevel: rule.IsolationLevel,
-	}
-
-	startKey, err := hex.DecodeString(rule.StartKeyHex)
-	if err != nil {
-		return err
-	}
-
-	endKey, err := hex.DecodeString(rule.EndKeyHex)
-	if err != nil {
-		return err
-	}
-
-	_, r.StartKey, err = codec.DecodeBytes(startKey, nil)
-	if err != nil {
-		return err
-	}
-
-	_, r.EndKey, err = codec.DecodeBytes(endKey, nil)
-
-	return err
-}
 
 // RuleBuilder is used to build the Rules from a constraint string.
 type RuleBuilder struct {

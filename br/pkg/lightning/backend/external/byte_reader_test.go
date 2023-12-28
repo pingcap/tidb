@@ -29,6 +29,8 @@ import (
 	"github.com/johannesboyne/gofakes3/backend/s3mem"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
@@ -79,19 +81,18 @@ func TestByteReader(t *testing.T) {
 	// Test basic next() usage.
 	br, err := newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
-	x := br.next(1)
-	require.Equal(t, 1, len(x))
-	require.Equal(t, byte('a'), x[0])
-	x = br.next(2)
-	require.Equal(t, 2, len(x))
-	require.Equal(t, byte('b'), x[0])
-	require.Equal(t, byte('c'), x[1])
+	n, bs := br.next(1)
+	require.Equal(t, 1, n)
+	require.Equal(t, [][]byte{{'a'}}, bs)
+	n, bs = br.next(2)
+	require.Equal(t, 2, n)
+	require.Equal(t, [][]byte{{'b', 'c'}}, bs)
 	require.NoError(t, br.Close())
 
 	// Test basic readNBytes() usage.
 	br, err = newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
-	x, err = br.readNBytes(2)
+	x, err := br.readNBytes(2)
 	require.NoError(t, err)
 	require.Equal(t, 2, len(x))
 	require.Equal(t, byte('a'), x[0])
@@ -104,12 +105,14 @@ func TestByteReader(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 5, len(x))
 	require.Equal(t, byte('e'), x[4])
+	_, err = br.readNBytes(1) // EOF
+	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, br.Close())
 
 	br, err = newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
 	_, err = br.readNBytes(7) // EOF
-	require.Error(t, err)
+	require.ErrorIs(t, err, io.ErrUnexpectedEOF)
 
 	err = st.WriteFile(context.Background(), "testfile", []byte("abcdef"))
 	require.NoError(t, err)
@@ -205,57 +208,66 @@ func TestEmptyContent(t *testing.T) {
 }
 
 func TestSwitchMode(t *testing.T) {
-	st, clean := NewS3WithBucketAndPrefix(t, "test", "testprefix")
-	defer clean()
-
-	// Prepare
-	fileSize := 1024 * 1024
-	err := st.WriteFile(context.Background(), "testfile", make([]byte, fileSize))
-	require.NoError(t, err)
-
-	newRsc := func() storage.ExternalFileReader {
-		rsc, err := st.Open(context.Background(), "testfile", nil)
-		require.NoError(t, err)
-		return rsc
-	}
-
-	ConcurrentReaderBufferSizePerConc = 100
-	br, err := newByteReader(context.Background(), newRsc(), 100)
-
 	seed := time.Now().Unix()
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
-	totalCnt := 0
+	st := storage.NewMemStorage()
+	// Prepare
+	ctx := context.Background()
+	writer := NewWriterBuilder().
+		SetPropSizeDistance(100).
+		SetPropKeysDistance(2).
+		BuildOneFile(st, "/test", "0")
+
+	err := writer.Init(ctx, 5*1024*1024)
+	require.NoError(t, err)
+
+	kvCnt := 1000000
+	kvs := make([]common.KvPair, kvCnt)
+	for i := 0; i < kvCnt; i++ {
+		randLen := rand.Intn(10) + 1
+		kvs[i].Key = make([]byte, randLen)
+		_, err := rand.Read(kvs[i].Key)
+		require.NoError(t, err)
+		randLen = rand.Intn(10) + 1
+		kvs[i].Val = make([]byte, randLen)
+		_, err = rand.Read(kvs[i].Val)
+		require.NoError(t, err)
+	}
+
+	for _, item := range kvs {
+		err := writer.WriteRow(ctx, item.Key, item.Val)
+		require.NoError(t, err)
+	}
+
+	err = writer.Close(ctx)
+	require.NoError(t, err)
+	pool := membuf.NewPool()
+	ConcurrentReaderBufferSizePerConc = rand.Intn(100) + 1
+	kvReader, err := newKVReader(context.Background(), "/test/0/one-file", st, 0, 64*1024)
+	require.NoError(t, err)
+	kvReader.byteReader.enableConcurrentRead(st, "/test/0/one-file", 100, ConcurrentReaderBufferSizePerConc, pool.NewBuffer())
 	modeUseCon := false
-	for totalCnt < fileSize {
+	i := 0
+	for {
 		if rand.Intn(5) == 0 {
 			if modeUseCon {
-				br.switchConcurrentMode(false)
+				kvReader.byteReader.switchConcurrentMode(false)
 				modeUseCon = false
 			} else {
-				br.switchConcurrentMode(true)
+				kvReader.byteReader.switchConcurrentMode(true)
 				modeUseCon = true
 			}
 		}
-		n := rand.Intn(100)
-		if n == 0 {
-			n = 1
-		}
-		if totalCnt+n > fileSize {
-			n = fileSize - totalCnt
-		}
-		if n == 0 {
-			break
-		}
-		y, err := br.readNBytes(n)
+		key, val, err := kvReader.nextKV()
 		if err == io.EOF {
 			break
 		}
 		require.NoError(t, err)
-		totalCnt += len(y)
+		require.Equal(t, kvs[i].Key, key)
+		require.Equal(t, kvs[i].Val, val)
+		i++
 	}
-	require.Equal(t, fileSize, totalCnt)
-
 }
 
 // NewS3WithBucketAndPrefix creates a new S3Storage for testing.

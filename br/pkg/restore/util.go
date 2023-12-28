@@ -43,8 +43,8 @@ type AppliedFile interface {
 	GetEndKey() []byte
 }
 
-// getTableIDMap creates a map maping old tableID to new tableID.
-func getTableIDMap(newTable, oldTable *model.TableInfo) map[int64]int64 {
+// getPartitionIDMap creates a map maping old physical ID to new physical ID.
+func getPartitionIDMap(newTable, oldTable *model.TableInfo) map[int64]int64 {
 	tableIDMap := make(map[int64]int64)
 
 	if oldTable.Partition != nil && newTable.Partition != nil {
@@ -60,6 +60,12 @@ func getTableIDMap(newTable, oldTable *model.TableInfo) map[int64]int64 {
 		}
 	}
 
+	return tableIDMap
+}
+
+// getTableIDMap creates a map maping old tableID to new tableID.
+func getTableIDMap(newTable, oldTable *model.TableInfo) map[int64]int64 {
+	tableIDMap := getPartitionIDMap(newTable, oldTable)
 	tableIDMap[oldTable.ID] = newTable.ID
 	return tableIDMap
 }
@@ -275,7 +281,9 @@ func makeDBPool(size uint, dbFactory func() (*DB, error)) ([]*DB, error) {
 		if e != nil {
 			return dbPool, e
 		}
-		dbPool = append(dbPool, db)
+		if db != nil {
+			dbPool = append(dbPool, db)
+		}
 	}
 	return dbPool, nil
 }

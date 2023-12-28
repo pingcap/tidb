@@ -36,9 +36,13 @@ tidb_background_subtask_history	CREATE TABLE `tidb_background_subtask_history` (
   `exec_expired` timestamp NULL DEFAULT NULL,
   `state` varchar(64) NOT NULL,
   `checkpoint` longblob NOT NULL,
+  `concurrency` int(11) DEFAULT NULL,
+  `create_time` timestamp NULL DEFAULT NULL,
   `start_time` bigint(20) DEFAULT NULL,
   `state_update_time` bigint(20) DEFAULT NULL,
+  `end_time` timestamp NULL DEFAULT NULL,
   `meta` longblob DEFAULT NULL,
+  `ordinal` int(11) DEFAULT NULL,
   `error` blob DEFAULT NULL,
   `summary` json DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,
@@ -48,7 +52,7 @@ tidb_background_subtask_history	CREATE TABLE `tidb_background_subtask_history` (
 insert into tidb_background_subtask(id, state, checkpoint) values (1, 0, "");
 insert into tidb_background_subtask_history select * from tidb_background_subtask;
 select * from tidb_background_subtask_history;
-id	step	namespace	task_key	ddl_physical_tid	type	exec_id	exec_expired	state	checkpoint	start_time	state_update_time	meta	error	summary
-1	NULL	NULL	NULL	NULL	NULL	NULL	NULL	0		NULL	NULL	NULL	NULL	NULL
+id	step	namespace	task_key	ddl_physical_tid	type	exec_id	exec_expired	state	checkpoint	concurrency	create_time	start_time	state_update_time	end_time	meta	ordinal	error	summary
+1	NULL	NULL	NULL	NULL	NULL	NULL	NULL	0		NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
 truncate table tidb_background_subtask;
 truncate table tidb_background_subtask_history;

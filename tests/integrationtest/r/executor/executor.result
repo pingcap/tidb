@@ -3933,8 +3933,8 @@ a
 1
 2
 3
-SELECT `s`.`count(a)` FROM (SELECT COUNT(`a`) FROM `test`.`t`) AS `s`;
-Error 1146 (42S02): Table 'test.t' doesn't exist
+SELECT `s`.`count(a)` FROM (SELECT COUNT(`a`) FROM `executor__executor`.`t`) AS `s`;
+Error 1054 (42S22): Unknown column 's.count(a)' in 'field list'
 drop view v;
 create definer='root'@'localhost' view v as select * from (select count(a) from t) s;
 select * from v;

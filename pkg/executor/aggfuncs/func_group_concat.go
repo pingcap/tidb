@@ -75,7 +75,7 @@ func (e *baseGroupConcat4String) handleTruncateError(sctx sessionctx.Context) (e
 		if !sctx.GetSessionVars().StmtCtx.TypeFlags().TruncateAsWarning() {
 			return expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].String())
 		}
-		sctx.GetSessionVars().StmtCtx.AppendWarning(expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].String()))
+		sctx.GetSessionVars().StmtCtx.AppendWarning(expression.ErrCutValueGroupConcat.FastGenByArgs(e.args[0].String()))
 	}
 	return nil
 }
@@ -171,6 +171,26 @@ func (e *groupConcat) MergePartialResult(sctx sessionctx.Context, src, dst Parti
 	p2.buffer.WriteString(p1.buffer.String())
 	memDelta += int64(p2.buffer.Cap())
 	return memDelta, e.truncatePartialResultIfNeed(sctx, p2.buffer)
+}
+
+func (e *groupConcat) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4GroupConcat)(partialResult)
+	resBuf := spillHelper.serializePartialResult4GroupConcat(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *groupConcat) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *groupConcat) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4GroupConcat)(pr)
+	success := helper.deserializePartialResult4GroupConcat(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
