@@ -184,8 +184,7 @@ func (local *Backend) SplitAndScatterRegionByRanges(
 		}
 
 		log.FromContext(ctx).Info("paginate scan region finished", logutil.Key("minKey", minKey), logutil.Key("maxKey", maxKey),
-			zap.Int("regions", len(regions)), logutil.Key("regionStart", regions[0].Region.StartKey),
-			logutil.Key("regionEnd", regions[len(regions)-1].Region.EndKey))
+			zap.Int("regions", len(regions)))
 
 		if !needSplit {
 			scatterRegions = append(scatterRegions, regions...)
