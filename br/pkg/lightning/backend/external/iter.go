@@ -324,6 +324,7 @@ func (i *mergeIter[T, R]) next() (closeReaderIdx int, ok bool) {
 	}
 	i.lastReaderIdx = -1
 
+	// TODO(lance6716): reader may be closed at init.
 	if i.h.Len() == 0 {
 		return closeReaderIdx, false
 	}
@@ -373,7 +374,7 @@ func newLimitSizeMergeIter[
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	i := &limitSizeMergeIter[T, R]{
+	ret := &limitSizeMergeIter[T, R]{
 		mergeIter:     iter,
 		readerOpeners: readerOpeners,
 		weights:       weights,
@@ -381,29 +382,30 @@ func newLimitSizeMergeIter[
 		nextReaderIdx: end,
 		limit:         limit,
 	}
-	return i, nil
+	// newMergeIter may close readers if the reader has no content, so we need to
+	// fill more
+	for i, rp := range iter.readers {
+		if rp != nil {
+			continue
+		}
+		ret.weightSum -= weights[i]
+	}
+
+	return ret, ret.tryOpenMoreReaders()
 }
 
-func (i *limitSizeMergeIter[T, R]) next() (ok bool, closeReaderIdx int) {
-	closeReaderIdx, ok = i.mergeIter.next()
-	if closeReaderIdx == -1 {
-		return
-	}
-	// limitSizeMergeIter will try to open next reader when one reader is closed.
-	i.weightSum -= i.weights[closeReaderIdx]
-
+func (i *limitSizeMergeIter[T, R]) tryOpenMoreReaders() error {
 	for i.nextReaderIdx < len(i.readerOpeners) {
 		weight := i.weights[i.nextReaderIdx]
 		if i.weightSum+weight > i.limit {
-			return
+			return nil
 		}
 
 		opener := i.readerOpeners[i.nextReaderIdx]
 		i.nextReaderIdx++
 		newReaders, firstElements, err := openAndGetFirstElem(opener)
 		if err != nil {
-			i.mergeIter.err = err
-			return false, closeReaderIdx
+			return err
 		}
 		newReader := newReaders[0]
 		newReaderIdx := len(i.mergeIter.readers)
@@ -419,11 +421,28 @@ func (i *limitSizeMergeIter[T, R]) next() (ok bool, closeReaderIdx int) {
 		})
 		heap.Fix(&i.mergeIter.h, len(i.mergeIter.h)-1)
 		i.weightSum += weight
-		// we need to call next once because mergeIter doesn't use h[0] as current value,
-		// but a separate curr field
-		if !ok && i.mergeIter.h.Len() == 1 {
-			_, ok = i.mergeIter.next()
-		}
+	}
+	return nil
+}
+
+func (i *limitSizeMergeIter[T, R]) next() (ok bool, closeReaderIdx int) {
+	closeReaderIdx, ok = i.mergeIter.next()
+	if closeReaderIdx == -1 {
+		return
+	}
+	// limitSizeMergeIter will try to open next reader when one reader is closed.
+	i.weightSum -= i.weights[closeReaderIdx]
+
+	mergeIterDrained := !ok && i.mergeIter.h.Len() == 0
+	if err := i.tryOpenMoreReaders(); err != nil {
+		i.mergeIter.err = err
+		return false, closeReaderIdx
+	}
+
+	// we need to call next once because mergeIter doesn't use h[0] as current value,
+	// but a separate curr field
+	if mergeIterDrained && i.mergeIter.h.Len() > 0 {
+		_, ok = i.mergeIter.next()
 	}
 	return
 }
@@ -602,6 +621,8 @@ type readerAndError struct {
 	err error
 }
 
+var mergePropBaseIterEarlyClosed = errors.New("mergePropBaseIter is closed")
+
 func newMergePropBaseIter(
 	ctx context.Context,
 	multiStat MultipleFilesStat,
@@ -627,7 +648,9 @@ func newMergePropBaseIter(
 	}
 	limit = min(limit, int64(len(multiStat.Filenames)))
 
-	// TODO(lance6716): explain it
+	// we are rely on the caller have reduced the overall overlapping to less than
+	// MergeSortOverlapThreshold for []MultipleFilesStat. And we are going to open
+	// about 8000 connection to read files.
 	preOpenLimit := limit * 8
 	preOpenLimit = min(preOpenLimit, int64(len(multiStat.Filenames)))
 	preOpenCh := make(chan chan readerAndError, preOpenLimit-limit)
@@ -674,17 +697,17 @@ func newMergePropBaseIter(
 		readerOpeners = append(readerOpeners, func() (*statReaderProxy, error) {
 			select {
 			case <-closeCh:
-				return nil, errors.New("mergePropBaseIter is closed")
+				return nil, mergePropBaseIterEarlyClosed
 			case asyncTask, ok := <-preOpenCh:
 				if !ok {
-					return nil, errors.New("mergePropBaseIter is closed")
+					return nil, mergePropBaseIterEarlyClosed
 				}
 				select {
 				case <-closeCh:
-					return nil, errors.New("mergePropBaseIter is closed")
+					return nil, mergePropBaseIterEarlyClosed
 				case t, ok := <-asyncTask:
 					if !ok {
-						return nil, errors.New("mergePropBaseIter is closed")
+						return nil, mergePropBaseIterEarlyClosed
 					}
 					return t.r, t.err
 				}

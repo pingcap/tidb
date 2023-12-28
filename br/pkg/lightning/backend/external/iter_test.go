@@ -649,6 +649,7 @@ func TestLimitSizeMergeIterDiffWeight(t *testing.T) {
 
 type slowOpenStorage struct {
 	*storage.MemStorage
+	sleep   time.Duration
 	openCnt atomic.Int32
 }
 
@@ -657,7 +658,7 @@ func (s *slowOpenStorage) Open(
 	filePath string,
 	o *storage.ReaderOption,
 ) (storage.ExternalFileReader, error) {
-	time.Sleep(time.Second)
+	time.Sleep(s.sleep)
 	s.openCnt.Inc()
 	return s.MemStorage.Open(ctx, filePath, o)
 }
@@ -671,7 +672,10 @@ func TestMergePropBaseIter(t *testing.T) {
 		filenames[i] = fmt.Sprintf("/test%06d", i)
 	}
 	ctx := context.Background()
-	store := &slowOpenStorage{MemStorage: storage.NewMemStorage()}
+	store := &slowOpenStorage{
+		MemStorage: storage.NewMemStorage(),
+		sleep:      time.Second,
+	}
 	for i, filename := range filenames {
 		writer, err := store.Create(ctx, filename, nil)
 		require.NoError(t, err)
@@ -694,6 +698,35 @@ func TestMergePropBaseIter(t *testing.T) {
 		require.NoError(t, err)
 		require.EqualValues(t, i, p.firstKey[0])
 	}
+
+	_, err = iter.next()
+	require.ErrorIs(t, err, io.EOF)
+	require.EqualValues(t, fileNum, store.openCnt.Load())
+}
+
+func TestEmptyBaseReader4LimitSizeMergeIter(t *testing.T) {
+	fileNum := 100
+	filenames := make([]string, fileNum)
+	for i := range filenames {
+		filenames[i] = fmt.Sprintf("/test%06d", i)
+	}
+	ctx := context.Background()
+	store := &slowOpenStorage{
+		MemStorage: storage.NewMemStorage(),
+	}
+	// empty file so reader will be closed at init
+	for _, filename := range filenames {
+		writer, err := store.Create(ctx, filename, nil)
+		require.NoError(t, err)
+		err = writer.Close(ctx)
+		require.NoError(t, err)
+	}
+
+	multiStat := MultipleFilesStat{MaxOverlappingNum: 1}
+	for _, f := range filenames {
+		multiStat.Filenames = append(multiStat.Filenames, [2]string{"", f})
+	}
+	iter, err := newMergePropBaseIter(ctx, multiStat, store)
 
 	_, err = iter.next()
 	require.ErrorIs(t, err, io.EOF)
