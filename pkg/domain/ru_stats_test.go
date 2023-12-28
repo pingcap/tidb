@@ -30,7 +30,7 @@ import (
 
 func TestWriteRUStatistics(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := newTestKitWithRoot(t, store)
+	tk := newTestKit(t, store)
 
 	testRUWriter := domain.NewRUStatsWriter(dom)
 	testRMClient := &testRMClient{
