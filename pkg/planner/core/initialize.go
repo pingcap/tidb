@@ -556,6 +556,10 @@ func (p *BatchPointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsIn
 		d      types.Datum
 	)
 
+	if p.PartitionColPos == GlobalWithoutColumnPos {
+		return p
+	}
+
 	if p.PartitionExpr != nil {
 		if len(p.Handles) > 0 {
 			for _, handle := range p.Handles {
