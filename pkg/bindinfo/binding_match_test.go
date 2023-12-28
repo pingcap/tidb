@@ -59,11 +59,24 @@ func TestExtractTableName(t *testing.T) {
 			"select * from t",
 			[]string{"t"},
 		},
+		{
+			"select * from t1, t2, t3;",
+			[]string{"t1", "t2", "t3"},
+		},
+		{
+			"select * from t1 where t1.a > (select max(a) from t2);",
+			[]string{"t1", "t1", "t2"},
+		},
+		{
+			"select * from t1 where t1.a > (select max(a) from t2 where t2.a > (select max(a) from t3));",
+			[]string{"t1", "t1", "t2", "t2", "t3"},
+		},
 	}
 	for _, tt := range tc {
 		stmt, err := parser.New().ParseOneStmt(tt.sql, "", "")
 		require.NoError(t, err)
 		rs := CollectTableNames(stmt)
-		require.Equal(t, tt.tables, getTableName(rs))
+		result := getTableName(rs)
+		require.Equal(t, tt.tables, result)
 	}
 }
