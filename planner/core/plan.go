@@ -86,7 +86,9 @@ func enforceProperty(p *property.PhysicalProperty, tsk task, ctx sessionctx.Cont
 		}
 		tsk = mpp.enforceExchanger(p)
 	}
-	if p.IsSortItemEmpty() || tsk.plan() == nil {
+	// when task is double cop task warping a index merge reader, tsk.plan() may be nil when indexPlanFinished is marked
+	// as false, while the real plan is in idxMergePartPlans. tsk.plan()==nil is not right here.
+	if p.IsSortItemEmpty() || tsk.invalid() {
 		return tsk
 	}
 	if p.TaskTp != property.MppTaskType {
