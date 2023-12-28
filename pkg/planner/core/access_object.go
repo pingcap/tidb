@@ -333,7 +333,7 @@ func (p *BatchPointGetPlan) AccessObject() AccessObject {
 		Database: p.dbName,
 		Table:    p.TblInfo.Name.O,
 	}
-	for _, partitionInfo := range p.PartitionInfos {
+	for _, partitionInfo := range p.PartitionDefs {
 		res.Partitions = append(res.Partitions, partitionInfo.Name.O)
 	}
 	if p.IndexInfo != nil {

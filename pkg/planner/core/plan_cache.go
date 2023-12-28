@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
@@ -510,7 +511,6 @@ func rebuildRange(p Plan) error {
 			if x.PartDef != nil {
 				// Single column PK <=> Must be the partitioning columns!
 				if !x.TblInfo.PKIsHandle {
-					panic("Oh well...")
 					return errors.New("point get for partition table can not use plan cache, PK is not handle")
 				}
 				// Re-calculate the pruning!
@@ -611,7 +611,7 @@ func rebuildRange(p Plan) error {
 					// TODO: Handle this, turn it into TableDual!
 					return errors.New("not matching any partition")
 				}
-				return errors.New("point_get cached query matches multiple partitions!")
+				return errors.New("point_get cached query matches multiple partitions")
 			}
 			x.PartDef = &x.TblInfo.GetPartitionInfo().Definitions[parts[0]]
 
@@ -674,12 +674,9 @@ func rebuildRange(p Plan) error {
 				}
 			}
 		}
-		// TODO: FIXME!!!
-		/*
-			if len(x.PartitionInfos) != 0 {
-				return errors.New("batch point get for partition table can not use plan cache")
-			}
-		*/
+		if len(x.PartitionDefs) != 0 {
+			return errors.New("batch point get for partition table can not use plan cache")
+		}
 		for i, param := range x.HandleParams {
 			if param != nil {
 				dVal, err := convertConstant2Datum(sctx, param, x.HandleType)

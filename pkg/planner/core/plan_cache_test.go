@@ -1264,12 +1264,10 @@ func TestPreparedPlanCachePartitions(b *testing.T) {
 	tk.MustExec(`prepare stmt from 'select a,b from t where a = ?;'`)
 	tk.MustExec(`set @a=1`)
 	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1 a"))
-	/*
-		// Same partition works, due to pruning is not affected
-		tk.MustExec(`set @a=4`)
-		tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("4 d"))
-		tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-	*/
+	// Same partition works, due to pruning is not affected
+	tk.MustExec(`set @a=4`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("4 d"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 	// Different partition needs code changes
 	tk.MustExec(`set @a=2`)
 	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("2 b"))
@@ -1290,6 +1288,8 @@ func TestPreparedPlanCachePartitions(b *testing.T) {
 	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows())
 	// How does it cache it? (verify that it still allows PartDef to be updated)
 	tk.MustExec(`set @a=1999999`)
-	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows())
+	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows("1999999 1999999 1999999"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows("1999999 1999999 1999999"))
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }

@@ -313,7 +313,7 @@ type BatchPointGetPlan struct {
 	dbName           string
 	TblInfo          *model.TableInfo
 	IndexInfo        *model.IndexInfo
-	PartitionInfos   []*model.PartitionDefinition
+	PartitionDefs    []*model.PartitionDefinition
 	Handles          []kv.Handle
 	HandleType       *types.FieldType
 	HandleParams     []*expression.Constant // record all Parameters for Plan-Cache
@@ -491,7 +491,7 @@ func (p *BatchPointGetPlan) MemoryUsage() (sum int64) {
 
 	sum = emptyBatchPointGetPlanSize + p.baseSchemaProducer.MemoryUsage() + int64(len(p.dbName)) +
 		int64(cap(p.IdxColLens))*size.SizeOfInt + int64(cap(p.Handles))*size.SizeOfInterface +
-		int64(cap(p.PartitionInfos)+cap(p.HandleParams)+cap(p.IndexColTypes)+cap(p.IdxCols)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
+		int64(cap(p.PartitionDefs)+cap(p.HandleParams)+cap(p.IndexColTypes)+cap(p.IdxCols)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
 	if p.HandleType != nil {
 		sum += p.HandleType.MemoryUsage()
 	}
@@ -715,12 +715,12 @@ func newBatchPointGetPlan(
 			partitionInfos = nil
 		}
 		p := &BatchPointGetPlan{
-			TblInfo:        tbl,
-			Handles:        handles,
-			HandleParams:   handleParams,
-			HandleType:     &handleCol.FieldType,
-			PartitionExpr:  partitionExpr,
-			PartitionInfos: partitionInfos,
+			TblInfo:       tbl,
+			Handles:       handles,
+			HandleParams:  handleParams,
+			HandleType:    &handleCol.FieldType,
+			PartitionExpr: partitionExpr,
+			PartitionDefs: partitionInfos,
 		}
 
 		return p.Init(ctx, statsInfo, schema, names, 0)
@@ -910,7 +910,7 @@ func newBatchPointGetPlan(
 		IndexColTypes:    indexTypes,
 		PartitionColPos:  pos,
 		PartitionExpr:    partitionExpr,
-		PartitionInfos:   partitionInfos,
+		PartitionDefs:    partitionInfos,
 	}
 
 	return p.Init(ctx, statsInfo, schema, names, 0)
