@@ -227,7 +227,7 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 		outerCtx:      e.outerCtx,
 		taskCh:        taskCh,
 		ctx:           e.Ctx(),
-		executorChk:   e.Ctx().GetSessionVars().GetNewChunkWithCapacity(e.innerCtx.rowTypes, e.MaxChunkSize(), e.MaxChunkSize(), e.AllocPool),
+		executorChk:   e.AllocPool.Alloc(e.innerCtx.rowTypes, e.MaxChunkSize(), e.MaxChunkSize()),
 		indexRanges:   copiedRanges,
 		keyOff2IdxOff: e.keyOff2IdxOff,
 		stats:         innerStats,

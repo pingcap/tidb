@@ -175,7 +175,7 @@ type logicalOptRule interface {
 func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node ast.Node, infoSchema infoschema.InfoSchema) (Plan, error) {
 	sctx.GetSessionVars().PlanID.Store(0)
 	sctx.GetSessionVars().PlanColumnID.Store(0)
-	builder, _ := NewPlanBuilder().Init(sctx, infoSchema, &utilhint.QBHintHandler{})
+	builder, _ := NewPlanBuilder().Init(sctx, infoSchema, utilhint.NewQBHintHandler(nil))
 	p, err := builder.Build(ctx, node)
 	if err != nil {
 		return nil, err
@@ -541,7 +541,7 @@ func prunePhysicalColumnForHashJoinChild(sctx sessionctx.Context, hashJoin *Phys
 		ch := sender.children[0]
 		proj := PhysicalProjection{
 			Exprs: usedExprs,
-		}.Init(sctx, ch.StatsInfo(), ch.SelectBlockOffset())
+		}.Init(sctx, ch.StatsInfo(), ch.QueryBlockOffset())
 
 		proj.SetSchema(prunedSchema)
 		proj.SetChildren(ch)

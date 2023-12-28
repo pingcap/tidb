@@ -167,6 +167,11 @@ func (d *DistExecutionContext) GetDomain(idx int) *domain.Domain {
 	return d.domains[idx]
 }
 
+// GetDomainCnt get domain count.
+func (d *DistExecutionContext) GetDomainCnt() int {
+	return len(d.domains)
+}
+
 // NewDistExecutionContext create DistExecutionContext for testing.
 func NewDistExecutionContext(t testing.TB, serverNum int) *DistExecutionContext {
 	store, err := mockstore.NewMockStore()

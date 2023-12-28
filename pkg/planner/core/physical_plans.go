@@ -234,7 +234,7 @@ func setMppOrBatchCopForTableScan(curPlan PhysicalPlan) {
 
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
 func (sg *TiKVSingleGather) GetPhysicalTableReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
-	reader := PhysicalTableReader{}.Init(sg.SCtx(), sg.SelectBlockOffset())
+	reader := PhysicalTableReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
 	reader.PartitionInfo = PartitionInfo{
 		PruningConds:   sg.Source.allConds,
 		PartitionNames: sg.Source.partitionNames,
@@ -249,7 +249,7 @@ func (sg *TiKVSingleGather) GetPhysicalTableReader(schema *expression.Schema, st
 
 // GetPhysicalIndexReader returns PhysicalIndexReader for logical TiKVSingleGather.
 func (sg *TiKVSingleGather) GetPhysicalIndexReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalIndexReader {
-	reader := PhysicalIndexReader{}.Init(sg.SCtx(), sg.SelectBlockOffset())
+	reader := PhysicalIndexReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
 	reader.SetStats(stats)
 	reader.SetSchema(schema)
 	reader.childrenReqProps = props
@@ -1423,7 +1423,7 @@ func NewPhysicalHashJoin(p *LogicalJoin, innerIdx int, useOuterToBuild bool, new
 		NAEqualConditions: p.NAEQConditions,
 		Concurrency:       uint(p.SCtx().GetSessionVars().HashJoinConcurrency()),
 		UseOuterToBuild:   useOuterToBuild,
-	}.Init(p.SCtx(), newStats, p.SelectBlockOffset(), prop...)
+	}.Init(p.SCtx(), newStats, p.QueryBlockOffset(), prop...)
 	return hashJoin
 }
 
@@ -1977,7 +1977,7 @@ func NewPhysicalHashAgg(la *LogicalAggregation, newStats *property.StatsInfo, pr
 	agg := basePhysicalAgg{
 		GroupByItems: newGbyItems,
 		AggFuncs:     newAggFuncs,
-	}.initForHash(la.SCtx(), newStats, la.SelectBlockOffset(), prop)
+	}.initForHash(la.SCtx(), newStats, la.QueryBlockOffset(), prop)
 	return agg
 }
 

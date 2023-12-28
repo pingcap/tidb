@@ -393,7 +393,7 @@ func negotiateCommonType(lType, rType *types.FieldType) (*types.FieldType, bool,
 func getProj(ctx sessionctx.Context, p PhysicalPlan) *PhysicalProjection {
 	proj := PhysicalProjection{
 		Exprs: make([]expression.Expression, 0, len(p.Schema().Columns)),
-	}.Init(ctx, p.StatsInfo(), p.SelectBlockOffset())
+	}.Init(ctx, p.StatsInfo(), p.QueryBlockOffset())
 	for _, col := range p.Schema().Columns {
 		proj.Exprs = append(proj.Exprs, col)
 	}
@@ -588,7 +588,7 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 		CommonHandleCols: t.commonHandleCols,
 		expectedCnt:      t.expectCnt,
 		keepOrder:        t.keepOrder,
-	}.Init(ctx, t.tablePlan.SelectBlockOffset())
+	}.Init(ctx, t.tablePlan.QueryBlockOffset())
 	p.PartitionInfo = t.partitionInfo
 	setTableScanToTableRowIDScan(p.tablePlan)
 	p.SetStats(t.tablePlan.StatsInfo())
@@ -604,7 +604,7 @@ func buildIndexLookUpTask(ctx sessionctx.Context, t *copTask) *rootTask {
 
 	if t.needExtraProj && !aggPushedDown {
 		schema := t.originSchema
-		proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.tablePlan.SelectBlockOffset(), nil)
+		proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.tablePlan.QueryBlockOffset(), nil)
 		proj.SetSchema(schema)
 		proj.SetChildren(p)
 		newTask.p = proj
@@ -692,14 +692,14 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 			IsIntersectionType: t.idxMergeIsIntersection,
 			AccessMVIndex:      t.idxMergeAccessMVIndex,
 			KeepOrder:          t.keepOrder,
-		}.Init(ctx, t.idxMergePartPlans[0].SelectBlockOffset())
+		}.Init(ctx, t.idxMergePartPlans[0].QueryBlockOffset())
 		p.PartitionInfo = t.partitionInfo
 		setTableScanToTableRowIDScan(p.tablePlan)
 		newTask.p = p
 		t.handleRootTaskConds(ctx, newTask)
 		if t.needExtraProj {
 			schema := t.originSchema
-			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.idxMergePartPlans[0].SelectBlockOffset(), nil)
+			proj := PhysicalProjection{Exprs: expression.Column2Exprs(schema.Columns)}.Init(ctx, p.StatsInfo(), t.idxMergePartPlans[0].QueryBlockOffset(), nil)
 			proj.SetSchema(schema)
 			proj.SetChildren(p)
 			newTask.p = proj
@@ -709,7 +709,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	if t.indexPlan != nil && t.tablePlan != nil {
 		newTask = buildIndexLookUpTask(ctx, t)
 	} else if t.indexPlan != nil {
-		p := PhysicalIndexReader{indexPlan: t.indexPlan}.Init(ctx, t.indexPlan.SelectBlockOffset())
+		p := PhysicalIndexReader{indexPlan: t.indexPlan}.Init(ctx, t.indexPlan.QueryBlockOffset())
 		p.PartitionInfo = t.partitionInfo
 		p.SetStats(t.indexPlan.StatsInfo())
 		newTask.p = p
@@ -728,7 +728,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 			tablePlan:      t.tablePlan,
 			StoreType:      ts.StoreType,
 			IsCommonHandle: ts.Table.IsCommonHandle,
-		}.Init(ctx, t.tablePlan.SelectBlockOffset())
+		}.Init(ctx, t.tablePlan.QueryBlockOffset())
 		p.PartitionInfo = t.partitionInfo
 		p.SetStats(t.tablePlan.StatsInfo())
 
@@ -745,7 +745,7 @@ func (t *copTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 		}
 
 		if t.needExtraProj && !aggPushedDown {
-			proj := PhysicalProjection{Exprs: expression.Column2Exprs(t.originSchema.Columns)}.Init(ts.SCtx(), ts.StatsInfo(), ts.SelectBlockOffset(), nil)
+			proj := PhysicalProjection{Exprs: expression.Column2Exprs(t.originSchema.Columns)}.Init(ts.SCtx(), ts.StatsInfo(), ts.QueryBlockOffset(), nil)
 			proj.SetSchema(t.originSchema)
 			proj.SetChildren(p)
 			newTask.p = proj
@@ -765,7 +765,7 @@ func (t *copTask) handleRootTaskConds(ctx sessionctx.Context, newTask *rootTask)
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = SelectionFactor
 		}
-		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.p.StatsInfo().Scale(selectivity), newTask.p.SelectBlockOffset())
+		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, newTask.p.StatsInfo().Scale(selectivity), newTask.p.QueryBlockOffset())
 		sel.fromDataSource = true
 		sel.SetChildren(newTask.p)
 		newTask.p = sel
@@ -847,7 +847,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 			childProfile := cop.tablePlan.StatsInfo()
 			// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
 			stats := deriveLimitStats(childProfile, float64(newCount))
-			pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+			pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.QueryBlockOffset())
 			pushedDownLimit.SetChildren(cop.tablePlan)
 			cop.tablePlan = pushedDownLimit
 			// Don't use clone() so that Limit and its children share the same schema. Otherwise, the virtual generated column may not be resolved right.
@@ -864,7 +864,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 				// Strictly speaking, for the row count of stats, we should multiply newCount with "regionNum",
 				// but "regionNum" is unknown since the copTask can be a double read, so we ignore it now.
 				stats := deriveLimitStats(childProfile, float64(newCount))
-				pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+				pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.QueryBlockOffset())
 				cop = attachPlan2Task(pushedDownLimit, cop).(*copTask)
 				// Don't use clone() so that Limit and its children share the same schema. Otherwise the virtual generated column may not be resolved right.
 				pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
@@ -884,7 +884,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 					for _, partialScan := range cop.idxMergePartPlans {
 						childProfile := partialScan.StatsInfo()
 						stats := deriveLimitStats(childProfile, float64(newCount))
-						pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+						pushedDownLimit := PhysicalLimit{PartitionBy: newPartitionBy, Count: newCount}.Init(p.SCtx(), stats, p.QueryBlockOffset())
 						pushedDownLimit.SetChildren(partialScan)
 						pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
 						limitChildren = append(limitChildren, pushedDownLimit)
@@ -924,7 +924,7 @@ func (p *PhysicalLimit) attach2Task(tasks ...task) task {
 		newCount := p.Offset + p.Count
 		childProfile := mpp.plan().StatsInfo()
 		stats := deriveLimitStats(childProfile, float64(newCount))
-		pushedDownLimit := PhysicalLimit{Count: newCount, PartitionBy: newPartitionBy}.Init(p.SCtx(), stats, p.SelectBlockOffset())
+		pushedDownLimit := PhysicalLimit{Count: newCount, PartitionBy: newPartitionBy}.Init(p.SCtx(), stats, p.QueryBlockOffset())
 		mpp = attachPlan2Task(pushedDownLimit, mpp).(*mppTask)
 		pushedDownLimit.SetSchema(pushedDownLimit.children[0].Schema())
 		t = mpp.convertToRootTask(p.SCtx())
@@ -968,7 +968,7 @@ func (p *PhysicalLimit) sinkIntoIndexLookUp(t task) bool {
 	if p.Schema().Len() != reader.Schema().Len() {
 		extraProj := PhysicalProjection{
 			Exprs: expression.Column2Exprs(p.schema.Columns),
-		}.Init(p.SCtx(), p.StatsInfo(), p.SelectBlockOffset(), nil)
+		}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), nil)
 		extraProj.SetSchema(p.schema)
 		// If the root.p is already a Projection. We left the optimization for the later Projection Elimination.
 		extraProj.SetChildren(root.p)
@@ -1036,7 +1036,7 @@ func (p *PhysicalLimit) sinkIntoIndexMerge(t task) bool {
 	if needProj {
 		extraProj := PhysicalProjection{
 			Exprs: expression.Column2Exprs(p.schema.Columns),
-		}.Init(p.SCtx(), p.StatsInfo(), p.SelectBlockOffset(), nil)
+		}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), nil)
 		extraProj.SetSchema(p.schema)
 		// If the root.p is already a Projection. We left the optimization for the later Projection Elimination.
 		extraProj.SetChildren(root.p)
@@ -1078,7 +1078,7 @@ func (p *PhysicalTopN) getPushedDownTopN(childPlan PhysicalPlan) *PhysicalTopN {
 		ByItems:     newByItems,
 		PartitionBy: newPartitionBy,
 		Count:       newCount,
-	}.Init(p.SCtx(), stats, p.SelectBlockOffset(), p.GetChildReqProps(0))
+	}.Init(p.SCtx(), stats, p.QueryBlockOffset(), p.GetChildReqProps(0))
 	topN.SetChildren(childPlan)
 	return topN
 }
@@ -1677,7 +1677,7 @@ func (p *basePhysicalAgg) convertAvgForMPP() *PhysicalProjection {
 		Exprs:                exprs,
 		CalculateNoDelay:     false,
 		AvoidColumnEvaluator: false,
-	}.Init(p.SCtx(), p.StatsInfo(), p.SelectBlockOffset(), p.GetChildReqProps(0).CloneEssentialFields())
+	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), p.GetChildReqProps(0).CloneEssentialFields())
 	proj.SetSchema(p.schema)
 
 	p.AggFuncs = newAggFuncs
@@ -1726,7 +1726,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 			AggFuncs:     finalPref.AggFuncs,
 			GroupByItems: finalPref.GroupByItems,
 			MppRunMode:   p.MppRunMode,
-		}.initForStream(p.SCtx(), p.StatsInfo(), p.SelectBlockOffset(), prop)
+		}.initForStream(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), prop)
 		finalAgg.schema = finalPref.Schema
 		return partialAgg, finalAgg
 	}
@@ -1735,7 +1735,7 @@ func (p *basePhysicalAgg) newPartialAggregate(copTaskType kv.StoreType, isMPPTas
 		AggFuncs:     finalPref.AggFuncs,
 		GroupByItems: finalPref.GroupByItems,
 		MppRunMode:   p.MppRunMode,
-	}.initForHash(p.SCtx(), p.StatsInfo(), p.SelectBlockOffset(), prop)
+	}.initForHash(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), prop)
 	finalAgg.schema = finalPref.Schema
 	// partialAgg and finalAgg use the same ref of stats
 	return partialAgg, finalAgg
@@ -2185,7 +2185,7 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan
 	stats.RowCount = stats.RowCount * float64(len(groupingSets))
 	physicalExpand := PhysicalExpand{
 		GroupingSets: groupingSets,
-	}.Init(p.SCtx(), stats, mpp.p.SelectBlockOffset())
+	}.Init(p.SCtx(), stats, mpp.p.QueryBlockOffset())
 	// generate a new column as groupingID to identify which this row is targeting for.
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	tp.SetFlag(mysql.UnsignedFlag | mysql.NotNullFlag)
@@ -2207,7 +2207,7 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan
 	}
 	cloneHashAgg := clonedAgg.(*PhysicalHashAgg)
 	// Clone(), it will share same base-plan elements from the finalAgg, including id,tp,stats. Make a new one here.
-	cloneHashAgg.Plan = base.NewBasePlan(cloneHashAgg.SCtx(), cloneHashAgg.TP(), cloneHashAgg.SelectBlockOffset())
+	cloneHashAgg.Plan = base.NewBasePlan(cloneHashAgg.SCtx(), cloneHashAgg.TP(), cloneHashAgg.QueryBlockOffset())
 	cloneHashAgg.SetStats(finalAgg.StatsInfo()) // reuse the final agg stats here.
 
 	// step1: adjust partial agg, for normal agg here, adjust it to target for specified group data.
@@ -2215,7 +2215,7 @@ func (p *PhysicalHashAgg) adjust3StagePhaseAgg(partialAgg, finalAgg PhysicalPlan
 	// customized proj here rather than depending on postOptimize to insert a blunt one for us.
 	//
 	// proj4Partial output all the base col from lower op + caseWhen proj cols.
-	proj4Partial := new(PhysicalProjection).Init(p.SCtx(), mpp.p.StatsInfo(), mpp.p.SelectBlockOffset())
+	proj4Partial := new(PhysicalProjection).Init(p.SCtx(), mpp.p.StatsInfo(), mpp.p.QueryBlockOffset())
 	for _, col := range mpp.p.Schema().Columns {
 		proj4Partial.Exprs = append(proj4Partial.Exprs, col)
 	}
@@ -2410,7 +2410,7 @@ func (p *PhysicalHashAgg) attach2TaskForMpp(tasks ...task) task {
 		if proj == nil {
 			proj = PhysicalProjection{
 				Exprs: make([]expression.Expression, 0, len(p.Schema().Columns)),
-			}.Init(p.SCtx(), p.StatsInfo(), p.SelectBlockOffset())
+			}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset())
 			for _, col := range p.Schema().Columns {
 				proj.Exprs = append(proj.Exprs, col)
 			}
@@ -2646,7 +2646,7 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 	p := PhysicalTableReader{
 		tablePlan: sender,
 		StoreType: kv.TiFlash,
-	}.Init(ctx, t.p.SelectBlockOffset())
+	}.Init(ctx, t.p.QueryBlockOffset())
 	p.SetStats(t.p.StatsInfo())
 	collectPartitionInfosFromMPPPlan(p, t.p)
 	rt := &rootTask{
@@ -2673,7 +2673,7 @@ func (t *mppTask) convertToRootTaskImpl(ctx sessionctx.Context) *rootTask {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = SelectionFactor
 		}
-		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, rt.p.StatsInfo().Scale(selectivity), rt.p.SelectBlockOffset())
+		sel := PhysicalSelection{Conditions: t.rootTaskConds}.Init(ctx, rt.p.StatsInfo().Scale(selectivity), rt.p.QueryBlockOffset())
 		sel.fromDataSource = true
 		sel.SetChildren(rt.p)
 		rt.p = sel
