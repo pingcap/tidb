@@ -3,5 +3,3 @@ driver = "mysql"
 
 [tikv-importer]
 on-duplicate = "error"
-# if we use "table" level pause, PD will trigger a region split and interfere with our failpoint `failToSplit`
-pause-pd-scheduler-scope = "global"
