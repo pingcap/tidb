@@ -195,7 +195,7 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx sessionctx.Context,
 					if posHigh < posLow {
 						rangeScalar = 0
 					} else {
-						rangeScalar = uint64(posHigh-posLow)
+						rangeScalar = uint64(posHigh - posLow)
 						offset = mathutil.Abs(posLow % int64(numPartitions))
 					}
 				}
@@ -307,7 +307,7 @@ func (s *partitionProcessor) getUsedKeyPartitions(ctx sessionctx.Context,
 					if posHigh < posLow {
 						rangeScalar = 0
 					} else {
-						rangeScalar = uint64(posHigh-posLow)
+						rangeScalar = uint64(posHigh - posLow)
 					}
 				}
 
