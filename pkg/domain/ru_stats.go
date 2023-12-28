@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -62,6 +63,10 @@ func NewRUStatsWriter(do *Domain) *RUStatsWriter {
 }
 
 func (do *Domain) dailyRequestUnitsWriterLoop() {
+	// do not start flush loop in unit test.
+	if intest.InTest {
+		return
+	}
 	ruWriter := NewRUStatsWriter(do)
 	for {
 		start := time.Now()
