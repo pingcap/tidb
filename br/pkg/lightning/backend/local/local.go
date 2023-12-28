@@ -545,7 +545,7 @@ func NewBackend(
 		return nil, common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 	}
 	pdHTTPCli := pdhttp.NewClient("lightning", pdAddrs, pdhttp.WithTLSConfig(tls.TLSConfig()))
-	splitCli := split.NewSplitClient(pdCli, tls.TLSConfig(), false)
+	splitCli := split.NewSplitClient(pdCli, pdHTTPCli, tls.TLSConfig(), false)
 
 	shouldCreate := true
 	if config.CheckpointEnabled {

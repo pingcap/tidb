@@ -92,9 +92,15 @@ type pdClient struct {
 }
 
 // NewSplitClient returns a client used by RegionSplitter.
-func NewSplitClient(client pd.Client, tlsConf *tls.Config, isRawKv bool) SplitClient {
+func NewSplitClient(
+	client pd.Client,
+	httpCli pdhttp.Client,
+	tlsConf *tls.Config,
+	isRawKv bool,
+) SplitClient {
 	cli := &pdClient{
 		client:     client,
+		httpCli:    httpCli,
 		tlsConf:    tlsConf,
 		storeCache: make(map[uint64]*metapb.Store),
 		isRawKv:    isRawKv,
