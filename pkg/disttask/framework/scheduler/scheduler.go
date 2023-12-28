@@ -494,6 +494,9 @@ func (s *BaseScheduler) updateTask(taskState proto.TaskState, newSubTasks []*pro
 		select {
 		case <-s.ctx.Done():
 			// We don't retry if the context is canceled.
+			if err1 := s.ctx.Err(); err1 != nil {
+				return err1
+			}
 			return err
 		default:
 		}
