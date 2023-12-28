@@ -112,14 +112,8 @@ func (m *Manager) initMeta() (err error) {
 		if err == nil {
 			break
 		}
-		select {
-		case <-m.ctx.Done():
-			// We don't retry if the context is canceled.
-			if err1 := m.ctx.Err(); err1 != nil {
-				return err1
-			}
+		if err = m.ctx.Err(); err != nil {
 			return err
-		default:
 		}
 		if i%10 == 0 {
 			logutil.Logger(m.logCtx).Warn("start manager failed",
