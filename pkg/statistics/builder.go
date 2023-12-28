@@ -401,10 +401,10 @@ func BuildHistAndTopN(
 					if foundTwice {
 						datumString, err := firstTimeSample.ToString()
 						if err != nil {
-							statslogutil.StatsLogger.Error("try to convert datum to string failed", zap.Error(err))
+							statslogutil.StatsLogger().Error("try to convert datum to string failed", zap.Error(err))
 						}
 
-						statslogutil.StatsLogger.Warn(
+						statslogutil.StatsLogger().Warn(
 							"invalid sample data",
 							zap.Bool("isColumn", isColumn),
 							zap.Int64("columnID", id),
@@ -429,12 +429,10 @@ func BuildHistAndTopN(
 				}
 			}
 		}
-		for i := 0; i < len(topNList); i++ {
-			topNList[i].Count *= uint64(sampleFactor)
-		}
 	}
 
 	topn := &TopN{TopN: topNList}
+	topn.Scale(sampleFactor)
 
 	if uint64(count) <= topn.TotalCount() || int(hg.NDV) <= len(topn.TopN) {
 		// TopN includes all sample data

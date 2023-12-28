@@ -589,7 +589,7 @@ select * from t partition(p3) order by id;
 insert ignore into t values  (15, 'a'),(17,'a');
 select * from t partition(p0,p1,p2) order by id;
 select * from t partition(p3) order by id;
---error 1062
+--error 1526
 insert into t values (100, 'd');
 delete from t;
 insert into t values  (1, 'a'),(2,'b'),(3,'c');
@@ -611,7 +611,7 @@ select * from t order by id;
 --error 1062
 update t set id=id+17 where id in (3,10);
 select * from t order by id;
---error 1062
+--error 1526
 update t set id=id*2 where id in (3,20);
 select * from t order by id;
 delete from t;
@@ -624,7 +624,7 @@ select * from t partition(p2) order by id;
 select * from t partition(p3) order by id;
 replace into t values  (1, 'x'),(7,'x');
 select * from t order by id;
---error 1062
+--error 1526
 replace into t values  (10,'x'),(50,'x');
 select * from t order by id;
 delete from t where id = 3;
@@ -721,7 +721,7 @@ select * from t order by id;
 --error 1062
 update t set id=id+1 where location='w' and id in (1,2);
 select * from t order by id;
---error 1062
+--error 1526
 update t set id=id+3 where location='w' and id in (1,2);
 select * from t order by id;
 update t set location='s', id=14 where location='e' and id=8;
@@ -1258,8 +1258,8 @@ create table replace_test_1 (id int, c1 int);
 replace replace_test_1 select id, c1 from replace_test;
 --disable_info
 begin;
--- error 1135
-replace replace_test_0 select c1 from replace_test;
+--error 1136
+replace replace_test_1 select c1 from replace_test;
 rollback;
 
 create table replace_test_2 (id int, c1 int);

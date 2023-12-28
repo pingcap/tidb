@@ -967,6 +967,38 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 	return tables, nil
 }
 
+// ListSimpleTables shows all simple tables in database.
+func (m *Meta) ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error) {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	res, err := m.txn.HGetAll(dbKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tables := make([]*model.TableNameInfo, 0, len(res)/2)
+	for _, r := range res {
+		// only handle table meta
+		tableKey := string(r.Field)
+		if !strings.HasPrefix(tableKey, mTablePrefix) {
+			continue
+		}
+
+		tbInfo := &model.TableNameInfo{}
+		err = json.Unmarshal(r.Value, tbInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		tables = append(tables, tbInfo)
+	}
+
+	return tables, nil
+}
+
 // ListDatabases shows all databases.
 func (m *Meta) ListDatabases() ([]*model.DBInfo, error) {
 	res, err := m.txn.HGetAll(mDBs)

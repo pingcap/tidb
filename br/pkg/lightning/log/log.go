@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/aws/awserr"
-	"github.com/aws/aws-sdk-go/aws/request"
 	"github.com/pingcap/errors"
 	pclog "github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -188,8 +187,15 @@ func IsContextCanceledError(err error) bool {
 	}
 
 	// see https://github.com/aws/aws-sdk-go/blob/9d1f49ba/aws/credentials/credentials.go#L246-L249
-	if v, ok := err.(awserr.Error); ok {
-		return v.Code() == request.CanceledErrorCode
+	// 2 cases that have meet:
+	// 	awserr.New("RequestCanceled", "request context canceled", err) and the nested err is context.Canceled
+	// 	awserr.New( "MultipartUpload", "upload multipart failed", err) and the nested err is the upper one
+	if v, ok := err.(awserr.BatchedErrors); ok {
+		for _, origErr := range v.OrigErrs() {
+			if IsContextCanceledError(origErr) {
+				return true
+			}
+		}
 	}
 	return false
 }

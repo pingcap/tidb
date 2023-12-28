@@ -68,7 +68,7 @@ func getTableStats(sql string, t *testing.T, ctx sessionctx.Context, dom *domain
 	require.NoError(t, err)
 	sctx := core.MockContext()
 	sctx.GetSessionVars().EnablePlanReplayerCapture = true
-	builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), &hint.BlockHintProcessor{})
+	builder, _ := core.NewPlanBuilder().Init(sctx, dom.InfoSchema(), hint.NewQBHintHandler(nil))
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(dom.InfoSchema())
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()

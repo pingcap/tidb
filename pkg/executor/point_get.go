@@ -63,8 +63,8 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		isStaleness:      b.isStaleness,
 	}
 
-	e.Base().SetInitCap(1)
-	e.Base().SetMaxChunkSize(1)
+	e.SetInitCap(1)
+	e.SetMaxChunkSize(1)
 	e.Init(p)
 
 	e.snapshot, err = b.getSnapshot()
@@ -333,7 +333,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
-	err = DecodeRowValToChunk(e.Base().Ctx(), e.Schema(), e.tblInfo, e.handle, val, req, e.rowDecoder)
+	err = DecodeRowValToChunk(e.BaseExecutor.Ctx(), e.Schema(), e.tblInfo, e.handle, val, req, e.rowDecoder)
 	if err != nil {
 		return err
 	}

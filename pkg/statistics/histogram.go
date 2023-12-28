@@ -16,10 +16,10 @@ package statistics
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
 	"math"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -119,7 +119,7 @@ func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType,
 		NullCount:         nullCount,
 		LastUpdateVersion: version,
 		Tp:                tp,
-		Bounds:            chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 2*bucketSize),
+		Bounds:            chunk.NewChunkFromPoolWithCapacity([]*types.FieldType{tp}, 2*bucketSize),
 		Buckets:           make([]Bucket, 0, bucketSize),
 		TotColSize:        totColSize,
 	}
@@ -176,11 +176,12 @@ func (hg *Histogram) updateLastBucket(upper *types.Datum, count, repeat int64, n
 	hg.Bounds.TruncateTo(2*l - 1)
 	hg.Bounds.AppendDatum(0, upper)
 	// The sampling case doesn't hold NDV since the low sampling rate. So check the NDV here.
-	if needBucketNDV && hg.Buckets[l-1].NDV > 0 {
-		hg.Buckets[l-1].NDV++
+	bucket := &hg.Buckets[l-1]
+	if needBucketNDV && bucket.NDV > 0 {
+		bucket.NDV++
 	}
-	hg.Buckets[l-1].Count = count
-	hg.Buckets[l-1].Repeat = repeat
+	bucket.Count = count
+	bucket.Repeat = repeat
 }
 
 // DecodeTo decodes the histogram bucket values into `tp`.
@@ -218,6 +219,14 @@ func (hg *Histogram) ConvertTo(sc *stmtctx.StatementContext, tp *types.FieldType
 // Len is the number of buckets in the histogram.
 func (hg *Histogram) Len() int {
 	return len(hg.Buckets)
+}
+
+// DestroyAndPutToPool resets the FMSketch and puts it to the pool.
+func (hg *Histogram) DestroyAndPutToPool() {
+	if hg == nil {
+		return
+	}
+	hg.Bounds.Destroy(len(hg.Buckets), []*types.FieldType{hg.Tp})
 }
 
 // HistogramEqual tests if two histograms are equal.
@@ -290,12 +299,13 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 // BinarySearchRemoveVal removes the value from the TopN using binary search.
 func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 	lowIdx, highIdx := 0, hg.Len()-1
+	column := hg.Bounds.Column(0)
 	// if hg is too small, we don't need to check the branch. because the cost is more than binary search.
 	if hg.Len() > 4 {
-		if cmpResult := bytes.Compare(hg.Bounds.Column(0).GetRaw(highIdx*2+1), valCntPairs.Encoded); cmpResult < 0 {
+		if cmpResult := bytes.Compare(column.GetRaw(highIdx*2+1), valCntPairs.Encoded); cmpResult < 0 {
 			return
 		}
-		if cmpResult := bytes.Compare(hg.Bounds.Column(0).GetRaw(lowIdx), valCntPairs.Encoded); cmpResult > 0 {
+		if cmpResult := bytes.Compare(column.GetRaw(lowIdx), valCntPairs.Encoded); cmpResult > 0 {
 			return
 		}
 	}
@@ -303,25 +313,27 @@ func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 	var found bool
 	for lowIdx <= highIdx {
 		midIdx = (lowIdx + highIdx) / 2
-		cmpResult := bytes.Compare(hg.Bounds.Column(0).GetRaw(midIdx*2), valCntPairs.Encoded)
+		cmpResult := bytes.Compare(column.GetRaw(midIdx*2), valCntPairs.Encoded)
 		if cmpResult > 0 {
 			highIdx = midIdx - 1
 			continue
 		}
-		cmpResult = bytes.Compare(hg.Bounds.Column(0).GetRaw(midIdx*2+1), valCntPairs.Encoded)
+		cmpResult = bytes.Compare(column.GetRaw(midIdx*2+1), valCntPairs.Encoded)
 		if cmpResult < 0 {
 			lowIdx = midIdx + 1
 			continue
 		}
-		if hg.Buckets[midIdx].NDV > 0 {
-			hg.Buckets[midIdx].NDV--
+		midbucket := &hg.Buckets[midIdx]
+
+		if midbucket.NDV > 0 {
+			midbucket.NDV--
 		}
 		if cmpResult == 0 {
-			hg.Buckets[midIdx].Repeat = 0
+			midbucket.Repeat = 0
 		}
-		hg.Buckets[midIdx].Count -= int64(valCntPairs.Count)
-		if hg.Buckets[midIdx].Count < 0 {
-			hg.Buckets[midIdx].Count = 0
+		midbucket.Count -= int64(valCntPairs.Count)
+		if midbucket.Count < 0 {
+			midbucket.Count = 0
 		}
 		found = true
 		break
@@ -1093,17 +1105,6 @@ func (hg *Histogram) Copy() *Histogram {
 	return &newHist
 }
 
-// RemoveUpperBound removes the upper bound from histogram.
-// It is used when merge stats for incremental analyze.
-func (hg *Histogram) RemoveUpperBound() *Histogram {
-	hg.Buckets[hg.Len()-1].Count -= hg.Buckets[hg.Len()-1].Repeat
-	hg.Buckets[hg.Len()-1].Repeat = 0
-	if hg.NDV > 0 {
-		hg.NDV--
-	}
-	return hg
-}
-
 // TruncateHistogram truncates the histogram to `numBkt` buckets.
 func (hg *Histogram) TruncateHistogram(numBkt int) *Histogram {
 	hist := hg.Copy()
@@ -1163,7 +1164,7 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 			}
 		}
 	}
-	sort.SliceStable(dataCnts, func(i, j int) bool { return dataCnts[i].cnt >= dataCnts[j].cnt })
+	slices.SortStableFunc(dataCnts, func(a, b dataCnt) int { return -cmp.Compare(a.cnt, b.cnt) })
 	if len(dataCnts) > int(numTopN) {
 		dataCnts = dataCnts[:numTopN]
 	}
@@ -1272,7 +1273,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 	// illegal order.
 	if upperCompare < 0 {
 		err := errors.Errorf("illegal bucket order")
-		statslogutil.StatsLogger.Warn("fail to mergeBucketNDV", zap.Error(err))
+		statslogutil.StatsLogger().Warn("fail to mergeBucketNDV", zap.Error(err))
 		return nil, err
 	}
 	//  ___right_|
@@ -1288,7 +1289,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 		// illegal order.
 		if lowerCompare < 0 {
 			err := errors.Errorf("illegal bucket order")
-			statslogutil.StatsLogger.Warn("fail to mergeBucketNDV", zap.Error(err))
+			statslogutil.StatsLogger().Warn("fail to mergeBucketNDV", zap.Error(err))
 			return nil, err
 		}
 		// |___right___|
@@ -1485,7 +1486,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	tail := 0
 	for i := range buckets {
 		if buckets[i].Count != 0 {
-			buckets[tail] = buckets[i]
+			// Because we will reuse the tail of the slice in `releasebucket4MergingForRecycle`,
+			// we need to shift the non-empty buckets to the front.
+			buckets[tail], buckets[i] = buckets[i], buckets[tail]
 			tail++
 		}
 	}

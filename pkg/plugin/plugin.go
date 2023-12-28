@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"sync"
 	"sync/atomic"
+	"time"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -275,14 +276,33 @@ func (w *flushWatcher) refreshPluginState() error {
 	}
 	return nil
 }
-
 func (w *flushWatcher) watchLoop() {
-	watchChan := w.etcd.Watch(w.ctx, w.path)
+	const reWatchInterval = time.Second * 5
+	logutil.BgLogger().Info("plugin flushWatcher loop started", zap.String("plugin", w.manifest.Name))
+	for w.ctx.Err() == nil {
+		ch := w.etcd.Watch(w.ctx, w.path)
+		if exit := w.watchLoopWithChan(ch); exit {
+			break
+		}
+
+		logutil.BgLogger().Info(
+			"plugin flushWatcher old chan closed, restart loop later",
+			zap.String("plugin", w.manifest.Name),
+			zap.Duration("after", reWatchInterval))
+		time.Sleep(reWatchInterval)
+	}
+}
+
+func (w *flushWatcher) watchLoopWithChan(ch clientv3.WatchChan) (exit bool) {
 	for {
 		select {
 		case <-w.ctx.Done():
-			return
-		case <-watchChan:
+			return true
+		case _, ok := <-ch:
+			if !ok {
+				return false
+			}
+			logutil.BgLogger().Info("plugin flushWatcher detected event to reload plugin config", zap.String("plugin", w.manifest.Name))
 			_ = w.refreshPluginState()
 		}
 	}

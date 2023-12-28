@@ -594,5 +594,14 @@
       "select  /*+ agg_to_cop() hash_agg() */  count(1) from tbl_15 ;",
       "select  /*+ agg_to_cop() stream_agg() */  avg(   tbl_16.col_100 ) as r0 from tbl_16 where tbl_16.col_100 in ( 10672141 ) or tbl_16.col_104 in ( 'yfEG1t!*b' ,'C1*bqx_qyO' ,'vQ^yUpKHr&j#~' ) group by tbl_16.col_100  order by r0 limit 20 ;"
     ]
+  },
+  {
+    "name": "TestIssues49377Plan",
+    "cases": [
+      "select 1,1,1 union all ((select * from employee where dept_id = 1)  union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 );",
+      "select 1,1,1 union all ((select * from employee where dept_id = 1)  union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);",
+      "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) limit 1);",
+      "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);"
+    ]
   }
 ]

@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
@@ -83,55 +84,57 @@ func ParseCaptureTableFilter(tableFilter string) (f tablefilter.Filter, valid bo
 	return f, true
 }
 
-func (h *BindHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
-	h.sctx.Lock()
-	defer h.sctx.Unlock()
+func (h *globalBindingHandle) extractCaptureFilterFromStorage() (filter *captureFilter) {
 	filter = &captureFilter{
 		frequency: 1,
 		users:     make(map[string]struct{}),
 	}
-	// No need to acquire the session context lock for ExecRestrictedSQL, it
-	// uses another background session.
-	rows, _, err := execRows(h.sctx.Context, `SELECT filter_type, filter_value FROM mysql.capture_plan_baselines_blacklist order by filter_type`)
-	if err != nil {
-		logutil.BgLogger().Warn("failed to load mysql.capture_plan_baselines_blacklist", zap.String("category", "sql-bind"), zap.Error(err))
-		return
-	}
-	for _, row := range rows {
-		filterTp := strings.ToLower(row.GetString(0))
-		valStr := strings.ToLower(row.GetString(1))
-		switch filterTp {
-		case "table":
-			tfilter, valid := ParseCaptureTableFilter(valStr)
-			if !valid {
-				logutil.BgLogger().Warn("capture table filter is invalid, ignore it", zap.String("category", "sql-bind"), zap.String("filter_value", valStr))
-				continue
-			}
-			filter.tables = append(filter.tables, tfilter)
-		case "user":
-			filter.users[valStr] = struct{}{}
-		case "frequency":
-			f, err := strconv.ParseInt(valStr, 10, 64)
-			if err != nil {
-				logutil.BgLogger().Warn("failed to parse frequency type value, ignore it", zap.String("category", "sql-bind"), zap.String("filter_value", valStr), zap.Error(err))
-				continue
-			}
-			if f < 1 {
-				logutil.BgLogger().Warn("frequency threshold is less than 1, ignore it", zap.String("category", "sql-bind"), zap.Int64("frequency", f))
-				continue
-			}
-			if f > filter.frequency {
-				filter.frequency = f
-			}
-		default:
-			logutil.BgLogger().Warn("unknown capture filter type, ignore it", zap.String("category", "sql-bind"), zap.String("filter_type", filterTp))
+
+	_ = h.callWithSCtx(false, func(sctx sessionctx.Context) error {
+		// No need to acquire the session context lock for ExecRestrictedSQL, it
+		// uses another background session.
+		rows, _, err := execRows(sctx, `SELECT filter_type, filter_value FROM mysql.capture_plan_baselines_blacklist order by filter_type`)
+		if err != nil {
+			logutil.BgLogger().Warn("failed to load mysql.capture_plan_baselines_blacklist", zap.String("category", "sql-bind"), zap.Error(err))
+			return err
 		}
-	}
+		for _, row := range rows {
+			filterTp := strings.ToLower(row.GetString(0))
+			valStr := strings.ToLower(row.GetString(1))
+			switch filterTp {
+			case "table":
+				tfilter, valid := ParseCaptureTableFilter(valStr)
+				if !valid {
+					logutil.BgLogger().Warn("capture table filter is invalid, ignore it", zap.String("category", "sql-bind"), zap.String("filter_value", valStr))
+					continue
+				}
+				filter.tables = append(filter.tables, tfilter)
+			case "user":
+				filter.users[valStr] = struct{}{}
+			case "frequency":
+				f, err := strconv.ParseInt(valStr, 10, 64)
+				if err != nil {
+					logutil.BgLogger().Warn("failed to parse frequency type value, ignore it", zap.String("category", "sql-bind"), zap.String("filter_value", valStr), zap.Error(err))
+					continue
+				}
+				if f < 1 {
+					logutil.BgLogger().Warn("frequency threshold is less than 1, ignore it", zap.String("category", "sql-bind"), zap.Int64("frequency", f))
+					continue
+				}
+				if f > filter.frequency {
+					filter.frequency = f
+				}
+			default:
+				logutil.BgLogger().Warn("unknown capture filter type, ignore it", zap.String("category", "sql-bind"), zap.String("filter_type", filterTp))
+			}
+		}
+		return nil
+	})
 	return
 }
 
 // CaptureBaselines is used to automatically capture plan baselines.
-func (h *BindHandle) CaptureBaselines() {
+func (h *globalBindingHandle) CaptureBaselines() {
 	parser4Capture := parser.New()
 	captureFilter := h.extractCaptureFilterFromStorage()
 	emptyCaptureFilter := captureFilter.isEmpty()
@@ -175,9 +178,12 @@ func (h *BindHandle) CaptureBaselines() {
 		if bindSQL == "" {
 			continue
 		}
-		h.sctx.Lock()
-		charset, collation := h.sctx.GetSessionVars().GetCharsetInfo()
-		h.sctx.Unlock()
+
+		var charset, collation string
+		_ = h.callWithSCtx(false, func(sctx sessionctx.Context) error {
+			charset, collation = sctx.GetSessionVars().GetCharsetInfo()
+			return nil
+		})
 		binding := Binding{
 			BindSQL:   bindSQL,
 			Status:    Enabled,

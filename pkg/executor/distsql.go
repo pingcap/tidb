@@ -987,7 +987,7 @@ func (w *indexWorker) fetchHandles(ctx context.Context, results []distsql.Select
 			}
 		}
 	}()
-	chk := w.idxLookup.Ctx().GetSessionVars().GetNewChunkWithCapacity(w.idxLookup.getRetTpsForIndexReader(), w.idxLookup.MaxChunkSize(), w.idxLookup.MaxChunkSize(), w.idxLookup.AllocPool)
+	chk := w.idxLookup.AllocPool.Alloc(w.idxLookup.getRetTpsForIndexReader(), w.idxLookup.MaxChunkSize(), w.idxLookup.MaxChunkSize())
 	idxID := w.idxLookup.getIndexPlanRootID()
 	if w.idxLookup.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		if idxID != w.idxLookup.ID() && w.idxLookup.stats != nil {
@@ -1455,7 +1455,7 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		logutil.Logger(ctx).Error("build table reader failed", zap.Error(err))
 		return err
 	}
-	defer terror.Call(tableReader.Close)
+	defer func() { terror.Log(exec.Close(tableReader)) }()
 
 	if w.checkIndexValue != nil {
 		return w.compareData(ctx, task, tableReader)

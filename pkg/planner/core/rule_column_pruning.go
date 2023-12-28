@@ -305,7 +305,7 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 				for j, col := range schema.Columns {
 					exprs[j] = col
 				}
-				proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(p.SCtx(), p.SelectBlockOffset())
+				proj := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(p.SCtx(), p.QueryBlockOffset())
 				proj.SetSchema(schema)
 
 				proj.SetChildren(child)
