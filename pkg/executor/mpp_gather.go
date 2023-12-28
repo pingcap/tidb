@@ -141,8 +141,7 @@ func (e *MPPGather) setupRespIter(ctx context.Context, isRecoverying bool) (err 
 	}
 
 	failpoint.Inject("mpp_recovery_test_check_node_cnt", func(nodeCnt failpoint.Value) {
-		nodeCntInt := nodeCnt.(int)
-		if nodeCntInt != e.nodeCnt {
+		if nodeCntInt := nodeCnt.(int); nodeCntInt != e.nodeCnt {
 			panic(fmt.Sprintf("unexpected node cnt, expect %v, got %v", nodeCntInt, e.nodeCnt))
 		}
 	})
