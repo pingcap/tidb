@@ -48,8 +48,12 @@ func newCollectTableName() *tableNameCollector {
 // Enter implements Visitor interface.
 func (c *tableNameCollector) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
-	case *ast.TableName, *ast.ColumnName:
-		c.tableNames = append(c.tableNames, &node)
+	case *ast.ColumnName:
+		if node.Table.String() != "" {
+			c.tableNames = append(c.tableNames, &in)
+		}
+	case *ast.TableName:
+		c.tableNames = append(c.tableNames, &in)
 		return in, true
 	}
 	return in, false
@@ -65,6 +69,6 @@ func (c *tableNameCollector) GetResult() []*ast.Node {
 }
 
 func (c *tableNameCollector) DestroyAndPutToPool() {
-	clear(c.tableNames)
+	c.tableNames = c.tableNames[:0]
 	tableNameCollectorPool.Put(c)
 }
