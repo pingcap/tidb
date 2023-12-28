@@ -383,7 +383,7 @@ func TestSlotManagerInManager(t *testing.T) {
 		return ctrl.Satisfied()
 	}, 2*time.Second, 300*time.Millisecond)
 
-	// 2. task1 is occupied by task3, task1 start to pausing
+	// 2. task1 is preempted by task3, task1 start to pausing
 	// 3. task3 is waiting for task1 to be released, and task2 can't be allocated
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID3, proto.StepOne,
 		unfinishedSubtaskStates...).

@@ -229,7 +229,7 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 		}
 
 		if !canAlloc {
-			logutil.Logger(m.logCtx).Debug("subtask has been rejected", zap.Int64("task-id", task.ID))
+			logutil.Logger(m.logCtx).Debug("no enough slots to run task", zap.Int64("task-id", task.ID))
 			continue
 		}
 		m.addHandlingTask(task.ID)
@@ -421,8 +421,6 @@ func (m *Manager) onRunnableTask(task *proto.Task) {
 		switch task.State {
 		case proto.TaskStateRunning:
 			if taskCtx.Err() != nil {
-				logutil.Logger(m.logCtx).Debug("onRunnableTask exit for taskCtx.Done",
-					zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type), zap.Error(taskCtx.Err()))
 				return
 			}
 			// use taskCtx for canceling.
