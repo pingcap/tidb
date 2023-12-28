@@ -283,7 +283,7 @@ type MockActionOnExceed struct {
 }
 
 // Action add the triggered number.
-func (m *MockActionOnExceed) Action(t *memory.Tracker) {
+func (m *MockActionOnExceed) Action(*memory.Tracker) {
 	m.triggeredNum.Add(1)
 }
 
