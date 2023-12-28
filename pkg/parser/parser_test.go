@@ -515,7 +515,6 @@ func TestAdminStmt(t *testing.T) {
 		// We do not support the global level. We will check it in the later.
 		{"admin flush global plan_cache", true, "ADMIN FLUSH GLOBAL PLAN_CACHE"},
 		// for BDR
-		{"admin set bdr role none", true, "ADMIN SET BDR ROLE NONE"},
 		{"admin set bdr role primary", true, "ADMIN SET BDR ROLE PRIMARY"},
 		{"admin set bdr role secondary", true, "ADMIN SET BDR ROLE SECONDARY"},
 		{"admin set bdr role local_only", true, "ADMIN SET BDR ROLE LOCAL_ONLY"},

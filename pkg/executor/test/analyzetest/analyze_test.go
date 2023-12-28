@@ -732,7 +732,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	tk.MustExec("insert into t values (10,10,10)")
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	require.Nil(t, h.Update(is))
-	h.HandleAutoAnalyze(is)
+	h.HandleAutoAnalyze()
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
@@ -1086,7 +1086,7 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	require.Nil(t, h.Update(is))
 	// auto analyze uses the saved option(predicate columns).
-	h.HandleAutoAnalyze(is)
+	h.HandleAutoAnalyze()
 	tblStats = h.GetTableStats(tblInfo)
 	require.Less(t, lastVersion, tblStats.Version)
 	lastVersion = tblStats.Version
@@ -1939,7 +1939,7 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 					require.NoError(t, failpoint.Disable(mockSlowAnalyze))
 				}()
 			}
-			require.True(t, h.HandleAutoAnalyze(is), comment)
+			require.True(t, h.HandleAutoAnalyze(), comment)
 			currentVersion := h.GetTableStats(tableInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the table stats are updated.
@@ -2011,7 +2011,7 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 					require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockSlowAnalyzeIndex"))
 				}()
 			}
-			require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()), comment)
+			require.True(t, h.HandleAutoAnalyze(), comment)
 			currentVersion := h.GetTableStats(tblInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the index stats are updated.
@@ -2616,7 +2616,7 @@ PARTITION BY RANGE ( id ) (
 		h.SetLease(oriLease)
 	}()
 	is := dom.InfoSchema()
-	h.HandleAutoAnalyze(is)
+	h.HandleAutoAnalyze()
 	tk.MustExec("create index idxa on t (a)")
 	tk.MustExec("create index idxb on t (b)")
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -2651,7 +2651,7 @@ PARTITION BY RANGE ( id ) (
 		h.SetLease(oriLease)
 	}()
 	is := dom.InfoSchema()
-	h.HandleAutoAnalyze(is)
+	h.HandleAutoAnalyze()
 	tk.MustExec("alter table t add column a int")
 	tk.MustExec("alter table t add column b int")
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -2746,7 +2746,7 @@ func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS)))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/injectBaseCount", "return(3)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/injectBaseModifyCount", "return(0)"))
-	require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()))
+	require.True(t, h.HandleAutoAnalyze())
 	// Check the count / modify_count changes during the analyze are not lost.
 	tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
 		"6 3",

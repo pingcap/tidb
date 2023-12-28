@@ -1428,6 +1428,11 @@ func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 			zap.String("capacity", store.Status.Capacity), zap.Error(err))
 		return nil
 	}
+	if capacity <= 0 {
+		// PD will return a zero value StoreInfo if heartbeat is not received after
+		// startup, skip temporarily.
+		return nil
+	}
 	available, err := units.RAMInBytes(store.Status.Available)
 	if err != nil {
 		logger.Warn("failed to parse available",

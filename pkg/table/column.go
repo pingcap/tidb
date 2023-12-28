@@ -272,9 +272,9 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 	// * **ST**: STRICT_TRANS_TABLES
 	// * **ELSE**: empty or NO_ZERO_IN_DATE_MODE
 	if tm.IsZero() && col.GetType() == mysql.TypeTimestamp {
-		innerErr := types.ErrWrongValue.GenWithStackByArgs(zeroT, str)
+		innerErr := types.ErrWrongValue.FastGenByArgs(zeroT, str)
 		if mode.HasStrictMode() && !ignoreErr && (tmIsInvalid || mode.HasNoZeroDateMode()) {
-			return types.NewDatum(zeroV), true, innerErr
+			return types.NewDatum(zeroV), true, errors.Trace(innerErr)
 		}
 
 		if tmIsInvalid || mode.HasNoZeroDateMode() {
@@ -283,11 +283,12 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 		return types.NewDatum(zeroV), true, nil
 	} else if tmIsInvalid && col.GetType() == mysql.TypeTimestamp {
 		// Prevent from being stored! Invalid timestamp!
+		warn := types.ErrWrongValue.FastGenByArgs(zeroT, str)
 		if mode.HasStrictMode() {
-			return types.NewDatum(zeroV), true, types.ErrWrongValue.GenWithStackByArgs(zeroT, str)
+			return types.NewDatum(zeroV), true, errors.Trace(warn)
 		}
 		// no strict mode, truncate to 0000-00-00 00:00:00
-		sc.AppendWarning(types.ErrWrongValue.GenWithStackByArgs(zeroT, str))
+		sc.AppendWarning(warn)
 		return types.NewDatum(zeroV), true, nil
 	} else if tm.IsZero() || tm.InvalidZero() {
 		if tm.IsZero() {
@@ -301,9 +302,9 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 			}
 		}
 
-		innerErr := types.ErrWrongValue.GenWithStackByArgs(zeroT, str)
+		innerErr := types.ErrWrongValue.FastGenByArgs(zeroT, str)
 		if mode.HasStrictMode() && !ignoreErr {
-			return types.NewDatum(zeroV), true, innerErr
+			return types.NewDatum(zeroV), true, errors.Trace(innerErr)
 		}
 
 		// TODO: as in MySQL 8.0's implement, warning message is `types.ErrWarnDataOutOfRange`,

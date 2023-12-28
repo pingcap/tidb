@@ -32,7 +32,7 @@ import (
 // QBHintHandler is used to handle this cases.
 type QBHintHandler struct {
 	QBNameToSelOffset map[string]int                    // map[QBName]SelectOffset
-	SelOffsetToHints  map[int][]*ast.TableOptimizerHint // map[SelectOffset]Hints
+	QBOffsetToHints   map[int][]*ast.TableOptimizerHint // map[QueryBlockOffset]Hints
 
 	// Used for the view's hint
 	ViewQBNameToTable map[string][]ast.HintTable           // map[QBName]TableInfo
@@ -41,6 +41,13 @@ type QBHintHandler struct {
 
 	Ctx              sessionctx.Context
 	selectStmtOffset int
+}
+
+// NewQBHintHandler creates a QBHintHandler.
+func NewQBHintHandler(ctx sessionctx.Context) *QBHintHandler {
+	return &QBHintHandler{
+		Ctx: ctx,
+	}
 }
 
 // MaxSelectStmtOffset returns the current stmt offset.
@@ -268,8 +275,8 @@ func (p *QBHintHandler) isHint4View(hint *ast.TableOptimizerHint) bool {
 
 // GetCurrentStmtHints extracts all hints that take effects at current stmt.
 func (p *QBHintHandler) GetCurrentStmtHints(hints []*ast.TableOptimizerHint, currentOffset int) []*ast.TableOptimizerHint {
-	if p.SelOffsetToHints == nil {
-		p.SelOffsetToHints = make(map[int][]*ast.TableOptimizerHint)
+	if p.QBOffsetToHints == nil {
+		p.QBOffsetToHints = make(map[int][]*ast.TableOptimizerHint)
 	}
 	for _, hint := range hints {
 		if hint.HintName.L == hintQBName {
@@ -283,14 +290,14 @@ func (p *QBHintHandler) GetCurrentStmtHints(hints []*ast.TableOptimizerHint, cur
 			}
 			continue
 		}
-		p.SelOffsetToHints[offset] = append(p.SelOffsetToHints[offset], hint)
+		p.QBOffsetToHints[offset] = append(p.QBOffsetToHints[offset], hint)
 	}
-	return p.SelOffsetToHints[currentOffset]
+	return p.QBOffsetToHints[currentOffset]
 }
 
 // GenerateQBName builds QBName from offset.
-func GenerateQBName(nodeType NodeType, blockOffset int) (model.CIStr, error) {
-	if blockOffset == 0 {
+func GenerateQBName(nodeType NodeType, qbOffset int) (model.CIStr, error) {
+	if qbOffset == 0 {
 		if nodeType == TypeDelete {
 			return model.NewCIStr(defaultDeleteBlockName), nil
 		}
@@ -299,5 +306,5 @@ func GenerateQBName(nodeType NodeType, blockOffset int) (model.CIStr, error) {
 		}
 		return model.NewCIStr(""), fmt.Errorf("Unexpected NodeType %d when block offset is 0", nodeType)
 	}
-	return model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, blockOffset)), nil
+	return model.NewCIStr(fmt.Sprintf("%s%d", defaultSelectBlockPrefix, qbOffset)), nil
 }
