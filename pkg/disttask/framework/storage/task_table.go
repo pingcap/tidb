@@ -234,7 +234,7 @@ func (stm *TaskManager) CreateTask(ctx context.Context, key string, tp proto.Tas
 
 // CreateTaskWithSession adds a new task to task table with session.
 func (stm *TaskManager) CreateTaskWithSession(ctx context.Context, se sessionctx.Context, key string, tp proto.TaskType, concurrency int, meta []byte) (taskID int64, err error) {
-	cpuCount, err := stm.GetCpuCountOfManagedNodes(ctx)
+	cpuCount, err := stm.getCpuCountOfManagedNodes(ctx, se)
 	if err != nil {
 		return 0, err
 	}
@@ -695,10 +695,17 @@ func (stm *TaskManager) StartSubtask(ctx context.Context, subtaskID int64) error
 }
 
 // StartManager insert the manager information into dist_framework_meta.
-// if the record exists, update the cpu_count.
 func (stm *TaskManager) StartManager(ctx context.Context, tidbID string, role string) error {
+	return stm.WithNewSession(func(se sessionctx.Context) error {
+		return stm.StartManagerSession(ctx, se, tidbID, role)
+	})
+}
+
+// StartManagerSession insert the manager information into dist_framework_meta.
+// if the record exists, update the cpu_count.
+func (*TaskManager) StartManagerSession(ctx context.Context, se sessionctx.Context, tidbID string, role string) error {
 	cpuCount := cpu.GetCPUCount()
-	_, err := stm.executeSQLWithNewSession(ctx, `
+	_, err := ExecSQL(ctx, se, `
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
 		values (%?, %?, %?, -1)
 		on duplicate key update cpu_count = %?`,
@@ -1253,7 +1260,17 @@ func (stm *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 
 // GetManagedNodes implements scheduler.TaskManager interface.
 func (stm *TaskManager) GetManagedNodes(ctx context.Context) ([]proto.ManagedNode, error) {
-	nodes, err := stm.GetAllNodes(ctx)
+	var nodes []proto.ManagedNode
+	err := stm.WithNewSession(func(se sessionctx.Context) error {
+		var err2 error
+		nodes, err2 = stm.getManagedNodesWithSession(ctx, se)
+		return err2
+	})
+	return nodes, err
+}
+
+func (stm *TaskManager) getManagedNodesWithSession(ctx context.Context, se sessionctx.Context) ([]proto.ManagedNode, error) {
+	nodes, err := stm.getAllNodesWithSession(ctx, se)
 	if err != nil {
 		return nil, err
 	}
@@ -1269,7 +1286,17 @@ func (stm *TaskManager) GetManagedNodes(ctx context.Context) ([]proto.ManagedNod
 
 // GetAllNodes gets nodes in dist_framework_meta.
 func (stm *TaskManager) GetAllNodes(ctx context.Context) ([]proto.ManagedNode, error) {
-	rs, err := stm.executeSQLWithNewSession(ctx, `
+	var nodes []proto.ManagedNode
+	err := stm.WithNewSession(func(se sessionctx.Context) error {
+		var err2 error
+		nodes, err2 = stm.getAllNodesWithSession(ctx, se)
+		return err2
+	})
+	return nodes, err
+}
+
+func (*TaskManager) getAllNodesWithSession(ctx context.Context, se sessionctx.Context) ([]proto.ManagedNode, error) {
+	rs, err := ExecSQL(ctx, se, `
 		select host, role, cpu_count
 		from mysql.dist_framework_meta
 		where role = 'background' or role = ''
@@ -1289,9 +1316,9 @@ func (stm *TaskManager) GetAllNodes(ctx context.Context) ([]proto.ManagedNode, e
 	return nodes, nil
 }
 
-// GetCpuCountOfManagedNodes gets the cpu count of managed nodes.
-func (stm *TaskManager) GetCpuCountOfManagedNodes(ctx context.Context) (int, error) {
-	nodes, err := stm.GetManagedNodes(ctx)
+// getCpuCountOfManagedNodes gets the cpu count of managed nodes.
+func (stm *TaskManager) getCpuCountOfManagedNodes(ctx context.Context, se sessionctx.Context) (int, error) {
+	nodes, err := stm.getManagedNodesWithSession(ctx, se)
 	if err != nil {
 		return 0, err
 	}

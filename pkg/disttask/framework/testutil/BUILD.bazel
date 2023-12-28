@@ -20,6 +20,7 @@ go_library(
         "//pkg/disttask/framework/scheduler/mock",
         "//pkg/disttask/framework/storage",
         "//pkg/disttask/framework/taskexecutor",
+        "//pkg/kv",
         "//pkg/sessionctx",
         "//pkg/testkit",
         "@com_github_ngaut_pools//:pools",

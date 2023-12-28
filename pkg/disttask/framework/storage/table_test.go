@@ -734,11 +734,11 @@ func TestDistFrameworkMeta(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
 
 	// when no node
-	_, err := sm.GetCpuCountOfManagedNodes(ctx)
+	_, err := storage.GetCpuCountOfManagedNodes(ctx, sm)
 	require.ErrorContains(t, err, "no managed nodes")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(0)"))
 	require.NoError(t, sm.StartManager(ctx, ":4000", "background"))
-	cpuCount, err := sm.GetCpuCountOfManagedNodes(ctx)
+	cpuCount, err := storage.GetCpuCountOfManagedNodes(ctx, sm)
 	require.NoError(t, err)
 	require.Equal(t, 0, cpuCount)
 
@@ -750,9 +750,9 @@ func TestDistFrameworkMeta(t *testing.T) {
 	nodes, err := sm.GetAllNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
-		{ID: "4000", Role: "background", CPUCount: 100},
-		{ID: "4001", Role: "", CPUCount: 8},
-		{ID: "4002", Role: "background", CPUCount: 8},
+		{ID: ":4000", Role: "background", CPUCount: 100},
+		{ID: ":4001", Role: "", CPUCount: 8},
+		{ID: ":4002", Role: "background", CPUCount: 8},
 	}, nodes)
 
 	// won't be replaced by below one, but cpu count will be updated
@@ -763,12 +763,12 @@ func TestDistFrameworkMeta(t *testing.T) {
 	nodes, err = sm.GetAllNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
-		{ID: "4000", Role: "background", CPUCount: 100},
-		{ID: "4001", Role: "", CPUCount: 8},
-		{ID: "4002", Role: "background", CPUCount: 100},
-		{ID: "4003", Role: "background", CPUCount: 100},
+		{ID: ":4000", Role: "background", CPUCount: 100},
+		{ID: ":4001", Role: "", CPUCount: 8},
+		{ID: ":4002", Role: "background", CPUCount: 100},
+		{ID: ":4003", Role: "background", CPUCount: 100},
 	}, nodes)
-	cpuCount, err = sm.GetCpuCountOfManagedNodes(ctx)
+	cpuCount, err = storage.GetCpuCountOfManagedNodes(ctx, sm)
 	require.NoError(t, err)
 	require.Equal(t, 100, cpuCount)
 
@@ -776,24 +776,24 @@ func TestDistFrameworkMeta(t *testing.T) {
 	nodes, err = sm.GetManagedNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
-		{ID: "4002", Role: "background", CPUCount: 100},
-		{ID: "4003", Role: "background", CPUCount: 100},
+		{ID: ":4002", Role: "background", CPUCount: 100},
+		{ID: ":4003", Role: "background", CPUCount: 100},
 	}, nodes)
 
 	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{":4003"}))
 	nodes, err = sm.GetManagedNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
-		{ID: "4002", Role: "background", CPUCount: 100},
+		{ID: ":4002", Role: "background", CPUCount: 100},
 	}, nodes)
 
 	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{":4002"}))
 	nodes, err = sm.GetManagedNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
-		{ID: "4001", Role: "", CPUCount: 8},
+		{ID: ":4001", Role: "", CPUCount: 8},
 	}, nodes)
-	cpuCount, err = sm.GetCpuCountOfManagedNodes(ctx)
+	cpuCount, err = storage.GetCpuCountOfManagedNodes(ctx, sm)
 	require.NoError(t, err)
 	require.Equal(t, 8, cpuCount)
 }
