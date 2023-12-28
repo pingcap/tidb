@@ -1489,22 +1489,26 @@ func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
 	return errors.Trace(err)
 }
 
+// GroupRUStats keeps the ru consumption statistics data.
 type GroupRUStats struct {
 	ID            int64             `json:"id"`
 	Name          string            `json:"name"`
 	RUConsumption *rmpb.Consumption `json:"ru_consumption"`
 }
 
+// DailyRUStats keeps all the ru consumption statistics data.
 type DailyRUStats struct {
 	EndTime time.Time      `json:"date"`
 	Stats   []GroupRUStats `json:"stats"`
 }
 
+// RUStats keeps the lastest and second lastest DailyRUStats data.
 type RUStats struct {
 	Latest   *DailyRUStats `json:"latest"`
 	Previous *DailyRUStats `json:"previous"`
 }
 
+// GetRUStats load the persisted RUStats data.
 func (m *Meta) GetRUStats() (*RUStats, error) {
 	data, err := m.txn.Get(mRequestUnitStats)
 	if err != nil {
@@ -1521,6 +1525,7 @@ func (m *Meta) GetRUStats() (*RUStats, error) {
 
 }
 
+// SetRUStats persist new ru stats data to meta storage.
 func (m *Meta) SetRUStats(stats *RUStats) error {
 	data, err := json.Marshal(stats)
 	if err != nil {

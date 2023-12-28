@@ -33,6 +33,9 @@ import (
 const (
 	maxRetryCount   int           = 10
 	ruStatsInterval time.Duration = 24 * time.Hour
+	// only keep stats rows for last 2 monthes(61 days at most).
+	ruStatsGCDuration time.Duration = 61 * ruStatsInterval
+	gcBatchSize       int64         = 1000
 )
 
 // RUStatsWriter represents a write to write ru historical data into mysql.request_unit_by_group.
@@ -79,8 +82,13 @@ func (do *Domain) dailyRequestUnitsWriterLoop() {
 				}
 				time.Sleep(time.Second)
 			}
-			logutil.BgLogger().Info("finish write ru historical data", zap.String("end_time", lastTime.Format(time.DateTime)), zap.Stringer("interval", ruStatsInterval),
-				zap.Stringer("cost", time.Since(start)), zap.Error(err))
+			// try gc outdated rows
+			if err := ruWriter.GCOutdatedRecords(lastTime); err != nil {
+				logutil.BgLogger().Warn("[ru_stats] gc outdated rowd failed, will try next time.", zap.Error(err))
+			}
+
+			logutil.BgLogger().Info("[ru_stats] finish write ru historical data", zap.String("end_time", lastTime.Format(time.DateTime)),
+				zap.Stringer("interval", ruStatsInterval), zap.Stringer("cost", time.Since(start)), zap.Error(err))
 		}
 
 		nextTime := lastTime.Add(ruStatsInterval)
@@ -112,7 +120,7 @@ func (r *RUStatsWriter) DoWriteRUStatistics(ctx context.Context) error {
 		return err
 	}
 	if isInserted {
-		logutil.BgLogger().Info("ru data is already inserted, skip", zap.Stringer("end_time", lastEndTime))
+		logutil.BgLogger().Info("[ru_stats] ru data is already inserted, skip", zap.Stringer("end_time", lastEndTime))
 		return nil
 	}
 
@@ -200,6 +208,27 @@ func (r *RUStatsWriter) insertRUStats(stats *meta.RUStats) error {
 
 	_, err := execRestrictedSQL(r.sessPool, sql, nil)
 	return err
+}
+
+func (r *RUStatsWriter) GCOutdatedRecords(lastEndTime time.Time) error {
+	gcEndDate := lastEndTime.Add(-ruStatsGCDuration).Format(time.DateTime)
+	countSql := fmt.Sprintf("SELECT count(*) FROM mysql.request_unit_by_group where end_time <= '%s'", gcEndDate)
+	rows, err := execRestrictedSQL(r.sessPool, countSql, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	totalCount := rows[0].GetInt64(0)
+
+	loopCount := (totalCount + gcBatchSize - 1) / gcBatchSize
+	for i := int64(0); i < loopCount; i++ {
+		sql := fmt.Sprintf("DELETE FROM mysql.request_unit_by_group where end_time <= '%s' order by end_time limit %d", gcEndDate, gcBatchSize)
+		_, err = execRestrictedSQL(r.sessPool, sql, nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
 }
 
 func generateSQL(stats *meta.RUStats) string {
