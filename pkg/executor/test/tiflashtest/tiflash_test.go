@@ -1893,7 +1893,7 @@ func TestMPPRecovery(t *testing.T) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	sql := "select * from t order by 1, 2"
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_force_enable", "return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_mock_enable", "return()"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_ignore_recovery_err", "return()"))
 	// Test different chunk size. And force one mpp err.
 	{
@@ -1918,6 +1918,19 @@ func TestMPPRecovery(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_max_err_times"))
 	}
 
+	{
+		// When AllowFallbackToTiKV, mpp err recovery should be disabled.
+		// So event we inject mock err multiple times, the query should be ok.
+		tk.MustExec("set @@tidb_allow_fallback_to_tikv = \"tiflash\"")
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_max_err_times", "return(5)"))
+
+		tk.MustExec("set @@tidb_max_chunk_size = 32")
+		tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
+
+		tk.MustExec("set @@tidb_allow_fallback_to_tikv = default")
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_max_err_times"))
+	}
+
 	// Test hold logic. Default hold 4 * MaxChunkSize rows.
 	{
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_max_err_times", "return(0)"))
@@ -1931,7 +1944,7 @@ func TestMPPRecovery(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_max_err_times"))
 	}
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_ignore_recovery_err"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_force_enable"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_mock_enable"))
 
 	{
 		// We have 2 mock tiflash, but the table is small, so only 1 tiflash node is in computation.

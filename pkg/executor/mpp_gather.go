@@ -178,13 +178,12 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	// For now, mpp err recovery only support MemLimit, which is only useful when AutoScaler is used.
 	enableMPPRecovery := disaggTiFlashWithAutoScaler
 
-	failpoint.Inject("mpp_recovery_test_force_enable", func() {
+	failpoint.Inject("mpp_recovery_test_mock_enable", func() {
 		enableMPPRecovery = true
 	})
 
 	// No need to recovery when can fallback to tikv.
-	_, allowTiFlashFallback := e.Ctx().GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
-	if allowTiFlashFallback {
+	if _, allowTiFlashFallback := e.Ctx().GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]; allowTiFlashFallback {
 		enableMPPRecovery = false
 	}
 
