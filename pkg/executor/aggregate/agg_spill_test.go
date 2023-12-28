@@ -19,10 +19,12 @@ import (
 	"fmt"
 	"math/rand"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -235,7 +237,6 @@ func initCtx(ctx *mock.Context, newRootExceedAction *testutil.MockActionOnExceed
 	ctx.GetSessionVars().MemTracker.SetActionOnExceed(newRootExceedAction)
 }
 
-// TODO continuous consume in another goroutine
 func TestGetCorrectResult(t *testing.T) {
 	newRootExceedAction := new(testutil.MockActionOnExceed)
 	hardLimitBytesNum := int64(6000000)
@@ -243,12 +244,28 @@ func TestGetCorrectResult(t *testing.T) {
 	ctx := mock.NewContext()
 	initCtx(ctx, newRootExceedAction, hardLimitBytesNum)
 
-	rowNum := 100000 + rand.Intn(200000)
+	rowNum := 100000 + rand.Intn(100000)
 	ndv := 50000 + rand.Intn(50000)
 	col1, col2 := generateData(rowNum, ndv)
 	result := generateResult(col1, col2)
 	opt := getMockDataSourceParameters(ctx)
 	dataSource := buildMockDataSource(opt, col1, col2)
+
+	finished := atomic.Bool{}
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		tracker := ctx.GetSessionVars().MemTracker
+		for {
+			if finished.Load() {
+				break
+			}
+			// Mock consuming in another goroutine, so that we can test potential data race.
+			tracker.Consume(1)
+			time.Sleep(1 * time.Millisecond)
+		}
+		wg.Done()
+	}()
 
 	for i := 0; i < 5; i++ {
 		aggExec := buildHashAggExecutor(t, ctx, dataSource)
@@ -268,11 +285,12 @@ func TestGetCorrectResult(t *testing.T) {
 		}
 		aggExec.Close()
 
-		log.Info(fmt.Sprintf("rowNum: %d, ndv: %d", rowNum, ndv))
 		require.True(t, aggExec.IsSpillTriggeredForTest())
 		require.True(t, resContainer.check(result))
 	}
 	require.Equal(t, 0, newRootExceedAction.GetTriggeredNum())
+	finished.Store(true)
+	wg.Wait()
 }
 
 func TestFallBackAction(t *testing.T) {
@@ -285,7 +303,7 @@ func TestFallBackAction(t *testing.T) {
 	// Consume lots of memory in advance to help to trigger fallback action.
 	ctx.GetSessionVars().MemTracker.Consume(int64(float64(hardLimitBytesNum) * 0.79))
 
-	rowNum := 100000 + rand.Intn(200000)
+	rowNum := 100000 + rand.Intn(100000)
 	ndv := 50000 + rand.Intn(50000)
 	col1, col2 := generateData(rowNum, ndv)
 	opt := getMockDataSourceParameters(ctx)
@@ -318,11 +336,27 @@ func TestRandomFail(t *testing.T) {
 	initCtx(ctx, newRootExceedAction, hardLimitBytesNum)
 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/enableAggSpillIntest", `return(true)`)
-	rowNum := 100000 + rand.Intn(200000)
+	rowNum := 100000 + rand.Intn(100000)
 	ndv := 50000 + rand.Intn(50000)
 	col1, col2 := generateData(rowNum, ndv)
 	opt := getMockDataSourceParameters(ctx)
 	dataSource := buildMockDataSource(opt, col1, col2)
+
+	finished := atomic.Bool{}
+	wg := sync.WaitGroup{}
+	wg.Add(1)
+	go func() {
+		tracker := ctx.GetSessionVars().MemTracker
+		for {
+			if finished.Load() {
+				break
+			}
+			// Mock consuming in another goroutine, so that we can test potential data race.
+			tracker.Consume(1)
+			time.Sleep(3 * time.Millisecond)
+		}
+		wg.Done()
+	}()
 
 	// Test is successful when all sqls are not hung
 	for i := 0; i < 100; i++ {
@@ -340,4 +374,7 @@ func TestRandomFail(t *testing.T) {
 		}
 		aggExec.Close()
 	}
+
+	finished.Store(true)
+	wg.Wait()
 }

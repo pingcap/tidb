@@ -351,7 +351,6 @@ func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 	sessionVars := e.Ctx().GetSessionVars()
 	partialConcurrency := sessionVars.HashAggPartialConcurrency()
-	partialConcurrency = 1
 	finalConcurrency := sessionVars.HashAggFinalConcurrency()
 
 	if partialConcurrency == 0 || finalConcurrency == 0 {
