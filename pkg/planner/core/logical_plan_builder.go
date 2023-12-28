@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core/internal"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -4175,7 +4176,7 @@ func (b *PlanBuilder) handlePossibleCalcFoundRows(ctx context.Context, selectOrU
 		return nil
 	}
 
-	hasCalcFoundRows, hasInvalidPlacement := checkCalcFoundRows(selectOrUnion)
+	hasCalcFoundRows, hasInvalidPlacement := internal.CheckCalcFoundRows(selectOrUnion)
 	if !hasCalcFoundRows {
 		return nil
 	}

@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package internal
 
 import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
-// checkCalcFoundRows returns whether SQL_CALC_FOUND_ROWS exists in the query and
+// CheckCalcFoundRows returns whether SQL_CALC_FOUND_ROWS exists in the query and
 // whether it is placed in the right place.
-func checkCalcFoundRows(node ast.Node) (hasCalcFoundRows bool, hasInvalidPlacement bool) {
+func CheckCalcFoundRows(node ast.Node) (hasCalcFoundRows bool, hasInvalidPlacement bool) {
 	checker := &calcFoundRowsPlacementChecker{}
 	node.Accept(checker)
 	return checker.hasCalcFoundRows, checker.hasInvalidPlacement
