@@ -140,10 +140,7 @@ func (s *BaseScheduler) refreshTask() error {
 		logutil.Logger(s.logCtx).Error("refresh task failed", zap.Error(err))
 		return err
 	}
-	// newTask might be nil when GC routine move the task into history table.
-	if newTask != nil {
-		s.Task = newTask
-	}
+	s.Task = newTask
 	return nil
 }
 

@@ -63,6 +63,10 @@ var (
 	// unstable, i.e. count, order and content of the subtasks are changed on
 	// different call.
 	ErrUnstableSubtasks = errors.New("unstable subtasks")
+
+	// ErrTaskNotFound is the error when we can't found task.
+	// i.e. onFinished() in scheduler move task from tidb_global_task to tidb_global_task_history.
+	ErrTaskNotFound = errors.New("task not found")
 )
 
 // SessionExecutor defines the interface for executing SQLs in a session.
@@ -277,20 +281,6 @@ func (stm *TaskManager) SucceedTask(ctx context.Context, taskID int64) error {
 	})
 }
 
-// GetOneTask get a task from task table, it's used by scheduler only.
-func (stm *TaskManager) GetOneTask(ctx context.Context) (task *proto.Task, err error) {
-	rs, err := stm.executeSQLWithNewSession(ctx, "select "+taskColumns+" from mysql.tidb_global_task where state = %? limit 1", proto.TaskStatePending)
-	if err != nil {
-		return task, err
-	}
-
-	if len(rs) == 0 {
-		return nil, nil
-	}
-
-	return row2Task(rs[0]), nil
-}
-
 // GetTopUnfinishedTasks implements the scheduler.TaskManager interface.
 func (stm *TaskManager) GetTopUnfinishedTasks(ctx context.Context) (task []*proto.Task, err error) {
 	rs, err := stm.executeSQLWithNewSession(ctx,
@@ -360,7 +350,7 @@ func (stm *TaskManager) GetTaskByID(ctx context.Context, taskID int64) (task *pr
 		return task, err
 	}
 	if len(rs) == 0 {
-		return nil, nil
+		return nil, ErrTaskNotFound
 	}
 
 	return row2Task(rs[0]), nil
@@ -374,7 +364,7 @@ func (stm *TaskManager) GetTaskByIDWithHistory(ctx context.Context, taskID int64
 		return task, err
 	}
 	if len(rs) == 0 {
-		return nil, nil
+		return nil, ErrTaskNotFound
 	}
 
 	return row2Task(rs[0]), nil
@@ -387,7 +377,7 @@ func (stm *TaskManager) GetTaskByKey(ctx context.Context, key string) (task *pro
 		return task, err
 	}
 	if len(rs) == 0 {
-		return nil, nil
+		return nil, ErrTaskNotFound
 	}
 
 	return row2Task(rs[0]), nil
@@ -401,7 +391,7 @@ func (stm *TaskManager) GetTaskByKeyWithHistory(ctx context.Context, key string)
 		return task, err
 	}
 	if len(rs) == 0 {
-		return nil, nil
+		return nil, ErrTaskNotFound
 	}
 
 	return row2Task(rs[0]), nil
