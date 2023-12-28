@@ -23,6 +23,7 @@ go_library(
         "//pkg/disttask/framework/taskexecutor",
         "//pkg/sessionctx",
         "//pkg/testkit",
+        "//pkg/util/sqlexec",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",

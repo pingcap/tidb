@@ -17,6 +17,7 @@ package importinto
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"sync"
 	"time"
 
@@ -82,7 +83,7 @@ func getTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (*i
 		GroupCtx: ctx,
 		Progress: importer.NewProgress(),
 		Job:      &importer.Job{},
-	}, controller, taskID)
+	}, controller, strconv.FormatInt(taskID, 10))
 }
 
 func (s *importStepExecutor) Init(ctx context.Context) error {
