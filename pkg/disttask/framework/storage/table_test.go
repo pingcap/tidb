@@ -139,6 +139,7 @@ func TestTaskTable(t *testing.T) {
 	require.ErrorContains(t, task.Error, "test error")
 	endTime, err := storage.GetTaskEndTimeForTest(ctx, gm, id)
 	require.NoError(t, err)
+	require.LessOrEqual(t, endTime.Sub(curTime), time.Since(curTime))
 	require.GreaterOrEqual(t, endTime, curTime)
 
 	// succeed a pending task, no effect
