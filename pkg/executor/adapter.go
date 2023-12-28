@@ -724,6 +724,7 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 				}
 			}()
 			err = exec.Next(ctx, e, exec.NewFirstChunk(e))
+			failpoint.Inject("handleForeignKeyCascadePanic", nil)
 		}()
 		closeErr := exec.Close(e)
 		if err == nil {
