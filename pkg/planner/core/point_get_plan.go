@@ -1116,9 +1116,8 @@ func checkTblIndexForPointPlan(ctx sessionctx.Context, tblName *ast.TableName, s
 		if len(tblName.PartitionNames) > 0 {
 			return nil
 		}
-		tbl := tblName.TableInfo
 		// some partition is in ddl.
-		if tbl == nil ||
+		if tblName.TableInfo == nil ||
 			len(tbl.GetPartitionInfo().AddingDefinitions) > 0 ||
 			len(tbl.GetPartitionInfo().DroppingDefinitions) > 0 {
 			return nil
