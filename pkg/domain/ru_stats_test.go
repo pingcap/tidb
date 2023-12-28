@@ -85,13 +85,18 @@ func TestWriteRUStatistics(t *testing.T) {
 	require.NoError(t, testRUWriter.DoWriteRUStatistics(context.Background()))
 	tk.MustQuery("SELECT count(*) from mysql.request_unit_by_group where end_time = '2023-12-28'").Check(testkit.Rows("0"))
 
+	testRUWriter.StartTime = time.Date(2023, 12, 29, 0, 0, 0, 0, time.Local)
+	testRMClient.groups[0].RUStats.WRU = 200
+	require.NoError(t, testRUWriter.DoWriteRUStatistics(context.Background()))
+	tk.MustQuery("SELECT resource_group, total_ru from mysql.request_unit_by_group where end_time = '2023-12-29'").Check(testkit.Rows("default 50"))
+
 	// after less than 1 day, even if ru changes, no new rows inserted.
 	// This is to test after restart, no unexpected data are inserted.
 	testRMClient.groups[0].RUStats.RRU = 1000
 	testRMClient.groups[1].RUStats.WRU = 2000
-	testRUWriter.StartTime = time.Date(2023, 12, 28, 1, 0, 0, 0, time.Local)
+	testRUWriter.StartTime = time.Date(2023, 12, 29, 1, 0, 0, 0, time.Local)
 	require.NoError(t, testRUWriter.DoWriteRUStatistics(context.Background()))
-	tk.MustQuery("SELECT count(*) from mysql.request_unit_by_group where end_time = '2023-12-28'").Check(testkit.Rows("0"))
+	tk.MustQuery("SELECT resource_group, total_ru from mysql.request_unit_by_group where end_time = '2023-12-29'").Check(testkit.Rows("default 50"))
 
 	// after 61 days, old record should be GCed.
 	testRUWriter.StartTime = time.Date(2023, 12, 26, 0, 0, 0, 0, time.Local).Add(61 * 24 * time.Hour)
