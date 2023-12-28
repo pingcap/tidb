@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -67,7 +68,7 @@ func checkFileCleaned(t *testing.T, jobID int64, sortStorageURI string) {
 	require.Equal(t, 0, len(statFiles))
 }
 
-func TestGlobalSortBasic(t *testing.T) {
+func prepareForGlobalSort(t *testing.T) (*testkit.TestKit, *domain.Domain, string) {
 	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
 	opt := fakestorage.Options{
 		Scheme:     "http",
@@ -77,21 +78,26 @@ func TestGlobalSortBasic(t *testing.T) {
 	}
 	server, err := fakestorage.NewServerWithOptions(opt)
 	require.NoError(t, err)
+	t.Cleanup(server.Stop)
 	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
 
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()"))
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
 	tk.MustExec(`set @@global.tidb_ddl_enable_fast_reorg = 1;`)
 	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
 	tk.MustExec(fmt.Sprintf(`set @@global.tidb_cloud_storage_uri = "%s"`, cloudStorageURI))
-	defer func() {
+	t.Cleanup(func() {
 		tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 		variable.CloudStorageURI.Store("")
-	}()
+	})
+	return tk, dom, cloudStorageURI
+}
+
+func TestGlobalSortBasic(t *testing.T) {
+	tk, dom, cloudStorageURI := prepareForGlobalSort(t)
 
 	tk.MustExec("create table t (a int, b int, c int);")
 	var sb strings.Builder
@@ -115,6 +121,7 @@ func TestGlobalSortBasic(t *testing.T) {
 	hook.OnJobUpdatedExported.Store(&onJobUpdated)
 	dom.DDL().SetHook(hook)
 
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()"))
 	tk.MustExec("alter table t add index idx(a);")
 	dom.DDL().SetHook(origin)
 	tk.MustExec("admin check table t;")
@@ -133,23 +140,7 @@ func TestGlobalSortBasic(t *testing.T) {
 }
 
 func TestGlobalSortMultiSchemaChange(t *testing.T) {
-	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
-	opt := fakestorage.Options{
-		Scheme:     "http",
-		Host:       gcsHost,
-		Port:       gcsPort,
-		PublicHost: gcsHost,
-	}
-	server, err := fakestorage.NewServerWithOptions(opt)
-	require.NoError(t, err)
-	t.Cleanup(server.Stop)
-	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
-
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("drop database if exists addindexlit;")
-	tk.MustExec("create database addindexlit;")
-	tk.MustExec("use addindexlit;")
+	tk, _, cloudStorageURI := prepareForGlobalSort(t)
 
 	tk.MustExec("create table t_rowid (a int, b bigint, c varchar(255));")
 	tk.MustExec("create table t_int_handle (a bigint primary key, b varchar(255));")
@@ -193,25 +184,7 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 }
 
 func TestAddIndexIngestShowReorgTp(t *testing.T) {
-	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
-	opt := fakestorage.Options{
-		Scheme:     "http",
-		Host:       gcsHost,
-		Port:       gcsPort,
-		PublicHost: gcsHost,
-	}
-	server, err := fakestorage.NewServerWithOptions(opt)
-	require.NoError(t, err)
-	t.Cleanup(server.Stop)
-
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("drop database if exists addindexlit;")
-	tk.MustExec("create database addindexlit;")
-	tk.MustExec("use addindexlit;")
-	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
-	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
-	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
+	tk, _, _ := prepareForGlobalSort(t)
 
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("insert into t values (1), (2), (3);")
@@ -223,4 +196,11 @@ func TestAddIndexIngestShowReorgTp(t *testing.T) {
 	require.True(t, strings.Contains(jobType, "ingest"))
 	require.False(t, strings.Contains(jobType, "cloud"))
 	require.Equal(t, rowCnt, "3")
+}
+
+func TestGlobalSortTrivial(t *testing.T) {
+	tk, _, _ := prepareForGlobalSort(t)
+	tk.MustExec("create table t (a int, b int, c int);")
+	tk.MustExec("alter table t add index idx(a);")
+	tk.MustQuery("select * from t use index(idx);").Check(testkit.Rows())
 }
