@@ -118,6 +118,9 @@ func (m *Manager) initMeta() (err error) {
 		if err == nil {
 			break
 		}
+		if err1 := m.ctx.Err(); err1 != nil {
+			return err1
+		}
 		if i%10 == 0 {
 			logutil.Logger(m.logCtx).Warn("start manager failed",
 				zap.String("scope", config.GetGlobalConfig().Instance.TiDBServiceScope),
