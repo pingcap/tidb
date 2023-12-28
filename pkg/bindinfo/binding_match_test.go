@@ -55,6 +55,10 @@ func TestExtractTableName(t *testing.T) {
 			"select /*+ HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t1.a=t2.a where t1.b is not null;",
 			[]string{"t1", "t1", "t1", "t2", "t1"},
 		},
+		{
+			"select * from t",
+			[]string{"t"},
+		},
 	}
 	for _, tt := range tc {
 		stmt, err := parser.New().ParseOneStmt(tt.sql, "", "")
