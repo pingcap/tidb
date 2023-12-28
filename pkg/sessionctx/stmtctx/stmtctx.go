@@ -190,6 +190,7 @@ type StatementContext struct {
 	ErrAutoincReadFailedAsWarning bool
 	InShowWarning                 bool
 	UseCache                      bool
+	ForcePlanCache                bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.
 	CacheType                     PlanCacheType
 	BatchCheck                    bool
 	InNullRejectCheck             bool
@@ -805,6 +806,12 @@ func (sc *StatementContext) SetSkipPlanCache(reason error) {
 	if !sc.UseCache {
 		return // avoid unnecessary warnings
 	}
+
+	if sc.ForcePlanCache {
+		sc.AppendWarning(errors.NewNoStackErrorf("force plan-cache: may use risky cached plan: %s", reason.Error()))
+		return
+	}
+
 	sc.UseCache = false
 	switch sc.CacheType {
 	case DefaultNoCache:
@@ -1275,10 +1282,10 @@ func (sc *StatementContext) RecordRangeFallback(rangeMaxSize int64) {
 	// If range fallback happens, it means ether the query is unreasonable(for example, several long IN lists) or tidb_opt_range_max_size is too small
 	// and the generated plan is probably suboptimal. In that case we don't put it into plan cache.
 	if sc.UseCache {
-		sc.SetSkipPlanCache(errors.Errorf("in-list is too long"))
+		sc.SetSkipPlanCache(errors.NewNoStackError("in-list is too long"))
 	}
 	if !sc.RangeFallback {
-		sc.AppendWarning(errors.Errorf("Memory capacity of %v bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen", rangeMaxSize))
+		sc.AppendWarning(errors.NewNoStackErrorf("Memory capacity of %v bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen", rangeMaxSize))
 		sc.RangeFallback = true
 	}
 }

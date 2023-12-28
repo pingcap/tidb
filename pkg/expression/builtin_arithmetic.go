@@ -787,13 +787,13 @@ func (s *builtinArithmeticIntDivideDecimalSig) Clone() builtinFunc {
 }
 
 func (s *builtinArithmeticIntDivideIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
-	b, bIsNull, err := s.args[1].EvalInt(ctx, row)
-	if bIsNull || err != nil {
-		return 0, bIsNull, err
-	}
 	a, aIsNull, err := s.args[0].EvalInt(ctx, row)
 	if aIsNull || err != nil {
 		return 0, aIsNull, err
+	}
+	b, bIsNull, err := s.args[1].EvalInt(ctx, row)
+	if bIsNull || err != nil {
+		return 0, bIsNull, err
 	}
 
 	if b == 0 {
@@ -970,18 +970,22 @@ func (s *builtinArithmeticModRealSig) Clone() builtinFunc {
 }
 
 func (s *builtinArithmeticModRealSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
-	b, isNull, err := s.args[1].EvalReal(ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
+	a, aIsNull, err := s.args[0].EvalReal(ctx, row)
+	if err != nil {
+		return 0, false, err
+	}
+
+	b, bIsNull, err := s.args[1].EvalReal(ctx, row)
+	if err != nil {
+		return 0, false, err
+	}
+
+	if aIsNull || bIsNull {
+		return 0, true, nil
 	}
 
 	if b == 0 {
 		return 0, true, handleDivisionByZeroError(ctx)
-	}
-
-	a, isNull, err := s.args[0].EvalReal(ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
 	}
 
 	return math.Mod(a, b), false, nil
@@ -1025,18 +1029,22 @@ func (s *builtinArithmeticModIntUnsignedUnsignedSig) Clone() builtinFunc {
 }
 
 func (s *builtinArithmeticModIntUnsignedUnsignedSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
-	b, isNull, err := s.args[1].EvalInt(ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
+	a, aIsNull, err := s.args[0].EvalInt(ctx, row)
+	if err != nil {
+		return 0, false, err
+	}
+
+	b, bIsNull, err := s.args[1].EvalInt(ctx, row)
+	if err != nil {
+		return 0, false, err
+	}
+
+	if aIsNull || bIsNull {
+		return 0, true, nil
 	}
 
 	if b == 0 {
 		return 0, true, handleDivisionByZeroError(ctx)
-	}
-
-	a, isNull, err := s.args[0].EvalInt(ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
 	}
 
 	ret := int64(uint64(a) % uint64(b))
@@ -1055,16 +1063,22 @@ func (s *builtinArithmeticModIntUnsignedSignedSig) Clone() builtinFunc {
 }
 
 func (s *builtinArithmeticModIntUnsignedSignedSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
-	b, isNull, err := s.args[1].EvalInt(ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
+	a, aIsNull, err := s.args[0].EvalInt(ctx, row)
+	if err != nil {
+		return 0, false, err
 	}
+
+	b, bIsNull, err := s.args[1].EvalInt(ctx, row)
+	if err != nil {
+		return 0, false, err
+	}
+
+	if aIsNull || bIsNull {
+		return 0, true, nil
+	}
+
 	if b == 0 {
 		return 0, true, handleDivisionByZeroError(ctx)
-	}
-	a, isNull, err := s.args[0].EvalInt(ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
 	}
 
 	var ret int64
@@ -1088,18 +1102,22 @@ func (s *builtinArithmeticModIntSignedUnsignedSig) Clone() builtinFunc {
 }
 
 func (s *builtinArithmeticModIntSignedUnsignedSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
-	b, isNull, err := s.args[1].EvalInt(ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
+	a, aIsNull, err := s.args[0].EvalInt(ctx, row)
+	if err != nil {
+		return 0, false, err
+	}
+
+	b, bIsNull, err := s.args[1].EvalInt(ctx, row)
+	if err != nil {
+		return 0, false, err
+	}
+
+	if aIsNull || bIsNull {
+		return 0, true, nil
 	}
 
 	if b == 0 {
 		return 0, true, handleDivisionByZeroError(ctx)
-	}
-
-	a, isNull, err := s.args[0].EvalInt(ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
 	}
 
 	var ret int64
@@ -1123,18 +1141,22 @@ func (s *builtinArithmeticModIntSignedSignedSig) Clone() builtinFunc {
 }
 
 func (s *builtinArithmeticModIntSignedSignedSig) evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error) {
-	b, isNull, err := s.args[1].EvalInt(ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
+	a, aIsNull, err := s.args[0].EvalInt(ctx, row)
+	if err != nil {
+		return 0, false, err
+	}
+
+	b, bIsNull, err := s.args[1].EvalInt(ctx, row)
+	if err != nil {
+		return 0, false, err
+	}
+
+	if aIsNull || bIsNull {
+		return 0, true, nil
 	}
 
 	if b == 0 {
 		return 0, true, handleDivisionByZeroError(ctx)
-	}
-
-	a, isNull, err := s.args[0].EvalInt(ctx, row)
-	if isNull || err != nil {
-		return 0, isNull, err
 	}
 
 	return a % b, false, nil

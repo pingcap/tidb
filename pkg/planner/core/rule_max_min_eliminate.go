@@ -47,7 +47,7 @@ func (*maxMinEliminator) composeAggsByInnerJoin(originAgg *LogicalAggregation, a
 	sctx := plan.SCtx()
 	joins := make([]*LogicalJoin, 0)
 	for i := 1; i < len(aggs); i++ {
-		join := LogicalJoin{JoinType: InnerJoin}.Init(sctx, plan.SelectBlockOffset())
+		join := LogicalJoin{JoinType: InnerJoin}.Init(sctx, plan.QueryBlockOffset())
 		join.SetChildren(plan, aggs[i])
 		join.schema = buildLogicalJoinSchema(InnerJoin, join)
 		join.cartesianJoin = true
@@ -110,14 +110,14 @@ func (a *maxMinEliminator) cloneSubPlans(plan LogicalPlan) LogicalPlan {
 	case *LogicalSelection:
 		newConditions := make([]expression.Expression, len(p.Conditions))
 		copy(newConditions, p.Conditions)
-		sel := LogicalSelection{Conditions: newConditions}.Init(p.SCtx(), p.SelectBlockOffset())
+		sel := LogicalSelection{Conditions: newConditions}.Init(p.SCtx(), p.QueryBlockOffset())
 		sel.SetChildren(a.cloneSubPlans(p.children[0]))
 		return sel
 	case *DataSource:
 		// Quick clone a DataSource.
 		// ReadOnly fields uses a shallow copy, while the fields which will be overwritten must use a deep copy.
 		newDs := *p
-		newDs.baseLogicalPlan = newBaseLogicalPlan(p.SCtx(), p.TP(), &newDs, p.SelectBlockOffset())
+		newDs.baseLogicalPlan = newBaseLogicalPlan(p.SCtx(), p.TP(), &newDs, p.QueryBlockOffset())
 		newDs.schema = p.schema.Clone()
 		newDs.Columns = make([]*model.ColumnInfo, len(p.Columns))
 		copy(newDs.Columns, p.Columns)
@@ -152,7 +152,7 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation, 
 	aggs = make([]*LogicalAggregation, 0, len(agg.AggFuncs))
 	// we can split the aggregation only if all of the aggFuncs pass the check.
 	for i, f := range agg.AggFuncs {
-		newAgg := LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.SCtx(), agg.SelectBlockOffset())
+		newAgg := LogicalAggregation{AggFuncs: []*aggregation.AggFuncDesc{f}}.Init(agg.SCtx(), agg.QueryBlockOffset())
 		newAgg.SetChildren(a.cloneSubPlans(agg.children[0]))
 		newAgg.schema = expression.NewSchema(agg.schema.Columns[i])
 		// Since LogicalAggregation doesn’t use the parent LogicalPlan, passing an incorrect parameter here won’t affect subsequent optimizations.
@@ -176,7 +176,7 @@ func (*maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation, opt *log
 	if len(expression.ExtractColumns(f.Args[0])) > 0 {
 		// If it can be NULL, we need to filter NULL out first.
 		if !mysql.HasNotNullFlag(f.Args[0].GetType().GetFlag()) {
-			sel = LogicalSelection{}.Init(ctx, agg.SelectBlockOffset())
+			sel = LogicalSelection{}.Init(ctx, agg.QueryBlockOffset())
 			isNullFunc := expression.NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), f.Args[0])
 			notNullFunc := expression.NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNullFunc)
 			sel.Conditions = []expression.Expression{notNullFunc}
@@ -188,14 +188,14 @@ func (*maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation, opt *log
 		// For max function, the sort order should be desc.
 		desc := f.Name == ast.AggFuncMax
 		// Compose Sort operator.
-		sort = LogicalSort{}.Init(ctx, agg.SelectBlockOffset())
+		sort = LogicalSort{}.Init(ctx, agg.QueryBlockOffset())
 		sort.ByItems = append(sort.ByItems, &util.ByItems{Expr: f.Args[0], Desc: desc})
 		sort.SetChildren(child)
 		child = sort
 	}
 
 	// Compose Limit operator.
-	li := LogicalLimit{Count: 1}.Init(ctx, agg.SelectBlockOffset())
+	li := LogicalLimit{Count: 1}.Init(ctx, agg.QueryBlockOffset())
 	li.SetChildren(child)
 
 	// If no data in the child, we need to return NULL instead of empty. This cannot be done by sort and limit themselves.

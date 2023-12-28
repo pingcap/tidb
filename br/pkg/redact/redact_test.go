@@ -8,12 +8,9 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/goleak"
 )
 
 func TestRedact(t *testing.T) {
-	defer goleak.VerifyNone(t)
-
 	redacted, secret := "?", "secret"
 
 	redact.InitRedact(false)

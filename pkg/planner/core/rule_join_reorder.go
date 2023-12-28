@@ -316,7 +316,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 		if schemaChanged {
 			proj := LogicalProjection{
 				Exprs: expression.Column2Exprs(originalSchema.Columns),
-			}.Init(p.SCtx(), p.SelectBlockOffset())
+			}.Init(p.SCtx(), p.QueryBlockOffset())
 			// Clone the schema here, because the schema may be changed by column pruning rules.
 			proj.SetSchema(originalSchema.Clone())
 			proj.SetChildren(p)
@@ -408,7 +408,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 	for _, hintTbl := range hintInfo.LeadingJoinOrder {
 		match := false
 		for i, joinGroup := range leftJoinGroup {
-			tableAlias := extractTableAlias(joinGroup, joinGroup.SelectBlockOffset())
+			tableAlias := extractTableAlias(joinGroup, joinGroup.QueryBlockOffset())
 			if tableAlias == nil {
 				continue
 			}
@@ -426,7 +426,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup [
 		// consider query block alias: select /*+ leading(t1, t2) */ * from (select ...) t1, t2 ...
 		groupIdx := -1
 		for i, joinGroup := range leftJoinGroup {
-			blockOffset := joinGroup.SelectBlockOffset()
+			blockOffset := joinGroup.QueryBlockOffset()
 			if blockOffset > 1 && blockOffset < len(queryBlockNames) {
 				blockName := queryBlockNames[blockOffset]
 				if hintTbl.DBName.L == blockName.DBName.L && hintTbl.TblName.L == blockName.TableName.L {
@@ -602,7 +602,7 @@ func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []Logi
 	if len(s.otherConds) > 0 {
 		additionSelection := LogicalSelection{
 			Conditions: s.otherConds,
-		}.Init(cartesianJoinGroup[0].SCtx(), cartesianJoinGroup[0].SelectBlockOffset())
+		}.Init(cartesianJoinGroup[0].SCtx(), cartesianJoinGroup[0].QueryBlockOffset())
 		additionSelection.SetChildren(cartesianJoinGroup[0])
 		cartesianJoinGroup[0] = additionSelection
 	}
@@ -610,8 +610,8 @@ func (s *baseSingleGroupJoinOrderSolver) makeBushyJoin(cartesianJoinGroup []Logi
 }
 
 func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild LogicalPlan) *LogicalJoin {
-	offset := lChild.SelectBlockOffset()
-	if offset != rChild.SelectBlockOffset() {
+	offset := lChild.QueryBlockOffset()
+	if offset != rChild.QueryBlockOffset() {
 		offset = -1
 	}
 	join := LogicalJoin{

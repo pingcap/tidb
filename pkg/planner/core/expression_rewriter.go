@@ -68,7 +68,7 @@ func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expressi
 	if s, ok := sctx.GetInfoSchema().(infoschema.InfoSchema); ok {
 		is = s
 	}
-	b, savedBlockNames := NewPlanBuilder().Init(sctx, is, &hint.QBHintHandler{})
+	b, savedBlockNames := NewPlanBuilder().Init(sctx, is, hint.NewQBHintHandler(nil))
 	b.allowBuildCastArray = allowCastArray
 	fakePlan := LogicalTableDual{}.Init(sctx, 0)
 	if schema != nil {
@@ -881,7 +881,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 				ctx:            ctx,
 				is:             er.b.is,
 				outputColIDs:   []int64{newColID},
-			}.Init(er.b.ctx, np.SelectBlockOffset())
+			}.Init(er.b.ctx, np.QueryBlockOffset())
 			scalarSubQ := &ScalarSubQueryExpr{
 				scalarSubqueryColID: newColID,
 				evalCtx:             subqueryCtx,
@@ -1117,7 +1117,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 			scalarSubQuery: physicalPlan,
 			ctx:            ctx,
 			is:             er.b.is,
-		}.Init(er.b.ctx, np.SelectBlockOffset())
+		}.Init(er.b.ctx, np.QueryBlockOffset())
 		newColIDs := make([]int64, 0, np.Schema().Len())
 		newScalarSubQueryExprs := make([]expression.Expression, 0, np.Schema().Len())
 		for _, col := range np.Schema().Columns {

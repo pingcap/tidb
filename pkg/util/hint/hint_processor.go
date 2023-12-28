@@ -260,7 +260,7 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 		return nil, nil, nil, fmt.Errorf("bind_sql must be a single statement: %s", sql)
 	}
 	hs := CollectHint(stmtNodes[0])
-	processor := &QBHintHandler{}
+	processor := NewQBHintHandler(nil)
 	stmtNodes[0].Accept(processor)
 	topNodeType := nodeType4Stmt(stmtNodes[0])
 	for i, tblHints := range hs.tableHints {
