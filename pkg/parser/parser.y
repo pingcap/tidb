@@ -8788,7 +8788,7 @@ TableName:
 |	Identifier '.' Identifier
 	{
 		schema := $1
-		if schema == "" {
+		if isInCorrectIdentifierName(schema) {
 			yylex.AppendError(ErrWrongDBName.GenWithStackByArgs(schema))
 			return 1
 		}
