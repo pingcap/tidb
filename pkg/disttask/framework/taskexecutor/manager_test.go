@@ -321,11 +321,14 @@ func TestSlotManagerInManager(t *testing.T) {
 	})
 
 	m.onRunnableTasks([]*proto.Task{task1, task2})
-	time.Sleep(2 * time.Second)
-
 	// task1 alloc resource success
-	require.Equal(t, 0, m.slotManager.available)
-	require.Equal(t, []*proto.Task{task1}, m.slotManager.executorTasks)
+	require.Eventually(t, func() bool {
+		if m.slotManager.available != 0 || len(m.slotManager.executorTasks) != 1 ||
+			m.slotManager.executorTasks[0].ID != task1.ID {
+			return false
+		}
+		return ctrl.Satisfied()
+	}, 2*time.Second, 300*time.Millisecond)
 	ch <- nil
 
 	// task1 succeed
@@ -371,11 +374,14 @@ func TestSlotManagerInManager(t *testing.T) {
 	})
 
 	m.onRunnableTasks([]*proto.Task{task1, task2})
-	time.Sleep(2 * time.Second)
 	// task1 alloc resource success
-	require.Equal(t, 0, m.slotManager.available)
-	require.Equal(t, []*proto.Task{task1}, m.slotManager.executorTasks)
-	require.True(t, ctrl.Satisfied())
+	require.Eventually(t, func() bool {
+		if m.slotManager.available != 0 || len(m.slotManager.executorTasks) != 1 ||
+			m.slotManager.executorTasks[0].ID != task1.ID {
+			return false
+		}
+		return ctrl.Satisfied()
+	}, 2*time.Second, 300*time.Millisecond)
 
 	// 2. task1 is occupied by task3, task1 start to pausing
 	// 3. task3 is waiting for task1 to be released, and task2 can't be allocated
@@ -385,7 +391,6 @@ func TestSlotManagerInManager(t *testing.T) {
 
 	// the priority of task3 is higher than task2, so task3 is in front of task2
 	m.onRunnableTasks([]*proto.Task{task3, task2})
-	time.Sleep(2 * time.Second)
 	require.Equal(t, 0, m.slotManager.available)
 	require.Equal(t, []*proto.Task{task1}, m.slotManager.executorTasks)
 	require.True(t, ctrl.Satisfied())
@@ -398,7 +403,7 @@ func TestSlotManagerInManager(t *testing.T) {
 
 	// 4. task1 is released, task3 alloc success, start to run
 	ch <- context.Canceled
-	time.Sleep(time.Second)
+	wg.Wait()
 	require.Equal(t, 10, m.slotManager.available)
 	require.Len(t, m.slotManager.executorTasks, 0)
 	require.True(t, ctrl.Satisfied())
@@ -437,9 +442,12 @@ func TestSlotManagerInManager(t *testing.T) {
 
 	m.onRunnableTasks([]*proto.Task{task3, task1, task2})
 	time.Sleep(2 * time.Second)
-	require.Equal(t, 8, m.slotManager.available)
-	require.Equal(t, 2, len(m.slotManager.executorTasks))
-	require.True(t, ctrl.Satisfied())
+	require.Eventually(t, func() bool {
+		if m.slotManager.available != 8 || len(m.slotManager.executorTasks) != 2 {
+			return false
+		}
+		return ctrl.Satisfied()
+	}, 2*time.Second, 300*time.Millisecond)
 
 	// 6. task3/task2 run success
 	task3.State = proto.TaskStateSucceed
