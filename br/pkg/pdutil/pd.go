@@ -1054,9 +1054,10 @@ func (p *PdController) CanPauseSchedulerByKeyRange() bool {
 	return p.version.Compare(minVersionForRegionLabelTTL) >= 0
 }
 
-// Close close the connection to pd.
+// Close closes the connection to pd.
 func (p *PdController) Close() {
 	p.pdClient.Close()
+	p.pdHTTPCli.Close()
 	if p.schedulerPauseCh != nil {
 		close(p.schedulerPauseCh)
 	}
