@@ -176,8 +176,10 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 
 	disaggTiFlashWithAutoScaler := config.GetGlobalConfig().DisaggregatedTiFlash && config.GetGlobalConfig().UseAutoScaler
 	_, allowTiFlashFallback := e.Ctx().GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
-	// For now, mpp err recovery only support MemLimit, which is only useful when AutoScaler is used.
-	// For cached table, will not dispatch tasks to TiFlash, so no need to recovery.
+	// 1. For now, mpp err recovery only support MemLimit, which is only useful when AutoScaler is used.
+	// 2. When enable fallback to tikv, the returned mpp err will be ErrTiFlashServerTimeout,
+	//    which we cannot handle for now. Also there is no need to recovery because tikv will retry the query.
+	// 3. For cached table, will not dispatch tasks to TiFlash, so no need to recovery.
 	enableMPPRecovery := disaggTiFlashWithAutoScaler && !allowTiFlashFallback && !e.dummy
 
 	failpoint.Inject("mpp_recovery_test_mock_enable", func() {
