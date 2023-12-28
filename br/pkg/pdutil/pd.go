@@ -1057,7 +1057,10 @@ func (p *PdController) CanPauseSchedulerByKeyRange() bool {
 // Close closes the connection to pd.
 func (p *PdController) Close() {
 	p.pdClient.Close()
-	p.pdHTTPCli.Close()
+	if p.pdHTTPCli != nil {
+		// nil in some unit tests
+		p.pdHTTPCli.Close()
+	}
 	if p.schedulerPauseCh != nil {
 		close(p.schedulerPauseCh)
 	}
