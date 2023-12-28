@@ -370,7 +370,7 @@ func (m *Manager) onRunnableTask(task *proto.Task) {
 				v, ok := testContexts.Load(m.id)
 				if ok {
 					<-v.(*TestContext).TestSyncSubtaskRun
-					_ = infosync.MockGlobalServerInfoManagerEntry.DeleteByID(m.id)
+					infosync.MockGlobalServerInfoManagerEntry.DeleteByExecID(m.id)
 					m.Stop()
 				}
 			}()
