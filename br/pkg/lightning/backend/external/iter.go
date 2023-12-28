@@ -324,7 +324,6 @@ func (i *mergeIter[T, R]) next() (closeReaderIdx int, ok bool) {
 	}
 	i.lastReaderIdx = -1
 
-	// TODO(lance6716): reader may be closed at init.
 	if i.h.Len() == 0 {
 		return closeReaderIdx, false
 	}
@@ -430,10 +429,11 @@ func (i *limitSizeMergeIter[T, R]) next() (ok bool, closeReaderIdx int) {
 	if closeReaderIdx == -1 {
 		return
 	}
-	// limitSizeMergeIter will try to open next reader when one reader is closed.
-	i.weightSum -= i.weights[closeReaderIdx]
 
 	mergeIterDrained := !ok && i.mergeIter.h.Len() == 0
+
+	// limitSizeMergeIter will try to open next reader when one reader is closed.
+	i.weightSum -= i.weights[closeReaderIdx]
 	if err := i.tryOpenMoreReaders(); err != nil {
 		i.mergeIter.err = err
 		return false, closeReaderIdx
@@ -658,7 +658,7 @@ func newMergePropBaseIter(
 	go func() {
 		defer close(preOpenCh)
 		// newLimitSizeMergeIter will open #limit readers at the beginning, and for rest
-		// readers we open them in advance to avoid block when we need to open them.
+		// readers we open them in advance to reduce block when we need to open them.
 		for i := int(limit); i < len(multiStat.Filenames); i++ {
 			filePair := multiStat.Filenames[i]
 			path := filePair[1]
