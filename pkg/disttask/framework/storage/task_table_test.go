@@ -39,11 +39,11 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m, opts...)
 }
 
-func GetCpuCountOfManagedNodes(ctx context.Context, taskMgr *TaskManager) (int, error) {
+func GetCPUCountOfManagedNodes(ctx context.Context, taskMgr *TaskManager) (int, error) {
 	var cnt int
 	err := taskMgr.WithNewSession(func(se sessionctx.Context) error {
 		var err2 error
-		cnt, err2 = taskMgr.getCpuCountOfManagedNodes(ctx, se)
+		cnt, err2 = taskMgr.getCPUCountOfManagedNodes(ctx, se)
 		return err2
 	})
 	return cnt, err

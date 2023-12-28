@@ -234,7 +234,7 @@ func (stm *TaskManager) CreateTask(ctx context.Context, key string, tp proto.Tas
 
 // CreateTaskWithSession adds a new task to task table with session.
 func (stm *TaskManager) CreateTaskWithSession(ctx context.Context, se sessionctx.Context, key string, tp proto.TaskType, concurrency int, meta []byte) (taskID int64, err error) {
-	cpuCount, err := stm.getCpuCountOfManagedNodes(ctx, se)
+	cpuCount, err := stm.getCPUCountOfManagedNodes(ctx, se)
 	if err != nil {
 		return 0, err
 	}
@@ -1316,8 +1316,8 @@ func (*TaskManager) getAllNodesWithSession(ctx context.Context, se sessionctx.Co
 	return nodes, nil
 }
 
-// getCpuCountOfManagedNodes gets the cpu count of managed nodes.
-func (stm *TaskManager) getCpuCountOfManagedNodes(ctx context.Context, se sessionctx.Context) (int, error) {
+// getCPUCountOfManagedNodes gets the cpu count of managed nodes.
+func (stm *TaskManager) getCPUCountOfManagedNodes(ctx context.Context, se sessionctx.Context) (int, error) {
 	nodes, err := stm.getManagedNodesWithSession(ctx, se)
 	if err != nil {
 		return 0, err
