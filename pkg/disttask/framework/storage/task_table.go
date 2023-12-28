@@ -413,7 +413,8 @@ func (stm *TaskManager) FailTask(ctx context.Context, taskID int64, currentState
 		`update mysql.tidb_global_task
 			set state=%?,
 			    error = %?,
-			    state_update_time = CURRENT_TIMESTAMP()
+			    state_update_time = CURRENT_TIMESTAMP(),
+				end_time = CURRENT_TIMESTAMP()
 			where id=%? and state=%?`,
 		proto.TaskStateFailed, serializeErr(taskErr), taskID, currentState,
 	)
@@ -546,8 +547,10 @@ func (stm *TaskManager) GetFirstSubtaskInStates(ctx context.Context, tidbID stri
 
 // UpdateSubtaskExecID updates the subtask's exec_id, used for testing now.
 func (stm *TaskManager) UpdateSubtaskExecID(ctx context.Context, tidbID string, subtaskID int64) error {
-	_, err := stm.executeSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
-		set exec_id = %?, state_update_time = unix_timestamp() where id = %?`,
+	_, err := stm.executeSQLWithNewSession(ctx,
+		`update mysql.tidb_background_subtask
+		 set exec_id = %?, state_update_time = unix_timestamp()
+		 where id = %?`,
 		tidbID, subtaskID)
 	return err
 }
@@ -557,8 +560,12 @@ func (stm *TaskManager) UpdateErrorToSubtask(ctx context.Context, tidbID string,
 	if err == nil {
 		return nil
 	}
-	_, err1 := stm.executeSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
-		set state = %?, error = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
+	_, err1 := stm.executeSQLWithNewSession(ctx,
+		`update mysql.tidb_background_subtask
+		set state = %?, error = %?, 
+		start_time = unix_timestamp(),
+		state_update_time = unix_timestamp(),
+		end_time = CURRENT_TIMESTAMP()
 		where exec_id = %? and task_key = %? and state in (%?, %?) limit 1;`,
 		proto.TaskStateFailed, serializeErr(err), tidbID, taskID, proto.TaskStatePending, proto.TaskStateRunning)
 	return err1
@@ -623,7 +630,8 @@ func (stm *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, st
 
 // UpdateSubtaskRowCount updates the subtask row count.
 func (stm *TaskManager) UpdateSubtaskRowCount(ctx context.Context, subtaskID int64, rowCount int64) error {
-	_, err := stm.executeSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
+	_, err := stm.executeSQLWithNewSession(ctx,
+		`update mysql.tidb_background_subtask
 		set summary = json_set(summary, '$.row_count', %?) where id = %?`,
 		rowCount, subtaskID)
 	return err
@@ -714,7 +722,8 @@ func (stm *TaskManager) UpdateSubtaskStateAndError(ctx context.Context, tidbID s
 // FinishSubtask updates the subtask meta and mark state to succeed.
 func (stm *TaskManager) FinishSubtask(ctx context.Context, tidbID string, id int64, meta []byte) error {
 	_, err := stm.executeSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
-		set meta = %?, state = %?, state_update_time = unix_timestamp() where id = %? and exec_id = %?`,
+		set meta = %?, state = %?, state_update_time = unix_timestamp(), end_time = CURRENT_TIMESTAMP()
+		where id = %? and exec_id = %?`,
 		meta, proto.TaskStateSucceed, id, tidbID)
 	return err
 }
