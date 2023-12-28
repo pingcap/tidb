@@ -359,7 +359,7 @@ OUTER:
 		for i, scalarCond := range notCoveredStrMatch {
 			ok, sel, err := GetSelectivityByFilter(ctx, coll, []expression.Expression{scalarCond})
 			if err != nil {
-				sc.AppendWarning(errors.New("Error when using TopN-assisted estimation: " + err.Error()))
+				sc.AppendWarning(errors.NewNoStackError("Error when using TopN-assisted estimation: " + err.Error()))
 			}
 			if !ok {
 				continue
@@ -374,7 +374,7 @@ OUTER:
 		for i, scalarCond := range notCoveredNegateStrMatch {
 			ok, sel, err := GetSelectivityByFilter(ctx, coll, []expression.Expression{scalarCond})
 			if err != nil {
-				sc.AppendWarning(errors.New("Error when using TopN-assisted estimation: " + err.Error()))
+				sc.AppendWarning(errors.NewNoStackError("Error when using TopN-assisted estimation: " + err.Error()))
 			}
 			if !ok {
 				continue

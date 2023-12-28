@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/filter"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -98,7 +99,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			return in, true
 		}
 		for _, hints := range node.TableHints {
-			if hints.HintName.L == HintIgnorePlanCache {
+			if hints.HintName.L == h.HintIgnorePlanCache {
 				checker.cacheable = false
 				checker.reason = "ignore plan cache by hint"
 				return in, true
@@ -106,7 +107,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		}
 	case *ast.DeleteStmt:
 		for _, hints := range node.TableHints {
-			if hints.HintName.L == HintIgnorePlanCache {
+			if hints.HintName.L == h.HintIgnorePlanCache {
 				checker.cacheable = false
 				checker.reason = "ignore plan cache by hint"
 				return in, true
@@ -114,7 +115,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		}
 	case *ast.UpdateStmt:
 		for _, hints := range node.TableHints {
-			if hints.HintName.L == HintIgnorePlanCache {
+			if hints.HintName.L == h.HintIgnorePlanCache {
 				checker.cacheable = false
 				checker.reason = "ignore plan cache by hint"
 				return in, true
@@ -134,7 +135,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			}
 		}
 		for _, hints := range node.TableHints {
-			if hints.HintName.L == HintIgnorePlanCache {
+			if hints.HintName.L == h.HintIgnorePlanCache {
 				checker.cacheable = false
 				checker.reason = "ignore plan cache by hint"
 				return in, true

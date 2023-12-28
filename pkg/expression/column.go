@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -172,9 +171,9 @@ func (col *CorrelatedColumn) IsCorrelated() bool {
 	return true
 }
 
-// ConstItem implements Expression interface.
-func (col *CorrelatedColumn) ConstItem(_ *stmtctx.StatementContext) bool {
-	return false
+// ConstLevel returns the const level for the expression
+func (col *CorrelatedColumn) ConstLevel() ConstLevel {
+	return ConstNone
 }
 
 // Decorrelate implements Expression interface.
@@ -515,9 +514,9 @@ func (col *Column) IsCorrelated() bool {
 	return false
 }
 
-// ConstItem implements Expression interface.
-func (col *Column) ConstItem(_ *stmtctx.StatementContext) bool {
-	return false
+// ConstLevel returns the const level for the expression
+func (col *Column) ConstLevel() ConstLevel {
+	return ConstNone
 }
 
 // Decorrelate implements Expression interface.
@@ -703,21 +702,6 @@ idLoop:
 // EvalVirtualColumn evals the virtual column
 func (col *Column) EvalVirtualColumn(ctx EvalContext, row chunk.Row) (types.Datum, error) {
 	return col.VirtualExpr.Eval(ctx, row)
-}
-
-// SupportReverseEval checks whether the builtinFunc support reverse evaluation.
-func (col *Column) SupportReverseEval() bool {
-	switch col.RetType.GetType() {
-	case mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong,
-		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
-		return true
-	}
-	return false
-}
-
-// ReverseEval evaluates the only one column value with given function result.
-func (col *Column) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
-	return types.ChangeReverseResultByUpperLowerBound(sc.TypeCtx(), col.RetType, res, rType)
 }
 
 // Coercibility returns the coercibility value which is used to check collations.

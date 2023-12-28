@@ -47,7 +47,7 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 		ReorgMeta:       nil,
 	}
 	if containsDistTaskSubJob(subJobs) {
-		job.ReorgMeta, err = newReorgMetaFromVariables(d, job, ctx)
+		job.ReorgMeta, err = newReorgMetaFromVariables(job, ctx)
 		if err != nil {
 			return err
 		}

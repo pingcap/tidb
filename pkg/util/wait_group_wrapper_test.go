@@ -16,9 +16,12 @@ package util
 
 import (
 	"fmt"
+	"os"
+	"path"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
 )
@@ -91,11 +94,33 @@ func TestWaitGroupWrapperCheck(t *testing.T) {
 	require.False(t, wg.check())
 }
 
+func middleF() {
+	var a int
+	_ = 10 / a
+}
+
 func TestNewErrorGroupWithRecover(t *testing.T) {
+	bak := os.Stdout
+	t.Cleanup(func() {
+		os.Stdout = bak
+	})
+	tempDir := t.TempDir()
+	fileName := path.Join(tempDir, "test.log")
+	file, err := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, 0644)
+	require.NoError(t, err)
+	os.Stdout = file
+	// InitLogger contains zap.AddStacktrace(zapcore.FatalLevel), so log level
+	// below fatal will not contain stack automatically.
+	require.NoError(t, logutil.InitLogger(&logutil.LogConfig{}))
 	eg := NewErrorGroupWithRecover()
 	eg.Go(func() error {
-		panic("test")
+		middleF()
+		return nil
 	})
-	err := eg.Wait()
-	require.Errorf(t, err, "test")
+	err = eg.Wait()
+	require.ErrorContains(t, err, "runtime error: integer divide by zero")
+	require.NoError(t, file.Close())
+	content, err := os.ReadFile(fileName)
+	require.NoError(t, err)
+	require.Contains(t, string(content), "pkg/util.middleF")
 }

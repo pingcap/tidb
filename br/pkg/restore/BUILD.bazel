@@ -49,7 +49,6 @@ go_library(
         "//br/pkg/utils/storewatch",
         "//br/pkg/version",
         "//pkg/bindinfo",
-        "//pkg/config",
         "//pkg/ddl",
         "//pkg/ddl/util",
         "//pkg/domain",

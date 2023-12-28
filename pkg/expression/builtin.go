@@ -28,6 +28,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/gogo/protobuf/proto"
@@ -37,10 +38,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -53,11 +54,8 @@ type baseBuiltinFunc struct {
 	pbCode       tipb.ScalarFuncSig
 	ctor         collate.Collator
 
-	childrenVectorized bool
-	childrenReversed   bool
-
+	childrenVectorized     bool
 	childrenVectorizedOnce *sync.Once
-	childrenReversedOnce   *sync.Once
 
 	collationInfo
 }
@@ -121,7 +119,6 @@ func newBaseBuiltinFunc(ctx sessionctx.Context, funcName string, args []Expressi
 	bf := baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
-		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
 		tp:   tp,
@@ -208,7 +205,6 @@ func newBaseBuiltinFuncWithTp(ctx sessionctx.Context, funcName string, args []Ex
 	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
-		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
 		tp:   fieldType,
@@ -270,7 +266,6 @@ func newBaseBuiltinFuncWithFieldTypes(ctx sessionctx.Context, funcName string, a
 	bf = baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
-		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
 		tp:   fieldType,
@@ -290,7 +285,6 @@ func newBaseBuiltinFuncWithFieldType(tp *types.FieldType, args []Expression) (ba
 	bf := baseBuiltinFunc{
 		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
-		childrenReversedOnce:   new(sync.Once),
 
 		args: args,
 		tp:   tp,
@@ -364,27 +358,6 @@ func (*baseBuiltinFunc) vectorized() bool {
 	return false
 }
 
-func (*baseBuiltinFunc) supportReverseEval() bool {
-	return false
-}
-
-func (b *baseBuiltinFunc) isChildrenReversed() bool {
-	b.childrenReversedOnce.Do(func() {
-		b.childrenReversed = true
-		for _, arg := range b.args {
-			if !arg.SupportReverseEval() {
-				b.childrenReversed = false
-				break
-			}
-		}
-	})
-	return b.childrenReversed
-}
-
-func (*baseBuiltinFunc) reverseEval(*stmtctx.StatementContext, types.Datum, types.RoundingType) (types.Datum, error) {
-	return types.Datum{}, errors.Errorf("baseBuiltinFunc.reverseEvalInt() should never be called, please contact the TiDB team for help")
-}
-
 func (b *baseBuiltinFunc) isChildrenVectorized() bool {
 	b.childrenVectorizedOnce.Do(func() {
 		b.childrenVectorized = true
@@ -436,7 +409,6 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	b.pbCode = from.pbCode
 	b.bufAllocator = newLocalColumnPool()
 	b.childrenVectorizedOnce = new(sync.Once)
-	b.childrenReversedOnce = new(sync.Once)
 	b.ctor = from.ctor
 }
 
@@ -502,22 +474,9 @@ type vecBuiltinFunc interface {
 	vecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 }
 
-// reverseBuiltinFunc evaluates the exactly one column value in the function when given a result for expression.
-// For example, the builtinFunc is builtinArithmeticPlusRealSig(2.3, builtinArithmeticMinusRealSig(Column, 3.4))
-// when given the result like 1.0, then the ReverseEval should evaluate the column value 1.0 - 2.3 + 3.4 = 2.1
-type reverseBuiltinFunc interface {
-	// supportReverseEval checks whether the builtinFunc support reverse evaluation.
-	supportReverseEval() bool
-	// isChildrenReversed checks whether the builtinFunc's children support reverse evaluation.
-	isChildrenReversed() bool
-	// reverseEval evaluates the only one column value with given function result.
-	reverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error)
-}
-
 // builtinFunc stands for a particular function signature.
 type builtinFunc interface {
 	vecBuiltinFunc
-	reverseBuiltinFunc
 
 	// evalInt evaluates int result of builtinFunc by given row.
 	evalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error)
@@ -1055,11 +1014,51 @@ func (b *baseBuiltinFunc) MemoryUsage() (sum int64) {
 	if b.childrenVectorizedOnce != nil {
 		sum += onceSize
 	}
-	if b.childrenReversedOnce != nil {
-		sum += onceSize
-	}
 	for _, e := range b.args {
 		sum += e.MemoryUsage()
 	}
 	return
+}
+
+type builtinFuncCacheItem[T any] struct {
+	ctxID uint64
+	item  T
+}
+
+type builtinFuncCache[T any] struct {
+	sync.Mutex
+	cached atomic.Pointer[builtinFuncCacheItem[T]]
+}
+
+func (c *builtinFuncCache[T]) getCache(ctxID uint64) (v T, ok bool) {
+	if p := c.cached.Load(); p != nil && p.ctxID == ctxID {
+		return p.item, true
+	}
+	return v, false
+}
+
+func (c *builtinFuncCache[T]) getOrInitCache(ctx EvalContext, constructCache func() (T, error)) (T, error) {
+	intest.Assert(constructCache != nil)
+	ctxID := ctx.GetSessionVars().StmtCtx.CtxID()
+	if item, ok := c.getCache(ctxID); ok {
+		return item, nil
+	}
+
+	c.Lock()
+	defer c.Unlock()
+	if item, ok := c.getCache(ctxID); ok {
+		return item, nil
+	}
+
+	item, err := constructCache()
+	if err != nil {
+		var def T
+		return def, err
+	}
+
+	c.cached.Store(&builtinFuncCacheItem[T]{
+		ctxID: ctxID,
+		item:  item,
+	})
+	return item, nil
 }

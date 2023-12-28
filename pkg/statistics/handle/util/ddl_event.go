@@ -33,7 +33,10 @@ type DDLEvent struct {
 	oldTableInfo *model.TableInfo
 	oldPartInfo  *model.PartitionInfo
 	columnInfos  []*model.ColumnInfo
-	tp           model.ActionType
+	// This value is used to store the table ID during a transition.
+	// It applies when a table structure is being changed from partitioned to non-partitioned, or vice versa.
+	oldTableID int64
+	tp         model.ActionType
 }
 
 // NewCreateTableEvent creates a new ddl event that creates a table.
@@ -244,29 +247,37 @@ func (e *DDLEvent) GetTruncatePartitionInfo() (
 // NewAddPartitioningEvent creates a new ddl event that converts a single table to a partitioned table.
 // For example, `alter table t partition by range (c1) (partition p1 values less than (10))`.
 func NewAddPartitioningEvent(
+	oldSingleTableID int64,
 	newGlobalTableInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 ) *DDLEvent {
 	return &DDLEvent{
-		tp:        model.ActionAlterTablePartitioning,
-		tableInfo: newGlobalTableInfo,
-		partInfo:  addedPartInfo,
+		tp:         model.ActionAlterTablePartitioning,
+		oldTableID: oldSingleTableID,
+		tableInfo:  newGlobalTableInfo,
+		partInfo:   addedPartInfo,
 	}
 }
 
 // GetAddPartitioningInfo gets the table info of the table that is converted to a partitioned table.
-func (e *DDLEvent) GetAddPartitioningInfo() (newGlobalTableInfo *model.TableInfo, addedPartInfo *model.PartitionInfo) {
-	return e.tableInfo, e.partInfo
+func (e *DDLEvent) GetAddPartitioningInfo() (
+	oldSingleTableID int64,
+	newGlobalTableInfo *model.TableInfo,
+	addedPartInfo *model.PartitionInfo,
+) {
+	return e.oldTableID, e.tableInfo, e.partInfo
 }
 
 // NewRemovePartitioningEvent creates a new ddl event that converts a partitioned table to a single table.
 // For example, `alter table t remove partitioning`.
 func NewRemovePartitioningEvent(
+	oldPartitionedTableID int64,
 	newSingleTableInfo *model.TableInfo,
 	droppedPartInfo *model.PartitionInfo,
 ) *DDLEvent {
 	return &DDLEvent{
 		tp:          model.ActionRemovePartitioning,
+		oldTableID:  oldPartitionedTableID,
 		tableInfo:   newSingleTableInfo,
 		oldPartInfo: droppedPartInfo,
 	}
@@ -274,10 +285,11 @@ func NewRemovePartitioningEvent(
 
 // GetRemovePartitioningInfo gets the table info of the table that is converted to a single table.
 func (e *DDLEvent) GetRemovePartitioningInfo() (
+	oldPartitionedTableID int64,
 	newSingleTableInfo *model.TableInfo,
 	droppedPartInfo *model.PartitionInfo,
 ) {
-	return e.tableInfo, e.oldPartInfo
+	return e.oldTableID, e.tableInfo, e.oldPartInfo
 }
 
 // NewFlashbackClusterEvent creates a new ddl event that flashes back the cluster.

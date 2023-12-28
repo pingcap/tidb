@@ -72,7 +72,7 @@ func (b *builtinAesDecryptSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 	}
 
 	isWarning := !b.ivRequired && len(b.args) == 3
-	isConstKey := b.args[1].ConstItem(ctx.GetSessionVars().StmtCtx)
+	isConstKey := b.args[1].ConstLevel() >= ConstOnlyInContext
 
 	var key []byte
 	if isConstKey {
@@ -89,7 +89,7 @@ func (b *builtinAesDecryptSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 		}
 		if isWarning {
 			// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
-			stmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
+			stmtCtx.AppendWarning(errWarnOptionIgnored.FastGenByArgs("IV"))
 		}
 		if !isConstKey {
 			key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(i), b.keySize)
@@ -158,7 +158,7 @@ func (b *builtinAesEncryptIVSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 		return errors.Errorf("unsupported block encryption mode - %v", b.modeName)
 	}
 
-	isConst := b.args[1].ConstItem(ctx.GetSessionVars().StmtCtx)
+	isConst := b.args[1].ConstLevel() >= ConstOnlyInContext
 	var key []byte
 	if isConst {
 		key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(0), b.keySize)
@@ -331,7 +331,7 @@ func (b *builtinAesDecryptIVSig) vecEvalString(ctx EvalContext, input *chunk.Chu
 		return errors.Errorf("unsupported block encryption mode - %v", b.modeName)
 	}
 
-	isConst := b.args[1].ConstItem(ctx.GetSessionVars().StmtCtx)
+	isConst := b.args[1].ConstLevel() >= ConstOnlyInContext
 	var key []byte
 	if isConst {
 		key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(0), b.keySize)
@@ -672,7 +672,7 @@ func (b *builtinAesEncryptSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 	}
 
 	isWarning := !b.ivRequired && len(b.args) == 3
-	isConst := b.args[1].ConstItem(ctx.GetSessionVars().StmtCtx)
+	isConst := b.args[1].ConstLevel() >= ConstOnlyInContext
 	var key []byte
 	if isConst {
 		key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(0), b.keySize)
@@ -687,7 +687,7 @@ func (b *builtinAesEncryptSig) vecEvalString(ctx EvalContext, input *chunk.Chunk
 			continue
 		}
 		if isWarning {
-			sc.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
+			sc.AppendWarning(errWarnOptionIgnored.FastGenByArgs("IV"))
 		}
 		if !isConst {
 			key = encrypt.DeriveKeyMySQL(keyBuf.GetBytes(i), b.keySize)
@@ -736,7 +736,7 @@ func (b *builtinPasswordSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, 
 
 		// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
 		// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("PASSWORD"))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("PASSWORD"))
 
 		result.AppendString(auth.EncodePasswordBytes(passBytes))
 	}

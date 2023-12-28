@@ -1011,23 +1011,74 @@ func (bc *Client) BackupRange(
 	return nil
 }
 
-func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, targetStoreIds map[uint64]struct{}) (*metapb.Peer, error) {
+func (bc *Client) FindTargetPeer(ctx context.Context, key []byte, isRawKv bool, targetStoreIds map[uint64]struct{}) (*metapb.Peer, error) {
 	// Keys are saved in encoded format in TiKV, so the key must be encoded
 	// in order to find the correct region.
+	var leader *metapb.Peer
 	key = codec.EncodeBytesExt([]byte{}, key, isRawKv)
-	for i := 0; i < 5; i++ {
-		// better backoff.
+	state := utils.InitialRetryState(60, 100*time.Millisecond, 2*time.Second)
+	failpoint.Inject("retry-state-on-find-target-peer", func(v failpoint.Value) {
+		logutil.CL(ctx).Info("reset state for FindTargetPeer")
+		state = utils.InitialRetryState(v.(int), 100*time.Millisecond, 100*time.Millisecond)
+	})
+	err := utils.WithRetry(ctx, func() error {
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
+		failpoint.Inject("return-region-on-find-target-peer", func(v failpoint.Value) {
+			switch v.(string) {
+			case "nil":
+				{
+					region = nil
+				}
+			case "hasLeader":
+				{
+					region = &pd.Region{
+						Leader: &metapb.Peer{
+							Id: 42,
+						},
+					}
+				}
+			case "hasPeer":
+				{
+					region = &pd.Region{
+						Meta: &metapb.Region{
+							Peers: []*metapb.Peer{
+								{
+									Id:      43,
+									StoreId: 42,
+								},
+							},
+						},
+					}
+				}
+
+			case "noLeader":
+				{
+					region = &pd.Region{
+						Leader: nil,
+					}
+				}
+			case "noPeer":
+				{
+					{
+						region = &pd.Region{
+							Meta: &metapb.Region{
+								Peers: nil,
+							},
+						}
+					}
+				}
+			}
+		})
 		if err != nil || region == nil {
 			logutil.CL(ctx).Error("find region failed", zap.Error(err), zap.Reflect("region", region))
-			time.Sleep(time.Millisecond * time.Duration(100*i))
-			continue
+			return errors.Annotate(berrors.ErrPDLeaderNotFound, "cannot find region from pd client")
 		}
 		if len(targetStoreIds) == 0 {
 			if region.Leader != nil {
 				logutil.CL(ctx).Info("find leader",
 					zap.Reflect("Leader", region.Leader), logutil.Key("key", key))
-				return region.Leader, nil
+				leader = region.Leader
+				return nil
 			}
 		} else {
 			candidates := make([]*metapb.Peer, 0, len(region.Meta.Peers))
@@ -1040,19 +1091,18 @@ func (bc *Client) findTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 				peer := candidates[rand.Intn(len(candidates))]
 				logutil.CL(ctx).Info("find target peer for backup",
 					zap.Reflect("Peer", peer), logutil.Key("key", key))
-				return peer, nil
+				leader = peer
+				return nil
 			}
 		}
-
-		logutil.CL(ctx).Warn("fail to find a target peer", logutil.Key("key", key))
-		time.Sleep(time.Millisecond * time.Duration(1000*i))
-		continue
+		return errors.Annotate(berrors.ErrPDLeaderNotFound, "cannot find leader or candidate from pd client")
+	}, &state)
+	if err != nil {
+		logutil.CL(ctx).Error("can not find a valid target peer after retry", logutil.Key("key", key))
+		return nil, err
 	}
-	logutil.CL(ctx).Error("can not find a valid target peer", logutil.Key("key", key))
-	if len(targetStoreIds) == 0 {
-		return nil, errors.Annotatef(berrors.ErrBackupNoLeader, "can not find a valid leader for key %s", key)
-	}
-	return nil, errors.Errorf("can not find a valid target peer for key %s", key)
+	// leader cannot be nil if err is nil
+	return leader, nil
 }
 
 func (bc *Client) fineGrainedBackup(
@@ -1226,7 +1276,7 @@ func (bc *Client) handleFineGrained(
 	targetStoreIds map[uint64]struct{},
 	respCh chan<- *backuppb.BackupResponse,
 ) (int, error) {
-	targetPeer, pderr := bc.findTargetPeer(ctx, req.StartKey, req.IsRawKv, targetStoreIds)
+	targetPeer, pderr := bc.FindTargetPeer(ctx, req.StartKey, req.IsRawKv, targetStoreIds)
 	if pderr != nil {
 		return 0, errors.Trace(pderr)
 	}

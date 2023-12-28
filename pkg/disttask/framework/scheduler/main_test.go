@@ -21,30 +21,31 @@ import (
 	"go.uber.org/goleak"
 )
 
-// SchedulerForTest exports for testing.
-type SchedulerManagerForTest interface {
-	GetRunningTaskCnt() int
-	DelRunningTask(id int64)
-	DoCleanUpRoutine()
-}
-
 // GetRunningGTaskCnt implements Scheduler.GetRunningGTaskCnt interface.
-func (dm *Manager) GetRunningTaskCnt() int {
-	return dm.getSchedulerCount()
+func (sm *Manager) GetRunningTaskCnt() int {
+	return sm.getSchedulerCount()
 }
 
 // DelRunningGTask implements Scheduler.DelRunningGTask interface.
-func (dm *Manager) DelRunningTask(id int64) {
-	dm.delScheduler(id)
+func (sm *Manager) DelRunningTask(id int64) {
+	sm.delScheduler(id)
 }
 
 // DoCleanUpRoutine implements Scheduler.DoCleanUpRoutine interface.
-func (dm *Manager) DoCleanUpRoutine() {
-	dm.doCleanUpRoutine()
+func (sm *Manager) DoCleanUpRoutine() {
+	sm.doCleanupTask()
 }
 
 func (s *BaseScheduler) OnNextStage() (err error) {
 	return s.onNextStage()
+}
+
+func (s *BaseScheduler) DoBalanceSubtasks(eligibleNodes []string) error {
+	return s.doBalanceSubtasks(eligibleNodes)
+}
+
+func NewNodeManager() *NodeManager {
+	return newNodeManager()
 }
 
 func TestMain(m *testing.M) {
@@ -57,6 +58,7 @@ func TestMain(m *testing.M) {
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),

@@ -188,6 +188,10 @@ func TestSwitchTaskStep(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
 	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
+	})
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -245,6 +249,11 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
 	}()
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
+	})
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -764,17 +773,17 @@ func TestDistFrameworkMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{":4000", ":4001", ":4002", ":4003"}, nodes)
 
-	require.NoError(t, sm.CleanUpMeta(ctx, []string{":4000"}))
+	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{":4000"}))
 	nodes, err = sm.GetManagedNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []string{":4002", ":4003"}, nodes)
 
-	require.NoError(t, sm.CleanUpMeta(ctx, []string{":4003"}))
+	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{":4003"}))
 	nodes, err = sm.GetManagedNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []string{":4002"}, nodes)
 
-	require.NoError(t, sm.CleanUpMeta(ctx, []string{":4002"}))
+	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{":4002"}))
 	nodes, err = sm.GetManagedNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []string{":4001"}, nodes)

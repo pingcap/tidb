@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -279,7 +280,20 @@ func (b *builtinCurrentResourceGroupSig) evalString(ctx EvalContext, row chunk.R
 	if data == nil {
 		return "", true, errors.Errorf("Missing session variable when eval builtin")
 	}
-	return data.ResourceGroupName, false, nil
+
+	return getHintResourceGroupName(data), false, nil
+}
+
+// get statement resource group name with hint in consideration
+// NOTE: because function `CURRENT_RESOURCE_GROUP()` maybe evaluated in optimizer
+// before we assign the hint value to StmtCtx.ResourceGroupName, so we have to
+// explicitly check the hint here.
+func getHintResourceGroupName(vars *variable.SessionVars) string {
+	groupName := vars.StmtCtx.ResourceGroupName
+	if vars.StmtCtx.HasResourceGroup {
+		groupName = vars.StmtCtx.StmtHints.ResourceGroup
+	}
+	return groupName
 }
 
 type userFunctionClass struct {
@@ -905,7 +919,7 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(ctx EvalContext, row chunk.R
 		if len(digestsStr) > errMsgMaxLength {
 			digestsStr = digestsStr[:errMsgMaxLength] + "..."
 		}
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errIncorrectArgs.GenWithStack("The argument can't be unmarshalled as JSON array: '%s'", digestsStr))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errIncorrectArgs.FastGen("The argument can't be unmarshalled as JSON array: '%s'", digestsStr))
 		return "", true, nil
 	}
 
@@ -934,7 +948,7 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(ctx EvalContext, row chunk.R
 			return "", true, errUnknown.GenWithStack("Retrieving cancelled internally with error: %v", err)
 		}
 
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknown.GenWithStack("Retrieving statements information failed with error: %v", err))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknown.FastGen("Retrieving statements information failed with error: %v", err))
 		return "", true, nil
 	}
 
@@ -957,7 +971,7 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(ctx EvalContext, row chunk.R
 
 	resultStr, err := json.Marshal(result)
 	if err != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknown.GenWithStack("Marshalling result as JSON failed with error: %v", err))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errUnknown.FastGen("Marshalling result as JSON failed with error: %v", err))
 		return "", true, nil
 	}
 

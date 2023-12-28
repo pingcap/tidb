@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/planner/core/internal/base"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -179,9 +178,9 @@ func (*ScalarSubQueryExpr) IsCorrelated() bool {
 	return false
 }
 
-// ConstItem implements the Expression interface.
-func (*ScalarSubQueryExpr) ConstItem(_ *stmtctx.StatementContext) bool {
-	return true
+// ConstLevel returns the const level for the expression
+func (*ScalarSubQueryExpr) ConstLevel() expression.ConstLevel {
+	return expression.ConstNone
 }
 
 // Decorrelate implements the Expression interface.
@@ -269,26 +268,6 @@ func (s *ScalarSubQueryExpr) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	return s.Constant.MarshalJSON()
-}
-
-// ReverseEval evaluates the only one column value with given function result.
-func (s *ScalarSubQueryExpr) ReverseEval(_ *stmtctx.StatementContext, _ types.Datum, _ types.RoundingType) (val types.Datum, err error) {
-	if s.evalErr != nil {
-		return s.Value, s.evalErr
-	}
-	if s.evaled {
-		return s.Value, nil
-	}
-	err = s.selfEvaluate()
-	if err != nil {
-		return s.Value, err
-	}
-	return s.Value, nil
-}
-
-// SupportReverseEval implements the Expression interface.
-func (*ScalarSubQueryExpr) SupportReverseEval() bool {
-	return true
 }
 
 // VecEvalInt evaluates this expression in a vectorized manner.
