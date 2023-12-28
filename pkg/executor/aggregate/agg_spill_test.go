@@ -223,7 +223,7 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 	return aggExec
 }
 
-func initCtx(ctx *mock.Context, hardLimitBytesNum int64) {
+func initCtx(ctx *mock.Context, newRootExceedAction *testutil.MockActionOnExceed, hardLimitBytesNum int64) {
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, hardLimitBytesNum)
@@ -231,19 +231,20 @@ func initCtx(ctx *mock.Context, hardLimitBytesNum int64) {
 	ctx.GetSessionVars().EnableConcurrentHashaggSpill = true
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+	ctx.GetSessionVars().MemTracker.SetActionOnExceed(newRootExceedAction)
 }
 
 // TODO trigger fallback when:
-//  1. we have triggered before
 //  2. does has enough data to spill
 //  3. trigger at final stage
 //
 // TODO continuous consume in another goroutine
 func TestGetCorrectResult(t *testing.T) {
-	hardLimitBytesNum := int64(5000000)
+	newRootExceedAction := new(testutil.MockActionOnExceed)
+	hardLimitBytesNum := int64(6000000)
 
 	ctx := mock.NewContext()
-	initCtx(ctx, hardLimitBytesNum)
+	initCtx(ctx, newRootExceedAction, hardLimitBytesNum)
 
 	rowNum := rand.Intn(300000)
 	ndv := rand.Intn(100000)
@@ -273,13 +274,15 @@ func TestGetCorrectResult(t *testing.T) {
 		require.True(t, aggExec.IsSpillTriggeredForTest())
 		require.True(t, resContainer.check(result))
 	}
+	require.Equal(t, 0, newRootExceedAction.GetTriggeredNum())
 }
 
 func TestRandomFail(t *testing.T) {
-	hardLimitBytesNum := int64(500000)
+	newRootExceedAction := new(testutil.MockActionOnExceed)
+	hardLimitBytesNum := int64(5000000)
 
 	ctx := mock.NewContext()
-	initCtx(ctx, hardLimitBytesNum)
+	initCtx(ctx, newRootExceedAction, hardLimitBytesNum)
 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/enableAggSpillIntest", `return(true)`)
 	rowNum := rand.Intn(300000)
