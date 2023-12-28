@@ -17,7 +17,7 @@ package chunk
 import (
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 
@@ -527,7 +527,7 @@ func (c *SortedRowContainer) Close() error {
 	return c.RowContainer.Close()
 }
 
-func (c *SortedRowContainer) lessRow(rowI, rowJ Row) bool {
+func (c *SortedRowContainer) lessRow(rowI, rowJ Row) int {
 	for i, colIdx := range c.keyColumns {
 		cmpFunc := c.keyCmpFuncs[i]
 		if cmpFunc != nil {
@@ -535,21 +535,19 @@ func (c *SortedRowContainer) lessRow(rowI, rowJ Row) bool {
 			if c.ByItemsDesc[i] {
 				cmp = -cmp
 			}
-			if cmp < 0 {
-				return true
-			} else if cmp > 0 {
-				return false
+			if cmp != 0 {
+				return cmp
 			}
 		}
 	}
-	return false
+	return 0
 }
 
 // SignalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
 const SignalCheckpointForSort uint = 10240
 
 // keyColumnsLess is the less function for key columns.
-func (c *SortedRowContainer) keyColumnsLess(i, j int) bool {
+func (c *SortedRowContainer) keyColumnsLess(i, j RowPtr) int {
 	if c.timesOfRowCompare >= SignalCheckpointForSort {
 		// Trigger Consume for checking the NeedKill signal
 		c.memTracker.Consume(1)
@@ -561,8 +559,8 @@ func (c *SortedRowContainer) keyColumnsLess(i, j int) bool {
 		}
 	})
 	c.timesOfRowCompare++
-	rowI := c.m.records.inMemory.GetRow(c.ptrM.rowPtrs[i])
-	rowJ := c.m.records.inMemory.GetRow(c.ptrM.rowPtrs[j])
+	rowI := c.m.records.inMemory.GetRow(i)
+	rowJ := c.m.records.inMemory.GetRow(j)
 	return c.lessRow(rowI, rowJ)
 }
 
@@ -599,7 +597,7 @@ func (c *SortedRowContainer) Sort() (ret error) {
 			panic("sort meet error")
 		}
 	})
-	sort.Slice(c.ptrM.rowPtrs, c.keyColumnsLess)
+	slices.SortFunc(c.ptrM.rowPtrs, c.keyColumnsLess)
 	return
 }
 
