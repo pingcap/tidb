@@ -1454,6 +1454,8 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 			executor_metrics.FairLockingTxnEffectiveCount.Inc()
 		}
 	}
+
+	a.Ctx.ReportUsageStats()
 }
 
 func (a *ExecStmt) recordLastQueryInfo(err error) {

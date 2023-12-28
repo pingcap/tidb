@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -68,16 +69,22 @@ type StatsUsage interface {
 
 	// Below methods are for index usage.
 
-	// NewSessionIndexUsageCollector creates a new IndexUsageCollector on the list.
+	// NewSessionIndexUsageCollector creates a new Collector on the list.
 	// The returned value's type should be *usage.SessionIndexUsageCollector, use interface{} to avoid cycle import now.
 	// TODO: use *usage.SessionIndexUsageCollector instead of interface{}.
-	NewSessionIndexUsageCollector() interface{}
-
-	// DumpIndexUsageToKV dumps all collected index usage info to storage.
-	DumpIndexUsageToKV() error
+	NewSessionIndexUsageCollector() *indexusage.SessionIndexUsageCollector
 
 	// GCIndexUsage removes unnecessary index usage data.
 	GCIndexUsage() error
+
+	// StartWorker starts for the collector worker.
+	StartWorker()
+
+	// Close closes and waits for the index usage collector worker.
+	Close()
+
+	// GetIndexUsage returns the index usage information
+	GetIndexUsage(tableID int64, indexID int64) *indexusage.Sample
 
 	// Blow methods are for table delta and stats usage.
 
