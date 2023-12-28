@@ -87,7 +87,7 @@ func NewBaseExecutor(ctx sessionctx.Context, schema *expression.Schema, id int, 
 		schema:       schema,
 		initCap:      ctx.GetSessionVars().InitChunkSize,
 		maxChunkSize: ctx.GetSessionVars().MaxChunkSize,
-		AllocPool:    ctx.GetSessionVars().ChunkPool.Alloc,
+		AllocPool:    ctx.GetSessionVars().GetChunkAllocator(),
 	}
 	if ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		if e.id > 0 {
@@ -249,7 +249,7 @@ func (e *BaseExecutor) NewChunk() *chunk.Chunk {
 
 // NewChunkWithCapacity allows the caller to allocate the chunk with any types, capacity and max size in the pool
 func (e *BaseExecutor) NewChunkWithCapacity(fields []*types.FieldType, capacity int, maxCachesize int) *chunk.Chunk {
-	return e.ctx.GetSessionVars().GetNewChunkWithCapacity(fields, capacity, maxCachesize, e.AllocPool)
+	return e.AllocPool.Alloc(fields, capacity, maxCachesize)
 }
 
 // HandleSQLKillerSignal handles the signal sent by SQLKiller
