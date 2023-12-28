@@ -3,3 +3,5 @@ max-record-rows = 1000
 
 [tikv-importer]
 on-duplicate = "ignore"
+# if we use "table" level pause, PD will trigger a region split and interfere with our failpoint `failToSplit`
+pause-pd-scheduler-scope = "global"

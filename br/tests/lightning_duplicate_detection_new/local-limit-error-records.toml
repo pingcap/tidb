@@ -4,3 +4,5 @@ max-record-rows = 50
 [tikv-importer]
 on-duplicate = "replace"
 add-index-by-sql = true
+# if we use "table" level pause, PD will trigger a region split and interfere with our failpoint `failToSplit`
+pause-pd-scheduler-scope = "global"
