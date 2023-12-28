@@ -462,10 +462,7 @@ set tidb_partition_prune_mode=default;
 drop table if exists t;
 CREATE TABLE `t` (
 `col_51` bigint(20) unsigned NOT NULL,
-PRIMARY KEY (`col_51`) /*T![clustered_index] CLUSTERED */,
-UNIQUE KEY `idx_28` (`col_51`),
-KEY `idx_29` (`col_51`),
-KEY `idx_31` (`col_51`)
+PRIMARY KEY (`col_51`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`col_51`) PARTITIONS 5;
 insert into t values (9223372036854775807), (9223372036854775808), (9223372036854775809);
@@ -481,10 +478,7 @@ col_51
 drop table if exists t;
 CREATE TABLE `t` (
 `col_51` bigint(20) NOT NULL,
-PRIMARY KEY (`col_51`) /*T![clustered_index] CLUSTERED */,
-UNIQUE KEY `idx_28` (`col_51`),
-KEY `idx_29` (`col_51`),
-KEY `idx_31` (`col_51`)
+PRIMARY KEY (`col_51`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY HASH (`col_51`) PARTITIONS 5;
 insert into t values (9223372036854775807), (-9223372036854775808);
@@ -500,10 +494,7 @@ col_51
 drop table if exists t;
 CREATE TABLE `t` (
 `col_51` bigint(20) unsigned NOT NULL,
-PRIMARY KEY (`col_51`) /*T![clustered_index] CLUSTERED */,
-UNIQUE KEY `idx_28` (`col_51`),
-KEY `idx_29` (`col_51`),
-KEY `idx_31` (`col_51`)
+PRIMARY KEY (`col_51`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY KEY (`col_51`) PARTITIONS 5;
 insert into t values (9223372036854775807), (9223372036854775808), (9223372036854775809);
@@ -519,10 +510,7 @@ col_51
 drop table if exists t;
 CREATE TABLE `t` (
 `col_51` bigint(20) NOT NULL,
-PRIMARY KEY (`col_51`) /*T![clustered_index] CLUSTERED */,
-UNIQUE KEY `idx_28` (`col_51`),
-KEY `idx_29` (`col_51`),
-KEY `idx_31` (`col_51`)
+PRIMARY KEY (`col_51`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY KEY (`col_51`) PARTITIONS 5;
 insert into t values (9223372036854775807), (-9223372036854775808);
