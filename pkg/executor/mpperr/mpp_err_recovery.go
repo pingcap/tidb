@@ -63,7 +63,7 @@ func (m *RecoveryHandler) Enabled() bool {
 
 // CanHoldResult tells whether we can insert intermediate results.
 func (m *RecoveryHandler) CanHoldResult() bool {
-	return m.holder.capacity > 0 && !m.holder.alreadyFulled
+	return m.holder.capacity > 0 && !m.holder.cannotHold
 }
 
 // HoldResult tries to hold mpp result. You should call Enabled() and CanHoldResult() to check first.
@@ -89,6 +89,7 @@ func (m *RecoveryHandler) PopFrontChk() *chunk.Chunk {
 	chk := m.holder.chks[0]
 	m.holder.chks = m.holder.chks[1:]
 	m.holder.memTracker.Consume(-chk.MemoryUsage())
+	m.holder.cannotHold = true
 	return chk
 }
 
@@ -114,10 +115,6 @@ func (m *RecoveryHandler) Recovery(info *RecoveryInfo) error {
 
 	if info == nil || info.MPPErr == nil {
 		return errors.New("RecoveryInfo is nil or mppErr is nil")
-	}
-
-	if m.holder.alreadyFulled {
-		return errors.New("mpp result holder is full")
 	}
 
 	if m.curRecoveryCnt >= m.maxRecoveryCnt {
@@ -168,11 +165,12 @@ func (*memLimitHandlerImpl) doRecovery(info *RecoveryInfo) error {
 }
 
 type mppResultHolder struct {
-	capacity      uint64
-	alreadyFulled bool
-	curRows       uint64
-	chks          []*chunk.Chunk
-	memTracker    *memory.Tracker
+	capacity uint64
+	// True when holder is full or begin to return result.
+	cannotHold bool
+	curRows    uint64
+	chks       []*chunk.Chunk
+	memTracker *memory.Tracker
 }
 
 func newMPPResultHolder(holderCap uint64, parent *memory.Tracker) *mppResultHolder {
@@ -188,13 +186,13 @@ func (h *mppResultHolder) insert(chk *chunk.Chunk) {
 	h.curRows += uint64(chk.NumRows())
 
 	if h.curRows >= h.capacity {
-		h.alreadyFulled = true
+		h.cannotHold = true
 	}
 	h.memTracker.Consume(chk.MemoryUsage())
 }
 
 func (h *mppResultHolder) reset() {
-	h.alreadyFulled = false
+	h.cannotHold = false
 	h.curRows = 0
 	h.chks = h.chks[:0]
 	h.memTracker.Detach()
