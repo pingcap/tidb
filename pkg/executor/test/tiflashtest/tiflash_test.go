@@ -1933,5 +1933,15 @@ func TestMPPRecovery(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_ignore_recovery_err"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_force_enable"))
 
+	{
+		// We have 2 mock tiflash, but the table is small, so only 1 tiflash node is in computation.
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_check_node_cnt", "return(1)"))
+
+		tk.MustExec("set @@tidb_max_chunk_size = 32")
+		tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
+
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_check_node_cnt"))
+	}
+
 	tk.MustExec("set @@tidb_max_chunk_size = default")
 }

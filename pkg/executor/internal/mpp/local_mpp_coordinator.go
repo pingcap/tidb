@@ -145,9 +145,8 @@ type localMppCoordinator struct {
 	enableCollectExecutionInfo bool
 	reportExecutionInfo        bool // if each mpp task needs to report execution info directly to coordinator through ReportMPPTaskStatus
 
-	// Record max task cnt among all the fragments.
-	// This is the number of nodes that involved in MPP computation.
-	maxTaskCnt int
+	// Record all nodes that involved in the mpp computation.
+	nodeInfo map[string]bool
 }
 
 // NewLocalMPPCoordinator creates a new localMppCoordinator instance
@@ -191,9 +190,6 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 		dagReq.EncodeType = tipb.EncodeType_TypeCHBlock
 	} else {
 		dagReq.EncodeType = tipb.EncodeType_TypeChunk
-	}
-	if c.maxTaskCnt < len(pf.ExchangeSender.Tasks) {
-		c.maxTaskCnt = len(pf.ExchangeSender.Tasks)
 	}
 	for _, mppTask := range pf.ExchangeSender.Tasks {
 		if mppTask.PartitionTableIDs != nil {
@@ -721,10 +717,11 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
 	sender := c.originalPlan.(*plannercore.PhysicalExchangeSender)
 	sctx := c.sessionCtx
-	frags, kvRanges, err := plannercore.GenerateRootMPPTasks(sctx, c.startTS, c.gatherID, c.mppQueryID, sender, c.is)
+	frags, kvRanges, nodeInfo, err := plannercore.GenerateRootMPPTasks(sctx, c.startTS, c.gatherID, c.mppQueryID, sender, c.is)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+	c.nodeInfo = nodeInfo
 
 	for _, frag := range frags {
 		err = c.appendMPPDispatchReq(frag)
@@ -751,6 +748,7 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 	return c, kvRanges, nil
 }
 
+// GetNodeCnt returns the node count that involved in the mpp computation.
 func (c *localMppCoordinator) GetNodeCnt() int {
-	return c.maxTaskCnt
+	return len(c.nodeInfo)
 }

@@ -139,6 +139,14 @@ func (e *MPPGather) setupRespIter(ctx context.Context, isRecoverying bool) (err 
 	if e.nodeCnt = coord.GetNodeCnt(); e.nodeCnt <= 0 {
 		return errors.Errorf("tiflash node count should be greater than zero: %v", e.nodeCnt)
 	}
+
+	failpoint.Inject("mpp_recovery_test_check_node_cnt", func(nodeCnt failpoint.Value) {
+		nodeCntInt := nodeCnt.(int)
+		if nodeCntInt != e.nodeCnt {
+			panic(fmt.Sprintf("unexpected node cnt, expect %v, got %v", nodeCntInt, e.nodeCnt))
+		}
+	})
+
 	e.respIter = distsql.GenSelectResultFromResponse(e.Ctx(), e.RetFieldTypes(), planIDs, e.ID(), resp)
 	return nil
 }
@@ -158,7 +166,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		if !ok {
 			return errors.Errorf("unexpected plan type, expect: PhysicalExchangeSender, got: %s", e.originalPlan.TP())
 		}
-		_, e.kvRanges, err = plannercore.GenerateRootMPPTasks(e.Ctx(), e.startTS, e.gatherID, e.mppQueryID, sender, e.is)
+		_, e.kvRanges, _, err = plannercore.GenerateRootMPPTasks(e.Ctx(), e.startTS, e.gatherID, e.mppQueryID, sender, e.is)
 		return err
 	}
 	if err = e.setupRespIter(ctx, false); err != nil {
