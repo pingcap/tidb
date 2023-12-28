@@ -519,6 +519,8 @@ func (c *localMppCoordinator) receiveResults(req *kv.MPPDispatchRequest, taskMet
 
 		resp, err = stream.Recv()
 		if err != nil {
+			logutil.BgLogger().Info("mpp stream recv got error", zap.Error(err), zap.Uint64("timestamp", taskMeta.StartTs),
+				zap.Int64("task", taskMeta.TaskId), zap.Int64("mpp-version", taskMeta.MppVersion))
 			if errors.Cause(err) == io.EOF {
 				return
 			}
