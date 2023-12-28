@@ -102,7 +102,7 @@ func (do *Domain) dailyRequestUnitsWriterLoop() {
 	}
 }
 
-// GetLastExpectedTime return the last writen ru time.
+// GetLastExpectedTime return the last written ru time.
 func GetLastExpectedTime(now time.Time, interval time.Duration) time.Time {
 	nowTs := now.Unix()
 	intervalSecs := int64(interval / time.Second)
