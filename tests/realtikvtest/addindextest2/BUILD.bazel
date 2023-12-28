@@ -14,6 +14,7 @@ go_test(
         "//pkg/config",
         "//pkg/ddl/util/callback",
         "//pkg/disttask/framework/scheduler",
+        "//pkg/domain",
         "//pkg/parser/model",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",
