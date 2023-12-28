@@ -395,7 +395,7 @@ func TestExchangePartitionStates(t *testing.T) {
 		err := tk2.ExecToErr(`alter table tp exchange partition p0 with table t`)
 		alterChan <- err
 	}()
-	waitFor := func(tableName, s string, pos int) {
+	waitFor := func(tableName, s string) {
 		for {
 			select {
 			case alterErr := <-alterChan:
@@ -403,17 +403,19 @@ func TestExchangePartitionStates(t *testing.T) {
 			default:
 				// Alter still running
 			}
-			res := tk4.MustQuery(`admin show ddl jobs where db_name = '` + strings.ToLower(dbName) + `' and table_name = '` + tableName + `' and job_type = 'exchange partition'`).Rows()
-			if len(res) == 1 && res[0][pos] == s {
+			ctx := tk.Session()
+			is := domain.GetDomain(ctx).InfoSchema()
+			tbl, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+			require.NoError(t, err)
+			nullExchangeInfo := tbl.Meta().ExchangePartitionInfo == nil
+			if s == "write only" && !nullExchangeInfo || s == "rollback done" && nullExchangeInfo {
 				logutil.BgLogger().Info("Got state", zap.String("State", s))
 				break
 			}
-			gotime.Sleep(50 * gotime.Millisecond)
+			gotime.Sleep(10 * gotime.Millisecond)
 		}
-		// Sleep 50ms to wait load InforSchema finish, issue #46815.
-		gotime.Sleep(50 * gotime.Millisecond)
 	}
-	waitFor("t", "write only", 4)
+	waitFor("t", "write only")
 	tk3.MustExec(`BEGIN`)
 	tk3.MustExec(`insert into t values (4,"4")`)
 	tk3.MustContainErrMsg(`insert into t values (1000004,"1000004")`, "[table:1748]Found a row not matching the given partition set")
@@ -424,7 +426,7 @@ func TestExchangePartitionStates(t *testing.T) {
 	// MDL will block the alter to not continue until all clients
 	// are in StateWriteOnly, which tk is blocking until it commits
 	tk.MustExec(`COMMIT`)
-	waitFor("t", "rollback done", 11)
+	waitFor("t", "rollback done")
 	// MDL will block the alter from finish, tk is in 'rollbacked' schema version
 	// but the alter is still waiting for tk3 to commit, before continuing
 	tk.MustExec("BEGIN")
@@ -506,7 +508,7 @@ func TestExchangePartitionCheckConstraintStates(t *testing.T) {
 		err := tk3.ExecToErr(`alter table pt exchange partition p1 with table nt`)
 		alterChan <- err
 	}()
-	waitFor := func(tableName, s string, pos int) {
+	waitFor := func(tableName, s string) {
 		for {
 			select {
 			case alterErr := <-alterChan:
@@ -514,17 +516,19 @@ func TestExchangePartitionCheckConstraintStates(t *testing.T) {
 			default:
 				// Alter still running
 			}
-			res := tk4.MustQuery(`admin show ddl jobs where db_name = 'check_constraint' and table_name = '` + tableName + `' and job_type = 'exchange partition'`).Rows()
-			if len(res) == 1 && res[0][pos] == s {
+			ctx := tk.Session()
+			is := domain.GetDomain(ctx).InfoSchema()
+			tbl, err := is.TableByName(model.NewCIStr("check_constraint"), model.NewCIStr(tableName))
+			require.NoError(t, err)
+			nullExchangeInfo := tbl.Meta().ExchangePartitionInfo == nil
+			if s == "write only" && !nullExchangeInfo || s == "none" && nullExchangeInfo {
 				logutil.BgLogger().Info("Got state", zap.String("State", s))
 				break
 			}
-			gotime.Sleep(50 * gotime.Millisecond)
+			gotime.Sleep(10 * gotime.Millisecond)
 		}
-		// Sleep 50ms to wait load InforSchema finish.
-		gotime.Sleep(50 * gotime.Millisecond)
 	}
-	waitFor("nt", "write only", 4)
+	waitFor("nt", "write only")
 
 	tk.MustExec(`insert into nt values (60, 60)`)
 	// violate pt (a < 75)
@@ -558,7 +562,7 @@ func TestExchangePartitionCheckConstraintStates(t *testing.T) {
 
 	// Release tk2 mdl, wait ddl enter next state.
 	tk2.MustExec("commit")
-	waitFor("pt", "none", 4)
+	waitFor("nt", "none")
 
 	// violate nt (b > 50)
 	// Now tk5 handle the sql with MDL: pt version state is write-only, nt version state is none.
@@ -617,7 +621,7 @@ func TestExchangePartitionCheckConstraintStatesTwo(t *testing.T) {
 		err := tk3.ExecToErr(`alter table pt exchange partition p1 with table nt`)
 		alterChan <- err
 	}()
-	waitFor := func(tableName, s string, pos int) {
+	waitFor := func(tableName, s string) {
 		for {
 			select {
 			case alterErr := <-alterChan:
@@ -625,17 +629,19 @@ func TestExchangePartitionCheckConstraintStatesTwo(t *testing.T) {
 			default:
 				// Alter still running
 			}
-			res := tk4.MustQuery(`admin show ddl jobs where db_name = 'check_constraint' and table_name = '` + tableName + `' and job_type = 'exchange partition'`).Rows()
-			if len(res) == 1 && res[0][pos] == s {
+			ctx := tk.Session()
+			is := domain.GetDomain(ctx).InfoSchema()
+			tbl, err := is.TableByName(model.NewCIStr("check_constraint"), model.NewCIStr(tableName))
+			require.NoError(t, err)
+			nullExchangeInfo := tbl.Meta().ExchangePartitionInfo == nil
+			if s == "write only" && !nullExchangeInfo {
 				logutil.BgLogger().Info("Got state", zap.String("State", s))
 				break
 			}
-			gotime.Sleep(50 * gotime.Millisecond)
+			gotime.Sleep(10 * gotime.Millisecond)
 		}
-		// Sleep 50ms to wait load InforSchema finish.
-		gotime.Sleep(50 * gotime.Millisecond)
 	}
-	waitFor("nt", "write only", 4)
+	waitFor("nt", "write only")
 
 	tk.MustExec(`insert into nt values (60, 60)`)
 	// violate pt (a < 75)
