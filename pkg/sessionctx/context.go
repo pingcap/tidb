@@ -152,8 +152,6 @@ type Context interface {
 	// GetPreparedTxnFuture returns the TxnFuture if it is valid or pending.
 	// It returns nil otherwise.
 	GetPreparedTxnFuture() TxnFuture
-	// StoreIndexUsage stores the index usage information.
-	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
 	// GetTxnWriteThroughputSLI returns the TxnWriteThroughputSLI.
 	GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI
 	// GetBuiltinFunctionUsage returns the BuiltinFunctionUsage of current Context, which is not thread safe.
