@@ -229,8 +229,7 @@ func (g *ErrorGroupWithRecover) Go(fn func() error) {
 	g.Group.Go(func() (err error) {
 		defer func() {
 			if r := recover(); r != nil {
-				// stack is automatically printed
-				logutil.BgLogger().Error("panic in error group", zap.Any("recover", r))
+				logutil.BgLogger().Error("panic in error group", zap.Any("recover", r), zap.Stack("stack"))
 				err = GetRecoverError(r)
 			}
 		}()
