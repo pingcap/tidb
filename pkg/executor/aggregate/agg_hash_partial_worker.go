@@ -126,15 +126,15 @@ func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasE
 
 	if intest.InTest && enableIntest {
 		num := rand.Intn(10000)
-		if num < 7 {
+		if num < 3 {
 			panic("Intest panic: partial worker is panicked when running")
-		} else if num < 14 {
+		} else if num < 10 {
 			time.Sleep(1 * time.Millisecond)
-		} else if num < 21 {
+		} else if num < 13 {
 			*hasError = true
 			w.processError(errors.Errorf("Random fail is triggered in partial worker"))
 			return false
-		} else if num < 28 {
+		} else if num < 16 {
 			w.memTracker.Consume(500000)
 		}
 	}

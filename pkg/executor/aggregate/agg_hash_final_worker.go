@@ -229,7 +229,6 @@ func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 	}
 
 	w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
-
 }
 
 func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
