@@ -1306,10 +1306,9 @@ func (*TaskManager) getAllNodesWithSession(ctx context.Context, se sessionctx.Co
 	}
 	nodes := make([]proto.ManagedNode, 0, len(rs))
 	for _, r := range rs {
-		role := r.GetString(1)
 		nodes = append(nodes, proto.ManagedNode{
 			ID:       r.GetString(0),
-			Role:     role,
+			Role:     r.GetString(1),
 			CPUCount: int(r.GetInt64(2)),
 		})
 	}
