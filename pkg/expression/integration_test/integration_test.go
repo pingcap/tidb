@@ -397,7 +397,7 @@ func TestFoundRows(t *testing.T) {
 		limit 1
 	`).Check(testkit.Rows("1 Furina 1"))
 	tk.MustQuery("select found_rows()").Check(testkit.Rows("5"))
-	// The following test cases fail due to https://github.com/pingcap/tidb/issues/49377:
+	// The following test cases fail due to https://github.com/pingcap/tidb/issues/49874:
 	// tk.MustQuery(`
 	// 	select SQL_CALC_FOUND_ROWS * from employee where dept_id = 1
 	// 		union all
