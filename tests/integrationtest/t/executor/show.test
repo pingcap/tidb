@@ -427,3 +427,8 @@ select * from information_schema.COLLATIONS;
 show character set like '%utf8mb4%';
 select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4';
 set @@session.default_collation_for_utf8mb4=default;
+
+# TestShowPreSplitRegionsForAutoRandomTables
+DROP TABLE IF EXISTS `t`;
+CREATE TABLE `t` (a BIGINT PRIMARY KEY AUTO_RANDOM(2), b INT) PRE_SPLIT_REGIONS=4;
+SHOW CREATE TABLE `t`;

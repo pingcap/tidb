@@ -293,7 +293,6 @@ const (
 		source VARCHAR(10) NOT NULL DEFAULT 'unknown',
 		sql_digest varchar(64),
 		plan_digest varchar(64),
-		type varchar(64) NOT NULL DEFAULT '',
 		INDEX sql_index(original_sql(700),default_db(68)) COMMENT "accelerate the speed when add global binding query",
 		INDEX time_index(update_time) COMMENT "accelerate the speed when querying with last update time"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
@@ -1040,17 +1039,13 @@ const (
 	version180 = 180
 
 	// version 181
-	//   add a new `type` column on mysql.bind_info, which is for universal binding #48875.
-	version181 = 181
-
-	// version 182
 	//   add column `bdr_role` to `mysql.tidb_ddl_job` and `mysql.tidb_ddl_history`.
-	version182 = 182
+	version181 = 181
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version182
+var currentBootstrapVersion int64 = version181
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1207,7 +1202,6 @@ var (
 		upgradeToVer179,
 		upgradeToVer180,
 		upgradeToVer181,
-		upgradeToVer182,
 	}
 )
 
@@ -2948,13 +2942,6 @@ func upgradeToVer180(s sessiontypes.Session, ver int64) {
 
 func upgradeToVer181(s sessiontypes.Session, ver int64) {
 	if ver >= version181 {
-		return
-	}
-	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN `type` VARCHAR(64) NOT NULL DEFAULT ''", infoschema.ErrColumnExists)
-}
-
-func upgradeToVer182(s sessiontypes.Session, ver int64) {
-	if ver >= version182 {
 		return
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ddl_job ADD COLUMN `bdr_role` varchar(64)", infoschema.ErrColumnExists)
