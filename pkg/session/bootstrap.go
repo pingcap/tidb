@@ -3088,6 +3088,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateDoneRunawayWatchTable)
 	// create dist_framework_meta
 	mustExecute(s, CreateDistFrameworkMeta)
+	// create request_unit_by_group
+	mustExecute(s, CreateRequestUnitByGroupTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

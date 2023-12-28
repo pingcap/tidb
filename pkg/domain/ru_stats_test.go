@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
@@ -32,9 +31,6 @@ import (
 func TestWriteRUStatistics(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := newTestKitWithRoot(t, store)
-
-	// create the system table
-	tk.MustExec(session.CreateRequestUnitByGroupTable)
 
 	testRUWriter := domain.NewRUStatsWriter(dom)
 	testRMClient := &testRMClient{
