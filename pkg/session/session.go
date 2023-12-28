@@ -3519,7 +3519,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 		dom.Close()
 		return nil, errors.New("Fail to load or parse sql file")
 	}
-	err = dom.InitDistTaskLoop(ctx)
+	err = dom.InitDistTaskLoop()
 	if err != nil {
 		return nil, err
 	}
