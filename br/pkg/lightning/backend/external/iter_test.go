@@ -666,6 +666,8 @@ func (s *slowOpenStorage) Open(
 func TestMergePropBaseIter(t *testing.T) {
 	// this test should be finished around 1 second. However, due to CI is not
 	// stable, we don't check the time.
+	oneOpenSleep := time.Second
+
 	fileNum := 16
 	filenames := make([]string, fileNum)
 	for i := range filenames {
@@ -674,7 +676,7 @@ func TestMergePropBaseIter(t *testing.T) {
 	ctx := context.Background()
 	store := &slowOpenStorage{
 		MemStorage: storage.NewMemStorage(),
-		sleep:      time.Second,
+		sleep:      oneOpenSleep,
 	}
 	for i, filename := range filenames {
 		writer, err := store.Create(ctx, filename, nil)
@@ -727,6 +729,7 @@ func TestEmptyBaseReader4LimitSizeMergeIter(t *testing.T) {
 		multiStat.Filenames = append(multiStat.Filenames, [2]string{"", f})
 	}
 	iter, err := newMergePropBaseIter(ctx, multiStat, store)
+	require.NoError(t, err)
 
 	_, err = iter.next()
 	require.ErrorIs(t, err, io.EOF)
