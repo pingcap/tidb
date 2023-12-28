@@ -46,12 +46,13 @@ func TestFrameworkPauseAndResume(t *testing.T) {
 	// 1. schedule and pause one running task.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pauseTaskAfterRefreshTask", "2*return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterResume", "return()"))
-	testutil.DispatchTaskAndCheckState(ctx, t, "key1", testContext, proto.TaskStatePaused)
+	task1 := testutil.SubmitAndWaitTask(ctx, t, "key1")
+	require.Equal(t, proto.TaskStatePaused, task1.State)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pauseTaskAfterRefreshTask"))
 	// 4 subtask scheduled.
 	require.NoError(t, handle.ResumeTask(ctx, "key1"))
 	<-scheduler.TestSyncChan
-	testutil.WaitTaskExit(ctx, t, "key1")
+	testutil.WaitTaskDoneOrPaused(ctx, t, task1.Key)
 	CheckSubtasksState(ctx, t, 1, proto.TaskStateSucceed, 4)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterResume"))
 
@@ -64,13 +65,13 @@ func TestFrameworkPauseAndResume(t *testing.T) {
 	// 2. pause pending task.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pausePendingTask", "2*return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterResume", "1*return()"))
-	testutil.DispatchTaskAndCheckState(ctx, t, "key2", testContext, proto.TaskStatePaused)
-
+	task2 := testutil.SubmitAndWaitTask(ctx, t, "key2")
+	require.Equal(t, proto.TaskStatePaused, task2.State)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pausePendingTask"))
 	// 4 subtask scheduled.
 	require.NoError(t, handle.ResumeTask(ctx, "key2"))
 	<-scheduler.TestSyncChan
-	testutil.WaitTaskExit(ctx, t, "key2")
+	testutil.WaitTaskDoneOrPaused(ctx, t, task2.Key)
 	CheckSubtasksState(ctx, t, 1, proto.TaskStateSucceed, 4)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterResume"))
 

@@ -1042,7 +1042,6 @@ const (
 	// version 179
 	//   enlarge `VARIABLE_VALUE` of `mysql.global_variables` from `varchar(1024)` to `varchar(16383)`.
 	version179 = 179
-
 	// version 180
 	//   add priority/create_time/end_time to `mysql.tidb_global_task`/`mysql.tidb_global_task_history`
 	//   add concurrency/create_time/end_time/digest to `mysql.tidb_background_subtask`/`mysql.tidb_background_subtask_history`
@@ -1050,14 +1049,18 @@ const (
 	version180 = 180
 
 	// version 181
+	//   add column `bdr_role` to `mysql.tidb_ddl_job` and `mysql.tidb_ddl_history`.
+	version181 = 181
+
+	// version 182
 	//   add new system table `mysql.request_unit_by_group`, which is used for
 	//   historical RU consumption by resource group per day.
-	version181 = 181
+	version182 = 182
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version181
+var currentBootstrapVersion int64 = version182
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1214,6 +1217,7 @@ var (
 		upgradeToVer179,
 		upgradeToVer180,
 		upgradeToVer181,
+		upgradeToVer182,
 	}
 )
 
@@ -2954,6 +2958,14 @@ func upgradeToVer180(s sessiontypes.Session, ver int64) {
 
 func upgradeToVer181(s sessiontypes.Session, ver int64) {
 	if ver >= version181 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ddl_job ADD COLUMN `bdr_role` varchar(64)", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ddl_history ADD COLUMN `bdr_role` varchar(64)", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer182(s sessiontypes.Session, ver int64) {
+	if ver >= version182 {
 		return
 	}
 	doReentrantDDL(s, CreateRequestUnitByGroupTable)

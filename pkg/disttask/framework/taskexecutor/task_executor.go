@@ -157,7 +157,7 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 		zap.Int("concurrency", task.Concurrency),
 		zap.Float64("mem-limit-percent", gctuner.GlobalMemoryLimitTuner.GetPercentage()),
 		zap.String("server-mem-limit", memory.ServerMemoryLimitOriginText.Load()),
-	), "schedule step")
+	), "execute task")
 	// log as info level, subtask might be cancelled, let caller check it.
 	defer func() {
 		stepLogger.End(zap.InfoLevel, resErr)
@@ -331,7 +331,7 @@ func (s *BaseTaskExecutor) runSubtask(ctx context.Context, subtaskExecutor execu
 
 	failpoint.Inject("mockTiDBPartitionThenResume", func(val failpoint.Value) {
 		if val.(bool) && (s.id == ":4000" || s.id == ":4001" || s.id == ":4002") {
-			_ = infosync.MockGlobalServerInfoManagerEntry.DeleteByID(s.id)
+			infosync.MockGlobalServerInfoManagerEntry.DeleteByExecID(s.id)
 			time.Sleep(20 * time.Second)
 		}
 	})
