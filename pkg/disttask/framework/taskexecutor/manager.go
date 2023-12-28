@@ -421,7 +421,7 @@ func (m *Manager) onRunnableTask(task *proto.Task) {
 		switch task.State {
 		case proto.TaskStateRunning:
 			if taskCtx.Err() != nil {
-				logutil.Logger(m.logCtx).Info("onRunnableTask exit for taskCtx.Done",
+				logutil.Logger(m.logCtx).Debug("onRunnableTask exit for taskCtx.Done",
 					zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type), zap.Error(taskCtx.Err()))
 				return
 			}
