@@ -1522,7 +1522,6 @@ func (m *Meta) GetRUStats() (*RUStats, error) {
 		}
 	}
 	return ruStats, nil
-
 }
 
 // SetRUStats persist new ru stats data to meta storage.
