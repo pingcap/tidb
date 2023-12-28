@@ -18,6 +18,7 @@ go_test(
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/testkit",
+        "//pkg/testkit/external",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util",
