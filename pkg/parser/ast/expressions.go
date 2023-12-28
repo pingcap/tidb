@@ -510,6 +510,14 @@ type ColumnName struct {
 	Name   model.CIStr
 }
 
+// ToTableName converts ColumnName to TableName.
+func (n *ColumnName) ToTableName() *TableName {
+	return &TableName{
+		Schema: n.Schema,
+		Name:   n.Table,
+	}
+}
+
 // Restore implements Node interface.
 func (n *ColumnName) Restore(ctx *format.RestoreCtx) error {
 	if n.Schema.O != "" && !ctx.IsCTETableName(n.Table.L) && !ctx.Flags.HasWithoutSchemaNameFlag() {

@@ -15,7 +15,6 @@
 package bindinfo
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
@@ -25,23 +24,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func getTableName(n []*ast.Node) []string {
+func getTableName(n []*ast.TableName) []string {
 	var result []string
 	for _, v := range n {
 		var sb strings.Builder
 		restoreFlags := format.RestoreKeyWordLowercase
 		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
-		switch node := (*v).(type) {
-		case *ast.TableName:
-			node.Restore(restoreCtx)
-			result = append(result, sb.String())
-		case *ast.ColumnName:
-			if node.Schema.String() != "" {
-				result = append(result, fmt.Sprintf("%s.%s", node.Schema.String(), node.Table.String()))
-			} else {
-				result = append(result, node.Table.String())
-			}
-		}
+		v.Restore(restoreCtx)
+		result = append(result, sb.String())
 	}
 	return result
 }

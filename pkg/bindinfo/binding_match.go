@@ -22,7 +22,7 @@ import (
 )
 
 // CollectTableNames gets all table names from ast.Node.
-func CollectTableNames(in ast.Node) []*ast.Node {
+func CollectTableNames(in ast.Node) []*ast.TableName {
 	collector := tableNameCollectorPool.Get().(*tableNameCollector)
 	defer collector.DestroyAndPutToPool()
 	in.Accept(collector)
@@ -36,12 +36,12 @@ var tableNameCollectorPool = sync.Pool{
 }
 
 type tableNameCollector struct {
-	tableNames []*ast.Node
+	tableNames []*ast.TableName
 }
 
 func newCollectTableName() *tableNameCollector {
 	return &tableNameCollector{
-		tableNames: make([]*ast.Node, 0, 4),
+		tableNames: make([]*ast.TableName, 0, 4),
 	}
 }
 
@@ -50,10 +50,10 @@ func (c *tableNameCollector) Enter(in ast.Node) (out ast.Node, skipChildren bool
 	switch node := in.(type) {
 	case *ast.ColumnName:
 		if node.Table.String() != "" {
-			c.tableNames = append(c.tableNames, &in)
+			c.tableNames = append(c.tableNames, node.ToTableName())
 		}
 	case *ast.TableName:
-		c.tableNames = append(c.tableNames, &in)
+		c.tableNames = append(c.tableNames, node)
 		return in, true
 	}
 	return in, false
@@ -64,7 +64,7 @@ func (*tableNameCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
 }
 
-func (c *tableNameCollector) GetResult() []*ast.Node {
+func (c *tableNameCollector) GetResult() []*ast.TableName {
 	return slices.Clone(c.tableNames)
 }
 
