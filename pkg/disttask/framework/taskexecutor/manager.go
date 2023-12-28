@@ -112,6 +112,12 @@ func (m *Manager) initMeta() (err error) {
 		if err == nil {
 			break
 		}
+		select {
+		case <-m.ctx.Done():
+			// We don't retry if outer context is canceled.
+			return err
+		default:
+		}
 		if i%10 == 0 {
 			logutil.Logger(m.logCtx).Warn("start manager failed",
 				zap.String("scope", config.GetGlobalConfig().Instance.TiDBServiceScope),
