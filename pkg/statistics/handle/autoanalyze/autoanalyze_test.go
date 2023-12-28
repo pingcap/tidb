@@ -59,12 +59,12 @@ func TestAutoAnalyzeLockedTable(t *testing.T) {
 		autoanalyze.AutoAnalyzeMinCnt = 1000
 	}()
 	// Try to analyze the locked table, it should not analyze the table.
-	require.False(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+	require.False(t, dom.StatsHandle().HandleAutoAnalyze())
 
 	// Unlock the table.
 	tk.MustExec("unlock stats t")
 	// Try again, it should analyze the table.
-	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
 }
 
 func TestDisableAutoAnalyze(t *testing.T) {
@@ -87,16 +87,16 @@ func TestDisableAutoAnalyze(t *testing.T) {
 		autoanalyze.AutoAnalyzeMinCnt = 1000
 	}()
 	// Even auto analyze ratio is set to 0, we still need to analyze the unanalyzed tables.
-	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
 	require.NoError(t, h.Update(is))
 
 	// Try again, it should not analyze the table because it's already analyzed and auto analyze ratio is 0.
-	require.False(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+	require.False(t, dom.StatsHandle().HandleAutoAnalyze())
 
 	// Index analyze doesn't depend on auto analyze ratio. Only control by tidb_enable_auto_analyze.
 	// Even auto analyze ratio is set to 0, we still need to analyze the newly created index.
 	tk.MustExec("alter table t add index ia(a)")
-	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
 }
 
 func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
@@ -118,7 +118,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	is := do.InfoSchema()
 	require.NoError(t, h.Update(is))
 	// Auto analyze when global ver is 1.
-	h.HandleAutoAnalyze(is)
+	h.HandleAutoAnalyze()
 	require.NoError(t, h.Update(is))
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
@@ -135,7 +135,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(is))
 	// Auto analyze t whose version is 1 after setting global ver to 2.
-	h.HandleAutoAnalyze(is)
+	h.HandleAutoAnalyze()
 	require.NoError(t, h.Update(is))
 	statsTbl1 = h.GetTableStats(tbl.Meta())
 	require.Equal(t, int64(5), statsTbl1.RealtimeCount)
@@ -156,7 +156,7 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tt"))
 	require.NoError(t, err)
 	require.NoError(t, h.Update(is))
-	h.HandleAutoAnalyze(is)
+	h.HandleAutoAnalyze()
 	require.NoError(t, h.Update(is))
 	statsTbl2 := h.GetTableStats(tbl2.Meta())
 	// Since it's a newly created table. Auto analyze should analyze it's statistics to version2.
@@ -292,7 +292,7 @@ func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
 	defer func() {
 		autoanalyze.AutoAnalyzeMinCnt = originalVal
 	}()
-	require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()))
+	require.True(t, h.HandleAutoAnalyze())
 	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%auto analyze table%'").Check(testkit.Rows("auto analyze table columns a, b, d with 256 buckets, 500 topn, 1 samplerate"))
 }
 
@@ -312,7 +312,7 @@ func TestAutoAnalyzeOnEmptyTable(t *testing.T) {
 	start, end := fmt.Sprintf("%02d:%02d +0000", h, m), fmt.Sprintf("%02d:%02d +0000", h, m)
 	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", start))
 	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", end))
-	dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema())
+	dom.StatsHandle().HandleAutoAnalyze()
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int, index idx(a))")
@@ -324,11 +324,11 @@ func TestAutoAnalyzeOnEmptyTable(t *testing.T) {
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 
 	// test if it will be limited by the time range
-	require.False(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+	require.False(t, dom.StatsHandle().HandleAutoAnalyze())
 
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
-	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
 }
 
 func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
@@ -347,7 +347,7 @@ func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
 	start, end := fmt.Sprintf("%02d:%02d +0000", h, m), fmt.Sprintf("%02d:%02d +0000", h, m)
 	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_start_time='%v'", start))
 	tk.MustExec(fmt.Sprintf("set global tidb_auto_analyze_end_time='%v'", end))
-	dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema())
+	dom.StatsHandle().HandleAutoAnalyze()
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
@@ -358,15 +358,15 @@ func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 
-	require.False(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+	require.False(t, dom.StatsHandle().HandleAutoAnalyze())
 	tk.MustExec("analyze table t")
 
 	tk.MustExec("alter table t add index ia(a)")
-	require.False(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+	require.False(t, dom.StatsHandle().HandleAutoAnalyze())
 
 	tk.MustExec("set global tidb_auto_analyze_start_time='00:00 +0000'")
 	tk.MustExec("set global tidb_auto_analyze_end_time='23:59 +0000'")
-	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
 }
 
 func makeFailpointRes(t *testing.T, v interface{}) string {
@@ -548,7 +548,6 @@ func TestSkipAutoAnalyzeOutsideTheAvailableTime(t *testing.T) {
 			se.(sessionctx.Context),
 			dom.StatsHandle(),
 			dom.SysProcTracker(),
-			dom.InfoSchema(),
 			0.6,
 			variable.Dynamic,
 			ttStart,
