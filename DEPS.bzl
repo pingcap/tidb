@@ -6265,13 +6265,13 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sha256 = "5cf7fd02dc19b5a84b74fb0f5b066e147be92a964b6a03604436e9ee9a2ce752",
-        strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20231222062942-c0c73f41d0b2",
+        sha256 = "89809f836b484ca8170e2c4a4dfde668fdd2a95a453d820c461d7f64748ebd7e",
+        strip_prefix = "github.com/yujuncen/kvproto@v0.0.0-20231228063318-9546d6dcd3cb",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20231222062942-c0c73f41d0b2.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20231222062942-c0c73f41d0b2.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20231222062942-c0c73f41d0b2.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20231222062942-c0c73f41d0b2.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/yujuncen/kvproto/com_github_yujuncen_kvproto-v0.0.0-20231228063318-9546d6dcd3cb.zip",
+            "http://ats.apps.svc/gomod/github.com/yujuncen/kvproto/com_github_yujuncen_kvproto-v0.0.0-20231228063318-9546d6dcd3cb.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/yujuncen/kvproto/com_github_yujuncen_kvproto-v0.0.0-20231228063318-9546d6dcd3cb.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/yujuncen/kvproto/com_github_yujuncen_kvproto-v0.0.0-20231228063318-9546d6dcd3cb.zip",
         ],
     )
     go_repository(
@@ -8602,6 +8602,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_google_cloud_go_dataproc",
+        build_file_proto_mode = "disable_global",
+        importpath = "cloud.google.com/go/dataproc",
+        sha256 = "f4adc94c30406a2bd04b62f2a0c8c33ddb605ffda53024b034e5c136407f0c73",
+        strip_prefix = "cloud.google.com/go/dataproc@v1.12.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/cloud.google.com/go/dataproc/com_google_cloud_go_dataproc-v1.12.0.zip",
+            "http://ats.apps.svc/gomod/cloud.google.com/go/dataproc/com_google_cloud_go_dataproc-v1.12.0.zip",
+            "https://cache.hawkingrei.com/gomod/cloud.google.com/go/dataproc/com_google_cloud_go_dataproc-v1.12.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/cloud.google.com/go/dataproc/com_google_cloud_go_dataproc-v1.12.0.zip",
+        ],
+    )
+    go_repository(
         name = "com_google_cloud_go_dataproc_v2",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/dataproc/v2",
@@ -10696,6 +10709,19 @@ def go_deps():
             "http://ats.apps.svc/gomod/google.golang.org/grpc/org_golang_google_grpc-v1.60.1.zip",
             "https://cache.hawkingrei.com/gomod/google.golang.org/grpc/org_golang_google_grpc-v1.60.1.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/google.golang.org/grpc/org_golang_google_grpc-v1.60.1.zip",
+        ],
+    )
+    go_repository(
+        name = "org_golang_google_grpc_cmd_protoc_gen_go_grpc",
+        build_file_proto_mode = "disable_global",
+        importpath = "google.golang.org/grpc/cmd/protoc-gen-go-grpc",
+        sha256 = "13877d86cbfa30bde4d62fef2bc58dd56377dcb502c16cf78197f6934193009a",
+        strip_prefix = "google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.1.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/google.golang.org/grpc/cmd/protoc-gen-go-grpc/org_golang_google_grpc_cmd_protoc_gen_go_grpc-v1.1.0.zip",
+            "http://ats.apps.svc/gomod/google.golang.org/grpc/cmd/protoc-gen-go-grpc/org_golang_google_grpc_cmd_protoc_gen_go_grpc-v1.1.0.zip",
+            "https://cache.hawkingrei.com/gomod/google.golang.org/grpc/cmd/protoc-gen-go-grpc/org_golang_google_grpc_cmd_protoc_gen_go_grpc-v1.1.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/google.golang.org/grpc/cmd/protoc-gen-go-grpc/org_golang_google_grpc_cmd_protoc_gen_go_grpc-v1.1.0.zip",
         ],
     )
     go_repository(
