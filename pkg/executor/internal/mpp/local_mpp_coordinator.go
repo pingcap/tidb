@@ -145,8 +145,8 @@ type localMppCoordinator struct {
 	enableCollectExecutionInfo bool
 	reportExecutionInfo        bool // if each mpp task needs to report execution info directly to coordinator through ReportMPPTaskStatus
 
-	// Record all nodes that involved in the mpp computation.
-	nodeInfo map[string]bool
+	// Record node cnt that involved in the mpp computation.
+	nodeCnt int
 }
 
 // NewLocalMPPCoordinator creates a new localMppCoordinator instance
@@ -721,7 +721,10 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	c.nodeInfo = nodeInfo
+	if nodeInfo == nil {
+		return nil, nil, errors.New("node info should not be nil")
+	}
+	c.nodeCnt = len(nodeInfo)
 
 	for _, frag := range frags {
 		err = c.appendMPPDispatchReq(frag)
@@ -750,5 +753,5 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 
 // GetNodeCnt returns the node count that involved in the mpp computation.
 func (c *localMppCoordinator) GetNodeCnt() int {
-	return len(c.nodeInfo)
+	return c.nodeCnt
 }
