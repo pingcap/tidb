@@ -611,9 +611,7 @@ func (e *mppTaskGenerator) constructMPPTasksImpl(ctx context.Context, ts *Physic
 		}
 		tasks = append(tasks, task)
 		addr := meta.GetAddress()
-		if _, ok := e.nodeInfo[addr]; !ok {
-			e.nodeInfo[addr] = true
-		}
+		e.nodeInfo[addr] = true
 	}
 	return tasks, nil
 }
