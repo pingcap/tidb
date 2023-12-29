@@ -150,9 +150,9 @@ type dataCursor struct {
 
 func NewDataCursor() *dataCursor {
 	return &dataCursor{
-		chkID:     0,
-		rowID:     0,
-		chkRowNum: 0,
+		chkID:     -1,
+		rowID:     -1,
+		chkRowNum: -1,
 		chk:       nil,
 	}
 }
@@ -165,12 +165,12 @@ func (d *dataCursor) advanceRow() {
 	d.rowID++
 }
 
-func (d *dataCursor) getSpilledRow() *chunk.Row {
+func (d *dataCursor) getSpilledRow() chunk.Row {
 	if d.rowID >= d.chkRowNum {
-		return nil
+		return chunk.Row{}
 	}
 	row := d.chk.GetRow(d.rowID)
-	return &row
+	return row
 }
 
 func (d *dataCursor) setChunk(chk *chunk.Chunk, chkID int) {

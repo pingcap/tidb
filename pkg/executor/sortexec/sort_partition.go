@@ -67,6 +67,8 @@ type sortPartition struct {
 
 	// It's index that points to the data need to be read next time.
 	idx int
+
+	cursor *dataCursor
 }
 
 // Creates a new SortPartition in memory.
@@ -89,6 +91,7 @@ func newSortPartition(fieldTypes []*types.FieldType, chunkSize int, byItemsDesc 
 		keyCmpFuncs:        keyCmpFuncs,
 		spillTriggered:     false,
 		idx:                0,
+		cursor:             NewDataCursor(),
 	}
 
 	return retVal
@@ -105,6 +108,22 @@ func (s *sortPartition) close() error {
 	s.diskTracker = nil
 	s.helper = nil
 	return nil
+}
+
+func (s *sortPartition) reloadCursor() (bool, error) {
+	spilledChkNum := s.inDisk.NumChunks()
+	restoredChkID := s.cursor.getChkID() + 1
+	if restoredChkID >= spilledChkNum {
+		// All data has been consumed
+		return false, nil
+	}
+
+	chk, err := s.inDisk.GetChunk(restoredChkID)
+	if err != nil {
+		return false, err
+	}
+	s.cursor.setChunk(chk, restoredChkID)
+	return true, nil
 }
 
 // Return false if the spill is triggered in this partition.
@@ -209,6 +228,36 @@ func (s *sortPartition) spillToDisk() error {
 	return err
 }
 
+func (s *sortPartition) getNextSortedRow() (chunk.Row, error) {
+	if s.isSpillTriggered() {
+		row := s.cursor.getSpilledRow()
+		if row.IsEmpty() {
+			success, err := s.reloadCursor()
+			if err != nil {
+				return chunk.Row{}, err
+			}
+			if !success {
+				// All data has been consumed
+				return chunk.Row{}, nil
+			}
+
+			row = s.cursor.getSpilledRow()
+			if row.IsEmpty() {
+				return chunk.Row{}, errors.New("Get an empty row")
+			}
+		}
+		s.cursor.advanceRow()
+		return row, nil
+	} else {
+		if s.idx >= len(s.savedRows) {
+			return chunk.Row{}, nil
+		}
+		ret := s.savedRows[s.idx]
+		s.advanceIdx()
+		return ret, nil
+	}
+}
+
 func (s *sortPartition) actionSpill(helper *spillHelper) *sortPartitionSpillDiskAction {
 	if s.spillAction == nil {
 		s.spillAction = &sortPartitionSpillDiskAction{
@@ -275,10 +324,6 @@ func (s *sortPartition) keyColumnsLess(i, j int) bool {
 
 	s.timesOfRowCompare++
 	return s.lessRow(s.savedRows[i], s.savedRows[j])
-}
-
-func (s *sortPartition) getIdx() int {
-	return s.idx
 }
 
 func (s *sortPartition) advanceIdx() {

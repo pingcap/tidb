@@ -19,7 +19,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -143,17 +142,15 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *SortExec) initExternalSorting() error {
-	err := e.initCursors()
-	if err != nil {
-		return err
-	}
-
-	e.multiWayMerge = &multiWayMerge{e.lessRow, e.compressRow, make([]rowWithPartition, 0, len(e.cursors))}
-	for i := 0; i < len(e.cursors); i++ {
+	e.multiWayMerge = &multiWayMerge{e.lessRow, e.compressRow, make([]rowWithPartition, 0, len(e.sortPartitions))}
+	for i := 0; i < len(e.sortPartitions); i++ {
 		// We should always get row here
-		row := e.cursors[i].getSpilledRow()
-		e.cursors[i].advanceRow()
-		e.multiWayMerge.elements = append(e.multiWayMerge.elements, rowWithPartition{row: *row, partitionID: i})
+		row, err := e.sortPartitions[i].getNextSortedRow()
+		if err != nil {
+			return err
+		}
+
+		e.multiWayMerge.elements = append(e.multiWayMerge.elements, rowWithPartition{row: row, partitionID: i})
 	}
 	heap.Init(e.multiWayMerge)
 	return nil
@@ -167,42 +164,17 @@ func (e *SortExec) onePartitionSorting(req *chunk.Chunk) (err error) {
 		return e.helper.spillError
 	}
 
-	if e.sortPartitions[0].isSpillTriggered() {
-		if len(e.cursors) == 0 {
-			e.initCursors()
+	for !req.IsFull() {
+		row, err := e.sortPartitions[0].getNextSortedRow()
+		if err != nil {
+			return err
 		}
 
-		// Maybe the spill is triggered by the last chunk, so there is only one partition.
-		cursor := e.cursors[0]
-		for !req.IsFull() {
-			row := cursor.getSpilledRow()
-			if row == nil {
-				success, err := e.reloadCursor(0)
-				if err != nil {
-					return err
-				}
-
-				if !success {
-					// All data have been completely consumed
-					return nil
-				}
-
-				// row shouldn't be nil here
-				row = cursor.getSpilledRow()
-				if row == nil {
-					return errors.New("Get a nil row")
-				}
-			}
-
-			cursor.advanceRow()
-			req.AppendRow(*row)
+		if row.IsEmpty() {
+			return nil
 		}
-	} else {
-		// Spill is not triggered and all data are in memory.
-		rowNum := e.sortPartitions[0].numRowInMemory()
-		for !req.IsFull() && e.sortPartitions[0].getIdx() < rowNum {
-			e.sortPartitions[0].getSortedRowFromMemoryAndAppendToChunk(req)
-		}
+
+		req.AppendRow(row)
 	}
 	return nil
 }
@@ -222,23 +194,18 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 
 		// Get a new row from that partition which inserted data belongs to
 		partitionID := element.partitionID
-		newRow := e.cursors[partitionID].getSpilledRow()
-		if newRow == nil {
-			success, err := e.reloadCursor(partitionID)
-			if err != nil {
-				return err
-			}
-			if !success {
-				// All data in this partition have been consumed
-				heap.Remove(e.multiWayMerge, 0)
-				continue
-			}
-			newRow = e.cursors[partitionID].getSpilledRow()
+		row, err := e.sortPartitions[partitionID].getNextSortedRow()
+		if err != nil {
+			return err
 		}
 
-		e.cursors[partitionID].advanceRow()
+		if row.IsEmpty() {
+			// All data in this partition have been consumed
+			heap.Remove(e.multiWayMerge, 0)
+			continue
+		}
 
-		e.multiWayMerge.elements[0].row = *newRow
+		e.multiWayMerge.elements[0].row = row
 		heap.Fix(e.multiWayMerge, 0)
 	}
 	return nil

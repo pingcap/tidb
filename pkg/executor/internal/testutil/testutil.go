@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -286,4 +288,25 @@ func BuildMockDataSourceWithIndex(opt MockDataSourceParameters, index []int) *Mo
 		opt.Orders[idx] = true
 	}
 	return BuildMockDataSource(opt)
+}
+
+// MockActionOnExceed is for test.
+type MockActionOnExceed struct {
+	memory.BaseOOMAction
+	triggeredNum atomic.Int32
+}
+
+// Action add the triggered number.
+func (m *MockActionOnExceed) Action(*memory.Tracker) {
+	m.triggeredNum.Add(1)
+}
+
+// GetPriority get the priority of the Action.
+func (*MockActionOnExceed) GetPriority() int64 {
+	return memory.DefLogPriority
+}
+
+// GetTriggeredNum get the triggered number of the Action
+func (m *MockActionOnExceed) GetTriggeredNum() int {
+	return int(m.triggeredNum.Load())
 }
