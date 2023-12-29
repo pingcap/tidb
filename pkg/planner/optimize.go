@@ -593,10 +593,16 @@ func NormalizeStmtForPlanCache(stmtNode ast.StmtNode, specifiedDB string) (stmt 
 //
 //	e.g. `select * from test.t where a in (1, 2, 3)` --> `select * from t where a in (...)`
 func NormalizeStmtForBinding(stmtNode ast.StmtNode, specifiedDB string, isUniversalBinding bool) (stmt ast.StmtNode, normalizedStmt, sqlDigest string, err error) {
-	if isUniversalBinding {
-		return normalizeStmt(stmtNode, specifiedDB, 2)
-	}
 	return normalizeStmt(stmtNode, specifiedDB, 1)
+}
+
+func NormalizeStmtForUniversalBinding(stmtNode ast.StmtNode, specifiedDB string, isUniversalBinding bool) (stmt ast.StmtNode, normalizedStmt, sqlDigest string, tableNames []*ast.TableName, err error) {
+	stmt, normalizedStmt, sqlDigest, err = normalizeStmt(stmtNode, specifiedDB, 2)
+	if err != nil {
+		return stmt, normalizedStmt, sqlDigest, nil, err
+	}
+	tableNames = bindinfo.CollectTableNames(stmt)
+	return stmt, normalizedStmt, sqlDigest, tableNames, err
 }
 
 // flag 0 is for plan cache, 1 is for normal bindings and 2 is for universal bindings.
@@ -667,14 +673,25 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRec
 	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
 		return nil, "", nil
 	}
-	stmtNode, normalizedSQL, sqlDigest, err := NormalizeStmtForBinding(stmt, ctx.GetSessionVars().CurrentDB, false)
-	if err != nil || stmtNode == nil {
-		return nil, "", err
-	}
-	var normalizedSQLUni, sqlDigestUni string
+	var (
+		stmtNode      ast.StmtNode
+		normalizedSQL string
+		sqlDigest     string
+		err           error
+	)
+
+	var (
+		normalizedSQLUni, sqlDigestUni string
+		tableNames                     []*ast.TableName
+	)
 	if ctx.GetSessionVars().EnableUniversalBinding {
-		_, normalizedSQLUni, sqlDigestUni, err = NormalizeStmtForBinding(stmt, ctx.GetSessionVars().CurrentDB, true)
+		_, normalizedSQLUni, sqlDigestUni, tableNames, err = NormalizeStmtForUniversalBinding(stmt, ctx.GetSessionVars().CurrentDB, true)
 		if err != nil {
+			return nil, "", err
+		}
+	} else {
+		stmtNode, normalizedSQL, sqlDigest, err = NormalizeStmtForBinding(stmt, ctx.GetSessionVars().CurrentDB, false)
+		if err != nil || stmtNode == nil {
 			return nil, "", err
 		}
 	}

@@ -18,6 +18,7 @@ import (
 	"errors"
 	"sync"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
@@ -179,7 +180,7 @@ func (c *bindCache) GetAllBindings() []*BindRecord {
 
 // SetBinding sets the BindRecord to the cache.
 // The function is thread-safe.
-func (c *bindCache) SetBinding(sqlDigest string, meta *BindRecord) (err error) {
+func (c *bindCache) SetBinding(sqlDigest string, meta *BindRecord, universalBindingTableNames []*ast.TableName) (err error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	cacheKey := bindCacheKey(sqlDigest)
@@ -187,6 +188,9 @@ func (c *bindCache) SetBinding(sqlDigest string, meta *BindRecord) (err error) {
 	for i := range metas {
 		if metas[i].OriginalSQL == meta.OriginalSQL {
 			metas[i] = meta
+			if universalBindingTableNames != nil {
+				metas[i].tableNames = universalBindingTableNames
+			}
 		}
 	}
 	_, err = c.set(cacheKey, []*BindRecord{meta})

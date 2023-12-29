@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -120,8 +121,8 @@ func (b *Binding) SinceUpdateTime() (time.Duration, error) {
 type BindRecord struct {
 	OriginalSQL string
 	Db          string
-
-	Bindings []Binding
+	tableNames  []*ast.TableName
+	Bindings    []Binding
 }
 
 // Copy get the copy of bindRecord

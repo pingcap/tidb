@@ -171,6 +171,12 @@ func (h *globalBindingHandle) CaptureBaselines() {
 		}
 		dbName := utilparser.GetDefaultDB(stmt, bindableStmt.Schema)
 		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName, bindableStmt.Query))
+		normalizedSQLStmt, err := parser4Capture.ParseOneStmt(bindableStmt.Query, bindableStmt.Charset, bindableStmt.Collation)
+		if err != nil {
+			logutil.BgLogger().Debug("parse Original SQL failed in baseline capture", zap.String("category", "sql-bind"), zap.String("SQL", bindableStmt.Query), zap.Error(err))
+			continue
+		}
+		universalTableNames := CollectTableNames(normalizedSQLStmt)
 		if r := h.GetGlobalBinding(digest.String(), normalizedSQL, dbName); r != nil && r.HasAvailableBinding() {
 			continue
 		}
@@ -193,7 +199,7 @@ func (h *globalBindingHandle) CaptureBaselines() {
 			SQLDigest: digest.String(),
 		}
 		// We don't need to pass the `sctx` because the BindSQL has been validated already.
-		err = h.CreateGlobalBinding(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, Bindings: []Binding{binding}})
+		err = h.CreateGlobalBinding(nil, &BindRecord{OriginalSQL: normalizedSQL, Db: dbName, tableNames: universalTableNames, Bindings: []Binding{binding}})
 		if err != nil {
 			logutil.BgLogger().Debug("create bind record failed in baseline capture", zap.String("category", "sql-bind"), zap.String("SQL", bindableStmt.Query), zap.Error(err))
 		}

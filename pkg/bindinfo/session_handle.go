@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -71,9 +72,9 @@ func NewSessionBindingHandle() SessionBindingHandle {
 
 // appendSessionBinding adds the BindRecord to the cache, all the stale bindMetas are
 // removed from the cache after this operation.
-func (h *sessionBindingHandle) appendSessionBinding(sqlDigest string, meta *BindRecord) {
+func (h *sessionBindingHandle) appendSessionBinding(sqlDigest string, meta *BindRecord, univeralTableName []*ast.TableName) {
 	oldRecord := h.ch.GetBinding(sqlDigest, meta.OriginalSQL, meta.Db)
-	err := h.ch.SetBinding(sqlDigest, meta)
+	err := h.ch.SetBinding(sqlDigest, meta, univeralTableName)
 	if err != nil {
 		logutil.BgLogger().Warn("SessionHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err))
 	}
@@ -93,8 +94,8 @@ func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, rec
 		record.Bindings[i].CreateTime = now
 		record.Bindings[i].UpdateTime = now
 	}
-
 	// update the BindMeta to the cache.
+
 	h.appendSessionBinding(parser.DigestNormalized(record.OriginalSQL).String(), record)
 	return nil
 }
@@ -114,7 +115,7 @@ func (h *sessionBindingHandle) DropSessionBinding(originalSQL, db string, bindin
 	} else {
 		newRecord = record
 	}
-	err := h.ch.SetBinding(sqlDigest, newRecord)
+	err := h.ch.SetBinding(sqlDigest, newRecord, newRecord.tableNames)
 	if err != nil {
 		// Should never reach here, just return an error for safety
 		return err
@@ -175,7 +176,7 @@ func (h *sessionBindingHandle) DecodeSessionStates(_ context.Context, sctx sessi
 		if err := record.prepareHints(sctx); err != nil {
 			return err
 		}
-		h.appendSessionBinding(parser.DigestNormalized(record.OriginalSQL).String(), record)
+		h.appendSessionBinding(parser.DigestNormalized(record.OriginalSQL).String(), record, record.tableNames)
 	}
 	return nil
 }

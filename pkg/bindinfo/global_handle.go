@@ -246,7 +246,7 @@ func (h *globalBindingHandle) Update(fullLoad bool) (err error) {
 			oldRecord := newCache.GetBinding(sqlDigest, meta.OriginalSQL, meta.Db)
 			newRecord := merge(oldRecord, meta).removeDeletedBindings()
 			if len(newRecord.Bindings) > 0 {
-				err = newCache.SetBinding(sqlDigest, newRecord)
+				err = newCache.SetBinding(sqlDigest, newRecord, oldRecord.tableNames)
 				if err != nil {
 					memExceededErr = err
 				}
@@ -280,7 +280,7 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, recor
 				return
 			}
 			sqlDigest := parser.DigestNormalized(record.OriginalSQL)
-			h.setGlobalCacheBinding(sqlDigest.String(), record)
+			h.setGlobalCacheBinding(sqlDigest.String(), record, record.tableNames)
 		}()
 
 		// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
@@ -399,6 +399,9 @@ func (h *globalBindingHandle) SetGlobalBindingStatus(originalSQL string, binding
 			ok = true
 			record := &BindRecord{OriginalSQL: originalSQL}
 			sqlDigest := parser.DigestNormalized(record.OriginalSQL)
+
+			parser.New().ParseOneStmt(record.)
+
 			oldRecord := h.GetGlobalBinding(sqlDigest.String(), originalSQL, "")
 			setBindingStatusInCacheSucc := false
 			if oldRecord != nil && len(oldRecord.Bindings) > 0 {
@@ -621,13 +624,13 @@ func newBindRecord(sctx sessionctx.Context, row chunk.Row) (string, *BindRecord,
 
 // setGlobalCacheBinding sets the BindRecord to the cache, if there already exists a BindRecord,
 // it will be overridden.
-func (h *globalBindingHandle) setGlobalCacheBinding(sqlDigest string, meta *BindRecord) {
+func (h *globalBindingHandle) setGlobalCacheBinding(sqlDigest string, meta *BindRecord, univeralTableNames []*ast.TableName) {
 	newCache, err0 := h.getCache().Copy()
 	if err0 != nil {
 		logutil.BgLogger().Warn("BindHandle.setGlobalCacheBindRecord", zap.String("category", "sql-bind"), zap.Error(err0))
 	}
 	oldRecord := newCache.GetBinding(sqlDigest, meta.OriginalSQL, meta.Db)
-	err1 := newCache.SetBinding(sqlDigest, meta)
+	err1 := newCache.SetBinding(sqlDigest, meta, univeralTableNames)
 	if err1 != nil && err0 == nil {
 		logutil.BgLogger().Warn("BindHandle.setGlobalCacheBindRecord", zap.String("category", "sql-bind"), zap.Error(err1))
 	}
