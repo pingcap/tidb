@@ -45,7 +45,7 @@ type TaskManager interface {
 	// PausingTask updated task state to pausing.
 	PauseTask(ctx context.Context, taskKey string) (bool, error)
 	// PausedTask updated task state to paused.
-	PausedTask(ctx context.Context, taskId int64) error
+	PausedTask(ctx context.Context, taskID int64) error
 	// SucceedTask updates a task to success state.
 	SucceedTask(ctx context.Context, taskID int64) error
 	// SwitchTaskStep switches the task to the next step and add subtasks in one
