@@ -160,6 +160,44 @@ func TestTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	checkTaskStateStep(t, task, proto.TaskStateSucceed, proto.StepDone)
 	require.GreaterOrEqual(t, task.StateUpdateTime, startTime)
+
+	// reverted a pending task, no effect
+	id, err = gm.CreateTask(ctx, "key-reverted", "test", 4, []byte("test"))
+	require.NoError(t, err)
+	require.NoError(t, gm.RevertedTask(ctx, id))
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	checkTaskStateStep(t, task, proto.TaskStatePending, proto.StepInit)
+	// reverted a reverting task
+	task.State = proto.TaskStateReverting
+	_, err = gm.UpdateTaskAndAddSubTasks(ctx, task, nil, proto.TaskStatePending)
+	require.NoError(t, err)
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateReverting, task.State)
+	require.NoError(t, gm.RevertedTask(ctx, task.ID))
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateReverted, task.State)
+	// paused
+
+	id, err = gm.CreateTask(ctx, "key-paused", "test", 4, []byte("test"))
+	require.NoError(t, err)
+	require.NoError(t, gm.PausedTask(ctx, id))
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	checkTaskStateStep(t, task, proto.TaskStatePending, proto.StepInit)
+	// reverted a reverting task
+	task.State = proto.TaskStatePausing
+	_, err = gm.UpdateTaskAndAddSubTasks(ctx, task, nil, proto.TaskStatePending)
+	require.NoError(t, err)
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStatePausing, task.State)
+	require.NoError(t, gm.PausedTask(ctx, task.ID))
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStatePaused, task.State)
 }
 
 func checkAfterSwitchStep(t *testing.T, startTime time.Time, task *proto.Task, subtasks []*proto.Subtask, step proto.Step) {

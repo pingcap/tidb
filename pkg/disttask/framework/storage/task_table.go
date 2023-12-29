@@ -261,22 +261,6 @@ func (*TaskManager) CreateTaskWithSession(ctx context.Context, se sessionctx.Con
 	return taskID, nil
 }
 
-// SucceedTask implements dispatcher.TaskManager interface.
-func (stm *TaskManager) SucceedTask(ctx context.Context, taskID int64) error {
-	return stm.WithNewSession(func(se sessionctx.Context) error {
-		_, err := ExecSQL(ctx, se, `
-			update mysql.tidb_global_task
-			set state = %?,
-			    step = %?,
-			    state_update_time = CURRENT_TIMESTAMP(),
-			    end_time = CURRENT_TIMESTAMP()
-			where id = %? and state = %?`,
-			proto.TaskStateSucceed, proto.StepDone, taskID, proto.TaskStateRunning,
-		)
-		return err
-	})
-}
-
 // GetOneTask get a task from task table, it's used by scheduler only.
 func (stm *TaskManager) GetOneTask(ctx context.Context) (task *proto.Task, err error) {
 	rs, err := stm.executeSQLWithNewSession(ctx, "select "+taskColumns+" from mysql.tidb_global_task where state = %? limit 1", proto.TaskStatePending)
@@ -405,20 +389,6 @@ func (stm *TaskManager) GetTaskByKeyWithHistory(ctx context.Context, key string)
 	}
 
 	return row2Task(rs[0]), nil
-}
-
-// FailTask implements the scheduler.TaskManager interface.
-func (stm *TaskManager) FailTask(ctx context.Context, taskID int64, currentState proto.TaskState, taskErr error) error {
-	_, err := stm.executeSQLWithNewSession(ctx,
-		`update mysql.tidb_global_task
-			set state=%?,
-			    error = %?,
-			    state_update_time = CURRENT_TIMESTAMP(),
-				end_time = CURRENT_TIMESTAMP()
-			where id=%? and state=%?`,
-		proto.TaskStateFailed, serializeErr(taskErr), taskID, currentState,
-	)
-	return err
 }
 
 // GetUsedSlotsOnNodes implements the scheduler.TaskManager interface.
@@ -1073,25 +1043,6 @@ func serializeErr(err error) []byte {
 	return errBytes
 }
 
-// CancelTask cancels task.
-func (stm *TaskManager) CancelTask(ctx context.Context, taskID int64) error {
-	_, err := stm.executeSQLWithNewSession(ctx,
-		"update mysql.tidb_global_task set state=%?, state_update_time = CURRENT_TIMESTAMP() "+
-			"where id=%? and state in (%?, %?)",
-		proto.TaskStateCancelling, taskID, proto.TaskStatePending, proto.TaskStateRunning,
-	)
-	return err
-}
-
-// CancelTaskByKeySession cancels task by key using input session.
-func (*TaskManager) CancelTaskByKeySession(ctx context.Context, se sessionctx.Context, taskKey string) error {
-	_, err := ExecSQL(ctx, se,
-		"update mysql.tidb_global_task set state=%?, state_update_time = CURRENT_TIMESTAMP() "+
-			"where task_key=%? and state in (%?, %?)",
-		proto.TaskStateCancelling, taskKey, proto.TaskStatePending, proto.TaskStateRunning)
-	return err
-}
-
 // IsTaskCancelling checks whether the task state is cancelling.
 func (stm *TaskManager) IsTaskCancelling(ctx context.Context, taskID int64) (bool, error) {
 	rs, err := stm.executeSQLWithNewSession(ctx, "select 1 from mysql.tidb_global_task where id=%? and state = %?",
@@ -1103,52 +1054,6 @@ func (stm *TaskManager) IsTaskCancelling(ctx context.Context, taskID int64) (boo
 	}
 
 	return len(rs) > 0, nil
-}
-
-// PauseTask pauses the task.
-func (stm *TaskManager) PauseTask(ctx context.Context, taskKey string) (bool, error) {
-	found := false
-	err := stm.WithNewSession(func(se sessionctx.Context) error {
-		_, err := ExecSQL(ctx, se,
-			"update mysql.tidb_global_task set state=%?, state_update_time = CURRENT_TIMESTAMP() "+
-				"where task_key = %? and state in (%?, %?)",
-			proto.TaskStatePausing, taskKey, proto.TaskStatePending, proto.TaskStateRunning,
-		)
-		if err != nil {
-			return err
-		}
-		if se.GetSessionVars().StmtCtx.AffectedRows() != 0 {
-			found = true
-		}
-		return err
-	})
-	if err != nil {
-		return found, err
-	}
-	return found, nil
-}
-
-// ResumeTask resumes the task.
-func (stm *TaskManager) ResumeTask(ctx context.Context, taskKey string) (bool, error) {
-	found := false
-	err := stm.WithNewSession(func(se sessionctx.Context) error {
-		_, err := ExecSQL(ctx, se,
-			"update mysql.tidb_global_task set state=%?, state_update_time = CURRENT_TIMESTAMP() "+
-				"where task_key = %? and state = %?",
-			proto.TaskStateResuming, taskKey, proto.TaskStatePaused,
-		)
-		if err != nil {
-			return err
-		}
-		if se.GetSessionVars().StmtCtx.AffectedRows() != 0 {
-			found = true
-		}
-		return err
-	})
-	if err != nil {
-		return found, err
-	}
-	return found, nil
 }
 
 // GetSubtasksForImportInto gets the subtasks for import into(show import jobs).
