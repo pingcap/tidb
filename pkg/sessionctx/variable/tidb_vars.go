@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable/featuretag/disttask"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -1345,8 +1346,6 @@ const (
 	DefTiDBEnablePrepPlanCacheMemoryMonitor        = true
 	DefTiDBPrepPlanCacheMemoryGuardRatio           = 0.1
 	DefTiDBEnableDistTask                          = disttask.TiDBEnableDistTask
-	DefTiDBDDLV1                                   = 1
-	DefTiDBDDLV2                                   = 2
 	DefTiDBSimplifiedMetrics                       = false
 	DefTiDBEnablePaging                            = true
 	DefTiFlashFineGrainedShuffleStreamCount        = 0
@@ -1495,7 +1494,7 @@ var (
 	// variables for plan cache
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 	EnableDistTask                    = atomic.NewBool(DefTiDBEnableDistTask)
-	DDLVersion                        = atomic.NewInt64(DefTiDBDDLV1)
+	DDLVersion                        = atomic.NewInt64(model.TiDBDDLV1)
 	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
 	EnableMDL                         = atomic.NewBool(false)

@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -89,6 +90,7 @@ const (
 
 	reorgWorkerCnt   = 10
 	generalWorkerCnt = 1
+	localWorkerCnt   = 10
 
 	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
 	checkFlagIndexInJobArgs = 1
@@ -275,7 +277,7 @@ type ddl struct {
 	m            sync.RWMutex
 	wg           tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
 	limitJobCh   chan *limitJobTask
-	limitV2JobCh chan *limitJobTask
+	limitJobV2Ch chan *limitJobTask
 
 	*ddlCtx
 	sessPool          *sess.Pool
@@ -286,8 +288,9 @@ type ddl struct {
 	generalDDLWorkerPool *workerPool
 	localWorkerPool      *workerPool
 	// get notification if any DDL coming.
-	ddlJobCh chan struct{}
-	taskCh   chan *limitJobTask
+	ddlJobCh     chan struct{}
+	jobTaskCh    chan *limitJobTask
+	globalIDLock sync.Mutex
 }
 
 // waitSchemaSyncedController is to control whether to waitSchemaSynced or not.
@@ -398,13 +401,14 @@ type ddlCtx struct {
 // schemaVersionManager is used to manage the schema version. To prevent the conflicts on this key between different DDL job,
 // we use another transaction to update the schema version, so that we need to lock the schema version and unlock it until the job is committed.
 type schemaVersionManager struct {
-	schemaVersionMu sync.Mutex
-	// lockOwner stores the job ID that is holding the lock.
-	lockOwner atomicutil.Int64
+	etcdClient *clientv3.Client
+	seMaps     sync.Map
+	muMaps     sync.Map
+	ctx        context.Context
 }
 
-func newSchemaVersionManager() *schemaVersionManager {
-	return &schemaVersionManager{}
+func newSchemaVersionManager(ctx context.Context, etcdClient *clientv3.Client) *schemaVersionManager {
+	return &schemaVersionManager{ctx: ctx, etcdClient: etcdClient}
 }
 
 func (sv *schemaVersionManager) setSchemaVersion(job *model.Job, store kv.Storage) (schemaVersion int64, err error) {
@@ -420,22 +424,21 @@ func (sv *schemaVersionManager) setSchemaVersion(job *model.Job, store kv.Storag
 
 // lockSchemaVersion gets the lock to prevent the schema version from being updated.
 func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) {
-	ownerID := sv.lockOwner.Load()
-	// There may exist one job update schema version many times in multiple-schema-change, so we do not lock here again
-	// if they are the same job.
-	if ownerID != jobID {
-		sv.schemaVersionMu.Lock()
-		sv.lockOwner.Store(jobID)
-	}
+	s, _ := concurrency.NewSession(sv.etcdClient)
+	l := concurrency.NewMutex(s, "/schemaversion/")
+	sv.seMaps.Store(jobID, s)
+	sv.muMaps.Store(jobID, l)
+	l.Lock(sv.ctx)
 }
 
 // unlockSchemaVersion releases the lock.
 func (sv *schemaVersionManager) unlockSchemaVersion(jobID int64) {
-	ownerID := sv.lockOwner.Load()
-	if ownerID == jobID {
-		sv.lockOwner.Store(0)
-		sv.schemaVersionMu.Unlock()
-	}
+	s, _ := sv.seMaps.Load(jobID)
+	l, _ := sv.muMaps.Load(jobID)
+	l.(*concurrency.Mutex).Unlock(sv.ctx)
+	s.(*concurrency.Session).Close()
+	sv.seMaps.Delete(jobID)
+	sv.muMaps.Delete(jobID)
 }
 
 func (dc *ddlCtx) isOwner() bool {
@@ -657,7 +660,6 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		tableLockCkr:               deadLockCkr,
 		etcdCli:                    opt.EtcdCli,
 		autoidCli:                  opt.AutoIDClient,
-		schemaVersionManager:       newSchemaVersionManager(),
 		waitSchemaSyncedController: newWaitSchemaSyncedController(),
 		runningJobs:                newRunningJobs(),
 	}
@@ -671,11 +673,12 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	d := &ddl{
 		ddlCtx:            ddlCtx,
 		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
-		limitV2JobCh:      make(chan *limitJobTask, batchAddingJobs),
+		limitJobV2Ch:      make(chan *limitJobTask, batchAddingJobs),
 		enableTiFlashPoll: atomicutil.NewBool(true),
 		ddlJobCh:          make(chan struct{}, 100),
-		taskCh:            make(chan *limitJobTask, batchAddingJobs),
+		jobTaskCh:         make(chan *limitJobTask, batchAddingJobs),
 	}
+	ddlCtx.schemaVersionManager = newSchemaVersionManager(ddlCtx.ctx, opt.EtcdCli)
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
 		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
@@ -737,8 +740,8 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 	// reorg worker count at least 1 at most 10.
 	reorgCnt := min(max(runtime.GOMAXPROCS(0)/4, 1), reorgWorkerCnt)
 	d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(addIdxWorker), reorgCnt, reorgCnt, 0), reorg)
-	d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), general)
-	d.localWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), reorgCnt, reorgCnt, 0), general)
+	d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), localWorkerCnt, localWorkerCnt, 0), general)
+	d.localWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(localWorker), batchAddingJobs, batchAddingJobs, 0), local)
 	failpoint.Inject("NoDDLDispatchLoop", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return()
@@ -752,7 +755,12 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("start DDL", zap.String("category", "ddl"), zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
 
-	d.wg.Run(d.limitDDLJobs)
+	d.wg.Run(func() {
+		d.limitDDLJobs(d.limitJobCh, d.addBatchDDLJobs)
+	})
+	d.wg.Run(func() {
+		d.limitDDLJobs(d.limitJobV2Ch, d.addBatchDDLV2Jobs)
+	})
 	d.sessPool = sess.NewSessionPool(ctxPool, d.store)
 	d.ownerManager.SetBeOwnerHook(func() {
 		var err error
@@ -862,6 +870,9 @@ func (d *ddl) close() {
 	if d.generalDDLWorkerPool != nil {
 		d.generalDDLWorkerPool.close()
 	}
+	if d.localWorkerPool != nil {
+		d.localWorkerPool.close()
+	}
 
 	// d.delRangeMgr using sessions from d.sessPool.
 	// Put it before d.sessPool.close to reduce the time spent by d.sessPool.close.
@@ -896,6 +907,9 @@ func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.In
 func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 	var ret []int64
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	// lock to avoid write conflict
+	d.globalIDLock.Lock()
+	defer d.globalIDLock.Unlock()
 	err := kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
 			if val.(bool) {
@@ -1025,6 +1039,40 @@ func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
 	}
 }
 
+func setDDLJobVersion(job *model.Job) {
+	if variable.DDLVersion.Load() != model.TiDBDDLV2 {
+		job.Version = model.TiDBDDLV1
+		return
+	}
+
+	switch job.Type {
+	case model.ActionCreateTable:
+		if len(job.Args) == 0 {
+			break
+		}
+		tbInfo, ok := job.Args[0].(*model.TableInfo)
+		if ok && len(tbInfo.ForeignKeys) == 0 {
+			job.Version = model.TiDBDDLV2
+			return
+		}
+	default:
+	}
+	job.Version = model.TiDBDDLV1
+}
+
+func (d *ddl) deliverJobTask(task *limitJobTask) {
+	switch task.job.Version {
+	case model.TiDBDDLV2:
+		d.limitJobV2Ch <- task
+	default:
+		d.limitJobCh <- task
+	}
+}
+
+func (d *ddl) shouldCheckHistoryJob(job *model.Job) bool {
+	return !job.IsVersion2()
+}
+
 // DoDDLJob will return
 // - nil: found in history DDL job and no job error
 // - context.Cancel: job has been sent to worker, but not found in history DDL job before cancel
@@ -1041,12 +1089,9 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	}
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
+	setDDLJobVersion(job)
 	task := &limitJobTask{job, make(chan error), nil}
-	if job.Version == variable.DefTiDBDDLV2 {
-		d.limitV2JobCh <- task
-	} else {
-		d.limitJobCh <- task
-	}
+	d.deliverJobTask(task)
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
 		if val.(bool) {
@@ -1054,11 +1099,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			// The same job will be put to the DDL queue twice.
 			job = job.Clone()
 			task1 := &limitJobTask{job, make(chan error), nil}
-			if job.Version == variable.DefTiDBDDLV2 {
-				d.limitV2JobCh <- task1
-			} else {
-				d.limitJobCh <- task1
-			}
+			d.deliverJobTask(task1)
 			// The second job result is used for test.
 			task = task1
 		}
@@ -1077,7 +1118,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// Notice worker that we push a new job and wait the job done.
 	d.asyncNotifyWorker(d.ddlJobCh, addingDDLJobConcurrent, job.ID, job.Type.String())
 	logutil.BgLogger().Info("start DDL job", zap.String("category", "ddl"), zap.String("job", job.String()), zap.String("query", job.Query))
-	if job.Version == variable.DefTiDBDDLV2 {
+	if !d.shouldCheckHistoryJob(job) {
 		return nil
 	}
 
@@ -1194,7 +1235,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 }
 
 func (d *ddl) callHookOnChanged(job *model.Job, err error) error {
-	if job.State == model.JobStateNone {
+	if job.State == model.JobStateNone || job.IsVersion2() {
 		// We don't call the hook if the job haven't run yet.
 		return err
 	}

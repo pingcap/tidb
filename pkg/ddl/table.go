@@ -1492,7 +1492,7 @@ func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName stri
 		return checkTableNotExistsFromInfoSchema(is, schemaID, tableName)
 	}
 
-	return checkTableNotExistsFromStore(t, schemaID, tableName)
+	return nil
 }
 
 func checkConstraintNamesNotExists(t *meta.Meta, schemaID int64, constraints []*model.ConstraintInfo) error {

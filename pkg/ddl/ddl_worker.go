@@ -84,6 +84,9 @@ const (
 	generalWorker workerType = 0
 	// addIdxWorker is the worker who handles the operation of adding indexes.
 	addIdxWorker workerType = 1
+	// loaclWorker is the worker who handles the operation in local TiDB.
+	// currently it only handle CreateTable job of TiDBDDLV2.
+	localWorker workerType = 2
 	// waitDependencyJobInterval is the interval when the dependency job doesn't be done.
 	waitDependencyJobInterval = 200 * time.Millisecond
 	// noneDependencyJob means a job has no dependency-job.
@@ -166,6 +169,8 @@ func (w *worker) typeStr() string {
 		str = "general"
 	case addIdxWorker:
 		str = "add index"
+	case localWorker:
+		str = "local worker"
 	default:
 		str = "unknown"
 	}
@@ -207,30 +212,22 @@ func asyncNotify(ch chan struct{}) {
 	}
 }
 
-func (d *ddl) limitDDLJobs() {
+func (d *ddl) limitDDLJobs(ch chan *limitJobTask, handler func(tasks []*limitJobTask)) {
 	defer tidbutil.Recover(metrics.LabelDDL, "limitDDLJobs", nil, true)
 
 	tasks := make([]*limitJobTask, 0, batchAddingJobs)
 	for {
 		select {
-		case task := <-d.limitJobCh:
-			tasks = tasks[:0]
-			jobLen := len(d.limitJobCh)
-			tasks = append(tasks, task)
-			for i := 0; i < jobLen; i++ {
-				tasks = append(tasks, <-d.limitJobCh)
-			}
-			d.addBatchDDLJobs(tasks)
-		case task := <-d.limitV2JobCh:
-			tasks = tasks[:0]
-			jobLen := len(d.limitJobCh)
-			tasks = append(tasks, task)
-			for i := 0; i < jobLen; i++ {
-				tasks = append(tasks, <-d.limitJobCh)
-			}
-			d.addBatchDDLV2Jobs(tasks)
 		case <-d.ctx.Done():
 			return
+		case task := <-ch:
+			tasks = tasks[:0]
+			jobLen := len(ch)
+			tasks = append(tasks, task)
+			for i := 0; i < jobLen; i++ {
+				tasks = append(tasks, <-ch)
+			}
+			handler(tasks)
 		}
 	}
 }
@@ -294,8 +291,6 @@ func (d *ddl) addBatchDDLV2Jobs(tasks []*limitJobTask) {
 		for _, task := range tasks {
 			task.err <- err
 		}
-	}
-	if err != nil {
 		logutil.BgLogger().Warn("add DDL jobs failed", zap.String("category", "ddl"), zap.Error(err))
 	} else {
 		logutil.BgLogger().Info("add DDL jobs", zap.String("category", "ddl"), zap.Int("batch count", len(tasks)))
@@ -311,18 +306,19 @@ func (d *ddl) addBatchDDLJobs2LocalWorker(tasks []*limitJobTask) error {
 	)
 
 	toTable := !variable.DDLForce2Queue.Load()
-	if toTable {
-		se, err := d.sessPool.Get()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		defer d.sessPool.Put(se)
-		if err := d.checkFlashBackJobInTable(se); err != nil {
-			return errors.Trace(err)
-		}
-	}
+	//	if toTable {
+	//		se, err := d.sessPool.Get()
+	//		if err != nil {
+	//			return errors.Trace(err)
+	//		}
+	//		defer d.sessPool.Put(se)
+	//		if err := d.checkFlashBackJobInTable(se); err != nil {
+	//			return errors.Trace(err)
+	//		}
+	//	}
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	d.globalIDLock.Lock()
 	err = kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		ids, err = t.GenGlobalIDs(len(tasks))
@@ -335,6 +331,7 @@ func (d *ddl) addBatchDDLJobs2LocalWorker(tasks []*limitJobTask) error {
 		}
 		return nil
 	})
+	d.globalIDLock.Unlock()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -343,13 +340,16 @@ func (d *ddl) addBatchDDLJobs2LocalWorker(tasks []*limitJobTask) error {
 		job := task.job
 		job.StartTS = startTS
 		job.ID = ids[i]
-		job.Encode(true)
+		if _, err := job.Encode(true); err != nil {
+			return err
+		}
+
 		setJobStateToQueueing(job)
 
 		injectModifyJobArgFailPoint(job)
 	}
 	for _, task := range tasks {
-		d.taskCh <- task
+		d.jobTaskCh <- task
 	}
 	return nil
 }
@@ -400,7 +400,6 @@ func (d *ddl) addBatchDDLJobs2Queue(tasks []*limitJobTask) error {
 
 		for i, task := range tasks {
 			job := task.job
-			job.Version = currentVersion
 			job.StartTS = txn.StartTS()
 			job.ID = ids[i]
 			setJobStateToQueueing(job)
@@ -491,7 +490,6 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 	jobTasks := make([]*model.Job, 0, len(tasks))
 	for i, task := range tasks {
 		job := task.job
-		job.Version = currentVersion
 		job.StartTS = startTS
 		job.ID = ids[i]
 		if len(bdrRole) == 0 {
@@ -581,7 +579,7 @@ func (w *worker) updateDDLJob(job *model.Job, meetErr bool) error {
 		w.jobLogger(job).Info("meet something wrong before update DDL job, shouldn't update raw args",
 			zap.String("job", job.String()))
 	}
-	if job.Version == variable.DefTiDBDDLV2 {
+	if job.IsVersion2() {
 		return errors.Trace(insertDDLJobs2Table(w.sess, updateRawArgs, job))
 	}
 	return errors.Trace(updateDDLJob2Table(w.sess, job, updateRawArgs))
@@ -914,11 +912,9 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	// set request source type to DDL type
 	txn.SetOption(kv.RequestSourceType, jobContext.ddlJobSourceType())
 
-	logutil.BgLogger().Info("before run ddl job")
 	// If running job meets error, we will save this error in job Error
 	// and retry later if the job is not cancelled.
 	schemaVer, runJobErr = w.runDDLJob(d, t, job)
-	logutil.BgLogger().Info("after run ddl job")
 
 	d.mu.RLock()
 	d.mu.hook.OnJobRunAfter(job)
@@ -944,7 +940,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		schemaVer = 0
 	}
 
-	if job.Version != variable.DefTiDBDDLV2 {
+	if !job.IsVersion2() {
 		err = w.registerMDLInfo(job, schemaVer)
 		if err != nil {
 			w.sess.Rollback()
@@ -952,23 +948,44 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 			return 0, err
 		}
 	}
-	logutil.BgLogger().Info("before update ddl job")
-	err = w.updateDDLJob(job, runJobErr != nil)
-	logutil.BgLogger().Info("after update ddl job")
-	if err = w.handleUpdateJobError(t, job, err); err != nil {
-		w.sess.Rollback()
-		d.unlockSchemaVersion(job.ID)
-		return 0, err
+	if !job.IsVersion2() {
+		err = w.updateDDLJob(job, runJobErr != nil)
+		if err = w.handleUpdateJobError(t, job, err); err != nil {
+			w.sess.Rollback()
+			d.unlockSchemaVersion(job.ID)
+			return 0, err
+		}
 	}
+
 	writeBinlog(d.binlogCli, txn, job)
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
+
+	if job.IsVersion2() {
+		job.BinlogInfo.FinishedTS = t.StartTS
+		w.jobLogger(job).Info("finish DDL job", zap.String("job", job.String()))
+		updateRawArgs := true
+		if job.Type == model.ActionAddPrimaryKey && !job.IsCancelled() {
+			// ActionAddPrimaryKey needs to check the warnings information in job.Args.
+			// Notice: warnings is used to support non-strict mode.
+			updateRawArgs = false
+		}
+		w.writeDDLSeqNum(job)
+		w.removeJobCtx(job)
+		err = AddHistoryDDLJob(w.sess, t, job, updateRawArgs)
+		err = w.sess.Commit()
+		d.unlockSchemaVersion(job.ID)
+		CleanupDDLReorgHandles(job, w.sess)
+		asyncNotify(d.ddlJobDoneCh)
+		return 0, err
+	}
+
 	err = w.sess.Commit()
 	d.unlockSchemaVersion(job.ID)
 	if err != nil {
 		return 0, err
 	}
-	if job.Version != variable.DefTiDBDDLV2 {
+	if !job.IsVersion2() {
 		w.registerSync(job)
 	}
 

@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
@@ -1281,8 +1282,8 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableDistTask.Load()), nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBDDLVersion, Value: strconv.Itoa(DefTiDBDDLV1), Type: TypeEnum, PossibleValues: []string{strconv.Itoa(DefTiDBDDLV1), strconv.Itoa(DefTiDBDDLV2)}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
-		v := TidbOptInt64(val, DefTiDBDDLV1)
+	{Scope: ScopeGlobal, Name: TiDBDDLVersion, Value: strconv.Itoa(model.TiDBDDLV1), Type: TypeEnum, PossibleValues: []string{strconv.Itoa(model.TiDBDDLV1), strconv.Itoa(model.TiDBDDLV2)}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		v := TidbOptInt64(val, model.TiDBDDLV1)
 		if DDLVersion.Load() != v {
 			err := SwitchDDLVersion(v)
 			if err != nil {

@@ -279,6 +279,11 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 	},
 }
 
+const (
+	TiDBDDLV1 = iota + 1
+	TiDBDDLV2
+)
+
 // String return current ddl action in string
 func (action ActionType) String() string {
 	if v, ok := ActionMap[action]; ok {
@@ -732,8 +737,8 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
-	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer)
+	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, Version: %d",
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.Version)
 	if job.ReorgMeta != nil {
 		warnings, _ := job.GetWarnings()
 		ret += fmt.Sprintf(", UniqueWarnings:%d", len(warnings))
@@ -998,6 +1003,10 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 	return []InvolvingSchemaInfo{
 		{Database: job.SchemaName, Table: job.TableName},
 	}
+}
+
+func (job *Job) IsVersion2() bool {
+	return job.Version == TiDBDDLV2
 }
 
 // JobState is for job state.

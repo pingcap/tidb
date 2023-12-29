@@ -51,6 +51,7 @@ import (
 var (
 	addingDDLJobConcurrent      = "/tidb/ddl/add_ddl_job_general"
 	dispatchLoopWaitingDuration = 1 * time.Second
+	localWorkerWaitingDuration  = 50 * time.Millisecond
 )
 
 func init() {
@@ -68,6 +69,8 @@ func (t jobType) String() string {
 		return "general"
 	case reorg:
 		return "reorg"
+	case local:
+		return "local"
 	}
 	return "unknown job type: " + strconv.Itoa(int(t))
 }
@@ -75,6 +78,7 @@ func (t jobType) String() string {
 const (
 	general jobType = iota
 	reorg
+	local
 )
 
 func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool, error)) (*model.Job, error) {
@@ -246,8 +250,6 @@ func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 }
 
 func (d *ddl) startLocalWorkerLoop() {
-	ticker := time.NewTicker(dispatchLoopWaitingDuration)
-	defer ticker.Stop()
 	for {
 		if isChanClosed(d.ctx.Done()) {
 			return
@@ -255,22 +257,11 @@ func (d *ddl) startLocalWorkerLoop() {
 		select {
 		case <-d.ctx.Done():
 			return
-		case task, ok := <-d.taskCh:
+		case task, ok := <-d.jobTaskCh:
 			if !ok {
 				return
 			}
-			wk, err := d.localWorkerPool.get()
-			if err != nil {
-				return
-			}
-			for wk == nil {
-				time.Sleep(dispatchLoopWaitingDuration)
-				wk, err = d.localWorkerPool.get()
-				if err != nil {
-					return
-				}
-			}
-			d.delivery2LocalWorker(wk, d.localWorkerPool, task)
+			d.delivery2LocalWorker(d.localWorkerPool, task)
 		}
 	}
 }
@@ -388,9 +379,27 @@ func (d *ddl) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*
 }
 
 // delivery2worker owns the worker, need to put it back to the pool in this function.
-func (d *ddl) delivery2LocalWorker(wk *worker, pool *workerPool, task *limitJobTask) {
+func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 	job := task.job
 	logutil.BgLogger().Info("delivery2LocalWorker", zap.String("job", job.String()))
+	wk, err := pool.get()
+	if err != nil {
+		task.err <- err
+		return
+	}
+	for wk == nil {
+		logutil.BgLogger().Info("waiting for local worker", zap.String("job", job.String()))
+		select {
+		case <-d.ctx.Done():
+			return
+		case <-time.After(localWorkerWaitingDuration):
+		}
+		wk, err = pool.get()
+		if err != nil {
+			task.err <- err
+			return
+		}
+	}
 	d.wg.Run(func() {
 		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
 		defer func() {
@@ -415,6 +424,14 @@ func (d *ddl) delivery2LocalWorker(wk *worker, pool *workerPool, task *limitJobT
 	})
 }
 
+func (d *ddl) needWaitSchemaSynced(job *model.Job) bool {
+	return !job.NotStarted() && (!d.isSynced(job) || !d.maybeAlreadyRunOnce(job.ID)) && !job.IsVersion2()
+}
+
+func (d *ddl) needWaitSchemaChanged(job *model.Job) bool {
+	return !job.IsVersion2()
+}
+
 // delivery2worker owns the worker, need to put it back to the pool in this function.
 func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 	injectFailPointForGetJob(job)
@@ -427,7 +444,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 		}()
 		// check if this ddl job is synced to all servers.
-		if job.Version != variable.DefTiDBDDLV2 && !job.NotStarted() && (!d.isSynced(job) || !d.maybeAlreadyRunOnce(job.ID)) {
+		if d.needWaitSchemaSynced(job) {
 			if variable.EnableMDL.Load() {
 				exist, version, err := checkMDLInfo(job.ID, d.sessPool)
 				if err != nil {
@@ -464,7 +481,7 @@ func (d *ddl) delivery2worker(wk *worker, pool *workerPool, job *model.Job) {
 		pool.put(wk)
 		if err != nil {
 			logutil.BgLogger().Info("handle ddl job failed", zap.String("category", "ddl"), zap.Error(err), zap.String("job", job.String()))
-		} else if job.Version != variable.DefTiDBDDLV2 {
+		} else if d.needWaitSchemaChanged(job) {
 			failpoint.Inject("mockDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
 				if val.(bool) {
 					if mockDDLErrOnce == 0 {
