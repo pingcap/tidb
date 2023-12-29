@@ -15,7 +15,6 @@
 package proto
 
 import (
-	"fmt"
 	"time"
 )
 
@@ -43,35 +42,6 @@ import (
 //	 3. pause/resume:	pending -> running -> pausing -> paused -> running
 //
 // TODO: we don't have revert_failed task for now.
-//
-// subtask state machine for normal subtask:
-//
-//	               ┌──────────────┐
-//	               │          ┌───┴──┐
-//	               │ ┌───────►│paused│
-//	               ▼ │        └──────┘
-//	┌───────┐    ┌───┴───┐    ┌───────┐
-//	│pending├───►│running├───►│succeed│
-//	└───────┘    └───┬───┘    └───────┘
-//	                 │        ┌──────┐
-//	                 ├───────►│failed│
-//	                 │        └──────┘
-//	                 │        ┌────────┐
-//	                 └───────►│canceled│
-//	                          └────────┘
-//
-// for reverting subtask:
-//
-//	┌──────────────┐    ┌─────────┐   ┌─────────┐
-//	│revert_pending├───►│reverting├──►│ reverted│
-//	└──────────────┘    └────┬────┘   └─────────┘
-//	                         │         ┌─────────────┐
-//	                         └────────►│revert_failed│
-//	                                   └─────────────┘
-//	 1. succeed/failed:	pending -> running -> succeed/failed
-//	 2. canceled:		pending -> running -> canceled
-//	 3. rollback:		revert_pending -> reverting -> reverted/revert_failed
-//	 4. pause/resume:	pending -> running -> paused -> running
 const (
 	TaskStatePending       TaskState = "pending"
 	TaskStateRunning       TaskState = "running"
@@ -179,79 +149,9 @@ func (t *Task) Compare(other *Task) int {
 	return int(t.ID - other.ID)
 }
 
-// Subtask represents the subtask of distribute framework.
-// Each task is divided into multiple subtasks by scheduler.
-type Subtask struct {
-	ID   int64
-	Step Step
-	Type TaskType
-	// taken from task_key of the subtask table
-	TaskID int64
-	State  TaskState
-	// Concurrency is the concurrency of the subtask, should <= task's concurrency.
-	// some subtasks like post-process of import into, don't consume too many resources,
-	// can lower this value.
-	Concurrency int
-	// ExecID is the ID of target executor, right now it's the same as instance_id,
-	// its value is IP:PORT, see GenerateExecID
-	ExecID     string
-	CreateTime time.Time
-	// StartTime is the time when the subtask is started.
-	// it's 0 if it hasn't started yet.
-	StartTime time.Time
-	// UpdateTime is the time when the subtask is updated.
-	// it can be used as subtask end time if the subtask is finished.
-	// it's 0 if it hasn't started yet.
-	UpdateTime time.Time
-	// Meta is the metadata of subtask, should not be nil.
-	// meta of different subtasks of same step must be different too.
-	Meta    []byte
-	Summary string
-	// Ordinal is the ordinal of subtask, should be unique for some task and step.
-	// starts from 1, for reverting subtask, it's NULL in database.
-	Ordinal int
-}
-
-func (t *Subtask) String() string {
-	return fmt.Sprintf("Subtask[ID=%d, Step=%d, Type=%s, TaskID=%d, State=%s, ExecID=%s]",
-		t.ID, t.Step, t.Type, t.TaskID, t.State, t.ExecID)
-}
-
-// IsFinished checks if the subtask is finished.
-func (t *Subtask) IsFinished() bool {
-	return t.State == TaskStateSucceed || t.State == TaskStateReverted || t.State == TaskStateCanceled ||
-		t.State == TaskStateFailed || t.State == TaskStateRevertFailed
-}
-
-// NewSubtask create a new subtask.
-func NewSubtask(step Step, taskID int64, tp TaskType, execID string, concurrency int, meta []byte, ordinal int) *Subtask {
-	s := &Subtask{
-		Step:        step,
-		Type:        tp,
-		TaskID:      taskID,
-		ExecID:      execID,
-		Concurrency: concurrency,
-		Meta:        meta,
-		Ordinal:     ordinal,
-	}
-	return s
-}
-
-// MinimalTask is the minimal task of distribute framework.
-// Each subtask is divided into multiple minimal tasks by TaskExecutor.
-type MinimalTask interface {
-	// IsMinimalTask is a marker to check if it is a minimal task for compiler.
-	IsMinimalTask()
-	fmt.Stringer
-}
-
 const (
 	// TaskTypeExample is TaskType of Example.
 	TaskTypeExample TaskType = "Example"
-	// TaskTypeExample2 is TaskType of Example.
-	TaskTypeExample2 TaskType = "Example1"
-	// TaskTypeExample3 is TaskType of Example.
-	TaskTypeExample3 TaskType = "Example2"
 	// ImportInto is TaskType of ImportInto.
 	ImportInto TaskType = "ImportInto"
 	// Backfill is TaskType of add index Backfilling process.
@@ -265,10 +165,6 @@ func Type2Int(t TaskType) int {
 		return 1
 	case ImportInto:
 		return 2
-	case TaskTypeExample2:
-		return 3
-	case TaskTypeExample3:
-		return 4
 	default:
 		return 0
 	}
@@ -281,10 +177,6 @@ func Int2Type(i int) TaskType {
 		return TaskTypeExample
 	case 2:
 		return ImportInto
-	case 3:
-		return TaskTypeExample2
-	case 4:
-		return TaskTypeExample3
 	default:
 		return ""
 	}

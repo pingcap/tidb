@@ -309,7 +309,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		for i, taskID := range taskIDs {
 			require.Equal(t, int64(i+1), tasks[i].ID)
 			require.Eventually(t, func() bool {
-				cnt, err := mgr.GetSubtaskInStatesCnt(ctx, taskID, proto.TaskStatePending)
+				cnt, err := mgr.GetSubtaskInStatesCnt(ctx, taskID, proto.SubtaskStatePending)
 				require.NoError(t, err)
 				return int64(subtaskCnt) == cnt
 			}, time.Second, 50*time.Millisecond)
@@ -360,7 +360,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	if isSucc {
 		// Mock subtasks succeed.
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
-			err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateSucceed, nil)
+			err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateSucceed, nil)
 			require.NoError(t, err)
 		}
 		checkGetTaskState(proto.TaskStateSucceed)
@@ -382,7 +382,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 			require.NoError(t, err)
 		}
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
-			err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStatePaused, nil)
+			err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStatePaused, nil)
 			require.NoError(t, err)
 		}
 		checkGetTaskState(proto.TaskStatePaused)
@@ -394,7 +394,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 
 		// Mock subtasks succeed.
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
-			err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateSucceed, nil)
+			err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateSucceed, nil)
 			require.NoError(t, err)
 		}
 		checkGetTaskState(proto.TaskStateSucceed)
@@ -409,13 +409,13 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		if isSubtaskCancel {
 			// Mock a subtask canceled
 			for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
-				err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateCanceled, nil)
+				err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateCanceled, nil)
 				require.NoError(t, err)
 			}
 		} else {
 			// Mock a subtask fails.
 			for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
-				err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateFailed, nil)
+				err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateFailed, nil)
 				require.NoError(t, err)
 			}
 		}
@@ -426,7 +426,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	// Mock all subtask reverted.
 	start := subtaskCnt * taskCnt
 	for i := start; i <= start+subtaskCnt*taskCnt; i++ {
-		err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateReverted, nil)
+		err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateReverted, nil)
 		require.NoError(t, err)
 	}
 	checkGetTaskState(proto.TaskStateReverted)

@@ -55,7 +55,7 @@ func (mr *MockTaskTableMockRecorder) FinishSubtask(arg0, arg1, arg2, arg3 any) *
 }
 
 // GetFirstSubtaskInStates mocks base method.
-func (m *MockTaskTable) GetFirstSubtaskInStates(arg0 context.Context, arg1 string, arg2 int64, arg3 proto.Step, arg4 ...any) (*proto.Subtask, error) {
+func (m *MockTaskTable) GetFirstSubtaskInStates(arg0 context.Context, arg1 string, arg2 int64, arg3 proto.Step, arg4 ...proto.SubtaskState) (*proto.Subtask, error) {
 	m.ctrl.T.Helper()
 	varargs := []any{arg0, arg1, arg2, arg3}
 	for _, a := range arg4 {
@@ -75,7 +75,7 @@ func (mr *MockTaskTableMockRecorder) GetFirstSubtaskInStates(arg0, arg1, arg2, a
 }
 
 // GetSubtasksByStepAndStates mocks base method.
-func (m *MockTaskTable) GetSubtasksByStepAndStates(arg0 context.Context, arg1 string, arg2 int64, arg3 proto.Step, arg4 ...any) ([]*proto.Subtask, error) {
+func (m *MockTaskTable) GetSubtasksByStepAndStates(arg0 context.Context, arg1 string, arg2 int64, arg3 proto.Step, arg4 ...proto.SubtaskState) ([]*proto.Subtask, error) {
 	m.ctrl.T.Helper()
 	varargs := []any{arg0, arg1, arg2, arg3}
 	for _, a := range arg4 {
@@ -130,7 +130,7 @@ func (mr *MockTaskTableMockRecorder) GetTasksInStates(arg0 any, arg1 ...any) *go
 }
 
 // HasSubtasksInStates mocks base method.
-func (m *MockTaskTable) HasSubtasksInStates(arg0 context.Context, arg1 string, arg2 int64, arg3 proto.Step, arg4 ...any) (bool, error) {
+func (m *MockTaskTable) HasSubtasksInStates(arg0 context.Context, arg1 string, arg2 int64, arg3 proto.Step, arg4 ...proto.SubtaskState) (bool, error) {
 	m.ctrl.T.Helper()
 	varargs := []any{arg0, arg1, arg2, arg3}
 	for _, a := range arg4 {
@@ -221,7 +221,7 @@ func (mr *MockTaskTableMockRecorder) UpdateErrorToSubtask(arg0, arg1, arg2, arg3
 }
 
 // UpdateSubtaskStateAndError mocks base method.
-func (m *MockTaskTable) UpdateSubtaskStateAndError(arg0 context.Context, arg1 string, arg2 int64, arg3 proto.TaskState, arg4 error) error {
+func (m *MockTaskTable) UpdateSubtaskStateAndError(arg0 context.Context, arg1 string, arg2 int64, arg3 proto.SubtaskState, arg4 error) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "UpdateSubtaskStateAndError", arg0, arg1, arg2, arg3, arg4)
 	ret0, _ := ret[0].(error)
