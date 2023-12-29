@@ -30,11 +30,11 @@ import (
 // AccessPath indicates the way we access a table: by using single index, or by using multiple indexes,
 // or just by using table scan.
 type AccessPath struct {
-	Index              *model.IndexInfo
-	FullIdxCols        []*expression.Column
-	FullIdxColLens     []int
-	IdxCols            []*expression.Column
-	IdxColLens         []int
+	Index          *model.IndexInfo
+	FullIdxCols    []*expression.Column
+	FullIdxColLens []int
+	IdxCols        []*expression.Column
+	IdxColLens     []int
 	// ConstCols indicates whether the column is constant under the given conditions for all index columns.
 	ConstCols []bool
 	Ranges    []*ranger.Range
