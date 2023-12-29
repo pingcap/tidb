@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -404,7 +403,10 @@ func TestExchangePartitionStates(t *testing.T) {
 			default:
 				// Alter still running
 			}
-			tbl := external.GetTableByName(t, tk, dbName, tableName)
+			ctx := tk.Session()
+			is := domain.GetDomain(ctx).InfoSchema()
+			tbl, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tableName))
+			require.NoError(t, err)
 			nullExchangeInfo := tbl.Meta().ExchangePartitionInfo == nil
 			if s == "write only" && !nullExchangeInfo || s == "rollback done" && nullExchangeInfo {
 				logutil.BgLogger().Info("Got state", zap.String("State", s))
@@ -514,7 +516,10 @@ func TestExchangePartitionCheckConstraintStates(t *testing.T) {
 			default:
 				// Alter still running
 			}
-			tbl := external.GetTableByName(t, tk, "check_constraint", tableName)
+			ctx := tk.Session()
+			is := domain.GetDomain(ctx).InfoSchema()
+			tbl, err := is.TableByName(model.NewCIStr("check_constraint"), model.NewCIStr(tableName))
+			require.NoError(t, err)
 			nullExchangeInfo := tbl.Meta().ExchangePartitionInfo == nil
 			if s == "write only" && !nullExchangeInfo || s == "none" && nullExchangeInfo {
 				logutil.BgLogger().Info("Got state", zap.String("State", s))
@@ -624,7 +629,10 @@ func TestExchangePartitionCheckConstraintStatesTwo(t *testing.T) {
 			default:
 				// Alter still running
 			}
-			tbl := external.GetTableByName(t, tk, "check_constraint", tableName)
+			ctx := tk.Session()
+			is := domain.GetDomain(ctx).InfoSchema()
+			tbl, err := is.TableByName(model.NewCIStr("check_constraint"), model.NewCIStr(tableName))
+			require.NoError(t, err)
 			nullExchangeInfo := tbl.Meta().ExchangePartitionInfo == nil
 			if s == "write only" && !nullExchangeInfo {
 				logutil.BgLogger().Info("Got state", zap.String("State", s))
