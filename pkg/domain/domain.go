@@ -1470,13 +1470,9 @@ func (do *Domain) InitDistTaskLoop() error {
 		errMsg := fmt.Sprintf("TiDB node ID( = %s ) not found in available TiDB nodes list", do.ddl.GetID())
 		return errors.New(errMsg)
 	}
-<<<<<<< HEAD
-	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(ctx, serverID, taskManager)
-=======
 	managerCtx, cancel := context.WithCancel(ctx)
 	do.cancelFns = append(do.cancelFns, cancel)
-	executorManager, err := taskexecutor.NewManagerBuilder().BuildManager(managerCtx, serverID, taskManager)
->>>>>>> 3f4db1afa8f (disttask: do not retry meta initialization if context done (#49881))
+	schedulerManager, err := scheduler.NewManagerBuilder().BuildManager(managerCtx, serverID, taskManager)
 	if err != nil {
 		return err
 	}
