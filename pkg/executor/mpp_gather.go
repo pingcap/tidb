@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"go.uber.org/zap"
 	"runtime/debug"
 	"time"
 
@@ -35,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"go.uber.org/zap"
 )
 
 func useMPPExecution(ctx sessionctx.Context, tr *plannercore.PhysicalTableReader) bool {
