@@ -186,6 +186,7 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 func TestAddIndexIngestShowReorgTp(t *testing.T) {
 	tk, _, _ := prepareForGlobalSort(t)
 
+	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 	tk.MustExec("create table t (a int);")
 	tk.MustExec("insert into t values (1), (2), (3);")
 	tk.MustExec("alter table t add index idx(a);")
