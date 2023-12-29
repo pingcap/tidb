@@ -551,6 +551,10 @@ func (em *engineManager) getKeyAdapter() common.KeyAdapter {
 	return em.keyAdapter
 }
 
+func (em *engineManager) getBufferPool() *membuf.Pool {
+	return em.bufferPool
+}
+
 func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 	dbPath := filepath.Join(storeDir, duplicateDBName)
 	// TODO: Optimize the opts for better write.
