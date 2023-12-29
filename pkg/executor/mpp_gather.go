@@ -16,6 +16,8 @@ package executor
 
 import (
 	"context"
+	"go.uber.org/zap"
+	"runtime/debug"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -31,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
@@ -145,6 +148,7 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // Close and release the used resources.
 func (e *MPPGather) Close() error {
+	logutil.BgLogger().Info(string(debug.Stack()), zap.Uint64("TS", e.startTS))
 	var err error
 	if e.dummy {
 		return nil

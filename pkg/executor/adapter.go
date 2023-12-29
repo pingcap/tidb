@@ -1393,6 +1393,9 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		sessVars.StmtCtx.SetPlan(a.Plan)
 	}
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
+	if !sessVars.StmtCtx.IsSQLRegistered.Load() {
+		logutil.BgLogger().Info("LogWhenFinished", zap.String("SQL", a.Text), zap.Uint64("TxnTS", txnTS), zap.String("Plan", a.Plan.ExplainInfo()))
+	}
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
 	a.observeStmtFinishedForTopSQL()
