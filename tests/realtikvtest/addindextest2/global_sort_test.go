@@ -186,9 +186,13 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 func TestAddIndexIngestShowReorgTp(t *testing.T) {
 	tk, _, _ := prepareForGlobalSort(t)
 
-	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 	tk.MustExec("create table t (a int);")
+	tk.MustExec("alter table t add index idx(a);")
+	tk.MustQuery("select * from t use index(idx);").Check(testkit.Rows())
+	tk.MustExec("alter table t drop index idx;")
+
 	tk.MustExec("insert into t values (1), (2), (3);")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 	tk.MustExec("alter table t add index idx(a);")
 
 	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
@@ -197,11 +201,4 @@ func TestAddIndexIngestShowReorgTp(t *testing.T) {
 	require.True(t, strings.Contains(jobType, "ingest"))
 	require.False(t, strings.Contains(jobType, "cloud"))
 	require.Equal(t, rowCnt, "3")
-}
-
-func TestGlobalSortTrivial(t *testing.T) {
-	tk, _, _ := prepareForGlobalSort(t)
-	tk.MustExec("create table t (a int, b int, c int);")
-	tk.MustExec("alter table t add index idx(a);")
-	tk.MustQuery("select * from t use index(idx);").Check(testkit.Rows())
 }
