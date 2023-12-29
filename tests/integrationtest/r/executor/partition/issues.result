@@ -459,3 +459,67 @@ IndexJoin_20	0.80	root		inner join, inner:TableReader_19, outer key:executor__pa
     └─TableRangeScan_17	0.80	cop[tikv]	table:c	range: decided by [eq(executor__partition__issues.c.txt_account_id, executor__partition__issues.t.txn_account_id) eq(executor__partition__issues.c.serial_id, executor__partition__issues.t.serial_id) eq(executor__partition__issues.c.occur_trade_date, 2022-11-17 00:00:00.000000)], keep order:false
 set @@tidb_opt_advanced_join_hint=default;
 set tidb_partition_prune_mode=default;
+drop table if exists t;
+CREATE TABLE `t` (
+`col_51` bigint(20) unsigned NOT NULL,
+PRIMARY KEY (`col_51`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`col_51`) PARTITIONS 5;
+insert into t values (9223372036854775807), (9223372036854775808), (9223372036854775809);
+analyze table t;
+desc SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN 9223372036854775807 AND 9223372036854775808;
+id	estRows	task	access object	operator info
+TableReader_6	2.00	root	partition:p2,p3	data:TableRangeScan_5
+└─TableRangeScan_5	2.00	cop[tikv]	table:t	range:[9223372036854775807,9223372036854775808], keep order:false
+SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN 9223372036854775807 AND 9223372036854775808;
+col_51
+9223372036854775807
+9223372036854775808
+drop table if exists t;
+CREATE TABLE `t` (
+`col_51` bigint(20) NOT NULL,
+PRIMARY KEY (`col_51`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`col_51`) PARTITIONS 5;
+insert into t values (9223372036854775807), (-9223372036854775808);
+analyze table t;
+desc SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN -9223372036854775808 AND 9223372036854775807;
+id	estRows	task	access object	operator info
+TableReader_6	2.00	root	partition:all	data:TableFullScan_5
+└─TableFullScan_5	2.00	cop[tikv]	table:t	keep order:false
+SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN -9223372036854775808 AND 9223372036854775807;
+col_51
+-9223372036854775808
+9223372036854775807
+drop table if exists t;
+CREATE TABLE `t` (
+`col_51` bigint(20) unsigned NOT NULL,
+PRIMARY KEY (`col_51`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY KEY (`col_51`) PARTITIONS 5;
+insert into t values (9223372036854775807), (9223372036854775808), (9223372036854775809);
+analyze table t;
+desc SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN 9223372036854775807 AND 9223372036854775808;
+id	estRows	task	access object	operator info
+TableReader_6	2.00	root	partition:p2	data:TableRangeScan_5
+└─TableRangeScan_5	2.00	cop[tikv]	table:t	range:[9223372036854775807,9223372036854775808], keep order:false
+SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN 9223372036854775807 AND 9223372036854775808;
+col_51
+9223372036854775807
+9223372036854775808
+drop table if exists t;
+CREATE TABLE `t` (
+`col_51` bigint(20) NOT NULL,
+PRIMARY KEY (`col_51`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY KEY (`col_51`) PARTITIONS 5;
+insert into t values (9223372036854775807), (-9223372036854775808);
+analyze table t;
+desc SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN -9223372036854775808 AND 9223372036854775807;
+id	estRows	task	access object	operator info
+TableReader_6	2.00	root	partition:all	data:TableFullScan_5
+└─TableFullScan_5	2.00	cop[tikv]	table:t	keep order:false
+SELECT * FROM `t` WHERE `t`.`col_51` BETWEEN -9223372036854775808 AND 9223372036854775807;
+col_51
+-9223372036854775808
+9223372036854775807
