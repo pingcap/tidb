@@ -63,6 +63,9 @@ var (
 	// unstable, i.e. count, order and content of the subtasks are changed on
 	// different call.
 	ErrUnstableSubtasks = errors.New("unstable subtasks")
+	// ErrSubtaskNotFound is the error when can't find subtask by subtask_id and execId,
+	// i.e. scheduler change the subtask's execId when subtask need to balance to other nodes.
+	ErrSubtaskNotFound = errors.New("subtask not found")
 )
 
 // SessionExecutor defines the interface for executing SQLs in a session.
@@ -114,7 +117,6 @@ func SetTaskManager(is *TaskManager) {
 }
 
 // ExecSQL executes the sql and returns the result.
-// TODO: consider retry.
 func ExecSQL(ctx context.Context, se sessionctx.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
 	rs, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, args...)
 	if err != nil {
@@ -510,14 +512,14 @@ func (stm *TaskManager) GetSubtasksByStepAndStates(ctx context.Context, tidbID s
 }
 
 // GetSubtasksByExecIdsAndStepAndState gets all subtasks by given taskID, exec_id, step and state.
-func (stm *TaskManager) GetSubtasksByExecIdsAndStepAndState(ctx context.Context, tidbIDs []string, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error) {
+func (stm *TaskManager) GetSubtasksByExecIdsAndStepAndState(ctx context.Context, execIDs []string, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error) {
 	args := []interface{}{taskID, step, state}
-	for _, tidbID := range tidbIDs {
-		args = append(args, tidbID)
+	for _, execID := range execIDs {
+		args = append(args, execID)
 	}
 	rs, err := stm.executeSQLWithNewSession(ctx, `select `+subtaskColumns+` from mysql.tidb_background_subtask
 		where task_key = %? and step = %? and state = %?
-		and exec_id in (`+strings.Repeat("%?,", len(tidbIDs)-1)+"%?)", args...)
+		and exec_id in (`+strings.Repeat("%?,", len(execIDs)-1)+"%?)", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -549,47 +551,32 @@ func (stm *TaskManager) GetFirstSubtaskInStates(ctx context.Context, tidbID stri
 }
 
 // UpdateSubtaskExecID updates the subtask's exec_id, used for testing now.
-func (stm *TaskManager) UpdateSubtaskExecID(ctx context.Context, tidbID string, subtaskID int64) error {
+func (stm *TaskManager) UpdateSubtaskExecID(ctx context.Context, execID string, subtaskID int64) error {
 	_, err := stm.executeSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
 		set exec_id = %?, state_update_time = unix_timestamp() where id = %?`,
-		tidbID, subtaskID)
+		execID, subtaskID)
 	return err
 }
 
 // UpdateErrorToSubtask updates the error to subtask.
-func (stm *TaskManager) UpdateErrorToSubtask(ctx context.Context, tidbID string, taskID int64, err error) error {
+func (stm *TaskManager) UpdateErrorToSubtask(ctx context.Context, execID string, taskID int64, err error) error {
 	if err == nil {
 		return nil
 	}
-	_, err1 := stm.executeSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
+	_, err1 := stm.executeSQLWithNewSession(ctx,
+		`update mysql.tidb_background_subtask
 		set state = %?, error = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
-		where exec_id = %? and task_key = %? and state in (%?, %?) limit 1;`,
-		proto.TaskStateFailed, serializeErr(err), tidbID, taskID, proto.TaskStatePending, proto.TaskStateRunning)
+		where exec_id = %? and 
+		task_key = %? and 
+		state in (%?, %?) 
+		limit 1;`,
+		proto.TaskStateFailed,
+		serializeErr(err),
+		execID,
+		taskID,
+		proto.TaskStatePending,
+		proto.TaskStateRunning)
 	return err1
-}
-
-// PrintSubtaskInfo log the subtask info by taskKey. Only used for UT.
-func (stm *TaskManager) PrintSubtaskInfo(ctx context.Context, taskID int64) {
-	rs, _ := stm.executeSQLWithNewSession(ctx,
-		`select `+subtaskColumns+` from mysql.tidb_background_subtask_history where task_key = %?`, taskID)
-	rs2, _ := stm.executeSQLWithNewSession(ctx,
-		`select `+subtaskColumns+` from mysql.tidb_background_subtask where task_key = %?`, taskID)
-	rs = append(rs, rs2...)
-
-	for _, r := range rs {
-		errBytes := r.GetBytes(13)
-		var err error
-		if len(errBytes) > 0 {
-			stdErr := errors.Normalize("")
-			err1 := stdErr.UnmarshalJSON(errBytes)
-			if err1 != nil {
-				err = err1
-			} else {
-				err = stdErr
-			}
-		}
-		logutil.BgLogger().Info(fmt.Sprintf("subTask: %v\n", row2SubTask(r)), zap.Error(err))
-	}
 }
 
 // GetSubtasksByStepAndState gets the subtask by step and state.
@@ -695,38 +682,52 @@ func (stm *TaskManager) HasSubtasksInStates(ctx context.Context, tidbID string, 
 }
 
 // StartSubtask updates the subtask state to running.
-func (stm *TaskManager) StartSubtask(ctx context.Context, subtaskID int64) error {
-	_, err := stm.executeSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
-		set state = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
-		where id = %?`,
-		proto.TaskStateRunning, subtaskID)
+func (stm *TaskManager) StartSubtask(ctx context.Context, subtaskID int64, execID string) error {
+	err := stm.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		vars := se.GetSessionVars()
+		_, err := ExecSQL(ctx,
+			se,
+			`update mysql.tidb_background_subtask
+			 set state = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
+			 where id = %? and exec_id = %?`,
+			proto.TaskStateRunning,
+			subtaskID,
+			execID)
+		if err != nil {
+			return err
+		}
+		if vars.StmtCtx.AffectedRows() == 0 {
+			return ErrSubtaskNotFound
+		}
+		return nil
+	})
 	return err
 }
 
 // StartManager insert the manager information into dist_framework_meta.
-func (stm *TaskManager) StartManager(ctx context.Context, tidbID string, role string) error {
+func (stm *TaskManager) StartManager(ctx context.Context, execID string, role string) error {
 	_, err := stm.executeSQLWithNewSession(ctx, `insert into mysql.dist_framework_meta(host, role, keyspace_id)
 	SELECT %?, %?,-1
-    WHERE NOT EXISTS (SELECT 1 FROM mysql.dist_framework_meta WHERE host = %?)`, tidbID, role, tidbID)
+    WHERE NOT EXISTS (SELECT 1 FROM mysql.dist_framework_meta WHERE host = %?)`, execID, role, execID)
 	return err
 }
 
 // UpdateSubtaskStateAndError updates the subtask state.
 func (stm *TaskManager) UpdateSubtaskStateAndError(
 	ctx context.Context,
-	tidbID string,
+	execID string,
 	id int64, state proto.SubtaskState, subTaskErr error) error {
 	_, err := stm.executeSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
 		set state = %?, error = %?, state_update_time = unix_timestamp() where id = %? and exec_id = %?`,
-		state, serializeErr(subTaskErr), id, tidbID)
+		state, serializeErr(subTaskErr), id, execID)
 	return err
 }
 
 // FinishSubtask updates the subtask meta and mark state to succeed.
-func (stm *TaskManager) FinishSubtask(ctx context.Context, tidbID string, id int64, meta []byte) error {
+func (stm *TaskManager) FinishSubtask(ctx context.Context, execID string, id int64, meta []byte) error {
 	_, err := stm.executeSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
 		set meta = %?, state = %?, state_update_time = unix_timestamp() where id = %? and exec_id = %?`,
-		meta, proto.TaskStateSucceed, id, tidbID)
+		meta, proto.TaskStateSucceed, id, execID)
 	return err
 }
 
@@ -836,9 +837,9 @@ func (stm *TaskManager) DeleteDeadNodes(ctx context.Context, nodes []string) err
 }
 
 // PauseSubtasks update all running/pending subtasks to pasued state.
-func (stm *TaskManager) PauseSubtasks(ctx context.Context, tidbID string, taskID int64) error {
+func (stm *TaskManager) PauseSubtasks(ctx context.Context, execID string, taskID int64) error {
 	_, err := stm.executeSQLWithNewSession(ctx,
-		`update mysql.tidb_background_subtask set state = "paused" where task_key = %? and state in ("running", "pending") and exec_id = %?`, taskID, tidbID)
+		`update mysql.tidb_background_subtask set state = "paused" where task_key = %? and state in ("running", "pending") and exec_id = %?`, taskID, execID)
 	return err
 }
 
@@ -875,7 +876,7 @@ func (stm *TaskManager) SwitchTaskStep(
 		}
 		if vars.StmtCtx.AffectedRows() == 0 {
 			// on network partition or owner change, there might be multiple
-			// dispatchers for the same task, if other dispatcher has switched
+			// schedulers for the same task, if other scheduler has switched
 			// the task to next step, skip the update process.
 			// Or when there is no such task.
 			return nil
