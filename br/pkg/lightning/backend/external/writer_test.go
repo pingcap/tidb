@@ -298,7 +298,11 @@ func TestWriterDuplicateDetect(t *testing.T) {
 }
 
 func TestMultiFileStat(t *testing.T) {
-	s := &MultipleFilesStat{}
+	s := &MultipleFilesStat{
+		Filenames: [][2]string{
+			{"3", "5"}, {"1", "3"}, {"2", "4"},
+		},
+	}
 	// [3, 5], [1, 3], [2, 4]
 	startKeys := []dbkv.Key{{3}, {1}, {2}}
 	endKeys := []dbkv.Key{{5}, {3}, {4}}
@@ -306,6 +310,7 @@ func TestMultiFileStat(t *testing.T) {
 	require.EqualValues(t, []byte{1}, s.MinKey)
 	require.EqualValues(t, []byte{5}, s.MaxKey)
 	require.EqualValues(t, 3, s.MaxOverlappingNum)
+	require.Equal(t, [][2]string{{"1", "3"}, {"2", "4"}, {"3", "5"}}, s.Filenames)
 }
 
 func TestMultiFileStatOverlap(t *testing.T) {

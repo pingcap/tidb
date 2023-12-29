@@ -1097,7 +1097,7 @@ import (
 	AuthOption                             "User auth option"
 	AutoRandomOpt                          "Auto random option"
 	Boolean                                "Boolean (0, 1, false, true)"
-	BDRRole                                "BDR role (none, primary, secondary, local_only)"
+	BDRRole                                "BDR role (primary, secondary, local_only)"
 	OptionalBraces                         "optional braces"
 	CastType                               "Cast function target type"
 	CharsetOpt                             "CHARACTER SET option in LOAD DATA"
@@ -10923,10 +10923,6 @@ BDRRole:
 |	"LOCAL_ONLY"
 	{
 		$$ = ast.BDRRoleLocalOnly
-	}
-|	"NONE"
-	{
-		$$ = ast.BDRRoleNone
 	}
 
 AdminStmt:
