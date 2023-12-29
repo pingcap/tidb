@@ -1554,7 +1554,6 @@ func (n *SelectStmt) Accept(v Visitor) (Node, bool) {
 type SetOprSelectList struct {
 	node
 
-	IsInBraces       bool
 	With             *WithClause
 	AfterSetOperator *SetOprType
 	Selects          []Node
@@ -1569,13 +1568,6 @@ func (n *SetOprSelectList) Restore(ctx *format.RestoreCtx) error {
 		if err := n.With.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore SetOprSelectList.With")
 		}
-	}
-
-	if n.IsInBraces {
-		ctx.WritePlain("(")
-		defer func() {
-			ctx.WritePlain(")")
-		}()
 	}
 
 	for i, stmt := range n.Selects {
