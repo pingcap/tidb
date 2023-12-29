@@ -1299,7 +1299,6 @@ func (*TaskManager) getAllNodesWithSession(ctx context.Context, se sessionctx.Co
 	rs, err := ExecSQL(ctx, se, `
 		select host, role, cpu_count
 		from mysql.dist_framework_meta
-		where role = 'background' or role = ''
 		order by host`)
 	if err != nil {
 		return nil, err
