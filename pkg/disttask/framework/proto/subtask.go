@@ -19,7 +19,6 @@ import (
 	"time"
 )
 
-//
 // subtask state machine for normal subtask:
 //
 //	               ┌──────────────┐
@@ -48,7 +47,6 @@ import (
 //	 2. canceled:		pending -> running -> canceled
 //	 3. rollback:		revert_pending -> reverting -> reverted/revert_failed
 //	 4. pause/resume:	pending -> running -> paused -> running
-
 const (
 	SubtaskStatePending       SubtaskState = "pending"
 	SubtaskStateRunning       SubtaskState = "running"
