@@ -302,18 +302,18 @@ func TestSlotManagerInManager(t *testing.T) {
 	// 2. task2 alloc failed
 	// 3. task1 run success
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
-		unfinishedSubtaskStates...).
+		unfinishedSubtaskStates).
 		Return(true, nil)
 	mockPool.EXPECT().Run(gomock.Any()).DoAndReturn(runFn)
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID2, proto.StepOne,
-		unfinishedSubtaskStates...).
+		unfinishedSubtaskStates).
 		Return(true, nil)
 
 	// mock inside onRunnableTask
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID1).Return(task1, nil)
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
-		unfinishedSubtaskStates...).
+		unfinishedSubtaskStates).
 		Return(true, nil)
 	// task1 start running
 	mockInternalExecutor.EXPECT().Run(gomock.Any(), task1).DoAndReturn(func(_ context.Context, _ *proto.Task) error {
@@ -386,7 +386,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	// 2. task1 is preempted by task3, task1 start to pausing
 	// 3. task3 is waiting for task1 to be released, and task2 can't be allocated
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID3, proto.StepOne,
-		unfinishedSubtaskStates...).
+		unfinishedSubtaskStates).
 		Return(true, nil)
 
 	// the priority of task3 is higher than task2, so task3 is in front of task2
@@ -397,7 +397,7 @@ func TestSlotManagerInManager(t *testing.T) {
 
 	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID1).Return(task1, nil)
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
-		unfinishedSubtaskStates...).
+		unfinishedSubtaskStates).
 		Return(true, nil)
 	mockInternalExecutor.EXPECT().Close()
 
@@ -409,14 +409,14 @@ func TestSlotManagerInManager(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID3, proto.StepOne,
-		unfinishedSubtaskStates...).
+		unfinishedSubtaskStates).
 		Return(true, nil)
 	mockPool.EXPECT().Run(gomock.Any()).DoAndReturn(runFn)
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
-		unfinishedSubtaskStates...).
+		unfinishedSubtaskStates).
 		Return(true, nil)
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID2, proto.StepOne,
-		unfinishedSubtaskStates...).
+		unfinishedSubtaskStates).
 		Return(true, nil)
 	mockPool.EXPECT().Run(gomock.Any()).DoAndReturn(runFn)
 
@@ -424,7 +424,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID3).Return(task3, nil)
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID3, proto.StepOne,
-		unfinishedSubtaskStates...).
+		unfinishedSubtaskStates).
 		Return(true, nil)
 	mockInternalExecutor.EXPECT().Run(gomock.Any(), task3).DoAndReturn(func(_ context.Context, _ *proto.Task) error {
 		return <-ch
@@ -434,7 +434,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID2).Return(task2, nil)
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID2, proto.StepOne,
-		unfinishedSubtaskStates...).
+		unfinishedSubtaskStates).
 		Return(true, nil)
 	mockInternalExecutor.EXPECT().Run(gomock.Any(), task2).DoAndReturn(func(_ context.Context, _ *proto.Task) error {
 		return <-ch

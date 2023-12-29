@@ -113,7 +113,7 @@ type Task struct {
 	Concurrency int
 	CreateTime  time.Time
 
-	/// depends on query, below fields might not be filled.
+	// depends on query, below fields might not be filled.
 
 	// SchedulerID is not used now.
 	SchedulerID     string
