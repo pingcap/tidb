@@ -143,6 +143,21 @@ func buildApproxCountDistinct(aggFuncDesc *aggregation.AggFuncDesc, ordinal int)
 	return nil
 }
 
+func getEvalTypeForApproxPercentile(aggFuncDesc *aggregation.AggFuncDesc) types.EvalType {
+	evalType := aggFuncDesc.Args[0].GetType().EvalType()
+	argType := aggFuncDesc.Args[0].GetType().GetType()
+
+	// Sometimes `mysql.EnumSetAsIntFlag` may be set to true, such as when join,
+	// which is unexpected for `buildApproxPercentile` and `mysql.TypeEnum` and `mysql.TypeSet` will return unexpected `ETInt` here,
+	// so here `evalType` are forcibly set to `ETString`.
+	// For mysql.TypeBit, just same as other aggregate function.
+	if argType == mysql.TypeEnum || argType == mysql.TypeSet || argType == mysql.TypeBit {
+		evalType = types.ETString
+	}
+
+	return evalType
+}
+
 func buildApproxPercentile(sctx sessionctx.Context, aggFuncDesc *aggregation.AggFuncDesc, ordinal int) AggFunc {
 	if aggFuncDesc.Mode == aggregation.DedupMode {
 		return nil
@@ -158,10 +173,14 @@ func buildApproxPercentile(sctx sessionctx.Context, aggFuncDesc *aggregation.Agg
 
 	base := basePercentile{percent: int(percent), baseAggFunc: baseAggFunc{args: aggFuncDesc.Args, ordinal: ordinal}}
 
+<<<<<<< HEAD:executor/aggfuncs/builder.go
 	evalType := aggFuncDesc.Args[0].GetType().EvalType()
 	if aggFuncDesc.Args[0].GetType().Tp == mysql.TypeBit {
 		evalType = types.ETString // same as other aggregate function
 	}
+=======
+	evalType := getEvalTypeForApproxPercentile(aggFuncDesc)
+>>>>>>> 4a47236db9d (executor: Fix the panic in `approx_percentile` function (#49644)):pkg/executor/aggfuncs/builder.go
 	switch aggFuncDesc.Mode {
 	case aggregation.CompleteMode, aggregation.Partial1Mode, aggregation.FinalMode:
 		switch evalType {
