@@ -731,6 +731,9 @@ func (w *worker) doModifyColumnTypeWithData(
 	case model.StateDeleteOnly:
 		// Column from null to not null.
 		if !mysql.HasNotNullFlag(oldCol.GetFlag()) && mysql.HasNotNullFlag(changingCol.GetFlag()) {
+			if d.lease > 0 {
+				delayForAsyncCommit()
+			}
 			// Introduce the `mysql.PreventNullInsertFlag` flag to prevent users from inserting or updating null values.
 			err := modifyColsFromNull2NotNull(w, dbInfo, tblInfo, []*model.ColumnInfo{oldCol}, targetCol, oldCol.GetType() != changingCol.GetType())
 			if err != nil {
