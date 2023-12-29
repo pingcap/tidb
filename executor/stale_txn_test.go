@@ -808,6 +808,7 @@ func TestValidateReadOnlyInStalenessTransaction(t *testing.T) {
 }
 
 func TestSpecialSQLInStalenessTxn(t *testing.T) {
+	// for test
 	disableCommonFailPoint := enableStaleReadCommonFailPoint(t)
 	defer disableCommonFailPoint()
 
