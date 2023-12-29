@@ -125,6 +125,7 @@ func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext) error {
 	retryEnv := preparesnap.RetryEnv{Env: env}
 	begin := time.Now()
 	prep := preparesnap.New(retryEnv)
+	prep.LeaseDuration = cx.cfg.TTL
 
 	defer cx.cleanUpWith(func(ctx context.Context) {
 		if err := prep.Finalize(ctx); err != nil {

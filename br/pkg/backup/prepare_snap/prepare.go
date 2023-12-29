@@ -25,7 +25,7 @@ const (
 
 	defaultMaxRetry     = 60
 	defaultRetryBackoff = 5 * time.Second
-	defaultLeaseDur     = 300 * time.Second
+	defaultLeaseDur     = 120 * time.Second
 
 	/* Give pd enough time to find the region. If we aren't able to fetch
 	   the region, the whole procedure might be aborted. */
