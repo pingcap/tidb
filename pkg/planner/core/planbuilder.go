@@ -220,7 +220,7 @@ type PlanBuilder struct {
 
 	// rewriterPool stores the expressionRewriter we have created to reuse it if it has been released.
 	// rewriterCounter counts how many rewriter is being used.
-	rewriterPool    []*expressionRewriter
+	rewriterPool    []*planExpressionRewriter
 	rewriterCounter int
 
 	windowSpecs  map[string]*ast.WindowSpec
