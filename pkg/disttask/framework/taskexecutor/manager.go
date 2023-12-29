@@ -205,9 +205,9 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 
 	for _, task := range tasks {
 		exist, err := m.taskTable.HasSubtasksInStates(m.ctx, m.id, task.ID, task.Step,
-			proto.TaskStatePending, proto.TaskStateRevertPending,
+			proto.SubtaskStatePending, proto.SubtaskStateRevertPending,
 			// for the case that the tidb is restarted when the subtask is running.
-			proto.TaskStateRunning, proto.TaskStateReverting)
+			proto.SubtaskStateRunning, proto.SubtaskStateReverting)
 		if err != nil {
 			logutil.Logger(m.logCtx).Error("check subtask exist failed", zap.Error(err))
 			m.logErr(err)
@@ -391,9 +391,9 @@ func (m *Manager) onRunnableTask(task *proto.Task) {
 		if exist, err := m.taskTable.HasSubtasksInStates(
 			m.ctx,
 			m.id, task.ID, task.Step,
-			proto.TaskStatePending, proto.TaskStateRevertPending,
+			proto.SubtaskStatePending, proto.SubtaskStateRevertPending,
 			// for the case that the tidb is restarted when the subtask is running.
-			proto.TaskStateRunning, proto.TaskStateReverting); err != nil {
+			proto.SubtaskStateRunning, proto.SubtaskStateReverting); err != nil {
 			m.logErr(err)
 			return
 		} else if !exist {

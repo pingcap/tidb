@@ -196,8 +196,9 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 		wg.Wait()
 	}()
 
-	subtasks, err := s.taskTable.GetSubtasksByStepAndStates(runCtx, s.id, task.ID, task.Step,
-		proto.TaskStatePending, proto.TaskStateRunning)
+	subtasks, err := s.taskTable.GetSubtasksByStepAndStates(
+		runCtx, s.id, task.ID, task.Step,
+		proto.SubtaskStatePending, proto.SubtaskStateRunning)
 	if err != nil {
 		s.onError(err)
 		if common.IsRetryableError(err) {
@@ -222,7 +223,7 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 		}
 
 		subtask, err := s.taskTable.GetFirstSubtaskInStates(runCtx, s.id, task.ID, task.Step,
-			proto.TaskStatePending, proto.TaskStateRunning)
+			proto.SubtaskStatePending, proto.SubtaskStateRunning)
 		if err != nil {
 			logutil.Logger(s.logCtx).Warn("GetFirstSubtaskInStates meets error", zap.Error(err))
 			continue
@@ -244,13 +245,13 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 			continue
 		}
 
-		if subtask.State == proto.TaskStateRunning {
+		if subtask.State == proto.SubtaskStateRunning {
 			if !s.IsIdempotent(subtask) {
 				logutil.Logger(s.logCtx).Info("subtask in running state and is not idempotent, fail it",
 					zap.Int64("subtask-id", subtask.ID))
 				subtaskErr := errors.New("subtask in running state and is not idempotent")
 				s.onError(subtaskErr)
-				s.updateSubtaskStateAndError(runCtx, subtask, proto.TaskStateFailed, subtaskErr)
+				s.updateSubtaskStateAndError(runCtx, subtask, proto.SubtaskStateFailed, subtaskErr)
 				s.markErrorHandled()
 				break
 			}
@@ -399,7 +400,7 @@ func (s *BaseTaskExecutor) Rollback(ctx context.Context, task *proto.Task) error
 	// We should cancel all subtasks before rolling back
 	for {
 		subtask, err := s.taskTable.GetFirstSubtaskInStates(ctx, s.id, task.ID, task.Step,
-			proto.TaskStatePending, proto.TaskStateRunning)
+			proto.SubtaskStatePending, proto.SubtaskStateRunning)
 		if err != nil {
 			s.onError(err)
 			return s.getError()
@@ -409,7 +410,7 @@ func (s *BaseTaskExecutor) Rollback(ctx context.Context, task *proto.Task) error
 			break
 		}
 
-		s.updateSubtaskStateAndError(ctx, subtask, proto.TaskStateCanceled, nil)
+		s.updateSubtaskStateAndError(ctx, subtask, proto.SubtaskStateCanceled, nil)
 		if err = s.getError(); err != nil {
 			return err
 		}
@@ -421,7 +422,7 @@ func (s *BaseTaskExecutor) Rollback(ctx context.Context, task *proto.Task) error
 		return s.getError()
 	}
 	subtask, err := s.taskTable.GetFirstSubtaskInStates(ctx, s.id, task.ID, task.Step,
-		proto.TaskStateRevertPending, proto.TaskStateReverting)
+		proto.SubtaskStateRevertPending, proto.SubtaskStateReverting)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -430,8 +431,8 @@ func (s *BaseTaskExecutor) Rollback(ctx context.Context, task *proto.Task) error
 		logutil.BgLogger().Warn("taskExecutor rollback a step, but no subtask in revert_pending state", zap.Any("step", task.Step))
 		return nil
 	}
-	if subtask.State == proto.TaskStateRevertPending {
-		s.updateSubtaskStateAndError(ctx, subtask, proto.TaskStateReverting, nil)
+	if subtask.State == proto.SubtaskStateRevertPending {
+		s.updateSubtaskStateAndError(ctx, subtask, proto.SubtaskStateReverting, nil)
 	}
 	if err := s.getError(); err != nil {
 		return err
@@ -441,10 +442,10 @@ func (s *BaseTaskExecutor) Rollback(ctx context.Context, task *proto.Task) error
 	// will try to remove this rollback completely in the future.
 	err = executor.Rollback(rollbackCtx)
 	if err != nil {
-		s.updateSubtaskStateAndError(ctx, subtask, proto.TaskStateRevertFailed, nil)
+		s.updateSubtaskStateAndError(ctx, subtask, proto.SubtaskStateRevertFailed, nil)
 		s.onError(err)
 	} else {
-		s.updateSubtaskStateAndError(ctx, subtask, proto.TaskStateReverted, nil)
+		s.updateSubtaskStateAndError(ctx, subtask, proto.SubtaskStateReverted, nil)
 	}
 	return s.getError()
 }
@@ -534,12 +535,12 @@ func (s *BaseTaskExecutor) startSubtaskAndUpdateState(ctx context.Context, subta
 	metrics.DecDistTaskSubTaskCnt(subtask)
 	metrics.EndDistTaskSubTask(subtask)
 	s.startSubtask(ctx, subtask.ID)
-	subtask.State = proto.TaskStateRunning
+	subtask.State = proto.SubtaskStateRunning
 	metrics.IncDistTaskSubTaskCnt(subtask)
 	metrics.StartDistTaskSubTask(subtask)
 }
 
-func (s *BaseTaskExecutor) updateSubtaskStateAndErrorImpl(ctx context.Context, tidbID string, subtaskID int64, state proto.TaskState, subTaskErr error) {
+func (s *BaseTaskExecutor) updateSubtaskStateAndErrorImpl(ctx context.Context, tidbID string, subtaskID int64, state proto.SubtaskState, subTaskErr error) {
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	logger := logutil.Logger(s.logCtx)
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
@@ -580,13 +581,13 @@ func (s *BaseTaskExecutor) finishSubtask(ctx context.Context, subtask *proto.Sub
 	}
 }
 
-func (s *BaseTaskExecutor) updateSubtaskStateAndError(ctx context.Context, subtask *proto.Subtask, state proto.TaskState, subTaskErr error) {
+func (s *BaseTaskExecutor) updateSubtaskStateAndError(ctx context.Context, subtask *proto.Subtask, state proto.SubtaskState, subTaskErr error) {
 	metrics.DecDistTaskSubTaskCnt(subtask)
 	metrics.EndDistTaskSubTask(subtask)
 	s.updateSubtaskStateAndErrorImpl(ctx, subtask.ExecID, subtask.ID, state, subTaskErr)
 	subtask.State = state
 	metrics.IncDistTaskSubTaskCnt(subtask)
-	if !subtask.IsFinished() {
+	if !subtask.IsDone() {
 		metrics.StartDistTaskSubTask(subtask)
 	}
 }
@@ -595,7 +596,7 @@ func (s *BaseTaskExecutor) finishSubtaskAndUpdateState(ctx context.Context, subt
 	metrics.DecDistTaskSubTaskCnt(subtask)
 	metrics.EndDistTaskSubTask(subtask)
 	s.finishSubtask(ctx, subtask)
-	subtask.State = proto.TaskStateSucceed
+	subtask.State = proto.SubtaskStateSucceed
 	metrics.IncDistTaskSubTaskCnt(subtask)
 }
 
@@ -608,14 +609,14 @@ func (s *BaseTaskExecutor) markSubTaskCanceledOrFailed(ctx context.Context, subt
 		err := errors.Cause(err)
 		if ctx.Err() != nil && context.Cause(ctx) == ErrCancelSubtask {
 			logutil.Logger(s.logCtx).Warn("subtask canceled", zap.Error(err))
-			s.updateSubtaskStateAndError(s.ctx, subtask, proto.TaskStateCanceled, nil)
+			s.updateSubtaskStateAndError(s.ctx, subtask, proto.SubtaskStateCanceled, nil)
 		} else if s.IsRetryableError(err) {
 			logutil.Logger(s.logCtx).Warn("met retryable error", zap.Error(err))
 		} else if common.IsContextCanceledError(err) {
 			logutil.Logger(s.logCtx).Info("met context canceled for gracefully shutdown", zap.Error(err))
 		} else {
 			logutil.Logger(s.logCtx).Warn("subtask failed", zap.Error(err))
-			s.updateSubtaskStateAndError(s.ctx, subtask, proto.TaskStateFailed, err)
+			s.updateSubtaskStateAndError(s.ctx, subtask, proto.SubtaskStateFailed, err)
 		}
 		s.markErrorHandled()
 		return true

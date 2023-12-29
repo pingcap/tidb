@@ -471,7 +471,7 @@ func row2SubTask(r chunk.Row) *proto.Subtask {
 		Step:        proto.Step(r.GetInt64(1)),
 		Type:        proto.Int2Type(int(r.GetInt64(3))),
 		ExecID:      r.GetString(4),
-		State:       proto.TaskState(r.GetString(5)),
+		State:       proto.SubtaskState(r.GetString(5)),
 		Concurrency: int(r.GetInt64(6)),
 		CreateTime:  createTime,
 		StartTime:   startTime,
@@ -490,9 +490,11 @@ func row2SubTask(r chunk.Row) *proto.Subtask {
 }
 
 // GetSubtasksByStepAndStates gets all subtasks by given states.
-func (stm *TaskManager) GetSubtasksByStepAndStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...interface{}) ([]*proto.Subtask, error) {
+func (stm *TaskManager) GetSubtasksByStepAndStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...proto.SubtaskState) ([]*proto.Subtask, error) {
 	args := []interface{}{tidbID, taskID, step}
-	args = append(args, states...)
+	for _, state := range states {
+		args = append(args, state)
+	}
 	rs, err := stm.executeSQLWithNewSession(ctx, `select `+subtaskColumns+` from mysql.tidb_background_subtask
 		where exec_id = %? and task_key = %? and step = %?
 		and state in (`+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
@@ -508,7 +510,7 @@ func (stm *TaskManager) GetSubtasksByStepAndStates(ctx context.Context, tidbID s
 }
 
 // GetSubtasksByExecIdsAndStepAndState gets all subtasks by given taskID, exec_id, step and state.
-func (stm *TaskManager) GetSubtasksByExecIdsAndStepAndState(ctx context.Context, tidbIDs []string, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error) {
+func (stm *TaskManager) GetSubtasksByExecIdsAndStepAndState(ctx context.Context, tidbIDs []string, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error) {
 	args := []interface{}{taskID, step, state}
 	for _, tidbID := range tidbIDs {
 		args = append(args, tidbID)
@@ -528,9 +530,11 @@ func (stm *TaskManager) GetSubtasksByExecIdsAndStepAndState(ctx context.Context,
 }
 
 // GetFirstSubtaskInStates gets the first subtask by given states.
-func (stm *TaskManager) GetFirstSubtaskInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...interface{}) (*proto.Subtask, error) {
+func (stm *TaskManager) GetFirstSubtaskInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...proto.SubtaskState) (*proto.Subtask, error) {
 	args := []interface{}{tidbID, taskID, step}
-	args = append(args, states...)
+	for _, state := range states {
+		args = append(args, state)
+	}
 	rs, err := stm.executeSQLWithNewSession(ctx, `select `+subtaskColumns+` from mysql.tidb_background_subtask
 		where exec_id = %? and task_key = %? and step = %?
 		and state in (`+strings.Repeat("%?,", len(states)-1)+"%?) limit 1", args...)
@@ -630,9 +634,11 @@ func (stm *TaskManager) UpdateSubtaskRowCount(ctx context.Context, subtaskID int
 }
 
 // GetSubtaskInStatesCnt gets the subtask count in the states.
-func (stm *TaskManager) GetSubtaskInStatesCnt(ctx context.Context, taskID int64, states ...interface{}) (int64, error) {
+func (stm *TaskManager) GetSubtaskInStatesCnt(ctx context.Context, taskID int64, states ...proto.SubtaskState) (int64, error) {
 	args := []interface{}{taskID}
-	args = append(args, states...)
+	for _, state := range states {
+		args = append(args, state)
+	}
 	rs, err := stm.executeSQLWithNewSession(ctx, `select count(*) from mysql.tidb_background_subtask
 		where task_key = %? and state in (`+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
 	if err != nil {
@@ -673,9 +679,11 @@ func (stm *TaskManager) CollectSubTaskError(ctx context.Context, taskID int64) (
 }
 
 // HasSubtasksInStates checks if there are subtasks in the states.
-func (stm *TaskManager) HasSubtasksInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...interface{}) (bool, error) {
+func (stm *TaskManager) HasSubtasksInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...proto.SubtaskState) (bool, error) {
 	args := []interface{}{tidbID, taskID, step}
-	args = append(args, states...)
+	for _, state := range states {
+		args = append(args, state)
+	}
 	rs, err := stm.executeSQLWithNewSession(ctx, `select 1 from mysql.tidb_background_subtask
 		where exec_id = %? and task_key = %? and step = %?
 			and state in (`+strings.Repeat("%?,", len(states)-1)+"%?) limit 1", args...)
@@ -704,7 +712,10 @@ func (stm *TaskManager) StartManager(ctx context.Context, tidbID string, role st
 }
 
 // UpdateSubtaskStateAndError updates the subtask state.
-func (stm *TaskManager) UpdateSubtaskStateAndError(ctx context.Context, tidbID string, id int64, state proto.TaskState, subTaskErr error) error {
+func (stm *TaskManager) UpdateSubtaskStateAndError(
+	ctx context.Context,
+	tidbID string,
+	id int64, state proto.SubtaskState, subTaskErr error) error {
 	_, err := stm.executeSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
 		set state = %?, error = %?, state_update_time = unix_timestamp() where id = %? and exec_id = %?`,
 		state, serializeErr(subTaskErr), id, tidbID)

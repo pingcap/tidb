@@ -29,9 +29,9 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-var unfinishedSubtaskStates = []interface{}{
-	proto.TaskStatePending, proto.TaskStateRevertPending,
-	proto.TaskStateRunning, proto.TaskStateReverting,
+var unfinishedSubtaskStates = []proto.SubtaskState{
+	proto.SubtaskStatePending, proto.SubtaskStateRevertPending,
+	proto.SubtaskStateRunning, proto.SubtaskStateReverting,
 }
 
 func getPoolRunFn() (*sync.WaitGroup, func(f func()) error) {
@@ -127,43 +127,43 @@ func TestOnRunnableTasks(t *testing.T) {
 	// get subtask failed
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID, proto.StepOne,
-		unfinishedSubtaskStates...).
+		unfinishedSubtaskStates).
 		Return(false, errors.New("get subtask failed"))
 	mockInternalExecutor.EXPECT().Close()
 	m.onRunnableTasks([]*proto.Task{task})
 
 	// no subtask
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID, proto.StepOne,
-		unfinishedSubtaskStates...).Return(false, nil)
+		unfinishedSubtaskStates).Return(false, nil)
 	m.onRunnableTasks([]*proto.Task{task})
 
 	// pool error
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID, proto.StepOne,
-		unfinishedSubtaskStates...).Return(true, nil)
+		unfinishedSubtaskStates).Return(true, nil)
 	mockPool.EXPECT().Run(gomock.Any()).Return(errors.New("pool error"))
 	m.onRunnableTasks([]*proto.Task{task})
 
 	// StepOne succeed
 	wg, runFn := getPoolRunFn()
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID, proto.StepOne,
-		unfinishedSubtaskStates...).Return(true, nil)
+		unfinishedSubtaskStates).Return(true, nil)
 	mockPool.EXPECT().Run(gomock.Any()).DoAndReturn(runFn)
 	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID).Return(task, nil)
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID, proto.StepOne,
-		unfinishedSubtaskStates...).Return(true, nil)
+		unfinishedSubtaskStates).Return(true, nil)
 	mockInternalExecutor.EXPECT().Run(gomock.Any(), task).Return(nil)
 
 	// StepTwo failed
 	task1 := &proto.Task{ID: taskID, State: proto.TaskStateRunning, Step: proto.StepTwo}
 	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID).Return(task1, nil)
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID, proto.StepTwo,
-		unfinishedSubtaskStates...).Return(true, nil)
+		unfinishedSubtaskStates).Return(true, nil)
 	mockInternalExecutor.EXPECT().Run(gomock.Any(), task1).Return(errors.New("run err"))
 
 	task2 := &proto.Task{ID: taskID, State: proto.TaskStateReverting, Step: proto.StepTwo}
 	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID).Return(task2, nil)
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID, proto.StepTwo,
-		unfinishedSubtaskStates...).Return(true, nil)
+		unfinishedSubtaskStates).Return(true, nil)
 	mockInternalExecutor.EXPECT().Rollback(gomock.Any(), task2).Return(nil)
 
 	task3 := &proto.Task{ID: taskID, State: proto.TaskStateReverted, Step: proto.StepTwo}
@@ -210,33 +210,33 @@ func TestManager(t *testing.T) {
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	// task1
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
-		unfinishedSubtaskStates...).
+		unfinishedSubtaskStates).
 		Return(true, nil)
 	wg, runFn := getPoolRunFn()
 	mockPool.EXPECT().Run(gomock.Any()).DoAndReturn(runFn)
 	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID1).Return(task1, nil).AnyTimes()
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
-		unfinishedSubtaskStates...).
+		unfinishedSubtaskStates).
 		Return(true, nil)
 	mockInternalExecutor.EXPECT().Run(gomock.Any(), task1).Return(nil)
 
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
-		unfinishedSubtaskStates...).
+		unfinishedSubtaskStates).
 		Return(false, nil).AnyTimes()
 	mockInternalExecutor.EXPECT().Close()
 	// task2
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID2, proto.StepOne,
-		unfinishedSubtaskStates...).
+		unfinishedSubtaskStates).
 		Return(true, nil)
 	mockPool.EXPECT().Run(gomock.Any()).DoAndReturn(runFn)
 	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID2).Return(task2, nil).AnyTimes()
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID2, proto.StepOne,
-		unfinishedSubtaskStates...).
+		unfinishedSubtaskStates).
 		Return(true, nil)
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockInternalExecutor.EXPECT().Rollback(gomock.Any(), task2).Return(nil)
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID2, proto.StepOne,
-		unfinishedSubtaskStates...).
+		unfinishedSubtaskStates).
 		Return(false, nil).AnyTimes()
 	mockInternalExecutor.EXPECT().Close()
 	// task3
@@ -299,18 +299,18 @@ func TestSlotManagerInManager(t *testing.T) {
 	wg, runFn := getPoolRunFn()
 
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
-		unfinishedSubtaskStates...).
+		unfinishedSubtaskStates).
 		Return(true, nil)
 	mockPool.EXPECT().Run(gomock.Any()).DoAndReturn(runFn)
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID2, proto.StepOne,
-		unfinishedSubtaskStates...).
+		unfinishedSubtaskStates).
 		Return(true, nil)
 
 	// mock inside onRunnableTask
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID1).Return(task1, nil)
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
-		unfinishedSubtaskStates...).
+		unfinishedSubtaskStates).
 		Return(true, nil)
 	// task1 start running
 	mockInternalExecutor.EXPECT().Run(gomock.Any(), task1).DoAndReturn(func(_ context.Context, _ *proto.Task) error {
