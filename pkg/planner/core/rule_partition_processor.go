@@ -1782,8 +1782,6 @@ func (s *partitionProcessor) makeUnionAllChildren(ds *DataSource, pi *model.Part
 			newDataSource.schema = ds.schema.Clone()
 			newDataSource.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 			copy(newDataSource.Columns, ds.Columns)
-			newDataSource.FullColumns = make([]*model.ColumnInfo, len(ds.FullColumns))
-			copy(newDataSource.FullColumns, ds.FullColumns)
 			newDataSource.isPartition = true
 			newDataSource.physicalTableID = pi.Definitions[i].ID
 

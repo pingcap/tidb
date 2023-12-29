@@ -1415,16 +1415,8 @@ type DataSource struct {
 	IndexHints    []h.IndexHintInfo
 	table         table.Table
 	tableInfo     *model.TableInfo
-	// Columns contains ColumnInfo for this table.
-	// It's initialized in buildDataSource, and may be appended with model.ExtraPhysTblID in buildSelectLock.
-	// It will be pruned in column pruning.
-	// It should always be consistent with DataSource.schema, which is also pruned.
-	Columns []*model.ColumnInfo
-	// FullColumns is similar to Columns, but it's not pruned during column pruning.
-	// It should always be consistent with DataSource.TblCols, which is initialized and modified in the same way, and is
-	// also not pruned.
-	FullColumns []*model.ColumnInfo
-	DBName      model.CIStr
+	Columns       []*model.ColumnInfo
+	DBName        model.CIStr
 
 	TableAsName *model.CIStr
 	// indexMergeHints are the hint for indexmerge.
@@ -1651,7 +1643,6 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 	path.Ranges = ranger.FullNotNullRange()
 	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
 	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
-	path.NoPruneFullIdxCols, _ = expression.IndexInfo2Cols(ds.FullColumns, ds.TblCols, path.Index)
 	if len(conds) == 0 {
 		return nil
 	}
@@ -1780,7 +1771,6 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 	path.CountAfterAccess = float64(ds.statisticTable.RealtimeCount)
 	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.schema.Columns, path.Index)
 	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.schema.Columns, path.Index)
-	path.NoPruneFullIdxCols, _ = expression.IndexInfo2Cols(ds.FullColumns, ds.TblCols, path.Index)
 	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
 		handleCol := ds.getPKIsHandleCol()
 		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {

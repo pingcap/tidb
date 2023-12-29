@@ -4546,7 +4546,6 @@ func (ds *DataSource) AddExtraPhysTblIDColumn() *expression.Column {
 	}
 
 	ds.Columns = append(ds.Columns, model.NewExtraPhysTblIDColInfo())
-	ds.FullColumns = append(ds.FullColumns, model.NewExtraPhysTblIDColInfo())
 	schema := ds.Schema()
 	schema.Append(pidCol)
 	ds.names = append(ds.names, &types.FieldName{
@@ -5146,8 +5145,6 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			ds.TblCols = append(ds.TblCols, extraCol)
 		}
 	}
-	ds.FullColumns = make([]*model.ColumnInfo, len(ds.Columns))
-	copy(ds.FullColumns, ds.Columns)
 	ds.handleCols = handleCols
 	ds.unMutableHandleCols = handleCols
 	handleMap := make(map[int64][]HandleCols)

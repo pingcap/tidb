@@ -1292,7 +1292,6 @@ func buildPartialPath4MVIndex(
 		partialPath.IdxColLens = append(partialPath.IdxColLens, mvIndex.Columns[i].Length)
 		partialPath.FullIdxCols = append(partialPath.FullIdxCols, idxCols[i])
 		partialPath.FullIdxColLens = append(partialPath.FullIdxColLens, mvIndex.Columns[i].Length)
-		partialPath.NoPruneFullIdxCols = append(partialPath.NoPruneFullIdxCols, idxCols[i])
 	}
 	if err := detachCondAndBuildRangeForPath(sctx, partialPath, accessFilters, histColl); err != nil {
 		return nil, false, err
