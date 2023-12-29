@@ -101,7 +101,7 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 		tbl, err := s.statsHandle.TableStatsFromStorage(tableInfo, physicalID, false, 0)
 		// Error is not nil may mean that there are some ddl changes on this table, we will not update it.
 		if err != nil {
-			statslogutil.StatsLogger.Error("error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
+			statslogutil.StatsLogger().Error("error occurred when read table stats", zap.String("table", tableInfo.Name.O), zap.Error(err))
 			continue
 		}
 		if tbl == nil {

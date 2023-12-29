@@ -323,10 +323,10 @@ func (*visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 func (e *ShowExec) fetchShowBind() error {
 	var tmp []*bindinfo.BindRecord
 	if !e.GlobalScope {
-		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		tmp = handle.GetAllSessionBindRecord()
+		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
+		tmp = handle.GetAllSessionBindings()
 	} else {
-		tmp = domain.GetDomain(e.Ctx()).BindHandle().GetAllGlobalBinding()
+		tmp = domain.GetDomain(e.Ctx()).BindHandle().GetAllGlobalBindings()
 	}
 	bindRecords := make([]*bindinfo.BindRecord, 0)
 	for _, bindRecord := range tmp {
@@ -408,7 +408,7 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 
 	handle := domain.GetDomain(e.Ctx()).BindHandle()
 
-	bindRecords := handle.GetAllGlobalBinding()
+	bindRecords := handle.GetAllGlobalBindings()
 	numBindings := 0
 	for _, bindRecord := range bindRecords {
 		for _, binding := range bindRecord.Bindings {
@@ -1292,6 +1292,10 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 			fmt.Fprintf(buf, "PRE_SPLIT_REGIONS=%d ", tableInfo.PreSplitRegions)
 		}
 		buf.WriteString("*/")
+	}
+
+	if tableInfo.AutoRandomBits > 0 && tableInfo.PreSplitRegions > 0 {
+		fmt.Fprintf(buf, " /*T! PRE_SPLIT_REGIONS=%d */", tableInfo.PreSplitRegions)
 	}
 
 	if len(tableInfo.Comment) > 0 {
@@ -2358,7 +2362,7 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 	return runWithSystemSession(ctx, sctx, func(s sessionctx.Context) error {
 		// Retrieve view columns info.
 		planBuilder, _ := plannercore.NewPlanBuilder(
-			plannercore.PlanBuilderOptNoExecution{}).Init(s, is, &hint.BlockHintProcessor{})
+			plannercore.PlanBuilderOptNoExecution{}).Init(s, is, hint.NewQBHintHandler(nil))
 		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl, nil, nil)
 		if err != nil {
 			return err

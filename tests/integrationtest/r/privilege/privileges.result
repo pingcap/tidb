@@ -133,15 +133,14 @@ set global innodb_commit_concurrency=16;
 Error 1227 (42000): Access denied; you need (at least one of) the SUPER or SYSTEM_VARIABLES_ADMIN privilege(s) for this operation
 # TestCheckPointGetDBPrivilege
 CREATE USER 'tester'@'localhost';
-GRANT SELECT,UPDATE ON privilege__privileges.* TO  'tester'@'localhost';
+GRANT SELECT,UPDATE ON privilege__privileges2.* TO  'tester'@'localhost';
 create database if not exists privilege__privileges;
 create table privilege__privileges.t(id int, v int, primary key(id));
 insert into privilege__privileges.t(id, v) values(1, 1);
-use privilege__privileges;
 select * from privilege__privileges.t where id = 1;
-id	v
-1	1
+Error 1142 (42000): SELECT command denied to user 'tester'@'localhost' for table 't'
 update privilege__privileges.t set v = 2 where id = 1;
+Error 1142 (42000): SELECT command denied to user 'tester'@'localhost' for table 't'
 DROP USER 'tester'@'localhost';
 CREATE DATABASE if not exists privilege__privileges;
 USE privilege__privileges;
@@ -328,8 +327,8 @@ GRANT USAGE ON *.* TO 'column'@'%'
 GRANT SELECT(a), INSERT(c), UPDATE(a, b) ON `privilege__privileges`.`column_table` TO 'column'@'%'
 CREATE USER 'tableaccess'@'localhost';
 CREATE TABLE fieldlistt1 (a int);
-desc fieldlistt1;
-Error 1046 (3D000): No database selected
+desc privilege__privileges.fieldlistt1;
+Error 1142 (42000): SELECT command denied to user 'tableaccess'@'localhost' for table 'fieldlistt1'
 CREATE USER tr_insert;
 CREATE USER tr_update;
 CREATE USER tr_delete;

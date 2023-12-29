@@ -2002,35 +2002,14 @@ func TestEmptyOrgName(t *testing.T) {
 }
 
 func TestStats(t *testing.T) {
-	var outBuffer bytes.Buffer
-
 	store := testkit.CreateMockStore(t)
-	cfg := serverutil.NewTestConfig()
-	cfg.Port = 0
-	cfg.Status.StatusPort = 0
-	drv := NewTiDBDriver(store)
-	server, err := NewServer(cfg, drv)
-	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 
-	cc := &clientConn{
-		connectionID: 1,
-		salt: []byte{
-			0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A,
-			0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14,
-		},
-		server:     server,
-		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(&outBuffer)),
-		collation:  mysql.DefaultCollationID,
-		peerHost:   "localhost",
-		alloc:      arena.NewAllocator(512),
-		chunkAlloc: chunk.NewAllocator(),
-		capability: mysql.ClientProtocol41,
-	}
+	stats := &compressionStats{}
 
 	// No compression
 	vars := tk.Session().GetSessionVars()
-	m, err := cc.Stats(vars)
+	m, err := stats.Stats(vars)
 	require.NoError(t, err)
 	require.Equal(t, "OFF", m["Compression"])
 	require.Equal(t, "", m["Compression_algorithm"])
@@ -2038,7 +2017,7 @@ func TestStats(t *testing.T) {
 
 	// zlib compression
 	vars.CompressionAlgorithm = mysql.CompressionZlib
-	m, err = cc.Stats(vars)
+	m, err = stats.Stats(vars)
 	require.NoError(t, err)
 	require.Equal(t, "ON", m["Compression"])
 	require.Equal(t, "zlib", m["Compression_algorithm"])
@@ -2047,7 +2026,7 @@ func TestStats(t *testing.T) {
 	// zstd compression, with level 1
 	vars.CompressionAlgorithm = mysql.CompressionZstd
 	vars.CompressionLevel = 1
-	m, err = cc.Stats(vars)
+	m, err = stats.Stats(vars)
 	require.NoError(t, err)
 	require.Equal(t, "ON", m["Compression"])
 	require.Equal(t, "zstd", m["Compression_algorithm"])

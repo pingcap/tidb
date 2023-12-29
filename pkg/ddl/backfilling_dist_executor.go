@@ -20,19 +20,22 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
-// BackfillGlobalMeta is the global task meta for backfilling index.
-type BackfillGlobalMeta struct {
+// BackfillTaskMeta is the dist task meta for backfilling index.
+type BackfillTaskMeta struct {
 	Job model.Job `json:"job"`
 	// EleIDs stands for the index/column IDs to backfill with distributed framework.
 	EleIDs []int64 `json:"ele_ids"`
@@ -59,7 +62,7 @@ type BackfillSubTaskMeta struct {
 // NewBackfillSubtaskExecutor creates a new backfill subtask executor.
 func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
 	bc ingest.BackendCtx, stage proto.Step, summary *execute.Summary) (execute.SubtaskExecutor, error) {
-	bgm := &BackfillGlobalMeta{}
+	bgm := &BackfillTaskMeta{}
 	err := json.Unmarshal(taskMeta, bgm)
 	if err != nil {
 		return nil, err
@@ -127,7 +130,7 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 	}
 	d := s.d
 
-	bgm := &BackfillGlobalMeta{}
+	bgm := &BackfillTaskMeta{}
 	err = json.Unmarshal(s.task.Meta, bgm)
 	if err != nil {
 		return errors.Trace(err)
@@ -164,6 +167,21 @@ func (s *backfillDistExecutor) GetSubtaskExecutor(ctx context.Context, task *pro
 
 func (*backfillDistExecutor) IsIdempotent(*proto.Subtask) bool {
 	return true
+}
+
+func isRetryableError(err error) bool {
+	originErr := errors.Cause(err)
+	if tErr, ok := originErr.(*terror.Error); ok {
+		sqlErr := terror.ToSQLError(tErr)
+		_, ok := dbterror.ReorgRetryableErrCodes[sqlErr.Code]
+		return ok
+	}
+	// can't retry Unknown err.
+	return false
+}
+
+func (*backfillDistExecutor) IsRetryableError(err error) bool {
+	return common.IsRetryableError(err) || isRetryableError(err)
 }
 
 func (s *backfillDistExecutor) Close() {

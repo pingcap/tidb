@@ -162,9 +162,9 @@ func (s *statsReadWriter) ChangeGlobalStatsID(from, to int64) (err error) {
 	}, util.FlagWrapTxn)
 }
 
-// ResetTableStats2KVForDrop update the version of mysql.stats_meta.
-// Then GC worker will delete the old version of stats.
-func (s *statsReadWriter) ResetTableStats2KVForDrop(physicalID int64) (err error) {
+// UpdateStatsMetaVersionForGC update the version of mysql.stats_meta.
+// See more details in the interface definition.
+func (s *statsReadWriter) UpdateStatsMetaVersionForGC(physicalID int64) (err error) {
 	statsVer := uint64(0)
 	defer func() {
 		if err == nil && statsVer != 0 {
@@ -177,9 +177,14 @@ func (s *statsReadWriter) ResetTableStats2KVForDrop(physicalID int64) (err error
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if _, err := util.Exec(sctx, "update mysql.stats_meta set version=%? where table_id =%?", startTS, physicalID); err != nil {
+		if _, err := util.Exec(
+			sctx,
+			"update mysql.stats_meta set version=%? where table_id =%?",
+			startTS, physicalID,
+		); err != nil {
 			return err
 		}
+		statsVer = startTS
 		return nil
 	}, util.FlagWrapTxn)
 }
@@ -553,7 +558,7 @@ type TestLoadStatsErr struct{}
 // LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
 // In final, it will also udpate the stats cache.
 func (s *statsReadWriter) LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema,
-	jsonTbl *util.JSONTable, concurrencyForPartition uint8) error {
+	jsonTbl *util.JSONTable, concurrencyForPartition int) error {
 	if err := s.LoadStatsFromJSONNoUpdate(ctx, is, jsonTbl, concurrencyForPartition); err != nil {
 		return errors.Trace(err)
 	}
@@ -562,14 +567,12 @@ func (s *statsReadWriter) LoadStatsFromJSON(ctx context.Context, is infoschema.I
 
 // LoadStatsFromJSONNoUpdate will load statistic from JSONTable, and save it to the storage.
 func (s *statsReadWriter) LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema,
-	jsonTbl *util.JSONTable, concurrencyForPartition uint8) error {
-	nCPU := uint8(runtime.GOMAXPROCS(0))
+	jsonTbl *util.JSONTable, concurrencyForPartition int) error {
+	nCPU := runtime.GOMAXPROCS(0)
 	if concurrencyForPartition == 0 {
-		concurrencyForPartition = nCPU / 2 // default
+		concurrencyForPartition = (nCPU + 1) / 2 // default
 	}
-	if concurrencyForPartition > nCPU {
-		concurrencyForPartition = nCPU // for safety
-	}
+	concurrencyForPartition = min(concurrencyForPartition, nCPU) // for safety
 
 	table, err := is.TableByName(model.NewCIStr(jsonTbl.DatabaseName), model.NewCIStr(jsonTbl.TableName))
 	if err != nil {
@@ -591,7 +594,7 @@ func (s *statsReadWriter) LoadStatsFromJSONNoUpdate(ctx context.Context, is info
 		close(taskCh)
 		var wg sync.WaitGroup
 		e := new(atomic.Pointer[error])
-		for i := 0; i < int(concurrencyForPartition); i++ {
+		for i := 0; i < concurrencyForPartition; i++ {
 			wg.Add(1)
 			s.statsHandler.GPool().Go(func() {
 				defer func() {
@@ -649,7 +652,7 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 		// loadStatsFromJSON doesn't support partition table now.
 		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
-		err = s.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.GetStatsVer()), 1, false, util.StatsMetaHistorySourceLoadStats)
+		err = s.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 0, &col.Histogram, col.CMSketch, col.TopN, int(col.GetStatsVer()), statistics.AnalyzeFlag, false, util.StatsMetaHistorySourceLoadStats)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -658,7 +661,7 @@ func (s *statsReadWriter) loadStatsFromJSON(tableInfo *model.TableInfo, physical
 		// loadStatsFromJSON doesn't support partition table now.
 		// The table level count and modify_count would be overridden by the SaveMetaToStorage below, so we don't need
 		// to care about them here.
-		err = s.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.GetStatsVer()), 1, false, util.StatsMetaHistorySourceLoadStats)
+		err = s.SaveStatsToStorage(tbl.PhysicalID, tbl.RealtimeCount, 0, 1, &idx.Histogram, idx.CMSketch, idx.TopN, int(idx.GetStatsVer()), statistics.AnalyzeFlag, false, util.StatsMetaHistorySourceLoadStats)
 		if err != nil {
 			return errors.Trace(err)
 		}

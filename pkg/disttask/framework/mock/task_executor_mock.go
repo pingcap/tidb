@@ -74,24 +74,24 @@ func (mr *MockTaskTableMockRecorder) GetFirstSubtaskInStates(arg0, arg1, arg2, a
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetFirstSubtaskInStates", reflect.TypeOf((*MockTaskTable)(nil).GetFirstSubtaskInStates), varargs...)
 }
 
-// GetSubtasksInStates mocks base method.
-func (m *MockTaskTable) GetSubtasksInStates(arg0 context.Context, arg1 string, arg2 int64, arg3 proto.Step, arg4 ...any) ([]*proto.Subtask, error) {
+// GetSubtasksByStepAndStates mocks base method.
+func (m *MockTaskTable) GetSubtasksByStepAndStates(arg0 context.Context, arg1 string, arg2 int64, arg3 proto.Step, arg4 ...any) ([]*proto.Subtask, error) {
 	m.ctrl.T.Helper()
 	varargs := []any{arg0, arg1, arg2, arg3}
 	for _, a := range arg4 {
 		varargs = append(varargs, a)
 	}
-	ret := m.ctrl.Call(m, "GetSubtasksInStates", varargs...)
+	ret := m.ctrl.Call(m, "GetSubtasksByStepAndStates", varargs...)
 	ret0, _ := ret[0].([]*proto.Subtask)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetSubtasksInStates indicates an expected call of GetSubtasksInStates.
-func (mr *MockTaskTableMockRecorder) GetSubtasksInStates(arg0, arg1, arg2, arg3 any, arg4 ...any) *gomock.Call {
+// GetSubtasksByStepAndStates indicates an expected call of GetSubtasksByStepAndStates.
+func (mr *MockTaskTableMockRecorder) GetSubtasksByStepAndStates(arg0, arg1, arg2, arg3 any, arg4 ...any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	varargs := append([]any{arg0, arg1, arg2, arg3}, arg4...)
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtasksInStates", reflect.TypeOf((*MockTaskTable)(nil).GetSubtasksInStates), varargs...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtasksByStepAndStates", reflect.TypeOf((*MockTaskTable)(nil).GetSubtasksByStepAndStates), varargs...)
 }
 
 // GetTaskByID mocks base method.
@@ -193,17 +193,17 @@ func (mr *MockTaskTableMockRecorder) StartManager(arg0, arg1, arg2 any) *gomock.
 }
 
 // StartSubtask mocks base method.
-func (m *MockTaskTable) StartSubtask(arg0 context.Context, arg1 int64) error {
+func (m *MockTaskTable) StartSubtask(arg0 context.Context, arg1 int64, arg2 string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "StartSubtask", arg0, arg1)
+	ret := m.ctrl.Call(m, "StartSubtask", arg0, arg1, arg2)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // StartSubtask indicates an expected call of StartSubtask.
-func (mr *MockTaskTableMockRecorder) StartSubtask(arg0, arg1 any) *gomock.Call {
+func (mr *MockTaskTableMockRecorder) StartSubtask(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StartSubtask", reflect.TypeOf((*MockTaskTable)(nil).StartSubtask), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StartSubtask", reflect.TypeOf((*MockTaskTable)(nil).StartSubtask), arg0, arg1, arg2)
 }
 
 // UpdateErrorToSubtask mocks base method.
@@ -346,6 +346,20 @@ func (mr *MockTaskExecutorMockRecorder) Init(arg0 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Init", reflect.TypeOf((*MockTaskExecutor)(nil).Init), arg0)
 }
 
+// IsRetryableError mocks base method.
+func (m *MockTaskExecutor) IsRetryableError(arg0 error) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsRetryableError", arg0)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// IsRetryableError indicates an expected call of IsRetryableError.
+func (mr *MockTaskExecutorMockRecorder) IsRetryableError(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsRetryableError", reflect.TypeOf((*MockTaskExecutor)(nil).IsRetryableError), arg0)
+}
+
 // Pause mocks base method.
 func (m *MockTaskExecutor) Pause(arg0 context.Context, arg1 *proto.Task) error {
 	m.ctrl.T.Helper()
@@ -438,4 +452,18 @@ func (m *MockExtension) IsIdempotent(arg0 *proto.Subtask) bool {
 func (mr *MockExtensionMockRecorder) IsIdempotent(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsIdempotent", reflect.TypeOf((*MockExtension)(nil).IsIdempotent), arg0)
+}
+
+// IsRetryableError mocks base method.
+func (m *MockExtension) IsRetryableError(arg0 error) bool {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "IsRetryableError", arg0)
+	ret0, _ := ret[0].(bool)
+	return ret0
+}
+
+// IsRetryableError indicates an expected call of IsRetryableError.
+func (mr *MockExtensionMockRecorder) IsRetryableError(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsRetryableError", reflect.TypeOf((*MockExtension)(nil).IsRetryableError), arg0)
 }

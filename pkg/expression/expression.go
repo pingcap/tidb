@@ -17,16 +17,9 @@ package expression
 import (
 	goJSON "encoding/json"
 	"fmt"
-	"strconv"
-	"strings"
-	"sync/atomic"
 
-	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
@@ -36,11 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/zeropool"
-	"github.com/pingcap/tipb/go-tipb"
-	"go.uber.org/zap"
 )
 
 // These are byte flags used for `HashCode()`.
@@ -68,34 +58,25 @@ type VecExpr interface {
 	Vectorized() bool
 
 	// VecEvalInt evaluates this expression in a vectorized manner.
-	VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	VecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// VecEvalReal evaluates this expression in a vectorized manner.
-	VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	VecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// VecEvalString evaluates this expression in a vectorized manner.
-	VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	VecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// VecEvalDecimal evaluates this expression in a vectorized manner.
-	VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	VecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// VecEvalTime evaluates this expression in a vectorized manner.
-	VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	VecEvalTime(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// VecEvalDuration evaluates this expression in a vectorized manner.
-	VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
+	VecEvalDuration(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 
 	// VecEvalJSON evaluates this expression in a vectorized manner.
-	VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error
-}
-
-// ReverseExpr contains all resersed evaluation methods.
-type ReverseExpr interface {
-	// SupportReverseEval checks whether the builtinFunc support reverse evaluation.
-	SupportReverseEval() bool
-
-	// ReverseEval evaluates the only one column value with given function result.
-	ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error)
+	VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error
 }
 
 // TraverseAction define the interface for action when traversing down an expression.
@@ -103,39 +84,56 @@ type TraverseAction interface {
 	Transform(Expression) Expression
 }
 
+// ConstLevel indicates the const level for an expression
+type ConstLevel uint
+
+const (
+	// ConstNone indicates the expression is not a constant expression.
+	// The evaluation result may be different for different input rows.
+	// e.g. `col_a * 2`, `substring(col_b, 5, 3)`.
+	ConstNone ConstLevel = iota
+	// ConstOnlyInContext indicates the expression is only a constant for a same context.
+	// This is mainly for Plan Cache, e.g. `prepare st from 'select * from t where a<1+?'`, where
+	// the value of `?` may change between different Contexts (executions).
+	ConstOnlyInContext
+	// ConstStrict indicates the expression is a constant expression.
+	// The evaluation result is always the same no matter the input context or rows.
+	// e.g. `1 + 2`, `substring("TiDB SQL Tutorial", 5, 3) + 'abcde'`
+	ConstStrict
+)
+
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	fmt.Stringer
 	goJSON.Marshaler
 	VecExpr
-	ReverseExpr
 	CollationInfo
 
 	Traverse(TraverseAction) Expression
 
 	// Eval evaluates an expression through a row.
-	Eval(ctx sessionctx.Context, row chunk.Row) (types.Datum, error)
+	Eval(ctx EvalContext, row chunk.Row) (types.Datum, error)
 
 	// EvalInt returns the int64 representation of expression.
-	EvalInt(ctx sessionctx.Context, row chunk.Row) (val int64, isNull bool, err error)
+	EvalInt(ctx EvalContext, row chunk.Row) (val int64, isNull bool, err error)
 
 	// EvalReal returns the float64 representation of expression.
-	EvalReal(ctx sessionctx.Context, row chunk.Row) (val float64, isNull bool, err error)
+	EvalReal(ctx EvalContext, row chunk.Row) (val float64, isNull bool, err error)
 
 	// EvalString returns the string representation of expression.
-	EvalString(ctx sessionctx.Context, row chunk.Row) (val string, isNull bool, err error)
+	EvalString(ctx EvalContext, row chunk.Row) (val string, isNull bool, err error)
 
 	// EvalDecimal returns the decimal representation of expression.
-	EvalDecimal(ctx sessionctx.Context, row chunk.Row) (val *types.MyDecimal, isNull bool, err error)
+	EvalDecimal(ctx EvalContext, row chunk.Row) (val *types.MyDecimal, isNull bool, err error)
 
 	// EvalTime returns the DATE/DATETIME/TIMESTAMP representation of expression.
-	EvalTime(ctx sessionctx.Context, row chunk.Row) (val types.Time, isNull bool, err error)
+	EvalTime(ctx EvalContext, row chunk.Row) (val types.Time, isNull bool, err error)
 
 	// EvalDuration returns the duration representation of expression.
-	EvalDuration(ctx sessionctx.Context, row chunk.Row) (val types.Duration, isNull bool, err error)
+	EvalDuration(ctx EvalContext, row chunk.Row) (val types.Duration, isNull bool, err error)
 
 	// EvalJSON returns the JSON representation of expression.
-	EvalJSON(ctx sessionctx.Context, row chunk.Row) (val types.BinaryJSON, isNull bool, err error)
+	EvalJSON(ctx EvalContext, row chunk.Row) (val types.BinaryJSON, isNull bool, err error)
 
 	// GetType gets the type that the expression returns.
 	GetType() *types.FieldType
@@ -144,20 +142,13 @@ type Expression interface {
 	Clone() Expression
 
 	// Equal checks whether two expressions are equal.
-	Equal(ctx sessionctx.Context, e Expression) bool
+	Equal(ctx EvalContext, e Expression) bool
 
 	// IsCorrelated checks if this expression has correlated key.
 	IsCorrelated() bool
 
-	// ConstItem checks if this expression is constant item, regardless of query evaluation state.
-	// An expression is constant item if it:
-	// refers no tables.
-	// refers no correlated column.
-	// refers no subqueries that refers any tables.
-	// refers no non-deterministic functions.
-	// refers no statement parameters.
-	// refers no param markers when prepare plan cache is enabled.
-	ConstItem(sc *stmtctx.StatementContext) bool
+	// ConstLevel returns the const level of the expression.
+	ConstLevel() ConstLevel
 
 	// Decorrelate try to decorrelate the expression by schema.
 	Decorrelate(schema *Schema) Expression
@@ -169,16 +160,16 @@ type Expression interface {
 	resolveIndices(schema *Schema) error
 
 	// ResolveIndicesByVirtualExpr resolves indices by the given schema in terms of virual expression. It will copy the original expression and return the copied one.
-	ResolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *Schema) (Expression, bool)
+	ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) (Expression, bool)
 
 	// resolveIndicesByVirtualExpr is called inside the `ResolveIndicesByVirtualExpr` It will perform on the expression itself.
-	resolveIndicesByVirtualExpr(ctx sessionctx.Context, schema *Schema) bool
+	resolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) bool
 
 	// RemapColumn remaps columns with provided mapping and returns new expression
 	RemapColumn(map[int64]*Column) (Expression, error)
 
 	// ExplainInfo returns operator information to be explained.
-	ExplainInfo(ctx sessionctx.Context) string
+	ExplainInfo(ctx EvalContext) string
 
 	// ExplainNormalizedInfo returns operator normalized information for generating digest.
 	ExplainNormalizedInfo() string
@@ -262,7 +253,7 @@ func HandleOverflowOnSelection(sc *stmtctx.StatementContext, val int64, err erro
 // indicates bool result of the expression list, the second returned value indicates
 // whether the result of the expression list is null, it can only be true when the
 // first returned values is false.
-func EvalBool(ctx sessionctx.Context, exprList CNFExprs, row chunk.Row) (bool, bool, error) {
+func EvalBool(ctx EvalContext, exprList CNFExprs, row chunk.Row) (bool, bool, error) {
 	hasNull := false
 	for _, expr := range exprList {
 		data, err := expr.Eval(ctx, row)
@@ -336,7 +327,7 @@ func deallocateZeroSlice(isZero []int8) {
 }
 
 // VecEvalBool does the same thing as EvalBool but it works in a vectorized manner.
-func VecEvalBool(ctx sessionctx.Context, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
+func VecEvalBool(ctx EvalContext, exprList CNFExprs, input *chunk.Chunk, selected, nulls []bool) ([]bool, []bool, error) {
 	// If input.Sel() != nil, we will call input.SetSel(nil) to clear the sel slice in input chunk.
 	// After the function finished, then we reset the input.Sel().
 	// The caller will handle the input.Sel() and selected slices.
@@ -550,7 +541,7 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalT
 	return nil
 }
 
-func implicitEvalReal(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
+func implicitEvalReal(ctx EvalContext, expr Expression, input *chunk.Chunk, result *chunk.Column) (err error) {
 	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
 		err = expr.VecEvalReal(ctx, input, result)
 	} else {
@@ -579,7 +570,7 @@ func implicitEvalReal(ctx sessionctx.Context, expr Expression, input *chunk.Chun
 // the environment variables and whether the expression can be vectorized.
 // Note: the input argument `evalType` is needed because of that when `expr` is
 // of the hybrid type(ENUM/SET/BIT), we need the invoker decide the actual EvalType.
-func EvalExpr(ctx sessionctx.Context, expr Expression, evalType types.EvalType, input *chunk.Chunk, result *chunk.Column) (err error) {
+func EvalExpr(ctx EvalContext, expr Expression, evalType types.EvalType, input *chunk.Chunk, result *chunk.Column) (err error) {
 	if expr.Vectorized() && ctx.GetSessionVars().EnableVectorizedExpression {
 		switch evalType {
 		case types.ETInt:
@@ -1047,439 +1038,6 @@ func NewValuesFunc(ctx sessionctx.Context, offset int, retTp *types.FieldType) *
 func IsBinaryLiteral(expr Expression) bool {
 	con, ok := expr.(*Constant)
 	return ok && con.Value.Kind() == types.KindBinaryLiteral
-}
-
-// supported functions tracked by https://github.com/tikv/tikv/issues/5751
-func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
-	switch sf.FuncName.L {
-	case
-		// op functions.
-		ast.LogicAnd, ast.LogicOr, ast.LogicXor, ast.UnaryNot, ast.And, ast.Or, ast.Xor, ast.BitNeg, ast.LeftShift, ast.RightShift, ast.UnaryMinus,
-
-		// compare functions.
-		ast.LT, ast.LE, ast.EQ, ast.NE, ast.GE, ast.GT, ast.NullEQ, ast.In, ast.IsNull, ast.Like, ast.IsTruthWithoutNull, ast.IsTruthWithNull, ast.IsFalsity,
-		// ast.Greatest, ast.Least, ast.Interval
-
-		// arithmetical functions.
-		ast.PI, /* ast.Truncate */
-		ast.Plus, ast.Minus, ast.Mul, ast.Div, ast.Abs, ast.Mod,
-
-		// math functions.
-		ast.Ceil, ast.Ceiling, ast.Floor, ast.Sqrt, ast.Sign, ast.Ln, ast.Log, ast.Log2, ast.Log10, ast.Exp, ast.Pow,
-
-		// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
-		// open the following switchers if we implement them in coprocessor via `cmath`
-		ast.Sin, ast.Asin, ast.Cos, ast.Acos /* ast.Tan */, ast.Atan, ast.Atan2, ast.Cot,
-		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
-
-		// control flow functions.
-		ast.Case, ast.If, ast.Ifnull, ast.Coalesce,
-
-		// string functions.
-		// ast.Bin, ast.Unhex, ast.Locate, ast.Ord, ast.Lpad, ast.Rpad,
-		// ast.Trim, ast.FromBase64, ast.ToBase64, ast.Upper, ast.Lower, ast.InsertFunc,
-		// ast.MakeSet, ast.SubstringIndex, ast.Instr, ast.Quote, ast.Oct,
-		// ast.FindInSet, ast.Repeat,
-		ast.Length, ast.BitLength, ast.Concat, ast.ConcatWS, ast.Replace, ast.ASCII, ast.Hex,
-		ast.Reverse, ast.LTrim, ast.RTrim, ast.Strcmp, ast.Space, ast.Elt, ast.Field,
-		InternalFuncFromBinary, InternalFuncToBinary, ast.Mid, ast.Substring, ast.Substr, ast.CharLength,
-		ast.Right, /* ast.Left */
-
-		// json functions.
-		ast.JSONType, ast.JSONExtract, ast.JSONObject, ast.JSONArray, ast.JSONMerge, ast.JSONSet,
-		ast.JSONInsert /*ast.JSONReplace,*/, ast.JSONRemove, ast.JSONLength,
-		ast.JSONUnquote, ast.JSONContains, ast.JSONValid, ast.JSONMemberOf,
-
-		// date functions.
-		ast.Date, ast.Week /* ast.YearWeek, ast.ToSeconds */, ast.DateDiff,
-		/* ast.TimeDiff, ast.AddTime,  ast.SubTime, */
-		ast.MonthName, ast.MakeDate, ast.TimeToSec, ast.MakeTime,
-		ast.DateFormat,
-		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond, ast.Month,
-		/* ast.DayName */ ast.DayOfMonth, ast.DayOfWeek, ast.DayOfYear,
-		/* ast.Weekday */ ast.WeekOfYear, ast.Year,
-		ast.FromDays,                  /* ast.ToDays */
-		ast.PeriodAdd, ast.PeriodDiff, /*ast.TimestampDiff, ast.DateAdd, ast.FromUnixTime,*/
-		/* ast.LastDay */
-		ast.Sysdate,
-
-		// encryption functions.
-		ast.MD5, ast.SHA1, ast.UncompressedLength,
-
-		ast.Cast,
-
-		// misc functions.
-		// TODO(#26942): enable functions below after them are fully tested in TiKV.
-		/*ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton, ast.IsIPv4, ast.IsIPv4Compat, ast.IsIPv4Mapped, ast.IsIPv6,*/
-		ast.UUID:
-
-		return true
-	case ast.Round:
-		switch sf.Function.PbCode() {
-		case tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundDec:
-			// We don't push round with frac due to mysql's round with frac has its special behavior:
-			// https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
-			return true
-		}
-	case ast.Rand:
-		switch sf.Function.PbCode() {
-		case tipb.ScalarFuncSig_RandWithSeedFirstGen:
-			return true
-		}
-	case ast.Regexp, ast.RegexpLike, ast.RegexpSubstr, ast.RegexpInStr, ast.RegexpReplace:
-		funcCharset, funcCollation := sf.Function.CharsetAndCollation()
-		if funcCharset == charset.CharsetBin && funcCollation == charset.CollationBin {
-			return false
-		}
-		return true
-	}
-	return false
-}
-
-func canEnumPushdownPreliminarily(scalarFunc *ScalarFunction) bool {
-	switch scalarFunc.FuncName.L {
-	case ast.Cast:
-		return scalarFunc.RetType.EvalType() == types.ETInt || scalarFunc.RetType.EvalType() == types.ETReal || scalarFunc.RetType.EvalType() == types.ETDecimal
-	default:
-		return false
-	}
-}
-
-func scalarExprSupportedByFlash(function *ScalarFunction) bool {
-	switch function.FuncName.L {
-	case ast.Floor, ast.Ceil, ast.Ceiling:
-		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_FloorIntToDec, tipb.ScalarFuncSig_CeilIntToDec:
-			return false
-		default:
-			return true
-		}
-	case
-		ast.LogicOr, ast.LogicAnd, ast.UnaryNot, ast.BitNeg, ast.Xor, ast.And, ast.Or, ast.RightShift, ast.LeftShift,
-		ast.GE, ast.LE, ast.EQ, ast.NE, ast.LT, ast.GT, ast.In, ast.IsNull, ast.Like, ast.Ilike, ast.Strcmp,
-		ast.Plus, ast.Minus, ast.Div, ast.Mul, ast.Abs, ast.Mod,
-		ast.If, ast.Ifnull, ast.Case,
-		ast.Concat, ast.ConcatWS,
-		ast.Date, ast.Year, ast.Month, ast.Day, ast.Quarter, ast.DayName, ast.MonthName,
-		ast.DateDiff, ast.TimestampDiff, ast.DateFormat, ast.FromUnixTime,
-		ast.DayOfWeek, ast.DayOfMonth, ast.DayOfYear, ast.LastDay, ast.WeekOfYear, ast.ToSeconds,
-		ast.FromDays, ast.ToDays,
-
-		ast.Sqrt, ast.Log, ast.Log2, ast.Log10, ast.Ln, ast.Exp, ast.Pow, ast.Sign,
-		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
-		ast.JSONLength, ast.JSONDepth, ast.JSONExtract, ast.JSONUnquote, ast.JSONArray, ast.Repeat,
-		ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton,
-		ast.Coalesce, ast.ASCII, ast.Length, ast.Trim, ast.Position, ast.Format, ast.Elt,
-		ast.LTrim, ast.RTrim, ast.Lpad, ast.Rpad,
-		ast.Hour, ast.Minute, ast.Second, ast.MicroSecond,
-		ast.TimeToSec:
-		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_InDuration,
-			tipb.ScalarFuncSig_CoalesceDuration,
-			tipb.ScalarFuncSig_IfNullDuration,
-			tipb.ScalarFuncSig_IfDuration,
-			tipb.ScalarFuncSig_CaseWhenDuration:
-			return false
-		}
-		return true
-	case ast.Regexp, ast.RegexpLike, ast.RegexpInStr, ast.RegexpSubstr, ast.RegexpReplace:
-		funcCharset, funcCollation := function.Function.CharsetAndCollation()
-		if funcCharset == charset.CharsetBin && funcCollation == charset.CollationBin {
-			return false
-		}
-		return true
-	case ast.Substr, ast.Substring, ast.Left, ast.Right, ast.CharLength, ast.SubstringIndex, ast.Reverse:
-		switch function.Function.PbCode() {
-		case
-			tipb.ScalarFuncSig_LeftUTF8,
-			tipb.ScalarFuncSig_RightUTF8,
-			tipb.ScalarFuncSig_CharLengthUTF8,
-			tipb.ScalarFuncSig_Substring2ArgsUTF8,
-			tipb.ScalarFuncSig_Substring3ArgsUTF8,
-			tipb.ScalarFuncSig_SubstringIndex,
-			tipb.ScalarFuncSig_ReverseUTF8,
-			tipb.ScalarFuncSig_Reverse:
-			return true
-		}
-	case ast.Cast:
-		sourceType := function.GetArgs()[0].GetType()
-		retType := function.RetType
-		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_CastDecimalAsInt, tipb.ScalarFuncSig_CastIntAsInt, tipb.ScalarFuncSig_CastRealAsInt, tipb.ScalarFuncSig_CastTimeAsInt,
-			tipb.ScalarFuncSig_CastStringAsInt /*, tipb.ScalarFuncSig_CastDurationAsInt, tipb.ScalarFuncSig_CastJsonAsInt*/ :
-			// TiFlash cast only support cast to Int64 or the source type is the same as the target type
-			return (sourceType.GetType() == retType.GetType() && mysql.HasUnsignedFlag(sourceType.GetFlag()) == mysql.HasUnsignedFlag(retType.GetFlag())) || retType.GetType() == mysql.TypeLonglong
-		case tipb.ScalarFuncSig_CastIntAsReal, tipb.ScalarFuncSig_CastRealAsReal, tipb.ScalarFuncSig_CastStringAsReal, tipb.ScalarFuncSig_CastTimeAsReal: /*, tipb.ScalarFuncSig_CastDecimalAsReal,
-			  tipb.ScalarFuncSig_CastDurationAsReal, tipb.ScalarFuncSig_CastJsonAsReal*/
-			// TiFlash cast only support cast to Float64 or the source type is the same as the target type
-			return sourceType.GetType() == retType.GetType() || retType.GetType() == mysql.TypeDouble
-		case tipb.ScalarFuncSig_CastDecimalAsDecimal, tipb.ScalarFuncSig_CastIntAsDecimal, tipb.ScalarFuncSig_CastRealAsDecimal, tipb.ScalarFuncSig_CastTimeAsDecimal,
-			tipb.ScalarFuncSig_CastStringAsDecimal /*, tipb.ScalarFuncSig_CastDurationAsDecimal, tipb.ScalarFuncSig_CastJsonAsDecimal*/ :
-			return function.RetType.IsDecimalValid()
-		case tipb.ScalarFuncSig_CastDecimalAsString, tipb.ScalarFuncSig_CastIntAsString, tipb.ScalarFuncSig_CastRealAsString, tipb.ScalarFuncSig_CastTimeAsString,
-			tipb.ScalarFuncSig_CastStringAsString, tipb.ScalarFuncSig_CastJsonAsString /*, tipb.ScalarFuncSig_CastDurationAsString*/ :
-			return true
-		case tipb.ScalarFuncSig_CastDecimalAsTime, tipb.ScalarFuncSig_CastIntAsTime, tipb.ScalarFuncSig_CastRealAsTime, tipb.ScalarFuncSig_CastTimeAsTime,
-			tipb.ScalarFuncSig_CastStringAsTime /*, tipb.ScalarFuncSig_CastDurationAsTime, tipb.ScalarFuncSig_CastJsonAsTime*/ :
-			// ban the function of casting year type as time type pushing down to tiflash because of https://github.com/pingcap/tidb/issues/26215
-			return function.GetArgs()[0].GetType().GetType() != mysql.TypeYear
-		case tipb.ScalarFuncSig_CastTimeAsDuration:
-			return retType.GetType() == mysql.TypeDuration
-		case tipb.ScalarFuncSig_CastIntAsJson, tipb.ScalarFuncSig_CastRealAsJson, tipb.ScalarFuncSig_CastDecimalAsJson, tipb.ScalarFuncSig_CastStringAsJson,
-			tipb.ScalarFuncSig_CastTimeAsJson, tipb.ScalarFuncSig_CastDurationAsJson, tipb.ScalarFuncSig_CastJsonAsJson:
-			return true
-		}
-	case ast.DateAdd, ast.AddDate:
-		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_AddDateDatetimeInt, tipb.ScalarFuncSig_AddDateStringInt, tipb.ScalarFuncSig_AddDateStringReal:
-			return true
-		}
-	case ast.DateSub, ast.SubDate:
-		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_SubDateDatetimeInt, tipb.ScalarFuncSig_SubDateStringInt, tipb.ScalarFuncSig_SubDateStringReal:
-			return true
-		}
-	case ast.UnixTimestamp:
-		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_UnixTimestampInt, tipb.ScalarFuncSig_UnixTimestampDec:
-			return true
-		}
-	case ast.Round:
-		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_RoundInt, tipb.ScalarFuncSig_RoundReal, tipb.ScalarFuncSig_RoundDec,
-			tipb.ScalarFuncSig_RoundWithFracInt, tipb.ScalarFuncSig_RoundWithFracReal, tipb.ScalarFuncSig_RoundWithFracDec:
-			return true
-		}
-	case ast.Extract:
-		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_ExtractDatetime, tipb.ScalarFuncSig_ExtractDuration:
-			return true
-		}
-	case ast.Replace:
-		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_Replace:
-			return true
-		}
-	case ast.StrToDate:
-		switch function.Function.PbCode() {
-		case
-			tipb.ScalarFuncSig_StrToDateDate,
-			tipb.ScalarFuncSig_StrToDateDatetime:
-			return true
-		default:
-			return false
-		}
-	case ast.Upper, ast.Ucase, ast.Lower, ast.Lcase, ast.Space:
-		return true
-	case ast.Sysdate:
-		return true
-	case ast.Least, ast.Greatest:
-		switch function.Function.PbCode() {
-		case tipb.ScalarFuncSig_GreatestInt, tipb.ScalarFuncSig_GreatestReal,
-			tipb.ScalarFuncSig_LeastInt, tipb.ScalarFuncSig_LeastReal, tipb.ScalarFuncSig_LeastString, tipb.ScalarFuncSig_GreatestString:
-			return true
-		}
-	case ast.IsTruthWithNull, ast.IsTruthWithoutNull, ast.IsFalsity:
-		return true
-	case ast.Hex, ast.Unhex, ast.Bin:
-		return true
-	case ast.GetFormat:
-		return true
-	case ast.IsIPv4, ast.IsIPv6:
-		return true
-	case ast.Grouping: // grouping function for grouping sets identification.
-		return true
-	}
-	return false
-}
-
-func scalarExprSupportedByTiDB(function *ScalarFunction) bool {
-	// TiDB can support all functions, but TiPB may not include some functions.
-	return scalarExprSupportedByTiKV(function) || scalarExprSupportedByFlash(function)
-}
-
-func canFuncBePushed(sf *ScalarFunction, storeType kv.StoreType) bool {
-	// Use the failpoint to control whether to push down an expression in the integration test.
-	// Push down all expression if the `failpoint expression` is `all`, otherwise, check
-	// whether scalar function's name is contained in the enabled expression list (e.g.`ne,eq,lt`).
-	// If neither of the above is true, switch to original logic.
-	failpoint.Inject("PushDownTestSwitcher", func(val failpoint.Value) {
-		enabled := val.(string)
-		if enabled == "all" {
-			failpoint.Return(true)
-		}
-		exprs := strings.Split(enabled, ",")
-		for _, expr := range exprs {
-			if strings.ToLower(strings.TrimSpace(expr)) == sf.FuncName.L {
-				failpoint.Return(true)
-			}
-		}
-		failpoint.Return(false)
-	})
-
-	ret := false
-
-	switch storeType {
-	case kv.TiFlash:
-		ret = scalarExprSupportedByFlash(sf)
-	case kv.TiKV:
-		ret = scalarExprSupportedByTiKV(sf)
-	case kv.TiDB:
-		ret = scalarExprSupportedByTiDB(sf)
-	case kv.UnSpecified:
-		ret = scalarExprSupportedByTiDB(sf) || scalarExprSupportedByTiKV(sf) || scalarExprSupportedByFlash(sf)
-	}
-
-	if ret {
-		ret = IsPushDownEnabled(sf.FuncName.L, storeType)
-	}
-	return ret
-}
-
-func storeTypeMask(storeType kv.StoreType) uint32 {
-	if storeType == kv.UnSpecified {
-		return 1<<kv.TiKV | 1<<kv.TiFlash | 1<<kv.TiDB
-	}
-	return 1 << storeType
-}
-
-// IsPushDownEnabled returns true if the input expr is not in the expr_pushdown_blacklist
-func IsPushDownEnabled(name string, storeType kv.StoreType) bool {
-	value, exists := DefaultExprPushDownBlacklist.Load().(map[string]uint32)[name]
-	if exists {
-		mask := storeTypeMask(storeType)
-		return !(value&mask == mask)
-	}
-
-	if storeType != kv.TiFlash && name == ast.AggFuncApproxCountDistinct {
-		// Can not push down approx_count_distinct to other store except tiflash by now.
-		return false
-	}
-
-	return true
-}
-
-// DefaultExprPushDownBlacklist indicates the expressions which can not be pushed down to TiKV.
-var DefaultExprPushDownBlacklist *atomic.Value
-
-// ExprPushDownBlackListReloadTimeStamp is used to record the last time when the push-down black list is reloaded.
-// This is for plan cache, when the push-down black list is updated, we invalid all cached plans to avoid error.
-var ExprPushDownBlackListReloadTimeStamp *atomic.Int64
-
-func init() {
-	DefaultExprPushDownBlacklist = new(atomic.Value)
-	DefaultExprPushDownBlacklist.Store(make(map[string]uint32))
-	ExprPushDownBlackListReloadTimeStamp = new(atomic.Int64)
-}
-
-func canScalarFuncPushDown(scalarFunc *ScalarFunction, pc PbConverter, storeType kv.StoreType) bool {
-	pbCode := scalarFunc.Function.PbCode()
-	// Check whether this function can be pushed.
-	if unspecified := pbCode <= tipb.ScalarFuncSig_Unspecified; unspecified || !canFuncBePushed(scalarFunc, storeType) {
-		if unspecified {
-			failpoint.Inject("PanicIfPbCodeUnspecified", func() {
-				panic(errors.Errorf("unspecified PbCode: %T", scalarFunc.Function))
-			})
-		}
-		storageName := storeType.Name()
-		if storeType == kv.UnSpecified {
-			storageName = "storage layer"
-		}
-		warnErr := errors.New("Scalar function '" + scalarFunc.FuncName.L + "'(signature: " + scalarFunc.Function.PbCode().String() + ", return type: " + scalarFunc.RetType.CompactStr() + ") is not supported to push down to " + storageName + " now.")
-		sc := pc.ctx.GetSessionVars().StmtCtx
-		if sc.InExplainStmt {
-			sc.AppendWarning(warnErr)
-		} else {
-			sc.AppendExtraWarning(warnErr)
-		}
-		return false
-	}
-	canEnumPush := canEnumPushdownPreliminarily(scalarFunc)
-	// Check whether all of its parameters can be pushed.
-	for _, arg := range scalarFunc.GetArgs() {
-		if !canExprPushDown(arg, pc, storeType, canEnumPush) {
-			return false
-		}
-	}
-
-	if metadata := scalarFunc.Function.metadata(); metadata != nil {
-		var err error
-		_, err = proto.Marshal(metadata)
-		if err != nil {
-			logutil.BgLogger().Error("encode metadata", zap.Any("metadata", metadata), zap.Error(err))
-			return false
-		}
-	}
-	return true
-}
-
-func canExprPushDown(expr Expression, pc PbConverter, storeType kv.StoreType, canEnumPush bool) bool {
-	if storeType == kv.TiFlash {
-		sc := pc.ctx.GetSessionVars().StmtCtx
-		switch expr.GetType().GetType() {
-		case mysql.TypeEnum, mysql.TypeBit, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeUnspecified:
-			if expr.GetType().GetType() == mysql.TypeEnum && canEnumPush {
-				break
-			}
-			warnErr := errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().GetType()) + "'.")
-			if sc.InExplainStmt {
-				sc.AppendWarning(warnErr)
-			} else {
-				sc.AppendExtraWarning(warnErr)
-			}
-			return false
-		case mysql.TypeNewDecimal:
-			if !expr.GetType().IsDecimalValid() {
-				warnErr := errors.New("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType().GetFlen()) + "','" + strconv.Itoa(expr.GetType().GetDecimal()) + "').")
-				if sc.InExplainStmt {
-					sc.AppendWarning(warnErr)
-				} else {
-					sc.AppendExtraWarning(warnErr)
-				}
-				return false
-			}
-		}
-	}
-	switch x := expr.(type) {
-	case *CorrelatedColumn:
-		return pc.conOrCorColToPBExpr(expr) != nil && pc.columnToPBExpr(&x.Column) != nil
-	case *Constant:
-		return pc.conOrCorColToPBExpr(expr) != nil
-	case *Column:
-		return pc.columnToPBExpr(x) != nil
-	case *ScalarFunction:
-		return canScalarFuncPushDown(x, pc, storeType)
-	}
-	return false
-}
-
-// PushDownExprsWithExtraInfo split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
-func PushDownExprsWithExtraInfo(ctx sessionctx.Context, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) (pushed []Expression, remained []Expression) {
-	pc := PbConverter{ctx: ctx, client: client}
-	for _, expr := range exprs {
-		if canExprPushDown(expr, pc, storeType, canEnumPush) {
-			pushed = append(pushed, expr)
-		} else {
-			remained = append(remained, expr)
-		}
-	}
-	return
-}
-
-// PushDownExprs split the input exprs into pushed and remained, pushed include all the exprs that can be pushed down
-func PushDownExprs(ctx sessionctx.Context, exprs []Expression, client kv.Client, storeType kv.StoreType) (pushed []Expression, remained []Expression) {
-	return PushDownExprsWithExtraInfo(ctx, exprs, client, storeType, false)
-}
-
-// CanExprsPushDownWithExtraInfo return true if all the expr in exprs can be pushed down
-func CanExprsPushDownWithExtraInfo(ctx sessionctx.Context, exprs []Expression, client kv.Client, storeType kv.StoreType, canEnumPush bool) bool {
-	_, remained := PushDownExprsWithExtraInfo(ctx, exprs, client, storeType, canEnumPush)
-	return len(remained) == 0
-}
-
-// CanExprsPushDown return true if all the expr in exprs can be pushed down
-func CanExprsPushDown(ctx sessionctx.Context, exprs []Expression, client kv.Client, storeType kv.StoreType) bool {
-	return CanExprsPushDownWithExtraInfo(ctx, exprs, client, storeType, false)
 }
 
 // wrapWithIsTrue wraps `arg` with istrue function if the return type of expr is not

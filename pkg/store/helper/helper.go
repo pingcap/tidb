@@ -81,6 +81,10 @@ type Storage interface {
 type Helper struct {
 	Store       Storage
 	RegionCache *tikv.RegionCache
+	// pdHTTPCli is used to send http request to PD.
+	// This field is lazy initialized in `TryGetPDHTTPClient`,
+	// and should be tagged with the caller ID before using.
+	pdHTTPCli pd.Client
 }
 
 // NewHelper gets a Helper from Storage
@@ -93,11 +97,15 @@ func NewHelper(store Storage) *Helper {
 
 // TryGetPDHTTPClient tries to get a PD HTTP client if it's available.
 func (h *Helper) TryGetPDHTTPClient() (pd.Client, error) {
+	if h.pdHTTPCli != nil {
+		return h.pdHTTPCli, nil
+	}
 	cli := h.Store.GetPDHTTPClient()
 	if cli == nil {
 		return nil, errors.New("pd http client unavailable")
 	}
-	return cli, nil
+	h.pdHTTPCli = cli.WithCallerID("tidb-store-helper")
+	return h.pdHTTPCli, nil
 }
 
 // MaxBackoffTimeoutForMvccGet is a derived value from previous implementation possible experiencing value 5000ms.

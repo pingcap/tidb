@@ -65,7 +65,7 @@ func (e *LockExec) Next(_ context.Context, _ *chunk.Chunk) error {
 			return err
 		}
 		if msg != "" {
-			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
+			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(msg))
 		}
 	} else {
 		tableWithPartitions, err := populateTableAndPartitionIDs(e.Tables, is)
@@ -78,7 +78,7 @@ func (e *LockExec) Next(_ context.Context, _ *chunk.Chunk) error {
 			return err
 		}
 		if msg != "" {
-			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
+			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(msg))
 		}
 	}
 

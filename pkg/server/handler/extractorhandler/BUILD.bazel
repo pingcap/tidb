@@ -27,6 +27,7 @@ go_test(
     deps = [
         ":extractorhandler",
         "//pkg/config",
+        "//pkg/domain",
         "//pkg/metrics",
         "//pkg/server",
         "//pkg/server/internal/testserverclient",

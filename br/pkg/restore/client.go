@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/pkg/config"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
@@ -90,6 +89,7 @@ const (
 // Client sends requests to restore files.
 type Client struct {
 	pdClient      pd.Client
+	pdHTTPClient  pdhttp.Client
 	toolClient    split.SplitClient
 	fileImporter  FileImporter
 	rawKVClient   *RawKVBatchClient
@@ -170,8 +170,8 @@ type Client struct {
 	// this feature is controlled by flag with-sys-table
 	fullClusterRestore bool
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
-	deleteRangeQuery          []string
-	deleteRangeQueryCh        chan string
+	deleteRangeQuery          []*stream.PreDelRangeQuery
+	deleteRangeQueryCh        chan *stream.PreDelRangeQuery
 	deleteRangeQueryWaitGroup sync.WaitGroup
 
 	// see RestoreCommonConfig.WithSysTable
@@ -194,18 +194,20 @@ type Client struct {
 // NewRestoreClient returns a new RestoreClient.
 func NewRestoreClient(
 	pdClient pd.Client,
+	pdHTTPCli pdhttp.Client,
 	tlsConf *tls.Config,
 	keepaliveConf keepalive.ClientParameters,
 	isRawKv bool,
 ) *Client {
 	return &Client{
 		pdClient:           pdClient,
-		toolClient:         split.NewSplitClient(pdClient, tlsConf, isRawKv),
+		pdHTTPClient:       pdHTTPCli,
+		toolClient:         split.NewSplitClient(pdClient, pdHTTPCli, tlsConf, isRawKv),
 		tlsConf:            tlsConf,
 		keepaliveConf:      keepaliveConf,
 		switchCh:           make(chan struct{}),
-		deleteRangeQuery:   make([]string, 0),
-		deleteRangeQueryCh: make(chan string, 10),
+		deleteRangeQuery:   make([]*stream.PreDelRangeQuery, 0),
+		deleteRangeQueryCh: make(chan *stream.PreDelRangeQuery, 10),
 	}
 }
 
@@ -231,24 +233,22 @@ func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
 		rc.backupMeta = new(backuppb.BackupMeta)
 	}
 
-	// Only in binary we can use multi-thread sessions to create tables.
-	// so use OwnStorage() to tell whether we are use binary or SQL.
-	if g.OwnsStorage() {
-		// Maybe allow user modify the DDL concurrency isn't necessary,
-		// because executing DDL is really I/O bound (or, algorithm bound?),
-		// and we cost most of time at waiting DDL jobs be enqueued.
-		// So these jobs won't be faster or slower when machine become faster or slower,
-		// hence make it a fixed value would be fine.
-		rc.dbPool, err = makeDBPool(defaultDDLConcurrency, func() (*DB, error) {
-			db, _, err := NewDB(g, store, rc.policyMode)
-			return db, err
-		})
-		if err != nil {
-			log.Warn("create session pool failed, we will send DDLs only by created sessions",
-				zap.Error(err),
-				zap.Int("sessionCount", len(rc.dbPool)),
-			)
-		}
+	// There are different ways to create session between in binary and in SQL.
+	//
+	// Maybe allow user modify the DDL concurrency isn't necessary,
+	// because executing DDL is really I/O bound (or, algorithm bound?),
+	// and we cost most of time at waiting DDL jobs be enqueued.
+	// So these jobs won't be faster or slower when machine become faster or slower,
+	// hence make it a fixed value would be fine.
+	rc.dbPool, err = makeDBPool(defaultDDLConcurrency, func() (*DB, error) {
+		db, _, err := NewDB(g, store, rc.policyMode)
+		return db, err
+	})
+	if err != nil {
+		log.Warn("create session pool failed, we will send DDLs only by created sessions",
+			zap.Error(err),
+			zap.Int("sessionCount", len(rc.dbPool)),
+		)
 	}
 	return errors.Trace(err)
 }
@@ -488,12 +488,21 @@ func (rc *Client) GetRewriteMode() RewriteMode {
 	return rc.rewriteMode
 }
 
-// Close a client.
-func (rc *Client) Close() {
+func (rc *Client) closeConn() {
 	// rc.db can be nil in raw kv mode.
 	if rc.db != nil {
 		rc.db.Close()
 	}
+	for _, db := range rc.dbPool {
+		db.Close()
+	}
+}
+
+// Close a client.
+func (rc *Client) Close() {
+	// close the connection, and it must be succeed when in SQL mode.
+	rc.closeConn()
+
 	if rc.rawKVClient != nil {
 		rc.rawKVClient.Close()
 	}
@@ -515,7 +524,7 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 }
 
 func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) {
-	metaClient := split.NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
+	metaClient := split.NewSplitClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, rc.rewriteMode)
 }
@@ -1322,7 +1331,7 @@ func (rc *Client) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int
 	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
-	client := split.NewSplitClient(rc.GetPDClient(), rc.GetTLSConfig(), false)
+	client := split.NewSplitClient(rc.GetPDClient(), rc.pdHTTPClient, rc.GetTLSConfig(), false)
 	return NewLogFilesIterWithSplitHelper(logIter, rules, client, splitSize, splitKeys), nil
 }
 
@@ -2045,7 +2054,7 @@ func (rc *Client) SetupPlacementRules(ctx context.Context, tables []*model.Table
 	}
 	rule.Index = 100
 	rule.Override = true
-	rule.LabelConstraints = append(rule.LabelConstraints, pdtypes.LabelConstraint{
+	rule.LabelConstraints = append(rule.LabelConstraints, pdhttp.LabelConstraint{
 		Key:    restoreLabelKey,
 		Op:     "in",
 		Values: []string{restoreLabelValue},
@@ -2797,7 +2806,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 			dbReplace.TableMap[t.Info.ID] = &stream.TableReplace{
 				Name:         newTableInfo.Name.O,
 				TableID:      newTableInfo.ID,
-				PartitionMap: getTableIDMap(newTableInfo, t.Info),
+				PartitionMap: getPartitionIDMap(newTableInfo, t.Info),
 				IndexMap:     getIndexIDMap(newTableInfo, t.Info),
 			}
 		}
@@ -2824,7 +2833,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 
 	rp := stream.NewSchemasReplace(
 		dbReplaces, needConstructIdMap, cfg.TiFlashRecorder, rc.currentTS, cfg.TableFilter, rc.GenGlobalID, rc.GenGlobalIDs,
-		rc.InsertDeleteRangeForTable, rc.InsertDeleteRangeForIndex)
+		rc.RecordDeleteRange)
 	return rp, nil
 }
 
@@ -3428,66 +3437,8 @@ NEXTSQL:
 	return nil
 }
 
-const (
-	insertDeleteRangeSQLPrefix = `INSERT IGNORE INTO mysql.gc_delete_range VALUES `
-	insertDeleteRangeSQLValue  = "(%d, %d, '%s', '%s', %%[1]d)"
-
-	batchInsertDeleteRangeSize = 256
-)
-
-// InsertDeleteRangeForTable generates query to insert table delete job into table `gc_delete_range`.
-func (rc *Client) InsertDeleteRangeForTable(jobID int64, tableIDs []int64) {
-	var elementID int64 = 1
-	var tableID int64
-	for i := 0; i < len(tableIDs); i += batchInsertDeleteRangeSize {
-		batchEnd := len(tableIDs)
-		if batchEnd > i+batchInsertDeleteRangeSize {
-			batchEnd = i + batchInsertDeleteRangeSize
-		}
-
-		var buf strings.Builder
-		buf.WriteString(insertDeleteRangeSQLPrefix)
-		for j := i; j < batchEnd; j++ {
-			tableID = tableIDs[j]
-			startKey := tablecodec.EncodeTablePrefix(tableID)
-			endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-			startKeyEncoded := hex.EncodeToString(startKey)
-			endKeyEncoded := hex.EncodeToString(endKey)
-			buf.WriteString(fmt.Sprintf(insertDeleteRangeSQLValue, jobID, elementID, startKeyEncoded, endKeyEncoded))
-			if j != batchEnd-1 {
-				buf.WriteString(",")
-			}
-			elementID += 1
-		}
-		rc.deleteRangeQueryCh <- buf.String()
-	}
-}
-
-// InsertDeleteRangeForIndex generates query to insert index delete job into table `gc_delete_range`.
-func (rc *Client) InsertDeleteRangeForIndex(jobID int64, elementID *int64, tableID int64, indexIDs []int64) {
-	var indexID int64
-	for i := 0; i < len(indexIDs); i += batchInsertDeleteRangeSize {
-		batchEnd := len(indexIDs)
-		if batchEnd > i+batchInsertDeleteRangeSize {
-			batchEnd = i + batchInsertDeleteRangeSize
-		}
-
-		var buf strings.Builder
-		buf.WriteString(insertDeleteRangeSQLPrefix)
-		for j := i; j < batchEnd; j++ {
-			indexID = indexIDs[j]
-			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
-			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-			startKeyEncoded := hex.EncodeToString(startKey)
-			endKeyEncoded := hex.EncodeToString(endKey)
-			buf.WriteString(fmt.Sprintf(insertDeleteRangeSQLValue, jobID, *elementID, startKeyEncoded, endKeyEncoded))
-			if j != batchEnd-1 {
-				buf.WriteString(",")
-			}
-			*elementID += 1
-		}
-		rc.deleteRangeQueryCh <- buf.String()
-	}
+func (rc *Client) RecordDeleteRange(sql *stream.PreDelRangeQuery) {
+	rc.deleteRangeQueryCh <- sql
 }
 
 // use channel to save the delete-range query to make it thread-safety.
@@ -3518,16 +3469,41 @@ func (rc *Client) InsertGCRows(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	jobIDMap := make(map[int64]int64)
 	for _, query := range rc.deleteRangeQuery {
-		if err := rc.db.se.ExecuteInternal(ctx, fmt.Sprintf(query, ts)); err != nil {
-			return errors.Trace(err)
+		paramsList := make([]interface{}, 0, len(query.ParamsList)*5)
+		for _, params := range query.ParamsList {
+			newJobID, exists := jobIDMap[params.JobID]
+			if !exists {
+				newJobID, err = rc.GenGlobalID(ctx)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				jobIDMap[params.JobID] = newJobID
+			}
+			log.Info("insert into the delete range",
+				zap.Int64("jobID", newJobID),
+				zap.Int64("elemID", params.ElemID),
+				zap.String("startKey", params.StartKey),
+				zap.String("endKey", params.EndKey),
+				zap.Uint64("ts", ts))
+			// (job_id, elem_id, start_key, end_key, ts)
+			paramsList = append(paramsList, newJobID, params.ElemID, params.StartKey, params.EndKey, ts)
+		}
+		if len(paramsList) > 0 {
+			// trim the ',' behind the query.Sql if exists
+			// that's when the rewrite rule of the last table id is not exist
+			sql := strings.TrimSuffix(query.Sql, ",")
+			if err := rc.db.se.ExecuteInternal(ctx, sql, paramsList...); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
 }
 
 // only for unit test
-func (rc *Client) GetGCRows() []string {
+func (rc *Client) GetGCRows() []*stream.PreDelRangeQuery {
 	close(rc.deleteRangeQueryCh)
 	rc.deleteRangeQueryWaitGroup.Wait()
 	return rc.deleteRangeQuery
@@ -3575,11 +3551,6 @@ func (rc *Client) InitFullClusterRestore(explicitFilter bool) {
 	rc.fullClusterRestore = !explicitFilter && rc.IsFull()
 
 	log.Info("full cluster restore", zap.Bool("value", rc.fullClusterRestore))
-
-	if rc.fullClusterRestore {
-		// have to skip grant table, in order to NotifyUpdatePrivilege
-		config.GetGlobalConfig().Security.SkipGrantTable = true
-	}
 }
 
 func (rc *Client) IsFullClusterRestore() bool {

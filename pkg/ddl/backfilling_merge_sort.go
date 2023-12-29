@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -88,11 +87,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	if err != nil {
 		return err
 	}
-	opt := &storage.ExternalStorageOptions{}
-	if intest.InTest {
-		opt.NoCredentials = true
-	}
-	store, err := storage.New(ctx, storeBackend, opt)
+	store, err := storage.NewWithDefaultOpt(ctx, storeBackend)
 	if err != nil {
 		return err
 	}
@@ -112,6 +107,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		64*1024,
 		prefix,
 		external.DefaultBlockSize,
+		external.DefaultMemSizeLimit,
 		8*1024,
 		1*size.MB,
 		8*1024,

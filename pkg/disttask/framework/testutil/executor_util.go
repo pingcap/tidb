@@ -40,6 +40,7 @@ func GetMockTaskExecutorExtension(ctrl *gomock.Controller, mockSubtaskExecutor *
 	mockExtension.EXPECT().
 		GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(mockSubtaskExecutor, nil).AnyTimes()
+	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
 	return mockExtension
 }
 

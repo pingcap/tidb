@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -83,7 +82,7 @@ func (r *localColumnPool) MemoryUsage() (sum int64) {
 }
 
 // vecEvalIntByRows uses the non-vectorized(row-based) interface `evalInt` to eval the expression.
-func vecEvalIntByRows(ctx sessionctx.Context, sig builtinFunc, input *chunk.Chunk, result *chunk.Column) error {
+func vecEvalIntByRows(ctx EvalContext, sig builtinFunc, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
@@ -99,7 +98,7 @@ func vecEvalIntByRows(ctx sessionctx.Context, sig builtinFunc, input *chunk.Chun
 }
 
 // vecEvalStringByRows uses the non-vectorized(row-based) interface `evalString` to eval the expression.
-func vecEvalStringByRows(sig builtinFunc, ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func vecEvalStringByRows(sig builtinFunc, ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ReserveString(n)
 	for i := 0; i < n; i++ {

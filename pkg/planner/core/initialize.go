@@ -69,28 +69,28 @@ func (la LogicalApply) Init(ctx sessionctx.Context, offset int) *LogicalApply {
 }
 
 // Init initializes LogicalSelection.
-func (p LogicalSelection) Init(ctx sessionctx.Context, offset int) *LogicalSelection {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeSel, &p, offset)
+func (p LogicalSelection) Init(ctx sessionctx.Context, qbOffset int) *LogicalSelection {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeSel, &p, qbOffset)
 	return &p
 }
 
 // Init initializes PhysicalSelection.
-func (p PhysicalSelection) Init(ctx sessionctx.Context, stats *property.StatsInfo, offset int, props ...*property.PhysicalProperty) *PhysicalSelection {
-	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeSel, &p, offset)
+func (p PhysicalSelection) Init(ctx sessionctx.Context, stats *property.StatsInfo, qbOffset int, props ...*property.PhysicalProperty) *PhysicalSelection {
+	p.basePhysicalPlan = newBasePhysicalPlan(ctx, plancodec.TypeSel, &p, qbOffset)
 	p.childrenReqProps = props
 	p.SetStats(stats)
 	return &p
 }
 
 // Init initializes LogicalUnionScan.
-func (p LogicalUnionScan) Init(ctx sessionctx.Context, offset int) *LogicalUnionScan {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeUnionScan, &p, offset)
+func (p LogicalUnionScan) Init(ctx sessionctx.Context, qbOffset int) *LogicalUnionScan {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeUnionScan, &p, qbOffset)
 	return &p
 }
 
 // Init initializes LogicalProjection.
-func (p LogicalProjection) Init(ctx sessionctx.Context, offset int) *LogicalProjection {
-	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeProj, &p, offset)
+func (p LogicalProjection) Init(ctx sessionctx.Context, qbOffset int) *LogicalProjection {
+	p.baseLogicalPlan = newBaseLogicalPlan(ctx, plancodec.TypeProj, &p, qbOffset)
 	return &p
 }
 
@@ -555,6 +555,10 @@ func (p *BatchPointGetPlan) Init(ctx sessionctx.Context, stats *property.StatsIn
 		hasErr bool
 		d      types.Datum
 	)
+
+	if p.PartitionColPos == GlobalWithoutColumnPos {
+		return p
+	}
 
 	if p.PartitionExpr != nil {
 		if len(p.Handles) > 0 {

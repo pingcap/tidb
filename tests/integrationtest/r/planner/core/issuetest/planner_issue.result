@@ -267,7 +267,7 @@ Projection	250.00	root		planner__core__issuetest__planner_issue.t1.a, length(pla
 └─UnionScan	250.00	root		like(planner__core__issuetest__planner_issue.t1.a, "测试 %", 92)
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t1.a, "测试 %", 92)
-      └─IndexRangeScan	250.00	cop[tikv]	table:t1, index:ia(a)	range:["测试 ","测试!"), keep order:false, stats:pseudo
+      └─IndexRangeScan	250.00	cop[tikv]	table:t1, index:ia(a)	range:["测试","测试!"), keep order:false, stats:pseudo
 explain format = brief select *,length(a) from t1 where a like '测试';
 id	estRows	task	access object	operator info
 Projection	10.00	root		planner__core__issuetest__planner_issue.t1.a, length(planner__core__issuetest__planner_issue.t1.a)->Column#3
@@ -295,21 +295,40 @@ create table t2(a varchar(20) collate gbk_chinese_ci, index ia(a));
 insert into t2 value('测试'),('测试  ');
 explain format = brief select *,length(a) from t2 where a like '测试 %';
 id	estRows	task	access object	operator info
-Projection	8000.00	root		planner__core__issuetest__planner_issue.t2.a, length(to_binary(planner__core__issuetest__planner_issue.t2.a))->Column#3
-└─UnionScan	8000.00	root		like(planner__core__issuetest__planner_issue.t2.a, "测试 %", 92)
-  └─TableReader	8000.00	root		data:Selection
-    └─Selection	8000.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t2.a, "测试 %", 92)
-      └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+Projection	250.00	root		planner__core__issuetest__planner_issue.t2.a, length(to_binary(planner__core__issuetest__planner_issue.t2.a))->Column#3
+└─UnionScan	250.00	root		like(planner__core__issuetest__planner_issue.t2.a, "测试 %", 92)
+  └─IndexReader	250.00	root		index:Selection
+    └─Selection	250.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t2.a, "测试 %", 92)
+      └─IndexRangeScan	250.00	cop[tikv]	table:t2, index:ia(a)	range:["\x89\a\xba%","\x89\a\xba%!"), keep order:false, stats:pseudo
 explain format = brief select *,length(a) from t2 where a like '测试';
 id	estRows	task	access object	operator info
-Projection	8000.00	root		planner__core__issuetest__planner_issue.t2.a, length(to_binary(planner__core__issuetest__planner_issue.t2.a))->Column#3
-└─UnionScan	8000.00	root		like(planner__core__issuetest__planner_issue.t2.a, "测试", 92)
-  └─TableReader	8000.00	root		data:Selection
-    └─Selection	8000.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t2.a, "测试", 92)
-      └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+Projection	10.00	root		planner__core__issuetest__planner_issue.t2.a, length(to_binary(planner__core__issuetest__planner_issue.t2.a))->Column#3
+└─UnionScan	10.00	root		like(planner__core__issuetest__planner_issue.t2.a, "测试", 92)
+  └─IndexReader	10.00	root		index:Selection
+    └─Selection	10.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t2.a, "测试", 92)
+      └─IndexRangeScan	10.00	cop[tikv]	table:t2, index:ia(a)	range:["\x89\a\xba%","\x89\a\xba%"], keep order:false, stats:pseudo
 select *,length(a) from t2 where a like '测试 %';
 a	length(a)
 测试  	6
 select *,length(a) from t2 where a like '测试';
 a	length(a)
 测试	4
+drop view if exists v1;
+create view v1(id) as
+with recursive cte(a) as (select 1 union select a+1 from cte where a<3)
+select * from cte;
+create table test2(id int,value int);
+insert into test2 values(1,1),(2,2),(3,3),(4,4),(5,5);
+update test2
+set value=0
+where test2.id in
+(
+select * from v1
+);
+select * from test2;
+id	value
+1	0
+2	0
+3	0
+4	4
+5	5
