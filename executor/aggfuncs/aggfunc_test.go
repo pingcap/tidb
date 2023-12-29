@@ -586,6 +586,7 @@ func testAggFunc(t *testing.T, p aggTest) {
 	result, err = dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[1], ctor)
 	require.NoError(t, err)
 	require.Equalf(t, 0, result, "%v != %v", dt.String(), p.results[1])
+<<<<<<< HEAD:executor/aggfuncs/aggfunc_test.go
 
 	// test the empty input
 	resultChk.Reset()
@@ -596,6 +597,8 @@ func testAggFunc(t *testing.T, p aggTest) {
 	result, err = dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[0], ctor)
 	require.NoError(t, err)
 	require.Equalf(t, 0, result, "%v != %v", dt.String(), p.results[0])
+=======
+>>>>>>> 4a47236db9d (executor: Fix the panic in `approx_percentile` function (#49644)):pkg/executor/aggfuncs/aggfunc_test.go
 }
 
 func testAggFuncWithoutDistinct(t *testing.T, p aggTest) {
