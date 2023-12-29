@@ -1041,7 +1041,6 @@ const (
 	// version 181
 	//   add column `bdr_role` to `mysql.tidb_ddl_job` and `mysql.tidb_ddl_history`.
 	version181 = 181
-  
 	// version 182
 	//   set tidb_txn_mode to Optimistic when tidb_txn_mode is not set.
 	version182 = 182
