@@ -52,18 +52,6 @@ func (mr *MockSchedulerMockRecorder) Close() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockScheduler)(nil).Close))
 }
 
-// ExecuteTask mocks base method.
-func (m *MockScheduler) ExecuteTask() {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "ExecuteTask")
-}
-
-// ExecuteTask indicates an expected call of ExecuteTask.
-func (mr *MockSchedulerMockRecorder) ExecuteTask() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExecuteTask", reflect.TypeOf((*MockScheduler)(nil).ExecuteTask))
-}
-
 // Init mocks base method.
 func (m *MockScheduler) Init() error {
 	m.ctrl.T.Helper()
@@ -76,6 +64,18 @@ func (m *MockScheduler) Init() error {
 func (mr *MockSchedulerMockRecorder) Init() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Init", reflect.TypeOf((*MockScheduler)(nil).Init))
+}
+
+// ScheduleTask mocks base method.
+func (m *MockScheduler) ScheduleTask() {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "ScheduleTask")
+}
+
+// ScheduleTask indicates an expected call of ScheduleTask.
+func (mr *MockSchedulerMockRecorder) ScheduleTask() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ScheduleTask", reflect.TypeOf((*MockScheduler)(nil).ScheduleTask))
 }
 
 // MockCleanUpRoutine is a mock of CleanUpRoutine interface.

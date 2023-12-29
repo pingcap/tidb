@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/spool"
@@ -162,6 +163,7 @@ func (sm *Manager) scheduleTaskLoop() {
 			logutil.BgLogger().Info("schedule task loop exits", zap.Error(sm.ctx.Err()), zap.Int64("interval", int64(checkTaskRunningInterval)/1000000))
 			return
 		case <-ticker.C:
+		case <-handle.TaskChangedCh:
 		}
 
 		taskCnt := sm.getSchedulerCount()
@@ -277,9 +279,10 @@ func (sm *Manager) startScheduler(basicTask *proto.Task, reservedExecID string) 
 			scheduler.Close()
 			sm.delScheduler(task.ID)
 			sm.slotMgr.unReserve(basicTask, reservedExecID)
+			handle.NotifyTaskChange()
 		}()
 		metrics.UpdateMetricsForRunTask(task)
-		scheduler.ExecuteTask()
+		scheduler.ScheduleTask()
 		logutil.BgLogger().Info("task finished", zap.Int64("task-id", task.ID))
 		sm.finishCh <- struct{}{}
 	})

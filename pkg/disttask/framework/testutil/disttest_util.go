@@ -16,12 +16,9 @@ package testutil
 
 import (
 	"context"
-	"fmt"
-	"sync"
 	"testing"
-	"time"
 
-	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -42,10 +39,8 @@ func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, schedulerHandle sch
 		mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
 			func(ctx context.Context, subtask *proto.Subtask) error {
 				switch subtask.Step {
-				case proto.StepOne:
-					testContext.M.Store("0", "0")
-				case proto.StepTwo:
-					testContext.M.Store("1", "1")
+				case proto.StepOne, proto.StepTwo:
+					testContext.CollectSubtask(subtask)
 				default:
 					panic("invalid step")
 				}
@@ -102,8 +97,8 @@ func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, mockSchedul
 		},
 	).AnyTimes()
 	mockExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(_ context.Context, _ *proto.Subtask) error {
-			testContext.M.Store("1", "1")
+		func(_ context.Context, subtask *proto.Subtask) error {
+			testContext.CollectSubtask(subtask)
 			return nil
 		}).AnyTimes()
 	mockExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
@@ -115,105 +110,22 @@ func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, mockSchedul
 	testContext.RollbackCnt.Store(0)
 }
 
-// DispatchTask schedule one task.
-func DispatchTask(ctx context.Context, t *testing.T, taskKey string) *proto.Task {
-	mgr, err := storage.GetTaskManager()
+// SubmitAndWaitTask schedule one task.
+func SubmitAndWaitTask(ctx context.Context, t *testing.T, taskKey string) *proto.Task {
+	_, err := handle.SubmitTask(ctx, taskKey, proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
-	_, err = mgr.CreateTask(ctx, taskKey, proto.TaskTypeExample, 8, nil)
-	require.NoError(t, err)
-	return WaitTaskExit(ctx, t, taskKey)
+	return WaitTaskDoneOrPaused(ctx, t, taskKey)
 }
 
-// WaitTaskExit wait until the task exit.
-func WaitTaskExit(ctx context.Context, t *testing.T, taskKey string) *proto.Task {
-	mgr, err := storage.GetTaskManager()
+// WaitTaskDoneOrPaused wait task done or paused.
+func WaitTaskDoneOrPaused(ctx context.Context, t *testing.T, taskKey string) *proto.Task {
+	taskMgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	var task *proto.Task
-	start := time.Now()
-	for {
-		if time.Since(start) > 10*time.Minute {
-			require.FailNow(t, "timeout")
-		}
-
-		time.Sleep(time.Second)
-		task, err = mgr.GetTaskByKeyWithHistory(ctx, taskKey)
-		require.NoError(t, err)
-		require.NotNil(t, task)
-		if task.State != proto.TaskStatePending && task.State != proto.TaskStateRunning && task.State != proto.TaskStateCancelling && task.State != proto.TaskStateReverting && task.State != proto.TaskStatePausing {
-			break
-		}
-	}
+	gotTask, err := taskMgr.GetTaskByKeyWithHistory(ctx, taskKey)
+	require.NoError(t, err)
+	task, err := handle.WaitTask(ctx, gotTask.ID, func(task *proto.Task) bool {
+		return task.IsDone() || task.State == proto.TaskStatePaused
+	})
+	require.NoError(t, err)
 	return task
-}
-
-// DispatchTaskAndCheckSuccess schedule one task and check if it is succeed.
-func DispatchTaskAndCheckSuccess(ctx context.Context, t *testing.T, taskKey string, testContext *TestContext, checkResultFn func(t *testing.T, testContext *TestContext)) {
-	task := DispatchTask(ctx, t, taskKey)
-	require.Equal(t, proto.TaskStateSucceed, task.State)
-	if checkResultFn == nil {
-		v, ok := testContext.M.Load("1")
-		require.Equal(t, true, ok)
-		require.Equal(t, "1", v)
-		v, ok = testContext.M.Load("0")
-		require.Equal(t, true, ok)
-		require.Equal(t, "0", v)
-		return
-	}
-	checkResultFn(t, testContext)
-	testContext.M = sync.Map{}
-}
-
-// DispatchAndCancelTask schedule one task then cancel it.
-func DispatchAndCancelTask(ctx context.Context, t *testing.T, taskKey string, testContext *TestContext) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunCancel", "1*return(1)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunCancel"))
-	}()
-	task := DispatchTask(ctx, t, taskKey)
-	require.Equal(t, proto.TaskStateReverted, task.State)
-	testContext.M.Range(func(key, value interface{}) bool {
-		testContext.M.Delete(key)
-		return true
-	})
-}
-
-// DispatchTaskAndCheckState schedule one task and check the task state.
-func DispatchTaskAndCheckState(ctx context.Context, t *testing.T, taskKey string, testContext *TestContext, state proto.TaskState) {
-	task := DispatchTask(ctx, t, taskKey)
-	require.Equal(t, state, task.State)
-	testContext.M.Range(func(key, value interface{}) bool {
-		testContext.M.Delete(key)
-		return true
-	})
-}
-
-// DispatchMultiTasksAndOneFail schedulees multiple tasks and force one task failed.
-// TODO(ywqzzy): run tasks with multiple types.
-func DispatchMultiTasksAndOneFail(ctx context.Context, t *testing.T, num int, testContext *TestContext) {
-	mgr, err := storage.GetTaskManager()
-	require.NoError(t, err)
-	tasks := make([]*proto.Task, num)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunErr", "1*return(true)"))
-
-	for i := 0; i < num; i++ {
-		_, err = mgr.CreateTask(ctx, fmt.Sprintf("key%d", i), proto.TaskTypeExample, 8, nil)
-		require.NoError(t, err)
-	}
-	for i := 0; i < num; i++ {
-		tasks[i] = WaitTaskExit(ctx, t, fmt.Sprintf("key%d", i))
-	}
-
-	failCount := 0
-	for _, task := range tasks {
-		if task.State == proto.TaskStateReverted {
-			failCount++
-		}
-	}
-	require.Equal(t, 1, failCount)
-
-	testContext.M.Range(func(key, value interface{}) bool {
-		testContext.M.Delete(key)
-		return true
-	})
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunErr"))
 }

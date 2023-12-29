@@ -513,3 +513,136 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 	require.Less(t, delta, uint64(4*1024*1024*1024))
 	_ = iter.Close()
 }
+
+type myInt int
+
+func (m myInt) sortKey() []byte {
+	return []byte{byte(m)}
+}
+
+func (m myInt) cloneInnerFields() {}
+
+func (m myInt) len() int { return 1 }
+
+type intReader struct {
+	ints   []int
+	refCnt *atomic.Int64
+}
+
+const errInt = -1
+
+func (i *intReader) path() string { return "" }
+
+func (i *intReader) next() (myInt, error) {
+	if len(i.ints) == 0 {
+		return 0, io.EOF
+	}
+	ret := i.ints[0]
+	i.ints = i.ints[1:]
+	if ret == errInt {
+		return 0, fmt.Errorf("mock error")
+	}
+	return myInt(ret), nil
+}
+
+func (i *intReader) switchConcurrentMode(bool) error { return nil }
+
+func (i *intReader) close() error {
+	i.refCnt.Dec()
+	return nil
+}
+
+func buildOpener(in [][]int, refCnt *atomic.Int64) []readerOpenerFn[myInt, *intReader] {
+	ret := make([]readerOpenerFn[myInt, *intReader], 0, len(in))
+	for _, ints := range in {
+		ints := ints
+		ret = append(ret, func() (**intReader, error) {
+			refCnt.Inc()
+			r := &intReader{ints, refCnt}
+			return &r, nil
+		})
+	}
+	return ret
+}
+
+func TestLimitSizeMergeIter(t *testing.T) {
+	ctx := context.Background()
+	refCnt := atomic.NewInt64(0)
+	readerOpeners := buildOpener([][]int{
+		{1, 2, 3}, {4, 5, 6}, {7, 8, 9},
+	}, refCnt)
+	weight := []int64{1, 1, 1}
+
+	oneToNine := []int{1, 2, 3, 4, 5, 6, 7, 8, 9}
+	for limit := int64(1); limit <= 4; limit++ {
+		refCnt.Store(0)
+		i, err := newLimitSizeMergeIter(ctx, readerOpeners, weight, limit)
+		require.NoError(t, err)
+		var got []int
+		ok, _ := i.next()
+		for ok {
+			got = append(got, int(i.curr))
+			require.LessOrEqual(t, refCnt.Load(), limit)
+			ok, _ = i.next()
+		}
+		require.NoError(t, i.err)
+		require.Equal(t, oneToNine, got)
+
+		// check it can return error
+		for errIdx := 1; errIdx <= 9; errIdx++ {
+			nums := make([]int, 9)
+			for i := range nums {
+				nums[i] = i + 1
+				if nums[i] == errIdx {
+					nums[i] = errInt
+				}
+			}
+			readerOpeners := buildOpener([][]int{nums[:3], nums[3:6], nums[6:]}, refCnt)
+			i, err = newLimitSizeMergeIter(ctx, readerOpeners, weight, limit)
+			if err != nil {
+				require.EqualError(t, err, "mock error")
+				continue
+			}
+			var got []int
+			ok, _ = i.next()
+			for ok {
+				got = append(got, int(i.curr))
+				ok, _ = i.next()
+			}
+			require.ErrorContains(t, i.err, "mock error")
+			require.Less(t, len(got), 9)
+		}
+	}
+}
+
+func TestLimitSizeMergeIterDiffWeight(t *testing.T) {
+	ctx := context.Background()
+	refCnt := atomic.NewInt64(0)
+	readerOpeners := buildOpener([][]int{
+		{1, 4, 7}, {2, 5}, {3},
+		{10},
+		{11, 14, 17}, {12, 15}, {13},
+	}, refCnt)
+	weight := []int64{
+		1, 1, 1,
+		3,
+		1, 1, 1,
+	}
+	limit := int64(3)
+
+	expected := []int{1, 2, 3, 4, 5, 7, 10, 11, 12, 13, 14, 15, 17}
+	expectedRefCnt := []int64{3, 3, 3, 2, 2, 1, 1, 3, 3, 3, 2, 2, 1}
+	iter, err := newLimitSizeMergeIter(ctx, readerOpeners, weight, limit)
+	require.NoError(t, err)
+	for i, exp := range expected {
+		ok, _ := iter.next()
+		require.True(t, ok)
+		require.Equal(t, exp, int(iter.curr), "i: %d", i)
+		require.Equal(t, expectedRefCnt[i], refCnt.Load(), "i: %d", i)
+	}
+
+	ok, _ := iter.next()
+	require.False(t, ok)
+	require.NoError(t, iter.err)
+	require.Equal(t, int64(0), refCnt.Load())
+}

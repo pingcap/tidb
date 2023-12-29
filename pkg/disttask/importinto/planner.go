@@ -503,8 +503,7 @@ func getRangeSplitter(ctx context.Context, store storage.ExternalStorage, kvMeta
 
 	return external.NewRangeSplitter(
 		ctx,
-		kvMeta.GetDataFiles(),
-		kvMeta.GetStatFiles(),
+		kvMeta.MultipleFilesStats,
 		store,
 		int64(config.DefaultBatchSize),
 		int64(math.MaxInt64),
