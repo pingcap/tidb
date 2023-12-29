@@ -25,7 +25,7 @@ import (
 )
 
 func getTableName(n []*ast.TableName) []string {
-	var result []string
+	result := make([]string, 0, len(n))
 	for _, v := range n {
 		var sb strings.Builder
 		restoreFlags := format.RestoreKeyWordLowercase
@@ -43,7 +43,7 @@ func TestExtractTableName(t *testing.T) {
 	}{
 		{
 			"select /*+ HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t1.a=t2.a where t1.b is not null;",
-			[]string{"t1", "t1", "t1", "t2", "t1"},
+			[]string{"t1", "t1"},
 		},
 		{
 			"select * from t",
@@ -55,11 +55,15 @@ func TestExtractTableName(t *testing.T) {
 		},
 		{
 			"select * from t1 where t1.a > (select max(a) from t2);",
-			[]string{"t1", "t1", "t2"},
+			[]string{"t1", "t2"},
 		},
 		{
 			"select * from t1 where t1.a > (select max(a) from t2 where t2.a > (select max(a) from t3));",
-			[]string{"t1", "t1", "t2", "t2", "t3"},
+			[]string{"t1", "t2", "t3"},
+		},
+		{
+			"select a,b,c,d,* from t1 where t1.a > (select max(a) from t2 where t2.a > (select max(a) from t3));",
+			[]string{"t1", "t2", "t3"},
 		},
 	}
 	for _, tt := range tc {
