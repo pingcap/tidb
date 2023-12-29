@@ -510,7 +510,12 @@ func SplitRanges(
 	updateCh glue.Progress,
 	isRawKv bool,
 ) error {
-	splitter := NewRegionSplitter(split.NewSplitClient(client.GetPDClient(), client.GetTLSConfig(), isRawKv))
+	splitter := NewRegionSplitter(split.NewSplitClient(
+		client.GetPDClient(),
+		client.pdHTTPClient,
+		client.GetTLSConfig(),
+		isRawKv,
+	))
 
 	return splitter.Split(ctx, ranges, rewriteRules, isRawKv, func(keys [][]byte) {
 		for range keys {
