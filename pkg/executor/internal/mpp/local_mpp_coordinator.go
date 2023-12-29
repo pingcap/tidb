@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
-	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
@@ -145,6 +144,8 @@ type localMppCoordinator struct {
 	enableCollectExecutionInfo bool
 	reportExecutionInfo        bool // if each mpp task needs to report execution info directly to coordinator through ReportMPPTaskStatus
 
+	// Record node cnt that involved in the mpp computation.
+	nodeCnt int
 }
 
 // NewLocalMPPCoordinator creates a new localMppCoordinator instance
@@ -518,17 +519,12 @@ func (c *localMppCoordinator) receiveResults(req *kv.MPPDispatchRequest, taskMet
 
 		resp, err = stream.Recv()
 		if err != nil {
+			logutil.BgLogger().Info("mpp stream recv got error", zap.Error(err), zap.Uint64("timestamp", taskMeta.StartTs),
+				zap.Int64("task", taskMeta.TaskId), zap.Int64("mpp-version", taskMeta.MppVersion))
 			if errors.Cause(err) == io.EOF {
 				return
 			}
 
-			if err1 := bo.Backoff(tikv.BoTiKVRPC(), errors.Errorf("recv stream response error: %v", err)); err1 != nil {
-				if errors.Cause(err) == context.Canceled {
-					logutil.BgLogger().Info("stream recv timeout", zap.Error(err), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId), zap.Int64("mpp-version", taskMeta.MppVersion))
-				} else {
-					logutil.BgLogger().Info("stream unknown error", zap.Error(err), zap.Uint64("timestamp", taskMeta.StartTs), zap.Int64("task", taskMeta.TaskId), zap.Int64("mpp-version", taskMeta.MppVersion))
-				}
-			}
 			// if NeedTriggerFallback is true, we return timeout to trigger tikv's fallback
 			if c.needTriggerFallback {
 				c.sendError(derr.ErrTiFlashServerTimeout)
@@ -715,10 +711,14 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 	// TODO: Move the construct tasks logic to planner, so we can see the explain results.
 	sender := c.originalPlan.(*plannercore.PhysicalExchangeSender)
 	sctx := c.sessionCtx
-	frags, kvRanges, err := plannercore.GenerateRootMPPTasks(sctx, c.startTS, c.gatherID, c.mppQueryID, sender, c.is)
+	frags, kvRanges, nodeInfo, err := plannercore.GenerateRootMPPTasks(sctx, c.startTS, c.gatherID, c.mppQueryID, sender, c.is)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
+	if nodeInfo == nil {
+		return nil, nil, errors.New("node info should not be nil")
+	}
+	c.nodeCnt = len(nodeInfo)
 
 	for _, frag := range frags {
 		err = c.appendMPPDispatchReq(frag)
@@ -743,4 +743,9 @@ func (c *localMppCoordinator) Execute(ctx context.Context) (kv.Response, []kv.Ke
 	go c.dispatchAll(ctxChild)
 
 	return c, kvRanges, nil
+}
+
+// GetNodeCnt returns the node count that involved in the mpp computation.
+func (c *localMppCoordinator) GetNodeCnt() int {
+	return c.nodeCnt
 }

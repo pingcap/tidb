@@ -295,7 +295,7 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 		storage.TestChannel <- struct{}{}
 		tk2 := testkit.NewTestKit(t, store)
 		subtask := subtasks2[0]
-		_, err = storage.ExecSQL(ctx, tk2.Session(), `
+		_, err = sqlexec.ExecSQL(ctx, tk2.Session(), `
 			insert into mysql.tidb_background_subtask(
 				step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary)
 			values (%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')`,
@@ -322,7 +322,7 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 	task3, subtasks3 := prepare("key3")
 	for i := 0; i < 2; i++ {
 		subtask := subtasks3[i]
-		_, err = storage.ExecSQL(ctx, tk.Session(), `
+		_, err = sqlexec.ExecSQL(ctx, tk.Session(), `
 			insert into mysql.tidb_background_subtask(
 				step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary)
 			values (%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')`,
@@ -382,7 +382,7 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 		return err
 	}))
 	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
-		rs, err := storage.ExecSQL(ctx, se, `
+		rs, err := sqlexec.ExecSQL(ctx, se, `
 				select count(1) from mysql.tidb_global_task`)
 		require.Len(t, rs, 1)
 		require.Equal(t, int64(12), rs[0].GetInt64(0))
@@ -487,7 +487,11 @@ func TestSubTaskTable(t *testing.T) {
 
 	ts := time.Now()
 	time.Sleep(time.Second)
-	require.NoError(t, sm.StartSubtask(ctx, 1))
+	err = sm.StartSubtask(ctx, 1, "tidb1")
+	require.NoError(t, err)
+
+	err = sm.StartSubtask(ctx, 1, "tidb2")
+	require.Error(t, storage.ErrSubtaskNotFound, err)
 
 	subtask, err = sm.GetFirstSubtaskInStates(ctx, "tidb1", 1, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
@@ -565,7 +569,9 @@ func TestSubTaskTable(t *testing.T) {
 	testutil.CreateSubTask(t, sm, 4, proto.StepInit, "for_test1", []byte("test"), proto.TaskTypeExample, 11, false)
 	subtask, err = sm.GetFirstSubtaskInStates(ctx, "for_test1", 4, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
-	require.NoError(t, sm.StartSubtask(ctx, subtask.ID))
+	err = sm.StartSubtask(ctx, subtask.ID, "for_test1")
+	require.NoError(t, err)
+
 	subtask, err = sm.GetFirstSubtaskInStates(ctx, "for_test1", 4, proto.StepInit, proto.TaskStateRunning)
 	require.NoError(t, err)
 	require.Greater(t, subtask.StartTime, ts)

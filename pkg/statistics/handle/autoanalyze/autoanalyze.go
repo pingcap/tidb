@@ -236,10 +236,11 @@ func CleanupCorruptedAnalyzeJobsOnDeadInstances(
 	return nil
 }
 
-// HandleAutoAnalyze analyzes the newly created table or index.
-func (sa *statsAnalyze) HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool) {
+// HandleAutoAnalyze analyzes the outdated tables. (The change percent of the table exceeds the threshold)
+// It also analyzes newly created tables and newly added indexes.
+func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
 	_ = statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
-		analyzed = HandleAutoAnalyze(sctx, sa.statsHandle, sa.sysProcTracker, is)
+		analyzed = HandleAutoAnalyze(sctx, sa.statsHandle, sa.sysProcTracker)
 		return nil
 	})
 	return
@@ -304,7 +305,6 @@ func HandleAutoAnalyze(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sessionctx.SysProcTracker,
-	is infoschema.InfoSchema,
 ) (analyzed bool) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -339,7 +339,6 @@ func HandleAutoAnalyze(
 		sctx,
 		statsHandle,
 		sysProcTracker,
-		is,
 		autoAnalyzeRatio,
 		pruneMode,
 		start,
@@ -357,11 +356,11 @@ func RandomPickOneTableAndTryAutoAnalyze(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sessionctx.SysProcTracker,
-	is infoschema.InfoSchema,
 	autoAnalyzeRatio float64,
 	pruneMode variable.PartitionPruneMode,
 	start, end time.Time,
 ) bool {
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
 	dbs := is.AllSchemaNames()
 	// Shuffle the database and table slice to randomize the order of analyzing tables.
 	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404

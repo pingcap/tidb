@@ -91,8 +91,8 @@ func (re *regexpBaseFuncSig) canMemorizeRegexp(matchTypeIdx int) bool {
 	// If the pattern and match type are both constants, we can cache the regexp into memory.
 	// Notice that the above two arguments are not required to be constant across contexts because the cache is only
 	// valid when the two context ids are the same.
-	return re.args[patternIdx].ConstItem(false) &&
-		(len(re.args) <= matchTypeIdx || re.args[matchTypeIdx].ConstItem(false))
+	return re.args[patternIdx].ConstLevel() >= ConstOnlyInContext &&
+		(len(re.args) <= matchTypeIdx || re.args[matchTypeIdx].ConstLevel() >= ConstOnlyInContext)
 }
 
 // buildRegexp builds a new `*regexp.Regexp` from the pattern and matchType
@@ -1156,7 +1156,7 @@ func getInstructions(repl []byte) []Instruction {
 }
 
 func (re *builtinRegexpReplaceFuncSig) canInstructionsMemorized() bool {
-	return re.args[replacementIdx].ConstItem(false)
+	return re.args[replacementIdx].ConstLevel() >= ConstOnlyInContext
 }
 
 func (re *builtinRegexpReplaceFuncSig) getInstructions(ctx EvalContext, repl string) ([]Instruction, error) {
