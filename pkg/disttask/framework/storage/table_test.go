@@ -295,7 +295,7 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 		storage.TestChannel <- struct{}{}
 		tk2 := testkit.NewTestKit(t, store)
 		subtask := subtasks2[0]
-		_, err = storage.ExecSQL(ctx, tk2.Session(), `
+		_, err = sqlexec.ExecSQL(ctx, tk2.Session(), `
 			insert into mysql.tidb_background_subtask(
 				step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary)
 			values (%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')`,
@@ -322,7 +322,7 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 	task3, subtasks3 := prepare("key3")
 	for i := 0; i < 2; i++ {
 		subtask := subtasks3[i]
-		_, err = storage.ExecSQL(ctx, tk.Session(), `
+		_, err = sqlexec.ExecSQL(ctx, tk.Session(), `
 			insert into mysql.tidb_background_subtask(
 				step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary)
 			values (%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')`,
@@ -382,7 +382,7 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 		return err
 	}))
 	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
-		rs, err := storage.ExecSQL(ctx, se, `
+		rs, err := sqlexec.ExecSQL(ctx, se, `
 				select count(1) from mysql.tidb_global_task`)
 		require.Len(t, rs, 1)
 		require.Equal(t, int64(12), rs[0].GetInt64(0))

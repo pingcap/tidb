@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
@@ -641,13 +642,13 @@ func TestManagerDispatchLoop(t *testing.T) {
 			mockScheduler.EXPECT().Init().Return(nil)
 			mockScheduler.EXPECT().ScheduleTask().Do(func() {
 				require.NoError(t, taskMgr.WithNewSession(func(se sessionctx.Context) error {
-					_, err := storage.ExecSQL(ctx, se, "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
+					_, err := sqlexec.ExecSQL(ctx, se, "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
 						proto.TaskStateRunning, proto.StepOne, task.ID)
 					return err
 				}))
 				<-waitChannels[idx]
 				require.NoError(t, taskMgr.WithNewSession(func(se sessionctx.Context) error {
-					_, err := storage.ExecSQL(ctx, se, "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
+					_, err := sqlexec.ExecSQL(ctx, se, "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
 						proto.TaskStateSucceed, proto.StepDone, task.ID)
 					return err
 				}))
