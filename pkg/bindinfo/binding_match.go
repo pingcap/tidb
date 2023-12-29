@@ -47,12 +47,7 @@ func newCollectTableName() *tableNameCollector {
 
 // Enter implements Visitor interface.
 func (c *tableNameCollector) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
-	switch node := in.(type) {
-	case *ast.ColumnName:
-		if node.Table.String() != "" {
-			c.tableNames = append(c.tableNames, node.ToTableName())
-		}
-	case *ast.TableName:
+	if node, ok := in.(*ast.TableName); ok {
 		c.tableNames = append(c.tableNames, node)
 		return in, true
 	}
