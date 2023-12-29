@@ -62,7 +62,7 @@ func TestCleanUpRoutine(t *testing.T) {
 
 	checkSubtaskCnt := func(tasks []*proto.Task, taskID int64) {
 		require.Eventually(t, func() bool {
-			cnt, err := mgr.GetSubtaskInStatesCnt(ctx, taskID, proto.TaskStatePending)
+			cnt, err := mgr.GetSubtaskInStatesCnt(ctx, taskID, proto.SubtaskStatePending)
 			require.NoError(t, err)
 			return int64(subtaskCnt) == cnt
 		}, time.Second, 50*time.Millisecond)
@@ -71,7 +71,7 @@ func TestCleanUpRoutine(t *testing.T) {
 	tasks := checkTaskRunningCnt()
 	checkSubtaskCnt(tasks, taskID)
 	for i := 1; i <= subtaskCnt; i++ {
-		err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateSucceed, nil)
+		err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateSucceed, nil)
 		require.NoError(t, err)
 	}
 	sch.DoCleanUpRoutine()

@@ -513,7 +513,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 		s.Len(subtasks, 2) // framework will generate a subtask when canceling
 		var cancelled bool
 		for _, st := range subtasks {
-			if st.State == proto.TaskStateCanceled {
+			if st.State == proto.SubtaskStateCanceled {
 				cancelled = true
 				break
 			}

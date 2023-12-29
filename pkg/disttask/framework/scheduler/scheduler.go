@@ -240,7 +240,7 @@ func (s *BaseScheduler) onCancelling() error {
 // handle task in pausing state, cancel all running subtasks.
 func (s *BaseScheduler) onPausing() error {
 	logutil.Logger(s.logCtx).Info("on pausing state", zap.Stringer("state", s.Task.State), zap.Int64("step", int64(s.Task.Step)))
-	cnt, err := s.taskMgr.GetSubtaskInStatesCnt(s.ctx, s.Task.ID, proto.TaskStateRunning, proto.TaskStatePending)
+	cnt, err := s.taskMgr.GetSubtaskInStatesCnt(s.ctx, s.Task.ID, proto.SubtaskStateRunning, proto.SubtaskStatePending)
 	if err != nil {
 		logutil.Logger(s.logCtx).Warn("check task failed", zap.Error(err))
 		return err
@@ -273,7 +273,7 @@ var TestSyncChan = make(chan struct{})
 // handle task in resuming state.
 func (s *BaseScheduler) onResuming() error {
 	logutil.Logger(s.logCtx).Info("on resuming state", zap.Stringer("state", s.Task.State), zap.Int64("step", int64(s.Task.Step)))
-	cnt, err := s.taskMgr.GetSubtaskInStatesCnt(s.ctx, s.Task.ID, proto.TaskStatePaused)
+	cnt, err := s.taskMgr.GetSubtaskInStatesCnt(s.ctx, s.Task.ID, proto.SubtaskStatePaused)
 	if err != nil {
 		logutil.Logger(s.logCtx).Warn("check task failed", zap.Error(err))
 		return err
@@ -294,7 +294,7 @@ func (s *BaseScheduler) onResuming() error {
 // handle task in reverting state, check all revert subtasks finishes.
 func (s *BaseScheduler) onReverting() error {
 	logutil.Logger(s.logCtx).Debug("on reverting state", zap.Stringer("state", s.Task.State), zap.Int64("step", int64(s.Task.Step)))
-	cnt, err := s.taskMgr.GetSubtaskInStatesCnt(s.ctx, s.Task.ID, proto.TaskStateRevertPending, proto.TaskStateReverting)
+	cnt, err := s.taskMgr.GetSubtaskInStatesCnt(s.ctx, s.Task.ID, proto.SubtaskStateRevertPending, proto.SubtaskStateReverting)
 	if err != nil {
 		logutil.Logger(s.logCtx).Warn("check task failed", zap.Error(err))
 		return err
@@ -333,7 +333,7 @@ func (s *BaseScheduler) onRunning() error {
 		return s.onErrHandlingStage(subTaskErrs)
 	}
 	// check current step finishes.
-	cnt, err := s.taskMgr.GetSubtaskInStatesCnt(s.ctx, s.Task.ID, proto.TaskStatePending, proto.TaskStateRunning)
+	cnt, err := s.taskMgr.GetSubtaskInStatesCnt(s.ctx, s.Task.ID, proto.SubtaskStatePending, proto.SubtaskStateRunning)
 	if err != nil {
 		logutil.Logger(s.logCtx).Warn("check task failed", zap.Error(err))
 		return err
@@ -405,7 +405,12 @@ func (s *BaseScheduler) doBalanceSubtasks(eligibleNodes []string) error {
 	if len(deadNodes) != 0 {
 		/// get subtask from deadNodes, since there might be some running subtasks on deadNodes.
 		/// In this case, all subtasks on deadNodes are in running/pending state.
-		subtasksOnDeadNodes, err := s.taskMgr.GetSubtasksByExecIdsAndStepAndState(s.ctx, deadNodes, s.Task.ID, s.Task.Step, proto.TaskStateRunning)
+		subtasksOnDeadNodes, err := s.taskMgr.GetSubtasksByExecIdsAndStepAndState(
+			s.ctx,
+			deadNodes,
+			s.Task.ID,
+			s.Task.Step,
+			proto.SubtaskStateRunning)
 		if err != nil {
 			return err
 		}
