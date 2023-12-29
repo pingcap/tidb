@@ -22,6 +22,7 @@ import (
 
 // CollectTableNames gets all table names from ast.Node.
 // This function is mainly for binding fuzzy matching.
+// ** the return is read-only.
 // For example:
 //
 //	`select * from t1 where a < 1` --> [t1]
