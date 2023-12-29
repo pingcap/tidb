@@ -35,8 +35,8 @@ import (
 )
 
 const (
-	// Refresh the jobs queue every 10 minutes.
-	refreshInterval = 10 * time.Minute
+	// Refresh the jobs queue every 1 minute.
+	refreshInterval = 1 * time.Minute
 )
 
 // Refresher represents a struct with a goroutine that periodically rebuilds the jobs queue.
