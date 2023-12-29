@@ -53,10 +53,16 @@ func TestHandle(t *testing.T) {
 	storage.SetTaskManager(mgr)
 
 	// no scheduler registered
-	err := handle.SubmitAndWaitTask(ctx, "1", proto.TaskTypeExample, 2, []byte("byte"))
-	require.Error(t, err)
+	task, err := handle.SubmitTask(ctx, "1", proto.TaskTypeExample, 2, []byte("byte"))
+	require.NoError(t, err)
+	waitedTask, err := handle.WaitTask(ctx, task.ID, func(task *proto.Task) bool {
+		return task.IsDone()
+	})
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateFailed, waitedTask.State)
+	require.ErrorContains(t, waitedTask.Error, "unknown task type")
 
-	task, err := mgr.GetTaskByID(ctx, 1)
+	task, err = mgr.GetTaskByID(ctx, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), task.ID)
 	require.Equal(t, "1", task.Key)

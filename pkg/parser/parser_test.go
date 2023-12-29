@@ -515,7 +515,6 @@ func TestAdminStmt(t *testing.T) {
 		// We do not support the global level. We will check it in the later.
 		{"admin flush global plan_cache", true, "ADMIN FLUSH GLOBAL PLAN_CACHE"},
 		// for BDR
-		{"admin set bdr role none", true, "ADMIN SET BDR ROLE NONE"},
 		{"admin set bdr role primary", true, "ADMIN SET BDR ROLE PRIMARY"},
 		{"admin set bdr role secondary", true, "ADMIN SET BDR ROLE SECONDARY"},
 		{"admin set bdr role local_only", true, "ADMIN SET BDR ROLE LOCAL_ONLY"},
@@ -3910,13 +3909,13 @@ func TestHintError(t *testing.T) {
 	stmt, warns, err := p.Parse("select /*+ tidb_unknown(T1,t2) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
 	require.Len(t, warns, 1)
-	require.Regexp(t, `Optimizer hint syntax error at line 1 column 23 near "tidb_unknown\(T1,t2\) \*/" $`, warns[0].Error())
+	require.Equal(t, `[parser:8061]Optimizer hint tidb_unknown is not supported by TiDB and is ignored`, warns[0].Error())
 	require.Len(t, stmt[0].(*ast.SelectStmt).TableHints, 0)
-	stmt, warns, err = p.Parse("select /*+ TIDB_INLJ(t1, T2) tidb_unknow(T1,t2, 1) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
-	require.Len(t, stmt[0].(*ast.SelectStmt).TableHints, 0)
+	stmt, warns, err = p.Parse("select /*+ TIDB_INLJ(t1, T2) tidb_unknown(T1,t2, 1) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.Len(t, stmt[0].(*ast.SelectStmt).TableHints, 1)
 	require.NoError(t, err)
 	require.Len(t, warns, 1)
-	require.Regexp(t, `Optimizer hint syntax error at line 1 column 40 near "tidb_unknow\(T1,t2, 1\) \*/" $`, warns[0].Error())
+	require.Equal(t, `[parser:8061]Optimizer hint tidb_unknown is not supported by TiDB and is ignored`, warns[0].Error())
 	_, _, err = p.Parse("select c1, c2 from /*+ tidb_unknow(T1,t2) */ t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err) // Hints are ignored after the "FROM" keyword!
 	_, _, err = p.Parse("select1 /*+ TIDB_INLJ(t1, T2) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
@@ -5886,6 +5885,8 @@ func TestAnalyze(t *testing.T) {
 		{"analyze table t index a predicate columns", false, ""},
 		{"analyze table t with 10 samplerate", true, "ANALYZE TABLE `t` WITH 10 SAMPLERATE"},
 		{"analyze table t with 0.1 samplerate", true, "ANALYZE TABLE `t` WITH 0.1 SAMPLERATE"},
+		{"analyze no_write_to_binlog table t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t1`"},
+		{"analyze local table t,t1", true, "ANALYZE NO_WRITE_TO_BINLOG TABLE `t`,`t1`"},
 	}
 	RunTest(t, table, false)
 }

@@ -148,3 +148,59 @@ func TestPlanReplayerGC(t *testing.T) {
 	require.NotNil(t, err)
 	require.True(t, os.IsNotExist(err))
 }
+
+func TestInsertPlanReplayerStatus(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	prHandle := dom.GetPlanReplayerHandle()
+	tk.MustExec("use test")
+	tk.MustExec(`
+	CREATE TABLE tableA (
+		columnA VARCHAR(255),
+		columnB DATETIME,
+		columnC VARCHAR(255)
+	)`)
+
+	// This is a single quote in the sql.
+	// We should escape it correctly.
+	sql := `
+SELECT * from tableA where SUBSTRING_INDEX(tableA.columnC, '_', 1) = tableA.columnA
+`
+
+	tk.MustQuery(sql)
+	_, d := tk.Session().GetSessionVars().StmtCtx.SQLDigest()
+	_, pd := tk.Session().GetSessionVars().StmtCtx.GetPlanDigest()
+	sqlDigest := d.String()
+	planDigest := pd.String()
+
+	// Register task
+	tk.MustExec("delete from mysql.plan_replayer_task")
+	tk.MustExec("delete from mysql.plan_replayer_status")
+	tk.MustExec(fmt.Sprintf("insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('%v','%v');", sqlDigest, planDigest))
+	err := prHandle.CollectPlanReplayerTask()
+	require.NoError(t, err)
+	require.Len(t, prHandle.GetTasks(), 1)
+
+	tk.MustExec("SET @@tidb_enable_plan_replayer_capture = ON;")
+
+	// Capture task and dump
+	tk.MustQuery(sql)
+	task := prHandle.DrainTask()
+	require.NotNil(t, task)
+	worker := prHandle.GetWorker()
+	success := worker.HandleTask(task)
+	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
+	require.True(t, success)
+	require.Equal(t, prHandle.GetTaskStatus().GetRunningTaskStatusLen(), 0)
+	// assert memory task consumed
+	require.Len(t, prHandle.GetTasks(), 0)
+
+	// Check the plan_replayer_status.
+	// We should store the origin sql correctly.
+	rows := tk.MustQuery(
+		"select * from mysql.plan_replayer_status where sql_digest = ? and plan_digest = ? and origin_sql is not null",
+		sqlDigest,
+		planDigest,
+	).Rows()
+	require.Len(t, rows, 1)
+}

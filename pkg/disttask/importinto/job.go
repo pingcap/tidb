@@ -109,7 +109,7 @@ func (ti *DistImporter) ImportTask(task *proto.Task) {
 	ti.Group.Go(func() error {
 		defer close(ti.Done)
 		// task is run using distribute framework, so we only wait for the task to finish.
-		return handle.WaitTask(ti.GroupCtx, task.ID)
+		return handle.WaitTaskDoneOrPaused(ti.GroupCtx, task.ID)
 	})
 }
 
@@ -193,6 +193,7 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 	}); err != nil {
 		return 0, nil, err
 	}
+	handle.NotifyTaskChange()
 	task, err := taskManager.GetTaskByID(ctx, taskID)
 	if err != nil {
 		return 0, nil, err

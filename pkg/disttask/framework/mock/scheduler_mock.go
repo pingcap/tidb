@@ -52,18 +52,6 @@ func (mr *MockSchedulerMockRecorder) Close() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockScheduler)(nil).Close))
 }
 
-// ExecuteTask mocks base method.
-func (m *MockScheduler) ExecuteTask() {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "ExecuteTask")
-}
-
-// ExecuteTask indicates an expected call of ExecuteTask.
-func (mr *MockSchedulerMockRecorder) ExecuteTask() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExecuteTask", reflect.TypeOf((*MockScheduler)(nil).ExecuteTask))
-}
-
 // Init mocks base method.
 func (m *MockScheduler) Init() error {
 	m.ctrl.T.Helper()
@@ -76,6 +64,18 @@ func (m *MockScheduler) Init() error {
 func (mr *MockSchedulerMockRecorder) Init() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Init", reflect.TypeOf((*MockScheduler)(nil).Init))
+}
+
+// ScheduleTask mocks base method.
+func (m *MockScheduler) ScheduleTask() {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "ScheduleTask")
+}
+
+// ScheduleTask indicates an expected call of ScheduleTask.
+func (mr *MockSchedulerMockRecorder) ScheduleTask() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ScheduleTask", reflect.TypeOf((*MockScheduler)(nil).ScheduleTask))
 }
 
 // MockCleanUpRoutine is a mock of CleanUpRoutine interface.
@@ -152,20 +152,6 @@ func (mr *MockTaskManagerMockRecorder) CancelTask(arg0, arg1 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelTask", reflect.TypeOf((*MockTaskManager)(nil).CancelTask), arg0, arg1)
 }
 
-// CleanUpMeta mocks base method.
-func (m *MockTaskManager) CleanUpMeta(arg0 context.Context, arg1 []string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CleanUpMeta", arg0, arg1)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// CleanUpMeta indicates an expected call of CleanUpMeta.
-func (mr *MockTaskManagerMockRecorder) CleanUpMeta(arg0, arg1 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CleanUpMeta", reflect.TypeOf((*MockTaskManager)(nil).CleanUpMeta), arg0, arg1)
-}
-
 // CollectSubTaskError mocks base method.
 func (m *MockTaskManager) CollectSubTaskError(arg0 context.Context, arg1 int64) ([]error, error) {
 	m.ctrl.T.Helper()
@@ -179,6 +165,20 @@ func (m *MockTaskManager) CollectSubTaskError(arg0 context.Context, arg1 int64) 
 func (mr *MockTaskManagerMockRecorder) CollectSubTaskError(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CollectSubTaskError", reflect.TypeOf((*MockTaskManager)(nil).CollectSubTaskError), arg0, arg1)
+}
+
+// DeleteDeadNodes mocks base method.
+func (m *MockTaskManager) DeleteDeadNodes(arg0 context.Context, arg1 []string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeleteDeadNodes", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteDeadNodes indicates an expected call of DeleteDeadNodes.
+func (mr *MockTaskManagerMockRecorder) DeleteDeadNodes(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteDeadNodes", reflect.TypeOf((*MockTaskManager)(nil).DeleteDeadNodes), arg0, arg1)
 }
 
 // FailTask mocks base method.

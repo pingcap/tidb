@@ -210,7 +210,7 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *plannercore.Fragment) err
 			return errors.Trace(err)
 		}
 
-		rgName := c.sessionCtx.GetSessionVars().ResourceGroupName
+		rgName := c.sessionCtx.GetSessionVars().StmtCtx.ResourceGroupName
 		if !variable.EnableResourceControl.Load() {
 			rgName = ""
 		}

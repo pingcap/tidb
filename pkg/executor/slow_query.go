@@ -124,8 +124,8 @@ func (e *slowQueryRetriever) initialize(ctx context.Context, sctx sessionctx.Con
 	if e.extractor != nil {
 		e.checker.enableTimeCheck = e.extractor.Enable
 		for _, tr := range e.extractor.TimeRanges {
-			startTime := types.NewTime(types.FromGoTime(tr.StartTime), mysql.TypeDatetime, types.MaxFsp)
-			endTime := types.NewTime(types.FromGoTime(tr.EndTime), mysql.TypeDatetime, types.MaxFsp)
+			startTime := types.NewTime(types.FromGoTime(tr.StartTime.In(sctx.GetSessionVars().Location())), mysql.TypeDatetime, types.MaxFsp)
+			endTime := types.NewTime(types.FromGoTime(tr.EndTime.In(sctx.GetSessionVars().Location())), mysql.TypeDatetime, types.MaxFsp)
 			timeRange := &timeRange{
 				startTime: startTime,
 				endTime:   endTime,
@@ -689,16 +689,12 @@ func getColumnValueFactoryByName(colName string, columnIdx int) (slowQueryColumn
 			if err != nil {
 				return false, err
 			}
-			timeValue := types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, types.MaxFsp)
+			timeValue := types.NewTime(types.FromGoTime(t.In(tz)), mysql.TypeTimestamp, types.MaxFsp)
 			if checker != nil {
 				valid := checker.isTimeValid(timeValue)
 				if !valid {
 					return valid, nil
 				}
-			}
-			if t.Location() != tz {
-				t = t.In(tz)
-				timeValue = types.NewTime(types.FromGoTime(t), mysql.TypeTimestamp, types.MaxFsp)
 			}
 			row[columnIdx] = types.NewTimeDatum(timeValue)
 			return true, nil
