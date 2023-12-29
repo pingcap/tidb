@@ -240,7 +240,7 @@ func (mr *MockTaskManagerMockRecorder) GetManagedNodes(arg0 any) *gomock.Call {
 }
 
 // GetSubtaskInStatesCnt mocks base method.
-func (m *MockTaskManager) GetSubtaskInStatesCnt(arg0 context.Context, arg1 int64, arg2 ...any) (int64, error) {
+func (m *MockTaskManager) GetSubtaskInStatesCnt(arg0 context.Context, arg1 int64, arg2 ...proto.SubtaskState) (int64, error) {
 	m.ctrl.T.Helper()
 	varargs := []any{arg0, arg1}
 	for _, a := range arg2 {
@@ -260,7 +260,7 @@ func (mr *MockTaskManagerMockRecorder) GetSubtaskInStatesCnt(arg0, arg1 any, arg
 }
 
 // GetSubtasksByExecIdsAndStepAndState mocks base method.
-func (m *MockTaskManager) GetSubtasksByExecIdsAndStepAndState(arg0 context.Context, arg1 []string, arg2 int64, arg3 proto.Step, arg4 proto.TaskState) ([]*proto.Subtask, error) {
+func (m *MockTaskManager) GetSubtasksByExecIdsAndStepAndState(arg0 context.Context, arg1 []string, arg2 int64, arg3 proto.Step, arg4 proto.SubtaskState) ([]*proto.Subtask, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetSubtasksByExecIdsAndStepAndState", arg0, arg1, arg2, arg3, arg4)
 	ret0, _ := ret[0].([]*proto.Subtask)

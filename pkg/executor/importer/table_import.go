@@ -29,6 +29,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
@@ -38,14 +39,23 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/util/etcd"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
+	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -71,10 +81,10 @@ var (
 )
 
 // prepareSortDir creates a new directory for import, remove previous sort directory if exists.
-func prepareSortDir(e *LoadDataController, taskID int64, tidbCfg *tidb.Config) (string, error) {
+func prepareSortDir(e *LoadDataController, id string, tidbCfg *tidb.Config) (string, error) {
 	sortPathSuffix := "import-" + strconv.Itoa(int(tidbCfg.Port))
 	importDir := filepath.Join(tidbCfg.TempDir, sortPathSuffix)
-	sortDir := filepath.Join(importDir, strconv.FormatInt(taskID, 10))
+	sortDir := filepath.Join(importDir, id)
 
 	if info, err := os.Stat(importDir); err != nil || !info.IsDir() {
 		if err != nil && !os.IsNotExist(err) {
@@ -168,7 +178,7 @@ func GetRegionSplitSizeKeys(ctx context.Context) (regionSplitSize int64, regionS
 }
 
 // NewTableImporter creates a new table importer.
-func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64) (ti *TableImporter, err error) {
+func NewTableImporter(param *JobImportParam, e *LoadDataController, id string) (ti *TableImporter, err error) {
 	idAlloc := kv.NewPanickingAllocators(0)
 	tbl, err := tables.TableFromMeta(idAlloc, e.Table.Meta())
 	if err != nil {
@@ -177,7 +187,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 
 	tidbCfg := tidb.GetGlobalConfig()
 	// todo: we only need to prepare this once on each node(we might call it 3 times in distribution framework)
-	dir, err := prepareSortDir(e, taskID, tidbCfg)
+	dir, err := prepareSortDir(e, id, tidbCfg)
 	if err != nil {
 		return nil, err
 	}
@@ -212,6 +222,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 	return &TableImporter{
 		JobImportParam:     param,
 		LoadDataController: e,
+		id:                 id,
 		backend:            localBackend,
 		tableInfo: &checkpoints.TidbTableInfo{
 			ID:   e.Table.Meta().ID,
@@ -221,7 +232,7 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 		encTable: tbl,
 		dbID:     e.DBID,
 		kvStore:  kvStore,
-		logger:   e.logger,
+		logger:   e.logger.With(zap.String("import-id", id)),
 		// this is the value we use for 50TiB data parallel import.
 		// this might not be the optimal value.
 		// todo: use different default for single-node import and distributed import.
@@ -236,6 +247,10 @@ func NewTableImporter(param *JobImportParam, e *LoadDataController, taskID int64
 type TableImporter struct {
 	*JobImportParam
 	*LoadDataController
+	// id is the unique id for this importer.
+	// it's the task id if we are running in distributed framework, else it's an
+	// uuid. we use this id to create a unique directory for this importer.
+	id        string
 	backend   *local.Backend
 	tableInfo *checkpoints.TidbTableInfo
 	// this table has a separate id allocator used to record the max row id allocated.
@@ -480,7 +495,6 @@ func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *bac
 		// each row is encoded into 1 data key
 		kvCount = ti.backend.GetImportedKVCount(closedEngine.GetUUID())
 	}
-	// todo: if we need support checkpoint, engine should not be cleanup if import failed.
 	cleanupErr := closedEngine.Cleanup(ctx)
 	return kvCount, multierr.Combine(importErr, cleanupErr)
 }
@@ -604,4 +618,177 @@ func adjustDiskQuota(diskQuota int64, sortDir string, logger *zap.Logger) int64 
 	default:
 		return diskQuota
 	}
+}
+
+type autoIDRequirement struct {
+	store     tidbkv.Storage
+	autoidCli *autoid.ClientDiscover
+}
+
+func (r *autoIDRequirement) Store() tidbkv.Storage {
+	return r.store
+}
+
+func (r *autoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
+	return r.autoidCli
+}
+
+// RebaseAllocatorBases rebase the allocator bases.
+func RebaseAllocatorBases(ctx context.Context, maxIDs map[autoid.AllocatorType]int64, plan *Plan, logger *zap.Logger) (err error) {
+	callLog := log.BeginTask(logger, "rebase allocators")
+	defer func() {
+		callLog.End(zap.ErrorLevel, err)
+	}()
+
+	if !common.TableHasAutoID(plan.DesiredTableInfo) {
+		return nil
+	}
+
+	tidbCfg := tidb.GetGlobalConfig()
+	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
+	tls, err2 := common.NewTLS(
+		tidbCfg.Security.ClusterSSLCA,
+		tidbCfg.Security.ClusterSSLCert,
+		tidbCfg.Security.ClusterSSLKey,
+		hostPort,
+		nil, nil, nil,
+	)
+	if err2 != nil {
+		return err2
+	}
+
+	// no need to close kvStore, since it's a cached store.
+	kvStore, err2 := GetCachedKVStoreFrom(tidbCfg.Path, tls)
+	if err2 != nil {
+		return errors.Trace(err2)
+	}
+	etcdCli, err := clientv3.New(clientv3.Config{
+		Endpoints:        []string{tidbCfg.Path},
+		AutoSyncInterval: 30 * time.Second,
+		TLS:              tls.TLSConfig(),
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(kvStore.GetCodec()))
+	autoidCli := autoid.NewClientDiscover(etcdCli)
+	r := autoIDRequirement{store: kvStore, autoidCli: autoidCli}
+	err = common.RebaseTableAllocators(ctx, maxIDs, &r, plan.DBID, plan.DesiredTableInfo)
+	if err1 := etcdCli.Close(); err1 != nil {
+		logger.Info("close etcd client error", zap.Error(err1))
+	}
+	autoidCli.ResetConn(nil)
+	return errors.Trace(err)
+}
+
+// VerifyChecksum verify the checksum of the table.
+func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChecksum, se sessionctx.Context, logger *zap.Logger) error {
+	if plan.Checksum == config.OpLevelOff {
+		return nil
+	}
+	logger.Info("local checksum", zap.Object("checksum", &localChecksum))
+
+	failpoint.Inject("waitCtxDone", func() {
+		<-ctx.Done()
+	})
+
+	remoteChecksum, err := checksumTable(ctx, se, plan, logger)
+	if err != nil {
+		if plan.Checksum != config.OpLevelOptional {
+			return err
+		}
+		logger.Warn("checksumTable failed, will skip this error and go on", zap.Error(err))
+	}
+	if remoteChecksum != nil {
+		if !remoteChecksum.IsEqual(&localChecksum) {
+			err2 := common.ErrChecksumMismatch.GenWithStackByArgs(
+				remoteChecksum.Checksum, localChecksum.Sum(),
+				remoteChecksum.TotalKVs, localChecksum.SumKVS(),
+				remoteChecksum.TotalBytes, localChecksum.SumSize(),
+			)
+			if plan.Checksum == config.OpLevelOptional {
+				logger.Warn("verify checksum failed, but checksum is optional, will skip it", zap.Error(err2))
+				err2 = nil
+			}
+			return err2
+		}
+		logger.Info("checksum pass", zap.Object("local", &localChecksum))
+	}
+	return nil
+}
+
+func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logger *zap.Logger) (*local.RemoteChecksum, error) {
+	var (
+		tableName                    = common.UniqueTable(plan.DBName, plan.TableInfo.Name.L)
+		sql                          = "ADMIN CHECKSUM TABLE " + tableName
+		maxErrorRetryCount           = 3
+		distSQLScanConcurrencyFactor = 1
+		remoteChecksum               *local.RemoteChecksum
+		txnErr                       error
+	)
+
+	ctx = util.WithInternalSourceType(ctx, tidbkv.InternalImportInto)
+	for i := 0; i < maxErrorRetryCount; i++ {
+		txnErr = func() error {
+			// increase backoff weight
+			if err := setBackoffWeight(se, plan, logger); err != nil {
+				logger.Warn("set tidb_backoff_weight failed", zap.Error(err))
+			}
+
+			distSQLScanConcurrency := se.GetSessionVars().DistSQLScanConcurrency()
+			se.GetSessionVars().SetDistSQLScanConcurrency(mathutil.Max(distSQLScanConcurrency/distSQLScanConcurrencyFactor, local.MinDistSQLScanConcurrency))
+			defer func() {
+				se.GetSessionVars().SetDistSQLScanConcurrency(distSQLScanConcurrency)
+			}()
+
+			// TODO: add resource group name
+
+			rs, err := sqlexec.ExecSQL(ctx, se, sql)
+			if err != nil {
+				return err
+			}
+			if len(rs) < 1 {
+				return errors.New("empty checksum result")
+			}
+
+			failpoint.Inject("errWhenChecksum", func() {
+				if i == 0 {
+					failpoint.Return(errors.New("occur an error when checksum, coprocessor task terminated due to exceeding the deadline"))
+				}
+			})
+
+			// ADMIN CHECKSUM TABLE <schema>.<table>  example.
+			// 	mysql> admin checksum table test.t;
+			// +---------+------------+---------------------+-----------+-------------+
+			// | Db_name | Table_name | Checksum_crc64_xor  | Total_kvs | Total_bytes |
+			// +---------+------------+---------------------+-----------+-------------+
+			// | test    | t          | 8520875019404689597 |   7296873 |   357601387 |
+			// +---------+------------+-------------
+			remoteChecksum = &local.RemoteChecksum{
+				Schema:     rs[0].GetString(0),
+				Table:      rs[0].GetString(1),
+				Checksum:   rs[0].GetUint64(2),
+				TotalKVs:   rs[0].GetUint64(3),
+				TotalBytes: rs[0].GetUint64(4),
+			}
+			return nil
+		}()
+		if !common.IsRetryableError(txnErr) {
+			break
+		}
+		distSQLScanConcurrencyFactor *= 2
+		logger.Warn("retry checksum table", zap.Int("retry count", i+1), zap.Error(txnErr))
+	}
+	return remoteChecksum, txnErr
+}
+
+func setBackoffWeight(se sessionctx.Context, plan *Plan, logger *zap.Logger) error {
+	backoffWeight := local.DefaultBackoffWeight
+	if val, ok := plan.ImportantSysVars[variable.TiDBBackOffWeight]; ok {
+		if weight, err := strconv.Atoi(val); err == nil && weight > backoffWeight {
+			backoffWeight = weight
+		}
+	}
+	logger.Info("set backoff weight", zap.Int("weight", backoffWeight))
+	return se.GetSessionVars().SetSystemVar(variable.TiDBBackOffWeight, strconv.Itoa(backoffWeight))
 }
