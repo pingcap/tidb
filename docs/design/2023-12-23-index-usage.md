@@ -36,25 +36,16 @@ Provide system tables `information_schema.tidb_index_usage` and `information_sch
 |QUERY_TOTAL|bigint|The count of all queries using this index|
 |KV_REQ_TOTAL|bigint|The count of all KV requests using this index|
 |ROWS_ACCESS_TOTAL|bigint|The count of all rows accessed by reading this index|
-|ROWS_RETURNED_TOTAL|bigint|The count of all rows returned to TiDB by reading this index|
 |PERCENTAGE_ACCESS_0|bigint|The number of occurrences where the ratio of accessed rows to total rows is 0%|
 |PERCENTAGE_ACCESS_0_1|bigint|The number of occurrences where the ratio of accessed rows to total rows falls into (0% ~ 1%).|
-|PERCENTAGE_RETURNED_0_1|bigint|The number of occurrences where the ratio of returned rows to total rows falls into [0% ~ 1%).|
 |PERCENTAGE_ACCESS_1_10|bigint|The number of occurrences where the ratio of accessed rows to total rows falls into [1% ~ 10%).|
-| PERCENTAGE_RETURNED_1_10   | bigint   | The number of occurrences where the ratio of returned rows to total rows falls into [1% ~ 10%).           |
 | PERCENTAGE_ACCESS_10_20    | bigint   | The number of occurrences where the ratio of accessed rows to total rows falls into [10% ~ 20%).          |
-| PERCENTAGE_RETURNED_10_20  | bigint   | The number of occurrences where the ratio of returned rows to total rows falls into [10% ~ 20%).          |
 | PERCENTAGE_ACCESS_20_50    | bigint   | The number of occurrences where the ratio of accessed rows to total rows falls into [20% ~ 50%).          |
-| PERCENTAGE_RETURNED_20_50  | bigint   | The number of occurrences where the ratio of returned rows to total rows falls into [20% ~ 50%).          |
 | PERCENTAGE_ACCESS_50_100   | bigint   | The number of occurrences where the ratio of accessed rows to total rows falls into [50% ~ 100%).         |
-| PERCENTAGE_RETURNED_50_100 | bigint   | The number of occurrences where the ratio of returned rows to total rows falls into [50% ~ 100%).         |
 | PERCENTAGE_ACCESS_100      | bigint   | The number of occurrences where the ratio of accessed rows to total rows is 100%.                          |
-| PERCENTAGE_RETURNED_100    | bigint   | The number of occurrences where the ratio of returned rows to total rows is 100%.                          |
 | LAST_ACCESS_TIME         | datetime | The datetime this index was last accessed.                                                                  |
 
-Technically, the term "returned" and "access" is used to distinguish the total scaned rows and the rows returned to TiDB from TiKV, because TiKV has filtered out some rows by using coprocessor selection.
-
-The percentage is calculated by dividing the count of returned/access rows by the count of all rows in the table. The count of rows in table is an assumption value by managing table row deltas, which has already been used by optimizer.
+The percentage is calculated by dividing the count of accessed rows by the count of all rows in the table. The count of rows in table is an assumption value by managing table row deltas, which has already been used by optimizer.
 
 These data are all stored in TiDB memory. Therefore, the data on an instance are lost when the TiDB instance shutdown or reboot.
 
@@ -72,20 +63,16 @@ It relies on the `information_schema.cluster_tidb_index_usage`. It'll list the i
 
 We need to get / calculate the following data, and record them in a per-node memory structure:
 
-1. KV_REQ_TOTAL. It is equal to the totalTasks in the basicCopRuntimeStats. A new method is needed to expose it.
-2. QUERY_TOTAL. We need a structure on StmtCtx to make sure a query is only counted once.
-3. READ_SELECTION_RATE, ACCESS_SELECTION_RATE. They are stored in a histogram, and are calculated by (returned|access)_rows / total_rows.
-  1. access_rows. The rows returned by the following plan should be recorded as returned_rows.
-    1. PhysicalIndexReader
-    2. Index Plans of PhysicalIndexLookUpReader
-    3. Index Plans of PhysicalIndexMergeReader
-    4. Point Get if the object is an index.
-  2. The rows returned by the following plan should be recorded as access_rows
-    1. PhysicalIndexScan
-    2. Point Get if the object is an index.
-  3. total_rows can be dumped from (*statistics.HistColl).RealtimeCount.The RealtimeCount in sc.usedStatsInforecords the used stats in current statement, but I'm not sure whether it's reliable.
+1. `KV_REQ_TOTAL`. It is equal to the `totalTasks` in the `basicCopRuntimeStats`. A new method is needed to expose it.
+2. `QUERY_TOTAL`. We need a structure on `StmtCtx` to make sure a query is only counted once.
+3. `READ_SELECTION_RATE`, `ACCESS_SELECTION_RATE`. They are stored in a histogram, and are calculated by access_rows / total_rows.
 
-The existing RuntimeStatsColl records the execution summary of each physical plan, and is accessed by physical plan ID. We can have multiple options on when / how to re-order the data into index usages.
+  1. The rows returned by the following plan should be recorded as access_rows
+    1. `PhysicalIndexScan`
+    2. `PointGet` if the object is an index.
+  2. `total_rows` can be dumped from `(*statistics.HistColl).RealtimeCount`.The RealtimeCount in `sc.usedStatsInforecords` the used stats in current statement, but I'm not sure whether it's reliable.
+
+The existing `RuntimeStatsColl` records the execution summary of each physical plan, and is accessed by physical plan ID. We can have multiple options on when / how to re-order the data into index usages.
 
 These physical plans have a corresponsing executor. We need to consider the following executors:
 
@@ -95,33 +82,7 @@ These physical plans have a corresponsing executor. We need to consider the foll
 4. `PointGetExecutor`
 5. `BatchPointGetExecutor`
 
-Then the rows returned by the first plan inside can be recorded as access_rows, and the rows returned by the last plan can be recorded as return_rows. For example, in the following plan:
-
-```
-+-------------------------------+---------+---------+-----------+-----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------------------------------------------+-----------+------+
-| id                            | estRows | actRows | task      | access object         | execution info                                                                                                                                                                                                                    | operator info                                     | memory    | disk |
-+-------------------------------+---------+---------+-----------+-----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------------------------------------------+-----------+------+
-| IndexLookUp_8                 | 1.00    | 0       | root      |                       | time:699.4µs, loops:1, RU:0.475336                                                                                                                                                                                                |                                                   | 184 Bytes | N/A  |
-| ├─Selection_7(Build)          | 1.00    | 0       | cop[tikv] |                       | time:456.4µs, loops:1, cop_task: {num: 1, max: 320.3µs, proc_keys: 0, rpc_num: 1, rpc_time: 267.4µs, copr_cache_hit_ratio: 0.00, build_task_duration: 33.6µs, max_distsql_concurrency: 1}, tikv_task:{time:214.6µs, loops:0}      | gt(plus(test.t.id, 10), 110)                      | N/A       | N/A  |
-| │ └─IndexFullScan_5           | 1.00    | 1       | cop[tikv] | table:t, index:id(id) | tikv_task:{time:214.6µs, loops:0}                                                                                                                                                                                                 | keep order:false, stats:partial[id:unInitialized] | N/A       | N/A  |
-| └─TableRowIDScan_6(Probe)     | 1.00    | 0       | cop[tikv] | table:t               |                                                                                                                                                                                                                                   | keep order:false, stats:partial[id:unInitialized] | N/A       | N/A  |
-+-------------------------------+---------+---------+-----------+-----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------------------------------------------+-----------+------+
-```
-
-The rows returned by Selection_7 (0) is counted in return_rows, and the rows returned by IndexFullScan_5 (1) is counted in access_rows. I cannot give a more accurate objective description for the difference between return_rows and access_rows, because it actually depends on whether this expression can be pushed down. If it cannot be pushed down, the selection will be outside of the IndexLookUp. For example, after blocking the + in expr_pushdown_blacklist:
-
-```
-+---------------------------------+---------+---------+-----------+-----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------------------------------------------+---------+------+
-| id                              | estRows | actRows | task      | access object         | execution info                                                                                                                                                                                                                                                              | operator info                                     | memory  | disk |
-+---------------------------------+---------+---------+-----------+-----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------------------------------------------+---------+------+
-| Selection_8                     | 0.80    | 0       | root      |                       | time:1.55ms, loops:1, RU:0.951221                                                                                                                                                                                                                                           | gt(plus(test.t.id, 10), 110)                      | 8.61 KB | N/A  |
-| └─IndexLookUp_7                 | 1.00    | 1       | root      |                       | time:1.5ms, loops:2, index_task: {total_time: 440.7µs, fetch_handle: 423.2µs, build: 7.55µs, wait: 10µs}, table_task: {total_time: 728.5µs, num: 1, concurrency: 5}, next: {wait_index: 705.1µs, wait_table_lookup_build: 163.7µs, wait_table_lookup_resp: 570.1µs}         |                                                   | 8.76 KB | N/A  |
-|   ├─IndexFullScan_5(Build)      | 1.00    | 1       | cop[tikv] | table:t, index:id(id) | time:418µs, loops:3, cop_task: {num: 1, max: 254µs, proc_keys: 0, rpc_num: 1, rpc_time: 204.7µs, copr_cache_hit_ratio: 0.00, build_task_duration: 126.5µs, max_distsql_concurrency: 1}, tikv_task:{time:157.3µs, loops:0}                                                   | keep order:false, stats:partial[id:unInitialized] | N/A     | N/A  |
-|   └─TableRowIDScan_6(Probe)     | 1.00    | 1       | cop[tikv] | table:t               | time:515.6µs, loops:2, cop_task: {num: 1, max: 326.2µs, proc_keys: 0, rpc_num: 1, rpc_time: 270.7µs, copr_cache_hit_ratio: 0.00, build_task_duration: 40.9µs, max_distsql_concurrency: 1, max_extra_concurrency: 1}, tikv_task:{time:215.1µs, loops:0}                      | keep order:false, stats:partial[id:unInitialized] | N/A     | N/A  |
-+---------------------------------+---------+---------+-----------+-----------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+---------------------------------------------------+---------+------+
-```
-
-In this case, `access_rows == return_rows == 1`.
+Then the rows returned by the `Index(Range|Full)Scan` inside can be recorded as `access_rows`.
 
 This information is reported and collected when the corresponding executor is closed. For example:
 
@@ -172,10 +133,6 @@ type IndexUsage struct {
     RowAccessTotal   atomic.Uint64
     // 0, 0-1, 1-10, 10-20, 20-50, 50-100, 100
     PercentageAccess [7]atomic.Uint64
-
-    RowReturnedTotal   atomic.Uint64
-    // 0-1, 1-10, 10-20, 20-50, 50-100, 100
-    PercentageReturned [6]atomic.Uint64
 }
 
 type indexUsageCollector struct {
@@ -185,7 +142,7 @@ type indexUsageCollector struct {
 
 type IndexRowUsageCollector interface {
     // ReportIndex reports one usage of the index
-    ReportIndex(key IndexKey, kvReqTotal uint64, rowAccess uint64, rowReturned uint64, tableTotalRows uint64)
+    ReportIndex(key IndexKey, kvReqTotal uint64, rowAccess uint64, tableTotalRows uint64)
 }
 
 type IndexUsageCollector interface {
