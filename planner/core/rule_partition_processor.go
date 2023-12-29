@@ -194,17 +194,31 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 					posHigh--
 				}
 
-				var rangeScalar float64
+				var rangeScalar uint64
+				var offset int64
 				if mysql.HasUnsignedFlag(col.RetType.GetFlag()) {
-					rangeScalar = float64(uint64(posHigh)) - float64(uint64(posLow)) // use float64 to avoid integer overflow
+					// Avoid integer overflow
+					if uint64(posHigh) < uint64(posLow) {
+						rangeScalar = 0
+					} else {
+						rangeScalar = uint64(posHigh) - uint64(posLow)
+						offset = int64(uint64(posLow) % uint64(numPartitions))
+					}
 				} else {
-					rangeScalar = float64(posHigh) - float64(posLow) // use float64 to avoid integer overflow
+					// Avoid integer overflow
+					if posHigh < posLow {
+						rangeScalar = 0
+					} else {
+						rangeScalar = uint64(posHigh - posLow)
+						offset = mathutil.Abs(posLow % int64(numPartitions))
+					}
 				}
 
 				// if range is less than the number of partitions, there will be unused partitions we can prune out.
-				if rangeScalar < float64(numPartitions) && !highIsNull && !lowIsNull {
-					for i := posLow; i <= posHigh; i++ {
-						idx := mathutil.Abs(i % int64(pi.Num))
+				if rangeScalar < uint64(numPartitions) && !highIsNull && !lowIsNull {
+					var i int64
+					for i = 0; i <= int64(rangeScalar); i++ {
+						idx := (offset + i) % int64(numPartitions)
 						if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
 							continue
 						}
@@ -233,6 +247,139 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context, tbl tabl
 			break
 		}
 	}
+<<<<<<< HEAD:planner/core/rule_partition_processor.go
+=======
+	return used, detachedResult.RemainedConds, nil
+}
+
+func (s *partitionProcessor) getUsedKeyPartitions(ctx sessionctx.Context,
+	tbl table.Table, partitionNames []model.CIStr, columns []*expression.Column,
+	conds []expression.Expression, _ types.NameSlice) ([]int, []expression.Expression, error) {
+	pi := tbl.Meta().Partition
+	partExpr := tbl.(partitionTable).PartitionExpr()
+	partCols, colLen := partExpr.GetPartColumnsForKeyPartition(columns)
+	pe := &tables.ForKeyPruning{KeyPartCols: partCols}
+	detachedResult, err := ranger.DetachCondAndBuildRangeForPartition(ctx, conds, partCols, colLen, ctx.GetSessionVars().RangeMaxSize)
+	if err != nil {
+		return nil, nil, err
+	}
+	ranges := detachedResult.Ranges
+	used := make([]int, 0, len(ranges))
+
+	for _, r := range ranges {
+		if !r.IsPointNullable(ctx) {
+			if len(partCols) == 1 && partCols[0].RetType.EvalType() == types.ETInt {
+				col := partCols[0]
+				posHigh, highIsNull, err := col.EvalInt(ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
+				if err != nil {
+					return nil, nil, err
+				}
+
+				posLow, lowIsNull, err := col.EvalInt(ctx, chunk.MutRowFromDatums(r.LowVal).ToRow())
+				if err != nil {
+					return nil, nil, err
+				}
+
+				// consider whether the range is closed or open
+				if r.LowExclude {
+					posLow++
+				}
+				if r.HighExclude {
+					posHigh--
+				}
+
+				var rangeScalar uint64
+				if mysql.HasUnsignedFlag(col.RetType.GetFlag()) {
+					// Avoid integer overflow
+					if uint64(posHigh) < uint64(posLow) {
+						rangeScalar = 0
+					} else {
+						rangeScalar = uint64(posHigh) - uint64(posLow)
+					}
+				} else {
+					// Avoid integer overflow
+					if posHigh < posLow {
+						rangeScalar = 0
+					} else {
+						rangeScalar = uint64(posHigh - posLow)
+					}
+				}
+
+				// if range is less than the number of partitions, there will be unused partitions we can prune out.
+				if rangeScalar < pi.Num && !highIsNull && !lowIsNull {
+					m := make(map[int]struct{})
+					for i := 0; i <= int(rangeScalar); i++ {
+						var d types.Datum
+						if mysql.HasUnsignedFlag(col.RetType.GetFlag()) {
+							d = types.NewUintDatum(uint64(posLow) + uint64(i))
+						} else {
+							d = types.NewIntDatum(posLow + int64(i))
+						}
+						idx, err := pe.LocateKeyPartition(pi.Num, []types.Datum{d})
+						if err != nil {
+							// If we failed to get the point position, we can just skip and ignore it.
+							continue
+						}
+						if _, ok := m[idx]; ok {
+							// Keys maybe in a same partition, we should skip.
+							continue
+						}
+						if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+							continue
+						}
+						used = append(used, idx)
+						m[idx] = struct{}{}
+					}
+					continue
+				}
+			}
+			used = []int{FullRange}
+			break
+		}
+		if len(r.HighVal) != len(partCols) {
+			used = []int{FullRange}
+			break
+		}
+
+		colVals := make([]types.Datum, 0, len(r.HighVal))
+		colVals = append(colVals, r.HighVal...)
+		idx, err := pe.LocateKeyPartition(pi.Num, colVals)
+		if err != nil {
+			// If we failed to get the point position, we can just skip and ignore it.
+			continue
+		}
+
+		if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
+			continue
+		}
+		used = append(used, idx)
+	}
+	return used, detachedResult.RemainedConds, nil
+}
+
+// getUsedPartitions is used to get used partitions for hash or key partition tables
+func (s *partitionProcessor) getUsedPartitions(ctx sessionctx.Context, tbl table.Table,
+	partitionNames []model.CIStr, columns []*expression.Column, conds []expression.Expression,
+	names types.NameSlice, partType model.PartitionType) ([]int, []expression.Expression, error) {
+	if partType == model.PartitionTypeHash {
+		return s.getUsedHashPartitions(ctx, tbl, partitionNames, columns, conds, names)
+	}
+	return s.getUsedKeyPartitions(ctx, tbl, partitionNames, columns, conds, names)
+}
+
+// findUsedPartitions is used to get used partitions for hash or key partition tables.
+// The first returning is the used partition index set pruned by `conds`.
+// The second returning is the filter conditions which should be kept after pruning.
+func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context,
+	tbl table.Table, partitionNames []model.CIStr, conds []expression.Expression,
+	columns []*expression.Column, names types.NameSlice) ([]int, []expression.Expression, error) {
+	pi := tbl.Meta().Partition
+	used, remainedConds, err := s.getUsedPartitions(ctx, tbl, partitionNames, columns, conds, names, pi.Type)
+	if err != nil {
+		return nil, nil, err
+	}
+
+>>>>>>> 3fd9eaad950 (planner: fix `between ... and ...` get wrong result for partition table (#49853)):pkg/planner/core/rule_partition_processor.go
 	if len(partitionNames) > 0 && len(used) == 1 && used[0] == FullRange {
 		or := partitionRangeOR{partitionRange{0, len(pi.Definitions)}}
 		return s.convertToIntSlice(or, pi, partitionNames), nil, nil
