@@ -157,7 +157,6 @@ func (s *sortPartition) sort() (ret error) {
 
 func (s *sortPartition) spillToDiskImpl() error {
 	s.inDisk = chunk.NewDataInDiskByChunks(s.fieldTypes)
-	s.diskTracker.AttachTo(s.diskTracker)
 	tmpChk := chunk.NewChunkWithCapacity(s.fieldTypes, spillChunkSize)
 
 	rowNum := len(s.savedRows)

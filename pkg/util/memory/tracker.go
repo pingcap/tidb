@@ -395,7 +395,7 @@ func (t *Tracker) ReplaceChild(oldChild, newChild *Tracker) {
 // UnconsumeAll unconsumes all bytes in this tracker
 func (t *Tracker) UnconsumeAll() {
 	allConsumedBytes := t.BytesConsumed()
-	t.Consume(allConsumedBytes)
+	t.Consume(-allConsumedBytes)
 }
 
 // Consume is used to consume a memory usage. "bytes" can be a negative value,
