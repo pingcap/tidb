@@ -239,7 +239,7 @@ func (h *globalBindingHandle) Update(fullLoad bool) (err error) {
 			}
 
 			if err != nil {
-				logutil.BgLogger().Debug("failed to generate bind record from data row", zap.String("category", "sql-bind"), zap.Error(err))
+				logutil.BgLogger().Warn("failed to generate bind record from data row", zap.String("category", "sql-bind"), zap.Error(err))
 				continue
 			}
 
@@ -591,6 +591,11 @@ func newBindRecord(sctx sessionctx.Context, row chunk.Row) (string, *BindRecord,
 	if status == Using {
 		status = Enabled
 	}
+	defaultDB := row.GetString(2)
+	bindingType := TypeNormal
+	if defaultDB == "" {
+		bindingType = TypeUniversal
+	}
 	binding := Binding{
 		BindSQL:    row.GetString(1),
 		Status:     status,
@@ -601,10 +606,11 @@ func newBindRecord(sctx sessionctx.Context, row chunk.Row) (string, *BindRecord,
 		Source:     row.GetString(8),
 		SQLDigest:  row.GetString(9),
 		PlanDigest: row.GetString(10),
+		Type:       bindingType,
 	}
 	bindRecord := &BindRecord{
 		OriginalSQL: row.GetString(0),
-		Db:          strings.ToLower(row.GetString(2)),
+		Db:          strings.ToLower(defaultDB),
 		Bindings:    []Binding{binding},
 	}
 	sqlDigest := parser.DigestNormalized(bindRecord.OriginalSQL)

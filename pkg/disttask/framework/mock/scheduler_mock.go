@@ -52,18 +52,6 @@ func (mr *MockSchedulerMockRecorder) Close() *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockScheduler)(nil).Close))
 }
 
-// ExecuteTask mocks base method.
-func (m *MockScheduler) ExecuteTask() {
-	m.ctrl.T.Helper()
-	m.ctrl.Call(m, "ExecuteTask")
-}
-
-// ExecuteTask indicates an expected call of ExecuteTask.
-func (mr *MockSchedulerMockRecorder) ExecuteTask() *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ExecuteTask", reflect.TypeOf((*MockScheduler)(nil).ExecuteTask))
-}
-
 // Init mocks base method.
 func (m *MockScheduler) Init() error {
 	m.ctrl.T.Helper()
@@ -76,6 +64,18 @@ func (m *MockScheduler) Init() error {
 func (mr *MockSchedulerMockRecorder) Init() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Init", reflect.TypeOf((*MockScheduler)(nil).Init))
+}
+
+// ScheduleTask mocks base method.
+func (m *MockScheduler) ScheduleTask() {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "ScheduleTask")
+}
+
+// ScheduleTask indicates an expected call of ScheduleTask.
+func (mr *MockSchedulerMockRecorder) ScheduleTask() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ScheduleTask", reflect.TypeOf((*MockScheduler)(nil).ScheduleTask))
 }
 
 // MockCleanUpRoutine is a mock of CleanUpRoutine interface.
@@ -152,20 +152,6 @@ func (mr *MockTaskManagerMockRecorder) CancelTask(arg0, arg1 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelTask", reflect.TypeOf((*MockTaskManager)(nil).CancelTask), arg0, arg1)
 }
 
-// CleanUpMeta mocks base method.
-func (m *MockTaskManager) CleanUpMeta(arg0 context.Context, arg1 []string) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CleanUpMeta", arg0, arg1)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// CleanUpMeta indicates an expected call of CleanUpMeta.
-func (mr *MockTaskManagerMockRecorder) CleanUpMeta(arg0, arg1 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CleanUpMeta", reflect.TypeOf((*MockTaskManager)(nil).CleanUpMeta), arg0, arg1)
-}
-
 // CollectSubTaskError mocks base method.
 func (m *MockTaskManager) CollectSubTaskError(arg0 context.Context, arg1 int64) ([]error, error) {
 	m.ctrl.T.Helper()
@@ -179,6 +165,20 @@ func (m *MockTaskManager) CollectSubTaskError(arg0 context.Context, arg1 int64) 
 func (mr *MockTaskManagerMockRecorder) CollectSubTaskError(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CollectSubTaskError", reflect.TypeOf((*MockTaskManager)(nil).CollectSubTaskError), arg0, arg1)
+}
+
+// DeleteDeadNodes mocks base method.
+func (m *MockTaskManager) DeleteDeadNodes(arg0 context.Context, arg1 []string) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "DeleteDeadNodes", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// DeleteDeadNodes indicates an expected call of DeleteDeadNodes.
+func (mr *MockTaskManagerMockRecorder) DeleteDeadNodes(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteDeadNodes", reflect.TypeOf((*MockTaskManager)(nil).DeleteDeadNodes), arg0, arg1)
 }
 
 // FailTask mocks base method.
@@ -411,6 +411,48 @@ func (m *MockTaskManager) ResumeSubtasks(arg0 context.Context, arg1 int64) error
 func (mr *MockTaskManagerMockRecorder) ResumeSubtasks(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResumeSubtasks", reflect.TypeOf((*MockTaskManager)(nil).ResumeSubtasks), arg0, arg1)
+}
+
+// SucceedTask mocks base method.
+func (m *MockTaskManager) SucceedTask(arg0 context.Context, arg1 int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SucceedTask", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SucceedTask indicates an expected call of SucceedTask.
+func (mr *MockTaskManagerMockRecorder) SucceedTask(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SucceedTask", reflect.TypeOf((*MockTaskManager)(nil).SucceedTask), arg0, arg1)
+}
+
+// SwitchTaskStep mocks base method.
+func (m *MockTaskManager) SwitchTaskStep(arg0 context.Context, arg1 *proto.Task, arg2 proto.TaskState, arg3 proto.Step, arg4 []*proto.Subtask) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SwitchTaskStep", arg0, arg1, arg2, arg3, arg4)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SwitchTaskStep indicates an expected call of SwitchTaskStep.
+func (mr *MockTaskManagerMockRecorder) SwitchTaskStep(arg0, arg1, arg2, arg3, arg4 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SwitchTaskStep", reflect.TypeOf((*MockTaskManager)(nil).SwitchTaskStep), arg0, arg1, arg2, arg3, arg4)
+}
+
+// SwitchTaskStepInBatch mocks base method.
+func (m *MockTaskManager) SwitchTaskStepInBatch(arg0 context.Context, arg1 *proto.Task, arg2 proto.TaskState, arg3 proto.Step, arg4 []*proto.Subtask) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SwitchTaskStepInBatch", arg0, arg1, arg2, arg3, arg4)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SwitchTaskStepInBatch indicates an expected call of SwitchTaskStepInBatch.
+func (mr *MockTaskManagerMockRecorder) SwitchTaskStepInBatch(arg0, arg1, arg2, arg3, arg4 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SwitchTaskStepInBatch", reflect.TypeOf((*MockTaskManager)(nil).SwitchTaskStepInBatch), arg0, arg1, arg2, arg3, arg4)
 }
 
 // TransferSubTasks2History mocks base method.

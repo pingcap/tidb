@@ -15,7 +15,7 @@
 package aggregation
 
 import (
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -61,7 +61,7 @@ func (cf *countFunction) Update(evalCtx *AggEvaluateContext, _ *stmtctx.Statemen
 	return nil
 }
 
-func (cf *countFunction) ResetContext(ctx sessionctx.Context, evalCtx *AggEvaluateContext) {
+func (cf *countFunction) ResetContext(ctx expression.EvalContext, evalCtx *AggEvaluateContext) {
 	if cf.HasDistinct {
 		evalCtx.DistinctChecker = createDistinctChecker(ctx.GetSessionVars().StmtCtx)
 	}

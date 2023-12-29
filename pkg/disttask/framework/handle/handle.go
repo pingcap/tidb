@@ -29,7 +29,21 @@ import (
 
 var (
 	checkTaskFinishInterval = 300 * time.Millisecond
+
+	// TaskChangedCh used to speed up task schedule, such as when task is submitted
+	// in the same node as the scheduler manager.
+	// put it here to avoid cyclic import.
+	TaskChangedCh = make(chan struct{}, 1)
 )
+
+// NotifyTaskChange is used to notify the scheduler manager that the task is changed,
+// either a new task is submitted or a task is finished.
+func NotifyTaskChange() {
+	select {
+	case TaskChangedCh <- struct{}{}:
+	default:
+	}
+}
 
 // SubmitTask submits a task.
 func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, taskMeta []byte) (*proto.Task, error) {
@@ -58,14 +72,15 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, co
 		}
 		metrics.UpdateMetricsForAddTask(task)
 	}
+	NotifyTaskChange()
 	return task, nil
 }
 
-// WaitTask waits for a task done or paused.
+// WaitTaskDoneOrPaused waits for a task done or paused.
 // this API returns error if task failed or cancelled.
-func WaitTask(ctx context.Context, id int64) error {
+func WaitTaskDoneOrPaused(ctx context.Context, id int64) error {
 	logger := logutil.Logger(ctx).With(zap.Int64("task-id", id))
-	found, err := waitTask(ctx, id, func(t *proto.Task) bool {
+	found, err := WaitTask(ctx, id, func(t *proto.Task) bool {
 		return t.IsDone() || t.State == proto.TaskStatePaused
 	})
 	if err != nil {
@@ -100,13 +115,14 @@ func WaitTaskDoneByKey(ctx context.Context, taskKey string) error {
 	if task == nil {
 		return errors.Errorf("cannot find task with key %s", taskKey)
 	}
-	_, err = waitTask(ctx, task.ID, func(t *proto.Task) bool {
+	_, err = WaitTask(ctx, task.ID, func(t *proto.Task) bool {
 		return t.IsDone()
 	})
 	return err
 }
 
-func waitTask(ctx context.Context, id int64, matchFn func(*proto.Task) bool) (*proto.Task, error) {
+// WaitTask waits for a task until it meets the matchFn.
+func WaitTask(ctx context.Context, id int64, matchFn func(*proto.Task) bool) (*proto.Task, error) {
 	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return nil, err
@@ -134,15 +150,6 @@ func waitTask(ctx context.Context, id int64, matchFn func(*proto.Task) bool) (*p
 			}
 		}
 	}
-}
-
-// SubmitAndWaitTask submits a task and wait for it to finish.
-func SubmitAndWaitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, taskMeta []byte) error {
-	task, err := SubmitTask(ctx, taskKey, taskType, concurrency, taskMeta)
-	if err != nil {
-		return err
-	}
-	return WaitTask(ctx, task.ID)
 }
 
 // CancelTask cancels a task.

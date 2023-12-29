@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -85,7 +86,7 @@ func TestFlashback(t *testing.T) {
 			fmt.Sprintf("return(%v)", injectSafeTS)))
 
 		tk.MustExec("insert t values (4), (5), (6)")
-		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 
 		tk.MustExec("admin check table t")
 		require.Equal(t, tk.MustQuery("select max(a) from t").Rows()[0][0], "3")
@@ -121,7 +122,7 @@ func TestPrepareFlashbackFailed(t *testing.T) {
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockPrepareMeetsEpochNotMatch", `return(true)`))
 
 		tk.MustExec("insert t values (4), (5), (6)")
-		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 
 		tk.MustExec("admin check table t")
 		require.Equal(t, tk.MustQuery("select max(a) from t").Rows()[0][0], "3")
@@ -169,7 +170,7 @@ func TestFlashbackAddDropIndex(t *testing.T) {
 			fmt.Sprintf("return(%v)", injectSafeTS)))
 
 		tk.MustExec("insert t values (4), (5), (6)")
-		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 
 		tk.MustExec("admin check table t")
 		require.Equal(t, tk.MustQuery("select max(a) from t use index(i)").Rows()[0][0], "3")
@@ -214,7 +215,7 @@ func TestFlashbackAddDropModifyColumn(t *testing.T) {
 			fmt.Sprintf("return(%v)", injectSafeTS)))
 
 		tk.MustExec("insert t values (4, 4), (5, 5), (6, 6)")
-		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 
 		tk.MustExec("admin check table t")
 		require.Equal(t, tk.MustQuery("show create table t").Rows()[0][1], "CREATE TABLE `t` (\n"+
@@ -265,7 +266,7 @@ func TestFlashbackBasicRenameDropCreateTable(t *testing.T) {
 
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
-		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 
 		tk.MustExec("admin check table t")
 		require.Equal(t, tk.MustQuery("select max(a) from t").Rows()[0][0], "3")
@@ -303,7 +304,7 @@ func TestFlashbackCreateDropTableWithData(t *testing.T) {
 
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
-		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 
 		tk.MustExec("admin check table t")
 		require.Equal(t, tk.MustQuery("select count(a) from t").Rows()[0][0], "0")
@@ -342,7 +343,7 @@ func TestFlashbackCreateDropSchema(t *testing.T) {
 
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
-		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 
 		tk.MustExec("admin check table test.t")
 		res := tk.MustQuery("select max(a) from test.t").Rows()
@@ -381,7 +382,7 @@ func TestFlashbackAutoID(t *testing.T) {
 
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
-		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 
 		tk.MustExec("admin check table t")
 		res = tk.MustQuery("select max(a) from t").Rows()
@@ -421,7 +422,7 @@ func TestFlashbackSequence(t *testing.T) {
 
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
-		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 
 		// flashback schema and skip cached values
 		res = tk.MustQuery("select nextval(seq)").Rows()
@@ -465,7 +466,7 @@ func TestFlashbackPartitionTable(t *testing.T) {
 
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
-		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 
 		tk.MustExec("admin check table t")
 		res = tk.MustQuery("select max(a), min(a), count(*) from t").Rows()
@@ -506,7 +507,7 @@ func TestFlashbackTmpTable(t *testing.T) {
 
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
-		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 
 		res := tk.MustQuery("select max(a) from t").Rows()
 		require.Equal(t, res[0][0], "3")
@@ -522,7 +523,7 @@ func TestFlashbackTmpTable(t *testing.T) {
 
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS",
 			fmt.Sprintf("return(%v)", injectSafeTS)))
-		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+		tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 
 		tk.MustGetErrCode("select * from t", errno.ErrNoSuchTable)
 
@@ -572,7 +573,7 @@ func TestFlashbackInProcessErrorMsg(t *testing.T) {
 			}
 		}
 		dom.DDL().SetHook(hook)
-		tk.Exec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts)))
+		tk.Exec(fmt.Sprintf("flashback cluster to timestamp '%s'", oracle.GetTimeFromTS(ts).Format(types.TimeFSPFormat)))
 		dom.DDL().SetHook(originHook)
 
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))

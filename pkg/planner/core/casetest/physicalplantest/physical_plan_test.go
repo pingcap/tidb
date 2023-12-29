@@ -1352,6 +1352,32 @@ func TestCountStarForTiFlash(t *testing.T) {
 	}
 }
 
+func TestIssues49377Plan(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists employee")
+	tk.MustExec("create table employee (employee_id int, name varchar(20), dept_id int)")
+
+	var (
+		input  []string
+		output []struct {
+			SQL     string
+			Plan    []string
+			Warning []string
+		}
+	)
+	planSuiteData := GetPlanSuiteData()
+	planSuiteData.LoadTestCases(t, &input, &output)
+	for i, ts := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = ts
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + ts).Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + ts).Check(testkit.Rows(output[i].Plan...))
+	}
+}
+
 func TestHashAggPushdownToTiFlashCompute(t *testing.T) {
 	var (
 		input  []string

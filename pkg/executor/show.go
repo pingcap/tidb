@@ -1294,6 +1294,10 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 		buf.WriteString("*/")
 	}
 
+	if tableInfo.AutoRandomBits > 0 && tableInfo.PreSplitRegions > 0 {
+		fmt.Fprintf(buf, " /*T! PRE_SPLIT_REGIONS=%d */", tableInfo.PreSplitRegions)
+	}
+
 	if len(tableInfo.Comment) > 0 {
 		fmt.Fprintf(buf, " COMMENT='%s'", format.OutputFormat(tableInfo.Comment))
 	}
@@ -2358,7 +2362,7 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 	return runWithSystemSession(ctx, sctx, func(s sessionctx.Context) error {
 		// Retrieve view columns info.
 		planBuilder, _ := plannercore.NewPlanBuilder(
-			plannercore.PlanBuilderOptNoExecution{}).Init(s, is, &hint.BlockHintProcessor{})
+			plannercore.PlanBuilderOptNoExecution{}).Init(s, is, hint.NewQBHintHandler(nil))
 		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl, nil, nil)
 		if err != nil {
 			return err

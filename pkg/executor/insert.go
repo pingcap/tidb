@@ -367,7 +367,7 @@ func (e *InsertExec) initEvalBuffer4Dup() {
 		evalBufferTypes = append(evalBufferTypes, &(col.FieldType))
 	}
 	if extraLen > 0 {
-		evalBufferTypes = append(evalBufferTypes, e.SelectExec.Base().RetFieldTypes()[e.rowLen:]...)
+		evalBufferTypes = append(evalBufferTypes, e.SelectExec.RetFieldTypes()[e.rowLen:]...)
 	}
 	for _, col := range e.Table.Cols() {
 		evalBufferTypes = append(evalBufferTypes, &(col.FieldType))

@@ -41,6 +41,7 @@ require (
 	github.com/fatih/color v1.15.0
 	github.com/fsouza/fake-gcs-server v1.44.0
 	github.com/go-ldap/ldap/v3 v3.4.4
+	github.com/go-resty/resty/v2 v2.7.0
 	github.com/go-sql-driver/mysql v1.7.1
 	github.com/gogo/protobuf v1.3.2
 	github.com/golang/protobuf v1.5.3
@@ -78,10 +79,10 @@ require (
 	github.com/opentracing/opentracing-go v1.2.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/badger v1.5.1-0.20230103063557-828f39b09b6d
-	github.com/pingcap/errors v0.11.5-0.20221009092201-b66cddb77c32
+	github.com/pingcap/errors v0.11.5-0.20231212100244-799fae176cfb
 	github.com/pingcap/failpoint v0.0.0-20220801062533-2eaa32854a6c
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20231122054644-fb0f5c2a0a10
+	github.com/pingcap/kvproto v0.0.0-20231222062942-c0c73f41d0b2
 	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
 	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
@@ -89,7 +90,7 @@ require (
 	github.com/prometheus/client_golang v1.17.0
 	github.com/prometheus/client_model v0.5.0
 	github.com/prometheus/common v0.45.0
-	github.com/prometheus/prometheus v0.48.0
+	github.com/prometheus/prometheus v0.48.1
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/sasha-s/go-deadlock v0.2.0
 	github.com/shirou/gopsutil/v3 v3.23.10
@@ -102,8 +103,8 @@ require (
 	github.com/stretchr/testify v1.8.4
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
-	github.com/tikv/client-go/v2 v2.0.8-0.20231201024404-0ff16620f6c0
-	github.com/tikv/pd/client v0.0.0-20231130081618-862eee18738e
+	github.com/tikv/client-go/v2 v2.0.8-0.20231227070846-61c486af13a5
+	github.com/tikv/pd/client v0.0.0-20231227120157-cee6e63b9f06
 	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -120,7 +121,7 @@ require (
 	go.uber.org/atomic v1.11.0
 	go.uber.org/automaxprocs v1.5.3
 	go.uber.org/goleak v1.3.0
-	go.uber.org/mock v0.3.0
+	go.uber.org/mock v0.4.0
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.26.0
 	golang.org/x/exp v0.0.0-20231006140011-7918f672742d
@@ -131,9 +132,9 @@ require (
 	golang.org/x/term v0.15.0
 	golang.org/x/text v0.14.0
 	golang.org/x/time v0.5.0
-	golang.org/x/tools v0.16.0
+	golang.org/x/tools v0.16.1
 	google.golang.org/api v0.149.0
-	google.golang.org/grpc v1.59.0
+	google.golang.org/grpc v1.60.1
 	gopkg.in/yaml.v2 v2.4.0
 	honnef.co/go/tools v0.4.6
 	k8s.io/api v0.28.2
@@ -161,8 +162,8 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.19.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.19.0 // indirect
 	go.opentelemetry.io/otel/metric v1.21.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20231030173426-d783a09b4405 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20231120223509-83a465c0220f // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20231120223509-83a465c0220f // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20231212172506-995d672761c0 // indirect
 	k8s.io/utils v0.0.0-20230711102312-30195339c3c7 // indirect
 )
 
@@ -288,14 +289,14 @@ require (
 	go.opentelemetry.io/otel/sdk v1.21.0 // indirect
 	go.opentelemetry.io/otel/trace v1.21.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.0.0 // indirect
-	golang.org/x/crypto v0.16.0 // indirect
+	golang.org/x/crypto v0.17.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20230307190834-24139beb5833 // indirect
 	golang.org/x/mod v0.14.0 // indirect
 	golang.org/x/xerrors v0.0.0-20220907171357-04be3eba64a2 // indirect
 	gonum.org/v1/gonum v0.8.2 // indirect
-	google.golang.org/appengine v1.6.7 // indirect
-	google.golang.org/genproto v0.0.0-20231106174013-bbf56f31fb17 // indirect
-	google.golang.org/protobuf v1.31.0 // indirect
+	google.golang.org/appengine v1.6.8 // indirect
+	google.golang.org/genproto v0.0.0-20231211222908-989df2bf70f3 // indirect
+	google.golang.org/protobuf v1.32.0 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
@@ -312,4 +313,9 @@ replace (
 	github.com/dgrijalva/jwt-go => github.com/form3tech-oss/jwt-go v3.2.6-0.20210809144907-32ab6a8243d7+incompatible
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
+
+	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
+	// Please remove these dependencies.
+	sourcegraph.com/sourcegraph/appdash => github.com/sourcegraph/appdash v0.0.0-20190731080439-ebfcffb1b5c0
+	sourcegraph.com/sourcegraph/appdash-data => github.com/sourcegraph/appdash-data v0.0.0-20151005221446-73f23eafcf67
 )

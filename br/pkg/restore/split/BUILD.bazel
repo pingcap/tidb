@@ -13,13 +13,11 @@ go_library(
     deps = [
         "//br/pkg/conn/util",
         "//br/pkg/errors",
-        "//br/pkg/httputil",
         "//br/pkg/lightning/config",
         "//br/pkg/logutil",
         "//br/pkg/redact",
         "//br/pkg/utils",
         "//pkg/kv",
-        "//pkg/store/pdtypes",
         "@com_github_google_btree//:btree",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

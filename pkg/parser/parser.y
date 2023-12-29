@@ -1051,10 +1051,7 @@ import (
 	UpdateStmtNoWith           "Update statement without CTE clause"
 	HelpStmt                   "HELP statement"
 	ShardableStmt              "Shardable statement that can be used in non-transactional DMLs"
-	PauseLoadDataStmt          "PAUSE LOAD DATA JOB statement"
-	ResumeLoadDataStmt         "RESUME LOAD DATA JOB statement"
 	CancelImportStmt           "CANCEL IMPORT JOB statement"
-	DropLoadDataStmt           "DROP LOAD DATA JOB statement"
 	ProcedureUnlabeledBlock    "The statement block without label in procedure"
 	ProcedureBlockContent      "The statement block in procedure expressed with 'Begin ... End'"
 	SimpleWhenThen             "Procedure case when then"
@@ -1100,7 +1097,7 @@ import (
 	AuthOption                             "User auth option"
 	AutoRandomOpt                          "Auto random option"
 	Boolean                                "Boolean (0, 1, false, true)"
-	BDRRole                                "BDR role (none, primary, secondary, local_only)"
+	BDRRole                                "BDR role (primary, secondary, local_only)"
 	OptionalBraces                         "optional braces"
 	CastType                               "Cast function target type"
 	CharsetOpt                             "CHARACTER SET option in LOAD DATA"
@@ -3154,76 +3151,82 @@ SplitSyntaxOption:
 	}
 
 AnalyzeTableStmt:
-	"ANALYZE" "TABLE" TableNameList AllColumnsOrPredicateColumnsOpt AnalyzeOptionListOpt
+	"ANALYZE" NoWriteToBinLogAliasOpt "TABLE" TableNameList AllColumnsOrPredicateColumnsOpt AnalyzeOptionListOpt
 	{
-		$$ = &ast.AnalyzeTableStmt{TableNames: $3.([]*ast.TableName), ColumnChoice: $4.(model.ColumnChoice), AnalyzeOpts: $5.([]ast.AnalyzeOpt)}
+		$$ = &ast.AnalyzeTableStmt{TableNames: $4.([]*ast.TableName), NoWriteToBinLog: $2.(bool), ColumnChoice: $5.(model.ColumnChoice), AnalyzeOpts: $6.([]ast.AnalyzeOpt)}
 	}
-|	"ANALYZE" "TABLE" TableName "INDEX" IndexNameList AnalyzeOptionListOpt
+|	"ANALYZE" NoWriteToBinLogAliasOpt "TABLE" TableName "INDEX" IndexNameList AnalyzeOptionListOpt
 	{
-		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, IndexNames: $5.([]model.CIStr), IndexFlag: true, AnalyzeOpts: $6.([]ast.AnalyzeOpt)}
+		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$4.(*ast.TableName)}, NoWriteToBinLog: $2.(bool), IndexNames: $6.([]model.CIStr), IndexFlag: true, AnalyzeOpts: $7.([]ast.AnalyzeOpt)}
 	}
-|	"ANALYZE" "INCREMENTAL" "TABLE" TableName "INDEX" IndexNameList AnalyzeOptionListOpt
+|	"ANALYZE" NoWriteToBinLogAliasOpt "INCREMENTAL" "TABLE" TableName "INDEX" IndexNameList AnalyzeOptionListOpt
 	{
-		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$4.(*ast.TableName)}, IndexNames: $6.([]model.CIStr), IndexFlag: true, Incremental: true, AnalyzeOpts: $7.([]ast.AnalyzeOpt)}
+		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$5.(*ast.TableName)}, NoWriteToBinLog: $2.(bool), IndexNames: $7.([]model.CIStr), IndexFlag: true, Incremental: true, AnalyzeOpts: $8.([]ast.AnalyzeOpt)}
 	}
-|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList AllColumnsOrPredicateColumnsOpt AnalyzeOptionListOpt
+|	"ANALYZE" NoWriteToBinLogAliasOpt "TABLE" TableName "PARTITION" PartitionNameList AllColumnsOrPredicateColumnsOpt AnalyzeOptionListOpt
 	{
-		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$3.(*ast.TableName)}, PartitionNames: $5.([]model.CIStr), ColumnChoice: $6.(model.ColumnChoice), AnalyzeOpts: $7.([]ast.AnalyzeOpt)}
+		$$ = &ast.AnalyzeTableStmt{TableNames: []*ast.TableName{$4.(*ast.TableName)}, NoWriteToBinLog: $2.(bool), PartitionNames: $6.([]model.CIStr), ColumnChoice: $7.(model.ColumnChoice), AnalyzeOpts: $8.([]ast.AnalyzeOpt)}
 	}
-|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList "INDEX" IndexNameList AnalyzeOptionListOpt
+|	"ANALYZE" NoWriteToBinLogAliasOpt "TABLE" TableName "PARTITION" PartitionNameList "INDEX" IndexNameList AnalyzeOptionListOpt
 	{
 		$$ = &ast.AnalyzeTableStmt{
-			TableNames:     []*ast.TableName{$3.(*ast.TableName)},
-			PartitionNames: $5.([]model.CIStr),
-			IndexNames:     $7.([]model.CIStr),
-			IndexFlag:      true,
-			AnalyzeOpts:    $8.([]ast.AnalyzeOpt),
+			TableNames:      []*ast.TableName{$4.(*ast.TableName)},
+			NoWriteToBinLog: $2.(bool),
+			PartitionNames:  $6.([]model.CIStr),
+			IndexNames:      $8.([]model.CIStr),
+			IndexFlag:       true,
+			AnalyzeOpts:     $9.([]ast.AnalyzeOpt),
 		}
 	}
-|	"ANALYZE" "INCREMENTAL" "TABLE" TableName "PARTITION" PartitionNameList "INDEX" IndexNameList AnalyzeOptionListOpt
+|	"ANALYZE" NoWriteToBinLogAliasOpt "INCREMENTAL" "TABLE" TableName "PARTITION" PartitionNameList "INDEX" IndexNameList AnalyzeOptionListOpt
 	{
 		$$ = &ast.AnalyzeTableStmt{
-			TableNames:     []*ast.TableName{$4.(*ast.TableName)},
-			PartitionNames: $6.([]model.CIStr),
-			IndexNames:     $8.([]model.CIStr),
-			IndexFlag:      true,
-			Incremental:    true,
-			AnalyzeOpts:    $9.([]ast.AnalyzeOpt),
+			TableNames:      []*ast.TableName{$5.(*ast.TableName)},
+			NoWriteToBinLog: $2.(bool),
+			PartitionNames:  $7.([]model.CIStr),
+			IndexNames:      $9.([]model.CIStr),
+			IndexFlag:       true,
+			Incremental:     true,
+			AnalyzeOpts:     $10.([]ast.AnalyzeOpt),
 		}
 	}
-|	"ANALYZE" "TABLE" TableName "UPDATE" "HISTOGRAM" "ON" IdentList AnalyzeOptionListOpt
+|	"ANALYZE" NoWriteToBinLogAliasOpt "TABLE" TableName "UPDATE" "HISTOGRAM" "ON" IdentList AnalyzeOptionListOpt
 	{
 		$$ = &ast.AnalyzeTableStmt{
-			TableNames:         []*ast.TableName{$3.(*ast.TableName)},
-			ColumnNames:        $7.([]model.CIStr),
-			AnalyzeOpts:        $8.([]ast.AnalyzeOpt),
+			TableNames:         []*ast.TableName{$4.(*ast.TableName)},
+			NoWriteToBinLog:    $2.(bool),
+			ColumnNames:        $8.([]model.CIStr),
+			AnalyzeOpts:        $9.([]ast.AnalyzeOpt),
 			HistogramOperation: ast.HistogramOperationUpdate,
 		}
 	}
-|	"ANALYZE" "TABLE" TableName "DROP" "HISTOGRAM" "ON" IdentList
+|	"ANALYZE" NoWriteToBinLogAliasOpt "TABLE" TableName "DROP" "HISTOGRAM" "ON" IdentList
 	{
 		$$ = &ast.AnalyzeTableStmt{
-			TableNames:         []*ast.TableName{$3.(*ast.TableName)},
-			ColumnNames:        $7.([]model.CIStr),
+			TableNames:         []*ast.TableName{$4.(*ast.TableName)},
+			NoWriteToBinLog:    $2.(bool),
+			ColumnNames:        $8.([]model.CIStr),
 			HistogramOperation: ast.HistogramOperationDrop,
 		}
 	}
-|	"ANALYZE" "TABLE" TableName "COLUMNS" IdentList AnalyzeOptionListOpt
+|	"ANALYZE" NoWriteToBinLogAliasOpt "TABLE" TableName "COLUMNS" IdentList AnalyzeOptionListOpt
 	{
 		$$ = &ast.AnalyzeTableStmt{
-			TableNames:   []*ast.TableName{$3.(*ast.TableName)},
-			ColumnNames:  $5.([]model.CIStr),
-			ColumnChoice: model.ColumnList,
-			AnalyzeOpts:  $6.([]ast.AnalyzeOpt)}
+			TableNames:      []*ast.TableName{$4.(*ast.TableName)},
+			NoWriteToBinLog: $2.(bool),
+			ColumnNames:     $6.([]model.CIStr),
+			ColumnChoice:    model.ColumnList,
+			AnalyzeOpts:     $7.([]ast.AnalyzeOpt)}
 	}
-|	"ANALYZE" "TABLE" TableName "PARTITION" PartitionNameList "COLUMNS" IdentList AnalyzeOptionListOpt
+|	"ANALYZE" NoWriteToBinLogAliasOpt "TABLE" TableName "PARTITION" PartitionNameList "COLUMNS" IdentList AnalyzeOptionListOpt
 	{
 		$$ = &ast.AnalyzeTableStmt{
-			TableNames:     []*ast.TableName{$3.(*ast.TableName)},
-			PartitionNames: $5.([]model.CIStr),
-			ColumnNames:    $7.([]model.CIStr),
-			ColumnChoice:   model.ColumnList,
-			AnalyzeOpts:    $8.([]ast.AnalyzeOpt)}
+			TableNames:      []*ast.TableName{$4.(*ast.TableName)},
+			NoWriteToBinLog: $2.(bool),
+			PartitionNames:  $6.([]model.CIStr),
+			ColumnNames:     $8.([]model.CIStr),
+			ColumnChoice:    model.ColumnList,
+			AnalyzeOpts:     $9.([]ast.AnalyzeOpt)}
 	}
 
 AllColumnsOrPredicateColumnsOpt:
@@ -5857,39 +5860,12 @@ OptionLevel:
 		$$ = ast.BRIEOptionLevelRequired
 	}
 
-PauseLoadDataStmt:
-	"PAUSE" "LOAD" "DATA" "JOB" Int64Num
-	{
-		$$ = &ast.LoadDataActionStmt{
-			Tp:    ast.LoadDataPause,
-			JobID: $5.(int64),
-		}
-	}
-
-ResumeLoadDataStmt:
-	"RESUME" "LOAD" "DATA" "JOB" Int64Num
-	{
-		$$ = &ast.LoadDataActionStmt{
-			Tp:    ast.LoadDataResume,
-			JobID: $5.(int64),
-		}
-	}
-
 CancelImportStmt:
 	"CANCEL" "IMPORT" "JOB" Int64Num
 	{
 		$$ = &ast.ImportIntoActionStmt{
 			Tp:    ast.ImportIntoCancel,
 			JobID: $4.(int64),
-		}
-	}
-
-DropLoadDataStmt:
-	"DROP" "LOAD" "DATA" "JOB" Int64Num
-	{
-		$$ = &ast.LoadDataActionStmt{
-			Tp:    ast.LoadDataDrop,
-			JobID: $5.(int64),
 		}
 	}
 
@@ -10253,15 +10229,21 @@ SetOprStmtWoutLimitOrderBy:
 		}
 		var setOprList2 []ast.Node
 		var with2 *ast.WithClause
+		var limit2 *ast.Limit
+		var orderBy2 *ast.OrderByClause
 		switch x := $3.(*ast.SubqueryExpr).Query.(type) {
 		case *ast.SelectStmt:
 			setOprList2 = []ast.Node{x}
 			with2 = x.With
 		case *ast.SetOprStmt:
+			// child setOprStmt's limit and order should also make sense
+			// we should separate it out from other normal SetOprSelectList.
 			setOprList2 = x.SelectList.Selects
 			with2 = x.With
+			limit2 = x.Limit
+			orderBy2 = x.OrderBy
 		}
-		nextSetOprList := &ast.SetOprSelectList{Selects: setOprList2, With: with2}
+		nextSetOprList := &ast.SetOprSelectList{Selects: setOprList2, With: with2, Limit: limit2, OrderBy: orderBy2}
 		nextSetOprList.AfterSetOperator = $2.(*ast.SetOprType)
 		setOprList := append(setOprList1, nextSetOprList)
 		setOpr := &ast.SetOprStmt{SelectList: &ast.SetOprSelectList{Selects: setOprList}}
@@ -10941,10 +10923,6 @@ BDRRole:
 |	"LOCAL_ONLY"
 	{
 		$$ = ast.BDRRoleLocalOnly
-	}
-|	"NONE"
-	{
-		$$ = ast.BDRRoleNone
 	}
 
 AdminStmt:
@@ -12094,10 +12072,7 @@ Statement:
 |	HelpStmt
 |	NonTransactionalDMLStmt
 |	OptimizeTableStmt
-|	PauseLoadDataStmt
-|	ResumeLoadDataStmt
 |	CancelImportStmt
-|	DropLoadDataStmt
 
 TraceableStmt:
 	DeleteFromStmt
