@@ -641,7 +641,7 @@ func (s *BaseScheduler) handlePlanErr(err error) error {
 	if s.IsRetryableErr(err) {
 		return err
 	}
-
+	s.Task.Error = err
 	if err = s.OnDone(s.ctx, s, s.Task); err != nil {
 		return errors.Trace(err)
 	}
