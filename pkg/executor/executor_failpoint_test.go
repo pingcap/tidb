@@ -693,6 +693,9 @@ func TestHandleForeignKeyCascadePanic(t *testing.T) {
 	tk.MustExec("alter table t2 add constraint fk_1 foreign key (a) references t1(a) on delete set null;")
 	tk.MustExec("replace into t1 values (1, 1);")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/handleForeignKeyCascadePanic", "panic(\"InTestHandleForeignKeyCascadePanic\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/handleForeignKeyCascadePanic"))
+	}()
 	err := tk.ExecToErr("replace into t1 values (1, 2);")
 	require.ErrorContains(t, err, "InTestHandleForeignKeyCascadePanic")
 }
