@@ -899,11 +899,13 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 			err := do.Reload()
 			if err != nil {
 				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))
+				continue
 			}
 		case _, ok := <-syncer.GlobalVersionCh():
 			err := do.Reload()
 			if err != nil {
 				logutil.BgLogger().Error("reload schema in loop failed", zap.Error(err))
+				continue
 			}
 			if !ok {
 				logutil.BgLogger().Warn("reload schema in loop, schema syncer need rewatch")
@@ -923,7 +925,7 @@ func (do *Domain) loadSchemaInLoop(ctx context.Context, lease time.Duration) {
 			err := do.mustRestartSyncer(ctx)
 			if err != nil {
 				logutil.BgLogger().Error("reload schema in loop, schema syncer restart failed", zap.Error(err))
-				break
+				continue
 			}
 			// The schema maybe changed, must reload schema then the schema validator can restart.
 			exitLoop := do.mustReload()
