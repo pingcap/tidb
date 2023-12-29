@@ -1291,3 +1291,10 @@ create temporary table t2(id int primary key, v int);
 select * from t2 where id=234;
 id	v
 commit;
+drop table if exists t;
+create table t(a int, b int as ((grouping(a))) stored);
+Error 1111 (HY000): Invalid use of group function
+create table t(a int);
+alter table t add column  b int as ((grouping(a))) stored;
+Error 1111 (HY000): Invalid use of group function
+drop table t;
