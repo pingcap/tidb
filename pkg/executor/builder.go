@@ -1248,8 +1248,7 @@ func (b *executorBuilder) setTelemetryInfo(v *plannercore.DDL) {
 				b.Ti.PartitionTelemetry.UseTablePartitionHash = true
 			}
 		case model.PartitionTypeList:
-			enable := b.ctx.GetSessionVars().EnableListTablePartition
-			if p.Sub == nil && enable {
+			if p.Sub == nil {
 				if len(p.ColumnNames) > 0 {
 					b.Ti.PartitionTelemetry.UseTablePartitionListColumns = true
 				} else {
