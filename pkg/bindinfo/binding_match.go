@@ -21,6 +21,13 @@ import (
 )
 
 // CollectTableNames gets all table names from ast.Node.
+// This function is mainly for binding fuzzy matching.
+// For example:
+//
+//	`select * from t1 where a < 1` --> [t1]
+//	`select * from db1.t1, t2 where a < 1` --> [db1.t1, t2]
+//
+// You can see more example at the TestExtractTableName.
 func CollectTableNames(in ast.Node) []*ast.TableName {
 	collector := tableNameCollectorPool.Get().(*tableNameCollector)
 	collector.reset()
