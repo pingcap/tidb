@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newOpeartorCommand() *cobra.Command {
+func newOperatorCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "operator <subcommand>",
 		Short: "utilities for operators like tidb-operator.",
@@ -26,14 +26,19 @@ func newOpeartorCommand() *cobra.Command {
 		},
 		Hidden: true,
 	}
-	cmd.AddCommand(newPauseGcCommand())
+	cmd.AddCommand(newPrepareForSnapshotBackupCommand(
+		"pause-gc-and-schedulers",
+		"(Will be replaced with `prepare-for-snapshot-backup`) pause gc, schedulers and importing until the program exits."))
+	cmd.AddCommand(newPrepareForSnapshotBackupCommand(
+		"prepare-for-snapshot-backup",
+		"pause gc, schedulers and importing until the program exits, for snapshot backup."))
 	return cmd
 }
 
-func newPauseGcCommand() *cobra.Command {
+func newPrepareForSnapshotBackupCommand(use string, short string) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "pause-gc-and-schedulers",
-		Short: "pause gc and schedulers to the ts until the program exits.",
+		Use:   use,
+		Short: short,
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := operator.PauseGcConfig{}
@@ -41,9 +46,9 @@ func newPauseGcCommand() *cobra.Command {
 				return err
 			}
 			ctx := GetDefaultContext()
-			return operator.PauseGCAndScheduler(ctx, &cfg)
+			return operator.AdaptEnvForSnapshotBackup(ctx, &cfg)
 		},
 	}
-	operator.DefineFlagsForPauseGcConfig(cmd.Flags())
+	operator.DefineFlagsForPrepareSnapBackup(cmd.Flags())
 	return cmd
 }

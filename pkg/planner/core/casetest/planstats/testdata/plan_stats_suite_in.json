@@ -1,0 +1,66 @@
+[
+  {
+    "name": "TestCollectDependingVirtualCols",
+    "cases": [
+      {
+        "tableName": "t",
+        "inputColNames": [
+          "a",
+          "b"
+        ]
+      },
+      {
+        "tableName": "t",
+        "inputColNames": [
+          "c"
+        ]
+      },
+      {
+        "tableName": "t",
+        "inputColNames": [
+          "b",
+          "c"
+        ]
+      },
+      {
+        "tableName": "t1",
+        "inputColNames": [
+          "a"
+        ]
+      },
+      {
+        "tableName": "t1",
+        "inputColNames": [
+          "b"
+        ]
+      },
+      {
+        "tableName": "t1",
+        "inputColNames": [
+          "c"
+        ]
+      },
+      {
+        "tableName": "t1",
+        "inputColNames": [
+          "vab"
+        ]
+      },
+      {
+        "tableName": "t1",
+        "inputColNames": [
+          "vab",
+          "c"
+        ]
+      },
+      {
+        "tableName": "t1",
+        "inputColNames": [
+          "vc",
+          "c",
+          "vvc"
+        ]
+      }
+    ]
+  }
+]

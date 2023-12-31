@@ -28,9 +28,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/tikv"
@@ -139,6 +139,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 		"batch size for ddl to create a batch of tables once.")
 	flags.Bool(flagWithSysTable, false, "whether restore system privilege tables on default setting")
 	flags.StringArrayP(FlagResetSysUsers, "", []string{"cloud_admin", "root"}, "whether reset these users after restoration")
+	flags.Bool(flagUseFSR, false, "whether enable FSR for AWS snapshots")
 	_ = flags.MarkHidden(FlagResetSysUsers)
 	_ = flags.MarkHidden(FlagMergeRegionSizeBytes)
 	_ = flags.MarkHidden(FlagMergeRegionKeyCount)
@@ -216,8 +217,10 @@ type RestoreConfig struct {
 	VolumeType          pconfig.EBSVolumeType `json:"volume-type" toml:"volume-type"`
 	VolumeIOPS          int64                 `json:"volume-iops" toml:"volume-iops"`
 	VolumeThroughput    int64                 `json:"volume-throughput" toml:"volume-throughput"`
+	VolumeEncrypted     bool                  `json:"volume-encrypted" toml:"volume-encrypted"`
 	ProgressFile        string                `json:"progress-file" toml:"progress-file"`
 	TargetAZ            string                `json:"target-az" toml:"target-az"`
+	UseFSR              bool                  `json:"use-fsr" toml:"use-fsr"`
 }
 
 // DefineRestoreFlags defines common flags for the restore tidb command.
@@ -380,6 +383,9 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		if cfg.VolumeThroughput, err = flags.GetInt64(flagVolumeThroughput); err != nil {
 			return errors.Trace(err)
 		}
+		if cfg.VolumeEncrypted, err = flags.GetBool(flagVolumeEncrypted); err != nil {
+			return errors.Trace(err)
+		}
 
 		cfg.ProgressFile, err = flags.GetString(flagProgressFile)
 		if err != nil {
@@ -387,6 +393,11 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		}
 
 		cfg.TargetAZ, err = flags.GetString(flagTargetAZ)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		cfg.UseFSR, err = flags.GetBool(flagUseFSR)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -562,6 +573,23 @@ func removeCheckpointDataForLogRestore(ctx context.Context, storageName string, 
 	return errors.Trace(checkpoint.RemoveCheckpointDataForLogRestore(ctx, s, taskName, clusterID))
 }
 
+func DefaultRestoreConfig() RestoreConfig {
+	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
+	DefineCommonFlags(fs)
+	DefineRestoreFlags(fs)
+	cfg := RestoreConfig{}
+	err := multierr.Combine(
+		cfg.ParseFromFlags(fs),
+		cfg.RestoreCommonConfig.ParseFromFlags(fs),
+		cfg.Config.ParseFromFlags(fs),
+	)
+	if err != nil {
+		log.Panic("infallible failed.", zap.Error(err))
+	}
+
+	return cfg
+}
+
 // RunRestore starts a restore task inside the current goroutine.
 func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConfig) error {
 	etcdCLI, err := dialEtcdWithCfg(c, cfg.Config)
@@ -657,7 +685,13 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	keepaliveCfg.PermitWithoutStream = true
-	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
+	client := restore.NewRestoreClient(
+		mgr.GetPDClient(),
+		mgr.GetPDHTTPClient(),
+		mgr.GetTLSConfig(),
+		keepaliveCfg,
+		false,
+	)
 	err = configureRestoreClient(ctx, client, cfg)
 	if err != nil {
 		return errors.Trace(err)
@@ -929,10 +963,10 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	// Restore sst files in batch.
 	batchSize := mathutil.Clamp(int(cfg.Concurrency), defaultRestoreConcurrency, maxRestoreBatchSizeLimit)
-	failpoint.Inject("small-batch-size", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("small-batch-size")); _err_ == nil {
 		log.Info("failpoint small batch size is on", zap.Int("size", v.(int)))
 		batchSize = v.(int)
-	})
+	}
 
 	// Split/Scatter + Download/Ingest
 	progressLen := int64(rangeSize + len(files))
@@ -1010,7 +1044,10 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	// The cost of rename user table / replace into system table wouldn't be so high.
 	// So leave it out of the pipeline for easier implementation.
-	client.RestoreSystemSchemas(ctx, cfg.TableFilter)
+	err = client.RestoreSystemSchemas(ctx, cfg.TableFilter)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	schedulersRemovable = true
 

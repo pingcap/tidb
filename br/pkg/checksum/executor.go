@@ -11,12 +11,12 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/distsql"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/ranger"
+	"github.com/pingcap/tidb/pkg/distsql"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -387,12 +387,12 @@ func (exec *Executor) Execute(
 				vars.BackOffWeight = exec.backoffWeight
 			}
 			resp, err = sendChecksumRequest(ctx, client, req, vars)
-			failpoint.Inject("checksumRetryErr", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("checksumRetryErr")); _err_ == nil {
 				// first time reach here. return error
 				if val.(bool) {
 					err = errors.New("inject checksum error")
 				}
-			})
+			}
 			if err != nil {
 				return errors.Trace(err)
 			}

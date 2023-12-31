@@ -18,7 +18,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/util/engine"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/engine"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -35,6 +36,10 @@ var (
 	checkpointSupportError error = nil
 	// pitrSupportBatchKVFiles specifies whether TiKV-server supports batch PITR.
 	pitrSupportBatchKVFiles bool = false
+
+	// Once TableInfoVersion updated. BR need to check compatibility with
+	// new TableInfoVersion. both snapshot restore and pitr need to be checked.
+	CURRENT_BACKUP_SUPPORT_TABLE_INFO_VERSION = model.TableInfoVersion5
 )
 
 // NextMajorVersion returns the next major version.

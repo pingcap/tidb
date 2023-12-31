@@ -1,0 +1,253 @@
+# TestIndexJoinUnionScan
+drop table if exists t1;
+drop table if exists t2;
+create table t1(id int primary key, a int);
+create table t2(id int primary key, a int, b int, key idx_a(a));
+insert into t2 values (1,1,1),(4,2,4);
+begin;
+insert into t1 values(2,2);
+insert into t2 values(2,2,2), (3,3,3);
+select /*+ INL_JOIN(t1, t2)*/ * from t1 join t2 on t1.a = t2.id;
+select /*+ INL_HASH_JOIN(t1, t2)*/ * from t1 join t2 on t1.a = t2.id;
+select /*+ INL_MERGE_JOIN(t1, t2)*/ * from t1 join t2 on t1.a = t2.id;
+select /*+ INL_JOIN(t1, t2)*/ * from t1 join t2 on t1.a = t2.a;
+select /*+ INL_HASH_JOIN(t1, t2)*/ * from t1 join t2 on t1.a = t2.a;
+select /*+ INL_MERGE_JOIN(t1, t2)*/ * from t1 join t2 on t1.a = t2.a;
+select /*+ INL_JOIN(t1, t2)*/ t1.a, t2.a from t1 join t2 on t1.a = t2.a;
+select /*+ INL_HASH_JOIN(t1, t2)*/ t1.a, t2.a from t1 join t2 on t1.a = t2.a;
+select /*+ INL_MERGE_JOIN(t1, t2)*/ t1.a, t2.a from t1 join t2 on t1.a = t2.a;
+rollback;
+
+# TestBatchIndexJoinUnionScanTest
+drop table if exists t1;
+drop table if exists t2;
+create table t1(id int primary key, a int);
+create table t2(id int primary key, a int, key idx_a(a));
+set @@session.tidb_init_chunk_size=1;
+set @@session.tidb_index_join_batch_size=1;
+set @@session.tidb_index_lookup_join_concurrency=4;
+begin;
+insert into t1 values(1,1),(2,1),(3,1),(4,1);
+insert into t2 values(1,1);
+select /*+ INL_JOIN(t1, t2)*/ count(*) from t1 join t2 on t1.a = t2.id;
+select /*+ INL_HASH_JOIN(t1, t2)*/ count(*) from t1 join t2 on t1.a = t2.id;
+select /*+ INL_MERGE_JOIN(t1, t2)*/ count(*) from t1 join t2 on t1.a = t2.id;
+rollback;
+set @@session.tidb_init_chunk_size=default;
+set @@session.tidb_index_join_batch_size=default;
+set @@session.tidb_index_lookup_join_concurrency=default;
+
+# TestInapplicableIndexJoinHint
+drop table if exists t1, t2;
+create table t1(a bigint, b bigint);
+create table t2(a bigint, b bigint);
+select /*+ TIDB_INLJ(t1, t2) */ * from t1, t2;
+show warnings;
+select /*+ TIDB_INLJ(t1, t2) */ * from t1 join t2 on t1.a=t2.a;
+show warnings;
+select /*+ INL_HASH_JOIN(t1, t2) */ * from t1, t2;
+show warnings;
+select /*+ INL_HASH_JOIN(t1, t2) */ * from t1 join t2 on t1.a=t2.a;
+show warnings;
+select /*+ INL_MERGE_JOIN(t1, t2) */ * from t1, t2;
+show warnings;
+select /*+ INL_MERGE_JOIN(t1, t2) */ * from t1 join t2 on t1.a=t2.a;
+show warnings;
+drop table if exists t1, t2;
+create table t1(a bigint, b bigint, index idx_a(a));
+create table t2(a bigint, b bigint);
+select /*+ TIDB_INLJ(t1) */ * from t1 left join t2 on t1.a=t2.a;
+show warnings;
+select /*+ TIDB_INLJ(t2) */ * from t1 right join t2 on t1.a=t2.a;
+show warnings;
+select /*+ INL_HASH_JOIN(t1) */ * from t1 left join t2 on t1.a=t2.a;
+show warnings;
+select /*+ INL_HASH_JOIN(t2) */ * from t1 right join t2 on t1.a=t2.a;
+show warnings;
+select /*+ INL_MERGE_JOIN(t1) */ * from t1 left join t2 on t1.a=t2.a;
+show warnings;
+select /*+ INL_MERGE_JOIN(t2) */ * from t1 right join t2 on t1.a=t2.a;
+show warnings;
+# Test for issues/46160
+drop table if exists t1, t2;
+create table t1 (a int, key(a));
+create table t2 (a int, key(a));
+explain select /*+ tidb_inlj(bb) */ aa.* from (select * from t1) as aa left join
+    (select t2.a, t2.a*2 as a2 from t2) as bb on aa.a=bb.a;
+
+# TestIndexJoinOverflow
+drop table if exists t1, t2;
+create table t1(a int);
+insert into t1 values (-1);
+create table t2(a int unsigned, index idx(a));
+select /*+ INL_JOIN(t2) */ * from t1 join t2 on t1.a = t2.a;
+select /*+ INL_HASH_JOIN(t2) */ * from t1 join t2 on t1.a = t2.a;
+select /*+ INL_MERGE_JOIN(t2) */ * from t1 join t2 on t1.a = t2.a;
+
+# TestIssue11061
+drop table if exists t1;
+create table t1(c varchar(30), index ix_c(c(10)));
+insert into t1 (c) values('7_chars'), ('13_characters');
+SELECT /*+ INL_JOIN(t1) */ SUM(LENGTH(c)) FROM t1 WHERE c IN (SELECT t1.c FROM t1);
+SELECT /*+ INL_HASH_JOIN(t1) */ SUM(LENGTH(c)) FROM t1 WHERE c IN (SELECT t1.c FROM t1);
+SELECT /*+ INL_MERGE_JOIN(t1) */ SUM(LENGTH(c)) FROM t1 WHERE c IN (SELECT t1.c FROM t1);
+
+# TestIndexJoinPartitionTable
+drop table if exists t;
+create table t(a int, b int not null, c int, key idx(c)) partition by hash(b) partitions 30;
+insert into t values(1, 27, 2);
+SELECT /*+ INL_JOIN(t1) */ count(1) FROM t t1 INNER JOIN (SELECT a, max(c) AS c FROM t WHERE b = 27 AND a = 1 GROUP BY a) t2 ON t1.a = t2.a AND t1.c = t2.c WHERE t1.b = 27;
+SELECT /*+ INL_HASH_JOIN(t1) */ count(1) FROM t t1 INNER JOIN (SELECT a, max(c) AS c FROM t WHERE b = 27 AND a = 1 GROUP BY a) t2 ON t1.a = t2.a AND t1.c = t2.c WHERE t1.b = 27;
+SELECT /*+ INL_MERGE_JOIN(t1) */ count(1) FROM t t1 INNER JOIN (SELECT a, max(c) AS c FROM t WHERE b = 27 AND a = 1 GROUP BY a) t2 ON t1.a = t2.a AND t1.c = t2.c WHERE t1.b = 27;
+
+# TestIndexJoinMultiCondition
+drop table if exists t1, t2;
+create table t1(a int not null, b int not null, key idx_a_b(a,b));
+create table t2(a int not null, b int not null);
+insert into t1 values (0,1), (0,2), (0,3);
+insert into t2 values (0,1), (0,2), (0,3);
+select /*+ TIDB_INLJ(t1) */ count(*) from t1, t2 where t1.a = t2.a and t1.b < t2.b;
+
+# TestIndexJoinEnumSetIssue19233
+drop table if exists t;
+drop table if exists i;
+drop table if exists p1;
+drop table if exists p2;
+CREATE TABLE p1 (type enum('HOST_PORT') NOT NULL, UNIQUE KEY (type)) ;
+CREATE TABLE p2 (type set('HOST_PORT') NOT NULL, UNIQUE KEY (type)) ;
+CREATE TABLE i (objectType varchar(64) NOT NULL);
+insert into i values ('SWITCH');
+create table t like i;
+insert into t values ('HOST_PORT');
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into i select * from t;
+insert into p1 values('HOST_PORT');
+insert into p2 values('HOST_PORT');
+# INL_MERGE_JOIN do not support enum type. ref: https://github.com/pingcap/tidb/issues/24473
+select /*+ INL_HASH_JOIN(p1) */ * from i, p1 where i.objectType = p1.type;
+show warnings;
+select /*+ INL_JOIN(p1) */ * from i, p1 where i.objectType = p1.type;
+show warnings;
+select /*+ INL_HASH_JOIN(p2) */ * from i, p2 where i.objectType = p2.type;
+show warnings;
+select /*+ INL_JOIN(p2) */ * from i, p2 where i.objectType = p2.type;
+show warnings;
+
+# TestIssue23722
+drop table if exists t;
+create table t (a int, b char(10), c blob, primary key (c(5)) clustered);
+insert into t values (20301,'Charlie',x'7a');
+select * from t;
+select * from t where c in (select c from t where t.c >= 'a');
+select @@last_sql_use_alloc;
+drop table if exists t;
+create table t (a int, b char(10), c varchar(255), primary key (c(5)) clustered);
+insert into t values (20301,'Charlie','aaaaaaa');
+select @@last_sql_use_alloc;
+select * from t;
+select * from t where c in (select c from t where t.c >= 'a');
+select @@last_sql_use_alloc;
+drop table if exists t;
+CREATE TABLE t (
+	col_15 decimal(49,3),
+	col_16 smallint(5),
+	col_17 char(118) CHARACTER SET utf8 COLLATE utf8_general_ci DEFAULT 'tLOOjbIXuuLKPFjkLo',
+	col_18 set('Alice','Bob','Charlie','David') NOT NULL,
+	col_19 tinyblob,
+	PRIMARY KEY (col_19(5),col_16) /*T![clustered_index] NONCLUSTERED */,
+	UNIQUE KEY idx_10 (col_19(5),col_16)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+INSERT INTO `t` VALUES (38799.400,20301,'KETeFZhkoxnwMAhA','Charlie',x'7a7968584570705a647179714e56');
+select  t.* from t where col_19 in  ( select col_19 from t where t.col_18 <> 'David' and t.col_19 >= 'jDzNn' ) order by col_15 , col_16 , col_17 , col_18 , col_19;
+
+# TestIssue27138
+set tidb_cost_model_version=1;
+drop table if exists t1,t2;
+set @@tidb_partition_prune_mode=dynamic;
+CREATE TABLE t1 (
+  id int(10) unsigned NOT NULL,
+  pc int(10) unsigned NOT NULL,
+  PRIMARY KEY (id,pc) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci
+PARTITION BY HASH( pc )
+PARTITIONS 1;
+CREATE TABLE t2 (
+  prefiller bigint(20) NOT NULL,
+  pk tinyint(3) unsigned NOT NULL,
+  postfiller bigint(20) NOT NULL,
+  PRIMARY KEY (pk) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin ;
+insert into t2 values ( pow(2,32), 1, 1), ( pow(2,32)+1, 2, 0);
+analyze table t1;
+analyze table t2;
+explain format='brief' select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 );
+show warnings;
+select /* +INL_JOIN(t1,t2) */ t1.id, t1.pc from t1 where id in ( select prefiller from t2 where t2.postfiller = 1 );
+drop table t1, t2;
+set @@tidb_partition_prune_mode=default;
+set tidb_cost_model_version=default;
+
+# TestIndexLookupJoinIssue
+drop table if exists t1;
+drop table if exists t2;
+create table t1 (a enum('x','y'));
+create table t2 (a int, key(a));
+insert into t1 values('x');
+insert into t2 values(1);
+select /*+ inl_join(t2) */ count(*) from t1 join t2 on t1.a = t2.a;
+select @@last_sql_use_alloc;
+select /*+ inl_hash_join(t2) */ count(*) from t1 join t2 on t1.a = t2.a;
+select @@last_sql_use_alloc;
+## Issue24547
+drop table if exists a,b;
+CREATE TABLE `a` (
+  `v` varchar(100) DEFAULT NULL,
+  `k1` varchar(100) NOT NULL,
+  `k2` varchar(100) NOT NULL,
+  PRIMARY KEY (`k1`(3),`k2`(3)) /*T![clustered_index] CLUSTERED */,
+  KEY `kk2` (`k2`(3)),
+  UNIQUE KEY `uk1` (`v`)
+);
+CREATE TABLE `b` (
+  `v` varchar(100) DEFAULT NULL,
+  `k1` varchar(100) NOT NULL,
+  `k2` varchar(100) NOT NULL,
+  PRIMARY KEY (`k1`(3),`k2`(3)) /*T![clustered_index] CLUSTERED */,
+  KEY `kk2` (`k2`(3))
+);
+insert into a(v, k1, k2) values('1', '1', '1'), ('22', '22', '22'), ('333', '333', '333'), ('3444', '3444', '3444'), ('444', '444', '444');
+insert into b(v, k1, k2) values('1', '1', '1'), ('22', '22', '22'), ('333', '333', '333'), ('2333', '2333', '2333'), ('555', '555', '555');
+delete a from a inner join b on a.k1 = b.k1 and a.k2 = b.k2 where b.k2 <> '333';
+## Issue19411
+drop table if exists t1,t2;
+create table t1  (c_int int, primary key (c_int));
+create table t2  (c_int int, primary key (c_int)) partition by hash (c_int) partitions 4;
+insert into t1 values (1);
+insert into t2 values (1);
+begin;
+insert into t1 values (2);
+insert into t2 values (2);
+--sorted_result
+select /*+ INL_JOIN(t1,t2) */ * from t1 left join t2 on t1.c_int = t2.c_int;
+commit;
+## Issue23653
+drop table if exists t1, t2;
+create table t1  (c_int int, c_str varchar(40), primary key(c_str), unique key(c_int), unique key(c_str));
+create table t2  (c_int int, c_str varchar(40), primary key(c_int, c_str(4)), key(c_int), unique key(c_str));
+insert into t1 values (1, 'cool buck'), (2, 'reverent keller');
+insert into t2 select * from t1;
+select /*+ inl_join(t2) */ * from t1, t2 where t1.c_str = t2.c_str and t1.c_int = t2.c_int and t1.c_int = 2;
+## Issue23656
+drop table if exists t1, t2;
+create table t1 (c_int int, c_str varchar(40), primary key(c_int, c_str(4)));
+create table t2 like t1;
+insert into t1 values (1, 'clever jang'), (2, 'blissful aryabhata');
+insert into t2 select * from t1;
+--sorted_result
+select /*+ inl_join(t2) */ * from t1 join t2 on t1.c_str = t2.c_str where t1.c_int = t2.c_int;
+

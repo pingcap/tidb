@@ -39,18 +39,19 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
-	_ "github.com/pingcap/tidb/planner/core" // to setup expression.EvalAstExpr. Otherwise we cannot parse the default value
-	"github.com/pingcap/tidb/store/pdtypes"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/dbterror"
-	"github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	_ "github.com/pingcap/tidb/pkg/planner/core" // to setup expression.EvalAstExpr. Otherwise we cannot parse the default value
+	"github.com/pingcap/tidb/pkg/store/pdtypes"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
@@ -185,9 +186,9 @@ func (g *TargetInfoGetterImpl) CheckVersionRequirements(ctx context.Context) err
 // It tries to select the row count from the target DB.
 func (g *TargetInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName string, tableName string) (*bool, error) {
 	var result bool
-	failpoint.Inject("CheckTableEmptyFailed", func() {
-		failpoint.Return(nil, errors.New("mock error"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("CheckTableEmptyFailed")); _err_ == nil {
+		return nil, errors.New("mock error")
+	}
 	exec := common.SQLWithRetry{
 		DB:     g.db,
 		Logger: log.FromContext(ctx),
@@ -236,7 +237,7 @@ func (g *TargetInfoGetterImpl) GetTargetSysVariablesForImport(ctx context.Contex
 // It uses the PD interface through TLS to get the information.
 func (g *TargetInfoGetterImpl) GetReplicationConfig(ctx context.Context) (*pdtypes.ReplicationConfig, error) {
 	result := new(pdtypes.ReplicationConfig)
-	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdReplicate, &result); err != nil {
+	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdhttp.ReplicateConfig, &result); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return result, nil
@@ -247,7 +248,7 @@ func (g *TargetInfoGetterImpl) GetReplicationConfig(ctx context.Context) (*pdtyp
 // It uses the PD interface through TLS to get the information.
 func (g *TargetInfoGetterImpl) GetStorageInfo(ctx context.Context) (*pdtypes.StoresInfo, error) {
 	result := new(pdtypes.StoresInfo)
-	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdStores, result); err != nil {
+	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdhttp.Stores, result); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return result, nil
@@ -258,7 +259,7 @@ func (g *TargetInfoGetterImpl) GetStorageInfo(ctx context.Context) (*pdtypes.Sto
 // It uses the PD interface through TLS to get the information.
 func (g *TargetInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdtypes.RegionsInfo, error) {
 	result := new(pdtypes.RegionsInfo)
-	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdEmptyRegions, &result); err != nil {
+	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdhttp.EmptyRegions, &result); err != nil {
 		return nil, errors.Trace(err)
 	}
 	return result, nil
@@ -372,19 +373,18 @@ func (p *PreImportInfoGetterImpl) GetAllTableStructures(ctx context.Context, opt
 
 func (p *PreImportInfoGetterImpl) getTableStructuresByFileMeta(ctx context.Context, dbSrcFileMeta *mydump.MDDatabaseMeta, getPreInfoCfg *ropts.GetPreInfoConfig) ([]*model.TableInfo, error) {
 	dbName := dbSrcFileMeta.Name
-	failpoint.Inject(
-		"getTableStructuresByFileMeta_BeforeFetchRemoteTableModels",
-		func(v failpoint.Value) {
-			fmt.Println("failpoint: getTableStructuresByFileMeta_BeforeFetchRemoteTableModels")
-			const defaultMilliSeconds int = 5000
-			sleepMilliSeconds, ok := v.(int)
-			if !ok || sleepMilliSeconds <= 0 || sleepMilliSeconds > 30000 {
-				sleepMilliSeconds = defaultMilliSeconds
-			}
-			//nolint: errcheck
-			failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/tidb/FetchRemoteTableModels_BeforeFetchTableAutoIDInfos", fmt.Sprintf("sleep(%d)", sleepMilliSeconds))
-		},
-	)
+	if v, _err_ := failpoint.Eval(_curpkg_("getTableStructuresByFileMeta_BeforeFetchRemoteTableModels")); _err_ == nil {
+
+		fmt.Println("failpoint: getTableStructuresByFileMeta_BeforeFetchRemoteTableModels")
+		const defaultMilliSeconds int = 5000
+		sleepMilliSeconds, ok := v.(int)
+		if !ok || sleepMilliSeconds <= 0 || sleepMilliSeconds > 30000 {
+			sleepMilliSeconds = defaultMilliSeconds
+		}
+		//nolint: errcheck
+		failpoint.Enable("github.com/pingcap/tidb/br/pkg/lightning/backend/tidb/FetchRemoteTableModels_BeforeFetchTableAutoIDInfos", fmt.Sprintf("sleep(%d)", sleepMilliSeconds))
+
+	}
 	currentTableInfosFromDB, err := p.targetInfoGetter.FetchRemoteTableModels(ctx, dbName)
 	if err != nil {
 		if getPreInfoCfg != nil && getPreInfoCfg.IgnoreDBNotExist {
@@ -761,9 +761,9 @@ outloop:
 		rowSize += uint64(lastRow.Length)
 		parser.RecycleRow(lastRow)
 
-		failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("mock-kv-size")); _err_ == nil {
 			kvSize += uint64(val.(int))
-		})
+		}
 		if rowSize > maxSampleDataSize || rowCount > maxSampleRowCount {
 			break
 		}

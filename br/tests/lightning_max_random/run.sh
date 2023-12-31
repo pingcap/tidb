@@ -44,6 +44,8 @@ cleanup() {
 
 cleanup
 
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/backend/local/changeEpochVersion=1*return(-1)"
+
 # auto_random_max = 2^{64-1-10}-1
 # db.test contains key auto_random_max - 1
 # db.test1 contains key auto_random_max
@@ -63,4 +65,31 @@ check_contains 'ERROR'
 run_sql 'INSERT INTO db.test2(b) VALUES(33);'
 run_sql 'INSERT INTO db.test2(b) VALUES(44);'
 run_sql 'INSERT INTO db.test2(b) VALUES(55);'
+
+grep 'RequestTooOld' "$TEST_DIR/lightning.log" | grep -q 'needRescan'
+cleanup
+
+export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/lightning/backend/local/changeEpochVersion=1*return(10)"
+
+# auto_random_max = 2^{64-1-10}-1
+# db.test contains key auto_random_max - 1
+# db.test1 contains key auto_random_max
+# db.test2 contains key auto_random_max + 1 (overflow)
+run_lightning --sorted-kv-dir "$TEST_DIR/sst" --config "$CUR/config.toml" --log-file "$TEST_DIR/lightning.log"
+check_result
+# successfully insert: d.test auto_random key has not reached maximum
+run_sql 'INSERT INTO db.test(b) VALUES(11);'
+# fail for further insertion
+run_sql 'INSERT INTO db.test(b) VALUES(22);' 2>&1 | tee -a "$TEST_DIR/sql_res.$TEST_NAME.txt"
+check_contains 'ERROR'
+# fail: db.test1 has key auto_random_max
+run_sql 'INSERT INTO db.test1(b) VALUES(11);'
+run_sql 'INSERT INTO db.test1(b) VALUES(22);' 2>&1 | tee -a "$TEST_DIR/sql_res.$TEST_NAME.txt"
+check_contains 'ERROR'
+# successfully insert for overflow key
+run_sql 'INSERT INTO db.test2(b) VALUES(33);'
+run_sql 'INSERT INTO db.test2(b) VALUES(44);'
+run_sql 'INSERT INTO db.test2(b) VALUES(55);'
+
+grep 'RequestTooNew' "$TEST_DIR/lightning.log" | grep -q 'regionScanned'
 cleanup

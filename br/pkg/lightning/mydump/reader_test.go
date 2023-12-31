@@ -159,6 +159,10 @@ func (AlwaysErrorReadSeekCloser) Close() error {
 	return nil
 }
 
+func (AlwaysErrorReadSeekCloser) GetFileSize() (int64, error) {
+	return 0, errors.New("get file size error")
+}
+
 func TestExportStatementHandleNonEOFError(t *testing.T) {
 	controller := gomock.NewController(t)
 	defer controller.Finish()
@@ -167,7 +171,7 @@ func TestExportStatementHandleNonEOFError(t *testing.T) {
 
 	mockStorage := mockstorage.NewMockExternalStorage(controller)
 	mockStorage.EXPECT().
-		Open(ctx, "no-perm-file").
+		Open(ctx, "no-perm-file", nil).
 		Return(AlwaysErrorReadSeekCloser{}, nil)
 
 	f := FileInfo{FileMeta: SourceFileMeta{Path: "no-perm-file", FileSize: 1}}

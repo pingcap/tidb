@@ -28,15 +28,15 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql" //nolint: goimports
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql" //nolint: goimports
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 type tableKVEncoder struct {
@@ -115,7 +115,7 @@ func CollectGeneratedColumns(se *Session, meta *model.TableInfo, cols []*table.C
 	var genCols []GeneratedCol
 	for i, col := range cols {
 		if col.GeneratedExpr != nil {
-			expr, err := expression.RewriteAstExpr(se, col.GeneratedExpr, schema, names, true)
+			expr, err := expression.RewriteAstExpr(se, col.GeneratedExpr.Internal(), schema, names, true)
 			if err != nil {
 				return nil, err
 			}

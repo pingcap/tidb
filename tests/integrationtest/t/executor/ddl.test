@@ -1,0 +1,535 @@
+# TestTruncateTable
+drop table if exists truncate_test;
+create table truncate_test (a int);
+insert truncate_test values (1),(2),(3);
+select * from truncate_test;
+truncate table truncate_test;
+select * from truncate_test;
+
+# TestViewRecursion
+drop table if exists t;
+drop view if exists recursive_view1, recursive_view2;
+create table if not exists t(a int);
+create definer='root'@'localhost' view recursive_view1 as select * from t;
+create definer='root'@'localhost' view recursive_view2 as select * from recursive_view1;
+drop table t;
+rename table recursive_view2 to t;
+--error 1462
+select * from recursive_view1;
+drop view recursive_view1, t;
+drop table if exists t;
+drop view if exists recursive_view1, recursive_view2;
+
+# TestIssue16250
+create table if not exists t(a int);
+create view view_issue16250 as select * from t;
+-- error 1146
+truncate table view_issue16250;
+drop table if exists t;
+drop view if exists view_issue16250;
+
+# TestIssue24771
+drop table if exists zy_tab;
+create table if not exists zy_tab (
+						zy_code int,
+						zy_name varchar(100)
+					);
+drop table if exists bj_tab;
+create table if not exists bj_tab (
+						bj_code int,
+						bj_name varchar(100),
+						bj_addr varchar(100),
+						bj_person_count int,
+						zy_code int
+					);
+drop table if exists st_tab;
+create table if not exists st_tab (
+						st_code int,
+						st_name varchar(100),
+						bj_code int
+					);
+drop view if exists v_st_2;
+create definer='root'@'localhost' view v_st_2 as
+		select st.st_name,bj.bj_name,zy.zy_name
+		from (
+			select bj_code,
+				bj_name,
+				zy_code
+			from bj_tab as b
+			where b.bj_code = 1
+		) as bj
+		left join zy_tab as zy on zy.zy_code = bj.zy_code
+		left join st_tab as st on bj.bj_code = st.bj_code;
+show create view v_st_2;
+select * from v_st_2;
+drop view if exists v_st_2;
+drop table if exists zy_tab;
+drop table if exists bj_tab;
+drop table if exists st_tab;
+
+# TestTruncateSequence
+drop sequence if exists seq;
+drop sequence if exists seq1;
+create sequence if not exists seq;
+-- error 1146
+truncate table seq;
+create sequence if not exists seq1 start 10 increment 2 maxvalue 10000 cycle;
+-- error 1146
+truncate table seq1;
+drop sequence if exists seq;
+drop sequence if exists seq1;
+
+# TestCreateDropIndex
+drop table if exists drop_test;
+create table if not exists drop_test (a int);
+create index idx_a on drop_test (a);
+drop index idx_a on drop_test;
+drop table drop_test;
+
+# TestAutoRandomClusteredPrimaryKey
+drop table if exists t;
+create table t (a bigint auto_random(5), b int, primary key (a, b) clustered);
+insert into t (b) values (1);
+set @@allow_auto_random_explicit_insert = 0;
+-- error 8216
+insert into t values (100, 2);
+set @@allow_auto_random_explicit_insert = 1;
+insert into t values (100, 2);
+select b from t order by b;
+alter table t modify column a bigint auto_random(6);
+drop table t;
+create table t (a bigint, b bigint auto_random(4, 32), primary key (b, a) clustered);
+insert into t (a) values (1);
+select a from t;
+drop table if exists t;
+set @@allow_auto_random_explicit_insert = default;
+
+# TestMaxHandleAddIndex
+drop table if exists t;
+create table t(a bigint PRIMARY KEY, b int);
+insert into t values(9223372036854775807, 1);
+insert into t values(-9223372036854775808, 1);
+alter table t add index idx_b(b);
+admin check table t;
+create table t1(a bigint UNSIGNED PRIMARY KEY, b int);
+insert into t1 values(18446744073709551615, 1);
+insert into t1 values(0, 1);
+alter table t1 add index idx_b(b);
+admin check table t1;
+drop table if exists t;
+
+# TestIssue9205
+drop table if exists t;
+create table t(c time DEFAULT '12:12:12.8');
+show create table `t`;
+alter table t add column c1 time default '12:12:12.000000';
+show create table `t`;
+alter table t alter column c1 set default '2019-02-01 12:12:10.4';
+show create table `t`;
+alter table t modify c1 time DEFAULT '770:12:12.000000';
+show create table `t`;
+drop table if exists t;
+
+# TestCheckDefaultFsp
+drop table if exists t, t2, t3;
+-- error 1067
+create table t (  tt timestamp default now(1));
+-- error 1067
+create table t (  tt timestamp(1) default current_timestamp);
+-- error 1067
+create table t (  tt timestamp(1) default now(2));
+create table t (  tt timestamp(1) default now(1));
+create table t2 (  tt timestamp default current_timestamp());
+create table t3 (  tt timestamp default current_timestamp(0));
+-- error 1067
+alter table t add column ttt timestamp default now(2);
+-- error 1067
+alter table t add column ttt timestamp(5) default current_timestamp;
+-- error 1067
+alter table t add column ttt timestamp(5) default now(2);
+-- error 1067
+alter table t modify column tt timestamp(1) default now();
+-- error 1067
+alter table t modify column tt timestamp(4) default now(5);
+-- error 1067
+alter table t change column tt tttt timestamp(4) default now(5);
+-- error 1067
+alter table t change column tt tttt timestamp(1) default now();
+drop table if exists t, t2, t3;
+
+# TestTimestampMinDefaultValue
+drop table if exists tdv;
+create table tdv(a int);
+ALTER TABLE tdv ADD COLUMN ts timestamp DEFAULT '1970-01-01 08:00:01';
+drop table if exists tdv;
+
+# TestCreateTableWithTTL
+drop table if exists t;
+CREATE TABLE t (created_at datetime) TTL = `created_at` + INTERVAL 5 DAY;
+SHOW CREATE TABLE t;
+DROP TABLE t;
+-- error 8148
+CREATE TABLE t (id int) TTL = `id` + INTERVAL 5 DAY;
+-- error 8150
+CREATE TABLE t (id int) TTL_ENABLE = 'ON';
+-- error 8150
+CREATE TABLE t (id int) TTL_JOB_INTERVAL = '1h';
+CREATE TABLE t (created_at datetime) TTL_ENABLE = 'ON' TTL = `created_at` + INTERVAL 1 DAY TTL_ENABLE = 'OFF' TTL_JOB_INTERVAL = '1d';
+SHOW CREATE TABLE t;
+DROP TABLE t;
+CREATE TABLE t (created_at datetime) TTL_ENABLE = 'ON' TTL = `created_at` + INTERVAL 1 DAY TTL = `created_at` + INTERVAL 2 DAY TTL = `created_at` + INTERVAL 3 DAY TTL_ENABLE = 'OFF';
+SHOW CREATE TABLE t;
+DROP TABLE t;
+
+# TestAlterTTLInfo
+drop table if exists t;
+CREATE TABLE t (created_at datetime, updated_at datetime, wrong_type int) TTL = `created_at` + INTERVAL 5 DAY;
+ALTER TABLE t TTL = `updated_at` + INTERVAL 2 YEAR;
+SHOW CREATE TABLE t;
+ALTER TABLE t TTL_ENABLE = 'OFF';
+SHOW CREATE TABLE t;
+ALTER TABLE t TTL_JOB_INTERVAL = '1d';
+SHOW CREATE TABLE t;
+-- error 1054
+ALTER TABLE t TTL = `not_exist` + INTERVAL 2 YEAR;
+-- error 8148
+ALTER TABLE t TTL = `wrong_type` + INTERVAL 2 YEAR;
+-- error 8149
+ALTER TABLE t DROP COLUMN updated_at;
+-- error 8148
+ALTER TABLE t CHANGE updated_at updated_at_new INT;
+ALTER TABLE t RENAME COLUMN `updated_at` TO `updated_at_2`;
+SHOW CREATE TABLE t;
+ALTER TABLE t CHANGE `updated_at_2` `updated_at_3` date;
+SHOW CREATE TABLE t;
+ALTER TABLE t TTL = `updated_at_3` + INTERVAL 3 YEAR;
+SHOW CREATE TABLE t;
+-- error 8200
+ALTER TABLE t TTL_ENABLE = 'OFF' REMOVE TTL;
+ALTER TABLE t REMOVE TTL;
+SHOW CREATE TABLE t;
+-- error 8150
+ALTER TABLE t TTL_ENABLE = 'OFF';
+-- error 8150
+ALTER TABLE t TTL_JOB_INTERVAL = '1h';
+drop table if exists t;
+
+# TestDisableTTLForTempTable
+drop table if exists t;
+--error 8151
+CREATE TEMPORARY TABLE t (created_at datetime) TTL = `created_at` + INTERVAL 5 DAY;
+
+# TestDisableTTLForFKParentTable
+set global tidb_enable_foreign_key='ON';
+drop table if exists t, t_1;
+CREATE TABLE t (id int primary key, created_at datetime);
+CREATE TABLE t_1 (t_id int, foreign key fk_t_id(t_id) references t(id));
+--error 8152
+ALTER TABLE t TTL = created_at + INTERVAL 5 YEAR;
+drop table t,t_1;
+CREATE TABLE t (id int primary key, created_at datetime) TTL = created_at + INTERVAL 5 YEAR;
+--error 8152
+CREATE TABLE t_1 (t_id int, foreign key fk_t_id(t_id) references t(id));
+drop table t;
+CREATE TABLE t (id int primary key, created_at datetime) TTL = created_at + INTERVAL 5 YEAR;
+CREATE TABLE t_1 (t_id int);
+--error 8152
+ALTER TABLE t_1 ADD FOREIGN KEY fk_t_id(t_id) references t(id);
+drop table t,t_1;
+set global tidb_enable_foreign_key=default;
+
+# TestCreateView
+drop table if exists source_table, t1, t2, test_v_nested;
+drop view if exists view_t, v, v1, v2, v3, v4, v5, v6, v7, v_nested, v_nested2;
+CREATE TABLE source_table (id INT NOT NULL DEFAULT 1, name varchar(255), PRIMARY KEY(id));
+CREATE VIEW view_t AS select id , name from source_table;
+-- error 1050
+CREATE VIEW view_t AS select id , name from source_table;
+-- error 1146
+create view v1 (c,d) as select a,b from t1;
+create table t1 (a int ,b int);
+insert into t1 values (1,2), (1,3), (2,4), (2,5), (3,10);
+create view v1 (c) as select b+1 from t1;
+create view v2 as select b+1 from t1;
+create view v3 as select b+1 as c from t1;
+create view v4 (c) as select b+1 as d from t1;
+create view v5 as select * from t1;
+create view v6 (c,d) as select * from t1;
+-- error 1353
+create view v7 (c,d,e) as select * from t1;
+drop view v1,v2,v3,v4,v5,v6;
+create view v1 (c,d) as select a,b+@@global.max_user_connections from t1;
+-- error 1050
+create view v1 (c,d) as select a,b from t1 where a = @@global.max_user_connections;
+drop view v1;
+-- error 1353
+create view v1 (c,d,e) as select a,b from t1 ;
+-- error 1353
+create view v1 (c) as select a,b from t1 ;
+drop view if exists v1;
+create view v1 (c,d) as select a,b from t1;
+create or replace view v1 (c,d) as select a,b from t1 ;
+create table if not exists t1 (a int ,b int);
+-- error 1347
+create or replace view t1 as select * from t1;
+prepare stmt from "create view v10 (x) as select 1";
+execute stmt;
+drop table if exists t1, t2;
+drop view if exists v;
+-- error 1146
+create view v as select * from t1 union select * from t2;
+create table t1(a int, b int);
+create table t2(a int, b int);
+insert into t1 values(1,2), (1,1), (1,2);
+insert into t2 values(1,1),(1,3);
+create definer='root'@'localhost' view v as select * from t1 union select * from t2;
+--sorted_result
+select * from v;
+alter table t1 drop column a;
+-- error 1356
+select * from v;
+alter table t1 add column a int;
+--sorted_result
+select * from v;
+alter table t1 drop column a;
+alter table t2 drop column b;
+-- error 1356
+select * from v;
+drop view v;
+create view v as (select * from t1);
+drop view v;
+create view v as (select * from t1 union select * from t2);
+drop view v;
+drop view if exists v_if_exists;
+show warnings;
+create view v1_if_exists as (select * from t1);
+drop view if exists v1_if_exists,v2_if_exists,v3_if_exists;
+show warnings;
+create table test_v_nested(a int);
+create definer='root'@'localhost' view v_nested as select * from test_v_nested;
+create definer='root'@'localhost' view v_nested2 as select * from v_nested;
+-- error 1146
+create or replace definer='root'@'localhost' view v_nested as select * from v_nested2;
+drop table test_v_nested;
+drop view v_nested, v_nested2;
+## Refer https://github.com/pingcap/tidb/issues/25876
+-- error 1356
+create view v_stale as select * from source_table as of timestamp current_timestamp(3);
+## Refer https://github.com/pingcap/tidb/issues/32682
+drop view if exists v1,v2;
+drop table if exists t1;
+CREATE TABLE t1(a INT, b INT);
+-- error 1470
+CREATE DEFINER=1234567890abcdefGHIKL1234567890abcdefGHIKL@localhost VIEW v1 AS SELECT a FROM t1;
+-- error 1470
+CREATE DEFINER=some_user_name@host_1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890abcdefghij1234567890X VIEW v2 AS SELECT b FROM t1;
+DROP VIEW IF EXISTS view_t;
+
+# TestCreateViewWithOverlongColName
+drop table if exists t;
+drop view if exists v;
+create table t(a int);
+create view v as select distinct'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', max('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'), 'cccccccccc', 'ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
+select * from v;
+select name_exp_1, name_exp_2, cccccccccc, name_exp_4 from v;
+show create view v;
+drop view v;
+CREATE ALGORITHM=UNDEFINED DEFINER=``@`` SQL SECURITY DEFINER VIEW `v` (`name_exp_1`, `name_exp_2`, `cccccccccc`, `name_exp_4`) AS SELECT DISTINCT _UTF8MB4'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' AS `aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa`,MAX(_UTF8MB4'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb') AS `max('bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')`,_UTF8MB4'cccccccccc' AS `cccccccccc`,_UTF8MB4'ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd' AS `ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd`;
+drop view v ;
+create definer='root'@'localhost' view v as select 'a', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' from t union select 'ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', count(distinct 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'c');
+select * from v;
+select a, name_exp_2 from v;
+show create view v;
+drop view v;
+CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`a`, `name_exp_2`) AS SELECT _UTF8MB4'a' AS `a`,_UTF8MB4'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' AS `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb` FROM `executor__ddl`.`t` UNION SELECT _UTF8MB4'ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc' AS `ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc`,COUNT(DISTINCT _UTF8MB4'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', _UTF8MB4'c') AS `count(distinct 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb', 'c')`;
+drop view v ;
+create definer='root'@'localhost' view v as select 'a' as 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb' from t;
+select * from v;
+select name_exp_1 from v;
+show create view v;
+drop view v;
+CREATE ALGORITHM=UNDEFINED DEFINER=`root`@`localhost` SQL SECURITY DEFINER VIEW `v` (`name_exp_1`) AS SELECT _UTF8MB4'a' AS `bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb` FROM `executor__ddl`.`t`;
+drop view v ;
+-- error 1059
+create view v(`bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb`) as select a from t;
+drop table t;
+
+# TestCreateDropTable
+drop table if exists drop_test;
+create table if not exists drop_test (a int);
+drop table if exists drop_test;
+create table drop_test (a int);
+drop table drop_test;
+-- error 1105
+drop table mysql.gc_delete_range;
+
+# TestCreateDropView
+drop table if exists t_v, t_v1, t_v2;
+drop view if exists v;
+create or replace view drop_test as select 1,2;
+-- error 1051
+drop table drop_test;
+drop view if exists drop_test;
+-- error 1105
+drop view mysql.gc_delete_range;
+-- error 1051
+drop view drop_test;
+create table t_v(a int);
+-- error 1347
+drop view t_v;
+create table t_v1(a int, b int);
+create table t_v2(a int, b int);
+create view v as select * from t_v1;
+create or replace view v  as select * from t_v2;
+select * from information_schema.views where table_name ='v' and table_schema='executor__ddl';
+
+# TestTooLargeIdentifierLength
+drop database if exists aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
+create database aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
+drop database aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
+-- error 1059
+create database aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;
+
+drop table if exists bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;
+create table bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb(c int);
+drop table bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb;
+-- error 1059
+create table bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb(c int);
+
+drop table if exists t;
+create table t(cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc int);
+drop table t;
+-- error 1059
+create table t(ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc int);
+
+create table t(c int);
+create index dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd on t(c);
+drop index dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd on t;
+-- error 1059
+create index ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd on t(c);
+drop table t;
+-- error 1059
+create table t(c int, index ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd(c));
+
+# TestIllegalFunctionCall4GeneratedColumns
+drop table if exists t1;
+-- error 1007
+CREATE database test;
+-- error 3102
+create table t1 (b double generated always as (rand()) virtual);
+-- error 3102
+create table t1 (a varchar(64), b varchar(1024) generated always as (load_file(a)) virtual);
+-- error 3102
+create table t1 (a datetime generated always as (curdate()) virtual);
+-- error 3102
+create table t1 (a datetime generated always as (current_time()) virtual);
+-- error 3102
+create table t1 (a datetime generated always as (current_timestamp()) virtual);
+-- error 3102
+create table t1 (a datetime, b varchar(10) generated always as (localtime()) virtual);
+-- error 3102
+create table t1 (a varchar(1024) generated always as (uuid()) virtual);
+-- error 3102
+create table t1 (a varchar(1024), b varchar(1024) generated always as (is_free_lock(a)) virtual);
+create table t1 (a bigint not null primary key auto_increment, b bigint, c bigint as (b + 1));
+-- error 3102
+alter table t1 add column d varchar(1024) generated always as (database());
+alter table t1 add column d bigint generated always as (b + 1);
+-- error 3102
+alter table t1 modify column d bigint generated always as (connection_id());
+-- error 3102
+alter table t1 change column c cc bigint generated always as (connection_id());
+
+# TestGeneratedColumnRelatedDDL
+drop table if exists t1;
+-- error 3109
+create table t1 (a bigint not null primary key auto_increment, b bigint as (a + 1));
+create table t1 (a bigint not null primary key auto_increment, b bigint, c bigint as (b + 1));
+-- error 3109
+alter table t1 add column d bigint generated always as (a + 1);
+alter table t1 add column d bigint generated always as (b + 1);
+-- error 3109
+alter table t1 modify column d bigint generated always as (a + 1);
+
+## This mysql compatibility check can be disabled using tidb_enable_auto_increment_in_generated
+set session tidb_enable_auto_increment_in_generated = 1;
+alter table t1 modify column d bigint generated always as (a + 1);
+-- error 1054
+alter table t1 add column e bigint as (z + 1);
+drop table t1;
+create table t1(a int, b int as (a+1), c int as (b+1));
+insert into t1 (a) values (1);
+-- error 3107
+alter table t1 modify column c int as (b+1) first;
+-- error 3107
+alter table t1 modify column b int as (a+1) after c;
+select * from t1;
+set session tidb_enable_auto_increment_in_generated = default;
+
+# TestAutoIncrementColumnErrorMessage
+drop table if exists t1;
+CREATE TABLE t1 (t1_id INT NOT NULL AUTO_INCREMENT PRIMARY KEY);
+-- error 3754
+CREATE INDEX idx1 ON t1 ((t1_id + t1_id));
+
+## This mysql compatibility check can be disabled using tidb_enable_auto_increment_in_generated
+SET SESSION tidb_enable_auto_increment_in_generated = 1;
+CREATE INDEX idx1 ON t1 ((t1_id + t1_id));
+SET SESSION tidb_enable_auto_increment_in_generated = default;
+
+# TestCheckPrimaryKeyForTTLTable
+set tidb_enable_clustered_index=on;
+drop table if exists t1, t2, t3, t4, t11, t12, t13, t21, t22, t23;
+
+## create table should fail when pk contains double/float
+-- error 8153
+create table t1(id float primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY;
+-- error 8153
+create table t1(id float(10,2) primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY;
+-- error 8153
+create table t1(id double primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY;
+-- error 8153
+create table t1(id float(10,2) primary key, t timestamp) TTL=`t`+INTERVAL 1 DAY;
+-- error 8153
+create table t1(id1 int, id2 float, t timestamp, primary key(id1, id2)) TTL=`t`+INTERVAL 1 DAY;
+-- error 8153
+create table t1(id1 int, id2 double, t timestamp, primary key(id1, id2)) TTL=`t`+INTERVAL 1 DAY;
+
+## alter table should fail when pk contains double/float
+create table t1(id float primary key, t timestamp);
+create table t2(id double primary key, t timestamp);
+create table t3(id1 int, id2 float, primary key(id1, id2), t timestamp);
+create table t4(id1 int, id2 double, primary key(id1, id2), t timestamp);
+-- error 8153
+alter table t1 TTL=`t`+INTERVAL 1 DAY;
+-- error 8153
+alter table t2 TTL=`t`+INTERVAL 1 DAY;
+-- error 8153
+alter table t3 TTL=`t`+INTERVAL 1 DAY;
+-- error 8153
+alter table t4 TTL=`t`+INTERVAL 1 DAY;
+
+## create table should not fail when the pk is not clustered
+create table t11(id float primary key nonclustered, t timestamp) TTL=`t`+INTERVAL 1 DAY;
+create table t12(id double primary key nonclustered, t timestamp) TTL=`t`+INTERVAL 1 DAY;
+create table t13(id1 int, id2 float, t timestamp, primary key(id1, id2) nonclustered) TTL=`t`+INTERVAL 1 DAY;
+
+## alter table should not fail when the pk is not clustered
+create table t21(id float primary key nonclustered, t timestamp);
+create table t22(id double primary key nonclustered, t timestamp);
+create table t23(id1 int, id2 float, t timestamp, primary key(id1, id2) nonclustered);
+alter table t21 TTL=`t`+INTERVAL 1 DAY;
+alter table t22 TTL=`t`+INTERVAL 1 DAY;
+alter table t23 TTL=`t`+INTERVAL 1 DAY;
+
+set tidb_enable_clustered_index=default;
+
+# TestInTxnExecDDLInvalid
+drop table if exists t;
+create table t (c_int int, c_str varchar(40));
+insert into t values (1, 'quizzical hofstadter');
+begin;
+select c_int from t where c_str is not null for update;
+alter table t add index idx_4 (c_str);
+rollback;
+

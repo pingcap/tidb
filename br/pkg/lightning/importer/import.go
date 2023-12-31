@@ -51,22 +51,24 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	tidbconfig "github.com/pingcap/tidb/config"
-	tidbkv "github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/store/driver"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/mathutil"
-	regexprrouter "github.com/pingcap/tidb/util/regexpr-router"
-	"github.com/pingcap/tidb/util/set"
+	tidbconfig "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/keyspace"
+	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/store/driver"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/etcd"
+	regexprrouter "github.com/pingcap/tidb/pkg/util/regexpr-router"
+	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/prometheus/client_golang/prometheus"
 	tikvconfig "github.com/tikv/client-go/v2/config"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -128,9 +130,9 @@ var DeliverPauser = common.NewPauser()
 
 // nolint:gochecknoinits // TODO: refactor
 func init() {
-	failpoint.Inject("SetMinDeliverBytes", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("SetMinDeliverBytes")); _err_ == nil {
 		minDeliverBytes = uint64(v.(int))
-	})
+	}
 }
 
 type saveCp struct {
@@ -464,7 +466,7 @@ func NewImportControllerWithPauser(
 	}
 
 	preCheckBuilder := NewPrecheckItemBuilder(
-		cfg, p.DBMetas, preInfoGetter, cpdb,
+		cfg, p.DBMetas, preInfoGetter, cpdb, pdCli,
 	)
 
 	rc := &Controller{
@@ -525,6 +527,8 @@ func (rc *Controller) Close() {
 
 // Run starts the restore task.
 func (rc *Controller) Run(ctx context.Context) error {
+	failpoint.Eval(_curpkg_("beforeRun"))
+
 	opts := []func(context.Context) error{
 		rc.setGlobalVariables,
 		rc.restoreSchema,
@@ -842,7 +846,7 @@ func (rc *Controller) restoreSchema(ctx context.Context) error {
 	// we can handle the duplicated created with createIfNotExist statement
 	// and we will check the schema in TiDB is valid with the datafile in DataCheck later.
 	logTask := log.FromContext(ctx).Begin(zap.InfoLevel, "restore all schema")
-	concurrency := mathutil.Min(rc.cfg.App.RegionConcurrency, 8)
+	concurrency := min(rc.cfg.App.RegionConcurrency, 8)
 	childCtx, cancel := context.WithCancel(ctx)
 	p := parser.New()
 	p.SetSQLMode(rc.cfg.TiDB.SQLMode)
@@ -896,10 +900,10 @@ func (rc *Controller) initCheckpoint(ctx context.Context) error {
 	if err != nil {
 		return common.ErrInitCheckpoint.Wrap(err).GenWithStackByArgs()
 	}
-	failpoint.Inject("InitializeCheckpointExit", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("InitializeCheckpointExit")); _err_ == nil {
 		log.FromContext(ctx).Warn("exit triggered", zap.String("failpoint", "InitializeCheckpointExit"))
 		os.Exit(0)
-	})
+	}
 	if err := rc.loadDesiredTableInfos(ctx); err != nil {
 		return err
 	}
@@ -976,7 +980,7 @@ func verifyLocalFile(ctx context.Context, cpdb checkpoints.DB, dir string) error
 	}
 	for tableName, engineIDs := range targetTables {
 		for _, engineID := range engineIDs {
-			_, eID := backend.MakeUUID(tableName, engineID)
+			_, eID := backend.MakeUUID(tableName, int64(engineID))
 			file := local.Engine{UUID: eID}
 			err := file.Exist(dir)
 			if err != nil {
@@ -1124,7 +1128,7 @@ func (rc *Controller) listenCheckpointUpdates(logger log.Logger) {
 			lock.Unlock()
 
 			//nolint:scopelint // This would be either INLINED or ERASED, at compile time.
-			failpoint.Inject("SlowDownCheckpointUpdate", func() {})
+			failpoint.Eval(_curpkg_("SlowDownCheckpointUpdate"))
 
 			if len(cpd) > 0 {
 				err := rc.checkpointsDB.Update(rc.taskCtx, cpd)
@@ -1157,25 +1161,25 @@ func (rc *Controller) listenCheckpointUpdates(logger log.Logger) {
 		lock.Unlock()
 
 		//nolint:scopelint // This would be either INLINED or ERASED, at compile time.
-		failpoint.Inject("FailIfImportedChunk", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("FailIfImportedChunk")); _err_ == nil {
 			if merger, ok := scp.merger.(*checkpoints.ChunkCheckpointMerger); ok && merger.Pos >= merger.EndOffset {
 				rc.checkpointsWg.Done()
 				rc.checkpointsWg.Wait()
 				panic("forcing failure due to FailIfImportedChunk")
 			}
-		})
+		}
 
 		//nolint:scopelint // This would be either INLINED or ERASED, at compile time.
-		failpoint.Inject("FailIfStatusBecomes", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("FailIfStatusBecomes")); _err_ == nil {
 			if merger, ok := scp.merger.(*checkpoints.StatusCheckpointMerger); ok && merger.EngineID >= 0 && int(merger.Status) == val.(int) {
 				rc.checkpointsWg.Done()
 				rc.checkpointsWg.Wait()
 				panic("forcing failure due to FailIfStatusBecomes")
 			}
-		})
+		}
 
 		//nolint:scopelint // This would be either INLINED or ERASED, at compile time.
-		failpoint.Inject("FailIfIndexEngineImported", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("FailIfIndexEngineImported")); _err_ == nil {
 			if merger, ok := scp.merger.(*checkpoints.StatusCheckpointMerger); ok &&
 				merger.EngineID == checkpoints.WholeTableEngineID &&
 				merger.Status == checkpoints.CheckpointStatusIndexImported && val.(int) > 0 {
@@ -1183,10 +1187,10 @@ func (rc *Controller) listenCheckpointUpdates(logger log.Logger) {
 				rc.checkpointsWg.Wait()
 				panic("forcing failure due to FailIfIndexEngineImported")
 			}
-		})
+		}
 
 		//nolint:scopelint // This would be either INLINED or ERASED, at compile time.
-		failpoint.Inject("KillIfImportedChunk", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("KillIfImportedChunk")); _err_ == nil {
 			if merger, ok := scp.merger.(*checkpoints.ChunkCheckpointMerger); ok && merger.Pos >= merger.EndOffset {
 				rc.checkpointsWg.Done()
 				rc.checkpointsWg.Wait()
@@ -1198,9 +1202,9 @@ func (rc *Controller) listenCheckpointUpdates(logger log.Logger) {
 						scp.waitCh <- context.Canceled
 					}
 				}
-				failpoint.Return()
+				return
 			}
-		})
+		}
 	}
 	// Don't put this statement in defer function at the beginning. failpoint function may call it manually.
 	rc.checkpointsWg.Done()
@@ -1433,7 +1437,7 @@ const (
 
 func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{}, error) {
 	tlsOpt := rc.tls.ToPDSecurityOption()
-	pdCli, err := pd.NewClientWithContext(ctx, []string{rc.cfg.TiDB.PdAddr}, tlsOpt)
+	pdCli, err := pd.NewClientWithContext(ctx, []string{rc.pdCli.GetLeaderAddr()}, tlsOpt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1553,6 +1557,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 	cleanup := false
 	postProgress := func() error { return nil }
 	var kvStore tidbkv.Storage
+	var etcdCli *clientv3.Client
 
 	if isLocalBackend(rc.cfg) {
 		var (
@@ -1594,13 +1599,28 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 		}
 
 		// Disable GC because TiDB enables GC already.
+
+		currentLeaderAddr := rc.pdCli.GetLeaderAddr()
+		// remove URL scheme
+		currentLeaderAddr = strings.TrimPrefix(currentLeaderAddr, "http://")
+		currentLeaderAddr = strings.TrimPrefix(currentLeaderAddr, "https://")
 		kvStore, err = driver.TiKVDriver{}.OpenWithOptions(
-			fmt.Sprintf("tikv://%s?disableGC=true&keyspaceName=%s", rc.cfg.TiDB.PdAddr, rc.keyspaceName),
+			fmt.Sprintf("tikv://%s?disableGC=true&keyspaceName=%s", currentLeaderAddr, rc.keyspaceName),
 			driver.WithSecurity(rc.tls.ToTiKVSecurityConfig()),
 		)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		etcdCli, err := clientv3.New(clientv3.Config{
+			Endpoints:        []string{rc.cfg.TiDB.PdAddr},
+			AutoSyncInterval: 30 * time.Second,
+			TLS:              rc.tls.TLSConfig(),
+		})
+		if err != nil {
+			return errors.Trace(err)
+		}
+		etcd.SetEtcdCliByNamespace(etcdCli, keyspace.MakeKeyspaceEtcdNamespace(kvStore.GetCodec()))
+
 		manager, err := NewChecksumManager(ctx, rc, kvStore)
 		if err != nil {
 			return errors.Trace(err)
@@ -1661,6 +1681,11 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 				logTask.Warn("failed to close kv store", zap.Error(err))
 			}
 		}
+		if etcdCli != nil {
+			if err := etcdCli.Close(); err != nil {
+				logTask.Warn("failed to close etcd client", zap.Error(err))
+			}
+		}
 	}()
 
 	taskCh := make(chan task, rc.cfg.App.IndexConcurrency)
@@ -1710,7 +1735,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			tr, err := NewTableImporter(tableName, tableMeta, dbInfo, tableInfo, cp, igCols.ColumnsMap(), kvStore, log.FromContext(ctx))
+			tr, err := NewTableImporter(tableName, tableMeta, dbInfo, tableInfo, cp, igCols.ColumnsMap(), kvStore, etcdCli, log.FromContext(ctx))
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1800,7 +1825,7 @@ func (rc *Controller) importTables(ctx context.Context) (finalErr error) {
 }
 
 func (rc *Controller) registerTaskToPD(ctx context.Context) (undo func(), _ error) {
-	etcdCli, err := dialEtcdWithCfg(ctx, rc.cfg)
+	etcdCli, err := dialEtcdWithCfg(ctx, rc.cfg, rc.pdCli.GetLeaderAddr())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -2102,7 +2127,7 @@ func (rc *Controller) preCheckRequirements(ctx context.Context) error {
 		rc.status.TotalFileSize.Store(estimatedSizeResult.SizeWithoutIndex)
 	}
 	if isLocalBackend(rc.cfg) {
-		pdController, err := pdutil.NewPdController(ctx, rc.cfg.TiDB.PdAddr,
+		pdController, err := pdutil.NewPdController(ctx, rc.pdCli.GetLeaderAddr(),
 			rc.tls.TLSConfig(), rc.tls.ToPDSecurityOption())
 		if err != nil {
 			return common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)

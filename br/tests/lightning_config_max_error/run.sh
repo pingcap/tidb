@@ -27,7 +27,7 @@ uniq_row_count=$( sed '1d' "${data_file}" | awk -F, '{print $1}' | sort | uniq -
 duplicated_row_count=$(( ${total_row_count} - ${uniq_row_count} ))
 
 run_sql 'DROP TABLE IF EXISTS mytest.testtbl'
-run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v1'
+run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v2'
 
 stderr_file="/tmp/${TEST_NAME}.stderr"
 
@@ -45,7 +45,7 @@ EOF
 cat "${stderr_file}"
 grep -q "${err_msg}" "${stderr_file}"
 
-run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_error_v1'
+run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_error_v2'
 # Although conflict error number exceeds the max-error limit, 
 # all the conflict errors are recorded, 
 # because recording of conflict errors are executed batch by batch (batch size 1024), 
@@ -55,11 +55,11 @@ check_contains "COUNT(*): ${duplicated_row_count}"
 # import a second time
 
 run_sql 'DROP TABLE IF EXISTS mytest.testtbl'
-run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v1'
+run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v2'
 
 run_lightning --backend local --config "${mydir}/normal_config.toml"
 
-run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_error_v1'
+run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_error_v2'
 check_contains "COUNT(*): ${duplicated_row_count}"
 
 # Check remaining records in the target table
@@ -69,11 +69,11 @@ check_contains "COUNT(*): ${uniq_row_count}"
 # import a third time
 
 run_sql 'DROP TABLE IF EXISTS mytest.testtbl'
-run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v1'
+run_sql 'DROP TABLE IF EXISTS lightning_task_info.conflict_error_v2'
 
 run_lightning --backend local --config "${mydir}/normal_config_old_style.toml"
 
-run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_error_v1'
+run_sql 'SELECT COUNT(*) FROM lightning_task_info.conflict_error_v2'
 check_contains "COUNT(*): ${duplicated_row_count}"
 
 # Check remaining records in the target table

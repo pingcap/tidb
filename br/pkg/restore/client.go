@@ -45,26 +45,24 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/config"
-	ddlutil "github.com/pingcap/tidb/ddl/util"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/domain/infosync"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/store/helper"
-	"github.com/pingcap/tidb/store/pdtypes"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/collate"
-	"github.com/pingcap/tidb/util/mathutil"
-	"github.com/pingcap/tidb/util/sqlexec"
-	filter "github.com/pingcap/tidb/util/table-filter"
+	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/statistics/handle"
+	"github.com/pingcap/tidb/pkg/store/pdtypes"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"golang.org/x/sync/errgroup"
@@ -91,6 +89,7 @@ const (
 // Client sends requests to restore files.
 type Client struct {
 	pdClient      pd.Client
+	pdHTTPClient  pdhttp.Client
 	toolClient    split.SplitClient
 	fileImporter  FileImporter
 	rawKVClient   *RawKVBatchClient
@@ -131,7 +130,7 @@ type Client struct {
 
 	// statHandler and dom are used for analyze table after restore.
 	// it will backup stats with #dump.DumpStatsToJSON
-	// and restore stats with #dump.LoadStatsFromJSON
+	// and restore stats with #dump.LoadStatsFromJSONNoUpdate
 	statsHandler *handle.Handle
 	dom          *domain.Domain
 
@@ -171,8 +170,8 @@ type Client struct {
 	// this feature is controlled by flag with-sys-table
 	fullClusterRestore bool
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
-	deleteRangeQuery          []string
-	deleteRangeQueryCh        chan string
+	deleteRangeQuery          []*stream.PreDelRangeQuery
+	deleteRangeQueryCh        chan *stream.PreDelRangeQuery
 	deleteRangeQueryWaitGroup sync.WaitGroup
 
 	// see RestoreCommonConfig.WithSysTable
@@ -195,18 +194,20 @@ type Client struct {
 // NewRestoreClient returns a new RestoreClient.
 func NewRestoreClient(
 	pdClient pd.Client,
+	pdHTTPCli pdhttp.Client,
 	tlsConf *tls.Config,
 	keepaliveConf keepalive.ClientParameters,
 	isRawKv bool,
 ) *Client {
 	return &Client{
 		pdClient:           pdClient,
-		toolClient:         split.NewSplitClient(pdClient, tlsConf, isRawKv),
+		pdHTTPClient:       pdHTTPCli,
+		toolClient:         split.NewSplitClient(pdClient, pdHTTPCli, tlsConf, isRawKv),
 		tlsConf:            tlsConf,
 		keepaliveConf:      keepaliveConf,
 		switchCh:           make(chan struct{}),
-		deleteRangeQuery:   make([]string, 0),
-		deleteRangeQueryCh: make(chan string, 10),
+		deleteRangeQuery:   make([]*stream.PreDelRangeQuery, 0),
+		deleteRangeQueryCh: make(chan *stream.PreDelRangeQuery, 10),
 	}
 }
 
@@ -232,24 +233,22 @@ func (rc *Client) Init(g glue.Glue, store kv.Storage) error {
 		rc.backupMeta = new(backuppb.BackupMeta)
 	}
 
-	// Only in binary we can use multi-thread sessions to create tables.
-	// so use OwnStorage() to tell whether we are use binary or SQL.
-	if g.OwnsStorage() {
-		// Maybe allow user modify the DDL concurrency isn't necessary,
-		// because executing DDL is really I/O bound (or, algorithm bound?),
-		// and we cost most of time at waiting DDL jobs be enqueued.
-		// So these jobs won't be faster or slower when machine become faster or slower,
-		// hence make it a fixed value would be fine.
-		rc.dbPool, err = makeDBPool(defaultDDLConcurrency, func() (*DB, error) {
-			db, _, err := NewDB(g, store, rc.policyMode)
-			return db, err
-		})
-		if err != nil {
-			log.Warn("create session pool failed, we will send DDLs only by created sessions",
-				zap.Error(err),
-				zap.Int("sessionCount", len(rc.dbPool)),
-			)
-		}
+	// There are different ways to create session between in binary and in SQL.
+	//
+	// Maybe allow user modify the DDL concurrency isn't necessary,
+	// because executing DDL is really I/O bound (or, algorithm bound?),
+	// and we cost most of time at waiting DDL jobs be enqueued.
+	// So these jobs won't be faster or slower when machine become faster or slower,
+	// hence make it a fixed value would be fine.
+	rc.dbPool, err = makeDBPool(defaultDDLConcurrency, func() (*DB, error) {
+		db, _, err := NewDB(g, store, rc.policyMode)
+		return db, err
+	})
+	if err != nil {
+		log.Warn("create session pool failed, we will send DDLs only by created sessions",
+			zap.Error(err),
+			zap.Int("sessionCount", len(rc.dbPool)),
+		)
 	}
 	return errors.Trace(err)
 }
@@ -489,12 +488,21 @@ func (rc *Client) GetRewriteMode() RewriteMode {
 	return rc.rewriteMode
 }
 
-// Close a client.
-func (rc *Client) Close() {
+func (rc *Client) closeConn() {
 	// rc.db can be nil in raw kv mode.
 	if rc.db != nil {
 		rc.db.Close()
 	}
+	for _, db := range rc.dbPool {
+		db.Close()
+	}
+}
+
+// Close a client.
+func (rc *Client) Close() {
+	// close the connection, and it must be succeed when in SQL mode.
+	rc.closeConn()
+
 	if rc.rawKVClient != nil {
 		rc.rawKVClient.Close()
 	}
@@ -516,7 +524,7 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 }
 
 func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) {
-	metaClient := split.NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
+	metaClient := split.NewSplitClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, rc.rewriteMode)
 }
@@ -660,11 +668,11 @@ func (rc *Client) GetTSWithRetry(ctx context.Context) (uint64, error) {
 
 	err := utils.WithRetry(ctx, func() error {
 		startTS, getTSErr = rc.GetTS(ctx)
-		failpoint.Inject("get-ts-error", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("get-ts-error")); _err_ == nil {
 			if val.(bool) && retry < 3 {
 				getTSErr = errors.Errorf("rpc error: code = Unknown desc = [PD:tso:ErrGenerateTimestamp]generate timestamp failed, requested pd is not leader of cluster")
 			}
-		})
+		}
 
 		retry++
 		if getTSErr != nil {
@@ -1031,18 +1039,18 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 	numOfTables := len(tables)
 
 	for lastSent := 0; lastSent < numOfTables; lastSent += int(rc.batchDdlSize) {
-		end := mathutil.Min(lastSent+int(rc.batchDdlSize), len(tables))
+		end := min(lastSent+int(rc.batchDdlSize), len(tables))
 		log.Info("create tables", zap.Int("table start", lastSent), zap.Int("table end", end))
 
 		tableSlice := tables[lastSent:end]
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			db := rc.dbPool[id%uint64(len(rc.dbPool))]
 			cts, err := rc.createTables(ectx, db, dom, tableSlice, newTS) // ddl job for [lastSent:i)
-			failpoint.Inject("restore-createtables-error", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("restore-createtables-error")); _err_ == nil {
 				if val.(bool) {
 					err = errors.New("sample error without extra message")
 				}
-			})
+			}
 			if err != nil {
 				log.Error("create tables fail", zap.Error(err))
 				return err
@@ -1323,7 +1331,7 @@ func (rc *Client) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int
 	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
-	client := split.NewSplitClient(rc.GetPDClient(), rc.GetTLSConfig(), false)
+	client := split.NewSplitClient(rc.GetPDClient(), rc.pdHTTPClient, rc.GetTLSConfig(), false)
 	return NewLogFilesIterWithSplitHelper(logIter, rules, client, splitSize, splitKeys), nil
 }
 
@@ -1757,7 +1765,10 @@ func (rc *Client) execChecksum(
 func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *CreatedTable, errCh chan<- error) chan *CreatedTable {
 	log.Info("Start to update meta then load stats")
 	outCh := DefaultOutputTableChan()
-	workers := utils.NewWorkerPool(1, "UpdateStats")
+	workers := utils.NewWorkerPool(16, "UpdateStats")
+	// The rc.db is not thread safe
+	var updateMetaLock sync.Mutex
+
 	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
 		oldTable := tbl.OldTable
 		// Not need to return err when failed because of update analysis-meta
@@ -1765,6 +1776,8 @@ func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *Cre
 		if err != nil {
 			log.Error("getTS failed", zap.Error(err))
 		} else {
+			updateMetaLock.Lock()
+
 			log.Info("start update metas",
 				zap.Stringer("table", oldTable.Info.Name),
 				zap.Stringer("db", oldTable.DB.Name))
@@ -1772,6 +1785,8 @@ func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *Cre
 			if err != nil {
 				log.Error("update stats meta failed", zap.Any("table", tbl.Table), zap.Error(err))
 			}
+
+			updateMetaLock.Unlock()
 		}
 
 		if oldTable.Stats != nil {
@@ -1780,7 +1795,8 @@ func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *Cre
 				zap.Int64("new id", tbl.Table.ID),
 			)
 			start := time.Now()
-			if err := rc.statsHandler.LoadStatsFromJSON(rc.dom.InfoSchema(), oldTable.Stats); err != nil {
+			// NOTICE: skip updating cache after load stats from json
+			if err := rc.statsHandler.LoadStatsFromJSONNoUpdate(ctx, rc.dom.InfoSchema(), oldTable.Stats, 0); err != nil {
 				log.Error("analyze table failed", zap.Any("table", oldTable.Stats), zap.Error(err))
 			}
 			log.Info("restore stat done",
@@ -1804,7 +1820,7 @@ func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTa
 	if err != nil {
 		errCh <- err
 	}
-	tiFlashStores := make(map[int64]helper.StoreStat)
+	tiFlashStores := make(map[int64]pdhttp.StoreInfo)
 	for _, store := range tikvStats.Stores {
 		for _, l := range store.Store.Labels {
 			if l.Key == "engine" && l.Value == "tiflash" {
@@ -1820,49 +1836,48 @@ func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTa
 			updateCh.Inc()
 			return nil
 		}
-		if rc.dom != nil {
-			log.Info("table has tiflash replica, start sync..",
-				zap.Stringer("table", tbl.OldTable.Info.Name),
-				zap.Stringer("db", tbl.OldTable.DB.Name))
-			for {
-				var progress float64
-				if pi := tbl.Table.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
-					for _, p := range pi.Definitions {
-						progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
-						if err != nil {
-							log.Warn("failed to get progress for tiflash partition replica, retry it",
-								zap.Int64("tableID", tbl.Table.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
-							time.Sleep(time.Second)
-							continue
-						}
-						progress += progressOfPartition
-					}
-					progress = progress / float64(len(pi.Definitions))
-				} else {
-					var err error
-					progress, err = infosync.MustGetTiFlashProgress(tbl.Table.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
+		if rc.dom == nil {
+			// unreachable, current we have initial domain in mgr.
+			log.Fatal("unreachable, domain is nil")
+		}
+		log.Info("table has tiflash replica, start sync..",
+			zap.Stringer("table", tbl.OldTable.Info.Name),
+			zap.Stringer("db", tbl.OldTable.DB.Name))
+		for {
+			var progress float64
+			if pi := tbl.Table.GetPartitionInfo(); pi != nil && len(pi.Definitions) > 0 {
+				for _, p := range pi.Definitions {
+					progressOfPartition, err := infosync.MustGetTiFlashProgress(p.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
 					if err != nil {
-						log.Warn("failed to get progress for tiflash replica, retry it",
-							zap.Int64("tableID", tbl.Table.ID), zap.Error(err))
+						log.Warn("failed to get progress for tiflash partition replica, retry it",
+							zap.Int64("tableID", tbl.Table.ID), zap.Int64("partitionID", p.ID), zap.Error(err))
 						time.Sleep(time.Second)
 						continue
 					}
+					progress += progressOfPartition
 				}
-				// check until progress is 1
-				if progress == 1 {
-					log.Info("tiflash replica synced",
-						zap.Stringer("table", tbl.OldTable.Info.Name),
-						zap.Stringer("db", tbl.OldTable.DB.Name))
-					break
+				progress = progress / float64(len(pi.Definitions))
+			} else {
+				var err error
+				progress, err = infosync.MustGetTiFlashProgress(tbl.Table.ID, tbl.Table.TiFlashReplica.Count, &tiFlashStores)
+				if err != nil {
+					log.Warn("failed to get progress for tiflash replica, retry it",
+						zap.Int64("tableID", tbl.Table.ID), zap.Error(err))
+					time.Sleep(time.Second)
+					continue
 				}
-				// just wait for next check
-				// tiflash check the progress every 2s
-				// we can wait 2.5x times
-				time.Sleep(5 * time.Second)
 			}
-		} else {
-			// unreachable, current we have initial domain in mgr.
-			log.Fatal("unreachable, domain is nil")
+			// check until progress is 1
+			if progress == 1 {
+				log.Info("tiflash replica synced",
+					zap.Stringer("table", tbl.OldTable.Info.Name),
+					zap.Stringer("db", tbl.OldTable.DB.Name))
+				break
+			}
+			// just wait for next check
+			// tiflash check the progress every 2s
+			// we can wait 2.5x times
+			time.Sleep(5 * time.Second)
 		}
 		updateCh.Inc()
 		return nil
@@ -2039,7 +2054,7 @@ func (rc *Client) SetupPlacementRules(ctx context.Context, tables []*model.Table
 	}
 	rule.Index = 100
 	rule.Override = true
-	rule.LabelConstraints = append(rule.LabelConstraints, pdtypes.LabelConstraint{
+	rule.LabelConstraints = append(rule.LabelConstraints, pdhttp.LabelConstraint{
 		Key:    restoreLabelKey,
 		Op:     "in",
 		Values: []string{restoreLabelValue},
@@ -2143,9 +2158,9 @@ func (rc *Client) getRuleID(tableID int64) string {
 
 // IsFull returns whether this backup is full.
 func (rc *Client) IsFull() bool {
-	failpoint.Inject("mock-incr-backup-data", func() {
-		failpoint.Return(false)
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("mock-incr-backup-data")); _err_ == nil {
+		return false
+	}
 	return !rc.IsIncremental()
 }
 
@@ -2791,7 +2806,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 			dbReplace.TableMap[t.Info.ID] = &stream.TableReplace{
 				Name:         newTableInfo.Name.O,
 				TableID:      newTableInfo.ID,
-				PartitionMap: getTableIDMap(newTableInfo, t.Info),
+				PartitionMap: getPartitionIDMap(newTableInfo, t.Info),
 				IndexMap:     getIndexIDMap(newTableInfo, t.Info),
 			}
 		}
@@ -2818,7 +2833,7 @@ func (rc *Client) InitSchemasReplaceForDDL(
 
 	rp := stream.NewSchemasReplace(
 		dbReplaces, needConstructIdMap, cfg.TiFlashRecorder, rc.currentTS, cfg.TableFilter, rc.GenGlobalID, rc.GenGlobalIDs,
-		rc.InsertDeleteRangeForTable, rc.InsertDeleteRangeForIndex)
+		rc.RecordDeleteRange)
 	return rp, nil
 }
 
@@ -2867,9 +2882,14 @@ func (rc *Client) RestoreMetaKVFiles(
 	filesInDefaultCF = SortMetaKVFiles(filesInDefaultCF)
 	filesInWriteCF = SortMetaKVFiles(filesInWriteCF)
 
-	failpoint.Inject("failed-before-id-maps-saved", func(_ failpoint.Value) {
-		failpoint.Return(errors.New("failpoint: failed before id maps saved"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("failed-before-id-maps-saved")); _err_ == nil {
+		return errors.New("failpoint: failed before id maps saved")
+	}
+
+	log.Info("start to restore meta files",
+		zap.Int("total files", len(files)),
+		zap.Int("default files", len(filesInDefaultCF)),
+		zap.Int("write files", len(filesInWriteCF)))
 
 	if schemasReplace.NeedConstructIdMap() {
 		// Preconstruct the map and save it into external storage.
@@ -2882,9 +2902,9 @@ func (rc *Client) RestoreMetaKVFiles(
 			return errors.Trace(err)
 		}
 	}
-	failpoint.Inject("failed-after-id-maps-saved", func(_ failpoint.Value) {
-		failpoint.Return(errors.New("failpoint: failed after id maps saved"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("failed-after-id-maps-saved")); _err_ == nil {
+		return errors.New("failpoint: failed after id maps saved")
+	}
 
 	// run the rewrite and restore meta-kv into TiKV cluster.
 	if err := rc.RestoreMetaKVFilesWithBatchMethod(
@@ -2987,10 +3007,11 @@ func (rc *Client) RestoreMetaKVFilesWithBatchMethod(
 		if i == 0 {
 			rangeMax = f.MaxTs
 			rangeMin = f.MinTs
+			batchSize = f.Length
 		} else {
 			if f.MinTs <= rangeMax && batchSize+f.Length <= MetaKVBatchSize {
-				rangeMin = mathutil.Min(rangeMin, f.MinTs)
-				rangeMax = mathutil.Max(rangeMax, f.MaxTs)
+				rangeMin = min(rangeMin, f.MinTs)
+				rangeMax = max(rangeMax, f.MaxTs)
 				batchSize += f.Length
 			} else {
 				// Either f.MinTS > rangeMax or f.MinTs is the filterTs we need.
@@ -3019,16 +3040,18 @@ func (rc *Client) RestoreMetaKVFilesWithBatchMethod(
 				writeIdx = toWriteIdx
 			}
 		}
-		if i == len(defaultFiles)-1 {
-			_, err = restoreBatch(ctx, defaultFiles[defaultIdx:], schemasReplace, defaultKvEntries, math.MaxUint64, updateStats, progressInc, stream.DefaultCF)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			_, err = restoreBatch(ctx, writeFiles[writeIdx:], schemasReplace, writeKvEntries, math.MaxUint64, updateStats, progressInc, stream.WriteCF)
-			if err != nil {
-				return errors.Trace(err)
-			}
-		}
+	}
+
+	// restore the left meta kv files and entries
+	// Notice: restoreBatch needs to realize the parameter `files` and `kvEntries` might be empty
+	// Assert: defaultIdx <= len(defaultFiles) && writeIdx <= len(writeFiles)
+	_, err = restoreBatch(ctx, defaultFiles[defaultIdx:], schemasReplace, defaultKvEntries, math.MaxUint64, updateStats, progressInc, stream.DefaultCF)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = restoreBatch(ctx, writeFiles[writeIdx:], schemasReplace, writeKvEntries, math.MaxUint64, updateStats, progressInc, stream.WriteCF)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	return nil
@@ -3124,18 +3147,18 @@ func (rc *Client) restoreMetaKvEntries(
 		log.Debug("after rewrite entry", zap.Int("new-key-len", len(newEntry.Key)),
 			zap.Int("new-value-len", len(entry.e.Value)), zap.ByteString("new-key", newEntry.Key))
 
-		failpoint.Inject("failed-to-restore-metakv", func(_ failpoint.Value) {
-			failpoint.Return(0, 0, errors.Errorf("failpoint: failed to restore metakv"))
-		})
+		if _, _err_ := failpoint.Eval(_curpkg_("failed-to-restore-metakv")); _err_ == nil {
+			return 0, 0, errors.Errorf("failpoint: failed to restore metakv")
+		}
 		if err := rc.rawKVClient.Put(ctx, newEntry.Key, newEntry.Value, entry.ts); err != nil {
 			return 0, 0, errors.Trace(err)
 		}
 		// for failpoint, we need to flush the cache in rawKVClient every time
-		failpoint.Inject("do-not-put-metakv-in-batch", func(_ failpoint.Value) {
+		if _, _err_ := failpoint.Eval(_curpkg_("do-not-put-metakv-in-batch")); _err_ == nil {
 			if err := rc.rawKVClient.PutRest(ctx); err != nil {
-				failpoint.Return(0, 0, errors.Trace(err))
+				return 0, 0, errors.Trace(err)
 			}
-		})
+		}
 		kvCount++
 		size += uint64(len(newEntry.Key) + len(newEntry.Value))
 	}
@@ -3392,11 +3415,11 @@ NEXTSQL:
 					return errors.Trace(err)
 				}
 			}
-			failpoint.Inject("failed-before-create-ingest-index", func(v failpoint.Value) {
+			if v, _err_ := failpoint.Eval(_curpkg_("failed-before-create-ingest-index")); _err_ == nil {
 				if v != nil && v.(bool) {
-					failpoint.Return(errors.New("failed before create ingest index"))
+					return errors.New("failed before create ingest index")
 				}
-			})
+			}
 			// create the repaired index when first execution or not found it
 			if err := rc.db.se.ExecuteInternal(ctx, sql.AddSQL, sql.AddArgs...); err != nil {
 				return errors.Trace(err)
@@ -3414,66 +3437,8 @@ NEXTSQL:
 	return nil
 }
 
-const (
-	insertDeleteRangeSQLPrefix = `INSERT IGNORE INTO mysql.gc_delete_range VALUES `
-	insertDeleteRangeSQLValue  = "(%d, %d, '%s', '%s', %%[1]d)"
-
-	batchInsertDeleteRangeSize = 256
-)
-
-// InsertDeleteRangeForTable generates query to insert table delete job into table `gc_delete_range`.
-func (rc *Client) InsertDeleteRangeForTable(jobID int64, tableIDs []int64) {
-	var elementID int64 = 1
-	var tableID int64
-	for i := 0; i < len(tableIDs); i += batchInsertDeleteRangeSize {
-		batchEnd := len(tableIDs)
-		if batchEnd > i+batchInsertDeleteRangeSize {
-			batchEnd = i + batchInsertDeleteRangeSize
-		}
-
-		var buf strings.Builder
-		buf.WriteString(insertDeleteRangeSQLPrefix)
-		for j := i; j < batchEnd; j++ {
-			tableID = tableIDs[j]
-			startKey := tablecodec.EncodeTablePrefix(tableID)
-			endKey := tablecodec.EncodeTablePrefix(tableID + 1)
-			startKeyEncoded := hex.EncodeToString(startKey)
-			endKeyEncoded := hex.EncodeToString(endKey)
-			buf.WriteString(fmt.Sprintf(insertDeleteRangeSQLValue, jobID, elementID, startKeyEncoded, endKeyEncoded))
-			if j != batchEnd-1 {
-				buf.WriteString(",")
-			}
-			elementID += 1
-		}
-		rc.deleteRangeQueryCh <- buf.String()
-	}
-}
-
-// InsertDeleteRangeForIndex generates query to insert index delete job into table `gc_delete_range`.
-func (rc *Client) InsertDeleteRangeForIndex(jobID int64, elementID *int64, tableID int64, indexIDs []int64) {
-	var indexID int64
-	for i := 0; i < len(indexIDs); i += batchInsertDeleteRangeSize {
-		batchEnd := len(indexIDs)
-		if batchEnd > i+batchInsertDeleteRangeSize {
-			batchEnd = i + batchInsertDeleteRangeSize
-		}
-
-		var buf strings.Builder
-		buf.WriteString(insertDeleteRangeSQLPrefix)
-		for j := i; j < batchEnd; j++ {
-			indexID = indexIDs[j]
-			startKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
-			endKey := tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
-			startKeyEncoded := hex.EncodeToString(startKey)
-			endKeyEncoded := hex.EncodeToString(endKey)
-			buf.WriteString(fmt.Sprintf(insertDeleteRangeSQLValue, jobID, *elementID, startKeyEncoded, endKeyEncoded))
-			if j != batchEnd-1 {
-				buf.WriteString(",")
-			}
-			*elementID += 1
-		}
-		rc.deleteRangeQueryCh <- buf.String()
-	}
+func (rc *Client) RecordDeleteRange(sql *stream.PreDelRangeQuery) {
+	rc.deleteRangeQueryCh <- sql
 }
 
 // use channel to save the delete-range query to make it thread-safety.
@@ -3504,16 +3469,41 @@ func (rc *Client) InsertGCRows(ctx context.Context) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+	jobIDMap := make(map[int64]int64)
 	for _, query := range rc.deleteRangeQuery {
-		if err := rc.db.se.ExecuteInternal(ctx, fmt.Sprintf(query, ts)); err != nil {
-			return errors.Trace(err)
+		paramsList := make([]interface{}, 0, len(query.ParamsList)*5)
+		for _, params := range query.ParamsList {
+			newJobID, exists := jobIDMap[params.JobID]
+			if !exists {
+				newJobID, err = rc.GenGlobalID(ctx)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				jobIDMap[params.JobID] = newJobID
+			}
+			log.Info("insert into the delete range",
+				zap.Int64("jobID", newJobID),
+				zap.Int64("elemID", params.ElemID),
+				zap.String("startKey", params.StartKey),
+				zap.String("endKey", params.EndKey),
+				zap.Uint64("ts", ts))
+			// (job_id, elem_id, start_key, end_key, ts)
+			paramsList = append(paramsList, newJobID, params.ElemID, params.StartKey, params.EndKey, ts)
+		}
+		if len(paramsList) > 0 {
+			// trim the ',' behind the query.Sql if exists
+			// that's when the rewrite rule of the last table id is not exist
+			sql := strings.TrimSuffix(query.Sql, ",")
+			if err := rc.db.se.ExecuteInternal(ctx, sql, paramsList...); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
 }
 
 // only for unit test
-func (rc *Client) GetGCRows() []string {
+func (rc *Client) GetGCRows() []*stream.PreDelRangeQuery {
 	close(rc.deleteRangeQueryCh)
 	rc.deleteRangeQueryWaitGroup.Wait()
 	return rc.deleteRangeQuery
@@ -3561,11 +3551,6 @@ func (rc *Client) InitFullClusterRestore(explicitFilter bool) {
 	rc.fullClusterRestore = !explicitFilter && rc.IsFull()
 
 	log.Info("full cluster restore", zap.Bool("value", rc.fullClusterRestore))
-
-	if rc.fullClusterRestore {
-		// have to skip grant table, in order to NotifyUpdatePrivilege
-		config.GetGlobalConfig().Security.SkipGrantTable = true
-	}
 }
 
 func (rc *Client) IsFullClusterRestore() bool {
@@ -3590,7 +3575,7 @@ func (rc *Client) ResetTiFlashReplicas(ctx context.Context, g glue.Glue, storage
 	for _, s := range allSchema {
 		for _, t := range s.Tables {
 			if t.TiFlashReplica != nil {
-				expectTiFlashStoreCount = mathutil.Max(expectTiFlashStoreCount, t.TiFlashReplica.Count)
+				expectTiFlashStoreCount = max(expectTiFlashStoreCount, t.TiFlashReplica.Count)
 				recorder.AddTable(t.ID, *t.TiFlashReplica)
 				needTiFlash = true
 			}

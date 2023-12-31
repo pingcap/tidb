@@ -18,7 +18,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/kv"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -151,10 +151,10 @@ func (t AdvancerExt) startListen(ctx context.Context, rev int64, ch chan<- TaskE
 		for {
 			select {
 			case resp, ok := <-c:
-				failpoint.Inject("advancer_close_channel", func() {
+				if _, _err_ := failpoint.Eval(_curpkg_("advancer_close_channel")); _err_ == nil {
 					// We cannot really close the channel, just simulating it.
 					ok = false
-				})
+				}
 				if !ok {
 					ch <- errorEvent(io.EOF)
 					return

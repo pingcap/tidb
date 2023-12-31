@@ -35,14 +35,14 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/keyspace"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/store/driver/txn"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/extsort"
+	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/store/driver/txn"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/extsort"
 	"go.uber.org/zap"
 )
 
@@ -478,9 +478,9 @@ func (cr *chunkProcessor) encodeLoop(
 			kvPacket = append(kvPacket, deliveredKVs{kvs: kvs, columns: filteredColumns, offset: newOffset,
 				rowID: rowID, realOffset: newScannedOffset})
 			kvSize += kvs.Size()
-			failpoint.Inject("mock-kv-size", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("mock-kv-size")); _err_ == nil {
 				kvSize += uint64(val.(int))
-			})
+			}
 			// pebble cannot allow > 4.0G kv in one batch.
 			// we will meet pebble panic when import sql file and each kv has the size larger than 4G / maxKvPairsCnt.
 			// so add this check.
@@ -733,25 +733,25 @@ func (cr *chunkProcessor) deliverLoop(
 			// No need to save checkpoint if nothing was delivered.
 			dataSynced = cr.maybeSaveCheckpoint(rc, t, engineID, cr.chunk, dataEngine, indexEngine)
 		}
-		failpoint.Inject("SlowDownWriteRows", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("SlowDownWriteRows")); _err_ == nil {
 			deliverLogger.Warn("Slowed down write rows")
 			finished := rc.status.FinishedFileSize.Load()
 			total := rc.status.TotalFileSize.Load()
 			deliverLogger.Warn("PrintStatus Failpoint",
 				zap.Int64("finished", finished),
 				zap.Int64("total", total))
-		})
-		failpoint.Inject("FailAfterWriteRows", nil)
+		}
+		failpoint.Eval(_curpkg_("FailAfterWriteRows"))
 		// TODO: for local backend, we may save checkpoint more frequently, e.g. after written
 		// 10GB kv pairs to data engine, we can do a flush for both data & index engine, then we
 		// can safely update current checkpoint.
 
-		failpoint.Inject("LocalBackendSaveCheckpoint", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("LocalBackendSaveCheckpoint")); _err_ == nil {
 			if !isLocalBackend(rc.cfg) && (dataChecksum.SumKVS() != 0 || indexChecksum.SumKVS() != 0) {
 				// No need to save checkpoint if nothing was delivered.
 				saveCheckpoint(rc, t, engineID, cr.chunk)
 			}
-		})
+		}
 	}
 
 	return

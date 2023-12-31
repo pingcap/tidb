@@ -1,0 +1,55 @@
+# TestPredicateQuery
+drop table if exists t, abclmn;
+create table t(id int, abctime int,DATETIME_PRECISION int);
+create table abclmn(a int);
+select TABLE_NAME from information_schema.columns where table_schema = 'planner__core__memtable_predicate_extractor' and column_name like 'i%';
+select TABLE_NAME from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and column_name like 'I%';
+select TABLE_NAME from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and column_name like 'ID';
+select TABLE_NAME from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and column_name like 'id';
+select column_name from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and (column_name like 'i%' or column_name like '%d');
+select column_name from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and (column_name like 'abc%' and column_name like '%time');
+select TABLE_NAME, column_name from information_schema.columns where table_schema = 'PLANNER__CORE__MEMTABLE_PREDICATE_EXTRACTOR' and column_name like '%time';
+describe t;
+describe t id;
+describe t ID;
+-- error 1064
+describe t 'I%';
+-- error 1064
+describe t I%;
+show columns from t like 'abctime';
+show columns from t like 'ABCTIME';
+show columns from t like 'abc%';
+show columns from t like 'ABC%';
+show columns from t like '%ime';
+show columns from t like '%IME';
+show columns in t like '%ime';
+show columns in t like '%IME';
+show fields in t like '%ime';
+show fields in t like '%IME';
+show columns from t where field like '%time';
+show columns from t where field = 'abctime';
+show columns in t where field = 'abctime';
+show fields from t where field = 'abctime';
+show fields in t where field = 'abctime';
+explain t;
+-- error 1054
+show columns from t like id;
+-- error 1054
+show columns from t like `id`;
+show tables like 't';
+show tables like 'T';
+show tables like 'ABCLMN';
+show tables like 'ABC%';
+show tables like '%lmn';
+show full tables like '%lmn';
+-- error 1054
+show tables like T;
+-- error 1054
+show tables like `T`;
+
+## For issue46618
+drop table if exists _bar, bar;
+create table _bar (id int);
+create table bar (id int);
+show tables like '\_%';
+

@@ -239,10 +239,10 @@ func WriteInsert(
 			}
 			counter++
 			wp.AddFileSize(uint64(bf.Len()-lastBfSize) + 2) // 2 is for ",\n" and ";\n"
-			failpoint.Inject("ChaosBrokenWriterConn", func(_ failpoint.Value) {
-				failpoint.Return(0, errors.New("connection is closed"))
-			})
-			failpoint.Inject("AtEveryRow", nil)
+			if _, _err_ := failpoint.Eval(_curpkg_("ChaosBrokenWriterConn")); _err_ == nil {
+				return 0, errors.New("connection is closed")
+			}
+			failpoint.Eval(_curpkg_("AtEveryRow"))
 
 			fileRowIter.Next()
 			shouldSwitch := wp.ShouldSwitchStatement()
@@ -309,9 +309,11 @@ func WriteInsertInCsv(
 
 	wp := newWriterPipe(w, cfg.FileSize, UnspecifiedSize, metrics, cfg.Labels)
 	opt := &csvOption{
-		nullValue: cfg.CsvNullValue,
-		separator: []byte(cfg.CsvSeparator),
-		delimiter: []byte(cfg.CsvDelimiter),
+		nullValue:      cfg.CsvNullValue,
+		separator:      []byte(cfg.CsvSeparator),
+		delimiter:      []byte(cfg.CsvDelimiter),
+		lineTerminator: []byte(cfg.CsvLineTerminator),
+		binaryFormat:   DialectBinaryFormatMap[cfg.CsvOutputDialect],
 	}
 
 	// use context.Background here to make sure writerPipe can deplete all the chunks in pipeline
@@ -365,8 +367,7 @@ func WriteInsertInCsv(
 				bf.Write(opt.separator)
 			}
 		}
-		bf.WriteByte('\r')
-		bf.WriteByte('\n')
+		bf.Write(opt.lineTerminator)
 	}
 	wp.currentFileSize += uint64(bf.Len())
 
@@ -381,8 +382,7 @@ func WriteInsertInCsv(
 		counter++
 		wp.currentFileSize += uint64(bf.Len()-lastBfSize) + 1 // 1 is for "\n"
 
-		bf.WriteByte('\r')
-		bf.WriteByte('\n')
+		bf.Write(opt.lineTerminator)
 		if bf.Len() >= lengthLimit {
 			select {
 			case <-pCtx.Done():
@@ -464,9 +464,9 @@ func buildFileWriter(tctx *tcontext.Context, s storage.ExternalStorage, fileName
 	tctx.L().Debug("opened file", zap.String("path", fullPath))
 	tearDownRoutine := func(ctx context.Context) error {
 		err := writer.Close(ctx)
-		failpoint.Inject("FailToCloseMetaFile", func(_ failpoint.Value) {
+		if _, _err_ := failpoint.Eval(_curpkg_("FailToCloseMetaFile")); _err_ == nil {
 			err = errors.New("injected error: fail to close meta file")
-		})
+		}
 		if err == nil {
 			return nil
 		}
@@ -507,9 +507,9 @@ func buildInterceptFileWriter(pCtx *tcontext.Context, s storage.ExternalStorage,
 		}
 		pCtx.L().Debug("tear down lazy file writer...", zap.String("path", fullPath))
 		err := writer.Close(ctx)
-		failpoint.Inject("FailToCloseDataFile", func(_ failpoint.Value) {
+		if _, _err_ := failpoint.Eval(_curpkg_("FailToCloseDataFile")); _err_ == nil {
 			err = errors.New("injected error: fail to close data file")
-		})
+		}
 		if err != nil {
 			pCtx.L().Warn("fail to close file",
 				zap.String("path", fullPath),

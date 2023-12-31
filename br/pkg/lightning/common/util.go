@@ -36,14 +36,14 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser/model"
-	tmysql "github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/format"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/format"
 	"go.uber.org/zap"
 )
 
@@ -93,13 +93,13 @@ func (param *MySQLConnectParam) ToDriverConfig() *mysql.Config {
 }
 
 func tryConnectMySQL(cfg *mysql.Config) (*sql.DB, error) {
-	failpoint.Inject("MustMySQLPassword", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MustMySQLPassword")); _err_ == nil {
 		pwd := val.(string)
 		if cfg.Passwd != pwd {
-			failpoint.Return(nil, &mysql.MySQLError{Number: tmysql.ErrAccessDenied, Message: "access denied"})
+			return nil, &mysql.MySQLError{Number: tmysql.ErrAccessDenied, Message: "access denied"}
 		}
-		failpoint.Return(nil, nil)
-	})
+		return nil, nil
+	}
 	c, err := mysql.NewConnector(cfg)
 	if err != nil {
 		return nil, errors.Trace(err)

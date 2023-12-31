@@ -1,0 +1,36 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "lockstats",
+    srcs = [
+        "lock_stats_executor.go",
+        "unlock_stats_executor.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/lockstats",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/domain",
+        "//pkg/executor/internal/exec",
+        "//pkg/infoschema",
+        "//pkg/parser/ast",
+        "//pkg/parser/model",
+        "//pkg/statistics/handle/types",
+        "//pkg/table/tables",
+        "//pkg/util/chunk",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "lockstats_test",
+    timeout = "short",
+    srcs = ["lock_stats_executor_test.go"],
+    embed = [":lockstats"],
+    flaky = True,
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/parser/ast",
+        "//pkg/parser/model",
+        "@com_github_stretchr_testify//require",
+    ],
+)

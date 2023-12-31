@@ -1,0 +1,21 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "pdtypes",
+    srcs = [
+        "api.go",
+        "config.go",
+        "placement.go",
+        "region_tree.go",
+        "statistics.go",
+        "typeutil.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/store/pdtypes",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@com_github_docker_go_units//:go-units",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_pingcap_kvproto//pkg/pdpb",
+    ],
+)

@@ -10,7 +10,7 @@ import (
 
 	encode "github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	verification "github.com/pingcap/tidb/br/pkg/lightning/verification"
-	types "github.com/pingcap/tidb/types"
+	types "github.com/pingcap/tidb/pkg/types"
 	gomock "go.uber.org/mock/gomock"
 )
 

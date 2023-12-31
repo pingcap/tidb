@@ -38,12 +38,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/redact"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/types"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -220,12 +220,11 @@ func (b *targetInfoGetter) FetchRemoteTableModels(ctx context.Context, schemaNam
 			return nil
 		}
 
-		failpoint.Inject(
-			"FetchRemoteTableModels_BeforeFetchTableAutoIDInfos",
-			func() {
-				fmt.Println("failpoint: FetchRemoteTableModels_BeforeFetchTableAutoIDInfos")
-			},
-		)
+		if _, _err_ := failpoint.Eval(_curpkg_("FetchRemoteTableModels_BeforeFetchTableAutoIDInfos")); _err_ == nil {
+
+			fmt.Println("failpoint: FetchRemoteTableModels_BeforeFetchTableAutoIDInfos")
+
+		}
 
 		// init auto id column for each table
 		for _, tbl := range tables {
@@ -455,7 +454,7 @@ func (enc *tidbEncoder) appendSQL(sb *strings.Builder, datum *types.Datum, _ *ta
 
 	case types.KindMysqlBit:
 		var buffer [20]byte
-		intValue, err := datum.GetBinaryLiteral().ToInt(nil)
+		intValue, err := datum.GetBinaryLiteral().ToInt(types.DefaultStmtNoWarningContext)
 		if err != nil {
 			return err
 		}
@@ -582,9 +581,9 @@ func (*tidbBackend) RetryImportDelay() time.Duration {
 }
 
 func (*tidbBackend) MaxChunkSize() int {
-	failpoint.Inject("FailIfImportedSomeRows", func() {
-		failpoint.Return(1)
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("FailIfImportedSomeRows")); _err_ == nil {
+		return 1
+	}
 	return 1048576
 }
 
@@ -808,9 +807,9 @@ stmtLoop:
 		}
 		// max-error not yet reached (error consumed by errorMgr), proceed to next stmtTask.
 	}
-	failpoint.Inject("FailIfImportedSomeRows", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("FailIfImportedSomeRows")); _err_ == nil {
 		panic("forcing failure due to FailIfImportedSomeRows, before saving checkpoint")
-	})
+	}
 	return nil
 }
 

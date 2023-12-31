@@ -38,8 +38,7 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
 )
 
@@ -544,7 +543,7 @@ type RebaseCheckpointMerger struct {
 // MergeInto implements TableCheckpointMerger.MergeInto.
 func (merger *RebaseCheckpointMerger) MergeInto(cpd *TableCheckpointDiff) {
 	cpd.hasRebase = true
-	cpd.allocBase = mathutil.Max(cpd.allocBase, merger.AllocBase)
+	cpd.allocBase = max(cpd.allocBase, merger.AllocBase)
 }
 
 // DestroyedTableCheckpoint is the checkpoint for a table that has been
@@ -1611,25 +1610,17 @@ func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, table
 		colName = columnTableName
 	}
 
-	// nolint:gosec
-	engineQuery := fmt.Sprintf(`
-		UPDATE %s.%s SET status = %d WHERE %s = ? AND status <= %d;
-	`, cpdb.schema, CheckpointTableNameEngine, CheckpointStatusLoaded, colName, CheckpointStatusMaxInvalid)
-
-	// nolint:gosec
-	tableQuery := fmt.Sprintf(`
-		UPDATE %s.%s SET status = %d WHERE %s = ? AND status <= %d;
-	`, cpdb.schema, CheckpointTableNameTable, CheckpointStatusLoaded, colName, CheckpointStatusMaxInvalid)
-
 	s := common.SQLWithRetry{
 		DB:     cpdb.db,
 		Logger: log.FromContext(ctx).With(zap.String("table", tableName)),
 	}
 	err := s.Transact(ctx, "ignore error checkpoints", func(c context.Context, tx *sql.Tx) error {
-		if _, e := tx.ExecContext(c, engineQuery, tableName); e != nil {
+		query := fmt.Sprintf("UPDATE %s.%s SET status = ? WHERE ? = ? AND status <= ?", cpdb.schema, CheckpointTableNameEngine)
+		if _, e := tx.ExecContext(c, query, CheckpointStatusLoaded, colName, tableName, CheckpointStatusMaxInvalid); e != nil {
 			return errors.Trace(e)
 		}
-		if _, e := tx.ExecContext(c, tableQuery, tableName); e != nil {
+		query = fmt.Sprintf("UPDATE %s.%s SET status = ? WHERE ? = ? AND status <= ?", cpdb.schema, CheckpointTableNameTable)
+		if _, e := tx.ExecContext(c, query, CheckpointStatusLoaded, colName, tableName, CheckpointStatusMaxInvalid); e != nil {
 			return errors.Trace(e)
 		}
 		return nil

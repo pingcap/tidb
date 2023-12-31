@@ -24,11 +24,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/rtree"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/store/pdtypes"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/store/pdtypes"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -41,6 +42,7 @@ type TestClient struct {
 	regionsInfo         *pdtypes.RegionTree // For now it's only used in ScanRegions
 	nextRegionID        uint64
 	injectInScatter     func(*split.RegionInfo) error
+	injectInOperator    func(uint64) (*pdpb.GetOperatorResponse, error)
 	supportBatchScatter bool
 
 	scattered   map[uint64]bool
@@ -215,6 +217,9 @@ func (c *TestClient) ScatterRegion(ctx context.Context, regionInfo *split.Region
 }
 
 func (c *TestClient) GetOperator(ctx context.Context, regionID uint64) (*pdpb.GetOperatorResponse, error) {
+	if c.injectInOperator != nil {
+		return c.injectInOperator(regionID)
+	}
 	return &pdpb.GetOperatorResponse{
 		Header: new(pdpb.ResponseHeader),
 	}, nil
@@ -237,11 +242,11 @@ func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit 
 	return regions, nil
 }
 
-func (c *TestClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r pdtypes.Rule, err error) {
+func (c *TestClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r *pdhttp.Rule, err error) {
 	return
 }
 
-func (c *TestClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error {
+func (c *TestClient) SetPlacementRule(ctx context.Context, rule *pdhttp.Rule) error {
 	return nil
 }
 
@@ -337,6 +342,114 @@ func TestSplitAndScatter(t *testing.T) {
 		client := initTestClient(false)
 		runTestSplitAndScatterWith(t, client)
 	})
+	t.Run("WaitScatter", func(t *testing.T) {
+		client := initTestClient(false)
+		client.InstallBatchScatterSupport()
+		runWaitScatter(t, client)
+	})
+}
+
+func TestXXX(t *testing.T) {
+	client := initTestClient(false)
+	client.InstallBatchScatterSupport()
+	runWaitScatter(t, client)
+}
+
+// +------------+----------------------------
+// |   region   | states
+// +------------+----------------------------
+// | [   , aay) | SUCCESS
+// +------------+----------------------------
+// | [aay, bba) | CANCEL, SUCCESS
+// +------------+----------------------------
+// | [bba, bbh) | RUNNING, TIMEOUT, SUCCESS
+// +------------+----------------------------
+// | [bbh, cca) | <NOT_SCATTER_OPEARTOR>
+// +------------+----------------------------
+// | [cca,    ) | CANCEL, RUNNING, SUCCESS
+// +------------+----------------------------
+// region: [, aay), [aay, bba), [bba, bbh), [bbh, cca), [cca, )
+// states:
+func runWaitScatter(t *testing.T, client *TestClient) {
+	// configuration
+	type Operatorstates struct {
+		index  int
+		status []pdpb.OperatorStatus
+	}
+	results := map[string]*Operatorstates{
+		"": {status: []pdpb.OperatorStatus{pdpb.OperatorStatus_SUCCESS}},
+		string(codec.EncodeBytesExt([]byte{}, []byte("aay"), false)): {status: []pdpb.OperatorStatus{pdpb.OperatorStatus_CANCEL, pdpb.OperatorStatus_SUCCESS}},
+		string(codec.EncodeBytesExt([]byte{}, []byte("bba"), false)): {status: []pdpb.OperatorStatus{pdpb.OperatorStatus_RUNNING, pdpb.OperatorStatus_TIMEOUT, pdpb.OperatorStatus_SUCCESS}},
+		string(codec.EncodeBytesExt([]byte{}, []byte("bbh"), false)): {},
+		string(codec.EncodeBytesExt([]byte{}, []byte("cca"), false)): {status: []pdpb.OperatorStatus{pdpb.OperatorStatus_CANCEL, pdpb.OperatorStatus_RUNNING, pdpb.OperatorStatus_SUCCESS}},
+	}
+	// after test done, the `leftScatterCount` should be empty
+	leftScatterCount := map[string]int{
+		string(codec.EncodeBytesExt([]byte{}, []byte("aay"), false)): 1,
+		string(codec.EncodeBytesExt([]byte{}, []byte("bba"), false)): 1,
+		string(codec.EncodeBytesExt([]byte{}, []byte("cca"), false)): 1,
+	}
+	client.injectInScatter = func(ri *split.RegionInfo) error {
+		states, ok := results[string(ri.Region.StartKey)]
+		require.True(t, ok)
+		require.NotEqual(t, 0, len(states.status))
+		require.NotEqual(t, pdpb.OperatorStatus_SUCCESS, states.status[states.index])
+		states.index += 1
+		cnt, ok := leftScatterCount[string(ri.Region.StartKey)]
+		require.True(t, ok)
+		if cnt == 1 {
+			delete(leftScatterCount, string(ri.Region.StartKey))
+		} else {
+			leftScatterCount[string(ri.Region.StartKey)] = cnt - 1
+		}
+		return nil
+	}
+	regionsMap := client.GetAllRegions()
+	leftOperatorCount := map[string]int{
+		"": 1,
+		string(codec.EncodeBytesExt([]byte{}, []byte("aay"), false)): 2,
+		string(codec.EncodeBytesExt([]byte{}, []byte("bba"), false)): 3,
+		string(codec.EncodeBytesExt([]byte{}, []byte("bbh"), false)): 1,
+		string(codec.EncodeBytesExt([]byte{}, []byte("cca"), false)): 3,
+	}
+	client.injectInOperator = func(u uint64) (*pdpb.GetOperatorResponse, error) {
+		ri := regionsMap[u]
+		cnt, ok := leftOperatorCount[string(ri.Region.StartKey)]
+		require.True(t, ok)
+		if cnt == 1 {
+			delete(leftOperatorCount, string(ri.Region.StartKey))
+		} else {
+			leftOperatorCount[string(ri.Region.StartKey)] = cnt - 1
+		}
+		states, ok := results[string(ri.Region.StartKey)]
+		require.True(t, ok)
+		if len(states.status) == 0 {
+			return &pdpb.GetOperatorResponse{
+				Desc: []byte("other"),
+			}, nil
+		}
+		if states.status[states.index] == pdpb.OperatorStatus_RUNNING {
+			states.index += 1
+			return &pdpb.GetOperatorResponse{
+				Desc:   []byte("scatter-region"),
+				Status: states.status[states.index-1],
+			}, nil
+		}
+		return &pdpb.GetOperatorResponse{
+			Desc:   []byte("scatter-region"),
+			Status: states.status[states.index],
+		}, nil
+	}
+
+	// begin to test
+	ctx := context.Background()
+	regions := make([]*split.RegionInfo, 0, len(regionsMap))
+	for _, info := range regionsMap {
+		regions = append(regions, info)
+	}
+	regionSplitter := restore.NewRegionSplitter(client)
+	leftCnt := regionSplitter.WaitForScatterRegions(ctx, regions, 2000*time.Second)
+	require.Equal(t, leftCnt, 0)
 }
 
 func runTestSplitAndScatterWith(t *testing.T, client *TestClient) {
@@ -940,10 +1053,10 @@ func (f *fakeSplitClient) ScanRegions(ctx context.Context, startKey, endKey []by
 	}
 	return result, nil
 }
-func (*fakeSplitClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (pdtypes.Rule, error) {
-	return pdtypes.Rule{}, nil
+func (*fakeSplitClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (*pdhttp.Rule, error) {
+	return nil, nil
 }
-func (*fakeSplitClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error { return nil }
+func (*fakeSplitClient) SetPlacementRule(ctx context.Context, rule *pdhttp.Rule) error { return nil }
 func (*fakeSplitClient) DeletePlacementRule(ctx context.Context, groupID, ruleID string) error {
 	return nil
 }
