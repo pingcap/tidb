@@ -450,6 +450,11 @@ func (c *Context) InSandBoxMode() bool {
 	return c.inSandBoxMode
 }
 
+// SetInfoSchema implements the sessionctx.Context interface.
+func (c *Context) SetInfoSchema(is sessionctx.InfoschemaMetaVersion) {
+	c.is = is
+}
+
 // Close implements the sessionctx.Context interface.
 func (*Context) Close() {}
 
