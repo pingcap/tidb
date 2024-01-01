@@ -58,11 +58,7 @@ func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.Info
 // If there are multiple hints, only one will take effect
 func IsASTCacheable(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (bool, string) {
 	switch node.(type) {
-	case *ast.SelectStmt,
-		*ast.UpdateStmt,
-		*ast.InsertStmt,
-		*ast.DeleteStmt,
-		*ast.SetOprStmt:
+	case *ast.SelectStmt, *ast.UpdateStmt, *ast.InsertStmt, *ast.DeleteStmt, *ast.SetOprStmt:
 	default:
 		return false, "not a SELECT/UPDATE/INSERT/DELETE/SET statement"
 	}
