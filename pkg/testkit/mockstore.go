@@ -18,7 +18,9 @@ package testkit
 
 import (
 	"flag"
+	"os"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 

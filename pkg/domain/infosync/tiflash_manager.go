@@ -95,11 +95,11 @@ func getTiFlashPeerWithoutLagCount(tiFlashStores map[int64]pd.StoreInfo, keyspac
 	for _, store := range tiFlashStores {
 		regionReplica := make(map[int64]int)
 		err := helper.CollectTiFlashStatus(store.Store.StatusAddress, keyspaceID, tableID, &regionReplica)
-		if _, _err_ := failpoint.Eval(_curpkg_("OneTiFlashStoreDown")); _err_ == nil {
+		failpoint.Inject("OneTiFlashStoreDown", func() {
 			if store.Store.StateName == "Down" {
 				err = errors.New("mock TiFlasah down")
 			}
-		}
+		})
 		if err != nil {
 			logutil.BgLogger().Error("Fail to get peer status from TiFlash.",
 				zap.Int64("tableID", tableID))
@@ -693,4 +693,201 @@ func (tiflash *MockTiFlash) GetPlacementRule(ruleName string) (*pd.Rule, bool) {
 	tiflash.Lock()
 	defer tiflash.Unlock()
 	if r, ok := tiflash.GlobalTiFlashPlacementRules[ruleName]; ok {
-		p := 
+		p := r
+		return p, ok
+	}
+	return nil, false
+}
+
+// CleanPlacementRules cleans all placement rules.
+func (tiflash *MockTiFlash) CleanPlacementRules() {
+	tiflash.Lock()
+	defer tiflash.Unlock()
+	tiflash.GlobalTiFlashPlacementRules = make(map[string]*pd.Rule)
+}
+
+// PlacementRulesLen gets length of all currently set placement rules.
+func (tiflash *MockTiFlash) PlacementRulesLen() int {
+	tiflash.Lock()
+	defer tiflash.Unlock()
+	return len(tiflash.GlobalTiFlashPlacementRules)
+}
+
+// GetTableSyncStatus returns table sync status by given tableID.
+func (tiflash *MockTiFlash) GetTableSyncStatus(tableID int) (*mockTiFlashTableInfo, bool) {
+	tiflash.Lock()
+	defer tiflash.Unlock()
+	if r, ok := tiflash.SyncStatus[tableID]; ok {
+		p := r
+		return &p, ok
+	}
+	return nil, false
+}
+
+// PdSwitch controls if pd is enabled.
+func (tiflash *MockTiFlash) PdSwitch(enabled bool) {
+	tiflash.Lock()
+	defer tiflash.Unlock()
+	tiflash.PdEnabled = enabled
+}
+
+// SetNetworkError sets network error state.
+func (tiflash *MockTiFlash) SetNetworkError(e bool) {
+	tiflash.Lock()
+	defer tiflash.Unlock()
+	tiflash.NetworkError = e
+}
+
+// CalculateTiFlashProgress return truncated string to avoid float64 comparison.
+func (m *mockTiFlashReplicaManagerCtx) CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]pd.StoreInfo) (float64, error) {
+	return calculateTiFlashProgress(tikv.NullspaceID, tableID, replicaCount, tiFlashStores)
+}
+
+// UpdateTiFlashProgressCache updates tiflashProgressCache
+func (m *mockTiFlashReplicaManagerCtx) UpdateTiFlashProgressCache(tableID int64, progress float64) {
+	m.Lock()
+	defer m.Unlock()
+	m.tiflashProgressCache[tableID] = progress
+}
+
+// GetTiFlashProgressFromCache gets tiflash replica progress from tiflashProgressCache
+func (m *mockTiFlashReplicaManagerCtx) GetTiFlashProgressFromCache(tableID int64) (float64, bool) {
+	m.RLock()
+	defer m.RUnlock()
+	progress, ok := m.tiflashProgressCache[tableID]
+	return progress, ok
+}
+
+// DeleteTiFlashProgressFromCache delete tiflash replica progress from tiflashProgressCache
+func (m *mockTiFlashReplicaManagerCtx) DeleteTiFlashProgressFromCache(tableID int64) {
+	m.Lock()
+	defer m.Unlock()
+	delete(m.tiflashProgressCache, tableID)
+}
+
+// CleanTiFlashProgressCache clean progress cache
+func (m *mockTiFlashReplicaManagerCtx) CleanTiFlashProgressCache() {
+	m.Lock()
+	defer m.Unlock()
+	m.tiflashProgressCache = make(map[int64]float64)
+}
+
+// SetMockTiFlash is set a mock TiFlash server.
+func (m *mockTiFlashReplicaManagerCtx) SetMockTiFlash(tiflash *MockTiFlash) {
+	m.Lock()
+	defer m.Unlock()
+	m.tiflash = tiflash
+}
+
+// SetTiFlashGroupConfig sets the tiflash's rule group config
+func (m *mockTiFlashReplicaManagerCtx) SetTiFlashGroupConfig(_ context.Context) error {
+	m.Lock()
+	defer m.Unlock()
+	if m.tiflash == nil {
+		return nil
+	}
+	m.tiflash.SetRuleGroupIndex(placement.RuleIndexTiFlash)
+	return nil
+}
+
+// SetPlacementRule is a helper function to set placement rule.
+func (m *mockTiFlashReplicaManagerCtx) SetPlacementRule(ctx context.Context, rule *pd.Rule) error {
+	m.Lock()
+	defer m.Unlock()
+	if m.tiflash == nil {
+		return nil
+	}
+	return m.tiflash.HandleSetPlacementRule(rule)
+}
+
+// SetPlacementRuleBatch is a helper function to set a batch of placement rules.
+func (m *mockTiFlashReplicaManagerCtx) SetPlacementRuleBatch(ctx context.Context, rules []*pd.Rule) error {
+	m.Lock()
+	defer m.Unlock()
+	if m.tiflash == nil {
+		return nil
+	}
+	return m.tiflash.HandleSetPlacementRuleBatch(rules)
+}
+
+// DeletePlacementRule is to delete placement rule for certain group.
+func (m *mockTiFlashReplicaManagerCtx) DeletePlacementRule(ctx context.Context, group string, ruleID string) error {
+	m.Lock()
+	defer m.Unlock()
+	if m.tiflash == nil {
+		return nil
+	}
+	logutil.BgLogger().Info("Remove TiFlash rule", zap.String("ruleID", ruleID))
+	m.tiflash.HandleDeletePlacementRule(group, ruleID)
+	return nil
+}
+
+// GetGroupRules to get all placement rule in a certain group.
+func (m *mockTiFlashReplicaManagerCtx) GetGroupRules(ctx context.Context, group string) ([]*pd.Rule, error) {
+	m.Lock()
+	defer m.Unlock()
+	if m.tiflash == nil {
+		return []*pd.Rule{}, nil
+	}
+	return m.tiflash.HandleGetGroupRules(group)
+}
+
+// PostAccelerateScheduleBatch sends `regions/batch-accelerate-schedule` request.
+func (m *mockTiFlashReplicaManagerCtx) PostAccelerateScheduleBatch(ctx context.Context, tableIDs []int64) error {
+	m.Lock()
+	defer m.Unlock()
+	if m.tiflash == nil {
+		return nil
+	}
+	for _, tableID := range tableIDs {
+		endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+		endKey = codec.EncodeBytes([]byte{}, endKey)
+		if err := m.tiflash.HandlePostAccelerateSchedule(hex.EncodeToString(endKey)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// GetRegionCountFromPD is a helper function calling `/stats/region`.
+func (m *mockTiFlashReplicaManagerCtx) GetRegionCountFromPD(ctx context.Context, tableID int64, regionCount *int) error {
+	m.Lock()
+	defer m.Unlock()
+	if m.tiflash == nil {
+		return nil
+	}
+	stats := m.tiflash.HandleGetPDRegionRecordStats(tableID)
+	*regionCount = stats.Count
+	return nil
+}
+
+// GetStoresStat gets the TiKV store information by accessing PD's api.
+func (m *mockTiFlashReplicaManagerCtx) GetStoresStat(ctx context.Context) (*pd.StoresInfo, error) {
+	m.Lock()
+	defer m.Unlock()
+	if m.tiflash == nil {
+		return nil, &MockTiFlashError{"MockTiFlash is not accessible"}
+	}
+	return m.tiflash.HandleGetStoresStat(), nil
+}
+
+// Close is called to close mockTiFlashReplicaManager.
+func (m *mockTiFlashReplicaManagerCtx) Close(ctx context.Context) {
+	m.Lock()
+	defer m.Unlock()
+	if m.tiflash == nil {
+		return
+	}
+	if m.tiflash.StatusServer != nil {
+		m.tiflash.StatusServer.Close()
+	}
+}
+
+// MockTiFlashError represents MockTiFlash error
+type MockTiFlashError struct {
+	Message string
+}
+
+func (me *MockTiFlashError) Error() string {
+	return me.Message
+}

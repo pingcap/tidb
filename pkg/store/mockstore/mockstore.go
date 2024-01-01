@@ -15,9 +15,9 @@
 package mockstore
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
-	"net/url"
 	"strings"
 
 	cp "github.com/otiai10/copy"

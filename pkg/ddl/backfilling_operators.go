@@ -113,9 +113,9 @@ func (ctx *OperatorCtx) OperatorErr() error {
 }
 
 func getWriterMemSize(idxNum int) (uint64, error) {
-	if _, _err_ := failpoint.Eval(_curpkg_("mockWriterMemSize")); _err_ == nil {
-		return 1 * size.GB, nil
-	}
+	failpoint.Inject("mockWriterMemSize", func() {
+		failpoint.Return(1*size.GB, nil)
+	})
 	_, writerCnt := expectedIngestWorkerCnt()
 	memTotal, err := memory.MemTotal()
 	if err != nil {
@@ -428,9 +428,9 @@ func (w *tableScanWorker) HandleTask(task TableScanTask, sender func(IndexRecord
 		w.ctx.onError(errors.New("met panic in tableScanWorker"))
 	}, false)
 
-	if _, _err_ := failpoint.Eval(_curpkg_("injectPanicForTableScan")); _err_ == nil {
+	failpoint.Inject("injectPanicForTableScan", func() {
 		panic("mock panic")
-	}
+	})
 	if w.se == nil {
 		sessCtx, err := w.sessPool.Get()
 		if err != nil {
@@ -458,12 +458,12 @@ func (w *tableScanWorker) scanRecords(task TableScanTask, sender func(IndexRecor
 
 	var idxResult IndexRecordChunk
 	err := wrapInBeginRollback(w.se, func(startTS uint64) error {
-		if _, _err_ := failpoint.Eval(_curpkg_("mockScanRecordError")); _err_ == nil {
-			return errors.New("mock scan record error")
-		}
-		if _, _err_ := failpoint.Eval(_curpkg_("scanRecordExec")); _err_ == nil {
+		failpoint.Inject("mockScanRecordError", func(_ failpoint.Value) {
+			failpoint.Return(errors.New("mock scan record error"))
+		})
+		failpoint.Inject("scanRecordExec", func(_ failpoint.Value) {
 			OperatorCallBackForTest()
-		}
+		})
 		rs, err := buildTableScan(w.ctx, w.copCtx.GetBase(), startTS, task.Start, task.End)
 		if err != nil {
 			return err
@@ -641,9 +641,9 @@ func (w *indexIngestWorker) HandleTask(rs IndexRecordChunk, send func(IndexWrite
 		w.ctx.onError(errors.New("met panic in indexIngestWorker"))
 	}, false)
 
-	if _, _err_ := failpoint.Eval(_curpkg_("injectPanicForIndexIngest")); _err_ == nil {
+	failpoint.Inject("injectPanicForIndexIngest", func() {
 		panic("mock panic")
-	}
+	})
 
 	result := IndexWriteResult{
 		ID: rs.ID,
@@ -701,12 +701,12 @@ func (w *indexIngestWorker) Close() {
 
 // WriteLocal will write index records to lightning engine.
 func (w *indexIngestWorker) WriteLocal(rs *IndexRecordChunk) (count int, nextKey kv.Key, err error) {
-	if _, _err_ := failpoint.Eval(_curpkg_("mockWriteLocalError")); _err_ == nil {
-		return 0, nil, errors.New("mock write local error")
-	}
-	if _, _err_ := failpoint.Eval(_curpkg_("writeLocalExec")); _err_ == nil {
+	failpoint.Inject("mockWriteLocalError", func(_ failpoint.Value) {
+		failpoint.Return(0, nil, errors.New("mock write local error"))
+	})
+	failpoint.Inject("writeLocalExec", func(_ failpoint.Value) {
 		OperatorCallBackForTest()
-	}
+	})
 
 	oprStartTime := time.Now()
 	vars := w.se.GetSessionVars()
@@ -785,9 +785,9 @@ func (s *indexWriteResultSink) flush() error {
 	if s.backendCtx == nil {
 		return nil
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("mockFlushError")); _err_ == nil {
-		return errors.New("mock flush error")
-	}
+	failpoint.Inject("mockFlushError", func(_ failpoint.Value) {
+		failpoint.Return(errors.New("mock flush error"))
+	})
 	for _, index := range s.indexes {
 		idxInfo := index.Meta()
 		_, _, err := s.backendCtx.Flush(idxInfo.ID, ingest.FlushModeForceGlobal)

@@ -244,9 +244,7 @@ func (*TaskManager) CreateTaskWithSession(ctx context.Context, se sessionctx.Con
 	}
 
 	taskID = int64(rs[0].GetUint64(0))
-	if _, _err_ := failpoint.Eval(_curpkg_("testSetLastTaskID")); _err_ == nil {
-		TestLastTaskID.Store(taskID)
-	}
+	failpoint.Inject("testSetLastTaskID", func() { TestLastTaskID.Store(taskID) })
 
 	return taskID, nil
 }
@@ -888,10 +886,10 @@ func (*TaskManager) insertSubtasks(ctx context.Context, se sessionctx.Context, s
 	if len(subtasks) == 0 {
 		return nil
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("waitBeforeInsertSubtasks")); _err_ == nil {
+	failpoint.Inject("waitBeforeInsertSubtasks", func() {
 		<-TestChannel
 		<-TestChannel
-	}
+	})
 	var (
 		sb         strings.Builder
 		markerList = make([]string, 0, len(subtasks))
@@ -1000,11 +998,11 @@ func (stm *TaskManager) UpdateTaskAndAddSubTasks(ctx context.Context, task *prot
 			}
 		}
 
-		if val, _err_ := failpoint.Eval(_curpkg_("MockUpdateTaskErr")); _err_ == nil {
+		failpoint.Inject("MockUpdateTaskErr", func(val failpoint.Value) {
 			if val.(bool) {
-				return errors.New("updateTaskErr")
+				failpoint.Return(errors.New("updateTaskErr"))
 			}
-		}
+		})
 		if len(subtasks) > 0 {
 			subtaskState := proto.TaskStatePending
 			if task.State == proto.TaskStateReverting {
@@ -1190,11 +1188,11 @@ func (stm *TaskManager) TransferSubTasks2History(ctx context.Context, taskID int
 // GCSubtasks deletes the history subtask which is older than the given days.
 func (stm *TaskManager) GCSubtasks(ctx context.Context) error {
 	subtaskHistoryKeepSeconds := defaultSubtaskKeepDays * 24 * 60 * 60
-	if val, _err_ := failpoint.Eval(_curpkg_("subtaskHistoryKeepSeconds")); _err_ == nil {
+	failpoint.Inject("subtaskHistoryKeepSeconds", func(val failpoint.Value) {
 		if val, ok := val.(int); ok {
 			subtaskHistoryKeepSeconds = val
 		}
-	}
+	})
 	_, err := stm.executeSQLWithNewSession(
 		ctx,
 		fmt.Sprintf("DELETE FROM mysql.tidb_background_subtask_history WHERE state_update_time < UNIX_TIMESTAMP() - %d ;", subtaskHistoryKeepSeconds),
