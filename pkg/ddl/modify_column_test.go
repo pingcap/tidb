@@ -127,7 +127,7 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 		}
 		// check the consistency of the tables.
 		currJobID := strconv.FormatInt(currJob.ID, 10)
-		tk.MustQuery("select job_id, reorg, schema_ids, table_ids, type, processing from mysql.tidb_ddl_job where job_id = " + currJobID).Check(testkit.Rows())
+		tk.MustQuery("select job_id, reorg, schema_ids, table_ids, type, processing, bdr_role from mysql.tidb_ddl_job where job_id = " + currJobID).Check(testkit.Rows())
 		tk.MustQuery("select job_id from mysql.tidb_ddl_history where job_id = " + currJobID).Check(testkit.Rows(currJobID))
 		tk.MustQuery("select job_id, ele_id, ele_type, physical_id from mysql.tidb_ddl_reorg where job_id = " + currJobID).Check(testkit.Rows())
 		require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))

@@ -1032,17 +1032,24 @@ const (
 	// version 179
 	//   enlarge `VARIABLE_VALUE` of `mysql.global_variables` from `varchar(1024)` to `varchar(16383)`.
 	version179 = 179
-
 	// version 180
 	//   add priority/create_time/end_time to `mysql.tidb_global_task`/`mysql.tidb_global_task_history`
 	//   add concurrency/create_time/end_time/digest to `mysql.tidb_background_subtask`/`mysql.tidb_background_subtask_history`
 	//   add idx_exec_id(exec_id), uk_digest to `mysql.tidb_background_subtask`
 	version180 = 180
+
+	// version 181
+	//   add column `bdr_role` to `mysql.tidb_ddl_job` and `mysql.tidb_ddl_history`.
+	version181 = 181
+
+	// version 182
+	//   set tidb_txn_mode to Optimistic when tidb_txn_mode is not set.
+	version182 = 182
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version180
+var currentBootstrapVersion int64 = version182
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1198,6 +1205,8 @@ var (
 		upgradeToVer178,
 		upgradeToVer179,
 		upgradeToVer180,
+		upgradeToVer181,
+		upgradeToVer182,
 	}
 )
 
@@ -2934,6 +2943,24 @@ func upgradeToVer180(s sessiontypes.Session, ver int64) {
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD INDEX idx_exec_id(exec_id)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD UNIQUE INDEX uk_task_key_step_ordinal(task_key, step, ordinal)", dbterror.ErrDupKeyName)
+}
+
+func upgradeToVer181(s sessiontypes.Session, ver int64) {
+	if ver >= version181 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ddl_job ADD COLUMN `bdr_role` varchar(64)", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ddl_history ADD COLUMN `bdr_role` varchar(64)", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer182(s sessiontypes.Session, ver int64) {
+	if ver >= version182 {
+		return
+	}
+	sql := fmt.Sprintf("INSERT HIGH_PRIORITY IGNORE INTO %s.%s VALUES('%s', '%s')",
+		mysql.SystemDB, mysql.GlobalVariablesTable,
+		variable.TiDBTxnMode, variable.OptimisticTxnMode)
+	mustExecute(s, sql)
 }
 
 func writeOOMAction(s sessiontypes.Session) {

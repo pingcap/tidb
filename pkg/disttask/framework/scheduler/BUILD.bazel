@@ -65,6 +65,7 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/util/disttask",
         "//pkg/util/logutil",
+        "//pkg/util/sqlexec",
         "@com_github_ngaut_pools//:pools",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

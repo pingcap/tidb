@@ -89,6 +89,7 @@ const (
 // Client sends requests to restore files.
 type Client struct {
 	pdClient      pd.Client
+	pdHTTPClient  pdhttp.Client
 	toolClient    split.SplitClient
 	fileImporter  FileImporter
 	rawKVClient   *RawKVBatchClient
@@ -193,13 +194,15 @@ type Client struct {
 // NewRestoreClient returns a new RestoreClient.
 func NewRestoreClient(
 	pdClient pd.Client,
+	pdHTTPCli pdhttp.Client,
 	tlsConf *tls.Config,
 	keepaliveConf keepalive.ClientParameters,
 	isRawKv bool,
 ) *Client {
 	return &Client{
 		pdClient:           pdClient,
-		toolClient:         split.NewSplitClient(pdClient, tlsConf, isRawKv),
+		pdHTTPClient:       pdHTTPCli,
+		toolClient:         split.NewSplitClient(pdClient, pdHTTPCli, tlsConf, isRawKv),
 		tlsConf:            tlsConf,
 		keepaliveConf:      keepaliveConf,
 		switchCh:           make(chan struct{}),
@@ -521,7 +524,7 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 }
 
 func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) {
-	metaClient := split.NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
+	metaClient := split.NewSplitClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
 	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, rc.rewriteMode)
 }
@@ -1328,7 +1331,7 @@ func (rc *Client) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int
 	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
-	client := split.NewSplitClient(rc.GetPDClient(), rc.GetTLSConfig(), false)
+	client := split.NewSplitClient(rc.GetPDClient(), rc.pdHTTPClient, rc.GetTLSConfig(), false)
 	return NewLogFilesIterWithSplitHelper(logIter, rules, client, splitSize, splitKeys), nil
 }
 
@@ -2051,7 +2054,7 @@ func (rc *Client) SetupPlacementRules(ctx context.Context, tables []*model.Table
 	}
 	rule.Index = 100
 	rule.Override = true
-	rule.LabelConstraints = append(rule.LabelConstraints, pdtypes.LabelConstraint{
+	rule.LabelConstraints = append(rule.LabelConstraints, pdhttp.LabelConstraint{
 		Key:    restoreLabelKey,
 		Op:     "in",
 		Values: []string{restoreLabelValue},
