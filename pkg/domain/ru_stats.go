@@ -120,7 +120,7 @@ func GetLastExpectedTime(now time.Time, interval time.Duration) time.Time {
 func (r *RUStatsWriter) DoWriteRUStatistics(ctx context.Context) error {
 	// check if is already inserted
 	lastEndTime := GetLastExpectedTime(r.StartTime, r.Interval)
-	isInserted, err := r.islatestDataInserted(lastEndTime)
+	isInserted, err := r.isLatestDataInserted(lastEndTime)
 	if err != nil {
 		return err
 	}
@@ -195,7 +195,7 @@ func (r *RUStatsWriter) persistLatestRUStats(stats *meta.RUStats) error {
 	})
 }
 
-func (r *RUStatsWriter) islatestDataInserted(lastEndTime time.Time) (bool, error) {
+func (r *RUStatsWriter) isLatestDataInserted(lastEndTime time.Time) (bool, error) {
 	end := lastEndTime.Format(time.DateTime)
 	start := lastEndTime.Add(-ruStatsInterval).Format(time.DateTime)
 	rows, sqlErr := execRestrictedSQL(r.sessPool, "SELECT 1 from mysql.request_unit_by_group where start_time = %? and end_time = %? limit 1", []interface{}{start, end})
