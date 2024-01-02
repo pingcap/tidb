@@ -73,7 +73,7 @@ func TestEngineManager(t *testing.T) {
 	backendConfig := getBackendConfig(t)
 	em, err := newEngineManager(backendConfig, storeHelper, log.L())
 	require.NoError(t, err)
-	storeHelper.EXPECT().GetTSO(gomock.Any()).Return(int64(0), int64(0), nil)
+	storeHelper.EXPECT().GetTS(gomock.Any()).Return(int64(0), int64(0), nil)
 	engine1ID := uuid.New()
 	require.NoError(t, em.openEngine(ctx, &backend.EngineConfig{}, engine1ID))
 	require.Equal(t, 1, syncMapLen(&em.engines))
@@ -89,7 +89,7 @@ func TestEngineManager(t *testing.T) {
 
 	// reset non-existent engine should work
 	require.NoError(t, em.resetEngine(ctx, uuid.New()))
-	storeHelper.EXPECT().GetTSO(gomock.Any()).Return(int64(0), int64(0), nil)
+	storeHelper.EXPECT().GetTS(gomock.Any()).Return(int64(0), int64(0), nil)
 	require.NoError(t, em.resetEngine(ctx, engine1ID))
 	require.Equal(t, 1, syncMapLen(&em.engines))
 	_, ok = em.engines.Load(engine1ID)
