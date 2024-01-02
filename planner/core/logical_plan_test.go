@@ -21,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+<<<<<<< HEAD:planner/core/logical_plan_test.go
 	"github.com/pingcap/tidb/domain"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -36,6 +37,26 @@ import (
 	"github.com/pingcap/tidb/sessionctx/variable"
 	"github.com/pingcap/tidb/testkit/testdata"
 	"github.com/pingcap/tidb/util/hint"
+=======
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tipb/go-tipb"
+>>>>>>> 70452024e78 (planner: use TxnCtx.InfoSchema to prevent schema inconsistency (#49947)):pkg/planner/core/logical_plans_test.go
 	"github.com/stretchr/testify/require"
 )
 
@@ -71,7 +92,22 @@ func createPlannerSuite() (s *plannerSuite) {
 		}
 	}
 	s.is = infoschema.MockInfoSchema(tblInfos)
-	s.ctx = MockContext()
+	ctx := mock.NewContext()
+	ctx.Store = &mock.Store{
+		Client: &mock.Client{},
+	}
+	initStatsCtx := mock.NewContext()
+	initStatsCtx.Store = &mock.Store{
+		Client: &mock.Client{},
+	}
+	ctx.GetSessionVars().CurrentDB = "test"
+	do := domain.NewMockDomain()
+	if err := do.CreateStatsHandle(ctx, initStatsCtx); err != nil {
+		panic(fmt.Sprintf("create mock context panic: %+v", err))
+	}
+	domain.BindDomain(ctx, do)
+	ctx.SetInfoSchema(s.is)
+	s.ctx = ctx
 	domain.GetDomain(s.ctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	s.ctx.GetSessionVars().EnableWindowFunction = true
 	s.p = parser.New()
