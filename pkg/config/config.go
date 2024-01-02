@@ -1595,7 +1595,7 @@ func GetGlobalConfigDetail() ([]OptionDetail, error) {
 	}
 	defaultCfgItems := FlattenConfigItems(dg)
 
-	result := make([]OptionDetail, 0)
+	result := []OptionDetail{}
 	for k, v := range cfgItems {
 		result = append(result, OptionDetail{
 			Name:         k,
