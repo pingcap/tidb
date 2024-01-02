@@ -148,10 +148,7 @@ func (ds *DataSource) generateNormalIndexPartialPaths4DNF(dnfItems []expression.
 			}
 			return false
 		})
-		partialPath, err := ds.buildIndexMergePartialPath(itemPaths)
-		if err != nil {
-			return nil, false, nil, err
-		}
+		partialPath := ds.buildIndexMergePartialPath(itemPaths)
 		if partialPath == nil {
 			// for this dnf item, we couldn't generate an index merge partial path.
 			// (1 member of (a)) or (3 member of (b)) or d=1; if one dnf item like d=1 here could walk index path,
@@ -215,10 +212,7 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 				partialPaths = nil
 				break
 			}
-			partialPath, err := ds.buildIndexMergePartialPath(itemPaths)
-			if err != nil {
-				return err
-			}
+			partialPath := ds.buildIndexMergePartialPath(itemPaths)
 			if partialPath == nil {
 				partialPaths = nil
 				break
