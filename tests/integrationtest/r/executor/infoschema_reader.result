@@ -283,7 +283,7 @@ SELECT * FROM information_schema.user_privileges WHERE grantee="'usageuser'@'%'"
 GRANTEE	TABLE_CATALOG	PRIVILEGE_TYPE	IS_GRANTABLE
 'usageuser'@'%'	def	BACKUP_ADMIN	NO
 'usageuser'@'%'	def	SELECT	YES
-select VARIABLE_NAME from information_schema.VARIABLES_INFO where DEFAULT_VALUE = CURRENT_VALUE and variable_name in ('tidb_txn_mode', 'tidb_enable_async_commit','tidb_enable_1pc', 'tidb_mem_oom_action', 'tidb_enable_auto_analyze', 'tidb_row_format_version', 'tidb_txn_assertion_level', 'tidb_enable_mutation_checker', 'tidb_pessimistic_txn_fair_locking') order by VARIABLE_NAME;
+select VARIABLE_NAME from information_schema.VARIABLES_INFO where DEFAULT_VALUE = CURRENT_VALUE and variable_name in ('tidb_enable_async_commit','tidb_enable_1pc', 'tidb_mem_oom_action', 'tidb_enable_auto_analyze', 'tidb_row_format_version', 'tidb_txn_assertion_level', 'tidb_enable_mutation_checker', 'tidb_pessimistic_txn_fair_locking') order by VARIABLE_NAME;
 VARIABLE_NAME
 tidb_enable_1pc
 tidb_enable_async_commit
@@ -293,8 +293,6 @@ tidb_mem_oom_action
 tidb_pessimistic_txn_fair_locking
 tidb_row_format_version
 tidb_txn_assertion_level
-tidb_txn_mode
-set global tidb_txn_mode = default;
 set global tidb_enable_async_commit = default;
 set global tidb_enable_1pc = default;
 set global tidb_mem_oom_action = default;
@@ -303,7 +301,7 @@ set global tidb_row_format_version = default;
 set global tidb_txn_assertion_level = default;
 set global tidb_enable_mutation_checker = default;
 set global tidb_pessimistic_txn_fair_locking = default;
-select a.VARIABLE_NAME from information_schema.VARIABLES_INFO as a, mysql.GLOBAL_VARIABLES as b where a.VARIABLE_NAME = b.VARIABLE_NAME and a.DEFAULT_VALUE = b.VARIABLE_VALUE and a.CURRENT_VALUE = b.VARIABLE_VALUE and a.variable_name in ('tidb_txn_mode', 'tidb_enable_async_commit','tidb_enable_1pc', 'tidb_mem_oom_action', 'tidb_enable_auto_analyze', 'tidb_row_format_version', 'tidb_txn_assertion_level', 'tidb_enable_mutation_checker', 'tidb_pessimistic_txn_fair_locking') order by VARIABLE_NAME;
+select a.VARIABLE_NAME from information_schema.VARIABLES_INFO as a, mysql.GLOBAL_VARIABLES as b where a.VARIABLE_NAME = b.VARIABLE_NAME and a.DEFAULT_VALUE = b.VARIABLE_VALUE and a.CURRENT_VALUE = b.VARIABLE_VALUE and a.variable_name in ('tidb_enable_async_commit','tidb_enable_1pc', 'tidb_mem_oom_action', 'tidb_enable_auto_analyze', 'tidb_row_format_version', 'tidb_txn_assertion_level', 'tidb_enable_mutation_checker', 'tidb_pessimistic_txn_fair_locking') order by VARIABLE_NAME;
 VARIABLE_NAME
 tidb_enable_1pc
 tidb_enable_async_commit
@@ -313,4 +311,3 @@ tidb_mem_oom_action
 tidb_pessimistic_txn_fair_locking
 tidb_row_format_version
 tidb_txn_assertion_level
-tidb_txn_mode

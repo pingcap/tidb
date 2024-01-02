@@ -2980,10 +2980,6 @@ var defaultSysVars = []*SysVar{
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)
 func GlobalSystemVariableInitialValue(varName, varVal string) string {
 	switch varName {
-	case TiDBTxnMode:
-		if config.GetGlobalConfig().Store == "tikv" || config.GetGlobalConfig().Store == "unistore" {
-			varVal = "pessimistic"
-		}
 	case TiDBEnableAsyncCommit, TiDBEnable1PC:
 		if config.GetGlobalConfig().Store == "tikv" {
 			varVal = On
