@@ -1393,7 +1393,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		sessVars.StmtCtx.SetPlan(a.Plan)
 	}
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
-	if !sessVars.StmtCtx.IsSQLRegistered.Load() && sessVars.StmtCtx.InSelectStmt {
+	if !sessVars.InRestrictedSQL && sessVars.StmtCtx.InSelectStmt {
 		stmtCtx := sessVars.StmtCtx
 		flat := getFlatPlan(stmtCtx)
 		if flat != nil && len(flat.Main) > 0 {
