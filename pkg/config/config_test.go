@@ -1344,5 +1344,12 @@ func TestGetGlobalConfigDetail(t *testing.T) {
 	require.True(t, len(d) > 0)
 	for _, v := range d {
 		require.Equal(t, v.Value, v.DefaultValue)
+		require.NotEqual(t, v.Name, "")
+		switch v.Name {
+		case "path":
+			require.Equal(t, v.Value, "/tmp/tidb")
+		case "store":
+			require.Equal(t, v.Value, "unistore")
+		}
 	}
 }
