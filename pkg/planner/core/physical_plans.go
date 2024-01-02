@@ -76,8 +76,8 @@ var (
 )
 
 type tableScanAndPartitionInfo struct {
-	tableScan             *PhysicalTableScan
-	physPlanPartitionInfo PhysPlanPartitionInfo
+	tableScan     *PhysicalTableScan
+	partitionInfo PartitionInfo
 }
 
 // MemoryUsage return the memory usage of tableScanAndPartitionInfo
@@ -86,7 +86,7 @@ func (t *tableScanAndPartitionInfo) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum += t.physPlanPartitionInfo.MemoryUsage()
+	sum += t.partitionInfo.MemoryUsage()
 	if t.tableScan != nil {
 		sum += t.tableScan.MemoryUsage()
 	}
@@ -136,23 +136,23 @@ type PhysicalTableReader struct {
 	IsCommonHandle bool
 
 	// Used by partition table.
-	PhysPlanPartitionInfo PhysPlanPartitionInfo
+	PartitionInfo PartitionInfo
 	// Used by MPP, because MPP plan may contain join/union/union all, it is possible that a physical table reader contains more than 1 table scan
 	PartitionInfos []tableScanAndPartitionInfo
 }
 
-// PhysPlanPartitionInfo indicates partition helper info in physical plan.
-type PhysPlanPartitionInfo struct {
+// PartitionInfo indicates partition helper info in physical plan.
+type PartitionInfo struct {
 	PruningConds   []expression.Expression
 	PartitionNames []model.CIStr
 	Columns        []*expression.Column
 	ColumnNames    types.NameSlice
 }
 
-const emptyPartitionInfoSize = int64(unsafe.Sizeof(PhysPlanPartitionInfo{}))
+const emptyPartitionInfoSize = int64(unsafe.Sizeof(PartitionInfo{}))
 
-// MemoryUsage return the memory usage of PhysPlanPartitionInfo
-func (pi *PhysPlanPartitionInfo) MemoryUsage() (sum int64) {
+// MemoryUsage return the memory usage of PartitionInfo
+func (pi *PartitionInfo) MemoryUsage() (sum int64) {
 	if pi == nil {
 		return
 	}
@@ -210,7 +210,7 @@ func (p *PhysicalTableReader) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfUint8*2 + size.SizeOfBool + p.PhysPlanPartitionInfo.MemoryUsage()
+	sum = p.physicalSchemaProducer.MemoryUsage() + size.SizeOfUint8*2 + size.SizeOfBool + p.PartitionInfo.MemoryUsage()
 	if p.tablePlan != nil {
 		sum += p.tablePlan.MemoryUsage()
 	}
@@ -235,7 +235,7 @@ func setMppOrBatchCopForTableScan(curPlan PhysicalPlan) {
 // GetPhysicalTableReader returns PhysicalTableReader for logical TiKVSingleGather.
 func (sg *TiKVSingleGather) GetPhysicalTableReader(schema *expression.Schema, stats *property.StatsInfo, props ...*property.PhysicalProperty) *PhysicalTableReader {
 	reader := PhysicalTableReader{}.Init(sg.SCtx(), sg.QueryBlockOffset())
-	reader.PhysPlanPartitionInfo = PhysPlanPartitionInfo{
+	reader.PartitionInfo = PartitionInfo{
 		PruningConds:   sg.Source.allConds,
 		PartitionNames: sg.Source.partitionNames,
 		Columns:        sg.Source.TblCols,
@@ -315,7 +315,7 @@ type PhysicalIndexReader struct {
 	OutputColumns []*expression.Column
 
 	// Used by partition table.
-	PartitionInfo PhysPlanPartitionInfo
+	PartitionInfo PartitionInfo
 }
 
 // Clone implements PhysicalPlan interface.
@@ -444,7 +444,7 @@ type PhysicalIndexLookUpReader struct {
 	CommonHandleCols []*expression.Column
 
 	// Used by partition table.
-	PartitionInfo PhysPlanPartitionInfo
+	PartitionInfo PartitionInfo
 
 	// required by cost calculation
 	expectedCnt uint64
@@ -576,7 +576,7 @@ type PhysicalIndexMergeReader struct {
 	tablePlan PhysicalPlan
 
 	// Used by partition table.
-	PartitionInfo PhysPlanPartitionInfo
+	PartitionInfo PartitionInfo
 
 	KeepOrder bool
 
@@ -865,7 +865,7 @@ type PhysicalTableScan struct {
 
 	isChildOfIndexLookUp bool
 
-	PhysPlanPartitionInfo PhysPlanPartitionInfo
+	PartitionInfo PartitionInfo
 
 	SampleInfo *TableSampleInfo
 
@@ -1014,7 +1014,7 @@ func (ts *PhysicalTableScan) MemoryUsage() (sum int64) {
 	}
 
 	sum = emptyPhysicalTableScanSize + ts.physicalSchemaProducer.MemoryUsage() + ts.DBName.MemoryUsage() +
-		int64(cap(ts.HandleIdx))*size.SizeOfInt + ts.PhysPlanPartitionInfo.MemoryUsage() + int64(len(ts.rangeInfo))
+		int64(cap(ts.HandleIdx))*size.SizeOfInt + ts.PartitionInfo.MemoryUsage() + int64(len(ts.rangeInfo))
 	if ts.TableAsName != nil {
 		sum += ts.TableAsName.MemoryUsage()
 	}

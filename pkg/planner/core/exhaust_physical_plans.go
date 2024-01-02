@@ -1108,13 +1108,13 @@ func (p *LogicalJoin) constructInnerTableScanTask(
 		tblColHists:       ds.TblColHists,
 		keepOrder:         ts.KeepOrder,
 	}
-	copTask.physPlanPartitionInfo = PhysPlanPartitionInfo{
+	copTask.partitionInfo = PartitionInfo{
 		PruningConds:   ds.allConds,
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
 	}
-	ts.PhysPlanPartitionInfo = copTask.physPlanPartitionInfo
+	ts.PartitionInfo = copTask.partitionInfo
 	selStats := ts.StatsInfo().Scale(selectivity)
 	ts.addPushedDownSelection(copTask, selStats)
 	t := copTask.convertToRootTask(ds.SCtx())
@@ -1272,7 +1272,7 @@ func (p *LogicalJoin) constructInnerIndexScanTask(
 		tblCols:     ds.TblCols,
 		keepOrder:   is.KeepOrder,
 	}
-	cop.physPlanPartitionInfo = PhysPlanPartitionInfo{
+	cop.partitionInfo = PartitionInfo{
 		PruningConds:   ds.allConds,
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,

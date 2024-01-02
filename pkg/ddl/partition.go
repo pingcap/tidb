@@ -4232,7 +4232,7 @@ func writeColumnListToBuffer(partitionInfo *model.PartitionInfo, sqlMode mysql.S
 }
 
 // AppendPartitionInfo is used in SHOW CREATE TABLE as well as generation the SQL syntax
-// for the PhysPlanPartitionInfo during validation of various DDL commands
+// for the PartitionInfo during validation of various DDL commands
 func AppendPartitionInfo(partitionInfo *model.PartitionInfo, buf *bytes.Buffer, sqlMode mysql.SQLMode) {
 	if partitionInfo == nil {
 		return
