@@ -1346,7 +1346,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		indexPlanFinished: false,
 		tblColHists:       ds.TblColHists,
 	}
-	cop.partitionInfo = PartitionInfo{
+	cop.physPlanPartInfo = PhysPlanPartInfo{
 		PruningConds:   pushDownNot(ds.SCtx(), ds.allConds),
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
@@ -1757,7 +1757,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 		tblCols:     ds.TblCols,
 		expectCnt:   uint64(prop.ExpectedCnt),
 	}
-	cop.partitionInfo = PartitionInfo{
+	cop.physPlanPartInfo = PhysPlanPartInfo{
 		PruningConds:   pushDownNot(ds.SCtx(), ds.allConds),
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
@@ -2179,7 +2179,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			partTp:      property.AnyType,
 			tblColHists: ds.TblColHists,
 		}
-		ts.PartitionInfo = PartitionInfo{
+		ts.PlanPartInfo = PhysPlanPartInfo{
 			PruningConds:   pushDownNot(ds.SCtx(), ds.allConds),
 			PartitionNames: ds.partitionNames,
 			Columns:        ds.TblCols,
@@ -2213,13 +2213,13 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		indexPlanFinished: true,
 		tblColHists:       ds.TblColHists,
 	}
-	copTask.partitionInfo = PartitionInfo{
+	copTask.physPlanPartInfo = PhysPlanPartInfo{
 		PruningConds:   pushDownNot(ds.SCtx(), ds.allConds),
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
 	}
-	ts.PartitionInfo = copTask.partitionInfo
+	ts.PlanPartInfo = copTask.physPlanPartInfo
 	task = copTask
 	if candidate.isMatchProp {
 		copTask.keepOrder = true
