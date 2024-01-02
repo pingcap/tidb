@@ -15,11 +15,7 @@
 package core
 
 import (
-<<<<<<< HEAD
 	"cmp"
-=======
-	"fmt"
->>>>>>> fbd0a185e1 (fix shouldKeptCurrentFitler)
 	"math"
 	"slices"
 	"strings"
@@ -206,9 +202,6 @@ func (ds *DataSource) generateNormalIndexPartialPaths4DNF(dnfItems []expression.
 // generate a concrete index merge path out, but an un-determined
 // alternatives set index merge path instead.
 func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression) error {
-	if strings.HasPrefix(ds.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3") {
-		fmt.Println(1)
-	}
 	usedIndexCount := len(ds.possibleAccessPaths)
 	for i, cond := range filters {
 		sf, ok := cond.(*expression.ScalarFunction)

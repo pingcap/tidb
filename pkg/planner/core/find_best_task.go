@@ -901,9 +901,11 @@ func (ds *DataSource) matchPropForIndexMergeAlternatives(path *util.AccessPath, 
 		// pick a most suitable index partial alternative from all matched alternative paths according to asc CountAfterAccess,
 		// By this way, a distinguished one is better.
 		for _, oneIdx := range matchIdxes {
-			indexID := oneItemAlternatives[oneIdx].Index.ID
+			var indexID int64
 			if oneItemAlternatives[oneIdx].IsTablePath() {
 				indexID = -1
+			} else {
+				indexID = oneItemAlternatives[oneIdx].Index.ID
 			}
 			if _, ok := usedIndexMap[indexID]; !ok {
 				// try to avoid all index partial paths are all about a single index.
@@ -928,6 +930,8 @@ func (ds *DataSource) matchPropForIndexMergeAlternatives(path *util.AccessPath, 
 	indexMergePath := &util.AccessPath{
 		PartialIndexPaths:        determinedIndexPartialPaths,
 		IndexMergeIsIntersection: false,
+		// inherit those determined can't pushed-down table filters.
+		TableFilters: path.TableFilters,
 	}
 	// path.ShouldBeKeptCurrentFilter record that whether there are some part of the cnf item couldn't be pushed down to tikv already.
 	shouldKeepCurrentFilter := path.ShouldBeKeptCurrentFilter
