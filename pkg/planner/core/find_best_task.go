@@ -852,9 +852,6 @@ func (ds *DataSource) matchPropForIndexMergeAlternatives(path *util.AccessPath, 
 		return nil, false
 	}
 
-	if strings.HasPrefix(ds.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3") {
-		fmt.Println(1)
-	}
 	noSortItem := prop.IsSortItemEmpty()
 	allSame, _ := prop.AllSameOrder()
 	if !allSame {
