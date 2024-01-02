@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/stretchr/testify/require"
@@ -46,9 +47,23 @@ func TestHandle(t *testing.T) {
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
 
+<<<<<<< HEAD
 	// no dispatcher registered
 	err := handle.SubmitAndRunGlobalTask(ctx, "1", proto.TaskTypeExample, 2, []byte("byte"))
 	require.Error(t, err)
+=======
+	testutil.WaitNodeRegistered(ctx, t)
+
+	// no scheduler registered
+	task, err := handle.SubmitTask(ctx, "1", proto.TaskTypeExample, 2, []byte("byte"))
+	require.NoError(t, err)
+	waitedTask, err := handle.WaitTask(ctx, task.ID, func(task *proto.Task) bool {
+		return task.IsDone()
+	})
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateFailed, waitedTask.State)
+	require.ErrorContains(t, waitedTask.Error, "unknown task type")
+>>>>>>> 99f0349bfb6 (disttask: fix failed step is taken as success (#49971))
 
 	task, err := mgr.GetGlobalTaskByID(ctx, 1)
 	require.NoError(t, err)

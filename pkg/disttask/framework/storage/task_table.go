@@ -488,24 +488,41 @@ func (stm *TaskManager) UpdateSubtaskRowCount(ctx context.Context, subtaskID int
 	return err
 }
 
+<<<<<<< HEAD
 // GetSubtaskInStatesCnt gets the subtask count in the states.
 func (stm *TaskManager) GetSubtaskInStatesCnt(ctx context.Context, taskID int64, states ...interface{}) (int64, error) {
 	args := []interface{}{taskID}
 	args = append(args, states...)
 	rs, err := stm.executeSQLWithNewSession(ctx, `select count(*) from mysql.tidb_background_subtask
 		where task_key = %? and state in (`+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
+=======
+// GetSubtaskCntGroupByStates gets the subtask count by states.
+func (stm *TaskManager) GetSubtaskCntGroupByStates(ctx context.Context, taskID int64, step proto.Step) (map[proto.SubtaskState]int64, error) {
+	rs, err := stm.executeSQLWithNewSession(ctx, `
+		select state, count(*)
+		from mysql.tidb_background_subtask
+		where task_key = %? and step = %?
+		group by state`,
+		taskID, step)
+>>>>>>> 99f0349bfb6 (disttask: fix failed step is taken as success (#49971))
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
-	return rs[0].GetInt64(0), nil
+	res := make(map[proto.SubtaskState]int64, len(rs))
+	for _, r := range rs {
+		state := proto.SubtaskState(r.GetString(0))
+		res[state] = r.GetInt64(1)
+	}
+
+	return res, nil
 }
 
 // CollectSubTaskError collects the subtask error.
 func (stm *TaskManager) CollectSubTaskError(ctx context.Context, taskID int64) ([]error, error) {
 	rs, err := stm.executeSQLWithNewSession(ctx,
 		`select error from mysql.tidb_background_subtask
-             where task_key = %? AND state in (%?, %?)`, taskID, proto.TaskStateFailed, proto.TaskStateCanceled)
+             where task_key = %? AND state in (%?, %?)`, taskID, proto.SubtaskStateFailed, proto.SubtaskStateCanceled)
 	if err != nil {
 		return nil, err
 	}
