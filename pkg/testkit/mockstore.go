@@ -67,6 +67,7 @@ func CreateMockStore(t testing.TB, opts ...mockstore.MockTiKVStoreOption) kv.Sto
 		view.Stop()
 	})
 	gctuner.GlobalMemoryLimitTuner.Stop()
+	tryMakeImage()
 	store, _ := CreateMockStoreAndDomain(t, opts...)
 	return store
 }
