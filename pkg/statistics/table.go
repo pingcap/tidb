@@ -105,7 +105,10 @@ type HistColl struct {
 	// Idx2ColumnIDs maps the index id to its column ids. It's used to calculate the selectivity in planner.
 	Idx2ColumnIDs map[int64][]int64
 	// ColID2IdxIDs maps the column id to a list index ids whose first column is it. It's used to calculate the selectivity in planner.
-	ColID2IdxIDs  map[int64][]int64
+	ColID2IdxIDs map[int64][]int64
+	// MVIdx2Columns maps the index id to its columns by expression.Column.
+	// For normal index, the column id is enough, as we already have in Idx2ColumnIDs. But currently, mv index needs more
+	// information to match the filter against the mv index columns, and we need this map to provide this information.
 	MVIdx2Columns map[int64][]*expression.Column
 	PhysicalID    int64
 	// TODO: add AnalyzeCount here

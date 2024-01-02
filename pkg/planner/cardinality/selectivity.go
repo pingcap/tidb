@@ -161,24 +161,9 @@ func Selectivity(
 		idxStats := coll.Indices[id]
 		idxInfo := idxStats.Info
 		if idxInfo.MVIndex {
-			cols := coll.MVIdx2Columns[id]
-			if len(cols) == 0 {
+			totalSelectivity, mask, ok := getMaskAndSelectivityForMVIndex(ctx, coll, id, remainedExprs)
+			if !ok {
 				continue
-			}
-			accessConds, _ := CollectFilters4MVIndex(ctx, remainedExprs, cols)
-			paths, isIntersection, ok, err := BuildPartialPaths4MVIndex(ctx, accessConds, cols, idxStats.Info, coll)
-			if err != nil || !ok {
-				continue
-			}
-			totalSelectivity := CalcTotalSelectivityForMVIdxPath(coll, paths, isIntersection)
-			var mask int64
-			for i := range remainedExprs {
-				for _, accessCond := range accessConds {
-					if exprs[i].Equal(ctx, accessCond) {
-						mask |= 1 << uint64(i)
-						break
-					}
-				}
 			}
 			nodes = append(nodes, &StatsNode{
 				Tp:          IndexType,
@@ -187,6 +172,7 @@ func Selectivity(
 				numCols:     len(idxInfo.Columns),
 				Selectivity: totalSelectivity,
 			})
+			continue
 		}
 		idxCols := findPrefixOfIndexByCol(ctx, extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxStats.ID])
 		if len(idxCols) > 0 {
@@ -683,6 +669,34 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 		}
 	}
 	return mask, ranges, false, nil
+}
+
+func getMaskAndSelectivityForMVIndex(
+	ctx sessionctx.Context,
+	coll *statistics.HistColl,
+	id int64,
+	remainedExprs []expression.Expression,
+) (float64, int64, bool) {
+	cols := coll.MVIdx2Columns[id]
+	if len(cols) == 0 {
+		return 1.0, 0, false
+	}
+	accessConds, _ := CollectFilters4MVIndex(ctx, remainedExprs, cols)
+	paths, isIntersection, ok, err := BuildPartialPaths4MVIndex(ctx, accessConds, cols, coll.Indices[id].Info, coll)
+	if err != nil || !ok {
+		return 1.0, 0, false
+	}
+	totalSelectivity := CalcTotalSelectivityForMVIdxPath(coll, paths, isIntersection)
+	var mask int64
+	for i := range remainedExprs {
+		for _, accessCond := range accessConds {
+			if remainedExprs[i].Equal(ctx, accessCond) {
+				mask |= 1 << uint64(i)
+				break
+			}
+		}
+	}
+	return totalSelectivity, mask, true
 }
 
 // GetSelectivityByFilter try to estimate selectivity of expressions by evaluate the expressions using TopN, Histogram buckets boundaries and NULL.
