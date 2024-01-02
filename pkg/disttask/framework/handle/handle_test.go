@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/stretchr/testify/require"
@@ -51,6 +52,8 @@ func TestHandle(t *testing.T) {
 	defer pool.Close()
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
+
+	testutil.WaitNodeRegistered(ctx, t)
 
 	// no scheduler registered
 	task, err := handle.SubmitTask(ctx, "1", proto.TaskTypeExample, 2, []byte("byte"))

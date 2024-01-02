@@ -228,6 +228,8 @@ func TestTaskFailInManager(t *testing.T) {
 	schManager.Start()
 	defer schManager.Stop()
 
+	testutil.WaitNodeRegistered(ctx, t)
+
 	// unknown task type
 	taskID, err := mgr.CreateTask(ctx, "test", "test-type", 1, nil)
 	require.NoError(t, err)
@@ -309,9 +311,9 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		for i, taskID := range taskIDs {
 			require.Equal(t, int64(i+1), tasks[i].ID)
 			require.Eventually(t, func() bool {
-				cnt, err := mgr.GetSubtaskInStatesCnt(ctx, taskID, proto.SubtaskStatePending)
+				cntByStates, err := mgr.GetSubtaskCntGroupByStates(ctx, taskID, proto.StepOne)
 				require.NoError(t, err)
-				return int64(subtaskCnt) == cnt
+				return int64(subtaskCnt) == cntByStates[proto.SubtaskStatePending]
 			}, time.Second, 50*time.Millisecond)
 		}
 	}
@@ -627,7 +629,7 @@ func TestManagerDispatchLoop(t *testing.T) {
 	require.NoError(t, err)
 	for _, s := range serverInfos {
 		execID := disttaskutil.GenerateExecID(s)
-		testutil.InsertSubtask(t, taskMgr, 1000000, proto.StepOne, execID, []byte(""), proto.TaskStatePending, proto.TaskTypeExample, 16)
+		testutil.InsertSubtask(t, taskMgr, 1000000, proto.StepOne, execID, []byte(""), proto.SubtaskStatePending, proto.TaskTypeExample, 16)
 	}
 	concurrencies := []int{4, 6, 16, 2, 4, 4}
 	waitChannels := make([]chan struct{}, len(concurrencies))
