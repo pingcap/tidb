@@ -180,17 +180,31 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx sessionctx.Context,
 					posHigh--
 				}
 
-				var rangeScalar float64
+				var rangeScalar uint64
+				var offset int64
 				if mysql.HasUnsignedFlag(col.RetType.GetFlag()) {
-					rangeScalar = float64(uint64(posHigh)) - float64(uint64(posLow)) // use float64 to avoid integer overflow
+					// Avoid integer overflow
+					if uint64(posHigh) < uint64(posLow) {
+						rangeScalar = 0
+					} else {
+						rangeScalar = uint64(posHigh) - uint64(posLow)
+						offset = int64(uint64(posLow) % uint64(numPartitions))
+					}
 				} else {
-					rangeScalar = float64(posHigh) - float64(posLow) // use float64 to avoid integer overflow
+					// Avoid integer overflow
+					if posHigh < posLow {
+						rangeScalar = 0
+					} else {
+						rangeScalar = uint64(posHigh - posLow)
+						offset = mathutil.Abs(posLow % int64(numPartitions))
+					}
 				}
 
 				// if range is less than the number of partitions, there will be unused partitions we can prune out.
-				if rangeScalar < float64(numPartitions) && !highIsNull && !lowIsNull {
-					for i := posLow; i <= posHigh; i++ {
-						idx := mathutil.Abs(i % int64(pi.Num))
+				if rangeScalar < uint64(numPartitions) && !highIsNull && !lowIsNull {
+					var i int64
+					for i = 0; i <= int64(rangeScalar); i++ {
+						idx := (offset + i) % int64(numPartitions)
 						if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
 							continue
 						}
@@ -280,26 +294,47 @@ func (s *partitionProcessor) getUsedKeyPartitions(ctx sessionctx.Context,
 					posHigh--
 				}
 
-				var rangeScalar float64
+				var rangeScalar uint64
 				if mysql.HasUnsignedFlag(col.RetType.GetFlag()) {
-					rangeScalar = float64(uint64(posHigh)) - float64(uint64(posLow)) // use float64 to avoid integer overflow
+					// Avoid integer overflow
+					if uint64(posHigh) < uint64(posLow) {
+						rangeScalar = 0
+					} else {
+						rangeScalar = uint64(posHigh) - uint64(posLow)
+					}
 				} else {
-					rangeScalar = float64(posHigh) - float64(posLow) // use float64 to avoid integer overflow
+					// Avoid integer overflow
+					if posHigh < posLow {
+						rangeScalar = 0
+					} else {
+						rangeScalar = uint64(posHigh - posLow)
+					}
 				}
 
 				// if range is less than the number of partitions, there will be unused partitions we can prune out.
-				if rangeScalar < float64(pi.Num) && !highIsNull && !lowIsNull {
-					for i := posLow; i <= posHigh; i++ {
-						d := types.NewIntDatum(i)
+				if rangeScalar < pi.Num && !highIsNull && !lowIsNull {
+					m := make(map[int]struct{})
+					for i := 0; i <= int(rangeScalar); i++ {
+						var d types.Datum
+						if mysql.HasUnsignedFlag(col.RetType.GetFlag()) {
+							d = types.NewUintDatum(uint64(posLow) + uint64(i))
+						} else {
+							d = types.NewIntDatum(posLow + int64(i))
+						}
 						idx, err := pe.LocateKeyPartition(pi.Num, []types.Datum{d})
 						if err != nil {
 							// If we failed to get the point position, we can just skip and ignore it.
+							continue
+						}
+						if _, ok := m[idx]; ok {
+							// Keys maybe in a same partition, we should skip.
 							continue
 						}
 						if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
 							continue
 						}
 						used = append(used, idx)
+						m[idx] = struct{}{}
 					}
 					continue
 				}

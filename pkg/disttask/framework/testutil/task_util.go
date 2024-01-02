@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -40,7 +41,7 @@ func InsertSubtask(t *testing.T, gm *storage.TaskManager, taskID int64, step pro
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "table_test")
 	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
-		_, err := storage.ExecSQL(ctx, se, `
+		_, err := sqlexec.ExecSQL(ctx, se, `
 			insert into mysql.tidb_background_subtask(`+storage.InsertSubtaskColumns+`) values`+
 			`(%?, %?, %?, %?, %?, %?, %?, NULL, CURRENT_TIMESTAMP(), '{}', '{}')`,
 			step, taskID, execID, meta, state, proto.Type2Int(tp), concurrency)

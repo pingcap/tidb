@@ -15,13 +15,16 @@
 package importer
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	tidb "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -38,7 +41,7 @@ func TestPrepareSortDir(t *testing.T) {
 	importDir := filepath.Join(dir, "import-4000")
 
 	// dir not exist, create it
-	sortDir, err := prepareSortDir(e, 1, tidbCfg)
+	sortDir, err := prepareSortDir(e, "1", tidbCfg)
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(importDir, "1"), sortDir)
 	info, err := os.Stat(importDir)
@@ -52,7 +55,7 @@ func TestPrepareSortDir(t *testing.T) {
 	require.NoError(t, os.Remove(importDir))
 	_, err = os.Create(importDir)
 	require.NoError(t, err)
-	sortDir, err = prepareSortDir(e, 2, tidbCfg)
+	sortDir, err = prepareSortDir(e, "2", tidbCfg)
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(importDir, "2"), sortDir)
 	info, err = os.Stat(importDir)
@@ -60,7 +63,7 @@ func TestPrepareSortDir(t *testing.T) {
 	require.True(t, info.IsDir())
 
 	// dir already exist, do nothing
-	sortDir, err = prepareSortDir(e, 3, tidbCfg)
+	sortDir, err = prepareSortDir(e, "3", tidbCfg)
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(importDir, "3"), sortDir)
 	info, err = os.Stat(importDir)
@@ -69,7 +72,7 @@ func TestPrepareSortDir(t *testing.T) {
 
 	// sortdir already exist, remove it
 	require.NoError(t, os.Mkdir(sortDir, 0755))
-	sortDir, err = prepareSortDir(e, 3, tidbCfg)
+	sortDir, err = prepareSortDir(e, "3", tidbCfg)
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(importDir, "3"), sortDir)
 	info, err = os.Stat(importDir)
@@ -172,4 +175,8 @@ func TestLoadDataControllerGetAdjustedMaxEngineSize(t *testing.T) {
 			}
 		})
 	}
+}
+
+func ChecksumTable(ctx context.Context, executor sessionctx.Context, plan *Plan, logger *zap.Logger) (*local.RemoteChecksum, error) {
+	return checksumTable(ctx, executor, plan, logger)
 }

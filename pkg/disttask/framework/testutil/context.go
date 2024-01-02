@@ -20,9 +20,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -51,10 +53,19 @@ func InitTestContext(t *testing.T, nodeNum int) (context.Context, *gomock.Contro
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
 	})
 
+	executionContext := testkit.NewDistExecutionContext(t, nodeNum)
+	// wait until some node is registered.
+	require.Eventually(t, func() bool {
+		taskMgr, err := storage.GetTaskManager()
+		require.NoError(t, err)
+		nodes, err := taskMgr.GetAllNodes(ctx)
+		require.NoError(t, err)
+		return len(nodes) > 0
+	}, 5*time.Second, 100*time.Millisecond)
 	testCtx := &TestContext{
 		subtasksHasRun: make(map[string]map[int64]struct{}),
 	}
-	return ctx, ctrl, testCtx, testkit.NewDistExecutionContext(t, nodeNum)
+	return ctx, ctrl, testCtx, executionContext
 }
 
 // CollectSubtask collects subtask info

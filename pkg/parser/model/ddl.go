@@ -90,23 +90,25 @@ const (
 	ActionModifySchemaDefaultPlacement  ActionType = 55
 	ActionAlterTablePlacement           ActionType = 56
 	ActionAlterCacheTable               ActionType = 57
-	ActionAlterTableStatsOptions        ActionType = 58
-	ActionAlterNoCacheTable             ActionType = 59
-	ActionCreateTables                  ActionType = 60
-	ActionMultiSchemaChange             ActionType = 61
-	ActionFlashbackCluster              ActionType = 62
-	ActionRecoverSchema                 ActionType = 63
-	ActionReorganizePartition           ActionType = 64
-	ActionAlterTTLInfo                  ActionType = 65
-	ActionAlterTTLRemove                ActionType = 67
-	ActionCreateResourceGroup           ActionType = 68
-	ActionAlterResourceGroup            ActionType = 69
-	ActionDropResourceGroup             ActionType = 70
-	ActionAlterTablePartitioning        ActionType = 71
-	ActionRemovePartitioning            ActionType = 72
+	// not used
+	ActionAlterTableStatsOptions ActionType = 58
+	ActionAlterNoCacheTable      ActionType = 59
+	ActionCreateTables           ActionType = 60
+	ActionMultiSchemaChange      ActionType = 61
+	ActionFlashbackCluster       ActionType = 62
+	ActionRecoverSchema          ActionType = 63
+	ActionReorganizePartition    ActionType = 64
+	ActionAlterTTLInfo           ActionType = 65
+	ActionAlterTTLRemove         ActionType = 67
+	ActionCreateResourceGroup    ActionType = 68
+	ActionAlterResourceGroup     ActionType = 69
+	ActionDropResourceGroup      ActionType = 70
+	ActionAlterTablePartitioning ActionType = 71
+	ActionRemovePartitioning     ActionType = 72
 )
 
-var actionMap = map[ActionType]string{
+// ActionMap is the map of DDL ActionType to string.
+var ActionMap = map[ActionType]string{
 	ActionCreateSchema:                  "create schema",
 	ActionDropSchema:                    "drop schema",
 	ActionCreateTable:                   "create table",
@@ -180,9 +182,106 @@ var actionMap = map[ActionType]string{
 	__DEPRECATED_ActionAlterTableAlterPartition: "alter partition",
 }
 
+// DDLBDRType is the type for DDL when BDR enable.
+type DDLBDRType string
+
+const (
+	// UnsafeDDL means the DDL can't be executed by user when cluster is Primary/Secondary.
+	UnsafeDDL DDLBDRType = "unsafe DDL"
+	// SafeDDL means the DDL can be executed by user when cluster is Primary.
+	SafeDDL DDLBDRType = "safe DDL"
+	// UnmanagementDDL means the DDL can't be synced by CDC.
+	UnmanagementDDL DDLBDRType = "unmanagement DDL"
+	// UnknownDDL means the DDL is unknown.
+	UnknownDDL DDLBDRType = "unknown DDL"
+)
+
+// ActionBDRMap is the map of DDL ActionType to DDLBDRType.
+var ActionBDRMap = map[ActionType]DDLBDRType{}
+
+// BDRActionMap is the map of DDLBDRType to ActionType (reversed from ActionBDRMap).
+var BDRActionMap = map[DDLBDRType][]ActionType{
+	SafeDDL: {
+		ActionCreateSchema,
+		ActionCreateTable,
+		ActionAddColumn, // add a new column to table if it’s nullable or with default value.
+		ActionAddIndex,  //add non-unique index
+		ActionDropIndex,
+		ActionModifyColumn, // add or update comments for column, change default values of one particular column
+		ActionSetDefaultValue,
+		ActionModifyTableComment,
+		ActionRenameIndex,
+		ActionAddTablePartition,
+		ActionDropPrimaryKey,
+		ActionAlterIndexVisibility,
+		ActionCreateTables,
+		ActionAlterTTLInfo,
+		ActionAlterTTLRemove,
+	},
+	UnsafeDDL: {
+		ActionDropSchema,
+		ActionDropTable,
+		ActionDropColumn,
+		ActionAddForeignKey,
+		ActionDropForeignKey,
+		ActionTruncateTable,
+		ActionRebaseAutoID,
+		ActionRenameTable,
+		ActionShardRowID,
+		ActionDropTablePartition,
+		ActionModifyTableCharsetAndCollate,
+		ActionTruncateTablePartition,
+		ActionRecoverTable,
+		ActionModifySchemaCharsetAndCollate,
+		ActionLockTable,
+		ActionUnlockTable,
+		ActionRepairTable,
+		ActionSetTiFlashReplica,
+		ActionUpdateTiFlashReplicaStatus,
+		ActionAddPrimaryKey,
+		ActionCreateSequence,
+		ActionAlterSequence,
+		ActionDropSequence,
+		ActionModifyTableAutoIdCache,
+		ActionRebaseAutoRandomBase,
+		ActionExchangeTablePartition,
+		ActionAddCheckConstraint,
+		ActionDropCheckConstraint,
+		ActionAlterCheckConstraint,
+		ActionRenameTables,
+		ActionAlterTableAttributes,
+		ActionAlterTablePartitionAttributes,
+		ActionAlterTablePartitionPlacement,
+		ActionModifySchemaDefaultPlacement,
+		ActionAlterTablePlacement,
+		ActionAlterCacheTable,
+		ActionAlterTableStatsOptions,
+		ActionAlterNoCacheTable,
+		ActionMultiSchemaChange,
+		ActionFlashbackCluster,
+		ActionRecoverSchema,
+		ActionReorganizePartition,
+		ActionAlterTablePartitioning,
+		ActionRemovePartitioning,
+	},
+	UnmanagementDDL: {
+		ActionCreateView,
+		ActionDropView,
+		ActionCreatePlacementPolicy,
+		ActionAlterPlacementPolicy,
+		ActionDropPlacementPolicy,
+		ActionCreateResourceGroup,
+		ActionAlterResourceGroup,
+		ActionDropResourceGroup,
+	},
+	UnknownDDL: {
+		__DEPRECATED_ActionAlterTableAlterPartition,
+	},
+}
+
 // String return current ddl action in string
 func (action ActionType) String() string {
-	if v, ok := actionMap[action]; ok {
+	if v, ok := ActionMap[action]; ok {
 		return v
 	}
 	return "none"
@@ -453,6 +552,12 @@ type Job struct {
 
 	// TraceInfo indicates the information for SQL tracing
 	TraceInfo *TraceInfo `json:"trace_info"`
+
+	// BDRRole indicates the role of BDR cluster when executing this DDL.
+	BDRRole string `json:"bdr_role"`
+
+	// CDCWriteSource indicates the source of CDC write.
+	CDCWriteSource uint64 `json:"cdc_write_source"`
 }
 
 // InvolvingSchemaInfo returns the schema info involved in the job.
@@ -1028,4 +1133,12 @@ type AffectedOption struct {
 	TableID     int64 `json:"table_id"`
 	OldTableID  int64 `json:"old_table_id"`
 	OldSchemaID int64 `json:"old_schema_id"`
+}
+
+func init() {
+	for bdrType, v := range BDRActionMap {
+		for _, action := range v {
+			ActionBDRMap[action] = bdrType
+		}
+	}
 }

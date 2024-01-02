@@ -548,7 +548,8 @@
       "pkg/resourcemanager/": "resourcemanager code",
       "pkg/keyspace/": "keyspace code",
       "pkg/owner/": "owner code",
-      "pkg/timer/": "timer code"
+      "pkg/timer/": "timer code",
+      "pkg/domain": "domain code"
     }
   },
   "shift": {

@@ -72,7 +72,7 @@ func (do *Domain) setPDClientDynamicOption(name, sVal string) {
 	}
 }
 
-func (do *Domain) setGlobalResourceControl(enable bool) {
+func (*Domain) setGlobalResourceControl(enable bool) {
 	if enable {
 		variable.EnableGlobalResourceControlFunc()
 	} else {
