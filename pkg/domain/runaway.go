@@ -610,7 +610,7 @@ func (r *SystemTableReader) genSelectStmt() (string, []interface{}) {
 	return builder.String(), params
 }
 
-func (r *SystemTableReader) Read(exec sqlexec.RestrictedSQLExecutor, genFn func() (string, []interface{})) ([]chunk.Row, error) {
+func (*SystemTableReader) Read(exec sqlexec.RestrictedSQLExecutor, genFn func() (string, []interface{})) ([]chunk.Row, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	sql, params := genFn()
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},

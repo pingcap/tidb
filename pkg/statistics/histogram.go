@@ -261,11 +261,6 @@ const (
 // AnalyzeFlag is set when the statistics comes from analyze.
 const AnalyzeFlag = 1
 
-// IsAnalyzed checks whether this flag contains AnalyzeFlag.
-func IsAnalyzed(flag int64) bool {
-	return (flag & AnalyzeFlag) > 0
-}
-
 // ValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
 // idxCols equals to number of origin values, else idxCols is 0.
 func ValueToString(vars *variable.SessionVars, value *types.Datum, idxCols int, idxColumnTypes []byte) (string, error) {
