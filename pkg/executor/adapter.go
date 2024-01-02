@@ -1460,16 +1460,21 @@ func (a *ExecStmt) recordLastQueryInfo(err error) {
 	case *ast.ExecuteStmt, ast.DMLNode:
 		recordLastQuery = true
 	}
-	// Keep the previous queryInfo for `show session_states` because the statement needs to encode it.
-	failpoint.Inject("mockRUConsumption", func(_ failpoint.Value) {
-		sessVars.LastRUConsumption = float64(len(sessVars.StmtCtx.OriginalSQL))
-	})
 	if recordLastQuery {
+		var lastRUConsumption float64
+		if ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
+			ruDetail := ruDetailRaw.(*util.RUDetails)
+			lastRUConsumption = ruDetail.RRU() + ruDetail.WRU()
+		}
+		failpoint.Inject("mockRUConsumption", func(_ failpoint.Value) {
+			lastRUConsumption = float64(len(sessVars.StmtCtx.OriginalSQL))
+		})
+		// Keep the previous queryInfo for `show session_states` because the statement needs to encode it.
 		sessVars.LastQueryInfo = sessionstates.QueryInfo{
 			TxnScope:          sessVars.CheckAndGetTxnScope(),
 			StartTS:           sessVars.TxnCtx.StartTS,
 			ForUpdateTS:       sessVars.TxnCtx.GetForUpdateTS(),
-			LastRUConsumption: sessVars.LastRUConsumption,
+			LastRUConsumption: lastRUConsumption,
 		}
 		if err != nil {
 			sessVars.LastQueryInfo.ErrMsg = err.Error()
@@ -1925,7 +1930,6 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	var ruDetail *util.RUDetails
 	if ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
 		ruDetail = ruDetailRaw.(*util.RUDetails)
-		sessVars.LastRUConsumption = ruDetail.RRU() + ruDetail.WRU()
 	}
 
 	if stmtCtx.WaitLockLeaseTime > 0 {

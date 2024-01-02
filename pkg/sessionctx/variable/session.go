@@ -792,9 +792,6 @@ type SessionVars struct {
 	// LastFoundRows is the number of found rows of last query statement
 	LastFoundRows uint64
 
-	// LastRUConsumption is the total RU consumption of last query statement
-	LastRUConsumption float64
-
 	// StmtCtx holds variables for current executing statement.
 	StmtCtx *stmtctx.StatementContext
 
