@@ -368,6 +368,9 @@ func (h *globalBindingHandle) DropGlobalBindingByDigest(sqlDigest string) (delet
 	if err != nil {
 		return 0, err
 	}
+	if oldRecord == nil {
+		return 0, nil
+	}
 	return h.DropGlobalBinding(oldRecord.OriginalSQL, strings.ToLower(oldRecord.Db), nil)
 }
 
