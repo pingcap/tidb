@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/atomic"
 )
 
@@ -277,11 +278,11 @@ func (c *testSplitClient) ScanRegions(ctx context.Context, key, endKey []byte, l
 	return regions, err
 }
 
-func (c *testSplitClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r pdtypes.Rule, err error) {
+func (c *testSplitClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r *pdhttp.Rule, err error) {
 	return
 }
 
-func (c *testSplitClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error {
+func (c *testSplitClient) SetPlacementRule(ctx context.Context, rule *pdhttp.Rule) error {
 	return nil
 }
 

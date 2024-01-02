@@ -178,9 +178,9 @@ func (*ScalarSubQueryExpr) IsCorrelated() bool {
 	return false
 }
 
-// ConstItem implements the Expression interface.
-func (*ScalarSubQueryExpr) ConstItem(_ bool) bool {
-	return true
+// ConstLevel returns the const level for the expression
+func (*ScalarSubQueryExpr) ConstLevel() expression.ConstLevel {
+	return expression.ConstNone
 }
 
 // Decorrelate implements the Expression interface.

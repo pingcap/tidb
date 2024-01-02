@@ -500,6 +500,8 @@ func (e *LoadDataController) checkFieldParams() error {
 }
 
 func (p *Plan) initDefaultOptions() {
+	// we're using cpu count of current node, not of framework managed nodes,
+	// but it seems more intuitive.
 	threadCnt := cpu.GetCPUCount()
 	threadCnt = int(math.Max(1, float64(threadCnt)*0.5))
 

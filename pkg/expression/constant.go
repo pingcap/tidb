@@ -421,9 +421,12 @@ func (c *Constant) IsCorrelated() bool {
 	return false
 }
 
-// ConstItem implements Expression interface.
-func (c *Constant) ConstItem(acrossCtx bool) bool {
-	return !acrossCtx || (c.DeferredExpr == nil && c.ParamMarker == nil)
+// ConstLevel returns the const level for the expression
+func (c *Constant) ConstLevel() ConstLevel {
+	if c.DeferredExpr != nil || c.ParamMarker != nil {
+		return ConstOnlyInContext
+	}
+	return ConstStrict
 }
 
 // Decorrelate implements Expression interface.

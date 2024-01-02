@@ -414,7 +414,7 @@ func (s *decorrelateSolver) optimize(ctx context.Context, p LogicalPlan, opt *lo
 						defaultValueMap := s.aggDefaultValueMap(agg)
 						// We should use it directly, rather than building a projection.
 						if len(defaultValueMap) > 0 {
-							proj := LogicalProjection{}.Init(agg.SCtx(), agg.SelectBlockOffset())
+							proj := LogicalProjection{}.Init(agg.SCtx(), agg.QueryBlockOffset())
 							proj.SetSchema(apply.schema)
 							proj.Exprs = expression.Column2Exprs(apply.schema.Columns)
 							for i, val := range defaultValueMap {

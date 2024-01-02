@@ -2386,4 +2386,9 @@ func TestCheckDiskAvail(t *testing.T) {
 	ctx := context.Background()
 	err := checkDiskAvail(ctx, store)
 	require.NoError(t, err)
+
+	// pd may return this StoreInfo before the store reports heartbeat
+	store = &http.StoreInfo{Status: http.StoreStatus{LeaderWeight: 1.0, RegionWeight: 1.0}}
+	err = checkDiskAvail(ctx, store)
+	require.NoError(t, err)
 }

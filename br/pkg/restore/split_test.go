@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -241,11 +242,11 @@ func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit 
 	return regions, nil
 }
 
-func (c *TestClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r pdtypes.Rule, err error) {
+func (c *TestClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r *pdhttp.Rule, err error) {
 	return
 }
 
-func (c *TestClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error {
+func (c *TestClient) SetPlacementRule(ctx context.Context, rule *pdhttp.Rule) error {
 	return nil
 }
 
@@ -1052,10 +1053,10 @@ func (f *fakeSplitClient) ScanRegions(ctx context.Context, startKey, endKey []by
 	}
 	return result, nil
 }
-func (*fakeSplitClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (pdtypes.Rule, error) {
-	return pdtypes.Rule{}, nil
+func (*fakeSplitClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (*pdhttp.Rule, error) {
+	return nil, nil
 }
-func (*fakeSplitClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error { return nil }
+func (*fakeSplitClient) SetPlacementRule(ctx context.Context, rule *pdhttp.Rule) error { return nil }
 func (*fakeSplitClient) DeletePlacementRule(ctx context.Context, groupID, ruleID string) error {
 	return nil
 }

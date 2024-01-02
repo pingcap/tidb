@@ -102,29 +102,29 @@ func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, no
 		return res
 	}
 	for _, child := range children {
-		blockOffset := child.SelectBlockOffset()
-		if blockOffset == -1 {
+		qbOffset := child.QueryBlockOffset()
+		if qbOffset == -1 {
 			continue
 		}
 		var dbName, tableName *model.CIStr
-		if blockOffset != parentOffset {
+		if qbOffset != parentOffset {
 			var blockAsNames []ast.HintTable
 			if p := sctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
 				blockAsNames = *p
 			}
-			if blockOffset >= len(blockAsNames) {
+			if qbOffset >= len(blockAsNames) {
 				continue
 			}
-			hintTable := blockAsNames[blockOffset]
+			hintTable := blockAsNames[qbOffset]
 			// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
-			dbName, tableName, blockOffset = &hintTable.DBName, &hintTable.TableName, parentOffset
+			dbName, tableName, qbOffset = &hintTable.DBName, &hintTable.TableName, parentOffset
 		} else {
 			dbName, tableName = extractTableAsName(child)
 		}
 		if tableName == nil || tableName.L == "" {
 			continue
 		}
-		qbName, err := h.GenerateQBName(nodeType, blockOffset)
+		qbName, err := h.GenerateQBName(nodeType, qbOffset)
 		if err != nil {
 			continue
 		}
@@ -139,7 +139,7 @@ func getJoinHints(sctx sessionctx.Context, joinType string, parentOffset int, no
 }
 
 func genHintsFromSingle(p PhysicalPlan, nodeType h.NodeType, storeType kv.StoreType, res []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
-	qbName, err := h.GenerateQBName(nodeType, p.SelectBlockOffset())
+	qbName, err := h.GenerateQBName(nodeType, p.QueryBlockOffset())
 	if err != nil {
 		return res
 	}
@@ -261,16 +261,16 @@ func genHintsFromSingle(p PhysicalPlan, nodeType h.NodeType, storeType kv.StoreT
 			})
 		}
 	case *PhysicalMergeJoin:
-		res = append(res, getJoinHints(p.SCtx(), h.HintSMJ, p.SelectBlockOffset(), nodeType, pp.children...)...)
+		res = append(res, getJoinHints(p.SCtx(), h.HintSMJ, p.QueryBlockOffset(), nodeType, pp.children...)...)
 	case *PhysicalHashJoin:
 		// TODO: support the hash_join_build and hash_join_probe hint for auto capture
-		res = append(res, getJoinHints(p.SCtx(), h.HintHJ, p.SelectBlockOffset(), nodeType, pp.children...)...)
+		res = append(res, getJoinHints(p.SCtx(), h.HintHJ, p.QueryBlockOffset(), nodeType, pp.children...)...)
 	case *PhysicalIndexJoin:
-		res = append(res, getJoinHints(p.SCtx(), h.HintINLJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+		res = append(res, getJoinHints(p.SCtx(), h.HintINLJ, p.QueryBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
 	case *PhysicalIndexMergeJoin:
-		res = append(res, getJoinHints(p.SCtx(), h.HintINLMJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+		res = append(res, getJoinHints(p.SCtx(), h.HintINLMJ, p.QueryBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
 	case *PhysicalIndexHashJoin:
-		res = append(res, getJoinHints(p.SCtx(), h.HintINLHJ, p.SelectBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
+		res = append(res, getJoinHints(p.SCtx(), h.HintINLHJ, p.QueryBlockOffset(), nodeType, pp.children[pp.InnerChildIdx])...)
 	}
 	return res
 }

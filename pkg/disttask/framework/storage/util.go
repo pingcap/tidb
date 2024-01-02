@@ -16,9 +16,13 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 // GetSubtasksFromHistoryForTest gets subtasks from history table for test.
@@ -98,4 +102,28 @@ func GetSubtaskEndTimeForTest(ctx context.Context, stm *TaskManager, subtaskID i
 		return rs[0].GetTime(0).GoTime(time.Local)
 	}
 	return time.Time{}, nil
+}
+
+// PrintSubtaskInfo log the subtask info by taskKey. Only used for UT.
+func (stm *TaskManager) PrintSubtaskInfo(ctx context.Context, taskID int64) {
+	rs, _ := stm.executeSQLWithNewSession(ctx,
+		`select `+subtaskColumns+` from mysql.tidb_background_subtask_history where task_key = %?`, taskID)
+	rs2, _ := stm.executeSQLWithNewSession(ctx,
+		`select `+subtaskColumns+` from mysql.tidb_background_subtask where task_key = %?`, taskID)
+	rs = append(rs, rs2...)
+
+	for _, r := range rs {
+		errBytes := r.GetBytes(13)
+		var err error
+		if len(errBytes) > 0 {
+			stdErr := errors.Normalize("")
+			err1 := stdErr.UnmarshalJSON(errBytes)
+			if err1 != nil {
+				err = err1
+			} else {
+				err = stdErr
+			}
+		}
+		logutil.BgLogger().Info(fmt.Sprintf("subTask: %v\n", row2SubTask(r)), zap.Error(err))
+	}
 }

@@ -33,7 +33,7 @@ type TaskManager interface {
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
 	UpdateTaskAndAddSubTasks(ctx context.Context, task *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error)
 	GCSubtasks(ctx context.Context) error
-	GetAllNodes(ctx context.Context) ([]string, error)
+	GetAllNodes(ctx context.Context) ([]proto.ManagedNode, error)
 	DeleteDeadNodes(ctx context.Context, nodes []string) error
 	TransferTasks2History(ctx context.Context, tasks []*proto.Task) error
 	// CancelTask updated task state to canceling.
@@ -65,7 +65,7 @@ type TaskManager interface {
 	// we only consider pending/running subtasks, subtasks related to revert are
 	// not considered.
 	GetUsedSlotsOnNodes(ctx context.Context) (map[string]int, error)
-	GetSubtaskInStatesCnt(ctx context.Context, taskID int64, states ...interface{}) (int64, error)
+	GetSubtaskInStatesCnt(ctx context.Context, taskID int64, states ...proto.SubtaskState) (int64, error)
 	ResumeSubtasks(ctx context.Context, taskID int64) error
 	CollectSubTaskError(ctx context.Context, taskID int64) ([]error, error)
 	TransferSubTasks2History(ctx context.Context, taskID int64) error
@@ -74,10 +74,10 @@ type TaskManager interface {
 	// to execute tasks. If there are any nodes with background role, we use them,
 	// else we use nodes without role.
 	// returned nodes are sorted by node id(host:port).
-	GetManagedNodes(ctx context.Context) ([]string, error)
+	GetManagedNodes(ctx context.Context) ([]proto.ManagedNode, error)
 	GetTaskExecutorIDsByTaskID(ctx context.Context, taskID int64) ([]string, error)
 	GetSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error)
-	GetSubtasksByExecIdsAndStepAndState(ctx context.Context, tidbIDs []string, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error)
+	GetSubtasksByExecIdsAndStepAndState(ctx context.Context, tidbIDs []string, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error)
 	GetTaskExecutorIDsByTaskIDAndStep(ctx context.Context, taskID int64, step proto.Step) ([]string, error)
 
 	WithNewSession(fn func(se sessionctx.Context) error) error

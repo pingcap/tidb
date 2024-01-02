@@ -126,8 +126,9 @@ type StatsAnalyze interface {
 	// their associated instances being removed from the current cluster.
 	CleanupCorruptedAnalyzeJobsOnDeadInstances() error
 
-	// HandleAutoAnalyze analyzes the newly created table or index.
-	HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool)
+	// HandleAutoAnalyze analyzes the outdated tables. (The change percent of the table exceeds the threshold)
+	// It also analyzes newly created tables and newly added indexes.
+	HandleAutoAnalyze() (analyzed bool)
 
 	// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
 	CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool
