@@ -2074,8 +2074,13 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 	if err != nil {
 		return err
 	}
+<<<<<<< HEAD
 	task, err := taskManager.GetGlobalTaskByKeyWithHistory(w.ctx, taskKey)
 	if err != nil {
+=======
+	task, err := taskManager.GetTaskByKeyWithHistory(w.ctx, taskKey)
+	if err != nil && err != storage.ErrTaskNotFound {
+>>>>>>> 237b2c7d507 (disttask: fix panic in task executor/scheduler (#49877))
 		return err
 	}
 	if task != nil {
@@ -2189,9 +2194,15 @@ func (w *worker) updateJobRowCount(taskKey string, jobID int64) {
 		logutil.BgLogger().Warn("cannot get task manager", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 		return
 	}
+<<<<<<< HEAD
 	gTask, err := taskMgr.GetGlobalTaskByKey(w.ctx, taskKey)
 	if err != nil || gTask == nil {
 		logutil.BgLogger().Warn("cannot get global task", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
+=======
+	task, err := taskMgr.GetTaskByKey(w.ctx, taskKey)
+	if err != nil {
+		logutil.BgLogger().Warn("cannot get task", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
+>>>>>>> 237b2c7d507 (disttask: fix panic in task executor/scheduler (#49877))
 		return
 	}
 	rowCount, err := taskMgr.GetSubtaskRowCount(w.ctx, gTask.ID, proto.StepOne)

@@ -197,9 +197,12 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 	if err != nil {
 		return 0, nil, err
 	}
+<<<<<<< HEAD
 	if globalTask == nil {
 		return 0, nil, errors.Errorf("cannot find global task with ID %d", taskID)
 	}
+=======
+>>>>>>> 237b2c7d507 (disttask: fix panic in task executor/scheduler (#49877))
 
 	metrics.UpdateMetricsForAddTask(globalTask)
 	// update logger with task id.
@@ -234,9 +237,12 @@ func getTaskMeta(ctx context.Context, jobID int64) (*TaskMeta, error) {
 	if err != nil {
 		return nil, err
 	}
+<<<<<<< HEAD
 	if globalTask == nil {
 		return nil, errors.Errorf("cannot find global task with key %s", taskKey)
 	}
+=======
+>>>>>>> 237b2c7d507 (disttask: fix panic in task executor/scheduler (#49877))
 	var taskMeta TaskMeta
 	if err := json.Unmarshal(globalTask.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
@@ -257,9 +263,12 @@ func GetTaskImportedRows(ctx context.Context, jobID int64) (uint64, error) {
 	if err != nil {
 		return 0, err
 	}
+<<<<<<< HEAD
 	if task == nil {
 		return 0, errors.Errorf("cannot find global task with key %s", taskKey)
 	}
+=======
+>>>>>>> 237b2c7d507 (disttask: fix panic in task executor/scheduler (#49877))
 	taskMeta := TaskMeta{}
 	if err = json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return 0, errors.Trace(err)

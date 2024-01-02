@@ -31,7 +31,11 @@ go_test(
     srcs = ["table_test.go"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 8,
+=======
+    shard_count = 15,
+>>>>>>> 237b2c7d507 (disttask: fix panic in task executor/scheduler (#49877))
     deps = [
         ":storage",
         "//pkg/disttask/framework/proto",

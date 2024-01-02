@@ -143,6 +143,7 @@ func (t *Task) IsDone() bool {
 		t.State == TaskStateFailed
 }
 
+<<<<<<< HEAD
 // Subtask represents the subtask of distribute framework.
 // Each task is divided into multiple subtasks by dispatcher.
 type Subtask struct {
@@ -165,6 +166,12 @@ type Subtask struct {
 	Meta       []byte
 	Summary    string
 }
+=======
+var (
+	// EmptyMeta is the empty meta of task/subtask.
+	EmptyMeta = []byte("{}")
+)
+>>>>>>> 237b2c7d507 (disttask: fix panic in task executor/scheduler (#49877))
 
 // IsFinished checks if the subtask is finished.
 func (t *Subtask) IsFinished() bool {

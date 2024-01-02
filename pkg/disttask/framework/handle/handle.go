@@ -37,11 +37,24 @@ func SubmitGlobalTask(ctx context.Context, taskKey string, taskType proto.TaskTy
 	if err != nil {
 		return nil, err
 	}
+<<<<<<< HEAD
 	globalTask, err := globalTaskManager.GetGlobalTaskByKey(ctx, taskKey)
+=======
+	task, err := taskManager.GetTaskByKey(ctx, taskKey)
+	if err != nil && err != storage.ErrTaskNotFound {
+		return nil, err
+	}
+	if task != nil {
+		return nil, storage.ErrTaskAlreadyExists
+	}
+
+	taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, concurrency, taskMeta)
+>>>>>>> 237b2c7d507 (disttask: fix panic in task executor/scheduler (#49877))
 	if err != nil {
 		return nil, err
 	}
 
+<<<<<<< HEAD
 	if globalTask == nil {
 		taskID, err := globalTaskManager.AddNewGlobalTask(ctx, taskKey, taskType, concurrency, taskMeta)
 		if err != nil {
@@ -59,6 +72,16 @@ func SubmitGlobalTask(ctx context.Context, taskKey string, taskType proto.TaskTy
 		metrics.UpdateMetricsForAddTask(globalTask)
 	}
 	return globalTask, nil
+=======
+	task, err = taskManager.GetTaskByID(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	metrics.UpdateMetricsForAddTask(task)
+
+	NotifyTaskChange()
+	return task, nil
+>>>>>>> 237b2c7d507 (disttask: fix panic in task executor/scheduler (#49877))
 }
 
 // WaitGlobalTask waits for a global task done or paused.
@@ -97,10 +120,14 @@ func WaitTaskDoneByKey(ctx context.Context, taskKey string) error {
 	if err != nil {
 		return err
 	}
+<<<<<<< HEAD
 	if task == nil {
 		return errors.Errorf("cannot find global task with key %s", taskKey)
 	}
 	_, err = waitTask(ctx, task.ID, func(t *proto.Task) bool {
+=======
+	_, err = WaitTask(ctx, task.ID, func(t *proto.Task) bool {
+>>>>>>> 237b2c7d507 (disttask: fix panic in task executor/scheduler (#49877))
 		return t.IsDone()
 	})
 	return err
@@ -120,17 +147,24 @@ func waitTask(ctx context.Context, id int64, matchFn func(*proto.Task) bool) (*p
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-ticker.C:
+<<<<<<< HEAD
 			found, err := globalTaskManager.GetTaskByIDWithHistory(ctx, id)
+=======
+			task, err := taskManager.GetTaskByIDWithHistory(ctx, id)
+>>>>>>> 237b2c7d507 (disttask: fix panic in task executor/scheduler (#49877))
 			if err != nil {
 				logger.Error("cannot get global task during waiting", zap.Error(err))
 				continue
 			}
+<<<<<<< HEAD
 			if found == nil {
 				return nil, errors.Errorf("cannot find global task with ID %d", id)
 			}
+=======
+>>>>>>> 237b2c7d507 (disttask: fix panic in task executor/scheduler (#49877))
 
-			if matchFn(found) {
-				return found, nil
+			if matchFn(task) {
+				return task, nil
 			}
 		}
 	}
@@ -153,14 +187,22 @@ func CancelGlobalTask(ctx context.Context, taskKey string) error {
 	}
 	task, err := taskManager.GetGlobalTaskByKey(ctx, taskKey)
 	if err != nil {
+		if err == storage.ErrTaskNotFound {
+			logutil.BgLogger().Info("task not exist", zap.String("taskKey", taskKey))
+			return nil
+		}
 		return err
 	}
+<<<<<<< HEAD
 	if task == nil {
 		logutil.BgLogger().Info("task not exist", zap.String("taskKey", taskKey))
 
 		return nil
 	}
 	return taskManager.CancelGlobalTask(ctx, task.ID)
+=======
+	return taskManager.CancelTask(ctx, task.ID)
+>>>>>>> 237b2c7d507 (disttask: fix panic in task executor/scheduler (#49877))
 }
 
 // PauseTask pauses a task.

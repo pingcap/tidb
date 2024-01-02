@@ -40,7 +40,41 @@ import (
 const (
 	defaultSubtaskKeepDays = 14
 
+<<<<<<< HEAD
 	subtaskColumns = `id, step, task_key, type, exec_id, state, start_time, state_update_time, meta, summary`
+=======
+	basicTaskColumns = `id, task_key, type, state, step, priority, concurrency, create_time`
+	// TODO: dispatcher_id will update to scheduler_id later
+	taskColumns = basicTaskColumns + `, start_time, state_update_time, meta, dispatcher_id, error`
+	// InsertTaskColumns is the columns used in insert task.
+	InsertTaskColumns = `task_key, type, state, priority, concurrency, step, meta, create_time`
+
+	subtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time,
+				start_time, state_update_time, meta, summary, ordinal`
+	// InsertSubtaskColumns is the columns used in insert subtask.
+	InsertSubtaskColumns = `step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary`
+)
+
+var (
+	maxSubtaskBatchSize = 16 * units.MiB
+
+	// ErrUnstableSubtasks is the error when we detected that the subtasks are
+	// unstable, i.e. count, order and content of the subtasks are changed on
+	// different call.
+	ErrUnstableSubtasks = errors.New("unstable subtasks")
+
+	// ErrTaskNotFound is the error when we can't found task.
+	// i.e. onFinished() in scheduler move task from tidb_global_task to tidb_global_task_history.
+	ErrTaskNotFound = errors.New("task not found")
+
+	// ErrTaskAlreadyExists is the error when we submit a task with the same task key.
+	// i.e. SubmitTask in handle may submit a task twice.
+	ErrTaskAlreadyExists = errors.New("task already exists")
+
+	// ErrSubtaskNotFound is the error when can't find subtask by subtask_id and execId,
+	// i.e. scheduler change the subtask's execId when subtask need to balance to other nodes.
+	ErrSubtaskNotFound = errors.New("subtask not found")
+>>>>>>> 237b2c7d507 (disttask: fix panic in task executor/scheduler (#49877))
 )
 
 // SessionExecutor defines the interface for executing SQLs in a session.
@@ -273,7 +307,7 @@ func (stm *TaskManager) GetGlobalTaskByID(ctx context.Context, taskID int64) (ta
 		return task, err
 	}
 	if len(rs) == 0 {
-		return nil, nil
+		return nil, ErrTaskNotFound
 	}
 
 	return row2GlobeTask(rs[0]), nil
@@ -287,7 +321,7 @@ func (stm *TaskManager) GetTaskByIDWithHistory(ctx context.Context, taskID int64
 		return task, err
 	}
 	if len(rs) == 0 {
-		return nil, nil
+		return nil, ErrTaskNotFound
 	}
 
 	return row2GlobeTask(rs[0]), nil
@@ -300,7 +334,7 @@ func (stm *TaskManager) GetGlobalTaskByKey(ctx context.Context, key string) (tas
 		return task, err
 	}
 	if len(rs) == 0 {
-		return nil, nil
+		return nil, ErrTaskNotFound
 	}
 
 	return row2GlobeTask(rs[0]), nil
@@ -314,7 +348,7 @@ func (stm *TaskManager) GetGlobalTaskByKeyWithHistory(ctx context.Context, key s
 		return task, err
 	}
 	if len(rs) == 0 {
-		return nil, nil
+		return nil, ErrTaskNotFound
 	}
 
 	return row2GlobeTask(rs[0]), nil

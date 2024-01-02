@@ -50,21 +50,56 @@ func TestHandle(t *testing.T) {
 	err := handle.SubmitAndRunGlobalTask(ctx, "1", proto.TaskTypeExample, 2, []byte("byte"))
 	require.Error(t, err)
 
+<<<<<<< HEAD
 	task, err := mgr.GetGlobalTaskByID(ctx, 1)
+=======
+	// no scheduler registered
+	task, err := handle.SubmitTask(ctx, "1", proto.TaskTypeExample, 2, proto.EmptyMeta)
+	require.NoError(t, err)
+	waitedTask, err := handle.WaitTask(ctx, task.ID, func(task *proto.Task) bool {
+		return task.IsDone()
+	})
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateFailed, waitedTask.State)
+	require.ErrorContains(t, waitedTask.Error, "unknown task type")
+
+	task, err = mgr.GetTaskByID(ctx, 1)
+>>>>>>> 237b2c7d507 (disttask: fix panic in task executor/scheduler (#49877))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), task.ID)
 	require.Equal(t, "1", task.Key)
 	require.Equal(t, proto.TaskTypeExample, task.Type)
+<<<<<<< HEAD
 	// no dispatcher registered
 	require.Equal(t, proto.TaskStateFailed, task.State)
 	require.Equal(t, proto.StepInit, task.Step)
 	require.Equal(t, uint64(2), task.Concurrency)
 	require.Equal(t, []byte("byte"), task.Meta)
+=======
+	// no scheduler registered.
+	require.Equal(t, proto.TaskStateFailed, task.State)
+	require.Equal(t, proto.StepInit, task.Step)
+	require.Equal(t, 2, task.Concurrency)
+	require.Equal(t, proto.EmptyMeta, task.Meta)
+>>>>>>> 237b2c7d507 (disttask: fix panic in task executor/scheduler (#49877))
 
 	require.NoError(t, handle.CancelGlobalTask(ctx, "1"))
 
+<<<<<<< HEAD
 	task, err = handle.SubmitGlobalTask(ctx, "2", proto.TaskTypeExample, 2, []byte("byte"))
 	require.NoError(t, err)
+=======
+	task, err = handle.SubmitTask(ctx, "2", proto.TaskTypeExample, 2, proto.EmptyMeta)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), task.ID)
+	require.Equal(t, "2", task.Key)
+
+	// submit same task.
+	task, err = handle.SubmitTask(ctx, "2", proto.TaskTypeExample, 2, proto.EmptyMeta)
+	require.Nil(t, task)
+	require.Error(t, storage.ErrTaskAlreadyExists, err)
+	// pause and resume task.
+>>>>>>> 237b2c7d507 (disttask: fix panic in task executor/scheduler (#49877))
 	require.NoError(t, handle.PauseTask(ctx, "2"))
 	require.NoError(t, handle.ResumeTask(ctx, "2"))
 }
