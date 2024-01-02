@@ -54,7 +54,7 @@ func InitTestContext(t *testing.T, nodeNum int) (context.Context, *gomock.Contro
 	})
 
 	executionContext := testkit.NewDistExecutionContext(t, nodeNum)
-	WaitNodeRegistered(t, ctx)
+	WaitNodeRegistered(ctx, t)
 	testCtx := &TestContext{
 		subtasksHasRun: make(map[string]map[int64]struct{}),
 	}
@@ -87,7 +87,8 @@ func getTaskStepKey(id int64, step proto.Step) string {
 	return fmt.Sprintf("%d/%d", id, step)
 }
 
-func WaitNodeRegistered(t *testing.T, ctx context.Context) {
+// WaitNodeRegistered waits until some node is registered.
+func WaitNodeRegistered(ctx context.Context, t *testing.T) {
 	// wait until some node is registered.
 	require.Eventually(t, func() bool {
 		taskMgr, err := storage.GetTaskManager()

@@ -53,7 +53,7 @@ func TestHandle(t *testing.T) {
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
 
-	testutil.WaitNodeRegistered(t, ctx)
+	testutil.WaitNodeRegistered(ctx, t)
 
 	// no scheduler registered
 	task, err := handle.SubmitTask(ctx, "1", proto.TaskTypeExample, 2, []byte("byte"))
