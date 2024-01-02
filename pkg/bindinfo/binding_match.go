@@ -50,13 +50,13 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*BindRecord, stri
 	if ctx.Value(SessionBindInfoKeyType) == nil {
 		return nil, "", nil
 	}
-	stmtNode, normalizedSQL, sqlDigest, err := NormalizeStmtForBinding(stmt, ctx.GetSessionVars().CurrentDB, false)
+	stmtNode, _, sqlDigest, err := NormalizeStmtForBinding(stmt, ctx.GetSessionVars().CurrentDB, false)
 	if err != nil || stmtNode == nil {
 		return nil, "", err
 	}
-	var normalizedSQLUni, sqlDigestUni string
+	var sqlDigestUni string
 	if ctx.GetSessionVars().EnableUniversalBinding {
-		_, normalizedSQLUni, sqlDigestUni, err = NormalizeStmtForBinding(stmt, ctx.GetSessionVars().CurrentDB, true)
+		_, _, sqlDigestUni, err = NormalizeStmtForBinding(stmt, ctx.GetSessionVars().CurrentDB, true)
 		if err != nil {
 			return nil, "", err
 		}
@@ -64,11 +64,11 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*BindRecord, stri
 
 	// the priority: session normal > session universal > global normal > global universal
 	sessionHandle := ctx.Value(SessionBindInfoKeyType).(SessionBindingHandle)
-	if bindRecord := sessionHandle.GetSessionBinding(sqlDigest, normalizedSQL, ""); bindRecord != nil && bindRecord.HasEnabledBinding() {
+	if bindRecord := sessionHandle.GetSessionBinding(sqlDigest); bindRecord != nil && bindRecord.HasEnabledBinding() {
 		return bindRecord, metrics.ScopeSession, nil
 	}
 	if ctx.GetSessionVars().EnableUniversalBinding {
-		if bindRecord := sessionHandle.GetSessionBinding(sqlDigestUni, normalizedSQLUni, ""); bindRecord != nil && bindRecord.HasEnabledBinding() {
+		if bindRecord := sessionHandle.GetSessionBinding(sqlDigestUni); bindRecord != nil && bindRecord.HasEnabledBinding() {
 			return bindRecord, metrics.ScopeSession, nil
 		}
 	}
@@ -76,11 +76,11 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*BindRecord, stri
 	if globalHandle == nil {
 		return nil, "", nil
 	}
-	if bindRecord := globalHandle.GetGlobalBinding(sqlDigest, normalizedSQL, ""); bindRecord != nil && bindRecord.HasEnabledBinding() {
+	if bindRecord := globalHandle.GetGlobalBinding(sqlDigest); bindRecord != nil && bindRecord.HasEnabledBinding() {
 		return bindRecord, metrics.ScopeGlobal, nil
 	}
 	if ctx.GetSessionVars().EnableUniversalBinding {
-		if bindRecord := globalHandle.GetGlobalBinding(sqlDigestUni, normalizedSQLUni, ""); bindRecord != nil && bindRecord.HasEnabledBinding() {
+		if bindRecord := globalHandle.GetGlobalBinding(sqlDigestUni); bindRecord != nil && bindRecord.HasEnabledBinding() {
 			return bindRecord, metrics.ScopeGlobal, nil
 		}
 	}
