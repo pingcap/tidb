@@ -607,7 +607,7 @@ func TestInvisibleIndex(t *testing.T) {
 	tk.MustExec("execute stmt1")
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.IndexNames, 0)
 
-	tk.MustExec("drop binding for select * from t")
+	tk.MustExec("drop global binding for select * from t")
 }
 
 func TestGCBindRecord(t *testing.T) {

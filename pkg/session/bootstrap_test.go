@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -580,7 +581,7 @@ func TestUpdateBindInfo(t *testing.T) {
 		require.Equal(t, "", row.GetString(2))
 		require.Equal(t, bindinfo.Enabled, row.GetString(3))
 		require.NoError(t, r.Close())
-		sql = fmt.Sprintf("drop global binding for %s", bindCase.deleteText)
+		sql = fmt.Sprintf("UPDATE mysql.bind_info SET status = \"%s\" WHERE original_sql = \"%s\"", "deleted", parser.Normalize(bindCase.deleteText))
 		MustExec(t, se, sql)
 		r = MustExecToRecodeSet(t, se, `select original_sql, bind_sql, status from mysql.bind_info where source != 'builtin'`)
 		require.NoError(t, r.Next(ctx, req))
