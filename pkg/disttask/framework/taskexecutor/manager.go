@@ -41,10 +41,10 @@ var (
 	recoverMetaInterval     = 90 * time.Second
 	retrySQLTimes           = 30
 	retrySQLInterval        = 500 * time.Millisecond
-	unfinishedSubtaskStates = []interface{}{
-		proto.TaskStatePending, proto.TaskStateRevertPending,
+	unfinishedSubtaskStates = []proto.SubtaskState{
+		proto.SubtaskStatePending, proto.SubtaskStateRevertPending,
 		// for the case that the tidb is restarted when the subtask is running.
-		proto.TaskStateRunning, proto.TaskStateReverting,
+		proto.SubtaskStateRunning, proto.SubtaskStateReverting,
 	}
 )
 
@@ -117,6 +117,9 @@ func (m *Manager) initMeta() (err error) {
 		err = m.taskTable.StartManager(m.ctx, m.id, config.GetGlobalConfig().Instance.TiDBServiceScope)
 		if err == nil {
 			break
+		}
+		if err1 := m.ctx.Err(); err1 != nil {
+			return err1
 		}
 		if i%10 == 0 {
 			logutil.Logger(m.logCtx).Warn("start manager failed",
