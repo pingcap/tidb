@@ -990,3 +990,19 @@ func TestCancelAndExecIdChanged(t *testing.T) {
 	// state unchanged
 	require.NotNil(t, subtask)
 }
+
+func TestTaskNotFound(t *testing.T) {
+	_, gm, ctx := testutil.InitTableTest(t)
+	task, err := gm.GetTaskByID(ctx, 1)
+	require.Error(t, err, storage.ErrTaskNotFound)
+	require.Nil(t, task)
+	task, err = gm.GetTaskByIDWithHistory(ctx, 1)
+	require.Error(t, err, storage.ErrTaskNotFound)
+	require.Nil(t, task)
+	task, err = gm.GetTaskByKey(ctx, "key")
+	require.Error(t, err, storage.ErrTaskNotFound)
+	require.Nil(t, task)
+	task, err = gm.GetTaskByKeyWithHistory(ctx, "key")
+	require.Error(t, err, storage.ErrTaskNotFound)
+	require.Nil(t, task)
+}

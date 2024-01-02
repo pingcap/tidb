@@ -406,9 +406,6 @@ func (m *Manager) onRunnableTask(task *proto.Task) {
 			m.logErr(err)
 			return
 		}
-		if task == nil {
-			return
-		}
 		if task.State != proto.TaskStateRunning && task.State != proto.TaskStateReverting {
 			logutil.Logger(m.logCtx).Info("onRunnableTask exit",
 				zap.Int64("task-id", task.ID), zap.Int64("step", int64(task.Step)), zap.Stringer("state", task.State))

@@ -233,11 +233,15 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 				failpoint.Break()
 			})
 			newTask, err := s.taskTable.GetTaskByID(runCtx, task.ID)
+			// When the task move history table of not found, the task executor should exit.
+			if err == storage.ErrTaskNotFound {
+				break
+			}
 			if err != nil {
 				logutil.Logger(s.logCtx).Warn("GetTaskByID meets error", zap.Error(err))
 				continue
 			}
-			// When the task move to next step or task state changes, the TaskExecutor should exit.
+			// When the task move to next step or task state changes, the task executor should exit.
 			if newTask.Step != task.Step || newTask.State != task.State {
 				break
 			}

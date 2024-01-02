@@ -62,6 +62,15 @@ var (
 	// unstable, i.e. count, order and content of the subtasks are changed on
 	// different call.
 	ErrUnstableSubtasks = errors.New("unstable subtasks")
+
+	// ErrTaskNotFound is the error when we can't found task.
+	// i.e. onFinished() in scheduler move task from tidb_global_task to tidb_global_task_history.
+	ErrTaskNotFound = errors.New("task not found")
+
+	// ErrTaskAlreadyExists is the error when we submit a task with the same task key.
+	// i.e. SubmitTask in handle may submit a task twice.
+	ErrTaskAlreadyExists = errors.New("task already exists")
+
 	// ErrSubtaskNotFound is the error when can't find subtask by subtask_id and execId,
 	// i.e. scheduler change the subtask's execId when subtask need to balance to other nodes.
 	ErrSubtaskNotFound = errors.New("subtask not found")
@@ -347,7 +356,7 @@ func (stm *TaskManager) GetTaskByID(ctx context.Context, taskID int64) (task *pr
 		return task, err
 	}
 	if len(rs) == 0 {
-		return nil, nil
+		return nil, ErrTaskNotFound
 	}
 
 	return row2Task(rs[0]), nil
@@ -361,7 +370,7 @@ func (stm *TaskManager) GetTaskByIDWithHistory(ctx context.Context, taskID int64
 		return task, err
 	}
 	if len(rs) == 0 {
-		return nil, nil
+		return nil, ErrTaskNotFound
 	}
 
 	return row2Task(rs[0]), nil
@@ -374,7 +383,7 @@ func (stm *TaskManager) GetTaskByKey(ctx context.Context, key string) (task *pro
 		return task, err
 	}
 	if len(rs) == 0 {
-		return nil, nil
+		return nil, ErrTaskNotFound
 	}
 
 	return row2Task(rs[0]), nil
@@ -388,7 +397,7 @@ func (stm *TaskManager) GetTaskByKeyWithHistory(ctx context.Context, key string)
 		return task, err
 	}
 	if len(rs) == 0 {
-		return nil, nil
+		return nil, ErrTaskNotFound
 	}
 
 	return row2Task(rs[0]), nil
