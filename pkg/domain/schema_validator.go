@@ -70,6 +70,7 @@ type schemaValidator struct {
 	mux                sync.RWMutex
 	lease              time.Duration
 	latestSchemaVer    int64
+	restartSchemaVer   int64
 	latestInfoSchema   infoschema.InfoSchema
 	do                 *Domain
 	latestSchemaExpire time.Time
@@ -110,6 +111,7 @@ func (s *schemaValidator) Restart() {
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	s.isStarted = true
+	s.restartSchemaVer = s.do.InfoSchema().SchemaMetaVersion()
 }
 
 func (s *schemaValidator) Reset() {
@@ -119,6 +121,7 @@ func (s *schemaValidator) Reset() {
 	s.isStarted = true
 	s.latestSchemaVer = 0
 	s.deltaSchemaInfos = s.deltaSchemaInfos[:0]
+	s.restartSchemaVer = 0
 }
 
 func (s *schemaValidator) Update(leaseGrantTS uint64, oldVer, currVer int64, change *transaction.RelatedSchemaChange) {
@@ -226,6 +229,10 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTa
 	defer s.mux.RUnlock()
 	if !s.isStarted {
 		logutil.BgLogger().Info("the schema validator stopped before checking")
+		return nil, ResultUnknown
+	}
+	if schemaVer < s.restartSchemaVer {
+		logutil.BgLogger().Info("the schema version is too old", zap.Int64("schemaVer", schemaVer))
 		return nil, ResultUnknown
 	}
 	if s.lease == 0 {
