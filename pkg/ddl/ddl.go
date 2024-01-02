@@ -275,9 +275,10 @@ type limitJobTask struct {
 
 // ddl is used to handle the statements that define the structure or schema of the database.
 type ddl struct {
-	m          sync.RWMutex
-	wg         tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
-	limitJobCh chan *limitJobTask
+	m            sync.RWMutex
+	wg           tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
+	limitJobCh   chan *limitJobTask
+	limitJobChV2 chan *limitJobTask
 
 	*ddlCtx
 	sessPool          *sess.Pool
@@ -290,7 +291,6 @@ type ddl struct {
 	// get notification if any DDL coming.
 	ddlJobCh chan struct{}
 
-	limitJobChV2 chan *limitJobTask
 	jobTaskCh    chan *limitJobTask
 	globalIDLock sync.Mutex
 }
@@ -415,7 +415,12 @@ type schemaVersionManager struct {
 }
 
 func newSchemaVersionManager(ctx context.Context, etcdClient *clientv3.Client) *schemaVersionManager {
-	return &schemaVersionManager{ctx: ctx, etcdClient: etcdClient}
+	return &schemaVersionManager{
+		ctx:        ctx,
+		etcdClient: etcdClient,
+		seMaps:     make(map[int64]*concurrency.Session),
+		lockMaps:   make(map[int64]*concurrency.Mutex),
+	}
 }
 
 func (sv *schemaVersionManager) setSchemaVersion(job *model.Job, store kv.Storage) (schemaVersion int64, err error) {
@@ -443,11 +448,11 @@ func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
 				return err
 			}
 			mu := concurrency.NewMutex(se, DDLSchemaVersionKey)
-			sv.seMaps[jobID] = se
-			sv.lockMaps[jobID] = mu
 			if err := mu.Lock(sv.ctx); err != nil {
 				return err
 			}
+			sv.seMaps[jobID] = se
+			sv.lockMaps[jobID] = mu
 		}
 	}
 	return nil
@@ -466,14 +471,14 @@ func (sv *schemaVersionManager) unlockSchemaVersion(jobID int64) {
 			if !ok {
 				return
 			}
+			delete(sv.seMaps, jobID)
+			delete(sv.lockMaps, jobID)
 			if err := mu.Unlock(sv.ctx); err != nil {
 				logutil.BgLogger().Error("unlock schema version", zap.Error(err))
 			}
 			if err := se.Close(); err != nil {
 				logutil.BgLogger().Error("close etcd session", zap.Error(err))
 			}
-			delete(sv.seMaps, jobID)
-			delete(sv.lockMaps, jobID)
 		}
 		sv.lockOwner.Store(0)
 		sv.schemaVersionMu.Unlock()
@@ -708,6 +713,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
+	ddlCtx.schemaVersionManager = newSchemaVersionManager(ddlCtx.ctx, opt.EtcdCli)
 
 	d := &ddl{
 		ddlCtx:            ddlCtx,
@@ -717,7 +723,6 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlJobCh:          make(chan struct{}, 100),
 		jobTaskCh:         make(chan *limitJobTask, batchAddingJobs),
 	}
-	ddlCtx.schemaVersionManager = newSchemaVersionManager(ddlCtx.ctx, opt.EtcdCli)
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
 		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
@@ -1274,7 +1279,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 }
 
 func (d *ddl) callHookOnChanged(job *model.Job, err error) error {
-	if job.State == model.JobStateNone || job.IsVersion2() {
+	if job.State == model.JobStateNone {
 		// We don't call the hook if the job haven't run yet.
 		return err
 	}

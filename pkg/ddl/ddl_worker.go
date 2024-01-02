@@ -306,16 +306,16 @@ func (d *ddl) addBatchDDLJobs2LocalWorker(tasks []*limitJobTask) error {
 	)
 
 	toTable := !variable.DDLForce2Queue.Load()
-	//	if toTable {
-	//		se, err := d.sessPool.Get()
-	//		if err != nil {
-	//			return errors.Trace(err)
-	//		}
-	//		defer d.sessPool.Put(se)
-	//		if err := d.checkFlashBackJobInTable(se); err != nil {
-	//			return errors.Trace(err)
-	//		}
-	//	}
+	if toTable {
+		se, err := d.sessPool.Get()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		defer d.sessPool.Put(se)
+		if err := d.checkFlashBackJobInTable(se); err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	// lock to reduce conflict
@@ -580,9 +580,6 @@ func (w *worker) updateDDLJob(job *model.Job, meetErr bool) error {
 		w.jobLogger(job).Info("meet something wrong before update DDL job, shouldn't update raw args",
 			zap.String("job", job.String()))
 	}
-	if job.IsVersion2() {
-		return errors.Trace(insertDDLJobs2Table(w.sess, updateRawArgs, job))
-	}
 	return errors.Trace(updateDDLJob2Table(w.sess, job, updateRawArgs))
 }
 
@@ -727,9 +724,11 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = w.deleteDDLJob(job)
-	if err != nil {
-		return errors.Trace(err)
+	if !job.IsVersion2() {
+		err = w.deleteDDLJob(job)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
 	job.BinlogInfo.FinishedTS = t.StartTS
@@ -872,31 +871,10 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		w.unlockSeqNum(err)
 	}()
 
-	err = w.sess.Begin()
+	txn, err := w.prepareTxn(job)
 	if err != nil {
 		return 0, err
 	}
-	failpoint.Inject("mockRunJobTime", func(val failpoint.Value) {
-		if val.(bool) {
-			time.Sleep(time.Duration(rand.Intn(500)) * time.Millisecond) // #nosec G404
-		}
-	})
-	txn, err := w.sess.Txn()
-	if err != nil {
-		w.sess.Rollback()
-		return 0, err
-	}
-	// Only general DDLs are allowed to be executed when TiKV is disk full.
-	if w.tp == addIdxWorker && job.IsRunning() {
-		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
-	}
-	w.setDDLLabelForTopSQL(job.ID, job.Query)
-	w.setDDLSourceForDiagnosis(job.ID, job.Type)
-	jobContext := w.jobContext(job.ID, job.ReorgMeta)
-	if tagger := w.getResourceGroupTaggerForTopSQL(job.ID); tagger != nil {
-		txn.SetOption(kv.ResourceGroupTagger, tagger)
-	}
-	txn.SetOption(kv.ResourceGroupName, jobContext.resourceGroupName)
 
 	t := meta.NewMeta(txn)
 	if job.IsDone() || job.IsRollbackDone() {
@@ -909,9 +887,6 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	d.mu.RLock()
 	d.mu.hook.OnJobRunBefore(job)
 	d.mu.RUnlock()
-
-	// set request source type to DDL type
-	txn.SetOption(kv.RequestSourceType, jobContext.ddlJobSourceType())
 
 	// If running job meets error, we will save this error in job Error
 	// and retry later if the job is not cancelled.
@@ -941,54 +916,27 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		schemaVer = 0
 	}
 
-	if !job.IsVersion2() {
-		err = w.registerMDLInfo(job, schemaVer)
-		if err != nil {
-			w.sess.Rollback()
-			d.unlockSchemaVersion(job.ID)
-			return 0, err
-		}
+	err = w.registerMDLInfo(job, schemaVer)
+	if err != nil {
+		w.sess.Rollback()
+		d.unlockSchemaVersion(job.ID)
+		return 0, err
 	}
-	if !job.IsVersion2() {
-		err = w.updateDDLJob(job, runJobErr != nil)
-		if err = w.handleUpdateJobError(t, job, err); err != nil {
-			w.sess.Rollback()
-			d.unlockSchemaVersion(job.ID)
-			return 0, err
-		}
+	err = w.updateDDLJob(job, runJobErr != nil)
+	if err = w.handleUpdateJobError(t, job, err); err != nil {
+		w.sess.Rollback()
+		d.unlockSchemaVersion(job.ID)
+		return 0, err
 	}
-
 	writeBinlog(d.binlogCli, txn, job)
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
-
-	if job.IsVersion2() {
-		job.BinlogInfo.FinishedTS = t.StartTS
-		w.jobLogger(job).Info("finish DDL job", zap.String("job", job.String()))
-		updateRawArgs := true
-		if job.Type == model.ActionAddPrimaryKey && !job.IsCancelled() {
-			// ActionAddPrimaryKey needs to check the warnings information in job.Args.
-			// Notice: warnings is used to support non-strict mode.
-			updateRawArgs = false
-		}
-		w.writeDDLSeqNum(job)
-		w.removeJobCtx(job)
-		err = AddHistoryDDLJob(w.sess, t, job, updateRawArgs)
-		err = w.sess.Commit()
-		d.unlockSchemaVersion(job.ID)
-		CleanupDDLReorgHandles(job, w.sess)
-		asyncNotify(d.ddlJobDoneCh)
-		return 0, err
-	}
-
 	err = w.sess.Commit()
 	d.unlockSchemaVersion(job.ID)
 	if err != nil {
 		return 0, err
 	}
-	if !job.IsVersion2() {
-		w.registerSync(job)
-	}
+	w.registerSync(job)
 
 	// If error is non-retryable, we can ignore the sleep.
 	if runJobErr != nil && errorIsRetryable(runJobErr, job) {
@@ -1000,6 +948,70 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	}
 
 	return schemaVer, nil
+}
+
+func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
+	err := w.sess.Begin()
+	if err != nil {
+		return nil, err
+	}
+	failpoint.Inject("mockRunJobTime", func(val failpoint.Value) {
+		if val.(bool) {
+			time.Sleep(time.Duration(rand.Intn(500)) * time.Millisecond) // #nosec G404
+		}
+	})
+	txn, err := w.sess.Txn()
+	if err != nil {
+		w.sess.Rollback()
+		return txn, err
+	}
+	// Only general DDLs are allowed to be executed when TiKV is disk full.
+	if w.tp == addIdxWorker && job.IsRunning() {
+		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
+	}
+	w.setDDLLabelForTopSQL(job.ID, job.Query)
+	w.setDDLSourceForDiagnosis(job.ID, job.Type)
+	jobContext := w.jobContext(job.ID, job.ReorgMeta)
+	if tagger := w.getResourceGroupTaggerForTopSQL(job.ID); tagger != nil {
+		txn.SetOption(kv.ResourceGroupTagger, tagger)
+	}
+	txn.SetOption(kv.ResourceGroupName, jobContext.resourceGroupName)
+	// set request source type to DDL type
+	txn.SetOption(kv.RequestSourceType, jobContext.ddlJobSourceType())
+	return txn, err
+}
+
+func (w *worker) HandleDDLJobTableV2(d *ddlCtx, job *model.Job) (err error) {
+	defer func() {
+		w.unlockSeqNum(err)
+	}()
+
+	txn, err := w.prepareTxn(job)
+	if err != nil {
+		return err
+	}
+
+	t := meta.NewMeta(txn)
+	d.mu.RLock()
+	d.mu.hook.OnJobRunBefore(job)
+	d.mu.RUnlock()
+
+	_, err = w.runDDLJob(d, t, job)
+	defer d.unlockSchemaVersion(job.ID)
+	if err != nil {
+		return err
+	}
+
+	d.mu.RLock()
+	d.mu.hook.OnJobRunAfter(job)
+	d.mu.RUnlock()
+
+	writeBinlog(d.binlogCli, txn, job)
+	// reset the SQL digest to make topsql work right.
+	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
+
+	job.State = model.JobStateSynced
+	return w.HandleJobDone(d, job, t)
 }
 
 func (w *JobContext) getResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
