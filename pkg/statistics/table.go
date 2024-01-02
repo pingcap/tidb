@@ -433,8 +433,18 @@ func (coll *HistColl) GetAnalyzeRowCount() float64 {
 	return -1
 }
 
-// GetScaledRealtimeAndModifyCnt ...TODO
+// GetScaledRealtimeAndModifyCnt scale the RealtimeCount and ModifyCount for some special indexes where the total row
+// count is different from the total row count of the table. Currently, only the mv index is this case.
+// Because we will use the RealtimeCount and ModifyCount during the estimation for ranges on this index (like the upper
+// bound for the out-of-range estimation logic and the IncreaseFactor logic), we can't directly use the RealtimeCount and
+// ModifyCount of the table. Instead, we should scale them before using.
+// For example, if the table analyze row count is 1000 and realtime row count is 1500, and the mv index total count is 5000,
+// when calculating the IncreaseFactor, it should be 1500/1000 = 1.5 for normal columns/indexes, and we should use the
+// same 1.5 for mv index. But obviously, use 1500/5000 would be wrong, the correct calculation should be 7500/5000 = 1.5.
+// So we add this function to get this 7500.
 func (coll *HistColl) GetScaledRealtimeAndModifyCnt(idxStats *Index) (realtimeCnt, modifyCnt int64) {
+	// In theory, we can apply this scale logic on all indexes. But currently, we only apply it on the mv index to avoid
+	// any unexpected changes caused by factors like precision difference.
 	if idxStats.Info == nil || !idxStats.Info.MVIndex || !idxStats.IsFullLoad() {
 		return coll.RealtimeCount, coll.ModifyCount
 	}
@@ -706,7 +716,9 @@ func CheckAnalyzeVerOnTable(tbl *Table, version *int) bool {
 	return true
 }
 
-// PrepareCols4MVIndex ...TODO
+// PrepareCols4MVIndex helps to identify the columns of an MV index. We need this information for estimation.
+// This logic is shared between the estimation logic and the access path generation logic. We'd like to put the mv index
+// related functions together in the planner/core package. So we use this trick here to avoid the import cycle.
 var PrepareCols4MVIndex func(
 	tableInfo *model.TableInfo,
 	mvIndex *model.IndexInfo,

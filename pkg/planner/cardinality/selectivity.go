@@ -448,7 +448,9 @@ OUTER:
 	return ret, nodes, nil
 }
 
-// CalcTotalSelectivityForMVIdxPath ...TODO
+// CalcTotalSelectivityForMVIdxPath calculates the total selectivity for the given partial paths of an MV index merge path.
+// It corresponds with the meaning of AccessPath.CountAfterAccess, as used in buildPartialPathUp4MVIndex.
+// It uses the independence assumption to estimate the selectivity.
 func CalcTotalSelectivityForMVIdxPath(
 	coll *statistics.HistColl,
 	partialPaths []*planutil.AccessPath,
@@ -456,7 +458,10 @@ func CalcTotalSelectivityForMVIdxPath(
 ) float64 {
 	selectivities := make([]float64, 0, len(partialPaths))
 	for _, path := range partialPaths {
-		// TODO...
+		// Note that although the total row count of the mv index is usually larger than the table, the CountAfterAccess
+		// of a partial path will never be larger than the table total row count.
+		// And for an index merge path with only one partial path, the CountAfterAccess will be exactly the same as the
+		// CountAfterAccess of the partial path (currently there's no index filter for partial path of mv index merge path).
 		sel := path.CountAfterAccess / float64(coll.RealtimeCount)
 		sel = mathutil.Clamp(sel, 0, 1)
 		selectivities = append(selectivities, sel)
@@ -1003,8 +1008,10 @@ func crossValidationSelectivity(
 	return minRowCount, crossValidationSelectivity, nil
 }
 
+// CollectFilters4MVIndex and BuildPartialPaths4MVIndex are for matching JSON expressions against mv index.
+// This logic is shared between the estimation logic and the access path generation logic. But the two functions are
+// defined in planner/core package and hard to move here. So we use this trick to avoid the import cycle.
 var (
-	// CollectFilters4MVIndex ...TODO
 	CollectFilters4MVIndex func(
 		sctx sessionctx.Context,
 		filters []expression.Expression,
@@ -1013,8 +1020,6 @@ var (
 		accessFilters,
 		remainingFilters []expression.Expression,
 	)
-
-	// BuildPartialPaths4MVIndex ...TODO
 	BuildPartialPaths4MVIndex func(
 		sctx sessionctx.Context,
 		accessFilters []expression.Expression,
