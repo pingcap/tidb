@@ -285,7 +285,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 }
 
 // addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL queue.
-func (d *ddl) addBatchDDLV2Jobs(tasks []*limitJobTask) {
+func (d *ddl) addBatchDDLJobsV2(tasks []*limitJobTask) {
 	err := d.addBatchDDLJobs2LocalWorker(tasks)
 	if err != nil {
 		for _, task := range tasks {
@@ -318,6 +318,7 @@ func (d *ddl) addBatchDDLJobs2LocalWorker(tasks []*limitJobTask) error {
 	//	}
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	// lock to reduce conflict
 	d.globalIDLock.Lock()
 	err = kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)

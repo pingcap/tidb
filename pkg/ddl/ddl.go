@@ -79,7 +79,8 @@ const (
 	// currentVersion is for all new DDL jobs.
 	currentVersion = 1
 	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
-	DDLOwnerKey = "/tidb/ddl/fg/owner"
+	DDLOwnerKey         = "/tidb/ddl/fg/owner"
+	DDLSchemaVersionKey = "/tidb/schema_version"
 	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
 	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
 	ddlPrompt          = "ddl"
@@ -274,10 +275,9 @@ type limitJobTask struct {
 
 // ddl is used to handle the statements that define the structure or schema of the database.
 type ddl struct {
-	m            sync.RWMutex
-	wg           tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
-	limitJobCh   chan *limitJobTask
-	limitJobV2Ch chan *limitJobTask
+	m          sync.RWMutex
+	wg         tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
+	limitJobCh chan *limitJobTask
 
 	*ddlCtx
 	sessPool          *sess.Pool
@@ -288,7 +288,9 @@ type ddl struct {
 	generalDDLWorkerPool *workerPool
 	localWorkerPool      *workerPool
 	// get notification if any DDL coming.
-	ddlJobCh     chan struct{}
+	ddlJobCh chan struct{}
+
+	limitJobChV2 chan *limitJobTask
 	jobTaskCh    chan *limitJobTask
 	globalIDLock sync.Mutex
 }
@@ -400,11 +402,16 @@ type ddlCtx struct {
 
 // schemaVersionManager is used to manage the schema version. To prevent the conflicts on this key between different DDL job,
 // we use another transaction to update the schema version, so that we need to lock the schema version and unlock it until the job is committed.
+// for version2, we use etcd lock to lock the schema version between TiDB nodes.
 type schemaVersionManager struct {
-	etcdClient *clientv3.Client
-	seMaps     sync.Map
-	muMaps     sync.Map
+	schemaVersionMu sync.Mutex
+	// lockOwner stores the job ID that is holding the lock.
+	lockOwner atomicutil.Int64
+
 	ctx        context.Context
+	etcdClient *clientv3.Client
+	seMaps     map[int64]*concurrency.Session
+	lockMaps   map[int64]*concurrency.Mutex
 }
 
 func newSchemaVersionManager(ctx context.Context, etcdClient *clientv3.Client) *schemaVersionManager {
@@ -423,22 +430,54 @@ func (sv *schemaVersionManager) setSchemaVersion(job *model.Job, store kv.Storag
 }
 
 // lockSchemaVersion gets the lock to prevent the schema version from being updated.
-func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) {
-	s, _ := concurrency.NewSession(sv.etcdClient)
-	l := concurrency.NewMutex(s, "/schemaversion/")
-	sv.seMaps.Store(jobID, s)
-	sv.muMaps.Store(jobID, l)
-	l.Lock(sv.ctx)
+func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
+	ownerID := sv.lockOwner.Load()
+	// There may exist one job update schema version many times in multiple-schema-change, so we do not lock here again
+	// if they are the same job.
+	if ownerID != jobID {
+		sv.schemaVersionMu.Lock()
+		sv.lockOwner.Store(jobID)
+		if sv.etcdClient != nil && variable.DDLVersion.Load() == model.TiDBDDLV2 {
+			se, err := concurrency.NewSession(sv.etcdClient)
+			if err != nil {
+				return err
+			}
+			mu := concurrency.NewMutex(se, DDLSchemaVersionKey)
+			sv.seMaps[jobID] = se
+			sv.lockMaps[jobID] = mu
+			if err := mu.Lock(sv.ctx); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // unlockSchemaVersion releases the lock.
 func (sv *schemaVersionManager) unlockSchemaVersion(jobID int64) {
-	s, _ := sv.seMaps.Load(jobID)
-	l, _ := sv.muMaps.Load(jobID)
-	l.(*concurrency.Mutex).Unlock(sv.ctx)
-	s.(*concurrency.Session).Close()
-	sv.seMaps.Delete(jobID)
-	sv.muMaps.Delete(jobID)
+	ownerID := sv.lockOwner.Load()
+	if ownerID == jobID {
+		if sv.etcdClient != nil && variable.DDLVersion.Load() == model.TiDBDDLV2 {
+			se, ok := sv.seMaps[jobID]
+			if !ok {
+				return
+			}
+			mu, ok := sv.lockMaps[jobID]
+			if !ok {
+				return
+			}
+			if err := mu.Unlock(sv.ctx); err != nil {
+				logutil.BgLogger().Error("unlock schema version", zap.Error(err))
+			}
+			if err := se.Close(); err != nil {
+				logutil.BgLogger().Error("close etcd session", zap.Error(err))
+			}
+			delete(sv.seMaps, jobID)
+			delete(sv.lockMaps, jobID)
+		}
+		sv.lockOwner.Store(0)
+		sv.schemaVersionMu.Unlock()
+	}
 }
 
 func (dc *ddlCtx) isOwner() bool {
@@ -673,7 +712,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	d := &ddl{
 		ddlCtx:            ddlCtx,
 		limitJobCh:        make(chan *limitJobTask, batchAddingJobs),
-		limitJobV2Ch:      make(chan *limitJobTask, batchAddingJobs),
+		limitJobChV2:      make(chan *limitJobTask, batchAddingJobs),
 		enableTiFlashPoll: atomicutil.NewBool(true),
 		ddlJobCh:          make(chan struct{}, 100),
 		jobTaskCh:         make(chan *limitJobTask, batchAddingJobs),
@@ -759,7 +798,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 		d.limitDDLJobs(d.limitJobCh, d.addBatchDDLJobs)
 	})
 	d.wg.Run(func() {
-		d.limitDDLJobs(d.limitJobV2Ch, d.addBatchDDLV2Jobs)
+		d.limitDDLJobs(d.limitJobChV2, d.addBatchDDLJobsV2)
 	})
 	d.sessPool = sess.NewSessionPool(ctxPool, d.store)
 	d.ownerManager.SetBeOwnerHook(func() {
@@ -907,7 +946,7 @@ func (d *ddl) GetInfoSchemaWithInterceptor(ctx sessionctx.Context) infoschema.In
 func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 	var ret []int64
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	// lock to avoid write conflict
+	// lock to reduce conflict
 	d.globalIDLock.Lock()
 	defer d.globalIDLock.Unlock()
 	err := kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
@@ -1063,7 +1102,7 @@ func setDDLJobVersion(job *model.Job) {
 func (d *ddl) deliverJobTask(task *limitJobTask) {
 	switch task.job.Version {
 	case model.TiDBDDLV2:
-		d.limitJobV2Ch <- task
+		d.limitJobChV2 <- task
 	default:
 		d.limitJobCh <- task
 	}
