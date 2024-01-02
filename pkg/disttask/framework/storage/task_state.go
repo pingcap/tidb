@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 // CancelTask cancels task.
@@ -35,7 +36,7 @@ func (stm *TaskManager) CancelTask(ctx context.Context, taskID int64) error {
 
 // CancelTaskByKeySession cancels task by key using input session.
 func (*TaskManager) CancelTaskByKeySession(ctx context.Context, se sessionctx.Context, taskKey string) error {
-	_, err := ExecSQL(ctx, se,
+	_, err := sqlexec.ExecSQL(ctx, se,
 		`update mysql.tidb_global_task
 		 set state=%?,
 			 state_update_time = CURRENT_TIMESTAMP()
@@ -75,7 +76,7 @@ func (stm *TaskManager) RevertedTask(ctx context.Context, taskID int64) error {
 func (stm *TaskManager) PauseTask(ctx context.Context, taskKey string) (bool, error) {
 	found := false
 	err := stm.WithNewSession(func(se sessionctx.Context) error {
-		_, err := ExecSQL(ctx, se,
+		_, err := sqlexec.ExecSQL(ctx, se,
 			`update mysql.tidb_global_task 
 			 set state=%?, 
 				 state_update_time = CURRENT_TIMESTAMP()
@@ -113,7 +114,7 @@ func (stm *TaskManager) PausedTask(ctx context.Context, taskID int64) error {
 func (stm *TaskManager) ResumeTask(ctx context.Context, taskKey string) (bool, error) {
 	found := false
 	err := stm.WithNewSession(func(se sessionctx.Context) error {
-		_, err := ExecSQL(ctx, se,
+		_, err := sqlexec.ExecSQL(ctx, se,
 			`update mysql.tidb_global_task
 		     set state=%?, 
 			     state_update_time = CURRENT_TIMESTAMP()
@@ -137,7 +138,7 @@ func (stm *TaskManager) ResumeTask(ctx context.Context, taskKey string) (bool, e
 // SucceedTask update task state from running to succeed.
 func (stm *TaskManager) SucceedTask(ctx context.Context, taskID int64) error {
 	return stm.WithNewSession(func(se sessionctx.Context) error {
-		_, err := ExecSQL(ctx, se, `
+		_, err := sqlexec.ExecSQL(ctx, se, `
 			update mysql.tidb_global_task
 			set state = %?,
 			    step = %?,
