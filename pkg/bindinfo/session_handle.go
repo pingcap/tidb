@@ -133,7 +133,7 @@ func (h *sessionBindingHandle) DropSessionBindingByDigest(sqlDigest string) erro
 }
 
 // GetSessionBinding return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
-func (h *sessionBindingHandle) GetSessionBinding(sqlDigest, normdOrigSQL, db string) *BindRecord {
+func (h *sessionBindingHandle) GetSessionBinding(sqlDigest, _, _ string) *BindRecord {
 	return h.ch.GetBinding(sqlDigest)
 }
 

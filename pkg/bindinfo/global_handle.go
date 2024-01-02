@@ -554,7 +554,7 @@ func (h *globalBindingHandle) Size() int {
 }
 
 // GetGlobalBinding returns the BindRecord of the (normalizedSQL,db) if BindRecord exist.
-func (h *globalBindingHandle) GetGlobalBinding(sqlDigest, normalizedSQL, db string) *BindRecord {
+func (h *globalBindingHandle) GetGlobalBinding(sqlDigest, _, _ string) *BindRecord {
 	return h.getCache().GetBinding(sqlDigest)
 }
 
