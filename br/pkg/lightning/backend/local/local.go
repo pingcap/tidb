@@ -703,40 +703,6 @@ func (*Backend) ShouldPostProcess() bool {
 	return true
 }
 
-<<<<<<< HEAD
-=======
-func (local *Backend) openEngineDB(engineUUID uuid.UUID, readOnly bool) (*pebble.DB, error) {
-	opt := &pebble.Options{
-		MemTableSize: local.MemTableSize,
-		// the default threshold value may cause write stall.
-		MemTableStopWritesThreshold: 8,
-		MaxConcurrentCompactions:    16,
-		// set threshold to half of the max open files to avoid trigger compaction
-		L0CompactionThreshold: math.MaxInt32,
-		L0StopWritesThreshold: math.MaxInt32,
-		LBaseMaxBytes:         16 * units.TiB,
-		MaxOpenFiles:          local.MaxOpenFiles,
-		DisableWAL:            true,
-		ReadOnly:              readOnly,
-		TablePropertyCollectors: []func() pebble.TablePropertyCollector{
-			newRangePropertiesCollector,
-		},
-		DisableAutomaticCompactions: local.DisableAutomaticCompactions,
-	}
-	// set level target file size to avoid pebble auto triggering compaction that split ingest SST files into small SST.
-	opt.Levels = []pebble.LevelOptions{
-		{
-			TargetFileSize: 16 * units.GiB,
-			BlockSize:      local.BackendConfig.BlockSize,
-		},
-	}
-
-	dbPath := filepath.Join(local.LocalStoreDir, engineUUID.String())
-	db, err := pebble.Open(dbPath, opt)
-	return db, errors.Trace(err)
-}
-
->>>>>>> 524397d07 (change type to bytesize)
 // OpenEngine must be called with holding mutex of Engine.
 func (local *Backend) OpenEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
 	return local.engineMgr.openEngine(ctx, cfg, engineUUID)
