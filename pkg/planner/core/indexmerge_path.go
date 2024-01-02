@@ -93,7 +93,11 @@ func (ds *DataSource) generateIndexMergePath() error {
 		return err
 	}
 
-	// TODO
+	// Because index merge access paths are built from ds.allConds, sometimes they can help us consider more filters than
+	// the ds.stats, which is calculated from ds.pushedDownConds before this point.
+	// So we use a simple and naive method to update ds.stats here using the largest row count from index merge paths.
+	// This can help to avoid some cases where the row count of operator above IndexMerge is larger than IndexMerge.
+	// TODO: Probably we should directly consider ds.allConds when calculating ds.stats in the future.
 	if len(ds.possibleAccessPaths) > regularPathCount && len(ds.allConds) > len(ds.pushedDownConds) {
 		var maxRowCount float64
 		for i := regularPathCount; i < len(ds.possibleAccessPaths); i++ {
