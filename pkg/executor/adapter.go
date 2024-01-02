@@ -716,16 +716,7 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 			terror.Log(exec.Close(e))
 			return err
 		}
-		func() { // Recover panic in exec.Next() call.
-			defer func() {
-				r := recover()
-				if r != nil {
-					err = util2.GetRecoverError(r)
-				}
-			}()
-			err = exec.Next(ctx, e, exec.NewFirstChunk(e))
-			failpoint.Inject("handleForeignKeyCascadePanic", nil)
-		}()
+		err = exec.Next(ctx, e, exec.NewFirstChunk(e))
 		closeErr := exec.Close(e)
 		if err == nil {
 			err = closeErr
