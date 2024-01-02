@@ -52,22 +52,24 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, co
 		return nil, err
 	}
 	task, err := taskManager.GetTaskByKey(ctx, taskKey)
-	if err != nil || err != storage.ErrTaskNotFound {
+	if err != nil && err != storage.ErrTaskNotFound {
+		return nil, err
+	}
+	if task != nil {
+		return nil, storage.ErrTaskAlreadyExists
+	}
+
+	taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, concurrency, taskMeta)
+	if err != nil {
 		return nil, err
 	}
 
-	if task == nil {
-		taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, concurrency, taskMeta)
-		if err != nil {
-			return nil, err
-		}
-
-		task, err = taskManager.GetTaskByID(ctx, taskID)
-		if err != nil {
-			return nil, err
-		}
-		metrics.UpdateMetricsForAddTask(task)
+	task, err = taskManager.GetTaskByID(ctx, taskID)
+	if err != nil {
+		return nil, err
 	}
+	metrics.UpdateMetricsForAddTask(task)
+
 	NotifyTaskChange()
 	return task, nil
 }
