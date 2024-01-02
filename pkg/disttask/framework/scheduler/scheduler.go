@@ -240,7 +240,7 @@ func (s *BaseScheduler) onCancelling() error {
 // handle task in pausing state, cancel all running subtasks.
 func (s *BaseScheduler) onPausing() error {
 	logutil.Logger(s.logCtx).Info("on pausing state", zap.Stringer("state", s.Task.State), zap.Int64("step", int64(s.Task.Step)))
-	cntByStates, err := s.taskMgr.GetSubtaskCntByStates(s.ctx, s.Task.ID, s.Task.Step)
+	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, s.Task.ID, s.Task.Step)
 	if err != nil {
 		logutil.Logger(s.logCtx).Warn("check task failed", zap.Error(err))
 		return err
@@ -274,7 +274,7 @@ var TestSyncChan = make(chan struct{})
 // handle task in resuming state.
 func (s *BaseScheduler) onResuming() error {
 	logutil.Logger(s.logCtx).Info("on resuming state", zap.Stringer("state", s.Task.State), zap.Int64("step", int64(s.Task.Step)))
-	cntByStates, err := s.taskMgr.GetSubtaskCntByStates(s.ctx, s.Task.ID, s.Task.Step)
+	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, s.Task.ID, s.Task.Step)
 	if err != nil {
 		logutil.Logger(s.logCtx).Warn("check task failed", zap.Error(err))
 		return err
@@ -295,7 +295,7 @@ func (s *BaseScheduler) onResuming() error {
 // handle task in reverting state, check all revert subtasks finishes.
 func (s *BaseScheduler) onReverting() error {
 	logutil.Logger(s.logCtx).Debug("on reverting state", zap.Stringer("state", s.Task.State), zap.Int64("step", int64(s.Task.Step)))
-	cntByStates, err := s.taskMgr.GetSubtaskCntByStates(s.ctx, s.Task.ID, s.Task.Step)
+	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, s.Task.ID, s.Task.Step)
 	if err != nil {
 		logutil.Logger(s.logCtx).Warn("check task failed", zap.Error(err))
 		return err
@@ -326,7 +326,7 @@ func (s *BaseScheduler) onRunning() error {
 		zap.Stringer("state", s.Task.State),
 		zap.Int64("step", int64(s.Task.Step)))
 	// check current step finishes.
-	cntByStates, err := s.taskMgr.GetSubtaskCntByStates(s.ctx, s.Task.ID, s.Task.Step)
+	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, s.Task.ID, s.Task.Step)
 	if err != nil {
 		logutil.Logger(s.logCtx).Warn("check task failed", zap.Error(err))
 		return err

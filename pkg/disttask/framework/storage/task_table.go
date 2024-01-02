@@ -605,8 +605,8 @@ func (stm *TaskManager) UpdateSubtaskRowCount(ctx context.Context, subtaskID int
 	return err
 }
 
-// GetSubtaskCntByStates gets the subtask count by states.
-func (stm *TaskManager) GetSubtaskCntByStates(ctx context.Context, taskID int64, step proto.Step) (map[proto.SubtaskState]int64, error) {
+// GetSubtaskCntGroupByStates gets the subtask count by states.
+func (stm *TaskManager) GetSubtaskCntGroupByStates(ctx context.Context, taskID int64, step proto.Step) (map[proto.SubtaskState]int64, error) {
 	rs, err := stm.executeSQLWithNewSession(ctx, `
 		select state, count(*)
 		from mysql.tidb_background_subtask
