@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -36,10 +37,15 @@ import (
 var (
 	executorPoolSize int32 = 4
 	// same as scheduler
-	checkTime           = 300 * time.Millisecond
-	recoverMetaInterval = 90 * time.Second
-	retrySQLTimes       = 30
-	retrySQLInterval    = 500 * time.Millisecond
+	checkTime               = 300 * time.Millisecond
+	recoverMetaInterval     = 90 * time.Second
+	retrySQLTimes           = 30
+	retrySQLInterval        = 500 * time.Millisecond
+	unfinishedSubtaskStates = []proto.SubtaskState{
+		proto.SubtaskStatePending, proto.SubtaskStateRevertPending,
+		// for the case that the tidb is restarted when the subtask is running.
+		proto.SubtaskStateRunning, proto.SubtaskStateReverting,
+	}
 )
 
 // ManagerBuilder is used to build a Manager.
@@ -72,12 +78,13 @@ type Manager struct {
 		handlingTasks map[int64]context.CancelCauseFunc
 	}
 	// id, it's the same as server id now, i.e. host:port.
-	id      string
-	wg      tidbutil.WaitGroupWrapper
-	ctx     context.Context
-	cancel  context.CancelFunc
-	logCtx  context.Context
-	newPool func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
+	id          string
+	wg          tidbutil.WaitGroupWrapper
+	ctx         context.Context
+	cancel      context.CancelFunc
+	logCtx      context.Context
+	newPool     func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
+	slotManager *slotManager
 }
 
 // BuildManager builds a Manager.
@@ -87,6 +94,11 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 		taskTable: taskTable,
 		logCtx:    logutil.WithFields(context.Background()),
 		newPool:   b.newPool,
+		slotManager: &slotManager{
+			taskID2Index:  make(map[int64]int),
+			executorTasks: make([]*proto.Task, 0),
+			available:     cpu.GetCPUCount(),
+		},
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.handlingTasks = make(map[int64]context.CancelCauseFunc)
@@ -105,6 +117,9 @@ func (m *Manager) initMeta() (err error) {
 		err = m.taskTable.StartManager(m.ctx, m.id, config.GetGlobalConfig().Instance.TiDBServiceScope)
 		if err == nil {
 			break
+		}
+		if err1 := m.ctx.Err(); err1 != nil {
+			return err1
 		}
 		if i%10 == 0 {
 			logutil.Logger(m.logCtx).Warn("start manager failed",
@@ -196,11 +211,9 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 		return
 	}
 	tasks = m.filterAlreadyHandlingTasks(tasks)
+
 	for _, task := range tasks {
-		exist, err := m.taskTable.HasSubtasksInStates(m.ctx, m.id, task.ID, task.Step,
-			proto.TaskStatePending, proto.TaskStateRevertPending,
-			// for the case that the tidb is restarted when the subtask is running.
-			proto.TaskStateRunning, proto.TaskStateReverting)
+		exist, err := m.taskTable.HasSubtasksInStates(m.ctx, m.id, task.ID, task.Step, unfinishedSubtaskStates...)
 		if err != nil {
 			logutil.Logger(m.logCtx).Error("check subtask exist failed", zap.Error(err))
 			m.logErr(err)
@@ -210,14 +223,29 @@ func (m *Manager) onRunnableTasks(tasks []*proto.Task) {
 			continue
 		}
 		logutil.Logger(m.logCtx).Info("detect new subtask", zap.Int64("task-id", task.ID))
+
+		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task)
+		if len(tasksNeedFree) > 0 {
+			m.cancelTaskExecutors(tasksNeedFree)
+			// do not handle the tasks with lower priority if current task is waiting tasks free.
+			break
+		}
+
+		if !canAlloc {
+			logutil.Logger(m.logCtx).Debug("no enough slots to run task", zap.Int64("task-id", task.ID))
+			continue
+		}
 		m.addHandlingTask(task.ID)
+		m.slotManager.alloc(task)
 		t := task
 		err = m.executorPool.Run(func() {
+			defer m.slotManager.free(t.ID)
 			m.onRunnableTask(t)
 			m.removeHandlingTask(t.ID)
 		})
 		// pool closed.
 		if err != nil {
+			m.slotManager.free(t.ID)
 			m.removeHandlingTask(task.ID)
 			m.logErr(err)
 			return
@@ -298,6 +326,19 @@ func (m *Manager) cancelAllRunningTasks() {
 	}
 }
 
+func (m *Manager) cancelTaskExecutors(tasks []*proto.Task) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, task := range tasks {
+		logutil.Logger(m.logCtx).Info("cancelTasks", zap.Any("task_id", task.ID))
+		if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
+			// Pause all running subtasks, don't mark subtasks as canceled.
+			// Should not change the subtask's state.
+			cancel(nil)
+		}
+	}
+}
+
 // filterAlreadyHandlingTasks filters the tasks that are already handled.
 func (m *Manager) filterAlreadyHandlingTasks(tasks []*proto.Task) []*proto.Task {
 	m.mu.RLock()
@@ -355,12 +396,12 @@ func (m *Manager) onRunnableTask(task *proto.Task) {
 				v, ok := testContexts.Load(m.id)
 				if ok {
 					<-v.(*TestContext).TestSyncSubtaskRun
-					_ = infosync.MockGlobalServerInfoManagerEntry.DeleteByID(m.id)
+					infosync.MockGlobalServerInfoManagerEntry.DeleteByExecID(m.id)
 					m.Stop()
 				}
 			}()
 		})
-		task, err := m.taskTable.GetTaskByID(m.ctx, task.ID)
+		task, err = m.taskTable.GetTaskByID(m.ctx, task.ID)
 		if err != nil {
 			m.logErr(err)
 			return
@@ -373,12 +414,8 @@ func (m *Manager) onRunnableTask(task *proto.Task) {
 				zap.Int64("task-id", task.ID), zap.Int64("step", int64(task.Step)), zap.Stringer("state", task.State))
 			return
 		}
-		if exist, err := m.taskTable.HasSubtasksInStates(
-			m.ctx,
-			m.id, task.ID, task.Step,
-			proto.TaskStatePending, proto.TaskStateRevertPending,
-			// for the case that the tidb is restarted when the subtask is running.
-			proto.TaskStateRunning, proto.TaskStateReverting); err != nil {
+		if exist, err := m.taskTable.HasSubtasksInStates(m.ctx, m.id, task.ID, task.Step,
+			unfinishedSubtaskStates...); err != nil {
 			m.logErr(err)
 			return
 		} else if !exist {
@@ -386,6 +423,9 @@ func (m *Manager) onRunnableTask(task *proto.Task) {
 		}
 		switch task.State {
 		case proto.TaskStateRunning:
+			if taskCtx.Err() != nil {
+				return
+			}
 			// use taskCtx for canceling.
 			err = executor.Run(taskCtx, task)
 		case proto.TaskStatePausing:

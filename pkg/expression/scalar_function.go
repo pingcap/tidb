@@ -206,9 +206,9 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	noopFuncsMode := ctx.GetSessionVars().NoopFuncsMode
 	if noopFuncsMode != variable.OnInt {
 		if _, ok := noopFuncs[funcName]; ok {
-			err := ErrFunctionsNoopImpl.GenWithStackByArgs(funcName)
+			err := ErrFunctionsNoopImpl.FastGenByArgs(funcName)
 			if noopFuncsMode == variable.OffInt {
-				return nil, err
+				return nil, errors.Trace(err)
 			}
 			// NoopFuncsMode is Warn, append an error
 			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
@@ -219,6 +219,10 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	switch funcName {
 	case ast.If, ast.Ifnull, ast.Nullif:
 		// Do nothing. Because it will call InferType4ControlFuncs.
+	case ast.RowFunc:
+		// Do nothing. Because it shouldn't use ROW's args to infer null type.
+		// For example, expression ('abc', 1) = (null, 0). Null's type should be STRING, not INT.
+		// The type infer happens when converting the expression to ('abc' = null) and (1 = 0).
 	default:
 		typeInferForNull(funcArgs)
 	}
@@ -348,18 +352,26 @@ func (sf *ScalarFunction) IsCorrelated() bool {
 	return false
 }
 
-// ConstItem implements Expression interface.
-func (sf *ScalarFunction) ConstItem(acrossCtx bool) bool {
+// ConstLevel returns the const level for the expression
+func (sf *ScalarFunction) ConstLevel() ConstLevel {
 	// Note: some unfoldable functions are deterministic, we use unFoldableFunctions here for simplification.
 	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
-		return false
+		return ConstNone
 	}
+
+	level := ConstStrict
 	for _, arg := range sf.GetArgs() {
-		if !arg.ConstItem(acrossCtx) {
-			return false
+		argLevel := arg.ConstLevel()
+		if argLevel == ConstNone {
+			return ConstNone
+		}
+
+		if argLevel < level {
+			level = argLevel
 		}
 	}
-	return true
+
+	return level
 }
 
 // Decorrelate implements Expression interface.

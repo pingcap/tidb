@@ -655,7 +655,6 @@ func buildBatchCopTasksConsistentHash(
 	fetchTopoStart := time.Now()
 	for {
 		retryNum++
-		// todo: use AssureAndGetTopo() after SNS is done.
 		storesStr, err = tiflashcompute.GetGlobalTopoFetcher().FetchAndGetTopo()
 		if err != nil {
 			return nil, err
@@ -979,7 +978,7 @@ func buildBatchCopTasksCore(bo *backoff.Backoffer, store *kvStore, rangesForEach
 				regionIDErrMsg += fmt.Sprintf("%d, ", regionIDsInOtherZones[i])
 			}
 			warningMsg += regionIDErrMsg + "etc"
-			appendWarning(errors.Errorf(warningMsg))
+			appendWarning(errors.NewNoStackErrorf(warningMsg))
 		}
 
 		for _, task := range storeTaskMap {

@@ -3169,3 +3169,11 @@ set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DAT
 insert into table_20220419(lastLoginDate) select lastLoginDate from table_20220419;
 Error 1292 (22007): Incorrect datetime value: '0000-00-00 00:00:00'
 set sql_mode=default;
+drop table if exists test.t;
+create table test.t (a varchar(10), b tinyint(1));
+insert into test.t values ("abc", 1);
+select * from test.t where (a, b) in (('a', 1), (null, 0));
+a	b
+update test.t set b = 0 where (a, b) in (('a', 1), (null, 0));
+SHOW WARNINGS;
+Level	Code	Message

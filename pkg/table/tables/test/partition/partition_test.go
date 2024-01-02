@@ -408,10 +408,11 @@ func TestExchangePartitionStates(t *testing.T) {
 				logutil.BgLogger().Info("Got state", zap.String("State", s))
 				break
 			}
-			gotime.Sleep(50 * gotime.Millisecond)
+			gotime.Sleep(10 * gotime.Millisecond)
 		}
-		// Sleep 50ms to wait load InforSchema finish, issue #46815.
-		gotime.Sleep(50 * gotime.Millisecond)
+		dom := domain.GetDomain(tk.Session())
+		// Make sure the table schema is the new schema.
+		require.NoError(t, dom.Reload())
 	}
 	waitFor("t", "write only", 4)
 	tk3.MustExec(`BEGIN`)
@@ -519,10 +520,11 @@ func TestExchangePartitionCheckConstraintStates(t *testing.T) {
 				logutil.BgLogger().Info("Got state", zap.String("State", s))
 				break
 			}
-			gotime.Sleep(50 * gotime.Millisecond)
+			gotime.Sleep(10 * gotime.Millisecond)
 		}
-		// Sleep 50ms to wait load InforSchema finish.
-		gotime.Sleep(50 * gotime.Millisecond)
+		dom := domain.GetDomain(tk.Session())
+		// Make sure the table schema is the new schema.
+		require.NoError(t, dom.Reload())
 	}
 	waitFor("nt", "write only", 4)
 
@@ -630,10 +632,11 @@ func TestExchangePartitionCheckConstraintStatesTwo(t *testing.T) {
 				logutil.BgLogger().Info("Got state", zap.String("State", s))
 				break
 			}
-			gotime.Sleep(50 * gotime.Millisecond)
+			gotime.Sleep(10 * gotime.Millisecond)
 		}
-		// Sleep 50ms to wait load InforSchema finish.
-		gotime.Sleep(50 * gotime.Millisecond)
+		dom := domain.GetDomain(tk.Session())
+		// Make sure the table schema is the new schema.
+		require.NoError(t, dom.Reload())
 	}
 	waitFor("nt", "write only", 4)
 
@@ -691,8 +694,9 @@ func TestAddKeyPartitionStates(t *testing.T) {
 			}
 			gotime.Sleep(10 * gotime.Millisecond)
 		}
-		// Sleep 50ms to wait load InforSchema finish.
-		gotime.Sleep(50 * gotime.Millisecond)
+		dom := domain.GetDomain(tk.Session())
+		// Make sure the table schema is the new schema.
+		require.NoError(t, dom.Reload())
 	}
 	waitFor(4, "delete only")
 	tk3.MustExec(`BEGIN`)
