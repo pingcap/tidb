@@ -201,6 +201,10 @@ func (ds *DataSource) generateNormalIndexPartialPaths4DNF(dnfItems []expression.
 }
 
 // getIndexMergeOrPath generates all possible IndexMergeOrPaths.
+// For index merge union case，the order property from its partial
+// path can be kept and multi-way merged and output. So we don't
+// generate a concrete index merge path out, but an un-determined
+// alternatives set index merge path instead.
 func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression) error {
 	if strings.HasPrefix(ds.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "explain select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3") {
 		fmt.Println(1)
@@ -241,9 +245,13 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 			// keep all the possible index merge partial paths here to let the property choose.
 			partialAlternativePaths = append(partialAlternativePaths, itemPaths)
 		}
-		// If all the partialPaths use the same index, we will not use the indexMerge.
+		// in this loop we do two things.
+		// 1: If all the partialPaths use the same index, we will not use the indexMerge.
+		// 2: Compute a theoretical best countAfterAccess(pick its accessConds) for every alternative path(s).
 		indexMap := make(map[int64]struct{}, 1)
+		accessConds := make([]expression.Expression, 0, len(partialAlternativePaths))
 		for i := len(partialAlternativePaths) - 1; i >= 0; i-- {
+			// 1: mark used map.
 			for j := len(partialAlternativePaths[i]) - 1; j >= 0; j-- {
 				if partialAlternativePaths[i][j].IsTablePath() {
 					// table path
@@ -253,15 +261,36 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 					indexMap[partialAlternativePaths[i][j].Index.ID] = struct{}{}
 				}
 			}
+			// 2.1: trade off on countAfterAccess.
+			theoreticalMinCountAfterAccessPath, err := ds.buildIndexMergePartialPath(partialAlternativePaths[i])
+			if err != nil {
+				return err
+			}
+			indexCondsForP := theoreticalMinCountAfterAccessPath.AccessConds[:]
+			indexCondsForP = append(indexCondsForP, theoreticalMinCountAfterAccessPath.IndexFilters...)
+			if len(indexCondsForP) > 0 {
+				accessConds = append(accessConds, expression.ComposeCNFCondition(ds.SCtx(), indexCondsForP...))
+			}
+
 		}
 		if len(indexMap) == 1 {
 			continue
 		}
+
+		// 2.2 get the theoretical whole count after access for index merge.
+		accessDNF := expression.ComposeDNFCondition(ds.SCtx(), accessConds...)
+		sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, []expression.Expression{accessDNF}, nil)
+		if err != nil {
+			logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
+			sel = SelectionFactor
+		}
+
 		if len(partialAlternativePaths) > 1 {
 			possiblePath := ds.buildIndexMergeOrPath(filters, partialAlternativePaths, i, shouldKeepCurrentFilter)
 			if possiblePath == nil {
 				return nil
 			}
+			possiblePath.CountAfterAccess = sel * ds.tableStats.RowCount
 			// only after all partial path is determined, can the countAfterAccess be done, delay it to converging.
 			ds.possibleAccessPaths = append(ds.possibleAccessPaths, possiblePath)
 		}
