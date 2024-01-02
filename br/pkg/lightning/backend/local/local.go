@@ -431,7 +431,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 		MaxConnPerStore:             cfg.TikvImporter.RangeConcurrency,
 		ConnCompressType:            cfg.TikvImporter.CompressKVPairs,
 		WorkerConcurrency:           cfg.TikvImporter.RangeConcurrency * 2,
-		BlockSize:                   cfg.TikvImporter.BlockSize,
+		BlockSize:                   int(cfg.TikvImporter.BlockSize),
 		KVWriteBatchSize:            int64(cfg.TikvImporter.SendKVSize),
 		RegionSplitBatchSize:        cfg.TikvImporter.RegionSplitBatchSize,
 		RegionSplitConcurrency:      cfg.TikvImporter.RegionSplitConcurrency,
