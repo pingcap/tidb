@@ -149,10 +149,7 @@ func (ds *DataSource) generateNormalIndexPartialPaths4DNF(dnfItems []expression.
 			}
 			return false
 		})
-		partialPath, err := ds.buildIndexMergePartialPath(itemPaths)
-		if err != nil {
-			return nil, false, nil, err
-		}
+		partialPath := ds.buildIndexMergePartialPath(itemPaths)
 		if partialPath == nil {
 			// for this dnf item, we couldn't generate an index merge partial path.
 			// (1 member of (a)) or (3 member of (b)) or d=1; if one dnf item like d=1 here could walk index path,
@@ -216,10 +213,7 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 				partialPaths = nil
 				break
 			}
-			partialPath, err := ds.buildIndexMergePartialPath(itemPaths)
-			if err != nil {
-				return err
-			}
+			partialPath := ds.buildIndexMergePartialPath(itemPaths)
 			if partialPath == nil {
 				partialPaths = nil
 				break
@@ -385,9 +379,9 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 
 // buildIndexMergePartialPath chooses the best index path from all possible paths.
 // Now we choose the index with minimal estimate row count.
-func (*DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.AccessPath) (*util.AccessPath, error) {
+func (*DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.AccessPath) *util.AccessPath {
 	if len(indexAccessPaths) == 1 {
-		return indexAccessPaths[0], nil
+		return indexAccessPaths[0]
 	}
 
 	minEstRowIndex := 0
@@ -402,7 +396,7 @@ func (*DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.AccessPat
 			minEstRow = rc
 		}
 	}
-	return indexAccessPaths[minEstRowIndex], nil
+	return indexAccessPaths[minEstRowIndex]
 }
 
 // buildIndexMergeOrPath generates one possible IndexMergePath.
