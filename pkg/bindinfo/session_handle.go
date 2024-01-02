@@ -72,7 +72,7 @@ func NewSessionBindingHandle() SessionBindingHandle {
 // appendSessionBinding adds the BindRecord to the cache, all the stale bindMetas are
 // removed from the cache after this operation.
 func (h *sessionBindingHandle) appendSessionBinding(sqlDigest string, meta *BindRecord) {
-	oldRecord := h.ch.GetBinding(sqlDigest, meta.OriginalSQL, meta.Db)
+	oldRecord := h.ch.GetBinding(sqlDigest)
 	err := h.ch.SetBinding(sqlDigest, meta)
 	if err != nil {
 		logutil.BgLogger().Warn("SessionHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err))
@@ -134,12 +134,12 @@ func (h *sessionBindingHandle) DropSessionBindingByDigest(sqlDigest string) erro
 
 // GetSessionBinding return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
 func (h *sessionBindingHandle) GetSessionBinding(sqlDigest, normdOrigSQL, db string) *BindRecord {
-	return h.ch.GetBinding(sqlDigest, normdOrigSQL, db)
+	return h.ch.GetBinding(sqlDigest)
 }
 
 // GetSessionBindingBySQLDigest return all BindMeta corresponding to sqlDigest.
 func (h *sessionBindingHandle) GetSessionBindingBySQLDigest(sqlDigest string) (*BindRecord, error) {
-	return h.ch.GetBindingBySQLDigest(sqlDigest)
+	return h.ch.GetBinding(sqlDigest), nil
 }
 
 // GetAllSessionBindings return all session bind info.
