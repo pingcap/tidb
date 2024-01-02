@@ -523,8 +523,11 @@ func (stm *TaskManager) UpdateErrorToSubtask(ctx context.Context, execID string,
 	}
 	_, err1 := stm.executeSQLWithNewSession(ctx,
 		`update mysql.tidb_background_subtask
-		set state = %?, error = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
-		end_time = CURRENT_TIMESTAMP(),
+		set state = %?, 
+		error = %?, 
+		start_time = unix_timestamp(), 
+		state_update_time = unix_timestamp(),
+		end_time = CURRENT_TIMESTAMP()
 		where exec_id = %? and 
 		task_key = %? and 
 		state in (%?, %?) 
