@@ -192,7 +192,9 @@ func (c *bindCache) Copy() (newCache *bindCache, err error) {
 	for _, key := range keys {
 		cacheKey := key.(bindCacheKey)
 		v := c.get(cacheKey)
-		newCache.set(cacheKey, v)
+		if _, err := newCache.set(cacheKey, v); err != nil {
+			return nil, err
+		}
 	}
 	return newCache, err
 }
