@@ -125,6 +125,9 @@ func (h *Handle) initStatsHistograms4ChunkLite(is infoschema.InfoSchema, cache s
 					break
 				}
 			}
+			if colInfo == nil {
+				continue
+			}
 			table.ColAndIdxExistenceMap.InsertCol(colInfo.ID, colInfo, statsVer != statistics.Version0 || ndv > 0 || nullCount > 0)
 		}
 		cache.Put(tblID, table) // put this table again since it is updated
