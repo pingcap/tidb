@@ -364,12 +364,15 @@ func (h *globalBindingHandle) DropGlobalBinding(originalSQL, db string, binding 
 
 // DropGlobalBindingByDigest drop BindRecord to the storage and BindRecord int the cache.
 func (h *globalBindingHandle) DropGlobalBindingByDigest(sqlDigest string) (deletedRows uint64, err error) {
+	if sqlDigest == "" {
+		return 0, errors.New("sql digest is empty")
+	}
 	oldRecord, err := h.GetGlobalBindingBySQLDigest(sqlDigest)
 	if err != nil {
 		return 0, err
 	}
 	if oldRecord == nil {
-		return 0, nil
+		return 0, errors.Errorf("can't find any binding for '%s'", sqlDigest)
 	}
 	return h.DropGlobalBinding(oldRecord.OriginalSQL, strings.ToLower(oldRecord.Db), nil)
 }

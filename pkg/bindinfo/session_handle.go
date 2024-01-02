@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -125,12 +126,15 @@ func (h *sessionBindingHandle) DropSessionBinding(originalSQL, db string, bindin
 
 // DropSessionBindingByDigest drop BindRecord in the cache.
 func (h *sessionBindingHandle) DropSessionBindingByDigest(sqlDigest string) error {
+	if sqlDigest == "" {
+		return errors.New("sql digest is empty")
+	}
 	oldRecord, err := h.GetSessionBindingBySQLDigest(sqlDigest)
 	if err != nil {
 		return err
 	}
 	if oldRecord == nil {
-		return nil
+		return errors.Errorf("can't find any binding for '%s'", sqlDigest)
 	}
 	return h.DropSessionBinding(oldRecord.OriginalSQL, strings.ToLower(oldRecord.Db), nil)
 }
