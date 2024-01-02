@@ -64,6 +64,7 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
+        "//pkg/util/cpu",
         "//pkg/util/disttask",
         "//pkg/util/logutil",
         "//pkg/util/sqlexec",

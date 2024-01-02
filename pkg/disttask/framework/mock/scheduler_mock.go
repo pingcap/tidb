@@ -210,10 +210,10 @@ func (mr *MockTaskManagerMockRecorder) GCSubtasks(arg0 any) *gomock.Call {
 }
 
 // GetAllNodes mocks base method.
-func (m *MockTaskManager) GetAllNodes(arg0 context.Context) ([]string, error) {
+func (m *MockTaskManager) GetAllNodes(arg0 context.Context) ([]proto.ManagedNode, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetAllNodes", arg0)
-	ret0, _ := ret[0].([]string)
+	ret0, _ := ret[0].([]proto.ManagedNode)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -225,10 +225,10 @@ func (mr *MockTaskManagerMockRecorder) GetAllNodes(arg0 any) *gomock.Call {
 }
 
 // GetManagedNodes mocks base method.
-func (m *MockTaskManager) GetManagedNodes(arg0 context.Context) ([]string, error) {
+func (m *MockTaskManager) GetManagedNodes(arg0 context.Context) ([]proto.ManagedNode, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetManagedNodes", arg0)
-	ret0, _ := ret[0].([]string)
+	ret0, _ := ret[0].([]proto.ManagedNode)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
