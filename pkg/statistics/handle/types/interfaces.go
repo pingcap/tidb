@@ -230,8 +230,8 @@ type StatsLock interface {
 
 // PartitionStatisticLoadTask currently records a partition-level jsontable.
 type PartitionStatisticLoadTask struct {
+	JSONTable  *statsutil.JSONTable
 	PhysicalID int64
-	JsonTable  *statsutil.JSONTable
 }
 
 // StatsReadWriter is used to read and write stats to the storage.

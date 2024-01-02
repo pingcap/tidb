@@ -635,7 +635,7 @@ func (s *statsReadWriter) LoadStatsFromJSONConcurrency(
 					loadFunc = ctx.Value(TestLoadStatsErr{}).(func(*model.TableInfo, int64, *util.JSONTable) error)
 				}
 
-				err := loadFunc(tableInfo, tbl.PhysicalID, tbl.JsonTable)
+				err := loadFunc(tableInfo, tbl.PhysicalID, tbl.JSONTable)
 				if err != nil {
 					e.CompareAndSwap(nil, &err)
 					return
@@ -676,7 +676,7 @@ func (s *statsReadWriter) LoadStatsFromJSONNoUpdate(ctx context.Context, is info
 			if tbl != nil {
 				taskCh <- &statstypes.PartitionStatisticLoadTask{
 					PhysicalID: def.ID,
-					JsonTable:  tbl,
+					JSONTable:  tbl,
 				}
 			}
 		}
@@ -685,7 +685,7 @@ func (s *statsReadWriter) LoadStatsFromJSONNoUpdate(ctx context.Context, is info
 		if globalStats, ok := jsonTbl.Partitions[util.TiDBGlobalStats]; ok {
 			taskCh <- &statstypes.PartitionStatisticLoadTask{
 				PhysicalID: tableInfo.ID,
-				JsonTable:  globalStats,
+				JSONTable:  globalStats,
 			}
 		}
 		close(taskCh)
