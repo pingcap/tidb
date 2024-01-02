@@ -120,7 +120,7 @@ type PointGetExecutor struct {
 	tblInfo          *model.TableInfo
 	handle           kv.Handle
 	idxInfo          *model.IndexInfo
-	partInfo         *model.PartitionDefinition
+	partition        *model.PartitionDefinition
 	idxKey           kv.Key
 	handleVal        []byte
 	idxVals          []types.Datum
@@ -162,7 +162,7 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 		e.lockWaitTime = 0
 	}
 	e.rowDecoder = decoder
-	e.partInfo = p.PartitionInfo
+	e.partition = p.Partition
 	e.columns = p.Columns
 	e.buildVirtualColumnInfo()
 }
@@ -221,8 +221,8 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	var tblID int64
 	var err error
-	if e.partInfo != nil {
-		tblID = e.partInfo.ID
+	if e.partition != nil {
+		tblID = e.partition.ID
 	} else {
 		tblID = e.tblInfo.ID
 	}
@@ -510,8 +510,8 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 	var tblName string
 	var partName string
 	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
-	if e.partInfo != nil {
-		tblID = e.partInfo.ID
+	if e.partition != nil {
+		tblID = e.partition.ID
 		tblInfo, _, partInfo := is.FindTableByPartitionID(tblID)
 		tblName = tblInfo.Meta().Name.String()
 		partName = partInfo.Name.String()
