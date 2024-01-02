@@ -50,7 +50,9 @@ func checkTaskStateStep(t *testing.T, task *proto.Task, state proto.TaskState, s
 }
 
 func TestTaskTable(t *testing.T) {
-	gm, ctx := testutil.InitTableTest(t)
+	_, gm, ctx := testutil.InitTableTest(t)
+
+	require.NoError(t, gm.StartManager(ctx, ":4000", ""))
 
 	_, err := gm.CreateTask(ctx, "key1", "test", 999, []byte("test"))
 	require.ErrorContains(t, err, "task concurrency(999) larger than cpu count")
@@ -184,24 +186,10 @@ func checkAfterSwitchStep(t *testing.T, startTime time.Time, task *proto.Task, s
 }
 
 func TestSwitchTaskStep(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
-	}()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
-	})
-	store := testkit.CreateMockStore(t)
+	store, tm, ctx := testutil.InitTableTest(t)
 	tk := testkit.NewTestKit(t, store)
-	pool := pools.NewResourcePool(func() (pools.Resource, error) {
-		return tk.Session(), nil
-	}, 1, 1, time.Second)
-	tm := GetTaskManager(t, pool)
-	defer pool.Close()
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "table_test")
 
+	require.NoError(t, tm.StartManager(ctx, ":4000", ""))
 	taskID, err := tm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
 	require.NoError(t, err)
 	task, err := tm.GetTaskByID(ctx, taskID)
@@ -245,25 +233,10 @@ func TestSwitchTaskStep(t *testing.T) {
 }
 
 func TestSwitchTaskStepInBatch(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
-	}()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
-	})
-
-	store := testkit.CreateMockStore(t)
+	store, tm, ctx := testutil.InitTableTest(t)
 	tk := testkit.NewTestKit(t, store)
-	pool := pools.NewResourcePool(func() (pools.Resource, error) {
-		return tk.Session(), nil
-	}, 1, 1, time.Second)
-	tm := GetTaskManager(t, pool)
-	defer pool.Close()
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "table_test")
 
+	require.NoError(t, tm.StartManager(ctx, ":4000", ""))
 	// normal flow
 	prepare := func(taskKey string) (*proto.Task, []*proto.Subtask) {
 		taskID, err := tm.CreateTask(ctx, taskKey, "test", 4, []byte("test"))
@@ -336,8 +309,9 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 }
 
 func TestGetTopUnfinishedTasks(t *testing.T) {
-	gm, ctx := testutil.InitTableTest(t)
+	_, gm, ctx := testutil.InitTableTest(t)
 
+	require.NoError(t, gm.StartManager(ctx, ":4000", ""))
 	taskStates := []proto.TaskState{
 		proto.TaskStateSucceed,
 		proto.TaskStatePending,
@@ -401,7 +375,7 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 }
 
 func TestGetUsedSlotsOnNodes(t *testing.T) {
-	sm, ctx := testutil.InitTableTest(t)
+	_, sm, ctx := testutil.InitTableTest(t)
 
 	testutil.InsertSubtask(t, sm, 1, proto.StepOne, "tidb-1", []byte(""), proto.TaskStateRunning, "test", 12)
 	testutil.InsertSubtask(t, sm, 1, proto.StepOne, "tidb-2", []byte(""), proto.TaskStatePending, "test", 12)
@@ -418,8 +392,9 @@ func TestGetUsedSlotsOnNodes(t *testing.T) {
 }
 
 func TestSubTaskTable(t *testing.T) {
-	sm, ctx := testutil.InitTableTest(t)
+	_, sm, ctx := testutil.InitTableTest(t)
 	timeBeforeCreate := time.Unix(time.Now().Unix(), 0)
+	require.NoError(t, sm.StartManager(ctx, ":4000", ""))
 	id, err := sm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
@@ -648,7 +623,8 @@ func TestSubTaskTable(t *testing.T) {
 }
 
 func TestBothTaskAndSubTaskTable(t *testing.T) {
-	sm, ctx := testutil.InitTableTest(t)
+	_, sm, ctx := testutil.InitTableTest(t)
+	require.NoError(t, sm.StartManager(ctx, ":4000", ""))
 	id, err := sm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
@@ -761,42 +737,75 @@ func TestBothTaskAndSubTaskTable(t *testing.T) {
 }
 
 func TestDistFrameworkMeta(t *testing.T) {
-	// to avoid inserted nodes be cleaned by scheduler
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
-	}()
-	sm, ctx := testutil.InitTableTest(t)
+	_, sm, ctx := testutil.InitTableTest(t)
 
+	// when no node
+	_, err := storage.GetCPUCountOfManagedNodes(ctx, sm)
+	require.ErrorContains(t, err, "no managed nodes")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(0)"))
 	require.NoError(t, sm.StartManager(ctx, ":4000", "background"))
+	cpuCount, err := storage.GetCPUCountOfManagedNodes(ctx, sm)
+	require.NoError(t, err)
+	require.Equal(t, 0, cpuCount)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)"))
+	require.NoError(t, sm.StartManager(ctx, ":4000", "background"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
 	require.NoError(t, sm.StartManager(ctx, ":4001", ""))
 	require.NoError(t, sm.StartManager(ctx, ":4002", "background"))
-	// won't be replaced by below one
+	nodes, err := sm.GetAllNodes(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []proto.ManagedNode{
+		{ID: ":4000", Role: "background", CPUCount: 100},
+		{ID: ":4001", Role: "", CPUCount: 8},
+		{ID: ":4002", Role: "background", CPUCount: 8},
+	}, nodes)
+
+	// won't be replaced by below one, but cpu count will be updated
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)"))
 	require.NoError(t, sm.StartManager(ctx, ":4002", ""))
 	require.NoError(t, sm.StartManager(ctx, ":4003", "background"))
 
-	nodes, err := sm.GetAllNodes(ctx)
+	nodes, err = sm.GetAllNodes(ctx)
 	require.NoError(t, err)
-	require.Equal(t, []string{":4000", ":4001", ":4002", ":4003"}, nodes)
+	require.Equal(t, []proto.ManagedNode{
+		{ID: ":4000", Role: "background", CPUCount: 100},
+		{ID: ":4001", Role: "", CPUCount: 8},
+		{ID: ":4002", Role: "background", CPUCount: 100},
+		{ID: ":4003", Role: "background", CPUCount: 100},
+	}, nodes)
+	cpuCount, err = storage.GetCPUCountOfManagedNodes(ctx, sm)
+	require.NoError(t, err)
+	require.Equal(t, 100, cpuCount)
 
 	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{":4000"}))
 	nodes, err = sm.GetManagedNodes(ctx)
 	require.NoError(t, err)
-	require.Equal(t, []string{":4002", ":4003"}, nodes)
+	require.Equal(t, []proto.ManagedNode{
+		{ID: ":4002", Role: "background", CPUCount: 100},
+		{ID: ":4003", Role: "background", CPUCount: 100},
+	}, nodes)
 
 	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{":4003"}))
 	nodes, err = sm.GetManagedNodes(ctx)
 	require.NoError(t, err)
-	require.Equal(t, []string{":4002"}, nodes)
+	require.Equal(t, []proto.ManagedNode{
+		{ID: ":4002", Role: "background", CPUCount: 100},
+	}, nodes)
 
 	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{":4002"}))
 	nodes, err = sm.GetManagedNodes(ctx)
 	require.NoError(t, err)
-	require.Equal(t, []string{":4001"}, nodes)
+	require.Equal(t, []proto.ManagedNode{
+		{ID: ":4001", Role: "", CPUCount: 8},
+	}, nodes)
+	cpuCount, err = storage.GetCPUCountOfManagedNodes(ctx, sm)
+	require.NoError(t, err)
+	require.Equal(t, 8, cpuCount)
 }
 
 func TestSubtaskHistoryTable(t *testing.T) {
-	sm, ctx := testutil.InitTableTest(t)
+	_, sm, ctx := testutil.InitTableTest(t)
 
 	const (
 		taskID       = 1
@@ -861,8 +870,9 @@ func TestSubtaskHistoryTable(t *testing.T) {
 }
 
 func TestTaskHistoryTable(t *testing.T) {
-	gm, ctx := testutil.InitTableTest(t)
+	_, gm, ctx := testutil.InitTableTest(t)
 
+	require.NoError(t, gm.StartManager(ctx, ":4000", ""))
 	_, err := gm.CreateTask(ctx, "1", proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
 	taskID, err := gm.CreateTask(ctx, "2", proto.TaskTypeExample, 1, nil)
@@ -903,7 +913,7 @@ func TestTaskHistoryTable(t *testing.T) {
 }
 
 func TestPauseAndResume(t *testing.T) {
-	sm, ctx := testutil.InitTableTest(t)
+	_, sm, ctx := testutil.InitTableTest(t)
 
 	testutil.CreateSubTask(t, sm, 1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, 11, false)
 	testutil.CreateSubTask(t, sm, 1, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, 11, false)
@@ -920,7 +930,7 @@ func TestPauseAndResume(t *testing.T) {
 	require.Equal(t, int64(3), cnt)
 
 	// 2.1 pause 2 subtasks.
-	sm.UpdateSubtaskStateAndError(ctx, "tidb1", 1, proto.SubtaskStateSucceed, nil)
+	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, "tidb1", 1, proto.SubtaskStateSucceed, nil))
 	require.NoError(t, sm.PauseSubtasks(ctx, "tidb1", 1))
 	cnt, err = sm.GetSubtaskInStatesCnt(ctx, 1, proto.SubtaskStatePaused)
 	require.NoError(t, err)

@@ -50,7 +50,7 @@ go_test(
     embed = [":scheduler"],
     flaky = True,
     race = "off",
-    shard_count = 24,
+    shard_count = 25,
     deps = [
         "//pkg/config",
         "//pkg/disttask/framework/mock",
@@ -63,6 +63,7 @@ go_test(
         "//pkg/sessionctx",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
+        "//pkg/util/cpu",
         "//pkg/util/disttask",
         "//pkg/util/logutil",
         "//pkg/util/sqlexec",

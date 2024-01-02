@@ -123,7 +123,7 @@ func (sm *Manager) Start() {
 		failpoint.Return()
 	})
 	// init cached managed nodes
-	sm.nodeMgr.refreshManagedNodes(sm.ctx, sm.taskMgr)
+	sm.nodeMgr.refreshManagedNodes(sm.ctx, sm.taskMgr, sm.slotMgr)
 
 	sm.wg.Run(sm.scheduleTaskLoop)
 	sm.wg.Run(sm.gcSubtaskHistoryTableLoop)
@@ -132,7 +132,7 @@ func (sm *Manager) Start() {
 		sm.nodeMgr.maintainLiveNodesLoop(sm.ctx, sm.taskMgr)
 	})
 	sm.wg.Run(func() {
-		sm.nodeMgr.refreshManagedNodesLoop(sm.ctx, sm.taskMgr)
+		sm.nodeMgr.refreshManagedNodesLoop(sm.ctx, sm.taskMgr, sm.slotMgr)
 	})
 	sm.initialized = true
 }
