@@ -239,24 +239,19 @@ func (mr *MockTaskManagerMockRecorder) GetManagedNodes(arg0 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetManagedNodes", reflect.TypeOf((*MockTaskManager)(nil).GetManagedNodes), arg0)
 }
 
-// GetSubtaskInStatesCnt mocks base method.
-func (m *MockTaskManager) GetSubtaskInStatesCnt(arg0 context.Context, arg1 int64, arg2 ...proto.SubtaskState) (int64, error) {
+// GetSubtaskCntGroupByStates mocks base method.
+func (m *MockTaskManager) GetSubtaskCntGroupByStates(arg0 context.Context, arg1 int64, arg2 proto.Step) (map[proto.SubtaskState]int64, error) {
 	m.ctrl.T.Helper()
-	varargs := []any{arg0, arg1}
-	for _, a := range arg2 {
-		varargs = append(varargs, a)
-	}
-	ret := m.ctrl.Call(m, "GetSubtaskInStatesCnt", varargs...)
-	ret0, _ := ret[0].(int64)
+	ret := m.ctrl.Call(m, "GetSubtaskCntGroupByStates", arg0, arg1, arg2)
+	ret0, _ := ret[0].(map[proto.SubtaskState]int64)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetSubtaskInStatesCnt indicates an expected call of GetSubtaskInStatesCnt.
-func (mr *MockTaskManagerMockRecorder) GetSubtaskInStatesCnt(arg0, arg1 any, arg2 ...any) *gomock.Call {
+// GetSubtaskCntGroupByStates indicates an expected call of GetSubtaskCntGroupByStates.
+func (mr *MockTaskManagerMockRecorder) GetSubtaskCntGroupByStates(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	varargs := append([]any{arg0, arg1}, arg2...)
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtaskInStatesCnt", reflect.TypeOf((*MockTaskManager)(nil).GetSubtaskInStatesCnt), varargs...)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtaskCntGroupByStates", reflect.TypeOf((*MockTaskManager)(nil).GetSubtaskCntGroupByStates), arg0, arg1, arg2)
 }
 
 // GetSubtasksByExecIdsAndStepAndState mocks base method.
