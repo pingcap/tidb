@@ -22,6 +22,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -43,9 +44,9 @@ func TestCleanUpRoutine(t *testing.T) {
 
 	sch, mgr := MockSchedulerManager(t, ctrl, pool, getNumberExampleSchedulerExt(ctrl), mockCleanupRoutine)
 	mockCleanupRoutine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	require.NoError(t, mgr.StartManager(ctx, ":4000", ""))
 	sch.Start()
 	defer sch.Stop()
+	testutil.WaitNodeRegistered(t, ctx)
 	taskID, err := mgr.CreateTask(ctx, "test", proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
 

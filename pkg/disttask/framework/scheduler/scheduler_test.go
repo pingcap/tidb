@@ -228,6 +228,8 @@ func TestTaskFailInManager(t *testing.T) {
 	schManager.Start()
 	defer schManager.Stop()
 
+	testutil.WaitNodeRegistered(t, ctx)
+
 	// unknown task type
 	taskID, err := mgr.CreateTask(ctx, "test", "test-type", 1, nil)
 	require.NoError(t, err)
