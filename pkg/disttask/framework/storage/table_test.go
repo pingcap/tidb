@@ -377,11 +377,11 @@ func TestGetTopUnfinishedTasks(t *testing.T) {
 func TestGetUsedSlotsOnNodes(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
 
-	testutil.InsertSubtask(t, sm, 1, proto.StepOne, "tidb-1", []byte(""), proto.TaskStateRunning, "test", 12)
-	testutil.InsertSubtask(t, sm, 1, proto.StepOne, "tidb-2", []byte(""), proto.TaskStatePending, "test", 12)
-	testutil.InsertSubtask(t, sm, 2, proto.StepOne, "tidb-2", []byte(""), proto.TaskStatePending, "test", 8)
-	testutil.InsertSubtask(t, sm, 3, proto.StepOne, "tidb-3", []byte(""), proto.TaskStatePending, "test", 8)
-	testutil.InsertSubtask(t, sm, 4, proto.StepOne, "tidb-3", []byte(""), proto.TaskStateFailed, "test", 8)
+	testutil.InsertSubtask(t, sm, 1, proto.StepOne, "tidb-1", []byte(""), proto.SubtaskStateRunning, "test", 12)
+	testutil.InsertSubtask(t, sm, 1, proto.StepOne, "tidb-2", []byte(""), proto.SubtaskStatePending, "test", 12)
+	testutil.InsertSubtask(t, sm, 2, proto.StepOne, "tidb-2", []byte(""), proto.SubtaskStatePending, "test", 8)
+	testutil.InsertSubtask(t, sm, 3, proto.StepOne, "tidb-3", []byte(""), proto.SubtaskStatePending, "test", 8)
+	testutil.InsertSubtask(t, sm, 4, proto.StepOne, "tidb-3", []byte(""), proto.SubtaskStateFailed, "test", 8)
 	slotsOnNodes, err := sm.GetUsedSlotsOnNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, map[string]int{
@@ -672,6 +672,7 @@ func TestBothTaskAndSubTaskTable(t *testing.T) {
 
 	cntByStates, err := sm.GetSubtaskCntByStates(ctx, 1, proto.StepInit)
 	require.NoError(t, err)
+	require.Len(t, cntByStates, 1)
 	require.Equal(t, int64(2), cntByStates[proto.SubtaskStatePending])
 
 	// isSubTaskRevert: true
@@ -734,6 +735,22 @@ func TestBothTaskAndSubTaskTable(t *testing.T) {
 	cntByStates, err = sm.GetSubtaskCntByStates(ctx, 1, proto.StepInit)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), cntByStates[proto.SubtaskStateRevertPending])
+}
+
+func TestGetSubtaskCntByStates(t *testing.T) {
+	_, sm, ctx := testutil.InitTableTest(t)
+	testutil.InsertSubtask(t, sm, 1, proto.StepOne, "tidb1", nil, proto.SubtaskStatePending, "test", 1)
+	testutil.InsertSubtask(t, sm, 1, proto.StepOne, "tidb1", nil, proto.SubtaskStatePending, "test", 1)
+	testutil.InsertSubtask(t, sm, 1, proto.StepOne, "tidb1", nil, proto.SubtaskStateRunning, "test", 1)
+	testutil.InsertSubtask(t, sm, 1, proto.StepOne, "tidb1", nil, proto.SubtaskStateSucceed, "test", 1)
+	testutil.InsertSubtask(t, sm, 1, proto.StepOne, "tidb1", nil, proto.SubtaskStateFailed, "test", 1)
+	cntByStates, err := sm.GetSubtaskCntByStates(ctx, 1, proto.StepOne)
+	require.NoError(t, err)
+	require.Len(t, cntByStates, 4)
+	require.Equal(t, int64(2), cntByStates[proto.SubtaskStatePending])
+	require.Equal(t, int64(1), cntByStates[proto.SubtaskStateRunning])
+	require.Equal(t, int64(1), cntByStates[proto.SubtaskStateSucceed])
+	require.Equal(t, int64(1), cntByStates[proto.SubtaskStateFailed])
 }
 
 func TestDistFrameworkMeta(t *testing.T) {

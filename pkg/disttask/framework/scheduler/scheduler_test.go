@@ -627,7 +627,7 @@ func TestManagerDispatchLoop(t *testing.T) {
 	require.NoError(t, err)
 	for _, s := range serverInfos {
 		execID := disttaskutil.GenerateExecID(s)
-		testutil.InsertSubtask(t, taskMgr, 1000000, proto.StepOne, execID, []byte(""), proto.TaskStatePending, proto.TaskTypeExample, 16)
+		testutil.InsertSubtask(t, taskMgr, 1000000, proto.StepOne, execID, []byte(""), proto.SubtaskStatePending, proto.TaskTypeExample, 16)
 	}
 	concurrencies := []int{4, 6, 16, 2, 4, 4}
 	waitChannels := make([]chan struct{}, len(concurrencies))
