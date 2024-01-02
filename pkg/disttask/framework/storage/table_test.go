@@ -744,12 +744,17 @@ func TestGetSubtaskCntByStates(t *testing.T) {
 	testutil.InsertSubtask(t, sm, 1, proto.StepOne, "tidb1", nil, proto.SubtaskStateRunning, "test", 1)
 	testutil.InsertSubtask(t, sm, 1, proto.StepOne, "tidb1", nil, proto.SubtaskStateSucceed, "test", 1)
 	testutil.InsertSubtask(t, sm, 1, proto.StepOne, "tidb1", nil, proto.SubtaskStateFailed, "test", 1)
+	testutil.InsertSubtask(t, sm, 1, proto.StepTwo, "tidb1", nil, proto.SubtaskStateFailed, "test", 1)
 	cntByStates, err := sm.GetSubtaskCntByStates(ctx, 1, proto.StepOne)
 	require.NoError(t, err)
 	require.Len(t, cntByStates, 4)
 	require.Equal(t, int64(2), cntByStates[proto.SubtaskStatePending])
 	require.Equal(t, int64(1), cntByStates[proto.SubtaskStateRunning])
 	require.Equal(t, int64(1), cntByStates[proto.SubtaskStateSucceed])
+	require.Equal(t, int64(1), cntByStates[proto.SubtaskStateFailed])
+	cntByStates, err = sm.GetSubtaskCntByStates(ctx, 1, proto.StepTwo)
+	require.NoError(t, err)
+	require.Len(t, cntByStates, 1)
 	require.Equal(t, int64(1), cntByStates[proto.SubtaskStateFailed])
 }
 
