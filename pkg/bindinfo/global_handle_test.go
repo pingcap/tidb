@@ -133,7 +133,7 @@ func TestBindParse(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, bindHandle.Size())
 
-	sql, sqlDigest := parser.NormalizeDigest("select * from test . t")
+	_, sqlDigest := parser.NormalizeDigest("select * from test . t")
 	bindData := bindHandle.GetGlobalBinding(sqlDigest.String())
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t`", bindData.OriginalSQL)
