@@ -430,6 +430,14 @@ func TestPrepareCacheNow(t *testing.T) {
 	require.Equal(t, rs[0][6].(string), rs[0][1].(string))
 	require.Equal(t, rs[0][7].(string), rs[0][2].(string))
 	require.Equal(t, rs[0][8].(string), rs[0][3].(string))
+
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("set global tidb_sysdate_is_now=0;")
+	tk.MustExec("prepare s from \"select sysdate(6)=now(6) from t\";")
+	rs = tk.MustQuery("execute s").Rows()
+	tk.MustExec("set global tidb_sysdate_is_now=1;")
+	rs1 := tk.MustQuery("execute s").Rows()
+	require.Equal(t, rs, rs1)
 }
 
 func TestPrepareOverMaxPreparedStmtCount(t *testing.T) {
