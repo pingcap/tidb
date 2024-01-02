@@ -33,7 +33,6 @@ import (
 	handle_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -466,7 +465,7 @@ func (s *statsReadWriter) PersistStatsBySnapshot(
 	dbName string,
 	tableInfo *model.TableInfo,
 	snapshot uint64,
-	persist func(ctx context.Context, jsonTable *statsutil.JSONTable, physicalID int64) error,
+	persist func(ctx context.Context, jsonTable *util.JSONTable, physicalID int64) error,
 ) error {
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil {
