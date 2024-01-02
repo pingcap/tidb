@@ -309,9 +309,9 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		for i, taskID := range taskIDs {
 			require.Equal(t, int64(i+1), tasks[i].ID)
 			require.Eventually(t, func() bool {
-				cnt, err := mgr.GetSubtaskInStatesCnt(ctx, taskID, proto.SubtaskStatePending)
+				cntByStates, err := mgr.GetSubtaskCntByStates(ctx, taskID, proto.StepOne)
 				require.NoError(t, err)
-				return int64(subtaskCnt) == cnt
+				return int64(subtaskCnt) == cntByStates[proto.SubtaskStatePending]
 			}, time.Second, 50*time.Millisecond)
 		}
 	}

@@ -96,7 +96,7 @@ func (s *BaseTaskExecutor) startCancelCheck(ctx context.Context, wg *sync.WaitGr
 		for {
 			select {
 			case <-ctx.Done():
-				logutil.Logger(s.logCtx).Info("taskExecutor exits", zap.Error(ctx.Err()))
+				logutil.Logger(s.logCtx).Info("task executor exits")
 				return
 			case <-ticker.C:
 				canceled, err := s.taskTable.IsTaskExecutorCanceled(ctx, s.id, s.taskID)
