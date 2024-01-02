@@ -25,7 +25,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -279,8 +278,7 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, recor
 			if err != nil {
 				return
 			}
-			sqlDigest := parser.DigestNormalized(record.OriginalSQL)
-			h.setGlobalCacheBinding(sqlDigest.String(), record)
+			h.setGlobalCacheBinding(bindingSQLDigest(record.OriginalSQL), record)
 		}()
 
 		// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
@@ -336,7 +334,7 @@ func (h *globalBindingHandle) DropGlobalBinding(originalSQL, db string, binding 
 			if binding != nil {
 				record.Bindings = append(record.Bindings, *binding)
 			}
-			h.removeGlobalCacheBinding(parser.DigestNormalized(originalSQL).String(), record)
+			h.removeGlobalCacheBinding(bindingSQLDigest(originalSQL), record)
 		}()
 
 		// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
@@ -404,8 +402,8 @@ func (h *globalBindingHandle) SetGlobalBindingStatus(originalSQL string, binding
 			// The set binding status operation is success.
 			ok = true
 			record := &BindRecord{OriginalSQL: originalSQL}
-			sqlDigest := parser.DigestNormalized(record.OriginalSQL)
-			oldRecord := h.GetGlobalBinding(sqlDigest.String(), originalSQL, "")
+			sqlDigest := bindingSQLDigest(record.OriginalSQL)
+			oldRecord := h.GetGlobalBinding(sqlDigest, originalSQL, "")
 			setBindingStatusInCacheSucc := false
 			if oldRecord != nil && len(oldRecord.Bindings) > 0 {
 				record.Bindings = make([]Binding, len(oldRecord.Bindings))
@@ -421,7 +419,7 @@ func (h *globalBindingHandle) SetGlobalBindingStatus(originalSQL string, binding
 				}
 			}
 			if setBindingStatusInCacheSucc {
-				h.setGlobalCacheBinding(sqlDigest.String(), record)
+				h.setGlobalCacheBinding(sqlDigest, record)
 			}
 		}()
 
@@ -622,10 +620,10 @@ func newBindRecord(sctx sessionctx.Context, row chunk.Row) (string, *BindRecord,
 		Db:          strings.ToLower(defaultDB),
 		Bindings:    []Binding{binding},
 	}
-	sqlDigest := parser.DigestNormalized(bindRecord.OriginalSQL)
+	sqlDigest := bindingSQLDigest(bindRecord.OriginalSQL)
 	sctx.GetSessionVars().CurrentDB = bindRecord.Db
 	err := bindRecord.prepareHints(sctx)
-	return sqlDigest.String(), bindRecord, err
+	return sqlDigest, bindRecord, err
 }
 
 // setGlobalCacheBinding sets the BindRecord to the cache, if there already exists a BindRecord,

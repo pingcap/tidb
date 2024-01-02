@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -96,14 +95,14 @@ func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, rec
 	}
 
 	// update the BindMeta to the cache.
-	h.appendSessionBinding(parser.DigestNormalized(record.OriginalSQL).String(), record)
+	h.appendSessionBinding(bindingSQLDigest(record.OriginalSQL), record)
 	return nil
 }
 
 // DropSessionBinding drops a BindRecord in the cache.
 func (h *sessionBindingHandle) DropSessionBinding(originalSQL, db string, binding *Binding) error {
 	db = strings.ToLower(db)
-	sqlDigest := parser.DigestNormalized(originalSQL).String()
+	sqlDigest := bindingSQLDigest(originalSQL)
 	oldRecord := h.GetSessionBinding(sqlDigest, originalSQL, db)
 	var newRecord *BindRecord
 	record := &BindRecord{OriginalSQL: originalSQL, Db: db}
@@ -182,7 +181,7 @@ func (h *sessionBindingHandle) DecodeSessionStates(_ context.Context, sctx sessi
 		if err := record.prepareHints(sctx); err != nil {
 			return err
 		}
-		h.appendSessionBinding(parser.DigestNormalized(record.OriginalSQL).String(), record)
+		h.appendSessionBinding(bindingSQLDigest(record.OriginalSQL), record)
 	}
 	return nil
 }

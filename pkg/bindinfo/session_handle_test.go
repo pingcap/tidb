@@ -110,7 +110,8 @@ func TestSessionBinding(t *testing.T) {
 		require.Equal(t, testSQL.memoryUsage, pb.GetGauge().GetValue())
 
 		handle := tk.Session().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-		sqlDigest := parser.DigestNormalized(testSQL.originSQL).String()
+		_, d := parser.NormalizeDigestForBinding(testSQL.originSQL)
+		sqlDigest := d.String()
 		bindData := handle.GetSessionBinding(sqlDigest, testSQL.originSQL, "test")
 		require.NotNil(t, bindData)
 		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
