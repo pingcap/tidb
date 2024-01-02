@@ -596,6 +596,8 @@ type ImportInto struct {
 
 	GenCols InsertGeneratedColumns
 	Stmt    string
+
+	SelectPlan PhysicalPlan
 }
 
 // LoadStats represents a load stats plan.
