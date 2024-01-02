@@ -1041,11 +1041,15 @@ const (
 	// version 181
 	//   add column `bdr_role` to `mysql.tidb_ddl_job` and `mysql.tidb_ddl_history`.
 	version181 = 181
+
+	// version 182
+	//   set tidb_txn_mode to Optimistic when tidb_txn_mode is not set.
+	version182 = 182
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version181
+var currentBootstrapVersion int64 = version182
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1202,6 +1206,7 @@ var (
 		upgradeToVer179,
 		upgradeToVer180,
 		upgradeToVer181,
+		upgradeToVer182,
 	}
 )
 
@@ -2946,6 +2951,16 @@ func upgradeToVer181(s sessiontypes.Session, ver int64) {
 	}
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ddl_job ADD COLUMN `bdr_role` varchar(64)", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ddl_history ADD COLUMN `bdr_role` varchar(64)", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer182(s sessiontypes.Session, ver int64) {
+	if ver >= version182 {
+		return
+	}
+	sql := fmt.Sprintf("INSERT HIGH_PRIORITY IGNORE INTO %s.%s VALUES('%s', '%s')",
+		mysql.SystemDB, mysql.GlobalVariablesTable,
+		variable.TiDBTxnMode, variable.OptimisticTxnMode)
+	mustExecute(s, sql)
 }
 
 func writeOOMAction(s sessiontypes.Session) {
