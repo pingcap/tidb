@@ -264,12 +264,10 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 			if len(indexCondsForP) > 0 {
 				accessConds = append(accessConds, expression.ComposeCNFCondition(ds.SCtx(), indexCondsForP...))
 			}
-
 		}
 		if len(indexMap) == 1 {
 			continue
 		}
-
 		// 2.2 get the theoretical whole count after access for index merge.
 		accessDNF := expression.ComposeDNFCondition(ds.SCtx(), accessConds...)
 		sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.tableStats.HistColl, []expression.Expression{accessDNF}, nil)
