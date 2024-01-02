@@ -1403,8 +1403,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 				if !isPhysicalPlan {
 					continue
 				}
-				switch pp.(type) {
-				case *plannercore.PhysicalHashJoin:
+				if _, ok := pp.(*plannercore.PhysicalHashJoin); ok {
 					hasJoin = true
 				}
 			}
