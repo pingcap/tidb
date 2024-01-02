@@ -899,6 +899,11 @@ func TestPartitionTable(t *testing.T) {
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("set @@tidb_enable_list_partition = 1")
 
+	seed := time.Now().UnixNano()
+	//seed := int64(1704191012078910000)
+	t.Logf("seed: %d", seed)
+	randomSeed := rand.New(rand.NewSource(seed))
+
 	type testcase struct {
 		t1Create string
 		t2Create string
@@ -908,18 +913,18 @@ func TestPartitionTable(t *testing.T) {
 	}
 	randDateTime := func() string {
 		return fmt.Sprintf("%v-%v-%v %v:%v:%v",
-			1950+rand.Intn(100), 1+rand.Intn(12), 1+rand.Intn(28), // date
-			rand.Intn(24), rand.Intn(60), rand.Intn(60)) // time
+			1950+randomSeed.Intn(100), 1+randomSeed.Intn(12), 1+randomSeed.Intn(28), // date
+			randomSeed.Intn(24), randomSeed.Intn(60), randomSeed.Intn(60)) // time
 	}
 	randDate := func() string {
-		return fmt.Sprintf("%v-%v-%v", 1950+rand.Intn(100), 1+rand.Intn(12), 1+rand.Intn(28))
+		return fmt.Sprintf("%v-%v-%v", 1950+randomSeed.Intn(100), 1+randomSeed.Intn(12), 1+randomSeed.Intn(28))
 	}
 	testcases := []testcase{
 		{ // hash partition + int
 			"create table t1(a int, b int) partition by hash(a) partitions 20",
 			"create table t2(a int, b int)",
-			func() string { return fmt.Sprintf("(%v, %v)", rand.Intn(100000000), rand.Intn(100000000)) },
-			func() string { return fmt.Sprintf("%v", rand.Intn(100000000)) },
+			func() string { return fmt.Sprintf("(%v, %v)", randomSeed.Intn(100000000), randomSeed.Intn(100000000)) },
+			func() string { return fmt.Sprintf("%v", randomSeed.Intn(100000000)) },
 			`select * from %v where a > ?`,
 		},
 		{ // range partition + int
@@ -930,8 +935,8 @@ func TestPartitionTable(t *testing.T) {
 						partition p3 values less than (80000000),
 						partition p4 values less than (100000000))`,
 			`create table t2(a int, b int)`,
-			func() string { return fmt.Sprintf("(%v, %v)", rand.Intn(100000000), rand.Intn(100000000)) },
-			func() string { return fmt.Sprintf("%v", rand.Intn(100000000)) },
+			func() string { return fmt.Sprintf("(%v, %v)", randomSeed.Intn(100000000), randomSeed.Intn(100000000)) },
+			func() string { return fmt.Sprintf("%v", randomSeed.Intn(100000000)) },
 			`select * from %v where a > ?`,
 		},
 		{ // range partition + varchar
@@ -942,8 +947,8 @@ func TestPartitionTable(t *testing.T) {
 						partition p3 values less than ('800'),
 						partition p4 values less than ('9999'))`,
 			`create table t2(a varchar(10), b varchar(10))`,
-			func() string { return fmt.Sprintf(`("%v", "%v")`, rand.Intn(1000), rand.Intn(1000)) },
-			func() string { return fmt.Sprintf(`"%v"`, rand.Intn(1000)) },
+			func() string { return fmt.Sprintf(`("%v", "%v")`, randomSeed.Intn(1000), randomSeed.Intn(1000)) },
+			func() string { return fmt.Sprintf(`"%v"`, randomSeed.Intn(1000)) },
 			`select * from %v where a > ?`,
 		},
 		{ // range partition + datetime
@@ -977,8 +982,8 @@ func TestPartitionTable(t *testing.T) {
 						partition p2 values in (10, 11, 12, 13, 14),
 						partition p3 values in (15, 16, 17, 18, 19))`,
 			`create table t2(a int, b int)`,
-			func() string { return fmt.Sprintf("(%v, %v)", rand.Intn(20), rand.Intn(20)) },
-			func() string { return fmt.Sprintf("%v", rand.Intn(20)) },
+			func() string { return fmt.Sprintf("(%v, %v)", randomSeed.Intn(20), randomSeed.Intn(20)) },
+			func() string { return fmt.Sprintf("%v", randomSeed.Intn(20)) },
 			`select * from %v where a > ?`,
 		},
 	}
@@ -994,6 +999,11 @@ func TestPartitionTable(t *testing.T) {
 		}
 		tk.MustExec(fmt.Sprintf("insert into t1 values %s", strings.Join(vals, ",")))
 		tk.MustExec(fmt.Sprintf("insert into t2 values %s", strings.Join(vals, ",")))
+		// if global stats are not ready, then dynamic prune mode is not used!
+		// TODO: Test without these to prevent prepared plan cache to switch between dynamic
+		// and static prune mode.
+		tk.MustExec(`analyze table t1`)
+		tk.MustExec(`analyze table t2`)
 
 		// the first query, @last_plan_from_cache should be zero
 		tk.MustExec(fmt.Sprintf(`prepare stmt1 from "%s"`, fmt.Sprintf(tc.query, "t1")))
@@ -1004,12 +1014,15 @@ func TestPartitionTable(t *testing.T) {
 		tk.MustQuery("execute stmt2 using @a").Sort().Check(result1)
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
+		commentString := fmt.Sprintf("/*\ntc.query=%s\ntc.t1Create=%s */", tc.query, tc.t1Create)
 		for i := 0; i < 100; i++ {
-			tk.MustExec(fmt.Sprintf("set @a=%v", tc.varGener()))
-			result1 := tk.MustQuery("execute stmt1 using @a").Sort().Rows()
-			// When https://github.com/pingcap/tidb/pull/33098 is reverted this should be 1 again
-			tk.MustQuery("select @@last_plan_from_cache /* i=" + strconv.Itoa(i) + " prepared statement: (t1) " + tc.query + "\n-- create table: " + tc.t1Create + "*/").Check(testkit.Rows("0"))
-			tk.MustQuery("execute stmt2 using @a").Sort().Check(result1)
+			val := tc.varGener()
+			t.Logf("@a=%v", val)
+			tk.MustExec(fmt.Sprintf("set @a=%v", val))
+			result1 = tk.MustQuery("execute stmt1 using @a /* @a=" + val + " i=" + strconv.Itoa(i) + "  */ " + commentString).Sort().Rows()
+
+			tk.MustQuery("select @@last_plan_from_cache /* i=" + strconv.Itoa(i) + " prepared statement: (t1) " + tc.query + "\n-- create table: " + tc.t1Create + "*/").Check(testkit.Rows("1"))
+			tk.MustQuery("execute stmt2 using @a /* @a=" + val + " i=" + strconv.Itoa(i) + " */ " + commentString).Sort().Check(result1)
 			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 		}
 	}

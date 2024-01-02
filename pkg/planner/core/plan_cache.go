@@ -573,10 +573,8 @@ func rebuildRange(p Plan) error {
 			if partDef != nil {
 				panic("Already pruned?!?!")
 			}
-			// Single column PK <=> Must be the partitioning columns!
-			if !x.TblInfo.PKIsHandle {
-				return errors.New("point get for partition table can not use plan cache, PK is not handle")
-			}
+			// TODO: difference between IndexValues and handles?
+			// Should this be moved to Access conds above?
 			// Re-calculate the pruning!
 			// For now, use the fully fledged pruner!
 			is := domain.GetDomain(sctx).InfoSchema()
@@ -586,49 +584,19 @@ func rebuildRange(p Plan) error {
 				return errors.New("point get for partition table can not use plan cache, cannot get table")
 			}
 			// TODO: Can we access the partition names somehow? At least test with explicit partition selection
-			// TODO: There must be some way to reuse the columns and names?
-			//func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
-			var colNames types.NameSlice
-			for _, col := range x.Schema().Columns {
-				name := &types.FieldName{
-					ColName:     model.NewCIStr(col.OrigName),
-					OrigColName: model.NewCIStr(col.OrigName),
-					OrigTblName: x.TblInfo.Name,
-					TblName:     x.TblInfo.Name,
-					DBName:      model.NewCIStr(x.dbName),
-				}
-				colNames = append(colNames, name)
-			}
-
-			//func PartitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr,
-			//	columns []*expression.Column, names types.NameSlice) ([]int, error) {
-			parts, err := PartitionPruning(sctx, tbl.GetPartitionedTable(), x.AccessConditions, nil, x.Schema().Columns, colNames)
+			parts, err := PartitionPruning(sctx, tbl.GetPartitionedTable(), x.AccessConditions, nil, x.Schema().Columns, x.outputNames)
 			if err != nil {
 				return err
 			}
 			if len(parts) != 1 {
 				if len(parts) == 0 {
 					// TODO: Handle this, turn it into TableDual!
+					// Maybe change check from x.PartDef to tbl.GetPartitionedTable() instead?
 					return errors.New("not matching any partition")
 				}
 				return errors.New("point_get cached query matches multiple partitions")
 			}
 			x.PartDef = &x.TblInfo.GetPartitionInfo().Definitions[parts[0]]
-
-			/*
-				// TODO: Why is this neither a handleConst lookup or Index lookup?
-				// TODO: Check how expressions are handled...
-				partDef, _, _, isTableDual = getPartitionInfo(sctx, x.TblInfo, []nameValuePair{{x.TblInfo.Columns[x.partitionColumnPos].Name.L, &x.TblInfo.Columns[x.partitionColumnPos].FieldType, *dVal, x.C}})
-				// TODO: Support isTableDual?
-				if isTableDual {
-					return errors.New("point get for partition table can not use plan cache, could not prune")
-				}
-				if partDef == nil {
-					return errors.New("point get for partition table can not use plan cache, could not prune")
-				}
-				x.PartDef = partDef
-
-			*/
 		}
 		return nil
 	case *BatchPointGetPlan:
@@ -645,6 +613,7 @@ func rebuildRange(p Plan) error {
 				for i := range x.IndexValues {
 					copy(x.IndexValues[i], ranges.Ranges[i].LowVal)
 				}
+				panic("Found a plan cache IndexInfo batch point test!")
 			} else {
 				var pkCol *expression.Column
 				var unsignedIntHandle bool
@@ -671,11 +640,9 @@ func rebuildRange(p Plan) error {
 					for i := range ranges {
 						x.Handles[i] = kv.IntHandle(ranges[i].LowVal[0].GetInt64())
 					}
+					panic("Found a plan cache Handles batch point test!")
 				}
 			}
-		}
-		if len(x.PartitionDefs) != 0 {
-			return errors.New("batch point get for partition table can not use plan cache")
 		}
 		for i, param := range x.HandleParams {
 			if param != nil {
@@ -688,6 +655,8 @@ func rebuildRange(p Plan) error {
 					return err
 				}
 				x.Handles[i] = kv.IntHandle(iv)
+				// TestPreparedPlanCachePartitions
+				//panic("Found a plan cache HandleParams batch point test!")
 			}
 		}
 		for i, params := range x.IndexValueParams {
@@ -703,6 +672,46 @@ func rebuildRange(p Plan) error {
 					x.IndexValues[i][j] = *dVal
 				}
 			}
+			panic("Found a plan cache IndexValueParams test!")
+		}
+		if len(x.HandleParams) > 0 && len(x.IndexValueParams) > 0 {
+			panic("Both handle and index params?!?")
+		}
+		if len(x.Handles) > 0 && len(x.IndexValues) > 0 {
+			panic("Both handle and index values?!?")
+		}
+		// TODO: fix TableDual!
+		if len(x.PartitionDefs) > 0 {
+			//pos2PartitionDefinition := make(map[int]*model.PartitionDefinition)
+			partIDs := make([]int64, 0, len(x.Handles))
+			partDefs := make([]*model.PartitionDefinition, 0, len(x.Handles))
+			if len(x.Handles) > 0 {
+				pairs := []nameValuePair{{
+					colName:      x.TblInfo.Columns[x.PartitionColPos].Name.L,
+					colFieldType: &x.TblInfo.Columns[x.PartitionColPos].FieldType,
+				}}
+				for i := range x.Handles {
+					datum, err := x.Handles[i].Data()
+					if err != nil {
+						return err
+					}
+					pairs[0].value = datum[0]
+					pairs[0].con = x.HandleParams[i]
+					// TODO: handle isTableDual!
+					partDef, _, _, _ := getPartitionInfo(sctx, x.TblInfo, pairs)
+					partDefs = append(partDefs, partDef)
+					partIDs = append(partIDs, partDef.ID)
+				}
+			} else if len(x.IndexValues) > 0 {
+				panic("What now?")
+			} else {
+				panic("What now?")
+			}
+
+			// TODO: Where is PartitionDefs used?
+			// PartitionIDs needs to match handles, and are deduplicated buildBatchPointGet
+			x.PartitionIDs = partIDs
+			x.PartitionDefs = partDefs
 		}
 	case *PhysicalIndexMergeReader:
 		indexMerge := p.(*PhysicalIndexMergeReader)

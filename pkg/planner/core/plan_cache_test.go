@@ -985,6 +985,9 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 		"select distinct a from t1 where a > 1 and b < 2",          // distinct
 		"select count(*) from t1 where a > 1 and b < 2 group by a", // group by
 		"select * from t1 order by a",                              // order by
+		"select * from t1 where a in (1, 2)",                       // Partitioned
+		"select * from t2 where a in (1, 2) and b in (1, 2, 3)",    // Partitioned
+		"select * from t1 where a in (1, 2) and b < 15",            // Partitioned
 	}
 
 	unsupported := []string{
@@ -1291,5 +1294,30 @@ func TestPreparedPlanCachePartitions(b *testing.T) {
 	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows("1999999 1999999 1999999"))
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows("1999999 1999999 1999999"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec(`prepare stmt4 from 'select a,c,b from t where a IN (?,?,?)'`)
+	tk.MustExec(`set @a=1999999,@b=0,@c=-1`)
+	tk.MustQuery(`execute stmt4 using @a,@b,@c`).Sort().Check(testkit.Rows("-1 <nil> <nil>", "0 0 0", "1999999 1999999 1999999"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`execute stmt4 using @a,@b,@c`).Sort().Check(testkit.Rows("-1 <nil> <nil>", "0 0 0", "1999999 1999999 1999999"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
+func TestPreparedPlanCachePartitionIndex(b *testing.T) {
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (b varchar(255), a int primary key nonclustered, key (b)) partition by key(a) partitions 3`)
+	tk.MustExec(`insert into t values ('Ab', 1),('abc',2),('BC',3),('AC',4),('BA',5),('cda',6)`)
+	tk.MustExec(`analyze table t`)
+	tk.MustExec(`prepare stmt from 'select * from t where a IN (?,?,?)'`)
+	tk.MustExec(`set @a=1,@b=3,@c=4`)
+	tk.MustQuery(`execute stmt using @a,@b,@c`).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BC 3"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+	tk.MustQuery(`execute stmt using @a,@b,@c`).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BC 3"))
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`set @a=2,@b=5,@c=4`)
+	tk.MustQuery(`execute stmt using @a,@b,@c`).Sort().Check(testkit.Rows("AC 4", "BA 5", "abc 2"))
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }

@@ -1501,9 +1501,11 @@ func (p *rangePruner) extractDataForPrune(sctx sessionctx.Context, expr expressi
 	// Suppose the partition expression is 'a + b' and we have a condition 'a = 2',
 	// the constExpr is '2 + b' after the replacement which we can't evaluate.
 	// TODO: Is this correct? Can it not at least include a paramMarker?
-	if !expression.ConstExprConsiderPlanCache(constExpr, sctx.GetSessionVars().StmtCtx.UseCache) {
-		return ret, false
-	}
+	/*
+		if !expression.ConstExprConsiderPlanCache(constExpr, sctx.GetSessionVars().StmtCtx.UseCache) {
+			return ret, false
+		}
+	*/
 	c, isNull, err := constExpr.EvalInt(sctx, chunk.Row{})
 	if err == nil && !isNull {
 		ret.c = c
