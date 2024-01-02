@@ -1503,7 +1503,7 @@ func TestTiDBParams(t *testing.T) {
 
 	// global/session variable
 	tk.MustQuery("select * from tidb_params where param_name like '%authentication_ldap_sasl_bind_root_pwd%'").Check(testkit.Rows("tidb VAR authentication_ldap_sasl_bind_root_pwd * GLOBAL   <nil> <nil> <nil> 1 0 0 <nil>"))
-	tk.MustQuery(`SELECT * FROM tidb_params WHERE param_name = 'tidb_txn_mode'`).Check(testkit.Rows("tidb VAR tidb_txn_mode * SESSION,GLOBAL pessimistic  <nil> <nil> pessimistic,optimistic 1 0 1 <nil>"))
+	tk.MustQuery(`SELECT * FROM tidb_params WHERE param_name = 'profiling_history_size'`).Check(testkit.Rows("tidb VAR profiling_history_size * SESSION,GLOBAL 15 15 <nil> <nil> <nil> 1 0 1 [\"IS_NOOP\"]"))
 	tk.MustQuery(`SELECT * FROM tidb_params WHERE param_name = 'tidb_checksum_table_concurrency'`).Check(testkit.Rows("tidb VAR tidb_checksum_table_concurrency * SESSION 4 4 1 256 <nil> 0 0 1 <nil>"))
 
 	// instance variable
