@@ -450,7 +450,7 @@ func (c *Context) InSandBoxMode() bool {
 	return c.inSandBoxMode
 }
 
-// SetInfoSchema implements the sessionctx.Context interface.
+// SetInfoSchema is to set info shema for the test.
 func (c *Context) SetInfoSchema(is sessionctx.InfoschemaMetaVersion) {
 	c.is = is
 }
