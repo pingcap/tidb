@@ -2350,11 +2350,58 @@ type HandleRange struct {
 type BDRRole string
 
 const (
-	BDRRoleNone      BDRRole = "none"
 	BDRRolePrimary   BDRRole = "primary"
 	BDRRoleSecondary BDRRole = "secondary"
 	BDRRoleLocalOnly BDRRole = "local_only"
 )
+
+// DeniedByBDR checks whether the DDL is denied by BDR.
+func DeniedByBDR(role BDRRole, action model.ActionType, job *model.Job) (denied bool) {
+	ddlType, ok := model.ActionBDRMap[action]
+	switch role {
+	case BDRRolePrimary:
+		if !ok {
+			return true
+		}
+
+		// Can't add unique index on primary role.
+		if job != nil && (action == model.ActionAddIndex || action == model.ActionAddPrimaryKey) &&
+			len(job.Args) >= 1 && job.Args[0].(bool) {
+			// job.Args[0] is unique when job.Type is ActionAddIndex or ActionAddPrimaryKey.
+			return true
+		}
+
+		// add or update comments for column, change default values of one particular column
+		// which is allowed on primary role. Other modify column operations are denied.
+		// nolint:staticcheck
+		if job != nil && action == model.ActionModifyColumn {
+			// TODO
+		}
+
+		// add a new column to table that it’s nullable or with default value,
+		// which is allowed on primary role. Other add column operations are denied.
+		// nolint:staticcheck
+		if job != nil && action == model.ActionAddColumn {
+			// TODO
+		}
+
+		if ddlType == model.SafeDDL || ddlType == model.UnmanagementDDL {
+			return false
+		}
+	case BDRRoleSecondary:
+		if !ok {
+			return true
+		}
+		if ddlType == model.UnmanagementDDL {
+			return false
+		}
+	default:
+		// if user do not set bdr role, we will not deny any ddl as `none`
+		return false
+	}
+
+	return true
+}
 
 type StatementScope int
 
@@ -2600,8 +2647,6 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	case AdminSetBDRRole:
 		switch n.BDRRole {
-		case BDRRoleNone:
-			ctx.WriteKeyWord("SET BDR ROLE NONE")
 		case BDRRolePrimary:
 			ctx.WriteKeyWord("SET BDR ROLE PRIMARY")
 		case BDRRoleSecondary:
@@ -3670,9 +3715,11 @@ type HintTable struct {
 }
 
 func (ht *HintTable) Restore(ctx *format.RestoreCtx) {
-	if ht.DBName.L != "" {
-		ctx.WriteName(ht.DBName.String())
-		ctx.WriteKeyWord(".")
+	if !ctx.Flags.HasWithoutSchemaNameFlag() {
+		if ht.DBName.L != "" {
+			ctx.WriteName(ht.DBName.String())
+			ctx.WriteKeyWord(".")
+		}
 	}
 	ctx.WriteName(ht.TableName.String())
 	if ht.QBName.L != "" {
@@ -3723,7 +3770,9 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(n.HintData.(string))
 	case "nth_plan":
 		ctx.WritePlainf("%d", n.HintData.(int64))
-	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join", "broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "leading":
+	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join",
+		"broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "leading", "no_hash_join", "no_merge_join",
+		"no_index_join", "no_index_hash_join", "no_index_merge_join":
 		for i, table := range n.Tables {
 			if i != 0 {
 				ctx.WritePlain(", ")

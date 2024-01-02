@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	poolutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
@@ -212,8 +213,7 @@ func (*globalPanicOnExceed) GetPriority() int64 {
 
 // newList creates a new List to buffer current executor's result.
 func newList(e exec.Executor) *chunk.List {
-	base := e.Base()
-	return chunk.NewList(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize())
+	return chunk.NewList(e.RetFieldTypes(), e.InitCap(), e.MaxChunkSize())
 }
 
 // CommandDDLJobsExec is the general struct for Cancel/Pause/Resume commands on
@@ -1989,6 +1989,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.OptimizerCETrace = nil
 	sc.IsSyncStatsFailed = false
 	sc.IsExplainAnalyzeDML = false
+	sc.ResourceGroupName = vars.ResourceGroupName
 	// Firstly we assume that UseDynamicPruneMode can be enabled according session variable, then we will check other conditions
 	// in PlanBuilder.buildDataSource
 	if ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
@@ -2220,6 +2221,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(reuseObj)
 	}
 
+	sc.ForcePlanCache = fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false)
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount
@@ -2377,7 +2379,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		w.e.err.CompareAndSwap(nil, &err)
 	}
 
-	se, err := w.e.Base().GetSysSession()
+	se, err := w.e.BaseExecutor.GetSysSession()
 	if err != nil {
 		trySaveErr(err)
 		return
@@ -2385,7 +2387,7 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	restoreCtx := w.initSessCtx(se)
 	defer func() {
 		restoreCtx()
-		w.e.Base().ReleaseSysSession(ctx, se)
+		w.e.BaseExecutor.ReleaseSysSession(ctx, se)
 	}()
 
 	var pkCols []string
@@ -2782,7 +2784,7 @@ func (e *AdminShowBDRRoleExec) Next(ctx context.Context, req *chunk.Chunk) error
 		}
 
 		if role == "" {
-			role = string(ast.BDRRoleNone)
+			role = string(ast.BDRRoleLocalOnly)
 		}
 
 		req.AppendString(0, role)

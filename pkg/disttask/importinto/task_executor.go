@@ -17,6 +17,7 @@ package importinto
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"sync"
 	"time"
 
@@ -82,7 +83,7 @@ func getTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (*i
 		GroupCtx: ctx,
 		Progress: importer.NewProgress(),
 		Job:      &importer.Job{},
-	}, controller, taskID)
+	}, controller, strconv.FormatInt(taskID, 10))
 }
 
 func (s *importStepExecutor) Init(ctx context.Context) error {
@@ -309,9 +310,21 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	logger.Info("merge sort partSize", zap.String("size", units.BytesSize(float64(m.partSize))))
 
-	return external.MergeOverlappingFiles(ctx, sm.DataFiles, m.controller.GlobalSortStore, m.partSize, 64*1024,
-		prefix, getKVGroupBlockSize(sm.KVGroup), 8*1024, 1*size.MB, 8*1024,
-		onClose, int(m.taskMeta.Plan.ThreadCnt), false)
+	return external.MergeOverlappingFiles(
+		ctx,
+		sm.DataFiles,
+		m.controller.GlobalSortStore,
+		m.partSize,
+		64*1024,
+		prefix,
+		getKVGroupBlockSize(sm.KVGroup),
+		external.DefaultMemSizeLimit,
+		8*1024,
+		1*size.MB,
+		8*1024,
+		onClose,
+		int(m.taskMeta.Plan.ThreadCnt),
+		false)
 }
 
 func (m *mergeSortStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {

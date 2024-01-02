@@ -174,7 +174,7 @@ func SyntaxWarn(err error) error {
 		}
 	}
 
-	return parser.ErrParse.GenWithStackByArgs(syntaxErrorPrefix, err.Error())
+	return parser.ErrParse.FastGenByArgs(syntaxErrorPrefix, err.Error())
 }
 
 var (

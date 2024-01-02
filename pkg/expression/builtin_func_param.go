@@ -78,8 +78,9 @@ func buildStringParam(ctx EvalContext, bf *baseBuiltinFunc, idx int, input *chun
 		return &pa, false, nil
 	}
 
-	// Check if this is a const value
-	if bf.args[idx].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache) {
+	// Check if this is a const value.
+	// funcParam will not be shared between evaluations, so we just need it to be const in one ctx.
+	if bf.args[idx].ConstLevel() >= ConstOnlyInContext {
 		// Initialize the const
 		var isConstNull bool
 		pa.defaultStrVal, isConstNull, err = bf.args[idx].EvalString(ctx, chunk.Row{})
@@ -111,7 +112,8 @@ func buildIntParam(ctx EvalContext, bf *baseBuiltinFunc, idx int, input *chunk.C
 	}
 
 	// Check if this is a const value
-	if bf.args[idx].ConstItem(ctx.GetSessionVars().StmtCtx.UseCache) {
+	// funcParam will not be shared between evaluations, so we just need it to be const in one ctx.
+	if bf.args[idx].ConstLevel() >= ConstOnlyInContext {
 		// Initialize the const
 		var isConstNull bool
 		pa.defaultIntVal, isConstNull, err = bf.args[idx].EvalInt(ctx, chunk.Row{})
