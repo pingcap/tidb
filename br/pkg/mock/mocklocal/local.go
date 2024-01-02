@@ -135,20 +135,20 @@ func (m *MockStoreHelper) EXPECT() *MockStoreHelperMockRecorder {
 	return m.recorder
 }
 
-// GetTSO mocks base method.
-func (m *MockStoreHelper) GetTSO(arg0 context.Context) (int64, int64, error) {
+// GetTS mocks base method.
+func (m *MockStoreHelper) GetTS(arg0 context.Context) (int64, int64, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetTSO", arg0)
+	ret := m.ctrl.Call(m, "GetTS", arg0)
 	ret0, _ := ret[0].(int64)
 	ret1, _ := ret[1].(int64)
 	ret2, _ := ret[2].(error)
 	return ret0, ret1, ret2
 }
 
-// GetTSO indicates an expected call of GetTSO.
-func (mr *MockStoreHelperMockRecorder) GetTSO(arg0 any) *gomock.Call {
+// GetTS indicates an expected call of GetTS.
+func (mr *MockStoreHelperMockRecorder) GetTS(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTSO", reflect.TypeOf((*MockStoreHelper)(nil).GetTSO), arg0)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTS", reflect.TypeOf((*MockStoreHelper)(nil).GetTS), arg0)
 }
 
 // GetTiKVCodec mocks base method.

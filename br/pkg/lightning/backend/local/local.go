@@ -1567,8 +1567,8 @@ func (local *Backend) EngineFileSizes() (res []backend.EngineFileSize) {
 	return local.engineMgr.engineFileSizes()
 }
 
-// GetTSO implements StoreHelper interface.
-func (local *Backend) GetTSO(ctx context.Context) (physical, logical int64, err error) {
+// GetTS implements StoreHelper interface.
+func (local *Backend) GetTS(ctx context.Context) (physical, logical int64, err error) {
 	return local.pdCli.GetTS(ctx)
 }
 

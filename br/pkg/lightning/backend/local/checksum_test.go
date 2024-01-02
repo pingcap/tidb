@@ -238,10 +238,10 @@ func TestDoChecksumWithErrorAndLongOriginalLifetime(t *testing.T) {
 
 func TestGetGCLifetime(t *testing.T) {
 	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, db.Close())
 	})
-	require.NoError(t, err)
 	ctx := context.Background()
 
 	mock.

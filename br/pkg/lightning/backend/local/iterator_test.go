@@ -204,11 +204,7 @@ func TestKeyAdapterEncoding(t *testing.T) {
 
 func BenchmarkDupDetectIter(b *testing.B) {
 	keyAdapter := common.DupDetectKeyAdapter{}
-	db, err := pebble.Open(filepath.Join(b.TempDir(), "kv"), &pebble.Options{})
-	require.NoError(b, err)
-	b.Cleanup(func() {
-		require.NoError(b, db.Close())
-	})
+	db, _ := pebble.Open(filepath.Join(b.TempDir(), "kv"), &pebble.Options{})
 	wb := db.NewBatch()
 	val := []byte("value")
 	for i := 0; i < 100_000; i++ {
@@ -220,16 +216,12 @@ func BenchmarkDupDetectIter(b *testing.B) {
 		keyStr := fmt.Sprintf("%09d", keyNum)
 		rowID := strconv.Itoa(i)
 		key := keyAdapter.Encode(nil, []byte(keyStr), []byte(rowID))
-		require.NoError(b, wb.Set(key, val, nil))
+		wb.Set(key, val, nil)
 	}
-	require.NoError(b, wb.Commit(pebble.Sync))
+	wb.Commit(pebble.Sync)
 
 	pool := membuf.NewPool()
-	dupDB, err := pebble.Open(filepath.Join(b.TempDir(), "dup"), &pebble.Options{})
-	require.NoError(b, err)
-	b.Cleanup(func() {
-		require.NoError(b, dupDB.Close())
-	})
+	dupDB, _ := pebble.Open(filepath.Join(b.TempDir(), "dup"), &pebble.Options{})
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		iter := newDupDetectIter(
@@ -245,6 +237,6 @@ func BenchmarkDupDetectIter(b *testing.B) {
 		for iter.First(); iter.Valid(); iter.Next() {
 			keyCnt++
 		}
-		require.NoError(b, iter.Close())
+		iter.Close()
 	}
 }

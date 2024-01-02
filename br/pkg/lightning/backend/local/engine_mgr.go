@@ -50,7 +50,7 @@ var (
 
 // StoreHelper have some api to help encode or store KV data
 type StoreHelper interface {
-	GetTSO(ctx context.Context) (physical, logical int64, err error)
+	GetTS(ctx context.Context) (physical, logical int64, err error)
 	GetTiKVCodec() tikvclient.Codec
 }
 
@@ -276,7 +276,7 @@ func (em *engineManager) closeEngine(ctx context.Context, cfg *backend.EngineCon
 		if err != nil {
 			return err
 		}
-		physical, logical, err := em.GetTSO(ctx)
+		physical, logical, err := em.GetTS(ctx)
 		if err != nil {
 			return err
 		}
@@ -424,7 +424,7 @@ func (em *engineManager) allocateTSIfNotExists(ctx context.Context, engine *Engi
 	if engine.TS > 0 {
 		return nil
 	}
-	physical, logical, err := em.GetTSO(ctx)
+	physical, logical, err := em.GetTS(ctx)
 	if err != nil {
 		return err
 	}
