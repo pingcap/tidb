@@ -241,4 +241,14 @@ connection default;
 disconnect conn1;
 
 # test information_schema.VARIABLES_INFO DEFAULT_VALUE
-select VARIABLE_NAME from information_schema.VARIABLES_INFO where DEFAULT_VALUE = CURRENT_VALUE and variable_name in ('tidb_txn_mode', 'tidb_enable_async_commit','tidb_enable_1pc', 'tidb_mem_oom_action', 'tidb_enable_auto_analyze', 'tidb_row_format_version', 'tidb_txn_assertion_level', 'tidb_enable_mutation_checker', 'tidb_pessimistic_txn_fair_locking') order by VARIABLE_NAME
+select VARIABLE_NAME from information_schema.VARIABLES_INFO where DEFAULT_VALUE = CURRENT_VALUE and variable_name in ('tidb_txn_mode', 'tidb_enable_async_commit','tidb_enable_1pc', 'tidb_mem_oom_action', 'tidb_enable_auto_analyze', 'tidb_row_format_version', 'tidb_txn_assertion_level', 'tidb_enable_mutation_checker', 'tidb_pessimistic_txn_fair_locking') order by VARIABLE_NAME;
+set global tidb_txn_mode = default;
+set global tidb_enable_async_commit = default;
+set global tidb_enable_1pc = default;
+set global tidb_mem_oom_action = default;
+set global tidb_enable_auto_analyze = default;
+set global tidb_row_format_version = default;
+set global tidb_txn_assertion_level = default;
+set global tidb_enable_mutation_checker = default;
+set global tidb_pessimistic_txn_fair_locking = default;
+select VARIABLE_NAME from information_schema.VARIABLES_INFO where DEFAULT_VALUE = CURRENT_VALUE and variable_name in ('tidb_txn_mode', 'tidb_enable_async_commit','tidb_enable_1pc', 'tidb_mem_oom_action', 'tidb_enable_auto_analyze', 'tidb_row_format_version', 'tidb_txn_assertion_level', 'tidb_enable_mutation_checker', 'tidb_pessimistic_txn_fair_locking') order by VARIABLE_NAME;
