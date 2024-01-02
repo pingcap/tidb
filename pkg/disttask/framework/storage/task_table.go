@@ -273,6 +273,20 @@ func (stm *TaskManager) SucceedTask(ctx context.Context, taskID int64) error {
 	})
 }
 
+// GetOneTask get a task from task table, it's used by scheduler only.
+func (stm *TaskManager) GetOneTask(ctx context.Context) (task *proto.Task, err error) {
+	rs, err := stm.executeSQLWithNewSession(ctx, "select "+taskColumns+" from mysql.tidb_global_task where state = %? limit 1", proto.TaskStatePending)
+	if err != nil {
+		return task, err
+	}
+
+	if len(rs) == 0 {
+		return nil, nil
+	}
+
+	return row2Task(rs[0]), nil
+}
+
 // GetTopUnfinishedTasks implements the scheduler.TaskManager interface.
 func (stm *TaskManager) GetTopUnfinishedTasks(ctx context.Context) (task []*proto.Task, err error) {
 	rs, err := stm.executeSQLWithNewSession(ctx,
