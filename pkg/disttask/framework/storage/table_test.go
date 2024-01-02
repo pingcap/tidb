@@ -970,7 +970,7 @@ func TestCancelAndExecIdChanged(t *testing.T) {
 }
 
 func TestTaskNotFound(t *testing.T) {
-	gm, ctx := testutil.InitTableTest(t)
+	_, gm, ctx := testutil.InitTableTest(t)
 	task, err := gm.GetTaskByID(ctx, 1)
 	require.Error(t, err, storage.ErrTaskNotFound)
 	require.Nil(t, task)
