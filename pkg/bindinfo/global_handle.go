@@ -47,10 +47,7 @@ type GlobalBindingHandle interface {
 	// Methods for create, get, drop global sql bindings.
 
 	// GetGlobalBinding returns the BindRecord of the (normalizedSQL,db) if BindRecord exist.
-	GetGlobalBinding(sqlDigest, normalizedSQL, db string) *BindRecord
-
-	// GetGlobalBindingBySQLDigest returns the BindRecord of the sql digest.
-	GetGlobalBindingBySQLDigest(sqlDigest string) (*BindRecord, error)
+	GetGlobalBinding(sqlDigest string) *BindRecord
 
 	// GetAllGlobalBindings returns all bind records in cache.
 	GetAllGlobalBindings() (bindRecords []*BindRecord)
@@ -367,10 +364,7 @@ func (h *globalBindingHandle) DropGlobalBindingByDigest(sqlDigest string) (delet
 	if sqlDigest == "" {
 		return 0, errors.New("sql digest is empty")
 	}
-	oldRecord, err := h.GetGlobalBindingBySQLDigest(sqlDigest)
-	if err != nil {
-		return 0, err
-	}
+	oldRecord := h.GetGlobalBinding(sqlDigest)
 	if oldRecord == nil {
 		return 0, errors.Errorf("can't find any binding for '%s'", sqlDigest)
 	}
@@ -405,7 +399,7 @@ func (h *globalBindingHandle) SetGlobalBindingStatus(originalSQL string, binding
 			ok = true
 			record := &BindRecord{OriginalSQL: originalSQL}
 			sqlDigest := parser.DigestNormalized(record.OriginalSQL)
-			oldRecord := h.GetGlobalBinding(sqlDigest.String(), originalSQL, "")
+			oldRecord := h.GetGlobalBinding(sqlDigest.String())
 			setBindingStatusInCacheSucc := false
 			if oldRecord != nil && len(oldRecord.Bindings) > 0 {
 				record.Bindings = make([]Binding, len(oldRecord.Bindings))
@@ -448,10 +442,7 @@ func (h *globalBindingHandle) SetGlobalBindingStatus(originalSQL string, binding
 
 // SetGlobalBindingStatusByDigest set a BindRecord's status to the storage and bind cache.
 func (h *globalBindingHandle) SetGlobalBindingStatusByDigest(newStatus, sqlDigest string) (ok bool, err error) {
-	oldRecord, err := h.GetGlobalBindingBySQLDigest(sqlDigest)
-	if err != nil {
-		return false, err
-	}
+	oldRecord := h.GetGlobalBinding(sqlDigest)
 	if oldRecord == nil {
 		return false, errors.Errorf("can't find any binding for '%s'", sqlDigest)
 	}
@@ -563,13 +554,8 @@ func (h *globalBindingHandle) Size() int {
 }
 
 // GetGlobalBinding returns the BindRecord of the (normalizedSQL,db) if BindRecord exist.
-func (h *globalBindingHandle) GetGlobalBinding(sqlDigest, _, _ string) *BindRecord {
+func (h *globalBindingHandle) GetGlobalBinding(sqlDigest string) *BindRecord {
 	return h.getCache().GetBinding(sqlDigest)
-}
-
-// GetGlobalBindingBySQLDigest returns the BindRecord of the sql digest.
-func (h *globalBindingHandle) GetGlobalBindingBySQLDigest(sqlDigest string) (*BindRecord, error) {
-	return h.getCache().GetBinding(sqlDigest), nil
 }
 
 // GetAllGlobalBindings returns all bind records in cache.

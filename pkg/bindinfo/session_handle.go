@@ -44,10 +44,7 @@ type SessionBindingHandle interface {
 	DropSessionBindingByDigest(sqlDigest string) error
 
 	// GetSessionBinding return the binding which can match the digest.
-	GetSessionBinding(sqlDigest, normdOrigSQL, db string) *BindRecord
-
-	// GetSessionBindingBySQLDigest return all bindings which can match the digest.
-	GetSessionBindingBySQLDigest(sqlDigest string) (*BindRecord, error)
+	GetSessionBinding(sqlDigest string) *BindRecord
 
 	// GetAllSessionBindings return all bindings.
 	GetAllSessionBindings() (bindRecords []*BindRecord)
@@ -104,7 +101,7 @@ func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, rec
 func (h *sessionBindingHandle) DropSessionBinding(originalSQL, db string, binding *Binding) error {
 	db = strings.ToLower(db)
 	sqlDigest := parser.DigestNormalized(originalSQL).String()
-	oldRecord := h.GetSessionBinding(sqlDigest, originalSQL, db)
+	oldRecord := h.GetSessionBinding(sqlDigest)
 	var newRecord *BindRecord
 	record := &BindRecord{OriginalSQL: originalSQL, Db: db}
 	if binding != nil {
@@ -129,24 +126,16 @@ func (h *sessionBindingHandle) DropSessionBindingByDigest(sqlDigest string) erro
 	if sqlDigest == "" {
 		return errors.New("sql digest is empty")
 	}
-	oldRecord, err := h.GetSessionBindingBySQLDigest(sqlDigest)
-	if err != nil {
-		return err
-	}
+	oldRecord := h.GetSessionBinding(sqlDigest)
 	if oldRecord == nil {
 		return errors.Errorf("can't find any binding for '%s'", sqlDigest)
 	}
 	return h.DropSessionBinding(oldRecord.OriginalSQL, strings.ToLower(oldRecord.Db), nil)
 }
 
-// GetSessionBinding return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
-func (h *sessionBindingHandle) GetSessionBinding(sqlDigest, _, _ string) *BindRecord {
+// GetSessionBinding return all BindMeta corresponding to sqlDigest.
+func (h *sessionBindingHandle) GetSessionBinding(sqlDigest string) *BindRecord {
 	return h.ch.GetBinding(sqlDigest)
-}
-
-// GetSessionBindingBySQLDigest return all BindMeta corresponding to sqlDigest.
-func (h *sessionBindingHandle) GetSessionBindingBySQLDigest(sqlDigest string) (*BindRecord, error) {
-	return h.ch.GetBinding(sqlDigest), nil
 }
 
 // GetAllSessionBindings return all session bind info.
