@@ -2118,6 +2118,8 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 
 		job := reorgInfo.Job
 		workerCntLimit := int(variable.GetDDLReorgWorkerCounter())
+		// we're using cpu count of current node, not of framework managed nodes,
+		// but it seems more intuitive.
 		concurrency := min(workerCntLimit, cpu.GetCPUCount())
 		logutil.BgLogger().Info("adjusted add-index task concurrency",
 			zap.Int("worker-cnt", workerCntLimit), zap.Int("task-concurrency", concurrency),

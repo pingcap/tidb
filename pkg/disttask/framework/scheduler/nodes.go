@@ -91,9 +91,9 @@ func (nm *NodeManager) maintainLiveNodes(ctx context.Context, taskMgr TaskManage
 	}
 
 	deadNodes := make([]string, 0)
-	for _, nodeID := range oldNodes {
-		if _, ok := currLiveNodes[nodeID]; !ok {
-			deadNodes = append(deadNodes, nodeID)
+	for _, node := range oldNodes {
+		if _, ok := currLiveNodes[node.ID]; !ok {
+			deadNodes = append(deadNodes, node.ID)
 		}
 	}
 	if len(deadNodes) == 0 {
@@ -110,7 +110,7 @@ func (nm *NodeManager) maintainLiveNodes(ctx context.Context, taskMgr TaskManage
 	nm.prevLiveNodes = currLiveNodes
 }
 
-func (nm *NodeManager) refreshManagedNodesLoop(ctx context.Context, taskMgr TaskManager) {
+func (nm *NodeManager) refreshManagedNodesLoop(ctx context.Context, taskMgr TaskManager, slotMgr *slotManager) {
 	ticker := time.NewTicker(nodesCheckInterval)
 	defer ticker.Stop()
 	for {
@@ -118,22 +118,28 @@ func (nm *NodeManager) refreshManagedNodesLoop(ctx context.Context, taskMgr Task
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			nm.refreshManagedNodes(ctx, taskMgr)
+			nm.refreshManagedNodes(ctx, taskMgr, slotMgr)
 		}
 	}
 }
 
 // refreshManagedNodes maintains the nodes managed by the framework.
-func (nm *NodeManager) refreshManagedNodes(ctx context.Context, taskMgr TaskManager) {
+func (nm *NodeManager) refreshManagedNodes(ctx context.Context, taskMgr TaskManager, slotMgr *slotManager) {
 	newNodes, err := taskMgr.GetManagedNodes(ctx)
 	if err != nil {
 		logutil.BgLogger().Warn("get managed nodes met error", log.ShortError(err))
 		return
 	}
-	if newNodes == nil {
-		newNodes = []string{}
+	nodeIDs := make([]string, 0, len(newNodes))
+	var cpuCount int
+	for _, node := range newNodes {
+		nodeIDs = append(nodeIDs, node.ID)
+		if node.CPUCount > 0 {
+			cpuCount = node.CPUCount
+		}
 	}
-	nm.managedNodes.Store(&newNodes)
+	slotMgr.updateCapacity(cpuCount)
+	nm.managedNodes.Store(&nodeIDs)
 }
 
 // GetManagedNodes returns the nodes managed by the framework.

@@ -22,32 +22,38 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
 
 // InitTableTest inits needed components for table_test.
-func InitTableTest(t *testing.T) (*storage.TaskManager, context.Context) {
-	pool := getResourcePool(t)
+// it disables disttask and mock cpu count to 8.
+func InitTableTest(t *testing.T) (kv.Storage, *storage.TaskManager, context.Context) {
+	store, pool := getResourcePool(t)
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "table_test")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
 	})
-	return getTaskManager(t, pool), ctx
+	return store, getTaskManager(t, pool), ctx
 }
 
 // InitTableTestWithCancel inits needed components with context.CancelFunc for table_test.
 func InitTableTestWithCancel(t *testing.T) (*storage.TaskManager, context.Context, context.CancelFunc) {
-	pool := getResourcePool(t)
+	_, pool := getResourcePool(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	ctx = util.WithInternalSourceType(ctx, "table_test")
 	return getTaskManager(t, pool), ctx, cancel
 }
 
-func getResourcePool(t *testing.T) *pools.ResourcePool {
+func getResourcePool(t *testing.T) (kv.Storage, *pools.ResourcePool) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
+	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
@@ -57,7 +63,7 @@ func getResourcePool(t *testing.T) *pools.ResourcePool {
 	t.Cleanup(func() {
 		pool.Close()
 	})
-	return pool
+	return store, pool
 }
 
 func getTaskManager(t *testing.T, pool *pools.ResourcePool) *storage.TaskManager {

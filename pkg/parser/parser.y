@@ -8789,6 +8789,10 @@ TableName:
 	{
 		$$ = &ast.TableName{Schema: model.NewCIStr($1), Name: model.NewCIStr($3)}
 	}
+|	'*' '.' Identifier
+	{
+		$$ = &ast.TableName{Schema: model.NewCIStr("*"), Name: model.NewCIStr($3)}
+	}
 
 TableNameList:
 	TableName
