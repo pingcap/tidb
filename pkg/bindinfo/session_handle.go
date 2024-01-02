@@ -129,6 +129,9 @@ func (h *sessionBindingHandle) DropSessionBindingByDigest(sqlDigest string) erro
 	if err != nil {
 		return err
 	}
+	if oldRecord == nil {
+		return nil
+	}
 	return h.DropSessionBinding(oldRecord.OriginalSQL, strings.ToLower(oldRecord.Db), nil)
 }
 
