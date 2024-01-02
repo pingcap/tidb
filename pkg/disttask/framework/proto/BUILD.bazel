@@ -2,7 +2,15 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "proto",
+<<<<<<< HEAD
     srcs = ["task.go"],
+=======
+    srcs = [
+        "node.go",
+        "subtask.go",
+        "task.go",
+    ],
+>>>>>>> 3d939d4b6f1 (disttask: init capacity and check concurrency using cpu count of managed node (#49875))
     importpath = "github.com/pingcap/tidb/pkg/disttask/framework/proto",
     visibility = ["//visibility:public"],
 )

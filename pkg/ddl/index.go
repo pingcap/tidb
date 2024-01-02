@@ -2115,7 +2115,18 @@ func (w *worker) executeDistGlobalTask(reorgInfo *reorgInfo) error {
 		}
 
 		job := reorgInfo.Job
+<<<<<<< HEAD
 		taskMeta := &BackfillGlobalMeta{
+=======
+		workerCntLimit := int(variable.GetDDLReorgWorkerCounter())
+		// we're using cpu count of current node, not of framework managed nodes,
+		// but it seems more intuitive.
+		concurrency := min(workerCntLimit, cpu.GetCPUCount())
+		logutil.BgLogger().Info("adjusted add-index task concurrency",
+			zap.Int("worker-cnt", workerCntLimit), zap.Int("task-concurrency", concurrency),
+			zap.String("task-key", taskKey))
+		taskMeta := &BackfillTaskMeta{
+>>>>>>> 3d939d4b6f1 (disttask: init capacity and check concurrency using cpu count of managed node (#49875))
 			Job:             *reorgInfo.Job.Clone(),
 			EleIDs:          elemIDs,
 			EleTypeKey:      reorgInfo.currElement.TypeKey,

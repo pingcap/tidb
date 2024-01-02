@@ -46,14 +46,35 @@ go_test(
     ],
     embed = [":scheduler"],
     flaky = True,
+<<<<<<< HEAD
     race = "on",
     shard_count = 8,
+=======
+    race = "off",
+    shard_count = 25,
+>>>>>>> 3d939d4b6f1 (disttask: init capacity and check concurrency using cpu count of managed node (#49875))
     deps = [
         "//pkg/disttask/framework/mock",
         "//pkg/disttask/framework/mock/execute",
         "//pkg/disttask/framework/proto",
+<<<<<<< HEAD
         "//pkg/resourcemanager/pool/spool",
         "//pkg/resourcemanager/util",
+=======
+        "//pkg/disttask/framework/scheduler/mock",
+        "//pkg/disttask/framework/storage",
+        "//pkg/disttask/framework/testutil",
+        "//pkg/domain/infosync",
+        "//pkg/kv",
+        "//pkg/sessionctx",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "//pkg/util/cpu",
+        "//pkg/util/disttask",
+        "//pkg/util/logutil",
+        "//pkg/util/sqlexec",
+        "@com_github_ngaut_pools//:pools",
+>>>>>>> 3d939d4b6f1 (disttask: init capacity and check concurrency using cpu count of managed node (#49875))
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@org_golang_google_grpc//codes",

@@ -502,10 +502,16 @@ func (e *LoadDataController) checkFieldParams() error {
 }
 
 func (p *Plan) initDefaultOptions() {
+<<<<<<< HEAD
 	threadCnt := runtime.GOMAXPROCS(0)
 	failpoint.Inject("mockNumCpu", func(val failpoint.Value) {
 		threadCnt = val.(int)
 	})
+=======
+	// we're using cpu count of current node, not of framework managed nodes,
+	// but it seems more intuitive.
+	threadCnt := cpu.GetCPUCount()
+>>>>>>> 3d939d4b6f1 (disttask: init capacity and check concurrency using cpu count of managed node (#49875))
 	threadCnt = int(math.Max(1, float64(threadCnt)*0.5))
 
 	p.Checksum = config.OpLevelRequired

@@ -15,8 +15,16 @@
 package dispatcher
 
 import (
+	"context"
 	"testing"
 
+<<<<<<< HEAD:pkg/disttask/framework/dispatcher/main_test.go
+=======
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+>>>>>>> 3d939d4b6f1 (disttask: init capacity and check concurrency using cpu count of managed node (#49875)):pkg/disttask/framework/storage/task_table_test.go
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"go.uber.org/goleak"
 )
@@ -60,3 +68,42 @@ func TestMain(m *testing.M) {
 	}
 	goleak.VerifyTestMain(m, opts...)
 }
+<<<<<<< HEAD:pkg/disttask/framework/dispatcher/main_test.go
+=======
+
+func GetCPUCountOfManagedNodes(ctx context.Context, taskMgr *TaskManager) (int, error) {
+	var cnt int
+	err := taskMgr.WithNewSession(func(se sessionctx.Context) error {
+		var err2 error
+		cnt, err2 = taskMgr.getCPUCountOfManagedNodes(ctx, se)
+		return err2
+	})
+	return cnt, err
+}
+
+func TestSplitSubtasks(t *testing.T) {
+	tm := &TaskManager{}
+	subtasks := make([]*proto.Subtask, 0, 10)
+	metaBytes := make([]byte, 100)
+	for i := 0; i < 10; i++ {
+		subtasks = append(subtasks, &proto.Subtask{ID: int64(i), Meta: metaBytes})
+	}
+	bak := kv.TxnTotalSizeLimit.Load()
+	t.Cleanup(func() {
+		kv.TxnTotalSizeLimit.Store(bak)
+	})
+
+	kv.TxnTotalSizeLimit.Store(config.SuperLargeTxnSize)
+	splitSubtasks := tm.splitSubtasks(subtasks)
+	require.Len(t, splitSubtasks, 1)
+	require.Equal(t, subtasks, splitSubtasks[0])
+
+	maxSubtaskBatchSize = 300
+	splitSubtasks = tm.splitSubtasks(subtasks)
+	require.Len(t, splitSubtasks, 4)
+	require.Equal(t, subtasks[:3], splitSubtasks[0])
+	require.Equal(t, subtasks[3:6], splitSubtasks[1])
+	require.Equal(t, subtasks[6:9], splitSubtasks[2])
+	require.Equal(t, subtasks[9:], splitSubtasks[3])
+}
+>>>>>>> 3d939d4b6f1 (disttask: init capacity and check concurrency using cpu count of managed node (#49875)):pkg/disttask/framework/storage/task_table_test.go
