@@ -273,7 +273,6 @@ func TestInvalidSetting(t *testing.T) {
 	cfg.TikvImporter.SortedKVDir = "."
 	cfg.TiDB.DistSQLScanConcurrency = 1
 	cfg.Mydumper.SourceDir = "."
-	cfg.TiDB.PdAddr = "234.56.78.90:12345"
 
 	err := cfg.Adjust(context.Background())
 	require.EqualError(t, err, "[Lightning:Config:ErrInvalidConfig]invalid `tidb.port` setting")
