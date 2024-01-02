@@ -452,6 +452,9 @@ func (h *globalBindingHandle) SetGlobalBindingStatusByDigest(newStatus, sqlDiges
 	if err != nil {
 		return false, err
 	}
+	if oldRecord == nil {
+		return false, errors.Errorf("can't find any binding for '%s'", sqlDigest)
+	}
 	return h.SetGlobalBindingStatus(oldRecord.OriginalSQL, nil, newStatus)
 }
 
