@@ -41,11 +41,9 @@ func (key bindCacheKey) Hash() []byte {
 	return hack.Slice(string(key))
 }
 
-func calcBindCacheKVMem(key bindCacheKey, value []*BindRecord) int64 {
+func calcBindCacheKVMem(key bindCacheKey, value *BindRecord) int64 {
 	var valMem int64
-	for _, bindRecord := range value {
-		valMem += int64(bindRecord.size())
-	}
+	valMem += int64(value.size())
 	return int64(len(key.Hash())) + valMem
 }
 
@@ -65,35 +63,19 @@ func newBindCache() *bindCache {
 // Note: Only other functions of the bindCache file can use this function.
 // Don't use this function directly in other files in bindinfo package.
 // The return value is not read-only, but it is only can be used in other functions which are also in the bind_cache.go.
-func (c *bindCache) get(key bindCacheKey) []*BindRecord {
+func (c *bindCache) get(key bindCacheKey) *BindRecord {
 	value, hit := c.cache.Get(key)
 	if !hit {
 		return nil
 	}
-	typedValue := value.([]*BindRecord)
+	typedValue := value.(*BindRecord)
 	return typedValue
-}
-
-// getCopiedVal gets a copied cache item according to cache key.
-// The return value can be modified.
-// If you want to modify the return value, use the 'getCopiedVal' function rather than 'get' function.
-// We use the copy on write way to operate the bindRecord in cache for safety and accuracy of memory usage.
-func (c *bindCache) getCopiedVal(key bindCacheKey) []*BindRecord {
-	bindRecords := c.get(key)
-	if bindRecords != nil {
-		copiedRecords := make([]*BindRecord, len(bindRecords))
-		for i, bindRecord := range bindRecords {
-			copiedRecords[i] = bindRecord.shallowCopy()
-		}
-		return copiedRecords
-	}
-	return bindRecords
 }
 
 // set inserts an item to the cache. It's not thread-safe.
 // Only other functions of the bindCache can use this function.
 // The set operation will return error message when the memory usage of binding_cache exceeds its capacity.
-func (c *bindCache) set(key bindCacheKey, value []*BindRecord) (ok bool, err error) {
+func (c *bindCache) set(key bindCacheKey, value *BindRecord) (ok bool, err error) {
 	mem := calcBindCacheKVMem(key, value)
 	if mem > c.memCapacity { // ignore this kv pair if its size is too large
 		err = errors.New("The memory usage of all available bindings exceeds the cache's mem quota. As a result, all available bindings cannot be held on the cache. Please increase the value of the system variable 'tidb_mem_quota_binding_cache' and execute 'admin reload bindings' to ensure that all bindings exist in the cache and can be used normally")
@@ -110,7 +92,7 @@ func (c *bindCache) set(key bindCacheKey, value []*BindRecord) (ok bool, err err
 		if !evicted {
 			return
 		}
-		c.memTracker.Consume(-calcBindCacheKVMem(evictedKey.(bindCacheKey), evictedValue.([]*BindRecord)))
+		c.memTracker.Consume(-calcBindCacheKVMem(evictedKey.(bindCacheKey), evictedValue.(*BindRecord)))
 	}
 	c.memTracker.Consume(mem)
 	c.cache.Put(key, value)
@@ -134,33 +116,10 @@ func (c *bindCache) delete(key bindCacheKey) bool {
 // GetBinding gets the BindRecord from the cache.
 // The return value is not read-only, but it shouldn't be changed in the caller functions.
 // The function is thread-safe.
-func (c *bindCache) GetBinding(sqlDigest, normalizedSQL, _ string) *BindRecord {
+func (c *bindCache) GetBinding(sqlDigest string) *BindRecord {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	bindRecords := c.get(bindCacheKey(sqlDigest))
-	for _, bindRecord := range bindRecords {
-		if bindRecord.OriginalSQL == normalizedSQL {
-			return bindRecord
-		}
-	}
-	return nil
-}
-
-// GetBindingBySQLDigest gets the BindRecord from the cache.
-// The return value is not read-only, but it shouldn't be changed in the caller functions.
-// The function is thread-safe.
-func (c *bindCache) GetBindingBySQLDigest(sqlDigest string) (*BindRecord, error) {
-	c.lock.Lock()
-	defer c.lock.Unlock()
-	bindings := c.get(bindCacheKey(sqlDigest))
-	if len(bindings) > 1 {
-		// currently, we only allow one binding for a sql
-		return nil, errors.New("more than 1 binding matched")
-	}
-	if len(bindings) == 0 || len(bindings[0].Bindings) == 0 {
-		return nil, errors.New("can't find any binding for '" + sqlDigest + "'")
-	}
-	return bindings[0], nil
+	return c.get(bindCacheKey(sqlDigest))
 }
 
 // GetAllBindings return all the bindRecords from the bindCache.
@@ -172,7 +131,7 @@ func (c *bindCache) GetAllBindings() []*BindRecord {
 	values := c.cache.Values()
 	bindRecords := make([]*BindRecord, 0, len(values))
 	for _, vals := range values {
-		bindRecords = append(bindRecords, vals.([]*BindRecord)...)
+		bindRecords = append(bindRecords, vals.(*BindRecord))
 	}
 	return bindRecords
 }
@@ -183,41 +142,16 @@ func (c *bindCache) SetBinding(sqlDigest string, meta *BindRecord) (err error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	cacheKey := bindCacheKey(sqlDigest)
-	metas := c.getCopiedVal(cacheKey)
-	for i := range metas {
-		if metas[i].OriginalSQL == meta.OriginalSQL {
-			metas[i] = meta
-		}
-	}
-	_, err = c.set(cacheKey, []*BindRecord{meta})
+	_, err = c.set(cacheKey, meta)
 	return
 }
 
 // RemoveBinding removes the BindRecord which has same originSQL with specified BindRecord.
 // The function is thread-safe.
-func (c *bindCache) RemoveBinding(sqlDigest string, meta *BindRecord) {
+func (c *bindCache) RemoveBinding(sqlDigest string, _ *BindRecord) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	metas := c.getCopiedVal(bindCacheKey(sqlDigest))
-	if metas == nil {
-		return
-	}
-
-	for i := len(metas) - 1; i >= 0; i-- {
-		if metas[i].isSame(meta) {
-			metas[i] = metas[i].remove(meta)
-			if len(metas[i].Bindings) == 0 {
-				metas = append(metas[:i], metas[i+1:]...)
-			}
-			if len(metas) == 0 {
-				c.delete(bindCacheKey(sqlDigest))
-				return
-			}
-		}
-	}
-	// This function can guarantee the memory usage for the cache will never grow up.
-	// So we don't need to handle the return value here.
-	_, _ = c.set(bindCacheKey(sqlDigest), metas)
+	c.delete(bindCacheKey(sqlDigest))
 }
 
 // SetMemCapacity sets the memory capacity for the cache.
@@ -258,11 +192,9 @@ func (c *bindCache) Copy() (newCache *bindCache, err error) {
 	for _, key := range keys {
 		cacheKey := key.(bindCacheKey)
 		v := c.get(cacheKey)
-		bindRecords := make([]*BindRecord, len(v))
-		copy(bindRecords, v)
-		// The memory usage of cache has been handled at the beginning of this function.
-		// So we don't need to handle the return value here.
-		_, _ = newCache.set(cacheKey, bindRecords)
+		if _, err := newCache.set(cacheKey, v); err != nil {
+			return nil, err
+		}
 	}
 	return newCache, err
 }

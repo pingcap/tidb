@@ -41,10 +41,10 @@ var (
 	recoverMetaInterval     = 90 * time.Second
 	retrySQLTimes           = 30
 	retrySQLInterval        = 500 * time.Millisecond
-	unfinishedSubtaskStates = []interface{}{
-		proto.TaskStatePending, proto.TaskStateRevertPending,
+	unfinishedSubtaskStates = []proto.SubtaskState{
+		proto.SubtaskStatePending, proto.SubtaskStateRevertPending,
 		// for the case that the tidb is restarted when the subtask is running.
-		proto.TaskStateRunning, proto.TaskStateReverting,
+		proto.SubtaskStateRunning, proto.SubtaskStateReverting,
 	}
 )
 

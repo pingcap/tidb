@@ -243,7 +243,7 @@ func (h *globalBindingHandle) Update(fullLoad bool) (err error) {
 				continue
 			}
 
-			oldRecord := newCache.GetBinding(sqlDigest, meta.OriginalSQL, meta.Db)
+			oldRecord := newCache.GetBinding(sqlDigest)
 			newRecord := merge(oldRecord, meta).removeDeletedBindings()
 			if len(newRecord.Bindings) > 0 {
 				err = newCache.SetBinding(sqlDigest, newRecord)
@@ -253,7 +253,7 @@ func (h *globalBindingHandle) Update(fullLoad bool) (err error) {
 			} else {
 				newCache.RemoveBinding(sqlDigest, newRecord)
 			}
-			updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.GetBinding(sqlDigest, meta.OriginalSQL, meta.Db), true)
+			updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.GetBinding(sqlDigest), true)
 		}
 		if memExceededErr != nil {
 			// When the memory capacity of bing_cache is not enough,
@@ -364,9 +364,15 @@ func (h *globalBindingHandle) DropGlobalBinding(originalSQL, db string, binding 
 
 // DropGlobalBindingByDigest drop BindRecord to the storage and BindRecord int the cache.
 func (h *globalBindingHandle) DropGlobalBindingByDigest(sqlDigest string) (deletedRows uint64, err error) {
+	if sqlDigest == "" {
+		return 0, errors.New("sql digest is empty")
+	}
 	oldRecord, err := h.GetGlobalBindingBySQLDigest(sqlDigest)
 	if err != nil {
 		return 0, err
+	}
+	if oldRecord == nil {
+		return 0, errors.Errorf("can't find any binding for '%s'", sqlDigest)
 	}
 	return h.DropGlobalBinding(oldRecord.OriginalSQL, strings.ToLower(oldRecord.Db), nil)
 }
@@ -445,6 +451,9 @@ func (h *globalBindingHandle) SetGlobalBindingStatusByDigest(newStatus, sqlDiges
 	oldRecord, err := h.GetGlobalBindingBySQLDigest(sqlDigest)
 	if err != nil {
 		return false, err
+	}
+	if oldRecord == nil {
+		return false, errors.Errorf("can't find any binding for '%s'", sqlDigest)
 	}
 	return h.SetGlobalBindingStatus(oldRecord.OriginalSQL, nil, newStatus)
 }
@@ -554,13 +563,13 @@ func (h *globalBindingHandle) Size() int {
 }
 
 // GetGlobalBinding returns the BindRecord of the (normalizedSQL,db) if BindRecord exist.
-func (h *globalBindingHandle) GetGlobalBinding(sqlDigest, normalizedSQL, db string) *BindRecord {
-	return h.getCache().GetBinding(sqlDigest, normalizedSQL, db)
+func (h *globalBindingHandle) GetGlobalBinding(sqlDigest, _, _ string) *BindRecord {
+	return h.getCache().GetBinding(sqlDigest)
 }
 
 // GetGlobalBindingBySQLDigest returns the BindRecord of the sql digest.
 func (h *globalBindingHandle) GetGlobalBindingBySQLDigest(sqlDigest string) (*BindRecord, error) {
-	return h.getCache().GetBindingBySQLDigest(sqlDigest)
+	return h.getCache().GetBinding(sqlDigest), nil
 }
 
 // GetAllGlobalBindings returns all bind records in cache.
@@ -626,7 +635,7 @@ func (h *globalBindingHandle) setGlobalCacheBinding(sqlDigest string, meta *Bind
 	if err0 != nil {
 		logutil.BgLogger().Warn("BindHandle.setGlobalCacheBindRecord", zap.String("category", "sql-bind"), zap.Error(err0))
 	}
-	oldRecord := newCache.GetBinding(sqlDigest, meta.OriginalSQL, meta.Db)
+	oldRecord := newCache.GetBinding(sqlDigest)
 	err1 := newCache.SetBinding(sqlDigest, meta)
 	if err1 != nil && err0 == nil {
 		logutil.BgLogger().Warn("BindHandle.setGlobalCacheBindRecord", zap.String("category", "sql-bind"), zap.Error(err1))
@@ -641,10 +650,10 @@ func (h *globalBindingHandle) removeGlobalCacheBinding(sqlDigest string, meta *B
 	if err != nil {
 		logutil.BgLogger().Warn("", zap.String("category", "sql-bind"), zap.Error(err))
 	}
-	oldRecord := newCache.GetBinding(sqlDigest, meta.OriginalSQL, meta.Db)
+	oldRecord := newCache.GetBinding(sqlDigest)
 	newCache.RemoveBinding(sqlDigest, meta)
 	h.setCache(newCache) // TODO: update it in place
-	updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.GetBinding(sqlDigest, meta.OriginalSQL, meta.Db), false)
+	updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.GetBinding(sqlDigest), false)
 }
 
 func copyBindRecordUpdateMap(oldMap map[string]*bindRecordUpdate) map[string]*bindRecordUpdate {
