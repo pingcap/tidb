@@ -384,9 +384,9 @@ func (ds *DataSource) accessPathsForConds(conditions []expression.Expression, us
 
 // buildIndexMergePartialPath chooses the best index path from all possible paths.
 // Now we choose the index with minimal estimate row count.
-func (*DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.AccessPath) (*util.AccessPath, error) {
+func (*DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.AccessPath) *util.AccessPath {
 	if len(indexAccessPaths) == 1 {
-		return indexAccessPaths[0], nil
+		return indexAccessPaths[0]
 	}
 
 	minEstRowIndex := 0
@@ -401,7 +401,7 @@ func (*DataSource) buildIndexMergePartialPath(indexAccessPaths []*util.AccessPat
 			minEstRow = rc
 		}
 	}
-	return indexAccessPaths[minEstRowIndex], nil
+	return indexAccessPaths[minEstRowIndex]
 }
 
 // buildIndexMergeOrPath generates one possible IndexMergePath.
