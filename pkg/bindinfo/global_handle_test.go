@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/testkit"
-	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,13 +43,13 @@ func TestBindingCache(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx);")
 
-	require.Nil(t, dom.BindHandle().Update(false))
-	require.Nil(t, dom.BindHandle().Update(false))
+	require.Nil(t, dom.BindHandle().LoadFromStorageToCache(false))
+	require.Nil(t, dom.BindHandle().LoadFromStorageToCache(false))
 	res := tk.MustQuery("show global bindings")
 	require.Equal(t, 2, len(res.Rows()))
 
 	tk.MustExec("drop global binding for select * from t;")
-	require.Nil(t, dom.BindHandle().Update(false))
+	require.Nil(t, dom.BindHandle().LoadFromStorageToCache(false))
 	require.Equal(t, 1, len(dom.BindHandle().GetAllGlobalBindings()))
 }
 
@@ -66,10 +65,12 @@ func TestBindingLastUpdateTime(t *testing.T) {
 	tk.MustExec("admin reload bindings;")
 
 	bindHandle := bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
-	err := bindHandle.Update(true)
+	err := bindHandle.LoadFromStorageToCache(true)
 	require.NoError(t, err)
-	sql, sqlDigest := parser.NormalizeDigest("select * from test . t0")
-	bindData := bindHandle.GetGlobalBinding(sqlDigest.String(), sql, "test")
+	stmt, err := parser.New().ParseOneStmt("select * from test . t0", "", "")
+	require.NoError(t, err)
+	bindData, err := bindHandle.MatchGlobalBinding("test", stmt)
+	require.NoError(t, err)
 	require.Equal(t, 1, len(bindData.Bindings))
 	bind := bindData.Bindings[0]
 	updateTime := bind.UpdateTime.String()
@@ -129,12 +130,14 @@ func TestBindParse(t *testing.T) {
 		originSQL, bindSQL, defaultDb, status, charset, collation, source, mockDigest, mockDigest)
 	tk.MustExec(sql)
 	bindHandle := bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
-	err := bindHandle.Update(true)
+	err := bindHandle.LoadFromStorageToCache(true)
 	require.NoError(t, err)
 	require.Equal(t, 1, bindHandle.Size())
 
-	sql, sqlDigest := parser.NormalizeDigest("select * from test . t")
-	bindData := bindHandle.GetGlobalBinding(sqlDigest.String(), sql, "test")
+	stmt, err := parser.New().ParseOneStmt("select * from test . t", "", "")
+	require.NoError(t, err)
+	bindData, err := bindHandle.MatchGlobalBinding("test", stmt)
+	require.NoError(t, err)
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t`", bindData.OriginalSQL)
 	bind := bindData.Bindings[0]
@@ -439,17 +442,10 @@ func TestGlobalBinding(t *testing.T) {
 			require.NoError(t, err)
 		}
 
-		pb := &dto.Metric{}
-		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Enabled).Write(pb)
-		require.NoError(t, err)
-		require.Equal(t, float64(1), pb.GetGauge().GetValue())
-		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Enabled).Write(pb)
-		require.NoError(t, err)
-		require.Equal(t, testSQL.memoryUsage, pb.GetGauge().GetValue())
+		stmt, _, _ := internal.UtilNormalizeWithDefaultDB(t, testSQL.querySQL)
 
-		sql, sqlDigest := internal.UtilNormalizeWithDefaultDB(t, testSQL.querySQL)
-
-		bindData := dom.BindHandle().GetGlobalBinding(sqlDigest, sql, "test")
+		bindData, err := dom.BindHandle().MatchGlobalBinding("test", stmt)
+		require.NoError(t, err)
 		require.NotNil(t, bindData)
 		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
 		bind := bindData.Bindings[0]
@@ -478,11 +474,12 @@ func TestGlobalBinding(t *testing.T) {
 		require.NotNil(t, row.GetString(7))
 
 		bindHandle := bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
-		err = bindHandle.Update(true)
+		err = bindHandle.LoadFromStorageToCache(true)
 		require.NoError(t, err)
 		require.Equal(t, 1, bindHandle.Size())
 
-		bindData = bindHandle.GetGlobalBinding(sqlDigest, sql, "test")
+		bindData, err = dom.BindHandle().MatchGlobalBinding("test", stmt)
+		require.NoError(t, err)
 		require.NotNil(t, bindData)
 		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
 		bind = bindData.Bindings[0]
@@ -497,23 +494,17 @@ func TestGlobalBinding(t *testing.T) {
 		_, err = tk.Exec("drop global " + testSQL.dropSQL)
 		require.Equal(t, uint64(1), tk.Session().AffectedRows())
 		require.NoError(t, err)
-		bindData = dom.BindHandle().GetGlobalBinding(sqlDigest, sql, "test")
+		bindData, err = dom.BindHandle().MatchGlobalBinding("test", stmt)
+		require.NoError(t, err)
 		require.Nil(t, bindData)
 
-		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Enabled).Write(pb)
-		require.NoError(t, err)
-		require.Equal(t, float64(0), pb.GetGauge().GetValue())
-		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeGlobal, bindinfo.Enabled).Write(pb)
-		require.NoError(t, err)
-		// From newly created global bind handle.
-		require.Equal(t, testSQL.memoryUsage, pb.GetGauge().GetValue())
-
 		bindHandle = bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
-		err = bindHandle.Update(true)
+		err = bindHandle.LoadFromStorageToCache(true)
 		require.NoError(t, err)
 		require.Equal(t, 0, bindHandle.Size())
 
-		bindData = bindHandle.GetGlobalBinding(sqlDigest, sql, "test")
+		bindData, err = dom.BindHandle().MatchGlobalBinding("test", stmt)
+		require.NoError(t, err)
 		require.Nil(t, bindData)
 
 		rs, err = tk.Exec("show global bindings")
@@ -537,7 +528,7 @@ func TestOutdatedInfoSchema(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
-	require.Nil(t, dom.BindHandle().Update(false))
+	require.Nil(t, dom.BindHandle().LoadFromStorageToCache(false))
 	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
 }
@@ -556,10 +547,7 @@ func TestReloadBindings(t *testing.T) {
 	rows = tk.MustQuery("select * from mysql.bind_info where source != 'builtin'").Rows()
 	require.Equal(t, 1, len(rows))
 	tk.MustExec("delete from mysql.bind_info where source != 'builtin'")
-	require.Nil(t, dom.BindHandle().Update(false))
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Equal(t, 1, len(rows))
-	require.Nil(t, dom.BindHandle().Update(true))
+	require.Nil(t, dom.BindHandle().LoadFromStorageToCache(false))
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Equal(t, 1, len(rows))
 	tk.MustExec("admin reload bindings")

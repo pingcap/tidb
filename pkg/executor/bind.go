@@ -74,20 +74,12 @@ func (e *SQLBindExec) Next(_ context.Context, req *chunk.Chunk) error {
 }
 
 func (e *SQLBindExec) dropSQLBind() error {
-	var bindInfo *bindinfo.Binding
-	if e.bindSQL != "" {
-		bindInfo = &bindinfo.Binding{
-			BindSQL:   e.bindSQL,
-			Charset:   e.charset,
-			Collation: e.collation,
-		}
-	}
 	if !e.isGlobal {
 		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-		err := handle.DropSessionBinding(e.normdOrigSQL, e.db, bindInfo)
+		err := handle.DropSessionBinding(e.sqlDigest)
 		return err
 	}
-	affectedRows, err := domain.GetDomain(e.Ctx()).BindHandle().DropGlobalBinding(e.normdOrigSQL, e.db, bindInfo)
+	affectedRows, err := domain.GetDomain(e.Ctx()).BindHandle().DropGlobalBinding(e.sqlDigest)
 	e.Ctx().GetSessionVars().StmtCtx.AddAffectedRows(affectedRows)
 	return err
 }
@@ -98,10 +90,10 @@ func (e *SQLBindExec) dropSQLBindByDigest() error {
 	}
 	if !e.isGlobal {
 		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-		err := handle.DropSessionBindingByDigest(e.sqlDigest)
+		err := handle.DropSessionBinding(e.sqlDigest)
 		return err
 	}
-	affectedRows, err := domain.GetDomain(e.Ctx()).BindHandle().DropGlobalBindingByDigest(e.sqlDigest)
+	affectedRows, err := domain.GetDomain(e.Ctx()).BindHandle().DropGlobalBinding(e.sqlDigest)
 	e.Ctx().GetSessionVars().StmtCtx.AddAffectedRows(affectedRows)
 	return err
 }
@@ -180,5 +172,5 @@ func (e *SQLBindExec) captureBindings() {
 }
 
 func (e *SQLBindExec) reloadBindings() error {
-	return domain.GetDomain(e.Ctx()).BindHandle().ReloadGlobalBindings()
+	return domain.GetDomain(e.Ctx()).BindHandle().LoadFromStorageToCache(true)
 }

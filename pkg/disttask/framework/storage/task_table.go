@@ -62,6 +62,15 @@ var (
 	// unstable, i.e. count, order and content of the subtasks are changed on
 	// different call.
 	ErrUnstableSubtasks = errors.New("unstable subtasks")
+
+	// ErrTaskNotFound is the error when we can't found task.
+	// i.e. onFinished() in scheduler move task from tidb_global_task to tidb_global_task_history.
+	ErrTaskNotFound = errors.New("task not found")
+
+	// ErrTaskAlreadyExists is the error when we submit a task with the same task key.
+	// i.e. SubmitTask in handle may submit a task twice.
+	ErrTaskAlreadyExists = errors.New("task already exists")
+
 	// ErrSubtaskNotFound is the error when can't find subtask by subtask_id and execId,
 	// i.e. scheduler change the subtask's execId when subtask need to balance to other nodes.
 	ErrSubtaskNotFound = errors.New("subtask not found")
@@ -347,7 +356,7 @@ func (stm *TaskManager) GetTaskByID(ctx context.Context, taskID int64) (task *pr
 		return task, err
 	}
 	if len(rs) == 0 {
-		return nil, nil
+		return nil, ErrTaskNotFound
 	}
 
 	return row2Task(rs[0]), nil
@@ -361,7 +370,7 @@ func (stm *TaskManager) GetTaskByIDWithHistory(ctx context.Context, taskID int64
 		return task, err
 	}
 	if len(rs) == 0 {
-		return nil, nil
+		return nil, ErrTaskNotFound
 	}
 
 	return row2Task(rs[0]), nil
@@ -374,7 +383,7 @@ func (stm *TaskManager) GetTaskByKey(ctx context.Context, key string) (task *pro
 		return task, err
 	}
 	if len(rs) == 0 {
-		return nil, nil
+		return nil, ErrTaskNotFound
 	}
 
 	return row2Task(rs[0]), nil
@@ -388,7 +397,7 @@ func (stm *TaskManager) GetTaskByKeyWithHistory(ctx context.Context, key string)
 		return task, err
 	}
 	if len(rs) == 0 {
-		return nil, nil
+		return nil, ErrTaskNotFound
 	}
 
 	return row2Task(rs[0]), nil
@@ -605,26 +614,32 @@ func (stm *TaskManager) UpdateSubtaskRowCount(ctx context.Context, subtaskID int
 	return err
 }
 
-// GetSubtaskInStatesCnt gets the subtask count in the states.
-func (stm *TaskManager) GetSubtaskInStatesCnt(ctx context.Context, taskID int64, states ...proto.SubtaskState) (int64, error) {
-	args := []interface{}{taskID}
-	for _, state := range states {
-		args = append(args, state)
-	}
-	rs, err := stm.executeSQLWithNewSession(ctx, `select count(*) from mysql.tidb_background_subtask
-		where task_key = %? and state in (`+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
+// GetSubtaskCntGroupByStates gets the subtask count by states.
+func (stm *TaskManager) GetSubtaskCntGroupByStates(ctx context.Context, taskID int64, step proto.Step) (map[proto.SubtaskState]int64, error) {
+	rs, err := stm.executeSQLWithNewSession(ctx, `
+		select state, count(*)
+		from mysql.tidb_background_subtask
+		where task_key = %? and step = %?
+		group by state`,
+		taskID, step)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
-	return rs[0].GetInt64(0), nil
+	res := make(map[proto.SubtaskState]int64, len(rs))
+	for _, r := range rs {
+		state := proto.SubtaskState(r.GetString(0))
+		res[state] = r.GetInt64(1)
+	}
+
+	return res, nil
 }
 
 // CollectSubTaskError collects the subtask error.
 func (stm *TaskManager) CollectSubTaskError(ctx context.Context, taskID int64) ([]error, error) {
 	rs, err := stm.executeSQLWithNewSession(ctx,
 		`select error from mysql.tidb_background_subtask
-             where task_key = %? AND state in (%?, %?)`, taskID, proto.TaskStateFailed, proto.TaskStateCanceled)
+             where task_key = %? AND state in (%?, %?)`, taskID, proto.SubtaskStateFailed, proto.SubtaskStateCanceled)
 	if err != nil {
 		return nil, err
 	}

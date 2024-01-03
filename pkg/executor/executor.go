@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/pdhelper"
@@ -2112,15 +2113,19 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		ResetDeleteStmtCtx(sc, stmt, vars)
 	case *ast.InsertStmt:
 		sc.InInsertStmt = true
+		var errLevels errctx.LevelMap
 		// For insert statement (not for update statement), disabling the StrictSQLMode
 		// should make TruncateAsWarning and DividedByZeroAsWarning,
 		// but should not make DupKeyAsWarning.
 		sc.DupKeyAsWarning = stmt.IgnoreErr
 		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.IgnoreNoPartition = stmt.IgnoreErr
-		sc.ErrAutoincReadFailedAsWarning = stmt.IgnoreErr
+		if stmt.IgnoreErr {
+			errLevels[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelWarn
+		}
 		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.Priority = stmt.Priority
+		sc.SetErrLevels(errLevels)
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).

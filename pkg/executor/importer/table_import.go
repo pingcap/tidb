@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -134,7 +135,8 @@ func GetTiKVModeSwitcherWithPDClient(ctx context.Context, logger *zap.Logger) (p
 		return nil, nil, err
 	}
 	tlsOpt := tls.ToPDSecurityOption()
-	pdCli, err := pd.NewClientWithContext(ctx, []string{tidbCfg.Path}, tlsOpt)
+	addrs := strings.Split(tidbCfg.Path, ",")
+	pdCli, err := pd.NewClientWithContext(ctx, addrs, tlsOpt)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -169,7 +171,8 @@ func GetRegionSplitSizeKeys(ctx context.Context) (regionSplitSize int64, regionS
 		return 0, 0, err
 	}
 	tlsOpt := tls.ToPDSecurityOption()
-	pdCli, err := pd.NewClientWithContext(ctx, []string{tidbCfg.Path}, tlsOpt)
+	addrs := strings.Split(tidbCfg.Path, ",")
+	pdCli, err := pd.NewClientWithContext(ctx, addrs, tlsOpt)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
@@ -461,6 +464,7 @@ func (ti *TableImporter) OpenIndexEngine(ctx context.Context, engineID int32) (*
 		Compact:            threshold > 0,
 		CompactConcurrency: 4,
 		CompactThreshold:   threshold,
+		BlockSize:          16 * 1024,
 	}
 	fullTableName := ti.fullTableName()
 	// todo: cleanup all engine data on any error since we don't support checkpoint for now

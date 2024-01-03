@@ -96,7 +96,7 @@ func (s *BaseTaskExecutor) startCancelCheck(ctx context.Context, wg *sync.WaitGr
 		for {
 			select {
 			case <-ctx.Done():
-				logutil.Logger(s.logCtx).Info("taskExecutor exits", zap.Error(ctx.Err()))
+				logutil.Logger(s.logCtx).Info("task executor exits")
 				return
 			case <-ticker.C:
 				canceled, err := s.taskTable.IsTaskExecutorCanceled(ctx, s.id, s.taskID)
@@ -233,11 +233,15 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 				failpoint.Break()
 			})
 			newTask, err := s.taskTable.GetTaskByID(runCtx, task.ID)
+			// When the task move history table of not found, the task executor should exit.
+			if err == storage.ErrTaskNotFound {
+				break
+			}
 			if err != nil {
 				logutil.Logger(s.logCtx).Warn("GetTaskByID meets error", zap.Error(err))
 				continue
 			}
-			// When the task move to next step or task state changes, the TaskExecutor should exit.
+			// When the task move to next step or task state changes, the task executor should exit.
 			if newTask.Step != task.Step || newTask.State != task.State {
 				break
 			}

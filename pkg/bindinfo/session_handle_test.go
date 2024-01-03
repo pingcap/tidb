@@ -110,8 +110,10 @@ func TestSessionBinding(t *testing.T) {
 		require.Equal(t, testSQL.memoryUsage, pb.GetGauge().GetValue())
 
 		handle := tk.Session().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-		sqlDigest := parser.DigestNormalized(testSQL.originSQL).String()
-		bindData := handle.GetSessionBinding(sqlDigest, testSQL.originSQL, "test")
+		stmt, err := parser.New().ParseOneStmt(testSQL.originSQL, "", "")
+		require.NoError(t, err)
+		bindData, err := handle.MatchSessionBinding("test", stmt)
+		require.NoError(t, err)
 		require.NotNil(t, bindData)
 		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
 		bind := bindData.Bindings[0]
@@ -148,7 +150,8 @@ func TestSessionBinding(t *testing.T) {
 
 		_, err = tk.Exec("drop session " + testSQL.dropSQL)
 		require.NoError(t, err)
-		bindData = handle.GetSessionBinding(sqlDigest, testSQL.originSQL, "test")
+		bindData, err = handle.MatchSessionBinding("test", stmt)
+		require.NoError(t, err)
 		require.NotNil(t, bindData)
 		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
 		require.Len(t, bindData.Bindings, 0)
@@ -397,12 +400,8 @@ func TestDropSingleBindings(t *testing.T) {
 	require.Equal(t, "SELECT * FROM `test`.`t` USE INDEX (`idx_b`)", rows[0][1])
 	tk.MustExec("drop binding for select * from t using select * from t use index(idx_a)")
 	rows = tk.MustQuery("show bindings").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "SELECT * FROM `test`.`t` USE INDEX (`idx_b`)", rows[0][1])
-	tk.MustExec("drop table t")
-	tk.MustExec("drop binding for select * from t using select * from t use index(idx_b)")
-	rows = tk.MustQuery("show bindings").Rows()
 	require.Len(t, rows, 0)
+	tk.MustExec("drop table t")
 
 	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idx_b(b))")
 	// Test drop global bindings.
@@ -415,12 +414,8 @@ func TestDropSingleBindings(t *testing.T) {
 	require.Equal(t, "SELECT * FROM `test`.`t` USE INDEX (`idx_b`)", rows[0][1])
 	tk.MustExec("drop global binding for select * from t using select * from t use index(idx_a)")
 	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "SELECT * FROM `test`.`t` USE INDEX (`idx_b`)", rows[0][1])
-	tk.MustExec("drop table t")
-	tk.MustExec("drop global binding for select * from t using select * from t use index(idx_b)")
-	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0)
+	tk.MustExec("drop table t")
 }
 
 func TestPreparedStmt(t *testing.T) {
