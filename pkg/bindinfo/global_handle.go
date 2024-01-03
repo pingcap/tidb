@@ -45,8 +45,8 @@ import (
 type GlobalBindingHandle interface {
 	// Methods for create, get, drop global sql bindings.
 
-	// GetGlobalBinding returns the BindRecord of the (normalizedSQL,db) if BindRecord exist.
-	GetGlobalBinding(sqlDigest string) *BindRecord
+	// MatchGlobalBinding returns the matched binding for this statement.
+	MatchGlobalBinding(currentDB string, stmt ast.StmtNode) (*BindRecord, error)
 
 	// GetAllGlobalBindings returns all bind records in cache.
 	GetAllGlobalBindings() (bindRecords []*BindRecord)
@@ -498,6 +498,20 @@ func (h *globalBindingHandle) AddInvalidGlobalBinding(invalidBindRecord *BindRec
 func (h *globalBindingHandle) Size() int {
 	size := len(h.getCache().GetAllBindings())
 	return size
+}
+
+// MatchGlobalBinding returns the matched binding for this statement.
+func (h *globalBindingHandle) MatchGlobalBinding(currentDB string, stmt ast.StmtNode) (*BindRecord, error) {
+	bindingCache := h.getCache()
+	if bindingCache.Size() == 0 {
+		return nil, nil
+	}
+	// TODO: support fuzzy matching.
+	_, _, sqlDigest, err := normalizeStmt(stmt, currentDB)
+	if err != nil {
+		return nil, err
+	}
+	return bindingCache.GetBinding(sqlDigest), nil
 }
 
 // GetGlobalBinding returns the BindRecord of the (normalizedSQL,db) if BindRecord exist.
