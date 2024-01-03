@@ -66,13 +66,15 @@ func (s *spillHelper) isSpillTriggeredNoLock() bool {
 	return s.isSpillTrigered
 }
 
-func (s *spillHelper) setErrorNoLock(err error) {
+func (s *spillHelper) setError(err error) {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	s.spillError = err
 }
 
 func (s *spillHelper) checkError() error {
-	s.syncLock.Lock()
-	defer s.syncLock.Unlock()
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	return s.spillError
 }
 
@@ -116,7 +118,7 @@ func (s *sortPartitionSpillDiskAction) executeAction(t *memory.Tracker) memory.A
 
 				err := s.partition.spillToDisk()
 				if err != nil {
-					s.helper.setErrorNoLock(err)
+					s.helper.setError(err)
 				}
 			}()
 		})

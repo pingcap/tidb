@@ -180,6 +180,8 @@ func (e *SortExec) onePartitionSorting(req *chunk.Chunk) (err error) {
 }
 
 func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
+	e.spillAction.helper.syncLock.Lock()
+	defer e.spillAction.helper.syncLock.Unlock()
 	if e.multiWayMerge == nil {
 		err := e.initExternalSorting()
 		if err != nil {
