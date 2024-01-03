@@ -1317,7 +1317,7 @@ func (e *InsertValues) removeRow(
 	inReplace bool,
 ) (bool, error) {
 	newRow := r.row
-	oldRow, err := getOldRow(ctx, e.Ctx(), txn, r.t, handle, e.GenExprs)
+	oldRow, err := getOldRow(ctx, e.Ctx(), txn, r.t, r.oldRowTable, handle, e.GenExprs)
 	if err != nil {
 		logutil.BgLogger().Error(
 			"get old row failed when replace",
@@ -1348,7 +1348,11 @@ func (e *InsertValues) removeRow(
 		return true, nil
 	}
 
-	err = r.t.RemoveRecord(e.Ctx(), handle, oldRow)
+	if r.oldRowTable != nil {
+		err = r.oldRowTable.RemoveRecord(e.Ctx(), handle, oldRow)
+	} else {
+		err = r.t.RemoveRecord(e.Ctx(), handle, oldRow)
+	}
 	if err != nil {
 		return false, err
 	}
