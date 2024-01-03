@@ -331,7 +331,7 @@ func (h *globalBindingHandle) dropGlobalBinding(sqlDigesst string) (deletedRows 
 
 		updateTs := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3).String()
 
-		_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE bind_info = %? AND update_time < %? AND status != %?`,
+		_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE sql_digest = %? AND update_time < %? AND status != %?`,
 			deleted, updateTs, sqlDigesst, updateTs, deleted)
 		if err != nil {
 			return err
