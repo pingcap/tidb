@@ -1070,7 +1070,6 @@ type TikvImporter struct {
 	StoreWriteBWLimit       ByteSize `toml:"store-write-bwlimit" json:"store-write-bwlimit"`
 	// default is PausePDSchedulerScopeTable to compatible with previous version(>= 6.1)
 	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
-	// block size is in KiB
 	BlockSize ByteSize `toml:"block-size" json:"block-size"`
 }
 
