@@ -51,6 +51,7 @@ import (
 var (
 	addingDDLJobConcurrent      = "/tidb/ddl/add_ddl_job_general"
 	dispatchLoopWaitingDuration = 1 * time.Second
+	localWorkerWaitingDuration  = 10 * time.Millisecond
 )
 
 func init() {
@@ -386,11 +387,10 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 		return
 	}
 	for wk == nil {
-		logutil.BgLogger().Info("waiting for local worker", zap.Stringer("job", job))
 		select {
 		case <-d.ctx.Done():
 			return
-		case <-time.After(dispatchLoopWaitingDuration):
+		case <-time.After(localWorkerWaitingDuration):
 		}
 		wk, err = pool.get()
 		if err != nil {

@@ -91,7 +91,7 @@ const (
 
 	reorgWorkerCnt   = 10
 	generalWorkerCnt = 1
-	localWorkerCnt   = 10
+	localWorkerCnt   = 5
 
 	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
 	checkFlagIndexInJobArgs = 1
@@ -721,7 +721,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		limitJobChV2:      make(chan *limitJobTask, batchAddingJobs),
 		enableTiFlashPoll: atomicutil.NewBool(true),
 		ddlJobCh:          make(chan struct{}, 100),
-		jobTaskCh:         make(chan *limitJobTask, batchAddingJobs),
+		jobTaskCh:         make(chan *limitJobTask, 1),
 	}
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
@@ -784,8 +784,8 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 	// reorg worker count at least 1 at most 10.
 	reorgCnt := min(max(runtime.GOMAXPROCS(0)/4, 1), reorgWorkerCnt)
 	d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(addIdxWorker), reorgCnt, reorgCnt, 0), reorg)
-	d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), localWorkerCnt, localWorkerCnt, 0), general)
-	d.localWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(localWorker), batchAddingJobs, batchAddingJobs, 0), local)
+	d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), general)
+	d.localWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(localWorker), localWorkerCnt, localWorkerCnt, 0), local)
 	failpoint.Inject("NoDDLDispatchLoop", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return()
