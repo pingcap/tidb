@@ -26,9 +26,9 @@ import (
 func (stm *TaskManager) CancelTask(ctx context.Context, taskID int64) error {
 	_, err := stm.executeSQLWithNewSession(ctx,
 		`update mysql.tidb_global_task
-		 set state=%?, 
+		 set state = %?, 
 			 state_update_time = CURRENT_TIMESTAMP()
-		 where id=%? and state in (%?, %?)`,
+		 where id = %? and state in (%?, %?)`,
 		proto.TaskStateCancelling, taskID, proto.TaskStatePending, proto.TaskStateRunning,
 	)
 	return err
@@ -38,9 +38,9 @@ func (stm *TaskManager) CancelTask(ctx context.Context, taskID int64) error {
 func (*TaskManager) CancelTaskByKeySession(ctx context.Context, se sessionctx.Context, taskKey string) error {
 	_, err := sqlexec.ExecSQL(ctx, se,
 		`update mysql.tidb_global_task
-		 set state=%?,
+		 set state = %?,
 			 state_update_time = CURRENT_TIMESTAMP()
-		 where task_key=%? and state in (%?, %?)`,
+		 where task_key = %? and state in (%?, %?)`,
 		proto.TaskStateCancelling, taskKey, proto.TaskStatePending, proto.TaskStateRunning)
 	return err
 }
@@ -49,11 +49,11 @@ func (*TaskManager) CancelTaskByKeySession(ctx context.Context, se sessionctx.Co
 func (stm *TaskManager) FailTask(ctx context.Context, taskID int64, currentState proto.TaskState, taskErr error) error {
 	_, err := stm.executeSQLWithNewSession(ctx,
 		`update mysql.tidb_global_task
-		 set state=%?,
+		 set state = %?,
 			 error = %?,
 			 state_update_time = CURRENT_TIMESTAMP(),
 			 end_time = CURRENT_TIMESTAMP()
-		 where id=%? and state=%?`,
+		 where id = %? and state = %?`,
 		proto.TaskStateFailed, serializeErr(taskErr), taskID, currentState,
 	)
 	return err
@@ -63,10 +63,10 @@ func (stm *TaskManager) FailTask(ctx context.Context, taskID int64, currentState
 func (stm *TaskManager) RevertedTask(ctx context.Context, taskID int64) error {
 	_, err := stm.executeSQLWithNewSession(ctx,
 		`update mysql.tidb_global_task
-		 set state=%?,
+		 set state = %?,
 			 state_update_time = CURRENT_TIMESTAMP(),
 			 end_time = CURRENT_TIMESTAMP()
-		 where id=%? and state=%?`,
+		 where id = %? and state = %?`,
 		proto.TaskStateReverted, taskID, proto.TaskStateReverting,
 	)
 	return err
@@ -78,7 +78,7 @@ func (stm *TaskManager) PauseTask(ctx context.Context, taskKey string) (bool, er
 	err := stm.WithNewSession(func(se sessionctx.Context) error {
 		_, err := sqlexec.ExecSQL(ctx, se,
 			`update mysql.tidb_global_task 
-			 set state=%?, 
+			 set state = %?, 
 				 state_update_time = CURRENT_TIMESTAMP()
 			 where task_key = %? and state in (%?, %?)`,
 			proto.TaskStatePausing, taskKey, proto.TaskStatePending, proto.TaskStateRunning,
@@ -101,10 +101,10 @@ func (stm *TaskManager) PauseTask(ctx context.Context, taskKey string) (bool, er
 func (stm *TaskManager) PausedTask(ctx context.Context, taskID int64) error {
 	_, err := stm.executeSQLWithNewSession(ctx,
 		`update mysql.tidb_global_task
-		 set state=%?,
+		 set state = %?,
 			 state_update_time = CURRENT_TIMESTAMP(),
 			 end_time = CURRENT_TIMESTAMP()
-		 where id=%? and state=%?`,
+		 where id = %? and state = %?`,
 		proto.TaskStatePaused, taskID, proto.TaskStatePausing,
 	)
 	return err
@@ -116,7 +116,7 @@ func (stm *TaskManager) ResumeTask(ctx context.Context, taskKey string) (bool, e
 	err := stm.WithNewSession(func(se sessionctx.Context) error {
 		_, err := sqlexec.ExecSQL(ctx, se,
 			`update mysql.tidb_global_task
-		     set state=%?, 
+		     set state = %?, 
 			     state_update_time = CURRENT_TIMESTAMP()
 		     where task_key = %? and state = %?`,
 			proto.TaskStateResuming, taskKey, proto.TaskStatePaused,

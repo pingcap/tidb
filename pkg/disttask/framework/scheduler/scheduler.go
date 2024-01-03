@@ -645,7 +645,7 @@ func (s *BaseScheduler) handlePlanErr(err error) error {
 		return errors.Trace(err)
 	}
 
-	return s.taskMgr.FailTask(s.ctx, s.Task.ID, s.Task.State, err)
+	return s.taskMgr.FailTask(s.ctx, s.Task.ID, s.Task.State, s.Task.Error)
 }
 
 // MockServerInfo exported for scheduler_test.go
