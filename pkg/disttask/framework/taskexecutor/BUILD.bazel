@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "taskexecutor",
     srcs = [
-        "interface.go",
         "manager.go",
         "register.go",
         "slot.go",
@@ -54,6 +53,7 @@ go_test(
         "//pkg/disttask/framework/mock/execute",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
+        "//pkg/disttask/framework/taskexecutor/execute",
         "//pkg/disttask/framework/testutil",
         "//pkg/kv",
         "//pkg/resourcemanager/pool/spool",

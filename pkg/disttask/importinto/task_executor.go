@@ -258,7 +258,7 @@ func (s *importStepExecutor) Rollback(context.Context) error {
 }
 
 type mergeSortStepExecutor struct {
-	taskexecutor.EmptySubtaskExecutor
+	execute.EmptySubtaskExecutor
 	taskID     int64
 	taskMeta   *TaskMeta
 	logger     *zap.Logger
@@ -430,7 +430,7 @@ func (e *writeAndIngestStepExecutor) Rollback(context.Context) error {
 }
 
 type postProcessStepExecutor struct {
-	taskexecutor.EmptySubtaskExecutor
+	execute.EmptySubtaskExecutor
 	taskID   int64
 	taskMeta *TaskMeta
 	logger   *zap.Logger
@@ -468,7 +468,7 @@ type importExecutor struct {
 	*taskexecutor.BaseTaskExecutor
 }
 
-func newImportExecutor(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
+func newImportExecutor(ctx context.Context, id string, task *proto.Task, taskTable execute.TaskTable) execute.TaskExecutor {
 	s := &importExecutor{
 		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, id, task.ID, taskTable),
 	}

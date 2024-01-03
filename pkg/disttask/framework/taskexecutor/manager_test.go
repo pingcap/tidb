@@ -23,6 +23,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/stretchr/testify/require"
@@ -107,7 +108,7 @@ func TestOnRunnableTasks(t *testing.T) {
 	ctx := context.Background()
 
 	b := NewManagerBuilder()
-	b.setPoolFactory(func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
+	b.setPoolFactory(func(name string, size int32, component util.Component, options ...spool.Option) (execute.Pool, error) {
 		return mockPool, nil
 	})
 	id := "test"
@@ -121,7 +122,7 @@ func TestOnRunnableTasks(t *testing.T) {
 	m.onRunnableTasks(nil)
 
 	RegisterTaskType("type",
-		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor {
+		func(ctx context.Context, id string, task *proto.Task, taskTable execute.TaskTable) execute.TaskExecutor {
 			return mockInternalExecutor
 		})
 
@@ -182,11 +183,11 @@ func TestManager(t *testing.T) {
 	mockInternalExecutor := mock.NewMockTaskExecutor(ctrl)
 	mockPool := mock.NewMockPool(ctrl)
 	b := NewManagerBuilder()
-	b.setPoolFactory(func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
+	b.setPoolFactory(func(name string, size int32, component util.Component, options ...spool.Option) (execute.Pool, error) {
 		return mockPool, nil
 	})
 	RegisterTaskType("type",
-		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor {
+		func(ctx context.Context, id string, task *proto.Task, taskTable execute.TaskTable) execute.TaskExecutor {
 			return mockInternalExecutor
 		})
 	id := "test"
@@ -260,11 +261,11 @@ func TestSlotManagerInManager(t *testing.T) {
 	mockInternalExecutor := mock.NewMockTaskExecutor(ctrl)
 	mockPool := mock.NewMockPool(ctrl)
 	b := NewManagerBuilder()
-	b.setPoolFactory(func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
+	b.setPoolFactory(func(name string, size int32, component util.Component, options ...spool.Option) (execute.Pool, error) {
 		return mockPool, nil
 	})
 	RegisterTaskType("type",
-		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor {
+		func(ctx context.Context, id string, task *proto.Task, taskTable execute.TaskTable) execute.TaskExecutor {
 			return mockInternalExecutor
 		})
 	id := "test"

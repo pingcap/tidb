@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "execute",
@@ -10,8 +10,22 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/disttask/framework/proto",
-        "//pkg/disttask/framework/storage",
         "//pkg/util/logutil",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "execute_test",
+    timeout = "short",
+    srcs = ["summary_test.go"],
+    flaky = True,
+    deps = [
+        ":execute",
+        "//pkg/disttask/framework/mock",
+        "//pkg/disttask/framework/proto",
+        "//pkg/disttask/framework/testutil",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_mock//gomock",
     ],
 )

@@ -107,12 +107,12 @@ type backfillDistExecutor struct {
 	*taskexecutor.BaseTaskExecutor
 	d          *ddl
 	task       *proto.Task
-	taskTable  taskexecutor.TaskTable
+	taskTable  execute.TaskTable
 	backendCtx ingest.BackendCtx
 	jobID      int64
 }
 
-func newBackfillDistExecutor(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable, d *ddl) taskexecutor.TaskExecutor {
+func newBackfillDistExecutor(ctx context.Context, id string, task *proto.Task, taskTable execute.TaskTable, d *ddl) execute.TaskExecutor {
 	s := &backfillDistExecutor{
 		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, id, task.ID, taskTable),
 		d:                d,

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -55,7 +56,7 @@ func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, schedulerHandle sch
 	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, schedulerHandle)
 }
 
-func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, mockExtension taskexecutor.Extension, mockCleanup scheduler.CleanUpRoutine, schedulerHandle scheduler.Extension) {
+func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, mockExtension execute.Extension, mockCleanup scheduler.CleanUpRoutine, schedulerHandle scheduler.Extension) {
 	t.Cleanup(func() {
 		scheduler.ClearSchedulerFactory()
 		scheduler.ClearSchedulerCleanUpFactory()
@@ -74,7 +75,7 @@ func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, mockExtension 
 		})
 
 	taskexecutor.RegisterTaskType(taskType,
-		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
+		func(ctx context.Context, id string, task *proto.Task, taskTable execute.TaskTable) execute.TaskExecutor {
 			s := taskexecutor.NewBaseTaskExecutor(ctx, id, task.ID, taskTable)
 			s.Extension = mockExtension
 			return s

@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/spool"
@@ -50,27 +51,27 @@ var (
 
 // ManagerBuilder is used to build a Manager.
 type ManagerBuilder struct {
-	newPool func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
+	newPool func(name string, size int32, component util.Component, options ...spool.Option) (execute.Pool, error)
 }
 
 // NewManagerBuilder creates a new ManagerBuilder.
 func NewManagerBuilder() *ManagerBuilder {
 	return &ManagerBuilder{
-		newPool: func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
+		newPool: func(name string, size int32, component util.Component, options ...spool.Option) (execute.Pool, error) {
 			return spool.NewPool(name, size, component, options...)
 		},
 	}
 }
 
 // setPoolFactory sets the poolFactory to mock the Pool in unit test.
-func (b *ManagerBuilder) setPoolFactory(poolFactory func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)) {
+func (b *ManagerBuilder) setPoolFactory(poolFactory func(name string, size int32, component util.Component, options ...spool.Option) (execute.Pool, error)) {
 	b.newPool = poolFactory
 }
 
 // Manager monitors the task table and manages the taskExecutors.
 type Manager struct {
-	taskTable    TaskTable
-	executorPool Pool
+	taskTable    execute.TaskTable
+	executorPool execute.Pool
 	mu           struct {
 		sync.RWMutex
 		// taskID -> CancelCauseFunc.
@@ -83,12 +84,12 @@ type Manager struct {
 	ctx         context.Context
 	cancel      context.CancelFunc
 	logCtx      context.Context
-	newPool     func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
+	newPool     func(name string, size int32, component util.Component, options ...spool.Option) (execute.Pool, error)
 	slotManager *slotManager
 }
 
 // BuildManager builds a Manager.
-func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, error) {
+func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable execute.TaskTable) (*Manager, error) {
 	m := &Manager{
 		id:        id,
 		taskTable: taskTable,
@@ -463,7 +464,7 @@ func (m *Manager) logErr(err error) {
 	logutil.Logger(m.logCtx).Error("task manager met error", zap.Error(err), zap.Stack("stack"))
 }
 
-func (m *Manager) logErrAndPersist(err error, taskID int64, taskExecutor TaskExecutor) {
+func (m *Manager) logErrAndPersist(err error, taskID int64, taskExecutor execute.TaskExecutor) {
 	m.logErr(err)
 	if taskExecutor.IsRetryableError(err) {
 		logutil.Logger(m.logCtx).Error("met retryable err", zap.Error(err), zap.Stack("stack"))

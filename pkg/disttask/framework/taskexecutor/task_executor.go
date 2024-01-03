@@ -59,11 +59,11 @@ type BaseTaskExecutor struct {
 	// id, it's the same as server id now, i.e. host:port.
 	id        string
 	taskID    int64
-	taskTable TaskTable
+	taskTable execute.TaskTable
 	logCtx    context.Context
 	// ctx from manager
 	ctx context.Context
-	Extension
+	execute.Extension
 
 	mu struct {
 		sync.RWMutex
@@ -76,7 +76,7 @@ type BaseTaskExecutor struct {
 }
 
 // NewBaseTaskExecutor creates a new BaseTaskExecutor.
-func NewBaseTaskExecutor(ctx context.Context, id string, taskID int64, taskTable TaskTable) *BaseTaskExecutor {
+func NewBaseTaskExecutor(ctx context.Context, id string, taskID int64, taskTable execute.TaskTable) *BaseTaskExecutor {
 	taskExecutorImpl := &BaseTaskExecutor{
 		id:        id,
 		taskID:    taskID,
@@ -478,20 +478,17 @@ func (*BaseTaskExecutor) Close() {
 func runSummaryCollectLoop(
 	ctx context.Context,
 	task *proto.Task,
-	taskTable TaskTable,
+	taskTable execute.TaskTable,
 ) (summary *execute.Summary, cleanup func(), err error) {
-	taskMgr, ok := taskTable.(*storage.TaskManager)
-	if !ok {
-		return nil, func() {}, nil
-	}
 	opt, ok := taskTypes[task.Type]
 	if !ok {
 		return nil, func() {}, errors.Errorf("taskExecutor option for type %s not found", task.Type)
 	}
 	if opt.Summary != nil {
-		go opt.Summary.UpdateRowCountLoop(ctx, taskMgr)
+		opt.Summary.TaskTable = taskTable
+		go opt.Summary.UpdateRowCountLoop(ctx)
 		return opt.Summary, func() {
-			opt.Summary.PersistRowCount(ctx, taskMgr)
+			opt.Summary.PersistRowCount(ctx)
 		}, nil
 	}
 	return nil, func() {}, nil

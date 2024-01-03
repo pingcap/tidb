@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -30,6 +29,7 @@ type Summary struct {
 		sync.Mutex
 		RowCount map[int64]int64 // subtask ID -> row count
 	}
+	TaskTable TaskTable
 }
 
 // NewSummary creates a new Summary.
@@ -52,7 +52,7 @@ func (s *Summary) UpdateRowCount(subtaskID int64, rowCount int64) {
 }
 
 // UpdateRowCountLoop updates the row count of the subtask periodically.
-func (s *Summary) UpdateRowCountLoop(ctx context.Context, taskMgr *storage.TaskManager) {
+func (s *Summary) UpdateRowCountLoop(ctx context.Context) {
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -60,13 +60,13 @@ func (s *Summary) UpdateRowCountLoop(ctx context.Context, taskMgr *storage.TaskM
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			s.PersistRowCount(ctx, taskMgr)
+			s.PersistRowCount(ctx)
 		}
 	}
 }
 
 // PersistRowCount persists the row count of the subtask to the storage.
-func (s *Summary) PersistRowCount(ctx context.Context, taskMgr *storage.TaskManager) {
+func (s *Summary) PersistRowCount(ctx context.Context) {
 	var copiedRowCount map[int64]int64
 	s.mu.Lock()
 	if len(s.mu.RowCount) == 0 {
@@ -80,7 +80,7 @@ func (s *Summary) PersistRowCount(ctx context.Context, taskMgr *storage.TaskMana
 	s.mu.Unlock()
 
 	for subtaskID, rowCount := range copiedRowCount {
-		err := taskMgr.UpdateSubtaskRowCount(ctx, subtaskID, rowCount)
+		err := s.TaskTable.UpdateSubtaskRowCount(ctx, subtaskID, rowCount)
 		if err != nil {
 			logutil.Logger(ctx).Warn("update subtask row count failed", zap.Error(err))
 		}

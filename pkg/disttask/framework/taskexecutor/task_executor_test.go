@@ -51,6 +51,8 @@ func TestTaskExecutorRun(t *testing.T) {
 	mockExtension := mock.NewMockExtension(ctrl)
 	mockExtension.EXPECT().IsRetryableError(gomock.Any()).AnyTimes()
 
+	RegisterTaskType(tp, nil)
+
 	// we don't test cancelCheck here, but in case the test is slow and trigger it.
 	mockSubtaskTable.EXPECT().IsTaskExecutorCanceled(ctx, gomock.Any(), gomock.Any()).Return(false, nil).AnyTimes()
 
@@ -274,6 +276,7 @@ func TestTaskExecutorRollback(t *testing.T) {
 	mockSubtaskTable := mock.NewMockTaskTable(ctrl)
 	mockSubtaskExecutor := mockexecute.NewMockSubtaskExecutor(ctrl)
 	mockExtension := mock.NewMockExtension(ctrl)
+	RegisterTaskType(tp, nil)
 
 	// 1. no taskExecutor constructor
 	taskExecutorRegisterErr := errors.Errorf("constructor of taskExecutor for key not found")
@@ -382,6 +385,8 @@ func TestTaskExecutor(t *testing.T) {
 	mockSubtaskTable := mock.NewMockTaskTable(ctrl)
 	mockSubtaskExecutor := mockexecute.NewMockSubtaskExecutor(ctrl)
 	mockExtension := mock.NewMockExtension(ctrl)
+	RegisterTaskType(tp, nil)
+
 	mockSubtaskTable.EXPECT().IsTaskExecutorCanceled(gomock.Any(), gomock.Any(), gomock.Any()).Return(false, nil).AnyTimes()
 	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(gomock.Any(), "id", taskID, proto.SubtaskStateFailed, gomock.Any()).Return(nil)
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()

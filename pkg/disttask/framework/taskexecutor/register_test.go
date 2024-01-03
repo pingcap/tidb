@@ -19,13 +19,14 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/stretchr/testify/require"
 )
 
 func TestRegisterTaskType(t *testing.T) {
 	// other case might add task types, so we need to clear it first
 	ClearTaskExecutors()
-	factoryFn := func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor {
+	factoryFn := func(ctx context.Context, id string, task *proto.Task, taskTable execute.TaskTable) execute.TaskExecutor {
 		return nil
 	}
 	RegisterTaskType("test1", factoryFn)

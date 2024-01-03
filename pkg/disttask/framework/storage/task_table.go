@@ -608,8 +608,10 @@ func (stm *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, st
 
 // UpdateSubtaskRowCount updates the subtask row count.
 func (stm *TaskManager) UpdateSubtaskRowCount(ctx context.Context, subtaskID int64, rowCount int64) error {
-	_, err := stm.executeSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
-		set summary = json_set(summary, '$.row_count', %?) where id = %?`,
+	_, err := stm.executeSQLWithNewSession(ctx,
+		`update mysql.tidb_background_subtask
+		set summary = json_set(summary, '$.row_count', %?)
+		where id = %?`,
 		rowCount, subtaskID)
 	return err
 }

@@ -36,7 +36,7 @@ var (
 	taskExecutorFactories = make(map[proto.TaskType]taskExecutorFactoryFn)
 )
 
-type taskExecutorFactoryFn func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor
+type taskExecutorFactoryFn func(ctx context.Context, id string, task *proto.Task, taskTable execute.TaskTable) execute.TaskExecutor
 
 // RegisterTaskType registers the task type.
 func RegisterTaskType(taskType proto.TaskType, factory taskExecutorFactoryFn, opts ...TaskTypeOption) {
