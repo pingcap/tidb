@@ -2781,10 +2781,6 @@ func (e *AdminShowBDRRoleExec) Next(ctx context.Context, req *chunk.Chunk) error
 			return err
 		}
 
-		if role == "" {
-			role = string(ast.BDRRoleLocalOnly)
-		}
-
 		req.AppendString(0, role)
 		e.done = true
 		return nil

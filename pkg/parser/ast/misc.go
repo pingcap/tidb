@@ -2338,6 +2338,7 @@ const (
 	AdminFlushPlanCache
 	AdminSetBDRRole
 	AdminShowBDRRole
+	AdminUnsetBDRRole
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -2352,7 +2353,7 @@ type BDRRole string
 const (
 	BDRRolePrimary   BDRRole = "primary"
 	BDRRoleSecondary BDRRole = "secondary"
-	BDRRoleLocalOnly BDRRole = "local_only"
+	BDRRoleNone      BDRRole = ""
 )
 
 // DeniedByBDR checks whether the DDL is denied by BDR.
@@ -2649,13 +2650,13 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("SET BDR ROLE PRIMARY")
 		case BDRRoleSecondary:
 			ctx.WriteKeyWord("SET BDR ROLE SECONDARY")
-		case BDRRoleLocalOnly:
-			ctx.WriteKeyWord("SET BDR ROLE LOCAL_ONLY")
 		default:
 			return errors.New("Unsupported BDR role")
 		}
 	case AdminShowBDRRole:
 		ctx.WriteKeyWord("SHOW BDR ROLE")
+	case AdminUnsetBDRRole:
+		ctx.WriteKeyWord("UNSET BDR ROLE")
 	default:
 		return errors.New("Unsupported AdminStmt type")
 	}

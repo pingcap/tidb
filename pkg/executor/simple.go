@@ -2789,6 +2789,8 @@ func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
 		return e.executeAdminFlushPlanCache(s)
 	case ast.AdminSetBDRRole:
 		return e.executeAdminSetBDRRole(s)
+	case ast.AdminUnsetBDRRole:
+		return e.executeAdminUnsetBDRRole(s)
 	}
 	return nil
 }
@@ -2832,6 +2834,16 @@ func (e *SimpleExec) executeAdminSetBDRRole(s *ast.AdminStmt) error {
 
 	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnAdmin), e.Ctx().GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		return errors.Trace(meta.NewMeta(txn).SetBDRRole(string(s.BDRRole)))
+	})
+}
+
+func (e *SimpleExec) executeAdminUnsetBDRRole(s *ast.AdminStmt) error {
+	if s.Tp != ast.AdminUnsetBDRRole {
+		return errors.New("This AdminStmt is not ADMIN UNSET BDR_ROLE")
+	}
+
+	return kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnAdmin), e.Ctx().GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+		return errors.Trace(meta.NewMeta(txn).ClearBDRRole())
 	})
 }
 
