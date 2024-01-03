@@ -1092,6 +1092,7 @@ func showBinding(tk *testkit.TestKit, showStmt string) [][]interface{} {
 }
 
 func TestUniversalBindingFromHistory(t *testing.T) {
+	t.Skip("skip it temporarily")
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
 	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)

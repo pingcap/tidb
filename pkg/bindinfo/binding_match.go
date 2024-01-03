@@ -50,27 +50,14 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*BindRecord, stri
 	if ctx.Value(SessionBindInfoKeyType) == nil {
 		return nil, "", nil
 	}
-	stmtNode, normalizedSQL, sqlDigest, err := NormalizeStmtForBinding(stmt, ctx.GetSessionVars().CurrentDB, false)
+	stmtNode, normalizedSQL, sqlDigest, err := normalizeStmt(stmt, ctx.GetSessionVars().CurrentDB)
 	if err != nil || stmtNode == nil {
 		return nil, "", err
 	}
-	var normalizedSQLUni, sqlDigestUni string
-	if ctx.GetSessionVars().EnableUniversalBinding {
-		_, normalizedSQLUni, sqlDigestUni, err = NormalizeStmtForBinding(stmt, ctx.GetSessionVars().CurrentDB, true)
-		if err != nil {
-			return nil, "", err
-		}
-	}
-
 	// the priority: session normal > session universal > global normal > global universal
 	sessionHandle := ctx.Value(SessionBindInfoKeyType).(SessionBindingHandle)
 	if bindRecord := sessionHandle.GetSessionBinding(sqlDigest, normalizedSQL, ""); bindRecord != nil && bindRecord.HasEnabledBinding() {
 		return bindRecord, metrics.ScopeSession, nil
-	}
-	if ctx.GetSessionVars().EnableUniversalBinding {
-		if bindRecord := sessionHandle.GetSessionBinding(sqlDigestUni, normalizedSQLUni, ""); bindRecord != nil && bindRecord.HasEnabledBinding() {
-			return bindRecord, metrics.ScopeSession, nil
-		}
 	}
 	globalHandle := GetGlobalBindingHandle(ctx)
 	if globalHandle == nil {
@@ -79,28 +66,7 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*BindRecord, stri
 	if bindRecord := globalHandle.GetGlobalBinding(sqlDigest, normalizedSQL, ""); bindRecord != nil && bindRecord.HasEnabledBinding() {
 		return bindRecord, metrics.ScopeGlobal, nil
 	}
-	if ctx.GetSessionVars().EnableUniversalBinding {
-		if bindRecord := globalHandle.GetGlobalBinding(sqlDigestUni, normalizedSQLUni, ""); bindRecord != nil && bindRecord.HasEnabledBinding() {
-			return bindRecord, metrics.ScopeGlobal, nil
-		}
-	}
 	return nil, "", nil
-}
-
-// NormalizeStmtForBinding normalizes a statement for binding.
-// This function skips Explain automatically, and literals in in-lists will be normalized as '...'.
-// For normal bindings, DB name will be completed automatically:
-//
-//	e.g. `select * from t where a in (1, 2, 3)` --> `select * from test.t where a in (...)`
-//
-// For universal bindings, DB name will be ignored:
-//
-//	e.g. `select * from test.t where a in (1, 2, 3)` --> `select * from t where a in (...)`
-func NormalizeStmtForBinding(stmtNode ast.StmtNode, specifiedDB string, isUniversalBinding bool) (stmt ast.StmtNode, normalizedStmt, sqlDigest string, err error) {
-	if isUniversalBinding {
-		return normalizeStmt(stmtNode, specifiedDB, 2)
-	}
-	return normalizeStmt(stmtNode, specifiedDB, 1)
 }
 
 func eraseLastSemicolon(stmt ast.StmtNode) {
@@ -110,18 +76,16 @@ func eraseLastSemicolon(stmt ast.StmtNode) {
 	}
 }
 
-// flag 0 is for plan cache, 1 is for normal bindings and 2 is for universal bindings.
-// see comments in NormalizeStmtForPlanCache and NormalizeStmtForBinding.
-func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, flag int) (stmt ast.StmtNode, normalizedStmt, sqlDigest string, err error) {
+// NormalizeStmtForBinding normalizes a statement for binding.
+// This function skips Explain automatically, and literals in in-lists will be normalized as '...'.
+// For normal bindings, DB name will be completed automatically:
+//
+//	e.g. `select * from t where a in (1, 2, 3)` --> `select * from test.t where a in (...)`
+func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string) (stmt ast.StmtNode, normalizedStmt, sqlDigest string, err error) {
 	normalize := func(n ast.StmtNode) (normalizedStmt, sqlDigest string) {
 		eraseLastSemicolon(n)
 		var digest *parser.Digest
-		switch flag {
-		case 1:
-			normalizedStmt, digest = parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(n, specifiedDB, n.Text()))
-		case 2:
-			normalizedStmt, digest = parser.NormalizeDigestForBinding(utilparser.RestoreWithoutDB(n))
-		}
+		normalizedStmt, digest = parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(n, specifiedDB, n.Text()))
 		return normalizedStmt, digest.String()
 	}
 
