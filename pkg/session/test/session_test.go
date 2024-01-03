@@ -1021,7 +1021,7 @@ insert into test.t values ("abc"); -- invalid statement
 		require.NoError(t, store.Close())
 	}()
 	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[1].Name()
-	dom, err = session.BootstrapSession(store)
+	dom, err = session.BootstrapSession(store, mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	se := session.CreateSessionAndSetID(t, store)
 	ctx := context.Background()
