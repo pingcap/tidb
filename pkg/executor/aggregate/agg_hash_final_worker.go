@@ -46,7 +46,6 @@ type HashAggFinalWorker struct {
 	mutableRow          chunk.MutRow
 	partialResultMap    aggfuncs.AggPartialResultMapper
 	BInMap              int
-	isFirstInput        bool
 	inputCh             chan *aggfuncs.AggPartialResultMapper
 	outputCh            chan *AfFinalResult
 	finalResultHolderCh chan *chunk.Chunk
@@ -95,7 +94,6 @@ func (w *HashAggFinalWorker) initBInMap() {
 }
 
 func (w *HashAggFinalWorker) handleFirstInput(input *aggfuncs.AggPartialResultMapper) {
-	w.isFirstInput = false
 	w.partialResultMap = *input
 	w.initBInMap()
 }
@@ -145,8 +143,6 @@ func (w *HashAggFinalWorker) handleNewGroupKey(key string, value []aggfuncs.Part
 }
 
 func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) error {
-	defer func() { w.isFirstInput = true }()
-
 	for {
 		input, ok := w.getPartialInput()
 		if !ok {
@@ -155,7 +151,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) error {
 
 		// As the w.partialResultMap is empty when we get the first input.
 		// So it's better to directly assign the input to w.partialResultMap
-		if w.isFirstInput {
+		if w.partialResultMap == nil {
 			w.handleFirstInput(input)
 			continue
 		}

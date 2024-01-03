@@ -326,7 +326,6 @@ func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 			baseHashAggWorker:   newBaseHashAggWorker(e.Ctx(), e.finishCh, e.FinalAggFuncs, e.MaxChunkSize(), e.memTracker),
 			partialResultMap:    make(aggfuncs.AggPartialResultMapper),
 			BInMap:              0,
-			isFirstInput:        true,
 			inputCh:             e.partialOutputChs[i],
 			outputCh:            e.finalOutputCh,
 			finalResultHolderCh: make(chan *chunk.Chunk, 1),
