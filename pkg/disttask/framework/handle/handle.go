@@ -52,26 +52,24 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, co
 		return nil, err
 	}
 	task, err := taskManager.GetTaskByKey(ctx, taskKey)
+	if err != nil && err != storage.ErrTaskNotFound {
+		return nil, err
+	}
+	if task != nil {
+		return nil, storage.ErrTaskAlreadyExists
+	}
+
+	taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, concurrency, taskMeta)
 	if err != nil {
 		return nil, err
 	}
 
-	if task == nil {
-		taskID, err := taskManager.CreateTask(ctx, taskKey, taskType, concurrency, taskMeta)
-		if err != nil {
-			return nil, err
-		}
-
-		task, err = taskManager.GetTaskByID(ctx, taskID)
-		if err != nil {
-			return nil, err
-		}
-
-		if task == nil {
-			return nil, errors.Errorf("cannot find task with ID %d", taskID)
-		}
-		metrics.UpdateMetricsForAddTask(task)
+	task, err = taskManager.GetTaskByID(ctx, taskID)
+	if err != nil {
+		return nil, err
 	}
+	metrics.UpdateMetricsForAddTask(task)
+
 	NotifyTaskChange()
 	return task, nil
 }
@@ -112,9 +110,6 @@ func WaitTaskDoneByKey(ctx context.Context, taskKey string) error {
 	if err != nil {
 		return err
 	}
-	if task == nil {
-		return errors.Errorf("cannot find task with key %s", taskKey)
-	}
 	_, err = WaitTask(ctx, task.ID, func(t *proto.Task) bool {
 		return t.IsDone()
 	})
@@ -136,17 +131,14 @@ func WaitTask(ctx context.Context, id int64, matchFn func(*proto.Task) bool) (*p
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		case <-ticker.C:
-			found, err := taskManager.GetTaskByIDWithHistory(ctx, id)
+			task, err := taskManager.GetTaskByIDWithHistory(ctx, id)
 			if err != nil {
 				logger.Error("cannot get task during waiting", zap.Error(err))
 				continue
 			}
-			if found == nil {
-				return nil, errors.Errorf("cannot find task with ID %d", id)
-			}
 
-			if matchFn(found) {
-				return found, nil
+			if matchFn(task) {
+				return task, nil
 			}
 		}
 	}
@@ -160,12 +152,11 @@ func CancelTask(ctx context.Context, taskKey string) error {
 	}
 	task, err := taskManager.GetTaskByKey(ctx, taskKey)
 	if err != nil {
+		if err == storage.ErrTaskNotFound {
+			logutil.BgLogger().Info("task not exist", zap.String("taskKey", taskKey))
+			return nil
+		}
 		return err
-	}
-	if task == nil {
-		logutil.BgLogger().Info("task not exist", zap.String("taskKey", taskKey))
-
-		return nil
 	}
 	return taskManager.CancelTask(ctx, task.ID)
 }
