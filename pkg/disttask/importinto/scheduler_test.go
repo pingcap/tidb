@@ -96,8 +96,7 @@ func (s *importIntoSuite) TestSchedulerInit() {
 	sch := importScheduler{
 		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
 			Meta: bytes,
-		}, scheduler.Param{},
-		),
+		}, scheduler.Param{}),
 	}
 	s.NoError(sch.Init())
 	s.False(sch.Extension.(*ImportSchedulerExt).GlobalSort)
@@ -108,8 +107,7 @@ func (s *importIntoSuite) TestSchedulerInit() {
 	sch = importScheduler{
 		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
 			Meta: bytes,
-		}, scheduler.Param{},
-		),
+		}, scheduler.Param{}),
 	}
 	s.NoError(sch.Init())
 	s.True(sch.Extension.(*ImportSchedulerExt).GlobalSort)
