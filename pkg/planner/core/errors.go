@@ -27,6 +27,7 @@ var (
 	ErrWrongParamCount                       = dbterror.ClassOptimizer.NewStd(mysql.ErrWrongParamCount)
 	ErrSchemaChanged                         = dbterror.ClassOptimizer.NewStd(mysql.ErrSchemaChanged)
 	ErrTablenameNotAllowedHere               = dbterror.ClassOptimizer.NewStd(mysql.ErrTablenameNotAllowedHere)
+	ErrCantUseOptionHere                     = dbterror.ClassOptimizer.NewStd(mysql.ErrCantUseOptionHere)
 	ErrNotSupportedYet                       = dbterror.ClassOptimizer.NewStd(mysql.ErrNotSupportedYet)
 	ErrWrongUsage                            = dbterror.ClassOptimizer.NewStd(mysql.ErrWrongUsage)
 	ErrUnknown                               = dbterror.ClassOptimizer.NewStd(mysql.ErrUnknown)
@@ -119,4 +120,6 @@ var (
 	ErrPrepareDDL       = dbterror.ClassExecutor.NewStd(mysql.ErrPrepareDDL)
 	ErrRowIsReferenced2 = dbterror.ClassOptimizer.NewStd(mysql.ErrRowIsReferenced2)
 	ErrNoReferencedRow2 = dbterror.ClassOptimizer.NewStd(mysql.ErrNoReferencedRow2)
+
+	ErrWarnDeprecatedSyntax = dbterror.ClassOptimizer.NewStd(mysql.ErrWarnDeprecatedSyntax)
 )

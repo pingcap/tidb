@@ -117,7 +117,11 @@ func (e *PrepareExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			return err
 		}
 	}
+
+	e.Ctx().GetSessionVars().StmtCtx.InPrepareStmt = true
 	stmt, p, paramCnt, err := plannercore.GeneratePlanCacheStmtWithAST(ctx, e.Ctx(), true, stmt0.Text(), stmt0, nil)
+	e.Ctx().GetSessionVars().StmtCtx.InPrepareStmt = false
+
 	if err != nil {
 		return err
 	}

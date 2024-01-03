@@ -1985,6 +1985,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.IsStaleness = false
 	sc.LockTableIDs = make(map[int64]struct{})
 	sc.EnableOptimizeTrace = false
+	sc.OverrideFoundRows = nil
 	sc.OptimizeTracer = nil
 	sc.OptimizerCETrace = nil
 	sc.IsSyncStatsFailed = false
@@ -2167,6 +2168,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		if stmt.Tp == ast.ShowWarnings || stmt.Tp == ast.ShowErrors || stmt.Tp == ast.ShowSessionStates {
 			sc.InShowWarning = true
 			sc.SetWarnings(vars.StmtCtx.GetWarnings())
+			sc.SetFoundRows(vars.StmtCtx.FoundRows())
+			sc.OverrideFoundRows = vars.StmtCtx.OverrideFoundRows
 		}
 	case *ast.SplitRegionStmt:
 		sc.SetTypeFlags(sc.TypeFlags().

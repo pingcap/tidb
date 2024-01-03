@@ -2271,6 +2271,11 @@ error = '''
 Access denied; you need (at least one of) the %-.128s privilege(s) for this operation
 '''
 
+["planner:1234"]
+error = '''
+Incorrect usage/placement of '%s'
+'''
+
 ["planner:1235"]
 error = '''
 This version of TiDB doesn't yet support '%s'
@@ -2294,6 +2299,11 @@ Reference '%-.64s' not supported (%s)
 ["planner:1250"]
 error = '''
 Table '%s' from one of the %ss cannot be used in %s
+'''
+
+["planner:1287"]
+error = '''
+'%s' is deprecated and will be removed in a future release. Please use %s instead
 '''
 
 ["planner:1288"]

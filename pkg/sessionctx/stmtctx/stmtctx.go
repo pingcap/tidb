@@ -184,6 +184,7 @@ type StatementContext struct {
 	InCreateOrAlterStmt           bool
 	InSetSessionStatesStmt        bool
 	InPreparedPlanBuilding        bool
+	InPrepareStmt                 bool
 	DupKeyAsWarning               bool
 	BadNullAsWarning              bool
 	DividedByZeroAsWarning        bool
@@ -401,6 +402,11 @@ type StatementContext struct {
 
 	// InHandleForeignKeyTrigger indicates currently are handling foreign key trigger.
 	InHandleForeignKeyTrigger bool
+
+	// OverrideFoundRows indicates found_rows should be overrided by the specified value, instead of
+	// calculated based on resultSet. This is set when SQL_CALC_FOUND_ROWS is specified.
+	// Accessing this variable does not need lock, as it will not be modified during execution.
+	OverrideFoundRows *int
 
 	// ForeignKeyTriggerCtx is the contain information for foreign key cascade execution.
 	ForeignKeyTriggerCtx struct {
@@ -862,6 +868,13 @@ func (sc *StatementContext) FoundRows() uint64 {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	return sc.mu.foundRows
+}
+
+// SetFoundRows sets found rows.
+func (sc *StatementContext) SetFoundRows(rows uint64) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	sc.mu.foundRows = rows
 }
 
 // AddFoundRows adds found rows.
