@@ -426,14 +426,24 @@ func RandomPickOneTableAndTryAutoAnalyze(
 				continue
 			}
 			// Only analyze the partition that has not been locked.
-			var partitionDefs []model.PartitionDefinition
+			partitionDefs := make([]model.PartitionDefinition, 0, len(pi.Definitions))
 			for _, def := range pi.Definitions {
 				if _, ok := lockedTables[def.ID]; !ok {
 					partitionDefs = append(partitionDefs, def)
 				}
 			}
+			partitionStats := getPartitionStats(statsHandle, tblInfo, partitionDefs)
 			if pruneMode == variable.Dynamic {
-				analyzed := tryAutoAnalyzePartitionTableInDynamicMode(sctx, statsHandle, sysProcTracker, tblInfo, partitionDefs, db, autoAnalyzeRatio)
+				analyzed := tryAutoAnalyzePartitionTableInDynamicMode(
+					sctx,
+					statsHandle,
+					sysProcTracker,
+					tblInfo,
+					partitionDefs,
+					partitionStats,
+					db,
+					autoAnalyzeRatio,
+				)
 				if analyzed {
 					return true
 				}
@@ -441,7 +451,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 			}
 			for _, def := range partitionDefs {
 				sql := "analyze table %n.%n partition %n"
-				statsTbl := statsHandle.GetPartitionStats(tblInfo, def.ID)
+				statsTbl := partitionStats[def.ID]
 				analyzed := tryAutoAnalyzeTable(sctx, statsHandle, sysProcTracker, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O, def.Name.O)
 				if analyzed {
 					return true
@@ -451,6 +461,20 @@ func RandomPickOneTableAndTryAutoAnalyze(
 	}
 
 	return false
+}
+
+func getPartitionStats(
+	statsHandle statstypes.StatsHandle,
+	tblInfo *model.TableInfo,
+	defs []model.PartitionDefinition,
+) map[int64]*statistics.Table {
+	partitionStats := make(map[int64]*statistics.Table, len(defs))
+
+	for _, def := range defs {
+		partitionStats[def.ID] = statsHandle.GetPartitionStats(tblInfo, def.ID)
+	}
+
+	return partitionStats
 }
 
 // AutoAnalyzeMinCnt means if the count of table is less than this value, we don't need to do auto analyze.
@@ -569,6 +593,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 	sysProcTracker sessionctx.SysProcTracker,
 	tblInfo *model.TableInfo,
 	partitionDefs []model.PartitionDefinition,
+	partitionStats map[int64]*statistics.Table,
 	db string,
 	ratio float64,
 ) bool {
@@ -577,7 +602,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 	needAnalyzePartitionNames := make([]interface{}, 0, len(partitionDefs))
 
 	for _, def := range partitionDefs {
-		partitionStatsTbl := statsHandle.GetPartitionStats(tblInfo, def.ID)
+		partitionStatsTbl := partitionStats[def.ID]
 		// 1. If the stats are not loaded, we don't need to analyze it.
 		// 2. If the table is too small, we don't want to waste time to analyze it.
 		//    Leave the opportunity to other bigger tables.
@@ -652,7 +677,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 		}
 		// Collect all the partition names that need to analyze.
 		for _, def := range partitionDefs {
-			partitionStatsTbl := statsHandle.GetPartitionStats(tblInfo, def.ID)
+			partitionStatsTbl := partitionStats[def.ID]
 			if _, ok := partitionStatsTbl.Indices[idx.ID]; !ok {
 				needAnalyzePartitionNames = append(needAnalyzePartitionNames, def.Name.O)
 				statistics.CheckAnalyzeVerOnTable(partitionStatsTbl, &tableStatsVer)

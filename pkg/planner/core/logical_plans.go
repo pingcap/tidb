@@ -177,7 +177,7 @@ func (p *LogicalJoin) isNAAJ() bool {
 // Shallow shallow copies a LogicalJoin struct.
 func (p *LogicalJoin) Shallow() *LogicalJoin {
 	join := *p
-	return join.Init(p.SCtx(), p.SelectBlockOffset())
+	return join.Init(p.SCtx(), p.QueryBlockOffset())
 }
 
 // ExtractFD implements the interface LogicalPlan.
@@ -1556,9 +1556,9 @@ func getTablePath(paths []*util.AccessPath) *util.AccessPath {
 }
 
 func (ds *DataSource) buildTableGather() LogicalPlan {
-	ts := LogicalTableScan{Source: ds, HandleCols: ds.handleCols}.Init(ds.SCtx(), ds.SelectBlockOffset())
+	ts := LogicalTableScan{Source: ds, HandleCols: ds.handleCols}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetSchema(ds.Schema())
-	sg := TiKVSingleGather{Source: ds, IsIndexGather: false}.Init(ds.SCtx(), ds.SelectBlockOffset())
+	sg := TiKVSingleGather{Source: ds, IsIndexGather: false}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	sg.SetSchema(ds.Schema())
 	sg.SetChildren(ts)
 	return sg
@@ -1573,7 +1573,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) LogicalPlan {
 		FullIdxColLens: path.FullIdxColLens,
 		IdxCols:        path.IdxCols,
 		IdxColLens:     path.IdxColLens,
-	}.Init(ds.SCtx(), ds.SelectBlockOffset())
+	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 
 	is.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 	copy(is.Columns, ds.Columns)
@@ -1584,7 +1584,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) LogicalPlan {
 		Source:        ds,
 		IsIndexGather: true,
 		Index:         path.Index,
-	}.Init(ds.SCtx(), ds.SelectBlockOffset())
+	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	sg.SetSchema(ds.Schema())
 	sg.SetChildren(is)
 	return sg

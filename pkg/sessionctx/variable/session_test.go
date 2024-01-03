@@ -469,33 +469,33 @@ func TestGetReuseChunk(t *testing.T) {
 
 	// SetAlloc efficient
 	sessVars.SetAlloc(nil)
-	require.Nil(t, sessVars.ChunkPool.Alloc)
+	require.False(t, sessVars.IsAllocValid())
 	require.False(t, sessVars.GetUseChunkAlloc())
 	// alloc is nil ，Allocate memory from the system
-	chk1 := sessVars.GetNewChunkWithCapacity(fieldTypes, 10, 10, sessVars.ChunkPool.Alloc)
+	chk1 := sessVars.GetChunkAllocator().Alloc(fieldTypes, 10, 10)
 	require.NotNil(t, chk1)
 
 	chunkReuseMap := make(map[*chunk.Chunk]struct{}, 14)
 	columnReuseMap := make(map[*chunk.Column]struct{}, 14)
 
 	alloc := chunk.NewAllocator()
-	sessVars.EnableReuseCheck = true
+	sessVars.EnableReuseChunk = true
 	sessVars.SetAlloc(alloc)
-	require.NotNil(t, sessVars.ChunkPool.Alloc)
-	require.Equal(t, alloc, sessVars.ChunkPool.Alloc)
+	require.True(t, sessVars.IsAllocValid())
 	require.False(t, sessVars.GetUseChunkAlloc())
 
 	//tries to apply from the cache
 	initCap := 10
-	chk1 = sessVars.GetNewChunkWithCapacity(fieldTypes, initCap, initCap, sessVars.ChunkPool.Alloc)
+	chk1 = sessVars.GetChunkAllocator().Alloc(fieldTypes, initCap, initCap)
 	require.NotNil(t, chk1)
 	chunkReuseMap[chk1] = struct{}{}
 	for i := 0; i < chk1.NumCols(); i++ {
 		columnReuseMap[chk1.Column(i)] = struct{}{}
 	}
+	require.True(t, sessVars.GetUseChunkAlloc())
 
 	alloc.Reset()
-	chkres1 := sessVars.GetNewChunkWithCapacity(fieldTypes, 10, 10, sessVars.ChunkPool.Alloc)
+	chkres1 := sessVars.GetChunkAllocator().Alloc(fieldTypes, 10, 10)
 	require.NotNil(t, chkres1)
 	_, exist := chunkReuseMap[chkres1]
 	require.True(t, exist)
@@ -503,14 +503,14 @@ func TestGetReuseChunk(t *testing.T) {
 		_, exist := columnReuseMap[chkres1.Column(i)]
 		require.True(t, exist)
 	}
-	allocpool := variable.ReuseChunkPool{Alloc: alloc}
 
-	sessVars.ClearAlloc(&allocpool.Alloc, false)
-	require.Equal(t, alloc, allocpool.Alloc)
+	var allocpool chunk.Allocator = alloc
+	sessVars.ClearAlloc(&allocpool, false)
+	require.Equal(t, alloc, allocpool)
 
-	sessVars.ClearAlloc(&allocpool.Alloc, true)
-	require.NotEqual(t, allocpool.Alloc, alloc)
-	require.Nil(t, sessVars.ChunkPool.Alloc)
+	sessVars.ClearAlloc(&allocpool, true)
+	require.NotEqual(t, allocpool, alloc)
+	require.False(t, sessVars.IsAllocValid())
 }
 
 func TestUserVarConcurrently(t *testing.T) {
