@@ -613,7 +613,7 @@ func rebuildRange(p Plan) error {
 				for i := range x.IndexValues {
 					copy(x.IndexValues[i], ranges.Ranges[i].LowVal)
 				}
-				panic("Found a plan cache IndexInfo batch point test!")
+				//panic("Found a plan cache IndexInfo batch point test!")
 			} else {
 				var pkCol *expression.Column
 				var unsignedIntHandle bool
@@ -640,7 +640,7 @@ func rebuildRange(p Plan) error {
 					for i := range ranges {
 						x.Handles[i] = kv.IntHandle(ranges[i].LowVal[0].GetInt64())
 					}
-					panic("Found a plan cache Handles batch point test!")
+					//panic("Found a plan cache Handles batch point test!")
 				}
 			}
 		}
@@ -672,7 +672,7 @@ func rebuildRange(p Plan) error {
 					x.IndexValues[i][j] = *dVal
 				}
 			}
-			panic("Found a plan cache IndexValueParams test!")
+			//panic("Found a plan cache IndexValueParams test!")
 		}
 		if len(x.HandleParams) > 0 && len(x.IndexValueParams) > 0 {
 			panic("Both handle and index params?!?")
@@ -703,9 +703,9 @@ func rebuildRange(p Plan) error {
 					partIDs = append(partIDs, partDef.ID)
 				}
 			} else if len(x.IndexValues) > 0 {
-				panic("What now?")
+				panic("What now, it has index values?")
 			} else {
-				panic("What now?")
+				panic("What now?, it does not have index values?")
 			}
 
 			// TODO: Where is PartitionDefs used?
