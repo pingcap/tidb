@@ -54,10 +54,9 @@ type parallelHashAggSpillHelper struct {
 		isAllPartialWorkerFinished bool
 	}
 
-	memTracker     *memory.Tracker
-	diskTracker    *disk.Tracker
-	isPartialStage int32
-	hasError       int32
+	memTracker  *memory.Tracker
+	diskTracker *disk.Tracker
+	hasError    int32
 
 	// These agg functions are partial agg functions that are same with partial workers'.
 	// They only be used for restoring data that are spilled to disk in partial stage.
@@ -89,7 +88,6 @@ func newSpillHelper(tracker *memory.Tracker, aggFuncsForRestoring []aggfuncs.Agg
 			isAllPartialWorkerFinished: false,
 		},
 		memTracker:           tracker,
-		isPartialStage:       partialStageFlag,
 		hasError:             0,
 		aggFuncsForRestoring: aggFuncsForRestoring,
 	}
@@ -139,10 +137,6 @@ func (p *parallelHashAggSpillHelper) setSpillTriggered() {
 	p.lock.mu.Lock()
 	defer p.lock.mu.Unlock()
 	p.lock.spillTriggered = spillFlag
-}
-
-func (p *parallelHashAggSpillHelper) isInPartialStage() bool {
-	return atomic.LoadInt32(&p.isPartialStage) == partialStageFlag
 }
 
 func (p *parallelHashAggSpillHelper) isInSpilling() bool {
@@ -350,12 +344,6 @@ func (p *ParallelAggSpillDiskAction) checkRestriction(t *memory.Tracker) bool {
 func (p *ParallelAggSpillDiskAction) actionImpl(t *memory.Tracker) bool {
 	p.spillHelper.lock.mu.Lock()
 	defer p.spillHelper.lock.mu.Unlock()
-
-	if !p.spillHelper.isInPartialStage() {
-		// The spill can be triggered only when we are in partial stage.
-		p.triggerFallBackAction(t)
-		return false
-	}
 
 	if p.checkRestriction(t) {
 		if !p.spillHelper.isInSpillingNoLock() {

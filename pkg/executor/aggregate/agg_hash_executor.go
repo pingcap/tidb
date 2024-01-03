@@ -265,7 +265,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 	}
 	spillChunkFieldTypes[baseRetTypeNum] = types.NewFieldType(mysql.TypeString)
 
-	runningPartialWorkerWaiter := &sync.WaitGroup{}
+	parallelSpillWaiter := &sync.WaitGroup{}
 	for i := 0; i < partialConcurrency; i++ {
 		partialResultsMap := make([]aggfuncs.AggPartialResultMapper, finalConcurrency)
 		for i := 0; i < finalConcurrency; i++ {
@@ -291,13 +291,13 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			spillChunkFieldTypes:  spillChunkFieldTypes,
 			spillSerializeHelpers: aggfuncs.NewSerializeHelper(),
 			isSpillPrepared:       false,
-			paralleSpillWaiter:    runningPartialWorkerWaiter,
+			parallelSpillWaiter:   parallelSpillWaiter,
 			spillHelper:           e.spillHelper,
 		}
 
 		e.partialWorkers[i].partialResultNumInRow = e.partialWorkers[i].getPartialResultSliceLenConsiderByteAlign()
-		for i := 0; i < finalConcurrency; i++ {
-			e.partialWorkers[i].BInMaps[i] = 0
+		for j := 0; j < finalConcurrency; j++ {
+			e.partialWorkers[i].BInMaps[j] = 0
 		}
 
 		// There is a bucket in the empty partialResultsMap.
@@ -316,7 +316,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 		e.inputCh <- input
 	}
 
-	runningPartialWorkerWaiter.Add(partialConcurrency)
+	parallelSpillWaiter.Add(partialConcurrency)
 }
 
 func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
@@ -341,7 +341,6 @@ func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 			e.finalWorkers[i].stats = &AggWorkerStat{}
 			e.stats.FinalStats = append(e.stats.FinalStats, e.finalWorkers[i].stats)
 		}
-		e.finalWorkers[i] = e.finalWorkers[i]
 		e.finalWorkers[i].finalResultHolderCh <- exec.NewFirstChunk(e)
 	}
 }
