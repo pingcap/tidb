@@ -1015,13 +1015,13 @@ insert into test.t values ("abc"); -- invalid statement
 	session.DisableRunBootstrapSQLFileInTest()
 
 	// Bootstrap with the second sql file, which would not been executed.
-	store, err = mockstore.NewMockStore()
+	store, err = mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
 	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[1].Name()
-	dom, err = session.BootstrapSession(store, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	dom, err = session.BootstrapSession(store)
 	require.NoError(t, err)
 	se := session.CreateSessionAndSetID(t, store)
 	ctx := context.Background()
