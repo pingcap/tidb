@@ -25,6 +25,7 @@ go_library(
         "//pkg/config",
         "//pkg/domain",
         "//pkg/domain/infosync",
+        "//pkg/domain/resourcegroup",
         "//pkg/errno",
         "//pkg/executor",
         "//pkg/executor/mppcoordmanager",

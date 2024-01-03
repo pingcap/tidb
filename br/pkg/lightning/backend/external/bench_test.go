@@ -996,8 +996,7 @@ func newMergeStep(t *testing.T, s *mergeTestSuite) {
 	now := time.Now()
 	err = MergeOverlappingFilesV2(
 		ctx,
-		datas,
-		stats,
+		mockOneMultiFileStat(datas, stats),
 		s.store,
 		s.minKey,
 		s.maxKey.Next(),

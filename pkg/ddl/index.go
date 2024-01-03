@@ -2077,7 +2077,7 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 		return err
 	}
 	task, err := taskManager.GetTaskByKeyWithHistory(w.ctx, taskKey)
-	if err != nil {
+	if err != nil && err != storage.ErrTaskNotFound {
 		return err
 	}
 	if task != nil {
@@ -2101,7 +2101,7 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 			if err != nil {
 				return err
 			}
-			err = handle.WaitTask(ctx, task.ID)
+			err = handle.WaitTaskDoneOrPaused(ctx, task.ID)
 			if err := w.isReorgRunnable(reorgInfo.Job.ID, true); err != nil {
 				if dbterror.ErrPausedDDLJob.Equal(err) {
 					logutil.BgLogger().Warn("job paused by user", zap.String("category", "ddl"), zap.Error(err))
@@ -2118,6 +2118,8 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 
 		job := reorgInfo.Job
 		workerCntLimit := int(variable.GetDDLReorgWorkerCounter())
+		// we're using cpu count of current node, not of framework managed nodes,
+		// but it seems more intuitive.
 		concurrency := min(workerCntLimit, cpu.GetCPUCount())
 		logutil.BgLogger().Info("adjusted add-index task concurrency",
 			zap.Int("worker-cnt", workerCntLimit), zap.Int("task-concurrency", concurrency),
@@ -2136,7 +2138,7 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 
 		g.Go(func() error {
 			defer close(done)
-			err := handle.SubmitAndWaitTask(ctx, taskKey, taskType, concurrency, metaData)
+			err := submitAndWaitTask(ctx, taskKey, taskType, concurrency, metaData)
 			failpoint.Inject("pauseAfterDistTaskFinished", func() {
 				MockDMLExecutionOnTaskFinished()
 			})
@@ -2197,16 +2199,25 @@ func (w *worker) updateJobRowCount(taskKey string, jobID int64) {
 		return
 	}
 	task, err := taskMgr.GetTaskByKey(w.ctx, taskKey)
-	if err != nil || task == nil {
+	if err != nil {
 		logutil.BgLogger().Warn("cannot get task", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 		return
 	}
-	rowCount, err := taskMgr.GetSubtaskRowCount(w.ctx, task.ID, proto.StepOne)
+	rowCount, err := taskMgr.GetSubtaskRowCount(w.ctx, task.ID, StepReadIndex)
 	if err != nil {
 		logutil.BgLogger().Warn("cannot get subtask row count", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 		return
 	}
 	w.getReorgCtx(jobID).setRowCount(rowCount)
+}
+
+// submitAndWaitTask submits a task and wait for it to finish.
+func submitAndWaitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, taskMeta []byte) error {
+	task, err := handle.SubmitTask(ctx, taskKey, taskType, concurrency, taskMeta)
+	if err != nil {
+		return err
+	}
+	return handle.WaitTaskDoneOrPaused(ctx, task.ID)
 }
 
 func getNextPartitionInfo(reorg *reorgInfo, t table.PartitionedTable, currPhysicalTableID int64) (int64, kv.Key, kv.Key, error) {

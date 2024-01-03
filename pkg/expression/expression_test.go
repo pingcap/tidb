@@ -16,12 +16,10 @@ package expression
 
 import (
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
@@ -106,9 +104,8 @@ func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
 
 func TestConstant(t *testing.T) {
 	ctx := createContext(t)
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	require.False(t, NewZero().IsCorrelated())
-	require.True(t, NewZero().ConstItem(sc.UseCache))
+	require.Equal(t, ConstStrict, NewZero().ConstLevel())
 	require.True(t, NewZero().Decorrelate(nil).Equal(ctx, NewZero()))
 	require.Equal(t, []byte{0x0, 0x8, 0x0}, NewZero().HashCode())
 	require.False(t, NewZero().Equal(ctx, NewOne()))
@@ -133,30 +130,25 @@ func TestIsBinaryLiteral(t *testing.T) {
 	require.False(t, IsBinaryLiteral(col))
 }
 
-func TestConstItem(t *testing.T) {
-	const noConst int = 0
-	const constInCtx int = 1
-	const constStrict int = 2
-
+func TestConstLevel(t *testing.T) {
 	ctxConst := NewZero()
 	ctxConst.DeferredExpr = newFunctionWithMockCtx(ast.UnixTimestamp)
 	for _, c := range []struct {
-		exp       Expression
-		constItem int
+		exp   Expression
+		level ConstLevel
 	}{
-		{newFunctionWithMockCtx(ast.Rand), noConst},
-		{newFunctionWithMockCtx(ast.UUID), noConst},
-		{newFunctionWithMockCtx(ast.GetParam, NewOne()), noConst},
-		{newFunctionWithMockCtx(ast.Abs, NewOne()), constStrict},
-		{newFunctionWithMockCtx(ast.Abs, newColumn(1)), noConst},
-		{newFunctionWithMockCtx(ast.Plus, NewOne(), NewOne()), constStrict},
-		{newFunctionWithMockCtx(ast.Plus, newColumn(1), NewOne()), noConst},
-		{newFunctionWithMockCtx(ast.Plus, NewOne(), newColumn(1)), noConst},
-		{newFunctionWithMockCtx(ast.Plus, NewOne(), newColumn(1)), noConst},
-		{newFunctionWithMockCtx(ast.Plus, NewOne(), ctxConst), constInCtx},
+		{newFunctionWithMockCtx(ast.Rand), ConstNone},
+		{newFunctionWithMockCtx(ast.UUID), ConstNone},
+		{newFunctionWithMockCtx(ast.GetParam, NewOne()), ConstNone},
+		{newFunctionWithMockCtx(ast.Abs, NewOne()), ConstStrict},
+		{newFunctionWithMockCtx(ast.Abs, newColumn(1)), ConstNone},
+		{newFunctionWithMockCtx(ast.Plus, NewOne(), NewOne()), ConstStrict},
+		{newFunctionWithMockCtx(ast.Plus, newColumn(1), NewOne()), ConstNone},
+		{newFunctionWithMockCtx(ast.Plus, NewOne(), newColumn(1)), ConstNone},
+		{newFunctionWithMockCtx(ast.Plus, NewOne(), newColumn(1)), ConstNone},
+		{newFunctionWithMockCtx(ast.Plus, NewOne(), ctxConst), ConstOnlyInContext},
 	} {
-		require.Equal(t, c.constItem >= constInCtx, c.exp.ConstItem(false), c.exp.String())
-		require.Equal(t, c.constItem >= constStrict, c.exp.ConstItem(true), c.exp.String())
+		require.Equal(t, c.level, c.exp.ConstLevel(), c.exp.String())
 	}
 }
 

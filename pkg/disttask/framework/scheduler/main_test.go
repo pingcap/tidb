@@ -36,8 +36,8 @@ func (sm *Manager) DoCleanUpRoutine() {
 	sm.doCleanupTask()
 }
 
-func (s *BaseScheduler) OnNextStage() (err error) {
-	return s.onNextStage()
+func (s *BaseScheduler) Switch2NextStep() (err error) {
+	return s.switch2NextStep()
 }
 
 func (s *BaseScheduler) DoBalanceSubtasks(eligibleNodes []string) error {

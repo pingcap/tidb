@@ -388,7 +388,7 @@ func TestAutoUpdate(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
 		require.NoError(t, h.Update(is))
-		h.HandleAutoAnalyze(is)
+		h.HandleAutoAnalyze()
 		require.NoError(t, h.Update(is))
 		stats = h.GetTableStats(tableInfo)
 		require.Equal(t, int64(5), stats.RealtimeCount)
@@ -406,7 +406,7 @@ func TestAutoUpdate(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
 		require.NoError(t, h.Update(is))
-		h.HandleAutoAnalyze(is)
+		h.HandleAutoAnalyze()
 		require.NoError(t, h.Update(is))
 		stats = h.GetTableStats(tableInfo)
 		require.Equal(t, int64(6), stats.RealtimeCount)
@@ -416,7 +416,7 @@ func TestAutoUpdate(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
 		require.NoError(t, h.Update(is))
-		h.HandleAutoAnalyze(is)
+		h.HandleAutoAnalyze()
 		require.NoError(t, h.Update(is))
 		stats = h.GetTableStats(tableInfo)
 		require.Equal(t, int64(7), stats.RealtimeCount)
@@ -426,7 +426,7 @@ func TestAutoUpdate(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
 		require.NoError(t, h.Update(is))
-		h.HandleAutoAnalyze(is)
+		h.HandleAutoAnalyze()
 		require.NoError(t, h.Update(is))
 		stats = h.GetTableStats(tableInfo)
 		require.Equal(t, int64(8), stats.RealtimeCount)
@@ -445,7 +445,7 @@ func TestAutoUpdate(t *testing.T) {
 		tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 		require.NoError(t, err)
 		tableInfo = tbl.Meta()
-		h.HandleAutoAnalyze(is)
+		h.HandleAutoAnalyze()
 		require.NoError(t, h.Update(is))
 		testKit.MustExec("explain select * from t where a > 'a'")
 		require.NoError(t, h.LoadNeededHistograms())
@@ -491,7 +491,7 @@ func TestAutoUpdatePartition(t *testing.T) {
 		testKit.MustExec("insert into t values (1)")
 		require.NoError(t, h.DumpStatsDeltaToKV(true))
 		require.NoError(t, h.Update(is))
-		h.HandleAutoAnalyze(is)
+		h.HandleAutoAnalyze()
 		stats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
 		require.Equal(t, int64(1), stats.RealtimeCount)
 		require.Equal(t, int64(0), stats.ModifyCount)
@@ -518,7 +518,7 @@ func TestIssue25700(t *testing.T) {
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 
-	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
+	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
 	require.Equal(t, "finished", tk.MustQuery("show analyze status").Rows()[1][7])
 }
 
@@ -648,9 +648,8 @@ func BenchmarkHandleAutoAnalyze(b *testing.B) {
 	testKit := testkit.NewTestKit(b, store)
 	testKit.MustExec("use test")
 	h := dom.StatsHandle()
-	is := dom.InfoSchema()
 	for i := 0; i < b.N; i++ {
-		h.HandleAutoAnalyze(is)
+		h.HandleAutoAnalyze()
 	}
 }
 
@@ -834,7 +833,7 @@ func TestAutoUpdatePartitionInDynamicOnlyMode(t *testing.T) {
 		require.Equal(t, int64(3), partitionStats.RealtimeCount)
 		require.Equal(t, int64(1), partitionStats.ModifyCount)
 
-		h.HandleAutoAnalyze(is)
+		h.HandleAutoAnalyze()
 		require.NoError(t, h.Update(is))
 		globalStats = h.GetTableStats(tableInfo)
 		partitionStats = h.GetPartitionStats(tableInfo, pi.Definitions[0].ID)
@@ -885,19 +884,19 @@ func TestAutoAnalyzeRatio(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(is))
 	require.Equal(t, getStatsHealthy(), 44)
-	require.True(t, h.HandleAutoAnalyze(is))
+	require.True(t, h.HandleAutoAnalyze())
 
 	tk.MustExec("delete from t limit 12")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(is))
 	require.Equal(t, getStatsHealthy(), 61)
-	require.False(t, h.HandleAutoAnalyze(is))
+	require.False(t, h.HandleAutoAnalyze())
 
 	tk.MustExec("delete from t limit 4")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(is))
 	require.Equal(t, getStatsHealthy(), 48)
-	require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()))
+	require.True(t, h.HandleAutoAnalyze())
 }
 
 func TestDumpColumnStatsUsage(t *testing.T) {
@@ -1104,7 +1103,7 @@ func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 10))
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(is))
-	require.True(t, h.HandleAutoAnalyze(is))
+	require.True(t, h.HandleAutoAnalyze())
 
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.Nil(t, err)
@@ -1119,7 +1118,7 @@ func TestStatsLockUnlockForAutoAnalyze(t *testing.T) {
 	tk.MustExec("delete from t limit 12")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(is))
-	require.False(t, h.HandleAutoAnalyze(is))
+	require.False(t, h.HandleAutoAnalyze())
 
 	tblStats1 := h.GetTableStats(tbl.Meta())
 	require.Equal(t, tblStats, tblStats1)
@@ -1300,13 +1299,13 @@ func TestAutoAnalyzePartitionTableAfterAddingIndex(t *testing.T) {
 	tk.MustExec("set session tidb_analyze_version = 2")
 	tk.MustExec("set session tidb_partition_prune_mode = 'dynamic'")
 	tk.MustExec("analyze table t")
-	require.False(t, h.HandleAutoAnalyze(dom.InfoSchema()))
+	require.False(t, h.HandleAutoAnalyze())
 	tk.MustExec("alter table t add index idx(a)")
 	tbl, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	idxInfo := tblInfo.Indices[0]
 	require.Nil(t, h.GetTableStats(tblInfo).Indices[idxInfo.ID])
-	require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()))
+	require.True(t, h.HandleAutoAnalyze())
 	require.NotNil(t, h.GetTableStats(tblInfo).Indices[idxInfo.ID])
 }

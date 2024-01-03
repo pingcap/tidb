@@ -4278,7 +4278,6 @@ and ssci.item_sk = csci.item_sk)
 limit 100;
 admin show bdr role;
 BDR_ROLE
-
 admin set bdr role primary;
 admin show bdr role;
 BDR_ROLE

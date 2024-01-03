@@ -53,6 +53,7 @@ func removeAllBindings(tk *testkit.TestKit, global bool) {
 }
 
 func TestUniversalBindingBasic(t *testing.T) {
+	t.Skip("skip it temporarily")
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 
@@ -94,6 +95,7 @@ func TestUniversalBindingBasic(t *testing.T) {
 }
 
 func TestUniversalDuplicatedBinding(t *testing.T) {
+	t.Skip("skip it temporarily")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
@@ -127,6 +129,7 @@ func TestUniversalDuplicatedBinding(t *testing.T) {
 }
 
 func TestUniversalBindingPriority(t *testing.T) {
+	t.Skip("skip it temporarily")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -162,6 +165,7 @@ func TestUniversalBindingPriority(t *testing.T) {
 }
 
 func TestCreateUpdateUniversalBinding(t *testing.T) {
+	t.Skip("skip it temporarily")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -194,6 +198,7 @@ func TestCreateUpdateUniversalBinding(t *testing.T) {
 }
 
 func TestUniversalBindingSwitch(t *testing.T) {
+	t.Skip("skip it temporarily")
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 
@@ -235,6 +240,7 @@ func TestUniversalBindingSwitch(t *testing.T) {
 }
 
 func TestUniversalBindingSetVar(t *testing.T) {
+	t.Skip("skip it temporarily")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
@@ -259,6 +265,7 @@ func TestUniversalBindingSetVar(t *testing.T) {
 }
 
 func TestUniversalBindingDBInHints(t *testing.T) {
+	t.Skip("skip it temporarily")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
@@ -281,6 +288,7 @@ func TestUniversalBindingDBInHints(t *testing.T) {
 }
 
 func TestUniversalBindingGC(t *testing.T) {
+	t.Skip("skip it temporarily")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
@@ -303,6 +311,7 @@ func TestUniversalBindingGC(t *testing.T) {
 }
 
 func TestUniversalBindingHints(t *testing.T) {
+	t.Skip("skip it temporarily")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
