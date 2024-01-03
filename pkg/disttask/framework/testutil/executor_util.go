@@ -21,6 +21,7 @@ import (
 	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"go.uber.org/mock/gomock"
 )
 
@@ -53,7 +54,7 @@ func InitTaskExecutor(ctrl *gomock.Controller, runSubtaskFn func(ctx context.Con
 
 	mockExtension := GetMockTaskExecutorExtension(ctrl, mockSubtaskExecutor)
 	taskexecutor.RegisterTaskType(proto.TaskTypeExample,
-		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
+		func(ctx context.Context, id string, task *proto.Task, taskTable execute.TaskTable) execute.TaskExecutor {
 			s := taskexecutor.NewBaseTaskExecutor(ctx, id, task.ID, taskTable)
 			s.Extension = mockExtension
 			return s
