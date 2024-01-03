@@ -144,7 +144,6 @@ func buildDataSource(ctx *mock.Context, sortCase *testutil.SortCase, schema *exp
 		Rows:       sortCase.Rows,
 		Ctx:        sortCase.Ctx,
 		Ndvs:       sortCase.Ndvs,
-		SaveChunks: true,
 	}
 	return testutil.BuildMockDataSource(opt)
 }

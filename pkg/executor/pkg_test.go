@@ -45,7 +45,6 @@ func TestNestedLoopApply(t *testing.T) {
 		GenDataFunc: func(row int, typ *types.FieldType) interface{} {
 			return int64(row + 1)
 		},
-		SaveChunks: false,
 	})
 	outerExec.PrepareChunks()
 
@@ -57,7 +56,6 @@ func TestNestedLoopApply(t *testing.T) {
 		GenDataFunc: func(row int, typ *types.FieldType) interface{} {
 			return int64(row + 1)
 		},
-		SaveChunks: false,
 	})
 	innerExec.PrepareChunks()
 

@@ -53,7 +53,6 @@ func TestJoinExec(t *testing.T) {
 					panic("not implement")
 				}
 			},
-			SaveChunks: false,
 		}
 		opt2 := opt1
 		opt1.DataSchema = expression.NewSchema(casTest.columns()...)

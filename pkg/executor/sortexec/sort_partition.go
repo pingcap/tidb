@@ -172,8 +172,7 @@ func (s *sortPartition) sort() (ret error) {
 
 func (s *sortPartition) spillToDiskImpl() error {
 	if s.inDisk != nil {
-		// The partition has been spilled before.
-		return nil
+		panic("Spill has been triggered before!")
 	}
 	s.inDisk = chunk.NewDataInDiskByChunks(s.fieldTypes)
 	tmpChk := chunk.NewChunkWithCapacity(s.fieldTypes, spillChunkSize)
@@ -211,6 +210,8 @@ func (s *sortPartition) spillToDiskImpl() error {
 
 // We can only call this function under the protection of `syncLock`.
 func (s *sortPartition) spillToDisk() error {
+	
+
 	err := s.sort()
 	if err != nil {
 		return err

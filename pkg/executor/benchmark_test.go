@@ -165,7 +165,6 @@ func benchmarkAggExecWithCase(b *testing.B, casTest *testutil.AggTestCase) {
 		Orders:     []bool{false, casTest.DataSourceSorted},
 		Rows:       casTest.Rows,
 		Ctx:        casTest.Ctx,
-		SaveChunks: false,
 	})
 
 	b.ResetTimer()
@@ -368,7 +367,6 @@ func benchmarkWindowExecWithCase(b *testing.B, casTest *testutil.WindowTestCase)
 		Orders:     []bool{false, casTest.DataSourceSorted, false, false},
 		Rows:       casTest.Rows,
 		Ctx:        casTest.Ctx,
-		SaveChunks: false,
 	})
 
 	b.ResetTimer()
@@ -735,7 +733,6 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 				panic("not implement")
 			}
 		},
-		SaveChunks: false,
 	}
 	opt2 := opt1
 	opt1.DataSchema = expression.NewSchema(casTest.columns()...)
@@ -945,7 +942,6 @@ func benchmarkBuildHashTableForList(b *testing.B, casTest *hashJoinTestCase) {
 				panic("not implement")
 			}
 		},
-		SaveChunks: false,
 	}
 	dataSource1 := testutil.BuildMockDataSource(opt)
 	dataSource2 := testutil.BuildMockDataSource(opt)
@@ -1085,7 +1081,6 @@ func (tc IndexJoinTestCase) GetMockDataSourceOptByRows(rows int) testutil.MockDa
 				panic("not implement")
 			}
 		},
-		SaveChunks: false,
 	}
 }
 
@@ -1500,7 +1495,6 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 				panic("not implement")
 			}
 		},
-		SaveChunks: false,
 	}
 
 	innerOpt := testutil.MockDataSourceParameters{
@@ -1520,7 +1514,6 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 				panic("not implement")
 			}
 		},
-		SaveChunks: false,
 	}
 
 	innerDS = testutil.BuildMockDataSource(innerOpt)
@@ -1615,7 +1608,6 @@ func benchmarkLimitExec(b *testing.B, cas *testutil.LimitCase) {
 		DataSchema: expression.NewSchema(cas.Columns()...),
 		Rows:       cas.Rows,
 		Ctx:        cas.Ctx,
-		SaveChunks: false,
 	}
 	dataSource := testutil.BuildMockDataSource(opt)
 	var exe exec.Executor

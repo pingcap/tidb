@@ -43,9 +43,6 @@ type MockDataSourceParameters struct {
 	Ndvs        []int
 	Orders      []bool
 	Rows        int
-
-	// Sometimes we may need to save chunks that have been outputted
-	SaveChunks bool
 }
 
 // MockDataSource mocks data source

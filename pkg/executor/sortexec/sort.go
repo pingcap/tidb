@@ -53,7 +53,6 @@ type SortExec struct {
 
 	// sortPartitions is the chunks to store row values for partitions. Every partition is a sorted list.
 	sortPartitions []*sortPartition
-	cursors        []*dataCursor
 
 	// multiWayMerge uses multi-way merge for spill disk.
 	// The multi-way merge algorithm can refer to https://en.wikipedia.org/wiki/K-way_merge_algorithm
