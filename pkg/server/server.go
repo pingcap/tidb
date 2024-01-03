@@ -128,6 +128,8 @@ type Server struct {
 	listener          net.Listener
 	socket            net.Listener
 	concurrentLimiter *util.TokenLimiter
+	flightListener    net.Listener
+	flightSQLServer   *FlightSQLServer
 
 	rwlock  sync.RWMutex
 	clients map[uint64]*clientConn
@@ -364,6 +366,21 @@ func (s *Server) initTiDBListener() (err error) {
 		}
 	}
 
+	if s.cfg.Host != "" && (s.cfg.FlightPort != 0 || RunInGoTest) {
+		addr := net.JoinHostPort(s.cfg.Host, strconv.Itoa(int(s.cfg.FlightPort)))
+		tcpProto := "tcp"
+		if s.cfg.EnableTCP4Only {
+			tcpProto = "tcp4"
+		}
+		if s.flightListener, err = net.Listen(tcpProto, addr); err != nil {
+			return errors.Trace(err)
+		}
+		logutil.BgLogger().Info("server is running Arrow protocol", zap.String("addr", addr))
+		if RunInGoTest && s.cfg.FlightPort == 0 {
+			s.cfg.FlightPort = uint(s.flightListener.Addr().(*net.TCPAddr).Port)
+		}
+	}
+
 	if s.cfg.Socket != "" {
 		if err := cleanupStaleSocket(s.cfg.Socket); err != nil {
 			return errors.Trace(err)
@@ -497,6 +514,7 @@ func (s *Server) Run(dom *domain.Domain) error {
 	terror.RegisterFinish()
 	go s.startNetworkListener(s.listener, false, errChan)
 	go s.startNetworkListener(s.socket, true, errChan)
+	go s.startFlightServer(s.flightListener, errChan)
 	if RunInGoTest && !isClosed(RunInGoTestChan) {
 		close(RunInGoTestChan)
 	}
@@ -506,6 +524,22 @@ func (s *Server) Run(dom *domain.Domain) error {
 		return err
 	}
 	return <-errChan
+}
+
+func (s *Server) startFlightServer(listener net.Listener, errChan chan error) {
+	errChan <- func() error {
+		if listener == nil {
+			return nil
+		}
+		server, err := NewFlightSQLServer(s)
+		if err != nil {
+			return err
+		}
+
+		s.flightSQLServer = server
+
+		return server.Serve(listener)
+	}()
 }
 
 // isClosed is to check if the channel is closed
@@ -648,6 +682,15 @@ func (s *Server) closeListener() {
 		err := statusServer.Close()
 		terror.Log(errors.Trace(err))
 		s.statusServer.Store(nil)
+	}
+	if s.flightSQLServer != nil {
+		s.flightSQLServer.Shutdown()
+		s.flightSQLServer = nil
+	}
+	if s.flightListener != nil {
+		err := s.flightListener.Close()
+		terror.Log(errors.Trace(err))
+		s.flightListener = nil
 	}
 	if s.grpcServer != nil {
 		s.grpcServer.Stop()
