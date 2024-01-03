@@ -41,10 +41,10 @@ var (
 	recoverMetaInterval     = 90 * time.Second
 	retrySQLTimes           = 30
 	retrySQLInterval        = 500 * time.Millisecond
-	unfinishedSubtaskStates = []interface{}{
-		proto.TaskStatePending, proto.TaskStateRevertPending,
+	unfinishedSubtaskStates = []proto.SubtaskState{
+		proto.SubtaskStatePending, proto.SubtaskStateRevertPending,
 		// for the case that the tidb is restarted when the subtask is running.
-		proto.TaskStateRunning, proto.TaskStateReverting,
+		proto.SubtaskStateRunning, proto.SubtaskStateReverting,
 	}
 )
 
@@ -404,9 +404,6 @@ func (m *Manager) onRunnableTask(task *proto.Task) {
 		task, err = m.taskTable.GetTaskByID(m.ctx, task.ID)
 		if err != nil {
 			m.logErr(err)
-			return
-		}
-		if task == nil {
 			return
 		}
 		if task.State != proto.TaskStateRunning && task.State != proto.TaskStateReverting {

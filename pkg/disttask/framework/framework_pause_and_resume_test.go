@@ -27,15 +27,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func CheckSubtasksState(ctx context.Context, t *testing.T, taskID int64, state proto.TaskState, expectedCnt int64) {
+func CheckSubtasksState(ctx context.Context, t *testing.T, taskID int64, state proto.SubtaskState, expectedCnt int64) {
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
 	mgr.PrintSubtaskInfo(ctx, taskID)
-	cnt, err := mgr.GetSubtaskInStatesCnt(ctx, taskID, state)
+	cntByStates, err := mgr.GetSubtaskCntGroupByStates(ctx, taskID, proto.StepTwo)
 	require.NoError(t, err)
 	historySubTasksCnt, err := storage.GetSubtasksFromHistoryByTaskIDForTest(ctx, mgr, taskID)
 	require.NoError(t, err)
-	require.Equal(t, expectedCnt, cnt+int64(historySubTasksCnt))
+	require.Equal(t, expectedCnt, cntByStates[state]+int64(historySubTasksCnt))
 }
 
 func TestFrameworkPauseAndResume(t *testing.T) {
@@ -53,7 +53,7 @@ func TestFrameworkPauseAndResume(t *testing.T) {
 	require.NoError(t, handle.ResumeTask(ctx, "key1"))
 	<-scheduler.TestSyncChan
 	testutil.WaitTaskDoneOrPaused(ctx, t, task1.Key)
-	CheckSubtasksState(ctx, t, 1, proto.TaskStateSucceed, 4)
+	CheckSubtasksState(ctx, t, 1, proto.SubtaskStateSucceed, 4)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterResume"))
 
 	mgr, err := storage.GetTaskManager()
@@ -72,7 +72,7 @@ func TestFrameworkPauseAndResume(t *testing.T) {
 	require.NoError(t, handle.ResumeTask(ctx, "key2"))
 	<-scheduler.TestSyncChan
 	testutil.WaitTaskDoneOrPaused(ctx, t, task2.Key)
-	CheckSubtasksState(ctx, t, 1, proto.TaskStateSucceed, 4)
+	CheckSubtasksState(ctx, t, 1, proto.SubtaskStateSucceed, 4)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterResume"))
 
 	errs, err = mgr.CollectSubTaskError(ctx, 1)
