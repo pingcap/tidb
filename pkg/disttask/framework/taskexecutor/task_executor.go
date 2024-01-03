@@ -49,6 +49,8 @@ var (
 	ErrFinishSubtask = errors.New("finish subtasks")
 	// ErrFinishRollback is the cancel cause when TaskExecutor rollback successfully.
 	ErrFinishRollback = errors.New("finish rollback")
+	// ErrPersistRowCount is the error when persist row count.
+	ErrPersistRowCount = errors.New("err persist row count")
 
 	// TestSyncChan is used to sync the test.
 	TestSyncChan = make(chan struct{})
@@ -64,6 +66,7 @@ type BaseTaskExecutor struct {
 	// ctx from manager
 	ctx context.Context
 	execute.Extension
+	summary *execute.Summary
 
 	mu struct {
 		sync.RWMutex
@@ -162,14 +165,13 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 	defer func() {
 		stepLogger.End(zap.InfoLevel, resErr)
 	}()
-
-	summary, cleanup, err := runSummaryCollectLoop(ctx, task, s.taskTable)
+	var err error
+	s.summary, err = getSummary(ctx, task, s.taskTable)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
 	}
-	defer cleanup()
-	subtaskExecutor, err := s.GetSubtaskExecutor(ctx, task, summary)
+	subtaskExecutor, err := s.GetSubtaskExecutor(ctx, task, s.summary)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -288,9 +290,9 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 			runCancel(nil)
 		})
 		failpoint.Inject("mockUpdateRowCount", func() {
-			summary.UpdateRowCount(subtask.ID, 1)
+			s.summary.UpdateRowCount(subtask.ID, 1)
 		})
-		s.runSubtask(runCtx, subtaskExecutor, subtask, cleanup)
+		s.runSubtask(runCtx, subtaskExecutor, subtask)
 	}
 	return s.getError()
 }
@@ -298,8 +300,7 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 func (s *BaseTaskExecutor) runSubtask(
 	ctx context.Context,
 	subtaskExecutor execute.SubtaskExecutor,
-	subtask *proto.Subtask,
-	cleanup func()) {
+	subtask *proto.Subtask) {
 	err := subtaskExecutor.RunSubtask(ctx, subtask)
 	failpoint.Inject("MockRunSubtaskCancel", func(val failpoint.Value) {
 		if val.(bool) {
@@ -372,9 +373,28 @@ func (s *BaseTaskExecutor) runSubtask(
 			}
 		}
 	})
-	// TODO: consider error handling for cleanup, make cleanup run in same txn with OnSubtaskFinished.
-	cleanup()
+
+	s.persistRowCount(ctx)
 	s.onSubtaskFinished(ctx, subtaskExecutor, subtask)
+}
+
+func (s *BaseTaskExecutor) persistRowCount(ctx context.Context) {
+	logger := logutil.Logger(s.logCtx)
+	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
+	err := handle.RunWithRetry(ctx, scheduler.RetrySQLTimes, backoffer, logger,
+		func(ctx context.Context) (bool, error) {
+			return true, s.summary.PersistRowCount(ctx)
+		},
+	)
+
+	failpoint.Inject("mockPersisRowCountErr", func() {
+		err = errors.New("mock persist row count err")
+	})
+
+	if err != nil {
+		err = ErrPersistRowCount
+		s.onError(err)
+	}
 }
 
 func (s *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execute.SubtaskExecutor, subtask *proto.Subtask) {
@@ -482,25 +502,6 @@ func (s *BaseTaskExecutor) Pause(ctx context.Context, task *proto.Task) error {
 
 // Close closes the TaskExecutor when all the subtasks are complete.
 func (*BaseTaskExecutor) Close() {
-}
-
-func runSummaryCollectLoop(
-	ctx context.Context,
-	task *proto.Task,
-	taskTable execute.TaskTable,
-) (summary *execute.Summary, cleanup func(), err error) {
-	opt, ok := taskTypes[task.Type]
-	if !ok {
-		return nil, func() {}, errors.Errorf("taskExecutor option for type %s not found", task.Type)
-	}
-	if opt.Summary != nil {
-		opt.Summary.TaskTable = taskTable
-		go opt.Summary.UpdateRowCountLoop(ctx)
-		return opt.Summary, func() {
-			opt.Summary.PersistRowCount(ctx)
-		}, nil
-	}
-	return nil, func() {}, nil
 }
 
 func (s *BaseTaskExecutor) registerCancelFunc(cancel context.CancelCauseFunc) {
@@ -638,6 +639,8 @@ func (s *BaseTaskExecutor) markSubTaskCanceledOrFailed(ctx context.Context, subt
 			logutil.Logger(s.logCtx).Warn("met retryable error", zap.Error(err))
 		} else if common.IsContextCanceledError(err) {
 			logutil.Logger(s.logCtx).Info("met context canceled for gracefully shutdown", zap.Error(err))
+		} else if err == ErrPersistRowCount {
+			logutil.Logger(s.logCtx).Info("met error when updating summary", zap.Error(err))
 		} else {
 			logutil.Logger(s.logCtx).Warn("subtask failed", zap.Error(err))
 			s.updateSubtaskStateAndError(s.ctx, subtask, proto.SubtaskStateFailed, err)

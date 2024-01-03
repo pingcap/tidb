@@ -17,7 +17,6 @@ package execute
 import (
 	"context"
 	"sync"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -51,27 +50,13 @@ func (s *Summary) UpdateRowCount(subtaskID int64, rowCount int64) {
 	s.mu.RowCount[subtaskID] = rowCount
 }
 
-// UpdateRowCountLoop updates the row count of the subtask periodically.
-func (s *Summary) UpdateRowCountLoop(ctx context.Context) {
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.PersistRowCount(ctx)
-		}
-	}
-}
-
 // PersistRowCount persists the row count of the subtask to the storage.
-func (s *Summary) PersistRowCount(ctx context.Context) {
+func (s *Summary) PersistRowCount(ctx context.Context) error {
 	var copiedRowCount map[int64]int64
 	s.mu.Lock()
 	if len(s.mu.RowCount) == 0 {
 		s.mu.Unlock()
-		return
+		return nil
 	}
 	copiedRowCount = make(map[int64]int64, len(s.mu.RowCount))
 	for subtaskID, rowCount := range s.mu.RowCount {
@@ -83,6 +68,7 @@ func (s *Summary) PersistRowCount(ctx context.Context) {
 		err := s.TaskTable.UpdateSubtaskRowCount(ctx, subtaskID, rowCount)
 		if err != nil {
 			logutil.Logger(ctx).Warn("update subtask row count failed", zap.Error(err))
+			return err
 		}
 	}
 	s.mu.Lock()
@@ -90,4 +76,5 @@ func (s *Summary) PersistRowCount(ctx context.Context) {
 		delete(s.mu.RowCount, subtaskID)
 	}
 	s.mu.Unlock()
+	return nil
 }

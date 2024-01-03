@@ -111,6 +111,7 @@ func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, mockSchedul
 	testContext.RollbackCnt.Store(0)
 }
 
+// RegisterExecutorWithSummary register subtask executor which enable summary.
 func RegisterExecutorWithSummary(t *testing.T, ctrl *gomock.Controller, testContext *TestContext) {
 	mockExtension := mock.NewMockExtension(ctrl)
 	mockExtension.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()

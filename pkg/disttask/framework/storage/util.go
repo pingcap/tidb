@@ -71,6 +71,23 @@ func GetTasksFromHistoryForTest(ctx context.Context, stm *TaskManager) (int, err
 	return len(rs), nil
 }
 
+// GetSubtaskRowCountFromHistory gets the subtask row count. Only used for UT.
+func (stm *TaskManager) GetSubtaskRowCountFromHistory(ctx context.Context, taskID int64, step proto.Step) (int64, error) {
+	rs, err := stm.executeSQLWithNewSession(ctx,
+		`select
+    	cast(sum(json_extract(summary, '$.row_count')) as signed) as row_count
+		from mysql.tidb_background_subtask_history
+		where task_key = %? and step = %?`,
+		taskID, step)
+	if err != nil {
+		return 0, err
+	}
+	if len(rs) == 0 {
+		return 0, nil
+	}
+	return rs[0].GetInt64(0), nil
+}
+
 // PrintSubtaskInfo log the subtask info by taskKey. Only used for UT.
 func (stm *TaskManager) PrintSubtaskInfo(ctx context.Context, taskID int64) {
 	rs, _ := stm.executeSQLWithNewSession(ctx,

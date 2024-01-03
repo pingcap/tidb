@@ -53,6 +53,10 @@ func checkRowCnt(ctx context.Context, t *testing.T, taskID int64, rowCnts map[pr
 	for step, cnt := range rowCnts {
 		actualCnt, err := taskMgr.GetSubtaskRowCount(ctx, taskID, step)
 		require.NoError(t, err)
+		if actualCnt == 0 {
+			actualCnt, err = taskMgr.GetSubtaskRowCountFromHistory(ctx, taskID, step)
+			require.NoError(t, err)
+		}
 		require.Equal(t, cnt, int(actualCnt))
 	}
 }
@@ -369,7 +373,9 @@ func TestRowCount(t *testing.T) {
 	defer ctrl.Finish()
 	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
 	testutil.RegisterExecutorWithSummary(t, ctrl, testContext)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockUpdateRowCount", "4*return()"))
+
+	// 1. basic.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockUpdateRowCount", "return()"))
 	t.Cleanup(func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockUpdateRowCount"))
 	})
@@ -378,5 +384,29 @@ func TestRowCount(t *testing.T) {
 		proto.StepOne: 3,
 		proto.StepTwo: 1,
 	})
+
+	// 2. fail once.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockPersisRowCountErr", "1*return()"))
+	submitTaskAndCheckSuccessForBasic(ctx, t, "😆", testContext)
+	checkRowCnt(ctx, t, 2, map[proto.Step]int{
+		proto.StepOne: 3,
+		proto.StepTwo: 1,
+	})
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockPersisRowCountErr"))
+
+	// 3. fail 10 times.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockPersisRowCountErr", "10*return()"))
+	bak := scheduler.RetrySQLTimes
+	scheduler.RetrySQLTimes = 1
+	t.Cleanup(func() {
+		scheduler.RetrySQLTimes = bak
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockPersisRowCountErr"))
+	})
+	submitTaskAndCheckSuccessForBasic(ctx, t, "😭", testContext)
+	checkRowCnt(ctx, t, 3, map[proto.Step]int{
+		proto.StepOne: 3,
+		proto.StepTwo: 1,
+	})
+
 	distContext.Close()
 }

@@ -17,6 +17,7 @@ package taskexecutor
 import (
 	"context"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 )
@@ -62,4 +63,20 @@ func ClearTaskExecutors() {
 // WithSummary is the option of TaskExecutor to set the summary.
 var WithSummary TaskTypeOption = func(opts *taskTypeOptions) {
 	opts.Summary = execute.NewSummary()
+}
+
+func getSummary(
+	ctx context.Context,
+	task *proto.Task,
+	taskTable execute.TaskTable,
+) (summary *execute.Summary, err error) {
+	opt, ok := taskTypes[task.Type]
+	if !ok {
+		return nil, errors.Errorf("task executor option for type %s not found", task.Type)
+	}
+	if opt.Summary != nil {
+		opt.Summary.TaskTable = taskTable
+		return opt.Summary, nil
+	}
+	return nil, nil
 }

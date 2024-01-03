@@ -593,9 +593,11 @@ func (stm *TaskManager) GetSubtasksByStepAndState(ctx context.Context, taskID in
 
 // GetSubtaskRowCount gets the subtask row count.
 func (stm *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, step proto.Step) (int64, error) {
-	rs, err := stm.executeSQLWithNewSession(ctx, `select
+	rs, err := stm.executeSQLWithNewSession(ctx,
+		`select
     	cast(sum(json_extract(summary, '$.row_count')) as signed) as row_count
-		from mysql.tidb_background_subtask where task_key = %? and step = %?`,
+		from mysql.tidb_background_subtask
+		where task_key = %? and step = %?`,
 		taskID, step)
 	if err != nil {
 		return 0, err
