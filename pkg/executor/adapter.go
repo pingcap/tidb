@@ -1486,7 +1486,7 @@ func GetResultRowsCountForCopStats(stmtCtx *stmtctx.StatementContext, planID int
 	}
 	copStats := runtimeStatsColl.GetCopStats(planID)
 	if copStats == nil {
-		return false, -1
+		return true, runtimeStatsColl.GetRootStats(planID).GetActRows()
 	}
 	return true, copStats.GetActRows()
 }
