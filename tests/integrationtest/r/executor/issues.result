@@ -858,10 +858,10 @@ insert into t values("V"),("v"),("v");
 CREATE TABLE `s` (`col_61` int);
 insert into s values(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
 insert into s values(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
-SELECT /*+ stream_agg()*/ `t`.`c` FROM (`s`) JOIN `t` GROUP BY `t`.`c`;
-c
-v
-SELECT  `t`.`c` FROM (`s`) JOIN `t`  GROUP BY `t`.`c`;
-c
-v
+SELECT /*+ stream_agg()*/ count(`t`.`c`) FROM (`s`) JOIN `t` GROUP BY `t`.`c`;
+count(`t`.`c`)
+170
+SELECT  count(`t`.`c`) FROM (`s`) JOIN `t`  GROUP BY `t`.`c`;
+count(`t`.`c`)
+170
 set @@tidb_max_chunk_size = default;
