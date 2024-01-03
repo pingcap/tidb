@@ -196,7 +196,7 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx sessionctx.Context,
 						rangeScalar = 0
 					} else {
 						rangeScalar = uint64(posHigh - posLow)
-						offset = mathutil.Abs(posLow % int64(numPartitions))
+						offset = posLow % int64(numPartitions)
 					}
 				}
 
@@ -204,7 +204,7 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx sessionctx.Context,
 				if rangeScalar < uint64(numPartitions) && !highIsNull && !lowIsNull {
 					var i int64
 					for i = 0; i <= int64(rangeScalar); i++ {
-						idx := (offset + i) % int64(numPartitions)
+						idx := mathutil.Abs(offset+i) % int64(numPartitions)
 						if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
 							continue
 						}
