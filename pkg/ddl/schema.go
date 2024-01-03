@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
 
 func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -238,6 +239,11 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		}
 		if err = t.DropDatabase(dbInfo.ID); err != nil {
 			break
+		}
+		if variable.DDLVersion.Load() == model.TiDBDDLV2 {
+			if err = t.DropDatabaseName(job.SchemaName); err != nil {
+				break
+			}
 		}
 
 		// Finish this job.

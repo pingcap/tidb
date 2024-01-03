@@ -58,7 +58,12 @@ func createTable(d *ddlCtx, t *meta.Meta, job *model.Job, fkCheck bool) (*model.
 	tbInfo := job.Args[0].(*model.TableInfo)
 
 	tbInfo.State = model.StateNone
-	err := checkTableNotExists(d, t, schemaID, tbInfo.Name.L)
+	var err error
+	if variable.DDLVersion.Load() == model.TiDBDDLV2 {
+		err = checkTableNotExistsByName(d, t, schemaID, job.SchemaName, tbInfo.Name.L)
+	} else {
+		err = checkTableNotExists(d, t, schemaID, tbInfo.Name.L)
+	}
 	if err != nil {
 		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableExists.Equal(err) {
 			job.State = model.JobStateCancelled
@@ -269,7 +274,15 @@ func createTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tb
 		job.State = model.JobStateCancelled
 		return errors.Trace(err)
 	}
-	return t.CreateTableOrView(schemaID, tbInfo)
+	if err := t.CreateTableOrView(schemaID, tbInfo); err != nil {
+		return err
+	}
+	if variable.DDLVersion.Load() == model.TiDBDDLV2 {
+		if err = t.CreateTableName(job.SchemaName, tbInfo.Name.String(), tbInfo.ID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func repairTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {
@@ -384,6 +397,11 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 		} else {
 			if err = t.DropTableOrView(job.SchemaID, job.TableID); err != nil {
 				return ver, errors.Trace(err)
+			}
+			if variable.DDLVersion.Load() == model.TiDBDDLV2 {
+				if err = t.DropTableName(job.SchemaName, tblInfo.Name.String()); err != nil {
+					return ver, errors.Trace(err)
+				}
 			}
 			if err = t.GetAutoIDAccessors(job.SchemaID, job.TableID).Del(); err != nil {
 				return ver, errors.Trace(err)
@@ -552,6 +570,11 @@ func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *Recover
 	err = t.CreateTableAndSetAutoID(recoverInfo.SchemaID, tableInfo, recoverInfo.AutoIDs.RowID, recoverInfo.AutoIDs.RandomID)
 	if err != nil {
 		return ver, errors.Trace(err)
+	}
+	if variable.DDLVersion.Load() == model.TiDBDDLV2 {
+		if err = t.CreateTableName(recoverInfo.OldSchemaName, recoverInfo.OldTableName, recoverInfo.TableInfo.ID); err != nil {
+			return ver, errors.Trace(err)
+		}
 	}
 
 	failpoint.Inject("mockRecoverTableCommitErr", func(val failpoint.Value) {
@@ -732,6 +755,12 @@ func (w *worker) onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	if variable.DDLVersion.Load() == model.TiDBDDLV2 {
+		if err = t.DropTableName(job.SchemaName, tblInfo.Name.String()); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
 	err = t.GetAutoIDAccessors(schemaID, tblInfo.ID).Del()
 	if err != nil {
 		job.State = model.JobStateCancelled
@@ -828,6 +857,12 @@ func (w *worker) onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
+	}
+	if variable.DDLVersion.Load() == model.TiDBDDLV2 {
+		if err = t.CreateTableName(job.SchemaName, tblInfo.Name.String(), tblInfo.ID); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 	}
 
 	failpoint.Inject("mockTruncateTableUpdateVersionError", func(val failpoint.Value) {
@@ -1105,6 +1140,12 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	if variable.DDLVersion.Load() == model.TiDBDDLV2 {
+		if err = t.DropTableName(oldSchemaName.String(), tblInfo.Name.String()); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
 
 	failpoint.Inject("renameTableErr", func(val failpoint.Value) {
 		if valStr, ok := val.(string); ok {
@@ -1139,6 +1180,12 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
+	}
+	if variable.DDLVersion.Load() == model.TiDBDDLV2 {
+		if err = t.CreateTableName(job.SchemaName, tblInfo.Name.String(), tblInfo.ID); err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
 	}
 
 	err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, oldRuleIDs, tblInfo.ID)
@@ -1492,7 +1539,20 @@ func checkTableNotExists(d *ddlCtx, t *meta.Meta, schemaID int64, tableName stri
 		return checkTableNotExistsFromInfoSchema(is, schemaID, tableName)
 	}
 
-	return nil
+	return checkTableNotExistsFromStore(t, schemaID, tableName)
+}
+
+func checkTableNotExistsByName(d *ddlCtx, t *meta.Meta, schemaID int64, schemaName, tableName string) error {
+	// Try to use memory schema info to check first.
+	currVer, err := t.GetSchemaVersion()
+	if err != nil {
+		return err
+	}
+	is := d.infoCache.GetLatest()
+	if is.SchemaMetaVersion() == currVer {
+		return checkTableNotExistsFromInfoSchema(is, schemaID, tableName)
+	}
+	return t.CheckTableNameNotExists(t.TableNameKey(schemaName, tableName))
 }
 
 func checkConstraintNamesNotExists(t *meta.Meta, schemaID int64, constraints []*model.ConstraintInfo) error {

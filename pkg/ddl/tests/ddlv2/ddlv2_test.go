@@ -42,3 +42,40 @@ func TestSwitchDDLVersion(t *testing.T) {
 
 	tk.MustGetErrMsg("set global tidb_ddl_version=3", "[variable:1231]Variable 'tidb_ddl_version' can't be set to the value of '3'")
 }
+
+func TestDDL(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+
+	sv.SetDomain(dom)
+	dom.InfoSyncer().SetSessionManager(sv)
+	defer sv.Close()
+
+	conn := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn.Context().Session)
+
+	tk.MustExec("set global tidb_ddl_version=2")
+
+	tk.MustExec("create database db")
+	// Create Table
+	tk.MustExec("create table db.tb1(id int)")
+	tk.MustExec("create table db.tb2(id int)")
+	// create table twice
+	tk.MustGetErrMsg("create table db.tb1(id int)", "[schema:1050]Table 'db.tb1' already exists")
+
+	// Truncate Table
+	tk.MustExec("truncate table db.tb1")
+
+	// Drop Table
+	tk.MustExec("drop table db.tb1")
+
+	// Recover Table
+	// can not get 'tikv_gc_safe_point'
+	// tk.MustExec("recover table db.tb1")
+
+	// Rename Table
+	tk.MustExec("rename table db.tb2 to db.tb3")
+
+	// Drop Database
+	tk.MustExec("drop database db")
+}
