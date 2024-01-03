@@ -67,9 +67,9 @@ We need to get / calculate the following data, and record them in a per-node mem
 2. `QUERY_TOTAL`. We need a structure on `StmtCtx` to make sure a query is only counted once.
 3. `READ_SELECTION_RATE`, `ACCESS_SELECTION_RATE`. They are stored in a histogram, and are calculated by access_rows / total_rows.
 
-  1. The rows returned by the following plan should be recorded as access_rows
-    1. `PhysicalIndexScan`
-    2. `PointGet` if the object is an index.
+  1. The rows returned by the following plan should be recorded as `access_rows`
+     1. `PhysicalIndexScan`
+     2. `PointGet` if the object is an index.
   2. `total_rows` can be dumped from `(*statistics.HistColl).RealtimeCount`.The RealtimeCount in `sc.usedStatsInforecords` the used stats in current statement, but I'm not sure whether it's reliable.
 
 The existing `RuntimeStatsColl` records the execution summary of each physical plan, and is accessed by physical plan ID. We can have multiple options on when / how to re-order the data into index usages.
@@ -101,75 +101,84 @@ func (e *IndexLookUpExecutor) Close() error {
 
 ### Index Usage Collector
 
-As discussed in the previous section, we'll need both a global structure to record the usages on the current node and a per-statement structure to report the usage to the global structure and count `QEURY_TOTAL`.
+We already have a similar RFC [2020-09-30-index-usage-information.md](https://github.com/pingcap/tidb/blob/master/docs/design/2020-09-30-index-usage-information.md). It gives a good idea of collecting index usages without locking.
 
-#### Node Index Usage Collector
-
-This feature needs a global structure to track the stats of every "existing" index. It should be synchronized with the information schema. However, keeping real synchronization is pretty hard and unnecessary (one option is to attach the stats to info schema, so it can be created automatically after loading the index meta, which sounds bad). 
-
-In order to achieve similar goals, we need to consider the following situations:
-
-1. In `(Executor).Close`, it reports the stats to an index which exists in node index usages.
-In this situation, we should simply merge the stats with the existing stats.
-2. In `(Executor).Close`, it reports the stats to an index which *doesn't* exist in node index usages.
-In this case, we should create a new entry to store the stats information of this index *without* considering whether this index actually exists.
-3. The index exists in node index usages, but it has been removed.
-A global cron job can be used to remove the disappeared tables and index.
-
-When the user is querying the table `tidb_index_usagetable`, these stats will be filtered by doing an intersection with the info schema in the query transaction, so that the user won't see the already removed table / index.
-
-To achieve these functions, it can be organized in the following structure:
+This RFC uses a similar way to track the index usages: allocate an index usage collector for each session, and organize them into a linked list:
 
 ```go
-type IndexKey struct {
-    TableID int64
-    IndexID int64
+type sessionIndexUsageCollector struct {
+	sync.Mutex
+
+	mapper indexUsage
+	next   *SessionIndexUsageCollector
+
+	deleted bool
 }
 
 type IndexUsage struct {
-    QueryTotal atomic.Uint64
-    KvReqTotal atomic.Uint64
+    QueryTotal uint64
+    KvReqTotal uint64
 
-    RowAccessTotal   atomic.Uint64
+    RowAccessTotal   uint64
     // 0, 0-1, 1-10, 10-20, 20-50, 50-100, 100
-    PercentageAccess [7]atomic.Uint64
+    PercentageAccess [7]uint64
 }
 
-type indexUsageCollector struct {
-    mu     sync.RWMutex
-    usages map[IndexKey]*IndexUsage
+type GlobalIndexID struct {
+	TableID int64
+	IndexID int64
 }
 
-type IndexRowUsageCollector interface {
-    // ReportIndex reports one usage of the index
-    ReportIndex(key IndexKey, kvReqTotal uint64, rowAccess uint64, tableTotalRows uint64)
-}
-
-type IndexUsageCollector interface {
-    IndexRowUsageCollector
-    ReportQuery(key IndexKey, queryTotal uint64)
-    GetUsage(key IndexKey) *IndexUsage
-
-    StartGCWorker() IndexUsageGCWorker
-}
-
-type IndexUsageGCWorker interface {
-    Stop()
-}
+type indexUsage map[GlobalIndexID]IndexUsageInformation
 ```
 
-As we don't need to keep consistent between multiple fields of `IndexUsage`. The method `ReportIndex`, `ReportQuery` and `GetUsage` will only need a read lock (but need to upgrade to write lock when the index is not found in the usages map), so that each statement will never block each other. The `RunGCWorker` will take the write lock for each several minutes (IMO 15 or 30 minutes is enough). The `RunGCWorker` will be called when the domain is started, and `StopGCWorker` is called when the domain is about to stop.
-
-#### Per-statement Index Usage Collector
-
-A per-statement structure is needed to track whether an index has been used / reported in the current stmt. As the executors will not be Closed concurrently, it's safe to not protect indexUsage .
+It provides the following method:
 
 ```go
-type stmtIndexUsages struct {
-    usages map[IndexKey]struct{}
+type SessionIndexUsageCollector interface {
+    Update(key GlobalIndexID, queryTotal uint64, kvReqTotal uint64, rowAccess uint64, tableTotalRows uint64)
+    Delete()
 }
-
-var _ IndexRowUsageCollector = &stmtIndexUsages{}
 ```
 
-It'll only implement `ReportIndex`. The method `ReportIndex` works like a wrapper of `(IndexUsageCollector).ReportIndex`. It'll report the index usage to the global `IndexUsageCollector` and record the index in `stmtIndexUsages.usages`. In `FinishExecuteStmt`, it'll be able to call ReportQuery for each used index.
+The `Update` method will increase the count of index usages inside. The `Delete` method means this session has been closed, and it's safe to remove this session.
+
+To avoid increasing the `queryTotal` in a query multiple times, we'll also have a statement-level tracker to track the usage of index in a single statement:
+
+```go
+type StmtIndexUsageCollector interface {
+    Update(key GlobalIndexID, kvReqTotal uint64, rowAccess uint64, tableTotalRows uint64)
+}
+
+type stmtIndexUsages struct {
+    usages map[IndexKey]struct{}
+    sessionCollector SessionIndexUsageCollector
+}
+
+var _ StmtIndexUsageCollector = &stmtIndexUsages{}
+```
+
+It'll transparently update the usage on `SessionIndexUsageCollector`. The value of `queryTotal` will depend on whether this index has been recorded in the `usages` map.
+
+#### Sweep index usage list
+
+We'll need to sweep the index usage list in the following cases:
+
+1. Periodically sweep, to avoid keeping too many deleted `SessionIndexUsageCollector` in memory.
+2. When the user is reading `tidb_index_usage` table.
+
+The cost of sweeping index usage list is locking the session collector one-by-one. All these information should be collected into a node-scope index usage collector, which is represented as the head of the session list.
+
+#### GC removed index
+
+The schema, table and index can be dropped. After dropping them, the related memory should be released. It's fine to keep some unused index in memory, as we can filter them out when we are retrieving `tidb_index_usage`.
+
+The GC should happen periodically. 20min or more is enough, as `ADD INDEX/DROP INDEX` can be regarded as an infrequent operation.
+
+### Remove redundant implementation
+
+As we already have a partial implementation of index usage for [2020-09-30-index-usage-information.md](https://github.com/pingcap/tidb/blob/master/docs/design/2020-09-30-index-usage-information.md), we should remove / modify some of the codes:
+
+1. Remove the table `SCHEMA_INDEX_USAGE`.
+2. Deprecate the config `index-usage-sync-lease`.
+3. Remove the codes related with persist index usages to table.
