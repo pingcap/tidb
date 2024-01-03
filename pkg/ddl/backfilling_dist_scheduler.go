@@ -207,7 +207,7 @@ func newLitBackfillScheduler(ctx context.Context, d *ddl, task *proto.Task, para
 // Init implements BaseScheduler interface.
 func (sch *LitBackfillScheduler) Init() (err error) {
 	taskMeta := &BackfillTaskMeta{}
-	if err = json.Unmarshal(sch.BaseScheduler.Task.Meta, taskMeta); err != nil {
+	if err = json.Unmarshal(sch.BaseScheduler.GetTask().Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
 	sch.BaseScheduler.Extension = &BackfillingSchedulerExt{

@@ -418,11 +418,11 @@ func (sch *importScheduler) Init() (err error) {
 	defer func() {
 		if err != nil {
 			// if init failed, close is not called, so we need to unregister here.
-			metricsManager.unregister(sch.Task.ID)
+			metricsManager.unregister(sch.GetTask().ID)
 		}
 	}()
 	taskMeta := &TaskMeta{}
-	if err = json.Unmarshal(sch.BaseScheduler.Task.Meta, taskMeta); err != nil {
+	if err = json.Unmarshal(sch.BaseScheduler.GetTask().Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
 
@@ -433,7 +433,7 @@ func (sch *importScheduler) Init() (err error) {
 }
 
 func (sch *importScheduler) Close() {
-	metricsManager.unregister(sch.Task.ID)
+	metricsManager.unregister(sch.GetTask().ID)
 	sch.BaseScheduler.Close()
 }
 
