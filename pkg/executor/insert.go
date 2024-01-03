@@ -194,7 +194,7 @@ func (e *InsertValues) prefetchDataCache(ctx context.Context, txn kv.Transaction
 
 // updateDupRow updates a duplicate row to a new row.
 func (e *InsertExec) updateDupRow(ctx context.Context, idxInBatch int, txn kv.Transaction, row toBeCheckedRow, handle kv.Handle, _ []*expression.Assignment) error {
-	oldRow, err := getOldRow(ctx, e.Ctx(), txn, row.t, handle, e.GenExprs)
+	oldRow, err := getOldRow(ctx, e.Ctx(), txn, row.t, row.oldRowTable, handle, e.GenExprs)
 	if err != nil {
 		return err
 	}
@@ -259,6 +259,16 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 			}
 			if handle == nil {
 				continue
+			}
+
+			if uk.globalIndex {
+				ph, ok := handle.(kv.PartitionHandle)
+				if !ok {
+					return errors.New("global index should have partition handle")
+				}
+				r.oldRowTable = e.Table.(table.PartitionedTable).GetPartition(ph.PartitionID)
+			} else {
+				r.oldRowTable = nil
 			}
 			err = e.updateDupRow(ctx, i, txn, r, handle, e.OnDuplicate)
 			if err != nil {

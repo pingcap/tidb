@@ -40,6 +40,7 @@ type keyValueWithDupInfo struct {
 	newKey       kv.Key
 	dupErr       error
 	commonHandle bool
+	globalIndex  bool
 }
 
 type toBeCheckedRow struct {
@@ -47,8 +48,14 @@ type toBeCheckedRow struct {
 	handleKey  *keyValueWithDupInfo
 	uniqueKeys []*keyValueWithDupInfo
 	// t is the table or partition this row belongs to.
-	t       table.Table
-	ignored bool
+	t table.Table
+	// oldRowTable only used for global index.
+	// `insert ... on duplicate key update` inserts a row, but the global index uk may have existed.
+	// the partition id in the global index value is the real tableID for old row.
+	// use oldRowTable to temporarily store the table this old row belongs to.
+	// `TestGlobalIndexForClusteredIndexTable` is a concrete case for the scenario.
+	oldRowTable table.Table
+	ignored     bool
 }
 
 // getKeysNeedCheck gets keys converted from to-be-insert rows to record keys and unique index keys,
@@ -216,6 +223,7 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 				newKey:       key,
 				dupErr:       kv.ErrKeyExists.FastGenByArgs(colValStr, fmt.Sprintf("%s.%s", v.TableMeta().Name.String(), v.Meta().Name.String())),
 				commonHandle: t.Meta().IsCommonHandle,
+				globalIndex:  v.Meta().Global,
 			})
 		}
 	}
@@ -264,9 +272,15 @@ func formatDataForDupError(data []types.Datum) (string, error) {
 
 // getOldRow gets the table record row from storage for batch check.
 // t could be a normal table or a partition, but it must not be a PartitionedTable.
-func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction, t table.Table, handle kv.Handle,
+func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction, t table.Table, oldRowTable table.Table, handle kv.Handle,
 	genExprs []expression.Expression) ([]types.Datum, error) {
-	oldValue, err := txn.Get(ctx, tablecodec.EncodeRecordKey(t.RecordPrefix(), handle))
+	var recordPrefix []byte
+	if oldRowTable != nil {
+		recordPrefix = oldRowTable.RecordPrefix()
+	} else {
+		recordPrefix = t.RecordPrefix()
+	}
+	oldValue, err := txn.Get(ctx, tablecodec.EncodeRecordKey(recordPrefix, handle))
 	if err != nil {
 		return nil, err
 	}

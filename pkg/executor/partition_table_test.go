@@ -2407,3 +2407,246 @@ func TestIssue31024(t *testing.T) {
 
 	tk2.MustExec("rollback")
 }
+
+func TestGlobalIndexForInsertIgnoreOnDuplicate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
+
+	// test clustered table
+	tk.MustExec("drop table if exists tbl_51")
+	tk.MustExec(`CREATE TABLE tbl_51 (
+		col_334 mediumint(9) NOT NULL DEFAULT '-3217641',
+		col_335 mediumint(8) unsigned NOT NULL DEFAULT '2002468',
+		col_336 enum('alice','bob','charlie','david') COLLATE utf8_general_ci NOT NULL DEFAULT 'alice',
+		PRIMARY KEY (col_334,col_336,col_335) /*T![clustered_index] CLUSTERED */,
+		UNIQUE KEY idx_116 (col_334,col_335),
+		UNIQUE KEY idx_117 (col_336,col_334),
+		UNIQUE KEY idx_118 (col_336)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci
+		PARTITION BY HASH( col_334 )
+		PARTITIONS 6;`)
+	err := tk.ExecToErr("insert into tbl_51 values(-3112969,3273861,'charlie'),(-3040776,4159759,'charlie')")
+	require.NotNil(t, err)
+	tk.MustExec("insert ignore into tbl_51 (col_336) values ( 'alice' ) , ( 'david' ) , ( 'charlie' ) , ( 'charlie' ) , ( 'alice' ) on duplicate key update col_335 = 7685969")
+	tk.MustQuery("show warnings;").Check(
+		testkit.Rows("Warning 1062 Duplicate entry '-3217641-7685969' for key 'tbl_51.idx_116'",
+			"Warning 1062 Duplicate entry '-3217641-7685969' for key 'tbl_51.idx_116'"))
+	tk.MustQuery("select * from tbl_51").Sort().Check(testkit.Rows("-3217641 2002468 charlie", "-3217641 7685969 alice"))
+	tk.MustExec("delete from tbl_51")
+
+	// test non-clustered table
+	tk.MustExec("drop table if exists tbl_51")
+	tk.MustExec(`CREATE TABLE tbl_51 (
+		col_334 mediumint(9) NOT NULL DEFAULT '-3217641',
+		col_335 mediumint(8) unsigned NOT NULL DEFAULT '2002468',
+		col_336 enum('alice','bob','charlie','david') COLLATE utf8_general_ci NOT NULL DEFAULT 'alice',
+		PRIMARY KEY (col_334,col_336,col_335),
+		UNIQUE KEY idx_116 (col_334,col_335),
+		UNIQUE KEY idx_117 (col_336,col_334),
+		UNIQUE KEY idx_118 (col_336)
+		) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci
+		PARTITION BY HASH( col_334 )
+		PARTITIONS 6;`)
+	err = tk.ExecToErr("insert into tbl_51 values(-3112969,3273861,'charlie'),(-3040776,4159759,'charlie')")
+	require.NotNil(t, err)
+	tk.MustExec("insert ignore into tbl_51 (col_336) values ( 'alice' ) , ( 'david' ) , ( 'charlie' ) , ( 'charlie' ) , ( 'alice' ) on duplicate key update col_335 = 7685969")
+	tk.MustQuery("show warnings;").Check(testkit.Rows(
+		"Warning 1062 Duplicate entry '-3217641-7685969' for key 'tbl_51.idx_116'",
+		"Warning 1062 Duplicate entry '-3217641-7685969' for key 'tbl_51.idx_116'"))
+	tk.MustQuery("select * from tbl_51").Sort().Check(testkit.Rows("-3217641 2002468 charlie", "-3217641 7685969 alice"))
+	tk.MustExec("delete from tbl_51")
+}
+
+func TestGlobalIndexForClusteredIndexTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
+
+	tk.MustExec("drop table if exists pt")
+	tk.MustExec(`create table pt (a int, b int, c int, d int default 0, primary key (a, b) clustered, unique key uidx(c))
+		partition by range(a) (
+			PARTITION p0 VALUES LESS THAN (3),
+			PARTITION p1 VALUES LESS THAN (6),
+			PARTITION p2 VALUES LESS THAN (9),
+			PARTITION p3 VALUES LESS THAN (20)
+	)`)
+	tk.MustExec("insert into pt(a,b,c) values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9), (10,10,10)")
+	tk.MustExec("analyze table pt")
+
+	// test point get
+	tk.MustQuery("select c from pt where c = 1").Sort().Check(testkit.Rows("1"))
+	tk.MustQuery("explain select c from pt where c = 1").Check(
+		testkit.Rows("Point_Get_1 1.00 root table:pt, index:uidx(c) "))
+	// test batch point get
+	tk.MustQuery("select * from pt where c in (1,2,3)").Sort().Check(testkit.Rows("1 1 1 0", "2 2 2 0", "3 3 3 0"))
+	tk.MustQuery("explain select c from pt where c in (1,2,3)").Check(
+		testkit.Rows("Batch_Point_Get_1 3.00 root table:pt, index:uidx(c) keep order:false, desc:false"))
+	// test index reader
+	tk.MustQuery("select c from pt where c < 3").Sort().Check(testkit.Rows("1", "2"))
+	tk.MustQuery("explain select c from pt where c < 3").Check(
+		testkit.Rows("IndexReader_7 2.00 root partition:all index:IndexRangeScan_5",
+			"└─IndexRangeScan_5 2.00 cop[tikv] table:pt, index:uidx(c) range:[-inf,3), keep order:false"))
+	// test index lookup
+	tk.MustQuery("select * from pt where 2 <= c and c < 3").Sort().Check(testkit.Rows("2 2 2 0"))
+	tk.MustQuery("explain select * from pt where 2 <= c and c < 3").Check(testkit.Rows("Point_Get_5 1.00 root table:pt, index:uidx(c) "))
+	// test index join
+	tk.MustQuery("select t1.a from pt t1 inner join pt t2 on t1.c = t2.c and t1.b < 3").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("explain select t1.a from pt t1 inner join pt t2 on t1.c = t2.c and t1.b < 3").Check(testkit.Rows(
+		"MergeJoin_8 2.00 root  inner join, left key:test.pt.c, right key:test.pt.c",
+		"├─IndexReader_31(Build) 10.00 root partition:all index:IndexFullScan_29",
+		"│ └─IndexFullScan_29 10.00 cop[tikv] table:t2, index:uidx(c) keep order:true",
+		"└─IndexReader_28(Probe) 2.00 root partition:all index:Selection_27",
+		"  └─Selection_27 2.00 cop[tikv]  lt(test.pt.b, 3)",
+		"    └─IndexFullScan_25 10.00 cop[tikv] table:t1, index:uidx(c) keep order:true"))
+
+	// test insert ignore
+	tk.MustExec("insert ignore into pt(a,b,c) values(11,11,5)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '5' for key 'pt.uidx'"))
+	tk.MustExec("insert ignore into pt(a,b,c) values(2,2,11)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '2-2' for key 'pt.PRIMARY'"))
+
+	// test insert ignore...on duplicate update
+	tk.MustExec("insert ignore into pt(a,b,c) values(2,3,2) on duplicate key update c = 11")
+	tk.MustQuery("select * from pt where a = 2").Sort().Check(testkit.Rows("2 2 11 0"))
+	tk.MustExec("insert ignore into pt(a,b,c) values(2,3,2) on duplicate key update c = 11")
+	tk.MustQuery("select * from pt where a = 2").Sort().Check(testkit.Rows("2 2 11 0", "2 3 2 0"))
+	tk.MustExec("insert ignore into pt(a,b,c) values(2,3,2) on duplicate key update c = 11")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '11' for key 'pt.uidx'"))
+	tk.MustQuery("select * from pt where a = 2").Sort().Check(testkit.Rows("2 2 11 0", "2 3 2 0"))
+	tk.MustExec("insert ignore into pt(a,b,c) values(2,2,2) on duplicate key update a = 11")
+	tk.MustQuery("select * from pt use index(uidx) order by a").Check(
+		testkit.Rows("1 1 1 0", "2 3 2 0", "3 3 3 0", "4 4 4 0", "5 5 5 0", "6 6 6 0",
+			"7 7 7 0", "8 8 8 0", "9 9 9 0", "10 10 10 0", "11 2 11 0"))
+	tk.MustQuery("select * from pt use index() order by a").Check(
+		testkit.Rows("1 1 1 0", "2 3 2 0", "3 3 3 0", "4 4 4 0", "5 5 5 0", "6 6 6 0",
+			"7 7 7 0", "8 8 8 0", "9 9 9 0", "10 10 10 0", "11 2 11 0"))
+
+	// test insert ... on duplicate update
+	err := tk.ExecToErr("insert into pt(a,b,c) values(3,4,3) on duplicate key update c = 11")
+	require.NotNil(t, err)
+
+	// test update
+	tk.MustExec("update pt set a = 12 where a = 2")
+	tk.MustQuery("select * from pt use index(uidx) order by a").Check(
+		testkit.Rows("1 1 1 0", "3 3 3 0", "4 4 4 0", "5 5 5 0", "6 6 6 0",
+			"7 7 7 0", "8 8 8 0", "9 9 9 0", "10 10 10 0", "11 2 11 0", "12 3 2 0"))
+
+	// test delete
+	tk.MustExec("delete from pt where a = 10 or b = 1 or c = 2")
+	tk.MustQuery("select * from pt use index(uidx) order by a").Check(
+		testkit.Rows("3 3 3 0", "4 4 4 0", "5 5 5 0", "6 6 6 0", "7 7 7 0", "8 8 8 0", "9 9 9 0", "11 2 11 0"))
+
+	// test replace
+	tk.MustExec("replace into pt(a,b,c) values(3, 3, 11)")
+	tk.MustQuery("select * from pt use index(uidx) order by a").Check(
+		testkit.Rows("3 3 11 0", "4 4 4 0", "5 5 5 0", "6 6 6 0", "7 7 7 0", "8 8 8 0", "9 9 9 0"))
+	tk.MustExec("replace into pt(a,b,c) values(3, 3, 12)")
+	tk.MustExec("replace into pt(a,b,c) values(2, 2, 11)")
+	tk.MustExec("admin check table pt")
+}
+
+func TestGlobalIndexForNonClusteredIndexTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
+
+	tk.MustExec("drop table if exists pt")
+	tk.MustExec(`create table pt (a int, b int, c int, d int default 0, primary key (a, b), unique key uidx(c))
+		partition by range(a) (
+			PARTITION p0 VALUES LESS THAN (3),
+			PARTITION p1 VALUES LESS THAN (6),
+			PARTITION p2 VALUES LESS THAN (9),
+			PARTITION p3 VALUES LESS THAN (20)
+	)`)
+	tk.MustExec("insert into pt(a,b,c) values(1,1,1), (2,2,2), (3,3,3), (4,4,4), (5,5,5), (6,6,6), (7,7,7), (8,8,8), (9,9,9), (10,10,10)")
+	tk.MustExec("analyze table pt")
+
+	// test point get
+	tk.MustQuery("select c from pt where c = 1").Sort().Check(testkit.Rows("1"))
+	tk.MustQuery("explain select c from pt where c = 1").Check(
+		testkit.Rows("Point_Get_1 1.00 root table:pt, index:uidx(c) "))
+	// test batch point get
+	tk.MustQuery("select * from pt where c in (1,2,3)").Sort().Check(testkit.Rows("1 1 1 0", "2 2 2 0", "3 3 3 0"))
+	tk.MustQuery("explain select c from pt where c in (1,2,3)").Check(
+		testkit.Rows("Batch_Point_Get_1 3.00 root table:pt, index:uidx(c) keep order:false, desc:false"))
+	// test index reader
+	tk.MustQuery("select c from pt where c < 3").Sort().Check(testkit.Rows("1", "2"))
+	tk.MustQuery("explain select c from pt where c < 3").Check(
+		testkit.Rows("IndexReader_7 2.00 root partition:all index:IndexRangeScan_5",
+			"└─IndexRangeScan_5 2.00 cop[tikv] table:pt, index:uidx(c) range:[-inf,3), keep order:false"))
+	// test index lookup
+	tk.MustQuery("select * from pt where 2 <= c and c < 3").Sort().Check(testkit.Rows("2 2 2 0"))
+	tk.MustQuery("explain select * from pt where 2 <= c and c < 3").Check(
+		testkit.Rows("Point_Get_5 1.00 root table:pt, index:uidx(c) "))
+	// test index join
+	tk.MustQuery("select t1.a from pt t1 inner join pt t2 on t1.c = t2.c and t1.b < 3").Check(testkit.Rows("1", "2"))
+	tk.MustQuery("explain select t1.a from pt t1 inner join pt t2 on t1.c = t2.c and t1.b < 3").Check(testkit.Rows(
+		"MergeJoin_8 2.00 root  inner join, left key:test.pt.c, right key:test.pt.c",
+		"├─IndexReader_31(Build) 10.00 root partition:all index:IndexFullScan_29",
+		"│ └─IndexFullScan_29 10.00 cop[tikv] table:t2, index:uidx(c) keep order:true",
+		"└─IndexReader_28(Probe) 2.00 root partition:all index:Selection_27",
+		"  └─Selection_27 2.00 cop[tikv]  lt(test.pt.b, 3)",
+		"    └─IndexFullScan_25 10.00 cop[tikv] table:t1, index:uidx(c) keep order:true"))
+
+	// test insert ignore
+	tk.MustExec("insert ignore into pt(a,b,c) values(11,11,5)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '5' for key 'pt.uidx'"))
+	tk.MustExec("insert ignore into pt(a,b,c) values(2,2,11)")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '2-2' for key 'pt.PRIMARY'"))
+
+	// test insert ignore...on duplicate update
+	tk.MustExec("insert ignore into pt(a,b,c) values(2,3,2) on duplicate key update c = 11")
+	tk.MustQuery("select * from pt where a = 2").Sort().Check(testkit.Rows("2 2 11 0"))
+	tk.MustExec("insert ignore into pt(a,b,c) values(2,3,2) on duplicate key update c = 11")
+	tk.MustQuery("select * from pt where a = 2").Sort().Check(testkit.Rows("2 2 11 0", "2 3 2 0"))
+	tk.MustExec("insert ignore into pt(a,b,c) values(2,3,2) on duplicate key update c = 11")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1062 Duplicate entry '11' for key 'pt.uidx'"))
+	tk.MustQuery("select * from pt where a = 2").Sort().Check(testkit.Rows("2 2 11 0", "2 3 2 0"))
+
+	tk.MustExec("insert ignore into pt(a,b,c) values(2,2,2) on duplicate key update a = 11")
+	tk.MustQuery("select * from pt use index(uidx) order by a").Check(
+		testkit.Rows("1 1 1 0", "2 3 2 0", "3 3 3 0", "4 4 4 0", "5 5 5 0", "6 6 6 0",
+			"7 7 7 0", "8 8 8 0", "9 9 9 0", "10 10 10 0", "11 2 11 0"))
+	tk.MustQuery("select * from pt use index() order by a").Check(
+		testkit.Rows("1 1 1 0", "2 3 2 0", "3 3 3 0", "4 4 4 0", "5 5 5 0", "6 6 6 0",
+			"7 7 7 0", "8 8 8 0", "9 9 9 0", "10 10 10 0", "11 2 11 0"))
+
+	// test insert ... on duplicate update
+	err := tk.ExecToErr("insert into pt(a,b,c) values(3,4,3) on duplicate key update c = 11")
+	require.NotNil(t, err)
+
+	// test update
+	tk.MustExec("update pt set a = 12 where a = 2")
+	tk.MustQuery("select * from pt use index(uidx) order by a").Check(
+		testkit.Rows("1 1 1 0", "3 3 3 0", "4 4 4 0", "5 5 5 0", "6 6 6 0",
+			"7 7 7 0", "8 8 8 0", "9 9 9 0", "10 10 10 0", "11 2 11 0", "12 3 2 0"))
+
+	// test delete
+	tk.MustExec("delete from pt where a = 10 or b = 1 or c = 2")
+	tk.MustQuery("select * from pt use index(uidx) order by a").Check(
+		testkit.Rows("3 3 3 0", "4 4 4 0", "5 5 5 0", "6 6 6 0", "7 7 7 0", "8 8 8 0", "9 9 9 0", "11 2 11 0"))
+
+	// test replace
+	tk.MustExec("replace into pt(a,b,c) values(3, 3, 11)")
+	tk.MustQuery("select * from pt use index(uidx) order by a").Check(
+		testkit.Rows("3 3 11 0", "4 4 4 0", "5 5 5 0", "6 6 6 0", "7 7 7 0", "8 8 8 0", "9 9 9 0"))
+	tk.MustExec("replace into pt(a,b,c) values(3, 3, 12)")
+	tk.MustExec("replace into pt(a,b,c) values(2, 2, 11)")
+	tk.MustExec("admin check table pt")
+}

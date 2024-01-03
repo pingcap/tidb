@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 )
@@ -408,23 +407,6 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 		}
 		tempValElem := tablecodec.TempIndexValueElem{Handle: h, KeyVer: tempKeyVer, Delete: true, Distinct: distinct}
 
-		// If index is global, decode the pid from value (if exists) and compare with c.physicalID.
-		// Only when pid in value equals to c.physicalID, the key can be deleted.
-		if c.idxInfo.Global {
-			if val, err := txn.GetMemBuffer().Get(context.Background(), key); err == nil {
-				segs := tablecodec.SplitIndexValue(val)
-				if len(segs.PartitionID) != 0 {
-					_, pid, err := codec.DecodeInt(segs.PartitionID)
-					if err != nil {
-						return err
-					}
-					if pid != c.phyTblID {
-						continue
-					}
-				}
-			}
-		}
-
 		if distinct {
 			if len(key) > 0 {
 				err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
@@ -549,7 +531,11 @@ func FetchDuplicatedHandle(ctx context.Context, key kv.Key, distinct bool,
 		return false, nil, err
 	}
 	if distinct {
+		// try decode partition id from index val
 		h, err := tablecodec.DecodeHandleInUniqueIndexValue(val, isCommon)
+		if pid, err1 := tablecodec.DecodePartitionIDInGlobalIndexValue(val); err1 == nil && pid > 0 {
+			return true, kv.PartitionHandle{Handle: h, PartitionID: pid}, err
+		}
 		return true, h, err
 	}
 	return true, nil, nil

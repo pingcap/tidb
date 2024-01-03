@@ -17,6 +17,7 @@ package tablecodec
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
 	"math"
 	"strings"
 	"time"
@@ -1726,6 +1727,27 @@ type IndexValueSegments struct {
 	PartitionID    []byte
 	RestoredValues []byte
 	IntHandle      []byte
+}
+
+// SplitIndexValuePortal decodes segments in index value for both non-clustered and clustered table.
+func SplitIndexValuePortal(value []byte) (segs IndexValueSegments) {
+	if getIndexVersion(value) == 1 {
+		return SplitIndexValueForClusteredIndexVersion1(value)
+	}
+	return SplitIndexValue(value)
+}
+
+// DecodePartitionIDInGlobalIndexValue decodes the partition id in global index value.
+func DecodePartitionIDInGlobalIndexValue(indexVal []byte) (int64, error) {
+	segs := SplitIndexValuePortal(indexVal)
+	_, pid, err := codec.DecodeInt(segs.PartitionID)
+	if err != nil {
+		return 0, err
+	}
+	if pid <= 0 {
+		return 0, errors.Trace(fmt.Errorf("pid must not be greater than zero, pid: %d", pid))
+	}
+	return pid, nil
 }
 
 // SplitIndexValue splits index value into segments.
