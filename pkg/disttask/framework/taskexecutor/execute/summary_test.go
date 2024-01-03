@@ -35,7 +35,7 @@ func TestSummary(t *testing.T) {
 	summary.TaskTable = mockTaskTable
 	summary.UpdateRowCount(1, 1)
 	mockTaskTable.EXPECT().UpdateSubtaskRowCount(gomock.Any(), int64(1), int64(1))
-	summary.PersistRowCount(ctx)
+	require.NoError(t, summary.PersistRowCount(ctx))
 }
 
 func TestSummaryWithStore(t *testing.T) {
@@ -47,7 +47,7 @@ func TestSummaryWithStore(t *testing.T) {
 	summary.UpdateRowCount(1, 1)
 	summary.UpdateRowCount(2, 3)
 
-	summary.PersistRowCount(ctx)
+	require.NoError(t, summary.PersistRowCount(ctx))
 	cnt, err := sm.GetSubtaskRowCount(ctx, 1, proto.StepOne)
 	require.NoError(t, err)
 	require.Equal(t, int64(4), cnt)
