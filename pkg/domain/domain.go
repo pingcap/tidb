@@ -1853,7 +1853,7 @@ func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve
 		do.BindHandle().Reset()
 	}
 
-	err := do.BindHandle().Update(true)
+	err := do.BindHandle().LoadFromStorageToCache(true)
 	if err != nil || bindinfo.Lease == 0 {
 		return err
 	}
@@ -1883,7 +1883,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				return
 			case <-bindWorkerTicker.C:
 				bindHandle := do.BindHandle()
-				err := bindHandle.Update(false)
+				err := bindHandle.LoadFromStorageToCache(false)
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
 				}
