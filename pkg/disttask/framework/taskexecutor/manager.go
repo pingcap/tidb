@@ -133,6 +133,7 @@ func (m *Manager) initMeta() (err error) {
 }
 
 // InitMeta initializes the meta of the Manager.
+// not a must-success step before start manager, manager will try to init meta periodically.
 func (m *Manager) InitMeta() error {
 	return m.initMeta()
 }
