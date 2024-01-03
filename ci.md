@@ -13,8 +13,8 @@ The CI pipeline will automatically trigger when you submit a PR or push new comm
 | check-dev2                      | `/test check-dev2`                      | All realtikv tests in `tests/realtikvtest`                   | Yes          |
 | mysql-test                      | `/test mysql-test`                      | All mysql tests in PingCAP-QE/tidb-test `mysql_test`         | Yes          |
 | unit-test                       | `/test unit-test`                       | All unit tests                                               | Yes          |
-| pull-integration-ddl-test       | `/test pull-integration-ddl-test`       | All ddl tests in PingCAP-QE/tidb-test `ddl_test`             | No           |
-| pull-mysql-client-test          | `/test pull-mysql-client-test`          | MySQL client tests in PingCAP-QE/tidb-test                   | No           |
+| pull-integration-ddl-test       | `/test pull-integration-ddl-test`       | All ddl tests in PingCAP-QE/tidb-test `ddl_test`             | Yes          |
+| pull-mysql-client-test          | `/test pull-mysql-client-test`          | MySQL client tests in PingCAP-QE/tidb-test                   | Yes          |
 | pull-br-integration-test        | `/test pull-br-integration-test`        | All br integration test in `br/tests`                        | No           |
 | pull-lightning-integration-test | `/test pull-lightning-integration-test` | All lightning integration tests in `br/tests`                | No           |
 | pull-common-test                | `/test pull-common-test`                | Some ORM tests performed through the unistore.               | No           |
