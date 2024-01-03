@@ -7949,7 +7949,6 @@ func TestIfFunctionWithNull(t *testing.T) {
 		testkit.Rows("20000 35100"))
 }
 
-<<<<<<< HEAD
 func TestIssue45410(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
