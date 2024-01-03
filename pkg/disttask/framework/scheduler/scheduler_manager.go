@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/spool"
@@ -122,7 +123,7 @@ func (sm *Manager) Start() {
 		failpoint.Return()
 	})
 	// init cached managed nodes
-	sm.nodeMgr.refreshManagedNodes(sm.ctx, sm.taskMgr)
+	sm.nodeMgr.refreshManagedNodes(sm.ctx, sm.taskMgr, sm.slotMgr)
 
 	sm.wg.Run(sm.scheduleTaskLoop)
 	sm.wg.Run(sm.gcSubtaskHistoryTableLoop)
@@ -131,7 +132,7 @@ func (sm *Manager) Start() {
 		sm.nodeMgr.maintainLiveNodesLoop(sm.ctx, sm.taskMgr)
 	})
 	sm.wg.Run(func() {
-		sm.nodeMgr.refreshManagedNodesLoop(sm.ctx, sm.taskMgr)
+		sm.nodeMgr.refreshManagedNodesLoop(sm.ctx, sm.taskMgr, sm.slotMgr)
 	})
 	sm.initialized = true
 }
@@ -162,6 +163,7 @@ func (sm *Manager) scheduleTaskLoop() {
 			logutil.BgLogger().Info("schedule task loop exits", zap.Error(sm.ctx.Err()), zap.Int64("interval", int64(checkTaskRunningInterval)/1000000))
 			return
 		case <-ticker.C:
+		case <-handle.TaskChangedCh:
 		}
 
 		taskCnt := sm.getSchedulerCount()
@@ -258,7 +260,7 @@ func (sm *Manager) gcSubtaskHistoryTableLoop() {
 func (sm *Manager) startScheduler(basicTask *proto.Task, reservedExecID string) {
 	task, err := sm.taskMgr.GetTaskByID(sm.ctx, basicTask.ID)
 	if err != nil {
-		logutil.BgLogger().Error("get task failed", zap.Error(err))
+		logutil.BgLogger().Error("get task failed", zap.Int64("task-id", basicTask.ID), zap.Error(err))
 		return
 	}
 
@@ -277,9 +279,10 @@ func (sm *Manager) startScheduler(basicTask *proto.Task, reservedExecID string) 
 			scheduler.Close()
 			sm.delScheduler(task.ID)
 			sm.slotMgr.unReserve(basicTask, reservedExecID)
+			handle.NotifyTaskChange()
 		}()
 		metrics.UpdateMetricsForRunTask(task)
-		scheduler.ExecuteTask()
+		scheduler.ScheduleTask()
 		logutil.BgLogger().Info("task finished", zap.Int64("task-id", task.ID))
 		sm.finishCh <- struct{}{}
 	})

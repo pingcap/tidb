@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -373,7 +374,11 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		return errors.Errorf("Can't add ddl job, have flashback cluster job")
 	}
 
-	startTS := uint64(0)
+	var (
+		startTS = uint64(0)
+		bdrRole = string(ast.BDRRoleLocalOnly)
+	)
+
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err = kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -381,6 +386,12 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		bdrRole, err = t.GetBDRRole()
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		startTS = txn.StartTS()
 		return nil
 	})
@@ -394,6 +405,24 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		job.Version = currentVersion
 		job.StartTS = startTS
 		job.ID = ids[i]
+		if len(bdrRole) == 0 {
+			bdrRole = string(ast.BDRRoleLocalOnly)
+		}
+		job.BDRRole = bdrRole
+
+		// BDR mode only affects the DDL not from CDC
+		if job.CDCWriteSource == 0 && bdrRole != string(ast.BDRRoleLocalOnly) {
+			if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
+				for _, subJob := range job.MultiSchemaInfo.SubJobs {
+					if ast.DeniedByBDR(ast.BDRRole(bdrRole), subJob.Type, job) {
+						return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
+					}
+				}
+			} else if ast.DeniedByBDR(ast.BDRRole(bdrRole), job.Type, job) {
+				return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
+			}
+		}
+
 		setJobStateToQueueing(job)
 
 		if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) {

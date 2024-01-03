@@ -15,11 +15,13 @@
 package storage
 
 import (
+	"context"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -29,11 +31,22 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
+		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}
 	goleak.VerifyTestMain(m, opts...)
+}
+
+func GetCPUCountOfManagedNodes(ctx context.Context, taskMgr *TaskManager) (int, error) {
+	var cnt int
+	err := taskMgr.WithNewSession(func(se sessionctx.Context) error {
+		var err2 error
+		cnt, err2 = taskMgr.getCPUCountOfManagedNodes(ctx, se)
+		return err2
+	})
+	return cnt, err
 }
 
 func TestSplitSubtasks(t *testing.T) {

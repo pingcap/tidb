@@ -15,6 +15,7 @@
 package taskexecutor
 
 import (
+	"slices"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -23,30 +24,28 @@ import (
 // slotManager is used to manage the slots of the executor.
 type slotManager struct {
 	sync.RWMutex
-	// taskID -> slotInfo
-	executorSlotInfos map[int64]*slotInfo
+	// taskID2Index is the index of the task
+	taskID2Index map[int64]int
+	// executorTasks is used to record the tasks that is running on the executor,
+	// the slice is sorted in reverse task order.
+	executorTasks []*proto.Task
 
 	// The number of slots that can be used by the executor.
-	// It is always equal to CPU cores of the instance.
+	// Its initial value is always equal to CPU cores of the instance.
 	available int
-}
-
-type slotInfo struct {
-	taskID int
-	// priority will be used in future
-	priority  int
-	slotCount int
 }
 
 func (sm *slotManager) alloc(task *proto.Task) {
 	sm.Lock()
 	defer sm.Unlock()
-	sm.executorSlotInfos[task.ID] = &slotInfo{
-		taskID:    int(task.ID),
-		priority:  task.Priority,
-		slotCount: task.Concurrency,
-	}
 
+	sm.executorTasks = append(sm.executorTasks, task)
+	slices.SortFunc(sm.executorTasks, func(a, b *proto.Task) int {
+		return b.Compare(a)
+	})
+	for index, slotInfo := range sm.executorTasks {
+		sm.taskID2Index[slotInfo.ID] = index
+	}
 	sm.available -= task.Concurrency
 }
 
@@ -54,17 +53,39 @@ func (sm *slotManager) free(taskID int64) {
 	sm.Lock()
 	defer sm.Unlock()
 
-	slotInfo, ok := sm.executorSlotInfos[taskID]
-	if ok {
-		delete(sm.executorSlotInfos, taskID)
-		sm.available += slotInfo.slotCount
+	index, ok := sm.taskID2Index[taskID]
+	if !ok {
+		return
+	}
+	sm.available += sm.executorTasks[index].Concurrency
+	sm.executorTasks = append(sm.executorTasks[:index], sm.executorTasks[index+1:]...)
+
+	delete(sm.taskID2Index, taskID)
+	for index, slotInfo := range sm.executorTasks {
+		sm.taskID2Index[slotInfo.ID] = index
 	}
 }
 
-// canReserve is used to check whether the instance has enough slots to run the task.
-func (sm *slotManager) canAlloc(task *proto.Task) bool {
+// canAlloc is used to check whether the instance has enough slots to run the task.
+func (sm *slotManager) canAlloc(task *proto.Task) (canAlloc bool, tasksNeedFree []*proto.Task) {
 	sm.RLock()
 	defer sm.RUnlock()
 
-	return sm.available >= task.Concurrency
+	if sm.available >= task.Concurrency {
+		return true, nil
+	}
+
+	usedSlots := 0
+	for _, slotInfo := range sm.executorTasks {
+		if slotInfo.Compare(task) < 0 {
+			break
+		}
+		tasksNeedFree = append(tasksNeedFree, slotInfo)
+		usedSlots += slotInfo.Concurrency
+		if sm.available+usedSlots >= task.Concurrency {
+			return true, tasksNeedFree
+		}
+	}
+
+	return false, nil
 }

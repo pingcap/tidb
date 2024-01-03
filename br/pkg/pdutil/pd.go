@@ -234,10 +234,11 @@ func DefaultExpectPDCfgGenerators() map[string]pauseConfigGenerator {
 
 // PdController manage get/update config from pd.
 type PdController struct {
-	addrs    []string
-	cli      *http.Client
-	pdClient pd.Client
-	version  *semver.Version
+	addrs     []string
+	cli       *http.Client // TODO: replace it with pd HTTP client
+	pdClient  pd.Client
+	pdHTTPCli pdhttp.Client
+	version   *semver.Version
 
 	// control the pause schedulers goroutine
 	schedulerPauseCh chan struct{}
@@ -293,11 +294,16 @@ func NewPdController(
 		return nil, errors.Trace(err)
 	}
 
+	pdHTTPCliConfig := make([]pdhttp.ClientOption, 0, 1)
+	if tlsConf != nil {
+		pdHTTPCliConfig = append(pdHTTPCliConfig, pdhttp.WithTLSConfig(tlsConf))
+	}
 	return &PdController{
-		addrs:    processedAddrs,
-		cli:      cli,
-		pdClient: pdClient,
-		version:  version,
+		addrs:     processedAddrs,
+		cli:       cli,
+		pdClient:  pdClient,
+		pdHTTPCli: pdhttp.NewClient("br/lightning PD controller", addrs, pdHTTPCliConfig...),
+		version:   version,
 		// We should make a buffered channel here otherwise when context canceled,
 		// gracefully shutdown will stick at resuming schedulers.
 		schedulerPauseCh: make(chan struct{}, 1),
@@ -352,6 +358,11 @@ func (p *PdController) SetPDClient(pdClient pd.Client) {
 // GetPDClient set pd addrs and cli for test.
 func (p *PdController) GetPDClient() pd.Client {
 	return p.pdClient
+}
+
+// GetPDHTTPClient returns the pd http client.
+func (p *PdController) GetPDHTTPClient() pdhttp.Client {
+	return p.pdHTTPCli
 }
 
 // GetClusterVersion returns the current cluster version.
@@ -1043,9 +1054,13 @@ func (p *PdController) CanPauseSchedulerByKeyRange() bool {
 	return p.version.Compare(minVersionForRegionLabelTTL) >= 0
 }
 
-// Close close the connection to pd.
+// Close closes the connection to pd.
 func (p *PdController) Close() {
 	p.pdClient.Close()
+	if p.pdHTTPCli != nil {
+		// nil in some unit tests
+		p.pdHTTPCli.Close()
+	}
 	if p.schedulerPauseCh != nil {
 		close(p.schedulerPauseCh)
 	}

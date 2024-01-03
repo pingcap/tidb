@@ -1908,7 +1908,7 @@ var defaultSysVars = []*SysVar{
 		s.ConstraintCheckInPlace = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTxnMode, Value: DefTiDBTxnMode, AllowEmptyAll: true, Type: TypeEnum, PossibleValues: []string{"pessimistic", "optimistic"}, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTxnMode, Value: DefTiDBTxnMode, AllowEmptyAll: true, Type: TypeEnum, PossibleValues: []string{PessimisticTxnMode, OptimisticTxnMode}, SetSession: func(s *SessionVars, val string) error {
 		s.TxnMode = strings.ToUpper(val)
 		return nil
 	}},
@@ -2419,7 +2419,7 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableReusechunk, Value: BoolToOnOff(DefTiDBEnableReusechunk), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
-			s.EnableReuseCheck = TiDBOptOn(val)
+			s.EnableReuseChunk = TiDBOptOn(val)
 			return nil
 		}},
 	{Scope: ScopeGlobal, Name: TiDBIgnoreInlistPlanDigest, Value: BoolToOnOff(DefTiDBIgnoreInlistPlanDigest), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
@@ -3001,6 +3001,11 @@ var SetCharsetVariables = []string{
 const (
 	// MaskPwd is the mask of password for LDAP variables.
 	MaskPwd = "******"
+
+	// PessimisticTxnMode is the name for tidb_txn_mode system variable.
+	PessimisticTxnMode = "pessimistic"
+	// OptimisticTxnMode is the name for tidb_txn_mode system variable.
+	OptimisticTxnMode = "optimistic"
 )
 
 const (

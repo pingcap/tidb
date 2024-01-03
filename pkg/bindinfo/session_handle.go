@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -36,17 +37,11 @@ type SessionBindingHandle interface {
 	// CreateSessionBinding creates a binding to the cache.
 	CreateSessionBinding(sctx sessionctx.Context, record *BindRecord) (err error)
 
-	// DropSessionBinding drops a binding in the cache.
-	DropSessionBinding(originalSQL, db string, binding *Binding) error
-
-	// DropSessionBindingByDigest drops a binding by the sql digest.
-	DropSessionBindingByDigest(sqlDigest string) error
+	// DropSessionBinding drops a binding by the sql digest.
+	DropSessionBinding(sqlDigest string) error
 
 	// GetSessionBinding return the binding which can match the digest.
-	GetSessionBinding(sqlDigest, normdOrigSQL, db string) *BindRecord
-
-	// GetSessionBindingBySQLDigest return all bindings which can match the digest.
-	GetSessionBindingBySQLDigest(sqlDigest string) (*BindRecord, error)
+	GetSessionBinding(sqlDigest string) *BindRecord
 
 	// GetAllSessionBindings return all bindings.
 	GetAllSessionBindings() (bindRecords []*BindRecord)
@@ -72,7 +67,7 @@ func NewSessionBindingHandle() SessionBindingHandle {
 // appendSessionBinding adds the BindRecord to the cache, all the stale bindMetas are
 // removed from the cache after this operation.
 func (h *sessionBindingHandle) appendSessionBinding(sqlDigest string, meta *BindRecord) {
-	oldRecord := h.ch.GetBinding(sqlDigest, meta.OriginalSQL, meta.Db)
+	oldRecord := h.ch.GetBinding(sqlDigest)
 	err := h.ch.SetBinding(sqlDigest, meta)
 	if err != nil {
 		logutil.BgLogger().Warn("SessionHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err))
@@ -99,11 +94,11 @@ func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, rec
 	return nil
 }
 
-// DropSessionBinding drops a BindRecord in the cache.
-func (h *sessionBindingHandle) DropSessionBinding(originalSQL, db string, binding *Binding) error {
+// dropSessionBinding drops a BindRecord in the cache.
+func (h *sessionBindingHandle) dropSessionBinding(originalSQL, db string, binding *Binding) error {
 	db = strings.ToLower(db)
 	sqlDigest := parser.DigestNormalized(originalSQL).String()
-	oldRecord := h.GetSessionBinding(sqlDigest, originalSQL, db)
+	oldRecord := h.GetSessionBinding(sqlDigest)
 	var newRecord *BindRecord
 	record := &BindRecord{OriginalSQL: originalSQL, Db: db}
 	if binding != nil {
@@ -123,23 +118,21 @@ func (h *sessionBindingHandle) DropSessionBinding(originalSQL, db string, bindin
 	return nil
 }
 
-// DropSessionBindingByDigest drop BindRecord in the cache.
-func (h *sessionBindingHandle) DropSessionBindingByDigest(sqlDigest string) error {
-	oldRecord, err := h.GetSessionBindingBySQLDigest(sqlDigest)
-	if err != nil {
-		return err
+// DropSessionBinding drop BindRecord in the cache.
+func (h *sessionBindingHandle) DropSessionBinding(sqlDigest string) error {
+	if sqlDigest == "" {
+		return errors.New("sql digest is empty")
 	}
-	return h.DropSessionBinding(oldRecord.OriginalSQL, strings.ToLower(oldRecord.Db), nil)
+	oldRecord := h.GetSessionBinding(sqlDigest)
+	if oldRecord == nil {
+		return errors.Errorf("can't find any binding for '%s'", sqlDigest)
+	}
+	return h.dropSessionBinding(oldRecord.OriginalSQL, strings.ToLower(oldRecord.Db), nil)
 }
 
-// GetSessionBinding return the BindMeta of the (normdOrigSQL,db) if BindMeta exist.
-func (h *sessionBindingHandle) GetSessionBinding(sqlDigest, normdOrigSQL, db string) *BindRecord {
-	return h.ch.GetBinding(sqlDigest, normdOrigSQL, db)
-}
-
-// GetSessionBindingBySQLDigest return all BindMeta corresponding to sqlDigest.
-func (h *sessionBindingHandle) GetSessionBindingBySQLDigest(sqlDigest string) (*BindRecord, error) {
-	return h.ch.GetBindingBySQLDigest(sqlDigest)
+// GetSessionBinding return all BindMeta corresponding to sqlDigest.
+func (h *sessionBindingHandle) GetSessionBinding(sqlDigest string) *BindRecord {
+	return h.ch.GetBinding(sqlDigest)
 }
 
 // GetAllSessionBindings return all session bind info.

@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
@@ -308,9 +309,9 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		for i, taskID := range taskIDs {
 			require.Equal(t, int64(i+1), tasks[i].ID)
 			require.Eventually(t, func() bool {
-				cnt, err := mgr.GetSubtaskInStatesCnt(ctx, taskID, proto.TaskStatePending)
+				cntByStates, err := mgr.GetSubtaskCntGroupByStates(ctx, taskID, proto.StepOne)
 				require.NoError(t, err)
-				return int64(subtaskCnt) == cnt
+				return int64(subtaskCnt) == cntByStates[proto.SubtaskStatePending]
 			}, time.Second, 50*time.Millisecond)
 		}
 	}
@@ -359,7 +360,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	if isSucc {
 		// Mock subtasks succeed.
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
-			err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateSucceed, nil)
+			err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateSucceed, nil)
 			require.NoError(t, err)
 		}
 		checkGetTaskState(proto.TaskStateSucceed)
@@ -381,7 +382,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 			require.NoError(t, err)
 		}
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
-			err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStatePaused, nil)
+			err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStatePaused, nil)
 			require.NoError(t, err)
 		}
 		checkGetTaskState(proto.TaskStatePaused)
@@ -393,7 +394,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 
 		// Mock subtasks succeed.
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
-			err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateSucceed, nil)
+			err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateSucceed, nil)
 			require.NoError(t, err)
 		}
 		checkGetTaskState(proto.TaskStateSucceed)
@@ -408,13 +409,13 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		if isSubtaskCancel {
 			// Mock a subtask canceled
 			for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
-				err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateCanceled, nil)
+				err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateCanceled, nil)
 				require.NoError(t, err)
 			}
 		} else {
 			// Mock a subtask fails.
 			for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
-				err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateFailed, nil)
+				err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateFailed, nil)
 				require.NoError(t, err)
 			}
 		}
@@ -425,7 +426,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	// Mock all subtask reverted.
 	start := subtaskCnt * taskCnt
 	for i := start; i <= start+subtaskCnt*taskCnt; i++ {
-		err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateReverted, nil)
+		err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateReverted, nil)
 		require.NoError(t, err)
 	}
 	checkGetTaskState(proto.TaskStateReverted)
@@ -521,7 +522,7 @@ func TestDispatcherOnNextStage(t *testing.T) {
 	// test next step is done
 	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepDone)
 	schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("done err"))
-	require.ErrorContains(t, sch.OnNextStage(), "done err")
+	require.ErrorContains(t, sch.Switch2NextStep(), "done err")
 	require.True(t, ctrl.Satisfied())
 	// we update task step before OnDone
 	require.Equal(t, proto.StepDone, sch.Task.Step)
@@ -529,18 +530,18 @@ func TestDispatcherOnNextStage(t *testing.T) {
 	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepDone)
 	schExt.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	taskMgr.EXPECT().SucceedTask(gomock.Any(), gomock.Any()).Return(nil)
-	require.NoError(t, sch.OnNextStage())
+	require.NoError(t, sch.Switch2NextStep())
 	require.True(t, ctrl.Satisfied())
 
 	// GetEligibleInstances err
 	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
 	schExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, errors.New("GetEligibleInstances err"))
-	require.ErrorContains(t, sch.OnNextStage(), "GetEligibleInstances err")
+	require.ErrorContains(t, sch.Switch2NextStep(), "GetEligibleInstances err")
 	require.True(t, ctrl.Satisfied())
 	// GetEligibleInstances no instance
 	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
 	schExt.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
-	require.ErrorContains(t, sch.OnNextStage(), "no available TiDB node to dispatch subtasks")
+	require.ErrorContains(t, sch.Switch2NextStep(), "no available TiDB node to dispatch subtasks")
 	require.True(t, ctrl.Satisfied())
 
 	serverNodes := []string{":4000"}
@@ -550,7 +551,7 @@ func TestDispatcherOnNextStage(t *testing.T) {
 	schExt.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, errors.New("OnNextSubtasksBatch err"))
 	schExt.EXPECT().IsRetryableErr(gomock.Any()).Return(true)
-	require.ErrorContains(t, sch.OnNextStage(), "OnNextSubtasksBatch err")
+	require.ErrorContains(t, sch.Switch2NextStep(), "OnNextSubtasksBatch err")
 	require.True(t, ctrl.Satisfied())
 
 	bak := kv.TxnTotalSizeLimit.Load()
@@ -569,7 +570,7 @@ func TestDispatcherOnNextStage(t *testing.T) {
 		Return(subtaskMetas, nil)
 	taskMgr.EXPECT().SwitchTaskStepInBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	kv.TxnTotalSizeLimit.Store(1)
-	require.NoError(t, sch.OnNextStage())
+	require.NoError(t, sch.Switch2NextStep())
 	require.True(t, ctrl.Satisfied())
 	// met unstable subtasks
 	schExt.EXPECT().GetNextStep(gomock.Any()).Return(proto.StepOne)
@@ -581,7 +582,7 @@ func TestDispatcherOnNextStage(t *testing.T) {
 			2, 100))
 	kv.TxnTotalSizeLimit.Store(1)
 	startTime := time.Now()
-	err := sch.OnNextStage()
+	err := sch.Switch2NextStep()
 	require.ErrorIs(t, err, storage.ErrUnstableSubtasks)
 	require.ErrorContains(t, err, "expected 2, got 100")
 	require.WithinDuration(t, startTime, time.Now(), 10*time.Second)
@@ -594,7 +595,7 @@ func TestDispatcherOnNextStage(t *testing.T) {
 		Return(subtaskMetas, nil)
 	taskMgr.EXPECT().SwitchTaskStep(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	kv.TxnTotalSizeLimit.Store(config.DefTxnTotalSizeLimit)
-	require.NoError(t, sch.OnNextStage())
+	require.NoError(t, sch.Switch2NextStep())
 	require.True(t, ctrl.Satisfied())
 }
 
@@ -626,7 +627,7 @@ func TestManagerDispatchLoop(t *testing.T) {
 	require.NoError(t, err)
 	for _, s := range serverInfos {
 		execID := disttaskutil.GenerateExecID(s)
-		testutil.InsertSubtask(t, taskMgr, 1000000, proto.StepOne, execID, []byte(""), proto.TaskStatePending, proto.TaskTypeExample, 16)
+		testutil.InsertSubtask(t, taskMgr, 1000000, proto.StepOne, execID, []byte(""), proto.SubtaskStatePending, proto.TaskTypeExample, 16)
 	}
 	concurrencies := []int{4, 6, 16, 2, 4, 4}
 	waitChannels := make([]chan struct{}, len(concurrencies))
@@ -639,15 +640,15 @@ func TestManagerDispatchLoop(t *testing.T) {
 			idx := counter.Load()
 			mockScheduler = mock.NewMockScheduler(ctrl)
 			mockScheduler.EXPECT().Init().Return(nil)
-			mockScheduler.EXPECT().ExecuteTask().Do(func() {
+			mockScheduler.EXPECT().ScheduleTask().Do(func() {
 				require.NoError(t, taskMgr.WithNewSession(func(se sessionctx.Context) error {
-					_, err := storage.ExecSQL(ctx, se, "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
+					_, err := sqlexec.ExecSQL(ctx, se, "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
 						proto.TaskStateRunning, proto.StepOne, task.ID)
 					return err
 				}))
 				<-waitChannels[idx]
 				require.NoError(t, taskMgr.WithNewSession(func(se sessionctx.Context) error {
-					_, err := storage.ExecSQL(ctx, se, "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
+					_, err := sqlexec.ExecSQL(ctx, se, "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
 						proto.TaskStateSucceed, proto.StepDone, task.ID)
 					return err
 				}))

@@ -126,8 +126,9 @@ type StatsAnalyze interface {
 	// their associated instances being removed from the current cluster.
 	CleanupCorruptedAnalyzeJobsOnDeadInstances() error
 
-	// HandleAutoAnalyze analyzes the newly created table or index.
-	HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool)
+	// HandleAutoAnalyze analyzes the outdated tables. (The change percent of the table exceeds the threshold)
+	// It also analyzes newly created tables and newly added indexes.
+	HandleAutoAnalyze() (analyzed bool)
 
 	// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
 	CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool
@@ -227,6 +228,15 @@ type StatsLock interface {
 	GetTableLockedAndClearForTest() (map[int64]struct{}, error)
 }
 
+// PartitionStatisticLoadTask currently records a partition-level jsontable.
+type PartitionStatisticLoadTask struct {
+	JSONTable  *statsutil.JSONTable
+	PhysicalID int64
+}
+
+// PersistFunc is used to persist JSONTable in the partition level.
+type PersistFunc func(ctx context.Context, jsonTable *statsutil.JSONTable, physicalID int64) error
+
 // StatsReadWriter is used to read and write stats to the storage.
 // TODO: merge and remove some methods.
 type StatsReadWriter interface {
@@ -317,6 +327,15 @@ type StatsReadWriter interface {
 
 	// DumpStatsToJSONBySnapshot dumps statistic to json.
 	DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*statsutil.JSONTable, error)
+
+	// PersistStatsBySnapshot dumps statistic to json and call the function for each partition statistic to persist.
+	// Notice:
+	//  1. It might call the function `persist` with nil jsontable.
+	//  2. It is only used by BR, so partitions' statistic are always dumped.
+	PersistStatsBySnapshot(ctx context.Context, dbName string, tableInfo *model.TableInfo, snapshot uint64, persist PersistFunc) error
+
+	// LoadStatsFromJSONConcurrently consumes concurrently the statistic task from `taskCh`.
+	LoadStatsFromJSONConcurrently(ctx context.Context, tableInfo *model.TableInfo, taskCh chan *PartitionStatisticLoadTask, concurrencyForPartition int) error
 
 	// LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
 	// In final, it will also udpate the stats cache.
