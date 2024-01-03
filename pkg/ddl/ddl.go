@@ -1831,7 +1831,8 @@ func addHistoryDDLJob2Table(sess *sess.Session, job *model.Job, updateRawArgs bo
 			job.ID, util.WrapKey2String(b), strconv.Quote(job.SchemaName), strconv.Quote(job.TableName),
 			strconv.Quote(strconv.FormatInt(job.SchemaID, 10)),
 			strconv.Quote(strconv.FormatInt(job.TableID, 10)),
-			strconv.Quote(model.TSConvert2Time(job.StartTS).String())),
+			strconv.Quote(model.TSConvert2Time(job.StartTS).String()),
+		),
 		"insert_history")
 	return errors.Trace(err)
 }

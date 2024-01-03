@@ -96,6 +96,7 @@ func TestTaskExecutorBasic(t *testing.T) {
 		}
 		return nil
 	})
+	require.NoError(t, mgr.StartManager(ctx, ":4000", ""))
 	for i := 0; i < 10; i++ {
 		runOneTask(ctx, t, mgr, "key"+strconv.Itoa(i), i)
 	}

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/stretchr/testify/require"
@@ -52,27 +53,41 @@ func TestHandle(t *testing.T) {
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
 
-	// no scheduler registered
-	err := handle.SubmitAndWaitTask(ctx, "1", proto.TaskTypeExample, 2, []byte("byte"))
-	require.Error(t, err)
+	testutil.WaitNodeRegistered(ctx, t)
 
-	task, err := mgr.GetTaskByID(ctx, 1)
+	// no scheduler registered
+	task, err := handle.SubmitTask(ctx, "1", proto.TaskTypeExample, 2, proto.EmptyMeta)
+	require.NoError(t, err)
+	waitedTask, err := handle.WaitTask(ctx, task.ID, func(task *proto.Task) bool {
+		return task.IsDone()
+	})
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateFailed, waitedTask.State)
+	require.ErrorContains(t, waitedTask.Error, "unknown task type")
+
+	task, err = mgr.GetTaskByID(ctx, 1)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), task.ID)
 	require.Equal(t, "1", task.Key)
 	require.Equal(t, proto.TaskTypeExample, task.Type)
-	// no scheduler registered
+	// no scheduler registered.
 	require.Equal(t, proto.TaskStateFailed, task.State)
 	require.Equal(t, proto.StepInit, task.Step)
 	require.Equal(t, 2, task.Concurrency)
-	require.Equal(t, []byte("byte"), task.Meta)
+	require.Equal(t, proto.EmptyMeta, task.Meta)
 
 	require.NoError(t, handle.CancelTask(ctx, "1"))
 
-	task, err = handle.SubmitTask(ctx, "2", proto.TaskTypeExample, 2, []byte("byte"))
+	task, err = handle.SubmitTask(ctx, "2", proto.TaskTypeExample, 2, proto.EmptyMeta)
 	require.NoError(t, err)
 	require.Equal(t, int64(2), task.ID)
 	require.Equal(t, "2", task.Key)
+
+	// submit same task.
+	task, err = handle.SubmitTask(ctx, "2", proto.TaskTypeExample, 2, proto.EmptyMeta)
+	require.Nil(t, task)
+	require.Error(t, storage.ErrTaskAlreadyExists, err)
+	// pause and resume task.
 	require.NoError(t, handle.PauseTask(ctx, "2"))
 	require.NoError(t, handle.ResumeTask(ctx, "2"))
 }
