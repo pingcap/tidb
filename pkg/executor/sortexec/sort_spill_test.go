@@ -244,6 +244,7 @@ func onePartitionAndAllDataInDiskCase(t *testing.T, ctx *mock.Context, sortCase 
 	dataSource := buildDataSource(ctx, sortCase, schema)
 	exe := buildSortExec(ctx, sortCase, dataSource)
 
+	// To ensure that spill has been trigger before getting chunk, or we may get chunk from memory.
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/waitForSpill", `return(true)`)
 	resultChunks := executeSortExecutor(t, exe)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/waitForSpill", `return(false)`)
@@ -266,11 +267,7 @@ func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.Sort
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(ctx, sortCase, schema)
 	exe := buildSortExec(ctx, sortCase, dataSource)
-
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(true)`)
 	resultChunks := executeSortExecutor(t, exe)
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(false)`)
-
 	sortPartitionNum := exe.GetSortPartitionListLenForTest()
 	require.Greater(t, sortPartitionNum, 1)
 
@@ -307,7 +304,6 @@ func inMemoryThenSpillCase(t *testing.T, ctx *mock.Context, sortCase *testutil.S
 }
 
 // TODO test fall back
-// TODO test without failpoint and the test should be right
 func TestSortSpillDisk(t *testing.T) {
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
@@ -322,3 +318,12 @@ func TestSortSpillDisk(t *testing.T) {
 		inMemoryThenSpillCase(t, ctx, sortCase)
 	}
 }
+
+// func TestFallBackAction(t *testing.T) {
+// 	sortexec.SetSmallSpillChunkSizeForTest()
+// 	ctx := mock.NewContext()
+// 	sortCase := &testutil.SortCase{Rows: 2048, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+
+// 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/signalCheckpointForSort", `return(true)`)
+
+// }

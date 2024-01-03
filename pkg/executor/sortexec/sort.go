@@ -295,13 +295,6 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-
-		failpoint.Inject("unholdSyncLock", func(val failpoint.Value) {
-			if val.(bool) {
-				// Ensure that spill can get `syncLock`.
-				time.Sleep(100 * time.Microsecond)
-			}
-		})
 	}
 
 	err := e.handleCurrentPartitionBeforeExit()

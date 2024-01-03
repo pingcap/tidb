@@ -171,6 +171,10 @@ func (s *sortPartition) sort() (ret error) {
 }
 
 func (s *sortPartition) spillToDiskImpl() error {
+	if s.inDisk != nil {
+		// The partition has been spilled before.
+		return nil
+	}
 	s.inDisk = chunk.NewDataInDiskByChunks(s.fieldTypes)
 	tmpChk := chunk.NewChunkWithCapacity(s.fieldTypes, spillChunkSize)
 
@@ -180,8 +184,7 @@ func (s *sortPartition) spillToDiskImpl() error {
 	}
 
 	for ; s.idx < rowNum; s.idx++ {
-		row := s.savedRows[s.idx]
-		tmpChk.AppendRow(row)
+		tmpChk.AppendRow(s.savedRows[s.idx])
 		if tmpChk.IsFull() {
 			err := s.inDisk.Add(tmpChk)
 			if err != nil {
@@ -262,11 +265,6 @@ func (s *sortPartition) actionSpill(helper *spillHelper) *sortPartitionSpillDisk
 		}
 	}
 	return s.spillAction
-}
-
-func (s *sortPartition) getSortedRowFromMemoryAndAppendToChunk(filledChk *chunk.Chunk) {
-	filledChk.AppendRow(s.savedRows[s.idx])
-	s.advanceIdx()
 }
 
 func (s *sortPartition) getMemTracker() *memory.Tracker {
