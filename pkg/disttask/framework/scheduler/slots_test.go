@@ -184,7 +184,6 @@ func TestSlotManagerUpdate(t *testing.T) {
 	nodeMgr := newNodeManager()
 	taskMgr := mock.NewMockTaskManager(ctrl)
 	nodeMgr.managedNodes.Store(&[]string{"tidb-1", "tidb-2", "tidb-3"})
-	taskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return([]proto.ManagedNode{{ID: "tidb-1"}, {ID: "tidb-2"}, {ID: "tidb-3"}}, nil)
 	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{
 		"tidb-1": 12,
 		"tidb-2": 8,
@@ -200,9 +199,10 @@ func TestSlotManagerUpdate(t *testing.T) {
 		"tidb-2": 8,
 		"tidb-3": 0,
 	}, *sm.usedSlots.Load())
+	require.True(t, ctrl.Satisfied())
+
 	// some node scaled in, should be reflected
 	nodeMgr.managedNodes.Store(&[]string{"tidb-1"})
-	taskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return([]proto.ManagedNode{{ID: "tidb-1"}}, nil)
 	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{
 		"tidb-1": 12,
 		"tidb-2": 8,
@@ -212,14 +212,8 @@ func TestSlotManagerUpdate(t *testing.T) {
 	require.Equal(t, map[string]int{
 		"tidb-1": 12,
 	}, *sm.usedSlots.Load())
+	require.True(t, ctrl.Satisfied())
 	// on error, the usedSlots should not be changed
-	taskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return(nil, errors.New("mock err"))
-	require.ErrorContains(t, sm.update(context.Background(), nodeMgr, taskMgr), "mock err")
-	require.Empty(t, sm.reservedSlots)
-	require.Equal(t, map[string]int{
-		"tidb-1": 12,
-	}, *sm.usedSlots.Load())
-	taskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return([]proto.ManagedNode{{ID: "tidb-1"}}, nil)
 	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, errors.New("mock err"))
 	require.ErrorContains(t, sm.update(ctx, nodeMgr, taskMgr), "mock err")
 	require.Empty(t, sm.reservedSlots)

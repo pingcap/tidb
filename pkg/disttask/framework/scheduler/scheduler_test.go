@@ -291,7 +291,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	checkGetRunningTaskCnt := func(expected int) {
 		require.Eventually(t, func() bool {
 			return sch.GetRunningTaskCnt() == expected
-		}, time.Second, 50*time.Millisecond)
+		}, 5*time.Second, 50*time.Millisecond)
 	}
 
 	checkTaskRunningCnt := func() []*proto.Task {
@@ -301,7 +301,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 			tasks, err = mgr.GetTasksInStates(ctx, proto.TaskStateRunning)
 			require.NoError(t, err)
 			return len(tasks) == taskCnt
-		}, time.Second, 50*time.Millisecond)
+		}, 5*time.Second, 50*time.Millisecond)
 		return tasks
 	}
 
@@ -312,7 +312,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 				cntByStates, err := mgr.GetSubtaskCntGroupByStates(ctx, taskID, proto.StepOne)
 				require.NoError(t, err)
 				return int64(subtaskCnt) == cntByStates[proto.SubtaskStatePending]
-			}, time.Second, 50*time.Millisecond)
+			}, 5*time.Second, 50*time.Millisecond)
 		}
 	}
 

@@ -393,7 +393,8 @@ func TestGetUsedSlotsOnNodes(t *testing.T) {
 }
 
 func TestGetActiveSubtasks(t *testing.T) {
-	tm, ctx := testutil.InitTableTest(t)
+	_, tm, ctx := testutil.InitTableTest(t)
+	require.NoError(t, tm.StartManager(ctx, ":4000", ""))
 	id, err := tm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
@@ -408,7 +409,7 @@ func TestGetActiveSubtasks(t *testing.T) {
 	}
 	require.NoError(t, tm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, subtasks))
 	require.NoError(t, tm.FinishSubtask(ctx, "tidb0", 1, []byte("{}}")))
-	require.NoError(t, tm.StartSubtask(ctx, 2))
+	require.NoError(t, tm.StartSubtask(ctx, 2, "tidb1"))
 
 	activeSubtasks, err := tm.GetActiveSubtasks(ctx, task.ID)
 	require.NoError(t, err)
@@ -417,9 +418,9 @@ func TestGetActiveSubtasks(t *testing.T) {
 		return int(i.ID - j.ID)
 	})
 	require.Equal(t, int64(2), activeSubtasks[0].ID)
-	require.Equal(t, proto.TaskStateRunning, activeSubtasks[0].State)
+	require.Equal(t, proto.SubtaskStateRunning, activeSubtasks[0].State)
 	require.Equal(t, int64(3), activeSubtasks[1].ID)
-	require.Equal(t, proto.TaskStatePending, activeSubtasks[1].State)
+	require.Equal(t, proto.SubtaskStatePending, activeSubtasks[1].State)
 }
 
 func TestSubTaskTable(t *testing.T) {
