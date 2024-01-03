@@ -19,6 +19,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -59,7 +60,7 @@ type HashAggFinalWorker struct {
 
 func (w *HashAggFinalWorker) getInputFromDisk(sctx sessionctx.Context) (ret aggfuncs.AggPartialResultMapper, restoredMem int64, err error) {
 	ret, restoredMem, err = w.spillHelper.restoreOnePartition(sctx)
-	w.intestDuringRun(&ret, &err)
+	w.intestDuringRun(&err)
 	return ret, restoredMem, err
 }
 
@@ -277,7 +278,7 @@ func intestBeforeStart() {
 	}
 }
 
-func (w *HashAggFinalWorker) intestDuringRun(input *aggfuncs.AggPartialResultMapper, err *error) {
+func (w *HashAggFinalWorker) intestDuringRun(err *error) {
 	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
 		if val.(bool) {
 			num := rand.Intn(10000)
@@ -288,6 +289,8 @@ func (w *HashAggFinalWorker) intestDuringRun(input *aggfuncs.AggPartialResultMap
 			} else if num < 15 {
 				w.memTracker.Consume(1000000)
 				w.restoredAggResultMapperMem += 1000000
+			} else if num < 20 {
+				*err = errors.New("Random fail is triggered in final worker")
 			}
 		}
 	})
