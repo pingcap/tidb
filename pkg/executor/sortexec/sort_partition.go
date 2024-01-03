@@ -15,12 +15,12 @@
 package sortexec
 
 import (
-	"fmt"
 	"sort"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -102,7 +102,7 @@ func (s *sortPartition) close() error {
 		s.inDisk.Close()
 		s.inDisk = nil
 	}
-	s.getMemTracker().UnconsumeAll()
+	s.getMemTracker().ReplaceBytesUsed(0)
 	s.spillAction = nil
 	s.memTracker = nil
 	s.diskTracker = nil
@@ -151,11 +151,7 @@ func (s *sortPartition) sort() (ret error) {
 	ret = nil
 	defer func() {
 		if r := recover(); r != nil {
-			if err, ok := r.(error); ok {
-				ret = err
-			} else {
-				ret = fmt.Errorf("%v", r)
-			}
+			ret = util.GetRecoverError(r)
 		}
 	}()
 
