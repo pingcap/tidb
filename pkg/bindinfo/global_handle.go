@@ -139,7 +139,7 @@ const (
 	BuiltinPseudoSQL4BindLock = "builtin_pseudo_sql_for_bind_lock"
 
 	// LockBindInfoSQL simulates LOCK TABLE by updating a same row in each pessimistic transaction.
-	LockBindInfoSQL = `UPDATE mysql.bind_info SET source= '` + Builtin + `' WHERE original_sql= '` + BuiltinPseudoSQL4BindLock + `'`
+	LockBindInfoSQL = `UPDATE mysql.bind_info SET source= 'builtin' WHERE original_sql= 'builtin_pseudo_sql_for_bind_lock'`
 
 	// StmtRemoveDuplicatedPseudoBinding is used to remove duplicated pseudo binding.
 	// After using BR to sync bind_info between two clusters, the pseudo binding may be duplicated, and
@@ -317,7 +317,7 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, recor
 }
 
 // DropGlobalBinding drops a BindRecord to the storage and BindRecord int the cache.
-func (h *globalBindingHandle) DropGlobalBinding(originalSQL, db string, binding *Binding) (deletedRows uint64, err error) {
+func (h *globalBindingHandle) DropGlobalBinding(originalSQL, _ string, binding *Binding) (deletedRows uint64, err error) {
 	defer func() {
 		if err == nil {
 			err = h.LoadFromStorageToCache(false)
@@ -436,7 +436,7 @@ func (h *globalBindingHandle) GCGlobalBinding() (err error) {
 // generally available later.
 // This lock would enforce the CREATE / DROP GLOBAL BINDING statements to be executed sequentially,
 // even if they come from different tidb instances.
-func (h *globalBindingHandle) lockBindInfoTable(sctx sessionctx.Context) error {
+func (_ *globalBindingHandle) lockBindInfoTable(sctx sessionctx.Context) error {
 	// h.sctx already locked.
 	_, err := exec(sctx, LockBindInfoSQL)
 	return err
