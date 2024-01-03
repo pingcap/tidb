@@ -465,7 +465,7 @@ func (s *statsReadWriter) PersistStatsBySnapshot(
 	dbName string,
 	tableInfo *model.TableInfo,
 	snapshot uint64,
-	persist func(ctx context.Context, jsonTable *util.JSONTable, physicalID int64) error,
+	persist statstypes.PersistFunc,
 ) error {
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil {
@@ -598,8 +598,8 @@ func (s *statsReadWriter) TableStatsToJSON(dbName string, tableInfo *model.Table
 // TestLoadStatsErr is only for test.
 type TestLoadStatsErr struct{}
 
-// LoadStatsFromJSONConcurrency consumes concurrently the statistic task from `taskCh`.
-func (s *statsReadWriter) LoadStatsFromJSONConcurrency(
+// LoadStatsFromJSONConcurrently consumes concurrently the statistic task from `taskCh`.
+func (s *statsReadWriter) LoadStatsFromJSONConcurrently(
 	ctx context.Context,
 	tableInfo *model.TableInfo,
 	taskCh chan *statstypes.PartitionStatisticLoadTask,
@@ -688,7 +688,7 @@ func (s *statsReadWriter) LoadStatsFromJSONNoUpdate(ctx context.Context, is info
 			}
 		}
 		close(taskCh)
-		if err := s.LoadStatsFromJSONConcurrency(ctx, tableInfo, taskCh, concurrencyForPartition); err != nil {
+		if err := s.LoadStatsFromJSONConcurrently(ctx, tableInfo, taskCh, concurrencyForPartition); err != nil {
 			return errors.Trace(err)
 		}
 	}

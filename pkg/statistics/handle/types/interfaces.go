@@ -234,6 +234,8 @@ type PartitionStatisticLoadTask struct {
 	PhysicalID int64
 }
 
+type PersistFunc func(ctx context.Context, jsonTable *statsutil.JSONTable, physicalID int64) error
+
 // StatsReadWriter is used to read and write stats to the storage.
 // TODO: merge and remove some methods.
 type StatsReadWriter interface {
@@ -329,10 +331,10 @@ type StatsReadWriter interface {
 	// Notice:
 	//  1. It might call the function `persist` with nil jsontable.
 	//  2. It is only used by BR, so partitions' statistic are always dumped.
-	PersistStatsBySnapshot(ctx context.Context, dbName string, tableInfo *model.TableInfo, snapshot uint64, persist func(ctx context.Context, jsonTable *statsutil.JSONTable, physicalID int64) error) error
+	PersistStatsBySnapshot(ctx context.Context, dbName string, tableInfo *model.TableInfo, snapshot uint64, persist PersistFunc) error
 
-	// LoadStatsFromJSONConcurrency consumes concurrently the statistic task from `taskCh`.
-	LoadStatsFromJSONConcurrency(ctx context.Context, tableInfo *model.TableInfo, taskCh chan *PartitionStatisticLoadTask, concurrencyForPartition int) error
+	// LoadStatsFromJSONConcurrently consumes concurrently the statistic task from `taskCh`.
+	LoadStatsFromJSONConcurrently(ctx context.Context, tableInfo *model.TableInfo, taskCh chan *PartitionStatisticLoadTask, concurrencyForPartition int) error
 
 	// LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
 	// In final, it will also udpate the stats cache.
