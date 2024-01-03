@@ -56,6 +56,7 @@ const (
 const (
 	importScanRegionTime = 10 * time.Second
 	gRPCBackOffMaxDelay  = 3 * time.Second
+	gRPCTimeOut          = 15 * time.Minute
 )
 
 // RewriteMode is a mode flag that tells the TiKV how to handle the rewrite rules.
@@ -719,7 +720,9 @@ func (importer *FileImporter) downloadSST(
 	for _, p := range regionInfo.Region.GetPeers() {
 		peer := p
 		eg.Go(func() error {
-			resp, err := importer.importClient.DownloadSST(ectx, peer.GetStoreId(), req)
+			dctx, cancel := context.WithTimeout(ectx, gRPCTimeOut)
+			defer cancel()
+			resp, err := importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -1014,8 +1017,10 @@ func (importer *FileImporter) downloadAndApplyKVFile(
 		}
 	}
 
+	dctx, cancel := context.WithTimeout(ctx, gRPCTimeOut)
+	defer cancel()
 	log.Debug("apply kv file", logutil.Leader(leader))
-	resp, err := importer.importClient.ApplyKVFile(ctx, leader.GetStoreId(), req)
+	resp, err := importer.importClient.ApplyKVFile(dctx, leader.GetStoreId(), req)
 	if err != nil {
 		return RPCResultFromError(errors.Trace(err))
 	}
