@@ -178,6 +178,7 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 	failpoint.Inject("mockExecSubtaskInitEnvErr", func() {
 		failpoint.Return(errors.New("mockExecSubtaskInitEnvErr"))
 	})
+
 	if err := subtaskExecutor.Init(runCtx); err != nil {
 		s.onError(err)
 		return s.getError()
@@ -286,13 +287,19 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 		failpoint.Inject("cancelBeforeRunSubtask", func() {
 			runCancel(nil)
 		})
-
-		s.runSubtask(runCtx, subtaskExecutor, subtask)
+		failpoint.Inject("mockUpdateRowCount", func() {
+			summary.UpdateRowCount(subtask.ID, 1)
+		})
+		s.runSubtask(runCtx, subtaskExecutor, subtask, cleanup)
 	}
 	return s.getError()
 }
 
-func (s *BaseTaskExecutor) runSubtask(ctx context.Context, subtaskExecutor execute.SubtaskExecutor, subtask *proto.Subtask) {
+func (s *BaseTaskExecutor) runSubtask(
+	ctx context.Context,
+	subtaskExecutor execute.SubtaskExecutor,
+	subtask *proto.Subtask,
+	cleanup func()) {
 	err := subtaskExecutor.RunSubtask(ctx, subtask)
 	failpoint.Inject("MockRunSubtaskCancel", func(val failpoint.Value) {
 		if val.(bool) {
@@ -365,6 +372,8 @@ func (s *BaseTaskExecutor) runSubtask(ctx context.Context, subtaskExecutor execu
 			}
 		}
 	})
+	// TODO: consider error handling for cleanup, make cleanup run in same txn with OnSubtaskFinished.
+	cleanup()
 	s.onSubtaskFinished(ctx, subtaskExecutor, subtask)
 }
 

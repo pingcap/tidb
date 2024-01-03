@@ -21,12 +21,12 @@ import (
 	"go.uber.org/goleak"
 )
 
-// GetRunningGTaskCnt implements Scheduler.GetRunningGTaskCnt interface.
+// GetRunningTaskCnt implements Scheduler.GetRunningTaskCnt interface.
 func (sm *Manager) GetRunningTaskCnt() int {
 	return sm.getSchedulerCount()
 }
 
-// DelRunningGTask implements Scheduler.DelRunningGTask interface.
+// DelRunningTask implements Scheduler.DelRunningTask interface.
 func (sm *Manager) DelRunningTask(id int64) {
 	sm.delScheduler(id)
 }

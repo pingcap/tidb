@@ -47,6 +47,16 @@ func submitTaskAndCheckSuccess(ctx context.Context, t *testing.T, taskKey string
 	}
 }
 
+func checkRowCnt(ctx context.Context, t *testing.T, taskID int64, rowCnts map[proto.Step]int) {
+	taskMgr, err := storage.GetTaskManager()
+	require.NoError(t, err)
+	for step, cnt := range rowCnts {
+		actualCnt, err := taskMgr.GetSubtaskRowCount(ctx, taskID, step)
+		require.NoError(t, err)
+		require.Equal(t, cnt, int(actualCnt))
+	}
+}
+
 func TestRandomOwnerChangeWithMultipleTasks(t *testing.T) {
 	nodeCnt := 5
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, nodeCnt)
@@ -140,7 +150,7 @@ func TestFrameworkWithQuery(t *testing.T) {
 	distContext.Close()
 }
 
-func TestFrameworkCancelGTask(t *testing.T) {
+func TestFrameworkCancelTask(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
 	defer ctrl.Finish()
 
@@ -351,5 +361,22 @@ func TestTaskCancelledBeforeUpdateTask(t *testing.T) {
 	task := testutil.SubmitAndWaitTask(ctx, t, "key1")
 	require.Equal(t, proto.TaskStateReverted, task.State)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/cancelBeforeUpdateTask"))
+	distContext.Close()
+}
+
+func TestRowCount(t *testing.T) {
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
+	defer ctrl.Finish()
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
+	testutil.RegisterExecutorWithSummary(t, ctrl, testContext)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockUpdateRowCount", "4*return()"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockUpdateRowCount"))
+	})
+	submitTaskAndCheckSuccessForBasic(ctx, t, "😊", testContext)
+	checkRowCnt(ctx, t, 1, map[proto.Step]int{
+		proto.StepOne: 3,
+		proto.StepTwo: 1,
+	})
 	distContext.Close()
 }

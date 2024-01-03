@@ -111,6 +111,33 @@ func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, mockSchedul
 	testContext.RollbackCnt.Store(0)
 }
 
+func RegisterExecutorWithSummary(t *testing.T, ctrl *gomock.Controller, testContext *TestContext) {
+	mockExtension := mock.NewMockExtension(ctrl)
+	mockExtension.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
+	mockSubtaskExecutor := GetMockSubtaskExecutor(ctrl)
+
+	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, subtask *proto.Subtask) error {
+			switch subtask.Step {
+			case proto.StepOne, proto.StepTwo:
+				testContext.CollectSubtask(subtask)
+			default:
+				panic("invalid step")
+			}
+			return nil
+		}).AnyTimes()
+
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
+	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
+	taskexecutor.RegisterTaskType(proto.TaskTypeExample,
+		func(ctx context.Context, id string, task *proto.Task, taskTable execute.TaskTable) execute.TaskExecutor {
+			s := taskexecutor.NewBaseTaskExecutor(ctx, id, task.ID, taskTable)
+			s.Extension = mockExtension
+			return s
+		}, taskexecutor.WithSummary,
+	)
+}
+
 // SubmitAndWaitTask schedule one task.
 func SubmitAndWaitTask(ctx context.Context, t *testing.T, taskKey string) *proto.Task {
 	_, err := handle.SubmitTask(ctx, taskKey, proto.TaskTypeExample, 1, nil)
