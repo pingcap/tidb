@@ -210,7 +210,7 @@ func executeSortExecutorAndManullyTriggerSpill(t *testing.T, exe *sortexec.SortE
 
 func checkCorrectness(schema *expression.Schema, exe *sortexec.SortExec, dataSource *testutil.MockDataSource, resultChunks []*chunk.Chunk) bool {
 	keyColumns, keyCmpFuncs, byItemsDesc := exe.GetSortMetaForTest()
-	checker := newResultChecker(schema, keyColumns, keyCmpFuncs, byItemsDesc, dataSource.SavedChunks)
+	checker := newResultChecker(schema, keyColumns, keyCmpFuncs, byItemsDesc, dataSource.GenData)
 	return checker.check(resultChunks)
 }
 
