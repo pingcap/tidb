@@ -56,11 +56,8 @@ type GlobalBindingHandle interface {
 	// It replaces all the exists bindings for the same normalized SQL.
 	CreateGlobalBinding(sctx sessionctx.Context, record *BindRecord) (err error)
 
-	// DropGlobalBinding drops a BindRecord to the storage and BindRecord int the cache.
-	DropGlobalBinding(originalSQL, db string, binding *Binding) (deletedRows uint64, err error)
-
-	// DropGlobalBindingByDigest drop BindRecord to the storage and BindRecord int the cache.
-	DropGlobalBindingByDigest(sqlDigest string) (deletedRows uint64, err error)
+	// DropGlobalBinding drop BindRecord to the storage and BindRecord int the cache.
+	DropGlobalBinding(sqlDigest string) (deletedRows uint64, err error)
 
 	// SetGlobalBindingStatus set a BindRecord's status to the storage and bind cache.
 	SetGlobalBindingStatus(originalSQL string, binding *Binding, newStatus string) (ok bool, err error)
@@ -180,7 +177,7 @@ func (h *globalBindingHandle) Reset() {
 	h.lastUpdateTime.Store(types.ZeroTimestamp)
 	h.invalidBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
 	h.invalidBindRecordMap.flushFunc = func(record *BindRecord) error {
-		_, err := h.DropGlobalBinding(record.OriginalSQL, record.Db, &record.Bindings[0])
+		_, err := h.dropGlobalBinding(record.OriginalSQL, record.Db)
 		return err
 	}
 	h.setCache(newBindCache())
@@ -320,8 +317,8 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, recor
 	})
 }
 
-// DropGlobalBinding drops a BindRecord to the storage and BindRecord int the cache.
-func (h *globalBindingHandle) DropGlobalBinding(originalSQL, db string, binding *Binding) (deletedRows uint64, err error) {
+// dropGlobalBinding drops a BindRecord to the storage and BindRecord int the cache.
+func (h *globalBindingHandle) dropGlobalBinding(originalSQL, db string) (deletedRows uint64, err error) {
 	err = h.callWithSCtx(false, func(sctx sessionctx.Context) error {
 		db = strings.ToLower(db)
 		defer func() {
@@ -330,9 +327,6 @@ func (h *globalBindingHandle) DropGlobalBinding(originalSQL, db string, binding 
 			}
 
 			record := &BindRecord{OriginalSQL: originalSQL, Db: db}
-			if binding != nil {
-				record.Bindings = append(record.Bindings, *binding)
-			}
 			h.removeGlobalCacheBinding(parser.DigestNormalized(originalSQL).String(), record)
 		}()
 
@@ -343,13 +337,8 @@ func (h *globalBindingHandle) DropGlobalBinding(originalSQL, db string, binding 
 
 		updateTs := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3).String()
 
-		if binding == nil {
-			_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND status != %?`,
-				deleted, updateTs, originalSQL, updateTs, deleted)
-		} else {
-			_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %? and status != %?`,
-				deleted, updateTs, originalSQL, updateTs, binding.BindSQL, deleted)
-		}
+		_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND status != %?`,
+			deleted, updateTs, originalSQL, updateTs, deleted)
 		if err != nil {
 			return err
 		}
@@ -359,8 +348,8 @@ func (h *globalBindingHandle) DropGlobalBinding(originalSQL, db string, binding 
 	return
 }
 
-// DropGlobalBindingByDigest drop BindRecord to the storage and BindRecord int the cache.
-func (h *globalBindingHandle) DropGlobalBindingByDigest(sqlDigest string) (deletedRows uint64, err error) {
+// DropGlobalBinding drop BindRecord to the storage and BindRecord int the cache.
+func (h *globalBindingHandle) DropGlobalBinding(sqlDigest string) (deletedRows uint64, err error) {
 	if sqlDigest == "" {
 		return 0, errors.New("sql digest is empty")
 	}
@@ -368,7 +357,7 @@ func (h *globalBindingHandle) DropGlobalBindingByDigest(sqlDigest string) (delet
 	if oldRecord == nil {
 		return 0, errors.Errorf("can't find any binding for '%s'", sqlDigest)
 	}
-	return h.DropGlobalBinding(oldRecord.OriginalSQL, strings.ToLower(oldRecord.Db), nil)
+	return h.dropGlobalBinding(oldRecord.OriginalSQL, strings.ToLower(oldRecord.Db))
 }
 
 // SetGlobalBindingStatus set a BindRecord's status to the storage and bind cache.
