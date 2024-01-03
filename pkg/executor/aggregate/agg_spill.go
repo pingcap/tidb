@@ -32,9 +32,8 @@ const (
 	// maxSpillTimes indicates how many times the data can spill at most.
 	maxSpillTimes       = 10
 	spillFlag           = 1
-	isSpillingFlag      = 2
-	hasErrorFlag        = 3
-	partialStageFlag    = 4
+	hasErrorFlag        = 2
+	partialStageFlag    = 3
 	spilledPartitionNum = 256
 	spillTasksDoneFlag  = -1
 
@@ -51,7 +50,7 @@ type parallelHashAggSpillHelper struct {
 		nextPartitionIdx           int
 		spilledChunksIO            [][]*chunk.DataInDiskByChunks
 		spillTriggered             int32
-		isSpilling                 int32
+		isSpilling                 bool
 		isAllPartialWorkerFinished bool
 	}
 
@@ -78,14 +77,14 @@ func newSpillHelper(tracker *memory.Tracker, aggFuncsForRestoring []aggfuncs.Agg
 			nextPartitionIdx           int
 			spilledChunksIO            [][]*chunk.DataInDiskByChunks
 			spillTriggered             int32
-			isSpilling                 int32
+			isSpilling                 bool
 			isAllPartialWorkerFinished bool
 		}{
 			mu:                         mu,
 			cond:                       sync.NewCond(mu),
 			spilledChunksIO:            make([][]*chunk.DataInDiskByChunks, spilledPartitionNum),
 			spillTriggered:             0,
-			isSpilling:                 0,
+			isSpilling:                 false,
 			nextPartitionIdx:           spilledPartitionNum - 1,
 			isAllPartialWorkerFinished: false,
 		},
@@ -136,10 +135,6 @@ func (p *parallelHashAggSpillHelper) isSpillTriggered() bool {
 	return p.lock.spillTriggered == spillFlag
 }
 
-func (p *parallelHashAggSpillHelper) isSpillTriggeredNoLock() bool {
-	return p.lock.spillTriggered == spillFlag
-}
-
 func (p *parallelHashAggSpillHelper) setSpillTriggered() {
 	p.lock.mu.Lock()
 	defer p.lock.mu.Unlock()
@@ -153,27 +148,21 @@ func (p *parallelHashAggSpillHelper) isInPartialStage() bool {
 func (p *parallelHashAggSpillHelper) isInSpilling() bool {
 	p.lock.mu.Lock()
 	defer p.lock.mu.Unlock()
-	return p.lock.isSpilling == isSpillingFlag
+	return p.lock.isSpilling
 }
 
 func (p *parallelHashAggSpillHelper) isInSpillingNoLock() bool {
-	return p.lock.isSpilling == isSpillingFlag
+	return p.lock.isSpilling
 }
 
 func (p *parallelHashAggSpillHelper) setIsSpillingNoLock() {
-	p.lock.isSpilling = isSpillingFlag
-}
-
-func (p *parallelHashAggSpillHelper) setIsSpilling() {
-	p.lock.mu.Lock()
-	defer p.lock.mu.Unlock()
-	p.lock.isSpilling = isSpillingFlag
+	p.lock.isSpilling = true
 }
 
 func (p *parallelHashAggSpillHelper) resetIsSpilling() {
 	p.lock.mu.Lock()
 	defer p.lock.mu.Unlock()
-	p.lock.isSpilling = isSpillingFlag + 1
+	p.lock.isSpilling = false
 }
 
 func (p *parallelHashAggSpillHelper) setAllPartialWorkersFinished() {
@@ -436,7 +425,7 @@ func (p *ParallelAggSpillDiskAction) spill() {
 				worker.processError(err)
 			}
 			waiter.Done()
-		}(p.e.partialWorkers[i])
+		}(&p.e.partialWorkers[i])
 	}
 
 	// Wait for the finish of spill

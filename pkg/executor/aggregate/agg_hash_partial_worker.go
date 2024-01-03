@@ -63,7 +63,7 @@ type HashAggPartialWorker struct {
 	chk *chunk.Chunk
 
 	isSpillPrepared       bool
-	runningWorkerWaiter   *sync.WaitGroup
+	paralleSpillWaiter    *sync.WaitGroup
 	spillHelper           *parallelHashAggSpillHelper
 	tmpChksForSpill       []*chunk.Chunk
 	spillSerializeHelpers *aggfuncs.SerializeHelper
@@ -96,6 +96,7 @@ func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasE
 	if w.spillHelper.isInSpilling() {
 		// Repeatedly release lock so that it could stop processing data when
 		// spill is in execution and spill action could have more chance to get write lock.
+		time.Sleep(1 * time.Millisecond)
 		return true
 	}
 
@@ -168,8 +169,8 @@ func (w *HashAggPartialWorker) handleSpillBeforeExit() {
 }
 
 func (w *HashAggPartialWorker) sendDataToFinalWorkersBeforeExit(needShuffle bool, finalConcurrency int, hasError bool) {
-	w.runningWorkerWaiter.Done()
-	w.runningWorkerWaiter.Wait()
+	w.paralleSpillWaiter.Done()
+	w.paralleSpillWaiter.Wait()
 
 	if hasError {
 		return
