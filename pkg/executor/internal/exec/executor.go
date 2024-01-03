@@ -260,9 +260,19 @@ func NewFirstChunk(e Executor) *chunk.Chunk {
 }
 
 // Next is a wrapper function on e.Next(), it handles some common codes.
+<<<<<<< HEAD
 func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	base := e.Base()
 	if base.RuntimeStats() != nil {
+=======
+func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = util.GetRecoverError(r)
+		}
+	}()
+	if e.RuntimeStats() != nil {
+>>>>>>> ca047599e69 (exeuctor: fix goroutine leak when handleForeignKeyCascade exceed mem_quota (#49885))
 		start := time.Now()
 		defer func() { base.RuntimeStats().Record(time.Since(start), req.NumRows()) }()
 	}
@@ -277,10 +287,15 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	r, ctx := tracing.StartRegionEx(ctx, fmt.Sprintf("%T.Next", e))
 	defer r.End()
 
+<<<<<<< HEAD
 	if topsqlstate.TopSQLEnabled() && sessVars.StmtCtx.IsSQLAndPlanRegistered.CompareAndSwap(false, true) {
 		RegisterSQLAndPlanInExecForTopSQL(sessVars)
 	}
 	err := e.Next(ctx, req)
+=======
+	e.RegisterSQLAndPlanInExecForTopSQL()
+	err = e.Next(ctx, req)
+>>>>>>> ca047599e69 (exeuctor: fix goroutine leak when handleForeignKeyCascade exceed mem_quota (#49885))
 
 	if err != nil {
 		return err
