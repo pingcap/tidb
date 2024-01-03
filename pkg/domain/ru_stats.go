@@ -62,7 +62,7 @@ func NewRUStatsWriter(do *Domain) *RUStatsWriter {
 	}
 }
 
-func (do *Domain) dailyRequestUnitsWriterLoop() {
+func (do *Domain) requestUnitsWriterLoop() {
 	// do not start flush loop in unit test.
 	if intest.InTest {
 		return
