@@ -252,6 +252,33 @@ func (t *TxStructure) iterateHash(key []byte, fn func(k []byte, v []byte) error)
 	return nil
 }
 
+func (t *TxStructure) Iterate(key, upperBound []byte, fn func(k []byte, v []byte) error) error {
+	dataPrefix := t.EncodeStringDataKey(key)
+	upperBoundDataPrefix := t.EncodeStringDataKey(upperBound)
+	it, err := t.reader.Iter(dataPrefix, upperBoundDataPrefix)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for it.Valid() {
+		k, err := t.decodeStringDataKey(it.Key())
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if err = fn(k, it.Value()); err != nil {
+			return errors.Trace(err)
+		}
+
+		err = it.Next()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
+}
+
 // ReverseHashIterator is the reverse hash iterator.
 type ReverseHashIterator struct {
 	t      *TxStructure

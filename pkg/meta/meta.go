@@ -56,14 +56,20 @@ var (
 //		TID:2 -> int64
 //	}
 //
+// DDL version 2
+// Names -> {
+//		Name:dbname\x00tablename -> tableid
+// }
 
 var (
 	mMetaPrefix          = []byte("m")
 	mNextGlobalIDKey     = []byte("NextGlobalID")
 	mSchemaVersionKey    = []byte("SchemaVersionKey")
 	mDBs                 = []byte("DBs")
+	mNames               = []byte("Names")
 	mDBPrefix            = "DB"
 	mTablePrefix         = "Table"
+	mNameSep             = []byte("\x00")
 	mSequencePrefix      = "SID"
 	mSeqCyclePrefix      = "SequenceCycle"
 	mTableIDPrefix       = "TID"
@@ -1485,4 +1491,103 @@ func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
 	err = m.txn.Set(diffKey, data)
 	metrics.MetaHistogram.WithLabelValues(metrics.SetSchemaDiff, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
 	return errors.Trace(err)
+}
+
+func (m *Meta) TableNameKey(dbName string, tableName string) kv.Key {
+	return kv.Key(fmt.Sprintf("%s:%s%s%s", mNames, dbName, mNameSep, tableName))
+}
+
+func (m *Meta) CheckTableNameExists(name []byte) error {
+	v, err := m.txn.Get(name)
+	if err == nil && v == nil {
+		err = ErrTableNotExists.GenWithStack("table doesn't exist")
+	}
+	return errors.Trace(err)
+}
+
+func (m *Meta) CheckTableNameNotExists(name []byte) error {
+	v, err := m.txn.Get(name)
+	if err == nil && v != nil {
+		err = ErrTableExists.GenWithStack("table already exists")
+	}
+	return errors.Trace(err)
+}
+
+func (m *Meta) CreateTableName(dbName string, tableName string, tableID int64) error {
+	// Check if table exists.
+	key := m.TableNameKey(dbName, tableName)
+	if err := m.CheckTableNameNotExists(key); err != nil {
+		return errors.Trace(err)
+	}
+	return m.txn.Set(key, []byte(strconv.FormatInt(tableID, 10)))
+}
+
+func (m *Meta) DropTableName(dbName string, tableName string) error {
+	// Check if table exists.
+	key := m.TableNameKey(dbName, tableName)
+	if err := m.CheckTableNameExists(key); err != nil {
+		return errors.Trace(err)
+	}
+	return m.txn.Clear(key)
+}
+
+func (m *Meta) ChangeTableName(dbName string, oldTableName string, newTableName string) error {
+	// Check if table exists.
+	oldKey := m.TableNameKey(dbName, oldTableName)
+	if err := m.CheckTableNameExists(oldKey); err != nil {
+		return errors.Trace(err)
+	}
+	newKey := m.TableNameKey(dbName, newTableName)
+	if err := m.CheckTableNameNotExists(newKey); err != nil {
+		return errors.Trace(err)
+	}
+	// add new key
+	if err := m.txn.Set(newKey, []byte(strconv.FormatInt(0, 10))); err != nil {
+		return errors.Trace(err)
+	}
+	// delete old key
+	return m.txn.Clear(oldKey)
+}
+
+func (m *Meta) ChangeDatabaseName(oldName string, newName string) error {
+	// iterate all tables
+	prefix := m.TableNameKey(oldName, "")
+	return m.txn.Iterate(prefix, prefix.PrefixNext(), func(key []byte, value []byte) error {
+		tableName := string(key[len(prefix):])
+		// check if new table name exists
+		newKey := m.TableNameKey(newName, tableName)
+		if err := m.CheckTableNameNotExists(newKey); err != nil {
+			return errors.Trace(err)
+		}
+		// add new key
+		if err := m.txn.Set(newKey, value); err != nil {
+			return errors.Trace(err)
+		}
+		// delete old key
+		return m.txn.Clear(key)
+	})
+}
+
+func (m *Meta) DropDatabaseName(dbName string) error {
+	// iterate all tables
+	prefix := m.TableNameKey(dbName, "")
+	return m.txn.Iterate(prefix, prefix.PrefixNext(), func(key []byte, value []byte) error {
+		return m.txn.Clear(key)
+	})
+}
+
+func (m *Meta) ChangeTableID(dbName string, tableName string, tableID int64) error {
+	// Check if table exists.
+	key := m.TableNameKey(dbName, tableName)
+	if err := m.CheckTableNameExists(key); err != nil {
+		return errors.Trace(err)
+	}
+	return m.txn.Set(key, []byte(strconv.FormatInt(tableID, 10)))
+}
+
+func (m *Meta) ClearAllTableNames() error {
+	prefix := kv.Key(fmt.Sprintf("%s:", mNames))
+	return m.txn.Iterate(prefix, prefix.PrefixNext(), func(key []byte, value []byte) error {
+		return m.txn.Clear(key)
+	})
 }

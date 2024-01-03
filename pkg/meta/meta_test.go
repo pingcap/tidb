@@ -641,3 +641,99 @@ func TestCreateMySQLDatabase(t *testing.T) {
 	err = txn.Rollback()
 	require.NoError(t, err)
 }
+
+func TestName(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	// TestTableNameKey
+	m := meta.NewMeta(txn)
+	key := m.TableNameKey("db", "tb")
+	require.Equal(t, string(key), "Names:db\x00tb")
+
+	// TestCheckTableNameExists
+	err = m.CheckTableNameExists(m.TableNameKey("db", "tb"))
+	require.True(t, meta.ErrTableNotExists.Equal(err))
+	// TestCheckTableNameNotExists
+	err = m.CheckTableNameNotExists(m.TableNameKey("db", "tb"))
+	require.NoError(t, err)
+
+	// TestCreateTable
+	err = m.CreateTableName("db", "tb", 1)
+	require.NoError(t, err)
+	err = m.CheckTableNameExists(m.TableNameKey("db", "tb"))
+	require.NoError(t, err)
+	err = m.CheckTableNameNotExists(m.TableNameKey("db", "tb"))
+	require.True(t, meta.ErrTableExists.Equal(err))
+	err = m.CreateTableName("db", "t", 2)
+	require.NoError(t, err)
+
+	err = m.CreateTableName("db", "tb", 3)
+	require.True(t, meta.ErrTableExists.Equal(err))
+
+	err = m.CreateTableName("d", "btb", 3)
+	require.NoError(t, err)
+	err = m.CheckTableNameExists(m.TableNameKey("d", "btb"))
+	require.NoError(t, err)
+
+	// TestChangeTableID
+	err = m.ChangeTableID("db", "b", 4)
+	require.True(t, meta.ErrTableNotExists.Equal(err))
+	err = m.ChangeTableID("db", "tb", 4)
+	require.NoError(t, err)
+
+	// TestRenameTable
+	err = m.ChangeTableName("db", "tb1", "tb")
+	require.True(t, meta.ErrTableNotExists.Equal(err))
+	err = m.ChangeTableName("db", "tb", "tb1")
+	require.NoError(t, err)
+	err = m.CheckTableNameExists(m.TableNameKey("db", "tb1"))
+	require.NoError(t, err)
+	err = m.CheckTableNameNotExists(m.TableNameKey("db", "tb"))
+	require.NoError(t, err)
+	err = m.ChangeTableName("db", "tb1", "t")
+	require.True(t, meta.ErrTableExists.Equal(err))
+
+	// TestChangeDatabaseName
+	err = m.ChangeDatabaseName("db", "db1")
+	require.NoError(t, err)
+	err = m.CheckTableNameNotExists(m.TableNameKey("db", "tb1"))
+	require.NoError(t, err)
+	err = m.CheckTableNameNotExists(m.TableNameKey("db", "t"))
+	require.NoError(t, err)
+	err = m.CheckTableNameExists(m.TableNameKey("db1", "tb1"))
+	require.NoError(t, err)
+	err = m.CheckTableNameExists(m.TableNameKey("db1", "t"))
+	require.NoError(t, err)
+
+	// TestDropTableName
+	err = m.DropTableName("db1", "b")
+	require.True(t, meta.ErrTableNotExists.Equal(err))
+	err = m.DropTableName("db1", "tb1")
+	require.NoError(t, err)
+
+	// TestDropDatabaseName
+	err = m.DropDatabaseName("xx")
+	require.NoError(t, err)
+	err = m.DropDatabaseName("d")
+	require.NoError(t, err)
+	err = m.CheckTableNameNotExists(m.TableNameKey("d", "btb"))
+	require.NoError(t, err)
+	err = m.CheckTableNameExists(m.TableNameKey("db1", "t"))
+	require.NoError(t, err)
+
+	// TestClearAllTableNames
+	err = m.ClearAllTableNames()
+	require.NoError(t, err)
+	err = m.CheckTableNameNotExists(m.TableNameKey("db1", "t"))
+	require.NoError(t, err)
+
+	err = txn.Rollback()
+	require.NoError(t, err)
+}
