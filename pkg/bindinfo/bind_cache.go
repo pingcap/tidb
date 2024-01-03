@@ -198,3 +198,9 @@ func (c *bindCache) Copy() (newCache *bindCache, err error) {
 	}
 	return newCache, err
 }
+
+func (c *bindCache) Size() int {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	return c.cache.Size()
+}

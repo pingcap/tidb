@@ -63,7 +63,7 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*BindRecord, stri
 	if globalHandle == nil {
 		return nil, "", nil
 	}
-	if bindRecord := globalHandle.GetGlobalBinding(sqlDigest); bindRecord != nil && bindRecord.HasEnabledBinding() {
+	if bindRecord, err := globalHandle.MatchGlobalBinding(ctx.GetSessionVars().CurrentDB, stmt); err == nil && bindRecord != nil && bindRecord.HasEnabledBinding() {
 		return bindRecord, metrics.ScopeGlobal, nil
 	}
 	return nil, "", nil

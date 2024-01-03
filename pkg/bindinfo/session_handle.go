@@ -17,6 +17,7 @@ package bindinfo
 import (
 	"context"
 	"encoding/json"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"strings"
 	"time"
 
@@ -45,6 +46,9 @@ type SessionBindingHandle interface {
 
 	// GetSessionBinding return the binding which can match the digest.
 	GetSessionBinding(sqlDigest string) *BindRecord
+
+	// MatchSessionBinding returns the matched binding for this statement.
+	MatchSessionBinding(currentDB string, stmt ast.StmtNode) (*BindRecord, error)
 
 	// GetAllSessionBindings return all bindings.
 	GetAllSessionBindings() (bindRecords []*BindRecord)
@@ -136,6 +140,19 @@ func (h *sessionBindingHandle) DropSessionBindingByDigest(sqlDigest string) erro
 // GetSessionBinding return all BindMeta corresponding to sqlDigest.
 func (h *sessionBindingHandle) GetSessionBinding(sqlDigest string) *BindRecord {
 	return h.ch.GetBinding(sqlDigest)
+}
+
+// MatchSessionBinding returns the matched binding for this statement.
+func (h *sessionBindingHandle) MatchSessionBinding(currentDB string, stmt ast.StmtNode) (*BindRecord, error) {
+	if h.ch.Size() == 0 {
+		return nil, nil
+	}
+	// TODO: support fuzzy matching.
+	_, _, sqlDigest, err := normalizeStmt(stmt, currentDB)
+	if err != nil {
+		return nil, err
+	}
+	return h.ch.GetBinding(sqlDigest), nil
 }
 
 // GetAllSessionBindings return all session bind info.
