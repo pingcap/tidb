@@ -234,6 +234,7 @@ type PartitionStatisticLoadTask struct {
 	PhysicalID int64
 }
 
+// PersistFunc is used to persist JSONTable in the partition level.
 type PersistFunc func(ctx context.Context, jsonTable *statsutil.JSONTable, physicalID int64) error
 
 // StatsReadWriter is used to read and write stats to the storage.
