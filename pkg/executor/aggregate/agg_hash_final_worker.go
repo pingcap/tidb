@@ -64,9 +64,6 @@ func (w *HashAggFinalWorker) getInputFromDisk(sctx sessionctx.Context) (ret aggf
 		return nil, restoredMem, err
 	}
 
-	if ret == nil {
-		return nil, restoredMem, nil
-	}
 	return ret, restoredMem, nil
 }
 
