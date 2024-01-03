@@ -215,8 +215,18 @@ func (d *DBStore) adjust(
 			d.Port = int(settings.Port)
 		}
 		if len(d.PdAddr) == 0 {
+			// verify that it is not a empty string
 			pdAddrs := strings.Split(settings.Path, ",")
-			d.PdAddr = pdAddrs[0] // FIXME support multiple PDs once importer can.
+			for _, ip := range pdAddrs {
+				ipPort := strings.Split(ip, ":")
+				if len(ipPort[0]) == 0 {
+					return common.ErrInvalidConfig.GenWithStack("invalid `tidb.pd-addr` setting")
+				}
+				if len(ipPort[1]) == 0 || ipPort[1] == "0" {
+					return common.ErrInvalidConfig.GenWithStack("invalid `tidb.port` setting")
+				}
+			}
+			d.PdAddr = settings.Path
 		}
 	}
 
