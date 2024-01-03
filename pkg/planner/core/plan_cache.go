@@ -703,7 +703,23 @@ func rebuildRange(p Plan) error {
 					partIDs = append(partIDs, partDef.ID)
 				}
 			} else if len(x.IndexValues) > 0 {
-				panic("What now, it has index values?")
+				pairs := make([]nameValuePair, 0, len(x.IndexValues))
+				for i := range x.IndexValues {
+					pairs = pairs[:0]
+					for c := range x.IndexInfo.Columns {
+						pairs = append(pairs, nameValuePair{
+							colName:      x.IndexInfo.Columns[c].Name.L,
+							colFieldType: x.IndexColTypes[c],
+							value:        x.IndexValues[i][c],
+							con:          x.IndexValueParams[i][c],
+						})
+					}
+					// TODO: handle isTableDual!
+					partDef, _, _, _ := getPartitionInfo(sctx, x.TblInfo, pairs)
+					// TODO: Check how partDef == nil is handled?
+					partDefs = append(partDefs, partDef)
+					partIDs = append(partIDs, partDef.ID)
+				}
 			} else {
 				panic("What now?, it does not have index values?")
 			}

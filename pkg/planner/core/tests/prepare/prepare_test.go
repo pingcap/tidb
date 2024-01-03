@@ -1144,11 +1144,7 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 		var expectedFromPlanCache string
 		for id, tbl := range []string{"trangeIdx", "thashIdx", "tnormalIdx"} {
 			scan := tk.MustQuery(fmt.Sprintf(`execute stmt%v_indexscan using @mina, @maxa`, tbl)).Sort()
-			if id == 2 {
-				expectedFromPlanCache = "1"
-			} else {
-				expectedFromPlanCache = "0"
-			}
+			expectedFromPlanCache = "1"
 			tblStr := ` table: ` + tbl + " i :" + strconv.FormatInt(int64(i), 10) + " */"
 			if i > 0 {
 				missedPlanCache = helperCheckPlanCache(t, tk, `select @@last_plan_from_cache /* indexscan table: `+tblStr, expectedFromPlanCache, missedPlanCache)
