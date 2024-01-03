@@ -717,6 +717,12 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 			return err
 		}
 		err = exec.Next(ctx, e, exec.NewFirstChunk(e))
+		failpoint.Inject("handleForeignKeyCascadeError", func(val failpoint.Value) {
+			// Next can recover panic and convert it to error. So we inject error directly here.
+			if val.(bool) && err == nil {
+				err = errors.New("handleForeignKeyCascadeError")
+			}
+		})
 		closeErr := exec.Close(e)
 		if err == nil {
 			err = closeErr

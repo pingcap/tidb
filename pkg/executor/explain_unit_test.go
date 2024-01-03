@@ -88,6 +88,6 @@ func TestExplainAnalyzeInvokeNextAndClose(t *testing.T) {
 	mockOpr = mockErrorOperator{baseExec, true, false}
 	explainExec.analyzeExec = &mockOpr
 	_, err = explainExec.generateExplainInfo(tmpCtx)
-	require.NotNil(t, err)
+	require.EqualError(t, err, "next panic, close error")
 	require.True(t, mockOpr.closed)
 }
