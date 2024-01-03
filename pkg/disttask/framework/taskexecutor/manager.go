@@ -132,13 +132,14 @@ func (m *Manager) initMeta() (err error) {
 	return err
 }
 
+// InitMeta initializes the meta of the Manager.
+func (m *Manager) InitMeta() error {
+	return m.initMeta()
+}
+
 // Start starts the Manager.
 func (m *Manager) Start() error {
 	logutil.Logger(m.logCtx).Debug("manager start")
-	if err := m.initMeta(); err != nil {
-		return err
-	}
-
 	m.wg.Run(m.fetchAndHandleRunnableTasksLoop)
 	m.wg.Run(m.fetchAndFastCancelTasksLoop)
 	m.wg.Run(m.recoverMetaLoop)
