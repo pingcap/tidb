@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -171,32 +172,31 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-	IsDDLJobInQueue               bool
-	DDLJobID                      int64
-	InInsertStmt                  bool
-	InUpdateStmt                  bool
-	InDeleteStmt                  bool
-	InSelectStmt                  bool
-	InLoadDataStmt                bool
-	InExplainStmt                 bool
-	InExplainAnalyzeStmt          bool
-	ExplainFormat                 string
-	InCreateOrAlterStmt           bool
-	InSetSessionStatesStmt        bool
-	InPreparedPlanBuilding        bool
-	DupKeyAsWarning               bool
-	BadNullAsWarning              bool
-	DividedByZeroAsWarning        bool
-	ErrAutoincReadFailedAsWarning bool
-	InShowWarning                 bool
-	UseCache                      bool
-	ForcePlanCache                bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.
-	CacheType                     PlanCacheType
-	BatchCheck                    bool
-	InNullRejectCheck             bool
-	IgnoreNoPartition             bool
-	IgnoreExplainIDSuffix         bool
-	MultiSchemaInfo               *model.MultiSchemaInfo
+	IsDDLJobInQueue        bool
+	DDLJobID               int64
+	InInsertStmt           bool
+	InUpdateStmt           bool
+	InDeleteStmt           bool
+	InSelectStmt           bool
+	InLoadDataStmt         bool
+	InExplainStmt          bool
+	InExplainAnalyzeStmt   bool
+	ExplainFormat          string
+	InCreateOrAlterStmt    bool
+	InSetSessionStatesStmt bool
+	InPreparedPlanBuilding bool
+	DupKeyAsWarning        bool
+	BadNullAsWarning       bool
+	DividedByZeroAsWarning bool
+	InShowWarning          bool
+	UseCache               bool
+	ForcePlanCache         bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.
+	CacheType              PlanCacheType
+	BatchCheck             bool
+	InNullRejectCheck      bool
+	IgnoreNoPartition      bool
+	IgnoreExplainIDSuffix  bool
+	MultiSchemaInfo        *model.MultiSchemaInfo
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx
@@ -443,17 +443,17 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 		ctxID: stmtCtxIDGenerator.Add(1),
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
-	sc.initErrCtx()
+	sc.errCtx = newErrCtx(sc.typeCtx, errctx.LevelMap{}, sc)
 	return sc
 }
 
 // Reset resets a statement context
 func (sc *StatementContext) Reset() {
 	*sc = StatementContext{
-		ctxID:   stmtCtxIDGenerator.Add(1),
-		typeCtx: types.NewContext(types.DefaultStmtFlags, time.UTC, sc),
+		ctxID: stmtCtxIDGenerator.Add(1),
 	}
-	sc.initErrCtx()
+	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
+	sc.errCtx = newErrCtx(sc.typeCtx, errctx.LevelMap{}, sc)
 }
 
 // CtxID returns the context id of the statement
@@ -482,20 +482,15 @@ func (sc *StatementContext) TypeCtx() types.Context {
 	return sc.typeCtx
 }
 
-func (sc *StatementContext) initErrCtx() {
-	ctx := errctx.NewContext(sc)
-
-	if sc.TypeFlags().IgnoreTruncateErr() {
-		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelIgnore)
-	} else if sc.TypeFlags().TruncateAsWarning() {
-		ctx = ctx.WithErrGroupLevel(errctx.ErrGroupTruncate, errctx.LevelWarn)
-	}
-	sc.errCtx = ctx
-}
-
 // ErrCtx returns the error context
 func (sc *StatementContext) ErrCtx() errctx.Context {
 	return sc.errCtx
+}
+
+// SetErrLevels sets the error levels for statement
+// The argument otherLevels is used to set the error levels except truncate
+func (sc *StatementContext) SetErrLevels(otherLevels errctx.LevelMap) {
+	sc.errCtx = newErrCtx(sc.typeCtx, otherLevels, sc)
 }
 
 // TypeFlags returns the type flags
@@ -506,7 +501,7 @@ func (sc *StatementContext) TypeFlags() types.Flags {
 // SetTypeFlags sets the type flags
 func (sc *StatementContext) SetTypeFlags(flags types.Flags) {
 	sc.typeCtx = sc.typeCtx.WithFlags(flags)
-	sc.initErrCtx()
+	sc.errCtx = newErrCtx(sc.typeCtx, sc.errCtx.LevelMap(), sc)
 }
 
 // HandleTruncate ignores or returns the error based on the TypeContext inside.
@@ -1413,6 +1408,18 @@ func (sc *StatementContext) TypeCtxOrDefault() types.Context {
 	}
 
 	return types.DefaultStmtNoWarningContext
+}
+
+func newErrCtx(tc types.Context, otherLevels errctx.LevelMap, handler contextutil.WarnHandler) errctx.Context {
+	l := errctx.LevelError
+	if flags := tc.Flags(); flags.IgnoreTruncateErr() {
+		l = errctx.LevelIgnore
+	} else if flags.TruncateAsWarning() {
+		l = errctx.LevelWarn
+	}
+
+	otherLevels[errctx.ErrGroupTruncate] = l
+	return errctx.NewContextWithLevels(otherLevels, handler)
 }
 
 // UsedStatsInfoForTable records stats that are used during query and their information.
