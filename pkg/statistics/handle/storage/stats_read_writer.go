@@ -460,6 +460,8 @@ func (s *statsReadWriter) DumpHistoricalStatsBySnapshot(
 // Notice:
 //  1. It might call the function `persist` with nil jsontable.
 //  2. It is only used by BR, so partitions' statistic are always dumped.
+//
+// TODO: once we support column-level statistic dump, it should replace the `PersistStatsBySnapshot` and `DumpStatsToJSON`.
 func (s *statsReadWriter) PersistStatsBySnapshot(
 	ctx context.Context,
 	dbName string,
