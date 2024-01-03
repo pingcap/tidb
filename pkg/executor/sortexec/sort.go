@@ -60,7 +60,6 @@ type SortExec struct {
 	// spillAction save the Action for spill disk.
 	spillAction *sortPartitionSpillDiskAction
 
-	helper                *spillHelper
 	enableTmpStorageOnOOM bool
 }
 
@@ -81,14 +80,12 @@ func (e *SortExec) Close() error {
 		e.spillAction.SetFinished()
 	}
 	e.spillAction = nil
-	e.helper = nil
 	return exec.Close(e.Children(0))
 }
 
 // Open implements the Executor Open interface.
 func (e *SortExec) Open(ctx context.Context) error {
 	e.fetched = false
-	e.helper = newSpillHelper()
 	e.enableTmpStorageOnOOM = variable.EnableTmpStorageOnOOM.Load()
 
 	// To avoid duplicated initialization for TopNExec.
@@ -156,11 +153,9 @@ func (e *SortExec) initExternalSorting() error {
 }
 
 func (e *SortExec) onePartitionSorting(req *chunk.Chunk) (err error) {
-	e.helper.syncLock.Lock()
-	defer e.helper.syncLock.Unlock()
-
-	if e.helper.spillError != nil {
-		return e.helper.spillError
+	err = e.sortPartitions[0].checkError()
+	if err != nil {
+		return err
 	}
 
 	for !req.IsFull() {
@@ -179,8 +174,13 @@ func (e *SortExec) onePartitionSorting(req *chunk.Chunk) (err error) {
 }
 
 func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
-	e.spillAction.helper.syncLock.Lock()
-	defer e.spillAction.helper.syncLock.Unlock()
+	// We only need to check error for the last partition as previous partitions
+	// have been checked when we call `switchToNewSortPartition` function.
+	err = e.sortPartitions[len(e.sortPartitions)-1].checkError()
+	if err != nil {
+		return err
+	}
+
 	if e.multiWayMerge == nil {
 		err := e.initExternalSorting()
 		if err != nil {
@@ -212,31 +212,43 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 	return nil
 }
 
-func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDesc []bool, appendPartition bool) {
+func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDesc []bool, appendPartition bool) error {
 	if appendPartition {
 		// Put the full partition into list
 		e.sortPartitions = append(e.sortPartitions, e.curPartition)
 	}
 
-	e.curPartition = newSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.helper, e.spillLimit)
+	if e.curPartition != nil {
+		err := e.curPartition.checkError()
+		if err != nil {
+			return err
+		}
+	}
+
+	e.curPartition = newSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.spillLimit)
 	e.curPartition.getMemTracker().AttachTo(e.memTracker)
 	e.curPartition.getMemTracker().SetLabel(memory.LabelForRowChunks)
-	e.spillAction = e.curPartition.actionSpill(e.helper)
+	e.spillAction = e.curPartition.actionSpill()
 	if e.enableTmpStorageOnOOM {
 		e.curPartition.getDiskTracker().AttachTo(e.diskTracker)
 		e.curPartition.getDiskTracker().SetLabel(memory.LabelForRowChunks)
 		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
 	}
+	return nil
 }
 
 func (e *SortExec) storeChunk(chk *chunk.Chunk, fields []*types.FieldType, byItemsDesc []bool) error {
-	err := e.helper.checkError()
+	err := e.curPartition.checkError()
 	if err != nil {
 		return err
 	}
 
 	if !e.curPartition.add(chk) {
-		e.switchToNewSortPartition(fields, byItemsDesc, true)
+		err := e.switchToNewSortPartition(fields, byItemsDesc, true)
+		if err != nil {
+			return err
+		}
+
 		if !e.curPartition.add(chk) {
 			return errFailToAddChunk
 		}
@@ -245,10 +257,7 @@ func (e *SortExec) storeChunk(chk *chunk.Chunk, fields []*types.FieldType, byIte
 }
 
 func (e *SortExec) handleCurrentPartitionBeforeExit() error {
-	e.helper.syncLock.Lock()
-	defer e.helper.syncLock.Unlock()
-
-	err := e.helper.checkErrorNoLock()
+	err := e.checkError()
 	if err != nil {
 		return err
 	}
@@ -264,6 +273,16 @@ func (e *SortExec) handleCurrentPartitionBeforeExit() error {
 		}
 	} else {
 		err := e.curPartition.sort()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *SortExec) checkError() error {
+	for _, partition := range e.sortPartitions {
+		err := partition.checkError()
 		if err != nil {
 			return err
 		}
@@ -294,6 +313,13 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+
+		failpoint.Inject("unholdSyncLock", func(val failpoint.Value) {
+			if val.(bool) {
+				// Ensure that spill can get `syncLock`.
+				time.Sleep(100 * time.Microsecond)
+			}
+		})
 	}
 
 	err := e.handleCurrentPartitionBeforeExit()

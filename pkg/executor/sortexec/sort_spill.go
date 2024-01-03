@@ -23,65 +23,6 @@ import (
 	"go.uber.org/zap"
 )
 
-type spillHelper struct {
-	syncLock sync.Mutex
-
-	lock            *sync.Mutex
-	cond            sync.Cond
-	spillError      error
-	isSpilling      bool
-	isSpillTrigered bool
-}
-
-func newSpillHelper() *spillHelper {
-	lock := new(sync.Mutex)
-	return &spillHelper{
-		lock:            lock,
-		cond:            *sync.NewCond(lock),
-		spillError:      nil,
-		isSpilling:      false,
-		isSpillTrigered: false,
-	}
-}
-
-func (s *spillHelper) reset() {
-	s.isSpilling = false
-	s.isSpillTrigered = false
-}
-
-func (s *spillHelper) setIsSpilling(isSpilling bool) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-	if isSpilling {
-		s.setSpillTriggeredNoLock()
-	}
-	s.isSpilling = isSpilling
-}
-
-func (s *spillHelper) setSpillTriggeredNoLock() {
-	s.isSpillTrigered = true
-}
-
-func (s *spillHelper) isSpillTriggeredNoLock() bool {
-	return s.isSpillTrigered
-}
-
-func (s *spillHelper) setError(err error) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-	s.spillError = err
-}
-
-func (s *spillHelper) checkError() error {
-	s.lock.Lock()
-	defer s.lock.Unlock()
-	return s.spillError
-}
-
-func (s *spillHelper) checkErrorNoLock() error {
-	return s.spillError
-}
-
 // sortPartitionSpillDiskAction implements memory.ActionOnExceed for chunk.List. If
 // the memory quota of a query is exceeded, sortPartitionSpillDiskAction.Action is
 // triggered.
@@ -89,7 +30,6 @@ type sortPartitionSpillDiskAction struct {
 	memory.BaseOOMAction
 	once      sync.Once
 	partition *sortPartition
-	helper    *spillHelper
 }
 
 // GetPriority get the priority of the Action.
@@ -105,20 +45,17 @@ func (s *sortPartitionSpillDiskAction) Action(t *memory.Tracker) {
 }
 
 func (s *sortPartitionSpillDiskAction) executeAction(t *memory.Tracker) memory.ActionOnExceed {
-	s.helper.lock.Lock()
-	defer s.helper.lock.Unlock()
+	s.partition.lock.Lock()
+	defer s.partition.lock.Unlock()
 
-	if !s.helper.isSpillTriggeredNoLock() && s.partition.hasEnoughDataToSpill() {
+	if !s.partition.isSpillTriggeredNoLock() && s.partition.hasEnoughDataToSpill() {
 		s.once.Do(func() {
 			go func() {
-				s.helper.syncLock.Lock()
-				defer s.helper.syncLock.Unlock()
 				logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 					zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
-
 				err := s.partition.spillToDisk()
 				if err != nil {
-					s.helper.setError(err)
+					s.partition.setError(err)
 				}
 			}()
 		})
@@ -131,8 +68,8 @@ func (s *sortPartitionSpillDiskAction) executeAction(t *memory.Tracker) memory.A
 		return nil
 	}
 
-	for s.helper.isSpilling {
-		s.helper.cond.Wait()
+	for s.partition.isSpilling {
+		s.partition.cond.Wait()
 	}
 
 	if !t.CheckExceed() {
