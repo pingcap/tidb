@@ -321,46 +321,12 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 	return nil
 }
 
-func (e *SortExec) reloadCursor(partitionID int) (bool, error) {
-	partition := e.sortPartitions[partitionID]
-	cursor := e.cursors[partitionID]
-
-	spilledChkNum := partition.inDisk.NumChunks()
-	restoredChkID := cursor.getChkID() + 1
-	if restoredChkID >= spilledChkNum {
-		// All data has been consumed
-		return false, nil
-	}
-
-	restoredChk, err := partition.inDisk.GetChunk(restoredChkID)
-	if err != nil {
-		return false, err
-	}
-
-	cursor.setChunk(restoredChk, restoredChkID)
-	return true, nil
-}
-
 func (e *SortExec) initCompareFuncs() {
 	e.keyCmpFuncs = make([]chunk.CompareFunc, len(e.ByItems))
 	for i := range e.ByItems {
 		keyType := e.ByItems[i].Expr.GetType()
 		e.keyCmpFuncs[i] = chunk.GetCompareFunc(keyType)
 	}
-}
-
-func (e *SortExec) initCursors() error {
-	partitionNum := len(e.sortPartitions)
-	e.cursors = make([]*dataCursor, partitionNum)
-	for i := 0; i < partitionNum; i++ {
-		e.cursors[i] = NewDataCursor()
-		chk, err := e.sortPartitions[i].inDisk.GetChunk(0)
-		if err != nil {
-			return err
-		}
-		e.cursors[i].setChunk(chk, 0)
-	}
-	return nil
 }
 
 func (e *SortExec) buildKeyColumns() {
