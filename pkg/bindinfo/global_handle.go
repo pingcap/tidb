@@ -173,7 +173,7 @@ func (h *globalBindingHandle) Reset() {
 	h.lastUpdateTime.Store(types.ZeroTimestamp)
 	h.invalidBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
 	h.invalidBindRecordMap.flushFunc = func(record *BindRecord) error {
-		_, err := h.dropGlobalBinding(record.OriginalSQL, record.Db)
+		_, err := h.dropGlobalBinding(parser.DigestNormalized(record.OriginalSQL).String())
 		return err
 	}
 	h.setCache(newBindCache())
@@ -250,7 +250,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 					logutil.BgLogger().Warn("BindHandle.Update", zap.String("category", "sql-bind"), zap.Error(err))
 				}
 			} else {
-				newCache.RemoveBinding(sqlDigest, newRecord)
+				newCache.RemoveBinding(sqlDigest)
 			}
 			updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.GetBinding(sqlDigest), true)
 		}
@@ -314,14 +314,16 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, recor
 }
 
 // dropGlobalBinding drops a BindRecord to the storage and BindRecord int the cache.
-func (h *globalBindingHandle) dropGlobalBinding(originalSQL, _ string) (deletedRows uint64, err error) {
-	defer func() {
-		if err == nil {
-			err = h.LoadFromStorageToCache(false)
-		}
-	}()
-
+func (h *globalBindingHandle) dropGlobalBinding(sqlDigesst string) (deletedRows uint64, err error) {
 	err = h.callWithSCtx(false, func(sctx sessionctx.Context) error {
+		defer func() {
+			if err != nil || deletedRows == 0 {
+				return
+			}
+
+			h.removeGlobalCacheBinding(sqlDigesst)
+		}()
+
 		// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
 		if err = lockBindInfoTable(sctx); err != nil {
 			return err
@@ -329,8 +331,8 @@ func (h *globalBindingHandle) dropGlobalBinding(originalSQL, _ string) (deletedR
 
 		updateTs := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3).String()
 
-		_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND status != %?`,
-			deleted, updateTs, originalSQL, updateTs, deleted)
+		_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE bind_info = %? AND update_time < %? AND status != %?`,
+			deleted, updateTs, sqlDigesst, updateTs, deleted)
 		if err != nil {
 			return err
 		}
@@ -345,11 +347,7 @@ func (h *globalBindingHandle) DropGlobalBinding(sqlDigest string) (deletedRows u
 	if sqlDigest == "" {
 		return 0, errors.New("sql digest is empty")
 	}
-	oldRecord := h.GetGlobalBinding(sqlDigest)
-	if oldRecord == nil {
-		return 0, errors.Errorf("can't find any binding for '%s'", sqlDigest)
-	}
-	return h.dropGlobalBinding(oldRecord.OriginalSQL, strings.ToLower(oldRecord.Db))
+	return h.dropGlobalBinding(sqlDigest)
 }
 
 // SetGlobalBindingStatus set a BindRecord's status to the storage and bind cache.
