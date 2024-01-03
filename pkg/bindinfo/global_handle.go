@@ -314,13 +314,13 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, recor
 }
 
 // dropGlobalBinding drops a BindRecord to the storage and BindRecord int the cache.
-func (h *globalBindingHandle) dropGlobalBinding(originalSQL, db string) (deletedRows uint64, err error) {
+func (h *globalBindingHandle) dropGlobalBinding(originalSQL, _ string) (deletedRows uint64, err error) {
   defer func() {
 		if err == nil {
 			err = h.LoadFromStorageToCache(false)
 		}
 	}()
-  
+
 
 	err = h.callWithSCtx(false, func(sctx sessionctx.Context) error {
 		// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
