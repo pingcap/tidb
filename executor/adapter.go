@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+<<<<<<< HEAD:executor/adapter.go
 	"github.com/pingcap/tidb/bindinfo"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl/placement"
@@ -69,6 +70,50 @@ import (
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/tracing"
+=======
+	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/ddl/placement"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/plugin"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
+	"github.com/pingcap/tidb/pkg/types"
+	util2 "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/breakpoint"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/replayer"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/stmtsummary"
+	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/pingcap/tidb/pkg/util/topsql"
+	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/tracing"
+>>>>>>> 33480e8c8d8 (*: add last ru consumption for tidb_last_query_info (#49769)):pkg/executor/adapter.go
 	"github.com/prometheus/client_golang/prometheus"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
@@ -1361,7 +1406,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		}
 	}
 	sessVars.PrevStmt = FormatSQL(a.GetTextToLog(false))
-
+	a.recordLastQueryInfo(err)
 	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
 	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
 	if sessVars.InRestrictedSQL {
@@ -1401,6 +1446,38 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		}
 		if sessVars.TxnCtx.FairLockingEffective {
 			executor_metrics.FairLockingTxnEffectiveCount.Inc()
+		}
+	}
+}
+
+func (a *ExecStmt) recordLastQueryInfo(err error) {
+	sessVars := a.Ctx.GetSessionVars()
+	// Record diagnostic information for DML statements
+	recordLastQuery := false
+	switch typ := a.StmtNode.(type) {
+	case *ast.ShowStmt:
+		recordLastQuery = typ.Tp != ast.ShowSessionStates
+	case *ast.ExecuteStmt, ast.DMLNode:
+		recordLastQuery = true
+	}
+	if recordLastQuery {
+		var lastRUConsumption float64
+		if ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
+			ruDetail := ruDetailRaw.(*util.RUDetails)
+			lastRUConsumption = ruDetail.RRU() + ruDetail.WRU()
+		}
+		failpoint.Inject("mockRUConsumption", func(_ failpoint.Value) {
+			lastRUConsumption = float64(len(sessVars.StmtCtx.OriginalSQL))
+		})
+		// Keep the previous queryInfo for `show session_states` because the statement needs to encode it.
+		sessVars.LastQueryInfo = sessionstates.QueryInfo{
+			TxnScope:          sessVars.CheckAndGetTxnScope(),
+			StartTS:           sessVars.TxnCtx.StartTS,
+			ForUpdateTS:       sessVars.TxnCtx.GetForUpdateTS(),
+			LastRUConsumption: lastRUConsumption,
+		}
+		if err != nil {
+			sessVars.LastQueryInfo.ErrMsg = err.Error()
 		}
 	}
 }
