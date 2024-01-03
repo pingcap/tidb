@@ -128,7 +128,7 @@ func getStatsJSON(t *testing.T, dom *domain.Domain, db, tableName string) *handl
 	return jsonTbl
 }
 
-func persistStats(t *testing.T, ctx context.Context, dom *domain.Domain, db, tableName string, persist statstypes.PersistFunc) {
+func persistStats(ctx context.Context, t *testing.T, dom *domain.Domain, db, tableName string, persist statstypes.PersistFunc) {
 	is := dom.InfoSchema()
 	h := dom.StatsHandle()
 	require.Nil(t, h.Update(is))
@@ -640,8 +640,9 @@ func TestPersistStats(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	createTable := `CREATE TABLE t (a int, b int, primary key(a), index idx(b))
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	createTable := `CREATE TABLE t1 (a int, b int, primary key(a), index idx(b))
 PARTITION BY RANGE ( a ) (
 		PARTITION p0 VALUES LESS THAN (6),
 		PARTITION p1 VALUES LESS THAN (11),
@@ -651,14 +652,14 @@ PARTITION BY RANGE ( a ) (
 	tk.MustExec(createTable)
 	tk.MustExec("CREATE TABLE t2 (a int, b int, primary key(a), index idx(b))")
 	for i := 1; i < 21; i++ {
-		tk.MustExec(fmt.Sprintf(`insert into t values (%d, %d)`, i, i))
-		tk.MustExec(fmt.Sprintf(`insert into t2 values (%d, %d)`, i, i))
+		tk.MustExec("insert into t1 values (?, ?)", i, i)
+		tk.MustExec("insert into t2 values (?, ?)", i, i)
 	}
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t1")
 	tk.MustExec("analyze table t2")
 
 	statsCnt := 0
-	persistStats(t, ctx, dom, "test", "t", func(ctx context.Context, jsonTable *handleutil.JSONTable, physicalID int64) error {
+	persistStats(ctx, t, dom, "test", "t1", func(ctx context.Context, jsonTable *handleutil.JSONTable, physicalID int64) error {
 		require.True(t, physicalID > 0)
 		require.NotNil(t, jsonTable)
 		statsCnt += 1
@@ -666,7 +667,7 @@ PARTITION BY RANGE ( a ) (
 	})
 	require.Equal(t, statsCnt, 5)
 	statsCnt = 0
-	persistStats(t, ctx, dom, "test", "t2", func(ctx context.Context, jsonTable *handleutil.JSONTable, physicalID int64) error {
+	persistStats(ctx, t, dom, "test", "t2", func(ctx context.Context, jsonTable *handleutil.JSONTable, physicalID int64) error {
 		require.True(t, physicalID > 0)
 		require.NotNil(t, jsonTable)
 		statsCnt += 1
