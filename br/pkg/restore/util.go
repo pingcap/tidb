@@ -281,7 +281,9 @@ func makeDBPool(size uint, dbFactory func() (*DB, error)) ([]*DB, error) {
 		if e != nil {
 			return dbPool, e
 		}
-		dbPool = append(dbPool, db)
+		if db != nil {
+			dbPool = append(dbPool, db)
+		}
 	}
 	return dbPool, nil
 }
@@ -508,7 +510,12 @@ func SplitRanges(
 	updateCh glue.Progress,
 	isRawKv bool,
 ) error {
-	splitter := NewRegionSplitter(split.NewSplitClient(client.GetPDClient(), client.GetTLSConfig(), isRawKv))
+	splitter := NewRegionSplitter(split.NewSplitClient(
+		client.GetPDClient(),
+		client.pdHTTPClient,
+		client.GetTLSConfig(),
+		isRawKv,
+	))
 
 	return splitter.Split(ctx, ranges, rewriteRules, isRawKv, func(keys [][]byte) {
 		for range keys {

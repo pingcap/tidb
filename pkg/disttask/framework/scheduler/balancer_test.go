@@ -50,16 +50,16 @@ func TestBalanceOneTask(t *testing.T) {
 		// balanced, no need to do anything.
 		{
 			subtasks: []*proto.Subtask{
-				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
 			},
 			eligibleNodes: []string{"tidb1", "tidb2"},
 			initUsedSlots: map[string]int{"tidb1": 0, "tidb2": 0},
 			expectedSubtasks: []*proto.Subtask{
-				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
 			},
 			expectedUsedSlots: map[string]int{"tidb1": 16, "tidb2": 16},
 		},
@@ -67,18 +67,18 @@ func TestBalanceOneTask(t *testing.T) {
 		// balance subtasks to 2:2:0
 		{
 			subtasks: []*proto.Subtask{
-				{ID: 1, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 3, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 4, ExecID: "tidb3", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 1, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 3, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 4, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStatePending},
 			},
 			eligibleNodes: []string{"tidb1", "tidb2", "tidb3"},
 			initUsedSlots: map[string]int{"tidb1": 0, "tidb2": 0, "tidb3": 0},
 			expectedSubtasks: []*proto.Subtask{
-				{ID: 1, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 3, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 4, ExecID: "tidb3", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 1, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 3, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 4, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStatePending},
 			},
 			expectedUsedSlots: map[string]int{"tidb1": 16, "tidb2": 16, "tidb3": 16},
 		},
@@ -86,14 +86,14 @@ func TestBalanceOneTask(t *testing.T) {
 		// used slots will not be changed.
 		{
 			subtasks: []*proto.Subtask{
-				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
 			},
 			eligibleNodes: []string{"tidb1", "tidb2"},
 			initUsedSlots: map[string]int{"tidb1": 8, "tidb2": 8},
 			expectedSubtasks: []*proto.Subtask{
-				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
 			},
 			expectedUsedSlots: map[string]int{"tidb1": 8, "tidb2": 8},
 		},
@@ -101,14 +101,14 @@ func TestBalanceOneTask(t *testing.T) {
 		// all subtasks will be balanced to tidb2.
 		{
 			subtasks: []*proto.Subtask{
-				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
 			},
 			eligibleNodes: []string{"tidb1", "tidb2"},
 			initUsedSlots: map[string]int{"tidb1": 8, "tidb2": 0},
 			expectedSubtasks: []*proto.Subtask{
-				{ID: 1, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 1, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
 			},
 			expectedUsedSlots: map[string]int{"tidb1": 8, "tidb2": 16},
 		},
@@ -116,56 +116,56 @@ func TestBalanceOneTask(t *testing.T) {
 		// task executor should mark those subtasks as pending, then we can balance them.
 		{
 			subtasks: []*proto.Subtask{
-				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 3, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStateRunning},
+				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 3, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
 			},
 			eligibleNodes: []string{"tidb1", "tidb2"},
 			initUsedSlots: map[string]int{"tidb1": 0, "tidb2": 0},
 			expectedSubtasks: []*proto.Subtask{
-				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 3, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStateRunning},
+				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 3, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
 			},
 			expectedUsedSlots: map[string]int{"tidb1": 16, "tidb2": 0},
 		},
 		// balance from 1:4 to 2:3
 		{
 			subtasks: []*proto.Subtask{
-				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 4, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 5, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 4, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 5, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
 			},
 			eligibleNodes: []string{"tidb1", "tidb2"},
 			initUsedSlots: map[string]int{"tidb1": 0, "tidb2": 0},
 			expectedSubtasks: []*proto.Subtask{
-				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 4, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 5, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 4, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 5, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
 			},
 			expectedUsedSlots: map[string]int{"tidb1": 16, "tidb2": 16},
 		},
 		// scale out, balance from 5 to 2:2:1
 		{
 			subtasks: []*proto.Subtask{
-				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 3, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 4, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 5, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 3, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 4, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 5, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
 			},
 			eligibleNodes: []string{"tidb1", "tidb2", "tidb3"},
 			initUsedSlots: map[string]int{"tidb1": 0, "tidb2": 0, "tidb3": 0},
 			expectedSubtasks: []*proto.Subtask{
-				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 4, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 5, ExecID: "tidb3", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 4, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 5, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStatePending},
 			},
 			expectedUsedSlots: map[string]int{"tidb1": 16, "tidb2": 16, "tidb3": 16},
 		},
@@ -173,54 +173,54 @@ func TestBalanceOneTask(t *testing.T) {
 		// this case checks the remainder part is right, so we don't balance it as 2:2:0.
 		{
 			subtasks: []*proto.Subtask{
-				{ID: 1, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 4, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 1, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 4, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
 			},
 			eligibleNodes: []string{"tidb1", "tidb2", "tidb3"},
 			initUsedSlots: map[string]int{"tidb1": 0, "tidb2": 0, "tidb3": 0},
 			expectedSubtasks: []*proto.Subtask{
-				{ID: 1, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 3, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 4, ExecID: "tidb3", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 1, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 3, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 4, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStatePending},
 			},
 			expectedUsedSlots: map[string]int{"tidb1": 16, "tidb2": 16, "tidb3": 16},
 		},
 		// scale in, balance from 1:3:1 to 3:2
 		{
 			subtasks: []*proto.Subtask{
-				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 4, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 5, ExecID: "tidb3", Concurrency: 16, State: proto.TaskStateRunning},
+				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 4, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 5, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStateRunning},
 			},
 			eligibleNodes: []string{"tidb1", "tidb3"},
 			initUsedSlots: map[string]int{"tidb1": 0, "tidb3": 0},
 			expectedSubtasks: []*proto.Subtask{
-				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 3, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 4, ExecID: "tidb3", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 5, ExecID: "tidb3", Concurrency: 16, State: proto.TaskStateRunning},
+				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 3, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 4, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 5, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStateRunning},
 			},
 			expectedUsedSlots: map[string]int{"tidb1": 16, "tidb3": 16},
 		},
 		// scale in and out at the same time, balance from 2:1 to 2:1
 		{
 			subtasks: []*proto.Subtask{
-				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
 			},
 			eligibleNodes: []string{"tidb2", "tidb3"},
 			initUsedSlots: map[string]int{"tidb2": 0, "tidb3": 0},
 			expectedSubtasks: []*proto.Subtask{
-				{ID: 1, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb3", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 1, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb3", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 3, ExecID: "tidb2", Concurrency: 16, State: proto.SubtaskStatePending},
 			},
 			expectedUsedSlots: map[string]int{"tidb2": 16, "tidb3": 16},
 		},
@@ -239,7 +239,7 @@ func TestBalanceOneTask(t *testing.T) {
 			mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil)
 
 			slotMgr := newSlotManager()
-			slotMgr.capacity = 16
+			slotMgr.updateCapacity(16)
 			b := newBalancer(Param{
 				taskMgr: mockTaskMgr,
 				nodeMgr: newNodeManager(),
@@ -260,7 +260,7 @@ func TestBalanceOneTask(t *testing.T) {
 		mockScheduler.EXPECT().GetTask().Return(&proto.Task{ID: 1}).Times(2)
 		mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock error"))
 		slotMgr := newSlotManager()
-		slotMgr.capacity = 16
+		slotMgr.updateCapacity(16)
 		b := newBalancer(Param{
 			taskMgr: mockTaskMgr,
 			nodeMgr: newNodeManager(),
@@ -283,7 +283,7 @@ func TestBalanceOneTask(t *testing.T) {
 		mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return([]string{"tidb1"}, nil)
 
 		slotMgr := newSlotManager()
-		slotMgr.capacity = 16
+		slotMgr.updateCapacity(16)
 		b := newBalancer(Param{
 			taskMgr: mockTaskMgr,
 			nodeMgr: newNodeManager(),
@@ -295,8 +295,8 @@ func TestBalanceOneTask(t *testing.T) {
 		b.currUsedSlots = map[string]int{"tidb1": 0, "tidb2": 0}
 		mockTaskMgr.EXPECT().GetActiveSubtasks(gomock.Any(), gomock.Any()).Return(
 			[]*proto.Subtask{
-				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
 			}, nil)
 		mockTaskMgr.EXPECT().UpdateSubtasksExecIDs(gomock.Any(), gomock.Any()).Return(errors.New("mock error2"))
 		mockScheduler.EXPECT().GetTask().Return(&proto.Task{ID: 1}).Times(2)
@@ -320,26 +320,26 @@ func TestBalanceMultipleTasks(t *testing.T) {
 		// used slots will be {tidb1: 8, tidb2: 8, tidb3: 0}
 		{
 			subtasks: []*proto.Subtask{
-				{ID: 1, ExecID: "tidb1", Concurrency: 8, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb2", Concurrency: 8, State: proto.TaskStateRunning},
+				{ID: 1, ExecID: "tidb1", Concurrency: 8, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb2", Concurrency: 8, State: proto.SubtaskStateRunning},
 			},
 			expectedSubtasks: []*proto.Subtask{
-				{ID: 1, ExecID: "tidb1", Concurrency: 8, State: proto.TaskStateRunning},
-				{ID: 2, ExecID: "tidb2", Concurrency: 8, State: proto.TaskStateRunning},
+				{ID: 1, ExecID: "tidb1", Concurrency: 8, State: proto.SubtaskStateRunning},
+				{ID: 2, ExecID: "tidb2", Concurrency: 8, State: proto.SubtaskStateRunning},
 			},
 		},
 		// task 2 require balance
 		// used slots will be {tidb1: 16, tidb2: 16, tidb3: 8}
 		{
 			subtasks: []*proto.Subtask{
-				{ID: 3, ExecID: "tidb1", Concurrency: 8, State: proto.TaskStateRunning},
-				{ID: 4, ExecID: "tidb4", Concurrency: 8, State: proto.TaskStateRunning},
-				{ID: 5, ExecID: "tidb4", Concurrency: 8, State: proto.TaskStatePending},
+				{ID: 3, ExecID: "tidb1", Concurrency: 8, State: proto.SubtaskStateRunning},
+				{ID: 4, ExecID: "tidb4", Concurrency: 8, State: proto.SubtaskStateRunning},
+				{ID: 5, ExecID: "tidb4", Concurrency: 8, State: proto.SubtaskStatePending},
 			},
 			expectedSubtasks: []*proto.Subtask{
-				{ID: 3, ExecID: "tidb1", Concurrency: 8, State: proto.TaskStateRunning},
-				{ID: 4, ExecID: "tidb2", Concurrency: 8, State: proto.TaskStateRunning},
-				{ID: 5, ExecID: "tidb3", Concurrency: 8, State: proto.TaskStatePending},
+				{ID: 3, ExecID: "tidb1", Concurrency: 8, State: proto.SubtaskStateRunning},
+				{ID: 4, ExecID: "tidb2", Concurrency: 8, State: proto.SubtaskStateRunning},
+				{ID: 5, ExecID: "tidb3", Concurrency: 8, State: proto.SubtaskStatePending},
 			},
 		},
 		// task 3 require balance, but no eligible node, so it's not balanced, and
@@ -347,22 +347,22 @@ func TestBalanceMultipleTasks(t *testing.T) {
 		// used slots will be {tidb1: 16, tidb2: 16, tidb3: 8}
 		{
 			subtasks: []*proto.Subtask{
-				{ID: 6, ExecID: "tidb4", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 7, ExecID: "tidb4", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 6, ExecID: "tidb4", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 7, ExecID: "tidb4", Concurrency: 16, State: proto.SubtaskStatePending},
 			},
 			expectedSubtasks: []*proto.Subtask{
-				{ID: 6, ExecID: "tidb4", Concurrency: 16, State: proto.TaskStatePending},
-				{ID: 7, ExecID: "tidb4", Concurrency: 16, State: proto.TaskStatePending},
+				{ID: 6, ExecID: "tidb4", Concurrency: 16, State: proto.SubtaskStatePending},
+				{ID: 7, ExecID: "tidb4", Concurrency: 16, State: proto.SubtaskStatePending},
 			},
 		},
 		// task 4 require balance
 		// used slots will be {tidb1: 16, tidb2: 16, tidb3: 16}
 		{
 			subtasks: []*proto.Subtask{
-				{ID: 8, ExecID: "tidb1", Concurrency: 8, State: proto.TaskStatePending},
+				{ID: 8, ExecID: "tidb1", Concurrency: 8, State: proto.SubtaskStatePending},
 			},
 			expectedSubtasks: []*proto.Subtask{
-				{ID: 8, ExecID: "tidb3", Concurrency: 8, State: proto.TaskStatePending},
+				{ID: 8, ExecID: "tidb3", Concurrency: 8, State: proto.SubtaskStatePending},
 			},
 		},
 	}
@@ -370,7 +370,7 @@ func TestBalanceMultipleTasks(t *testing.T) {
 
 	manager, err := NewManager(ctx, mockTaskMgr, "1")
 	require.NoError(t, err)
-	manager.slotMgr.capacity = 16
+	manager.slotMgr.updateCapacity(16)
 	manager.nodeMgr.managedNodes.Store(&[]string{"tidb1", "tidb2", "tidb3"})
 	b := newBalancer(Param{
 		taskMgr: manager.taskMgr,
@@ -420,14 +420,14 @@ func TestBalanceMultipleTasks(t *testing.T) {
 func TestBalancerUpdateUsedNodes(t *testing.T) {
 	b := newBalancer(Param{})
 	b.updateUsedNodes([]*proto.Subtask{
-		{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStateRunning},
-		{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.TaskStatePending},
+		{ID: 1, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStateRunning},
+		{ID: 2, ExecID: "tidb1", Concurrency: 16, State: proto.SubtaskStatePending},
 	})
 	require.Equal(t, map[string]int{"tidb1": 16}, b.currUsedSlots)
 	b.updateUsedNodes([]*proto.Subtask{
-		{ID: 3, ExecID: "tidb1", Concurrency: 4, State: proto.TaskStateRunning},
-		{ID: 4, ExecID: "tidb2", Concurrency: 8, State: proto.TaskStatePending},
-		{ID: 5, ExecID: "tidb3", Concurrency: 12, State: proto.TaskStatePending},
+		{ID: 3, ExecID: "tidb1", Concurrency: 4, State: proto.SubtaskStateRunning},
+		{ID: 4, ExecID: "tidb2", Concurrency: 8, State: proto.SubtaskStatePending},
+		{ID: 5, ExecID: "tidb3", Concurrency: 12, State: proto.SubtaskStatePending},
 	})
 	require.Equal(t, map[string]int{"tidb1": 20, "tidb2": 8, "tidb3": 12}, b.currUsedSlots)
 }

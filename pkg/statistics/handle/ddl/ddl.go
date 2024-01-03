@@ -78,7 +78,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			return err
 		}
 		for _, id := range droppedIDs {
-			if err := h.statsWriter.ResetTableStats2KVForDrop(id); err != nil {
+			if err := h.statsWriter.UpdateStatsMetaVersionForGC(id); err != nil {
 				return err
 			}
 		}
@@ -89,7 +89,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			return err
 		}
 		for _, id := range ids {
-			if err := h.statsWriter.ResetTableStats2KVForDrop(id); err != nil {
+			if err := h.statsWriter.UpdateStatsMetaVersionForGC(id); err != nil {
 				return err
 			}
 		}
@@ -162,7 +162,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 
 		// Remove partition stats.
 		for _, def := range droppedPartInfo.Definitions {
-			if err := h.statsWriter.ResetTableStats2KVForDrop(def.ID); err != nil {
+			if err := h.statsWriter.UpdateStatsMetaVersionForGC(def.ID); err != nil {
 				return err
 			}
 		}

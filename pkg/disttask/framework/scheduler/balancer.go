@@ -136,7 +136,7 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 		// put running subtask in the front of slice.
 		// if subtask fail-over, it's possible that there are multiple running
 		// subtasks for one task executor.
-		if subtask.State == proto.TaskStateRunning {
+		if subtask.State == proto.SubtaskStateRunning {
 			executorSubtasks[subtask.ExecID] = append([]*proto.Subtask{subtask}, executorSubtasks[subtask.ExecID]...)
 		} else {
 			executorSubtasks[subtask.ExecID] = append(executorSubtasks[subtask.ExecID], subtask)

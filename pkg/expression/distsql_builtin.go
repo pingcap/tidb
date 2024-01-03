@@ -17,7 +17,6 @@ package expression
 import (
 	"fmt"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -659,9 +658,9 @@ func getSignatureByPB(ctx sessionctx.Context, sigCode tipb.ScalarFuncSig, tp *ti
 	case tipb.ScalarFuncSig_UUID:
 		f = &builtinUUIDSig{base}
 	case tipb.ScalarFuncSig_LikeSig:
-		f = &builtinLikeSig{base, nil, false, sync.Once{}}
+		f = &builtinLikeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_IlikeSig:
-		f = &builtinIlikeSig{base, nil, false, sync.Once{}}
+		f = &builtinIlikeSig{baseBuiltinFunc: base}
 	case tipb.ScalarFuncSig_RegexpSig:
 		f = &builtinRegexpLikeFuncSig{regexpBaseFuncSig{baseBuiltinFunc: base}}
 	case tipb.ScalarFuncSig_RegexpUTF8Sig:
@@ -1146,7 +1145,7 @@ func PBToExpr(ctx sessionctx.Context, expr *tipb.Expr, tps []*types.FieldType) (
 	case tipb.ExprType_Float64:
 		return convertFloat(expr.Val, false)
 	case tipb.ExprType_MysqlDecimal:
-		return convertDecimal(expr.Val)
+		return convertDecimal(expr.Val, expr.FieldType)
 	case tipb.ExprType_MysqlDuration:
 		return convertDuration(expr.Val)
 	case tipb.ExprType_MysqlTime:
@@ -1264,7 +1263,8 @@ func convertFloat(val []byte, f32 bool) (*Constant, error) {
 	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeDouble)}, nil
 }
 
-func convertDecimal(val []byte) (*Constant, error) {
+func convertDecimal(val []byte, ftPB *tipb.FieldType) (*Constant, error) {
+	ft := PbTypeToFieldType(ftPB)
 	_, dec, precision, frac, err := codec.DecodeDecimal(val)
 	var d types.Datum
 	d.SetMysqlDecimal(dec)
@@ -1273,7 +1273,7 @@ func convertDecimal(val []byte) (*Constant, error) {
 	if err != nil {
 		return nil, errors.Errorf("invalid decimal % x", val)
 	}
-	return &Constant{Value: d, RetType: types.NewFieldType(mysql.TypeNewDecimal)}, nil
+	return &Constant{Value: d, RetType: ft}, nil
 }
 
 func convertDuration(val []byte) (*Constant, error) {

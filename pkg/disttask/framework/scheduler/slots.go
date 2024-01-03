@@ -22,6 +22,8 @@ import (
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/util/cpu"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 type taskStripes struct {
@@ -48,10 +50,7 @@ type taskStripes struct {
 // quota to subtask, but subtask can determine what to conform.
 type SlotManager struct {
 	// Capacity is the total number of slots and stripes.
-	// TODO: we assume that all nodes managed by dist framework are isomorphic,
-	// but dist owner might run on normal node where the capacity might not be
-	// able to run any task.
-	capacity int
+	capacity atomic.Int32
 
 	mu sync.RWMutex
 	// represents the number of stripes reserved by task, when we reserve by the
@@ -77,13 +76,16 @@ type SlotManager struct {
 // newSlotManager creates a new SlotManager.
 func newSlotManager() *SlotManager {
 	usedSlots := make(map[string]int)
-	sm := &SlotManager{
-		capacity:      cpu.GetCPUCount(),
+	s := &SlotManager{
 		task2Index:    make(map[int64]int),
 		reservedSlots: make(map[string]int),
 	}
-	sm.usedSlots.Store(&usedSlots)
-	return sm
+	s.usedSlots.Store(&usedSlots)
+	// this node might not be the managed node of the framework, but we initialize
+	// capacity with the cpu count of this node, it will be updated when node
+	// manager starts.
+	s.updateCapacity(cpu.GetCPUCount())
+	return s
 }
 
 // Update updates the used slots on each node.
@@ -111,6 +113,7 @@ func (sm *SlotManager) update(ctx context.Context, nodeMgr *NodeManager, taskMgr
 // scheduled subtasks.
 func (sm *SlotManager) canReserve(task *proto.Task) (execID string, ok bool) {
 	usedSlots := *sm.usedSlots.Load()
+	capacity := int(sm.capacity.Load())
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	if len(usedSlots) == 0 {
@@ -125,12 +128,12 @@ func (sm *SlotManager) canReserve(task *proto.Task) (execID string, ok bool) {
 		}
 		reservedForHigherPriority += s.stripes
 	}
-	if task.Concurrency+reservedForHigherPriority <= sm.capacity {
+	if task.Concurrency+reservedForHigherPriority <= capacity {
 		return "", true
 	}
 
 	for id, count := range usedSlots {
-		if count+sm.reservedSlots[id]+task.Concurrency <= sm.capacity {
+		if count+sm.reservedSlots[id]+task.Concurrency <= capacity {
 			return id, true
 		}
 	}
@@ -180,18 +183,31 @@ func (sm *SlotManager) unReserve(task *proto.Task, execID string) {
 }
 
 func (sm *SlotManager) getCapacity() int {
-	return sm.capacity
+	return int(sm.capacity.Load())
 }
 
 // we schedule subtasks to the nodes with enough slots first, if no such nodes,
 // schedule to all nodes.
 func (sm *SlotManager) adjustEligibleNodes(eligibleNodes []string, concurrency int) []string {
 	usedSlots := *sm.usedSlots.Load()
-	nodes := filterNodesWithEnoughSlots(usedSlots, sm.capacity, eligibleNodes, concurrency)
+	nodes := filterNodesWithEnoughSlots(usedSlots, sm.getCapacity(), eligibleNodes, concurrency)
 	if len(nodes) == 0 {
 		nodes = eligibleNodes
 	}
 	return nodes
+}
+
+func (sm *SlotManager) updateCapacity(cpuCount int) {
+	old := sm.capacity.Load()
+	if cpuCount > 0 && cpuCount != int(old) {
+		sm.capacity.Store(int32(cpuCount))
+		if old == 0 {
+			logutil.BgLogger().Info("initialize slot capacity", zap.Int("capacity", cpuCount))
+		} else {
+			logutil.BgLogger().Info("update slot capacity",
+				zap.Int("old", int(old)), zap.Int("new", cpuCount))
+		}
+	}
 }
 
 func filterNodesWithEnoughSlots(usedSlots map[string]int, capacity int, eligibleNodes []string, concurrency int) []string {

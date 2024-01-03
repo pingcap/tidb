@@ -215,8 +215,18 @@ func (d *DBStore) adjust(
 			d.Port = int(settings.Port)
 		}
 		if len(d.PdAddr) == 0 {
+			// verify that it is not a empty string
 			pdAddrs := strings.Split(settings.Path, ",")
-			d.PdAddr = pdAddrs[0] // FIXME support multiple PDs once importer can.
+			for _, ip := range pdAddrs {
+				ipPort := strings.Split(ip, ":")
+				if len(ipPort[0]) == 0 {
+					return common.ErrInvalidConfig.GenWithStack("invalid `tidb.pd-addr` setting")
+				}
+				if len(ipPort[1]) == 0 || ipPort[1] == "0" {
+					return common.ErrInvalidConfig.GenWithStack("invalid `tidb.port` setting")
+				}
+			}
+			d.PdAddr = settings.Path
 		}
 	}
 
@@ -1070,6 +1080,7 @@ type TikvImporter struct {
 	StoreWriteBWLimit       ByteSize `toml:"store-write-bwlimit" json:"store-write-bwlimit"`
 	// default is PausePDSchedulerScopeTable to compatible with previous version(>= 6.1)
 	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
+	BlockSize             ByteSize              `toml:"block-size" json:"block-size"`
 }
 
 func (t *TikvImporter) adjust() error {
@@ -1457,6 +1468,7 @@ func NewConfig() *Config {
 			DiskQuota:               ByteSize(math.MaxInt64),
 			DuplicateResolution:     DupeResAlgNone,
 			PausePDSchedulerScope:   PausePDSchedulerScopeTable,
+			BlockSize:               16 * 1024,
 		},
 		PostRestore: PostRestore{
 			Checksum:          OpLevelRequired,

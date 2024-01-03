@@ -334,9 +334,9 @@ func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
 			topn = int64(val)
 		}
 		colChoice := opts.ColChoice.String()
-		colIDs := make([]string, len(opts.ColumnList))
-		for i, colInfo := range opts.ColumnList {
-			colIDs[i] = strconv.FormatInt(colInfo.ID, 10)
+		colIDs := make([]string, 0, len(opts.ColumnList))
+		for _, colInfo := range opts.ColumnList {
+			colIDs = append(colIDs, strconv.FormatInt(colInfo.ID, 10))
 		}
 		colIDStrs := strings.Join(colIDs, ",")
 		sqlescape.MustFormatSQL(sql, "(%?,%?,%?,%?,%?,%?,%?)", opts.PhyTableID, sampleNum, sampleRate, buckets, topn, colChoice, colIDStrs)
