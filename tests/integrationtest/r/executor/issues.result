@@ -850,64 +850,18 @@ c
 2
 2147483647
 set @@sql_mode = default;
-drop table if exists t6b2b5228;
-drop table if exists t95144843;
-CREATE TABLE `t6b2b5228` (
-`col_60` varchar(27) CHARACTER SET utf8 COLLATE utf8_unicode_ci NOT NULL,
-`col_61` time NOT NULL DEFAULT '20:33:39',
-UNIQUE KEY `idx_26` (`col_61`,`col_60`(5)),
-KEY `idx_27` (`col_61`,`col_60`),
-KEY `idx_28` (`col_60`,`col_61`),
-PRIMARY KEY (`col_61`,`col_60`(5)) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-INSERT INTO `t6b2b5228` VALUES ('VV$oZob0FJ+==qTb','00:17:18'), ('VV$oZob0FJ+==qTb','00:28:47'), ('!','00:39:34'), ('','00:59:55'), ('VV$oZob0FJ+==qTb','01:16:30'), ('(46raVJ*NT5@q=8','01:21:01'), ('VV$oZob0FJ+==qTb','01:23:19'), ('VV$oZob0FJ+==qTb','01:35:10'), ('VV$oZob0FJ+==qTb','01:44:47'), ('N','01:55:29'), ('VV$oZob0FJ+==qTb','02:21:27'), ('Ju$UWkLPm2S','02:31:23'), ('VV$oZob0FJ+==qTb','02:31:55'), ('VV$oZob0FJ+==qTb','02:36:55'), ('VV$oZob0FJ+==qTb','02:59:51'), ('VV$oZob0FJ+==qTb','03:02:15'), ('','03:14:12'), ('~gYMnP','03:15:07'), ('VV$oZob0FJ+==qTb','03:17:08'), ('&TGP','03:26:39'), ('(atO_ui','03:42:02'), ('qa2XQtJ=q+o','04:29:46'), ('vB23070uaDVrnmp6W','05:27:09'), ('VV$oZob0FJ+==qTb','06:03:18'), ('lPjU%-Z','06:13:54'), (')(pYi98w','07:15:44'), ('(4zdfNLyJ','07:40:56'), ('VV$oZob0FJ+==qTb','07:56:47'), ('tFA7zs&H!o%Go0G4yH','08:00:39'), ('VV$oZob0FJ+==qTb','08:12:01'), ('VV$oZob0FJ+==qTb','08:21:37'), ('7~*MQ=nJP','08:27:39'), ('u9^!m','08:55:04'), ('VV$oZob0FJ+==qTb','08:56:31'), ('VV$oZob0FJ+==qTb','09:07:50'), ('VV$oZob0FJ+==qTb','09:11:32'), ('VV$oZob0FJ+==qTb','09:47:58'), ('VV$oZob0FJ+==qTb','10:21:36'), ('Ud5+Rq*','10:23:15'), ('VV$oZob0FJ+==qTb','10:25:21'), ('VV$oZob0FJ+==qTb','10:26:25'), ('VV$oZob0FJ+==qTb','10:50:00'), ('VV$oZob0FJ+==qTb','11:01:07'), ('VV$oZob0FJ+==qTb','11:59:20'), ('VV$oZob0FJ+==qTb','12:26:49'), ('+nCqNXsS$uF&g90sx','12:30:52'), ('v','12:52:11'), ('VV$oZob0FJ+==qTb','12:55:18'), ('VV$oZob0FJ+==qTb','13:02:25'), ('Y4xD*2(+i+JkSSiBSH','13:22:18'), ('VV$oZob0FJ+==qTb','13:25:37'), ('4P!&UVxx=p~t8GdN_XX','13:31:13'), ('(%nqbZ','13:42:55'), ('VV$oZob0FJ+==qTb','13:57:31'), ('nzH+m&P7Crug0QrLE','14:02:56'), ('VV$oZob0FJ+==qTb','14:10:49'), ('','14:34:24'), (')GmfMl837','14:35:05'), ('v-7FtR&GpIdovDeB','15:04:26'), ('VV$oZob0FJ+==qTb','15:04:33'), ('VV$oZob0FJ+==qTb','15:06:53'), ('VV$oZob0FJ+==qTb','15:15:30'), ('VV$oZob0FJ+==qTb','15:18:04'), ('VV$oZob0FJ+==qTb','15:35:16'), ('VV$oZob0FJ+==qTb','15:49:49'), ('VV$oZob0FJ+==qTb','15:52:18'), ('gTAT7MApl9','15:59:08'), ('VV$oZob0FJ+==qTb','16:02:51'), ('VV$oZob0FJ+==qTb','16:03:49'), ('VV$oZob0FJ+==qTb','16:12:31'), ('VV$oZob0FJ+==qTb','16:14:12'), ('VV$oZob0FJ+==qTb','16:37:27'), ('VV$oZob0FJ+==qTb','16:52:31'), ('VV$oZob0FJ+==qTb','16:54:41'), ('VV$oZob0FJ+==qTb','17:01:29'), ('-','17:22:04'), ('VV$oZob0FJ+==qTb','17:22:17'), ('VV$oZob0FJ+==qTb','17:41:26'), (')snjWA=L','17:43:51'), ('VV$oZob0FJ+==qTb','17:48:33'), ('L0ai9HVPUZ+i','17:56:14'), ('VV$oZob0FJ+==qTb','18:01:29'), ('VV$oZob0FJ+==qTb','18:03:51'), ('VV$oZob0FJ+==qTb','18:11:08'), ('pzm(Kpk3sz-AJA','18:24:29'), ('Jx-j)J~A5z_#(&&U','18:26:59'), ('VV$oZob0FJ+==qTb','18:57:16'), ('z~V#TT!xvVAPK0i9l','19:05:46'), ('VV$oZob0FJ+==qTb','19:14:15'), ('VV$oZob0FJ+==qTb','19:31:07'), ('VV$oZob0FJ+==qTb','19:38:20'), ('VV$oZob0FJ+==qTb','19:44:36'), ('VV$oZob0FJ+==qTb','19:54:17'), (')jWb)$tA0Jkp','20:03:47'), ('VV$oZob0FJ+==qTb','20:21:16'), ('VV$oZob0FJ+==qTb','20:25:57'), ('VV$oZob0FJ+==qTb','20:30:29'), ('VV$oZob0FJ+==qTb','20:37:05'), ('VV$oZob0FJ+==qTb','20:52:18'), ('VV$oZob0FJ+==qTb','20:55:50'), ('VV$oZob0FJ+==qTb','20:58:22'), ('%pwKcQ','21:04:08'), ('H6!KqnZcGy)PJLCIYU','21:13:28'), ('VV$oZob0FJ+==qTb','21:14:13'), ('VV$oZob0FJ+==qTb','21:17:08'), ('VV$oZob0FJ+==qTb','21:24:34'), ('VV$oZob0FJ+==qTb','21:35:33'), ('VV$oZob0FJ+==qTb','21:50:05'), ('VV$oZob0FJ+==qTb','21:53:40'), ('q','21:58:10'), ('VV$oZob0FJ+==qTb','22:07:46'), ('w!P1Y0tRO#m','22:28:16'), ('VV$oZob0FJ+==qTb','22:51:45'), ('VV$oZob0FJ+==qTb','23:02:44'), ('VV$oZob0FJ+==qTb','23:15:04'), ('','23:21:52'), ('VV$oZob0FJ+==qTb','23:24:40'), ('P1xvPuYH$3vRo1Bpg','23:55:56');
-CREATE TABLE `t95144843` (
-`col_32` char(129) CHARACTER SET gbk COLLATE gbk_chinese_ci NOT NULL DEFAULT 'ZFOO奆D靖Il!非5',
-`col_33_2` datetime NOT NULL DEFAULT '2019-10-21 00:00:00',
-PRIMARY KEY (`col_32`(3),`col_33_2`) /*T![clustered_index] CLUSTERED */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
-INSERT INTO `t95144843` VALUES ('','1979-12-19 00:00:00'), ('','1997-12-20 00:00:00'), ('','2031-01-03 00:00:00'), ('','2034-08-19 00:00:00'), ('!e','2020-05-11 00:00:00'), ('&+e&ap蠬9273-jSoQ','1985-04-19 00:00:00'), (')K','1992-11-02 00:00:00'), ('+D','2008-07-24 00:00:00'), ('-瀌戞LH繷+%sR+V9a玀f','1972-01-12 00:00:00'), ('3孲Aa萮靚','1974-03-11 00:00:00'), ('55Kp幷YhY5QS=r伅_ig爔=','1979-01-30 00:00:00'), ('9eU燩嘊嚖PT','2028-01-18 00:00:00'), ('9饒攬8','1982-03-26 00:00:00'), ('=*-','2008-11-10 00:00:00'), ('=M3H','2014-11-06 00:00:00'), ('=撦S鼒sSFS*g兾oKR搕a','2034-11-19 00:00:00'), ('A睒','2029-11-21 00:00:00'), ('bY輵秲塹','1989-05-31 00:00:00'), ('dw灰3wvX*槝Kd慴dB&C','2020-06-03 00:00:00'), ('e-5a)Y7D壏零Ru迉窽!m','1976-06-19 00:00:00'), ('E_d&赐蟠乯q向樾$d%Y-D','2010-07-28 00:00:00'), ('GU','2032-01-22 00:00:00'), ('l_l毚','2017-02-24 00:00:00'), ('mi1赞乚zg#w','1990-06-16 00:00:00'), ('O%啹H颖芗','2014-03-31 00:00:00'), ('q鳎A*_鱯胵T4罋v噛d臛','1981-08-09 00:00:00'), ('R暋OH峕D夹ZT垛!虔x8%茯','1980-05-21 00:00:00'), ('t','1998-09-29 00:00:00'), ('V','2026-08-07 00:00:00'), ('v','2029-02-08 00:00:00'), ('WE1鑋b绸尥Y1Vh1DTF^','1979-01-31 00:00:00'), ('Y3((mFY湎wc$','2017-07-26 00:00:00'), ('~莈tPbIb3r敡楻','2021-07-25 00:00:00'), ('y飍鎉*#垷T','2024-07-03 00:00:00'), ('ze(n_)栽齧曅','1984-03-20 00:00:00'), ('湐p聝嫛铢3^uu','2009-05-26 00:00:00'), ('采砅畅俛aC塬1君','1998-05-20 00:00:00'), ('橕z硱唻吱dk矰S)d','1985-12-27 00:00:00'), ('訛','1989-03-27 00:00:00'), ('鵋l笗','1996-01-13 00:00:00'), ('奬h傰贱','2032-08-18 00:00:00'), ('昽d兩#hN悻杲','2019-08-26 00:00:00'), ('峷7S^鑙t','2035-11-05 00:00:00'), ('煟狺YaF','1973-04-13 00:00:00'), ('吻F嵿D)pTg','1992-12-13 00:00:00'), ('绣bAY~咤妰沖犜曈','2016-11-12 00:00:00'), ('柷','2022-01-24 00:00:00'), ('最騺踯l砢W雠#3措C慼Cmg9','1996-07-20 00:00:00');
-SELECT /*+ STREAM_AGG()*/ BIT_XOR(`t6b2b5228`.`col_61`) AS `r0` FROM (`t6b2b5228`) JOIN `t95144843` GROUP BY `t95144843`.`col_32` HAVING `t95144843`.`col_32` BETWEEN '6(!2QW+凊麩SXNjoWq湿舃' AND '~O3K弣6' order by `t95144843`.`col_32`;
-r0
-234206
-234206
-234206
-234206
-234206
-234206
-234206
-234206
-234206
-234206
-234206
-234206
-234206
-234206
-234206
-234206
-234206
-0
-234206
-234206
-SELECT  BIT_XOR(`t6b2b5228`.`col_61`) AS `r0` FROM (`t6b2b5228`) JOIN `t95144843` GROUP BY `t95144843`.`col_32` HAVING `t95144843`.`col_32` BETWEEN '6(!2QW+凊麩SXNjoWq湿舃' AND '~O3K弣6' order by `t95144843`.`col_32`;
-r0
-234206
-234206
-234206
-234206
-234206
-234206
-234206
-234206
-234206
-234206
-234206
-234206
-234206
-234206
-234206
-234206
-234206
-0
-234206
-234206
+drop table if exists t, s;
+CREATE TABLE `t` (`c` char(1)) COLLATE=utf8_general_ci  ;
+insert into t values("V"),("v");
+CREATE TABLE `s` (`col_61` int);
+insert into s values(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
+insert into s values(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
+insert into s values(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
+insert into s values(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
+insert into s values(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
+SELECT /*+ stream_agg()*/ `t`.`c` FROM (`s`) JOIN `t` GROUP BY `t`.`c`;
+c
+v
+SELECT  `t`.`c` FROM (`s`) JOIN `t`  GROUP BY `t`.`c`;
+c
+v
