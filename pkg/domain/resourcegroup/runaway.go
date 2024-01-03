@@ -396,7 +396,7 @@ func (rm *RunawayManager) markRunaway(resourceGroupName, originalSQL, planDigest
 }
 
 // FlushThreshold specifies the threshold for the number of records in trigger flush
-func (rm *RunawayManager) FlushThreshold() int {
+func (*RunawayManager) FlushThreshold() int {
 	return maxWatchRecordChannelSize / 2
 }
 

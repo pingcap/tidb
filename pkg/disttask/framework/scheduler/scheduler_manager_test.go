@@ -22,6 +22,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -43,9 +44,9 @@ func TestCleanUpRoutine(t *testing.T) {
 
 	sch, mgr := MockSchedulerManager(t, ctrl, pool, getNumberExampleSchedulerExt(ctrl), mockCleanupRoutine)
 	mockCleanupRoutine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	require.NoError(t, mgr.StartManager(ctx, ":4000", ""))
 	sch.Start()
 	defer sch.Stop()
+	testutil.WaitNodeRegistered(ctx, t)
 	taskID, err := mgr.CreateTask(ctx, "test", proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
 
@@ -62,16 +63,16 @@ func TestCleanUpRoutine(t *testing.T) {
 
 	checkSubtaskCnt := func(tasks []*proto.Task, taskID int64) {
 		require.Eventually(t, func() bool {
-			cnt, err := mgr.GetSubtaskInStatesCnt(ctx, taskID, proto.TaskStatePending)
+			cntByStates, err := mgr.GetSubtaskCntGroupByStates(ctx, taskID, proto.StepOne)
 			require.NoError(t, err)
-			return int64(subtaskCnt) == cnt
+			return int64(subtaskCnt) == cntByStates[proto.SubtaskStatePending]
 		}, time.Second, 50*time.Millisecond)
 	}
 
 	tasks := checkTaskRunningCnt()
 	checkSubtaskCnt(tasks, taskID)
 	for i := 1; i <= subtaskCnt; i++ {
-		err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateSucceed, nil)
+		err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateSucceed, nil)
 		require.NoError(t, err)
 	}
 	sch.DoCleanUpRoutine()

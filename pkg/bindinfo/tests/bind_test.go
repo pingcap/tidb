@@ -317,9 +317,9 @@ func TestBindingSymbolList(t *testing.T) {
 	require.True(t, tk.MustUseIndex("select a, b from t where a = 3 limit 1, 100", "ib(b)"))
 
 	// Normalize
-	sql, hash := parser.NormalizeDigestForBinding("select a, b from test . t where a = 1 limit 0, 1")
+	_, hash := parser.NormalizeDigestForBinding("select a, b from test . t where a = 1 limit 0, 1")
 
-	bindData := dom.BindHandle().GetGlobalBinding(hash.String(), sql, "test")
+	bindData := dom.BindHandle().GetGlobalBinding(hash.String())
 	require.NotNil(t, bindData)
 	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` = ? limit ...", bindData.OriginalSQL)
 	bind := bindData.Bindings[0]
@@ -361,9 +361,9 @@ func TestBindingInListWithSingleLiteral(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 
 	// Normalize
-	sql, hash := parser.NormalizeDigestForBinding("select a, b from test . t where a in (1)")
+	_, hash := parser.NormalizeDigestForBinding("select a, b from test . t where a in (1)")
 
-	bindData := dom.BindHandle().GetGlobalBinding(hash.String(), sql, "test")
+	bindData := dom.BindHandle().GetGlobalBinding(hash.String())
 	require.NotNil(t, bindData)
 	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` in ( ... )", bindData.OriginalSQL)
 	bind := bindData.Bindings[0]
@@ -397,8 +397,8 @@ func TestBestPlanInBaselines(t *testing.T) {
 	tk.MustExec(`create global binding for select a, b from t where a = 1 limit 0, 1 using select /*+ use_index(@sel_1 test.t ia) */ a, b from t where a = 1 limit 0, 1`)
 	tk.MustExec(`create global binding for select a, b from t where b = 1 limit 0, 1 using select /*+ use_index(@sel_1 test.t ib) */ a, b from t where b = 1 limit 0, 1`)
 
-	sql, hash := internal.UtilNormalizeWithDefaultDB(t, "select a, b from t where a = 1 limit 0, 1")
-	bindData := dom.BindHandle().GetGlobalBinding(hash, sql, "test")
+	_, hash := internal.UtilNormalizeWithDefaultDB(t, "select a, b from t where a = 1 limit 0, 1")
+	bindData := dom.BindHandle().GetGlobalBinding(hash)
 	require.NotNil(t, bindData)
 	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` = ? limit ...", bindData.OriginalSQL)
 	bind := bindData.Bindings[0]
@@ -430,8 +430,8 @@ func TestErrorBind(t *testing.T) {
 	_, err := tk.Exec("create global binding for select * from t where i>100 using select * from t use index(index_t) where i>100")
 	require.NoError(t, err, "err %v", err)
 
-	sql, hash := parser.NormalizeDigestForBinding("select * from test . t where i > ?")
-	bindData := dom.BindHandle().GetGlobalBinding(hash.String(), sql, "test")
+	_, hash := parser.NormalizeDigestForBinding("select * from test . t where i > ?")
+	bindData := dom.BindHandle().GetGlobalBinding(hash.String())
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `i` > ?", bindData.OriginalSQL)
 	bind := bindData.Bindings[0]
@@ -487,8 +487,8 @@ func TestHintsSetID(t *testing.T) {
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(test.t, idx_a) */ * from t where a > 10")
 	bindHandle := dom.BindHandle()
 	// Verify the added Binding contains ID with restored query block.
-	sql, hash := internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
-	bindData := bindHandle.GetGlobalBinding(hash, sql, "test")
+	_, hash := internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
+	bindData := bindHandle.GetGlobalBinding(hash)
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
 	require.Len(t, bindData.Bindings, 1)
@@ -497,7 +497,7 @@ func TestHintsSetID(t *testing.T) {
 
 	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(t, idx_a) */ * from t where a > 10")
-	bindData = bindHandle.GetGlobalBinding(hash, sql, "test")
+	bindData = bindHandle.GetGlobalBinding(hash)
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
 	require.Len(t, bindData.Bindings, 1)
@@ -506,7 +506,7 @@ func TestHintsSetID(t *testing.T) {
 
 	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@sel_1 t, idx_a) */ * from t where a > 10")
-	bindData = bindHandle.GetGlobalBinding(hash, sql, "test")
+	bindData = bindHandle.GetGlobalBinding(hash)
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
 	require.Len(t, bindData.Bindings, 1)
@@ -515,7 +515,7 @@ func TestHintsSetID(t *testing.T) {
 
 	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@qb1 t, idx_a) qb_name(qb1) */ * from t where a > 10")
-	bindData = bindHandle.GetGlobalBinding(hash, sql, "test")
+	bindData = bindHandle.GetGlobalBinding(hash)
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
 	require.Len(t, bindData.Bindings, 1)
@@ -524,7 +524,7 @@ func TestHintsSetID(t *testing.T) {
 
 	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(T, IDX_A) */ * from t where a > 10")
-	bindData = bindHandle.GetGlobalBinding(hash, sql, "test")
+	bindData = bindHandle.GetGlobalBinding(hash)
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
 	require.Len(t, bindData.Bindings, 1)
@@ -535,7 +535,7 @@ func TestHintsSetID(t *testing.T) {
 	err := tk.ExecToErr("create global binding for select * from t using select /*+ non_exist_hint() */ * from t")
 	require.True(t, terror.ErrorEqual(err, parser.ErrParse))
 	tk.MustExec("create global binding for select * from t where a > 10 using select * from t where a > 10")
-	bindData = bindHandle.GetGlobalBinding(hash, sql, "test")
+	bindData = bindHandle.GetGlobalBinding(hash)
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
 	require.Len(t, bindData.Bindings, 1)

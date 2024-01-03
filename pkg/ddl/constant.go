@@ -48,7 +48,6 @@ const (
 		job_meta longblob,
 		type int,
 		processing int,
-		bdr_role varchar(64),
 		primary key(job_id))`
 	// ReorgTableSQL is the CREATE TABLE SQL of `tidb_ddl_reorg`.
 	ReorgTableSQL = "create table " + ReorgTable + `(
@@ -69,7 +68,6 @@ const (
 		schema_ids text(65535),
 		table_ids text(65535),
 		create_time datetime,
-		bdr_role varchar(64),
 		primary key(job_id))`
 	// BackgroundSubtaskTableSQL is the CREATE TABLE SQL of `tidb_background_subtask`.
 	BackgroundSubtaskTableSQL = `create table tidb_background_subtask (
