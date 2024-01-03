@@ -2383,6 +2383,10 @@ func DeniedByBDR(role BDRRole, action model.ActionType, job *model.Job) (denied 
 		if job != nil && action == model.ActionAddColumn && len(job.Args) >= 5 && job.Args[4].(bool) {
 			return true
 		}
+		if ddlType == model.SafeDDL || ddlType == model.UnmanagementDDL {
+			return false
+		}
+	case BDRRoleSecondary:
 		if !ok {
 			return true
 		}
