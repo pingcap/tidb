@@ -208,7 +208,7 @@ func TestSwitchTaskStep(t *testing.T) {
 	require.Equal(t, []byte("changed meta"), task.Meta)
 	checkAfterSwitchStep(t, startTime, task, subtasksStepOne, proto.StepOne)
 	// switch step again, no effect
-	// some fields are changed in prev call, revert them.
+	// some fields are changed in prev call, change back.
 	task.State = proto.TaskStatePending
 	task.Step = proto.StepInit
 	require.NoError(t, tm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, subtasksStepOne))
