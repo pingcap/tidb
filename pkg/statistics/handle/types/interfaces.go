@@ -115,8 +115,20 @@ type StatsAnalyze interface {
 	// DeleteAnalyzeJobs deletes the analyze jobs whose update time is earlier than updateTime.
 	DeleteAnalyzeJobs(updateTime time.Time) error
 
-	// HandleAutoAnalyze analyzes the newly created table or index.
-	HandleAutoAnalyze(is infoschema.InfoSchema) (analyzed bool)
+	// CleanupCorruptedAnalyzeJobsOnCurrentInstance cleans up the corrupted analyze job.
+	// A corrupted analyze job is one that is in a 'pending' or 'running' state,
+	// but is associated with a TiDB instance that is either not currently running or has been restarted.
+	// We use current running analyze jobs to check whether the analyze job is corrupted.
+	CleanupCorruptedAnalyzeJobsOnCurrentInstance(currentRunningProcessIDs map[uint64]struct{}) error
+
+	// CleanupCorruptedAnalyzeJobsOnDeadInstances purges analyze jobs that are associated with non-existent instances.
+	// This function is specifically designed to handle jobs that have become corrupted due to
+	// their associated instances being removed from the current cluster.
+	CleanupCorruptedAnalyzeJobsOnDeadInstances() error
+
+	// HandleAutoAnalyze analyzes the outdated tables. (The change percent of the table exceeds the threshold)
+	// It also analyzes newly created tables and newly added indexes.
+	HandleAutoAnalyze() (analyzed bool)
 
 	// CheckAnalyzeVersion checks whether all the statistics versions of this table's columns and indexes are the same.
 	CheckAnalyzeVersion(tblInfo *model.TableInfo, physicalIDs []int64, version *int) bool
@@ -216,6 +228,15 @@ type StatsLock interface {
 	GetTableLockedAndClearForTest() (map[int64]struct{}, error)
 }
 
+// PartitionStatisticLoadTask currently records a partition-level jsontable.
+type PartitionStatisticLoadTask struct {
+	JSONTable  *statsutil.JSONTable
+	PhysicalID int64
+}
+
+// PersistFunc is used to persist JSONTable in the partition level.
+type PersistFunc func(ctx context.Context, jsonTable *statsutil.JSONTable, physicalID int64) error
+
 // StatsReadWriter is used to read and write stats to the storage.
 // TODO: merge and remove some methods.
 type StatsReadWriter interface {
@@ -256,9 +277,30 @@ type StatsReadWriter interface {
 	// then tidb-server will reload automatic.
 	UpdateStatsVersion() error
 
-	// ResetTableStats2KVForDrop update the version of mysql.stats_meta.
-	// Then GC worker will delete the old version of stats.
-	ResetTableStats2KVForDrop(physicalID int64) (err error)
+	// UpdateStatsMetaVersionForGC updates the version of mysql.stats_meta,
+	// ensuring it is greater than the last garbage collection (GC) time.
+	// The GC worker deletes old stats based on a safe time point,
+	// calculated as now() - 10 * max(stats lease, ddl lease).
+	// The range [last GC time, safe time point) is chosen to prevent
+	// the simultaneous deletion of numerous stats, minimizing potential
+	// performance issues.
+	// This function ensures the version is updated beyond the last GC time,
+	// allowing the GC worker to delete outdated stats.
+	//
+	// Explanation:
+	// - ddl lease: 10
+	// - stats lease: 3
+	// - safe time point: now() - 10 * 10 = now() - 100
+	// - now: 200
+	// - last GC time: 90
+	// - [last GC time, safe time point) = [90, 100)
+	// - To trigger stats deletion, the version must be updated beyond 90.
+	//
+	// This safeguards scenarios where a table remains unchanged for an extended period.
+	// For instance, if a table was created at time 90, and it's now time 200,
+	// with the last GC time at 95 and the safe time point at 100,
+	// updating the version beyond 95 ensures eventual deletion of stats.
+	UpdateStatsMetaVersionForGC(physicalID int64) (err error)
 
 	// ChangeGlobalStatsID changes the global stats ID.
 	ChangeGlobalStatsID(from, to int64) (err error)
@@ -286,12 +328,21 @@ type StatsReadWriter interface {
 	// DumpStatsToJSONBySnapshot dumps statistic to json.
 	DumpStatsToJSONBySnapshot(dbName string, tableInfo *model.TableInfo, snapshot uint64, dumpPartitionStats bool) (*statsutil.JSONTable, error)
 
+	// PersistStatsBySnapshot dumps statistic to json and call the function for each partition statistic to persist.
+	// Notice:
+	//  1. It might call the function `persist` with nil jsontable.
+	//  2. It is only used by BR, so partitions' statistic are always dumped.
+	PersistStatsBySnapshot(ctx context.Context, dbName string, tableInfo *model.TableInfo, snapshot uint64, persist PersistFunc) error
+
+	// LoadStatsFromJSONConcurrently consumes concurrently the statistic task from `taskCh`.
+	LoadStatsFromJSONConcurrently(ctx context.Context, tableInfo *model.TableInfo, taskCh chan *PartitionStatisticLoadTask, concurrencyForPartition int) error
+
 	// LoadStatsFromJSON will load statistic from JSONTable, and save it to the storage.
 	// In final, it will also udpate the stats cache.
-	LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema, jsonTbl *statsutil.JSONTable, concurrencyForPartition uint8) error
+	LoadStatsFromJSON(ctx context.Context, is infoschema.InfoSchema, jsonTbl *statsutil.JSONTable, concurrencyForPartition int) error
 
 	// LoadStatsFromJSONNoUpdate will load statistic from JSONTable, and save it to the storage.
-	LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema, jsonTbl *statsutil.JSONTable, concurrencyForPartition uint8) error
+	LoadStatsFromJSONNoUpdate(ctx context.Context, is infoschema.InfoSchema, jsonTbl *statsutil.JSONTable, concurrencyForPartition int) error
 
 	// Methods for extended stast.
 

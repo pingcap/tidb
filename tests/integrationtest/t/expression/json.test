@@ -343,7 +343,7 @@ select json_storage_free(NULL);
 select json_storage_free('{}');
 select json_storage_free('1');
 select json_storage_free('{"a": "b"}');
--- error 1064
+-- error 3140
 select json_storage_free('{"c":["a","b"]');
 
 # TestJSONExtractFromLast

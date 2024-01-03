@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
-	"io"
 	"sort"
 	"sync"
 	"time"
@@ -37,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/sync/errgroup"
 )
 
 // during test on ks3, we found that we can open about 8000 connections to ks3,
@@ -94,6 +92,8 @@ type Engine struct {
 	importedKVCount *atomic.Int64
 }
 
+const memLimit = 16 * 1024 * 1024 * 1024
+
 // NewExternalEngine creates an (external) engine.
 func NewExternalEngine(
 	storage storage.ExternalStorage,
@@ -113,15 +113,20 @@ func NewExternalEngine(
 	totalKVCount int64,
 	checkHotspot bool,
 ) common.Engine {
+	memLimiter := membuf.NewLimiter(memLimit)
 	return &Engine{
-		storage:            storage,
-		dataFiles:          dataFiles,
-		statsFiles:         statsFiles,
-		startKey:           startKey,
-		endKey:             endKey,
-		splitKeys:          splitKeys,
-		regionSplitSize:    regionSplitSize,
-		bufPool:            membuf.NewPool(),
+		storage:         storage,
+		dataFiles:       dataFiles,
+		statsFiles:      statsFiles,
+		startKey:        startKey,
+		endKey:          endKey,
+		splitKeys:       splitKeys,
+		regionSplitSize: regionSplitSize,
+		bufPool: membuf.NewPool(
+			membuf.WithBlockNum(0),
+			membuf.WithPoolMemoryLimiter(memLimiter),
+			membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
+		),
 		checkHotspot:       checkHotspot,
 		keyAdapter:         keyAdapter,
 		duplicateDetection: duplicateDetection,
@@ -170,7 +175,12 @@ func (e *Engine) getAdjustedConcurrency() int {
 	return max(adjusted, 1)
 }
 
-func getFilesReadConcurrency(ctx context.Context, storage storage.ExternalStorage, statsFiles []string, startKey, endKey []byte) ([]uint64, []uint64, error) {
+func getFilesReadConcurrency(
+	ctx context.Context,
+	storage storage.ExternalStorage,
+	statsFiles []string,
+	startKey, endKey []byte,
+) ([]uint64, []uint64, error) {
 	result := make([]uint64, len(statsFiles))
 	startOffs, err := seekPropsOffsets(ctx, startKey, statsFiles, storage, false)
 	if err != nil {
@@ -182,133 +192,15 @@ func getFilesReadConcurrency(ctx context.Context, storage storage.ExternalStorag
 	}
 	for i := range statsFiles {
 		result[i] = (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
-		if result[i] < 16 {
-			result[i] = 1
-		} else {
-			logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
-				zap.String("filename", statsFiles[i]),
-			)
-		}
+		result[i] = max(result[i], 1)
+		logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
+			zap.String("filename", statsFiles[i]),
+			zap.Uint64("startOffset", startOffs[i]),
+			zap.Uint64("endOffset", endOffs[i]),
+			zap.Uint64("expected concurrency", result[i]),
+		)
 	}
 	return result, startOffs, nil
-}
-
-func readOneFile(
-	ctx context.Context,
-	storage storage.ExternalStorage,
-	dataFile string,
-	startKey, endKey []byte,
-	startOffset uint64,
-	concurrency uint64,
-	bufPool *membuf.Pool,
-	output *memKVsAndBuffers,
-) error {
-	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_one_file")
-
-	ts := time.Now()
-
-	rd, err := newKVReader(ctx, dataFile, storage, startOffset, 64*1024)
-	if err != nil {
-		return err
-	}
-	defer rd.Close()
-	if concurrency > 1 {
-		rd.byteReader.enableConcurrentRead(
-			storage,
-			dataFile,
-			int(concurrency)*2,
-			ConcurrentReaderBufferSizePerConc,
-			bufPool.NewBuffer(),
-		)
-		err = rd.byteReader.switchConcurrentMode(true)
-		if err != nil {
-			return err
-		}
-	}
-
-	// this buffer is associated with data slices and will return to caller
-	memBuf := bufPool.NewBuffer()
-	keys := make([][]byte, 0, 1024)
-	values := make([][]byte, 0, 1024)
-	size := 0
-
-	for {
-		k, v, err := rd.nextKV()
-		if err != nil {
-			if err == io.EOF {
-				break
-			}
-			return err
-		}
-		if bytes.Compare(k, startKey) < 0 {
-			continue
-		}
-		if bytes.Compare(k, endKey) >= 0 {
-			break
-		}
-		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
-		// directly read into memBuf?
-		keys = append(keys, memBuf.AddBytes(k))
-		values = append(values, memBuf.AddBytes(v))
-		size += len(k) + len(v)
-	}
-	readAndSortDurHist.Observe(time.Since(ts).Seconds())
-	output.mu.Lock()
-	output.keys = append(output.keys, keys...)
-	output.values = append(output.values, values...)
-	output.memKVBuffers = append(output.memKVBuffers, memBuf)
-	output.size += size
-	output.mu.Unlock()
-	return nil
-}
-
-func readAllData(
-	ctx context.Context,
-	storage storage.ExternalStorage,
-	dataFiles, statsFiles []string,
-	startKey, endKey []byte,
-	bufPool *membuf.Pool,
-	output *memKVsAndBuffers,
-) (err error) {
-	task := log.BeginTask(logutil.Logger(ctx), "read all data")
-	task.Info("arguments",
-		zap.Int("data-file-count", len(dataFiles)),
-		zap.Int("stat-file-count", len(statsFiles)),
-		zap.Binary("start-key", startKey),
-		zap.Binary("end-key", endKey),
-	)
-	defer func() {
-		task.End(zap.ErrorLevel, err)
-	}()
-
-	concurrences, startOffsets, err := getFilesReadConcurrency(
-		ctx,
-		storage,
-		statsFiles,
-		startKey,
-		endKey,
-	)
-	if err != nil {
-		return err
-	}
-	var eg errgroup.Group
-	for i := range dataFiles {
-		i := i
-		eg.Go(func() error {
-			return readOneFile(
-				ctx,
-				storage,
-				dataFiles[i],
-				startKey,
-				endKey,
-				startOffsets[i],
-				concurrences[i],
-				bufPool,
-				output,
-			)
-		})
-	}
-	return eg.Wait()
 }
 
 func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byte, outCh chan<- common.DataAndRange) error {
@@ -364,9 +256,11 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	readRateHist.Observe(float64(size) / 1024.0 / 1024.0 / readSecond)
 	sortRateHist.Observe(float64(size) / 1024.0 / 1024.0 / sortSecond)
 
-	newBuf := make([]*membuf.Buffer, 0, len(e.memKVsAndBuffers.memKVBuffers))
-	copy(newBuf, e.memKVsAndBuffers.memKVBuffers)
-	data := e.buildIngestData(e.memKVsAndBuffers.keys, e.memKVsAndBuffers.values, newBuf)
+	data := e.buildIngestData(
+		e.memKVsAndBuffers.keys,
+		e.memKVsAndBuffers.values,
+		e.memKVsAndBuffers.memKVBuffers,
+	)
 
 	// release the reference of e.memKVsAndBuffers
 	e.memKVsAndBuffers.keys = nil
@@ -524,7 +418,10 @@ func (e *Engine) Close() error {
 func (e *Engine) Reset() error {
 	if e.bufPool != nil {
 		e.bufPool.Destroy()
-		e.bufPool = membuf.NewPool()
+		memLimiter := membuf.NewLimiter(memLimit)
+		e.bufPool = membuf.NewPool(
+			membuf.WithPoolMemoryLimiter(memLimiter),
+		)
 	}
 	return nil
 }

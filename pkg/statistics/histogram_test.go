@@ -276,6 +276,170 @@ func TestMergePartitionLevelHist(t *testing.T) {
 			},
 			expBucketNumber: 3,
 		},
+		{
+			// issue#49023
+			partitionHists: [][]*bucket4Test{
+				{
+					// Col(1) = [1, 4,|| 6, 9, 9,|| 12, 12, 12,|| 13, 14, 15]
+					{
+						lower:  1,
+						upper:  4,
+						count:  2,
+						repeat: 1,
+						ndv:    2,
+					},
+					{
+						lower:  6,
+						upper:  9,
+						count:  5,
+						repeat: 2,
+						ndv:    2,
+					},
+					{
+						lower:  12,
+						upper:  12,
+						count:  5,
+						repeat: 3,
+						ndv:    1,
+					},
+					{
+						lower:  13,
+						upper:  15,
+						count:  11,
+						repeat: 1,
+						ndv:    3,
+					},
+				},
+				// Col(2) = [2, 5,|| 6, 7, 7,|| 11, 11, 11,|| 13, 14, 17]
+				{
+					{
+						lower:  2,
+						upper:  5,
+						count:  2,
+						repeat: 1,
+						ndv:    2,
+					},
+					{
+						lower:  6,
+						upper:  7,
+						count:  2,
+						repeat: 2,
+						ndv:    2,
+					},
+					{
+						lower:  11,
+						upper:  11,
+						count:  8,
+						repeat: 3,
+						ndv:    1,
+					},
+					{
+						lower:  13,
+						upper:  17,
+						count:  11,
+						repeat: 1,
+						ndv:    3,
+					},
+				},
+				// Col(3) = [2, 5,|| 6, 7, 7,|| 11, 11, 11,|| 13, 14, 17]
+				{
+					{
+						lower:  2,
+						upper:  5,
+						count:  2,
+						repeat: 1,
+						ndv:    2,
+					},
+					{
+						lower:  6,
+						upper:  7,
+						count:  2,
+						repeat: 2,
+						ndv:    2,
+					},
+					{
+						lower:  11,
+						upper:  11,
+						count:  8,
+						repeat: 3,
+						ndv:    1,
+					},
+					{
+						lower:  13,
+						upper:  17,
+						count:  11,
+						repeat: 1,
+						ndv:    3,
+					},
+				},
+				// Col(4) = [2, 5,|| 6, 7, 7,|| 11, 11, 11,|| 13, 14, 17]
+				{
+					{
+						lower:  2,
+						upper:  5,
+						count:  2,
+						repeat: 1,
+						ndv:    2,
+					},
+					{
+						lower:  6,
+						upper:  7,
+						count:  2,
+						repeat: 2,
+						ndv:    2,
+					},
+					{
+						lower:  11,
+						upper:  11,
+						count:  8,
+						repeat: 3,
+						ndv:    1,
+					},
+					{
+						lower:  13,
+						upper:  17,
+						count:  11,
+						repeat: 1,
+						ndv:    3,
+					},
+				},
+			},
+			totColSize: []int64{11, 11, 11, 11},
+			popedTopN: []topN4Test{
+				{
+					data:  18,
+					count: 5,
+				},
+				{
+					data:  4,
+					count: 6,
+				},
+			},
+			expHist: []*bucket4Test{
+				{
+					lower:  1,
+					upper:  9,
+					count:  17,
+					repeat: 2,
+					ndv:    10,
+				},
+				{
+					lower:  11,
+					upper:  11,
+					count:  35,
+					repeat: 9,
+					ndv:    1,
+				},
+				{
+					lower:  11,
+					upper:  18,
+					count:  55,
+					repeat: 5,
+					ndv:    8,
+				},
+			},
+			expBucketNumber: 3,
+		},
 	}
 
 	for _, tt := range tests {

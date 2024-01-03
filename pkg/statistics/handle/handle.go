@@ -175,11 +175,11 @@ func (h *Handle) FlushStats() {
 	for len(h.DDLEventCh()) > 0 {
 		e := <-h.DDLEventCh()
 		if err := h.HandleDDLEvent(e); err != nil {
-			statslogutil.StatsLogger.Error("handle ddl event fail", zap.Error(err))
+			statslogutil.StatsLogger().Error("handle ddl event fail", zap.Error(err))
 		}
 	}
 	if err := h.DumpStatsDeltaToKV(true); err != nil {
-		statslogutil.StatsLogger.Error("dump stats delta fail", zap.Error(err))
+		statslogutil.StatsLogger().Error("dump stats delta fail", zap.Error(err))
 	}
 }
 

@@ -47,7 +47,7 @@ import (
 
 func TestInitDefaultOptions(t *testing.T) {
 	plan := &Plan{}
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/mockNumCpu", "return(1)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(1)"))
 	variable.CloudStorageURI.Store("s3://bucket/path")
 	t.Cleanup(func() {
 		variable.CloudStorageURI.Store("")
@@ -65,7 +65,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
 	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/mockNumCpu", "return(10)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(10)"))
 	plan.initDefaultOptions()
 	require.Equal(t, int64(5), plan.ThreadCnt)
 }

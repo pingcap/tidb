@@ -15,8 +15,10 @@
 package sqlkiller
 
 import (
+	"math/rand"
 	"sync/atomic"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -46,6 +48,16 @@ func (killer *SQLKiller) SendKillSignal(reason killSignal) {
 
 // HandleSignal handles the kill signal and return the error.
 func (killer *SQLKiller) HandleSignal() error {
+	failpoint.Inject("randomPanic", func(val failpoint.Value) {
+		if p, ok := val.(int); ok {
+			if rand.Float64() > (float64)(p)/1000 {
+				if killer.ConnID != 0 {
+					targetStatus := rand.Int31n(5)
+					atomic.StoreUint32(&killer.Signal, uint32(targetStatus))
+				}
+			}
+		}
+	})
 	status := atomic.LoadUint32(&killer.Signal)
 	switch status {
 	case QueryInterrupted:

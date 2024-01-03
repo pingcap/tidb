@@ -25,15 +25,16 @@ import (
 type TaskTable interface {
 	GetTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
-
-	GetSubtasksInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...interface{}) ([]*proto.Subtask, error)
-	GetFirstSubtaskInStates(ctx context.Context, instanceID string, taskID int64, step proto.Step, states ...interface{}) (*proto.Subtask, error)
+	GetSubtasksByStepAndStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...proto.SubtaskState) ([]*proto.Subtask, error)
+	GetFirstSubtaskInStates(ctx context.Context, instanceID string, taskID int64, step proto.Step, states ...proto.SubtaskState) (*proto.Subtask, error)
 	StartManager(ctx context.Context, tidbID string, role string) error
-	StartSubtask(ctx context.Context, subtaskID int64) error
-	UpdateSubtaskStateAndError(ctx context.Context, tidbID string, subtaskID int64, state proto.TaskState, err error) error
+	// StartSubtask try to update the subtask's state to running if the subtask is owned by execID.
+	// If the update success, it means the execID's related task executor own the subtask.
+	StartSubtask(ctx context.Context, subtaskID int64, execID string) error
+	UpdateSubtaskStateAndError(ctx context.Context, tidbID string, subtaskID int64, state proto.SubtaskState, err error) error
 	FinishSubtask(ctx context.Context, tidbID string, subtaskID int64, meta []byte) error
 
-	HasSubtasksInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...interface{}) (bool, error)
+	HasSubtasksInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...proto.SubtaskState) (bool, error)
 	UpdateErrorToSubtask(ctx context.Context, tidbID string, taskID int64, err error) error
 	IsTaskExecutorCanceled(ctx context.Context, tidbID string, taskID int64) (bool, error)
 	PauseSubtasks(ctx context.Context, tidbID string, taskID int64) error
@@ -54,6 +55,7 @@ type TaskExecutor interface {
 	Rollback(context.Context, *proto.Task) error
 	Pause(context.Context, *proto.Task) error
 	Close()
+	IsRetryableError(err error) bool
 }
 
 // Extension extends the TaskExecutor.
@@ -67,6 +69,10 @@ type Extension interface {
 	// GetSubtaskExecutor returns the subtask executor for the subtask.
 	// Note: summary is the summary manager of all subtask of the same type now.
 	GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error)
+	// IsRetryableError returns whether the error is transient.
+	// When error is transient, the framework won't mark subtasks as failed,
+	// then the TaskExecutor can load the subtask again and redo it.
+	IsRetryableError(err error) bool
 }
 
 // EmptySubtaskExecutor is an empty Executor.

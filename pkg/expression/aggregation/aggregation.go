@@ -44,10 +44,10 @@ type Aggregation interface {
 	GetResult(evalCtx *AggEvaluateContext) types.Datum
 
 	// CreateContext creates a new AggEvaluateContext for the aggregation function.
-	CreateContext(ctx sessionctx.Context) *AggEvaluateContext
+	CreateContext(ctx expression.EvalContext) *AggEvaluateContext
 
 	// ResetContext resets the content of the evaluate context.
-	ResetContext(ctx sessionctx.Context, evalCtx *AggEvaluateContext)
+	ResetContext(ctx expression.EvalContext, evalCtx *AggEvaluateContext)
 }
 
 // NewDistAggFunc creates new Aggregate function for mock tikv.
@@ -87,7 +87,7 @@ func NewDistAggFunc(expr *tipb.Expr, fieldTps []*types.FieldType, ctx sessionctx
 
 // AggEvaluateContext is used to store intermediate result when calculating aggregate functions.
 type AggEvaluateContext struct {
-	Ctx             sessionctx.Context
+	Ctx             expression.EvalContext
 	DistinctChecker *distinctChecker
 	Count           int64
 	Value           types.Datum
@@ -127,7 +127,7 @@ func newAggFunc(funcName string, args []expression.Expression, hasDistinct bool)
 }
 
 // CreateContext implements Aggregation interface.
-func (af *aggFunction) CreateContext(ctx sessionctx.Context) *AggEvaluateContext {
+func (af *aggFunction) CreateContext(ctx expression.EvalContext) *AggEvaluateContext {
 	evalCtx := &AggEvaluateContext{Ctx: ctx}
 	if af.HasDistinct {
 		evalCtx.DistinctChecker = createDistinctChecker(ctx.GetSessionVars().StmtCtx)
@@ -135,7 +135,7 @@ func (af *aggFunction) CreateContext(ctx sessionctx.Context) *AggEvaluateContext
 	return evalCtx
 }
 
-func (af *aggFunction) ResetContext(ctx sessionctx.Context, evalCtx *AggEvaluateContext) {
+func (af *aggFunction) ResetContext(ctx expression.EvalContext, evalCtx *AggEvaluateContext) {
 	if af.HasDistinct {
 		evalCtx.DistinctChecker = createDistinctChecker(ctx.GetSessionVars().StmtCtx)
 	}
