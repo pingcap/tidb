@@ -2344,7 +2344,7 @@ func (cli *testServerClient) getMetrics(t *testing.T) []byte {
 
 func getStmtCnt(content string) (stmtCnt map[string]int) {
 	stmtCnt = make(map[string]int)
-	r := regexp.MustCompile("tidb_executor_statement_total{db=\"\",type=\"([A-Z|a-z|-]+)\"} (\\d+)")
+	r := regexp.MustCompile("tidb_executor_statement_total{db=\"\",resource_group=\".*\",type=\"([A-Z|a-z|-]+)\"} (\\d+)")
 	matchResult := r.FindAllStringSubmatch(content, -1)
 	for _, v := range matchResult {
 		cnt, _ := strconv.Atoi(v[2])
@@ -2355,7 +2355,7 @@ func getStmtCnt(content string) (stmtCnt map[string]int) {
 
 func getDBStmtCnt(content, dbName string) (stmtCnt map[string]int) {
 	stmtCnt = make(map[string]int)
-	r := regexp.MustCompile(fmt.Sprintf("tidb_executor_statement_total{db=\"%s\",type=\"([A-Z|a-z|-]+)\"} (\\d+)", dbName))
+	r := regexp.MustCompile(fmt.Sprintf("tidb_executor_statement_total{db=\"%s\",resource_group=\".*\",type=\"([A-Z|a-z|-]+)\"} (\\d+)", dbName))
 	matchResult := r.FindAllStringSubmatch(content, -1)
 	for _, v := range matchResult {
 		cnt, _ := strconv.Atoi(v[2])

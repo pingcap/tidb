@@ -6,7 +6,13 @@ go_library(
     importpath = "github.com/pingcap/tidb/sessiontxn/isolation/metrics",
     visibility = ["//visibility:public"],
     deps = [
+<<<<<<< HEAD:sessiontxn/isolation/metrics/BUILD.bazel
         "//metrics",
+=======
+        "//pkg/domain/resourcegroup",
+        "//pkg/metrics",
+        "//pkg/parser/mysql",
+>>>>>>> e80385270c9 (metrics: add connection and fail metrics  by `resource group name` (#49424)):pkg/server/metrics/BUILD.bazel
         "@com_github_prometheus_client_golang//prometheus",
     ],
 )

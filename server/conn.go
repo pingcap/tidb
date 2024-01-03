@@ -56,6 +56,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+<<<<<<< HEAD:server/conn.go
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
@@ -95,6 +96,55 @@ import (
 	"github.com/pingcap/tidb/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/tracing"
+=======
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/plugin"
+	"github.com/pingcap/tidb/pkg/privilege"
+	"github.com/pingcap/tidb/pkg/privilege/conn"
+	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
+	servererr "github.com/pingcap/tidb/pkg/server/err"
+	"github.com/pingcap/tidb/pkg/server/handler/tikvhandler"
+	"github.com/pingcap/tidb/pkg/server/internal"
+	"github.com/pingcap/tidb/pkg/server/internal/column"
+	"github.com/pingcap/tidb/pkg/server/internal/dump"
+	"github.com/pingcap/tidb/pkg/server/internal/handshake"
+	"github.com/pingcap/tidb/pkg/server/internal/parse"
+	"github.com/pingcap/tidb/pkg/server/internal/resultset"
+	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
+	server_metrics "github.com/pingcap/tidb/pkg/server/metrics"
+	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
+	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/arena"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
+	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/tracing"
+>>>>>>> e80385270c9 (metrics: add connection and fail metrics  by `resource group name` (#49424)):pkg/server/conn.go
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
@@ -318,16 +368,39 @@ func (cc *clientConn) handshake(ctx context.Context) error {
 func (cc *clientConn) Close() error {
 	cc.server.rwlock.Lock()
 	delete(cc.server.clients, cc.connectionID)
-	connections := len(cc.server.clients)
+	resourceGroupName, count := "", 0
+	if ctx := cc.getCtx(); ctx != nil {
+		resourceGroupName = ctx.GetSessionVars().ResourceGroupName
+		count = cc.server.ConnNumByResourceGroup[resourceGroupName]
+		if count <= 1 {
+			delete(cc.server.ConnNumByResourceGroup, resourceGroupName)
+		} else {
+			cc.server.ConnNumByResourceGroup[resourceGroupName]--
+		}
+	}
 	cc.server.rwlock.Unlock()
-	return closeConn(cc, connections)
+	return closeConn(cc, resourceGroupName, count)
 }
 
+<<<<<<< HEAD:server/conn.go
 func closeConn(cc *clientConn, connections int) error {
 	var err error
 	cc.closeOnce.Do(func() {
 		metrics.ConnGauge.Set(float64(connections))
 
+=======
+// closeConn is idempotent and thread-safe.
+// It will be called on the same `clientConn` more than once to avoid connection leak.
+func closeConn(cc *clientConn, resourceGroupName string, count int) error {
+	var err error
+	cc.closeOnce.Do(func() {
+		metrics.ConnGauge.WithLabelValues(resourceGroupName).Set(float64(count))
+
+		if cc.connectionID > 0 {
+			cc.server.dom.ReleaseConnID(cc.connectionID)
+			cc.connectionID = 0
+		}
+>>>>>>> e80385270c9 (metrics: add connection and fail metrics  by `resource group name` (#49424)):pkg/server/conn.go
 		if cc.bufReadConn != nil {
 			err = cc.bufReadConn.Close()
 			if err != nil {
@@ -355,7 +428,14 @@ func closeConn(cc *clientConn, connections int) error {
 
 func (cc *clientConn) closeWithoutLock() error {
 	delete(cc.server.clients, cc.connectionID)
-	return closeConn(cc, len(cc.server.clients))
+	name := cc.getCtx().GetSessionVars().ResourceGroupName
+	count := cc.server.ConnNumByResourceGroup[name]
+	if count <= 1 {
+		delete(cc.server.ConnNumByResourceGroup, name)
+	} else {
+		cc.server.ConnNumByResourceGroup[name]--
+	}
+	return closeConn(cc, name, count-1)
 }
 
 // writeInitialHandshake sends server version, connection ID, server capability, collation, server status
@@ -1187,9 +1267,11 @@ func (cc *clientConn) Run(ctx context.Context) {
 			if ctx := cc.getCtx(); ctx != nil {
 				txnMode = ctx.GetSessionVars().GetReadableTxnMode()
 			}
-			for _, dbName := range session.GetDBNames(cc.getCtx().GetSessionVars()) {
-				metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), dbName).Inc()
+			vars := cc.getCtx().GetSessionVars()
+			for _, dbName := range session.GetDBNames(vars) {
+				metrics.ExecuteErrorCounter.WithLabelValues(metrics.ExecuteErrorToLabel(err), dbName, vars.ResourceGroupName).Inc()
 			}
+
 			if storeerr.ErrLockAcquireFailAndNoWaitSet.Equal(err) {
 				logutil.Logger(ctx).Debug("Expected error for FOR UPDATE NOWAIT", zap.Error(err))
 			} else {
@@ -1237,20 +1319,25 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		return
 	}
 
+	vars := cc.getCtx().GetSessionVars()
+	resourceGroupName := vars.ResourceGroupName
 	var counter prometheus.Counter
-	if err != nil && int(cmd) < len(server_metrics.QueryTotalCountErr) {
-		counter = server_metrics.QueryTotalCountErr[cmd]
-	} else if err == nil && int(cmd) < len(server_metrics.QueryTotalCountOk) {
-		counter = server_metrics.QueryTotalCountOk[cmd]
+	if len(resourceGroupName) == 0 || resourceGroupName == resourcegroup.DefaultResourceGroupName {
+		if err != nil && int(cmd) < len(server_metrics.QueryTotalCountErr) {
+			counter = server_metrics.QueryTotalCountErr[cmd]
+		} else if err == nil && int(cmd) < len(server_metrics.QueryTotalCountOk) {
+			counter = server_metrics.QueryTotalCountOk[cmd]
+		}
 	}
+
 	if counter != nil {
 		counter.Inc()
 	} else {
 		label := strconv.Itoa(int(cmd))
 		if err != nil {
-			metrics.QueryTotalCounter.WithLabelValues(label, "Error").Inc()
+			metrics.QueryTotalCounter.WithLabelValues(label, "Error", resourceGroupName).Inc()
 		} else {
-			metrics.QueryTotalCounter.WithLabelValues(label, "OK").Inc()
+			metrics.QueryTotalCounter.WithLabelValues(label, "OK", resourceGroupName).Inc()
 		}
 	}
 
@@ -1276,8 +1363,13 @@ func (cc *clientConn) addMetrics(cmd byte, startTime time.Time, err error) {
 		server_metrics.AffectedRowsCounterUpdate.Add(float64(affectedRows))
 	}
 
+<<<<<<< HEAD:server/conn.go
 	for _, dbName := range session.GetDBNames(cc.getCtx().GetSessionVars()) {
 		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName).Observe(cost.Seconds())
+=======
+	for _, dbName := range session.GetDBNames(vars) {
+		metrics.QueryDurationHistogram.WithLabelValues(sqlType, dbName, vars.StmtCtx.ResourceGroupName).Observe(cost.Seconds())
+>>>>>>> e80385270c9 (metrics: add connection and fail metrics  by `resource group name` (#49424)):pkg/server/conn.go
 	}
 }
 
