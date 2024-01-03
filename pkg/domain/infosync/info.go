@@ -200,7 +200,9 @@ func GlobalInfoSyncerInit(
 	skipRegisterToDashBoard bool,
 ) (*InfoSyncer, error) {
 	if pdHTTPCli != nil {
-		pdHTTPCli = pdHTTPCli.WithRespHandler(pdResponseHandler)
+		pdHTTPCli = pdHTTPCli.
+			WithCallerID("tidb-info-syncer").
+			WithRespHandler(pdResponseHandler)
 	}
 	is := &InfoSyncer{
 		etcdCli:           etcdCli,
@@ -1061,12 +1063,12 @@ func GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rul
 }
 
 // CalculateTiFlashProgress calculates TiFlash replica progress
-func CalculateTiFlashProgress(tableID int64, replicaCount uint64, TiFlashStores map[int64]pdhttp.StoreInfo) (float64, error) {
+func CalculateTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores map[int64]pdhttp.StoreInfo) (float64, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
-	return is.tiflashReplicaManager.CalculateTiFlashProgress(tableID, replicaCount, TiFlashStores)
+	return is.tiflashReplicaManager.CalculateTiFlashProgress(tableID, replicaCount, tiFlashStores)
 }
 
 // UpdateTiFlashProgressCache updates tiflashProgressCache

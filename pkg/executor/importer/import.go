@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/executor/asyncloaddata"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -57,7 +56,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/filter"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	kvconfig "github.com/tikv/client-go/v2/config"
@@ -502,6 +500,8 @@ func (e *LoadDataController) checkFieldParams() error {
 }
 
 func (p *Plan) initDefaultOptions() {
+	// we're using cpu count of current node, not of framework managed nodes,
+	// but it seems more intuitive.
 	threadCnt := cpu.GetCPUCount()
 	threadCnt = int(math.Max(1, float64(threadCnt)*0.5))
 
@@ -942,11 +942,7 @@ func (*LoadDataController) initExternalStore(ctx context.Context, u *url.URL, ta
 		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, GetMsgFromBRError(err2))
 	}
 
-	opt := &storage.ExternalStorageOptions{}
-	if intest.InTest {
-		opt.NoCredentials = true
-	}
-	s, err := storage.New(ctx, b, opt)
+	s, err := storage.NewWithDefaultOpt(ctx, b)
 	if err != nil {
 		return nil, exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(target, GetMsgFromBRError(err))
 	}
@@ -1292,13 +1288,13 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 
 // JobImportParam is the param of the job import.
 type JobImportParam struct {
-	Job      *asyncloaddata.Job
+	Job      *Job
 	Group    *errgroup.Group
 	GroupCtx context.Context
 	// should be closed in the end of the job.
 	Done chan struct{}
 
-	Progress *asyncloaddata.Progress
+	Progress *Progress
 }
 
 // JobImportResult is the result of the job import.

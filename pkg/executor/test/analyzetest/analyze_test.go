@@ -732,7 +732,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 	tk.MustExec("insert into t values (10,10,10)")
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	require.Nil(t, h.Update(is))
-	h.HandleAutoAnalyze(is)
+	h.HandleAutoAnalyze()
 	tbl = h.GetTableStats(tableInfo)
 	require.Greater(t, tbl.Version, lastVersion)
 	lastVersion = tbl.Version
@@ -1086,7 +1086,7 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	require.Nil(t, h.DumpStatsDeltaToKV(true))
 	require.Nil(t, h.Update(is))
 	// auto analyze uses the saved option(predicate columns).
-	h.HandleAutoAnalyze(is)
+	h.HandleAutoAnalyze()
 	tblStats = h.GetTableStats(tblInfo)
 	require.Less(t, lastVersion, tblStats.Version)
 	lastVersion = tblStats.Version
@@ -1939,7 +1939,7 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 					require.NoError(t, failpoint.Disable(mockSlowAnalyze))
 				}()
 			}
-			require.True(t, h.HandleAutoAnalyze(is), comment)
+			require.True(t, h.HandleAutoAnalyze(), comment)
 			currentVersion := h.GetTableStats(tableInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the table stats are updated.
@@ -2011,7 +2011,7 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 					require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockSlowAnalyzeIndex"))
 				}()
 			}
-			require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()), comment)
+			require.True(t, h.HandleAutoAnalyze(), comment)
 			currentVersion := h.GetTableStats(tblInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the index stats are updated.
@@ -2616,7 +2616,7 @@ PARTITION BY RANGE ( id ) (
 		h.SetLease(oriLease)
 	}()
 	is := dom.InfoSchema()
-	h.HandleAutoAnalyze(is)
+	h.HandleAutoAnalyze()
 	tk.MustExec("create index idxa on t (a)")
 	tk.MustExec("create index idxb on t (b)")
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -2651,7 +2651,7 @@ PARTITION BY RANGE ( id ) (
 		h.SetLease(oriLease)
 	}()
 	is := dom.InfoSchema()
-	h.HandleAutoAnalyze(is)
+	h.HandleAutoAnalyze()
 	tk.MustExec("alter table t add column a int")
 	tk.MustExec("alter table t add column b int")
 	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -2746,7 +2746,7 @@ func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/injectAnalyzeSnapshot", fmt.Sprintf("return(%d)", startTS)))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/injectBaseCount", "return(3)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/injectBaseModifyCount", "return(0)"))
-	require.True(t, h.HandleAutoAnalyze(dom.InfoSchema()))
+	require.True(t, h.HandleAutoAnalyze())
 	// Check the count / modify_count changes during the analyze are not lost.
 	tk.MustQuery(fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tid)).Check(testkit.Rows(
 		"6 3",
@@ -2774,10 +2774,12 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 	tk.MustExec("analyze table t columns a")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(""+
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\"",
-		"Warning 1105 Columns b are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats",
-		"Warning 1105 analyzing multi-valued indexes is not supported, skip idx_c"))
-	tk.MustQuery("select job_info from mysql.analyze_jobs where table_schema = 'test' and table_name = 't'").Check(testkit.Rows(
-		"analyze table columns a, b with 256 buckets, 500 topn, 1 samplerate"))
+		"Warning 1105 Columns b are missing in ANALYZE but their stats are needed for calculating stats for indexes/primary key/extended stats"))
+	tk.MustQuery("select job_info from mysql.analyze_jobs where table_schema = 'test' and table_name = 't'").Sort().Check(
+		testkit.Rows(
+			"analyze index idx_c",
+			"analyze table columns a, b with 256 buckets, 500 topn, 1 samplerate",
+		))
 
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -2788,13 +2790,12 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 	require.True(t, stats.Columns[tblInfo.Columns[1].ID].IsStatsInitialized())
 	require.False(t, stats.Columns[tblInfo.Columns[2].ID].IsStatsInitialized())
 	require.True(t, stats.Indices[tblInfo.Indices[0].ID].IsStatsInitialized())
-	require.False(t, stats.Indices[tblInfo.Indices[1].ID].IsStatsInitialized())
+	require.True(t, stats.Indices[tblInfo.Indices[1].ID].IsStatsInitialized())
 }
 
 // TestAnalyzeMVIndex tests analyzing the mv index use some real data in the table.
 // It checks the analyze jobs, async loading and the stats content in the memory.
 func TestAnalyzeMVIndex(t *testing.T) {
-	t.Skip()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/DebugAnalyzeJobOperations", "return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/DebugAnalyzeJobOperations", "return(true)"))
 	defer func() {
@@ -2944,12 +2945,12 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	))
 	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.bin')").Check(testkit.Rows(
 		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[0x31,0x31], keep order:false, stats:partial[ia:allEvicted, ij_binary:allEvicted, j:unInitialized]",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[ia:allEvicted, ij_binary:allEvicted, j:unInitialized]",
 		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, ij_binary:allEvicted, j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.char')").Check(testkit.Rows(
 		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[0x31,0x31], keep order:false, stats:partial[ia:allEvicted, ij_char:allEvicted, j:unInitialized]",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[ia:allEvicted, ij_char:allEvicted, j:unInitialized]",
 		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, ij_char:allEvicted, j:unInitialized]",
 	))
 	// 3.2. emulate the background async loading
@@ -2972,12 +2973,12 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	))
 	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.bin')").Check(testkit.Rows(
 		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[0x31,0x31], keep order:false, stats:partial[j:unInitialized]",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[j:unInitialized]",
 		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.char')").Check(testkit.Rows(
 		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[0x31,0x31], keep order:false, stats:partial[j:unInitialized]",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[j:unInitialized]",
 		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
 
@@ -2998,12 +2999,12 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	))
 	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.bin')").Check(testkit.Rows(
 		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[0x31,0x31], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
 		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.char')").Check(testkit.Rows(
 		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[0x31,0x31], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
 		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
 	))
 

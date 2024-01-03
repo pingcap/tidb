@@ -449,6 +449,7 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 				Compact:            threshold > 0,
 				CompactConcurrency: 4,
 				CompactThreshold:   threshold,
+				BlockSize:          int(rc.cfg.TikvImporter.BlockSize),
 			}
 		}
 		// import backend can't reopen engine if engine is closed, so
@@ -771,8 +772,9 @@ ChunkLoop:
 
 		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
 			// TODO: use the compressed size of the chunk to conduct memory control
-			_, err = getChunkCompressedSizeForParquet(ctx, chunk, rc.store)
-			return nil, errors.Trace(err)
+			if _, err = getChunkCompressedSizeForParquet(ctx, chunk, rc.store); err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 
 		restoreWorker := rc.regionWorkers.Apply()

@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -116,48 +117,6 @@ func (tp JoinType) String() string {
 	return "unsupported join type"
 }
 
-const (
-	// Hint flag for join
-	preferINLJ uint = 1 << iota
-	preferINLHJ
-	preferINLMJ
-	preferHJBuild
-	preferHJProbe
-	preferHashJoin
-	preferNoHashJoin
-	preferMergeJoin
-	preferNoMergeJoin
-	preferNoIndexJoin
-	preferNoIndexHashJoin
-	preferNoIndexMergeJoin
-	preferBCJoin
-	preferShuffleJoin
-	preferRewriteSemiJoin
-
-	// Hint flag to specify the join with direction
-	preferLeftAsINLJInner
-	preferRightAsINLJInner
-	preferLeftAsINLHJInner
-	preferRightAsINLHJInner
-	preferLeftAsINLMJInner
-	preferRightAsINLMJInner
-	preferLeftAsHJBuild
-	preferRightAsHJBuild
-	preferLeftAsHJProbe
-	preferRightAsHJProbe
-
-	// Hint flag for Agg
-	preferHashAgg
-	preferStreamAgg
-	preferMPP1PhaseAgg
-	preferMPP2PhaseAgg
-)
-
-const (
-	preferTiKV = 1 << iota
-	preferTiFlash
-)
-
 // LogicalJoin is the logical join plan.
 type LogicalJoin struct {
 	logicalSchemaProducer
@@ -168,7 +127,7 @@ type LogicalJoin struct {
 	StraightJoin  bool
 
 	// hintInfo stores the join algorithm hint information specified by client.
-	hintInfo            *tableHintInfo
+	hintInfo            *h.TableHintInfo
 	preferJoinType      uint
 	preferJoinOrder     bool
 	leftPreferJoinType  uint
@@ -218,7 +177,7 @@ func (p *LogicalJoin) isNAAJ() bool {
 // Shallow shallow copies a LogicalJoin struct.
 func (p *LogicalJoin) Shallow() *LogicalJoin {
 	join := *p
-	return join.Init(p.SCtx(), p.SelectBlockOffset())
+	return join.Init(p.SCtx(), p.QueryBlockOffset())
 }
 
 // ExtractFD implements the interface LogicalPlan.
@@ -958,7 +917,7 @@ type LogicalAggregation struct {
 	GroupByItems []expression.Expression
 
 	// aggHints stores aggregation hint information.
-	aggHints aggHintInfo
+	aggHints h.AggHintInfo
 
 	possibleProperties [][]*expression.Column
 	inputCount         float64 // inputCount is the input count of this plan.
@@ -1453,7 +1412,7 @@ type DataSource struct {
 	logicalSchemaProducer
 
 	astIndexHints []*ast.IndexHint
-	IndexHints    []indexHintInfo
+	IndexHints    []h.IndexHintInfo
 	table         table.Table
 	tableInfo     *model.TableInfo
 	Columns       []*model.ColumnInfo
@@ -1461,7 +1420,7 @@ type DataSource struct {
 
 	TableAsName *model.CIStr
 	// indexMergeHints are the hint for indexmerge.
-	indexMergeHints []indexHintInfo
+	indexMergeHints []h.IndexHintInfo
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
 	// allConds contains all the filters on this table. For now it's maintained
@@ -1597,9 +1556,9 @@ func getTablePath(paths []*util.AccessPath) *util.AccessPath {
 }
 
 func (ds *DataSource) buildTableGather() LogicalPlan {
-	ts := LogicalTableScan{Source: ds, HandleCols: ds.handleCols}.Init(ds.SCtx(), ds.SelectBlockOffset())
+	ts := LogicalTableScan{Source: ds, HandleCols: ds.handleCols}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	ts.SetSchema(ds.Schema())
-	sg := TiKVSingleGather{Source: ds, IsIndexGather: false}.Init(ds.SCtx(), ds.SelectBlockOffset())
+	sg := TiKVSingleGather{Source: ds, IsIndexGather: false}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	sg.SetSchema(ds.Schema())
 	sg.SetChildren(ts)
 	return sg
@@ -1614,7 +1573,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) LogicalPlan {
 		FullIdxColLens: path.FullIdxColLens,
 		IdxCols:        path.IdxCols,
 		IdxColLens:     path.IdxColLens,
-	}.Init(ds.SCtx(), ds.SelectBlockOffset())
+	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 
 	is.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 	copy(is.Columns, ds.Columns)
@@ -1625,7 +1584,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) LogicalPlan {
 		Source:        ds,
 		IsIndexGather: true,
 		Index:         path.Index,
-	}.Init(ds.SCtx(), ds.SelectBlockOffset())
+	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	sg.SetSchema(ds.Schema())
 	sg.SetChildren(is)
 	return sg
@@ -1649,12 +1608,17 @@ func (ds *DataSource) Convert2Gathers() (gathers []LogicalPlan) {
 	return gathers
 }
 
-func (ds *DataSource) detachCondAndBuildRangeForPath(path *util.AccessPath, conds []expression.Expression) error {
+func detachCondAndBuildRangeForPath(
+	sctx sessionctx.Context,
+	path *util.AccessPath,
+	conds []expression.Expression,
+	histColl *statistics.HistColl,
+) error {
 	if len(path.IdxCols) == 0 {
 		path.TableFilters = conds
 		return nil
 	}
-	res, err := ranger.DetachCondAndBuildRangeForIndex(ds.SCtx(), conds, path.IdxCols, path.IdxColLens, ds.SCtx().GetSessionVars().RangeMaxSize)
+	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx, conds, path.IdxCols, path.IdxColLens, sctx.GetSessionVars().RangeMaxSize)
 	if err != nil {
 		return err
 	}
@@ -1670,7 +1634,7 @@ func (ds *DataSource) detachCondAndBuildRangeForPath(path *util.AccessPath, cond
 			path.ConstCols[i] = res.ColumnValues[i] != nil
 		}
 	}
-	path.CountAfterAccess, err = cardinality.GetRowCountByIndexRanges(ds.SCtx(), ds.tableStats.HistColl, path.Index.ID, path.Ranges)
+	path.CountAfterAccess, err = cardinality.GetRowCountByIndexRanges(sctx, histColl, path.Index.ID, path.Ranges)
 	return err
 }
 
@@ -1682,7 +1646,7 @@ func (ds *DataSource) deriveCommonHandleTablePathStats(path *util.AccessPath, co
 	if len(conds) == 0 {
 		return nil
 	}
-	if err := ds.detachCondAndBuildRangeForPath(path, conds); err != nil {
+	if err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.tableStats.HistColl); err != nil {
 		return err
 	}
 	if path.EqOrInCondCount == len(path.AccessConds) {
@@ -1827,7 +1791,7 @@ func (ds *DataSource) fillIndexPath(path *util.AccessPath, conds []expression.Ex
 			}
 		}
 	}
-	err := ds.detachCondAndBuildRangeForPath(path, conds)
+	err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.tableStats.HistColl)
 	return err
 }
 
@@ -1951,7 +1915,7 @@ type LogicalTopN struct {
 	PartitionBy []property.SortItem // This is used for enhanced topN optimization
 	Offset      uint64
 	Count       uint64
-	limitHints  limitHintInfo
+	limitHints  h.LimitHintInfo
 }
 
 // GetPartitionBy returns partition by fields
@@ -1980,7 +1944,7 @@ type LogicalLimit struct {
 	PartitionBy []property.SortItem // This is used for enhanced topN optimization
 	Offset      uint64
 	Count       uint64
-	limitHints  limitHintInfo
+	limitHints  h.LimitHintInfo
 	IsPartial   bool
 }
 

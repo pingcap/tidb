@@ -68,8 +68,8 @@ func TestBindingLastUpdateTime(t *testing.T) {
 	bindHandle := bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
 	err := bindHandle.Update(true)
 	require.NoError(t, err)
-	sql, sqlDigest := parser.NormalizeDigest("select * from test . t0")
-	bindData := bindHandle.GetGlobalBinding(sqlDigest.String(), sql, "test")
+	_, sqlDigest := parser.NormalizeDigest("select * from test . t0")
+	bindData := bindHandle.GetGlobalBinding(sqlDigest.String())
 	require.Equal(t, 1, len(bindData.Bindings))
 	bind := bindData.Bindings[0]
 	updateTime := bind.UpdateTime.String()
@@ -133,8 +133,8 @@ func TestBindParse(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, bindHandle.Size())
 
-	sql, sqlDigest := parser.NormalizeDigest("select * from test . t")
-	bindData := bindHandle.GetGlobalBinding(sqlDigest.String(), sql, "test")
+	_, sqlDigest := parser.NormalizeDigest("select * from test . t")
+	bindData := bindHandle.GetGlobalBinding(sqlDigest.String())
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t`", bindData.OriginalSQL)
 	bind := bindData.Bindings[0]
@@ -447,9 +447,9 @@ func TestGlobalBinding(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, testSQL.memoryUsage, pb.GetGauge().GetValue())
 
-		sql, sqlDigest := internal.UtilNormalizeWithDefaultDB(t, testSQL.querySQL)
+		_, sqlDigest := internal.UtilNormalizeWithDefaultDB(t, testSQL.querySQL)
 
-		bindData := dom.BindHandle().GetGlobalBinding(sqlDigest, sql, "test")
+		bindData := dom.BindHandle().GetGlobalBinding(sqlDigest)
 		require.NotNil(t, bindData)
 		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
 		bind := bindData.Bindings[0]
@@ -482,7 +482,7 @@ func TestGlobalBinding(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 1, bindHandle.Size())
 
-		bindData = bindHandle.GetGlobalBinding(sqlDigest, sql, "test")
+		bindData = bindHandle.GetGlobalBinding(sqlDigest)
 		require.NotNil(t, bindData)
 		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
 		bind = bindData.Bindings[0]
@@ -497,7 +497,7 @@ func TestGlobalBinding(t *testing.T) {
 		_, err = tk.Exec("drop global " + testSQL.dropSQL)
 		require.Equal(t, uint64(1), tk.Session().AffectedRows())
 		require.NoError(t, err)
-		bindData = dom.BindHandle().GetGlobalBinding(sqlDigest, sql, "test")
+		bindData = dom.BindHandle().GetGlobalBinding(sqlDigest)
 		require.Nil(t, bindData)
 
 		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeGlobal, bindinfo.Enabled).Write(pb)
@@ -513,7 +513,7 @@ func TestGlobalBinding(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 0, bindHandle.Size())
 
-		bindData = bindHandle.GetGlobalBinding(sqlDigest, sql, "test")
+		bindData = bindHandle.GetGlobalBinding(sqlDigest)
 		require.Nil(t, bindData)
 
 		rs, err = tk.Exec("show global bindings")

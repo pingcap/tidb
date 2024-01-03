@@ -40,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/domain/globalconfigsync"
@@ -159,7 +159,7 @@ type Domain struct {
 	// TODO: use Run for each process in future pr
 	wg                  *util.WaitGroupEnhancedWrapper
 	statsUpdating       atomicutil.Int32
-	cancel              context.CancelFunc
+	cancelFns           []context.CancelFunc
 	indexUsageSyncLease time.Duration
 	dumpFileGcChecker   *dumpFileGcChecker
 	planReplayerHandle  *planReplayerHandle
@@ -340,7 +340,7 @@ func (do *Domain) sysFacHack() (pools.Resource, error) {
 	return do.sysExecutorFactory(do)
 }
 
-func (do *Domain) fetchPolicies(m *meta.Meta) ([]*model.PolicyInfo, error) {
+func (*Domain) fetchPolicies(m *meta.Meta) ([]*model.PolicyInfo, error) {
 	allPolicies, err := m.ListPolicies()
 	if err != nil {
 		return nil, err
@@ -348,7 +348,7 @@ func (do *Domain) fetchPolicies(m *meta.Meta) ([]*model.PolicyInfo, error) {
 	return allPolicies, nil
 }
 
-func (do *Domain) fetchResourceGroups(m *meta.Meta) ([]*model.ResourceGroupInfo, error) {
+func (*Domain) fetchResourceGroups(m *meta.Meta) ([]*model.ResourceGroupInfo, error) {
 	allResourceGroups, err := m.ListResourceGroups()
 	if err != nil {
 		return nil, err
@@ -380,7 +380,7 @@ func (do *Domain) fetchAllSchemasWithTables(m *meta.Meta) ([]*model.DBInfo, erro
 // so we decrease the concurrency.
 const fetchSchemaConcurrency = 1
 
-func (do *Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInfo {
+func (*Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DBInfo {
 	groupSize := (len(schemas) + fetchSchemaConcurrency - 1) / fetchSchemaConcurrency
 	splitted := make([][]*model.DBInfo, 0, fetchSchemaConcurrency)
 	schemaCnt := len(schemas)
@@ -394,7 +394,7 @@ func (do *Domain) splitForConcurrentFetch(schemas []*model.DBInfo) [][]*model.DB
 	return splitted
 }
 
-func (do *Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, done chan error) {
+func (*Domain) fetchSchemasWithTables(schemas []*model.DBInfo, m *meta.Meta, done chan error) {
 	for _, di := range schemas {
 		if di.State != model.StatePublic {
 			// schema is not public, can't be used outside.
@@ -456,7 +456,7 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 		if diff.RegenerateSchemaMap {
 			return nil, nil, nil, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
 		}
-		IDs, err := builder.ApplyDiff(m, diff)
+		ids, err := builder.ApplyDiff(m, diff)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -464,8 +464,8 @@ func (do *Domain) tryLoadSchemaDiffs(m *meta.Meta, usedVersion, newVersion int64
 			continue
 		}
 		diffTypes = append(diffTypes, diff.Type.String())
-		phyTblIDs = append(phyTblIDs, IDs...)
-		for i := 0; i < len(IDs); i++ {
+		phyTblIDs = append(phyTblIDs, ids...)
+		for i := 0; i < len(ids); i++ {
 			actions = append(actions, uint64(diff.Type))
 		}
 	}
@@ -554,7 +554,7 @@ func (do *Domain) Store() kv.Storage {
 }
 
 // GetScope gets the status variables scope.
-func (do *Domain) GetScope(status string) variable.ScopeFlag {
+func (*Domain) GetScope(string) variable.ScopeFlag {
 	// Now domain status variables scope are all default scope.
 	return variable.DefaultStatusVarScopeFlag
 }
@@ -595,7 +595,7 @@ func (do *Domain) Reload() error {
 	if err != nil {
 		if version = getFlashbackStartTSFromErrorMsg(err); version != 0 {
 			// use the lastest available version to create domain
-			version -= 1
+			version--
 			is, hitCache, oldSchemaVersion, changes, err = do.loadInfoSchema(version)
 		}
 	}
@@ -1036,8 +1036,8 @@ func (do *Domain) Close() {
 	}
 
 	do.slowQuery.Close()
-	if do.cancel != nil {
-		do.cancel()
+	for _, f := range do.cancelFns {
+		f()
 	}
 	do.wg.Wait()
 	do.sysSessionPool.Close()
@@ -1164,7 +1164,7 @@ func (do *Domain) Init(
 	}
 	sysCtxPool := pools.NewResourcePool(sysFac, 128, 128, resourceIdleTimeout)
 	ctx, cancelFunc := context.WithCancel(context.Background())
-	do.cancel = cancelFunc
+	do.cancelFns = append(do.cancelFns, cancelFunc)
 	var callback ddl.Callback
 	newCallbackFunc, err := ddl.GetCustomizedHook("default_hook")
 	if err != nil {
@@ -1422,7 +1422,7 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 	for _, s := range servers {
 		if v, ok := s.Labels[placement.DCLabelKey]; ok && v != "" {
 			if _, ok := storeZones[v]; ok {
-				storeZones[v] += 1
+				storeZones[v]++
 				if v == zone {
 					svrIdsInThisZone = append(svrIdsInThisZone, s.ID)
 				}
@@ -1458,7 +1458,8 @@ func (do *Domain) checkReplicaRead(ctx context.Context, pdClient pd.Client) erro
 }
 
 // InitDistTaskLoop initializes the distributed task framework.
-func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
+func (do *Domain) InitDistTaskLoop() error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalDistTask)
 	failpoint.Inject("MockDisableDistTask", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(nil)
@@ -1478,7 +1479,9 @@ func (do *Domain) InitDistTaskLoop(ctx context.Context) error {
 		errMsg := fmt.Sprintf("TiDB node ID( = %s ) not found in available TiDB nodes list", do.ddl.GetID())
 		return errors.New(errMsg)
 	}
-	executorManager, err := taskexecutor.NewManagerBuilder().BuildManager(ctx, serverID, taskManager)
+	managerCtx, cancel := context.WithCancel(ctx)
+	do.cancelFns = append(do.cancelFns, cancel)
+	executorManager, err := taskexecutor.NewManagerBuilder().BuildManager(managerCtx, serverID, taskManager)
 	if err != nil {
 		return err
 	}
@@ -1506,24 +1509,24 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		logutil.BgLogger().Info("dist task executor manager stopped")
 	}()
 
-	var dispatcherManager *dispatcher.Manager
+	var schedulerManager *scheduler.Manager
 	startDispatchIfNeeded := func() {
-		if dispatcherManager != nil && dispatcherManager.Initialized() {
+		if schedulerManager != nil && schedulerManager.Initialized() {
 			return
 		}
 		var err error
-		dispatcherManager, err = dispatcher.NewManager(ctx, taskManager, serverID)
+		schedulerManager, err = scheduler.NewManager(ctx, taskManager, serverID)
 		if err != nil {
-			logutil.BgLogger().Error("failed to create a dist task dispatcher manager", zap.Error(err))
+			logutil.BgLogger().Error("failed to create a dist task scheduler manager", zap.Error(err))
 			return
 		}
-		dispatcherManager.Start()
+		schedulerManager.Start()
 	}
 	stopDispatchIfNeeded := func() {
-		if dispatcherManager != nil && dispatcherManager.Initialized() {
-			logutil.BgLogger().Info("stopping dist task dispatcher manager because the current node is not DDL owner anymore", zap.String("id", do.ddl.GetID()))
-			dispatcherManager.Stop()
-			logutil.BgLogger().Info("dist task dispatcher manager stopped", zap.String("id", do.ddl.GetID()))
+		if schedulerManager != nil && schedulerManager.Initialized() {
+			logutil.BgLogger().Info("stopping dist task scheduler manager because the current node is not DDL owner anymore", zap.String("id", do.ddl.GetID()))
+			schedulerManager.Stop()
+			logutil.BgLogger().Info("dist task scheduler manager stopped", zap.String("id", do.ddl.GetID()))
 		}
 	}
 
@@ -2382,7 +2385,7 @@ func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
 	}
 }
 
-func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle, owner owner.Manager) {
+func (*Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle, owner owner.Manager) {
 	ch := make(chan struct{}, 1)
 	timeout, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -2403,7 +2406,7 @@ func (do *Domain) updateStatsWorkerExitPreprocessing(statsHandle *handle.Handle,
 	}
 }
 
-func (do *Domain) updateStatsWorker(ctx sessionctx.Context, owner owner.Manager) {
+func (do *Domain) updateStatsWorker(_ sessionctx.Context, owner owner.Manager) {
 	defer util.Recover(metrics.LabelDomain, "updateStatsWorker", nil, false)
 	logutil.BgLogger().Info("updateStatsWorker started.")
 	lease := do.statsLease
@@ -2472,7 +2475,7 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 		select {
 		case <-analyzeTicker.C:
 			if variable.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && owner.IsOwner() {
-				statsHandle.HandleAutoAnalyze(do.InfoSchema())
+				statsHandle.HandleAutoAnalyze()
 			}
 		case <-do.exit:
 			return
@@ -2497,7 +2500,7 @@ func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
 	defer util.Recover(metrics.LabelDomain, "analyzeJobsCleanupWorker", nil, false)
 	// For GC.
 	const gcInterval = time.Hour
-	const DaysToKeep = 7
+	const daysToKeep = 7
 	gcTicker := time.NewTicker(gcInterval)
 	// For clean up.
 	// Default stats lease is 3 * time.Second.
@@ -2515,7 +2518,7 @@ func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
 		case <-gcTicker.C:
 			// Only the owner should perform this operation.
 			if owner.IsOwner() {
-				updateTime := time.Now().AddDate(0, 0, -DaysToKeep)
+				updateTime := time.Now().AddDate(0, 0, -daysToKeep)
 				err := statsHandle.DeleteAnalyzeJobs(updateTime)
 				if err != nil {
 					logutil.BgLogger().Warn("gc analyze history failed", zap.Error(err))
@@ -2817,7 +2820,7 @@ func (do *Domain) acquireServerID(ctx context.Context) error {
 	}
 }
 
-func (do *Domain) releaseServerID(ctx context.Context) {
+func (do *Domain) releaseServerID(context.Context) {
 	serverID := do.ServerID()
 	if serverID == 0 {
 		return
@@ -2837,7 +2840,7 @@ func (do *Domain) releaseServerID(ctx context.Context) {
 }
 
 // propose server ID by random.
-func (do *Domain) proposeServerID(ctx context.Context, conflictCnt int) (uint64, error) {
+func (*Domain) proposeServerID(ctx context.Context, conflictCnt int) (uint64, error) {
 	// get a random server ID in range [min, max]
 	randomServerID := func(min uint64, max uint64) uint64 {
 		return uint64(rand.Int63n(int64(max-min+1)) + int64(min)) // #nosec G404

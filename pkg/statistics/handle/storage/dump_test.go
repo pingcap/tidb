@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -226,6 +227,10 @@ func TestLoadPartitionStats(t *testing.T) {
 func TestLoadPartitionStatsErrPanic(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+	val := runtime.GOMAXPROCS(1)
+	defer func() {
+		runtime.GOMAXPROCS(val)
+	}()
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")

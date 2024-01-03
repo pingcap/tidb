@@ -437,7 +437,7 @@ func (e *UpdateExec) Close() error {
 		}
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
-	return e.Children(0).Close()
+	return exec.Close(e.Children(0))
 }
 
 // Open implements the Executor Open interface.

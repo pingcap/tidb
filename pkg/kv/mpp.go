@@ -224,6 +224,8 @@ type MppCoordinator interface {
 	Close() error
 	// IsClosed returns whether mpp coordinator is closed or not
 	IsClosed() bool
+	// GetComputationCnt returns the number of node cnt that involved in the MPP computation.
+	GetNodeCnt() int
 }
 
 // MPPBuildTasksRequest request the stores allocation for a mpp plan fragment.

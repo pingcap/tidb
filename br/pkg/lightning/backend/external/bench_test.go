@@ -33,8 +33,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
+	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -44,7 +47,7 @@ func openTestingStorage(t *testing.T) storage.ExternalStorage {
 	if *testingStorageURI == "" {
 		t.Skip("testingStorageURI is not set")
 	}
-	s, err := storage.NewFromURL(context.Background(), *testingStorageURI, nil)
+	s, err := storage.NewFromURL(context.Background(), *testingStorageURI)
 	require.NoError(t, err)
 	return s
 }
@@ -360,7 +363,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 	}
 	writer := builder.BuildOneFile(
 		s.store, filePath, "writerID")
-	_ = writer.Init(ctx, 20*1024*1024)
+	intest.AssertNoError(writer.Init(ctx, 20*1024*1024))
 	key, val, _ := s.source.next()
 	for key != nil {
 		err := writer.WriteRow(ctx, key, val)
@@ -370,8 +373,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 	if s.beforeWriterClose != nil {
 		s.beforeWriterClose()
 	}
-	err := writer.Close(ctx)
-	intest.AssertNoError(err)
+	intest.AssertNoError(writer.Close(ctx))
 	if s.afterWriterClose != nil {
 		s.afterWriterClose()
 	}
@@ -574,17 +576,17 @@ func readFileConcurrently(t *testing.T, s *readTestSuite) {
 }
 
 func createEvenlyDistributedFiles(
-	t *testing.T,
+	store storage.ExternalStorage,
 	fileSize, fileCount int,
 	subDir string,
-) (storage.ExternalStorage, int) {
-	store := openTestingStorage(t)
+) (int, kv.Key, kv.Key) {
 	ctx := context.Background()
 
 	cleanOldFiles(ctx, store, "/"+subDir)
 
 	value := make([]byte, 100)
 	kvCnt := 0
+	var minKey, maxKey kv.Key
 	for i := 0; i < fileCount; i++ {
 		builder := NewWriterBuilder().
 			SetBlockSize(10 * 1024 * 1024).
@@ -599,6 +601,13 @@ func createEvenlyDistributedFiles(
 		totalSize := 0
 		for totalSize < fileSize {
 			key := fmt.Sprintf("key_%09d", keyIdx)
+			if len(minKey) == 0 && len(maxKey) == 0 {
+				minKey = []byte(key)
+				maxKey = []byte(key)
+			} else {
+				minKey = BytesMin(minKey, []byte(key))
+				maxKey = BytesMax(maxKey, []byte(key))
+			}
 			err := writer.WriteRow(ctx, []byte(key), value, nil)
 			intest.AssertNoError(err)
 			keyIdx += fileCount
@@ -608,7 +617,7 @@ func createEvenlyDistributedFiles(
 		err := writer.Close(ctx)
 		intest.AssertNoError(err)
 	}
-	return store, kvCnt
+	return kvCnt, minKey, maxKey
 }
 
 func readMergeIter(t *testing.T, s *readTestSuite) {
@@ -655,7 +664,9 @@ func TestCompareReaderEvenlyDistributedContent(t *testing.T) {
 	fileSize := 50 * 1024 * 1024
 	fileCnt := 24
 	subDir := "evenly_distributed"
-	store, kvCnt := createEvenlyDistributedFiles(t, fileSize, fileCnt, subDir)
+	store := openTestingStorage(t)
+
+	kvCnt, _, _ := createEvenlyDistributedFiles(store, fileSize, fileCnt, subDir)
 	memoryLimit := 64 * 1024 * 1024
 	fileIdx := 0
 	var (
@@ -721,7 +732,7 @@ func createAscendingFiles(
 	store storage.ExternalStorage,
 	fileSize, fileCount int,
 	subDir string,
-) int {
+) (int, kv.Key, kv.Key) {
 	ctx := context.Background()
 
 	cleanOldFiles(ctx, store, "/"+subDir)
@@ -729,6 +740,7 @@ func createAscendingFiles(
 	keyIdx := 0
 	value := make([]byte, 100)
 	kvCnt := 0
+	var minKey, maxKey kv.Key
 	for i := 0; i < fileCount; i++ {
 		builder := NewWriterBuilder().
 			SetMemorySizeLimit(uint64(float64(fileSize) * 1.1))
@@ -739,18 +751,25 @@ func createAscendingFiles(
 		)
 
 		totalSize := 0
+		var key string
 		for totalSize < fileSize {
-			key := fmt.Sprintf("key_%09d", keyIdx)
+			key = fmt.Sprintf("key_%09d", keyIdx)
+			if i == 0 && totalSize == 0 {
+				minKey = []byte(key)
+			}
 			err := writer.WriteRow(ctx, []byte(key), value, nil)
 			intest.AssertNoError(err)
 			keyIdx++
 			totalSize += len(key) + len(value)
 			kvCnt++
 		}
+		if i == fileCount-1 {
+			maxKey = []byte(key)
+		}
 		err := writer.Close(ctx)
 		intest.AssertNoError(err)
 	}
-	return kvCnt
+	return kvCnt, minKey, maxKey
 }
 
 var (
@@ -760,32 +779,36 @@ var (
 	concurrency  = flag.Int("concurrency", 100, "concurrency")
 	memoryLimit  = flag.Int("memory-limit", 64*units.MiB, "memory limit")
 	skipCreate   = flag.Bool("skip-create", false, "skip create files")
+	fileName     = flag.String("file-name", "test", "file name for tests")
 )
 
 func TestReadFileConcurrently(t *testing.T) {
-	testCompareReaderAscendingContent(t, readFileConcurrently)
+	testCompareReaderWithContent(t, createAscendingFiles, readFileConcurrently)
 }
 
 func TestReadFileSequential(t *testing.T) {
-	testCompareReaderAscendingContent(t, readFileSequential)
+	testCompareReaderWithContent(t, createAscendingFiles, readFileSequential)
 }
 
 func TestReadMergeIterCheckHotspot(t *testing.T) {
-	testCompareReaderAscendingContent(t, func(t *testing.T, suite *readTestSuite) {
+	testCompareReaderWithContent(t, createAscendingFiles, func(t *testing.T, suite *readTestSuite) {
 		suite.mergeIterHotspot = true
 		readMergeIter(t, suite)
 	})
 }
 
 func TestReadMergeIterWithoutCheckHotspot(t *testing.T) {
-	testCompareReaderAscendingContent(t, readMergeIter)
+	testCompareReaderWithContent(t, createAscendingFiles, readMergeIter)
 }
 
-func testCompareReaderAscendingContent(t *testing.T, fn func(t *testing.T, suite *readTestSuite)) {
+func testCompareReaderWithContent(
+	t *testing.T,
+	createFn func(store storage.ExternalStorage, fileSize int, fileCount int, objectPrefix string) (int, kv.Key, kv.Key),
+	fn func(t *testing.T, suite *readTestSuite)) {
 	store := openTestingStorage(t)
 	kvCnt := 0
 	if !*skipCreate {
-		kvCnt = createAscendingFiles(store, *fileSize, *fileCount, *objectPrefix)
+		kvCnt, _, _ = createFn(store, *fileSize, *fileCount, *objectPrefix)
 	}
 	fileIdx := 0
 	var (
@@ -895,4 +918,184 @@ func TestPrepareLargeData(t *testing.T) {
 	intest.AssertNoError(err)
 	t.Logf("total %d data files, first file size: %.2f MB, last file size: %.2f MB",
 		len(dataFiles), float64(firstFileSize)/1024/1024, float64(lastFileSize)/1024/1024)
+}
+
+type mergeTestSuite struct {
+	store            storage.ExternalStorage
+	subDir           string
+	totalKVCnt       int
+	concurrency      int
+	memoryLimit      int
+	mergeIterHotspot bool
+	minKey           kv.Key
+	maxKey           kv.Key
+	beforeMerge      func()
+	afterMerge       func()
+}
+
+func mergeStep(t *testing.T, s *mergeTestSuite) {
+	ctx := context.Background()
+	datas, _, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
+	intest.AssertNoError(err)
+
+	mergeOutput := "merge_output"
+	totalSize := atomic.NewUint64(0)
+	onClose := func(s *WriterSummary) {
+		totalSize.Add(s.TotalSize)
+	}
+	if s.beforeMerge != nil {
+		s.beforeMerge()
+	}
+
+	now := time.Now()
+	err = MergeOverlappingFiles(
+		ctx,
+		datas,
+		s.store,
+		int64(5*size.MB),
+		64*1024,
+		mergeOutput,
+		DefaultBlockSize,
+		DefaultMemSizeLimit,
+		8*1024,
+		1*size.MB,
+		8*1024,
+		onClose,
+		s.concurrency,
+		s.mergeIterHotspot,
+	)
+
+	intest.AssertNoError(err)
+	if s.afterMerge != nil {
+		s.afterMerge()
+	}
+	elapsed := time.Since(now)
+	t.Logf(
+		"merge speed for %d bytes in %s with %d concurrency, speed: %.2f MB/s",
+		totalSize.Load(),
+		elapsed,
+		s.concurrency,
+		float64(totalSize.Load())/elapsed.Seconds()/1024/1024,
+	)
+}
+
+func newMergeStep(t *testing.T, s *mergeTestSuite) {
+	ctx := context.Background()
+	datas, stats, err := GetAllFileNames(ctx, s.store, "/"+s.subDir)
+	intest.AssertNoError(err)
+
+	mergeOutput := "merge_output"
+	totalSize := atomic.NewUint64(0)
+	onClose := func(s *WriterSummary) {
+		totalSize.Add(s.TotalSize)
+	}
+	if s.beforeMerge != nil {
+		s.beforeMerge()
+	}
+
+	now := time.Now()
+	err = MergeOverlappingFilesV2(
+		ctx,
+		mockOneMultiFileStat(datas, stats),
+		s.store,
+		s.minKey,
+		s.maxKey.Next(),
+		int64(5*size.MB),
+		mergeOutput,
+		"test",
+		DefaultBlockSize,
+		8*1024,
+		1*size.MB,
+		8*1024,
+		onClose,
+		s.concurrency,
+		s.mergeIterHotspot,
+	)
+
+	intest.AssertNoError(err)
+	if s.afterMerge != nil {
+		s.afterMerge()
+	}
+	elapsed := time.Since(now)
+	t.Logf(
+		"new merge speed for %d bytes in %s, speed: %.2f MB/s",
+		totalSize.Load(),
+		elapsed,
+		float64(totalSize.Load())/elapsed.Seconds()/1024/1024,
+	)
+}
+
+func testCompareMergeWithContent(
+	t *testing.T,
+	concurrency int,
+	createFn func(store storage.ExternalStorage, fileSize int, fileCount int, objectPrefix string) (int, kv.Key, kv.Key),
+	fn func(t *testing.T, suite *mergeTestSuite)) {
+	store := openTestingStorage(t)
+	kvCnt := 0
+	var minKey, maxKey kv.Key
+	if !*skipCreate {
+		kvCnt, minKey, maxKey = createFn(store, *fileSize, *fileCount, *objectPrefix)
+	}
+
+	fileIdx := 0
+	var (
+		file *os.File
+		err  error
+	)
+	beforeTest := func() {
+		file, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", fileIdx))
+		intest.AssertNoError(err)
+		err = pprof.StartCPUProfile(file)
+		intest.AssertNoError(err)
+	}
+
+	afterTest := func() {
+		pprof.StopCPUProfile()
+	}
+
+	suite := &mergeTestSuite{
+		store:            store,
+		totalKVCnt:       kvCnt,
+		concurrency:      concurrency,
+		memoryLimit:      *memoryLimit,
+		beforeMerge:      beforeTest,
+		afterMerge:       afterTest,
+		subDir:           *objectPrefix,
+		minKey:           minKey,
+		maxKey:           maxKey,
+		mergeIterHotspot: true,
+	}
+
+	fn(t, suite)
+}
+
+func TestMergeBench(t *testing.T) {
+	testCompareMergeWithContent(t, 1, createAscendingFiles, mergeStep)
+	testCompareMergeWithContent(t, 1, createEvenlyDistributedFiles, mergeStep)
+	testCompareMergeWithContent(t, 2, createAscendingFiles, mergeStep)
+	testCompareMergeWithContent(t, 2, createEvenlyDistributedFiles, mergeStep)
+	testCompareMergeWithContent(t, 4, createAscendingFiles, mergeStep)
+	testCompareMergeWithContent(t, 4, createEvenlyDistributedFiles, mergeStep)
+	testCompareMergeWithContent(t, 8, createAscendingFiles, mergeStep)
+	testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, mergeStep)
+	testCompareMergeWithContent(t, 8, createAscendingFiles, newMergeStep)
+	testCompareMergeWithContent(t, 8, createEvenlyDistributedFiles, newMergeStep)
+}
+
+func TestReadStatFile(t *testing.T) {
+	ctx := context.Background()
+	store := openTestingStorage(t)
+	rd, _ := newStatsReader(ctx, store, *fileName, 4096)
+	for {
+
+		prop, err := rd.nextProp()
+		if err == io.EOF {
+			break
+		}
+		logutil.BgLogger().Info("read one prop",
+			zap.Int("prop len", prop.len()),
+			zap.Int("prop offset", int(prop.offset)),
+			zap.Int("prop size", int(prop.size)),
+			zap.Int("prop keys", int(prop.keys)))
+	}
 }
