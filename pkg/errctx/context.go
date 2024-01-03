@@ -33,10 +33,23 @@ const (
 	LevelIgnore
 )
 
+// LevelMap indicates the map from `ErrGroup` to `Level`
+type LevelMap [errGroupCount]Level
+
 // Context defines how to handle an error
 type Context struct {
-	levelMap    [errGroupCount]Level
+	levelMap    LevelMap
 	warnHandler contextutil.WarnHandler
+}
+
+// LevelMap returns the `levelMap` of the context.
+func (ctx *Context) LevelMap() LevelMap {
+	return ctx.levelMap
+}
+
+// LevelForGroup returns the level for a specified group.
+func (ctx *Context) LevelForGroup(errGroup ErrGroup) Level {
+	return ctx.levelMap[errGroup]
 }
 
 // WithStrictErrGroupLevel makes the context to return the error directly for any kinds of errors.
@@ -57,6 +70,14 @@ func (ctx *Context) WithErrGroupLevel(eg ErrGroup, l Level) Context {
 	newCtx.levelMap[eg] = l
 
 	return newCtx
+}
+
+// WithErrGroupLevels sets `levelMap` for an `ErrGroup`
+func (ctx *Context) WithErrGroupLevels(levels LevelMap) Context {
+	return Context{
+		levelMap:    levels,
+		warnHandler: ctx.warnHandler,
+	}
 }
 
 // appendWarning appends the error to warning. If the inner `warnHandler` is nil, do nothing.
@@ -136,9 +157,15 @@ func (ctx *Context) HandleErrorWithAlias(internalErr error, err error, warnErr e
 
 // NewContext creates an error context to handle the errors and warnings
 func NewContext(handler contextutil.WarnHandler) Context {
+	return NewContextWithLevels(LevelMap{}, handler)
+}
+
+// NewContextWithLevels creates an error context to handle the errors and warnings
+func NewContextWithLevels(levels LevelMap, handler contextutil.WarnHandler) Context {
 	intest.Assert(handler != nil)
 	return Context{
 		warnHandler: handler,
+		levelMap:    levels,
 	}
 }
 
@@ -153,9 +180,14 @@ type ErrGroup int
 const (
 	// ErrGroupTruncate is the group of truncated errors
 	ErrGroupTruncate ErrGroup = iota
-	// ErrGroupOverflow is the group of overflow errors
-	ErrGroupOverflow
-
+	// ErrGroupDupKey is the group of duplicate key errors
+	ErrGroupDupKey
+	// ErrGroupBadNull is the group of bad null errors
+	ErrGroupBadNull
+	// ErrGroupDividedByZero is the group of divided by zero errors
+	ErrGroupDividedByZero
+	// ErrGroupAutoIncReadFailed is the group of auto increment read failed errors
+	ErrGroupAutoIncReadFailed
 	// errGroupCount is the count of all `ErrGroup`. Please leave it at the end of the list.
 	errGroupCount
 )
@@ -176,4 +208,6 @@ func init() {
 	for _, errCode := range truncateErrCodes {
 		errGroupMap[errCode] = ErrGroupTruncate
 	}
+
+	errGroupMap[errno.ErrAutoincReadFailed] = ErrGroupAutoIncReadFailed
 }

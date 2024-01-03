@@ -2028,7 +2028,6 @@ func upgradeToVer67(s sessiontypes.Session, ver int64) {
 		return
 	}
 	bindMap := make(map[string]bindInfo)
-	h := bindinfo.NewGlobalBindingHandle(nil)
 	var err error
 	mustExecute(s, "BEGIN PESSIMISTIC")
 
@@ -2040,7 +2039,7 @@ func upgradeToVer67(s sessiontypes.Session, ver int64) {
 
 		mustExecute(s, "COMMIT")
 	}()
-	mustExecute(s, h.LockBindInfoSQL())
+	mustExecute(s, bindinfo.LockBindInfoSQL)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	var rs sqlexec.RecordSet
 	rs, err = s.ExecuteInternal(ctx,

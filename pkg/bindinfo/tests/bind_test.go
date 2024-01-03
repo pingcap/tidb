@@ -607,7 +607,7 @@ func TestInvisibleIndex(t *testing.T) {
 	tk.MustExec("execute stmt1")
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.IndexNames, 0)
 
-	tk.MustExec("drop binding for select * from t")
+	tk.MustExec("drop global binding for select * from t")
 }
 
 func TestGCBindRecord(t *testing.T) {
@@ -797,7 +797,7 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		internal.UtilCleanBindingEnv(tk, dom)
 		sql := "create global binding for " + c.origin + " using " + c.hint
 		tk.MustExec(sql)
-		h.ReloadGlobalBindings()
+		h.LoadFromStorageToCache(true)
 		res := tk.MustQuery(`show global bindings`).Rows()
 
 		require.Equal(t, len(res), 1)
@@ -805,7 +805,7 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		drop := fmt.Sprintf("drop global binding for sql digest '%s'", res[0][9])
 		tk.MustExec(drop)
 		require.NoError(t, h.GCGlobalBinding())
-		h.ReloadGlobalBindings()
+		h.LoadFromStorageToCache(true)
 		tk.MustQuery("show global bindings").Check(testkit.Rows())
 	}
 
@@ -827,4 +827,25 @@ func TestDropBindBySQLDigest(t *testing.T) {
 	// exception cases
 	tk.MustGetErrMsg(fmt.Sprintf("drop binding for sql digest '%s'", "1"), "can't find any binding for '1'")
 	tk.MustGetErrMsg(fmt.Sprintf("drop binding for sql digest '%s'", ""), "sql digest is empty")
+}
+
+func TestJoinOrderHintWithBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2, t3;")
+	tk.MustExec("create table t(a int, b int, key(a));")
+	tk.MustExec("create table t1(a int, b int, key(a));")
+	tk.MustExec("create table t2(a int, b int, key(a));")
+	tk.MustExec("create table t3(a int, b int, key(a));")
+
+	tk.MustExec("create global binding for select * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b using select /*+ leading(t2) */ * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b")
+	tk.MustExec("select * from t1 join t2 on t1.a=t2.a left join t3 on t2.b=t3.b")
+	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
+	res := tk.MustQuery("show global bindings").Rows()
+	require.Equal(t, res[0][0], "select * from ( `test` . `t1` join `test` . `t2` on `t1` . `a` = `t2` . `a` ) left join `test` . `t3` on `t2` . `b` = `t3` . `b`")
+
+	// TODO(hawkingrei,qw4990)：Here is a situation of inconsistent behavior between 7.5 and master.
+	// tk.MustExec("drop global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
 }

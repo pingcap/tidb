@@ -14,6 +14,7 @@ go_library(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/types",
+        "//pkg/util/context",
         "//pkg/util/disk",
         "//pkg/util/execdetails",
         "//pkg/util/intest",
@@ -43,6 +44,7 @@ go_test(
     flaky = True,
     shard_count = 12,
     deps = [
+        "//pkg/errctx",
         "//pkg/kv",
         "//pkg/sessionctx/variable",
         "//pkg/testkit",

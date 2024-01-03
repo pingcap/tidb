@@ -49,6 +49,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -717,10 +718,16 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 			return err
 		}
 		err = exec.Next(ctx, e, exec.NewFirstChunk(e))
-		if err != nil {
-			return err
+		failpoint.Inject("handleForeignKeyCascadeError", func(val failpoint.Value) {
+			// Next can recover panic and convert it to error. So we inject error directly here.
+			if val.(bool) && err == nil {
+				err = errors.New("handleForeignKeyCascadeError")
+			}
+		})
+		closeErr := exec.Close(e)
+		if err == nil {
+			err = closeErr
 		}
-		err = exec.Close(e)
 		if err != nil {
 			return err
 		}
@@ -1404,7 +1411,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		}
 	}
 	sessVars.PrevStmt = FormatSQL(a.GetTextToLog(false))
-
+	a.recordLastQueryInfo(err)
 	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
 	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
 	if sessVars.InRestrictedSQL {
@@ -1445,6 +1452,38 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		}
 		if sessVars.TxnCtx.FairLockingEffective {
 			executor_metrics.FairLockingTxnEffectiveCount.Inc()
+		}
+	}
+}
+
+func (a *ExecStmt) recordLastQueryInfo(err error) {
+	sessVars := a.Ctx.GetSessionVars()
+	// Record diagnostic information for DML statements
+	recordLastQuery := false
+	switch typ := a.StmtNode.(type) {
+	case *ast.ShowStmt:
+		recordLastQuery = typ.Tp != ast.ShowSessionStates
+	case *ast.ExecuteStmt, ast.DMLNode:
+		recordLastQuery = true
+	}
+	if recordLastQuery {
+		var lastRUConsumption float64
+		if ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
+			ruDetail := ruDetailRaw.(*util.RUDetails)
+			lastRUConsumption = ruDetail.RRU() + ruDetail.WRU()
+		}
+		failpoint.Inject("mockRUConsumption", func(_ failpoint.Value) {
+			lastRUConsumption = float64(len(sessVars.StmtCtx.OriginalSQL))
+		})
+		// Keep the previous queryInfo for `show session_states` because the statement needs to encode it.
+		sessVars.LastQueryInfo = sessionstates.QueryInfo{
+			TxnScope:          sessVars.CheckAndGetTxnScope(),
+			StartTS:           sessVars.TxnCtx.StartTS,
+			ForUpdateTS:       sessVars.TxnCtx.GetForUpdateTS(),
+			LastRUConsumption: lastRUConsumption,
+		}
+		if err != nil {
+			sessVars.LastQueryInfo.ErrMsg = err.Error()
 		}
 	}
 }
