@@ -172,5 +172,5 @@ func (e *SQLBindExec) captureBindings() {
 }
 
 func (e *SQLBindExec) reloadBindings() error {
-	return domain.GetDomain(e.Ctx()).BindHandle().ReloadGlobalBindings()
+	return domain.GetDomain(e.Ctx()).BindHandle().LoadFromStorageToCache(true)
 }
