@@ -2288,6 +2288,8 @@ func (cli *TestServerClient) RunTestMultiStatements(t *testing.T) {
 		dbt.MustExec("begin;")
 		rs := dbt.MustQuery("delete from t where a = 1; select 1;")
 		rs.Close()
+		rs = dbt.MustQuery("update t set b = 2 where a = 1; select 1;")
+		rs.Close()
 		dbt.MustExec("commit;")
 	})
 }

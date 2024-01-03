@@ -102,12 +102,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -1741,7 +1739,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		cc.ctx.GetSessionVars().InMultiStmts = true
 
 		// Only pre-build point plans for multi-statement query
-		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts, sql)
+		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts)
 		if err != nil {
 			for _, stmt := range stmts {
 				cc.onExtensionStmtEnd(stmt, false, err)
@@ -1817,7 +1815,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 // prefetchPointPlanKeys extracts the point keys in multi-statement query,
 // use BatchGet to get the keys, so the values will be cached in the snapshot cache, save RPC call cost.
 // For pessimistic transaction, the keys will be batch locked.
-func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.StmtNode, sqls string) ([]plannercore.Plan, error) {
+func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.StmtNode) ([]plannercore.Plan, error) {
 	txn, err := cc.ctx.Txn(false)
 	if err != nil {
 		return nil, err
@@ -1947,7 +1945,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		return pointPlans, nil
 	}
 	snapshot := txn.GetSnapshot()
-	setResourceGroupTaggerForMultiStmtPrefetch(snapshot, sqls)
+	snapshot.SetOption(kv.ResourceGroupTagger, sc.GetResourceGroupTagger())
 	idxVals, err1 := snapshot.BatchGet(ctx, idxKeys)
 	if err1 != nil {
 		return nil, err1
@@ -1976,20 +1974,6 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		}
 	}
 	return pointPlans, nil
-}
-
-func setResourceGroupTaggerForMultiStmtPrefetch(snapshot kv.Snapshot, sqls string) {
-	normalized, digest := parser.NormalizeDigest(sqls)
-	snapshot.SetOption(kv.ResourceGroupTagger, tikvrpc.ResourceGroupTagger(func(req *tikvrpc.Request) {
-		if req == nil {
-			return
-		}
-		if len(normalized) == 0 {
-			return
-		}
-		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, nil,
-			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
-	}))
 }
 
 // The first return value indicates whether the call of handleStmt has no side effect and can be retried.
