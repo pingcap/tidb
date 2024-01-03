@@ -50,7 +50,7 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*BindRecord, stri
 	if ctx.Value(SessionBindInfoKeyType) == nil {
 		return nil, "", nil
 	}
-	stmtNode, normalizedSQL, sqlDigest, err := normalizeStmt(stmt, ctx.GetSessionVars().CurrentDB)
+	stmtNode, _, sqlDigest, err := normalizeStmt(stmt, ctx.GetSessionVars().CurrentDB)
 	if err != nil || stmtNode == nil {
 		return nil, "", err
 	}
