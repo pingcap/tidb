@@ -2154,6 +2154,18 @@ func (cli *testServerClient) runTestMultiStatements(t *testing.T) {
 		// the create table + drop table statements will return errors.
 		dbt.MustExec("CREATE DATABASE multistmtuse")
 		dbt.MustExec("use multistmtuse; create table if not exists t1 (id int); drop table t1;")
+
+		// Test issue #50012
+		dbt.MustExec("create database if not exists test;")
+		dbt.MustExec("use test;")
+		dbt.MustExec("CREATE TABLE t (a bigint(20), b int(10), PRIMARY KEY (b, a), UNIQUE KEY uk_a (a));")
+		dbt.MustExec("insert into t values (1, 1);")
+		dbt.MustExec("begin;")
+		rs := dbt.MustQuery("delete from t where a = 1; select 1;")
+		rs.Close()
+		rs = dbt.MustQuery("update t set b = 2 where a = 1; select 1;")
+		rs.Close()
+		dbt.MustExec("commit;")
 	})
 }
 

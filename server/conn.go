@@ -56,6 +56,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+<<<<<<< HEAD:server/conn.go
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/domain/infosync"
 	"github.com/pingcap/tidb/errno"
@@ -93,7 +94,59 @@ import (
 	tlsutil "github.com/pingcap/tidb/util/tls"
 	topsqlstate "github.com/pingcap/tidb/util/topsql/state"
 	"github.com/pingcap/tidb/util/tracing"
+=======
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/extension"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/plugin"
+	"github.com/pingcap/tidb/pkg/privilege"
+	"github.com/pingcap/tidb/pkg/privilege/conn"
+	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
+	servererr "github.com/pingcap/tidb/pkg/server/err"
+	"github.com/pingcap/tidb/pkg/server/handler/tikvhandler"
+	"github.com/pingcap/tidb/pkg/server/internal"
+	"github.com/pingcap/tidb/pkg/server/internal/column"
+	"github.com/pingcap/tidb/pkg/server/internal/dump"
+	"github.com/pingcap/tidb/pkg/server/internal/handshake"
+	"github.com/pingcap/tidb/pkg/server/internal/parse"
+	"github.com/pingcap/tidb/pkg/server/internal/resultset"
+	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
+	server_metrics "github.com/pingcap/tidb/pkg/server/metrics"
+	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
+	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/arena"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
+	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
+	"github.com/pingcap/tidb/pkg/util/topsql"
+	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/tracing"
+>>>>>>> 4f38f2913b4 (server: fix decode issue for prefetch point plan index keys (#50037)):pkg/server/conn.go
 	"github.com/prometheus/client_golang/prometheus"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
@@ -1865,7 +1918,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 		cc.ctx.GetSessionVars().InMultiStmts = true
 
 		// Only pre-build point plans for multi-statement query
-		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts)
+		pointPlans, err = cc.prefetchPointPlanKeys(ctx, stmts, sql)
 		if err != nil {
 			for _, stmt := range stmts {
 				cc.onExtensionStmtEnd(stmt, false, err)
@@ -1941,7 +1994,7 @@ func (cc *clientConn) handleQuery(ctx context.Context, sql string) (err error) {
 // prefetchPointPlanKeys extracts the point keys in multi-statement query,
 // use BatchGet to get the keys, so the values will be cached in the snapshot cache, save RPC call cost.
 // For pessimistic transaction, the keys will be batch locked.
-func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.StmtNode) ([]plannercore.Plan, error) {
+func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.StmtNode, sqls string) ([]plannercore.Plan, error) {
 	txn, err := cc.ctx.Txn(false)
 	if err != nil {
 		return nil, err
@@ -1965,6 +2018,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 	pointPlans := make([]plannercore.Plan, len(stmts))
 	var idxKeys []kv.Key //nolint: prealloc
 	var rowKeys []kv.Key //nolint: prealloc
+	isCommonHandle := make(map[string]bool, 0)
 
 	handlePlan := func(p plannercore.PhysicalPlan, resetStmtCtxFn func()) error {
 		var tableID int64
@@ -1982,6 +2036,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 					return err1
 				}
 				idxKeys = append(idxKeys, idxKey)
+				isCommonHandle[string(hack.String(idxKey))] = v.TblInfo.IsCommonHandle
 			} else {
 				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tableID, v.Handle))
 			}
@@ -2004,6 +2059,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 						return err1
 					}
 					idxKeys = append(idxKeys, idxKey)
+					isCommonHandle[string(hack.String(idxKey))] = v.TblInfo.IsCommonHandle
 				}
 			} else {
 				for i, handle := range v.Handles {
@@ -2068,12 +2124,14 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		return pointPlans, nil
 	}
 	snapshot := txn.GetSnapshot()
+	setResourceGroupTaggerForMultiStmtPrefetch(snapshot, sqls)
 	idxVals, err1 := snapshot.BatchGet(ctx, idxKeys)
 	if err1 != nil {
 		return nil, err1
 	}
 	for idxKey, idxVal := range idxVals {
-		h, err2 := tablecodec.DecodeHandleInUniqueIndexValue(idxVal, false)
+		isCommonHd := isCommonHandle[idxKey]
+		h, err2 := tablecodec.DecodeHandleInUniqueIndexValue(idxVal, isCommonHd)
 		if err2 != nil {
 			return nil, err2
 		}
@@ -2095,6 +2153,24 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		}
 	}
 	return pointPlans, nil
+}
+
+func setResourceGroupTaggerForMultiStmtPrefetch(snapshot kv.Snapshot, sqls string) {
+	if !topsqlstate.TopSQLEnabled() {
+		return
+	}
+	normalized, digest := parser.NormalizeDigest(sqls)
+	topsql.AttachAndRegisterSQLInfo(context.Background(), normalized, digest, false)
+	snapshot.SetOption(kv.ResourceGroupTagger, tikvrpc.ResourceGroupTagger(func(req *tikvrpc.Request) {
+		if req == nil {
+			return
+		}
+		if len(normalized) == 0 {
+			return
+		}
+		req.ResourceGroupTag = resourcegrouptag.EncodeResourceGroupTag(digest, nil,
+			resourcegrouptag.GetResourceGroupLabelByKey(resourcegrouptag.GetFirstKeyFromRequest(req)))
+	}))
 }
 
 // The first return value indicates whether the call of handleStmt has no side effect and can be retried.
