@@ -227,7 +227,7 @@ func (e *IndexLookUpJoin) newInnerWorker(taskCh chan *lookUpJoinTask) *innerWork
 		outerCtx:      e.outerCtx,
 		taskCh:        taskCh,
 		ctx:           e.Ctx(),
-		executorChk:   e.AllocPool.Alloc(e.innerCtx.rowTypes, e.MaxChunkSize(), e.MaxChunkSize()),
+		executorChk:   e.AllocPool.Alloc(e.innerCtx.rowTypes, e.InitCap(), e.MaxChunkSize()),
 		indexRanges:   copiedRanges,
 		keyOff2IdxOff: e.keyOff2IdxOff,
 		stats:         innerStats,
@@ -437,7 +437,7 @@ func (ow *outerWorker) buildTask(ctx context.Context) (*lookUpJoinTask, error) {
 	}
 	maxChunkSize := ow.ctx.GetSessionVars().MaxChunkSize
 	for requiredRows > task.outerResult.Len() {
-		chk := ow.executor.NewChunkWithCapacity(ow.outerCtx.rowTypes, maxChunkSize, maxChunkSize)
+		chk := ow.executor.NewChunkWithCapacity(ow.outerCtx.rowTypes, requiredRows, maxChunkSize)
 		chk = chk.SetRequiredRows(requiredRows, maxChunkSize)
 		err := exec.Next(ctx, ow.executor, chk)
 		if err != nil {
