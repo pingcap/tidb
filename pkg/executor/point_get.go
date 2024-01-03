@@ -162,7 +162,7 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 		e.lockWaitTime = 0
 	}
 	e.rowDecoder = decoder
-	e.partInfo = p.PartDef
+	e.partInfo = p.PartitionInfo
 	e.columns = p.Columns
 	e.buildVirtualColumnInfo()
 }

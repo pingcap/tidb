@@ -307,8 +307,8 @@ func (p *PointGetPlan) AccessObject() AccessObject {
 		Database: p.dbName,
 		Table:    p.TblInfo.Name.O,
 	}
-	if p.PartDef != nil {
-		res.Partitions = []string{p.PartDef.Name.O}
+	if p.PartitionInfo != nil {
+		res.Partitions = []string{p.PartitionInfo.Name.O}
 	}
 	if p.IndexInfo != nil {
 		index := IndexAccess{
@@ -333,7 +333,7 @@ func (p *BatchPointGetPlan) AccessObject() AccessObject {
 		Database: p.dbName,
 		Table:    p.TblInfo.Name.O,
 	}
-	for _, partitionInfo := range p.PartitionDefs {
+	for _, partitionInfo := range p.PartitionInfos {
 		res.Partitions = append(res.Partitions, partitionInfo.Name.O)
 	}
 	if p.IndexInfo != nil {

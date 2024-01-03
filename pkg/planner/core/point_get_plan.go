@@ -68,7 +68,7 @@ type PointGetPlan struct {
 	schema           *expression.Schema
 	TblInfo          *model.TableInfo
 	IndexInfo        *model.IndexInfo
-	PartDef          *model.PartitionDefinition
+	PartitionInfo    *model.PartitionDefinition
 	Handle           kv.Handle
 	HandleConstant   *expression.Constant
 	handleFieldType  *types.FieldType
@@ -270,8 +270,8 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 	if p.schema != nil {
 		sum += p.schema.MemoryUsage()
 	}
-	if p.PartDef != nil {
-		sum += p.PartDef.MemoryUsage()
+	if p.PartitionInfo != nil {
+		sum += p.PartitionInfo.MemoryUsage()
 	}
 	if p.HandleConstant != nil {
 		sum += p.HandleConstant.MemoryUsage()
@@ -313,7 +313,7 @@ type BatchPointGetPlan struct {
 	dbName           string
 	TblInfo          *model.TableInfo
 	IndexInfo        *model.IndexInfo
-	PartitionDefs    []*model.PartitionDefinition
+	PartitionInfos   []*model.PartitionDefinition
 	Handles          []kv.Handle
 	HandleType       *types.FieldType
 	HandleParams     []*expression.Constant // record all Parameters for Plan-Cache
@@ -491,7 +491,7 @@ func (p *BatchPointGetPlan) MemoryUsage() (sum int64) {
 
 	sum = emptyBatchPointGetPlanSize + p.baseSchemaProducer.MemoryUsage() + int64(len(p.dbName)) +
 		int64(cap(p.IdxColLens))*size.SizeOfInt + int64(cap(p.Handles))*size.SizeOfInterface +
-		int64(cap(p.PartitionDefs)+cap(p.HandleParams)+cap(p.IndexColTypes)+cap(p.IdxCols)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
+		int64(cap(p.PartitionInfos)+cap(p.HandleParams)+cap(p.IndexColTypes)+cap(p.IdxCols)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
 	if p.HandleType != nil {
 		sum += p.HandleType.MemoryUsage()
 	}
@@ -715,12 +715,12 @@ func newBatchPointGetPlan(
 			partitionInfos = nil
 		}
 		p := &BatchPointGetPlan{
-			TblInfo:       tbl,
-			Handles:       handles,
-			HandleParams:  handleParams,
-			HandleType:    &handleCol.FieldType,
-			PartitionExpr: partitionExpr,
-			PartitionDefs: partitionInfos,
+			TblInfo:        tbl,
+			Handles:        handles,
+			HandleParams:   handleParams,
+			HandleType:     &handleCol.FieldType,
+			PartitionExpr:  partitionExpr,
+			PartitionInfos: partitionInfos,
 		}
 
 		return p.Init(ctx, statsInfo, schema, names, 0)
@@ -910,7 +910,7 @@ func newBatchPointGetPlan(
 		IndexColTypes:    indexTypes,
 		PartitionColPos:  pos,
 		PartitionExpr:    partitionExpr,
-		PartitionDefs:    partitionInfos,
+		PartitionInfos:   partitionInfos,
 	}
 
 	return p.Init(ctx, statsInfo, schema, names, 0)
@@ -1097,7 +1097,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.GetFlag())
 		p.handleFieldType = fieldType
 		p.HandleConstant = handlePair.con
-		p.PartDef = partitionInfo
+		p.PartitionInfo = partitionInfo
 		return p
 	} else if handlePair.value.Kind() != types.KindNull {
 		return nil
@@ -1151,8 +1151,8 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		p.IndexValues = idxValues
 		p.IndexConstants = idxConstant
 		p.ColsFieldType = colsFieldType
-		p.PartDef = partitionInfo
-		if p.PartDef != nil {
+		p.PartitionInfo = partitionInfo
+		if p.PartitionInfo != nil {
 			p.partitionColumnPos = findPartitionIdx(idxInfo, pos, pairs)
 		}
 		return p

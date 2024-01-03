@@ -1289,7 +1289,7 @@ func TestPreparedPlanCachePartitions(b *testing.T) {
 	tk.MustExec(`set @a=2000000`)
 	// This should use TableDual
 	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows())
-	// How does it cache it? (verify that it still allows PartDef to be updated)
+	// How does it cache it? (verify that it still allows PartitionInfo to be updated)
 	tk.MustExec(`set @a=1999999`)
 	tk.MustQuery(`execute stmt3 using @a`).Check(testkit.Rows("1999999 1999999 1999999"))
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))

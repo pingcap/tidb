@@ -508,7 +508,7 @@ func rebuildRange(p Plan) error {
 			}
 
 			// TODO: Also check non-clustered partitioned tables?
-			if x.PartDef != nil {
+			if x.PartitionInfo != nil {
 				// Single column PK <=> Must be the partitioning columns!
 				if !x.TblInfo.PKIsHandle {
 					return errors.New("point get for partition table can not use plan cache, PK is not handle")
@@ -523,7 +523,7 @@ func rebuildRange(p Plan) error {
 				if partDef == nil {
 					return errors.New("point get for partition table can not use plan cache, could not prune")
 				}
-				x.PartDef = partDef
+				x.PartitionInfo = partDef
 			}
 
 			iv, err := dVal.ToInt64(sc.TypeCtx())
@@ -545,7 +545,7 @@ func rebuildRange(p Plan) error {
 				}
 				x.IndexValues[i] = *dVal
 				// TODO: Also check non-clustered partitioned tables?
-				if x.PartDef != nil &&
+				if x.PartitionInfo != nil &&
 					x.IndexInfo.Columns[i].Offset == x.partitionColumnPos {
 					// Single column PK <=> Must be the partitioning columns!
 					if !x.TblInfo.PKIsHandle {
@@ -564,12 +564,12 @@ func rebuildRange(p Plan) error {
 					if partDef == nil {
 						return errors.New("point get for partition table can not use plan cache, could not prune")
 					}
-					x.PartDef = partDef
+					x.PartitionInfo = partDef
 				}
 			}
 		}
 		// TODO: Also check non-clustered partitioned tables?
-		if x.PartDef != nil {
+		if x.PartitionInfo != nil {
 			if partDef != nil {
 				panic("Already pruned?!?!")
 			}
@@ -591,12 +591,12 @@ func rebuildRange(p Plan) error {
 			if len(parts) != 1 {
 				if len(parts) == 0 {
 					// TODO: Handle this, turn it into TableDual!
-					// Maybe change check from x.PartDef to tbl.GetPartitionedTable() instead?
+					// Maybe change check from x.PartitionInfo to tbl.GetPartitionedTable() instead?
 					return errors.New("not matching any partition")
 				}
 				return errors.New("point_get cached query matches multiple partitions")
 			}
-			x.PartDef = &x.TblInfo.GetPartitionInfo().Definitions[parts[0]]
+			x.PartitionInfo = &x.TblInfo.GetPartitionInfo().Definitions[parts[0]]
 		}
 		return nil
 	case *BatchPointGetPlan:
@@ -681,7 +681,7 @@ func rebuildRange(p Plan) error {
 			panic("Both handle and index values?!?")
 		}
 		// TODO: fix TableDual!
-		if len(x.PartitionDefs) > 0 {
+		if len(x.PartitionInfos) > 0 {
 			//pos2PartitionDefinition := make(map[int]*model.PartitionDefinition)
 			partIDs := make([]int64, 0, len(x.Handles))
 			partDefs := make([]*model.PartitionDefinition, 0, len(x.Handles))
@@ -711,7 +711,7 @@ func rebuildRange(p Plan) error {
 			// TODO: Where is PartitionDefs used?
 			// PartitionIDs needs to match handles, and are deduplicated buildBatchPointGet
 			x.PartitionIDs = partIDs
-			x.PartitionDefs = partDefs
+			x.PartitionInfos = partDefs
 		}
 	case *PhysicalIndexMergeReader:
 		indexMerge := p.(*PhysicalIndexMergeReader)
