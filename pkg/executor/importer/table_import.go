@@ -449,6 +449,7 @@ func (ti *TableImporter) OpenIndexEngine(ctx context.Context, engineID int32) (*
 		Compact:            threshold > 0,
 		CompactConcurrency: 4,
 		CompactThreshold:   threshold,
+		BlockSize:          16 * 1024,
 	}
 	fullTableName := ti.fullTableName()
 	// todo: cleanup all engine data on any error since we don't support checkpoint for now
