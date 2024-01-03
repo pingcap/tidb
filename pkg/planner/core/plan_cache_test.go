@@ -1264,6 +1264,7 @@ func TestPreparedPlanCachePartitions(b *testing.T) {
 	//tk.MustExec(`create table t (a int primary key)`)
 	tk.MustExec(`create table t (a int primary key, b varchar(255)) partition by hash(a) partitions 3`)
 	tk.MustExec(`insert into t values (1,"a"),(2,"b"),(3,"c"),(4,"d"),(5,"e"),(6,"f")`)
+	tk.MustExec(`analyze table t`)
 	tk.MustExec(`prepare stmt from 'select a,b from t where a = ?;'`)
 	tk.MustExec(`set @a=1`)
 	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1 a"))
@@ -1285,6 +1286,7 @@ func TestPreparedPlanCachePartitions(b *testing.T) {
 
 	tk.MustExec(`create table t (a int primary key, b varchar(255), c varchar(255), key (b)) partition by range (a) (partition pNeg values less than (0), partition p0 values less than (1000000), partition p1M values less than (2000000))`)
 	tk.MustExec(`insert into t values (-10, -10, -10), (0, 0, 0), (-1, NULL, NULL), (1000, 1000, 1000), (1000000, 1000000, 1000000), (1500000, 1500000, 1500000), (1999999, 1999999, 1999999)`)
+	tk.MustExec(`analyze table t`)
 	tk.MustExec(`prepare stmt3 from 'select a,c,b from t where a = ?'`)
 	tk.MustExec(`set @a=2000000`)
 	// This should use TableDual
