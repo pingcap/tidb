@@ -255,10 +255,7 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 				}
 			}
 			// 2.1: trade off on countAfterAccess.
-			theoreticalMinCountAfterAccessPath, err := ds.buildIndexMergePartialPath(partialAlternativePaths[i])
-			if err != nil {
-				return err
-			}
+			theoreticalMinCountAfterAccessPath := ds.buildIndexMergePartialPath(partialAlternativePaths[i])
 			indexCondsForP := theoreticalMinCountAfterAccessPath.AccessConds[:]
 			indexCondsForP = append(indexCondsForP, theoreticalMinCountAfterAccessPath.IndexFilters...)
 			if len(indexCondsForP) > 0 {
