@@ -272,7 +272,9 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 		if err == nil {
 			err = task.cacheErr
 		}
-		task.err <- err
+		for _, ch := range task.errs {
+			ch <- err
+		}
 		jobs += task.job.String() + "; "
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, task.job.Type.String(),
 			metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
@@ -289,13 +291,45 @@ func (d *ddl) addBatchDDLJobsV2(tasks []*limitJobTask) {
 	err := d.addBatchDDLJobs2LocalWorker(tasks)
 	if err != nil {
 		for _, task := range tasks {
-			task.err <- err
+			for _, ch := range task.errs {
+				ch <- err
+			}
 		}
 		logutil.BgLogger().Warn("add DDL jobs failed", zap.String("category", "ddl"), zap.Error(err))
 	} else {
 		logutil.BgLogger().Info("add DDL jobs", zap.String("category", "ddl"), zap.Int("batch count", len(tasks)))
 	}
 
+}
+
+func (d *ddl) optimistBatchJobs(tasks []*limitJobTask) ([]*limitJobTask, error) {
+	if len(tasks) <= 1 {
+		return tasks, nil
+	}
+	var schemaName string
+	jobs := make([]*model.Job, 0, len(tasks))
+	for i, task := range tasks {
+		if task.job.Type != model.ActionCreateTable {
+			return tasks, nil
+		}
+		if i == 0 {
+			schemaName = task.job.SchemaName
+		} else if task.job.SchemaName != schemaName {
+			return tasks, nil
+		}
+		jobs = append(jobs, task.job)
+	}
+
+	job, err := d.BatchCreateTableWithJobs(jobs)
+	if err != nil {
+		return tasks, err
+	}
+	logutil.BgLogger().Info("batch create tables", zap.String("category", "ddl"), zap.Int("len", len(tasks)))
+	jobTask := &limitJobTask{job, []chan error{}, nil}
+	for _, j := range tasks {
+		jobTask.errs = append(jobTask.errs, j.errs...)
+	}
+	return []*limitJobTask{jobTask}, nil
 }
 
 func (d *ddl) addBatchDDLJobs2LocalWorker(tasks []*limitJobTask) error {
@@ -315,6 +349,10 @@ func (d *ddl) addBatchDDLJobs2LocalWorker(tasks []*limitJobTask) error {
 		if err := d.checkFlashBackJobInTable(se); err != nil {
 			return errors.Trace(err)
 		}
+	}
+
+	if newTasks, err := d.optimistBatchJobs(tasks); err == nil {
+		tasks = newTasks
 	}
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)

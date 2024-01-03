@@ -67,6 +67,7 @@ var (
 	mSchemaVersionKey    = []byte("SchemaVersionKey")
 	mDBs                 = []byte("DBs")
 	mNames               = []byte("Names")
+	mDDLVersion          = []byte("DDLVersion")
 	mDBPrefix            = "DB"
 	mTablePrefix         = "Table"
 	mNameSep             = []byte("\x00")
@@ -1590,4 +1591,12 @@ func (m *Meta) ClearAllTableNames() error {
 	return m.txn.Iterate(prefix, prefix.PrefixNext(), func(key []byte, value []byte) error {
 		return m.txn.Clear(key)
 	})
+}
+
+func (m *Meta) SetDDLVersion(v int64) error {
+	return m.txn.Set(mDDLVersion, []byte(strconv.FormatInt(v, 10)))
+}
+
+func (m *Meta) GetDDLVersion() (int64, error) {
+	return m.txn.GetInt64(mDDLVersion)
 }

@@ -383,7 +383,9 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 	job := task.job
 	wk, err := pool.get()
 	if err != nil {
-		task.err <- err
+		for _, ch := range task.errs {
+			ch <- err
+		}
 		return
 	}
 	for wk == nil {
@@ -394,7 +396,9 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 		}
 		wk, err = pool.get()
 		if err != nil {
-			task.err <- err
+			for _, ch := range task.errs {
+				ch <- err
+			}
 			return
 		}
 	}
@@ -409,7 +413,9 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 		if err != nil {
 			logutil.BgLogger().Info("handle ddl job failed", zap.String("category", "ddl"), zap.Error(err), zap.String("job", job.String()))
 		}
-		task.err <- err
+		for _, ch := range task.errs {
+			ch <- err
+		}
 	})
 }
 

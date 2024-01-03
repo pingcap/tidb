@@ -91,7 +91,7 @@ const (
 
 	reorgWorkerCnt   = 10
 	generalWorkerCnt = 1
-	localWorkerCnt   = 5
+	localWorkerCnt   = 2
 
 	// checkFlagIndexInJobArgs is the recoverCheckFlag index used in RecoverTable/RecoverSchema job arg list.
 	checkFlagIndexInJobArgs = 1
@@ -269,7 +269,7 @@ type DDL interface {
 
 type limitJobTask struct {
 	job      *model.Job
-	err      chan error
+	errs     []chan error
 	cacheErr error
 }
 
@@ -783,9 +783,11 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 	}
 	// reorg worker count at least 1 at most 10.
 	reorgCnt := min(max(runtime.GOMAXPROCS(0)/4, 1), reorgWorkerCnt)
+	// local worker count at least 2 at most 10.
+	localCnt := min(max(runtime.GOMAXPROCS(0)/4, 2), localWorkerCnt)
 	d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(addIdxWorker), reorgCnt, reorgCnt, 0), reorg)
 	d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), general)
-	d.localWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(localWorker), localWorkerCnt, localWorkerCnt, 0), local)
+	d.localWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(localWorker), localCnt, localCnt, 0), local)
 	failpoint.Inject("NoDDLDispatchLoop", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return()
@@ -1134,15 +1136,15 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 	setDDLJobVersion(job)
-	task := &limitJobTask{job, make(chan error), nil}
+	task := &limitJobTask{job, []chan error{make(chan error)}, nil}
 	d.deliverJobTask(task)
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
 		if val.(bool) {
-			<-task.err
+			<-task.errs[0]
 			// The same job will be put to the DDL queue twice.
 			job = job.Clone()
-			task1 := &limitJobTask{job, make(chan error), nil}
+			task1 := &limitJobTask{job, []chan error{make(chan error)}, nil}
 			d.deliverJobTask(task1)
 			// The second job result is used for test.
 			task = task1
@@ -1150,7 +1152,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	})
 
 	// worker should restart to continue handling tasks in limitJobCh, and send back through task.err
-	err := <-task.err
+	err := <-task.errs[0]
 	if err != nil {
 		// The transaction of enqueuing job is failed.
 		return errors.Trace(err)
@@ -1414,9 +1416,69 @@ func (d *ddl) SwitchDDLVersion(version int64) error {
 		return errors.New("please wait for all jobs done")
 	}
 
+	if err := d.migration2DDLVersion(version); err != nil {
+		return errors.Trace(err)
+	}
+
 	variable.DDLVersion.Store(version)
 	logutil.BgLogger().Info("switch ddl version", zap.String("category", "ddl"), zap.Int64("version", version))
 	return nil
+}
+
+func (d *ddl) migration2DDLV1(m *meta.Meta) error {
+	return errors.Trace(m.ClearAllTableNames())
+}
+
+func (d *ddl) migration2DDLV2(m *meta.Meta) error {
+	if err := m.ClearAllTableNames(); err != nil {
+		return errors.Trace(err)
+	}
+
+	dbs, err := m.ListDatabases()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, dbInfo := range dbs {
+		tables, err := m.ListTables(dbInfo.ID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		for _, tableInfo := range tables {
+			if err := m.CreateTableName(dbInfo.Name.String(), tableInfo.Name.String(), tableInfo.ID); err != nil {
+				return errors.Trace(err)
+			}
+		}
+	}
+
+	return err
+}
+
+func (d *ddl) migration2DDLVersion(ver int64) error {
+	return kv.RunInNewTxn(kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
+		m := meta.NewMeta(txn)
+		v, err := m.GetDDLVersion()
+		if err != nil {
+			v = model.TiDBDDLV1
+		}
+
+		if v == ver {
+			return nil
+		}
+
+		switch ver {
+		case model.TiDBDDLV1:
+			err = d.migration2DDLV1(m)
+		case model.TiDBDDLV2:
+			err = d.migration2DDLV2(m)
+		default:
+			err = errors.Errorf("unknow ddl version %d", ver)
+		}
+		if err != nil {
+			return errors.Trace(err)
+		}
+		return m.SetDDLVersion(ver)
+	})
 }
 
 // RecoverInfo contains information needed by DDL.RecoverTable.

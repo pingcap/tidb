@@ -2874,6 +2874,48 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	return nil
 }
 
+func (d *ddl) BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
+	var j *model.Job
+
+	args := make([]*model.TableInfo, 0, len(jobs))
+	var foreignKeyChecks bool
+
+	//  if there is any duplicated table name
+	duplication := make(map[string]struct{})
+	for _, job := range jobs {
+		if j == nil {
+			j = job.Clone()
+			foreignKeyChecks = job.Args[1].(bool)
+		}
+		// append table job args
+		info, ok := job.Args[0].(*model.TableInfo)
+		if !ok {
+			return nil, errors.Trace(fmt.Errorf("except table info"))
+		}
+		args = append(args, info)
+
+		if _, ok := duplication[info.Name.L]; ok {
+			// return err even if create table if not exists
+			return nil, infoschema.ErrTableExists.FastGenByArgs("can not batch create tables with same name")
+		}
+
+		duplication[info.Name.L] = struct{}{}
+
+		j.InvolvingSchemaInfo = append(j.InvolvingSchemaInfo,
+			model.InvolvingSchemaInfo{
+				Database: job.SchemaName,
+				Table:    info.Name.L,
+			})
+	}
+	if len(args) == 0 {
+		return nil, errors.Trace(fmt.Errorf("except args"))
+	}
+	j.Args = append(j.Args, args)
+	j.Args = append(j.Args, foreignKeyChecks)
+
+	return j, nil
+}
+
 func (d *ddl) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *model.PolicyInfo, onExist OnExist) error {
 	if checkIgnorePlacementDDL(ctx) {
 		return nil
