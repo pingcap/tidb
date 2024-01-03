@@ -1393,6 +1393,34 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		sessVars.StmtCtx.SetPlan(a.Plan)
 	}
 	// `LowSlowQuery` and `SummaryStmt` must be called before recording `PrevStmt`.
+	if !sessVars.InRestrictedSQL && sessVars.StmtCtx.InSelectStmt {
+		stmtCtx := sessVars.StmtCtx
+		flat := getFlatPlan(stmtCtx)
+		if flat != nil && len(flat.Main) > 0 {
+			hasJoin := false
+			for _, flatOp := range flat.Main {
+				pp, isPhysicalPlan := flatOp.Origin.(plannercore.PhysicalPlan)
+				if !isPhysicalPlan {
+					continue
+				}
+				if _, ok := pp.(*plannercore.PhysicalHashJoin); ok {
+					hasJoin = true
+				}
+			}
+			if hasJoin {
+				for _, flatOp := range flat.Main {
+					pp, isPhysicalPlan := flatOp.Origin.(plannercore.PhysicalPlan)
+					if !isPhysicalPlan {
+						continue
+					}
+					hasCopStats, actualRows := GetResultRowsCountForCopStats(stmtCtx, pp.ID())
+					if hasCopStats {
+						logutil.BgLogger().Info("LogWhenFinished", zap.String("SQL", a.Text), zap.Uint64("TxnTS", txnTS), zap.Int64("Count", actualRows), zap.String("Executor", pp.ExplainInfo()))
+					}
+				}
+			}
+		}
+	}
 	a.LogSlowQuery(txnTS, succ, hasMoreResults)
 	a.SummaryStmt(succ)
 	a.observeStmtFinishedForTopSQL()
@@ -1447,6 +1475,20 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 			executor_metrics.FairLockingTxnEffectiveCount.Inc()
 		}
 	}
+}
+
+// GetResultRowsCountForCopStats gets the count of the statement result rows of cop stats
+// Return false, -1 if no cop stats exists
+func GetResultRowsCountForCopStats(stmtCtx *stmtctx.StatementContext, planID int) (bool, int64) {
+	runtimeStatsColl := stmtCtx.RuntimeStatsColl
+	if runtimeStatsColl == nil {
+		return false, -1
+	}
+	copStats := runtimeStatsColl.GetCopStats(planID)
+	if copStats == nil {
+		return true, runtimeStatsColl.GetRootStats(planID).GetActRows()
+	}
+	return true, copStats.GetActRows()
 }
 
 func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {

@@ -17,6 +17,7 @@ package executor
 import (
 	"context"
 	"fmt"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -304,6 +305,7 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 
 // Close and release the used resources.
 func (e *MPPGather) Close() error {
+	logutil.BgLogger().Info(string(debug.Stack()), zap.Uint64("TS", e.startTS))
 	var err error
 	if e.dummy {
 		return nil
