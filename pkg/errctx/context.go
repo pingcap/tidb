@@ -209,5 +209,19 @@ func init() {
 		errGroupMap[errCode] = ErrGroupTruncate
 	}
 
+	errGroupMap[errno.ErrDivisionByZero] = ErrGroupDividedByZero
 	errGroupMap[errno.ErrAutoincReadFailed] = ErrGroupAutoIncReadFailed
+}
+
+// ResolveErrLevel resolves the error level according to the `ignore` and `warn` flags
+// if ignore is true, it will return `LevelIgnore` to ignore the error,
+// otherwise, it will return `LevelWarn` or `LevelError` according to the `warn` flag
+func ResolveErrLevel(ignore bool, warn bool) Level {
+	if ignore {
+		return LevelIgnore
+	}
+	if warn {
+		return LevelWarn
+	}
+	return LevelError
 }

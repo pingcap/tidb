@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -163,10 +164,13 @@ func initSessCtx(
 	if err := setSessCtxLocation(sessCtx, tzLocation); err != nil {
 		return errors.Trace(err)
 	}
-	sessCtx.GetSessionVars().StmtCtx.InReorg = true
 	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(sessCtx.GetSessionVars().Location())
 	sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
+
+	errLevels := sessCtx.GetSessionVars().StmtCtx.ErrLevels()
+	errLevels[errctx.ErrGroupDividedByZero] =
+		errctx.ResolveErrLevel(!sqlMode.HasErrorForDivisionByZeroMode(), !sqlMode.HasStrictMode())
+	sessCtx.GetSessionVars().StmtCtx.SetErrLevels(errLevels)
 
 	typeFlags := types.StrictFlags.
 		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
@@ -195,8 +199,8 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 		timezone = &tz
 	}
 	badNullAsWarn := sv.StmtCtx.BadNullAsWarning
-	dividedZeroAsWarn := sv.StmtCtx.DividedByZeroAsWarning
 	typeFlags := sv.StmtCtx.TypeFlags()
+	errLevels := sv.StmtCtx.ErrLevels()
 	resGroupName := sv.StmtCtx.ResourceGroupName
 	return func(usedSessCtx sessionctx.Context) {
 		uv := usedSessCtx.GetSessionVars()
@@ -204,10 +208,9 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 		uv.SQLMode = sqlMode
 		uv.TimeZone = timezone
 		uv.StmtCtx.BadNullAsWarning = badNullAsWarn
-		uv.StmtCtx.DividedByZeroAsWarning = dividedZeroAsWarn
 		uv.StmtCtx.SetTypeFlags(typeFlags)
+		uv.StmtCtx.SetErrLevels(errLevels)
 		uv.StmtCtx.ResourceGroupName = resGroupName
-		uv.StmtCtx.InReorg = false
 	}
 }
 
