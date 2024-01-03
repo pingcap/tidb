@@ -201,7 +201,7 @@ func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 			}
 
 			if w.partialResultMap == nil {
-				// All partition have been restored
+				// All partitions have been restored
 				break
 			}
 

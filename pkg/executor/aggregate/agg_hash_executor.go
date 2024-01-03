@@ -272,7 +272,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			partialResultsMap[i] = make(aggfuncs.AggPartialResultMapper)
 		}
 
-		w := HashAggPartialWorker{
+		e.partialWorkers[i] = HashAggPartialWorker{
 			baseHashAggWorker:    newBaseHashAggWorker(e.Ctx(), e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
 			ctx:                  ctx,
 			inputCh:              e.partialInputChs[i],
@@ -295,23 +295,22 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			spillHelper:           e.spillHelper,
 		}
 
-		w.partialResultNumInRow = w.getPartialResultSliceLenConsiderByteAlign()
+		e.partialWorkers[i].partialResultNumInRow = e.partialWorkers[i].getPartialResultSliceLenConsiderByteAlign()
 		for i := 0; i < finalConcurrency; i++ {
-			w.BInMaps[i] = 0
+			e.partialWorkers[i].BInMaps[i] = 0
 		}
 
 		// There is a bucket in the empty partialResultsMap.
 		failpoint.Inject("ConsumeRandomPanic", nil)
-		e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
+		e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << e.partialWorkers[i].BInMap))
 		if e.stats != nil {
-			w.stats = &AggWorkerStat{}
-			e.stats.PartialStats = append(e.stats.PartialStats, w.stats)
+			e.partialWorkers[i].stats = &AggWorkerStat{}
+			e.stats.PartialStats = append(e.stats.PartialStats, e.partialWorkers[i].stats)
 		}
-		e.memTracker.Consume(w.chk.MemoryUsage())
-		e.partialWorkers[i] = w
+		e.memTracker.Consume(e.partialWorkers[i].chk.MemoryUsage())
 		input := &HashAggInput{
 			chk:        exec.NewFirstChunk(e.Children(0)),
-			giveBackCh: w.inputCh,
+			giveBackCh: e.partialWorkers[i].inputCh,
 		}
 		e.memTracker.Consume(input.chk.MemoryUsage())
 		e.inputCh <- input
@@ -322,7 +321,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 
 func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 	for i := 0; i < finalConcurrency; i++ {
-		w := HashAggFinalWorker{
+		e.finalWorkers[i] = HashAggFinalWorker{
 			baseHashAggWorker:   newBaseHashAggWorker(e.Ctx(), e.finishCh, e.FinalAggFuncs, e.MaxChunkSize(), e.memTracker),
 			partialResultMap:    make(aggfuncs.AggPartialResultMapper),
 			BInMap:              0,
@@ -337,12 +336,12 @@ func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 			isSpilledTriggered:  false,
 		}
 		// There is a bucket in the empty partialResultsMap.
-		e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMap))
+		e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << e.finalWorkers[i].BInMap))
 		if e.stats != nil {
-			w.stats = &AggWorkerStat{}
-			e.stats.FinalStats = append(e.stats.FinalStats, w.stats)
+			e.finalWorkers[i].stats = &AggWorkerStat{}
+			e.stats.FinalStats = append(e.stats.FinalStats, e.finalWorkers[i].stats)
 		}
-		e.finalWorkers[i] = w
+		e.finalWorkers[i] = e.finalWorkers[i]
 		e.finalWorkers[i].finalResultHolderCh <- exec.NewFirstChunk(e)
 	}
 }
