@@ -535,7 +535,7 @@ func TestDeniedByBDR(t *testing.T) {
 
 		// Roles for ActionCreateView
 		{ast.BDRRolePrimary, model.ActionCreateView, false},
-		{ast.BDRRoleSecondary, model.ActionCreateView, false},
+		{ast.BDRRoleSecondary, model.ActionCreateView, true},
 		{ast.BDRRoleLocalOnly, model.ActionCreateView, false},
 
 		// Roles for ActionModifyTableCharsetAndCollate
@@ -550,7 +550,7 @@ func TestDeniedByBDR(t *testing.T) {
 
 		// Roles for ActionDropView
 		{ast.BDRRolePrimary, model.ActionDropView, false},
-		{ast.BDRRoleSecondary, model.ActionDropView, false},
+		{ast.BDRRoleSecondary, model.ActionDropView, true},
 		{ast.BDRRoleLocalOnly, model.ActionDropView, false},
 
 		// Roles for ActionRecoverTable
@@ -788,6 +788,60 @@ func TestDeniedByBDR(t *testing.T) {
 				Args: []interface{}{true},
 			},
 			expected: true,
+		},
+		{
+			role:   ast.BDRRolePrimary,
+			action: model.ActionAddIndex,
+			job: &model.Job{
+				Type: model.ActionAddIndex,
+				Args: []interface{}{true},
+			},
+			expected: true,
+		},
+		{
+			role:   ast.BDRRolePrimary,
+			action: model.ActionAddIndex,
+			job: &model.Job{
+				Type: model.ActionAddIndex,
+				Args: []interface{}{false},
+			},
+			expected: false,
+		},
+		{
+			role:   ast.BDRRolePrimary,
+			action: model.ActionAddColumn,
+			job: &model.Job{
+				Type: model.ActionAddColumn,
+				Args: []interface{}{"", "", "", "", true},
+			},
+			expected: true,
+		},
+		{
+			role:   ast.BDRRolePrimary,
+			action: model.ActionAddColumn,
+			job: &model.Job{
+				Type: model.ActionAddColumn,
+				Args: []interface{}{"", "", "", "", false},
+			},
+			expected: false,
+		},
+		{
+			role:   ast.BDRRolePrimary,
+			action: model.ActionModifyColumn,
+			job: &model.Job{
+				Type: model.ActionModifyColumn,
+				Args: []interface{}{"", "", "", "", "", true, "", "", ""},
+			},
+			expected: true,
+		},
+		{
+			role:   ast.BDRRolePrimary,
+			action: model.ActionModifyColumn,
+			job: &model.Job{
+				Type: model.ActionModifyColumn,
+				Args: []interface{}{"", "", "", "", "", false, "", "", ""},
+			},
+			expected: false,
 		},
 	}
 

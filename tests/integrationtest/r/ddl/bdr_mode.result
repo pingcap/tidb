@@ -29,6 +29,7 @@ Error 8263 (HY000): The operation is not allowed while the bdr role of this clus
 drop table t2;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
 alter table t modify column a bigint;
+Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
 alter table t auto_increment = 6000;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
 alter table t alter column a set default 1;
@@ -345,7 +346,15 @@ admin set bdr role local_only;
 drop sequence seq;
 admin set bdr role secondary;
 create view v as select 1 as b;
+Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
+admin set bdr role local_only;
+create view v as select 1 as b;
+admin set bdr role secondary;
 drop view v;
+Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
+admin set bdr role local_only;
+drop view v;
+admin set bdr role secondary;
 alter table t charset utf8mb4 collate utf8mb4_unicode_ci;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
 alter database bdr_mode default character set = utf8;
@@ -451,3 +460,24 @@ alter resource group rg1 ru_per_sec = 200;
 drop user user1;
 drop resource group if exists rg1;
 admin set bdr role local_only;
+create database bdr_mode;
+use bdr_mode;
+admin set bdr role primary;
+create table t(a int);
+alter table t modify column a bigint;
+Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
+alter table t modify column a int default 10;
+alter table t modify column a int comment "test";
+Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
+alter table t modify column a int default 100 comment "test";
+admin set bdr role local_only;
+drop table t;
+admin set bdr role primary;
+create table t(a int);
+alter table t add column b int;
+alter table t add column c int null;
+alter table t add column d int not null;
+Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
+alter table t add column d int not null default 10;
+admin set bdr role local_only;
+drop database bdr_mode;

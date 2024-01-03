@@ -37,6 +37,7 @@ truncate table t2;
 -- error 8263
 drop table t2;
 
+-- error 8263
 alter table t modify column a bigint;
 -- error 8263
 alter table t auto_increment = 6000;
@@ -397,8 +398,16 @@ admin set bdr role local_only;
 drop sequence seq;
 admin set bdr role secondary;
 
+-- error 8263
 create view v as select 1 as b;
+admin set bdr role local_only;
+create view v as select 1 as b;
+admin set bdr role secondary;
+-- error 8263
 drop view v;
+admin set bdr role local_only;
+drop view v;
+admin set bdr role secondary;
 
 -- error 8263
 alter table t charset utf8mb4 collate utf8mb4_unicode_ci;
@@ -532,3 +541,28 @@ alter resource group rg1 ru_per_sec = 200;
 drop user user1;
 drop resource group if exists rg1;
 admin set bdr role local_only;
+
+# *******TestModifyColumn*******
+create database bdr_mode;
+use bdr_mode;
+admin set bdr role primary;
+create table t(a int);
+-- error 8263
+alter table t modify column a bigint;
+alter table t modify column a int default 10;
+-- error 8263
+alter table t modify column a int comment "test";
+alter table t modify column a int default 100 comment "test";
+admin set bdr role local_only;
+drop table t;
+
+# *******TestAddColumn*******
+admin set bdr role primary;
+create table t(a int);
+alter table t add column b int;
+alter table t add column c int null;
+-- error 8263
+alter table t add column d int not null;
+alter table t add column d int not null default 10;
+admin set bdr role local_only;
+drop database bdr_mode;

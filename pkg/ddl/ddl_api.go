@@ -4178,7 +4178,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		TableName:      t.Meta().Name.L,
 		Type:           model.ActionAddColumn,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []interface{}{col, spec.Position, 0, spec.IfNotExists},
+		Args:           []interface{}{col, spec.Position, 0, spec.IfNotExists, deniedByBDRWhenAddColumn(specNewColumn.Options)},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 
@@ -5714,15 +5714,18 @@ func GetModifiableColumnJob(
 	}
 
 	job := &model.Job{
-		SchemaID:       schema.ID,
-		TableID:        t.Meta().ID,
-		SchemaName:     schema.Name.L,
-		TableName:      t.Meta().Name.L,
-		Type:           model.ActionModifyColumn,
-		BinlogInfo:     &model.HistoryInfo{},
-		ReorgMeta:      NewDDLReorgMeta(sctx),
-		CtxVars:        []interface{}{needChangeColData},
-		Args:           []interface{}{&newCol.ColumnInfo, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
+		SchemaID:   schema.ID,
+		TableID:    t.Meta().ID,
+		SchemaName: schema.Name.L,
+		TableName:  t.Meta().Name.L,
+		Type:       model.ActionModifyColumn,
+		BinlogInfo: &model.HistoryInfo{},
+		ReorgMeta:  NewDDLReorgMeta(sctx),
+		CtxVars:    []interface{}{needChangeColData},
+		Args: []interface{}{
+			&newCol.ColumnInfo, originalColName, spec.Position, modifyColumnTp, newAutoRandBits,
+			deniedByBDRWhenModifyColumn(newCol.FieldType, col.FieldType, specNewColumn.Options),
+		},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 	}
 	return job, nil
