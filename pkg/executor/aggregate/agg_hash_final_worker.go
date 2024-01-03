@@ -19,7 +19,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -58,17 +57,17 @@ type HashAggFinalWorker struct {
 	restoredMemDelta int64
 }
 
-func (w *HashAggFinalWorker) getInputFromDisk(sctx sessionctx.Context) (ret aggfuncs.AggPartialResultMapper, ok bool, restoredMem int64, err error) {
+func (w *HashAggFinalWorker) getInputFromDisk(sctx sessionctx.Context) (ret aggfuncs.AggPartialResultMapper, restoredMem int64, err error) {
 	ret, restoredMem, err = w.spillHelper.restoreOnePartition(sctx)
-	w.intestDuringRun(&ret, &ok, &err)
+	w.intestDuringRun(&ret, &err)
 	if err != nil {
-		return nil, false, restoredMem, err
+		return nil, restoredMem, err
 	}
 
 	if ret == nil {
-		return nil, false, restoredMem, nil
+		return nil, restoredMem, nil
 	}
-	return ret, true, restoredMem, nil
+	return ret, restoredMem, nil
 }
 
 func (w *HashAggFinalWorker) getPartialInput() (input *aggfuncs.AggPartialResultMapper, ok bool) {
@@ -93,11 +92,6 @@ func (w *HashAggFinalWorker) initBInMap() {
 	}
 }
 
-func (w *HashAggFinalWorker) handleFirstInput(input *aggfuncs.AggPartialResultMapper) {
-	w.partialResultMap = *input
-	w.initBInMap()
-}
-
 func (w *HashAggFinalWorker) increaseWaitTime(waitStart time.Time) {
 	if w.stats != nil {
 		w.stats.WaitTime += int64(time.Since(waitStart))
@@ -112,6 +106,14 @@ func (w *HashAggFinalWorker) increaseExecTime(execStart time.Time) {
 }
 
 func (w *HashAggFinalWorker) mergeInputIntoResultMap(sctx sessionctx.Context, input *aggfuncs.AggPartialResultMapper) error {
+	// As the w.partialResultMap is empty when we get the first input.
+	// So it's better to directly assign the input to w.partialResultMap
+	if len(w.partialResultMap) == 0 {
+		w.partialResultMap = *input
+		w.initBInMap()
+		return nil
+	}
+
 	execStart := time.Now()
 	allMemDelta := int64(0)
 	for key, value := range *input {
@@ -147,13 +149,6 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) error {
 		input, ok := w.getPartialInput()
 		if !ok {
 			return nil
-		}
-
-		// As the w.partialResultMap is empty when we get the first input.
-		// So it's better to directly assign the input to w.partialResultMap
-		if w.partialResultMap == nil {
-			w.handleFirstInput(input)
-			continue
 		}
 
 		failpoint.Inject("ConsumeRandomPanic", nil)
@@ -200,21 +195,19 @@ func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 	execStart := time.Now()
 	defer w.increaseExecTime(execStart)
 	if w.isSpilledTriggered {
-		var ok bool
 		var err error
 		for {
 			// As we restore data by partition, only one partition uses memory at the same time.
 			// So we need to release the memory usage of last partition.
 			w.memTracker.Consume(-w.restoredAggResultMapperMem)
-			w.partialResultMap, ok, w.restoredAggResultMapperMem, err = w.getInputFromDisk(sctx)
+			w.partialResultMap, w.restoredAggResultMapperMem, err = w.getInputFromDisk(sctx)
 			if err != nil {
 				w.outputCh <- &AfFinalResult{err: err}
 				return
 			}
 
-			if !ok {
-				w.partialResultMap = nil
-				w.memTracker.Consume(-w.restoredAggResultMapperMem)
+			if w.partialResultMap == nil {
+				// All partition have been restored
 				break
 			}
 
@@ -291,7 +284,7 @@ func intestBeforeStart() {
 	}
 }
 
-func (w *HashAggFinalWorker) intestDuringRun(input *aggfuncs.AggPartialResultMapper, ok *bool, err *error) {
+func (w *HashAggFinalWorker) intestDuringRun(input *aggfuncs.AggPartialResultMapper, err *error) {
 	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
 		if val.(bool) {
 			num := rand.Intn(10000)
@@ -302,10 +295,6 @@ func (w *HashAggFinalWorker) intestDuringRun(input *aggfuncs.AggPartialResultMap
 			} else if num < 15 {
 				w.memTracker.Consume(1000000)
 				w.restoredAggResultMapperMem += 1000000
-			} else if num < 20 {
-				*ok = false
-				*input = nil
-				*err = errors.New("Random fail is triggered in final worker")
 			}
 		}
 	})
