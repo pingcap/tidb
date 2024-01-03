@@ -47,6 +47,7 @@ go_test(
     timeout = "short",
     srcs = ["agg_spill_test.go"],
     flaky = True,
+    shard_count = 3,
     deps = [
         ":aggregate",
         "//pkg/executor/aggfuncs",
