@@ -498,6 +498,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			failpoint.Return(errors.New("ErrorSameTime returned error"))
 		}
 	})
+	var globalHg *statistics.Histogram
 	for {
 		select {
 		case item, ok := <-a.histogramAndTopn:
@@ -515,7 +516,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			}
 
 			// Merge histogram.
-			globalHg := a.globalStats.Hg[item.idx]
+			globalHg = a.globalStats.Hg[item.idx]
 			globalHg, err = statistics.MergePartitionHist2GlobalHist(stmtCtx, allhg, poppedTopN,
 				int64(opts[ast.AnalyzeOptNumBuckets]), isIndex)
 			if err != nil {
@@ -523,7 +524,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			}
 
 			// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
-			for j := range globalHg.Buckets {
+			for j := range (*globalHg).Buckets {
 				globalHg.Buckets[j].NDV = 0
 			}
 			globalHg.NDV = a.globalStatsNDV[item.idx]
