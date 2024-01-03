@@ -673,11 +673,25 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 			terror.Call(e.Close)
 			return err
 		}
+<<<<<<< HEAD:executor/adapter.go
 		err = Next(ctx, e, newFirstChunk(e))
 		if err != nil {
 			return err
 		}
 		err = e.Close()
+=======
+		err = exec.Next(ctx, e, exec.NewFirstChunk(e))
+		failpoint.Inject("handleForeignKeyCascadeError", func(val failpoint.Value) {
+			// Next can recover panic and convert it to error. So we inject error directly here.
+			if val.(bool) && err == nil {
+				err = errors.New("handleForeignKeyCascadeError")
+			}
+		})
+		closeErr := exec.Close(e)
+		if err == nil {
+			err = closeErr
+		}
+>>>>>>> ca047599e69 (exeuctor: fix goroutine leak when handleForeignKeyCascade exceed mem_quota (#49885)):pkg/executor/adapter.go
 		if err != nil {
 			return err
 		}
