@@ -41,9 +41,6 @@ type SessionBindingHandle interface {
 	// DropSessionBinding drops a binding by the sql digest.
 	DropSessionBinding(sqlDigest string) error
 
-	// GetSessionBinding return the binding which can match the digest.
-	GetSessionBinding(sqlDigest string) *BindRecord
-
 	// MatchSessionBinding returns the matched binding for this statement.
 	MatchSessionBinding(currentDB string, stmt ast.StmtNode) (*BindRecord, error)
 

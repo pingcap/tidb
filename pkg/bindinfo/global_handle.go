@@ -45,9 +45,6 @@ import (
 type GlobalBindingHandle interface {
 	// Methods for create, get, drop global sql bindings.
 
-	// GetGlobalBinding returns the BindRecord of the (normalizedSQL,db) if BindRecord exist.
-	GetGlobalBinding(sqlDigest string) *BindRecord
-
 	// MatchGlobalBinding returns the matched binding for this statement.
 	MatchGlobalBinding(currentDB string, stmt ast.StmtNode) (*BindRecord, error)
 
