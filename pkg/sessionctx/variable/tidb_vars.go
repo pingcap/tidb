@@ -1570,7 +1570,7 @@ var (
 	EnableDDL func() error = nil
 	// DisableDDL is the func registered by ddl to disable running ddl in this instance.
 	DisableDDL func() error = nil
-	// SwitchMDL is the func registered by DDL to switch MDL.
+	// SwitchDDLVersion is the func registered by DDL to switch DDL version.
 	SwitchDDLVersion func(version int64) error
 	// SetExternalTimestamp is the func registered by staleread to set externaltimestamp in pd
 	SetExternalTimestamp func(ctx context.Context, ts uint64) error

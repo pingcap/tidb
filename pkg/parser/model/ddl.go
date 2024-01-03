@@ -280,7 +280,9 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 }
 
 const (
-	TiDBDDLV1 = iota + 1
+	// TiDBDDLV1 is the version 1 of DDL.
+	TiDBDDLV1 int64 = iota + 1
+	// TiDBDDLV2 is the version 2 of DDL.
 	TiDBDDLV2
 )
 
@@ -1003,10 +1005,6 @@ func (job *Job) GetInvolvingSchemaInfo() []InvolvingSchemaInfo {
 	return []InvolvingSchemaInfo{
 		{Database: job.SchemaName, Table: job.TableName},
 	}
-}
-
-func (job *Job) IsVersion2() bool {
-	return job.Version == TiDBDDLV2
 }
 
 // JobState is for job state.

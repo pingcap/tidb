@@ -249,6 +249,7 @@ func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 	})
 }
 
+// startLocalWorkerLoop starts the local worker loop to run the DDL job of v2.
 func (d *ddl) startLocalWorkerLoop() {
 	for {
 		if isChanClosed(d.ctx.Done()) {
@@ -257,7 +258,7 @@ func (d *ddl) startLocalWorkerLoop() {
 		select {
 		case <-d.ctx.Done():
 			return
-		case task, ok := <-d.jobTaskCh:
+		case task, ok := <-d.localJobCh:
 			if !ok {
 				return
 			}
@@ -378,14 +379,14 @@ func (d *ddl) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*
 	d.delivery2worker(wk, pool, job)
 }
 
-// delivery2worker owns the worker, need to put it back to the pool in this function.
+// delivery2LocalWorker runs the DDL job of v2 in local.
+// send the result to the error channels in the task.
+// delivery2Localworker owns the worker, need to put it back to the pool in this function.
 func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 	job := task.job
 	wk, err := pool.get()
 	if err != nil {
-		for _, ch := range task.errs {
-			ch <- err
-		}
+		task.NotifyError(err)
 		return
 	}
 	for wk == nil {
@@ -396,9 +397,7 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 		}
 		wk, err = pool.get()
 		if err != nil {
-			for _, ch := range task.errs {
-				ch <- err
-			}
+			task.NotifyError(err)
 			return
 		}
 	}
@@ -408,14 +407,12 @@ func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
 			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
 		}()
 
-		err := wk.HandleDDLJobTableV2(d.ddlCtx, job)
+		err := wk.HandleDDLJobV2(d.ddlCtx, job)
 		pool.put(wk)
 		if err != nil {
 			logutil.BgLogger().Info("handle ddl job failed", zap.String("category", "ddl"), zap.Error(err), zap.String("job", job.String()))
 		}
-		for _, ch := range task.errs {
-			ch <- err
-		}
+		task.NotifyError(err)
 	})
 }
 

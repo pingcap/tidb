@@ -275,11 +275,11 @@ func createTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tb
 		return errors.Trace(err)
 	}
 	if err := t.CreateTableOrView(schemaID, tbInfo); err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	if variable.DDLVersion.Load() == model.TiDBDDLV2 {
 		if err = t.CreateTableName(job.SchemaName, tbInfo.Name.String(), tbInfo.ID); err != nil {
-			return err
+			return errors.Trace(err)
 		}
 	}
 	return nil
@@ -398,7 +398,7 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 			if err = t.DropTableOrView(job.SchemaID, job.TableID); err != nil {
 				return ver, errors.Trace(err)
 			}
-			if variable.DDLVersion.Load() == model.TiDBDDLV2 {
+			if variable.DDLVersion.Load() == model.TiDBDDLV2 && job.Type == model.ActionDropTable {
 				if err = t.DropTableName(job.SchemaName, tblInfo.Name.String()); err != nil {
 					return ver, errors.Trace(err)
 				}

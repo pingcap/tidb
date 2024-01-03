@@ -2874,10 +2874,12 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	return nil
 }
 
-func (d *ddl) BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
+// BatchCreateTableWithJobs combine CreateTableJobs to BatchCreateTableJob.
+func (*ddl) BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
 	var j *model.Job
 
 	args := make([]*model.TableInfo, 0, len(jobs))
+	involvingSchemaInfo := make([]model.InvolvingSchemaInfo, 0, len(jobs))
 	var foreignKeyChecks bool
 
 	//  if there is any duplicated table name
@@ -2901,7 +2903,7 @@ func (d *ddl) BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
 
 		duplication[info.Name.L] = struct{}{}
 
-		j.InvolvingSchemaInfo = append(j.InvolvingSchemaInfo,
+		involvingSchemaInfo = append(involvingSchemaInfo,
 			model.InvolvingSchemaInfo{
 				Database: job.SchemaName,
 				Table:    info.Name.L,
@@ -2912,6 +2914,7 @@ func (d *ddl) BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
 	}
 	j.Args = append(j.Args, args)
 	j.Args = append(j.Args, foreignKeyChecks)
+	j.InvolvingSchemaInfo = involvingSchemaInfo
 
 	return j, nil
 }

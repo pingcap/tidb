@@ -734,6 +734,21 @@ func TestName(t *testing.T) {
 	err = m.CheckTableNameNotExists(m.TableNameKey("db1", "t"))
 	require.NoError(t, err)
 
+	// TestDDLVersion
+	v, err := m.GetDDLVersion()
+	require.NoError(t, err)
+	require.Equal(t, v, int64(0))
+	err = m.SetDDLVersion(1)
+	require.NoError(t, err)
+	v, err = m.GetDDLVersion()
+	require.NoError(t, err)
+	require.Equal(t, v, int64(1))
+	err = m.SetDDLVersion(2)
+	require.NoError(t, err)
+	v, err = m.GetDDLVersion()
+	require.NoError(t, err)
+	require.Equal(t, v, int64(2))
+
 	err = txn.Rollback()
 	require.NoError(t, err)
 }

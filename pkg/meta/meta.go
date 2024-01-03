@@ -1494,10 +1494,12 @@ func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
 	return errors.Trace(err)
 }
 
-func (m *Meta) TableNameKey(dbName string, tableName string) kv.Key {
+// TableNameKey constructs the key for table name.
+func (*Meta) TableNameKey(dbName string, tableName string) kv.Key {
 	return kv.Key(fmt.Sprintf("%s:%s%s%s", mNames, dbName, mNameSep, tableName))
 }
 
+// CheckTableNameExists checks if the table name exists.
 func (m *Meta) CheckTableNameExists(name []byte) error {
 	v, err := m.txn.Get(name)
 	if err == nil && v == nil {
@@ -1506,6 +1508,7 @@ func (m *Meta) CheckTableNameExists(name []byte) error {
 	return errors.Trace(err)
 }
 
+// CheckTableNameNotExists checks if the table name not exists.
 func (m *Meta) CheckTableNameNotExists(name []byte) error {
 	v, err := m.txn.Get(name)
 	if err == nil && v != nil {
@@ -1514,6 +1517,8 @@ func (m *Meta) CheckTableNameNotExists(name []byte) error {
 	return errors.Trace(err)
 }
 
+// CreateTableName creates a table name.
+// Used by CreateTable/RenameTable/TruncateTable/RecoverTable/RecoverSchema.
 func (m *Meta) CreateTableName(dbName string, tableName string, tableID int64) error {
 	// Check if table exists.
 	key := m.TableNameKey(dbName, tableName)
@@ -1523,6 +1528,8 @@ func (m *Meta) CreateTableName(dbName string, tableName string, tableID int64) e
 	return m.txn.Set(key, []byte(strconv.FormatInt(tableID, 10)))
 }
 
+// DropTableName drops a table name.
+// Used by DropTable/RenameTable/TruncateTable.
 func (m *Meta) DropTableName(dbName string, tableName string) error {
 	// Check if table exists.
 	key := m.TableNameKey(dbName, tableName)
@@ -1532,6 +1539,8 @@ func (m *Meta) DropTableName(dbName string, tableName string) error {
 	return m.txn.Clear(key)
 }
 
+// ChangeTableName changes a table name.
+// It can be used by RenameTable.
 func (m *Meta) ChangeTableName(dbName string, oldTableName string, newTableName string) error {
 	// Check if table exists.
 	oldKey := m.TableNameKey(dbName, oldTableName)
@@ -1550,6 +1559,8 @@ func (m *Meta) ChangeTableName(dbName string, oldTableName string, newTableName 
 	return m.txn.Clear(oldKey)
 }
 
+// ChangeDatabaseName changes a database name.
+// It can be used by RenameDatabase.
 func (m *Meta) ChangeDatabaseName(oldName string, newName string) error {
 	// iterate all tables
 	prefix := m.TableNameKey(oldName, "")
@@ -1569,6 +1580,8 @@ func (m *Meta) ChangeDatabaseName(oldName string, newName string) error {
 	})
 }
 
+// DropDatabaseName drops a database name.
+// Used by DropDatabase.
 func (m *Meta) DropDatabaseName(dbName string) error {
 	// iterate all tables
 	prefix := m.TableNameKey(dbName, "")
@@ -1577,6 +1590,8 @@ func (m *Meta) DropDatabaseName(dbName string) error {
 	})
 }
 
+// ChangeTableID changes a table ID.
+// It can be used by TruncateTable.
 func (m *Meta) ChangeTableID(dbName string, tableName string, tableID int64) error {
 	// Check if table exists.
 	key := m.TableNameKey(dbName, tableName)
@@ -1586,6 +1601,7 @@ func (m *Meta) ChangeTableID(dbName string, tableName string, tableID int64) err
 	return m.txn.Set(key, []byte(strconv.FormatInt(tableID, 10)))
 }
 
+// ClearAllTableNames clears all table names.
 func (m *Meta) ClearAllTableNames() error {
 	prefix := kv.Key(fmt.Sprintf("%s:", mNames))
 	return m.txn.Iterate(prefix, prefix.PrefixNext(), func(key []byte, value []byte) error {
@@ -1593,10 +1609,12 @@ func (m *Meta) ClearAllTableNames() error {
 	})
 }
 
+// SetDDLVersion sets the ddl version.
 func (m *Meta) SetDDLVersion(v int64) error {
 	return m.txn.Set(mDDLVersion, []byte(strconv.FormatInt(v, 10)))
 }
 
+// GetDDLVersion gets the ddl version.
 func (m *Meta) GetDDLVersion() (int64, error) {
 	return m.txn.GetInt64(mDDLVersion)
 }

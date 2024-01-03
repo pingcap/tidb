@@ -80,7 +80,7 @@ const (
 	currentVersion = 1
 	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
 	DDLOwnerKey         = "/tidb/ddl/fg/owner"
-	DDLSchemaVersionKey = "/tidb/schema_version"
+	ddlSchemaVersionKey = "/tidb/schema_version"
 	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
 	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
 	ddlPrompt          = "ddl"
@@ -268,16 +268,25 @@ type DDL interface {
 }
 
 type limitJobTask struct {
-	job      *model.Job
-	errs     []chan error
+	job *model.Job
+	// when we combine multiple jobs into one task,
+	// append the errChs to this slice.
+	errChs   []chan error
 	cacheErr error
+}
+
+func (t *limitJobTask) NotifyError(err error) {
+	for _, errCh := range t.errChs {
+		errCh <- err
+	}
 }
 
 // ddl is used to handle the statements that define the structure or schema of the database.
 type ddl struct {
-	m            sync.RWMutex
-	wg           tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
-	limitJobCh   chan *limitJobTask
+	m          sync.RWMutex
+	wg         tidbutil.WaitGroupWrapper // It's only used to deal with data race in restart_test.
+	limitJobCh chan *limitJobTask
+	// limitJobChV2 is used to limit the number of jobs being executed in local worker.
 	limitJobChV2 chan *limitJobTask
 
 	*ddlCtx
@@ -291,7 +300,9 @@ type ddl struct {
 	// get notification if any DDL coming.
 	ddlJobCh chan struct{}
 
-	jobTaskCh    chan *limitJobTask
+	// localJobCh is used to delivery job in local TiDB nodes.
+	localJobCh chan *limitJobTask
+	// globalIDLocal locks global id to reduce write conflict.
 	globalIDLock sync.Mutex
 }
 
@@ -402,7 +413,7 @@ type ddlCtx struct {
 
 // schemaVersionManager is used to manage the schema version. To prevent the conflicts on this key between different DDL job,
 // we use another transaction to update the schema version, so that we need to lock the schema version and unlock it until the job is committed.
-// for version2, we use etcd lock to lock the schema version between TiDB nodes.
+// for version2, we use etcd lock to lock the schema version between TiDB nodes now.
 type schemaVersionManager struct {
 	schemaVersionMu sync.Mutex
 	// lockOwner stores the job ID that is holding the lock.
@@ -424,7 +435,10 @@ func newSchemaVersionManager(ctx context.Context, etcdClient *clientv3.Client) *
 }
 
 func (sv *schemaVersionManager) setSchemaVersion(job *model.Job, store kv.Storage) (schemaVersion int64, err error) {
-	sv.lockSchemaVersion(job.ID)
+	err = sv.lockSchemaVersion(job.ID)
+	if err != nil {
+		return schemaVersion, errors.Trace(err)
+	}
 	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(ctx context.Context, txn kv.Transaction) error {
 		var err error
 		m := meta.NewMeta(txn)
@@ -445,11 +459,11 @@ func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
 		if sv.etcdClient != nil && variable.DDLVersion.Load() == model.TiDBDDLV2 {
 			se, err := concurrency.NewSession(sv.etcdClient)
 			if err != nil {
-				return err
+				return errors.Trace(err)
 			}
-			mu := concurrency.NewMutex(se, DDLSchemaVersionKey)
+			mu := concurrency.NewMutex(se, ddlSchemaVersionKey)
 			if err := mu.Lock(sv.ctx); err != nil {
-				return err
+				return errors.Trace(err)
 			}
 			sv.seMaps[jobID] = se
 			sv.lockMaps[jobID] = mu
@@ -721,7 +735,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		limitJobChV2:      make(chan *limitJobTask, batchAddingJobs),
 		enableTiFlashPoll: atomicutil.NewBool(true),
 		ddlJobCh:          make(chan struct{}, 100),
-		jobTaskCh:         make(chan *limitJobTask, 1),
+		localJobCh:        make(chan *limitJobTask, 1),
 	}
 
 	taskexecutor.RegisterTaskType(proto.Backfill,
@@ -802,7 +816,7 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	logutil.BgLogger().Info("start DDL", zap.String("category", "ddl"), zap.String("ID", d.uuid), zap.Bool("runWorker", config.GetGlobalConfig().Instance.TiDBEnableDDL.Load()))
 
 	d.wg.Run(func() {
-		d.limitDDLJobs(d.limitJobCh, d.addBatchDDLJobs)
+		d.limitDDLJobs(d.limitJobCh, d.addBatchDDLJobsV1)
 	})
 	d.wg.Run(func() {
 		d.limitDDLJobs(d.limitJobChV2, d.addBatchDDLJobsV2)
@@ -1092,6 +1106,7 @@ func setDDLJobVersion(job *model.Job) {
 	}
 
 	switch job.Type {
+	// currently, v2 only support CreateTable without foreign keys.
 	case model.ActionCreateTable:
 		if len(job.Args) == 0 {
 			break
@@ -1115,8 +1130,9 @@ func (d *ddl) deliverJobTask(task *limitJobTask) {
 	}
 }
 
-func (d *ddl) shouldCheckHistoryJob(job *model.Job) bool {
-	return !job.IsVersion2()
+func (*ddl) shouldCheckHistoryJob(job *model.Job) bool {
+	// for v2 job, we add the history job directly now, so no need to check it.
+	return job.Version != model.TiDBDDLV2
 }
 
 // DoDDLJob will return
@@ -1141,7 +1157,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 
 	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
 		if val.(bool) {
-			<-task.errs[0]
+			<-task.errChs[0]
 			// The same job will be put to the DDL queue twice.
 			job = job.Clone()
 			task1 := &limitJobTask{job, []chan error{make(chan error)}, nil}
@@ -1152,7 +1168,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	})
 
 	// worker should restart to continue handling tasks in limitJobCh, and send back through task.err
-	err := <-task.errs[0]
+	err := <-task.errChs[0]
 	if err != nil {
 		// The transaction of enqueuing job is failed.
 		return errors.Trace(err)
@@ -1391,7 +1407,7 @@ func (d *ddl) SwitchMDL(enable bool) error {
 	return nil
 }
 
-// SwitchDDLVersion enables MDL or disable MDL.
+// SwitchDDLVersion switch ddl version.
 func (d *ddl) SwitchDDLVersion(version int64) error {
 	oldVersion := variable.DDLVersion.Load()
 	if oldVersion == version {
@@ -1404,13 +1420,13 @@ func (d *ddl) SwitchDDLVersion(version int64) error {
 	// This check can not cover every corner cases, so users need to guarantee that there is no DDL running by themselves.
 	sessCtx, err := d.sessPool.Get()
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	defer d.sessPool.Put(sessCtx)
 	se := sess.NewSession(sessCtx)
 	rows, err := se.Execute(ctx, "select 1 from mysql.tidb_ddl_job", "check job")
 	if err != nil {
-		return err
+		return errors.Trace(err)
 	}
 	if len(rows) != 0 {
 		return errors.New("please wait for all jobs done")
@@ -1425,11 +1441,14 @@ func (d *ddl) SwitchDDLVersion(version int64) error {
 	return nil
 }
 
-func (d *ddl) migration2DDLV1(m *meta.Meta) error {
+// migration2DDLV1 migration ddl version to v1.
+func (*ddl) migration2DDLV1(m *meta.Meta) error {
+	// clear all table names when we switch to v1.
 	return errors.Trace(m.ClearAllTableNames())
 }
 
-func (d *ddl) migration2DDLV2(m *meta.Meta) error {
+// migration2DDLV2 migration ddl version to v2.
+func (*ddl) migration2DDLV2(m *meta.Meta) error {
 	if err := m.ClearAllTableNames(); err != nil {
 		return errors.Trace(err)
 	}
@@ -1459,7 +1478,7 @@ func (d *ddl) migration2DDLVersion(ver int64) error {
 		m := meta.NewMeta(txn)
 		v, err := m.GetDDLVersion()
 		if err != nil {
-			v = model.TiDBDDLV1
+			return errors.Trace(err)
 		}
 
 		if v == ver {

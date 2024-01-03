@@ -218,8 +218,6 @@ func (d *ddl) limitDDLJobs(ch chan *limitJobTask, handler func(tasks []*limitJob
 	tasks := make([]*limitJobTask, 0, batchAddingJobs)
 	for {
 		select {
-		case <-d.ctx.Done():
-			return
 		case task := <-ch:
 			tasks = tasks[:0]
 			jobLen := len(ch)
@@ -228,42 +226,20 @@ func (d *ddl) limitDDLJobs(ch chan *limitJobTask, handler func(tasks []*limitJob
 				tasks = append(tasks, <-ch)
 			}
 			handler(tasks)
+		case <-d.ctx.Done():
+			return
 		}
 	}
 }
 
-func (d *ddl) checkFlashbackJobInQueue(t *meta.Meta) error {
-	jobs, err := t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	for _, job := range jobs {
-		if job.Type == model.ActionFlashbackCluster {
-			return errors.Errorf("Can't add ddl job, have flashback cluster job")
-		}
-	}
-	return nil
-}
-
-func (d *ddl) checkFlashBackJobInTable(se sessionctx.Context) error {
-	job, err := getJobsBySQL(sess.NewSession(se), JobTable, fmt.Sprintf("type = %d", model.ActionFlashbackCluster))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(job) != 0 {
-		return errors.Errorf("Can't add ddl job, have flashback cluster job")
-	}
-	return nil
-}
-
-// addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL queue.
-func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
+// addBatchDDLJobsV1 gets global job IDs and puts the DDL jobs in the DDL queue.
+func (d *ddl) addBatchDDLJobsV1(tasks []*limitJobTask) {
 	startTime := time.Now()
 	var err error
 	// DDLForce2Queue is a flag to tell DDL worker to always push the job to the DDL queue.
 	toTable := !variable.DDLForce2Queue.Load()
 	if toTable {
-		err = d.addBatchDDLJobs2Table(tasks)
+		err = d.addBatchDDLJobs(tasks)
 	} else {
 		err = d.addBatchDDLJobs2Queue(tasks)
 	}
@@ -272,9 +248,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 		if err == nil {
 			err = task.cacheErr
 		}
-		for _, ch := range task.errs {
-			ch <- err
-		}
+		task.NotifyError(err)
 		jobs += task.job.String() + "; "
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerAddDDLJob, task.job.Type.String(),
 			metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
@@ -286,111 +260,17 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) {
 	}
 }
 
-// addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL queue.
+// addBatchDDLJobsV2 gets global job IDs and delivery the DDL jobs to local TiDB
 func (d *ddl) addBatchDDLJobsV2(tasks []*limitJobTask) {
-	err := d.addBatchDDLJobs2LocalWorker(tasks)
+	err := d.addBatchDDLJobs(tasks)
 	if err != nil {
 		for _, task := range tasks {
-			for _, ch := range task.errs {
-				ch <- err
-			}
+			task.NotifyError(err)
 		}
 		logutil.BgLogger().Warn("add DDL jobs failed", zap.String("category", "ddl"), zap.Error(err))
 	} else {
 		logutil.BgLogger().Info("add DDL jobs", zap.String("category", "ddl"), zap.Int("batch count", len(tasks)))
 	}
-
-}
-
-func (d *ddl) optimistBatchJobs(tasks []*limitJobTask) ([]*limitJobTask, error) {
-	if len(tasks) <= 1 {
-		return tasks, nil
-	}
-	var schemaName string
-	jobs := make([]*model.Job, 0, len(tasks))
-	for i, task := range tasks {
-		if task.job.Type != model.ActionCreateTable {
-			return tasks, nil
-		}
-		if i == 0 {
-			schemaName = task.job.SchemaName
-		} else if task.job.SchemaName != schemaName {
-			return tasks, nil
-		}
-		jobs = append(jobs, task.job)
-	}
-
-	job, err := d.BatchCreateTableWithJobs(jobs)
-	if err != nil {
-		return tasks, err
-	}
-	logutil.BgLogger().Info("batch create tables", zap.String("category", "ddl"), zap.Int("len", len(tasks)))
-	jobTask := &limitJobTask{job, []chan error{}, nil}
-	for _, j := range tasks {
-		jobTask.errs = append(jobTask.errs, j.errs...)
-	}
-	return []*limitJobTask{jobTask}, nil
-}
-
-func (d *ddl) addBatchDDLJobs2LocalWorker(tasks []*limitJobTask) error {
-	var (
-		ids     []int64
-		err     error
-		startTS uint64
-	)
-
-	toTable := !variable.DDLForce2Queue.Load()
-	if toTable {
-		se, err := d.sessPool.Get()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		defer d.sessPool.Put(se)
-		if err := d.checkFlashBackJobInTable(se); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	if newTasks, err := d.optimistBatchJobs(tasks); err == nil {
-		tasks = newTasks
-	}
-
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	// lock to reduce conflict
-	d.globalIDLock.Lock()
-	err = kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
-		t := meta.NewMeta(txn)
-		ids, err = t.GenGlobalIDs(len(tasks))
-		if err != nil {
-			return errors.Trace(err)
-		}
-		startTS = txn.StartTS()
-		if !toTable {
-			return d.checkFlashbackJobInQueue(t)
-		}
-		return nil
-	})
-	d.globalIDLock.Unlock()
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for i, task := range tasks {
-		job := task.job
-		job.StartTS = startTS
-		job.ID = ids[i]
-		if _, err := job.Encode(true); err != nil {
-			return err
-		}
-
-		setJobStateToQueueing(job)
-
-		injectModifyJobArgFailPoint(job)
-	}
-	for _, task := range tasks {
-		d.jobTaskCh <- task
-	}
-	return nil
 }
 
 // buildJobDependence sets the curjob's dependency-ID.
@@ -426,6 +306,9 @@ func buildJobDependence(t *meta.Meta, curJob *model.Job) error {
 
 func (d *ddl) addBatchDDLJobs2Queue(tasks []*limitJobTask) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	// lock to reduce conflict
+	d.globalIDLock.Lock()
+	defer d.globalIDLock.Unlock()
 	return kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		ids, err := t.GenGlobalIDs(len(tasks))
@@ -433,8 +316,14 @@ func (d *ddl) addBatchDDLJobs2Queue(tasks []*limitJobTask) error {
 			return errors.Trace(err)
 		}
 
-		if err := d.checkFlashbackJobInQueue(t); err != nil {
+		jobs, err := t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
+		if err != nil {
 			return errors.Trace(err)
+		}
+		for _, job := range jobs {
+			if job.Type == model.ActionFlashbackCluster {
+				return errors.Errorf("Can't add ddl job, have flashback cluster job")
+			}
 		}
 
 		for i, task := range tasks {
@@ -487,18 +376,23 @@ func setJobStateToQueueing(job *model.Job) {
 	job.State = model.JobStateQueueing
 }
 
-// addBatchDDLJobs2Table gets global job IDs and puts the DDL jobs in the DDL job table.
-func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
+// addBatchDDLJobs gets global job IDs and puts the DDL jobs in the DDL job table or local worker.
+func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 	var ids []int64
 	var err error
+	var toLocalWorker bool
 
 	se, err := d.sessPool.Get()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer d.sessPool.Put(se)
-	if err := d.checkFlashBackJobInTable(se); err != nil {
+	job, err := getJobsBySQL(sess.NewSession(se), JobTable, fmt.Sprintf("type = %d", model.ActionFlashbackCluster))
+	if err != nil {
 		return errors.Trace(err)
+	}
+	if len(job) != 0 {
+		return errors.Errorf("Can't add ddl job, have flashback cluster job")
 	}
 
 	var (
@@ -506,7 +400,13 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		bdrRole = string(ast.BDRRoleLocalOnly)
 	)
 
+	if newTasks, err := d.optimistBatchJobs(tasks); err == nil {
+		tasks = newTasks
+	}
+
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	// lock to reduce conflict
+	d.globalIDLock.Lock()
 	err = kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		ids, err = t.GenGlobalIDs(len(tasks))
@@ -522,6 +422,7 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		startTS = txn.StartTS()
 		return nil
 	})
+	d.globalIDLock.Unlock()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -551,7 +452,8 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 
 		setJobStateToQueueing(job)
 
-		if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) {
+		// currently doesn't support pause job in v2.
+		if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) && job.Version != model.TiDBDDLV2 {
 			if err = pauseRunningJob(sess.NewSession(se), job, model.AdminCommandBySystem); err != nil {
 				logutil.BgLogger().Warn("pause user DDL by system failed", zap.String("category", "ddl-upgrading"), zap.Stringer("job", job), zap.Error(err))
 				task.cacheErr = err
@@ -560,13 +462,60 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 			logutil.BgLogger().Info("pause user DDL by system successful", zap.String("category", "ddl-upgrading"), zap.Stringer("job", job))
 		}
 
+		if job.Version == model.TiDBDDLV2 {
+			toLocalWorker = true
+			if _, err := job.Encode(true); err != nil {
+				return err
+			}
+		}
+
 		jobTasks = append(jobTasks, job)
 		injectModifyJobArgFailPoint(job)
 	}
 
 	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 
+	if toLocalWorker {
+		for _, task := range tasks {
+			d.localJobCh <- task
+		}
+		return nil
+	}
 	return errors.Trace(insertDDLJobs2Table(sess.NewSession(se), true, jobTasks...))
+}
+
+// optimistBatchJobs optimist batch jobs to another batch jobs.
+// currently it only support combine CreateTable to CreateTables.
+func (d *ddl) optimistBatchJobs(tasks []*limitJobTask) ([]*limitJobTask, error) {
+	if len(tasks) <= 1 {
+		return tasks, nil
+	}
+	var schemaName string
+	jobs := make([]*model.Job, 0, len(tasks))
+	for i, task := range tasks {
+		if task.job.Version != model.TiDBDDLV2 || task.job.Type != model.ActionCreateTable {
+			return tasks, nil
+		}
+		if i == 0 {
+			schemaName = task.job.SchemaName
+		} else if task.job.SchemaName != schemaName {
+			return tasks, nil
+		}
+		jobs = append(jobs, task.job)
+	}
+
+	job, err := d.BatchCreateTableWithJobs(jobs)
+	if err != nil {
+		return tasks, err
+	}
+	logutil.BgLogger().Info("combine jobs to batch create table job", zap.String("category", "ddl"), zap.Int("len", len(tasks)))
+
+	jobTask := &limitJobTask{job, []chan error{}, nil}
+	// combine the error chans.
+	for _, j := range tasks {
+		jobTask.errChs = append(jobTask.errChs, j.errChs...)
+	}
+	return []*limitJobTask{jobTask}, nil
 }
 
 func injectFailPointForGetJob(job *model.Job) {
@@ -762,7 +711,9 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if !job.IsVersion2() {
+	// for v2 job, we didn't insert the job to ddl table now.
+	// so no need to delete it.
+	if job.Version != model.TiDBDDLV2 {
 		err = w.deleteDDLJob(job)
 		if err != nil {
 			return errors.Trace(err)
@@ -899,6 +850,37 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 	return nil
 }
 
+func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
+	err := w.sess.Begin()
+	if err != nil {
+		return nil, err
+	}
+	failpoint.Inject("mockRunJobTime", func(val failpoint.Value) {
+		if val.(bool) {
+			time.Sleep(time.Duration(rand.Intn(500)) * time.Millisecond) // #nosec G404
+		}
+	})
+	txn, err := w.sess.Txn()
+	if err != nil {
+		w.sess.Rollback()
+		return txn, err
+	}
+	// Only general DDLs are allowed to be executed when TiKV is disk full.
+	if w.tp == addIdxWorker && job.IsRunning() {
+		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
+	}
+	w.setDDLLabelForTopSQL(job.ID, job.Query)
+	w.setDDLSourceForDiagnosis(job.ID, job.Type)
+	jobContext := w.jobContext(job.ID, job.ReorgMeta)
+	if tagger := w.getResourceGroupTaggerForTopSQL(job.ID); tagger != nil {
+		txn.SetOption(kv.ResourceGroupTagger, tagger)
+	}
+	txn.SetOption(kv.ResourceGroupName, jobContext.resourceGroupName)
+	// set request source type to DDL type
+	txn.SetOption(kv.RequestSourceType, jobContext.ddlJobSourceType())
+	return txn, err
+}
+
 func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	var (
 		err       error
@@ -988,38 +970,12 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	return schemaVer, nil
 }
 
-func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
-	err := w.sess.Begin()
-	if err != nil {
-		return nil, err
-	}
-	failpoint.Inject("mockRunJobTime", func(val failpoint.Value) {
-		if val.(bool) {
-			time.Sleep(time.Duration(rand.Intn(500)) * time.Millisecond) // #nosec G404
-		}
-	})
-	txn, err := w.sess.Txn()
-	if err != nil {
-		w.sess.Rollback()
-		return txn, err
-	}
-	// Only general DDLs are allowed to be executed when TiKV is disk full.
-	if w.tp == addIdxWorker && job.IsRunning() {
-		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
-	}
-	w.setDDLLabelForTopSQL(job.ID, job.Query)
-	w.setDDLSourceForDiagnosis(job.ID, job.Type)
-	jobContext := w.jobContext(job.ID, job.ReorgMeta)
-	if tagger := w.getResourceGroupTaggerForTopSQL(job.ID); tagger != nil {
-		txn.SetOption(kv.ResourceGroupTagger, tagger)
-	}
-	txn.SetOption(kv.ResourceGroupName, jobContext.resourceGroupName)
-	// set request source type to DDL type
-	txn.SetOption(kv.RequestSourceType, jobContext.ddlJobSourceType())
-	return txn, err
-}
-
-func (w *worker) HandleDDLJobTableV2(d *ddlCtx, job *model.Job) (err error) {
+// HandleDDLJobV2 handles v2 ddl job.
+// Compare with v1:
+// 1. directly insert the job to history job table(incompatible with CDC).
+// 2. no need to wait schema version(only support create table now).
+// 3. no register mdl info(only support create table now).
+func (w *worker) HandleDDLJobV2(d *ddlCtx, job *model.Job) (err error) {
 	defer func() {
 		w.unlockSeqNum(err)
 	}()

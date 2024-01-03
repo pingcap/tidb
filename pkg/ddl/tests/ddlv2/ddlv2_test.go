@@ -1,4 +1,4 @@
-// Copyright 2022 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -33,6 +33,12 @@ func TestSwitchDDLVersion(t *testing.T) {
 	tk := testkit.NewTestKitWithSession(t, store, conn.Context().Session)
 
 	tk.MustQuery("show global variables like 'tidb_ddl_version'").Check(testkit.Rows("tidb_ddl_version 1"))
+
+	tk.MustExec("create database db1;")
+	tk.MustExec("create database db2;")
+	tk.MustExec("create table db1.tb1(id int);")
+	tk.MustExec("create table db1.tb2(id int);")
+	tk.MustExec("create table db2.tb1(id int);")
 
 	tk.MustExec("set global tidb_ddl_version=2")
 	tk.MustQuery("show global variables like 'tidb_ddl_version'").Check(testkit.Rows("tidb_ddl_version 2"))

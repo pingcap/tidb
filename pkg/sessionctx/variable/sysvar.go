@@ -1282,7 +1282,7 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableDistTask.Load()), nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBDDLVersion, Value: strconv.Itoa(model.TiDBDDLV1), Type: TypeEnum, PossibleValues: []string{strconv.Itoa(model.TiDBDDLV1), strconv.Itoa(model.TiDBDDLV2)}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+	{Scope: ScopeGlobal, Name: TiDBDDLVersion, Value: strconv.FormatInt(model.TiDBDDLV1, 10), Type: TypeEnum, PossibleValues: []string{strconv.FormatInt(model.TiDBDDLV1, 10), strconv.FormatInt(model.TiDBDDLV2, 10)}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		v := TidbOptInt64(val, model.TiDBDDLV1)
 		if DDLVersion.Load() != v {
 			err := SwitchDDLVersion(v)
