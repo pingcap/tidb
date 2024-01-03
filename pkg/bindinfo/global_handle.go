@@ -277,7 +277,7 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, recor
 	record.Db = strings.ToLower(record.Db)
 	return h.callWithSCtx(true, func(sctx sessionctx.Context) error {
 		// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
-		if err = h.lockBindInfoTable(sctx); err != nil {
+		if err = lockBindInfoTable(sctx); err != nil {
 			return err
 		}
 
@@ -326,7 +326,7 @@ func (h *globalBindingHandle) DropGlobalBinding(originalSQL, _ string, binding *
 
 	err = h.callWithSCtx(false, func(sctx sessionctx.Context) error {
 		// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
-		if err = h.lockBindInfoTable(sctx); err != nil {
+		if err = lockBindInfoTable(sctx); err != nil {
 			return err
 		}
 
@@ -385,7 +385,7 @@ func (h *globalBindingHandle) SetGlobalBindingStatus(originalSQL string, binding
 
 	err = h.callWithSCtx(true, func(sctx sessionctx.Context) error {
 		// Lock mysql.bind_info to synchronize with SetBindingStatus on other tidb instances.
-		if err = h.lockBindInfoTable(sctx); err != nil {
+		if err = lockBindInfoTable(sctx); err != nil {
 			return err
 		}
 
@@ -417,7 +417,7 @@ func (h *globalBindingHandle) SetGlobalBindingStatusByDigest(newStatus, sqlDiges
 func (h *globalBindingHandle) GCGlobalBinding() (err error) {
 	return h.callWithSCtx(true, func(sctx sessionctx.Context) error {
 		// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
-		if err = h.lockBindInfoTable(sctx); err != nil {
+		if err = lockBindInfoTable(sctx); err != nil {
 			return err
 		}
 
@@ -436,7 +436,7 @@ func (h *globalBindingHandle) GCGlobalBinding() (err error) {
 // generally available later.
 // This lock would enforce the CREATE / DROP GLOBAL BINDING statements to be executed sequentially,
 // even if they come from different tidb instances.
-func (_ *globalBindingHandle) lockBindInfoTable(sctx sessionctx.Context) error {
+func lockBindInfoTable(sctx sessionctx.Context) error {
 	// h.sctx already locked.
 	_, err := exec(sctx, LockBindInfoSQL)
 	return err
