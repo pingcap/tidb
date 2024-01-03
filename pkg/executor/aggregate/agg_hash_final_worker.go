@@ -60,11 +60,7 @@ type HashAggFinalWorker struct {
 func (w *HashAggFinalWorker) getInputFromDisk(sctx sessionctx.Context) (ret aggfuncs.AggPartialResultMapper, restoredMem int64, err error) {
 	ret, restoredMem, err = w.spillHelper.restoreOnePartition(sctx)
 	w.intestDuringRun(&ret, &err)
-	if err != nil {
-		return nil, restoredMem, err
-	}
-
-	return ret, restoredMem, nil
+	return ret, restoredMem, err
 }
 
 func (w *HashAggFinalWorker) getPartialInput() (input *aggfuncs.AggPartialResultMapper, ok bool) {
