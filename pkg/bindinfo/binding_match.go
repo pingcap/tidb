@@ -50,20 +50,20 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*BindRecord, stri
 	if ctx.Value(SessionBindInfoKeyType) == nil {
 		return nil, "", nil
 	}
-	stmtNode, normalizedSQL, sqlDigest, err := normalizeStmt(stmt, ctx.GetSessionVars().CurrentDB)
+	stmtNode, _, sqlDigest, err := normalizeStmt(stmt, ctx.GetSessionVars().CurrentDB)
 	if err != nil || stmtNode == nil {
 		return nil, "", err
 	}
 	// the priority: session normal > session universal > global normal > global universal
 	sessionHandle := ctx.Value(SessionBindInfoKeyType).(SessionBindingHandle)
-	if bindRecord := sessionHandle.GetSessionBinding(sqlDigest, normalizedSQL, ""); bindRecord != nil && bindRecord.HasEnabledBinding() {
+	if bindRecord := sessionHandle.GetSessionBinding(sqlDigest); bindRecord != nil && bindRecord.HasEnabledBinding() {
 		return bindRecord, metrics.ScopeSession, nil
 	}
 	globalHandle := GetGlobalBindingHandle(ctx)
 	if globalHandle == nil {
 		return nil, "", nil
 	}
-	if bindRecord := globalHandle.GetGlobalBinding(sqlDigest, normalizedSQL, ""); bindRecord != nil && bindRecord.HasEnabledBinding() {
+	if bindRecord := globalHandle.GetGlobalBinding(sqlDigest); bindRecord != nil && bindRecord.HasEnabledBinding() {
 		return bindRecord, metrics.ScopeGlobal, nil
 	}
 	return nil, "", nil
