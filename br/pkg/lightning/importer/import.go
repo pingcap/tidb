@@ -472,7 +472,7 @@ func NewImportControllerWithPauser(
 	}
 
 	preCheckBuilder := NewPrecheckItemBuilder(
-		cfg, p.DBMetas, preInfoGetter, cpdb, pdCli,
+		cfg, p.DBMetas, preInfoGetter, cpdb, pdHTTPCli,
 	)
 
 	rc := &Controller{

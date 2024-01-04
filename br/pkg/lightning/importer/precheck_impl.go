@@ -752,13 +752,13 @@ func (ci *checkpointCheckItem) checkpointIsValid(ctx context.Context, tableInfo 
 type CDCPITRCheckItem struct {
 	cfg              *config.Config
 	Instruction      string
-	leaderAddrGetter func() string
+	leaderAddrGetter func(context.Context) string
 	// used in test
 	etcdCli *clientv3.Client
 }
 
 // NewCDCPITRCheckItem creates a checker to check downstream has enabled CDC or PiTR.
-func NewCDCPITRCheckItem(cfg *config.Config, leaderAddrGetter func() string) precheck.Checker {
+func NewCDCPITRCheckItem(cfg *config.Config, leaderAddrGetter func(context.Context) string) precheck.Checker {
 	return &CDCPITRCheckItem{
 		cfg:              cfg,
 		Instruction:      "local backend is not compatible with them. Please switch to tidb backend then try again.",
@@ -811,7 +811,7 @@ func (ci *CDCPITRCheckItem) Check(ctx context.Context) (*precheck.CheckResult, e
 
 	if ci.etcdCli == nil {
 		var err error
-		ci.etcdCli, err = dialEtcdWithCfg(ctx, ci.cfg, ci.leaderAddrGetter())
+		ci.etcdCli, err = dialEtcdWithCfg(ctx, ci.cfg, ci.leaderAddrGetter(ctx))
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
