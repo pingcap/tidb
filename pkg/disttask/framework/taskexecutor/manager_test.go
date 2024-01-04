@@ -94,7 +94,7 @@ func TestManageTask(t *testing.T) {
 	ctx4, cancel4 := context.WithCancelCause(context.Background())
 	m.registerCancelFunc(1, cancel4)
 	mockTaskTable.EXPECT().PauseSubtasks(m.ctx, "test", int64(1)).Return(nil)
-	m.onPausingTasks([]*proto.Task{{ID: 1}})
+	require.NoError(t, m.onPausingTasks([]*proto.Task{{ID: 1}}))
 	require.Equal(t, context.Canceled, ctx4.Err())
 }
 
