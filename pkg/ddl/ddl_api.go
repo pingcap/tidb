@@ -6013,7 +6013,7 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		Type:           model.ActionModifyColumn,
 		BinlogInfo:     &model.HistoryInfo{},
 		ReorgMeta:      NewDDLReorgMeta(ctx),
-		Args:           []interface{}{&newCol, oldColName, spec.Position, 0, 0},
+		Args:           []interface{}{&newCol, oldColName, spec.Position, 0, 0, true},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 	err = d.DoDDLJob(ctx, job)
