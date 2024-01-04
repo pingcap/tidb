@@ -31,9 +31,8 @@ import (
 const (
 	// maxSpillTimes indicates how many times the data can spill at most.
 	maxSpillTimes       = 10
-	spillFlag           = 1
-	hasErrorFlag        = 2
-	partialStageFlag    = 3
+	hasErrorFlag        = 1
+	partialStageFlag    = 2
 	spilledPartitionNum = 256
 	spillTasksDoneFlag  = -1
 
@@ -49,14 +48,14 @@ type parallelHashAggSpillHelper struct {
 		cond                       *sync.Cond
 		nextPartitionIdx           int
 		spilledChunksIO            [][]*chunk.DataInDiskByChunks
-		spillTriggered             int32
 		isSpilling                 bool
 		isAllPartialWorkerFinished bool
 	}
 
-	memTracker  *memory.Tracker
-	diskTracker *disk.Tracker
-	hasError    int32
+	spillTriggered atomic.Bool
+	memTracker     *memory.Tracker
+	diskTracker    *disk.Tracker
+	hasError       int32
 
 	// These agg functions are partial agg functions that are same with partial workers'.
 	// They only be used for restoring data that are spilled to disk in partial stage.
@@ -75,18 +74,17 @@ func newSpillHelper(tracker *memory.Tracker, aggFuncsForRestoring []aggfuncs.Agg
 			cond                       *sync.Cond
 			nextPartitionIdx           int
 			spilledChunksIO            [][]*chunk.DataInDiskByChunks
-			spillTriggered             int32
 			isSpilling                 bool
 			isAllPartialWorkerFinished bool
 		}{
 			mu:                         mu,
 			cond:                       sync.NewCond(mu),
 			spilledChunksIO:            make([][]*chunk.DataInDiskByChunks, spilledPartitionNum),
-			spillTriggered:             0,
 			isSpilling:                 false,
 			nextPartitionIdx:           spilledPartitionNum - 1,
 			isAllPartialWorkerFinished: false,
 		},
+		spillTriggered:       atomic.Bool{},
 		memTracker:           tracker,
 		hasError:             0,
 		aggFuncsForRestoring: aggFuncsForRestoring,
@@ -128,15 +126,11 @@ func (p *parallelHashAggSpillHelper) getListInDisks(partitionNum int) []*chunk.D
 }
 
 func (p *parallelHashAggSpillHelper) isSpillTriggered() bool {
-	p.lock.mu.Lock()
-	defer p.lock.mu.Unlock()
-	return p.lock.spillTriggered == spillFlag
+	return p.spillTriggered.Load()
 }
 
 func (p *parallelHashAggSpillHelper) setSpillTriggered() {
-	p.lock.mu.Lock()
-	defer p.lock.mu.Unlock()
-	p.lock.spillTriggered = spillFlag
+	p.spillTriggered.Store(true)
 }
 
 func (p *parallelHashAggSpillHelper) isInSpilling() bool {

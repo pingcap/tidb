@@ -193,7 +193,7 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 		for {
 			// Since data is restored partition by partition, only one partition is in memory at any given time.
 			// Therefore, it's necessary to release the memory used by the previous partition.
-			w.memTracker.Consume(-w.restoredAggResultMapperMem)
+			w.spillHelper.memTracker.Consume(-w.restoredAggResultMapperMem)
 			w.partialResultMap, w.restoredAggResultMapperMem, err = w.getInputFromDisk(sctx)
 			if err != nil {
 				w.outputCh <- &AfFinalResult{err: err}
