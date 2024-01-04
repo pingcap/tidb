@@ -1486,7 +1486,7 @@ func (d *ddl) migration2DDLVersion(ver int64) error {
 		}
 
 		switch ver {
-		case model.TiDBDDLV1:
+		case model.TiDBDDLV1, 0:
 			err = d.migration2DDLV1(m)
 		case model.TiDBDDLV2:
 			err = d.migration2DDLV2(m)

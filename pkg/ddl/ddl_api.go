@@ -2887,6 +2887,8 @@ func (*ddl) BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
 	for _, job := range jobs {
 		if j == nil {
 			j = job.Clone()
+			j.Type = model.ActionCreateTables
+			j.Args = j.Args[:0]
 			foreignKeyChecks = job.Args[1].(bool)
 		}
 		// append table job args
@@ -2912,7 +2914,6 @@ func (*ddl) BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
 	if len(args) == 0 {
 		return nil, errors.Trace(fmt.Errorf("except args"))
 	}
-	j.Args = j.Args[0:0]
 	j.Args = append(j.Args, args)
 	j.Args = append(j.Args, foreignKeyChecks)
 	j.InvolvingSchemaInfo = involvingSchemaInfo
