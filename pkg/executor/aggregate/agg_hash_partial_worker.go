@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/twmb/murmur3"
 )
 
@@ -89,7 +88,7 @@ func (w *HashAggPartialWorker) getChildInput() bool {
 	return true
 }
 
-func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasError *bool, needShuffle *bool, enableIntest bool) bool {
+func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasError *bool, needShuffle *bool) bool {
 	w.spillHelper.syncLock.RLock()
 	defer w.spillHelper.syncLock.RUnlock()
 
@@ -125,26 +124,30 @@ func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasE
 	// so we set needShuffle to be true.
 	*needShuffle = true
 
-	if intest.InTest && enableIntest {
-		num := rand.Intn(10000)
-		if num < 3 {
-			panic("Intest panic: partial worker is panicked when running")
-		} else if num < 10 {
-			time.Sleep(1 * time.Millisecond)
-		} else if num < 13 {
-			*hasError = true
-			w.processError(errors.Errorf("Random fail is triggered in partial worker"))
-			return false
-		} else if num < 16 {
-			w.memTracker.Consume(500000)
-		}
-	}
+	w.intestDuringPartialWorkerRun()
 
 	if w.spillHelper.checkError() {
 		*hasError = true
 		return false
 	}
 	return true
+}
+
+func (w *HashAggPartialWorker) intestDuringPartialWorkerRun() {
+	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
+		if val.(bool) {
+			num := rand.Intn(10000)
+			if num < 3 {
+				panic("Intest panic: partial worker is panicked when running")
+			} else if num < 10 {
+				time.Sleep(1 * time.Millisecond)
+			} else if num < 13 {
+				w.processError(errors.Errorf("Random fail is triggered in partial worker"))
+			} else if num < 16 {
+				w.memTracker.Consume(500000)
+			}
+		}
+	})
 }
 
 func (w *HashAggPartialWorker) handleSpillBeforeExit() {
@@ -189,6 +192,19 @@ func (w *HashAggPartialWorker) sendDataToFinalWorkersBeforeExit(needShuffle bool
 	}
 }
 
+func (w *HashAggPartialWorker) intestBeforePartialWorkerRun() {
+	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
+		if val.(bool) {
+			num := rand.Intn(100)
+			if num < 2 {
+				panic("Intest panic: partial worker is panicked before start")
+			} else if num >= 2 && num < 4 {
+				time.Sleep(1 * time.Millisecond)
+			}
+		}
+	})
+}
+
 func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
 	start := time.Now()
 	hasError := false
@@ -207,23 +223,9 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		waitGroup.Done()
 	}()
 
-	enableIntest := false
-	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
-		if val.(bool) {
-			enableIntest = true
-		}
-	})
+	w.intestBeforePartialWorkerRun()
 
-	if intest.InTest && enableIntest {
-		num := rand.Intn(100)
-		if num < 2 {
-			panic("Intest panic: partial worker is panicked before start")
-		} else if num >= 2 && num < 4 {
-			time.Sleep(1 * time.Millisecond)
-		}
-	}
-
-	for w.fetchChunkAndProcess(ctx, &hasError, &needShuffle, enableIntest) {
+	for w.fetchChunkAndProcess(ctx, &hasError, &needShuffle) {
 	}
 }
 

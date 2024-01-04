@@ -60,7 +60,7 @@ type HashAggFinalWorker struct {
 
 func (w *HashAggFinalWorker) getInputFromDisk(sctx sessionctx.Context) (ret aggfuncs.AggPartialResultMapper, restoredMem int64, err error) {
 	ret, restoredMem, err = w.spillHelper.restoreOnePartition(sctx)
-	w.intestDuringRun(&err)
+	w.intestDuringFinalWorkerRun(&err)
 	return ret, restoredMem, err
 }
 
@@ -240,7 +240,7 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 
 	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
 		if val.(bool) {
-			intestBeforeStart()
+			intestBeforeFinalWorkerStart()
 		}
 	})
 
@@ -269,7 +269,7 @@ func (w *HashAggFinalWorker) cleanup(start time.Time, waitGroup *sync.WaitGroup)
 	waitGroup.Done()
 }
 
-func intestBeforeStart() {
+func intestBeforeFinalWorkerStart() {
 	num := rand.Intn(50)
 	if num == 0 {
 		panic("Intest panic: final worker is panicked before start")
@@ -278,7 +278,7 @@ func intestBeforeStart() {
 	}
 }
 
-func (w *HashAggFinalWorker) intestDuringRun(err *error) {
+func (w *HashAggFinalWorker) intestDuringFinalWorkerRun(err *error) {
 	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
 		if val.(bool) {
 			num := rand.Intn(10000)
