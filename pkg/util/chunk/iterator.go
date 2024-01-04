@@ -58,6 +58,13 @@ func NewIterator4Slice(rows []Row) Iterator {
 	return &Iterator4Slice{rows: rows}
 }
 
+func NewIterator4SliceNoInterface(rows []Row) Iterator4Slice {
+	return Iterator4Slice{
+		rows:   rows,
+		cursor: 0,
+	}
+}
+
 // Iterator4Slice is used to iterate rows inside a slice.
 type Iterator4Slice struct {
 	_      cpu.CacheLinePad

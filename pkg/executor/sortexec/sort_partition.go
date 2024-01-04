@@ -17,7 +17,6 @@ package sortexec
 import (
 	"sort"
 	"sync"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -37,23 +36,33 @@ var spillChunkSize = 1024
 // signalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
 const signalCheckpointForSort uint = 10240
 
+const (
+	notSpilled = iota
+	inSpilling
+	spillTriggered
+)
+
 type sortPartition struct {
-	// syncLock is used to ensure that we can exclusively execute the spill action while other operations are blocked.
+	// cond is only used for protecting spillStatus
+	cond        *sync.Cond
+	spillStatus int
+
+	// syncLock is used to protect variables except `spillStatus`
 	syncLock sync.Mutex
 
-	// cond is used for protecting the spillError, inDisk and closed fields.
-	cond       *sync.Cond
+	// Data are stored in savedRows
+	savedRows []chunk.Row
+	sliceIter chunk.Iterator4Slice
+	isSorted  bool
+
+	// cursor iterates the spilled chunks.
+	cursor *dataCursor
+	inDisk *chunk.DataInDiskByChunks
+
 	spillError error
-	inDisk     *chunk.DataInDiskByChunks
 	closed     bool
 
-	isSpilling atomic.Bool
-
 	fieldTypes []*types.FieldType
-
-	// Store data here
-	savedRows []chunk.Row
-	isSorted  bool
 
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
@@ -71,11 +80,6 @@ type sortPartition struct {
 	// Sort is a time-consuming operation, we need to set a checkpoint to detect
 	// the outside signal periodically.
 	timesOfRowCompare uint
-
-	// It's index that points to the data need to be read next time.
-	idx int
-
-	cursor *dataCursor
 }
 
 // Creates a new SortPartition in memory.
@@ -85,7 +89,7 @@ func newSortPartition(fieldTypes []*types.FieldType, byItemsDesc []bool,
 	retVal := &sortPartition{
 		cond:        sync.NewCond(lock),
 		spillError:  nil,
-		isSpilling:  atomic.Bool{},
+		spillStatus: notSpilled,
 		fieldTypes:  fieldTypes,
 		savedRows:   make([]chunk.Row, 0),
 		isSorted:    false,
@@ -97,27 +101,21 @@ func newSortPartition(fieldTypes []*types.FieldType, byItemsDesc []bool,
 		byItemsDesc: byItemsDesc,
 		keyColumns:  keyColumns,
 		keyCmpFuncs: keyCmpFuncs,
-		idx:         0,
 		cursor:      NewDataCursor(),
 		closed:      false,
 	}
-	retVal.isSpilling.Store(false)
 
 	return retVal
 }
 
 func (s *sortPartition) close() error {
-	s.cond.L.Lock()
-	defer s.cond.L.Unlock()
+	s.syncLock.Lock()
+	defer s.syncLock.Unlock()
 	s.closed = true
 	if s.inDisk != nil {
 		s.inDisk.Close()
-		s.inDisk = nil
 	}
 	s.getMemTracker().ReplaceBytesUsed(0)
-	s.spillAction = nil
-	s.memTracker = nil
-	s.diskTracker = nil
 	return nil
 }
 
@@ -183,12 +181,17 @@ func (s *sortPartition) sortNoLock() (ret error) {
 
 	sort.Slice(s.savedRows, s.keyColumnsLess)
 	s.isSorted = true
+	s.sliceIter = chunk.NewIterator4SliceNoInterface(s.savedRows)
 	return
 }
 
-func (s *sortPartition) spillToDiskImpl() error {
-	s.cond.L.Lock()
-	defer s.cond.L.Unlock()
+func (s *sortPartition) spillToDiskImpl() (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = util.GetRecoverError(r)
+		}
+	}()
+
 	if s.closed {
 		return nil
 	}
@@ -202,8 +205,8 @@ func (s *sortPartition) spillToDiskImpl() error {
 		return errSpillEmptyChunk
 	}
 
-	for ; s.idx < rowNum; s.advanceIdx() {
-		tmpChk.AppendRow(s.savedRows[s.idx])
+	for row := s.sliceIter.Next(); !row.IsEmpty(); row = s.sliceIter.Next() {
+		tmpChk.AppendRow(row)
 		if tmpChk.IsFull() {
 			err := s.inDisk.Add(tmpChk)
 			if err != nil {
@@ -241,11 +244,11 @@ func (s *sortPartition) spillToDisk() error {
 		return err
 	}
 
-	s.setIsSpilling(true)
+	s.setIsSpilling()
 	defer s.cond.Broadcast()
 
 	err = s.spillToDiskImpl()
-	s.setIsSpilling(false)
+	s.setSpillTriggered()
 	return err
 }
 
@@ -273,12 +276,8 @@ func (s *sortPartition) getNextSortedRow() (chunk.Row, error) {
 		return row, nil
 	}
 
-	if s.idx >= len(s.savedRows) {
-		return chunk.Row{}, nil
-	}
-	ret := s.savedRows[s.idx]
-	s.advanceIdx()
-	return ret, nil
+	row := s.sliceIter.Next()
+	return row, nil
 }
 
 func (s *sortPartition) actionSpill() *sortPartitionSpillDiskAction {
@@ -343,33 +342,41 @@ func (s *sortPartition) keyColumnsLess(i, j int) bool {
 	return s.lessRow(s.savedRows[i], s.savedRows[j])
 }
 
-func (s *sortPartition) advanceIdx() {
-	s.idx++
-}
-
 func (s *sortPartition) isSpillTriggered() bool {
 	s.cond.L.Lock()
 	defer s.cond.L.Unlock()
-	return s.inDisk != nil
+	return s.spillStatus == spillTriggered
 }
 
 func (s *sortPartition) isSpillTriggeredNoLock() bool {
-	return s.inDisk != nil
+	return s.spillStatus == spillTriggered
 }
 
-func (s *sortPartition) setIsSpilling(isSpilling bool) {
-	s.isSpilling.Store(isSpilling)
+func (s *sortPartition) setSpillTriggered() {
+	s.cond.L.Lock()
+	defer s.cond.L.Unlock()
+	s.spillStatus = spillTriggered
+}
+
+func (s *sortPartition) setIsSpilling() {
+	s.cond.L.Lock()
+	defer s.cond.L.Unlock()
+	s.spillStatus = inSpilling
+}
+
+func (s *sortPartition) getIsSpillingNoLock() bool {
+	return s.spillStatus == inSpilling
 }
 
 func (s *sortPartition) setError(err error) {
-	s.cond.L.Lock()
-	defer s.cond.L.Unlock()
+	s.syncLock.Lock()
+	defer s.syncLock.Unlock()
 	s.spillError = err
 }
 
 func (s *sortPartition) checkError() error {
-	s.cond.L.Lock()
-	defer s.cond.L.Unlock()
+	s.syncLock.Lock()
+	defer s.syncLock.Unlock()
 	return s.spillError
 }
 
