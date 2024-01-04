@@ -163,6 +163,11 @@ func initSessCtx(
 	if err := setSessCtxLocation(sessCtx, tzLocation); err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD
+=======
+	sessCtx.GetSessionVars().StmtCtx.InReorg = true
+	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(sessCtx.GetSessionVars().Location())
+>>>>>>> 6f3266498df (ddl: fix reorg cannot handle divide 0 error (#50057))
 	sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.TruncateAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
@@ -203,9 +208,15 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 		uv.StmtCtx.BadNullAsWarning = badNullAsWarn
 		uv.StmtCtx.OverflowAsWarning = overflowAsWarn
 		uv.StmtCtx.DividedByZeroAsWarning = dividedZeroAsWarn
+<<<<<<< HEAD
 		uv.StmtCtx.IgnoreZeroInDate = ignoreZeroInDate
 		uv.StmtCtx.NoZeroDate = noZeroDate
 		uv.ResourceGroupName = resGroupName
+=======
+		uv.StmtCtx.SetTypeFlags(typeFlags)
+		uv.StmtCtx.ResourceGroupName = resGroupName
+		uv.StmtCtx.InReorg = false
+>>>>>>> 6f3266498df (ddl: fix reorg cannot handle divide 0 error (#50057))
 	}
 }
 
