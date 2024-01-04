@@ -896,7 +896,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		return 0, err
 	}
 
-	t := meta.NewMeta(txn)
+	t := meta.NewMeta(txn, meta.WithUpdateName())
 	if job.IsDone() || job.IsRollbackDone() {
 		if job.IsDone() {
 			job.State = model.JobStateSynced
