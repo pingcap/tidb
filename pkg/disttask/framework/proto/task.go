@@ -46,14 +46,14 @@ const (
 	TaskStatePending      TaskState = "pending"
 	TaskStateRunning      TaskState = "running"
 	TaskStateSucceed      TaskState = "succeed"
-	TaskStateReverting    TaskState = "reverting"
 	TaskStateFailed       TaskState = "failed"
+	TaskStateReverting    TaskState = "reverting"
+	TaskStateReverted     TaskState = "reverted"
 	TaskStateRevertFailed TaskState = "revert_failed"
 	TaskStateCancelling   TaskState = "cancelling"
 	TaskStatePausing      TaskState = "pausing"
 	TaskStatePaused       TaskState = "paused"
 	TaskStateResuming     TaskState = "resuming"
-	TaskStateReverted     TaskState = "reverted"
 )
 
 type (
