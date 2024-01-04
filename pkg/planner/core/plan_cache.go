@@ -921,49 +921,10 @@ func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err
 		return errors.New("rebuild to get an unsafe range")
 	}
 	is.Ranges = res.Ranges
-	if is.Table.Partition != nil {
-		infoSchema := domain.GetDomain(sctx).InfoSchema()
-		tbl, ok := infoSchema.TableByID(is.Table.ID)
-		if !ok {
-			return errors.New("rebuild failed to get the partitioned table")
-		}
-		partTbl := tbl.GetPartitionedTable()
-		if partTbl == nil {
-			return errors.New("rebuild failed to get the partitioned table")
-		}
-		colNames := make([]*types.FieldName, 0, len(is.IdxCols))
-		for i := range is.IdxCols {
-			var colName model.CIStr
-			for j := range is.Columns {
-				if is.IdxCols[i].ID == is.Columns[j].ID {
-					colName = is.Columns[j].Name
-					break
-				}
-			}
-			colNames = append(colNames, &types.FieldName{
-				OrigTblName: is.Table.Name,
-				OrigColName: model.NewCIStr(is.IdxCols[i].OrigName),
-				DBName:      is.DBName,
-				TblName:     *is.TableAsName,
-				ColName:     colName,
-			})
-		}
-
-		partIDs, err := PartitionPruning(sctx, partTbl, is.AccessCondition, nil, is.IdxCols, colNames)
-		if err != nil {
-			return err
-		}
-		if len(partIDs) != 1 {
-			if len(partIDs) == 0 {
-				return errors.New("rebuild failed, no matching partition")
-			}
-			return errors.New("rebuild failed, multiple matching partitions")
-		}
-		if partIDs[0] < 0 || partIDs[0] >= len(tbl.Meta().Partition.Definitions) {
-			return errors.New("rebuild failed, no matching partitions")
-		}
-		is.physicalTableID = tbl.Meta().Partition.Definitions[partIDs[0]].ID
-	}
+	// PhysicalIndexScan will recalculate partition pruning, so no need to do it here!
+	// In executorBuilder.buildIndex{Reader|LookUpReader|MergeReader}
+	// TODO: check with optimizer team when it should be recalculated through rebuildRange and when not?
+	// TODO: Are there any IndexScan that is *not* updating the pruning?
 	return
 }
 
