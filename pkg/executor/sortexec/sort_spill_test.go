@@ -283,7 +283,10 @@ func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.Sort
 
 		// Ensure all partitions are spilled
 		for i := 0; i < sortPartitionNum; i++ {
-			require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(i))
+			// The last partition may not be spilled.
+			if i < sortPartitionNum-1 {
+				require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(i))
+			}
 		}
 	}
 

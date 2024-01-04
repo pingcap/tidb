@@ -262,21 +262,11 @@ func (e *SortExec) handleCurrentPartitionBeforeExit() error {
 		return err
 	}
 
-	if e.isSpillTriggered() {
-		// If e.partition haven't trigger the spill. We need to manually trigger it.
-		// As all data should be in disk when spill is triggered.
-		if !e.curPartition.isSpillTriggered() {
-			err := e.curPartition.spillToDisk()
-			if err != nil {
-				return err
-			}
-		}
-	} else {
-		err := e.curPartition.sort()
-		if err != nil {
-			return err
-		}
+	err = e.curPartition.sort()
+	if err != nil {
+		return err
 	}
+
 	return nil
 }
 
