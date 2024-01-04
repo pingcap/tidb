@@ -840,7 +840,6 @@ func TestDropBindBySQLDigest(t *testing.T) {
 	}
 
 	// exception cases
-	tk.MustGetErrMsg(fmt.Sprintf("drop binding for sql digest '%s'", "1"), "can't find any binding for '1'")
 	tk.MustGetErrMsg(fmt.Sprintf("drop binding for sql digest '%s'", ""), "sql digest is empty")
 }
 
@@ -861,6 +860,5 @@ func TestJoinOrderHintWithBinding(t *testing.T) {
 	res := tk.MustQuery("show global bindings").Rows()
 	require.Equal(t, res[0][0], "select * from ( `test` . `t1` join `test` . `t2` on `t1` . `a` = `t2` . `a` ) left join `test` . `t3` on `t2` . `b` = `t3` . `b`")
 
-	// TODO(hawkingrei,qw4990)：Here is a situation of inconsistent behavior between 7.5 and master.
-	// tk.MustExec("drop global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
+	tk.MustExec("drop global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
 }

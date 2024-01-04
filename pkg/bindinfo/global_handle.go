@@ -59,10 +59,7 @@ type GlobalBindingHandle interface {
 	DropGlobalBinding(sqlDigest string) (deletedRows uint64, err error)
 
 	// SetGlobalBindingStatus set a BindRecord's status to the storage and bind cache.
-	SetGlobalBindingStatus(originalSQL string, binding *Binding, newStatus string) (ok bool, err error)
-
-	// SetGlobalBindingStatusByDigest set a BindRecord's status to the storage and bind cache.
-	SetGlobalBindingStatusByDigest(newStatus, sqlDigest string) (ok bool, err error)
+	SetGlobalBindingStatus(newStatus, sqlDigest string) (ok bool, err error)
 
 	// AddInvalidGlobalBinding adds BindRecord which needs to be deleted into invalidBindRecordMap.
 	AddInvalidGlobalBinding(invalidBindRecord *BindRecord)
@@ -173,8 +170,12 @@ func (h *globalBindingHandle) Reset() {
 	h.lastUpdateTime.Store(types.ZeroTimestamp)
 	h.invalidBindRecordMap.Value.Store(make(map[string]*bindRecordUpdate))
 	h.invalidBindRecordMap.flushFunc = func(record *BindRecord) error {
-		_, err := h.dropGlobalBinding(record.OriginalSQL, record.Db)
-		return err
+		for _, binding := range record.Bindings {
+			if _, err := h.dropGlobalBinding(binding.SQLDigest); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	h.setCache(newBindCache())
 	variable.RegisterStatistics(h)
@@ -250,7 +251,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 					logutil.BgLogger().Warn("BindHandle.Update", zap.String("category", "sql-bind"), zap.Error(err))
 				}
 			} else {
-				newCache.RemoveBinding(sqlDigest, newRecord)
+				newCache.RemoveBinding(sqlDigest)
 			}
 			updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.GetBinding(sqlDigest), true)
 		}
@@ -314,13 +315,7 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, recor
 }
 
 // dropGlobalBinding drops a BindRecord to the storage and BindRecord int the cache.
-func (h *globalBindingHandle) dropGlobalBinding(originalSQL, _ string) (deletedRows uint64, err error) {
-	defer func() {
-		if err == nil {
-			err = h.LoadFromStorageToCache(false)
-		}
-	}()
-
+func (h *globalBindingHandle) dropGlobalBinding(sqlDigest string) (deletedRows uint64, err error) {
 	err = h.callWithSCtx(false, func(sctx sessionctx.Context) error {
 		// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
 		if err = lockBindInfoTable(sctx); err != nil {
@@ -329,8 +324,8 @@ func (h *globalBindingHandle) dropGlobalBinding(originalSQL, _ string) (deletedR
 
 		updateTs := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3).String()
 
-		_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND status != %?`,
-			deleted, updateTs, originalSQL, updateTs, deleted)
+		_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE sql_digest = %? AND update_time < %? AND status != %?`,
+			deleted, updateTs, sqlDigest, updateTs, deleted)
 		if err != nil {
 			return err
 		}
@@ -345,15 +340,16 @@ func (h *globalBindingHandle) DropGlobalBinding(sqlDigest string) (deletedRows u
 	if sqlDigest == "" {
 		return 0, errors.New("sql digest is empty")
 	}
-	oldRecord := h.GetGlobalBinding(sqlDigest)
-	if oldRecord == nil {
-		return 0, errors.Errorf("can't find any binding for '%s'", sqlDigest)
-	}
-	return h.dropGlobalBinding(oldRecord.OriginalSQL, strings.ToLower(oldRecord.Db))
+	defer func() {
+		if err == nil {
+			err = h.LoadFromStorageToCache(false)
+		}
+	}()
+	return h.dropGlobalBinding(sqlDigest)
 }
 
 // SetGlobalBindingStatus set a BindRecord's status to the storage and bind cache.
-func (h *globalBindingHandle) SetGlobalBindingStatus(originalSQL string, binding *Binding, newStatus string) (ok bool, err error) {
+func (h *globalBindingHandle) SetGlobalBindingStatus(newStatus, sqlDigest string) (ok bool, err error) {
 	var (
 		updateTs               types.Time
 		oldStatus0, oldStatus1 string
@@ -384,25 +380,11 @@ func (h *globalBindingHandle) SetGlobalBindingStatus(originalSQL string, binding
 		updateTs = types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
 		updateTsStr := updateTs.String()
 
-		if binding == nil {
-			_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND status IN (%?, %?)`,
-				newStatus, updateTsStr, originalSQL, updateTsStr, oldStatus0, oldStatus1)
-		} else {
-			_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %? AND bind_sql = %? AND status IN (%?, %?)`,
-				newStatus, updateTsStr, originalSQL, updateTsStr, binding.BindSQL, oldStatus0, oldStatus1)
-		}
-		return nil
+		_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE sql_digest = %? AND update_time < %? AND status IN (%?, %?)`,
+			newStatus, updateTsStr, sqlDigest, updateTsStr, oldStatus0, oldStatus1)
+		return err
 	})
 	return
-}
-
-// SetGlobalBindingStatusByDigest set a BindRecord's status to the storage and bind cache.
-func (h *globalBindingHandle) SetGlobalBindingStatusByDigest(newStatus, sqlDigest string) (ok bool, err error) {
-	oldRecord := h.GetGlobalBinding(sqlDigest)
-	if oldRecord == nil {
-		return false, errors.Errorf("can't find any binding for '%s'", sqlDigest)
-	}
-	return h.SetGlobalBindingStatus(oldRecord.OriginalSQL, nil, newStatus)
 }
 
 // GCGlobalBinding physically removes the deleted bind records in mysql.bind_info.
@@ -486,6 +468,11 @@ func (tmpMap *tmpBindRecordMap) Add(bindRecord *BindRecord) {
 
 // DropInvalidGlobalBinding executes the drop BindRecord tasks.
 func (h *globalBindingHandle) DropInvalidGlobalBinding() {
+	defer func() {
+		if err := h.LoadFromStorageToCache(false); err != nil {
+			logutil.BgLogger().Warn("drop invalid global binding error", zap.Error(err))
+		}
+	}()
 	h.invalidBindRecordMap.flushToStore()
 }
 
@@ -512,11 +499,6 @@ func (h *globalBindingHandle) MatchGlobalBinding(currentDB string, stmt ast.Stmt
 		return nil, err
 	}
 	return bindingCache.GetBinding(sqlDigest), nil
-}
-
-// GetGlobalBinding returns the BindRecord of the (normalizedSQL,db) if BindRecord exist.
-func (h *globalBindingHandle) GetGlobalBinding(sqlDigest string) *BindRecord {
-	return h.getCache().GetBinding(sqlDigest)
 }
 
 // GetAllGlobalBindings returns all bind records in cache.
