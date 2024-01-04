@@ -211,14 +211,6 @@ func TestSetBindingStatus(t *testing.T) {
 	tk.MustExec("select * from t where a > 10")
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 
-	tk.MustExec("set binding disabled for select * from t where a > 10 using select * from t where a > 10")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 There are no bindings can be set the status. Please check the SQL text"))
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, bindinfo.Enabled, rows[0][3])
-	tk.MustExec("select * from t where a > 10")
-	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
-
 	tk.MustExec("set binding disabled for select * from t where a > 10")
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
@@ -269,10 +261,11 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
 
 	// Simulate creating bindings on other machines
+	_, sqlDigest := parser.NormalizeDigestForBinding("select * from `test` . `t` where `a` > ?")
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT /*+ USE_INDEX(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 10', 'test', 'deleted', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT /*+ USE_INDEX(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 10', 'test', 'enabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
 	dom.BindHandle().Clear()
 	tk.MustExec("set binding disabled for select * from t where a > 10")
 	tk.MustExec("admin reload bindings")
@@ -285,9 +278,9 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 
 	// Simulate creating bindings on other machines
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT * FROM `test`.`t` WHERE `a` > 10', 'test', 'deleted', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT * FROM `test`.`t` WHERE `a` > 10', 'test', 'disabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
 	dom.BindHandle().Clear()
 	tk.MustExec("set binding enabled for select * from t where a > 10")
 	tk.MustExec("admin reload bindings")
