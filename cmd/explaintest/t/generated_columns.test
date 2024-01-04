@@ -162,3 +162,20 @@ EXPLAIN format = 'brief' SELECT * FROM tu WHERE c = 1;
 EXPLAIN format = 'brief' SELECT a, c FROM tu WHERE c = 1;
 EXPLAIN format = 'brief' SELECT * FROM tu WHERE c in(1, 2, 3);
 EXPLAIN format = 'brief' SELECT c, a FROM tu WHERE c in(1, 2, 3);
+
+# should handle divide zero error for default sql mode
+set @@sql_mode=default;
+drop table if exists t1;
+create table t1(a int);
+insert into t1 values(0);
+--error 1365
+alter table t1 add index i((100/a));
+drop table t1;
+
+# should ignore divide zero error for default sql mode
+set @@sql_mode='';
+create table t1(a int);
+insert into t1 values(0);
+alter table t1 add index i((100/a));
+drop table t1;
+set @@sql_mode=default;

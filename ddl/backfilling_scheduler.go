@@ -149,6 +149,11 @@ func initSessCtx(sessCtx sessionctx.Context, sqlMode mysql.SQLMode, tzLocation *
 	if err := setSessCtxLocation(sessCtx, tzLocation); err != nil {
 		return errors.Trace(err)
 	}
+<<<<<<< HEAD:ddl/backfilling_scheduler.go
+=======
+	sessCtx.GetSessionVars().StmtCtx.InReorg = true
+	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(sessCtx.GetSessionVars().Location())
+>>>>>>> 6f3266498df (ddl: fix reorg cannot handle divide 0 error (#50057)):pkg/ddl/backfilling_scheduler.go
 	sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.TruncateAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
@@ -162,7 +167,38 @@ func initSessCtx(sessCtx sessionctx.Context, sqlMode mysql.SQLMode, tzLocation *
 	return nil
 }
 
+<<<<<<< HEAD:ddl/backfilling_scheduler.go
 func (b *txnBackfillScheduler) expectedWorkerSize() (size int) {
+=======
+func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context) {
+	sv := sessCtx.GetSessionVars()
+	rowEncoder := sv.RowEncoder.Enable
+	sqlMode := sv.SQLMode
+	var timezone *time.Location
+	if sv.TimeZone != nil {
+		// Copy the content of timezone instead of pointer because it may be changed.
+		tz := *sv.TimeZone
+		timezone = &tz
+	}
+	badNullAsWarn := sv.StmtCtx.BadNullAsWarning
+	dividedZeroAsWarn := sv.StmtCtx.DividedByZeroAsWarning
+	typeFlags := sv.StmtCtx.TypeFlags()
+	resGroupName := sv.StmtCtx.ResourceGroupName
+	return func(usedSessCtx sessionctx.Context) {
+		uv := usedSessCtx.GetSessionVars()
+		uv.RowEncoder.Enable = rowEncoder
+		uv.SQLMode = sqlMode
+		uv.TimeZone = timezone
+		uv.StmtCtx.BadNullAsWarning = badNullAsWarn
+		uv.StmtCtx.DividedByZeroAsWarning = dividedZeroAsWarn
+		uv.StmtCtx.SetTypeFlags(typeFlags)
+		uv.StmtCtx.ResourceGroupName = resGroupName
+		uv.StmtCtx.InReorg = false
+	}
+}
+
+func (*txnBackfillScheduler) expectedWorkerSize() (size int) {
+>>>>>>> 6f3266498df (ddl: fix reorg cannot handle divide 0 error (#50057)):pkg/ddl/backfilling_scheduler.go
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
 	return mathutil.Min(workerCnt, maxBackfillWorkerSize)
 }
