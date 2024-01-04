@@ -600,9 +600,14 @@ func (s *BaseTaskExecutor) finishSubtask(ctx context.Context, subtask *proto.Sub
 }
 
 func (s *BaseTaskExecutor) updateSubtaskStateAndError(ctx context.Context, subtask *proto.Subtask, state proto.SubtaskState, subTaskErr error) {
+	valid := VerifySubtaskStateTransform(subtask.State, state)
+	if !valid {
+		s.onError(errors.Errorf("invalid subtask state transform, from %s to %s", subtask.State, state))
+		return
+	}
 	metrics.DecDistTaskSubTaskCnt(subtask)
 	metrics.EndDistTaskSubTask(subtask)
-	s.updateSubtaskStateAndErrorImpl(ctx, subtask.ExecID, subtask.ID, state, subTaskErr)
+	s.updateSubtaskStateAndErrorImpl(ctx, subtask.ExecID, subtask.ID, state, subtask.State, subTaskErr)
 	subtask.State = state
 	metrics.IncDistTaskSubTaskCnt(subtask)
 	if !subtask.IsDone() {
