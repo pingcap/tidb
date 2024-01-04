@@ -42,7 +42,7 @@ func deniedByBDRWhenAddColumn(options []*ast.ColumnOption) bool {
 			comment = 1
 		}
 	}
-	tpLen := len(options) - int(comment)
+	tpLen := len(options) - comment
 
 	if tpLen == 0 || (tpLen == 1 && nullable) {
 		return false
