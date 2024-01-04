@@ -15,12 +15,12 @@
 package bindinfo
 
 import (
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"time"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -87,6 +87,7 @@ type Binding struct {
 	// Type indicates the type of this binding, currently only 2 types: "" for normal and "u" for universal bindings.
 	Type string
 
+	// TableNames records all schema and table names in this binding statement, which are used for fuzzy matching.
 	TableNames []*ast.TableName
 }
 
@@ -199,7 +200,7 @@ func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 		if err != nil {
 			return err
 		}
-		if sctx != nil && bind.Type == TypeNormal && !IsFuzzyBinding(stmt) {
+		if sctx != nil && bind.Type == TypeNormal && !isFuzzyBinding(stmt) {
 			paramChecker := &paramMarkerChecker{}
 			stmt.Accept(paramChecker)
 			if !paramChecker.hasParamMarker {

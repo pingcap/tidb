@@ -137,7 +137,7 @@ func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, fuzzy bool) (stmt 
 	return nil, "", "", nil
 }
 
-func matchBindingTableName(currentDB string, stmtTableNames, bindingTableNames []*ast.TableName) (numWildcards int, matched bool) {
+func fuzzyMatchBindingTableName(currentDB string, stmtTableNames, bindingTableNames []*ast.TableName) (numWildcards int, matched bool) {
 	if len(stmtTableNames) != len(bindingTableNames) {
 		return 0, false
 	}
@@ -158,8 +158,8 @@ func matchBindingTableName(currentDB string, stmtTableNames, bindingTableNames [
 	return numWildcards, true
 }
 
-// IsFuzzyBinding checks whether the stmtNode is a fuzzy binding.
-func IsFuzzyBinding(stmt ast.Node) bool {
+// isFuzzyBinding checks whether the stmtNode is a fuzzy binding.
+func isFuzzyBinding(stmt ast.Node) bool {
 	for _, t := range CollectTableNames(stmt) {
 		if t.Schema.L == "*" {
 			return true

@@ -544,7 +544,7 @@ func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, stmt a
 		sqlDigest := exactDigest
 		if bindRecord := bindingCache.GetBinding(sqlDigest); bindRecord != nil {
 			for _, binding := range bindRecord.Bindings {
-				numWildcards, matched := matchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
+				numWildcards, matched := fuzzyMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
 				if matched && numWildcards > 0 && sctx != nil && !sctx.GetSessionVars().EnableFuzzyBinding {
 					continue // fuzzy binding is disabled, skip this binding
 				}
