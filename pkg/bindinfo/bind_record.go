@@ -192,7 +192,12 @@ func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 			continue
 		}
 		dbName := br.Db
-		if bind.Type == TypeUniversal {
+		bindingStmt, err := p.ParseOneStmt(bind.BindSQL, bind.Charset, bind.Collation)
+		if err != nil {
+			return err
+		}
+		isFuzzy := isFuzzyBinding(bindingStmt)
+		if isFuzzy {
 			dbName = "*" // ues '*' for universal bindings
 		}
 
@@ -200,7 +205,7 @@ func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 		if err != nil {
 			return err
 		}
-		if sctx != nil && bind.Type == TypeNormal && !isFuzzyBinding(stmt) {
+		if sctx != nil && bind.Type == TypeNormal && !isFuzzy {
 			paramChecker := &paramMarkerChecker{}
 			stmt.Accept(paramChecker)
 			if !paramChecker.hasParamMarker {
