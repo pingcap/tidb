@@ -22,9 +22,8 @@ type rowWithPartition struct {
 }
 
 type multiWayMerge struct {
-	lessRowFunction     func(rowI chunk.Row, rowJ chunk.Row) bool
-	compressRowFunction func(rowI chunk.Row, rowJ chunk.Row) int
-	elements            []rowWithPartition
+	lessRowFunction func(rowI chunk.Row, rowJ chunk.Row) bool
+	elements        []rowWithPartition
 }
 
 func (h *multiWayMerge) Less(i, j int) bool {
