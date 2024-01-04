@@ -151,7 +151,7 @@ func (p *PacketIO) readOnePacket() ([]byte, error) {
 			return nil, errors.Trace(err)
 		}
 
-		// To be compatible with MariaDB Java Connecter 2.X, 
+		// To be compatible with MariaDB Connector/J 2.x, 
 		// check sequence only for the packet with compression protocol disabled.
 		sequence := header[3]
 		if sequence != p.sequence {

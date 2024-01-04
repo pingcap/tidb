@@ -428,14 +428,14 @@ func TestCompressedReaderLong(t *testing.T) {
 // MariaDB Java Connecter 2.X would generate wrong sequence number for the sub header.
 // TiDB should be compatible with it.
 //
-// Header:
+// MySQL Compressed Protocol Header:
 // 0e 00 00   					Compressed length
 // 00         					Compressed Packetnr
 // 00 00 00   					Uncompressed length
 //
-// Sub Header:
+// MySQL Protocol Header:
 // 0a 00 00   					Payload length
-// 01         					Packet Sequence Number (it should be 0 in fact)
+// 01         					Packet Sequence Number (it should be 0x00, but MariaDB Connector/J 2.x sets it to 0x01)
 // 03							COM_QUERY
 // 73 65 6c 65 63 74 20 31 3b   "select 1;"
 func TestSubHeaderWithWrongSequenceNumber(t *testing.T) {
