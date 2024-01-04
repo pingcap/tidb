@@ -354,6 +354,7 @@ func (ci *regionDistributionCheckItem) Check(ctx context.Context) (*precheck.Che
 	}
 	stores := make([]*pdhttp.StoreInfo, 0, len(storesInfo.Stores))
 	for _, store := range storesInfo.Stores {
+		store := store
 		if metapb.StoreState(metapb.StoreState_value[store.Store.StateName]) != metapb.StoreState_Up {
 			continue
 		}
