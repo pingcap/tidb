@@ -42,7 +42,7 @@ type SessionBindingHandle interface {
 	DropSessionBinding(sqlDigest string) error
 
 	// MatchSessionBinding returns the matched binding for this statement.
-	MatchSessionBinding(currentDB string, stmt ast.StmtNode) (*BindRecord, error)
+	MatchSessionBinding(sctx sessionctx.Context, stmt ast.StmtNode) (*BindRecord, error)
 
 	// GetAllSessionBindings return all bindings.
 	GetAllSessionBindings() (bindRecords []*BindRecord)
@@ -105,12 +105,12 @@ func (h *sessionBindingHandle) DropSessionBinding(sqlDigest string) error {
 }
 
 // MatchSessionBinding returns the matched binding for this statement.
-func (h *sessionBindingHandle) MatchSessionBinding(currentDB string, stmt ast.StmtNode) (*BindRecord, error) {
+func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, stmt ast.StmtNode) (*BindRecord, error) {
 	if h.ch.Size() == 0 {
 		return nil, nil
 	}
 	// TODO: support fuzzy matching.
-	_, _, sqlDigest, err := normalizeStmt(stmt, currentDB, false)
+	_, _, sqlDigest, err := normalizeStmt(stmt, sctx.GetSessionVars().CurrentDB, false)
 	if err != nil {
 		return nil, err
 	}

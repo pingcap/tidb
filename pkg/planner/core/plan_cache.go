@@ -801,7 +801,7 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, stmt *PlanCacheStmt) (string,
 		return "", ignore
 	}
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-	bindRecord, _ := sessionHandle.MatchSessionBinding(sctx.GetSessionVars().CurrentDB, stmt.PreparedAst.Stmt)
+	bindRecord, _ := sessionHandle.MatchSessionBinding(sctx, stmt.PreparedAst.Stmt)
 	if bindRecord != nil {
 		enabledBinding := bindRecord.FindEnabledBinding()
 		if enabledBinding != nil {

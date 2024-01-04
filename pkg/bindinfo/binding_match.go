@@ -52,7 +52,7 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*BindRecord, stri
 	}
 	// the priority: session normal > session universal > global normal > global universal
 	sessionHandle := ctx.Value(SessionBindInfoKeyType).(SessionBindingHandle)
-	if bindRecord, err := sessionHandle.MatchSessionBinding(ctx.GetSessionVars().CurrentDB, stmt); err == nil && bindRecord != nil && bindRecord.HasEnabledBinding() {
+	if bindRecord, err := sessionHandle.MatchSessionBinding(ctx, stmt); err == nil && bindRecord != nil && bindRecord.HasEnabledBinding() {
 		return bindRecord, metrics.ScopeSession, nil
 	}
 	globalHandle := GetGlobalBindingHandle(ctx)
