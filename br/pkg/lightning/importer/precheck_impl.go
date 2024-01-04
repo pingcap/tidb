@@ -273,6 +273,7 @@ func (ci *emptyRegionCheckItem) Check(ctx context.Context) (*precheck.CheckResul
 		}
 	}
 	for _, store := range storeInfo.Stores {
+		store := store
 		stores[store.Store.ID] = &store
 	}
 	tableCount := 0
