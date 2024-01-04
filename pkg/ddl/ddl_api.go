@@ -4194,6 +4194,18 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		return errors.Trace(err)
 	}
 
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	bdrRole, err := meta.NewMeta(txn).GetBDRRole()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if bdrRole == string(ast.BDRRolePrimary) && deniedByBDRWhenAddColumn(specNewColumn.Options) {
+		return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
+	}
+
 	job := &model.Job{
 		SchemaID:       schema.ID,
 		TableID:        tbInfo.ID,
@@ -4201,7 +4213,7 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		TableName:      tbInfo.Name.L,
 		Type:           model.ActionAddColumn,
 		BinlogInfo:     &model.HistoryInfo{},
-		Args:           []interface{}{col, spec.Position, 0, spec.IfNotExists, deniedByBDRWhenAddColumn(specNewColumn.Options)},
+		Args:           []interface{}{col, spec.Position, 0, spec.IfNotExists},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 

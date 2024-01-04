@@ -2372,17 +2372,6 @@ func DeniedByBDR(role BDRRole, action model.ActionType, job *model.Job) (denied 
 			return true
 		}
 
-		// add or update comments for column, change default values of one particular column
-		// which is allowed on primary role. Other modify column operations are denied.
-		if job != nil && action == model.ActionModifyColumn && len(job.Args) >= 6 && job.Args[5].(bool) {
-			return true
-		}
-
-		// add a new column to table that it’s nullable or with default value,
-		// which is allowed on primary role. Other add column operations are denied.
-		if job != nil && action == model.ActionAddColumn && len(job.Args) >= 5 && job.Args[4].(bool) {
-			return true
-		}
 		if ddlType == model.SafeDDL || ddlType == model.UnmanagementDDL {
 			return false
 		}
