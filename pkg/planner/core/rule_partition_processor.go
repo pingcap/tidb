@@ -367,6 +367,10 @@ func (s *partitionProcessor) findUsedPartitions(ctx sessionctx.Context,
 func (s *partitionProcessor) convertToIntSlice(or partitionRangeOR, pi *model.PartitionInfo, partitionNames []model.CIStr) []int {
 	if len(or) == 1 && or[0].start == 0 && or[0].end == len(pi.Definitions) {
 		if len(partitionNames) == 0 {
+			if len(pi.Definitions) == 1 {
+				// Return as singe partition, instead of full range!
+				return []int{0}
+			}
 			return []int{FullRange}
 		}
 	}

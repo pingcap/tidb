@@ -596,6 +596,9 @@ func rebuildRange(p Plan) error {
 				}
 				return errors.New("point_get cached query matches multiple partitions")
 			}
+			if parts[0] < 0 || parts[0] >= len(x.TblInfo.GetPartitionInfo().Definitions) {
+				return errors.New("point_get cached query matches no partitions")
+			}
 			x.PartitionInfo = &x.TblInfo.GetPartitionInfo().Definitions[parts[0]]
 		}
 		return nil

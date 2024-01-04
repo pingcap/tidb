@@ -1554,36 +1554,30 @@ func TestPointGetForUpdateAutoCommitCache(t *testing.T) {
 }
 
 func TestPrepareCacheForDynamicPartitionPruning(t *testing.T) {
+	// https://github.com/pingcap/tidb/issues/33031
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustQuery(`select @@session.tidb_enable_prepared_plan_cache`).Check(testkit.Rows("1"))
-	//tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
-	for _, pruneMode := range []string{ /*string(variable.Static),*/ string(variable.Dynamic)} {
-		//for _, pruneMode := range []string{string(variable.Static), string(variable.Dynamic)} {
+	for _, pruneMode := range []string{string(variable.Static), string(variable.Dynamic)} {
 		tk.MustExec("set @@tidb_partition_prune_mode = '" + pruneMode + "'")
 
-		// https://github.com/pingcap/tidb/issues/33031
 		tk.MustExec(`drop table if exists Issue33031`)
 		tk.MustExec(`CREATE TABLE Issue33031 (COL1 int(16) DEFAULT '29' COMMENT 'NUMERIC UNIQUE INDEX', COL2 bigint(20) DEFAULT NULL, UNIQUE KEY UK_COL1 (COL1)) PARTITION BY RANGE (COL1) (PARTITION P0 VALUES LESS THAN (0))`)
-		//tk.MustExec(`CREATE TABLE Issue33031 (COL1 int(16) DEFAULT '29' COMMENT 'NUMERIC UNIQUE INDEX', COL2 bigint(20) DEFAULT NULL, UNIQUE KEY UK_COL1 (COL1))`)
 		tk.MustExec(`insert into Issue33031 values(-5, 7)`)
 		tk.MustExec(`analyze table Issue33031`)
-		//tk.MustQuery(`explain format='brief' select * from Issue33031 where col2 < 111 and col1 = 2`).Check(testkit.Rows())
-		//tk.MustQuery(`explain format='brief' select * from Issue33031 where col2 < 111 and col1 (1,2)`).Check(testkit.Rows())
-		//tk.MustQuery(`explain format='brief' select * from Issue33031 where col2 < 112 and col1 = -5`).Check(testkit.Rows())
 		tk.MustExec(`prepare stmt from 'select * from Issue33031 where col2 < ? and col1 = ?'`)
 		tk.MustExec(`set @a=111, @b=1`)
 		tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
+		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		tk.MustExec(`set @a=112, @b=-5`)
 		tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows("-5 7"))
-		// One can only check one thing after a statement, either warnings or last_plan_from_cache :)
-		//tk.MustQuery(`show warnings`).Check(testkit.Rows())
 		if pruneMode == string(variable.Dynamic) {
-			tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+			require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		} else {
-			tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+			require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		}
+		tk.MustQuery(`show warnings`).Check(testkit.Rows())
 	}
 }
