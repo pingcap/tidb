@@ -171,7 +171,7 @@ func (h *globalBindingHandle) CaptureBaselines() {
 		}
 		dbName := utilparser.GetDefaultDB(stmt, bindableStmt.Schema)
 		normalizedSQL, digest := parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(stmt, dbName, bindableStmt.Query))
-		if r := h.GetGlobalBinding(digest.String()); r != nil && r.HasAvailableBinding() {
+		if r := h.getCache().GetBinding(digest.String()); r != nil && r.HasAvailableBinding() {
 			continue
 		}
 		bindSQL := GenerateBindSQL(context.TODO(), stmt, bindableStmt.PlanHint, true, dbName)

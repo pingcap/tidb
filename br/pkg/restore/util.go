@@ -517,7 +517,7 @@ func SplitRanges(
 		isRawKv,
 	))
 
-	return splitter.Split(ctx, ranges, rewriteRules, isRawKv, func(keys [][]byte) {
+	return splitter.ExecuteSplit(ctx, ranges, rewriteRules, client.GetStoreCount(), client.GetGranularity(), isRawKv, func(keys [][]byte) {
 		for range keys {
 			updateCh.Inc()
 		}

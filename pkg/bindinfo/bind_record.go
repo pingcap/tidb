@@ -250,24 +250,6 @@ func merge(lBindRecord, rBindRecord *BindRecord) *BindRecord {
 	return result
 }
 
-func (br *BindRecord) remove(deleted *BindRecord) *BindRecord {
-	// Delete all bindings.
-	if len(deleted.Bindings) == 0 {
-		return &BindRecord{OriginalSQL: br.OriginalSQL, Db: br.Db}
-	}
-	result := br.shallowCopy()
-	for j := range deleted.Bindings {
-		deletedBind := deleted.Bindings[j]
-		for i, bind := range result.Bindings {
-			if bind.isSame(&deletedBind) {
-				result.Bindings = append(result.Bindings[:i], result.Bindings[i+1:]...)
-				break
-			}
-		}
-	}
-	return result
-}
-
 func (br *BindRecord) removeDeletedBindings() *BindRecord {
 	result := BindRecord{OriginalSQL: br.OriginalSQL, Db: br.Db, Bindings: make([]Binding, 0, len(br.Bindings))}
 	for _, binding := range br.Bindings {

@@ -120,10 +120,29 @@ func TestOnRunnableTasks(t *testing.T) {
 	// no task
 	m.onRunnableTasks(nil)
 
+	// type not found
+	mockTaskTable.EXPECT().UpdateErrorToSubtask(m.ctx, id, taskID, gomock.Any())
+	m.onRunnableTask(task)
+
 	RegisterTaskType("type",
 		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor {
 			return mockInternalExecutor
 		})
+
+	// executor init failed non retryable
+	executorErr := errors.New("executor init failed")
+	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(executorErr)
+	mockInternalExecutor.EXPECT().IsRetryableError(executorErr).Return(false)
+	mockTaskTable.EXPECT().UpdateErrorToSubtask(m.ctx, id, taskID, executorErr)
+	m.onRunnableTask(task)
+	m.removeHandlingTask(taskID)
+	require.Equal(t, true, ctrl.Satisfied())
+
+	// executor init failed retryable
+	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(executorErr)
+	mockInternalExecutor.EXPECT().IsRetryableError(executorErr).Return(true)
+	m.onRunnableTask(task)
+	m.removeHandlingTask(taskID)
 
 	// get subtask failed
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
@@ -248,6 +267,7 @@ func TestManager(t *testing.T) {
 		wg.Wait()
 	})
 
+	require.NoError(t, m.InitMeta())
 	require.NoError(t, m.Start())
 	time.Sleep(5 * time.Second)
 	m.Stop()
@@ -461,5 +481,42 @@ func TestSlotManagerInManager(t *testing.T) {
 	wg.Wait()
 	require.Equal(t, 10, m.slotManager.available)
 	require.Equal(t, 0, len(m.slotManager.executorTasks))
+	require.True(t, ctrl.Satisfied())
+}
+
+func TestManagerInitMeta(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockTaskTable := mock.NewMockTaskTable(ctrl)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m := &Manager{
+		taskTable: mockTaskTable,
+		ctx:       ctx,
+		logCtx:    ctx,
+	}
+	mockTaskTable.EXPECT().StartManager(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	require.NoError(t, m.InitMeta())
+	require.True(t, ctrl.Satisfied())
+	gomock.InOrder(
+		mockTaskTable.EXPECT().StartManager(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("mock err")),
+		mockTaskTable.EXPECT().StartManager(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil),
+	)
+	require.NoError(t, m.InitMeta())
+	require.True(t, ctrl.Satisfied())
+
+	bak := retrySQLTimes
+	t.Cleanup(func() {
+		retrySQLTimes = bak
+	})
+	retrySQLTimes = 1
+	mockTaskTable.EXPECT().StartManager(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("mock err"))
+	require.ErrorContains(t, m.InitMeta(), "mock err")
+	require.True(t, ctrl.Satisfied())
+
+	cancel()
+	mockTaskTable.EXPECT().StartManager(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("mock err"))
+	require.ErrorIs(t, m.InitMeta(), context.Canceled)
 	require.True(t, ctrl.Satisfied())
 }

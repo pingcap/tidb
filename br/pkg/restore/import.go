@@ -54,8 +54,9 @@ const (
 )
 
 const (
-	importScanRegionTime = 10 * time.Second
+	importScanRegionTime = 20 * time.Second
 	gRPCBackOffMaxDelay  = 3 * time.Second
+	gRPCTimeOut          = 10 * time.Minute
 )
 
 // RewriteMode is a mode flag that tells the TiKV how to handle the rewrite rules.
@@ -267,6 +268,10 @@ type FileImporter struct {
 	importClient ImporterClient
 	backend      *backuppb.StorageBackend
 
+	storeWorkerPoolRWLock sync.RWMutex
+	storeWorkerPoolMap    map[uint64]chan struct{}
+	storeStatisticMap     map[uint64]*int64
+
 	kvMode             KvMode
 	rawStartKey        []byte
 	rawEndKey          []byte
@@ -283,6 +288,8 @@ func NewFileImporter(
 	backend *backuppb.StorageBackend,
 	isRawKvMode bool,
 	isTxnKvMode bool,
+	storeWorkerPoolMap map[uint64]chan struct{},
+	storeStatisticMap map[uint64]*int64,
 	rewriteMode RewriteMode,
 ) FileImporter {
 	kvMode := TiDB
@@ -293,12 +300,14 @@ func NewFileImporter(
 		kvMode = Txn
 	}
 	return FileImporter{
-		metaClient:   metaClient,
-		backend:      backend,
-		importClient: importClient,
-		kvMode:       kvMode,
-		rewriteMode:  rewriteMode,
-		cacheKey:     fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
+		metaClient:         metaClient,
+		backend:            backend,
+		importClient:       importClient,
+		storeStatisticMap:  storeStatisticMap,
+		storeWorkerPoolMap: storeWorkerPoolMap,
+		kvMode:             kvMode,
+		rewriteMode:        rewriteMode,
+		cacheKey:           fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
 	}
 }
 
@@ -569,7 +578,8 @@ func (importer *FileImporter) ImportSSTFiles(
 			log.Debug("download file done",
 				zap.String("file-sample", files[0].Name), zap.Stringer("take", time.Since(start)),
 				logutil.Key("start", files[0].StartKey), logutil.Key("end", files[0].EndKey))
-			if errIngest := importer.ingest(ctx, info, downloadMetas); errIngest != nil {
+			start = time.Now()
+			if errIngest := importer.ingest(ctx, files, info, downloadMetas); errIngest != nil {
 				log.Warn("ingest file failed, retry later",
 					logutil.Files(files),
 					logutil.SSTMetas(downloadMetas),
@@ -577,9 +587,9 @@ func (importer *FileImporter) ImportSSTFiles(
 					zap.Error(errIngest))
 				return errors.Trace(errIngest)
 			}
+			log.Debug("ingest file done", zap.String("file-sample", files[0].Name), zap.Stringer("take", time.Since(start)))
 		}
 
-		log.Debug("ingest file done", zap.String("file-sample", files[0].Name), zap.Stringer("take", time.Since(start)))
 		for _, f := range files {
 			summary.CollectSuccessUnit(summary.TotalKV, 1, f.TotalKvs)
 			summary.CollectSuccessUnit(summary.TotalBytes, 1, f.TotalBytes)
@@ -719,7 +729,32 @@ func (importer *FileImporter) downloadSST(
 	for _, p := range regionInfo.Region.GetPeers() {
 		peer := p
 		eg.Go(func() error {
-			resp, err := importer.importClient.DownloadSST(ectx, peer.GetStoreId(), req)
+			importer.storeWorkerPoolRWLock.RLock()
+			workerCh := importer.storeWorkerPoolMap[peer.GetStoreId()]
+			statis := importer.storeStatisticMap[peer.GetStoreId()]
+			defer func() {
+				atomic.AddInt64(statis, -1)
+				workerCh <- struct{}{}
+				importer.storeWorkerPoolRWLock.RUnlock()
+			}()
+			<-workerCh
+			atomic.AddInt64(statis, 1)
+
+			var err error
+			var resp *import_sstpb.DownloadResponse
+			for i := 0; i < 5; i += 1 {
+				dctx, cancel := context.WithTimeout(ectx, gRPCTimeOut)
+				resp, err = importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)
+				cancel()
+				if err != nil {
+					if strings.Contains(err.Error(), "context deadline exceeded") {
+						continue
+					}
+					return errors.Trace(err)
+				}
+
+				break
+			}
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -832,10 +867,13 @@ func (importer *FileImporter) downloadRawKVSST(
 }
 
 func (importer *FileImporter) ingest(
-	ctx context.Context,
+	c context.Context,
+	files []*backuppb.File,
 	info *split.RegionInfo,
 	downloadMetas []*import_sstpb.SSTMeta,
 ) error {
+	ctx, cancel := context.WithTimeout(c, gRPCTimeOut)
+	defer cancel()
 	for {
 		ingestResp, errIngest := importer.ingestSSTs(ctx, downloadMetas, info)
 		if errIngest != nil {
@@ -866,7 +904,10 @@ func (importer *FileImporter) ingest(
 						break
 					}
 					// do not get region info, wait a second and GetRegion() again.
-					log.Warn("get region by key return nil", logutil.Region(info.Region))
+					log.Warn("ingest get region by key return nil", logutil.Region(info.Region),
+						logutil.Files(files),
+						logutil.SSTMetas(downloadMetas),
+					)
 					time.Sleep(time.Second)
 				}
 			}
@@ -875,6 +916,8 @@ func (importer *FileImporter) ingest(
 				return errors.Trace(berrors.ErrKVEpochNotMatch)
 			}
 			log.Debug("ingest sst returns not leader error, retry it",
+				logutil.Files(files),
+				logutil.SSTMetas(downloadMetas),
 				logutil.Region(info.Region),
 				zap.Stringer("newLeader", newInfo.Leader))
 			info = newInfo
