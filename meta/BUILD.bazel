@@ -18,6 +18,7 @@ go_library(
         "//util/dbterror",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_kvproto//pkg/resource_manager",
     ],
 )
 

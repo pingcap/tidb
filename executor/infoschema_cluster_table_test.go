@@ -290,7 +290,11 @@ func TestTableStorageStats(t *testing.T) {
 		"test 2",
 	))
 	rows := tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()
+<<<<<<< HEAD:executor/infoschema_cluster_table_test.go
 	result := 48
+=======
+	result := 56
+>>>>>>> a1fd1bee0b9 (domain: support inserting ru historical data into mysql.request_unit_by_group periodically (#49873)):pkg/executor/infoschema_cluster_table_test.go
 	require.Len(t, rows, result)
 
 	// More tests about the privileges.

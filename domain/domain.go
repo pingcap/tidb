@@ -1215,6 +1215,12 @@ func (do *Domain) Init(
 	do.wg.Run(do.topNSlowQueryLoop, "topNSlowQueryLoop")
 	do.wg.Run(do.infoSyncerKeeper, "infoSyncerKeeper")
 	do.wg.Run(do.globalConfigSyncerKeeper, "globalConfigSyncerKeeper")
+<<<<<<< HEAD:domain/domain.go
+=======
+	do.wg.Run(do.runawayRecordFlushLoop, "runawayRecordFlushLoop")
+	do.wg.Run(do.runawayWatchSyncLoop, "runawayWatchSyncLoop")
+	do.wg.Run(do.requestUnitsWriterLoop, "requestUnitsWriterLoop")
+>>>>>>> a1fd1bee0b9 (domain: support inserting ru historical data into mysql.request_unit_by_group periodically (#49873)):pkg/domain/domain.go
 	if !skipRegisterToDashboard {
 		do.wg.Run(do.topologySyncerKeeper, "topologySyncerKeeper")
 	}
