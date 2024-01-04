@@ -993,7 +993,7 @@ const (
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
 	// TiDBEnableDistTask indicates whether to enable the distributed execute background tasks(For example DDL, Import etc).
 	TiDBEnableDistTask = "tidb_enable_dist_task"
-	// TiDBDDLVersion is used to control tidb ddl version current.
+	// TiDBDDLVersion is used to store tidb ddl version.
 	TiDBDDLVersion = "tidb_ddl_version"
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
