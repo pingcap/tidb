@@ -62,7 +62,6 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/store/driver",
         "//pkg/store/driver/txn",
-        "//pkg/store/pdtypes",
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/tablecodec",

@@ -98,7 +98,11 @@ func NewPrecheckItemBuilder(
 			if err != nil {
 				return cfg.TiDB.PdAddr
 			}
-			return leaderInfo.GetClientUrls()[0]
+			addrs := leaderInfo.GetClientUrls()
+			if len(addrs) == 0 {
+				return cfg.TiDB.PdAddr
+			}
+			return addrs[0]
 		}
 	}
 	return &PrecheckItemBuilder{

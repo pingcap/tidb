@@ -140,13 +140,9 @@ func GetTiKVModeSwitcherWithPDClient(logger *zap.Logger) (pdhttp.Client, local.T
 	if o := tls.TLSConfig(); o != nil {
 		opts = append(opts, pdhttp.WithTLSConfig(o))
 	}
-	pdCli := pdhttp.NewClient("dist-task", addrs, opts...)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
-	}
-
+	pdHTTPCli := pdhttp.NewClient("dist-task", addrs, opts...)
 	// TODO: let disttask framework pass-in the PD HTTP client from domain
-	return pdCli, NewTiKVModeSwitcher(tls, pdCli, logger), nil
+	return pdHTTPCli, NewTiKVModeSwitcher(tls, pdHTTPCli, logger), nil
 }
 
 // GetCachedKVStoreFrom gets a cached kv store from PD address.
