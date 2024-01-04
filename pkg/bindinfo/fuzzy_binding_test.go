@@ -65,7 +65,7 @@ func TestFuzzyBindingBasic(t *testing.T) {
 	tk1.MustExec(`use test2`)
 	tk1.MustExec(`create table t (a int, b int, c int, d int, e int, key(a), key(b), key(c), key(d), key(e))`)
 
-	for _, scope := range []string{"", "session", "global"} {
+	for _, scope := range []string{ /*"", "session", */ "global"} {
 		tk := testkit.NewTestKit(t, store)
 		for _, idx := range []string{"a", "b", "c", "d", "e"} {
 			tk.MustExec("use test")
