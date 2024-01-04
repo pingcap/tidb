@@ -58,6 +58,7 @@ func NewIterator4Slice(rows []Row) Iterator {
 	return &Iterator4Slice{rows: rows}
 }
 
+// NewIterator4SliceNoInterface returns a Iterator4Slice.
 func NewIterator4SliceNoInterface(rows []Row) Iterator4Slice {
 	return Iterator4Slice{
 		rows:   rows,
