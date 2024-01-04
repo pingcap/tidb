@@ -1491,7 +1491,7 @@ func (d *ddl) migration2DDLVersion(ver int64) error {
 		case model.TiDBDDLV2:
 			err = d.migration2DDLV2(m)
 		default:
-			err = errors.Errorf("unknow ddl version %d", ver)
+			err = errors.Errorf("unknown ddl version %d", ver)
 		}
 		if err != nil {
 			return errors.Trace(err)
