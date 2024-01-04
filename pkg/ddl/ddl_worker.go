@@ -400,7 +400,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 		bdrRole = string(ast.BDRRoleLocalOnly)
 	)
 
-	if newTasks, err := d.optimistBatchJobs(tasks); err == nil {
+	if newTasks, err := d.combineBatchJobs(tasks); err == nil {
 		tasks = newTasks
 	}
 
@@ -484,9 +484,9 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 	return errors.Trace(insertDDLJobs2Table(sess.NewSession(se), true, jobTasks...))
 }
 
-// optimistBatchJobs optimist batch jobs to another batch jobs.
+// combineBatchJobs combine batch jobs to another batch jobs.
 // currently it only support combine CreateTable to CreateTables.
-func (d *ddl) optimistBatchJobs(tasks []*limitJobTask) ([]*limitJobTask, error) {
+func (d *ddl) combineBatchJobs(tasks []*limitJobTask) ([]*limitJobTask, error) {
 	if len(tasks) <= 1 {
 		return tasks, nil
 	}
