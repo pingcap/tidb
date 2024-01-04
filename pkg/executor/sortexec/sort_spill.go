@@ -68,7 +68,7 @@ func (s *sortPartitionSpillDiskAction) executeAction(t *memory.Tracker) memory.A
 		return nil
 	}
 
-	for s.partition.isSpilling {
+	for s.partition.isSpilling.Load() {
 		s.partition.cond.Wait()
 	}
 

@@ -17,6 +17,7 @@ package sortexec
 import (
 	"sort"
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -42,7 +43,7 @@ type sortPartition struct {
 	lock       *sync.Mutex
 	cond       *sync.Cond
 	spillError error
-	isSpilling bool
+	isSpilling atomic.Bool
 
 	fieldTypes []*types.FieldType
 
@@ -84,7 +85,7 @@ func newSortPartition(fieldTypes []*types.FieldType, chunkSize int, byItemsDesc 
 		lock:               lock,
 		cond:               sync.NewCond(lock),
 		spillError:         nil,
-		isSpilling:         false,
+		isSpilling:         atomic.Bool{},
 		fieldTypes:         fieldTypes,
 		savedRows:          make([]chunk.Row, 0),
 		totalTrackedMemNum: 0,
@@ -100,6 +101,7 @@ func newSortPartition(fieldTypes []*types.FieldType, chunkSize int, byItemsDesc 
 		idx:                0,
 		cursor:             NewDataCursor(),
 	}
+	retVal.isSpilling.Store(false)
 
 	return retVal
 }
@@ -183,6 +185,8 @@ func (s *sortPartition) sortNoLock() (ret error) {
 }
 
 func (s *sortPartition) spillToDiskImpl() error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
 	s.inDisk = chunk.NewDataInDiskByChunks(s.fieldTypes)
 	tmpChk := chunk.NewChunkWithCapacity(s.fieldTypes, spillChunkSize)
 
@@ -230,11 +234,9 @@ func (s *sortPartition) spillToDisk() error {
 		return err
 	}
 
-	s.lock.Lock()
-	defer s.lock.Unlock()
-	s.setIsSpillingNoLock(true)
+	s.setIsSpilling(true)
 	err = s.spillToDiskImpl()
-	s.setIsSpillingNoLock(false)
+	s.setIsSpilling(false)
 	s.cond.Broadcast()
 	return err
 }
@@ -347,8 +349,8 @@ func (s *sortPartition) isSpillTriggeredNoLock() bool {
 	return s.inDisk != nil
 }
 
-func (s *sortPartition) setIsSpillingNoLock(isSpilling bool) {
-	s.isSpilling = isSpilling
+func (s *sortPartition) setIsSpilling(isSpilling bool) {
+	s.isSpilling.Store(isSpilling)
 }
 
 func (s *sortPartition) setError(err error) {
