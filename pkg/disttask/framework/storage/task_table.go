@@ -1241,7 +1241,19 @@ func (*TaskManager) getAllNodesWithSession(ctx context.Context, se sessionctx.Co
 	return nodes, nil
 }
 
+// GetCPUCountOfManagedNodes gets the cpu count of managed nodes.
+func (stm *TaskManager) GetCPUCountOfManagedNodes(ctx context.Context) (int, error) {
+	var cnt int
+	err := stm.WithNewSession(func(se sessionctx.Context) error {
+		var err2 error
+		cnt, err2 = stm.getCPUCountOfManagedNodes(ctx, se)
+		return err2
+	})
+	return cnt, err
+}
+
 // getCPUCountOfManagedNodes gets the cpu count of managed nodes.
+// returns error when there's no managed node or no node has valid cpu count.
 func (stm *TaskManager) getCPUCountOfManagedNodes(ctx context.Context, se sessionctx.Context) (int, error) {
 	nodes, err := stm.getManagedNodesWithSession(ctx, se)
 	if err != nil {
@@ -1256,6 +1268,9 @@ func (stm *TaskManager) getCPUCountOfManagedNodes(ctx context.Context, se sessio
 			cpuCount = n.CPUCount
 			break
 		}
+	}
+	if cpuCount == 0 {
+		return 0, errors.New("no managed node have enough resource")
 	}
 	return cpuCount, nil
 }

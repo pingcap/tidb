@@ -25,6 +25,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/util"
+	disttaskstore "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -59,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	kvconfig "github.com/tikv/client-go/v2/config"
+	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -141,6 +144,8 @@ var (
 		".zstd", ".zst",
 		".snappy",
 	}
+
+	getCPUCountTimeout = time.Minute
 )
 
 // GetKVStore returns a kv.Storage.
@@ -199,7 +204,7 @@ type Plan struct {
 
 	DiskQuota             config.ByteSize
 	Checksum              config.PostOpLevel
-	ThreadCnt             int64
+	ThreadCnt             int
 	MaxWriteSpeed         config.ByteSize
 	SplitFile             bool
 	MaxRecordedErrors     int64
@@ -499,14 +504,11 @@ func (e *LoadDataController) checkFieldParams() error {
 	return nil
 }
 
-func (p *Plan) initDefaultOptions() {
-	// we're using cpu count of current node, not of framework managed nodes,
-	// but it seems more intuitive.
-	threadCnt := cpu.GetCPUCount()
-	threadCnt = int(math.Max(1, float64(threadCnt)*0.5))
+func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
+	threadCnt := int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
 
 	p.Checksum = config.OpLevelRequired
-	p.ThreadCnt = int64(threadCnt)
+	p.ThreadCnt = threadCnt
 	p.MaxWriteSpeed = unlimitedWriteSpeed
 	p.SplitFile = false
 	p.MaxRecordedErrors = 100
@@ -520,7 +522,11 @@ func (p *Plan) initDefaultOptions() {
 }
 
 func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
-	p.initDefaultOptions()
+	targetNodeCPUCnt, err := GetTargetNodeCPUCnt(p.Path)
+	if err != nil {
+		return err
+	}
+	p.initDefaultOptions(targetNodeCPUCnt)
 
 	specifiedOptions := map[string]*plannercore.LoadDataOpt{}
 	for _, opt := range options {
@@ -637,7 +643,7 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		if err != nil || vInt <= 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		p.ThreadCnt = vInt
+		p.ThreadCnt = int(vInt)
 	}
 	if opt, ok := specifiedOptions[maxWriteSpeedOption]; ok {
 		v, err := optAsString(opt)
@@ -708,16 +714,15 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("skip_rows, should be <= 1 when split-file is enabled")
 	}
 
-	p.adjustOptions()
+	p.adjustOptions(targetNodeCPUCnt)
 	return nil
 }
 
-func (p *Plan) adjustOptions() {
+func (p *Plan) adjustOptions(targetNodeCPUCnt int) {
 	// max value is cpu-count
-	numCPU := int64(runtime.GOMAXPROCS(0))
-	if p.ThreadCnt > numCPU {
+	if p.ThreadCnt > targetNodeCPUCnt {
 		log.L().Info("IMPORT INTO thread count is larger than cpu-count, set to cpu-count")
-		p.ThreadCnt = numCPU
+		p.ThreadCnt = targetNodeCPUCnt
 	}
 }
 
@@ -1252,7 +1257,7 @@ func (e *LoadDataController) getBackendWorkerConcurrency() int {
 	// The real concurrency used is adjusted in external engine later.
 	// when using local sort, use the default value as lightning.
 	if e.IsGlobalSort() {
-		return int(e.ThreadCnt) * 2
+		return e.ThreadCnt * 2
 	}
 	return config.DefaultRangeConcurrency * 2
 }
@@ -1333,6 +1338,32 @@ func GetMsgFromBRError(err error) string {
 		return raw
 	}
 	return raw[:len(raw)-len(berrMsg)-len(": ")]
+}
+
+// GetTargetNodeCPUCnt get cpu count of target node where the import into job will be executed.
+// target node is current node if it's server-disk import or disttask is disabled,
+// else it's the node managed by disttask.
+// exported for testing.
+func GetTargetNodeCPUCnt(path string) (int, error) {
+	u, err2 := storage.ParseRawURL(path)
+	if err2 != nil {
+		return 0, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			err2.Error())
+	}
+
+	serverDiskImport := storage.IsLocal(u)
+	if serverDiskImport || !variable.EnableDistTask.Load() {
+		return cpu.GetCPUCount(), nil
+	}
+	manager, err := disttaskstore.GetTaskManager()
+	if err != nil {
+		return 0, err
+	}
+	// the call path of initialization of threadCnt don't have context, so we use a timeout here.
+	ctx, cancel := context.WithTimeout(context.Background(), getCPUCountTimeout)
+	defer cancel()
+	ctx = tikvutil.WithInternalSourceType(ctx, tidbkv.InternalImportInto)
+	return manager.GetCPUCountOfManagedNodes(ctx)
 }
 
 // TestSyncCh is used in unit test to synchronize the execution.

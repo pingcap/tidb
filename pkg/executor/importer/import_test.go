@@ -47,12 +47,11 @@ import (
 
 func TestInitDefaultOptions(t *testing.T) {
 	plan := &Plan{}
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(1)"))
 	variable.CloudStorageURI.Store("s3://bucket/path")
 	t.Cleanup(func() {
 		variable.CloudStorageURI.Store("")
 	})
-	plan.initDefaultOptions()
+	plan.initDefaultOptions(1)
 	require.Equal(t, config.ByteSize(0), plan.DiskQuota)
 	require.Equal(t, config.OpLevelRequired, plan.Checksum)
 	require.Equal(t, int64(1), plan.ThreadCnt)
@@ -65,8 +64,7 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
 	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(10)"))
-	plan.initDefaultOptions()
+	plan.initDefaultOptions(10)
 	require.Equal(t, int64(5), plan.ThreadCnt)
 }
 
@@ -173,8 +171,8 @@ func TestAdjustOptions(t *testing.T) {
 		ThreadCnt:     100000000,
 		MaxWriteSpeed: 10,
 	}
-	plan.adjustOptions()
-	require.Equal(t, int64(runtime.GOMAXPROCS(0)), plan.ThreadCnt)
+	plan.adjustOptions(16)
+	require.Equal(t, 16, plan.ThreadCnt)
 	require.Equal(t, config.ByteSize(10), plan.MaxWriteSpeed) // not adjusted
 }
 
