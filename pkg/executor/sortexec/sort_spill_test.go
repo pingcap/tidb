@@ -257,7 +257,10 @@ func onePartitionAndAllDataInDiskCase(t *testing.T, ctx *mock.Context, sortCase 
 	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
 
-func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) {
+// When we enable the `unholdSyncLock` failpoint, we can ensure that there must be multi partitions.
+// However, `unholdSyncLock` failpoint introduces sleep and this will hide some concurrent problems,
+// so this failpoint needs to be disabled if we want to test concurrent problem.
+func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase, enableFailPoint bool) {
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 10000)
@@ -266,11 +269,18 @@ func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.Sort
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(ctx, sortCase, schema)
 	exe := buildSortExec(ctx, sortCase, dataSource)
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(true)`)
+	if enableFailPoint {
+		failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(true)`)
+	}
 	resultChunks := executeSortExecutor(t, exe)
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(false)`)
+	if enableFailPoint {
+		failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(false)`)
+	}
 	sortPartitionNum := exe.GetSortPartitionListLenForTest()
-	require.Greater(t, sortPartitionNum, 1)
+	if enableFailPoint {
+		// If we disable the failpoint, there may be only one partition.
+		require.Greater(t, sortPartitionNum, 1)
+	}
 
 	// Ensure all partitions are spilled
 	for i := 0; i < sortPartitionNum; i++ {
@@ -304,7 +314,6 @@ func inMemoryThenSpillCase(t *testing.T, ctx *mock.Context, sortCase *testutil.S
 	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
 
-// TODO test fall back
 func TestSortSpillDisk(t *testing.T) {
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
@@ -315,16 +324,35 @@ func TestSortSpillDisk(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		onePartitionAndAllDataInMemoryCase(t, ctx, sortCase)
 		onePartitionAndAllDataInDiskCase(t, ctx, sortCase)
-		multiPartitionCase(t, ctx, sortCase)
+		multiPartitionCase(t, ctx, sortCase, false)
+		multiPartitionCase(t, ctx, sortCase, true)
 		inMemoryThenSpillCase(t, ctx, sortCase)
 	}
 }
 
-// func TestFallBackAction(t *testing.T) {
-// 	sortexec.SetSmallSpillChunkSizeForTest()
-// 	ctx := mock.NewContext()
-// 	sortCase := &testutil.SortCase{Rows: 2048, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+func TestFallBackAction(t *testing.T) {
+	hardLimitBytesNum := int64(1000000)
+	newRootExceedAction := new(testutil.MockActionOnExceed)
+	sortexec.SetSmallSpillChunkSizeForTest()
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, hardLimitBytesNum)
+	ctx.GetSessionVars().MemTracker.SetActionOnExceed(newRootExceedAction)
+	// Consume lots of memory in advance to help to trigger fallback action.
+	ctx.GetSessionVars().MemTracker.Consume(int64(float64(hardLimitBytesNum) * 0.99999))
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+	sortCase := &testutil.SortCase{Rows: 2048, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
 
-// 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/signalCheckpointForSort", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/signalCheckpointForSort", `return(true)`)
 
-// }
+	schema := expression.NewSchema(sortCase.Columns()...)
+	dataSource := buildDataSource(ctx, sortCase, schema)
+	exe := buildSortExec(ctx, sortCase, dataSource)
+	executeSortExecutor(t, exe)
+	err := exe.Close()
+	require.NoError(t, err)
+
+	require.Less(t, 0, newRootExceedAction.GetTriggeredNum())
+}
