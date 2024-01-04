@@ -15,7 +15,7 @@
 # limitations under the License.
 #
 
-set -eux
+set -eu
 
 cur=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )
 . $cur/../_utils/run_services
