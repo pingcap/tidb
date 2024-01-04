@@ -588,10 +588,6 @@ func newBindRecord(sctx sessionctx.Context, row chunk.Row) (string, *BindRecord,
 		status = Enabled
 	}
 	defaultDB := row.GetString(2)
-	bindingType := TypeNormal
-	if defaultDB == "" {
-		bindingType = TypeUniversal
-	}
 
 	bindSQL := row.GetString(1)
 	charset, collation := row.GetString(6), row.GetString(7)
@@ -611,7 +607,6 @@ func newBindRecord(sctx sessionctx.Context, row chunk.Row) (string, *BindRecord,
 		Source:     row.GetString(8),
 		SQLDigest:  row.GetString(9),
 		PlanDigest: row.GetString(10),
-		Type:       bindingType,
 		TableNames: tableNames,
 	}
 	bindRecord := &BindRecord{
