@@ -80,11 +80,11 @@ const (
 	defaultPiTRBatchSize      = 16 * 1024 * 1024
 	defaultRestoreConcurrency = 128
 	defaultPiTRConcurrency    = 16
-	maxRestoreBatchSizeLimit  = 10240
 	defaultPDConcurrency      = 1
 	defaultBatchFlushInterval = 16 * time.Second
 	defaultFlagDdlBatchSize   = 128
 	resetSpeedLimitRetryTimes = 3
+	maxRestoreBatchSizeLimit  = 10240
 )
 
 const (
@@ -508,13 +508,7 @@ func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *Re
 	if err != nil {
 		return errors.Trace(err)
 	}
-	storeCount := client.GetStoreCount()
-	if storeCount > 0 {
-		client.SetConcurrency(uint(cfg.Concurrency) * uint(client.GetStoreCount()))
-	} else {
-		client.SetConcurrency(uint(cfg.Concurrency))
-	}
-
+	client.SetConcurrency(uint(cfg.Concurrency))
 	return nil
 }
 
@@ -983,7 +977,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	// Restore sst files in batch.
-	batchSize := mathutil.Clamp(int(cfg.Concurrency), defaultRestoreConcurrency, maxRestoreBatchSizeLimit)
+	batchSize := mathutil.Max(int(client.GetConcurrency()), defaultRestoreConcurrency)
 	failpoint.Inject("small-batch-size", func(v failpoint.Value) {
 		log.Info("failpoint small batch size is on", zap.Int("size", v.(int)))
 		batchSize = v.(int)
