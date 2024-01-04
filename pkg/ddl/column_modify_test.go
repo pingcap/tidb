@@ -540,19 +540,22 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == model.StateDeleteOnly && job.Type == model.ActionModifyColumn {
 			var (
-				newCol                *model.ColumnInfo
-				oldColName            *model.CIStr
-				modifyColumnTp        byte
-				updatedAutoRandomBits uint64
-				changingCol           *model.ColumnInfo
-				changingIdxs          []*model.IndexInfo
+				_newCol                *model.ColumnInfo
+				_oldColName            *model.CIStr
+				_pos                   = &ast.ColumnPosition{}
+				_modifyColumnTp        byte
+				_updatedAutoRandomBits uint64
+				deniedByBDR            bool
+				changingCol            *model.ColumnInfo
+				changingIdxs           []*model.IndexInfo
 			)
-			pos := &ast.ColumnPosition{}
-			err := job.DecodeArgs(&newCol, &oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits, &changingCol, &changingIdxs)
+
+			err := job.DecodeArgs(&_newCol, &_oldColName, _pos, &_modifyColumnTp, &_updatedAutoRandomBits, &deniedByBDR, &changingCol, &changingIdxs)
 			if err != nil {
 				checkErr = err
 				return
 			}
+			require.True(t, deniedByBDR)
 			if changingCol.Name.L != assertChangingColName {
 				checkErr = errors.New("changing column name is incorrect")
 			} else if changingIdxs[0].Name.L != assertChangingIdxName {
@@ -596,19 +599,21 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 	onJobUpdatedExportedFunc2 := func(job *model.Job) {
 		if (job.Query == query1 || job.Query == query2) && job.SchemaState == model.StateDeleteOnly && job.Type == model.ActionModifyColumn {
 			var (
-				newCol                *model.ColumnInfo
-				oldColName            *model.CIStr
-				modifyColumnTp        byte
-				updatedAutoRandomBits uint64
-				changingCol           *model.ColumnInfo
-				changingIdxs          []*model.IndexInfo
+				_newCol                *model.ColumnInfo
+				_oldColName            *model.CIStr
+				_pos                   = &ast.ColumnPosition{}
+				_modifyColumnTp        byte
+				_updatedAutoRandomBits uint64
+				deniedByBDR            bool
+				changingCol            *model.ColumnInfo
+				changingIdxs           []*model.IndexInfo
 			)
-			pos := &ast.ColumnPosition{}
-			err := job.DecodeArgs(&newCol, &oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits, &changingCol, &changingIdxs)
+			err := job.DecodeArgs(&_newCol, &_oldColName, _pos, &_modifyColumnTp, &_updatedAutoRandomBits, &deniedByBDR, &changingCol, &changingIdxs)
 			if err != nil {
 				checkErr = err
 				return
 			}
+			require.True(t, deniedByBDR)
 			if job.Query == query1 && changingCol.Name.L != assertChangingColName1 {
 				checkErr = errors.New("changing column name is incorrect")
 			}
