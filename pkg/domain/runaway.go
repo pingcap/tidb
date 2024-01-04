@@ -98,7 +98,7 @@ func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration t
 			return
 		}
 
-		rows, sqlErr := do.execRestrictedSQL(sql, nil)
+		rows, sqlErr := execRestrictedSQL(do.sysSessionPool, sql, nil)
 		if sqlErr != nil {
 			logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 			return
@@ -127,7 +127,7 @@ func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration t
 				return
 			}
 
-			_, err = do.execRestrictedSQL(sql, nil)
+			_, err = execRestrictedSQL(do.sysSessionPool, sql, nil)
 			if err != nil {
 				logutil.BgLogger().Error(
 					"delete SQL failed when deleting system table", zap.Error(err), zap.String("SQL", sql),
@@ -232,7 +232,7 @@ func (do *Domain) runawayRecordFlushLoop() {
 			return
 		}
 		sql, params := resourcegroup.GenRunawayQueriesStmt(records)
-		if _, err := do.execRestrictedSQL(sql, params); err != nil {
+		if _, err := execRestrictedSQL(do.sysSessionPool, sql, params); err != nil {
 			logutil.BgLogger().Error("flush runaway records failed", zap.Error(err), zap.Int("count", len(records)))
 		}
 		records = records[:0]
@@ -376,10 +376,10 @@ func (do *Domain) handleRemoveStaleRunawayWatch(record *resourcegroup.Quarantine
 	return err
 }
 
-func (do *Domain) execRestrictedSQL(sql string, params []interface{}) ([]chunk.Row, error) {
-	se, err := do.sysSessionPool.Get()
+func execRestrictedSQL(sessPool *sessionPool, sql string, params []interface{}) ([]chunk.Row, error) {
+	se, err := sessPool.Get()
 	defer func() {
-		do.sysSessionPool.Put(se)
+		sessPool.Put(se)
 	}()
 	if err != nil {
 		return nil, errors.Annotate(err, "get session failed")
