@@ -133,11 +133,16 @@ func TestTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskStatePending, task.State)
 	require.Nil(t, task.Error)
+	curTime := time.Unix(time.Now().Unix(), 0)
 	require.NoError(t, gm.FailTask(ctx, id, proto.TaskStatePending, errors.New("test error")))
 	task, err = gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskStateFailed, task.State)
 	require.ErrorContains(t, task.Error, "test error")
+	endTime, err := storage.GetTaskEndTimeForTest(ctx, gm, id)
+	require.NoError(t, err)
+	require.LessOrEqual(t, endTime.Sub(curTime), time.Since(curTime))
+	require.GreaterOrEqual(t, endTime, curTime)
 
 	// succeed a pending task, no effect
 	id, err = gm.CreateTask(ctx, "key-success", "test", 4, []byte("test"))
@@ -157,6 +162,44 @@ func TestTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	checkTaskStateStep(t, task, proto.TaskStateSucceed, proto.StepDone)
 	require.GreaterOrEqual(t, task.StateUpdateTime, startTime)
+
+	// reverted a pending task, no effect
+	id, err = gm.CreateTask(ctx, "key-reverted", "test", 4, []byte("test"))
+	require.NoError(t, err)
+	require.NoError(t, gm.RevertedTask(ctx, id))
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	checkTaskStateStep(t, task, proto.TaskStatePending, proto.StepInit)
+	// reverted a reverting task
+	task.State = proto.TaskStateReverting
+	_, err = gm.UpdateTaskAndAddSubTasks(ctx, task, nil, proto.TaskStatePending)
+	require.NoError(t, err)
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateReverting, task.State)
+	require.NoError(t, gm.RevertedTask(ctx, task.ID))
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateReverted, task.State)
+	// paused
+
+	id, err = gm.CreateTask(ctx, "key-paused", "test", 4, []byte("test"))
+	require.NoError(t, err)
+	require.NoError(t, gm.PausedTask(ctx, id))
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	checkTaskStateStep(t, task, proto.TaskStatePending, proto.StepInit)
+	// reverted a reverting task
+	task.State = proto.TaskStatePausing
+	_, err = gm.UpdateTaskAndAddSubTasks(ctx, task, nil, proto.TaskStatePending)
+	require.NoError(t, err)
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStatePausing, task.State)
+	require.NoError(t, gm.PausedTask(ctx, task.ID))
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStatePaused, task.State)
 }
 
 func checkAfterSwitchStep(t *testing.T, startTime time.Time, task *proto.Task, subtasks []*proto.Subtask, step proto.Step) {
@@ -543,6 +586,10 @@ func TestSubTaskTable(t *testing.T) {
 	require.Greater(t, subtask.StartTime, ts)
 	require.Greater(t, subtask.UpdateTime, ts)
 
+	endTime, err := storage.GetSubtaskEndTimeForTest(ctx, sm, subtask.ID)
+	require.NoError(t, err)
+	require.Greater(t, endTime, ts)
+
 	// test FinishSubtask do update update time
 	testutil.CreateSubTask(t, sm, 4, proto.StepInit, "for_test1", []byte("test"), proto.TaskTypeExample, 11, false)
 	subtask, err = sm.GetFirstSubtaskInStates(ctx, "for_test1", 4, proto.StepInit, proto.SubtaskStatePending)
@@ -554,12 +601,16 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, subtask.StartTime, ts)
 	require.Greater(t, subtask.UpdateTime, ts)
+	ts = time.Now()
 	time.Sleep(time.Second)
 	require.NoError(t, sm.FinishSubtask(ctx, "for_test1", subtask.ID, []byte{}))
 	subtask2, err = sm.GetFirstSubtaskInStates(ctx, "for_test1", 4, proto.StepInit, proto.SubtaskStateSucceed)
 	require.NoError(t, err)
 	require.Equal(t, subtask2.StartTime, subtask.StartTime)
 	require.Greater(t, subtask2.UpdateTime, subtask.UpdateTime)
+	endTime, err = storage.GetSubtaskEndTimeForTest(ctx, sm, subtask.ID)
+	require.NoError(t, err)
+	require.Greater(t, endTime, ts)
 
 	// test UpdateFailedTaskExecutorIDs and IsTaskExecutorCanceled
 	canceled, err := sm.IsTaskExecutorCanceled(ctx, "for_test999", 4)

@@ -635,9 +635,11 @@ func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, flag int) (stmt as
 
 func handleInvalidBinding(ctx context.Context, sctx sessionctx.Context, level string, bindRecord bindinfo.BindRecord) {
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-	err := sessionHandle.DropSessionBinding(bindRecord.OriginalSQL, bindRecord.Db, &bindRecord.Bindings[0])
-	if err != nil {
-		logutil.Logger(ctx).Info("drop session bindings failed")
+	if len(bindRecord.Bindings) > 0 {
+		err := sessionHandle.DropSessionBinding(bindRecord.Bindings[0].SQLDigest)
+		if err != nil {
+			logutil.Logger(ctx).Info("drop session bindings failed")
+		}
 	}
 	if level == metrics.ScopeSession {
 		return

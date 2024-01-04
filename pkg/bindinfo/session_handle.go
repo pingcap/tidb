@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
@@ -37,14 +38,11 @@ type SessionBindingHandle interface {
 	// CreateSessionBinding creates a binding to the cache.
 	CreateSessionBinding(sctx sessionctx.Context, record *BindRecord) (err error)
 
-	// DropSessionBinding drops a binding in the cache.
-	DropSessionBinding(originalSQL, db string, binding *Binding) error
+	// DropSessionBinding drops a binding by the sql digest.
+	DropSessionBinding(sqlDigest string) error
 
-	// DropSessionBindingByDigest drops a binding by the sql digest.
-	DropSessionBindingByDigest(sqlDigest string) error
-
-	// GetSessionBinding return the binding which can match the digest.
-	GetSessionBinding(sqlDigest string) *BindRecord
+	// MatchSessionBinding returns the matched binding for this statement.
+	MatchSessionBinding(currentDB string, stmt ast.StmtNode) (*BindRecord, error)
 
 	// GetAllSessionBindings return all bindings.
 	GetAllSessionBindings() (bindRecords []*BindRecord)
@@ -97,8 +95,8 @@ func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, rec
 	return nil
 }
 
-// DropSessionBinding drops a BindRecord in the cache.
-func (h *sessionBindingHandle) DropSessionBinding(originalSQL, db string, binding *Binding) error {
+// dropSessionBinding drops a BindRecord in the cache.
+func (h *sessionBindingHandle) dropSessionBinding(originalSQL, db string, binding *Binding) error {
 	db = strings.ToLower(db)
 	sqlDigest := parser.DigestNormalized(originalSQL).String()
 	oldRecord := h.GetSessionBinding(sqlDigest)
@@ -121,8 +119,8 @@ func (h *sessionBindingHandle) DropSessionBinding(originalSQL, db string, bindin
 	return nil
 }
 
-// DropSessionBindingByDigest drop BindRecord in the cache.
-func (h *sessionBindingHandle) DropSessionBindingByDigest(sqlDigest string) error {
+// DropSessionBinding drop BindRecord in the cache.
+func (h *sessionBindingHandle) DropSessionBinding(sqlDigest string) error {
 	if sqlDigest == "" {
 		return errors.New("sql digest is empty")
 	}
@@ -130,12 +128,25 @@ func (h *sessionBindingHandle) DropSessionBindingByDigest(sqlDigest string) erro
 	if oldRecord == nil {
 		return errors.Errorf("can't find any binding for '%s'", sqlDigest)
 	}
-	return h.DropSessionBinding(oldRecord.OriginalSQL, strings.ToLower(oldRecord.Db), nil)
+	return h.dropSessionBinding(oldRecord.OriginalSQL, strings.ToLower(oldRecord.Db), nil)
 }
 
 // GetSessionBinding return all BindMeta corresponding to sqlDigest.
 func (h *sessionBindingHandle) GetSessionBinding(sqlDigest string) *BindRecord {
 	return h.ch.GetBinding(sqlDigest)
+}
+
+// MatchSessionBinding returns the matched binding for this statement.
+func (h *sessionBindingHandle) MatchSessionBinding(currentDB string, stmt ast.StmtNode) (*BindRecord, error) {
+	if h.ch.Size() == 0 {
+		return nil, nil
+	}
+	// TODO: support fuzzy matching.
+	_, _, sqlDigest, err := normalizeStmt(stmt, currentDB)
+	if err != nil {
+		return nil, err
+	}
+	return h.ch.GetBinding(sqlDigest), nil
 }
 
 // GetAllSessionBindings return all session bind info.
