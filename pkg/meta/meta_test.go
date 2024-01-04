@@ -707,7 +707,7 @@ func TestName(t *testing.T) {
 	// TestDDLV2Initialized
 	v, err := m.GetDDLV2Initialized()
 	require.NoError(t, err)
-	require.Equal(t, v, int64(0))
+	require.Equal(t, v, false)
 	err = m.SetDDLV2Initialized(true)
 	require.NoError(t, err)
 	v, err = m.GetDDLV2Initialized()
