@@ -140,7 +140,7 @@ func TestFrameworkWithQuery(t *testing.T) {
 	distContext.Close()
 }
 
-func TestFrameworkCancelGTask(t *testing.T) {
+func TestFrameworkCancelTask(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
 	defer ctrl.Finish()
 
