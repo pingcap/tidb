@@ -127,11 +127,11 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, stmt
 			if err != nil {
 				return nil, err
 			}
-			_, _, bindingFuzzDigest, err := normalizeStmt(bindingStmt, sctx.GetSessionVars().CurrentDB, true)
+			_, _, bindingFuzzyDigest, err := normalizeStmt(bindingStmt, sctx.GetSessionVars().CurrentDB, true)
 			if err != nil {
 				return nil, err
 			}
-			if bindingFuzzDigest != fuzzDigest {
+			if bindingFuzzyDigest != fuzzDigest {
 				continue
 			}
 			bindingTableNames := CollectTableNames(bindingStmt)
