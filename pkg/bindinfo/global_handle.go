@@ -469,7 +469,9 @@ func (tmpMap *tmpBindRecordMap) Add(bindRecord *BindRecord) {
 // DropInvalidGlobalBinding executes the drop BindRecord tasks.
 func (h *globalBindingHandle) DropInvalidGlobalBinding() {
 	defer func() {
-		_ = h.LoadFromStorageToCache(false)
+		if err := h.LoadFromStorageToCache(false); err != nil {
+			logutil.BgLogger().Warn("drop invalid global binding error", zap.Error(err))
+		}
 	}()
 	h.invalidBindRecordMap.flushToStore()
 }
