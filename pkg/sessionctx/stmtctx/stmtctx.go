@@ -185,6 +185,7 @@ type StatementContext struct {
 	InCreateOrAlterStmt    bool
 	InSetSessionStatesStmt bool
 	InPreparedPlanBuilding bool
+	InReorg                bool
 	DupKeyAsWarning        bool
 	BadNullAsWarning       bool
 	DividedByZeroAsWarning bool
