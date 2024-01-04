@@ -957,6 +957,9 @@ func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err
 			}
 			return errors.New("rebuild failed, multiple matching partitions")
 		}
+		if partIDs[0] < 0 || partIDs[0] >= len(tbl.Meta().Partition.Definitions) {
+			return errors.New("rebuild failed, no matching partitions")
+		}
 		is.physicalTableID = tbl.Meta().Partition.Definitions[partIDs[0]].ID
 	}
 	return
