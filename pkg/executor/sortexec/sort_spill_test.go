@@ -280,12 +280,13 @@ func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.Sort
 	if enableFailPoint {
 		// If we disable the failpoint, there may be only one partition.
 		require.Greater(t, sortPartitionNum, 1)
+
+		// Ensure all partitions are spilled
+		for i := 0; i < sortPartitionNum; i++ {
+			require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(i))
+		}
 	}
 
-	// Ensure all partitions are spilled
-	for i := 0; i < sortPartitionNum; i++ {
-		require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(i))
-	}
 	err := exe.Close()
 	require.NoError(t, err)
 
