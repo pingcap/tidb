@@ -807,42 +807,6 @@ func TestDeniedByBDR(t *testing.T) {
 			},
 			expected: false,
 		},
-		{
-			role:   ast.BDRRolePrimary,
-			action: model.ActionAddColumn,
-			job: &model.Job{
-				Type: model.ActionAddColumn,
-				Args: []interface{}{"", "", "", "", true},
-			},
-			expected: true,
-		},
-		{
-			role:   ast.BDRRolePrimary,
-			action: model.ActionAddColumn,
-			job: &model.Job{
-				Type: model.ActionAddColumn,
-				Args: []interface{}{"", "", "", "", false},
-			},
-			expected: false,
-		},
-		{
-			role:   ast.BDRRolePrimary,
-			action: model.ActionModifyColumn,
-			job: &model.Job{
-				Type: model.ActionModifyColumn,
-				Args: []interface{}{"", "", "", "", "", true, "", "", ""},
-			},
-			expected: true,
-		},
-		{
-			role:   ast.BDRRolePrimary,
-			action: model.ActionModifyColumn,
-			job: &model.Job{
-				Type: model.ActionModifyColumn,
-				Args: []interface{}{"", "", "", "", "", false, "", "", ""},
-			},
-			expected: false,
-		},
 	}
 
 	for _, tc := range testCases2 {

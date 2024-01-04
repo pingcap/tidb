@@ -60,17 +60,24 @@ func deniedByBDRWhenModifyColumn(newFieldType, oldFieldType types.FieldType, opt
 	if !newFieldType.Equal(&oldFieldType) {
 		return true
 	}
-	tps := make(map[ast.ColumnOptionType]struct{})
+	var (
+		defaultValue bool
+		comment      bool
+	)
 	for _, opt := range options {
-		tps[opt.Tp] = struct{}{}
+		if opt.Tp == ast.ColumnOptionDefaultValue {
+			defaultValue = true
+		}
+		if opt.Tp == ast.ColumnOptionComment {
+			comment = true
+		}
 	}
-	_, defaultValue := tps[ast.ColumnOptionDefaultValue]
-	_, comment := tps[ast.ColumnOptionComment]
-	if len(tps) == 1 && defaultValue {
+
+	if len(options) == 1 && defaultValue {
 		return false
 	}
 
-	if len(tps) == 2 && defaultValue && comment {
+	if len(options) == 2 && defaultValue && comment {
 		return false
 	}
 

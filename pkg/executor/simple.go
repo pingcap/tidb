@@ -2790,7 +2790,7 @@ func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
 	case ast.AdminSetBDRRole:
 		return e.executeAdminSetBDRRole(s)
 	case ast.AdminUnsetBDRRole:
-		return e.executeAdminUnsetBDRRole(s)
+		return e.executeAdminUnsetBDRRole()
 	}
 	return nil
 }
@@ -2839,11 +2839,7 @@ func (e *SimpleExec) executeAdminSetBDRRole(s *ast.AdminStmt) error {
 	return errors.Trace(meta.NewMeta(txn).SetBDRRole(string(s.BDRRole)))
 }
 
-func (e *SimpleExec) executeAdminUnsetBDRRole(s *ast.AdminStmt) error {
-	if s.Tp != ast.AdminUnsetBDRRole {
-		return errors.New("This AdminStmt is not ADMIN UNSET BDR_ROLE")
-	}
-
+func (e *SimpleExec) executeAdminUnsetBDRRole() error {
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return errors.Trace(err)
