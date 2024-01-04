@@ -274,15 +274,7 @@ func createTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tb
 		job.State = model.JobStateCancelled
 		return errors.Trace(err)
 	}
-	if err := t.CreateTableOrView(schemaID, tbInfo); err != nil {
-		return errors.Trace(err)
-	}
-	if variable.DDLVersion.Load() == model.TiDBDDLV2 {
-		if err = t.CreateTableName(job.SchemaName, tbInfo.Name.String(), tbInfo.ID); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
+	return t.CreateTableOrView(schemaID, job.SchemaName, tbInfo)
 }
 
 func repairTableOrViewWithCheck(t *meta.Meta, job *model.Job, schemaID int64, tbInfo *model.TableInfo) error {
@@ -328,7 +320,7 @@ func onCreateView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		tbInfo.State = model.StatePublic
 		tbInfo.UpdateTS = t.StartTS
 		if oldTbInfoID > 0 && orReplace {
-			err = t.DropTableOrView(schemaID, oldTbInfoID)
+			err = t.DropTableOrView(schemaID, job.SchemaName, oldTbInfoID, tbInfo.Name.L)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
@@ -391,17 +383,12 @@ func onDropTableOrView(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ er
 			return ver, errors.Trace(err)
 		}
 		if tblInfo.IsSequence() {
-			if err = t.DropSequence(job.SchemaID, job.TableID); err != nil {
+			if err = t.DropSequence(job.SchemaID, job.SchemaName, job.TableID, job.TableName); err != nil {
 				return ver, errors.Trace(err)
 			}
 		} else {
-			if err = t.DropTableOrView(job.SchemaID, job.TableID); err != nil {
+			if err = t.DropTableOrView(job.SchemaID, job.SchemaName, job.TableID, job.TableName); err != nil {
 				return ver, errors.Trace(err)
-			}
-			if variable.DDLVersion.Load() == model.TiDBDDLV2 && job.Type == model.ActionDropTable {
-				if err = t.DropTableName(job.SchemaName, tblInfo.Name.String()); err != nil {
-					return ver, errors.Trace(err)
-				}
 			}
 			if err = t.GetAutoIDAccessors(job.SchemaID, job.TableID).Del(); err != nil {
 				return ver, errors.Trace(err)
@@ -567,14 +554,9 @@ func (w *worker) recoverTable(t *meta.Meta, job *model.Job, recoverInfo *Recover
 	tableInfo := recoverInfo.TableInfo.Clone()
 	tableInfo.State = model.StatePublic
 	tableInfo.UpdateTS = t.StartTS
-	err = t.CreateTableAndSetAutoID(recoverInfo.SchemaID, tableInfo, recoverInfo.AutoIDs.RowID, recoverInfo.AutoIDs.RandomID)
+	err = t.CreateTableAndSetAutoID(recoverInfo.SchemaID, recoverInfo.OldSchemaName, tableInfo, recoverInfo.AutoIDs.RowID, recoverInfo.AutoIDs.RandomID)
 	if err != nil {
 		return ver, errors.Trace(err)
-	}
-	if variable.DDLVersion.Load() == model.TiDBDDLV2 {
-		if err = t.CreateTableName(recoverInfo.OldSchemaName, recoverInfo.OldTableName, recoverInfo.TableInfo.ID); err != nil {
-			return ver, errors.Trace(err)
-		}
 	}
 
 	failpoint.Inject("mockRecoverTableCommitErr", func(val failpoint.Value) {
@@ -750,16 +732,10 @@ func (w *worker) onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 	if err != nil {
 		return ver, err
 	}
-	err = t.DropTableOrView(schemaID, tblInfo.ID)
+	err = t.DropTableOrView(schemaID, job.SchemaName, tblInfo.ID, tblInfo.Name.L)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
-	}
-	if variable.DDLVersion.Load() == model.TiDBDDLV2 {
-		if err = t.DropTableName(job.SchemaName, tblInfo.Name.String()); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
 	}
 	err = t.GetAutoIDAccessors(schemaID, tblInfo.ID).Del()
 	if err != nil {
@@ -853,16 +829,10 @@ func (w *worker) onTruncateTable(d *ddlCtx, t *meta.Meta, job *model.Job) (ver i
 		return 0, errors.Wrapf(err, "failed to notify PD the placement rules")
 	}
 
-	err = t.CreateTableOrView(schemaID, tblInfo)
+	err = t.CreateTableOrView(schemaID, job.SchemaName, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
-	}
-	if variable.DDLVersion.Load() == model.TiDBDDLV2 {
-		if err = t.CreateTableName(job.SchemaName, tblInfo.Name.String(), tblInfo.ID); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
 	}
 
 	failpoint.Inject("mockTruncateTableUpdateVersionError", func(val failpoint.Value) {
@@ -1135,16 +1105,10 @@ func onRenameTables(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error
 }
 
 func checkAndRenameTables(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo, oldSchemaID, newSchemaID int64, oldSchemaName, tableName *model.CIStr) (ver int64, _ error) {
-	err := t.DropTableOrView(oldSchemaID, tblInfo.ID)
+	err := t.DropTableOrView(oldSchemaID, oldSchemaName.L, tblInfo.ID, tblInfo.Name.L)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
-	}
-	if variable.DDLVersion.Load() == model.TiDBDDLV2 {
-		if err = t.DropTableName(oldSchemaName.String(), tblInfo.Name.String()); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
 	}
 
 	failpoint.Inject("renameTableErr", func(val failpoint.Value) {
@@ -1176,16 +1140,10 @@ func checkAndRenameTables(t *meta.Meta, job *model.Job, tblInfo *model.TableInfo
 	}
 
 	tblInfo.Name = *tableName
-	err = t.CreateTableOrView(newSchemaID, tblInfo)
+	err = t.CreateTableOrView(newSchemaID, job.SchemaName, tblInfo)
 	if err != nil {
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
-	}
-	if variable.DDLVersion.Load() == model.TiDBDDLV2 {
-		if err = t.CreateTableName(job.SchemaName, tblInfo.Name.String(), tblInfo.ID); err != nil {
-			job.State = model.JobStateCancelled
-			return ver, errors.Trace(err)
-		}
 	}
 
 	err = updateLabelRules(job, tblInfo, oldRules, tableRuleID, partRuleIDs, oldRuleIDs, tblInfo.ID)

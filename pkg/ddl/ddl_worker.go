@@ -985,7 +985,7 @@ func (w *worker) HandleDDLJobV2(d *ddlCtx, job *model.Job) (err error) {
 		return err
 	}
 
-	t := meta.NewMeta(txn)
+	t := meta.NewMeta(txn, meta.WithUpdateName())
 	d.mu.RLock()
 	d.mu.hook.OnJobRunBefore(job)
 	d.mu.RUnlock()

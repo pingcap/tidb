@@ -229,7 +229,7 @@ func TestMeta(t *testing.T) {
 		ID:   1,
 		Name: model.NewCIStr("t"),
 	}
-	err = m.CreateTableOrView(1, tbInfo)
+	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo)
 	require.NoError(t, err)
 
 	n, err = m.GetAutoIDAccessors(1, 1).RowID().Inc(10)
@@ -240,7 +240,7 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
 
-	err = m.CreateTableOrView(1, tbInfo)
+	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo)
 	require.NotNil(t, err)
 	require.True(t, meta.ErrTableExists.Equal(err))
 
@@ -266,7 +266,7 @@ func TestMeta(t *testing.T) {
 		ID:   2,
 		Name: model.NewCIStr("bb"),
 	}
-	err = m.CreateTableOrView(1, tbInfo2)
+	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo2)
 	require.NoError(t, err)
 
 	tblName := &model.TableNameInfo{ID: tbInfo.ID, Name: tbInfo.Name}
@@ -300,7 +300,7 @@ func TestMeta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(10), n)
 
-	err = m.DropTableOrView(1, tbInfo2.ID)
+	err = m.DropTableOrView(1, dbInfo.Name.L, tbInfo2.ID, tbInfo2.Name.L)
 	require.NoError(t, err)
 	err = m.GetAutoIDAccessors(1, tbInfo2.ID).Del()
 	require.NoError(t, err)
@@ -332,7 +332,7 @@ func TestMeta(t *testing.T) {
 		Name: model.NewCIStr("t_rename"),
 	}
 	// Create table.
-	err = m.CreateTableOrView(1, tbInfo100)
+	err = m.CreateTableOrView(1, dbInfo.Name.L, tbInfo100)
 	require.NoError(t, err)
 	// Update auto ID.
 	currentDBID := int64(1)
@@ -358,7 +358,7 @@ func TestMeta(t *testing.T) {
 		ID:   3,
 		Name: model.NewCIStr("tbl3"),
 	}
-	err = m.CreateTableAndSetAutoID(1, tbInfo3, 123, 0)
+	err = m.CreateTableAndSetAutoID(1, dbInfo.Name.L, tbInfo3, 123, 0)
 	require.NoError(t, err)
 	id, err := m.GetAutoIDAccessors(1, tbInfo3.ID).RowID().Get()
 	require.NoError(t, err)
@@ -368,9 +368,9 @@ func TestMeta(t *testing.T) {
 	require.Equal(t, []byte(strconv.FormatInt(1234, 10)), val)
 	require.Equal(t, []byte{0x6d, 0x44, 0x42, 0x3a, 0x31, 0x0, 0x0, 0x0, 0x0, 0xfb, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x68, 0x54, 0x49, 0x44, 0x3a, 0x33, 0x0, 0x0, 0x0, 0xfc}, key)
 
-	err = m.DropDatabase(1)
+	err = m.DropDatabase(1, dbInfo.Name.L)
 	require.NoError(t, err)
-	err = m.DropDatabase(currentDBID)
+	err = m.DropDatabase(currentDBID, dbInfo.Name.L)
 	require.NoError(t, err)
 
 	dbs, err = m.ListDatabases()
@@ -682,40 +682,10 @@ func TestName(t *testing.T) {
 	err = m.CheckTableNameExists(m.TableNameKey("d", "btb"))
 	require.NoError(t, err)
 
-	// TestChangeTableID
-	err = m.ChangeTableID("db", "b", 4)
-	require.True(t, meta.ErrTableNotExists.Equal(err))
-	err = m.ChangeTableID("db", "tb", 4)
-	require.NoError(t, err)
-
-	// TestRenameTable
-	err = m.ChangeTableName("db", "tb1", "tb")
-	require.True(t, meta.ErrTableNotExists.Equal(err))
-	err = m.ChangeTableName("db", "tb", "tb1")
-	require.NoError(t, err)
-	err = m.CheckTableNameExists(m.TableNameKey("db", "tb1"))
-	require.NoError(t, err)
-	err = m.CheckTableNameNotExists(m.TableNameKey("db", "tb"))
-	require.NoError(t, err)
-	err = m.ChangeTableName("db", "tb1", "t")
-	require.True(t, meta.ErrTableExists.Equal(err))
-
-	// TestChangeDatabaseName
-	err = m.ChangeDatabaseName("db", "db1")
-	require.NoError(t, err)
-	err = m.CheckTableNameNotExists(m.TableNameKey("db", "tb1"))
-	require.NoError(t, err)
-	err = m.CheckTableNameNotExists(m.TableNameKey("db", "t"))
-	require.NoError(t, err)
-	err = m.CheckTableNameExists(m.TableNameKey("db1", "tb1"))
-	require.NoError(t, err)
-	err = m.CheckTableNameExists(m.TableNameKey("db1", "t"))
-	require.NoError(t, err)
-
 	// TestDropTableName
 	err = m.DropTableName("db1", "b")
 	require.True(t, meta.ErrTableNotExists.Equal(err))
-	err = m.DropTableName("db1", "tb1")
+	err = m.DropTableName("db", "tb")
 	require.NoError(t, err)
 
 	// TestDropDatabaseName
@@ -725,7 +695,7 @@ func TestName(t *testing.T) {
 	require.NoError(t, err)
 	err = m.CheckTableNameNotExists(m.TableNameKey("d", "btb"))
 	require.NoError(t, err)
-	err = m.CheckTableNameExists(m.TableNameKey("db1", "t"))
+	err = m.CheckTableNameExists(m.TableNameKey("db", "t"))
 	require.NoError(t, err)
 
 	// TestClearAllTableNames

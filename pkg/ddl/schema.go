@@ -237,14 +237,10 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if err = t.DropDatabase(dbInfo.ID); err != nil {
+		if err = t.DropDatabase(dbInfo.ID, dbInfo.Name.L); err != nil {
 			break
 		}
-		if variable.DDLVersion.Load() == model.TiDBDDLV2 {
-			if err = t.DropDatabaseName(job.SchemaName); err != nil {
-				break
-			}
-		}
+
 
 		// Finish this job.
 		if len(tables) > 0 {
