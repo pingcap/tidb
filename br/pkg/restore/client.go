@@ -656,16 +656,18 @@ func (rc *Client) GetFilesInRawRange(startKey []byte, endKey []byte, cf string) 
 
 // SetConcurrency sets the concurrency of dbs tables files.
 func (rc *Client) SetConcurrency(c uint) {
-	if rc.storeCount <= 0 {
-		log.Fatal("uninitical store count")
-	}
-	totalCount := c * uint(rc.storeCount)
-	log.Info("new worker pool", zap.Uint("currency-per-store", c), zap.Uint("total", totalCount))
-	rc.workerPool = utils.NewWorkerPool(totalCount, "file")
+	log.Info("download worker pool", zap.Uint("size", c))
+	rc.workerPool = utils.NewWorkerPool(c, "file")
 	rc.concurrencyPerStore = c
 }
 
-func (rc *Client) GetConcurrency() uint {
+// SetConcurrencyPerStore sets the concurrency of download files for each store.
+func (rc *Client) SetConcurrencyPerStore(c uint) {
+	log.Info("per-store download worker pool", zap.Uint("size", c))
+	rc.concurrencyPerStore = c
+}
+
+func (rc *Client) GetTotalDownloadConcurrency() uint {
 	if rc.storeCount <= 0 {
 		log.Fatal("uninitialize store count", zap.Int("storeCount", rc.storeCount))
 	}
