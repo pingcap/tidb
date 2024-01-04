@@ -128,18 +128,6 @@ func (ds *DataSource) generateIndexMergePath() error {
 			ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
 		}
 	}
-	// since undetermined index merge path couldn't sure to be a valid physical plan，if all targeted path are all about
-	// undetermined index merge path, here we don't prune other paths.
-	pruneJudge := func(targets []*util.AccessPath) bool {
-		allUndeterminedIndexMergePath := true
-		for _, one := range targets {
-			if len(one.PartialAlternativeIndexPaths) != 0 {
-				allUndeterminedIndexMergePath = false
-				break
-			}
-		}
-		return allUndeterminedIndexMergePath
-	}
 
 	// If there is a multi-valued index hint, remove all paths which don't use the specified index.
 	ds.cleanAccessPathForMVIndexHint()
