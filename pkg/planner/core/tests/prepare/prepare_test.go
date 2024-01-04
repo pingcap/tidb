@@ -564,6 +564,7 @@ func TestPrepareCacheForPartition(t *testing.T) {
 		tk.MustExec("drop table if exists t_range_index")
 		tk.MustExec("create table t_range_index (id int, k int, c varchar(10), primary key(id)) partition by range(id) ( PARTITION p0 VALUES LESS THAN (4), PARTITION p1 VALUES LESS THAN (14),PARTITION p2 VALUES LESS THAN (20) )")
 		tk.MustExec("insert into t_range_index values (1, 2, 'abc'), (5, 4, 'def'), (13, 6, 'xyz'), (17, 6, 'hij')")
+		tk.MustExec(`analyze table t_range_index`)
 		tk.MustExec("prepare stmt5 from 'select c from t_range_index where id = ?'")
 		tk.MustExec("set @id=1")
 		tk.MustQuery("execute stmt5 using @id").Check(testkit.Rows("abc"))
@@ -585,10 +586,13 @@ func TestPrepareCacheForPartition(t *testing.T) {
 		tk.MustExec("drop table if exists t_range_table")
 		tk.MustExec("create table t_range_table (id int, k int, c varchar(10)) partition by range(id) ( PARTITION p0 VALUES LESS THAN (4), PARTITION p1 VALUES LESS THAN (14),PARTITION p2 VALUES LESS THAN (20) )")
 		tk.MustExec("insert into t_range_table values (1, 2, 'abc'), (5, 4, 'def'), (13, 6, 'xyz'), (17, 6, 'hij')")
+		tk.MustExec(`analyze table t_range_table`)
 		tk.MustExec("prepare stmt6 from 'select c from t_range_table where id = ?'")
 		tk.MustExec("set @id=1")
 		tk.MustQuery("execute stmt6 using @id").Check(testkit.Rows("abc"))
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+		tk.MustExec(`set @@global.tidb_slow_log_threshold = -1`)
+		tk.MustQuery(`select * from information_schema.slow_query`).Check(testkit.Rows())
 		// TODO: Check pruning, seems like it did not prune!!!
 		tk.MustQuery("execute stmt6 using @id").Check(testkit.Rows("abc"))
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(planCacheUsed))
@@ -633,6 +637,7 @@ func TestPrepareCacheForPartition(t *testing.T) {
 		tk.MustExec("drop table if exists t_list_index")
 		tk.MustExec("create table t_list_index (id int, k int, c varchar(10), primary key(id)) partition by list columns (id) ( PARTITION p0 VALUES IN (1,2,3,4), PARTITION p1 VALUES IN (5,6,7,8),PARTITION p2 VALUES IN (9,10,11,12))")
 		tk.MustExec("insert into t_list_index values (1, 1, 'abc'), (5, 5, 'def'), (9, 9, 'xyz'), (12, 12, 'hij')")
+		tk.MustExec(`analyze table t_list_index`)
 		tk.MustExec("prepare stmt8 from 'select c from t_list_index where id = ?'")
 		tk.MustExec("set @id=1")
 		tk.MustQuery("execute stmt8 using @id").Check(testkit.Rows("abc"))
@@ -654,19 +659,36 @@ func TestPrepareCacheForPartition(t *testing.T) {
 		tk.MustQuery("execute stmt8 using @id").Check(testkit.Rows())
 		// TODO: Handle TableDual!
 		//tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows(planCacheUsed))
-
-		// https://github.com/pingcap/tidb/issues/33031
-		tk.MustExec(`drop table if exists Issue33031`)
-		tk.MustExec(`CREATE TABLE Issue33031 (COL1 int(16) DEFAULT '29' COMMENT 'NUMERIC UNIQUE INDEX', COL2 bigint(20) DEFAULT NULL, UNIQUE KEY UK_COL1 (COL1)) PARTITION BY RANGE (COL1) (PARTITION P0 VALUES LESS THAN (0))`)
-		tk.MustExec(`insert into Issue33031 values(-5, 7)`)
-		tk.MustExec(`prepare stmt from 'select *,? from Issue33031 where col2 < ? and col1 in (?, ?)'`)
-		tk.MustExec(`set @a=111, @b=1, @c=2, @d=22`)
-		tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows())
-		tk.MustExec(`set @a=112, @b=-2, @c=-5, @d=33`)
-		tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows("-5 7 33"))
-		// Does not use plan cache even if non-partitioned!
-		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	}
+}
+
+func TestIssue33031(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+	tk.MustExec(`use test`)
+	// https://github.com/pingcap/tidb/issues/33031
+	tk.MustExec(`drop table if exists Issue33031`)
+	//tk.MustExec(`CREATE TABLE Issue33031 (COL1 int(16) DEFAULT '29' COMMENT 'NUMERIC UNIQUE INDEX', COL2 bigint(20) DEFAULT NULL, UNIQUE KEY UK_COL1 (COL1))`)
+	tk.MustExec(`CREATE TABLE Issue33031 (COL1 int(16) DEFAULT '29' COMMENT 'NUMERIC UNIQUE INDEX', COL2 bigint(20) DEFAULT NULL, UNIQUE KEY UK_COL1 (COL1)) PARTITION BY RANGE (COL1) (PARTITION P0 VALUES LESS THAN (0))`)
+	tk.MustExec(`insert into Issue33031 values(-5, 7)`)
+	tk.MustExec(`set @@session.tidb_partition_prune_mode='static'`)
+	tk.MustExec(`prepare stmt from 'select *,? from Issue33031 where col2 < ? and col1 in (?, ?)'`)
+	tk.MustExec(`set @a=111, @b=1, @c=2, @d=22`)
+	tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows())
+	tk.MustExec(`set @a=112, @b=-2, @c=-5, @d=33`)
+	tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows("-5 7 33"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`deallocate prepare stmt`)
+	tk.MustExec(`set @@session.tidb_partition_prune_mode='dynamic'`)
+	tk.MustExec(`analyze table Issue33031`)
+	tk.MustExec(`prepare stmt from 'select *,? from Issue33031 where col2 < ? and col1 in (?, ?)'`)
+	tk.MustExec(`set @a=111, @b=1, @c=2, @d=22`)
+	tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows())
+	tk.MustExec(`set @a=112, @b=-2, @c=-5, @d=33`)
+	tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows("-5 7 33"))
+	// Does not use plan cache even if non-partitioned!
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func newSession(t *testing.T, store kv.Storage, dbName string) sessiontypes.Session {
@@ -976,6 +998,7 @@ func TestPartitionTable(t *testing.T) {
 			`select * from %v where a > ?`,
 		},
 		{ // list partition + int
+			// This should be able to use plan cache if @a between 14-18
 			`create table t1(a int, b int) partition by list(a) (
 						partition p0 values in (0, 1, 2, 3, 4),
 						partition p1 values in (5, 6, 7, 8, 9),
@@ -1015,16 +1038,29 @@ func TestPartitionTable(t *testing.T) {
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
 		commentString := fmt.Sprintf("/*\ntc.query=%s\ntc.t1Create=%s */", tc.query, tc.t1Create)
+		numWarns := 0
 		for i := 0; i < 100; i++ {
 			val := tc.varGener()
 			t.Logf("@a=%v", val)
 			tk.MustExec(fmt.Sprintf("set @a=%v", val))
 			result1 = tk.MustQuery("execute stmt1 using @a /* @a=" + val + " i=" + strconv.Itoa(i) + "  */ " + commentString).Sort().Rows()
-
-			tk.MustQuery("select @@last_plan_from_cache /* i=" + strconv.Itoa(i) + " prepared statement: (t1) " + tc.query + "\n-- create table: " + tc.t1Create + "*/").Check(testkit.Rows("1"))
+			foundInPlanCache := tk.Session().GetSessionVars().FoundInPlanCache
+			warnings := tk.MustQuery(`show warnings`)
+			if foundInPlanCache {
+				tk.Session().GetSessionPlanCache()
+			}
+			if len(warnings.Rows()) > 0 {
+				// TODO: support prepared plan cache for all plans which matches multiple partitions
+				// or no partition (Table Dual).
+				warnings.CheckContain("skip plan-cache: plan rebuild failed, ")
+				numWarns++
+			} else {
+				require.True(t, foundInPlanCache, "select @@last_plan_from_cache /* i=%d prepared statement: (t1) %s\n-- create table: %s*/", i, tc.query, tc.t1Create)
+			}
 			tk.MustQuery("execute stmt2 using @a /* @a=" + val + " i=" + strconv.Itoa(i) + " */ " + commentString).Sort().Check(result1)
 			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 		}
+		t.Logf("Create t1: %s\nstmt: %s\nnumWarns: %d", tc.t1Create, tc.query, numWarns)
 	}
 }
 
