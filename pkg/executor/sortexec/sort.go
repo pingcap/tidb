@@ -138,7 +138,7 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *SortExec) initExternalSorting() error {
-	e.multiWayMerge = &multiWayMerge{e.lessRow, e.compressRow, make([]rowWithPartition, 0, len(e.sortPartitions))}
+	e.multiWayMerge = &multiWayMerge{e.lessRow, make([]rowWithPartition, 0, len(e.sortPartitions))}
 	for i := 0; i < len(e.sortPartitions); i++ {
 		// We should always get row here
 		row, err := e.sortPartitions[i].getNextSortedRow()
