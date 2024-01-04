@@ -280,20 +280,19 @@ func TestUniversalBindingDBInHints(t *testing.T) {
 	require.Equal(t, rs[2][1], "SELECT /*+ use_index(`t` `a`)*/ * FROM `t`")
 }
 
-func TestUniversalBindingGC(t *testing.T) {
-	t.Skip("skip it temporarily")
+func TestFuzzyBindingGC(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
 
-	tk.MustExec(`create global universal binding using select /*+ use_index(t, b) */ * from t`)
+	tk.MustExec(`create global binding using select /*+ use_index(t, b) */ * from *.t`)
 	require.Equal(t, showBinding(tk, "show global bindings"),
-		[][]interface{}{{"select * from `t`", "SELECT /*+ use_index(`t` `b`)*/ * FROM `t`", "", "enabled", "manual", "e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7"}})
-	tk.MustExec(`drop global binding for sql digest 'e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7'`)
+		[][]interface{}{{"select * from `*` . `t`", "SELECT /*+ use_index(`t` `b`)*/ * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
+	tk.MustExec(`drop global binding for sql digest 'a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013'`)
 	require.Equal(t, showBinding(tk, "show global bindings"), [][]interface{}{}) // empty
 	tk.MustQuery(`select bind_sql, status from mysql.bind_info where source != 'builtin'`).Check(
-		testkit.Rows("SELECT /*+ use_index(`t` `b`)*/ * FROM `t` deleted")) // status=deleted
+		testkit.Rows("SELECT /*+ use_index(`t` `b`)*/ * FROM `*`.`t` deleted")) // status=deleted
 
 	updateTime := time.Now().Add(-(15 * bindinfo.Lease))
 	updateTimeStr := types.NewTime(types.FromGoTime(updateTime), mysql.TypeTimestamp, 3).String()
