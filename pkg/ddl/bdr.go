@@ -22,19 +22,32 @@ import (
 // In BDR mode(primary role), we allow add a new column to table if it is nullable
 // or not null with default value.
 func deniedByBDRWhenAddColumn(options []*ast.ColumnOption) bool {
-	tps := make(map[ast.ColumnOptionType]struct{})
+	var (
+		nullable     bool
+		notNull      bool
+		defaultValue bool
+		comment      int
+	)
 	for _, opt := range options {
-		tps[opt.Tp] = struct{}{}
+		if opt.Tp == ast.ColumnOptionNull {
+			nullable = true
+		}
+		if opt.Tp == ast.ColumnOptionNotNull {
+			notNull = true
+		}
+		if opt.Tp == ast.ColumnOptionDefaultValue {
+			defaultValue = true
+		}
+		if opt.Tp == ast.ColumnOptionComment {
+			comment = 1
+		}
 	}
-	delete(tps, ast.ColumnOptionComment)
-	_, nullable := tps[ast.ColumnOptionNull]
-	_, notNull := tps[ast.ColumnOptionNotNull]
-	_, defaultValue := tps[ast.ColumnOptionDefaultValue]
+	tpLen := len(options) - int(comment)
 
-	if len(tps) == 0 || (len(tps) == 1 && nullable) {
+	if tpLen == 0 || (tpLen == 1 && nullable) {
 		return false
 	}
-	if len(tps) == 2 && notNull && defaultValue {
+	if tpLen == 2 && notNull && defaultValue {
 		return false
 	}
 
