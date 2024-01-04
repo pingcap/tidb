@@ -394,6 +394,20 @@ func (mr *MockTaskManagerMockRecorder) PauseTask(arg0, arg1 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PauseTask", reflect.TypeOf((*MockTaskManager)(nil).PauseTask), arg0, arg1)
 }
 
+// PausedTask mocks base method.
+func (m *MockTaskManager) PausedTask(arg0 context.Context, arg1 int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "PausedTask", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// PausedTask indicates an expected call of PausedTask.
+func (mr *MockTaskManagerMockRecorder) PausedTask(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PausedTask", reflect.TypeOf((*MockTaskManager)(nil).PausedTask), arg0, arg1)
+}
+
 // ResumeSubtasks mocks base method.
 func (m *MockTaskManager) ResumeSubtasks(arg0 context.Context, arg1 int64) error {
 	m.ctrl.T.Helper()
@@ -406,6 +420,20 @@ func (m *MockTaskManager) ResumeSubtasks(arg0 context.Context, arg1 int64) error
 func (mr *MockTaskManagerMockRecorder) ResumeSubtasks(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResumeSubtasks", reflect.TypeOf((*MockTaskManager)(nil).ResumeSubtasks), arg0, arg1)
+}
+
+// RevertedTask mocks base method.
+func (m *MockTaskManager) RevertedTask(arg0 context.Context, arg1 int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RevertedTask", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RevertedTask indicates an expected call of RevertedTask.
+func (mr *MockTaskManagerMockRecorder) RevertedTask(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RevertedTask", reflect.TypeOf((*MockTaskManager)(nil).RevertedTask), arg0, arg1)
 }
 
 // SucceedTask mocks base method.
