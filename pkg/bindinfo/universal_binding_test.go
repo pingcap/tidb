@@ -79,12 +79,12 @@ func TestUniversalBindingBasic(t *testing.T) {
 				for _, useDB := range []string{"test", "test1", "test2"} {
 					tk.MustExec("use " + useDB)
 					for _, testDB := range []string{"", "test.", "test1.", "test2."} {
-						tk.MustExec(`set @@tidb_opt_enable_universal_binding=1`) // enabled
+						tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`) // enabled
 						require.True(t, tk.MustUseIndex(fmt.Sprintf("select * from %vt", testDB), idx))
 						tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
 						require.True(t, tk.MustUseIndex(fmt.Sprintf("select * from %vt", testDB), idx))
-						tk.MustQuery(`show warnings`).Check(testkit.Rows())      // no warning
-						tk.MustExec(`set @@tidb_opt_enable_universal_binding=0`) // disabled
+						tk.MustQuery(`show warnings`).Check(testkit.Rows())  // no warning
+						tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=0`) // disabled
 						tk.MustQuery(fmt.Sprintf("select * from %vt", testDB))
 						tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
 					}
@@ -133,7 +133,7 @@ func TestUniversalBindingPriority(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
-	tk.MustExec(`set @@tidb_opt_enable_universal_binding=1`)
+	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, c int, d int, e int, key(a), key(b), key(c), key(d), key(e))`)
 
@@ -152,11 +152,11 @@ func TestUniversalBindingPriority(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
 
 	// global normal takes effect again if disable universal bindings
-	tk.MustExec(`set @@tidb_opt_enable_universal_binding=0`)
+	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=0`)
 	tk.MustExec(`create global binding using select /*+ use_index(t, b) */ * from t`)
 	tk.MustUseIndex(`select * from t`, "b")
 	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
-	tk.MustExec(`set @@tidb_opt_enable_universal_binding=1`)
+	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
 
 	// session normal > session universal
 	tk.MustExec(`create session binding using select /*+ use_index(t, d) */ * from t`)
@@ -212,10 +212,10 @@ func TestUniversalBindingSwitch(t *testing.T) {
 	tk1.MustExec(`use test1`)
 	tk1.MustQuery(`select * from test.t`).Check(testkit.Rows())
 	tk1.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
-	tk1.MustExec(`set @@tidb_opt_enable_universal_binding=1`)
+	tk1.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
 	tk1.MustUseIndex(`select * from test.t`, "b")
 	tk1.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
-	tk1.MustExec(`set @@tidb_opt_enable_universal_binding=0`)
+	tk1.MustExec(`set @@tidb_opt_enable_fuzzy_binding=0`)
 	tk1.MustQuery(`select * from test.t`).Check(testkit.Rows())
 	tk1.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
 
@@ -225,18 +225,18 @@ func TestUniversalBindingSwitch(t *testing.T) {
 	tk2.MustExec(`create global universal binding using select /*+ use_index(t, b) */ * from t`)
 	tk2.MustQuery(`select * from test.t`).Check(testkit.Rows())
 	tk2.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
-	tk2.MustExec(`set @@tidb_opt_enable_universal_binding=1`)
+	tk2.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
 	tk2.MustUseIndex(`select * from test.t`, "b")
 	tk2.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
-	tk2.MustExec(`set @@tidb_opt_enable_universal_binding=0`)
+	tk2.MustExec(`set @@tidb_opt_enable_fuzzy_binding=0`)
 	tk2.MustQuery(`select * from test.t`).Check(testkit.Rows())
 	tk2.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
 
 	// the default value is off
 	tk3 := testkit.NewTestKit(t, store)
-	tk3.MustQuery(`select @@tidb_opt_enable_universal_binding`).Check(testkit.Rows("0"))
-	tk3.MustQuery(`show session variables like 'tidb_opt_enable_universal_binding'`).Check(testkit.Rows("tidb_opt_enable_universal_binding OFF"))
-	tk3.MustQuery(`show global variables like 'tidb_opt_enable_universal_binding'`).Check(testkit.Rows("tidb_opt_enable_universal_binding OFF"))
+	tk3.MustQuery(`select @@tidb_opt_enable_fuzzy_binding`).Check(testkit.Rows("0"))
+	tk3.MustQuery(`show session variables like 'tidb_opt_enable_fuzzy_binding'`).Check(testkit.Rows("tidb_opt_enable_fuzzy_binding OFF"))
+	tk3.MustQuery(`show global variables like 'tidb_opt_enable_fuzzy_binding'`).Check(testkit.Rows("tidb_opt_enable_fuzzy_binding OFF"))
 }
 
 func TestUniversalBindingSetVar(t *testing.T) {
@@ -247,20 +247,20 @@ func TestUniversalBindingSetVar(t *testing.T) {
 	tk.MustExec(`create table t (a int, b int, key(a), key(b))`)
 	tk.MustExec(`create universal binding using select /*+ use_index(t, a) */ * from t`)
 
-	tk.MustExec(`set @@tidb_opt_enable_universal_binding=0`)
+	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=0`)
 	tk.MustExec(`select * from t`)
 	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
-	tk.MustExec(`select /*+ set_var(tidb_opt_enable_universal_binding=1) */ * from t`)
+	tk.MustExec(`select /*+ set_var(tidb_opt_enable_fuzzy_binding=1) */ * from t`)
 	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
-	tk.MustExec(`select /*+ set_var(tidb_opt_enable_universal_binding=0) */ * from t`)
+	tk.MustExec(`select /*+ set_var(tidb_opt_enable_fuzzy_binding=0) */ * from t`)
 	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
 
-	tk.MustExec(`set @@tidb_opt_enable_universal_binding=1`)
+	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
 	tk.MustExec(`select * from t`)
 	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
-	tk.MustExec(`select /*+ set_var(tidb_opt_enable_universal_binding=0) */ * from t`)
+	tk.MustExec(`select /*+ set_var(tidb_opt_enable_fuzzy_binding=0) */ * from t`)
 	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
-	tk.MustExec(`select /*+ set_var(tidb_opt_enable_universal_binding=1) */ * from t`)
+	tk.MustExec(`select /*+ set_var(tidb_opt_enable_fuzzy_binding=1) */ * from t`)
 	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
 }
 
@@ -323,7 +323,7 @@ func TestUniversalBindingHints(t *testing.T) {
 		tk.MustExec(`create table t2 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
 		tk.MustExec(`create table t3 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
 	}
-	tk.MustExec(`set @@tidb_opt_enable_universal_binding=1`)
+	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
 
 	for _, c := range []struct {
 		binding   string
