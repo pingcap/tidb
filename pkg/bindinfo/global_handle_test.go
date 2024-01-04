@@ -69,7 +69,7 @@ func TestBindingLastUpdateTime(t *testing.T) {
 	require.NoError(t, err)
 	stmt, err := parser.New().ParseOneStmt("select * from test . t0", "", "")
 	require.NoError(t, err)
-	bindData, err := bindHandle.MatchGlobalBinding("test", stmt)
+	bindData, err := bindHandle.MatchGlobalBinding(tk.Session(), stmt)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(bindData.Bindings))
 	bind := bindData.Bindings[0]
@@ -125,7 +125,8 @@ func TestBindParse(t *testing.T) {
 	charset := "utf8mb4"
 	collation := "utf8mb4_bin"
 	source := bindinfo.Manual
-	mockDigest := "0f644e22c38ecc71d4592c52df127df7f86b6ca7f7c0ee899113b794578f9396"
+	_, digest := parser.NormalizeDigestForBinding(originSQL)
+	mockDigest := digest.String()
 	sql := fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation,source, sql_digest, plan_digest) VALUES ('%s', '%s', '%s', '%s', NOW(), NOW(),'%s', '%s', '%s', '%s', '%s')`,
 		originSQL, bindSQL, defaultDb, status, charset, collation, source, mockDigest, mockDigest)
 	tk.MustExec(sql)
@@ -136,7 +137,7 @@ func TestBindParse(t *testing.T) {
 
 	stmt, err := parser.New().ParseOneStmt("select * from test . t", "", "")
 	require.NoError(t, err)
-	bindData, err := bindHandle.MatchGlobalBinding("test", stmt)
+	bindData, err := bindHandle.MatchGlobalBinding(tk.Session(), stmt)
 	require.NoError(t, err)
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t`", bindData.OriginalSQL)
@@ -437,7 +438,7 @@ func TestGlobalBinding(t *testing.T) {
 
 		stmt, _, _ := internal.UtilNormalizeWithDefaultDB(t, testSQL.querySQL)
 
-		bindData, err := dom.BindHandle().MatchGlobalBinding("test", stmt)
+		bindData, err := dom.BindHandle().MatchGlobalBinding(tk.Session(), stmt)
 		require.NoError(t, err)
 		require.NotNil(t, bindData)
 		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
@@ -471,7 +472,7 @@ func TestGlobalBinding(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 1, bindHandle.Size())
 
-		bindData, err = dom.BindHandle().MatchGlobalBinding("test", stmt)
+		bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), stmt)
 		require.NoError(t, err)
 		require.NotNil(t, bindData)
 		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
@@ -487,7 +488,7 @@ func TestGlobalBinding(t *testing.T) {
 		_, err = tk.Exec("drop global " + testSQL.dropSQL)
 		require.Equal(t, uint64(1), tk.Session().AffectedRows())
 		require.NoError(t, err)
-		bindData, err = dom.BindHandle().MatchGlobalBinding("test", stmt)
+		bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), stmt)
 		require.NoError(t, err)
 		require.Nil(t, bindData)
 
@@ -496,7 +497,7 @@ func TestGlobalBinding(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 0, bindHandle.Size())
 
-		bindData, err = dom.BindHandle().MatchGlobalBinding("test", stmt)
+		bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), stmt)
 		require.NoError(t, err)
 		require.Nil(t, bindData)
 
