@@ -1533,7 +1533,7 @@ func (*Meta) TableNameKey(dbName string, tableName string) kv.Key {
 func (m *Meta) CheckTableNameExists(name []byte) error {
 	v, err := m.txn.Get(name)
 	if err == nil && v == nil {
-		err = ErrTableNotExists.GenWithStack("table doesn't exist")
+		err = ErrTableNotExists.GenWithStack(string(name))
 	}
 	return errors.Trace(err)
 }
@@ -1542,13 +1542,13 @@ func (m *Meta) CheckTableNameExists(name []byte) error {
 func (m *Meta) CheckTableNameNotExists(name []byte) error {
 	v, err := m.txn.Get(name)
 	if err == nil && v != nil {
-		err = ErrTableExists.GenWithStack("table already exists")
+		err = ErrTableExists.GenWithStack(string(name))
 	}
 	return errors.Trace(err)
 }
 
 // CreateTableName creates a table name.
-// Used by CreateTable/RenameTable/TruncateTable/RecoverTable/RecoverSchema.
+// Used by CreateTable/RenameTable/TruncateTable/RecoverTable/RecoverSchema/CreateView...
 func (m *Meta) CreateTableName(dbName string, tableName string, tableID int64) error {
 	// Check if table exists.
 	key := m.TableNameKey(dbName, tableName)
@@ -1559,7 +1559,7 @@ func (m *Meta) CreateTableName(dbName string, tableName string, tableID int64) e
 }
 
 // DropTableName drops a table name.
-// Used by DropTable/RenameTable/TruncateTable.
+// Used by DropTable/RenameTable/TruncateTable/DropView...
 func (m *Meta) DropTableName(dbName string, tableName string) error {
 	// Check if table exists.
 	key := m.TableNameKey(dbName, tableName)

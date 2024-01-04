@@ -75,10 +75,6 @@ func TestDDL(t *testing.T) {
 	// Drop Table
 	tk.MustExec("drop table db.tb1")
 
-	// Recover Table
-	// can not get 'tikv_gc_safe_point'
-	// tk.MustExec("recover table db.tb1")
-
 	// Rename Table
 	tk.MustExec("rename table db.tb2 to db.tb3")
 

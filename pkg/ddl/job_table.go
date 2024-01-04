@@ -252,9 +252,6 @@ func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 // startLocalWorkerLoop starts the local worker loop to run the DDL job of v2.
 func (d *ddl) startLocalWorkerLoop() {
 	for {
-		if isChanClosed(d.ctx.Done()) {
-			return
-		}
 		select {
 		case <-d.ctx.Done():
 			return
