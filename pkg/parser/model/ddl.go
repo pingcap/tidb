@@ -565,6 +565,10 @@ type Job struct {
 
 	// CDCWriteSource indicates the source of CDC write.
 	CDCWriteSource uint64 `json:"cdc_write_source"`
+
+	// LocalMode indicates whether the job is running in local TiDB.
+	// Only happens when tidb_ddl_version = 2.
+	LocalMode bool
 }
 
 // InvolvingSchemaInfo returns the schema info involved in the job.
@@ -739,8 +743,8 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
-	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, Version: %d",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.Version)
+	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, LocalMode: %t",
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.LocalMode)
 	if job.ReorgMeta != nil {
 		warnings, _ := job.GetWarnings()
 		ret += fmt.Sprintf(", UniqueWarnings:%d", len(warnings))

@@ -80,4 +80,10 @@ func TestDDL(t *testing.T) {
 
 	// Drop Database
 	tk.MustExec("drop database db")
+
+	// create again
+	tk.MustExec("create database db")
+	// Create Table
+	tk.MustExec("create table db.tb1(id int)")
+	tk.MustExec("create table db.tb2(id int)")
 }

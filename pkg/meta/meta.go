@@ -68,7 +68,7 @@ var (
 	mSchemaVersionKey    = []byte("SchemaVersionKey")
 	mDBs                 = []byte("DBs")
 	mNames               = []byte("Names")
-	mDDLVersion          = []byte("DDLVersion")
+	mDDLV2Initialized    = []byte("DDLV2Initialized")
 	mDBPrefix            = "DB"
 	mTablePrefix         = "Table"
 	mNameSep             = []byte("\x00")
@@ -1587,14 +1587,27 @@ func (m *Meta) ClearAllTableNames() error {
 	})
 }
 
-// SetDDLVersion sets the ddl version.
-func (m *Meta) SetDDLVersion(v int64) error {
-	return m.txn.Set(mDDLVersion, []byte(strconv.FormatInt(v, 10)))
+// SetDDLV2Initialized set DDLV2Initialized.
+func (m *Meta) SetDDLV2Initialized(b bool) error {
+	var data []byte
+	if b {
+		data = []byte("1")
+	} else {
+		data = []byte("0")
+	}
+	return m.txn.Set(mDDLV2Initialized, data)
 }
 
-// GetDDLVersion gets the ddl version.
-func (m *Meta) GetDDLVersion() (int64, error) {
-	return m.txn.GetInt64(mDDLVersion)
+// GetDDLV2Initialized gets DDLV2Initialized
+func (m *Meta) GetDDLV2Initialized() (initialized bool, err error) {
+	val, err := m.txn.Get(mDDLV2Initialized)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	if len(val) == 0 {
+		return false, nil
+	}
+	return bytes.Equal(val, []byte("1")),  nil
 }
 
 // GroupRUStats keeps the ru consumption statistics data.

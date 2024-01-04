@@ -328,6 +328,7 @@ func (d *ddl) addBatchDDLJobs2Queue(tasks []*limitJobTask) error {
 
 		for i, task := range tasks {
 			job := task.job
+			job.Version = currentVersion
 			job.StartTS = txn.StartTS()
 			job.ID = ids[i]
 			setJobStateToQueueing(job)
@@ -430,6 +431,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 	jobTasks := make([]*model.Job, 0, len(tasks))
 	for i, task := range tasks {
 		job := task.job
+		job.Version = currentVersion
 		job.StartTS = startTS
 		job.ID = ids[i]
 		if len(bdrRole) == 0 {
@@ -452,8 +454,8 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 
 		setJobStateToQueueing(job)
 
-		// currently doesn't support pause job in v2.
-		if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) && job.Version != model.TiDBDDLV2 {
+		// currently doesn't support pause job in local mode.
+		if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) && !job.LocalMode {
 			if err = pauseRunningJob(sess.NewSession(se), job, model.AdminCommandBySystem); err != nil {
 				logutil.BgLogger().Warn("pause user DDL by system failed", zap.String("category", "ddl-upgrading"), zap.Stringer("job", job), zap.Error(err))
 				task.cacheErr = err
@@ -462,7 +464,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 			logutil.BgLogger().Info("pause user DDL by system successful", zap.String("category", "ddl-upgrading"), zap.Stringer("job", job))
 		}
 
-		if job.Version == model.TiDBDDLV2 {
+		if job.LocalMode {
 			toLocalWorker = true
 			if _, err := job.Encode(true); err != nil {
 				return err
@@ -493,7 +495,7 @@ func (d *ddl) combineBatchJobs(tasks []*limitJobTask) ([]*limitJobTask, error) {
 	var schemaName string
 	jobs := make([]*model.Job, 0, len(tasks))
 	for i, task := range tasks {
-		if task.job.Version != model.TiDBDDLV2 || task.job.Type != model.ActionCreateTable {
+		if !task.job.LocalMode || task.job.Type != model.ActionCreateTable {
 			return tasks, nil
 		}
 		if i == 0 {
@@ -711,9 +713,9 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// for v2 job, we didn't insert the job to ddl table now.
+	// for local mode job, we didn't insert the job to ddl table now.
 	// so no need to delete it.
-	if job.Version != model.TiDBDDLV2 {
+	if !job.LocalMode {
 		err = w.deleteDDLJob(job)
 		if err != nil {
 			return errors.Trace(err)

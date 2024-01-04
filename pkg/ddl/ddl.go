@@ -1099,9 +1099,9 @@ func setDDLJobQuery(ctx sessionctx.Context, job *model.Job) {
 	}
 }
 
-func setDDLJobVersion(job *model.Job) {
+func setDDLJobMode(job *model.Job) {
 	if variable.DDLVersion.Load() != model.TiDBDDLV2 {
-		job.Version = model.TiDBDDLV1
+		job.LocalMode = false
 		return
 	}
 
@@ -1113,26 +1113,25 @@ func setDDLJobVersion(job *model.Job) {
 		}
 		tbInfo, ok := job.Args[0].(*model.TableInfo)
 		if ok && len(tbInfo.ForeignKeys) == 0 {
-			job.Version = model.TiDBDDLV2
+			job.LocalMode = true
 			return
 		}
 	default:
 	}
-	job.Version = model.TiDBDDLV1
+	job.LocalMode = false
 }
 
 func (d *ddl) deliverJobTask(task *limitJobTask) {
-	switch task.job.Version {
-	case model.TiDBDDLV2:
+	if task.job.LocalMode {
 		d.limitJobChV2 <- task
-	default:
+	} else {
 		d.limitJobCh <- task
 	}
 }
 
 func (*ddl) shouldCheckHistoryJob(job *model.Job) bool {
-	// for v2 job, we add the history job directly now, so no need to check it.
-	return job.Version != model.TiDBDDLV2
+	// for local mode job, we add the history job directly now, so no need to check it.
+	return !job.LocalMode
 }
 
 // DoDDLJob will return
@@ -1151,7 +1150,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	}
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
-	setDDLJobVersion(job)
+	setDDLJobMode(job)
 	task := &limitJobTask{job, []chan error{make(chan error)}, nil}
 	d.deliverJobTask(task)
 
@@ -1443,12 +1442,30 @@ func (d *ddl) SwitchDDLVersion(version int64) error {
 
 // migration2DDLV1 migration ddl version to v1.
 func (*ddl) migration2DDLV1(m *meta.Meta) error {
+	ddlV2Initialized, err := m.GetDDLV2Initialized()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !ddlV2Initialized {
+		return nil
+	}
 	// clear all table names when we switch to v1.
-	return errors.Trace(m.ClearAllTableNames())
+	if err := m.ClearAllTableNames(); err != nil {
+		return errors.Trace(err)
+	}
+	return errors.Trace(m.SetDDLV2Initialized(false))
 }
 
 // migration2DDLV2 migration ddl version to v2.
 func (*ddl) migration2DDLV2(m *meta.Meta) error {
+	ddlV2Initialized, err := m.GetDDLV2Initialized()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ddlV2Initialized {
+		return nil
+	}
+
 	if err := m.ClearAllTableNames(); err != nil {
 		return errors.Trace(err)
 	}
@@ -1470,20 +1487,12 @@ func (*ddl) migration2DDLV2(m *meta.Meta) error {
 		}
 	}
 
-	return err
+	return errors.Trace(m.SetDDLV2Initialized(true))
 }
 
-func (d *ddl) migration2DDLVersion(ver int64) error {
+func (d *ddl) migration2DDLVersion(ver int64) (err error) {
 	return kv.RunInNewTxn(kv.WithInternalSourceType(d.ctx, kv.InternalTxnDDL), d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
-		v, err := m.GetDDLVersion()
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		if v == ver {
-			return nil
-		}
 
 		switch ver {
 		case model.TiDBDDLV1, 0:
@@ -1493,10 +1502,7 @@ func (d *ddl) migration2DDLVersion(ver int64) error {
 		default:
 			err = errors.Errorf("unknown ddl version %d", ver)
 		}
-		if err != nil {
-			return errors.Trace(err)
-		}
-		return m.SetDDLVersion(ver)
+		return errors.Trace(err)
 	})
 }
 
