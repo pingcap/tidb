@@ -813,7 +813,7 @@ func GetBindSQL4PlanCache(sctx sessionctx.Context, stmt *PlanCacheStmt) (string,
 	if globalHandle == nil {
 		return "", ignore
 	}
-	bindRecord, _ = globalHandle.MatchGlobalBinding(sctx.GetSessionVars().CurrentDB, stmt.PreparedAst.Stmt)
+	bindRecord, _ = globalHandle.MatchGlobalBinding(sctx, stmt.PreparedAst.Stmt)
 	if bindRecord != nil {
 		enabledBinding := bindRecord.FindEnabledBinding()
 		if enabledBinding != nil {

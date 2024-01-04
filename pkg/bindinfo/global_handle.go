@@ -46,7 +46,7 @@ type GlobalBindingHandle interface {
 	// Methods for create, get, drop global sql bindings.
 
 	// MatchGlobalBinding returns the matched binding for this statement.
-	MatchGlobalBinding(currentDB string, stmt ast.StmtNode) (*BindRecord, error)
+	MatchGlobalBinding(sctx sessionctx.Context, stmt ast.StmtNode) (*BindRecord, error)
 
 	// GetAllGlobalBindings returns all bind records in cache.
 	GetAllGlobalBindings() (bindRecords []*BindRecord)
@@ -521,7 +521,7 @@ func (h *globalBindingHandle) Size() int {
 }
 
 // MatchGlobalBinding returns the matched binding for this statement.
-func (h *globalBindingHandle) MatchGlobalBinding(currentDB string, stmt ast.StmtNode) (*BindRecord, error) {
+func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, stmt ast.StmtNode) (*BindRecord, error) {
 	bindingCache := h.getCache()
 	if bindingCache.Size() == 0 {
 		return nil, nil
@@ -532,7 +532,7 @@ func (h *globalBindingHandle) MatchGlobalBinding(currentDB string, stmt ast.Stmt
 	}
 
 	// TODO: support fuzzy matching.
-	_, _, fuzzDigest, err := normalizeStmt(stmt, currentDB, true)
+	_, _, fuzzDigest, err := normalizeStmt(stmt, sctx.GetSessionVars().CurrentDB, true)
 	if err != nil {
 		return nil, err
 	}
@@ -544,7 +544,10 @@ func (h *globalBindingHandle) MatchGlobalBinding(currentDB string, stmt ast.Stmt
 		sqlDigest := exactDigest
 		if bindRecord := bindingCache.GetBinding(sqlDigest); bindRecord != nil {
 			for _, binding := range bindRecord.Bindings {
-				numWildcards, matched := matchBindingTableName(currentDB, tableNames, binding.TableNames)
+				numWildcards, matched := matchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
+				if matched && numWildcards > 0 && sctx != nil && !sctx.GetSessionVars().EnableFuzzyBinding {
+					continue // fuzzy binding is disabled, skip this binding
+				}
 				if matched && numWildcards < leastWildcards {
 					bestBinding = bindRecord
 					leastWildcards = numWildcards

@@ -59,7 +59,7 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*BindRecord, stri
 	if globalHandle == nil {
 		return nil, "", nil
 	}
-	if bindRecord, err := globalHandle.MatchGlobalBinding(ctx.GetSessionVars().CurrentDB, stmt); err == nil && bindRecord != nil && bindRecord.HasEnabledBinding() {
+	if bindRecord, err := globalHandle.MatchGlobalBinding(ctx, stmt); err == nil && bindRecord != nil && bindRecord.HasEnabledBinding() {
 		return bindRecord, metrics.ScopeGlobal, nil
 	}
 	return nil, "", nil
@@ -145,13 +145,13 @@ func matchBindingTableName(currentDB string, stmtTableNames, bindingTableNames [
 		if stmtTableNames[i].Name.L != bindingTableNames[i].Name.L {
 			return 0, false
 		}
+		if bindingTableNames[i].Schema.L == "*" {
+			numWildcards++
+		}
 		if bindingTableNames[i].Schema.L == stmtTableNames[i].Schema.L || // exactly same, or
 			(stmtTableNames[i].Schema.L == "" && bindingTableNames[i].Schema.L == currentDB) || // equal to the current DB, or
 			bindingTableNames[i].Schema.L == "*" { // fuzzy match successfully
 			continue
-		}
-		if bindingTableNames[i].Schema.L == "*" {
-			numWildcards++
 		}
 		return 0, false
 	}
