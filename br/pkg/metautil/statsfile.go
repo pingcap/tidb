@@ -158,7 +158,7 @@ func RestoreStats(
 	})
 	eg.Go(func() error {
 		// NOTICE: skip updating cache after load stats from json
-		return statsHandler.LoadStatsFromJSONConcurrency(ectx, newTableInfo, taskCh, 0)
+		return statsHandler.LoadStatsFromJSONConcurrently(ectx, newTableInfo, taskCh, 0)
 	})
 	return eg.Wait()
 }
@@ -222,7 +222,7 @@ func downloadStats(
 					return nil
 				case taskCh <- &statstypes.PartitionStatisticLoadTask{
 					PhysicalID: physicalId,
-					JsonTable:  jsonTable,
+					JSONTable:  jsonTable,
 				}:
 
 				}

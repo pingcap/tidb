@@ -514,10 +514,6 @@ func (rc *Client) SetCurrentTS(ts uint64) {
 	rc.currentTS = ts
 }
 
-func (rc *Client) SetExternalStorage(s storage.ExternalStorage) {
-	rc.storage = s
-}
-
 func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
 	var err error
 	rc.storage, err = storage.New(ctx, backend, opts)
@@ -1766,10 +1762,17 @@ func (rc *Client) execChecksum(
 	return nil
 }
 
-func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *CreatedTable, errCh chan<- error) chan *CreatedTable {
+func (rc *Client) GoUpdateMetaAndLoadStats(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	cipher *backuppb.CipherInfo,
+	inCh <-chan *CreatedTable,
+	errCh chan<- error,
+	statsConcurrency uint,
+) chan *CreatedTable {
 	log.Info("Start to update meta then load stats")
 	outCh := DefaultOutputTableChan()
-	workers := utils.NewWorkerPool(12, "UpdateStats")
+	workers := utils.NewWorkerPool(statsConcurrency, "UpdateStats")
 	// The rc.db is not thread safe
 	var updateMetaLock sync.Mutex
 
@@ -1814,7 +1817,7 @@ func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *Cre
 			)
 			start := time.Now()
 			rewriteIDMap := getTableIDMap(tbl.Table, tbl.OldTable.Info)
-			if err := metautil.RestoreStats(ctx, rc.storage, rc.cipher, rc.statsHandler, tbl.Table, oldTable.StatsFileIndexes, rewriteIDMap); err != nil {
+			if err := metautil.RestoreStats(ctx, s, cipher, rc.statsHandler, tbl.Table, oldTable.StatsFileIndexes, rewriteIDMap); err != nil {
 				log.Error("analyze table failed", zap.Any("table", oldTable.StatsFileIndexes), zap.Error(err))
 			}
 			log.Info("restore statistic data done",

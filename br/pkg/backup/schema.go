@@ -213,7 +213,7 @@ func (s *schemaInfo) calculateChecksum(
 
 func (s *schemaInfo) dumpStatsToJSON(ctx context.Context, statsWriter *metautil.StatsWriter, statsHandle *handle.Handle, backupTS uint64) error {
 	log.Info("dump stats to json", zap.Stringer("db", s.dbInfo.Name), zap.Stringer("table", s.tableInfo.Name))
-	if err := statsHandle.DumpStatsToJSONBySnapshotFunc(
+	if err := statsHandle.PersistStatsBySnapshot(
 		ctx, s.dbInfo.Name.String(), s.tableInfo, backupTS, statsWriter.BackupStats,
 	); err != nil {
 		return errors.Trace(err)
