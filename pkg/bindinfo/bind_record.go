@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -85,6 +86,9 @@ type Binding struct {
 	PlanDigest string
 	// Type indicates the type of this binding, currently only 2 types: "" for normal and "u" for universal bindings.
 	Type string
+
+	// TableNames records all schema and table names in this binding statement, which are used for fuzzy matching.
+	TableNames []*ast.TableName `json:"-"`
 }
 
 func (b *Binding) isSame(rb *Binding) bool {
@@ -188,7 +192,12 @@ func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 			continue
 		}
 		dbName := br.Db
-		if bind.Type == TypeUniversal {
+		bindingStmt, err := p.ParseOneStmt(bind.BindSQL, bind.Charset, bind.Collation)
+		if err != nil {
+			return err
+		}
+		isFuzzy := isFuzzyBinding(bindingStmt)
+		if isFuzzy {
 			dbName = "*" // ues '*' for universal bindings
 		}
 
@@ -196,7 +205,7 @@ func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 		if err != nil {
 			return err
 		}
-		if sctx != nil && bind.Type == TypeNormal {
+		if sctx != nil && bind.Type == TypeNormal && !isFuzzy {
 			paramChecker := &paramMarkerChecker{}
 			stmt.Accept(paramChecker)
 			if !paramChecker.hasParamMarker {
