@@ -225,7 +225,7 @@ func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDe
 		}
 	}
 
-	e.curPartition = newSortPartition(fields, e.MaxChunkSize(), byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.spillLimit)
+	e.curPartition = newSortPartition(fields, byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.spillLimit)
 	e.curPartition.getMemTracker().AttachTo(e.memTracker)
 	e.curPartition.getMemTracker().SetLabel(memory.LabelForRowChunks)
 	e.spillAction = e.curPartition.actionSpill()
@@ -297,7 +297,10 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		byItemsDesc[i] = byItem.Desc
 	}
 
-	e.switchToNewSortPartition(fields, byItemsDesc, false)
+	err := e.switchToNewSortPartition(fields, byItemsDesc, false)
+	if err != nil {
+		return err
+	}
 
 	for {
 		chk := exec.TryNewCacheChunk(e.Children(0))
@@ -322,7 +325,7 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		})
 	}
 
-	err := e.handleCurrentPartitionBeforeExit()
+	err = e.handleCurrentPartitionBeforeExit()
 	if err != nil {
 		return err
 	}
@@ -388,30 +391,34 @@ func (e *SortExec) compressRow(rowI, rowJ chunk.Row) int {
 func (e *SortExec) isSpillTriggered() bool {
 	if len(e.sortPartitions) > 0 {
 		return e.sortPartitions[0].isSpillTriggered()
-	} else {
-		if e.curPartition != nil {
-			return e.curPartition.isSpillTriggered()
-		}
-		return false
 	}
+	if e.curPartition != nil {
+		return e.curPartition.isSpillTriggered()
+	}
+	return false
 }
 
+// IsSpillTriggeredForTest tells if spill is triggered, it's only used in test.
 func (e *SortExec) IsSpillTriggeredForTest() bool {
 	return e.isSpillTriggered()
 }
 
+// IsSpillTriggeredInOnePartitionForTest tells if spill is triggered in a specific partition, it's only used in test.
 func (e *SortExec) IsSpillTriggeredInOnePartitionForTest(idx int) bool {
 	return e.sortPartitions[idx].isSpillTriggered()
 }
 
+// GetRowNumInOnePartitionForTest returns number of rows a partition holds, it's only used in test.
 func (e *SortExec) GetRowNumInOnePartitionForTest(idx int) int64 {
 	return e.sortPartitions[idx].numRowForTest()
 }
 
+// GetSortPartitionListLenForTest returns the number of partitions, it's only used in test.
 func (e *SortExec) GetSortPartitionListLenForTest() int {
 	return len(e.sortPartitions)
 }
 
+// GetSortMetaForTest returns some sort meta, it's only used in test.
 func (e *SortExec) GetSortMetaForTest() (keyColumns []int, keyCmpFuncs []chunk.CompareFunc, byItemsDesc []bool) {
 	keyColumns = e.keyColumns
 	keyCmpFuncs = e.keyCmpFuncs

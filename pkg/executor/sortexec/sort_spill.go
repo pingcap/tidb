@@ -87,6 +87,7 @@ type dataCursor struct {
 	chk       *chunk.Chunk
 }
 
+// NewDataCursor creates a new dataCursor
 func NewDataCursor() *dataCursor {
 	return &dataCursor{
 		chkID:     -1,

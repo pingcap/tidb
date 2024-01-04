@@ -32,7 +32,7 @@ var errSpillEmptyChunk = errors.New("can not spill empty chunk to disk")
 var errFailToAddChunk = errors.New("fail to add chunk")
 
 // It should be const, but we need to modify it for test.
-var spillChunkSize int = 1024
+var spillChunkSize = 1024
 
 // signalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
 const signalCheckpointForSort uint = 10240
@@ -80,7 +80,7 @@ type sortPartition struct {
 }
 
 // Creates a new SortPartition in memory.
-func newSortPartition(fieldTypes []*types.FieldType, chunkSize int, byItemsDesc []bool,
+func newSortPartition(fieldTypes []*types.FieldType, byItemsDesc []bool,
 	keyColumns []int, keyCmpFuncs []chunk.CompareFunc, spillLimit int64) *sortPartition {
 	lock := new(sync.Mutex)
 	retVal := &sortPartition{
@@ -244,9 +244,10 @@ func (s *sortPartition) spillToDisk() error {
 	}
 
 	s.setIsSpilling(true)
+	defer s.cond.Broadcast()
+
 	err = s.spillToDiskImpl()
 	s.setIsSpilling(false)
-	s.cond.Broadcast()
 	return err
 }
 
@@ -272,14 +273,14 @@ func (s *sortPartition) getNextSortedRow() (chunk.Row, error) {
 		}
 		s.cursor.advanceRow()
 		return row, nil
-	} else {
-		if s.idx >= len(s.savedRows) {
-			return chunk.Row{}, nil
-		}
-		ret := s.savedRows[s.idx]
-		s.advanceIdx()
-		return ret, nil
 	}
+
+	if s.idx >= len(s.savedRows) {
+		return chunk.Row{}, nil
+	}
+	ret := s.savedRows[s.idx]
+	s.advanceIdx()
+	return ret, nil
 }
 
 func (s *sortPartition) actionSpill() *sortPartitionSpillDiskAction {
@@ -386,6 +387,7 @@ func (s *sortPartition) numRowForTest() int64 {
 	return rowNumInMemory
 }
 
+// SetSmallSpillChunkSizeForTest set spill chunk size for test.
 func SetSmallSpillChunkSizeForTest() {
 	spillChunkSize = 16
 }
