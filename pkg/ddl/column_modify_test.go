@@ -545,17 +545,15 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 				_pos                   = &ast.ColumnPosition{}
 				_modifyColumnTp        byte
 				_updatedAutoRandomBits uint64
-				deniedByBDR            bool
 				changingCol            *model.ColumnInfo
 				changingIdxs           []*model.IndexInfo
 			)
 
-			err := job.DecodeArgs(&_newCol, &_oldColName, _pos, &_modifyColumnTp, &_updatedAutoRandomBits, &deniedByBDR, &changingCol, &changingIdxs)
+			err := job.DecodeArgs(&_newCol, &_oldColName, _pos, &_modifyColumnTp, &_updatedAutoRandomBits, &changingCol, &changingIdxs)
 			if err != nil {
 				checkErr = err
 				return
 			}
-			require.True(t, deniedByBDR)
 			if changingCol.Name.L != assertChangingColName {
 				checkErr = errors.New("changing column name is incorrect")
 			} else if changingIdxs[0].Name.L != assertChangingIdxName {
@@ -604,16 +602,14 @@ func TestColumnTypeChangeGenUniqueChangingName(t *testing.T) {
 				_pos                   = &ast.ColumnPosition{}
 				_modifyColumnTp        byte
 				_updatedAutoRandomBits uint64
-				deniedByBDR            bool
 				changingCol            *model.ColumnInfo
 				changingIdxs           []*model.IndexInfo
 			)
-			err := job.DecodeArgs(&_newCol, &_oldColName, _pos, &_modifyColumnTp, &_updatedAutoRandomBits, &deniedByBDR, &changingCol, &changingIdxs)
+			err := job.DecodeArgs(&_newCol, &_oldColName, _pos, &_modifyColumnTp, &_updatedAutoRandomBits, &changingCol, &changingIdxs)
 			if err != nil {
 				checkErr = err
 				return
 			}
-			require.True(t, deniedByBDR)
 			if job.Query == query1 && changingCol.Name.L != assertChangingColName1 {
 				checkErr = errors.New("changing column name is incorrect")
 			}

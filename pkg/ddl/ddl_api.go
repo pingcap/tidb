@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -5739,19 +5740,29 @@ func GetModifiableColumnJob(
 		return nil, errors.Trace(err)
 	}
 
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bdrRole, err := meta.NewMeta(txn).GetBDRRole()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if bdrRole == string(ast.BDRRolePrimary) &&
+		deniedByBDRWhenModifyColumn(newCol.FieldType, col.FieldType, specNewColumn.Options) {
+		return nil, dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
+	}
+
 	job := &model.Job{
-		SchemaID:   schema.ID,
-		TableID:    t.Meta().ID,
-		SchemaName: schema.Name.L,
-		TableName:  t.Meta().Name.L,
-		Type:       model.ActionModifyColumn,
-		BinlogInfo: &model.HistoryInfo{},
-		ReorgMeta:  NewDDLReorgMeta(sctx),
-		CtxVars:    []interface{}{needChangeColData},
-		Args: []interface{}{
-			&newCol.ColumnInfo, originalColName, spec.Position, modifyColumnTp, newAutoRandBits,
-			deniedByBDRWhenModifyColumn(newCol.FieldType, col.FieldType, specNewColumn.Options),
-		},
+		SchemaID:       schema.ID,
+		TableID:        t.Meta().ID,
+		SchemaName:     schema.Name.L,
+		TableName:      t.Meta().Name.L,
+		Type:           model.ActionModifyColumn,
+		BinlogInfo:     &model.HistoryInfo{},
+		ReorgMeta:      NewDDLReorgMeta(sctx),
+		CtxVars:        []interface{}{needChangeColData},
+		Args:           []interface{}{&newCol.ColumnInfo, originalColName, spec.Position, modifyColumnTp, newAutoRandBits},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 	}
 	return job, nil
@@ -6013,7 +6024,7 @@ func (d *ddl) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *ast.Al
 		Type:           model.ActionModifyColumn,
 		BinlogInfo:     &model.HistoryInfo{},
 		ReorgMeta:      NewDDLReorgMeta(ctx),
-		Args:           []interface{}{&newCol, oldColName, spec.Position, 0, 0, true},
+		Args:           []interface{}{&newCol, oldColName, spec.Position, 0, 0},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 	}
 	err = d.DoDDLJob(ctx, job)

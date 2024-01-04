@@ -70,14 +70,12 @@ func TestModifyColumnTypeArgs(t *testing.T) {
 		_oldColName            *model.CIStr
 		_modifyColumnTp        byte
 		_updatedAutoRandomBits uint64
-		deniedByBDR            bool
 		changingCol            *model.ColumnInfo
 		changingIdxs           []*model.IndexInfo
 	)
 	_pos := &ast.ColumnPosition{}
-	err = historyJob.DecodeArgs(&_newCol, &_oldColName, _pos, &_modifyColumnTp, &_updatedAutoRandomBits, &deniedByBDR, &changingCol, &changingIdxs)
+	err = historyJob.DecodeArgs(&_newCol, &_oldColName, _pos, &_modifyColumnTp, &_updatedAutoRandomBits, &changingCol, &changingIdxs)
 	require.NoError(t, err)
-	require.True(t, deniedByBDR)
 	require.Nil(t, changingCol)
 	require.Nil(t, changingIdxs)
 }
