@@ -38,7 +38,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/util"
-	disttaskstore "github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -1355,15 +1355,11 @@ func GetTargetNodeCPUCnt(path string) (int, error) {
 	if serverDiskImport || !variable.EnableDistTask.Load() {
 		return cpu.GetCPUCount(), nil
 	}
-	manager, err := disttaskstore.GetTaskManager()
-	if err != nil {
-		return 0, err
-	}
 	// the call path of initialization of threadCnt don't have context, so we use a timeout here.
 	ctx, cancel := context.WithTimeout(context.Background(), getCPUCountTimeout)
 	defer cancel()
 	ctx = tikvutil.WithInternalSourceType(ctx, tidbkv.InternalImportInto)
-	return manager.GetCPUCountOfManagedNodes(ctx)
+	return handle.GetCPUCountOfManagedNode(ctx)
 }
 
 // TestSyncCh is used in unit test to synchronize the execution.

@@ -231,7 +231,7 @@ func (stm *TaskManager) CreateTask(ctx context.Context, key string, tp proto.Tas
 
 // CreateTaskWithSession adds a new task to task table with session.
 func (stm *TaskManager) CreateTaskWithSession(ctx context.Context, se sessionctx.Context, key string, tp proto.TaskType, concurrency int, meta []byte) (taskID int64, err error) {
-	cpuCount, err := stm.getCPUCountOfManagedNodes(ctx, se)
+	cpuCount, err := stm.getCPUCountOfManagedNode(ctx, se)
 	if err != nil {
 		return 0, err
 	}
@@ -1241,20 +1241,20 @@ func (*TaskManager) getAllNodesWithSession(ctx context.Context, se sessionctx.Co
 	return nodes, nil
 }
 
-// GetCPUCountOfManagedNodes gets the cpu count of managed nodes.
-func (stm *TaskManager) GetCPUCountOfManagedNodes(ctx context.Context) (int, error) {
+// GetCPUCountOfManagedNode gets the cpu count of managed node.
+func (stm *TaskManager) GetCPUCountOfManagedNode(ctx context.Context) (int, error) {
 	var cnt int
 	err := stm.WithNewSession(func(se sessionctx.Context) error {
 		var err2 error
-		cnt, err2 = stm.getCPUCountOfManagedNodes(ctx, se)
+		cnt, err2 = stm.getCPUCountOfManagedNode(ctx, se)
 		return err2
 	})
 	return cnt, err
 }
 
-// getCPUCountOfManagedNodes gets the cpu count of managed nodes.
+// getCPUCountOfManagedNode gets the cpu count of managed node.
 // returns error when there's no managed node or no node has valid cpu count.
-func (stm *TaskManager) getCPUCountOfManagedNodes(ctx context.Context, se sessionctx.Context) (int, error) {
+func (stm *TaskManager) getCPUCountOfManagedNode(ctx context.Context, se sessionctx.Context) (int, error) {
 	nodes, err := stm.getManagedNodesWithSession(ctx, se)
 	if err != nil {
 		return 0, err

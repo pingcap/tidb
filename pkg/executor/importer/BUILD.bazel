@@ -32,7 +32,7 @@ go_library(
         "//br/pkg/utils",
         "//pkg/config",
         "//pkg/ddl/util",
-        "//pkg/disttask/framework/storage",
+        "//pkg/disttask/framework/handle",
         "//pkg/expression",
         "//pkg/keyspace",
         "//pkg/kv",
