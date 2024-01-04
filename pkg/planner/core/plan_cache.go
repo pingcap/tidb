@@ -850,54 +850,53 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 		if len(ts.filterCondition) > 0 {
 			conds = append(conds, ts.filterCondition...)
 		}
-		if len(conds) > 0 {
-			tbl, ok := domain.GetDomain(sctx).InfoSchema().TableByID(ts.Table.ID)
-			if !ok || tbl == nil {
-				return errors.New("fail to build ranges, could not find partitioned table")
-			}
-			partTbl := tbl.GetPartitionedTable()
-			if partTbl == nil {
-				return errors.New("fail to build ranges, could not find partitioned table")
-			}
-			colNames := make([]*types.FieldName, 0, len(ts.tblCols))
-			cols := make([]*expression.Column, 0, len(ts.tblCols))
-			for i := range ts.tblCols {
-				var colName model.CIStr
-				for j := range ts.Columns {
-					if ts.tblCols[i].ID == ts.Columns[j].ID {
-						colName = ts.Columns[j].Name
-						break
-					}
-				}
-				if len(colName.O) == 0 {
-					continue
-				}
-				cols = append(cols, ts.tblCols[i])
-				colNames = append(colNames, &types.FieldName{
-					OrigTblName: ts.Table.Name,
-					OrigColName: model.NewCIStr(ts.tblCols[i].OrigName),
-					DBName:      ts.DBName,
-					TblName:     *ts.TableAsName,
-					ColName:     colName,
-				})
-			}
-			partIDs, err := PartitionPruning(sctx, partTbl, conds, nil, cols, colNames)
-			if err != nil {
-				return err
-			}
-			if len(partIDs) != 1 {
-				if len(partIDs) == 0 {
-					return errors.New("fail to build ranges, could not find matching partition")
-				}
-				return errors.New("fail to build ranges, found multiple matching partitions")
-			}
-			if partIDs[0] < 0 || partIDs[0] >= len(ts.Table.Partition.Definitions) {
-				return errors.New("fail to build ranges, all partitions used")
-			}
-			ts.physicalTableID = ts.Table.Partition.Definitions[partIDs[0]].ID
-		} else {
+		if len(conds) == 0 {
 			panic("Need to test this!!")
 		}
+		tbl, ok := domain.GetDomain(sctx).InfoSchema().TableByID(ts.Table.ID)
+		if !ok || tbl == nil {
+			return errors.New("fail to build ranges, could not find partitioned table")
+		}
+		partTbl := tbl.GetPartitionedTable()
+		if partTbl == nil {
+			return errors.New("fail to build ranges, could not find partitioned table")
+		}
+		colNames := make([]*types.FieldName, 0, len(ts.tblCols))
+		cols := make([]*expression.Column, 0, len(ts.tblCols))
+		for i := range ts.tblCols {
+			var colName model.CIStr
+			for j := range ts.Columns {
+				if ts.tblCols[i].ID == ts.Columns[j].ID {
+					colName = ts.Columns[j].Name
+					break
+				}
+			}
+			if len(colName.O) == 0 {
+				continue
+			}
+			cols = append(cols, ts.tblCols[i])
+			colNames = append(colNames, &types.FieldName{
+				OrigTblName: ts.Table.Name,
+				OrigColName: model.NewCIStr(ts.tblCols[i].OrigName),
+				DBName:      ts.DBName,
+				TblName:     *ts.TableAsName,
+				ColName:     colName,
+			})
+		}
+		partIDs, err := PartitionPruning(sctx, partTbl, conds, nil, cols, colNames)
+		if err != nil {
+			return err
+		}
+		if len(partIDs) != 1 {
+			if len(partIDs) == 0 {
+				return errors.New("fail to build ranges, could not find matching partition")
+			}
+			return errors.New("fail to build ranges, found multiple matching partitions")
+		}
+		if partIDs[0] < 0 || partIDs[0] >= len(ts.Table.Partition.Definitions) {
+			return errors.New("fail to build ranges, all partitions used")
+		}
+		ts.physicalTableID = ts.Table.Partition.Definitions[partIDs[0]].ID
 	}
 	return
 }
