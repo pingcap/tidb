@@ -245,7 +245,7 @@ func (s *BaseScheduler) onPausing() error {
 	runningPendingCnt := cntByStates[proto.SubtaskStateRunning] + cntByStates[proto.SubtaskStatePending]
 	if runningPendingCnt == 0 {
 		logutil.Logger(s.logCtx).Info("all running subtasks paused, update the task to paused state")
-		return s.updateTask(proto.TaskStatePaused, nil, RetrySQLTimes)
+		return s.taskMgr.PausedTask(s.ctx, s.Task.ID)
 	}
 	logutil.Logger(s.logCtx).Debug("on pausing state, this task keeps current state", zap.Stringer("state", s.Task.State))
 	return nil
@@ -302,7 +302,7 @@ func (s *BaseScheduler) onReverting() error {
 		if err = s.OnDone(s.ctx, s, s.Task); err != nil {
 			return errors.Trace(err)
 		}
-		return s.updateTask(proto.TaskStateReverted, nil, RetrySQLTimes)
+		return s.taskMgr.RevertedTask(s.ctx, s.Task.ID)
 	}
 	// Wait all subtasks in this step finishes.
 	s.OnTick(s.ctx, s.Task)
@@ -641,11 +641,11 @@ func (s *BaseScheduler) handlePlanErr(err error) error {
 		return err
 	}
 	s.Task.Error = err
-
 	if err = s.OnDone(s.ctx, s, s.Task); err != nil {
 		return errors.Trace(err)
 	}
-	return s.updateTask(proto.TaskStateFailed, nil, RetrySQLTimes)
+
+	return s.taskMgr.FailTask(s.ctx, s.Task.ID, s.Task.State, s.Task.Error)
 }
 
 // MockServerInfo exported for scheduler_test.go
