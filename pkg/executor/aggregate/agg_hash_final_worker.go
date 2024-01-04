@@ -176,7 +176,7 @@ func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, resu
 	}
 }
 
-func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
+func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 	waitStart := time.Now()
 	result, finished := w.receiveFinalResultHolder()
 	w.increaseWaitTime(waitStart)
@@ -191,8 +191,8 @@ func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 	if w.isSpilledTriggered {
 		var err error
 		for {
-			// As we restore data by partition, only one partition uses memory at the same time.
-			// So we need to release the memory usage of last partition.
+			// Since data is restored partition by partition, only one partition is in memory at any given time.
+			// Therefore, it's necessary to release the memory used by the previous partition.
 			w.memTracker.Consume(-w.restoredAggResultMapperMem)
 			w.partialResultMap, w.restoredAggResultMapperMem, err = w.getInputFromDisk(sctx)
 			if err != nil {
@@ -223,17 +223,6 @@ func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {
 	}
 }
 
-func (w *HashAggFinalWorker) mergeResultsAndSend(ctx sessionctx.Context) error {
-	err := w.consumeIntermData(ctx)
-	if err != nil {
-		w.outputCh <- &AfFinalResult{err: err}
-		return err
-	}
-
-	w.loadFinalResult(ctx)
-	return nil
-}
-
 func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup) {
 	start := time.Now()
 	defer w.cleanup(start, waitGroup)
@@ -249,14 +238,14 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 		if w.spillHelper.checkError() {
 			return
 		}
-
-		w.loadFinalResult(ctx)
 	} else {
-		err := w.mergeResultsAndSend(ctx)
+		err := w.consumeIntermData(ctx)
 		if err != nil {
+			w.outputCh <- &AfFinalResult{err: err}
 			return
 		}
 	}
+	w.sendFinalResult(ctx)
 }
 
 func (w *HashAggFinalWorker) cleanup(start time.Time, waitGroup *sync.WaitGroup) {
@@ -288,7 +277,6 @@ func (w *HashAggFinalWorker) intestDuringFinalWorkerRun(err *error) {
 				time.Sleep(1 * time.Millisecond)
 			} else if num < 15 {
 				w.memTracker.Consume(1000000)
-				w.restoredAggResultMapperMem += 1000000
 			} else if num < 20 {
 				*err = errors.New("Random fail is triggered in final worker")
 			}
