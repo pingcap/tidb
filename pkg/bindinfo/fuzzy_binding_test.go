@@ -157,8 +157,7 @@ func TestUniversalBindingPriority(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
 }
 
-func TestCreateUpdateUniversalBinding(t *testing.T) {
-	t.Skip("skip it temporarily")
+func TestCreateUpdateFuzzyBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -166,27 +165,27 @@ func TestCreateUpdateUniversalBinding(t *testing.T) {
 	tk.MustExec(`create table t (a int)`)
 
 	// drop/show/update binding for sql digest can work for global universal bindings
-	tk.MustExec(`create global universal binding using select * from t`)
+	tk.MustExec(`create global binding using select * from *.t`)
 	require.Equal(t, showBinding(tk, "show global bindings"),
-		[][]interface{}{{"select * from `t`", "SELECT * FROM `t`", "", "enabled", "manual", "e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7"}})
+		[][]interface{}{{"select * from `*` . `t`", "SELECT * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
 	require.Equal(t, showBinding(tk, "show global bindings"), [][]interface{}{
-		{"select * from `t`", "SELECT * FROM `t`", "", "enabled", "manual", "e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7"}})
-	tk.MustExec(`set binding disabled for sql digest 'e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7'`)
+		{"select * from `*` . `t`", "SELECT * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
+	tk.MustExec(`set binding disabled for sql digest 'a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013'`)
 	require.Equal(t, showBinding(tk, "show global bindings"), [][]interface{}{
-		{"select * from `t`", "SELECT * FROM `t`", "", "disabled", "manual", "e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7"}})
-	tk.MustExec(`set binding enabled for sql digest 'e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7'`)
+		{"select * from `*` . `t`", "SELECT * FROM `*`.`t`", "", "disabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
+	tk.MustExec(`set binding enabled for sql digest 'a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013'`)
 	require.Equal(t, showBinding(tk, "show global bindings"), [][]interface{}{
-		{"select * from `t`", "SELECT * FROM `t`", "", "enabled", "manual", "e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7"}})
-	tk.MustExec(`drop global binding for sql digest 'e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7'`)
+		{"select * from `*` . `t`", "SELECT * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
+	tk.MustExec(`drop global binding for sql digest 'a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013'`)
 	require.Equal(t, showBinding(tk, "show global bindings"), [][]interface{}{})
 
 	// drop/show/update binding for sql digest can work for session universal bindings
-	tk.MustExec(`create session universal binding using select * from t`)
+	tk.MustExec(`create session binding using select * from *.t`)
 	require.Equal(t, showBinding(tk, "show session bindings"),
-		[][]interface{}{{"select * from `t`", "SELECT * FROM `t`", "", "enabled", "manual", "e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7"}})
+		[][]interface{}{{"select * from `*` . `t`", "SELECT * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
 	require.Equal(t, showBinding(tk, "show session bindings"), [][]interface{}{
-		{"select * from `t`", "SELECT * FROM `t`", "", "enabled", "manual", "e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7"}})
-	tk.MustExec(`drop session binding for sql digest 'e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7'`)
+		{"select * from `*` . `t`", "SELECT * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
+	tk.MustExec(`drop session binding for sql digest 'a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013'`)
 	require.Equal(t, showBinding(tk, "show session bindings"), [][]interface{}{})
 }
 
