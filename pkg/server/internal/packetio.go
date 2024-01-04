@@ -150,10 +150,6 @@ func (p *PacketIO) readOnePacket() ([]byte, error) {
 		if _, err := io.ReadFull(r, header[:]); err != nil {
 			return nil, errors.Trace(err)
 		}
-	} else {
-		if _, err := io.ReadFull(p.compressedReader, header[:]); err != nil {
-			return nil, errors.Trace(err)
-		}
 
 		// To be compatible with MariaDB Java Connecter 2.X, 
 		// check sequence only for the packet with compression protocol disabled.
@@ -161,6 +157,10 @@ func (p *PacketIO) readOnePacket() ([]byte, error) {
 		if sequence != p.sequence {
 			return nil, server_err.ErrInvalidSequence.GenWithStack(
 				"invalid sequence, received %d while expecting %d", sequence, p.sequence)
+		}
+	} else {
+		if _, err := io.ReadFull(p.compressedReader, header[:]); err != nil {
+			return nil, errors.Trace(err)
 		}
 	}
 
