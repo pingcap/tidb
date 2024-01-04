@@ -110,7 +110,7 @@ func (h *sessionBindingHandle) MatchSessionBinding(currentDB string, stmt ast.St
 		return nil, nil
 	}
 	// TODO: support fuzzy matching.
-	_, _, sqlDigest, err := normalizeStmt(stmt, currentDB)
+	_, _, sqlDigest, err := normalizeStmt(stmt, currentDB, false)
 	if err != nil {
 		return nil, err
 	}

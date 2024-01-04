@@ -77,11 +77,17 @@ func eraseLastSemicolon(stmt ast.StmtNode) {
 // For normal bindings, DB name will be completed automatically:
 //
 //	e.g. `select * from t where a in (1, 2, 3)` --> `select * from test.t where a in (...)`
-func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string) (stmt ast.StmtNode, normalizedStmt, sqlDigest string, err error) {
+func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, fuzzy bool) (stmt ast.StmtNode, normalizedStmt, sqlDigest string, err error) {
 	normalize := func(n ast.StmtNode) (normalizedStmt, sqlDigest string) {
 		eraseLastSemicolon(n)
 		var digest *parser.Digest
-		normalizedStmt, digest = parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(n, specifiedDB, n.Text()))
+		var normalizedSQL string
+		if !fuzzy {
+			normalizedSQL = utilparser.RestoreWithDefaultDB(n, specifiedDB, n.Text())
+		} else {
+			normalizedSQL = utilparser.RestoreWithoutDB(n)
+		}
+		normalizedStmt, digest = parser.NormalizeDigestForBinding(normalizedSQL)
 		return normalizedStmt, digest.String()
 	}
 
@@ -129,6 +135,27 @@ func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string) (stmt ast.StmtNode
 		return x, normalizedSQL, digest, nil
 	}
 	return nil, "", "", nil
+}
+
+func matchBindingTableName(currentDB string, stmtTableNames, bindingTableNames []*ast.TableName) (numWildcards int, matched bool) {
+	if len(stmtTableNames) != len(bindingTableNames) {
+		return 0, false
+	}
+	for i := range stmtTableNames {
+		if stmtTableNames[i].Name.L != bindingTableNames[i].Name.L {
+			return 0, false
+		}
+		if bindingTableNames[i].Schema.L == stmtTableNames[i].Schema.L || // exactly same, or
+			(stmtTableNames[i].Schema.L == "" && bindingTableNames[i].Schema.L == currentDB) || // equal to the current DB, or
+			bindingTableNames[i].Schema.L == "*" { // fuzzy match successfully
+			continue
+		}
+		if bindingTableNames[i].Schema.L == "*" {
+			numWildcards++
+		}
+		return 0, false
+	}
+	return numWildcards, true
 }
 
 // IsFuzzyBinding checks whether the stmtNode is a fuzzy binding.

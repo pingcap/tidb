@@ -526,12 +526,35 @@ func (h *globalBindingHandle) MatchGlobalBinding(currentDB string, stmt ast.Stmt
 	if bindingCache.Size() == 0 {
 		return nil, nil
 	}
+	fuzzyDigestMap := h.getFuzzyDigestMap()
+	if len(fuzzyDigestMap) == 0 {
+		return nil, nil
+	}
+
 	// TODO: support fuzzy matching.
-	_, _, sqlDigest, err := normalizeStmt(stmt, currentDB)
+	_, _, fuzzDigest, err := normalizeStmt(stmt, currentDB, true)
 	if err != nil {
 		return nil, err
 	}
-	return bindingCache.GetBinding(sqlDigest), nil
+
+	tableNames := CollectTableNames(stmt)
+	var bestBinding *BindRecord
+	leastWildcards := len(tableNames) + 1
+	for _, exactDigest := range fuzzyDigestMap[fuzzDigest] {
+		sqlDigest := exactDigest
+		if bindRecord := bindingCache.GetBinding(sqlDigest); bindRecord != nil {
+			for _, binding := range bindRecord.Bindings {
+				numWildcards, matched := matchBindingTableName(currentDB, tableNames, binding.TableNames)
+				if matched && numWildcards < leastWildcards {
+					bestBinding = bindRecord
+					leastWildcards = numWildcards
+					break
+				}
+			}
+		}
+	}
+
+	return bestBinding, nil
 }
 
 // GetAllGlobalBindings returns all bind records in cache.
@@ -567,17 +590,27 @@ func newBindRecord(sctx sessionctx.Context, row chunk.Row) (string, *BindRecord,
 	if defaultDB == "" {
 		bindingType = TypeUniversal
 	}
+
+	bindSQL := row.GetString(1)
+	charset, collation := row.GetString(6), row.GetString(7)
+	stmt, err := parser.New().ParseOneStmt(bindSQL, charset, collation)
+	if err != nil {
+		return "", nil, err
+	}
+	tableNames := CollectTableNames(stmt)
+
 	binding := Binding{
-		BindSQL:    row.GetString(1),
+		BindSQL:    bindSQL,
 		Status:     status,
 		CreateTime: row.GetTime(4),
 		UpdateTime: row.GetTime(5),
-		Charset:    row.GetString(6),
-		Collation:  row.GetString(7),
+		Charset:    charset,
+		Collation:  collation,
 		Source:     row.GetString(8),
 		SQLDigest:  row.GetString(9),
 		PlanDigest: row.GetString(10),
 		Type:       bindingType,
+		TableNames: tableNames,
 	}
 	bindRecord := &BindRecord{
 		OriginalSQL: row.GetString(0),
@@ -586,7 +619,7 @@ func newBindRecord(sctx sessionctx.Context, row chunk.Row) (string, *BindRecord,
 	}
 	sqlDigest := parser.DigestNormalized(bindRecord.OriginalSQL)
 	sctx.GetSessionVars().CurrentDB = bindRecord.Db
-	err := bindRecord.prepareHints(sctx)
+	err = bindRecord.prepareHints(sctx)
 	return sqlDigest.String(), bindRecord, err
 }
 

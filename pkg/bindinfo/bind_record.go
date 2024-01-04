@@ -15,6 +15,7 @@
 package bindinfo
 
 import (
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"time"
 	"unsafe"
 
@@ -85,6 +86,8 @@ type Binding struct {
 	PlanDigest string
 	// Type indicates the type of this binding, currently only 2 types: "" for normal and "u" for universal bindings.
 	Type string
+
+	TableNames []*ast.TableName
 }
 
 func (b *Binding) isSame(rb *Binding) bool {
