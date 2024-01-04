@@ -607,7 +607,7 @@ func (s *BaseTaskExecutor) updateSubtaskStateAndError(ctx context.Context, subta
 	}
 	metrics.DecDistTaskSubTaskCnt(subtask)
 	metrics.EndDistTaskSubTask(subtask)
-	s.updateSubtaskStateAndErrorImpl(ctx, subtask.ExecID, subtask.ID, state, subtask.State, subTaskErr)
+	s.updateSubtaskStateAndErrorImpl(ctx, subtask.ExecID, subtask.ID, state, subTaskErr)
 	subtask.State = state
 	metrics.IncDistTaskSubTaskCnt(subtask)
 	if !subtask.IsDone() {
