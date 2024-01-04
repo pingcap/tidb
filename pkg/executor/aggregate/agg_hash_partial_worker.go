@@ -189,7 +189,7 @@ func (w *HashAggPartialWorker) sendDataToFinalWorkersBeforeExit(needShuffle bool
 	}
 }
 
-func (w *HashAggPartialWorker) intestBeforePartialWorkerRun() {
+func intestBeforePartialWorkerRun() {
 	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
 		if val.(bool) {
 			num := rand.Intn(100)
@@ -220,7 +220,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		waitGroup.Done()
 	}()
 
-	w.intestBeforePartialWorkerRun()
+	intestBeforePartialWorkerRun()
 
 	for w.fetchChunkAndProcess(ctx, &hasError, &needShuffle) {
 	}
