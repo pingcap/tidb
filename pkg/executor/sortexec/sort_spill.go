@@ -82,18 +82,14 @@ func (s *sortPartitionSpillDiskAction) executeAction(t *memory.Tracker) memory.A
 // It's used only when spill is triggered
 type dataCursor struct {
 	chkID     int
-	rowID     int
-	chkRowNum int
-	chk       *chunk.Chunk
+	chunkIter *chunk.Iterator4Chunk
 }
 
 // NewDataCursor creates a new dataCursor
 func NewDataCursor() *dataCursor {
 	return &dataCursor{
 		chkID:     -1,
-		rowID:     -1,
-		chkRowNum: -1,
-		chk:       nil,
+		chunkIter: chunk.NewIterator4Chunk(nil),
 	}
 }
 
@@ -101,21 +97,15 @@ func (d *dataCursor) getChkID() int {
 	return d.chkID
 }
 
-func (d *dataCursor) advanceRow() {
-	d.rowID++
+func (d *dataCursor) begin() chunk.Row {
+	return d.chunkIter.Begin()
 }
 
-func (d *dataCursor) getSpilledRow() chunk.Row {
-	if d.rowID >= d.chkRowNum {
-		return chunk.Row{}
-	}
-	row := d.chk.GetRow(d.rowID)
-	return row
+func (d *dataCursor) next() chunk.Row {
+	return d.chunkIter.Next()
 }
 
 func (d *dataCursor) setChunk(chk *chunk.Chunk, chkID int) {
 	d.chkID = chkID
-	d.rowID = 0
-	d.chkRowNum = chk.NumRows()
-	d.chk = chk
+	d.chunkIter = chunk.NewIterator4Chunk(chk)
 }

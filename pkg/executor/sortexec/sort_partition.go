@@ -256,7 +256,7 @@ func (s *sortPartition) getNextSortedRow() (chunk.Row, error) {
 	s.syncLock.Lock()
 	defer s.syncLock.Unlock()
 	if s.isSpillTriggered() {
-		row := s.cursor.getSpilledRow()
+		row := s.cursor.next()
 		if row.IsEmpty() {
 			success, err := s.reloadCursor()
 			if err != nil {
@@ -267,12 +267,11 @@ func (s *sortPartition) getNextSortedRow() (chunk.Row, error) {
 				return chunk.Row{}, nil
 			}
 
-			row = s.cursor.getSpilledRow()
+			row = s.cursor.begin()
 			if row.IsEmpty() {
 				return chunk.Row{}, errors.New("Get an empty row")
 			}
 		}
-		s.cursor.advanceRow()
 		return row, nil
 	}
 
