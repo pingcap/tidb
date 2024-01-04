@@ -1405,6 +1405,41 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 }
 
+<<<<<<< HEAD:executor/adapter.go
+=======
+func (a *ExecStmt) recordLastQueryInfo(err error) {
+	sessVars := a.Ctx.GetSessionVars()
+	// Record diagnostic information for DML statements
+	recordLastQuery := false
+	switch typ := a.StmtNode.(type) {
+	case *ast.ShowStmt:
+		recordLastQuery = typ.Tp != ast.ShowSessionStates
+	case *ast.ExecuteStmt, ast.DMLNode:
+		recordLastQuery = true
+	}
+	if recordLastQuery {
+		var lastRUConsumption float64
+		if ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
+			ruDetail := ruDetailRaw.(*util.RUDetails)
+			lastRUConsumption = ruDetail.RRU() + ruDetail.WRU()
+		}
+		failpoint.Inject("mockRUConsumption", func(_ failpoint.Value) {
+			lastRUConsumption = float64(len(sessVars.StmtCtx.OriginalSQL))
+		})
+		// Keep the previous queryInfo for `show session_states` because the statement needs to encode it.
+		sessVars.LastQueryInfo = sessionstates.QueryInfo{
+			TxnScope:      sessVars.CheckAndGetTxnScope(),
+			StartTS:       sessVars.TxnCtx.StartTS,
+			ForUpdateTS:   sessVars.TxnCtx.GetForUpdateTS(),
+			RUConsumption: lastRUConsumption,
+		}
+		if err != nil {
+			sessVars.LastQueryInfo.ErrMsg = err.Error()
+		}
+	}
+}
+
+>>>>>>> 7a8d82eddb2 (*: remove duplicate prefix for last query info (#50075)):pkg/executor/adapter.go
 func (a *ExecStmt) checkPlanReplayerCapture(txnTS uint64) {
 	if kv.GetInternalSourceType(a.GoCtx) == kv.InternalTxnStats {
 		return
