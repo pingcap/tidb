@@ -539,16 +539,13 @@ func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBack
 	}
 	concurrencyPerStore := rc.GetConcurrencyPerStore()
 	for _, store := range stores {
-		ch := make(chan struct{}, concurrencyPerStore)
-		for i := 0; i < int(concurrencyPerStore); i += 1 {
-			ch <- struct{}{}
-		}
+		ch := utils.BuildWorkerTokenChannel(concurrencyPerStore)
 		storeWorkerPoolMap[store.Id] = ch
 	}
 
 	metaClient := split.NewSplitClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, storeWorkerPoolMap, rc.rewriteMode)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, storeWorkerPoolMap, rc.rewriteMode, concurrencyPerStore)
 }
 
 func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
@@ -1274,7 +1271,7 @@ func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient ImporterClient,
 	rc.SetRateLimit(42)
 	rc.SetConcurrency(concurrency)
 	rc.hasSpeedLimited = false
-	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, false, nil, rc.rewriteMode)
+	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, false, nil, rc.rewriteMode, 128)
 	return rc.setSpeedLimit(ctx, rc.rateLimit)
 }
 

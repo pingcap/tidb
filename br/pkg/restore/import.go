@@ -271,6 +271,7 @@ type FileImporter struct {
 
 	storeWorkerPoolRWLock sync.RWMutex
 	storeWorkerPoolMap    map[uint64]chan struct{}
+	concurrencyPerStore   uint
 
 	kvMode             KvMode
 	rawStartKey        []byte
@@ -290,6 +291,7 @@ func NewFileImporter(
 	isTxnKvMode bool,
 	storeWorkerPoolMap map[uint64]chan struct{},
 	rewriteMode RewriteMode,
+	concurrencyPerStore uint,
 ) FileImporter {
 	kvMode := TiDB
 	if isRawKvMode {
@@ -299,13 +301,14 @@ func NewFileImporter(
 		kvMode = Txn
 	}
 	return FileImporter{
-		metaClient:         metaClient,
-		backend:            backend,
-		importClient:       importClient,
-		storeWorkerPoolMap: storeWorkerPoolMap,
-		kvMode:             kvMode,
-		rewriteMode:        rewriteMode,
-		cacheKey:           fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
+		metaClient:          metaClient,
+		backend:             backend,
+		importClient:        importClient,
+		storeWorkerPoolMap:  storeWorkerPoolMap,
+		kvMode:              kvMode,
+		rewriteMode:         rewriteMode,
+		cacheKey:            fmt.Sprintf("BR-%s-%d", time.Now().Format("20060102150405"), rand.Int63()),
+		concurrencyPerStore: concurrencyPerStore,
 	}
 }
 
@@ -734,7 +737,14 @@ func (importer *FileImporter) downloadSST(
 	for _, p := range regionInfo.Region.GetPeers() {
 		peer := p
 		eg.Go(func() error {
-			workerCh := importer.storeWorkerPoolMap[peer.GetStoreId()]
+			importer.storeWorkerPoolRWLock.Lock()
+			workerCh, ok := importer.storeWorkerPoolMap[peer.GetStoreId()]
+			// handle the case that the store is new-scaled in the cluster
+			if !ok {
+				workerCh = utils.BuildWorkerTokenChannel(importer.concurrencyPerStore)
+				importer.storeWorkerPoolMap[peer.GetStoreId()] = workerCh
+			}
+			importer.storeWorkerPoolRWLock.Unlock()
 			defer func() {
 				workerCh <- struct{}{}
 			}()
