@@ -122,7 +122,7 @@ func TestMockTargetInfoBasic(t *testing.T) {
 	require.Equal(t, "222", v)
 
 	ti.MaxReplicasPerRegion = replicaCount
-	rcfg, err := ti.GetReplicationConfig(ctx)
+	rcfg, err := ti.GetMaxReplica(ctx)
 	require.NoError(t, err)
 	require.Equal(t, uint64(replicaCount), rcfg.MaxReplicas)
 

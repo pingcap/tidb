@@ -141,6 +141,7 @@ func GetTiKVModeSwitcherWithPDClient(ctx context.Context, logger *zap.Logger) (p
 		return nil, nil, errors.Trace(err)
 	}
 
+	// TODO(lance6716): pass the PD HTTP client from domain
 	return pdCli, NewTiKVModeSwitcher(tls, pdCli, logger), nil
 }
 
