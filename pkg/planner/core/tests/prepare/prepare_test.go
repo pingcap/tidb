@@ -1118,6 +1118,7 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 		tk.MustExec(`analyze table ` + tbl)
 	}
 
+	missedPlanCache := make([]string, 0, 4)
 	// TableReader, PointGet on PK, BatchGet on PK
 	for _, tbl := range []string{`trangePK`, `thashPK`, `tnormalPK`} {
 		tk.MustExec(fmt.Sprintf(`prepare stmt%v_tablescan from 'select * from %v use index(primary) where a > ? and a < ?'`, tbl, tbl))
@@ -1126,12 +1127,19 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 	}
 	for i := 0; i < 100; i++ {
 		mina, maxa := rand.Intn(40000), rand.Intn(40000)
+		pointa := mina
+		a0, a1, a2 := mina, maxa, rand.Intn(40000)
 		if mina > maxa {
 			mina, maxa = maxa, mina
 		}
 		tk.MustExec(fmt.Sprintf(`set @mina=%v, @maxa=%v`, mina, maxa))
-		tk.MustExec(fmt.Sprintf(`set @pointa=%v`, rand.Intn(40000)))
-		tk.MustExec(fmt.Sprintf(`set @a0=%v, @a1=%v, @a2=%v`, rand.Intn(40000), rand.Intn(40000), rand.Intn(40000)))
+		tk.MustExec(fmt.Sprintf(`set @pointa=%v`, pointa))
+		tk.MustExec(fmt.Sprintf(`set @a0=%v, @a1=%v, @a2=%v`, a0, a1, a2))
+		// TODO: Handle multiple partitions for table scan
+		sameScanPart := "0"
+		if mina/10000 == maxa/10000 {
+			sameScanPart = "1"
+		}
 
 		var rscan, rpoint, rbatch [][]interface{}
 		for id, tbl := range []string{`trangePK`, `thashPK`, `tnormalPK`} {
@@ -1141,6 +1149,16 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 			} else {
 				scan.Check(rscan)
 			}
+			if i > 0 {
+				expectedPlanCacheHit := "1"
+				if id == 0 {
+					expectedPlanCacheHit = sameScanPart
+				} else if id == 1 && mina != maxa {
+					expectedPlanCacheHit = "0"
+				}
+				tblStr := ` table: ` + tbl + " i :" + strconv.FormatInt(int64(i), 10) + " */"
+				missedPlanCache = helperCheckPlanCache(t, tk, `select @@last_plan_from_cache /* tablescan table: `+tblStr, expectedPlanCacheHit, missedPlanCache)
+			}
 
 			point := tk.MustQuery(fmt.Sprintf(`execute stmt%v_pointget using @pointa`, tbl)).Sort()
 			if id == 0 {
@@ -1148,12 +1166,20 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 			} else {
 				point.Check(rpoint)
 			}
+			if i > 0 {
+				tblStr := ` table: ` + tbl + " i :" + strconv.FormatInt(int64(i), 10) + " */"
+				missedPlanCache = helperCheckPlanCache(t, tk, `select @@last_plan_from_cache /* pointget table: `+tblStr, "1", missedPlanCache)
+			}
 
 			batch := tk.MustQuery(fmt.Sprintf(`execute stmt%v_batchget using @a0, @a1, @a2`, tbl)).Sort()
 			if id == 0 {
 				rbatch = batch.Rows()
 			} else {
 				batch.Check(rbatch)
+			}
+			if i > 0 {
+				tblStr := ` table: ` + tbl + " i :" + strconv.FormatInt(int64(i), 10) + " */"
+				missedPlanCache = helperCheckPlanCache(t, tk, `select @@last_plan_from_cache /* batchget table: `+tblStr, "1", missedPlanCache)
 			}
 		}
 	}
@@ -1166,7 +1192,6 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`prepare stmt%v_batchget_idx from 'select * from %v use index(a) where a in (?, ?, ?)'`, tbl, tbl))
 	}
 	loops := 100
-	missedPlanCache := make([]string, 0, 4)
 	for i := 0; i < loops; i++ {
 		mina, maxa := rand.Intn(40000), rand.Intn(40000)
 		if mina > maxa {
@@ -1177,13 +1202,41 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`set @a0=%v, @a1=%v, @a2=%v`, rand.Intn(40000), rand.Intn(40000), rand.Intn(40000)))
 
 		var rscan, rlookup, rpoint, rbatch [][]interface{}
-		var expectedFromPlanCache string
+		var indexScanExpectedFromPlanCache, indexLookupExpectedFromPlanCache, pointGetExpectedFromPlanCache, batchGetExpectedFromPlanCache, sameRangePart, sameHashPart string
+		if (mina / 10000) == (maxa / 10000) {
+			sameRangePart = "1"
+		} else {
+			sameRangePart = "0"
+		}
+		if mina == maxa {
+			sameHashPart = "1"
+		} else {
+			sameHashPart = "0"
+		}
 		for id, tbl := range []string{"trangeIdx", "thashIdx", "tnormalIdx"} {
+			// TODO: Support more partitioned table queries for prepared plan cache!
+			// Currently only batch get supports multiple partitions!
+			switch id {
+			case 0:
+				indexScanExpectedFromPlanCache = sameRangePart
+				indexLookupExpectedFromPlanCache = sameRangePart
+				pointGetExpectedFromPlanCache = "1"
+				batchGetExpectedFromPlanCache = "1"
+			case 1:
+				indexScanExpectedFromPlanCache = sameHashPart
+				indexLookupExpectedFromPlanCache = sameHashPart
+				pointGetExpectedFromPlanCache = "1"
+				batchGetExpectedFromPlanCache = "1"
+			case 2:
+				indexScanExpectedFromPlanCache = "1"
+				indexLookupExpectedFromPlanCache = "1"
+				pointGetExpectedFromPlanCache = "1"
+				batchGetExpectedFromPlanCache = "1"
+			}
 			scan := tk.MustQuery(fmt.Sprintf(`execute stmt%v_indexscan using @mina, @maxa`, tbl)).Sort()
-			expectedFromPlanCache = "1"
 			tblStr := ` table: ` + tbl + " i :" + strconv.FormatInt(int64(i), 10) + " */"
 			if i > 0 {
-				missedPlanCache = helperCheckPlanCache(t, tk, `select @@last_plan_from_cache /* indexscan table: `+tblStr, expectedFromPlanCache, missedPlanCache)
+				missedPlanCache = helperCheckPlanCache(t, tk, `select @@last_plan_from_cache /* indexscan table: `+tblStr, indexScanExpectedFromPlanCache, missedPlanCache)
 			}
 			if id == 0 {
 				rscan = scan.Rows()
@@ -1193,7 +1246,7 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 
 			lookup := tk.MustQuery(fmt.Sprintf(`execute stmt%v_indexlookup using @mina, @maxa`, tbl)).Sort()
 			if i > 0 {
-				missedPlanCache = helperCheckPlanCache(t, tk, `select @@last_plan_from_cache /* indexlookup table: `+tblStr, expectedFromPlanCache, missedPlanCache)
+				missedPlanCache = helperCheckPlanCache(t, tk, `select @@last_plan_from_cache /* indexlookup table: `+tblStr, indexLookupExpectedFromPlanCache, missedPlanCache)
 			}
 			if id == 0 {
 				rlookup = lookup.Rows()
@@ -1205,7 +1258,7 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 			if tbl == `tnormalPK` && i > 0 {
 				// PlanCache cannot support PointGet now since we haven't relocated partition after rebuilding range.
 				// Please see Execute.rebuildRange for more details.
-				missedPlanCache = helperCheckPlanCache(t, tk, `select @@last_plan_from_cache /* pointget table: `+tblStr, expectedFromPlanCache, missedPlanCache)
+				missedPlanCache = helperCheckPlanCache(t, tk, `select @@last_plan_from_cache /* pointget table: `+tblStr, pointGetExpectedFromPlanCache, missedPlanCache)
 			}
 			if id == 0 {
 				rpoint = point.Rows()
@@ -1215,7 +1268,7 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 
 			batch := tk.MustQuery(fmt.Sprintf(`execute stmt%v_batchget_idx using @a0, @a1, @a2`, tbl)).Sort()
 			if i > 0 {
-				missedPlanCache = helperCheckPlanCache(t, tk, `select @@last_plan_from_cache /* batchget table: `+tblStr, expectedFromPlanCache, missedPlanCache)
+				missedPlanCache = helperCheckPlanCache(t, tk, `select @@last_plan_from_cache /* batchget table: `+tblStr, batchGetExpectedFromPlanCache, missedPlanCache)
 			}
 			if id == 0 {
 				rbatch = batch.Rows()
