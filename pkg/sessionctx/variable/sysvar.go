@@ -706,6 +706,12 @@ var defaultSysVars = []*SysVar{
 		(*SetPDClientDynamicOption.Load())(TiDBEnableTSOFollowerProxy, val)
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: PDEnableFollowerHandleRegion, Value: BoolToOnOff(DefPDEnableFollowerHandleRegion), Type: TypeBool, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+		return BoolToOnOff(EnablePDFollowerHandleRegion.Load()), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		(*SetPDClientDynamicOption.Load())(PDEnableFollowerHandleRegion, val)
+		return nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableLocalTxn, Value: BoolToOnOff(DefTiDBEnableLocalTxn), Hidden: true, Type: TypeBool, Depended: true, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 		return BoolToOnOff(EnableLocalTxn.Load()), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {

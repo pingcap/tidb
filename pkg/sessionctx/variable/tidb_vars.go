@@ -722,6 +722,9 @@ const (
 	// TiDBEnableTSOFollowerProxy indicates whether to enable the TSO Follower Proxy feature of PD client.
 	TiDBEnableTSOFollowerProxy = "tidb_enable_tso_follower_proxy"
 
+	// PDEnableFollowerHandleRegion indicates whether to enable the PD Follower handle region API.
+	PDEnableFollowerHandleRegion = "pd_enable_follower_handle_region"
+
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
 
@@ -1290,6 +1293,7 @@ const (
 	DefTiDBEnableLocalTxn                          = false
 	DefTiDBTSOClientBatchMaxWaitTime               = 0.0 // 0ms
 	DefTiDBEnableTSOFollowerProxy                  = false
+	DefPDEnableFollowerHandleRegion                = false
 	DefTiDBEnableOrderedResultMode                 = false
 	DefTiDBEnablePseudoForOutdatedStats            = false
 	DefTiDBRegardNULLAsPoint                       = true
@@ -1476,6 +1480,7 @@ var (
 	EnableLocalTxn                       = atomic.NewBool(DefTiDBEnableLocalTxn)
 	MaxTSOBatchWaitInterval              = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy               = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
+	EnablePDFollowerHandleRegion         = atomic.NewBool(DefPDEnableFollowerHandleRegion)
 	RestrictedReadOnly                   = atomic.NewBool(DefTiDBRestrictedReadOnly)
 	VarTiDBSuperReadOnly                 = atomic.NewBool(DefTiDBSuperReadOnly)
 	PersistAnalyzeOptions                = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
