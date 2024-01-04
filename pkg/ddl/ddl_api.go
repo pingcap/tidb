@@ -2912,7 +2912,7 @@ func (*ddl) BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
 			})
 	}
 	if len(args) == 0 {
-		return nil, errors.Trace(fmt.Errorf("except args"))
+		return nil, errors.Trace(fmt.Errorf("expect non-empty args"))
 	}
 	j.Args = append(j.Args, args)
 	j.Args = append(j.Args, foreignKeyChecks)
