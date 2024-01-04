@@ -32,27 +32,29 @@ var errSpillEmptyChunk = errors.New("can not spill empty chunk to disk")
 var errFailToAddChunk = errors.New("fail to add chunk")
 
 // It should be const, but we need to modify it for test.
-var spillChunkSize int = 4096
+var spillChunkSize int = 1024
 
 // signalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
 const signalCheckpointForSort uint = 10240
 
 type sortPartition struct {
+	// syncLock is used to ensure that we can exclusively execute the spill action while other operations are blocked.
 	syncLock sync.Mutex
 
+	// lock is used for protecting the spillError, inDisk and closed fields.
 	lock       *sync.Mutex
 	cond       *sync.Cond
 	spillError error
+	inDisk     *chunk.DataInDiskByChunks
+	closed     bool
+
 	isSpilling atomic.Bool
 
 	fieldTypes []*types.FieldType
 
 	// Store data here
-	savedRows          []chunk.Row
-	totalTrackedMemNum int64
-	isSorted           bool
-
-	inDisk *chunk.DataInDiskByChunks
+	savedRows []chunk.Row
+	isSorted  bool
 
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
@@ -82,24 +84,24 @@ func newSortPartition(fieldTypes []*types.FieldType, chunkSize int, byItemsDesc 
 	keyColumns []int, keyCmpFuncs []chunk.CompareFunc, spillLimit int64) *sortPartition {
 	lock := new(sync.Mutex)
 	retVal := &sortPartition{
-		lock:               lock,
-		cond:               sync.NewCond(lock),
-		spillError:         nil,
-		isSpilling:         atomic.Bool{},
-		fieldTypes:         fieldTypes,
-		savedRows:          make([]chunk.Row, 0),
-		totalTrackedMemNum: 0,
-		isSorted:           false,
-		inDisk:             nil, // It's initialized only when spill is triggered
-		memTracker:         memory.NewTracker(memory.LabelForSortPartition, -1),
-		diskTracker:        disk.NewTracker(memory.LabelForSortPartition, -1),
-		spillAction:        nil, // It's set in `actionSpill` function
-		spillLimit:         spillLimit,
-		byItemsDesc:        byItemsDesc,
-		keyColumns:         keyColumns,
-		keyCmpFuncs:        keyCmpFuncs,
-		idx:                0,
-		cursor:             NewDataCursor(),
+		lock:        lock,
+		cond:        sync.NewCond(lock),
+		spillError:  nil,
+		isSpilling:  atomic.Bool{},
+		fieldTypes:  fieldTypes,
+		savedRows:   make([]chunk.Row, 0),
+		isSorted:    false,
+		inDisk:      nil, // It's initialized only when spill is triggered
+		memTracker:  memory.NewTracker(memory.LabelForSortPartition, -1),
+		diskTracker: disk.NewTracker(memory.LabelForSortPartition, -1),
+		spillAction: nil, // It's set in `actionSpill` function
+		spillLimit:  spillLimit,
+		byItemsDesc: byItemsDesc,
+		keyColumns:  keyColumns,
+		keyCmpFuncs: keyCmpFuncs,
+		idx:         0,
+		cursor:      NewDataCursor(),
+		closed:      false,
 	}
 	retVal.isSpilling.Store(false)
 
@@ -107,6 +109,9 @@ func newSortPartition(fieldTypes []*types.FieldType, chunkSize int, byItemsDesc 
 }
 
 func (s *sortPartition) close() error {
+	s.lock.Lock()
+	defer s.lock.Unlock()
+	s.closed = true
 	if s.inDisk != nil {
 		s.inDisk.Close()
 		s.inDisk = nil
@@ -151,7 +156,6 @@ func (s *sortPartition) add(chk *chunk.Chunk) bool {
 	}
 
 	s.getMemTracker().Consume(consumedBytesNum)
-	s.totalTrackedMemNum += consumedBytesNum
 	return true
 }
 
@@ -187,6 +191,10 @@ func (s *sortPartition) sortNoLock() (ret error) {
 func (s *sortPartition) spillToDiskImpl() error {
 	s.lock.Lock()
 	defer s.lock.Unlock()
+	if s.closed {
+		return nil
+	}
+
 	s.inDisk = chunk.NewDataInDiskByChunks(s.fieldTypes)
 	s.inDisk.GetDiskTracker().AttachTo(s.diskTracker)
 	tmpChk := chunk.NewChunkWithCapacity(s.fieldTypes, spillChunkSize)
@@ -218,7 +226,7 @@ func (s *sortPartition) spillToDiskImpl() error {
 
 	// Release memory as all data have been spilled to disk
 	s.savedRows = nil
-	s.getMemTracker().Consume(-s.totalTrackedMemNum)
+	s.getMemTracker().ReplaceBytesUsed(0)
 	return nil
 }
 
