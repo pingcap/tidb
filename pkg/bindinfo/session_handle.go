@@ -134,8 +134,9 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, stmt
 			if bindingFuzzDigest != fuzzDigest {
 				continue
 			}
+			bindingTableNames := CollectTableNames(bindingStmt)
 
-			numWildcards, matched := fuzzyMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
+			numWildcards, matched := fuzzyMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, bindingTableNames)
 			if matched && numWildcards > 0 && sctx != nil && !sctx.GetSessionVars().EnableFuzzyBinding {
 				continue // fuzzy binding is disabled, skip this binding
 			}
