@@ -130,7 +130,7 @@ func (t *Task) IsDone() bool {
 }
 
 var (
-	// EmptyMeta is the empty meta of subtask.
+	// EmptyMeta is the empty meta of task/subtask.
 	EmptyMeta = []byte("{}")
 )
 

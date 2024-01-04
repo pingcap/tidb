@@ -51,10 +51,11 @@ func InitTestContext(t *testing.T, nodeNum int) (context.Context, *gomock.Contro
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
 	})
 
+	executionContext := testkit.NewDistExecutionContext(t, nodeNum)
 	testCtx := &TestContext{
 		subtasksHasRun: make(map[string]map[int64]struct{}),
 	}
-	return ctx, ctrl, testCtx, testkit.NewDistExecutionContext(t, nodeNum)
+	return ctx, ctrl, testCtx, executionContext
 }
 
 // CollectSubtask collects subtask info

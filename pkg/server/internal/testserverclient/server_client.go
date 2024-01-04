@@ -2279,6 +2279,18 @@ func (cli *TestServerClient) RunTestMultiStatements(t *testing.T) {
 		// the create table + drop table statements will return errors.
 		dbt.MustExec("CREATE DATABASE multistmtuse")
 		dbt.MustExec("use multistmtuse; create table if not exists t1 (id int); drop table t1;")
+
+		// Test issue #50012
+		dbt.MustExec("create database if not exists test;")
+		dbt.MustExec("use test;")
+		dbt.MustExec("CREATE TABLE t (a bigint(20), b int(10), PRIMARY KEY (b, a), UNIQUE KEY uk_a (a));")
+		dbt.MustExec("insert into t values (1, 1);")
+		dbt.MustExec("begin;")
+		rs := dbt.MustQuery("delete from t where a = 1; select 1;")
+		rs.Close()
+		rs = dbt.MustQuery("update t set b = 2 where a = 1; select 1;")
+		rs.Close()
+		dbt.MustExec("commit;")
 	})
 }
 
@@ -2457,7 +2469,7 @@ func (cli *TestServerClient) getMetrics(t *testing.T) []byte {
 
 func getStmtCnt(content string) (stmtCnt map[string]int) {
 	stmtCnt = make(map[string]int)
-	r := regexp.MustCompile("tidb_executor_statement_total{db=\"\",type=\"([A-Z|a-z|-]+)\"} (\\d+)")
+	r := regexp.MustCompile("tidb_executor_statement_total{db=\"\",resource_group=\".*\",type=\"([A-Z|a-z|-]+)\"} (\\d+)")
 	matchResult := r.FindAllStringSubmatch(content, -1)
 	for _, v := range matchResult {
 		cnt, _ := strconv.Atoi(v[2])
@@ -2468,7 +2480,7 @@ func getStmtCnt(content string) (stmtCnt map[string]int) {
 
 func getDBStmtCnt(content, dbName string) (stmtCnt map[string]int) {
 	stmtCnt = make(map[string]int)
-	r := regexp.MustCompile(fmt.Sprintf("tidb_executor_statement_total{db=\"%s\",type=\"([A-Z|a-z|-]+)\"} (\\d+)", dbName))
+	r := regexp.MustCompile(fmt.Sprintf("tidb_executor_statement_total{db=\"%s\",resource_group=\".*\",type=\"([A-Z|a-z|-]+)\"} (\\d+)", dbName))
 	matchResult := r.FindAllStringSubmatch(content, -1)
 	for _, v := range matchResult {
 		cnt, _ := strconv.Atoi(v[2])

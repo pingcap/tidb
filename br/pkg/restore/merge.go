@@ -119,10 +119,15 @@ func MergeFileRanges(
 	rangeTree := rtree.NewRangeTree()
 	for key := range filesMap {
 		files := filesMap[key]
+		rangeSize := uint64(0)
+		for _, f := range filesMap[key] {
+			rangeSize += f.Size_
+		}
 		if out := rangeTree.InsertRange(rtree.Range{
 			StartKey: files[0].GetStartKey(),
 			EndKey:   files[0].GetEndKey(),
 			Files:    files,
+			Size:     rangeSize,
 		}); out != nil {
 			return nil, nil, errors.Annotatef(berrors.ErrRestoreInvalidRange,
 				"duplicate range %s files %+v", out, files)
@@ -136,6 +141,7 @@ func MergeFileRanges(
 			continue
 		}
 		sortedRanges[i-1].EndKey = sortedRanges[i].EndKey
+		sortedRanges[i-1].Size += sortedRanges[i].Size
 		sortedRanges[i-1].Files = append(sortedRanges[i-1].Files, sortedRanges[i].Files...)
 		// TODO: this is slow when there are lots of ranges need to merge.
 		sortedRanges = append(sortedRanges[:i], sortedRanges[i+1:]...)

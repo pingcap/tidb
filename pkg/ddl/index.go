@@ -2077,7 +2077,7 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 		return err
 	}
 	task, err := taskManager.GetTaskByKeyWithHistory(w.ctx, taskKey)
-	if err != nil {
+	if err != nil && err != storage.ErrTaskNotFound {
 		return err
 	}
 	if task != nil {
@@ -2118,6 +2118,8 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 
 		job := reorgInfo.Job
 		workerCntLimit := int(variable.GetDDLReorgWorkerCounter())
+		// we're using cpu count of current node, not of framework managed nodes,
+		// but it seems more intuitive.
 		concurrency := min(workerCntLimit, cpu.GetCPUCount())
 		logutil.BgLogger().Info("adjusted add-index task concurrency",
 			zap.Int("worker-cnt", workerCntLimit), zap.Int("task-concurrency", concurrency),
@@ -2197,7 +2199,7 @@ func (w *worker) updateJobRowCount(taskKey string, jobID int64) {
 		return
 	}
 	task, err := taskMgr.GetTaskByKey(w.ctx, taskKey)
-	if err != nil || task == nil {
+	if err != nil {
 		logutil.BgLogger().Warn("cannot get task", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 		return
 	}

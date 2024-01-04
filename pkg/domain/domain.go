@@ -1487,6 +1487,11 @@ func (do *Domain) InitDistTaskLoop() error {
 	}
 
 	storage.SetTaskManager(taskManager)
+	if err = executorManager.InitMeta(); err != nil {
+		// executor manager loop will try to recover meta repeatedly, so we can
+		// just log the error here.
+		logutil.BgLogger().Warn("init task executor manager meta failed", zap.Error(err))
+	}
 	do.wg.Run(func() {
 		defer func() {
 			storage.SetTaskManager(nil)
@@ -1510,7 +1515,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 	}()
 
 	var schedulerManager *scheduler.Manager
-	startDispatchIfNeeded := func() {
+	startSchedulerMgrIfNeeded := func() {
 		if schedulerManager != nil && schedulerManager.Initialized() {
 			return
 		}
@@ -1522,7 +1527,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		}
 		schedulerManager.Start()
 	}
-	stopDispatchIfNeeded := func() {
+	stopSchedulerMgrIfNeeded := func() {
 		if schedulerManager != nil && schedulerManager.Initialized() {
 			logutil.BgLogger().Info("stopping dist task scheduler manager because the current node is not DDL owner anymore", zap.String("id", do.ddl.GetID()))
 			schedulerManager.Stop()
@@ -1534,13 +1539,13 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 	for {
 		select {
 		case <-do.exit:
-			stopDispatchIfNeeded()
+			stopSchedulerMgrIfNeeded()
 			return
 		case <-ticker.C:
 			if do.ddl.OwnerManager().IsOwner() {
-				startDispatchIfNeeded()
+				startSchedulerMgrIfNeeded()
 			} else {
-				stopDispatchIfNeeded()
+				stopSchedulerMgrIfNeeded()
 			}
 		}
 	}
@@ -1853,7 +1858,7 @@ func (do *Domain) LoadBindInfoLoop(ctxForHandle sessionctx.Context, ctxForEvolve
 		do.BindHandle().Reset()
 	}
 
-	err := do.BindHandle().Update(true)
+	err := do.BindHandle().LoadFromStorageToCache(true)
 	if err != nil || bindinfo.Lease == 0 {
 		return err
 	}
@@ -1883,7 +1888,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				return
 			case <-bindWorkerTicker.C:
 				bindHandle := do.BindHandle()
-				err := bindHandle.Update(false)
+				err := bindHandle.LoadFromStorageToCache(false)
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
 				}

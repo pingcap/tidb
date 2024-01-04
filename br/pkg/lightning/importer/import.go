@@ -357,7 +357,9 @@ func NewImportControllerWithPauser(
 		if maxOpenFiles < 0 {
 			maxOpenFiles = math.MaxInt32
 		}
-		pdCli, err = pd.NewClientWithContext(ctx, []string{cfg.TiDB.PdAddr}, tls.ToPDSecurityOption())
+
+		addrs := strings.Split(cfg.TiDB.PdAddr, ",")
+		pdCli, err = pd.NewClientWithContext(ctx, addrs, tls.ToPDSecurityOption())
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -1437,7 +1439,8 @@ const (
 
 func (rc *Controller) keepPauseGCForDupeRes(ctx context.Context) (<-chan struct{}, error) {
 	tlsOpt := rc.tls.ToPDSecurityOption()
-	pdCli, err := pd.NewClientWithContext(ctx, []string{rc.pdCli.GetLeaderAddr()}, tlsOpt)
+	addrs := strings.Split(rc.cfg.TiDB.PdAddr, ",")
+	pdCli, err := pd.NewClientWithContext(ctx, addrs, tlsOpt)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

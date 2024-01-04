@@ -365,6 +365,7 @@ func sendSplitRegionRequest(ctx context.Context, c *pdClient, regionInfo *Region
 	if resp.RegionError != nil {
 		log.Warn("fail to split region",
 			logutil.Region(regionInfo.Region),
+			logutil.Keys(keys),
 			zap.Stringer("regionErr", resp.RegionError))
 		*splitErrors = multierr.Append(*splitErrors,
 			errors.Annotatef(berrors.ErrRestoreSplitFailed, "split region failed: err=%v", resp.RegionError))

@@ -33,13 +33,21 @@ type TaskManager interface {
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
 	UpdateTaskAndAddSubTasks(ctx context.Context, task *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error)
 	GCSubtasks(ctx context.Context) error
-	GetAllNodes(ctx context.Context) ([]string, error)
+	GetAllNodes(ctx context.Context) ([]proto.ManagedNode, error)
 	DeleteDeadNodes(ctx context.Context, nodes []string) error
 	TransferTasks2History(ctx context.Context, tasks []*proto.Task) error
+	// CancelTask updated task state to canceling.
 	CancelTask(ctx context.Context, taskID int64) error
 	// FailTask updates task state to Failed and updates task error.
 	FailTask(ctx context.Context, taskID int64, currentState proto.TaskState, taskErr error) error
+	// RevertedTask updates task state to reverted.
+	RevertedTask(ctx context.Context, taskID int64) error
+	// PauseTask updated task state to pausing.
 	PauseTask(ctx context.Context, taskKey string) (bool, error)
+	// PausedTask updated task state to paused.
+	PausedTask(ctx context.Context, taskID int64) error
+	// SucceedTask updates a task to success state.
+	SucceedTask(ctx context.Context, taskID int64) error
 	// SwitchTaskStep switches the task to the next step and add subtasks in one
 	// transaction. It will change task state too if we're switch from InitStep to
 	// next step.
@@ -51,15 +59,14 @@ type TaskManager interface {
 	// And each subtask of this step must be different, to handle the network
 	// partition or owner change.
 	SwitchTaskStepInBatch(ctx context.Context, task *proto.Task, nextState proto.TaskState, nextStep proto.Step, subtasks []*proto.Subtask) error
-	// SucceedTask updates a task to success state.
-	SucceedTask(ctx context.Context, taskID int64) error
 	// GetUsedSlotsOnNodes returns the used slots on nodes that have subtask scheduled.
 	// subtasks of each task on one node is only accounted once as we don't support
 	// running them concurrently.
 	// we only consider pending/running subtasks, subtasks related to revert are
 	// not considered.
 	GetUsedSlotsOnNodes(ctx context.Context) (map[string]int, error)
-	GetSubtaskInStatesCnt(ctx context.Context, taskID int64, states ...proto.SubtaskState) (int64, error)
+	// GetSubtaskCntGroupByStates returns the count of subtasks of some step group by state.
+	GetSubtaskCntGroupByStates(ctx context.Context, taskID int64, step proto.Step) (map[proto.SubtaskState]int64, error)
 	ResumeSubtasks(ctx context.Context, taskID int64) error
 	CollectSubTaskError(ctx context.Context, taskID int64) ([]error, error)
 	TransferSubTasks2History(ctx context.Context, taskID int64) error
@@ -68,7 +75,7 @@ type TaskManager interface {
 	// to execute tasks. If there are any nodes with background role, we use them,
 	// else we use nodes without role.
 	// returned nodes are sorted by node id(host:port).
-	GetManagedNodes(ctx context.Context) ([]string, error)
+	GetManagedNodes(ctx context.Context) ([]proto.ManagedNode, error)
 	GetTaskExecutorIDsByTaskID(ctx context.Context, taskID int64) ([]string, error)
 	GetSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error)
 	GetSubtasksByExecIdsAndStepAndState(ctx context.Context, tidbIDs []string, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error)
