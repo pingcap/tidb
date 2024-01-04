@@ -896,7 +896,12 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		return 0, err
 	}
 
-	t := meta.NewMeta(txn, meta.WithUpdateName())
+	var t *meta.Meta
+	if variable.DDLVersion.Load() == model.TiDBDDLV2 {
+		t = meta.NewMeta(txn, meta.WithUpdateName())
+	} else {
+		t = meta.NewMeta(txn)
+	}
 	if job.IsDone() || job.IsRollbackDone() {
 		if job.IsDone() {
 			job.State = model.JobStateSynced
