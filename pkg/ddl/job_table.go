@@ -225,6 +225,7 @@ func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 			return false, nil
 		}
 		if (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
+			job.State == model.JobStateQueueing &&
 			job.ReorgMeta != nil &&
 			job.ReorgMeta.IsFastReorg &&
 			ingest.LitBackCtxMgr != nil {
