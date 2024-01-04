@@ -98,11 +98,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/util/memory"
-=======
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
->>>>>>> 4f38f2913b4 (server: fix decode issue for prefetch point plan index keys (#50037))
 	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
