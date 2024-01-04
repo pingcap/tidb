@@ -2894,7 +2894,7 @@ func (*ddl) BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
 		// append table job args
 		info, ok := job.Args[0].(*model.TableInfo)
 		if !ok {
-			return nil, errors.Trace(fmt.Errorf("except table info"))
+			return nil, errors.Trace(fmt.Errorf("expect model.TableInfo, but got %T", job.Args[0]))
 		}
 		args = append(args, info)
 
