@@ -158,7 +158,7 @@ func (e *SQLBindExec) createSQLBind() error {
 	}
 	if !e.isGlobal {
 		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-		return handle.CreateSessionBinding(e.Ctx(), record)
+		return handle.CreateSessionBinding(e.Ctx(), e.sqlDigest, record)
 	}
 	return domain.GetDomain(e.Ctx()).BindHandle().CreateGlobalBinding(e.Ctx(), record)
 }
