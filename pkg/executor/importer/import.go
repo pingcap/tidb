@@ -61,7 +61,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	kvconfig "github.com/tikv/client-go/v2/config"
-	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -352,7 +351,7 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 }
 
 // NewImportPlan creates a new import into plan.
-func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*Plan, error) {
+func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*Plan, error) {
 	var format string
 	if plan.Format != nil {
 		format = strings.ToLower(*plan.Format)
@@ -391,7 +390,7 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 		InImportInto:           true,
 		User:                   userSctx.GetSessionVars().User.String(),
 	}
-	if err := p.initOptions(userSctx, plan.Options); err != nil {
+	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
 		return nil, err
 	}
 	if err := p.initParameters(plan); err != nil {
@@ -521,8 +520,8 @@ func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
 	p.Charset = &v
 }
 
-func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
-	targetNodeCPUCnt, err := GetTargetNodeCPUCnt(p.Path)
+func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
+	targetNodeCPUCnt, err := GetTargetNodeCPUCnt(ctx, p.Path)
 	if err != nil {
 		return err
 	}
@@ -1344,7 +1343,7 @@ func GetMsgFromBRError(err error) string {
 // target node is current node if it's server-disk import or disttask is disabled,
 // else it's the node managed by disttask.
 // exported for testing.
-func GetTargetNodeCPUCnt(path string) (int, error) {
+func GetTargetNodeCPUCnt(ctx context.Context, path string) (int, error) {
 	u, err2 := storage.ParseRawURL(path)
 	if err2 != nil {
 		return 0, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
@@ -1355,10 +1354,6 @@ func GetTargetNodeCPUCnt(path string) (int, error) {
 	if serverDiskImport || !variable.EnableDistTask.Load() {
 		return cpu.GetCPUCount(), nil
 	}
-	// the call path of initialization of threadCnt don't have context, so we use a timeout here.
-	ctx, cancel := context.WithTimeout(context.Background(), getCPUCountTimeout)
-	defer cancel()
-	ctx = tikvutil.WithInternalSourceType(ctx, tidbkv.InternalImportInto)
 	return handle.GetCPUCountOfManagedNode(ctx)
 }
 

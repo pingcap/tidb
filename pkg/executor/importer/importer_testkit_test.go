@@ -82,20 +82,20 @@ func TestGetTargetNodeCpuCnt(t *testing.T) {
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
 	// invalid path
-	_, err := importer.GetTargetNodeCPUCnt(":xx")
+	_, err := importer.GetTargetNodeCPUCnt(ctx, ":xx")
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataInvalidURI)
 	// server disk import
-	targetNodeCPUCnt, err := importer.GetTargetNodeCPUCnt("/path/to/xxx.csv")
+	targetNodeCPUCnt, err := importer.GetTargetNodeCPUCnt(ctx, "/path/to/xxx.csv")
 	require.NoError(t, err)
 	require.Equal(t, 8, targetNodeCPUCnt)
 	// disttask disabled
-	targetNodeCPUCnt, err = importer.GetTargetNodeCPUCnt("s3://path/to/xxx.csv")
+	targetNodeCPUCnt, err = importer.GetTargetNodeCPUCnt(ctx, "s3://path/to/xxx.csv")
 	require.NoError(t, err)
 	require.Equal(t, 8, targetNodeCPUCnt)
 	// disttask enabled
 	variable.EnableDistTask.Store(true)
 
-	targetNodeCPUCnt, err = importer.GetTargetNodeCPUCnt("s3://path/to/xxx.csv")
+	targetNodeCPUCnt, err = importer.GetTargetNodeCPUCnt(ctx, "s3://path/to/xxx.csv")
 	require.NoError(t, err)
 	require.Equal(t, 16, targetNodeCPUCnt)
 }
