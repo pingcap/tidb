@@ -112,6 +112,11 @@ type globalBindingHandle struct {
 
 	bindingCache atomic.Pointer[bindCache]
 
+	// fuzzyDigestMap is used to support fuzzy matching.
+	// fuzzyDigest is the digest calculated after eliminating all DB names, e.g. `select * from test.t` -> `select * from t` -> fuzzyDigest.
+	// exactDigest is the digest where all DB names are kept, e.g. `select * from test.t` -> exactDigest.
+	fuzzyDigestMap atomic.Value // map[string][]string fuzzyDigest --> exactDigests
+
 	// lastTaskTime records the last update time for the global sql bind cache.
 	// This value is used to avoid reload duplicated bindings from storage.
 	lastUpdateTime atomic.Value
@@ -163,6 +168,33 @@ func (h *globalBindingHandle) getCache() *bindCache {
 func (h *globalBindingHandle) setCache(c *bindCache) {
 	// TODO: update the global cache in-place instead of replacing it and remove this function.
 	h.bindingCache.Store(c)
+}
+
+func (h *globalBindingHandle) getFuzzyDigestMap() map[string][]string {
+	return h.fuzzyDigestMap.Load().(map[string][]string)
+}
+
+func (h *globalBindingHandle) setFuzzyDigestMap(m map[string][]string) {
+	h.fuzzyDigestMap.Store(m)
+}
+
+func buildFuzzyDigestMap(bindRecords []*BindRecord) map[string][]string {
+	m := make(map[string][]string)
+	p := parser.New()
+	for _, bindRecord := range bindRecords {
+		for _, binding := range bindRecord.Bindings {
+			stmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
+			if err != nil {
+				logutil.BgLogger().Warn("parse bindSQL failed", zap.String("bindSQL", binding.BindSQL), zap.Error(err))
+				p = parser.New()
+				continue
+			}
+			sqlWithoutDB := utilparser.RestoreWithoutDB(stmt)
+			_, fuzzyDigest := parser.NormalizeDigestForBinding(sqlWithoutDB)
+			m[fuzzyDigest.String()] = append(m[fuzzyDigest.String()], binding.SQLDigest)
+		}
+	}
+	return m
 }
 
 // Reset is to reset the BindHandle and clean old info.
@@ -220,6 +252,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 		defer func() {
 			h.setLastUpdateTime(lastUpdateTime)
 			h.setCache(newCache) // TODO: update it in place
+			h.setFuzzyDigestMap(buildFuzzyDigestMap(newCache.GetAllBindings()))
 		}()
 
 		for _, row := range rows {

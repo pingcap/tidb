@@ -131,6 +131,16 @@ func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string) (stmt ast.StmtNode
 	return nil, "", "", nil
 }
 
+// IsFuzzyBinding checks whether the stmtNode is a fuzzy binding.
+func IsFuzzyBinding(stmt ast.Node) bool {
+	for _, t := range CollectTableNames(stmt) {
+		if t.Schema.L == "*" {
+			return true
+		}
+	}
+	return false
+}
+
 // CollectTableNames gets all table names from ast.Node.
 // This function is mainly for binding fuzzy matching.
 // ** the return is read-only.
