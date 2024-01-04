@@ -562,6 +562,10 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	function, err = NewFunction(mock.NewContext(), ast.JSONMemberOf, types.NewFieldType(mysql.TypeLonglong), jsonColumn, jsonColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// json_valid
 	/// json_valid_others
 	function, err = NewFunction(mock.NewContext(), ast.JSONValid, types.NewFieldType(mysql.TypeLonglong), intColumn)
