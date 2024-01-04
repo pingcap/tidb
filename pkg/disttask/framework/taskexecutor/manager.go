@@ -467,7 +467,7 @@ func (m *Manager) logErr(err error) {
 
 func (m *Manager) logErrAndPersist(err error, taskID int64, taskExecutor TaskExecutor) {
 	m.logErr(err)
-	if taskExecutor.IsRetryableError(err) {
+	if taskExecutor != nil && taskExecutor.IsRetryableError(err) {
 		logutil.Logger(m.logCtx).Error("met retryable err", zap.Error(err), zap.Stack("stack"))
 		return
 	}
