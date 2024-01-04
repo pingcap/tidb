@@ -542,10 +542,18 @@ func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBack
 		ch := utils.BuildWorkerTokenChannel(concurrencyPerStore)
 		storeWorkerPoolMap[store.Id] = ch
 	}
+	useTokenBucket := false
+	if rc.granularity == string(CoarseGrained) {
+		// coarse-grained make split & scatter pipeline fast enough
+		// so we can use a new token bucket way to speed up download.
+		// ToDo remove it when token bucket is stable enough.
+		log.Info("use token bucket to control download and ingest flow")
+		useTokenBucket = true
+	}
 
 	metaClient := split.NewSplitClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, storeWorkerPoolMap, rc.rewriteMode, concurrencyPerStore)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, storeWorkerPoolMap, rc.rewriteMode, concurrencyPerStore, useTokenBucket)
 }
 
 func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
@@ -1271,7 +1279,7 @@ func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient ImporterClient,
 	rc.SetRateLimit(42)
 	rc.SetConcurrency(concurrency)
 	rc.hasSpeedLimited = false
-	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, false, nil, rc.rewriteMode, 128)
+	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, false, nil, rc.rewriteMode, 128, false)
 	return rc.setSpeedLimit(ctx, rc.rateLimit)
 }
 
@@ -1298,14 +1306,13 @@ func (rc *Client) setSpeedLimit(ctx context.Context, rateLimit uint64) error {
 			}
 
 			finalStore := store
-			eg.Go(
-				func() error {
-					err := rc.fileImporter.setDownloadSpeedLimit(ectx, finalStore.GetId(), rateLimit)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					return nil
-				})
+			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+				err := rc.fileImporter.setDownloadSpeedLimit(ectx, finalStore.GetId(), rateLimit)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				return nil
+			})
 		}
 
 		if err := eg.Wait(); err != nil {
@@ -1474,7 +1481,7 @@ LOOPFORTABLE:
 				// breaking here directly is also a reasonable behavior.
 				break LOOPFORTABLE
 			}
-			eg.Go(func() error {
+			restoreFn := func() error {
 				filesGroups := getGroupFiles(filesReplica, rc.fileImporter.supportMultiIngest)
 				for _, filesGroup := range filesGroups {
 					if importErr := func(fs []*backuppb.File) error {
@@ -1500,7 +1507,15 @@ LOOPFORTABLE:
 					}
 				}
 				return nil
-			})
+			}
+			if rc.granularity == string(CoarseGrained) {
+				eg.Go(restoreFn)
+			} else {
+				// if we are not use coarse granularity which means
+				// we still pipeline split & scatter regions and import sst files
+				// just keep the consistency as before.
+				rc.workerPool.ApplyOnErrorGroup(eg, restoreFn)
+			}
 		}
 	}
 
@@ -1525,11 +1540,10 @@ func (rc *Client) WaitForFilesRestored(ctx context.Context, files []*backuppb.Fi
 
 	for _, file := range files {
 		fileReplica := file
-		eg.Go(
-			func() error {
-				defer updateCh.Inc()
-				return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
-			})
+		rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+			defer updateCh.Inc()
+			return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
+		})
 	}
 	if err := eg.Wait(); err != nil {
 		return errors.Trace(err)
@@ -1620,40 +1634,39 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 		}
 
 		finalStore := store
-		eg.Go(
-			func() error {
-				opt := grpc.WithTransportCredentials(insecure.NewCredentials())
-				if rc.tlsConf != nil {
-					opt = grpc.WithTransportCredentials(credentials.NewTLS(rc.tlsConf))
-				}
-				gctx, cancel := context.WithTimeout(ectx, time.Second*5)
-				connection, err := grpc.DialContext(
-					gctx,
-					finalStore.GetAddress(),
-					opt,
-					grpc.WithBlock(),
-					grpc.FailOnNonTempDialError(true),
-					grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
-					// we don't need to set keepalive timeout here, because the connection lives
-					// at most 5s. (shorter than minimal value for keepalive time!)
-				)
-				cancel()
-				if err != nil {
-					return errors.Trace(err)
-				}
-				client := import_sstpb.NewImportSSTClient(connection)
-				_, err = client.SwitchMode(ctx, &import_sstpb.SwitchModeRequest{
-					Mode: mode,
-				})
-				if err != nil {
-					return errors.Trace(err)
-				}
-				err = connection.Close()
-				if err != nil {
-					log.Error("close grpc connection failed in switch mode", zap.Error(err))
-				}
-				return nil
+		rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+			opt := grpc.WithTransportCredentials(insecure.NewCredentials())
+			if rc.tlsConf != nil {
+				opt = grpc.WithTransportCredentials(credentials.NewTLS(rc.tlsConf))
+			}
+			gctx, cancel := context.WithTimeout(ectx, time.Second*5)
+			connection, err := grpc.DialContext(
+				gctx,
+				finalStore.GetAddress(),
+				opt,
+				grpc.WithBlock(),
+				grpc.FailOnNonTempDialError(true),
+				grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
+				// we don't need to set keepalive timeout here, because the connection lives
+				// at most 5s. (shorter than minimal value for keepalive time!)
+			)
+			cancel()
+			if err != nil {
+				return errors.Trace(err)
+			}
+			client := import_sstpb.NewImportSSTClient(connection)
+			_, err = client.SwitchMode(ctx, &import_sstpb.SwitchModeRequest{
+				Mode: mode,
 			})
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = connection.Close()
+			if err != nil {
+				log.Error("close grpc connection failed in switch mode", zap.Error(err))
+			}
+			return nil
+		})
 	}
 
 	if err = eg.Wait(); err != nil {
