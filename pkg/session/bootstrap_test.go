@@ -17,7 +17,6 @@ package session
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/parser"
 	"sort"
 	"testing"
 	"time"
@@ -27,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"

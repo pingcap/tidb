@@ -531,7 +531,6 @@ func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, stmt a
 		return nil, nil
 	}
 
-	// TODO: support fuzzy matching.
 	_, _, fuzzDigest, err := normalizeStmt(stmt, sctx.GetSessionVars().CurrentDB, true)
 	if err != nil {
 		return nil, err

@@ -109,12 +109,44 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, stmt
 	if h.ch.Size() == 0 {
 		return nil, nil
 	}
-	// TODO: support fuzzy matching.
-	_, _, sqlDigest, err := normalizeStmt(stmt, sctx.GetSessionVars().CurrentDB, false)
+
+	_, _, fuzzDigest, err := normalizeStmt(stmt, sctx.GetSessionVars().CurrentDB, true)
 	if err != nil {
 		return nil, err
 	}
-	return h.ch.GetBinding(sqlDigest), nil
+
+	// The current implementation is simplistic, but session binding is only for test purpose, so
+	// there shouldn't be many session bindings, and to keep it simple, this implementation is acceptable.
+	tableNames := CollectTableNames(stmt)
+	var bestBinding *BindRecord
+	leastWildcards := len(tableNames) + 1
+	bindRecords := h.ch.GetAllBindings()
+	for _, bindRecord := range bindRecords {
+		for _, binding := range bindRecord.Bindings {
+			bindingStmt, err := parser.New().ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
+			if err != nil {
+				return nil, err
+			}
+			_, _, bindingFuzzDigest, err := normalizeStmt(bindingStmt, sctx.GetSessionVars().CurrentDB, true)
+			if err != nil {
+				return nil, err
+			}
+			if bindingFuzzDigest != fuzzDigest {
+				continue
+			}
+
+			numWildcards, matched := fuzzyMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
+			if matched && numWildcards > 0 && sctx != nil && !sctx.GetSessionVars().EnableFuzzyBinding {
+				continue // fuzzy binding is disabled, skip this binding
+			}
+			if matched && numWildcards < leastWildcards {
+				bestBinding = bindRecord
+				leastWildcards = numWildcards
+				break
+			}
+		}
+	}
+	return bestBinding, nil
 }
 
 // GetAllSessionBindings return all session bind info.
