@@ -1060,3 +1060,19 @@ func TestTaskNotFound(t *testing.T) {
 	require.Error(t, err, storage.ErrTaskNotFound)
 	require.Nil(t, task)
 }
+
+func TestSubtaskType(t *testing.T) {
+	_, sm, ctx := testutil.InitTableTest(t)
+	cases := []proto.TaskType{
+		proto.TaskTypeExample,
+		proto.ImportInto,
+		proto.Backfill,
+		"",
+	}
+	for i, c := range cases {
+		testutil.InsertSubtask(t, sm, int64(i+1), proto.StepOne, "tidb-1", []byte(""), proto.SubtaskStateRunning, c, 12)
+		subtask, err := sm.GetFirstSubtaskInStates(ctx, "tidb-1", int64(i+1), proto.StepOne, proto.SubtaskStateRunning)
+		require.NoError(t, err)
+		require.Equal(t, c, subtask.Type)
+	}
+}
