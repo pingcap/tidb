@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -80,6 +81,7 @@ var (
 	mDDLTableVersion     = []byte("DDLTableVersion")
 	mBDRRole             = []byte("BDRRole")
 	mMetaDataLock        = []byte("metadataLock")
+	mRequestUnitStats    = []byte("RequestUnitStats")
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
 	defaultGroupID = int64(1)
@@ -1484,5 +1486,51 @@ func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
 	startTime := time.Now()
 	err = m.txn.Set(diffKey, data)
 	metrics.MetaHistogram.WithLabelValues(metrics.SetSchemaDiff, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	return errors.Trace(err)
+}
+
+// GroupRUStats keeps the ru consumption statistics data.
+type GroupRUStats struct {
+	ID            int64             `json:"id"`
+	Name          string            `json:"name"`
+	RUConsumption *rmpb.Consumption `json:"ru_consumption"`
+}
+
+// DailyRUStats keeps all the ru consumption statistics data.
+type DailyRUStats struct {
+	EndTime time.Time      `json:"date"`
+	Stats   []GroupRUStats `json:"stats"`
+}
+
+// RUStats keeps the lastest and second lastest DailyRUStats data.
+type RUStats struct {
+	Latest   *DailyRUStats `json:"latest"`
+	Previous *DailyRUStats `json:"previous"`
+}
+
+// GetRUStats load the persisted RUStats data.
+func (m *Meta) GetRUStats() (*RUStats, error) {
+	data, err := m.txn.Get(mRequestUnitStats)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var ruStats *RUStats
+	if data != nil {
+		ruStats = &RUStats{}
+		if err = json.Unmarshal(data, &ruStats); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return ruStats, nil
+}
+
+// SetRUStats persist new ru stats data to meta storage.
+func (m *Meta) SetRUStats(stats *RUStats) error {
+	data, err := json.Marshal(stats)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = m.txn.Set(mRequestUnitStats, data)
 	return errors.Trace(err)
 }

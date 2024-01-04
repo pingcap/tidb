@@ -52,14 +52,14 @@ func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*BindRecord, stri
 	}
 	// the priority: session normal > session universal > global normal > global universal
 	sessionHandle := ctx.Value(SessionBindInfoKeyType).(SessionBindingHandle)
-	if bindRecord, err := sessionHandle.MatchSessionBinding(ctx.GetSessionVars().CurrentDB, stmt); err == nil && bindRecord != nil && bindRecord.HasEnabledBinding() {
+	if bindRecord, err := sessionHandle.MatchSessionBinding(ctx, stmt); err == nil && bindRecord != nil && bindRecord.HasEnabledBinding() {
 		return bindRecord, metrics.ScopeSession, nil
 	}
 	globalHandle := GetGlobalBindingHandle(ctx)
 	if globalHandle == nil {
 		return nil, "", nil
 	}
-	if bindRecord, err := globalHandle.MatchGlobalBinding(ctx.GetSessionVars().CurrentDB, stmt); err == nil && bindRecord != nil && bindRecord.HasEnabledBinding() {
+	if bindRecord, err := globalHandle.MatchGlobalBinding(ctx, stmt); err == nil && bindRecord != nil && bindRecord.HasEnabledBinding() {
 		return bindRecord, metrics.ScopeGlobal, nil
 	}
 	return nil, "", nil
@@ -77,11 +77,17 @@ func eraseLastSemicolon(stmt ast.StmtNode) {
 // For normal bindings, DB name will be completed automatically:
 //
 //	e.g. `select * from t where a in (1, 2, 3)` --> `select * from test.t where a in (...)`
-func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string) (stmt ast.StmtNode, normalizedStmt, sqlDigest string, err error) {
+func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, fuzzy bool) (stmt ast.StmtNode, normalizedStmt, sqlDigest string, err error) {
 	normalize := func(n ast.StmtNode) (normalizedStmt, sqlDigest string) {
 		eraseLastSemicolon(n)
 		var digest *parser.Digest
-		normalizedStmt, digest = parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(n, specifiedDB, n.Text()))
+		var normalizedSQL string
+		if !fuzzy {
+			normalizedSQL = utilparser.RestoreWithDefaultDB(n, specifiedDB, n.Text())
+		} else {
+			normalizedSQL = utilparser.RestoreWithoutDB(n)
+		}
+		normalizedStmt, digest = parser.NormalizeDigestForBinding(normalizedSQL)
 		return normalizedStmt, digest.String()
 	}
 
@@ -129,6 +135,37 @@ func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string) (stmt ast.StmtNode
 		return x, normalizedSQL, digest, nil
 	}
 	return nil, "", "", nil
+}
+
+func fuzzyMatchBindingTableName(currentDB string, stmtTableNames, bindingTableNames []*ast.TableName) (numWildcards int, matched bool) {
+	if len(stmtTableNames) != len(bindingTableNames) {
+		return 0, false
+	}
+	for i := range stmtTableNames {
+		if stmtTableNames[i].Name.L != bindingTableNames[i].Name.L {
+			return 0, false
+		}
+		if bindingTableNames[i].Schema.L == "*" {
+			numWildcards++
+		}
+		if bindingTableNames[i].Schema.L == stmtTableNames[i].Schema.L || // exactly same, or
+			(stmtTableNames[i].Schema.L == "" && bindingTableNames[i].Schema.L == currentDB) || // equal to the current DB, or
+			bindingTableNames[i].Schema.L == "*" { // fuzzy match successfully
+			continue
+		}
+		return 0, false
+	}
+	return numWildcards, true
+}
+
+// isFuzzyBinding checks whether the stmtNode is a fuzzy binding.
+func isFuzzyBinding(stmt ast.Node) bool {
+	for _, t := range CollectTableNames(stmt) {
+		if t.Schema.L == "*" {
+			return true
+		}
+	}
+	return false
 }
 
 // CollectTableNames gets all table names from ast.Node.
