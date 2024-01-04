@@ -500,8 +500,6 @@ func TestModifyFromNullToNotNull(t *testing.T) {
 	sess := testkit.NewTestKit(t, store).Session()
 	err := sessiontxn.NewTxn(context.Background(), sess)
 	require.NoError(t, err)
-	// _, err := sess.Execute(context.Background(), "begin")
-	// require.NoError(t, err)
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)

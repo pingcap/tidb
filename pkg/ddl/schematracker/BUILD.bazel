@@ -53,6 +53,8 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/parser/model",
         "//pkg/sessionctx",
+        "//pkg/sessiontxn",
+        "//pkg/testkit",
         "//pkg/util/chunk",
         "//pkg/util/mock",
         "//pkg/util/sqlexec",
