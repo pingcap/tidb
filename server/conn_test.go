@@ -755,8 +755,16 @@ func TestConnExecutionTimeout(t *testing.T) {
 	require.NoError(t, err)
 
 	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(1);")
+<<<<<<< HEAD:server/conn_test.go
 	require.NoError(t, err)
 
+=======
+	require.Equal(t, "[executor:3024]Query execution was interrupted, maximum statement execution time exceeded", err.Error())
+	err = cc.handleQuery(context.Background(), "select /*+ set_var(max_execution_time=100) */ age, sleep(1) from testTable2 union all select age, 1 from testTable2")
+	require.Equal(t, "[executor:3024]Query execution was interrupted, maximum statement execution time exceeded", err.Error())
+	// Killed because of max execution time, reset Killed to 0.
+	tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
+>>>>>>> 62c83d40fe2 (bindinfo: extract the table hint from the union statement (#50070)):pkg/server/conn_test.go
 	tk.MustExec("set @@max_execution_time = 500;")
 
 	err = cc.handleQuery(context.Background(), "alter table testTable2 add index idx(age);")
