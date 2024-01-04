@@ -2643,37 +2643,36 @@ func (rc *Client) RestoreKVFiles(
 		} else {
 			applyWg.Add(1)
 			downstreamId := idrules[files[0].TableId]
-			rc.workerPool.ApplyOnErrorGroup(eg,
-				func() (err error) {
-					fileStart := time.Now()
-					defer applyWg.Done()
-					defer func() {
-						onProgress(int64(len(files)))
-						updateStats(uint64(kvCount), size)
-						summary.CollectInt("File", len(files))
+			rc.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
+				fileStart := time.Now()
+				defer applyWg.Done()
+				defer func() {
+					onProgress(int64(len(files)))
+					updateStats(uint64(kvCount), size)
+					summary.CollectInt("File", len(files))
 
-						if err == nil {
-							filenames := make([]string, 0, len(files))
-							if runner == nil {
-								for _, f := range files {
-									filenames = append(filenames, f.Path+", ")
-								}
-							} else {
-								for _, f := range files {
-									filenames = append(filenames, f.Path+", ")
-									if e := checkpoint.AppendRangeForLogRestore(ectx, runner, f.MetaDataGroupName, downstreamId, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
-										err = errors.Annotate(e, "failed to append checkpoint data")
-										break
-									}
+					if err == nil {
+						filenames := make([]string, 0, len(files))
+						if runner == nil {
+							for _, f := range files {
+								filenames = append(filenames, f.Path+", ")
+							}
+						} else {
+							for _, f := range files {
+								filenames = append(filenames, f.Path+", ")
+								if e := checkpoint.AppendRangeForLogRestore(ectx, runner, f.MetaDataGroupName, downstreamId, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
+									err = errors.Annotate(e, "failed to append checkpoint data")
+									break
 								}
 							}
-							log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
-								zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
 						}
-					}()
+						log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
+							zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
+					}
+				}()
 
-					return rc.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS, supportBatch)
-				})
+				return rc.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS, supportBatch)
+			})
 		}
 	}
 
