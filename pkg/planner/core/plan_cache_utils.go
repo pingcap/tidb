@@ -43,9 +43,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	"github.com/pingcap/tidb/pkg/util/size"
 	atomic2 "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 const (
@@ -131,10 +133,9 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 
 	var (
-		normalizedSQL4PC, digest4PC string
-		selectStmtNode              ast.StmtNode
-		cacheable                   bool
-		reason                      string
+		selectStmtNode ast.StmtNode
+		cacheable      bool
+		reason         string
 	)
 	if (isPrepStmt && !vars.EnablePreparedPlanCache) || // prepared statement
 		(!isPrepStmt && !vars.EnableNonPreparedPlanCache) { // non-prepared statement
@@ -149,10 +150,9 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		if !cacheable {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: " + reason))
 		}
-		selectStmtNode, normalizedSQL4PC, digest4PC, err = NormalizeStmtForPlanCache(paramStmt, vars.CurrentDB)
-		if err != nil || selectStmtNode == nil {
-			normalizedSQL4PC = ""
-			digest4PC = ""
+		selectStmtNode, _, _, err = NormalizeStmtForPlanCache(paramStmt, vars.CurrentDB)
+		if err != nil {
+			logutil.BgLogger().Warn("fail to NormalizeStmtForPlanCache", zap.Error(err))
 		}
 	}
 
@@ -186,8 +186,6 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SQLDigest:           digest,
 		ForUpdateRead:       destBuilder.GetIsForUpdateRead(),
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
-		NormalizedSQL4PC:    normalizedSQL4PC,
-		SQLDigest4PC:        digest4PC,
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
 		QueryFeatures:       features,
@@ -459,8 +457,6 @@ type PlanCacheStmt struct {
 	PlanDigest          *parser.Digest
 	ForUpdateRead       bool
 	SnapshotTSEvaluator func(sessionctx.Context) (uint64, error)
-	NormalizedSQL4PC    string
-	SQLDigest4PC        string
 
 	// the different between NormalizedSQL, NormalizedSQL4PC and StmtText:
 	//  for the query `select * from t where a>1 and b<?`, then

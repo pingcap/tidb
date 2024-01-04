@@ -794,7 +794,7 @@ func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
 func GetBindSQL4PlanCache(sctx sessionctx.Context, stmt *PlanCacheStmt) (string, bool) {
 	useBinding := sctx.GetSessionVars().UsePlanBaselines
 	ignore := false
-	if !useBinding || stmt.PreparedAst.Stmt == nil || stmt.NormalizedSQL4PC == "" || stmt.SQLDigest4PC == "" {
+	if !useBinding || stmt.PreparedAst.Stmt == nil || {
 		return "", ignore
 	}
 	if sctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
