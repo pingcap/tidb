@@ -207,6 +207,7 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 		uv.StmtCtx.DividedByZeroAsWarning = dividedZeroAsWarn
 		uv.StmtCtx.SetTypeFlags(typeFlags)
 		uv.StmtCtx.ResourceGroupName = resGroupName
+		uv.StmtCtx.InReorg = false
 	}
 }
 
