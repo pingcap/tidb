@@ -190,8 +190,7 @@ func TestCreateUpdateUniversalBinding(t *testing.T) {
 	require.Equal(t, showBinding(tk, "show session bindings"), [][]interface{}{})
 }
 
-func TestUniversalBindingSwitch(t *testing.T) {
-	t.Skip("skip it temporarily")
+func TestFuzzyBindingSwitch(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 
@@ -201,7 +200,7 @@ func TestUniversalBindingSwitch(t *testing.T) {
 
 	// switch can work for both global and session universal bindings
 	// test for session bindings
-	tk1.MustExec(`create session universal binding using select /*+ use_index(t, b) */ * from t`)
+	tk1.MustExec(`create session binding using select /*+ use_index(t, b) */ * from *.t`)
 	tk1.MustExec(`use test1`)
 	tk1.MustQuery(`select * from test.t`).Check(testkit.Rows())
 	tk1.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
@@ -215,7 +214,7 @@ func TestUniversalBindingSwitch(t *testing.T) {
 	// test for global bindings
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec(`use test1`)
-	tk2.MustExec(`create global universal binding using select /*+ use_index(t, b) */ * from t`)
+	tk2.MustExec(`create global binding using select /*+ use_index(t, b) */ * from *.t`)
 	tk2.MustQuery(`select * from test.t`).Check(testkit.Rows())
 	tk2.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("0"))
 	tk2.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
