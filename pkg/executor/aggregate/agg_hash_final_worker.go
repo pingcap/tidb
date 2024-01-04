@@ -51,9 +51,8 @@ type HashAggFinalWorker struct {
 	finalResultHolderCh chan *chunk.Chunk
 	groupKeys           [][]byte
 
-	spillHelper                *parallelHashAggSpillHelper
-	isSpilledTriggered         bool
-	restoredAggResultMapperMem int64
+	spillHelper        *parallelHashAggSpillHelper
+	isSpilledTriggered bool
 
 	restoredMemDelta int64
 }
@@ -190,11 +189,12 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 	defer w.increaseExecTime(execStart)
 	if w.isSpilledTriggered {
 		var err error
+		restoredAggResultMapperMem := int64(0)
 		for {
 			// Since data is restored partition by partition, only one partition is in memory at any given time.
 			// Therefore, it's necessary to release the memory used by the previous partition.
-			w.spillHelper.memTracker.Consume(-w.restoredAggResultMapperMem)
-			w.partialResultMap, w.restoredAggResultMapperMem, err = w.getInputFromDisk(sctx)
+			w.spillHelper.memTracker.Consume(-restoredAggResultMapperMem)
+			w.partialResultMap, restoredAggResultMapperMem, err = w.getInputFromDisk(sctx)
 			if err != nil {
 				w.outputCh <- &AfFinalResult{err: err}
 				return
