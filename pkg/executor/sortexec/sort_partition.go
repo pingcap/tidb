@@ -52,7 +52,7 @@ type sortPartition struct {
 
 	// Data are stored in savedRows
 	savedRows []chunk.Row
-	sliceIter chunk.Iterator4Slice
+	sliceIter *chunk.Iterator4Slice
 	isSorted  bool
 
 	// cursor iterates the spilled chunks.
@@ -181,7 +181,7 @@ func (s *sortPartition) sortNoLock() (ret error) {
 
 	sort.Slice(s.savedRows, s.keyColumnsLess)
 	s.isSorted = true
-	s.sliceIter = chunk.NewIterator4SliceNoInterface(s.savedRows)
+	s.sliceIter = chunk.NewIterator4Slice(s.savedRows)
 	return
 }
 
@@ -246,9 +246,9 @@ func (s *sortPartition) spillToDisk() error {
 
 	s.setIsSpilling()
 	defer s.cond.Broadcast()
+	defer s.setSpillTriggered()
 
 	err = s.spillToDiskImpl()
-	s.setSpillTriggered()
 	return err
 }
 

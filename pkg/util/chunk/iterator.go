@@ -53,14 +53,9 @@ type Iterator interface {
 	Error() error
 }
 
-// NewIterator4Slice returns a Iterator for Row slice.
-func NewIterator4Slice(rows []Row) Iterator {
-	return &Iterator4Slice{rows: rows}
-}
-
-// NewIterator4SliceNoInterface returns a Iterator4Slice.
-func NewIterator4SliceNoInterface(rows []Row) Iterator4Slice {
-	return Iterator4Slice{
+// NewIterator4Slice returns a *Iterator4Slice for Row slice.
+func NewIterator4Slice(rows []Row) *Iterator4Slice {
+	return &Iterator4Slice{
 		rows:   rows,
 		cursor: 0,
 	}
