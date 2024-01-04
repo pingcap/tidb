@@ -150,7 +150,6 @@ func (s *BaseScheduler) refreshTask() error {
 
 // scheduleTask schedule the task execution step by step.
 func (s *BaseScheduler) scheduleTask() {
-	task := s.GetTask()
 	ticker := time.NewTicker(checkTaskFinishedInterval)
 	defer ticker.Stop()
 	for {
@@ -163,6 +162,7 @@ func (s *BaseScheduler) scheduleTask() {
 			if err != nil {
 				continue
 			}
+			task := s.GetTask()
 			failpoint.Inject("cancelTaskAfterRefreshTask", func(val failpoint.Value) {
 				if val.(bool) && task.State == proto.TaskStateRunning {
 					err := s.taskMgr.CancelTask(s.ctx, task.ID)
