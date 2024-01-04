@@ -151,9 +151,6 @@ func (w *HashAggPartialWorker) intestDuringPartialWorkerRun() {
 }
 
 func (w *HashAggPartialWorker) handleSpillBeforeExit() {
-	w.spillHelper.syncLock.RLock()
-	defer w.spillHelper.syncLock.RUnlock()
-
 	if w.spillHelper.checkError() {
 		return
 	}
