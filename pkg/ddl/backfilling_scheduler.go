@@ -163,6 +163,7 @@ func initSessCtx(
 	if err := setSessCtxLocation(sessCtx, tzLocation); err != nil {
 		return errors.Trace(err)
 	}
+	sessCtx.GetSessionVars().StmtCtx.InReorg = true
 	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(sessCtx.GetSessionVars().Location())
 	sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
@@ -206,6 +207,7 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 		uv.StmtCtx.DividedByZeroAsWarning = dividedZeroAsWarn
 		uv.StmtCtx.SetTypeFlags(typeFlags)
 		uv.StmtCtx.ResourceGroupName = resGroupName
+		uv.StmtCtx.InReorg = false
 	}
 }
 

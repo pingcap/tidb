@@ -260,7 +260,7 @@ func (sm *Manager) gcSubtaskHistoryTableLoop() {
 func (sm *Manager) startScheduler(basicTask *proto.Task, reservedExecID string) {
 	task, err := sm.taskMgr.GetTaskByID(sm.ctx, basicTask.ID)
 	if err != nil {
-		logutil.BgLogger().Error("get task failed", zap.Error(err))
+		logutil.BgLogger().Error("get task failed", zap.Int64("task-id", basicTask.ID), zap.Error(err))
 		return
 	}
 

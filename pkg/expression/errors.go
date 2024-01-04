@@ -86,7 +86,7 @@ func handleInvalidTimeError(ctx EvalContext, err error) error {
 // handleDivisionByZeroError reports error or warning depend on the context.
 func handleDivisionByZeroError(ctx EvalContext) error {
 	sc := ctx.GetSessionVars().StmtCtx
-	if sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt {
+	if sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt || sc.InReorg {
 		if !ctx.GetSessionVars().SQLMode.HasErrorForDivisionByZeroMode() {
 			return nil
 		}
