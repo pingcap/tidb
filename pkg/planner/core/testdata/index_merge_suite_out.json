@@ -463,8 +463,8 @@
         "Plan": [
           "Sort 19.99 root  test.t2.c",
           "└─IndexMerge 19.99 root  type: union",
-          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:b(b) range:[1,1], keep order:false, stats:pseudo",
+          "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t2, index:a(a) range:[1,1], keep order:false, stats:pseudo",
           "  └─TableRowIDScan(Probe) 19.99 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Result": null
