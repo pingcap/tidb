@@ -88,7 +88,7 @@ type Binding struct {
 	Type string
 
 	// TableNames records all schema and table names in this binding statement, which are used for fuzzy matching.
-	TableNames []*ast.TableName
+	TableNames []*ast.TableName `json:"-"`
 }
 
 func (b *Binding) isSame(rb *Binding) bool {
