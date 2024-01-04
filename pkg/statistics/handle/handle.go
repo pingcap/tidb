@@ -157,7 +157,7 @@ func (h *Handle) GetTableStatsForAutoAnalyze(tblInfo *model.TableInfo) *statisti
 // GetPartitionStats retrieves the partition stats from cache.
 // TODO: remove GetTableStats later on.
 func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
-	h.getPartitionStats(tblInfo, pid, true)
+	return h.getPartitionStats(tblInfo, pid, true)
 }
 
 func (h *Handle) getPartitionStats(tblInfo *model.TableInfo, pid int64, returnPseudo bool) *statistics.Table {
