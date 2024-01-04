@@ -1119,7 +1119,7 @@ func TestUniversalBindingFromHistory(t *testing.T) {
 	})
 
 	tk.MustExec(`admin reload bindings`)
-	tk.MustExec(`set @@tidb_opt_enable_universal_binding=1`)
+	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
 	tk.MustExec(`create database test2`)
 	tk.MustExec(`use test2`)
 	tk.MustExec(`create table t (a int, b int, c int, key(a), key(b), key(c))`)
