@@ -59,7 +59,7 @@ var (
 //
 // DDL version 2
 // Names -> {
-//		Name:dbname\x00tablename -> tableid
+//		Name:DBname\x00tablename -> tableID
 // }
 
 var (
@@ -170,9 +170,9 @@ func (ver DDLTableVersion) Bytes() []byte {
 // Option is for Meta option.
 type Option func(m *Meta)
 
-// WithUpdateName is for updating the name of the table.
+// WithUpdateTableName is for updating the name of the table.
 // Only used for ddl v2.
-func WithUpdateName() Option {
+func WithUpdateTableName() Option {
 	return func(m *Meta) {
 		m.needUpdateName = true
 	}
@@ -706,7 +706,7 @@ func (m *Meta) CreateTableOrView(dbID int64, dbName string, tableInfo *model.Tab
 	if err := m.txn.HSet(dbKey, tableKey, data); err != nil {
 		return errors.Trace(err)
 	}
-	if m.needUpdateName && len(dbName) > 0 {
+	if m.needUpdateName {
 		return errors.Trace(m.CreateTableName(dbName, tableInfo.Name.L, tableInfo.ID))
 	}
 	return nil
@@ -877,7 +877,7 @@ func (m *Meta) DropDatabase(dbID int64, dbName string) error {
 		return errors.Trace(err)
 	}
 
-	if m.needUpdateName && len(dbName) > 0 {
+	if m.needUpdateName {
 		return errors.Trace(m.DropDatabaseName(dbName))
 	}
 	return nil
@@ -917,7 +917,7 @@ func (m *Meta) DropTableOrView(dbID int64, dbName string, tblID int64, tbName st
 	if err := m.txn.HDel(dbKey, tableKey); err != nil {
 		return errors.Trace(err)
 	}
-	if m.needUpdateName && len(dbName) > 0 && len(tbName) > 0 {
+	if m.needUpdateName {
 		return errors.Trace(m.DropTableName(dbName, tbName))
 	}
 	return nil
@@ -1526,7 +1526,13 @@ func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
 
 // TableNameKey constructs the key for table name.
 func (*Meta) TableNameKey(dbName string, tableName string) kv.Key {
-	return kv.Key(fmt.Sprintf("%s:%s%s%s", mNames, strings.ToLower(dbName), mNameSep, strings.ToLower(tableName)))
+	var sb strings.Builder
+	sb.Write(mNames)
+	sb.WriteByte(':')
+	sb.WriteString(strings.ToLower(dbName))
+	sb.Write(mNameSep)
+	sb.WriteString(strings.ToLower(tableName))
+	return kv.Key(sb.String())
 }
 
 // CheckTableNameExists checks if the table name exists.
@@ -1607,7 +1613,7 @@ func (m *Meta) GetDDLV2Initialized() (initialized bool, err error) {
 	if len(val) == 0 {
 		return false, nil
 	}
-	return bytes.Equal(val, []byte("1")),  nil
+	return bytes.Equal(val, []byte("1")), nil
 }
 
 // GroupRUStats keeps the ru consumption statistics data.

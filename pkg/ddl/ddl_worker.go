@@ -900,7 +900,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 
 	var t *meta.Meta
 	if variable.DDLVersion.Load() == model.TiDBDDLV2 {
-		t = meta.NewMeta(txn, meta.WithUpdateName())
+		t = meta.NewMeta(txn, meta.WithUpdateTableName())
 	} else {
 		t = meta.NewMeta(txn)
 	}
@@ -992,7 +992,7 @@ func (w *worker) HandleDDLJobV2(d *ddlCtx, job *model.Job) (err error) {
 		return err
 	}
 
-	t := meta.NewMeta(txn, meta.WithUpdateName())
+	t := meta.NewMeta(txn, meta.WithUpdateTableName())
 	d.mu.RLock()
 	d.mu.hook.OnJobRunBefore(job)
 	d.mu.RUnlock()
