@@ -45,8 +45,8 @@ func (s *sortPartitionSpillDiskAction) Action(t *memory.Tracker) {
 }
 
 func (s *sortPartitionSpillDiskAction) executeAction(t *memory.Tracker) memory.ActionOnExceed {
-	s.partition.lock.Lock()
-	defer s.partition.lock.Unlock()
+	s.partition.cond.L.Lock()
+	defer s.partition.cond.L.Unlock()
 
 	if !s.partition.isSpillTriggeredNoLock() && s.partition.hasEnoughDataToSpill() {
 		s.once.Do(func() {

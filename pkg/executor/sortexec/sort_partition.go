@@ -41,8 +41,7 @@ type sortPartition struct {
 	// syncLock is used to ensure that we can exclusively execute the spill action while other operations are blocked.
 	syncLock sync.Mutex
 
-	// lock is used for protecting the spillError, inDisk and closed fields.
-	lock       *sync.Mutex
+	// cond is used for protecting the spillError, inDisk and closed fields.
 	cond       *sync.Cond
 	spillError error
 	inDisk     *chunk.DataInDiskByChunks
@@ -84,7 +83,6 @@ func newSortPartition(fieldTypes []*types.FieldType, byItemsDesc []bool,
 	keyColumns []int, keyCmpFuncs []chunk.CompareFunc, spillLimit int64) *sortPartition {
 	lock := new(sync.Mutex)
 	retVal := &sortPartition{
-		lock:        lock,
 		cond:        sync.NewCond(lock),
 		spillError:  nil,
 		isSpilling:  atomic.Bool{},
@@ -109,8 +107,8 @@ func newSortPartition(fieldTypes []*types.FieldType, byItemsDesc []bool,
 }
 
 func (s *sortPartition) close() error {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	s.cond.L.Lock()
+	defer s.cond.L.Unlock()
 	s.closed = true
 	if s.inDisk != nil {
 		s.inDisk.Close()
@@ -189,8 +187,8 @@ func (s *sortPartition) sortNoLock() (ret error) {
 }
 
 func (s *sortPartition) spillToDiskImpl() error {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	s.cond.L.Lock()
+	defer s.cond.L.Unlock()
 	if s.closed {
 		return nil
 	}
@@ -350,8 +348,8 @@ func (s *sortPartition) advanceIdx() {
 }
 
 func (s *sortPartition) isSpillTriggered() bool {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	s.cond.L.Lock()
+	defer s.cond.L.Unlock()
 	return s.inDisk != nil
 }
 
@@ -364,14 +362,14 @@ func (s *sortPartition) setIsSpilling(isSpilling bool) {
 }
 
 func (s *sortPartition) setError(err error) {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	s.cond.L.Lock()
+	defer s.cond.L.Unlock()
 	s.spillError = err
 }
 
 func (s *sortPartition) checkError() error {
-	s.lock.Lock()
-	defer s.lock.Unlock()
+	s.cond.L.Lock()
+	defer s.cond.L.Unlock()
 	return s.spillError
 }
 
