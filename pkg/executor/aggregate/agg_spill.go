@@ -31,8 +31,7 @@ import (
 const (
 	// maxSpillTimes indicates how many times the data can spill at most.
 	maxSpillTimes       = 10
-	hasErrorFlag        = 1
-	partialStageFlag    = 2
+	partialStageFlag    = 1
 	spilledPartitionNum = 256
 	spillTasksDoneFlag  = -1
 
@@ -55,7 +54,7 @@ type parallelHashAggSpillHelper struct {
 	spillTriggered atomic.Bool
 	memTracker     *memory.Tracker
 	diskTracker    *disk.Tracker
-	hasError       int32
+	hasError       atomic.Bool
 
 	// These agg functions are partial agg functions that are same with partial workers'.
 	// They only be used for restoring data that are spilled to disk in partial stage.
@@ -86,7 +85,7 @@ func newSpillHelper(tracker *memory.Tracker, aggFuncsForRestoring []aggfuncs.Agg
 		},
 		spillTriggered:       atomic.Bool{},
 		memTracker:           tracker,
-		hasError:             0,
+		hasError:             atomic.Bool{},
 		aggFuncsForRestoring: aggFuncsForRestoring,
 	}
 }
@@ -167,12 +166,12 @@ func (p *parallelHashAggSpillHelper) checkAllPartialWorkersFinished() bool {
 
 // We need to check error with atmoic as multi partial workers may access it.
 func (p *parallelHashAggSpillHelper) checkError() bool {
-	return atomic.LoadInt32(&p.hasError) == hasErrorFlag
+	return p.hasError.Load()
 }
 
 // We need to set error with atmoic as multi partial workers may access it.
 func (p *parallelHashAggSpillHelper) setError() {
-	atomic.StoreInt32(&p.hasError, hasErrorFlag)
+	p.hasError.Store(true)
 }
 
 func (p *parallelHashAggSpillHelper) restoreOnePartition(ctx sessionctx.Context) (aggfuncs.AggPartialResultMapper, int64, error) {
