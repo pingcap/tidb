@@ -656,3 +656,19 @@ a
 1
 select /*+ use_index_merge(t, j0_0) */ a from t where ('1' member of (j0->'$.path0'));
 a
+drop table if exists t;
+create table t(a int, b int, c int, d json, index iad(a, (cast(d->'$.b' as signed array))));
+insert into t value(1,1,1, '{"b":[1,2,3,4]}');
+insert into t value(2,2,2, '{"b":[3,4,5,6]}');
+set tidb_analyze_version=2;
+analyze table t;
+explain select * from t use index (iad) where a = 1;
+id	estRows	task	access object	operator info
+IndexMerge_7	1.00	root		type: union
+├─IndexRangeScan_5(Build)	4.00	cop[tikv]	table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array))	range:[1,1], keep order:false
+└─TableRowIDScan_6(Probe)	1.00	cop[tikv]	table:t	keep order:false
+explain select * from t use index (iad) where a = 1 and (2 member of (d->'$.b'));
+id	estRows	task	access object	operator info
+IndexMerge_7	1.00	root		type: union
+├─IndexRangeScan_5(Build)	1.00	cop[tikv]	table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array))	range:[1 2,1 2], keep order:false, stats:partial[d:unInitialized]
+└─TableRowIDScan_6(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:partial[d:unInitialized]

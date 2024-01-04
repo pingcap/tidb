@@ -444,11 +444,55 @@ func CalcTotalSelectivityForMVIdxPath(
 ) float64 {
 	selectivities := make([]float64, 0, len(partialPaths))
 	for _, path := range partialPaths {
-		// Note that although the total row count of the mv index is usually larger than the table, the CountAfterAccess
-		// of a partial path will never be larger than the table total row count.
-		// And for an index merge path with only one partial path, the CountAfterAccess will be exactly the same as the
-		// CountAfterAccess of the partial path (currently there's no index filter for partial path of mv index merge path).
-		sel := path.CountAfterAccess / float64(coll.RealtimeCount)
+		// For a partial path, we distinguish between two cases.
+		// 1. We will access a single value on the virtual column of the mv index.
+		//   In this case, handles from a single partial path must be unique.
+		//   The CountAfterAccess of a partial path will never be larger than the table total row count.
+		//   For an index merge path with only one partial path, the CountAfterAccess will be exactly the same as the
+		//   CountAfterAccess of the partial path (currently there's no index filter for partial path of mv index merge
+		//   path).
+		// 2. We use the mv index as if it's a non-MV index, which means the virtual column is not involved in the access
+		//   conditions.
+		//   In this case, we may read repeated handles from a single partial path.
+		//   The CountAfterAccess of a partial path might be larger than the table total row count.
+		//   For an index merge path with only one partial path, the CountAfterAccess might be less than the CountAfterAccess
+		//   of the partial path
+		// For example:
+		// create table t(a int, d json, index iad(a, (cast(d->'$.b' as signed array))));
+		// insert into t value(1,'{"b":[1,2,3,4]}'), (2,'{"b":[3,4,5,6]}');
+		// The index has 8 entries.
+		// Case 1:
+		//   select * from t use index (iad) where a = 1 and 1 member of (d->'$.b');
+		//   IndexMerge
+		//   ├─IndexRangeScan RowCount:1 Range:[1 1,1 1]
+		//   └─TableRowIDScan RowCount:1
+		// Case 2:
+		//   select * from t use index (iad) where a = 1;
+		//   IndexMerge
+		//   ├─IndexRangeScan RowCount:4 Range:[1,1]
+		//   └─TableRowIDScan RowCount:1
+		// From the example, it should be obvious that we need different total row count to calculate the selectivity of
+		// the access conditions:
+		// Case 1: Here we should use the table total row count
+		//   Selectivity( a = 1 and 1 member of (d->'$.b') ) = 1 / 2
+		// Case 2: Here we should use the index total row count
+		//   Selectivity( a = 1 ) = 4 / 8
+		var virtualCol *expression.Column
+		for _, col := range coll.MVIdx2Columns[path.Index.ID] {
+			if col.VirtualExpr != nil {
+				virtualCol = col
+				break
+			}
+		}
+		cols := expression.ExtractColumnsFromExpressions(nil, path.AccessConds, func(column *expression.Column) bool {
+			return virtualCol != nil && column.UniqueID == virtualCol.UniqueID
+		})
+		realtimeCount := coll.RealtimeCount
+		// If we can't find the virtual column from the access conditions, it's the case 2.
+		if len(cols) == 0 {
+			realtimeCount, _ = coll.GetScaledRealtimeAndModifyCnt(coll.Indices[path.Index.ID])
+		}
+		sel := path.CountAfterAccess / float64(realtimeCount)
 		sel = mathutil.Clamp(sel, 0, 1)
 		selectivities = append(selectivities, sel)
 	}
@@ -675,22 +719,24 @@ func getMaskAndSelectivityForMVIndex(
 	ctx sessionctx.Context,
 	coll *statistics.HistColl,
 	id int64,
-	remainedExprs []expression.Expression,
+	exprs []expression.Expression,
 ) (float64, int64, bool) {
 	cols := coll.MVIdx2Columns[id]
 	if len(cols) == 0 {
 		return 1.0, 0, false
 	}
-	accessConds, _ := CollectFilters4MVIndex(ctx, remainedExprs, cols)
+	// You can find more examples and explanations in comments for collectFilters4MVIndex() and
+	// buildPartialPaths4MVIndex() in planner/core.
+	accessConds, _ := CollectFilters4MVIndex(ctx, exprs, cols)
 	paths, isIntersection, ok, err := BuildPartialPaths4MVIndex(ctx, accessConds, cols, coll.Indices[id].Info, coll)
 	if err != nil || !ok {
 		return 1.0, 0, false
 	}
 	totalSelectivity := CalcTotalSelectivityForMVIdxPath(coll, paths, isIntersection)
 	var mask int64
-	for i := range remainedExprs {
+	for i := range exprs {
 		for _, accessCond := range accessConds {
-			if remainedExprs[i].Equal(ctx, accessCond) {
+			if exprs[i].Equal(ctx, accessCond) {
 				mask |= 1 << uint64(i)
 				break
 			}
