@@ -1306,13 +1306,14 @@ func (rc *Client) setSpeedLimit(ctx context.Context, rateLimit uint64) error {
 			}
 
 			finalStore := store
-			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
-				err := rc.fileImporter.setDownloadSpeedLimit(ectx, finalStore.GetId(), rateLimit)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				return nil
-			})
+			rc.workerPool.ApplyOnErrorGroup(eg,
+				func() error {
+					err := rc.fileImporter.setDownloadSpeedLimit(ectx, finalStore.GetId(), rateLimit)
+					if err != nil {
+						return errors.Trace(err)
+					}
+					return nil
+				})
 		}
 
 		if err := eg.Wait(); err != nil {
@@ -1540,10 +1541,11 @@ func (rc *Client) WaitForFilesRestored(ctx context.Context, files []*backuppb.Fi
 
 	for _, file := range files {
 		fileReplica := file
-		rc.workerPool.ApplyOnErrorGroup(eg, func() error {
-			defer updateCh.Inc()
-			return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
-		})
+		rc.workerPool.ApplyOnErrorGroup(eg,
+			func() error {
+				defer updateCh.Inc()
+				return rc.fileImporter.ImportSSTFiles(ectx, []*backuppb.File{fileReplica}, EmptyRewriteRule(), rc.cipher, rc.backupMeta.ApiVersion)
+			})
 	}
 	if err := eg.Wait(); err != nil {
 		return errors.Trace(err)
@@ -1634,39 +1636,40 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 		}
 
 		finalStore := store
-		rc.workerPool.ApplyOnErrorGroup(eg, func() error {
-			opt := grpc.WithTransportCredentials(insecure.NewCredentials())
-			if rc.tlsConf != nil {
-				opt = grpc.WithTransportCredentials(credentials.NewTLS(rc.tlsConf))
-			}
-			gctx, cancel := context.WithTimeout(ectx, time.Second*5)
-			connection, err := grpc.DialContext(
-				gctx,
-				finalStore.GetAddress(),
-				opt,
-				grpc.WithBlock(),
-				grpc.FailOnNonTempDialError(true),
-				grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
-				// we don't need to set keepalive timeout here, because the connection lives
-				// at most 5s. (shorter than minimal value for keepalive time!)
-			)
-			cancel()
-			if err != nil {
-				return errors.Trace(err)
-			}
-			client := import_sstpb.NewImportSSTClient(connection)
-			_, err = client.SwitchMode(ctx, &import_sstpb.SwitchModeRequest{
-				Mode: mode,
+		rc.workerPool.ApplyOnErrorGroup(eg,
+			func() error {
+				opt := grpc.WithTransportCredentials(insecure.NewCredentials())
+				if rc.tlsConf != nil {
+					opt = grpc.WithTransportCredentials(credentials.NewTLS(rc.tlsConf))
+				}
+				gctx, cancel := context.WithTimeout(ectx, time.Second*5)
+				connection, err := grpc.DialContext(
+					gctx,
+					finalStore.GetAddress(),
+					opt,
+					grpc.WithBlock(),
+					grpc.FailOnNonTempDialError(true),
+					grpc.WithConnectParams(grpc.ConnectParams{Backoff: bfConf}),
+					// we don't need to set keepalive timeout here, because the connection lives
+					// at most 5s. (shorter than minimal value for keepalive time!)
+				)
+				cancel()
+				if err != nil {
+					return errors.Trace(err)
+				}
+				client := import_sstpb.NewImportSSTClient(connection)
+				_, err = client.SwitchMode(ctx, &import_sstpb.SwitchModeRequest{
+					Mode: mode,
+				})
+				if err != nil {
+					return errors.Trace(err)
+				}
+				err = connection.Close()
+				if err != nil {
+					log.Error("close grpc connection failed in switch mode", zap.Error(err))
+				}
+				return nil
 			})
-			if err != nil {
-				return errors.Trace(err)
-			}
-			err = connection.Close()
-			if err != nil {
-				log.Error("close grpc connection failed in switch mode", zap.Error(err))
-			}
-			return nil
-		})
 	}
 
 	if err = eg.Wait(); err != nil {
@@ -2640,36 +2643,37 @@ func (rc *Client) RestoreKVFiles(
 		} else {
 			applyWg.Add(1)
 			downstreamId := idrules[files[0].TableId]
-			rc.workerPool.ApplyOnErrorGroup(eg, func() (err error) {
-				fileStart := time.Now()
-				defer applyWg.Done()
-				defer func() {
-					onProgress(int64(len(files)))
-					updateStats(uint64(kvCount), size)
-					summary.CollectInt("File", len(files))
+			rc.workerPool.ApplyOnErrorGroup(eg,
+				func() (err error) {
+					fileStart := time.Now()
+					defer applyWg.Done()
+					defer func() {
+						onProgress(int64(len(files)))
+						updateStats(uint64(kvCount), size)
+						summary.CollectInt("File", len(files))
 
-					if err == nil {
-						filenames := make([]string, 0, len(files))
-						if runner == nil {
-							for _, f := range files {
-								filenames = append(filenames, f.Path+", ")
-							}
-						} else {
-							for _, f := range files {
-								filenames = append(filenames, f.Path+", ")
-								if e := checkpoint.AppendRangeForLogRestore(ectx, runner, f.MetaDataGroupName, downstreamId, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
-									err = errors.Annotate(e, "failed to append checkpoint data")
-									break
+						if err == nil {
+							filenames := make([]string, 0, len(files))
+							if runner == nil {
+								for _, f := range files {
+									filenames = append(filenames, f.Path+", ")
+								}
+							} else {
+								for _, f := range files {
+									filenames = append(filenames, f.Path+", ")
+									if e := checkpoint.AppendRangeForLogRestore(ectx, runner, f.MetaDataGroupName, downstreamId, f.OffsetInMetaGroup, f.OffsetInMergedGroup); e != nil {
+										err = errors.Annotate(e, "failed to append checkpoint data")
+										break
+									}
 								}
 							}
+							log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
+								zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
 						}
-						log.Info("import files done", zap.Int("batch-count", len(files)), zap.Uint64("batch-size", size),
-							zap.Duration("take", time.Since(fileStart)), zap.Strings("files", filenames))
-					}
-				}()
+					}()
 
-				return rc.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS, supportBatch)
-			})
+					return rc.fileImporter.ImportKVFiles(ectx, files, rule, rc.shiftStartTS, rc.startTS, rc.restoreTS, supportBatch)
+				})
 		}
 	}
 
