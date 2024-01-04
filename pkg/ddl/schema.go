@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 )
 
 func onCreateSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) {
@@ -240,7 +239,6 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		if err = t.DropDatabase(dbInfo.ID, dbInfo.Name.L); err != nil {
 			break
 		}
-
 
 		// Finish this job.
 		if len(tables) > 0 {

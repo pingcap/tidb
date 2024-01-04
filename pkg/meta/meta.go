@@ -165,8 +165,11 @@ func (ver DDLTableVersion) Bytes() []byte {
 	return []byte(strconv.Itoa(int(ver)))
 }
 
+// Option is for Meta option.
 type Option func(m *Meta)
 
+// WithUpdateName is for updating the name of the table.
+// Only used for ddl v2.
 func WithUpdateName() Option {
 	return func(m *Meta) {
 		m.needUpdateName = true
