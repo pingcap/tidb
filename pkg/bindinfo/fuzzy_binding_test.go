@@ -303,7 +303,7 @@ func TestUniversalBindingGC(t *testing.T) {
 	tk.MustQuery(`select bind_sql, status from mysql.bind_info where source != 'builtin'`).Check(testkit.Rows()) // empty after GC
 }
 
-func TestUniversalBindingHints(t *testing.T) {
+func TestFuzzyBindingHints(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
