@@ -13,3 +13,19 @@
 // limitations under the License.
 
 package issue
+
+import (
+	"testing"
+
+	"github.com/pingcap/tidb/pkg/testkit"
+)
+
+func TestIssue(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1);")
+	tk.MustExec("insert into t values (1);")
+	tk.MustExec("select /*+ set_var(max_execution_time=100) */ a, sleep(1) from t;")
+}
