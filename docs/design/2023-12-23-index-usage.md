@@ -70,7 +70,7 @@ We need to get / calculate the following data, and record them in a per-node mem
   1. The rows returned by the following plan should be recorded as `access_rows`
      1. `PhysicalIndexScan`
      2. `PointGet` if the object is an index.
-  2. `total_rows` can be dumped from `(*statistics.HistColl).RealtimeCount`.The RealtimeCount in `sc.usedStatsInforecords` the used stats in current statement, but I'm not sure whether it's reliable.
+  2. `total_rows` can be dumped from `(*statistics.HistColl).RealtimeCount`.The RealtimeCount in `sc.usedStatsInforecords` the used stats in current statement.
 
 The existing `RuntimeStatsColl` records the execution summary of each physical plan, and is accessed by physical plan ID. We can have multiple options on when / how to re-order the data into index usages.
 
@@ -115,13 +115,14 @@ type sessionIndexUsageCollector struct {
 	deleted bool
 }
 
-type IndexUsage struct {
-    QueryTotal uint64
-    KvReqTotal uint64
-
-    RowAccessTotal   uint64
-    // 0, 0-1, 1-10, 10-20, 20-50, 50-100, 100
-    PercentageAccess [7]uint64
+// Sample is the data structure to store index usage information.
+type Sample struct {
+	LastUsedAt     time.Time
+	QueryTotal     uint64
+	KvReqTotal     uint64
+	RowAccessTotal uint64
+	// 0, 0-1, 1-10, 10-20, 20-50, 50-100, 100
+	PercentageAccess [7]uint64
 }
 
 type GlobalIndexID struct {
@@ -136,7 +137,7 @@ It provides the following method:
 
 ```go
 type SessionIndexUsageCollector interface {
-    Update(key GlobalIndexID, queryTotal uint64, kvReqTotal uint64, rowAccess uint64, tableTotalRows uint64)
+    Update(tableID int64, indexID int64, sample *Sample)
     Delete()
 }
 ```
@@ -147,18 +148,18 @@ To avoid increasing the `queryTotal` in a query multiple times, we'll also have 
 
 ```go
 type StmtIndexUsageCollector interface {
-    Update(key GlobalIndexID, kvReqTotal uint64, rowAccess uint64, tableTotalRows uint64)
+    Update(tableID int64, indexID int64, sample *Sample)
 }
 
 type stmtIndexUsages struct {
-    usages map[IndexKey]struct{}
+    recordedIndex map[IndexKey]struct{}
     sessionCollector SessionIndexUsageCollector
 }
 
 var _ StmtIndexUsageCollector = &stmtIndexUsages{}
 ```
 
-It'll transparently update the usage on `SessionIndexUsageCollector`. The value of `queryTotal` will depend on whether this index has been recorded in the `usages` map.
+It'll transparently update the usage on `SessionIndexUsageCollector`. The value of `queryTotal` will depend on whether this index has been recorded in the `recordedIndex` map.
 
 #### Sweep index usage list
 
