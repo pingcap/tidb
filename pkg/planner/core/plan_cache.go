@@ -506,15 +506,6 @@ func rebuildRange(p Plan) error {
 		}
 		var partDef *model.PartitionDefinition
 		var isTableDual bool
-		/*
-			// The code should never run here as long as we're not using point get for partition table.
-			// And if we change the logic one day, here work as defensive programming to cache the error.
-			if x.PartitionInfo != nil {
-				// TODO: relocate the partition after rebuilding range to make PlanCache support PointGet
-				return errors.New("point get for partition table can not use plan cache")
-			}
-		*/
-		//what := PartitionPruning(sctx, x.)
 		// TODO: Test partition pruning with _tidb_rowid!
 		if x.HandleConstant != nil {
 			// Integer PK <=> Handle
@@ -549,46 +540,43 @@ func rebuildRange(p Plan) error {
 			x.Handle = kv.IntHandle(iv)
 			return nil
 		}
-		for i, param := range x.IndexConstants {
-			if x.HandleConstant != nil {
-				panic("Is it possible?")
-			}
-			if param != nil {
-				// TODO: Can this happen with partitioned tables?
-				dVal, err := convertConstant2Datum(sctx, param, x.ColsFieldType[i])
-				if err != nil {
-					return err
+		if len(x.IndexConstants) > 0 {
+			for i, param := range x.IndexConstants {
+				if param != nil {
+					// TODO: Can this happen with partitioned tables?
+					dVal, err := convertConstant2Datum(sctx, param, x.ColsFieldType[i])
+					if err != nil {
+						return err
+					}
+					x.IndexValues[i] = *dVal
+					// TODO: Also check non-clustered partitioned tables?
+					if x.PartitionInfo != nil &&
+						x.IndexInfo.Columns[i].Offset == x.partitionColumnPos {
+						// Single column PK <=> Must be the partitioning columns!
+						if !x.TblInfo.PKIsHandle {
+							return errors.New("point get for partition table can not use plan cache, PK is not handle")
+						}
+						// Re-calculate the pruning!
+						// TODO: Check how expressions are handled...
+						partDef, _, _, isTableDual = getPartitionInfo(sctx, x.TblInfo, []nameValuePair{{x.TblInfo.Columns[x.partitionColumnPos].Name.L, &x.TblInfo.Columns[x.partitionColumnPos].FieldType, *dVal, x.IndexConstants[i]}})
+						// TODO: Support isTableDual?
+						if isTableDual {
+							return errors.New("point get for partition table can not use plan cache, could not prune")
+						}
+						if partDef == nil {
+							return errors.New("point get for partition table can not use plan cache, could not prune")
+						}
+						if i > 0 && x.PartitionInfo != partDef {
+							return errors.New("point get for partition table can not use plan cache, found multiple partitions")
+						}
+						x.PartitionInfo = partDef
+					}
 				}
-				x.IndexValues[i] = *dVal
-				// TODO: Also check non-clustered partitioned tables?
-				if x.PartitionInfo != nil &&
-					x.IndexInfo.Columns[i].Offset == x.partitionColumnPos {
-					// Single column PK <=> Must be the partitioning columns!
-					if !x.TblInfo.PKIsHandle {
-						return errors.New("point get for partition table can not use plan cache, PK is not handle")
-					}
-					// Re-calculate the pruning!
-					if x.IndexInfo.Columns[i].Name.L != x.TblInfo.Columns[x.partitionColumnPos].Name.L {
-						panic("oopsie!!")
-					}
-					// TODO: Check how expressions are handled...
-					partDef, _, _, isTableDual = getPartitionInfo(sctx, x.TblInfo, []nameValuePair{{x.TblInfo.Columns[x.partitionColumnPos].Name.L, &x.TblInfo.Columns[x.partitionColumnPos].FieldType, *dVal, x.IndexConstants[i]}})
-					// TODO: Support isTableDual?
-					if isTableDual {
-						return errors.New("point get for partition table can not use plan cache, could not prune")
-					}
-					if partDef == nil {
-						return errors.New("point get for partition table can not use plan cache, could not prune")
-					}
-					x.PartitionInfo = partDef
-				}
 			}
+			return nil
 		}
 		// TODO: Also check non-clustered partitioned tables?
 		if x.PartitionInfo != nil {
-			if partDef != nil {
-				panic("Already pruned?!?!")
-			}
 			// TODO: difference between IndexValues and handles?
 			// Should this be moved to Access conds above?
 			// Re-calculate the pruning!
@@ -632,7 +620,6 @@ func rebuildRange(p Plan) error {
 				for i := range x.IndexValues {
 					copy(x.IndexValues[i], ranges.Ranges[i].LowVal)
 				}
-				//panic("Found a plan cache IndexInfo batch point test!")
 			} else {
 				var pkCol *expression.Column
 				var unsignedIntHandle bool
@@ -659,7 +646,6 @@ func rebuildRange(p Plan) error {
 					for i := range ranges {
 						x.Handles[i] = kv.IntHandle(ranges[i].LowVal[0].GetInt64())
 					}
-					//panic("Found a plan cache Handles batch point test!")
 				}
 			}
 		}
@@ -674,8 +660,6 @@ func rebuildRange(p Plan) error {
 					return err
 				}
 				x.Handles[i] = kv.IntHandle(iv)
-				// TestPreparedPlanCachePartitions
-				//panic("Found a plan cache HandleParams batch point test!")
 			}
 		}
 		for i, params := range x.IndexValueParams {
@@ -691,7 +675,6 @@ func rebuildRange(p Plan) error {
 					x.IndexValues[i][j] = *dVal
 				}
 			}
-			//panic("Found a plan cache IndexValueParams test!")
 		}
 		if len(x.HandleParams) > 0 && len(x.IndexValueParams) > 0 {
 			panic("Both handle and index params?!?")
@@ -701,7 +684,6 @@ func rebuildRange(p Plan) error {
 		}
 		// TODO: fix TableDual!
 		if len(x.PartitionInfos) > 0 {
-			//pos2PartitionDefinition := make(map[int]*model.PartitionDefinition)
 			partIDs := make([]int64, 0, len(x.Handles))
 			partDefs := make([]*model.PartitionDefinition, 0, len(x.Handles))
 			if len(x.Handles) > 0 {
@@ -740,7 +722,8 @@ func rebuildRange(p Plan) error {
 					partIDs = append(partIDs, partDef.ID)
 				}
 			} else {
-				panic("What now?, it does not have index values?")
+				// TODO: Can this even happen?
+				return errors.New("rebuild failed, cannot prune partitions")
 			}
 
 			// TODO: Where is PartitionDefs used?
