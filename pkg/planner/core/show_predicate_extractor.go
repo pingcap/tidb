@@ -164,7 +164,8 @@ type ShowStatsMetaExtractor struct {
 	Table set.StringSet
 }
 
-// Extract implements the MemTablePredicateExtractor Extract interface
+// Check extract table_name and db_name filter condition for 'show stats_meta where ...' statement.
+// Used in Show's logical plan predicate push down.
 func (e *ShowStatsMetaExtractor) Check(
 	schema *expression.Schema,
 	names []*types.FieldName,
@@ -177,16 +178,22 @@ func (e *ShowStatsMetaExtractor) Check(
 	return remained
 }
 
-// Extract predicates which can be pushed down and returns whether the extractor can extract predicates.
+// Extract implements the ShowPredicateExtractor Extract interface
 func (e *ShowStatsMetaExtractor) Extract() bool {
 	return false
 }
+
+// explainInfo implements the ShowPredicateExtractor interface.
 func (e *ShowStatsMetaExtractor) explainInfo() string {
 	return ""
 }
+
+// Field implements the ShowPredicateExtractor interface.
 func (e *ShowStatsMetaExtractor) Field() string {
 	return ""
 }
+
+// FieldPatternLike implements the ShowPredicateExtractor interface.
 func (e *ShowStatsMetaExtractor) FieldPatternLike() collate.WildcardPattern {
 	return nil
 }
