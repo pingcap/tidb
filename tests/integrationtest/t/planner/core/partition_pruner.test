@@ -1023,6 +1023,7 @@ PARTITION BY RANGE (`a`)
  PARTITION `p3` VALUES LESS THAN (9223372036854775810));
 desc select * from t where a BETWEEN -6895222 AND 3125507;
 desc select * from t where a > 9223372036854775808;
+desc select * from t where a in (-6895222, 3125507, 9223372036854775809);
 
 drop table if exists t;
 create table t(a bigint)
@@ -1033,4 +1034,5 @@ PARTITION BY RANGE (`a`)
  PARTITION `p3` VALUES LESS THAN (9223372036854775807));
 desc select * from t where a BETWEEN -6895222 AND 3125507;
 desc select * from t where a > 9223372036854775808;
+desc select * from t where a in (-6895222, 3125507, 9223372036854775809);
 

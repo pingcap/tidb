@@ -1429,7 +1429,7 @@ func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expressi
 			val, _, err = partFnConst.EvalInt(sctx, chunk.Row{})
 			unsigned = mysql.HasUnsignedFlag(partFnConst.GetType().GetFlag())
 		} else {
-			val, err = constExpr.Value.ToInt64(sctx.GetSessionVars().StmtCtx.TypeCtx())
+			val, _, err = constExpr.EvalInt(sctx, chunk.Row{})
 			unsigned = mysql.HasUnsignedFlag(constExpr.GetType().GetFlag())
 		}
 		if err != nil {

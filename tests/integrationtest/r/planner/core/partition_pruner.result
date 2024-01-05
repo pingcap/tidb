@@ -3661,6 +3661,15 @@ id	estRows	task	access object	operator info
 TableReader_9	3333.33	root		data:Selection_8
 └─Selection_8	3333.33	cop[tikv]		gt(planner__core__partition_pruner.t.a, 9223372036854775808)
   └─TableFullScan_7	10000.00	cop[tikv]	table:t, partition:p3	keep order:false, stats:pseudo
+desc select * from t where a in (-6895222, 3125507, 9223372036854775809);
+id	estRows	task	access object	operator info
+PartitionUnion_9	40.00	root		
+├─TableReader_12	20.00	root		data:Selection_11
+│ └─Selection_11	20.00	cop[tikv]		in(planner__core__partition_pruner.t.a, -6895222, 3125507, 9223372036854775809)
+│   └─TableFullScan_10	10000.00	cop[tikv]	table:t, partition:p0	keep order:false, stats:pseudo
+└─TableReader_15	20.00	root		data:Selection_14
+  └─Selection_14	20.00	cop[tikv]		in(planner__core__partition_pruner.t.a, -6895222, 3125507, 9223372036854775809)
+    └─TableFullScan_13	10000.00	cop[tikv]	table:t, partition:p3	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a bigint)
 PARTITION BY RANGE (`a`)
@@ -3676,3 +3685,8 @@ TableReader_9	250.00	root		data:Selection_8
 desc select * from t where a > 9223372036854775808;
 id	estRows	task	access object	operator info
 TableDual_7	0.00	root		rows:0
+desc select * from t where a in (-6895222, 3125507, 9223372036854775809);
+id	estRows	task	access object	operator info
+TableReader_9	8000.00	root		data:Selection_8
+└─Selection_8	8000.00	cop[tikv]		in(planner__core__partition_pruner.t.a, -6895222, 3125507, 9223372036854775809)
+  └─TableFullScan_7	10000.00	cop[tikv]	table:t, partition:p0	keep order:false, stats:pseudo
