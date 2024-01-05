@@ -87,38 +87,25 @@ func TestFuzzyBindingBasic(t *testing.T) {
 	}
 }
 
-func TestUniversalDuplicatedBinding(t *testing.T) {
-	t.Skip("skip it temporarily")
+func TestFuzzyDuplicatedBinding(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, c int, d int, e int, key(a), key(b), key(c), key(d), key(e))`)
 
-	tk.MustExec(`create global universal binding using select * from t`)
+	tk.MustExec(`create global binding using select * from *.t`)
 	require.Equal(t, showBinding(tk, "show global bindings"),
-		[][]interface{}{{"select * from `t`", "SELECT * FROM `t`", "", "enabled", "manual", "e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7"}})
+		[][]interface{}{{"select * from `*` . `t`", "SELECT * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
 
 	// if duplicated, the old one will be replaced
-	tk.MustExec(`create global universal binding using select /*+ use_index(t, a) */ * from t`)
+	tk.MustExec(`create global binding using select /*+ use_index(t, a) */ * from *.t`)
 	require.Equal(t, showBinding(tk, "show global bindings"),
-		[][]interface{}{{"select * from `t`", "SELECT /*+ use_index(`t` `a`)*/ * FROM `t`", "", "enabled", "manual", "e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7"}})
+		[][]interface{}{{"select * from `*` . `t`", "SELECT /*+ use_index(`t` `a`)*/ * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
 
 	// if duplicated, the old one will be replaced
-	tk.MustExec(`create global universal binding using select /*+ use_index(t, b) */ * from t`)
+	tk.MustExec(`create global binding using select /*+ use_index(t, b) */ * from *.t`)
 	require.Equal(t, showBinding(tk, "show global bindings"),
-		[][]interface{}{{"select * from `t`", "SELECT /*+ use_index(`t` `b`)*/ * FROM `t`", "", "enabled", "manual", "e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7"}})
-
-	// normal bindings don't conflict with universal bindings
-	tk.MustExec(`create global binding using select /*+ use_index(t, b) */ * from t`)
-	require.Equal(t, showBinding(tk, "show global bindings"),
-		[][]interface{}{{"select * from `t`", "SELECT /*+ use_index(`t` `b`)*/ * FROM `t`", "", "enabled", "manual", "e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7"},
-			{"select * from `test` . `t`", "SELECT /*+ use_index(`t` `b`)*/ * FROM `test`.`t`", "test", "enabled", "manual", "8b193b00413fdb910d39073e0d494c96ebf24d1e30b131ecdd553883d0e29b42"}})
-
-	// session bindings don't conflict with global bindings
-	tk.MustExec(`create session universal binding using select /*+ use_index(t, c) */ * from t`)
-	require.Equal(t, showBinding(tk, "show global bindings"),
-		[][]interface{}{{"select * from `t`", "SELECT /*+ use_index(`t` `b`)*/ * FROM `t`", "", "enabled", "manual", "e5796985ccafe2f71126ed6c0ac939ffa015a8c0744a24b7aee6d587103fd2f7"},
-			{"select * from `test` . `t`", "SELECT /*+ use_index(`t` `b`)*/ * FROM `test`.`t`", "test", "enabled", "manual", "8b193b00413fdb910d39073e0d494c96ebf24d1e30b131ecdd553883d0e29b42"}})
+		[][]interface{}{{"select * from `*` . `t`", "SELECT /*+ use_index(`t` `b`)*/ * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
 }
 
 func TestUniversalBindingPriority(t *testing.T) {
@@ -230,13 +217,12 @@ func TestFuzzyBindingSwitch(t *testing.T) {
 	tk3.MustQuery(`show global variables like 'tidb_opt_enable_fuzzy_binding'`).Check(testkit.Rows("tidb_opt_enable_fuzzy_binding OFF"))
 }
 
-func TestUniversalBindingSetVar(t *testing.T) {
-	t.Skip("skip it temporarily")
+func TestFuzzyBindingSetVar(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`use test`)
 	tk.MustExec(`create table t (a int, b int, key(a), key(b))`)
-	tk.MustExec(`create universal binding using select /*+ use_index(t, a) */ * from t`)
+	tk.MustExec(`create global binding using select /*+ use_index(t, a) */ * from *.t`)
 
 	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=0`)
 	tk.MustExec(`select * from t`)
