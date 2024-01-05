@@ -344,6 +344,10 @@ func generateGlobalSortIngestPlan(
 	if err != nil {
 		return nil, err
 	}
+	if len(startKeyFromSumm) == 0 && len(endKeyFromSumm) == 0 {
+		// Skip global sort for empty table.
+		return nil, nil
+	}
 	instanceIDs, err := scheduler.GenerateTaskExecutorNodes(ctx)
 	if err != nil {
 		return nil, err
