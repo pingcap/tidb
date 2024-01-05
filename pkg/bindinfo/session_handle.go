@@ -104,6 +104,7 @@ func (h *sessionBindingHandle) DropSessionBinding(sqlDigest string) error {
 	return nil
 }
 
+// MatchSessionBinding returns the matched binding for this statement.
 func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (*BindRecord, error) {
 	// The current implementation is simplistic, but session binding is only for test purpose, so
 	// there shouldn't be many session bindings, and to keep it simple, this implementation is acceptable.

@@ -15,7 +15,6 @@
 package bindinfo
 
 import (
-	"github.com/pingcap/tidb/pkg/util/hint"
 	"strings"
 	"sync"
 
@@ -23,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 )
 
@@ -85,7 +85,6 @@ func getBindRecord(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Binding
 		tableNames = info.TableNames
 	}
 
-	// the priority: session normal > session universal > global normal > global universal
 	sessionHandle := sctx.Value(SessionBindInfoKeyType).(SessionBindingHandle)
 	if bindRecord, err := sessionHandle.MatchSessionBinding(sctx, fuzzyDigest, tableNames); err == nil && bindRecord != nil && bindRecord.HasEnabledBinding() {
 		return bindRecord, metrics.ScopeSession

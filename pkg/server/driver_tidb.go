@@ -18,10 +18,10 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/bindinfo"
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/extension"
 	"github.com/pingcap/tidb/pkg/kv"
