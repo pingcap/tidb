@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
+	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -89,6 +90,7 @@ const (
 // Client sends requests to restore files.
 type Client struct {
 	pdClient      pd.Client
+	pdHTTPClient  pdhttp.Client
 	toolClient    split.SplitClient
 	fileImporter  FileImporter
 	rawKVClient   *RawKVBatchClient
@@ -118,10 +120,12 @@ type Client struct {
 	dbPool          []*DB
 	rateLimit       uint64
 	isOnline        bool
+	granularity     string
 	noSchema        bool
 	hasSpeedLimited bool
 
 	restoreStores []uint64
+	storeCount    int
 
 	cipher             *backuppb.CipherInfo
 	switchModeInterval time.Duration
@@ -193,13 +197,15 @@ type Client struct {
 // NewRestoreClient returns a new RestoreClient.
 func NewRestoreClient(
 	pdClient pd.Client,
+	pdHTTPCli pdhttp.Client,
 	tlsConf *tls.Config,
 	keepaliveConf keepalive.ClientParameters,
 	isRawKv bool,
 ) *Client {
 	return &Client{
 		pdClient:           pdClient,
-		toolClient:         split.NewSplitClient(pdClient, tlsConf, isRawKv),
+		pdHTTPClient:       pdHTTPCli,
+		toolClient:         split.NewSplitClient(pdClient, pdHTTPCli, tlsConf, isRawKv),
 		tlsConf:            tlsConf,
 		keepaliveConf:      keepaliveConf,
 		switchCh:           make(chan struct{}),
@@ -454,6 +460,10 @@ func (rc *Client) GetDomain() *domain.Domain {
 	return rc.dom
 }
 
+func (rc *Client) GetStoreCount() int {
+	return rc.storeCount
+}
+
 // GetPDClient returns a pd client.
 func (rc *Client) GetPDClient() pd.Client {
 	return rc.pdClient
@@ -520,10 +530,25 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 	return nil
 }
 
-func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) {
-	metaClient := split.NewSplitClient(rc.pdClient, rc.tlsConf, isRawKvMode)
+func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) {
+	storeWorkerPoolMap := make(map[uint64]chan struct{})
+	storeStatisticMap := make(map[uint64]*int64)
+	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
+	if err != nil {
+		log.Fatal("failed to get stores", zap.Error(err))
+	}
+	concurrencyPerStore := 512
+	for _, store := range stores {
+		ch := make(chan struct{}, concurrencyPerStore)
+		for i := 0; i < concurrencyPerStore; i += 1 {
+			ch <- struct{}{}
+		}
+		storeWorkerPoolMap[store.Id] = ch
+		storeStatisticMap[store.Id] = new(int64)
+	}
+	metaClient := split.NewSplitClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, rc.rewriteMode)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, storeWorkerPoolMap, storeStatisticMap, rc.rewriteMode)
 }
 
 func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
@@ -563,7 +588,7 @@ func (rc *Client) InitBackupMeta(
 	}
 	rc.backupMeta = backupMeta
 
-	rc.InitClients(backend, backupMeta.IsRawKv, backupMeta.IsTxnKv)
+	rc.InitClients(c, backend, backupMeta.IsRawKv, backupMeta.IsTxnKv)
 	log.Info("load backupmeta", zap.Int("databases", len(rc.databases)), zap.Int("jobs", len(rc.ddlJobs)))
 	return rc.fileImporter.CheckMultiIngestSupport(c, rc.pdClient)
 }
@@ -638,6 +663,16 @@ func (rc *Client) SetConcurrency(c uint) {
 // EnableOnline sets the mode of restore to online.
 func (rc *Client) EnableOnline() {
 	rc.isOnline = true
+}
+
+// SetGranularity sets the ganularity of restore pipeline.
+func (rc *Client) SetGranularity(g string) {
+	rc.granularity = g
+}
+
+// GetGranularity sets the ganularity of restore pipeline.
+func (rc *Client) GetGranularity() string {
+	return rc.granularity
 }
 
 // GetTLSConfig returns the tls config.
@@ -1221,7 +1256,7 @@ func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient ImporterClient,
 	rc.SetRateLimit(42)
 	rc.SetConcurrency(concurrency)
 	rc.hasSpeedLimited = false
-	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, false, rc.rewriteMode)
+	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, false, nil, nil, rc.rewriteMode)
 	return rc.setSpeedLimit(ctx, rc.rateLimit)
 }
 
@@ -1328,7 +1363,7 @@ func (rc *Client) WrapLogFilesIterWithSplitHelper(logIter LogIter, rules map[int
 	execCtx := se.GetSessionCtx().(sqlexec.RestrictedSQLExecutor)
 	splitSize, splitKeys := utils.GetRegionSplitInfo(execCtx)
 	log.Info("get split threshold from tikv config", zap.Uint64("split-size", splitSize), zap.Int64("split-keys", splitKeys))
-	client := split.NewSplitClient(rc.GetPDClient(), rc.GetTLSConfig(), false)
+	client := split.NewSplitClient(rc.GetPDClient(), rc.pdHTTPClient, rc.GetTLSConfig(), false)
 	return NewLogFilesIterWithSplitHelper(logIter, rules, client, splitSize, splitKeys), nil
 }
 
@@ -2002,16 +2037,13 @@ const (
 
 // LoadRestoreStores loads the stores used to restore data.
 func (rc *Client) LoadRestoreStores(ctx context.Context) error {
-	if !rc.isOnline {
-		return nil
-	}
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.LoadRestoreStores", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
 
-	stores, err := rc.pdClient.GetAllStores(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2019,14 +2051,19 @@ func (rc *Client) LoadRestoreStores(ctx context.Context) error {
 		if s.GetState() != metapb.StoreState_Up {
 			continue
 		}
-		for _, l := range s.GetLabels() {
-			if l.GetKey() == restoreLabelKey && l.GetValue() == restoreLabelValue {
-				rc.restoreStores = append(rc.restoreStores, s.GetId())
-				break
+		rc.storeCount++
+		if rc.isOnline {
+			for _, l := range s.GetLabels() {
+				if l.GetKey() == restoreLabelKey && l.GetValue() == restoreLabelValue {
+					rc.restoreStores = append(rc.restoreStores, s.GetId())
+					break
+				}
 			}
 		}
 	}
-	log.Info("load restore stores", zap.Uint64s("store-ids", rc.restoreStores))
+	if rc.isOnline {
+		log.Info("load restore stores", zap.Uint64s("store-ids", rc.restoreStores))
+	}
 	return nil
 }
 
@@ -2051,7 +2088,7 @@ func (rc *Client) SetupPlacementRules(ctx context.Context, tables []*model.Table
 	}
 	rule.Index = 100
 	rule.Override = true
-	rule.LabelConstraints = append(rule.LabelConstraints, pdtypes.LabelConstraint{
+	rule.LabelConstraints = append(rule.LabelConstraints, pdhttp.LabelConstraint{
 		Key:    restoreLabelKey,
 		Op:     "in",
 		Values: []string{restoreLabelValue},
@@ -3673,35 +3710,16 @@ func CheckNewCollationEnable(
 	g glue.Glue,
 	storage kv.Storage,
 	CheckRequirements bool,
-) error {
-	if backupNewCollationEnable == "" {
-		if CheckRequirements {
-			return errors.Annotatef(berrors.ErrUnknown,
-				"the value '%s' not found in backupmeta. "+
-					"you can use \"SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='%s';\" to manually check the config. "+
-					"if you ensure the value '%s' in backup cluster is as same as restore cluster, use --check-requirements=false to skip this check",
-				utils.TidbNewCollationEnabled, utils.TidbNewCollationEnabled, utils.TidbNewCollationEnabled)
-		}
-		log.Warn(fmt.Sprintf("the config '%s' is not in backupmeta", utils.TidbNewCollationEnabled))
-		return nil
-	}
-
+) (bool, error) {
 	se, err := g.CreateSession(storage)
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
 
 	newCollationEnable, err := se.GetGlobalVariable(utils.GetTidbNewCollationEnabled())
 	if err != nil {
-		return errors.Trace(err)
+		return false, errors.Trace(err)
 	}
-
-	if !strings.EqualFold(backupNewCollationEnable, newCollationEnable) {
-		return errors.Annotatef(berrors.ErrUnknown,
-			"the config '%s' not match, upstream:%v, downstream: %v",
-			utils.TidbNewCollationEnabled, backupNewCollationEnable, newCollationEnable)
-	}
-
 	// collate.newCollationEnabled is set to 1 when the collate package is initialized,
 	// so we need to modify this value according to the config of the cluster
 	// before using the collate package.
@@ -3709,7 +3727,26 @@ func CheckNewCollationEnable(
 	// modify collate.newCollationEnabled according to the config of the cluster
 	collate.SetNewCollationEnabledForTest(enabled)
 	log.Info(fmt.Sprintf("set %s", utils.TidbNewCollationEnabled), zap.Bool("new_collation_enabled", enabled))
-	return nil
+
+	if backupNewCollationEnable == "" {
+		if CheckRequirements {
+			return enabled, errors.Annotatef(berrors.ErrUnknown,
+				"the value '%s' not found in backupmeta. "+
+					"you can use \"SELECT VARIABLE_VALUE FROM mysql.tidb WHERE VARIABLE_NAME='%s';\" to manually check the config. "+
+					"if you ensure the value '%s' in backup cluster is as same as restore cluster, use --check-requirements=false to skip this check",
+				utils.TidbNewCollationEnabled, utils.TidbNewCollationEnabled, utils.TidbNewCollationEnabled)
+		}
+		log.Warn(fmt.Sprintf("the config '%s' is not in backupmeta", utils.TidbNewCollationEnabled))
+		return enabled, nil
+	}
+
+	if !strings.EqualFold(backupNewCollationEnable, newCollationEnable) {
+		return enabled, errors.Annotatef(berrors.ErrUnknown,
+			"the config '%s' not match, upstream:%v, downstream: %v",
+			utils.TidbNewCollationEnabled, backupNewCollationEnable, newCollationEnable)
+	}
+
+	return enabled, nil
 }
 
 type waitTiFlashBackoffer struct {

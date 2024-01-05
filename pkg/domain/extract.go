@@ -62,8 +62,7 @@ const (
 )
 
 func taskTypeToString(t ExtractType) string {
-	switch t {
-	case ExtractPlanType:
+	if t == ExtractPlanType {
 		return "Plan"
 	}
 	return "Unknown"
@@ -131,8 +130,7 @@ func newExtractWorker(sctx sessionctx.Context, isBackgroundWorker bool) *extract
 }
 
 func (w *extractWorker) extractTask(ctx context.Context, task *ExtractTask) (string, error) {
-	switch task.ExtractType {
-	case ExtractPlanType:
+	if task.ExtractType == ExtractPlanType {
 		return w.extractPlanTask(ctx, task)
 	}
 	return "", errors.New("unknown extract task")
@@ -453,8 +451,7 @@ func dumpExtractMeta(task *ExtractTask, zw *zip.Writer) error {
 	}
 	varMap := make(map[string]string)
 	varMap[ExtractTaskType] = taskTypeToString(task.ExtractType)
-	switch task.ExtractType {
-	case ExtractPlanType:
+	if task.ExtractType == ExtractPlanType {
 		varMap[ExtractPlanTaskSkipStats] = strconv.FormatBool(task.SkipStats)
 	}
 

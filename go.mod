@@ -77,6 +77,7 @@ require (
 	github.com/nishanths/predeclared v0.2.2
 	github.com/opentracing/basictracer-go v1.0.0
 	github.com/opentracing/opentracing-go v1.2.0
+	github.com/otiai10/copy v1.2.0
 	github.com/phayes/freeport v0.0.0-20180830031419-95f893ade6f2
 	github.com/pingcap/badger v1.5.1-0.20230103063557-828f39b09b6d
 	github.com/pingcap/errors v0.11.5-0.20231212100244-799fae176cfb
@@ -87,7 +88,7 @@ require (
 	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
 	github.com/pingcap/tipb v0.0.0-20230919054518-dfd7d194838f
-	github.com/prometheus/client_golang v1.17.0
+	github.com/prometheus/client_golang v1.18.0
 	github.com/prometheus/client_model v0.5.0
 	github.com/prometheus/common v0.45.0
 	github.com/prometheus/prometheus v0.48.1
@@ -104,7 +105,7 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/client-go/v2 v2.0.8-0.20231227070846-61c486af13a5
-	github.com/tikv/pd/client v0.0.0-20231227120157-cee6e63b9f06
+	github.com/tikv/pd/client v0.0.0-20240103101103-a4d2f1ca365a
 	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
@@ -128,7 +129,7 @@ require (
 	golang.org/x/net v0.19.0
 	golang.org/x/oauth2 v0.15.0
 	golang.org/x/sync v0.5.0
-	golang.org/x/sys v0.15.0
+	golang.org/x/sys v0.16.0
 	golang.org/x/term v0.15.0
 	golang.org/x/text v0.14.0
 	golang.org/x/time v0.5.0

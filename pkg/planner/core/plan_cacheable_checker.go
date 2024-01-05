@@ -57,12 +57,9 @@ func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.Info
 // Handle "ignore_plan_cache()" hint
 // If there are multiple hints, only one will take effect
 func IsASTCacheable(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (bool, string) {
-	_, isSelect := node.(*ast.SelectStmt)
-	_, isUpdate := node.(*ast.UpdateStmt)
-	_, isInsert := node.(*ast.InsertStmt)
-	_, isDelete := node.(*ast.DeleteStmt)
-	_, isSetOpr := node.(*ast.SetOprStmt)
-	if !(isSelect || isUpdate || isInsert || isDelete || isSetOpr) {
+	switch node.(type) {
+	case *ast.SelectStmt, *ast.UpdateStmt, *ast.InsertStmt, *ast.DeleteStmt, *ast.SetOprStmt:
+	default:
 		return false, "not a SELECT/UPDATE/INSERT/DELETE/SET statement"
 	}
 	checker := cacheableChecker{

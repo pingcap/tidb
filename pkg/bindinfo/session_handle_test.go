@@ -110,8 +110,12 @@ func TestSessionBinding(t *testing.T) {
 		require.Equal(t, testSQL.memoryUsage, pb.GetGauge().GetValue())
 
 		handle := tk.Session().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-		sqlDigest := parser.DigestNormalized(testSQL.originSQL).String()
-		bindData := handle.GetSessionBinding(sqlDigest, testSQL.originSQL, "test")
+		stmt, err := parser.New().ParseOneStmt(testSQL.originSQL, "", "")
+		require.NoError(t, err)
+
+		_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+		bindData, err := handle.MatchSessionBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+		require.NoError(t, err)
 		require.NotNil(t, bindData)
 		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
 		bind := bindData.Bindings[0]
@@ -148,17 +152,10 @@ func TestSessionBinding(t *testing.T) {
 
 		_, err = tk.Exec("drop session " + testSQL.dropSQL)
 		require.NoError(t, err)
-		bindData = handle.GetSessionBinding(sqlDigest, testSQL.originSQL, "test")
-		require.NotNil(t, bindData)
-		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
-		require.Len(t, bindData.Bindings, 0)
-
-		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Enabled).Write(pb)
+		_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+		bindData, err = handle.MatchSessionBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 		require.NoError(t, err)
-		require.Equal(t, float64(0), pb.GetGauge().GetValue())
-		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession, bindinfo.Enabled).Write(pb)
-		require.NoError(t, err)
-		require.Equal(t, float64(0), pb.GetGauge().GetValue())
+		require.Nil(t, bindData) // dropped
 	}
 }
 
@@ -211,8 +208,9 @@ func TestBaselineDBLowerCase(t *testing.T) {
 	internal.UtilCleanBindingEnv(tk, dom)
 
 	// Simulate existing bindings with upper case default_db.
+	_, sqlDigest := parser.NormalizeDigestForBinding("select * from `spm` . `t`")
 	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select * from `spm` . `t`', 'SPM', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
 	tk.MustQuery("select original_sql, default_db from mysql.bind_info where original_sql = 'select * from `spm` . `t`'").Check(testkit.Rows(
 		"select * from `spm` . `t` SPM",
 	))
@@ -230,7 +228,7 @@ func TestBaselineDBLowerCase(t *testing.T) {
 	internal.UtilCleanBindingEnv(tk, dom)
 	// Simulate existing bindings with upper case default_db.
 	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select * from `spm` . `t`', 'SPM', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
 	tk.MustQuery("select original_sql, default_db from mysql.bind_info where original_sql = 'select * from `spm` . `t`'").Check(testkit.Rows(
 		"select * from `spm` . `t` SPM",
 	))
@@ -397,12 +395,8 @@ func TestDropSingleBindings(t *testing.T) {
 	require.Equal(t, "SELECT * FROM `test`.`t` USE INDEX (`idx_b`)", rows[0][1])
 	tk.MustExec("drop binding for select * from t using select * from t use index(idx_a)")
 	rows = tk.MustQuery("show bindings").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "SELECT * FROM `test`.`t` USE INDEX (`idx_b`)", rows[0][1])
-	tk.MustExec("drop table t")
-	tk.MustExec("drop binding for select * from t using select * from t use index(idx_b)")
-	rows = tk.MustQuery("show bindings").Rows()
 	require.Len(t, rows, 0)
+	tk.MustExec("drop table t")
 
 	tk.MustExec("create table t(a int, b int, c int, index idx_a(a), index idx_b(b))")
 	// Test drop global bindings.
@@ -415,12 +409,8 @@ func TestDropSingleBindings(t *testing.T) {
 	require.Equal(t, "SELECT * FROM `test`.`t` USE INDEX (`idx_b`)", rows[0][1])
 	tk.MustExec("drop global binding for select * from t using select * from t use index(idx_a)")
 	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, "SELECT * FROM `test`.`t` USE INDEX (`idx_b`)", rows[0][1])
-	tk.MustExec("drop table t")
-	tk.MustExec("drop global binding for select * from t using select * from t use index(idx_b)")
-	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0)
+	tk.MustExec("drop table t")
 }
 
 func TestPreparedStmt(t *testing.T) {

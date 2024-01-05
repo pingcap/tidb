@@ -734,11 +734,13 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 	var p *SQLBindPlan
 	if v.OriginNode != nil {
+		normdOrigSQL, sqlDigestWithDB := bindinfo.NormalizeStmtForBinding(v.OriginNode, b.ctx.GetSessionVars().CurrentDB)
 		p = &SQLBindPlan{
 			SQLBindOp:    OpSQLBindDrop,
-			NormdOrigSQL: parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
+			NormdOrigSQL: normdOrigSQL,
 			IsGlobal:     v.GlobalScope,
 			Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
+			SQLDigest:    sqlDigestWithDB,
 		}
 		if v.HintedNode != nil {
 			p.BindSQL = utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text())
@@ -856,11 +858,6 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 	restoredSQL := utilparser.RestoreWithDefaultDB(originNode, bindableStmt.Schema, bindableStmt.Query)
 	bindSQL = utilparser.RestoreWithDefaultDB(hintNode, bindableStmt.Schema, hintNode.Text())
 	db := utilparser.GetDefaultDB(originNode, bindableStmt.Schema)
-	if v.IsUniversal { // hide schema name if it's universal binding
-		restoredSQL = utilparser.RestoreWithoutDB(originNode)
-		bindSQL = utilparser.RestoreWithoutDB(hintNode)
-		db = ""
-	}
 	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(restoredSQL)
 
 	p := &SQLBindPlan{
@@ -868,7 +865,6 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 		NormdOrigSQL: normdOrigSQL,
 		BindSQL:      bindSQL,
 		IsGlobal:     v.GlobalScope,
-		IsUniversal:  v.IsUniversal,
 		BindStmt:     hintNode,
 		Db:           db,
 		Charset:      bindableStmt.Charset,
@@ -899,18 +895,12 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 	restoredSQL := utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())
 	bindSQL := utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text())
 	db := utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB)
-	if v.IsUniversal { // hide schema name if it's universal binding
-		restoredSQL = utilparser.RestoreWithoutDB(v.OriginNode)
-		bindSQL = utilparser.RestoreWithoutDB(v.HintedNode)
-		db = ""
-	}
 	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(restoredSQL)
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
 		NormdOrigSQL: normdOrigSQL,
 		BindSQL:      bindSQL,
 		IsGlobal:     v.GlobalScope,
-		IsUniversal:  v.IsUniversal,
 		BindStmt:     v.HintedNode,
 		Db:           db,
 		Charset:      charSet,
@@ -1300,17 +1290,6 @@ func removeGlobalIndexPaths(paths []*util.AccessPath) []*util.AccessPath {
 	return paths[:i]
 }
 
-func removeTiflashDuringStaleRead(paths []*util.AccessPath) []*util.AccessPath {
-	n := 0
-	for _, path := range paths {
-		if path.StoreType != kv.TiFlash {
-			paths[n] = path
-			n++
-		}
-	}
-	return paths[:n]
-}
-
 func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo) (*LogicalLock, error) {
 	var tblID2PhysTblIDCol map[int64]*expression.Column
 	if len(b.partitionedTable) > 0 {
@@ -1475,7 +1454,7 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		return &Simple{Statement: as}, nil
 	case ast.AdminFlushPlanCache:
 		return &Simple{Statement: as}, nil
-	case ast.AdminSetBDRRole:
+	case ast.AdminSetBDRRole, ast.AdminUnsetBDRRole:
 		return &Simple{Statement: as}, nil
 	case ast.AdminShowBDRRole:
 		p := &AdminShowBDRRole{}
@@ -2150,7 +2129,11 @@ func getColOffsetForAnalyze(colsInfo []*model.ColumnInfo, colID int64) int {
 // TODO: find a better way to find indexed columns in ANALYZE rather than use IndexColumn.Offset
 // For multi-valued index, we need to collect it separately here and analyze it as independent index analyze task.
 // See comments for AnalyzeResults.ForMVIndex for more details.
-func getModifiedIndexesInfoForAnalyze(sctx sessionctx.Context, tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) ([]*model.IndexInfo, []*model.IndexInfo) {
+func getModifiedIndexesInfoForAnalyze(
+	tblInfo *model.TableInfo,
+	allColumns bool,
+	colsInfo []*model.ColumnInfo,
+) ([]*model.IndexInfo, []*model.IndexInfo) {
 	idxsInfo := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	independentIdxsInfo := make([]*model.IndexInfo, 0)
 	for _, originIdx := range tblInfo.Indices {
@@ -2158,7 +2141,7 @@ func getModifiedIndexesInfoForAnalyze(sctx sessionctx.Context, tblInfo *model.Ta
 			continue
 		}
 		if originIdx.MVIndex {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing multi-valued indexes is not supported, skip %s", originIdx.Name.L))
+			independentIdxsInfo = append(independentIdxsInfo, originIdx)
 			continue
 		}
 		if allColumns {
@@ -2277,7 +2260,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		}
 		execColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
 		allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
-		indexes, independentIndexes := getModifiedIndexesInfoForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
+		indexes, independentIndexes := getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, execColsInfo)
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 		newTask := AnalyzeColumnsTask{
 			HandleCols:  handleCols,

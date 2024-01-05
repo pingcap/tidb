@@ -28,7 +28,7 @@ import (
 
 func TestSlotManagerReserve(t *testing.T) {
 	sm := newSlotManager()
-	sm.capacity = 16
+	sm.updateCapacity(16)
 	// no node
 	_, ok := sm.canReserve(&proto.Task{Concurrency: 1})
 	require.False(t, ok)
@@ -181,13 +181,13 @@ func TestSlotManagerUpdate(t *testing.T) {
 	defer ctrl.Finish()
 
 	taskMgr := mock.NewMockTaskManager(ctrl)
-	taskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return([]string{"tidb-1", "tidb-2", "tidb-3"}, nil)
+	taskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return([]proto.ManagedNode{{ID: "tidb-1"}, {ID: "tidb-2"}, {ID: "tidb-3"}}, nil)
 	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{
 		"tidb-1": 12,
 		"tidb-2": 8,
 	}, nil)
 	sm := newSlotManager()
-	sm.capacity = 16
+	sm.updateCapacity(16)
 	require.Empty(t, sm.usedSlots)
 	require.Empty(t, sm.reservedSlots)
 	require.NoError(t, sm.update(context.Background(), taskMgr))
@@ -198,7 +198,7 @@ func TestSlotManagerUpdate(t *testing.T) {
 		"tidb-3": 0,
 	}, sm.usedSlots)
 	// some node scaled in, should be reflected
-	taskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return([]string{"tidb-1"}, nil)
+	taskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return([]proto.ManagedNode{{ID: "tidb-1"}}, nil)
 	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{
 		"tidb-1": 12,
 		"tidb-2": 8,
@@ -215,11 +215,21 @@ func TestSlotManagerUpdate(t *testing.T) {
 	require.Equal(t, map[string]int{
 		"tidb-1": 12,
 	}, sm.usedSlots)
-	taskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return([]string{"tidb-1"}, nil)
+	taskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return([]proto.ManagedNode{{ID: "tidb-1"}}, nil)
 	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(nil, errors.New("mock err"))
 	require.ErrorContains(t, sm.update(context.Background(), taskMgr), "mock err")
 	require.Empty(t, sm.reservedSlots)
 	require.Equal(t, map[string]int{
 		"tidb-1": 12,
 	}, sm.usedSlots)
+}
+
+func TestSlotManagerUpdateCapacity(t *testing.T) {
+	sm := newSlotManager()
+	sm.updateCapacity(16)
+	require.Equal(t, 16, int(sm.capacity.Load()))
+	sm.updateCapacity(32)
+	require.Equal(t, 32, int(sm.capacity.Load()))
+	sm.updateCapacity(0)
+	require.Equal(t, 32, int(sm.capacity.Load()))
 }

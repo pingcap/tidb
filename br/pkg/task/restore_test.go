@@ -55,7 +55,7 @@ func TestConfigureRestoreClient(t *testing.T) {
 		RestoreCommonConfig: restoreComCfg,
 		DdlBatchSize:        128,
 	}
-	client := restore.NewRestoreClient(mockPDClient{}, nil, keepalive.ClientParameters{}, false)
+	client := restore.NewRestoreClient(mockPDClient{}, nil, nil, keepalive.ClientParameters{}, false)
 	ctx := context.Background()
 	err := configureRestoreClient(ctx, client, restoreCfg)
 	require.NoError(t, err)

@@ -706,6 +706,12 @@ var defaultSysVars = []*SysVar{
 		(*SetPDClientDynamicOption.Load())(TiDBEnableTSOFollowerProxy, val)
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: PDEnableFollowerHandleRegion, Value: BoolToOnOff(DefPDEnableFollowerHandleRegion), Type: TypeBool, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+		return BoolToOnOff(EnablePDFollowerHandleRegion.Load()), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		(*SetPDClientDynamicOption.Load())(PDEnableFollowerHandleRegion, val)
+		return nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableLocalTxn, Value: BoolToOnOff(DefTiDBEnableLocalTxn), Hidden: true, Type: TypeBool, Depended: true, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 		return BoolToOnOff(EnableLocalTxn.Load()), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
@@ -1214,8 +1220,8 @@ var defaultSysVars = []*SysVar{
 		s.EnableNonPreparedPlanCacheForDML = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnableUniversalBinding, Value: BoolToOnOff(false), Type: TypeBool, IsHintUpdatableVerfied: true, SetSession: func(s *SessionVars, val string) error {
-		s.EnableUniversalBinding = TiDBOptOn(val)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnableFuzzyBinding, Value: BoolToOnOff(false), Type: TypeBool, IsHintUpdatableVerfied: true, SetSession: func(s *SessionVars, val string) error {
+		s.EnableFuzzyBinding = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBNonPreparedPlanCacheSize, Value: strconv.FormatUint(uint64(DefTiDBNonPreparedPlanCacheSize), 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 100000, SetSession: func(s *SessionVars, val string) error {
@@ -1908,7 +1914,7 @@ var defaultSysVars = []*SysVar{
 		s.ConstraintCheckInPlace = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTxnMode, Value: DefTiDBTxnMode, AllowEmptyAll: true, Type: TypeEnum, PossibleValues: []string{"pessimistic", "optimistic"}, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTxnMode, Value: DefTiDBTxnMode, AllowEmptyAll: true, Type: TypeEnum, PossibleValues: []string{PessimisticTxnMode, OptimisticTxnMode}, SetSession: func(s *SessionVars, val string) error {
 		s.TxnMode = strings.ToUpper(val)
 		return nil
 	}},
@@ -3001,6 +3007,11 @@ var SetCharsetVariables = []string{
 const (
 	// MaskPwd is the mask of password for LDAP variables.
 	MaskPwd = "******"
+
+	// PessimisticTxnMode is the name for tidb_txn_mode system variable.
+	PessimisticTxnMode = "pessimistic"
+	// OptimisticTxnMode is the name for tidb_txn_mode system variable.
+	OptimisticTxnMode = "optimistic"
 )
 
 const (

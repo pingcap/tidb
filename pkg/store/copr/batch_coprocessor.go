@@ -655,7 +655,6 @@ func buildBatchCopTasksConsistentHash(
 	fetchTopoStart := time.Now()
 	for {
 		retryNum++
-		// todo: use AssureAndGetTopo() after SNS is done.
 		storesStr, err = tiflashcompute.GetGlobalTopoFetcher().FetchAndGetTopo()
 		if err != nil {
 			return nil, err

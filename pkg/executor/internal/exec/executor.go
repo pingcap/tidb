@@ -292,7 +292,12 @@ func Open(ctx context.Context, e Executor) (err error) {
 }
 
 // Next is a wrapper function on e.Next(), it handles some common codes.
-func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
+func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = util.GetRecoverError(r)
+		}
+	}()
 	if e.RuntimeStats() != nil {
 		start := time.Now()
 		defer func() { e.RuntimeStats().Record(time.Since(start), req.NumRows()) }()
@@ -306,7 +311,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) error {
 	defer r.End()
 
 	e.RegisterSQLAndPlanInExecForTopSQL()
-	err := e.Next(ctx, req)
+	err = e.Next(ctx, req)
 
 	if err != nil {
 		return err
