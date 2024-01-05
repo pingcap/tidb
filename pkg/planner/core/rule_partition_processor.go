@@ -19,6 +19,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"math"
 	gomath "math"
 	"slices"
 	"sort"
@@ -852,6 +853,7 @@ func (*partitionProcessor) name() string {
 
 type lessThanDataInt struct {
 	data     []int64
+	unsigned bool
 	maxvalue bool
 }
 
@@ -859,32 +861,34 @@ func (lt *lessThanDataInt) length() int {
 	return len(lt.data)
 }
 
-func compareUnsigned(v1, v2 int64) int {
-	switch {
-	case uint64(v1) > uint64(v2):
-		return 1
-	case uint64(v1) == uint64(v2):
-		return 0
-	}
-	return -1
-}
-
 func (lt *lessThanDataInt) compare(ith int, v int64, unsigned bool) int {
-	if ith == len(lt.data)-1 {
-		if lt.maxvalue {
-			return 1
-		}
-	}
-	if unsigned {
-		return compareUnsigned(lt.data[ith], v)
-	}
-	switch {
-	case lt.data[ith] > v:
+	if ith == lt.length()-1 && lt.maxvalue {
 		return 1
-	case lt.data[ith] == v:
-		return 0
 	}
-	return -1
+
+	isUnsigned0, isUnsigned1 := lt.unsigned, unsigned
+	arg0, arg1 := lt.data[ith], v
+
+	var res int
+	switch {
+	case isUnsigned0 && isUnsigned1:
+		res = cmp.Compare(uint64(arg0), uint64(arg1))
+	case isUnsigned0 && !isUnsigned1:
+		if arg1 < 0 || uint64(arg0) > math.MaxInt64 {
+			res = 1
+		} else {
+			res = cmp.Compare(arg0, arg1)
+		}
+	case !isUnsigned0 && isUnsigned1:
+		if arg0 < 0 || uint64(arg1) > math.MaxInt64 {
+			res = -1
+		} else {
+			res = cmp.Compare(arg0, arg1)
+		}
+	case !isUnsigned0 && !isUnsigned1:
+		res = cmp.Compare(arg0, arg1)
+	}
+	return res
 }
 
 // partitionRange represents [start, end)
@@ -1027,6 +1031,7 @@ func (s *partitionProcessor) pruneRangePartition(ctx sessionctx.Context, pi *mod
 	pruner := rangePruner{
 		lessThan: lessThanDataInt{
 			data:     partExpr.ForRangePruning.LessThan,
+			unsigned: mysql.HasUnsignedFlag(col.GetType().GetFlag()),
 			maxvalue: partExpr.ForRangePruning.MaxValue,
 		},
 		col:        col,
@@ -1344,8 +1349,7 @@ func (p *rangePruner) partitionRangeForExpr(sctx sessionctx.Context, expr expres
 		return 0, 0, false
 	}
 
-	unsigned := mysql.HasUnsignedFlag(p.col.RetType.GetFlag())
-	start, end = pruneUseBinarySearch(p.lessThan, dataForPrune, unsigned)
+	start, end = pruneUseBinarySearch(p.lessThan, dataForPrune)
 	return start, end, true
 }
 
@@ -1406,7 +1410,6 @@ func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expressi
 	}
 
 	var result partitionRangeOR
-	unsigned := mysql.HasUnsignedFlag(col.RetType.GetFlag())
 	for i := 1; i < len(args); i++ {
 		constExpr, ok := args[i].(*expression.Constant)
 		if !ok {
@@ -1419,18 +1422,21 @@ func partitionRangeForInExpr(sctx sessionctx.Context, args []expression.Expressi
 
 		var val int64
 		var err error
+		var unsigned bool
 		if pruner.partFn != nil {
 			// replace fn(col) to fn(const)
 			partFnConst := replaceColumnWithConst(pruner.partFn, constExpr)
 			val, _, err = partFnConst.EvalInt(sctx, chunk.Row{})
+			unsigned = mysql.HasUnsignedFlag(partFnConst.GetType().GetFlag())
 		} else {
 			val, err = constExpr.Value.ToInt64(sctx.GetSessionVars().StmtCtx.TypeCtx())
+			unsigned = mysql.HasUnsignedFlag(constExpr.GetType().GetFlag())
 		}
 		if err != nil {
 			return pruner.fullRange()
 		}
 
-		start, end := pruneUseBinarySearch(pruner.lessThan, dataForPrune{op: ast.EQ, c: val}, unsigned)
+		start, end := pruneUseBinarySearch(pruner.lessThan, dataForPrune{op: ast.EQ, c: val, unsigned: unsigned})
 		result = append(result, partitionRange{start, end})
 	}
 	return result.simplify()
@@ -1466,8 +1472,9 @@ func getMonotoneMode(fnName string) monotoneMode {
 
 // f(x) op const, op is > = <
 type dataForPrune struct {
-	op string
-	c  int64
+	op       string
+	c        int64
+	unsigned bool
 }
 
 // extractDataForPrune extracts data from the expression for pruning.
@@ -1541,6 +1548,7 @@ func (p *rangePruner) extractDataForPrune(sctx sessionctx.Context, expr expressi
 	c, isNull, err := constExpr.EvalInt(sctx, chunk.Row{})
 	if err == nil && !isNull {
 		ret.c = c
+		ret.unsigned = mysql.HasUnsignedFlag(constExpr.GetType().GetFlag())
 		return ret, true
 	}
 	return ret, false
@@ -1598,7 +1606,7 @@ func relaxOP(op string) string {
 
 // pruneUseBinarySearch returns the start and end of which partitions will match.
 // If no match (i.e. value > last partition) the start partition will be the number of partition, not the first partition!
-func pruneUseBinarySearch(lessThan lessThanDataInt, data dataForPrune, unsigned bool) (start int, end int) {
+func pruneUseBinarySearch(lessThan lessThanDataInt, data dataForPrune) (start int, end int) {
 	length := lessThan.length()
 	switch data.op {
 	case ast.EQ:
@@ -1606,21 +1614,21 @@ func pruneUseBinarySearch(lessThan lessThanDataInt, data dataForPrune, unsigned 
 		// col = 14, lessThan = [4 7 11 14 17] => [4, 5)
 		// col = 10, lessThan = [4 7 11 14 17] => [2, 3)
 		// col = 3, lessThan = [4 7 11 14 17] => [0, 1)
-		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c, unsigned) > 0 })
+		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c, data.unsigned) > 0 })
 		start, end = pos, pos+1
 	case ast.LT:
 		// col < 66, lessThan = [4 7 11 14 17] => [0, 5)
 		// col < 14, lessThan = [4 7 11 14 17] => [0, 4)
 		// col < 10, lessThan = [4 7 11 14 17] => [0, 3)
 		// col < 3, lessThan = [4 7 11 14 17] => [0, 1)
-		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c, unsigned) >= 0 })
+		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c, data.unsigned) >= 0 })
 		start, end = 0, pos+1
 	case ast.GE:
 		// col >= 66, lessThan = [4 7 11 14 17] => [5, 5)
 		// col >= 14, lessThan = [4 7 11 14 17] => [4, 5)
 		// col >= 10, lessThan = [4 7 11 14 17] => [2, 5)
 		// col >= 3, lessThan = [4 7 11 14 17] => [0, 5)
-		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c, unsigned) > 0 })
+		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c, data.unsigned) > 0 })
 		start, end = pos, length
 	case ast.GT:
 		// col > 66, lessThan = [4 7 11 14 17] => [5, 5)
@@ -1628,14 +1636,16 @@ func pruneUseBinarySearch(lessThan lessThanDataInt, data dataForPrune, unsigned 
 		// col > 10, lessThan = [4 7 11 14 17] => [3, 5)
 		// col > 3, lessThan = [4 7 11 14 17] => [1, 5)
 		// col > 2, lessThan = [4 7 11 14 17] => [0, 5)
-		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c+1, unsigned) > 0 })
+
+		// Although `data.c+1` will overflow in sometime, this does not affect the correct results obtained.
+		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c+1, data.unsigned) > 0 })
 		start, end = pos, length
 	case ast.LE:
 		// col <= 66, lessThan = [4 7 11 14 17] => [0, 6)
 		// col <= 14, lessThan = [4 7 11 14 17] => [0, 5)
 		// col <= 10, lessThan = [4 7 11 14 17] => [0, 3)
 		// col <= 3, lessThan = [4 7 11 14 17] => [0, 1)
-		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c, unsigned) > 0 })
+		pos := sort.Search(length, func(i int) bool { return lessThan.compare(i, data.c, data.unsigned) > 0 })
 		start, end = 0, pos+1
 	case ast.IsNull:
 		start, end = 0, 1
