@@ -7,6 +7,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"golang.org/x/exp/maps"
 	"math/rand"
 	"strings"
 	"sync"
@@ -961,7 +962,6 @@ func (importer *FileImporter) downloadSSTV2(
 	apiVersion kvrpcpb.APIVersion,
 ) ([]*import_sstpb.SSTMeta, error) {
 	var mu sync.Mutex
-	downloadMetas := make([]*import_sstpb.SSTMeta, 0, len(files))
 	downloadMetasMap := make(map[string]import_sstpb.SSTMeta)
 	resultMetasMap := make(map[string]*import_sstpb.SSTMeta)
 	downloadReqsMap := make(map[string]*import_sstpb.DownloadRequest)
@@ -997,15 +997,11 @@ func (importer *FileImporter) downloadSSTV2(
 				}
 				var err error
 				var resp *import_sstpb.DownloadResponse
-				err = utils.WithRetry(ctx, func() error {
-					dctx, cancel := context.WithTimeout(ectx, gRPCTimeOut)
-					resp, err = importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)
-					cancel()
-					if err != nil {
-						return err
-					}
-					return nil
-				}, utils.NewDownloadSSTBackoffer())
+				resp, err = utils.WithRetryV2(ectx, utils.NewDownloadSSTBackoffer(), func(ctx context.Context) (*import_sstpb.DownloadResponse, error) {
+					dctx, cancel := context.WithTimeout(ctx, gRPCTimeOut)
+					defer cancel()
+					return importer.importClient.DownloadSST(dctx, peer.GetStoreId(), req)
+				})
 				if err != nil {
 					return errors.Trace(err)
 				}
@@ -1020,13 +1016,14 @@ func (importer *FileImporter) downloadSSTV2(
 				sstMeta, ok := downloadMetasMap[file.Name]
 				if !ok {
 					mu.Unlock()
-					return errors.New("not found file key for download sstMeta")
+					return errors.Errorf("not found file key for download sstMeta", file.Name)
 				}
 				sstMeta.Range = &import_sstpb.Range{
 					Start: TruncateTS(resp.Range.GetStart()),
 					End:   TruncateTS(resp.Range.GetEnd()),
 				}
 				resultMetasMap[file.Name] = &sstMeta
+				mu.Unlock()
 
 				log.Debug("download from peer",
 					logutil.Region(regionInfo.Region),
@@ -1038,7 +1035,6 @@ func (importer *FileImporter) downloadSSTV2(
 					zap.Uint32("resp-crc32", resp.Crc32),
 					zap.Int("len files", len(files)),
 				)
-				mu.Unlock()
 			}
 			return nil
 		})
@@ -1046,10 +1042,7 @@ func (importer *FileImporter) downloadSSTV2(
 	if err := eg.Wait(); err != nil {
 		return nil, err
 	}
-	for _, sstMeta := range resultMetasMap {
-		downloadMetas = append(downloadMetas, sstMeta)
-	}
-	return downloadMetas, nil
+	return maps.Values(resultMetasMap), nil
 }
 
 func (importer *FileImporter) downloadRawKVSSTV2(
