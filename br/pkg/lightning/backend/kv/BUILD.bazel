@@ -22,6 +22,7 @@ go_library(
         "//br/pkg/logutil",
         "//br/pkg/redact",
         "//br/pkg/utils",
+        "//pkg/errctx",
         "//pkg/expression",
         "//pkg/kv",
         "//pkg/meta/autoid",

@@ -49,6 +49,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -177,14 +178,13 @@ func (a *recordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 		return exec.NewFirstChunk(a.executor)
 	}
 
-	base := a.executor.Base()
-	return alloc.Alloc(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize())
+	return alloc.Alloc(a.executor.RetFieldTypes(), a.executor.InitCap(), a.executor.MaxChunkSize())
 }
 
 func (a *recordSet) Finish() error {
 	var err error
 	a.once.Do(func() {
-		err = a.executor.Close()
+		err = exec.Close(a.executor)
 		cteErr := resetCTEStorageMap(a.stmt.Ctx)
 		if cteErr != nil {
 			logutil.BgLogger().Error("got error when reset cte storage, should check if the spill disk file deleted or not", zap.Error(cteErr))
@@ -353,7 +353,7 @@ func (a *ExecStmt) PointGet(ctx context.Context) (*recordSet, error) {
 	}
 
 	if err = exec.Open(ctx, pointExecutor); err != nil {
-		terror.Call(pointExecutor.Close)
+		terror.Log(exec.Close(pointExecutor))
 		return nil, err
 	}
 
@@ -557,7 +557,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		stmtCtx := sctx.GetSessionVars().StmtCtx
 		_, planDigest := GetPlanDigest(stmtCtx)
 		_, digest := stmtCtx.SQLDigest()
-		stmtCtx.RunawayChecker = domain.GetDomain(sctx).RunawayManager().DeriveChecker(sctx.GetSessionVars().ResourceGroupName, stmtCtx.OriginalSQL, digest.String(), planDigest.String())
+		stmtCtx.RunawayChecker = domain.GetDomain(sctx).RunawayManager().DeriveChecker(sctx.GetSessionVars().StmtCtx.ResourceGroupName, stmtCtx.OriginalSQL, digest.String(), planDigest.String())
 		if err := stmtCtx.RunawayChecker.BeforeExecutor(); err != nil {
 			return nil, err
 		}
@@ -565,7 +565,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 
 	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorFirstRun)
 	if err = a.openExecutor(ctx, e); err != nil {
-		terror.Call(e.Close)
+		terror.Log(exec.Close(e))
 		return nil, err
 	}
 
@@ -714,14 +714,20 @@ func (a *ExecStmt) handleForeignKeyCascade(ctx context.Context, fkc *FKCascadeEx
 			return err
 		}
 		if err := exec.Open(ctx, e); err != nil {
-			terror.Call(e.Close)
+			terror.Log(exec.Close(e))
 			return err
 		}
 		err = exec.Next(ctx, e, exec.NewFirstChunk(e))
-		if err != nil {
-			return err
+		failpoint.Inject("handleForeignKeyCascadeError", func(val failpoint.Value) {
+			// Next can recover panic and convert it to error. So we inject error directly here.
+			if val.(bool) && err == nil {
+				err = errors.New("handleForeignKeyCascadeError")
+			}
+		})
+		closeErr := exec.Close(e)
+		if err == nil {
+			err = closeErr
 		}
-		err = e.Close()
 		if err != nil {
 			return err
 		}
@@ -886,8 +892,7 @@ func (c *chunkRowRecordSet) NewChunk(alloc chunk.Allocator) *chunk.Chunk {
 		return exec.NewFirstChunk(c.e)
 	}
 
-	base := c.e.Base()
-	return alloc.Alloc(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize())
+	return alloc.Alloc(c.e.RetFieldTypes(), c.e.InitCap(), c.e.MaxChunkSize())
 }
 
 func (c *chunkRowRecordSet) Close() error {
@@ -897,7 +902,7 @@ func (c *chunkRowRecordSet) Close() error {
 
 func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e exec.Executor) (_ sqlexec.RecordSet, retErr error) {
 	if snapshotTS := a.Ctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
-		terror.Log(e.Close())
+		terror.Log(exec.Close(e))
 		return nil, errors.New("can not execute write statement when 'tidb_snapshot' is set")
 	}
 
@@ -941,7 +946,7 @@ func (a *ExecStmt) handlePessimisticSelectForUpdate(ctx context.Context, e exec.
 
 func (a *ExecStmt) runPessimisticSelectForUpdate(ctx context.Context, e exec.Executor) (sqlexec.RecordSet, error) {
 	defer func() {
-		terror.Log(e.Close())
+		terror.Log(exec.Close(e))
 	}()
 	var rows []chunk.Row
 	var err error
@@ -971,7 +976,7 @@ func (a *ExecStmt) handleNoDelayExecutor(ctx context.Context, e exec.Executor) (
 
 	var err error
 	defer func() {
-		terror.Log(e.Close())
+		terror.Log(exec.Close(e))
 		a.logAudit()
 	}()
 
@@ -1406,7 +1411,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		}
 	}
 	sessVars.PrevStmt = FormatSQL(a.GetTextToLog(false))
-
+	a.recordLastQueryInfo(err)
 	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
 	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
 	if sessVars.InRestrictedSQL {
@@ -1447,6 +1452,38 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 		}
 		if sessVars.TxnCtx.FairLockingEffective {
 			executor_metrics.FairLockingTxnEffectiveCount.Inc()
+		}
+	}
+}
+
+func (a *ExecStmt) recordLastQueryInfo(err error) {
+	sessVars := a.Ctx.GetSessionVars()
+	// Record diagnostic information for DML statements
+	recordLastQuery := false
+	switch typ := a.StmtNode.(type) {
+	case *ast.ShowStmt:
+		recordLastQuery = typ.Tp != ast.ShowSessionStates
+	case *ast.ExecuteStmt, ast.DMLNode:
+		recordLastQuery = true
+	}
+	if recordLastQuery {
+		var lastRUConsumption float64
+		if ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
+			ruDetail := ruDetailRaw.(*util.RUDetails)
+			lastRUConsumption = ruDetail.RRU() + ruDetail.WRU()
+		}
+		failpoint.Inject("mockRUConsumption", func(_ failpoint.Value) {
+			lastRUConsumption = float64(len(sessVars.StmtCtx.OriginalSQL))
+		})
+		// Keep the previous queryInfo for `show session_states` because the statement needs to encode it.
+		sessVars.LastQueryInfo = sessionstates.QueryInfo{
+			TxnScope:      sessVars.CheckAndGetTxnScope(),
+			StartTS:       sessVars.TxnCtx.StartTS,
+			ForUpdateTS:   sessVars.TxnCtx.GetForUpdateTS(),
+			RUConsumption: lastRUConsumption,
+		}
+		if err != nil {
+			sessVars.LastQueryInfo.ErrMsg = err.Error()
 		}
 	}
 }
@@ -1554,6 +1591,11 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if tikvExecDetailRaw != nil {
 		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
 	}
+	ruDetails := util.NewRUDetails()
+	if ruDetailsVal := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailsVal != nil {
+		ruDetails = ruDetailsVal.(*util.RUDetails)
+	}
+
 	execDetail := stmtCtx.GetExecDetails()
 	copTaskInfo := stmtCtx.CopTasksDetails()
 	memMax := sessVars.MemTracker.MaxConsumed()
@@ -1615,6 +1657,10 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 		UsedStats:         stmtCtx.GetUsedStatsInfo(false),
 		IsSyncStatsFailed: stmtCtx.IsSyncStatsFailed,
 		Warnings:          collectWarningsForSlowLog(stmtCtx),
+		ResourceGroupName: sessVars.StmtCtx.ResourceGroupName,
+		RRU:               ruDetails.RRU(),
+		WRU:               ruDetails.WRU(),
+		WaitRUDuration:    ruDetails.RUWaitDuration(),
 	}
 	failpoint.Inject("assertSyncStatsFailed", func(val failpoint.Value) {
 		if val.(bool) {
@@ -1796,10 +1842,9 @@ func getEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPla
 			// some hints like 'memory_quota' cannot be extracted from the PhysicalPlan directly,
 			// so we have to iterate all hints from the customer and keep some other necessary hints.
 			switch tableHint.HintName.L {
-			case plannercore.HintMemoryQuota, plannercore.HintUseToja, plannercore.HintNoIndexMerge,
-				plannercore.HintMaxExecutionTime,
-				plannercore.HintIgnoreIndex, plannercore.HintReadFromStorage, plannercore.HintMerge,
-				plannercore.HintSemiJoinRewrite, plannercore.HintNoDecorrelate:
+			case hint.HintMemoryQuota, hint.HintUseToja, hint.HintNoIndexMerge,
+				hint.HintMaxExecutionTime, hint.HintIgnoreIndex, hint.HintReadFromStorage,
+				hint.HintMerge, hint.HintSemiJoinRewrite, hint.HintNoDecorrelate:
 				hints = append(hints, tableHint)
 			}
 		}
@@ -1888,6 +1933,10 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if tikvExecDetailRaw != nil {
 		tikvExecDetail = *(tikvExecDetailRaw.(*util.ExecDetails))
 	}
+	var ruDetail *util.RUDetails
+	if ruDetailRaw := a.GoCtx.Value(util.RUDetailsCtxKey); ruDetailRaw != nil {
+		ruDetail = ruDetailRaw.(*util.RUDetails)
+	}
 
 	if stmtCtx.WaitLockLeaseTime > 0 {
 		if execDetail.BackoffSleep == nil {
@@ -1943,6 +1992,8 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 		Prepared:            a.isPreparedStmt,
 		KeyspaceName:        keyspaceName,
 		KeyspaceID:          keyspaceID,
+		RUDetail:            ruDetail,
+		ResourceGroupName:   sessVars.StmtCtx.ResourceGroupName,
 	}
 	if a.retryCount > 0 {
 		stmtExecInfo.ExecRetryTime = costTime - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)

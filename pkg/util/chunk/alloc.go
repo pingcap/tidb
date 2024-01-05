@@ -16,6 +16,7 @@ package chunk
 
 import (
 	"math"
+	"sync"
 
 	"github.com/pingcap/tidb/pkg/types"
 )
@@ -241,3 +242,103 @@ func (cList *columnList) push(col *Column) {
 		cList.allocColumns = append(cList.allocColumns, col)
 	}
 }
+
+var _ Allocator = &syncAllocator{}
+
+// syncAllocator uses a mutex to protect the allocator.
+type syncAllocator struct {
+	mu    sync.Mutex
+	alloc Allocator
+}
+
+// NewSyncAllocator creates the synchronized version of the `alloc`
+func NewSyncAllocator(alloc Allocator) Allocator {
+	return &syncAllocator{
+		alloc: alloc,
+	}
+}
+
+// Alloc implements `Allocator` for `*syncAllocator`
+func (s *syncAllocator) Alloc(fields []*types.FieldType, capacity, maxChunkSize int) *Chunk {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.alloc.Alloc(fields, capacity, maxChunkSize)
+}
+
+// CheckReuseAllocSize implements `Allocator` for `*syncAllocator`
+func (s *syncAllocator) CheckReuseAllocSize() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.alloc.CheckReuseAllocSize()
+}
+
+// Reset implements `Allocator` for `*syncAllocator`
+func (s *syncAllocator) Reset() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.alloc.Reset()
+}
+
+var _ Allocator = &reuseHookAllocator{}
+
+// reuseHookAllocator will run the function hook when it allocates the first chunk from reused part
+type reuseHookAllocator struct {
+	once sync.Once
+	f    func()
+
+	alloc Allocator
+}
+
+// NewReuseHookAllocator creates an allocator, which will call the function `f` when the first reused chunk is allocated.
+func NewReuseHookAllocator(alloc Allocator, f func()) Allocator {
+	return &reuseHookAllocator{
+		f:     f,
+		alloc: alloc,
+	}
+}
+
+// Alloc implements `Allocator` for `*reuseHookAllocator`
+func (r *reuseHookAllocator) Alloc(fields []*types.FieldType, capacity, maxChunkSize int) *Chunk {
+	if r.alloc.CheckReuseAllocSize() {
+		r.once.Do(r.f)
+	}
+
+	return r.alloc.Alloc(fields, capacity, maxChunkSize)
+}
+
+// CheckReuseAllocSize implements `Allocator` for `*reuseHookAllocator`
+func (r *reuseHookAllocator) CheckReuseAllocSize() bool {
+	return r.alloc.CheckReuseAllocSize()
+}
+
+// Reset implements `Allocator` for `*reuseHookAllocator`
+func (r *reuseHookAllocator) Reset() {
+	r.alloc.Reset()
+}
+
+var _ Allocator = emptyAllocator{}
+
+type emptyAllocator struct{}
+
+var defaultEmptyAllocator Allocator = emptyAllocator{}
+
+// NewEmptyAllocator creates an empty pool, which will always call `chunk.New` to create a new chunk
+func NewEmptyAllocator() Allocator {
+	return defaultEmptyAllocator
+}
+
+// Alloc implements `Allocator` for `*emptyAllocator`
+func (emptyAllocator) Alloc(fields []*types.FieldType, capacity, maxChunkSize int) *Chunk {
+	return New(fields, capacity, maxChunkSize)
+}
+
+// CheckReuseAllocSize implements `Allocator` for `*emptyAllocator`
+func (emptyAllocator) CheckReuseAllocSize() bool {
+	return false
+}
+
+// Reset implements `Allocator` for `*emptyAllocator`
+func (emptyAllocator) Reset() {}

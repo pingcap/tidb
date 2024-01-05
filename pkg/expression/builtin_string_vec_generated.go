@@ -17,13 +17,12 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
 // vecEvalInt evals FIELD(str,str1,str2,str3,...).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_field
-func (b *builtinFieldIntSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinFieldIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -73,7 +72,7 @@ func (b *builtinFieldIntSig) vectorized() bool {
 
 // vecEvalInt evals FIELD(str,str1,str2,str3,...).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_field
-func (b *builtinFieldRealSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinFieldRealSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {
@@ -123,7 +122,7 @@ func (b *builtinFieldRealSig) vectorized() bool {
 
 // vecEvalInt evals FIELD(str,str1,str2,str3,...).
 // See https://dev.mysql.com/doc/refman/5.7/en/string-functions.html#function_field
-func (b *builtinFieldStringSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinFieldStringSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf0, err := b.bufAllocator.get()
 	if err != nil {

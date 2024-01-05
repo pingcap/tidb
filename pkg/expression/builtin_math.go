@@ -175,7 +175,7 @@ func (b *builtinAbsRealSig) Clone() builtinFunc {
 
 // evalReal evals ABS(value).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_abs
-func (b *builtinAbsRealSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinAbsRealSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -195,7 +195,7 @@ func (b *builtinAbsIntSig) Clone() builtinFunc {
 
 // evalInt evals ABS(value).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_abs
-func (b *builtinAbsIntSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinAbsIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -221,7 +221,7 @@ func (b *builtinAbsUIntSig) Clone() builtinFunc {
 
 // evalInt evals ABS(value).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_abs
-func (b *builtinAbsUIntSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinAbsUIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	return b.args[0].EvalInt(ctx, row)
 }
 
@@ -237,7 +237,7 @@ func (b *builtinAbsDecSig) Clone() builtinFunc {
 
 // evalDecimal evals ABS(value).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_abs
-func (b *builtinAbsDecSig) evalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
+func (b *builtinAbsDecSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalDecimal(ctx, row)
 	if isNull || err != nil {
 		return nil, isNull, err
@@ -352,7 +352,7 @@ func (b *builtinRoundRealSig) Clone() builtinFunc {
 
 // evalReal evals ROUND(value).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
-func (b *builtinRoundRealSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinRoundRealSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -372,7 +372,7 @@ func (b *builtinRoundIntSig) Clone() builtinFunc {
 
 // evalInt evals ROUND(value).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
-func (b *builtinRoundIntSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinRoundIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	return b.args[0].EvalInt(ctx, row)
 }
 
@@ -388,7 +388,7 @@ func (b *builtinRoundDecSig) Clone() builtinFunc {
 
 // evalDecimal evals ROUND(value).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
-func (b *builtinRoundDecSig) evalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
+func (b *builtinRoundDecSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalDecimal(ctx, row)
 	if isNull || err != nil {
 		return nil, isNull, err
@@ -412,7 +412,7 @@ func (b *builtinRoundWithFracRealSig) Clone() builtinFunc {
 
 // evalReal evals ROUND(value, frac).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
-func (b *builtinRoundWithFracRealSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinRoundWithFracRealSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -436,7 +436,7 @@ func (b *builtinRoundWithFracIntSig) Clone() builtinFunc {
 
 // evalInt evals ROUND(value, frac).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
-func (b *builtinRoundWithFracIntSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinRoundWithFracIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -460,7 +460,7 @@ func (b *builtinRoundWithFracDecSig) Clone() builtinFunc {
 
 // evalDecimal evals ROUND(value, frac).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_round
-func (b *builtinRoundWithFracDecSig) evalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
+func (b *builtinRoundWithFracDecSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalDecimal(ctx, row)
 	if isNull || err != nil {
 		return nil, isNull, err
@@ -533,7 +533,7 @@ func (b *builtinCeilRealSig) Clone() builtinFunc {
 
 // evalReal evals a builtinCeilRealSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_ceil
-func (b *builtinCeilRealSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinCeilRealSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -553,7 +553,7 @@ func (b *builtinCeilIntToIntSig) Clone() builtinFunc {
 
 // evalInt evals a builtinCeilIntToIntSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_ceil
-func (b *builtinCeilIntToIntSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinCeilIntToIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	return b.args[0].EvalInt(ctx, row)
 }
 
@@ -569,7 +569,7 @@ func (b *builtinCeilIntToDecSig) Clone() builtinFunc {
 
 // evalDecimal evals a builtinCeilIntToDecSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_Ceil
-func (b *builtinCeilIntToDecSig) evalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
+func (b *builtinCeilIntToDecSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return nil, true, err
@@ -593,7 +593,7 @@ func (b *builtinCeilDecToIntSig) Clone() builtinFunc {
 
 // evalInt evals a builtinCeilDecToIntSig.
 // Ceil receives
-func (b *builtinCeilDecToIntSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinCeilDecToIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalDecimal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -620,7 +620,7 @@ func (b *builtinCeilDecToDecSig) Clone() builtinFunc {
 }
 
 // evalDecimal evals a builtinCeilDecToDecSig.
-func (b *builtinCeilDecToDecSig) evalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
+func (b *builtinCeilDecToDecSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalDecimal(ctx, row)
 	if isNull || err != nil {
 		return nil, isNull, err
@@ -724,7 +724,7 @@ func (b *builtinFloorRealSig) Clone() builtinFunc {
 
 // evalReal evals a builtinFloorRealSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_floor
-func (b *builtinFloorRealSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinFloorRealSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -744,7 +744,7 @@ func (b *builtinFloorIntToIntSig) Clone() builtinFunc {
 
 // evalInt evals a builtinFloorIntToIntSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_floor
-func (b *builtinFloorIntToIntSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinFloorIntToIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	return b.args[0].EvalInt(ctx, row)
 }
 
@@ -760,7 +760,7 @@ func (b *builtinFloorIntToDecSig) Clone() builtinFunc {
 
 // evalDecimal evals a builtinFloorIntToDecSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_floor
-func (b *builtinFloorIntToDecSig) evalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
+func (b *builtinFloorIntToDecSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return nil, true, err
@@ -784,7 +784,7 @@ func (b *builtinFloorDecToIntSig) Clone() builtinFunc {
 
 // evalInt evals a builtinFloorDecToIntSig.
 // floor receives
-func (b *builtinFloorDecToIntSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinFloorDecToIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalDecimal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -811,7 +811,7 @@ func (b *builtinFloorDecToDecSig) Clone() builtinFunc {
 }
 
 // evalDecimal evals a builtinFloorDecToDecSig.
-func (b *builtinFloorDecToDecSig) evalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
+func (b *builtinFloorDecToDecSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
 	val, isNull, err := b.args[0].EvalDecimal(ctx, row)
 	if isNull || err != nil {
 		return nil, true, err
@@ -882,7 +882,7 @@ func (b *builtinLog1ArgSig) Clone() builtinFunc {
 
 // evalReal evals a builtinLog1ArgSig, corresponding to log(x).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log
-func (b *builtinLog1ArgSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinLog1ArgSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -906,7 +906,7 @@ func (b *builtinLog2ArgsSig) Clone() builtinFunc {
 
 // evalReal evals a builtinLog2ArgsSig, corresponding to log(b, x).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log
-func (b *builtinLog2ArgsSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinLog2ArgsSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	val1, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -954,7 +954,7 @@ func (b *builtinLog2Sig) Clone() builtinFunc {
 
 // evalReal evals a builtinLog2Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log2
-func (b *builtinLog2Sig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinLog2Sig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -995,7 +995,7 @@ func (b *builtinLog10Sig) Clone() builtinFunc {
 
 // evalReal evals a builtinLog10Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_log10
-func (b *builtinLog10Sig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinLog10Sig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -1064,7 +1064,7 @@ func (b *builtinRandSig) Clone() builtinFunc {
 
 // evalReal evals RAND().
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
-func (b *builtinRandSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinRandSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	res := b.mysqlRng.Gen()
 	return res, false, nil
 }
@@ -1081,7 +1081,7 @@ func (b *builtinRandWithSeedFirstGenSig) Clone() builtinFunc {
 
 // evalReal evals RAND(N).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_rand
-func (b *builtinRandWithSeedFirstGenSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinRandWithSeedFirstGenSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	seed, isNull, err := b.args[0].EvalInt(ctx, row)
 	if err != nil {
 		return 0, true, err
@@ -1127,7 +1127,7 @@ func (b *builtinPowSig) Clone() builtinFunc {
 
 // evalReal evals POW(x, y).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_pow
-func (b *builtinPowSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinPowSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	x, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -1181,7 +1181,7 @@ func (b *builtinConvSig) Clone() builtinFunc {
 
 // evalString evals CONV(N,from_base,to_base).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_conv.
-func (b *builtinConvSig) evalString(ctx sessionctx.Context, row chunk.Row) (res string, isNull bool, err error) {
+func (b *builtinConvSig) evalString(ctx EvalContext, row chunk.Row) (res string, isNull bool, err error) {
 	var str string
 	switch x := b.args[0].(type) {
 	case *Constant:
@@ -1317,7 +1317,7 @@ func (b *builtinCRC32Sig) Clone() builtinFunc {
 
 // evalInt evals a CRC32(expr).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_crc32
-func (b *builtinCRC32Sig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinCRC32Sig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	x, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -1355,7 +1355,7 @@ func (b *builtinSignSig) Clone() builtinFunc {
 
 // evalInt evals SIGN(v).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_sign
-func (b *builtinSignSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinSignSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -1397,7 +1397,7 @@ func (b *builtinSqrtSig) Clone() builtinFunc {
 
 // evalReal evals a SQRT(x).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_sqrt
-func (b *builtinSqrtSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinSqrtSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -1437,7 +1437,7 @@ func (b *builtinAcosSig) Clone() builtinFunc {
 
 // evalReal evals a builtinAcosSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_acos
-func (b *builtinAcosSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinAcosSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -1478,7 +1478,7 @@ func (b *builtinAsinSig) Clone() builtinFunc {
 
 // evalReal evals a builtinAsinSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_asin
-func (b *builtinAsinSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinAsinSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -1541,7 +1541,7 @@ func (b *builtinAtan1ArgSig) Clone() builtinFunc {
 
 // evalReal evals a builtinAtan1ArgSig, corresponding to atan(x).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_atan
-func (b *builtinAtan1ArgSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinAtan1ArgSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -1562,7 +1562,7 @@ func (b *builtinAtan2ArgsSig) Clone() builtinFunc {
 
 // evalReal evals a builtinAtan1ArgSig, corresponding to atan(y, x).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_atan
-func (b *builtinAtan2ArgsSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinAtan2ArgsSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	val1, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -1605,7 +1605,7 @@ func (b *builtinCosSig) Clone() builtinFunc {
 
 // evalReal evals a builtinCosSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_cos
-func (b *builtinCosSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinCosSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -1642,7 +1642,7 @@ func (b *builtinCotSig) Clone() builtinFunc {
 
 // evalReal evals a builtinCotSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_cot
-func (b *builtinCotSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinCotSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -1687,7 +1687,7 @@ func (b *builtinDegreesSig) Clone() builtinFunc {
 
 // evalReal evals a builtinDegreesSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_degrees
-func (b *builtinDegreesSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinDegreesSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -1725,7 +1725,7 @@ func (b *builtinExpSig) Clone() builtinFunc {
 
 // evalReal evals a builtinExpSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_exp
-func (b *builtinExpSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinExpSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -1775,7 +1775,7 @@ func (b *builtinPISig) Clone() builtinFunc {
 
 // evalReal evals a builtinPISig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_pi
-func (b *builtinPISig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinPISig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	return float64(math.Pi), false, nil
 }
 
@@ -1808,7 +1808,7 @@ func (b *builtinRadiansSig) Clone() builtinFunc {
 
 // evalReal evals RADIANS(X).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_radians
-func (b *builtinRadiansSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinRadiansSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	x, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -1845,7 +1845,7 @@ func (b *builtinSinSig) Clone() builtinFunc {
 
 // evalReal evals a builtinSinSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_sin
-func (b *builtinSinSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinSinSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -1882,7 +1882,7 @@ func (b *builtinTanSig) Clone() builtinFunc {
 
 // evalReal evals a builtinTanSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_tan
-func (b *builtinTanSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinTanSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	val, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -1950,7 +1950,7 @@ func (b *builtinTruncateDecimalSig) Clone() builtinFunc {
 
 // evalDecimal evals a TRUNCATE(X,D).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_truncate
-func (b *builtinTruncateDecimalSig) evalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
+func (b *builtinTruncateDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
 	x, isNull, err := b.args[0].EvalDecimal(ctx, row)
 	if isNull || err != nil {
 		return nil, isNull, err
@@ -1980,7 +1980,7 @@ func (b *builtinTruncateRealSig) Clone() builtinFunc {
 
 // evalReal evals a TRUNCATE(X,D).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_truncate
-func (b *builtinTruncateRealSig) evalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+func (b *builtinTruncateRealSig) evalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
 	x, isNull, err := b.args[0].EvalReal(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -2006,7 +2006,7 @@ func (b *builtinTruncateIntSig) Clone() builtinFunc {
 
 // evalInt evals a TRUNCATE(X,D).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_truncate
-func (b *builtinTruncateIntSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinTruncateIntSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	x, isNull, err := b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
@@ -2043,7 +2043,7 @@ type builtinTruncateUintSig struct {
 
 // evalInt evals a TRUNCATE(X,D).
 // See https://dev.mysql.com/doc/refman/5.7/en/mathematical-functions.html#function_truncate
-func (b *builtinTruncateUintSig) evalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+func (b *builtinTruncateUintSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
 	x, isNull, err := b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err

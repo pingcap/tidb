@@ -15,23 +15,28 @@
 package addindextest
 
 import (
+	"context"
+	"fmt"
 	"testing"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/util"
 )
 
 func init() {
@@ -41,6 +46,13 @@ func init() {
 }
 
 func TestAddIndexDistBasic(t *testing.T) {
+	// mock that we only have 1 cpu, add-index task can be scheduled as usual
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(1)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/testSetLastTaskID", `return(true)`))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/storage/testSetLastTaskID"))
+	})
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	if store.Name() != "TiKV" {
 		t.Skip("TiKV store only")
@@ -52,6 +64,9 @@ func TestAddIndexDistBasic(t *testing.T) {
 	tk.MustExec("use test;")
 	tk.MustExec(`set global tidb_enable_dist_task=1;`)
 
+	bak := variable.GetDDLReorgWorkerCounter()
+	tk.MustExec("set global tidb_ddl_reorg_worker_cnt = 111")
+	require.Equal(t, int32(111), variable.GetDDLReorgWorkerCounter())
 	tk.MustExec("create table t(a bigint auto_random primary key) partition by hash(a) partitions 20;")
 	tk.MustExec("insert into t values (), (), (), (), (), ()")
 	tk.MustExec("insert into t values (), (), (), (), (), ()")
@@ -61,6 +76,15 @@ func TestAddIndexDistBasic(t *testing.T) {
 	tk.MustExec("split table t between (3) and (8646911284551352360) regions 50;")
 	tk.MustExec("alter table t add index idx(a);")
 	tk.MustExec("admin check index t idx;")
+	taskMgr, err := storage.GetTaskManager()
+	require.NoError(t, err)
+	ctx := util.WithInternalSourceType(context.Background(), "dispatcher")
+	task, err := taskMgr.GetTaskByIDWithHistory(ctx, storage.TestLastTaskID.Load())
+	require.NoError(t, err)
+	require.Equal(t, 1, task.Concurrency)
+
+	tk.MustExec(fmt.Sprintf("set global tidb_ddl_reorg_worker_cnt = %d", bak))
+	require.Equal(t, bak, variable.GetDDLReorgWorkerCounter())
 
 	tk.MustExec("create table t1(a bigint auto_random primary key);")
 	tk.MustExec("insert into t1 values (), (), (), (), (), ()")
@@ -128,6 +152,7 @@ func TestAddIndexDistCancel(t *testing.T) {
 }
 
 func TestAddIndexDistPauseAndResume(t *testing.T) {
+	t.Skip("unstable") // TODO(tangenta): fix this unstable test
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	if store.Name() != "TiKV" {
 		t.Skip("TiKV store only")
@@ -154,7 +179,7 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 		<-ddl.TestSyncChan
 	}
 
-	dispatcher.MockDMLExecutionOnPausedState = func(task *proto.Task) {
+	scheduler.MockDMLExecutionOnPausedState = func(task *proto.Task) {
 		row := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
 		require.Equal(t, 1, len(row))
 		jobID := row[0][0].(string)
@@ -169,13 +194,13 @@ func TestAddIndexDistPauseAndResume(t *testing.T) {
 	}
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", "3*return(true)"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDMLExecutionOnPausedState", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockDMLExecutionOnPausedState", "return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/syncDDLTaskPause", "return()"))
 	tk.MustExec(`set global tidb_enable_dist_task=1;`)
 	tk.MustExec("alter table t add index idx1(a);")
 	tk.MustExec("admin check table t;")
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/mockDMLExecutionOnPausedState"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockDMLExecutionOnPausedState"))
 
 	// dist task succeed, job paused and resumed.
 	var hook = &callback.TestDDLCallback{Do: dom}

@@ -45,7 +45,7 @@ We also introduce a new session variable `tidb_request_source_type` to help tag 
 SET @@tidb_request_source_type = "lightning";
 ```
 
-The `tidb_request_source_type` variable is mostly used in the internal logic, but it's also possible to use this variable to allow other tasks be controlled as background jobs. For example, by setting this varialbe user can let `dumpling` or `TiSpark` tasks be control in the background mode.
+The `tidb_request_source_type` variable is mostly used in the internal logic, but it's also possible to use this variable to allow other tasks be controlled as background jobs. For example, by setting this variable user can let `dumpling` or `TiSpark` tasks be control in the background mode.
 
 ## Implementation: Resource Limiter on TiKV for Background Task
 
