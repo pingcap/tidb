@@ -79,8 +79,8 @@ const (
 	// currentVersion is for all new DDL jobs.
 	currentVersion = 1
 	// DDLOwnerKey is the ddl owner path that is saved to etcd, and it's exported for testing.
-	DDLOwnerKey         = "/tidb/ddl/fg/owner"
-	ddlSchemaVersionKey = "/tidb/schema_version"
+	DDLOwnerKey             = "/tidb/ddl/fg/owner"
+	ddlSchemaVersionKeyLock = "/tidb/ddl/schema_version_lock"
 	// addingDDLJobPrefix is the path prefix used to record the newly added DDL job, and it's saved to etcd.
 	addingDDLJobPrefix = "/tidb/ddl/add_ddl_job_"
 	ddlPrompt          = "ddl"
@@ -461,7 +461,7 @@ func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			mu := concurrency.NewMutex(se, ddlSchemaVersionKey)
+			mu := concurrency.NewMutex(se, ddlSchemaVersionKeyLock)
 			if err := mu.Lock(sv.ctx); err != nil {
 				return errors.Trace(err)
 			}
@@ -1481,7 +1481,7 @@ func (*ddl) migration2DDLV2(m *meta.Meta) error {
 			return errors.Trace(err)
 		}
 		for _, tableInfo := range tables {
-			if err := m.CreateTableName(dbInfo.Name.String(), tableInfo.Name.String(), tableInfo.ID); err != nil {
+			if err := m.CreateTableName(dbInfo.Name.L, tableInfo.Name.L, tableInfo.ID); err != nil {
 				return errors.Trace(err)
 			}
 		}
