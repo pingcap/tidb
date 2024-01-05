@@ -189,9 +189,8 @@ func buildFuzzyDigestMap(bindRecords []*BindRecord) map[string][]string {
 				p = parser.New()
 				continue
 			}
-			sqlWithoutDB := utilparser.RestoreWithoutDB(stmt)
-			_, fuzzyDigest := parser.NormalizeDigestForBinding(sqlWithoutDB)
-			m[fuzzyDigest.String()] = append(m[fuzzyDigest.String()], binding.SQLDigest)
+			_, fuzzyDigest := NormalizeStmtForFuzzyBinding(stmt)
+			m[fuzzyDigest] = append(m[fuzzyDigest], binding.SQLDigest)
 		}
 	}
 	return m
@@ -531,11 +530,7 @@ func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, stmt a
 		return nil, nil
 	}
 
-	_, _, fuzzDigest, err := normalizeStmt(stmt, sctx.GetSessionVars().CurrentDB, true)
-	if err != nil {
-		return nil, err
-	}
-
+	_, fuzzDigest := NormalizeStmtForFuzzyBinding(stmt)
 	tableNames := CollectTableNames(stmt)
 	var bestBinding *BindRecord
 	leastWildcards := len(tableNames) + 1

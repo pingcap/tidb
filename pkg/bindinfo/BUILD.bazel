@@ -78,6 +78,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "//pkg/types",
+        "//pkg/util",
         "//pkg/util/hack",
         "//pkg/util/parser",
         "//pkg/util/stmtsummary",

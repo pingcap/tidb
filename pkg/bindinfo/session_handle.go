@@ -109,11 +109,7 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, stmt
 	if h.ch.Size() == 0 {
 		return nil, nil
 	}
-
-	_, _, fuzzDigest, err := normalizeStmt(stmt, sctx.GetSessionVars().CurrentDB, true)
-	if err != nil {
-		return nil, err
-	}
+	_, fuzzDigest := NormalizeStmtForFuzzyBinding(stmt)
 
 	// The current implementation is simplistic, but session binding is only for test purpose, so
 	// there shouldn't be many session bindings, and to keep it simple, this implementation is acceptable.
@@ -127,10 +123,7 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, stmt
 			if err != nil {
 				return nil, err
 			}
-			_, _, bindingFuzzyDigest, err := normalizeStmt(bindingStmt, sctx.GetSessionVars().CurrentDB, true)
-			if err != nil {
-				return nil, err
-			}
+			_, bindingFuzzyDigest := NormalizeStmtForFuzzyBinding(bindingStmt)
 			if bindingFuzzyDigest != fuzzDigest {
 				continue
 			}

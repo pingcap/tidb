@@ -73,11 +73,23 @@ func eraseLastSemicolon(stmt ast.StmtNode) {
 }
 
 // NormalizeStmtForBinding normalizes a statement for binding.
+// Schema names will be completed automatically: `select * from t` --> `select * from db . t`.
+func NormalizeStmtForBinding(stmtNode ast.StmtNode, specifiedDB string) (normalizedStmt, exactSQLDigest string) {
+	return normalizeStmt(stmtNode, specifiedDB, false)
+}
+
+// NormalizeStmtForFuzzyBinding normalizes a statement for fuzzy matching.
+// Schema names will be eliminated automatically: `select * from db . t` --> `select * from t`.
+func NormalizeStmtForFuzzyBinding(stmtNode ast.StmtNode) (normalizedStmt, fuzzySQLDigest string) {
+	return normalizeStmt(stmtNode, "", true)
+}
+
+// NormalizeStmtForBinding normalizes a statement for binding.
 // This function skips Explain automatically, and literals in in-lists will be normalized as '...'.
 // For normal bindings, DB name will be completed automatically:
 //
 //	e.g. `select * from t where a in (1, 2, 3)` --> `select * from test.t where a in (...)`
-func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, fuzzy bool) (stmt ast.StmtNode, normalizedStmt, sqlDigest string, err error) {
+func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, fuzzy bool) (normalizedStmt, sqlDigest string) {
 	normalize := func(n ast.StmtNode) (normalizedStmt, sqlDigest string) {
 		eraseLastSemicolon(n)
 		var digest *parser.Digest
@@ -99,12 +111,12 @@ func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, fuzzy bool) (stmt 
 		// The difference between them is whether len(x.Text()) is empty. They cannot be distinguished by stmt.restore.
 		// For these cases, we need return "" as normalize SQL and hash.
 		if len(x.Text()) == 0 {
-			return x.Stmt, "", "", nil
+			return "", ""
 		}
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 			normalizeSQL, digest := normalize(x.Stmt)
-			return x.Stmt, normalizeSQL, digest, nil
+			return normalizeSQL, digest
 		case *ast.SetOprStmt:
 			normalizeExplainSQL, _ := normalize(x)
 
@@ -116,11 +128,11 @@ func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, fuzzy bool) (stmt 
 			// If the SQL is `EXPLAIN ((VALUES ROW ()) ORDER BY 1);`, the idx will be -1.
 			if idx == -1 {
 				hash := parser.DigestNormalized(normalizeExplainSQL)
-				return x.Stmt, normalizeExplainSQL, hash.String(), nil
+				return normalizeExplainSQL, hash.String()
 			}
 			normalizeSQL := normalizeExplainSQL[idx:]
 			hash := parser.DigestNormalized(normalizeSQL)
-			return x.Stmt, normalizeSQL, hash.String(), nil
+			return normalizeSQL, hash.String()
 		}
 	case *ast.SelectStmt, *ast.SetOprStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 		// This function is only used to find bind record.
@@ -129,12 +141,12 @@ func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, fuzzy bool) (stmt 
 		// The difference between them is whether len(x.Text()) is empty. They cannot be distinguished by stmt.restore.
 		// For these cases, we need return "" as normalize SQL and hash.
 		if len(x.Text()) == 0 {
-			return x, "", "", nil
+			return "", ""
 		}
 		normalizedSQL, digest := normalize(x)
-		return x, normalizedSQL, digest, nil
+		return normalizedSQL, digest
 	}
-	return nil, "", "", nil
+	return "", ""
 }
 
 func fuzzyMatchBindingTableName(currentDB string, stmtTableNames, bindingTableNames []*ast.TableName) (numWildcards int, matched bool) {
