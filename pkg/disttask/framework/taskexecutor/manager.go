@@ -114,7 +114,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 
 func (m *Manager) initMeta() (err error) {
 	for i := 0; i < retrySQLTimes; i++ {
-		err = m.taskTable.StartManager(m.ctx, m.id, config.GetGlobalConfig().Instance.TiDBServiceScope.Load())
+		err = m.taskTable.StartManager(m.ctx, m.id, config.GetGlobalConfig().Instance.TiDBServiceScope)
 		if err == nil {
 			break
 		}
@@ -123,7 +123,7 @@ func (m *Manager) initMeta() (err error) {
 		}
 		if i%10 == 0 {
 			logutil.Logger(m.logCtx).Warn("start manager failed",
-				zap.String("scope", config.GetGlobalConfig().Instance.TiDBServiceScope.Load()),
+				zap.String("scope", config.GetGlobalConfig().Instance.TiDBServiceScope),
 				zap.Int("retry times", i),
 				zap.Error(err))
 		}
