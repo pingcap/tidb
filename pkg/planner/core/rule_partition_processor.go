@@ -866,29 +866,7 @@ func (lt *lessThanDataInt) compare(ith int, v int64, unsigned bool) int {
 		return 1
 	}
 
-	isUnsigned0, isUnsigned1 := lt.unsigned, unsigned
-	arg0, arg1 := lt.data[ith], v
-
-	var res int
-	switch {
-	case isUnsigned0 && isUnsigned1:
-		res = cmp.Compare(uint64(arg0), uint64(arg1))
-	case isUnsigned0 && !isUnsigned1:
-		if arg1 < 0 || uint64(arg0) > math.MaxInt64 {
-			res = 1
-		} else {
-			res = cmp.Compare(arg0, arg1)
-		}
-	case !isUnsigned0 && isUnsigned1:
-		if arg0 < 0 || uint64(arg1) > math.MaxInt64 {
-			res = -1
-		} else {
-			res = cmp.Compare(arg0, arg1)
-		}
-	case !isUnsigned0 && !isUnsigned1:
-		res = cmp.Compare(arg0, arg1)
-	}
-	return res
+	return types.CompareInt(lt.data[ith], lt.unsigned, v, unsigned)
 }
 
 // partitionRange represents [start, end)
