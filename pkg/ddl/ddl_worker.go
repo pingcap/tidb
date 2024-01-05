@@ -926,23 +926,6 @@ func writeBinlog(binlogCli *pumpcli.PumpsClient, txn kv.Transaction, job *model.
 	}
 }
 
-// waitDependencyJobFinished waits for the dependency-job to be finished.
-// If the dependency job isn't finished yet, we'd better wait a moment.
-func (w *worker) waitDependencyJobFinished(job *model.Job, cnt *int) {
-	if job.DependencyID != noneDependencyJob {
-		intervalCnt := int(3 * time.Second / waitDependencyJobInterval)
-		if *cnt%intervalCnt == 0 {
-			w.jobLogger(job).Info("DDL job need to wait dependent job, sleeps a while, then retries it.",
-				zap.Int64("dependentJobID", job.DependencyID),
-				zap.Duration("waitTime", waitDependencyJobInterval))
-		}
-		time.Sleep(waitDependencyJobInterval)
-		*cnt++
-	} else {
-		*cnt = 0
-	}
-}
-
 func chooseLeaseTime(t, max time.Duration) time.Duration {
 	if t == 0 || t > max {
 		return max

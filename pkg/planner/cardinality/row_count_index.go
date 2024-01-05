@@ -50,20 +50,16 @@ func GetRowCountByIndexRanges(sctx sessionctx.Context, coll *statistics.HistColl
 	sc := sctx.GetSessionVars().StmtCtx
 	idx, ok := coll.Indices[idxID]
 	colNames := make([]string, 0, 8)
-	isMVIndex := false
 	if ok {
 		if idx.Info != nil {
 			name = idx.Info.Name.O
 			for _, col := range idx.Info.Columns {
 				colNames = append(colNames, col.Name.O)
 			}
-			isMVIndex = idx.Info.MVIndex
 		}
 	}
 	recordUsedItemStatsStatus(sctx, idx, coll.PhysicalID, idxID)
-	// For the mv index case, now we have supported collecting stats and async loading stats, but sync loading and
-	// estimation is not well-supported, so we keep mv index using pseudo estimation for this period of time.
-	if !ok || idx.IsInvalid(sctx, coll.Pseudo) || isMVIndex {
+	if !ok || idx.IsInvalid(sctx, coll.Pseudo) {
 		colsLen := -1
 		if idx != nil && idx.Info.Unique {
 			colsLen = len(idx.Info.Columns)
@@ -74,17 +70,18 @@ func GetRowCountByIndexRanges(sctx sessionctx.Context, coll *statistics.HistColl
 		}
 		return result, err
 	}
+	realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx)
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.RecordAnyValuesWithNames(sctx,
 			"Histogram NotNull Count", idx.Histogram.NotNullCount(),
 			"TopN total count", idx.TopN.TotalCount(),
-			"Increase Factor", idx.GetIncreaseFactor(coll.RealtimeCount),
+			"Increase Factor", idx.GetIncreaseFactor(realtimeCnt),
 		)
 	}
 	if idx.CMSketch != nil && idx.StatsVer == statistics.Version1 {
 		result, err = getIndexRowCountForStatsV1(sctx, coll, idxID, indexRanges)
 	} else {
-		result, err = getIndexRowCountForStatsV2(sctx, idx, coll, indexRanges, coll.RealtimeCount, coll.ModifyCount)
+		result, err = getIndexRowCountForStatsV2(sctx, idx, coll, indexRanges, realtimeCnt, modifyCount)
 	}
 	if sc.EnableOptimizerCETrace {
 		ceTraceRange(sctx, coll.PhysicalID, colNames, indexRanges, "Index Stats", uint64(result))
@@ -118,7 +115,8 @@ func getIndexRowCountForStatsV1(sctx sessionctx.Context, coll *statistics.HistCo
 		// on single-column index, use previous way as well, because CMSketch does not contain null
 		// values in this case.
 		if rangePosition == 0 || isSingleColIdxNullRange(idx, ran) {
-			count, err := getIndexRowCountForStatsV2(sctx, idx, nil, []*ranger.Range{ran}, coll.RealtimeCount, coll.ModifyCount)
+			realtimeCnt, modifyCount := coll.GetScaledRealtimeAndModifyCnt(idx)
+			count, err := getIndexRowCountForStatsV2(sctx, idx, nil, []*ranger.Range{ran}, realtimeCnt, modifyCount)
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -432,13 +430,15 @@ func expBackoffEstimation(sctx sessionctx.Context, idx *statistics.Index, coll *
 		}
 		colID := colsIDs[i]
 		var (
-			count      float64
-			err        error
-			foundStats bool
+			count       float64
+			selectivity float64
+			err         error
+			foundStats  bool
 		)
 		if col, ok := coll.Columns[colID]; ok && !col.IsInvalid(sctx, coll.Pseudo) {
 			foundStats = true
 			count, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan)
+			selectivity = count / float64(coll.RealtimeCount)
 		}
 		if idxIDs, ok := coll.ColID2IdxIDs[colID]; ok && !foundStats && len(indexRange.LowVal) > 1 {
 			// Note the `len(indexRange.LowVal) > 1` condition here, it means we only recursively call
@@ -448,11 +448,17 @@ func expBackoffEstimation(sctx sessionctx.Context, idx *statistics.Index, coll *
 				if idxID == idx.Histogram.ID {
 					continue
 				}
+				idxStats, ok := coll.Indices[idxID]
+				if !ok || idxStats.IsInvalid(sctx, coll.Pseudo) {
+					continue
+				}
 				foundStats = true
 				count, err = GetRowCountByIndexRanges(sctx, coll, idxID, tmpRan)
 				if err == nil {
 					break
 				}
+				realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idxStats)
+				selectivity = count / float64(realtimeCnt)
 			}
 		}
 		if !foundStats {
@@ -461,15 +467,11 @@ func expBackoffEstimation(sctx sessionctx.Context, idx *statistics.Index, coll *
 		if err != nil {
 			return 0, false, err
 		}
-		singleColumnEstResults = append(singleColumnEstResults, count)
+		singleColumnEstResults = append(singleColumnEstResults, selectivity)
 	}
 	// Sort them.
 	slices.Sort(singleColumnEstResults)
 	l := len(singleColumnEstResults)
-	// Convert the first 4 to selectivity results.
-	for i := 0; i < l && i < 4; i++ {
-		singleColumnEstResults[i] = singleColumnEstResults[i] / float64(coll.RealtimeCount)
-	}
 	failpoint.Inject("cleanEstResults", func() {
 		singleColumnEstResults = singleColumnEstResults[:0]
 		l = 0
