@@ -461,6 +461,8 @@ func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
+			// the schema synchronization mechanism now requires strict incremental schema versions.
+			// Therefore, we require a distributed lock to ensure the sequential commit of schema diffs from different TiDB nodes.
 			mu := concurrency.NewMutex(se, ddlSchemaVersionKeyLock)
 			if err := mu.Lock(sv.ctx); err != nil {
 				return errors.Trace(err)
@@ -476,15 +478,8 @@ func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
 func (sv *schemaVersionManager) unlockSchemaVersion(jobID int64) {
 	ownerID := sv.lockOwner.Load()
 	if ownerID == jobID {
-		if sv.etcdClient != nil && variable.DDLVersion.Load() == model.TiDBDDLV2 {
-			se, ok := sv.seMaps[jobID]
-			if !ok {
-				return
-			}
-			mu, ok := sv.lockMaps[jobID]
-			if !ok {
-				return
-			}
+		if se, ok := sv.seMaps[jobID]; ok {
+			mu := sv.lockMaps[jobID]
 			delete(sv.seMaps, jobID)
 			delete(sv.lockMaps, jobID)
 			if err := mu.Unlock(sv.ctx); err != nil {
