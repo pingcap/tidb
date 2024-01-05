@@ -73,6 +73,18 @@ func eraseLastSemicolon(stmt ast.StmtNode) {
 }
 
 // NormalizeStmtForBinding normalizes a statement for binding.
+// Schema names will be completed automatically: `select * from t` --> `select * from db . t`.
+func NormalizeStmtForBinding(stmtNode ast.StmtNode, specifiedDB string) (normalizedStmt, exactSQLDigest string) {
+	return normalizeStmt(stmtNode, specifiedDB, false)
+}
+
+// NormalizeStmtForFuzzyBinding normalizes a statement for fuzzy matching.
+// Schema names will be eliminated automatically: `select * from db . t` --> `select * from t`.
+func NormalizeStmtForFuzzyBinding(stmtNode ast.StmtNode) (normalizedStmt, fuzzySQLDigest string) {
+	return normalizeStmt(stmtNode, "", true)
+}
+
+// NormalizeStmtForBinding normalizes a statement for binding.
 // This function skips Explain automatically, and literals in in-lists will be normalized as '...'.
 // For normal bindings, DB name will be completed automatically:
 //
