@@ -483,11 +483,12 @@ func (sv *schemaVersionManager) unlockSchemaVersion(jobID int64) {
 		if lockInfo, ok := sv.lockInfoMaps[jobID]; ok {
 			delete(sv.lockInfoMaps, jobID)
 			err := lockInfo.mu.Unlock(sv.ctx)
+		outer:
 			for err != nil {
 				logutil.BgLogger().Error("unlock schema version", zap.Error(err))
 				select {
 				case <-sv.ctx.Done():
-					break
+					break outer
 				case <-time.After(time.Second):
 				}
 				// retry unlock
@@ -1111,9 +1112,6 @@ func setDDLJobMode(job *model.Job) {
 	switch job.Type {
 	// currently, v2 only support CreateTable without foreign keys.
 	case model.ActionCreateTable:
-		if len(job.Args) == 0 {
-			break
-		}
 		tbInfo, ok := job.Args[0].(*model.TableInfo)
 		if ok && len(tbInfo.ForeignKeys) == 0 {
 			job.LocalMode = true
