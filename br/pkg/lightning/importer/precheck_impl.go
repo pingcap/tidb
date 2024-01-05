@@ -75,7 +75,7 @@ func (ci *clusterResourceCheckItem) getClusterAvail(ctx context.Context) (tikvAv
 	}
 
 	for _, store := range storeInfo.Stores {
-		avail, err := units.FromHumanSize(store.Status.Available)
+		avail, err := units.RAMInBytes(store.Status.Available)
 		if err != nil {
 			return 0, 0, errors.Trace(err)
 		}
