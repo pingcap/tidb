@@ -32,7 +32,7 @@ import (
 )
 
 func TestPlacementPolicy(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 
 	defer func() {
@@ -151,7 +151,7 @@ func TestResourceGroup(t *testing.T) {
 }
 
 func TestMeta(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 
 	defer func() {
@@ -432,7 +432,7 @@ func TestMeta(t *testing.T) {
 }
 
 func TestSnapshot(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
@@ -494,7 +494,7 @@ func TestElement(t *testing.T) {
 }
 
 func BenchmarkGenGlobalIDs(b *testing.B) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(b, err)
 	defer func() {
 		err := store.Close()
