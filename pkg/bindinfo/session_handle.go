@@ -42,7 +42,7 @@ type SessionBindingHandle interface {
 	DropSessionBinding(sqlDigest string) error
 
 	// MatchSessionBinding returns the matched binding for this statement.
-	MatchSessionBinding(sctx sessionctx.Context, stmt ast.StmtNode) (*BindRecord, error)
+	MatchSessionBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (*BindRecord, error)
 
 	// GetAllSessionBindings return all bindings.
 	GetAllSessionBindings() (bindRecords []*BindRecord)
@@ -105,15 +105,9 @@ func (h *sessionBindingHandle) DropSessionBinding(sqlDigest string) error {
 }
 
 // MatchSessionBinding returns the matched binding for this statement.
-func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, stmt ast.StmtNode) (*BindRecord, error) {
-	if h.ch.Size() == 0 {
-		return nil, nil
-	}
-	_, fuzzDigest := NormalizeStmtForFuzzyBinding(stmt)
-
+func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (*BindRecord, error) {
 	// The current implementation is simplistic, but session binding is only for test purpose, so
 	// there shouldn't be many session bindings, and to keep it simple, this implementation is acceptable.
-	tableNames := CollectTableNames(stmt)
 	var bestBinding *BindRecord
 	leastWildcards := len(tableNames) + 1
 	bindRecords := h.ch.GetAllBindings()
@@ -124,7 +118,7 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, stmt
 				return nil, err
 			}
 			_, bindingFuzzyDigest := NormalizeStmtForFuzzyBinding(bindingStmt)
-			if bindingFuzzyDigest != fuzzDigest {
+			if bindingFuzzyDigest != fuzzyDigest {
 				continue
 			}
 			bindingTableNames := CollectTableNames(bindingStmt)

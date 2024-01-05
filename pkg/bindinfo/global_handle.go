@@ -46,7 +46,7 @@ type GlobalBindingHandle interface {
 	// Methods for create, get, drop global sql bindings.
 
 	// MatchGlobalBinding returns the matched binding for this statement.
-	MatchGlobalBinding(sctx sessionctx.Context, stmt ast.StmtNode) (*BindRecord, error)
+	MatchGlobalBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (*BindRecord, error)
 
 	// GetAllGlobalBindings returns all bind records in cache.
 	GetAllGlobalBindings() (bindRecords []*BindRecord)
@@ -520,7 +520,7 @@ func (h *globalBindingHandle) Size() int {
 }
 
 // MatchGlobalBinding returns the matched binding for this statement.
-func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, stmt ast.StmtNode) (*BindRecord, error) {
+func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (*BindRecord, error) {
 	bindingCache := h.getCache()
 	if bindingCache.Size() == 0 {
 		return nil, nil
@@ -530,11 +530,9 @@ func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, stmt a
 		return nil, nil
 	}
 
-	_, fuzzDigest := NormalizeStmtForFuzzyBinding(stmt)
-	tableNames := CollectTableNames(stmt)
 	var bestBinding *BindRecord
 	leastWildcards := len(tableNames) + 1
-	for _, exactDigest := range fuzzyDigestMap[fuzzDigest] {
+	for _, exactDigest := range fuzzyDigestMap[fuzzyDigest] {
 		sqlDigest := exactDigest
 		if bindRecord := bindingCache.GetBinding(sqlDigest); bindRecord != nil {
 			for _, binding := range bindRecord.Bindings {
