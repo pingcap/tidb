@@ -34,12 +34,13 @@ go_test(
     timeout = "short",
     srcs = [
         "table_test.go",
+        "task_state_test.go",
         "task_table_test.go",
     ],
     embed = [":storage"],
     flaky = True,
     race = "on",
-    shard_count = 15,
+    shard_count = 16,
     deps = [
         "//pkg/config",
         "//pkg/disttask/framework/proto",
