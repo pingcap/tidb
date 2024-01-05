@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
@@ -181,6 +182,8 @@ type Context interface {
 	EnableSandBoxMode()
 	// DisableSandBoxMode enable the sandbox mode of this Session
 	DisableSandBoxMode()
+	// NewStmtIndexUsageCollector creates a new index usage collector for statement
+	NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollector
 }
 
 // TxnFuture is an interface where implementations have a kv.Transaction field and after

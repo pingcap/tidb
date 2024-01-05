@@ -223,3 +223,32 @@ func (s *SessionIndexUsageCollector) Flush() {
 	s.collector.SendDeltaSync(s.mapper)
 	s.mapper = make(indexUsage)
 }
+
+// StmtIndexUsageCollector removes the duplicates index for recording `QueryTotal` in session collector
+type StmtIndexUsageCollector struct {
+	recordedIndex    map[GlobalIndexID]struct{}
+	sessionCollector *SessionIndexUsageCollector
+}
+
+// NewStmtIndexUsageCollector creates a new StmtIndexUsageCollector.
+func NewStmtIndexUsageCollector(sessionCollector *SessionIndexUsageCollector) *StmtIndexUsageCollector {
+	return &StmtIndexUsageCollector{
+		recordedIndex:    make(map[GlobalIndexID]struct{}),
+		sessionCollector: sessionCollector,
+	}
+}
+
+// Update updates the index usage in the internal session collector. The `sample.QueryTotal` will be modified according
+// to whether this index has been recorded in this statement usage collector.
+func (s *StmtIndexUsageCollector) Update(tableID int64, indexID int64, sample Sample) {
+	// the map in `StmtIndexUsageCollector` will not be read/written concurrently, so lock is not needed
+	idxId := GlobalIndexID{IndexID: indexID, TableID: tableID}
+	if _, ok := s.recordedIndex[idxId]; !ok {
+		sample.QueryTotal = 1
+		s.recordedIndex[idxId] = struct{}{}
+	} else {
+		sample.QueryTotal = 0
+	}
+
+	s.sessionCollector.Update(tableID, indexID, sample)
+}
