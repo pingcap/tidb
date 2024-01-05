@@ -411,6 +411,13 @@ type ddlCtx struct {
 	}
 }
 
+// the schema synchronization mechanism now requires strict incremental schema versions.
+// Therefore, we require a distributed lock to ensure the sequential commit of schema diffs from different TiDB nodes.
+type etcdLockInfo struct {
+	se *concurrency.Session
+	mu *concurrency.Mutex
+}
+
 // schemaVersionManager is used to manage the schema version. To prevent the conflicts on this key between different DDL job,
 // we use another transaction to update the schema version, so that we need to lock the schema version and unlock it until the job is committed.
 // for version2, we use etcd lock to lock the schema version between TiDB nodes now.
@@ -419,18 +426,16 @@ type schemaVersionManager struct {
 	// lockOwner stores the job ID that is holding the lock.
 	lockOwner atomicutil.Int64
 
-	ctx        context.Context
-	etcdClient *clientv3.Client
-	seMaps     map[int64]*concurrency.Session
-	lockMaps   map[int64]*concurrency.Mutex
+	ctx          context.Context
+	etcdClient   *clientv3.Client
+	lockInfoMaps map[int64]*etcdLockInfo
 }
 
 func newSchemaVersionManager(ctx context.Context, etcdClient *clientv3.Client) *schemaVersionManager {
 	return &schemaVersionManager{
-		ctx:        ctx,
-		etcdClient: etcdClient,
-		seMaps:     make(map[int64]*concurrency.Session),
-		lockMaps:   make(map[int64]*concurrency.Mutex),
+		ctx:          ctx,
+		etcdClient:   etcdClient,
+		lockInfoMaps: make(map[int64]*etcdLockInfo),
 	}
 }
 
@@ -461,14 +466,11 @@ func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
-			// the schema synchronization mechanism now requires strict incremental schema versions.
-			// Therefore, we require a distributed lock to ensure the sequential commit of schema diffs from different TiDB nodes.
 			mu := concurrency.NewMutex(se, ddlSchemaVersionKeyLock)
 			if err := mu.Lock(sv.ctx); err != nil {
 				return errors.Trace(err)
 			}
-			sv.seMaps[jobID] = se
-			sv.lockMaps[jobID] = mu
+			sv.lockInfoMaps[jobID] = &etcdLockInfo{se: se, mu: mu}
 		}
 	}
 	return nil
@@ -478,14 +480,12 @@ func (sv *schemaVersionManager) lockSchemaVersion(jobID int64) error {
 func (sv *schemaVersionManager) unlockSchemaVersion(jobID int64) {
 	ownerID := sv.lockOwner.Load()
 	if ownerID == jobID {
-		if se, ok := sv.seMaps[jobID]; ok {
-			mu := sv.lockMaps[jobID]
-			delete(sv.seMaps, jobID)
-			delete(sv.lockMaps, jobID)
-			if err := mu.Unlock(sv.ctx); err != nil {
+		if lockInfo, ok := sv.lockInfoMaps[jobID]; ok {
+			delete(sv.lockInfoMaps, jobID)
+			if err := lockInfo.mu.Unlock(sv.ctx); err != nil {
 				logutil.BgLogger().Error("unlock schema version", zap.Error(err))
 			}
-			if err := se.Close(); err != nil {
+			if err := lockInfo.se.Close(); err != nil {
 				logutil.BgLogger().Error("close etcd session", zap.Error(err))
 			}
 		}
