@@ -86,6 +86,7 @@ func CompareString(x, y, collation string) int {
 	return collate.GetCollator(collation).Compare(x, y)
 }
 
+// CompareInt return an integer comparing the integer x to y with signed or unsigned.
 func CompareInt(arg0 int64, isUnsigned0 bool, arg1 int64, isUnsigned1 bool) int {
 	var res int
 	switch {
