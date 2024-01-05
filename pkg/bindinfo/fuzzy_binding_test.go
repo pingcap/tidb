@@ -16,6 +16,7 @@ package bindinfo_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -108,40 +110,47 @@ func TestFuzzyDuplicatedBinding(t *testing.T) {
 		[][]interface{}{{"select * from `*` . `t`", "SELECT /*+ use_index(`t` `b`)*/ * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
 }
 
-func TestUniversalBindingPriority(t *testing.T) {
-	t.Skip("skip it temporarily")
+func TestFuzzyBindingPriority(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
 	tk.MustExec(`use test`)
-	tk.MustExec(`create table t (a int, b int, c int, d int, e int, key(a), key(b), key(c), key(d), key(e))`)
+	tk.MustExec(`create table t1 (a int)`)
+	tk.MustExec(`create table t2 (a int)`)
+	tk.MustExec(`create table t3 (a int)`)
+	tk.MustExec(`create table t4 (a int)`)
+	tk.MustExec(`create table t5 (a int)`)
 
-	tk.MustExec(`create global universal binding using select /*+ use_index(t, a) */ * from t`)
-	tk.MustUseIndex(`select * from t`, "a")
-	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	// The less wildcard number, the higher priority.
+	tk.MustExec(`create global binding using select /*+ leading(t1, t2, t3, t4, t5) */ * from *.t1, *.t2, *.t3, *.t4, *.t5`)
+	tk.MustExec(`explain format='verbose' select * from t1, t2, t3, t4, t5`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Note 1105 Using the bindSQL: SELECT /*+ leading(`t1`, `t2`, `t3`, `t4`, `t5`)*/ * FROM ((((`*`.`t1`) JOIN `*`.`t2`) JOIN `*`.`t3`) JOIN `*`.`t4`) JOIN `*`.`t5`"))
 
-	// global normal > global universal
-	tk.MustExec(`create global binding using select /*+ use_index(t, b) */ * from t`)
-	tk.MustUseIndex(`select * from t`, "b")
-	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustExec(`create global binding using select /*+ leading(t1, t2, t3, t4, t5) */ * from *.t1, *.t2, *.t3, *.t4, t5`)
+	tk.MustExec(`explain format='verbose' select * from t1, t2, t3, t4, t5`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Note 1105 Using the bindSQL: SELECT /*+ leading(`t1`, `t2`, `t3`, `t4`, `t5`)*/ * FROM ((((`*`.`t1`) JOIN `*`.`t2`) JOIN `*`.`t3`) JOIN `*`.`t4`) JOIN `test`.`t5`"))
 
-	// session universal > global normal
-	tk.MustExec(`create session universal binding using select /*+ use_index(t, c) */ * from t`)
-	tk.MustUseIndex(`select * from t`, "c")
-	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustExec(`create global binding using select /*+ leading(t1, t2, t3, t4, t5) */ * from *.t1, *.t2, *.t3, t4, t5`)
+	tk.MustExec(`explain format='verbose' select * from t1, t2, t3, t4, t5`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Note 1105 Using the bindSQL: SELECT /*+ leading(`t1`, `t2`, `t3`, `t4`, `t5`)*/ * FROM ((((`*`.`t1`) JOIN `*`.`t2`) JOIN `*`.`t3`) JOIN `test`.`t4`) JOIN `test`.`t5`"))
 
-	// global normal takes effect again if disable universal bindings
-	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=0`)
-	tk.MustExec(`create global binding using select /*+ use_index(t, b) */ * from t`)
-	tk.MustUseIndex(`select * from t`, "b")
-	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
-	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
+	tk.MustExec(`create global binding using select /*+ leading(t1, t2, t3, t4, t5) */ * from *.t1, *.t2, t3, t4, t5`)
+	tk.MustExec(`explain format='verbose' select * from t1, t2, t3, t4, t5`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Note 1105 Using the bindSQL: SELECT /*+ leading(`t1`, `t2`, `t3`, `t4`, `t5`)*/ * FROM ((((`*`.`t1`) JOIN `*`.`t2`) JOIN `test`.`t3`) JOIN `test`.`t4`) JOIN `test`.`t5`"))
 
-	// session normal > session universal
-	tk.MustExec(`create session binding using select /*+ use_index(t, d) */ * from t`)
-	tk.MustUseIndex(`select * from t`, "d")
-	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustExec(`create global binding using select /*+ leading(t1, t2, t3, t4, t5) */ * from *.t1, t2, t3, t4, t5`)
+	tk.MustExec(`explain format='verbose' select * from t1, t2, t3, t4, t5`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Note 1105 Using the bindSQL: SELECT /*+ leading(`t1`, `t2`, `t3`, `t4`, `t5`)*/ * FROM ((((`*`.`t1`) JOIN `test`.`t2`) JOIN `test`.`t3`) JOIN `test`.`t4`) JOIN `test`.`t5`"))
+
+	tk.MustExec(`create global binding using select /*+ leading(t1, t2, t3, t4, t5) */ * from t1, t2, t3, t4, t5`)
+	tk.MustExec(`explain format='verbose' select * from t1, t2, t3, t4, t5`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Note 1105 Using the bindSQL: SELECT /*+ leading(`t1`, `t2`, `t3`, `t4`, `t5`)*/ * FROM ((((`test`.`t1`) JOIN `test`.`t2`) JOIN `test`.`t3`) JOIN `test`.`t4`) JOIN `test`.`t5`"))
+
+	// Session binding's priority is higher than global binding's.
+	tk.MustExec(`create session binding using select /*+ leading(t1, t2, t3, t4, t5) */ * from *.t1, *.t2, *.t3, *.t4, *.t5`)
+	tk.MustExec(`explain format='verbose' select * from t1, t2, t3, t4, t5`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Note 1105 Using the bindSQL: SELECT /*+ leading(`t1`, `t2`, `t3`, `t4`, `t5`)*/ * FROM ((((`*`.`t1`) JOIN `*`.`t2`) JOIN `*`.`t3`) JOIN `*`.`t4`) JOIN `*`.`t5`"))
 }
 
 func TestCreateUpdateFuzzyBinding(t *testing.T) {
@@ -241,29 +250,6 @@ func TestFuzzyBindingSetVar(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
 }
 
-func TestUniversalBindingDBInHints(t *testing.T) {
-	t.Skip("skip it temporarily")
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	tk.MustExec(`create table t1 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
-	tk.MustExec(`create table t2 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
-	tk.MustExec(`create table t3 (a int, b int, c int, d int, key(a), key(b), key(c), key(d))`)
-
-	tk.MustExec(`create universal binding using select /*+ use_index(test.t, a) */ * from t`)
-	tk.MustExec(`create universal binding using select /*+ leading(t1, test.t2) */ * from t1, t2 where t1.a=t2.a`)
-	tk.MustExec(`create universal binding using select /*+ leading(test.t1, test.t2, test.t3) */ * from t1, t2 where t1.a=t2.a and t2.b=t3.b`)
-
-	// use_index(test.t, a) --> use_index(t, a)
-	// leading(t1, test.t2) --> leading(t1, t2)
-	// leading(test.t1, test.t2, test.t3) --> leading(t1, t2, t3)
-	rs := showBinding(tk, "show bindings")
-	require.Equal(t, len(rs), 3)
-	require.Equal(t, rs[0][1], "SELECT /*+ leading(`t1`, `t2`)*/ * FROM (`t1`) JOIN `t2` WHERE `t1`.`a` = `t2`.`a`")
-	require.Equal(t, rs[1][1], "SELECT /*+ leading(`t1`, `t2`, `t3`)*/ * FROM (`t1`) JOIN `t2` WHERE `t1`.`a` = `t2`.`a` AND `t2`.`b` = `t3`.`b`")
-	require.Equal(t, rs[2][1], "SELECT /*+ use_index(`t` `a`)*/ * FROM `t`")
-}
-
 func TestFuzzyBindingGC(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -284,6 +270,90 @@ func TestFuzzyBindingGC(t *testing.T) {
 	bindHandle := bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
 	require.NoError(t, bindHandle.GCGlobalBinding())
 	tk.MustQuery(`select bind_sql, status from mysql.bind_info where source != 'builtin'`).Check(testkit.Rows()) // empty after GC
+}
+
+func TestFuzzyBindingInList(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`create database test1`)
+	tk.MustExec(`use test1`)
+	tk.MustExec(`create table t1 (a int)`)
+	tk.MustExec(`create table t2 (a int)`)
+	tk.MustExec(`create database test2`)
+	tk.MustExec(`use test2`)
+	tk.MustExec(`create table t1 (a int)`)
+	tk.MustExec(`create table t2 (a int)`)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
+	tk.MustExec(`create global binding using select * from *.t1 where a in (1,2,3)`)
+	tk.MustExec(`explain format='verbose' select * from test1.t1 where a in (1)`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Note 1105 Using the bindSQL: SELECT * FROM `*`.`t1` WHERE `a` IN (1,2,3)"))
+	tk.MustExec(`explain format='verbose' select * from test2.t1 where a in (1,2,3,4,5)`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Note 1105 Using the bindSQL: SELECT * FROM `*`.`t1` WHERE `a` IN (1,2,3)"))
+	tk.MustExec(`use test1`)
+	tk.MustExec(`explain format='verbose' select * from t1 where a in (1)`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Note 1105 Using the bindSQL: SELECT * FROM `*`.`t1` WHERE `a` IN (1,2,3)"))
+
+	tk.MustExec(`create global binding using select * from *.t1, *.t2 where t1.a in (1) and t2.a in (2)`)
+	for _, currentDB := range []string{"test1", "test2"} {
+		for _, t1DB := range []string{"", "test1.", "test2."} {
+			for _, t2DB := range []string{"", "test1.", "test2."} {
+				for _, t1Cond := range []string{"(1)", "(1,2,3)", "(1,1,1,1,1,1,2,2,2)"} {
+					for _, t2Cond := range []string{"(1)", "(1,2,3)", "(1,1,1,1,1,1,2,2,2)"} {
+						tk.MustExec(`use ` + currentDB)
+						sql := fmt.Sprintf(`explain format='verbose' select * from %st1, %st2 where t1.a in %s and t2.a in %s`, t1DB, t2DB, t1Cond, t2Cond)
+						tk.MustExec(sql)
+						tk.MustQuery(`show warnings`).Check(testkit.Rows("Note 1105 Using the bindSQL: SELECT * FROM (`*`.`t1`) JOIN `*`.`t2` WHERE `t1`.`a` IN (1) AND `t2`.`a` IN (2)"))
+					}
+				}
+			}
+		}
+	}
+}
+
+func TestFuzzyBindingPlanCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
+	tk.MustExec(`create table t (a int, b int, c int, d int, e int, key(a), key(b), key(c), key(d))`)
+
+	hasPlan := func(operator, accessInfo string) {
+		tkProcess := tk.Session().ShowProcess()
+		ps := []*util.ProcessInfo{tkProcess}
+		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+		rows := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Rows()
+		flag := false
+		for _, row := range rows {
+			op := row[0].(string)
+			info := row[4].(string)
+			if strings.Contains(op, operator) && strings.Contains(info, accessInfo) {
+				flag = true
+				break
+			}
+		}
+		require.Equal(t, flag, true)
+	}
+
+	tk.MustExec(`prepare stmt from 'select * from t where e > ?'`)
+	tk.MustExec(`set @v=0`)
+	tk.MustExec(`execute stmt using @v`)
+	hasPlan("TableFullScan", "")
+
+	tk.MustExec(`create database test2`)
+	tk.MustExec(`use test2`)
+	tk.MustExec(`create global binding using select /*+ use_index(t, a) */ * from *.t where e > 1`)
+	tk.MustExec(`execute stmt using @v`)
+	hasPlan("IndexFullScan", "index:a(a)")
+
+	tk.MustExec(`create global binding using select /*+ use_index(t, b) */ * from *.t where e > 1`)
+	tk.MustExec(`execute stmt using @v`)
+	hasPlan("IndexFullScan", "index:b(b)")
+
+	tk.MustExec(`create global binding using select /*+ use_index(t, c) */ * from *.t where e > 1`)
+	tk.MustExec(`execute stmt using @v`)
+	hasPlan("IndexFullScan", "index:c(c)")
 }
 
 func TestFuzzyBindingHints(t *testing.T) {
