@@ -1300,17 +1300,6 @@ func removeGlobalIndexPaths(paths []*util.AccessPath) []*util.AccessPath {
 	return paths[:i]
 }
 
-func removeTiflashDuringStaleRead(paths []*util.AccessPath) []*util.AccessPath {
-	n := 0
-	for _, path := range paths {
-		if path.StoreType != kv.TiFlash {
-			paths[n] = path
-			n++
-		}
-	}
-	return paths[:n]
-}
-
 func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo) (*LogicalLock, error) {
 	var tblID2PhysTblIDCol map[int64]*expression.Column
 	if len(b.partitionedTable) > 0 {
