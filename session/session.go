@@ -3891,15 +3891,6 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			query = execStmt.GetTextToLog(false)
 		}
 
-		idx := strings.Index(query, "sbtest1")
-		if idx == -1 {
-			return
-		}
-
-		if !containsTarget(query) {
-			return
-		}
-
 		query = executor.QueryReplacer.Replace(query)
 		if !vars.EnableRedactLog {
 			query += vars.PlanCacheParams.String()
@@ -3916,18 +3907,6 @@ func logGeneralQuery(execStmt *executor.ExecStmt, s *session, isPrepared bool) {
 			zap.String("sessionTxnMode", vars.GetReadableTxnMode()),
 			zap.String("sql", query))
 	}
-}
-
-func containsTarget(query string) bool {
-	idx := strings.Index(query, "sbtest1")
-	if idx == -1 {
-		return false
-	}
-	// Exclude sbtest1[0-9].
-	if len(query) > idx+7 && query[idx+7] >= '0' && query[idx+7] <= '9' {
-		return false
-	}
-	return true
 }
 
 func (s *session) recordOnTransactionExecution(err error, counter int, duration float64, isInternal bool) {

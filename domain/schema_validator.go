@@ -111,6 +111,9 @@ func (s *schemaValidator) Restart() {
 	s.mux.Lock()
 	defer s.mux.Unlock()
 	s.isStarted = true
+	// When this instance reconnects PD, we should record the latest schema verion after mustReload(),
+	// to prevent write txns using a stale schema version by aborting them before commit.
+	// However, the problem still exists for read-only txns.
 	s.restartSchemaVer = s.do.InfoSchema().SchemaMetaVersion()
 }
 
@@ -230,9 +233,10 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTa
 		logutil.BgLogger().Info("the schema validator stopped before checking")
 		return nil, ResultUnknown
 	}
+
 	if schemaVer < s.restartSchemaVer {
 		logutil.BgLogger().Info("the schema version is too old", zap.Int64("schemaVer", schemaVer))
-		return nil, ResultUnknown
+		return nil, ResultFail
 	}
 	if s.lease == 0 {
 		return nil, ResultSucc
