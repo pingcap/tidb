@@ -397,7 +397,7 @@ func (e *SortExec) GetRowNumInOnePartitionDiskForTest(idx int) int64 {
 	return e.sortPartitions[idx].numRowInDiskForTest()
 }
 
-// GetRowNumInOnePartitionDiskForTest returns number of rows a partition holds in memory, it's only used in test.
+// GetRowNumInOnePartitionMemoryForTest returns number of rows a partition holds in memory, it's only used in test.
 func (e *SortExec) GetRowNumInOnePartitionMemoryForTest(idx int) int64 {
 	return e.sortPartitions[idx].numRowInMemoryForTest()
 }
