@@ -48,6 +48,10 @@ func (s *sortPartitionSpillDiskAction) executeAction(t *memory.Tracker) memory.A
 	s.partition.cond.L.Lock()
 	defer s.partition.cond.L.Unlock()
 
+	for s.partition.getIsSpillingNoLock() {
+		s.partition.cond.Wait()
+	}
+
 	if !s.partition.isSpillTriggeredNoLock() && s.partition.hasEnoughDataToSpill() {
 		s.once.Do(func() {
 			go func() {
@@ -66,10 +70,6 @@ func (s *sortPartitionSpillDiskAction) executeAction(t *memory.Tracker) memory.A
 		// sort operation which is executed in `s.partition.spillToDisk()` as sort will retrigger the action
 		// and lead to dead lock.
 		return nil
-	}
-
-	for s.partition.getIsSpillingNoLock() {
-		s.partition.cond.Wait()
 	}
 
 	if !t.CheckExceed() {
