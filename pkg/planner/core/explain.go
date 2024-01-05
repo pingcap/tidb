@@ -218,11 +218,11 @@ func (p *PhysicalTableScan) OperatorInfo(normalized bool) string {
 	}
 	if p.SCtx().GetSessionVars().EnableLateMaterialization && len(p.filterCondition) > 0 && p.StoreType == kv.TiFlash {
 		buffer.WriteString("pushed down filter:")
-		if len(p.lateMaterializationFilterCondition) > 0 {
+		if len(p.LateMaterializationFilterCondition) > 0 {
 			if normalized {
-				buffer.Write(expression.SortedExplainNormalizedExpressionList(p.lateMaterializationFilterCondition))
+				buffer.Write(expression.SortedExplainNormalizedExpressionList(p.LateMaterializationFilterCondition))
 			} else {
-				buffer.Write(expression.SortedExplainExpressionList(p.SCtx(), p.lateMaterializationFilterCondition))
+				buffer.Write(expression.SortedExplainExpressionList(p.SCtx(), p.LateMaterializationFilterCondition))
 			}
 		} else {
 			buffer.WriteString("empty")
@@ -467,7 +467,7 @@ func (p *basePhysicalAgg) ExplainInfo() string {
 func (p *basePhysicalAgg) explainInfo(normalized bool) string {
 	sortedExplainExpressionList := expression.SortedExplainExpressionList
 	if normalized {
-		sortedExplainExpressionList = func(_ sessionctx.Context, exprs []expression.Expression) []byte {
+		sortedExplainExpressionList = func(_ expression.EvalContext, exprs []expression.Expression) []byte {
 			return expression.SortedExplainNormalizedExpressionList(exprs)
 		}
 	}
@@ -517,7 +517,7 @@ func (p *PhysicalIndexMergeJoin) ExplainInfo() string {
 func (p *PhysicalIndexJoin) explainInfo(normalized bool, isIndexMergeJoin bool) string {
 	sortedExplainExpressionList := expression.SortedExplainExpressionList
 	if normalized {
-		sortedExplainExpressionList = func(_ sessionctx.Context, exprs []expression.Expression) []byte {
+		sortedExplainExpressionList = func(_ expression.EvalContext, exprs []expression.Expression) []byte {
 			return expression.SortedExplainNormalizedExpressionList(exprs)
 		}
 	}
@@ -588,7 +588,7 @@ func (p *PhysicalHashJoin) ExplainNormalizedInfo() string {
 func (p *PhysicalHashJoin) explainInfo(normalized bool) string {
 	sortedExplainExpressionList := expression.SortedExplainExpressionList
 	if normalized {
-		sortedExplainExpressionList = func(_ sessionctx.Context, exprs []expression.Expression) []byte {
+		sortedExplainExpressionList = func(_ expression.EvalContext, exprs []expression.Expression) []byte {
 			return expression.SortedExplainNormalizedExpressionList(exprs)
 		}
 	}
@@ -683,7 +683,7 @@ func (p *PhysicalMergeJoin) ExplainInfo() string {
 func (p *PhysicalMergeJoin) explainInfo(normalized bool) string {
 	sortedExplainExpressionList := expression.SortedExplainExpressionList
 	if normalized {
-		sortedExplainExpressionList = func(_ sessionctx.Context, exprs []expression.Expression) []byte {
+		sortedExplainExpressionList = func(_ expression.EvalContext, exprs []expression.Expression) []byte {
 			return expression.SortedExplainNormalizedExpressionList(exprs)
 		}
 	}

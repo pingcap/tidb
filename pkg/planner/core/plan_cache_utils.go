@@ -56,9 +56,6 @@ const (
 var (
 	// PreparedPlanCacheMaxMemory stores the max memory size defined in the global config "performance-server-memory-quota".
 	PreparedPlanCacheMaxMemory = *atomic2.NewUint64(math.MaxUint64)
-
-	// ExtractSelectAndNormalizeDigest extract the select statement and normalize it.
-	ExtractSelectAndNormalizeDigest func(stmtNode ast.StmtNode, specifiledDB string, forBinding bool) (ast.StmtNode, string, string, error)
 )
 
 type paramMarkerExtractor struct {
@@ -131,10 +128,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 
 	var (
-		normalizedSQL4PC, digest4PC string
-		selectStmtNode              ast.StmtNode
-		cacheable                   bool
-		reason                      string
+		cacheable bool
+		reason    string
 	)
 	if (isPrepStmt && !vars.EnablePreparedPlanCache) || // prepared statement
 		(!isPrepStmt && !vars.EnableNonPreparedPlanCache) { // non-prepared statement
@@ -147,12 +142,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 			cacheable = true // it is already checked here
 		}
 		if !cacheable {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip prepared plan-cache: " + reason))
-		}
-		selectStmtNode, normalizedSQL4PC, digest4PC, err = ExtractSelectAndNormalizeDigest(paramStmt, vars.CurrentDB, false)
-		if err != nil || selectStmtNode == nil {
-			normalizedSQL4PC = ""
-			digest4PC = ""
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: " + reason))
 		}
 	}
 
@@ -168,7 +158,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	}
 
 	var p Plan
-	destBuilder, _ := NewPlanBuilder().Init(sctx, ret.InfoSchema, &hint.BlockHintProcessor{})
+	destBuilder, _ := NewPlanBuilder().Init(sctx, ret.InfoSchema, hint.NewQBHintHandler(nil))
 	p, err = destBuilder.Build(ctx, paramStmt)
 	if err != nil {
 		return nil, nil, 0, err
@@ -186,8 +176,6 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SQLDigest:           digest,
 		ForUpdateRead:       destBuilder.GetIsForUpdateRead(),
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
-		NormalizedSQL4PC:    normalizedSQL4PC,
-		SQLDigest4PC:        digest4PC,
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
 		QueryFeatures:       features,
@@ -459,8 +447,6 @@ type PlanCacheStmt struct {
 	PlanDigest          *parser.Digest
 	ForUpdateRead       bool
 	SnapshotTSEvaluator func(sessionctx.Context) (uint64, error)
-	NormalizedSQL4PC    string
-	SQLDigest4PC        string
 
 	// the different between NormalizedSQL, NormalizedSQL4PC and StmtText:
 	//  for the query `select * from t where a>1 and b<?`, then

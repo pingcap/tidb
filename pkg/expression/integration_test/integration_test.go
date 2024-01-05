@@ -63,7 +63,7 @@ func TestGetLock(t *testing.T) {
 	// Increase pessimistic txn max retry count to make test more stable.
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
-	newCfg.PessimisticTxn.MaxRetryCount = 2048
+	newCfg.PessimisticTxn.MaxRetryCount = 10240
 	config.StoreGlobalConfig(&newCfg)
 	defer func() {
 		config.StoreGlobalConfig(originCfg)

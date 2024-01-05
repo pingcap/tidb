@@ -15,7 +15,6 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
@@ -23,7 +22,7 @@ func (b *builtinLikeSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLikeSig) vecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLikeSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	bufVal, err := b.bufAllocator.get()
 	if err != nil {

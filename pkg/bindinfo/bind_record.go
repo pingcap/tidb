@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -76,6 +77,9 @@ type Binding struct {
 	ID         string `json:"-"`
 	SQLDigest  string
 	PlanDigest string
+
+	// TableNames records all schema and table names in this binding statement, which are used for fuzzy matching.
+	TableNames []*ast.TableName `json:"-"`
 }
 
 func (b *Binding) isSame(rb *Binding) bool {
@@ -178,11 +182,21 @@ func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
 		if (bind.Hint != nil && bind.ID != "") || bind.Status == deleted {
 			continue
 		}
-		hintsSet, stmt, warns, err := hint.ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation, br.Db)
+		dbName := br.Db
+		bindingStmt, err := p.ParseOneStmt(bind.BindSQL, bind.Charset, bind.Collation)
 		if err != nil {
 			return err
 		}
-		if sctx != nil {
+		isFuzzy := isFuzzyBinding(bindingStmt)
+		if isFuzzy {
+			dbName = "*" // ues '*' for universal bindings
+		}
+
+		hintsSet, stmt, warns, err := hint.ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation, dbName)
+		if err != nil {
+			return err
+		}
+		if sctx != nil && !isFuzzy {
 			paramChecker := &paramMarkerChecker{}
 			stmt.Accept(paramChecker)
 			if !paramChecker.hasParamMarker {
@@ -231,24 +245,6 @@ func merge(lBindRecord, rBindRecord *BindRecord) *BindRecord {
 		}
 		if !found {
 			result.Bindings = append(result.Bindings, rbind)
-		}
-	}
-	return result
-}
-
-func (br *BindRecord) remove(deleted *BindRecord) *BindRecord {
-	// Delete all bindings.
-	if len(deleted.Bindings) == 0 {
-		return &BindRecord{OriginalSQL: br.OriginalSQL, Db: br.Db}
-	}
-	result := br.shallowCopy()
-	for j := range deleted.Bindings {
-		deletedBind := deleted.Bindings[j]
-		for i, bind := range result.Bindings {
-			if bind.isSame(&deletedBind) {
-				result.Bindings = append(result.Bindings[:i], result.Bindings[i+1:]...)
-				break
-			}
 		}
 	}
 	return result

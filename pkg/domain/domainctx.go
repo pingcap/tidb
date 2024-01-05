@@ -22,7 +22,7 @@ import (
 type domainKeyType int
 
 // String defines a Stringer function for debugging and pretty printing.
-func (k domainKeyType) String() string {
+func (domainKeyType) String() string {
 	return "domain"
 }
 

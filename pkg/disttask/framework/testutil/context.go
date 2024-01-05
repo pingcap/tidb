@@ -16,19 +16,24 @@ package testutil
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
 )
 
 // TestContext defines shared variables for disttask tests.
 type TestContext struct {
-	// for basic tests.
-	M sync.Map
+	sync.RWMutex
+	// taskID/step -> subtask map.
+	subtasksHasRun map[string]map[int64]struct{}
 	// for rollback tests.
 	RollbackCnt atomic.Int32
 	// for plan err handling tests.
@@ -40,7 +45,41 @@ func InitTestContext(t *testing.T, nodeNum int) (context.Context, *gomock.Contro
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "scheduler")
+	ctx = util.WithInternalSourceType(ctx, "dispatcher")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
+	})
 
-	return ctx, ctrl, &TestContext{}, testkit.NewDistExecutionContext(t, nodeNum)
+	executionContext := testkit.NewDistExecutionContext(t, nodeNum)
+	testCtx := &TestContext{
+		subtasksHasRun: make(map[string]map[int64]struct{}),
+	}
+	return ctx, ctrl, testCtx, executionContext
+}
+
+// CollectSubtask collects subtask info
+func (c *TestContext) CollectSubtask(subtask *proto.Subtask) {
+	key := getTaskStepKey(subtask.TaskID, subtask.Step)
+	c.Lock()
+	defer c.Unlock()
+	m, ok := c.subtasksHasRun[key]
+	if !ok {
+		m = make(map[int64]struct{})
+		c.subtasksHasRun[key] = m
+	}
+	m[subtask.ID] = struct{}{}
+}
+
+// CollectedSubtaskCnt returns the collected subtask count.
+func (c *TestContext) CollectedSubtaskCnt(taskID int64, step proto.Step) int {
+	key := getTaskStepKey(taskID, step)
+	c.RLock()
+	defer c.RUnlock()
+	return len(c.subtasksHasRun[key])
+}
+
+// getTaskStepKey returns the key of a task step.
+func getTaskStepKey(id int64, step proto.Step) string {
+	return fmt.Sprintf("%d/%d", id, step)
 }

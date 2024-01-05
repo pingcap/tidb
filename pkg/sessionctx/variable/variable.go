@@ -402,11 +402,11 @@ func (sv *SysVar) checkDurationSystemVar(value string, vars *SessionVars) (strin
 	}
 	// Check for min/max violations
 	if int64(d) < sv.MinValue {
-		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
+		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(sv.Name, value))
 		return time.Duration(sv.MinValue).String(), nil
 	}
 	if uint64(d) > sv.MaxValue {
-		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
+		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(sv.Name, value))
 		return time.Duration(sv.MaxValue).String(), nil
 	}
 	// return a string representation of the duration
@@ -425,7 +425,7 @@ func (sv *SysVar) checkUInt64SystemVar(value string, vars *SessionVars) (string,
 		if err != nil {
 			return value, ErrWrongTypeForVar.GenWithStackByArgs(sv.Name)
 		}
-		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
+		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(sv.Name, value))
 		return strconv.FormatInt(sv.MinValue, 10), nil
 	}
 	val, err := strconv.ParseUint(value, 10, 64)
@@ -433,11 +433,11 @@ func (sv *SysVar) checkUInt64SystemVar(value string, vars *SessionVars) (string,
 		return value, ErrWrongTypeForVar.GenWithStackByArgs(sv.Name)
 	}
 	if val < uint64(sv.MinValue) {
-		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
+		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(sv.Name, value))
 		return strconv.FormatInt(sv.MinValue, 10), nil
 	}
 	if val > sv.MaxValue {
-		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
+		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(sv.Name, value))
 		return strconv.FormatUint(sv.MaxValue, 10), nil
 	}
 	return value, nil
@@ -452,11 +452,11 @@ func (sv *SysVar) checkInt64SystemVar(value string, vars *SessionVars) (string, 
 		return value, ErrWrongTypeForVar.GenWithStackByArgs(sv.Name)
 	}
 	if val < sv.MinValue {
-		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
+		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(sv.Name, value))
 		return strconv.FormatInt(sv.MinValue, 10), nil
 	}
 	if val > int64(sv.MaxValue) {
-		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
+		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(sv.Name, value))
 		return strconv.FormatUint(sv.MaxValue, 10), nil
 	}
 	return value, nil
@@ -484,11 +484,11 @@ func (sv *SysVar) checkFloatSystemVar(value string, vars *SessionVars) (string, 
 		return value, ErrWrongTypeForVar.GenWithStackByArgs(sv.Name)
 	}
 	if val < float64(sv.MinValue) {
-		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
+		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(sv.Name, value))
 		return strconv.FormatInt(sv.MinValue, 10), nil
 	}
 	if val > float64(sv.MaxValue) {
-		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(sv.Name, value))
+		vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(sv.Name, value))
 		return strconv.FormatUint(sv.MaxValue, 10), nil
 	}
 	return value, nil

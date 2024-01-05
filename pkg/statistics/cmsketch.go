@@ -536,6 +536,13 @@ type TopN struct {
 	TopN []TopNMeta
 }
 
+// Scale scales the TopN by the given factor.
+func (c *TopN) Scale(scaleFactor float64) {
+	for i := range c.TopN {
+		c.TopN[i].Count = uint64(float64(c.TopN[i].Count) * scaleFactor)
+	}
+}
+
 // AppendTopN appends a topn into the TopN struct.
 func (c *TopN) AppendTopN(data []byte, count uint64) {
 	if c == nil {
@@ -854,8 +861,8 @@ func SortTopnMeta(topnMetas []TopNMeta) {
 
 // TopnMetaCompare compare topnMeta
 func TopnMetaCompare(i, j TopNMeta) int {
-	c := cmp.Compare(i.Count, j.Count)
-	if c == 0 {
+	c := cmp.Compare(j.Count, i.Count)
+	if c != 0 {
 		return c
 	}
 	return bytes.Compare(i.Encoded, j.Encoded)

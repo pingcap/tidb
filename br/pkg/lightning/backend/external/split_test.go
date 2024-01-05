@@ -54,8 +54,9 @@ func TestGeneralProperties(t *testing.T) {
 
 	dataFiles, statFiles, err := MockExternalEngine(memStore, keys, values)
 	require.NoError(t, err)
+	multiFileStat := mockOneMultiFileStat(dataFiles, statFiles)
 	splitter, err := NewRangeSplitter(
-		ctx, dataFiles, statFiles, memStore, 1000, 30, 1000, 1, true,
+		ctx, multiFileStat, memStore, 1000, 30, 1000, 1, true,
 	)
 	var lastEndKey []byte
 notExhausted:
@@ -112,8 +113,10 @@ func TestOnlyOneGroup(t *testing.T) {
 	require.Len(t, dataFiles, 1)
 	require.Len(t, statFiles, 1)
 
+	multiFileStat := mockOneMultiFileStat(dataFiles, statFiles)
+
 	splitter, err := NewRangeSplitter(
-		ctx, dataFiles, statFiles, memStore, 1000, 30, 1000, 10, true,
+		ctx, multiFileStat, memStore, 1000, 30, 1000, 10, true,
 	)
 	require.NoError(t, err)
 	endKey, dataFiles, statFiles, splitKeys, err := splitter.SplitOneRangesGroup()
@@ -125,7 +128,7 @@ func TestOnlyOneGroup(t *testing.T) {
 	require.NoError(t, splitter.Close())
 
 	splitter, err = NewRangeSplitter(
-		ctx, dataFiles, statFiles, memStore, 1000, 30, 1000, 1, true,
+		ctx, multiFileStat, memStore, 1000, 30, 1000, 1, true,
 	)
 	require.NoError(t, err)
 	endKey, dataFiles, statFiles, splitKeys, err = splitter.SplitOneRangesGroup()
@@ -157,8 +160,9 @@ func TestSortedData(t *testing.T) {
 	rangesGroupKV := 30
 	groupFileNumUpperBound := int(math.Ceil(float64(rangesGroupKV-1)/avgKVPerFile)) + 1
 
+	multiFileStat := mockOneMultiFileStat(dataFiles, statFiles)
 	splitter, err := NewRangeSplitter(
-		ctx, dataFiles, statFiles, memStore, 1000, int64(rangesGroupKV), 1000, 10, true,
+		ctx, multiFileStat, memStore, 1000, int64(rangesGroupKV), 1000, 10, true,
 	)
 	require.NoError(t, err)
 
@@ -237,9 +241,12 @@ func TestRangeSplitterStrictCase(t *testing.T) {
 		"/mock-test/3/0", "/mock-test/3/1",
 	}, dataFiles123)
 
+	multi := mockOneMultiFileStat(dataFiles123[:4], statFiles123[:4])
+	multi2 := mockOneMultiFileStat(dataFiles123[4:], statFiles123[4:])
+	multiFileStat := []MultipleFilesStat{multi[0], multi2[0]}
 	// group keys = 2, region keys = 1
 	splitter, err := NewRangeSplitter(
-		ctx, dataFiles123, statFiles123, memStore, 1000, 2, 1000, 1, true,
+		ctx, multiFileStat, memStore, 1000, 2, 1000, 1, true,
 	)
 	require.NoError(t, err)
 
@@ -318,10 +325,11 @@ func TestExactlyKeyNum(t *testing.T) {
 
 	dataFiles, statFiles, err := MockExternalEngineWithWriter(memStore, writer, subDir, keys, values)
 	require.NoError(t, err)
+	multiFileStat := mockOneMultiFileStat(dataFiles, statFiles)
 
 	// maxRangeKeys = 3
 	splitter, err := NewRangeSplitter(
-		ctx, dataFiles, statFiles, memStore, 1000, 100, 1000, 3, true,
+		ctx, multiFileStat, memStore, 1000, 100, 1000, 3, true,
 	)
 	require.NoError(t, err)
 	endKey, splitDataFiles, splitStatFiles, splitKeys, err := splitter.SplitOneRangesGroup()
@@ -333,7 +341,7 @@ func TestExactlyKeyNum(t *testing.T) {
 
 	// rangesGroupKeys = 3
 	splitter, err = NewRangeSplitter(
-		ctx, dataFiles, statFiles, memStore, 1000, 3, 1000, 1, true,
+		ctx, multiFileStat, memStore, 1000, 3, 1000, 1, true,
 	)
 	require.NoError(t, err)
 	endKey, splitDataFiles, splitStatFiles, splitKeys, err = splitter.SplitOneRangesGroup()

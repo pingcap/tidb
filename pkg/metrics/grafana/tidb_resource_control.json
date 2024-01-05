@@ -3073,7 +3073,7 @@
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
-              "legendFormat": "{{name}}-{{instance}}",
+              "legendFormat": "{{resource_group}}-{{instance}}",
               "metric": "scan_details",
               "refId": "B",
               "step": 4
@@ -3184,7 +3184,7 @@
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
-              "legendFormat": "{{name}}-{{instance}}",
+              "legendFormat": "{{resource_group}}-{{instance}}",
               "metric": "scan_details",
               "refId": "B",
               "step": 4
@@ -3295,7 +3295,7 @@
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
-              "legendFormat": "{{name}}-{{instance}}",
+              "legendFormat": "{{resource_group}}-{{instance}}",
               "metric": "scan_details",
               "refId": "B",
               "step": 4
@@ -3406,7 +3406,7 @@
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
-              "legendFormat": "{{name}}-{{instance}}",
+              "legendFormat": "{{resource_group}}-{{instance}}",
               "metric": "scan_details",
               "refId": "B",
               "step": 4
@@ -3517,7 +3517,7 @@
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
-              "legendFormat": "{{name}}-{{instance}}",
+              "legendFormat": "{{resource_group}}-{{instance}}",
               "metric": "scan_details",
               "refId": "B",
               "step": 4

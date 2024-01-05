@@ -655,6 +655,7 @@ func prepare4HashJoin(testCase *hashJoinTestCase, innerExec, outerExec exec.Exec
 			concurrency:     uint(testCase.concurrency),
 			probeTypes:      exec.RetTypes(outerExec),
 			buildTypes:      exec.RetTypes(innerExec),
+			allocPool:       chunk.NewEmptyAllocator(),
 		},
 		probeSideTupleFetcher: &probeSideTupleFetcher{
 			probeSideExec: outerExec,

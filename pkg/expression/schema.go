@@ -19,7 +19,6 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/size"
 )
 
@@ -269,7 +268,7 @@ func MergeSchema(lSchema, rSchema *Schema) *Schema {
 }
 
 // GetUsedList shows whether each column in schema is contained in usedCols.
-func GetUsedList(ctx sessionctx.Context, usedCols []*Column, schema *Schema) []bool {
+func GetUsedList(ctx EvalContext, usedCols []*Column, schema *Schema) []bool {
 	tmpSchema := NewSchema(usedCols...)
 	used := make([]bool, schema.Len())
 	for i, col := range schema.Columns {

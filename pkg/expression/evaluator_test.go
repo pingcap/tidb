@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -438,9 +439,9 @@ func TestBinopNumeric(t *testing.T) {
 		{types.NewDecFromInt(10), ast.Mod, 0},
 	}
 
-	ctx.GetSessionVars().StmtCtx.InSelectStmt = false
-	ctx.GetSessionVars().SQLMode |= mysql.ModeErrorForDivisionByZero
-	ctx.GetSessionVars().StmtCtx.InInsertStmt = true
+	levels := ctx.GetSessionVars().StmtCtx.ErrLevels()
+	levels[errctx.ErrGroupDividedByZero] = errctx.LevelError
+	ctx.GetSessionVars().StmtCtx.SetErrLevels(levels)
 	for _, tt := range testcases {
 		fc := funcs[tt.op]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
@@ -449,7 +450,8 @@ func TestBinopNumeric(t *testing.T) {
 		require.Error(t, err)
 	}
 
-	ctx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = true
+	levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+	ctx.GetSessionVars().StmtCtx.SetErrLevels(levels)
 	for _, tt := range testcases {
 		fc := funcs[tt.op]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))

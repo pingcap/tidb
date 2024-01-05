@@ -99,6 +99,7 @@ func (options *GCSBackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
 type GCSStorage struct {
 	gcs    *backuppb.GCS
 	bucket *storage.BucketHandle
+	cli    *storage.Client
 }
 
 // GetBucketHandle gets the handle to the GCS API on the bucket.
@@ -272,12 +273,29 @@ func (s *GCSStorage) URI() string {
 }
 
 // Create implements ExternalStorage interface.
-func (s *GCSStorage) Create(ctx context.Context, name string, _ *WriterOption) (ExternalFileWriter, error) {
-	object := s.objectName(name)
-	wc := s.bucket.Object(object).NewWriter(ctx)
-	wc.StorageClass = s.gcs.StorageClass
-	wc.PredefinedACL = s.gcs.PredefinedAcl
-	return newFlushStorageWriter(wc, &emptyFlusher{}, wc), nil
+func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) (ExternalFileWriter, error) {
+	// NewGCSWriter requires real testing environment on Google Cloud.
+	mockGCS := intest.InTest && strings.Contains(s.gcs.GetEndpoint(), "127.0.0.1")
+	if wo == nil || wo.Concurrency <= 1 || mockGCS {
+		object := s.objectName(name)
+		wc := s.bucket.Object(object).NewWriter(ctx)
+		wc.StorageClass = s.gcs.StorageClass
+		wc.PredefinedACL = s.gcs.PredefinedAcl
+		return newFlushStorageWriter(wc, &emptyFlusher{}, wc), nil
+	}
+	uri := s.objectName(name)
+	// 5MB is the minimum part size for GCS.
+	partSize := int64(gcsMinimumChunkSize)
+	if wo.PartSize > partSize {
+		partSize = wo.PartSize
+	}
+	w, err := NewGCSWriter(ctx, s.cli, uri, partSize, wo.Concurrency, s.gcs.Bucket)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	fw := newFlushStorageWriter(w, &emptyFlusher{}, w)
+	bw := newBufferedWriter(fw, int(partSize), NoCompression)
+	return bw, nil
 }
 
 // Rename file name from oldFileName to newFileName.
@@ -293,6 +311,9 @@ func (s *GCSStorage) Rename(ctx context.Context, oldFileName, newFileName string
 	return s.DeleteFile(ctx, oldFileName)
 }
 
+// used in tests
+var mustReportCredErr = false
+
 // NewGCSStorage creates a GCS external storage implementation.
 func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorageOptions) (*GCSStorage, error) {
 	var clientOps []option.ClientOption
@@ -302,6 +323,10 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 		if gcs.CredentialsBlob == "" {
 			creds, err := google.FindDefaultCredentials(ctx, storage.ScopeReadWrite)
 			if err != nil {
+				if intest.InTest && !mustReportCredErr {
+					clientOps = append(clientOps, option.WithoutAuthentication())
+					goto skipHandleCred
+				}
 				return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "%v Or you should provide '--gcs.credentials_file'", err)
 			}
 			if opts.SendCredentials {
@@ -318,23 +343,26 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 			clientOps = append(clientOps, option.WithCredentialsJSON([]byte(gcs.GetCredentialsBlob())))
 		}
 	}
+skipHandleCred:
 
 	if gcs.Endpoint != "" {
 		clientOps = append(clientOps, option.WithEndpoint(gcs.Endpoint))
 	}
 
 	if opts.HTTPClient != nil {
-		if !intest.InTest {
-			// see https://github.com/pingcap/tidb/issues/47022#issuecomment-1722913455
-			// https://www.googleapis.com/auth/cloud-platform must be set to use service_account
-			// type of credential-file.
-			newTransport, err := htransport.NewTransport(ctx, opts.HTTPClient.Transport,
-				append(clientOps, option.WithScopes(storage.ScopeFullControl, "https://www.googleapis.com/auth/cloud-platform"))...)
-			if err != nil {
-				return nil, errors.Trace(err)
+		// see https://github.com/pingcap/tidb/issues/47022#issuecomment-1722913455
+		// https://www.googleapis.com/auth/cloud-platform must be set to use service_account
+		// type of credential-file.
+		newTransport, err := htransport.NewTransport(ctx, opts.HTTPClient.Transport,
+			append(clientOps, option.WithScopes(storage.ScopeFullControl, "https://www.googleapis.com/auth/cloud-platform"))...)
+		if err != nil {
+			if intest.InTest && !mustReportCredErr {
+				goto skipHandleTransport
 			}
-			opts.HTTPClient.Transport = newTransport
+			return nil, errors.Trace(err)
 		}
+		opts.HTTPClient.Transport = newTransport
+	skipHandleTransport:
 		clientOps = append(clientOps, option.WithHTTPClient(opts.HTTPClient))
 	}
 
@@ -361,7 +389,7 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 		// so we need find sst in slash directory
 		gcs.Prefix += "//"
 	}
-	return &GCSStorage{gcs: gcs, bucket: bucket}, nil
+	return &GCSStorage{gcs: gcs, bucket: bucket, cli: client}, nil
 }
 
 func hasSSTFiles(ctx context.Context, bucket *storage.BucketHandle, prefix string) bool {
