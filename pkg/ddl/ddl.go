@@ -482,8 +482,16 @@ func (sv *schemaVersionManager) unlockSchemaVersion(jobID int64) {
 	if ownerID == jobID {
 		if lockInfo, ok := sv.lockInfoMaps[jobID]; ok {
 			delete(sv.lockInfoMaps, jobID)
-			if err := lockInfo.mu.Unlock(sv.ctx); err != nil {
+			err := lockInfo.mu.Unlock(sv.ctx)
+			for err != nil {
 				logutil.BgLogger().Error("unlock schema version", zap.Error(err))
+				select {
+				case <-sv.ctx.Done():
+					break
+				case <-time.After(time.Second):
+				}
+				// retry unlock
+				err = lockInfo.mu.Unlock(sv.ctx)
 			}
 			if err := lockInfo.se.Close(); err != nil {
 				logutil.BgLogger().Error("close etcd session", zap.Error(err))
