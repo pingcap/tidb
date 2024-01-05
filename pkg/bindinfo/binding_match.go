@@ -225,9 +225,12 @@ func isFuzzyBinding(stmt ast.Node) bool {
 // You can see more example at the TestExtractTableName.
 func CollectTableNames(in ast.Node) []*ast.TableName {
 	collector := tableNameCollectorPool.Get().(*tableNameCollector)
-	collector.reset()
+	defer func() {
+		collector.tableNames = nil
+		tableNameCollectorPool.Put(collector)
+	}()
 	in.Accept(collector)
-	return collector.GetResult()
+	return collector.tableNames
 }
 
 var tableNameCollectorPool = sync.Pool{
@@ -258,13 +261,4 @@ func (c *tableNameCollector) Enter(in ast.Node) (out ast.Node, skipChildren bool
 // Leave implements Visitor interface.
 func (*tableNameCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
-}
-
-func (c *tableNameCollector) GetResult() []*ast.TableName {
-	return c.tableNames
-}
-
-func (c *tableNameCollector) reset() {
-	c.tableNames = nil
-	tableNameCollectorPool.Put(c)
 }
