@@ -313,6 +313,7 @@ func (s *metaMgrSuite) prepareMock(rowsVal [][]driver.Value, nextRowID *int64, u
 		WillReturnResult(sqlmock.NewResult(int64(0), int64(0)))
 	s.prepareMockInner(rowsVal, nextRowID, updateArgs, checksum, updateStatus, rollback)
 }
+
 func (s *metaMgrSuite) prepareMockInner(rowsVal [][]driver.Value, nextRowID *int64, updateArgs []driver.Value, checksum *verification.KVChecksum, updateStatus *string, rollback bool) {
 	s.mockDB.ExpectBegin()
 

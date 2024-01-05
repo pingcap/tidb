@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/planner"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -46,7 +45,6 @@ func TestPlanner(t *testing.T) {
 	defer pool.Close()
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	testutil.WaitNodeRegistered(ctx, t)
 	p := &planner.Planner{}
 	pCtx := planner.PlanCtx{
 		Ctx:        ctx,

@@ -418,6 +418,10 @@ func TestMeta(t *testing.T) {
 	role, err = m.GetBDRRole()
 	require.NoError(t, err)
 	require.Equal(t, string(ast.BDRRolePrimary), role)
+	require.NoError(t, m.ClearBDRRole())
+	role, err = m.GetBDRRole()
+	require.NoError(t, err)
+	require.Len(t, role, 0)
 
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)

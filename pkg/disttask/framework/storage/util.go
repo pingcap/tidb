@@ -17,6 +17,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -69,6 +70,38 @@ func GetTasksFromHistoryForTest(ctx context.Context, stm *TaskManager) (int, err
 		return 0, err
 	}
 	return len(rs), nil
+}
+
+// GetTaskEndTimeForTest gets task's endTime for test.
+func GetTaskEndTimeForTest(ctx context.Context, stm *TaskManager, taskID int64) (time.Time, error) {
+	rs, err := stm.executeSQLWithNewSession(ctx,
+		`select end_time 
+		from mysql.tidb_global_task
+	    where id = %?`, taskID)
+
+	if err != nil {
+		return time.Time{}, nil
+	}
+	if !rs[0].IsNull(0) {
+		return rs[0].GetTime(0).GoTime(time.Local)
+	}
+	return time.Time{}, nil
+}
+
+// GetSubtaskEndTimeForTest gets subtask's endTime for test.
+func GetSubtaskEndTimeForTest(ctx context.Context, stm *TaskManager, subtaskID int64) (time.Time, error) {
+	rs, err := stm.executeSQLWithNewSession(ctx,
+		`select end_time 
+		from mysql.tidb_background_subtask
+	    where id = %?`, subtaskID)
+
+	if err != nil {
+		return time.Time{}, nil
+	}
+	if !rs[0].IsNull(0) {
+		return rs[0].GetTime(0).GoTime(time.Local)
+	}
+	return time.Time{}, nil
 }
 
 // PrintSubtaskInfo log the subtask info by taskKey. Only used for UT.
