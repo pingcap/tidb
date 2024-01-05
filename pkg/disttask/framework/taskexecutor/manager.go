@@ -132,13 +132,15 @@ func (m *Manager) initMeta() (err error) {
 	return err
 }
 
+// InitMeta initializes the meta of the Manager.
+// not a must-success step before start manager, manager will try to init meta periodically.
+func (m *Manager) InitMeta() error {
+	return m.initMeta()
+}
+
 // Start starts the Manager.
 func (m *Manager) Start() error {
 	logutil.Logger(m.logCtx).Debug("manager start")
-	if err := m.initMeta(); err != nil {
-		return err
-	}
-
 	m.wg.Run(m.fetchAndHandleRunnableTasksLoop)
 	m.wg.Run(m.fetchAndFastCancelTasksLoop)
 	m.wg.Run(m.recoverMetaLoop)
@@ -465,7 +467,7 @@ func (m *Manager) logErr(err error) {
 
 func (m *Manager) logErrAndPersist(err error, taskID int64, taskExecutor TaskExecutor) {
 	m.logErr(err)
-	if taskExecutor.IsRetryableError(err) {
+	if taskExecutor != nil && taskExecutor.IsRetryableError(err) {
 		logutil.Logger(m.logCtx).Error("met retryable err", zap.Error(err), zap.Stack("stack"))
 		return
 	}

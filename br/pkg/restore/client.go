@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/checksum"
+	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -119,10 +120,12 @@ type Client struct {
 	dbPool          []*DB
 	rateLimit       uint64
 	isOnline        bool
+	granularity     string
 	noSchema        bool
 	hasSpeedLimited bool
 
 	restoreStores []uint64
+	storeCount    int
 
 	cipher             *backuppb.CipherInfo
 	switchModeInterval time.Duration
@@ -457,6 +460,10 @@ func (rc *Client) GetDomain() *domain.Domain {
 	return rc.dom
 }
 
+func (rc *Client) GetStoreCount() int {
+	return rc.storeCount
+}
+
 // GetPDClient returns a pd client.
 func (rc *Client) GetPDClient() pd.Client {
 	return rc.pdClient
@@ -523,10 +530,25 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 	return nil
 }
 
-func (rc *Client) InitClients(backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) {
+func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) {
+	storeWorkerPoolMap := make(map[uint64]chan struct{})
+	storeStatisticMap := make(map[uint64]*int64)
+	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
+	if err != nil {
+		log.Fatal("failed to get stores", zap.Error(err))
+	}
+	concurrencyPerStore := 512
+	for _, store := range stores {
+		ch := make(chan struct{}, concurrencyPerStore)
+		for i := 0; i < concurrencyPerStore; i += 1 {
+			ch <- struct{}{}
+		}
+		storeWorkerPoolMap[store.Id] = ch
+		storeStatisticMap[store.Id] = new(int64)
+	}
 	metaClient := split.NewSplitClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, rc.rewriteMode)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, storeWorkerPoolMap, storeStatisticMap, rc.rewriteMode)
 }
 
 func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
@@ -566,7 +588,7 @@ func (rc *Client) InitBackupMeta(
 	}
 	rc.backupMeta = backupMeta
 
-	rc.InitClients(backend, backupMeta.IsRawKv, backupMeta.IsTxnKv)
+	rc.InitClients(c, backend, backupMeta.IsRawKv, backupMeta.IsTxnKv)
 	log.Info("load backupmeta", zap.Int("databases", len(rc.databases)), zap.Int("jobs", len(rc.ddlJobs)))
 	return rc.fileImporter.CheckMultiIngestSupport(c, rc.pdClient)
 }
@@ -641,6 +663,16 @@ func (rc *Client) SetConcurrency(c uint) {
 // EnableOnline sets the mode of restore to online.
 func (rc *Client) EnableOnline() {
 	rc.isOnline = true
+}
+
+// SetGranularity sets the ganularity of restore pipeline.
+func (rc *Client) SetGranularity(g string) {
+	rc.granularity = g
+}
+
+// GetGranularity sets the ganularity of restore pipeline.
+func (rc *Client) GetGranularity() string {
+	return rc.granularity
 }
 
 // GetTLSConfig returns the tls config.
@@ -1224,7 +1256,7 @@ func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient ImporterClient,
 	rc.SetRateLimit(42)
 	rc.SetConcurrency(concurrency)
 	rc.hasSpeedLimited = false
-	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, false, rc.rewriteMode)
+	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, false, nil, nil, rc.rewriteMode)
 	return rc.setSpeedLimit(ctx, rc.rateLimit)
 }
 
@@ -2005,16 +2037,13 @@ const (
 
 // LoadRestoreStores loads the stores used to restore data.
 func (rc *Client) LoadRestoreStores(ctx context.Context) error {
-	if !rc.isOnline {
-		return nil
-	}
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("Client.LoadRestoreStores", opentracing.ChildOf(span.Context()))
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
+	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
 
-	stores, err := rc.pdClient.GetAllStores(ctx)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -2022,14 +2051,19 @@ func (rc *Client) LoadRestoreStores(ctx context.Context) error {
 		if s.GetState() != metapb.StoreState_Up {
 			continue
 		}
-		for _, l := range s.GetLabels() {
-			if l.GetKey() == restoreLabelKey && l.GetValue() == restoreLabelValue {
-				rc.restoreStores = append(rc.restoreStores, s.GetId())
-				break
+		rc.storeCount++
+		if rc.isOnline {
+			for _, l := range s.GetLabels() {
+				if l.GetKey() == restoreLabelKey && l.GetValue() == restoreLabelValue {
+					rc.restoreStores = append(rc.restoreStores, s.GetId())
+					break
+				}
 			}
 		}
 	}
-	log.Info("load restore stores", zap.Uint64s("store-ids", rc.restoreStores))
+	if rc.isOnline {
+		log.Info("load restore stores", zap.Uint64s("store-ids", rc.restoreStores))
+	}
 	return nil
 }
 

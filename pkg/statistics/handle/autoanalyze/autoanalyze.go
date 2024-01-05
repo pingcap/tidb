@@ -414,7 +414,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 			pi := tblInfo.GetPartitionInfo()
 			// No partitions, analyze the whole table.
 			if pi == nil {
-				statsTbl := statsHandle.GetTableStats(tblInfo)
+				statsTbl := statsHandle.GetTableStatsForAutoAnalyze(tblInfo)
 				sql := "analyze table %n.%n"
 				analyzed := tryAutoAnalyzeTable(sctx, statsHandle, sysProcTracker, tblInfo, statsTbl, autoAnalyzeRatio, sql, db, tblInfo.Name.O)
 				if analyzed {
@@ -491,10 +491,10 @@ func tryAutoAnalyzeTable(
 	sql string,
 	params ...interface{},
 ) bool {
-	// 1. If the stats are not loaded, we don't need to analyze it.
+	// 1. If the statistics are either not loaded or are classified as pseudo, there is no need for analyze
 	// 2. If the table is too small, we don't want to waste time to analyze it.
 	//    Leave the opportunity to other bigger tables.
-	if statsTbl.Pseudo || statsTbl.RealtimeCount < AutoAnalyzeMinCnt {
+	if statsTbl == nil || statsTbl.RealtimeCount < AutoAnalyzeMinCnt || statsTbl.Pseudo {
 		return false
 	}
 

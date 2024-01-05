@@ -15,12 +15,12 @@ rename table t to t3, t2 to t4;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
 alter table t add foreign key (a) references t2(a);
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
-admin set bdr role local_only;
+admin unset bdr role;
 alter table t add foreign key (a) references t2(a);
 admin set bdr role primary;
 alter table t drop foreign key fk_1;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
-admin set bdr role local_only;
+admin unset bdr role;
 alter table t drop foreign key fk_1;
 alter table t drop index fk_1;
 admin set bdr role primary;
@@ -29,13 +29,14 @@ Error 8263 (HY000): The operation is not allowed while the bdr role of this clus
 drop table t2;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
 alter table t modify column a bigint;
+Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
 alter table t auto_increment = 6000;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
 alter table t alter column a set default 1;
 alter table t shard_row_id_bits = 4;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
 alter table t comment = 'test';
-admin set bdr role local_only;
+admin unset bdr role;
 drop table t;
 drop table t2;
 admin set bdr role primary;
@@ -76,13 +77,13 @@ partition p5 values less than (5)
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
 alter table t drop partition p0;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
-admin set bdr role local_only;
+admin unset bdr role;
 drop table t2;
 admin set bdr role primary;
 create placement policy pp1 followers=1;
 alter table t partition by range (a) (partition p0 values less than (1000000), partition pMax values less than (maxvalue) placement policy pp1);
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
-admin set bdr role local_only;
+admin unset bdr role;
 drop table t;
 admin set bdr role primary;
 drop placement policy pp1;
@@ -90,36 +91,36 @@ create table t(a int);
 set global tidb_enable_check_constraint=ON;
 alter table t add constraint `a_check` check(a > 0);
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
-admin set bdr role local_only;
+admin unset bdr role;
 alter table t add constraint `a_check` check(a > 0);
 admin set bdr role primary;
 alter table t alter constraint `a_check` enforced;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
 alter table t drop constraint `a_check`;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
-admin set bdr role local_only;
+admin unset bdr role;
 alter table t drop constraint `a_check`;
 admin set bdr role primary;
 set global tidb_enable_check_constraint=OFF;
 alter table t cache;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
-admin set bdr role local_only;
+admin unset bdr role;
 alter table t cache;
 admin set bdr role primary;
 alter table t nocache;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
-admin set bdr role local_only;
+admin unset bdr role;
 alter table t nocache;
 admin set bdr role primary;
 CREATE TABLE ttl_test (created_at datetime) TTL = `created_at` + INTERVAL 5 DAY;
 ALTER TABLE ttl_test TTL = `created_at` + INTERVAL 2 YEAR;
 alter table ttl_test remove ttl;
-admin set bdr role local_only;
+admin unset bdr role;
 drop table ttl_test;
 admin set bdr role primary;
 alter table t add primary key (a);
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
-admin set bdr role local_only;
+admin unset bdr role;
 alter table t add primary key (a);
 admin set bdr role primary;
 alter table t drop primary key;
@@ -130,19 +131,19 @@ Error 8263 (HY000): The operation is not allowed while the bdr role of this clus
 create table t_random(a bigint auto_random, primary key (a));
 alter table t_random auto_random_base = 10;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
-admin set bdr role local_only;
+admin unset bdr role;
 drop table t_random;
 admin set bdr role primary;
 create sequence seq;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
-admin set bdr role local_only;
+admin unset bdr role;
 create sequence seq;
 admin set bdr role primary;
 alter sequence seq restart;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
 drop sequence seq;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
-admin set bdr role local_only;
+admin unset bdr role;
 drop sequence seq;
 admin set bdr role primary;
 create view v as select 1 as b;
@@ -151,7 +152,7 @@ alter table t charset utf8mb4 collate utf8mb4_unicode_ci;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
 alter database bdr_mode default character set = utf8;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
-admin set bdr role local_only;
+admin unset bdr role;
 drop database bdr_mode;
 admin set bdr role primary;
 create resource group rg1 ru_per_sec = 100;
@@ -170,12 +171,12 @@ alter table t drop column b;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
 alter table t add index idx_a(a);
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
-admin set bdr role local_only;
+admin unset bdr role;
 alter table t add index idx_a(a);
 admin set bdr role secondary;
 alter table t alter index idx_a invisible;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
-admin set bdr role local_only;
+admin unset bdr role;
 alter table t alter index idx_a invisible;
 admin set bdr role secondary;
 alter table t alter index idx_a visible;
@@ -184,7 +185,7 @@ alter table t rename index idx_a to idx_a_2;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
 alter table t drop index idx_a;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
-admin set bdr role local_only;
+admin unset bdr role;
 alter table t drop index idx_a;
 create table t2(a int, primary key (a));
 admin set bdr role secondary;
@@ -192,12 +193,12 @@ rename table t to t3, t2 to t4;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
 alter table t add foreign key (a) references t2(a);
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
-admin set bdr role local_only;
+admin unset bdr role;
 alter table t add foreign key (a) references t2(a);
 admin set bdr role secondary;
 alter table t drop foreign key fk_1;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
-admin set bdr role local_only;
+admin unset bdr role;
 alter table t drop foreign key fk_1;
 alter table t drop index fk_1;
 admin set bdr role secondary;
@@ -215,7 +216,7 @@ alter table t shard_row_id_bits = 4;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
 alter table t comment = 'test';
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
-admin set bdr role local_only;
+admin unset bdr role;
 drop table t;
 drop table t2;
 admin set bdr role secondary;
@@ -224,7 +225,7 @@ partition p0 values less than (5),
 partition p1 values less than (10),
 partition p2 values less than (15));
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
-admin set bdr role local_only;
+admin unset bdr role;
 create table t(a int) partition by range(a) (
 partition p0 values less than (5),
 partition p1 values less than (10),
@@ -251,7 +252,7 @@ alter table t attributes="merge_option=allow";
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
 alter table t partition p2 attributes="key1=value1";
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
-admin set bdr role local_only;
+admin unset bdr role;
 create table t2(a int);
 admin set bdr role secondary;
 alter table t exchange partition p0 with table t2;
@@ -266,41 +267,41 @@ partition p5 values less than (5)
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
 alter table t drop partition p2;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
-admin set bdr role local_only;
+admin unset bdr role;
 drop table t2;
 admin set bdr role secondary;
 create placement policy pp1 followers=1;
 alter table t partition by range (a) (partition p0 values less than (1000000), partition pMax values less than (maxvalue) placement policy pp1);
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
-admin set bdr role local_only;
+admin unset bdr role;
 drop table t;
 admin set bdr role secondary;
 drop placement policy pp1;
-admin set bdr role local_only;
+admin unset bdr role;
 create table t(a int);
 admin set bdr role secondary;
 set global tidb_enable_check_constraint=ON;
 alter table t add constraint `a_check` check(a > 0);
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
-admin set bdr role local_only;
+admin unset bdr role;
 alter table t add constraint `a_check` check(a > 0);
 admin set bdr role secondary;
 alter table t alter constraint `a_check` enforced;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
 alter table t drop constraint `a_check`;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
-admin set bdr role local_only;
+admin unset bdr role;
 alter table t drop constraint `a_check`;
 admin set bdr role secondary;
 set global tidb_enable_check_constraint=OFF;
 alter table t cache;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
-admin set bdr role local_only;
+admin unset bdr role;
 alter table t cache;
 admin set bdr role secondary;
 alter table t nocache;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
-admin set bdr role local_only;
+admin unset bdr role;
 alter table t nocache;
 CREATE TABLE ttl_test (created_at datetime) TTL = `created_at` + INTERVAL 5 DAY;
 admin set bdr role secondary;
@@ -312,47 +313,55 @@ drop table ttl_test;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
 alter table t add primary key (a);
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
-admin set bdr role local_only;
+admin unset bdr role;
 alter table t add primary key (a);
 admin set bdr role secondary;
 alter table t drop primary key;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
-admin set bdr role local_only;
+admin unset bdr role;
 alter table t drop primary key;
 admin set bdr role secondary;
 alter table t add unique index (a);
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
 alter table t auto_id_cache = 10;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
-admin set bdr role local_only;
+admin unset bdr role;
 create table t_random(a bigint auto_random, primary key (a));
 admin set bdr role secondary;
 alter table t_random auto_random_base = 10;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
-admin set bdr role local_only;
+admin unset bdr role;
 drop table t_random;
 admin set bdr role secondary;
 create sequence seq;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
-admin set bdr role local_only;
+admin unset bdr role;
 create sequence seq;
 admin set bdr role secondary;
 alter sequence seq restart;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
 drop sequence seq;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
-admin set bdr role local_only;
+admin unset bdr role;
 drop sequence seq;
 admin set bdr role secondary;
 create view v as select 1 as b;
+Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
+admin unset bdr role;
+create view v as select 1 as b;
+admin set bdr role secondary;
 drop view v;
+Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
+admin unset bdr role;
+drop view v;
+admin set bdr role secondary;
 alter table t charset utf8mb4 collate utf8mb4_unicode_ci;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
 alter database bdr_mode default character set = utf8;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
 drop database bdr_mode;
 Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to secondary.
-admin set bdr role local_only;
+admin unset bdr role;
 drop database bdr_mode;
 admin set bdr role secondary;
 create resource group rg1 ru_per_sec = 100;
@@ -361,7 +370,7 @@ alter user `user1` resource group `rg1`;
 alter resource group rg1 ru_per_sec = 200;
 drop user user1;
 drop resource group if exists rg1;
-admin set bdr role local_only;
+admin unset bdr role;
 create database bdr_mode;
 use bdr_mode;
 create table t(a int);
@@ -450,4 +459,25 @@ alter user `user1` resource group `rg1`;
 alter resource group rg1 ru_per_sec = 200;
 drop user user1;
 drop resource group if exists rg1;
-admin set bdr role local_only;
+admin unset bdr role;
+create database bdr_mode;
+use bdr_mode;
+admin set bdr role primary;
+create table t(a int);
+alter table t modify column a bigint;
+Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
+alter table t modify column a int default 10;
+alter table t modify column a int comment "test";
+Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
+alter table t modify column a int default 100 comment "test";
+admin unset bdr role;
+drop table t;
+admin set bdr role primary;
+create table t(a int);
+alter table t add column b int;
+alter table t add column c int null;
+alter table t add column d int not null;
+Error 8263 (HY000): The operation is not allowed while the bdr role of this cluster is set to primary.
+alter table t add column d int not null default 10;
+admin unset bdr role;
+drop database bdr_mode;

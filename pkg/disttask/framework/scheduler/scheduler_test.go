@@ -228,8 +228,6 @@ func TestTaskFailInManager(t *testing.T) {
 	schManager.Start()
 	defer schManager.Stop()
 
-	testutil.WaitNodeRegistered(ctx, t)
-
 	// unknown task type
 	taskID, err := mgr.CreateTask(ctx, "test", "test-type", 1, nil)
 	require.NoError(t, err)
@@ -380,7 +378,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	} else if isPauseAndResume {
 		for i := 0; i < taskCnt; i++ {
 			found, err := mgr.PauseTask(ctx, fmt.Sprintf("%d", i))
-			require.Equal(t, true, found)
+			require.True(t, found)
 			require.NoError(t, err)
 		}
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
@@ -390,7 +388,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		checkGetTaskState(proto.TaskStatePaused)
 		for i := 0; i < taskCnt; i++ {
 			found, err := mgr.ResumeTask(ctx, fmt.Sprintf("%d", i))
-			require.Equal(t, true, found)
+			require.True(t, found)
 			require.NoError(t, err)
 		}
 

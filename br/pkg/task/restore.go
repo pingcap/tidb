@@ -5,6 +5,7 @@ package task
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -40,8 +41,9 @@ import (
 )
 
 const (
-	flagOnline   = "online"
-	flagNoSchema = "no-schema"
+	flagOnline      = "online"
+	flagNoSchema    = "no-schema"
+	flagGranularity = "granularity"
 
 	// FlagMergeRegionSizeBytes is the flag name of merge small regions by size
 	FlagMergeRegionSizeBytes = "merge-region-size-bytes"
@@ -96,7 +98,8 @@ const (
 
 // RestoreCommonConfig is the common configuration for all BR restore tasks.
 type RestoreCommonConfig struct {
-	Online bool `json:"online" toml:"online"`
+	Online      bool   `json:"online" toml:"online"`
+	Granularity string `json:"granularity" toml:"granularity"`
 
 	// MergeSmallRegionSizeBytes is the threshold of merging small regions (Default 96MB, region split size).
 	// MergeSmallRegionKeyCount is the threshold of merging smalle regions (Default 960_000, region split key count).
@@ -119,12 +122,16 @@ func (cfg *RestoreCommonConfig) adjust() {
 	if cfg.MergeSmallRegionSizeBytes == 0 {
 		cfg.MergeSmallRegionSizeBytes = conn.DefaultMergeRegionSizeBytes
 	}
+	if len(cfg.Granularity) == 0 {
+		cfg.Granularity = string(restore.FineGrained)
+	}
 }
 
 // DefineRestoreCommonFlags defines common flags for the restore command.
 func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	// TODO remove experimental tag if it's stable
 	flags.Bool(flagOnline, false, "(experimental) Whether online when restore")
+	flags.String(flagGranularity, string(restore.FineGrained), "(experimental) Whether split & scatter regions using fine-grained way during restore")
 	flags.Uint32(flagConcurrency, 128, "The size of thread pool on BR that executes tasks, "+
 		"where each task restores one SST file to TiKV")
 	flags.Uint64(FlagMergeRegionSizeBytes, conn.DefaultMergeRegionSizeBytes,
@@ -152,6 +159,10 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 func (cfg *RestoreCommonConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	var err error
 	cfg.Online, err = flags.GetBool(flagOnline)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.Granularity, err = flags.GetString(flagGranularity)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -473,7 +484,7 @@ func (cfg *RestoreConfig) generateSnapshotRestoreTaskName(clusterID uint64) stri
 func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *RestoreConfig) error {
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
-	client.SetConcurrency(uint(cfg.Concurrency))
+	client.SetGranularity(cfg.Granularity)
 	if cfg.Online {
 		client.EnableOnline()
 	}
@@ -496,6 +507,12 @@ func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *Re
 	err = client.LoadRestoreStores(ctx)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	storeCount := client.GetStoreCount()
+	if storeCount > 0 {
+		client.SetConcurrency(uint(cfg.Concurrency) * uint(client.GetStoreCount()))
+	} else {
+		client.SetConcurrency(uint(cfg.Concurrency))
 	}
 
 	return nil
@@ -942,6 +959,10 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		})
 	}
 
+	if cfg.Granularity == string(restore.CoarseGrained) {
+		tableStream = GoBlockCreateTablesPipeline(ctx, maxRestoreBatchSizeLimit, tableStream)
+	}
+
 	tableFileMap := restore.MapTableToFiles(files)
 	log.Debug("mapped table to files", zap.Any("result map", tableFileMap))
 
@@ -983,7 +1004,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		progressLen,
 		!cfg.LogProgress)
 	defer updateCh.Close()
-	sender, err := restore.NewTiKVSender(ctx, client, updateCh, cfg.PDConcurrency)
+	sender, err := restore.NewTiKVSender(ctx, client, updateCh, cfg.PDConcurrency, cfg.Granularity)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1193,4 +1214,30 @@ func restoreTableStream(
 			batcher.Add(t)
 		}
 	}
+}
+
+func GoBlockCreateTablesPipeline(ctx context.Context, sz int, inCh <-chan restore.CreatedTable) <-chan restore.CreatedTable {
+	outCh := make(chan restore.CreatedTable, sz)
+
+	go func() {
+		defer close(outCh)
+		cachedTables := make([]restore.CreatedTable, 0, sz)
+		for tbl := range inCh {
+			cachedTables = append(cachedTables, tbl)
+		}
+
+		sort.Slice(cachedTables, func(a, b int) bool {
+			return cachedTables[a].Table.ID < cachedTables[b].Table.ID
+		})
+
+		for _, tbl := range cachedTables {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				outCh <- tbl
+			}
+		}
+	}()
+	return outCh
 }

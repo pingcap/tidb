@@ -32,7 +32,7 @@ import (
 )
 
 func TestPlacementPolicy(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 
 	defer func() {
@@ -151,7 +151,7 @@ func TestResourceGroup(t *testing.T) {
 }
 
 func TestMeta(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 
 	defer func() {
@@ -418,6 +418,10 @@ func TestMeta(t *testing.T) {
 	role, err = m.GetBDRRole()
 	require.NoError(t, err)
 	require.Equal(t, string(ast.BDRRolePrimary), role)
+	require.NoError(t, m.ClearBDRRole())
+	role, err = m.GetBDRRole()
+	require.NoError(t, err)
+	require.Len(t, role, 0)
 
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
@@ -428,7 +432,7 @@ func TestMeta(t *testing.T) {
 }
 
 func TestSnapshot(t *testing.T) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
@@ -490,7 +494,7 @@ func TestElement(t *testing.T) {
 }
 
 func BenchmarkGenGlobalIDs(b *testing.B) {
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(b, err)
 	defer func() {
 		err := store.Close()

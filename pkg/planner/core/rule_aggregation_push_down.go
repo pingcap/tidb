@@ -608,7 +608,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 							break
 						}
 					}
-					for j, item := range newAggOrderItems {
+					for j, item := range newAggOrderItems[i] {
 						if item == nil {
 							continue
 						}

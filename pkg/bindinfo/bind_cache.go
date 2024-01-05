@@ -148,7 +148,7 @@ func (c *bindCache) SetBinding(sqlDigest string, meta *BindRecord) (err error) {
 
 // RemoveBinding removes the BindRecord which has same originSQL with specified BindRecord.
 // The function is thread-safe.
-func (c *bindCache) RemoveBinding(sqlDigest string, _ *BindRecord) {
+func (c *bindCache) RemoveBinding(sqlDigest string) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	c.delete(bindCacheKey(sqlDigest))
@@ -197,4 +197,10 @@ func (c *bindCache) Copy() (newCache *bindCache, err error) {
 		}
 	}
 	return newCache, err
+}
+
+func (c *bindCache) Size() int {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	return c.cache.Size()
 }

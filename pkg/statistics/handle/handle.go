@@ -149,9 +149,18 @@ func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
 	return h.GetPartitionStats(tblInfo, tblInfo.ID)
 }
 
+// GetTableStatsForAutoAnalyze is to get table stats but it will
+func (h *Handle) GetTableStatsForAutoAnalyze(tblInfo *model.TableInfo) *statistics.Table {
+	return h.getPartitionStats(tblInfo, tblInfo.ID, false)
+}
+
 // GetPartitionStats retrieves the partition stats from cache.
 // TODO: remove GetTableStats later on.
 func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
+	return h.getPartitionStats(tblInfo, pid, true)
+}
+
+func (h *Handle) getPartitionStats(tblInfo *model.TableInfo, pid int64, returnPseudo bool) *statistics.Table {
 	var tbl *statistics.Table
 	if h == nil {
 		tbl = statistics.PseudoTable(tblInfo, false)
@@ -160,12 +169,15 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 	}
 	tbl, ok := h.Get(pid)
 	if !ok {
-		tbl = statistics.PseudoTable(tblInfo, false)
-		tbl.PhysicalID = pid
-		if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
-			h.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+		if returnPseudo {
+			tbl = statistics.PseudoTable(tblInfo, false)
+			tbl.PhysicalID = pid
+			if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
+				h.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+			}
+			return tbl
 		}
-		return tbl
+		return nil
 	}
 	return tbl
 }

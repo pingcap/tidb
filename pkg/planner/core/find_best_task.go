@@ -2565,7 +2565,14 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 			ds.StatsInfo(), ds.tableStats, ds.statisticTable,
 			path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
 	}
-	is.SetStats(ds.tableStats.ScaleByExpectCnt(rowCount))
+	// ScaleByExpectCnt only allows to scale the row count smaller than the table total row count.
+	// But for MV index, it's possible that the IndexRangeScan row count is larger than the table total row count.
+	// Please see the Case 2 in CalcTotalSelectivityForMVIdxPath for an example.
+	if idx.MVIndex && rowCount > ds.tableStats.RowCount {
+		is.SetStats(ds.tableStats.Scale(rowCount / ds.tableStats.RowCount))
+	} else {
+		is.SetStats(ds.tableStats.ScaleByExpectCnt(rowCount))
+	}
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
 	if usedStats != nil && usedStats[is.physicalTableID] != nil {
 		is.usedStatsInfo = usedStats[is.physicalTableID]

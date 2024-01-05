@@ -52,10 +52,6 @@ type dumpFileGcChecker struct {
 	planReplayerTaskStatus *planReplayerDumpTaskStatus
 }
 
-func parseType(s string) string {
-	return strings.Split(s, "_")[0]
-}
-
 func parseTime(s string) (time.Time, error) {
 	startIdx := strings.LastIndex(s, "_")
 	if startIdx == -1 {
