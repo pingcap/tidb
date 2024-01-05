@@ -351,9 +351,8 @@ func (cc *clientConn) Close() error {
 
 // closeConn should be idempotent.
 // It will be called on the same `clientConn` more than once to avoid connection leak.
-<<<<<<< HEAD
-func closeConn(cc *clientConn, connections int) error {
-	metrics.ConnGauge.Set(float64(connections))
+func closeConn(cc *clientConn, resourceGroupName string, count int) error {
+	metrics.ConnGauge.WithLabelValues(resourceGroupName).Set(float64(count))
 	if cc.connectionID > 0 {
 		cc.server.dom.ReleaseConnID(cc.connectionID)
 		cc.connectionID = 0
@@ -364,16 +363,6 @@ func closeConn(cc *clientConn, connections int) error {
 			// We need to expect connection might have already disconnected.
 			// This is because closeConn() might be called after a connection read-timeout.
 			logutil.Logger(context.Background()).Debug("could not close connection", zap.Error(err))
-=======
-func closeConn(cc *clientConn, resourceGroupName string, count int) error {
-	var err error
-	cc.closeOnce.Do(func() {
-		metrics.ConnGauge.WithLabelValues(resourceGroupName).Set(float64(count))
-
-		if cc.connectionID > 0 {
-			cc.server.dom.ReleaseConnID(cc.connectionID)
-			cc.connectionID = 0
->>>>>>> e80385270c9 (metrics: add connection and fail metrics  by `resource group name` (#49424))
 		}
 	}
 	// Close statements and session
