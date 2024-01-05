@@ -719,8 +719,4 @@ func TestImportIntoBuildPlan(t *testing.T) {
 		core.ErrWrongValueCountOnRow)
 	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t1(a) FROM select * from t2;"),
 		core.ErrWrongValueCountOnRow)
-	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t1(a, @1) FROM select * from t2;"),
-		core.ErrUnknownColumn)
-	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t1(a, @b) FROM select * from t2;"),
-		core.ErrUnknownColumn)
 }

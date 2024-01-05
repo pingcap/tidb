@@ -4253,12 +4253,6 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 			(len(ld.ColumnsAndUserVars) == 0 && len(selectPlan.Schema().Columns) != len(tableInPlan.VisibleCols())) {
 			return nil, ErrWrongValueCountOnRow.GenWithStackByArgs(1)
 		}
-		for _, cu := range ld.ColumnsAndUserVars {
-			// all fields must be column
-			if cu.ColumnName == nil {
-				return nil, ErrUnknownColumn.GenWithStackByArgs(cu.UserVar.Name, "field list")
-			}
-		}
 		p.SelectPlan, _, err2 = DoOptimize(ctx, b.ctx, b.optFlag, selectPlan.(LogicalPlan))
 		if err2 != nil {
 			return nil, err2

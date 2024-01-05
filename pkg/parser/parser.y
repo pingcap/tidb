@@ -14624,12 +14624,23 @@ ImportIntoStmt:
 |	"IMPORT" "INTO" TableName ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt "FROM" ImportFromSelectStmt LoadDataOptionListOpt
 	/* LoadDataSetSpecOpt is used to avoid shift/reduce conflict, we don't support it actually */
 	{
-		$$ = &ast.ImportIntoStmt{
+		st := &ast.ImportIntoStmt{
 			Table:              $3.(*ast.TableName),
 			ColumnsAndUserVars: $4.([]*ast.ColumnNameOrUserVar),
 			Select:             $7.(ast.ResultSetNode),
 			Options:            $8.([]*ast.LoadDataOpt),
 		}
+		for _, cu := range st.ColumnsAndUserVars {
+			if cu.ColumnName == nil {
+				yylex.AppendError(yylex.Errorf("Cannot use user variable(%s) in IMPORT INTO FROM SELECT statement.", cu.UserVar.Name))
+				return 1
+			}
+		}
+		if $5.([]*ast.Assignment) != nil {
+			yylex.AppendError(yylex.Errorf("Cannot use SET clause in IMPORT INTO FROM SELECT statement."))
+			return 1
+		}
+		$$ = st
 	}
 
 ImportFromSelectStmt:
