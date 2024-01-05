@@ -861,7 +861,7 @@ func (lt *lessThanDataInt) length() int {
 }
 
 func (lt *lessThanDataInt) compare(ith int, v int64, unsigned bool) int {
-	// TODO: get more partitions when `v` bigger than `lt.maxvalue``, but the result still correct.
+	// TODO: get an extra partition when `v` bigger than `lt.maxvalue``, but the result still correct.
 	if ith == lt.length()-1 && lt.maxvalue {
 		return 1
 	}
