@@ -24,10 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestParallelSort(t *testing.T) {
-	ctx := mock.NewContext()
-	rowNum := 65536
-	sortCase := &testutil.SortCase{Rows: rowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+func parallelSortTest(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) {
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
@@ -43,6 +40,16 @@ func TestParallelSort(t *testing.T) {
 	err := exe.Close()
 	require.NoError(t, err)
 	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
+}
+
+func TestParallelSort(t *testing.T) {
+	ctx := mock.NewContext()
+	rowNum := 65536
+	nvd := 200 // we have two column and should ensure that nvd*nvd is less than rowNum.
+	sortCase := &testutil.SortCase{Rows: rowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{nvd, nvd}, Ctx: ctx}
+	for i := 0; i < 1; i++ {
+		parallelSortTest(t, ctx, sortCase)
+	}
 }
 
 // TODO add failpoint
