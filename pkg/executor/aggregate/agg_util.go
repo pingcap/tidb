@@ -231,7 +231,6 @@ func (e *HashAggExec) ActionSpill() memory.ActionOnExceed {
 		e.parallelAggSpillAction = &ParallelAggSpillDiskAction{
 			e:           e,
 			spillHelper: e.spillHelper,
-			spillTimes:  atomic.Int32{},
 		}
 	}
 	return e.parallelAggSpillAction

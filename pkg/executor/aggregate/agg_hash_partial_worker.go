@@ -88,15 +88,29 @@ func (w *HashAggPartialWorker) getChildInput() bool {
 	return true
 }
 
-func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasError *bool, needShuffle *bool) bool {
-	w.spillHelper.syncLock.RLock()
-	defer w.spillHelper.syncLock.RUnlock()
+func (w *HashAggPartialWorker) checkAndExecuteSpill() error {
+	if !w.spillHelper.checkNeedSpill() {
+		return nil
+	}
 
-	if w.spillHelper.isInSpilling() {
-		// Repeatedly release lock so that it could stop processing data when
-		// spill is in execution and spill action could have more chance to get write lock.
-		time.Sleep(10 * time.Millisecond)
-		return true
+	w.spillHelper.tryToSetInSpilling()
+	err := w.spillDataToDisk()
+	w.spillHelper.tryToUnsetInSpilling()
+	return err
+}
+
+func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasError *bool, needShuffle *bool) bool {
+	err := w.checkAndExecuteSpill()
+	if err != nil {
+		*hasError = true
+		w.processError(err)
+		return false
+	}
+
+	// Other partial workers may encounter error.
+	if w.spillHelper.checkError() {
+		*hasError = true
+		return false
 	}
 
 	waitStart := time.Now()
@@ -115,6 +129,7 @@ func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasE
 		w.processError(err)
 		return false
 	}
+
 	if w.stats != nil {
 		w.stats.ExecTime += int64(time.Since(execStart))
 		w.stats.TaskNum++
@@ -125,11 +140,6 @@ func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasE
 	*needShuffle = true
 
 	w.intestDuringPartialWorkerRun()
-
-	if w.spillHelper.checkError() {
-		*hasError = true
-		return false
-	}
 	return true
 }
 
@@ -170,16 +180,14 @@ func (w *HashAggPartialWorker) handleSpillBeforeExit() {
 
 func (w *HashAggPartialWorker) sendDataToFinalWorkersBeforeExit(needShuffle bool, finalConcurrency int, hasError bool) {
 	w.parallelSpillWaiter.Done()
+
+	// If spill is triggered, only the last finished worker will set spill triggered flag.
+	// So only when all workers exist can we know if spill was triggered before.
 	w.parallelSpillWaiter.Wait()
 
 	if hasError {
 		return
 	}
-
-	w.spillHelper.syncLock.RLock()
-	defer w.spillHelper.syncLock.RUnlock()
-
-	w.spillHelper.setAllPartialWorkersFinished()
 
 	// We should always check spill status first.
 	if w.spillHelper.isSpillTriggered() {

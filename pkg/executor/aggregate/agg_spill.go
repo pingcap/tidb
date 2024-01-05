@@ -35,6 +35,10 @@ const (
 	spilledPartitionNum = 256
 	spillTasksDoneFlag  = -1
 
+	noSpill = iota
+	needSpill
+	inSpilling
+
 	notSpillMode = 0
 	spillMode    = 1
 
@@ -43,46 +47,49 @@ const (
 
 type parallelHashAggSpillHelper struct {
 	lock struct {
-		mu                         *sync.Mutex
-		cond                       *sync.Cond
-		nextPartitionIdx           int
-		spilledChunksIO            [][]*chunk.DataInDiskByChunks
-		isSpilling                 bool
-		isAllPartialWorkerFinished bool
+		mu                  *sync.Mutex
+		cond                *sync.Cond
+		nextPartitionIdx    int
+		spilledChunksIO     [][]*chunk.DataInDiskByChunks
+		spillStatus         int
+		inSpillingWorkerNum int
 	}
+
+	partialWorkerNum int
 
 	spillTriggered atomic.Bool
 	memTracker     *memory.Tracker
 	diskTracker    *disk.Tracker
 	hasError       atomic.Bool
 
+	// memory consumption when needSpill flag is set.
+	memoryConsumption atomic.Int64
+	memoryQuota       atomic.Int64
+
 	// These agg functions are partial agg functions that are same with partial workers'.
 	// They only be used for restoring data that are spilled to disk in partial stage.
 	aggFuncsForRestoring []aggfuncs.AggFunc
-
-	// When spill is triggered, all partial workers should stop
-	// and we can ensure this when the spill action gets write lock.
-	syncLock sync.RWMutex
 }
 
-func newSpillHelper(tracker *memory.Tracker, aggFuncsForRestoring []aggfuncs.AggFunc) *parallelHashAggSpillHelper {
+func newSpillHelper(tracker *memory.Tracker, aggFuncsForRestoring []aggfuncs.AggFunc, partialWorkerNum int) *parallelHashAggSpillHelper {
 	mu := new(sync.Mutex)
 	return &parallelHashAggSpillHelper{
 		lock: struct {
-			mu                         *sync.Mutex
-			cond                       *sync.Cond
-			nextPartitionIdx           int
-			spilledChunksIO            [][]*chunk.DataInDiskByChunks
-			isSpilling                 bool
-			isAllPartialWorkerFinished bool
+			mu                  *sync.Mutex
+			cond                *sync.Cond
+			nextPartitionIdx    int
+			spilledChunksIO     [][]*chunk.DataInDiskByChunks
+			spillStatus         int
+			inSpillingWorkerNum int
 		}{
-			mu:                         mu,
-			cond:                       sync.NewCond(mu),
-			spilledChunksIO:            make([][]*chunk.DataInDiskByChunks, spilledPartitionNum),
-			isSpilling:                 false,
-			nextPartitionIdx:           spilledPartitionNum - 1,
-			isAllPartialWorkerFinished: false,
+			mu:                  mu,
+			cond:                sync.NewCond(mu),
+			spilledChunksIO:     make([][]*chunk.DataInDiskByChunks, spilledPartitionNum),
+			spillStatus:         noSpill,
+			nextPartitionIdx:    spilledPartitionNum - 1,
+			inSpillingWorkerNum: 0,
 		},
+		partialWorkerNum:     partialWorkerNum,
 		spillTriggered:       atomic.Bool{},
 		memTracker:           tracker,
 		hasError:             atomic.Bool{},
@@ -124,6 +131,29 @@ func (p *parallelHashAggSpillHelper) getListInDisks(partitionNum int) []*chunk.D
 	return p.lock.spilledChunksIO[partitionNum]
 }
 
+func (p *parallelHashAggSpillHelper) tryToSetInSpilling() {
+	p.lock.mu.Lock()
+	defer p.lock.mu.Unlock()
+	p.lock.inSpillingWorkerNum++
+	if p.lock.inSpillingWorkerNum == p.partialWorkerNum {
+		p.setIsSpillingNoLock()
+		p.setSpillTriggered()
+		logutil.BgLogger().Info(spillLogInfo,
+			zap.Int64("consumed", p.memoryConsumption.Load()),
+			zap.Int64("quota", p.memoryQuota.Load()))
+	}
+}
+
+func (p *parallelHashAggSpillHelper) tryToUnsetInSpilling() {
+	p.lock.mu.Lock()
+	defer p.lock.mu.Unlock()
+	p.lock.inSpillingWorkerNum--
+	if p.lock.inSpillingWorkerNum == 0 {
+		p.setNoSpillNoLock()
+		p.lock.cond.Broadcast()
+	}
+}
+
 func (p *parallelHashAggSpillHelper) isSpillTriggered() bool {
 	return p.spillTriggered.Load()
 }
@@ -132,36 +162,26 @@ func (p *parallelHashAggSpillHelper) setSpillTriggered() {
 	p.spillTriggered.Store(true)
 }
 
-func (p *parallelHashAggSpillHelper) isInSpilling() bool {
-	p.lock.mu.Lock()
-	defer p.lock.mu.Unlock()
-	return p.lock.isSpilling
+func (p *parallelHashAggSpillHelper) isInSpillingNoLock() bool {
+	return p.lock.spillStatus == inSpilling
 }
 
-func (p *parallelHashAggSpillHelper) isInSpillingNoLock() bool {
-	return p.lock.isSpilling
+func (p *parallelHashAggSpillHelper) checkNeedSpill() bool {
+	p.lock.mu.Lock()
+	defer p.lock.mu.Unlock()
+	return p.lock.spillStatus == needSpill
 }
 
 func (p *parallelHashAggSpillHelper) setIsSpillingNoLock() {
-	p.lock.isSpilling = true
+	p.lock.spillStatus = inSpilling
 }
 
-func (p *parallelHashAggSpillHelper) resetIsSpilling() {
-	p.lock.mu.Lock()
-	defer p.lock.mu.Unlock()
-	p.lock.isSpilling = false
+func (p *parallelHashAggSpillHelper) setNeedSpillNoLock() {
+	p.lock.spillStatus = needSpill
 }
 
-func (p *parallelHashAggSpillHelper) setAllPartialWorkersFinished() {
-	p.lock.mu.Lock()
-	defer p.lock.mu.Unlock()
-	p.lock.isAllPartialWorkerFinished = true
-}
-
-func (p *parallelHashAggSpillHelper) checkAllPartialWorkersFinished() bool {
-	p.lock.mu.Lock()
-	defer p.lock.mu.Unlock()
-	return p.lock.isAllPartialWorkerFinished
+func (p *parallelHashAggSpillHelper) setNoSpillNoLock() {
+	p.lock.spillStatus = noSpill
 }
 
 // We need to check error with atmoic as multi partial workers may access it.
@@ -315,7 +335,6 @@ type ParallelAggSpillDiskAction struct {
 	memory.BaseOOMAction
 	e           *HashAggExec
 	spillHelper *parallelHashAggSpillHelper
-	spillTimes  atomic.Int32
 }
 
 // Action set HashAggExec spill mode.
@@ -329,31 +348,20 @@ func (p *ParallelAggSpillDiskAction) Action(t *memory.Tracker) {
 	}
 }
 
-func (p *ParallelAggSpillDiskAction) checkRestriction(t *memory.Tracker) bool {
-	return hasEnoughDataToSpill(p.e.memTracker, t) && p.spillTimes.Load() < maxSpillTimes
-}
-
-// Return false if we should keep executing.
+// Return true if we should keep executing.
 func (p *ParallelAggSpillDiskAction) actionImpl(t *memory.Tracker) bool {
 	p.spillHelper.lock.mu.Lock()
 	defer p.spillHelper.lock.mu.Unlock()
 
-	if p.checkRestriction(t) {
-		if !p.spillHelper.isInSpillingNoLock() {
-			p.spillHelper.setIsSpillingNoLock()
-			go func() {
-				p.doActionForParallelHashAgg(t)
-				p.spillTimes.Add(1)
-				p.spillHelper.resetIsSpilling()
-				p.spillHelper.lock.cond.Broadcast()
-			}()
-		}
-
-		return false
-	}
-
 	for p.spillHelper.isInSpillingNoLock() {
 		p.spillHelper.lock.cond.Wait()
+	}
+
+	if hasEnoughDataToSpill(p.e.memTracker, t) {
+		p.spillHelper.setNeedSpillNoLock()
+		p.spillHelper.memoryConsumption.Store(t.BytesConsumed())
+		p.spillHelper.memoryQuota.Store(t.GetBytesLimit())
+		return false
 	}
 
 	return true
@@ -368,47 +376,4 @@ func (p *ParallelAggSpillDiskAction) triggerFallBackAction(t *memory.Tracker) {
 // GetPriority get the priority of the Action
 func (*ParallelAggSpillDiskAction) GetPriority() int64 {
 	return memory.DefSpillPriority
-}
-
-// syncLock has been held outside of this function
-func (p *ParallelAggSpillDiskAction) doActionForParallelHashAgg(t *memory.Tracker) {
-	p.spillHelper.syncLock.Lock()
-	defer p.spillHelper.syncLock.Unlock()
-	if p.spillHelper.checkError() {
-		return
-	}
-
-	// When all partial workers exit, we shouldn't spill.
-	// When it's the first triggered spill, spillTriggered flag has not been set yet
-	// and partial workers will shuffle data to final workers by channels as spillTriggered
-	// flag tells them there is no spill triggered. It will cause unexpected behaviour
-	// if we still spill data when all data have been shuffled to final workers.
-	if p.spillHelper.checkAllPartialWorkersFinished() {
-		return
-	}
-
-	logutil.BgLogger().Info(spillLogInfo,
-		zap.Uint32("spillTimes", uint32(p.spillTimes.Load())),
-		zap.Int64("consumed", t.BytesConsumed()),
-		zap.Int64("quota", t.GetBytesLimit()))
-
-	p.spillHelper.setSpillTriggered()
-	p.spill()
-}
-
-func (p *ParallelAggSpillDiskAction) spill() {
-	waiter := sync.WaitGroup{}
-	waiter.Add(len(p.e.partialWorkers))
-	for i := range p.e.partialWorkers {
-		go func(worker *HashAggPartialWorker) {
-			err := worker.spillDataToDisk()
-			if err != nil {
-				worker.processError(err)
-			}
-			waiter.Done()
-		}(&p.e.partialWorkers[i])
-	}
-
-	// Wait for the finish of spill
-	waiter.Wait()
 }

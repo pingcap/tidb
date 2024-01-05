@@ -372,7 +372,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 	e.finalWorkers = make([]HashAggFinalWorker, finalConcurrency)
 	e.initRuntimeStats()
 
-	e.spillHelper = newSpillHelper(e.memTracker, e.PartialAggFuncs)
+	e.spillHelper = newSpillHelper(e.memTracker, e.PartialAggFuncs, partialConcurrency)
 	e.initPartialWorkers(partialConcurrency, finalConcurrency, ctx)
 	e.initFinalWorkers(finalConcurrency)
 
