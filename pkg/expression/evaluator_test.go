@@ -105,7 +105,9 @@ func TestSleep(t *testing.T) {
 
 	fc := funcs[ast.Sleep]
 	// non-strict model
-	sessVars.StmtCtx.BadNullAsWarning = true
+	var levels errctx.LevelMap
+	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
+	sessVars.StmtCtx.SetErrLevels(levels)
 	d := make([]types.Datum, 1)
 	f, err := fc.getFunction(ctx, datumsToConstants(d))
 	require.NoError(t, err)
@@ -122,7 +124,8 @@ func TestSleep(t *testing.T) {
 	require.Equal(t, int64(0), ret)
 
 	// for error case under the strict model
-	sessVars.StmtCtx.BadNullAsWarning = false
+	levels[errctx.ErrGroupBadNull] = errctx.LevelError
+	sessVars.StmtCtx.SetErrLevels(levels)
 	d[0].SetNull()
 	_, err = fc.getFunction(ctx, datumsToConstants(d))
 	require.NoError(t, err)

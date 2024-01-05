@@ -2122,11 +2122,11 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		// should make TruncateAsWarning and DividedByZeroAsWarning,
 		// but should not make DupKeyAsWarning.
 		sc.DupKeyAsWarning = stmt.IgnoreErr
-		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.IgnoreNoPartition = stmt.IgnoreErr
 		if stmt.IgnoreErr {
 			errLevels[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelWarn
 		}
+		errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !vars.StrictSQLMode || stmt.IgnoreErr)
 		errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
 			!vars.SQLMode.HasErrorForDivisionByZeroMode(),
 			!vars.StrictSQLMode || stmt.IgnoreErr,
@@ -2260,7 +2260,7 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 	sc.InUpdateStmt = true
 	errLevels := sc.ErrLevels()
 	sc.DupKeyAsWarning = stmt.IgnoreErr
-	sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !vars.StrictSQLMode || stmt.IgnoreErr)
 	errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
 		!vars.SQLMode.HasErrorForDivisionByZeroMode(),
 		!vars.StrictSQLMode || stmt.IgnoreErr,
@@ -2280,7 +2280,7 @@ func ResetDeleteStmtCtx(sc *stmtctx.StatementContext, stmt *ast.DeleteStmt, vars
 	sc.InDeleteStmt = true
 	errLevels := sc.ErrLevels()
 	sc.DupKeyAsWarning = stmt.IgnoreErr
-	sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !vars.StrictSQLMode || stmt.IgnoreErr)
 	errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
 		!vars.SQLMode.HasErrorForDivisionByZeroMode(),
 		!vars.StrictSQLMode || stmt.IgnoreErr,
