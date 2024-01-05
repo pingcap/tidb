@@ -212,16 +212,16 @@ func (sm *SlotManager) updateCapacity(cpuCount int) {
 
 func filterNodesWithEnoughSlots(usedSlots map[string]int, capacity int, eligibleNodes []string, concurrency int) []string {
 	nodesOfEnoughSlots := make(map[string]struct{}, len(usedSlots))
-	for n, slots := range usedSlots {
+	for node, slots := range usedSlots {
 		if slots+concurrency <= capacity {
-			nodesOfEnoughSlots[n] = struct{}{}
+			nodesOfEnoughSlots[node] = struct{}{}
 		}
 	}
 
 	result := make([]string, 0, len(eligibleNodes))
-	for _, n := range eligibleNodes {
-		if _, ok := nodesOfEnoughSlots[n]; ok {
-			result = append(result, n)
+	for _, node := range eligibleNodes {
+		if _, ok := nodesOfEnoughSlots[node]; ok {
+			result = append(result, node)
 		}
 	}
 	return result
