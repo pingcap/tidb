@@ -347,7 +347,7 @@ func (d *ddl) addBatchDDLJobs2Queue(tasks []*limitJobTask) error {
 	})
 }
 
-func (d *ddl) checkFlashbackJobInQueue(t *meta.Meta) error {
+func (*ddl) checkFlashbackJobInQueue(t *meta.Meta) error {
 	jobs, err := t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
 	if err != nil {
 		return errors.Trace(err)

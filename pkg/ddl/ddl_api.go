@@ -2876,7 +2876,11 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 
 // BatchCreateTableWithJobs combine CreateTableJobs to BatchCreateTableJob.
 func (*ddl) BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
-	var j *model.Job
+	if len(jobs) == 0 {
+		return nil, errors.Trace(fmt.Errorf("expect non-empty jobs"))
+	}
+
+	var combinedJob *model.Job
 
 	args := make([]*model.TableInfo, 0, len(jobs))
 	involvingSchemaInfo := make([]model.InvolvingSchemaInfo, 0, len(jobs))
@@ -2885,10 +2889,10 @@ func (*ddl) BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
 	// if there is any duplicated table name
 	duplication := make(map[string]struct{})
 	for _, job := range jobs {
-		if j == nil {
-			j = job.Clone()
-			j.Type = model.ActionCreateTables
-			j.Args = j.Args[:0]
+		if combinedJob == nil {
+			combinedJob = job.Clone()
+			combinedJob.Type = model.ActionCreateTables
+			combinedJob.Args = combinedJob.Args[:0]
 			foreignKeyChecks = job.Args[1].(bool)
 		}
 		// append table job args
@@ -2911,14 +2915,12 @@ func (*ddl) BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
 				Table:    info.Name.L,
 			})
 	}
-	if len(args) == 0 {
-		return nil, errors.Trace(fmt.Errorf("expect non-empty args"))
-	}
-	j.Args = append(j.Args, args)
-	j.Args = append(j.Args, foreignKeyChecks)
-	j.InvolvingSchemaInfo = involvingSchemaInfo
 
-	return j, nil
+	combinedJob.Args = append(combinedJob.Args, args)
+	combinedJob.Args = append(combinedJob.Args, foreignKeyChecks)
+	combinedJob.InvolvingSchemaInfo = involvingSchemaInfo
+
+	return combinedJob, nil
 }
 
 func (d *ddl) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *model.PolicyInfo, onExist OnExist) error {
