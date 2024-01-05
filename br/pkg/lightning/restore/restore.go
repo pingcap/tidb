@@ -209,10 +209,9 @@ type Controller struct {
 	tidbGlue      glue.Glue
 	pdCli         pd.Client
 
-	alterTableLock sync.Mutex
-	sysVars        map[string]string
-	tls            *common.TLS
-	checkTemplate  Template
+	sysVars       map[string]string
+	tls           *common.TLS
+	checkTemplate Template
 
 	errorSummaries errorSummaries
 
