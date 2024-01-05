@@ -322,18 +322,18 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 	for i := 0; i < finalConcurrency; i++ {
 		e.finalWorkers[i] = HashAggFinalWorker{
-			baseHashAggWorker:   newBaseHashAggWorker(e.Ctx(), e.finishCh, e.FinalAggFuncs, e.MaxChunkSize(), e.memTracker),
-			partialResultMap:    make(aggfuncs.AggPartialResultMapper),
-			BInMap:              0,
-			inputCh:             e.partialOutputChs[i],
-			outputCh:            e.finalOutputCh,
-			finalResultHolderCh: make(chan *chunk.Chunk, 1),
-			rowBuffer:           make([]types.Datum, 0, e.Schema().Len()),
-			mutableRow:          chunk.MutRowFromTypes(exec.RetTypes(e)),
-			groupKeys:           make([][]byte, 0, 8),
-			restoredMemDelta:    0,
-			spillHelper:         e.spillHelper,
-			isSpilledTriggered:  false,
+			baseHashAggWorker:          newBaseHashAggWorker(e.Ctx(), e.finishCh, e.FinalAggFuncs, e.MaxChunkSize(), e.memTracker),
+			partialResultMap:           make(aggfuncs.AggPartialResultMapper),
+			BInMap:                     0,
+			inputCh:                    e.partialOutputChs[i],
+			outputCh:                   e.finalOutputCh,
+			finalResultHolderCh:        make(chan *chunk.Chunk, 1),
+			rowBuffer:                  make([]types.Datum, 0, e.Schema().Len()),
+			mutableRow:                 chunk.MutRowFromTypes(exec.RetTypes(e)),
+			groupKeys:                  make([][]byte, 0, 8),
+			spillHelper:                e.spillHelper,
+			isSpilledTriggered:         false,
+			restoredAggResultMapperMem: 0,
 		}
 		// There is a bucket in the empty partialResultsMap.
 		e.memTracker.Consume(hack.DefBucketMemoryUsageForMapStrToSlice * (1 << e.finalWorkers[i].BInMap))

@@ -54,7 +54,7 @@ type HashAggFinalWorker struct {
 	spillHelper        *parallelHashAggSpillHelper
 	isSpilledTriggered bool
 
-	restoredMemDelta int64
+	restoredAggResultMapperMem int64
 }
 
 func (w *HashAggFinalWorker) getInputFromDisk(sctx sessionctx.Context) (ret aggfuncs.AggPartialResultMapper, restoredMem int64, err error) {
@@ -188,23 +188,14 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 	execStart := time.Now()
 	defer w.increaseExecTime(execStart)
 	if w.isSpilledTriggered {
-		var err error
-		restoredAggResultMapperMem := int64(0)
 		for {
-			// Since data is restored partition by partition, only one partition is in memory at any given time.
-			// Therefore, it's necessary to release the memory used by the previous partition.
-			w.spillHelper.memTracker.Consume(-restoredAggResultMapperMem)
-			w.partialResultMap, restoredAggResultMapperMem, err = w.getInputFromDisk(sctx)
-			if err != nil {
-				w.outputCh <- &AfFinalResult{err: err}
+			eof, hasError := w.restoreDataFromDisk(sctx)
+			if hasError {
 				return
 			}
-
-			if w.partialResultMap == nil {
-				// All partitions have been restored
+			if eof {
 				break
 			}
-
 			w.generateResultAndSend(sctx, result)
 		}
 	} else {
@@ -212,6 +203,25 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 	}
 
 	w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
+}
+
+func (w *HashAggFinalWorker) restoreDataFromDisk(sctx sessionctx.Context) (bool, bool) {
+	var err error
+
+	// Since data is restored partition by partition, only one partition is in memory at any given time.
+	// Therefore, it's necessary to release the memory used by the previous partition.
+	w.spillHelper.memTracker.Consume(-w.restoredAggResultMapperMem)
+	w.partialResultMap, w.restoredAggResultMapperMem, err = w.getInputFromDisk(sctx)
+	if err != nil {
+		w.outputCh <- &AfFinalResult{err: err}
+		return false, true
+	}
+
+	if w.partialResultMap == nil {
+		// All partitions have been restored
+		return true, false
+	}
+	return false, false
 }
 
 func (w *HashAggFinalWorker) receiveFinalResultHolder() (*chunk.Chunk, bool) {

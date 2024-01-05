@@ -226,9 +226,9 @@ func buildHashAggExecutor(t *testing.T, ctx sessionctx.Context, child exec.Execu
 	return aggExec
 }
 
-func initCtx(ctx *mock.Context, newRootExceedAction *testutil.MockActionOnExceed, hardLimitBytesNum int64) {
-	ctx.GetSessionVars().InitChunkSize = 32
-	ctx.GetSessionVars().MaxChunkSize = 32
+func initCtx(ctx *mock.Context, newRootExceedAction *testutil.MockActionOnExceed, hardLimitBytesNum int64, chkSize int) {
+	ctx.GetSessionVars().InitChunkSize = chkSize
+	ctx.GetSessionVars().MaxChunkSize = chkSize
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, hardLimitBytesNum)
 	ctx.GetSessionVars().TrackAggregateMemoryUsage = true
 	ctx.GetSessionVars().EnableConcurrentHashaggSpill = true
@@ -237,12 +237,47 @@ func initCtx(ctx *mock.Context, newRootExceedAction *testutil.MockActionOnExceed
 	ctx.GetSessionVars().MemTracker.SetActionOnExceed(newRootExceedAction)
 }
 
+func fallBackActionTest(t *testing.T) {
+	newRootExceedAction := new(testutil.MockActionOnExceed)
+	hardLimitBytesNum := int64(6000000)
+
+	ctx := mock.NewContext()
+	initCtx(ctx, newRootExceedAction, hardLimitBytesNum, 4096)
+
+	// Consume lots of memory in advance to help to trigger fallback action.
+	ctx.GetSessionVars().MemTracker.Consume(int64(float64(hardLimitBytesNum) * 0.799999))
+
+	rowNum := 10000 + rand.Intn(10000)
+	ndv := 5000 + rand.Intn(5000)
+	col1, col2 := generateData(rowNum, ndv)
+	opt := getMockDataSourceParameters(ctx)
+	dataSource := buildMockDataSource(opt, col1, col2)
+
+	aggExec := buildHashAggExecutor(t, ctx, dataSource)
+	dataSource.PrepareChunks()
+	tmpCtx := context.Background()
+	chk := exec.NewFirstChunk(aggExec)
+	resContainer := resultsContainer{}
+	aggExec.Open(tmpCtx)
+
+	for {
+		aggExec.Next(tmpCtx, chk)
+		if chk.NumRows() == 0 {
+			break
+		}
+		resContainer.add(chk)
+		chk.Reset()
+	}
+	aggExec.Close()
+	require.Less(t, 0, newRootExceedAction.GetTriggeredNum())
+}
+
 func TestGetCorrectResult(t *testing.T) {
 	newRootExceedAction := new(testutil.MockActionOnExceed)
 	hardLimitBytesNum := int64(6000000)
 
 	ctx := mock.NewContext()
-	initCtx(ctx, newRootExceedAction, hardLimitBytesNum)
+	initCtx(ctx, newRootExceedAction, hardLimitBytesNum, 32)
 
 	rowNum := 100000 + rand.Intn(100000)
 	ndv := 50000 + rand.Intn(50000)
@@ -294,38 +329,9 @@ func TestGetCorrectResult(t *testing.T) {
 }
 
 func TestFallBackAction(t *testing.T) {
-	newRootExceedAction := new(testutil.MockActionOnExceed)
-	hardLimitBytesNum := int64(6000000)
-
-	ctx := mock.NewContext()
-	initCtx(ctx, newRootExceedAction, hardLimitBytesNum)
-
-	// Consume lots of memory in advance to help to trigger fallback action.
-	ctx.GetSessionVars().MemTracker.Consume(int64(float64(hardLimitBytesNum) * 0.79))
-
-	rowNum := 100000 + rand.Intn(100000)
-	ndv := 50000 + rand.Intn(50000)
-	col1, col2 := generateData(rowNum, ndv)
-	opt := getMockDataSourceParameters(ctx)
-	dataSource := buildMockDataSource(opt, col1, col2)
-
-	aggExec := buildHashAggExecutor(t, ctx, dataSource)
-	dataSource.PrepareChunks()
-	tmpCtx := context.Background()
-	chk := exec.NewFirstChunk(aggExec)
-	resContainer := resultsContainer{}
-	aggExec.Open(tmpCtx)
-
-	for {
-		aggExec.Next(tmpCtx, chk)
-		if chk.NumRows() == 0 {
-			break
-		}
-		resContainer.add(chk)
-		chk.Reset()
+	for i := 0; i < 50; i++ {
+		fallBackActionTest(t)
 	}
-	aggExec.Close()
-	require.Less(t, 0, newRootExceedAction.GetTriggeredNum())
 }
 
 func TestRandomFail(t *testing.T) {
@@ -333,7 +339,7 @@ func TestRandomFail(t *testing.T) {
 	hardLimitBytesNum := int64(5000000)
 
 	ctx := mock.NewContext()
-	initCtx(ctx, newRootExceedAction, hardLimitBytesNum)
+	initCtx(ctx, newRootExceedAction, hardLimitBytesNum, 32)
 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/enableAggSpillIntest", `return(true)`)
 	rowNum := 100000 + rand.Intn(100000)
