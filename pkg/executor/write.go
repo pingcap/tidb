@@ -186,7 +186,8 @@ func updateRecord(
 			memBuffer.Release(sh)
 			return true, nil
 		}(); err != nil {
-			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
+			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				return false, nil
 			}
 			return updated, err
@@ -194,7 +195,8 @@ func updateRecord(
 	} else {
 		// Update record to new value and update index.
 		if err := t.UpdateRecord(ctx, sctx, h, oldData, newData, modified); err != nil {
-			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
+			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				return false, nil
 			}
 			return false, err
