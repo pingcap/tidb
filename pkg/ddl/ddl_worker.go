@@ -267,9 +267,9 @@ func (d *ddl) addBatchDDLJobsV2(tasks []*limitJobTask) {
 		for _, task := range tasks {
 			task.NotifyError(err)
 		}
-		logutil.BgLogger().Warn("add DDL jobs failed", zap.String("category", "ddl"), zap.Error(err))
+		logutil.BgLogger().Error("add DDL jobs failed", zap.String("category", "ddl"), zap.Bool("local_mode", true), zap.Error(err))
 	} else {
-		logutil.BgLogger().Info("add DDL jobs", zap.String("category", "ddl"), zap.Int("batch count", len(tasks)))
+		logutil.BgLogger().Info("add DDL jobs", zap.String("category", "ddl"), zap.Bool("local_mode", true), zap.Int("batch count", len(tasks)))
 	}
 }
 
@@ -316,14 +316,8 @@ func (d *ddl) addBatchDDLJobs2Queue(tasks []*limitJobTask) error {
 			return errors.Trace(err)
 		}
 
-		jobs, err := t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
-		if err != nil {
+		if err := d.checkFlashbackJobInQueue(t); err != nil {
 			return errors.Trace(err)
-		}
-		for _, job := range jobs {
-			if job.Type == model.ActionFlashbackCluster {
-				return errors.Errorf("Can't add ddl job, have flashback cluster job")
-			}
 		}
 
 		for i, task := range tasks {
@@ -351,6 +345,19 @@ func (d *ddl) addBatchDDLJobs2Queue(tasks []*limitJobTask) error {
 		})
 		return nil
 	})
+}
+
+func (d *ddl) checkFlashbackJobInQueue(t *meta.Meta) error {
+	jobs, err := t.GetAllDDLJobsInQueue(meta.DefaultJobListKey)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	for _, job := range jobs {
+		if job.Type == model.ActionFlashbackCluster {
+			return errors.Errorf("Can't add ddl job, have flashback cluster job")
+		}
+	}
+	return nil
 }
 
 func injectModifyJobArgFailPoint(job *model.Job) {
@@ -381,7 +388,10 @@ func setJobStateToQueueing(job *model.Job) {
 func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 	var ids []int64
 	var err error
-	var toLocalWorker bool
+
+	if len(tasks) == 0 {
+		return nil
+	}
 
 	se, err := d.sessPool.Get()
 	if err != nil {
@@ -401,7 +411,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 		bdrRole = string(ast.BDRRoleLocalOnly)
 	)
 
-	if newTasks, err := d.combineBatchJobs(tasks); err == nil {
+	if newTasks, err := d.combineBatchCreateTableJobs(tasks); err == nil {
 		tasks = newTasks
 	}
 
@@ -421,6 +431,14 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 		}
 
 		startTS = txn.StartTS()
+
+		// for localmode, we still need to check this variable if upgrading below v6.2.
+		if variable.DDLForce2Queue.Load() {
+			if err := d.checkFlashbackJobInQueue(t); err != nil {
+				return err
+			}
+		}
+
 		return nil
 	})
 	d.globalIDLock.Unlock()
@@ -464,11 +482,8 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 			logutil.BgLogger().Info("pause user DDL by system successful", zap.String("category", "ddl-upgrading"), zap.Stringer("job", job))
 		}
 
-		if job.LocalMode {
-			toLocalWorker = true
-			if _, err := job.Encode(true); err != nil {
-				return err
-			}
+		if _, err := job.Encode(true); err != nil {
+			return err
 		}
 
 		jobTasks = append(jobTasks, job)
@@ -477,7 +492,7 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 
 	se.SetDiskFullOpt(kvrpcpb.DiskFullOpt_AllowedOnAlmostFull)
 
-	if toLocalWorker {
+	if tasks[0].job.LocalMode {
 		for _, task := range tasks {
 			d.localJobCh <- task
 		}
@@ -486,16 +501,16 @@ func (d *ddl) addBatchDDLJobs(tasks []*limitJobTask) error {
 	return errors.Trace(insertDDLJobs2Table(sess.NewSession(se), true, jobTasks...))
 }
 
-// combineBatchJobs combine batch jobs to another batch jobs.
+// combineBatchCreateTableJobs combine batch jobs to another batch jobs.
 // currently it only support combine CreateTable to CreateTables.
-func (d *ddl) combineBatchJobs(tasks []*limitJobTask) ([]*limitJobTask, error) {
-	if len(tasks) <= 1 {
+func (d *ddl) combineBatchCreateTableJobs(tasks []*limitJobTask) ([]*limitJobTask, error) {
+	if len(tasks) <= 1 || !tasks[0].job.LocalMode {
 		return tasks, nil
 	}
 	var schemaName string
 	jobs := make([]*model.Job, 0, len(tasks))
 	for i, task := range tasks {
-		if !task.job.LocalMode || task.job.Type != model.ActionCreateTable {
+		if task.job.Type != model.ActionCreateTable {
 			return tasks, nil
 		}
 		if i == 0 {

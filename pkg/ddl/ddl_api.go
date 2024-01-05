@@ -2882,7 +2882,7 @@ func (*ddl) BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
 	involvingSchemaInfo := make([]model.InvolvingSchemaInfo, 0, len(jobs))
 	var foreignKeyChecks bool
 
-	//  if there is any duplicated table name
+	// if there is any duplicated table name
 	duplication := make(map[string]struct{})
 	for _, job := range jobs {
 		if j == nil {
