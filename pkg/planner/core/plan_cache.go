@@ -423,6 +423,10 @@ func rebuildRange(p Plan) error {
 			}
 		}
 	case *PhysicalTableScan:
+		err = expression.ReEvaluateParamMarkerConst(sctx, x.PartitionInfo.PruningConds)
+		if err != nil {
+			return errors.New("fail to build ranges, cannot re-evaluate partition constants")
+		}
 		err = buildRangeForTableScan(sctx, x)
 		if err != nil {
 			return err
@@ -433,16 +437,28 @@ func rebuildRange(p Plan) error {
 			return err
 		}
 	case *PhysicalTableReader:
+		err = expression.ReEvaluateParamMarkerConst(sctx, x.PartitionInfo.PruningConds)
+		if err != nil {
+			return err
+		}
 		err = rebuildRange(x.TablePlans[0])
 		if err != nil {
 			return err
 		}
 	case *PhysicalIndexReader:
+		err = expression.ReEvaluateParamMarkerConst(sctx, x.PartitionInfo.PruningConds)
+		if err != nil {
+			return err
+		}
 		err = rebuildRange(x.IndexPlans[0])
 		if err != nil {
 			return err
 		}
 	case *PhysicalIndexLookUpReader:
+		err = expression.ReEvaluateParamMarkerConst(sctx, x.PartitionInfo.PruningConds)
+		if err != nil {
+			return err
+		}
 		err = rebuildRange(x.IndexPlans[0])
 		if err != nil {
 			return err
@@ -733,6 +749,10 @@ func rebuildRange(p Plan) error {
 			x.PartitionInfos = partDefs
 		}
 	case *PhysicalIndexMergeReader:
+		err = expression.ReEvaluateParamMarkerConst(sctx, x.PartitionInfo.PruningConds)
+		if err != nil {
+			return err
+		}
 		indexMerge := p.(*PhysicalIndexMergeReader)
 		for _, partialPlans := range indexMerge.PartialPlans {
 			err = rebuildRange(partialPlans[0])
@@ -845,62 +865,6 @@ func buildRangeForTableScan(sctx sessionctx.Context, ts *PhysicalTableScan) (err
 			ts.Ranges = ranger.FullIntRange(false)
 		}
 	}
-	if ts.Table.Partition != nil {
-		conds := make([]expression.Expression, 0, len(ts.AccessCondition)+len(ts.filterCondition))
-		if len(ts.AccessCondition) > 0 {
-			conds = append(conds, ts.AccessCondition...)
-		}
-		if len(ts.filterCondition) > 0 {
-			conds = append(conds, ts.filterCondition...)
-		}
-		if len(conds) == 0 {
-			panic("Need to test this!!")
-		}
-		tbl, ok := domain.GetDomain(sctx).InfoSchema().TableByID(ts.Table.ID)
-		if !ok || tbl == nil {
-			return errors.New("fail to build ranges, could not find partitioned table")
-		}
-		partTbl := tbl.GetPartitionedTable()
-		if partTbl == nil {
-			return errors.New("fail to build ranges, could not find partitioned table")
-		}
-		colNames := make([]*types.FieldName, 0, len(ts.tblCols))
-		cols := make([]*expression.Column, 0, len(ts.tblCols))
-		for i := range ts.tblCols {
-			var colName model.CIStr
-			for j := range ts.Columns {
-				if ts.tblCols[i].ID == ts.Columns[j].ID {
-					colName = ts.Columns[j].Name
-					break
-				}
-			}
-			if len(colName.O) == 0 {
-				continue
-			}
-			cols = append(cols, ts.tblCols[i])
-			colNames = append(colNames, &types.FieldName{
-				OrigTblName: ts.Table.Name,
-				OrigColName: model.NewCIStr(ts.tblCols[i].OrigName),
-				DBName:      ts.DBName,
-				TblName:     *ts.TableAsName,
-				ColName:     colName,
-			})
-		}
-		partIDs, err := PartitionPruning(sctx, partTbl, conds, nil, cols, colNames)
-		if err != nil {
-			return err
-		}
-		if len(partIDs) != 1 {
-			if len(partIDs) == 0 {
-				return errors.New("fail to build ranges, could not find matching partition")
-			}
-			return errors.New("fail to build ranges, found multiple matching partitions")
-		}
-		if partIDs[0] < 0 || partIDs[0] >= len(ts.Table.Partition.Definitions) {
-			return errors.New("fail to build ranges, all partitions used")
-		}
-		ts.physicalTableID = ts.Table.Partition.Definitions[partIDs[0]].ID
-	}
 	return
 }
 
@@ -921,8 +885,13 @@ func buildRangeForIndexScan(sctx sessionctx.Context, is *PhysicalIndexScan) (err
 		return errors.New("rebuild to get an unsafe range")
 	}
 	is.Ranges = res.Ranges
+	if is.isPartition || (is.physicalTableID > 0 && is.physicalTableID != is.Table.ID) {
+		panic("static pruning mode, when dynamic prune mode is a must for plan cache?!?")
+	}
 	// PhysicalIndexScan will recalculate partition pruning, so no need to do it here!
 	// In executorBuilder.buildIndex{Reader|LookUpReader|MergeReader}
+	// Can PhysicalIndexScan plan be used without IndexReader/IndexLookupReader/MergeReader?
+	// Since those do have the 'PartitionInfo.PruningConds' that needs to be updated...
 	// TODO: check with optimizer team when it should be recalculated through rebuildRange and when not?
 	// TODO: Are there any IndexScan that is *not* updating the pruning?
 	return

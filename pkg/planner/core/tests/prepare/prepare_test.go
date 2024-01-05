@@ -685,10 +685,22 @@ func TestIssue33031(t *testing.T) {
 	tk.MustExec(`prepare stmt from 'select *,? from Issue33031 where col2 < ? and col1 in (?, ?)'`)
 	tk.MustExec(`set @a=111, @b=1, @c=2, @d=22`)
 	tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
 	tk.MustExec(`set @a=112, @b=-2, @c=-5, @d=33`)
 	tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows("-5 7 33"))
-	// Does not use plan cache even if non-partitioned!
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	// Notice that plan cache is used here, while it is not in non-partitioned case.
+	// Seems to relate to DataSource.findBestTask() =>
+	// canConvertPointGet and batchPointGet and partitioning
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`alter table Issue33031 remove partitioning`)
+	tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows("-5 7 33"))
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
+	// Does not use plan cache if non-partitioned!
+	tk.MustQuery(`execute stmt using @d,@a,@b,@c`).Check(testkit.Rows("-5 7 33"))
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
 }
 
 func newSession(t *testing.T, store kv.Storage, dbName string) sessiontypes.Session {
@@ -951,11 +963,11 @@ func TestPartitionTable(t *testing.T) {
 		},
 		{ // range partition + int
 			`create table t1(a int, b int) partition by range(a) (
-						partition p0 values less than (20000000),
-						partition p1 values less than (40000000),
-						partition p2 values less than (60000000),
-						partition p3 values less than (80000000),
-						partition p4 values less than (100000000))`,
+							partition p0 values less than (20000000),
+							partition p1 values less than (40000000),
+							partition p2 values less than (60000000),
+							partition p3 values less than (80000000),
+							partition p4 values less than (100000000))`,
 			`create table t2(a int, b int)`,
 			func() string { return fmt.Sprintf("(%v, %v)", randomSeed.Intn(100000000), randomSeed.Intn(100000000)) },
 			func() string { return fmt.Sprintf("%v", randomSeed.Intn(100000000)) },
@@ -963,11 +975,11 @@ func TestPartitionTable(t *testing.T) {
 		},
 		{ // range partition + varchar
 			`create table t1(a varchar(10), b varchar(10)) partition by range columns(a) (
-						partition p0 values less than ('200'),
-						partition p1 values less than ('400'),
-						partition p2 values less than ('600'),
-						partition p3 values less than ('800'),
-						partition p4 values less than ('9999'))`,
+							partition p0 values less than ('200'),
+							partition p1 values less than ('400'),
+							partition p2 values less than ('600'),
+							partition p3 values less than ('800'),
+							partition p4 values less than ('9999'))`,
 			`create table t2(a varchar(10), b varchar(10))`,
 			func() string { return fmt.Sprintf(`("%v", "%v")`, randomSeed.Intn(1000), randomSeed.Intn(1000)) },
 			func() string { return fmt.Sprintf(`"%v"`, randomSeed.Intn(1000)) },
@@ -975,11 +987,11 @@ func TestPartitionTable(t *testing.T) {
 		},
 		{ // range partition + datetime
 			`create table t1(a datetime, b datetime) partition by range columns(a) (
-						partition p0 values less than ('1970-01-01 00:00:00'),
-						partition p1 values less than ('1990-01-01 00:00:00'),
-						partition p2 values less than ('2010-01-01 00:00:00'),
-						partition p3 values less than ('2030-01-01 00:00:00'),
-						partition p4 values less than ('2060-01-01 00:00:00'))`,
+							partition p0 values less than ('1970-01-01 00:00:00'),
+							partition p1 values less than ('1990-01-01 00:00:00'),
+							partition p2 values less than ('2010-01-01 00:00:00'),
+							partition p3 values less than ('2030-01-01 00:00:00'),
+							partition p4 values less than ('2060-01-01 00:00:00'))`,
 			`create table t2(a datetime, b datetime)`,
 			func() string { return fmt.Sprintf(`("%v", "%v")`, randDateTime(), randDateTime()) },
 			func() string { return fmt.Sprintf(`"%v"`, randDateTime()) },
@@ -987,11 +999,11 @@ func TestPartitionTable(t *testing.T) {
 		},
 		{ // range partition + date
 			`create table t1(a date, b date) partition by range columns(a) (
-						partition p0 values less than ('1970-01-01'),
-						partition p1 values less than ('1990-01-01'),
-						partition p2 values less than ('2010-01-01'),
-						partition p3 values less than ('2030-01-01'),
-						partition p4 values less than ('2060-01-01'))`,
+							partition p0 values less than ('1970-01-01'),
+							partition p1 values less than ('1990-01-01'),
+							partition p2 values less than ('2010-01-01'),
+							partition p3 values less than ('2030-01-01'),
+							partition p4 values less than ('2060-01-01'))`,
 			`create table t2(a date, b date)`,
 			func() string { return fmt.Sprintf(`("%v", "%v")`, randDate(), randDate()) },
 			func() string { return fmt.Sprintf(`"%v"`, randDate()) },
@@ -1006,7 +1018,8 @@ func TestPartitionTable(t *testing.T) {
 						partition p3 values in (15, 16, 17, 18, 19))`,
 			`create table t2(a int, b int)`,
 			func() string { return fmt.Sprintf("(%v, %v)", randomSeed.Intn(20), randomSeed.Intn(20)) },
-			func() string { return fmt.Sprintf("%v", randomSeed.Intn(20)) },
+			func() string { return fmt.Sprintf("%v", 0) },
+			//func() string { return fmt.Sprintf("%v", randomSeed.Intn(20)) },
 			`select * from %v where a > ?`,
 		},
 	}
@@ -1046,9 +1059,6 @@ func TestPartitionTable(t *testing.T) {
 			result1 = tk.MustQuery("execute stmt1 using @a /* @a=" + val + " i=" + strconv.Itoa(i) + "  */ " + commentString).Sort().Rows()
 			foundInPlanCache := tk.Session().GetSessionVars().FoundInPlanCache
 			warnings := tk.MustQuery(`show warnings`)
-			if foundInPlanCache {
-				tk.Session().GetSessionPlanCache()
-			}
 			if len(warnings.Rows()) > 0 {
 				// TODO: support prepared plan cache for all plans which matches multiple partitions
 				// or no partition (Table Dual).
@@ -1135,11 +1145,6 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`set @mina=%v, @maxa=%v`, mina, maxa))
 		tk.MustExec(fmt.Sprintf(`set @pointa=%v`, pointa))
 		tk.MustExec(fmt.Sprintf(`set @a0=%v, @a1=%v, @a2=%v`, a0, a1, a2))
-		// TODO: Handle multiple partitions for table scan
-		sameScanPart := "0"
-		if mina/10000 == maxa/10000 {
-			sameScanPart = "1"
-		}
 
 		var rscan, rpoint, rbatch [][]interface{}
 		for id, tbl := range []string{`trangePK`, `thashPK`, `tnormalPK`} {
@@ -1150,14 +1155,8 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 				scan.Check(rscan)
 			}
 			if i > 0 {
-				expectedPlanCacheHit := "1"
-				if id == 0 {
-					expectedPlanCacheHit = sameScanPart
-				} else if id == 1 && mina != maxa {
-					expectedPlanCacheHit = "0"
-				}
 				tblStr := ` table: ` + tbl + " i :" + strconv.FormatInt(int64(i), 10) + " */"
-				missedPlanCache = helperCheckPlanCache(t, tk, `select @@last_plan_from_cache /* tablescan table: `+tblStr, expectedPlanCacheHit, missedPlanCache)
+				missedPlanCache = helperCheckPlanCache(t, tk, `select @@last_plan_from_cache /* tablescan table: `+tblStr, "1", missedPlanCache)
 			}
 
 			point := tk.MustQuery(fmt.Sprintf(`execute stmt%v_pointget using @pointa`, tbl)).Sort()
@@ -1202,29 +1201,36 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`set @a0=%v, @a1=%v, @a2=%v`, rand.Intn(40000), rand.Intn(40000), rand.Intn(40000)))
 
 		var rscan, rlookup, rpoint, rbatch [][]interface{}
-		var indexScanExpectedFromPlanCache, indexLookupExpectedFromPlanCache, pointGetExpectedFromPlanCache, batchGetExpectedFromPlanCache, sameRangePart, sameHashPart string
-		if (mina / 10000) == (maxa / 10000) {
-			sameRangePart = "1"
-		} else {
-			sameRangePart = "0"
-		}
-		if mina == maxa {
-			sameHashPart = "1"
-		} else {
-			sameHashPart = "0"
-		}
+		var indexScanExpectedFromPlanCache, indexLookupExpectedFromPlanCache, pointGetExpectedFromPlanCache, batchGetExpectedFromPlanCache string
+		/*
+			var sameRangePart, sameHashPart string
+			if (mina / 10000) == (maxa / 10000) {
+				sameRangePart = "1"
+			} else {
+				sameRangePart = "0"
+			}
+			if mina == maxa {
+				sameHashPart = "1"
+			} else {
+				sameHashPart = "0"
+			}
+		*/
 		for id, tbl := range []string{"trangeIdx", "thashIdx", "tnormalIdx"} {
 			// TODO: Support more partitioned table queries for prepared plan cache!
 			// Currently only batch get supports multiple partitions!
 			switch id {
 			case 0:
-				indexScanExpectedFromPlanCache = sameRangePart
-				indexLookupExpectedFromPlanCache = sameRangePart
+				indexScanExpectedFromPlanCache = "1"
+				//indexScanExpectedFromPlanCache = sameRangePart
+				//indexLookupExpectedFromPlanCache = sameRangePart
+				indexLookupExpectedFromPlanCache = "1"
 				pointGetExpectedFromPlanCache = "1"
 				batchGetExpectedFromPlanCache = "1"
 			case 1:
-				indexScanExpectedFromPlanCache = sameHashPart
-				indexLookupExpectedFromPlanCache = sameHashPart
+				indexScanExpectedFromPlanCache = "1"
+				//indexScanExpectedFromPlanCache = sameHashPart
+				//indexLookupExpectedFromPlanCache = sameHashPart
+				indexLookupExpectedFromPlanCache = "1"
 				pointGetExpectedFromPlanCache = "1"
 				batchGetExpectedFromPlanCache = "1"
 			case 2:

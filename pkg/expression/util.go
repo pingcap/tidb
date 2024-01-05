@@ -1492,6 +1492,29 @@ func containMutableConst(ctx EvalContext, exprs []Expression) bool {
 	return false
 }
 
+// ReEvaluateParamMarkerConst updates all constants to their current ParamMarkers
+// TODO: Does it need to handle DeferredExpr as well?
+func ReEvaluateParamMarkerConst(ctx sessionctx.Context, exprs []Expression) error {
+	var err error
+	for _, expr := range exprs {
+		switch v := expr.(type) {
+		case *Constant:
+			if v.ParamMarker != nil {
+				v.Value, err = v.Eval(ctx, chunk.Row{})
+				if err != nil {
+					return err
+				}
+			}
+		case *ScalarFunction:
+			err = ReEvaluateParamMarkerConst(ctx, v.GetArgs())
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // RemoveMutableConst used to remove the `ParamMarker` and `DeferredExpr` in the `Constant` expr.
 func RemoveMutableConst(ctx sessionctx.Context, exprs []Expression) (err error) {
 	for _, expr := range exprs {

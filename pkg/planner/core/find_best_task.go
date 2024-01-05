@@ -1192,6 +1192,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		var hashPartColName *model.CIStr
 		if tblInfo := ds.table.Meta(); canConvertPointGet && tblInfo.GetPartitionInfo() != nil {
 			// partition table with dynamic prune not support batchPointGet
+			// TODO: Add support for this!
 			if canConvertPointGet && len(path.Ranges) > 1 && ds.SCtx().GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
 				canConvertPointGet = false
 			}
