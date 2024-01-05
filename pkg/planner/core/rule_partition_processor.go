@@ -20,7 +20,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	gomath "math"
 	"slices"
 	"sort"
 	"strings"
@@ -217,7 +216,7 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx sessionctx.Context,
 				// issue:#22619
 				if col.RetType.GetType() == mysql.TypeBit {
 					// maximum number of partitions is 8192
-					if col.RetType.GetFlen() > 0 && col.RetType.GetFlen() < int(gomath.Log2(mysql.PartitionCountLimit)) {
+					if col.RetType.GetFlen() > 0 && col.RetType.GetFlen() < int(math.Log2(mysql.PartitionCountLimit)) {
 						// all possible hash values
 						maxUsedPartitions := 1 << col.RetType.GetFlen()
 						if maxUsedPartitions < numPartitions {
