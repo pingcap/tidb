@@ -66,6 +66,11 @@ type AdaptEnvForSnapshotBackupContext struct {
 	runGrp *errgroup.Group
 }
 
+func (cx *AdaptEnvForSnapshotBackupContext) Close() {
+	cx.pdMgr.Close()
+	cx.kvMgr.Close()
+}
+
 func (cx *AdaptEnvForSnapshotBackupContext) GetBackOffer(operation string) utils.Backoffer {
 	state := utils.InitialRetryState(64, 1*time.Second, 10*time.Second)
 	bo := utils.GiveUpRetryOn(&state, berrors.ErrPossibleInconsistency)
@@ -113,6 +118,8 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 		rdGrp:   sync.WaitGroup{},
 		runGrp:  eg,
 	}
+	defer cx.Close()
+
 	cx.rdGrp.Add(3)
 
 	eg.Go(func() error { return pauseGCKeeper(cx) })
