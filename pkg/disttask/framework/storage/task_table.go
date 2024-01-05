@@ -690,14 +690,15 @@ func (stm *TaskManager) StartManager(ctx context.Context, tidbID string, role st
 }
 
 // StartManagerSession insert the manager information into dist_framework_meta.
-// if the record exists, update the cpu_count.
+// if the record exists, update the cpu_count and role.
 func (*TaskManager) StartManagerSession(ctx context.Context, se sessionctx.Context, execID string, role string) error {
 	cpuCount := cpu.GetCPUCount()
 	_, err := sqlexec.ExecSQL(ctx, se, `
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
 		values (%?, %?, %?, -1)
-		on duplicate key update cpu_count = %?`,
-		execID, role, cpuCount, cpuCount)
+		on duplicate key
+		update cpu_count = %?, role = %?`,
+		execID, role, cpuCount, cpuCount, role)
 	return err
 }
 

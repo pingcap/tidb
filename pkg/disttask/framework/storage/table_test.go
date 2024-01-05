@@ -1060,3 +1060,32 @@ func TestTaskNotFound(t *testing.T) {
 	require.Error(t, err, storage.ErrTaskNotFound)
 	require.Nil(t, task)
 }
+
+func TestStartManager(t *testing.T) {
+	store, sm, ctx := testutil.InitTableTest(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, sm.StartManager(ctx, "tidb1", ""))
+	tk.MustQuery(`select role from mysql.dist_framework_meta where host="tidb1"`).Check(testkit.Rows(""))
+	require.NoError(t, sm.StartManager(ctx, "tidb1", "background"))
+	tk.MustQuery(`select role from mysql.dist_framework_meta where host="tidb1"`).Check(testkit.Rows("background"))
+	tk.MustExec(`set global tidb_service_scope=""`)
+	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows(""))
+
+	// 1. delete then recover.
+	sm.DeleteDeadNodes(ctx, []string{"tidb1"})
+	require.NoError(t, sm.StartManager(ctx, "tidb1", ""))
+	tk.MustQuery(`select role from mysql.dist_framework_meta where host="tidb1"`).Check(testkit.Rows(""))
+
+	sm.DeleteDeadNodes(ctx, []string{"tidb1"})
+	require.NoError(t, sm.StartManager(ctx, "tidb1", "background"))
+	tk.MustQuery(`select role from mysql.dist_framework_meta where host="tidb1"`).Check(testkit.Rows("background"))
+
+	// 2. delete then set.
+	sm.DeleteDeadNodes(ctx, []string{"tidb1"})
+	tk.MustExec(`set global tidb_service_scope=""`)
+	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows(""))
+
+	sm.DeleteDeadNodes(ctx, []string{"tidb1"})
+	tk.MustExec(`set global tidb_service_scope="background"`)
+	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
+}
