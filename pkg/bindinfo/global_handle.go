@@ -531,11 +531,7 @@ func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, stmt a
 		return nil, nil
 	}
 
-	_, _, fuzzDigest, err := normalizeStmt(stmt, sctx.GetSessionVars().CurrentDB, true)
-	if err != nil {
-		return nil, err
-	}
-
+	_, fuzzDigest := normalizeStmt(stmt, sctx.GetSessionVars().CurrentDB, true)
 	tableNames := CollectTableNames(stmt)
 	var bestBinding *BindRecord
 	leastWildcards := len(tableNames) + 1
