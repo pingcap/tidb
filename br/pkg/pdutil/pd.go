@@ -104,7 +104,6 @@ var (
 		"shuffle-leader-scheduler":     {},
 		"shuffle-region-scheduler":     {},
 		"shuffle-hot-region-scheduler": {},
-		"evict-leader-scheduler":       {},
 	}
 	expectPDCfgGenerators = map[string]pauseConfigGenerator{
 		"merge-schedule-limit": zeroPauseConfig,
@@ -243,6 +242,8 @@ type PdController struct {
 
 	// control the pause schedulers goroutine
 	schedulerPauseCh chan struct{}
+	// control the ttl of pausing schedulers
+	SchedulerPauseTTL time.Duration
 }
 
 // NewPdController creates a new PdController.
@@ -445,7 +446,7 @@ func (p *PdController) getStoreInfoWith(
 func (p *PdController) doPauseSchedulers(ctx context.Context,
 	schedulers []string, post pdHTTPRequest) ([]string, error) {
 	// pause this scheduler with 300 seconds
-	body, err := json.Marshal(pauseSchedulerBody{Delay: int64(pauseTimeout.Seconds())})
+	body, err := json.Marshal(pauseSchedulerBody{Delay: int64(p.ttlOfPausing().Seconds())})
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -492,7 +493,7 @@ func (p *PdController) pauseSchedulersAndConfigWith(
 	}
 
 	go func() {
-		tick := time.NewTicker(pauseTimeout / 3)
+		tick := time.NewTicker(p.ttlOfPausing() / 3)
 		defer tick.Stop()
 
 		for {
@@ -637,7 +638,7 @@ func (p *PdController) doUpdatePDScheduleConfig(
 
 func (p *PdController) doPauseConfigs(ctx context.Context, cfg map[string]interface{}, post pdHTTPRequest) error {
 	// pause this scheduler with 300 seconds
-	return p.doUpdatePDScheduleConfig(ctx, cfg, post, pdhttp.ConfigWithTTLSeconds(pauseTimeout.Seconds()))
+	return p.doUpdatePDScheduleConfig(ctx, cfg, post, pdhttp.ConfigWithTTLSeconds(p.ttlOfPausing().Seconds()))
 }
 
 func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg ClusterConfig,
@@ -1067,6 +1068,13 @@ func (p *PdController) Close() {
 	if p.schedulerPauseCh != nil {
 		close(p.schedulerPauseCh)
 	}
+}
+
+func (p *PdController) ttlOfPausing() time.Duration {
+	if p.SchedulerPauseTTL > 0 {
+		return p.SchedulerPauseTTL
+	}
+	return pauseTimeout
 }
 
 // FetchPDVersion get pd version

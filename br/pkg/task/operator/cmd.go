@@ -92,6 +92,7 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	if err != nil {
 		return errors.Annotate(err, "failed to dial PD")
 	}
+	mgr.SchedulerPauseTTL = cfg.TTL
 	var tconf *tls.Config
 	if cfg.TLS.IsEnabled() {
 		tconf, err = cfg.TLS.ToTLSConfig()
