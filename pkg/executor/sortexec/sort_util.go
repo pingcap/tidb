@@ -48,10 +48,14 @@ type partitionPointer struct {
 	partitionID int
 }
 
+type rowWithPartition struct {
+	row         chunk.Row
+	partitionID int
+}
+
 type multiWayMerge struct {
-	lessRowFunction     func(rowI chunk.Row, rowJ chunk.Row) bool
-	compressRowFunction func(rowI chunk.Row, rowJ chunk.Row) int
-	elements            []partitionPointer
+	lessRowFunction func(rowI chunk.Row, rowJ chunk.Row) bool
+	elements        []rowWithPartition
 }
 
 func (h *multiWayMerge) Less(i, j int) bool {

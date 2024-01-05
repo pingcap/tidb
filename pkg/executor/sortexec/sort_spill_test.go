@@ -144,7 +144,6 @@ func buildDataSource(ctx *mock.Context, sortCase *testutil.SortCase, schema *exp
 		Rows:       sortCase.Rows,
 		Ctx:        sortCase.Ctx,
 		Ndvs:       sortCase.Ndvs,
-		SaveChunks: true,
 	}
 	return testutil.BuildMockDataSource(opt)
 }
@@ -197,7 +196,7 @@ func executeSortExecutorAndManullyTriggerSpill(t *testing.T, exe *sortexec.SortE
 			// Trigger the spill
 			tracker.Consume(hardLimit)
 			// Wait for spill
-			time.Sleep(5 * time.Millisecond)
+			time.Sleep(10 * time.Millisecond)
 		}
 
 		if chk.NumRows() == 0 {
@@ -210,7 +209,7 @@ func executeSortExecutorAndManullyTriggerSpill(t *testing.T, exe *sortexec.SortE
 
 func checkCorrectness(schema *expression.Schema, exe *sortexec.SortExec, dataSource *testutil.MockDataSource, resultChunks []*chunk.Chunk) bool {
 	keyColumns, keyCmpFuncs, byItemsDesc := exe.GetSortMetaForTest()
-	checker := newResultChecker(schema, keyColumns, keyCmpFuncs, byItemsDesc, dataSource.SavedChunks)
+	checker := newResultChecker(schema, keyColumns, keyCmpFuncs, byItemsDesc, dataSource.GenData)
 	return checker.check(resultChunks)
 }
 
@@ -228,7 +227,8 @@ func onePartitionAndAllDataInMemoryCase(t *testing.T, ctx *mock.Context, sortCas
 
 	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
 	require.Equal(t, false, exe.IsSpillTriggeredInOnePartitionForTest(0))
-	require.Equal(t, int64(2048), exe.GetRowNumInOnePartitionForTest(0))
+	require.Equal(t, int64(2048), exe.GetRowNumInOnePartitionMemoryForTest(0))
+	require.Equal(t, int64(0), exe.GetRowNumInOnePartitionDiskForTest(0))
 	err := exe.Close()
 	require.NoError(t, err)
 
@@ -246,20 +246,25 @@ func onePartitionAndAllDataInDiskCase(t *testing.T, ctx *mock.Context, sortCase 
 	dataSource := buildDataSource(ctx, sortCase, schema)
 	exe := buildSortExec(ctx, sortCase, dataSource)
 
+	// To ensure that spill has been trigger before getting chunk, or we may get chunk from memory.
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/waitForSpill", `return(true)`)
 	resultChunks := executeSortExecutor(t, exe)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/waitForSpill", `return(false)`)
 
 	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
 	require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(0))
-	require.Equal(t, int64(2048), exe.GetRowNumInOnePartitionForTest(0))
+	require.Equal(t, int64(0), exe.GetRowNumInOnePartitionMemoryForTest(0))
+	require.Equal(t, int64(2048), exe.GetRowNumInOnePartitionDiskForTest(0))
 	err := exe.Close()
 	require.NoError(t, err)
 
 	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
 
-func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) {
+// When we enable the `unholdSyncLock` failpoint, we can ensure that there must be multi partitions.
+// However, `unholdSyncLock` failpoint introduces sleep and this will hide some concurrent problems,
+// so this failpoint needs to be disabled if we want to test concurrent problem.
+func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase, enableFailPoint bool) {
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 10000)
@@ -269,18 +274,27 @@ func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.Sort
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(ctx, sortCase, schema)
 	exe := buildSortExec(ctx, sortCase, dataSource)
-
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(true)`)
-	resultChunks := executeSortExecutor(t, exe)
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(false)`)
-
-	sortPartitionNum := exe.GetSortPartitionListLenForTest()
-	require.Greater(t, sortPartitionNum, 1)
-
-	// Ensure all partitions are spilled
-	for i := 0; i < sortPartitionNum; i++ {
-		require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(i))
+	if enableFailPoint {
+		failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(true)`)
 	}
+	resultChunks := executeSortExecutor(t, exe)
+	if enableFailPoint {
+		failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(false)`)
+	}
+	sortPartitionNum := exe.GetSortPartitionListLenForTest()
+	if enableFailPoint {
+		// If we disable the failpoint, there may be only one partition.
+		require.Greater(t, sortPartitionNum, 1)
+
+		// Ensure all partitions are spilled
+		for i := 0; i < sortPartitionNum; i++ {
+			// The last partition may not be spilled.
+			if i < sortPartitionNum-1 {
+				require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(i))
+			}
+		}
+	}
+
 	err := exe.Close()
 	require.NoError(t, err)
 
@@ -303,25 +317,56 @@ func inMemoryThenSpillCase(t *testing.T, ctx *mock.Context, sortCase *testutil.S
 
 	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
 	require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(0))
-	require.Greater(t, int64(2048), exe.GetRowNumInOnePartitionForTest(0))
+
+	rowNumInDisk := exe.GetRowNumInOnePartitionDiskForTest(0)
+	require.Equal(t, int64(0), exe.GetRowNumInOnePartitionMemoryForTest(0))
+	require.Greater(t, int64(2048), rowNumInDisk)
+	require.Less(t, int64(0), rowNumInDisk)
 	err := exe.Close()
 	require.NoError(t, err)
 
 	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
 
-// TODO test fall back
 func TestSortSpillDiskUnparallel(t *testing.T) {
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
 	sortCase := &testutil.SortCase{Rows: 2048, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
 
-	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/signalCheckpointForSort", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
 
 	for i := 0; i < 50; i++ {
 		onePartitionAndAllDataInMemoryCase(t, ctx, sortCase)
 		onePartitionAndAllDataInDiskCase(t, ctx, sortCase)
-		multiPartitionCase(t, ctx, sortCase)
+		multiPartitionCase(t, ctx, sortCase, false)
+		multiPartitionCase(t, ctx, sortCase, true)
 		inMemoryThenSpillCase(t, ctx, sortCase)
 	}
+}
+
+func TestFallBackAction(t *testing.T) {
+	hardLimitBytesNum := int64(1000000)
+	newRootExceedAction := new(testutil.MockActionOnExceed)
+	sortexec.SetSmallSpillChunkSizeForTest()
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, hardLimitBytesNum)
+	ctx.GetSessionVars().MemTracker.SetActionOnExceed(newRootExceedAction)
+	// Consume lots of memory in advance to help to trigger fallback action.
+	ctx.GetSessionVars().MemTracker.Consume(int64(float64(hardLimitBytesNum) * 0.99999))
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+	sortCase := &testutil.SortCase{Rows: 2048, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
+
+	schema := expression.NewSchema(sortCase.Columns()...)
+	dataSource := buildDataSource(ctx, sortCase, schema)
+	exe := buildSortExec(ctx, sortCase, dataSource)
+	executeSortExecutor(t, exe)
+	err := exe.Close()
+	require.NoError(t, err)
+
+	require.Less(t, 0, newRootExceedAction.GetTriggeredNum())
 }

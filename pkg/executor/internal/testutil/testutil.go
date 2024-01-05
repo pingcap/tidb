@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -41,17 +43,13 @@ type MockDataSourceParameters struct {
 	Ndvs        []int
 	Orders      []bool
 	Rows        int
-
-	// Sometimes we may need to save chunks that have been outputted
-	SaveChunks bool
 }
 
 // MockDataSource mocks data source
 type MockDataSource struct {
-	GenData     []*chunk.Chunk
-	Chunks      []*chunk.Chunk
-	SavedChunks []*chunk.Chunk
-	P           MockDataSourceParameters
+	GenData []*chunk.Chunk
+	Chunks  []*chunk.Chunk
+	P       MockDataSourceParameters
 	exec.BaseExecutor
 	ChunkPtr int
 }
@@ -148,9 +146,6 @@ func (*MockDataSource) RandDatum(typ *types.FieldType) interface{} {
 
 // PrepareChunks prepares chunks
 func (mds *MockDataSource) PrepareChunks() {
-	if mds.P.SaveChunks {
-		mds.SavedChunks = make([]*chunk.Chunk, len(mds.GenData))
-	}
 	mds.Chunks = make([]*chunk.Chunk, len(mds.GenData))
 	for i := range mds.Chunks {
 		mds.Chunks[i] = mds.GenData[i].CopyConstruct()
@@ -166,10 +161,6 @@ func (mds *MockDataSource) Next(_ context.Context, req *chunk.Chunk) error {
 	}
 	dataChk := mds.Chunks[mds.ChunkPtr]
 	dataChk.SwapColumns(req)
-
-	if mds.P.SaveChunks {
-		mds.SavedChunks[mds.ChunkPtr] = req.CopyConstruct()
-	}
 
 	mds.ChunkPtr++
 	return nil
@@ -243,7 +234,6 @@ func BuildMockDataSource(opt MockDataSourceParameters) *MockDataSource {
 		P:            opt,
 		GenData:      nil,
 		Chunks:       nil,
-		SavedChunks:  nil,
 	}
 	rTypes := exec.RetTypes(m)
 	colData := make([][]interface{}, len(rTypes))
@@ -286,4 +276,25 @@ func BuildMockDataSourceWithIndex(opt MockDataSourceParameters, index []int) *Mo
 		opt.Orders[idx] = true
 	}
 	return BuildMockDataSource(opt)
+}
+
+// MockActionOnExceed is for test.
+type MockActionOnExceed struct {
+	memory.BaseOOMAction
+	triggeredNum atomic.Int32
+}
+
+// Action add the triggered number.
+func (m *MockActionOnExceed) Action(*memory.Tracker) {
+	m.triggeredNum.Add(1)
+}
+
+// GetPriority get the priority of the Action.
+func (*MockActionOnExceed) GetPriority() int64 {
+	return memory.DefLogPriority
+}
+
+// GetTriggeredNum get the triggered number of the Action
+func (m *MockActionOnExceed) GetTriggeredNum() int {
+	return int(m.triggeredNum.Load())
 }
