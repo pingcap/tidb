@@ -18,9 +18,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"go.uber.org/zap"
 )
 
 // sortPartitionSpillDiskAction implements memory.ActionOnExceed for chunk.List. If
@@ -55,9 +53,7 @@ func (s *sortPartitionSpillDiskAction) executeAction(t *memory.Tracker) memory.A
 	if !s.partition.isSpillTriggeredNoLock() && s.partition.hasEnoughDataToSpill() {
 		s.once.Do(func() {
 			go func() {
-				logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
-					zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
-				err := s.partition.spillToDisk()
+				err := s.partition.spillToDisk(t)
 				if err != nil {
 					s.partition.setError(err)
 				}

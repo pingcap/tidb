@@ -196,7 +196,7 @@ func executeSortExecutorAndManullyTriggerSpill(t *testing.T, exe *sortexec.SortE
 			// Trigger the spill
 			tracker.Consume(hardLimit)
 			// Wait for spill
-			time.Sleep(5 * time.Millisecond)
+			time.Sleep(10 * time.Millisecond)
 		}
 
 		if chk.NumRows() == 0 {
@@ -226,7 +226,8 @@ func onePartitionAndAllDataInMemoryCase(t *testing.T, ctx *mock.Context, sortCas
 
 	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
 	require.Equal(t, false, exe.IsSpillTriggeredInOnePartitionForTest(0))
-	require.Equal(t, int64(2048), exe.GetRowNumInOnePartitionForTest(0))
+	require.Equal(t, int64(2048), exe.GetRowNumInOnePartitionMemoryForTest(0))
+	require.Equal(t, int64(0), exe.GetRowNumInOnePartitionDiskForTest(0))
 	err := exe.Close()
 	require.NoError(t, err)
 
@@ -250,7 +251,8 @@ func onePartitionAndAllDataInDiskCase(t *testing.T, ctx *mock.Context, sortCase 
 
 	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
 	require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(0))
-	require.Equal(t, int64(2048), exe.GetRowNumInOnePartitionForTest(0))
+	require.Equal(t, int64(0), exe.GetRowNumInOnePartitionMemoryForTest(0))
+	require.Equal(t, int64(2048), exe.GetRowNumInOnePartitionDiskForTest(0))
 	err := exe.Close()
 	require.NoError(t, err)
 
@@ -311,7 +313,11 @@ func inMemoryThenSpillCase(t *testing.T, ctx *mock.Context, sortCase *testutil.S
 
 	require.Equal(t, exe.GetSortPartitionListLenForTest(), 1)
 	require.Equal(t, true, exe.IsSpillTriggeredInOnePartitionForTest(0))
-	require.Greater(t, int64(2048), exe.GetRowNumInOnePartitionForTest(0))
+
+	rowNumInDisk := exe.GetRowNumInOnePartitionDiskForTest(0)
+	require.Equal(t, int64(0), exe.GetRowNumInOnePartitionMemoryForTest(0))
+	require.Greater(t, int64(2048), rowNumInDisk)
+	require.Less(t, int64(0), rowNumInDisk)
 	err := exe.Close()
 	require.NoError(t, err)
 

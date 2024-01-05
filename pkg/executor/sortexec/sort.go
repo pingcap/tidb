@@ -316,15 +316,10 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 		})
 	}
 
-	err = e.handleCurrentPartitionBeforeExit()
-	if err != nil {
-		return err
-	}
-
 	failpoint.Inject("waitForSpill", func(val failpoint.Value) {
 		if val.(bool) {
 			// Ensure that spill is triggered before returning data.
-			time.Sleep(5 * time.Millisecond)
+			time.Sleep(50 * time.Millisecond)
 		}
 	})
 
@@ -335,6 +330,11 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			}
 		}
 	})
+
+	err = e.handleCurrentPartitionBeforeExit()
+	if err != nil {
+		return err
+	}
 
 	e.sortPartitions = append(e.sortPartitions, e.curPartition)
 	e.curPartition = nil
@@ -392,9 +392,14 @@ func (e *SortExec) IsSpillTriggeredInOnePartitionForTest(idx int) bool {
 	return e.sortPartitions[idx].isSpillTriggered()
 }
 
-// GetRowNumInOnePartitionForTest returns number of rows a partition holds, it's only used in test.
-func (e *SortExec) GetRowNumInOnePartitionForTest(idx int) int64 {
-	return e.sortPartitions[idx].numRowForTest()
+// GetRowNumInOnePartitionDiskForTest returns number of rows a partition holds in disk, it's only used in test.
+func (e *SortExec) GetRowNumInOnePartitionDiskForTest(idx int) int64 {
+	return e.sortPartitions[idx].numRowInDiskForTest()
+}
+
+// GetRowNumInOnePartitionDiskForTest returns number of rows a partition holds in memory, it's only used in test.
+func (e *SortExec) GetRowNumInOnePartitionMemoryForTest(idx int) int64 {
+	return e.sortPartitions[idx].numRowInMemoryForTest()
 }
 
 // GetSortPartitionListLenForTest returns the number of partitions, it's only used in test.

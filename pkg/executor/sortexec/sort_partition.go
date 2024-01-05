@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"go.uber.org/zap"
 )
 
 var errSpillEmptyChunk = errors.New("can not spill empty chunk to disk")
@@ -227,12 +229,13 @@ func (s *sortPartition) spillToDiskImpl() (err error) {
 
 	// Release memory as all data have been spilled to disk
 	s.savedRows = nil
+	s.sliceIter = nil
 	s.getMemTracker().ReplaceBytesUsed(0)
 	return nil
 }
 
 // We can only call this function under the protection of `syncLock`.
-func (s *sortPartition) spillToDisk() error {
+func (s *sortPartition) spillToDisk(tracker *memory.Tracker) error {
 	s.syncLock.Lock()
 	defer s.syncLock.Unlock()
 	if s.isSpillTriggered() {
@@ -247,6 +250,9 @@ func (s *sortPartition) spillToDisk() error {
 	s.setIsSpilling()
 	defer s.cond.Broadcast()
 	defer s.setSpillTriggered()
+
+	logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
+		zap.Int64("consumed", tracker.BytesConsumed()), zap.Int64("quota", tracker.GetBytesLimit()))
 
 	err = s.spillToDiskImpl()
 	return err
@@ -319,10 +325,6 @@ func (s *sortPartition) lessRow(rowI, rowJ chunk.Row) bool {
 	return false
 }
 
-func (s *sortPartition) numRowInMemory() int {
-	return len(s.savedRows)
-}
-
 // keyColumnsLess is the less function for key columns.
 func (s *sortPartition) keyColumnsLess(i, j int) bool {
 	if s.timesOfRowCompare >= signalCheckpointForSort {
@@ -379,16 +381,20 @@ func (s *sortPartition) checkError() error {
 	return s.spillError
 }
 
-func (s *sortPartition) numRowForTest() int64 {
-	rowNumInMemory := int64(s.numRowInMemory())
+func (s *sortPartition) numRowInDiskForTest() int64 {
 	if s.inDisk != nil {
-		if rowNumInMemory > 0 {
-			panic("Data shouldn't be placed in memory and disk simultaneously")
-		}
 		return s.inDisk.NumRows()
 	}
+	return 0
+}
 
-	return rowNumInMemory
+func (s *sortPartition) numRowInMemoryForTest() int64 {
+	if s.sliceIter != nil {
+		if s.sliceIter.Len() != len(s.savedRows) {
+			panic("length of sliceIter should be equal to savedRows")
+		}
+	}
+	return int64(len(s.savedRows))
 }
 
 // SetSmallSpillChunkSizeForTest set spill chunk size for test.
