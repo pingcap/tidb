@@ -140,7 +140,23 @@ func TestGlobalSortBasic(t *testing.T) {
 }
 
 func TestGlobalSortMultiSchemaChange(t *testing.T) {
-	tk, _, cloudStorageURI := prepareForGlobalSort(t)
+	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
+	opt := fakestorage.Options{
+		Scheme:     "http",
+		Host:       gcsHost,
+		Port:       gcsPort,
+		PublicHost: gcsHost,
+	}
+	server, err := fakestorage.NewServerWithOptions(opt)
+	require.NoError(t, err)
+	t.Cleanup(server.Stop)
+	server.CreateBucketWithOpts(fakestorage.CreateBucketOpts{Name: "sorted"})
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
 
 	tk.MustExec("create table t_rowid (a int, b bigint, c varchar(255));")
 	tk.MustExec("create table t_int_handle (a bigint primary key, b varchar(255));")
