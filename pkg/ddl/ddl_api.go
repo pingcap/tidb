@@ -40,6 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -4193,6 +4194,18 @@ func (d *ddl) AddColumn(ctx sessionctx.Context, ti ast.Ident, spec *ast.AlterTab
 		return errors.Trace(err)
 	}
 
+	txn, err := ctx.Txn(true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	bdrRole, err := meta.NewMeta(txn).GetBDRRole()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if bdrRole == string(ast.BDRRolePrimary) && deniedByBDRWhenAddColumn(specNewColumn.Options) {
+		return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
+	}
+
 	job := &model.Job{
 		SchemaID:       schema.ID,
 		TableID:        tbInfo.ID,
@@ -5737,6 +5750,19 @@ func GetModifiableColumnJob(
 	var newAutoRandBits uint64
 	if newAutoRandBits, err = checkAutoRandom(t.Meta(), col, specNewColumn); err != nil {
 		return nil, errors.Trace(err)
+	}
+
+	txn, err := sctx.Txn(true)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	bdrRole, err := meta.NewMeta(txn).GetBDRRole()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if bdrRole == string(ast.BDRRolePrimary) &&
+		deniedByBDRWhenModifyColumn(newCol.FieldType, col.FieldType, specNewColumn.Options) {
+		return nil, dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
 	}
 
 	job := &model.Job{
