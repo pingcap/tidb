@@ -569,7 +569,7 @@ type Job struct {
 
 	// LocalMode indicates whether the job is running in local TiDB.
 	// Only happens when tidb_ddl_version = 2.
-	LocalMode bool `json:"LocalMode"`
+	LocalMode bool `json:"local_mode"`
 }
 
 // InvolvingSchemaInfo returns the schema info involved in the job.
