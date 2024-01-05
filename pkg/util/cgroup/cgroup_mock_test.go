@@ -372,7 +372,7 @@ const (
 func TestCgroupsGetCPU(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		if i == 1 {
-			// The field in /proc/self/cgroup and /proc/self/meminfo may appear as "cpuacct,cpu" or "rw,cpuacct,cpu"
+			// The field in /proc/self/cgroup and /proc/self/mountinfo may appear as "cpuacct,cpu" or "rw,cpuacct,cpu"
 			// while the input controller is "cpu,cpuacct"
 			v1CgroupWithCPUController = strings.ReplaceAll(v1CgroupWithCPUController, "cpu,cpuacct", "cpuacct,cpu")
 			v1CgroupWithCPUControllerNS = strings.ReplaceAll(v1CgroupWithCPUControllerNS, "cpu,cpuacct", "cpuacct,cpu")
@@ -387,6 +387,7 @@ func TestCgroupsGetCPU(t *testing.T) {
 			v1MountsWithCPUControllerNS2 = strings.ReplaceAll(v1MountsWithCPUControllerNS2, "rw,cpu,cpuacct", "rw,cpuacct,cpu")
 		}
 		testCgroupsGetCPU(t)
+		testCgroupsGetCPUPeriodAndQuota(t)
 	}
 }
 
@@ -570,6 +571,147 @@ func testCgroupsGetCPU(t *testing.T) {
 		require.Equal(t, tc.period, cpuusage.Period)
 		require.Equal(t, tc.system, cpuusage.Stime)
 		require.Equal(t, tc.user, cpuusage.Utime)
+	}
+}
+
+func testCgroupsGetCPUPeriodAndQuota(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		paths  map[string]string
+		errMsg string
+		period int64
+		quota  int64
+	}{
+		{
+			errMsg: "failed to read cpu cgroup from cgroups file:",
+		},
+		{
+			paths: map[string]string{
+				"/proc/self/cgroup":    v1CgroupWithoutCPUController,
+				"/proc/self/mountinfo": v1MountsWithoutCPUController,
+			},
+			errMsg: "no cpu controller detected",
+		},
+		{
+			paths: map[string]string{
+				"/proc/self/cgroup": v1CgroupWithCPUController,
+			},
+			errMsg: "failed to read mounts info from file:",
+		},
+		{
+			paths: map[string]string{
+				"/proc/self/cgroup":    v1CgroupWithCPUController,
+				"/proc/self/mountinfo": v1MountsWithoutCPUController,
+			},
+			errMsg: "failed to detect cgroup root mount and version",
+		},
+		{
+			paths: map[string]string{
+				"/proc/self/cgroup":                            v1CgroupWithCPUController,
+				"/proc/self/mountinfo":                         v1MountsWithCPUController,
+				"/sys/fs/cgroup/cpu,cpuacct/cpu.cfs_quota_us":  "12345",
+				"/sys/fs/cgroup/cpu,cpuacct/cpu.cfs_period_us": "67890",
+			},
+			quota:  int64(12345),
+			period: int64(67890),
+		},
+		{
+			paths: map[string]string{
+				"/proc/self/cgroup":    v1CgroupWithCPUControllerNS,
+				"/proc/self/mountinfo": v1MountsWithCPUControllerNS,
+				"/sys/fs/cgroup/cpu,cpuacct/crdb_test/cpu.cfs_quota_us":  "12345",
+				"/sys/fs/cgroup/cpu,cpuacct/crdb_test/cpu.cfs_period_us": "67890",
+			},
+			quota:  int64(12345),
+			period: int64(67890),
+		},
+		{
+			paths: map[string]string{
+				"/proc/self/cgroup":    v1CgroupWithCPUControllerNSMountRel,
+				"/proc/self/mountinfo": v1MountsWithCPUControllerNSMountRel,
+			},
+			errMsg: "failed to detect cgroup root mount and version",
+		},
+		{
+			paths: map[string]string{
+				"/proc/self/cgroup":    v1CgroupWithCPUControllerNSMountRelRemount,
+				"/proc/self/mountinfo": v1MountsWithCPUControllerNSMountRelRemount,
+				"/sys/fs/cgroup/cpu,cpuacct/crdb_test/cpu.cfs_quota_us":  "12345",
+				"/sys/fs/cgroup/cpu,cpuacct/crdb_test/cpu.cfs_period_us": "67890",
+			},
+			quota:  int64(12345),
+			period: int64(67890),
+		},
+		{
+			paths: map[string]string{
+				"/proc/self/cgroup":    v1CgroupWithCPUControllerNS2,
+				"/proc/self/mountinfo": v1MountsWithCPUControllerNS2,
+				"/sys/fs/cgroup/cpu,cpuacct/crdb_test/cpu.cfs_quota_us":  "12345",
+				"/sys/fs/cgroup/cpu,cpuacct/crdb_test/cpu.cfs_period_us": "67890",
+			},
+			quota:  int64(12345),
+			period: int64(67890),
+		},
+		{
+			paths: map[string]string{
+				"/proc/self/cgroup":                            v1CgroupWithCPUController,
+				"/proc/self/mountinfo":                         v1MountsWithCPUController,
+				"/sys/fs/cgroup/cpu,cpuacct/cpu.cfs_quota_us":  "-1",
+				"/sys/fs/cgroup/cpu,cpuacct/cpu.cfs_period_us": "67890",
+			},
+			quota:  int64(-1),
+			period: int64(67890),
+		},
+		{
+			paths: map[string]string{
+				"/proc/self/cgroup":    v2CgroupWithMemoryController,
+				"/proc/self/mountinfo": v2Mounts,
+			},
+			errMsg: "error when read cpu quota from cgroup v2",
+		},
+		{
+			paths: map[string]string{
+				"/proc/self/cgroup":    v2CgroupWithMemoryController,
+				"/proc/self/mountinfo": v2Mounts,
+				"/sys/fs/cgroup/machine.slice/libpod-f1c6b44c0d61f273952b8daecf154cee1be2d503b7e9184ebf7fcaf48e139810.scope/cpu.max": "foo bar\n",
+			},
+			errMsg: "error when reading cpu quota from cgroup v2 at",
+		},
+		{
+			paths: map[string]string{
+				"/proc/self/cgroup":    v2CgroupWithMemoryController,
+				"/proc/self/mountinfo": v2Mounts,
+				"/sys/fs/cgroup/machine.slice/libpod-f1c6b44c0d61f273952b8daecf154cee1be2d503b7e9184ebf7fcaf48e139810.scope/cpu.max": "100 1000\n",
+			},
+			quota:  int64(100),
+			period: int64(1000),
+		},
+		{
+			paths: map[string]string{
+				"/proc/self/cgroup":    v2CgroupWithMemoryController,
+				"/proc/self/mountinfo": v2Mounts,
+				"/sys/fs/cgroup/machine.slice/libpod-f1c6b44c0d61f273952b8daecf154cee1be2d503b7e9184ebf7fcaf48e139810.scope/cpu.max": "max 1000\n",
+			},
+			quota:  int64(-1),
+			period: int64(1000),
+		},
+		{
+			paths: map[string]string{
+				"/proc/self/cgroup":    v2CgroupWithMemoryController,
+				"/proc/self/mountinfo": v2Mounts,
+				"/sys/fs/cgroup/machine.slice/libpod-f1c6b44c0d61f273952b8daecf154cee1be2d503b7e9184ebf7fcaf48e139810.scope/cpu.max": "100 1000\n",
+			},
+			quota:  int64(100),
+			period: int64(1000),
+		},
+	} {
+		dir := createFiles(t, tc.paths)
+
+		period, quota, err := getCgroupCPUPeriodAndQuota(dir)
+		require.True(t, isError(err, tc.errMsg),
+			"%v %v", err, tc.errMsg)
+		require.Equal(t, tc.quota, quota)
+		require.Equal(t, tc.period, period)
 	}
 }
 

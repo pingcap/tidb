@@ -60,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/cgmon"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
@@ -291,6 +292,7 @@ func main() {
 	}
 	setGlobalVars()
 	setCPUAffinity()
+	cgmon.StartCgroupMonitor()
 	setupTracing() // Should before createServer and after setup config.
 	printInfo()
 	setupBinlogClient()
@@ -372,8 +374,9 @@ func setCPUAffinity() {
 		fmt.Fprintf(os.Stderr, "set cpu affinity failure: %v", err)
 		os.Exit(1)
 	}
-	runtime.GOMAXPROCS(len(cpu))
-	metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
+	if len(cpu) < runtime.GOMAXPROCS(0) {
+		runtime.GOMAXPROCS(len(cpu))
+	}
 }
 
 func registerStores() {
@@ -730,7 +733,6 @@ func setGlobalVars() {
 	// We should respect to user's settings in config file.
 	// The default value of MaxProcs is 0, runtime.GOMAXPROCS(0) is no-op.
 	runtime.GOMAXPROCS(int(cfg.Performance.MaxProcs))
-	metrics.MaxProcs.Set(float64(runtime.GOMAXPROCS(0)))
 
 	util.SetGOGC(cfg.Performance.GOGC)
 
@@ -949,6 +951,7 @@ func cleanup(svr *server.Server, storage kv.Storage, dom *domain.Domain) {
 	disk.CleanUp()
 	closeStmtSummary()
 	topsql.Close()
+	cgmon.StopCgroupMonitor()
 }
 
 func stringToList(repairString string) []string {
