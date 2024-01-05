@@ -953,7 +953,7 @@ func (tr *TableImporter) postProcess(
 	if cp.Status < checkpoints.CheckpointStatusAlteredAutoInc {
 		tblInfo := tr.tableInfo.Core
 		var err error
-		if common.TableHasAutoID(tblInfo) {
+		if isLocalBackend(rc.cfg) && common.TableHasAutoID(tblInfo) {
 			maxIDs := map[autoid.AllocatorType]int64{
 				autoid.RowIDAllocType:    tr.alloc.Get(autoid.RowIDAllocType).Base(),
 				autoid.AutoIncrementType: tr.alloc.Get(autoid.AutoIncrementType).Base(),
