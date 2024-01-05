@@ -387,21 +387,6 @@ func (e *SortExec) compressRow(rowI, rowJ chunk.Row) int {
 	return 0
 }
 
-func (e *SortExec) isSpillTriggered() bool {
-	if len(e.sortPartitions) > 0 {
-		return e.sortPartitions[0].isSpillTriggered()
-	}
-	if e.curPartition != nil {
-		return e.curPartition.isSpillTriggered()
-	}
-	return false
-}
-
-// IsSpillTriggeredForTest tells if spill is triggered, it's only used in test.
-func (e *SortExec) IsSpillTriggeredForTest() bool {
-	return e.isSpillTriggered()
-}
-
 // IsSpillTriggeredInOnePartitionForTest tells if spill is triggered in a specific partition, it's only used in test.
 func (e *SortExec) IsSpillTriggeredInOnePartitionForTest(idx int) bool {
 	return e.sortPartitions[idx].isSpillTriggered()
