@@ -792,7 +792,9 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	ingest.InitGlobalLightningEnv()
 	d.ownerManager.SetRetireOwnerHook(func() {
 		// Since this instance is not DDL owner anymore, we clean up the processing job info.
-		ingest.LitBackCtxMgr.MarkJobFinish()
+		if ingest.LitBackCtxMgr != nil {
+			ingest.LitBackCtxMgr.MarkJobFinish()
+		}
 	})
 
 	return nil
