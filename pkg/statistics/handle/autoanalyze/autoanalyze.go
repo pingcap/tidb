@@ -491,7 +491,7 @@ func tryAutoAnalyzeTable(
 	sql string,
 	params ...interface{},
 ) bool {
-	// 1. If the stats are not loaded, we don't need to analyze it.
+	// 1. If the statistics are either not loaded or are classified as pseudo, there is no need for analyze
 	// 2. If the table is too small, we don't want to waste time to analyze it.
 	//    Leave the opportunity to other bigger tables.
 	if statsTbl == nil || statsTbl.RealtimeCount < AutoAnalyzeMinCnt || statsTbl.Pseudo {
