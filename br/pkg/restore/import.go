@@ -1016,7 +1016,7 @@ func (importer *FileImporter) downloadSSTV2(
 				sstMeta, ok := downloadMetasMap[file.Name]
 				if !ok {
 					mu.Unlock()
-					return errors.Errorf("not found file key for download sstMeta", file.Name)
+					return errors.Errorf("not found file %s for download sstMeta", file.Name)
 				}
 				sstMeta.Range = &import_sstpb.Range{
 					Start: TruncateTS(resp.Range.GetStart()),
