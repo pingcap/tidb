@@ -307,8 +307,8 @@ func (p *PointGetPlan) AccessObject() AccessObject {
 		Database: p.dbName,
 		Table:    p.TblInfo.Name.O,
 	}
-	if p.Partition != nil {
-		res.Partitions = []string{p.Partition.Name.O}
+	if p.PartitionDef != nil {
+		res.Partitions = []string{p.PartitionDef.Name.O}
 	}
 	if p.IndexInfo != nil {
 		index := IndexAccess{

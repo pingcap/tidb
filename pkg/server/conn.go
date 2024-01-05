@@ -1820,8 +1820,8 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		var tableID int64
 		switch v := p.(type) {
 		case *plannercore.PointGetPlan:
-			if v.Partition != nil {
-				tableID = v.Partition.ID
+			if v.PartitionDef != nil {
+				tableID = v.PartitionDef.ID
 			} else {
 				tableID = v.TblInfo.ID
 			}

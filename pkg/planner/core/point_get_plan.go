@@ -71,7 +71,7 @@ type PointGetPlan struct {
 	schema             *expression.Schema
 	TblInfo            *model.TableInfo
 	IndexInfo          *model.IndexInfo
-	Partition          *model.PartitionDefinition
+	PartitionDef       *model.PartitionDefinition
 	Handle             kv.Handle
 	HandleConstant     *expression.Constant
 	handleFieldType    *types.FieldType
@@ -272,8 +272,8 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 	if p.schema != nil {
 		sum += p.schema.MemoryUsage()
 	}
-	if p.Partition != nil {
-		sum += p.Partition.MemoryUsage()
+	if p.PartitionDef != nil {
+		sum += p.PartitionDef.MemoryUsage()
 	}
 	if p.HandleConstant != nil {
 		sum += p.HandleConstant.MemoryUsage()
@@ -658,7 +658,7 @@ func newBatchPointGetPlan(
 		var handles = make([]kv.Handle, len(patternInExpr.List))
 		var handleParams = make([]*expression.Constant, len(patternInExpr.List))
 		var pos2PartitionDefinition = make(map[int]*model.PartitionDefinition)
-		partitionInfos := make([]*model.PartitionDefinition, 0, len(patternInExpr.List))
+		partitionDefs := make([]*model.PartitionDefinition, 0, len(patternInExpr.List))
 		for i, item := range patternInExpr.List {
 			// SELECT * FROM t WHERE (key) in ((1), (2))
 			if p, ok := item.(*ast.ParenthesesExpr); ok {
@@ -711,10 +711,10 @@ func newBatchPointGetPlan(
 		}
 		sort.Ints(posArr)
 		for _, pos := range posArr {
-			partitionInfos = append(partitionInfos, pos2PartitionDefinition[pos])
+			partitionDefs = append(partitionDefs, pos2PartitionDefinition[pos])
 		}
-		if len(partitionInfos) == 0 {
-			partitionInfos = nil
+		if len(partitionDefs) == 0 {
+			partitionDefs = nil
 		}
 		p := &BatchPointGetPlan{
 			TblInfo:       tbl,
@@ -722,7 +722,7 @@ func newBatchPointGetPlan(
 			HandleParams:  handleParams,
 			HandleType:    &handleCol.FieldType,
 			PartitionExpr: partitionExpr,
-			PartitionDefs: partitionInfos,
+			PartitionDefs: partitionDefs,
 		}
 
 		return p.Init(ctx, statsInfo, schema, names, 0)
@@ -1097,7 +1097,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.GetFlag())
 		p.handleFieldType = fieldType
 		p.HandleConstant = handlePair.con
-		p.Partition = partitionDef
+		p.PartitionDef = partitionDef
 		return p
 	} else if handlePair.value.Kind() != types.KindNull {
 		return nil
@@ -1180,8 +1180,8 @@ func checkTblIndexForPointPlan(ctx sessionctx.Context, tblName *ast.TableName, s
 		p.IndexValues = idxValues
 		p.IndexConstants = idxConstant
 		p.ColsFieldType = colsFieldType
-		p.Partition = partitionDef
-		if p.Partition != nil {
+		p.PartitionDef = partitionDef
+		if p.PartitionDef != nil {
 			p.partitionColumnPos = findPartitionIdx(idxInfo, pos, pairs)
 		}
 		return p
