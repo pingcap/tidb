@@ -3619,7 +3619,7 @@
           "lines": true,
           "linewidth": 2,
           "links": [],
-          "nullPointMode": "null as zero",
+          "nullPointMode": "null",
           "options": {
             "alertThreshold": true
           },
@@ -3694,9 +3694,9 @@
             {
               "format": "s",
               "label": null,
-              "logBase": 10,
+              "logBase": 2,
               "max": null,
-              "min": "0",
+              "min": null,
               "show": true
             },
             {
@@ -3719,7 +3719,7 @@
           "dashLength": 10,
           "dashes": false,
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "",
+          "description": "MySQL commands processing numbers per second. See https://dev.mysql.com/doc/internals/en/text-protocol.html and https://dev.mysql.com/doc/internals/en/prepared-statements.html",
           "editable": true,
           "error": false,
           "fieldConfig": {
@@ -3925,7 +3925,7 @@
             {
               "format": "short",
               "label": null,
-              "logBase": 10,
+              "logBase": 2,
               "max": null,
               "min": "0",
               "show": true
@@ -3982,7 +3982,7 @@
           "lines": true,
           "linewidth": 2,
           "links": [],
-          "nullPointMode": "null as zero",
+          "nullPointMode": "null",
           "options": {
             "alertThreshold": true
           },
@@ -4041,7 +4041,7 @@
             {
               "format": "short",
               "label": null,
-              "logBase": 10,
+              "logBase": 1,
               "max": null,
               "min": "0",
               "show": true
