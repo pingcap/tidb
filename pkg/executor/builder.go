@@ -4925,7 +4925,6 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) exec.Exec
 		collation:    v.Collation,
 		db:           v.Db,
 		isGlobal:     v.IsGlobal,
-		isUniversal:  v.IsUniversal,
 		bindAst:      v.BindStmt,
 		newStatus:    v.NewStatus,
 		source:       v.Source,

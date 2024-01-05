@@ -871,7 +871,6 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 		NormdOrigSQL: normdOrigSQL,
 		BindSQL:      bindSQL,
 		IsGlobal:     v.GlobalScope,
-		IsUniversal:  v.IsUniversal,
 		BindStmt:     hintNode,
 		Db:           db,
 		Charset:      bindableStmt.Charset,
@@ -913,7 +912,6 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 		NormdOrigSQL: normdOrigSQL,
 		BindSQL:      bindSQL,
 		IsGlobal:     v.GlobalScope,
-		IsUniversal:  v.IsUniversal,
 		BindStmt:     v.HintedNode,
 		Db:           db,
 		Charset:      charSet,
@@ -1478,7 +1476,7 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		return &Simple{Statement: as}, nil
 	case ast.AdminFlushPlanCache:
 		return &Simple{Statement: as}, nil
-	case ast.AdminSetBDRRole:
+	case ast.AdminSetBDRRole, ast.AdminUnsetBDRRole:
 		return &Simple{Statement: as}, nil
 	case ast.AdminShowBDRRole:
 		p := &AdminShowBDRRole{}

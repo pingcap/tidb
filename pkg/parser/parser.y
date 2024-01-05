@@ -473,7 +473,6 @@ import (
 	level                 "LEVEL"
 	list                  "LIST"
 	local                 "LOCAL"
-	local_only            "LOCAL_ONLY"
 	location              "LOCATION"
 	locked                "LOCKED"
 	logs                  "LOGS"
@@ -667,9 +666,10 @@ import (
 	uncommitted           "UNCOMMITTED"
 	undefined             "UNDEFINED"
 	unicodeSym            "UNICODE"
-	unknown               "UNKNOWN"
-	user                  "USER"
 	universal             "UNIVERSAL"
+	unknown               "UNKNOWN"
+	unset                 "UNSET"
+	user                  "USER"
 	validation            "VALIDATION"
 	value                 "VALUE"
 	variables             "VARIABLES"
@@ -1098,7 +1098,7 @@ import (
 	AuthOption                             "User auth option"
 	AutoRandomOpt                          "Auto random option"
 	Boolean                                "Boolean (0, 1, false, true)"
-	BDRRole                                "BDR role (primary, secondary, local_only)"
+	BDRRole                                "BDR role (primary, secondary)"
 	OptionalBraces                         "optional braces"
 	CastType                               "Cast function target type"
 	CharsetOpt                             "CHARACTER SET option in LOAD DATA"
@@ -6608,7 +6608,6 @@ UnReservedKeyword:
 |	"INSERT_METHOD"
 |	"LESS"
 |	"LOCAL"
-|	"LOCAL_ONLY"
 |	"LAST"
 |	"NAMES"
 |	"NVARCHAR"
@@ -6651,6 +6650,7 @@ UnReservedKeyword:
 |	"TSO"
 |	"UNBOUNDED"
 |	"UNKNOWN"
+|	"UNSET"
 |	"VALUE" %prec lowerThanValueKeyword
 |	"WARNINGS"
 |	"YEAR"
@@ -10931,10 +10931,6 @@ BDRRole:
 	{
 		$$ = ast.BDRRoleSecondary
 	}
-|	"LOCAL_ONLY"
-	{
-		$$ = ast.BDRRoleLocalOnly
-	}
 
 AdminStmt:
 	"ADMIN" "SHOW" "DDL"
@@ -11163,6 +11159,12 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminShowBDRRole,
+		}
+	}
+|	"ADMIN" "UNSET" "BDR" "ROLE"
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminUnsetBDRRole,
 		}
 	}
 
