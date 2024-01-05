@@ -331,7 +331,7 @@ func (s *sortPartition) keyColumnsLess(i, j int) bool {
 		s.timesOfRowCompare = 0
 	}
 
-	failpoint.Inject("signalCheckpointForSort", func(val failpoint.Value) {
+	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
 		if val.(bool) {
 			s.timesOfRowCompare += 1024
 		}
