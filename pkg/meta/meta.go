@@ -1539,7 +1539,7 @@ func (*Meta) TableNameKey(dbName string, tableName string) kv.Key {
 func (m *Meta) CheckTableNameExists(name []byte) error {
 	v, err := m.txn.Get(name)
 	if err == nil && v == nil {
-		err = ErrTableNotExists.GenWithStackByArgs(string(name))
+		err = ErrTableNotExists.FastGenByArgs(string(name))
 	}
 	return errors.Trace(err)
 }
@@ -1548,7 +1548,7 @@ func (m *Meta) CheckTableNameExists(name []byte) error {
 func (m *Meta) CheckTableNameNotExists(name []byte) error {
 	v, err := m.txn.Get(name)
 	if err == nil && v != nil {
-		err = ErrTableExists.GenWithStackByArgs(string(name))
+		err = ErrTableExists.FastGenByArgs(string(name))
 	}
 	return errors.Trace(err)
 }
