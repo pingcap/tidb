@@ -22,6 +22,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/autoid_service",
+        "//pkg/bindinfo",
         "//pkg/config",
         "//pkg/domain",
         "//pkg/domain/infosync",

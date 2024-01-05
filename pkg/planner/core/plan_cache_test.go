@@ -1222,6 +1222,21 @@ func TestBuiltinFuncFlen(t *testing.T) {
 	}
 }
 
+func BenchmarkPlanCacheBindingMatch(b *testing.B) {
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, key(a))")
+	tk.MustExec(`create global binding using select * from t where a=1`)
+
+	tk.MustExec(`prepare st from 'select * from t where a=?'`)
+	tk.MustExec(`set @a=1`)
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		tk.MustExec("execute st using @a")
+	}
+}
+
 func BenchmarkPlanCacheInsert(b *testing.B) {
 	store := testkit.CreateMockStore(b)
 	tk := testkit.NewTestKit(b, store)

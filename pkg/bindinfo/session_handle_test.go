@@ -112,7 +112,9 @@ func TestSessionBinding(t *testing.T) {
 		handle := tk.Session().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 		stmt, err := parser.New().ParseOneStmt(testSQL.originSQL, "", "")
 		require.NoError(t, err)
-		bindData, err := handle.MatchSessionBinding(tk.Session(), stmt)
+
+		_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+		bindData, err := handle.MatchSessionBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 		require.NoError(t, err)
 		require.NotNil(t, bindData)
 		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
@@ -150,7 +152,8 @@ func TestSessionBinding(t *testing.T) {
 
 		_, err = tk.Exec("drop session " + testSQL.dropSQL)
 		require.NoError(t, err)
-		bindData, err = handle.MatchSessionBinding(tk.Session(), stmt)
+		_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+		bindData, err = handle.MatchSessionBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 		require.NoError(t, err)
 		require.Nil(t, bindData) // dropped
 	}

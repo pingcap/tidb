@@ -17,6 +17,7 @@ package core
 import (
 	"cmp"
 	"context"
+	"github.com/pingcap/tidb/pkg/bindinfo"
 	"math"
 	"slices"
 	"strconv"
@@ -447,6 +448,8 @@ type PlanCacheStmt struct {
 	PlanDigest          *parser.Digest
 	ForUpdateRead       bool
 	SnapshotTSEvaluator func(sessionctx.Context) (uint64, error)
+
+	BindingInfo bindinfo.BindingMatchInfo
 
 	// the different between NormalizedSQL, NormalizedSQL4PC and StmtText:
 	//  for the query `select * from t where a>1 and b<?`, then
