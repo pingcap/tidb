@@ -663,7 +663,7 @@ func overrideConfig(cfg *config.Config, fset *flag.FlagSet) {
 				nmTiDBServiceScope, `"", background`)
 			terror.MustNil(err)
 		}
-		cfg.Instance.TiDBServiceScope = scope
+		cfg.Instance.TiDBServiceScope.Store(scope)
 	}
 }
 
@@ -847,8 +847,8 @@ func setGlobalVars() {
 	txninfo.Recorder.SetMinDuration(time.Duration(cfg.TrxSummary.TransactionIDDigestMinDuration) * time.Millisecond)
 	chunk.InitChunkAllocSize(cfg.TiDBMaxReuseChunk, cfg.TiDBMaxReuseColumn)
 
-	if len(cfg.Instance.TiDBServiceScope) > 0 {
-		variable.ServiceScope.Store(strings.ToLower(cfg.Instance.TiDBServiceScope))
+	if len(cfg.Instance.TiDBServiceScope.Load()) > 0 {
+		variable.ServiceScope.Store(strings.ToLower(cfg.Instance.TiDBServiceScope.Load()))
 	}
 }
 
