@@ -323,6 +323,11 @@ func (l *Lightning) adjust(i *TikvImporter) {
 		if len(l.MetaSchemaName) == 0 {
 			l.MetaSchemaName = defaultMetaSchemaName
 		}
+		// RegionConcurrency > NumCPU is meaningless.
+		cpuCount := runtime.NumCPU()
+		if l.RegionConcurrency > cpuCount {
+			l.RegionConcurrency = cpuCount
+		}
 	}
 }
 
