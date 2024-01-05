@@ -179,21 +179,21 @@ func (e *ShowStatsMetaExtractor) Check(
 }
 
 // Extract implements the ShowPredicateExtractor Extract interface
-func (e *ShowStatsMetaExtractor) Extract() bool {
+func (_ *ShowStatsMetaExtractor) Extract() bool {
 	return false
 }
 
 // explainInfo implements the ShowPredicateExtractor interface.
-func (e *ShowStatsMetaExtractor) explainInfo() string {
+func (_ *ShowStatsMetaExtractor) explainInfo() string {
 	return ""
 }
 
 // Field implements the ShowPredicateExtractor interface.
-func (e *ShowStatsMetaExtractor) Field() string {
+func (_ *ShowStatsMetaExtractor) Field() string {
 	return ""
 }
 
 // FieldPatternLike implements the ShowPredicateExtractor interface.
-func (e *ShowStatsMetaExtractor) FieldPatternLike() collate.WildcardPattern {
+func (_ *ShowStatsMetaExtractor) FieldPatternLike() collate.WildcardPattern {
 	return nil
 }
