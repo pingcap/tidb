@@ -3287,3 +3287,13 @@ RELEASE_LOCK('test_lock3')
 SELECT RELEASE_ALL_LOCKS();
 RELEASE_ALL_LOCKS()
 0
+drop table if exists t;
+create table t (col bit(37) NOT NULL);
+insert into t (col) values(x'05d3a46d88'), (x'04dba3570c'), (x'0ed284dfee'), (x'12657141bf');
+select hex(col), hex(reverse(col)) from t order by reverse(col);
+hex(col)	hex(reverse(col))
+4DBA3570C	0C57A3DB04
+5D3A46D88	886DA4D305
+12657141BF	BF41716512
+ED284DFEE	EEDF84D20E
+drop table t;
