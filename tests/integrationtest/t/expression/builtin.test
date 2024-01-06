@@ -1560,3 +1560,9 @@ SELECT RELEASE_LOCK('test_lock1');
 SELECT RELEASE_LOCK('test_lock3');
 SELECT RELEASE_ALL_LOCKS();
 
+# Issue #49566
+drop table if exists t;
+create table t (col bit(37) NOT NULL);
+insert into t (col) values(x'05d3a46d88'), (x'04dba3570c'), (x'0ed284dfee'), (x'12657141bf');
+select hex(col), hex(reverse(col)) from t order by reverse(col);
+drop table t;
