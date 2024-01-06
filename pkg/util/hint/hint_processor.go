@@ -100,6 +100,8 @@ func ExtractTableHintsFromStmtNode(node ast.Node, sctx sessionctx.Context) []*as
 			}
 		}
 		return result
+	case *ast.ExplainStmt:
+		return ExtractTableHintsFromStmtNode(x.Stmt, sctx)
 	default:
 		return nil
 	}
