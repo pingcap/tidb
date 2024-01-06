@@ -340,3 +340,13 @@ func TestOptimizeHintOnPartitionTable(t *testing.T) {
 	tk.MustQuery("SELECT /*+ MAX_EXECUTION_TIME(10), dtc(name=tt) unknow(t1,t2) */ SLEEP(5)").Check(testkit.Rows("0"))
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 2)
 }
+
+func TestIssue50067(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int);")
+	tk.MustExec("create table t2 (a int);")
+	tk.MustExec("create table t3 (a int);")
+	tk.MustExec("explain select * from t1, t2, t3 union all select /*+ leading(t3, t2) */ * from t1, t2, t3 union all select * from t1, t2, t3;")
+}
