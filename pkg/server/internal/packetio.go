@@ -150,14 +150,6 @@ func (p *PacketIO) readOnePacket() ([]byte, error) {
 		if _, err := io.ReadFull(r, header[:]); err != nil {
 			return nil, errors.Trace(err)
 		}
-
-		// To be compatible with MariaDB Connector/J 2.x,
-		// check sequence only for the packet with compression protocol disabled.
-		sequence := header[3]
-		if sequence != p.sequence {
-			return nil, server_err.ErrInvalidSequence.GenWithStack(
-				"invalid sequence, received %d while expecting %d", sequence, p.sequence)
-		}
 	} else {
 		if _, err := io.ReadFull(p.compressedReader, header[:]); err != nil {
 			return nil, errors.Trace(err)
@@ -166,6 +158,18 @@ func (p *PacketIO) readOnePacket() ([]byte, error) {
 
 	length := int(uint32(header[0]) | uint32(header[1])<<8 | uint32(header[2])<<16)
 
+	sequence := header[3]
+	if sequence != p.sequence {
+		err := server_err.ErrInvalidSequence.GenWithStack(
+			"invalid sequence, received %d while expecting %d", sequence, p.sequence)
+		if p.compressionAlgorithm == mysql.CompressionNone {
+			return nil, err
+		} else {
+			// To be compatible with MariaDB Connector/J 2.x,
+			// ignore sequence check and print a log when compression protocol is active.
+			terror.Log(err)
+		}
+	}
 	p.sequence++
 
 	// Accumulated payload length exceeds the limit.

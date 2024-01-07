@@ -454,5 +454,4 @@ func TestSubHeaderWithWrongSequenceNumber(t *testing.T) {
 	require.Equal(t, uint8(1), pkt.compressedSequence)
 	require.Equal(t, []byte{0x03, 0x73, 0x65, 0x6c, 0x65, 0x63,
 		0x74, 0x20, 0x31, 0x3b}, readBytes)
-
 }
