@@ -56,9 +56,6 @@ var unRecoverableTable = map[string]struct{}{
 }
 
 // tables in this map is restored when fullClusterRestore=true
-// the value part is the filter in SQL where clause which is used to
-// skip clearing or restoring 'cloud_admin'@'%' which is a special
-// user on TiDB Cloud
 var sysPrivilegeTableMap = map[string]string{
 	"user":          "(user = '%s' and host = '%%')",       // since v1.0.0
 	"db":            "(user = '%s' and host = '%%')",       // since v1.0.0
