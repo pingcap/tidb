@@ -697,6 +697,11 @@ func (m *Meta) GetBDRRole() (string, error) {
 	return string(v), nil
 }
 
+// ClearBDRRole clear BDR role from storage.
+func (m *Meta) ClearBDRRole() error {
+	return errors.Trace(m.txn.Clear(mBDRRole))
+}
+
 // SetDDLTables write a key into storage.
 func (m *Meta) SetDDLTables(ddlTableVersion DDLTableVersion) error {
 	return errors.Trace(m.txn.Set(mDDLTableVersion, ddlTableVersion.Bytes()))

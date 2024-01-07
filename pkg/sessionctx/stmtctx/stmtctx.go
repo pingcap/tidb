@@ -185,10 +185,7 @@ type StatementContext struct {
 	InCreateOrAlterStmt    bool
 	InSetSessionStatesStmt bool
 	InPreparedPlanBuilding bool
-	InReorg                bool
 	DupKeyAsWarning        bool
-	BadNullAsWarning       bool
-	DividedByZeroAsWarning bool
 	InShowWarning          bool
 	UseCache               bool
 	ForcePlanCache         bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.
@@ -432,6 +429,11 @@ type StatementContext struct {
 	}
 }
 
+var defaultErrLevels = func() (l errctx.LevelMap) {
+	l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+	return
+}()
+
 // NewStmtCtx creates a new statement context
 func NewStmtCtx() *StatementContext {
 	return NewStmtCtxWithTimeZone(time.UTC)
@@ -444,7 +446,7 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 		ctxID: stmtCtxIDGenerator.Add(1),
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
-	sc.errCtx = newErrCtx(sc.typeCtx, errctx.LevelMap{}, sc)
+	sc.errCtx = newErrCtx(sc.typeCtx, defaultErrLevels, sc)
 	return sc
 }
 
@@ -454,7 +456,7 @@ func (sc *StatementContext) Reset() {
 		ctxID: stmtCtxIDGenerator.Add(1),
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, time.UTC, sc)
-	sc.errCtx = newErrCtx(sc.typeCtx, errctx.LevelMap{}, sc)
+	sc.errCtx = newErrCtx(sc.typeCtx, defaultErrLevels, sc)
 }
 
 // CtxID returns the context id of the statement
@@ -492,6 +494,12 @@ func (sc *StatementContext) ErrCtx() errctx.Context {
 // The argument otherLevels is used to set the error levels except truncate
 func (sc *StatementContext) SetErrLevels(otherLevels errctx.LevelMap) {
 	sc.errCtx = newErrCtx(sc.typeCtx, otherLevels, sc)
+}
+
+// ErrLevels returns the current `errctx.LevelMap`
+func (sc *StatementContext) ErrLevels() errctx.LevelMap {
+	ec := sc.ErrCtx()
+	return ec.LevelMap()
 }
 
 // TypeFlags returns the type flags
@@ -1176,6 +1184,7 @@ func (sc *StatementContext) GetExecDetails() execdetails.ExecDetails {
 // PushDownFlags converts StatementContext to tipb.SelectRequest.Flags.
 func (sc *StatementContext) PushDownFlags() uint64 {
 	var flags uint64
+	ec := sc.ErrCtx()
 	if sc.InInsertStmt {
 		flags |= model.FlagInInsertStmt
 	} else if sc.InUpdateStmt || sc.InDeleteStmt {
@@ -1193,7 +1202,7 @@ func (sc *StatementContext) PushDownFlags() uint64 {
 	if sc.TypeFlags().IgnoreZeroInDate() {
 		flags |= model.FlagIgnoreZeroInDate
 	}
-	if sc.DividedByZeroAsWarning {
+	if ec.LevelForGroup(errctx.ErrGroupDividedByZero) != errctx.LevelError {
 		flags |= model.FlagDividedByZeroAsWarning
 	}
 	if sc.InLoadDataStmt {
@@ -1254,7 +1263,11 @@ func (sc *StatementContext) InitFromPBFlagAndTz(flags uint64, tz *time.Location)
 	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
 	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
 	sc.InDeleteStmt = (flags & model.FlagInUpdateOrDeleteStmt) > 0
-	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
+	levels := sc.ErrLevels()
+	levels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(false,
+		(flags&model.FlagDividedByZeroAsWarning) > 0,
+	)
+	sc.SetErrLevels(levels)
 	sc.SetTimeZone(tz)
 	sc.SetTypeFlags(types.DefaultStmtFlags.
 		WithIgnoreTruncateErr((flags & model.FlagIgnoreTruncate) > 0).

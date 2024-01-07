@@ -61,6 +61,7 @@ var (
 	errUserLockDeadlock              = dbterror.ClassExpression.NewStd(mysql.ErrUserLockDeadlock)
 	errUserLockWrongName             = dbterror.ClassExpression.NewStd(mysql.ErrUserLockWrongName)
 	errJSONInBooleanContext          = dbterror.ClassExpression.NewStd(mysql.ErrJSONInBooleanContext)
+	errBadNull                       = dbterror.ClassExpression.NewStd(mysql.ErrBadNull)
 
 	// Sequence usage privilege check.
 	errSequenceAccessDenied      = dbterror.ClassExpression.NewStd(mysql.ErrTableaccessDenied)
@@ -85,17 +86,8 @@ func handleInvalidTimeError(ctx EvalContext, err error) error {
 
 // handleDivisionByZeroError reports error or warning depend on the context.
 func handleDivisionByZeroError(ctx EvalContext) error {
-	sc := ctx.GetSessionVars().StmtCtx
-	if sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt || sc.InReorg {
-		if !ctx.GetSessionVars().SQLMode.HasErrorForDivisionByZeroMode() {
-			return nil
-		}
-		if ctx.GetSessionVars().StrictSQLMode && !sc.DividedByZeroAsWarning {
-			return ErrDivisionByZero
-		}
-	}
-	sc.AppendWarning(ErrDivisionByZero)
-	return nil
+	ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
+	return ec.HandleError(ErrDivisionByZero)
 }
 
 // handleAllowedPacketOverflowed reports error or warning depend on the context.

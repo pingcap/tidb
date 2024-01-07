@@ -41,7 +41,7 @@ var (
 // CreateStoreAndBootstrap creates a mock store and bootstrap it.
 func CreateStoreAndBootstrap(t *testing.T) (kv.Storage, *domain.Domain) {
 	testenv.SetGOMAXPROCSForTest()
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)

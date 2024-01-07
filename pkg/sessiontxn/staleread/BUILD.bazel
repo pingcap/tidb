@@ -55,6 +55,7 @@ go_test(
         "//pkg/parser/auth",
         "//pkg/sessionctx",
         "//pkg/sessiontxn",
+        "//pkg/store/mockstore",
         "//pkg/table/temptable",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
