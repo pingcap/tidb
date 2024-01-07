@@ -2178,3 +2178,50 @@ func TestTiDBUpgradeToVer179(t *testing.T) {
 
 	dom.Close()
 }
+
+func TestTiDBUpgradeToVer183(t *testing.T) {
+	store, _ := CreateStoreAndBootstrap(t)
+	defer func() {
+		require.NoError(t, store.Close())
+	}()
+	// Fix issue #50147
+	ver180 := version180
+	resetTo180 := func(s sessiontypes.Session) {
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		m := meta.NewMeta(txn)
+		err = m.FinishBootstrap(int64(ver180))
+		require.NoError(t, err)
+		MustExec(t, s, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver180))
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+
+		unsetStoreBootstrapped(store.UUID())
+		ver, err := getBootstrapVersion(s)
+		require.NoError(t, err)
+		require.Equal(t, int64(ver180), ver)
+	}
+
+	// drop column cpu_count and then upgrade
+	s := CreateSessionAndSetID(t, store)
+	MustExec(t, s, "alter table mysql.dist_framework_meta drop column cpu_count")
+	resetTo180(s)
+	dom, err := BootstrapSession(store)
+	require.NoError(t, err)
+	ver, err := getBootstrapVersion(s)
+	require.NoError(t, err)
+	require.Less(t, int64(ver180), ver)
+	MustExec(t, s, "SELECT cpu_count from mysql.dist_framework_meta")
+	dom.Close()
+
+	// upgrade with column cpu_count exists
+	s = CreateSessionAndSetID(t, store)
+	resetTo180(s)
+	dom, err = BootstrapSession(store)
+	require.NoError(t, err)
+	ver, err = getBootstrapVersion(s)
+	require.NoError(t, err)
+	require.Less(t, int64(ver180), ver)
+	MustExec(t, s, "SELECT cpu_count from mysql.dist_framework_meta")
+	dom.Close()
+}
