@@ -55,18 +55,6 @@ var unRecoverableTable = map[string]struct{}{
 	"tidb_mdl_view": {},
 }
 
-// tables in this map is restored when fullClusterRestore=true
-var sysPrivilegeTableMap = map[string]string{
-	"user":          "(user = '%s' and host = '%%')",       // since v1.0.0
-	"db":            "(user = '%s' and host = '%%')",       // since v1.0.0
-	"tables_priv":   "(user = '%s' and host = '%%')",       // since v1.0.0
-	"columns_priv":  "(user = '%s' and host = '%%')",       // since v1.0.0
-	"default_roles": "(user = '%s' and host = '%%')",       // since v3.0.0
-	"role_edges":    "(to_user = '%s' and to_host = '%%')", // since v3.0.0
-	"global_priv":   "(user = '%s' and host = '%%')",       // since v3.0.8
-	"global_grants": "(user = '%s' and host = '%%')",       // since v5.0.3
-}
-
 func isUnrecoverableTable(tableName string) bool {
 	_, ok := unRecoverableTable[tableName]
 	return ok
