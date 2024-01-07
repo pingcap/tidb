@@ -5,6 +5,10 @@ package operator
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
+	"math/rand"
+	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -51,7 +55,14 @@ func (cx *AdaptEnvForSnapshotBackupContext) cleanUpWithErr(f func(ctx context.Co
 
 func (cx *AdaptEnvForSnapshotBackupContext) run(f func() error) {
 	cx.rdGrp.Add(1)
-	cx.runGrp.Go(f)
+	buf := debug.Stack()
+	cx.runGrp.Go(func() error {
+		err := f()
+		if err != nil {
+			log.Error("A task failed.", zap.Error(err), zap.ByteString("task-created-at", buf))
+		}
+		return err
+	})
 }
 
 type AdaptEnvForSnapshotBackupContext struct {

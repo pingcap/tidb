@@ -130,13 +130,16 @@ func (p *Preparer) DriveLoopAndWaitPrepare(ctx context.Context) error {
 		zap.Duration("lease_duration", p.LeaseDuration))
 	p.retryTime = 0
 	if err := p.prepareConnections(ctx); err != nil {
+		log.Error("failed to prepare connections", logutil.ShortError(err))
 		return errors.Annotate(err, "failed to prepare connections")
 	}
 	if err := p.MaybeFinish(ctx); err != nil {
+		log.Error("failed to check the progress of our work", logutil.ShortError(err))
 		return errors.Annotate(err, "failed to begin step")
 	}
 	for !p.waitApplyFinished {
 		if err := p.WaitAndHandleNextEvent(ctx); err != nil {
+			log.Error("failed to wait and handle next event", logutil.ShortError(err))
 			return errors.Annotate(err, "failed to step")
 		}
 	}
@@ -389,6 +392,7 @@ func (p *Preparer) pushWaitApply(reqs pendingRequests, region Region) {
 }
 
 func (p *Preparer) prepareConnections(ctx context.Context) error {
+	log.Info("Preparing connections to stores.")
 	stores, err := p.env.GetAllLiveStores(ctx)
 	if err != nil {
 		return errors.Annotate(err, "failed to get all live stores")
