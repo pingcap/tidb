@@ -1048,7 +1048,6 @@ const (
 	//   add priority/create_time/end_time to `mysql.tidb_global_task`/`mysql.tidb_global_task_history`
 	//   add concurrency/create_time/end_time/digest to `mysql.tidb_background_subtask`/`mysql.tidb_background_subtask_history`
 	//   add idx_exec_id(exec_id), uk_digest to `mysql.tidb_background_subtask`
-	//   add cpu_count to mysql.dist_framework_meta
 	version180 = 180
 
 	// version 181
@@ -1059,11 +1058,15 @@ const (
 	//   add new system table `mysql.request_unit_by_group`, which is used for
 	//   historical RU consumption by resource group per day.
 	version182 = 182
+
+	// version 183
+	//   add cpu_count to mysql.dist_framework_meta
+	version183 = 183
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version182
+var currentBootstrapVersion int64 = version183
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1221,6 +1224,7 @@ var (
 		upgradeToVer180,
 		upgradeToVer181,
 		upgradeToVer182,
+		upgradeToVer183,
 	}
 )
 
@@ -2956,8 +2960,6 @@ func upgradeToVer180(s sessiontypes.Session, ver int64) {
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD INDEX idx_exec_id(exec_id)", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD UNIQUE INDEX uk_task_key_step_ordinal(task_key, step, ordinal)", dbterror.ErrDupKeyName)
-
-	doReentrantDDL(s, "ALTER TABLE mysql.dist_framework_meta ADD COLUMN `cpu_count` INT DEFAULT 0 AFTER `role`", infoschema.ErrColumnExists)
 }
 
 func upgradeToVer181(s sessiontypes.Session, ver int64) {
@@ -2975,6 +2977,13 @@ func upgradeToVer182(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateRequestUnitByGroupTable)
+}
+
+func upgradeToVer183(s sessiontypes.Session, ver int64) {
+	if ver >= version183 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.dist_framework_meta ADD COLUMN `cpu_count` INT DEFAULT 0 AFTER `role`", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s sessiontypes.Session) {
