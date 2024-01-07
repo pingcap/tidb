@@ -1347,7 +1347,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		indexPlanFinished: false,
 		tblColHists:       ds.TblColHists,
 	}
-	cop.partitionInfo = PartitionInfo{
+	cop.physPlanPartInfo = PhysPlanPartInfo{
 		PruningConds:   pushDownNot(ds.SCtx(), ds.allConds),
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
@@ -1758,7 +1758,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 		tblCols:     ds.TblCols,
 		expectCnt:   uint64(prop.ExpectedCnt),
 	}
-	cop.partitionInfo = PartitionInfo{
+	cop.physPlanPartInfo = PhysPlanPartInfo{
 		PruningConds:   pushDownNot(ds.SCtx(), ds.allConds),
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
@@ -2180,7 +2180,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			partTp:      property.AnyType,
 			tblColHists: ds.TblColHists,
 		}
-		ts.PartitionInfo = PartitionInfo{
+		ts.PlanPartInfo = PhysPlanPartInfo{
 			PruningConds:   pushDownNot(ds.SCtx(), ds.allConds),
 			PartitionNames: ds.partitionNames,
 			Columns:        ds.TblCols,
@@ -2214,13 +2214,13 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		indexPlanFinished: true,
 		tblColHists:       ds.TblColHists,
 	}
-	copTask.partitionInfo = PartitionInfo{
+	copTask.physPlanPartInfo = PhysPlanPartInfo{
 		PruningConds:   pushDownNot(ds.SCtx(), ds.allConds),
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
 	}
-	ts.PartitionInfo = copTask.partitionInfo
+	ts.PlanPartInfo = copTask.physPlanPartInfo
 	task = copTask
 	if candidate.isMatchProp {
 		copTask.keepOrder = true
@@ -2299,7 +2299,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		LockWaitTime:     ds.SCtx().GetSessionVars().LockWaitTimeout,
 		Columns:          ds.Columns,
 	}.Init(ds.SCtx(), ds.tableStats.ScaleByExpectCnt(accessCnt), ds.QueryBlockOffset())
-	var partitionInfo *model.PartitionDefinition
+	var partitionDef *model.PartitionDefinition
 	pi := ds.tableInfo.GetPartitionInfo()
 	if ds.isPartition {
 		// static prune
@@ -2307,12 +2307,12 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 			for i := range pi.Definitions {
 				def := pi.Definitions[i]
 				if def.ID == ds.physicalTableID {
-					partitionInfo = &def
+					partitionDef = &def
 					break
 				}
 			}
 		}
-		if partitionInfo == nil {
+		if partitionDef == nil {
 			return invalidTask
 		}
 	} else if pi != nil {
@@ -2325,9 +2325,9 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 			if len(pi.Definitions) != 1 {
 				return invalidTask
 			}
-			partitionInfo = &pi.Definitions[0]
+			partitionDef = &pi.Definitions[0]
 		} else if len(idxs) == 1 {
-			partitionInfo = &pi.Definitions[idxs[0]]
+			partitionDef = &pi.Definitions[idxs[0]]
 		} else {
 			return invalidTask
 		}
@@ -2336,7 +2336,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	if candidate.path.IsIntHandlePath {
 		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
 		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.handleCols.GetCol(0).RetType.GetFlag())
-		pointGetPlan.PartitionInfo = partitionInfo
+		pointGetPlan.PartitionDef = partitionDef
 		pointGetPlan.accessCols = ds.TblCols
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
@@ -2351,7 +2351,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		pointGetPlan.IdxCols = candidate.path.IdxCols
 		pointGetPlan.IdxColLens = candidate.path.IdxColLens
 		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
-		pointGetPlan.PartitionInfo = partitionInfo
+		pointGetPlan.PartitionDef = partitionDef
 		if candidate.path.IsSingleScan {
 			pointGetPlan.accessCols = candidate.path.IdxCols
 		} else {

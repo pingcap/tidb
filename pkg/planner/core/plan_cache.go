@@ -422,7 +422,7 @@ func rebuildRange(p Plan) error {
 			}
 		}
 	case *PhysicalTableScan:
-		err = expression.ReEvaluateParamMarkerConst(sctx, x.PartitionInfo.PruningConds)
+		err = expression.ReEvaluateParamMarkerConst(sctx, x.PlanPartInfo.PruningConds)
 		if err != nil {
 			return errors.New("fail to build ranges, cannot re-evaluate partition constants")
 		}
@@ -436,7 +436,7 @@ func rebuildRange(p Plan) error {
 			return err
 		}
 	case *PhysicalTableReader:
-		err = expression.ReEvaluateParamMarkerConst(sctx, x.PartitionInfo.PruningConds)
+		err = expression.ReEvaluateParamMarkerConst(sctx, x.PlanPartInfo.PruningConds)
 		if err != nil {
 			return err
 		}
@@ -445,7 +445,7 @@ func rebuildRange(p Plan) error {
 			return err
 		}
 	case *PhysicalIndexReader:
-		err = expression.ReEvaluateParamMarkerConst(sctx, x.PartitionInfo.PruningConds)
+		err = expression.ReEvaluateParamMarkerConst(sctx, x.PlanPartInfo.PruningConds)
 		if err != nil {
 			return err
 		}
@@ -454,7 +454,7 @@ func rebuildRange(p Plan) error {
 			return err
 		}
 	case *PhysicalIndexLookUpReader:
-		err = expression.ReEvaluateParamMarkerConst(sctx, x.PartitionInfo.PruningConds)
+		err = expression.ReEvaluateParamMarkerConst(sctx, x.PlanPartInfo.PruningConds)
 		if err != nil {
 			return err
 		}
@@ -514,14 +514,14 @@ func rebuildRange(p Plan) error {
 			}
 
 			// TODO: Also check non-clustered partitioned tables?
-			if x.PartitionInfo != nil {
+			if x.PartitionDef != nil {
 				// Single column PK <=> Must be the partitioning columns!
 				if !x.TblInfo.PKIsHandle {
 					return errors.New("point get for partition table can not use plan cache, PK is not handle")
 				}
 				// Re-calculate the pruning!
 				// TODO: Check how expressions are handled...
-				partDef, _, _, isTableDual = getPartitionInfo(sctx, x.TblInfo, []nameValuePair{{x.TblInfo.Columns[x.partitionColumnPos].Name.L, &x.TblInfo.Columns[x.partitionColumnPos].FieldType, *dVal, x.HandleConstant}})
+				partDef, _, _, isTableDual = getPartitionDef(sctx, x.TblInfo, []nameValuePair{{x.TblInfo.Columns[x.partitionColumnPos].Name.L, &x.TblInfo.Columns[x.partitionColumnPos].FieldType, *dVal, x.HandleConstant}})
 				// TODO: Support isTableDual?
 				if isTableDual {
 					return errors.New("point get for partition table can not use plan cache, could not prune")
@@ -529,7 +529,7 @@ func rebuildRange(p Plan) error {
 				if partDef == nil {
 					return errors.New("point get for partition table can not use plan cache, could not prune")
 				}
-				x.PartitionInfo = partDef
+				x.PartitionDef = partDef
 			}
 
 			iv, err := dVal.ToInt64(sc.TypeCtx())
@@ -549,7 +549,7 @@ func rebuildRange(p Plan) error {
 					}
 					x.IndexValues[i] = *dVal
 					// TODO: Also check non-clustered partitioned tables?
-					if x.PartitionInfo != nil &&
+					if x.PartitionDef != nil &&
 						x.IndexInfo.Columns[i].Offset == x.partitionColumnPos {
 						// Single column PK <=> Must be the partitioning columns!
 						if !x.TblInfo.PKIsHandle {
@@ -557,7 +557,7 @@ func rebuildRange(p Plan) error {
 						}
 						// Re-calculate the pruning!
 						// TODO: Check how expressions are handled...
-						partDef, _, _, isTableDual = getPartitionInfo(sctx, x.TblInfo, []nameValuePair{{x.TblInfo.Columns[x.partitionColumnPos].Name.L, &x.TblInfo.Columns[x.partitionColumnPos].FieldType, *dVal, x.IndexConstants[i]}})
+						partDef, _, _, isTableDual = getPartitionDef(sctx, x.TblInfo, []nameValuePair{{x.TblInfo.Columns[x.partitionColumnPos].Name.L, &x.TblInfo.Columns[x.partitionColumnPos].FieldType, *dVal, x.IndexConstants[i]}})
 						// TODO: Support isTableDual?
 						if isTableDual {
 							return errors.New("point get for partition table can not use plan cache, could not prune")
@@ -565,17 +565,17 @@ func rebuildRange(p Plan) error {
 						if partDef == nil {
 							return errors.New("point get for partition table can not use plan cache, could not prune")
 						}
-						if i > 0 && x.PartitionInfo != partDef {
+						if i > 0 && x.PartitionDef != partDef {
 							return errors.New("point get for partition table can not use plan cache, found multiple partitions")
 						}
-						x.PartitionInfo = partDef
+						x.PartitionDef = partDef
 					}
 				}
 			}
 			return nil
 		}
 		// TODO: Also check non-clustered partitioned tables?
-		if x.PartitionInfo != nil {
+		if x.PartitionDef != nil {
 			// TODO: difference between IndexValues and handles?
 			// Should this be moved to Access conds above?
 			// Re-calculate the pruning!
@@ -602,7 +602,7 @@ func rebuildRange(p Plan) error {
 			if parts[0] < 0 || parts[0] >= len(x.TblInfo.GetPartitionInfo().Definitions) {
 				return errors.New("point_get cached query matches no partitions")
 			}
-			x.PartitionInfo = &x.TblInfo.GetPartitionInfo().Definitions[parts[0]]
+			x.PartitionDef = &x.TblInfo.GetPartitionInfo().Definitions[parts[0]]
 		}
 		return nil
 	case *BatchPointGetPlan:
@@ -682,7 +682,7 @@ func rebuildRange(p Plan) error {
 			panic("Both handle and index values?!?")
 		}
 		// TODO: fix TableDual!
-		if len(x.PartitionInfos) > 0 {
+		if len(x.PartitionDefs) > 0 {
 			partIDs := make([]int64, 0, len(x.Handles))
 			partDefs := make([]*model.PartitionDefinition, 0, len(x.Handles))
 			if len(x.Handles) > 0 {
@@ -698,7 +698,7 @@ func rebuildRange(p Plan) error {
 					pairs[0].value = datum[0]
 					pairs[0].con = x.HandleParams[i]
 					// TODO: handle isTableDual!
-					partDef, _, _, _ := getPartitionInfo(sctx, x.TblInfo, pairs)
+					partDef, _, _, _ := getPartitionDef(sctx, x.TblInfo, pairs)
 					partDefs = append(partDefs, partDef)
 					partIDs = append(partIDs, partDef.ID)
 				}
@@ -715,7 +715,7 @@ func rebuildRange(p Plan) error {
 						})
 					}
 					// TODO: handle isTableDual!
-					partDef, _, _, _ := getPartitionInfo(sctx, x.TblInfo, pairs)
+					partDef, _, _, _ := getPartitionDef(sctx, x.TblInfo, pairs)
 					// TODO: Check how partDef == nil is handled?
 					partDefs = append(partDefs, partDef)
 					partIDs = append(partIDs, partDef.ID)
@@ -728,10 +728,10 @@ func rebuildRange(p Plan) error {
 			// TODO: Where is PartitionDefs used?
 			// PartitionIDs needs to match handles, and are deduplicated buildBatchPointGet
 			x.PartitionIDs = partIDs
-			x.PartitionInfos = partDefs
+			x.PartitionDefs = partDefs
 		}
 	case *PhysicalIndexMergeReader:
-		err = expression.ReEvaluateParamMarkerConst(sctx, x.PartitionInfo.PruningConds)
+		err = expression.ReEvaluateParamMarkerConst(sctx, x.PlanPartInfo.PruningConds)
 		if err != nil {
 			return err
 		}
