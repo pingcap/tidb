@@ -274,6 +274,7 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 
 		e.partialWorkers[i] = HashAggPartialWorker{
 			baseHashAggWorker:    newBaseHashAggWorker(e.Ctx(), e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
+			idForTest:            i,
 			ctx:                  ctx,
 			inputCh:              e.partialInputChs[i],
 			outputChs:            e.partialOutputChs,

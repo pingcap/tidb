@@ -35,7 +35,8 @@ import (
 // the number of the worker can be set by `tidb_hashagg_partial_concurrency`.
 type HashAggPartialWorker struct {
 	baseHashAggWorker
-	ctx sessionctx.Context
+	idForTest int
+	ctx       sessionctx.Context
 
 	inputCh        chan *chunk.Chunk
 	outputChs      []chan *aggfuncs.AggPartialResultMapper
@@ -149,12 +150,15 @@ func (w *HashAggPartialWorker) intestDuringPartialWorkerRun() {
 			num := rand.Intn(10000)
 			if num < 3 {
 				panic("Intest panic: partial worker is panicked when running")
-			} else if num < 10 {
-				time.Sleep(1 * time.Millisecond)
-			} else if num < 13 {
+			} else if num < 6 {
 				w.processError(errors.Errorf("Random fail is triggered in partial worker"))
-			} else if num < 16 {
+			} else if num < 9 {
 				w.memTracker.Consume(500000)
+			}
+
+			// Slow some workers
+			if w.idForTest%2 == 0 && num < 15 {
+				time.Sleep(1 * time.Millisecond)
 			}
 		}
 	})
