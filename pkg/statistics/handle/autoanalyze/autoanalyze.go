@@ -32,7 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
-	analyzeutil "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/util"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
@@ -512,7 +512,7 @@ func tryAutoAnalyzeTable(
 
 		tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-		analyzeutil.ExecAutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sql, params...)
+		exec.ExecAutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sql, params...)
 
 		return true
 	}
@@ -533,7 +533,7 @@ func tryAutoAnalyzeTable(
 			)
 			tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
 			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-			analyzeutil.ExecAutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sqlWithIdx, paramsWithIdx...)
+			exec.ExecAutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sqlWithIdx, paramsWithIdx...)
 			return true
 		}
 	}
@@ -661,7 +661,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				zap.String("table", tblInfo.Name.String()),
 				zap.Any("partitions", needAnalyzePartitionNames[start:end]),
 			)
-			analyzeutil.ExecAutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sql, params...)
+			exec.ExecAutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sql, params...)
 		}
 
 		return true
@@ -699,7 +699,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 					zap.String("index", idx.Name.String()),
 					zap.Any("partitions", needAnalyzePartitionNames[start:end]),
 				)
-				analyzeutil.ExecAutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sql, params...)
+				exec.ExecAutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sql, params...)
 			}
 
 			return true
