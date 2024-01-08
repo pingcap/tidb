@@ -145,7 +145,7 @@ func TestStatsWriter(t *testing.T) {
 		controlWorker.ApplyOnErrorGroup(eg, func() error {
 			for task := range taskCh {
 				expectedJsonTable := fakeJsonTables[rerewriteIDs[task.PhysicalID]]
-				require.Equal(t, expectedJsonTable, task.JsonTable)
+				require.Equal(t, expectedJsonTable, task.JSONTable)
 			}
 			return nil
 		})

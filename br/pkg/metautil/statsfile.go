@@ -224,7 +224,6 @@ func downloadStats(
 					PhysicalID: physicalId,
 					JSONTable:  jsonTable,
 				}:
-
 				}
 			}
 
