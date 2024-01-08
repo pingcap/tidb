@@ -151,6 +151,7 @@ func (ss *Schemas) BackupSchemas(
 					statsWriter := metaWriter.NewStatsWriter()
 					if err := schema.dumpStatsToJSON(ctx, statsWriter, statsHandle, backupTS); err != nil {
 						logger.Error("dump table stats failed", logutil.ShortError(err))
+						return errors.Trace(err)
 					}
 				}
 			}

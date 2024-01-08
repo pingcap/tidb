@@ -17,7 +17,7 @@
 package intest
 
 // InTest checks if the code is running in test.
-const InTest = false
+const InTest = true
 
 // Assert is a stub function in release build.
 // See the same function in `util/intest/assert.go` for the real implement in test.

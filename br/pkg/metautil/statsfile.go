@@ -1,4 +1,4 @@
-// Copyright 2023 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -65,7 +65,17 @@ func newStatsWriter(
 		statsFileIndexes: make([]*backuppb.StatsFileIndex, 0),
 
 		totalSize: 0,
-		statsFile: &backuppb.StatsFile{},
+		statsFile: &backuppb.StatsFile{
+			Blocks: make([]*backuppb.StatsBlock, 0, 8),
+		},
+	}
+}
+
+func (s *StatsWriter) clearTemporary() {
+	// clear the temporary variables
+	s.totalSize = 0
+	s.statsFile = &backuppb.StatsFile{
+		Blocks: make([]*backuppb.StatsBlock, 0, 8),
 	}
 }
 
@@ -100,9 +110,7 @@ func (s *StatsWriter) writeStatsFileAndClear(ctx context.Context, physicalID int
 		CipherIv: iv,
 	})
 
-	// clear the temporary variables
-	s.totalSize = 0
-	s.statsFile = &backuppb.StatsFile{}
+	s.clearTemporary()
 	return nil
 }
 
