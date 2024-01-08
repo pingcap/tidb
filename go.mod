@@ -147,6 +147,7 @@ require (
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
 	github.com/dennwc/varint v1.0.0 // indirect
 	github.com/dolthub/maphash v0.1.0 // indirect
+	github.com/felixge/fgprof v0.9.3 // indirect
 	github.com/go-kit/log v0.2.1 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.4.2 // indirect

@@ -1916,6 +1916,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_felixge_fgprof",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/felixge/fgprof",
+        sha256 = "2c83268087acf8b767be69dbc37c099fa85856763c2e88fb99637d46eb6ac23c",
+        strip_prefix = "github.com/felixge/fgprof@v0.9.3",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/felixge/fgprof/com_github_felixge_fgprof-v0.9.3.zip",
+            "http://ats.apps.svc/gomod/github.com/felixge/fgprof/com_github_felixge_fgprof-v0.9.3.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/felixge/fgprof/com_github_felixge_fgprof-v0.9.3.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/felixge/fgprof/com_github_felixge_fgprof-v0.9.3.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_felixge_httpsnoop",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/felixge/httpsnoop",
