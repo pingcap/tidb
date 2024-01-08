@@ -33,7 +33,7 @@ var (
 // balancer is used to balance subtasks on managed nodes
 // it handles 2 cases:
 //   - managed node scale in/out.
-//   - nodes might run subtasks in different speed, cause the subtasks are not balanced.
+//   - nodes might run subtasks in different speed, the amount of data processed by subtasks varies, cause the subtasks are not balanced.
 //
 // we will try balance in task order, subtasks will be scheduled to the node with
 // enough slots to run them, if there is no such node, we will skip balance for
