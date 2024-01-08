@@ -459,17 +459,17 @@ const (
 	);`
 	// CreateMDLView is a view about metadata locks.
 	CreateMDLView = `CREATE OR REPLACE VIEW mysql.tidb_mdl_view as (
-		SELECT ddl_jobs.job_id,
-			db_name,
-			table_name,
-			query,
+		SELECT tidb_mdl_info.job_id,
+			JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.schema_name") as db_name,
+			JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.table_name") as table_name,
+			JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.query") as query,
 			session_id,
 			cluster_tidb_trx.start_time,
 			tidb_decode_sql_digests(all_sql_digests, 4096) AS SQL_DIGESTS
-		FROM information_schema.ddl_jobs,
+		FROM mysql.tidb_ddl_job,
 			mysql.tidb_mdl_info,
 			information_schema.cluster_tidb_trx
-		WHERE ddl_jobs.job_id = tidb_mdl_info.job_id
+		WHERE tidb_ddl_job.job_id=tidb_mdl_info.job_id
 			AND CONCAT(',', tidb_mdl_info.table_ids, ',') REGEXP CONCAT(',', REPLACE(cluster_tidb_trx.related_table_ids, ',', '|'), ',') != 0
 	);`
 
