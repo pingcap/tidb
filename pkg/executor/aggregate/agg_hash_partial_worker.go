@@ -331,7 +331,7 @@ func (w *HashAggPartialWorker) prepareForSpill() {
 func (w *HashAggPartialWorker) spillDataToDisk() error {
 	err := w.spillDataToDiskImpl()
 	if err == nil {
-		err = generateRandomError()
+		err = failpointError()
 	}
 	return err
 }

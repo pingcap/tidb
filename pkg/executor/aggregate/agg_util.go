@@ -247,7 +247,7 @@ type processRowContext struct {
 	bInMap                 *int
 }
 
-func generateRandomError() error {
+func failpointError() error {
 	var err error
 	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
 		if val.(bool) {
