@@ -856,8 +856,16 @@ func (rc *Client) CreateTables(
 	for i, t := range tables {
 		tbMapping[t.Info.Name.String()] = i
 	}
-	dataCh := rc.GoCreateTables(context.TODO(), dom, tables, newTS, errCh)
-	for et := range dataCh {
+	dataCh := rc.GoCreateTables(context.TODO(), dom, tables, newTS)
+	for {
+		et, ok, err := dataCh.Recv(context.TODO())
+		if err != nil {
+			errCh <- err
+			break
+		}
+		if !ok {
+			break
+		}
 		rules := et.RewriteRule
 		rewriteRules.Data = append(rewriteRules.Data, rules.Data...)
 		newTables = append(newTables, et.Table)
@@ -960,8 +968,7 @@ func (rc *Client) GoCreateTables(
 	dom *domain.Domain,
 	tables []*metautil.Table,
 	newTS uint64,
-	errCh chan<- error,
-) <-chan CreatedTable {
+) *utils.PipelineChannel[CreatedTable] {
 	// Could we have a smaller size of tables?
 	log.Info("start create tables")
 
@@ -971,11 +978,11 @@ func (rc *Client) GoCreateTables(
 		defer span1.Finish()
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
-	outCh := make(chan CreatedTable, len(tables))
+	outCh := utils.NewPipelineChannel[CreatedTable]("created_table", len(tables))
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
 	if err := rc.allocTableIDs(ctx, tables); err != nil {
-		errCh <- err
-		close(outCh)
+		outCh.SendError(err)
+		outCh.Close()
 		return outCh
 	}
 
@@ -985,11 +992,11 @@ func (rc *Client) GoCreateTables(
 		err = rc.createTablesInWorkerPool(ctx, dom, tables, newTS, outCh)
 		if err == nil {
 			defer log.Debug("all tables are created")
-			close(outCh)
+			outCh.Close()
 			return outCh
 		} else if !utils.FallBack2CreateTable(err) {
-			errCh <- err
-			close(outCh)
+			outCh.SendError(err)
+			outCh.Close()
 			return outCh
 		}
 		// fall back to old create table (sequential create table)
@@ -1011,10 +1018,10 @@ func (rc *Client) GoCreateTables(
 			return errors.Trace(err)
 		}
 		log.Debug("table created and send to next",
-			zap.Int("output chan size", len(outCh)),
+			zap.Int("output chan size", outCh.Len()),
 			zap.Stringer("table", t.Info.Name),
 			zap.Stringer("database", t.DB.Name))
-		outCh <- rt
+		outCh.Send(rt)
 		rater.Inc()
 		rater.L().Info("table created",
 			zap.Stringer("table", t.Info.Name),
@@ -1022,7 +1029,7 @@ func (rc *Client) GoCreateTables(
 		return nil
 	}
 	go func() {
-		defer close(outCh)
+		defer outCh.Close()
 		defer log.Debug("all tables are created")
 		var err error
 		if len(rc.dbPool) > 0 {
@@ -1031,7 +1038,7 @@ func (rc *Client) GoCreateTables(
 			err = rc.createTablesWithSoleDB(ctx, createOneTable, tables)
 		}
 		if err != nil {
-			errCh <- err
+			outCh.SendError(err)
 		}
 	}()
 
@@ -1064,7 +1071,7 @@ func (rc *Client) createTablesWithDBPool(ctx context.Context,
 	return eg.Wait()
 }
 
-func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Domain, tables []*metautil.Table, newTS uint64, outCh chan<- CreatedTable) error {
+func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Domain, tables []*metautil.Table, newTS uint64, outCh *utils.PipelineChannel[CreatedTable]) error {
 	eg, ectx := errgroup.WithContext(ctx)
 	rater := logutil.TraceRateOver(logutil.MetricTableCreatedCounter)
 	workers := utils.NewWorkerPool(uint(len(rc.dbPool)), "Create Tables Worker")
@@ -1089,10 +1096,10 @@ func (rc *Client) createTablesInWorkerPool(ctx context.Context, dom *domain.Doma
 			}
 			for _, ct := range cts {
 				log.Debug("table created and send to next",
-					zap.Int("output chan size", len(outCh)),
+					zap.Int("output chan size", outCh.Len()),
 					zap.Stringer("table", ct.OldTable.Info.Name),
 					zap.Stringer("database", ct.OldTable.DB.Name))
-				outCh <- ct
+				outCh.Send(ct)
 				rater.Inc()
 				rater.L().Info("table created",
 					zap.Stringer("table", ct.OldTable.Info.Name),
@@ -1649,18 +1656,17 @@ func (rc *Client) switchTiKVMode(ctx context.Context, mode import_sstpb.SwitchMo
 
 func concurrentHandleTablesCh(
 	ctx context.Context,
-	inCh <-chan *CreatedTable,
-	outCh chan<- *CreatedTable,
-	errCh chan<- error,
+	inCh *utils.PipelineChannel[*CreatedTable],
+	outCh *utils.PipelineChannel[*CreatedTable],
 	workers *utils.WorkerPool,
 	processFun func(context.Context, *CreatedTable) error,
 	deferFun func()) {
 	eg, ectx := errgroup.WithContext(ctx)
 	defer func() {
 		if err := eg.Wait(); err != nil {
-			errCh <- err
+			outCh.SendError(err)
 		}
-		close(outCh)
+		outCh.Close()
 		deferFun()
 	}()
 
@@ -1668,8 +1674,13 @@ func concurrentHandleTablesCh(
 		select {
 		// if we use ectx here, maybe canceled will mask real error.
 		case <-ctx.Done():
-			errCh <- ctx.Err()
-		case tbl, ok := <-inCh:
+			outCh.SendError(ctx.Err())
+		default:
+			tbl, ok, err := inCh.Recv(ctx)
+			if err != nil {
+				outCh.SendError(err)
+				return
+			}
 			if !ok {
 				return
 			}
@@ -1681,7 +1692,7 @@ func concurrentHandleTablesCh(
 				if err != nil {
 					return err
 				}
-				outCh <- cloneTable
+				outCh.Send(cloneTable)
 				return nil
 			})
 		}
@@ -1692,16 +1703,15 @@ func concurrentHandleTablesCh(
 // it returns a channel fires a struct{} when all things get done.
 func (rc *Client) GoValidateChecksum(
 	ctx context.Context,
-	inCh <-chan *CreatedTable,
+	inCh *utils.PipelineChannel[*CreatedTable],
 	kvClient kv.Client,
-	errCh chan<- error,
 	updateCh glue.Progress,
 	concurrency uint,
-) <-chan *CreatedTable {
+) *utils.PipelineChannel[*CreatedTable] {
 	log.Info("Start to validate checksum")
-	outCh := DefaultOutputTableChan()
+	outCh := DefaultOutputTableChan("checksum")
 	workers := utils.NewWorkerPool(defaultChecksumConcurrency, "RestoreChecksum")
-	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
+	go concurrentHandleTablesCh(ctx, inCh, outCh, workers, func(c context.Context, tbl *CreatedTable) error {
 		start := time.Now()
 		defer func() {
 			elapsed := time.Since(start)
@@ -1794,14 +1804,14 @@ func (rc *Client) execChecksum(
 	return nil
 }
 
-func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *CreatedTable, errCh chan<- error) chan *CreatedTable {
+func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh *utils.PipelineChannel[*CreatedTable]) *utils.PipelineChannel[*CreatedTable] {
 	log.Info("Start to update meta then load stats")
-	outCh := DefaultOutputTableChan()
+	outCh := DefaultOutputTableChan("stats")
 	workers := utils.NewWorkerPool(16, "UpdateStats")
 	// The rc.db is not thread safe
 	var updateMetaLock sync.Mutex
 
-	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
+	go concurrentHandleTablesCh(ctx, inCh, outCh, workers, func(c context.Context, tbl *CreatedTable) error {
 		oldTable := tbl.OldTable
 		// Not need to return err when failed because of update analysis-meta
 		restoreTS, err := rc.GetTSWithRetry(ctx)
@@ -1843,14 +1853,16 @@ func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *Cre
 	return outCh
 }
 
-func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTable, updateCh glue.Progress, errCh chan<- error) chan *CreatedTable {
+func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh *utils.PipelineChannel[*CreatedTable], updateCh glue.Progress) *utils.PipelineChannel[*CreatedTable] {
 	log.Info("Start to wait tiflash replica sync")
-	outCh := DefaultOutputTableChan()
+	outCh := DefaultOutputTableChan("wait_tiflash")
 	workers := utils.NewWorkerPool(4, "WaitForTiflashReady")
 	// TODO support tiflash store changes
 	tikvStats, err := infosync.GetTiFlashStoresStat(context.Background())
 	if err != nil {
-		errCh <- err
+		outCh.SendError(err)
+		outCh.Close()
+		return outCh
 	}
 	tiFlashStores := make(map[int64]pdhttp.StoreInfo)
 	for _, store := range tikvStats.Stores {
@@ -1860,7 +1872,7 @@ func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTa
 			}
 		}
 	}
-	go concurrentHandleTablesCh(ctx, inCh, outCh, errCh, workers, func(c context.Context, tbl *CreatedTable) error {
+	go concurrentHandleTablesCh(ctx, inCh, outCh, workers, func(c context.Context, tbl *CreatedTable) error {
 		if tbl.Table != nil && tbl.Table.TiFlashReplica == nil {
 			log.Info("table has no tiflash replica",
 				zap.Stringer("table", tbl.OldTable.Info.Name),

@@ -1,6 +1,6 @@
 // Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
 
-package backup
+package metrics
 
 import (
 	"github.com/prometheus/client_golang/prometheus"
@@ -25,7 +25,7 @@ var (
 		})
 )
 
-func init() { // nolint:gochecknoinits
+func initBackupMetrics() { // nolint:gochecknoinits
 	prometheus.MustRegister(backupRegionCounters)
 	prometheus.MustRegister(backupRegionHistogram)
 }

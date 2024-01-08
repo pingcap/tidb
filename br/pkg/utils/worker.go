@@ -3,13 +3,112 @@
 package utils
 
 import (
+	"context"
+	"fmt"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/metrics"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
+
+// PipelineChannel is used to record the stats of a channel during restore.
+type PipelineChannel[T any] struct {
+	name  string
+	size  int
+	ch    chan T
+	errCh chan error
+}
+
+func NewPipelineChannel[T any](name string, size int) *PipelineChannel[T] {
+	return &PipelineChannel[T]{
+		name:  name,
+		size:  size,
+		ch:    make(chan T, size),
+		errCh: make(chan error, 32),
+	}
+}
+
+func (p *PipelineChannel[T]) Send(item T) {
+	metrics.RestoreInFlightCounters.WithLabelValues(p.name).Inc()
+	p.ch <- item
+}
+
+// we can always send error to next pipeline channel
+func (p *PipelineChannel[T]) SendError(e error) {
+	p.errCh <- e
+}
+
+// Recv read the error and item whether who come first.
+// The **caller** has responsibility to handle the error, and make sure the error send to next pipeline channel.
+func (p *PipelineChannel[T]) Recv(ctx context.Context) (item T, ok bool, err error) {
+	metrics.RestoreInFlightCounters.WithLabelValues(p.name).Desc()
+	for {
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+			return item, false, err
+		case item, ok = <-p.ch:
+			return item, ok, nil
+		case err, ok = <-p.errCh:
+			if ok && err != nil {
+				// receive error
+				// make sure error returned, and handle error first to next pipeline channel
+				return item, false, err
+			}
+		}
+	}
+}
+
+// WaitFinish make sure the ch closed or err detected.
+// Normally only the last pipeline channel call this method.
+func (p *PipelineChannel[T]) WaitFinish(ctx context.Context) (err error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-p.errCh:
+			return err
+		case _, ok := <-p.ch:
+			if !ok {
+				// finished
+				log.Info("pipeline channel has consume all pending tasks", zap.String("name", p.name))
+				return nil
+			}
+		}
+	}
+}
+
+// Close channels.
+func (p *PipelineChannel[T]) Close() {
+	close(p.ch)
+	close(p.errCh)
+	log.Info("channel closed", zap.String("name", p.name))
+}
+
+// Len represents the current item count of channel.
+func (p *PipelineChannel[T]) Len() int {
+	return len(p.ch)
+}
+
+// Map consume the items in channel and transform them with func.
+// golang does not support additional type parameter in method.
+// so we cannot transform T to Other types.
+// https://github.com/golang/go/issues/49085
+func (p *PipelineChannel[T]) Map(f func(T) T) *PipelineChannel[T] {
+	name := fmt.Sprintf("%s_mapped", p.name)
+	outCh := NewPipelineChannel[T](name, p.size)
+	go func() {
+		defer outCh.Close()
+		for item := range p.ch {
+			outCh.Send(f(item))
+		}
+	}()
+	return outCh
+}
 
 // WorkerPool contains a pool of workers.
 type WorkerPool struct {

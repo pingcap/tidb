@@ -327,22 +327,26 @@ func MapTableToFiles(files []*backuppb.File) map[int64][]*backuppb.File {
 // tables with range.
 func GoValidateFileRanges(
 	ctx context.Context,
-	tableStream <-chan CreatedTable,
+	tableStream *utils.PipelineChannel[CreatedTable],
 	fileOfTable map[int64][]*backuppb.File,
 	splitSizeBytes, splitKeyCount uint64,
-	errCh chan<- error,
-) <-chan TableWithRange {
+) *utils.PipelineChannel[TableWithRange] {
 	// Could we have a smaller outCh size?
-	outCh := make(chan TableWithRange, len(fileOfTable))
+	outCh := utils.NewPipelineChannel[TableWithRange]("table_ranges", len(fileOfTable))
 	go func() {
-		defer close(outCh)
+		defer outCh.Close()
 		defer log.Info("all range generated")
 		for {
 			select {
 			case <-ctx.Done():
-				errCh <- ctx.Err()
+				outCh.SendError(ctx.Err())
 				return
-			case t, ok := <-tableStream:
+			default:
+				t, ok, err := tableStream.Recv(ctx)
+				if err != nil {
+					outCh.SendError(err)
+					return
+				}
 				if !ok {
 					return
 				}
@@ -360,7 +364,7 @@ func GoValidateFileRanges(
 				for _, file := range files {
 					err := ValidateFileRewriteRule(file, t.RewriteRule)
 					if err != nil {
-						errCh <- err
+						outCh.SendError(err)
 						return
 					}
 				}
@@ -368,7 +372,7 @@ func GoValidateFileRanges(
 				ranges, stat, err := MergeFileRanges(
 					files, splitSizeBytes, splitKeyCount)
 				if err != nil {
-					errCh <- err
+					outCh.SendError(err)
 					return
 				}
 				log.Info("merge and validate file",
@@ -392,8 +396,8 @@ func GoValidateFileRanges(
 					zap.Stringer("table", t.Table.Name),
 					zap.Int("files", len(files)),
 					zap.Int("range size", len(ranges)),
-					zap.Int("output channel size", len(outCh)))
-				outCh <- tableWithRange
+					zap.Int("output channel size", outCh.Len()))
+				outCh.Send(tableWithRange)
 			}
 		}
 	}()

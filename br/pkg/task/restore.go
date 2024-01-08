@@ -30,13 +30,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/tikv"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
@@ -914,11 +912,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}
 
-	// We make bigger errCh so we won't block on multi-part failed.
-	errCh := make(chan error, 32)
-
-	tableStream := client.GoCreateTables(ctx, mgr.GetDomain(), tables, newTS, errCh)
-
+	tableStream := client.GoCreateTables(ctx, mgr.GetDomain(), tables, newTS)
 	if len(files) == 0 {
 		log.Info("no files, empty databases and tables are restored")
 		summary.SetSuccessStatus(true)
@@ -937,7 +931,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 
 		// Hijack the tableStream and rewrite the rewrite rules.
-		tableStream = util.ChanMap(tableStream, func(t restore.CreatedTable) restore.CreatedTable {
+		tableStream.Map(func(t restore.CreatedTable) restore.CreatedTable {
 			// Set the keyspace info for the checksum requests
 			t.RewriteRule.OldKeyspace = oldKeyspace
 			t.RewriteRule.NewKeyspace = newKeyspace
@@ -951,7 +945,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	if cfg.tiflashRecorder != nil {
-		tableStream = util.ChanMap(tableStream, func(t restore.CreatedTable) restore.CreatedTable {
+		tableStream.Map(func(t restore.CreatedTable) restore.CreatedTable {
 			if cfg.tiflashRecorder != nil {
 				cfg.tiflashRecorder.Rewrite(t.OldTable.Info.ID, t.Table.ID)
 			}
@@ -967,7 +961,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	log.Debug("mapped table to files", zap.Any("result map", tableFileMap))
 
 	rangeStream := restore.GoValidateFileRanges(
-		ctx, tableStream, tableFileMap, mergeRegionSize, mergeRegionCount, errCh)
+		ctx, tableStream, tableFileMap, mergeRegionSize, mergeRegionCount)
 
 	rangeSize := restore.EstimateRangeSize(files)
 	summary.CollectInt("restore ranges", rangeSize)
@@ -1009,29 +1003,26 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		return errors.Trace(err)
 	}
 	manager := restore.NewBRContextManager(client)
-	batcher, afterTableRestoredCh := restore.NewBatcher(ctx, sender, manager, errCh, updateCh)
+	batcher, afterTableRestoredCh := restore.NewBatcher(ctx, sender, manager, updateCh)
 	batcher.SetCheckpoint(checkpointSetWithTableID)
 	batcher.SetThreshold(batchSize)
 	batcher.EnableAutoCommit(ctx, cfg.BatchFlushInterval)
-	go restoreTableStream(ctx, rangeStream, batcher, errCh)
+	go restoreTableStream(ctx, rangeStream, batcher)
 
-	var finish <-chan struct{}
 	postHandleCh := afterTableRestoredCh
 
 	// pipeline checksum and load stats
 	if cfg.Checksum {
 		afterTableCheckesumedCh := client.GoValidateChecksum(
-			ctx, afterTableRestoredCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
-		afterTableLoadStatsCh := client.GoUpdateMetaAndLoadStats(ctx, afterTableCheckesumedCh, errCh)
+			ctx, afterTableRestoredCh, mgr.GetStorage().GetClient(), updateCh, cfg.ChecksumConcurrency)
+		afterTableLoadStatsCh := client.GoUpdateMetaAndLoadStats(ctx, afterTableCheckesumedCh)
 		postHandleCh = afterTableLoadStatsCh
 	}
 
 	// pipeline wait Tiflash synced
 	if cfg.WaitTiflashReady {
-		postHandleCh = client.GoWaitTiFlashReady(ctx, postHandleCh, updateCh, errCh)
+		postHandleCh = client.GoWaitTiFlashReady(ctx, postHandleCh, updateCh)
 	}
-
-	finish = dropToBlackhole(ctx, postHandleCh, errCh)
 
 	// Reset speed limit. ResetSpeedLimit must be called after client.InitBackupMeta has been called.
 	defer func() {
@@ -1052,12 +1043,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		}
 	}()
 
-	select {
-	case err = <-errCh:
-		err = multierr.Append(err, multierr.Combine(restore.Exhaust(errCh)...))
-	case <-finish:
-	}
-
+	err = postHandleCh.WaitFinish(ctx)
 	// If any error happened, return now.
 	if err != nil {
 		return errors.Trace(err)
@@ -1075,33 +1061,6 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	// Set task summary to success status.
 	summary.SetSuccessStatus(true)
 	return nil
-}
-
-// dropToBlackhole drop all incoming tables into black hole,
-// i.e. don't execute checksum, just increase the process anyhow.
-func dropToBlackhole(
-	ctx context.Context,
-	inCh <-chan *restore.CreatedTable,
-	errCh chan<- error,
-) <-chan struct{} {
-	outCh := make(chan struct{}, 1)
-	go func() {
-		defer func() {
-			close(outCh)
-		}()
-		for {
-			select {
-			case <-ctx.Done():
-				errCh <- ctx.Err()
-				return
-			case _, ok := <-inCh:
-				if !ok {
-					return
-				}
-			}
-		}
-	}()
-	return outCh
 }
 
 // filterRestoreFiles filters tables that can't be processed after applying cfg.TableFilter.MatchTable.
@@ -1187,9 +1146,8 @@ func enableTiDBConfig() func() {
 // by send tables to batcher.
 func restoreTableStream(
 	ctx context.Context,
-	inputCh <-chan restore.TableWithRange,
+	inputCh *utils.PipelineChannel[restore.TableWithRange],
 	batcher *restore.Batcher,
-	errCh chan<- error,
 ) {
 	oldTableCount := 0
 	defer func() {
@@ -1203,9 +1161,14 @@ func restoreTableStream(
 	for {
 		select {
 		case <-ctx.Done():
-			errCh <- ctx.Err()
+			batcher.AddError(ctx.Err())
 			return
-		case t, ok := <-inputCh:
+		default:
+			t, ok, err := inputCh.Recv(ctx)
+			if err != nil {
+				batcher.AddError(err)
+				return
+			}
 			if !ok {
 				return
 			}
