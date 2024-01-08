@@ -257,8 +257,8 @@ func (t *TargetInfo) GetStorageInfo(_ context.Context) (*pdhttp.StoresInfo, erro
 				StateName: "Up",
 			},
 			Status: pdhttp.StoreStatus{
-				Capacity:    units.HumanSize(float64(storeInfo.TotalSize)),
-				Available:   units.HumanSize(float64(storeInfo.AvailableSize)),
+				Capacity:    units.BytesSize(float64(storeInfo.TotalSize)),
+				Available:   units.BytesSize(float64(storeInfo.AvailableSize)),
 				RegionSize:  int64(storeInfo.UsedSize),
 				RegionCount: int64(storeInfo.RegionCount),
 			},
