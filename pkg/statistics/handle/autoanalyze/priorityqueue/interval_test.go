@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package analyzequeue
+package priorityqueue
 
 import (
 	"testing"
@@ -196,7 +196,7 @@ func insertFinishedJob(
 	) VALUES (
 		?,
 		?,
-		?,	
+		?,
 		'Job information for finished job',
 		'2022-01-01 09:00:00',
 		'2022-01-01 10:00:00',
@@ -229,8 +229,8 @@ func insertFailedJob(
 		fail_reason,
 		instance
 	) VALUES (
-		?,	
-		?,	
+		?,
+		?,
 		'Job information for failed job',
 		'2024-01-01 09:00:00',
 		'2024-01-01 10:00:00',
@@ -256,8 +256,8 @@ func insertFailedJob(
 		instance
 	) VALUES (
 		?,
-		?,	
-		?,	
+		?,
+		?,
 		'Job information for failed job',
 		'2024-01-01 09:00:00',
 		'2024-01-01 10:00:00',
