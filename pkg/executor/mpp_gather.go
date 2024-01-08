@@ -149,15 +149,16 @@ func (e *MPPGather) setupRespIter(ctx context.Context, isRecoverying bool) (err 
 		}
 	})
 
+	if e.runtimeStats = execdetails.NewRuntimeStatsColl(nil); e.runtimeStats == nil {
+		return errors.New("alloc runtime stats for mpp_gather failed")
+	}
+
 	e.respIter = distsql.GenSelectResultFromMPPResponse(e.Ctx(), e.RetFieldTypes(), planIDs, e.ID(), resp, e.runtimeStats)
 
 	if e.nodeCnt = coord.GetNodeCnt(); e.nodeCnt <= 0 {
 		return errors.Errorf("tiflash node count should be greater than zero: %v", e.nodeCnt)
 	}
 
-	if e.runtimeStats = execdetails.NewRuntimeStatsColl(nil); e.runtimeStats == nil {
-		return errors.New("alloc runtime stats for mpp_gather failed")
-	}
 	return nil
 }
 
