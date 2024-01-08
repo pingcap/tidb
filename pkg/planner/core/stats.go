@@ -364,7 +364,7 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 				Example in the test "TestPointgetIndexChoosen".
 			*/
 			if uniqueBest == nil || len(uniqueIdx.Ranges) < len(uniqueBest.Ranges) ||
-				(len(uniqueIdx.Ranges) == len(uniqueBest.Ranges) && len(uniqueIdx.TableFilters) == 0) {
+				(len(uniqueIdx.Ranges) == len(uniqueBest.Ranges) && len(uniqueIdx.TableFilters) < len(uniqueBest.TableFilters)) {
 				uniqueBest = uniqueIdx
 			}
 		}

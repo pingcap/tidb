@@ -607,7 +607,8 @@
   {
     "name": "TestPointgetIndexChoosen",
     "cases": [
-      "select * from t where b=1 and c='1';"
+      "select * from t where b=1 and c='1';",
+      "select * from t where b=1 and c='1' and d='1';"
     ]
   }
 ]
