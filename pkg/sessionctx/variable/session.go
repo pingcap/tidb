@@ -1389,8 +1389,8 @@ type SessionVars struct {
 	// EnableNonPreparedPlanCacheForDML indicates whether to enable non-prepared plan cache for DML statements.
 	EnableNonPreparedPlanCacheForDML bool
 
-	// EnableUniversalBinding indicates whether to enable universal binding.
-	EnableUniversalBinding bool
+	// EnableFuzzyBinding indicates whether to enable fuzzy binding.
+	EnableFuzzyBinding bool
 
 	// PlanCacheInvalidationOnFreshStats controls if plan cache will be invalidated automatically when
 	// related stats are analyzed after the plan cache is generated.

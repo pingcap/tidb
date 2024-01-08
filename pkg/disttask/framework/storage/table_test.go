@@ -96,7 +96,7 @@ func TestTaskTable(t *testing.T) {
 	task.State = proto.TaskStateRunning
 	retryable, err := gm.UpdateTaskAndAddSubTasks(ctx, task, nil, prevState)
 	require.NoError(t, err)
-	require.Equal(t, true, retryable)
+	require.True(t, retryable)
 
 	task5, err := gm.GetTasksInStates(ctx, proto.TaskStateRunning)
 	require.NoError(t, err)
@@ -674,6 +674,17 @@ func TestSubTaskTable(t *testing.T) {
 	subtasks, err = sm.GetSubtasksByExecIdsAndStepAndState(ctx, []string{"tidb1"}, 6, proto.StepInit, proto.SubtaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(subtasks))
+
+	// test CollectSubTaskError
+	testutil.CreateSubTask(t, sm, 7, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, 11, false)
+	subtasks, err = sm.GetSubtasksByStepAndState(ctx, 7, proto.StepInit, proto.TaskStatePending)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(subtasks))
+	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, "tidb1", subtasks[0].ID, proto.SubtaskStateFailed, errors.New("test err")))
+	subtaskErrs, err := sm.CollectSubTaskError(ctx, 7)
+	require.NoError(t, err)
+	require.Equal(t, 1, len(subtaskErrs))
+	require.ErrorContains(t, subtaskErrs[0], "test err")
 }
 
 func TestBothTaskAndSubTaskTable(t *testing.T) {
@@ -706,7 +717,7 @@ func TestBothTaskAndSubTaskTable(t *testing.T) {
 	}
 	retryable, err := sm.UpdateTaskAndAddSubTasks(ctx, task, subTasks, prevState)
 	require.NoError(t, err)
-	require.Equal(t, true, retryable)
+	require.True(t, retryable)
 
 	task, err = sm.GetTaskByID(ctx, 1)
 	require.NoError(t, err)
@@ -748,7 +759,7 @@ func TestBothTaskAndSubTaskTable(t *testing.T) {
 	}
 	retryable, err = sm.UpdateTaskAndAddSubTasks(ctx, task, subTasks, prevState)
 	require.NoError(t, err)
-	require.Equal(t, true, retryable)
+	require.True(t, retryable)
 
 	task, err = sm.GetTaskByID(ctx, 1)
 	require.NoError(t, err)
@@ -780,7 +791,7 @@ func TestBothTaskAndSubTaskTable(t *testing.T) {
 	task.State = proto.TaskStateFailed
 	retryable, err = sm.UpdateTaskAndAddSubTasks(ctx, task, subTasks, prevState)
 	require.EqualError(t, err, "updateTaskErr")
-	require.Equal(t, true, retryable)
+	require.True(t, retryable)
 
 	task, err = sm.GetTaskByID(ctx, 1)
 	require.NoError(t, err)

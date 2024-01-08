@@ -706,6 +706,12 @@ var defaultSysVars = []*SysVar{
 		(*SetPDClientDynamicOption.Load())(TiDBEnableTSOFollowerProxy, val)
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: PDEnableFollowerHandleRegion, Value: BoolToOnOff(DefPDEnableFollowerHandleRegion), Type: TypeBool, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+		return BoolToOnOff(EnablePDFollowerHandleRegion.Load()), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		(*SetPDClientDynamicOption.Load())(PDEnableFollowerHandleRegion, val)
+		return nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableLocalTxn, Value: BoolToOnOff(DefTiDBEnableLocalTxn), Hidden: true, Type: TypeBool, Depended: true, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 		return BoolToOnOff(EnableLocalTxn.Load()), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
@@ -1214,8 +1220,8 @@ var defaultSysVars = []*SysVar{
 		s.EnableNonPreparedPlanCacheForDML = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnableUniversalBinding, Value: BoolToOnOff(false), Type: TypeBool, IsHintUpdatableVerfied: true, SetSession: func(s *SessionVars, val string) error {
-		s.EnableUniversalBinding = TiDBOptOn(val)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnableFuzzyBinding, Value: BoolToOnOff(false), Type: TypeBool, IsHintUpdatableVerfied: true, SetSession: func(s *SessionVars, val string) error {
+		s.EnableFuzzyBinding = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBNonPreparedPlanCacheSize, Value: strconv.FormatUint(uint64(DefTiDBNonPreparedPlanCacheSize), 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 100000, SetSession: func(s *SessionVars, val string) error {

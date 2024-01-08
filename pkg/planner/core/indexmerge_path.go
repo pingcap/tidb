@@ -38,6 +38,12 @@ import (
 	"go.uber.org/zap"
 )
 
+func init() {
+	cardinality.CollectFilters4MVIndex = collectFilters4MVIndex
+	cardinality.BuildPartialPaths4MVIndex = buildPartialPaths4MVIndex
+	statistics.PrepareCols4MVIndex = prepareCols4MVIndex
+}
+
 // generateIndexMergePath generates IndexMerge AccessPaths on this DataSource.
 func (ds *DataSource) generateIndexMergePath() error {
 	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
@@ -87,6 +93,21 @@ func (ds *DataSource) generateIndexMergePath() error {
 		return err
 	}
 
+	// Because index merge access paths are built from ds.allConds, sometimes they can help us consider more filters than
+	// the ds.stats, which is calculated from ds.pushedDownConds before this point.
+	// So we use a simple and naive method to update ds.stats here using the largest row count from index merge paths.
+	// This can help to avoid some cases where the row count of operator above IndexMerge is larger than IndexMerge.
+	// TODO: Probably we should directly consider ds.allConds when calculating ds.stats in the future.
+	if len(ds.possibleAccessPaths) > regularPathCount && len(ds.allConds) > len(ds.pushedDownConds) {
+		var maxRowCount float64
+		for i := regularPathCount; i < len(ds.possibleAccessPaths); i++ {
+			maxRowCount = max(maxRowCount, ds.possibleAccessPaths[i].CountAfterAccess)
+		}
+		if ds.StatsInfo().RowCount > maxRowCount {
+			ds.SetStats(ds.tableStats.ScaleByExpectCnt(maxRowCount))
+		}
+	}
+
 	// If without hints, it means that `enableIndexMerge` is true
 	if len(ds.indexMergeHints) == 0 {
 		return nil
@@ -105,15 +126,6 @@ func (ds *DataSource) generateIndexMergePath() error {
 		ds.possibleAccessPaths = ds.possibleAccessPaths[oldIndexMergeCount:]
 	} else {
 		ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
-	}
-	minRowCount := ds.possibleAccessPaths[0].CountAfterAccess
-	for _, path := range ds.possibleAccessPaths {
-		if minRowCount < path.CountAfterAccess {
-			minRowCount = path.CountAfterAccess
-		}
-	}
-	if ds.StatsInfo().RowCount > minRowCount {
-		ds.SetStats(ds.tableStats.ScaleByExpectCnt(minRowCount))
 	}
 	return nil
 }
@@ -1145,23 +1157,13 @@ func (*DataSource) buildPartialPathUp4MVIndex(
 	partialPaths []*util.AccessPath,
 	isIntersection bool,
 	remainingFilters []expression.Expression,
-	_ *statistics.HistColl,
+	histColl *statistics.HistColl,
 ) *util.AccessPath {
 	indexMergePath := &util.AccessPath{PartialIndexPaths: partialPaths, IndexMergeAccessMVIndex: true}
 	indexMergePath.IndexMergeIsIntersection = isIntersection
 	indexMergePath.TableFilters = remainingFilters
-
-	// TODO: use a naive estimation strategy here now for simplicity, make it more accurate.
-	minEstRows, maxEstRows := math.MaxFloat64, -1.0
-	for _, p := range indexMergePath.PartialIndexPaths {
-		minEstRows = math.Min(minEstRows, p.CountAfterAccess)
-		maxEstRows = math.Max(maxEstRows, p.CountAfterAccess)
-	}
-	if indexMergePath.IndexMergeIsIntersection {
-		indexMergePath.CountAfterAccess = minEstRows
-	} else {
-		indexMergePath.CountAfterAccess = maxEstRows
-	}
+	indexMergePath.CountAfterAccess = float64(histColl.RealtimeCount) *
+		cardinality.CalcTotalSelectivityForMVIdxPath(histColl, partialPaths, isIntersection)
 	return indexMergePath
 }
 
