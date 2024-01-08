@@ -161,7 +161,7 @@ func (p *PacketIO) readOnePacket() ([]byte, error) {
 	sequence := header[3]
 	if sequence != p.sequence {
 		err := server_err.ErrInvalidSequence.GenWithStack(
-				"invalid sequence, received %d while expecting %d", sequence, p.sequence)
+			"invalid sequence, received %d while expecting %d", sequence, p.sequence)
 		if p.compressionAlgorithm == mysql.CompressionNone {
 			return nil, err
 		}
