@@ -534,20 +534,18 @@ func (e *SortExec) buildKeyColumns() {
 	}
 }
 
-func (e *SortExec) lessRow(rowI, rowJ chunk.Row) bool {
+func (e *SortExec) lessRow(rowI, rowJ chunk.Row) int {
 	for i, colIdx := range e.keyColumns {
 		cmpFunc := e.keyCmpFuncs[i]
 		cmp := cmpFunc(rowI, colIdx, rowJ, colIdx)
 		if e.ByItems[i].Desc {
 			cmp = -cmp
 		}
-		if cmp < 0 {
-			return true
-		} else if cmp > 0 {
-			return false
+		if cmp != 0 {
+			return cmp
 		}
 	}
-	return false
+	return 0
 }
 
 func (e *SortExec) compressRow(rowI, rowJ chunk.Row) int {

@@ -16,11 +16,11 @@ package sortexec
 
 import (
 	"container/list"
-	"sort"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"golang.org/x/exp/slices"
 )
 
 // SignalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
@@ -29,7 +29,7 @@ const SignalCheckpointForSort uint = 20000
 type parallelSortWorker struct {
 	sortedRowsQueue list.List // Type is sortedRows
 
-	lessRowFunc func(chunk.Row, chunk.Row) bool
+	lessRowFunc func(chunk.Row, chunk.Row) int
 
 	publicSpace *publicMergeSpace
 
@@ -50,7 +50,7 @@ type parallelSortWorker struct {
 }
 
 func newParallelSortWorker(
-	lessRowFunc func(chunk.Row, chunk.Row) bool,
+	lessRowFunc func(chunk.Row, chunk.Row) int,
 	publicSpace *publicMergeSpace,
 	waitGroup *sync.WaitGroup,
 	result *sortedRows,
@@ -97,7 +97,7 @@ func (p *parallelSortWorker) fetchFromMPMCQueueAndSort() bool {
 	}
 }
 
-func (p *parallelSortWorker) keyColumnsLess(i, j int) bool {
+func (p *parallelSortWorker) keyColumnsLess(i, j chunk.Row) int {
 	if p.timesOfRowCompare >= SignalCheckpointForSort {
 		// Trigger Consume for checking the NeedKill signal
 		p.memTracker.Consume(1)
@@ -111,7 +111,7 @@ func (p *parallelSortWorker) keyColumnsLess(i, j int) bool {
 	// })
 	p.timesOfRowCompare++
 
-	return p.lessRowFunc(p.rowBuffer[i], p.rowBuffer[j])
+	return p.lessRowFunc(i, j)
 }
 
 func (p *parallelSortWorker) sortChunkAndGetSortedRows(chk *chunk.Chunk) sortedRows {
@@ -120,7 +120,7 @@ func (p *parallelSortWorker) sortChunkAndGetSortedRows(chk *chunk.Chunk) sortedR
 	for i := 0; i < rowNum; i++ {
 		p.rowBuffer[i] = chk.GetRow(i)
 	}
-	sort.Slice(p.rowBuffer, p.keyColumnsLess)
+	slices.SortFunc(p.rowBuffer, p.keyColumnsLess)
 	return p.rowBuffer
 }
 
@@ -178,7 +178,7 @@ func (p *parallelSortWorker) mergeTwoSortedRows(sortedRows1 sortedRows, sortedRo
 
 		p.timesOfRowCompare++
 
-		if p.lessRowFunc(sortedRows1[cursor1], sortedRows2[cursor2]) {
+		if p.lessRowFunc(sortedRows1[cursor1], sortedRows2[cursor2]) < 0 {
 			mergedSortedRows = append(mergedSortedRows, sortedRows1[cursor1])
 			cursor1++
 		} else {
