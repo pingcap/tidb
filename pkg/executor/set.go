@@ -181,7 +181,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			if err != nil {
 				return err
 			}
-			return taskMgr.StartManagerSession(ctx, e.Ctx(), serverID, valStr)
+			return taskMgr.InitMetaSession(ctx, e.Ctx(), serverID, valStr)
 		}
 		return err
 	}

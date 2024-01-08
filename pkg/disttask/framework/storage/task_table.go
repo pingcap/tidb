@@ -682,16 +682,16 @@ func (stm *TaskManager) StartSubtask(ctx context.Context, subtaskID int64, execI
 	return err
 }
 
-// StartManager insert the manager information into dist_framework_meta.
-func (stm *TaskManager) StartManager(ctx context.Context, tidbID string, role string) error {
+// InitMeta insert the manager information into dist_framework_meta.
+func (stm *TaskManager) InitMeta(ctx context.Context, tidbID string, role string) error {
 	return stm.WithNewSession(func(se sessionctx.Context) error {
-		return stm.StartManagerSession(ctx, se, tidbID, role)
+		return stm.InitMetaSession(ctx, se, tidbID, role)
 	})
 }
 
-// StartManagerSession insert the manager information into dist_framework_meta.
+// InitMetaSession insert the manager information into dist_framework_meta.
 // if the record exists, update the cpu_count and role.
-func (*TaskManager) StartManagerSession(ctx context.Context, se sessionctx.Context, execID string, role string) error {
+func (*TaskManager) InitMetaSession(ctx context.Context, se sessionctx.Context, execID string, role string) error {
 	cpuCount := cpu.GetCPUCount()
 	_, err := sqlexec.ExecSQL(ctx, se, `
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)

@@ -117,7 +117,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 // manager will try to recover meta periodically.
 func (m *Manager) InitMeta() (err error) {
 	for i := 0; i < retrySQLTimes; i++ {
-		err = m.taskTable.StartManager(m.ctx, m.id, config.GetGlobalConfig().Instance.TiDBServiceScope)
+		err = m.taskTable.InitMeta(m.ctx, m.id, config.GetGlobalConfig().Instance.TiDBServiceScope)
 		if err == nil {
 			break
 		}
