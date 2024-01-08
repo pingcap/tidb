@@ -1929,9 +1929,6 @@ func getPartitionDef(ctx sessionctx.Context, tbl *model.TableInfo, schema *expre
 						return nil, 0, 0, false
 					}
 					return &pi.Definitions[pos], i, pos, false
-				} else {
-					// This should have been checked before!
-					return nil, 0, 0, false
 				}
 			}
 		}
