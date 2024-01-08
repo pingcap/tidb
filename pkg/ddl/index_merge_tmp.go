@@ -53,6 +53,10 @@ func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(
 			// Found a value in the original index key.
 			err := checkTempIndexKey(txn, idxRecords[i], val, w.table)
 			if err != nil {
+				if errors.ErrorEqual(err, kv.ErrKeyExists) {
+					// TODO: print key is not a good solution.
+					return kv.ErrKeyExists.GenWithStackByArgs(string(key), idxInfo.Name.O)
+				}
 				return errors.Trace(err)
 			}
 		} else if idxRecords[i].distinct {
