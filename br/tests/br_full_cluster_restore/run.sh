@@ -134,10 +134,7 @@ run_sql_as user3 "123456" "select count(*) from db1.t1" --ssl
 check_contains "count(*): 2"
 run_sql_as user3 "123456" "select count(*) from db1.t2" --ssl || true
 check_contains "SELECT command denied to user"
-# we don't clear or restore data about user cloud_admin@'%'
-# but other cloud_admin@'any-other-host' will be cleared and restored
-# so cloud_admin@'1.1.1.1' is cleared, cloud_admin@'127.0.0.1' is restored
-run_sql_as cloud_admin "000000" "show grants"
+run_sql_as cloud_admin "000000" "show grants" || true
 check_contains ": GRANT USAGE"
 run_sql "select count(*) from mysql.user where user='cloud_admin'"
 check_contains "count(*): 3"
