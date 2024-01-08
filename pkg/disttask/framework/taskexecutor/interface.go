@@ -28,8 +28,11 @@ type TaskTable interface {
 	GetSubtasksByStepAndStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...proto.SubtaskState) ([]*proto.Subtask, error)
 	GetFirstSubtaskInStates(ctx context.Context, instanceID string, taskID int64, step proto.Step, states ...proto.SubtaskState) (*proto.Subtask, error)
 	// StartManagerSession insert the manager information into dist_framework_meta.
-	// Call it when starting task executor or in recover meta loop.
+	// Call it when starting task executor or in set variable operation.
 	StartManager(ctx context.Context, tidbID string, role string) error
+	// RecoverMeta recover the manager information into dist_framework_meta.
+	// Call it periodically to recover deleted meta.
+	RecoverMeta(ctx context.Context, tidbID string, role string) error
 	// StartSubtask try to update the subtask's state to running if the subtask is owned by execID.
 	// If the update success, it means the execID's related task executor own the subtask.
 	StartSubtask(ctx context.Context, subtaskID int64, execID string) error

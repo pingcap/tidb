@@ -702,6 +702,21 @@ func (*TaskManager) StartManagerSession(ctx context.Context, se sessionctx.Conte
 	return err
 }
 
+// RecoverMeta insert the manager information into dist_framework_meta.
+// if the record exists, update the cpu_count.
+// Don't update role for we only update it in `set global tidb_service_scope`.
+// if not there might has a data race.
+func (stm *TaskManager) RecoverMeta(ctx context.Context, execID string, role string) error {
+	cpuCount := cpu.GetCPUCount()
+	_, err := stm.executeSQLWithNewSession(ctx, `
+		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
+		values (%?, %?, %?, -1)
+		on duplicate key
+		update cpu_count = %?`,
+		execID, role, cpuCount, cpuCount)
+	return err
+}
+
 // UpdateSubtaskStateAndError updates the subtask state.
 func (stm *TaskManager) UpdateSubtaskStateAndError(
 	ctx context.Context,

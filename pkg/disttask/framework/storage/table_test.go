@@ -848,7 +848,6 @@ func TestDistFrameworkMeta(t *testing.T) {
 		{ID: ":4002", Role: "background", CPUCount: 8},
 	}, nodes)
 
-	// won't be replaced by below one, but cpu count will be updated
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)"))
 	require.NoError(t, sm.StartManager(ctx, ":4002", ""))
 	require.NoError(t, sm.StartManager(ctx, ":4003", "background"))
@@ -858,12 +857,14 @@ func TestDistFrameworkMeta(t *testing.T) {
 	require.Equal(t, []proto.ManagedNode{
 		{ID: ":4000", Role: "background", CPUCount: 100},
 		{ID: ":4001", Role: "", CPUCount: 8},
-		{ID: ":4002", Role: "background", CPUCount: 100},
+		{ID: ":4002", Role: "", CPUCount: 100},
 		{ID: ":4003", Role: "background", CPUCount: 100},
 	}, nodes)
 	cpuCount, err = storage.GetCPUCountOfManagedNodes(ctx, sm)
 	require.NoError(t, err)
 	require.Equal(t, 100, cpuCount)
+
+	require.NoError(t, sm.StartManager(ctx, ":4002", "background"))
 
 	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{":4000"}))
 	nodes, err = sm.GetManagedNodes(ctx)
@@ -889,6 +890,20 @@ func TestDistFrameworkMeta(t *testing.T) {
 	cpuCount, err = storage.GetCPUCountOfManagedNodes(ctx, sm)
 	require.NoError(t, err)
 	require.Equal(t, 8, cpuCount)
+
+	require.NoError(t, sm.RecoverMeta(ctx, ":4002", "background"))
+	nodes, err = sm.GetManagedNodes(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []proto.ManagedNode{
+		{ID: ":4002", Role: "background", CPUCount: 100},
+	}, nodes)
+	// should not reset role
+	require.NoError(t, sm.RecoverMeta(ctx, ":4002", ""))
+	nodes, err = sm.GetManagedNodes(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []proto.ManagedNode{
+		{ID: ":4002", Role: "background", CPUCount: 100},
+	}, nodes)
 }
 
 func TestSubtaskHistoryTable(t *testing.T) {
@@ -1082,7 +1097,7 @@ func TestStartManager(t *testing.T) {
 	tk.MustExec(`set global tidb_service_scope=""`)
 	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows(""))
 
-	// 1. delete then recover.
+	// 1. delete then start.
 	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{"tidb1"}))
 	require.NoError(t, sm.StartManager(ctx, "tidb1", ""))
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host="tidb1"`).Check(testkit.Rows(""))
