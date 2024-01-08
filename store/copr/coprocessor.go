@@ -921,7 +921,12 @@ func (it *copIterator) recvFromRespCh(ctx context.Context, respCh <-chan *copRes
 			exit = true
 			return
 		case <-ticker.C:
-			if atomic.LoadUint32(it.vars.Killed) == 1 {
+			killed := atomic.LoadUint32(it.vars.Killed)
+			if killed != 0 {
+				logutil.Logger(ctx).Info(
+					"a killed signal is received",
+					zap.Uint32("signal", killed),
+				)
 				resp = &copResponse{err: derr.ErrQueryInterrupted}
 				ok = true
 				return
@@ -1812,8 +1817,15 @@ func (worker *copIteratorWorker) calculateRemain(ranges *KeyRanges, split *copro
 
 // finished checks the flags and finished channel, it tells whether the worker is finished.
 func (worker *copIteratorWorker) finished() bool {
-	if worker.vars != nil && worker.vars.Killed != nil && atomic.LoadUint32(worker.vars.Killed) == 1 {
-		return true
+	if worker.vars != nil && worker.vars.Killed != nil {
+		killed := atomic.LoadUint32(worker.vars.Killed)
+		if killed != 0 {
+			logutil.BgLogger().Info(
+				"a killed signal is received in copIteratorWorker",
+				zap.Uint32("signal", killed),
+			)
+			return true
+		}
 	}
 	select {
 	case <-worker.finishCh:
