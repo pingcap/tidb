@@ -41,9 +41,10 @@ import (
 )
 
 const (
-	flagOnline      = "online"
-	flagNoSchema    = "no-schema"
-	flagGranularity = "granularity"
+	flagOnline              = "online"
+	flagNoSchema            = "no-schema"
+	flagGranularity         = "granularity"
+	flagConcurrencyPerStore = "tikv-max-restore-concurrency"
 
 	// FlagMergeRegionSizeBytes is the flag name of merge small regions by size
 	FlagMergeRegionSizeBytes = "merge-region-size-bytes"
@@ -80,11 +81,11 @@ const (
 	defaultPiTRBatchSize      = 16 * 1024 * 1024
 	defaultRestoreConcurrency = 128
 	defaultPiTRConcurrency    = 16
-	maxRestoreBatchSizeLimit  = 10240
 	defaultPDConcurrency      = 1
 	defaultBatchFlushInterval = 16 * time.Second
 	defaultFlagDdlBatchSize   = 128
 	resetSpeedLimitRetryTimes = 3
+	maxRestoreBatchSizeLimit  = 10240
 )
 
 const (
@@ -98,8 +99,9 @@ const (
 
 // RestoreCommonConfig is the common configuration for all BR restore tasks.
 type RestoreCommonConfig struct {
-	Online      bool   `json:"online" toml:"online"`
-	Granularity string `json:"granularity" toml:"granularity"`
+	Online              bool   `json:"online" toml:"online"`
+	Granularity         string `json:"granularity" toml:"granularity"`
+	ConcurrencyPerStore uint   `json:"tikv-max-restore-concurrency" toml:"tikv-max-restore-concurrency"`
 
 	// MergeSmallRegionSizeBytes is the threshold of merging small regions (Default 96MB, region split size).
 	// MergeSmallRegionKeyCount is the threshold of merging smalle regions (Default 960_000, region split key count).
@@ -125,6 +127,9 @@ func (cfg *RestoreCommonConfig) adjust() {
 	if len(cfg.Granularity) == 0 {
 		cfg.Granularity = string(restore.FineGrained)
 	}
+	if cfg.ConcurrencyPerStore == 0 {
+		cfg.ConcurrencyPerStore = 128
+	}
 }
 
 // DefineRestoreCommonFlags defines common flags for the restore command.
@@ -132,7 +137,8 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	// TODO remove experimental tag if it's stable
 	flags.Bool(flagOnline, false, "(experimental) Whether online when restore")
 	flags.String(flagGranularity, string(restore.FineGrained), "(experimental) Whether split & scatter regions using fine-grained way during restore")
-	flags.Uint32(flagConcurrency, 128, "The size of thread pool on BR that executes tasks, "+
+	flags.Uint(flagConcurrencyPerStore, 128, "(experimental) The size of thread pool on each store that executes tasks")
+	flags.Uint32(flagConcurrency, 128, "(deprecated) The size of thread pool on BR that executes tasks, "+
 		"where each task restores one SST file to TiKV")
 	flags.Uint64(FlagMergeRegionSizeBytes, conn.DefaultMergeRegionSizeBytes,
 		"the threshold of merging small regions (Default 96MB, region split size)")
@@ -508,13 +514,8 @@ func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *Re
 	if err != nil {
 		return errors.Trace(err)
 	}
-	storeCount := client.GetStoreCount()
-	if storeCount > 0 {
-		client.SetConcurrency(uint(cfg.Concurrency) * uint(client.GetStoreCount()))
-	} else {
-		client.SetConcurrency(uint(cfg.Concurrency))
-	}
-
+	client.SetConcurrency(uint(cfg.Concurrency))
+	client.SetConcurrencyPerStore(cfg.ConcurrencyPerStore)
 	return nil
 }
 
@@ -959,9 +960,8 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		})
 	}
 
-	if cfg.Granularity == string(restore.CoarseGrained) {
-		tableStream = GoBlockCreateTablesPipeline(ctx, maxRestoreBatchSizeLimit, tableStream)
-	}
+	// Block on creating tables before restore starts. since create table is no longer a heavy operation any more.
+	tableStream = GoBlockCreateTablesPipeline(ctx, maxRestoreBatchSizeLimit, tableStream)
 
 	tableFileMap := restore.MapTableToFiles(files)
 	log.Debug("mapped table to files", zap.Any("result map", tableFileMap))
@@ -984,6 +984,9 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	// Restore sst files in batch.
 	batchSize := mathutil.Clamp(int(cfg.Concurrency), defaultRestoreConcurrency, maxRestoreBatchSizeLimit)
+	if client.GetGranularity() == string(restore.CoarseGrained) {
+		batchSize = mathutil.Max(int(client.GetTotalDownloadConcurrency()), maxRestoreBatchSizeLimit)
+	}
 	failpoint.Inject("small-batch-size", func(v failpoint.Value) {
 		log.Info("failpoint small batch size is on", zap.Int("size", v.(int)))
 		batchSize = v.(int)
