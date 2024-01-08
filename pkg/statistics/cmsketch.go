@@ -861,8 +861,8 @@ func SortTopnMeta(topnMetas []TopNMeta) {
 
 // TopnMetaCompare compare topnMeta
 func TopnMetaCompare(i, j TopNMeta) int {
-	c := cmp.Compare(i.Count, j.Count)
-	if c == 0 {
+	c := cmp.Compare(j.Count, i.Count)
+	if c != 0 {
 		return c
 	}
 	return bytes.Compare(i.Encoded, j.Encoded)

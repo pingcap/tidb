@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	planutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
@@ -157,6 +159,21 @@ func Selectivity(
 	slices.Sort(idxIDs)
 	for _, id := range idxIDs {
 		idxStats := coll.Indices[id]
+		idxInfo := idxStats.Info
+		if idxInfo.MVIndex {
+			totalSelectivity, mask, ok := getMaskAndSelectivityForMVIndex(ctx, coll, id, remainedExprs)
+			if !ok {
+				continue
+			}
+			nodes = append(nodes, &StatsNode{
+				Tp:          IndexType,
+				ID:          id,
+				mask:        mask,
+				numCols:     len(idxInfo.Columns),
+				Selectivity: totalSelectivity,
+			})
+			continue
+		}
 		idxCols := findPrefixOfIndexByCol(ctx, extractedCols, coll.Idx2ColumnIDs[id], id2Paths[idxStats.ID])
 		if len(idxCols) > 0 {
 			lengths := make([]int, 0, len(idxCols))
@@ -417,6 +434,83 @@ OUTER:
 	return ret, nodes, nil
 }
 
+// CalcTotalSelectivityForMVIdxPath calculates the total selectivity for the given partial paths of an MV index merge path.
+// It corresponds with the meaning of AccessPath.CountAfterAccess, as used in buildPartialPathUp4MVIndex.
+// It uses the independence assumption to estimate the selectivity.
+func CalcTotalSelectivityForMVIdxPath(
+	coll *statistics.HistColl,
+	partialPaths []*planutil.AccessPath,
+	isIntersection bool,
+) float64 {
+	selectivities := make([]float64, 0, len(partialPaths))
+	for _, path := range partialPaths {
+		// For a partial path, we distinguish between two cases.
+		// 1. We will access a single value on the virtual column of the mv index.
+		//   In this case, handles from a single partial path must be unique.
+		//   The CountAfterAccess of a partial path will never be larger than the table total row count.
+		//   For an index merge path with only one partial path, the CountAfterAccess will be exactly the same as the
+		//   CountAfterAccess of the partial path (currently there's no index filter for partial path of mv index merge
+		//   path).
+		// 2. We use the mv index as if it's a non-MV index, which means the virtual column is not involved in the access
+		//   conditions.
+		//   In this case, we may read repeated handles from a single partial path.
+		//   The CountAfterAccess of a partial path might be larger than the table total row count.
+		//   For an index merge path with only one partial path, the CountAfterAccess might be less than the CountAfterAccess
+		//   of the partial path
+		// For example:
+		// create table t(a int, d json, index iad(a, (cast(d->'$.b' as signed array))));
+		// insert into t value(1,'{"b":[1,2,3,4]}'), (2,'{"b":[3,4,5,6]}');
+		// The index has 8 entries.
+		// Case 1:
+		//   select * from t use index (iad) where a = 1 and 1 member of (d->'$.b');
+		//   IndexMerge
+		//   ├─IndexRangeScan RowCount:1 Range:[1 1,1 1]
+		//   └─TableRowIDScan RowCount:1
+		// Case 2:
+		//   select * from t use index (iad) where a = 1;
+		//   IndexMerge
+		//   ├─IndexRangeScan RowCount:4 Range:[1,1]
+		//   └─TableRowIDScan RowCount:1
+		// From the example, it should be obvious that we need different total row count to calculate the selectivity of
+		// the access conditions:
+		// Case 1: Here we should use the table total row count
+		//   Selectivity( a = 1 and 1 member of (d->'$.b') ) = 1 / 2
+		// Case 2: Here we should use the index total row count
+		//   Selectivity( a = 1 ) = 4 / 8
+		var virtualCol *expression.Column
+		for _, col := range coll.MVIdx2Columns[path.Index.ID] {
+			if col.VirtualExpr != nil {
+				virtualCol = col
+				break
+			}
+		}
+		cols := expression.ExtractColumnsFromExpressions(nil, path.AccessConds, func(column *expression.Column) bool {
+			return virtualCol != nil && column.UniqueID == virtualCol.UniqueID
+		})
+		realtimeCount := coll.RealtimeCount
+		// If we can't find the virtual column from the access conditions, it's the case 2.
+		if len(cols) == 0 {
+			realtimeCount, _ = coll.GetScaledRealtimeAndModifyCnt(coll.Indices[path.Index.ID])
+		}
+		sel := path.CountAfterAccess / float64(realtimeCount)
+		sel = mathutil.Clamp(sel, 0, 1)
+		selectivities = append(selectivities, sel)
+	}
+	var totalSelectivity float64
+	if isIntersection {
+		totalSelectivity = 1
+		for _, sel := range selectivities {
+			totalSelectivity *= sel
+		}
+	} else {
+		totalSelectivity = 0
+		for _, sel := range selectivities {
+			totalSelectivity = (sel + totalSelectivity) - totalSelectivity*sel
+		}
+	}
+	return totalSelectivity
+}
+
 // StatsNode is used for calculating selectivity.
 type StatsNode struct {
 	// Ranges contains all the Ranges we got.
@@ -621,6 +715,36 @@ func getMaskAndRanges(ctx sessionctx.Context, exprs []expression.Expression, ran
 	return mask, ranges, false, nil
 }
 
+func getMaskAndSelectivityForMVIndex(
+	ctx sessionctx.Context,
+	coll *statistics.HistColl,
+	id int64,
+	exprs []expression.Expression,
+) (float64, int64, bool) {
+	cols := coll.MVIdx2Columns[id]
+	if len(cols) == 0 {
+		return 1.0, 0, false
+	}
+	// You can find more examples and explanations in comments for collectFilters4MVIndex() and
+	// buildPartialPaths4MVIndex() in planner/core.
+	accessConds, _ := CollectFilters4MVIndex(ctx, exprs, cols)
+	paths, isIntersection, ok, err := BuildPartialPaths4MVIndex(ctx, accessConds, cols, coll.Indices[id].Info, coll)
+	if err != nil || !ok {
+		return 1.0, 0, false
+	}
+	totalSelectivity := CalcTotalSelectivityForMVIdxPath(coll, paths, isIntersection)
+	var mask int64
+	for i := range exprs {
+		for _, accessCond := range accessConds {
+			if exprs[i].Equal(ctx, accessCond) {
+				mask |= 1 << uint64(i)
+				break
+			}
+		}
+	}
+	return totalSelectivity, mask, true
+}
+
 // GetSelectivityByFilter try to estimate selectivity of expressions by evaluate the expressions using TopN, Histogram buckets boundaries and NULL.
 // Currently, this method can only handle expressions involving a single column.
 func GetSelectivityByFilter(sctx sessionctx.Context, coll *statistics.HistColl, filters []expression.Expression) (ok bool, selectivity float64, err error) {
@@ -820,10 +944,11 @@ func getEqualCondSelectivity(sctx sessionctx.Context, coll *statistics.HistColl,
 	}
 	val := types.NewBytesDatum(bytes)
 	if outOfRangeOnIndex(idx, val) {
+		realtimeCnt, _ := coll.GetScaledRealtimeAndModifyCnt(idx)
 		// When the value is out of range, we could not found this value in the CM Sketch,
 		// so we use heuristic methods to estimate the selectivity.
 		if idx.NDV > 0 && coverAll {
-			return outOfRangeEQSelectivity(sctx, idx.NDV, coll.RealtimeCount, int64(idx.TotalRowCount())), nil
+			return outOfRangeEQSelectivity(sctx, idx.NDV, realtimeCnt, int64(idx.TotalRowCount())), nil
 		}
 		// The equal condition only uses prefix columns of the index.
 		colIDs := coll.Idx2ColumnIDs[idx.ID]
@@ -836,7 +961,7 @@ func getEqualCondSelectivity(sctx sessionctx.Context, coll *statistics.HistColl,
 				ndv = max(ndv, col.Histogram.NDV)
 			}
 		}
-		return outOfRangeEQSelectivity(sctx, ndv, coll.RealtimeCount, int64(idx.TotalRowCount())), nil
+		return outOfRangeEQSelectivity(sctx, ndv, realtimeCnt, int64(idx.TotalRowCount())), nil
 	}
 
 	minRowCount, crossValidSelectivity, err := crossValidationSelectivity(sctx, coll, idx, usedColsLen, idxPointRange)
@@ -942,3 +1067,29 @@ func crossValidationSelectivity(
 	}
 	return minRowCount, crossValidationSelectivity, nil
 }
+
+// CollectFilters4MVIndex and BuildPartialPaths4MVIndex are for matching JSON expressions against mv index.
+// This logic is shared between the estimation logic and the access path generation logic. But the two functions are
+// defined in planner/core package and hard to move here. So we use this trick to avoid the import cycle.
+var (
+	CollectFilters4MVIndex func(
+		sctx sessionctx.Context,
+		filters []expression.Expression,
+		idxCols []*expression.Column,
+	) (
+		accessFilters,
+		remainingFilters []expression.Expression,
+	)
+	BuildPartialPaths4MVIndex func(
+		sctx sessionctx.Context,
+		accessFilters []expression.Expression,
+		idxCols []*expression.Column,
+		mvIndex *model.IndexInfo,
+		histColl *statistics.HistColl,
+	) (
+		partialPaths []*planutil.AccessPath,
+		isIntersection bool,
+		ok bool,
+		err error,
+	)
+)

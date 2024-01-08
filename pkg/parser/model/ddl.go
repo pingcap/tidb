@@ -217,6 +217,8 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 		ActionCreateTables,
 		ActionAlterTTLInfo,
 		ActionAlterTTLRemove,
+		ActionCreateView,
+		ActionDropView,
 	},
 	UnsafeDDL: {
 		ActionDropSchema,
@@ -265,8 +267,6 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 		ActionRemovePartitioning,
 	},
 	UnmanagementDDL: {
-		ActionCreateView,
-		ActionDropView,
 		ActionCreatePlacementPolicy,
 		ActionAlterPlacementPolicy,
 		ActionDropPlacementPolicy,

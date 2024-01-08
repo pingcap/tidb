@@ -82,6 +82,7 @@ func TestCopTasksDetails(t *testing.T) {
 func TestStatementContextPushDownFLags(t *testing.T) {
 	newStmtCtx := func(fn func(*stmtctx.StatementContext)) *stmtctx.StatementContext {
 		sc := stmtctx.NewStmtCtx()
+		sc.SetErrLevels(errctx.LevelMap{})
 		fn(sc)
 		return sc
 	}
@@ -97,14 +98,20 @@ func TestStatementContextPushDownFLags(t *testing.T) {
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true)) }), 1},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true)) }), 66},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.SetTypeFlags(sc.TypeFlags().WithIgnoreZeroInDate(true)) }), 128},
-		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.DividedByZeroAsWarning = true }), 256},
+		{newStmtCtx(func(sc *stmtctx.StatementContext) {
+			var levels errctx.LevelMap
+			levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+			sc.SetErrLevels(levels)
+		}), 256},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) { sc.InLoadDataStmt = true }), 1024},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) {
 			sc.InSelectStmt = true
 			sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))
 		}), 98},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) {
-			sc.DividedByZeroAsWarning = true
+			var levels errctx.LevelMap
+			levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+			sc.SetErrLevels(levels)
 			sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
 		}), 257},
 		{newStmtCtx(func(sc *stmtctx.StatementContext) {
@@ -318,7 +325,9 @@ func TestNewStmtCtx(t *testing.T) {
 	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 	require.Same(t, time.UTC, sc.TimeZone())
 	require.Same(t, time.UTC, sc.TimeZone())
-	require.Equal(t, errctx.NewContextWithLevels(errctx.LevelMap{}, sc), sc.ErrCtx())
+	var levels errctx.LevelMap
+	levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
 	sc.AppendWarning(errors.NewNoStackError("err1"))
 	warnings := sc.GetWarnings()
 	require.Equal(t, 1, len(warnings))
@@ -330,7 +339,7 @@ func TestNewStmtCtx(t *testing.T) {
 	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 	require.Same(t, tz, sc.TimeZone())
 	require.Same(t, tz, sc.TimeZone())
-	require.Equal(t, errctx.NewContextWithLevels(errctx.LevelMap{}, sc), sc.ErrCtx())
+	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
 	sc.AppendWarning(errors.NewNoStackError("err2"))
 	warnings = sc.GetWarnings()
 	require.Equal(t, 1, len(warnings))
@@ -351,6 +360,7 @@ func TestSetStmtCtxTypeFlags(t *testing.T) {
 	require.Equal(t, types.DefaultStmtFlags, sc.TypeFlags())
 
 	levels := errctx.LevelMap{}
+	sc.SetErrLevels(levels)
 	sc.SetTypeFlags(types.FlagAllowNegativeToUnsigned | types.FlagSkipASCIICheck)
 	require.Equal(t, types.FlagAllowNegativeToUnsigned|types.FlagSkipASCIICheck, sc.TypeFlags())
 	require.Equal(t, sc.TypeFlags(), sc.TypeFlags())
@@ -379,6 +389,7 @@ func TestResetStmtCtx(t *testing.T) {
 	require.Equal(t, 1, len(sc.GetWarnings()))
 	levels := errctx.LevelMap{}
 	levels[errctx.ErrGroupTruncate] = errctx.LevelIgnore
+	levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
 
 	sc.Reset()
@@ -395,6 +406,7 @@ func TestResetStmtCtx(t *testing.T) {
 	require.Equal(t, stmtctx.WarnLevelWarning, warnings[0].Level)
 	require.Equal(t, "err2", warnings[0].Err.Error())
 	levels = errctx.LevelMap{}
+	levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
 }
 
@@ -426,7 +438,9 @@ func TestErrCtx(t *testing.T) {
 	err := types.ErrTruncated
 	require.Error(t, sc.HandleError(err))
 	levels := errctx.LevelMap{}
+	levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 	require.Equal(t, errctx.NewContextWithLevels(levels, sc), sc.ErrCtx())
+	levels[errctx.ErrGroupDividedByZero] = errctx.LevelError
 
 	// set error levels
 	levels[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelIgnore
