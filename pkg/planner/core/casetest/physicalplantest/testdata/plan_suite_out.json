@@ -3724,9 +3724,9 @@
     "Name": "TestPointgetIndexChoosen",
     "Cases": [
       {
-        "SQL": "select * from t where a=1 and b=1;",
+        "SQL": "select * from t where b=1 and c='1';",
         "Plan": [
-          "Point_Get 1.00 root table:t, index:uab(a, b) "
+          "Point_Get 1.00 root table:t, index:ubc(b, c) "
         ],
         "Warning": null
       }

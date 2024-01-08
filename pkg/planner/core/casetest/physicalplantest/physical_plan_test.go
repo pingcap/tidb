@@ -1467,8 +1467,8 @@ func TestPointgetIndexChoosen(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec(`CREATE TABLE t ( a int NOT NULL ,  b int NOT NULL,
 			c varchar(64) NOT NULL ,  d varchar(64) NOT NULL  ,
-			UNIQUE KEY ua (a),
-			UNIQUE KEY uab (a, b));`)
+			UNIQUE KEY ub (b),
+			UNIQUE KEY ubc (b, c));`)
 	for i, ts := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = ts
