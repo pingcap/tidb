@@ -978,18 +978,30 @@ func (importer *FileImporter) downloadSSTV2(
 	for _, p := range regionInfo.Region.GetPeers() {
 		peer := p
 		eg.Go(func() error {
-			importer.storeWorkerPoolRWLock.Lock()
+			importer.storeWorkerPoolRWLock.RLock()
 			workerCh, ok := importer.storeWorkerPoolMap[peer.GetStoreId()]
 			// handle the case that the store is new-scaled in the cluster
 			if !ok {
-				workerCh = utils.BuildWorkerTokenChannel(importer.concurrencyPerStore)
+				importer.storeWorkerPoolRWLock.RUnlock()
+				importer.storeWorkerPoolRWLock.Lock()
+				// Notice: worker channel can't replaced, because it is still used after unlock.
+				if workerCh, ok = importer.storeWorkerPoolMap[peer.GetStoreId()]; !ok {
+					workerCh = utils.BuildWorkerTokenChannel(importer.concurrencyPerStore)
+					importer.storeWorkerPoolMap[peer.GetStoreId()] = workerCh
+				}
 				importer.storeWorkerPoolMap[peer.GetStoreId()] = workerCh
+				importer.storeWorkerPoolRWLock.Unlock()
+			} else {
+				importer.storeWorkerPoolRWLock.RUnlock()
 			}
-			importer.storeWorkerPoolRWLock.Unlock()
 			defer func() {
 				workerCh <- struct{}{}
 			}()
-			<-workerCh
+			select {
+			case <-ectx.Done():
+				return ectx.Err()
+			case <-workerCh:
+			}
 			for _, file := range files {
 				req, ok := downloadReqsMap[file.Name]
 				if !ok {

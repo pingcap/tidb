@@ -538,10 +538,6 @@ func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBack
 		log.Fatal("failed to get stores", zap.Error(err))
 	}
 	concurrencyPerStore := rc.GetConcurrencyPerStore()
-	for _, store := range stores {
-		ch := utils.BuildWorkerTokenChannel(concurrencyPerStore)
-		storeWorkerPoolMap[store.Id] = ch
-	}
 	useTokenBucket := false
 	if rc.granularity == string(CoarseGrained) {
 		// coarse-grained make split & scatter pipeline fast enough
@@ -549,6 +545,10 @@ func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBack
 		// ToDo remove it when token bucket is stable enough.
 		log.Info("use token bucket to control download and ingest flow")
 		useTokenBucket = true
+		for _, store := range stores {
+			ch := utils.BuildWorkerTokenChannel(concurrencyPerStore)
+			storeWorkerPoolMap[store.Id] = ch
+		}
 	}
 
 	metaClient := split.NewSplitClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, isRawKvMode)
@@ -663,7 +663,6 @@ func (rc *Client) GetFilesInRawRange(startKey []byte, endKey []byte, cf string) 
 func (rc *Client) SetConcurrency(c uint) {
 	log.Info("download worker pool", zap.Uint("size", c))
 	rc.workerPool = utils.NewWorkerPool(c, "file")
-	rc.concurrencyPerStore = c
 }
 
 // SetConcurrencyPerStore sets the concurrency of download files for each store.
