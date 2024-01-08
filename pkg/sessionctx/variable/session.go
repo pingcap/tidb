@@ -2091,7 +2091,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	if EnableRowLevelChecksum.Load() {
 		vars.EnableRowLevelChecksum = true
 	}
-	vars.systems[MaxAllowedPacket] = strconv.Itoa(int(DefMaxAllowedPacket))
 	vars.systems[CharacterSetConnection], vars.systems[CollationConnection] = charset.GetDefaultCharsetAndCollate()
 	return vars
 }

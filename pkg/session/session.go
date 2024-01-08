@@ -3509,6 +3509,10 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(types.Session)) {
 		// Bootstrap fail will cause program exit.
 		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
 	}
+	err = s.sessionVars.SetSystemVar(variable.MaxAllowedPacket, strconv.FormatUint(variable.DefMaxAllowedPacket, 10))
+	if err != nil {
+		logutil.BgLogger().Error("set system variable max_allowed_packet error", zap.Error(err))
+	}
 	// For the bootstrap SQLs, the following variables should be compatible with old TiDB versions.
 	s.sessionVars.EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
