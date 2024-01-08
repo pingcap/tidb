@@ -3509,10 +3509,6 @@ func runInBootstrapSession(store kv.Storage, bootstrap func(types.Session)) {
 		// Bootstrap fail will cause program exit.
 		logutil.BgLogger().Fatal("createSession error", zap.Error(err))
 	}
-	err = s.sessionVars.SetSystemVar(variable.MaxAllowedPacket, strconv.FormatUint(variable.DefMaxAllowedPacket, 10))
-	if err != nil {
-		logutil.BgLogger().Error("set system variable max_allowed_packet error", zap.Error(err))
-	}
 	// For the bootstrap SQLs, the following variables should be compatible with old TiDB versions.
 	s.sessionVars.EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 
@@ -3711,6 +3707,11 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	}
 	if s.Value(sessionctx.Initing) != nil {
 		// When running bootstrap or upgrade, we should not access global storage.
+		// But we need to init max_allowed_packet to use concat function during bootstrap or upgrade.
+		err := vars.SetSystemVar(variable.MaxAllowedPacket, strconv.FormatUint(variable.DefMaxAllowedPacket, 10))
+		if err != nil {
+			logutil.BgLogger().Error("set system variable max_allowed_packet error", zap.Error(err))
+		}
 		return nil
 	}
 
