@@ -15,6 +15,7 @@
 package types
 
 import (
+	"cmp"
 	"math"
 
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -83,4 +84,28 @@ func VecCompareIU(x []int64, y []uint64, res []int64) {
 // CompareString returns an integer comparing the string x to y with the specified collation and length.
 func CompareString(x, y, collation string) int {
 	return collate.GetCollator(collation).Compare(x, y)
+}
+
+// CompareInt return an integer comparing the integer x to y with signed or unsigned.
+func CompareInt(arg0 int64, isUnsigned0 bool, arg1 int64, isUnsigned1 bool) int {
+	var res int
+	switch {
+	case isUnsigned0 && isUnsigned1:
+		res = cmp.Compare(uint64(arg0), uint64(arg1))
+	case isUnsigned0 && !isUnsigned1:
+		if arg1 < 0 || uint64(arg0) > math.MaxInt64 {
+			res = 1
+		} else {
+			res = cmp.Compare(arg0, arg1)
+		}
+	case !isUnsigned0 && isUnsigned1:
+		if arg0 < 0 || uint64(arg1) > math.MaxInt64 {
+			res = -1
+		} else {
+			res = cmp.Compare(arg0, arg1)
+		}
+	case !isUnsigned0 && !isUnsigned1:
+		res = cmp.Compare(arg0, arg1)
+	}
+	return res
 }
