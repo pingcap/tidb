@@ -603,5 +603,11 @@
       "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) limit 1);",
       "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);"
     ]
+  },
+  {
+    "name": "TestPointgetIndexChoosen",
+    "cases": [
+      "select * from t where a=1 and b=1;"
+    ]
   }
 ]

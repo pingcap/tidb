@@ -3719,5 +3719,17 @@
         "Warning": null
       }
     ]
+  },
+  {
+    "Name": "TestPointgetIndexChoosen",
+    "Cases": [
+      {
+        "SQL": "select * from t where a=1 and b=1;",
+        "Plan": [
+          "Point_Get 1.00 root table:t, index:uab(a, b) "
+        ],
+        "Warning": null
+      }
+    ]
   }
 ]
