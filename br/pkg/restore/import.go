@@ -989,7 +989,6 @@ func (importer *FileImporter) downloadSSTV2(
 					workerCh = utils.BuildWorkerTokenChannel(importer.concurrencyPerStore)
 					importer.storeWorkerPoolMap[peer.GetStoreId()] = workerCh
 				}
-				importer.storeWorkerPoolMap[peer.GetStoreId()] = workerCh
 				importer.storeWorkerPoolRWLock.Unlock()
 			} else {
 				importer.storeWorkerPoolRWLock.RUnlock()
