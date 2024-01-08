@@ -145,7 +145,7 @@ func (m *Manager) recoverMeta() (err error) {
 			return err1
 		}
 		if i%10 == 0 {
-			logutil.Logger(m.logCtx).Warn("start manager failed",
+			logutil.Logger(m.logCtx).Warn("recover meta failed",
 				zap.String("scope", config.GetGlobalConfig().Instance.TiDBServiceScope),
 				zap.Int("retry times", i),
 				zap.Error(err))
