@@ -826,6 +826,7 @@ func (writer *MetaWriter) Backupmeta() *backuppb.BackupMeta {
 	return clone.(*backuppb.BackupMeta)
 }
 
+// NewStatsWriter wraps the new function of stats writer
 func (writer *MetaWriter) NewStatsWriter() *StatsWriter {
 	return newStatsWriter(writer.storage, writer.cipher)
 }
