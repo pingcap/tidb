@@ -16,8 +16,11 @@ package mockstore
 
 import (
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 
+	cp "github.com/otiai10/copy"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -192,6 +195,13 @@ func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 	case MockTiKV:
 		store, err = newMockTikvStore(&opt)
 	case EmbedUnistore:
+		if opt.path == "" && len(options) == 0 && ImageAvailable() {
+			// Create the store from the image.
+			if path, err := copyImage(); err == nil {
+				opt.path = path
+			}
+		}
+
 		store, err = newUnistore(&opt)
 	default:
 		panic("unsupported mockstore")
@@ -204,6 +214,31 @@ func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 		store = DDLCheckerInjector(store)
 	}
 	return store, nil
+}
+
+// ImageFilePath is used by testing, it's the file path for the bootstraped store image.
+const ImageFilePath = "/tmp/tidb-unistore-bootstraped-image/"
+
+// ImageAvailable checks whether the store image file is available.
+func ImageAvailable() bool {
+	_, err := os.ReadDir(ImageFilePath)
+	if err != nil {
+		return false
+	}
+	_, err = os.ReadDir(filepath.Join(ImageFilePath, "kv"))
+	return err == nil
+}
+
+func copyImage() (string, error) {
+	path, err := os.MkdirTemp("", "tidb-unistore-temp")
+	if err != nil {
+		return "", err
+	}
+	err = cp.Copy(ImageFilePath, path)
+	if err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // BootstrapWithSingleStore initializes a Cluster with 1 Region and 1 Store.

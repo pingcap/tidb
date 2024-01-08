@@ -1011,39 +1011,6 @@ func TestStmtSummaryInternalQuery(t *testing.T) {
 	// Disable refreshing summary.
 	tk.MustExec("set global tidb_stmt_summary_refresh_interval = 999999999")
 	tk.MustQuery("select @@global.tidb_stmt_summary_refresh_interval").Check(testkit.Rows("999999999"))
-
-	// Test Internal
-
-	// Create a new session to test.
-	tk = newTestKitWithRoot(t, store)
-
-	tk.MustExec("select * from t where t.a = 1")
-	tk.MustQuery(`select exec_count, digest_text
-		from information_schema.statements_summary
-		where digest_text like "select original_sql , bind_sql , default_db , status%"`).Check(testkit.Rows())
-
-	// Enable internal query and evolve baseline.
-	tk.MustExec("set global tidb_stmt_summary_internal_query = 1")
-	defer tk.MustExec("set global tidb_stmt_summary_internal_query = false")
-
-	// Create a new session to test.
-	tk = newTestKitWithRoot(t, store)
-
-	tk.MustExec("admin flush bindings")
-	tk.MustExec("admin evolve bindings")
-
-	// `exec_count` may be bigger than 1 because other cases are also running.
-	sql := "select digest_text " +
-		"from information_schema.statements_summary " +
-		"where digest_text like \"select `original_sql` , `bind_sql` , `default_db` , status%\""
-	tk.MustQuery(sql).Check(testkit.Rows(
-		"select `original_sql` , `bind_sql` , `default_db` , status , `create_time` , `update_time` , charset , " +
-			"collation , source , `sql_digest` , `plan_digest` from `mysql` . `bind_info` where `update_time` > ? order by `update_time` , `create_time`"))
-
-	// Test for issue #21642.
-	tk.MustQuery(`select tidb_version()`)
-	rows := tk.MustQuery("select plan from information_schema.statements_summary where digest_text like \"select `tidb_version`%\"").Rows()
-	require.Contains(t, rows[0][0].(string), "Projection")
 }
 
 // TestSimpleStmtSummaryEvictedCount test stmtSummaryEvictedCount

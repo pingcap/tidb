@@ -379,8 +379,8 @@ func TestLastQueryInfo(t *testing.T) {
 	checkMatch := func(actual []string, expected []interface{}) bool {
 		return strings.Contains(actual[0], expected[0].(string))
 	}
-	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"last_ru_consumption":15`), checkMatch)
+	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"ru_consumption":15`), checkMatch)
 	tk.MustExec("select a from t where a = 1")
-	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"last_ru_consumption":27`), checkMatch)
-	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"last_ru_consumption":30`), checkMatch)
+	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"ru_consumption":27`), checkMatch)
+	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"ru_consumption":30`), checkMatch)
 }

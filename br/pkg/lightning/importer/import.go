@@ -209,10 +209,9 @@ type Controller struct {
 	pdCli         pd.Client
 	pdHTTPCli     pdhttp.Client
 
-	alterTableLock sync.Mutex
-	sysVars        map[string]string
-	tls            *common.TLS
-	checkTemplate  Template
+	sysVars       map[string]string
+	tls           *common.TLS
+	checkTemplate Template
 
 	errorSummaries errorSummaries
 
