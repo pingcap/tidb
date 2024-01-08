@@ -93,15 +93,15 @@ func TestModifyColumnReorgInfo(t *testing.T) {
 			}
 			currJob = job
 			var (
-				newCol                *model.ColumnInfo
-				oldColName            *model.CIStr
-				modifyColumnTp        byte
-				updatedAutoRandomBits uint64
-				changingCol           *model.ColumnInfo
-				changingIdxs          []*model.IndexInfo
+				_newCol                *model.ColumnInfo
+				_oldColName            *model.CIStr
+				_pos                   = &ast.ColumnPosition{}
+				_modifyColumnTp        byte
+				_updatedAutoRandomBits uint64
+				changingCol            *model.ColumnInfo
+				changingIdxs           []*model.IndexInfo
 			)
-			pos := &ast.ColumnPosition{}
-			checkErr = job.DecodeArgs(&newCol, &oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits, &changingCol, &changingIdxs)
+			checkErr = job.DecodeArgs(&_newCol, &_oldColName, _pos, &_modifyColumnTp, &_updatedAutoRandomBits, &changingCol, &changingIdxs)
 			elements = ddl.BuildElements(changingCol, changingIdxs)
 		}
 		if job.Type == model.ActionAddIndex {
