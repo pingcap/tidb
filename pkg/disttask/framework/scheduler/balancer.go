@@ -147,30 +147,30 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 	subtasksNeedSchedule := make([]*proto.Subtask, 0)
 	remainder := averageSubtaskRemainder
 	executorWithOneMoreSubtask := make(map[string]struct{}, remainder)
-	for k, v := range executorSubtasks {
-		if _, ok := adjustedNodeMap[k]; !ok {
+	for node, sts := range executorSubtasks {
+		if _, ok := adjustedNodeMap[node]; !ok {
 			// dead node or not have enough slots
-			subtasksNeedSchedule = append(subtasksNeedSchedule, v...)
-			delete(executorSubtasks, k)
+			subtasksNeedSchedule = append(subtasksNeedSchedule, sts...)
+			delete(executorSubtasks, node)
 			continue
 		}
 		if remainder > 0 {
 			// first remainder nodes will get 1 more subtask.
-			if len(v) >= averageSubtaskCnt+1 {
-				needScheduleCnt := len(v) - (averageSubtaskCnt + 1)
+			if len(sts) >= averageSubtaskCnt+1 {
+				needScheduleCnt := len(sts) - (averageSubtaskCnt + 1)
 				// running subtasks are never balanced.
-				needScheduleCnt = min(executorPendingCnts[k], needScheduleCnt)
-				subtasksNeedSchedule = append(subtasksNeedSchedule, v[len(v)-needScheduleCnt:]...)
-				executorSubtasks[k] = v[:len(v)-needScheduleCnt]
+				needScheduleCnt = min(executorPendingCnts[node], needScheduleCnt)
+				subtasksNeedSchedule = append(subtasksNeedSchedule, sts[len(sts)-needScheduleCnt:]...)
+				executorSubtasks[node] = sts[:len(sts)-needScheduleCnt]
 
-				executorWithOneMoreSubtask[k] = struct{}{}
+				executorWithOneMoreSubtask[node] = struct{}{}
 				remainder--
 			}
-		} else if len(v) > averageSubtaskCnt {
+		} else if len(sts) > averageSubtaskCnt {
 			// running subtasks are never balanced.
-			cnt := min(executorPendingCnts[k], len(v)-averageSubtaskCnt)
-			subtasksNeedSchedule = append(subtasksNeedSchedule, v[len(v)-cnt:]...)
-			executorSubtasks[k] = v[:len(v)-cnt]
+			cnt := min(executorPendingCnts[node], len(sts)-averageSubtaskCnt)
+			subtasksNeedSchedule = append(subtasksNeedSchedule, sts[len(sts)-cnt:]...)
+			executorSubtasks[node] = sts[:len(sts)-cnt]
 		}
 	}
 	if len(subtasksNeedSchedule) == 0 {
@@ -206,6 +206,7 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 
 func (b *balancer) updateUsedNodes(subtasks []*proto.Subtask) {
 	used := make(map[string]int, len(b.currUsedSlots))
+	// see slotManager.alloc in task executor.
 	for _, st := range subtasks {
 		if _, ok := used[st.ExecID]; !ok {
 			used[st.ExecID] = st.Concurrency
