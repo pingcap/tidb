@@ -111,7 +111,7 @@ type Client struct {
 	keepaliveConf keepalive.ClientParameters
 
 	concurrencyPerStore uint
-	databases           map[string]*utils.Database
+	databases           map[string]*metautil.Database
 	ddlJobs             []*model.Job
 
 	// store tables need to rebase info like auto id and random id and so on after create table
@@ -583,7 +583,7 @@ func (rc *Client) InitBackupMeta(
 	backend *backuppb.StorageBackend,
 	reader *metautil.MetaReader) error {
 	if rc.needLoadSchemas(backupMeta) {
-		databases, err := utils.LoadBackupTables(c, reader)
+		databases, err := metautil.LoadBackupTables(c, reader)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -777,8 +777,8 @@ func (rc *Client) GetPlacementRules(ctx context.Context, pdAddrs []string) ([]pd
 }
 
 // GetDatabases returns all databases.
-func (rc *Client) GetDatabases() []*utils.Database {
-	dbs := make([]*utils.Database, 0, len(rc.databases))
+func (rc *Client) GetDatabases() []*metautil.Database {
+	dbs := make([]*metautil.Database, 0, len(rc.databases))
 	for _, db := range rc.databases {
 		dbs = append(dbs, db)
 	}
@@ -786,7 +786,7 @@ func (rc *Client) GetDatabases() []*utils.Database {
 }
 
 // GetDatabase returns a database by name.
-func (rc *Client) GetDatabase(name string) *utils.Database {
+func (rc *Client) GetDatabase(name string) *metautil.Database {
 	return rc.databases[name]
 }
 
@@ -1836,10 +1836,17 @@ func (rc *Client) execChecksum(
 	return nil
 }
 
-func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *CreatedTable, errCh chan<- error) chan *CreatedTable {
+func (rc *Client) GoUpdateMetaAndLoadStats(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	cipher *backuppb.CipherInfo,
+	inCh <-chan *CreatedTable,
+	errCh chan<- error,
+	statsConcurrency uint,
+) chan *CreatedTable {
 	log.Info("Start to update meta then load stats")
 	outCh := DefaultOutputTableChan()
-	workers := utils.NewWorkerPool(16, "UpdateStats")
+	workers := utils.NewWorkerPool(statsConcurrency, "UpdateStats")
 	// The rc.db is not thread safe
 	var updateMetaLock sync.Mutex
 
@@ -1874,6 +1881,20 @@ func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *Cre
 				log.Error("analyze table failed", zap.Any("table", oldTable.Stats), zap.Error(err))
 			}
 			log.Info("restore stat done",
+				zap.Stringer("table", oldTable.Info.Name),
+				zap.Stringer("db", oldTable.DB.Name),
+				zap.Duration("cost", time.Since(start)))
+		} else if oldTable.StatsFileIndexes != nil {
+			log.Info("start to load statistic data for each partition",
+				zap.Int64("old id", oldTable.Info.ID),
+				zap.Int64("new id", tbl.Table.ID),
+			)
+			start := time.Now()
+			rewriteIDMap := getTableIDMap(tbl.Table, tbl.OldTable.Info)
+			if err := metautil.RestoreStats(ctx, s, cipher, rc.statsHandler, tbl.Table, oldTable.StatsFileIndexes, rewriteIDMap); err != nil {
+				log.Error("analyze table failed", zap.Any("table", oldTable.StatsFileIndexes), zap.Error(err))
+			}
+			log.Info("restore statistic data done",
 				zap.Stringer("table", oldTable.Info.Name),
 				zap.Stringer("db", oldTable.DB.Name),
 				zap.Duration("cost", time.Since(start)))
@@ -2760,7 +2781,7 @@ func initFullBackupTables(
 	// read full backup databases to get map[table]table.Info
 	reader := metautil.NewMetaReader(backupMeta, s, nil)
 
-	databases, err := utils.LoadBackupTables(ctx, reader)
+	databases, err := metautil.LoadBackupTables(ctx, reader)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3739,7 +3760,7 @@ func (rc *Client) RangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecord
 }
 
 // MockClient create a fake client used to test.
-func MockClient(dbs map[string]*utils.Database) *Client {
+func MockClient(dbs map[string]*metautil.Database) *Client {
 	return &Client{databases: dbs}
 }
 

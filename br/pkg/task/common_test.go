@@ -214,6 +214,7 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 			ResetSysUsers:             []string{"cloud_admin", "root"}},
 		NoSchema:            false,
 		PDConcurrency:       0x1,
+		StatsConcurrency:    0xc,
 		BatchFlushInterval:  16000000000,
 		DdlBatchSize:        0x80,
 		WithPlacementPolicy: "STRICT",

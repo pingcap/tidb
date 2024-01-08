@@ -52,6 +52,8 @@ const (
 	FlagMergeRegionKeyCount = "merge-region-key-count"
 	// FlagPDConcurrency controls concurrency pd-relative operations like split & scatter.
 	FlagPDConcurrency = "pd-concurrency"
+	// FlagStatsConcurrency controls concurrency to restore statistic.
+	FlagStatsConcurrency = "stats-concurrency"
 	// FlagBatchFlushInterval controls after how long the restore batch would be auto sended.
 	FlagBatchFlushInterval = "batch-flush-interval"
 	// FlagDdlBatchSize controls batch ddl size to create a batch of tables
@@ -82,6 +84,7 @@ const (
 	defaultRestoreConcurrency = 128
 	defaultPiTRConcurrency    = 16
 	defaultPDConcurrency      = 1
+	defaultStatsConcurrency   = 12
 	defaultBatchFlushInterval = 16 * time.Second
 	defaultFlagDdlBatchSize   = 128
 	resetSpeedLimitRetryTimes = 3
@@ -146,6 +149,8 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 		"the threshold of merging small regions (Default 960_000, region split key count)")
 	flags.Uint(FlagPDConcurrency, defaultPDConcurrency,
 		"concurrency pd-relative operations like split & scatter.")
+	flags.Uint(FlagStatsConcurrency, defaultStatsConcurrency,
+		"concurrency to restore statistic")
 	flags.Duration(FlagBatchFlushInterval, defaultBatchFlushInterval,
 		"after how long a restore batch would be auto sent.")
 	flags.Uint(FlagDdlBatchSize, defaultFlagDdlBatchSize,
@@ -157,6 +162,7 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(FlagMergeRegionSizeBytes)
 	_ = flags.MarkHidden(FlagMergeRegionKeyCount)
 	_ = flags.MarkHidden(FlagPDConcurrency)
+	_ = flags.MarkHidden(FlagStatsConcurrency)
 	_ = flags.MarkHidden(FlagBatchFlushInterval)
 	_ = flags.MarkHidden(FlagDdlBatchSize)
 }
@@ -201,6 +207,7 @@ type RestoreConfig struct {
 
 	NoSchema           bool          `json:"no-schema" toml:"no-schema"`
 	PDConcurrency      uint          `json:"pd-concurrency" toml:"pd-concurrency"`
+	StatsConcurrency   uint          `json:"stats-concurrency" toml:"stats-concurrency"`
 	BatchFlushInterval time.Duration `json:"batch-flush-interval" toml:"batch-flush-interval"`
 	// DdlBatchSize use to define the size of batch ddl to create tables
 	DdlBatchSize uint `json:"ddl-batch-size" toml:"ddl-batch-size"`
@@ -333,6 +340,10 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagPDConcurrency)
 	}
+	cfg.StatsConcurrency, err = flags.GetUint(FlagStatsConcurrency)
+	if err != nil {
+		return errors.Annotatef(err, "failed to get flag %s", FlagStatsConcurrency)
+	}
 	cfg.BatchFlushInterval, err = flags.GetDuration(FlagBatchFlushInterval)
 	if err != nil {
 		return errors.Annotatef(err, "failed to get flag %s", FlagBatchFlushInterval)
@@ -446,6 +457,9 @@ func (cfg *RestoreConfig) Adjust() {
 	}
 	if cfg.PDConcurrency == 0 {
 		cfg.PDConcurrency = defaultPDConcurrency
+	}
+	if cfg.StatsConcurrency == 0 {
+		cfg.StatsConcurrency = defaultStatsConcurrency
 	}
 	if cfg.BatchFlushInterval == 0 {
 		cfg.BatchFlushInterval = defaultBatchFlushInterval
@@ -725,6 +739,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if err != nil {
 		return errors.Trace(err)
 	}
+
 	backupVersion := version.NormalizeBackupVersion(backupMeta.ClusterVersion)
 	if cfg.CheckRequirements && backupVersion != nil {
 		if versionErr := version.CheckClusterVersion(ctx, mgr.GetPDClient(), version.CheckVersionForBackup(backupVersion)); versionErr != nil {
@@ -1025,7 +1040,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	if cfg.Checksum {
 		afterTableCheckesumedCh := client.GoValidateChecksum(
 			ctx, afterTableRestoredCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
-		afterTableLoadStatsCh := client.GoUpdateMetaAndLoadStats(ctx, afterTableCheckesumedCh, errCh)
+		afterTableLoadStatsCh := client.GoUpdateMetaAndLoadStats(ctx, s, &cfg.CipherInfo, afterTableCheckesumedCh, errCh, cfg.StatsConcurrency)
 		postHandleCh = afterTableLoadStatsCh
 	}
 
@@ -1112,7 +1127,7 @@ func dropToBlackhole(
 func filterRestoreFiles(
 	client *restore.Client,
 	cfg *RestoreConfig,
-) (files []*backuppb.File, tables []*metautil.Table, dbs []*utils.Database) {
+) (files []*backuppb.File, tables []*metautil.Table, dbs []*metautil.Database) {
 	for _, db := range client.GetDatabases() {
 		dbName := db.Info.Name.O
 		if name, ok := utils.GetSysDBName(db.Info.Name); utils.IsSysDB(name) && ok {
