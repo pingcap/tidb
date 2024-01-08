@@ -1314,3 +1314,21 @@ func TestIssue40158(t *testing.T) {
 	tk.MustExec("insert into t1 values (1, null);")
 	tk.MustQuery("select * from t1 where c1 is null and _id < 1;").Check(testkit.Rows())
 }
+
+func TestIssue49902(t *testing.T) {
+	store, clean := testkit.CreateMockStore(t)
+	defer clean()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_max_chunk_size = 32;")
+	tk.MustExec("drop table if exists t, s;")
+	tk.MustExec("CREATE TABLE `t` (`c` char(1)) COLLATE=utf8_general_ci ;")
+	tk.MustExec("insert into t values(\"V\"),(\"v\");")
+	tk.MustExec("insert into t values(\"V\"),(\"v\"),(\"v\");")
+	tk.MustExec("CREATE TABLE `s` (`col_61` int);")
+	tk.MustExec("insert into s values(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1);")
+	tk.MustExec("insert into s values(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1);")
+	tk.MustQuery("SELECT /*+ stream_agg()*/ count(`t`.`c`) FROM (`s`) JOIN `t` GROUP BY `t`.`c`;").Check(testkit.Rows("170"))
+	tk.MustQuery("SELECT count(`t`.`c`) FROM (`s`) JOIN `t` GROUP BY `t`.`c`;").Check(testkit.Rows("170"))
+	tk.MustExec("set @@tidb_max_chunk_size = default;")
+}
