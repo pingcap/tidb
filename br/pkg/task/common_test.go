@@ -207,9 +207,10 @@ func expectedDefaultRestoreConfig() RestoreConfig {
 	return RestoreConfig{
 		Config: defaultConfig,
 		RestoreCommonConfig: RestoreCommonConfig{Online: false,
+			Granularity:               "fine-grained",
 			MergeSmallRegionSizeBytes: 0x6000000,
 			MergeSmallRegionKeyCount:  0xea600,
-			WithSysTable:              false,
+			WithSysTable:              true,
 			ResetSysUsers:             []string{"cloud_admin", "root"}},
 		NoSchema:            false,
 		PDConcurrency:       0x1,
