@@ -505,22 +505,18 @@ func rebuildRange(p Plan) error {
 		}
 		var partDef *model.PartitionDefinition
 		var isTableDual bool
-		// TODO: Test partition pruning with _tidb_rowid!
 		if x.HandleConstant != nil {
-			// Integer PK <=> Handle
 			dVal, err := convertConstant2Datum(sctx, x.HandleConstant, x.handleFieldType)
 			if err != nil {
 				return err
 			}
 
-			// TODO: Also check non-clustered partitioned tables?
 			if x.PartitionDef != nil {
 				// Single column PK <=> Must be the partitioning columns!
 				if !x.TblInfo.PKIsHandle {
 					return errors.New("point get for partition table can not use plan cache, PK is not handle")
 				}
 				// Re-calculate the pruning!
-				// TODO: Check how expressions are handled...
 				partDef, _, _, isTableDual = getPartitionDef(sctx, x.TblInfo, []nameValuePair{{x.TblInfo.Columns[x.partitionColumnPos].Name.L, &x.TblInfo.Columns[x.partitionColumnPos].FieldType, *dVal, x.HandleConstant}})
 				// TODO: Support isTableDual?
 				if isTableDual {

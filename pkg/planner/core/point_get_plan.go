@@ -645,7 +645,7 @@ func newBatchPointGetPlan(
 		if partitionExpr == nil {
 			return nil
 		}
-
+		// TODO: Support KEY partitioning! (it does not have an expression, just a column list...)
 		if partitionExpr.Expr == nil {
 			return nil
 		}
@@ -1878,7 +1878,9 @@ func buildHandleCols(ctx sessionctx.Context, tbl *model.TableInfo, schema *expre
 	return &IntHandleCols{col: handleCol}
 }
 
-// TODO: Can this be replaced by the generic PartitionPruning function?
+// This is an optimized (smaller version) of the full PartitionPruning function.
+// It is used for TryFastPlan using AST representation, instead of model representations.
+// Meaning it does only support a small subset of PartitionPruning.
 func getPartitionDef(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) (*model.PartitionDefinition, int, int, bool) {
 	partitionExpr := getPartitionExpr(ctx, tbl)
 	if partitionExpr == nil {
