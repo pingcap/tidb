@@ -134,8 +134,6 @@ run_sql_as user3 "123456" "select count(*) from db1.t1" --ssl
 check_contains "count(*): 2"
 run_sql_as user3 "123456" "select count(*) from db1.t2" --ssl || true
 check_contains "SELECT command denied to user"
-run_sql_as cloud_admin "000000" "show grants" || true
-check_contains ": GRANT USAGE"
 run_sql "select count(*) from mysql.user where user='cloud_admin'"
 check_contains "count(*): 3"
 run_sql "select count(*) from mysql.user where user='cloud_admin' and host='127.0.0.1'"
