@@ -30,9 +30,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/zeropool"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/zeropool"
 	"github.com/spkg/bom"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -202,6 +202,7 @@ func (parser *blockParser) SetPos(pos int64, rowID int64) error {
 }
 
 // ScannedPos gets the read position of current reader.
+// this always returns the position of the underlying file, either compressed or not.
 func (parser *blockParser) ScannedPos() (int64, error) {
 	return parser.reader.Seek(0, io.SeekCurrent)
 }
@@ -669,9 +670,9 @@ func OpenReader(
 		if err2 != nil {
 			return nil, err2
 		}
-		reader, err = storage.WithCompression(store, compressType, decompressCfg).Open(ctx, fileMeta.Path)
+		reader, err = storage.WithCompression(store, compressType, decompressCfg).Open(ctx, fileMeta.Path, nil)
 	default:
-		reader, err = store.Open(ctx, fileMeta.Path)
+		reader, err = store.Open(ctx, fileMeta.Path, nil)
 	}
 	return
 }

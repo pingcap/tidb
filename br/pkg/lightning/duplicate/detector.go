@@ -22,7 +22,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/util/extsort"
+	"github.com/pingcap/tidb/pkg/util/extsort"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )

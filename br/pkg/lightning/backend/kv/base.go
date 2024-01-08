@@ -24,15 +24,15 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/redact"
-	"github.com/pingcap/tidb/expression"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -270,7 +270,7 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 		// if MutRowFromDatums sees a nil it won't initialize the underlying storage and cause SetDatum to panic.
 		value = types.GetMinValue(&col.FieldType)
 	case isBadNullValue:
-		err = col.HandleBadNull(&value, e.SessionCtx.Vars.StmtCtx, 0)
+		err = col.HandleBadNull(e.SessionCtx.Vars.StmtCtx.ErrCtx(), &value, 0)
 	default:
 		// copy from the following GetColDefaultValue function, when this is true it will use getColDefaultExprValue
 		if col.DefaultIsExpr {
@@ -353,7 +353,7 @@ func evalGeneratedColumns(se *Session, record []types.Datum, cols []*table.Colum
 	mutRow := chunk.MutRowFromDatums(record)
 	for _, gc := range genCols {
 		col := cols[gc.Index].ToInfo()
-		evaluated, err := gc.Expr.Eval(mutRow.ToRow())
+		evaluated, err := gc.Expr.Eval(se, mutRow.ToRow())
 		if err != nil {
 			return col, err
 		}

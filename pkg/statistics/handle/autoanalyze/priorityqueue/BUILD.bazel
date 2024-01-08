@@ -1,0 +1,20 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "priorityqueue",
+    srcs = [
+        "job.go",
+        "queue.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "priorityqueue_test",
+    timeout = "short",
+    srcs = ["queue_test.go"],
+    embed = [":priorityqueue"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

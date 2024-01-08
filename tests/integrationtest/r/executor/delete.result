@@ -1,0 +1,124 @@
+drop table if exists t, t1;
+create table t(a int);
+create table t1(a int);
+insert into t values(1);
+insert into t1 values(1);
+delete a from t a where exists (select 1 from t1 where t1.a=a.a);
+select * from t;
+a
+insert into t values(1), (2);
+insert into t1 values(2);
+prepare stmt from 'delete a from t a where exists (select 1 from t1 where a.a=t1.a and t1.a=?)';
+set @a=1;
+execute stmt using @a;
+select * from t;
+a
+2
+drop table if exists delete_test;
+drop view if exists v;
+drop sequence if exists seq;
+create table delete_test(id int not null default 1, name varchar(255), PRIMARY KEY(id));
+insert INTO delete_test VALUES (1, "hello");
+insert into delete_test values (2, "hello");
+update delete_test set name = "abc" where id = 2;
+affected rows: 1
+info: Rows matched: 1  Changed: 1  Warnings: 0
+delete from delete_test where id = 2 limit 1;
+affected rows: 1
+info: 
+delete from delete_test where 0;
+affected rows: 0
+info: 
+insert into delete_test values (2, 'abc');
+delete from delete_test where delete_test.id = 2 limit 1;
+affected rows: 1
+info: 
+begin;
+SELECT * from delete_test limit 2;
+id	name
+1	hello
+commit;
+insert into delete_test values (2, 'abc');
+delete from delete_test where id = (select '2a');
+Error 1292 (22007): Truncated incorrect DOUBLE value: '2a'
+delete ignore from delete_test where id = (select '2a');
+affected rows: 1
+info: 
+SHOW WARNINGS;
+Level	Code	Message
+Warning	1292	Truncated incorrect DOUBLE value: '2a'
+Warning	1292	Truncated incorrect DOUBLE value: '2a'
+delete from delete_test;
+affected rows: 1
+info: 
+create view v as select * from delete_test;
+delete from v where name = 'aaa';
+Error 1105 (HY000): delete view v is not supported now
+drop view v;
+create sequence seq;
+delete from seq;
+Error 1105 (HY000): delete sequence seq is not supported now
+drop sequence seq;
+drop table if exists t1, t2;
+create table t1 (c1 int, c2 int, index (c1));
+create table t2 (c1 int, c2 int);
+insert into t1 values (1, 1), (2, 2);
+delete from t1 where t1.c1 = 1;
+affected rows: 1
+info: 
+delete from t1 where t1.c2 = 2;
+affected rows: 1
+info: 
+select * from t1;
+c1	c2
+insert into t1 values (1, 3);
+delete from t1 as a where a.c1 = 1;
+affected rows: 1
+info: 
+insert into t1 values (1, 1), (2, 2);
+insert into t2 values (2, 1), (3,1);
+delete t1, t2 from t1 join t2 where t1.c1 = t2.c2;
+affected rows: 3
+info: 
+insert into t2 values (2, 1), (3,1);
+delete a, b from t1 as a join t2 as b where a.c2 = b.c1;
+affected rows: 2
+info: 
+delete t1, t2 from t1 as a join t2 as b where a.c2 = b.c1;
+Error 1109 (42S02): Unknown table 't1' in MULTI DELETE
+drop table if exists t1, t2, t3;
+create table t1 (id int, data int);
+insert into t1 values (11, 121), (12, 122), (13, 123);
+affected rows: 3
+info: Records: 3  Duplicates: 0  Warnings: 0
+create table t2 (id int, data int);
+insert into t2 values (11, 221), (22, 222), (23, 223);
+affected rows: 3
+info: Records: 3  Duplicates: 0  Warnings: 0
+create table t3 (id int, data int);
+insert into t3 values (11, 321), (22, 322), (23, 323);
+affected rows: 3
+info: Records: 3  Duplicates: 0  Warnings: 0
+delete t1, t2 from t1 inner join t2 inner join t3 where t1.id=t2.id and t2.id=t3.id;
+affected rows: 2
+info: 
+select * from t3;
+id	data
+11	321
+22	322
+23	323
+drop table if exists t;
+create table t (id char(255));
+insert into t values ('18446744073709551616');
+delete from t where cast(id as unsigned) = 1;
+Error 1690 (22003): BIGINT value is out of range in '18446744073709551616'
+update t set id = '1' where cast(id as unsigned) = 1;
+Error 1690 (22003): BIGINT value is out of range in '18446744073709551616'
+set sql_mode=''
+delete from t where cast(id as unsigned) = 1;
+Level	Code	Message
+Warning	1292	Truncated incorrect INTEGER value: '18446744073709551616'
+update t set id = '1' where cast(id as unsigned) = 1;
+Level	Code	Message
+Warning	1292	Truncated incorrect INTEGER value: '18446744073709551616'
+set sql_mode=DEFAULT

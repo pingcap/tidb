@@ -18,7 +18,7 @@ import (
 	"math"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/pkg/util/codec"
 )
 
 // KeyAdapter is used to encode and decode keys so that duplicate key can be

@@ -1,0 +1,52 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "runtime",
+    srcs = [
+        "cache.go",
+        "runtime.go",
+        "worker.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/timer/runtime",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/timer/api",
+        "//pkg/timer/metrics",
+        "//pkg/util",
+        "//pkg/util/logutil",
+        "//pkg/util/timeutil",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_prometheus_client_golang//prometheus",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "runtime_test",
+    timeout = "short",
+    srcs = [
+        "cache_test.go",
+        "main_test.go",
+        "runtime_test.go",
+        "worker_test.go",
+    ],
+    embed = [":runtime"],
+    flaky = True,
+    race = "on",
+    shard_count = 23,
+    deps = [
+        "//pkg/testkit/testsetup",
+        "//pkg/timer/api",
+        "//pkg/util",
+        "//pkg/util/mock",
+        "//pkg/util/timeutil",
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_robfig_cron_v3//:cron",
+        "@com_github_stretchr_testify//mock",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

@@ -28,9 +28,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	filter "github.com/pingcap/tidb/util/table-filter"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	pd "github.com/tikv/pd/client"
@@ -80,6 +80,7 @@ const (
 	flagDryRun            = "dry-run"
 	// TODO used for local test, should be removed later
 	flagSkipAWS                       = "skip-aws"
+	flagUseFSR                        = "use-fsr"
 	flagCloudAPIConcurrency           = "cloud-api-concurrency"
 	flagWithSysTable                  = "with-sys-table"
 	flagOperatorPausedGCAndSchedulers = "operator-paused-gc-and-scheduler"
@@ -208,6 +209,7 @@ type Config struct {
 	TLS                 TLSConfig `json:"tls" toml:"tls"`
 	RateLimit           uint64    `json:"rate-limit" toml:"rate-limit"`
 	ChecksumConcurrency uint      `json:"checksum-concurrency" toml:"checksum-concurrency"`
+	TableConcurrency    uint      `json:"table-concurrency" toml:"table-concurrency"`
 	Concurrency         uint32    `json:"concurrency" toml:"concurrency"`
 	Checksum            bool      `json:"checksum" toml:"checksum"`
 	SendCreds           bool      `json:"send-credentials-to-tikv" toml:"send-credentials-to-tikv"`
@@ -268,8 +270,7 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 	flags.String(flagCA, "", "CA certificate path for TLS connection")
 	flags.String(flagCert, "", "Certificate path for TLS connection")
 	flags.String(flagKey, "", "Private key path for TLS connection")
-	flags.Uint(flagChecksumConcurrency, variable.DefChecksumTableConcurrency, "The concurrency of table checksumming")
-	_ = flags.MarkHidden(flagChecksumConcurrency)
+	flags.Uint(flagChecksumConcurrency, variable.DefChecksumTableConcurrency, "The concurrency of checksumming in one table")
 
 	flags.Uint64(flagRateLimit, unlimited, "The rate limit of the task, MB/s per node")
 	flags.Bool(flagChecksum, true, "Run checksum at end of task")
@@ -328,6 +329,16 @@ func HiddenFlagsForStream(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagSwitchModeInterval)
 
 	storage.HiddenFlagsForStream(flags)
+}
+
+func DefaultConfig() Config {
+	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
+	DefineCommonFlags(fs)
+	cfg := Config{}
+	if err := cfg.ParseFromFlags(fs); err != nil {
+		log.Panic("infallible operation failed.", zap.Error(err))
+	}
+	return cfg
 }
 
 // DefineDatabaseFlags defines the required --db flag for `db` subcommand.

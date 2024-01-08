@@ -1,0 +1,19 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "multivaluedindex_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "multi_valued_index_test.go",
+    ],
+    flaky = True,
+    deps = [
+        "//pkg/infoschema",
+        "//pkg/parser/model",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

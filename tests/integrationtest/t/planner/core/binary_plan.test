@@ -1,0 +1,10 @@
+# TestInvalidDecodeBinaryPlan
+select tidb_decode_binary_plan('some random bytes');
+show warnings;
+## base64.StdEncoding.EncodeToString("some random bytes")
+select tidb_decode_binary_plan('c29tZSByYW5kb20gYnl0ZXM=');
+show warnings;
+## base64.StdEncoding.EncodeToString(snappy.Encode(nil, "some random bytes"))
+select tidb_decode_binary_plan('EUBzb21lIHJhbmRvbSBieXRlcw==');
+show warnings;
+

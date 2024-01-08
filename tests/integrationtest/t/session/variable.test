@@ -1,0 +1,180 @@
+# TestDefaultWeekFormat checks for issue #21510.
+set @@default_week_format = 4;
+select week('2020-02-02'), @@default_week_format, week('2020-02-02');
+set @@default_week_format = default;
+
+# TestIssue21944
+-- error 1238
+set @@tidb_current_ts=1;
+
+# TestIssue21943
+-- error 1238
+set @@last_plan_from_binding='123';
+-- error 1238
+set @@last_plan_from_cache='123';
+
+# TestGlobalVarCollationServer
+set @@global.collation_server=utf8mb4_general_ci;
+show global variables like 'collation_server';
+connect (conn1, localhost, root,, session__variable);
+connection conn1;
+show global variables like 'collation_server';
+show variables like 'collation_server';
+disconnect conn1;
+set @@global.collation_server=default;
+
+# TestMemoryUsageAlarmVariable
+set @@global.tidb_memory_usage_alarm_ratio=1;
+select @@global.tidb_memory_usage_alarm_ratio;
+set @@global.tidb_memory_usage_alarm_ratio=0;
+select @@global.tidb_memory_usage_alarm_ratio;
+set @@global.tidb_memory_usage_alarm_ratio=0.7;
+select @@global.tidb_memory_usage_alarm_ratio;
+--enable_warnings
+set @@global.tidb_memory_usage_alarm_ratio=1.1;
+--disable_warnings
+select @@global.tidb_memory_usage_alarm_ratio;
+--enable_warnings
+set @@global.tidb_memory_usage_alarm_ratio=-1;
+--disable_warnings
+select @@global.tidb_memory_usage_alarm_ratio;
+-- error 1229
+set @@session.tidb_memory_usage_alarm_ratio=0.8;
+set @@global.tidb_memory_usage_alarm_keep_record_num=1;
+select @@global.tidb_memory_usage_alarm_keep_record_num;
+set @@global.tidb_memory_usage_alarm_keep_record_num=100;
+select @@global.tidb_memory_usage_alarm_keep_record_num;
+--enable_warnings
+set @@global.tidb_memory_usage_alarm_keep_record_num=0;
+--disable_warnings
+select @@global.tidb_memory_usage_alarm_keep_record_num;
+--enable_warnings
+set @@global.tidb_memory_usage_alarm_keep_record_num=10001;
+--disable_warnings
+select @@global.tidb_memory_usage_alarm_keep_record_num;
+set @@global.tidb_memory_usage_alarm_keep_record_num=default;
+set @@global.tidb_memory_usage_alarm_ratio=default;
+
+# TestSelectLockInShare
+DROP TABLE IF EXISTS t_sel_in_share;
+CREATE TABLE t_sel_in_share (id int DEFAULT NULL);
+insert into t_sel_in_share values (11);
+-- error 1235
+select * from t_sel_in_share lock in share mode;
+set @@tidb_enable_noop_functions = 1;
+select * from t_sel_in_share lock in share mode;
+DROP TABLE t_sel_in_share;
+set @@tidb_enable_noop_functions = default;
+
+# TestEnablePartition
+set tidb_enable_table_partition=off;
+show variables like 'tidb_enable_table_partition';
+set global tidb_enable_table_partition = on;
+show variables like 'tidb_enable_table_partition';
+show global variables like 'tidb_enable_table_partition';
+set tidb_enable_list_partition=off;
+show variables like 'tidb_enable_list_partition';
+set global tidb_enable_list_partition=on;
+show global variables like 'tidb_enable_list_partition';
+show variables like 'tidb_enable_list_partition';
+set tidb_enable_list_partition=1;
+show variables like 'tidb_enable_list_partition';
+set tidb_enable_list_partition=on;
+show variables like 'tidb_enable_list_partition';
+show global variables like 'tidb_enable_list_partition';
+set global tidb_enable_list_partition=off;
+show global variables like 'tidb_enable_list_partition';
+show variables like 'tidb_enable_list_partition';
+set tidb_enable_list_partition=off;
+show variables like 'tidb_enable_list_partition';
+set global tidb_enable_list_partition=on;
+show global variables like 'tidb_enable_list_partition';
+connect (conn1, localhost, root,, session__variable);
+connection conn1;
+show variables like 'tidb_enable_table_partition';
+show variables like 'tidb_enable_list_partition';
+disconnect conn1;
+set global tidb_enable_table_partition = default;
+
+# TestIgnoreForeignKey
+set @@foreign_key_checks=0;
+CREATE TABLE address (
+	id bigint(20) NOT NULL AUTO_INCREMENT,
+	user_id bigint(20) NOT NULL,
+	PRIMARY KEY (id),
+	CONSTRAINT FK_7rod8a71yep5vxasb0ms3osbg FOREIGN KEY (user_id) REFERENCES waimaiqa.user (id),
+	INDEX FK_7rod8a71yep5vxasb0ms3osbg (user_id) comment ''
+) ENGINE=InnoDB AUTO_INCREMENT=30 DEFAULT CHARACTER SET utf8 COLLATE utf8_general_ci ROW_FORMAT=COMPACT COMMENT='' CHECKSUM=0 DELAY_KEY_WRITE=0;
+set @@foreign_key_checks=default;
+
+# TestSysdateIsNow
+set @@tidb_sysdate_is_now=false;
+show variables like '%tidb_sysdate_is_now%';
+set @@tidb_sysdate_is_now=true;
+show variables like '%tidb_sysdate_is_now%';
+set @@tidb_sysdate_is_now=default;
+
+# TestSessionAlias
+select @@tidb_session_alias;
+--enable_warnings
+set @@tidb_session_alias='alias123';
+select @@tidb_session_alias;
+--disable_warnings
+set @@tidb_session_alias='中文';
+--enable_warnings
+select @@tidb_session_alias;
+set @@tidb_session_alias='0123456789012345678901234567890123456789012345678901234567890123456789';
+--disable_warnings
+select @@tidb_session_alias;
+--enable_warnings
+set @@tidb_session_alias='中文测试1中文测试2中文测试3中文测试4中文测试5中文测试6中文测试7中文测试8中文测试9中文测试0中文测试a中文测试b中文测试c';
+--disable_warnings
+select @@tidb_session_alias;
+--enable_warnings
+set @@tidb_session_alias='abc  ';
+--disable_warnings
+select @@tidb_session_alias;
+--enable_warnings
+set @@tidb_session_alias='abc                                                                    1';
+--disable_warnings
+select @@tidb_session_alias;
+--enable_warnings
+set @@tidb_session_alias='';
+--disable_warnings
+select @@tidb_session_alias;
+set @@tidb_session_alias=default;
+
+# TestTiDBReadStaleness
+set @@tidb_read_staleness='-5';
+set @@tidb_read_staleness='-100';
+-- error 1232
+set @@tidb_read_staleness='-5s';
+-- error 1232
+set @@tidb_read_staleness='foo';
+set @@tidb_read_staleness='';
+set @@tidb_read_staleness='0';
+set @@tidb_read_staleness=default;
+
+# TestSetGroupConcatMaxLen
+# for issue #7034
+set global group_concat_max_len = 100;
+set @@session.group_concat_max_len = 50;
+show global variables  where variable_name='group_concat_max_len';
+show session variables  where variable_name='group_concat_max_len';
+select @@group_concat_max_len;
+select @@global.group_concat_max_len;
+select @@session.group_concat_max_len;
+set @@group_concat_max_len = 1024;
+select @@group_concat_max_len;
+select @@global.group_concat_max_len;
+select @@session.group_concat_max_len;
+--enable_warnings
+set @@group_concat_max_len=1;
+--disable_warnings
+select @@group_concat_max_len;
+-- error 1232
+set @@group_concat_max_len = 18446744073709551616;
+-- error 1232
+set @@group_concat_max_len='hello';
+set global group_concat_max_len = default;
+set @@session.group_concat_max_len = default;

@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "parser_driver",
+    srcs = ["value_expr.go"],
+    importpath = "github.com/pingcap/tidb/pkg/types/parser_driver",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/ast",
+        "//pkg/parser/format",
+        "//pkg/parser/mysql",
+        "//pkg/types",
+        "//pkg/util/hack",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "parser_driver_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "value_expr_test.go",
+    ],
+    embed = [":parser_driver"],
+    flaky = True,
+    deps = [
+        "//pkg/parser/format",
+        "//pkg/testkit/testsetup",
+        "//pkg/types",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

@@ -1,0 +1,63 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "sortexec",
+    srcs = [
+        "sort.go",
+        "topn.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/executor/sortexec",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/executor/internal/exec",
+        "//pkg/expression",
+        "//pkg/planner/core",
+        "//pkg/planner/util",
+        "//pkg/sessionctx/variable",
+        "//pkg/util/chunk",
+        "//pkg/util/disk",
+        "//pkg/util/memory",
+        "//pkg/util/sqlkiller",
+        "@com_github_pingcap_failpoint//:failpoint",
+    ],
+)
+
+go_test(
+    name = "sort_exec_test",
+    timeout = "short",
+    srcs = ["sort_test.go"],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        "//pkg/config",
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit",
+        "//pkg/util",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)
+
+go_test(
+    name = "sortexec_test",
+    srcs = [
+        "benchmark_test.go",
+        "sort_spill_test.go",
+        "sort_test.go",
+    ],
+    deps = [
+        ":sortexec",
+        "//pkg/config",
+        "//pkg/executor/internal/exec",
+        "//pkg/executor/internal/testutil",
+        "//pkg/expression",
+        "//pkg/planner/util",
+        "//pkg/sessionctx/variable",
+        "//pkg/testkit",
+        "//pkg/util",
+        "//pkg/util/memory",
+        "//pkg/util/mock",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)

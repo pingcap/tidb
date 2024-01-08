@@ -16,9 +16,19 @@ error = '''
 backup range invalid
 '''
 
+["BR:Backup:ErrBackupKeyIsLocked"]
+error = '''
+backup key is locked
+'''
+
 ["BR:Backup:ErrBackupNoLeader"]
 error = '''
 backup no leader
+'''
+
+["BR:Backup:ErrBackupRegion"]
+error = '''
+backup region error
 '''
 
 ["BR:Common:ErrEnvNotSpecified"]
@@ -146,6 +156,11 @@ error = '''
 storage is not tikv
 '''
 
+["BR:KV:ErrPossibleInconsistency"]
+error = '''
+the cluster state might be inconsistent
+'''
+
 ["BR:PD:ErrPDBatchScanRegion"]
 error = '''
 batch scan region
@@ -159,6 +174,11 @@ PD invalid response
 ["BR:PD:ErrPDLeaderNotFound"]
 error = '''
 PD leader not found
+'''
+
+["BR:PD:ErrPDUknownScatterResult"]
+error = '''
+failed to wait region splitted
 '''
 
 ["BR:PD:ErrPDUpdateFailed"]
@@ -1011,6 +1031,11 @@ error = '''
 Statement is unsafe because it uses a system function that may return a different value on the slave
 '''
 
+["ddl:1681"]
+error = '''
+The ZEROFILL attribute is deprecated and will be removed in a future release. Use the LPAD function to zero-pad numbers, or store the formatted numbers in a CHAR column.
+'''
+
 ["ddl:1688"]
 error = '''
 Comment for index '%-.64s' is too long (max = %d)
@@ -1241,6 +1266,11 @@ error = '''
 Check constraint '%s' refers to non-existing column '%s'.
 '''
 
+["ddl:3822"]
+error = '''
+Duplicate check constraint name '%s'.
+'''
+
 ["ddl:3823"]
 error = '''
 Column '%s' cannot be used in a check constraint '%s': needed in a foreign key constraint referential action.
@@ -1328,7 +1358,7 @@ Unsupported clustered primary key type FLOAT/DOUBLE for TTL
 
 ["ddl:8200"]
 error = '''
-Unsupported shard_row_id_bits for table with primary key as row id
+Unsupported tidb_enable_dist_task setting. To utilize distributed task execution, please enable tidb_ddl_enable_fast_reorg first.
 '''
 
 ["ddl:8201"]
@@ -1494,6 +1524,11 @@ Job [%v] can't be resumed: %s
 ["ddl:8262"]
 error = '''
 Job [%v] has already been paused
+'''
+
+["ddl:8263"]
+error = '''
+The operation is not allowed while the bdr role of this cluster is set to %s.
 '''
 
 ["domain:8027"]
@@ -1798,12 +1833,12 @@ The FORMAT '%s' is not supported
 
 ["executor:8158"]
 error = '''
-The URI of file location is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access_key_id={your_access_key_id ID}&secret_access_key={your_secret_access_key}&session_token={your_session_token}'
+The URI of %s is invalid. Reason: %s. Please provide a valid URI, such as 's3://import/test.csv?access-key={your_access_key_id ID}&secret-access-key={your_secret_access_key}&session-token={your_session_token}'
 '''
 
 ["executor:8159"]
 error = '''
-Access to the source file has been denied. Reason: %s. Please check the URI, access key and secret access key are correct
+Access to the %s has been denied. Reason: %s. Please check the URI, access key and secret access key are correct
 '''
 
 ["executor:8160"]
@@ -1861,6 +1896,16 @@ error = '''
 BRIE Job %d not found
 '''
 
+["executor:8175"]
+error = '''
+Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=%d]
+'''
+
+["executor:8176"]
+error = '''
+Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again.[conn=%d]
+'''
+
 ["executor:8212"]
 error = '''
 Failed to split region ranges: %s
@@ -1914,6 +1959,11 @@ Illegal mix of collations (%s,%s), (%s,%s), (%s,%s) for operation '%s'
 ["expression:1271"]
 error = '''
 Illegal mix of collations for operation '%s'
+'''
+
+["expression:1305"]
+error = '''
+%s %s does not exist
 '''
 
 ["expression:1365"]
@@ -2478,7 +2528,7 @@ Argument %s of GROUPING function is not in GROUP BY
 
 ["planner:3637"]
 error = '''
-Variable '%s' cannot be set using SET_VAR hint.
+Variable '%s' might not be affected by SET_VAR hint.
 '''
 
 ["planner:8006"]
@@ -3203,7 +3253,7 @@ Bad Number
 
 ["types:8030"]
 error = '''
-Cast to signed converted positive out-of-range integer to it's negative complement
+Cast to signed converted positive out-of-range integer to its negative complement
 '''
 
 ["types:8031"]

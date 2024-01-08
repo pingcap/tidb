@@ -1,0 +1,20 @@
+[
+  {
+    "Name": "TestRuntimeFilterGenerator",
+    "Cases": [
+      "select /*+ hash_join_build(t1) */ * from t1, t2 where t1.k1=t2.k1 and t2.k2 = 1",
+      "select /*+ hash_join_build(t1) */ * from t1, t2 where t1.k1=t2.k1 and t1.k1=t2.k2",
+      "select /*+ shuffle_join(t1, t2) */ * from t1, t2 where t1.k1=t2.k1; -- Global doesn't support",
+      "select /*+ broadcast_join(t2, t1), hash_join_build(t2) */ * from t2, (select k1 from t1 group by k1) t1 where t1.k1=t2.k1; -- Global doesn't support",
+      "select /*+ broadcast_join(t1, t2), hash_join_build(t1) */ * from t1, t2 where t1.k1=t2.k1; -- t1 is build side",
+      "select * from t1_tikv as t1, t2 where t1.k1=t2.k1; -- Doesn't support hash join in root",
+      "select /*+ broadcast_join(t1, t2), hash_join_build(t1) */ * from t1, t2 where t1.k1+1=t2.k1; -- Support transform src expression t1.k1+1",
+      "select /*+ broadcast_join(t2, t1), hash_join_build(t2) */ * from t2, (select k1, k1+1 as k11 from t1) t1 where t1.k1=t2.k1; -- Only support origin column k1",
+      "select /*+ hash_join_build(t2) */ * from t2, (select k1, k1+1 as k11 from t1) t1 where t1.k11=t2.k1; -- Doesn't support transform column k11",
+      "select /*+ broadcast_join(t1, t2), hash_join_build(t1) */ * from t1, t2 where t1.k1=t2.k1+1; -- Doesn't support target expression t2.k1+1",
+      "select /*+ broadcast_join(t1, t2), hash_join_build(t1) */ * from t1 right join t2 on t1.k1=t2.k1; -- t2 side couldn't be RF target side, no RF",
+      "select /*+ broadcast_join(t1, t2), hash_join_build(t1) */ * from t1 where t1.k1 not in (select k1 from t2); -- RF could not push to t2 because of anti join",
+      "select /*+ hash_join_build(t1) */ * from t1, t2 where t1.k1<=>t2.k1; -- Doesn't support null safe eq predicate"
+    ]
+  }
+]

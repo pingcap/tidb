@@ -1,0 +1,359 @@
+set @@tidb_enable_prepared_plan_cache=true;
+drop table if exists t;
+create table t (id int, KEY id (id));
+insert into t values (1), (2), (3);
+prepare stmt from 'select * from t use index(id) where id = ?';
+execute stmt using @id;
+id
+execute stmt using @id;
+id
+set @id="1";
+execute stmt using @id;
+id
+1
+execute stmt using @id2;
+id
+execute stmt using @id;
+id
+1
+set @@tidb_enable_prepared_plan_cache=false;
+drop table if exists t;
+create table t (id int, KEY id (id));
+insert into t values (1), (2), (3);
+prepare stmt from 'select * from t use index(id) where id = ?';
+execute stmt using @id;
+id
+1
+execute stmt using @id;
+id
+1
+set @id="1";
+execute stmt using @id;
+id
+1
+execute stmt using @id2;
+id
+execute stmt using @id;
+id
+1
+set @@tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_prepared_plan_cache=true;
+drop table if exists t;
+create table t (a int, b int, index a_idx(a));
+insert into t values (1,1), (2,2), (null,3);
+select a, b from t order by b asc;
+a	b
+1	1
+2	2
+NULL	3
+prepare stmt from 'select a, b from t where ? order by b asc';
+execute stmt using @param;
+a	b
+set @param = true;
+execute stmt using @param;
+a	b
+1	1
+2	2
+NULL	3
+set @param = false;
+execute stmt using @param;
+a	b
+set @param = 1;
+execute stmt using @param;
+a	b
+1	1
+2	2
+NULL	3
+set @param = 0;
+execute stmt using @param;
+a	b
+set @@tidb_enable_prepared_plan_cache=false;
+drop table if exists t;
+create table t (a int, b int, index a_idx(a));
+insert into t values (1,1), (2,2), (null,3);
+select a, b from t order by b asc;
+a	b
+1	1
+2	2
+NULL	3
+prepare stmt from 'select a, b from t where ? order by b asc';
+execute stmt using @param;
+a	b
+set @param = true;
+execute stmt using @param;
+a	b
+1	1
+2	2
+NULL	3
+set @param = false;
+execute stmt using @param;
+a	b
+set @param = 1;
+execute stmt using @param;
+a	b
+1	1
+2	2
+NULL	3
+set @param = 0;
+execute stmt using @param;
+a	b
+set @@tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_prepared_plan_cache=true;
+drop table if exists t;
+create table t(data mediumblob);
+prepare stmt from 'insert t (data) values (?)';
+set @a = 'a';
+execute stmt using @a;
+set @b = 'aaaaaaaaaaaaaaaaaa';
+execute stmt using @b;
+select * from t;
+data
+a
+aaaaaaaaaaaaaaaaaa
+drop table if exists t;
+create table t(data decimal);
+prepare stmt from 'insert t (data) values (?)';
+set @a = '1';
+execute stmt using @a;
+set @b = '11111.11111';
+execute stmt using @b;
+select * from t;
+data
+1
+11111
+drop table if exists t;
+create table t(data decimal(10,3));
+prepare stmt from 'insert t (data) values (?)';
+set @a = 1.1;
+execute stmt using @a;
+set @b = 11.11;
+execute stmt using @b;
+select * from t;
+data
+1.100
+11.110
+set @@tidb_enable_prepared_plan_cache=false;
+drop table if exists t;
+create table t(data mediumblob);
+prepare stmt from 'insert t (data) values (?)';
+set @a = 'a';
+execute stmt using @a;
+set @b = 'aaaaaaaaaaaaaaaaaa';
+execute stmt using @b;
+select * from t;
+data
+a
+aaaaaaaaaaaaaaaaaa
+drop table if exists t;
+create table t(data decimal);
+prepare stmt from 'insert t (data) values (?)';
+set @a = '1';
+execute stmt using @a;
+set @b = '11111.11111';
+execute stmt using @b;
+select * from t;
+data
+1
+11111
+drop table if exists t;
+create table t(data decimal(10,3));
+prepare stmt from 'insert t (data) values (?)';
+set @a = 1.1;
+execute stmt using @a;
+set @b = 11.11;
+execute stmt using @b;
+select * from t;
+data
+1.100
+11.110
+set @@tidb_enable_prepared_plan_cache=default;
+drop table if exists t;
+create table t (id int, KEY id (id));
+prepare stmt from 'select * from t limit ? offset ?';
+prepare stmt from 'select b from t';
+Error 1054 (42S22): Unknown column 'b' in 'field list'
+prepare stmt from '(select * FROM t) union all (select * FROM t) order by a limit ?';
+Error 1054 (42S22): Unknown column 'a' in 'order clause'
+drop table if exists t;
+prepare stmt from 'create table t (id int, KEY id (id))';
+prepare stmt0 from "create table t0(a int primary key)";
+prepare stmt1 from "execute stmt0";
+Error 1295 (HY000): This command is not supported in the prepared statement protocol yet
+prepare stmt2 from "deallocate prepare stmt0";
+Error 1295 (HY000): This command is not supported in the prepared statement protocol yet
+prepare stmt4 from "prepare stmt3 from 'create table t1(a int, b int)'";
+Error 1295 (HY000): This command is not supported in the prepared statement protocol yet
+drop table if exists t;
+create table t (id int primary key, num int);
+insert into t values (1, 1);
+insert into t values (2, 2);
+insert into t values (3, 3);
+prepare stmt from 'select /*+ IGNORE_PLAN_CACHE() */ * from t where id=?';
+set @ignore_plan_doma = 1;
+execute stmt using @ignore_plan_doma;
+id	num
+1	1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+prepare stmt from "select /*+ max_execution_time(10) */ sleep(3)";
+set @a=now();
+execute stmt;
+sleep(3)
+1
+select timediff(now(), @a) < 3;
+timediff(now(), @a) < 3
+1
+set @a=now();
+select /*+ max_execution_time(10) */ sleep(3);
+sleep(3)
+1
+select timediff(now(), @a) < 3;
+timediff(now(), @a) < 3
+1
+drop table if exists t;
+create table t (i int);
+prepare stmt from 'with a as (select /*+ qb_name(qb1) */ * from t)  select /*+ leading(@qb1)*/ * from a;';
+set tidb_enable_prepared_plan_cache=1;
+set @@tidb_enable_collect_execution_info=0;
+prepare stmt from 'SELECT IF(?, 1, 0);';
+set @a=1, @b=null, @c=0;
+execute stmt using @a;
+IF(?, 1, 0)
+1
+execute stmt using @b;
+IF(?, 1, 0)
+0
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute stmt using @c;
+IF(?, 1, 0)
+0
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_collect_execution_info=default;
+set tidb_enable_prepared_plan_cache=1;
+drop table if exists IDT_26207;
+CREATE TABLE IDT_26207 (col1 bit(1));
+insert into  IDT_26207 values(0x0), (0x1);
+prepare stmt from 'select hex(t1.col1) from IDT_26207 as t1 left join IDT_26207 as t2 on t1.col1 = t2.col1 where t1.col1 in (?, ?, ?)';
+set @a=0x01, @b=0x01, @c=0x01;
+execute stmt using @a,@b,@c;
+hex(t1.col1)
+1
+set @a=0x00, @b=0x00, @c=0x01;
+execute stmt using @a,@b,@c;
+hex(t1.col1)
+0
+1
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+drop table if exists IDT_MC21780;
+CREATE TABLE IDT_MC21780 (
+COL1 timestamp NULL DEFAULT NULL,
+COL2 timestamp NULL DEFAULT NULL,
+COL3 timestamp NULL DEFAULT NULL,
+KEY U_M_COL (COL1,COL2)
+);
+insert into IDT_MC21780 values("1970-12-18 10:53:28", "1970-12-18 10:53:28", "1970-12-18 10:53:28");
+prepare stmt from 'select/*+ hash_join(t1) */ * from IDT_MC21780 t1 join IDT_MC21780 t2 on t1.col1 = t2.col1 where t1. col1 < ? and t2. col1 in (?, ?, ?);';
+set @a="2038-01-19 03:14:07", @b="2038-01-19 03:14:07", @c="2038-01-19 03:14:07", @d="2038-01-19 03:14:07";
+execute stmt using @a,@b,@c,@d;
+COL1	COL2	COL3	COL1	COL2	COL3
+set @a="1976-09-09 20:21:11", @b="2021-07-14 09:28:16", @c="1982-01-09 03:36:39", @d="1970-12-18 10:53:28";
+execute stmt using @a,@b,@c,@d;
+COL1	COL2	COL3	COL1	COL2	COL3
+1970-12-18 10:53:28	1970-12-18 10:53:28	1970-12-18 10:53:28	1970-12-18 10:53:28	1970-12-18 10:53:28	1970-12-18 10:53:28
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set tidb_enable_prepared_plan_cache=default;
+set tidb_enable_prepared_plan_cache=1;
+set @@tidb_enable_collect_execution_info=0;
+drop table if exists tmp2;
+create temporary table tmp2 (a int, b int, key(a), key(b));
+prepare stmt from 'select * from tmp2;';
+execute stmt;
+a	b
+execute stmt;
+a	b
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+drop table if exists tmp_t;
+create global temporary table tmp_t (id int primary key, a int, b int, index(a)) on commit delete rows;
+prepare stmt from 'select * from tmp_t;';
+execute stmt;
+id	a	b
+execute stmt;
+id	a	b
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_enable_collect_execution_info=default;
+set tidb_enable_prepared_plan_cache=1;
+set @@tidb_txn_mode = 'pessimistic';
+prepare stmt1 from 'do 1';
+set @@tidb_txn_mode = 'optimistic';
+prepare stmt1 from 'do 1';
+set tidb_enable_prepared_plan_cache=default;
+set @@tidb_txn_mode=default;
+drop table if exists t;
+create table t(a int, key(a));
+prepare stmt from 'select * from t limit ?';
+set @a = 1.2;
+execute stmt using @a;
+Error 1210 (HY000): Incorrect arguments to LIMIT
+set @a = 1.;
+execute stmt using @a;
+Error 1210 (HY000): Incorrect arguments to LIMIT
+set @a = '0';
+execute stmt using @a;
+Error 1210 (HY000): Incorrect arguments to LIMIT
+set @a = '1';
+execute stmt using @a;
+Error 1210 (HY000): Incorrect arguments to LIMIT
+set @a = 1_2;
+execute stmt using @a;
+Error 1210 (HY000): Incorrect arguments to LIMIT
+drop table if exists t;
+create table t(id int, k int);
+prepare stmt from 'explain select * from t where id = ? and k = ? group by id, k';
+show warnings;
+Level	Code	Message
+Warning	1105	skip prepared plan-cache: not a SELECT/UPDATE/INSERT/DELETE/SET statement
+set @a = 1;
+execute stmt using @a, @a;
+id	estRows	task	access object	operator info
+HashAgg_8	1.00	root		group by:executor__prepared.t.id, executor__prepared.t.k, funcs:firstrow(executor__prepared.t.id)->executor__prepared.t.id, funcs:firstrow(executor__prepared.t.k)->executor__prepared.t.k
+└─TableReader_15	0.01	root		data:Selection_14
+  └─Selection_14	0.01	cop[tikv]		eq(executor__prepared.t.id, 1), eq(executor__prepared.t.k, 1)
+    └─TableFullScan_13	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select * from t where id = 1 and k = 1 group by id, k;
+id	estRows	task	access object	operator info
+HashAgg_8	1.00	root		group by:executor__prepared.t.id, executor__prepared.t.k, funcs:firstrow(executor__prepared.t.id)->executor__prepared.t.id, funcs:firstrow(executor__prepared.t.k)->executor__prepared.t.k
+└─TableReader_15	0.01	root		data:Selection_14
+  └─Selection_14	0.01	cop[tikv]		eq(executor__prepared.t.id, 1), eq(executor__prepared.t.k, 1)
+    └─TableFullScan_13	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+prepare stmt from 'explain select * from t where ? = id and ? = k group by id, k';
+show warnings;
+Level	Code	Message
+Warning	1105	skip prepared plan-cache: not a SELECT/UPDATE/INSERT/DELETE/SET statement
+set @a = 1;
+execute stmt using @a, @a;
+id	estRows	task	access object	operator info
+HashAgg_8	1.00	root		group by:executor__prepared.t.id, executor__prepared.t.k, funcs:firstrow(executor__prepared.t.id)->executor__prepared.t.id, funcs:firstrow(executor__prepared.t.k)->executor__prepared.t.k
+└─TableReader_15	0.01	root		data:Selection_14
+  └─Selection_14	0.01	cop[tikv]		eq(1, executor__prepared.t.id), eq(1, executor__prepared.t.k)
+    └─TableFullScan_13	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain select * from t where 1 = id and 1 = k group by id, k;
+id	estRows	task	access object	operator info
+HashAgg_8	1.00	root		group by:executor__prepared.t.id, executor__prepared.t.k, funcs:firstrow(executor__prepared.t.id)->executor__prepared.t.id, funcs:firstrow(executor__prepared.t.k)->executor__prepared.t.k
+└─TableReader_15	0.01	root		data:Selection_14
+  └─Selection_14	0.01	cop[tikv]		eq(1, executor__prepared.t.id), eq(1, executor__prepared.t.k)
+    └─TableFullScan_13	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo

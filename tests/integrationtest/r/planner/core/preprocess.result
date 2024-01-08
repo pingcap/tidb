@@ -1,0 +1,9 @@
+create database TestErrKeyPart;
+use TestErrKeyPart;
+CREATE TABLE `tbl11`(`a` INT(11) NOT NULL, `b` INT(11), PRIMARY KEY (`a`(0))) CHARSET UTF8MB4 COLLATE UTF8MB4_BIN;
+Error 1391 (HY000): Key part 'a' length cannot be 0
+create table t (a int, b varchar(255), key (b(0)));
+Error 1391 (HY000): Key part 'b' length cannot be 0
+create table t (a int, b varchar(255));
+alter table t add index (b(0));
+Error 1391 (HY000): Key part 'b' length cannot be 0

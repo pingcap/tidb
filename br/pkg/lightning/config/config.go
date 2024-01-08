@@ -36,12 +36,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	tidbcfg "github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/util"
-	"github.com/pingcap/tidb/util/mathutil"
-	filter "github.com/pingcap/tidb/util/table-filter"
-	router "github.com/pingcap/tidb/util/table-router"
+	tidbcfg "github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/util"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
+	router "github.com/pingcap/tidb/pkg/util/table-router"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -149,7 +148,7 @@ type DBStore struct {
 	BuildStatsConcurrency      int               `toml:"build-stats-concurrency" json:"build-stats-concurrency"`
 	IndexSerialScanConcurrency int               `toml:"index-serial-scan-concurrency" json:"index-serial-scan-concurrency"`
 	ChecksumTableConcurrency   int               `toml:"checksum-table-concurrency" json:"checksum-table-concurrency"`
-	Vars                       map[string]string `toml:"-" json:"vars"`
+	Vars                       map[string]string `toml:"session-vars" json:"vars"`
 
 	IOTotalBytes *atomic.Uint64 `toml:"-" json:"-"`
 	UUID         string         `toml:"-" json:"-"`
@@ -217,8 +216,18 @@ func (d *DBStore) adjust(
 			d.Port = int(settings.Port)
 		}
 		if len(d.PdAddr) == 0 {
+			// verify that it is not a empty string
 			pdAddrs := strings.Split(settings.Path, ",")
-			d.PdAddr = pdAddrs[0] // FIXME support multiple PDs once importer can.
+			for _, ip := range pdAddrs {
+				ipPort := strings.Split(ip, ":")
+				if len(ipPort[0]) == 0 {
+					return common.ErrInvalidConfig.GenWithStack("invalid `tidb.pd-addr` setting")
+				}
+				if len(ipPort[1]) == 0 || ipPort[1] == "0" {
+					return common.ErrInvalidConfig.GenWithStack("invalid `tidb.port` setting")
+				}
+			}
+			d.PdAddr = settings.Path
 		}
 	}
 
@@ -589,16 +598,16 @@ const (
 	// DupeResAlgNone doesn't detect duplicate.
 	DupeResAlgNone DuplicateResolutionAlgorithm = iota
 
-	// DupeResAlgRecord only records duplicate records to `lightning_task_info.conflict_error_v1` table on the target TiDB.
+	// DupeResAlgRecord only records duplicate records to `lightning_task_info.conflict_error_v2` table on the target TiDB.
 	DupeResAlgRecord
 
 	// DupeResAlgRemove records all duplicate records like the 'record' algorithm and remove all information related to the
-	// duplicated rows. Users need to analyze the lightning_task_info.conflict_error_v1 table to add back the correct rows.
+	// duplicated rows. Users need to analyze the lightning_task_info.conflict_error_v2 table to add back the correct rows.
 	DupeResAlgRemove
 
 	// DupeResAlgReplace records all duplicate records like the 'record' algorithm, and remove some rows with conflict
 	// and reserve other rows that can be kept and not cause conflict anymore. Users need to analyze the
-	// lightning_task_info.conflict_error_v1 table to check whether the reserved data cater to their need and check whether
+	// lightning_task_info.conflict_error_v2 table to check whether the reserved data cater to their need and check whether
 	// they need to add back the correct rows.
 	DupeResAlgReplace
 
@@ -1074,6 +1083,7 @@ type TikvImporter struct {
 
 	// default is PausePDSchedulerScopeTable to compatible with previous version(>= 6.1)
 	PausePDSchedulerScope PausePDSchedulerScope `toml:"pause-pd-scheduler-scope" json:"pause-pd-scheduler-scope"`
+	BlockSize             ByteSize              `toml:"block-size" json:"block-size"`
 }
 
 func (t *TikvImporter) adjust() error {
@@ -1345,9 +1355,9 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 			"unsupported `%s` (%s)", strategyConfigFrom, c.Strategy)
 	}
 	if c.Strategy != "" {
-		if i.ParallelImport {
+		if i.ParallelImport && i.Backend == BackendLocal {
 			return common.ErrInvalidConfig.GenWithStack(
-				"%s cannot be used with tikv-importer.parallel-import",
+				`%s cannot be used with tikv-importer.parallel-import and tikv-importer.backend = "local"`,
 				strategyConfigFrom)
 		}
 		if i.DuplicateResolution != DupeResAlgNone {
@@ -1378,7 +1388,7 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 	if c.MaxRecordRows < 0 {
 		maxErr := l.MaxError
 		// Compatible with the old behavior that records all syntax,charset,type errors.
-		maxAccepted := mathutil.Max(maxErr.Syntax.Load(), maxErr.Charset.Load(), maxErr.Type.Load())
+		maxAccepted := max(maxErr.Syntax.Load(), maxErr.Charset.Load(), maxErr.Type.Load())
 		if maxAccepted < defaultMaxRecordRows {
 			maxAccepted = defaultMaxRecordRows
 		}
@@ -1466,6 +1476,7 @@ func NewConfig() *Config {
 			DiskQuota:                ByteSize(math.MaxInt64),
 			DuplicateResolution:      DupeResAlgNone,
 			PausePDSchedulerScope:    PausePDSchedulerScopeTable,
+			BlockSize:                16 * 1024,
 			TiDBWriteThroughputLimit: ByteSize(DefaultTiDBWriteThroughputLimit),
 		},
 		PostRestore: PostRestore{

@@ -21,15 +21,16 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 )
 
+// we use uint64 to store the length of key and value.
+const lengthBytes = 8
+
 // KeyValueStore stores key-value pairs and maintains the range properties.
 type KeyValueStore struct {
 	dataWriter storage.ExternalFileWriter
 
-	rc       *rangePropertiesCollector
-	ctx      context.Context
-	writerID int
-	seq      int
-	offset   uint64
+	rc     *rangePropertiesCollector
+	ctx    context.Context
+	offset uint64
 }
 
 // NewKeyValueStore creates a new KeyValueStore. The data will be written to the
@@ -39,71 +40,43 @@ func NewKeyValueStore(
 	ctx context.Context,
 	dataWriter storage.ExternalFileWriter,
 	rangePropertiesCollector *rangePropertiesCollector,
-	writerID int,
-	seq int,
 ) (*KeyValueStore, error) {
 	kvStore := &KeyValueStore{
 		dataWriter: dataWriter,
 		ctx:        ctx,
 		rc:         rangePropertiesCollector,
-		writerID:   writerID,
-		seq:        seq,
 	}
 	return kvStore, nil
 }
 
-// AddKeyValue saves a key-value pair to the KeyValueStore. If the accumulated
+// addEncodedData saves encoded key-value pairs to the KeyValueStore.
+// data layout: keyLen + valueLen + key + value. If the accumulated
 // size or key count exceeds the given distance, a new range property will be
 // appended to the rangePropertiesCollector with current status.
 // `key` must be in strictly ascending order for invocations of a KeyValueStore.
-func (s *KeyValueStore) AddKeyValue(key, value []byte) error {
-	var (
-		b     [8]byte
-		kvLen = 0
-	)
+func (s *KeyValueStore) addEncodedData(data []byte) error {
+	_, err := s.dataWriter.Write(s.ctx, data)
+	if err != nil {
+		return err
+	}
 
-	// data layout: keyLen + key + valueLen + value
-	n, err := s.dataWriter.Write(
-		s.ctx,
-		binary.BigEndian.AppendUint64(b[:0], uint64(len(key))),
-	)
-	if err != nil {
-		return err
-	}
-	kvLen += n
-	n, err = s.dataWriter.Write(s.ctx, key)
-	if err != nil {
-		return err
-	}
-	kvLen += n
-	n, err = s.dataWriter.Write(
-		s.ctx,
-		binary.BigEndian.AppendUint64(b[:0], uint64(len(value))),
-	)
-	if err != nil {
-		return err
-	}
-	kvLen += n
-	n, err = s.dataWriter.Write(s.ctx, value)
-	if err != nil {
-		return err
-	}
-	kvLen += n
+	keyLen := binary.BigEndian.Uint64(data)
+	key := data[2*lengthBytes : 2*lengthBytes+keyLen]
 
 	if len(s.rc.currProp.firstKey) == 0 {
 		s.rc.currProp.firstKey = key
 	}
 	s.rc.currProp.lastKey = key
 
-	s.offset += uint64(kvLen)
-	s.rc.currProp.size += uint64(len(key) + len(value))
+	s.offset += uint64(len(data))
+	s.rc.currProp.size += uint64(len(data) - 2*lengthBytes)
 	s.rc.currProp.keys++
 
 	if s.rc.currProp.size >= s.rc.propSizeDist ||
 		s.rc.currProp.keys >= s.rc.propKeysDist {
 		newProp := *s.rc.currProp
 		s.rc.props = append(s.rc.props, &newProp)
-
+		// reset currProp, and start to update this prop.
 		s.rc.currProp.firstKey = nil
 		s.rc.currProp.offset = s.offset
 		s.rc.currProp.keys = 0
