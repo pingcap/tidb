@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/replayer"
@@ -66,6 +67,7 @@ import (
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/twmb/murmur3"
 	atomic2 "go.uber.org/atomic"
+	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
 )
 
@@ -2090,6 +2092,10 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	}
 	if EnableRowLevelChecksum.Load() {
 		vars.EnableRowLevelChecksum = true
+	}
+	err := vars.SetSystemVar(MaxAllowedPacket, strconv.FormatUint(DefMaxAllowedPacket, 10))
+	if err != nil {
+		logutil.BgLogger().Error("set system variable max_allowed_packet error", zap.Error(err))
 	}
 	vars.systems[CharacterSetConnection], vars.systems[CollationConnection] = charset.GetDefaultCharsetAndCollate()
 	return vars
