@@ -417,28 +417,26 @@ func (e *SortExec) fetchChunksUnparallel(ctx context.Context) error {
 
 func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	workerNum := len(e.Parallel.workers)
-	publicSpace := publicMergeSpace{}
-	waitGroup := sync.WaitGroup{}
+	rowsToBeMerged := sortedRowsList{}
 
-	// Add before the start of goroutine to avoid that the counter in waitGroup is minus to negative.
-	waitGroup.Add(workerNum + 1)
+	// Wait for the finish of all workers
+	workersWaiter := sync.WaitGroup{}
+
+	// Add before the start of goroutine to avoid that the counter is minus to negative.
+	workersWaiter.Add(workerNum + 1)
 
 	// Fetch chunks from child and put chunks into MPMCQueue
-	go e.fetchChunksFromChild(ctx, e.Parallel.mpmcQueue, &waitGroup)
+	go e.fetchChunksFromChild(ctx, e.Parallel.mpmcQueue, &workersWaiter)
 
-	// Create workers
+	// Create and run workers
 	for i := range e.Parallel.workers {
-		e.Parallel.workers[i] = newParallelSortWorker(e.lessRow, &publicSpace, &waitGroup, &e.Parallel.result, e.Parallel.mpmcQueue, e.checkErrorForParallel, e.processErrorForParallel, e.memTracker)
+		e.Parallel.workers[i] = newParallelSortWorker(e.lessRow, &rowsToBeMerged, &workersWaiter, &e.Parallel.result, e.Parallel.mpmcQueue, e.checkErrorForParallel, e.processErrorForParallel, e.memTracker)
+		go e.Parallel.workers[i].run()
 	}
 
-	// Run workers
-	for _, worker := range e.Parallel.workers {
-		go worker.run()
-	}
-
-	// Wait for the finish of all goroutines
-	waitGroup.Wait()
-	e.getResult(&publicSpace)
+	// Wait for the finish of all workers
+	workersWaiter.Wait()
+	e.getSortedRows(&rowsToBeMerged)
 	err := e.checkErrorForParallel()
 	return err
 }
@@ -502,8 +500,8 @@ func (e *SortExec) processErrorForParallel(err error) {
 	e.Parallel.mpmcQueue.Cancel()
 }
 
-func (e *SortExec) getResult(publicSpace *publicMergeSpace) {
-	partitionNum := publicSpace.publicQueue.Len()
+func (e *SortExec) getSortedRows(rowsToBeMerged *sortedRowsList) {
+	partitionNum := rowsToBeMerged.sortedRowsQueue.Len()
 	if partitionNum > 1 {
 		panic("Sort is not completed.")
 	}
@@ -513,9 +511,9 @@ func (e *SortExec) getResult(publicSpace *publicMergeSpace) {
 		return
 	}
 
-	sortedData := popFromList(&publicSpace.publicQueue)
-	e.Parallel.rowNum = int64(len(sortedData))
-	e.Parallel.result = sortedData
+	sortedRows := popFromList(&rowsToBeMerged.sortedRowsQueue)
+	e.Parallel.rowNum = int64(len(sortedRows))
+	e.Parallel.result = sortedRows
 }
 
 func (e *SortExec) initCompareFuncs() {

@@ -31,7 +31,7 @@ type parallelSortWorker struct {
 
 	lessRowFunc func(chunk.Row, chunk.Row) int
 
-	publicSpace *publicMergeSpace
+	publicSortedRows *sortedRowsList
 
 	waitGroup *sync.WaitGroup
 	result    *sortedRows
@@ -51,7 +51,7 @@ type parallelSortWorker struct {
 
 func newParallelSortWorker(
 	lessRowFunc func(chunk.Row, chunk.Row) int,
-	publicSpace *publicMergeSpace,
+	publicSpace *sortedRowsList,
 	waitGroup *sync.WaitGroup,
 	result *sortedRows,
 	mpmcQueue *chunk.MPMCQueue,
@@ -60,7 +60,7 @@ func newParallelSortWorker(
 	memTracker *memory.Tracker) *parallelSortWorker {
 	return &parallelSortWorker{
 		lessRowFunc:       lessRowFunc,
-		publicSpace:       publicSpace,
+		publicSortedRows:  publicSpace,
 		waitGroup:         waitGroup,
 		result:            result,
 		mpmcQueue:         mpmcQueue,
@@ -126,7 +126,7 @@ func (p *parallelSortWorker) sortChunkAndGetSortedRows(chk *chunk.Chunk) sortedR
 
 // Sort data that received by itself. At last, length of sortedRowsQueue should not be greater than 1.
 // Return false if there is some error.
-func (p *parallelSortWorker) mergeSortLocalData() bool {
+func (p *parallelSortWorker) mergeSortLocalRows() bool {
 	for p.sortedRowsQueue.Len() > 1 {
 		err := p.checkError()
 		if err != nil {
@@ -143,7 +143,7 @@ func (p *parallelSortWorker) mergeSortLocalData() bool {
 
 // The worker will check the length of sharedSortedRows. If length > 0, it will fetch a sortedRows and merge it
 // with worker's own sorted rows. If length == 0, worker will put it's row into sharedSortedRows and leave.
-func (p *parallelSortWorker) mergeSortPublicData() {
+func (p *parallelSortWorker) mergeSortPublicRows() {
 	for {
 		err := p.checkError()
 		if err != nil {
@@ -151,7 +151,7 @@ func (p *parallelSortWorker) mergeSortPublicData() {
 		}
 
 		localSortedRows := popFromList(&p.sortedRowsQueue)
-		fetchedSortedRows := p.publicSpace.fetchOrPutSortedRows(localSortedRows)
+		fetchedSortedRows := p.publicSortedRows.fetchOrPutSortedRows(localSortedRows)
 		if fetchedSortedRows == nil {
 			break
 		}
@@ -188,16 +188,8 @@ func (p *parallelSortWorker) mergeTwoSortedRows(sortedRows1 sortedRows, sortedRo
 	}
 
 	// Append the remaining rows
-	for cursor1 < sortedRows1Len {
-		mergedSortedRows = append(mergedSortedRows, sortedRows1[cursor1])
-		cursor1++
-	}
-
-	// Append the remaining rows
-	for cursor2 < sortedRows2Len {
-		mergedSortedRows = append(mergedSortedRows, sortedRows2[cursor2])
-		cursor2++
-	}
+	mergedSortedRows = append(mergedSortedRows, sortedRows1[cursor1:]...)
+	mergedSortedRows = append(mergedSortedRows, sortedRows2[cursor2:]...)
 
 	return mergedSortedRows
 }
@@ -215,10 +207,10 @@ func (p *parallelSortWorker) run() {
 		return
 	}
 
-	ok = p.mergeSortLocalData()
+	ok = p.mergeSortLocalRows()
 	if !ok {
 		return
 	}
 
-	p.mergeSortPublicData()
+	p.mergeSortPublicRows()
 }

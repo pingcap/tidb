@@ -24,28 +24,24 @@ import (
 	"go.uber.org/zap"
 )
 
-type publicMergeSpace struct {
-	lock        sync.Mutex
-	publicQueue list.List // Type is sortedRows
+// All elements in publicQueue are row slices that have been sorted
+type sortedRowsList struct {
+	lock            sync.Mutex
+	sortedRowsQueue list.List // Type is sortedRows
 }
 
 // If there is sortedRows in the queue, fetch them, or we should put the rows into queue.
-func (p *publicMergeSpace) fetchOrPutSortedRows(rows sortedRows) sortedRows {
+func (p *sortedRowsList) fetchOrPutSortedRows(rows sortedRows) sortedRows {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	if p.publicQueue.Len() > 0 {
-		r := popFromList(&p.publicQueue)
+	if p.sortedRowsQueue.Len() > 0 {
+		r := popFromList(&p.sortedRowsQueue)
 		return r
 	} else {
-		p.publicQueue.PushBack(rows)
+		p.sortedRowsQueue.PushBack(rows)
 		return nil
 	}
-}
-
-type partitionPointer struct {
-	row         chunk.Row
-	partitionID int
 }
 
 type rowWithPartition struct {
