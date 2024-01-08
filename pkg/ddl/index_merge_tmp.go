@@ -117,7 +117,6 @@ type temporaryIndexRecord struct {
 	unique   bool
 	distinct bool
 	handle   kv.Handle
-	rowKey   kv.Key
 }
 
 type mergeIndexWorker struct {
