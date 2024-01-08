@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
@@ -36,8 +37,10 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-// GenSelectResultFromResponse generates an iterator from response.
-func GenSelectResultFromResponse(sctx sessionctx.Context, fieldTypes []*types.FieldType, planIDs []int, rootID int, resp kv.Response) SelectResult {
+// GenSelectResultFromMPPResponse generates an iterator from response.
+func GenSelectResultFromMPPResponse(sctx sessionctx.Context, fieldTypes []*types.FieldType,
+	planIDs []int, rootID int, resp kv.Response,
+	gatherRuntimeStats *execdetails.RuntimeStatsColl) SelectResult {
 	// TODO: Add metric label and set open tracing.
 	return &selectResult{
 		label:      "mpp",
@@ -48,6 +51,8 @@ func GenSelectResultFromResponse(sctx sessionctx.Context, fieldTypes []*types.Fi
 		copPlanIDs: planIDs,
 		rootPlanID: rootID,
 		storeType:  kv.TiFlash,
+
+		tiflashRuntimeStats: gatherRuntimeStats,
 	}
 }
 

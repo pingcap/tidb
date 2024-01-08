@@ -146,29 +146,35 @@ type localMppCoordinator struct {
 
 	// Record node cnt that involved in the mpp computation.
 	nodeCnt int
+
+	// gjt todo maybe tiflashGatherRuntimeStats?
+	tiflashRuntimeStats *execdetails.RuntimeStatsColl
 }
 
 // NewLocalMPPCoordinator creates a new localMppCoordinator instance
-func NewLocalMPPCoordinator(sctx sessionctx.Context, is infoschema.InfoSchema, plan plannercore.PhysicalPlan, planIDs []int, startTS uint64, mppQueryID kv.MPPQueryID, gatherID uint64, coordinatorAddr string, memTracker *memory.Tracker) *localMppCoordinator {
+func NewLocalMPPCoordinator(sctx sessionctx.Context, is infoschema.InfoSchema, plan plannercore.PhysicalPlan,
+	planIDs []int, startTS uint64, mppQueryID kv.MPPQueryID, gatherID uint64, coordinatorAddr string,
+	memTracker *memory.Tracker, runtimeStats *execdetails.RuntimeStatsColl) *localMppCoordinator {
 	if sctx.GetSessionVars().ChooseMppVersion() < kv.MppVersionV2 {
 		coordinatorAddr = ""
 	}
 	coord := &localMppCoordinator{
-		sessionCtx:      sctx,
-		is:              is,
-		originalPlan:    plan,
-		planIDs:         planIDs,
-		startTS:         startTS,
-		mppQueryID:      mppQueryID,
-		gatherID:        gatherID,
-		coordinatorAddr: coordinatorAddr,
-		memTracker:      memTracker,
-		finishCh:        make(chan struct{}),
-		wgDoneChan:      make(chan struct{}),
-		respChan:        make(chan *mppResponse),
-		reportStatusCh:  make(chan struct{}),
-		vars:            sctx.GetSessionVars().KVVars,
-		reqMap:          make(map[int64]*mppRequestReport),
+		sessionCtx:          sctx,
+		is:                  is,
+		originalPlan:        plan,
+		planIDs:             planIDs,
+		startTS:             startTS,
+		mppQueryID:          mppQueryID,
+		gatherID:            gatherID,
+		coordinatorAddr:     coordinatorAddr,
+		memTracker:          memTracker,
+		finishCh:            make(chan struct{}),
+		wgDoneChan:          make(chan struct{}),
+		respChan:            make(chan *mppResponse),
+		reportStatusCh:      make(chan struct{}),
+		vars:                sctx.GetSessionVars().KVVars,
+		reqMap:              make(map[int64]*mppRequestReport),
+		tiflashRuntimeStats: runtimeStats,
 	}
 
 	if len(coordinatorAddr) > 0 && needReportExecutionSummary(coord.originalPlan) {
@@ -588,12 +594,12 @@ func (c *localMppCoordinator) handleAllReports() {
 				for _, detail := range report.executionSummaries {
 					if detail != nil && detail.TimeProcessedNs != nil &&
 						detail.NumProducedRows != nil && detail.NumIterations != nil {
-						recordedPlanIDs[c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl.
+						recordedPlanIDs[c.tiflashRuntimeStats.
 							RecordOneCopTask(-1, kv.TiFlash.Name(), report.mppReq.Meta.GetAddress(), detail)] = 0
 					}
 				}
 			}
-			distsql.FillDummySummariesForTiFlashTasks(c.sessionCtx.GetSessionVars().StmtCtx, "", kv.TiFlash.Name(), c.planIDs, recordedPlanIDs)
+			distsql.FillDummySummariesForTiFlashTasks(c.tiflashRuntimeStats, "", kv.TiFlash.Name(), c.planIDs, recordedPlanIDs)
 		case <-time.After(receiveReportTimeout):
 			metrics.MppCoordinatorStatsReportNotReceived.Inc()
 			logutil.BgLogger().Warn(fmt.Sprintf("Mpp coordinator not received all reports within %d seconds", int(receiveReportTimeout.Seconds())),

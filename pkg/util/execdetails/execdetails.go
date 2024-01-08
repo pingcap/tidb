@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/influxdata/tdigest"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -1039,6 +1040,41 @@ func (e *RuntimeStatsColl) ExistsCopStats(planID int) bool {
 	defer e.mu.Unlock()
 	_, exists := e.copStats[planID]
 	return exists
+}
+
+func (e *RuntimeStatsColl) cloneBasicCopRuntimeStats() map[int]map[string]*basicCopRuntimeStats {
+	// <planID, <addr, *basicCopRuntimeStat>>
+	clone := map[int]map[string]*basicCopRuntimeStats{}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	for planID, copStat := range e.copStats {
+		cloneBasicCopStats := map[string]*basicCopRuntimeStats{}
+		for addr, baseStat := range copStat.stats {
+			cloneBasicCopStats[addr] = baseStat.Clone().(*basicCopRuntimeStats)
+		}
+		clone[planID] = cloneBasicCopStats
+	}
+	return clone
+}
+
+// MergeCopRuntimeStats merge copStats of another RuntimeStatsColl.
+func (e *RuntimeStatsColl) MergeBasicCopRuntimeStats(other *RuntimeStatsColl, storeType string) error {
+	otherCopStats := other.cloneBasicCopRuntimeStats()
+	if otherCopStats == nil {
+		return errors.New("copStats is nil when trying to merge it")
+	}
+
+	for otherPlanID, otherCopStat := range otherCopStats {
+		selfCopStat := e.GetOrCreateCopStats(otherPlanID, storeType).stats
+		for otherAddr, otherBaseStat := range otherCopStat {
+			if selfCopStat[otherAddr] == nil {
+				selfCopStat[otherAddr] = otherBaseStat
+			} else {
+				selfCopStat[otherAddr].Merge(otherBaseStat)
+			}
+		}
+	}
+	return nil
 }
 
 // ConcurrencyInfo is used to save the concurrency information of the executor operator

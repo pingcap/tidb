@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -99,6 +100,9 @@ type MPPGather struct {
 	// Only for MemLimit err recovery for now.
 	// AutoScaler use this value as hint to scale out CN.
 	nodeCnt int
+
+	runtimeStats *execdetails.RuntimeStatsColl
+	storeType    string
 }
 
 func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
@@ -116,10 +120,12 @@ func (e *MPPGather) setupRespIter(ctx context.Context, isRecoverying bool) (err 
 		if e.dummy {
 			return errors.New("should not reset mpp resp iter for dummy table")
 		}
+		if e.runtimeStats == nil {
+			return errors.New("cop runtime stats should already be init")
+		}
 		if e.respIter == nil {
 			return errors.New("mpp resp iter should already be setup")
 		}
-
 		if err := e.respIter.Close(); err != nil {
 			return err
 		}
@@ -136,9 +142,6 @@ func (e *MPPGather) setupRespIter(ctx context.Context, isRecoverying bool) (err 
 	if resp, e.kvRanges, err = coord.Execute(ctx); err != nil {
 		return errors.Trace(err)
 	}
-	if e.nodeCnt = coord.GetNodeCnt(); e.nodeCnt <= 0 {
-		return errors.Errorf("tiflash node count should be greater than zero: %v", e.nodeCnt)
-	}
 
 	failpoint.Inject("mpp_recovery_test_check_node_cnt", func(nodeCnt failpoint.Value) {
 		if nodeCntInt := nodeCnt.(int); nodeCntInt != e.nodeCnt {
@@ -146,7 +149,15 @@ func (e *MPPGather) setupRespIter(ctx context.Context, isRecoverying bool) (err 
 		}
 	})
 
-	e.respIter = distsql.GenSelectResultFromResponse(e.Ctx(), e.RetFieldTypes(), planIDs, e.ID(), resp)
+	e.respIter = distsql.GenSelectResultFromMPPResponse(e.Ctx(), e.RetFieldTypes(), planIDs, e.ID(), resp, e.runtimeStats)
+
+	if e.nodeCnt = coord.GetNodeCnt(); e.nodeCnt <= 0 {
+		return errors.Errorf("tiflash node count should be greater than zero: %v", e.nodeCnt)
+	}
+
+	if e.runtimeStats = execdetails.NewRuntimeStatsColl(nil); e.runtimeStats == nil {
+		return errors.New("alloc runtime stats for mpp_gather failed")
+	}
 	return nil
 }
 
@@ -189,12 +200,15 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	})
 
 	e.mppErrRecovery = mpperr.NewRecoveryHandler(disaggTiFlashWithAutoScaler, uint64(holdCap), enableMPPRecovery, e.memTracker)
+	storeType := kv.TiFlash
+	e.storeType = storeType.Name()
 	return nil
 }
 
 func (e *MPPGather) buildCoordinator(planIDs []int) kv.MppCoordinator {
 	_, serverAddr := mppcoordmanager.InstanceMPPCoordinatorManager.GetServerAddr()
-	coord := mpp.NewLocalMPPCoordinator(e.Ctx(), e.is, e.originalPlan, planIDs, e.startTS, e.mppQueryID, e.gatherID, serverAddr, e.memTracker)
+	coord := mpp.NewLocalMPPCoordinator(e.Ctx(), e.is, e.originalPlan, planIDs, e.startTS, e.mppQueryID,
+		e.gatherID, serverAddr, e.memTracker, e.runtimeStats)
 	return coord
 }
 
@@ -238,7 +252,8 @@ func (e *MPPGather) nextWithRecovery(ctx context.Context) error {
 			}
 
 			logutil.BgLogger().Info("recovery mpp error succeed, begin next retry",
-				zap.Any("mppErr", mppErr), zap.Any("recoveryCnt", e.mppErrRecovery.RecoveryCnt()))
+				zap.Any("mppErr", mppErr), zap.Any("recoveryCnt", e.mppErrRecovery.RecoveryCnt()),
+				zap.Any("startTS", e.startTS), zap.Any("queryID", e.mppQueryID), zap.Any("gatherID", e.gatherID))
 
 			if err := e.setupRespIter(ctx, true); err != nil {
 				logutil.BgLogger().Error("setup resp iter when recovery mpp err failed", zap.Any("err", err))
@@ -311,11 +326,16 @@ func (e *MPPGather) Close() error {
 	if e.respIter != nil {
 		err = e.respIter.Close()
 	}
+
 	mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherID: e.gatherID})
 	if err != nil {
 		return err
 	}
-	e.mppErrRecovery.ResetHolder()
+	if e.mppErrRecovery != nil {
+		e.mppErrRecovery.ResetHolder()
+	}
+
+	e.mergeRuntimeStats()
 	return nil
 }
 
@@ -326,4 +346,11 @@ func (e *MPPGather) Table() table.Table {
 
 func (e *MPPGather) setDummy() {
 	e.dummy = true
+}
+
+func (e *MPPGather) mergeRuntimeStats() {
+	if e.runtimeStats != nil {
+		e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.MergeBasicCopRuntimeStats(e.runtimeStats, e.storeType)
+		e.runtimeStats = nil
+	}
 }

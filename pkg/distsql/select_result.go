@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/telemetry"
 	"github.com/pingcap/tidb/pkg/types"
@@ -317,6 +316,9 @@ type selectResult struct {
 	// distSQLConcurrency and paging are only for collecting information, and they don't affect the process of execution.
 	distSQLConcurrency int
 	paging             bool
+
+	// gjt todo comments
+	tiflashRuntimeStats *execdetails.RuntimeStatsColl
 }
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
@@ -510,27 +512,30 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 }
 
 // FillDummySummariesForTiFlashTasks fills dummy execution summaries for mpp tasks which lack summaries
-func FillDummySummariesForTiFlashTasks(sctx *stmtctx.StatementContext, callee string, storeTypeName string, allPlanIDs []int, recordedPlanIDs map[int]int) {
+func FillDummySummariesForTiFlashTasks(tiflashRuntimeStats *execdetails.RuntimeStatsColl,
+	callee string, storeTypeName string, allPlanIDs []int, recordedPlanIDs map[int]int) {
 	num := uint64(0)
 	dummySummary := &tipb.ExecutorExecutionSummary{TimeProcessedNs: &num, NumProducedRows: &num, NumIterations: &num, ExecutorId: nil}
 	for _, planID := range allPlanIDs {
 		if _, ok := recordedPlanIDs[planID]; !ok {
-			sctx.RuntimeStatsColl.RecordOneCopTask(planID, storeTypeName, callee, dummySummary)
+			tiflashRuntimeStats.RecordOneCopTask(planID, storeTypeName, callee, dummySummary)
 		}
 	}
 }
 
 // recordExecutionSummariesForTiFlashTasks records mpp task execution summaries
-func recordExecutionSummariesForTiFlashTasks(sctx *stmtctx.StatementContext, executionSummaries []*tipb.ExecutorExecutionSummary, callee string, storeTypeName string, allPlanIDs []int) {
+func recordExecutionSummariesForTiFlashTasks(tiflashRuntimeStats *execdetails.RuntimeStatsColl,
+	executionSummaries []*tipb.ExecutorExecutionSummary,
+	callee string, storeTypeName string, allPlanIDs []int) {
 	var recordedPlanIDs = make(map[int]int)
 	for _, detail := range executionSummaries {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
-			recordedPlanIDs[sctx.RuntimeStatsColl.
+			recordedPlanIDs[tiflashRuntimeStats.
 				RecordOneCopTask(-1, storeTypeName, callee, detail)] = 0
 		}
 	}
-	FillDummySummariesForTiFlashTasks(sctx, callee, storeTypeName, allPlanIDs, recordedPlanIDs)
+	FillDummySummariesForTiFlashTasks(tiflashRuntimeStats, callee, storeTypeName, allPlanIDs, recordedPlanIDs)
 }
 
 func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration) {
@@ -576,7 +581,8 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		}
 	}
 	if hasExecutor {
-		recordExecutionSummariesForTiFlashTasks(r.ctx.GetSessionVars().StmtCtx, r.selectResp.GetExecutionSummaries(), callee, r.storeType.Name(), r.copPlanIDs)
+		recordExecutionSummariesForTiFlashTasks(r.tiflashRuntimeStats, r.selectResp.GetExecutionSummaries(),
+			callee, r.storeType.Name(), r.copPlanIDs)
 	} else {
 		// For cop task cases, we still need this protection.
 		if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
