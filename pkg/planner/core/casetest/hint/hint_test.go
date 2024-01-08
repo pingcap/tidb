@@ -341,12 +341,28 @@ func TestOptimizeHintOnPartitionTable(t *testing.T) {
 	require.Len(t, tk.Session().GetSessionVars().StmtCtx.GetWarnings(), 2)
 }
 
-func TestIssue50067(t *testing.T) {
+func TestHints(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int);")
 	tk.MustExec("create table t2 (a int);")
 	tk.MustExec("create table t3 (a int);")
-	tk.MustExec("explain select * from t1, t2, t3 union all select /*+ leading(t3, t2) */ * from t1, t2, t3 union all select * from t1, t2, t3;")
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	integrationSuiteData := GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format = 'brief' " + tt).Rows())
+			output[i].Warn = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
+		})
+		tk.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warn...))
+	}
 }
