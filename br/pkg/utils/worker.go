@@ -136,15 +136,18 @@ type Result[T any] struct {
 	Item T
 }
 
-func AsynchronouslyTry[T any](calc func() (T, error)) <-chan Result[T] {
+func AsyncStreamBy[T any](generator func() (T, error)) <-chan Result[T] {
 	out := make(chan Result[T])
 	go func() {
-		item, err := calc()
-		if err != nil {
-			out <- Result[T]{Err: err}
-			return
+		defer close(out)
+		for {
+			item, err := generator()
+			if err != nil {
+				out <- Result[T]{Err: err}
+				return
+			}
+			out <- Result[T]{Item: item}
 		}
-		out <- Result[T]{Item: item}
 	}()
 	return out
 }

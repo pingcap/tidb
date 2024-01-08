@@ -5,9 +5,6 @@ package operator
 import (
 	"context"
 	"crypto/tls"
-	"fmt"
-	"math/rand"
-	"os"
 	"runtime/debug"
 	"strings"
 	"sync"

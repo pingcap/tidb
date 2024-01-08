@@ -19,6 +19,7 @@ import (
 type Env interface {
 	ConnectToStore(ctx context.Context, storeID uint64) (PrepareClient, error)
 	GetAllLiveStores(ctx context.Context) ([]*metapb.Store, error)
+
 	LoadRegionsInKeyRange(ctx context.Context, startKey, endKey []byte) (regions []Region, err error)
 }
 

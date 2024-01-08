@@ -98,19 +98,20 @@ func (p *Preparer) MarshalLogObject(om zapcore.ObjectEncoder) error {
 	om.AddInt("inflight_requests", len(p.inflightReqs))
 	for _, r := range p.inflightReqs {
 		om.AddString("simple_inflight_region", region{maybeID: r.Id, startKey: r.StartKey, endKey: r.EndKey}.String())
-		break
 	}
 	om.AddInt("failed_requests", len(p.failedRegions))
 	for _, r := range p.failedRegions {
 		om.AddString("simple_failed_region", r.String())
-		break
 	}
-	om.AddArray("connected_stores", zapcore.ArrayMarshalerFunc(func(ae zapcore.ArrayEncoder) error {
+	err := om.AddArray("connected_stores", zapcore.ArrayMarshalerFunc(func(ae zapcore.ArrayEncoder) error {
 		for id := range p.clients {
 			ae.AppendUint64(id)
 		}
 		return nil
 	}))
+	if err != nil {
+		return err
+	}
 	om.AddInt("retry_time", p.retryTime)
 	om.AddBool("wait_apply_finished", p.waitApplyFinished)
 	return nil
@@ -194,8 +195,7 @@ func (p *Preparer) batchEvents(evts *[]event) {
 func (p *Preparer) WaitAndHandleNextEvent(ctx context.Context) error {
 	select {
 	case <-ctx.Done():
-		logutil.CL(ctx).Warn("User canceled, try to stop the whole procedure gracefully.")
-		p.Finalize(context.Background())
+		logutil.CL(ctx).Warn("User canceled.", logutil.ShortError(ctx.Err()))
 		return ctx.Err()
 	case evt := <-p.eventChan:
 		logutil.CL(ctx).Debug("received event", zap.Stringer("event", evt))
@@ -285,11 +285,10 @@ func (p *Preparer) MaybeFinish(ctx context.Context) error {
 		if len(holes) == 0 {
 			p.waitApplyFinished = true
 			return nil
-		} else {
-			logutil.CL(ctx).Warn("It seems there are still some works to be done.", zap.Stringers("regions", holes))
-			p.failedRegions = holes
-			return p.workOnPendingRanges(ctx)
 		}
+		logutil.CL(ctx).Warn("It seems there are still some works to be done.", zap.Stringers("regions", holes))
+		p.failedRegions = holes
+		return p.workOnPendingRanges(ctx)
 	}
 
 	return nil

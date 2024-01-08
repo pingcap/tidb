@@ -15,14 +15,13 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
+	. "github.com/pingcap/tidb/br/pkg/backup/prepare_snap"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap/zapcore"
-
-	. "github.com/pingcap/tidb/br/pkg/backup/prepare_snap"
-	"github.com/pingcap/tidb/br/pkg/utils"
 )
 
 type mockStore struct {
@@ -252,7 +251,7 @@ func TestFailDueToErr(t *testing.T) {
 
 	ms.onCreateStore = func(ms *mockStore) {
 		ms.onWaitApply = func(r *metapb.Region) error {
-			return errors.New("failed meow!")
+			return errors.New("failed meow")
 		}
 	}
 
@@ -277,7 +276,7 @@ func TestError(t *testing.T) {
 		ms.onWaitApply = func(r *metapb.Region) error {
 			if !failed {
 				failed = true
-				return errors.New("failed!")
+				return errors.New("failed")
 			}
 			return nil
 		}

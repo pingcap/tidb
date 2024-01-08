@@ -11,6 +11,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -39,10 +40,11 @@ type prepareStream struct {
 	cli           PrepareClient
 	leaseDuration time.Duration
 
-	output chan<- event
+	output       chan<- event
+	serverStream <-chan utils.Result[*brpb.PrepareSnapshotBackupResponse]
 
-	bgTasks     *errgroup.Group
-	stopBgTasks context.CancelFunc
+	clientLoopHandle *errgroup.Group
+	stopBgTasks      context.CancelFunc
 }
 
 // InitConn initializes the connection to the stream (i.e. "active" the stream).
@@ -52,46 +54,88 @@ type prepareStream struct {
 // Once this has been called, them **should not be changed** any more.
 func (p *prepareStream) InitConn(ctx context.Context, cli PrepareClient) error {
 	p.cli = cli
-	p.bgTasks, ctx = errgroup.WithContext(ctx)
+	p.clientLoopHandle, ctx = errgroup.WithContext(ctx)
 	ctx, p.stopBgTasks = context.WithCancel(ctx)
-	p.GoLeaseLoop(ctx, p.leaseDuration)
-	p.bgTasks.Go(func() error { return p.RecvLoop(ctx) })
-	return nil
+	return p.GoLeaseLoop(ctx, p.leaseDuration)
 }
 
 func (p *prepareStream) Finalize(ctx context.Context) error {
 	log.Info("shutting down", zap.Uint64("store", p.storeID))
-	p.stopBgTasks()
-	return p.bgTasks.Wait()
+	return p.stopClientLoop(ctx)
 }
 
 func (p *prepareStream) GoLeaseLoop(ctx context.Context, dur time.Duration) error {
-	p.cli.Send(&brpb.PrepareSnapshotBackupRequest{
+	err := p.cli.Send(&brpb.PrepareSnapshotBackupRequest{
 		Ty:             brpb.PrepareSnapshotBackupRequestType_UpdateLease,
 		LeaseInSeconds: uint64(dur.Seconds()),
 	})
+	if err != nil {
+		return errors.Annotate(err, "failed to initialize the lease")
+	}
 	msg, err := p.cli.Recv()
 	if err != nil {
-		return errors.Annotate(err, "failed to initialize the lease for suspending the backup")
+		return errors.Annotate(err, "failed to recv the initialize lease result")
 	}
 	if msg.Ty != brpb.PrepareSnapshotBackupEventType_UpdateLeaseResult {
-		return errors.New("unexpected type of response during creating lease loop")
+		return errors.Errorf("unexpected type of response during creating lease loop: it is %s", msg.Ty)
 	}
-	p.bgTasks.Go(func() error { return p.LeaseLoop(ctx, dur) })
+	p.serverStream = utils.AsyncStreamBy(p.cli.Recv)
+	p.clientLoopHandle.Go(func() error { return p.clientLoop(ctx, dur) })
 	return nil
 }
 
-func (p *prepareStream) LeaseLoop(ctx context.Context, dur time.Duration) error {
+func (p *prepareStream) onResponse(ctx context.Context, res utils.Result[*brpb.PrepareSnapshotBackupResponse]) error {
+	if err := res.Err; err != nil {
+		return err
+	}
+	resp := res.Item
+	logutil.CL(ctx).Debug("received response", zap.Stringer("resp", resp))
+	evt, ok := p.convertToEvent(resp)
+	if ok {
+		logutil.CL(ctx).Debug("generating internal event", zap.Stringer("event", evt))
+		p.output <- evt
+	}
+	return nil
+}
+
+func (p *prepareStream) stopClientLoop(ctx context.Context) error {
+	p.stopBgTasks()
+	if err := p.clientLoopHandle.Wait(); err != nil {
+		return err
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case res, ok := <-p.serverStream:
+			err := p.onResponse(ctx, res)
+			if err == io.EOF || !ok {
+				logutil.CL(ctx).Info("close loop done.", zap.Uint64("store", p.storeID), zap.Bool("is-chan-closed", !ok))
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (p *prepareStream) clientLoop(ctx context.Context, dur time.Duration) error {
 	ticker := time.NewTicker(dur / 4)
 	lastSuccess := time.Unix(0, 0)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
-			log.Info("lease loop exits.", zap.Uint64("store", p.storeID))
+			logutil.CL(ctx).Info("client loop exits.", zap.Uint64("store", p.storeID))
 			return p.cli.Send(&brpb.PrepareSnapshotBackupRequest{
 				Ty: brpb.PrepareSnapshotBackupRequestType_Finish,
 			})
+		case res := <-p.serverStream:
+			if err := p.onResponse(ctx, res); err != nil {
+				p.sendErr(errors.Annotate(err, "failed to recv from the stream"))
+				return err
+			}
 		case <-ticker.C:
 			err := p.cli.Send(&brpb.PrepareSnapshotBackupRequest{
 				Ty:             brpb.PrepareSnapshotBackupRequestType_UpdateLease,
@@ -120,26 +164,6 @@ func (p *prepareStream) sendErr(err error) {
 		ty:      eventMiscErr,
 		storeID: p.storeID,
 		err:     err,
-	}
-}
-
-func (p *prepareStream) RecvLoop(ctx context.Context) error {
-	for {
-		resp, err := p.cli.Recv()
-		if err != nil {
-			if err == io.EOF {
-				logutil.CL(ctx).Info("RecvLoop stopped.", zap.Uint64("store", p.storeID))
-				return nil
-			}
-			p.sendErr(errors.Annotate(err, "failed to recv from the stream"))
-			return err
-		}
-		logutil.CL(ctx).Debug("received response", zap.Stringer("resp", resp))
-		evt, ok := p.convertToEvent(resp)
-		if ok {
-			logutil.CL(ctx).Debug("generating internal event", zap.Stringer("event", evt))
-			p.output <- evt
-		}
 	}
 }
 
