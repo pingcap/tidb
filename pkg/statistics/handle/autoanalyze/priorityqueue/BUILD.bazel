@@ -16,5 +16,6 @@ go_test(
     srcs = ["queue_test.go"],
     embed = [":priorityqueue"],
     flaky = True,
+    shard_count = 4,
     deps = ["@com_github_stretchr_testify//require"],
 )
