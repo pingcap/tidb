@@ -79,7 +79,7 @@ func TestAdjustPdAddrAndPort(t *testing.T) {
 	err := cfg.Adjust(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, 4444, cfg.TiDB.Port)
-	require.Equal(t, "123.45.67.89:1234", cfg.TiDB.PdAddr)
+	require.Equal(t, "123.45.67.89:1234,56.78.90.12:3456", cfg.TiDB.PdAddr)
 }
 
 func TestPausePDSchedulerScope(t *testing.T) {
@@ -273,6 +273,7 @@ func TestInvalidSetting(t *testing.T) {
 	cfg.TikvImporter.SortedKVDir = "."
 	cfg.TiDB.DistSQLScanConcurrency = 1
 	cfg.Mydumper.SourceDir = "."
+	cfg.TiDB.PdAddr = "234.56.78.90:12345"
 
 	err := cfg.Adjust(context.Background())
 	require.EqualError(t, err, "[Lightning:Config:ErrInvalidConfig]invalid `tidb.port` setting")
@@ -986,7 +987,11 @@ func TestAdjustConflictStrategy(t *testing.T) {
 	cfg.TikvImporter.Backend = BackendLocal
 	cfg.Conflict.Strategy = ReplaceOnDup
 	cfg.TikvImporter.ParallelImport = true
-	require.ErrorContains(t, cfg.Adjust(ctx), "conflict.strategy cannot be used with tikv-importer.parallel-import")
+	require.ErrorContains(t, cfg.Adjust(ctx), `conflict.strategy cannot be used with tikv-importer.parallel-import and tikv-importer.backend = "local"`)
+
+	cfg.TikvImporter.Backend = BackendTiDB
+	cfg.Conflict.Strategy = IgnoreOnDup
+	require.NoError(t, cfg.Adjust(ctx))
 
 	cfg.TikvImporter.Backend = BackendLocal
 	cfg.Conflict.Strategy = ReplaceOnDup

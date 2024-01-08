@@ -225,9 +225,12 @@ func TestTiDBClusterInfo(t *testing.T) {
 		row("tikv", "store1", "", "", ""),
 	))
 	startTime := types.NewTime(types.FromGoTime(s.startTime), mysql.TypeDatetime, 0).String()
-	tk.MustQuery("select type, instance, start_time from information_schema.cluster_info where type != 'tidb'").Check(testkit.Rows(
+	tk.MustQuery("select type, instance, start_time from information_schema.cluster_info where type = 'pd'").Check(testkit.Rows(
 		row("pd", mockAddr, startTime),
-		row("tikv", "store1", startTime),
+	))
+	// The start_time is filled in `dataForTiDBClusterInfo` function not always same as `s.startTime`.
+	tk.MustQuery("select type, instance from information_schema.cluster_info where type = 'tikv'").Check(testkit.Rows(
+		row("tikv", "store1"),
 	))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockStoreTombstone", `return(true)`))
@@ -382,7 +385,7 @@ func TestTableStorageStats(t *testing.T) {
 		"test 2",
 	))
 	rows := tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()
-	result := 55
+	result := 56
 	require.Len(t, rows, result)
 
 	// More tests about the privileges.

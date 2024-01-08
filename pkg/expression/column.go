@@ -171,9 +171,9 @@ func (col *CorrelatedColumn) IsCorrelated() bool {
 	return true
 }
 
-// ConstItem implements Expression interface.
-func (col *CorrelatedColumn) ConstItem(_ bool) bool {
-	return false
+// ConstLevel returns the const level for the expression
+func (col *CorrelatedColumn) ConstLevel() ConstLevel {
+	return ConstNone
 }
 
 // Decorrelate implements Expression interface.
@@ -514,9 +514,9 @@ func (col *Column) IsCorrelated() bool {
 	return false
 }
 
-// ConstItem implements Expression interface.
-func (col *Column) ConstItem(_ bool) bool {
-	return false
+// ConstLevel returns the const level for the expression
+func (col *Column) ConstLevel() ConstLevel {
+	return ConstNone
 }
 
 // Decorrelate implements Expression interface.

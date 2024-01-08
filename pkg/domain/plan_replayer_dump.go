@@ -112,7 +112,7 @@ func (tne *tableNameExtractor) getTablesAndViews() map[tableNamePair]struct{} {
 	return r
 }
 
-func (tne *tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
+func (*tableNameExtractor) Enter(in ast.Node) (ast.Node, bool) {
 	if _, ok := in.(*ast.TableName); ok {
 		return in, true
 	}
@@ -755,7 +755,7 @@ func dumpPlanReplayerExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanR
 }
 
 func extractTableNames(ctx context.Context, sctx sessionctx.Context,
-	ExecStmts []ast.StmtNode, curDB model.CIStr) (map[tableNamePair]struct{}, error) {
+	execStmts []ast.StmtNode, curDB model.CIStr) (map[tableNamePair]struct{}, error) {
 	tableExtractor := &tableNameExtractor{
 		ctx:      ctx,
 		executor: sctx.(sqlexec.RestrictedSQLExecutor),
@@ -764,7 +764,7 @@ func extractTableNames(ctx context.Context, sctx sessionctx.Context,
 		names:    make(map[tableNamePair]struct{}),
 		cteNames: make(map[string]struct{}),
 	}
-	for _, execStmt := range ExecStmts {
+	for _, execStmt := range execStmts {
 		execStmt.Accept(tableExtractor)
 	}
 	if tableExtractor.err != nil {

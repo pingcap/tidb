@@ -1460,7 +1460,13 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	var err error
 	keepaliveCfg := GetKeepalive(&cfg.Config)
 	keepaliveCfg.PermitWithoutStream = true
-	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
+	client := restore.NewRestoreClient(
+		mgr.GetPDClient(),
+		mgr.GetPDHTTPClient(),
+		mgr.GetTLSConfig(),
+		keepaliveCfg,
+		false,
+	)
 	err = client.Init(g, mgr.GetStorage())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1484,7 +1490,7 @@ func createRestoreClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, m
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetConcurrency(uint(cfg.Concurrency))
 	client.SetSwitchModeInterval(cfg.SwitchModeInterval)
-	client.InitClients(u, false, false)
+	client.InitClients(ctx, u, false, false)
 
 	rawKVClient, err := newRawBatchClient(ctx, cfg.PD, cfg.TLS)
 	if err != nil {

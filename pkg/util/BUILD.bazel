@@ -82,6 +82,7 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/fastrand",
+        "//pkg/util/logutil",
         "//pkg/util/memory",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//assert",

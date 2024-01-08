@@ -88,6 +88,18 @@ func ExtractTableHintsFromStmtNode(node ast.Node, sctx sessionctx.Context) []*as
 		// check duplicated hints
 		checkInsertStmtHintDuplicated(node, sctx)
 		return x.TableHints
+	case *ast.SetOprStmt:
+		var result []*ast.TableOptimizerHint
+		if x.SelectList == nil {
+			return nil
+		}
+		for _, s := range x.SelectList.Selects {
+			tmp := ExtractTableHintsFromStmtNode(s, sctx)
+			if len(tmp) != 0 {
+				result = append(result, tmp...)
+			}
+		}
+		return result
 	default:
 		return nil
 	}
@@ -260,7 +272,7 @@ func ParseHintsSet(p *parser.Parser, sql, charset, collation, db string) (*Hints
 		return nil, nil, nil, fmt.Errorf("bind_sql must be a single statement: %s", sql)
 	}
 	hs := CollectHint(stmtNodes[0])
-	processor := &QBHintHandler{}
+	processor := NewQBHintHandler(nil)
 	stmtNodes[0].Accept(processor)
 	topNodeType := nodeType4Stmt(stmtNodes[0])
 	for i, tblHints := range hs.tableHints {

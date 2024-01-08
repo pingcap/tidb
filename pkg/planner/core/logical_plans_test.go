@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -93,7 +94,22 @@ func createPlannerSuite() (s *plannerSuite) {
 		}
 	}
 	s.is = infoschema.MockInfoSchema(tblInfos)
-	s.ctx = MockContext()
+	ctx := mock.NewContext()
+	ctx.Store = &mock.Store{
+		Client: &mock.Client{},
+	}
+	initStatsCtx := mock.NewContext()
+	initStatsCtx.Store = &mock.Store{
+		Client: &mock.Client{},
+	}
+	ctx.GetSessionVars().CurrentDB = "test"
+	do := domain.NewMockDomain()
+	if err := do.CreateStatsHandle(ctx, initStatsCtx); err != nil {
+		panic(fmt.Sprintf("create mock context panic: %+v", err))
+	}
+	domain.BindDomain(ctx, do)
+	ctx.SetInfoSchema(s.is)
+	s.ctx = ctx
 	domain.GetDomain(s.ctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	s.ctx.GetSessionVars().EnableWindowFunction = true
 	s.p = parser.New()
@@ -1482,7 +1498,7 @@ func TestVisitInfo(t *testing.T) {
 		// TODO: to fix, Table 'test.ttt' doesn't exist
 		_ = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		sctx := MockContext()
-		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.QBHintHandler{})
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		builder.ctx.GetSessionVars().SetHashJoinConcurrency(1)
 		_, err = builder.Build(context.TODO(), stmt)
@@ -1566,7 +1582,7 @@ func TestUnion(t *testing.T) {
 		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err)
 		sctx := MockContext()
-		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.QBHintHandler{})
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		plan, err := builder.Build(ctx, stmt)
 		testdata.OnRecord(func() {
@@ -1608,7 +1624,7 @@ func TestTopNPushDown(t *testing.T) {
 		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err)
 		sctx := MockContext()
-		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.QBHintHandler{})
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, err := builder.Build(ctx, stmt)
 		require.NoError(t, err)
@@ -1695,7 +1711,7 @@ func TestOuterJoinEliminator(t *testing.T) {
 		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err)
 		sctx := MockContext()
-		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.QBHintHandler{})
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, err := builder.Build(ctx, stmt)
 		require.NoError(t, err)
@@ -1735,7 +1751,7 @@ func TestSelectView(t *testing.T) {
 		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err)
 		sctx := MockContext()
-		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.QBHintHandler{})
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
 		p, err := builder.Build(ctx, stmt)
 		require.NoError(t, err)
 		p, err = logicalOptimize(ctx, builder.optFlag, p.(LogicalPlan))
@@ -1842,7 +1858,7 @@ func (s *plannerSuiteWithOptimizeVars) optimize(ctx context.Context, sql string)
 			return nil, nil, err
 		}
 	}
-	builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.QBHintHandler{})
+	builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	p, err := builder.Build(ctx, stmt)
 	if err != nil {
@@ -1944,7 +1960,7 @@ func TestSkylinePruning(t *testing.T) {
 		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err)
 		sctx := MockContext()
-		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.QBHintHandler{})
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, err := builder.Build(ctx, stmt)
 		if err != nil {
@@ -2053,7 +2069,7 @@ func TestUpdateEQCond(t *testing.T) {
 		err = Preprocess(context.Background(), s.ctx, stmt, WithPreprocessorReturn(&PreprocessorReturn{InfoSchema: s.is}))
 		require.NoError(t, err)
 		sctx := MockContext()
-		builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.QBHintHandler{})
+		builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
 		domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 		p, err := builder.Build(ctx, stmt)
 		require.NoError(t, err)
@@ -2077,7 +2093,7 @@ func TestConflictedJoinTypeHints(t *testing.T) {
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
-	builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.QBHintHandler{})
+	builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	p, err := builder.Build(ctx, stmt)
 	require.NoError(t, err)
@@ -2104,7 +2120,7 @@ func TestSimplyOuterJoinWithOnlyOuterExpr(t *testing.T) {
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
-	builder, _ := NewPlanBuilder().Init(sctx, s.is, &hint.QBHintHandler{})
+	builder, _ := NewPlanBuilder().Init(sctx, s.is, hint.NewQBHintHandler(nil))
 	domain.GetDomain(sctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	p, err := builder.Build(ctx, stmt)
 	require.NoError(t, err)
@@ -2300,7 +2316,7 @@ func TestRollupExpand(t *testing.T) {
 	// manual builder
 	s.ctx.GetSessionVars().PlanID.Store(0)
 	s.ctx.GetSessionVars().PlanColumnID.Store(0)
-	builder, _ := NewPlanBuilder().Init(s.ctx, s.is, &hint.QBHintHandler{})
+	builder, _ := NewPlanBuilder().Init(s.ctx, s.is, hint.NewQBHintHandler(nil))
 	p, err := builder.Build(ctx, stmt)
 	require.NoError(t, err)
 

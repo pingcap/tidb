@@ -605,8 +605,8 @@ const (
 	// TiDBEvolvePlanBaselines indicates whether the evolution of plan baselines is enabled.
 	TiDBEvolvePlanBaselines = "tidb_evolve_plan_baselines"
 
-	// TiDBOptEnableUniversalBinding indicates whether to enable the universal binding.
-	TiDBOptEnableUniversalBinding = "tidb_opt_enable_universal_binding"
+	// TiDBOptEnableFuzzyBinding indicates whether to enable the universal binding.
+	TiDBOptEnableFuzzyBinding = "tidb_opt_enable_fuzzy_binding"
 
 	// TiDBEnableExtendedStats indicates whether the extended statistics feature is enabled.
 	TiDBEnableExtendedStats = "tidb_enable_extended_stats"
@@ -721,6 +721,9 @@ const (
 
 	// TiDBEnableTSOFollowerProxy indicates whether to enable the TSO Follower Proxy feature of PD client.
 	TiDBEnableTSOFollowerProxy = "tidb_enable_tso_follower_proxy"
+
+	// PDEnableFollowerHandleRegion indicates whether to enable the PD Follower handle region API.
+	PDEnableFollowerHandleRegion = "pd_enable_follower_handle_region"
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
@@ -929,6 +932,9 @@ const (
 	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
 	// Please see comments of SessionVars.OptObjective for details.
 	TiDBOptObjective = "tidb_opt_objective"
+
+	// TiDBTxnEntrySizeLimit indicates the max size of a entry in membuf.
+	TiDBTxnEntrySizeLimit = "tidb_txn_entry_size_limit"
 )
 
 // TiDB vars that have only global scope
@@ -1220,7 +1226,7 @@ const (
 	DefTiFlashQuerySpillRatio                      = 0.7
 	DefTiDBEnableTiFlashPipelineMode               = true
 	DefTiDBMPPStoreFailTTL                         = "60s"
-	DefTiDBTxnMode                                 = ""
+	DefTiDBTxnMode                                 = PessimisticTxnMode
 	DefTiDBRowFormatV1                             = 1
 	DefTiDBRowFormatV2                             = 2
 	DefTiDBDDLReorgWorkerCount                     = 4
@@ -1287,6 +1293,7 @@ const (
 	DefTiDBEnableLocalTxn                          = false
 	DefTiDBTSOClientBatchMaxWaitTime               = 0.0 // 0ms
 	DefTiDBEnableTSOFollowerProxy                  = false
+	DefPDEnableFollowerHandleRegion                = false
 	DefTiDBEnableOrderedResultMode                 = false
 	DefTiDBEnablePseudoForOutdatedStats            = false
 	DefTiDBRegardNULLAsPoint                       = true
@@ -1444,6 +1451,7 @@ const (
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
 	DefTiDBIdleTransactionTimeout                     = 0
+	DefTiDBTxnEntrySizeLimit                          = 0
 )
 
 // Process global variables.
@@ -1472,6 +1480,7 @@ var (
 	EnableLocalTxn                       = atomic.NewBool(DefTiDBEnableLocalTxn)
 	MaxTSOBatchWaitInterval              = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy               = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
+	EnablePDFollowerHandleRegion         = atomic.NewBool(DefPDEnableFollowerHandleRegion)
 	RestrictedReadOnly                   = atomic.NewBool(DefTiDBRestrictedReadOnly)
 	VarTiDBSuperReadOnly                 = atomic.NewBool(DefTiDBSuperReadOnly)
 	PersistAnalyzeOptions                = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
@@ -1544,6 +1553,7 @@ var (
 	SchemaVersionCacheLimit   = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
 	CloudStorageURI           = atomic.NewString("")
 	IgnoreInlistPlanDigest    = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
+	TxnEntrySizeLimit         = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
 )
 
 var (

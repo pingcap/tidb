@@ -75,8 +75,8 @@ type Scheduler interface {
 	// if Init returns error, scheduler manager will fail the task directly,
 	// so the returned error should be a fatal error.
 	Init() error
-	// ExecuteTask start to schedule a task.
-	ExecuteTask()
+	// ScheduleTask schedules the task execution step by step.
+	ScheduleTask()
 	// Close closes the scheduler, should be called if Init returns nil.
 	Close()
 }
@@ -122,9 +122,9 @@ func (*BaseScheduler) Init() error {
 	return nil
 }
 
-// ExecuteTask implements the Scheduler interface.
-func (s *BaseScheduler) ExecuteTask() {
-	logutil.Logger(s.logCtx).Info("execute one task",
+// ScheduleTask implements the Scheduler interface.
+func (s *BaseScheduler) ScheduleTask() {
+	logutil.Logger(s.logCtx).Info("schedule task",
 		zap.Stringer("state", s.Task.State), zap.Int("concurrency", s.Task.Concurrency))
 	s.scheduleTask()
 }
@@ -140,10 +140,7 @@ func (s *BaseScheduler) refreshTask() error {
 		logutil.Logger(s.logCtx).Error("refresh task failed", zap.Error(err))
 		return err
 	}
-	// newTask might be nil when GC routine move the task into history table.
-	if newTask != nil {
-		s.Task = newTask
-	}
+	s.Task = newTask
 	return nil
 }
 
@@ -232,22 +229,23 @@ func (s *BaseScheduler) scheduleTask() {
 
 // handle task in cancelling state, schedule revert subtasks.
 func (s *BaseScheduler) onCancelling() error {
-	logutil.Logger(s.logCtx).Info("on cancelling state", zap.Stringer("state", s.Task.State), zap.Int64("stage", int64(s.Task.Step)))
+	logutil.Logger(s.logCtx).Info("on cancelling state", zap.Stringer("state", s.Task.State), zap.Int64("step", int64(s.Task.Step)))
 	errs := []error{errors.New(taskCancelMsg)}
 	return s.onErrHandlingStage(errs)
 }
 
 // handle task in pausing state, cancel all running subtasks.
 func (s *BaseScheduler) onPausing() error {
-	logutil.Logger(s.logCtx).Info("on pausing state", zap.Stringer("state", s.Task.State), zap.Int64("stage", int64(s.Task.Step)))
-	cnt, err := s.taskMgr.GetSubtaskInStatesCnt(s.ctx, s.Task.ID, proto.TaskStateRunning, proto.TaskStatePending)
+	logutil.Logger(s.logCtx).Info("on pausing state", zap.Stringer("state", s.Task.State), zap.Int64("step", int64(s.Task.Step)))
+	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, s.Task.ID, s.Task.Step)
 	if err != nil {
 		logutil.Logger(s.logCtx).Warn("check task failed", zap.Error(err))
 		return err
 	}
-	if cnt == 0 {
+	runningPendingCnt := cntByStates[proto.SubtaskStateRunning] + cntByStates[proto.SubtaskStatePending]
+	if runningPendingCnt == 0 {
 		logutil.Logger(s.logCtx).Info("all running subtasks paused, update the task to paused state")
-		return s.updateTask(proto.TaskStatePaused, nil, RetrySQLTimes)
+		return s.taskMgr.PausedTask(s.ctx, s.Task.ID)
 	}
 	logutil.Logger(s.logCtx).Debug("on pausing state, this task keeps current state", zap.Stringer("state", s.Task.State))
 	return nil
@@ -258,7 +256,7 @@ var MockDMLExecutionOnPausedState func(task *proto.Task)
 
 // handle task in paused state.
 func (s *BaseScheduler) onPaused() error {
-	logutil.Logger(s.logCtx).Info("on paused state", zap.Stringer("state", s.Task.State), zap.Int64("stage", int64(s.Task.Step)))
+	logutil.Logger(s.logCtx).Info("on paused state", zap.Stringer("state", s.Task.State), zap.Int64("step", int64(s.Task.Step)))
 	failpoint.Inject("mockDMLExecutionOnPausedState", func(val failpoint.Value) {
 		if val.(bool) {
 			MockDMLExecutionOnPausedState(s.Task)
@@ -272,13 +270,13 @@ var TestSyncChan = make(chan struct{})
 
 // handle task in resuming state.
 func (s *BaseScheduler) onResuming() error {
-	logutil.Logger(s.logCtx).Info("on resuming state", zap.Stringer("state", s.Task.State), zap.Int64("stage", int64(s.Task.Step)))
-	cnt, err := s.taskMgr.GetSubtaskInStatesCnt(s.ctx, s.Task.ID, proto.TaskStatePaused)
+	logutil.Logger(s.logCtx).Info("on resuming state", zap.Stringer("state", s.Task.State), zap.Int64("step", int64(s.Task.Step)))
+	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, s.Task.ID, s.Task.Step)
 	if err != nil {
 		logutil.Logger(s.logCtx).Warn("check task failed", zap.Error(err))
 		return err
 	}
-	if cnt == 0 {
+	if cntByStates[proto.SubtaskStatePaused] == 0 {
 		// Finish the resuming process.
 		logutil.Logger(s.logCtx).Info("all paused tasks converted to pending state, update the task to running state")
 		err := s.updateTask(proto.TaskStateRunning, nil, RetrySQLTimes)
@@ -293,19 +291,20 @@ func (s *BaseScheduler) onResuming() error {
 
 // handle task in reverting state, check all revert subtasks finishes.
 func (s *BaseScheduler) onReverting() error {
-	logutil.Logger(s.logCtx).Debug("on reverting state", zap.Stringer("state", s.Task.State), zap.Int64("stage", int64(s.Task.Step)))
-	cnt, err := s.taskMgr.GetSubtaskInStatesCnt(s.ctx, s.Task.ID, proto.TaskStateRevertPending, proto.TaskStateReverting)
+	logutil.Logger(s.logCtx).Debug("on reverting state", zap.Stringer("state", s.Task.State), zap.Int64("step", int64(s.Task.Step)))
+	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, s.Task.ID, s.Task.Step)
 	if err != nil {
 		logutil.Logger(s.logCtx).Warn("check task failed", zap.Error(err))
 		return err
 	}
-	if cnt == 0 {
+	activeRevertCnt := cntByStates[proto.SubtaskStateRevertPending] + cntByStates[proto.SubtaskStateReverting]
+	if activeRevertCnt == 0 {
 		if err = s.OnDone(s.ctx, s, s.Task); err != nil {
 			return errors.Trace(err)
 		}
-		return s.updateTask(proto.TaskStateReverted, nil, RetrySQLTimes)
+		return s.taskMgr.RevertedTask(s.ctx, s.Task.ID)
 	}
-	// Wait all subtasks in this stage finishes.
+	// Wait all subtasks in this step finishes.
 	s.OnTick(s.ctx, s.Task)
 	logutil.Logger(s.logCtx).Debug("on reverting state, this task keeps current state", zap.Stringer("state", s.Task.State))
 	return nil
@@ -313,38 +312,40 @@ func (s *BaseScheduler) onReverting() error {
 
 // handle task in pending state, schedule subtasks.
 func (s *BaseScheduler) onPending() error {
-	logutil.Logger(s.logCtx).Debug("on pending state", zap.Stringer("state", s.Task.State), zap.Int64("stage", int64(s.Task.Step)))
-	return s.onNextStage()
+	logutil.Logger(s.logCtx).Debug("on pending state", zap.Stringer("state", s.Task.State), zap.Int64("step", int64(s.Task.Step)))
+	return s.switch2NextStep()
 }
 
 // handle task in running state, check all running subtasks finishes.
-// If subtasks finished, run into the next stage.
+// If subtasks finished, run into the next step.
 func (s *BaseScheduler) onRunning() error {
-	logutil.Logger(s.logCtx).Debug("on running state", zap.Stringer("state", s.Task.State), zap.Int64("stage", int64(s.Task.Step)))
-	subTaskErrs, err := s.taskMgr.CollectSubTaskError(s.ctx, s.Task.ID)
-	if err != nil {
-		logutil.Logger(s.logCtx).Warn("collect subtask error failed", zap.Error(err))
-		return err
-	}
-	if len(subTaskErrs) > 0 {
-		logutil.Logger(s.logCtx).Warn("subtasks encounter errors")
-		return s.onErrHandlingStage(subTaskErrs)
-	}
-	// check current stage finishes.
-	cnt, err := s.taskMgr.GetSubtaskInStatesCnt(s.ctx, s.Task.ID, proto.TaskStatePending, proto.TaskStateRunning)
+	logutil.Logger(s.logCtx).Debug("on running state",
+		zap.Stringer("state", s.Task.State),
+		zap.Int64("step", int64(s.Task.Step)))
+	// check current step finishes.
+	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, s.Task.ID, s.Task.Step)
 	if err != nil {
 		logutil.Logger(s.logCtx).Warn("check task failed", zap.Error(err))
 		return err
 	}
-
-	if cnt == 0 {
-		return s.onNextStage()
+	if cntByStates[proto.SubtaskStateFailed] > 0 || cntByStates[proto.SubtaskStateCanceled] > 0 {
+		subTaskErrs, err := s.taskMgr.CollectSubTaskError(s.ctx, s.Task.ID)
+		if err != nil {
+			logutil.Logger(s.logCtx).Warn("collect subtask error failed", zap.Error(err))
+			return err
+		}
+		if len(subTaskErrs) > 0 {
+			logutil.Logger(s.logCtx).Warn("subtasks encounter errors")
+			return s.onErrHandlingStage(subTaskErrs)
+		}
+	} else if s.isStepSucceed(cntByStates) {
+		return s.switch2NextStep()
 	}
 
 	if err := s.balanceSubtasks(); err != nil {
 		return err
 	}
-	// Wait all subtasks in this stage finishes.
+	// Wait all subtasks in this step finishes.
 	s.OnTick(s.ctx, s.Task)
 	logutil.Logger(s.logCtx).Debug("on running state, this task keeps current state", zap.Stringer("state", s.Task.State))
 	return nil
@@ -403,7 +404,12 @@ func (s *BaseScheduler) doBalanceSubtasks(eligibleNodes []string) error {
 	if len(deadNodes) != 0 {
 		/// get subtask from deadNodes, since there might be some running subtasks on deadNodes.
 		/// In this case, all subtasks on deadNodes are in running/pending state.
-		subtasksOnDeadNodes, err := s.taskMgr.GetSubtasksByExecIdsAndStepAndState(s.ctx, deadNodes, s.Task.ID, s.Task.Step, proto.TaskStateRunning)
+		subtasksOnDeadNodes, err := s.taskMgr.GetSubtasksByExecIdsAndStepAndState(
+			s.ctx,
+			deadNodes,
+			s.Task.ID,
+			s.Task.Step,
+			proto.SubtaskStateRunning)
 		if err != nil {
 			return err
 		}
@@ -489,6 +495,9 @@ func (s *BaseScheduler) updateTask(taskState proto.TaskState, newSubTasks []*pro
 		if err == nil || !retryable {
 			break
 		}
+		if err1 := s.ctx.Err(); err1 != nil {
+			return err1
+		}
 		if i%10 == 0 {
 			logutil.Logger(s.logCtx).Warn("updateTask first failed", zap.Stringer("from", prevState), zap.Stringer("to", s.Task.State),
 				zap.Int("retry times", i), zap.Error(err))
@@ -526,9 +535,9 @@ func (s *BaseScheduler) onErrHandlingStage(receiveErrs []error) error {
 	return s.updateTask(proto.TaskStateReverting, subTasks, RetrySQLTimes)
 }
 
-func (s *BaseScheduler) onNextStage() (err error) {
+func (s *BaseScheduler) switch2NextStep() (err error) {
 	nextStep := s.GetNextStep(s.Task)
-	logutil.Logger(s.logCtx).Info("onNextStage",
+	logutil.Logger(s.logCtx).Info("on next step",
 		zap.Int64("current-step", int64(s.Task.Step)),
 		zap.Int64("next-step", int64(nextStep)))
 
@@ -539,16 +548,6 @@ func (s *BaseScheduler) onNextStage() (err error) {
 			return errors.Trace(err)
 		}
 		return s.taskMgr.SucceedTask(s.ctx, s.Task.ID)
-	}
-
-	// Adjust the task's concurrency.
-	if s.Task.State == proto.TaskStatePending {
-		if s.Task.Concurrency == 0 {
-			s.Task.Concurrency = DefaultSubtaskConcurrency
-		}
-		if s.Task.Concurrency > MaxSubtaskConcurrency {
-			s.Task.Concurrency = MaxSubtaskConcurrency
-		}
 	}
 
 	serverNodes, err := s.getEligibleNodes()
@@ -642,11 +641,11 @@ func (s *BaseScheduler) handlePlanErr(err error) error {
 		return err
 	}
 	s.Task.Error = err
-
 	if err = s.OnDone(s.ctx, s, s.Task); err != nil {
 		return errors.Trace(err)
 	}
-	return s.updateTask(proto.TaskStateFailed, nil, RetrySQLTimes)
+
+	return s.taskMgr.FailTask(s.ctx, s.Task.ID, s.Task.State, s.Task.Error)
 }
 
 // MockServerInfo exported for scheduler_test.go
@@ -725,6 +724,11 @@ func (s *BaseScheduler) WithNewSession(fn func(se sessionctx.Context) error) err
 // WithNewTxn executes the fn in a new transaction.
 func (s *BaseScheduler) WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error {
 	return s.taskMgr.WithNewTxn(ctx, fn)
+}
+
+func (*BaseScheduler) isStepSucceed(cntByStates map[proto.SubtaskState]int64) bool {
+	_, ok := cntByStates[proto.SubtaskStateSucceed]
+	return len(cntByStates) == 0 || (len(cntByStates) == 1 && ok)
 }
 
 // IsCancelledErr checks if the error is a cancelled error.

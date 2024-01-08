@@ -4278,7 +4278,7 @@ and ssci.item_sk = csci.item_sk)
 limit 100;
 admin show bdr role;
 BDR_ROLE
-none
+
 admin set bdr role primary;
 admin show bdr role;
 BDR_ROLE
@@ -4287,15 +4287,16 @@ admin set bdr role secondary;
 admin show bdr role;
 BDR_ROLE
 secondary
-admin set bdr role local_only;
+admin unset bdr role;
 admin show bdr role;
 BDR_ROLE
-local_only
+
 admin set bdr role test_err;
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 27 near "test_err;" 
 admin show bdr role;
 BDR_ROLE
-local_only
+
+admin unset bdr role;
 set global tidb_mem_oom_action='CANCEL';
 drop table if exists t, t1;
 create table t(a int, b int, index idx(a));
@@ -4382,12 +4383,12 @@ create table testbind(i int, s varchar(20));
 create index index_t on testbind(i,s);
 create global binding for select * from testbind using select * from testbind use index for join(index_t);
 show global bindings where default_db='executor__executor';
-Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Type	Sql_digest	Plan_digest
-select * from `executor__executor` . `testbind`	SELECT * FROM `executor__executor`.`testbind` USE INDEX FOR JOIN (`index_t`)	executor__executor	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual		a2fa907992be17801e5976df09b5b3a0d205f4c4aff39a14ab3bc8642026f527	
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from `executor__executor` . `testbind`	SELECT * FROM `executor__executor`.`testbind` USE INDEX FOR JOIN (`index_t`)	executor__executor	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	a2fa907992be17801e5976df09b5b3a0d205f4c4aff39a14ab3bc8642026f527	
 create session binding for select * from testbind using select * from testbind use index for join(index_t);
 show session bindings where default_db='executor__executor';
-Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Type	Sql_digest	Plan_digest
-select * from `executor__executor` . `testbind`	SELECT * FROM `executor__executor`.`testbind` USE INDEX FOR JOIN (`index_t`)	executor__executor	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual		a2fa907992be17801e5976df09b5b3a0d205f4c4aff39a14ab3bc8642026f527	
+Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
+select * from `executor__executor` . `testbind`	SELECT * FROM `executor__executor`.`testbind` USE INDEX FOR JOIN (`index_t`)	executor__executor	enabled	<create_time>	<update_time>	utf8mb4	utf8mb4_general_ci	manual	a2fa907992be17801e5976df09b5b3a0d205f4c4aff39a14ab3bc8642026f527	
 drop session binding for select * from testbind using select * from testbind use index for join(index_t);
 drop global binding for select * from testbind using select * from testbind use index for join(index_t);
 drop table if EXISTS t1;

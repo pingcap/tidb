@@ -515,10 +515,9 @@ func TestAdminStmt(t *testing.T) {
 		// We do not support the global level. We will check it in the later.
 		{"admin flush global plan_cache", true, "ADMIN FLUSH GLOBAL PLAN_CACHE"},
 		// for BDR
-		{"admin set bdr role none", true, "ADMIN SET BDR ROLE NONE"},
 		{"admin set bdr role primary", true, "ADMIN SET BDR ROLE PRIMARY"},
 		{"admin set bdr role secondary", true, "ADMIN SET BDR ROLE SECONDARY"},
-		{"admin set bdr role local_only", true, "ADMIN SET BDR ROLE LOCAL_ONLY"},
+		{"admin unset bdr role", true, "ADMIN UNSET BDR ROLE"},
 		{"admin show bdr role", true, "ADMIN SHOW BDR ROLE"},
 	}
 	RunTest(t, table, false)
@@ -1151,6 +1150,9 @@ AAAAAAAAAAAA5gm5Mg==
 		{"query watch add SQL TEXT SIMILAR 'select 1'", false, ""},
 		{"query watch remove 1", true, "QUERY WATCH REMOVE 1"},
 		{"query watch remove", false, ""},
+
+		// for issue 34325, "replace into" with hints
+		{"replace /*+ SET_VAR(sql_mode='ALLOW_INVALID_DATES') */ into t values ('2004-04-31');", true, "REPLACE /*+ SET_VAR(sql_mode = ALLOW_INVALID_DATES)*/ INTO `t` VALUES (_UTF8MB4'2004-04-31')"},
 	}
 	RunTest(t, table, false)
 }
@@ -5156,6 +5158,16 @@ func TestSetOperator(t *testing.T) {
 		{"(select c1 from t1) union all (select c2 from t2 except select c3 from t3) order by c1 limit 1", true, "(SELECT `c1` FROM `t1`) UNION ALL (SELECT `c2` FROM `t2` EXCEPT SELECT `c3` FROM `t3`) ORDER BY `c1` LIMIT 1"},
 		{"((select c1 from t1) except select c2 from t2) intersect all (select c3 from t3) order by c1 limit 1", true, "((SELECT `c1` FROM `t1`) EXCEPT SELECT `c2` FROM `t2`) INTERSECT ALL (SELECT `c3` FROM `t3`) ORDER BY `c1` LIMIT 1"},
 		{"select 1 union distinct (select 1 except all select 1 intersect select 1)", true, "SELECT 1 UNION (SELECT 1 EXCEPT ALL SELECT 1 INTERSECT SELECT 1)"},
+
+		// https://github.com/pingcap/tidb/issues/49874
+		{"select * from a where PK = 0 union all (select * from b where PK = 0 union all (select * from b where PK != 0) order by pk limit 1)", true,
+			"SELECT * FROM `a` WHERE `PK`=0 UNION ALL (SELECT * FROM `b` WHERE `PK`=0 UNION ALL (SELECT * FROM `b` WHERE `PK`!=0) ORDER BY `pk` LIMIT 1)"},
+		{"select * from a where PK = 0 union all (select * from b where PK = 0 union all (select * from b where PK != 0) order by pk limit 1) order by pk limit 2", true,
+			"SELECT * FROM `a` WHERE `PK`=0 UNION ALL (SELECT * FROM `b` WHERE `PK`=0 UNION ALL (SELECT * FROM `b` WHERE `PK`!=0) ORDER BY `pk` LIMIT 1) ORDER BY `pk` LIMIT 2"},
+		{"(select * from b where pk= 0 union all (select * from b where pk !=0) order by pk limit 1) order by pk limit 2", true,
+			"(SELECT * FROM `b` WHERE `pk`=0 UNION ALL (SELECT * FROM `b` WHERE `pk`!=0) ORDER BY `pk` LIMIT 1) ORDER BY `pk` LIMIT 2"},
+		{"(select * from b where pk= 0 union all (select * from b where pk !=0) order by pk limit 1) order by pk", true,
+			"(SELECT * FROM `b` WHERE `pk`=0 UNION ALL (SELECT * FROM `b` WHERE `pk`!=0) ORDER BY `pk` LIMIT 1) ORDER BY `pk`"},
 	}
 	RunTest(t, table, false)
 }
@@ -5476,13 +5488,11 @@ func TestBinding(t *testing.T) {
 		{"create session binding for select 1 union select 2 intersect select 3 using select 1 union select 2 intersect select 3", true, "CREATE SESSION BINDING FOR SELECT 1 UNION SELECT 2 INTERSECT SELECT 3 USING SELECT 1 UNION SELECT 2 INTERSECT SELECT 3"},
 		{"drop session binding for select 1 union select 2 intersect select 3 using select 1 union select 2 intersect select 3", true, "DROP SESSION BINDING FOR SELECT 1 UNION SELECT 2 INTERSECT SELECT 3 USING SELECT 1 UNION SELECT 2 INTERSECT SELECT 3"},
 		{"drop session binding for select 1 union select 2 intersect select 3", true, "DROP SESSION BINDING FOR SELECT 1 UNION SELECT 2 INTERSECT SELECT 3"},
-		// Universal bindings
-		{"create global universal binding for select * from t using select * from t", true, "CREATE GLOBAL UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
-		{"create session universal binding for select * from t using select * from t", true, "CREATE SESSION UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
-		{"create universal binding for select * from t using select * from t", true, "CREATE SESSION UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
-		{"create global universal binding using select * from t", true, "CREATE GLOBAL UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
-		{"create session universal binding using select * from t", true, "CREATE SESSION UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
-		{"create universal binding using select * from t", true, "CREATE SESSION UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
+		// Use wildcards when creating binding
+		{"create global binding using select * from *.t1", true, "CREATE GLOBAL BINDING FOR SELECT * FROM `*`.`t1` USING SELECT * FROM `*`.`t1`"},
+		{"create global binding using select * from *.t1 where t1.a > (select max(a) from t2)", true, "CREATE GLOBAL BINDING FOR SELECT * FROM `*`.`t1` WHERE `t1`.`a`>(SELECT MAX(`a`) FROM `t2`) USING SELECT * FROM `*`.`t1` WHERE `t1`.`a`>(SELECT MAX(`a`) FROM `t2`)"},
+		{"create session binding using select * from *.t1", true, "CREATE SESSION BINDING FOR SELECT * FROM `*`.`t1` USING SELECT * FROM `*`.`t1`"},
+		{"create binding using select * from *.t1", true, "CREATE SESSION BINDING FOR SELECT * FROM `*`.`t1` USING SELECT * FROM `*`.`t1`"},
 		// Update cases.
 		{"CREATE GLOBAL BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1", true, "CREATE GLOBAL BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1"},
 		{"CREATE SESSION BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1", true, "CREATE SESSION BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1"},
