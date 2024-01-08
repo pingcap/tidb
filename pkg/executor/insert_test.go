@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -30,12 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/stretchr/testify/require"
 )
-
-func TestInsertOnDuplicateKey(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	testInsertOnDuplicateKey(t, tk)
-}
 
 func TestInsertOnDuplicateKeyWithBinlog(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -514,53 +507,6 @@ func TestGlobalTempTableParallel(t *testing.T) {
 		wg.Run(insertFunc)
 	}
 	wg.Wait()
-}
-
-func TestIssue17745(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-	tk.MustExec("drop table if exists tt1")
-	tk.MustExec("create table tt1 (c1 decimal(64))")
-	tk.MustGetErrCode("insert into tt1 values(89000000000000000000000000000000000000000000000000000000000000000000000000000000000000000)", errno.ErrWarnDataOutOfRange)
-	tk.MustGetErrCode("insert into tt1 values(89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000)", errno.ErrWarnDataOutOfRange)
-	tk.MustExec("insert ignore into tt1 values(89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000)")
-	tk.MustQuery("show warnings;").Check(testkit.Rows(`Warning 1264 Out of range value for column 'c1' at row 1`, `Warning 1292 Truncated incorrect DECIMAL value: '789012345678901234567890123456789012345678901234567890123456789012345678900000000'`))
-	tk.MustQuery("select c1 from tt1").Check(testkit.Rows("9999999999999999999999999999999999999999999999999999999999999999"))
-	tk.MustGetErrCode("update tt1 set c1 = 89123456789012345678901234567890123456789012345678901234567890123456789012345678900000000", errno.ErrWarnDataOutOfRange)
-	tk.MustExec("drop table if exists tt1")
-	tk.MustGetErrCode("insert into tt1 values(4556414e723532)", errno.ErrIllegalValueForType)
-	tk.MustQuery("select 888888888888888888888888888888888888888888888888888888888888888888888888888888888888").Check(testkit.Rows("99999999999999999999999999999999999999999999999999999999999999999"))
-	tk.MustQuery("show warnings;").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect DECIMAL value: '888888888888888888888888888888888888888888888888888888888888888888888888888888888'"))
-}
-
-// TestInsertIssue29892 test the double type with auto_increment problem, just leverage the serial test suite.
-func TestInsertIssue29892(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec(`use test`)
-
-	tk.MustExec("set global tidb_txn_mode='optimistic';")
-	tk.MustExec("set global tidb_disable_txn_auto_retry=false;")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a double auto_increment key, b int)")
-	tk.MustExec("insert into t values (146576794, 1)")
-
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec(`use test`)
-	tk1.MustExec("begin")
-	tk1.MustExec("insert into t(b) select 1")
-
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec(`use test`)
-	tk2.MustExec("begin")
-	tk2.MustExec("insert into t values (146576795, 1)")
-	tk2.MustExec("insert into t values (146576796, 1)")
-	tk2.MustExec("commit")
-
-	// since the origin auto-id (146576795) is cached in retryInfo, it will be fetched again to do the retry again,
-	// which will duplicate with what has been inserted in tk1.
-	tk1.MustContainErrMsg("commit", "Duplicate entry")
 }
 
 func TestInsertLockUnchangedKeys(t *testing.T) {

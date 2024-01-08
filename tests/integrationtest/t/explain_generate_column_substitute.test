@@ -146,35 +146,43 @@ desc select * from t where a+1 = 3;
 # test flen for float and double
 drop table if exists t0;
 create table t0(c0 float(24), c1 double as (c0) unique);
-explain format = 'brief' select c0 from t0; # TableRead
+## TableRead
+explain format = 'brief' select c0 from t0;
 
 drop table if exists t0;
 create table t0(c0 float(25), c1 double as (c0) unique);
-explain format = 'brief' select c0 from t0; # IndexRead
+## IndexRead
+explain format = 'brief' select c0 from t0;
 
 drop table if exists t0;
 create table t0(c0 double, c1 double as (c0) unique);
-explain format = 'brief' select c0 from t0; # IndexRead
+## IndexRead
+explain format = 'brief' select c0 from t0;
 
 drop table if exists t0;
 create table t0(c0 double, c1 double as (c0) unique);
-explain format = 'brief' select c0 from t0; # IndexRead
+## IndexRead
+explain format = 'brief' select c0 from t0;
 
 drop table if exists t0;
 create table t0(c0 float(24), c1 float as (c0) unique);
-explain format = 'brief' select c0 from t0; # IndexRead
+## IndexRead
+explain format = 'brief' select c0 from t0;
 
 drop table if exists t0;
 create table t0(c0 float(25), c1 float as (c0) unique);
-explain format = 'brief' select c0 from t0; # TableRead
+## TableRead
+explain format = 'brief' select c0 from t0;
 
 drop table if exists t0;
 create table t0(c0 double, c1 float as (c0) unique);
-explain format = 'brief' select c0 from t0; # TableRead
+## TableRead
+explain format = 'brief' select c0 from t0;
 
 drop table if exists t0;
 create table t0(c0 double, c1 float as (c0) unique);
-explain format = 'brief' select c0 from t0; # TableRead
+## TableRead
+explain format = 'brief' select c0 from t0;
 
 drop table if exists tbl1;
 create table tbl1 (id int unsigned not null auto_increment primary key, s int, index((md5(s))));

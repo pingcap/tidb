@@ -18,7 +18,7 @@ import (
 	"context"
 	stderrors "errors"
 	"math"
-	"sort"
+	"slices"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -200,11 +200,11 @@ func (e *AnalyzeColumnsExecV2) decodeSampleDataWithVirtualColumn(
 	chk := chunk.NewChunkWithCapacity(totFts, len(collector.Base().Samples))
 	decoder := codec.NewDecoder(chk, e.ctx.GetSessionVars().Location())
 	for _, sample := range collector.Base().Samples {
-		for i := range sample.Columns {
+		for i, columns := range sample.Columns {
 			if schema.Columns[i].VirtualExpr != nil {
 				continue
 			}
-			_, err := decoder.DecodeOne(sample.Columns[i].GetBytes(), i, e.schemaForVirtualColEval.Columns[i].RetType)
+			_, err := decoder.DecodeOne(columns.GetBytes(), i, e.schemaForVirtualColEval.Columns[i].RetType)
 			if err != nil {
 				return err
 			}
@@ -378,8 +378,8 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	colLen := len(e.colsInfo)
 	// The order of the samples are broken when merging samples from sub-collectors.
 	// So now we need to sort the samples according to the handle in order to calculate correlation.
-	sort.Slice(rootRowCollector.Base().Samples, func(i, j int) bool {
-		return rootRowCollector.Base().Samples[i].Handle.Compare(rootRowCollector.Base().Samples[j].Handle) < 0
+	slices.SortFunc(rootRowCollector.Base().Samples, func(i, j *statistics.ReservoirRowSampleItem) int {
+		return i.Handle.Compare(j.Handle)
 	})
 
 	totalLen := len(e.colsInfo) + len(e.indexes)
@@ -795,6 +795,7 @@ workLoop:
 				// 8 is size of reference, 8 is the size of "b := make([]byte, 0, 8)"
 				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 8)
 				e.memTracker.Consume(collectorMemSize)
+				errCtx := e.ctx.GetSessionVars().StmtCtx.ErrCtx()
 			indexSampleCollectLoop:
 				for _, row := range task.rootRowCollector.Base().Samples {
 					if len(idx.Columns) == 1 && row.Columns[idx.Columns[0].Offset].IsNull() {
@@ -809,14 +810,16 @@ workLoop:
 						if col.Length != types.UnspecifiedLength {
 							row.Columns[col.Offset].Copy(&tmpDatum)
 							ranger.CutDatumByPrefixLen(&tmpDatum, col.Length, &e.colsInfo[col.Offset].FieldType)
-							b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, tmpDatum)
+							b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, tmpDatum)
+							err = errCtx.HandleError(err)
 							if err != nil {
 								resultCh <- err
 								continue workLoop
 							}
 							continue
 						}
-						b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx, b, row.Columns[col.Offset])
+						b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, row.Columns[col.Offset])
+						err = errCtx.HandleError(err)
 						if err != nil {
 							resultCh <- err
 							continue workLoop
@@ -847,7 +850,7 @@ workLoop:
 					e.memTracker.Release(collector.MemSize)
 				}
 			}
-			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn, e.memTracker)
+			hist, topn, err := statistics.BuildHistAndTopN(e.ctx, int(e.opts[ast.AnalyzeOptNumBuckets]), int(e.opts[ast.AnalyzeOptNumTopN]), task.id, collector, task.tp, task.isColumn, e.memTracker, e.ctx.GetSessionVars().EnableExtendedStats)
 			if err != nil {
 				resultCh <- err
 				releaseCollectorMemory()

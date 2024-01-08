@@ -53,14 +53,14 @@ select cast(-1 as unsigned) - cast(-1 as unsigned);
 set @@sql_mode=default;
 
 # TestIssue22444
-set sql_mode='NO_UNSIGNED_SUBTRACTION'; ;
-select cast(-1 as unsigned) - cast(-10000 as unsigned); ;
+set sql_mode='NO_UNSIGNED_SUBTRACTION';
+select cast(-1 as unsigned) - cast(-10000 as unsigned);
 set sql_mode='';
-select cast(-1 as unsigned) - cast(-10000 as unsigned); ;
+select cast(-1 as unsigned) - cast(-10000 as unsigned);
 set @@sql_mode=default;
 
 # TestIssue22445
-set sql_mode='NO_UNSIGNED_SUBTRACTION'; ;
+set sql_mode='NO_UNSIGNED_SUBTRACTION';
 select cast(-12 as unsigned) - cast(-1 as unsigned);
 set sql_mode='';
 -- error 1690
@@ -68,14 +68,14 @@ select cast(-12 as unsigned) - cast(-1 as unsigned);
 set @@sql_mode=default;
 
 # TestIssue22446
-set sql_mode='NO_UNSIGNED_SUBTRACTION'; ;
+set sql_mode='NO_UNSIGNED_SUBTRACTION';
 select cast(-1 as unsigned) - 9223372036854775808;
-set sql_mode=''; ;
+set sql_mode='';
 select cast(-1 as unsigned) - 9223372036854775808;
 set @@sql_mode=default;
 
 # TestIssue22447
-set sql_mode='NO_UNSIGNED_SUBTRACTION'; ;
+set sql_mode='NO_UNSIGNED_SUBTRACTION';
 select 9223372036854775808 - cast(-1 as unsigned);
 set sql_mode='';
 -- error 1690

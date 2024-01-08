@@ -17,7 +17,7 @@ go_test(
         "//pkg/parser/auth",
         "//pkg/parser/charset",
         "//pkg/parser/mysql",
-        "//pkg/session",
+        "//pkg/session/types",
         "//pkg/testkit",
         "//pkg/util",
         "//pkg/util/dbterror/exeerrors",

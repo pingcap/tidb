@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -48,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -70,6 +70,8 @@ func TestGetTimeZone(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
+	systemTimeZone := timeutil.SystemLocation().String()
+
 	testCases := []struct {
 		tzSQL  string
 		tzStr  string
@@ -84,8 +86,8 @@ func TestGetTimeZone(t *testing.T) {
 		{"set time_zone = '-08:00'", "", "", -28800, ""},
 		{"set time_zone = '+08:00'", "", "", 28800, ""},
 		{"set time_zone = 'Asia/Shanghai'", "Asia/Shanghai", "Asia/Shanghai", 0, ""},
-		{"set time_zone = 'SYSTEM'", "Asia/Shanghai", "Asia/Shanghai", 0, ""},
-		{"set time_zone = DEFAULT", "Asia/Shanghai", "Asia/Shanghai", 0, ""},
+		{"set time_zone = 'SYSTEM'", systemTimeZone, systemTimeZone, 0, ""},
+		{"set time_zone = DEFAULT", systemTimeZone, systemTimeZone, 0, ""},
 		{"set time_zone = 'GMT'", "GMT", "GMT", 0, ""},
 		{"set time_zone = 'GMT+1'", "GMT", "GMT", 0, "[variable:1298]Unknown or incorrect time zone: 'GMT+1'"},
 		{"set time_zone = 'Etc/GMT+12'", "Etc/GMT+12", "Etc/GMT+12", 0, ""},
@@ -153,46 +155,6 @@ func TestIssue22307(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualError(t, checkErr1, "[planner:1054]Unknown column 'b' in 'where clause'")
 	require.EqualError(t, checkErr2, "[planner:1054]Unknown column 'b' in 'order clause'")
-}
-
-func TestIssue23473(t *testing.T) {
-	store := testkit.CreateMockStoreWithSchemaLease(t, dbTestLease)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_23473;")
-	tk.MustExec("create table t_23473 (k int primary key, v int)")
-	tk.MustExec("alter table t_23473 change column k k bigint")
-
-	tbl := external.GetTableByName(t, tk, "test", "t_23473")
-	require.True(t, mysql.HasNoDefaultValueFlag(tbl.Cols()[0].GetFlag()))
-}
-
-func TestAutoConvertBlobTypeByLength(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	sql := fmt.Sprintf("create table t0(c0 Blob(%d), c1 Blob(%d), c2 Blob(%d), c3 Blob(%d))",
-		255-1, 65535-1, 16777215-1, 4294967295-1)
-	tk.MustExec(sql)
-
-	var tableID int64
-	rs := tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where table_name='t0' and table_schema='test';")
-	tableIDi, _ := strconv.Atoi(rs.Rows()[0][0].(string))
-	tableID = int64(tableIDi)
-
-	tbl, exist := dom.InfoSchema().TableByID(tableID)
-	require.True(t, exist)
-
-	require.Equal(t, tbl.Cols()[0].GetType(), mysql.TypeTinyBlob)
-	require.Equal(t, tbl.Cols()[0].GetFlen(), 255)
-	require.Equal(t, tbl.Cols()[1].GetType(), mysql.TypeBlob)
-	require.Equal(t, tbl.Cols()[1].GetFlen(), 65535)
-	require.Equal(t, tbl.Cols()[2].GetType(), mysql.TypeMediumBlob)
-	require.Equal(t, tbl.Cols()[2].GetFlen(), 16777215)
-	require.Equal(t, tbl.Cols()[3].GetType(), mysql.TypeLongBlob)
-	require.Equal(t, tbl.Cols()[3].GetFlen(), 4294967295)
 }
 
 func TestAddExpressionIndexRollback(t *testing.T) {

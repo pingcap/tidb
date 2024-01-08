@@ -49,6 +49,7 @@ type visit struct {
 func TestShow(t *testing.T) {
 	node := &ast.ShowStmt{}
 	tps := []ast.ShowStmtType{
+		ast.ShowBinlogStatus,
 		ast.ShowEngines,
 		ast.ShowDatabases,
 		ast.ShowTables,
@@ -123,7 +124,7 @@ func TestRewriterPool(t *testing.T) {
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
-	builder, _ := NewPlanBuilder().Init(ctx, nil, &hint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
 
 	// Make sure PlanBuilder.getExpressionRewriter() provides clean rewriter from pool.
 	// First, pick one rewriter from the pool and make it dirty.
@@ -180,7 +181,7 @@ func TestDisableFold(t *testing.T) {
 		stmt := st.(*ast.SelectStmt)
 		expr := stmt.Fields.Fields[0].Expr
 
-		builder, _ := NewPlanBuilder().Init(ctx, nil, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
 		builder.rewriterCounter++
 		rewriter := builder.getExpressionRewriter(context.TODO(), nil)
 		require.NotNil(t, rewriter)
@@ -657,7 +658,7 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
-	pb, _ := NewPlanBuilder().Init(ctx, nil, &hint.BlockHintProcessor{})
+	pb, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
 
 	// Create a new TableName instance.
 	tableName := &ast.TableName{
@@ -713,7 +714,7 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
-	pb, _ := NewPlanBuilder().Init(ctx, nil, &hint.BlockHintProcessor{})
+	pb, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
 
 	tables := []*ast.TableName{
 		{

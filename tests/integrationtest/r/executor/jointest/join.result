@@ -1561,3 +1561,32 @@ set sql_mode=default;
 set @@tidb_hash_join_concurrency=default;
 set @@tidb_hashagg_partial_concurrency=default;
 set @@tidb_hashagg_final_concurrency=default;
+drop table if exists t;
+create table t(a int);
+insert into t values(1);
+set tidb_mem_quota_query = 1 << 18;
+set global tidb_mem_oom_action = 'CANCEL';
+set global tidb_enable_tmp_storage_on_oom = off;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+desc analyze select * from t t1, t t2, t t3, t t4, t t5, t t6;
+Error 8175 (HY000): Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=<num>]
+set tidb_mem_quota_query = default;
+set global tidb_mem_oom_action = default;
+set global tidb_enable_tmp_storage_on_oom = default;
+SET GLOBAL tidb_mem_oom_action='LOG';
+set @@tidb_mem_quota_query=1;
+drop table if exists t, t1;
+create table t(c1 int, c2 int);
+create table t1(c1 int, c2 int);
+insert into t values(1,1),(2,2);
+insert into t1 values(2,3),(4,4);
+select /*+ TIDB_HJ(t, t2) */ * from t, t1 where t.c1 = t1.c1;
+c1	c2	c1	c2
+2	2	2	3

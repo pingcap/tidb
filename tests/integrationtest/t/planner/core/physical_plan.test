@@ -35,3 +35,32 @@ insert into t1 (a,b,c) value(3,4,5);
 explain format = 'brief' select * from (select * from t1 order by a) tmp;
 
 
+# TestHJBuildAndProbeHintWithBinding
+set tidb_cost_model_version=2;
+drop table if exists t, t1, t2, t3;
+create table t(a int, b int, key(a));
+create table t1(a int, b int, key(a));
+create table t2(a int, b int, key(a));
+create table t3(a int, b int, key(a));
+
+select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+select @@last_plan_from_binding;
+create global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b using select /*+ hash_join_build(t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__physical_plan%';
+
+create global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b using select /*+ hash_join_probe(t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__physical_plan%';
+
+drop global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b;
+select @@last_plan_from_binding;
+--replace_column 5 <create_time> 6 <update_time>
+show global bindings where original_sql like '%planner__core__physical_plan%';
+
+set tidb_cost_model_version=DEFAULT;

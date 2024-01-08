@@ -43,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/server"
-	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/mockstorage"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
@@ -51,13 +50,13 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	"github.com/pingcap/tidb/pkg/util/resourcegrouptag"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
+	pd "github.com/tikv/pd/client/http"
 	"google.golang.org/grpc"
 )
 
@@ -769,12 +768,12 @@ func (s *clusterTablesSuite) setUpMockPDHTTPServer() (*httptest.Server, string) 
 	srv := httptest.NewServer(router)
 	// mock store stats stat
 	mockAddr := strings.TrimPrefix(srv.URL, "http://")
-	router.Handle(pdapi.Stores, fn.Wrap(func() (*helper.StoresStat, error) {
-		return &helper.StoresStat{
+	router.Handle(pd.Stores, fn.Wrap(func() (*pd.StoresInfo, error) {
+		return &pd.StoresInfo{
 			Count: 1,
-			Stores: []helper.StoreStat{
+			Stores: []pd.StoreInfo{
 				{
-					Store: helper.StoreBaseStat{
+					Store: pd.MetaStore{
 						ID:             1,
 						Address:        "127.0.0.1:20160",
 						State:          0,
@@ -789,7 +788,7 @@ func (s *clusterTablesSuite) setUpMockPDHTTPServer() (*httptest.Server, string) 
 		}, nil
 	}))
 	// mock PD API
-	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
+	router.Handle(pd.Status, fn.Wrap(func() (interface{}, error) {
 		return struct {
 			Version        string `json:"version"`
 			GitHash        string `json:"git_hash"`
@@ -819,7 +818,7 @@ func (s *clusterTablesSuite) setUpMockPDHTTPServer() (*httptest.Server, string) 
 		return configuration, nil
 	}
 	// pd config
-	router.Handle(pdapi.Config, fn.Wrap(mockConfig))
+	router.Handle(pd.Config, fn.Wrap(mockConfig))
 	// TiDB/TiKV config
 	router.Handle("/config", fn.Wrap(mockConfig))
 	return srv, mockAddr
@@ -1087,6 +1086,57 @@ func TestQuickBinding(t *testing.T) {
 	}
 }
 
+// for testing, only returns Original_sql, Bind_sql, Default_db, Status, Source, Sql_digest
+func showBinding(tk *testkit.TestKit, showStmt string) [][]interface{} {
+	rows := tk.MustQuery(showStmt).Sort().Rows()
+	result := make([][]interface{}, len(rows))
+	for i, r := range rows {
+		result[i] = append(result[i], r[:4]...)
+		result[i] = append(result[i], r[8:10]...)
+	}
+	return result
+}
+
+func TestUniversalBindingFromHistory(t *testing.T) {
+	t.Skip("skip it temporarily")
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, c int, key(a), key(b), key(c))`)
+	tk.MustExec(`select /*+ use_index(t, b) */ a from t where a=1`)
+	tk.MustExec(`select /*+ use_index(t, c) */ b from t where b=1`)
+
+	planDigest := tk.MustQuery(`select plan_digest from information_schema.statements_summary where query_sample_text='select /*+ use_index(t, b) */ a from t where a=1'`).Rows()
+	tk.MustExec(fmt.Sprintf("create global universal binding from history using plan digest '%s'", planDigest[0][0].(string)))
+	planDigest = tk.MustQuery(`select plan_digest from information_schema.statements_summary where query_sample_text='select /*+ use_index(t, c) */ b from t where b=1'`).Rows()
+	tk.MustExec(fmt.Sprintf("create global universal binding from history using plan digest '%s'", planDigest[0][0].(string)))
+
+	require.Equal(t, showBinding(tk, `show global bindings`), [][]interface{}{
+		{"select `a` from `t` where `a` = ?", "SELECT /*+ use_index(@`sel_1` `t` `b`) no_order_index(@`sel_1` `t` `b`)*/ `a` FROM `t` WHERE `a` = 1", "", "enabled", "history", "f8e294e078ed195998dee6717e71499d6a14b8e0f405952af8d0a5b24d0cae30"},
+		{"select `b` from `t` where `b` = ?", "SELECT /*+ use_index(@`sel_1` `t` `c`) no_order_index(@`sel_1` `t` `c`)*/ `b` FROM `t` WHERE `b` = 1", "", "enabled", "history", "cfb4dd59c4c75ff1ee126236c6bd365f7d04f6120990d922e75aa47ae8bd94eb"},
+	})
+
+	tk.MustExec(`admin reload bindings`)
+	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
+	tk.MustExec(`create database test2`)
+	tk.MustExec(`use test2`)
+	tk.MustExec(`create table t (a int, b int, c int, key(a), key(b), key(c))`)
+	tk.MustExec(`select a from t where a=10`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustExec(`select b from t where b=10`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustExec(`select b from test.t where b=10`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+}
+
 func TestCreateBindingFromHistory(t *testing.T) {
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
@@ -1284,7 +1334,6 @@ func TestSetBindingStatusBySQLDigest(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("set binding enabled for sql digest '%s'", sqlDigest[0][9]))
 	tk.MustExec(sql)
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
-	tk.MustGetErrMsg("set binding enabled for sql digest '2'", "can't find any binding for '2'")
 	tk.MustGetErrMsg("set binding enabled for sql digest ''", "sql digest is empty")
 	tk.MustGetErrMsg("set binding disabled for sql digest ''", "sql digest is empty")
 }

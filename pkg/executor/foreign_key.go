@@ -292,7 +292,8 @@ func (fkc *FKCheckExec) buildHandleFromFKValues(sc *stmtctx.StatementContext, va
 	if len(vals) == 1 && fkc.Idx == nil {
 		return kv.IntHandle(vals[0].GetInt64()), nil
 	}
-	handleBytes, err := codec.EncodeKey(sc, nil, vals...)
+	handleBytes, err := codec.EncodeKey(sc.TimeZone(), nil, vals...)
+	err = sc.HandleError(err)
 	if err != nil {
 		return nil, err
 	}
@@ -464,7 +465,8 @@ func (h *fkValueHelper) fetchFKValuesWithCheck(sc *stmtctx.StatementContext, row
 	if err != nil || h.hasNullValue(vals) {
 		return nil, err
 	}
-	keyBuf, err := codec.EncodeKey(sc, nil, vals...)
+	keyBuf, err := codec.EncodeKey(sc.TimeZone(), nil, vals...)
+	err = sc.HandleError(err)
 	if err != nil {
 		return nil, err
 	}
@@ -687,7 +689,8 @@ func (fkc *FKCascadeExec) onUpdateRow(sc *stmtctx.StatementContext, oldRow, newR
 	if err != nil {
 		return err
 	}
-	newValsKey, err := codec.EncodeKey(sc, nil, newVals...)
+	newValsKey, err := codec.EncodeKey(sc.TimeZone(), nil, newVals...)
+	err = sc.HandleError(err)
 	if err != nil {
 		return err
 	}

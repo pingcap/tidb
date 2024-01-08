@@ -316,7 +316,7 @@ func StrToUint(ctx Context, str string, isFuncCast bool) (uint64, error) {
 
 // StrToDateTime converts str to MySQL DateTime.
 func StrToDateTime(ctx Context, str string, fsp int) (Time, error) {
-	return ParseTime(ctx, str, mysql.TypeDatetime, fsp, nil)
+	return ParseTime(ctx, str, mysql.TypeDatetime, fsp)
 }
 
 // StrToDuration converts str to Duration. It returns Duration in normal case,

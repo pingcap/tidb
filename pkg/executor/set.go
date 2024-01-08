@@ -19,6 +19,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -38,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sem"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -57,7 +58,8 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	e.done = true
-	sessionVars := e.Ctx().GetSessionVars()
+	sctx := e.Ctx()
+	sessionVars := sctx.GetSessionVars()
 	for _, v := range e.vars {
 		// Variable is case insensitive, we use lower case.
 		if v.Name == ast.SetNames || v.Name == ast.SetCharset {
@@ -69,7 +71,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				}
 				continue
 			}
-			dt, err := v.Expr.(*expression.Constant).Eval(chunk.Row{})
+			dt, err := v.Expr.(*expression.Constant).Eval(sctx, chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -87,7 +89,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		name := strings.ToLower(v.Name)
 		if !v.IsSystem {
 			// Set user variable.
-			value, err := v.Expr.Eval(chunk.Row{})
+			value, err := v.Expr.Eval(sctx, chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -136,13 +138,13 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		// The variable is a noop. For compatibility we allow it to still
 		// be changed, but we append a warning since users might be expecting
 		// something that's not going to happen.
-		sessionVars.StmtCtx.AppendWarning(exeerrors.ErrSettingNoopVariable.GenWithStackByArgs(sysVar.Name))
+		sessionVars.StmtCtx.AppendWarning(exeerrors.ErrSettingNoopVariable.FastGenByArgs(sysVar.Name))
 	}
 	if sysVar.HasInstanceScope() && !v.IsGlobal && sessionVars.EnableLegacyInstanceScope {
 		// For backward compatibility we will change the v.IsGlobal to true,
 		// and append a warning saying this will not be supported in future.
 		v.IsGlobal = true
-		sessionVars.StmtCtx.AppendWarning(exeerrors.ErrInstanceScope.GenWithStackByArgs(sysVar.Name))
+		sessionVars.StmtCtx.AppendWarning(exeerrors.ErrInstanceScope.FastGenByArgs(sysVar.Name))
 	}
 
 	if v.IsGlobal {
@@ -161,12 +163,20 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 			}
 			return nil
 		})
-		logutil.BgLogger().Info("set global var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
+		showValStr := valStr
+		if name == variable.TiDBCloudStorageURI {
+			showValStr = ast.RedactURL(showValStr)
+		}
+		logutil.BgLogger().Info("set global var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", showValStr))
 		if name == variable.TiDBServiceScope {
 			dom := domain.GetDomain(e.Ctx())
+			config.GetGlobalConfig().Instance.TiDBServiceScope = valStr
 			serverID := disttaskutil.GenerateSubtaskExecID(ctx, dom.DDL().GetID())
-			_, err = e.Ctx().(sqlexec.SQLExecutor).ExecuteInternal(ctx,
-				`replace into mysql.dist_framework_meta values(%?, %?, DEFAULT)`, serverID, valStr)
+			taskMgr, err := storage.GetTaskManager()
+			if err != nil {
+				return err
+			}
+			return taskMgr.StartManagerSession(ctx, e.Ctx(), serverID, valStr)
 		}
 		return err
 	}
@@ -290,7 +300,7 @@ func (e *SetExecutor) getVarValue(ctx context.Context, v *expression.VarAssignme
 		}
 		return e.Ctx().GetSessionVars().GetGlobalSystemVar(ctx, v.Name)
 	}
-	nativeVal, err := v.Expr.Eval(chunk.Row{})
+	nativeVal, err := v.Expr.Eval(e.Ctx(), chunk.Row{})
 	if err != nil || nativeVal.IsNull() {
 		return "", err
 	}

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -241,11 +242,11 @@ func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit 
 	return regions, nil
 }
 
-func (c *TestClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r pdtypes.Rule, err error) {
+func (c *TestClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (r *pdhttp.Rule, err error) {
 	return
 }
 
-func (c *TestClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error {
+func (c *TestClient) SetPlacementRule(ctx context.Context, rule *pdhttp.Rule) error {
 	return nil
 }
 
@@ -293,7 +294,7 @@ func TestScatterFinishInTime(t *testing.T) {
 	regionSplitter := restore.NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.Split(ctx, ranges, rewriteRules, false, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 0, "", false, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
@@ -319,7 +320,7 @@ func TestScatterFinishInTime(t *testing.T) {
 
 	// When using a exponential backoffer, if we try to backoff more than 40 times in 10 regions,
 	// it would cost time unacceptable.
-	regionSplitter.ScatterRegionsWithBackoffer(ctx,
+	regionSplitter.ScatterRegionsSequentially(ctx,
 		regionInfos,
 		assertRetryLessThan(t, 40))
 }
@@ -447,7 +448,7 @@ func runWaitScatter(t *testing.T, client *TestClient) {
 		regions = append(regions, info)
 	}
 	regionSplitter := restore.NewRegionSplitter(client)
-	leftCnt := regionSplitter.WaitForScatterRegions(ctx, regions, 2000*time.Second)
+	leftCnt := regionSplitter.WaitForScatterRegionsTimeout(ctx, regions, 2000*time.Second)
 	require.Equal(t, leftCnt, 0)
 }
 
@@ -457,7 +458,7 @@ func runTestSplitAndScatterWith(t *testing.T, client *TestClient) {
 	regionSplitter := restore.NewRegionSplitter(client)
 
 	ctx := context.Background()
-	err := regionSplitter.Split(ctx, ranges, rewriteRules, false, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 0, "", false, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	if !validateRegions(regions) {
@@ -481,7 +482,7 @@ func runTestSplitAndScatterWith(t *testing.T, client *TestClient) {
 		scattered[regionInfo.Region.Id] = true
 		return nil
 	}
-	regionSplitter.ScatterRegions(ctx, regionInfos)
+	regionSplitter.ScatterRegionsSync(ctx, regionInfos)
 	for key := range regions {
 		if key == alwaysFailedRegionID {
 			require.Falsef(t, scattered[key], "always failed region %d was scattered successfully", key)
@@ -503,7 +504,7 @@ func TestRawSplit(t *testing.T) {
 	ctx := context.Background()
 
 	regionSplitter := restore.NewRegionSplitter(client)
-	err := regionSplitter.Split(ctx, ranges, nil, true, func(key [][]byte) {})
+	err := regionSplitter.ExecuteSplit(ctx, ranges, nil, 0, "", true, func(key [][]byte) {})
 	require.NoError(t, err)
 	regions := client.GetAllRegions()
 	expectedKeys := []string{"", "aay", "bba", "bbh", "cca", ""}
@@ -828,7 +829,7 @@ func TestRestoreFailed(t *testing.T) {
 	r := &fakeRestorer{
 		tableIDIsInsequence: true,
 	}
-	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1)
+	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1, string(restore.FineGrained))
 	require.NoError(t, err)
 	dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -851,7 +852,7 @@ func TestSplitFailed(t *testing.T) {
 		fakeRanges("bcy", "cad", "xxy"),
 	}
 	r := &fakeRestorer{errorInSplit: true, tableIDIsInsequence: true}
-	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1)
+	sender, err := restore.NewTiKVSender(context.TODO(), r, nil, 1, string(restore.FineGrained))
 	require.NoError(t, err)
 	dctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -1052,10 +1053,10 @@ func (f *fakeSplitClient) ScanRegions(ctx context.Context, startKey, endKey []by
 	}
 	return result, nil
 }
-func (*fakeSplitClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (pdtypes.Rule, error) {
-	return pdtypes.Rule{}, nil
+func (*fakeSplitClient) GetPlacementRule(ctx context.Context, groupID, ruleID string) (*pdhttp.Rule, error) {
+	return nil, nil
 }
-func (*fakeSplitClient) SetPlacementRule(ctx context.Context, rule pdtypes.Rule) error { return nil }
+func (*fakeSplitClient) SetPlacementRule(ctx context.Context, rule *pdhttp.Rule) error { return nil }
 func (*fakeSplitClient) DeletePlacementRule(ctx context.Context, groupID, ruleID string) error {
 	return nil
 }

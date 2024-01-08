@@ -434,7 +434,7 @@ create table t1 (a varchar(1024), b varchar(1024) generated always as (is_free_l
 create table t1 (a bigint not null primary key auto_increment, b bigint, c bigint as (b + 1));
 -- error 3102
 alter table t1 add column d varchar(1024) generated always as (database());
-alter table t1 add column d bigint generated always as (b + 1); ;
+alter table t1 add column d bigint generated always as (b + 1);
 -- error 3102
 alter table t1 modify column d bigint generated always as (connection_id());
 -- error 3102

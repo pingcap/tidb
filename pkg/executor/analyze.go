@@ -122,7 +122,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.
 	needGlobalStats := pruneMode == variable.Dynamic
 	globalStatsMap := make(map[globalStatsKey]globalStatsInfo)
-	g, _ := errgroup.WithContext(ctx)
+	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		return e.handleResultsError(ctx, concurrency, needGlobalStats, globalStatsMap, resultsCh, len(tasks))
 	})
@@ -134,9 +134,15 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		dom := domain.GetDomain(e.Ctx())
 		dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
 	})
-
+TASKLOOP:
 	for _, task := range tasks {
-		taskCh <- task
+		select {
+		case taskCh <- task:
+		case <-e.errExitCh:
+			break TASKLOOP
+		case <-gctx.Done():
+			break TASKLOOP
+		}
 	}
 	close(taskCh)
 	defer func() {
@@ -286,7 +292,7 @@ func warnLockedTableMsg(sessionVars *variable.SessionVars, needAnalyzeTableCnt u
 		} else {
 			msg = "skip analyze locked table: %s"
 		}
-		sessionVars.StmtCtx.AppendWarning(errors.Errorf(msg, tables))
+		sessionVars.StmtCtx.AppendWarning(errors.NewNoStackErrorf(msg, tables))
 	}
 }
 
@@ -328,9 +334,9 @@ func (e *AnalyzeExec) saveV2AnalyzeOpts() error {
 			topn = int64(val)
 		}
 		colChoice := opts.ColChoice.String()
-		colIDs := make([]string, len(opts.ColumnList))
-		for i, colInfo := range opts.ColumnList {
-			colIDs[i] = strconv.FormatInt(colInfo.ID, 10)
+		colIDs := make([]string, 0, len(opts.ColumnList))
+		for _, colInfo := range opts.ColumnList {
+			colIDs = append(colIDs, strconv.FormatInt(colInfo.ID, 10))
 		}
 		colIDStrs := strings.Join(colIDs, ",")
 		sqlescape.MustFormatSQL(sql, "(%?,%?,%?,%?,%?,%?,%?)", opts.PhyTableID, sampleNum, sampleRate, buckets, topn, colChoice, colIDStrs)
@@ -525,6 +531,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		if !ok {
 			break
 		}
+		failpoint.Inject("handleAnalyzeWorkerPanic", nil)
 		StartAnalyzeJob(e.Ctx(), task.job)
 		switch task.taskType {
 		case colTask:

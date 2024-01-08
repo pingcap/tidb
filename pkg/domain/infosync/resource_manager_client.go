@@ -15,6 +15,7 @@
 package infosync
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -57,7 +58,7 @@ func NewMockResourceManagerClient() pd.ResourceManagerClient {
 
 var _ pd.ResourceManagerClient = (*mockResourceManagerClient)(nil)
 
-func (m *mockResourceManagerClient) ListResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, error) {
+func (m *mockResourceManagerClient) ListResourceGroups(context.Context, ...pd.GetResourceGroupOption) ([]*rmpb.ResourceGroup, error) {
 	m.RLock()
 	defer m.RUnlock()
 	groups := make([]*rmpb.ResourceGroup, 0, len(m.groups))
@@ -67,7 +68,7 @@ func (m *mockResourceManagerClient) ListResourceGroups(ctx context.Context) ([]*
 	return groups, nil
 }
 
-func (m *mockResourceManagerClient) GetResourceGroup(ctx context.Context, name string) (*rmpb.ResourceGroup, error) {
+func (m *mockResourceManagerClient) GetResourceGroup(_ context.Context, name string, _ ...pd.GetResourceGroupOption) (*rmpb.ResourceGroup, error) {
 	m.RLock()
 	defer m.RUnlock()
 	group, ok := m.groups[name]
@@ -77,7 +78,7 @@ func (m *mockResourceManagerClient) GetResourceGroup(ctx context.Context, name s
 	return group, nil
 }
 
-func (m *mockResourceManagerClient) AddResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) (string, error) {
+func (m *mockResourceManagerClient) AddResourceGroup(_ context.Context, group *rmpb.ResourceGroup) (string, error) {
 	m.Lock()
 	defer m.Unlock()
 	if _, ok := m.groups[group.Name]; ok {
@@ -97,7 +98,7 @@ func (m *mockResourceManagerClient) AddResourceGroup(ctx context.Context, group 
 	return "Success!", nil
 }
 
-func (m *mockResourceManagerClient) ModifyResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) (string, error) {
+func (m *mockResourceManagerClient) ModifyResourceGroup(_ context.Context, group *rmpb.ResourceGroup) (string, error) {
 	m.Lock()
 	defer m.Unlock()
 
@@ -114,7 +115,7 @@ func (m *mockResourceManagerClient) ModifyResourceGroup(ctx context.Context, gro
 	return "Success!", nil
 }
 
-func (m *mockResourceManagerClient) DeleteResourceGroup(ctx context.Context, name string) (string, error) {
+func (m *mockResourceManagerClient) DeleteResourceGroup(_ context.Context, name string) (string, error) {
 	m.Lock()
 	defer m.Unlock()
 	group := m.groups[name]
@@ -131,18 +132,21 @@ func (m *mockResourceManagerClient) DeleteResourceGroup(ctx context.Context, nam
 	return "Success!", nil
 }
 
-func (m *mockResourceManagerClient) AcquireTokenBuckets(ctx context.Context, request *rmpb.TokenBucketsRequest) ([]*rmpb.TokenBucketResponse, error) {
+func (*mockResourceManagerClient) AcquireTokenBuckets(context.Context, *rmpb.TokenBucketsRequest) ([]*rmpb.TokenBucketResponse, error) {
 	return nil, nil
 }
 
-func (m *mockResourceManagerClient) WatchResourceGroup(ctx context.Context, revision int64) (chan []*rmpb.ResourceGroup, error) {
+func (*mockResourceManagerClient) WatchResourceGroup(context.Context, int64) (chan []*rmpb.ResourceGroup, error) {
 	return nil, nil
 }
 
-func (m *mockResourceManagerClient) LoadResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, int64, error) {
+func (*mockResourceManagerClient) LoadResourceGroups(context.Context) ([]*rmpb.ResourceGroup, int64, error) {
 	return nil, 0, nil
 }
 
-func (m *mockResourceManagerClient) Watch(ctx context.Context, key []byte, opts ...pd.OpOption) (chan []*meta_storagepb.Event, error) {
-	return m.eventCh, nil
+func (m *mockResourceManagerClient) Watch(_ context.Context, key []byte, _ ...pd.OpOption) (chan []*meta_storagepb.Event, error) {
+	if bytes.Equal(pd.GroupSettingsPathPrefixBytes, key) {
+		return m.eventCh, nil
+	}
+	return nil, nil
 }

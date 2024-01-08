@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -78,7 +79,9 @@ var (
 	mPolicyGlobalID      = []byte("PolicyGlobalID")
 	mPolicyMagicByte     = CurrentMagicByteVer
 	mDDLTableVersion     = []byte("DDLTableVersion")
+	mBDRRole             = []byte("BDRRole")
 	mMetaDataLock        = []byte("metadataLock")
+	mRequestUnitStats    = []byte("RequestUnitStats")
 	// the id for 'default' group, the internal ddl can ensure
 	// user created resource group won't duplicate with this id.
 	defaultGroupID = int64(1)
@@ -680,10 +683,28 @@ func (m *Meta) CreateTableOrView(dbID int64, tableInfo *model.TableInfo) error {
 	return m.txn.HSet(dbKey, tableKey, data)
 }
 
+// SetBDRRole write BDR role into storage.
+func (m *Meta) SetBDRRole(role string) error {
+	return errors.Trace(m.txn.Set(mBDRRole, []byte(role)))
+}
+
+// GetBDRRole get BDR role from storage.
+func (m *Meta) GetBDRRole() (string, error) {
+	v, err := m.txn.Get(mBDRRole)
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return string(v), nil
+}
+
+// ClearBDRRole clear BDR role from storage.
+func (m *Meta) ClearBDRRole() error {
+	return errors.Trace(m.txn.Clear(mBDRRole))
+}
+
 // SetDDLTables write a key into storage.
 func (m *Meta) SetDDLTables(ddlTableVersion DDLTableVersion) error {
-	err := m.txn.Set(mDDLTableVersion, ddlTableVersion.Bytes())
-	return errors.Trace(err)
+	return errors.Trace(m.txn.Set(mDDLTableVersion, ddlTableVersion.Bytes()))
 }
 
 // CheckDDLTableVersion check if the tables related to concurrent DDL exists.
@@ -942,6 +963,38 @@ func (m *Meta) ListTables(dbID int64) ([]*model.TableInfo, error) {
 		}
 
 		tbInfo := &model.TableInfo{}
+		err = json.Unmarshal(r.Value, tbInfo)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		tables = append(tables, tbInfo)
+	}
+
+	return tables, nil
+}
+
+// ListSimpleTables shows all simple tables in database.
+func (m *Meta) ListSimpleTables(dbID int64) ([]*model.TableNameInfo, error) {
+	dbKey := m.dbKey(dbID)
+	if err := m.checkDBExists(dbKey); err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	res, err := m.txn.HGetAll(dbKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	tables := make([]*model.TableNameInfo, 0, len(res)/2)
+	for _, r := range res {
+		// only handle table meta
+		tableKey := string(r.Field)
+		if !strings.HasPrefix(tableKey, mTablePrefix) {
+			continue
+		}
+
+		tbInfo := &model.TableNameInfo{}
 		err = json.Unmarshal(r.Value, tbInfo)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -1438,5 +1491,51 @@ func (m *Meta) SetSchemaDiff(diff *model.SchemaDiff) error {
 	startTime := time.Now()
 	err = m.txn.Set(diffKey, data)
 	metrics.MetaHistogram.WithLabelValues(metrics.SetSchemaDiff, metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+	return errors.Trace(err)
+}
+
+// GroupRUStats keeps the ru consumption statistics data.
+type GroupRUStats struct {
+	ID            int64             `json:"id"`
+	Name          string            `json:"name"`
+	RUConsumption *rmpb.Consumption `json:"ru_consumption"`
+}
+
+// DailyRUStats keeps all the ru consumption statistics data.
+type DailyRUStats struct {
+	EndTime time.Time      `json:"date"`
+	Stats   []GroupRUStats `json:"stats"`
+}
+
+// RUStats keeps the lastest and second lastest DailyRUStats data.
+type RUStats struct {
+	Latest   *DailyRUStats `json:"latest"`
+	Previous *DailyRUStats `json:"previous"`
+}
+
+// GetRUStats load the persisted RUStats data.
+func (m *Meta) GetRUStats() (*RUStats, error) {
+	data, err := m.txn.Get(mRequestUnitStats)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var ruStats *RUStats
+	if data != nil {
+		ruStats = &RUStats{}
+		if err = json.Unmarshal(data, &ruStats); err != nil {
+			return nil, errors.Trace(err)
+		}
+	}
+	return ruStats, nil
+}
+
+// SetRUStats persist new ru stats data to meta storage.
+func (m *Meta) SetRUStats(stats *RUStats) error {
+	data, err := json.Marshal(stats)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	err = m.txn.Set(mRequestUnitStats, data)
 	return errors.Trace(err)
 }

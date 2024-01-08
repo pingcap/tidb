@@ -437,7 +437,7 @@ func TestMonthName(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.MonthName, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -475,7 +475,7 @@ func TestDayName(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.DayName, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -511,7 +511,7 @@ func TestDayOfWeek(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.DayOfWeek, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -547,7 +547,7 @@ func TestDayOfMonth(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.DayOfMonth, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -583,7 +583,7 @@ func TestDayOfYear(t *testing.T) {
 	for _, c := range cases {
 		f, err := newFunctionForTest(ctx, ast.DayOfYear, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -803,7 +803,7 @@ func TestTime(t *testing.T) {
 		require.Equal(t, charset.CollationBin, tp.GetCollate())
 		require.Equal(t, mysql.BinaryFlag, tp.GetFlag()&mysql.BinaryFlag)
 		require.Equal(t, c.flen, tp.GetFlen())
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -1643,7 +1643,7 @@ func TestTimeDiff(t *testing.T) {
 		require.Equal(t, charset.CollationBin, tp.GetCollate())
 		require.Equal(t, mysql.BinaryFlag, tp.GetFlag())
 		require.Equal(t, c.flen, tp.GetFlen())
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getWarning {
 			require.NoError(t, err)
 			require.Equal(t, preWarningCnt+1, ctx.GetSessionVars().StmtCtx.WarningCount())
@@ -2276,7 +2276,7 @@ func TestMakeDate(t *testing.T) {
 		require.Equal(t, charset.CollationBin, tp.GetCollate())
 		require.Equal(t, mysql.BinaryFlag, tp.GetFlag())
 		require.Equal(t, mysql.MaxDateWidth, tp.GetFlen())
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -2369,7 +2369,7 @@ func TestMakeTime(t *testing.T) {
 	// MAKETIME(CAST(-1 AS UNSIGNED),0,0);
 	tp1 := types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetFlag(mysql.UnsignedFlag).SetFlen(mysql.MaxIntWidth).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).BuildP()
 	f := BuildCastFunction(ctx, &Constant{Value: types.NewDatum("-1"), RetType: types.NewFieldType(mysql.TypeString)}, tp1)
-	res, err := f.Eval(chunk.Row{})
+	res, err := f.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
 	f1, err := maketime.getFunction(ctx, datumsToConstants([]types.Datum{res, makeDatums(0)[0], makeDatums(0)[0]}))
 	require.NoError(t, err)

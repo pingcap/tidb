@@ -21,63 +21,66 @@ import (
 	"reflect"
 )
 
-// Assert asserts a condition. It only works in test (intest.InTest == true).
-// You can assert a condition like this to assert a variable `foo` is not nil: `assert.Assert(foo != nil)`.
-// Or you can pass foo as a parameter directly for simple: `assert.Assert(foo)`
-// You can also assert a function that returns a bool: `intest.Assert(func() bool { return foo != nil })`
-// If you pass a function without a signature `func() bool`, the function will always panic.
-func Assert(cond any, msgAndArgs ...any) {
+// Assert asserts a condition is true
+func Assert(cond bool, msgAndArgs ...any) {
+	if InTest && !cond {
+		doPanic("", msgAndArgs...)
+	}
+}
+
+// AssertNoError asserts an error is nil
+func AssertNoError(err error, msgAndArgs ...any) {
+	if InTest && err != nil {
+		doPanic(fmt.Sprintf("error is not nil: %+v", err), msgAndArgs...)
+	}
+}
+
+// AssertNotNil asserts an object is not nil
+func AssertNotNil(obj any, msgAndArgs ...any) {
 	if InTest {
-		assert(cond, msgAndArgs...)
+		Assert(obj != nil, msgAndArgs...)
+		value := reflect.ValueOf(obj)
+		switch value.Kind() {
+		case reflect.Func, reflect.Chan, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice, reflect.UnsafePointer:
+			Assert(!value.IsNil(), msgAndArgs...)
+		}
 	}
 }
 
 // AssertFunc asserts a function condition
 func AssertFunc(fn func() bool, msgAndArgs ...any) {
 	if InTest {
-		assert(fn(), msgAndArgs...)
+		Assert(fn != nil, msgAndArgs...)
+		Assert(fn(), msgAndArgs...)
 	}
 }
 
-func assert(cond any, msgAndArgs ...any) {
-	if !checkAssertObject(cond) {
-		doPanic(msgAndArgs...)
-	}
+func doPanic(extraMsg string, userMsgAndArgs ...any) {
+	panic(assertionFailedMsg(extraMsg, userMsgAndArgs...))
 }
 
-func doPanic(msgAndArgs ...any) {
-	panic(assertionFailedMsg(msgAndArgs...))
-}
-
-func assertionFailedMsg(msgAndArgs ...any) string {
-	if len(msgAndArgs) == 0 {
-		return "assert failed"
+func assertionFailedMsg(extraMsg string, userMsgAndArgs ...any) string {
+	msg := "assert failed"
+	if len(userMsgAndArgs) == 0 {
+		if extraMsg != "" {
+			msg = fmt.Sprintf("%s, %s", msg, extraMsg)
+		}
+		return msg
 	}
 
-	msg, ok := msgAndArgs[0].(string)
+	if len(userMsgAndArgs) == 0 {
+		return fmt.Sprintf("assert failed, %s", extraMsg)
+	}
+
+	userMsg, ok := userMsgAndArgs[0].(string)
 	if !ok {
-		msg = fmt.Sprintf("%+v", msgAndArgs[0])
+		userMsg = fmt.Sprintf("%+v", userMsgAndArgs[0])
 	}
 
-	msg = fmt.Sprintf("assert failed: %s", msg)
-	return fmt.Sprintf(msg, msgAndArgs[1:]...)
-}
-
-func checkAssertObject(obj any) bool {
-	if obj == nil {
-		return false
+	msg = fmt.Sprintf("%s, %s", msg, userMsg)
+	if extraMsg != "" {
+		msg = fmt.Sprintf("%s, %s", msg, extraMsg)
 	}
 
-	value := reflect.ValueOf(obj)
-	switch value.Kind() {
-	case reflect.Bool:
-		return obj.(bool)
-	case reflect.Func:
-		panic("you should use `intest.Assert(fn != nil)` to assert a function is not nil, " +
-			"or use `intest.AssertFunc(fn)` to assert a function's return value is true")
-	case reflect.Chan, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice, reflect.UnsafePointer:
-		return !value.IsNil()
-	default:
-		return true
-	}
+	return fmt.Sprintf(msg, userMsgAndArgs[1:]...)
 }

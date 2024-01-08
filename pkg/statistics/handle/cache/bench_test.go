@@ -22,11 +22,11 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/testutil"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/util/benchdaily"
 )
 
-func benchCopyAndUpdate(b *testing.B, c util.StatsCache) {
+func benchCopyAndUpdate(b *testing.B, c types.StatsCache) {
 	var wg sync.WaitGroup
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -42,7 +42,7 @@ func benchCopyAndUpdate(b *testing.B, c util.StatsCache) {
 	b.StopTimer()
 }
 
-func benchPutGet(b *testing.B, c util.StatsCache) {
+func benchPutGet(b *testing.B, c types.StatsCache) {
 	var wg sync.WaitGroup
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -65,7 +65,7 @@ func benchPutGet(b *testing.B, c util.StatsCache) {
 	b.StopTimer()
 }
 
-func benchGet(b *testing.B, c util.StatsCache) {
+func benchGet(b *testing.B, c types.StatsCache) {
 	var w sync.WaitGroup
 	for i := 0; i < b.N; i++ {
 		w.Add(1)

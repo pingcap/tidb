@@ -652,6 +652,12 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set global tidb_enable_tso_follower_proxy = 0")
 	tk.MustQuery("select @@tidb_enable_tso_follower_proxy").Check(testkit.Rows("0"))
 	require.Error(t, tk.ExecToErr("set tidb_enable_tso_follower_proxy = 1"))
+	tk.MustQuery("select @@pd_enable_follower_handle_region").Check(testkit.Rows("0"))
+	tk.MustExec("set global pd_enable_follower_handle_region = 1")
+	tk.MustQuery("select @@pd_enable_follower_handle_region").Check(testkit.Rows("1"))
+	tk.MustExec("set global pd_enable_follower_handle_region = 0")
+	tk.MustQuery("select @@pd_enable_follower_handle_region").Check(testkit.Rows("0"))
+	require.Error(t, tk.ExecToErr("set pd_enable_follower_handle_region = 1"))
 
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
@@ -809,13 +815,13 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_opt_force_inline_cte").Check(testkit.Rows("1"))
 
 	// test tidb_auto_analyze_partition_batch_size
-	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("1")) // default value is 1
+	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("128")) // default value is 128
 	tk.MustExec("set global tidb_auto_analyze_partition_batch_size = 2")
 	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("2"))
 	tk.MustExec("set global tidb_auto_analyze_partition_batch_size = 0")
 	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("1")) // min value is 1
 	tk.MustExec("set global tidb_auto_analyze_partition_batch_size = 9999")
-	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("1024")) // max value is 1024
+	tk.MustQuery("select @@global.tidb_auto_analyze_partition_batch_size").Check(testkit.Rows("8192")) // max value is 8192
 
 	// test variable 'tidb_opt_prefix_index_single_scan'
 	// global scope
@@ -902,6 +908,54 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_schema_version_cache_limit").Check(testkit.Rows("2"))
 	tk.MustExec("set @@global.tidb_schema_version_cache_limit=64;")
 	tk.MustQuery("select @@global.tidb_schema_version_cache_limit").Check(testkit.Rows("64"))
+
+	// test tidb_idle_transaction_timeout
+	tk.MustQuery("select @@session.tidb_idle_transaction_timeout").Check(testkit.Rows("0"))
+	tk.MustExec("SET SESSION tidb_idle_transaction_timeout = 2")
+	tk.MustQuery("select @@session.tidb_idle_transaction_timeout").Check(testkit.Rows("2"))
+	tk.MustGetErrMsg("SET SESSION tidb_idle_transaction_timeout='x';", "[variable:1232]Incorrect argument type to variable 'tidb_idle_transaction_timeout'")
+	tk.MustExec("SET SESSION tidb_idle_transaction_timeout=31536001;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_idle_transaction_timeout value: '31536001'"))
+	tk.MustQuery("select @@session.tidb_idle_transaction_timeout").Check(testkit.Rows("31536000"))
+	tk.MustExec("SET SESSION tidb_idle_transaction_timeout = 0")
+	tk.MustQuery("select @@session.tidb_idle_transaction_timeout").Check(testkit.Rows("0"))
+	tk.MustExec("SET SESSION tidb_idle_transaction_timeout=31536000;")
+	tk.MustQuery("select @@session.tidb_idle_transaction_timeout").Check(testkit.Rows("31536000"))
+	tk.MustQuery("select @@global.tidb_idle_transaction_timeout").Check(testkit.Rows("0"))
+	tk.MustExec("SET GLOBAL tidb_idle_transaction_timeout = 1")
+	tk.MustQuery("select @@global.tidb_idle_transaction_timeout").Check(testkit.Rows("1"))
+	tk.MustGetErrMsg("SET GLOBAL tidb_idle_transaction_timeout='x';", "[variable:1232]Incorrect argument type to variable 'tidb_idle_transaction_timeout'")
+	tk.MustExec("SET GLOBAL tidb_idle_transaction_timeout=31536001;")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_idle_transaction_timeout value: '31536001'"))
+	tk.MustQuery("select @@global.tidb_idle_transaction_timeout").Check(testkit.Rows("31536000"))
+	tk.MustExec("SET GLOBAL tidb_idle_transaction_timeout = 0")
+	tk.MustQuery("select @@global.tidb_idle_transaction_timeout").Check(testkit.Rows("0"))
+	tk.MustExec("SET GLOBAL tidb_idle_transaction_timeout=31536000;")
+	tk.MustQuery("select @@global.tidb_idle_transaction_timeout").Check(testkit.Rows("31536000"))
+
+	// test tidb_txn_entry_size_limit
+	tk.MustQuery("select @@session.tidb_txn_entry_size_limit").Check(testkit.Rows("0"))
+	tk.MustExec("set session tidb_txn_entry_size_limit = 1024")
+	tk.MustQuery("select @@session.tidb_txn_entry_size_limit").Check(testkit.Rows("1024"))
+	tk.MustExec("set session tidb_txn_entry_size_limit = 125829120")
+	tk.MustQuery("select @@session.tidb_txn_entry_size_limit").Check(testkit.Rows("125829120"))
+
+	tk.MustGetErrMsg("set session tidb_txn_entry_size_limit = 'x'", "[variable:1232]Incorrect argument type to variable 'tidb_txn_entry_size_limit'")
+	tk.MustGetErrMsg("set session tidb_txn_entry_size_limit = 18446744073709551616", "[variable:1232]Incorrect argument type to variable 'tidb_txn_entry_size_limit'")
+
+	tk.MustExec("set session tidb_txn_entry_size_limit = 125829121")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_txn_entry_size_limit value: '125829121'"))
+	tk.MustQuery("select @@session.tidb_txn_entry_size_limit").Check(testkit.Rows("125829120"))
+	tk.MustExec("set session tidb_txn_entry_size_limit = -1")
+	tk.MustQuery("show warnings").Check(testkit.RowsWithSep("|", "Warning|1292|Truncated incorrect tidb_txn_entry_size_limit value: '-1'"))
+	tk.MustQuery("select @@session.tidb_txn_entry_size_limit").Check(testkit.Rows("0"))
+
+	tk.MustExec("set session tidb_txn_entry_size_limit = 2048")
+	tk.MustQuery("select @@session.tidb_txn_entry_size_limit, @@global.tidb_txn_entry_size_limit").Check(testkit.Rows("2048 0"))
+	tk.MustExec("set global tidb_txn_entry_size_limit = 4096")
+	tk.MustQuery("select @@session.tidb_txn_entry_size_limit, @@global.tidb_txn_entry_size_limit").Check(testkit.Rows("2048 4096"))
+	tk.MustExec("set global tidb_txn_entry_size_limit = 0")
+	tk.MustQuery("select @@session.tidb_txn_entry_size_limit, @@global.tidb_txn_entry_size_limit").Check(testkit.Rows("2048 0"))
 }
 
 func TestSetCollationAndCharset(t *testing.T) {
@@ -952,7 +1006,19 @@ func TestValidateSetVar(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
-	err := tk.ExecToErr("set global tidb_distsql_scan_concurrency='fff';")
+	err := tk.ExecToErr("set global tidb_analyze_distsql_scan_concurrency='fff';")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), fmt.Sprintf("err %v", err))
+
+	tk.MustExec("set global tidb_analyze_distsql_scan_concurrency=-2;")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_analyze_distsql_scan_concurrency value: '-2'"))
+
+	err = tk.ExecToErr("set @@tidb_analyze_distsql_scan_concurrency='fff';")
+	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), fmt.Sprintf("err %v", err))
+
+	tk.MustExec("set @@tidb_analyze_distsql_scan_concurrency=-2;")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_analyze_distsql_scan_concurrency value: '-2'"))
+
+	err = tk.ExecToErr("set global tidb_distsql_scan_concurrency='fff';")
 	require.True(t, terror.ErrorEqual(err, variable.ErrWrongTypeForVar), fmt.Sprintf("err %v", err))
 
 	tk.MustExec("set global tidb_distsql_scan_concurrency=-2;")

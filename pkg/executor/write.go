@@ -74,7 +74,7 @@ func updateRecord(
 	// Handle the bad null error.
 	for i, col := range t.Cols() {
 		var err error
-		if err = col.HandleBadNull(&newData[i], sc, 0); err != nil {
+		if err = col.HandleBadNull(sc.ErrCtx(), &newData[i], 0); err != nil {
 			return false, err
 		}
 	}
@@ -186,7 +186,8 @@ func updateRecord(
 			memBuffer.Release(sh)
 			return true, nil
 		}(); err != nil {
-			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
+			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				return false, nil
 			}
 			return updated, err
@@ -194,7 +195,8 @@ func updateRecord(
 	} else {
 		// Update record to new value and update index.
 		if err := t.UpdateRecord(ctx, sctx, h, oldData, newData, modified); err != nil {
-			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && terr.Code() == errno.ErrNoPartitionForGivenValue {
+			if terr, ok := errors.Cause(err).(*terror.Error); sctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(err)
 				return false, nil
 			}
 			return false, err
@@ -268,7 +270,7 @@ func addUnchangedKeysForLockByRow(
 				return count, err
 			}
 			unchangedUniqueKey, _, err := tablecodec.GenIndexKey(
-				stmtCtx,
+				stmtCtx.TimeZone(),
 				idx.TableMeta(),
 				meta,
 				physicalID,
@@ -276,6 +278,7 @@ func addUnchangedKeysForLockByRow(
 				h,
 				nil,
 			)
+			err = stmtCtx.HandleError(err)
 			if err != nil {
 				return count, err
 			}

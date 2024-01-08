@@ -701,7 +701,7 @@ select approx_count_distinct(c,d) from t;
 approx_count_distinct(c,d)
 5
 select count(c,d) from t;
-[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near ",d) from t;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near ",d) from t;" 
 select d*2 as ee, sum(c) from t group by ee order by ee;
 ee	sum(c)
 2	2
@@ -2060,4 +2060,3 @@ Projection	1.00	root		Column#9, Column#12, Column#15, Column#18
             └─TableFullScan	1000.00	cop[tikv]	table:test	keep order:false, stats:pseudo
 delete from mysql.opt_rule_blacklist where name = "decorrelate";
 admin reload opt_rule_blacklist;
-

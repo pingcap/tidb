@@ -14,11 +14,20 @@
 
 package storage
 
-import "github.com/pingcap/tidb/pkg/disttask/framework/proto"
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
+)
 
 // GetSubtasksFromHistoryForTest gets subtasks from history table for test.
-func GetSubtasksFromHistoryForTest(stm *TaskManager) (int, error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx,
+func GetSubtasksFromHistoryForTest(ctx context.Context, stm *TaskManager) (int, error) {
+	rs, err := stm.executeSQLWithNewSession(ctx,
 		"select * from mysql.tidb_background_subtask_history")
 	if err != nil {
 		return 0, err
@@ -27,9 +36,9 @@ func GetSubtasksFromHistoryForTest(stm *TaskManager) (int, error) {
 }
 
 // GetSubtasksFromHistoryByTaskIDForTest gets subtasks by taskID from history table for test.
-func GetSubtasksFromHistoryByTaskIDForTest(stm *TaskManager, taskID int64) (int, error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx,
-		"select * from mysql.tidb_background_subtask_history where task_key = %?", taskID)
+func GetSubtasksFromHistoryByTaskIDForTest(ctx context.Context, stm *TaskManager, taskID int64) (int, error) {
+	rs, err := stm.executeSQLWithNewSession(ctx,
+		`select `+subtaskColumns+` from mysql.tidb_background_subtask_history where task_key = %?`, taskID)
 	if err != nil {
 		return 0, err
 	}
@@ -37,9 +46,9 @@ func GetSubtasksFromHistoryByTaskIDForTest(stm *TaskManager, taskID int64) (int,
 }
 
 // GetSubtasksByTaskIDForTest gets subtasks by taskID for test.
-func GetSubtasksByTaskIDForTest(stm *TaskManager, taskID int64) ([]*proto.Subtask, error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx,
-		"select * from mysql.tidb_background_subtask where task_key = %?", taskID)
+func GetSubtasksByTaskIDForTest(ctx context.Context, stm *TaskManager, taskID int64) ([]*proto.Subtask, error) {
+	rs, err := stm.executeSQLWithNewSession(ctx,
+		`select `+subtaskColumns+` from mysql.tidb_background_subtask where task_key = %?`, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -54,11 +63,67 @@ func GetSubtasksByTaskIDForTest(stm *TaskManager, taskID int64) ([]*proto.Subtas
 }
 
 // GetTasksFromHistoryForTest gets tasks from history table for test.
-func GetTasksFromHistoryForTest(stm *TaskManager) (int, error) {
-	rs, err := stm.executeSQLWithNewSession(stm.ctx,
+func GetTasksFromHistoryForTest(ctx context.Context, stm *TaskManager) (int, error) {
+	rs, err := stm.executeSQLWithNewSession(ctx,
 		"select * from mysql.tidb_global_task_history")
 	if err != nil {
 		return 0, err
 	}
 	return len(rs), nil
+}
+
+// GetTaskEndTimeForTest gets task's endTime for test.
+func GetTaskEndTimeForTest(ctx context.Context, stm *TaskManager, taskID int64) (time.Time, error) {
+	rs, err := stm.executeSQLWithNewSession(ctx,
+		`select end_time 
+		from mysql.tidb_global_task
+	    where id = %?`, taskID)
+
+	if err != nil {
+		return time.Time{}, nil
+	}
+	if !rs[0].IsNull(0) {
+		return rs[0].GetTime(0).GoTime(time.Local)
+	}
+	return time.Time{}, nil
+}
+
+// GetSubtaskEndTimeForTest gets subtask's endTime for test.
+func GetSubtaskEndTimeForTest(ctx context.Context, stm *TaskManager, subtaskID int64) (time.Time, error) {
+	rs, err := stm.executeSQLWithNewSession(ctx,
+		`select end_time 
+		from mysql.tidb_background_subtask
+	    where id = %?`, subtaskID)
+
+	if err != nil {
+		return time.Time{}, nil
+	}
+	if !rs[0].IsNull(0) {
+		return rs[0].GetTime(0).GoTime(time.Local)
+	}
+	return time.Time{}, nil
+}
+
+// PrintSubtaskInfo log the subtask info by taskKey. Only used for UT.
+func (stm *TaskManager) PrintSubtaskInfo(ctx context.Context, taskID int64) {
+	rs, _ := stm.executeSQLWithNewSession(ctx,
+		`select `+subtaskColumns+` from mysql.tidb_background_subtask_history where task_key = %?`, taskID)
+	rs2, _ := stm.executeSQLWithNewSession(ctx,
+		`select `+subtaskColumns+` from mysql.tidb_background_subtask where task_key = %?`, taskID)
+	rs = append(rs, rs2...)
+
+	for _, r := range rs {
+		errBytes := r.GetBytes(13)
+		var err error
+		if len(errBytes) > 0 {
+			stdErr := errors.Normalize("")
+			err1 := stdErr.UnmarshalJSON(errBytes)
+			if err1 != nil {
+				err = err1
+			} else {
+				err = stdErr
+			}
+		}
+		logutil.BgLogger().Info(fmt.Sprintf("subTask: %v\n", row2SubTask(r)), zap.Error(err))
+	}
 }

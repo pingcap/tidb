@@ -605,7 +605,8 @@ func buildCommonHandleFromChunkRow(sctx *stmtctx.StatementContext, tblInfo *mode
 	tablecodec.TruncateIndexValues(tblInfo, idxInfo, datumRow)
 
 	var handleBytes []byte
-	handleBytes, err := codec.EncodeKey(sctx, nil, datumRow...)
+	handleBytes, err := codec.EncodeKey(sctx.TimeZone(), nil, datumRow...)
+	err = sctx.HandleError(err)
 	if err != nil {
 		return nil, err
 	}

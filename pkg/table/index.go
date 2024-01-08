@@ -101,6 +101,7 @@ type IndexKVGenerator struct {
 	handle            kv.Handle
 	handleRestoreData []types.Datum
 
+	isMultiValue bool
 	// Only used by multi-value index.
 	allIdxVals [][]types.Datum
 	i          int
@@ -108,23 +109,40 @@ type IndexKVGenerator struct {
 	idxVals []types.Datum
 }
 
-// NewIndexKVGenerator creates a new IndexKVGenerator.
-func NewIndexKVGenerator(
+// NewMultiValueIndexKVGenerator creates a new IndexKVGenerator for multi-value indexes.
+func NewMultiValueIndexKVGenerator(
 	index Index,
 	stmtCtx *stmtctx.StatementContext,
 	handle kv.Handle,
 	handleRestoredData []types.Datum,
 	mvIndexData [][]types.Datum,
-	singleIdxData []types.Datum,
 ) IndexKVGenerator {
 	return IndexKVGenerator{
 		index:             index,
 		sCtx:              stmtCtx,
 		handle:            handle,
 		handleRestoreData: handleRestoredData,
+		isMultiValue:      true,
 		allIdxVals:        mvIndexData,
 		i:                 0,
-		idxVals:           singleIdxData,
+	}
+}
+
+// NewPlainIndexKVGenerator creates a new IndexKVGenerator for non multi-value indexes.
+func NewPlainIndexKVGenerator(
+	index Index,
+	stmtCtx *stmtctx.StatementContext,
+	handle kv.Handle,
+	handleRestoredData []types.Datum,
+	idxData []types.Datum,
+) IndexKVGenerator {
+	return IndexKVGenerator{
+		index:             index,
+		sCtx:              stmtCtx,
+		handle:            handle,
+		handleRestoreData: handleRestoredData,
+		isMultiValue:      false,
+		idxVals:           idxData,
 	}
 }
 
@@ -132,10 +150,10 @@ func NewIndexKVGenerator(
 // For non multi-value indexes, there is only one index kv.
 func (iter *IndexKVGenerator) Next(keyBuf, valBuf []byte) ([]byte, []byte, bool, error) {
 	var val []types.Datum
-	if len(iter.allIdxVals) == 0 {
-		val = iter.idxVals
-	} else {
+	if iter.isMultiValue {
 		val = iter.allIdxVals[iter.i]
+	} else {
+		val = iter.idxVals
 	}
 	key, distinct, err := iter.index.GenIndexKey(iter.sCtx, val, iter.handle, keyBuf)
 	if err != nil {
@@ -151,8 +169,8 @@ func (iter *IndexKVGenerator) Next(keyBuf, valBuf []byte) ([]byte, []byte, bool,
 
 // Valid returns true if the generator is not exhausted.
 func (iter *IndexKVGenerator) Valid() bool {
-	if len(iter.allIdxVals) == 0 {
-		return iter.i == 0
+	if iter.isMultiValue {
+		return iter.i < len(iter.allIdxVals)
 	}
-	return iter.i < len(iter.allIdxVals)
+	return iter.i == 0
 }

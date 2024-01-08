@@ -18,6 +18,7 @@ import (
 	"archive/zip"
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
@@ -35,13 +36,13 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -52,7 +53,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
-	error2 "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -98,22 +98,6 @@ func checkFileName(s string) bool {
 	return false
 }
 
-func TestBind(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists testbind")
-
-	tk.MustExec("create table testbind(i int, s varchar(20))")
-	tk.MustExec("create index index_t on testbind(i,s)")
-	tk.MustExec("create global binding for select * from testbind using select * from testbind use index for join(index_t)")
-	require.Len(t, tk.MustQuery("show global bindings").Rows(), 1)
-
-	tk.MustExec("create session binding for select * from testbind using select * from testbind use index for join(index_t)")
-	require.Len(t, tk.MustQuery("show session bindings").Rows(), 1)
-	tk.MustExec("drop session binding for select * from testbind")
-}
-
 func TestPlanReplayer(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {
@@ -126,6 +110,7 @@ func TestPlanReplayer(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx_a(a))")
 	tk.MustExec("alter table t set tiflash replica 1")
 	tk.MustQuery("plan replayer dump explain select * from t where a=10")
+	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 	tk.MustQuery("plan replayer dump explain select /*+ read_from_storage(tiflash[t]) */ * from t")
 
 	tk.MustExec("create table t1 (a int)")
@@ -157,6 +142,7 @@ func TestPlanReplayerCaptureSEM(t *testing.T) {
 	tk.MustExec("plan replayer capture '123' '123';")
 	tk.MustExec("create table t(id int)")
 	tk.MustQuery("plan replayer dump explain select * from t")
+	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 	tk.MustQuery("select count(*) from mysql.plan_replayer_status").Check(testkit.Rows("1"))
 }
 
@@ -209,6 +195,7 @@ func TestPlanReplayerContinuesCapture(t *testing.T) {
 	require.NotNil(t, task)
 	worker := prHandle.GetWorker()
 	success := worker.HandleTask(task)
+	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 	require.True(t, success)
 	tk.MustQuery("select count(*) from mysql.plan_replayer_status").Check(testkit.Rows("1"))
 }
@@ -220,6 +207,7 @@ func TestPlanReplayerDumpSingle(t *testing.T) {
 	tk.MustExec("drop table if exists t_dump_single")
 	tk.MustExec("create table t_dump_single(a int)")
 	res := tk.MustQuery("plan replayer dump explain select * from t_dump_single")
+	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 	path := testdata.ConvertRowsToStrings(res.Rows())
 
 	reader, err := zip.OpenReader(filepath.Join(replayer.GetPlanReplayerDirName(), path[0]))
@@ -404,7 +392,7 @@ func setColValue(t *testing.T, txn kv.Transaction, key kv.Key, v types.Datum) {
 	colIDs := []int64{2, 3}
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	rd := rowcodec.Encoder{Enable: true}
-	value, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil, &rd)
+	value, err := tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, nil, nil, &rd)
 	require.NoError(t, err)
 	err = txn.Set(key, value)
 	require.NoError(t, err)
@@ -649,117 +637,6 @@ func TestTiDBLastQueryInfo(t *testing.T) {
 	tk.MustExec("rollback")
 }
 
-func TestSelectForUpdate(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-
-	tk.MustExec("drop table if exists t, t1")
-
-	txn, err := tk.Session().Txn(true)
-	require.True(t, kv.ErrInvalidTxn.Equal(err))
-	require.False(t, txn.Valid())
-	tk.MustExec("create table t (c1 int, c2 int, c3 int)")
-	tk.MustExec("insert t values (11, 2, 3)")
-	tk.MustExec("insert t values (12, 2, 3)")
-	tk.MustExec("insert t values (13, 2, 3)")
-
-	tk.MustExec("create table t1 (c1 int)")
-	tk.MustExec("insert t1 values (11)")
-
-	// conflict
-	tk1.MustExec("begin")
-	tk1.MustQuery("select * from t where c1=11 for update")
-
-	tk2.MustExec("begin")
-	tk2.MustExec("update t set c2=211 where c1=11")
-	tk2.MustExec("commit")
-
-	err = tk1.ExecToErr("commit")
-	require.Error(t, err)
-
-	// no conflict for subquery.
-	tk1.MustExec("begin")
-	tk1.MustQuery("select * from t where exists(select null from t1 where t1.c1=t.c1) for update")
-
-	tk2.MustExec("begin")
-	tk2.MustExec("update t set c2=211 where c1=12")
-	tk2.MustExec("commit")
-
-	tk1.MustExec("commit")
-
-	// not conflict
-	tk1.MustExec("begin")
-	tk1.MustQuery("select * from t where c1=11 for update")
-
-	tk2.MustExec("begin")
-	tk2.MustExec("update t set c2=22 where c1=12")
-	tk2.MustExec("commit")
-
-	tk1.MustExec("commit")
-
-	// not conflict, auto commit
-	tk1.MustExec("set @@autocommit=1;")
-	tk1.MustQuery("select * from t where c1=11 for update")
-
-	tk2.MustExec("begin")
-	tk2.MustExec("update t set c2=211 where c1=11")
-	tk2.MustExec("commit")
-
-	tk1.MustExec("commit")
-
-	// conflict
-	tk1.MustExec("begin")
-	tk1.MustQuery("select * from (select * from t for update) t join t1 for update")
-
-	tk2.MustExec("begin")
-	tk2.MustExec("update t1 set c1 = 13")
-	tk2.MustExec("commit")
-
-	err = tk1.ExecToErr("commit")
-	require.Error(t, err)
-}
-
-func TestSelectForUpdateOf(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-
-	tk.MustExec("drop table if exists t, t1")
-	tk.MustExec("create table t (i int)")
-	tk.MustExec("create table t1 (i int)")
-	tk.MustExec("insert t values (1)")
-	tk.MustExec("insert t1 values (1)")
-
-	tk.MustExec("begin pessimistic")
-	tk.MustQuery("select * from t, t1 where t.i = t1.i for update of t").Check(testkit.Rows("1 1"))
-
-	tk1.MustExec("begin pessimistic")
-
-	// no lock for t
-	tk1.MustQuery("select * from t1 for update").Check(testkit.Rows("1"))
-
-	// meet lock for t1
-	err := tk1.ExecToErr("select * from t for update nowait")
-	require.True(t, terror.ErrorEqual(err, error2.ErrLockAcquireFailAndNoWaitSet), fmt.Sprintf("err: %v", err))
-
-	// t1 rolled back, tk1 acquire the lock
-	tk.MustExec("rollback")
-	tk1.MustQuery("select * from t for update nowait").Check(testkit.Rows("1"))
-
-	tk1.MustExec("rollback")
-}
-
 func TestPartitionHashCode(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -777,62 +654,6 @@ func TestPartitionHashCode(t *testing.T) {
 		})
 	}
 	wg.Wait()
-}
-
-func TestIndexLookupRuntimeStats(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (a int, b int, index(a))")
-	tk.MustExec("insert into t1 values (1,2),(2,3),(3,4)")
-	rows := tk.MustQuery("explain analyze select * from t1 use index(a) where a > 1").Rows()
-	require.Len(t, rows, 3)
-	explain := fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*time:.*loops:.*index_task:.*table_task: {total_time.*num.*concurrency.*}.*", explain)
-	indexExplain := fmt.Sprintf("%v", rows[1])
-	tableExplain := fmt.Sprintf("%v", rows[2])
-	require.Regexp(t, ".*time:.*loops:.*cop_task:.*", indexExplain)
-	require.Regexp(t, ".*time:.*loops:.*cop_task:.*", tableExplain)
-}
-
-func TestHashAggRuntimeStats(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (a int, b int)")
-	tk.MustExec("insert into t1 values (1,2),(2,3),(3,4)")
-	rows := tk.MustQuery("explain analyze SELECT /*+ HASH_AGG() */ count(*) FROM t1 WHERE a < 10;").Rows()
-	require.Len(t, rows, 5)
-	explain := fmt.Sprintf("%v", rows[0])
-	pattern := ".*time:.*loops:.*partial_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*final_worker:{wall_time:.*concurrency:.*task_num:.*tot_wait:.*tot_exec:.*tot_time:.*max:.*p95:.*}.*"
-	require.Regexp(t, pattern, explain)
-}
-
-func TestIndexMergeRuntimeStats(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_index_merge = 1")
-	tk.MustExec("create table t1(id int primary key, a int, b int, c int, d int)")
-	tk.MustExec("create index t1a on t1(a)")
-	tk.MustExec("create index t1b on t1(b)")
-	tk.MustExec("insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5)")
-	rows := tk.MustQuery("explain analyze select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4;").Rows()
-	require.Len(t, rows, 4)
-	explain := fmt.Sprintf("%v", rows[0])
-	pattern := ".*time:.*loops:.*index_task:{fetch_handle:.*, merge:.*}.*table_task:{num.*concurrency.*fetch_row.*wait_time.*}.*"
-	require.Regexp(t, pattern, explain)
-	tableRangeExplain := fmt.Sprintf("%v", rows[1])
-	indexExplain := fmt.Sprintf("%v", rows[2])
-	tableExplain := fmt.Sprintf("%v", rows[3])
-	require.Regexp(t, ".*time:.*loops:.*cop_task:.*", tableRangeExplain)
-	require.Regexp(t, ".*time:.*loops:.*cop_task:.*", indexExplain)
-	require.Regexp(t, ".*time:.*loops:.*cop_task:.*", tableExplain)
-	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
-	tk.MustQuery("select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by a").Check(testkit.Rows("1 1 1 1 1", "5 5 5 5 5"))
 }
 
 func TestPrevStmtDesensitization(t *testing.T) {
@@ -887,25 +708,6 @@ func TestOOMActionPriority(t *testing.T) {
 	action := tk.Session().GetSessionVars().StmtCtx.MemTracker.GetFallbackForTest(true)
 	// All actions are finished and removed.
 	require.Equal(t, action.GetPriority(), int64(memory.DefLogPriority))
-}
-
-func TestTrackAggMemoryUsage(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("insert into t values(1)")
-	tk.MustExec("set tidb_track_aggregate_memory_usage = off;")
-	rows := tk.MustQuery("explain analyze select /*+ HASH_AGG() */ sum(a) from t").Rows()
-	require.Equal(t, "N/A", rows[0][7])
-	rows = tk.MustQuery("explain analyze select /*+ STREAM_AGG() */ sum(a) from t").Rows()
-	require.Equal(t, "N/A", rows[0][7])
-	tk.MustExec("set tidb_track_aggregate_memory_usage = on;")
-	rows = tk.MustQuery("explain analyze select /*+ HASH_AGG() */ sum(a) from t").Rows()
-	require.NotEqual(t, "N/A", rows[0][7])
-	rows = tk.MustQuery("explain analyze select /*+ STREAM_AGG() */ sum(a) from t").Rows()
-	require.NotEqual(t, "N/A", rows[0][7])
 }
 
 // Test invoke Close without invoking Open before for each operators.
@@ -1046,59 +848,47 @@ func TestUnreasonablyClose(t *testing.T) {
 	require.Equal(t, opsNeedsCoveredMask, opsAlreadyCoveredMask, fmt.Sprintf("these operators are not covered %s", commentBuf.String()))
 }
 
-func TestOOMPanicAction(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+func TestTwiceCloseUnionExec(t *testing.T) {
+	store := testkit.CreateMockStore(t)
 
+	is := infoschema.MockInfoSchema([]*model.TableInfo{plannercore.MockSignedTable(), plannercore.MockUnsignedTable()})
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t (a int primary key, b double);")
-	tk.MustExec("insert into t values (1,1)")
-	sm := &testkit.MockSessionManager{
-		PS: make([]*util.ProcessInfo, 0),
+	tk.MustExec("set tidb_cost_model_version=2")
+	// To enable the shuffleExec operator.
+	tk.MustExec("set @@tidb_merge_join_concurrency=4")
+
+	p := parser.New()
+	for i, tc := range []string{
+		"select /*+ stream_agg()*/ sum(a+1) from (select /*+ stream_agg()*/ sum(a+1) as a from t t1 union all select a from t t2) t1 union all select a from t t2",
+	} {
+		comment := fmt.Sprintf("case:%v sql:%s", i, tc)
+		stmt, err := p.ParseOneStmt(tc, "", "")
+		require.NoError(t, err, comment)
+		err = sessiontxn.NewTxn(context.Background(), tk.Session())
+		require.NoError(t, err, comment)
+
+		err = sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), stmt)
+		require.NoError(t, err, comment)
+
+		executorBuilder := executor.NewMockExecutorBuilderForTest(tk.Session(), is, nil)
+		p, _, _ := planner.Optimize(context.TODO(), tk.Session(), stmt, is)
+		e := executorBuilder.Build(p)
+		chk := exec.NewFirstChunk(e)
+		require.NoError(t, exec.Open(context.Background(), e), comment)
+		require.NoError(t, e.Next(context.Background(), chk), comment)
+		require.NoError(t, exec.Close(e), comment)
+		chk.Reset()
+
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/mockStreamAggExecBaseExecutorOpenReturnedError", `return(true)`))
+		require.NoError(t, exec.Open(context.Background(), e), comment)
+		err = e.Next(context.Background(), chk)
+		require.EqualError(t, err, "mock StreamAggExec.baseExecutor.Open returned error")
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/aggregate/mockStreamAggExecBaseExecutorOpenReturnedError"))
+
+		exec.Close(e)
+		// No leak.
 	}
-	tk.Session().SetSessionManager(sm)
-	dom.ExpensiveQueryHandle().SetSessionManager(sm)
-	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
-	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
-	tk.MustExec("set @@tidb_mem_quota_query=1;")
-	err := tk.QueryToErr("select sum(b) from t group by a;")
-	require.Error(t, err)
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
-
-	// Test insert from select oom panic.
-	tk.MustExec("drop table if exists t,t1")
-	tk.MustExec("create table t (a bigint);")
-	tk.MustExec("create table t1 (a bigint);")
-	tk.MustExec("set @@tidb_mem_quota_query=200;")
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("insert into t1 values (1),(2),(3),(4),(5);")))
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("replace into t1 values (1),(2),(3),(4),(5);")))
-	tk.MustExec("set @@tidb_mem_quota_query=10000")
-	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5);")
-	tk.MustExec("set @@tidb_mem_quota_query=10;")
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("insert into t select a from t1 order by a desc;")))
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("replace into t select a from t1 order by a desc;")))
-
-	tk.MustExec("set @@tidb_mem_quota_query=10000")
-	tk.MustExec("insert into t values (1),(2),(3),(4),(5);")
-	// Set the memory quota to 244 to make this SQL panic during the DeleteExec
-	// instead of the TableReaderExec.
-	tk.MustExec("set @@tidb_mem_quota_query=244;")
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("delete from t")))
-
-	tk.MustExec("set @@tidb_mem_quota_query=10000;")
-	tk.MustExec("delete from t1")
-	tk.MustExec("insert into t1 values(1)")
-	tk.MustExec("insert into t values (1),(2),(3),(4),(5);")
-	tk.MustExec("set @@tidb_mem_quota_query=244;")
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("delete t, t1 from t join t1 on t.a = t1.a")))
-
-	tk.MustExec("set @@tidb_mem_quota_query=100000;")
-	tk.MustExec("truncate table t")
-	tk.MustExec("insert into t values(1),(2),(3)")
-	// set the memory to quota to make the SQL panic during UpdateExec instead
-	// of TableReader.
-	tk.MustExec("set @@tidb_mem_quota_query=244;")
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("update t set a = 4")))
 }
 
 func TestPointGetPreparedPlan(t *testing.T) {
@@ -1796,24 +1586,6 @@ func TestAdminShowDDLJobs(t *testing.T) {
 	require.Equal(t, t2.In(time.UTC), tt.In(time.UTC))
 }
 
-func TestAdminShowDDLJobsRowCount(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	// Test for issue: https://github.com/pingcap/tidb/issues/25968
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("create table t (id bigint key,b int);")
-	tk.MustExec("split table t by (10),(20),(30);")
-	tk.MustExec("insert into t values (0,0),(10,10),(20,20),(30,30);")
-	tk.MustExec("alter table t add index idx1(b);")
-	require.Equal(t, "4", tk.MustQuery("admin show ddl jobs 1").Rows()[0][7])
-
-	tk.MustExec("insert into t values (1,0),(2,10),(3,20),(4,30);")
-	tk.MustExec("alter table t add index idx2(b);")
-	require.Equal(t, "8", tk.MustQuery("admin show ddl jobs 1").Rows()[0][7])
-}
-
 func TestAdminShowDDLJobsInfo(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2130,16 +1902,6 @@ func TestLowResolutionTSORead(t *testing.T) {
 	tk.MustQuery("select * from low_resolution_tso").Check(testkit.Rows("2"))
 }
 
-func TestStaleReadAtFutureTime(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	// Setting tx_read_ts to a time in the future will fail. (One day before the 2038 problem)
-	tk.MustGetErrMsg("set @@tx_read_ts = '2038-01-18 03:14:07'", "cannot set read timestamp to a future time")
-	// TxnReadTS Is not updated if check failed.
-	require.Zero(t, tk.Session().GetSessionVars().TxnReadTS.PeakTxnReadTS())
-}
-
 func TestAdapterStatement(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2297,8 +2059,8 @@ func TestColumnName(t *testing.T) {
 	require.Equal(t, "1+1", fields[0].ColumnAsName.L)
 	require.Equal(t, "num", fields[1].Column.Name.L)
 	require.Equal(t, "num", fields[1].ColumnAsName.L)
-	tk.MustExec("set @@tidb_enable_window_function = 0")
 	require.Nil(t, rs.Close())
+	tk.MustExec("set @@tidb_enable_window_function = 0")
 
 	rs, err = tk.Exec("select if(1,c,c) from t;")
 	require.NoError(t, err)
@@ -2807,40 +2569,6 @@ func TestAdmin(t *testing.T) {
 	require.Equal(t, historyJobs2, historyJobs)
 }
 
-func TestForSelectScopeInUnion(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	// A union B for update, the "for update" option belongs to union statement, so
-	// it should works on both A and B.
-	tk1 := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk1.MustExec("drop table if exists t")
-	tk1.MustExec("create table t(a int)")
-	tk1.MustExec("insert into t values (1)")
-
-	tk1.MustExec("begin")
-	// 'For update' would act on the second select.
-	tk1.MustQuery("select 1 as a union select a from t for update")
-
-	tk2.MustExec("use test")
-	tk2.MustExec("update t set a = a + 1")
-
-	// As tk1 use select 'for update', it should detect conflict and fail.
-	_, err := tk1.Exec("commit")
-	require.Error(t, err)
-
-	tk1.MustExec("begin")
-	tk1.MustQuery("select 1 as a union select a from t limit 5 for update")
-	tk1.MustQuery("select 1 as a union select a from t order by a for update")
-
-	tk2.MustExec("update t set a = a + 1")
-
-	_, err = tk1.Exec("commit")
-	require.Error(t, err)
-}
-
 func TestMaxOneRow(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2859,29 +2587,6 @@ func TestMaxOneRow(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, "[executor:1242]Subquery returns more than 1 row", err.Error())
 	require.NoError(t, rs.Close())
-}
-
-func TestSummaryFailedUpdate(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int, b int as(-a))")
-	tk.MustExec("insert into t(a) values(1), (3), (7)")
-	sm := &testkit.MockSessionManager{
-		PS: make([]*util.ProcessInfo, 0),
-	}
-	tk.Session().SetSessionManager(sm)
-	dom.ExpensiveQueryHandle().SetSessionManager(sm)
-	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
-	tk.MustQuery("select variable_value from mysql.GLOBAL_VARIABLES where variable_name = 'tidb_mem_oom_action'").Check(testkit.Rows("LOG"))
-
-	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-	tk.MustExec("set @@tidb_mem_quota_query=1")
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(tk.ExecToErr("update t set t.a = t.a - 1 where t.a in (select a from t where a < 4)")))
-	tk.MustExec("set @@tidb_mem_quota_query=1000000000")
-	tk.MustQuery("select stmt_type from information_schema.statements_summary where digest_text = 'update `t` set `t` . `a` = `t` . `a` - ? where `t` . `a` in ( select `a` from `t` where `a` < ? )'").Check(testkit.Rows("Update"))
 }
 
 func TestIsFastPlan(t *testing.T) {
@@ -2919,33 +2624,6 @@ func TestIsFastPlan(t *testing.T) {
 	}
 }
 
-func TestTableLockPrivilege(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk2 := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("create user 'testuser'@'localhost'")
-	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil, nil))
-	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test'")
-	tk.MustExec("GRANT LOCK TABLES ON test.* to 'testuser'@'localhost'")
-	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 't'")
-	tk.MustExec("REVOKE ALL ON test.* FROM 'testuser'@'localhost'")
-	tk.MustExec("GRANT SELECT ON test.* to 'testuser'@'localhost'")
-	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test'")
-	tk.MustExec("GRANT LOCK TABLES ON test.* to 'testuser'@'localhost'")
-	tk2.MustExec("LOCK TABLE test.t WRITE")
-
-	tk.MustExec("create database test2")
-	tk.MustExec("create table test2.t2(a int)")
-	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE, test2.t2 WRITE", "[planner:1044]Access denied for user 'testuser'@'localhost' to database 'test2'")
-	tk.MustExec("GRANT LOCK TABLES ON test2.* to 'testuser'@'localhost'")
-	tk2.MustGetErrMsg("LOCK TABLE test.t WRITE, test2.t2 WRITE", "[planner:1142]SELECT command denied to user 'testuser'@'localhost' for table 't2'")
-	tk.MustExec("GRANT SELECT ON test2.* to 'testuser'@'localhost'")
-	tk2.MustExec("LOCK TABLE test.t WRITE, test2.t2 WRITE")
-	tk.MustExec("LOCK TABLE test.t WRITE, test2.t2 WRITE")
-}
-
 func TestGlobalMemoryControl2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
@@ -2981,21 +2659,6 @@ func TestGlobalMemoryControl2(t *testing.T) {
 	wg.Wait()
 	test[0] = 0
 	runtime.GC()
-}
-
-func TestCompileOutOfMemoryQuota(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	// Test for issue: https://github.com/pingcap/tidb/issues/38322
-	defer tk.MustExec("set global tidb_mem_oom_action = DEFAULT")
-	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int, b int, index idx(a))")
-	tk.MustExec("create table t1(a int, c int, index idx(a))")
-	tk.MustExec("set tidb_mem_quota_query=10")
-	err := tk.ExecToErr("select t.a, t1.a from t use index(idx), t1 use index(idx) where t.a = t1.a")
-	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 }
 
 func TestSignalCheckpointForSort(t *testing.T) {
@@ -3060,4 +2723,55 @@ func TestProcessInfoOfSubQuery(t *testing.T) {
 	time.Sleep(time.Second)
 	tk2.MustQuery("select 1 from information_schema.processlist where TxnStart != '' and info like 'select%sleep% from t%'").Check(testkit.Rows("1"))
 	wg.Wait()
+}
+
+func TestIssues49377(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table employee (employee_id int, name varchar(20), dept_id int)")
+	tk.MustExec("insert into employee values (1, 'Furina', 1), (2, 'Klee', 1), (3, 'Eula', 1), (4, 'Diluc', 2), (5, 'Tartaglia', 2)")
+
+	tk.MustQuery("select 1,1,1 union all ( " +
+		"(select * from employee where dept_id = 1) " +
+		"union all  " +
+		"(select * from employee where dept_id = 1 order by employee_id) " +
+		"order by 1 limit 1 " +
+		");").Sort().Check(testkit.Rows("1 1 1", "1 Furina 1"))
+
+	tk.MustQuery("select 1,1,1 union all ( " +
+		"(select * from employee where dept_id = 1) " +
+		"union all  " +
+		"(select * from employee where dept_id = 1 order by employee_id) " +
+		"order by 1" +
+		");").Sort().Check(testkit.Rows("1 1 1", "1 Furina 1", "1 Furina 1", "2 Klee 1", "2 Klee 1", "3 Eula 1", "3 Eula 1"))
+
+	tk.MustQuery("select * from employee where dept_id = 1 " +
+		"union all " +
+		"(select * from employee where dept_id = 1 order by employee_id) " +
+		"union all" +
+		"(" +
+		"select * from employee where dept_id = 1 " +
+		"union all " +
+		"(select * from employee where dept_id = 1 order by employee_id) " +
+		"limit 1" +
+		");").Sort().Check(testkit.Rows("1 Furina 1", "1 Furina 1", "1 Furina 1", "2 Klee 1", "2 Klee 1", "3 Eula 1", "3 Eula 1"))
+}
+
+func TestIssues40463(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE `4f380f26-9af6-4df8-959d-ad6296eff914` (`f7a9a4be-3728-449b-a5ea-df9b957eec67` enum('bkdv0','9rqy','lw','neud','ym','4nbv','9a7','bpkfo','xtfl','59','6vjj') NOT NULL DEFAULT 'neud', `43ca0135-1650-429b-8887-9eabcae2a234` set('8','5x47','xc','o31','lnz','gs5s','6yam','1','20ea','i','e') NOT NULL DEFAULT 'e', PRIMARY KEY (`f7a9a4be-3728-449b-a5ea-df9b957eec67`,`43ca0135-1650-429b-8887-9eabcae2a234`) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=ascii COLLATE=ascii_bin;")
+	tk.MustExec("INSERT INTO `4f380f26-9af6-4df8-959d-ad6296eff914` VALUES ('bkdv0','gs5s'),('lw','20ea'),('neud','8'),('ym','o31'),('4nbv','o31'),('xtfl','e');")
+
+	tk.MustExec("CREATE TABLE `ba35a09f-76f4-40aa-9b48-13154a24bdd2` (`9b2a7138-14a3-4e8f-b29a-720392aad22c` set('zgn','if8yo','e','k7','bav','xj6','lkag','m5','as','ia','l3') DEFAULT 'zgn,if8yo,e,k7,ia,l3',`a60d6b5c-08bd-4a6d-b951-716162d004a5` set('6li6','05jlu','w','l','m','e9r','5q','d0ol','i6ajr','csf','d32') DEFAULT '6li6,05jlu,w,l,m,d0ol,i6ajr,csf,d32',`fb753d37-6252-4bd3-9bd1-0059640e7861` year(4) DEFAULT '2065', UNIQUE KEY `51816c39-27df-4bbe-a0e7-d6b6f54be2a2` (`fb753d37-6252-4bd3-9bd1-0059640e7861`), KEY `b0dfda0a-ffed-4c5b-9a72-4113bc1cbc8e` (`9b2a7138-14a3-4e8f-b29a-720392aad22c`,`fb753d37-6252-4bd3-9bd1-0059640e7861`)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin /*T! SHARD_ROW_ID_BITS=5 */;")
+	tk.MustExec("insert into `ba35a09f-76f4-40aa-9b48-13154a24bdd2` values ('if8yo', '6li6,05jlu,w,l,m,d0ol,i6ajr,csf,d32', 2065);")
+
+	tk.MustExec("CREATE TABLE `07ccc74e-14c3-4685-bb41-c78a069b1a6d` (`8a93bdc5-2214-4f96-b5a7-1ba4c0d396ae` bigint(20) NOT NULL DEFAULT '-4604789462044748682',`30b19ecf-679f-4ca3-813f-d3c3b8f7da7e` date NOT NULL DEFAULT '5030-11-23',`1c52eaf2-1ebb-4486-9410-dfd00c7c835c` decimal(7,5) DEFAULT '-81.91307',`4b09dfdc-e688-41cb-9ffa-d03071a43077` float DEFAULT '1.7989023',PRIMARY KEY (`30b19ecf-679f-4ca3-813f-d3c3b8f7da7e`,`8a93bdc5-2214-4f96-b5a7-1ba4c0d396ae`) /*T![clustered_index] CLUSTERED */,KEY `ae7a7637-ca52-443b-8a3f-69694f730cc4` (`8a93bdc5-2214-4f96-b5a7-1ba4c0d396ae`),KEY `42640042-8a17-4145-9510-5bb419f83ed9` (`8a93bdc5-2214-4f96-b5a7-1ba4c0d396ae`),KEY `839f4f5a-83f3-449b-a7dd-c7d2974d351a` (`30b19ecf-679f-4ca3-813f-d3c3b8f7da7e`),KEY `c474cde1-6fe4-45df-9067-b4e479f84149` (`8a93bdc5-2214-4f96-b5a7-1ba4c0d396ae`),KEY `f834d0a9-709e-4ca8-925d-73f48322b70d` (`8a93bdc5-2214-4f96-b5a7-1ba4c0d396ae`)) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;")
+	tk.MustExec("set sql_mode=``;")
+	tk.MustExec("INSERT INTO `07ccc74e-14c3-4685-bb41-c78a069b1a6d` VALUES (616295989348159438,'0000-00-00',1.00000,1.7989023),(2215857492573998768,'1970-02-02',0.00000,1.7989023),(2215857492573998768,'1983-05-13',0.00000,1.7989023),(-2840083604831267906,'1984-01-30',1.00000,1.7989023),(599388718360890339,'1986-09-09',1.00000,1.7989023),(3506764933630033073,'1987-11-22',1.00000,1.7989023),(3506764933630033073,'2002-02-26',1.00000,1.7989023),(3506764933630033073,'2003-05-14',1.00000,1.7989023),(3506764933630033073,'2007-05-16',1.00000,1.7989023),(3506764933630033073,'2017-02-20',1.00000,1.7989023),(3506764933630033073,'2017-08-06',1.00000,1.7989023),(2215857492573998768,'2019-02-18',1.00000,1.7989023),(3506764933630033073,'2020-08-11',1.00000,1.7989023),(3506764933630033073,'2028-06-07',1.00000,1.7989023),(3506764933630033073,'2036-08-16',1.00000,1.7989023);")
+
+	tk.MustQuery("select  /*+ use_index_merge( `4f380f26-9af6-4df8-959d-ad6296eff914` ) */ /*+  stream_agg() */  approx_percentile( `4f380f26-9af6-4df8-959d-ad6296eff914`.`f7a9a4be-3728-449b-a5ea-df9b957eec67` , 77 ) as r0 , `4f380f26-9af6-4df8-959d-ad6296eff914`.`f7a9a4be-3728-449b-a5ea-df9b957eec67` as r1 from `4f380f26-9af6-4df8-959d-ad6296eff914` where not( IsNull( `4f380f26-9af6-4df8-959d-ad6296eff914`.`f7a9a4be-3728-449b-a5ea-df9b957eec67` ) ) and not( `4f380f26-9af6-4df8-959d-ad6296eff914`.`f7a9a4be-3728-449b-a5ea-df9b957eec67` in ( select `8a93bdc5-2214-4f96-b5a7-1ba4c0d396ae` from `07ccc74e-14c3-4685-bb41-c78a069b1a6d` where `4f380f26-9af6-4df8-959d-ad6296eff914`.`f7a9a4be-3728-449b-a5ea-df9b957eec67` in ( select `a60d6b5c-08bd-4a6d-b951-716162d004a5` from `ba35a09f-76f4-40aa-9b48-13154a24bdd2` where not( `4f380f26-9af6-4df8-959d-ad6296eff914`.`f7a9a4be-3728-449b-a5ea-df9b957eec67` between 'bpkfo' and '59' ) and not( `4f380f26-9af6-4df8-959d-ad6296eff914`.`f7a9a4be-3728-449b-a5ea-df9b957eec67` in ( select `fb753d37-6252-4bd3-9bd1-0059640e7861` from `ba35a09f-76f4-40aa-9b48-13154a24bdd2` where IsNull( `4f380f26-9af6-4df8-959d-ad6296eff914`.`f7a9a4be-3728-449b-a5ea-df9b957eec67` ) or not( `4f380f26-9af6-4df8-959d-ad6296eff914`.`43ca0135-1650-429b-8887-9eabcae2a234` in ( select `8a93bdc5-2214-4f96-b5a7-1ba4c0d396ae` from `07ccc74e-14c3-4685-bb41-c78a069b1a6d` where IsNull( `4f380f26-9af6-4df8-959d-ad6296eff914`.`43ca0135-1650-429b-8887-9eabcae2a234` ) and not( `4f380f26-9af6-4df8-959d-ad6296eff914`.`f7a9a4be-3728-449b-a5ea-df9b957eec67` between 'neud' and 'bpkfo' ) ) ) ) ) ) ) ) group by `4f380f26-9af6-4df8-959d-ad6296eff914`.`f7a9a4be-3728-449b-a5ea-df9b957eec67`;")
 }

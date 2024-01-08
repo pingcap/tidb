@@ -1,0 +1,10 @@
+# TestIssue34325
+drop table if exists t;
+create table t(d date);
+-- error 1292
+replace into t values ('2004-04-31');
+replace /*+ SET_VAR(sql_mode='ALLOW_INVALID_DATES') */ into t values ('2004-04-31');
+drop table if exists t;
+create table t(a INT, KEY(a));
+insert /*+ SET_VAR(sql_mode='') */ into t values (2);
+replace /*+ SET_VAR(sql_mode='') */ into t values (2);

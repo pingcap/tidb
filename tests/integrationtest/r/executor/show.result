@@ -555,9 +555,10 @@ select 1;
 1
 1
 create invalid;
-[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 14 near "invalid;" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 14 near "invalid;" 
 show errors;
 Level	Code	Message
+Error	1064	You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 14 near "invalid;" 
 show tables;
 Error 1046 (3D000): No database selected
 show tables;
@@ -1122,3 +1123,12 @@ select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER
 COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN
 utf8mb4_bin	utf8mb4	46	Yes	Yes	1
 set @@session.default_collation_for_utf8mb4=default;
+DROP TABLE IF EXISTS `t`;
+CREATE TABLE `t` (a BIGINT PRIMARY KEY AUTO_RANDOM(2), b INT) PRE_SPLIT_REGIONS=4;
+SHOW CREATE TABLE `t`;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(2) */,
+  `b` int(11) DEFAULT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! PRE_SPLIT_REGIONS=2 */

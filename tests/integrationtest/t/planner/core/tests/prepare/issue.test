@@ -95,6 +95,7 @@ prepare stmt from "select * from t where a=10";
 execute stmt;
 execute stmt;
 select @@last_plan_from_cache;
+set tidb_enable_prepared_plan_cache=DEFAULT;
 
 # TestIssue42439
 CREATE TABLE UK_MU16407 (COL3 timestamp NULL DEFAULT NULL, UNIQUE KEY U3(COL3));
@@ -122,6 +123,8 @@ set @a=-29408, @b=-9254, @c=-1849, @d=-2346;
 execute stmt using @a,@b,@c,@d;
 set @a=126, @b=126, @c=-125, @d=707;
 execute stmt using @a,@b,@c,@d;
+set tidb_enable_prepared_plan_cache=DEFAULT;
+
 
 # TestIssue28867
 set tidb_enable_prepared_plan_cache=1;
@@ -148,6 +151,8 @@ set @a=1;
 execute stmt using @a;
 execute stmt using @a;
 select @@last_plan_from_cache;
+set tidb_enable_prepared_plan_cache=DEFAULT;
+
 
 # TestIssue29565
 set tidb_enable_prepared_plan_cache=1;
@@ -163,6 +168,8 @@ select @@last_plan_from_cache;
 set @a=7309027171262036496, @b=-9798213896406520625;
 execute stmt using @a,@b;
 select @@last_plan_from_cache;
+set tidb_enable_prepared_plan_cache=DEFAULT;
+
 
 # TestIssue31730
 set tidb_enable_prepared_plan_cache=1;
@@ -172,6 +179,8 @@ insert into PK_S_MULTI_37 values(-9999999999999999999999999999999999999999999999
 prepare stmt from 'SELECT SUM(COL1+?), col2 FROM PK_S_MULTI_37 GROUP BY col2';
 set @a=1;
 execute stmt using @a;
+set tidb_enable_prepared_plan_cache=DEFAULT;
+
 
 # TestIssue28828
 set tidb_enable_prepared_plan_cache=1;
@@ -216,6 +225,9 @@ select @@last_plan_from_cache;
 prepare stmt from 'select/*+ hash_agg() */ count(distinct col1) from PK_TCOLLATION10197 where col1 > ?;';
 execute stmt using @b;
 select/*+ hash_agg() */ count(distinct col1) from PK_TCOLLATION10197 where col1 > '龺';
+set tidb_enable_prepared_plan_cache=DEFAULT;
+set tidb_enable_clustered_index=DEFAULT;
+
 
 # TestIssue29993
 set tidb_enable_prepared_plan_cache=1;
@@ -265,6 +277,9 @@ select @@last_plan_from_cache;
 execute stmt using @z;
 select @@last_plan_from_cache;
 execute stmt using @z;
+set tidb_enable_prepared_plan_cache=DEFAULT;
+set tidb_enable_clustered_index=DEFAULT;
+
 
 # TestIssue30100
 set tidb_enable_prepared_plan_cache=1;
@@ -280,6 +295,8 @@ set @a=0;
 execute stmt using @a;
 execute stmt using @a;
 select @@last_plan_from_cache;
+set tidb_enable_prepared_plan_cache=DEFAULT;
+
 
 # TestIssue37901
 drop table if exists t4;
@@ -289,3 +306,123 @@ set @t='2022-01-01 00:00:00.000000';
 execute st1 using @t;
 select count(*) from t4;
 
+
+# TestIssueEnablePreparedPlanCache2
+set tidb_enable_prepared_plan_cache=1;
+
+## Issue18066
+drop table if exists t;
+create table t(a int);
+prepare stmt from 'select * from t';
+execute stmt;
+select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`' and TABLE_NAMES = 'planner__core__tests__prepare__issue.t';
+execute stmt;
+select EXEC_COUNT,plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`' and TABLE_NAMES = 'planner__core__tests__prepare__issue.t';
+prepare stmt from 'select * from t';
+execute stmt;
+select @@last_plan_from_cache;
+select EXEC_COUNT, plan_cache_hits, plan_in_cache from information_schema.statements_summary where digest_text='select * from `t`' and TABLE_NAMES = 'planner__core__tests__prepare__issue.t';
+
+## TestIssue26873
+drop table if exists t;
+create table t(a int primary key, b int, c int);
+prepare stmt from 'select * from t where a = 2 or a = ?';
+set @p = 3;
+execute stmt using @p;
+select @@last_plan_from_cache;
+execute stmt using @p;
+select @@last_plan_from_cache;
+
+## TestIssue29511
+drop table if exists t;
+CREATE TABLE `t` (`COL1` bigint(20) DEFAULT NULL COMMENT 'WITH DEFAULT', UNIQUE KEY `UK_COL1` (`COL1`));
+insert into t values(-3865356285544170443),(9223372036854775807);
+prepare stmt from 'select/*+ hash_agg() */ max(col1) from t where col1 = ? and col1 > ?;';
+set @a=-3865356285544170443, @b=-4055949188488870713;
+execute stmt using @a,@b;
+
+## TestIssue23671
+drop table if exists t;
+create table t (a int, b int, index ab(a, b));
+insert into t values (1, 1), (2, 2);
+prepare s1 from 'select * from t use index(ab) where a>=? and b>=? and b<=?';
+set @a=1, @b=1, @c=1;
+execute s1 using @a, @b, @c;
+set @a=1, @b=1, @c=10;
+execute s1 using @a, @b, @c;
+select @@last_plan_from_cache;
+
+## TestIssue28920
+drop table if exists UK_GCOL_VIRTUAL_18928;
+CREATE TABLE UK_GCOL_VIRTUAL_18928 (
+  COL102 bigint(20) DEFAULT NULL,
+  COL103 bigint(20) DEFAULT NULL,
+  COL1 bigint(20) GENERATED ALWAYS AS (COL102 & 10) VIRTUAL,
+  COL2 varchar(20) DEFAULT NULL,
+  COL4 datetime DEFAULT NULL,
+  COL3 bigint(20) DEFAULT NULL,
+  COL5 float DEFAULT NULL,
+  UNIQUE KEY UK_COL1 (COL1));
+insert into UK_GCOL_VIRTUAL_18928(col102,col2) values("-5175976006730879891", "屘厒镇览錻碛斵大擔觏譨頙硺箄魨搝珄鋧扭趖");
+prepare stmt from 'SELECT * FROM UK_GCOL_VIRTUAL_18928 WHERE col1 < ? AND col2 != ?';
+set @a=10, @b="aa";
+execute stmt using @a, @b;
+
+## Issue29296
+drop table if exists UK_MU14722;
+CREATE TABLE UK_MU14722 (
+	  COL1 tinytext DEFAULT NULL,
+	  COL2 tinyint(16) DEFAULT NULL,
+	  COL3 datetime DEFAULT NULL,
+	  COL4 int(11) DEFAULT NULL,
+	  UNIQUE KEY U_M_COL (COL1(10)),
+	  UNIQUE KEY U_M_COL2 (COL2),
+	  UNIQUE KEY U_M_COL3 (COL3));
+insert into UK_MU14722 values("輮睅麤敜溺她晁瀪襄頮鹛涓誗钷廔筪惌嶙鎢塴", -121, "3383-02-19 07:58:28" , -639457963),
+		("偧孇鱓鼂瘠钻篝醗時鷷聽箌磇砀玸眞扦鸇祈灇", 127, "7902-03-05 08:54:04", -1094128660),
+		("浀玡慃淛漉围甧鴎史嬙砊齄w章炢忲噑硓哈樘", -127, "5813-04-16 03:07:20", -333397107),
+		("鑝粼啎鸼贖桖弦簼赭蠅鏪鐥蕿捐榥疗耹岜鬓槊", -117, "7753-11-24 10:14:24", 654872077);
+prepare stmt from 'SELECT * FROM UK_MU14722 WHERE col2 > ? OR col2 BETWEEN ? AND ? ORDER BY COL2 + ? LIMIT 3';
+set @a=30410, @b=3937, @c=22045, @d=-4374;
+execute stmt using @a,@b,@c,@d;
+set @a=127, @b=127, @c=127, @d=127;
+execute stmt using @a,@b,@c,@d;
+
+## TestIssue28246
+drop table if exists PK_AUTO_RANDOM9111;
+CREATE TABLE `PK_AUTO_RANDOM9111` (   `COL1` bigint(45) NOT NULL  ,   `COL2` varchar(20) DEFAULT NULL,   `COL4` datetime DEFAULT NULL,   `COL3` bigint(20) DEFAULT NULL,   `COL5` float DEFAULT NULL,   PRIMARY KEY (`COL1`)  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+insert into PK_AUTO_RANDOM9111(col1) values (-9223372036854775808), (9223372036854775807);
+set @a=9223372036854775807, @b=1;
+prepare stmt from 'select min(col1) from PK_AUTO_RANDOM9111 where col1 > ?;';
+## The plan contains the tableDual, so it will not be cached.
+execute stmt using @a;
+execute stmt using @a;
+select @@last_plan_from_cache;
+execute stmt using @b;
+select @@last_plan_from_cache;
+execute stmt using @a;
+select @@last_plan_from_cache;
+
+set tidb_enable_prepared_plan_cache=DEFAULT;
+
+# TestIssue42739
+
+use test;
+drop table if exists t0;
+CREATE TABLE t0 (c1 double, c2 double);
+select
+  exists (
+    select
+          subq_2.c0 as c8
+        from
+          (select
+                ref_153.c1 as c0
+              from
+                t0 as ref_153
+              group by ref_153.c1 having 0 <> (
+                  select 1
+                    from
+                      t0 as ref_173
+                    where count(ref_153.c2) = avg(ref_153.c2)
+                    order by c1 desc limit 1)) as subq_2
+     ) as c10;

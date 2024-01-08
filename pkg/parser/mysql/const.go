@@ -642,6 +642,9 @@ const (
 	CursorTypeScrollable
 )
 
+// ZlibCompressDefaultLevel is the zlib compression level for the compressed protocol
+const ZlibCompressDefaultLevel = 6
+
 const (
 	// CompressionNone is no compression in use
 	CompressionNone = iota

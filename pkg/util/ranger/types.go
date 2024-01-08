@@ -195,14 +195,16 @@ func (ran *Range) String() string {
 // Encode encodes the range to its encoded value.
 func (ran *Range) Encode(sc *stmtctx.StatementContext, lowBuffer, highBuffer []byte) ([]byte, []byte, error) {
 	var err error
-	lowBuffer, err = codec.EncodeKey(sc, lowBuffer[:0], ran.LowVal...)
+	lowBuffer, err = codec.EncodeKey(sc.TimeZone(), lowBuffer[:0], ran.LowVal...)
+	err = sc.HandleError(err)
 	if err != nil {
 		return nil, nil, err
 	}
 	if ran.LowExclude {
 		lowBuffer = kv.Key(lowBuffer).PrefixNext()
 	}
-	highBuffer, err = codec.EncodeKey(sc, highBuffer[:0], ran.HighVal...)
+	highBuffer, err = codec.EncodeKey(sc.TimeZone(), highBuffer[:0], ran.HighVal...)
+	err = sc.HandleError(err)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -269,7 +271,7 @@ func formatDatum(d types.Datum, isLeftSide bool) string {
 			return "+inf"
 		}
 	case types.KindBytes:
-		return fmt.Sprintf("0x%X", d.GetValue())
+		return fmt.Sprintf("%q", d.GetValue())
 	case types.KindString:
 		return fmt.Sprintf("%q", d.GetValue())
 	case types.KindMysqlEnum, types.KindMysqlSet,

@@ -253,7 +253,7 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowPlugins()
 	case ast.ShowProfiles:
 		// empty result
-	case ast.ShowMasterStatus:
+	case ast.ShowMasterStatus, ast.ShowBinlogStatus:
 		return e.fetchShowMasterStatus()
 	case ast.ShowPrivileges:
 		return e.fetchShowPrivileges()
@@ -323,10 +323,10 @@ func (*visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 func (e *ShowExec) fetchShowBind() error {
 	var tmp []*bindinfo.BindRecord
 	if !e.GlobalScope {
-		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		tmp = handle.GetAllBindRecord()
+		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
+		tmp = handle.GetAllSessionBindings()
 	} else {
-		tmp = domain.GetDomain(e.Ctx()).BindHandle().GetAllBindRecord()
+		tmp = domain.GetDomain(e.Ctx()).BindHandle().GetAllGlobalBindings()
 	}
 	bindRecords := make([]*bindinfo.BindRecord, 0)
 	for _, bindRecord := range tmp {
@@ -408,7 +408,7 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 
 	handle := domain.GetDomain(e.Ctx()).BindHandle()
 
-	bindRecords := handle.GetAllBindRecord()
+	bindRecords := handle.GetAllGlobalBindings()
 	numBindings := 0
 	for _, bindRecord := range bindRecords {
 		for _, binding := range bindRecord.Bindings {
@@ -1292,6 +1292,10 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 			fmt.Fprintf(buf, "PRE_SPLIT_REGIONS=%d ", tableInfo.PreSplitRegions)
 		}
 		buf.WriteString("*/")
+	}
+
+	if tableInfo.AutoRandomBits > 0 && tableInfo.PreSplitRegions > 0 {
+		fmt.Fprintf(buf, " /*T! PRE_SPLIT_REGIONS=%d */", tableInfo.PreSplitRegions)
 	}
 
 	if len(tableInfo.Comment) > 0 {
@@ -2285,11 +2289,11 @@ func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedR
 	result.AppendString(12, info.CreatedBy)
 }
 
-func handleImportJobInfo(info *importer.JobInfo, result *chunk.Chunk) error {
+func handleImportJobInfo(ctx context.Context, info *importer.JobInfo, result *chunk.Chunk) error {
 	var importedRowCount int64 = -1
 	if info.Summary == nil && info.Status == importer.JobStatusRunning {
 		// for running jobs, need get from distributed framework.
-		rows, err := importinto.GetTaskImportedRows(info.ID)
+		rows, err := importinto.GetTaskImportedRows(ctx, info.ID)
 		if err != nil {
 			return err
 		}
@@ -2309,13 +2313,14 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 		hasSuperPriv = pm.RequestVerification(e.Ctx().GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
 	}
 	// we use sessionCtx from GetTaskManager, user ctx might not have system table privileges.
-	globalTaskManager, err := fstorage.GetTaskManager()
+	taskManager, err := fstorage.GetTaskManager()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return err
 	}
 	if e.ImportJobID != nil {
 		var info *importer.JobInfo
-		if err = globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
+		if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
 			exec := se.(sqlexec.SQLExecutor)
 			var err2 error
 			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
@@ -2323,10 +2328,10 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 		}); err != nil {
 			return err
 		}
-		return handleImportJobInfo(info, e.result)
+		return handleImportJobInfo(ctx, info, e.result)
 	}
 	var infos []*importer.JobInfo
-	if err = globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
+	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
 		var err2 error
 		infos, err2 = importer.GetAllViewableJobs(ctx, exec, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
@@ -2335,7 +2340,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 		return err
 	}
 	for _, info := range infos {
-		if err2 := handleImportJobInfo(info, e.result); err2 != nil {
+		if err2 := handleImportJobInfo(ctx, info, e.result); err2 != nil {
 			return err2
 		}
 	}
@@ -2357,7 +2362,7 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 	return runWithSystemSession(ctx, sctx, func(s sessionctx.Context) error {
 		// Retrieve view columns info.
 		planBuilder, _ := plannercore.NewPlanBuilder(
-			plannercore.PlanBuilderOptNoExecution{}).Init(s, is, &hint.BlockHintProcessor{})
+			plannercore.PlanBuilderOptNoExecution{}).Init(s, is, hint.NewQBHintHandler(nil))
 		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl, nil, nil)
 		if err != nil {
 			return err

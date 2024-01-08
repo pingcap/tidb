@@ -89,8 +89,8 @@ After executing the tests, run `make br_coverage` to get a coverage report at
 
 1. New integration tests can be written as shell scripts in `tests/TEST_NAME/run.sh`.
 The script should exit with a nonzero error code on failure.
-2. Add TEST_NAME to existing group in [run_group.sh](./run_group.sh)(Recommended), or add a new group for it.
-3. If you add a new group, the name of the new group must be added to CI [br-integration-test](https://github.com/PingCAP-QE/ci/blob/main/pipelines/pingcap/tidb/latest/pull_br_integration_test.groovy).
+2. Add TEST_NAME to existing group in [run_group_br_tests.sh](./run_group_br_tests.sh)(Recommended) or [run_group_lightning_tests.sh](./run_group_lightning_tests.sh)(Recommended), or add a new group for it.
+3. If you add a new group, the name of the new group must be added to CI [br-integration-test](https://github.com/PingCAP-QE/ci/blob/main/pipelines/pingcap/tidb/latest/pull_br_integration_test.groovy) or [lightning-integration-test](https://github.com/PingCAP-QE/ci/blob/main/pipelines/pingcap/tidb/latest/pull_lightning_integration_test.groovy).
 
 Several convenient commands are provided:
 

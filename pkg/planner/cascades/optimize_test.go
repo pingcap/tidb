@@ -175,7 +175,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	aggProp := preparePossibleProperties(group, propMap)
 	// We only have one prop for Group0 : f
 	require.Len(t, aggProp, 1)
-	require.True(t, aggProp[0][0].Equal(nil, columnF))
+	require.True(t, aggProp[0][0].EqualColumn(columnF))
 
 	gatherGroup := group.Equivalents.Front().Value.(*memo.GroupExpr).Children[0]
 	gatherProp, ok := propMap[gatherGroup]
@@ -184,7 +184,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	require.Len(t, gatherProp, 2)
 	for _, prop := range gatherProp {
 		require.Len(t, prop, 1)
-		require.True(t, prop[0].Equal(nil, columnA) || prop[0].Equal(nil, columnF))
+		require.True(t, prop[0].EqualColumn(columnA) || prop[0].EqualColumn(columnF))
 	}
 }
 

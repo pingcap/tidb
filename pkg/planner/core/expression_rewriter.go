@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -59,7 +58,7 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 	if err != nil {
 		return types.Datum{}, err
 	}
-	return newExpr.Eval(chunk.Row{})
+	return newExpr.Eval(sctx, chunk.Row{})
 }
 
 // rewriteAstExpr rewrites ast expression directly.
@@ -69,7 +68,7 @@ func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expressi
 	if s, ok := sctx.GetInfoSchema().(infoschema.InfoSchema); ok {
 		is = s
 	}
-	b, savedBlockNames := NewPlanBuilder().Init(sctx, is, &hint.BlockHintProcessor{})
+	b, savedBlockNames := NewPlanBuilder().Init(sctx, is, hint.NewQBHintHandler(nil))
 	b.allowBuildCastArray = allowCastArray
 	fakePlan := LogicalTableDual{}.Init(sctx, 0)
 	if schema != nil {
@@ -542,9 +541,9 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 		return v, true
 	}
 
-	noDecorrelate := hintFlags&HintFlagNoDecorrelate > 0
+	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
 	if noDecorrelate && len(extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())) == 0 {
-		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
+		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))
 		noDecorrelate = false
 	}
@@ -630,7 +629,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, v *ast.
 func (er *expressionRewriter) handleOtherComparableSubq(lexpr, rexpr expression.Expression, np LogicalPlan, useMin bool, cmpFunc string, all, markNoDecorrelate bool) {
 	plan4Agg := LogicalAggregation{}.Init(er.sctx, er.b.getSelectOffset())
 	if hint := er.b.TableHints(); hint != nil {
-		plan4Agg.aggHints = hint.aggHints
+		plan4Agg.aggHints = hint.AggHints
 	}
 	plan4Agg.SetChildren(np)
 
@@ -761,7 +760,7 @@ func (er *expressionRewriter) handleNEAny(lexpr, rexpr expression.Expression, np
 		AggFuncs: []*aggregation.AggFuncDesc{maxFunc, countFunc},
 	}.Init(er.sctx, er.b.getSelectOffset())
 	if hint := er.b.TableHints(); hint != nil {
-		plan4Agg.aggHints = hint.aggHints
+		plan4Agg.aggHints = hint.AggHints
 	}
 	plan4Agg.SetChildren(np)
 	maxResultCol := &expression.Column{
@@ -798,7 +797,7 @@ func (er *expressionRewriter) handleEQAll(lexpr, rexpr expression.Expression, np
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
 	}.Init(er.sctx, er.b.getSelectOffset())
 	if hint := er.b.TableHints(); hint != nil {
-		plan4Agg.aggHints = hint.aggHints
+		plan4Agg.aggHints = hint.AggHints
 	}
 	plan4Agg.SetChildren(np)
 	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
@@ -845,15 +844,15 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 	}
 	np = er.popExistsSubPlan(np)
 
-	noDecorrelate := hintFlags&HintFlagNoDecorrelate > 0
+	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
 	if noDecorrelate && len(extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())) == 0 {
-		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
+		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))
 		noDecorrelate = false
 	}
-	semiJoinRewrite := hintFlags&HintFlagSemiJoinRewrite > 0
+	semiJoinRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
 	if semiJoinRewrite && noDecorrelate {
-		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
+		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
 			"NO_DECORRELATE() and SEMI_JOIN_REWRITE() are in conflict. Both will be ineffective."))
 		noDecorrelate = false
 		semiJoinRewrite = false
@@ -882,7 +881,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, v *ast.Ex
 				ctx:            ctx,
 				is:             er.b.is,
 				outputColIDs:   []int64{newColID},
-			}.Init(er.b.ctx, np.SelectBlockOffset())
+			}.Init(er.b.ctx, np.QueryBlockOffset())
 			scalarSubQ := &ScalarSubQueryExpr{
 				scalarSubqueryColID: newColID,
 				evalCtx:             subqueryCtx,
@@ -1018,10 +1017,10 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, v *ast.Patte
 	lt, rt := lexpr.GetType(), rexpr.GetType()
 	collFlag := collate.CompatibleCollate(lt.GetCollate(), rt.GetCollate())
 
-	noDecorrelate := hintFlags&HintFlagNoDecorrelate > 0
+	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
 	corCols := extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())
 	if len(corCols) == 0 && noDecorrelate {
-		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
+		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))
 		noDecorrelate = false
 	}
@@ -1079,9 +1078,9 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 	}
 	np = er.b.buildMaxOneRow(np)
 
-	noDecorrelate := hintFlags&HintFlagNoDecorrelate > 0
+	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
 	if noDecorrelate && len(extractCorColumnsBySchema4LogicalPlan(np, er.p.Schema())) == 0 {
-		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack(
+		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))
 		noDecorrelate = false
 	}
@@ -1118,7 +1117,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, v *ast.S
 			scalarSubQuery: physicalPlan,
 			ctx:            ctx,
 			is:             er.b.is,
-		}.Init(er.b.ctx, np.SelectBlockOffset())
+		}.Init(er.b.ctx, np.QueryBlockOffset())
 		newColIDs := make([]int64, 0, np.Schema().Len())
 		newScalarSubQueryExprs := make([]expression.Expression, 0, np.Schema().Len())
 		for _, col := range np.Schema().Columns {
@@ -1484,7 +1483,7 @@ func (er *expressionRewriter) rewriteVariable(v *ast.VariableExpr) {
 	}
 	if sysVar.IsNoop && !variable.EnableNoopVariables.Load() {
 		// The variable does nothing, append a warning to the statement output.
-		sessionVars.StmtCtx.AppendWarning(ErrGettingNoopVariable.GenWithStackByArgs(sysVar.Name))
+		sessionVars.StmtCtx.AppendWarning(ErrGettingNoopVariable.FastGenByArgs(sysVar.Name))
 	}
 	if sem.IsEnabled() && sem.IsInvisibleSysVar(sysVar.Name) {
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_VARIABLES_ADMIN")
@@ -1677,7 +1676,10 @@ func (er *expressionRewriter) inToExpression(lLen int, not bool, tp *types.Field
 						continue // no need to refine it
 					}
 					er.sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("'%v' may be converted to INT", c.String()))
-					expression.RemoveMutableConst(er.sctx, []expression.Expression{c})
+					if err := expression.RemoveMutableConst(er.sctx, []expression.Expression{c}); err != nil {
+						er.err = err
+						return
+					}
 				}
 				args[i], isExceptional = expression.RefineComparedConstant(er.sctx, *leftFt, c, opcode.EQ)
 				if isExceptional {
@@ -1846,7 +1848,7 @@ func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeO
 	isPatternExactMatch := false
 	// Treat predicate 'like' or 'ilike' the same way as predicate '=' when it is an exact match and new collation is not enabled.
 	if patExpression, ok := er.ctxStack[l-1].(*expression.Constant); ok && !collate.NewCollationEnabled() {
-		patString, isNull, err := patExpression.EvalString(nil, chunk.Row{})
+		patString, isNull, err := patExpression.EvalString(er.sctx, chunk.Row{})
 		if err != nil {
 			er.err = err
 			return
@@ -2311,11 +2313,11 @@ func hasCurrentDatetimeDefault(col *table.Column) bool {
 	return strings.ToLower(x) == ast.CurrentTimestamp
 }
 
-func decodeKeyFromString(ctx sessionctx.Context, s string) string {
+func decodeKeyFromString(ctx expression.EvalContext, s string) string {
 	sc := ctx.GetSessionVars().StmtCtx
 	key, err := hex.DecodeString(s)
 	if err != nil {
-		sc.AppendWarning(errors.Errorf("invalid key: %X", key))
+		sc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
 		return s
 	}
 	// Auto decode byte if needed.
@@ -2325,17 +2327,13 @@ func decodeKeyFromString(ctx sessionctx.Context, s string) string {
 	}
 	tableID := tablecodec.DecodeTableID(key)
 	if tableID == 0 {
-		sc.AppendWarning(errors.Errorf("invalid key: %X", key))
+		sc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
 		return s
 	}
-	dm := domain.GetDomain(ctx)
-	if dm == nil {
-		sc.AppendWarning(errors.Errorf("domain not found when decoding key: %X", key))
-		return s
-	}
-	is := dm.InfoSchema()
-	if is == nil {
-		sc.AppendWarning(errors.Errorf("infoschema not found when decoding key: %X", key))
+
+	is, ok := ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	if !ok {
+		sc.AppendWarning(errors.NewNoStackErrorf("infoschema not found when decoding key: %X", key))
 		return s
 	}
 	tbl, _ := infoschema.FindTableByTblOrPartID(is, tableID)
@@ -2362,7 +2360,7 @@ func decodeKeyFromString(ctx sessionctx.Context, s string) string {
 		}
 		return ret
 	}
-	sc.AppendWarning(errors.Errorf("invalid key: %X", key))
+	sc.AppendWarning(errors.NewNoStackErrorf("invalid key: %X", key))
 	return s
 }
 

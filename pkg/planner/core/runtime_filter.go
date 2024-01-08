@@ -20,7 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -201,10 +201,10 @@ func (rf *RuntimeFilter) Clone() *RuntimeFilter {
 }
 
 // RuntimeFilterListToPB convert runtime filter list to PB list
-func RuntimeFilterListToPB(runtimeFilterList []*RuntimeFilter, sc *stmtctx.StatementContext, client kv.Client) ([]*tipb.RuntimeFilter, error) {
+func RuntimeFilterListToPB(ctx sessionctx.Context, runtimeFilterList []*RuntimeFilter, client kv.Client) ([]*tipb.RuntimeFilter, error) {
 	result := make([]*tipb.RuntimeFilter, 0, len(runtimeFilterList))
 	for _, runtimeFilter := range runtimeFilterList {
-		rfPB, err := runtimeFilter.ToPB(sc, client)
+		rfPB, err := runtimeFilter.ToPB(ctx, client)
 		if err != nil {
 			return nil, err
 		}
@@ -214,8 +214,8 @@ func RuntimeFilterListToPB(runtimeFilterList []*RuntimeFilter, sc *stmtctx.State
 }
 
 // ToPB convert runtime filter to PB
-func (rf *RuntimeFilter) ToPB(sc *stmtctx.StatementContext, client kv.Client) (*tipb.RuntimeFilter, error) {
-	pc := expression.NewPBConverter(client, sc)
+func (rf *RuntimeFilter) ToPB(ctx sessionctx.Context, client kv.Client) (*tipb.RuntimeFilter, error) {
+	pc := expression.NewPBConverter(client, ctx)
 	srcExprListPB := make([]*tipb.Expr, 0, len(rf.srcExprList))
 	for _, srcExpr := range rf.srcExprList {
 		srcExprPB := pc.ExprToPB(srcExpr)

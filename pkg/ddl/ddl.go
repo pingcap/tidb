@@ -40,13 +40,14 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/syncer"
 	"github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -58,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/table"
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -349,25 +351,20 @@ type ddlCtx struct {
 	schemaSyncer syncer.SchemaSyncer
 	stateSyncer  syncer.StateSyncer
 	ddlJobDoneCh chan struct{}
-	ddlEventCh   chan<- *util.Event
+	ddlEventCh   chan<- *statsutil.DDLEvent
 	lease        time.Duration        // lease is schema lease.
 	binlogCli    *pumpcli.PumpsClient // binlogCli is used for Binlog.
 	infoCache    *infoschema.InfoCache
 	statsHandle  *handle.Handle
 	tableLockCkr util.DeadTableLockChecker
 	etcdCli      *clientv3.Client
-	// backfillJobCh gets notification if any backfill jobs coming.
-	backfillJobCh chan struct{}
+	autoidCli    *autoid.ClientDiscover
 
 	*waitSchemaSyncedController
 	*schemaVersionManager
-	// recording the running jobs.
-	runningJobs struct {
-		sync.RWMutex
-		ids map[int64]struct{}
-	}
-	// It holds the running DDL jobs ID.
-	runningJobIDs []string
+
+	runningJobs *runningJobs
+
 	// reorgCtx is used for reorganization.
 	reorgCtx reorgContexts
 	// backfillCtx is used for backfill workers.
@@ -500,23 +497,6 @@ func (dc *ddlCtx) jobContext(jobID int64, reorgMeta *model.DDLReorgMeta) *JobCon
 	return ctx
 }
 
-func (dc *ddlCtx) removeBackfillCtxJobCtx(jobID int64) {
-	dc.backfillCtx.Lock()
-	delete(dc.backfillCtx.jobCtxMap, jobID)
-	dc.backfillCtx.Unlock()
-}
-
-func (dc *ddlCtx) backfillCtxJobIDs() []int64 {
-	dc.backfillCtx.Lock()
-	defer dc.backfillCtx.Unlock()
-
-	runningJobIDs := make([]int64, 0, len(dc.backfillCtx.jobCtxMap))
-	for id := range dc.backfillCtx.jobCtxMap {
-		runningJobIDs = append(runningJobIDs, id)
-	}
-	return runningJobIDs
-}
-
 type reorgContexts struct {
 	sync.RWMutex
 	// reorgCtxMap maps job ID to reorg context.
@@ -599,7 +579,7 @@ func (d *ddl) RegisterStatsHandle(h *handle.Handle) {
 
 // asyncNotifyEvent will notify the ddl event to outside world, say statistic handle. When the channel is full, we may
 // give up notify and log it.
-func asyncNotifyEvent(d *ddlCtx, e *util.Event) {
+func asyncNotifyEvent(d *ddlCtx, e *statsutil.DDLEvent) {
 	if d.ddlEventCh != nil {
 		if d.lease == 0 {
 			// If lease is 0, it's always used in test.
@@ -673,9 +653,10 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		infoCache:                  opt.InfoCache,
 		tableLockCkr:               deadLockCkr,
 		etcdCli:                    opt.EtcdCli,
+		autoidCli:                  opt.AutoIDClient,
 		schemaVersionManager:       newSchemaVersionManager(),
 		waitSchemaSyncedController: newWaitSchemaSyncedController(),
-		runningJobIDs:              make([]string, 0, jobRecordCapacity),
+		runningJobs:                newRunningJobs(),
 	}
 	ddlCtx.reorgCtx.reorgCtxMap = make(map[int64]*reorgCtx)
 	ddlCtx.jobCtx.jobCtxMap = make(map[int64]*JobContext)
@@ -683,7 +664,6 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	ddlCtx.mu.interceptor = &BaseInterceptor{}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	ddlCtx.ctx, ddlCtx.cancel = context.WithCancel(ctx)
-	ddlCtx.runningJobs.ids = make(map[int64]struct{})
 
 	d := &ddl{
 		ddlCtx:            ddlCtx,
@@ -692,17 +672,17 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 		ddlJobCh:          make(chan struct{}, 100),
 	}
 
-	scheduler.RegisterTaskType(proto.Backfill,
-		func(ctx context.Context, id string, task *proto.Task, taskTable scheduler.TaskTable) scheduler.Scheduler {
-			return newBackfillDistScheduler(ctx, id, task, taskTable, d)
-		}, scheduler.WithSummary,
+	taskexecutor.RegisterTaskType(proto.Backfill,
+		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
+			return newBackfillDistExecutor(ctx, id, task, taskTable, d)
+		}, taskexecutor.WithSummary,
 	)
 
-	dispatcher.RegisterDispatcherFactory(proto.Backfill,
-		func(ctx context.Context, taskMgr dispatcher.TaskManager, serverID string, task *proto.Task) dispatcher.Dispatcher {
-			return newLitBackfillDispatcher(ctx, d, taskMgr, serverID, task)
+	scheduler.RegisterSchedulerFactory(proto.Backfill,
+		func(ctx context.Context, taskMgr scheduler.TaskManager, nodeMgr *scheduler.NodeManager, task *proto.Task) scheduler.Scheduler {
+			return newLitBackfillScheduler(ctx, d, taskMgr, nodeMgr, task)
 		})
-	dispatcher.RegisterDispatcherCleanUpFactory(proto.Backfill, newBackfillCleanUpS3)
+	scheduler.RegisterSchedulerCleanUpFactory(proto.Backfill, newBackfillCleanUpS3)
 	// Register functions for enable/disable ddl when changing system variable `tidb_enable_ddl`.
 	variable.EnableDDL = d.EnableDDL
 	variable.DisableDDL = d.DisableDDL
@@ -811,7 +791,13 @@ func (d *ddl) Start(ctxPool *pools.ResourcePool) error {
 	}
 	defer d.sessPool.Put(ctx)
 
-	ingest.InitGlobalLightningEnv(d.ctx, ctx)
+	ingest.InitGlobalLightningEnv()
+	d.ownerManager.SetRetireOwnerHook(func() {
+		// Since this instance is not DDL owner anymore, we clean up the processing job info.
+		if ingest.LitBackCtxMgr != nil {
+			ingest.LitBackCtxMgr.MarkJobFinish()
+		}
+	})
 
 	return nil
 }
@@ -1851,7 +1837,8 @@ func addHistoryDDLJob2Table(sess *sess.Session, job *model.Job, updateRawArgs bo
 			job.ID, util.WrapKey2String(b), strconv.Quote(job.SchemaName), strconv.Quote(job.TableName),
 			strconv.Quote(strconv.FormatInt(job.SchemaID, 10)),
 			strconv.Quote(strconv.FormatInt(job.TableID, 10)),
-			strconv.Quote(model.TSConvert2Time(job.StartTS).String())),
+			strconv.Quote(model.TSConvert2Time(job.StartTS).String()),
+		),
 		"insert_history")
 	return errors.Trace(err)
 }

@@ -42,7 +42,8 @@ func createDistinctChecker(sc *stmtctx.StatementContext) *distinctChecker {
 func (d *distinctChecker) Check(values []types.Datum) (bool, error) {
 	d.key = d.key[:0]
 	var err error
-	d.key, err = codec.EncodeValue(d.sc, d.key, values...)
+	d.key, err = codec.EncodeValue(d.sc.TimeZone(), d.key, values...)
+	err = d.sc.HandleError(err)
 	if err != nil {
 		return false, err
 	}

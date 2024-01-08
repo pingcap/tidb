@@ -18,11 +18,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
@@ -62,53 +59,4 @@ func TestSysSessionPoolGoroutineLeak(t *testing.T) {
 		})
 	}
 	wg.Wait()
-}
-
-func TestParseErrorWarn(t *testing.T) {
-	ctx := core.MockContext()
-	defer func() {
-		domain.GetDomain(ctx).StatsHandle().Close()
-	}()
-	nodes, err := Parse(ctx, "select /*+ adf */ 1")
-	require.NoError(t, err)
-	require.Len(t, nodes, 1)
-	require.Len(t, ctx.GetSessionVars().StmtCtx.GetWarnings(), 1)
-
-	_, err = Parse(ctx, "select")
-	require.Error(t, err)
-}
-
-func TestKeysNeedLock(t *testing.T) {
-	rowKey := tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(1))
-	uniqueIndexKey := tablecodec.EncodeIndexSeekKey(1, 1, []byte{1})
-	nonUniqueIndexKey := tablecodec.EncodeIndexSeekKey(1, 2, []byte{1})
-	uniqueValue := make([]byte, 8)
-	uniqueUntouched := append(uniqueValue, '1')
-	nonUniqueVal := []byte{'0'}
-	nonUniqueUntouched := []byte{'1'}
-	var deleteVal []byte
-	rowVal := []byte{'a', 'b', 'c'}
-	tests := []struct {
-		key  []byte
-		val  []byte
-		need bool
-	}{
-		{rowKey, rowVal, true},
-		{rowKey, deleteVal, true},
-		{nonUniqueIndexKey, nonUniqueVal, false},
-		{nonUniqueIndexKey, nonUniqueUntouched, false},
-		{uniqueIndexKey, uniqueValue, true},
-		{uniqueIndexKey, uniqueUntouched, false},
-		{uniqueIndexKey, deleteVal, false},
-	}
-
-	for _, test := range tests {
-		need := keyNeedToLock(test.key, test.val, 0)
-		require.Equal(t, test.need, need)
-
-		flag := kv.KeyFlags(1)
-		need = keyNeedToLock(test.key, test.val, flag)
-		require.True(t, flag.HasPresumeKeyNotExists())
-		require.True(t, need)
-	}
 }

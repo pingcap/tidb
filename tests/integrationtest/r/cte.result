@@ -321,14 +321,12 @@ from dual;
 scal_subq
 with
 drop table if exists t1;
-create table t1 (a int);
-                                                                                                                                                                                                                                                      insert into t1 values(1), (2), (3);
+create table t1 (a int);                                                                                                                                                                                                                                                      insert into t1 values(1), (2), (3);
 with q as (select * from t1)
 select /*+ merge(q) no_merge(q1) */ * from q, q q1 where q.a=1 and q1.a=2;
 a	a
 1	2
-drop table if exists t1;
-                                                                                                                                                                                                                                                      create table t1 (a int, b int);
+drop table if exists t1;                                                                                                                                                                                                                                                      create table t1 (a int, b int);
 with qn as (select a, b from t1) select b from qn group by a;
 b
 drop table if exists t1;

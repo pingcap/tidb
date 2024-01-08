@@ -463,7 +463,7 @@ func (ci *largeFileCheckItem) Check(_ context.Context) (*precheck.CheckResult, e
 		Item:     ci.GetCheckItemID(),
 		Severity: precheck.Warn,
 		Passed:   true,
-		Message:  "Source csv files size is proper",
+		Message:  "Source data files size is proper",
 	}
 
 	if !ci.cfg.Mydumper.StrictFormat {
@@ -471,14 +471,14 @@ func (ci *largeFileCheckItem) Check(_ context.Context) (*precheck.CheckResult, e
 			for _, t := range db.Tables {
 				for _, f := range t.DataFiles {
 					if f.FileMeta.RealSize > defaultCSVSize {
-						theResult.Message = fmt.Sprintf("large csv: %s file exists and it will slow down import performance", f.FileMeta.Path)
+						theResult.Message = fmt.Sprintf("large data file: %s file exists and it will slow down import performance", f.FileMeta.Path)
 						theResult.Passed = false
 					}
 				}
 			}
 		}
 	} else {
-		theResult.Message = "Skip the csv size check, because config.StrictFormat is true"
+		theResult.Message = "Skip the data file size check, because config.StrictFormat is true"
 	}
 	return theResult, nil
 }

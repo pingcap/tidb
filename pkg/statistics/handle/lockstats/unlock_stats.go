@@ -18,6 +18,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"go.uber.org/zap"
 )
@@ -36,7 +38,7 @@ const (
 // Return the message of skipped tables and error.
 func RemoveLockedTables(
 	sctx sessionctx.Context,
-	tables map[int64]*util.StatsLockTable,
+	tables map[int64]*types.StatsLockTable,
 ) (string, error) {
 	// Load tables to check locked before delete.
 	lockedTables, err := QueryLockedTables(sctx)
@@ -52,7 +54,7 @@ func RemoveLockedTables(
 		}
 	}
 
-	statsLogger.Info("unlock table",
+	statslogutil.StatsLogger().Info("unlock table",
 		zap.Any("tables", tables),
 	)
 
@@ -105,7 +107,7 @@ func RemoveLockedPartitions(
 	for pid := range pidNames {
 		pids = append(pids, pid)
 	}
-	statsLogger.Info("unlock partitions",
+	statslogutil.StatsLogger().Info("unlock partitions",
 		zap.Int64("tableID", tid),
 		zap.String("tableName", tableName),
 		zap.Int64s("partitionIDs", pids),

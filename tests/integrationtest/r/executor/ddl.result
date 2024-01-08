@@ -109,13 +109,11 @@ insert into t values(9223372036854775807, 1);
 insert into t values(-9223372036854775808, 1);
 alter table t add index idx_b(b);
 admin check table t;
-
 create table t1(a bigint UNSIGNED PRIMARY KEY, b int);
 insert into t1 values(18446744073709551615, 1);
 insert into t1 values(0, 1);
 alter table t1 add index idx_b(b);
 admin check table t1;
-
 drop table if exists t;
 drop table if exists t;
 create table t(c time DEFAULT '12:12:12.8');
@@ -331,7 +329,6 @@ create or replace view t1 as select * from t1;
 Error 1347 (HY000): 'executor__ddl.t1' is not VIEW
 prepare stmt from "create view v10 (x) as select 1";
 execute stmt;
-
 drop table if exists t1, t2;
 drop view if exists v;
 create view v as select * from t1 union select * from t2;
