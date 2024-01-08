@@ -346,6 +346,20 @@ func (w *HashAggPartialWorker) spillDataToDiskImpl() error {
 		return nil
 	}
 
+	defer func() {
+		// Clear the partialResultsMap
+		w.partialResultsMap = make([]aggfuncs.AggPartialResultMapper, len(w.partialResultsMap))
+		for i := range w.partialResultsMap {
+			w.partialResultsMap[i] = make(aggfuncs.AggPartialResultMapper)
+		}
+
+		w.memTracker.Consume(-w.partialResultsMapMem.Load())
+		w.partialResultsMapMem.Store(0)
+		for i := range w.BInMaps {
+			w.BInMaps[i] = 0
+		}
+	}()
+
 	w.prepareForSpill()
 	for _, partialResultsMap := range w.partialResultsMap {
 		for key, partialResults := range partialResultsMap {
@@ -368,18 +382,6 @@ func (w *HashAggPartialWorker) spillDataToDiskImpl() error {
 			// Append key
 			w.tmpChksForSpill[partitionNum].AppendString(len(w.aggFuncs), key)
 		}
-	}
-
-	// Clear the partialResultsMap
-	w.partialResultsMap = make([]aggfuncs.AggPartialResultMapper, len(w.partialResultsMap))
-	for i := range w.partialResultsMap {
-		w.partialResultsMap[i] = make(aggfuncs.AggPartialResultMapper)
-	}
-
-	w.memTracker.Consume(-w.partialResultsMapMem.Load())
-	w.partialResultsMapMem.Store(0)
-	for i := range w.BInMaps {
-		w.BInMaps[i] = 0
 	}
 
 	// Trigger the spill of remaining data
