@@ -693,7 +693,7 @@ func newBatchPointGetPlan(
 			handleParams[i] = con
 			pairs := []nameValuePair{{colName: handleCol.Name.L, colFieldType: item.GetType(), value: *intDatum, con: con}}
 			if tbl.GetPartitionInfo() != nil {
-				tmpPartitionDefinition, _, pos, isTableDual := getPartitionDef(ctx, tbl, pairs)
+				tmpPartitionDefinition, _, pos, isTableDual := getPartitionDef(ctx, tbl, schema, pairs)
 				if isTableDual {
 					return nil
 				}
@@ -881,7 +881,7 @@ func newBatchPointGetPlan(
 		indexValues[i] = values
 		indexValueParams[i] = valuesParams
 		if tbl.GetPartitionInfo() != nil {
-			tmpPartitionDefinition, _, pos, isTableDual := getPartitionDef(ctx, tbl, pairs)
+			tmpPartitionDefinition, _, pos, isTableDual := getPartitionDef(ctx, tbl, schema, pairs)
 			if isTableDual {
 				return nil
 			}
@@ -1065,7 +1065,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 	var partitionDef *model.PartitionDefinition
 	var pos int
 	if pi != nil {
-		partitionDef, pos, _, isTableDual = getPartitionDef(ctx, tbl, pairs)
+		partitionDef, pos, _, isTableDual = getPartitionDef(ctx, tbl, schema, pairs)
 		if isTableDual {
 			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 			p.IsTableDual = true
@@ -1875,7 +1875,7 @@ func buildHandleCols(ctx sessionctx.Context, tbl *model.TableInfo, schema *expre
 	return &IntHandleCols{col: handleCol}
 }
 
-func getPartitionDef(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) (*model.PartitionDefinition, int, int, bool) {
+func getPartitionDef(ctx sessionctx.Context, tbl *model.TableInfo, schema *expression.Schema, pairs []nameValuePair) (*model.PartitionDefinition, int, int, bool) {
 	partitionExpr := getPartitionExpr(ctx, tbl)
 	if partitionExpr == nil {
 		return nil, 0, 0, false
@@ -1909,13 +1909,29 @@ func getPartitionDef(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameV
 	case model.PartitionTypeKey:
 		// The key partition table supports FastPlan when it contains only one partition column
 		if len(pi.Columns) == 1 {
+			// We need to change the partition column index!
+			partCols, _ := partitionExpr.GetPartColumnsForKeyPartition(schema.Columns)
+			if len(partCols) != 1 {
+				return nil, 0, 0, false
+			}
+			pe := &tables.ForKeyPruning{KeyPartCols: partCols}
+			colName := ""
+			for _, col := range tbl.Columns {
+				if partCols[0].ID == col.ID {
+					colName = col.Name.L
+					break
+				}
+			}
 			for i, pair := range pairs {
-				if pi.Columns[0].L == pair.colName {
-					pos, err := partitionExpr.LocateKeyPartition(pi.Num, []types.Datum{pair.value})
+				if colName == pair.colName {
+					pos, err := pe.LocateKeyPartition(pi.Num, []types.Datum{pair.value})
 					if err != nil {
 						return nil, 0, 0, false
 					}
 					return &pi.Definitions[pos], i, pos, false
+				} else {
+					// This should have been checked before!
+					return nil, 0, 0, false
 				}
 			}
 		}
