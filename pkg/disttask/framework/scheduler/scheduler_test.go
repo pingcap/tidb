@@ -284,7 +284,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		}
 	}()
 
-	require.NoError(t, mgr.StartManager(ctx, ":4000", "background"))
+	require.NoError(t, mgr.InitMeta(ctx, ":4000", "background"))
 
 	// 3s
 	cnt := 60

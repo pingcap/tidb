@@ -29,7 +29,7 @@ import (
 func TestTaskState(t *testing.T) {
 	_, gm, ctx := testutil.InitTableTest(t)
 
-	require.NoError(t, gm.StartManager(ctx, ":4000", ""))
+	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
 
 	// 1. cancel task
 	id, err := gm.CreateTask(ctx, "key1", "test", 4, []byte("test"))

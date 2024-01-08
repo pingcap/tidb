@@ -682,21 +682,37 @@ func (stm *TaskManager) StartSubtask(ctx context.Context, subtaskID int64, execI
 	return err
 }
 
-// StartManager insert the manager information into dist_framework_meta.
-func (stm *TaskManager) StartManager(ctx context.Context, tidbID string, role string) error {
+// InitMeta insert the manager information into dist_framework_meta.
+func (stm *TaskManager) InitMeta(ctx context.Context, tidbID string, role string) error {
 	return stm.WithNewSession(func(se sessionctx.Context) error {
-		return stm.StartManagerSession(ctx, se, tidbID, role)
+		return stm.InitMetaSession(ctx, se, tidbID, role)
 	})
 }
 
-// StartManagerSession insert the manager information into dist_framework_meta.
-// if the record exists, update the cpu_count.
-func (*TaskManager) StartManagerSession(ctx context.Context, se sessionctx.Context, execID string, role string) error {
+// InitMetaSession insert the manager information into dist_framework_meta.
+// if the record exists, update the cpu_count and role.
+func (*TaskManager) InitMetaSession(ctx context.Context, se sessionctx.Context, execID string, role string) error {
 	cpuCount := cpu.GetCPUCount()
 	_, err := sqlexec.ExecSQL(ctx, se, `
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
 		values (%?, %?, %?, -1)
-		on duplicate key update cpu_count = %?`,
+		on duplicate key
+		update cpu_count = %?, role = %?`,
+		execID, role, cpuCount, cpuCount, role)
+	return err
+}
+
+// RecoverMeta insert the manager information into dist_framework_meta.
+// if the record exists, update the cpu_count.
+// Don't update role for we only update it in `set global tidb_service_scope`.
+// if not there might has a data race.
+func (stm *TaskManager) RecoverMeta(ctx context.Context, execID string, role string) error {
+	cpuCount := cpu.GetCPUCount()
+	_, err := stm.executeSQLWithNewSession(ctx, `
+		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
+		values (%?, %?, %?, -1)
+		on duplicate key
+		update cpu_count = %?`,
 		execID, role, cpuCount, cpuCount)
 	return err
 }
