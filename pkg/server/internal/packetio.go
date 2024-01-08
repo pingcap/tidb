@@ -160,14 +160,14 @@ func (p *PacketIO) readOnePacket() ([]byte, error) {
 
 	sequence := header[3]
 	if sequence != p.sequence {
-			err := server_err.ErrInvalidSequence.GenWithStack(
-					"invalid sequence, received %d while expecting %d", sequence, p.sequence)
-			if p.compressionAlgorithm == mysql.CompressionNone {
-					return nil, err
-			}
-			// To be compatible with MariaDB Connector/J 2.x,
-			// ignore sequence check and print a log when compression protocol is active.
-			terror.Log(err)
+		err := server_err.ErrInvalidSequence.GenWithStack(
+				"invalid sequence, received %d while expecting %d", sequence, p.sequence)
+		if p.compressionAlgorithm == mysql.CompressionNone {
+				return nil, err
+		}
+		// To be compatible with MariaDB Connector/J 2.x,
+		// ignore sequence check and print a log when compression protocol is active.
+		terror.Log(err)
 	}
 	p.sequence++
 
