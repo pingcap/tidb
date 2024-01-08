@@ -72,7 +72,7 @@ flag_management:
 
 ignore:
   - "LICENSES"
-  - "**/*_test.go"  
+  - "**/*_test.go"
   - ".git"
   - "**/*.yml"
   - "**/*.md"
