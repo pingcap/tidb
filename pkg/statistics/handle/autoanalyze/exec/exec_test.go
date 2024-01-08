@@ -36,7 +36,7 @@ func TestExecAutoAnalyzes(t *testing.T) {
 	sctx := se.(sessionctx.Context)
 	handle := dom.StatsHandle()
 
-	exec.ExecAutoAnalyze(
+	exec.AutoAnalyze(
 		sctx,
 		handle,
 		dom.SysProcTracker(),

@@ -36,8 +36,8 @@ var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
 	statistics.Version2: sqlexec.ExecOptionAnalyzeVer2,
 }
 
-// ExecAutoAnalyze executes the auto analyze task.
-func ExecAutoAnalyze(
+// AutoAnalyze executes the auto analyze task.
+func AutoAnalyze(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sessionctx.SysProcTracker,
