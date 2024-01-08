@@ -188,6 +188,8 @@ const (
 	ErrGroupDividedByZero
 	// ErrGroupAutoIncReadFailed is the group of auto increment read failed errors
 	ErrGroupAutoIncReadFailed
+	// ErrGroupNoMatchedPartition is the group of no partition is matched errors.
+	ErrGroupNoMatchedPartition
 	// errGroupCount is the count of all `ErrGroup`. Please leave it at the end of the list.
 	errGroupCount
 )
@@ -215,6 +217,10 @@ func init() {
 		},
 		ErrGroupAutoIncReadFailed: {
 			errno.ErrAutoincReadFailed,
+		},
+		ErrGroupNoMatchedPartition: {
+			errno.ErrNoPartitionForGivenValue,
+			errno.ErrRowDoesNotMatchGivenPartitionSet,
 		},
 	}
 
