@@ -165,17 +165,13 @@ func (w *HashAggPartialWorker) handleSpillBeforeExit() {
 		return
 	}
 
-	hasError := false
 	if len(w.groupKey) > 0 {
 		if err := w.spillDataToDisk(); err != nil {
 			w.processError(err)
-			hasError = true
+			return
 		}
 	}
-
-	if !hasError {
-		w.spillHelper.addListInDisks(w.spilledChunksIO)
-	}
+	w.spillHelper.addListInDisks(w.spilledChunksIO)
 }
 
 func (w *HashAggPartialWorker) sendDataToFinalWorkersBeforeExit(needShuffle bool, finalConcurrency int, hasError bool) {
@@ -192,7 +188,10 @@ func (w *HashAggPartialWorker) sendDataToFinalWorkersBeforeExit(needShuffle bool
 	// We should always check spill status first.
 	if w.spillHelper.isSpillTriggered() {
 		w.handleSpillBeforeExit()
-	} else if needShuffle {
+		return
+	}
+
+	if needShuffle {
 		w.shuffleIntermData(finalConcurrency)
 	}
 }
@@ -350,7 +349,7 @@ func (w *HashAggPartialWorker) spillDataToDiskImpl() error {
 	w.prepareForSpill()
 	for _, partialResultsMap := range w.partialResultsMap {
 		for key, partialResults := range partialResultsMap {
-			partitionNum := int(murmur3.Sum32([]byte(key))) % spilledPartitionNum
+			partitionNum := int(murmur3.Sum32(hack.Slice(key))) % spilledPartitionNum
 
 			// Spill data when tmp chunk is full
 			if w.tmpChksForSpill[partitionNum].IsFull() {
