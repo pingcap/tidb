@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/table/temptable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -104,7 +103,7 @@ func getCurrentExternalTimestamp(t *testing.T, tk *testkit.TestKit) uint64 {
 }
 
 func TestStaleReadProcessorWithSelectTable(t *testing.T) {
-	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tn := astTableWithAsOf(t, "")
 	p1 := genStaleReadPoint(t, tk)
@@ -230,7 +229,7 @@ func TestStaleReadProcessorWithSelectTable(t *testing.T) {
 }
 
 func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
-	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	p1 := genStaleReadPoint(t, tk)
 	//p2 := genStaleReadPoint(t, tk)

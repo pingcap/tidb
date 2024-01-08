@@ -16,8 +16,6 @@ package unistore
 
 import (
 	"os"
-	spath "path"
-	"strings"
 
 	"github.com/pingcap/errors"
 	usconf "github.com/pingcap/tidb/pkg/store/mockstore/unistore/config"
@@ -33,8 +31,6 @@ func New(path string) (*RPCClient, pd.Client, *Cluster, error) {
 		if path, err = os.MkdirTemp("", "tidb-unistore-temp"); err != nil {
 			return nil, nil, nil, err
 		}
-	}
-	if strings.HasPrefix(path, spath.Join(os.TempDir(), "tidb-unistore-temp")) {
 		persistent = false
 	}
 

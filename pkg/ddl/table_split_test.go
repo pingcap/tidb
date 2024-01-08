@@ -31,7 +31,7 @@ import (
 )
 
 func TestTableSplit(t *testing.T) {
-	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
