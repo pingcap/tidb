@@ -29,15 +29,23 @@ func TestGetAverageAnalysisDuration(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(session.CreateAnalyzeJobs)
+	// Empty table.
+	se := tk.Session()
+	sctx := se.(sessionctx.Context)
+	avgDuration, err := getAverageAnalysisDuration(
+		sctx,
+		"example_schema", "example_table", "example_partition",
+	)
+	require.NoError(t, err)
+	require.Equal(t, time.Duration(0), avgDuration)
+
 	initJobs(tk)
 
 	// Partitioned table.
 	insertFinishedJob(tk, "example_schema", "example_table", "example_partition")
 	insertFinishedJob(tk, "example_schema", "example_table", "example_partition1")
-	se := tk.Session()
-	sctx := se.(sessionctx.Context)
 	// Only one partition.
-	avgDuration, err := getAverageAnalysisDuration(
+	avgDuration, err = getAverageAnalysisDuration(
 		sctx,
 		"example_schema", "example_table", "example_partition",
 	)
@@ -62,15 +70,25 @@ func TestGetLastFailedAnalysisDuration(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(session.CreateAnalyzeJobs)
+	// Empty table.
+	se := tk.Session()
+	sctx := se.(sessionctx.Context)
+	lastFailedDuration, err := getLastFailedAnalysisDuration(
+		sctx,
+		"example_schema", "example_table", "example_partition",
+	)
+	require.NoError(t, err)
+	require.Equal(t, time.Duration(0), lastFailedDuration)
 	initJobs(tk)
 
 	// Partitioned table.
 	insertFailedJob(tk, "example_schema", "example_table", "example_partition")
 	insertFailedJob(tk, "example_schema", "example_table", "example_partition1")
-	se := tk.Session()
-	sctx := se.(sessionctx.Context)
 	// Only one partition.
-	lastFailedDuration, err := getLastFailedAnalysisDuration(sctx, "example_schema", "example_table", "example_partition")
+	lastFailedDuration, err = getLastFailedAnalysisDuration(
+		sctx,
+		"example_schema", "example_table", "example_partition",
+	)
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, lastFailedDuration, time.Duration(24)*time.Hour)
 	// Multiple partitions.

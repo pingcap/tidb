@@ -66,6 +66,7 @@ const lastFailedDurationQueryForPartition = `
 `
 
 // getAverageAnalysisDuration returns the average duration of the last 5 successful analyses for each specified partition.
+// If there are no successful analyses, it returns 0.
 func getAverageAnalysisDuration(
 	sctx sessionctx.Context,
 	schema, tableName string,
@@ -86,10 +87,12 @@ func getAverageAnalysisDuration(
 		return 0, err
 	}
 
+	// NOTE: if there are no successful analyses, we return 0.
 	var avgDuration *types.MyDecimal
-	if len(rows) > 0 {
-		avgDuration = rows[0].GetMyDecimal(0)
+	if len(rows) == 0 {
+		return 0, nil
 	}
+	avgDuration = rows[0].GetMyDecimal(0)
 	duration, err := avgDuration.ToFloat64()
 	if err != nil {
 		return 0, err
@@ -99,6 +102,7 @@ func getAverageAnalysisDuration(
 }
 
 // getLastFailedAnalysisDuration returns the duration since the last failed analysis.
+// If there is no failed analysis, it returns 0.
 func getLastFailedAnalysisDuration(
 	sctx sessionctx.Context,
 	schema, tableName string,
@@ -119,10 +123,12 @@ func getLastFailedAnalysisDuration(
 		return 0, err
 	}
 
+	// NOTE: if there are no failed analyses, we return 0.
 	var lastFailedDuration uint64
-	if len(rows) > 0 {
-		lastFailedDuration = rows[0].GetUint64(0)
+	if len(rows) == 0 {
+		return 0, nil
 	}
+	lastFailedDuration = rows[0].GetUint64(0)
 
 	return time.Duration(lastFailedDuration) * time.Second, nil
 }
