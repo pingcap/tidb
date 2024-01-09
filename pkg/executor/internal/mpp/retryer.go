@@ -50,6 +50,7 @@ import (
 // 5. mppIterator:
 //  1. Send or receive MPP RPC.
 type ExecutorWithRetry struct {
+	ctx        context.Context
 	sctx       sessionctx.Context
 	memTracker *memory.Tracker
 	planIDs    []int
@@ -73,15 +74,17 @@ type ExecutorWithRetry struct {
 	// 2. If the held MPP results exceed the capacity, will starts returning results to caller.
 	//    Once the results start being returned, error recovery cannot be performed anymore.
 	mppErrRecovery *RecoveryHandler
+
+	KVRanges []kv.KeyRange
 }
 
 var _ kv.Response = &ExecutorWithRetry{}
 
 const mppErrRecoveryHoldChkCap = 4
 
-func NewRetryer(sctx sessionctx.Context, parentTracker *memory.Tracker, planIDs []int,
+func NewRetryer(ctx context.Context, sctx sessionctx.Context, parentTracker *memory.Tracker, planIDs []int,
 	plan plannercore.PhysicalPlan, startTS uint64, queryID kv.MPPQueryID,
-	dummy bool, is infoschema.InfoSchema) *ExecutorWithRetry {
+	dummy bool, is infoschema.InfoSchema) (*ExecutorWithRetry, error) {
 	// TODO: After add row info in tipb.DataPacket, we can use row count as capacity.
 	// For now, use the number of tipb.DataPacket as capacity.
 	const holdCap = 2
@@ -94,9 +97,17 @@ func NewRetryer(sctx sessionctx.Context, parentTracker *memory.Tracker, planIDs 
 	//    which we cannot handle for now. Also there is no need to recovery because tikv will retry the query.
 	// 3. For cached table, will not dispatch tasks to TiFlash, so no need to recovery.
 	enableMPPRecovery := disaggTiFlashWithAutoScaler && !allowTiFlashFallback && !dummy
+
+	failpoint.Inject("mpp_recovery_test_mock_enable", func() {
+		if !dummy && !allowTiFlashFallback {
+			enableMPPRecovery = true
+		}
+	})
+
 	recoveryHandler := NewRecoveryHandler(disaggTiFlashWithAutoScaler,
 		uint64(holdCap), enableMPPRecovery, parentTracker)
 	retryer := &ExecutorWithRetry{
+		ctx:            ctx,
 		sctx:           sctx,
 		memTracker:     memory.NewTracker(parentTracker.Label(), 0),
 		planIDs:        planIDs,
@@ -106,9 +117,15 @@ func NewRetryer(sctx sessionctx.Context, parentTracker *memory.Tracker, planIDs 
 		queryID:        queryID,
 		mppErrRecovery: recoveryHandler,
 	}
-	retryer.setupMPPCoordinator(false)
 
-	return retryer
+	retryer.setupMPPCoordinator(ctx, false)
+	var err error
+	_, retryer.KVRanges, err = retryer.coord.Execute(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return retryer, nil
 }
 
 func (r *ExecutorWithRetry) Next(ctx context.Context) (resp kv.ResultSubset, err error) {
@@ -123,7 +140,7 @@ func (r *ExecutorWithRetry) Next(ctx context.Context) (resp kv.ResultSubset, err
 	} else if resp, err = r.coord.Next(ctx); err != nil {
 		return nil, err
 	}
-	return resp, err
+	return resp, nil
 }
 
 func (r *ExecutorWithRetry) Close() error {
@@ -133,7 +150,7 @@ func (r *ExecutorWithRetry) Close() error {
 	return r.coord.Close()
 }
 
-func (r *ExecutorWithRetry) setupMPPCoordinator(recoverying bool) error {
+func (r *ExecutorWithRetry) setupMPPCoordinator(ctx context.Context, recoverying bool) (err error) {
 	if recoverying {
 		// Sanity check.
 		if r.coord == nil {
@@ -195,7 +212,7 @@ func (r *ExecutorWithRetry) nextWithRecovery(ctx context.Context) error {
 			logutil.BgLogger().Info("recovery mpp error succeed, begin next retry",
 				zap.Any("mppErr", mppErr), zap.Any("recoveryCnt", r.mppErrRecovery.RecoveryCnt()))
 
-			if err := r.setupMPPCoordinator(true); err != nil {
+			if err := r.setupMPPCoordinator(r.ctx, true); err != nil {
 				logutil.BgLogger().Error("setup resp iter when recovery mpp err failed", zap.Any("err", err))
 				return mppErr
 			}

@@ -99,9 +99,10 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		}
 	}
 	planIDs := collectPlanIDS(e.originalPlan, nil)
-	if e.mppExec = mpp.NewRetryer(e.Ctx(), e.memTracker, planIDs, e.originalPlan, e.startTS, e.mppQueryID, e.dummy, e.is); e.mppExec == nil {
-		return errors.New("generate mppExec failed")
+	if e.mppExec, err = mpp.NewRetryer(ctx, e.Ctx(), e.memTracker, planIDs, e.originalPlan, e.startTS, e.mppQueryID, e.dummy, e.is); err != nil {
+		return err
 	}
+	e.kvRanges = e.mppExec.KVRanges
 	e.respIter = distsql.GenSelectResultFromMPPResponse(e.Ctx(), e.RetFieldTypes(), planIDs, e.ID(), e.mppExec)
 	return nil
 }
