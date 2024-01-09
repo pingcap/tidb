@@ -385,6 +385,14 @@ func (f *FlatPhysicalPlan) flattenRecursively(p Plan, info *operatorCtx, target 
 			childIdxs = append(childIdxs, childIdx)
 		}
 		target, childIdxs = f.flattenForeignKeyChecksAndCascades(childCtx, target, childIdxs, plan.FKChecks, plan.FKCascades, true)
+	case *ImportInto:
+		if plan.SelectPlan != nil {
+			childCtx.isRoot = true
+			childCtx.label = Empty
+			childCtx.isLastChild = true
+			target, childIdx = f.flattenRecursively(plan.SelectPlan, childCtx, target)
+			childIdxs = append(childIdxs, childIdx)
+		}
 	case *Update:
 		if plan.SelectPlan != nil {
 			childCtx.isRoot = true

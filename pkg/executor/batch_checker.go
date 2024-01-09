@@ -100,8 +100,11 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	if p, ok := t.(table.PartitionedTable); ok {
 		t, err = p.GetPartitionByRow(ctx, row)
 		if err != nil {
-			if terr, ok := errors.Cause(err).(*terror.Error); ctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			if terr, ok := errors.Cause(err).(*terror.Error); ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
+				ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
+				if err = ec.HandleError(terr); err != nil {
+					return nil, err
+				}
 				result = append(result, toBeCheckedRow{ignored: true})
 				return result, nil
 			}
