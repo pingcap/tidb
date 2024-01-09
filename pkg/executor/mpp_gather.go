@@ -94,10 +94,10 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		if !ok {
 			return errors.Errorf("unexpected plan type, expect: PhysicalExchangeSender, got: %s", e.originalPlan.TP())
 		}
-		_, e.kvRanges, _, err = plannercore.GenerateRootMPPTasks(e.Ctx(), e.startTS, 0, e.mppQueryID, sender, e.is)
-		return err
+		if _, e.kvRanges, _, err = plannercore.GenerateRootMPPTasks(e.Ctx(), e.startTS, 0, e.mppQueryID, sender, e.is); err != nil {
+			return nil
+		}
 	}
-	// gjt todo name
 	planIDs := collectPlanIDS(e.originalPlan, nil)
 	if e.mppExec = mpp.NewRetryer(e.Ctx(), e.memTracker, planIDs, e.originalPlan, e.startTS, e.mppQueryID, e.dummy, e.is); e.mppExec == nil {
 		return errors.New("generate mppExec failed")
@@ -112,15 +112,14 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.dummy {
 		return nil
 	}
-	err := e.respIter.Next(ctx, chk)
-	if err != nil {
+	if err := e.respIter.Next(ctx, chk); err != nil {
 		return err
 	}
 	if chk.NumRows() == 0 {
 		return nil
 	}
 
-	if err = table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx(), chk); err != nil {
+	if err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx(), chk); err != nil {
 		return err
 	}
 	return nil
