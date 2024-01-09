@@ -327,7 +327,6 @@ func (e *MPPGather) Close() error {
 	if e.respIter != nil {
 		err = e.respIter.Close()
 	}
-
 	mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherID: e.gatherID})
 	if err != nil {
 		return err
