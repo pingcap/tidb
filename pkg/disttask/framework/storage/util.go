@@ -104,7 +104,7 @@ func GetSubtaskEndTimeForTest(ctx context.Context, mgr *TaskManager, subtaskID i
 	return time.Time{}, nil
 }
 
-// GetSubtaskNodesForTest gets subtasks running nodes for one task. Only used for UT.
+// GetSubtaskNodesForTest gets subtasks running nodes for one task for test.
 func GetSubtaskNodesForTest(ctx context.Context, mgr *TaskManager, taskID int64) ([]string, error) {
 	rs, err := mgr.executeSQLWithNewSession(ctx,
 		`select exec_id from mysql.tidb_background_subtask where task_key=%? group by exec_id`, taskID)
@@ -120,7 +120,7 @@ func GetSubtaskNodesForTest(ctx context.Context, mgr *TaskManager, taskID int64)
 	return nodes, nil
 }
 
-// PrintSubtaskInfo log the subtask info by taskKey. Only used for UT.
+// PrintSubtaskInfo log the subtask info by taskKey for test.
 func (mgr *TaskManager) PrintSubtaskInfo(ctx context.Context, taskID int64) {
 	rs, _ := mgr.executeSQLWithNewSession(ctx,
 		`select `+subtaskColumns+` from mysql.tidb_background_subtask_history where task_key = %?`, taskID)
