@@ -420,6 +420,7 @@ type BackendConfig struct {
 	// see DisableAutomaticCompactions of pebble.Options for more details.
 	// default true.
 	DisableAutomaticCompactions bool
+	BlockSize                   int
 }
 
 // NewBackendConfig creates a new BackendConfig.
@@ -430,6 +431,7 @@ func NewBackendConfig(cfg *config.Config, maxOpenFiles int, keyspaceName, resour
 		MaxConnPerStore:             cfg.TikvImporter.RangeConcurrency,
 		ConnCompressType:            cfg.TikvImporter.CompressKVPairs,
 		WorkerConcurrency:           cfg.TikvImporter.RangeConcurrency * 2,
+		BlockSize:                   int(cfg.TikvImporter.BlockSize),
 		KVWriteBatchSize:            int64(cfg.TikvImporter.SendKVSize),
 		RegionSplitBatchSize:        cfg.TikvImporter.RegionSplitBatchSize,
 		RegionSplitConcurrency:      cfg.TikvImporter.RegionSplitConcurrency,
@@ -809,6 +811,8 @@ func (local *Backend) prepareAndSendJob(
 		needSplit = true
 	})
 	logger := log.FromContext(ctx).With(zap.String("uuid", engine.ID())).Begin(zap.InfoLevel, "split and scatter ranges")
+	backOffTime := 10 * time.Second
+	maxbackoffTime := 120 * time.Second
 	for i := 0; i < maxRetryTimes; i++ {
 		failpoint.Inject("skipSplitAndScatter", func() {
 			failpoint.Break()
@@ -821,6 +825,15 @@ func (local *Backend) prepareAndSendJob(
 
 		log.FromContext(ctx).Warn("split and scatter failed in retry", zap.String("engine ID", engine.ID()),
 			log.ShortError(err), zap.Int("retry", i))
+		select {
+		case <-time.After(backOffTime):
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		backOffTime *= 2
+		if backOffTime > maxbackoffTime {
+			backOffTime = maxbackoffTime
+		}
 	}
 	logger.End(zap.ErrorLevel, err)
 	if err != nil {

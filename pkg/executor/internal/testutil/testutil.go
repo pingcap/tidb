@@ -47,9 +47,9 @@ type MockDataSourceParameters struct {
 
 // MockDataSource mocks data source
 type MockDataSource struct {
-	P       MockDataSourceParameters
 	GenData []*chunk.Chunk
 	Chunks  []*chunk.Chunk
+	P       MockDataSourceParameters
 	exec.BaseExecutor
 	ChunkPtr int
 }
@@ -161,6 +161,7 @@ func (mds *MockDataSource) Next(_ context.Context, req *chunk.Chunk) error {
 	}
 	dataChk := mds.Chunks[mds.ChunkPtr]
 	dataChk.SwapColumns(req)
+
 	mds.ChunkPtr++
 	return nil
 }
@@ -232,7 +233,8 @@ func BuildMockDataSource(opt MockDataSourceParameters) *MockDataSource {
 		ChunkPtr:     0,
 		P:            opt,
 		GenData:      nil,
-		Chunks:       nil}
+		Chunks:       nil,
+	}
 	rTypes := exec.RetTypes(m)
 	colData := make([][]interface{}, len(rTypes))
 	for i := 0; i < len(rTypes); i++ {

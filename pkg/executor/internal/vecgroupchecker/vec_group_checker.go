@@ -93,13 +93,13 @@ func (e *VecGroupChecker) SplitIntoGroups(chk *chunk.Chunk) (isFirstGroupSameAsP
 			return false, err
 		}
 	}
-	e.firstGroupKey, err = codec.EncodeValue(e.ctx.GetSessionVars().StmtCtx.TimeZone(), e.firstGroupKey, e.firstRowDatums...)
+	e.firstGroupKey, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), e.firstGroupKey, e.firstRowDatums...)
 	err = e.ctx.GetSessionVars().StmtCtx.HandleError(err)
 	if err != nil {
 		return false, err
 	}
 
-	e.lastGroupKey, err = codec.EncodeValue(e.ctx.GetSessionVars().StmtCtx.TimeZone(), e.lastGroupKey, e.lastRowDatums...)
+	e.lastGroupKey, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), e.lastGroupKey, e.lastRowDatums...)
 	err = e.ctx.GetSessionVars().StmtCtx.HandleError(err)
 	if err != nil {
 		return false, err

@@ -595,18 +595,6 @@ func getComponentCPUUsagePerSec(ctx context.Context, sctx sessionctx.Context, ex
 	return getValuesFromMetrics(ctx, sctx, exec, query)
 }
 
-func getNumberFromMetrics(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, query, metrics string) (float64, error) {
-	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, query)
-	if err != nil {
-		return 0.0, errors.Trace(err)
-	}
-	if len(rows) == 0 {
-		return 0.0, errors.Errorf("metrics '%s' is empty", metrics)
-	}
-
-	return rows[0].GetFloat64(0), nil
-}
-
 func getValuesFromMetrics(ctx context.Context, sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor, query string) (*timeSeriesValues, error) {
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, query)
 	if err != nil {

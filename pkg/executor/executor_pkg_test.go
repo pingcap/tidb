@@ -15,14 +15,19 @@
 package executor
 
 import (
+	"fmt"
 	"runtime"
 	"strconv"
 	"testing"
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -262,4 +267,112 @@ func TestFilterTemporaryTableKeys(t *testing.T) {
 
 	res := filterTemporaryTableKeys(vars, []kv.Key{tablecodec.EncodeTablePrefix(tableID), tablecodec.EncodeTablePrefix(42)})
 	require.Len(t, res, 1)
+}
+
+func TestErrLevelsForResetStmtContext(t *testing.T) {
+	ctx := mock.NewContext()
+	domain.BindDomain(ctx, &domain.Domain{})
+
+	cases := []struct {
+		name    string
+		sqlMode mysql.SQLMode
+		stmt    []ast.StmtNode
+		levels  errctx.LevelMap
+	}{
+		{
+			name:    "strict,write",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.InsertStmt{}, &ast.UpdateStmt{}, &ast.DeleteStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelError
+				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelError
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "non-strict,write",
+			sqlMode: mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.InsertStmt{}, &ast.UpdateStmt{}, &ast.DeleteStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "strict,insert ignore",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.InsertStmt{IgnoreErr: true}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelWarn
+				return
+			}(),
+		},
+		{
+			name:    "strict,update/delete ignore",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.UpdateStmt{IgnoreErr: true}, &ast.DeleteStmt{IgnoreErr: true}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "strict without error_for_division_by_zero,write",
+			sqlMode: mysql.ModeStrictAllTables,
+			stmt:    []ast.StmtNode{&ast.InsertStmt{}, &ast.UpdateStmt{}, &ast.DeleteStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelError
+				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelIgnore
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "strict,select/union",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.SelectStmt{}, &ast.SetOprStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "non-strict,select/union",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.SelectStmt{}, &ast.SetOprStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				return
+			}(),
+		},
+	}
+
+	for i, c := range cases {
+		for _, stmt := range c.stmt {
+			msg := fmt.Sprintf("%d: %s, stmt: %T", i, c.name, stmt)
+			ctx.GetSessionVars().SQLMode = c.sqlMode
+			ctx.GetSessionVars().StrictSQLMode = ctx.GetSessionVars().SQLMode.HasStrictMode()
+			require.NoError(t, ResetContextOfStmt(ctx, stmt), msg)
+			ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
+			require.Equal(t, c.levels, ec.LevelMap(), msg)
+		}
+	}
 }
