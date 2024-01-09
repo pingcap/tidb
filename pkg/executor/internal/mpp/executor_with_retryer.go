@@ -75,8 +75,8 @@ type ExecutorWithRetry struct {
 
 var _ kv.Response = &ExecutorWithRetry{}
 
-// NewRetryer create ExecutorWithRetry.
-func NewRetryer(ctx context.Context, sctx sessionctx.Context, parentTracker *memory.Tracker, planIDs []int,
+// NewExecutorWithRetry create ExecutorWithRetry.
+func NewExecutorWithRetry(ctx context.Context, sctx sessionctx.Context, parentTracker *memory.Tracker, planIDs []int,
 	plan plannercore.PhysicalPlan, startTS uint64, queryID kv.MPPQueryID,
 	dummy bool, is infoschema.InfoSchema) (*ExecutorWithRetry, error) {
 	// TODO: After add row info in tipb.DataPacket, we can use row count as capacity.
