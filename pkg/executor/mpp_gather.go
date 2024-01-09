@@ -336,7 +336,9 @@ func (e *MPPGather) Close() error {
 		e.mppErrRecovery.ResetHolder()
 	}
 
-	e.mergeAndClearRuntimeStats()
+	if err = e.mergeAndClearRuntimeStats(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -349,9 +351,12 @@ func (e *MPPGather) setDummy() {
 	e.dummy = true
 }
 
-func (e *MPPGather) mergeAndClearRuntimeStats() {
+func (e *MPPGather) mergeAndClearRuntimeStats() error {
 	if e.runtimeStats != nil {
-		e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.MergeBasicCopRuntimeStats(e.runtimeStats, e.storeType)
+		if err := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.MergeBasicCopRuntimeStats(e.runtimeStats, e.storeType); err != nil {
+			return err
+		}
 		e.runtimeStats = nil
 	}
+	return nil
 }
