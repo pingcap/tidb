@@ -96,6 +96,32 @@ type SortExec struct {
 	enableTmpStorageOnOOM bool
 }
 
+// Close implements the Executor Close interface.
+func (e *SortExec) Close() error {
+	if e.spillAction != nil {
+		e.spillAction.SetFinished()
+	}
+
+	if e.IsUnparallel {
+		for _, partition := range e.sortPartitions {
+			partition.close()
+		}
+
+		if e.Unparallel.spillAction != nil {
+			e.Unparallel.spillAction.SetFinished()
+		}
+	} else {
+		if e.Parallel.err != nil {
+			return e.Parallel.err
+		}
+	}
+
+	if e.memTracker != nil {
+		e.memTracker.ReplaceBytesUsed(0)
+	}
+	return e.Children(0).Close()
+}
+
 // Open implements the Executor Open interface.
 func (e *SortExec) Open(ctx context.Context) error {
 	e.fetched = false
@@ -123,32 +149,6 @@ func (e *SortExec) Open(ctx context.Context) error {
 
 	e.sortPartitions = e.sortPartitions[:0]
 	return exec.Open(ctx, e.Children(0))
-}
-
-// Close implements the Executor Close interface.
-func (e *SortExec) Close() error {
-	if e.spillAction != nil {
-		e.spillAction.SetFinished()
-	}
-
-	if e.IsUnparallel {
-		for _, partition := range e.sortPartitions {
-			partition.close()
-		}
-
-		if e.Unparallel.spillAction != nil {
-			e.Unparallel.spillAction.SetFinished()
-		}
-	} else {
-		if e.Parallel.err != nil {
-			return e.Parallel.err
-		}
-	}
-
-	if e.memTracker != nil {
-		e.memTracker.ReplaceBytesUsed(0)
-	}
-	return e.Children(0).Close()
 }
 
 // Next implements the Executor Next interface.
@@ -280,25 +280,6 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 	return nil
 }
 
-func (e *SortExec) storeChunk(chk *chunk.Chunk, fields []*types.FieldType, byItemsDesc []bool) error {
-	err := e.curPartition.checkError()
-	if err != nil {
-		return err
-	}
-
-	if !e.curPartition.add(chk) {
-		err := e.switchToNewSortPartition(fields, byItemsDesc, true)
-		if err != nil {
-			return err
-		}
-
-		if !e.curPartition.add(chk) {
-			return errFailToAddChunk
-		}
-	}
-	return nil
-}
-
 func (e *SortExec) checkError() error {
 	for _, partition := range e.sortPartitions {
 		err := partition.checkError()
@@ -337,6 +318,25 @@ func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDe
 		e.curPartition.getDiskTracker().AttachTo(e.diskTracker)
 		e.curPartition.getDiskTracker().SetLabel(memory.LabelForRowChunks)
 		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
+	}
+	return nil
+}
+
+func (e *SortExec) storeChunk(chk *chunk.Chunk, fields []*types.FieldType, byItemsDesc []bool) error {
+	err := e.curPartition.checkError()
+	if err != nil {
+		return err
+	}
+
+	if !e.curPartition.add(chk) {
+		err := e.switchToNewSortPartition(fields, byItemsDesc, true)
+		if err != nil {
+			return err
+		}
+
+		if !e.curPartition.add(chk) {
+			return errFailToAddChunk
+		}
 	}
 	return nil
 }
