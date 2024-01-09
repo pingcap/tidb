@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/mockstorage"
@@ -833,14 +834,21 @@ func (s *clusterTablesSuite) newTestKitWithRoot(t *testing.T) *testkit.TestKit {
 func TestMDLView(t *testing.T) {
 	testCases := []struct {
 		name        string
-		createTable string
+		createTable []string
 		ddl         string
 		queryInTxn  []string
 		sqlDigest   string
 	}{
-		{"add column", "create table t(a int)", "alter table test.t add column b int", []string{"select 1", "select * from t"}, "[\"begin\",\"select ?\",\"select * from `t`\"]"},
-		{"change column in 1 step", "create table t(a int)", "alter table test.t change column a b int", []string{"select 1", "select * from t"}, "[\"begin\",\"select ?\",\"select * from `t`\"]"},
+		{"add column", []string{"create table t(a int)"}, "alter table test.t add column b int", []string{"select 1", "select * from t"}, "[\"begin\",\"select ?\",\"select * from `t`\"]"},
+		{"change column in 1 step", []string{"create table t(a int)"}, "alter table test.t change column a b int", []string{"select 1", "select * from t"}, "[\"begin\",\"select ?\",\"select * from `t`\"]"},
+		{"rename tables", []string{"create table t(a int)", "create table t1(a int)"}, "rename table test.t to test.t2, test.t1 to test.t3", []string{"select 1", "select * from t"}, "[\"begin\",\"select ?\",\"select * from `t`\"]"},
+		{"err don't show rollbackdone ddl", []string{"create table t(a int)", "insert into t values (1);", "insert into t values (1);", "alter table t add unique idx(id);"}, "alter table test.t add column b int", []string{"select 1", "select * from t"}, "[\"begin\",\"select ?\",\"select * from `t`\"]"},
 	}
+	save := privileges.SkipWithGrant
+	privileges.SkipWithGrant = true
+	defer func() {
+		privileges.SkipWithGrant = save
+	}()
 	for _, c := range testCases {
 		t.Run(c.name, func(t *testing.T) {
 			// setup suite
@@ -855,7 +863,13 @@ func TestMDLView(t *testing.T) {
 			tk3 := s.newTestKitWithRoot(t)
 			tk.MustExec("use test")
 			tk.MustExec("set global tidb_enable_metadata_lock=1")
-			tk.MustExec(c.createTable)
+			for _, cr := range c.createTable {
+				if strings.Contains(c.name, "err") {
+					_, _ = tk.Exec(cr)
+				} else {
+					tk.MustExec(cr)
+				}
+			}
 
 			tk.MustExec("begin")
 			for _, q := range c.queryInTxn {
