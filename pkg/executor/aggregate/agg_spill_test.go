@@ -277,7 +277,7 @@ func TestGetCorrectResult(t *testing.T) {
 	hardLimitBytesNum := int64(6000000)
 
 	ctx := mock.NewContext()
-	initCtx(ctx, newRootExceedAction, hardLimitBytesNum, 32)
+	initCtx(ctx, newRootExceedAction, hardLimitBytesNum, 30000)
 
 	rowNum := 100000 + rand.Intn(100000)
 	ndv := 50000 + rand.Intn(50000)
@@ -285,6 +285,8 @@ func TestGetCorrectResult(t *testing.T) {
 	result := generateResult(col1, col2)
 	opt := getMockDataSourceParameters(ctx)
 	dataSource := buildMockDataSource(opt, col1, col2)
+
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/slowSomePartialWorkers", `return(true)`)
 
 	finished := atomic.Bool{}
 	wg := sync.WaitGroup{}

@@ -156,8 +156,18 @@ func (w *HashAggPartialWorker) intestDuringPartialWorkerRun() {
 				w.memTracker.Consume(500000)
 			}
 
-			// Slow some workers
+			// Slow some partial workers
 			if w.idForTest%2 == 0 && num < 15 {
+				time.Sleep(1 * time.Millisecond)
+			}
+		}
+	})
+
+	failpoint.Inject("slowSomePartialWorkers", func(val failpoint.Value) {
+		if val.(bool) {
+			num := rand.Intn(10000)
+			// Slow some partial workers
+			if w.idForTest%2 == 0 && num < 10 {
 				time.Sleep(1 * time.Millisecond)
 			}
 		}
