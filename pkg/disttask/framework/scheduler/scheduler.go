@@ -68,19 +68,6 @@ type TaskHandle interface {
 	storage.SessionExecutor
 }
 
-// Scheduler manages the lifetime of a task
-// including submitting subtasks and updating the status of a task.
-type Scheduler interface {
-	// Init initializes the scheduler, should be called before ExecuteTask.
-	// if Init returns error, scheduler manager will fail the task directly,
-	// so the returned error should be a fatal error.
-	Init() error
-	// ScheduleTask schedules the task execution step by step.
-	ScheduleTask()
-	// Close closes the scheduler, should be called if Init returns nil.
-	Close()
-}
-
 // BaseScheduler is the base struct for Scheduler.
 // each task type embed this struct and implement the Extension interface.
 type BaseScheduler struct {

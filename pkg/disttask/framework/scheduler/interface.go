@@ -85,6 +85,19 @@ type TaskManager interface {
 	WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error
 }
 
+// Scheduler manages the lifetime of a task
+// including submitting subtasks and updating the status of a task.
+type Scheduler interface {
+	// Init initializes the scheduler, should be called before ExecuteTask.
+	// if Init returns error, scheduler manager will fail the task directly,
+	// so the returned error should be a fatal error.
+	Init() error
+	// ScheduleTask schedules the task execution step by step.
+	ScheduleTask()
+	// Close closes the scheduler, should be called if Init returns nil.
+	Close()
+}
+
 // Extension is used to control the process operations for each task.
 // it's used to extend functions of BaseScheduler.
 // as golang doesn't support inheritance, we embed this interface in Scheduler
