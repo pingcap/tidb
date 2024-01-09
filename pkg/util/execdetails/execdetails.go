@@ -1064,15 +1064,21 @@ func (e *RuntimeStatsColl) MergeBasicCopRuntimeStats(other *RuntimeStatsColl, st
 		return errors.New("copStats is nil when trying to merge it")
 	}
 
-	for otherPlanID, otherCopStat := range otherCopStats {
-		selfCopStat := e.GetOrCreateCopStats(otherPlanID, storeType).stats
-		for otherAddr, otherBaseStat := range otherCopStat {
-			if selfCopStat[otherAddr] == nil {
-				selfCopStat[otherAddr] = otherBaseStat
+	merge := func(self *CopRuntimeStats, otherBasicCopStats map[string]*basicCopRuntimeStats) {
+		self.Lock()
+		defer self.Unlock()
+		for otherAddr, otherBaseStat := range otherBasicCopStats {
+			if self.stats[otherAddr] == nil {
+				self.stats[otherAddr] = otherBaseStat
 			} else {
-				selfCopStat[otherAddr].Merge(otherBaseStat)
+				self.stats[otherAddr].Merge(otherBaseStat)
 			}
 		}
+	}
+
+	for otherPlanID, otherCopStat := range otherCopStats {
+		self := e.GetOrCreateCopStats(otherPlanID, storeType)
+		merge(self, otherCopStat)
 	}
 	return nil
 }
