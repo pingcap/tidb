@@ -71,7 +71,7 @@ type PointGetPlan struct {
 	schema             *expression.Schema
 	TblInfo            *model.TableInfo
 	IndexInfo          *model.IndexInfo
-	PartitionInfo      *model.PartitionDefinition
+	PartitionDef       *model.PartitionDefinition
 	Handle             kv.Handle
 	HandleConstant     *expression.Constant
 	handleFieldType    *types.FieldType
@@ -272,8 +272,8 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 	if p.schema != nil {
 		sum += p.schema.MemoryUsage()
 	}
-	if p.PartitionInfo != nil {
-		sum += p.PartitionInfo.MemoryUsage()
+	if p.PartitionDef != nil {
+		sum += p.PartitionDef.MemoryUsage()
 	}
 	if p.HandleConstant != nil {
 		sum += p.HandleConstant.MemoryUsage()
@@ -315,7 +315,7 @@ type BatchPointGetPlan struct {
 	dbName           string
 	TblInfo          *model.TableInfo
 	IndexInfo        *model.IndexInfo
-	PartitionInfos   []*model.PartitionDefinition
+	PartitionDefs    []*model.PartitionDefinition
 	Handles          []kv.Handle
 	HandleType       *types.FieldType
 	HandleParams     []*expression.Constant // record all Parameters for Plan-Cache
@@ -493,7 +493,7 @@ func (p *BatchPointGetPlan) MemoryUsage() (sum int64) {
 
 	sum = emptyBatchPointGetPlanSize + p.baseSchemaProducer.MemoryUsage() + int64(len(p.dbName)) +
 		int64(cap(p.IdxColLens))*size.SizeOfInt + int64(cap(p.Handles))*size.SizeOfInterface +
-		int64(cap(p.PartitionInfos)+cap(p.HandleParams)+cap(p.IndexColTypes)+cap(p.IdxCols)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
+		int64(cap(p.PartitionDefs)+cap(p.HandleParams)+cap(p.IndexColTypes)+cap(p.IdxCols)+cap(p.Columns)+cap(p.accessCols))*size.SizeOfPointer
 	if p.HandleType != nil {
 		sum += p.HandleType.MemoryUsage()
 	}
@@ -658,7 +658,7 @@ func newBatchPointGetPlan(
 		var handles = make([]kv.Handle, len(patternInExpr.List))
 		var handleParams = make([]*expression.Constant, len(patternInExpr.List))
 		var pos2PartitionDefinition = make(map[int]*model.PartitionDefinition)
-		partitionInfos := make([]*model.PartitionDefinition, 0, len(patternInExpr.List))
+		partitionDefs := make([]*model.PartitionDefinition, 0, len(patternInExpr.List))
 		for i, item := range patternInExpr.List {
 			// SELECT * FROM t WHERE (key) in ((1), (2))
 			if p, ok := item.(*ast.ParenthesesExpr); ok {
@@ -693,7 +693,7 @@ func newBatchPointGetPlan(
 			handleParams[i] = con
 			pairs := []nameValuePair{{colName: handleCol.Name.L, colFieldType: item.GetType(), value: *intDatum, con: con}}
 			if tbl.GetPartitionInfo() != nil {
-				tmpPartitionDefinition, _, pos, isTableDual := getPartitionInfo(ctx, tbl, pairs)
+				tmpPartitionDefinition, _, pos, isTableDual := getPartitionDef(ctx, tbl, pairs)
 				if isTableDual {
 					return nil
 				}
@@ -711,18 +711,18 @@ func newBatchPointGetPlan(
 		}
 		sort.Ints(posArr)
 		for _, pos := range posArr {
-			partitionInfos = append(partitionInfos, pos2PartitionDefinition[pos])
+			partitionDefs = append(partitionDefs, pos2PartitionDefinition[pos])
 		}
-		if len(partitionInfos) == 0 {
-			partitionInfos = nil
+		if len(partitionDefs) == 0 {
+			partitionDefs = nil
 		}
 		p := &BatchPointGetPlan{
-			TblInfo:        tbl,
-			Handles:        handles,
-			HandleParams:   handleParams,
-			HandleType:     &handleCol.FieldType,
-			PartitionExpr:  partitionExpr,
-			PartitionInfos: partitionInfos,
+			TblInfo:       tbl,
+			Handles:       handles,
+			HandleParams:  handleParams,
+			HandleType:    &handleCol.FieldType,
+			PartitionExpr: partitionExpr,
+			PartitionDefs: partitionDefs,
 		}
 
 		return p.Init(ctx, statsInfo, schema, names, 0)
@@ -779,7 +779,7 @@ func newBatchPointGetPlan(
 
 	indexValues := make([][]types.Datum, len(patternInExpr.List))
 	indexValueParams := make([][]*expression.Constant, len(patternInExpr.List))
-	partitionInfos := make([]*model.PartitionDefinition, 0, len(patternInExpr.List))
+	partitionDefs := make([]*model.PartitionDefinition, 0, len(patternInExpr.List))
 	var pos2PartitionDefinition = make(map[int]*model.PartitionDefinition)
 
 	var indexTypes []*types.FieldType
@@ -881,7 +881,7 @@ func newBatchPointGetPlan(
 		indexValues[i] = values
 		indexValueParams[i] = valuesParams
 		if tbl.GetPartitionInfo() != nil {
-			tmpPartitionDefinition, _, pos, isTableDual := getPartitionInfo(ctx, tbl, pairs)
+			tmpPartitionDefinition, _, pos, isTableDual := getPartitionDef(ctx, tbl, pairs)
 			if isTableDual {
 				return nil
 			}
@@ -899,10 +899,10 @@ func newBatchPointGetPlan(
 	}
 	sort.Ints(posArr)
 	for _, pos := range posArr {
-		partitionInfos = append(partitionInfos, pos2PartitionDefinition[pos])
+		partitionDefs = append(partitionDefs, pos2PartitionDefinition[pos])
 	}
-	if len(partitionInfos) == 0 {
-		partitionInfos = nil
+	if len(partitionDefs) == 0 {
+		partitionDefs = nil
 	}
 	p := &BatchPointGetPlan{
 		TblInfo:          tbl,
@@ -912,7 +912,7 @@ func newBatchPointGetPlan(
 		IndexColTypes:    indexTypes,
 		PartitionColPos:  pos,
 		PartitionExpr:    partitionExpr,
-		PartitionInfos:   partitionInfos,
+		PartitionDefs:    partitionDefs,
 	}
 
 	return p.Init(ctx, statsInfo, schema, names, 0)
@@ -1062,21 +1062,21 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		return nil
 	}
 
-	var partitionInfo *model.PartitionDefinition
+	var partitionDef *model.PartitionDefinition
 	var pos int
 	if pi != nil {
-		partitionInfo, pos, _, isTableDual = getPartitionInfo(ctx, tbl, pairs)
+		partitionDef, pos, _, isTableDual = getPartitionDef(ctx, tbl, pairs)
 		if isTableDual {
 			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 			p.IsTableDual = true
 			return p
 		}
-		if partitionInfo == nil {
+		if partitionDef == nil {
 			return checkTblIndexForPointPlan(ctx, tblName, schema, names, pairs, nil, pos, true, isTableDual, check)
 		}
 		// Take partition selection into consideration.
 		if len(tblName.PartitionNames) > 0 {
-			if !partitionNameInSet(partitionInfo.Name, tblName.PartitionNames) {
+			if !partitionNameInSet(partitionDef.Name, tblName.PartitionNames) {
 				p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 				p.IsTableDual = true
 				return p
@@ -1097,17 +1097,17 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.GetFlag())
 		p.handleFieldType = fieldType
 		p.HandleConstant = handlePair.con
-		p.PartitionInfo = partitionInfo
+		p.PartitionDef = partitionDef
 		return p
 	} else if handlePair.value.Kind() != types.KindNull {
 		return nil
 	}
 
-	return checkTblIndexForPointPlan(ctx, tblName, schema, names, pairs, partitionInfo, pos, false, isTableDual, check)
+	return checkTblIndexForPointPlan(ctx, tblName, schema, names, pairs, partitionDef, pos, false, isTableDual, check)
 }
 
 func checkTblIndexForPointPlan(ctx sessionctx.Context, tblName *ast.TableName, schema *expression.Schema,
-	names []*types.FieldName, pairs []nameValuePair, partitionInfo *model.PartitionDefinition,
+	names []*types.FieldName, pairs []nameValuePair, partitionDef *model.PartitionDefinition,
 	pos int, globalIndexCheck, isTableDual, check bool) *PointGetPlan {
 	if globalIndexCheck {
 		// when partitions are specified or some partition is in ddl, not use point get plan for global index.
@@ -1180,8 +1180,8 @@ func checkTblIndexForPointPlan(ctx sessionctx.Context, tblName *ast.TableName, s
 		p.IndexValues = idxValues
 		p.IndexConstants = idxConstant
 		p.ColsFieldType = colsFieldType
-		p.PartitionInfo = partitionInfo
-		if p.PartitionInfo != nil {
+		p.PartitionDef = partitionDef
+		if p.PartitionDef != nil {
 			p.partitionColumnPos = findPartitionIdx(idxInfo, pos, pairs)
 		}
 		return p
@@ -1875,7 +1875,7 @@ func buildHandleCols(ctx sessionctx.Context, tbl *model.TableInfo, schema *expre
 	return &IntHandleCols{col: handleCol}
 }
 
-func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) (*model.PartitionDefinition, int, int, bool) {
+func getPartitionDef(ctx sessionctx.Context, tbl *model.TableInfo, pairs []nameValuePair) (*model.PartitionDefinition, int, int, bool) {
 	partitionExpr := getPartitionExpr(ctx, tbl)
 	if partitionExpr == nil {
 		return nil, 0, 0, false

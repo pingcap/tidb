@@ -51,7 +51,7 @@ func newTableInfo(t *testing.T,
 		if err := m.CreateDatabase(&model.DBInfo{ID: dbID}); err != nil && !errors.ErrorEqual(err, meta.ErrDBExists) {
 			return err
 		}
-		return m.CreateTableOrView(dbID, tableInfo)
+		return m.CreateTableOrView(dbID, "", tableInfo)
 	})
 	require.NoError(t, err)
 	return tableInfo

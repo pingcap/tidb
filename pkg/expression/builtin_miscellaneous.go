@@ -141,14 +141,14 @@ func (b *builtinSleepSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 	}
 
 	sessVars := ctx.GetSessionVars()
+	ec := sessVars.StmtCtx.ErrCtx()
 	if isNull || val < 0 {
 		// for insert ignore stmt, the StrictSQLMode and ignoreErr should both be considered.
-		if !sessVars.StmtCtx.BadNullAsWarning {
-			return 0, false, errIncorrectArgs.GenWithStackByArgs("sleep")
-		}
-		err := errIncorrectArgs.FastGenByArgs("sleep")
-		sessVars.StmtCtx.AppendWarning(err)
-		return 0, false, nil
+		return 0, false, ec.HandleErrorWithAlias(
+			errBadNull,
+			errIncorrectArgs.GenWithStackByArgs("sleep"),
+			errIncorrectArgs.FastGenByArgs("sleep"),
+		)
 	}
 
 	if val > math.MaxFloat64/float64(time.Second.Nanoseconds()) {

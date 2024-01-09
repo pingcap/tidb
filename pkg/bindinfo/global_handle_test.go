@@ -69,7 +69,9 @@ func TestBindingLastUpdateTime(t *testing.T) {
 	require.NoError(t, err)
 	stmt, err := parser.New().ParseOneStmt("select * from test . t0", "", "")
 	require.NoError(t, err)
-	bindData, err := bindHandle.MatchGlobalBinding("test", stmt)
+
+	_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+	bindData, err := bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 	require.NoError(t, err)
 	require.Equal(t, 1, len(bindData.Bindings))
 	bind := bindData.Bindings[0]
@@ -125,7 +127,8 @@ func TestBindParse(t *testing.T) {
 	charset := "utf8mb4"
 	collation := "utf8mb4_bin"
 	source := bindinfo.Manual
-	mockDigest := "0f644e22c38ecc71d4592c52df127df7f86b6ca7f7c0ee899113b794578f9396"
+	_, digest := parser.NormalizeDigestForBinding(originSQL)
+	mockDigest := digest.String()
 	sql := fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql,bind_sql,default_db,status,create_time,update_time,charset,collation,source, sql_digest, plan_digest) VALUES ('%s', '%s', '%s', '%s', NOW(), NOW(),'%s', '%s', '%s', '%s', '%s')`,
 		originSQL, bindSQL, defaultDb, status, charset, collation, source, mockDigest, mockDigest)
 	tk.MustExec(sql)
@@ -136,7 +139,8 @@ func TestBindParse(t *testing.T) {
 
 	stmt, err := parser.New().ParseOneStmt("select * from test . t", "", "")
 	require.NoError(t, err)
-	bindData, err := bindHandle.MatchGlobalBinding("test", stmt)
+	_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+	bindData, err := bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 	require.NoError(t, err)
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t`", bindData.OriginalSQL)
@@ -211,14 +215,6 @@ func TestSetBindingStatus(t *testing.T) {
 	tk.MustExec("select * from t where a > 10")
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
 
-	tk.MustExec("set binding disabled for select * from t where a > 10 using select * from t where a > 10")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 There are no bindings can be set the status. Please check the SQL text"))
-	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 1)
-	require.Equal(t, bindinfo.Enabled, rows[0][3])
-	tk.MustExec("select * from t where a > 10")
-	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
-
 	tk.MustExec("set binding disabled for select * from t where a > 10")
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
@@ -269,10 +265,11 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
 
 	// Simulate creating bindings on other machines
+	_, sqlDigest := parser.NormalizeDigestForBinding("select * from `test` . `t` where `a` > ?")
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT /*+ USE_INDEX(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 10', 'test', 'deleted', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT /*+ USE_INDEX(`t` `idx_a`)*/ * FROM `test`.`t` WHERE `a` > 10', 'test', 'enabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
 	dom.BindHandle().Clear()
 	tk.MustExec("set binding disabled for select * from t where a > 10")
 	tk.MustExec("admin reload bindings")
@@ -285,9 +282,9 @@ func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {
 
 	// Simulate creating bindings on other machines
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT * FROM `test`.`t` WHERE `a` > 10', 'test', 'deleted', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
 	tk.MustExec("insert into mysql.bind_info values('select * from `test` . `t` where `a` > ?', 'SELECT * FROM `test`.`t` WHERE `a` > 10', 'test', 'disabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
 	dom.BindHandle().Clear()
 	tk.MustExec("set binding enabled for select * from t where a > 10")
 	tk.MustExec("admin reload bindings")
@@ -444,7 +441,8 @@ func TestGlobalBinding(t *testing.T) {
 
 		stmt, _, _ := internal.UtilNormalizeWithDefaultDB(t, testSQL.querySQL)
 
-		bindData, err := dom.BindHandle().MatchGlobalBinding("test", stmt)
+		_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+		bindData, err := dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 		require.NoError(t, err)
 		require.NotNil(t, bindData)
 		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
@@ -478,7 +476,8 @@ func TestGlobalBinding(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 1, bindHandle.Size())
 
-		bindData, err = dom.BindHandle().MatchGlobalBinding("test", stmt)
+		_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+		bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 		require.NoError(t, err)
 		require.NotNil(t, bindData)
 		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
@@ -494,7 +493,8 @@ func TestGlobalBinding(t *testing.T) {
 		_, err = tk.Exec("drop global " + testSQL.dropSQL)
 		require.Equal(t, uint64(1), tk.Session().AffectedRows())
 		require.NoError(t, err)
-		bindData, err = dom.BindHandle().MatchGlobalBinding("test", stmt)
+		_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+		bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 		require.NoError(t, err)
 		require.Nil(t, bindData)
 
@@ -503,7 +503,8 @@ func TestGlobalBinding(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 0, bindHandle.Size())
 
-		bindData, err = dom.BindHandle().MatchGlobalBinding("test", stmt)
+		_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+		bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 		require.NoError(t, err)
 		require.Nil(t, bindData)
 

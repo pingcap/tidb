@@ -20,7 +20,6 @@ import (
 	"math"
 	"math/rand"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -31,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cascades"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -45,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"go.uber.org/zap"
 )
@@ -562,77 +559,6 @@ func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Nod
 	return p, nil
 }
 
-// NormalizeStmtForPlanCache normalizes a statement for plan cache.
-// This function skips Explain and complete DB name automatically, and each literal will be normalized as a placeholder '?'.
-//
-//	e.g. `explain select * from t where a in (1, 2, 3)` --> `select * from test.t where a in (?, ?, ?)`
-func NormalizeStmtForPlanCache(stmtNode ast.StmtNode, specifiedDB string) (stmt ast.StmtNode, normalizedStmt, sqlDigest string, err error) {
-	return normalizeStmt(stmtNode, specifiedDB, 0)
-}
-
-// flag 0 is for plan cache, 1 is for normal bindings and 2 is for universal bindings.
-// see comments in NormalizeStmtForPlanCache and NormalizeStmtForBinding.
-func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, flag int) (stmt ast.StmtNode, normalizedStmt, sqlDigest string, err error) {
-	normalize := func(n ast.StmtNode) (normalizedStmt, sqlDigest string) {
-		core.EraseLastSemicolon(n)
-		var digest *parser.Digest
-		switch flag {
-		case 0:
-			normalizedStmt, digest = parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(n, specifiedDB, n.Text()))
-		case 1:
-			normalizedStmt, digest = parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(n, specifiedDB, n.Text()))
-		case 2:
-			normalizedStmt, digest = parser.NormalizeDigestForBinding(utilparser.RestoreWithoutDB(n))
-		}
-		return normalizedStmt, digest.String()
-	}
-
-	switch x := stmtNode.(type) {
-	case *ast.ExplainStmt:
-		// This function is only used to find bind record.
-		// For some SQLs, such as `explain select * from t`, they will be entered here many times,
-		// but some of them do not want to obtain bind record.
-		// The difference between them is whether len(x.Text()) is empty. They cannot be distinguished by stmt.restore.
-		// For these cases, we need return "" as normalize SQL and hash.
-		if len(x.Text()) == 0 {
-			return x.Stmt, "", "", nil
-		}
-		switch x.Stmt.(type) {
-		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
-			normalizeSQL, digest := normalize(x.Stmt)
-			return x.Stmt, normalizeSQL, digest, nil
-		case *ast.SetOprStmt:
-			normalizeExplainSQL, _ := normalize(x)
-
-			idx := strings.Index(normalizeExplainSQL, "select")
-			parenthesesIdx := strings.Index(normalizeExplainSQL, "(")
-			if parenthesesIdx != -1 && parenthesesIdx < idx {
-				idx = parenthesesIdx
-			}
-			// If the SQL is `EXPLAIN ((VALUES ROW ()) ORDER BY 1);`, the idx will be -1.
-			if idx == -1 {
-				hash := parser.DigestNormalized(normalizeExplainSQL)
-				return x.Stmt, normalizeExplainSQL, hash.String(), nil
-			}
-			normalizeSQL := normalizeExplainSQL[idx:]
-			hash := parser.DigestNormalized(normalizeSQL)
-			return x.Stmt, normalizeSQL, hash.String(), nil
-		}
-	case *ast.SelectStmt, *ast.SetOprStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
-		// This function is only used to find bind record.
-		// For some SQLs, such as `explain select * from t`, they will be entered here many times,
-		// but some of them do not want to obtain bind record.
-		// The difference between them is whether len(x.Text()) is empty. They cannot be distinguished by stmt.restore.
-		// For these cases, we need return "" as normalize SQL and hash.
-		if len(x.Text()) == 0 {
-			return x, "", "", nil
-		}
-		normalizedSQL, digest := normalize(x)
-		return x, normalizedSQL, digest, nil
-	}
-	return nil, "", "", nil
-}
-
 func handleInvalidBinding(ctx context.Context, sctx sessionctx.Context, level string, bindRecord bindinfo.BindRecord) {
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 	if len(bindRecord.Bindings) > 0 {
@@ -825,7 +751,6 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 func init() {
 	core.OptimizeAstNode = Optimize
 	core.IsReadOnly = IsReadOnly
-	core.NormalizeStmtForPlanCache = NormalizeStmtForPlanCache
 	bindinfo.GetGlobalBindingHandle = func(sctx sessionctx.Context) bindinfo.GlobalBindingHandle {
 		return domain.GetDomain(sctx).BindHandle()
 	}

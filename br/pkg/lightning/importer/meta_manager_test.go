@@ -69,7 +69,7 @@ func newTableRestore(t *testing.T,
 		if err := m.CreateDatabase(&model.DBInfo{ID: dbInfo.ID}); err != nil && !errors.ErrorEqual(err, meta.ErrDBExists) {
 			return err
 		}
-		return m.CreateTableOrView(dbInfo.ID, ti.Core)
+		return m.CreateTableOrView(dbInfo.ID, db, ti.Core)
 	})
 	require.NoError(t, err)
 
@@ -313,6 +313,7 @@ func (s *metaMgrSuite) prepareMock(rowsVal [][]driver.Value, nextRowID *int64, u
 		WillReturnResult(sqlmock.NewResult(int64(0), int64(0)))
 	s.prepareMockInner(rowsVal, nextRowID, updateArgs, checksum, updateStatus, rollback)
 }
+
 func (s *metaMgrSuite) prepareMockInner(rowsVal [][]driver.Value, nextRowID *int64, updateArgs []driver.Value, checksum *verification.KVChecksum, updateStatus *string, rollback bool) {
 	s.mockDB.ExpectBegin()
 

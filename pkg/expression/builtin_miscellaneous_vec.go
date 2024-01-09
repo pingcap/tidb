@@ -317,6 +317,7 @@ func (b *builtinSleepSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 	result.ResizeInt64(n, false)
 	i64s := result.Int64s()
 
+	ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
 	for i := 0; i < n; i++ {
 		isNull := buf.IsNull(i)
 		val := buf.GetFloat64(i)
@@ -324,11 +325,13 @@ func (b *builtinSleepSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 		sessVars := ctx.GetSessionVars()
 		if isNull || val < 0 {
 			// for insert ignore stmt, the StrictSQLMode and ignoreErr should both be considered.
-			if !sessVars.StmtCtx.BadNullAsWarning {
-				return errIncorrectArgs.GenWithStackByArgs("sleep")
+			err := ec.HandleErrorWithAlias(errBadNull,
+				errIncorrectArgs.GenWithStackByArgs("sleep"),
+				errIncorrectArgs.FastGenByArgs("sleep"),
+			)
+			if err != nil {
+				return err
 			}
-			err := errIncorrectArgs.FastGenByArgs("sleep")
-			sessVars.StmtCtx.AppendWarning(err)
 			continue
 		}
 
