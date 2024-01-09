@@ -24,10 +24,10 @@ import (
 
 // RecoveryHandler tries to recovery mpp error.
 type RecoveryHandler struct {
-	curRecoveryCnt uint32
-	maxRecoveryCnt uint32
 	holder         *mppResultHolder
 	handlers       []handlerImpl
+	maxRecoveryCnt uint32
+	curRecoveryCnt uint32
 	enable         bool
 }
 
@@ -158,11 +158,10 @@ func (*memLimitHandlerImpl) doRecovery(info *RecoveryInfo) error {
 }
 
 type mppResultHolder struct {
-	capacity uint64
-	// True when holder is full or begin to return result.
-	cannotHold bool
-	resps      []*mppResponse
 	memTracker *memory.Tracker
+	resps      []*mppResponse
+	capacity   uint64
+	cannotHold bool
 }
 
 func newMPPResultHolder(holderCap uint64, parent *memory.Tracker) *mppResultHolder {

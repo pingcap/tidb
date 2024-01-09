@@ -88,6 +88,7 @@ type MPPGather struct {
 	mppExec *mpp.ExecutorWithRetry
 }
 
+// Open implements the Executor Open interface.
 func (e *MPPGather) Open(ctx context.Context) (err error) {
 	if e.dummy {
 		sender, ok := e.originalPlan.(*plannercore.PhysicalExchangeSender)
@@ -98,7 +99,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 			return nil
 		}
 	}
-	planIDs := collectPlanIDS(e.originalPlan, nil)
+	planIDs := collectPlanIDs(e.originalPlan, nil)
 	if e.mppExec, err = mpp.NewRetryer(ctx, e.Ctx(), e.memTracker, planIDs, e.originalPlan, e.startTS, e.mppQueryID, e.dummy, e.is); err != nil {
 		return err
 	}
@@ -120,10 +121,7 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 		return nil
 	}
 
-	if err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx(), chk); err != nil {
-		return err
-	}
-	return nil
+	return table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx(), chk)
 }
 
 // Close and release the used resources.

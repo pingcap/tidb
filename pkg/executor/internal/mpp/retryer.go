@@ -51,21 +51,12 @@ import (
 // 5. mppIterator:
 //  1. Send or receive MPP RPC.
 type ExecutorWithRetry struct {
-	ctx        context.Context
+	coord      kv.MppCoordinator
 	sctx       sessionctx.Context
-	memTracker *memory.Tracker
-	planIDs    []int
 	is         infoschema.InfoSchema
 	plan       plannercore.PhysicalPlan
-	startTS    uint64
-	queryID    kv.MPPQueryID
-
-	KVRanges []kv.KeyRange
-
-	// Following members need to set up every time retry mpp error.
-	gatherID uint64
-	coord    kv.MppCoordinator
-
+	ctx        context.Context
+	memTracker *memory.Tracker
 	// mppErrRecovery is designed for the recovery of MPP errors.
 	// Basic idea:
 	// 1. It attempts to hold the results of MPP. During the holding process, if an error occurs, it starts error recovery.
@@ -74,10 +65,12 @@ type ExecutorWithRetry struct {
 	// 2. If the held MPP results exceed the capacity, will starts returning results to caller.
 	//    Once the results start being returned, error recovery cannot be performed anymore.
 	mppErrRecovery *RecoveryHandler
-
-	// Only for MemLimit err recovery for now.
-	// AutoScaler use this value as hint to scale out CN.
-	nodeCnt int
+	planIDs        []int
+	KVRanges       []kv.KeyRange
+	queryID        kv.MPPQueryID
+	startTS        uint64
+	gatherID       uint64
+	nodeCnt        int
 }
 
 var _ kv.Response = &ExecutorWithRetry{}
@@ -131,9 +124,7 @@ func (r *ExecutorWithRetry) Next(ctx context.Context) (resp kv.ResultSubset, err
 	}
 
 	if r.mppErrRecovery.NumHoldResp() != 0 {
-		if resp = r.mppErrRecovery.PopFrontResp(); resp == nil {
-			return nil, errors.New("cannot get resp from mpp result holder")
-		}
+		resp = r.mppErrRecovery.PopFrontResp()
 	} else if resp, err = r.coord.Next(ctx); err != nil {
 		return nil, err
 	}
