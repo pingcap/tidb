@@ -40,10 +40,6 @@ func (s *BaseScheduler) Switch2NextStep() (err error) {
 	return s.switch2NextStep()
 }
 
-func (s *BaseScheduler) DoBalanceSubtasks(eligibleNodes []string) error {
-	return s.doBalanceSubtasks(eligibleNodes)
-}
-
 func NewNodeManager() *NodeManager {
 	return newNodeManager()
 }
