@@ -112,9 +112,12 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 	return m, nil
 }
 
-func (m *Manager) initMeta() (err error) {
+// InitMeta initializes the meta of the Manager.
+// not a must-success step before start manager,
+// manager will try to recover meta periodically.
+func (m *Manager) InitMeta() (err error) {
 	for i := 0; i < retrySQLTimes; i++ {
-		err = m.taskTable.StartManager(m.ctx, m.id, config.GetGlobalConfig().Instance.TiDBServiceScope)
+		err = m.taskTable.InitMeta(m.ctx, m.id, config.GetGlobalConfig().Instance.TiDBServiceScope)
 		if err == nil {
 			break
 		}
@@ -132,10 +135,24 @@ func (m *Manager) initMeta() (err error) {
 	return err
 }
 
-// InitMeta initializes the meta of the Manager.
-// not a must-success step before start manager, manager will try to init meta periodically.
-func (m *Manager) InitMeta() error {
-	return m.initMeta()
+func (m *Manager) recoverMeta() (err error) {
+	for i := 0; i < retrySQLTimes; i++ {
+		err = m.taskTable.RecoverMeta(m.ctx, m.id, config.GetGlobalConfig().Instance.TiDBServiceScope)
+		if err == nil {
+			break
+		}
+		if err1 := m.ctx.Err(); err1 != nil {
+			return err1
+		}
+		if i%10 == 0 {
+			logutil.Logger(m.logCtx).Warn("recover meta failed",
+				zap.String("scope", config.GetGlobalConfig().Instance.TiDBServiceScope),
+				zap.Int("retry times", i),
+				zap.Error(err))
+		}
+		time.Sleep(retrySQLInterval)
+	}
+	return err
 }
 
 // Start starts the Manager.
@@ -292,7 +309,7 @@ func (m *Manager) onPausingTasks(tasks []*proto.Task) error {
 	return nil
 }
 
-// recoverMetaLoop inits and recovers dist_framework_meta for the tidb node running the taskExecutor manager.
+// recoverMetaLoop recovers dist_framework_meta for the tidb node running the taskExecutor manager.
 // This is necessary when the TiDB node experiences a prolonged network partition
 // and the scheduler deletes `dist_framework_meta`.
 // When the TiDB node recovers from the network partition,
@@ -306,7 +323,7 @@ func (m *Manager) recoverMetaLoop() {
 			logutil.Logger(m.logCtx).Info("recoverMetaLoop done")
 			return
 		case <-ticker.C:
-			if err := m.initMeta(); err != nil {
+			if err := m.recoverMeta(); err != nil {
 				m.logErr(err)
 				continue
 			}

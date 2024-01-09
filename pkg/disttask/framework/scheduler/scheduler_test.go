@@ -274,7 +274,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	ctx = util.WithInternalSourceType(ctx, "scheduler")
 
 	sch, mgr := MockSchedulerManager(t, ctrl, pool, getNumberExampleSchedulerExt(ctrl), nil)
-	require.NoError(t, mgr.StartManager(ctx, ":4000", "background"))
+	require.NoError(t, mgr.InitMeta(ctx, ":4000", "background"))
 	sch.Start()
 	defer func() {
 		sch.Stop()
@@ -376,7 +376,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 	} else if isPauseAndResume {
 		for i := 0; i < taskCnt; i++ {
 			found, err := mgr.PauseTask(ctx, fmt.Sprintf("%d", i))
-			require.Equal(t, true, found)
+			require.True(t, found)
 			require.NoError(t, err)
 		}
 		for i := 1; i <= subtaskCnt*taskCnt; i++ {
@@ -386,7 +386,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		checkGetTaskState(proto.TaskStatePaused)
 		for i := 0; i < taskCnt; i++ {
 			found, err := mgr.ResumeTask(ctx, fmt.Sprintf("%d", i))
-			require.Equal(t, true, found)
+			require.True(t, found)
 			require.NoError(t, err)
 		}
 

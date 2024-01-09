@@ -2930,56 +2930,56 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	tk.MustExec("set session tidb_stats_load_sync_wait = 0")
 	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.signed')").Check(testkit.Rows(
 		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, ij_signed:allEvicted, j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, ij_signed:allEvicted, j:unInitialized]",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, ij_signed:allEvicted, ij_unsigned:allEvicted...(more: 3 allEvicted, 1 unInitialized)]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, ij_signed:allEvicted, ij_unsigned:allEvicted...(more: 3 allEvicted, 1 unInitialized)]",
 	))
 	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.unsigned')").Check(testkit.Rows(
 		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, ij_unsigned:allEvicted, j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, ij_unsigned:allEvicted, j:unInitialized]",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, ij_signed:allEvicted, ij_unsigned:allEvicted...(more: 3 allEvicted, 1 unInitialized)]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, ij_signed:allEvicted, ij_unsigned:allEvicted...(more: 3 allEvicted, 1 unInitialized)]",
 	))
 	tk.MustQuery("explain format = brief select * from t where 10.01 member of (j->'$.dbl')").Check(testkit.Rows(
 		"TableReader 21.60 root  data:Selection",
 		"└─Selection 21.60 cop[tikv]  json_memberof(cast(10.01, json BINARY), json_extract(test.t.j, \"$.dbl\"))",
-		"  └─TableFullScan 27.00 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"  └─TableFullScan 27.00 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, ij_signed:allEvicted, ij_unsigned:allEvicted...(more: 2 allEvicted, 1 unInitialized)]",
 	))
 	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.bin')").Check(testkit.Rows(
 		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[ia:allEvicted, ij_binary:allEvicted, j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, ij_binary:allEvicted, j:unInitialized]",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[ia:allEvicted, ij_signed:allEvicted, ij_unsigned:allEvicted...(more: 3 allEvicted, 1 unInitialized)]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, ij_signed:allEvicted, ij_unsigned:allEvicted...(more: 3 allEvicted, 1 unInitialized)]",
 	))
 	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.char')").Check(testkit.Rows(
 		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[ia:allEvicted, ij_char:allEvicted, j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, ij_char:allEvicted, j:unInitialized]",
+		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[ia:allEvicted, ij_signed:allEvicted, ij_unsigned:allEvicted...(more: 3 allEvicted, 1 unInitialized)]",
+		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, ij_signed:allEvicted, ij_unsigned:allEvicted...(more: 3 allEvicted, 1 unInitialized)]",
 	))
 	// 3.2. emulate the background async loading
 	require.NoError(t, h.LoadNeededHistograms())
 	// 3.3. now, stats on all indexes should be loaded
-	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.signed')").Check(testkit.Rows(
-		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_signed) */ * from t where 1 member of (j->'$.signed')").Check(testkit.Rows(
+		"IndexMerge 27.00 root  type: union",
+		"├─IndexRangeScan(Build) 27.00 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 27.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
-	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.unsigned')").Check(testkit.Rows(
-		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_unsigned) */* from t where 1 member of (j->'$.unsigned')").Check(testkit.Rows(
+		"IndexMerge 18.00 root  type: union",
+		"├─IndexRangeScan(Build) 18.00 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 18.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
-	tk.MustQuery("explain format = brief select * from t where 10.01 member of (j->'$.dbl')").Check(testkit.Rows(
+	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_double) */ * from t where 10.01 member of (j->'$.dbl')").Check(testkit.Rows(
 		"TableReader 21.60 root  data:Selection",
 		"└─Selection 21.60 cop[tikv]  json_memberof(cast(10.01, json BINARY), json_extract(test.t.j, \"$.dbl\"))",
 		"  └─TableFullScan 27.00 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
-	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.bin')").Check(testkit.Rows(
-		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_binary) */ * from t where '1' member of (j->'$.bin')").Check(testkit.Rows(
+		"IndexMerge 14.83 root  type: union",
+		"├─IndexRangeScan(Build) 14.83 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 14.83 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
-	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.char')").Check(testkit.Rows(
-		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
+	tk.MustQuery("explain format = brief select /*+ use_index_merge(t, ij_char) */ * from t where '1' member of (j->'$.char')").Check(testkit.Rows(
+		"IndexMerge 13.50 root  type: union",
+		"├─IndexRangeScan(Build) 13.50 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[j:unInitialized]",
+		"└─TableRowIDScan(Probe) 13.50 cop[tikv] table:t keep order:false, stats:partial[j:unInitialized]",
 	))
 
 	// 3.4. clean up the stats and re-analyze the table
@@ -2988,24 +2988,24 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	// 3.5. turn on the sync loading, stats on mv indexes should be loaded
 	tk.MustExec("set session tidb_stats_load_sync_wait = 1000")
 	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.signed')").Check(testkit.Rows(
-		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"IndexMerge 3.84 root  type: union",
+		"├─IndexRangeScan(Build) 3.84 cop[tikv] table:t, index:ij_signed(cast(json_extract(`j`, _utf8mb4'$.signed') as signed array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 3.84 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select * from t where 1 member of (j->'$.unsigned')").Check(testkit.Rows(
-		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"IndexMerge 3.60 root  type: union",
+		"├─IndexRangeScan(Build) 3.60 cop[tikv] table:t, index:ij_unsigned(cast(json_extract(`j`, _utf8mb4'$.unsigned') as unsigned array)) range:[1,1], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 3.60 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.bin')").Check(testkit.Rows(
-		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"IndexMerge 1.55 root  type: union",
+		"├─IndexRangeScan(Build) 1.55 cop[tikv] table:t, index:ij_binary(cast(json_extract(`j`, _utf8mb4'$.bin') as binary(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 1.55 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
 	))
 	tk.MustQuery("explain format = brief select * from t where '1' member of (j->'$.char')").Check(testkit.Rows(
-		"IndexMerge 0.03 root  type: union",
-		"├─IndexRangeScan(Build) 0.03 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
-		"└─TableRowIDScan(Probe) 0.03 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"IndexMerge 1.93 root  type: union",
+		"├─IndexRangeScan(Build) 1.93 cop[tikv] table:t, index:ij_char(cast(json_extract(`j`, _utf8mb4'$.char') as char(50) array)) range:[\"1\",\"1\"], keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
+		"└─TableRowIDScan(Probe) 1.93 cop[tikv] table:t keep order:false, stats:partial[ia:allEvicted, j:unInitialized]",
 	))
 
 	// 4. check stats content in the memory
@@ -3024,59 +3024,59 @@ func TestAnalyzeMVIndex(t *testing.T) {
 	tk.MustQuery("show stats_topn").Check(testkit.Rows(
 		// db_name, table_name, partition_name, column_name, is_index, value, count
 		"test t  ia 1 1 27",
-		"test t  ij_signed 1 -40000 16",
-		"test t  ij_signed 1 -300 1",
-		"test t  ij_signed 1 -5 11",
+		"test t  ij_signed 1 0 27",
+		"test t  ij_signed 1 1 27",
+		"test t  ij_signed 1 2 27",
 		"test t  ij_unsigned 1 0 27",
 		"test t  ij_unsigned 1 3 27",
 		"test t  ij_unsigned 1 4 27",
 		"test t  ij_double 1 -21.5 27",
-		"test t  ij_double 1 -12.000005 8",
 		"test t  ij_double 1 0 27",
-		"test t  ij_binary 1 0000 26",
-		"test t  ij_binary 1 1234 19",
-		"test t  ij_binary 1 3796 1",
-		"test t  ij_char 1 !@#$ 24",
-		"test t  ij_char 1 %*$%#@qwe 2",
-		"test t  ij_char 1 %*asdf@ 1",
+		"test t  ij_double 1 2.15 27",
+		"test t  ij_binary 1 aaaaaa 27",
+		"test t  ij_binary 1 bbbb 27",
+		"test t  ij_binary 1 ccc 27",
+		"test t  ij_char 1 aaa 27",
+		"test t  ij_char 1 asdf 27",
+		"test t  ij_char 1 cccccc 27",
 	))
 	tk.MustQuery("show stats_buckets").Check(testkit.Rows(
 		// db_name, table_name, partition_name, column_name, is_index, bucket_id, count, repeats, lower_bound, upper_bound, ndv
-		"test t  ij_signed 1 0 27 27 0 0 0",
-		"test t  ij_signed 1 1 54 27 1 1 0",
-		"test t  ij_signed 1 2 81 27 2 2 0",
-		"test t  ij_signed 1 3 107 26 4 4 0",
-		"test t  ij_signed 1 4 123 16 5 5 0",
-		"test t  ij_signed 1 5 124 1 100 100 0",
-		"test t  ij_signed 1 6 151 27 300 300 0",
-		"test t  ij_signed 1 7 162 11 13245 13245 0",
+		"test t  ij_signed 1 0 16 16 -40000 -40000 0",
+		"test t  ij_signed 1 1 17 1 -300 -300 0",
+		"test t  ij_signed 1 2 28 11 -5 -5 0",
+		"test t  ij_signed 1 3 54 26 4 4 0",
+		"test t  ij_signed 1 4 70 16 5 5 0",
+		"test t  ij_signed 1 5 71 1 100 100 0",
+		"test t  ij_signed 1 6 98 27 300 300 0",
+		"test t  ij_signed 1 7 109 11 13245 13245 0",
 		"test t  ij_unsigned 1 0 16 16 12 12 0",
 		"test t  ij_unsigned 1 1 43 27 600 600 0",
 		"test t  ij_unsigned 1 2 54 11 3112 3112 0",
-		"test t  ij_double 1 0 19 19 0.000005 0.000005 0",
-		"test t  ij_double 1 1 46 27 2.15 2.15 0",
-		"test t  ij_double 1 2 73 27 10.555555 10.555555 0",
-		"test t  ij_double 1 3 92 19 10.9876 10.9876 0",
-		"test t  ij_binary 1 0 8 8 5678 5678 0",
-		"test t  ij_binary 1 1 35 27 aaaaaa aaaaaa 0",
-		"test t  ij_binary 1 2 59 24 asdf asdf 0",
-		"test t  ij_binary 1 3 86 27 bbbb bbbb 0",
-		"test t  ij_binary 1 4 113 27 ccc ccc 0",
-		"test t  ij_binary 1 5 116 3 egfb egfb 0",
-		"test t  ij_binary 1 6 124 8 ghjk ghjk 0",
-		"test t  ij_binary 1 7 127 3 nfre nfre 0",
-		"test t  ij_binary 1 8 154 27 ppp ppp 0",
-		"test t  ij_binary 1 9 178 24 qwer qwer 0",
-		"test t  ij_binary 1 10 186 8 yuiop yuiop 0",
-		"test t  ij_binary 1 11 213 27 zzzz zzzz 0",
-		"test t  ij_char 1 0 27 27 aaa aaa 0",
-		"test t  ij_char 1 1 54 27 asdf asdf 0",
-		"test t  ij_char 1 2 81 27 cccccc cccccc 0",
-		"test t  ij_char 1 3 108 27 eee eee 0",
-		"test t  ij_char 1 4 110 2 k!@cvd k!@cvd 0",
-		"test t  ij_char 1 5 111 1 kicvd kicvd 0",
-		"test t  ij_char 1 6 135 24 qwer qwer 0",
-		"test t  ij_char 1 7 162 27 yuiop yuiop 0",
+		"test t  ij_double 1 0 8 8 -12.000005 -12.000005 0",
+		"test t  ij_double 1 1 27 19 0.000005 0.000005 0",
+		"test t  ij_double 1 2 54 27 10.555555 10.555555 0",
+		"test t  ij_double 1 3 73 19 10.9876 10.9876 0",
+		"test t  ij_binary 1 0 26 26 0000 0000 0",
+		"test t  ij_binary 1 1 45 19 1234 1234 0",
+		"test t  ij_binary 1 2 46 1 3796 3796 0",
+		"test t  ij_binary 1 3 54 8 5678 5678 0",
+		"test t  ij_binary 1 4 78 24 asdf asdf 0",
+		"test t  ij_binary 1 5 81 3 egfb egfb 0",
+		"test t  ij_binary 1 6 89 8 ghjk ghjk 0",
+		"test t  ij_binary 1 7 92 3 nfre nfre 0",
+		"test t  ij_binary 1 8 119 27 ppp ppp 0",
+		"test t  ij_binary 1 9 143 24 qwer qwer 0",
+		"test t  ij_binary 1 10 151 8 yuiop yuiop 0",
+		"test t  ij_binary 1 11 178 27 zzzz zzzz 0",
+		"test t  ij_char 1 0 24 24 !@#$ !@#$ 0",
+		"test t  ij_char 1 1 26 2 %*$%#@qwe %*$%#@qwe 0",
+		"test t  ij_char 1 2 27 1 %*asdf@ %*asdf@ 0",
+		"test t  ij_char 1 3 54 27 eee eee 0",
+		"test t  ij_char 1 4 56 2 k!@cvd k!@cvd 0",
+		"test t  ij_char 1 5 57 1 kicvd kicvd 0",
+		"test t  ij_char 1 6 81 24 qwer qwer 0",
+		"test t  ij_char 1 7 108 27 yuiop yuiop 0",
 	))
 }
 

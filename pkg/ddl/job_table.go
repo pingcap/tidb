@@ -51,6 +51,7 @@ import (
 var (
 	addingDDLJobConcurrent      = "/tidb/ddl/add_ddl_job_general"
 	dispatchLoopWaitingDuration = 1 * time.Second
+	localWorkerWaitingDuration  = 10 * time.Millisecond
 )
 
 func init() {
@@ -68,6 +69,8 @@ func (t jobType) String() string {
 		return "general"
 	case reorg:
 		return "reorg"
+	case local:
+		return "local"
 	}
 	return "unknown job type: " + strconv.Itoa(int(t))
 }
@@ -75,6 +78,7 @@ func (t jobType) String() string {
 const (
 	general jobType = iota
 	reorg
+	local
 )
 
 func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool, error)) (*model.Job, error) {
@@ -225,6 +229,7 @@ func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 			return false, nil
 		}
 		if (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
+			job.State == model.JobStateQueueing &&
 			job.ReorgMeta != nil &&
 			job.ReorgMeta.IsFastReorg &&
 			ingest.LitBackCtxMgr != nil {
@@ -243,6 +248,21 @@ func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
 		rows, err := sess.Execute(d.ctx, sql, "check conflict jobs")
 		return len(rows) == 0, err
 	})
+}
+
+// startLocalWorkerLoop starts the local worker loop to run the DDL job of v2.
+func (d *ddl) startLocalWorkerLoop() {
+	for {
+		select {
+		case <-d.ctx.Done():
+			return
+		case task, ok := <-d.localJobCh:
+			if !ok {
+				return
+			}
+			d.delivery2LocalWorker(d.localWorkerPool, task)
+		}
+	}
 }
 
 func (d *ddl) startDispatchLoop() {
@@ -355,6 +375,43 @@ func (d *ddl) loadDDLJobAndRun(se *sess.Session, pool *workerPool, getJob func(*
 	d.mu.RUnlock()
 
 	d.delivery2worker(wk, pool, job)
+}
+
+// delivery2LocalWorker runs the DDL job of v2 in local.
+// send the result to the error channels in the task.
+// delivery2Localworker owns the worker, need to put it back to the pool in this function.
+func (d *ddl) delivery2LocalWorker(pool *workerPool, task *limitJobTask) {
+	job := task.job
+	wk, err := pool.get()
+	if err != nil {
+		task.NotifyError(err)
+		return
+	}
+	for wk == nil {
+		select {
+		case <-d.ctx.Done():
+			return
+		case <-time.After(localWorkerWaitingDuration):
+		}
+		wk, err = pool.get()
+		if err != nil {
+			task.NotifyError(err)
+			return
+		}
+	}
+	d.wg.Run(func() {
+		metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Inc()
+		defer func() {
+			metrics.DDLRunningJobCount.WithLabelValues(pool.tp().String()).Dec()
+		}()
+
+		err := wk.HandleDDLJobV2(d.ddlCtx, job)
+		pool.put(wk)
+		if err != nil {
+			logutil.BgLogger().Info("handle ddl job failed", zap.String("category", "ddl"), zap.Error(err), zap.String("job", job.String()))
+		}
+		task.NotifyError(err)
+	})
 }
 
 // delivery2worker owns the worker, need to put it back to the pool in this function.

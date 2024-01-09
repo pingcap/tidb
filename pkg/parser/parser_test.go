@@ -517,7 +517,7 @@ func TestAdminStmt(t *testing.T) {
 		// for BDR
 		{"admin set bdr role primary", true, "ADMIN SET BDR ROLE PRIMARY"},
 		{"admin set bdr role secondary", true, "ADMIN SET BDR ROLE SECONDARY"},
-		{"admin set bdr role local_only", true, "ADMIN SET BDR ROLE LOCAL_ONLY"},
+		{"admin unset bdr role", true, "ADMIN UNSET BDR ROLE"},
 		{"admin show bdr role", true, "ADMIN SHOW BDR ROLE"},
 	}
 	RunTest(t, table, false)
@@ -5493,13 +5493,6 @@ func TestBinding(t *testing.T) {
 		{"create global binding using select * from *.t1 where t1.a > (select max(a) from t2)", true, "CREATE GLOBAL BINDING FOR SELECT * FROM `*`.`t1` WHERE `t1`.`a`>(SELECT MAX(`a`) FROM `t2`) USING SELECT * FROM `*`.`t1` WHERE `t1`.`a`>(SELECT MAX(`a`) FROM `t2`)"},
 		{"create session binding using select * from *.t1", true, "CREATE SESSION BINDING FOR SELECT * FROM `*`.`t1` USING SELECT * FROM `*`.`t1`"},
 		{"create binding using select * from *.t1", true, "CREATE SESSION BINDING FOR SELECT * FROM `*`.`t1` USING SELECT * FROM `*`.`t1`"},
-		// Universal bindings
-		{"create global universal binding for select * from t using select * from t", true, "CREATE GLOBAL UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
-		{"create session universal binding for select * from t using select * from t", true, "CREATE SESSION UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
-		{"create universal binding for select * from t using select * from t", true, "CREATE SESSION UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
-		{"create global universal binding using select * from t", true, "CREATE GLOBAL UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
-		{"create session universal binding using select * from t", true, "CREATE SESSION UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
-		{"create universal binding using select * from t", true, "CREATE SESSION UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
 		// Update cases.
 		{"CREATE GLOBAL BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1", true, "CREATE GLOBAL BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1"},
 		{"CREATE SESSION BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1", true, "CREATE SESSION BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1"},

@@ -24,6 +24,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -56,9 +57,6 @@ const (
 var (
 	// PreparedPlanCacheMaxMemory stores the max memory size defined in the global config "performance-server-memory-quota".
 	PreparedPlanCacheMaxMemory = *atomic2.NewUint64(math.MaxUint64)
-
-	// NormalizeStmtForPlanCache extract the select statement and normalize it.
-	NormalizeStmtForPlanCache func(stmtNode ast.StmtNode, specifiledDB string) (ast.StmtNode, string, string, error)
 )
 
 type paramMarkerExtractor struct {
@@ -131,10 +129,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 
 	var (
-		normalizedSQL4PC, digest4PC string
-		selectStmtNode              ast.StmtNode
-		cacheable                   bool
-		reason                      string
+		cacheable bool
+		reason    string
 	)
 	if (isPrepStmt && !vars.EnablePreparedPlanCache) || // prepared statement
 		(!isPrepStmt && !vars.EnableNonPreparedPlanCache) { // non-prepared statement
@@ -148,11 +144,6 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		}
 		if !cacheable {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: " + reason))
-		}
-		selectStmtNode, normalizedSQL4PC, digest4PC, err = NormalizeStmtForPlanCache(paramStmt, vars.CurrentDB)
-		if err != nil || selectStmtNode == nil {
-			normalizedSQL4PC = ""
-			digest4PC = ""
 		}
 	}
 
@@ -186,8 +177,6 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		SQLDigest:           digest,
 		ForUpdateRead:       destBuilder.GetIsForUpdateRead(),
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
-		NormalizedSQL4PC:    normalizedSQL4PC,
-		SQLDigest4PC:        digest4PC,
 		StmtCacheable:       cacheable,
 		UncacheableReason:   reason,
 		QueryFeatures:       features,
@@ -459,8 +448,8 @@ type PlanCacheStmt struct {
 	PlanDigest          *parser.Digest
 	ForUpdateRead       bool
 	SnapshotTSEvaluator func(sessionctx.Context) (uint64, error)
-	NormalizedSQL4PC    string
-	SQLDigest4PC        string
+
+	BindingInfo bindinfo.BindingMatchInfo
 
 	// the different between NormalizedSQL, NormalizedSQL4PC and StmtText:
 	//  for the query `select * from t where a>1 and b<?`, then

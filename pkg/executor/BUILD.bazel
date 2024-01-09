@@ -380,6 +380,7 @@ go_test(
         "//pkg/distsql",
         "//pkg/domain",
         "//pkg/domain/infosync",
+        "//pkg/errctx",
         "//pkg/errno",
         "//pkg/executor/aggfuncs",
         "//pkg/executor/aggregate",
