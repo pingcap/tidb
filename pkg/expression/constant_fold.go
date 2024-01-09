@@ -219,7 +219,7 @@ func foldConstant(ctx sessionctx.Context, expr Expression) (Expression, bool) {
 			return expr, isDeferredConst
 		}
 		value, err := x.Eval(ctx, chunk.Row{})
-		retType := x.RetType.Clone()
+		retType := x.RetType
 		if !hasNullArg {
 			// set right not null flag for constant value
 			switch value.Kind() {
