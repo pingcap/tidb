@@ -683,9 +683,9 @@ func (mgr *TaskManager) StartSubtask(ctx context.Context, subtaskID int64, execI
 }
 
 // InitMeta insert the manager information into dist_framework_meta.
-func (stm *TaskManager) InitMeta(ctx context.Context, tidbID string, role string) error {
-	return stm.WithNewSession(func(se sessionctx.Context) error {
-		return stm.InitMetaSession(ctx, se, tidbID, role)
+func (mgr *TaskManager) InitMeta(ctx context.Context, tidbID string, role string) error {
+	return mgr.WithNewSession(func(se sessionctx.Context) error {
+		return mgr.InitMetaSession(ctx, se, tidbID, role)
 	})
 }
 
@@ -706,9 +706,9 @@ func (*TaskManager) InitMetaSession(ctx context.Context, se sessionctx.Context, 
 // if the record exists, update the cpu_count.
 // Don't update role for we only update it in `set global tidb_service_scope`.
 // if not there might has a data race.
-func (stm *TaskManager) RecoverMeta(ctx context.Context, execID string, role string) error {
+func (mgr *TaskManager) RecoverMeta(ctx context.Context, execID string, role string) error {
 	cpuCount := cpu.GetCPUCount()
-	_, err := stm.executeSQLWithNewSession(ctx, `
+	_, err := mgr.executeSQLWithNewSession(ctx, `
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
 		values (%?, %?, %?, -1)
 		on duplicate key
