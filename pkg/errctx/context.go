@@ -193,21 +193,48 @@ const (
 )
 
 func init() {
-	truncateErrCodes := []errors.ErrCode{
-		errno.ErrTruncatedWrongValue,
-		errno.ErrDataTooLong,
-		errno.ErrTruncatedWrongValueForField,
-		errno.ErrWarnDataOutOfRange,
-		errno.ErrDataOutOfRange,
-		errno.ErrBadNumber,
-		errno.ErrWrongValueForType,
-		errno.ErrDatetimeFunctionOverflow,
-		errno.WarnDataTruncated,
-		errno.ErrIncorrectDatetimeValue,
-	}
-	for _, errCode := range truncateErrCodes {
-		errGroupMap[errCode] = ErrGroupTruncate
+	group2Errors := map[ErrGroup][]errors.ErrCode{
+		ErrGroupTruncate: {
+			errno.ErrTruncatedWrongValue,
+			errno.ErrDataTooLong,
+			errno.ErrTruncatedWrongValueForField,
+			errno.ErrWarnDataOutOfRange,
+			errno.ErrDataOutOfRange,
+			errno.ErrBadNumber,
+			errno.ErrWrongValueForType,
+			errno.ErrDatetimeFunctionOverflow,
+			errno.WarnDataTruncated,
+			errno.ErrIncorrectDatetimeValue,
+		},
+		ErrGroupBadNull: {
+			errno.ErrBadNull,
+			errno.ErrWarnNullToNotnull,
+		},
+		ErrGroupDividedByZero: {
+			errno.ErrDivisionByZero,
+		},
+		ErrGroupAutoIncReadFailed: {
+			errno.ErrAutoincReadFailed,
+		},
 	}
 
-	errGroupMap[errno.ErrAutoincReadFailed] = ErrGroupAutoIncReadFailed
+	for group, codes := range group2Errors {
+		for _, errCode := range codes {
+			errGroupMap[errCode] = group
+		}
+	}
+}
+
+// ResolveErrLevel resolves the error level according to the `ignore` and `warn` flags
+// if ignore is true, it will return `LevelIgnore` to ignore the error,
+// otherwise, it will return `LevelWarn` or `LevelError` according to the `warn` flag
+// Only one of `ignore` and `warn` can be true.
+func ResolveErrLevel(ignore bool, warn bool) Level {
+	if ignore {
+		return LevelIgnore
+	}
+	if warn {
+		return LevelWarn
+	}
+	return LevelError
 }

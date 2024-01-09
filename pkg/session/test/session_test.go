@@ -798,7 +798,7 @@ func TestRequestSource(t *testing.T) {
 
 func TestEmptyInitSQLFile(t *testing.T) {
 	// A non-existent sql file would stop the bootstrap of the tidb cluster
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	config.GetGlobalConfig().InitializeSQLFile = "non-existent.sql"
 	defer func() {
@@ -832,7 +832,7 @@ func TestInitSystemVariable(t *testing.T) {
 
 	// Create a mock store
 	// Set the config parameter for initialize sql file
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	config.GetGlobalConfig().InitializeSQLFile = initializeSQLFile.Name()
 	defer func() {
@@ -921,7 +921,7 @@ DROP USER root;
 	_, err = sqlFiles[1].WriteString("drop user cloud_admin;")
 	require.NoError(t, err)
 
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[0].Name()
 	defer func() {
@@ -999,7 +999,7 @@ insert into test.t values ("abc"); -- invalid statement
 `)
 	require.NoError(t, err)
 
-	store, err := mockstore.NewMockStore()
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	config.GetGlobalConfig().InitializeSQLFile = sqlFiles[0].Name()
 	defer func() {
@@ -1015,7 +1015,7 @@ insert into test.t values ("abc"); -- invalid statement
 	session.DisableRunBootstrapSQLFileInTest()
 
 	// Bootstrap with the second sql file, which would not been executed.
-	store, err = mockstore.NewMockStore()
+	store, err = mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, store.Close())

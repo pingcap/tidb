@@ -473,7 +473,6 @@ import (
 	level                 "LEVEL"
 	list                  "LIST"
 	local                 "LOCAL"
-	local_only            "LOCAL_ONLY"
 	location              "LOCATION"
 	locked                "LOCKED"
 	logs                  "LOGS"
@@ -668,8 +667,8 @@ import (
 	undefined             "UNDEFINED"
 	unicodeSym            "UNICODE"
 	unknown               "UNKNOWN"
+	unset                 "UNSET"
 	user                  "USER"
-	universal             "UNIVERSAL"
 	validation            "VALIDATION"
 	value                 "VALUE"
 	variables             "VARIABLES"
@@ -1097,7 +1096,7 @@ import (
 	AuthOption                             "User auth option"
 	AutoRandomOpt                          "Auto random option"
 	Boolean                                "Boolean (0, 1, false, true)"
-	BDRRole                                "BDR role (primary, secondary, local_only)"
+	BDRRole                                "BDR role (primary, secondary)"
 	OptionalBraces                         "optional braces"
 	CastType                               "Cast function target type"
 	CharsetOpt                             "CHARACTER SET option in LOAD DATA"
@@ -1165,7 +1164,6 @@ import (
 	GetFormatSelector                      "{DATE|DATETIME|TIME|TIMESTAMP}"
 	GlobalScope                            "The scope of variable"
 	StatementScope                         "The scope of statement"
-	BindingType                            "The type of binding"
 	GroupByClause                          "GROUP BY clause"
 	HavingClause                           "HAVING clause"
 	AsOfClause                             "AS OF clause"
@@ -6607,7 +6605,6 @@ UnReservedKeyword:
 |	"INSERT_METHOD"
 |	"LESS"
 |	"LOCAL"
-|	"LOCAL_ONLY"
 |	"LAST"
 |	"NAMES"
 |	"NVARCHAR"
@@ -6650,6 +6647,7 @@ UnReservedKeyword:
 |	"TSO"
 |	"UNBOUNDED"
 |	"UNKNOWN"
+|	"UNSET"
 |	"VALUE" %prec lowerThanValueKeyword
 |	"WARNINGS"
 |	"YEAR"
@@ -6802,7 +6800,6 @@ UnReservedKeyword:
 |	"DISCARD"
 |	"TABLE_CHECKSUM"
 |	"UNICODE"
-|	"UNIVERSAL"
 |	"AUTO_RANDOM"
 |	"AUTO_RANDOM_BASE"
 |	"SQL_TSI_DAY"
@@ -10930,10 +10927,6 @@ BDRRole:
 	{
 		$$ = ast.BDRRoleSecondary
 	}
-|	"LOCAL_ONLY"
-	{
-		$$ = ast.BDRRoleLocalOnly
-	}
 
 AdminStmt:
 	"ADMIN" "SHOW" "DDL"
@@ -11162,6 +11155,12 @@ AdminStmt:
 	{
 		$$ = &ast.AdminStmt{
 			Tp: ast.AdminShowBDRRole,
+		}
+	}
+|	"ADMIN" "UNSET" "BDR" "ROLE"
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminUnsetBDRRole,
 		}
 	}
 
@@ -11775,15 +11774,6 @@ ShowLikeOrWhereOpt:
 |	"WHERE" Expression
 	{
 		$$ = $2
-	}
-
-BindingType:
-	{
-		$$ = false
-	}
-|	"UNIVERSAL"
-	{
-		$$ = true
 	}
 
 GlobalScope:
@@ -13801,47 +13791,44 @@ BindableStmt:
  *      CREATE GLOBAL BINDING FOR select Col1,Col2 from table USING select Col1,Col2 from table use index(Col1)
  *******************************************************************/
 CreateBindingStmt:
-	"CREATE" GlobalScope BindingType "BINDING" "FOR" BindableStmt "USING" BindableStmt
+	"CREATE" GlobalScope "BINDING" "FOR" BindableStmt "USING" BindableStmt
 	{
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.startOffset(&yyS[yypt-1])
-		originStmt := $6
+		originStmt := $5
 		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
 
 		startOffset = parser.startOffset(&yyS[yypt])
-		hintedStmt := $8
+		hintedStmt := $7
 		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.CreateBindingStmt{
 			OriginNode:  originStmt,
 			HintedNode:  hintedStmt,
 			GlobalScope: $2.(bool),
-			IsUniversal: $3.(bool),
 		}
 
 		$$ = x
 	}
-|	"CREATE" GlobalScope BindingType "BINDING" "USING" BindableStmt
+|	"CREATE" GlobalScope "BINDING" "USING" BindableStmt
 	{
 		startOffset := parser.startOffset(&yyS[yypt])
-		hintedStmt := $6
+		hintedStmt := $5
 		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.CreateBindingStmt{
 			OriginNode:  hintedStmt,
 			HintedNode:  hintedStmt,
 			GlobalScope: $2.(bool),
-			IsUniversal: $3.(bool),
 		}
 
 		$$ = x
 	}
-|	"CREATE" GlobalScope BindingType "BINDING" "FROM" "HISTORY" "USING" "PLAN" "DIGEST" stringLit
+|	"CREATE" GlobalScope "BINDING" "FROM" "HISTORY" "USING" "PLAN" "DIGEST" stringLit
 	{
 		x := &ast.CreateBindingStmt{
 			GlobalScope: $2.(bool),
-			IsUniversal: $3.(bool),
-			PlanDigest:  $10,
+			PlanDigest:  $9,
 		}
 
 		$$ = x

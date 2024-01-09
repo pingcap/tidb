@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -236,8 +237,9 @@ func TestIssue18681(t *testing.T) {
 
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select bin(a), bin(b), bin(c), bin(d) from load_data_test;"
+	levels := ctx.GetSessionVars().StmtCtx.ErrLevels()
 	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
-	ctx.GetSessionVars().StmtCtx.BadNullAsWarning = true
+	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
 
 	sc := ctx.GetSessionVars().StmtCtx
 	oldTypeFlags := sc.TypeFlags()

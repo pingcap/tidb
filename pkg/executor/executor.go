@@ -2105,27 +2105,33 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	// pushing them down to TiKV as flags.
 
 	sc.InRestrictedSQL = vars.InRestrictedSQL
+
+	errLevels := sc.ErrLevels()
+	errLevels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 	switch stmt := s.(type) {
 	// `ResetUpdateStmtCtx` and `ResetDeleteStmtCtx` may modify the flags, so we'll need to store them.
 	case *ast.UpdateStmt:
 		ResetUpdateStmtCtx(sc, stmt, vars)
+		errLevels = sc.ErrLevels()
 	case *ast.DeleteStmt:
 		ResetDeleteStmtCtx(sc, stmt, vars)
+		errLevels = sc.ErrLevels()
 	case *ast.InsertStmt:
 		sc.InInsertStmt = true
-		var errLevels errctx.LevelMap
 		// For insert statement (not for update statement), disabling the StrictSQLMode
 		// should make TruncateAsWarning and DividedByZeroAsWarning,
 		// but should not make DupKeyAsWarning.
 		sc.DupKeyAsWarning = stmt.IgnoreErr
-		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.IgnoreNoPartition = stmt.IgnoreErr
 		if stmt.IgnoreErr {
 			errLevels[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelWarn
 		}
-		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !vars.StrictSQLMode || stmt.IgnoreErr)
+		errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
+			!vars.SQLMode.HasErrorForDivisionByZeroMode(),
+			!vars.StrictSQLMode || stmt.IgnoreErr,
+		)
 		sc.Priority = stmt.Priority
-		sc.SetErrLevels(errLevels)
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
@@ -2191,6 +2197,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
 	}
 
+	if errLevels != sc.ErrLevels() {
+		sc.SetErrLevels(errLevels)
+	}
+
 	sc.SetTypeFlags(sc.TypeFlags().
 		WithSkipUTF8Check(vars.SkipUTF8Check).
 		WithSkipSACIICheck(vars.SkipASCIICheck).
@@ -2248,9 +2258,14 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 // ResetUpdateStmtCtx resets statement context for UpdateStmt.
 func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars *variable.SessionVars) {
 	sc.InUpdateStmt = true
+	errLevels := sc.ErrLevels()
 	sc.DupKeyAsWarning = stmt.IgnoreErr
-	sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-	sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !vars.StrictSQLMode || stmt.IgnoreErr)
+	errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
+		!vars.SQLMode.HasErrorForDivisionByZeroMode(),
+		!vars.StrictSQLMode || stmt.IgnoreErr,
+	)
+	sc.SetErrLevels(errLevels)
 	sc.Priority = stmt.Priority
 	sc.IgnoreNoPartition = stmt.IgnoreErr
 	sc.SetTypeFlags(sc.TypeFlags().
@@ -2263,9 +2278,14 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 // ResetDeleteStmtCtx resets statement context for DeleteStmt.
 func ResetDeleteStmtCtx(sc *stmtctx.StatementContext, stmt *ast.DeleteStmt, vars *variable.SessionVars) {
 	sc.InDeleteStmt = true
+	errLevels := sc.ErrLevels()
 	sc.DupKeyAsWarning = stmt.IgnoreErr
-	sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-	sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !vars.StrictSQLMode || stmt.IgnoreErr)
+	errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
+		!vars.SQLMode.HasErrorForDivisionByZeroMode(),
+		!vars.StrictSQLMode || stmt.IgnoreErr,
+	)
+	sc.SetErrLevels(errLevels)
 	sc.Priority = stmt.Priority
 	sc.SetTypeFlags(sc.TypeFlags().
 		WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr).
@@ -2786,10 +2806,6 @@ func (e *AdminShowBDRRoleExec) Next(ctx context.Context, req *chunk.Chunk) error
 		role, err := meta.NewMeta(txn).GetBDRRole()
 		if err != nil {
 			return err
-		}
-
-		if role == "" {
-			role = string(ast.BDRRoleLocalOnly)
 		}
 
 		req.AppendString(0, role)
