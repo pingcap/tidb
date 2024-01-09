@@ -2785,4 +2785,5 @@ func TestIssue38756(t *testing.T) {
 	tk.MustExec("insert into t values (1), (2), (3)")
 	tk.MustQuery("SELECT SQRT(1) FROM t").Check(testkit.Rows("1", "1", "1"))
 	tk.MustQuery("(SELECT DISTINCT SQRT(1) FROM t)").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT DISTINCT cast(1 as double) FROM t").Check(testkit.Rows("1"))
 }
