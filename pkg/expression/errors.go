@@ -76,8 +76,8 @@ func handleInvalidTimeError(ctx EvalContext, err error) error {
 		types.ErrDatetimeFunctionOverflow.Equal(err) || types.ErrIncorrectDatetimeValue.Equal(err)) {
 		return err
 	}
-	tc := ctx.GetSessionVars().StmtCtx.TypeCtx()
-	return tc.HandleTruncate(err)
+	ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
+	return ec.HandleError(err)
 }
 
 // handleDivisionByZeroError reports error or warning depend on the context.
