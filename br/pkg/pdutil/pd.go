@@ -300,7 +300,7 @@ func NewPdController(
 		pdHTTPCliConfig = append(pdHTTPCliConfig, pdhttp.WithTLSConfig(tlsConf))
 	}
 	pdHTTPCli := pdhttp.NewClient("br/lightning PD controller", addrs, pdHTTPCliConfig...).
-		WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, PDRequestRetryTime))
+		WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, PDRequestRetryTime*time.Second))
 	return &PdController{
 		addrs:     processedAddrs,
 		cli:       cli,
