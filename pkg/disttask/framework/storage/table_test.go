@@ -440,7 +440,7 @@ func TestGetUsedSlotsOnNodes(t *testing.T) {
 
 func TestGetActiveSubtasks(t *testing.T) {
 	_, tm, ctx := testutil.InitTableTest(t)
-	require.NoError(t, tm.StartManager(ctx, ":4000", ""))
+	require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
 	id, err := tm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
