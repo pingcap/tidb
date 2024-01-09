@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package framework_test
+package example
 
 import (
 	"testing"
@@ -22,20 +22,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestRetryErrOnNextSubtasksBatch(t *testing.T) {
-	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
-	defer ctrl.Finish()
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetPlanErrSchedulerExt(ctrl, testContext), testContext)
-	testutil.SubmitTaskAndCheckSuccessForBasic(ctx, t, "key1", testContext)
-	distContext.Close()
-}
-
-func TestPlanNotRetryableOnNextSubtasksBatchErr(t *testing.T) {
-	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
+func TestExamole(t *testing.T) {
+	ctx, ctrl, _, distContext := testutil.InitTestContext(t, 5)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetPlanNotRetryableErrSchedulerExt(ctrl), testContext)
+	registerExample()
 	task := testutil.SubmitAndWaitTask(ctx, t, "key1")
-	require.Equal(t, proto.TaskStateFailed, task.State)
+	require.Equal(t, proto.TaskStateSucceed, task.State)
 	distContext.Close()
 }

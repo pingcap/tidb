@@ -30,25 +30,21 @@ import (
 )
 
 // RegisterTaskMeta initialize mock components for dist task.
-func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, schedulerHandle scheduler.Extension, testContext *TestContext, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) {
+func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, schedulerHandle scheduler.Extension, testContext *TestContext) {
 	mockExtension := mock.NewMockExtension(ctrl)
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
 	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockSubtaskExecutor := GetMockSubtaskExecutor(ctrl)
-	if runSubtaskFn == nil {
-		mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
-			func(ctx context.Context, subtask *proto.Subtask) error {
-				switch subtask.Step {
-				case proto.StepOne, proto.StepTwo:
-					testContext.CollectSubtask(subtask)
-				default:
-					panic("invalid step")
-				}
-				return nil
-			}).AnyTimes()
-	} else {
-		mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(runSubtaskFn).AnyTimes()
-	}
+	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, subtask *proto.Subtask) error {
+			switch subtask.Step {
+			case proto.StepOne, proto.StepTwo:
+				testContext.CollectSubtask(subtask)
+			default:
+				panic("invalid step")
+			}
+			return nil
+		}).AnyTimes()
 	mockExtension.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
 	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
@@ -128,4 +124,20 @@ func WaitTaskDoneOrPaused(ctx context.Context, t *testing.T, taskKey string) *pr
 	})
 	require.NoError(t, err)
 	return task
+}
+
+func SubmitTaskAndCheckSuccessForBasic(ctx context.Context, t *testing.T, taskKey string, testContext *TestContext) {
+	SubmitTaskAndCheckSuccess(ctx, t, taskKey, testContext, map[proto.Step]int{
+		proto.StepOne: 3,
+		proto.StepTwo: 1,
+	})
+}
+
+func SubmitTaskAndCheckSuccess(ctx context.Context, t *testing.T, taskKey string,
+	testContext *TestContext, subtaskCnts map[proto.Step]int) {
+	task := SubmitAndWaitTask(ctx, t, taskKey)
+	require.Equal(t, proto.TaskStateSucceed, task.State)
+	for step, cnt := range subtaskCnts {
+		require.Equal(t, cnt, testContext.CollectedSubtaskCnt(task.ID, step))
+	}
 }

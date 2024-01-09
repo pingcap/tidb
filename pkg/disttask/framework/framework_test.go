@@ -15,7 +15,6 @@
 package framework_test
 
 import (
-	"context"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -31,22 +30,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func submitTaskAndCheckSuccessForBasic(ctx context.Context, t *testing.T, taskKey string, testContext *testutil.TestContext) {
-	submitTaskAndCheckSuccess(ctx, t, taskKey, testContext, map[proto.Step]int{
-		proto.StepOne: 3,
-		proto.StepTwo: 1,
-	})
-}
-
-func submitTaskAndCheckSuccess(ctx context.Context, t *testing.T, taskKey string,
-	testContext *testutil.TestContext, subtaskCnts map[proto.Step]int) {
-	task := testutil.SubmitAndWaitTask(ctx, t, taskKey)
-	require.Equal(t, proto.TaskStateSucceed, task.State)
-	for step, cnt := range subtaskCnts {
-		require.Equal(t, cnt, testContext.CollectedSubtaskCnt(task.ID, step))
-	}
-}
-
 func TestRandomOwnerChangeWithMultipleTasks(t *testing.T) {
 	nodeCnt := 5
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, nodeCnt)
@@ -55,12 +38,12 @@ func TestRandomOwnerChangeWithMultipleTasks(t *testing.T) {
 	t.Logf("seed: %d", seed)
 	random := rand.New(rand.NewSource(seed))
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext)
 	var wg util.WaitGroupWrapper
 	for i := 0; i < 10; i++ {
 		taskKey := fmt.Sprintf("key%d", i)
 		wg.Run(func() {
-			submitTaskAndCheckSuccessForBasic(ctx, t, taskKey, testContext)
+			testutil.SubmitTaskAndCheckSuccessForBasic(ctx, t, taskKey, testContext)
 		})
 	}
 	wg.Run(func() {
@@ -84,12 +67,12 @@ func TestFrameworkScaleInAndOut(t *testing.T) {
 	t.Logf("seed: %d", seed)
 	random := rand.New(rand.NewSource(seed))
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext)
 	var wg util.WaitGroupWrapper
 	for i := 0; i < 12; i++ {
 		taskKey := fmt.Sprintf("key%d", i)
 		wg.Run(func() {
-			submitTaskAndCheckSuccessForBasic(ctx, t, taskKey, testContext)
+			testutil.SubmitTaskAndCheckSuccessForBasic(ctx, t, taskKey, testContext)
 		})
 	}
 	wg.Run(func() {
@@ -118,10 +101,10 @@ func TestFrameworkWithQuery(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext)
 	var wg util.WaitGroupWrapper
 	wg.Run(func() {
-		submitTaskAndCheckSuccessForBasic(ctx, t, "key1", testContext)
+		testutil.SubmitTaskAndCheckSuccessForBasic(ctx, t, "key1", testContext)
 	})
 
 	tk := testkit.NewTestKit(t, distContext.Store)
@@ -144,7 +127,7 @@ func TestFrameworkCancelGTask(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunCancel", "1*return(1)"))
 	defer func() {
@@ -159,7 +142,7 @@ func TestFrameworkSubTaskFailed(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 1)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunErr", "1*return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockExecutorRunErr"))
@@ -173,7 +156,7 @@ func TestFrameworkSubTaskFailed(t *testing.T) {
 func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 1)
 	defer ctrl.Finish()
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockExecSubtaskInitEnvErr", "return()"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockExecSubtaskInitEnvErr"))
@@ -186,12 +169,12 @@ func TestFrameworkSubTaskInitEnvFailed(t *testing.T) {
 func TestOwnerChangeWhenSchedule(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext)
 	scheduler.MockOwnerChange = func() {
 		distContext.SetOwner(0)
 	}
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockOwnerChange", "1*return(true)"))
-	submitTaskAndCheckSuccessForBasic(ctx, t, "😊", testContext)
+	testutil.SubmitTaskAndCheckSuccessForBasic(ctx, t, "😊", testContext)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockOwnerChange"))
 	distContext.Close()
 }
@@ -200,11 +183,11 @@ func TestTaskExecutorDownBasic(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 4)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor", "return()"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager", "4*return(\":4000\")"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown", "return(\":4000\")"))
-	submitTaskAndCheckSuccess(ctx, t, "😊", testContext, map[proto.Step]int{
+	testutil.SubmitTaskAndCheckSuccess(ctx, t, "😊", testContext, map[proto.Step]int{
 		proto.StepOne: 3,
 		proto.StepTwo: 1,
 	})
@@ -217,11 +200,11 @@ func TestTaskExecutorDownBasic(t *testing.T) {
 func TestTaskExecutorDownManyNodes(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 30)
 	defer ctrl.Finish()
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor", "return()"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager", "30*return(\":4000\")"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown", "return(\":4000\")"))
-	submitTaskAndCheckSuccess(ctx, t, "😊", testContext, map[proto.Step]int{
+	testutil.SubmitTaskAndCheckSuccess(ctx, t, "😊", testContext, map[proto.Step]int{
 		proto.StepOne: 3,
 		proto.StepTwo: 1,
 	})
@@ -235,21 +218,21 @@ func TestFrameworkSetLabel(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext)
 	tk := testkit.NewTestKit(t, distContext.Store)
 
 	// 1. all "" role.
-	submitTaskAndCheckSuccessForBasic(ctx, t, "😁", testContext)
+	testutil.SubmitTaskAndCheckSuccessForBasic(ctx, t, "😁", testContext)
 
 	// 2. one "background" role.
 	tk.MustExec("set global tidb_service_scope=background")
 	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
 	tk.MustQuery("select @@tidb_service_scope").Check(testkit.Rows("background"))
-	submitTaskAndCheckSuccessForBasic(ctx, t, "😊", testContext)
+	testutil.SubmitTaskAndCheckSuccessForBasic(ctx, t, "😊", testContext)
 
 	// 3. 2 "background" role.
 	tk.MustExec("update mysql.dist_framework_meta set role = \"background\" where host = \":4001\"")
-	submitTaskAndCheckSuccessForBasic(ctx, t, "😆", testContext)
+	testutil.SubmitTaskAndCheckSuccessForBasic(ctx, t, "😆", testContext)
 
 	// 4. set wrong sys var.
 	tk.MustMatchErrMsg("set global tidb_service_scope=wrong", `incorrect value: .*. tidb_service_scope options: "", background`)
@@ -265,7 +248,7 @@ func TestGC(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/historySubtaskTableGcInterval", "return(1)"))
@@ -274,7 +257,7 @@ func TestGC(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/historySubtaskTableGcInterval"))
 	}()
 
-	submitTaskAndCheckSuccessForBasic(ctx, t, "😊", testContext)
+	testutil.SubmitTaskAndCheckSuccessForBasic(ctx, t, "😊", testContext)
 
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
@@ -305,7 +288,7 @@ func TestFrameworkSubtaskFinishedCancel(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockSubtaskFinishedCancel", "1*return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockSubtaskFinishedCancel"))
@@ -319,7 +302,7 @@ func TestFrameworkRunSubtaskCancel(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/MockRunSubtaskCancel", "1*return(true)"))
 	task := testutil.SubmitAndWaitTask(ctx, t, "key1")
 	require.Equal(t, proto.TaskStateReverted, task.State)
@@ -330,9 +313,9 @@ func TestFrameworkRunSubtaskCancel(t *testing.T) {
 func TestFrameworkCleanUpRoutine(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()"))
-	submitTaskAndCheckSuccessForBasic(ctx, t, "key1", testContext)
+	testutil.SubmitTaskAndCheckSuccessForBasic(ctx, t, "key1", testContext)
 	<-scheduler.WaitCleanUpFinished
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
@@ -346,7 +329,7 @@ func TestTaskCancelledBeforeUpdateTask(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 1)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/cancelBeforeUpdateTask", "1*return(true)"))
 	task := testutil.SubmitAndWaitTask(ctx, t, "key1")
 	require.Equal(t, proto.TaskStateReverted, task.State)

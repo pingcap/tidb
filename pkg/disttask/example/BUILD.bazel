@@ -1,0 +1,23 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "example",
+    srcs = ["example.go"],
+    importpath = "github.com/pingcap/tidb/pkg/disttask/example",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/disttask/framework/proto",
+        "//pkg/disttask/framework/scheduler",
+        "//pkg/disttask/framework/taskexecutor",
+        "//pkg/disttask/framework/taskexecutor/execute",
+    ],
+)
+
+go_test(
+    name = "example_test",
+    timeout = "short",
+    srcs = ["example_test.go"],
+    embed = [":example"],
+    flaky = True,
+    deps = ["//pkg/disttask/framework/testutil"],
+)
