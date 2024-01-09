@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	diststorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -67,7 +68,7 @@ func (*BackfillingSchedulerExt) OnTick(_ context.Context, _ *proto.Task) {
 // OnNextSubtasksBatch generate batch of next step's plan.
 func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 	ctx context.Context,
-	taskHandle scheduler.TaskHandle,
+	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
 	execIDs []string,
 	nextStep proto.Step,
@@ -175,7 +176,7 @@ func skipMergeSort(stats []external.MultipleFilesStat) bool {
 }
 
 // OnDone implements scheduler.Extension interface.
-func (*BackfillingSchedulerExt) OnDone(_ context.Context, _ scheduler.TaskHandle, _ *proto.Task) error {
+func (*BackfillingSchedulerExt) OnDone(_ context.Context, _ diststorage.TaskHandle, _ *proto.Task) error {
 	return nil
 }
 
@@ -195,11 +196,10 @@ type LitBackfillScheduler struct {
 	d *ddl
 }
 
-func newLitBackfillScheduler(ctx context.Context, d *ddl, taskMgr scheduler.TaskManager,
-	nodeMgr *scheduler.NodeManager, task *proto.Task) scheduler.Scheduler {
+func newLitBackfillScheduler(ctx context.Context, d *ddl, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 	sch := LitBackfillScheduler{
 		d:             d,
-		BaseScheduler: scheduler.NewBaseScheduler(ctx, taskMgr, nodeMgr, task),
+		BaseScheduler: scheduler.NewBaseScheduler(ctx, task, param),
 	}
 	return &sch
 }
@@ -207,7 +207,7 @@ func newLitBackfillScheduler(ctx context.Context, d *ddl, taskMgr scheduler.Task
 // Init implements BaseScheduler interface.
 func (sch *LitBackfillScheduler) Init() (err error) {
 	taskMeta := &BackfillTaskMeta{}
-	if err = json.Unmarshal(sch.BaseScheduler.Task.Meta, taskMeta); err != nil {
+	if err = json.Unmarshal(sch.BaseScheduler.GetTask().Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
 	sch.BaseScheduler.Extension = &BackfillingSchedulerExt{
@@ -333,7 +333,7 @@ func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool
 
 func generateGlobalSortIngestPlan(
 	ctx context.Context,
-	taskHandle scheduler.TaskHandle,
+	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
 	jobID int64,
 	cloudStorageURI string,
@@ -408,7 +408,7 @@ func generateGlobalSortIngestPlan(
 }
 
 func generateMergePlan(
-	taskHandle scheduler.TaskHandle,
+	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
 	logger *zap.Logger,
 ) ([][]byte, error) {
@@ -507,7 +507,7 @@ func getRangeSplitter(
 }
 
 func getSummaryFromLastStep(
-	taskHandle scheduler.TaskHandle,
+	taskHandle diststorage.TaskHandle,
 	gTaskID int64,
 	step proto.Step,
 ) (startKey, endKey kv.Key, totalKVSize uint64, multiFileStat []external.MultipleFilesStat, err error) {

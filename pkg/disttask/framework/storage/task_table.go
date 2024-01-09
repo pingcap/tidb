@@ -49,8 +49,8 @@ const (
 	// InsertTaskColumns is the columns used in insert task.
 	InsertTaskColumns = `task_key, type, state, priority, concurrency, step, meta, create_time`
 
-	subtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time,
-				start_time, state_update_time, meta, summary, ordinal`
+	basicSubtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time, ordinal`
+	subtaskColumns      = basicSubtaskColumns + `, start_time, state_update_time, meta, summary`
 	// InsertSubtaskColumns is the columns used in insert subtask.
 	InsertSubtaskColumns = `step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary`
 )
@@ -82,6 +82,14 @@ type SessionExecutor interface {
 	WithNewSession(fn func(se sessionctx.Context) error) error
 	// WithNewTxn executes the fn in a new transaction.
 	WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error
+}
+
+// TaskHandle provides the interface for operations needed by Scheduler.
+// Then we can use scheduler's function in Scheduler interface.
+type TaskHandle interface {
+	// GetPreviousSubtaskMetas gets previous subtask metas.
+	GetPreviousSubtaskMetas(taskID int64, step proto.Step) ([][]byte, error)
+	SessionExecutor
 }
 
 // TaskManager is the manager of task and subtask.
@@ -415,44 +423,50 @@ func (mgr *TaskManager) GetUsedSlotsOnNodes(ctx context.Context) (map[string]int
 	return slots, nil
 }
 
-// row2SubTask converts a row to a subtask.
-func row2SubTask(r chunk.Row) *proto.Subtask {
-	// subtask defines start/update time as bigint, to ensure backward compatible,
-	// we keep it that way, and we convert it here.
-	createTime, _ := r.GetTime(7).GoTime(time.Local)
-	var startTime, updateTime time.Time
-	if !r.IsNull(8) {
-		ts := r.GetInt64(8)
-		startTime = time.Unix(ts, 0)
-	}
-	if !r.IsNull(9) {
-		ts := r.GetInt64(9)
-		updateTime = time.Unix(ts, 0)
-	}
-	var ordinal int
-	if !r.IsNull(12) {
-		ordinal = int(r.GetInt64(12))
-	}
-	subtask := &proto.Subtask{
-		ID:          r.GetInt64(0),
-		Step:        proto.Step(r.GetInt64(1)),
-		Type:        proto.Int2Type(int(r.GetInt64(3))),
-		ExecID:      r.GetString(4),
-		State:       proto.SubtaskState(r.GetString(5)),
-		Concurrency: int(r.GetInt64(6)),
-		CreateTime:  createTime,
-		StartTime:   startTime,
-		UpdateTime:  updateTime,
-		Meta:        r.GetBytes(10),
-		Summary:     r.GetJSON(11).String(),
-		Ordinal:     ordinal,
-	}
+// row2BasicSubTask converts a row to a subtask with basic info
+func row2BasicSubTask(r chunk.Row) *proto.Subtask {
 	taskIDStr := r.GetString(2)
 	tid, err := strconv.Atoi(taskIDStr)
 	if err != nil {
 		logutil.BgLogger().Warn("unexpected subtask id", zap.String("subtask-id", taskIDStr))
 	}
-	subtask.TaskID = int64(tid)
+	createTime, _ := r.GetTime(7).GoTime(time.Local)
+	var ordinal int
+	if !r.IsNull(8) {
+		ordinal = int(r.GetInt64(8))
+	}
+	subtask := &proto.Subtask{
+		ID:          r.GetInt64(0),
+		Step:        proto.Step(r.GetInt64(1)),
+		TaskID:      int64(tid),
+		Type:        proto.Int2Type(int(r.GetInt64(3))),
+		ExecID:      r.GetString(4),
+		State:       proto.SubtaskState(r.GetString(5)),
+		Concurrency: int(r.GetInt64(6)),
+		CreateTime:  createTime,
+		Ordinal:     ordinal,
+	}
+	return subtask
+}
+
+// row2SubTask converts a row to a subtask.
+func row2SubTask(r chunk.Row) *proto.Subtask {
+	subtask := row2BasicSubTask(r)
+	// subtask defines start/update time as bigint, to ensure backward compatible,
+	// we keep it that way, and we convert it here.
+	var startTime, updateTime time.Time
+	if !r.IsNull(9) {
+		ts := r.GetInt64(9)
+		startTime = time.Unix(ts, 0)
+	}
+	if !r.IsNull(10) {
+		ts := r.GetInt64(10)
+		updateTime = time.Unix(ts, 0)
+	}
+	subtask.StartTime = startTime
+	subtask.UpdateTime = updateTime
+	subtask.Meta = r.GetBytes(11)
+	subtask.Summary = r.GetJSON(12).String()
 	return subtask
 }
 
@@ -548,6 +562,22 @@ func (mgr *TaskManager) UpdateErrorToSubtask(ctx context.Context, execID string,
 		proto.TaskStatePending,
 		proto.TaskStateRunning)
 	return err1
+}
+
+// GetActiveSubtasks implements TaskManager.GetActiveSubtasks.
+func (mgr *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64) ([]*proto.Subtask, error) {
+	rs, err := mgr.executeSQLWithNewSession(ctx, `
+		select `+basicSubtaskColumns+` from mysql.tidb_background_subtask
+		where task_key = %? and state in (%?, %?)`,
+		taskID, proto.TaskStatePending, proto.TaskStateRunning)
+	if err != nil {
+		return nil, err
+	}
+	subtasks := make([]*proto.Subtask, 0, len(rs))
+	for _, r := range rs {
+		subtasks = append(subtasks, row2BasicSubTask(r))
+	}
+	return subtasks, nil
 }
 
 // GetSubtasksByStepAndState gets the subtask by step and state.
@@ -798,19 +828,18 @@ func (mgr *TaskManager) IsTaskExecutorCanceled(ctx context.Context, execID strin
 }
 
 // UpdateSubtasksExecIDs update subtasks' execID.
-func (mgr *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, taskID int64, subtasks []*proto.Subtask) error {
+func (mgr *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.Subtask) error {
 	// skip the update process.
 	if len(subtasks) == 0 {
 		return nil
 	}
 	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		for _, subtask := range subtasks {
-			_, err := sqlexec.ExecSQL(ctx, se,
-				"update mysql.tidb_background_subtask set exec_id = %? where id = %? and state = %? and task_key = %?",
-				subtask.ExecID,
-				subtask.ID,
-				subtask.State,
-				taskID)
+			_, err := sqlexec.ExecSQL(ctx, se, `
+				update mysql.tidb_background_subtask
+				set exec_id = %?
+				where id = %? and state = %?`,
+				subtask.ExecID, subtask.ID, subtask.State)
 			if err != nil {
 				return err
 			}

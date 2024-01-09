@@ -35,6 +35,7 @@ type slotManager struct {
 	available int
 }
 
+// subtasks inside a task will be run in serial, so they takes task.Concurrency slots.
 func (sm *slotManager) alloc(task *proto.Task) {
 	sm.Lock()
 	defer sm.Unlock()
