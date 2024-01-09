@@ -32,8 +32,39 @@ import (
 	"go.uber.org/zap"
 )
 
+// The abstraction layer of reading mpp resp:
+// 1. MPPGather:
+//  1. As part of the TiDB Volcano model executor, it is equivalent to a TableReader.
+//
+// 2. selectResult:
+//  1. Decode select result(mppResponse) into chunk.
+//  2. Record runtime info.
+//
+// 3. ExecutorWithRetry:
+//  1. Recovery mpp err if possible and retry MPP Task.
+//
+// 4. localMppCoordinator:
+//  1. Generate MPP fragment and dispatch MPPTask.
+//  2. Receive MPP status for better err msg and correct stats for Limit.
+//
+// 5. mppIterator:
+//  1. Send or receive MPP RPC.
 type ExecutorWithRetry struct {
-	sctx sessionctx.Context
+	sctx       sessionctx.Context
+	memTracker *memory.Tracker
+	planIDs    []int
+	is         infoschema.InfoSchema
+	plan       plannercore.PhysicalPlan
+	startTS    uint64
+	queryID    kv.MPPQueryID
+
+	// Following members need to set up every time retry mpp error.
+	gatherID uint64
+	coord    kv.MppCoordinator
+	// Only for MemLimit err recovery for now.
+	// AutoScaler use this value as hint to scale out CN.
+	nodeCnt int
+
 	// mppErrRecovery is designed for the recovery of MPP errors.
 	// Basic idea:
 	// 1. It attempts to hold the results of MPP. During the holding process, if an error occurs, it starts error recovery.
@@ -42,34 +73,18 @@ type ExecutorWithRetry struct {
 	// 2. If the held MPP results exceed the capacity, will starts returning results to caller.
 	//    Once the results start being returned, error recovery cannot be performed anymore.
 	mppErrRecovery *RecoveryHandler
-
-	gatherID uint64
-	startTS  uint64
-	queryID  kv.MPPQueryID
-
-	coord kv.MppCoordinator
-
-	planIDs []int
-	is      infoschema.InfoSchema
-	plan    plannercore.PhysicalPlan
-
-	memTracker *memory.Tracker
-
-	// Only for MemLimit err recovery for now.
-	// AutoScaler use this value as hint to scale out CN.
-	nodeCnt int
 }
 
 var _ kv.Response = &ExecutorWithRetry{}
 
 const mppErrRecoveryHoldChkCap = 4
 
-func NewRetryer(sctx sessionctx.Context, memTracker *memory.Tracker, planIDs []int,
+func NewRetryer(sctx sessionctx.Context, parentTracker *memory.Tracker, planIDs []int,
 	plan plannercore.PhysicalPlan, startTS uint64, queryID kv.MPPQueryID,
-	dummy bool) *ExecutorWithRetry {
+	dummy bool, is infoschema.InfoSchema) *ExecutorWithRetry {
 	// TODO: After add row info in tipb.DataPacket, we can use row count as capacity.
 	// For now, use the number of tipb.DataPacket as capacity.
-	const holdCap = 1
+	const holdCap = 2
 
 	disaggTiFlashWithAutoScaler := config.GetGlobalConfig().DisaggregatedTiFlash && config.GetGlobalConfig().UseAutoScaler
 	_, allowTiFlashFallback := sctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
@@ -80,14 +95,16 @@ func NewRetryer(sctx sessionctx.Context, memTracker *memory.Tracker, planIDs []i
 	// 3. For cached table, will not dispatch tasks to TiFlash, so no need to recovery.
 	enableMPPRecovery := disaggTiFlashWithAutoScaler && !allowTiFlashFallback && !dummy
 	recoveryHandler := NewRecoveryHandler(disaggTiFlashWithAutoScaler,
-		uint64(holdCap), enableMPPRecovery, memTracker)
+		uint64(holdCap), enableMPPRecovery, parentTracker)
 	retryer := &ExecutorWithRetry{
 		sctx:           sctx,
-		mppErrRecovery: recoveryHandler,
+		memTracker:     memory.NewTracker(parentTracker.Label(), 0),
+		planIDs:        planIDs,
+		is:             is,
+		plan:           plan,
 		startTS:        startTS,
 		queryID:        queryID,
-		// gjt todo: child tracker?
-		memTracker: memTracker,
+		mppErrRecovery: recoveryHandler,
 	}
 	retryer.setupMPPCoordinator(false)
 
@@ -111,6 +128,8 @@ func (r *ExecutorWithRetry) Next(ctx context.Context) (resp kv.ResultSubset, err
 
 func (r *ExecutorWithRetry) Close() error {
 	mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(r.getCoordUniqueID())
+	// Handle reports only when it's not failed.
+	r.coord.(*localMppCoordinator).handleAllReports()
 	return r.coord.Close()
 }
 
@@ -128,6 +147,7 @@ func (r *ExecutorWithRetry) setupMPPCoordinator(recoverying bool) error {
 
 	r.coord = r.buildCoordinator()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Register(r.getCoordUniqueID(), r.coord)
+
 	if r.nodeCnt = r.coord.GetNodeCnt(); r.nodeCnt <= 0 {
 		return errors.Errorf("tiflash node count should be greater than zero: %v", r.nodeCnt)
 	}

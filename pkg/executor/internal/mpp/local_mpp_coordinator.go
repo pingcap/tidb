@@ -618,7 +618,6 @@ func (c *localMppCoordinator) Close() error {
 	}
 	c.cancelFunc()
 	<-c.wgDoneChan
-	c.handleAllReports()
 	return nil
 }
 

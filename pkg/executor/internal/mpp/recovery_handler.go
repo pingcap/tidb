@@ -70,12 +70,12 @@ func (m *RecoveryHandler) HoldResult(resp *mppResponse) {
 	m.holder.insert(resp)
 }
 
-// NumHoldResp returns the number of chunk holded.
+// NumHoldResp returns the number of resp holded.
 func (m *RecoveryHandler) NumHoldResp() int {
 	return len(m.holder.resps)
 }
 
-// PopFrontResp pop one chunk.
+// PopFrontResp pop one resp.
 func (m *RecoveryHandler) PopFrontResp() *mppResponse {
 	if !m.enable || len(m.holder.resps) == 0 {
 		return nil
@@ -186,7 +186,6 @@ func (h *mppResultHolder) insert(resp *mppResponse) {
 
 func (h *mppResultHolder) reset() {
 	h.cannotHold = false
-	// h.curRows = 0
 	h.resps = h.resps[:0]
 	h.memTracker.Detach()
 }

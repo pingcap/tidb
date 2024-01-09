@@ -99,7 +99,7 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 	}
 	// gjt todo name
 	planIDs := collectPlanIDS(e.originalPlan, nil)
-	if e.mppExec = mpp.NewRetryer(e.Ctx(), e.memTracker, planIDs, e.originalPlan, e.startTS, e.mppQueryID, e.dummy); e.mppExec == nil {
+	if e.mppExec = mpp.NewRetryer(e.Ctx(), e.memTracker, planIDs, e.originalPlan, e.startTS, e.mppQueryID, e.dummy, e.is); e.mppExec == nil {
 		return errors.New("generate mppExec failed")
 	}
 	e.respIter = distsql.GenSelectResultFromMPPResponse(e.Ctx(), e.RetFieldTypes(), planIDs, e.ID(), e.mppExec)
