@@ -1270,7 +1270,7 @@ func (stm *TaskManager) getCPUCountOfManagedNode(ctx context.Context, se session
 		}
 	}
 	if cpuCount == 0 {
-		return 0, errors.New("no managed node have enough resource")
+		return 0, errors.New("no managed node have enough resource for dist task")
 	}
 	return cpuCount, nil
 }
