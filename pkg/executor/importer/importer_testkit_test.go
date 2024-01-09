@@ -78,7 +78,7 @@ func TestGetTargetNodeCpuCnt(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
 		variable.EnableDistTask.Store(false)
 	})
-	require.NoError(t, tm.StartManager(ctx, "tidb1", ""))
+	require.NoError(t, tm.InitMeta(ctx, "tidb1", ""))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
 	// invalid path
