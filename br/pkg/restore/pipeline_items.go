@@ -260,6 +260,10 @@ func NewTiKVSender(
 	go sender.splitWorker(ctx, inCh, midCh, splitConcurrency)
 	if granularity == string(CoarseGrained) {
 		outCh := make(chan drainResultAndDone, defaultChannelSize)
+		// block on splitting and scattering regions.
+		// in coarse-grained mode, wait all regions are split and scattered is
+		// no longer a time-consuming operation, then we can batch download files
+		// as much as enough and reduce the time of blocking restore.
 		go sender.blockPipelineWorker(ctx, midCh, outCh)
 		go sender.restoreWorker(ctx, outCh)
 	} else {

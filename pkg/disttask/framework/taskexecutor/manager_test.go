@@ -206,7 +206,7 @@ func TestManager(t *testing.T) {
 	task2 := &proto.Task{ID: taskID2, State: proto.TaskStateReverting, Step: proto.StepOne, Type: "type"}
 	task3 := &proto.Task{ID: taskID3, State: proto.TaskStatePausing, Step: proto.StepOne, Type: "type"}
 
-	mockTaskTable.EXPECT().StartManager(m.ctx, "test", "").Return(nil).Times(1)
+	mockTaskTable.EXPECT().InitMeta(m.ctx, "test", "").Return(nil).Times(1)
 	mockTaskTable.EXPECT().GetTasksInStates(m.ctx, proto.TaskStateRunning, proto.TaskStateReverting, proto.TaskStatePausing).
 		Return([]*proto.Task{task1, task2, task3}, nil).AnyTimes()
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
@@ -568,12 +568,12 @@ func TestManagerInitMeta(t *testing.T) {
 		ctx:       ctx,
 		logCtx:    ctx,
 	}
-	mockTaskTable.EXPECT().StartManager(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	mockTaskTable.EXPECT().InitMeta(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	require.NoError(t, m.InitMeta())
 	require.True(t, ctrl.Satisfied())
 	gomock.InOrder(
-		mockTaskTable.EXPECT().StartManager(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("mock err")),
-		mockTaskTable.EXPECT().StartManager(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil),
+		mockTaskTable.EXPECT().InitMeta(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("mock err")),
+		mockTaskTable.EXPECT().InitMeta(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil),
 	)
 	require.NoError(t, m.InitMeta())
 	require.True(t, ctrl.Satisfied())
@@ -583,12 +583,12 @@ func TestManagerInitMeta(t *testing.T) {
 		retrySQLTimes = bak
 	})
 	retrySQLTimes = 1
-	mockTaskTable.EXPECT().StartManager(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("mock err"))
+	mockTaskTable.EXPECT().InitMeta(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("mock err"))
 	require.ErrorContains(t, m.InitMeta(), "mock err")
 	require.True(t, ctrl.Satisfied())
 
 	cancel()
-	mockTaskTable.EXPECT().StartManager(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("mock err"))
+	mockTaskTable.EXPECT().InitMeta(gomock.Any(), gomock.Any(), gomock.Any()).Return(errors.New("mock err"))
 	require.ErrorIs(t, m.InitMeta(), context.Canceled)
 	require.True(t, ctrl.Satisfied())
 }

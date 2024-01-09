@@ -458,7 +458,7 @@ func (e *IndexNestedLoopHashJoin) newInnerWorker(taskCh chan *indexHashJoinTask,
 		resultCh:          e.resultCh,
 		joinKeyBuf:        make([]byte, 1),
 		outerRowStatus:    make([]outerRowStatusFlag, 0, e.MaxChunkSize()),
-		rowIter:           chunk.NewIterator4Slice([]chunk.Row{}).(*chunk.Iterator4Slice),
+		rowIter:           chunk.NewIterator4Slice([]chunk.Row{}),
 	}
 	iw.memTracker.AttachTo(e.memTracker)
 	if len(copiedRanges) != 0 {

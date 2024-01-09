@@ -52,7 +52,7 @@ func checkTaskStateStep(t *testing.T, task *proto.Task, state proto.TaskState, s
 func TestTaskTable(t *testing.T) {
 	_, gm, ctx := testutil.InitTableTest(t)
 
-	require.NoError(t, gm.StartManager(ctx, ":4000", ""))
+	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
 
 	_, err := gm.CreateTask(ctx, "key1", "test", 999, []byte("test"))
 	require.ErrorContains(t, err, "task concurrency(999) larger than cpu count")
@@ -232,7 +232,7 @@ func TestSwitchTaskStep(t *testing.T) {
 	store, tm, ctx := testutil.InitTableTest(t)
 	tk := testkit.NewTestKit(t, store)
 
-	require.NoError(t, tm.StartManager(ctx, ":4000", ""))
+	require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
 	taskID, err := tm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
 	require.NoError(t, err)
 	task, err := tm.GetTaskByID(ctx, taskID)
@@ -282,7 +282,7 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 	store, tm, ctx := testutil.InitTableTest(t)
 	tk := testkit.NewTestKit(t, store)
 
-	require.NoError(t, tm.StartManager(ctx, ":4000", ""))
+	require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
 	// normal flow
 	prepare := func(taskKey string) (*proto.Task, []*proto.Subtask) {
 		taskID, err := tm.CreateTask(ctx, taskKey, "test", 4, []byte("test"))
@@ -357,7 +357,7 @@ func TestSwitchTaskStepInBatch(t *testing.T) {
 func TestGetTopUnfinishedTasks(t *testing.T) {
 	_, gm, ctx := testutil.InitTableTest(t)
 
-	require.NoError(t, gm.StartManager(ctx, ":4000", ""))
+	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
 	taskStates := []proto.TaskState{
 		proto.TaskStateSucceed,
 		proto.TaskStatePending,
@@ -440,7 +440,7 @@ func TestGetUsedSlotsOnNodes(t *testing.T) {
 func TestSubTaskTable(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
 	timeBeforeCreate := time.Unix(time.Now().Unix(), 0)
-	require.NoError(t, sm.StartManager(ctx, ":4000", ""))
+	require.NoError(t, sm.InitMeta(ctx, ":4000", ""))
 	id, err := sm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
@@ -689,7 +689,7 @@ func TestSubTaskTable(t *testing.T) {
 
 func TestBothTaskAndSubTaskTable(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
-	require.NoError(t, sm.StartManager(ctx, ":4000", ""))
+	require.NoError(t, sm.InitMeta(ctx, ":4000", ""))
 	id, err := sm.CreateTask(ctx, "key1", "test", 4, []byte("test"))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), id)
@@ -830,16 +830,16 @@ func TestDistFrameworkMeta(t *testing.T) {
 	_, err := storage.GetCPUCountOfManagedNodes(ctx, sm)
 	require.ErrorContains(t, err, "no managed nodes")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(0)"))
-	require.NoError(t, sm.StartManager(ctx, ":4000", "background"))
+	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
 	cpuCount, err := storage.GetCPUCountOfManagedNodes(ctx, sm)
 	require.NoError(t, err)
 	require.Equal(t, 0, cpuCount)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)"))
-	require.NoError(t, sm.StartManager(ctx, ":4000", "background"))
+	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
-	require.NoError(t, sm.StartManager(ctx, ":4001", ""))
-	require.NoError(t, sm.StartManager(ctx, ":4002", "background"))
+	require.NoError(t, sm.InitMeta(ctx, ":4001", ""))
+	require.NoError(t, sm.InitMeta(ctx, ":4002", "background"))
 	nodes, err := sm.GetAllNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
@@ -848,22 +848,23 @@ func TestDistFrameworkMeta(t *testing.T) {
 		{ID: ":4002", Role: "background", CPUCount: 8},
 	}, nodes)
 
-	// won't be replaced by below one, but cpu count will be updated
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)"))
-	require.NoError(t, sm.StartManager(ctx, ":4002", ""))
-	require.NoError(t, sm.StartManager(ctx, ":4003", "background"))
+	require.NoError(t, sm.InitMeta(ctx, ":4002", ""))
+	require.NoError(t, sm.InitMeta(ctx, ":4003", "background"))
 
 	nodes, err = sm.GetAllNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
 		{ID: ":4000", Role: "background", CPUCount: 100},
 		{ID: ":4001", Role: "", CPUCount: 8},
-		{ID: ":4002", Role: "background", CPUCount: 100},
+		{ID: ":4002", Role: "", CPUCount: 100},
 		{ID: ":4003", Role: "background", CPUCount: 100},
 	}, nodes)
 	cpuCount, err = storage.GetCPUCountOfManagedNodes(ctx, sm)
 	require.NoError(t, err)
 	require.Equal(t, 100, cpuCount)
+
+	require.NoError(t, sm.InitMeta(ctx, ":4002", "background"))
 
 	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{":4000"}))
 	nodes, err = sm.GetManagedNodes(ctx)
@@ -889,6 +890,20 @@ func TestDistFrameworkMeta(t *testing.T) {
 	cpuCount, err = storage.GetCPUCountOfManagedNodes(ctx, sm)
 	require.NoError(t, err)
 	require.Equal(t, 8, cpuCount)
+
+	require.NoError(t, sm.RecoverMeta(ctx, ":4002", "background"))
+	nodes, err = sm.GetManagedNodes(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []proto.ManagedNode{
+		{ID: ":4002", Role: "background", CPUCount: 100},
+	}, nodes)
+	// should not reset role
+	require.NoError(t, sm.RecoverMeta(ctx, ":4002", ""))
+	nodes, err = sm.GetManagedNodes(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []proto.ManagedNode{
+		{ID: ":4002", Role: "background", CPUCount: 100},
+	}, nodes)
 }
 
 func TestSubtaskHistoryTable(t *testing.T) {
@@ -959,7 +974,7 @@ func TestSubtaskHistoryTable(t *testing.T) {
 func TestTaskHistoryTable(t *testing.T) {
 	_, gm, ctx := testutil.InitTableTest(t)
 
-	require.NoError(t, gm.StartManager(ctx, ":4000", ""))
+	require.NoError(t, gm.InitMeta(ctx, ":4000", ""))
 	_, err := gm.CreateTask(ctx, "1", proto.TaskTypeExample, 1, nil)
 	require.NoError(t, err)
 	taskID, err := gm.CreateTask(ctx, "2", proto.TaskTypeExample, 1, nil)
@@ -1070,4 +1085,33 @@ func TestTaskNotFound(t *testing.T) {
 	task, err = gm.GetTaskByKeyWithHistory(ctx, "key")
 	require.Error(t, err, storage.ErrTaskNotFound)
 	require.Nil(t, task)
+}
+
+func TestInitMeta(t *testing.T) {
+	store, sm, ctx := testutil.InitTableTest(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, sm.InitMeta(ctx, "tidb1", ""))
+	tk.MustQuery(`select role from mysql.dist_framework_meta where host="tidb1"`).Check(testkit.Rows(""))
+	require.NoError(t, sm.InitMeta(ctx, "tidb1", "background"))
+	tk.MustQuery(`select role from mysql.dist_framework_meta where host="tidb1"`).Check(testkit.Rows("background"))
+	tk.MustExec(`set global tidb_service_scope=""`)
+	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows(""))
+
+	// 1. delete then start.
+	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{"tidb1"}))
+	require.NoError(t, sm.InitMeta(ctx, "tidb1", ""))
+	tk.MustQuery(`select role from mysql.dist_framework_meta where host="tidb1"`).Check(testkit.Rows(""))
+
+	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{"tidb1"}))
+	require.NoError(t, sm.InitMeta(ctx, "tidb1", "background"))
+	tk.MustQuery(`select role from mysql.dist_framework_meta where host="tidb1"`).Check(testkit.Rows("background"))
+
+	// 2. delete then set.
+	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{"tidb1"}))
+	tk.MustExec(`set global tidb_service_scope=""`)
+	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows(""))
+
+	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{"tidb1"}))
+	tk.MustExec(`set global tidb_service_scope="background"`)
+	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
 }
