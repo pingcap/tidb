@@ -29,21 +29,6 @@ import (
 	"go.uber.org/zap"
 )
 
-var errSpillEmptyChunk = errors.New("can not spill empty chunk to disk")
-var errFailToAddChunk = errors.New("fail to add chunk")
-
-// It should be const, but we need to modify it for test.
-var spillChunkSize = 1024
-
-// signalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
-const signalCheckpointForSort uint = 10240
-
-const (
-	notSpilled = iota
-	inSpilling
-	spillTriggered
-)
-
 type sortPartition struct {
 	// cond is only used for protecting spillStatus
 	cond        *sync.Cond

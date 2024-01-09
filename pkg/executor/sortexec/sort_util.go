@@ -18,10 +18,26 @@ import (
 	"container/list"
 	"sync"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
+)
+
+var errSpillEmptyChunk = errors.New("can not spill empty chunk to disk")
+var errFailToAddChunk = errors.New("fail to add chunk")
+
+// It should be const, but we need to modify it for test.
+var spillChunkSize = 1024
+
+// signalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
+const signalCheckpointForSort uint = 10240
+
+const (
+	notSpilled = iota
+	inSpilling
+	spillTriggered
 )
 
 // All elements in publicQueue are row slices that have been sorted
