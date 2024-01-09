@@ -280,16 +280,6 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 	return nil
 }
 
-func (e *SortExec) checkError() error {
-	for _, partition := range e.sortPartitions {
-		err := partition.checkError()
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (e *SortExec) fetchChunks(ctx context.Context) error {
 	if e.IsUnparallel {
 		return e.fetchChunksUnparallel(ctx)
@@ -318,6 +308,16 @@ func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDe
 		e.curPartition.getDiskTracker().AttachTo(e.diskTracker)
 		e.curPartition.getDiskTracker().SetLabel(memory.LabelForRowChunks)
 		e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.spillAction)
+	}
+	return nil
+}
+
+func (e *SortExec) checkError() error {
+	for _, partition := range e.sortPartitions {
+		err := partition.checkError()
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
