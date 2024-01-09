@@ -43,3 +43,12 @@ Charlie	3.0000000000
 Charlie	3.0000000000
 Charlie	3.0000000000
 Charlie	3.0000000000
+insert into t3fa8f3ec values('1982-03-19 16:00:00', 23424, null, '09:49:41', 628.79083, 3.1, 0x00307831);
+select t047d7221.col_14_1, t3fa8f3ec.col_36 from t047d7221 left join t3fa8f3ec on t047d7221.col_14_1 = t3fa8f3ec.col_36 where t047d7221.col_14_1 in ( 'Charlie' );
+col_14_1	col_36
+Charlie	3.0000000000
+Charlie	3.0000000000
+Charlie	3.0000000000
+Charlie	3.0000000000
+Charlie	3.0000000000
+Charlie	3.0000000000

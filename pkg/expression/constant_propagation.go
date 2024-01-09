@@ -397,6 +397,9 @@ func (s *basePropConstSolver) dealWithPossibleHybridType(col *Column, con *Const
 		if err != nil {
 			return nil, false
 		}
+		if MaybeOverOptimized4PlanCache(s.ctx, []Expression{con}) {
+			s.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("Skip plan cache since mutable constant is restored and propagated"))
+		}
 		switch d.Kind() {
 		case types.KindInt64:
 			enum, err := types.ParseEnumValue(col.GetType().GetElems(), uint64(d.GetInt64()))
