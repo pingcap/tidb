@@ -25,7 +25,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"time"
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
@@ -143,8 +142,6 @@ var (
 		".zstd", ".zst",
 		".snappy",
 	}
-
-	getCPUCountTimeout = time.Minute
 )
 
 // GetKVStore returns a kv.Storage.
