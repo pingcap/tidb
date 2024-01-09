@@ -858,11 +858,6 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 	restoredSQL := utilparser.RestoreWithDefaultDB(originNode, bindableStmt.Schema, bindableStmt.Query)
 	bindSQL = utilparser.RestoreWithDefaultDB(hintNode, bindableStmt.Schema, hintNode.Text())
 	db := utilparser.GetDefaultDB(originNode, bindableStmt.Schema)
-	if v.IsUniversal { // hide schema name if it's universal binding
-		restoredSQL = utilparser.RestoreWithoutDB(originNode)
-		bindSQL = utilparser.RestoreWithoutDB(hintNode)
-		db = ""
-	}
 	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(restoredSQL)
 
 	p := &SQLBindPlan{
@@ -900,11 +895,6 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 	restoredSQL := utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())
 	bindSQL := utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text())
 	db := utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB)
-	if v.IsUniversal { // hide schema name if it's universal binding
-		restoredSQL = utilparser.RestoreWithoutDB(v.OriginNode)
-		bindSQL = utilparser.RestoreWithoutDB(v.HintedNode)
-		db = ""
-	}
 	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(restoredSQL)
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
@@ -1298,17 +1288,6 @@ func removeGlobalIndexPaths(paths []*util.AccessPath) []*util.AccessPath {
 		i++
 	}
 	return paths[:i]
-}
-
-func removeTiflashDuringStaleRead(paths []*util.AccessPath) []*util.AccessPath {
-	n := 0
-	for _, path := range paths {
-		if path.StoreType != kv.TiFlash {
-			paths[n] = path
-			n++
-		}
-	}
-	return paths[:n]
 }
 
 func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo) (*LogicalLock, error) {

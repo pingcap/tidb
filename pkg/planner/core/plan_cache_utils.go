@@ -24,6 +24,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -447,6 +448,8 @@ type PlanCacheStmt struct {
 	PlanDigest          *parser.Digest
 	ForUpdateRead       bool
 	SnapshotTSEvaluator func(sessionctx.Context) (uint64, error)
+
+	BindingInfo bindinfo.BindingMatchInfo
 
 	// the different between NormalizedSQL, NormalizedSQL4PC and StmtText:
 	//  for the query `select * from t where a>1 and b<?`, then

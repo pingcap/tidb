@@ -61,6 +61,7 @@ var (
 	errUserLockDeadlock              = dbterror.ClassExpression.NewStd(mysql.ErrUserLockDeadlock)
 	errUserLockWrongName             = dbterror.ClassExpression.NewStd(mysql.ErrUserLockWrongName)
 	errJSONInBooleanContext          = dbterror.ClassExpression.NewStd(mysql.ErrJSONInBooleanContext)
+	errBadNull                       = dbterror.ClassExpression.NewStd(mysql.ErrBadNull)
 
 	// Sequence usage privilege check.
 	errSequenceAccessDenied      = dbterror.ClassExpression.NewStd(mysql.ErrTableaccessDenied)

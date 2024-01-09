@@ -286,7 +286,6 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	vars.SkipUTF8Check = true
 	vars.StmtCtx.InInsertStmt = true
 	vars.StmtCtx.BatchCheck = true
-	vars.StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
 	vars.SQLMode = sqlMode
 
 	typeFlags := vars.StmtCtx.TypeFlags().
@@ -296,6 +295,7 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	vars.StmtCtx.SetTypeFlags(typeFlags)
 
 	errLevels := vars.StmtCtx.ErrLevels()
+	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !sqlMode.HasStrictMode())
 	errLevels[errctx.ErrGroupDividedByZero] =
 		errctx.ResolveErrLevel(!sqlMode.HasErrorForDivisionByZeroMode(), !sqlMode.HasStrictMode())
 	vars.StmtCtx.SetErrLevels(errLevels)

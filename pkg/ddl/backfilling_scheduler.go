@@ -165,9 +165,9 @@ func initSessCtx(
 		return errors.Trace(err)
 	}
 	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(sessCtx.GetSessionVars().Location())
-	sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
 
 	errLevels := sessCtx.GetSessionVars().StmtCtx.ErrLevels()
+	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !sqlMode.HasStrictMode())
 	errLevels[errctx.ErrGroupDividedByZero] =
 		errctx.ResolveErrLevel(!sqlMode.HasErrorForDivisionByZeroMode(), !sqlMode.HasStrictMode())
 	sessCtx.GetSessionVars().StmtCtx.SetErrLevels(errLevels)
@@ -198,7 +198,6 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 		tz := *sv.TimeZone
 		timezone = &tz
 	}
-	badNullAsWarn := sv.StmtCtx.BadNullAsWarning
 	typeFlags := sv.StmtCtx.TypeFlags()
 	errLevels := sv.StmtCtx.ErrLevels()
 	resGroupName := sv.StmtCtx.ResourceGroupName
@@ -207,7 +206,6 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 		uv.RowEncoder.Enable = rowEncoder
 		uv.SQLMode = sqlMode
 		uv.TimeZone = timezone
-		uv.StmtCtx.BadNullAsWarning = badNullAsWarn
 		uv.StmtCtx.SetTypeFlags(typeFlags)
 		uv.StmtCtx.SetErrLevels(errLevels)
 		uv.StmtCtx.ResourceGroupName = resGroupName

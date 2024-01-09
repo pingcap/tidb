@@ -186,7 +186,6 @@ type StatementContext struct {
 	InSetSessionStatesStmt bool
 	InPreparedPlanBuilding bool
 	DupKeyAsWarning        bool
-	BadNullAsWarning       bool
 	InShowWarning          bool
 	UseCache               bool
 	ForcePlanCache         bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.

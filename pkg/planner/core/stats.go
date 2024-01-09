@@ -359,7 +359,12 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 		for _, uniqueIdx := range uniqueIdxsWithDoubleScan {
 			uniqueIdxAccessCols = append(uniqueIdxAccessCols, uniqueIdx.GetCol2LenFromAccessConds(ds.SCtx()))
 			// Find the unique index with the minimal number of ranges as `uniqueBest`.
-			if uniqueBest == nil || len(uniqueIdx.Ranges) < len(uniqueBest.Ranges) {
+			/*
+				If the range is same but one of unique index can match all of where predicates, it will better than current unique index.
+				Example in the test "TestPointgetIndexChoosen".
+			*/
+			if uniqueBest == nil || len(uniqueIdx.Ranges) < len(uniqueBest.Ranges) ||
+				(len(uniqueIdx.Ranges) == len(uniqueBest.Ranges) && len(uniqueIdx.TableFilters) < len(uniqueBest.TableFilters)) {
 				uniqueBest = uniqueIdx
 			}
 		}

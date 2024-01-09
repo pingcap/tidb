@@ -280,6 +280,35 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 	return nil
 }
 
+func (e *SortExec) storeChunk(chk *chunk.Chunk, fields []*types.FieldType, byItemsDesc []bool) error {
+	err := e.curPartition.checkError()
+	if err != nil {
+		return err
+	}
+
+	if !e.curPartition.add(chk) {
+		err := e.switchToNewSortPartition(fields, byItemsDesc, true)
+		if err != nil {
+			return err
+		}
+
+		if !e.curPartition.add(chk) {
+			return errFailToAddChunk
+		}
+	}
+	return nil
+}
+
+func (e *SortExec) checkError() error {
+	for _, partition := range e.sortPartitions {
+		err := partition.checkError()
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (e *SortExec) fetchChunks(ctx context.Context) error {
 	if e.IsUnparallel {
 		return e.fetchChunksUnparallel(ctx)
@@ -312,25 +341,6 @@ func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDe
 	return nil
 }
 
-func (e *SortExec) storeChunk(chk *chunk.Chunk, fields []*types.FieldType, byItemsDesc []bool) error {
-	err := e.curPartition.checkError()
-	if err != nil {
-		return err
-	}
-
-	if !e.curPartition.add(chk) {
-		err := e.switchToNewSortPartition(fields, byItemsDesc, true)
-		if err != nil {
-			return err
-		}
-
-		if !e.curPartition.add(chk) {
-			return errFailToAddChunk
-		}
-	}
-	return nil
-}
-
 func (e *SortExec) handleCurrentPartitionBeforeExit() error {
 	err := e.checkError()
 	if err != nil {
@@ -342,16 +352,6 @@ func (e *SortExec) handleCurrentPartitionBeforeExit() error {
 		return err
 	}
 
-	return nil
-}
-
-func (e *SortExec) checkError() error {
-	for _, partition := range e.sortPartitions {
-		err := partition.checkError()
-		if err != nil {
-			return err
-		}
-	}
 	return nil
 }
 

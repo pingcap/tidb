@@ -666,7 +666,6 @@ import (
 	uncommitted           "UNCOMMITTED"
 	undefined             "UNDEFINED"
 	unicodeSym            "UNICODE"
-	universal             "UNIVERSAL"
 	unknown               "UNKNOWN"
 	unset                 "UNSET"
 	user                  "USER"
@@ -1165,7 +1164,6 @@ import (
 	GetFormatSelector                      "{DATE|DATETIME|TIME|TIMESTAMP}"
 	GlobalScope                            "The scope of variable"
 	StatementScope                         "The scope of statement"
-	BindingType                            "The type of binding"
 	GroupByClause                          "GROUP BY clause"
 	HavingClause                           "HAVING clause"
 	AsOfClause                             "AS OF clause"
@@ -6802,7 +6800,6 @@ UnReservedKeyword:
 |	"DISCARD"
 |	"TABLE_CHECKSUM"
 |	"UNICODE"
-|	"UNIVERSAL"
 |	"AUTO_RANDOM"
 |	"AUTO_RANDOM_BASE"
 |	"SQL_TSI_DAY"
@@ -11779,15 +11776,6 @@ ShowLikeOrWhereOpt:
 		$$ = $2
 	}
 
-BindingType:
-	{
-		$$ = false
-	}
-|	"UNIVERSAL"
-	{
-		$$ = true
-	}
-
 GlobalScope:
 	{
 		$$ = false
@@ -13803,47 +13791,44 @@ BindableStmt:
  *      CREATE GLOBAL BINDING FOR select Col1,Col2 from table USING select Col1,Col2 from table use index(Col1)
  *******************************************************************/
 CreateBindingStmt:
-	"CREATE" GlobalScope BindingType "BINDING" "FOR" BindableStmt "USING" BindableStmt
+	"CREATE" GlobalScope "BINDING" "FOR" BindableStmt "USING" BindableStmt
 	{
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.startOffset(&yyS[yypt-1])
-		originStmt := $6
+		originStmt := $5
 		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
 
 		startOffset = parser.startOffset(&yyS[yypt])
-		hintedStmt := $8
+		hintedStmt := $7
 		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.CreateBindingStmt{
 			OriginNode:  originStmt,
 			HintedNode:  hintedStmt,
 			GlobalScope: $2.(bool),
-			IsUniversal: $3.(bool),
 		}
 
 		$$ = x
 	}
-|	"CREATE" GlobalScope BindingType "BINDING" "USING" BindableStmt
+|	"CREATE" GlobalScope "BINDING" "USING" BindableStmt
 	{
 		startOffset := parser.startOffset(&yyS[yypt])
-		hintedStmt := $6
+		hintedStmt := $5
 		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.CreateBindingStmt{
 			OriginNode:  hintedStmt,
 			HintedNode:  hintedStmt,
 			GlobalScope: $2.(bool),
-			IsUniversal: $3.(bool),
 		}
 
 		$$ = x
 	}
-|	"CREATE" GlobalScope BindingType "BINDING" "FROM" "HISTORY" "USING" "PLAN" "DIGEST" stringLit
+|	"CREATE" GlobalScope "BINDING" "FROM" "HISTORY" "USING" "PLAN" "DIGEST" stringLit
 	{
 		x := &ast.CreateBindingStmt{
 			GlobalScope: $2.(bool),
-			IsUniversal: $3.(bool),
-			PlanDigest:  $10,
+			PlanDigest:  $9,
 		}
 
 		$$ = x
