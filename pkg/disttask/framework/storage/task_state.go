@@ -23,8 +23,8 @@ import (
 )
 
 // CancelTask cancels task.
-func (stm *TaskManager) CancelTask(ctx context.Context, taskID int64) error {
-	_, err := stm.executeSQLWithNewSession(ctx,
+func (mgr *TaskManager) CancelTask(ctx context.Context, taskID int64) error {
+	_, err := mgr.executeSQLWithNewSession(ctx,
 		`update mysql.tidb_global_task
 		 set state = %?, 
 			 state_update_time = CURRENT_TIMESTAMP()
@@ -46,8 +46,8 @@ func (*TaskManager) CancelTaskByKeySession(ctx context.Context, se sessionctx.Co
 }
 
 // FailTask implements the scheduler.TaskManager interface.
-func (stm *TaskManager) FailTask(ctx context.Context, taskID int64, currentState proto.TaskState, taskErr error) error {
-	_, err := stm.executeSQLWithNewSession(ctx,
+func (mgr *TaskManager) FailTask(ctx context.Context, taskID int64, currentState proto.TaskState, taskErr error) error {
+	_, err := mgr.executeSQLWithNewSession(ctx,
 		`update mysql.tidb_global_task
 		 set state = %?,
 			 error = %?,
@@ -60,8 +60,8 @@ func (stm *TaskManager) FailTask(ctx context.Context, taskID int64, currentState
 }
 
 // RevertedTask implements the scheduler.TaskManager interface.
-func (stm *TaskManager) RevertedTask(ctx context.Context, taskID int64) error {
-	_, err := stm.executeSQLWithNewSession(ctx,
+func (mgr *TaskManager) RevertedTask(ctx context.Context, taskID int64) error {
+	_, err := mgr.executeSQLWithNewSession(ctx,
 		`update mysql.tidb_global_task
 		 set state = %?,
 			 state_update_time = CURRENT_TIMESTAMP(),
@@ -73,9 +73,9 @@ func (stm *TaskManager) RevertedTask(ctx context.Context, taskID int64) error {
 }
 
 // PauseTask pauses the task.
-func (stm *TaskManager) PauseTask(ctx context.Context, taskKey string) (bool, error) {
+func (mgr *TaskManager) PauseTask(ctx context.Context, taskKey string) (bool, error) {
 	found := false
-	err := stm.WithNewSession(func(se sessionctx.Context) error {
+	err := mgr.WithNewSession(func(se sessionctx.Context) error {
 		_, err := sqlexec.ExecSQL(ctx, se,
 			`update mysql.tidb_global_task 
 			 set state = %?, 
@@ -98,8 +98,8 @@ func (stm *TaskManager) PauseTask(ctx context.Context, taskKey string) (bool, er
 }
 
 // PausedTask update the task state from pausing to paused.
-func (stm *TaskManager) PausedTask(ctx context.Context, taskID int64) error {
-	_, err := stm.executeSQLWithNewSession(ctx,
+func (mgr *TaskManager) PausedTask(ctx context.Context, taskID int64) error {
+	_, err := mgr.executeSQLWithNewSession(ctx,
 		`update mysql.tidb_global_task
 		 set state = %?,
 			 state_update_time = CURRENT_TIMESTAMP(),
@@ -111,9 +111,9 @@ func (stm *TaskManager) PausedTask(ctx context.Context, taskID int64) error {
 }
 
 // ResumeTask resumes the task.
-func (stm *TaskManager) ResumeTask(ctx context.Context, taskKey string) (bool, error) {
+func (mgr *TaskManager) ResumeTask(ctx context.Context, taskKey string) (bool, error) {
 	found := false
-	err := stm.WithNewSession(func(se sessionctx.Context) error {
+	err := mgr.WithNewSession(func(se sessionctx.Context) error {
 		_, err := sqlexec.ExecSQL(ctx, se,
 			`update mysql.tidb_global_task
 		     set state = %?, 
@@ -136,8 +136,8 @@ func (stm *TaskManager) ResumeTask(ctx context.Context, taskKey string) (bool, e
 }
 
 // SucceedTask update task state from running to succeed.
-func (stm *TaskManager) SucceedTask(ctx context.Context, taskID int64) error {
-	return stm.WithNewSession(func(se sessionctx.Context) error {
+func (mgr *TaskManager) SucceedTask(ctx context.Context, taskID int64) error {
+	return mgr.WithNewSession(func(se sessionctx.Context) error {
 		_, err := sqlexec.ExecSQL(ctx, se, `
 			update mysql.tidb_global_task
 			set state = %?,
