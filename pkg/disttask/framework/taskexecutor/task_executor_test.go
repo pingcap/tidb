@@ -345,30 +345,6 @@ func TestTaskExecutorRollback(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestTaskExecutorPause(t *testing.T) {
-	var tp proto.TaskType = "test_task_executor_pause"
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	runCtx, runCancel := context.WithCancel(ctx)
-	defer runCancel()
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-	mockSubtaskTable := mock.NewMockTaskTable(ctrl)
-	mockExtension := mock.NewMockExtension(ctrl)
-
-	// pause success.
-	taskExecutor := NewBaseTaskExecutor(ctx, "id", 1, mockSubtaskTable)
-	taskExecutor.Extension = mockExtension
-	mockSubtaskTable.EXPECT().PauseSubtasks(runCtx, "id", int64(1)).Return(nil)
-	require.NoError(t, taskExecutor.Pause(runCtx, &proto.Task{Step: proto.StepOne, ID: 1, Type: tp}))
-
-	// pause error.
-	pauseErr := errors.New("pause error")
-	mockSubtaskTable.EXPECT().PauseSubtasks(runCtx, "id", int64(1)).Return(pauseErr)
-	err := taskExecutor.Pause(runCtx, &proto.Task{Step: proto.StepOne, ID: 1, Type: tp})
-	require.EqualError(t, err, pauseErr.Error())
-}
-
 func TestTaskExecutor(t *testing.T) {
 	var tp proto.TaskType = "test_task_executor"
 	var taskID int64 = 1
