@@ -51,7 +51,7 @@ type parallelSortWorker struct {
 
 func newParallelSortWorker(
 	lessRowFunc func(chunk.Row, chunk.Row) int,
-	publicSpace *sortedRowsList,
+	publicSortedRows *sortedRowsList,
 	waitGroup *sync.WaitGroup,
 	result *sortedRows,
 	mpmcQueue *chunk.MPMCQueue,
@@ -60,7 +60,7 @@ func newParallelSortWorker(
 	memTracker *memory.Tracker) *parallelSortWorker {
 	return &parallelSortWorker{
 		lessRowFunc:       lessRowFunc,
-		publicSortedRows:  publicSpace,
+		publicSortedRows:  publicSortedRows,
 		waitGroup:         waitGroup,
 		result:            result,
 		mpmcQueue:         mpmcQueue,
