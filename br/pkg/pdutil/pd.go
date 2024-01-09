@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/retry"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -298,11 +299,13 @@ func NewPdController(
 	if tlsConf != nil {
 		pdHTTPCliConfig = append(pdHTTPCliConfig, pdhttp.WithTLSConfig(tlsConf))
 	}
+	pdHTTPCli := pdhttp.NewClient("br/lightning PD controller", addrs, pdHTTPCliConfig...).
+		WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, PDRequestRetryTime))
 	return &PdController{
 		addrs:     processedAddrs,
 		cli:       cli,
 		pdClient:  pdClient,
-		pdHTTPCli: pdhttp.NewClient("br/lightning PD controller", addrs, pdHTTPCliConfig...),
+		pdHTTPCli: pdHTTPCli,
 		version:   version,
 		// We should make a buffered channel here otherwise when context canceled,
 		// gracefully shutdown will stick at resuming schedulers.
