@@ -113,6 +113,8 @@ type localMppCoordinator struct {
 
 	memTracker *memory.Tracker
 
+	tiflashRuntimeStats *execdetails.RuntimeStatsColl
+
 	reportStatusCh chan struct{} // used to notify inside coordinator that all reports has been received
 
 	vars *kv.Variables
@@ -146,8 +148,6 @@ type localMppCoordinator struct {
 
 	// Record node cnt that involved in the mpp computation.
 	nodeCnt int
-
-	tiflashRuntimeStats *execdetails.RuntimeStatsColl
 }
 
 // NewLocalMPPCoordinator creates a new localMppCoordinator instance
