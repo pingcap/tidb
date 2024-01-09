@@ -25,6 +25,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/planner/core",
+        "//pkg/privilege/privileges",
         "//pkg/server",
         "//pkg/session",
         "//pkg/session/txninfo",
