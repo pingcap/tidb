@@ -56,10 +56,10 @@ func getMPPQueryTS(ctx sessionctx.Context) uint64 {
 	return mppQueryInfo.QueryTS.Load()
 }
 
-func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
+func collectPlanIDs(plan plannercore.PhysicalPlan, ids []int) []int {
 	ids = append(ids, plan.ID())
 	for _, child := range plan.Children() {
-		ids = collectPlanIDS(child, ids)
+		ids = collectPlanIDs(child, ids)
 	}
 	return ids
 }

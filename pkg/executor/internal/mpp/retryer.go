@@ -32,6 +32,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// ExecutorWithRetry receive mppResponse from localMppCoordinator.
 // The abstraction layer of reading mpp resp:
 // 1. MPPGather:
 //  1. As part of the TiDB Volcano model executor, it is equivalent to a TableReader.
@@ -59,12 +60,11 @@ type ExecutorWithRetry struct {
 	startTS    uint64
 	queryID    kv.MPPQueryID
 
+	KVRanges []kv.KeyRange
+
 	// Following members need to set up every time retry mpp error.
 	gatherID uint64
 	coord    kv.MppCoordinator
-	// Only for MemLimit err recovery for now.
-	// AutoScaler use this value as hint to scale out CN.
-	nodeCnt int
 
 	// mppErrRecovery is designed for the recovery of MPP errors.
 	// Basic idea:
@@ -75,13 +75,14 @@ type ExecutorWithRetry struct {
 	//    Once the results start being returned, error recovery cannot be performed anymore.
 	mppErrRecovery *RecoveryHandler
 
-	KVRanges []kv.KeyRange
+	// Only for MemLimit err recovery for now.
+	// AutoScaler use this value as hint to scale out CN.
+	nodeCnt int
 }
 
 var _ kv.Response = &ExecutorWithRetry{}
 
-const mppErrRecoveryHoldChkCap = 4
-
+// NewRetryer create ExecutorWithRetry.
 func NewRetryer(ctx context.Context, sctx sessionctx.Context, parentTracker *memory.Tracker, planIDs []int,
 	plan plannercore.PhysicalPlan, startTS uint64, queryID kv.MPPQueryID,
 	dummy bool, is infoschema.InfoSchema) (*ExecutorWithRetry, error) {
@@ -118,16 +119,12 @@ func NewRetryer(ctx context.Context, sctx sessionctx.Context, parentTracker *mem
 		mppErrRecovery: recoveryHandler,
 	}
 
-	retryer.setupMPPCoordinator(ctx, false)
 	var err error
-	_, retryer.KVRanges, err = retryer.coord.Execute(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return retryer, nil
+	retryer.KVRanges, err = retryer.setupMPPCoordinator(ctx, false)
+	return retryer, err
 }
 
+// Next implements kv.Response interface.
 func (r *ExecutorWithRetry) Next(ctx context.Context) (resp kv.ResultSubset, err error) {
 	if err = r.nextWithRecovery(ctx); err != nil {
 		return nil, err
@@ -143,6 +140,7 @@ func (r *ExecutorWithRetry) Next(ctx context.Context) (resp kv.ResultSubset, err
 	return resp, nil
 }
 
+// Close implements kv.Response interface.
 func (r *ExecutorWithRetry) Close() error {
 	mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(r.getCoordUniqueID())
 	// Handle reports only when it's not failed.
@@ -150,11 +148,14 @@ func (r *ExecutorWithRetry) Close() error {
 	return r.coord.Close()
 }
 
-func (r *ExecutorWithRetry) setupMPPCoordinator(ctx context.Context, recoverying bool) (err error) {
+func (r *ExecutorWithRetry) setupMPPCoordinator(ctx context.Context, recoverying bool) ([]kv.KeyRange, error) {
 	if recoverying {
 		// Sanity check.
 		if r.coord == nil {
-			return errors.New("mpp coordinator should not be nil when recoverying")
+			return nil, errors.New("mpp coordinator should not be nil when recoverying")
+		}
+		if err := r.coord.Close(); err != nil {
+			return nil, err
 		}
 		mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(r.getCoordUniqueID())
 	}
@@ -163,12 +164,19 @@ func (r *ExecutorWithRetry) setupMPPCoordinator(ctx context.Context, recoverying
 	r.gatherID = allocMPPGatherID(r.sctx)
 
 	r.coord = r.buildCoordinator()
-	mppcoordmanager.InstanceMPPCoordinatorManager.Register(r.getCoordUniqueID(), r.coord)
+	if err := mppcoordmanager.InstanceMPPCoordinatorManager.Register(r.getCoordUniqueID(), r.coord); err != nil {
+		return nil, err
+	}
+
+	_, kvRanges, err := r.coord.Execute(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	if r.nodeCnt = r.coord.GetNodeCnt(); r.nodeCnt <= 0 {
-		return errors.Errorf("tiflash node count should be greater than zero: %v", r.nodeCnt)
+		return nil, errors.Errorf("tiflash node count should be greater than zero: %v", r.nodeCnt)
 	}
-	return nil
+	return kvRanges, err
 }
 
 func (r *ExecutorWithRetry) nextWithRecovery(ctx context.Context) error {
@@ -212,7 +220,7 @@ func (r *ExecutorWithRetry) nextWithRecovery(ctx context.Context) error {
 			logutil.BgLogger().Info("recovery mpp error succeed, begin next retry",
 				zap.Any("mppErr", mppErr), zap.Any("recoveryCnt", r.mppErrRecovery.RecoveryCnt()))
 
-			if err := r.setupMPPCoordinator(r.ctx, true); err != nil {
+			if _, err := r.setupMPPCoordinator(r.ctx, true); err != nil {
 				logutil.BgLogger().Error("setup resp iter when recovery mpp err failed", zap.Any("err", err))
 				return mppErr
 			}

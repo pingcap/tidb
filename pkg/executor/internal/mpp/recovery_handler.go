@@ -24,12 +24,11 @@ import (
 
 // RecoveryHandler tries to recovery mpp error.
 type RecoveryHandler struct {
-	enable   bool
-	handlers []handlerImpl
-	holder   *mppResultHolder
-
 	curRecoveryCnt uint32
 	maxRecoveryCnt uint32
+	holder         *mppResultHolder
+	handlers       []handlerImpl
+	enable         bool
 }
 
 // RecoveryInfo contains info that can help recovery error.
@@ -178,7 +177,7 @@ func (h *mppResultHolder) insert(resp *mppResponse) {
 	h.resps = append(h.resps, resp)
 
 	// TODO: Better use row number as threshold. Need to add row number info in tipb.MPPDataPacket.
-	if len(h.resps) > int(h.capacity) {
+	if len(h.resps) >= int(h.capacity) {
 		h.cannotHold = true
 	}
 	h.memTracker.Consume(resp.respSize)
