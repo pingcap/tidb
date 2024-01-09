@@ -734,14 +734,13 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 	var p *SQLBindPlan
 	if v.OriginNode != nil {
-		restoredSQL := utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())
-		normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(restoredSQL)
+		normdOrigSQL, sqlDigestWithDB := bindinfo.NormalizeStmtForBinding(v.OriginNode, b.ctx.GetSessionVars().CurrentDB)
 		p = &SQLBindPlan{
 			SQLBindOp:    OpSQLBindDrop,
 			NormdOrigSQL: normdOrigSQL,
 			IsGlobal:     v.GlobalScope,
 			Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
-			SQLDigest:    sqlDigestWithDB.String(),
+			SQLDigest:    sqlDigestWithDB,
 		}
 		if v.HintedNode != nil {
 			p.BindSQL = utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text())
@@ -859,11 +858,6 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 	restoredSQL := utilparser.RestoreWithDefaultDB(originNode, bindableStmt.Schema, bindableStmt.Query)
 	bindSQL = utilparser.RestoreWithDefaultDB(hintNode, bindableStmt.Schema, hintNode.Text())
 	db := utilparser.GetDefaultDB(originNode, bindableStmt.Schema)
-	if v.IsUniversal { // hide schema name if it's universal binding
-		restoredSQL = utilparser.RestoreWithoutDB(originNode)
-		bindSQL = utilparser.RestoreWithoutDB(hintNode)
-		db = ""
-	}
 	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(restoredSQL)
 
 	p := &SQLBindPlan{
@@ -871,7 +865,6 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 		NormdOrigSQL: normdOrigSQL,
 		BindSQL:      bindSQL,
 		IsGlobal:     v.GlobalScope,
-		IsUniversal:  v.IsUniversal,
 		BindStmt:     hintNode,
 		Db:           db,
 		Charset:      bindableStmt.Charset,
@@ -902,18 +895,12 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 	restoredSQL := utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())
 	bindSQL := utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text())
 	db := utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB)
-	if v.IsUniversal { // hide schema name if it's universal binding
-		restoredSQL = utilparser.RestoreWithoutDB(v.OriginNode)
-		bindSQL = utilparser.RestoreWithoutDB(v.HintedNode)
-		db = ""
-	}
 	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(restoredSQL)
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
 		NormdOrigSQL: normdOrigSQL,
 		BindSQL:      bindSQL,
 		IsGlobal:     v.GlobalScope,
-		IsUniversal:  v.IsUniversal,
 		BindStmt:     v.HintedNode,
 		Db:           db,
 		Charset:      charSet,
@@ -1303,17 +1290,6 @@ func removeGlobalIndexPaths(paths []*util.AccessPath) []*util.AccessPath {
 	return paths[:i]
 }
 
-func removeTiflashDuringStaleRead(paths []*util.AccessPath) []*util.AccessPath {
-	n := 0
-	for _, path := range paths {
-		if path.StoreType != kv.TiFlash {
-			paths[n] = path
-			n++
-		}
-	}
-	return paths[:n]
-}
-
 func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo) (*LogicalLock, error) {
 	var tblID2PhysTblIDCol map[int64]*expression.Column
 	if len(b.partitionedTable) > 0 {
@@ -1478,7 +1454,7 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		return &Simple{Statement: as}, nil
 	case ast.AdminFlushPlanCache:
 		return &Simple{Statement: as}, nil
-	case ast.AdminSetBDRRole:
+	case ast.AdminSetBDRRole, ast.AdminUnsetBDRRole:
 		return &Simple{Statement: as}, nil
 	case ast.AdminShowBDRRole:
 		p := &AdminShowBDRRole{}
@@ -4174,9 +4150,11 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		importFromServer bool
 	)
 
-	importFromServer, err = storage.IsLocalPath(ld.Path)
-	if err != nil {
-		return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
+	if ld.Select == nil {
+		importFromServer, err = storage.IsLocalPath(ld.Path)
+		if err != nil {
+			return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
+		}
 	}
 
 	if importFromServer && sem.IsEnabled() {
@@ -4239,8 +4217,26 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		return nil, err
 	}
 
-	outputSchema, outputFields := convert2OutputSchemasAndNames(importIntoSchemaNames, importIntoSchemaFTypes)
-	p.setSchemaAndNames(outputSchema, outputFields)
+	if ld.Select != nil {
+		// privilege of tables in select will be checked here
+		selectPlan, err2 := b.Build(ctx, ld.Select)
+		if err2 != nil {
+			return nil, err2
+		}
+		// it's allowed to use IMPORT INTO t FROM SELECT * FROM t
+		// as we pre-check that the target table must be empty.
+		if (len(ld.ColumnsAndUserVars) > 0 && len(selectPlan.Schema().Columns) != len(ld.ColumnsAndUserVars)) ||
+			(len(ld.ColumnsAndUserVars) == 0 && len(selectPlan.Schema().Columns) != len(tableInPlan.VisibleCols())) {
+			return nil, ErrWrongValueCountOnRow.GenWithStackByArgs(1)
+		}
+		p.SelectPlan, _, err2 = DoOptimize(ctx, b.ctx, b.optFlag, selectPlan.(LogicalPlan))
+		if err2 != nil {
+			return nil, err2
+		}
+	} else {
+		outputSchema, outputFields := convert2OutputSchemasAndNames(importIntoSchemaNames, importIntoSchemaFTypes)
+		p.setSchemaAndNames(outputSchema, outputFields)
+	}
 	return p, nil
 }
 

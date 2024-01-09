@@ -39,6 +39,12 @@ func TestString(t *testing.T) {
 	err = tx.Set(key, value)
 	require.NoError(t, err)
 
+	tx.Iterate([]byte("a"), []byte("b"), func(k, v []byte) error {
+		require.Equal(t, k, key)
+		require.Equal(t, v, value)
+		return nil
+	})
+
 	v, err := tx.Get(key)
 	require.NoError(t, err)
 	require.Equal(t, value, v)

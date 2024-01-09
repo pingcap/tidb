@@ -430,6 +430,9 @@ type StatsHandle interface {
 	// GetTableStats retrieves the statistics table from cache, and the cache will be updated by a goroutine.
 	GetTableStats(tblInfo *model.TableInfo) *statistics.Table
 
+	// GetTableStatsForAutoAnalyze retrieves the statistics table from cache, but it will not return pseudo.
+	GetTableStatsForAutoAnalyze(tblInfo *model.TableInfo) *statistics.Table
+
 	// GetPartitionStats retrieves the partition stats from cache.
 	GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table
 
