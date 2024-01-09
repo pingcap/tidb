@@ -47,7 +47,7 @@ var defaultKeepaliveCfg = keepalive.ClientParameters{
 func TestCreateTables(t *testing.T) {
 	m := mc
 	g := gluetidb.New()
-	client := restore.NewRestoreClient(m.PDClient, nil, defaultKeepaliveCfg, false)
+	client := restore.NewRestoreClient(m.PDClient, m.PDHTTPCli, nil, defaultKeepaliveCfg, false)
 	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
 
@@ -106,7 +106,7 @@ func TestCreateTables(t *testing.T) {
 func TestIsOnline(t *testing.T) {
 	m := mc
 	g := gluetidb.New()
-	client := restore.NewRestoreClient(m.PDClient, nil, defaultKeepaliveCfg, false)
+	client := restore.NewRestoreClient(m.PDClient, m.PDHTTPCli, nil, defaultKeepaliveCfg, false)
 	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
 
@@ -130,7 +130,7 @@ func TestCheckTargetClusterFresh(t *testing.T) {
 	defer cluster.Stop()
 
 	g := gluetidb.New()
-	client := restore.NewRestoreClient(cluster.PDClient, nil, defaultKeepaliveCfg, false)
+	client := restore.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, defaultKeepaliveCfg, false)
 	err := client.Init(g, cluster.Storage)
 	require.NoError(t, err)
 
@@ -147,7 +147,7 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 	defer cluster.Stop()
 
 	g := gluetidb.New()
-	client := restore.NewRestoreClient(cluster.PDClient, nil, defaultKeepaliveCfg, false)
+	client := restore.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, defaultKeepaliveCfg, false)
 	err := client.Init(g, cluster.Storage)
 	require.NoError(t, err)
 
@@ -182,7 +182,7 @@ func TestCheckTargetClusterFreshWithTable(t *testing.T) {
 func TestCheckSysTableCompatibility(t *testing.T) {
 	cluster := mc
 	g := gluetidb.New()
-	client := restore.NewRestoreClient(cluster.PDClient, nil, defaultKeepaliveCfg, false)
+	client := restore.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, defaultKeepaliveCfg, false)
 	err := client.Init(g, cluster.Storage)
 	require.NoError(t, err)
 
@@ -258,7 +258,7 @@ func TestCheckSysTableCompatibility(t *testing.T) {
 func TestInitFullClusterRestore(t *testing.T) {
 	cluster := mc
 	g := gluetidb.New()
-	client := restore.NewRestoreClient(cluster.PDClient, nil, defaultKeepaliveCfg, false)
+	client := restore.NewRestoreClient(cluster.PDClient, cluster.PDHTTPCli, nil, defaultKeepaliveCfg, false)
 	err := client.Init(g, cluster.Storage)
 	require.NoError(t, err)
 
@@ -283,7 +283,7 @@ func TestInitFullClusterRestore(t *testing.T) {
 func TestPreCheckTableClusterIndex(t *testing.T) {
 	m := mc
 	g := gluetidb.New()
-	client := restore.NewRestoreClient(m.PDClient, nil, defaultKeepaliveCfg, false)
+	client := restore.NewRestoreClient(m.PDClient, m.PDHTTPCli, nil, defaultKeepaliveCfg, false)
 	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
 
@@ -372,7 +372,7 @@ func TestGetTSWithRetry(t *testing.T) {
 	t.Run("PD leader is healthy:", func(t *testing.T) {
 		retryTimes := -1000
 		pDClient := fakePDClient{notLeader: false, retryTimes: &retryTimes}
-		client := restore.NewRestoreClient(pDClient, nil, defaultKeepaliveCfg, false)
+		client := restore.NewRestoreClient(pDClient, nil, nil, defaultKeepaliveCfg, false)
 		_, err := client.GetTSWithRetry(context.Background())
 		require.NoError(t, err)
 	})
@@ -380,7 +380,7 @@ func TestGetTSWithRetry(t *testing.T) {
 	t.Run("PD leader failure:", func(t *testing.T) {
 		retryTimes := -1000
 		pDClient := fakePDClient{notLeader: true, retryTimes: &retryTimes}
-		client := restore.NewRestoreClient(pDClient, nil, defaultKeepaliveCfg, false)
+		client := restore.NewRestoreClient(pDClient, nil, nil, defaultKeepaliveCfg, false)
 		_, err := client.GetTSWithRetry(context.Background())
 		require.Error(t, err)
 	})
@@ -388,7 +388,7 @@ func TestGetTSWithRetry(t *testing.T) {
 	t.Run("PD leader switch successfully", func(t *testing.T) {
 		retryTimes := 0
 		pDClient := fakePDClient{notLeader: true, retryTimes: &retryTimes}
-		client := restore.NewRestoreClient(pDClient, nil, defaultKeepaliveCfg, false)
+		client := restore.NewRestoreClient(pDClient, nil, nil, defaultKeepaliveCfg, false)
 		_, err := client.GetTSWithRetry(context.Background())
 		require.NoError(t, err)
 	})
@@ -420,7 +420,7 @@ func TestPreCheckTableTiFlashReplicas(t *testing.T) {
 	g := gluetidb.New()
 	client := restore.NewRestoreClient(fakePDClient{
 		stores: mockStores,
-	}, nil, defaultKeepaliveCfg, false)
+	}, nil, nil, defaultKeepaliveCfg, false)
 	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
 
@@ -544,7 +544,7 @@ func TestSetSpeedLimit(t *testing.T) {
 	// 1. The cost of concurrent communication is expected to be less than the cost of serial communication.
 	client := restore.NewRestoreClient(fakePDClient{
 		stores: mockStores,
-	}, nil, defaultKeepaliveCfg, false)
+	}, nil, nil, defaultKeepaliveCfg, false)
 	ctx := context.Background()
 
 	recordStores = NewRecordStores()
@@ -570,7 +570,7 @@ func TestSetSpeedLimit(t *testing.T) {
 	mockStores[5].Id = SET_SPEED_LIMIT_ERROR // setting a fault store
 	client = restore.NewRestoreClient(fakePDClient{
 		stores: mockStores,
-	}, nil, defaultKeepaliveCfg, false)
+	}, nil, nil, defaultKeepaliveCfg, false)
 
 	// Concurrency needs to be less than the number of stores
 	err = restore.MockCallSetSpeedLimit(ctx, FakeImporterClient{}, client, 2)
@@ -584,6 +584,43 @@ func TestSetSpeedLimit(t *testing.T) {
 	for i := 0; i < recordStores.len(); i++ {
 		require.Equal(t, mockStores[i].Id, recordStores.get(i))
 	}
+}
+
+var deleteRangeQueryList = []*stream.PreDelRangeQuery{
+	{
+		Sql: "INSERT IGNORE INTO mysql.gc_delete_range VALUES (%?, %?, %?, %?, %?), (%?, %?, %?, %?, %?)",
+		ParamsList: []stream.DelRangeParams{
+			{
+				JobID:    1,
+				ElemID:   1,
+				StartKey: "a",
+				EndKey:   "b",
+			},
+			{
+				JobID:    1,
+				ElemID:   2,
+				StartKey: "b",
+				EndKey:   "c",
+			},
+		},
+	},
+	{
+		// When the last table id has no rewrite rule
+		Sql: "INSERT IGNORE INTO mysql.gc_delete_range VALUES (%?, %?, %?, %?, %?),",
+		ParamsList: []stream.DelRangeParams{
+			{
+				JobID:    2,
+				ElemID:   1,
+				StartKey: "a",
+				EndKey:   "b",
+			},
+		},
+	},
+	{
+		// When all the tables have no rewrite rule
+		Sql:        "INSERT IGNORE INTO mysql.gc_delete_range VALUES ",
+		ParamsList: nil,
+	},
 }
 
 func TestDeleteRangeQuery(t *testing.T) {
@@ -613,46 +650,67 @@ func TestDeleteRangeQuery(t *testing.T) {
 	g := gluetidb.New()
 	client := restore.NewRestoreClient(fakePDClient{
 		stores: mockStores,
-	}, nil, defaultKeepaliveCfg, false)
+	}, nil, nil, defaultKeepaliveCfg, false)
 	err := client.Init(g, m.Storage)
 	require.NoError(t, err)
 
 	client.RunGCRowsLoader(ctx)
 
-	client.RecordDeleteRange(&stream.PreDelRangeQuery{
-		Sql: "INSERT IGNORE INTO mysql.gc_delete_range VALUES (%?, %?, %?, %?, %?), (%?, %?, %?, %?, %?)",
-		ParamsList: []stream.DelRangeParams{
-			{
-				JobID:    1,
-				ElemID:   1,
-				StartKey: "a",
-				EndKey:   "b",
-			},
-			{
-				JobID:    1,
-				ElemID:   2,
-				StartKey: "b",
-				EndKey:   "c",
+	for _, query := range deleteRangeQueryList {
+		client.RecordDeleteRange(query)
+	}
+	querys := client.GetGCRows()
+	require.Equal(t, len(querys), len(deleteRangeQueryList))
+	for i, query := range querys {
+		expected_query := deleteRangeQueryList[i]
+		require.Equal(t, expected_query.Sql, query.Sql)
+		require.Equal(t, len(expected_query.ParamsList), len(query.ParamsList))
+		for j := range expected_query.ParamsList {
+			require.Equal(t, expected_query.ParamsList[j], query.ParamsList[j])
+		}
+	}
+}
+
+func TestDeleteRangeQueryExec(t *testing.T) {
+	ctx := context.Background()
+	m := mc
+	mockStores := []*metapb.Store{
+		{
+			Id: 1,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "engine",
+					Value: "tiflash",
+				},
 			},
 		},
-	})
+		{
+			Id: 2,
+			Labels: []*metapb.StoreLabel{
+				{
+					Key:   "engine",
+					Value: "tiflash",
+				},
+			},
+		},
+	}
 
-	querys := client.GetGCRows()
-	require.Equal(t, len(querys), 1)
-	require.Equal(t, querys[0].Sql, "INSERT IGNORE INTO mysql.gc_delete_range VALUES (%?, %?, %?, %?, %?), (%?, %?, %?, %?, %?)")
-	require.Equal(t, len(querys[0].ParamsList), 2)
-	require.Equal(t, querys[0].ParamsList[0], stream.DelRangeParams{
-		JobID:    1,
-		ElemID:   1,
-		StartKey: "a",
-		EndKey:   "b",
-	})
-	require.Equal(t, querys[0].ParamsList[1], stream.DelRangeParams{
-		JobID:    1,
-		ElemID:   2,
-		StartKey: "b",
-		EndKey:   "c",
-	})
+	g := gluetidb.New()
+	retryCnt := 1
+	client := restore.NewRestoreClient(fakePDClient{
+		stores:     mockStores,
+		retryTimes: &retryCnt,
+	}, nil, nil, defaultKeepaliveCfg, false)
+	err := client.Init(g, m.Storage)
+	require.NoError(t, err)
+
+	client.RunGCRowsLoader(ctx)
+
+	for _, query := range deleteRangeQueryList {
+		client.RecordDeleteRange(query)
+	}
+
+	require.NoError(t, client.InsertGCRows(ctx))
 }
 
 func MockEmptySchemasReplace() *stream.SchemasReplace {
@@ -1893,19 +1951,25 @@ func TestCheckNewCollationEnable(t *testing.T) {
 			CheckRequirements:           true,
 			isErr:                       true,
 		},
+		{
+			backupMeta:                  &backuppb.BackupMeta{NewCollationsEnabled: ""},
+			newCollationEnableInCluster: "False",
+			CheckRequirements:           false,
+			isErr:                       false,
+		},
 	}
 
 	for i, ca := range caseList {
 		g := &gluetidb.MockGlue{
 			GlobalVars: map[string]string{"new_collation_enabled": ca.newCollationEnableInCluster},
 		}
-		err := restore.CheckNewCollationEnable(ca.backupMeta.GetNewCollationsEnabled(), g, nil, ca.CheckRequirements)
-
+		enabled, err := restore.CheckNewCollationEnable(ca.backupMeta.GetNewCollationsEnabled(), g, nil, ca.CheckRequirements)
 		t.Logf("[%d] Got Error: %v\n", i, err)
 		if ca.isErr {
 			require.Error(t, err)
 		} else {
 			require.NoError(t, err)
 		}
+		require.Equal(t, ca.newCollationEnableInCluster == "True", enabled)
 	}
 }

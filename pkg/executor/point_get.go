@@ -63,8 +63,8 @@ func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Execut
 		isStaleness:      b.isStaleness,
 	}
 
-	e.Base().SetInitCap(1)
-	e.Base().SetMaxChunkSize(1)
+	e.SetInitCap(1)
+	e.SetMaxChunkSize(1)
 	e.Init(p)
 
 	e.snapshot, err = b.getSnapshot()
@@ -120,7 +120,7 @@ type PointGetExecutor struct {
 	tblInfo          *model.TableInfo
 	handle           kv.Handle
 	idxInfo          *model.IndexInfo
-	partInfo         *model.PartitionDefinition
+	partitionDef     *model.PartitionDefinition
 	idxKey           kv.Key
 	handleVal        []byte
 	idxVals          []types.Datum
@@ -162,7 +162,7 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 		e.lockWaitTime = 0
 	}
 	e.rowDecoder = decoder
-	e.partInfo = p.PartitionInfo
+	e.partitionDef = p.PartitionDef
 	e.columns = p.Columns
 	e.buildVirtualColumnInfo()
 }
@@ -221,8 +221,8 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	var tblID int64
 	var err error
-	if e.partInfo != nil {
-		tblID = e.partInfo.ID
+	if e.partitionDef != nil {
+		tblID = e.partitionDef.ID
 	} else {
 		tblID = e.tblInfo.ID
 	}
@@ -303,6 +303,14 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				// Wait `UPDATE` finished
 				failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step2", nil)
 			})
+			if e.idxInfo.Global {
+				segs := tablecodec.SplitIndexValue(e.handleVal)
+				_, pid, err := codec.DecodeInt(segs.PartitionID)
+				if err != nil {
+					return err
+				}
+				tblID = pid
+			}
 		}
 	}
 
@@ -333,7 +341,7 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return nil
 	}
-	err = DecodeRowValToChunk(e.Base().Ctx(), e.Schema(), e.tblInfo, e.handle, val, req, e.rowDecoder)
+	err = DecodeRowValToChunk(e.BaseExecutor.Ctx(), e.Schema(), e.tblInfo, e.handle, val, req, e.rowDecoder)
 	if err != nil {
 		return err
 	}
@@ -502,8 +510,8 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 	var tblName string
 	var partName string
 	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
-	if e.partInfo != nil {
-		tblID = e.partInfo.ID
+	if e.partitionDef != nil {
+		tblID = e.partitionDef.ID
 		tblInfo, _, partInfo := is.FindTableByPartitionID(tblID)
 		tblName = tblInfo.Meta().Name.String()
 		partName = partInfo.Name.String()

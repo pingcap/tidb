@@ -16,12 +16,10 @@ package expression
 
 import (
 	"testing"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
@@ -106,9 +104,8 @@ func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
 
 func TestConstant(t *testing.T) {
 	ctx := createContext(t)
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	require.False(t, NewZero().IsCorrelated())
-	require.True(t, NewZero().ConstItem(sc))
+	require.Equal(t, ConstStrict, NewZero().ConstLevel())
 	require.True(t, NewZero().Decorrelate(nil).Equal(ctx, NewZero()))
 	require.Equal(t, []byte{0x0, 0x8, 0x0}, NewZero().HashCode())
 	require.False(t, NewZero().Equal(ctx, NewOne()))
@@ -133,16 +130,26 @@ func TestIsBinaryLiteral(t *testing.T) {
 	require.False(t, IsBinaryLiteral(col))
 }
 
-func TestConstItem(t *testing.T) {
-	ctx := createContext(t)
-	sf := newFunctionWithMockCtx(ast.Rand)
-	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
-	sf = newFunctionWithMockCtx(ast.UUID)
-	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
-	sf = newFunctionWithMockCtx(ast.GetParam, NewOne())
-	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
-	sf = newFunctionWithMockCtx(ast.Abs, NewOne())
-	require.True(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
+func TestConstLevel(t *testing.T) {
+	ctxConst := NewZero()
+	ctxConst.DeferredExpr = newFunctionWithMockCtx(ast.UnixTimestamp)
+	for _, c := range []struct {
+		exp   Expression
+		level ConstLevel
+	}{
+		{newFunctionWithMockCtx(ast.Rand), ConstNone},
+		{newFunctionWithMockCtx(ast.UUID), ConstNone},
+		{newFunctionWithMockCtx(ast.GetParam, NewOne()), ConstNone},
+		{newFunctionWithMockCtx(ast.Abs, NewOne()), ConstStrict},
+		{newFunctionWithMockCtx(ast.Abs, newColumn(1)), ConstNone},
+		{newFunctionWithMockCtx(ast.Plus, NewOne(), NewOne()), ConstStrict},
+		{newFunctionWithMockCtx(ast.Plus, newColumn(1), NewOne()), ConstNone},
+		{newFunctionWithMockCtx(ast.Plus, NewOne(), newColumn(1)), ConstNone},
+		{newFunctionWithMockCtx(ast.Plus, NewOne(), newColumn(1)), ConstNone},
+		{newFunctionWithMockCtx(ast.Plus, NewOne(), ctxConst), ConstOnlyInContext},
+	} {
+		require.Equal(t, c.level, c.exp.ConstLevel(), c.exp.String())
+	}
 }
 
 func TestVectorizable(t *testing.T) {

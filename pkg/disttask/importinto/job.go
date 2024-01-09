@@ -109,7 +109,7 @@ func (ti *DistImporter) ImportTask(task *proto.Task) {
 	ti.Group.Go(func() error {
 		defer close(ti.Done)
 		// task is run using distribute framework, so we only wait for the task to finish.
-		return handle.WaitTask(ti.GroupCtx, task.ID)
+		return handle.WaitTaskDoneOrPaused(ti.GroupCtx, task.ID)
 	})
 }
 
@@ -193,12 +193,10 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 	}); err != nil {
 		return 0, nil, err
 	}
+	handle.NotifyTaskChange()
 	task, err := taskManager.GetTaskByID(ctx, taskID)
 	if err != nil {
 		return 0, nil, err
-	}
-	if task == nil {
-		return 0, nil, errors.Errorf("cannot find task with ID %d", taskID)
 	}
 
 	metrics.UpdateMetricsForAddTask(task)
@@ -234,9 +232,6 @@ func getTaskMeta(ctx context.Context, jobID int64) (*TaskMeta, error) {
 	if err != nil {
 		return nil, err
 	}
-	if task == nil {
-		return nil, errors.Errorf("cannot find task with key %s", taskKey)
-	}
 	var taskMeta TaskMeta
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
@@ -256,9 +251,6 @@ func GetTaskImportedRows(ctx context.Context, jobID int64) (uint64, error) {
 	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	if err != nil {
 		return 0, err
-	}
-	if task == nil {
-		return 0, errors.Errorf("cannot find task with key %s", taskKey)
 	}
 	taskMeta := TaskMeta{}
 	if err = json.Unmarshal(task.Meta, &taskMeta); err != nil {

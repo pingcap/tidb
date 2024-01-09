@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -151,7 +152,9 @@ func TestSleepVectorized(t *testing.T) {
 	warnCnt := counter{}
 
 	// non-strict model
-	sessVars.StmtCtx.BadNullAsWarning = true
+	var levels errctx.LevelMap
+	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
+	sessVars.StmtCtx.SetErrLevels(levels)
 	input.AppendFloat64(0, 1)
 	err = f.vecEvalInt(ctx, input, result)
 	require.NoError(t, err)
@@ -184,7 +187,8 @@ func TestSleepVectorized(t *testing.T) {
 	require.Equal(t, uint16(warnCnt.add(2)), sessVars.StmtCtx.WarningCount())
 
 	// for error case under the strict model
-	sessVars.StmtCtx.BadNullAsWarning = false
+	levels[errctx.ErrGroupBadNull] = errctx.LevelError
+	sessVars.StmtCtx.SetErrLevels(levels)
 	input.Reset()
 	input.AppendNull(0)
 	err = f.vecEvalInt(ctx, input, result)

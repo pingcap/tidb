@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	fstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
-	"github.com/pingcap/tidb/pkg/executor/asyncloaddata"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -59,6 +58,7 @@ const unknownImportedRowCount = -1
 // ImportIntoExec represents a IMPORT INTO executor.
 type ImportIntoExec struct {
 	exec.BaseExecutor
+	selectExec exec.Executor
 	userSctx   sessionctx.Context
 	importPlan *importer.Plan
 	controller *importer.LoadDataController
@@ -71,8 +71,8 @@ var (
 	_ exec.Executor = (*ImportIntoExec)(nil)
 )
 
-func newImportIntoExec(b exec.BaseExecutor, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (
-	*ImportIntoExec, error) {
+func newImportIntoExec(b exec.BaseExecutor, selectExec exec.Executor, userSctx sessionctx.Context,
+	plan *plannercore.ImportInto, tbl table.Table) (*ImportIntoExec, error) {
 	importPlan, err := importer.NewImportPlan(userSctx, plan, tbl)
 	if err != nil {
 		return nil, err
@@ -84,6 +84,7 @@ func newImportIntoExec(b exec.BaseExecutor, userSctx sessionctx.Context, plan *p
 	}
 	return &ImportIntoExec{
 		BaseExecutor: b,
+		selectExec:   selectExec,
 		userSctx:     userSctx,
 		importPlan:   importPlan,
 		controller:   controller,
@@ -133,11 +134,11 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	groupCtx = kv.WithInternalSourceType(groupCtx, kv.InternalDistTask)
 
 	param := &importer.JobImportParam{
-		Job:      &asyncloaddata.Job{},
+		Job:      &importer.Job{},
 		Group:    group,
 		GroupCtx: groupCtx,
 		Done:     make(chan struct{}),
-		Progress: asyncloaddata.NewProgress(false),
+		Progress: importer.NewProgress(),
 	}
 	distImporter, err := e.getJobImporter(ctx, param)
 	if err != nil {

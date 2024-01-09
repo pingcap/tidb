@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/executor/asyncloaddata"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 )
@@ -132,7 +131,7 @@ type SharedVars struct {
 	TableImporter *importer.TableImporter
 	DataEngine    *backend.OpenedEngine
 	IndexEngine   *backend.OpenedEngine
-	Progress      *asyncloaddata.Progress
+	Progress      *importer.Progress
 
 	mu       sync.Mutex
 	Checksum *verification.KVChecksum
@@ -168,9 +167,6 @@ type importStepMinimalTask struct {
 	Chunk      Chunk
 	SharedVars *SharedVars
 }
-
-// IsMinimalTask implements the MinimalTask interface.
-func (*importStepMinimalTask) IsMinimalTask() {}
 
 func (t *importStepMinimalTask) String() string {
 	return fmt.Sprintf("chunk:%s:%d", t.Chunk.Path, t.Chunk.Offset)

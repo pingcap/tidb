@@ -332,7 +332,7 @@ func (w *buildWorker) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chun
 		if w.hashJoinCtx.finished.Load() {
 			return
 		}
-		chk := sessVars.GetNewChunkWithCapacity(w.buildSideExec.Base().RetFieldTypes(), sessVars.MaxChunkSize, sessVars.MaxChunkSize, w.hashJoinCtx.allocPool)
+		chk := w.hashJoinCtx.allocPool.Alloc(w.buildSideExec.RetFieldTypes(), sessVars.MaxChunkSize, sessVars.MaxChunkSize)
 		err = exec.Next(ctx, w.buildSideExec, chk)
 		if err != nil {
 			errCh <- errors.Trace(err)
@@ -1141,7 +1141,7 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			}
 		}
 		for i := uint(0); i < e.concurrency; i++ {
-			e.probeWorkers[i].rowIters = chunk.NewIterator4Slice([]chunk.Row{}).(*chunk.Iterator4Slice)
+			e.probeWorkers[i].rowIters = chunk.NewIterator4Slice([]chunk.Row{})
 		}
 		e.workerWg.RunWithRecover(func() {
 			defer trace.StartRegion(ctx, "HashJoinHashTableBuilder").End()
@@ -1355,7 +1355,7 @@ func (e *NestedLoopApplyExec) Open(ctx context.Context) error {
 // aggExecutorTreeInputEmpty checks whether the executor tree returns empty if without aggregate operators.
 // Note that, the prerequisite is that this executor tree has been executed already and it returns one row.
 func aggExecutorTreeInputEmpty(e exec.Executor) bool {
-	children := e.Base().AllChildren()
+	children := e.AllChildren()
 	if len(children) == 0 {
 		return false
 	}
