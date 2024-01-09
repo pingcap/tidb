@@ -238,7 +238,8 @@ func (s *schemaValidator) Check(txnTS uint64, schemaVer int64, relatedPhysicalTa
 	}
 
 	if schemaVer < s.restartSchemaVer {
-		logutil.BgLogger().Info("the schema version is too old", zap.Int64("schemaVer", schemaVer))
+		logutil.BgLogger().Info("the schema version is too old, TiDB and PD maybe unhealthy after the transaction started",
+			zap.Int64("schemaVer", schemaVer))
 		return nil, ResultFail
 	}
 	if s.lease == 0 {
