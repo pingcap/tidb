@@ -48,8 +48,6 @@ const (
 	subtaskCnt = 3
 )
 
-var mockedAllServerInfos = []*infosync.ServerInfo{}
-
 func getTestSchedulerExt(ctrl *gomock.Controller) scheduler.Extension {
 	mockScheduler := mockDispatch.NewMockExtension(ctrl)
 	mockScheduler.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
@@ -486,7 +484,6 @@ func TestVerifyTaskStateTransform(t *testing.T) {
 		{proto.TaskStateRunning, proto.TaskStatePausing, true},
 		{proto.TaskStateRunning, proto.TaskStateResuming, false},
 		{proto.TaskStateCancelling, proto.TaskStateRunning, false},
-		{proto.TaskStateCanceled, proto.TaskStateRunning, false},
 	}
 	for _, tc := range testCases {
 		require.Equal(t, tc.expect, scheduler.VerifyTaskStateTransform(tc.oldState, tc.newState))

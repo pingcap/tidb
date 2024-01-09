@@ -1064,9 +1064,9 @@ func (mgr *TaskManager) UpdateTaskAndAddSubTasks(ctx context.Context, task *prot
 			}
 		})
 		if len(subtasks) > 0 {
-			subtaskState := proto.TaskStatePending
+			subtaskState := proto.SubtaskStatePending
 			if task.State == proto.TaskStateReverting {
-				subtaskState = proto.TaskStateRevertPending
+				subtaskState = proto.SubtaskStateRevertPending
 			}
 
 			sql := new(strings.Builder)

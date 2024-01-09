@@ -816,7 +816,7 @@ func TestBothTaskAndSubTaskTable(t *testing.T) {
 
 	// test transactional
 	require.NoError(t, sm.DeleteSubtasksByTaskID(ctx, 1))
-	failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/MockUpdateTaskErr", "1*return(true)")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/MockUpdateTaskErr", "1*return(true)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/storage/MockUpdateTaskErr"))
 	}()
@@ -987,7 +987,7 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	require.Len(t, subTasks, 3)
 
 	// test GC history table.
-	failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds", "return(1)"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/storage/subtaskHistoryKeepSeconds"))
 	}()
@@ -1147,4 +1147,20 @@ func TestInitMeta(t *testing.T) {
 	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{"tidb1"}))
 	tk.MustExec(`set global tidb_service_scope="background"`)
 	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
+}
+
+func TestSubtaskType(t *testing.T) {
+	_, sm, ctx := testutil.InitTableTest(t)
+	cases := []proto.TaskType{
+		proto.TaskTypeExample,
+		proto.ImportInto,
+		proto.Backfill,
+		"",
+	}
+	for i, c := range cases {
+		testutil.InsertSubtask(t, sm, int64(i+1), proto.StepOne, "tidb-1", []byte(""), proto.SubtaskStateRunning, c, 12)
+		subtask, err := sm.GetFirstSubtaskInStates(ctx, "tidb-1", int64(i+1), proto.StepOne, proto.SubtaskStateRunning)
+		require.NoError(t, err)
+		require.Equal(t, c, subtask.Type)
+	}
 }
