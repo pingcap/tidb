@@ -336,10 +336,7 @@ func (e *MPPGather) Close() error {
 		e.mppErrRecovery.ResetHolder()
 	}
 
-	if err = e.mergeAndClearRuntimeStats(); err != nil {
-		return err
-	}
-	return nil
+	return e.mergeAndClearRuntimeStats()
 }
 
 // Table implements the dataSourceExecutor interface.
