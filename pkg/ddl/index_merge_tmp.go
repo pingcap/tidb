@@ -55,7 +55,7 @@ func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(
 			if err != nil {
 				if errors.ErrorEqual(err, kv.ErrKeyExists) {
 					// TODO: print key is not a good solution.
-					return kv.ErrKeyExists.GenWithStackByArgs(string(key), idxInfo.Name.O)
+					return kv.ErrKeyExists.GenWithStackByArgs(key.String(), idxInfo.Name.O)
 				}
 				return errors.Trace(err)
 			}
