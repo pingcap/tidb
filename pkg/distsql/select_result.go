@@ -317,7 +317,9 @@ type selectResult struct {
 	distSQLConcurrency int
 	paging             bool
 
-	// gjt todo comments
+	// TiFlash will handle its runtime stats in MPPGather instead of add to StmtCtx.RuntimeStatsColl directly.
+	// Because MPPGather will retry when got mpp err and do gather level retry.
+	// MPPGather will merge this runtime stats to StmtCtx.RuntimeStatsColl when Close().
 	tiflashRuntimeStats *execdetails.RuntimeStatsColl
 }
 

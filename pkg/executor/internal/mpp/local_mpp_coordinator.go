@@ -147,7 +147,6 @@ type localMppCoordinator struct {
 	// Record node cnt that involved in the mpp computation.
 	nodeCnt int
 
-	// gjt todo maybe tiflashGatherRuntimeStats?
 	tiflashRuntimeStats *execdetails.RuntimeStatsColl
 }
 

@@ -1057,7 +1057,7 @@ func (e *RuntimeStatsColl) cloneBasicCopRuntimeStats() map[int]map[string]*basic
 	return clone
 }
 
-// MergeCopRuntimeStats merge copStats of another RuntimeStatsColl.
+// MergeBasicCopRuntimeStats merge copStats of another RuntimeStatsColl.
 func (e *RuntimeStatsColl) MergeBasicCopRuntimeStats(other *RuntimeStatsColl, storeType string) error {
 	otherCopStats := other.cloneBasicCopRuntimeStats()
 	if otherCopStats == nil {
