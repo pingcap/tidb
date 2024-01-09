@@ -79,6 +79,9 @@ type SortExec struct {
 		mpmcQueue *chunk.MPMCQueue
 		workers   []*parallelSortWorker
 
+		// All workers' sorted rows will be put into this list to be merged
+		rowsToBeMerged sortedRowsList
+
 		errRWLock sync.RWMutex
 		err       error
 	}
@@ -417,7 +420,6 @@ func (e *SortExec) fetchChunksUnparallel(ctx context.Context) error {
 
 func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	workerNum := len(e.Parallel.workers)
-	rowsToBeMerged := sortedRowsList{}
 
 	// Wait for the finish of all workers
 	workersWaiter := sync.WaitGroup{}
@@ -430,13 +432,13 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 
 	// Create and run workers
 	for i := range e.Parallel.workers {
-		e.Parallel.workers[i] = newParallelSortWorker(e.lessRow, &rowsToBeMerged, &workersWaiter, &e.Parallel.result, e.Parallel.mpmcQueue, e.checkErrorForParallel, e.processErrorForParallel, e.memTracker)
+		e.Parallel.workers[i] = newParallelSortWorker(e.lessRow, &e.Parallel.rowsToBeMerged, &workersWaiter, &e.Parallel.result, e.Parallel.mpmcQueue, e.checkErrorForParallel, e.processErrorForParallel, e.memTracker)
 		go e.Parallel.workers[i].run()
 	}
 
 	// Wait for the finish of all workers
 	workersWaiter.Wait()
-	e.getSortedRows(&rowsToBeMerged)
+	e.getSortedRows()
 	err := e.checkErrorForParallel()
 	return err
 }
@@ -500,8 +502,8 @@ func (e *SortExec) processErrorForParallel(err error) {
 	e.Parallel.mpmcQueue.Cancel()
 }
 
-func (e *SortExec) getSortedRows(rowsToBeMerged *sortedRowsList) {
-	partitionNum := rowsToBeMerged.sortedRowsQueue.Len()
+func (e *SortExec) getSortedRows() {
+	partitionNum := e.Parallel.rowsToBeMerged.sortedRowsQueue.Len()
 	if partitionNum > 1 {
 		panic("Sort is not completed.")
 	}
@@ -511,7 +513,7 @@ func (e *SortExec) getSortedRows(rowsToBeMerged *sortedRowsList) {
 		return
 	}
 
-	sortedRows := popFromList(&rowsToBeMerged.sortedRowsQueue)
+	sortedRows := popFromList(&e.Parallel.rowsToBeMerged.sortedRowsQueue)
 	e.Parallel.rowNum = int64(len(sortedRows))
 	e.Parallel.result = sortedRows
 }
