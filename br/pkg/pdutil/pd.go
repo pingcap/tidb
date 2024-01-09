@@ -41,7 +41,7 @@ const (
 	maxMsgSize   = int(128 * units.MiB) // pd.ScanRegion may return a large response
 	pauseTimeout = 5 * time.Minute
 	// pd request retry time when connection fail
-	pdRequestRetryTime = 120
+	PDRequestRetryTime = 120
 	// set max-pending-peer-count to a large value to avoid scatter region failed.
 	maxPendingPeerUnlimited uint64 = math.MaxInt32
 )
@@ -167,7 +167,7 @@ func pdRequestWithCode(
 		resp, err = cli.Do(req) //nolint:bodyclose
 		count++
 		failpoint.Inject("InjectClosed", func(v failpoint.Value) {
-			if failType, ok := v.(int); ok && count <= pdRequestRetryTime-1 {
+			if failType, ok := v.(int); ok && count <= PDRequestRetryTime-1 {
 				resp = nil
 				switch failType {
 				case 0:
@@ -183,7 +183,7 @@ func pdRequestWithCode(
 				}
 			}
 		})
-		if count > pdRequestRetryTime || (resp != nil && resp.StatusCode < 500) ||
+		if count > PDRequestRetryTime || (resp != nil && resp.StatusCode < 500) ||
 			(err != nil && !common.IsRetryableError(err)) {
 			break
 		}
