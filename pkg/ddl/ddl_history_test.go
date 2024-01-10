@@ -33,7 +33,6 @@ import (
 )
 
 func TestDDLHistoryBasic(t *testing.T) {
-
 	store := testkit.CreateMockStore(t)
 	rs := pools.NewResourcePool(func() (pools.Resource, error) {
 		newTk := testkit.NewTestKit(t, store)
