@@ -489,7 +489,6 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 			require.Equal(t, 1, cmp, "endKey: %v, lastEndKey: %v", endKey, lastEndKey)
 		}
 		lastEndKey = slices.Clone(endKey)
-		t.Logf("endKey: %v, file number: %d", endKey, len(statFiles))
 	}
 	err = splitter.Close()
 	require.NoError(t, err)
