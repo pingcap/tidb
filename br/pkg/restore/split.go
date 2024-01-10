@@ -105,12 +105,18 @@ func (rs *RegionSplitter) ExecuteSplit(
 	if errSplit != nil {
 		return errors.Trace(errSplit)
 	}
+	if len(sortedRanges) == 0 {
+		log.Info("skip split regions after sorted, no range")
+		return nil
+	}
 	sortedKeys := make([][]byte, 0, len(sortedRanges))
 	totalRangeSize := uint64(0)
 	for _, r := range sortedRanges {
 		sortedKeys = append(sortedKeys, r.EndKey)
 		totalRangeSize += r.Size
 	}
+	// need use first range's start key to scan region
+	// and the range size must be greater than 0 here
 	scanStartKey := sortedRanges[0].StartKey
 	sctx := SplitContext{
 		isRawKv:     isRawKv,
@@ -192,6 +198,8 @@ func (rs *RegionSplitter) executeSplitByRanges(
 					rangeSize += rg.Size
 					allKeys = append(allKeys, rg.EndKey)
 				}
+				// need use first range's start key to scan region
+				// and the range size must be greater than 0 here
 				scanStartKey := ranges[0].StartKey
 				expectSplitSize := rangeSize / uint64(sctx.storeCount)
 				size := uint64(0)
