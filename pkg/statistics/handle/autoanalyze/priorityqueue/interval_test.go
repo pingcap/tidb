@@ -42,8 +42,7 @@ func TestGetAverageAnalysisDuration(t *testing.T) {
 	initJobs(tk)
 
 	// Partitioned table.
-	insertFinishedJob(tk, "example_schema", "example_table", "example_partition")
-	insertFinishedJob(tk, "example_schema", "example_table", "example_partition1")
+	insertMultipleFinishedJobs(tk, "example_table", "example_partition")
 	// Only one partition.
 	avgDuration, err = getAverageAnalysisDuration(
 		sctx,
@@ -59,10 +58,35 @@ func TestGetAverageAnalysisDuration(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, time.Duration(3600)*time.Second, avgDuration)
 	// Non-partitioned table.
-	insertFinishedJob(tk, "example_schema1", "example_table1", "")
-	avgDuration, err = getAverageAnalysisDuration(sctx, "example_schema1", "example_table1", "")
+	insertMultipleFinishedJobs(tk, "example_table1", "")
+	avgDuration, err = getAverageAnalysisDuration(sctx, "example_schema", "example_table1")
 	require.NoError(t, err)
 	require.Equal(t, time.Duration(3600)*time.Second, avgDuration)
+}
+
+func insertMultipleFinishedJobs(tk *testkit.TestKit, tableName string, partitionName string) {
+	jobs := []struct {
+		dbName        string
+		tableName     string
+		partitionName string
+		startTime     string
+		endTime       string
+	}{
+		// This is a special case its duration is 30 minutes.
+		// But the id is smaller than the following records.
+		// So it will not be selected.
+		{"example_schema", tableName, partitionName, "2022-01-01 7:00:00", "2022-01-01 7:30:00"},
+		// Other records.
+		{"example_schema", tableName, partitionName, "2022-01-01 09:00:00", "2022-01-01 10:00:00"},
+		{"example_schema", tableName, partitionName, "2022-01-01 10:00:00", "2022-01-01 11:00:00"},
+		{"example_schema", tableName, partitionName, "2022-01-01 11:00:00", "2022-01-01 12:00:00"},
+		{"example_schema", tableName, partitionName, "2022-01-01 13:00:00", "2022-01-01 14:00:00"},
+		{"example_schema", tableName, partitionName, "2022-01-01 14:00:00", "2022-01-01 15:00:00"},
+	}
+
+	for _, job := range jobs {
+		insertFinishedJob(tk, job.dbName, job.tableName, job.partitionName, job.startTime, job.endTime)
+	}
 }
 
 func TestGetLastFailedAnalysisDuration(t *testing.T) {
@@ -99,8 +123,8 @@ func TestGetLastFailedAnalysisDuration(t *testing.T) {
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, lastFailedDuration, time.Duration(24)*time.Hour)
 	// Non-partitioned table.
-	insertFailedJob(tk, "example_schema1", "example_table1", "")
-	lastFailedDuration, err = getLastFailedAnalysisDuration(sctx, "example_schema1", "example_table1", "")
+	insertFailedJob(tk, "example_schema", "example_table1", "")
+	lastFailedDuration, err = getLastFailedAnalysisDuration(sctx, "example_schema", "example_table1")
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, lastFailedDuration, time.Duration(24)*time.Hour)
 }
@@ -176,6 +200,8 @@ func insertFinishedJob(
 	dbName string,
 	tableName string,
 	partitionName string,
+	startTime string,
+	endTime string,
 ) {
 	if partitionName == "" {
 		tk.MustExec(`
@@ -191,14 +217,16 @@ func insertFinishedJob(
 		?,
 		?,
 		'Job information for finished job',
-		'2022-01-01 09:00:00',
-		'2022-01-01 10:00:00',
+		?,
+		?,
 		'finished',
 		'example_instance'
 	);
 		`,
 			dbName,
 			tableName,
+			startTime,
+			endTime,
 		)
 	} else {
 		tk.MustExec(`
@@ -216,8 +244,8 @@ func insertFinishedJob(
 		?,
 		?,
 		'Job information for finished job',
-		'2022-01-01 09:00:00',
-		'2022-01-01 10:00:00',
+		?,
+		?,
 		'finished',
 		'example_instance'
 	);
@@ -225,6 +253,8 @@ func insertFinishedJob(
 			dbName,
 			tableName,
 			partitionName,
+			startTime,
+			endTime,
 		)
 	}
 }

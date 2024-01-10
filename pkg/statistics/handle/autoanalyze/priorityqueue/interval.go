@@ -24,10 +24,13 @@ import (
 
 const avgDurationQueryForTable = `
 	SELECT AVG(TIMESTAMPDIFF(SECOND, start_time, end_time)) AS avg_duration
-	FROM mysql.analyze_jobs
-	WHERE table_schema = %? AND table_name = %? AND state = 'finished' AND fail_reason IS NULL AND partition_name = ''
-	ORDER BY id DESC
-	LIMIT 5;
+	FROM (
+		SELECT start_time, end_time
+		FROM mysql.analyze_jobs
+		WHERE table_schema = %? AND table_name = %? AND state = 'finished' AND fail_reason IS NULL AND partition_name = ''
+		ORDER BY id DESC
+		LIMIT 5
+	) AS recent_analyses;
 `
 
 // For multiple partitions, we only need to return the average duration of the most recent 5 successful analyses
