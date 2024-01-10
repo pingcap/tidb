@@ -142,7 +142,7 @@ gotest_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
 	@$(CLEAN_UT_BINARY)
 
 gotest_unstable_in_verify_ci: tools/bin/xprog tools/bin/ut failpoint-enable
-	@echo "Running gotest_in_verify_ci"
+	@echo "Running gotest_unstable_in_verify_ci"
 	@mkdir -p $(TEST_COVERAGE_DIR)
 	tools/bin/ut --junitfile "$(TEST_COVERAGE_DIR)/tidb-junit-report.xml" --coverprofile "$(TEST_COVERAGE_DIR)/tidb_cov.unit_test.out" --only unstable.txt || { $(FAILPOINT_DISABLE); exit 1; }
 	@$(FAILPOINT_DISABLE)
