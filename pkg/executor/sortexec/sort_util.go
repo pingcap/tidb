@@ -30,18 +30,45 @@ type sortedRowsList struct {
 	sortedRowsQueue list.List // Type is sortedRows
 }
 
-// If there is sortedRows in the queue, fetch them, or we should put the rows into queue.
-func (p *sortedRowsList) fetchOrPutSortedRows(rows sortedRows) sortedRows {
+func (p *sortedRowsList) add(rows sortedRows) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	p.sortedRowsQueue.PushBack(rows)
+}
+
+func (p *sortedRowsList) addNoLock(rows sortedRows) {
+	p.sortedRowsQueue.PushBack(rows)
+}
+
+func (p *sortedRowsList) addAndFetchTwoSortedRows(rows sortedRows) (sortedRows, sortedRows) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	if p.sortedRowsQueue.Len() > 0 {
-		r := popFromList(&p.sortedRowsQueue)
-		return r
-	} else {
-		p.sortedRowsQueue.PushBack(rows)
-		return nil
+	p.addNoLock(rows)
+	return p.fetchTwoSortedRowsNoLock()
+}
+
+func (p *sortedRowsList) fetchTwoSortedRows() (sortedRows, sortedRows) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	return p.fetchTwoSortedRowsNoLock()
+}
+
+func (p *sortedRowsList) fetchTwoSortedRowsNoLock() (sortedRows, sortedRows) {
+	if p.sortedRowsQueue.Len() > 1 {
+		res1 := popFromList(&p.sortedRowsQueue)
+		res2 := popFromList(&p.sortedRowsQueue)
+		return res1, res2
 	}
+	return nil, nil
+}
+
+func (p *sortedRowsList) fetchSortedRowsNoLock() sortedRows {
+	return popFromList(&p.sortedRowsQueue)
+}
+
+func (p *sortedRowsList) getSortedRowsNumNoLock() int {
+	return p.sortedRowsQueue.Len()
 }
 
 type rowWithPartition struct {
@@ -78,7 +105,7 @@ func (h *multiWayMerge) Swap(i, j int) {
 	h.elements[i], h.elements[j] = h.elements[j], h.elements[i]
 }
 
-func processErrorAndLog(processError func(error), r interface{}) {
+func processPanicAndLog(processError func(error), r interface{}) {
 	err := util.GetRecoverError(r)
 	processError(err)
 	logutil.BgLogger().Error("parallel sort panicked", zap.Error(err), zap.Stack("stack"))

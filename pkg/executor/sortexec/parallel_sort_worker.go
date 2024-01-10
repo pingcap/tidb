@@ -15,7 +15,6 @@
 package sortexec
 
 import (
-	"container/list"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -27,11 +26,9 @@ import (
 const SignalCheckpointForSort uint = 20000
 
 type parallelSortWorker struct {
-	sortedRowsQueue list.List // Type is sortedRows
-
 	lessRowFunc func(chunk.Row, chunk.Row) int
 
-	publicSortedRows *sortedRowsList
+	globalSortedRowsQueue *sortedRowsList
 
 	waitGroup *sync.WaitGroup
 	result    *sortedRows
@@ -51,7 +48,7 @@ type parallelSortWorker struct {
 
 func newParallelSortWorker(
 	lessRowFunc func(chunk.Row, chunk.Row) int,
-	publicSortedRows *sortedRowsList,
+	globalSortedRowsQueue *sortedRowsList,
 	waitGroup *sync.WaitGroup,
 	result *sortedRows,
 	mpmcQueue *chunk.MPMCQueue,
@@ -59,23 +56,23 @@ func newParallelSortWorker(
 	processError func(error),
 	memTracker *memory.Tracker) *parallelSortWorker {
 	return &parallelSortWorker{
-		lessRowFunc:       lessRowFunc,
-		publicSortedRows:  publicSortedRows,
-		waitGroup:         waitGroup,
-		result:            result,
-		mpmcQueue:         mpmcQueue,
-		checkError:        checkError,
-		processError:      processError,
-		totalMemoryUsage:  0,
-		timesOfRowCompare: 0,
-		memTracker:        memTracker,
+		lessRowFunc:           lessRowFunc,
+		globalSortedRowsQueue: globalSortedRowsQueue,
+		waitGroup:             waitGroup,
+		result:                result,
+		mpmcQueue:             mpmcQueue,
+		checkError:            checkError,
+		processError:          processError,
+		totalMemoryUsage:      0,
+		timesOfRowCompare:     0,
+		memTracker:            memTracker,
 	}
 }
 
 // Fetching chunks from MPMCQueue and sort them.
 // Rows are sorted only inside a chunk.
 // Return false if there is some error.
-func (p *parallelSortWorker) fetchFromMPMCQueueAndSort() bool {
+func (p *parallelSortWorker) fetchChunksAndSort() bool {
 	for {
 		err := p.checkError()
 		if err != nil {
@@ -93,7 +90,7 @@ func (p *parallelSortWorker) fetchFromMPMCQueueAndSort() bool {
 		p.totalMemoryUsage += chk.MemoryUsage
 
 		sortedRows := p.sortChunkAndGetSortedRows(chk.Chk)
-		pushIntoList(&p.sortedRowsQueue, sortedRows)
+		p.globalSortedRowsQueue.add(sortedRows)
 	}
 }
 
@@ -124,52 +121,33 @@ func (p *parallelSortWorker) sortChunkAndGetSortedRows(chk *chunk.Chunk) sortedR
 	return p.rowBuffer
 }
 
-// Sort data that received by itself. At last, length of sortedRowsQueue should not be greater than 1.
-// Return false if there is some error.
-func (p *parallelSortWorker) mergeSortLocalRows() bool {
-	for p.sortedRowsQueue.Len() > 1 {
-		err := p.checkError()
-		if err != nil {
-			return false
-		}
-
-		sortedRows1 := popFromList(&p.sortedRowsQueue)
-		sortedRows2 := popFromList(&p.sortedRowsQueue)
-		mergedSortedRows := p.mergeTwoSortedRows(sortedRows1, sortedRows2)
-		pushIntoList(&p.sortedRowsQueue, mergedSortedRows)
-	}
-	return true
-}
-
-// The worker will check the length of sharedSortedRows. If length > 0, it will fetch a sortedRows and merge it
-// with worker's own sorted rows. If length == 0, worker will put it's row into sharedSortedRows and leave.
-func (p *parallelSortWorker) mergeSortPublicRows() {
+func (p *parallelSortWorker) mergeSortGlobalRows() {
+	sortedRowsLeft, sortedRowsRight := p.globalSortedRowsQueue.fetchTwoSortedRows()
+	mergedSortedRows := p.mergeTwoSortedRows(sortedRowsLeft, sortedRowsRight)
 	for {
 		err := p.checkError()
 		if err != nil {
 			return
 		}
 
-		localSortedRows := popFromList(&p.sortedRowsQueue)
-		fetchedSortedRows := p.publicSortedRows.fetchOrPutSortedRows(localSortedRows)
-		if fetchedSortedRows == nil {
+		sortedRowsLeft, sortedRowsRight = p.globalSortedRowsQueue.addAndFetchTwoSortedRows(mergedSortedRows)
+		if sortedRowsLeft == nil {
 			break
 		}
 
-		mergedSortedRows := p.mergeTwoSortedRows(localSortedRows, fetchedSortedRows)
-		pushIntoList(&p.sortedRowsQueue, mergedSortedRows)
+		mergedSortedRows = p.mergeTwoSortedRows(sortedRowsLeft, sortedRowsRight)
 	}
 }
 
-func (p *parallelSortWorker) mergeTwoSortedRows(sortedRows1 sortedRows, sortedRows2 sortedRows) sortedRows {
-	sortedRows1Len := len(sortedRows1)
-	sortedRows2Len := len(sortedRows2)
-	mergedSortedRows := make(sortedRows, 0, sortedRows1Len+sortedRows2Len)
+func (p *parallelSortWorker) mergeTwoSortedRows(sortedRowsLeft sortedRows, sortedRowsRight sortedRows) sortedRows {
+	sortedRowsLeftLen := len(sortedRowsLeft)
+	sortedRowsRightLen := len(sortedRowsRight)
+	mergedSortedRows := make(sortedRows, 0, sortedRowsLeftLen+sortedRowsRightLen)
 	cursor1 := 0 // Point to sortedRows1
 	cursor2 := 0 // Point to sortedRows2
 
 	// Merge
-	for cursor1 < sortedRows1Len && cursor2 < sortedRows2Len {
+	for cursor1 < sortedRowsLeftLen && cursor2 < sortedRowsRightLen {
 		if p.timesOfRowCompare >= SignalCheckpointForSort {
 			// Trigger Consume for checking the NeedKill signal
 			p.memTracker.Consume(1)
@@ -178,18 +156,18 @@ func (p *parallelSortWorker) mergeTwoSortedRows(sortedRows1 sortedRows, sortedRo
 
 		p.timesOfRowCompare++
 
-		if p.lessRowFunc(sortedRows1[cursor1], sortedRows2[cursor2]) < 0 {
-			mergedSortedRows = append(mergedSortedRows, sortedRows1[cursor1])
+		if p.lessRowFunc(sortedRowsLeft[cursor1], sortedRowsRight[cursor2]) < 0 {
+			mergedSortedRows = append(mergedSortedRows, sortedRowsLeft[cursor1])
 			cursor1++
 		} else {
-			mergedSortedRows = append(mergedSortedRows, sortedRows2[cursor2])
+			mergedSortedRows = append(mergedSortedRows, sortedRowsRight[cursor2])
 			cursor2++
 		}
 	}
 
 	// Append the remaining rows
-	mergedSortedRows = append(mergedSortedRows, sortedRows1[cursor1:]...)
-	mergedSortedRows = append(mergedSortedRows, sortedRows2[cursor2:]...)
+	mergedSortedRows = append(mergedSortedRows, sortedRowsLeft[cursor1:]...)
+	mergedSortedRows = append(mergedSortedRows, sortedRowsRight[cursor2:]...)
 
 	return mergedSortedRows
 }
@@ -197,20 +175,15 @@ func (p *parallelSortWorker) mergeTwoSortedRows(sortedRows1 sortedRows, sortedRo
 func (p *parallelSortWorker) run() {
 	defer func() {
 		if r := recover(); r != nil {
-			processErrorAndLog(p.processError, r)
+			processPanicAndLog(p.processError, r)
 		}
 		p.waitGroup.Done()
 	}()
 
-	ok := p.fetchFromMPMCQueueAndSort()
+	ok := p.fetchChunksAndSort()
 	if !ok {
 		return
 	}
 
-	ok = p.mergeSortLocalRows()
-	if !ok {
-		return
-	}
-
-	p.mergeSortPublicRows()
+	p.mergeSortGlobalRows()
 }
