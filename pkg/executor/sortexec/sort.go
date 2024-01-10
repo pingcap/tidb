@@ -80,7 +80,7 @@ type SortExec struct {
 		workers   []*parallelSortWorker
 
 		// All workers' sorted rows will be put into this list to be merged
-		rowsToBeMerged sortedRowsList
+		globalSortedRowsQueue sortedRowsList
 
 		errRWLock sync.RWMutex
 		err       error
@@ -435,21 +435,22 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 
 	// Create and run workers
 	for i := range e.Parallel.workers {
-		e.Parallel.workers[i] = newParallelSortWorker(e.lessRow, &e.Parallel.rowsToBeMerged, &workersWaiter, &e.Parallel.result, e.Parallel.mpmcQueue, e.checkErrorForParallel, e.processErrorForParallel, e.memTracker, e.Parallel.spillHelper)
+		e.Parallel.workers[i] = newParallelSortWorker(e.lessRow, &e.Parallel.globalSortedRowsQueue, &workersWaiter, &e.Parallel.result, e.Parallel.mpmcQueue, e.checkErrorForParallel, e.processErrorForParallel, e.memTracker, e.Parallel.spillHelper)
 		go e.Parallel.workers[i].run()
 	}
 
 	// Wait for the finish of all workers
 	workersWaiter.Wait()
-	e.getSortedRows()
+	e.getResult()
 	err := e.checkErrorForParallel()
 	return err
 }
 
+// Fetch chunks from child and put chunks into MPMCQueue
 func (e *SortExec) fetchChunksFromChild(ctx context.Context, mpmcQueue *chunk.MPMCQueue, waitGroup *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
-			processErrorAndLog(e.processErrorForParallel, r)
+			processPanicAndLog(e.processErrorForParallel, r)
 		}
 		waitGroup.Done()
 	}()
@@ -505,20 +506,20 @@ func (e *SortExec) processErrorForParallel(err error) {
 	e.Parallel.mpmcQueue.Cancel()
 }
 
-func (e *SortExec) getSortedRows() {
+func (e *SortExec) getResult() {
 	e.Parallel.spillHelper.syncLock.Lock()
 	defer e.Parallel.spillHelper.syncLock.Unlock()
-	partitionNum := e.Parallel.rowsToBeMerged.sortedRowsQueue.Len()
-	if partitionNum > 1 {
+	sortedRowsNum := e.Parallel.globalSortedRowsQueue.getSortedRowsNumNoLock()
+	if sortedRowsNum > 1 {
 		panic("Sort is not completed.")
 	}
 
-	if partitionNum == 0 {
+	if sortedRowsNum == 0 {
 		e.Parallel.rowNum = 0
 		return
 	}
 
-	sortedRows := popFromList(&e.Parallel.rowsToBeMerged.sortedRowsQueue)
+	sortedRows := e.Parallel.globalSortedRowsQueue.fetchSortedRowsNoLock()
 	e.Parallel.rowNum = int64(len(sortedRows))
 	e.Parallel.result = sortedRows
 }
