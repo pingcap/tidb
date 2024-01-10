@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tikvstore "github.com/tikv/client-go/v2/kv"
+	"github.com/tikv/client-go/v2/tikv"
 	atomic2 "go.uber.org/atomic"
 )
 
@@ -488,6 +489,24 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableRCReadCheckTS.Load()), nil
+	}},
+	{Scope: ScopeInstance, Name: TiKVClientReplicaSelectorExperimentalOptions, Value: "", Type: TypeStr, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		var opts tikv.ReplicaSelectorExperimentalOptions
+		if len(val) > 0 {
+			err := json.Unmarshal([]byte(val), &opts)
+			if err != nil {
+				return errors.Errorf("invalid json value %q: %v", val, err)
+			}
+			tikv.SetReplicaSelectorExperimentalOptions(opts)
+		}
+		return nil
+	}, GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
+		opts := tikv.GetReplicaSelectorExperimentalOptions()
+		raw, err := json.Marshal(opts)
+		if err != nil {
+			return "", errors.Trace(err)
+		}
+		return string(raw), nil
 	}},
 
 	/* The system variables below have GLOBAL scope  */
@@ -2608,6 +2627,8 @@ const (
 	MaxExecutionTime = "max_execution_time"
 	// TiKVClientReadTimeout is the name of the 'tikv_client_read_timeout' system variable.
 	TiKVClientReadTimeout = "tikv_client_read_timeout"
+	// TiKVClientReplicaSelectorExperimentalOptions is the name of the 'tikv_client_replica_selector_experimental_options' system variable.
+	TiKVClientReplicaSelectorExperimentalOptions = "tikv_client_replica_selector_experimental_options"
 	// ReadOnly is the name of the 'read_only' system variable.
 	ReadOnly = "read_only"
 	// DefaultAuthPlugin is the name of 'default_authentication_plugin' system variable.
