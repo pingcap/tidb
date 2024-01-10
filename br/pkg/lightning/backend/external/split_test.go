@@ -394,6 +394,8 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 			key := make([]byte, keySize)
 			key[keySize-1] = byte(i % 256)
 			key[keySize-2] = byte(i / 256)
+			minKey := slices.Clone(key)
+			var maxKey []byte
 
 			memSize := uint64(0)
 			for j := 0; j < int(64*size.GB/kvSize); j++ {
@@ -418,6 +420,7 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 				w.rc.currProp.lastKey = key
 
 				memSize += kvSize
+				w.totalSize += kvSize
 				w.rc.currProp.size += kvSize - 2*lengthBytes
 				w.rc.currProp.keys++
 
@@ -432,6 +435,10 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 					w.rc.currProp.size = 0
 				}
 
+				if j == int(64*size.GB/kvSize)-1 {
+					maxKey = slices.Clone(key)
+				}
+
 				// increase the key
 
 				for k := keySize - 3; k >= 0; k-- {
@@ -442,6 +449,12 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 				}
 			}
 
+			// copied from mergeOverlappingFilesInternal
+			var stat MultipleFilesStat
+			stat.Filenames = append(stat.Filenames,
+				[2]string{w.dataFile, w.statFile})
+			stat.build([]kv.Key{minKey}, []kv.Key{maxKey})
+			statCh <- []MultipleFilesStat{stat}
 			return w.Close(ctx)
 		})
 	}

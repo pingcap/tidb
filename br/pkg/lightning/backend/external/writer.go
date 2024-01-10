@@ -209,8 +209,10 @@ func (b *WriterBuilder) Build(
 	return ret
 }
 
-// BuildOneFile builds a new one file Writer. The writer will create only one file under the prefix
-// of "{prefix}/{writerID}".
+// BuildOneFile builds a new one file Writer. The writer will create only one
+// file under the prefix of "{prefix}/{writerID}".
+//
+// BuildOneFile will ignore SetOnCloseFunc.
 func (b *WriterBuilder) BuildOneFile(
 	store storage.ExternalStorage,
 	prefix string,
