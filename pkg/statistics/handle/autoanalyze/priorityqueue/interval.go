@@ -90,7 +90,7 @@ func getAverageAnalysisDuration(
 	}
 
 	// NOTE: if there are no successful analyses, we return 0.
-	if len(rows) == 0 {
+	if len(rows) == 0 || rows[0].IsNull(0) {
 		return 0, nil
 	}
 	avgDuration := rows[0].GetMyDecimal(0)
@@ -125,7 +125,7 @@ func getLastFailedAnalysisDuration(
 	}
 
 	// NOTE: if there are no failed analyses, we return 0.
-	if len(rows) == 0 {
+	if len(rows) == 0 || rows[0].IsNull(0) {
 		return 0, nil
 	}
 	lastFailedDuration := rows[0].GetUint64(0)
