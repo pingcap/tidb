@@ -20,13 +20,11 @@ package ddl_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/internal/session"
-	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -35,20 +33,7 @@ import (
 )
 
 func TestDDLHistoryBasic(t *testing.T) {
-	mkJob := func(id int64, schemaTableNames ...string) *model.Job {
-		var schemaInfos []model.InvolvingSchemaInfo
-		for _, schemaTableName := range schemaTableNames {
-			ss := strings.Split(schemaTableName, ".")
-			schemaInfos = append(schemaInfos, model.InvolvingSchemaInfo{
-				Database: ss[0],
-				Table:    ss[1],
-			})
-		}
-		return &model.Job{
-			ID:                  id,
-			InvolvingSchemaInfo: schemaInfos,
-		}
-	}
+
 	store := testkit.CreateMockStore(t)
 	rs := pools.NewResourcePool(func() (pools.Resource, error) {
 		newTk := testkit.NewTestKit(t, store)
@@ -57,19 +42,23 @@ func TestDDLHistoryBasic(t *testing.T) {
 	sessPool := session.NewSessionPool(rs, store)
 	sessCtx, err := sessPool.Get()
 	require.NoError(t, err)
-	sess := sess.NewSession(sessCtx)
+	sess := session.NewSession(sessCtx)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLightning)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		return ddl.AddHistoryDDLJob(sess, t, mkJob(1, "test.t1"), false)
+		return ddl.AddHistoryDDLJob(sess, t, &model.Job{
+			ID: 1,
+		}, false)
 	})
 
 	require.NoError(t, err)
 
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
-		return ddl.AddHistoryDDLJob(sess, t, mkJob(2, "test.t2"), false)
+		return ddl.AddHistoryDDLJob(sess, t, &model.Job{
+			ID: 2,
+		}, false)
 	})
 
 	require.NoError(t, err)
