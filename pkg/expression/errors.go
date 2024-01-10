@@ -76,12 +76,8 @@ func handleInvalidTimeError(ctx EvalContext, err error) error {
 		types.ErrDatetimeFunctionOverflow.Equal(err) || types.ErrIncorrectDatetimeValue.Equal(err)) {
 		return err
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	err = sc.HandleTruncate(err)
-	if ctx.GetSessionVars().StrictSQLMode && (sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt) {
-		return err
-	}
-	return nil
+	ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
+	return ec.HandleError(err)
 }
 
 // handleDivisionByZeroError reports error or warning depend on the context.
@@ -93,17 +89,10 @@ func handleDivisionByZeroError(ctx EvalContext) error {
 // handleAllowedPacketOverflowed reports error or warning depend on the context.
 func handleAllowedPacketOverflowed(ctx EvalContext, exprName string, maxAllowedPacketSize uint64) error {
 	err := errWarnAllowedPacketOverflowed.FastGenByArgs(exprName, maxAllowedPacketSize)
-	sc := ctx.GetSessionVars().StmtCtx
-
-	// insert|update|delete ignore ...
-	if sc.TypeFlags().TruncateAsWarning() {
-		sc.AppendWarning(err)
+	tc := ctx.GetSessionVars().StmtCtx.TypeCtx()
+	if f := tc.Flags(); f.TruncateAsWarning() || f.IgnoreTruncateErr() {
+		tc.AppendWarning(err)
 		return nil
 	}
-
-	if ctx.GetSessionVars().StrictSQLMode && (sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt) {
-		return errors.Trace(err)
-	}
-	sc.AppendWarning(err)
-	return nil
+	return errors.Trace(err)
 }

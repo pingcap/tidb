@@ -113,9 +113,7 @@ func TestRunWithRetry(t *testing.T) {
 		)
 		require.Error(t, err)
 	}()
-	require.Eventually(t, func() bool {
-		return end.Load()
-	}, 5*time.Second, 100*time.Millisecond)
+	require.Eventually(t, end.Load, 5*time.Second, 100*time.Millisecond)
 
 	// fail with retryable error once, then success
 	end.Store(false)
@@ -134,9 +132,7 @@ func TestRunWithRetry(t *testing.T) {
 		)
 		require.NoError(t, err)
 	}()
-	require.Eventually(t, func() bool {
-		return end.Load()
-	}, 5*time.Second, 100*time.Millisecond)
+	require.Eventually(t, end.Load, 5*time.Second, 100*time.Millisecond)
 
 	// context done
 	subctx, cancel := context.WithCancel(ctx)

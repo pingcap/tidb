@@ -58,7 +58,6 @@ type TaskExecutor interface {
 	Init(context.Context) error
 	Run(context.Context, *proto.Task) error
 	Rollback(context.Context, *proto.Task) error
-	Pause(context.Context, *proto.Task) error
 	Close()
 	IsRetryableError(err error) bool
 }

@@ -58,6 +58,7 @@ const unknownImportedRowCount = -1
 // ImportIntoExec represents a IMPORT INTO executor.
 type ImportIntoExec struct {
 	exec.BaseExecutor
+	selectExec exec.Executor
 	userSctx   sessionctx.Context
 	importPlan *importer.Plan
 	controller *importer.LoadDataController
@@ -70,8 +71,8 @@ var (
 	_ exec.Executor = (*ImportIntoExec)(nil)
 )
 
-func newImportIntoExec(b exec.BaseExecutor, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (
-	*ImportIntoExec, error) {
+func newImportIntoExec(b exec.BaseExecutor, selectExec exec.Executor, userSctx sessionctx.Context,
+	plan *plannercore.ImportInto, tbl table.Table) (*ImportIntoExec, error) {
 	importPlan, err := importer.NewImportPlan(userSctx, plan, tbl)
 	if err != nil {
 		return nil, err
@@ -83,6 +84,7 @@ func newImportIntoExec(b exec.BaseExecutor, userSctx sessionctx.Context, plan *p
 	}
 	return &ImportIntoExec{
 		BaseExecutor: b,
+		selectExec:   selectExec,
 		userSctx:     userSctx,
 		importPlan:   importPlan,
 		controller:   controller,

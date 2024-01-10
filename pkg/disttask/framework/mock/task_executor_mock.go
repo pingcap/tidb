@@ -374,20 +374,6 @@ func (mr *MockTaskExecutorMockRecorder) IsRetryableError(arg0 any) *gomock.Call 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsRetryableError", reflect.TypeOf((*MockTaskExecutor)(nil).IsRetryableError), arg0)
 }
 
-// Pause mocks base method.
-func (m *MockTaskExecutor) Pause(arg0 context.Context, arg1 *proto.Task) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Pause", arg0, arg1)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// Pause indicates an expected call of Pause.
-func (mr *MockTaskExecutorMockRecorder) Pause(arg0, arg1 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Pause", reflect.TypeOf((*MockTaskExecutor)(nil).Pause), arg0, arg1)
-}
-
 // Rollback mocks base method.
 func (m *MockTaskExecutor) Rollback(arg0 context.Context, arg1 *proto.Task) error {
 	m.ctrl.T.Helper()

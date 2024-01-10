@@ -62,8 +62,8 @@ func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, mockExtension 
 		taskexecutor.ClearTaskExecutors()
 	})
 	scheduler.RegisterSchedulerFactory(taskType,
-		func(ctx context.Context, taskMgr scheduler.TaskManager, nodeMgr *scheduler.NodeManager, task *proto.Task) scheduler.Scheduler {
-			baseScheduler := scheduler.NewBaseScheduler(ctx, taskMgr, nodeMgr, task)
+		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
+			baseScheduler := scheduler.NewBaseScheduler(ctx, task, param)
 			baseScheduler.Extension = schedulerHandle
 			return baseScheduler
 		})
