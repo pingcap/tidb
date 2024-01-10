@@ -418,9 +418,9 @@ func (rm *MockRegionManager) SplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpc
 	}
 
 	rm.mu.Lock()
+	defer rm.mu.Unlock()
 	ri := rm.regions[req.Context.RegionId]
 	if ri == nil {
-		rm.mu.Unlock()
 		return &kvrpcpb.SplitRegionResponse{RegionError: &errorpb.Error{
 			Message: "region not found",
 			RegionNotFound: &errorpb.RegionNotFound{
@@ -430,7 +430,6 @@ func (rm *MockRegionManager) SplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpc
 	}
 	// Region epoch does not match.
 	if rm.isEpochStale(ri.getRegionEpoch(), req.Context.GetRegionEpoch()) {
-		rm.mu.Unlock()
 		return &kvrpcpb.SplitRegionResponse{RegionError: &errorpb.Error{
 			Message: "stale epoch",
 			EpochNotMatch: &errorpb.EpochNotMatch{
@@ -444,9 +443,7 @@ func (rm *MockRegionManager) SplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpc
 			},
 		}}
 	}
-
 	newRegions, err := rm.splitKeys(splitKeys)
-	rm.mu.Unlock()
 	if err != nil {
 		return &kvrpcpb.SplitRegionResponse{RegionError: &errorpb.Error{Message: err.Error()}}
 	}
