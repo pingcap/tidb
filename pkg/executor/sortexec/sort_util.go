@@ -27,7 +27,7 @@ import (
 // All elements in publicQueue are row slices that have been sorted
 type sortedRowsList struct {
 	lock            sync.Mutex
-	sortedRowsQueue list.List // Type is sortedRows
+	sortedRowsQueue list.List
 }
 
 func (p *sortedRowsList) add(rows sortedRows) {
@@ -105,9 +105,4 @@ func popFromList(l *list.List) sortedRows {
 	res, _ := elem.Value.(sortedRows) // Should always success
 	l.Remove(elem)
 	return res
-}
-
-// Ensure the pushed data type is `sortedRows`.
-func pushIntoList(l *list.List, rows sortedRows) {
-	l.PushBack(rows)
 }

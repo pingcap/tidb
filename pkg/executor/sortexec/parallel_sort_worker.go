@@ -142,11 +142,11 @@ func (p *parallelSortWorker) mergeTwoSortedRows(sortedRowsLeft sortedRows, sorte
 	sortedRowsLeftLen := len(sortedRowsLeft)
 	sortedRowsRightLen := len(sortedRowsRight)
 	mergedSortedRows := make(sortedRows, 0, sortedRowsLeftLen+sortedRowsRightLen)
-	cursor1 := 0 // Point to sortedRows1
-	cursor2 := 0 // Point to sortedRows2
+	cursorLeft := 0  // Point to sortedRowsLeft
+	cursorRight := 0 // Point to sortedRowsRight
 
 	// Merge
-	for cursor1 < sortedRowsLeftLen && cursor2 < sortedRowsRightLen {
+	for cursorLeft < sortedRowsLeftLen && cursorRight < sortedRowsRightLen {
 		if p.timesOfRowCompare >= SignalCheckpointForSort {
 			// Trigger Consume for checking the NeedKill signal
 			p.memTracker.Consume(1)
@@ -155,18 +155,18 @@ func (p *parallelSortWorker) mergeTwoSortedRows(sortedRowsLeft sortedRows, sorte
 
 		p.timesOfRowCompare++
 
-		if p.lessRowFunc(sortedRowsLeft[cursor1], sortedRowsRight[cursor2]) < 0 {
-			mergedSortedRows = append(mergedSortedRows, sortedRowsLeft[cursor1])
-			cursor1++
+		if p.lessRowFunc(sortedRowsLeft[cursorLeft], sortedRowsRight[cursorRight]) < 0 {
+			mergedSortedRows = append(mergedSortedRows, sortedRowsLeft[cursorLeft])
+			cursorLeft++
 		} else {
-			mergedSortedRows = append(mergedSortedRows, sortedRowsRight[cursor2])
-			cursor2++
+			mergedSortedRows = append(mergedSortedRows, sortedRowsRight[cursorRight])
+			cursorRight++
 		}
 	}
 
 	// Append the remaining rows
-	mergedSortedRows = append(mergedSortedRows, sortedRowsLeft[cursor1:]...)
-	mergedSortedRows = append(mergedSortedRows, sortedRowsRight[cursor2:]...)
+	mergedSortedRows = append(mergedSortedRows, sortedRowsLeft[cursorLeft:]...)
+	mergedSortedRows = append(mergedSortedRows, sortedRowsRight[cursorRight:]...)
 
 	return mergedSortedRows
 }
