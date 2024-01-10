@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -42,6 +43,11 @@ type Granularity string
 const (
 	FineGrained   Granularity = "fine-grained"
 	CoarseGrained Granularity = "coarse-grained"
+)
+
+const (
+	splitRegionKeysConcurrency   = 8
+	splitRegionRangesConcurrency = 16
 )
 
 type SplitContext struct {
@@ -164,8 +170,9 @@ func (rs *RegionSplitter) executeSplitByRanges(
 				}
 			}
 		}
-
-		workerPool := utils.NewWorkerPool(uint(splitContext.storeCount), "split ranges")
+		// pd cannot handling too many scan regions requests.
+		poolSize := mathutil.Min(uint(splitContext.storeCount), splitRegionRangesConcurrency)
+		workerPool := utils.NewWorkerPool(poolSize, "split ranges")
 		eg, ectx := errgroup.WithContext(ctx)
 		for rID, rgs := range splitRangeMap {
 			region := regionMap[rID]
@@ -256,7 +263,7 @@ func (rs *RegionSplitter) executeSplitByKeys(
 		for _, region := range regions {
 			regionMap[region.Region.GetId()] = region
 		}
-		workerPool := utils.NewWorkerPool(8, "split keys")
+		workerPool := utils.NewWorkerPool(splitRegionKeysConcurrency, "split keys")
 		eg, ectx := errgroup.WithContext(ctx)
 		for regionID, splitKeys := range splitKeyMap {
 			region := regionMap[regionID]
