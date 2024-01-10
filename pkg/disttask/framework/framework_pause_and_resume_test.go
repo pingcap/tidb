@@ -30,10 +30,10 @@ import (
 func CheckSubtasksState(ctx context.Context, t *testing.T, taskID int64, state proto.SubtaskState, expectedCnt int64) {
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	mgr.PrintSubtaskInfo(ctx, taskID)
+	testutil.PrintSubtaskInfo(ctx, mgr, taskID)
 	cntByStates, err := mgr.GetSubtaskCntGroupByStates(ctx, taskID, proto.StepTwo)
 	require.NoError(t, err)
-	historySubTasksCnt, err := storage.GetSubtasksFromHistoryByTaskIDForTest(ctx, mgr, taskID)
+	historySubTasksCnt, err := testutil.GetSubtasksFromHistoryByTaskID(ctx, mgr, taskID)
 	require.NoError(t, err)
 	require.Equal(t, expectedCnt, cntByStates[state]+int64(historySubTasksCnt))
 }
