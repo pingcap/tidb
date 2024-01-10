@@ -1443,6 +1443,7 @@ func TestIngestFailOnFirstBatch(t *testing.T) {
 	ctx := log.NewContext(context.Background(), logger)
 
 	apiInvokeRecorder := map[string][]uint64{}
+	importCli := newMockImportClient()
 
 	local := &local{
 		importClientFactory: &mockImportClientFactory{
@@ -1451,11 +1452,10 @@ func TestIngestFailOnFirstBatch(t *testing.T) {
 				{Id: 11}, {Id: 12}, {Id: 13},
 			},
 			createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
-				importCli := newMockImportClient()
 				importCli.store = store
 				importCli.apiInvokeRecorder = apiInvokeRecorder
 				if store.Id == 1 {
-					importCli.retry = 100
+					importCli.retry = 5
 					importCli.err = status.Error(codes.Unknown, "Suspended { time_to_lease_expire: 1.204s }")
 				}
 				return importCli
