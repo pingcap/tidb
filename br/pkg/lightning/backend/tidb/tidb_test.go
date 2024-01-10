@@ -73,7 +73,7 @@ func createMysqlSuite(t *testing.T) *mysqlSuite {
 	cfg.Conflict.Strategy = config.ReplaceOnDup
 	cfg.Conflict.Threshold = math.MaxInt64
 	cfg.Conflict.MaxRecordRows = 100
-	backendObj := tidb.NewTiDBBackend(context.Background(), db, cfg.Conflict, errormanager.New(nil, cfg, log.L()), config.DefaultTiDBWriteThroughputLimit)
+	backendObj := tidb.NewTiDBBackend(context.Background(), db, cfg, errormanager.New(nil, cfg, log.L()))
 	return &mysqlSuite{
 		dbHandle:   db,
 		mockDB:     mock,
@@ -166,7 +166,7 @@ func TestWriteRowsIgnoreOnDup(t *testing.T) {
 	cfg.Conflict.Strategy = config.IgnoreOnDup
 	cfg.Conflict.Threshold = math.MaxInt64
 	cfg.Conflict.MaxRecordRows = 0
-	ignoreBackend := tidb.NewTiDBBackend(ctx, s.dbHandle, cfg.Conflict, errormanager.New(nil, cfg, logger), config.DefaultTiDBWriteThroughputLimit)
+	ignoreBackend := tidb.NewTiDBBackend(ctx, s.dbHandle, cfg, errormanager.New(nil, cfg, logger))
 	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
 
@@ -193,7 +193,7 @@ func TestWriteRowsIgnoreOnDup(t *testing.T) {
 	// test conflict.strategy == ignore and not 0 conflict.max-record-rows will use ErrorOnDup
 
 	cfg.Conflict.MaxRecordRows = 10
-	ignoreBackend = tidb.NewTiDBBackend(ctx, s.dbHandle, cfg.Conflict, errormanager.New(nil, cfg, logger), config.DefaultTiDBWriteThroughputLimit)
+	ignoreBackend = tidb.NewTiDBBackend(ctx, s.dbHandle, cfg, errormanager.New(nil, cfg, logger))
 	engine, err = backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
 
@@ -246,7 +246,7 @@ func TestWriteRowsErrorOnDup(t *testing.T) {
 	cfg.Conflict.Strategy = config.ErrorOnDup
 	cfg.Conflict.Threshold = math.MaxInt64
 	cfg.Conflict.MaxRecordRows = 0
-	ignoreBackend := tidb.NewTiDBBackend(ctx, s.dbHandle, cfg.Conflict, errormanager.New(nil, cfg, logger), config.DefaultTiDBWriteThroughputLimit)
+	ignoreBackend := tidb.NewTiDBBackend(ctx, s.dbHandle, cfg, errormanager.New(nil, cfg, logger))
 	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
 
@@ -536,13 +536,7 @@ func TestWriteRowsErrorNoRetry(t *testing.T) {
 	cfg.Conflict.Strategy = config.ErrorOnDup
 	cfg.Conflict.Threshold = 0
 	cfg.Conflict.MaxRecordRows = 0
-	ignoreBackend := tidb.NewTiDBBackend(
-		context.Background(),
-		s.dbHandle,
-		cfg.Conflict,
-		errormanager.New(s.dbHandle, cfg, log.L()),
-		config.DefaultTiDBWriteThroughputLimit,
-	)
+	ignoreBackend := tidb.NewTiDBBackend(context.Background(), s.dbHandle, cfg, errormanager.New(s.dbHandle, cfg, log.L()))
 	encBuilder := tidb.NewEncodingBuilder()
 	dataRows := encodeRowsTiDB(t, encBuilder, s.tbl)
 	ctx := context.Background()
@@ -606,13 +600,7 @@ func TestWriteRowsErrorDowngradingAll(t *testing.T) {
 	cfg.Conflict.MaxRecordRows = 10
 	cfg.App.TaskInfoSchemaName = "tidb_lightning_errors"
 	cfg.App.MaxError.Type = *atomic.NewInt64(10)
-	ignoreBackend := tidb.NewTiDBBackend(
-		context.Background(),
-		s.dbHandle,
-		cfg.Conflict,
-		errormanager.New(s.dbHandle, cfg, log.L()),
-		config.DefaultTiDBWriteThroughputLimit,
-	)
+	ignoreBackend := tidb.NewTiDBBackend(context.Background(), s.dbHandle, cfg, errormanager.New(s.dbHandle, cfg, log.L()))
 	encBuilder := tidb.NewEncodingBuilder()
 	dataRows := encodeRowsTiDB(t, encBuilder, s.tbl)
 	ctx := context.Background()
@@ -665,13 +653,7 @@ func TestWriteRowsErrorDowngradingExceedThreshold(t *testing.T) {
 	cfg.Conflict.MaxRecordRows = 10
 	cfg.App.TaskInfoSchemaName = "tidb_lightning_errors"
 	cfg.App.MaxError.Type = *atomic.NewInt64(3)
-	ignoreBackend := tidb.NewTiDBBackend(
-		context.Background(),
-		s.dbHandle,
-		cfg.Conflict,
-		errormanager.New(s.dbHandle, cfg, log.L()),
-		config.DefaultTiDBWriteThroughputLimit,
-	)
+	ignoreBackend := tidb.NewTiDBBackend(context.Background(), s.dbHandle, cfg, errormanager.New(s.dbHandle, cfg, log.L()))
 	encBuilder := tidb.NewEncodingBuilder()
 	dataRows := encodeRowsTiDB(t, encBuilder, s.tbl)
 	ctx := context.Background()
@@ -711,13 +693,7 @@ func TestWriteRowsRecordOneError(t *testing.T) {
 	cfg.Conflict.Threshold = 0
 	cfg.Conflict.MaxRecordRows = 0
 	cfg.App.TaskInfoSchemaName = "tidb_lightning_errors"
-	ignoreBackend := tidb.NewTiDBBackend(
-		context.Background(),
-		s.dbHandle,
-		cfg.Conflict,
-		errormanager.New(s.dbHandle, cfg, log.L()),
-		config.DefaultTiDBWriteThroughputLimit,
-	)
+	ignoreBackend := tidb.NewTiDBBackend(context.Background(), s.dbHandle, cfg, errormanager.New(s.dbHandle, cfg, log.L()))
 	encBuilder := tidb.NewEncodingBuilder()
 	dataRows := encodeRowsTiDB(t, encBuilder, s.tbl)
 	ctx := context.Background()
@@ -744,13 +720,7 @@ func TestDuplicateThreshold(t *testing.T) {
 	cfg.Conflict.Strategy = config.IgnoreOnDup
 	cfg.Conflict.Threshold = 5
 	cfg.Conflict.MaxRecordRows = 0
-	ignoreBackend := tidb.NewTiDBBackend(
-		context.Background(),
-		s.dbHandle,
-		cfg.Conflict,
-		errormanager.New(s.dbHandle, cfg, log.L()),
-		config.DefaultTiDBWriteThroughputLimit,
-	)
+	ignoreBackend := tidb.NewTiDBBackend(context.Background(), s.dbHandle, cfg, errormanager.New(s.dbHandle, cfg, log.L()))
 	encBuilder := tidb.NewEncodingBuilder()
 	dataRows := encodeRowsTiDB(t, encBuilder, s.tbl)
 	ctx := context.Background()
@@ -872,25 +842,60 @@ func TestEncodeRowForRecord(t *testing.T) {
 	require.Equal(t, row, "(5, \"test test\", \x00\x00\x00\xab\xcd\xef)")
 }
 
-func TestTiDBWriteThroughputLimit(t *testing.T) {
+// TestLogicalImportBatch tests that each INSERT statement is limited by both
+// logical-import-batch-size and logical-import-batch-rows configurations. Here
+// we ensure each INSERT statement has up to 5 rows *and* ~30 bytes of values.
+func TestLogicalImportBatch(t *testing.T) {
 	s := createMysqlSuite(t)
 	defer s.TearDownTest(t)
 
 	s.mockDB.
-		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1),(2),(3)\\E").
-		WillReturnResult(sqlmock.NewResult(3, 3))
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1),(2),(4),(8),(16)\\E").
+		WillReturnResult(sqlmock.NewResult(5, 5))
 	s.mockDB.
-		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(4),(5)\\E").
-		WillReturnResult(sqlmock.NewResult(2, 2))
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(32),(64),(128),(256),(512)\\E").
+		WillReturnResult(sqlmock.NewResult(5, 5))
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(1024),(2048),(4096),(8192)\\E").
+		WillReturnResult(sqlmock.NewResult(4, 4))
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(16384),(32768),(65536),(131072)\\E").
+		WillReturnResult(sqlmock.NewResult(4, 4))
+	s.mockDB.
+		ExpectExec("\\QINSERT INTO `foo`.`bar`(`a`) VALUES(262144)\\E").
+		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	ctx := context.Background()
 	logger := log.L()
 
 	cfg := config.NewConfig()
 	cfg.Conflict.Strategy = config.ErrorOnDup
-	ignoreBackend := tidb.NewTiDBBackend(ctx, s.dbHandle, cfg.Conflict, errormanager.New(nil, cfg, logger), 9)
+	cfg.TikvImporter.LogicalImportBatchSize = 30
+	cfg.TikvImporter.LogicalImportBatchRows = 5
+	ignoreBackend := tidb.NewTiDBBackend(ctx, s.dbHandle, cfg, errormanager.New(nil, cfg, logger))
 	encBuilder := tidb.NewEncodingBuilder()
-	dataRows := encodeRowsTiDB(t, encBuilder, s.tbl)
+	encoder, err := encBuilder.NewEncoder(context.Background(), &encode.EncodingConfig{
+		Path:   "1.csv",
+		Table:  s.tbl,
+		Logger: log.L(),
+	})
+	require.NoError(t, err)
+
+	dataRows := encBuilder.MakeEmptyRows()
+	dataChecksum := verification.MakeKVChecksum(0, 0, 0)
+	indexRows := encBuilder.MakeEmptyRows()
+	indexChecksum := verification.MakeKVChecksum(0, 0, 0)
+	for i := int64(0); i < 19; i++ { // encode rows 1, 2, 4, 8, ..., 262144.
+		row, err := encoder.Encode(
+			[]types.Datum{types.NewIntDatum(1 << i)},
+			i,
+			[]int{0, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
+			8*i,
+		)
+		require.NoError(t, err)
+		row.ClassifyAndAppend(&dataRows, &dataChecksum, &indexRows, &indexChecksum)
+	}
+
 	engine, err := backend.MakeEngineManager(ignoreBackend).OpenEngine(ctx, &backend.EngineConfig{}, "`foo`.`bar`", 1)
 	require.NoError(t, err)
 	writer, err := engine.LocalWriter(ctx, &backend.LocalWriterConfig{TableName: "`foo`.`bar`"})

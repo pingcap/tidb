@@ -272,9 +272,11 @@ type tidbBackend struct {
 	// view should be the same.
 	onDuplicate string
 	errorMgr    *errormanager.ErrorManager
-	// maxChunkSize is the target size of each INSERT SQL statement to be sent to downstream.
-	// sometimes we want to reduce the txn size to avoid affecting the cluster too much.
-	maxChunkSize int
+	// maxChunkSize and maxChunkRows are the target size and number of rows of each INSERT SQL
+	// statement to be sent to downstream. Sometimes we want to reduce the txn size to avoid
+	// affecting the cluster too much.
+	maxChunkSize uint64
+	maxChunkRows int
 }
 
 var _ backend.Backend = (*tidbBackend)(nil)
@@ -286,10 +288,10 @@ var _ backend.Backend = (*tidbBackend)(nil)
 func NewTiDBBackend(
 	ctx context.Context,
 	db *sql.DB,
-	conflict config.Conflict,
+	cfg *config.Config,
 	errorMgr *errormanager.ErrorManager,
-	maxChunkSize int,
 ) backend.Backend {
+	conflict := cfg.Conflict
 	var onDuplicate string
 	switch conflict.Strategy {
 	case config.ErrorOnDup:
@@ -313,7 +315,8 @@ func NewTiDBBackend(
 		conflictCfg:  conflict,
 		onDuplicate:  onDuplicate,
 		errorMgr:     errorMgr,
-		maxChunkSize: maxChunkSize,
+		maxChunkSize: uint64(cfg.TikvImporter.LogicalImportBatchSize),
+		maxChunkRows: cfg.TikvImporter.LogicalImportBatchRows,
 	}
 }
 
@@ -334,18 +337,17 @@ func (row tidbRow) ClassifyAndAppend(data *encode.Rows, checksum *verification.K
 	checksum.Add(&cs)
 }
 
-func (rows tidbRows) SplitIntoChunks(splitSizeInt int) []encode.Rows {
+func (rows tidbRows) splitIntoChunks(splitSize uint64, splitRows int) []tidbRows {
 	if len(rows) == 0 {
 		return nil
 	}
 
-	res := make([]encode.Rows, 0, 1)
+	res := make([]tidbRows, 0, 1)
 	i := 0
 	cumSize := uint64(0)
-	splitSize := uint64(splitSizeInt)
 
 	for j, row := range rows {
-		if i < j && cumSize+row.Size() > splitSize {
+		if i < j && (cumSize+row.Size() > splitSize || j-i >= splitRows) {
 			res = append(res, rows[i:j])
 			i = j
 			cumSize = 0
@@ -586,10 +588,6 @@ func (*tidbBackend) RetryImportDelay() time.Duration {
 	return 0
 }
 
-func (be *tidbBackend) MaxChunkSize() int {
-	return be.maxChunkSize
-}
-
 func (*tidbBackend) ShouldPostProcess() bool {
 	return true
 }
@@ -613,7 +611,7 @@ func (*tidbBackend) ImportEngine(context.Context, uuid.UUID, int64, int64) error
 func (be *tidbBackend) WriteRows(ctx context.Context, tableName string, columnNames []string, rows encode.Rows) error {
 	var err error
 rowLoop:
-	for _, r := range rows.SplitIntoChunks(be.MaxChunkSize()) {
+	for _, r := range rows.(tidbRows).splitIntoChunks(be.maxChunkSize, be.maxChunkRows) {
 		for i := 0; i < writeRowsMaxRetryTimes; i++ {
 			// Write in the batch mode first.
 			err = be.WriteBatchRowsToDB(ctx, tableName, columnNames, r)
@@ -650,8 +648,7 @@ type stmtTask struct {
 // WriteBatchRowsToDB write rows in batch mode, which will insert multiple rows like this:
 //
 //	insert into t1 values (111), (222), (333), (444);
-func (be *tidbBackend) WriteBatchRowsToDB(ctx context.Context, tableName string, columnNames []string, r encode.Rows) error {
-	rows := r.(tidbRows)
+func (be *tidbBackend) WriteBatchRowsToDB(ctx context.Context, tableName string, columnNames []string, rows tidbRows) error {
 	insertStmt := be.checkAndBuildStmt(rows, tableName, columnNames)
 	if insertStmt == nil {
 		return nil
@@ -684,8 +681,7 @@ func (be *tidbBackend) checkAndBuildStmt(rows tidbRows, tableName string, column
 //	insert into t1 values (444);
 //
 // See more details in br#1366: https://github.com/pingcap/br/issues/1366
-func (be *tidbBackend) WriteRowsToDB(ctx context.Context, tableName string, columnNames []string, r encode.Rows) error {
-	rows := r.(tidbRows)
+func (be *tidbBackend) WriteRowsToDB(ctx context.Context, tableName string, columnNames []string, rows tidbRows) error {
 	insertStmt := be.checkAndBuildStmt(rows, tableName, columnNames)
 	if insertStmt == nil {
 		return nil
