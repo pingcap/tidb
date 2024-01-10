@@ -57,11 +57,12 @@ type ExecutorWithRetry struct {
 	//    Once the results start being returned, error recovery cannot be performed anymore.
 	mppErrRecovery *RecoveryHandler
 	planIDs        []int
-	KVRanges       []kv.KeyRange
-	queryID        kv.MPPQueryID
-	startTS        uint64
-	gatherID       uint64
-	nodeCnt        int
+	// Expose to let MPPGather access.
+	KVRanges []kv.KeyRange
+	queryID  kv.MPPQueryID
+	startTS  uint64
+	gatherID uint64
+	nodeCnt  int
 }
 
 var _ kv.Response = &ExecutorWithRetry{}
@@ -69,7 +70,7 @@ var _ kv.Response = &ExecutorWithRetry{}
 // NewExecutorWithRetry create ExecutorWithRetry.
 func NewExecutorWithRetry(ctx context.Context, sctx sessionctx.Context, parentTracker *memory.Tracker, planIDs []int,
 	plan plannercore.PhysicalPlan, startTS uint64, queryID kv.MPPQueryID,
-	dummy bool, is infoschema.InfoSchema) (*ExecutorWithRetry, error) {
+	is infoschema.InfoSchema) (*ExecutorWithRetry, error) {
 	// TODO: After add row info in tipb.DataPacket, we can use row count as capacity.
 	// For now, use the number of tipb.DataPacket as capacity.
 	const holdCap = 2
@@ -81,10 +82,10 @@ func NewExecutorWithRetry(ctx context.Context, sctx sessionctx.Context, parentTr
 	// 2. When enable fallback to tikv, the returned mpp err will be ErrTiFlashServerTimeout,
 	//    which we cannot handle for now. Also there is no need to recovery because tikv will retry the query.
 	// 3. For cached table, will not dispatch tasks to TiFlash, so no need to recovery.
-	enableMPPRecovery := disaggTiFlashWithAutoScaler && !allowTiFlashFallback && !dummy
+	enableMPPRecovery := disaggTiFlashWithAutoScaler && !allowTiFlashFallback
 
 	failpoint.Inject("mpp_recovery_test_mock_enable", func() {
-		if !dummy && !allowTiFlashFallback {
+		if !allowTiFlashFallback {
 			enableMPPRecovery = true
 		}
 	})
