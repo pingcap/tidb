@@ -8788,7 +8788,12 @@ TableName:
 	}
 |	Identifier '.' Identifier
 	{
-		$$ = &ast.TableName{Schema: model.NewCIStr($1), Name: model.NewCIStr($3)}
+		schema := $1
+		if isInCorrectIdentifierName(schema) {
+			yylex.AppendError(ErrWrongDBName.GenWithStackByArgs(schema))
+			return 1
+		}
+		$$ = &ast.TableName{Schema: model.NewCIStr(schema), Name: model.NewCIStr($3)}
 	}
 |	'*' '.' Identifier
 	{

@@ -288,6 +288,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelError
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
 				return
 			}(),
 		},
@@ -300,6 +301,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
 				return
 			}(),
 		},
@@ -312,18 +314,33 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelWarn
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
 				return
 			}(),
 		},
 		{
-			name:    "strict,update/delete ignore",
+			name:    "strict,update ignore",
 			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
-			stmt:    []ast.StmtNode{&ast.UpdateStmt{IgnoreErr: true}, &ast.DeleteStmt{IgnoreErr: true}},
+			stmt:    []ast.StmtNode{&ast.UpdateStmt{IgnoreErr: true}},
 			levels: func() (l errctx.LevelMap) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
 				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
+				return
+			}(),
+		},
+		{
+			name:    "strict,delete ignore",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.DeleteStmt{IgnoreErr: true}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
 				return
 			}(),
 		},
@@ -336,6 +353,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelIgnore
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
 				return
 			}(),
 		},
@@ -348,6 +366,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
 				return
 			}(),
 		},
@@ -360,12 +379,40 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "strict,load_data",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.LoadDataStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelError
+				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
+				return
+			}(),
+		},
+		{
+			name:    "non-strict,load_data",
+			sqlMode: mysql.SQLMode(0),
+			stmt:    []ast.StmtNode{&ast.LoadDataStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelError
+				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				l[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
 				return
 			}(),
 		},
 	}
 
 	for i, c := range cases {
+		require.NotEmpty(t, c.stmt, c.name)
 		for _, stmt := range c.stmt {
 			msg := fmt.Sprintf("%d: %s, stmt: %T", i, c.name, stmt)
 			ctx.GetSessionVars().SQLMode = c.sqlMode

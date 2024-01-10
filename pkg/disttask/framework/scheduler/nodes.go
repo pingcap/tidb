@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -110,7 +111,7 @@ func (nm *NodeManager) maintainLiveNodes(ctx context.Context, taskMgr TaskManage
 	nm.prevLiveNodes = currLiveNodes
 }
 
-func (nm *NodeManager) refreshManagedNodesLoop(ctx context.Context, taskMgr TaskManager, slotMgr *slotManager) {
+func (nm *NodeManager) refreshManagedNodesLoop(ctx context.Context, taskMgr TaskManager, slotMgr *SlotManager) {
 	ticker := time.NewTicker(nodesCheckInterval)
 	defer ticker.Stop()
 	for {
@@ -123,8 +124,11 @@ func (nm *NodeManager) refreshManagedNodesLoop(ctx context.Context, taskMgr Task
 	}
 }
 
+// TestRefreshedChan is used to sync the test.
+var TestRefreshedChan = make(chan struct{})
+
 // refreshManagedNodes maintains the nodes managed by the framework.
-func (nm *NodeManager) refreshManagedNodes(ctx context.Context, taskMgr TaskManager, slotMgr *slotManager) {
+func (nm *NodeManager) refreshManagedNodes(ctx context.Context, taskMgr TaskManager, slotMgr *SlotManager) {
 	newNodes, err := taskMgr.GetManagedNodes(ctx)
 	if err != nil {
 		logutil.BgLogger().Warn("get managed nodes met error", log.ShortError(err))
@@ -140,10 +144,17 @@ func (nm *NodeManager) refreshManagedNodes(ctx context.Context, taskMgr TaskMana
 	}
 	slotMgr.updateCapacity(cpuCount)
 	nm.managedNodes.Store(&nodeIDs)
+
+	failpoint.Inject("syncRefresh", func() {
+		TestRefreshedChan <- struct{}{}
+	})
 }
 
 // GetManagedNodes returns the nodes managed by the framework.
-// The returned map is read-only, don't write to it.
+// return a copy of the managed nodes.
 func (nm *NodeManager) getManagedNodes() []string {
-	return *nm.managedNodes.Load()
+	nodes := *nm.managedNodes.Load()
+	res := make([]string, len(nodes))
+	copy(res, nodes)
+	return res
 }

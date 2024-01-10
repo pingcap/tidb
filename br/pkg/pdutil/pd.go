@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/retry"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -41,7 +42,7 @@ const (
 	maxMsgSize   = int(128 * units.MiB) // pd.ScanRegion may return a large response
 	pauseTimeout = 5 * time.Minute
 	// pd request retry time when connection fail
-	pdRequestRetryTime = 120
+	PDRequestRetryTime = 120
 	// set max-pending-peer-count to a large value to avoid scatter region failed.
 	maxPendingPeerUnlimited uint64 = math.MaxInt32
 )
@@ -167,7 +168,7 @@ func pdRequestWithCode(
 		resp, err = cli.Do(req) //nolint:bodyclose
 		count++
 		failpoint.Inject("InjectClosed", func(v failpoint.Value) {
-			if failType, ok := v.(int); ok && count <= pdRequestRetryTime-1 {
+			if failType, ok := v.(int); ok && count <= PDRequestRetryTime-1 {
 				resp = nil
 				switch failType {
 				case 0:
@@ -183,7 +184,7 @@ func pdRequestWithCode(
 				}
 			}
 		})
-		if count > pdRequestRetryTime || (resp != nil && resp.StatusCode < 500) ||
+		if count > PDRequestRetryTime || (resp != nil && resp.StatusCode < 500) ||
 			(err != nil && !common.IsRetryableError(err)) {
 			break
 		}
@@ -298,11 +299,13 @@ func NewPdController(
 	if tlsConf != nil {
 		pdHTTPCliConfig = append(pdHTTPCliConfig, pdhttp.WithTLSConfig(tlsConf))
 	}
+	pdHTTPCli := pdhttp.NewClient("br/lightning PD controller", addrs, pdHTTPCliConfig...).
+		WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, PDRequestRetryTime*time.Second))
 	return &PdController{
 		addrs:     processedAddrs,
 		cli:       cli,
 		pdClient:  pdClient,
-		pdHTTPCli: pdhttp.NewClient("br/lightning PD controller", addrs, pdHTTPCliConfig...),
+		pdHTTPCli: pdHTTPCli,
 		version:   version,
 		// We should make a buffered channel here otherwise when context canceled,
 		// gracefully shutdown will stick at resuming schedulers.

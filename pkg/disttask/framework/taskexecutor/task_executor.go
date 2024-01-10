@@ -460,17 +460,6 @@ func (s *BaseTaskExecutor) Rollback(ctx context.Context, task *proto.Task) error
 	return s.getError()
 }
 
-// Pause pause the TaskExecutor's subtasks.
-func (s *BaseTaskExecutor) Pause(ctx context.Context, task *proto.Task) error {
-	logutil.Logger(s.logCtx).Info("taskExecutor pause subtasks")
-	// pause all running subtasks.
-	if err := s.taskTable.PauseSubtasks(ctx, s.id, task.ID); err != nil {
-		s.onError(err)
-		return s.getError()
-	}
-	return nil
-}
-
 // Close closes the TaskExecutor when all the subtasks are complete.
 func (*BaseTaskExecutor) Close() {
 }
