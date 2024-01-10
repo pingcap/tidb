@@ -106,3 +106,11 @@ func popFromList(l *list.List) sortedRows {
 	l.Remove(elem)
 	return res
 }
+
+// chunkWithMemoryUsage contains chunk and memory usage.
+// However, some of memory usage may also come from other place,
+// not only the chunk's memory usage.
+type chunkWithMemoryUsage struct {
+	Chk         *chunk.Chunk
+	MemoryUsage int64
+}
