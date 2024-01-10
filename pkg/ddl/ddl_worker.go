@@ -849,11 +849,6 @@ func (w *JobContext) setDDLLabelForDiagnosis(jobType model.ActionType) {
 }
 
 func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
-	if !w.ddlCtx.isOwner() && w.tp != localWorker {
-		// This TiDB instance is not DDL owner anymore, it should not commit any transaction.
-		w.sess.Rollback()
-		return dbterror.ErrNotOwner
-	}
 	err := w.finishDDLJob(t, job)
 	if err != nil {
 		w.sess.Rollback()
@@ -866,6 +861,16 @@ func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
 	}
 	CleanupDDLReorgHandles(job, w.sess)
 	asyncNotify(d.ddlJobDoneCh)
+	return nil
+}
+
+func (w *worker) checkOwnerBeforeCommit() error {
+	if !w.ddlCtx.isOwner() && w.tp != localWorker {
+		// Since this TiDB instance is not a DDL owner anymore,
+		// it should not commit any transaction.
+		w.sess.Rollback()
+		return dbterror.ErrNotOwner
+	}
 	return nil
 }
 
@@ -940,6 +945,11 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	d.mu.hook.OnJobRunAfter(job)
 	d.mu.RUnlock()
 
+	if err = w.checkOwnerBeforeCommit(); err != nil {
+		d.unlockSchemaVersion(job.ID)
+		return 0, err
+	}
+
 	if job.IsCancelled() {
 		defer d.unlockSchemaVersion(job.ID)
 		w.sess.Reset()
@@ -975,12 +985,6 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	writeBinlog(d.binlogCli, txn, job)
 	// reset the SQL digest to make topsql work right.
 	w.sess.GetSessionVars().StmtCtx.ResetSQLDigest(job.Query)
-	if !w.ddlCtx.isOwner() {
-		// This TiDB instance is not DDL owner anymore, it should not commit any transaction.
-		w.sess.Rollback()
-		d.unlockSchemaVersion(job.ID)
-		return 0, dbterror.ErrNotOwner
-	}
 	err = w.sess.Commit()
 	d.unlockSchemaVersion(job.ID)
 	if err != nil {
