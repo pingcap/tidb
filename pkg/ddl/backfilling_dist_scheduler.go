@@ -463,7 +463,6 @@ func generateMergePlan(
 			return nil, err
 		}
 		metaArr = append(metaArr, metaBytes)
-
 	}
 	if i == len(multiStats)-1 {
 		startKey := multiStats[i].MinKey.Clone()
