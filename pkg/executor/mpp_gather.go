@@ -100,7 +100,6 @@ func (e *MPPGather) Open(ctx context.Context) (err error) {
 		}
 	}
 	planIDs := collectPlanIDs(e.originalPlan, nil)
-	// gjt todo del dummy
 	if e.mppExec, err = mpp.NewExecutorWithRetry(ctx, e.Ctx(), e.memTracker, planIDs, e.originalPlan, e.startTS, e.mppQueryID, e.is); err != nil {
 		return err
 	}
