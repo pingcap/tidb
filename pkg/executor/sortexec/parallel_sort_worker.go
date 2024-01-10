@@ -35,8 +35,7 @@ type parallelSortWorker struct {
 
 	waitGroup *sync.WaitGroup
 
-	mpmcQueue *chunk.MPMCQueue
-
+	chunkChannel chan *chunkWithMemoryUsage
 	checkError   func() error
 	processError func(error)
 
@@ -54,7 +53,7 @@ func newParallelSortWorker(
 	globalSortedRowsQueue *sortedRowsList,
 	waitGroup *sync.WaitGroup,
 	result *sortedRows,
-	mpmcQueue *chunk.MPMCQueue,
+	chunkChannel chan *chunkWithMemoryUsage,
 	checkError func() error,
 	processError func(error),
 	memTracker *memory.Tracker,
@@ -64,7 +63,7 @@ func newParallelSortWorker(
 		globalSortedRowsQueue: globalSortedRowsQueue,
 		waitGroup:             waitGroup,
 		result:                result,
-		mpmcQueue:             mpmcQueue,
+		chunkChannel:          chunkChannel,
 		checkError:            checkError,
 		processError:          processError,
 		totalMemoryUsage:      0,
@@ -105,12 +104,10 @@ func (p *parallelSortWorker) fetchChunksAndSortImpl() (bool, error) {
 		return true, err
 	}
 
-	// Memory usage of the chunk has been tracked at the producer side.
-	chk, res := p.mpmcQueue.Pop()
-	if res != chunk.OK {
-		// Check if the queue is closed by an error.
-		err := p.checkError()
-		return err == nil, err
+	// Memory usage of the chunk has been consumed at the producer side.
+	chk, ok := <-p.chunkChannel
+	if !ok {
+		return true, nil
 	}
 
 	p.totalMemoryUsage += chk.MemoryUsage
@@ -118,23 +115,6 @@ func (p *parallelSortWorker) fetchChunksAndSortImpl() (bool, error) {
 	sortedRows := p.sortChunkAndGetSortedRows(chk.Chk)
 	p.globalSortedRowsQueue.add(sortedRows)
 	return false, nil
-}
-
-func (p *parallelSortWorker) keyColumnsLess(i, j chunk.Row) int {
-	if p.timesOfRowCompare >= SignalCheckpointForSort {
-		// Trigger Consume for checking the NeedKill signal
-		p.memTracker.Consume(1)
-		p.timesOfRowCompare = 0
-	}
-	// TODO add test with this failpoint
-	// failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
-	// 	if val.(bool) {
-	// 		c.timesOfRowCompare += 1024
-	// 	}
-	// })
-	p.timesOfRowCompare++
-
-	return p.lessRowFunc(i, j)
 }
 
 func (p *parallelSortWorker) sortChunkAndGetSortedRows(chk *chunk.Chunk) sortedRows {
@@ -217,6 +197,23 @@ func (p *parallelSortWorker) mergeTwoSortedRows(sortedRowsLeft sortedRows, sorte
 	mergedSortedRows = append(mergedSortedRows, sortedRowsRight[cursorRight:]...)
 
 	return mergedSortedRows
+}
+
+func (p *parallelSortWorker) keyColumnsLess(i, j chunk.Row) int {
+	if p.timesOfRowCompare >= SignalCheckpointForSort {
+		// Trigger Consume for checking the NeedKill signal
+		p.memTracker.Consume(1)
+		p.timesOfRowCompare = 0
+	}
+	// TODO add test with this failpoint
+	// failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
+	// 	if val.(bool) {
+	// 		c.timesOfRowCompare += 1024
+	// 	}
+	// })
+	p.timesOfRowCompare++
+
+	return p.lessRowFunc(i, j)
 }
 
 func (p *parallelSortWorker) run() {

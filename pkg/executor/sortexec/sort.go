@@ -34,6 +34,8 @@ import (
 
 type sortedRows []chunk.Row
 
+const defaultChunkChannelSize = 100
+
 // SortExec represents sorting executor.
 type SortExec struct {
 	exec.BaseExecutor
@@ -75,9 +77,8 @@ type SortExec struct {
 		rowNum int64
 		idx    int64
 
-		// Queue should only be closed by `fetchChunksFromChild` function.
-		mpmcQueue *chunk.MPMCQueue
-		workers   []*parallelSortWorker
+		chunkChannel chan *chunkWithMemoryUsage
+		workers      []*parallelSortWorker
 
 		// All workers' sorted rows will be put into this list to be merged
 		globalSortedRowsQueue sortedRowsList
@@ -148,7 +149,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 	} else {
 		e.Parallel.idx = 0
 		e.Parallel.workers = make([]*parallelSortWorker, e.Ctx().GetSessionVars().ExecutorConcurrency)
-		e.Parallel.mpmcQueue = chunk.NewMPMCQueue(chunk.DefaultMPMCQueueLimitNum)
+		e.Parallel.chunkChannel = make(chan *chunkWithMemoryUsage, defaultChunkChannelSize)
 		e.Parallel.err = nil
 		e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e))
 	}
@@ -431,11 +432,11 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	workersWaiter.Add(workerNum + 1)
 
 	// Fetch chunks from child and put chunks into MPMCQueue
-	go e.fetchChunksFromChild(ctx, e.Parallel.mpmcQueue, &workersWaiter)
+	go e.fetchChunksFromChild(ctx, &workersWaiter)
 
 	// Create and run workers
 	for i := range e.Parallel.workers {
-		e.Parallel.workers[i] = newParallelSortWorker(e.lessRow, &e.Parallel.globalSortedRowsQueue, &workersWaiter, &e.Parallel.result, e.Parallel.mpmcQueue, e.checkErrorForParallel, e.processErrorForParallel, e.memTracker, e.Parallel.spillHelper)
+		e.Parallel.workers[i] = newParallelSortWorker(e.lessRow, &e.Parallel.globalSortedRowsQueue, &workersWaiter, &e.Parallel.result, e.Parallel.chunkChannel, e.checkErrorForParallel, e.processErrorForParallel, e.memTracker, e.Parallel.spillHelper)
 		go e.Parallel.workers[i].run()
 	}
 
@@ -447,11 +448,12 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 }
 
 // Fetch chunks from child and put chunks into MPMCQueue
-func (e *SortExec) fetchChunksFromChild(ctx context.Context, mpmcQueue *chunk.MPMCQueue, waitGroup *sync.WaitGroup) {
+func (e *SortExec) fetchChunksFromChild(ctx context.Context, waitGroup *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
 			processPanicAndLog(e.processErrorForParallel, r)
 		}
+		close(e.Parallel.chunkChannel)
 		waitGroup.Done()
 	}()
 
@@ -465,26 +467,16 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context, mpmcQueue *chunk.MP
 
 		rowCount := chk.NumRows()
 		if rowCount == 0 {
-			status := mpmcQueue.GetStatus()
-			// Queue may have been canceled at other place.
-			if status == chunk.StatusOpen {
-				mpmcQueue.Close()
-			}
 			break
 		}
 
-		chkWithMemoryUsage := &chunk.ChunkWithMemoryUsage{
+		chkWithMemoryUsage := &chunkWithMemoryUsage{
 			Chk:         chk,
 			MemoryUsage: chk.MemoryUsage() + chunk.RowSize*int64(rowCount),
 		}
 
-		// Push chunk into mpmcQueue.
-		res := e.Parallel.mpmcQueue.Push(chkWithMemoryUsage)
-		if res != chunk.OK {
-			return
-		}
-
 		e.memTracker.Consume(chkWithMemoryUsage.MemoryUsage)
+		e.Parallel.chunkChannel <- chkWithMemoryUsage
 
 		err = e.checkErrorForParallel()
 		if err != nil {
@@ -503,7 +495,6 @@ func (e *SortExec) processErrorForParallel(err error) {
 	e.Parallel.errRWLock.Lock()
 	defer e.Parallel.errRWLock.Unlock()
 	e.Parallel.err = err
-	e.Parallel.mpmcQueue.Cancel()
 }
 
 func (e *SortExec) getResult() {
