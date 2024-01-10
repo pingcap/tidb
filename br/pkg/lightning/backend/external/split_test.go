@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
@@ -371,7 +372,7 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 	}
 
 	eg := errgroup.Group{}
-	eg.SetLimit(10)
+	eg.SetLimit(30) // note that the total memory usage is 30*256MB,
 	for i := 0; i < 3000; i++ {
 		i := i
 		eg.Go(func() error {
@@ -396,7 +397,7 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 			val := make([]byte, kvSize-keySize)
 			for j := 0; j < int(64*size.GB/kvSize); j++ {
 				err = writer.WriteRow(ctx, key, val)
-				require.NoError(t, err)
+				intest.AssertNoError(err)
 
 				for k := keySize - 3; k >= 0; k-- {
 					key[k]++
