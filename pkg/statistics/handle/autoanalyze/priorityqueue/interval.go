@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/types"
 )
 
 const avgDurationQueryForTable = `
@@ -91,11 +90,10 @@ func getAverageAnalysisDuration(
 	}
 
 	// NOTE: if there are no successful analyses, we return 0.
-	var avgDuration *types.MyDecimal
 	if len(rows) == 0 {
 		return 0, nil
 	}
-	avgDuration = rows[0].GetMyDecimal(0)
+	avgDuration := rows[0].GetMyDecimal(0)
 	duration, err := avgDuration.ToFloat64()
 	if err != nil {
 		return 0, err
@@ -127,11 +125,10 @@ func getLastFailedAnalysisDuration(
 	}
 
 	// NOTE: if there are no failed analyses, we return 0.
-	var lastFailedDuration uint64
 	if len(rows) == 0 {
 		return 0, nil
 	}
-	lastFailedDuration = rows[0].GetUint64(0)
+	lastFailedDuration := rows[0].GetUint64(0)
 
 	return time.Duration(lastFailedDuration) * time.Second, nil
 }
