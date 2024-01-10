@@ -47,10 +47,10 @@ const (
 	// TODO: dispatcher_id will update to scheduler_id later
 	taskColumns = basicTaskColumns + `, start_time, state_update_time, meta, dispatcher_id, error`
 	// InsertTaskColumns is the columns used in insert task.
-	InsertTaskColumns = `task_key, type, state, priority, concurrency, step, meta, create_time`
-
+	InsertTaskColumns   = `task_key, type, state, priority, concurrency, step, meta, create_time`
 	basicSubtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time, ordinal`
-	SubtaskColumns      = basicSubtaskColumns + `, start_time, state_update_time, meta, summary`
+	// SubtaskColumns is the columns for subtask.
+	SubtaskColumns = basicSubtaskColumns + `, start_time, state_update_time, meta, summary`
 	// InsertSubtaskColumns is the columns used in insert subtask.
 	InsertSubtaskColumns = `step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary`
 )
@@ -214,6 +214,7 @@ func (mgr *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Co
 	})
 }
 
+// ExecuteSQLWithNewSession executes one SQL with new session.
 func (mgr *TaskManager) ExecuteSQLWithNewSession(ctx context.Context, sql string, args ...interface{}) (rs []chunk.Row, err error) {
 	err = mgr.WithNewSession(func(se sessionctx.Context) error {
 		rs, err = sqlexec.ExecSQL(ctx, se, sql, args...)
@@ -527,16 +528,6 @@ func (mgr *TaskManager) GetFirstSubtaskInStates(ctx context.Context, tidbID stri
 		return nil, nil
 	}
 	return Row2SubTask(rs[0]), nil
-}
-
-// UpdateSubtaskExecID updates the subtask's exec_id, used for testing now.
-func (mgr *TaskManager) UpdateSubtaskExecID(ctx context.Context, tidbID string, subtaskID int64) error {
-	_, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`update mysql.tidb_background_subtask
-		 set exec_id = %?, state_update_time = unix_timestamp()
-		 where id = %?`,
-		tidbID, subtaskID)
-	return err
 }
 
 // UpdateErrorToSubtask updates the error to subtask.

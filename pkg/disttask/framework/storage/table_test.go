@@ -1095,7 +1095,7 @@ func TestCancelAndExecIdChanged(t *testing.T) {
 
 	// 2. change the exec_id
 	// exec_id changed
-	require.NoError(t, sm.UpdateSubtaskExecID(ctx, "tidb2", subtask.ID))
+	require.NoError(t, testutil.UpdateSubtaskExecID(ctx, sm, "tidb2", subtask.ID))
 	// exec_id in memory unchanged, call UpdateSubtaskStateAndError.
 	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, subtask.ExecID, subtask.ID, proto.SubtaskStateFailed, nil))
 	subtask, err = sm.GetFirstSubtaskInStates(ctx, "tidb2", 1, proto.StepInit, proto.SubtaskStatePending)

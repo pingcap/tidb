@@ -175,6 +175,16 @@ func GetSubtaskNodes(ctx context.Context, mgr *storage.TaskManager, taskID int64
 	return nodes, nil
 }
 
+// UpdateSubtaskExecID updates the subtask's exec_id, used for testing now.
+func UpdateSubtaskExecID(ctx context.Context, mgr *storage.TaskManager, tidbID string, subtaskID int64) error {
+	_, err := mgr.ExecuteSQLWithNewSession(ctx,
+		`update mysql.tidb_background_subtask
+		 set exec_id = %?, state_update_time = unix_timestamp()
+		 where id = %?`,
+		tidbID, subtaskID)
+	return err
+}
+
 // PrintSubtaskInfo log the subtask info by taskKey for test.
 func PrintSubtaskInfo(ctx context.Context, mgr *storage.TaskManager, taskID int64) {
 	rs, _ := mgr.ExecuteSQLWithNewSession(ctx,
