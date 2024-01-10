@@ -1085,6 +1085,44 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 	}
 }
 
+func TestOrderingIdxSelectivityRatio(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int primary key, b int, c int, index ib(b), index ic(c))")
+	for i := 0; i < 10000; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t values (%v, %v, %v)", i, i, i)) // [0, 10000)
+	}
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec(`analyze table t`)
+
+	var (
+		input  []string
+		output []struct {
+			Query  string
+			Result []string
+		}
+	)
+	integrationSuiteData := cardinality.GetCardinalitySuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i := 0; i < len(input); i++ {
+		testdata.OnRecord(func() {
+			output[i].Query = input[i]
+		})
+		if !strings.HasPrefix(input[i], "explain") {
+			testKit.MustExec(input[i])
+			continue
+		}
+		testdata.OnRecord(func() {
+			output[i].Result = testdata.ConvertRowsToStrings(testKit.MustQuery(input[i]).Rows())
+		})
+		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
+	}
+}
+
 func TestCrossValidationSelectivity(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
