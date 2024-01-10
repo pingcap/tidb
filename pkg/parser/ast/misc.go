@@ -172,7 +172,7 @@ func (n *TraceStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// ExplainForStmt is a statement to provite information about how is SQL statement executeing
+// ExplainForStmt is a statement to provide information about how is SQL statement executing
 // in connection #ConnectionID
 // See https://dev.mysql.com/doc/refman/5.7/en/explain.html
 type ExplainForStmt struct {
@@ -180,6 +180,7 @@ type ExplainForStmt struct {
 
 	Format       string
 	ConnectionID uint64
+	Expr         ExprNode
 }
 
 // Restore implements Node interface.
@@ -191,7 +192,13 @@ func (n *ExplainForStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WritePlain(" ")
 	ctx.WriteKeyWord("FOR ")
 	ctx.WriteKeyWord("CONNECTION ")
-	ctx.WritePlain(strconv.FormatUint(n.ConnectionID, 10))
+	if n.Expr != nil {
+		if err := n.Expr.Restore(ctx); err != nil {
+			return errors.Trace(err)
+		}
+	} else {
+		ctx.WritePlain(strconv.FormatUint(n.ConnectionID, 10))
+	}
 	return nil
 }
 

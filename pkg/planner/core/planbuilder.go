@@ -4952,6 +4952,12 @@ func (b *PlanBuilder) buildExplainPlan(targetPlan Plan, format string, explainRo
 // buildExplainFor gets *last* (maybe running or finished) query plan from connection #connection id.
 // See https://dev.mysql.com/doc/refman/8.0/en/explain-for-connection.html.
 func (b *PlanBuilder) buildExplainFor(explainFor *ast.ExplainForStmt) (Plan, error) {
+	if x, ok := explainFor.Expr.(*ast.FuncCallExpr); ok {
+		if x.FnName.L != ast.ConnectionID {
+			return nil, errors.New("Invalid operation. Please use 'EXPLAIN FOR CONNECTION [connectionID | CONNECTION_ID()]' instead")
+		}
+		explainFor.ConnectionID = b.ctx.GetSessionVars().ConnectionID
+	}
 	processInfo, ok := b.ctx.GetSessionManager().GetProcessInfo(explainFor.ConnectionID)
 	if !ok {
 		return nil, ErrNoSuchThread.GenWithStackByArgs(explainFor.ConnectionID)
