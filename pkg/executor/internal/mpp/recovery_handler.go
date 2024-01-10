@@ -75,15 +75,15 @@ func (m *RecoveryHandler) NumHoldResp() int {
 }
 
 // PopFrontResp pop one resp.
-func (m *RecoveryHandler) PopFrontResp() *mppResponse {
+func (m *RecoveryHandler) PopFrontResp() (*mppResponse, error) {
 	if !m.enable || len(m.holder.resps) == 0 {
-		return nil
+		return nil, errors.Errorf("pop resp failed. enable: %v, size: %v", m.enable, len(m.holder.resps))
 	}
 	resp := m.holder.resps[0]
 	m.holder.resps = m.holder.resps[1:]
 	m.holder.memTracker.Consume(-resp.MemSize())
 	m.holder.cannotHold = true
-	return resp
+	return resp, nil
 }
 
 // ResetHolder reset the dynamic data, like resps and recovery cnt.

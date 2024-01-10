@@ -115,7 +115,9 @@ func (r *ExecutorWithRetry) Next(ctx context.Context) (resp kv.ResultSubset, err
 	}
 
 	if r.mppErrRecovery.NumHoldResp() != 0 {
-		resp = r.mppErrRecovery.PopFrontResp()
+		if resp, err = r.mppErrRecovery.PopFrontResp(); err != nil {
+			return nil, err
+		}
 	} else if resp, err = r.coord.Next(ctx); err != nil {
 		return nil, err
 	}
