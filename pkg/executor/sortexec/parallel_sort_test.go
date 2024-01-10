@@ -47,7 +47,7 @@ func TestParallelSort(t *testing.T) {
 	rowNum := 65536
 	nvd := 200 // we have two column and should ensure that nvd*nvd is less than rowNum.
 	sortCase := &testutil.SortCase{Rows: rowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{nvd, nvd}, Ctx: ctx}
-	for i := 0; i < 20; i++ {
+	for i := 0; i < 30; i++ {
 		parallelSortTest(t, ctx, sortCase)
 	}
 }

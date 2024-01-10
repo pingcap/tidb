@@ -148,20 +148,16 @@ func (p *parallelSortWorker) sortChunkAndGetSortedRows(chk *chunk.Chunk) sortedR
 }
 
 func (p *parallelSortWorker) mergeSortGlobalRows() {
-	mergedSortedRows := p.initMergeGlobalRows()
-	for mergedSortedRows != nil {
-		mergedSortedRows = p.mergeSortGlobalRowsImpl(mergedSortedRows)
+	for p.mergeSortGlobalRowsCalledByWorker() {
 	}
 }
 
-func (p *parallelSortWorker) initMergeGlobalRows() sortedRows {
-	p.spillHelper.syncLock.RLock()
-	defer p.spillHelper.syncLock.RUnlock()
-	sortedRowsLeft, sortedRowsRight := p.globalSortedRowsQueue.fetchTwoSortedRows()
-	return p.mergeTwoSortedRows(sortedRowsLeft, sortedRowsRight)
+func (p *parallelSortWorker) mergeSortGlobalRowsForSpillAction() {
+	for p.mergeSortGlobalRowsImpl() {
+	}
 }
 
-func (p *parallelSortWorker) mergeSortGlobalRowsImpl(mergedSortedRows sortedRows) sortedRows {
+func (p *parallelSortWorker) mergeSortGlobalRowsCalledByWorker() bool {
 	p.spillHelper.syncLock.RLock()
 	for p.spillHelper.isInSpilling() {
 		p.spillHelper.syncLock.RUnlock()
@@ -171,28 +167,34 @@ func (p *parallelSortWorker) mergeSortGlobalRowsImpl(mergedSortedRows sortedRows
 	}
 	defer p.spillHelper.syncLock.RUnlock()
 
+	return p.mergeSortGlobalRowsImpl()
+}
+
+func (p *parallelSortWorker) mergeSortGlobalRowsImpl() bool {
 	err := p.checkError()
 	if err != nil {
-		return nil
+		return false
 	}
 
-	sortedRowsLeft, sortedRowsRight := p.globalSortedRowsQueue.addAndFetchTwoSortedRows(mergedSortedRows)
+	sortedRowsLeft, sortedRowsRight := p.globalSortedRowsQueue.fetchTwoSortedRows()
 	if sortedRowsLeft == nil {
-		return nil
+		return false
 	}
 
-	return p.mergeTwoSortedRows(sortedRowsLeft, sortedRowsRight)
+	mergedSortedRows := p.mergeTwoSortedRows(sortedRowsLeft, sortedRowsRight)
+	p.globalSortedRowsQueue.add(mergedSortedRows)
+	return true
 }
 
 func (p *parallelSortWorker) mergeTwoSortedRows(sortedRowsLeft sortedRows, sortedRowsRight sortedRows) sortedRows {
 	sortedRowsLeftLen := len(sortedRowsLeft)
 	sortedRowsRightLen := len(sortedRowsRight)
 	mergedSortedRows := make(sortedRows, 0, sortedRowsLeftLen+sortedRowsRightLen)
-	cursor1 := 0 // Point to sortedRows1
-	cursor2 := 0 // Point to sortedRows2
+	cursorLeft := 0  // Point to sortedRowsLeft
+	cursorRight := 0 // Point to sortedRowsRight
 
 	// Merge
-	for cursor1 < sortedRowsLeftLen && cursor2 < sortedRowsRightLen {
+	for cursorLeft < sortedRowsLeftLen && cursorRight < sortedRowsRightLen {
 		if p.timesOfRowCompare >= SignalCheckpointForSort {
 			// Trigger Consume for checking the NeedKill signal
 			p.memTracker.Consume(1)
@@ -201,18 +203,18 @@ func (p *parallelSortWorker) mergeTwoSortedRows(sortedRowsLeft sortedRows, sorte
 
 		p.timesOfRowCompare++
 
-		if p.lessRowFunc(sortedRowsLeft[cursor1], sortedRowsRight[cursor2]) < 0 {
-			mergedSortedRows = append(mergedSortedRows, sortedRowsLeft[cursor1])
-			cursor1++
+		if p.lessRowFunc(sortedRowsLeft[cursorLeft], sortedRowsRight[cursorRight]) < 0 {
+			mergedSortedRows = append(mergedSortedRows, sortedRowsLeft[cursorLeft])
+			cursorLeft++
 		} else {
-			mergedSortedRows = append(mergedSortedRows, sortedRowsRight[cursor2])
-			cursor2++
+			mergedSortedRows = append(mergedSortedRows, sortedRowsRight[cursorRight])
+			cursorRight++
 		}
 	}
 
 	// Append the remaining rows
-	mergedSortedRows = append(mergedSortedRows, sortedRowsLeft[cursor1:]...)
-	mergedSortedRows = append(mergedSortedRows, sortedRowsRight[cursor2:]...)
+	mergedSortedRows = append(mergedSortedRows, sortedRowsLeft[cursorLeft:]...)
+	mergedSortedRows = append(mergedSortedRows, sortedRowsRight[cursorRight:]...)
 
 	return mergedSortedRows
 }

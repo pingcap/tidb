@@ -99,7 +99,7 @@ func (p *parallelSortSpillHelper) spill() {
 		go func(idx int) {
 			defer func() {
 				if r := recover(); r != nil {
-					processErrorAndLog(p.setSpillError, r)
+					processPanicAndLog(p.setSpillError, r)
 				}
 				workerWaiter.Done()
 			}()
@@ -110,7 +110,7 @@ func (p *parallelSortSpillHelper) spill() {
 			}
 
 			// Let workers sort existing rows
-			p.spillForOneWorker(idx)
+			p.sortExec.Parallel.workers[idx].mergeSortGlobalRowsForSpillAction()
 		}(i)
 	}
 
@@ -118,17 +118,8 @@ func (p *parallelSortSpillHelper) spill() {
 	p.spillImpl()
 }
 
-func (p *parallelSortSpillHelper) spillForOneWorker(idx int) {
-	ok := p.sortExec.Parallel.workers[idx].mergeSortLocalRows(true)
-	if !ok {
-		return
-	}
-
-	p.sortExec.Parallel.workers[idx].mergeSortAllRows(true)
-}
-
 func (p *parallelSortSpillHelper) getSpilledRows() sortedRows {
-	partitionNum := p.sortExec.Parallel.rowsToBeMerged.sortedRowsQueue.Len()
+	partitionNum := p.sortExec.Parallel.globalSortedRowsQueue.getSortedRowsNumNoLock()
 	var spilledRows sortedRows
 	if partitionNum > 1 {
 		p.setSpillError(errors.New("Sort is not completed."))
@@ -138,21 +129,20 @@ func (p *parallelSortSpillHelper) getSpilledRows() sortedRows {
 	if partitionNum == 0 {
 		spilledRows = p.sortExec.Parallel.result
 		p.sortExec.Parallel.result = nil // Clear the result
+		p.sortExec.Parallel.rowNum = 0
 	} else {
-		spilledRows = popFromList(&p.sortExec.Parallel.rowsToBeMerged.sortedRowsQueue)
+		spilledRows = popFromList(&p.sortExec.Parallel.globalSortedRowsQueue.sortedRowsQueue)
 	}
 	return spilledRows
 }
 
 func (p *parallelSortSpillHelper) spillImpl() {
-
-
-	spilledRows := 
+	spilledRows := p.getSpilledRows()
 
 	p.tmpSpillChunk.Reset()
 	inDisk := chunk.NewDataInDiskByChunks(p.fieldTypes)
 
-	for _, row := range sortedRows {
+	for _, row := range spilledRows {
 		p.tmpSpillChunk.AppendRow(row)
 		if p.tmpSpillChunk.IsFull() {
 			inDisk.Add(p.tmpSpillChunk)

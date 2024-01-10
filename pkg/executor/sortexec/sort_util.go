@@ -43,7 +43,7 @@ const (
 // All elements in publicQueue are row slices that have been sorted
 type sortedRowsList struct {
 	lock            sync.Mutex
-	sortedRowsQueue list.List // Type is sortedRows
+	sortedRowsQueue list.List
 }
 
 func (p *sortedRowsList) add(rows sortedRows) {
@@ -52,25 +52,10 @@ func (p *sortedRowsList) add(rows sortedRows) {
 	p.sortedRowsQueue.PushBack(rows)
 }
 
-func (p *sortedRowsList) addNoLock(rows sortedRows) {
-	p.sortedRowsQueue.PushBack(rows)
-}
-
-func (p *sortedRowsList) addAndFetchTwoSortedRows(rows sortedRows) (sortedRows, sortedRows) {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-
-	p.addNoLock(rows)
-	return p.fetchTwoSortedRowsNoLock()
-}
-
 func (p *sortedRowsList) fetchTwoSortedRows() (sortedRows, sortedRows) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	return p.fetchTwoSortedRowsNoLock()
-}
 
-func (p *sortedRowsList) fetchTwoSortedRowsNoLock() (sortedRows, sortedRows) {
 	if p.sortedRowsQueue.Len() > 1 {
 		res1 := popFromList(&p.sortedRowsQueue)
 		res2 := popFromList(&p.sortedRowsQueue)
@@ -136,9 +121,4 @@ func popFromList(l *list.List) sortedRows {
 	res, _ := elem.Value.(sortedRows) // Should always success
 	l.Remove(elem)
 	return res
-}
-
-// Ensure the pushed data type is `sortedRows`.
-func pushIntoList(l *list.List, rows sortedRows) {
-	l.PushBack(rows)
 }
