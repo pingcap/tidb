@@ -84,6 +84,8 @@ type SortExec struct {
 
 		errRWLock sync.RWMutex
 		err       error
+
+		spillHelper *parallelSortSpillHelper
 	}
 
 	// TODO move them into Unparallel
@@ -148,6 +150,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Parallel.workers = make([]*parallelSortWorker, e.Ctx().GetSessionVars().ExecutorConcurrency)
 		e.Parallel.mpmcQueue = chunk.NewMPMCQueue(chunk.DefaultMPMCQueueLimitNum)
 		e.Parallel.err = nil
+		e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e))
 	}
 
 	e.sortPartitions = e.sortPartitions[:0]
@@ -432,7 +435,7 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 
 	// Create and run workers
 	for i := range e.Parallel.workers {
-		e.Parallel.workers[i] = newParallelSortWorker(e.lessRow, &e.Parallel.rowsToBeMerged, &workersWaiter, &e.Parallel.result, e.Parallel.mpmcQueue, e.checkErrorForParallel, e.processErrorForParallel, e.memTracker)
+		e.Parallel.workers[i] = newParallelSortWorker(e.lessRow, &e.Parallel.rowsToBeMerged, &workersWaiter, &e.Parallel.result, e.Parallel.mpmcQueue, e.checkErrorForParallel, e.processErrorForParallel, e.memTracker, e.Parallel.spillHelper)
 		go e.Parallel.workers[i].run()
 	}
 
@@ -503,6 +506,8 @@ func (e *SortExec) processErrorForParallel(err error) {
 }
 
 func (e *SortExec) getSortedRows() {
+	e.Parallel.spillHelper.syncLock.Lock()
+	defer e.Parallel.spillHelper.syncLock.Unlock()
 	partitionNum := e.Parallel.rowsToBeMerged.sortedRowsQueue.Len()
 	if partitionNum > 1 {
 		panic("Sort is not completed.")

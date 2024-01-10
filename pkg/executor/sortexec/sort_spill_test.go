@@ -281,9 +281,9 @@ func multiPartitionCase(t *testing.T, ctx *mock.Context, sortCase *testutil.Sort
 	if enableFailPoint {
 		failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/unholdSyncLock", `return(false)`)
 	}
-	sortPartitionNum := exe.GetSortPartitionListLenForTest()
 	if enableFailPoint {
 		// If we disable the failpoint, there may be only one partition.
+		sortPartitionNum := exe.GetSortPartitionListLenForTest()
 		require.Greater(t, sortPartitionNum, 1)
 
 		// Ensure all partitions are spilled

@@ -17,6 +17,7 @@ package sortexec
 import (
 	"container/list"
 	"sync"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -27,26 +28,28 @@ import (
 const SignalCheckpointForSort uint = 20000
 
 type parallelSortWorker struct {
-	sortedRowsQueue list.List // Type is sortedRows
-
-	lessRowFunc func(chunk.Row, chunk.Row) int
-
+	// This queue stores rows that are received by the worker itself
+	sortedRowsQueue list.List
+	// This list is shared by all workers and all workers will put their sorted rows into this list
 	publicSortedRows *sortedRowsList
-
-	waitGroup *sync.WaitGroup
+	// Temporarily store rows that will be sorted.
+	rowBuffer sortedRows
 	result    *sortedRows
 
-	mpmcQueue    *chunk.MPMCQueue
+	waitGroup *sync.WaitGroup
+
+	mpmcQueue *chunk.MPMCQueue
+
 	checkError   func() error
 	processError func(error)
 
-	totalMemoryUsage  int64
+	lessRowFunc       func(chunk.Row, chunk.Row) int
 	timesOfRowCompare uint
 
-	memTracker *memory.Tracker
+	memTracker       *memory.Tracker
+	totalMemoryUsage int64
 
-	// Temporarily store rows that will be sorted.
-	rowBuffer sortedRows
+	spillHelper *parallelSortSpillHelper
 }
 
 func newParallelSortWorker(
@@ -57,7 +60,8 @@ func newParallelSortWorker(
 	mpmcQueue *chunk.MPMCQueue,
 	checkError func() error,
 	processError func(error),
-	memTracker *memory.Tracker) *parallelSortWorker {
+	memTracker *memory.Tracker,
+	spillHelper *parallelSortSpillHelper) *parallelSortWorker {
 	return &parallelSortWorker{
 		lessRowFunc:       lessRowFunc,
 		publicSortedRows:  publicSortedRows,
@@ -69,32 +73,53 @@ func newParallelSortWorker(
 		totalMemoryUsage:  0,
 		timesOfRowCompare: 0,
 		memTracker:        memTracker,
+		spillHelper:       spillHelper,
+	}
+}
+
+func (p *parallelSortWorker) fetchFromMPMCQueueAndSort() bool {
+	for {
+		eof, err := p.fetchFromMPMCQueueAndSortImpl()
+		if err != nil {
+			return false
+		}
+
+		if eof {
+			return true
+		}
 	}
 }
 
 // Fetching chunks from MPMCQueue and sort them.
 // Rows are sorted only inside a chunk.
-// Return false if there is some error.
-func (p *parallelSortWorker) fetchFromMPMCQueueAndSort() bool {
-	for {
-		err := p.checkError()
-		if err != nil {
-			return false
-		}
-
-		// Memory usage of the chunk has been tracked at the producer side.
-		chk, res := p.mpmcQueue.Pop()
-		if res != chunk.OK {
-			// Check if the queue is closed by an error.
-			err := p.checkError()
-			return err == nil
-		}
-
-		p.totalMemoryUsage += chk.MemoryUsage
-
-		sortedRows := p.sortChunkAndGetSortedRows(chk.Chk)
-		pushIntoList(&p.sortedRowsQueue, sortedRows)
+func (p *parallelSortWorker) fetchFromMPMCQueueAndSortImpl() (bool, error) {
+	p.spillHelper.syncLock.RLock()
+	for p.spillHelper.isInSpilling() {
+		p.spillHelper.syncLock.RUnlock()
+		// Repeatedly release lock so that spill action has more chance to get write lock
+		time.Sleep(10 * time.Millisecond)
+		p.spillHelper.syncLock.RLock()
 	}
+	defer p.spillHelper.syncLock.RUnlock()
+
+	err := p.checkError()
+	if err != nil {
+		return true, err
+	}
+
+	// Memory usage of the chunk has been tracked at the producer side.
+	chk, res := p.mpmcQueue.Pop()
+	if res != chunk.OK {
+		// Check if the queue is closed by an error.
+		err := p.checkError()
+		return err == nil, err
+	}
+
+	p.totalMemoryUsage += chk.MemoryUsage
+
+	sortedRows := p.sortChunkAndGetSortedRows(chk.Chk)
+	pushIntoList(&p.sortedRowsQueue, sortedRows)
+	return false, nil
 }
 
 func (p *parallelSortWorker) keyColumnsLess(i, j chunk.Row) int {
@@ -124,41 +149,79 @@ func (p *parallelSortWorker) sortChunkAndGetSortedRows(chk *chunk.Chunk) sortedR
 	return p.rowBuffer
 }
 
-// Sort data that received by itself. At last, length of sortedRowsQueue should not be greater than 1.
-// Return false if there is some error.
-func (p *parallelSortWorker) mergeSortLocalRows() bool {
+func (p *parallelSortWorker) mergeSortLocalRows(calledBySpillAction bool) bool {
 	for p.sortedRowsQueue.Len() > 1 {
-		err := p.checkError()
-		if err != nil {
+		hasError := p.mergeSortLocalRowsImpl(calledBySpillAction)
+		if hasError {
 			return false
 		}
-
-		sortedRows1 := popFromList(&p.sortedRowsQueue)
-		sortedRows2 := popFromList(&p.sortedRowsQueue)
-		mergedSortedRows := p.mergeTwoSortedRows(sortedRows1, sortedRows2)
-		pushIntoList(&p.sortedRowsQueue, mergedSortedRows)
 	}
 	return true
 }
 
+// Sort data that received by itself. At last, length of sortedRowsQueue should not be greater than 1.
+// Return false if there is some error.
+func (p *parallelSortWorker) mergeSortLocalRowsImpl(calledBySpillAction bool) bool {
+	if !calledBySpillAction {
+		p.spillHelper.syncLock.RLock()
+
+		for p.spillHelper.isInSpilling() {
+			p.spillHelper.syncLock.RUnlock()
+			// Repeatedly release lock so that spill action has more chance to get write lock
+			time.Sleep(10 * time.Millisecond)
+			p.spillHelper.syncLock.RLock()
+		}
+		defer p.spillHelper.syncLock.RUnlock()
+	}
+
+	err := p.checkError()
+	if err != nil {
+		return true
+	}
+
+	sortedRows1 := popFromList(&p.sortedRowsQueue)
+	sortedRows2 := popFromList(&p.sortedRowsQueue)
+	mergedSortedRows := p.mergeTwoSortedRows(sortedRows1, sortedRows2)
+	pushIntoList(&p.sortedRowsQueue, mergedSortedRows)
+	return false
+}
+
 // The worker will check the length of sharedSortedRows. If length > 0, it will fetch a sortedRows and merge it
 // with worker's own sorted rows. If length == 0, worker will put it's row into sharedSortedRows and leave.
-func (p *parallelSortWorker) mergeSortPublicRows() {
-	for {
-		err := p.checkError()
-		if err != nil {
-			return
-		}
-
-		localSortedRows := popFromList(&p.sortedRowsQueue)
-		fetchedSortedRows := p.publicSortedRows.fetchOrPutSortedRows(localSortedRows)
-		if fetchedSortedRows == nil {
-			break
-		}
-
-		mergedSortedRows := p.mergeTwoSortedRows(localSortedRows, fetchedSortedRows)
-		pushIntoList(&p.sortedRowsQueue, mergedSortedRows)
+func (p *parallelSortWorker) mergeSortAllRows(calledBySpillAction bool) {
+	continueExecute := true
+	for continueExecute {
+		continueExecute = p.mergeSortAllRowsImpl(calledBySpillAction)
 	}
+}
+
+func (p *parallelSortWorker) mergeSortAllRowsImpl(calledBySpillAction bool) bool {
+	if !calledBySpillAction {
+		p.spillHelper.syncLock.RLock()
+
+		for p.spillHelper.isInSpilling() {
+			p.spillHelper.syncLock.RUnlock()
+			// Repeatedly release lock so that spill action has more chance to get write lock
+			time.Sleep(10 * time.Millisecond)
+			p.spillHelper.syncLock.RLock()
+		}
+		defer p.spillHelper.syncLock.RUnlock()
+	}
+
+	err := p.checkError()
+	if err != nil {
+		return false
+	}
+
+	localSortedRows := popFromList(&p.sortedRowsQueue)
+	fetchedSortedRows := p.publicSortedRows.fetchOrPutSortedRows(localSortedRows)
+	if fetchedSortedRows == nil {
+		return false
+	}
+
+	mergedSortedRows := p.mergeTwoSortedRows(localSortedRows, fetchedSortedRows)
+	pushIntoList(&p.sortedRowsQueue, mergedSortedRows)
+	return true
 }
 
 func (p *parallelSortWorker) mergeTwoSortedRows(sortedRows1 sortedRows, sortedRows2 sortedRows) sortedRows {
@@ -207,10 +270,10 @@ func (p *parallelSortWorker) run() {
 		return
 	}
 
-	ok = p.mergeSortLocalRows()
+	ok = p.mergeSortLocalRows(false)
 	if !ok {
 		return
 	}
 
-	p.mergeSortPublicRows()
+	p.mergeSortAllRows(false)
 }

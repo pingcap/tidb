@@ -75,6 +75,43 @@ func (s *sortPartitionSpillDiskAction) executeAction(t *memory.Tracker) memory.A
 	return s.GetFallback()
 }
 
+type parallelSortSpillAction struct {
+	memory.BaseOOMAction
+	spillHelper *parallelSortSpillHelper
+}
+
+func newParallelSortSpillDiskAction(spillHelper *parallelSortSpillHelper) *parallelSortSpillAction {
+	return &parallelSortSpillAction{
+		spillHelper: spillHelper,
+	}
+}
+
+// GetPriority get the priority of the Action.
+func (*parallelSortSpillAction) GetPriority() int64 {
+	return memory.DefSpillPriority
+}
+
+func (s *parallelSortSpillAction) Action(t *memory.Tracker) {
+	s.spillHelper.cond.L.Lock()
+	defer s.spillHelper.cond.L.Unlock()
+
+	for s.spillHelper.isInSpillingNoLock() {
+		s.spillHelper.cond.Wait()
+	}
+
+	if t.CheckExceed() {
+		s.spillHelper.setInSpillingNoLock()
+		s.spillHelper.setSpillTriggeredNoLock()
+		go func() {
+			s.spillHelper.syncLock.Lock()
+			defer s.spillHelper.syncLock.Unlock()
+			s.spillHelper.spill()
+			s.spillHelper.resetInSpilling()
+			s.spillHelper.cond.Broadcast()
+		}()
+	}
+}
+
 // It's used only when spill is triggered
 type dataCursor struct {
 	chkID     int
