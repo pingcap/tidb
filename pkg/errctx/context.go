@@ -222,6 +222,9 @@ func init() {
 			errno.ErrNoPartitionForGivenValue,
 			errno.ErrRowDoesNotMatchGivenPartitionSet,
 		},
+		ErrGroupDupKey: {
+			errno.ErrDupEntry,
+		},
 	}
 
 	for group, codes := range group2Errors {
