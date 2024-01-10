@@ -39,6 +39,7 @@ require (
 	github.com/emirpasic/gods v1.18.1
 	github.com/fatanugraha/noloopclosure v0.1.1
 	github.com/fatih/color v1.15.0
+	github.com/felixge/fgprof v0.9.3
 	github.com/fsouza/fake-gcs-server v1.44.0
 	github.com/go-ldap/ldap/v3 v3.4.4
 	github.com/go-resty/resty/v2 v2.7.0
@@ -147,7 +148,6 @@ require (
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
 	github.com/dennwc/varint v1.0.0 // indirect
 	github.com/dolthub/maphash v0.1.0 // indirect
-	github.com/felixge/fgprof v0.9.3 // indirect
 	github.com/go-kit/log v0.2.1 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/golang-jwt/jwt/v4 v4.4.2 // indirect
