@@ -122,20 +122,19 @@ func (p *parallelSortWorker) sortChunkAndGetSortedRows(chk *chunk.Chunk) sortedR
 }
 
 func (p *parallelSortWorker) mergeSortGlobalRows() {
-	sortedRowsLeft, sortedRowsRight := p.globalSortedRowsQueue.fetchTwoSortedRows()
-	mergedSortedRows := p.mergeTwoSortedRows(sortedRowsLeft, sortedRowsRight)
 	for {
 		err := p.checkError()
 		if err != nil {
 			return
 		}
 
-		sortedRowsLeft, sortedRowsRight = p.globalSortedRowsQueue.addAndFetchTwoSortedRows(mergedSortedRows)
+		sortedRowsLeft, sortedRowsRight := p.globalSortedRowsQueue.fetchTwoSortedRows()
 		if sortedRowsLeft == nil {
 			break
 		}
 
-		mergedSortedRows = p.mergeTwoSortedRows(sortedRowsLeft, sortedRowsRight)
+		mergedSortedRows := p.mergeTwoSortedRows(sortedRowsLeft, sortedRowsRight)
+		p.globalSortedRowsQueue.add(mergedSortedRows)
 	}
 }
 
