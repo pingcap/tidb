@@ -21,9 +21,10 @@ import (
 
 // subtask state machine for normal subtask:
 //
-// NOTE: `running` -> `pending` only happens when the subtask is balanced to other
-// node, and the subtask is idempotent, we do this to make the subtask can be scheduled
-// to other node again, it's NOT a normal case.
+// NOTE: `running` -> `pending` only happens when some node is taken as dead, so
+// its running subtask is balanced to other node, and the subtask is idempotent,
+// we do this to make the subtask can be scheduled to other node again, it's NOT
+// a normal state transition.
 //
 //	               ┌──────────────┐
 //	               │          ┌───┴──┐

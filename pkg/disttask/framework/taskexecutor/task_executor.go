@@ -95,8 +95,7 @@ func NewBaseTaskExecutor(ctx context.Context, id string, task *proto.Task, taskT
 	return taskExecutorImpl
 }
 
-// startBalanceSubtaskCheck starts a goroutine to check whether the subtasks are
-// scheduled to or away from this node.
+// checkBalanceSubtask check whether the subtasks are balanced to or away from this node.
 //   - If other subtask of `running` state is scheduled to this node, try changed to
 //     `pending` state, to make sure subtasks can be balanced later when node scale out.
 //   - If current running subtask are scheduled away from this node, i.e. this node
@@ -438,6 +437,7 @@ func (s *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execu
 
 // Rollback rollbacks the subtask.
 func (s *BaseTaskExecutor) Rollback(ctx context.Context, task *proto.Task) error {
+	// TODO: we can centralized this when we move handleExecutableTask loop here.
 	s.task.Store(task)
 	rollbackCtx, rollbackCancel := context.WithCancelCause(ctx)
 	defer rollbackCancel(ErrFinishRollback)
