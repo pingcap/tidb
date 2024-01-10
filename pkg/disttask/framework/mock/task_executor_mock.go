@@ -206,6 +206,20 @@ func (mr *MockTaskTableMockRecorder) RecoverMeta(arg0, arg1, arg2 any) *gomock.C
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecoverMeta", reflect.TypeOf((*MockTaskTable)(nil).RecoverMeta), arg0, arg1, arg2)
 }
 
+// RunningSubtasksBack2Pending mocks base method.
+func (m *MockTaskTable) RunningSubtasksBack2Pending(arg0 context.Context, arg1 []*proto.Subtask) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RunningSubtasksBack2Pending", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RunningSubtasksBack2Pending indicates an expected call of RunningSubtasksBack2Pending.
+func (mr *MockTaskTableMockRecorder) RunningSubtasksBack2Pending(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunningSubtasksBack2Pending", reflect.TypeOf((*MockTaskTable)(nil).RunningSubtasksBack2Pending), arg0, arg1)
+}
+
 // StartSubtask mocks base method.
 func (m *MockTaskTable) StartSubtask(arg0 context.Context, arg1 int64, arg2 string) error {
 	m.ctrl.T.Helper()

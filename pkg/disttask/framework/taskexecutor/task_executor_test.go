@@ -59,7 +59,7 @@ func TestTaskExecutorRun(t *testing.T) {
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, taskExecutorRegisterErr).Times(2)
 	taskExecutor := NewBaseTaskExecutor(ctx, "id", 1, mockSubtaskTable)
 	taskExecutor.Extension = mockExtension
-	err := taskExecutor.run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp})
+	err := taskExecutor.runStep(runCtx, &proto.Task{Step: proto.StepOne, Type: tp})
 	require.EqualError(t, err, taskExecutorRegisterErr.Error())
 	mockSubtaskTable.EXPECT().UpdateErrorToSubtask(runCtx, gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	err = taskExecutor.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp})
@@ -70,7 +70,7 @@ func TestTaskExecutorRun(t *testing.T) {
 
 	initErr := errors.New("init error")
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(initErr)
-	err = taskExecutor.run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp})
+	err = taskExecutor.runStep(runCtx, &proto.Task{Step: proto.StepOne, Type: tp})
 	require.EqualError(t, err, initErr.Error())
 
 	var taskID int64 = 1
@@ -378,7 +378,7 @@ func TestTaskExecutor(t *testing.T) {
 	mockSubtaskTable.EXPECT().StartSubtask(gomock.Any(), taskID, "id").Return(nil)
 	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(runSubtaskErr)
 	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-	err := taskExecutor.run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency})
+	err := taskExecutor.runStep(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency})
 	require.EqualError(t, err, runSubtaskErr.Error())
 
 	// 2. rollback success.
@@ -408,6 +408,6 @@ func TestTaskExecutor(t *testing.T) {
 		unfinishedNormalSubtaskStates...).Return(nil, nil)
 	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), gomock.Any()).Return(nil, storage.ErrTaskNotFound)
 	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
-	err = taskExecutor.run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency})
+	err = taskExecutor.runStep(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency})
 	require.NoError(t, err)
 }

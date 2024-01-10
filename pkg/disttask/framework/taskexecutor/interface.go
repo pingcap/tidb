@@ -43,6 +43,10 @@ type TaskTable interface {
 	UpdateErrorToSubtask(ctx context.Context, tidbID string, taskID int64, err error) error
 	IsTaskExecutorCanceled(ctx context.Context, tidbID string, taskID int64) (bool, error)
 	PauseSubtasks(ctx context.Context, tidbID string, taskID int64) error
+	// RunningSubtaskBack2Pending update the state of subtask which belongs to this
+	// node from running to pending.
+	// see subtask state machine for more detail.
+	RunningSubtasksBack2Pending(ctx context.Context, subtasks []*proto.Subtask) error
 }
 
 // Pool defines the interface of a pool.

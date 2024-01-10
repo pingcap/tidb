@@ -21,15 +21,19 @@ import (
 
 // subtask state machine for normal subtask:
 //
+// NOTE: `running` -> `pending` only happens when the subtask is balanced to other
+// node, and the subtask is idempotent, we do this to make the subtask can be scheduled
+// to other node again, it's NOT a normal case.
+//
 //	               ┌──────────────┐
 //	               │          ┌───┴──┐
 //	               │ ┌───────►│paused│
 //	               ▼ │        └──────┘
 //	┌───────┐    ┌───┴───┐    ┌───────┐
 //	│pending├───►│running├───►│succeed│
-//	└───────┘    └───┬───┘    └───────┘
-//	                 │        ┌──────┐
-//	                 ├───────►│failed│
+//	└───────┘    └┬──┬───┘    └───────┘
+//	     ▲        │  │        ┌──────┐
+//	     └────────┘  ├───────►│failed│
 //	                 │        └──────┘
 //	                 │        ┌────────┐
 //	                 └───────►│canceled│

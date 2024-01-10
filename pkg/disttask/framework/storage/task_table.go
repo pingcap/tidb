@@ -849,6 +849,28 @@ func (mgr *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, subtasks []*p
 	return err
 }
 
+// RunningSubtaskBack2Pending implements the taskexecutor.TaskTable interface.
+func (mgr *TaskManager) RunningSubtasksBack2Pending(ctx context.Context, subtasks []*proto.Subtask) error {
+	// skip the update process.
+	if len(subtasks) == 0 {
+		return nil
+	}
+	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		for _, subtask := range subtasks {
+			_, err := sqlexec.ExecSQL(ctx, se, `
+				update mysql.tidb_background_subtask
+				set state = %?
+				where id = %? and exec_id = %? and state = %?`,
+				proto.SubtaskStatePending, subtask.ID, subtask.ExecID, proto.SubtaskStateRunning)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return err
+}
+
 // DeleteDeadNodes deletes the dead nodes from mysql.dist_framework_meta.
 func (mgr *TaskManager) DeleteDeadNodes(ctx context.Context, nodes []string) error {
 	if len(nodes) == 0 {
