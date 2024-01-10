@@ -190,7 +190,7 @@ func (r *ExecutorWithRetry) nextWithRecovery(ctx context.Context) error {
 				if recoveryErr == nil {
 					panic("mocked mpp err should got recovery err")
 				}
-				if strings.Contains(recoveryErr.Error(), "no handler to recovery") {
+				if strings.Contains(mppErr.Error(), "mock mpp error") && strings.Contains(recoveryErr.Error(), "no handler to recovery") {
 					recoveryErr = nil
 				}
 			})
