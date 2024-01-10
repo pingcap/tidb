@@ -39,10 +39,10 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// DefaultCheckBalanceSubtaskInterval is the default check interval for checking
+var (
+	// checkBalanceSubtaskInterval is the default check interval for checking
 	// subtasks balance to/away from this node.
-	DefaultCheckBalanceSubtaskInterval = 2 * time.Second
+	checkBalanceSubtaskInterval = 2 * time.Second
 )
 
 var (
@@ -101,9 +101,8 @@ func NewBaseTaskExecutor(ctx context.Context, id string, task *proto.Task, taskT
 //   - If current running subtask are scheduled away from this node, i.e. this node
 //     is taken as down, cancel running.
 func (s *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
-	ticker := time.NewTicker(DefaultCheckBalanceSubtaskInterval)
+	ticker := time.NewTicker(checkBalanceSubtaskInterval)
 	defer ticker.Stop()
-outer:
 	for {
 		select {
 		case <-ctx.Done():
@@ -131,12 +130,12 @@ outer:
 			}
 			if !s.IsIdempotent(st) {
 				s.updateSubtaskStateAndError(ctx, st, proto.SubtaskStateFailed, ErrNonIdempotentSubtask)
-				continue outer
+				return
 			}
 			extraRunningSubtasks = append(extraRunningSubtasks, st)
 		}
 		if len(extraRunningSubtasks) > 0 {
-			if err = s.taskTable.RunningSubtasksBack2Pending(ctx, subtasks); err != nil {
+			if err = s.taskTable.RunningSubtasksBack2Pending(ctx, extraRunningSubtasks); err != nil {
 				logutil.Logger(s.logCtx).Error("update running subtasks back to pending failed", zap.Error(err))
 			}
 		}

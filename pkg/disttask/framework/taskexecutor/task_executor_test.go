@@ -17,6 +17,7 @@ package taskexecutor
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
@@ -431,7 +432,7 @@ func TestTaskExecutor(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 }
 
-func TestCurrentSubtaskScheduledAway(t *testing.T) {
+func TestRunStepCurrentSubtaskScheduledAway(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mockSubtaskTable := mock.NewMockTaskTable(ctrl)
@@ -466,5 +467,64 @@ func TestCurrentSubtaskScheduledAway(t *testing.T) {
 	})
 	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 	require.ErrorIs(t, taskExecutor.runStep(ctx, task), context.Canceled)
+	require.True(t, ctrl.Satisfied())
+}
+
+func TestCheckBalanceSubtask(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockSubtaskTable := mock.NewMockTaskTable(ctrl)
+	mockExtension := mock.NewMockExtension(ctrl)
+
+	ctx := context.Background()
+	task := &proto.Task{Step: proto.StepOne, Type: "type", ID: 1, Concurrency: 1}
+	taskExecutor := NewBaseTaskExecutor(ctx, "tidb1", task, mockSubtaskTable)
+	taskExecutor.Extension = mockExtension
+
+	// context canceled
+	canceledCtx, cancel := context.WithCancel(ctx)
+	cancel()
+	taskExecutor.checkBalanceSubtask(canceledCtx)
+
+	bak := checkBalanceSubtaskInterval
+	t.Cleanup(func() {
+		checkBalanceSubtaskInterval = bak
+	})
+	checkBalanceSubtaskInterval = 100 * time.Millisecond
+
+	// subtask scheduled away
+	mockSubtaskTable.EXPECT().GetSubtasksByStepAndStates(gomock.Any(), "tidb1",
+		task.ID, task.Step, proto.SubtaskStateRunning).Return(nil, errors.New("error"))
+	mockSubtaskTable.EXPECT().GetSubtasksByStepAndStates(gomock.Any(), "tidb1",
+		task.ID, task.Step, proto.SubtaskStateRunning).Return([]*proto.Subtask{}, nil)
+	runCtx, cancelCause := context.WithCancelCause(ctx)
+	taskExecutor.registerCancelFunc(cancelCause)
+	require.NoError(t, runCtx.Err())
+	taskExecutor.checkBalanceSubtask(ctx)
+	require.ErrorIs(t, runCtx.Err(), context.Canceled)
+	require.True(t, ctrl.Satisfied())
+
+	subtasks := []*proto.Subtask{{ID: 1, ExecID: "tidb1"}}
+	// in-idempotent running subtask
+	mockSubtaskTable.EXPECT().GetSubtasksByStepAndStates(gomock.Any(), "tidb1",
+		task.ID, task.Step, proto.SubtaskStateRunning).Return(subtasks, nil)
+	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(gomock.Any(), "tidb1",
+		subtasks[0].ID, proto.SubtaskStateFailed, ErrNonIdempotentSubtask).Return(nil)
+	mockExtension.EXPECT().IsIdempotent(subtasks[0]).Return(false)
+	taskExecutor.checkBalanceSubtask(ctx)
+	require.True(t, ctrl.Satisfied())
+
+	// current running subtask is skipped
+	require.Zero(t, taskExecutor.currSubtaskID.Load())
+	taskExecutor.currSubtaskID.Store(1)
+	subtasks = []*proto.Subtask{{ID: 1, ExecID: "tidb1"}, {ID: 2, ExecID: "tidb1"}}
+	mockSubtaskTable.EXPECT().GetSubtasksByStepAndStates(gomock.Any(), "tidb1",
+		task.ID, task.Step, proto.SubtaskStateRunning).Return(subtasks, nil)
+	mockExtension.EXPECT().IsIdempotent(gomock.Any()).Return(true)
+	mockSubtaskTable.EXPECT().RunningSubtasksBack2Pending(gomock.Any(), []*proto.Subtask{{ID: 2, ExecID: "tidb1"}}).Return(nil)
+	// used to break the loop
+	mockSubtaskTable.EXPECT().GetSubtasksByStepAndStates(gomock.Any(), "tidb1",
+		task.ID, task.Step, proto.SubtaskStateRunning).Return(nil, nil)
+	taskExecutor.checkBalanceSubtask(ctx)
 	require.True(t, ctrl.Satisfied())
 }
