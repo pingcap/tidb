@@ -365,14 +365,15 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 	// test the case that after one round merge step, we have 3000 stat files. In
 	// current merge step parameters, we will merge 4000 files of 256MB into 16
 	// files, so we directly write 4000*256MB/16 = 64GB data to onefile writer.
-	statCh := make(chan []MultipleFilesStat, 3000)
+	fileNum := 3000
+	statCh := make(chan []MultipleFilesStat, fileNum)
 	onClose := func(s *WriterSummary) {
 		statCh <- s.MultipleFilesStats
 	}
 
 	eg := errgroup.Group{}
 	eg.SetLimit(30)
-	for i := 0; i < 3000; i++ {
+	for i := 0; i < fileNum; i++ {
 		i := i
 		eg.Go(func() error {
 			w := NewWriterBuilder().
@@ -447,8 +448,8 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 
 	require.NoError(t, eg.Wait())
 
-	multiStat := make([]MultipleFilesStat, 0, 3000)
-	for i := 0; i < 3000; i++ {
+	multiStat := make([]MultipleFilesStat, 0, fileNum)
+	for i := 0; i < fileNum; i++ {
 		multiStat = append(multiStat, <-statCh...)
 	}
 	splitter, err := NewRangeSplitter(
