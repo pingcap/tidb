@@ -12,7 +12,6 @@ go_library(
     deps = [
         "//pkg/sessionctx",
         "//pkg/statistics/handle/util",
-        "//pkg/types",
     ],
 )
 
