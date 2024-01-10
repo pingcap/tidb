@@ -131,8 +131,6 @@ func (r *ExecutorWithRetry) Close() error {
 	r.mppErrRecovery.ResetHolder()
 	r.memTracker.Detach()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(r.getCoordUniqueID())
-	// Handle reports only when it's not failed.
-	r.coord.(*localMppCoordinator).handleAllReports()
 	return r.coord.Close()
 }
 
@@ -142,9 +140,8 @@ func (r *ExecutorWithRetry) setupMPPCoordinator(ctx context.Context, recoverying
 		if r.coord == nil {
 			return nil, errors.New("mpp coordinator should not be nil when recoverying")
 		}
-		if err := r.coord.Close(); err != nil {
-			return nil, err
-		}
+		// Only report runtime stats when there is no error.
+		r.coord.(*localMppCoordinator).closeWithoutReport()
 		mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(r.getCoordUniqueID())
 	}
 
