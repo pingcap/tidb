@@ -246,8 +246,7 @@ func getGroups(ctx context.Context, splitter *RangeSplitter, startKey kv.Key, en
 // Using concurrency * (readAllData and writer).
 func MergeOverlappingFilesOpt(
 	ctx context.Context,
-	dataFiles []string,
-	statFiles []string,
+	multiFileStat []MultipleFilesStat,
 	store storage.ExternalStorage,
 	startKey []byte,
 	endKey []byte,
@@ -263,8 +262,6 @@ func MergeOverlappingFilesOpt(
 	checkHotspot bool,
 ) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx).With(
-		zap.Int("data-file-count", len(dataFiles)),
-		zap.Int("stat-file-count", len(statFiles)),
 		zap.Binary("start-key", startKey),
 		zap.Binary("end-key", endKey),
 		zap.String("new-file-prefix", newFilePrefix),
@@ -282,8 +279,7 @@ func MergeOverlappingFilesOpt(
 
 	splitter, err := NewRangeSplitter(
 		ctx,
-		dataFiles,
-		statFiles,
+		multiFileStat,
 		store,
 		int64(rangesGroupSize),
 		math.MaxInt64,

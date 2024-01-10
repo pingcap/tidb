@@ -102,8 +102,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 
 	return external.MergeOverlappingFilesOpt(
 		ctx,
-		sm.DataFiles,
-		sm.StatFiles,
+		sm.MultipleFilesStats,
 		store,
 		sm.StartKey,
 		sm.EndKey,

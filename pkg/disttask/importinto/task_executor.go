@@ -313,8 +313,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	return external.MergeOverlappingFilesOpt(
 		ctx,
-		sm.DataFiles,
-		sm.StatFiles,
+		sm.MultipleFilesStats,
 		m.controller.GlobalSortStore,
 		sm.StartKey,
 		sm.EndKey,

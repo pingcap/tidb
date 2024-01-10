@@ -1045,8 +1045,7 @@ func newMergeStepOpt(t *testing.T, s *mergeTestSuite) {
 	now := time.Now()
 	err = MergeOverlappingFilesOpt(
 		ctx,
-		datas,
-		stats,
+		mockOneMultiFileStat(datas, stats),
 		s.store,
 		s.minKey,
 		s.maxKey.Next(),
