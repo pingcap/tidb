@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
@@ -372,11 +371,11 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 	}
 
 	eg := errgroup.Group{}
-	eg.SetLimit(30) // note that the total memory usage is 30*256MB,
+	eg.SetLimit(30)
 	for i := 0; i < 3000; i++ {
 		i := i
 		eg.Go(func() error {
-			writer := NewWriterBuilder().
+			w := NewWriterBuilder().
 				SetMemorySizeLimit(DefaultMemSizeLimit).
 				SetBlockSize(32*units.MiB). // dataKVGroupBlockSize
 				SetWriterBatchCount(8*1024).
@@ -384,20 +383,55 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 				SetPropSizeDistance(size.MB).
 				SetOnCloseFunc(onClose).
 				BuildOneFile(store, "/mock-test", uuid.New().String())
-			err := writer.Init(ctx, int64(5*size.MB))
+			err := w.Init(ctx, int64(5*size.MB))
 			require.NoError(t, err)
 			// we don't need data files
-			writer.dataWriter = storage.NoopWriter{}
+			w.dataWriter = storage.NoopWriter{}
 
 			kvSize := 20 * size.KB
 			keySize := size.KB
 			key := make([]byte, keySize)
 			key[keySize-1] = byte(i % 256)
 			key[keySize-2] = byte(i / 256)
-			val := make([]byte, kvSize-keySize)
+
+			memSize := uint64(0)
 			for j := 0; j < int(64*size.GB/kvSize); j++ {
-				err = writer.WriteRow(ctx, key, val)
-				intest.AssertNoError(err)
+
+				// copied from OneFileWriter.WriteRow
+
+				if memSize >= DefaultMemSizeLimit {
+					memSize = 0
+					w.kvStore.Close()
+					encodedStat := w.rc.encode()
+					_, err := w.statWriter.Write(ctx, encodedStat)
+					if err != nil {
+						return err
+					}
+					w.rc.reset()
+					// the new prop should have the same offset with kvStore.
+					w.rc.currProp.offset = w.kvStore.offset
+				}
+				if len(w.rc.currProp.firstKey) == 0 {
+					w.rc.currProp.firstKey = key
+				}
+				w.rc.currProp.lastKey = key
+
+				memSize += kvSize
+				w.rc.currProp.size += kvSize - 2*lengthBytes
+				w.rc.currProp.keys++
+
+				if w.rc.currProp.size >= w.rc.propSizeDist ||
+					w.rc.currProp.keys >= w.rc.propKeysDist {
+					newProp := *w.rc.currProp
+					w.rc.props = append(w.rc.props, &newProp)
+					// reset currProp, and start to update this prop.
+					w.rc.currProp.firstKey = nil
+					w.rc.currProp.offset = memSize
+					w.rc.currProp.keys = 0
+					w.rc.currProp.size = 0
+				}
+
+				// increase the key
 
 				for k := keySize - 3; k >= 0; k-- {
 					key[k]++
@@ -407,7 +441,7 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 				}
 			}
 
-			return writer.Close(ctx)
+			return w.Close(ctx)
 		})
 	}
 
@@ -430,10 +464,9 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 	require.NoError(t, err)
 	var lastEndKey []byte
 	for {
-		endKey, dataFiles, statFiles, _, err := splitter.SplitOneRangesGroup()
+		endKey, _, statFiles, _, err := splitter.SplitOneRangesGroup()
 		require.NoError(t, err)
-		require.Equal(t, len(dataFiles), len(statFiles))
-		require.Greater(t, len(dataFiles), 0)
+		require.Greater(t, len(statFiles), 0)
 		if endKey == nil {
 			break
 		}
@@ -442,7 +475,7 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 			require.Equal(t, 1, cmp, "endKey: %v, lastEndKey: %v", endKey, lastEndKey)
 		}
 		lastEndKey = slices.Clone(endKey)
-		t.Logf("endKey: %v, file number: %d", endKey, len(dataFiles))
+		t.Logf("endKey: %v, file number: %d", endKey, len(statFiles))
 	}
 	err = splitter.Close()
 	require.NoError(t, err)
