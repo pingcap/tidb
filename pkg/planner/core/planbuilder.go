@@ -533,7 +533,11 @@ type PlanBuilder struct {
 	colMapper map[*ast.ColumnNameExpr]int
 	// visitInfo is used for privilege check.
 	visitInfo     []visitInfo
+<<<<<<< HEAD
 	tableHintInfo []tableHintInfo
+=======
+	tableHintInfo []*hint.TableHintInfo
+>>>>>>> c55105e0442 (planner: fix leading hint cannot take effect in UNION ALL statements (#50145))
 	// optFlag indicates the flags of the optimizer rules.
 	optFlag uint64
 	// capFlag indicates the capability flags.

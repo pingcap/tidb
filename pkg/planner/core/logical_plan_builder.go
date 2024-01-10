@@ -4199,6 +4199,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.GenWithStack("We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid"))
 		}
 	}
+<<<<<<< HEAD
 	b.tableHintInfo = append(b.tableHintInfo, tableHintInfo{
 		sortMergeJoinTables:       sortMergeTables,
 		broadcastJoinTables:       bcTables,
@@ -4215,6 +4216,24 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		indexMergeHintList:        indexMergeHintList,
 		timeRangeHint:             timeRangeHint,
 		limitHints:                limitHints,
+=======
+	b.tableHintInfo = append(b.tableHintInfo, &h.TableHintInfo{
+		SortMergeJoinTables:       sortMergeTables,
+		BroadcastJoinTables:       bcTables,
+		ShuffleJoinTables:         shuffleJoinTables,
+		IndexNestedLoopJoinTables: h.IndexNestedLoopJoinTables{INLJTables: inljTables, INLHJTables: inlhjTables, INLMJTables: inlmjTables},
+		NoIndexJoinTables:         h.IndexNestedLoopJoinTables{INLJTables: noIndexJoinTables, INLHJTables: noIndexHashJoinTables, INLMJTables: noIndexMergeJoinTables},
+		HashJoinTables:            hashJoinTables,
+		NoHashJoinTables:          noHashJoinTables,
+		NoMergeJoinTables:         noMergeJoinTables,
+		IndexHintList:             indexHintList,
+		TiFlashTables:             tiflashTables,
+		TiKVTables:                tikvTables,
+		AggHints:                  aggHints,
+		IndexMergeHintList:        indexMergeHintList,
+		TimeRangeHint:             timeRangeHint,
+		LimitHints:                limitHints,
+>>>>>>> c55105e0442 (planner: fix leading hint cannot take effect in UNION ALL statements (#50145))
 		MergeHints:                MergeHints,
 		leadingJoinOrder:          leadingJoinOrder,
 		hjBuildTables:             hjBuildTables,
@@ -4298,7 +4317,7 @@ func (b *PlanBuilder) TableHints() *tableHintInfo {
 	if len(b.tableHintInfo) == 0 {
 		return nil
 	}
-	return &(b.tableHintInfo[len(b.tableHintInfo)-1])
+	return b.tableHintInfo[len(b.tableHintInfo)-1]
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {
