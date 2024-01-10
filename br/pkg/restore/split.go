@@ -201,6 +201,10 @@ func (rs *RegionSplitter) executeSplitByRanges(
 				// need use first range's start key to scan region
 				// and the range size must be greater than 0 here
 				scanStartKey := ranges[0].StartKey
+				// if ranges is less than store count, we can't split it by range
+				if len(ranges) <= sctx.storeCount {
+					return rs.executeSplitByKeys(ectx, sctx, scanStartKey, allKeys)
+				}
 				expectSplitSize := rangeSize / uint64(sctx.storeCount)
 				size := uint64(0)
 				keys := make([][]byte, 0, sctx.storeCount)
