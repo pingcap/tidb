@@ -935,13 +935,13 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	// If running job meets error, we will save this error in job Error
 	// and retry later if the job is not cancelled.
 	schemaVer, runJobErr = w.runDDLJob(d, t, job)
-	defer d.unlockSchemaVersion(job.ID)
 
 	d.mu.RLock()
 	d.mu.hook.OnJobRunAfter(job)
 	d.mu.RUnlock()
 
 	if job.IsCancelled() {
+		defer d.unlockSchemaVersion(job.ID)
 		w.sess.Reset()
 		err = w.HandleJobDone(d, job, t)
 		return 0, err
@@ -963,11 +963,13 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	err = w.registerMDLInfo(job, schemaVer)
 	if err != nil {
 		w.sess.Rollback()
+		d.unlockSchemaVersion(job.ID)
 		return 0, err
 	}
 	err = w.updateDDLJob(job, runJobErr != nil)
 	if err = w.handleUpdateJobError(t, job, err); err != nil {
 		w.sess.Rollback()
+		d.unlockSchemaVersion(job.ID)
 		return 0, err
 	}
 	writeBinlog(d.binlogCli, txn, job)
@@ -976,9 +978,11 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	if !w.ddlCtx.isOwner() {
 		// This TiDB instance is not DDL owner anymore, it should not commit any transaction.
 		w.sess.Rollback()
+		d.unlockSchemaVersion(job.ID)
 		return 0, dbterror.ErrNotOwner
 	}
 	err = w.sess.Commit()
+	d.unlockSchemaVersion(job.ID)
 	if err != nil {
 		return 0, err
 	}
