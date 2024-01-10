@@ -344,13 +344,14 @@ func cmdRun(args ...string) bool {
 		}
 	}
 
+	if coverprofile != "" {
+		collectCoverProfileFile()
+	}
+
 	for _, work := range works {
 		if work.Fail {
 			return false
 		}
-	}
-	if coverprofile != "" {
-		collectCoverProfileFile()
 	}
 	return true
 }
