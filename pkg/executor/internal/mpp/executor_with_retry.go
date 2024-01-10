@@ -32,24 +32,15 @@ import (
 	"go.uber.org/zap"
 )
 
-// ExecutorWithRetry receive mppResponse from localMppCoordinator.
+// ExecutorWithRetry receive mppResponse from localMppCoordinator,
+// and tries to recovery mpp err if necessary.
 // The abstraction layer of reading mpp resp:
-// 1. MPPGather:
-//  1. As part of the TiDB Volcano model executor, it is equivalent to a TableReader.
-//
-// 2. selectResult:
-//  1. Decode select result(mppResponse) into chunk.
-//  2. Record runtime info.
-//
-// 3. ExecutorWithRetry:
-//  1. Recovery mpp err if possible and retry MPP Task.
-//
-// 4. localMppCoordinator:
-//  1. Generate MPP fragment and dispatch MPPTask.
-//  2. Receive MPP status for better err msg and correct stats for Limit.
-//
-// 5. mppIterator:
-//  1. Send or receive MPP RPC.
+//  1. MPPGather: As part of the TiDB Volcano model executor, it is equivalent to a TableReader.
+//  2. selectResult: Decode select result(mppResponse) into chunk. Also record runtime info.
+//  3. ExecutorWithRetry: Recovery mpp err if possible and retry MPP Task.
+//  4. localMppCoordinator: Generate MPP fragment and dispatch MPPTask.
+//     And receive MPP status for better err msg and correct stats for Limit.
+//  5. mppIterator: Send or receive MPP RPC.
 type ExecutorWithRetry struct {
 	coord      kv.MppCoordinator
 	sctx       sessionctx.Context

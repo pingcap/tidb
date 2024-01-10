@@ -81,7 +81,7 @@ func (m *RecoveryHandler) PopFrontResp() *mppResponse {
 	}
 	resp := m.holder.resps[0]
 	m.holder.resps = m.holder.resps[1:]
-	m.holder.memTracker.Consume(-resp.respSize)
+	m.holder.memTracker.Consume(-resp.MemSize())
 	m.holder.cannotHold = true
 	return resp
 }
@@ -179,7 +179,7 @@ func (h *mppResultHolder) insert(resp *mppResponse) {
 	if len(h.resps) >= int(h.capacity) {
 		h.cannotHold = true
 	}
-	h.memTracker.Consume(resp.respSize)
+	h.memTracker.Consume(resp.MemSize())
 }
 
 func (h *mppResultHolder) reset() {
