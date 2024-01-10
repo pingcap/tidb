@@ -460,10 +460,8 @@ func TestRunStepCurrentSubtaskScheduledAway(t *testing.T) {
 	mockSubtaskTable.EXPECT().StartSubtask(gomock.Any(), task.ID, "tidb1").Return(nil)
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(func(ctx context.Context, subtask *proto.Subtask) error {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+		<-ctx.Done()
+		return ctx.Err()
 	})
 	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 	require.ErrorIs(t, taskExecutor.runStep(ctx, task), context.Canceled)
