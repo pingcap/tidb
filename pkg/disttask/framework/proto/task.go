@@ -165,6 +165,8 @@ func Type2Int(t TaskType) int {
 		return 1
 	case ImportInto:
 		return 2
+	case Backfill:
+		return 3
 	default:
 		return 0
 	}
@@ -177,6 +179,8 @@ func Int2Type(i int) TaskType {
 		return TaskTypeExample
 	case 2:
 		return ImportInto
+	case 3:
+		return Backfill
 	default:
 		return ""
 	}
