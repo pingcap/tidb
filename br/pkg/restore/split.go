@@ -111,6 +111,7 @@ func (rs *RegionSplitter) ExecuteSplit(
 		sortedKeys = append(sortedKeys, r.EndKey)
 		totalRangeSize += r.Size
 	}
+	scanStartKey := sortedRanges[0].StartKey
 	sctx := SplitContext{
 		isRawKv:     isRawKv,
 		needScatter: true,
@@ -121,7 +122,7 @@ func (rs *RegionSplitter) ExecuteSplit(
 	if granularity == string(CoarseGrained) {
 		return rs.executeSplitByRanges(ctx, sctx, sortedRanges)
 	}
-	return rs.executeSplitByKeys(ctx, sctx, sortedKeys)
+	return rs.executeSplitByKeys(ctx, sctx, scanStartKey, sortedKeys)
 }
 
 func (rs *RegionSplitter) executeSplitByRanges(
@@ -191,6 +192,7 @@ func (rs *RegionSplitter) executeSplitByRanges(
 					rangeSize += rg.Size
 					allKeys = append(allKeys, rg.EndKey)
 				}
+				scanStartKey := ranges[0].StartKey
 				expectSplitSize := rangeSize / uint64(sctx.storeCount)
 				size := uint64(0)
 				keys := make([][]byte, 0, sctx.storeCount)
@@ -223,7 +225,7 @@ func (rs *RegionSplitter) executeSplitByRanges(
 				}
 				sctx.onSplit(keys)
 				sctx.needScatter = false
-				return rs.executeSplitByKeys(ectx, sctx, allKeys)
+				return rs.executeSplitByKeys(ectx, sctx, scanStartKey, allKeys)
 			})
 		}
 		return eg.Wait()
@@ -243,11 +245,12 @@ func (rs *RegionSplitter) executeSplitByRanges(
 func (rs *RegionSplitter) executeSplitByKeys(
 	ctx context.Context,
 	splitContext SplitContext,
+	scanStartKey []byte,
 	sortedKeys [][]byte,
 ) error {
 	var mutex sync.Mutex
 	startTime := time.Now()
-	minKey := codec.EncodeBytesExt(nil, sortedKeys[0], splitContext.isRawKv)
+	minKey := codec.EncodeBytesExt(nil, scanStartKey, splitContext.isRawKv)
 	maxKey := codec.EncodeBytesExt(nil, sortedKeys[len(sortedKeys)-1], splitContext.isRawKv)
 	scatterRegions := make([]*split.RegionInfo, 0)
 	regionsMap := make(map[uint64]*split.RegionInfo)
