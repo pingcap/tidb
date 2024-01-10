@@ -2147,3 +2147,17 @@ set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DAT
 -- error 1292
 insert into table_20220419(lastLoginDate) select lastLoginDate from table_20220419;
 set sql_mode=default;
+
+# TestIssue49015
+drop table if exists test.t;
+create table test.t (a varchar(10), b tinyint(1));
+insert into test.t values ("abc", 1);
+select * from test.t where (a, b) in (('a', 1), (null, 0));
+update test.t set b = 0 where (a, b) in (('a', 1), (null, 0));
+SHOW WARNINGS;
+
+# TestIssue49986
+drop table if exists test.t;
+create table if not exists test.ast (i varchar(20));
+create table if not exists test.acc (j varchar(20), k varchar(20), l varchar(20), m varchar(20));
+explain format='brief' with t as(select i, (case when b.j = '20001' then b.l else b.k end) an from test.ast a inner join test.acc b on (a.i = b.m) and a.i = 'astp2019121731703151'), t1 as (select i, group_concat(an order by an separator '; ') an from t group by i) select * from t1;

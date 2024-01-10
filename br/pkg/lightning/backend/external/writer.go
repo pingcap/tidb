@@ -20,6 +20,7 @@ import (
 	"encoding/binary"
 	"path/filepath"
 	"slices"
+	"sort"
 	"strconv"
 	"time"
 
@@ -237,10 +238,30 @@ func (b *WriterBuilder) BuildOneFile(
 // every 500 files). It is used to estimate the data overlapping, and per-file
 // statistic information maybe too big to loaded into memory.
 type MultipleFilesStat struct {
-	MinKey            tidbkv.Key  `json:"min-key"`
-	MaxKey            tidbkv.Key  `json:"max-key"`
-	Filenames         [][2]string `json:"filenames"` // [dataFile, statFile]
+	MinKey tidbkv.Key `json:"min-key"`
+	MaxKey tidbkv.Key `json:"max-key"`
+	// Filenames is a list of [dataFile, statFile] paris, and it's sorted by the
+	// first key of the data file.
+	Filenames         [][2]string `json:"filenames"`
 	MaxOverlappingNum int64       `json:"max-overlapping-num"`
+}
+
+type startKeysAndFiles struct {
+	startKeys []tidbkv.Key
+	files     [][2]string
+}
+
+func (s *startKeysAndFiles) Len() int {
+	return len(s.startKeys)
+}
+
+func (s *startKeysAndFiles) Less(i, j int) bool {
+	return s.startKeys[i].Cmp(s.startKeys[j]) < 0
+}
+
+func (s *startKeysAndFiles) Swap(i, j int) {
+	s.startKeys[i], s.startKeys[j] = s.startKeys[j], s.startKeys[i]
+	s.files[i], s.files[j] = s.files[j], s.files[i]
 }
 
 func (m *MultipleFilesStat) build(startKeys, endKeys []tidbkv.Key) {
@@ -257,6 +278,9 @@ func (m *MultipleFilesStat) build(startKeys, endKeys []tidbkv.Key) {
 			m.MaxKey = endKeys[i]
 		}
 	}
+	// make Filenames sorted by startKeys
+	s := &startKeysAndFiles{startKeys, m.Filenames}
+	sort.Sort(s)
 
 	points := make([]Endpoint, 0, len(startKeys)*2)
 	for _, k := range startKeys {

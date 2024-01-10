@@ -16,13 +16,18 @@ package storage
 
 import (
 	"context"
+	"fmt"
+	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 // GetSubtasksFromHistoryForTest gets subtasks from history table for test.
-func GetSubtasksFromHistoryForTest(ctx context.Context, stm *TaskManager) (int, error) {
-	rs, err := stm.executeSQLWithNewSession(ctx,
+func GetSubtasksFromHistoryForTest(ctx context.Context, mgr *TaskManager) (int, error) {
+	rs, err := mgr.executeSQLWithNewSession(ctx,
 		"select * from mysql.tidb_background_subtask_history")
 	if err != nil {
 		return 0, err
@@ -31,8 +36,8 @@ func GetSubtasksFromHistoryForTest(ctx context.Context, stm *TaskManager) (int, 
 }
 
 // GetSubtasksFromHistoryByTaskIDForTest gets subtasks by taskID from history table for test.
-func GetSubtasksFromHistoryByTaskIDForTest(ctx context.Context, stm *TaskManager, taskID int64) (int, error) {
-	rs, err := stm.executeSQLWithNewSession(ctx,
+func GetSubtasksFromHistoryByTaskIDForTest(ctx context.Context, mgr *TaskManager, taskID int64) (int, error) {
+	rs, err := mgr.executeSQLWithNewSession(ctx,
 		`select `+subtaskColumns+` from mysql.tidb_background_subtask_history where task_key = %?`, taskID)
 	if err != nil {
 		return 0, err
@@ -41,8 +46,8 @@ func GetSubtasksFromHistoryByTaskIDForTest(ctx context.Context, stm *TaskManager
 }
 
 // GetSubtasksByTaskIDForTest gets subtasks by taskID for test.
-func GetSubtasksByTaskIDForTest(ctx context.Context, stm *TaskManager, taskID int64) ([]*proto.Subtask, error) {
-	rs, err := stm.executeSQLWithNewSession(ctx,
+func GetSubtasksByTaskIDForTest(ctx context.Context, mgr *TaskManager, taskID int64) ([]*proto.Subtask, error) {
+	rs, err := mgr.executeSQLWithNewSession(ctx,
 		`select `+subtaskColumns+` from mysql.tidb_background_subtask where task_key = %?`, taskID)
 	if err != nil {
 		return nil, err
@@ -58,11 +63,83 @@ func GetSubtasksByTaskIDForTest(ctx context.Context, stm *TaskManager, taskID in
 }
 
 // GetTasksFromHistoryForTest gets tasks from history table for test.
-func GetTasksFromHistoryForTest(ctx context.Context, stm *TaskManager) (int, error) {
-	rs, err := stm.executeSQLWithNewSession(ctx,
+func GetTasksFromHistoryForTest(ctx context.Context, mgr *TaskManager) (int, error) {
+	rs, err := mgr.executeSQLWithNewSession(ctx,
 		"select * from mysql.tidb_global_task_history")
 	if err != nil {
 		return 0, err
 	}
 	return len(rs), nil
+}
+
+// GetTaskEndTimeForTest gets task's endTime for test.
+func GetTaskEndTimeForTest(ctx context.Context, mgr *TaskManager, taskID int64) (time.Time, error) {
+	rs, err := mgr.executeSQLWithNewSession(ctx,
+		`select end_time 
+		from mysql.tidb_global_task
+	    where id = %?`, taskID)
+
+	if err != nil {
+		return time.Time{}, nil
+	}
+	if !rs[0].IsNull(0) {
+		return rs[0].GetTime(0).GoTime(time.Local)
+	}
+	return time.Time{}, nil
+}
+
+// GetSubtaskEndTimeForTest gets subtask's endTime for test.
+func GetSubtaskEndTimeForTest(ctx context.Context, mgr *TaskManager, subtaskID int64) (time.Time, error) {
+	rs, err := mgr.executeSQLWithNewSession(ctx,
+		`select end_time 
+		from mysql.tidb_background_subtask
+	    where id = %?`, subtaskID)
+
+	if err != nil {
+		return time.Time{}, nil
+	}
+	if !rs[0].IsNull(0) {
+		return rs[0].GetTime(0).GoTime(time.Local)
+	}
+	return time.Time{}, nil
+}
+
+// GetSubtaskNodesForTest gets subtasks running nodes for one task for test.
+func GetSubtaskNodesForTest(ctx context.Context, mgr *TaskManager, taskID int64) ([]string, error) {
+	rs, err := mgr.executeSQLWithNewSession(ctx,
+		`select distinct(exec_id) from mysql.tidb_background_subtask where task_key=%?`, taskID)
+	if err != nil {
+		return nil, err
+	}
+	nodes := make([]string, 0, len(rs))
+	for _, r := range rs {
+		if !r.IsNull(0) {
+			nodes = append(nodes, r.GetString(0))
+		}
+	}
+	return nodes, nil
+}
+
+// PrintSubtaskInfo log the subtask info by taskKey for test.
+func (mgr *TaskManager) PrintSubtaskInfo(ctx context.Context, taskID int64) {
+	rs, _ := mgr.executeSQLWithNewSession(ctx,
+		`select `+subtaskColumns+` from mysql.tidb_background_subtask_history where task_key = %?`, taskID)
+	rs2, _ := mgr.executeSQLWithNewSession(ctx,
+		`select `+subtaskColumns+` from mysql.tidb_background_subtask where task_key = %?`, taskID)
+	rs = append(rs, rs2...)
+
+	for _, r := range rs {
+		errBytes := r.GetBytes(13)
+		var err error
+		if len(errBytes) > 0 {
+			stdErr := errors.Normalize("")
+			err1 := stdErr.UnmarshalJSON(errBytes)
+			if err1 != nil {
+				err = err1
+			} else {
+				err = stdErr
+			}
+		}
+		logutil.BgLogger().Info(fmt.Sprintf("subTask: %v\n", row2SubTask(r)), zap.Error(err))
+	}
 }

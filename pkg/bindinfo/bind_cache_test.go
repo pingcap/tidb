@@ -28,14 +28,13 @@ func TestBindCache(t *testing.T) {
 	variable.MemQuotaBindingCache.Store(200)
 	bindCache := newBindCache()
 
-	value := make([][]*BindRecord, 3)
+	value := make([]*BindRecord, 3)
 	key := make([]bindCacheKey, 3)
 	var bigKey string
 	for i := 0; i < 3; i++ {
 		cacheKey := strings.Repeat(strconv.Itoa(i), 50)
 		key[i] = bindCacheKey(hack.Slice(cacheKey))
-		record := &BindRecord{OriginalSQL: cacheKey, Db: ""}
-		value[i] = []*BindRecord{record}
+		value[i] = &BindRecord{OriginalSQL: cacheKey, Db: ""}
 		bigKey += cacheKey
 
 		require.Equal(t, int64(100), calcBindCacheKVMem(key[i], value[i]))
@@ -68,8 +67,7 @@ func TestBindCache(t *testing.T) {
 	require.NotNil(t, result)
 
 	bigBindCacheKey := bindCacheKey(hack.Slice(bigKey))
-	bigRecord := &BindRecord{OriginalSQL: bigKey, Db: ""}
-	bigBindCacheValue := []*BindRecord{bigRecord}
+	bigBindCacheValue := &BindRecord{OriginalSQL: bigKey, Db: ""}
 	require.Equal(t, int64(300), calcBindCacheKVMem(bigBindCacheKey, bigBindCacheValue))
 	ok, err = bindCache.set(bigBindCacheKey, bigBindCacheValue)
 	require.False(t, ok)

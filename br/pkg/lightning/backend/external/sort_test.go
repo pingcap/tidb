@@ -346,8 +346,7 @@ func testSortWithNewMerge(t *testing.T, mergeFunc func(ctx context.Context, data
 	for i, group := range dataGroup {
 		require.NoError(t, mergeFunc(
 			ctx,
-			group,
-			statGroup[i],
+			mockOneMultiFileStat(group, statGroup[i]),
 			memStore,
 			startKeys[i],
 			endKeys[i],

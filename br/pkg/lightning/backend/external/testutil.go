@@ -28,6 +28,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func mockOneMultiFileStat(data, stat []string) []MultipleFilesStat {
+	m := MultipleFilesStat{}
+	for i := range data {
+		m.Filenames = append(m.Filenames, [2]string{data[i], stat[i]})
+	}
+	return []MultipleFilesStat{m}
+}
+
 func testReadAndCompare(
 	ctx context.Context,
 	t *testing.T,
@@ -40,8 +48,7 @@ func testReadAndCompare(
 
 	splitter, err := NewRangeSplitter(
 		ctx,
-		datas,
-		stats,
+		mockOneMultiFileStat(datas, stats),
 		store,
 		int64(memSizeLimit), // make the group small for testing
 		math.MaxInt64,

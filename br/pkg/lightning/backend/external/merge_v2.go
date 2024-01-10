@@ -25,8 +25,7 @@ import (
 // Not used for now.
 func MergeOverlappingFilesV2(
 	ctx context.Context,
-	dataFiles []string,
-	statFiles []string,
+	multiFileStat []MultipleFilesStat,
 	store storage.ExternalStorage,
 	startKey []byte,
 	endKey []byte,
@@ -41,9 +40,12 @@ func MergeOverlappingFilesV2(
 	writerConcurrency int,
 	checkHotspot bool,
 ) (err error) {
+	fileCnt := 0
+	for _, m := range multiFileStat {
+		fileCnt += len(m.Filenames)
+	}
 	task := log.BeginTask(logutil.Logger(ctx).With(
-		zap.Int("data-file-count", len(dataFiles)),
-		zap.Int("stat-file-count", len(statFiles)),
+		zap.Int("file-count", fileCnt),
 		zap.Binary("start-key", startKey),
 		zap.Binary("end-key", endKey),
 		zap.String("new-file-prefix", newFilePrefix),
@@ -61,8 +63,7 @@ func MergeOverlappingFilesV2(
 
 	splitter, err := NewRangeSplitter(
 		ctx,
-		dataFiles,
-		statFiles,
+		multiFileStat,
 		store,
 		int64(rangesGroupSize),
 		math.MaxInt64,

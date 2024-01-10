@@ -141,14 +141,14 @@ func (b *builtinSleepSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 	}
 
 	sessVars := ctx.GetSessionVars()
+	ec := sessVars.StmtCtx.ErrCtx()
 	if isNull || val < 0 {
 		// for insert ignore stmt, the StrictSQLMode and ignoreErr should both be considered.
-		if !sessVars.StmtCtx.BadNullAsWarning {
-			return 0, false, errIncorrectArgs.GenWithStackByArgs("sleep")
-		}
-		err := errIncorrectArgs.GenWithStackByArgs("sleep")
-		sessVars.StmtCtx.AppendWarning(err)
-		return 0, false, nil
+		return 0, false, ec.HandleErrorWithAlias(
+			errBadNull,
+			errIncorrectArgs.GenWithStackByArgs("sleep"),
+			errIncorrectArgs.FastGenByArgs("sleep"),
+		)
 	}
 
 	if val > math.MaxFloat64/float64(time.Second.Nanoseconds()) {
@@ -216,7 +216,7 @@ func (b *builtinLockSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, e
 	// We can't have a timeout greater than innodb_lock_wait_timeout.
 	// So users are aware, we also attach a warning.
 	if timeout < 0 || timeout > maxTimeout {
-		err := errTruncatedWrongValue.GenWithStackByArgs("get_lock", strconv.FormatInt(timeout, 10))
+		err := errTruncatedWrongValue.FastGenByArgs("get_lock", strconv.FormatInt(timeout, 10))
 		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		timeout = maxTimeout
 	}

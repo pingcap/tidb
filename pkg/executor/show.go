@@ -389,7 +389,6 @@ func (e *ShowExec) fetchShowBind() error {
 				hint.Charset,
 				hint.Collation,
 				hint.Source,
-				hint.Type,
 				hint.SQLDigest,
 				hint.PlanDigest,
 			})
@@ -1293,6 +1292,10 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 			fmt.Fprintf(buf, "PRE_SPLIT_REGIONS=%d ", tableInfo.PreSplitRegions)
 		}
 		buf.WriteString("*/")
+	}
+
+	if tableInfo.AutoRandomBits > 0 && tableInfo.PreSplitRegions > 0 {
+		fmt.Fprintf(buf, " /*T! PRE_SPLIT_REGIONS=%d */", tableInfo.PreSplitRegions)
 	}
 
 	if len(tableInfo.Comment) > 0 {
@@ -2255,6 +2258,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	e.appendRow([]interface{}{stateJSON, tokenJSON})
 	return nil
 }
+
 func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedRowCount int64) {
 	fullTableName := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
 	result.AppendInt64(0, info.ID)
@@ -2359,7 +2363,7 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 	return runWithSystemSession(ctx, sctx, func(s sessionctx.Context) error {
 		// Retrieve view columns info.
 		planBuilder, _ := plannercore.NewPlanBuilder(
-			plannercore.PlanBuilderOptNoExecution{}).Init(s, is, &hint.BlockHintProcessor{})
+			plannercore.PlanBuilderOptNoExecution{}).Init(s, is, hint.NewQBHintHandler(nil))
 		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl, nil, nil)
 		if err != nil {
 			return err

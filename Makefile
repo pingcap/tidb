@@ -71,7 +71,6 @@ license:
 		--run_under="cd $(CURDIR) && " \
 		 @com_github_apache_skywalking_eyes//cmd/license-eye:license-eye --run_under="cd $(CURDIR) && "  -- -c ./.github/licenserc.yml  header check
 
-
 tidy:
 	@echo "go mod tidy"
 	./tools/check/check-tidy.sh
@@ -87,10 +86,13 @@ check-parallel:
 		xargs -0 grep -F -n "t.Parallel()" || \
 		! echo "Error: all the go tests should be run in serial."
 
+CLEAN_UT_BINARY := find . -name '*.test.bin'| xargs rm -f
+
 clean: failpoint-disable
 	$(GO) clean -i ./...
 	rm -rf $(TEST_COVERAGE_DIR)
-	
+	@$(CLEAN_UT_BINARY)
+
 # Split tests for CI to run `make test` in parallel.
 test: test_part_1 test_part_2
 	@>&2 echo "Great, all tests passed."
@@ -126,8 +128,6 @@ integrationtest: server_check
 
 ddltest:
 	@cd cmd/ddltest && $(GO) test --tags=deadllock,intest -o ../../bin/ddltest -c
-
-CLEAN_UT_BINARY := find . -name '*.test.bin'| xargs rm
 
 ut: tools/bin/ut tools/bin/xprog failpoint-enable
 	tools/bin/ut $(X) || { $(FAILPOINT_DISABLE); exit 1; }
@@ -383,7 +383,7 @@ mock_s3iface: mockgen
 mock_lightning: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/lightning/backend Backend,EngineWriter,TargetInfoGetter,ChunkFlushStatus > br/pkg/mock/backend.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/lightning/backend/encode Encoder,EncodingBuilder,Rows,Row > br/pkg/mock/encode.go
-	tools/bin/mockgen -package mocklocal github.com/pingcap/tidb/br/pkg/lightning/backend/local DiskUsage,TiKVModeSwitcher > br/pkg/mock/mocklocal/local.go
+	tools/bin/mockgen -package mocklocal github.com/pingcap/tidb/br/pkg/lightning/backend/local DiskUsage,TiKVModeSwitcher,StoreHelper > br/pkg/mock/mocklocal/local.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/br/pkg/utils TaskRegister > br/pkg/mock/task_register.go
 
 gen_mock: mockgen

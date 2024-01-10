@@ -21,19 +21,20 @@ import (
 )
 
 const (
-	rootUser         = "root"
 	sysUserTableName = "user"
-	cloudAdminUser   = "cloud_admin"
 )
 
 var statsTables = map[string]struct{}{
-	"stats_buckets":    {},
-	"stats_extended":   {},
-	"stats_feedback":   {},
-	"stats_fm_sketch":  {},
-	"stats_histograms": {},
-	"stats_meta":       {},
-	"stats_top_n":      {},
+	"stats_buckets":      {},
+	"stats_extended":     {},
+	"stats_feedback":     {},
+	"stats_fm_sketch":    {},
+	"stats_histograms":   {},
+	"stats_history":      {},
+	"stats_meta":         {},
+	"stats_meta_history": {},
+	"stats_table_locked": {},
+	"stats_top_n":        {},
 }
 
 var unRecoverableTable = map[string]struct{}{
@@ -49,21 +50,9 @@ var unRecoverableTable = map[string]struct{}{
 
 	// schema_index_usage has table id need to be rewrite.
 	"schema_index_usage": {},
-}
 
-// tables in this map is restored when fullClusterRestore=true
-// the value part is the filter in SQL where clause which is used to
-// skip clearing or restoring 'cloud_admin'@'%' which is a special
-// user on TiDB Cloud
-var sysPrivilegeTableMap = map[string]string{
-	"user":          "(user = '%s' and host = '%%')",       // since v1.0.0
-	"db":            "(user = '%s' and host = '%%')",       // since v1.0.0
-	"tables_priv":   "(user = '%s' and host = '%%')",       // since v1.0.0
-	"columns_priv":  "(user = '%s' and host = '%%')",       // since v1.0.0
-	"default_roles": "(user = '%s' and host = '%%')",       // since v3.0.0
-	"role_edges":    "(to_user = '%s' and to_host = '%%')", // since v3.0.0
-	"global_priv":   "(user = '%s' and host = '%%')",       // since v3.0.8
-	"global_grants": "(user = '%s' and host = '%%')",       // since v5.0.3
+	// replace into view is not supported now
+	"tidb_mdl_view": {},
 }
 
 func isUnrecoverableTable(tableName string) bool {
@@ -76,84 +65,18 @@ func isStatsTable(tableName string) bool {
 	return ok
 }
 
-func generateResetSQLs(db *database, resetUsers []string) []string {
-	if db.Name.L != mysql.SystemDB {
-		return nil
-	}
-	sqls := make([]string, 0, 10)
-	// we only need reset root password once
-	rootReset := false
-	for tableName := range db.ExistingTables {
-		if sysPrivilegeTableMap[tableName] != "" {
-			for _, name := range resetUsers {
-				if strings.ToLower(name) == rootUser {
-					if rootReset {
-						continue
-					}
-					updateSQL := fmt.Sprintf("UPDATE %s.%s SET authentication_string='',"+
-						" Shutdown_priv='Y',"+
-						" Config_priv='Y'"+
-						" WHERE USER='root' AND Host='%%';",
-						db.Name.L, sysUserTableName)
-					sqls = append(sqls, updateSQL)
-					rootReset = true
-				} else {
-					/* #nosec G202: SQL string concatenation */
-					whereClause := fmt.Sprintf("WHERE "+sysPrivilegeTableMap[tableName], name)
-					deleteSQL := fmt.Sprintf("DELETE FROM %s %s;",
-						utils.EncloseDBAndTable(db.Name.L, tableName), whereClause)
-					sqls = append(sqls, deleteSQL)
-				}
-			}
-		}
-	}
-	return sqls
-}
-
-// ClearSystemUsers is used for volume-snapshot restoration.
-// because we can not support restore user in some scenarios, for example in cloud.
-// we'd better use this function to drop cloud_admin user after volume-snapshot restore.
-func (rc *Client) ClearSystemUsers(ctx context.Context, resetUsers []string) error {
-	sysDB := mysql.SystemDB
-	db, ok := rc.getDatabaseByName(sysDB)
-	if !ok {
-		log.Warn("target database not exist, aborting", zap.String("database", sysDB))
-		return nil
-	}
-	execSQL := func(sql string) error {
-		// SQLs here only contain table name and database name, seems it is no need to redact them.
-		if err := rc.db.se.Execute(ctx, sql); err != nil {
-			log.Warn("failed to clear system users",
-				zap.Stringer("database", db.Name),
-				zap.String("sql", sql),
-				zap.Error(err),
-			)
-			return berrors.ErrUnknown.Wrap(err).GenWithStack("failed to execute %s", sql)
-		}
-		log.Info("successfully clear system users after restoration",
-			zap.Stringer("database", db.Name),
-			zap.String("sql", sql),
-		)
-		return nil
-	}
-
-	sqls := generateResetSQLs(db, resetUsers)
-	for _, sql := range sqls {
-		log.Info("reset system user for cloud", zap.String("sql", sql))
-		if err := execSQL(sql); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // RestoreSystemSchemas restores the system schema(i.e. the `mysql` schema).
 // Detail see https://github.com/pingcap/br/issues/679#issuecomment-762592254.
-func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) error {
+func (rc *Client) RestoreSystemSchemas(ctx context.Context, f filter.Filter) (rerr error) {
 	sysDB := mysql.SystemDB
 
 	temporaryDB := utils.TemporaryDBName(sysDB)
-	defer rc.cleanTemporaryDatabase(ctx, sysDB)
+	defer func() {
+		// Don't clean the temporary database for next restore with checkpoint.
+		if rerr == nil {
+			rc.cleanTemporaryDatabase(ctx, sysDB)
+		}
+	}()
 
 	if !f.MatchSchema(sysDB) || !rc.withSysTable {
 		log.Debug("system database filtered out", zap.String("database", sysDB))
@@ -223,15 +146,11 @@ func (rc *Client) afterSystemTablesReplaced(ctx context.Context, tables []string
 	var err error
 	for _, table := range tables {
 		if table == "user" {
-			if rc.fullClusterRestore {
-				log.Info("privilege system table restored, please reconnect to make it effective")
-				err = multierr.Append(err, rc.dom.NotifyUpdatePrivilege())
+			if serr := rc.dom.NotifyUpdatePrivilege(); serr != nil {
+				log.Warn("failed to flush privileges, please manually execute `FLUSH PRIVILEGES`")
+				err = multierr.Append(err, berrors.ErrUnknown.Wrap(serr).GenWithStack("failed to flush privileges"))
 			} else {
-				// to make it compatible with older version
-				// todo: should we allow restore system table in non-fresh cluster in later br version?
-				// if we don't, we can check it at first place.
-				err = multierr.Append(err, errors.Annotatef(berrors.ErrUnsupportedSystemTable,
-					"restored user info may not take effect, until you should execute `FLUSH PRIVILEGES` manually"))
+				log.Info("privilege system table restored, please reconnect to make it effective")
 			}
 		} else if table == "bind_info" {
 			if serr := rc.db.se.Execute(ctx, bindinfo.StmtRemoveDuplicatedPseudoBinding); serr != nil {
@@ -277,12 +196,11 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 	//  1.5 ) (Optional) The UPDATE statement sometimes costs, the whole system tables restore step can be place into the restore pipeline.
 	//  2   ) Deprecate the origin interface for backing up statistics.
 	if isStatsTable(tableName) {
-		return berrors.ErrUnsupportedSystemTable.GenWithStack("restoring stats via `mysql` schema isn't support yet: " +
-			"the table ID is out-of-date and may corrupt existing statistics")
+		return nil
 	}
 
 	if isUnrecoverableTable(tableName) {
-		return berrors.ErrUnsupportedSystemTable.GenWithStack("restoring unsupported `mysql` schema table")
+		return nil
 	}
 
 	// Currently, we don't support restore resource group metadata, so we need to
@@ -302,19 +220,6 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 	}
 
 	if db.ExistingTables[tableName] != nil {
-		whereNotClause := ""
-		if rc.fullClusterRestore && sysPrivilegeTableMap[tableName] != "" {
-			// cloud_admin is a special user on tidb cloud, need to skip it.
-			/* #nosec G202: SQL string concatenation */
-			whereNotClause = fmt.Sprintf("WHERE NOT "+sysPrivilegeTableMap[tableName], cloudAdminUser)
-			log.Info("full cluster restore, delete existing data",
-				zap.String("table", tableName), zap.Stringer("schema", db.Name))
-			deleteSQL := fmt.Sprintf("DELETE FROM %s %s;",
-				utils.EncloseDBAndTable(db.Name.L, tableName), whereNotClause)
-			if err := execSQL(deleteSQL); err != nil {
-				return err
-			}
-		}
 		log.Info("replace into existing table",
 			zap.String("table", tableName),
 			zap.Stringer("schema", db.Name))
@@ -324,11 +229,10 @@ func (rc *Client) replaceTemporaryTableToSystable(ctx context.Context, ti *model
 			columnNames = append(columnNames, utils.EncloseName(col.Name.L))
 		}
 		colListStr := strings.Join(columnNames, ",")
-		replaceIntoSQL := fmt.Sprintf("REPLACE INTO %s(%s) SELECT %s FROM %s %s;",
+		replaceIntoSQL := fmt.Sprintf("REPLACE INTO %s(%s) SELECT %s FROM %s;",
 			utils.EncloseDBAndTable(db.Name.L, tableName),
 			colListStr, colListStr,
-			utils.EncloseDBAndTable(db.TemporaryName.L, tableName),
-			whereNotClause)
+			utils.EncloseDBAndTable(db.TemporaryName.L, tableName))
 		return execSQL(replaceIntoSQL)
 	}
 

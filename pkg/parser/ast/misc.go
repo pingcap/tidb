@@ -1972,7 +1972,6 @@ type CreateBindingStmt struct {
 	stmtNode
 
 	GlobalScope bool
-	IsUniversal bool
 	OriginNode  StmtNode
 	HintedNode  StmtNode
 	PlanDigest  string
@@ -1984,9 +1983,6 @@ func (n *CreateBindingStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("GLOBAL ")
 	} else {
 		ctx.WriteKeyWord("SESSION ")
-	}
-	if n.IsUniversal {
-		ctx.WriteKeyWord("UNIVERSAL ")
 	}
 	if n.OriginNode == nil {
 		ctx.WriteKeyWord("BINDING FROM HISTORY USING PLAN DIGEST ")
@@ -2338,6 +2334,7 @@ const (
 	AdminFlushPlanCache
 	AdminSetBDRRole
 	AdminShowBDRRole
+	AdminUnsetBDRRole
 )
 
 // HandleRange represents a range where handle value >= Begin and < End.
@@ -2350,11 +2347,44 @@ type HandleRange struct {
 type BDRRole string
 
 const (
-	BDRRoleNone      BDRRole = "none"
 	BDRRolePrimary   BDRRole = "primary"
 	BDRRoleSecondary BDRRole = "secondary"
-	BDRRoleLocalOnly BDRRole = "local_only"
+	BDRRoleNone      BDRRole = ""
 )
+
+// DeniedByBDR checks whether the DDL is denied by BDR.
+func DeniedByBDR(role BDRRole, action model.ActionType, job *model.Job) (denied bool) {
+	ddlType, ok := model.ActionBDRMap[action]
+	switch role {
+	case BDRRolePrimary:
+		if !ok {
+			return true
+		}
+
+		// Can't add unique index on primary role.
+		if job != nil && (action == model.ActionAddIndex || action == model.ActionAddPrimaryKey) &&
+			len(job.Args) >= 1 && job.Args[0].(bool) {
+			// job.Args[0] is unique when job.Type is ActionAddIndex or ActionAddPrimaryKey.
+			return true
+		}
+
+		if ddlType == model.SafeDDL || ddlType == model.UnmanagementDDL {
+			return false
+		}
+	case BDRRoleSecondary:
+		if !ok {
+			return true
+		}
+		if ddlType == model.UnmanagementDDL {
+			return false
+		}
+	default:
+		// if user do not set bdr role, we will not deny any ddl as `none`
+		return false
+	}
+
+	return true
+}
 
 type StatementScope int
 
@@ -2600,19 +2630,17 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	case AdminSetBDRRole:
 		switch n.BDRRole {
-		case BDRRoleNone:
-			ctx.WriteKeyWord("SET BDR ROLE NONE")
 		case BDRRolePrimary:
 			ctx.WriteKeyWord("SET BDR ROLE PRIMARY")
 		case BDRRoleSecondary:
 			ctx.WriteKeyWord("SET BDR ROLE SECONDARY")
-		case BDRRoleLocalOnly:
-			ctx.WriteKeyWord("SET BDR ROLE LOCAL_ONLY")
 		default:
 			return errors.New("Unsupported BDR role")
 		}
 	case AdminShowBDRRole:
 		ctx.WriteKeyWord("SHOW BDR ROLE")
+	case AdminUnsetBDRRole:
+		ctx.WriteKeyWord("UNSET BDR ROLE")
 	default:
 		return errors.New("Unsupported AdminStmt type")
 	}

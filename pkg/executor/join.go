@@ -332,7 +332,7 @@ func (w *buildWorker) fetchBuildSideRows(ctx context.Context, chkCh chan<- *chun
 		if w.hashJoinCtx.finished.Load() {
 			return
 		}
-		chk := sessVars.GetNewChunkWithCapacity(w.buildSideExec.RetFieldTypes(), sessVars.MaxChunkSize, sessVars.MaxChunkSize, w.hashJoinCtx.allocPool)
+		chk := w.hashJoinCtx.allocPool.Alloc(w.buildSideExec.RetFieldTypes(), sessVars.MaxChunkSize, sessVars.MaxChunkSize)
 		err = exec.Next(ctx, w.buildSideExec, chk)
 		if err != nil {
 			errCh <- errors.Trace(err)
@@ -1141,7 +1141,7 @@ func (e *HashJoinExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 			}
 		}
 		for i := uint(0); i < e.concurrency; i++ {
-			e.probeWorkers[i].rowIters = chunk.NewIterator4Slice([]chunk.Row{}).(*chunk.Iterator4Slice)
+			e.probeWorkers[i].rowIters = chunk.NewIterator4Slice([]chunk.Row{})
 		}
 		e.workerWg.RunWithRecover(func() {
 			defer trace.StartRegion(ctx, "HashJoinHashTableBuilder").End()
