@@ -19,13 +19,19 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
+	"github.com/google/uuid"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
+	"golang.org/x/sync/errgroup"
 )
 
 func TestGeneralProperties(t *testing.T) {
@@ -350,4 +356,93 @@ func TestExactlyKeyNum(t *testing.T) {
 	require.Equal(t, dataFiles, splitDataFiles)
 	require.Equal(t, statFiles, splitStatFiles)
 	require.Equal(t, [][]byte{[]byte("key001"), []byte("key002")}, splitKeys)
+}
+
+func Test3KFilesRangeSplitter(t *testing.T) {
+	store := openTestingStorage(t)
+	ctx := context.Background()
+
+	// test the case that after one round merge step, we have 3000 stat files. In
+	// current merge step parameters, we will merge 4000 files of 256MB into 16
+	// files, so we directly write 4000*256MB/16 = 64GB data to onefile writer.
+	statCh := make(chan []MultipleFilesStat, 3000)
+	onClose := func(s *WriterSummary) {
+		statCh <- s.MultipleFilesStats
+	}
+
+	eg := errgroup.Group{}
+	eg.SetLimit(10)
+	for i := 0; i < 3000; i++ {
+		i := i
+		eg.Go(func() error {
+			writer := NewWriterBuilder().
+				SetMemorySizeLimit(DefaultMemSizeLimit).
+				SetBlockSize(32*units.MiB). // dataKVGroupBlockSize
+				SetWriterBatchCount(8*1024).
+				SetPropKeysDistance(8*1024).
+				SetPropSizeDistance(size.MB).
+				SetOnCloseFunc(onClose).
+				BuildOneFile(store, "/mock-test", uuid.New().String())
+			err := writer.Init(ctx, int64(5*size.MB))
+			require.NoError(t, err)
+			// we don't need data files
+			writer.dataWriter = storage.NoopWriter{}
+
+			kvSize := 20 * size.KB
+			keySize := size.KB
+			key := make([]byte, keySize)
+			key[keySize-1] = byte(i % 256)
+			key[keySize-2] = byte(i / 256)
+			val := make([]byte, kvSize-keySize)
+			for j := 0; j < int(64*size.GB/kvSize); j++ {
+				err = writer.WriteRow(ctx, key, val)
+				require.NoError(t, err)
+
+				for k := keySize - 3; k >= 0; k-- {
+					key[k]++
+					if key[k] != 0 {
+						break
+					}
+				}
+			}
+
+			return writer.Close(ctx)
+		})
+	}
+
+	require.NoError(t, eg.Wait())
+
+	multiStat := make([]MultipleFilesStat, 0, 3000)
+	for i := 0; i < 3000; i++ {
+		multiStat = append(multiStat, <-statCh...)
+	}
+	splitter, err := NewRangeSplitter(
+		ctx,
+		multiStat,
+		store,
+		int64(config.DefaultBatchSize),
+		int64(math.MaxInt64),
+		int64(config.SplitRegionSize),
+		int64(config.SplitRegionKeys),
+		false,
+	)
+	require.NoError(t, err)
+	var lastEndKey []byte
+	for {
+		endKey, dataFiles, statFiles, _, err := splitter.SplitOneRangesGroup()
+		require.NoError(t, err)
+		require.Equal(t, len(dataFiles), len(statFiles))
+		require.Greater(t, len(dataFiles), 0)
+		if endKey == nil {
+			break
+		}
+		if lastEndKey != nil {
+			cmp := bytes.Compare(endKey, lastEndKey)
+			require.Equal(t, 1, cmp, "endKey: %v, lastEndKey: %v", endKey, lastEndKey)
+		}
+		lastEndKey = slices.Clone(endKey)
+		t.Logf("endKey: %v, file number: %d", endKey, len(dataFiles))
+	}
+	err = splitter.Close()
+	require.NoError(t, err)
 }

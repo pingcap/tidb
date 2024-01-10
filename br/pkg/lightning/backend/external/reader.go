@@ -67,7 +67,8 @@ func readAllData(
 		return err
 	}
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	// TODO(lance6716): limit the concurrency of eg to 30 does not help
+	// limit the concurrency to avoid open too many connections at the same time
+	eg.SetLimit(1000)
 	for i := range dataFiles {
 		i := i
 		eg.Go(func() error {
