@@ -165,10 +165,12 @@ type mppResultHolder struct {
 }
 
 func newMPPResultHolder(holderCap uint64, parent *memory.Tracker) *mppResultHolder {
+	tracker := memory.NewTracker(parent.Label(), 0)
+	tracker.AttachTo(parent)
 	return &mppResultHolder{
 		capacity:   holderCap,
 		resps:      []*mppResponse{},
-		memTracker: memory.NewTracker(parent.Label(), 0),
+		memTracker: tracker,
 	}
 }
 

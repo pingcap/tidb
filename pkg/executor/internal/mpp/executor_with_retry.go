@@ -91,10 +91,12 @@ func NewExecutorWithRetry(ctx context.Context, sctx sessionctx.Context, parentTr
 
 	recoveryHandler := NewRecoveryHandler(disaggTiFlashWithAutoScaler,
 		uint64(holdCap), enableMPPRecovery, parentTracker)
+	memTracker := memory.NewTracker(parentTracker.Label(), 0)
+	memTracker.AttachTo(parentTracker)
 	retryer := &ExecutorWithRetry{
 		ctx:            ctx,
 		sctx:           sctx,
-		memTracker:     memory.NewTracker(parentTracker.Label(), 0),
+		memTracker:     memTracker,
 		planIDs:        planIDs,
 		is:             is,
 		plan:           plan,
@@ -126,6 +128,8 @@ func (r *ExecutorWithRetry) Next(ctx context.Context) (resp kv.ResultSubset, err
 
 // Close implements kv.Response interface.
 func (r *ExecutorWithRetry) Close() error {
+	r.mppErrRecovery.ResetHolder()
+	r.memTracker.Detach()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(r.getCoordUniqueID())
 	// Handle reports only when it's not failed.
 	r.coord.(*localMppCoordinator).handleAllReports()
