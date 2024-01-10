@@ -169,7 +169,7 @@ func newMPPResultHolder(holderCap uint64, parent *memory.Tracker) *mppResultHold
 	tracker.AttachTo(parent)
 	return &mppResultHolder{
 		capacity:   holderCap,
-		resps:      []*mppResponse{},
+		resps:      make([]*mppResponse, 0, holderCap),
 		memTracker: tracker,
 	}
 }
