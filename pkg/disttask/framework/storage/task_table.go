@@ -239,7 +239,7 @@ func (mgr *TaskManager) CreateTask(ctx context.Context, key string, tp proto.Tas
 
 // CreateTaskWithSession adds a new task to task table with session.
 func (mgr *TaskManager) CreateTaskWithSession(ctx context.Context, se sessionctx.Context, key string, tp proto.TaskType, concurrency int, meta []byte) (taskID int64, err error) {
-	cpuCount, err := mgr.getCPUCountOfManagedNodes(ctx, se)
+	cpuCount, err := mgr.getCPUCountOfManagedNode(ctx, se)
 	if err != nil {
 		return 0, err
 	}
@@ -1286,8 +1286,20 @@ func (*TaskManager) getAllNodesWithSession(ctx context.Context, se sessionctx.Co
 	return nodes, nil
 }
 
-// getCPUCountOfManagedNodes gets the cpu count of managed nodes.
-func (mgr *TaskManager) getCPUCountOfManagedNodes(ctx context.Context, se sessionctx.Context) (int, error) {
+// GetCPUCountOfManagedNode gets the cpu count of managed node.
+func (mgr *TaskManager) GetCPUCountOfManagedNode(ctx context.Context) (int, error) {
+	var cnt int
+	err := mgr.WithNewSession(func(se sessionctx.Context) error {
+		var err2 error
+		cnt, err2 = mgr.getCPUCountOfManagedNode(ctx, se)
+		return err2
+	})
+	return cnt, err
+}
+
+// getCPUCountOfManagedNode gets the cpu count of managed node.
+// returns error when there's no managed node or no node has valid cpu count.
+func (mgr *TaskManager) getCPUCountOfManagedNode(ctx context.Context, se sessionctx.Context) (int, error) {
 	nodes, err := mgr.getManagedNodesWithSession(ctx, se)
 	if err != nil {
 		return 0, err
@@ -1301,6 +1313,9 @@ func (mgr *TaskManager) getCPUCountOfManagedNodes(ctx context.Context, se sessio
 			cpuCount = n.CPUCount
 			break
 		}
+	}
+	if cpuCount == 0 {
+		return 0, errors.New("no managed node have enough resource for dist task")
 	}
 	return cpuCount, nil
 }

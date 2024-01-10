@@ -860,13 +860,12 @@ func TestDistFrameworkMeta(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
 
 	// when no node
-	_, err := storage.GetCPUCountOfManagedNodes(ctx, sm)
+	_, err := sm.GetCPUCountOfManagedNode(ctx)
 	require.ErrorContains(t, err, "no managed nodes")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(0)"))
 	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
-	cpuCount, err := storage.GetCPUCountOfManagedNodes(ctx, sm)
-	require.NoError(t, err)
-	require.Equal(t, 0, cpuCount)
+	_, err = sm.GetCPUCountOfManagedNode(ctx)
+	require.ErrorContains(t, err, "no managed node have enough resource")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)"))
 	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
@@ -893,7 +892,7 @@ func TestDistFrameworkMeta(t *testing.T) {
 		{ID: ":4002", Role: "", CPUCount: 100},
 		{ID: ":4003", Role: "background", CPUCount: 100},
 	}, nodes)
-	cpuCount, err = storage.GetCPUCountOfManagedNodes(ctx, sm)
+	cpuCount, err := sm.GetCPUCountOfManagedNode(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 100, cpuCount)
 
@@ -920,7 +919,7 @@ func TestDistFrameworkMeta(t *testing.T) {
 	require.Equal(t, []proto.ManagedNode{
 		{ID: ":4001", Role: "", CPUCount: 8},
 	}, nodes)
-	cpuCount, err = storage.GetCPUCountOfManagedNodes(ctx, sm)
+	cpuCount, err = sm.GetCPUCountOfManagedNode(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 8, cpuCount)
 
