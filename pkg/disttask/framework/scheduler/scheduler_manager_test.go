@@ -43,7 +43,6 @@ func TestCleanUpRoutine(t *testing.T) {
 
 	sch, mgr := MockSchedulerManager(t, ctrl, pool, getNumberExampleSchedulerExt(ctrl), mockCleanupRoutine)
 	mockCleanupRoutine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	require.NoError(t, mgr.StartManager(ctx, ":4000", ""))
 	sch.Start()
 	defer sch.Stop()
 	taskID, err := mgr.CreateTask(ctx, "test", proto.TaskTypeExample, 1, nil)
@@ -56,22 +55,22 @@ func TestCleanUpRoutine(t *testing.T) {
 			tasks, err = mgr.GetTasksInStates(ctx, proto.TaskStateRunning)
 			require.NoError(t, err)
 			return len(tasks) == 1
-		}, time.Second, 50*time.Millisecond)
+		}, 5*time.Second, 50*time.Millisecond)
 		return tasks
 	}
 
 	checkSubtaskCnt := func(tasks []*proto.Task, taskID int64) {
 		require.Eventually(t, func() bool {
-			cnt, err := mgr.GetSubtaskInStatesCnt(ctx, taskID, proto.TaskStatePending)
+			cntByStates, err := mgr.GetSubtaskCntGroupByStates(ctx, taskID, proto.StepOne)
 			require.NoError(t, err)
-			return int64(subtaskCnt) == cnt
-		}, time.Second, 50*time.Millisecond)
+			return int64(subtaskCnt) == cntByStates[proto.SubtaskStatePending]
+		}, 5*time.Second, 50*time.Millisecond)
 	}
 
 	tasks := checkTaskRunningCnt()
 	checkSubtaskCnt(tasks, taskID)
 	for i := 1; i <= subtaskCnt; i++ {
-		err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.TaskStateSucceed, nil)
+		err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateSucceed, nil)
 		require.NoError(t, err)
 	}
 	sch.DoCleanUpRoutine()
@@ -79,5 +78,5 @@ func TestCleanUpRoutine(t *testing.T) {
 		tasks, err := mgr.GetTasksFromHistoryInStates(ctx, proto.TaskStateSucceed)
 		require.NoError(t, err)
 		return len(tasks) != 0
-	}, time.Second*10, time.Millisecond*300)
+	}, 5*time.Second*10, time.Millisecond*300)
 }

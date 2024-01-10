@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	diststorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -67,7 +68,7 @@ func (*BackfillingSchedulerExt) OnTick(_ context.Context, _ *proto.Task) {
 // OnNextSubtasksBatch generate batch of next step's plan.
 func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 	ctx context.Context,
-	taskHandle scheduler.TaskHandle,
+	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
 	execIDs []string,
 	nextStep proto.Step,
@@ -175,7 +176,7 @@ func skipMergeSort(stats []external.MultipleFilesStat) bool {
 }
 
 // OnDone implements scheduler.Extension interface.
-func (*BackfillingSchedulerExt) OnDone(_ context.Context, _ scheduler.TaskHandle, _ *proto.Task) error {
+func (*BackfillingSchedulerExt) OnDone(_ context.Context, _ diststorage.TaskHandle, _ *proto.Task) error {
 	return nil
 }
 
@@ -195,11 +196,10 @@ type LitBackfillScheduler struct {
 	d *ddl
 }
 
-func newLitBackfillScheduler(ctx context.Context, d *ddl, taskMgr scheduler.TaskManager,
-	nodeMgr *scheduler.NodeManager, task *proto.Task) scheduler.Scheduler {
+func newLitBackfillScheduler(ctx context.Context, d *ddl, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 	sch := LitBackfillScheduler{
 		d:             d,
-		BaseScheduler: scheduler.NewBaseScheduler(ctx, taskMgr, nodeMgr, task),
+		BaseScheduler: scheduler.NewBaseScheduler(ctx, task, param),
 	}
 	return &sch
 }
@@ -207,7 +207,7 @@ func newLitBackfillScheduler(ctx context.Context, d *ddl, taskMgr scheduler.Task
 // Init implements BaseScheduler interface.
 func (sch *LitBackfillScheduler) Init() (err error) {
 	taskMeta := &BackfillTaskMeta{}
-	if err = json.Unmarshal(sch.BaseScheduler.Task.Meta, taskMeta); err != nil {
+	if err = json.Unmarshal(sch.BaseScheduler.GetTask().Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
 	sch.BaseScheduler.Extension = &BackfillingSchedulerExt{
@@ -333,23 +333,27 @@ func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool
 
 func generateGlobalSortIngestPlan(
 	ctx context.Context,
-	taskHandle scheduler.TaskHandle,
+	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
 	jobID int64,
 	cloudStorageURI string,
 	step proto.Step,
 	logger *zap.Logger,
 ) ([][]byte, error) {
-	startKeyFromSumm, endKeyFromSumm, totalSize, dataFiles, statFiles, err := getSummaryFromLastStep(taskHandle, task.ID, step)
+	startKeyFromSumm, endKeyFromSumm, totalSize, multiFileStat, err := getSummaryFromLastStep(taskHandle, task.ID, step)
 	if err != nil {
 		return nil, err
+	}
+	if len(startKeyFromSumm) == 0 && len(endKeyFromSumm) == 0 {
+		// Skip global sort for empty table.
+		return nil, nil
 	}
 	instanceIDs, err := scheduler.GenerateTaskExecutorNodes(ctx)
 	if err != nil {
 		return nil, err
 	}
 	splitter, err := getRangeSplitter(
-		ctx, cloudStorageURI, jobID, int64(totalSize), int64(len(instanceIDs)), dataFiles, statFiles, logger)
+		ctx, cloudStorageURI, jobID, int64(totalSize), int64(len(instanceIDs)), multiFileStat, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -404,7 +408,7 @@ func generateGlobalSortIngestPlan(
 }
 
 func generateMergePlan(
-	taskHandle scheduler.TaskHandle,
+	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
 	logger *zap.Logger,
 ) ([][]byte, error) {
@@ -429,9 +433,15 @@ func generateMergePlan(
 	}
 
 	// generate merge sort plan.
-	_, _, _, dataFiles, _, err := getSummaryFromLastStep(taskHandle, task.ID, StepReadIndex)
+	_, _, _, multiFileStat, err := getSummaryFromLastStep(taskHandle, task.ID, StepReadIndex)
 	if err != nil {
 		return nil, err
+	}
+	dataFiles := make([]string, 0, 1000)
+	for _, m := range multiFileStat {
+		for _, filePair := range m.Filenames {
+			dataFiles = append(dataFiles, filePair[0])
+		}
 	}
 
 	start := 0
@@ -462,7 +472,7 @@ func getRangeSplitter(
 	jobID int64,
 	totalSize int64,
 	instanceCnt int64,
-	dataFiles, statFiles []string,
+	multiFileStat []external.MultipleFilesStat,
 	logger *zap.Logger,
 ) (*external.RangeSplitter, error) {
 	backend, err := storage.ParseBackend(cloudStorageURI, nil)
@@ -492,26 +502,24 @@ func getRangeSplitter(
 	maxSizePerRange = max(maxSizePerRange, int64(config.SplitRegionSize))
 	maxKeysPerRange = max(maxKeysPerRange, int64(config.SplitRegionKeys))
 
-	return external.NewRangeSplitter(ctx, dataFiles, statFiles, extStore,
+	return external.NewRangeSplitter(ctx, multiFileStat, extStore,
 		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange, true)
 }
 
 func getSummaryFromLastStep(
-	taskHandle scheduler.TaskHandle,
+	taskHandle diststorage.TaskHandle,
 	gTaskID int64,
 	step proto.Step,
-) (startKey, endKey kv.Key, totalKVSize uint64, dataFiles, statFiles []string, err error) {
+) (startKey, endKey kv.Key, totalKVSize uint64, multiFileStat []external.MultipleFilesStat, err error) {
 	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, step)
 	if err != nil {
-		return nil, nil, 0, nil, nil, errors.Trace(err)
+		return nil, nil, 0, nil, errors.Trace(err)
 	}
-	allDataFiles := make([]string, 0, 16)
-	allStatFiles := make([]string, 0, 16)
 	for _, subTaskMeta := range subTaskMetas {
 		var subtask BackfillSubTaskMeta
 		err := json.Unmarshal(subTaskMeta, &subtask)
 		if err != nil {
-			return nil, nil, 0, nil, nil, errors.Trace(err)
+			return nil, nil, 0, nil, errors.Trace(err)
 		}
 		// Skip empty subtask.StartKey/EndKey because it means
 		// no records need to be written in this subtask.
@@ -531,14 +539,9 @@ func getSummaryFromLastStep(
 		}
 		totalKVSize += subtask.TotalKVSize
 
-		for _, stat := range subtask.MultipleFilesStats {
-			for i := range stat.Filenames {
-				allDataFiles = append(allDataFiles, stat.Filenames[i][0])
-				allStatFiles = append(allStatFiles, stat.Filenames[i][1])
-			}
-		}
+		multiFileStat = append(multiFileStat, subtask.MultipleFilesStats...)
 	}
-	return startKey, endKey, totalKVSize, allDataFiles, allStatFiles, nil
+	return startKey, endKey, totalKVSize, multiFileStat, nil
 }
 
 // StepStr convert proto.Step to string.

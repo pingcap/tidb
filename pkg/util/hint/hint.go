@@ -567,7 +567,7 @@ var (
 )
 
 // CollectUnmatchedHintWarnings collects warnings for unmatched hints from this TableHintInfo.
-func CollectUnmatchedHintWarnings(hintInfo TableHintInfo) (warnings []error) {
+func CollectUnmatchedHintWarnings(hintInfo *TableHintInfo) (warnings []error) {
 	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.IndexHintList, false)...)
 	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.IndexMergeHintList, true)...)
 	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintINLJ, TiDBIndexNestedLoopJoin, hintInfo.IndexNestedLoopJoinTables.INLJTables)...)

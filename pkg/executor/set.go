@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -39,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sem"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -170,10 +170,18 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		logutil.BgLogger().Info("set global var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", showValStr))
 		if name == variable.TiDBServiceScope {
 			dom := domain.GetDomain(e.Ctx())
-			config.GetGlobalConfig().Instance.TiDBServiceScope = valStr
+			oldConfig := config.GetGlobalConfig()
+			if oldConfig.Instance.TiDBServiceScope != valStr {
+				newConfig := *oldConfig
+				newConfig.Instance.TiDBServiceScope = valStr
+				config.StoreGlobalConfig(&newConfig)
+			}
 			serverID := disttaskutil.GenerateSubtaskExecID(ctx, dom.DDL().GetID())
-			_, err = e.Ctx().(sqlexec.SQLExecutor).ExecuteInternal(ctx,
-				`replace into mysql.dist_framework_meta values(%?, %?, DEFAULT)`, serverID, valStr)
+			taskMgr, err := storage.GetTaskManager()
+			if err != nil {
+				return err
+			}
+			return taskMgr.InitMetaSession(ctx, e.Ctx(), serverID, valStr)
 		}
 		return err
 	}

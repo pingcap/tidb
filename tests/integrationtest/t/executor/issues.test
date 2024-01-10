@@ -647,3 +647,16 @@ insert into t   select round(cast('888888999999999998888888888888888888888888888
 show warnings;
 select * from t;
 set @@sql_mode = default;
+
+# TestIssue49902
+set @@tidb_max_chunk_size = 32;
+drop table if exists t, s;
+CREATE TABLE `t` (`c` char(1)) COLLATE=utf8_general_ci  ;
+insert into t values("V"),("v");
+insert into t values("V"),("v"),("v");
+CREATE TABLE `s` (`col_61` int);
+insert into s values(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
+insert into s values(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1),(1);
+SELECT /*+ stream_agg()*/ count(`t`.`c`) FROM (`s`) JOIN `t` GROUP BY `t`.`c`;
+SELECT  count(`t`.`c`) FROM (`s`) JOIN `t`  GROUP BY `t`.`c`;
+set @@tidb_max_chunk_size = default;

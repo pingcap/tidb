@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/retry"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -41,7 +42,7 @@ const (
 	maxMsgSize   = int(128 * units.MiB) // pd.ScanRegion may return a large response
 	pauseTimeout = 5 * time.Minute
 	// pd request retry time when connection fail
-	pdRequestRetryTime = 120
+	PDRequestRetryTime = 120
 	// set max-pending-peer-count to a large value to avoid scatter region failed.
 	maxPendingPeerUnlimited uint64 = math.MaxInt32
 )
@@ -167,7 +168,7 @@ func pdRequestWithCode(
 		resp, err = cli.Do(req) //nolint:bodyclose
 		count++
 		failpoint.Inject("InjectClosed", func(v failpoint.Value) {
-			if failType, ok := v.(int); ok && count <= pdRequestRetryTime-1 {
+			if failType, ok := v.(int); ok && count <= PDRequestRetryTime-1 {
 				resp = nil
 				switch failType {
 				case 0:
@@ -183,7 +184,7 @@ func pdRequestWithCode(
 				}
 			}
 		})
-		if count > pdRequestRetryTime || (resp != nil && resp.StatusCode < 500) ||
+		if count > PDRequestRetryTime || (resp != nil && resp.StatusCode < 500) ||
 			(err != nil && !common.IsRetryableError(err)) {
 			break
 		}
@@ -234,10 +235,11 @@ func DefaultExpectPDCfgGenerators() map[string]pauseConfigGenerator {
 
 // PdController manage get/update config from pd.
 type PdController struct {
-	addrs    []string
-	cli      *http.Client
-	pdClient pd.Client
-	version  *semver.Version
+	addrs     []string
+	cli       *http.Client // TODO: replace it with pd HTTP client
+	pdClient  pd.Client
+	pdHTTPCli pdhttp.Client
+	version   *semver.Version
 
 	// control the pause schedulers goroutine
 	schedulerPauseCh chan struct{}
@@ -293,11 +295,18 @@ func NewPdController(
 		return nil, errors.Trace(err)
 	}
 
+	pdHTTPCliConfig := make([]pdhttp.ClientOption, 0, 1)
+	if tlsConf != nil {
+		pdHTTPCliConfig = append(pdHTTPCliConfig, pdhttp.WithTLSConfig(tlsConf))
+	}
+	pdHTTPCli := pdhttp.NewClient("br/lightning PD controller", addrs, pdHTTPCliConfig...).
+		WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, PDRequestRetryTime*time.Second))
 	return &PdController{
-		addrs:    processedAddrs,
-		cli:      cli,
-		pdClient: pdClient,
-		version:  version,
+		addrs:     processedAddrs,
+		cli:       cli,
+		pdClient:  pdClient,
+		pdHTTPCli: pdHTTPCli,
+		version:   version,
 		// We should make a buffered channel here otherwise when context canceled,
 		// gracefully shutdown will stick at resuming schedulers.
 		schedulerPauseCh: make(chan struct{}, 1),
@@ -352,6 +361,11 @@ func (p *PdController) SetPDClient(pdClient pd.Client) {
 // GetPDClient set pd addrs and cli for test.
 func (p *PdController) GetPDClient() pd.Client {
 	return p.pdClient
+}
+
+// GetPDHTTPClient returns the pd http client.
+func (p *PdController) GetPDHTTPClient() pdhttp.Client {
+	return p.pdHTTPCli
 }
 
 // GetClusterVersion returns the current cluster version.
@@ -1043,9 +1057,13 @@ func (p *PdController) CanPauseSchedulerByKeyRange() bool {
 	return p.version.Compare(minVersionForRegionLabelTTL) >= 0
 }
 
-// Close close the connection to pd.
+// Close closes the connection to pd.
 func (p *PdController) Close() {
 	p.pdClient.Close()
+	if p.pdHTTPCli != nil {
+		// nil in some unit tests
+		p.pdHTTPCli.Close()
+	}
 	if p.schedulerPauseCh != nil {
 		close(p.schedulerPauseCh)
 	}

@@ -168,9 +168,6 @@ type importStepMinimalTask struct {
 	SharedVars *SharedVars
 }
 
-// IsMinimalTask implements the MinimalTask interface.
-func (*importStepMinimalTask) IsMinimalTask() {}
-
 func (t *importStepMinimalTask) String() string {
 	return fmt.Sprintf("chunk:%s:%d", t.Chunk.Path, t.Chunk.Offset)
 }

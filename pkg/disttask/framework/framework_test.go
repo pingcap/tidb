@@ -140,7 +140,7 @@ func TestFrameworkWithQuery(t *testing.T) {
 	distContext.Close()
 }
 
-func TestFrameworkCancelGTask(t *testing.T) {
+func TestFrameworkCancelTask(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
 	defer ctrl.Finish()
 
@@ -228,36 +228,6 @@ func TestTaskExecutorDownManyNodes(t *testing.T) {
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager"))
-	distContext.Close()
-}
-
-func TestFrameworkSetLabel(t *testing.T) {
-	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
-	defer ctrl.Finish()
-
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
-	tk := testkit.NewTestKit(t, distContext.Store)
-
-	// 1. all "" role.
-	submitTaskAndCheckSuccessForBasic(ctx, t, "😁", testContext)
-
-	// 2. one "background" role.
-	tk.MustExec("set global tidb_service_scope=background")
-	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
-	tk.MustQuery("select @@tidb_service_scope").Check(testkit.Rows("background"))
-	submitTaskAndCheckSuccessForBasic(ctx, t, "😊", testContext)
-
-	// 3. 2 "background" role.
-	tk.MustExec("update mysql.dist_framework_meta set role = \"background\" where host = \":4001\"")
-	submitTaskAndCheckSuccessForBasic(ctx, t, "😆", testContext)
-
-	// 4. set wrong sys var.
-	tk.MustMatchErrMsg("set global tidb_service_scope=wrong", `incorrect value: .*. tidb_service_scope options: "", background`)
-
-	// 5. set keyspace id.
-	tk.MustExec("update mysql.dist_framework_meta set keyspace_id = 16777216 where host = \":4001\"")
-	tk.MustQuery("select keyspace_id from mysql.dist_framework_meta where host = \":4001\"").Check(testkit.Rows("16777216"))
-
 	distContext.Close()
 }
 

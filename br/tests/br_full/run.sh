@@ -104,6 +104,37 @@ for ct in limit lz4 zstd; do
   fi
 done
 
+for granularity in "fine-grained" "coarse-grained"; do
+  for i in $(seq $DB_COUNT); do
+      run_sql "DROP DATABASE $DB${i};"
+  done
+
+  # restore full
+  echo "restore with $ct backup start..."
+  export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/restore/restore-storage-error=1*return(\"connection refused\");github.com/pingcap/tidb/br/pkg/restore/restore-gRPC-error=1*return(true)"
+  export GO_FAILPOINTS="${GO_FAILPOINTS};github.com/pingcap/tidb/br/pkg/restore/no-leader-error=3*return(true)"
+  run_br restore full -s "local://$TEST_DIR/$DB-$ct" --pd $PD_ADDR --ratelimit 1024 --granularity=$granularity
+  export GO_FAILPOINTS=""
+
+  for i in $(seq $DB_COUNT); do
+      row_count_new[${i}]=$(run_sql "SELECT COUNT(*) FROM $DB${i}.$TABLE;" | awk '/COUNT/{print $2}')
+  done
+
+  fail=false
+  for i in $(seq $DB_COUNT); do
+      if [ "${row_count_ori[i]}" != "${row_count_new[i]}" ];then
+          fail=true
+          echo "TEST: [$TEST_NAME] fail on database $DB${i}"
+      fi
+      echo "database $DB${i} [original] row count: ${row_count_ori[i]}, [after br] row count: ${row_count_new[i]}"
+  done
+
+  if $fail; then
+      echo "TEST: [$TEST_NAME] [$granularity] failed!"
+      exit 1
+  fi
+done
+
 for i in $(seq $DB_COUNT); do
     run_sql "DROP DATABASE $DB${i};"
 done
