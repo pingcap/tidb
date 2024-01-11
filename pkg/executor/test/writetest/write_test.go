@@ -238,7 +238,7 @@ func TestIssue18681(t *testing.T) {
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select bin(a), bin(b), bin(c), bin(d) from load_data_test;"
 	levels := ctx.GetSessionVars().StmtCtx.ErrLevels()
-	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
+	levels[errctx.ErrGroupDupKey] = errctx.LevelWarn
 	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
 
 	sc := ctx.GetSessionVars().StmtCtx

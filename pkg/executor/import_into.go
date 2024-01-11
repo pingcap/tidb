@@ -64,6 +64,8 @@ type ImportIntoExec struct {
 	controller *importer.LoadDataController
 	stmt       string
 
+	plan       *plannercore.ImportInto
+	tbl        table.Table
 	dataFilled bool
 }
 
@@ -73,22 +75,13 @@ var (
 
 func newImportIntoExec(b exec.BaseExecutor, selectExec exec.Executor, userSctx sessionctx.Context,
 	plan *plannercore.ImportInto, tbl table.Table) (*ImportIntoExec, error) {
-	importPlan, err := importer.NewImportPlan(userSctx, plan, tbl)
-	if err != nil {
-		return nil, err
-	}
-	astArgs := importer.ASTArgsFromImportPlan(plan)
-	controller, err := importer.NewLoadDataController(importPlan, tbl, astArgs)
-	if err != nil {
-		return nil, err
-	}
 	return &ImportIntoExec{
 		BaseExecutor: b,
 		selectExec:   selectExec,
 		userSctx:     userSctx,
-		importPlan:   importPlan,
-		controller:   controller,
 		stmt:         plan.Stmt,
+		plan:         plan,
+		tbl:          tbl,
 	}, nil
 }
 
@@ -100,6 +93,18 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 		// need to return an empty req to indicate all results have been written
 		return nil
 	}
+	importPlan, err := importer.NewImportPlan(ctx, e.userSctx, e.plan, e.tbl)
+	if err != nil {
+		return err
+	}
+	astArgs := importer.ASTArgsFromImportPlan(e.plan)
+	controller, err := importer.NewLoadDataController(importPlan, e.tbl, astArgs)
+	if err != nil {
+		return err
+	}
+	e.importPlan = importPlan
+	e.controller = controller
+
 	if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
 		return err2
 	}

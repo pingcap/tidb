@@ -182,7 +182,7 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 			SessionCtx: se,
 			TaskKey:    TaskKey(jobID),
 			TaskType:   proto.ImportInto,
-			ThreadCnt:  int(plan.ThreadCnt),
+			ThreadCnt:  plan.ThreadCnt,
 		}
 		p := planner.NewPlanner()
 		taskID, err2 = p.Run(planCtx, logicalPlan)
@@ -206,7 +206,7 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 	ti.logger = ti.logger.With(zap.Int64("task-id", task.ID))
 
 	ti.logger.Info("job submitted to task queue",
-		zap.Int64("job-id", jobID), zap.Int64("thread-cnt", plan.ThreadCnt))
+		zap.Int64("job-id", jobID), zap.Int("thread-cnt", plan.ThreadCnt))
 
 	return jobID, task, nil
 }
