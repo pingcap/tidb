@@ -370,6 +370,40 @@ func writeExternalOneFile(s *writeTestSuite) {
 	}
 }
 
+func recordHeapForMaxInUse(filename string) (chan struct{}, *sync.WaitGroup) {
+	doneCh := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	maxInUse := uint64(0)
+	go func() {
+		defer wg.Done()
+
+		var m runtime.MemStats
+		ticker := time.NewTicker(300 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-doneCh:
+				return
+			case <-ticker.C:
+				runtime.ReadMemStats(&m)
+				if m.HeapInuse <= maxInUse {
+					continue
+				}
+				maxInUse = m.HeapInuse
+				file, err := os.Create(filename)
+				intest.AssertNoError(err)
+				err = pprof.WriteHeapProfile(file)
+				intest.AssertNoError(err)
+				err = file.Close()
+				intest.AssertNoError(err)
+			}
+		}
+	}()
+	return doneCh, &wg
+}
+
 // TestCompareWriter should be run like
 // go test ./br/pkg/lightning/backend/external -v -timeout=1h --tags=intest -test.run TestCompareWriter --testing-storage-uri="s3://xxx".
 func TestCompareWriter(t *testing.T) {
@@ -389,8 +423,7 @@ func TestCompareWriter(t *testing.T) {
 
 		filenameHeap   string
 		heapProfDoneCh chan struct{}
-		heapWg         sync.WaitGroup
-		maxInUse       uint64
+		heapWg         *sync.WaitGroup
 	)
 	beforeTest := func() {
 		testIdx++
@@ -399,34 +432,7 @@ func TestCompareWriter(t *testing.T) {
 		cpuProfCloser = fgprof.Start(fileCPU, fgprof.FormatPprof)
 
 		filenameHeap = fmt.Sprintf("heap-profile-%d.prof", testIdx)
-		heapProfDoneCh = make(chan struct{})
-		heapWg.Add(1)
-		go func() {
-			defer heapWg.Done()
-
-			var m runtime.MemStats
-			ticker := time.NewTicker(300 * time.Millisecond)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-heapProfDoneCh:
-					return
-				case <-ticker.C:
-					runtime.ReadMemStats(&m)
-					if m.HeapInuse <= maxInUse {
-						continue
-					}
-					maxInUse = m.HeapInuse
-					file, err2 := os.Create(filenameHeap)
-					intest.AssertNoError(err2)
-					err = pprof.WriteHeapProfile(file)
-					intest.AssertNoError(err)
-					err = file.Close()
-					intest.AssertNoError(err)
-				}
-			}
-		}()
+		heapProfDoneCh, heapWg = recordHeapForMaxInUse(filenameHeap)
 
 		now = time.Now()
 	}
@@ -686,8 +692,7 @@ func TestCompareReaderEvenlyDistributedContent(t *testing.T) {
 
 		filenameHeap   string
 		heapProfDoneCh chan struct{}
-		heapWg         sync.WaitGroup
-		maxInUse       uint64
+		heapWg         *sync.WaitGroup
 	)
 	beforeTest := func() {
 		fileIdx++
@@ -696,34 +701,7 @@ func TestCompareReaderEvenlyDistributedContent(t *testing.T) {
 		cpuProfCloser = fgprof.Start(fileCPU, fgprof.FormatPprof)
 
 		filenameHeap = fmt.Sprintf("heap-profile-%d.prof", fileIdx)
-		heapProfDoneCh = make(chan struct{})
-		heapWg.Add(1)
-		go func() {
-			defer heapWg.Done()
-
-			var m runtime.MemStats
-			ticker := time.NewTicker(300 * time.Millisecond)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-heapProfDoneCh:
-					return
-				case <-ticker.C:
-					runtime.ReadMemStats(&m)
-					if m.HeapInuse <= maxInUse {
-						continue
-					}
-					maxInUse = m.HeapInuse
-					file, err2 := os.Create(filenameHeap)
-					intest.AssertNoError(err2)
-					err = pprof.WriteHeapProfile(file)
-					intest.AssertNoError(err)
-					err = file.Close()
-					intest.AssertNoError(err)
-				}
-			}
-		}()
+		heapProfDoneCh, heapWg = recordHeapForMaxInUse(filenameHeap)
 
 		now = time.Now()
 	}
@@ -860,8 +838,7 @@ func testCompareReaderWithContent(
 
 		filenameHeap   string
 		heapProfDoneCh chan struct{}
-		heapWg         sync.WaitGroup
-		maxInUse       uint64
+		heapWg         *sync.WaitGroup
 	)
 	beforeTest := func() {
 		fileIdx++
@@ -870,34 +847,7 @@ func testCompareReaderWithContent(
 		cpuProfCloser = fgprof.Start(fileCPU, fgprof.FormatPprof)
 
 		filenameHeap = fmt.Sprintf("heap-profile-%d.prof", fileIdx)
-		heapProfDoneCh = make(chan struct{})
-		heapWg.Add(1)
-		go func() {
-			defer heapWg.Done()
-
-			var m runtime.MemStats
-			ticker := time.NewTicker(300 * time.Millisecond)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-heapProfDoneCh:
-					return
-				case <-ticker.C:
-					runtime.ReadMemStats(&m)
-					if m.HeapInuse <= maxInUse {
-						continue
-					}
-					maxInUse = m.HeapInuse
-					file, err2 := os.Create(filenameHeap)
-					intest.AssertNoError(err2)
-					err = pprof.WriteHeapProfile(file)
-					intest.AssertNoError(err)
-					err = file.Close()
-					intest.AssertNoError(err)
-				}
-			}
-		}()
+		heapProfDoneCh, heapWg = recordHeapForMaxInUse(filenameHeap)
 	}
 	afterClose := func() {
 		err = cpuProfCloser()
