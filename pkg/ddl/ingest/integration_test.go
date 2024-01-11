@@ -340,6 +340,7 @@ func TestAddIndexDuplicateMessage(t *testing.T) {
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 1 1", "2 1 2"))
 }
+<<<<<<< HEAD
 
 func TestMultiSchemaAddIndexMerge(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -372,3 +373,5 @@ func TestMultiSchemaAddIndexMerge(t *testing.T) {
 		tk.MustExec("admin check table t;")
 	}
 }
+=======
+>>>>>>> 0e29758b313 (ddl: refine duplicate entry err msg when merging temp index (#50275))

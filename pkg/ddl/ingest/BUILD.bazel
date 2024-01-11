@@ -67,7 +67,11 @@ go_test(
     embed = [":ingest"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 17,
+=======
+    shard_count = 16,
+>>>>>>> 0e29758b313 (ddl: refine duplicate entry err msg when merging temp index (#50275))
     deps = [
         "//pkg/config",
         "//pkg/ddl",

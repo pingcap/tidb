@@ -54,7 +54,11 @@ func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(
 			err := checkTempIndexKey(txn, idxRecords[i], val, w.table)
 			if err != nil {
 				if kv.ErrKeyExists.Equal(err) {
+<<<<<<< HEAD
 					return driver.ExtractKeyExistsErrFromIndex(key, val, w.table.Meta(), w.currentIndex.ID)
+=======
+					return driver.ExtractKeyExistsErrFromIndex(key, val, w.table.Meta(), idxInfo.ID)
+>>>>>>> 0e29758b313 (ddl: refine duplicate entry err msg when merging temp index (#50275))
 				}
 				return errors.Trace(err)
 			}
