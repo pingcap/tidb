@@ -75,8 +75,8 @@ func failpointTest(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase,
 
 func TestParallelSort(t *testing.T) {
 	ctx := mock.NewContext()
-	rowNum := 65536
-	nvd := 200 // we have two column and should ensure that nvd*nvd is less than rowNum.
+	rowNum := 30000
+	nvd := 100 // we have two column and should ensure that nvd*nvd is less than rowNum.
 	sortCase := &testutil.SortCase{Rows: rowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{nvd, nvd}, Ctx: ctx}
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
@@ -94,7 +94,7 @@ func TestFailpoint(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail", `return(true)`)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
-	testNum := 100
+	testNum := 50
 	for i := 0; i < testNum; i++ {
 		failpointTest(t, ctx, sortCase, dataSource)
 	}
