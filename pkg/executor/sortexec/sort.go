@@ -172,57 +172,54 @@ func (e *SortExec) Open(ctx context.Context) error {
 //     stage 2: Worker fetches two slices from global queue, merge them into one slice, put it into
 //     global queue and repeat the above processes until global queue has only one slice.
 //
-// Overview of stage 1:
-//
-//	                     ┌─────────┐
-//	                     │  Child  │
-//	                     └────▲────┘
-//	                          │
-//	                        Fetch
-//	                          │
-//	                  ┌───────┴───────┐
-//	                  │ Chunk Fetcher │
-//	                  └───────┬───────┘
-//	                          │
-//	                        Push
-//	                          │
-//	                          ▼
-//	     ┌────────────────►Channel◄───────────────────┐
-//	     │                    ▲                       │
-//	     │                    │                       │
-//	   Fetch                Fetch                   Fetch
-//	     │                    │                       │
-//	┌────┴───┐            ┌───┴────┐              ┌───┴────┐
-//	│ Worker │            │ Worker │   ......     │ Worker │
-//	└────┬───┘            └───┬────┘              └───┬────┘
-//	     │                    │                       │
-//	     │                    │                       │
-//
-// Sort And Put         Sort And Put            Sort And Put
-//
-//	│                    │                       │
-//	│                    │                       │
-//	│             ┌──────▼────────┐              │
-//	└────────────►│ Global Queue  │◄─────────────┘
-//	              └───────────────┘
-//
-// Overview of stage 2:
-// ┌────────┐    ┌────────┐          ┌────────┐
-// │ Worker │    │ Worker │  ......  │ Worker │
-// └──────┬─┘    └──────┬─┘          └─┬──────┘
-//
-//	 ▲    │        ▲    │              │    ▲
-//	 │    │        │    │              │    │
-//	 │    │        │    │              │    │
-//	 │   Put       │   Put            Put   │
-//	 │    │        │    │              │    │
-//	 │    │       Pop   │              │    │
-//	 │    │        │    ▼              │    │
-//	 │    │   ┌────┴─────────┐         │    │
-//	 │    └──►│              │◄────────┘    │
-//	 │        │ Global Queue │              │
-//	Pop───────┤              ├─────────────Pop
-//	          └──────────────┘
+/*
+Overview of stage 1:
+                      ┌─────────┐
+                      │  Child  │
+                      └────▲────┘
+                           │
+                         Fetch
+                           │
+                   ┌───────┴───────┐
+                   │ Chunk Fetcher │
+                   └───────┬───────┘
+                           │
+                         Push
+                           │
+                           ▼
+      ┌────────────────►Channel◄───────────────────┐
+      │                    ▲                       │
+      │                    │                       │
+    Fetch                Fetch                   Fetch
+      │                    │                       │
+ ┌────┴───┐            ┌───┴────┐              ┌───┴────┐
+ │ Worker │            │ Worker │   ......     │ Worker │
+ └────┬───┘            └───┬────┘              └───┬────┘
+      │                    │                       │
+      │                    │                       │
+Sort And Put         Sort And Put            Sort And Put
+      │                    │                       │
+      │                    │                       │
+      │             ┌──────▼────────┐              │
+      └────────────►│ Global Queue  │◄─────────────┘
+                    └───────────────┘
+Overview of stage 2:
+┌────────┐    ┌────────┐          ┌────────┐
+│ Worker │    │ Worker │  ......  │ Worker │
+└──────┬─┘    └──────┬─┘          └─┬──────┘
+  ▲    │        ▲    │              │    ▲
+  │    │        │    │              │    │
+  │    │        │    │              │    │
+  │   Put       │   Put            Put   │
+  │    │        │    │              │    │
+  │    │       Pop   │              │    │
+  │    │        │    ▼              │    │
+  │    │   ┌────┴─────────┐         │    │
+  │    └──►│              │◄────────┘    │
+  │        │ Global Queue │              │
+ Pop───────┤              ├─────────────Pop
+           └──────────────┘
+*/
 func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if !e.fetched {
