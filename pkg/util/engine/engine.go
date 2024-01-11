@@ -16,12 +16,23 @@ package engine
 
 import (
 	"github.com/pingcap/kvproto/pkg/metapb"
+	pdhttp "github.com/tikv/pd/client/http"
 )
 
-// IsTiFlash tests whether the store is based on tiflash engine.
+// IsTiFlash check whether the store is based on tiflash engine.
 func IsTiFlash(store *metapb.Store) bool {
 	for _, label := range store.Labels {
 		if label.Key == "engine" && (label.Value == "tiflash_compute" || label.Value == "tiflash") {
+			return true
+		}
+	}
+	return false
+}
+
+// IsTiFlashForHttpAPI is same as https://github.com/tikv/pd/blob/120351162c2050d9217ee4c8920e75d7297f3f29/pkg/core/store.go#L164.
+func IsTiFlashForHttpAPI(store *pdhttp.StoreInfo) bool {
+	for _, l := range store.Store.Labels {
+		if l.Key == "engine" && l.Value == "tiflash" {
 			return true
 		}
 	}
