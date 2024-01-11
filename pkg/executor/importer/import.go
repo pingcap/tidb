@@ -134,7 +134,7 @@ var (
 		splitFileOption:           {},
 	}
 
-	importFromQueryOptions = map[string]struct{}{
+	allowedOptionsOfImportFromQuery = map[string]struct{}{
 		threadOption: {},
 	}
 
@@ -576,7 +576,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 	}
 	if p.DataSourceType == DataSourceTypeQuery {
 		for k := range specifiedOptions {
-			if _, ok := importFromQueryOptions[k]; !ok {
+			if _, ok := allowedOptionsOfImportFromQuery[k]; !ok {
 				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "import from query")
 			}
 		}
@@ -754,6 +754,7 @@ func (p *Plan) adjustOptions(targetNodeCPUCnt int) {
 	if p.DataSourceType == DataSourceTypeQuery {
 		// for query, row is produced using 1 thread, the max cpu used is much
 		// lower than import from file, so we set limit to 2*targetNodeCPUCnt.
+		// TODO: adjust after spec is ready.
 		limit *= 2
 	}
 	// max value is cpu-count
@@ -1327,6 +1328,11 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 		backendConfig.RaftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
 	}
 	return backendConfig
+}
+
+// FullTableName return FQDN of the table.
+func (e *LoadDataController) FullTableName() string {
+	return common.UniqueTable(e.DBName, e.Table.Meta().Name.O)
 }
 
 func getDataSourceType(p *plannercore.ImportInto) DataSourceType {

@@ -511,7 +511,7 @@ func (ti *TableImporter) OpenIndexEngine(ctx context.Context, engineID int32) (*
 		CompactThreshold:   threshold,
 		BlockSize:          16 * 1024,
 	}
-	fullTableName := ti.fullTableName()
+	fullTableName := ti.FullTableName()
 	// todo: cleanup all engine data on any error since we don't support checkpoint for now
 	// some return path, didn't make sure all data engine and index engine are cleaned up.
 	// maybe we can add this in upper level to clean the whole local-sort directory
@@ -532,7 +532,7 @@ func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*b
 	//	dataEngineCfg.Local.CompactThreshold = local.CompactionUpperThreshold
 	//}
 	mgr := backend.MakeEngineManager(ti.backend)
-	return mgr.OpenEngine(ctx, dataEngineCfg, ti.fullTableName(), engineID)
+	return mgr.OpenEngine(ctx, dataEngineCfg, ti.FullTableName(), engineID)
 }
 
 // ImportAndCleanup imports the engine and cleanup the engine data.
@@ -546,11 +546,6 @@ func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *bac
 	}
 	cleanupErr := closedEngine.Cleanup(ctx)
 	return kvCount, multierr.Combine(importErr, cleanupErr)
-}
-
-// FullTableName return FQDN of the table.
-func (ti *TableImporter) fullTableName() string {
-	return common.UniqueTable(ti.DBName, ti.Table.Meta().Name.O)
 }
 
 // Backend returns the backend of the importer.
