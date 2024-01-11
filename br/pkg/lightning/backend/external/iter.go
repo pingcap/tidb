@@ -672,7 +672,7 @@ func newMergePropBaseIter(
 			go func() {
 				defer close(asyncTask)
 				defer wg.Done()
-				rd, err := newStatsReader(ctx, exStorage, path, 500*1024)
+				rd, err := newStatsReader(ctx, exStorage, path, 250*1024)
 				select {
 				case <-closeCh:
 					_ = rd.Close()
@@ -707,7 +707,7 @@ func newMergePropBaseIter(
 	for i := 0; i < int(limit); i++ {
 		path := multiStat.Filenames[i][1]
 		readerOpeners = append(readerOpeners, func() (*statReaderProxy, error) {
-			rd, err := newStatsReader(ctx, exStorage, path, 500*1024)
+			rd, err := newStatsReader(ctx, exStorage, path, 250*1024)
 			if err != nil {
 				return nil, err
 			}
