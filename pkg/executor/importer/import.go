@@ -149,17 +149,18 @@ var (
 	}
 )
 
-type dataSourceType string
+// DataSourceType indicates the data source type of IMPORT INTO.
+type DataSourceType string
 
 const (
 	// DataSourceTypeFile represents the data source of IMPORT INTO is file.
 	// exported for test.
-	DataSourceTypeFile dataSourceType = "file"
+	DataSourceTypeFile DataSourceType = "file"
 	// DataSourceTypeQuery represents the data source of IMPORT INTO is query.
-	DataSourceTypeQuery dataSourceType = "query"
+	DataSourceTypeQuery DataSourceType = "query"
 )
 
-func (t dataSourceType) String() string {
+func (t DataSourceType) String() string {
 	return string(t)
 }
 
@@ -234,7 +235,7 @@ type Plan struct {
 
 	// todo: remove it when load data code is reverted.
 	InImportInto   bool
-	DataSourceType dataSourceType
+	DataSourceType DataSourceType
 	// only initialized for IMPORT INTO, used when creating job.
 	Parameters *ImportParameters `json:"-"`
 	// the user who executes the statement, in the form of user@host
@@ -1328,7 +1329,7 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 	return backendConfig
 }
 
-func getDataSourceType(p *plannercore.ImportInto) dataSourceType {
+func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
 	if p.SelectPlan != nil {
 		return DataSourceTypeQuery
 	}
@@ -1388,7 +1389,7 @@ func GetMsgFromBRError(err error) string {
 // target node is current node if it's server-disk import, import from query or disttask is disabled,
 // else it's the node managed by disttask.
 // exported for testing.
-func GetTargetNodeCPUCnt(ctx context.Context, sourceType dataSourceType, path string) (int, error) {
+func GetTargetNodeCPUCnt(ctx context.Context, sourceType DataSourceType, path string) (int, error) {
 	if sourceType == DataSourceTypeQuery {
 		return cpu.GetCPUCount(), nil
 	}

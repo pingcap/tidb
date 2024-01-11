@@ -242,7 +242,7 @@ type ChunkProcessor interface {
 }
 
 type baseChunkProcessor struct {
-	sourceType dataSourceType
+	sourceType DataSourceType
 	enc        chunkEncoder
 	deliver    *dataDeliver
 	logger     *zap.Logger
