@@ -178,20 +178,19 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 
 	if e.IsUnparallel {
-		return e.getChunkInUnparallelMode(req)
-	} else {
-		e.getChunkInParallelMode(req)
+		return e.appendResultToChunkInUnparallelMode(req)
 	}
+	e.appendResultToChunkInParallelMode(req)
 	return nil
 }
 
-func (e *SortExec) getChunkInParallelMode(req *chunk.Chunk) {
+func (e *SortExec) appendResultToChunkInParallelMode(req *chunk.Chunk) {
 	for ; !req.IsFull() && e.Parallel.idx < e.Parallel.rowNum; e.Parallel.idx++ {
 		req.AppendRow(e.Parallel.result[e.Parallel.idx])
 	}
 }
 
-func (e *SortExec) getChunkInUnparallelMode(req *chunk.Chunk) error {
+func (e *SortExec) appendResultToChunkInUnparallelMode(req *chunk.Chunk) error {
 	sortPartitionListLen := len(e.sortPartitions)
 	if sortPartitionListLen == 0 {
 		return nil
@@ -439,7 +438,7 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 
 	// Wait for the finish of all workers
 	workersWaiter.Wait()
-	e.getResult()
+	e.fetchResultFromQueue()
 	err := e.checkErrorForParallel()
 	return err
 }
@@ -494,7 +493,7 @@ func (e *SortExec) processErrorForParallel(err error) {
 	e.Parallel.err = err
 }
 
-func (e *SortExec) getResult() {
+func (e *SortExec) fetchResultFromQueue() {
 	sortedRowsNum := e.Parallel.globalSortedRowsQueue.getSortedRowsNumNoLock()
 	if sortedRowsNum > 1 {
 		panic("Sort is not completed.")

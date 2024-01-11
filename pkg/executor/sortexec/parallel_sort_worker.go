@@ -17,6 +17,7 @@ package sortexec
 import (
 	"sync"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"golang.org/x/exp/slices"
@@ -158,12 +159,12 @@ func (p *parallelSortWorker) keyColumnsLess(i, j chunk.Row) int {
 		p.memTracker.Consume(1)
 		p.timesOfRowCompare = 0
 	}
-	// TODO add test with this failpoint
-	// failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
-	// 	if val.(bool) {
-	// 		c.timesOfRowCompare += 1024
-	// 	}
-	// })
+
+	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
+		if val.(bool) {
+			p.timesOfRowCompare += 1024
+		}
+	})
 	p.timesOfRowCompare++
 
 	return p.lessRowFunc(i, j)

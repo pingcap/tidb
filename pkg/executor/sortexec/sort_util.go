@@ -36,7 +36,7 @@ func (p *sortedRowsList) add(rows sortedRows) {
 	p.sortedRowsQueue.PushBack(rows)
 }
 
-func (p *sortedRowsList) fetchTwoSortedRows() (sortedRows, sortedRows) {
+func (p *sortedRowsList) fetchTwoSortedRows() (res1 sortedRows, res2 sortedRows) {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 

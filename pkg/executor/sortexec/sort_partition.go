@@ -110,7 +110,7 @@ func newSortPartition(fieldTypes []*types.FieldType, byItemsDesc []bool,
 	return retVal
 }
 
-func (s *sortPartition) close() error {
+func (s *sortPartition) close() {
 	s.syncLock.Lock()
 	defer s.syncLock.Unlock()
 	s.closed = true
@@ -118,7 +118,6 @@ func (s *sortPartition) close() error {
 		s.inDisk.Close()
 	}
 	s.getMemTracker().ReplaceBytesUsed(0)
-	return nil
 }
 
 func (s *sortPartition) reloadCursor() (bool, error) {
