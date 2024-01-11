@@ -46,7 +46,7 @@ type GlobalBindingHandle interface {
 	// Methods for create, get, drop global sql bindings.
 
 	// MatchGlobalBinding returns the matched binding for this statement.
-	MatchGlobalBinding(sctx sessionctx.Context, stmt ast.StmtNode) (*BindRecord, error)
+	MatchGlobalBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (*BindRecord, error)
 
 	// GetAllGlobalBindings returns all bind records in cache.
 	GetAllGlobalBindings() (bindRecords []*BindRecord)
@@ -189,9 +189,8 @@ func buildFuzzyDigestMap(bindRecords []*BindRecord) map[string][]string {
 				p = parser.New()
 				continue
 			}
-			sqlWithoutDB := utilparser.RestoreWithoutDB(stmt)
-			_, fuzzyDigest := parser.NormalizeDigestForBinding(sqlWithoutDB)
-			m[fuzzyDigest.String()] = append(m[fuzzyDigest.String()], binding.SQLDigest)
+			_, fuzzyDigest := NormalizeStmtForFuzzyBinding(stmt)
+			m[fuzzyDigest] = append(m[fuzzyDigest], binding.SQLDigest)
 		}
 	}
 	return m
@@ -521,7 +520,7 @@ func (h *globalBindingHandle) Size() int {
 }
 
 // MatchGlobalBinding returns the matched binding for this statement.
-func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, stmt ast.StmtNode) (*BindRecord, error) {
+func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (*BindRecord, error) {
 	bindingCache := h.getCache()
 	if bindingCache.Size() == 0 {
 		return nil, nil
@@ -531,15 +530,9 @@ func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, stmt a
 		return nil, nil
 	}
 
-	_, _, fuzzDigest, err := normalizeStmt(stmt, sctx.GetSessionVars().CurrentDB, true)
-	if err != nil {
-		return nil, err
-	}
-
-	tableNames := CollectTableNames(stmt)
 	var bestBinding *BindRecord
 	leastWildcards := len(tableNames) + 1
-	for _, exactDigest := range fuzzyDigestMap[fuzzDigest] {
+	for _, exactDigest := range fuzzyDigestMap[fuzzyDigest] {
 		sqlDigest := exactDigest
 		if bindRecord := bindingCache.GetBinding(sqlDigest); bindRecord != nil {
 			for _, binding := range bindRecord.Bindings {

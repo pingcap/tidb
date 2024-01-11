@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
@@ -1286,6 +1287,18 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableDistTask.Load()), nil
+	}},
+	{Scope: ScopeGlobal, Name: TiDBDDLVersion, Value: strconv.FormatInt(model.TiDBDDLV1, 10), Type: TypeEnum, PossibleValues: []string{strconv.FormatInt(model.TiDBDDLV1, 10), strconv.FormatInt(model.TiDBDDLV2, 10)}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		v := TidbOptInt64(val, model.TiDBDDLV1)
+		if DDLVersion.Load() != v {
+			err := SwitchDDLVersion(v)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return strconv.FormatInt(DDLVersion.Load(), 10), nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableNoopVariables, Value: BoolToOnOff(DefTiDBEnableNoopVariables), Type: TypeEnum, PossibleValues: []string{Off, On}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		EnableNoopVariables.Store(TiDBOptOn(val))
@@ -2965,7 +2978,14 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, nil
 		},
 		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-			ServiceScope.Store(strings.ToLower(s))
+			newValue := strings.ToLower(s)
+			ServiceScope.Store(newValue)
+			oldConfig := config.GetGlobalConfig()
+			if oldConfig.Instance.TiDBServiceScope != newValue {
+				newConfig := *oldConfig
+				newConfig.Instance.TiDBServiceScope = newValue
+				config.StoreGlobalConfig(&newConfig)
+			}
 			return nil
 		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 			return ServiceScope.Load(), nil

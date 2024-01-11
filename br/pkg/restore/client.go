@@ -87,6 +87,18 @@ const (
 	MetaKVBatchSize = 64 * 1024 * 1024
 )
 
+// tables in this map is restored when fullClusterRestore=true
+var sysPrivilegeTableMap = map[string]string{
+	"user":          "(user = '%s' and host = '%%')",       // since v1.0.0
+	"db":            "(user = '%s' and host = '%%')",       // since v1.0.0
+	"tables_priv":   "(user = '%s' and host = '%%')",       // since v1.0.0
+	"columns_priv":  "(user = '%s' and host = '%%')",       // since v1.0.0
+	"default_roles": "(user = '%s' and host = '%%')",       // since v3.0.0
+	"role_edges":    "(to_user = '%s' and to_host = '%%')", // since v3.0.0
+	"global_priv":   "(user = '%s' and host = '%%')",       // since v3.0.8
+	"global_grants": "(user = '%s' and host = '%%')",       // since v5.0.3
+}
+
 // Client sends requests to restore files.
 type Client struct {
 	pdClient      pd.Client
@@ -98,8 +110,9 @@ type Client struct {
 	tlsConf       *tls.Config
 	keepaliveConf keepalive.ClientParameters
 
-	databases map[string]*utils.Database
-	ddlJobs   []*model.Job
+	concurrencyPerStore uint
+	databases           map[string]*metautil.Database
+	ddlJobs             []*model.Job
 
 	// store tables need to rebase info like auto id and random id and so on after create table
 	rebasedTablesMap map[UniqueTableName]bool
@@ -532,23 +545,27 @@ func (rc *Client) SetStorage(ctx context.Context, backend *backuppb.StorageBacke
 
 func (rc *Client) InitClients(ctx context.Context, backend *backuppb.StorageBackend, isRawKvMode bool, isTxnKvMode bool) {
 	storeWorkerPoolMap := make(map[uint64]chan struct{})
-	storeStatisticMap := make(map[uint64]*int64)
 	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, rc.pdClient, util.SkipTiFlash)
 	if err != nil {
 		log.Fatal("failed to get stores", zap.Error(err))
 	}
-	concurrencyPerStore := 512
-	for _, store := range stores {
-		ch := make(chan struct{}, concurrencyPerStore)
-		for i := 0; i < concurrencyPerStore; i += 1 {
-			ch <- struct{}{}
+	concurrencyPerStore := rc.GetConcurrencyPerStore()
+	useTokenBucket := false
+	if rc.granularity == string(CoarseGrained) {
+		// coarse-grained make split & scatter pipeline fast enough
+		// so we can use a new token bucket way to speed up download.
+		// ToDo remove it when token bucket is stable enough.
+		log.Info("use token bucket to control download and ingest flow")
+		useTokenBucket = true
+		for _, store := range stores {
+			ch := utils.BuildWorkerTokenChannel(concurrencyPerStore)
+			storeWorkerPoolMap[store.Id] = ch
 		}
-		storeWorkerPoolMap[store.Id] = ch
-		storeStatisticMap[store.Id] = new(int64)
 	}
+
 	metaClient := split.NewSplitClient(rc.pdClient, rc.pdHTTPClient, rc.tlsConf, isRawKvMode)
 	importCli := NewImportClient(metaClient, rc.tlsConf, rc.keepaliveConf)
-	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, storeWorkerPoolMap, storeStatisticMap, rc.rewriteMode)
+	rc.fileImporter = NewFileImporter(metaClient, importCli, backend, isRawKvMode, isTxnKvMode, storeWorkerPoolMap, rc.rewriteMode, concurrencyPerStore, useTokenBucket)
 }
 
 func (rc *Client) SetRawKVClient(c *RawKVBatchClient) {
@@ -566,7 +583,7 @@ func (rc *Client) InitBackupMeta(
 	backend *backuppb.StorageBackend,
 	reader *metautil.MetaReader) error {
 	if rc.needLoadSchemas(backupMeta) {
-		databases, err := utils.LoadBackupTables(c, reader)
+		databases, err := metautil.LoadBackupTables(c, reader)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -656,8 +673,25 @@ func (rc *Client) GetFilesInRawRange(startKey []byte, endKey []byte, cf string) 
 
 // SetConcurrency sets the concurrency of dbs tables files.
 func (rc *Client) SetConcurrency(c uint) {
-	log.Info("new worker pool", zap.Uint("currency-count", c))
+	log.Info("download worker pool", zap.Uint("size", c))
 	rc.workerPool = utils.NewWorkerPool(c, "file")
+}
+
+// SetConcurrencyPerStore sets the concurrency of download files for each store.
+func (rc *Client) SetConcurrencyPerStore(c uint) {
+	log.Info("per-store download worker pool", zap.Uint("size", c))
+	rc.concurrencyPerStore = c
+}
+
+func (rc *Client) GetTotalDownloadConcurrency() uint {
+	if rc.storeCount <= 0 {
+		log.Fatal("uninitialize store count", zap.Int("storeCount", rc.storeCount))
+	}
+	return rc.concurrencyPerStore * uint(rc.storeCount)
+}
+
+func (rc *Client) GetConcurrencyPerStore() uint {
+	return rc.concurrencyPerStore
 }
 
 // EnableOnline sets the mode of restore to online.
@@ -743,8 +777,8 @@ func (rc *Client) GetPlacementRules(ctx context.Context, pdAddrs []string) ([]pd
 }
 
 // GetDatabases returns all databases.
-func (rc *Client) GetDatabases() []*utils.Database {
-	dbs := make([]*utils.Database, 0, len(rc.databases))
+func (rc *Client) GetDatabases() []*metautil.Database {
+	dbs := make([]*metautil.Database, 0, len(rc.databases))
 	for _, db := range rc.databases {
 		dbs = append(dbs, db)
 	}
@@ -752,7 +786,7 @@ func (rc *Client) GetDatabases() []*utils.Database {
 }
 
 // GetDatabase returns a database by name.
-func (rc *Client) GetDatabase(name string) *utils.Database {
+func (rc *Client) GetDatabase(name string) *metautil.Database {
 	return rc.databases[name]
 }
 
@@ -1256,7 +1290,7 @@ func MockCallSetSpeedLimit(ctx context.Context, fakeImportClient ImporterClient,
 	rc.SetRateLimit(42)
 	rc.SetConcurrency(concurrency)
 	rc.hasSpeedLimited = false
-	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, false, nil, nil, rc.rewriteMode)
+	rc.fileImporter = NewFileImporter(nil, fakeImportClient, nil, false, false, nil, rc.rewriteMode, 128, false)
 	return rc.setSpeedLimit(ctx, rc.rateLimit)
 }
 
@@ -1459,7 +1493,7 @@ LOOPFORTABLE:
 				// breaking here directly is also a reasonable behavior.
 				break LOOPFORTABLE
 			}
-			rc.workerPool.ApplyOnErrorGroup(eg, func() error {
+			restoreFn := func() error {
 				filesGroups := getGroupFiles(filesReplica, rc.fileImporter.supportMultiIngest)
 				for _, filesGroup := range filesGroups {
 					if importErr := func(fs []*backuppb.File) error {
@@ -1485,7 +1519,15 @@ LOOPFORTABLE:
 					}
 				}
 				return nil
-			})
+			}
+			if rc.granularity == string(CoarseGrained) {
+				eg.Go(restoreFn)
+			} else {
+				// if we are not use coarse granularity which means
+				// we still pipeline split & scatter regions and import sst files
+				// just keep the consistency as before.
+				rc.workerPool.ApplyOnErrorGroup(eg, restoreFn)
+			}
 		}
 	}
 
@@ -1794,10 +1836,17 @@ func (rc *Client) execChecksum(
 	return nil
 }
 
-func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *CreatedTable, errCh chan<- error) chan *CreatedTable {
+func (rc *Client) GoUpdateMetaAndLoadStats(
+	ctx context.Context,
+	s storage.ExternalStorage,
+	cipher *backuppb.CipherInfo,
+	inCh <-chan *CreatedTable,
+	errCh chan<- error,
+	statsConcurrency uint,
+) chan *CreatedTable {
 	log.Info("Start to update meta then load stats")
 	outCh := DefaultOutputTableChan()
-	workers := utils.NewWorkerPool(16, "UpdateStats")
+	workers := utils.NewWorkerPool(statsConcurrency, "UpdateStats")
 	// The rc.db is not thread safe
 	var updateMetaLock sync.Mutex
 
@@ -1832,6 +1881,20 @@ func (rc *Client) GoUpdateMetaAndLoadStats(ctx context.Context, inCh <-chan *Cre
 				log.Error("analyze table failed", zap.Any("table", oldTable.Stats), zap.Error(err))
 			}
 			log.Info("restore stat done",
+				zap.Stringer("table", oldTable.Info.Name),
+				zap.Stringer("db", oldTable.DB.Name),
+				zap.Duration("cost", time.Since(start)))
+		} else if oldTable.StatsFileIndexes != nil {
+			log.Info("start to load statistic data for each partition",
+				zap.Int64("old id", oldTable.Info.ID),
+				zap.Int64("new id", tbl.Table.ID),
+			)
+			start := time.Now()
+			rewriteIDMap := getTableIDMap(tbl.Table, tbl.OldTable.Info)
+			if err := metautil.RestoreStats(ctx, s, cipher, rc.statsHandler, tbl.Table, oldTable.StatsFileIndexes, rewriteIDMap); err != nil {
+				log.Error("analyze table failed", zap.Any("table", oldTable.StatsFileIndexes), zap.Error(err))
+			}
+			log.Info("restore statistic data done",
 				zap.Stringer("table", oldTable.Info.Name),
 				zap.Stringer("db", oldTable.DB.Name),
 				zap.Duration("cost", time.Since(start)))
@@ -2718,7 +2781,7 @@ func initFullBackupTables(
 	// read full backup databases to get map[table]table.Info
 	reader := metautil.NewMetaReader(backupMeta, s, nil)
 
-	databases, err := utils.LoadBackupTables(ctx, reader)
+	databases, err := metautil.LoadBackupTables(ctx, reader)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -3697,7 +3760,7 @@ func (rc *Client) RangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecord
 }
 
 // MockClient create a fake client used to test.
-func MockClient(dbs map[string]*utils.Database) *Client {
+func MockClient(dbs map[string]*metautil.Database) *Client {
 	return &Client{databases: dbs}
 }
 

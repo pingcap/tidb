@@ -69,7 +69,9 @@ func TestBindingLastUpdateTime(t *testing.T) {
 	require.NoError(t, err)
 	stmt, err := parser.New().ParseOneStmt("select * from test . t0", "", "")
 	require.NoError(t, err)
-	bindData, err := bindHandle.MatchGlobalBinding(tk.Session(), stmt)
+
+	_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+	bindData, err := bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 	require.NoError(t, err)
 	require.Equal(t, 1, len(bindData.Bindings))
 	bind := bindData.Bindings[0]
@@ -137,7 +139,8 @@ func TestBindParse(t *testing.T) {
 
 	stmt, err := parser.New().ParseOneStmt("select * from test . t", "", "")
 	require.NoError(t, err)
-	bindData, err := bindHandle.MatchGlobalBinding(tk.Session(), stmt)
+	_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+	bindData, err := bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 	require.NoError(t, err)
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t`", bindData.OriginalSQL)
@@ -438,7 +441,8 @@ func TestGlobalBinding(t *testing.T) {
 
 		stmt, _, _ := internal.UtilNormalizeWithDefaultDB(t, testSQL.querySQL)
 
-		bindData, err := dom.BindHandle().MatchGlobalBinding(tk.Session(), stmt)
+		_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+		bindData, err := dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 		require.NoError(t, err)
 		require.NotNil(t, bindData)
 		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
@@ -472,7 +476,8 @@ func TestGlobalBinding(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 1, bindHandle.Size())
 
-		bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), stmt)
+		_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+		bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 		require.NoError(t, err)
 		require.NotNil(t, bindData)
 		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
@@ -488,7 +493,8 @@ func TestGlobalBinding(t *testing.T) {
 		_, err = tk.Exec("drop global " + testSQL.dropSQL)
 		require.Equal(t, uint64(1), tk.Session().AffectedRows())
 		require.NoError(t, err)
-		bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), stmt)
+		_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+		bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 		require.NoError(t, err)
 		require.Nil(t, bindData)
 
@@ -497,7 +503,8 @@ func TestGlobalBinding(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 0, bindHandle.Size())
 
-		bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), stmt)
+		_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+		bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 		require.NoError(t, err)
 		require.Nil(t, bindData)
 

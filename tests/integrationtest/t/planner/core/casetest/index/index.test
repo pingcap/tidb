@@ -273,4 +273,3 @@ explain format='brief' select /*+ use_index_merge(t1 primary, c) */ * from t1 wh
 --sorted_result
 select /*+ use_index_merge(t1 primary, c) */ * from t1 where t1.a = 1 and t1.b = '111' or t1.c = 3.3;
 set tidb_enable_clustered_index=default;
-

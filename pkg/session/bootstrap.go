@@ -460,19 +460,18 @@ const (
 	);`
 	// CreateMDLView is a view about metadata locks.
 	CreateMDLView = `CREATE OR REPLACE VIEW mysql.tidb_mdl_view as (
-		SELECT job_id,
-			db_name,
-			table_name,
-			query,
+		SELECT tidb_mdl_info.job_id,
+			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.schema_name")) as db_name,
+			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.table_name")) as table_name,
+			JSON_UNQUOTE(JSON_EXTRACT(cast(cast(job_meta as char) as json), "$.query")) as query,
 			session_id,
-			txnstart,
+			cluster_tidb_trx.start_time,
 			tidb_decode_sql_digests(all_sql_digests, 4096) AS SQL_DIGESTS
-		FROM information_schema.ddl_jobs,
-			information_schema.cluster_tidb_trx,
-			information_schema.cluster_processlist
-		WHERE (ddl_jobs.state != 'synced' and ddl_jobs.state != 'cancelled')
-			AND Find_in_set(ddl_jobs.table_id, cluster_tidb_trx.related_table_ids)
-			AND cluster_tidb_trx.session_id = cluster_processlist.id
+		FROM mysql.tidb_ddl_job,
+			mysql.tidb_mdl_info,
+			information_schema.cluster_tidb_trx
+		WHERE tidb_ddl_job.job_id=tidb_mdl_info.job_id
+			AND CONCAT(',', tidb_mdl_info.table_ids, ',') REGEXP CONCAT(',', REPLACE(cluster_tidb_trx.related_table_ids, ',', '|'), ',') != 0
 	);`
 
 	// CreatePlanReplayerStatusTable is a table about plan replayer status
@@ -1044,6 +1043,7 @@ const (
 	// version 179
 	//   enlarge `VARIABLE_VALUE` of `mysql.global_variables` from `varchar(1024)` to `varchar(16383)`.
 	version179 = 179
+
 	// version 180
 	//   add priority/create_time/end_time to `mysql.tidb_global_task`/`mysql.tidb_global_task_history`
 	//   add concurrency/create_time/end_time/digest to `mysql.tidb_background_subtask`/`mysql.tidb_background_subtask_history`
@@ -1059,11 +1059,15 @@ const (
 	//   add new system table `mysql.request_unit_by_group`, which is used for
 	//   historical RU consumption by resource group per day.
 	version182 = 182
+
+	// version 183
+	//   replace `mysql.tidb_mdl_view` table
+	version183 = 183
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version182
+var currentBootstrapVersion int64 = version183
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1221,6 +1225,7 @@ var (
 		upgradeToVer180,
 		upgradeToVer181,
 		upgradeToVer182,
+		upgradeToVer183,
 	}
 )
 
@@ -2975,6 +2980,13 @@ func upgradeToVer182(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateRequestUnitByGroupTable)
+}
+
+func upgradeToVer183(s sessiontypes.Session, ver int64) {
+	if ver >= version183 {
+		return
+	}
+	doReentrantDDL(s, CreateMDLView)
 }
 
 func writeOOMAction(s sessiontypes.Session) {

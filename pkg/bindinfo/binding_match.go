@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 )
 
@@ -31,38 +32,71 @@ var (
 	GetGlobalBindingHandle func(sctx sessionctx.Context) GlobalBindingHandle
 )
 
+// BindingMatchInfo records necessary information for fuzzy binding matching.
+// This is mainly for plan cache to avoid normalizing the same statement repeatedly.
+type BindingMatchInfo struct {
+	FuzzyDigest string
+	TableNames  []*ast.TableName
+}
+
+// MatchSQLBindingForPlanCache matches binding for plan cache.
+func MatchSQLBindingForPlanCache(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (bindingSQL string, ignoreBinding bool) {
+	bindRecord, _ := getBindRecord(sctx, stmtNode, info)
+	if bindRecord != nil {
+		if enabledBinding := bindRecord.FindEnabledBinding(); enabledBinding != nil {
+			bindingSQL = enabledBinding.BindSQL
+			ignoreBinding = enabledBinding.Hint.ContainTableHint(hint.HintIgnorePlanCache)
+		}
+	}
+	return
+}
+
 // MatchSQLBinding returns the matched binding for this statement.
 func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord *BindRecord, scope string, matched bool) {
-	useBinding := sctx.GetSessionVars().UsePlanBaselines
-	if !useBinding || stmtNode == nil {
-		return nil, "", false
-	}
-	var err error
-	bindRecord, scope, err = getBindRecord(sctx, stmtNode)
-	if err != nil || bindRecord == nil || len(bindRecord.Bindings) == 0 {
+	bindRecord, scope = getBindRecord(sctx, stmtNode, nil)
+	if bindRecord == nil || len(bindRecord.Bindings) == 0 {
 		return nil, "", false
 	}
 	return bindRecord, scope, true
 }
 
-func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*BindRecord, string, error) {
+func getBindRecord(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (*BindRecord, string) {
+	useBinding := sctx.GetSessionVars().UsePlanBaselines
+	if !useBinding || stmtNode == nil {
+		return nil, ""
+	}
 	// When the domain is initializing, the bind will be nil.
-	if ctx.Value(SessionBindInfoKeyType) == nil {
-		return nil, "", nil
+	if sctx.Value(SessionBindInfoKeyType) == nil {
+		return nil, ""
 	}
-	// the priority: session normal > session universal > global normal > global universal
-	sessionHandle := ctx.Value(SessionBindInfoKeyType).(SessionBindingHandle)
-	if bindRecord, err := sessionHandle.MatchSessionBinding(ctx, stmt); err == nil && bindRecord != nil && bindRecord.HasEnabledBinding() {
-		return bindRecord, metrics.ScopeSession, nil
+
+	// record the normalization result into info to avoid repeat normalization next time.
+	var fuzzyDigest string
+	var tableNames []*ast.TableName
+	if info == nil || info.TableNames == nil || info.FuzzyDigest == "" {
+		_, fuzzyDigest = NormalizeStmtForFuzzyBinding(stmtNode)
+		tableNames = CollectTableNames(stmtNode)
+		if info != nil {
+			info.FuzzyDigest = fuzzyDigest
+			info.TableNames = tableNames
+		}
+	} else {
+		fuzzyDigest = info.FuzzyDigest
+		tableNames = info.TableNames
 	}
-	globalHandle := GetGlobalBindingHandle(ctx)
+
+	sessionHandle := sctx.Value(SessionBindInfoKeyType).(SessionBindingHandle)
+	if bindRecord, err := sessionHandle.MatchSessionBinding(sctx, fuzzyDigest, tableNames); err == nil && bindRecord != nil && bindRecord.HasEnabledBinding() {
+		return bindRecord, metrics.ScopeSession
+	}
+	globalHandle := GetGlobalBindingHandle(sctx)
 	if globalHandle == nil {
-		return nil, "", nil
+		return nil, ""
 	}
-	if bindRecord, err := globalHandle.MatchGlobalBinding(ctx, stmt); err == nil && bindRecord != nil && bindRecord.HasEnabledBinding() {
-		return bindRecord, metrics.ScopeGlobal, nil
+	if bindRecord, err := globalHandle.MatchGlobalBinding(sctx, fuzzyDigest, tableNames); err == nil && bindRecord != nil && bindRecord.HasEnabledBinding() {
+		return bindRecord, metrics.ScopeGlobal
 	}
-	return nil, "", nil
+	return nil, ""
 }
 
 func eraseLastSemicolon(stmt ast.StmtNode) {
@@ -73,11 +107,23 @@ func eraseLastSemicolon(stmt ast.StmtNode) {
 }
 
 // NormalizeStmtForBinding normalizes a statement for binding.
+// Schema names will be completed automatically: `select * from t` --> `select * from db . t`.
+func NormalizeStmtForBinding(stmtNode ast.StmtNode, specifiedDB string) (normalizedStmt, exactSQLDigest string) {
+	return normalizeStmt(stmtNode, specifiedDB, false)
+}
+
+// NormalizeStmtForFuzzyBinding normalizes a statement for fuzzy matching.
+// Schema names will be eliminated automatically: `select * from db . t` --> `select * from t`.
+func NormalizeStmtForFuzzyBinding(stmtNode ast.StmtNode) (normalizedStmt, fuzzySQLDigest string) {
+	return normalizeStmt(stmtNode, "", true)
+}
+
+// NormalizeStmtForBinding normalizes a statement for binding.
 // This function skips Explain automatically, and literals in in-lists will be normalized as '...'.
 // For normal bindings, DB name will be completed automatically:
 //
 //	e.g. `select * from t where a in (1, 2, 3)` --> `select * from test.t where a in (...)`
-func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, fuzzy bool) (stmt ast.StmtNode, normalizedStmt, sqlDigest string, err error) {
+func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, fuzzy bool) (normalizedStmt, sqlDigest string) {
 	normalize := func(n ast.StmtNode) (normalizedStmt, sqlDigest string) {
 		eraseLastSemicolon(n)
 		var digest *parser.Digest
@@ -99,12 +145,12 @@ func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, fuzzy bool) (stmt 
 		// The difference between them is whether len(x.Text()) is empty. They cannot be distinguished by stmt.restore.
 		// For these cases, we need return "" as normalize SQL and hash.
 		if len(x.Text()) == 0 {
-			return x.Stmt, "", "", nil
+			return "", ""
 		}
 		switch x.Stmt.(type) {
 		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 			normalizeSQL, digest := normalize(x.Stmt)
-			return x.Stmt, normalizeSQL, digest, nil
+			return normalizeSQL, digest
 		case *ast.SetOprStmt:
 			normalizeExplainSQL, _ := normalize(x)
 
@@ -116,11 +162,11 @@ func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, fuzzy bool) (stmt 
 			// If the SQL is `EXPLAIN ((VALUES ROW ()) ORDER BY 1);`, the idx will be -1.
 			if idx == -1 {
 				hash := parser.DigestNormalized(normalizeExplainSQL)
-				return x.Stmt, normalizeExplainSQL, hash.String(), nil
+				return normalizeExplainSQL, hash.String()
 			}
 			normalizeSQL := normalizeExplainSQL[idx:]
 			hash := parser.DigestNormalized(normalizeSQL)
-			return x.Stmt, normalizeSQL, hash.String(), nil
+			return normalizeSQL, hash.String()
 		}
 	case *ast.SelectStmt, *ast.SetOprStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
 		// This function is only used to find bind record.
@@ -129,12 +175,12 @@ func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, fuzzy bool) (stmt 
 		// The difference between them is whether len(x.Text()) is empty. They cannot be distinguished by stmt.restore.
 		// For these cases, we need return "" as normalize SQL and hash.
 		if len(x.Text()) == 0 {
-			return x, "", "", nil
+			return "", ""
 		}
 		normalizedSQL, digest := normalize(x)
-		return x, normalizedSQL, digest, nil
+		return normalizedSQL, digest
 	}
-	return nil, "", "", nil
+	return "", ""
 }
 
 func fuzzyMatchBindingTableName(currentDB string, stmtTableNames, bindingTableNames []*ast.TableName) (numWildcards int, matched bool) {
@@ -179,9 +225,12 @@ func isFuzzyBinding(stmt ast.Node) bool {
 // You can see more example at the TestExtractTableName.
 func CollectTableNames(in ast.Node) []*ast.TableName {
 	collector := tableNameCollectorPool.Get().(*tableNameCollector)
-	collector.reset()
+	defer func() {
+		collector.tableNames = nil
+		tableNameCollectorPool.Put(collector)
+	}()
 	in.Accept(collector)
-	return collector.GetResult()
+	return collector.tableNames
 }
 
 var tableNameCollectorPool = sync.Pool{
@@ -212,13 +261,4 @@ func (c *tableNameCollector) Enter(in ast.Node) (out ast.Node, skipChildren bool
 // Leave implements Visitor interface.
 func (*tableNameCollector) Leave(in ast.Node) (out ast.Node, ok bool) {
 	return in, true
-}
-
-func (c *tableNameCollector) GetResult() []*ast.TableName {
-	return c.tableNames
-}
-
-func (c *tableNameCollector) reset() {
-	c.tableNames = nil
-	tableNameCollectorPool.Put(c)
 }

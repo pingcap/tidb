@@ -54,10 +54,10 @@ const (
 	SubtaskStateFailed        SubtaskState = "failed"
 	SubtaskStateCanceled      SubtaskState = "canceled"
 	SubtaskStatePaused        SubtaskState = "paused"
+	SubtaskStateRevertPending SubtaskState = "revert_pending"
 	SubtaskStateReverting     SubtaskState = "reverting"
 	SubtaskStateReverted      SubtaskState = "reverted"
 	SubtaskStateRevertFailed  SubtaskState = "revert_failed"
-	SubtaskStateRevertPending SubtaskState = "revert_pending"
 )
 
 type (
