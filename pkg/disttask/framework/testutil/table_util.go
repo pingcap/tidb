@@ -184,6 +184,7 @@ func UpdateSubtaskExecID(ctx context.Context, mgr *storage.TaskManager, tidbID s
 	return err
 }
 
+// TransferSubTasks2History move subtasks from tidb_background_subtask to tidb_background_subtask_history.
 func TransferSubTasks2History(ctx context.Context, mgr *storage.TaskManager, taskID int64) error {
 	return mgr.WithNewSession(func(se sessionctx.Context) error {
 		return mgr.TransferSubtasks2HistoryWithSession(ctx, se, taskID)
