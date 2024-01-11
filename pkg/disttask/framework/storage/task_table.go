@@ -47,10 +47,10 @@ const (
 	// TODO: dispatcher_id will update to scheduler_id later
 	taskColumns = basicTaskColumns + `, start_time, state_update_time, meta, dispatcher_id, error`
 	// InsertTaskColumns is the columns used in insert task.
-	InsertTaskColumns = `task_key, type, state, priority, concurrency, step, meta, create_time`
-
+	InsertTaskColumns   = `task_key, type, state, priority, concurrency, step, meta, create_time`
 	basicSubtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time, ordinal`
-	subtaskColumns      = basicSubtaskColumns + `, start_time, state_update_time, meta, summary`
+	// SubtaskColumns is the columns for subtask.
+	SubtaskColumns = basicSubtaskColumns + `, start_time, state_update_time, meta, summary`
 	// InsertSubtaskColumns is the columns used in insert subtask.
 	InsertSubtaskColumns = `step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary`
 )
@@ -214,7 +214,8 @@ func (mgr *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Co
 	})
 }
 
-func (mgr *TaskManager) executeSQLWithNewSession(ctx context.Context, sql string, args ...interface{}) (rs []chunk.Row, err error) {
+// ExecuteSQLWithNewSession executes one SQL with new session.
+func (mgr *TaskManager) ExecuteSQLWithNewSession(ctx context.Context, sql string, args ...interface{}) (rs []chunk.Row, err error) {
 	err = mgr.WithNewSession(func(se sessionctx.Context) error {
 		rs, err = sqlexec.ExecSQL(ctx, se, sql, args...)
 		return err
@@ -267,7 +268,7 @@ func (mgr *TaskManager) CreateTaskWithSession(ctx context.Context, se sessionctx
 
 // GetOneTask get a task from task table, it's used by scheduler only.
 func (mgr *TaskManager) GetOneTask(ctx context.Context) (task *proto.Task, err error) {
-	rs, err := mgr.executeSQLWithNewSession(ctx, "select "+taskColumns+" from mysql.tidb_global_task where state = %? limit 1", proto.TaskStatePending)
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+taskColumns+" from mysql.tidb_global_task where state = %? limit 1", proto.TaskStatePending)
 	if err != nil {
 		return task, err
 	}
@@ -281,7 +282,7 @@ func (mgr *TaskManager) GetOneTask(ctx context.Context) (task *proto.Task, err e
 
 // GetTopUnfinishedTasks implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) (task []*proto.Task, err error) {
-	rs, err := mgr.executeSQLWithNewSession(ctx,
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`select `+basicTaskColumns+` from mysql.tidb_global_task
 		where state in (%?, %?, %?, %?, %?, %?)
 		order by priority asc, create_time asc, id asc
@@ -310,7 +311,7 @@ func (mgr *TaskManager) GetTasksInStates(ctx context.Context, states ...interfac
 		return task, nil
 	}
 
-	rs, err := mgr.executeSQLWithNewSession(ctx,
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
 		"select "+taskColumns+" from mysql.tidb_global_task "+
 			"where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)"+
 			" order by priority asc, create_time asc, id asc", states...)
@@ -330,7 +331,7 @@ func (mgr *TaskManager) GetTasksFromHistoryInStates(ctx context.Context, states 
 		return task, nil
 	}
 
-	rs, err := mgr.executeSQLWithNewSession(ctx, "select "+taskColumns+" from mysql.tidb_global_task_history where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", states...)
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+taskColumns+" from mysql.tidb_global_task_history where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", states...)
 	if err != nil {
 		return task, err
 	}
@@ -343,7 +344,7 @@ func (mgr *TaskManager) GetTasksFromHistoryInStates(ctx context.Context, states 
 
 // GetTaskByID gets the task by the task ID.
 func (mgr *TaskManager) GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error) {
-	rs, err := mgr.executeSQLWithNewSession(ctx, "select "+taskColumns+" from mysql.tidb_global_task where id = %?", taskID)
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+taskColumns+" from mysql.tidb_global_task where id = %?", taskID)
 	if err != nil {
 		return task, err
 	}
@@ -356,7 +357,7 @@ func (mgr *TaskManager) GetTaskByID(ctx context.Context, taskID int64) (task *pr
 
 // GetTaskByIDWithHistory gets the task by the task ID from both tidb_global_task and tidb_global_task_history.
 func (mgr *TaskManager) GetTaskByIDWithHistory(ctx context.Context, taskID int64) (task *proto.Task, err error) {
-	rs, err := mgr.executeSQLWithNewSession(ctx, "select "+taskColumns+" from mysql.tidb_global_task where id = %? "+
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+taskColumns+" from mysql.tidb_global_task where id = %? "+
 		"union select "+taskColumns+" from mysql.tidb_global_task_history where id = %?", taskID, taskID)
 	if err != nil {
 		return task, err
@@ -370,7 +371,7 @@ func (mgr *TaskManager) GetTaskByIDWithHistory(ctx context.Context, taskID int64
 
 // GetTaskByKey gets the task by the task key.
 func (mgr *TaskManager) GetTaskByKey(ctx context.Context, key string) (task *proto.Task, err error) {
-	rs, err := mgr.executeSQLWithNewSession(ctx, "select "+taskColumns+" from mysql.tidb_global_task where task_key = %?", key)
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+taskColumns+" from mysql.tidb_global_task where task_key = %?", key)
 	if err != nil {
 		return task, err
 	}
@@ -383,7 +384,7 @@ func (mgr *TaskManager) GetTaskByKey(ctx context.Context, key string) (task *pro
 
 // GetTaskByKeyWithHistory gets the task from history table by the task key.
 func (mgr *TaskManager) GetTaskByKeyWithHistory(ctx context.Context, key string) (task *proto.Task, err error) {
-	rs, err := mgr.executeSQLWithNewSession(ctx, "select "+taskColumns+" from mysql.tidb_global_task where task_key = %?"+
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+taskColumns+" from mysql.tidb_global_task where task_key = %?"+
 		"union select "+taskColumns+" from mysql.tidb_global_task_history where task_key = %?", key, key)
 	if err != nil {
 		return task, err
@@ -399,7 +400,7 @@ func (mgr *TaskManager) GetTaskByKeyWithHistory(ctx context.Context, key string)
 func (mgr *TaskManager) GetUsedSlotsOnNodes(ctx context.Context) (map[string]int, error) {
 	// concurrency of subtasks of some step is the same, we use max(concurrency)
 	// to make group by works.
-	rs, err := mgr.executeSQLWithNewSession(ctx, `
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		select
 			exec_id, sum(concurrency)
 		from (
@@ -449,8 +450,8 @@ func row2BasicSubTask(r chunk.Row) *proto.Subtask {
 	return subtask
 }
 
-// row2SubTask converts a row to a subtask.
-func row2SubTask(r chunk.Row) *proto.Subtask {
+// Row2SubTask converts a row to a subtask.
+func Row2SubTask(r chunk.Row) *proto.Subtask {
 	subtask := row2BasicSubTask(r)
 	// subtask defines start/update time as bigint, to ensure backward compatible,
 	// we keep it that way, and we convert it here.
@@ -476,7 +477,7 @@ func (mgr *TaskManager) GetSubtasksByStepAndStates(ctx context.Context, tidbID s
 	for _, state := range states {
 		args = append(args, state)
 	}
-	rs, err := mgr.executeSQLWithNewSession(ctx, `select `+subtaskColumns+` from mysql.tidb_background_subtask
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select `+SubtaskColumns+` from mysql.tidb_background_subtask
 		where exec_id = %? and task_key = %? and step = %?
 		and state in (`+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
 	if err != nil {
@@ -485,7 +486,7 @@ func (mgr *TaskManager) GetSubtasksByStepAndStates(ctx context.Context, tidbID s
 
 	subtasks := make([]*proto.Subtask, len(rs))
 	for i, row := range rs {
-		subtasks[i] = row2SubTask(row)
+		subtasks[i] = Row2SubTask(row)
 	}
 	return subtasks, nil
 }
@@ -496,7 +497,7 @@ func (mgr *TaskManager) GetSubtasksByExecIdsAndStepAndState(ctx context.Context,
 	for _, execID := range execIDs {
 		args = append(args, execID)
 	}
-	rs, err := mgr.executeSQLWithNewSession(ctx, `select `+subtaskColumns+` from mysql.tidb_background_subtask
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select `+SubtaskColumns+` from mysql.tidb_background_subtask
 		where task_key = %? and step = %? and state = %?
 		and exec_id in (`+strings.Repeat("%?,", len(execIDs)-1)+"%?)", args...)
 	if err != nil {
@@ -505,7 +506,7 @@ func (mgr *TaskManager) GetSubtasksByExecIdsAndStepAndState(ctx context.Context,
 
 	subtasks := make([]*proto.Subtask, len(rs))
 	for i, row := range rs {
-		subtasks[i] = row2SubTask(row)
+		subtasks[i] = Row2SubTask(row)
 	}
 	return subtasks, nil
 }
@@ -516,7 +517,7 @@ func (mgr *TaskManager) GetFirstSubtaskInStates(ctx context.Context, tidbID stri
 	for _, state := range states {
 		args = append(args, state)
 	}
-	rs, err := mgr.executeSQLWithNewSession(ctx, `select `+subtaskColumns+` from mysql.tidb_background_subtask
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select `+SubtaskColumns+` from mysql.tidb_background_subtask
 		where exec_id = %? and task_key = %? and step = %?
 		and state in (`+strings.Repeat("%?,", len(states)-1)+"%?) limit 1", args...)
 	if err != nil {
@@ -526,17 +527,7 @@ func (mgr *TaskManager) GetFirstSubtaskInStates(ctx context.Context, tidbID stri
 	if len(rs) == 0 {
 		return nil, nil
 	}
-	return row2SubTask(rs[0]), nil
-}
-
-// UpdateSubtaskExecID updates the subtask's exec_id, used for testing now.
-func (mgr *TaskManager) UpdateSubtaskExecID(ctx context.Context, tidbID string, subtaskID int64) error {
-	_, err := mgr.executeSQLWithNewSession(ctx,
-		`update mysql.tidb_background_subtask
-		 set exec_id = %?, state_update_time = unix_timestamp()
-		 where id = %?`,
-		tidbID, subtaskID)
-	return err
+	return Row2SubTask(rs[0]), nil
 }
 
 // UpdateErrorToSubtask updates the error to subtask.
@@ -544,7 +535,7 @@ func (mgr *TaskManager) UpdateErrorToSubtask(ctx context.Context, execID string,
 	if err == nil {
 		return nil
 	}
-	_, err1 := mgr.executeSQLWithNewSession(ctx,
+	_, err1 := mgr.ExecuteSQLWithNewSession(ctx,
 		`update mysql.tidb_background_subtask
 		set state = %?, 
 		error = %?, 
@@ -566,7 +557,7 @@ func (mgr *TaskManager) UpdateErrorToSubtask(ctx context.Context, execID string,
 
 // GetActiveSubtasks implements TaskManager.GetActiveSubtasks.
 func (mgr *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64) ([]*proto.Subtask, error) {
-	rs, err := mgr.executeSQLWithNewSession(ctx, `
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		select `+basicSubtaskColumns+` from mysql.tidb_background_subtask
 		where task_key = %? and state in (%?, %?)`,
 		taskID, proto.TaskStatePending, proto.TaskStateRunning)
@@ -582,7 +573,7 @@ func (mgr *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64) ([]
 
 // GetSubtasksByStepAndState gets the subtask by step and state.
 func (mgr *TaskManager) GetSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error) {
-	rs, err := mgr.executeSQLWithNewSession(ctx, `select `+subtaskColumns+` from mysql.tidb_background_subtask
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select `+SubtaskColumns+` from mysql.tidb_background_subtask
 		where task_key = %? and state = %? and step = %?`,
 		taskID, state, step)
 	if err != nil {
@@ -593,14 +584,14 @@ func (mgr *TaskManager) GetSubtasksByStepAndState(ctx context.Context, taskID in
 	}
 	subtasks := make([]*proto.Subtask, 0, len(rs))
 	for _, r := range rs {
-		subtasks = append(subtasks, row2SubTask(r))
+		subtasks = append(subtasks, Row2SubTask(r))
 	}
 	return subtasks, nil
 }
 
 // GetSubtaskRowCount gets the subtask row count.
 func (mgr *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, step proto.Step) (int64, error) {
-	rs, err := mgr.executeSQLWithNewSession(ctx, `select
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select
     	cast(sum(json_extract(summary, '$.row_count')) as signed) as row_count
 		from mysql.tidb_background_subtask where task_key = %? and step = %?`,
 		taskID, step)
@@ -615,7 +606,7 @@ func (mgr *TaskManager) GetSubtaskRowCount(ctx context.Context, taskID int64, st
 
 // UpdateSubtaskRowCount updates the subtask row count.
 func (mgr *TaskManager) UpdateSubtaskRowCount(ctx context.Context, subtaskID int64, rowCount int64) error {
-	_, err := mgr.executeSQLWithNewSession(ctx,
+	_, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`update mysql.tidb_background_subtask
 		set summary = json_set(summary, '$.row_count', %?) where id = %?`,
 		rowCount, subtaskID)
@@ -624,7 +615,7 @@ func (mgr *TaskManager) UpdateSubtaskRowCount(ctx context.Context, subtaskID int
 
 // GetSubtaskCntGroupByStates gets the subtask count by states.
 func (mgr *TaskManager) GetSubtaskCntGroupByStates(ctx context.Context, taskID int64, step proto.Step) (map[proto.SubtaskState]int64, error) {
-	rs, err := mgr.executeSQLWithNewSession(ctx, `
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		select state, count(*)
 		from mysql.tidb_background_subtask
 		where task_key = %? and step = %?
@@ -645,7 +636,7 @@ func (mgr *TaskManager) GetSubtaskCntGroupByStates(ctx context.Context, taskID i
 
 // CollectSubTaskError collects the subtask error.
 func (mgr *TaskManager) CollectSubTaskError(ctx context.Context, taskID int64) ([]error, error) {
-	rs, err := mgr.executeSQLWithNewSession(ctx,
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`select error from mysql.tidb_background_subtask
              where task_key = %? AND state in (%?, %?)`, taskID, proto.SubtaskStateFailed, proto.SubtaskStateCanceled)
 	if err != nil {
@@ -679,7 +670,7 @@ func (mgr *TaskManager) HasSubtasksInStates(ctx context.Context, tidbID string, 
 	for _, state := range states {
 		args = append(args, state)
 	}
-	rs, err := mgr.executeSQLWithNewSession(ctx, `select 1 from mysql.tidb_background_subtask
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select 1 from mysql.tidb_background_subtask
 		where exec_id = %? and task_key = %? and step = %?
 			and state in (`+strings.Repeat("%?,", len(states)-1)+"%?) limit 1", args...)
 	if err != nil {
@@ -738,7 +729,7 @@ func (*TaskManager) InitMetaSession(ctx context.Context, se sessionctx.Context, 
 // if not there might has a data race.
 func (mgr *TaskManager) RecoverMeta(ctx context.Context, execID string, role string) error {
 	cpuCount := cpu.GetCPUCount()
-	_, err := mgr.executeSQLWithNewSession(ctx, `
+	_, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
 		values (%?, %?, %?, -1)
 		on duplicate key
@@ -752,7 +743,7 @@ func (mgr *TaskManager) UpdateSubtaskStateAndError(
 	ctx context.Context,
 	execID string,
 	id int64, state proto.SubtaskState, subTaskErr error) error {
-	_, err := mgr.executeSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
+	_, err := mgr.ExecuteSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
 		set state = %?, error = %?, state_update_time = unix_timestamp() where id = %? and exec_id = %?`,
 		state, serializeErr(subTaskErr), id, execID)
 	return err
@@ -760,7 +751,7 @@ func (mgr *TaskManager) UpdateSubtaskStateAndError(
 
 // FinishSubtask updates the subtask meta and mark state to succeed.
 func (mgr *TaskManager) FinishSubtask(ctx context.Context, execID string, id int64, meta []byte) error {
-	_, err := mgr.executeSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
+	_, err := mgr.ExecuteSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
 		set meta = %?, state = %?, state_update_time = unix_timestamp(), end_time = CURRENT_TIMESTAMP()
 		where id = %? and exec_id = %?`,
 		meta, proto.TaskStateSucceed, id, execID)
@@ -769,7 +760,7 @@ func (mgr *TaskManager) FinishSubtask(ctx context.Context, execID string, id int
 
 // DeleteSubtasksByTaskID deletes the subtask of the given task ID.
 func (mgr *TaskManager) DeleteSubtasksByTaskID(ctx context.Context, taskID int64) error {
-	_, err := mgr.executeSQLWithNewSession(ctx, `delete from mysql.tidb_background_subtask
+	_, err := mgr.ExecuteSQLWithNewSession(ctx, `delete from mysql.tidb_background_subtask
 		where task_key = %?`, taskID)
 	if err != nil {
 		return err
@@ -780,7 +771,7 @@ func (mgr *TaskManager) DeleteSubtasksByTaskID(ctx context.Context, taskID int64
 
 // GetTaskExecutorIDsByTaskID gets the task executor IDs of the given task ID.
 func (mgr *TaskManager) GetTaskExecutorIDsByTaskID(ctx context.Context, taskID int64) ([]string, error) {
-	rs, err := mgr.executeSQLWithNewSession(ctx, `select distinct(exec_id) from mysql.tidb_background_subtask
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select distinct(exec_id) from mysql.tidb_background_subtask
 		where task_key = %?`, taskID)
 	if err != nil {
 		return nil, err
@@ -800,7 +791,7 @@ func (mgr *TaskManager) GetTaskExecutorIDsByTaskID(ctx context.Context, taskID i
 
 // GetTaskExecutorIDsByTaskIDAndStep gets the task executor IDs of the given global task ID and step.
 func (mgr *TaskManager) GetTaskExecutorIDsByTaskIDAndStep(ctx context.Context, taskID int64, step proto.Step) ([]string, error) {
-	rs, err := mgr.executeSQLWithNewSession(ctx, `select distinct(exec_id) from mysql.tidb_background_subtask
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select distinct(exec_id) from mysql.tidb_background_subtask
 		where task_key = %? and step = %?`, taskID, step)
 	if err != nil {
 		return nil, err
@@ -820,7 +811,7 @@ func (mgr *TaskManager) GetTaskExecutorIDsByTaskIDAndStep(ctx context.Context, t
 
 // IsTaskExecutorCanceled checks if subtask 'execID' of task 'taskID' has been canceled somehow.
 func (mgr *TaskManager) IsTaskExecutorCanceled(ctx context.Context, execID string, taskID int64) (bool, error) {
-	rs, err := mgr.executeSQLWithNewSession(ctx, "select 1 from mysql.tidb_background_subtask where task_key = %? and exec_id = %?", taskID, execID)
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select 1 from mysql.tidb_background_subtask where task_key = %? and exec_id = %?", taskID, execID)
 	if err != nil {
 		return false, err
 	}
@@ -873,14 +864,14 @@ func (mgr *TaskManager) DeleteDeadNodes(ctx context.Context, nodes []string) err
 
 // PauseSubtasks update all running/pending subtasks to pasued state.
 func (mgr *TaskManager) PauseSubtasks(ctx context.Context, execID string, taskID int64) error {
-	_, err := mgr.executeSQLWithNewSession(ctx,
+	_, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`update mysql.tidb_background_subtask set state = "paused" where task_key = %? and state in ("running", "pending") and exec_id = %?`, taskID, execID)
 	return err
 }
 
 // ResumeSubtasks update all paused subtasks to pending state.
 func (mgr *TaskManager) ResumeSubtasks(ctx context.Context, taskID int64) error {
-	_, err := mgr.executeSQLWithNewSession(ctx,
+	_, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`update mysql.tidb_background_subtask set state = "pending", error = null where task_key = %? and state = "paused"`, taskID)
 	return err
 }
@@ -1113,7 +1104,7 @@ func serializeErr(err error) []byte {
 
 // IsTaskCancelling checks whether the task state is cancelling.
 func (mgr *TaskManager) IsTaskCancelling(ctx context.Context, taskID int64) (bool, error) {
-	rs, err := mgr.executeSQLWithNewSession(ctx, "select 1 from mysql.tidb_global_task where id=%? and state = %?",
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select 1 from mysql.tidb_global_task where id=%? and state = %?",
 		taskID, proto.TaskStateCancelling,
 	)
 
@@ -1132,7 +1123,7 @@ func (mgr *TaskManager) GetSubtasksForImportInto(ctx context.Context, taskID int
 	)
 	err = mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		rs, err = sqlexec.ExecSQL(ctx, se,
-			`select `+subtaskColumns+` from mysql.tidb_background_subtask where task_key = %? and step = %?`,
+			`select `+SubtaskColumns+` from mysql.tidb_background_subtask where task_key = %? and step = %?`,
 			taskID, step,
 		)
 		if err != nil {
@@ -1142,7 +1133,7 @@ func (mgr *TaskManager) GetSubtasksForImportInto(ctx context.Context, taskID int
 		// To avoid the situation that the subtasks has been `TransferSubTasks2History`
 		// when the user show import jobs, we need to check the history table.
 		rsFromHistory, err := sqlexec.ExecSQL(ctx, se,
-			`select `+subtaskColumns+` from mysql.tidb_background_subtask_history where task_key = %? and step = %?`,
+			`select `+SubtaskColumns+` from mysql.tidb_background_subtask_history where task_key = %? and step = %?`,
 			taskID, step,
 		)
 		if err != nil {
@@ -1161,7 +1152,7 @@ func (mgr *TaskManager) GetSubtasksForImportInto(ctx context.Context, taskID int
 	}
 	subtasks := make([]*proto.Subtask, 0, len(rs))
 	for _, r := range rs {
-		subtasks = append(subtasks, row2SubTask(r))
+		subtasks = append(subtasks, Row2SubTask(r))
 	}
 	return subtasks, nil
 }
@@ -1188,7 +1179,7 @@ func (mgr *TaskManager) GCSubtasks(ctx context.Context) error {
 			subtaskHistoryKeepSeconds = val
 		}
 	})
-	_, err := mgr.executeSQLWithNewSession(
+	_, err := mgr.ExecuteSQLWithNewSession(
 		ctx,
 		fmt.Sprintf("DELETE FROM mysql.tidb_background_subtask_history WHERE state_update_time < UNIX_TIMESTAMP() - %d ;", subtaskHistoryKeepSeconds),
 	)

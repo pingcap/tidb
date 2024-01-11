@@ -140,7 +140,7 @@ func TestTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskStateFailed, task.State)
 	require.ErrorContains(t, task.Error, "test error")
-	endTime, err := storage.GetTaskEndTimeForTest(ctx, gm, id)
+	endTime, err := testutil.GetTaskEndTime(ctx, gm, id)
 	require.NoError(t, err)
 	require.LessOrEqual(t, endTime.Sub(curTime), time.Since(curTime))
 	require.GreaterOrEqual(t, endTime, curTime)
@@ -619,7 +619,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.Greater(t, subtask.StartTime, ts)
 	require.Greater(t, subtask.UpdateTime, ts)
 
-	endTime, err := storage.GetSubtaskEndTimeForTest(ctx, sm, subtask.ID)
+	endTime, err := testutil.GetSubtaskEndTime(ctx, sm, subtask.ID)
 	require.NoError(t, err)
 	require.Greater(t, endTime, ts)
 
@@ -641,7 +641,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, subtask2.StartTime, subtask.StartTime)
 	require.Greater(t, subtask2.UpdateTime, subtask.UpdateTime)
-	endTime, err = storage.GetSubtaskEndTimeForTest(ctx, sm, subtask.ID)
+	endTime, err = testutil.GetSubtaskEndTime(ctx, sm, subtask.ID)
 	require.NoError(t, err)
 	require.Greater(t, endTime, ts)
 
@@ -962,10 +962,10 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	testutil.CreateSubTask(t, sm, taskID, proto.StepInit, tidb3, []byte(meta), proto.TaskTypeExample, 11, false)
 	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, tidb3, subTask3, proto.SubtaskStateFailed, nil))
 
-	subTasks, err := storage.GetSubtasksByTaskIDForTest(ctx, sm, taskID)
+	subTasks, err := testutil.GetSubtasksByTaskID(ctx, sm, taskID)
 	require.NoError(t, err)
 	require.Len(t, subTasks, 3)
-	historySubTasksCnt, err := storage.GetSubtasksFromHistoryForTest(ctx, sm)
+	historySubTasksCnt, err := testutil.GetSubtasksFromHistory(ctx, sm)
 	require.NoError(t, err)
 	require.Equal(t, 0, historySubTasksCnt)
 	subTasks, err = sm.GetSubtasksForImportInto(ctx, taskID, proto.StepInit)
@@ -975,10 +975,10 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	// test TransferSubTasks2History
 	require.NoError(t, sm.TransferSubTasks2History(ctx, taskID))
 
-	subTasks, err = storage.GetSubtasksByTaskIDForTest(ctx, sm, taskID)
+	subTasks, err = testutil.GetSubtasksByTaskID(ctx, sm, taskID)
 	require.NoError(t, err)
 	require.Len(t, subTasks, 0)
-	historySubTasksCnt, err = storage.GetSubtasksFromHistoryForTest(ctx, sm)
+	historySubTasksCnt, err = testutil.GetSubtasksFromHistory(ctx, sm)
 	require.NoError(t, err)
 	require.Equal(t, 3, historySubTasksCnt)
 	subTasks, err = sm.GetSubtasksForImportInto(ctx, taskID, proto.StepInit)
@@ -998,7 +998,7 @@ func TestSubtaskHistoryTable(t *testing.T) {
 
 	require.NoError(t, sm.GCSubtasks(ctx))
 
-	historySubTasksCnt, err = storage.GetSubtasksFromHistoryForTest(ctx, sm)
+	historySubTasksCnt, err = testutil.GetSubtasksFromHistory(ctx, sm)
 	require.NoError(t, err)
 	require.Equal(t, 1, historySubTasksCnt)
 }
@@ -1021,7 +1021,7 @@ func TestTaskHistoryTable(t *testing.T) {
 	tasks, err = gm.GetTasksInStates(ctx, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(tasks))
-	num, err := storage.GetTasksFromHistoryForTest(ctx, gm)
+	num, err := testutil.GetTasksFromHistory(ctx, gm)
 	require.NoError(t, err)
 	require.Equal(t, 2, num)
 
@@ -1041,7 +1041,7 @@ func TestTaskHistoryTable(t *testing.T) {
 	require.Equal(t, 1, len(tasks))
 	tasks[0].Error = errors.New("mock err")
 	require.NoError(t, gm.TransferTasks2History(ctx, tasks))
-	num, err = storage.GetTasksFromHistoryForTest(ctx, gm)
+	num, err = testutil.GetTasksFromHistory(ctx, gm)
 	require.NoError(t, err)
 	require.Equal(t, 3, num)
 }
@@ -1094,7 +1094,7 @@ func TestCancelAndExecIdChanged(t *testing.T) {
 
 	// 2. change the exec_id
 	// exec_id changed
-	require.NoError(t, sm.UpdateSubtaskExecID(ctx, "tidb2", subtask.ID))
+	require.NoError(t, testutil.UpdateSubtaskExecID(ctx, sm, "tidb2", subtask.ID))
 	// exec_id in memory unchanged, call UpdateSubtaskStateAndError.
 	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, subtask.ExecID, subtask.ID, proto.SubtaskStateFailed, nil))
 	subtask, err = sm.GetFirstSubtaskInStates(ctx, "tidb2", 1, proto.StepInit, proto.SubtaskStatePending)
