@@ -448,7 +448,7 @@ func (coll *HistColl) GetAnalyzeRowCount() float64 {
 func (coll *HistColl) GetScaledRealtimeAndModifyCnt(idxStats *Index) (realtimeCnt, modifyCnt int64) {
 	// In theory, we can apply this scale logic on all indexes. But currently, we only apply it on the mv index to avoid
 	// any unexpected changes caused by factors like precision difference.
-	if idxStats.Info == nil || !idxStats.Info.MVIndex || !idxStats.IsFullLoad() {
+	if idxStats == nil || idxStats.Info == nil || !idxStats.Info.MVIndex || !idxStats.IsFullLoad() {
 		return coll.RealtimeCount, coll.ModifyCount
 	}
 	analyzeRowCount := coll.GetAnalyzeRowCount()
