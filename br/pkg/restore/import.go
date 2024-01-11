@@ -990,14 +990,14 @@ func (importer *FileImporter) downloadSSTV2(
 			} else {
 				importer.storeWorkerPoolRWLock.RUnlock()
 			}
-			defer func() {
-				workerCh <- struct{}{}
-			}()
 			select {
 			case <-ectx.Done():
 				return ectx.Err()
 			case <-workerCh:
 			}
+			defer func() {
+				workerCh <- struct{}{}
+			}()
 			for _, file := range files {
 				req, ok := downloadReqsMap[file.Name]
 				if !ok {
