@@ -226,7 +226,7 @@ func TestStmtIndexUsageCollector(t *testing.T) {
 	statementCollector.Update(1, 1, NewSample(10, 0, 0, 0))
 	sessionCollector.Flush()
 	require.Eventuallyf(t, func() bool {
-		return iuc.GetIndexUsage(1, 1) != nil
+		return iuc.GetIndexUsage(1, 1) != Sample{}
 	}, time.Second, time.Millisecond, "wait for report")
 	require.Equal(t, iuc.GetIndexUsage(1, 1).QueryTotal, uint64(1))
 
@@ -235,7 +235,8 @@ func TestStmtIndexUsageCollector(t *testing.T) {
 	sessionCollector.Flush()
 	require.Eventuallyf(t, func() bool {
 		iu := iuc.GetIndexUsage(1, 1)
-		if iu != nil {
+		emptySample := Sample{}
+		if iu != emptySample {
 			return iu.QueryTotal == 1
 		}
 		return false
@@ -244,7 +245,7 @@ func TestStmtIndexUsageCollector(t *testing.T) {
 	statementCollector.Update(1, 2, NewSample(10, 0, 0, 0))
 	sessionCollector.Flush()
 	require.Eventuallyf(t, func() bool {
-		return iuc.GetIndexUsage(1, 2) != nil
+		return iuc.GetIndexUsage(1, 2) != Sample{}
 	}, time.Second, time.Millisecond, "wait for report")
 	require.Equal(t, iuc.GetIndexUsage(1, 2).QueryTotal, uint64(1))
 
@@ -252,7 +253,7 @@ func TestStmtIndexUsageCollector(t *testing.T) {
 	statementCollector.Update(1, 3, NewSample(0, 0, 0, 0))
 	sessionCollector.Flush()
 	require.Eventuallyf(t, func() bool {
-		return iuc.GetIndexUsage(1, 3) != nil
+		return iuc.GetIndexUsage(1, 3) != Sample{}
 	}, time.Second, time.Millisecond, "wait for report")
 	require.Equal(t, iuc.GetIndexUsage(1, 3).QueryTotal, uint64(1))
 }

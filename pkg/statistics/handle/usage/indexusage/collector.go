@@ -237,6 +237,7 @@ func (s *SessionIndexUsageCollector) Flush() {
 type StmtIndexUsageCollector struct {
 	recordedIndex    map[GlobalIndexID]struct{}
 	sessionCollector *SessionIndexUsageCollector
+	sync.Mutex
 }
 
 // NewStmtIndexUsageCollector creates a new StmtIndexUsageCollector.
@@ -250,11 +251,16 @@ func NewStmtIndexUsageCollector(sessionCollector *SessionIndexUsageCollector) *S
 // Update updates the index usage in the internal session collector. The `sample.QueryTotal` will be modified according
 // to whether this index has been recorded in this statement usage collector.
 func (s *StmtIndexUsageCollector) Update(tableID int64, indexID int64, sample Sample) {
-	// the map in `StmtIndexUsageCollector` will not be read/written concurrently, so lock is not needed
-	idxId := GlobalIndexID{IndexID: indexID, TableID: tableID}
-	if _, ok := s.recordedIndex[idxId]; !ok {
+	// The session index usage collector and the map inside cannot be updated concurrently. However, for executors with
+	// multiple workers, it's possible for them to be closed (and update stats) at the same time, so a lock is needed
+	// here.
+	s.Lock()
+	defer s.Unlock()
+
+	idxID := GlobalIndexID{IndexID: indexID, TableID: tableID}
+	if _, ok := s.recordedIndex[idxID]; !ok {
 		sample.QueryTotal = 1
-		s.recordedIndex[idxId] = struct{}{}
+		s.recordedIndex[idxID] = struct{}{}
 	} else {
 		sample.QueryTotal = 0
 	}
