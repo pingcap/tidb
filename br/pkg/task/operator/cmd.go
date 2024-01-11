@@ -151,11 +151,9 @@ func getCallerName() string {
 
 func pauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
 	suspendLightning := utils.NewSuspendImporting(getCallerName(), cx.kvMgr)
-	limitedCx, cancel := context.WithTimeout(cx, cx.cfg.TTL)
-	_, err := utils.WithRetryV2(limitedCx, cx.GetBackOffer("suspend_lightning"), func(_ context.Context) (map[uint64]bool, error) {
-		return suspendLightning.DenyAllStores(limitedCx, cx.cfg.TTL)
+	_, err := utils.WithRetryV2(cx, cx.GetBackOffer("suspend_lightning"), func(_ context.Context) (map[uint64]bool, error) {
+		return suspendLightning.DenyAllStores(cx, cx.cfg.TTL)
 	})
-	cancel()
 	if err != nil {
 		return errors.Trace(err)
 	}
