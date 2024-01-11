@@ -21,7 +21,6 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
@@ -31,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
-	"go.uber.org/zap"
 )
 
 // InitTableTest inits needed components for table_test.
@@ -194,17 +192,6 @@ func PrintSubtaskInfo(ctx context.Context, mgr *storage.TaskManager, taskID int6
 	rs = append(rs, rs2...)
 
 	for _, r := range rs {
-		errBytes := r.GetBytes(13)
-		var err error
-		if len(errBytes) > 0 {
-			stdErr := errors.Normalize("")
-			err1 := stdErr.UnmarshalJSON(errBytes)
-			if err1 != nil {
-				err = err1
-			} else {
-				err = stdErr
-			}
-		}
-		logutil.BgLogger().Info(fmt.Sprintf("subTask: %v\n", storage.Row2SubTask(r)), zap.Error(err))
+		logutil.BgLogger().Info(fmt.Sprintf("subTask: %v\n", storage.Row2SubTask(r)))
 	}
 }

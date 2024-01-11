@@ -31,11 +31,13 @@ func CheckSubtasksState(ctx context.Context, t *testing.T, taskID int64, state p
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
 	testutil.PrintSubtaskInfo(ctx, mgr, taskID)
-	cntByStates, err := mgr.GetSubtaskCntGroupByStates(ctx, taskID, proto.StepTwo)
+	cntByStatesStepOne, err := mgr.GetSubtaskCntGroupByStates(ctx, taskID, proto.StepOne)
+	require.NoError(t, err)
+	cntByStatesStepTwo, err := mgr.GetSubtaskCntGroupByStates(ctx, taskID, proto.StepTwo)
 	require.NoError(t, err)
 	historySubTasksCnt, err := testutil.GetSubtasksFromHistoryByTaskID(ctx, mgr, taskID)
 	require.NoError(t, err)
-	require.Equal(t, expectedCnt, cntByStates[state]+int64(historySubTasksCnt))
+	require.Equal(t, expectedCnt, cntByStatesStepOne[state]+cntByStatesStepTwo[state]+int64(historySubTasksCnt))
 }
 
 func TestFrameworkPauseAndResume(t *testing.T) {
