@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -216,4 +217,54 @@ func TestSchedulerIsStepSucceed(t *testing.T) {
 			state: 1,
 		}))
 	}
+}
+
+func TestSchedulerCleanupTask(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
+	}()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	taskMgr := mock.NewMockTaskManager(ctrl)
+	ctx := context.Background()
+	mgr, err := NewManager(ctx, taskMgr, "1")
+	require.NoError(t, err)
+
+	// normal
+	tasks := []*proto.Task{
+		{ID: 1},
+	}
+	taskMgr.EXPECT().GetTasksInStates(
+		mgr.ctx,
+		proto.TaskStateFailed,
+		proto.TaskStateReverted,
+		proto.TaskStateSucceed).Return(tasks, nil)
+
+	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(nil)
+	mgr.doCleanupTask()
+	require.True(t, ctrl.Satisfied())
+
+	// fail in transfer
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "1*return()"))
+	mockErr := errors.New("transfer err")
+	taskMgr.EXPECT().GetTasksInStates(
+		mgr.ctx,
+		proto.TaskStateFailed,
+		proto.TaskStateReverted,
+		proto.TaskStateSucceed).Return(tasks, nil)
+	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(mockErr)
+	mgr.doCleanupTask()
+	require.True(t, ctrl.Satisfied())
+
+	taskMgr.EXPECT().GetTasksInStates(
+		mgr.ctx,
+		proto.TaskStateFailed,
+		proto.TaskStateReverted,
+		proto.TaskStateSucceed).Return(tasks, nil)
+	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(nil)
+	mgr.doCleanupTask()
+	require.True(t, ctrl.Satisfied())
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished"))
 }
