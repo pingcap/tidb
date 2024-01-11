@@ -19,6 +19,8 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/http"
+	_ "net/http/pprof"
 	"slices"
 	"testing"
 	"time"
@@ -361,6 +363,11 @@ func TestExactlyKeyNum(t *testing.T) {
 func Test3KFilesRangeSplitter(t *testing.T) {
 	store := openTestingStorage(t)
 	ctx := context.Background()
+
+	// use HTTP pprof to debug
+	go func() {
+		http.ListenAndServe("localhost:6060", nil)
+	}()
 
 	// test the case that after one round merge step, we have 3000 stat files. In
 	// current merge step parameters, we will merge 4000 files of 256MB into 16
