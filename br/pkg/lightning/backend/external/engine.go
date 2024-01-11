@@ -295,7 +295,8 @@ func (e *Engine) LoadIngestData(
 ) error {
 	// currently we assume the region size is 96MB and will download 96MB*20 = 1.9GB
 	// data at once
-	regionBatchSize := 20
+	// TODO(lance6716): test lower value
+	regionBatchSize := 10
 	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
 		regionBatchSize = val.(int)
 	})
