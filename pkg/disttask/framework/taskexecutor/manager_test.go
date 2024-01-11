@@ -297,6 +297,7 @@ func TestManagerHandleTasks(t *testing.T) {
 
 	// handle pending tasks
 	var task1Ctx context.Context
+	var mu sync.Mutex
 	mockTaskTable.EXPECT().GetTasksInStates(m.ctx, proto.TaskStateRunning, proto.TaskStateReverting, proto.TaskStatePausing).
 		Return([]*proto.Task{task1}, nil)
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, task1.ID, proto.StepOne,
@@ -307,11 +308,15 @@ func TestManagerHandleTasks(t *testing.T) {
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, task1.ID, proto.StepOne,
 		unfinishedSubtaskStates).Return(true, nil)
 	mockInternalExecutor.EXPECT().Run(gomock.Any(), task1).DoAndReturn(func(ctx context.Context, _ *proto.Task) error {
+		mu.Lock()
 		task1Ctx = ctx
+		mu.Unlock()
 		return <-ch
 	})
 	m.handleTasks()
 	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
 		return task1Ctx != nil && ctrl.Satisfied()
 	}, 5*time.Second, 100*time.Millisecond)
 	require.True(t, m.isExecutorStarted(task1.ID))

@@ -321,11 +321,11 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		err = completeInsertErr(c, val, rowIdx, err)
 	}
 
-	if !e.Ctx().GetSessionVars().StmtCtx.DupKeyAsWarning {
-		return err
-	}
 	// TODO: should not filter all types of errors here.
-	e.handleWarning(err)
+	if err != nil {
+		ec := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()
+		return ec.HandleErrorWithAlias(kv.ErrKeyExists, err, err)
+	}
 	return nil
 }
 

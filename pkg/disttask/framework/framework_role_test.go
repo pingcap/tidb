@@ -31,7 +31,7 @@ import (
 func checkSubtaskOnNodes(ctx context.Context, t *testing.T, taskID int64, expectedNodes []string) {
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	nodes, err := storage.GetSubtaskNodesForTest(ctx, mgr, taskID)
+	nodes, err := testutil.GetSubtaskNodes(ctx, mgr, taskID)
 	require.NoError(t, err)
 	slices.Sort(nodes)
 	slices.Sort(expectedNodes)

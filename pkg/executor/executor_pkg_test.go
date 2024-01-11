@@ -285,6 +285,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 			stmt:    []ast.StmtNode{&ast.InsertStmt{}, &ast.UpdateStmt{}, &ast.DeleteStmt{}},
 			levels: func() (l errctx.LevelMap) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelError
+				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelError
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
@@ -298,6 +299,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 			stmt:    []ast.StmtNode{&ast.InsertStmt{}, &ast.UpdateStmt{}, &ast.DeleteStmt{}},
 			levels: func() (l errctx.LevelMap) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
@@ -311,6 +313,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 			stmt:    []ast.StmtNode{&ast.InsertStmt{IgnoreErr: true}},
 			levels: func() (l errctx.LevelMap) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupDupKey] = errctx.LevelWarn
 				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelWarn
@@ -324,6 +327,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 			stmt:    []ast.StmtNode{&ast.UpdateStmt{IgnoreErr: true}},
 			levels: func() (l errctx.LevelMap) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupDupKey] = errctx.LevelWarn
 				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
@@ -337,6 +341,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 			stmt:    []ast.StmtNode{&ast.DeleteStmt{IgnoreErr: true}},
 			levels: func() (l errctx.LevelMap) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupDupKey] = errctx.LevelWarn
 				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
@@ -350,6 +355,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 			stmt:    []ast.StmtNode{&ast.InsertStmt{}, &ast.UpdateStmt{}, &ast.DeleteStmt{}},
 			levels: func() (l errctx.LevelMap) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelError
+				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelIgnore
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
@@ -363,6 +369,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 			stmt:    []ast.StmtNode{&ast.SelectStmt{}, &ast.SetOprStmt{}},
 			levels: func() (l errctx.LevelMap) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
@@ -376,6 +383,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 			stmt:    []ast.StmtNode{&ast.SelectStmt{}, &ast.SetOprStmt{}},
 			levels: func() (l errctx.LevelMap) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
@@ -389,6 +397,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 			stmt:    []ast.StmtNode{&ast.LoadDataStmt{}},
 			levels: func() (l errctx.LevelMap) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelError
+				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
@@ -402,6 +411,7 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 			stmt:    []ast.StmtNode{&ast.LoadDataStmt{}},
 			levels: func() (l errctx.LevelMap) {
 				l[errctx.ErrGroupTruncate] = errctx.LevelError
+				l[errctx.ErrGroupDupKey] = errctx.LevelError
 				l[errctx.ErrGroupBadNull] = errctx.LevelError
 				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
