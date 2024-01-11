@@ -20,11 +20,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -54,7 +52,6 @@ func InitTestContext(t *testing.T, nodeNum int) (context.Context, *gomock.Contro
 	})
 
 	executionContext := testkit.NewDistExecutionContext(t, nodeNum)
-	WaitNodeRegistered(ctx, t)
 	testCtx := &TestContext{
 		subtasksHasRun: make(map[string]map[int64]struct{}),
 	}
@@ -85,16 +82,4 @@ func (c *TestContext) CollectedSubtaskCnt(taskID int64, step proto.Step) int {
 // getTaskStepKey returns the key of a task step.
 func getTaskStepKey(id int64, step proto.Step) string {
 	return fmt.Sprintf("%d/%d", id, step)
-}
-
-// WaitNodeRegistered waits until some node is registered.
-func WaitNodeRegistered(ctx context.Context, t *testing.T) {
-	// wait until some node is registered.
-	require.Eventually(t, func() bool {
-		taskMgr, err := storage.GetTaskManager()
-		require.NoError(t, err)
-		nodes, err := taskMgr.GetAllNodes(ctx)
-		require.NoError(t, err)
-		return len(nodes) > 0
-	}, 5*time.Second, 100*time.Millisecond)
 }

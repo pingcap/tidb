@@ -130,3 +130,11 @@ func PanicToErr(err *error) {
 		log.Warn("PanicToErr: panicked, recovering and returning error", zap.StackSkip("stack", 1), logutil.ShortError(*err))
 	}
 }
+
+func BuildWorkerTokenChannel(size uint) chan struct{} {
+	ch := make(chan struct{}, size)
+	for i := 0; i < int(size); i += 1 {
+		ch <- struct{}{}
+	}
+	return ch
+}

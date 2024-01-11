@@ -195,7 +195,7 @@ func TestBasic(t *testing.T) {
 	require.NotNil(t, tb)
 
 	err = kv.RunInNewTxn(ctx, store, true, func(ctx context.Context, txn kv.Transaction) error {
-		err := meta.NewMeta(txn).CreateTableOrView(dbID, tblInfo)
+		err := meta.NewMeta(txn).CreateTableOrView(dbID, dbName.L, tblInfo)
 		require.NoError(t, err)
 		return errors.Trace(err)
 	})
@@ -344,7 +344,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 
 	createGlobalTemporaryTableChange := func(tblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
 		return func(m *meta.Meta, builder *infoschema.Builder) {
-			err := m.CreateTableOrView(db.ID, &model.TableInfo{
+			err := m.CreateTableOrView(db.ID, db.Name.L, &model.TableInfo{
 				ID:            tblID,
 				TempTableType: model.TempTableGlobal,
 				State:         model.StatePublic,
@@ -357,7 +357,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 
 	createNormalTableChange := func(tblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
 		return func(m *meta.Meta, builder *infoschema.Builder) {
-			err := m.CreateTableOrView(db.ID, &model.TableInfo{
+			err := m.CreateTableOrView(db.ID, db.Name.L, &model.TableInfo{
 				ID:    tblID,
 				State: model.StatePublic,
 			})
@@ -369,7 +369,7 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 
 	dropTableChange := func(tblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
 		return func(m *meta.Meta, builder *infoschema.Builder) {
-			err := m.DropTableOrView(db.ID, tblID)
+			err := m.DropTableOrView(db.ID, db.Name.L, tblID, "")
 			require.NoError(t, err)
 			_, err = builder.ApplyDiff(m, &model.SchemaDiff{Type: model.ActionDropTable, SchemaID: db.ID, TableID: tblID})
 			require.NoError(t, err)
@@ -378,10 +378,10 @@ func TestBuildSchemaWithGlobalTemporaryTable(t *testing.T) {
 
 	truncateGlobalTemporaryTableChange := func(tblID, newTblID int64) func(m *meta.Meta, builder *infoschema.Builder) {
 		return func(m *meta.Meta, builder *infoschema.Builder) {
-			err := m.DropTableOrView(db.ID, tblID)
+			err := m.DropTableOrView(db.ID, db.Name.L, tblID, "")
 			require.NoError(t, err)
 
-			err = m.CreateTableOrView(db.ID, &model.TableInfo{
+			err = m.CreateTableOrView(db.ID, db.Name.L, &model.TableInfo{
 				ID:            newTblID,
 				TempTableType: model.TempTableGlobal,
 				State:         model.StatePublic,

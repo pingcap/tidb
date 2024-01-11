@@ -22,6 +22,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/autoid_service",
+        "//pkg/bindinfo",
         "//pkg/config",
         "//pkg/domain",
         "//pkg/domain/infosync",
@@ -90,6 +91,7 @@ go_library(
         "//pkg/util/logutil",
         "//pkg/util/memory",
         "//pkg/util/printer",
+        "//pkg/util/resourcegrouptag",
         "//pkg/util/sqlexec",
         "//pkg/util/sqlkiller",
         "//pkg/util/sys/linux",
@@ -117,6 +119,7 @@ go_library(
         "@com_github_soheilhy_cmux//:cmux",
         "@com_github_stretchr_testify//require",
         "@com_github_tiancaiamao_appdash//traceapp",
+        "@com_github_tikv_client_go_v2//tikvrpc",
         "@com_github_tikv_client_go_v2//util",
         "@com_sourcegraph_sourcegraph_appdash_data//:appdash-data",
         "@org_golang_google_grpc//:grpc",

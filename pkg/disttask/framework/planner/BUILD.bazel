@@ -27,7 +27,6 @@ go_test(
         ":planner",
         "//pkg/disttask/framework/mock",
         "//pkg/disttask/framework/storage",
-        "//pkg/disttask/framework/testutil",
         "//pkg/kv",
         "//pkg/testkit",
         "@com_github_ngaut_pools//:pools",

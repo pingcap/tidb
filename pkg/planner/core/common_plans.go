@@ -274,7 +274,6 @@ type SQLBindPlan struct {
 	NormdOrigSQL string
 	BindSQL      string
 	IsGlobal     bool
-	IsUniversal  bool // for universal binding
 	BindStmt     ast.StmtNode
 	Db           string
 	Charset      string
@@ -596,6 +595,8 @@ type ImportInto struct {
 
 	GenCols InsertGeneratedColumns
 	Stmt    string
+
+	SelectPlan PhysicalPlan
 }
 
 // LoadStats represents a load stats plan.

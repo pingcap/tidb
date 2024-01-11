@@ -94,11 +94,9 @@ func (s *importIntoSuite) TestSchedulerInit() {
 	bytes, err := json.Marshal(meta)
 	s.NoError(err)
 	sch := importScheduler{
-		BaseScheduler: &scheduler.BaseScheduler{
-			Task: &proto.Task{
-				Meta: bytes,
-			},
-		},
+		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
+			Meta: bytes,
+		}, scheduler.Param{}),
 	}
 	s.NoError(sch.Init())
 	s.False(sch.Extension.(*ImportSchedulerExt).GlobalSort)
@@ -107,11 +105,9 @@ func (s *importIntoSuite) TestSchedulerInit() {
 	bytes, err = json.Marshal(meta)
 	s.NoError(err)
 	sch = importScheduler{
-		BaseScheduler: &scheduler.BaseScheduler{
-			Task: &proto.Task{
-				Meta: bytes,
-			},
-		},
+		BaseScheduler: scheduler.NewBaseScheduler(context.Background(), &proto.Task{
+			Meta: bytes,
+		}, scheduler.Param{}),
 	}
 	s.NoError(sch.Init())
 	s.True(sch.Extension.(*ImportSchedulerExt).GlobalSort)

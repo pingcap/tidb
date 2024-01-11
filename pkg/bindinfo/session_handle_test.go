@@ -110,8 +110,12 @@ func TestSessionBinding(t *testing.T) {
 		require.Equal(t, testSQL.memoryUsage, pb.GetGauge().GetValue())
 
 		handle := tk.Session().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-		sqlDigest := parser.DigestNormalized(testSQL.originSQL).String()
-		bindData := handle.GetSessionBinding(sqlDigest)
+		stmt, err := parser.New().ParseOneStmt(testSQL.originSQL, "", "")
+		require.NoError(t, err)
+
+		_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+		bindData, err := handle.MatchSessionBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+		require.NoError(t, err)
 		require.NotNil(t, bindData)
 		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
 		bind := bindData.Bindings[0]
@@ -148,17 +152,10 @@ func TestSessionBinding(t *testing.T) {
 
 		_, err = tk.Exec("drop session " + testSQL.dropSQL)
 		require.NoError(t, err)
-		bindData = handle.GetSessionBinding(sqlDigest)
-		require.NotNil(t, bindData)
-		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
-		require.Len(t, bindData.Bindings, 0)
-
-		err = metrics.BindTotalGauge.WithLabelValues(metrics.ScopeSession, bindinfo.Enabled).Write(pb)
+		_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+		bindData, err = handle.MatchSessionBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 		require.NoError(t, err)
-		require.Equal(t, float64(0), pb.GetGauge().GetValue())
-		err = metrics.BindMemoryUsage.WithLabelValues(metrics.ScopeSession, bindinfo.Enabled).Write(pb)
-		require.NoError(t, err)
-		require.Equal(t, float64(0), pb.GetGauge().GetValue())
+		require.Nil(t, bindData) // dropped
 	}
 }
 
@@ -211,8 +208,9 @@ func TestBaselineDBLowerCase(t *testing.T) {
 	internal.UtilCleanBindingEnv(tk, dom)
 
 	// Simulate existing bindings with upper case default_db.
+	_, sqlDigest := parser.NormalizeDigestForBinding("select * from `spm` . `t`")
 	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select * from `spm` . `t`', 'SPM', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
 	tk.MustQuery("select original_sql, default_db from mysql.bind_info where original_sql = 'select * from `spm` . `t`'").Check(testkit.Rows(
 		"select * from `spm` . `t` SPM",
 	))
@@ -230,7 +228,7 @@ func TestBaselineDBLowerCase(t *testing.T) {
 	internal.UtilCleanBindingEnv(tk, dom)
 	// Simulate existing bindings with upper case default_db.
 	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select * from `spm` . `t`', 'SPM', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+		bindinfo.Manual + "', '" + sqlDigest.String() + "', '')")
 	tk.MustQuery("select original_sql, default_db from mysql.bind_info where original_sql = 'select * from `spm` . `t`'").Check(testkit.Rows(
 		"select * from `spm` . `t` SPM",
 	))
