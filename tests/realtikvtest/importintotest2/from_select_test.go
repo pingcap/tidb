@@ -15,6 +15,10 @@
 package importintotest
 
 import (
+	"fmt"
+	"slices"
+	"strings"
+
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -37,11 +41,30 @@ func (s *mockGCSSuite) TestImportFromSelectBasic() {
 	// non-empty table
 	s.ErrorContains(s.tk.ExecToErr(`import into dst FROM select * from src`), "target table is not empty")
 
+	// with where
 	s.tk.MustExec("truncate table dst")
-	s.tk.MustExec(`import into dst FROM select * from src where id > 5 with thread = 4`)
+	s.tk.MustExec(`import into dst FROM select * from src where id > 5`)
 	s.Equal(uint64(2), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
 	s.Contains(s.tk.Session().LastMessage(), "Records: 2,")
 	s.tk.MustQuery("select * from dst").Check(testkit.Rows("6 cccccc", "7 dddddd"))
+
+	// parallel
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", `return(8)`)
+	s.tk.MustExec("truncate table src")
+	s.tk.MustExec("truncate table dst")
+	var count = 5000
+	values := make([]string, 0, count)
+	queryResult := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		values = append(values, fmt.Sprintf("(%d, 'abc-%d')", i, i))
+		queryResult = append(queryResult, fmt.Sprintf("%d abc-%d", i, i))
+	}
+	slices.Sort(queryResult)
+	s.tk.MustExec("insert into src values " + strings.Join(values, ","))
+	s.tk.MustExec(`import into dst FROM select * from src with thread = 8`)
+	s.Equal(uint64(count), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
+	s.Contains(s.tk.Session().LastMessage(), fmt.Sprintf("Records: %d,", count))
+	s.tk.MustQuery("select * from dst").Sort().Check(testkit.Rows(queryResult...))
 }
 
 func (s *mockGCSSuite) TestWriteAfterImportFromSelect() {
