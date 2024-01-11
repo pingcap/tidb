@@ -3285,7 +3285,10 @@ func buildNoRangeTableReader(b *executorBuilder, v *plannercore.PhysicalTableRea
 		return nil, err
 	}
 
-	tbl, _ := b.is.TableByID(ts.Table.ID)
+	tbl, ok := b.is.TableByID(ts.Table.ID)
+	if !ok {
+		panic(ts.Table.ID)
+	}
 	isPartition, physicalTableID := ts.IsPartition()
 	if isPartition {
 		pt := tbl.(table.PartitionedTable)

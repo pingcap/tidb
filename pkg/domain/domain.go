@@ -492,6 +492,7 @@ func (do *Domain) InfoSchema() infoschema.InfoSchema {
 
 // GetSnapshotInfoSchema gets a snapshot information schema.
 func (do *Domain) GetSnapshotInfoSchema(snapshotTS uint64) (infoschema.InfoSchema, error) {
+	fmt.Println("GetSnapshotInfoSchema??? ", snapshotTS)
 	// if the snapshotTS is new enough, we can get infoschema directly through sanpshotTS.
 	if is := do.infoCache.GetBySnapshotTS(snapshotTS); is != nil {
 		return is, nil
@@ -2346,6 +2347,7 @@ func (do *Domain) loadStatsWorker() {
 	for {
 		select {
 		case <-loadTicker.C:
+			// continue
 			err = statsHandle.Update(do.InfoSchema())
 			if err != nil {
 				logutil.BgLogger().Debug("update stats info failed", zap.Error(err))

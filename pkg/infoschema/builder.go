@@ -20,8 +20,10 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	// "runtime/debug"
 
 	"github.com/ngaut/pools"
+	"github.com/dgraph-io/ristretto"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -774,7 +776,7 @@ func (b *Builder) applyRecoverSchema(m *meta.Meta, diff *model.SchemaDiff) ([]in
 
 func (b *Builder) copySortedTablesBucket(bucketIdx int) {
 	oldSortedTables := b.is.sortedTablesBuckets[bucketIdx]
-	newSortedTables := make(sortedTables, len(oldSortedTables))
+	newSortedTables := make([]sortedTableItem, len(oldSortedTables))
 	copy(newSortedTables, oldSortedTables)
 	b.is.sortedTablesBuckets[bucketIdx] = newSortedTables
 }
@@ -864,10 +866,11 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	tableNames := b.is.schemaMap[dbInfo.Name.L]
 	tableNames.tables[tblInfo.Name.L] = tbl
 	bucketIdx := tableBucketIdx(tableID)
-	b.is.sortedTablesBuckets[bucketIdx] = append(b.is.sortedTablesBuckets[bucketIdx], tbl)
-	slices.SortFunc(b.is.sortedTablesBuckets[bucketIdx], func(i, j table.Table) int {
-		return cmp.Compare(i.Meta().ID, j.Meta().ID)
+	b.is.sortedTablesBuckets[bucketIdx] = append(b.is.sortedTablesBuckets[bucketIdx], sortedTableItem{tableID, dbInfo.ID})
+	slices.SortFunc(b.is.sortedTablesBuckets[bucketIdx], func(i, j sortedTableItem) int {
+		return cmp.Compare(i.tableID, j.tableID)
 	})
+	b.is.tables.Set(tableID, tbl, cacheTableCost(tbl))
 
 	if tblInfo.TempTableType != model.TempTableNone {
 		b.addTemporaryTable(tableID)
@@ -914,12 +917,13 @@ func ConvertOldVersionUTF8ToUTF8MB4IfNeed(tbInfo *model.TableInfo) {
 func (b *Builder) applyDropTable(dbInfo *model.DBInfo, tableID int64, affected []int64) []int64 {
 	bucketIdx := tableBucketIdx(tableID)
 	sortedTbls := b.is.sortedTablesBuckets[bucketIdx]
-	idx := sortedTbls.searchTable(tableID)
+	idx := searchTable(sortedTbls, tableID)
 	if idx == -1 {
 		return affected
 	}
+	tbl, _ := b.is.TableByID(tableID)
 	if tableNames, ok := b.is.schemaMap[dbInfo.Name.L]; ok {
-		tblInfo := sortedTbls[idx].Meta()
+		tblInfo := tbl.Meta()
 		delete(tableNames.tables, tblInfo.Name.L)
 		affected = appendAffectedIDs(affected, tblInfo)
 	}
@@ -963,7 +967,9 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) *Builder {
 	b.copyTemporaryTableIDsMap(oldIS)
 	b.copyReferredForeignKeyMap(oldIS)
 
-	copy(b.is.sortedTablesBuckets, oldIS.sortedTablesBuckets)
+	b.is.sortedTablesBuckets = oldIS.sortedTablesBuckets
+	b.is.tables = oldIS.tables
+	b.is.virtual = oldIS.virtual
 	return b
 }
 
@@ -1038,6 +1044,18 @@ func (b *Builder) getSchemaAndCopyIfNecessary(dbName string) *model.DBInfo {
 func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64) (*Builder, error) {
 	info := b.is
 	info.schemaMetaVersion = schemaVersion
+	// fmt.Println("init with db infos===", schemaVersion)
+	cache, err := ristretto.NewCache(&ristretto.Config{
+		NumCounters: 1e6,  // this means at most 10,000 items, recommand num is 10x items
+		MaxCost:     10000, // if we measure one partition cost as 1, at most 10,000 partitions.
+		// MaxCost:     1000000, // if we measure one partition cost as 1, at most 10,000 partitions.
+		BufferItems: 64, 
+	})
+	if err != nil {
+		panic(err)
+	}
+	info.tables = cache
+
 	// build the policies.
 	for _, policy := range policies {
 		info.setPolicy(policy)
@@ -1072,8 +1090,8 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 
 	// Sort all tables by `ID`
 	for _, v := range info.sortedTablesBuckets {
-		slices.SortFunc(v, func(a, b table.Table) int {
-			return cmp.Compare(a.Meta().ID, b.Meta().ID)
+		slices.SortFunc(v, func(a, b sortedTableItem) int {
+			return cmp.Compare(a.tableID, b.tableID)
 		})
 	}
 	return b, nil
@@ -1102,6 +1120,7 @@ func (b *Builder) tableFromMeta(alloc autoid.Allocators, tblInfo *model.TableInf
 type tableFromMetaFunc func(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error)
 
 func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableFromMetaFunc) error {
+	// fmt.Println("init with db info ===============================", di)
 	schTbls := &schemaTables{
 		dbInfo: di,
 		tables: make(map[string]table.Table, len(di.Tables)),
@@ -1117,10 +1136,12 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 		}
 		schTbls.tables[t.Name.L] = tbl
 		sortedTbls := b.is.sortedTablesBuckets[tableBucketIdx(t.ID)]
-		b.is.sortedTablesBuckets[tableBucketIdx(t.ID)] = append(sortedTbls, tbl)
+		b.is.sortedTablesBuckets[tableBucketIdx(t.ID)] = append(sortedTbls, sortedTableItem{t.ID, di.ID})
 		if tblInfo := tbl.Meta(); tblInfo.TempTableType != model.TempTableNone {
 			b.addTemporaryTable(tblInfo.ID)
 		}
+		// fmt.Println("set === cache ===", t.ID, di.ID)
+		b.is.addTable(t.ID, tbl)
 	}
 	return nil
 }
@@ -1146,15 +1167,19 @@ func RegisterVirtualTable(dbInfo *model.DBInfo, tableFromMeta tableFromMetaFunc)
 
 // NewBuilder creates a new Builder with a Handle.
 func NewBuilder(r autoid.Requirement, factory func() (pools.Resource, error)) *Builder {
+	fmt.Println("new builder ========")
 	return &Builder{
 		Requirement: r,
 		is: &infoSchema{
+			r: r,
 			schemaMap:             map[string]*schemaTables{},
 			policyMap:             map[string]*model.PolicyInfo{},
 			resourceGroupMap:      map[string]*model.ResourceGroupInfo{},
 			ruleBundleMap:         map[int64]*placement.Bundle{},
-			sortedTablesBuckets:   make([]sortedTables, bucketCount),
+			// sortedTablesBuckets:   make([]sortedTables, bucketCount),
 			referredForeignKeyMap: make(map[SchemaAndTableName][]*model.ReferredFKInfo),
+			virtual: make(map[int64]table.Table),
+			// tables: cache,
 		},
 		dirtyDB: make(map[string]bool),
 		factory: factory,
