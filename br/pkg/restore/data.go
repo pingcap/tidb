@@ -139,9 +139,10 @@ func doRecoveryData(ctx context.Context, resolveTS uint64, allStores []*metapb.S
 		return totalRegions, recoveryError{error: err, atStage: StageRecovering}
 	}
 
-	if err := recovery.WaitApply(ctx); err != nil {
-		return totalRegions, recoveryError{error: err, atStage: StageRecovering}
-	}
+	// Skip wait follower apply because for the new backup implementation it is no meaning.
+	// if err := recovery.WaitApply(ctx); err != nil {
+	// 	return totalRegions, recoveryError{error: err, atStage: StageRecovering}
+	// }
 
 	if err := recovery.PrepareFlashbackToVersion(ctx, resolveTS, restoreTS-1); err != nil {
 		return totalRegions, recoveryError{error: err, atStage: StageFlashback}
