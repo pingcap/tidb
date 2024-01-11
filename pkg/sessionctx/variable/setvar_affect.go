@@ -93,6 +93,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_enable_inl_join_inner_multi_pattern":        {},
 	"tidb_opt_enable_late_materialization":            {},
 	"tidb_opt_ordering_index_selectivity_threshold":   {},
+	"tidb_opt_ordering_index_selectivity_ratio":       {},
 	"tidb_opt_enable_mpp_shared_cte_execution":        {},
 	"tidb_opt_fix_control":                            {},
 	"tidb_runtime_filter_type":                        {},

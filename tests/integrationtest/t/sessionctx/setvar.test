@@ -652,6 +652,14 @@ select /*+ set_var(tidb_opt_ordering_index_selectivity_threshold=1) */ @@tidb_op
 select @@tidb_opt_ordering_index_selectivity_threshold;
 set @@tidb_opt_ordering_index_selectivity_threshold=default;
 select @@tidb_opt_ordering_index_selectivity_threshold;
+select /*+ set_var(tidb_opt_ordering_index_selectivity_ratio=-1) */ @@tidb_opt_ordering_index_selectivity_ratio;
+select @@tidb_opt_ordering_index_selectivity_ratio;
+set @@tidb_opt_ordering_index_selectivity_ratio=default;
+select @@tidb_opt_ordering_index_selectivity_ratio;
+select /*+ set_var(tidb_opt_ordering_index_selectivity_ratio=1) */ @@tidb_opt_ordering_index_selectivity_ratio;
+select @@tidb_opt_ordering_index_selectivity_ratio;
+set @@tidb_opt_ordering_index_selectivity_ratio=default;
+select @@tidb_opt_ordering_index_selectivity_ratio;
 select /*+ set_var(tidb_opt_enable_mpp_shared_cte_execution=0) */ @@tidb_opt_enable_mpp_shared_cte_execution;
 select @@tidb_opt_enable_mpp_shared_cte_execution;
 set @@tidb_opt_enable_mpp_shared_cte_execution=default;
