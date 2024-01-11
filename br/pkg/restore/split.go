@@ -178,7 +178,7 @@ func (rs *RegionSplitter) executeSplitByRanges(
 			}
 		}
 		// pd cannot handling too many scan regions requests.
-		poolSize := mathutil.Min(uint(splitContext.storeCount), splitRegionRangesConcurrency)
+		poolSize := mathutil.Clamp(uint(splitContext.storeCount), 1, splitRegionRangesConcurrency)
 		workerPool := utils.NewWorkerPool(poolSize, "split ranges")
 		eg, ectx := errgroup.WithContext(ctx)
 		for rID, rgs := range splitRangeMap {
