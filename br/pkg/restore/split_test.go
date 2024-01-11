@@ -230,7 +230,7 @@ func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit 
 		c.InjectTimes -= 1
 		return nil, status.Error(codes.Unavailable, "not leader")
 	}
-	if bytes.Compare(key, endKey) == 0 {
+	if bytes.Equal(key, endKey) {
 		return nil, status.Error(codes.Internal, "key and endKey are the same")
 	}
 
