@@ -86,13 +86,13 @@ type SortExec struct {
 		idx    int64
 
 		chunkChannel    chan *chunkWithMemoryUsage
-		isChannelClosed atomic.Bool
+		isChannelClosed *atomic.Bool
 		workers         []*parallelSortWorker
 
 		// All workers' sorted rows will be put into this list to be merged
-		globalSortedRowsQueue sortedRowsList
+		globalSortedRowsQueue *sortedRowsList
 
-		errRWLock sync.RWMutex
+		errRWLock *sync.RWMutex
 		err       error
 	}
 
@@ -143,7 +143,10 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Parallel.idx = 0
 		e.Parallel.workers = make([]*parallelSortWorker, e.Ctx().GetSessionVars().ExecutorConcurrency)
 		e.Parallel.chunkChannel = make(chan *chunkWithMemoryUsage, defaultChunkChannelSize)
+		e.Parallel.isChannelClosed = &atomic.Bool{}
 		e.Parallel.isChannelClosed.Store(false)
+		e.Parallel.globalSortedRowsQueue = &sortedRowsList{}
+		e.Parallel.errRWLock = &sync.RWMutex{}
 		e.Parallel.err = nil
 	}
 
@@ -170,53 +173,56 @@ func (e *SortExec) Open(ctx context.Context) error {
 //     global queue and repeat the above processes until global queue has only one slice.
 //
 // Overview of stage 1:
-//                       ┌─────────┐
-//                       │  Child  │
-//                       └────▲────┘
-//                            │
-//                          Fetch
-//                            │
-//                    ┌───────┴───────┐
-//                    │ Chunk Fetcher │
-//                    └───────┬───────┘
-//                            │
-//                          Push
-//                            │
-//                            ▼
-//       ┌────────────────►Channel◄───────────────────┐
-//       │                    ▲                       │
-//       │                    │                       │
-//     Fetch                Fetch                   Fetch
-//       │                    │                       │
-//  ┌────┴───┐            ┌───┴────┐              ┌───┴────┐
-//  │ Worker │            │ Worker │   ......     │ Worker │
-//  └────┬───┘            └───┬────┘              └───┬────┘
-//       │                    │                       │
-//       │                    │                       │
+//
+//	                     ┌─────────┐
+//	                     │  Child  │
+//	                     └────▲────┘
+//	                          │
+//	                        Fetch
+//	                          │
+//	                  ┌───────┴───────┐
+//	                  │ Chunk Fetcher │
+//	                  └───────┬───────┘
+//	                          │
+//	                        Push
+//	                          │
+//	                          ▼
+//	     ┌────────────────►Channel◄───────────────────┐
+//	     │                    ▲                       │
+//	     │                    │                       │
+//	   Fetch                Fetch                   Fetch
+//	     │                    │                       │
+//	┌────┴───┐            ┌───┴────┐              ┌───┴────┐
+//	│ Worker │            │ Worker │   ......     │ Worker │
+//	└────┬───┘            └───┬────┘              └───┬────┘
+//	     │                    │                       │
+//	     │                    │                       │
+//
 // Sort And Put         Sort And Put            Sort And Put
-//       │                    │                       │
-//       │                    │                       │
-//       │             ┌──────▼────────┐              │
-//       └────────────►│ Global Queue  │◄─────────────┘
-//                     └───────────────┘
+//
+//	│                    │                       │
+//	│                    │                       │
+//	│             ┌──────▼────────┐              │
+//	└────────────►│ Global Queue  │◄─────────────┘
+//	              └───────────────┘
 //
 // Overview of stage 2:
 // ┌────────┐    ┌────────┐          ┌────────┐
 // │ Worker │    │ Worker │  ......  │ Worker │
 // └──────┬─┘    └──────┬─┘          └─┬──────┘
-//   ▲    │        ▲    │              │    ▲
-//   │    │        │    │              │    │
-//   │    │        │    │              │    │
-//   │   Put       │   Put            Put   │
-//   │    │        │    │              │    │
-//   │    │       Pop   │              │    │
-//   │    │        │    ▼              │    │
-//   │    │   ┌────┴─────────┐         │    │
-//   │    └──►│              │◄────────┘    │
-//   │        │ Global Queue │              │
-//  Pop───────┤              ├─────────────Pop
-//            └──────────────┘
-
+//
+//	 ▲    │        ▲    │              │    ▲
+//	 │    │        │    │              │    │
+//	 │    │        │    │              │    │
+//	 │   Put       │   Put            Put   │
+//	 │    │        │    │              │    │
+//	 │    │       Pop   │              │    │
+//	 │    │        │    ▼              │    │
+//	 │    │   ┌────┴─────────┐         │    │
+//	 │    └──►│              │◄────────┘    │
+//	 │        │ Global Queue │              │
+//	Pop───────┤              ├─────────────Pop
+//	          └──────────────┘
 func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	if !e.fetched {
@@ -490,7 +496,7 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 
 	// Create and run workers
 	for i := range e.Parallel.workers {
-		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, &e.Parallel.globalSortedRowsQueue, &workersWaiter, &e.Parallel.result, e.Parallel.chunkChannel, e.tryToCloseChunkChannel, e.checkErrorForParallel, e.processErrorForParallel, e.memTracker)
+		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.globalSortedRowsQueue, &workersWaiter, &e.Parallel.result, e.Parallel.chunkChannel, e.tryToCloseChunkChannel, e.checkErrorForParallel, e.processErrorForParallel, e.memTracker)
 		go e.Parallel.workers[i].run()
 	}
 
