@@ -29,8 +29,8 @@ func IsTiFlash(store *metapb.Store) bool {
 	return false
 }
 
-// IsTiFlashForHttpAPI is same as https://github.com/tikv/pd/blob/120351162c2050d9217ee4c8920e75d7297f3f29/pkg/core/store.go#L164.
-func IsTiFlashForHttpAPI(store *pdhttp.StoreInfo) bool {
+// IsTiFlashForHTTPAPI is same as https://github.com/tikv/pd/blob/120351162c2050d9217ee4c8920e75d7297f3f29/pkg/core/store.go#L164.
+func IsTiFlashForHTTPAPI(store *pdhttp.StoreInfo) bool {
 	for _, l := range store.Store.Labels {
 		if l.Key == "engine" && l.Value == "tiflash" {
 			return true

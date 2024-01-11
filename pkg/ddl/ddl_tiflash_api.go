@@ -341,7 +341,7 @@ func updateTiFlashStores(pollTiFlashContext *TiFlashManagementContext) error {
 	}
 	pollTiFlashContext.TiFlashStores = make(map[int64]pd.StoreInfo)
 	for _, store := range tikvStats.Stores {
-		if engine.IsTiFlashForHttpAPI(&store) {
+		if engine.IsTiFlashForHTTPAPI(&store) {
 			pollTiFlashContext.TiFlashStores[store.Store.ID] = store
 		}
 	}

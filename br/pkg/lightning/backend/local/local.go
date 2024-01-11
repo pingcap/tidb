@@ -1117,7 +1117,7 @@ func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 	ratio := available * 100 / capacity
 	if ratio < 10 {
 		storeType := "TiKV"
-		if engine.IsTiFlashForHttpAPI(store) {
+		if engine.IsTiFlashForHTTPAPI(store) {
 			storeType = "TiFlash"
 		}
 		return errors.Errorf("the remaining storage capacity of %s(%s) is less than 10%%; please increase the storage capacity of %s and try again",

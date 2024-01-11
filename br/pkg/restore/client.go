@@ -1918,7 +1918,7 @@ func (rc *Client) GoWaitTiFlashReady(ctx context.Context, inCh <-chan *CreatedTa
 	}
 	tiFlashStores := make(map[int64]pdhttp.StoreInfo)
 	for _, store := range tikvStats.Stores {
-		if engine.IsTiFlashForHttpAPI(&store) {
+		if engine.IsTiFlashForHTTPAPI(&store) {
 			tiFlashStores[store.Store.ID] = store
 		}
 	}
