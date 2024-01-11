@@ -1,15 +1,15 @@
 header:
   license:
     spdx-id: Apache-2.0
-    copyright-owner: PingCAP, Inc.
+    copyright-owner: 'PingCAP, Inc.'
   paths-ignore:
-    - 'docs/'
-    - 'br/'
-    - '.gitignore'
-    - '.gitattributes'
-    - '.golangci.yml'
-    - '.golangci_br.yml'
-    - 'LICENSES/'
+    - docs/
+    - br/
+    - .gitignore
+    - .gitattributes
+    - .golangci.yml
+    - .golangci_br.yml
+    - LICENSES/
     - '**/*.md'
     - '**/*.json'
     - '**/*.pem'
@@ -17,15 +17,17 @@ header:
     - '**/*.test'
     - '**/*.result'
     - '**/*.example'
-    - '.codecov.yml'
-    - 'errors.toml'
-    - 'Jenkinsfile'
-    - '.editorconfig'
-    - 'hooks/pre-commit'
+    - .codecov.yml
+    - errors.toml
+    - Jenkinsfile
+    - .editorconfig
+    - hooks/pre-commit
     - '**/go.mod'
     - '**/go.sum'
-    - 'LICENSE'
-    - '.github/'
-    - 'parser/'
-    - 'dumpling/'
+    - LICENSE
+    - .github/
+    - parser/
+    - dumpling/
+    - '**/OWNERS'
+    - OWNERS_ALIASES
   comment: on-failure
