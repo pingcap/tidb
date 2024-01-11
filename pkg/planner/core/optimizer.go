@@ -1116,12 +1116,10 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 		if noOrder && supportClone {
 			apply.Concurrency = sctx.GetSessionVars().ExecutorConcurrency
 		} else {
-			if err != nil && noOrder {
+			if err != nil {
 				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Some apply operators can not be executed in parallel: %v", err))
-			} else if err == nil && !noOrder {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Some apply operators can not be executed in parallel because of no order"))
-			} else if err != nil && !noOrder {
-				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Some apply operators can not be executed in parallel : %v and no order", err))
+			} else {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Some apply operators can not be executed in parallel"))
 			}
 		}
 		// because of the limitation 3, we cannot parallelize Apply operators in this Apply's inner size,
