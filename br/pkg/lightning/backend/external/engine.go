@@ -293,9 +293,9 @@ func (e *Engine) LoadIngestData(
 	regionRanges []common.Range,
 	outCh chan<- common.DataAndRange,
 ) error {
-	// currently we assume the region size is 96MB and will download 96MB*40 = 3.8GB
+	// currently we assume the region size is 96MB and will download 96MB*20 = 1.9GB
 	// data at once
-	regionBatchSize := 40
+	regionBatchSize := 20
 	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
 		regionBatchSize = val.(int)
 	})
