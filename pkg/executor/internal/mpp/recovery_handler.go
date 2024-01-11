@@ -12,25 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package mpperr
+package mpp
 
 import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 )
 
 // RecoveryHandler tries to recovery mpp error.
 type RecoveryHandler struct {
-	enable   bool
-	handlers []handlerImpl
-	holder   *mppResultHolder
-
-	curRecoveryCnt uint32
+	holder         *mppResultHolder
+	handlers       []handlerImpl
 	maxRecoveryCnt uint32
+	curRecoveryCnt uint32
+	enable         bool
 }
 
 // RecoveryInfo contains info that can help recovery error.
@@ -67,33 +65,28 @@ func (m *RecoveryHandler) CanHoldResult() bool {
 }
 
 // HoldResult tries to hold mpp result. You should call Enabled() and CanHoldResult() to check first.
-func (m *RecoveryHandler) HoldResult(chk *chunk.Chunk) {
-	m.holder.insert(chk)
+func (m *RecoveryHandler) HoldResult(resp *mppResponse) {
+	m.holder.insert(resp)
 }
 
-// NumHoldChk returns the number of chunk holded.
-func (m *RecoveryHandler) NumHoldChk() int {
-	return len(m.holder.chks)
+// NumHoldResp returns the number of resp holded.
+func (m *RecoveryHandler) NumHoldResp() int {
+	return len(m.holder.resps)
 }
 
-// NumHoldRows returns the number of chunk holded.
-func (m *RecoveryHandler) NumHoldRows() uint64 {
-	return m.holder.curRows
-}
-
-// PopFrontChk pop one chunk.
-func (m *RecoveryHandler) PopFrontChk() *chunk.Chunk {
-	if !m.enable || len(m.holder.chks) == 0 {
-		return nil
+// PopFrontResp pop one resp.
+func (m *RecoveryHandler) PopFrontResp() (*mppResponse, error) {
+	if !m.enable || len(m.holder.resps) == 0 {
+		return nil, errors.Errorf("pop resp failed. enable: %v, size: %v", m.enable, len(m.holder.resps))
 	}
-	chk := m.holder.chks[0]
-	m.holder.chks = m.holder.chks[1:]
-	m.holder.memTracker.Consume(-chk.MemoryUsage())
+	resp := m.holder.resps[0]
+	m.holder.resps = m.holder.resps[1:]
+	m.holder.memTracker.Consume(-resp.MemSize())
 	m.holder.cannotHold = true
-	return chk
+	return resp, nil
 }
 
-// ResetHolder reset the dynamic data, like chk and recovery cnt.
+// ResetHolder reset the dynamic data, like resps and recovery cnt.
 // Will not touch other metadata, like enable.
 func (m *RecoveryHandler) ResetHolder() {
 	m.holder.reset()
@@ -165,35 +158,34 @@ func (*memLimitHandlerImpl) doRecovery(info *RecoveryInfo) error {
 }
 
 type mppResultHolder struct {
-	capacity uint64
-	// True when holder is full or begin to return result.
-	cannotHold bool
-	curRows    uint64
-	chks       []*chunk.Chunk
 	memTracker *memory.Tracker
+	resps      []*mppResponse
+	capacity   uint64
+	cannotHold bool
 }
 
 func newMPPResultHolder(holderCap uint64, parent *memory.Tracker) *mppResultHolder {
+	tracker := memory.NewTracker(parent.Label(), 0)
+	tracker.AttachTo(parent)
 	return &mppResultHolder{
 		capacity:   holderCap,
-		chks:       []*chunk.Chunk{},
-		memTracker: memory.NewTracker(parent.Label(), 0),
+		resps:      make([]*mppResponse, 0, holderCap),
+		memTracker: tracker,
 	}
 }
 
-func (h *mppResultHolder) insert(chk *chunk.Chunk) {
-	h.chks = append(h.chks, chk)
-	h.curRows += uint64(chk.NumRows())
+func (h *mppResultHolder) insert(resp *mppResponse) {
+	h.resps = append(h.resps, resp)
 
-	if h.curRows >= h.capacity {
+	// TODO: Better use row number as threshold. Need to add row number info in tipb.MPPDataPacket.
+	if len(h.resps) >= int(h.capacity) {
 		h.cannotHold = true
 	}
-	h.memTracker.Consume(chk.MemoryUsage())
+	h.memTracker.Consume(resp.MemSize())
 }
 
 func (h *mppResultHolder) reset() {
 	h.cannotHold = false
-	h.curRows = 0
-	h.chks = h.chks[:0]
+	h.resps = h.resps[:0]
 	h.memTracker.Detach()
 }
