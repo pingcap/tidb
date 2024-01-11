@@ -105,9 +105,15 @@ func (c *Compiler) Compile(ctx context.Context, stmtNode ast.StmtNode) (_ *ExecS
 	})
 
 	if preparedObj != nil {
+<<<<<<< HEAD:executor/compiler.go
 		CountStmtNode(preparedObj.PreparedAst.Stmt, sessVars.InRestrictedSQL)
 	} else {
 		CountStmtNode(stmtNode, sessVars.InRestrictedSQL)
+=======
+		CountStmtNode(preparedObj.PreparedAst.Stmt, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
+	} else {
+		CountStmtNode(stmtNode, sessVars.InRestrictedSQL, stmtCtx.ResourceGroupName)
+>>>>>>> 190488d0dbb (metrics: add new row panel for tidb query (#50086)):pkg/executor/compiler.go
 	}
 	var lowerPriority bool
 	if c.Ctx.GetSessionVars().StmtCtx.Priority == mysql.NoPriority {

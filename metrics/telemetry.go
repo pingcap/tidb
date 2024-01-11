@@ -476,7 +476,11 @@ func GetNonTransactionalStmtCounter() NonTransactionalStmtCounter {
 
 // GetSavepointStmtCounter gets the savepoint statement executed counter.
 func GetSavepointStmtCounter() int64 {
+<<<<<<< HEAD:metrics/telemetry.go
 	return readCounter(StmtNodeCounter.With(prometheus.Labels{LblType: "Savepoint", LblDb: ""}))
+=======
+	return readCounter(StmtNodeCounter.WithLabelValues("Savepoint", "", "default"))
+>>>>>>> 190488d0dbb (metrics: add new row panel for tidb query (#50086)):pkg/metrics/telemetry.go
 }
 
 // GetLazyPessimisticUniqueCheckSetCounter returns the counter of setting tidb_constraint_check_in_place_pessimistic to false.
