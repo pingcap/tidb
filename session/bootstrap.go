@@ -2409,6 +2409,7 @@ func doDMLWorks(s Session) {
 		if !v.HasGlobalScope() {
 			continue
 		}
+<<<<<<< HEAD:session/bootstrap.go
 		vVal := v.Value
 		switch v.Name {
 		case variable.TiDBTxnMode:
@@ -2438,6 +2439,10 @@ func doDMLWorks(s Session) {
 		case variable.TiDBEnableMutationChecker:
 			vVal = variable.On
 		}
+=======
+		vVal := variable.GlobalSystemVariableInitialValue(v.Name, v.Value)
+
+>>>>>>> 205b5bbd210 (variable: fix information_schema.VARIABLES_INFO DEFAULT_VALUE not right problem (#49524)):pkg/session/bootstrap.go
 		// sanitize k and vVal
 		value := fmt.Sprintf(`("%s", "%s")`, sqlexec.EscapeString(k), sqlexec.EscapeString(vVal))
 		values = append(values, value)
