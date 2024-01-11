@@ -18,6 +18,7 @@ import (
 	"container/heap"
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -77,8 +78,9 @@ type SortExec struct {
 		rowNum int64
 		idx    int64
 
-		chunkChannel chan *chunkWithMemoryUsage
-		workers      []*parallelSortWorker
+		chunkChannel    chan *chunkWithMemoryUsage
+		isChannelClosed atomic.Bool
+		workers         []*parallelSortWorker
 
 		// All workers' sorted rows will be put into this list to be merged
 		globalSortedRowsQueue sortedRowsList
@@ -148,6 +150,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Parallel.idx = 0
 		e.Parallel.workers = make([]*parallelSortWorker, e.Ctx().GetSessionVars().ExecutorConcurrency)
 		e.Parallel.chunkChannel = make(chan *chunkWithMemoryUsage, defaultChunkChannelSize)
+		e.Parallel.isChannelClosed.Store(false)
 		e.Parallel.err = nil
 	}
 
@@ -315,6 +318,12 @@ func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDe
 	return nil
 }
 
+func (e *SortExec) tryToCloseChunkChannel() {
+	if e.Parallel.isChannelClosed.CompareAndSwap(false, true) {
+		close(e.Parallel.chunkChannel)
+	}
+}
+
 func (e *SortExec) checkError() error {
 	for _, partition := range e.sortPartitions {
 		err := partition.checkError()
@@ -432,15 +441,18 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 
 	// Create and run workers
 	for i := range e.Parallel.workers {
-		e.Parallel.workers[i] = newParallelSortWorker(e.lessRow, &e.Parallel.globalSortedRowsQueue, &workersWaiter, &e.Parallel.result, e.Parallel.chunkChannel, e.checkErrorForParallel, e.processErrorForParallel, e.memTracker)
+		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, &e.Parallel.globalSortedRowsQueue, &workersWaiter, &e.Parallel.result, e.Parallel.chunkChannel, e.tryToCloseChunkChannel, e.checkErrorForParallel, e.processErrorForParallel, e.memTracker)
 		go e.Parallel.workers[i].run()
 	}
 
 	// Wait for the finish of all workers
 	workersWaiter.Wait()
-	e.fetchResultFromQueue()
 	err := e.checkErrorForParallel()
-	return err
+	if err != nil {
+		return err
+	}
+	e.fetchResultFromQueue()
+	return nil
 }
 
 // Fetch chunks from child and put chunks into MPMCQueue
@@ -449,7 +461,7 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context, waitGroup *sync.Wai
 		if r := recover(); r != nil {
 			processPanicAndLog(e.processErrorForParallel, r)
 		}
-		close(e.Parallel.chunkChannel)
+		e.tryToCloseChunkChannel()
 		waitGroup.Done()
 	}()
 
@@ -472,12 +484,17 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context, waitGroup *sync.Wai
 		}
 
 		e.memTracker.Consume(chkWithMemoryUsage.MemoryUsage)
+
+		// chunkChannel may be closed by workers and it's ok to let it panic
+		// as workers have panicked and the query can't keep on running.
 		e.Parallel.chunkChannel <- chkWithMemoryUsage
 
 		err = e.checkErrorForParallel()
 		if err != nil {
 			return
 		}
+
+		injectParallelSortRandomFail()
 	}
 }
 
@@ -490,7 +507,9 @@ func (e *SortExec) checkErrorForParallel() error {
 func (e *SortExec) processErrorForParallel(err error) {
 	e.Parallel.errRWLock.Lock()
 	defer e.Parallel.errRWLock.Unlock()
-	e.Parallel.err = err
+	if e.Parallel.err == nil {
+		e.Parallel.err = err
+	}
 }
 
 func (e *SortExec) fetchResultFromQueue() {

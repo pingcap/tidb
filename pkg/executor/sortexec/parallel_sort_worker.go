@@ -15,7 +15,9 @@
 package sortexec
 
 import (
+	"math/rand"
 	"sync"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -27,47 +29,67 @@ import (
 const SignalCheckpointForSort uint = 20000
 
 type parallelSortWorker struct {
+	workerIDForTest int
+
 	lessRowFunc func(chunk.Row, chunk.Row) int
 
-	globalSortedRowsQueue *sortedRowsList
-
 	waitGroup *sync.WaitGroup
-	result    *sortedRows
-
-	chunkChannel chan *chunkWithMemoryUsage
-	checkError   func() error
-	processError func(error)
-
-	totalMemoryUsage  int64
-	timesOfRowCompare uint
-
-	memTracker *memory.Tracker
 
 	// Temporarily store rows that will be sorted.
-	rowBuffer sortedRows
+	rowBuffer             sortedRows
+	result                *sortedRows
+	globalSortedRowsQueue *sortedRowsList
+
+	chunkChannel           chan *chunkWithMemoryUsage
+	tryToCloseChunkChannel func()
+	checkError             func() error
+	processError           func(error)
+
+	timesOfRowCompare uint
+
+	totalMemoryUsage int64
+	memTracker       *memory.Tracker
 }
 
 func newParallelSortWorker(
+	workerIDForTest int,
 	lessRowFunc func(chunk.Row, chunk.Row) int,
 	globalSortedRowsQueue *sortedRowsList,
 	waitGroup *sync.WaitGroup,
 	result *sortedRows,
 	chunkChannel chan *chunkWithMemoryUsage,
+	tryToCloseChunkChannel func(),
 	checkError func() error,
 	processError func(error),
 	memTracker *memory.Tracker) *parallelSortWorker {
 	return &parallelSortWorker{
-		lessRowFunc:           lessRowFunc,
-		globalSortedRowsQueue: globalSortedRowsQueue,
-		waitGroup:             waitGroup,
-		result:                result,
-		chunkChannel:          chunkChannel,
-		checkError:            checkError,
-		processError:          processError,
-		totalMemoryUsage:      0,
-		timesOfRowCompare:     0,
-		memTracker:            memTracker,
+		workerIDForTest:        workerIDForTest,
+		lessRowFunc:            lessRowFunc,
+		globalSortedRowsQueue:  globalSortedRowsQueue,
+		waitGroup:              waitGroup,
+		result:                 result,
+		chunkChannel:           chunkChannel,
+		tryToCloseChunkChannel: tryToCloseChunkChannel,
+		checkError:             checkError,
+		processError:           processError,
+		totalMemoryUsage:       0,
+		timesOfRowCompare:      0,
+		memTracker:             memTracker,
 	}
+}
+
+func (p *parallelSortWorker) injectFailPointForParallelSortWorker() {
+	injectParallelSortRandomFail()
+	failpoint.Inject("SlowSomeWorkers", func(val failpoint.Value) {
+		if val.(bool) {
+			if p.workerIDForTest%2 == 0 {
+				randNum := rand.Int31n(10000)
+				if randNum < 100 {
+					time.Sleep(5 * time.Millisecond)
+				}
+			}
+		}
+	})
 }
 
 // Fetching chunks from MPMCQueue and sort them.
@@ -90,6 +112,7 @@ func (p *parallelSortWorker) fetchChunksAndSort() bool {
 
 		sortedRows := p.sortChunkAndGetSortedRows(chk.Chk)
 		p.globalSortedRowsQueue.add(sortedRows)
+		p.injectFailPointForParallelSortWorker()
 	}
 }
 
@@ -117,6 +140,7 @@ func (p *parallelSortWorker) mergeSortGlobalRows() {
 
 		mergedSortedRows := p.mergeTwoSortedRows(sortedRowsLeft, sortedRowsRight)
 		p.globalSortedRowsQueue.add(mergedSortedRows)
+		p.injectFailPointForParallelSortWorker()
 	}
 }
 
@@ -135,6 +159,11 @@ func (p *parallelSortWorker) mergeTwoSortedRows(sortedRowsLeft sortedRows, sorte
 			p.timesOfRowCompare = 0
 		}
 
+		failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
+			if val.(bool) {
+				p.timesOfRowCompare += 1024
+			}
+		})
 		p.timesOfRowCompare++
 
 		if p.lessRowFunc(sortedRowsLeft[cursorLeft], sortedRowsRight[cursorRight]) < 0 {
@@ -174,6 +203,7 @@ func (p *parallelSortWorker) run() {
 	defer func() {
 		if r := recover(); r != nil {
 			processPanicAndLog(p.processError, r)
+			p.tryToCloseChunkChannel()
 		}
 		p.waitGroup.Done()
 	}()

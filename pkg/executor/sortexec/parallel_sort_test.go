@@ -15,14 +15,33 @@
 package sortexec_test
 
 import (
+	"context"
 	"testing"
 
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
+	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+// Test is successful if there is no hang
+func executeInFailpoint(t *testing.T, exe *sortexec.SortExec) {
+	tmpCtx := context.Background()
+	err := exe.Open(tmpCtx)
+	require.NoError(t, err)
+
+	chk := exec.NewFirstChunk(exe)
+	for {
+		exe.Next(tmpCtx, chk)
+		if chk.NumRows() == 0 {
+			break
+		}
+	}
+}
 
 func parallelSortTest(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) {
 	ctx.GetSessionVars().InitChunkSize = 32
@@ -42,14 +61,41 @@ func parallelSortTest(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCa
 	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
 
+func failpointTest(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase, dataSource *testutil.MockDataSource) {
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+	ctx.GetSessionVars().EnableParallelSort = true
+	exe := buildSortExec(ctx, sortCase, dataSource)
+	dataSource.PrepareChunks()
+	executeInFailpoint(t, exe)
+}
+
 func TestParallelSort(t *testing.T) {
 	ctx := mock.NewContext()
 	rowNum := 65536
 	nvd := 200 // we have two column and should ensure that nvd*nvd is less than rowNum.
 	sortCase := &testutil.SortCase{Rows: rowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{nvd, nvd}, Ctx: ctx}
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
 	for i := 0; i < 30; i++ {
 		parallelSortTest(t, ctx, sortCase)
 	}
 }
 
-// TODO add failpoint
+func TestFailpoint(t *testing.T) {
+	ctx := mock.NewContext()
+	rowNum := 65536
+	sortCase := &testutil.SortCase{Rows: rowNum, OrderByIdx: []int{0, 1}, Ndvs: []int{0, 0}, Ctx: ctx}
+	schema := expression.NewSchema(sortCase.Columns()...)
+	dataSource := buildDataSource(ctx, sortCase, schema)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
+	testNum := 100
+	for i := 0; i < testNum; i++ {
+		failpointTest(t, ctx, sortCase, dataSource)
+	}
+}

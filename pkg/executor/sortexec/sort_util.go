@@ -16,8 +16,10 @@ package sortexec
 
 import (
 	"container/list"
+	"math/rand"
 	"sync"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -113,4 +115,15 @@ func popFromList(l *list.List) sortedRows {
 type chunkWithMemoryUsage struct {
 	Chk         *chunk.Chunk
 	MemoryUsage int64
+}
+
+func injectParallelSortRandomFail() {
+	failpoint.Inject("ParallelSortRandomFail", func(val failpoint.Value) {
+		if val.(bool) {
+			randNum := rand.Int31n(10000)
+			if randNum < 5 {
+				panic("panic is triggered by random fail")
+			}
+		}
+	})
 }
