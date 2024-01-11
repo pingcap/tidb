@@ -946,6 +946,7 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	}
 
 	if err = w.checkOwnerBeforeCommit(); err != nil {
+		d.unlockSchemaVersion(job.ID)
 		return 0, err
 	}
 
