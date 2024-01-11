@@ -394,6 +394,8 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 			err := w.Init(ctx, int64(5*size.MB))
 			require.NoError(t, err)
 			// we don't need data files
+			err = w.dataWriter.Close(ctx)
+			require.NoError(t, err)
 			w.dataWriter = storage.NoopWriter{}
 
 			kvSize := 20 * size.KB
