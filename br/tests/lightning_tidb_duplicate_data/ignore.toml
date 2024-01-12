@@ -1,4 +1,4 @@
 [tikv-importer]
 backend = "tidb"
 on-duplicate = "ignore"
-tidb-write-throughput-limit = 1
+logical-import-batch-rows = 1
