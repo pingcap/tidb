@@ -445,7 +445,7 @@ type queryChunkEncoder struct {
 
 var _ chunkEncoder = (*queryChunkEncoder)(nil)
 
-func (e *queryChunkEncoder) init() error {
+func (*queryChunkEncoder) init() error {
 	return nil
 }
 

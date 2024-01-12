@@ -693,7 +693,7 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		colSizeMap = make(map[int64]int64)
 	)
 	eg, egCtx := tidbutil.NewErrorGroupWithRecoverWithCtx(ctx)
-	for i := 0; i < int(ti.ThreadCnt); i++ {
+	for i := 0; i < ti.ThreadCnt; i++ {
 		eg.Go(func() error {
 			chunkCheckpoint := checkpoints.ChunkCheckpoint{}
 			progress := NewProgress()

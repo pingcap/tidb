@@ -67,6 +67,21 @@ func (s *mockGCSSuite) TestImportFromSelectBasic() {
 	s.tk.MustQuery("select * from dst").Sort().Check(testkit.Rows(queryResult...))
 }
 
+func (s *mockGCSSuite) TestImportFromSelectColumnList() {
+	s.prepareAndUseDB("from_select")
+	s.tk.MustExec("create table src(id int, a varchar(64))")
+	s.tk.MustExec("create table dst(id int auto_increment primary key, a varchar(64), b int default 10, c int)")
+	s.tk.MustExec("insert into src values(4, 'aaaaaa'), (5, 'bbbbbb'), (6, 'cccccc'), (7, 'dddddd')")
+	s.tk.MustExec(`import into dst(c, a) FROM select * from src order by id`)
+	s.tk.MustQuery("select * from dst").Check(testkit.Rows("1 aaaaaa 10 4", "2 bbbbbb 10 5", "3 cccccc 10 6", "4 dddddd 10 7"))
+
+	s.tk.MustExec("truncate table dst")
+	s.tk.MustExec("create table src2(id int, a varchar(64))")
+	s.tk.MustExec("insert into src2 values(4, 'four'), (5, 'five')")
+	s.tk.MustExec(`import into dst(c, a) FROM select y.id, y.a from src x join src2 y on x.id = y.id order by y.id`)
+	s.tk.MustQuery("select * from dst").Check(testkit.Rows("1 four 10 4", "2 five 10 5"))
+}
+
 func (s *mockGCSSuite) TestWriteAfterImportFromSelect() {
 	s.prepareAndUseDB("from_select")
 	s.tk.MustExec("create table dt(id int, v varchar(64))")
