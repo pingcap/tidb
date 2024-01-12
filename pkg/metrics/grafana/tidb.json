@@ -14826,14 +14826,14 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(tidb_disttask_subtask_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"pending|running|reverting|revert_pending|paused\"}) by (instance)",
+              "expr": "sum(tidb_disttask_subtask_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", exec_id=~\"$exec_id\" status=~\"pending|running|reverting|revert_pending|paused\"}) by (exec_id)",
               "interval": "",
               "legendFormat": "",
               "queryType": "randomWalk",
               "refId": "A"
             }
           ],
-          "title": "Distributed Task Running Subtask Distribution on TiDB Nodes",
+          "title": "Distributed Task Pending/Running Subtask Distribution on TiDB Nodes",
           "type": "piechart"
         }
       ],
