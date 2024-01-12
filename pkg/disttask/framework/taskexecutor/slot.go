@@ -37,6 +37,9 @@ type slotManager struct {
 
 // subtasks inside a task will be run in serial, so they takes task.Concurrency slots.
 func (sm *slotManager) alloc(task *proto.Task) {
+	if task.State != proto.TaskStateRunning {
+		return
+	}
 	sm.Lock()
 	defer sm.Unlock()
 
@@ -69,6 +72,9 @@ func (sm *slotManager) free(taskID int64) {
 
 // canAlloc is used to check whether the instance has enough slots to run the task.
 func (sm *slotManager) canAlloc(task *proto.Task) (canAlloc bool, tasksNeedFree []*proto.Task) {
+	if task.State != proto.TaskStateRunning {
+		return true, nil
+	}
 	sm.RLock()
 	defer sm.RUnlock()
 
