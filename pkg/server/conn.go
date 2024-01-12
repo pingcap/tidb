@@ -64,7 +64,6 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/extension"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -1178,10 +1177,6 @@ func errStrForLog(err error, enableRedactLog bool) string {
 		if parser.ErrParse.Equal(err) {
 			return "fail to parse SQL and can't redact when enable log redaction"
 		}
-	}
-	if kv.ErrKeyExists.Equal(err) || parser.ErrParse.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
-		// Do not log stack for duplicated entry error.
-		return err.Error()
 	}
 	return errors.ErrorStack(err)
 }

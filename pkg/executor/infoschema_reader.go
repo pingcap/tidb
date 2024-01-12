@@ -2055,6 +2055,12 @@ func (e *tableStorageStatsRetriever) setDataForTableStorageStats(ctx context.Con
 
 // dataForAnalyzeStatusHelper is a helper function which can be used in show_stats.go
 func dataForAnalyzeStatusHelper(ctx context.Context, sctx sessionctx.Context) (rows [][]types.Datum, err error) {
+	defer func() {
+		if err != nil {
+			logutil.BgLogger().Warn("AAAAAAAAAAAAAAAAAAA", zap.Error(err))
+		}
+		err = errors.Trace(err)
+	}()
 	const maxAnalyzeJobs = 30
 	const sql = "SELECT table_schema, table_name, partition_name, job_info, processed_rows, CONVERT_TZ(start_time, @@TIME_ZONE, '+00:00'), CONVERT_TZ(end_time, @@TIME_ZONE, '+00:00'), state, fail_reason, instance, process_id FROM mysql.analyze_jobs ORDER BY update_time DESC LIMIT %?"
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
