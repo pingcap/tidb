@@ -1154,6 +1154,10 @@ const (
 	TiDBEnableParallelSort = "enable_parallel_sort"
 	// TiDBLowResolutionTSOUpdateInterval defines how often to refresh low resolution timestamps.
 	TiDBLowResolutionTSOUpdateInterval = "tidb_low_resolution_tso_update_interval"
+	// TiDBDMLType indicates whether the execution type of DML in TiDB.
+	// The value can be STANDARD, BULK.
+	// Currently, the BULK mode only affects auto-committed DML.
+	TiDBDMLType = "tidb_dml_type"
 )
 
 // TiDB intentional limits
@@ -1480,6 +1484,7 @@ const (
 	DefTiDBTxnEntrySizeLimit                          = 0
 	DefTiDBSchemaCacheSize                            = 0
 	DefTiDBLowResolutionTSOUpdateInterval             = 2000
+	DefTiDBDMLType                                    = "STANDARD"
 )
 
 // Process global variables.

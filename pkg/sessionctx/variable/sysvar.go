@@ -3065,6 +3065,19 @@ var defaultSysVars = []*SysVar{
 			vars.EnableParallelSort = TiDBOptOn(s)
 			return nil
 		}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBDMLType, Value: DefTiDBDMLType, Type: TypeStr,
+		SetSession: func(s *SessionVars, val string) error {
+			lowerVal := strings.ToLower(val)
+			if strings.EqualFold(lowerVal, "standard") {
+				s.BulkDMLParallelism = 0
+				return nil
+			}
+			if strings.EqualFold(lowerVal, "bulk") {
+				s.BulkDMLParallelism = 1
+				return nil
+			}
+			return errors.Errorf("unsupport DML type: %s", val)
+		}},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

@@ -92,6 +92,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 			return err
 		}
 	} else {
+		ctx = kv.WithPipelinedMemDBSkipRemoteBuffer(ctx)
 		e.collectRuntimeStatsEnabled()
 		start := time.Now()
 		for i, row := range rows {

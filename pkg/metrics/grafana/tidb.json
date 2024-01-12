@@ -7318,6 +7318,148 @@
             "align": false,
             "alignLevel": null
           }
+        },
+        {
+          "type": "heatmap",
+          "title": "Pipelined Flush Keys",
+          "gridPos": {
+            "x": 16,
+            "y": 74,
+            "w": 8,
+            "h": 7
+          },
+          "id": 327,
+          "targets": [
+            {
+              "expr": "sum(delta(tidb_tikvclient_pipelined_flush_len_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le)",
+              "format": "heatmap",
+              "intervalFactor": 2,
+              "legendFormat": "{{le}}",
+              "metric": "tidb_tikvclient_pipelined_flush_len_bucket",
+              "refId": "A",
+              "step": 4
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "legend": {
+            "show": false
+          },
+          "tooltip": {
+            "show": true,
+            "showHistogram": false
+          },
+          "yBucketBound": "upper",
+          "datasource": "${DS_TEST-CLUSTER}",
+          "heatmap": {},
+          "cards": {
+            "cardPadding": null,
+            "cardRound": null
+          },
+          "color": {
+            "cardColor": "#b4ff00",
+            "colorScale": "sqrt",
+            "colorScheme": "interpolateSpectral",
+            "exponent": 0.5,
+            "mode": "spectrum"
+          },
+          "dataFormat": "tsbuckets",
+          "xAxis": {
+            "show": true
+          },
+          "yAxis": {
+            "decimals": 0,
+            "format": "short",
+            "logBase": 1,
+            "max": null,
+            "min": null,
+            "show": true,
+            "splitFactor": null
+          },
+          "highlightCards": true,
+          "hideZeroBuckets": true,
+          "description": "The keys of pipelined flush.",
+          "links": [],
+          "reverseYBuckets": false,
+          "timeFrom": null,
+          "timeShift": null,
+          "xBucketNumber": null,
+          "xBucketSize": null,
+          "yBucketNumber": null,
+          "yBucketSize": null
+        },
+        {
+          "type": "heatmap",
+          "title": "Pipelined Flush Size",
+          "gridPos": {
+            "x": 0,
+            "y": 82,
+            "w": 8,
+            "h": 7
+          },
+          "id": 328,
+          "targets": [
+            {
+              "expr": "sum(delta(tidb_tikvclient_pipelined_flush_size_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le)",
+              "format": "heatmap",
+              "intervalFactor": 2,
+              "legendFormat": "{{le}}",
+              "metric": "tidb_tikvclient_pipelined_flush_size_bucket",
+              "refId": "A",
+              "step": 4
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "legend": {
+            "show": false
+          },
+          "tooltip": {
+            "show": true,
+            "showHistogram": false
+          },
+          "yBucketBound": "upper",
+          "datasource": "${DS_TEST-CLUSTER}",
+          "heatmap": {},
+          "cards": {
+            "cardPadding": null,
+            "cardRound": null
+          },
+          "color": {
+            "cardColor": "#b4ff00",
+            "colorScale": "sqrt",
+            "colorScheme": "interpolateSpectral",
+            "exponent": 0.5,
+            "mode": "spectrum"
+          },
+          "dataFormat": "tsbuckets",
+          "xAxis": {
+            "show": true
+          },
+          "yAxis": {
+            "decimals": 0,
+            "format": "decbytes",
+            "logBase": 1,
+            "max": null,
+            "min": null,
+            "show": true,
+            "splitFactor": null
+          },
+          "highlightCards": true,
+          "hideZeroBuckets": true,
+          "description": "The size of pipelined flush.",
+          "links": [],
+          "reverseYBuckets": false,
+          "timeFrom": null,
+          "timeShift": null,
+          "xBucketNumber": null,
+          "xBucketSize": null,
+          "yBucketNumber": null,
+          "yBucketSize": null
         }
       ],
       "repeat": null,
