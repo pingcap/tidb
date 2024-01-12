@@ -15,9 +15,11 @@
 package sortexec
 
 import (
+	"math/rand"
 	"sync"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"golang.org/x/exp/slices"
@@ -27,6 +29,8 @@ import (
 const SignalCheckpointForSort uint = 20000
 
 type parallelSortWorker struct {
+	workerIDForTest int
+
 	// This list is shared by all workers and all workers will put their sorted rows into this list
 	globalSortedRowsQueue *sortedRowsList
 	// Temporarily store rows that will be sorted.
@@ -35,9 +39,10 @@ type parallelSortWorker struct {
 
 	waitGroup *sync.WaitGroup
 
-	chunkChannel chan *chunkWithMemoryUsage
-	checkError   func() error
-	processError func(error)
+	chunkChannel           chan *chunkWithMemoryUsage
+	tryToCloseChunkChannel func()
+	checkError             func() error
+	processError           func(error)
 
 	lessRowFunc       func(chunk.Row, chunk.Row) int
 	timesOfRowCompare uint
@@ -49,27 +54,31 @@ type parallelSortWorker struct {
 }
 
 func newParallelSortWorker(
+	workerIDForTest int,
 	lessRowFunc func(chunk.Row, chunk.Row) int,
 	globalSortedRowsQueue *sortedRowsList,
 	waitGroup *sync.WaitGroup,
 	result *sortedRows,
 	chunkChannel chan *chunkWithMemoryUsage,
+	tryToCloseChunkChannel func(),
 	checkError func() error,
 	processError func(error),
 	memTracker *memory.Tracker,
 	spillHelper *parallelSortSpillHelper) *parallelSortWorker {
 	return &parallelSortWorker{
-		lessRowFunc:           lessRowFunc,
-		globalSortedRowsQueue: globalSortedRowsQueue,
-		waitGroup:             waitGroup,
-		result:                result,
-		chunkChannel:          chunkChannel,
-		checkError:            checkError,
-		processError:          processError,
-		totalMemoryUsage:      0,
-		timesOfRowCompare:     0,
-		memTracker:            memTracker,
-		spillHelper:           spillHelper,
+		workerIDForTest:        workerIDForTest,
+		lessRowFunc:            lessRowFunc,
+		globalSortedRowsQueue:  globalSortedRowsQueue,
+		waitGroup:              waitGroup,
+		result:                 result,
+		chunkChannel:           chunkChannel,
+		tryToCloseChunkChannel: tryToCloseChunkChannel,
+		checkError:             checkError,
+		processError:           processError,
+		totalMemoryUsage:       0,
+		timesOfRowCompare:      0,
+		memTracker:             memTracker,
+		spillHelper:            spillHelper,
 	}
 }
 
@@ -85,6 +94,20 @@ func (p *parallelSortWorker) fetchChunksAndSort() bool {
 		}
 
 	}
+}
+
+func (p *parallelSortWorker) injectFailPointForParallelSortWorker() {
+	injectParallelSortRandomFail()
+	failpoint.Inject("SlowSomeWorkers", func(val failpoint.Value) {
+		if val.(bool) {
+			if p.workerIDForTest%2 == 0 {
+				randNum := rand.Int31n(10000)
+				if randNum < 100 {
+					time.Sleep(5 * time.Millisecond)
+				}
+			}
+		}
+	})
 }
 
 // Fetching chunks from MPMCQueue and sort them.
@@ -114,6 +137,7 @@ func (p *parallelSortWorker) fetchChunksAndSortImpl() (bool, error) {
 
 	sortedRows := p.sortChunkAndGetSortedRows(chk.Chk)
 	p.globalSortedRowsQueue.add(sortedRows)
+	p.injectFailPointForParallelSortWorker()
 	return false, nil
 }
 
@@ -163,6 +187,7 @@ func (p *parallelSortWorker) mergeSortGlobalRowsImpl() bool {
 
 	mergedSortedRows := p.mergeTwoSortedRows(sortedRowsLeft, sortedRowsRight)
 	p.globalSortedRowsQueue.add(mergedSortedRows)
+	p.injectFailPointForParallelSortWorker()
 	return true
 }
 
@@ -181,6 +206,11 @@ func (p *parallelSortWorker) mergeTwoSortedRows(sortedRowsLeft sortedRows, sorte
 			p.timesOfRowCompare = 0
 		}
 
+		failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
+			if val.(bool) {
+				p.timesOfRowCompare += 1024
+			}
+		})
 		p.timesOfRowCompare++
 
 		if p.lessRowFunc(sortedRowsLeft[cursorLeft], sortedRowsRight[cursorRight]) < 0 {
@@ -205,12 +235,12 @@ func (p *parallelSortWorker) keyColumnsLess(i, j chunk.Row) int {
 		p.memTracker.Consume(1)
 		p.timesOfRowCompare = 0
 	}
-	// TODO add test with this failpoint
-	// failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
-	// 	if val.(bool) {
-	// 		c.timesOfRowCompare += 1024
-	// 	}
-	// })
+
+	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
+		if val.(bool) {
+			p.timesOfRowCompare += 1024
+		}
+	})
 	p.timesOfRowCompare++
 
 	return p.lessRowFunc(i, j)
@@ -220,6 +250,7 @@ func (p *parallelSortWorker) run() {
 	defer func() {
 		if r := recover(); r != nil {
 			processPanicAndLog(p.processError, r)
+			p.tryToCloseChunkChannel()
 		}
 		p.waitGroup.Done()
 	}()
