@@ -248,7 +248,7 @@ type PdController struct {
 // NewPdController creates a new PdController.
 func NewPdController(
 	ctx context.Context,
-	pdAddrs string,
+	pdAddrs string, // TODO(lance6716): use HTTP client?
 	tlsConf *tls.Config,
 	securityOption pd.SecurityOption,
 ) (*PdController, error) {
@@ -1070,19 +1070,11 @@ func (p *PdController) Close() {
 }
 
 // FetchPDVersion get pd version
-func FetchPDVersion(ctx context.Context, tls *common.TLS, pdAddr string) (*semver.Version, error) {
-	// An example of PD version API.
-	// curl http://pd_address/pd/api/v1/version
-	// {
-	//   "version": "v4.0.0-rc.2-451-g760fb650"
-	// }
-	var rawVersion struct {
-		Version string `json:"version"`
-	}
-	err := tls.WithHost(pdAddr).GetJSON(ctx, pdhttp.Version, &rawVersion)
+func FetchPDVersion(ctx context.Context, pdHTTPCli pdhttp.Client) (*semver.Version, error) {
+	ver, err := pdHTTPCli.GetPDVersion(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	return parseVersion([]byte(rawVersion.Version)), nil
+	return parseVersion([]byte(ver)), nil
 }
