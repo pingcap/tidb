@@ -59,7 +59,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
@@ -2118,9 +2117,11 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 
 		job := reorgInfo.Job
 		workerCntLimit := int(variable.GetDDLReorgWorkerCounter())
-		// we're using cpu count of current node, not of framework managed nodes,
-		// but it seems more intuitive.
-		concurrency := min(workerCntLimit, cpu.GetCPUCount())
+		cpuCount, err := handle.GetCPUCountOfManagedNode(ctx)
+		if err != nil {
+			return err
+		}
+		concurrency := min(workerCntLimit, cpuCount)
 		logutil.BgLogger().Info("adjusted add-index task concurrency",
 			zap.Int("worker-cnt", workerCntLimit), zap.Int("task-concurrency", concurrency),
 			zap.String("task-key", taskKey))

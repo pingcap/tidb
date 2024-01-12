@@ -9,7 +9,7 @@ import (
 	ropts "github.com/pingcap/tidb/br/pkg/lightning/importer/opts"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/precheck"
-	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 )
 
 type precheckContextKey string
@@ -27,15 +27,15 @@ type PrecheckItemBuilder struct {
 	dbMetas            []*mydump.MDDatabaseMeta
 	preInfoGetter      PreImportInfoGetter
 	checkpointsDB      checkpoints.DB
-	pdLeaderAddrGetter func() string
+	pdLeaderAddrGetter func(context.Context) string
 }
 
 // NewPrecheckItemBuilderFromConfig creates a new PrecheckItemBuilder from config
-// pdCli **must not** be nil for local backend
+// pdHTTPCli **must not** be nil for local backend
 func NewPrecheckItemBuilderFromConfig(
 	ctx context.Context,
 	cfg *config.Config,
-	pdCli pd.Client,
+	pdHTTPCli pdhttp.Client,
 	opts ...ropts.PrecheckItemBuilderOption,
 ) (*PrecheckItemBuilder, error) {
 	var gerr error
@@ -47,7 +47,7 @@ func NewPrecheckItemBuilderFromConfig(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	targetInfoGetter, err := NewTargetInfoGetterImpl(cfg, targetDB, pdCli)
+	targetInfoGetter, err := NewTargetInfoGetterImpl(cfg, targetDB, pdHTTPCli)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -77,7 +77,7 @@ func NewPrecheckItemBuilderFromConfig(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, cpdb, pdCli), gerr
+	return NewPrecheckItemBuilder(cfg, dbMetas, preInfoGetter, cpdb, pdHTTPCli), gerr
 }
 
 // NewPrecheckItemBuilder creates a new PrecheckItemBuilder
@@ -86,14 +86,24 @@ func NewPrecheckItemBuilder(
 	dbMetas []*mydump.MDDatabaseMeta,
 	preInfoGetter PreImportInfoGetter,
 	checkpointsDB checkpoints.DB,
-	pdCli pd.Client,
+	pdHTTPCli pdhttp.Client,
 ) *PrecheckItemBuilder {
-	leaderAddrGetter := func() string {
+	leaderAddrGetter := func(context.Context) string {
 		return cfg.TiDB.PdAddr
 	}
 	// in tests we may not have a pdCli
-	if pdCli != nil {
-		leaderAddrGetter = pdCli.GetLeaderAddr
+	if pdHTTPCli != nil {
+		leaderAddrGetter = func(ctx context.Context) string {
+			leaderInfo, err := pdHTTPCli.GetLeader(ctx)
+			if err != nil {
+				return cfg.TiDB.PdAddr
+			}
+			addrs := leaderInfo.GetClientUrls()
+			if len(addrs) == 0 {
+				return cfg.TiDB.PdAddr
+			}
+			return addrs[0]
+		}
 	}
 	return &PrecheckItemBuilder{
 		cfg:                cfg,

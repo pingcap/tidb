@@ -21,13 +21,18 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 )
 
-// TaskTable defines the interface to access task table.
+// TaskTable defines the interface to access the task table.
 type TaskTable interface {
 	GetTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
 	GetSubtasksByStepAndStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...proto.SubtaskState) ([]*proto.Subtask, error)
 	GetFirstSubtaskInStates(ctx context.Context, instanceID string, taskID int64, step proto.Step, states ...proto.SubtaskState) (*proto.Subtask, error)
-	StartManager(ctx context.Context, tidbID string, role string) error
+	// InitMeta insert the manager information into dist_framework_meta.
+	// Call it when starting task executor or in set variable operation.
+	InitMeta(ctx context.Context, tidbID string, role string) error
+	// RecoverMeta recover the manager information into dist_framework_meta.
+	// Call it periodically to recover deleted meta.
+	RecoverMeta(ctx context.Context, tidbID string, role string) error
 	// StartSubtask try to update the subtask's state to running if the subtask is owned by execID.
 	// If the update success, it means the execID's related task executor own the subtask.
 	StartSubtask(ctx context.Context, subtaskID int64, execID string) error
@@ -36,8 +41,11 @@ type TaskTable interface {
 
 	HasSubtasksInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...proto.SubtaskState) (bool, error)
 	UpdateErrorToSubtask(ctx context.Context, tidbID string, taskID int64, err error) error
-	IsTaskExecutorCanceled(ctx context.Context, tidbID string, taskID int64) (bool, error)
 	PauseSubtasks(ctx context.Context, tidbID string, taskID int64) error
+	// RunningSubtasksBack2Pending update the state of subtask which belongs to this
+	// node from running to pending.
+	// see subtask state machine for more detail.
+	RunningSubtasksBack2Pending(ctx context.Context, subtasks []*proto.Subtask) error
 }
 
 // Pool defines the interface of a pool.
@@ -53,7 +61,6 @@ type TaskExecutor interface {
 	Init(context.Context) error
 	Run(context.Context, *proto.Task) error
 	Rollback(context.Context, *proto.Task) error
-	Pause(context.Context, *proto.Task) error
 	Close()
 	IsRetryableError(err error) bool
 }

@@ -28,22 +28,19 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	"github.com/pingcap/tidb/pkg/statistics/handle/lockstats"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
 )
@@ -515,7 +512,7 @@ func tryAutoAnalyzeTable(
 
 		tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
 		statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-		execAutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sql, params...)
+		exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sql, params...)
 
 		return true
 	}
@@ -536,7 +533,7 @@ func tryAutoAnalyzeTable(
 			)
 			tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
 			statistics.CheckAnalyzeVerOnTable(statsTbl, &tableStatsVer)
-			execAutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sqlWithIdx, paramsWithIdx...)
+			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sqlWithIdx, paramsWithIdx...)
 			return true
 		}
 	}
@@ -664,7 +661,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				zap.String("table", tblInfo.Name.String()),
 				zap.Any("partitions", needAnalyzePartitionNames[start:end]),
 			)
-			execAutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sql, params...)
+			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sql, params...)
 		}
 
 		return true
@@ -702,7 +699,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 					zap.String("index", idx.Name.String()),
 					zap.Any("partitions", needAnalyzePartitionNames[start:end]),
 				)
-				execAutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sql, params...)
+				exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, tableStatsVer, sql, params...)
 			}
 
 			return true
@@ -710,61 +707,6 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 	}
 
 	return false
-}
-
-var execOptionForAnalyze = map[int]sqlexec.OptionFuncAlias{
-	statistics.Version0: sqlexec.ExecOptionAnalyzeVer1,
-	statistics.Version1: sqlexec.ExecOptionAnalyzeVer1,
-	statistics.Version2: sqlexec.ExecOptionAnalyzeVer2,
-}
-
-func execAutoAnalyze(
-	sctx sessionctx.Context,
-	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
-	statsVer int,
-	sql string,
-	params ...interface{},
-) {
-	startTime := time.Now()
-	_, _, err := execAnalyzeStmt(sctx, statsHandle, sysProcTracker, statsVer, sql, params...)
-	dur := time.Since(startTime)
-	metrics.AutoAnalyzeHistogram.Observe(dur.Seconds())
-	if err != nil {
-		escaped, err1 := sqlescape.EscapeSQL(sql, params...)
-		if err1 != nil {
-			escaped = ""
-		}
-		statslogutil.StatsLogger().Error(
-			"auto analyze failed",
-			zap.String("sql", escaped),
-			zap.Duration("cost_time", dur),
-			zap.Error(err),
-		)
-		metrics.AutoAnalyzeCounter.WithLabelValues("failed").Inc()
-	} else {
-		metrics.AutoAnalyzeCounter.WithLabelValues("succ").Inc()
-	}
-}
-
-func execAnalyzeStmt(
-	sctx sessionctx.Context,
-	statsHandle statstypes.StatsHandle,
-	sysProcTracker sessionctx.SysProcTracker,
-	statsVer int,
-	sql string,
-	params ...interface{},
-) ([]chunk.Row, []*ast.ResultField, error) {
-	pruneMode := sctx.GetSessionVars().PartitionPruneMode.Load()
-	analyzeSnapshot := sctx.GetSessionVars().EnableAnalyzeSnapshot
-	optFuncs := []sqlexec.OptionFuncAlias{
-		execOptionForAnalyze[statsVer],
-		sqlexec.GetAnalyzeSnapshotOption(analyzeSnapshot),
-		sqlexec.GetPartitionPruneModeOption(pruneMode),
-		sqlexec.ExecOptionUseCurSession,
-		sqlexec.ExecOptionWithSysProcTrack(statsHandle.AutoAnalyzeProcID(), sysProcTracker.Track, sysProcTracker.UnTrack),
-	}
-	return statsutil.ExecWithOpts(sctx, optFuncs, sql, params...)
 }
 
 // insertAnalyzeJob inserts analyze job into mysql.analyze_jobs and gets job ID for further updating job.

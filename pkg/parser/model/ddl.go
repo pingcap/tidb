@@ -279,6 +279,13 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 	},
 }
 
+const (
+	// TiDBDDLV1 is the version 1 of DDL.
+	TiDBDDLV1 int64 = iota + 1
+	// TiDBDDLV2 is the version 2 of DDL.
+	TiDBDDLV2
+)
+
 // String return current ddl action in string
 func (action ActionType) String() string {
 	if v, ok := ActionMap[action]; ok {
@@ -454,6 +461,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		Collate:         parentJob.Collate,
 		AdminOperator:   parentJob.AdminOperator,
 		TraceInfo:       parentJob.TraceInfo,
+		LocalMode:       parentJob.LocalMode,
 	}
 }
 
@@ -558,6 +566,10 @@ type Job struct {
 
 	// CDCWriteSource indicates the source of CDC write.
 	CDCWriteSource uint64 `json:"cdc_write_source"`
+
+	// LocalMode indicates whether the job is running in local TiDB.
+	// Only happens when tidb_ddl_version = 2.
+	LocalMode bool `json:"local_mode"`
 }
 
 // InvolvingSchemaInfo returns the schema info involved in the job.
@@ -732,8 +744,8 @@ func (job *Job) DecodeArgs(args ...interface{}) error {
 // String implements fmt.Stringer interface.
 func (job *Job) String() string {
 	rowCount := job.GetRowCount()
-	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v",
-		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer)
+	ret := fmt.Sprintf("ID:%d, Type:%s, State:%s, SchemaState:%s, SchemaID:%d, TableID:%d, RowCount:%d, ArgLen:%d, start time: %v, Err:%v, ErrCount:%d, SnapshotVersion:%v, LocalMode: %t",
+		job.ID, job.Type, job.State, job.SchemaState, job.SchemaID, job.TableID, rowCount, len(job.Args), TSConvert2Time(job.StartTS), job.Error, job.ErrorCount, job.SnapshotVer, job.LocalMode)
 	if job.ReorgMeta != nil {
 		warnings, _ := job.GetWarnings()
 		ret += fmt.Sprintf(", UniqueWarnings:%d", len(warnings))
