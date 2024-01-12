@@ -60,6 +60,7 @@ import (
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/retry"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -556,7 +557,8 @@ func NewBackend(
 	if err != nil {
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
-	pdHTTPCli := pdhttp.NewClient("lightning", pdAddrs, pdhttp.WithTLSConfig(tls.TLSConfig()))
+	pdHTTPCli := pdhttp.NewClient("lightning", pdAddrs, pdhttp.WithTLSConfig(tls.TLSConfig())).
+		WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
 	splitCli := split.NewSplitClient(pdCli, pdHTTPCli, tls.TLSConfig(), false)
 	importClientFactory := newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
 	var writeLimiter StoreWriteLimiter

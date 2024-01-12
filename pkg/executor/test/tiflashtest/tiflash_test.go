@@ -1892,68 +1892,69 @@ func TestMPPRecovery(t *testing.T) {
 	tk.MustExec(insertStr)
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	sql := "select * from t order by 1, 2"
+	const packagePath = "github.com/pingcap/tidb/pkg/executor/internal/mpp/"
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_mock_enable", "return()"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_ignore_recovery_err", "return()"))
+	require.NoError(t, failpoint.Enable(packagePath+"mpp_recovery_test_mock_enable", "return()"))
+	require.NoError(t, failpoint.Enable(packagePath+"mpp_recovery_test_ignore_recovery_err", "return()"))
 	// Test different chunk size. And force one mpp err.
 	{
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_max_err_times", "return(1)"))
+		require.NoError(t, failpoint.Enable(packagePath+"mpp_recovery_test_max_err_times", "return(1)"))
 
 		tk.MustExec("set @@tidb_max_chunk_size = default")
 		tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
 		tk.MustExec("set @@tidb_max_chunk_size = 32")
 		tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
 
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_max_err_times"))
+		require.NoError(t, failpoint.Disable(packagePath+"mpp_recovery_test_max_err_times"))
 	}
 
 	// Test exceeds max recovery times. Default max times is 3.
 	{
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_max_err_times", "return(5)"))
+		require.NoError(t, failpoint.Enable(packagePath+"mpp_recovery_test_max_err_times", "return(5)"))
 
 		tk.MustExec("set @@tidb_max_chunk_size = 32")
 		err := tk.QueryToErr(sql)
 		strings.Contains(err.Error(), "mock mpp err")
 
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_max_err_times"))
+		require.NoError(t, failpoint.Disable(packagePath+"mpp_recovery_test_max_err_times"))
 	}
 
 	{
 		// When AllowFallbackToTiKV, mpp err recovery should be disabled.
 		// So event we inject mock err multiple times, the query should be ok.
 		tk.MustExec("set @@tidb_allow_fallback_to_tikv = \"tiflash\"")
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_max_err_times", "return(5)"))
+		require.NoError(t, failpoint.Enable(packagePath+"mpp_recovery_test_max_err_times", "return(5)"))
 
 		tk.MustExec("set @@tidb_max_chunk_size = 32")
 		tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
 
 		tk.MustExec("set @@tidb_allow_fallback_to_tikv = default")
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_max_err_times"))
+		require.NoError(t, failpoint.Disable(packagePath+"mpp_recovery_test_max_err_times"))
 	}
 
 	// Test hold logic. Default hold 4 * MaxChunkSize rows.
 	{
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_max_err_times", "return(0)"))
+		require.NoError(t, failpoint.Enable(packagePath+"mpp_recovery_test_max_err_times", "return(0)"))
 
 		tk.MustExec("set @@tidb_max_chunk_size = 32")
-		expectedHoldRows := 4 * 32
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_hold_size", fmt.Sprintf("1*return(%d)", expectedHoldRows)))
+		expectedHoldSize := 2
+		require.NoError(t, failpoint.Enable(packagePath+"mpp_recovery_test_hold_size", fmt.Sprintf("1*return(%d)", expectedHoldSize)))
 		tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_hold_size"))
+		require.NoError(t, failpoint.Disable(packagePath+"mpp_recovery_test_hold_size"))
 
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_max_err_times"))
+		require.NoError(t, failpoint.Disable(packagePath+"mpp_recovery_test_max_err_times"))
 	}
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_ignore_recovery_err"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_mock_enable"))
+	require.NoError(t, failpoint.Disable(packagePath+"mpp_recovery_test_ignore_recovery_err"))
+	require.NoError(t, failpoint.Disable(packagePath+"mpp_recovery_test_mock_enable"))
 
 	{
 		// We have 2 mock tiflash, but the table is small, so only 1 tiflash node is in computation.
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_check_node_cnt", "return(1)"))
+		require.NoError(t, failpoint.Enable(packagePath+"mpp_recovery_test_check_node_cnt", "return(1)"))
 
 		tk.MustExec("set @@tidb_max_chunk_size = 32")
 		tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
 
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mpp_recovery_test_check_node_cnt"))
+		require.NoError(t, failpoint.Disable(packagePath+"mpp_recovery_test_check_node_cnt"))
 	}
 
 	tk.MustExec("set @@tidb_max_chunk_size = default")

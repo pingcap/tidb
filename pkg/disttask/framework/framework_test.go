@@ -251,7 +251,7 @@ func TestGC(t *testing.T) {
 
 	var historySubTasksCnt int
 	require.Eventually(t, func() bool {
-		historySubTasksCnt, err = storage.GetSubtasksFromHistoryForTest(ctx, mgr)
+		historySubTasksCnt, err = testutil.GetSubtasksFromHistory(ctx, mgr)
 		if err != nil {
 			return false
 		}
@@ -261,7 +261,7 @@ func TestGC(t *testing.T) {
 	scheduler.WaitTaskFinished <- struct{}{}
 
 	require.Eventually(t, func() bool {
-		historySubTasksCnt, err := storage.GetSubtasksFromHistoryForTest(ctx, mgr)
+		historySubTasksCnt, err := testutil.GetSubtasksFromHistory(ctx, mgr)
 		if err != nil {
 			return false
 		}

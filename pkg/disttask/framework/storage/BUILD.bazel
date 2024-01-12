@@ -5,7 +5,6 @@ go_library(
     srcs = [
         "task_state.go",
         "task_table.go",
-        "util.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/disttask/framework/storage",
     visibility = ["//visibility:public"],

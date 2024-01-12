@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -2606,7 +2607,7 @@ func (s *SessionVars) GetPrevStmtDigest() string {
 
 // LazyCheckKeyNotExists returns if we can lazy check key not exists.
 func (s *SessionVars) LazyCheckKeyNotExists() bool {
-	return s.PresumeKeyNotExists || (s.TxnCtx != nil && s.TxnCtx.IsPessimistic && !s.StmtCtx.DupKeyAsWarning)
+	return s.PresumeKeyNotExists || (s.TxnCtx != nil && s.TxnCtx.IsPessimistic && s.StmtCtx.ErrGroupLevel(errctx.ErrGroupDupKey) == errctx.LevelError)
 }
 
 // GetTemporaryTable returns a TempTable by tableInfo.

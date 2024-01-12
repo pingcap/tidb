@@ -39,6 +39,7 @@ require (
 	github.com/emirpasic/gods v1.18.1
 	github.com/fatanugraha/noloopclosure v0.1.1
 	github.com/fatih/color v1.15.0
+	github.com/felixge/fgprof v0.9.3
 	github.com/fsouza/fake-gcs-server v1.44.0
 	github.com/go-ldap/ldap/v3 v3.4.4
 	github.com/go-resty/resty/v2 v2.7.0
@@ -68,7 +69,7 @@ require (
 	github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df
 	github.com/kisielk/errcheck v1.6.3
 	github.com/klauspost/compress v1.17.1
-	github.com/ks3sdklib/aws-sdk-go v1.2.7
+	github.com/ks3sdklib/aws-sdk-go v1.2.9
 	github.com/kyoh86/exportloopref v0.1.11
 	github.com/lestrrat-go/jwx/v2 v2.0.17
 	github.com/mgechev/revive v1.3.4
@@ -105,7 +106,7 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tikv/client-go/v2 v2.0.8-0.20231227070846-61c486af13a5
-	github.com/tikv/pd/client v0.0.0-20240108040922-c94810e110ce
+	github.com/tikv/pd/client v0.0.0-20240109100024-dd8df25316e9
 	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
 	github.com/twmb/murmur3 v1.1.6
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
