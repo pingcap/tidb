@@ -8,7 +8,7 @@ t	CREATE TABLE `t` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 drop table t;
 CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg;
-[parser:1115]Unknown character set: 'abcdefg'
+Error 1115 (42000): Unknown character set: 'abcdefg'
 CREATE TABLE `collateTest` (`a` int, `b` varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
 show create table collateTest;
 Table	Create Table
@@ -37,31 +37,31 @@ dbCollateTest	CREATE TABLE `dbCollateTest` (
 create table t_enum (a enum('e','e'));
 Error 1291 (HY000): Column 'a' has duplicated value 'e' in ENUM
 create table t_enum (a enum('e','E')) charset=utf7 collate=utf8_general_ci;
-[parser:1115]Unknown character set: 'utf7'
+Error 1115 (42000): Unknown character set: 'utf7'
 create table t_enum (a enum('abc','Abc')) charset=utf7 collate=utf8_general_ci;
-[parser:1115]Unknown character set: 'utf7'
+Error 1115 (42000): Unknown character set: 'utf7'
 create table t_enum (a enum('e','E')) charset=utf7 collate=utf8_unicode_ci;
-[parser:1115]Unknown character set: 'utf7'
+Error 1115 (42000): Unknown character set: 'utf7'
 create table t_enum (a enum('ss','ß')) charset=utf7 collate=utf8_unicode_ci;
-[parser:1115]Unknown character set: 'utf7'
+Error 1115 (42000): Unknown character set: 'utf7'
 create table t_enum (a enum('æ','ae')) charset=utf7mb4 collate=utf8mb4_0900_ai_ci;
-[parser:1115]Unknown character set: 'utf7mb4'
+Error 1115 (42000): Unknown character set: 'utf7mb4'
 create table t_enum (a set('e','e'));
 Error 1291 (HY000): Column 'a' has duplicated value 'e' in SET
 create table t_enum (a set('e','E')) charset=utf7 collate=utf8_general_ci;
-[parser:1115]Unknown character set: 'utf7'
+Error 1115 (42000): Unknown character set: 'utf7'
 create table t_enum (a set('abc','Abc')) charset=utf7 collate=utf8_general_ci;
-[parser:1115]Unknown character set: 'utf7'
+Error 1115 (42000): Unknown character set: 'utf7'
 create table t_enum (a enum('B','b')) charset=utf7 collate=utf8_general_ci;
-[parser:1115]Unknown character set: 'utf7'
+Error 1115 (42000): Unknown character set: 'utf7'
 create table t_enum (a set('e','E')) charset=utf7 collate=utf8_unicode_ci;
-[parser:1115]Unknown character set: 'utf7'
+Error 1115 (42000): Unknown character set: 'utf7'
 create table t_enum (a set('ss','ß')) charset=utf7 collate=utf8_unicode_ci;
-[parser:1115]Unknown character set: 'utf7'
+Error 1115 (42000): Unknown character set: 'utf7'
 create table t_enum (a enum('ss','ß')) charset=utf7 collate=utf8_unicode_ci;
-[parser:1115]Unknown character set: 'utf7'
+Error 1115 (42000): Unknown character set: 'utf7'
 create table t_enum (a set('æ','ae')) charset=utf7mb4 collate=utf8mb4_0900_ai_ci;
-[parser:1115]Unknown character set: 'utf7mb4'
+Error 1115 (42000): Unknown character set: 'utf7mb4'
 CREATE TABLE x (a INT) ENGINE = MyISAM;
 CREATE TABLE y (a INT) ENGINE = MyISAM;
 CREATE TABLE z (a INT) ENGINE = MERGE UNION = (x, y);

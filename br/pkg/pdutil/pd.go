@@ -31,8 +31,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
 	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -130,13 +130,13 @@ var (
 
 // pdHTTPRequest defines the interface to send a request to pd and return the result in bytes.
 type pdHTTPRequest func(ctx context.Context, addr string, prefix string,
-	cli *http.Client, method string, body io.Reader) ([]byte, error)
+	cli *http.Client, method string, body []byte) ([]byte, error)
 
 // pdRequest is a func to send an HTTP to pd and return the result bytes.
 func pdRequest(
 	ctx context.Context,
 	addr string, prefix string,
-	cli *http.Client, method string, body io.Reader) ([]byte, error) {
+	cli *http.Client, method string, body []byte) ([]byte, error) {
 	_, respBody, err := pdRequestWithCode(ctx, addr, prefix, cli, method, body)
 	return respBody, err
 }
@@ -144,7 +144,7 @@ func pdRequest(
 func pdRequestWithCode(
 	ctx context.Context,
 	addr string, prefix string,
-	cli *http.Client, method string, body io.Reader) (int, []byte, error) {
+	cli *http.Client, method string, body []byte) (int, []byte, error) {
 	u, err := url.Parse(addr)
 	if err != nil {
 		return 0, nil, errors.Trace(err)
@@ -154,10 +154,13 @@ func pdRequestWithCode(
 		req  *http.Request
 		resp *http.Response
 	)
+	if body == nil {
+		body = []byte("")
+	}
 	count := 0
 	// the total retry duration: 120*1 = 2min
 	for {
-		req, err = http.NewRequestWithContext(ctx, method, reqURL, body)
+		req, err = http.NewRequestWithContext(ctx, method, reqURL, bytes.NewBuffer(body))
 		if err != nil {
 			return 0, nil, errors.Trace(err)
 		}
@@ -184,6 +187,8 @@ func pdRequestWithCode(
 			(err != nil && !common.IsRetryableError(err)) {
 			break
 		}
+		log.Warn("request failed, will retry later",
+			zap.String("url", reqURL), zap.Int("retry-count", count), zap.Error(err))
 		if resp != nil {
 			_ = resp.Body.Close()
 		}
@@ -229,10 +234,11 @@ func DefaultExpectPDCfgGenerators() map[string]pauseConfigGenerator {
 
 // PdController manage get/update config from pd.
 type PdController struct {
-	addrs    []string
-	cli      *http.Client
-	pdClient pd.Client
-	version  *semver.Version
+	addrs     []string
+	cli       *http.Client // TODO: replace it with pd HTTP client
+	pdClient  pd.Client
+	pdHTTPCli pdhttp.Client
+	version   *semver.Version
 
 	// control the pause schedulers goroutine
 	schedulerPauseCh chan struct{}
@@ -260,7 +266,7 @@ func NewPdController(
 			}
 		}
 		processedAddrs = append(processedAddrs, addr)
-		versionBytes, failure = pdRequest(ctx, addr, pdapi.ClusterVersion, cli, http.MethodGet, nil)
+		versionBytes, failure = pdRequest(ctx, addr, pdhttp.ClusterVersion, cli, http.MethodGet, nil)
 		if failure == nil {
 			break
 		}
@@ -288,11 +294,16 @@ func NewPdController(
 		return nil, errors.Trace(err)
 	}
 
+	pdHTTPCliConfig := make([]pdhttp.ClientOption, 0, 1)
+	if tlsConf != nil {
+		pdHTTPCliConfig = append(pdHTTPCliConfig, pdhttp.WithTLSConfig(tlsConf))
+	}
 	return &PdController{
-		addrs:    processedAddrs,
-		cli:      cli,
-		pdClient: pdClient,
-		version:  version,
+		addrs:     processedAddrs,
+		cli:       cli,
+		pdClient:  pdClient,
+		pdHTTPCli: pdhttp.NewClient("br/lightning PD controller", addrs, pdHTTPCliConfig...),
+		version:   version,
 		// We should make a buffered channel here otherwise when context canceled,
 		// gracefully shutdown will stick at resuming schedulers.
 		schedulerPauseCh: make(chan struct{}, 1),
@@ -349,6 +360,11 @@ func (p *PdController) GetPDClient() pd.Client {
 	return p.pdClient
 }
 
+// GetPDHTTPClient returns the pd http client.
+func (p *PdController) GetPDHTTPClient() pdhttp.Client {
+	return p.pdHTTPCli
+}
+
 // GetClusterVersion returns the current cluster version.
 func (p *PdController) GetClusterVersion(ctx context.Context) (string, error) {
 	return p.getClusterVersionWith(ctx, pdRequest)
@@ -357,7 +373,7 @@ func (p *PdController) GetClusterVersion(ctx context.Context) (string, error) {
 func (p *PdController) getClusterVersionWith(ctx context.Context, get pdHTTPRequest) (string, error) {
 	var err error
 	for _, addr := range p.getAllPDAddrs() {
-		v, e := get(ctx, addr, pdapi.ClusterVersion, p.cli, http.MethodGet, nil)
+		v, e := get(ctx, addr, pdhttp.ClusterVersion, p.cli, http.MethodGet, nil)
 		if e != nil {
 			err = e
 			continue
@@ -377,14 +393,16 @@ func (p *PdController) getRegionCountWith(
 	ctx context.Context, get pdHTTPRequest, startKey, endKey []byte,
 ) (int, error) {
 	// TiKV reports region start/end keys to PD in memcomparable-format.
-	var start, end string
-	start = url.QueryEscape(string(codec.EncodeBytes(nil, startKey)))
+	var start, end []byte
+	start = codec.EncodeBytes(nil, startKey)
 	if len(endKey) != 0 { // Empty end key means the max.
-		end = url.QueryEscape(string(codec.EncodeBytes(nil, endKey)))
+		end = codec.EncodeBytes(nil, endKey)
 	}
 	var err error
 	for _, addr := range p.getAllPDAddrs() {
-		v, e := get(ctx, addr, pdapi.RegionStatsByStartEndKey(start, end), p.cli, http.MethodGet, nil)
+		v, e := get(ctx, addr,
+			pdhttp.RegionStatsByKeyRange(pdhttp.NewKeyRange(start, end), false),
+			p.cli, http.MethodGet, nil)
 		if e != nil {
 			err = e
 			continue
@@ -408,7 +426,7 @@ func (p *PdController) getStoreInfoWith(
 	ctx context.Context, get pdHTTPRequest, storeID uint64) (*pdtypes.StoreInfo, error) {
 	var err error
 	for _, addr := range p.getAllPDAddrs() {
-		v, e := get(ctx, addr, pdapi.StoreByID(storeID), p.cli, http.MethodGet, nil)
+		v, e := get(ctx, addr, pdhttp.StoreByID(storeID), p.cli, http.MethodGet, nil)
 		if e != nil {
 			err = e
 			continue
@@ -434,7 +452,7 @@ func (p *PdController) doPauseSchedulers(ctx context.Context,
 	removedSchedulers := make([]string, 0, len(schedulers))
 	for _, scheduler := range schedulers {
 		for _, addr := range p.getAllPDAddrs() {
-			_, err = post(ctx, addr, pdapi.SchedulerByName(scheduler), p.cli, http.MethodPost, bytes.NewBuffer(body))
+			_, err = post(ctx, addr, pdhttp.SchedulerByName(scheduler), p.cli, http.MethodPost, body)
 			if err == nil {
 				removedSchedulers = append(removedSchedulers, scheduler)
 				break
@@ -516,7 +534,7 @@ func (p *PdController) resumeSchedulerWith(ctx context.Context, schedulers []str
 	}
 	for _, scheduler := range schedulers {
 		for _, addr := range p.getAllPDAddrs() {
-			_, err = post(ctx, addr, pdapi.SchedulerByName(scheduler), p.cli, http.MethodPost, bytes.NewBuffer(body))
+			_, err = post(ctx, addr, pdhttp.SchedulerByName(scheduler), p.cli, http.MethodPost, body)
 			if err == nil {
 				break
 			}
@@ -540,7 +558,7 @@ func (p *PdController) ListSchedulers(ctx context.Context) ([]string, error) {
 func (p *PdController) listSchedulersWith(ctx context.Context, get pdHTTPRequest) ([]string, error) {
 	var err error
 	for _, addr := range p.getAllPDAddrs() {
-		v, e := get(ctx, addr, pdapi.Schedulers, p.cli, http.MethodGet, nil)
+		v, e := get(ctx, addr, pdhttp.Schedulers, p.cli, http.MethodGet, nil)
 		if e != nil {
 			err = e
 			continue
@@ -563,7 +581,7 @@ func (p *PdController) GetPDScheduleConfig(
 	var err error
 	for _, addr := range p.getAllPDAddrs() {
 		v, e := pdRequest(
-			ctx, addr, pdapi.ScheduleConfig, p.cli, http.MethodGet, nil)
+			ctx, addr, pdhttp.ScheduleConfig, p.cli, http.MethodGet, nil)
 		if e != nil {
 			err = e
 			continue
@@ -587,7 +605,7 @@ func (p *PdController) UpdatePDScheduleConfig(ctx context.Context) error {
 func (p *PdController) doUpdatePDScheduleConfig(
 	ctx context.Context, cfg map[string]interface{}, post pdHTTPRequest, prefixs ...string,
 ) error {
-	prefix := pdapi.Config
+	prefix := pdhttp.Config
 	if len(prefixs) != 0 {
 		prefix = prefixs[0]
 	}
@@ -605,7 +623,7 @@ func (p *PdController) doUpdatePDScheduleConfig(
 			return errors.Trace(err)
 		}
 		_, e := post(ctx, addr, prefix,
-			p.cli, http.MethodPost, bytes.NewBuffer(reqData))
+			p.cli, http.MethodPost, reqData)
 		if e == nil {
 			return nil
 		}
@@ -616,7 +634,7 @@ func (p *PdController) doUpdatePDScheduleConfig(
 
 func (p *PdController) doPauseConfigs(ctx context.Context, cfg map[string]interface{}, post pdHTTPRequest) error {
 	// pause this scheduler with 300 seconds
-	return p.doUpdatePDScheduleConfig(ctx, cfg, post, pdapi.ConfigWithTTLSeconds(pauseTimeout.Seconds()))
+	return p.doUpdatePDScheduleConfig(ctx, cfg, post, pdhttp.ConfigWithTTLSeconds(pauseTimeout.Seconds()))
 }
 
 func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg ClusterConfig,
@@ -638,7 +656,7 @@ func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg Cluster
 	prefix := make([]string, 0, 1)
 	if pd.isPauseConfigEnabled() {
 		// set config's ttl to zero, make temporary config invalid immediately.
-		prefix = append(prefix, pdapi.ConfigWithTTLSeconds(0))
+		prefix = append(prefix, pdhttp.ConfigWithTTLSeconds(0))
 	}
 	// reset config with previous value.
 	if err := pd.doUpdatePDScheduleConfig(ctx, mergeCfg, pdRequest, prefix...); err != nil {
@@ -827,7 +845,7 @@ func (p *PdController) doRemoveSchedulersWith(
 func (p *PdController) GetMinResolvedTS(ctx context.Context) (uint64, error) {
 	var err error
 	for _, addr := range p.getAllPDAddrs() {
-		v, e := pdRequest(ctx, addr, pdapi.MinResolvedTS, p.cli, http.MethodGet, nil)
+		v, e := pdRequest(ctx, addr, pdhttp.MinResolvedTSPrefix, p.cli, http.MethodGet, nil)
 		if e != nil {
 			log.Warn("failed to get min resolved ts", zap.String("addr", addr), zap.Error(e))
 			err = e
@@ -861,7 +879,7 @@ func (p *PdController) RecoverBaseAllocID(ctx context.Context, id uint64) error 
 	})
 	var err error
 	for _, addr := range p.getAllPDAddrs() {
-		_, e := pdRequest(ctx, addr, pdapi.BaseAllocID, p.cli, http.MethodPost, bytes.NewBuffer(reqData))
+		_, e := pdRequest(ctx, addr, pdhttp.BaseAllocID, p.cli, http.MethodPost, reqData)
 		if e != nil {
 			log.Warn("failed to recover base alloc id", zap.String("addr", addr), zap.Error(e))
 			err = e
@@ -885,7 +903,7 @@ func (p *PdController) ResetTS(ctx context.Context, ts uint64) error {
 	})
 	var err error
 	for _, addr := range p.getAllPDAddrs() {
-		code, _, e := pdRequestWithCode(ctx, addr, pdapi.ResetTS, p.cli, http.MethodPost, bytes.NewBuffer(reqData))
+		code, _, e := pdRequestWithCode(ctx, addr, pdhttp.ResetTS, p.cli, http.MethodPost, reqData)
 		if e != nil {
 			// for pd version <= 6.2, if the given ts < current ts of pd, pd returns StatusForbidden.
 			// it's not an error for br
@@ -915,7 +933,7 @@ func (p *PdController) UnmarkRecovering(ctx context.Context) error {
 func (p *PdController) operateRecoveringMark(ctx context.Context, method string) error {
 	var err error
 	for _, addr := range p.getAllPDAddrs() {
-		_, e := pdRequest(ctx, addr, pdapi.SnapshotRecoveringMark, p.cli, method, nil)
+		_, e := pdRequest(ctx, addr, pdhttp.SnapshotRecoveringMark, p.cli, method, nil)
 		if e != nil {
 			log.Warn("failed to operate recovering mark", zap.String("method", method),
 				zap.String("addr", addr), zap.Error(e))
@@ -952,67 +970,32 @@ type KeyRangeRule struct {
 	EndKeyHex   string `json:"end_key"`   // hex format end key, for marshal/unmarshal
 }
 
-// CreateOrUpdateRegionLabelRule creates or updates a region label rule.
-func (p *PdController) CreateOrUpdateRegionLabelRule(ctx context.Context, rule LabelRule) error {
-	reqData, err := json.Marshal(&rule)
-	if err != nil {
-		panic(err)
-	}
-	var lastErr error
-	addrs := p.getAllPDAddrs()
-	for i, addr := range addrs {
-		_, lastErr = pdRequest(ctx, addr, pdapi.RegionLabelRule,
-			p.cli, http.MethodPost, bytes.NewBuffer(reqData))
-		if lastErr == nil {
-			return nil
-		}
-		if berrors.IsContextCanceled(lastErr) {
-			return errors.Trace(lastErr)
-		}
-
-		if i < len(addrs) {
-			log.Warn("failed to create or update region label rule, will try next pd address",
-				zap.Error(lastErr), zap.String("pdAddr", addr))
-		}
-	}
-	return errors.Trace(lastErr)
-}
-
-// DeleteRegionLabelRule deletes a region label rule.
-func (p *PdController) DeleteRegionLabelRule(ctx context.Context, ruleID string) error {
-	var lastErr error
-	addrs := p.getAllPDAddrs()
-	for i, addr := range addrs {
-		_, lastErr = pdRequest(ctx, addr, fmt.Sprintf("%s/%s", pdapi.RegionLabelRule, ruleID),
-			p.cli, http.MethodDelete, nil)
-		if lastErr == nil {
-			return nil
-		}
-		if berrors.IsContextCanceled(lastErr) {
-			return errors.Trace(lastErr)
-		}
-
-		if i < len(addrs) {
-			log.Warn("failed to delete region label rule, will try next pd address",
-				zap.Error(lastErr), zap.String("pdAddr", addr))
-		}
-	}
-	return errors.Trace(lastErr)
-}
-
 // PauseSchedulersByKeyRange will pause schedulers for regions in the specific key range.
 // This function will spawn a goroutine to keep pausing schedulers periodically until the context is done.
 // The return done channel is used to notify the caller that the background goroutine is exited.
-func (p *PdController) PauseSchedulersByKeyRange(ctx context.Context,
-	startKey, endKey []byte) (done <-chan struct{}, err error) {
-	return p.pauseSchedulerByKeyRangeWithTTL(ctx, startKey, endKey, pauseTimeout)
+func PauseSchedulersByKeyRange(
+	ctx context.Context,
+	pdHTTPCli pdhttp.Client,
+	startKey, endKey []byte,
+) (done <-chan struct{}, err error) {
+	done, err = pauseSchedulerByKeyRangeWithTTL(ctx, pdHTTPCli, startKey, endKey, pauseTimeout)
+	// Wait for the rule to take effect because the PD operator is processed asynchronously.
+	// To synchronize this, checking the operator status may not be enough. For details, see
+	// https://github.com/pingcap/tidb/issues/49477.
+	// Let's use two times default value of `patrol-region-interval` from PD configuration.
+	<-time.After(20 * time.Millisecond)
+	return
 }
 
-func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context,
-	startKey, endKey []byte, ttl time.Duration) (_done <-chan struct{}, err error) {
-	rule := LabelRule{
+func pauseSchedulerByKeyRangeWithTTL(
+	ctx context.Context,
+	pdHTTPCli pdhttp.Client,
+	startKey, endKey []byte,
+	ttl time.Duration,
+) (<-chan struct{}, error) {
+	rule := &pdhttp.LabelRule{
 		ID: uuid.New().String(),
-		Labels: []RegionLabel{{
+		Labels: []pdhttp.RegionLabel{{
 			Key:   "schedule",
 			Value: "deny",
 			TTL:   ttl.String(),
@@ -1026,7 +1009,8 @@ func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context,
 		}},
 	}
 	done := make(chan struct{})
-	if err := p.CreateOrUpdateRegionLabelRule(ctx, rule); err != nil {
+
+	if err := pdHTTPCli.SetRegionLabelRule(ctx, rule); err != nil {
 		close(done)
 		return nil, errors.Trace(err)
 	}
@@ -1039,7 +1023,7 @@ func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context,
 		for {
 			select {
 			case <-ticker.C:
-				if err := p.CreateOrUpdateRegionLabelRule(ctx, rule); err != nil {
+				if err := pdHTTPCli.SetRegionLabelRule(ctx, rule); err != nil {
 					if berrors.IsContextCanceled(err) {
 						break loop
 					}
@@ -1055,7 +1039,8 @@ func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context,
 		defer cancel()
 		// Set ttl to 0 to remove the rule.
 		rule.Labels[0].TTL = time.Duration(0).String()
-		if err := p.DeleteRegionLabelRule(recoverCtx, rule.ID); err != nil {
+		deleteRule := &pdhttp.LabelRulePatch{DeleteRules: []string{rule.ID}}
+		if err := pdHTTPCli.PatchRegionLabelRules(recoverCtx, deleteRule); err != nil {
 			log.Warn("failed to delete region label rule, the rule will be removed after ttl expires",
 				zap.String("rule-id", rule.ID), zap.Duration("ttl", ttl), zap.Error(err))
 		}
@@ -1069,9 +1054,13 @@ func (p *PdController) CanPauseSchedulerByKeyRange() bool {
 	return p.version.Compare(minVersionForRegionLabelTTL) >= 0
 }
 
-// Close close the connection to pd.
+// Close closes the connection to pd.
 func (p *PdController) Close() {
 	p.pdClient.Close()
+	if p.pdHTTPCli != nil {
+		// nil in some unit tests
+		p.pdHTTPCli.Close()
+	}
 	if p.schedulerPauseCh != nil {
 		close(p.schedulerPauseCh)
 	}
@@ -1087,7 +1076,7 @@ func FetchPDVersion(ctx context.Context, tls *common.TLS, pdAddr string) (*semve
 	var rawVersion struct {
 		Version string `json:"version"`
 	}
-	err := tls.WithHost(pdAddr).GetJSON(ctx, pdapi.Version, &rawVersion)
+	err := tls.WithHost(pdAddr).GetJSON(ctx, pdhttp.Version, &rawVersion)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

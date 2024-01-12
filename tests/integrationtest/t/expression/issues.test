@@ -867,7 +867,7 @@ create table t12205(
 );
 insert into t12205 values('-1038024704','-527892480');
 --enable_warnings
-select SEC_TO_TIME( ( `col_varchar_64` & `col_varchar_64_key` ) ),`col_varchar_64` & `col_varchar_64_key` from t12205; ;
+select SEC_TO_TIME( ( `col_varchar_64` & `col_varchar_64_key` ) ),`col_varchar_64` & `col_varchar_64_key` from t12205;
 --disable_warnings
 
 # TestIssue21677
@@ -1193,7 +1193,7 @@ select a from t1 order by a;
 # TestIssue32488
 drop table if exists t;
 create table t(a varchar(32)) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-insert into t values('ʞ'), ('İ');
+insert into t values('ʞ'), ('İ'), ('ß');
 set @@tidb_enable_vectorized_expression = false;
 select binary upper(a), lower(a) from t order by upper(a);
 select distinct upper(a), lower(a) from t order by upper(a);
@@ -1918,3 +1918,246 @@ SELECT @@GLOBAL.information_schema_stats_expiry;
 SELECT @@GLOBAL.information_schema_stats_expiry;
 set @@SESSION.information_schema_stats_expiry=default;
 set @@GLOBAL.information_schema_stats_expiry=default;
+
+# TestIssue11333
+drop table if exists t;
+drop table if exists t1;
+create table t(col1 decimal);
+ insert into t values(0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000);
+select * from t;
+create table t1(col1 decimal(65,30));
+ insert into t1 values(0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000);
+select * from t1;
+select 0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000;
+select 0.0000000000000000000000000000000000000000000000000000000000000000000000012;
+select 0.000000000000000000000000000000000000000000000000000000000000000000000001;
+
+# TestIssue19892
+drop table if exists dd;
+CREATE TABLE dd(a date, b datetime, c timestamp);
+
+## check NO_ZERO_DATE
+SET sql_mode='';
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('0000-00-00');
+SHOW WARNINGS;
+SELECT a FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('2000-10-01');
+UPDATE dd SET b = '0000-00-00';
+SHOW WARNINGS;
+SELECT b FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('0000-00-00 20:00:00');
+SHOW WARNINGS;
+SELECT c FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-10-01 20:00:00');
+UPDATE dd SET c = '0000-00-00 20:00:00';
+SHOW WARNINGS;
+SELECT c FROM dd;
+SET sql_mode='NO_ZERO_DATE';
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('0000-0-00');
+SHOW WARNINGS;
+SELECT b FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('2000-10-01');
+UPDATE dd SET a = '0000-00-00';
+SHOW WARNINGS;
+SELECT a FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-10-01 10:00:00');
+UPDATE dd SET c = '0000-00-00 10:00:00';
+SHOW WARNINGS;
+SELECT c FROM dd;
+SET sql_mode='NO_ZERO_DATE,STRICT_TRANS_TABLES';
+TRUNCATE TABLE dd;
+-- error 1292
+INSERT INTO dd(c) VALUES ('0000-00-00 20:00:00');
+INSERT IGNORE INTO dd(c) VALUES ('0000-00-00 20:00:00');
+SHOW WARNINGS;
+SELECT c FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('2000-10-01');
+-- error 1292
+UPDATE dd SET b = '0000-00-00';
+UPDATE IGNORE dd SET b = '0000-00-00';
+SHOW WARNINGS;
+SELECT b FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-10-01 10:00:00');
+-- error 1292
+UPDATE dd SET c = '0000-00-00 00:00:00';
+UPDATE IGNORE dd SET c = '0000-00-00 00:00:00';
+SHOW WARNINGS;
+SELECT c FROM dd;
+
+## check NO_ZERO_IN_DATE
+SET sql_mode='';
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('2000-01-00');
+SHOW WARNINGS;
+SELECT a FROM dd;
+INSERT INTO dd(a) values('2000-00-01');
+SHOW WARNINGS;
+SELECT a FROM dd;
+INSERT INTO dd(a) values('0-01-02');
+SHOW WARNINGS;
+SELECT a FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('2000-01-02');
+UPDATE dd SET b = '2000-00-02';
+SHOW WARNINGS;
+SELECT b FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-01-02 20:00:00');
+UPDATE dd SET c = '0000-01-02 20:00:00';
+SHOW WARNINGS;
+SELECT c FROM dd;
+SET sql_mode='NO_ZERO_IN_DATE';
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('2000-01-00');
+SHOW WARNINGS;
+SELECT a FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('2000-01-02');
+UPDATE dd SET a = '2000-00-02';
+SHOW WARNINGS;
+SELECT a FROM dd;
+UPDATE dd SET b = '2000-01-0';
+SHOW WARNINGS;
+SELECT b FROM dd;
+UPDATE dd SET b = '0-01-02';
+SHOW WARNINGS;
+SELECT b FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-01-02 20:00:00');
+UPDATE dd SET c = '2000-00-02 20:00:00';
+SHOW WARNINGS;
+SELECT c FROM dd;
+SET sql_mode='NO_ZERO_IN_DATE,STRICT_TRANS_TABLES';
+TRUNCATE TABLE dd;
+-- error 1292
+INSERT INTO dd(b) VALUES ('2000-01-00');
+INSERT IGNORE INTO dd(b) VALUES ('2000-00-01');
+SHOW WARNINGS;
+SELECT b FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) VALUES ('2000-01-02');
+-- error 1292
+UPDATE dd SET b = '2000-01-00';
+UPDATE IGNORE dd SET b = '2000-01-0';
+SHOW WARNINGS;
+SELECT b FROM dd;
+UPDATE dd SET b = '0000-1-2';
+SELECT b FROM dd;
+-- error 1292
+UPDATE dd SET c = '0000-01-05';
+UPDATE IGNORE dd SET c = '0000-01-5';
+SHOW WARNINGS;
+SELECT c FROM dd;
+TRUNCATE TABLE dd;
+-- error 1292
+INSERT INTO dd(c) VALUES ('2000-01-00 20:00:00');
+INSERT INTO dd(c) VALUES ('2000-01-02');
+-- error 1292
+UPDATE dd SET c = '2000-01-00 20:00:00';
+UPDATE IGNORE dd SET b = '2000-01-00';
+SHOW WARNINGS;
+SELECT b FROM dd;
+
+## check !NO_ZERO_DATE
+SET sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('0000-00-00');
+SHOW WARNINGS;
+SELECT a FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('2000-10-01');
+UPDATE dd SET b = '0000-00-00';
+SHOW WARNINGS;
+SELECT b FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('0000-00-00 00:00:00');
+SHOW WARNINGS;
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-10-01 10:00:00');
+UPDATE dd SET c = '0000-00-00 00:00:00';
+SHOW WARNINGS;
+SELECT c FROM dd;
+TRUNCATE TABLE dd;
+-- error 1292
+INSERT INTO dd(b) VALUES ('2000-01-00');
+INSERT IGNORE INTO dd(b) VALUES ('2000-00-01');
+SHOW WARNINGS;
+SELECT b FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) VALUES ('2000-01-02');
+-- error 1292
+UPDATE dd SET b = '2000-01-00';
+UPDATE IGNORE dd SET b = '2000-01-0';
+SHOW WARNINGS;
+SELECT b FROM dd;
+UPDATE dd SET b = '0000-1-2';
+SELECT b FROM dd;
+-- error 1292
+UPDATE dd SET c = '0000-01-05';
+UPDATE IGNORE dd SET c = '0000-01-5';
+SHOW WARNINGS;
+SELECT c FROM dd;
+TRUNCATE TABLE dd;
+-- error 1292
+INSERT INTO dd(c) VALUES ('2000-01-00 20:00:00');
+INSERT INTO dd(c) VALUES ('2000-01-02');
+-- error 1292
+UPDATE dd SET c = '2000-01-00 20:00:00';
+UPDATE IGNORE dd SET b = '2000-01-00';
+SHOW WARNINGS;
+SELECT b FROM dd;
+
+## check !NO_ZERO_IN_DATE
+SET sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION';
+TRUNCATE TABLE dd;
+INSERT INTO dd(a) values('2000-00-10');
+SHOW WARNINGS;
+SELECT a FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(b) values('2000-10-01');
+UPDATE dd SET b = '2000-00-10';
+SHOW WARNINGS;
+SELECT b FROM dd;
+TRUNCATE TABLE dd;
+INSERT INTO dd(c) values('2000-10-01 10:00:00');
+-- error 1292
+UPDATE dd SET c = '2000-00-10 00:00:00';
+UPDATE IGNORE dd SET c = '2000-01-00 00:00:00';
+SHOW WARNINGS;
+SELECT c FROM dd;
+
+drop table if exists table_20220419;
+CREATE TABLE table_20220419 (
+  id bigint(20) NOT NULL AUTO_INCREMENT,
+  lastLoginDate datetime NOT NULL,
+  PRIMARY KEY (id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+set sql_mode='';
+insert into table_20220419 values(1,'0000-00-00 00:00:00');
+set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';
+-- error 1292
+insert into table_20220419(lastLoginDate) select lastLoginDate from table_20220419;
+set sql_mode=default;
+
+# TestIssue49015
+drop table if exists test.t;
+create table test.t (a varchar(10), b tinyint(1));
+insert into test.t values ("abc", 1);
+select * from test.t where (a, b) in (('a', 1), (null, 0));
+update test.t set b = 0 where (a, b) in (('a', 1), (null, 0));
+SHOW WARNINGS;
+
+# TestIssue49986
+drop table if exists test.t;
+create table if not exists test.ast (i varchar(20));
+create table if not exists test.acc (j varchar(20), k varchar(20), l varchar(20), m varchar(20));
+explain format='brief' with t as(select i, (case when b.j = '20001' then b.l else b.k end) an from test.ast a inner join test.acc b on (a.i = b.m) and a.i = 'astp2019121731703151'), t1 as (select i, group_concat(an order by an separator '; ') an from t group by i) select * from t1;

@@ -18,14 +18,14 @@ import (
 	gjson "encoding/json"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client/http"
 )
 
 func TestShowPlacementLabelsBuilder(t *testing.T) {
 	cases := []struct {
-		stores  [][]*helper.StoreLabel
+		stores  [][]*pd.StoreLabel
 		expects [][]interface{}
 	}{
 		{
@@ -33,7 +33,7 @@ func TestShowPlacementLabelsBuilder(t *testing.T) {
 			expects: nil,
 		},
 		{
-			stores: [][]*helper.StoreLabel{
+			stores: [][]*pd.StoreLabel{
 				{{Key: "zone", Value: "z1"}, {Key: "rack", Value: "r3"}, {Key: "host", Value: "h1"}},
 				{{Key: "zone", Value: "z1"}, {Key: "rack", Value: "r1"}, {Key: "host", Value: "h2"}},
 				{{Key: "zone", Value: "z1"}, {Key: "rack", Value: "r2"}, {Key: "host", Value: "h2"}},

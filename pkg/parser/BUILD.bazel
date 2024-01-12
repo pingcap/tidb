@@ -9,8 +9,10 @@ go_library(
     name = "parser",
     srcs = [
         "digester.go",
+        "generate.go",
         "hintparser.go",
         "hintparserimpl.go",
+        "keywords.go",
         "lexer.go",
         "misc.go",
         "parser.go",
@@ -41,6 +43,7 @@ go_test(
         "consistent_test.go",
         "digester_test.go",
         "hintparser_test.go",
+        "keywords_test.go",
         "lexer_test.go",
         "main_test.go",
         "parser_test.go",

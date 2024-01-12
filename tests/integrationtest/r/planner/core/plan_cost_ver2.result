@@ -247,3 +247,14 @@ Limit_9	0.17	root		offset:0, count:100000
   └─Limit_21(Probe)	0.17	cop[tikv]		offset:0, count:100000
     └─Selection_16	0.17	cop[tikv]		eq(planner__core__plan_cost_ver2.t.c, 20), ne(planner__core__plan_cost_ver2.t.b, 200)
       └─TableRowIDScan_15	250.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t;
+create table t (a int);
+set @@tidb_cost_model_version=2;
+explain format='true_card_cost' select * from t;
+Error 1105 (HY000): 'explain format=true_card_cost' cannot work without 'analyze', please use 'explain analyze format=true_card_cost'
+explain analyze format='true_card_cost' select * from t where a<3;
+id	estRows	estCost	costFormula	actRows	task	access object	execution info	operator info	memory	disk
+TableReader_7	3323.33	0.00	(((cpu(0*filters(1)*tikv_cpu_factor(49.9))) + (scan(0*logrowsize(32)*tikv_scan_factor(40.7)))) + (net(0*rowsize(16)*tidb_kv_net_factor(3.96))))/15.00	0	root		<execution_info>	<operator_info>	<memory>	<disk>
+└─Selection_6	3323.33	0.00	(cpu(0*filters(1)*tikv_cpu_factor(49.9))) + (scan(0*logrowsize(32)*tikv_scan_factor(40.7)))	0	cop[tikv]		<execution_info>	<operator_info>	<memory>	<disk>
+  └─TableFullScan_5	10000.00	0.00	scan(0*logrowsize(32)*tikv_scan_factor(40.7))	0	cop[tikv]	table:t	<execution_info>	<operator_info>	<memory>	<disk>
+set @@tidb_cost_model_version=DEFAULT;

@@ -21,18 +21,19 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	pd "github.com/tikv/pd/client/http"
 )
 
 func TestClone(t *testing.T) {
-	rule := &Rule{ID: "434"}
+	rule := &pd.Rule{ID: "434"}
 	newRule := rule.Clone()
 	newRule.ID = "121"
 
-	require.Equal(t, &Rule{ID: "434"}, rule)
-	require.Equal(t, &Rule{ID: "121"}, newRule)
+	require.Equal(t, &pd.Rule{ID: "434"}, rule)
+	require.Equal(t, &pd.Rule{ID: "121"}, newRule)
 }
 
-func matchRules(t1, t2 []*Rule, prefix string, t *testing.T) {
+func matchRules(t1, t2 []*pd.Rule, prefix string, t *testing.T) {
 	require.Equal(t, len(t2), len(t1), prefix)
 	for i := range t1 {
 		found := false
@@ -52,7 +53,7 @@ func TestNewRuleAndNewRules(t *testing.T) {
 		name     string
 		input    string
 		replicas uint64
-		output   []*Rule
+		output   []*pd.Rule
 		err      error
 	}
 	var tests []TestCase
@@ -61,8 +62,8 @@ func TestNewRuleAndNewRules(t *testing.T) {
 		name:     "empty constraints",
 		input:    "",
 		replicas: 3,
-		output: []*Rule{
-			NewRule(Voter, 3, NewConstraintsDirect()),
+		output: []*pd.Rule{
+			NewRule(pd.Voter, 3, NewConstraintsDirect()),
 		},
 	})
 
@@ -77,10 +78,10 @@ func TestNewRuleAndNewRules(t *testing.T) {
 		name:     "normal list constraints",
 		input:    `["+zone=sh", "+region=sh"]`,
 		replicas: 3,
-		output: []*Rule{
-			NewRule(Voter, 3, NewConstraintsDirect(
-				NewConstraintDirect("zone", In, "sh"),
-				NewConstraintDirect("region", In, "sh"),
+		output: []*pd.Rule{
+			NewRule(pd.Voter, 3, NewConstraintsDirect(
+				NewConstraintDirect("zone", pd.In, "sh"),
+				NewConstraintDirect("region", pd.In, "sh"),
 			)),
 		},
 	})
@@ -88,13 +89,13 @@ func TestNewRuleAndNewRules(t *testing.T) {
 	tests = append(tests, TestCase{
 		name:  "normal dict constraints",
 		input: `{"+zone=sh,-zone=bj":2, "+zone=sh": 1}`,
-		output: []*Rule{
-			NewRule(Voter, 2, NewConstraintsDirect(
-				NewConstraintDirect("zone", In, "sh"),
-				NewConstraintDirect("zone", NotIn, "bj"),
+		output: []*pd.Rule{
+			NewRule(pd.Voter, 2, NewConstraintsDirect(
+				NewConstraintDirect("zone", pd.In, "sh"),
+				NewConstraintDirect("zone", pd.NotIn, "bj"),
 			)),
-			NewRule(Voter, 1, NewConstraintsDirect(
-				NewConstraintDirect("zone", In, "sh"),
+			NewRule(pd.Voter, 1, NewConstraintsDirect(
+				NewConstraintDirect("zone", pd.In, "sh"),
 			)),
 		},
 	})
@@ -102,13 +103,13 @@ func TestNewRuleAndNewRules(t *testing.T) {
 	tests = append(tests, TestCase{
 		name:  "normal dict constraints, with count",
 		input: "{'+zone=sh,-zone=bj':2, '+zone=sh': 1}",
-		output: []*Rule{
-			NewRule(Voter, 2, NewConstraintsDirect(
-				NewConstraintDirect("zone", In, "sh"),
-				NewConstraintDirect("zone", NotIn, "bj"),
+		output: []*pd.Rule{
+			NewRule(pd.Voter, 2, NewConstraintsDirect(
+				NewConstraintDirect("zone", pd.In, "sh"),
+				NewConstraintDirect("zone", pd.NotIn, "bj"),
 			)),
-			NewRule(Voter, 1, NewConstraintsDirect(
-				NewConstraintDirect("zone", In, "sh"),
+			NewRule(pd.Voter, 1, NewConstraintsDirect(
+				NewConstraintDirect("zone", pd.In, "sh"),
 			)),
 		},
 	})
@@ -147,13 +148,13 @@ func TestNewRuleAndNewRules(t *testing.T) {
 	tests = append(tests, TestCase{
 		name:  "normal dict constraint with evict leader attribute",
 		input: `{"+zone=sh,-zone=bj":2, "+zone=sh,#evict-leader": 1}`,
-		output: []*Rule{
-			NewRule(Voter, 2, NewConstraintsDirect(
-				NewConstraintDirect("zone", In, "sh"),
-				NewConstraintDirect("zone", NotIn, "bj"),
+		output: []*pd.Rule{
+			NewRule(pd.Voter, 2, NewConstraintsDirect(
+				NewConstraintDirect("zone", pd.In, "sh"),
+				NewConstraintDirect("zone", pd.NotIn, "bj"),
 			)),
-			NewRule(Follower, 1, NewConstraintsDirect(
-				NewConstraintDirect("zone", In, "sh"),
+			NewRule(pd.Follower, 1, NewConstraintsDirect(
+				NewConstraintDirect("zone", pd.In, "sh"),
 			)),
 		},
 	})
@@ -172,7 +173,7 @@ func TestNewRuleAndNewRules(t *testing.T) {
 
 	for _, tt := range tests {
 		comment := fmt.Sprintf("[%s]", tt.name)
-		output, err := newRules(Voter, tt.replicas, tt.input)
+		output, err := newRules(pd.Voter, tt.replicas, tt.input)
 		if tt.err == nil {
 			require.NoError(t, err, comment)
 			matchRules(tt.output, output, comment, t)

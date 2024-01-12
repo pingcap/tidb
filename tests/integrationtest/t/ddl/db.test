@@ -365,3 +365,13 @@ select @@last_insert_id;
 select id from local_temp_auto_id;
 show create table local_temp_auto_id;
 
+# TestIssue23473
+drop table if exists t_23473;
+create table t_23473 (k int primary key, v int);
+alter table t_23473 change column k k bigint;
+show columns from t_23473;
+
+# TestAutoConvertBlobTypeByLength
+drop table if exists t0;
+create table t0(c0 Blob(254), c1 Blob(65534), c2 Blob(16777214), c3 Blob(4294967294));
+show columns from t0;

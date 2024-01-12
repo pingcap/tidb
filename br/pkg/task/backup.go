@@ -41,6 +41,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
 	kvutil "github.com/tikv/client-go/v2/util"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
@@ -56,6 +57,7 @@ const (
 	flagUseCheckpoint    = "use-checkpoint"
 	flagKeyspaceName     = "keyspace-name"
 	flagReplicaReadLabel = "replica-read-label"
+	flagTableConcurrency = "table-concurrency"
 
 	flagGCTTL = "gcttl"
 
@@ -91,6 +93,7 @@ type BackupConfig struct {
 	UseBackupMetaV2  bool              `json:"use-backupmeta-v2"`
 	UseCheckpoint    bool              `json:"use-checkpoint" toml:"use-checkpoint"`
 	ReplicaReadLabel map[string]string `json:"replica-read-label" toml:"replica-read-label"`
+	TableConcurrency uint              `json:"table-concurrency" toml:"table-concurrency"`
 	CompressionConfig
 
 	// for ebs-based backup
@@ -122,18 +125,17 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 		"One task represents one table range (or one index range) according to the backup schemas. If there is one table with one index."+
 		"there will be two tasks to back up this table. This value should increase if you need to back up lots of tables or indices.")
 
+	flags.Uint(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool used for backup table metas, "+
+		"including tableInfo/checksum and stats.")
+
 	flags.Bool(flagRemoveSchedulers, false,
 		"disable the balance, shuffle and region-merge schedulers in PD to speed up backup")
 	// This flag can impact the online cluster, so hide it in case of abuse.
 	_ = flags.MarkHidden(flagRemoveSchedulers)
 
-	// Disable stats by default. because of
-	// 1. DumpStatsToJson is not stable
-	// 2. It increases memory usage and might cause BR OOM.
+	// Disable stats by default.
 	// TODO: we need a better way to backup/restore stats.
-	flags.Bool(flagIgnoreStats, true, "ignore backup stats, used for test")
-	// This flag is used for test. we should backup stats all the time.
-	_ = flags.MarkHidden(flagIgnoreStats)
+	flags.Bool(flagIgnoreStats, true, "ignore backup stats")
 
 	flags.Bool(flagUseBackupMetaV2, true,
 		"use backup meta v2 to store meta info")
@@ -198,6 +200,9 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	cfg.GCTTL = gcTTL
 	cfg.Concurrency, err = flags.GetUint32(flagConcurrency)
 	if err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.TableConcurrency, err = flags.GetUint(flagTableConcurrency); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -721,7 +726,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}
 	}
 	updateCh = g.StartProgress(ctx, "Checksum", checksumProgress, !cfg.LogProgress)
-	schemasConcurrency := uint(min(backup.DefaultSchemaConcurrency, schemas.Len()))
+	schemasConcurrency := min(cfg.TableConcurrency, uint(schemas.Len()))
 
 	err = schemas.BackupSchemas(
 		ctx, metawriter, client.GetCheckpointRunner(), mgr.GetStorage(), statsHandle, backupTS, schemasConcurrency, cfg.ChecksumConcurrency, skipChecksum, updateCh)
@@ -773,7 +778,7 @@ func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 			return 0, errors.Errorf("must set timezone when using datetime format ts, e.g. '2018-05-11 01:42:23+0800'")
 		}
 	}
-	t, err := types.ParseTime(sc.TypeCtx(), ts, mysql.TypeTimestamp, types.MaxFsp, nil)
+	t, err := types.ParseTime(sc.TypeCtx(), ts, mysql.TypeTimestamp, types.MaxFsp)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -782,6 +787,21 @@ func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 		return 0, errors.Trace(err)
 	}
 	return oracle.GoTimeToTS(t1), nil
+}
+
+func DefaultBackupConfig() BackupConfig {
+	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
+	DefineCommonFlags(fs)
+	DefineBackupFlags(fs)
+	cfg := BackupConfig{}
+	err := multierr.Combine(
+		cfg.ParseFromFlags(fs),
+		cfg.Config.ParseFromFlags(fs),
+	)
+	if err != nil {
+		log.Panic("infallible operation failed.", zap.Error(err))
+	}
+	return cfg
 }
 
 func parseCompressionType(s string) (backuppb.CompressionType, error) {

@@ -6,13 +6,11 @@ begin;
 prepare stmt from 'update t set a = ? where  a = ?';
 set @a=1;
 execute stmt using @a, @a;
-
 commit;
 begin;
 prepare stmt from 'update t set a = ? where  a = ?';
 set @a=2;
 execute stmt using @a, @a;
-
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
@@ -88,7 +86,6 @@ select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
 admin flush session plan_cache;
-
 execute stmt1;
 id	a	b	id	a	b
 select @@last_plan_from_cache;
@@ -166,7 +163,6 @@ select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
 admin flush session plan_cache;
-
 show warnings;
 Level	Code	Message
 Warning	1105	The plan cache is disable. So there no need to flush the plan cache
@@ -304,7 +300,6 @@ create table t2 (a int, b int, primary key(a));
 prepare stmt1 from "insert into t2 select * from t1 where a=?";
 set @a=1;
 execute stmt1 using @a;
-
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 0
@@ -313,7 +308,6 @@ a	b
 1	1
 set @a=2;
 execute stmt1 using @a;
-
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 1
@@ -323,7 +317,6 @@ a	b
 2	2
 set @a=3;
 execute stmt1 using @a;
-
 select @@last_plan_from_cache;
 @@last_plan_from_cache
 1

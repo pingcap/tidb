@@ -234,7 +234,7 @@ func (resp *mockResponse) Next(context.Context) (kv.ResultSubset, error) {
 	if !canUseChunkRPC(resp.ctx) {
 		datum := types.NewIntDatum(1)
 		bytes := make([]byte, 0, 100)
-		bytes, _ = codec.EncodeValue(nil, bytes, datum, datum, datum, datum)
+		bytes, _ = codec.EncodeValue(time.UTC, bytes, datum, datum, datum, datum)
 		chunks = make([]tipb.Chunk, numRows)
 		for i := range chunks {
 			chkData := make([]byte, len(bytes))

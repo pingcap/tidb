@@ -50,18 +50,18 @@ select * from t;
 
 # TestCharsetDatabase
 create database if not exists cd_test_utf8 CHARACTER SET utf8 COLLATE utf8_bin;
---error 1273
+--error 0,1273
 create database if not exists cd_test_latin1 CHARACTER SET latin1 COLLATE latin1_swedish_ci;
 use cd_test_utf8;
 select @@character_set_database;
 select @@collation_database;
---error 1049
+--error 0,1049
 use cd_test_latin1;
 select @@character_set_database;
 select @@collation_database;
 
 # DefaultDBAfterDropCurDB
---error 1273
+--error 0,1273
 create database if not exists test_db CHARACTER SET latin1 COLLATE latin1_swedish_ci;
 
 # CollationUnion

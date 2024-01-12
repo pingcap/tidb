@@ -35,13 +35,13 @@ import (
 func TestPartialNext(t *testing.T) {
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	// keyA represents a multi column index.
-	keyA, err := codec.EncodeValue(sc, nil, types.NewDatum("abc"), types.NewDatum("def"))
+	keyA, err := codec.EncodeValue(sc.TimeZone(), nil, types.NewDatum("abc"), types.NewDatum("def"))
 	require.NoError(t, err)
-	keyB, err := codec.EncodeValue(sc, nil, types.NewDatum("abca"), types.NewDatum("def"))
+	keyB, err := codec.EncodeValue(sc.TimeZone(), nil, types.NewDatum("abca"), types.NewDatum("def"))
 	require.NoError(t, err)
 
 	// We only use first column value to seek.
-	seekKey, err := codec.EncodeValue(sc, nil, types.NewDatum("abc"))
+	seekKey, err := codec.EncodeValue(sc.TimeZone(), nil, types.NewDatum("abc"))
 	require.NoError(t, err)
 
 	nextKey := Key(seekKey).Next()
@@ -149,7 +149,7 @@ func TestHandle(t *testing.T) {
 
 func TestPaddingHandle(t *testing.T) {
 	dec := types.NewDecFromInt(1)
-	encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx(), nil, types.NewDecimalDatum(dec))
+	encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx().TimeZone(), nil, types.NewDecimalDatum(dec))
 	assert.Nil(t, err)
 	assert.Less(t, len(encoded), 9)
 
@@ -229,7 +229,7 @@ func TestHandleMapWithPartialHandle(t *testing.T) {
 	m.Set(ih, 3)
 
 	dec := types.NewDecFromInt(1)
-	encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx(), nil, types.NewDecimalDatum(dec))
+	encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx().TimeZone(), nil, types.NewDecimalDatum(dec))
 	assert.Nil(t, err)
 	assert.Less(t, len(encoded), 9)
 
@@ -285,7 +285,7 @@ func TestMemAwareHandleMapWithPartialHandle(t *testing.T) {
 	m.Set(ih, 3)
 
 	dec := types.NewDecFromInt(1)
-	encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx(), nil, types.NewDecimalDatum(dec))
+	encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx().TimeZone(), nil, types.NewDecimalDatum(dec))
 	assert.Nil(t, err)
 	assert.Less(t, len(encoded), 9)
 
@@ -381,7 +381,7 @@ func BenchmarkMemAwareHandleMap(b *testing.B) {
 			if i%2 == 0 {
 				handles[i] = IntHandle(i)
 			} else {
-				handleBytes, _ := codec.EncodeKey(&sc, nil, types.NewIntDatum(int64(i)))
+				handleBytes, _ := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(int64(i)))
 				handles[i], _ = NewCommonHandle(handleBytes)
 			}
 		}
@@ -403,7 +403,7 @@ func BenchmarkNativeHandleMap(b *testing.B) {
 			if i%2 == 0 {
 				handles[i] = IntHandle(i)
 			} else {
-				handleBytes, _ := codec.EncodeKey(&sc, nil, types.NewIntDatum(int64(i)))
+				handleBytes, _ := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(int64(i)))
 				handles[i], _ = NewCommonHandle(handleBytes)
 			}
 		}

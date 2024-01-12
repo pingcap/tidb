@@ -14,6 +14,7 @@ go_test(
         "//pkg/ddl",
         "//pkg/metrics",
         "//pkg/session",
+        "//pkg/store/mockstore",
         "//pkg/tablecodec",
         "//pkg/testkit",
         "//pkg/testkit/external",

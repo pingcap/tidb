@@ -52,10 +52,10 @@ func TestHashGroupKeyCollation(t *testing.T) {
 	tp.SetCollate("utf8_general_ci")
 	buf1 := make([][]byte, n)
 	buf2 := make([][]byte, n)
-	buf1, err := HashGroupKey(sc, n, chk1.Column(0), buf1, tp)
+	buf1, err := HashGroupKey(sc.TimeZone(), n, chk1.Column(0), buf1, tp)
 	require.NoError(t, err)
 
-	buf2, err = HashGroupKey(sc, n, chk2.Column(0), buf2, tp)
+	buf2, err = HashGroupKey(sc.TimeZone(), n, chk2.Column(0), buf2, tp)
 	require.NoError(t, err)
 
 	for i := 0; i < n; i++ {
@@ -68,9 +68,9 @@ func TestHashGroupKeyCollation(t *testing.T) {
 	tp.SetCollate("utf8_unicode_ci")
 	buf1 = make([][]byte, n)
 	buf2 = make([][]byte, n)
-	buf1, err = HashGroupKey(sc, n, chk1.Column(0), buf1, tp)
+	buf1, err = HashGroupKey(sc.TimeZone(), n, chk1.Column(0), buf1, tp)
 	require.NoError(t, err)
-	buf2, err = HashGroupKey(sc, n, chk2.Column(0), buf2, tp)
+	buf2, err = HashGroupKey(sc.TimeZone(), n, chk2.Column(0), buf2, tp)
 	require.NoError(t, err)
 
 	for i := 0; i < n; i++ {
@@ -93,8 +93,8 @@ func TestHashChunkRowCollation(t *testing.T) {
 	for i := 0; i < n; i++ {
 		h1 := crc32.NewIEEE()
 		h2 := crc32.NewIEEE()
-		require.NoError(t, HashChunkRow(sc, h1, chk1.GetRow(i), tps, cols, buf))
-		require.NoError(t, HashChunkRow(sc, h2, chk2.GetRow(i), tps, cols, buf))
+		require.NoError(t, HashChunkRow(sc.TypeCtx(), h1, chk1.GetRow(i), tps, cols, buf))
+		require.NoError(t, HashChunkRow(sc.TypeCtx(), h2, chk2.GetRow(i), tps, cols, buf))
 		require.NotEqual(t, h2.Sum32(), h1.Sum32())
 		h1.Reset()
 		h2.Reset()
@@ -104,8 +104,8 @@ func TestHashChunkRowCollation(t *testing.T) {
 	for i := 0; i < n; i++ {
 		h1 := crc32.NewIEEE()
 		h2 := crc32.NewIEEE()
-		require.NoError(t, HashChunkRow(sc, h1, chk1.GetRow(i), tps, cols, buf))
-		require.NoError(t, HashChunkRow(sc, h2, chk2.GetRow(i), tps, cols, buf))
+		require.NoError(t, HashChunkRow(sc.TypeCtx(), h1, chk1.GetRow(i), tps, cols, buf))
+		require.NoError(t, HashChunkRow(sc.TypeCtx(), h2, chk2.GetRow(i), tps, cols, buf))
 		require.Equal(t, h2.Sum32(), h1.Sum32())
 		h1.Reset()
 		h2.Reset()
@@ -115,8 +115,8 @@ func TestHashChunkRowCollation(t *testing.T) {
 	for i := 0; i < n; i++ {
 		h1 := crc32.NewIEEE()
 		h2 := crc32.NewIEEE()
-		require.NoError(t, HashChunkRow(sc, h1, chk1.GetRow(i), tps, cols, buf))
-		require.NoError(t, HashChunkRow(sc, h2, chk2.GetRow(i), tps, cols, buf))
+		require.NoError(t, HashChunkRow(sc.TypeCtx(), h1, chk1.GetRow(i), tps, cols, buf))
+		require.NoError(t, HashChunkRow(sc.TypeCtx(), h2, chk2.GetRow(i), tps, cols, buf))
 		require.Equal(t, h2.Sum32(), h1.Sum32())
 		h1.Reset()
 		h2.Reset()
@@ -133,8 +133,8 @@ func TestHashChunkColumnsCollation(t *testing.T) {
 	h2s := []hash.Hash64{fnv.New64(), fnv.New64(), fnv.New64()}
 
 	tp.SetCollate("binary")
-	require.NoError(t, HashChunkColumns(sc, h1s, chk1, tp, 0, buf, hasNull))
-	require.NoError(t, HashChunkColumns(sc, h2s, chk2, tp, 0, buf, hasNull))
+	require.NoError(t, HashChunkColumns(sc.TypeCtx(), h1s, chk1, tp, 0, buf, hasNull))
+	require.NoError(t, HashChunkColumns(sc.TypeCtx(), h2s, chk2, tp, 0, buf, hasNull))
 
 	for i := 0; i < n; i++ {
 		require.NotEqual(t, h2s[i].Sum64(), h1s[i].Sum64())
@@ -143,15 +143,15 @@ func TestHashChunkColumnsCollation(t *testing.T) {
 	}
 
 	tp.SetCollate("utf8_general_ci")
-	require.NoError(t, HashChunkColumns(sc, h1s, chk1, tp, 0, buf, hasNull))
-	require.NoError(t, HashChunkColumns(sc, h2s, chk2, tp, 0, buf, hasNull))
+	require.NoError(t, HashChunkColumns(sc.TypeCtx(), h1s, chk1, tp, 0, buf, hasNull))
+	require.NoError(t, HashChunkColumns(sc.TypeCtx(), h2s, chk2, tp, 0, buf, hasNull))
 	for i := 0; i < n; i++ {
 		require.Equal(t, h2s[i].Sum64(), h1s[i].Sum64())
 	}
 
 	tp.SetCollate("utf8_unicode_ci")
-	require.NoError(t, HashChunkColumns(sc, h1s, chk1, tp, 0, buf, hasNull))
-	require.NoError(t, HashChunkColumns(sc, h2s, chk2, tp, 0, buf, hasNull))
+	require.NoError(t, HashChunkColumns(sc.TypeCtx(), h1s, chk1, tp, 0, buf, hasNull))
+	require.NoError(t, HashChunkColumns(sc.TypeCtx(), h2s, chk2, tp, 0, buf, hasNull))
 	for i := 0; i < n; i++ {
 		require.Equal(t, h2s[i].Sum64(), h1s[i].Sum64())
 	}

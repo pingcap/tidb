@@ -23,6 +23,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -259,10 +260,15 @@ func (c *CMSketch) SubValue(h1, h2 uint64, count uint64) {
 // QueryValue is used to query the count of specified value.
 func QueryValue(sctx sessionctx.Context, c *CMSketch, t *TopN, val types.Datum) (uint64, error) {
 	var sc *stmtctx.StatementContext
+	tz := time.UTC
 	if sctx != nil {
 		sc = sctx.GetSessionVars().StmtCtx
+		tz = sc.TimeZone()
 	}
-	rawData, err := tablecodec.EncodeValue(sc, nil, val)
+	rawData, err := tablecodec.EncodeValue(tz, nil, val)
+	if sc != nil {
+		err = sc.HandleError(err)
+	}
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -528,6 +534,13 @@ func (c *CMSketch) CalcDefaultValForAnalyze(ndv uint64) {
 // TopN stores most-common values, which is used to estimate point queries.
 type TopN struct {
 	TopN []TopNMeta
+}
+
+// Scale scales the TopN by the given factor.
+func (c *TopN) Scale(scaleFactor float64) {
+	for i := range c.TopN {
+		c.TopN[i].Count = uint64(float64(c.TopN[i].Count) * scaleFactor)
+	}
 }
 
 // AppendTopN appends a topn into the TopN struct.
@@ -848,8 +861,8 @@ func SortTopnMeta(topnMetas []TopNMeta) {
 
 // TopnMetaCompare compare topnMeta
 func TopnMetaCompare(i, j TopNMeta) int {
-	c := cmp.Compare(i.Count, j.Count)
-	if c == 0 {
+	c := cmp.Compare(j.Count, i.Count)
+	if c != 0 {
 		return c
 	}
 	return bytes.Compare(i.Encoded, j.Encoded)

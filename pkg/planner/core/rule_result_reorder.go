@@ -59,7 +59,7 @@ func (rs *resultReorder) completeSort(lp LogicalPlan) bool {
 		for _, col := range cols {
 			exist := false
 			for _, byItem := range sort.ByItems {
-				if col.Equal(nil, byItem.Expr) {
+				if col.EqualColumn(byItem.Expr) {
 					exist = true
 					break
 				}
@@ -89,7 +89,7 @@ func (rs *resultReorder) injectSort(lp LogicalPlan) LogicalPlan {
 	}
 	sort := LogicalSort{
 		ByItems: byItems,
-	}.Init(lp.SCtx(), lp.SelectBlockOffset())
+	}.Init(lp.SCtx(), lp.QueryBlockOffset())
 	sort.SetChildren(lp)
 	return sort
 }

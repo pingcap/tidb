@@ -143,7 +143,7 @@ func TestCompare(t *testing.T) {
 		args := bf.getArgs()
 		require.Equal(t, test.tp, args[0].GetType().GetType())
 		require.Equal(t, test.tp, args[1].GetType().GetType())
-		res, isNil, err := bf.evalInt(chunk.Row{})
+		res, isNil, err := bf.evalInt(ctx, chunk.Row{})
 		require.NoError(t, err)
 		require.False(t, isNil)
 		require.Equal(t, test.expected, res)
@@ -207,7 +207,7 @@ func TestCoalesce(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.Coalesce, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
 
-		d, err := f.Eval(chunk.Row{})
+		d, err := f.Eval(ctx, chunk.Row{})
 
 		if test.getErr {
 			require.Error(t, err)
@@ -274,12 +274,12 @@ func TestIntervalFunc(t *testing.T) {
 		f, err := fc.getFunction(ctx, datumsToConstants(test.args))
 		require.NoError(t, err)
 		if test.getErr {
-			v, err := evalBuiltinFunc(f, chunk.Row{})
+			v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			require.Error(t, err)
 			require.Equal(t, test.ret, v.GetInt64())
 			continue
 		}
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		require.Equal(t, test.ret, v.GetInt64())
 	}
@@ -376,7 +376,7 @@ func TestGreatestLeastFunc(t *testing.T) {
 	} {
 		f0, err := newFunctionForTest(ctx, ast.Greatest, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
-		d, err := f0.Eval(chunk.Row{})
+		d, err := f0.Eval(ctx, chunk.Row{})
 		if test.getErr {
 			require.Error(t, err)
 		} else {
@@ -390,7 +390,7 @@ func TestGreatestLeastFunc(t *testing.T) {
 
 		f1, err := newFunctionForTest(ctx, ast.Least, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
-		d, err = f1.Eval(chunk.Row{})
+		d, err = f1.Eval(ctx, chunk.Row{})
 		if test.getErr {
 			require.Error(t, err)
 		} else {
@@ -420,4 +420,13 @@ func TestRefineArgsWithCastEnum(t *testing.T) {
 	args := f.refineArgsByUnsignedFlag(ctx, []Expression{zeroUintConst, enumCol})
 	require.Equal(t, zeroUintConst, args[0])
 	require.Equal(t, enumCol, args[1])
+}
+
+func TestIssue46475(t *testing.T) {
+	ctx := createContext(t)
+	args := []interface{}{nil, dt, nil}
+
+	f, err := newFunctionForTest(ctx, ast.Coalesce, primitiveValsToConstants(ctx, args)...)
+	require.NoError(t, err)
+	require.Equal(t, f.GetType().GetType(), mysql.TypeDate)
 }

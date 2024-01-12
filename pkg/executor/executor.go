@@ -17,6 +17,7 @@ package executor
 import (
 	"cmp"
 	"context"
+	stderrors "errors"
 	"fmt"
 	"math"
 	"runtime/pprof"
@@ -36,9 +37,11 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/schematracker"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/pdhelper"
+	"github.com/pingcap/tidb/pkg/executor/sortexec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -50,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	poolutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
@@ -102,14 +106,15 @@ var (
 	_ exec.Executor = &ShowDDLExec{}
 	_ exec.Executor = &ShowDDLJobsExec{}
 	_ exec.Executor = &ShowDDLJobQueriesExec{}
-	_ exec.Executor = &SortExec{}
+	_ exec.Executor = &sortexec.SortExec{}
 	_ exec.Executor = &aggregate.StreamAggExec{}
 	_ exec.Executor = &TableDualExec{}
 	_ exec.Executor = &TableReaderExecutor{}
 	_ exec.Executor = &TableScanExec{}
-	_ exec.Executor = &TopNExec{}
+	_ exec.Executor = &sortexec.TopNExec{}
 	_ exec.Executor = &UnionExec{}
 	_ exec.Executor = &FastCheckTableExec{}
+	_ exec.Executor = &AdminShowBDRRoleExec{}
 
 	// GlobalMemoryUsageTracker is the ancestor of all the Executors' memory tracker and GlobalMemory Tracker
 	GlobalMemoryUsageTracker *memory.Tracker
@@ -198,6 +203,7 @@ func (a *globalPanicOnExceed) Action(t *memory.Tracker) {
 	default:
 		msg = "Out of Unknown Resource Quota!"
 	}
+	// TODO(hawkingrei): should return error instead.
 	panic(msg)
 }
 
@@ -208,8 +214,7 @@ func (*globalPanicOnExceed) GetPriority() int64 {
 
 // newList creates a new List to buffer current executor's result.
 func newList(e exec.Executor) *chunk.List {
-	base := e.Base()
-	return chunk.NewList(base.RetFieldTypes(), base.InitCap(), base.MaxChunkSize())
+	return chunk.NewList(e.RetFieldTypes(), e.InitCap(), e.MaxChunkSize())
 }
 
 // CommandDDLJobsExec is the general struct for Cancel/Pause/Resume commands on
@@ -490,11 +495,12 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	}
 	req.AppendString(11, job.State.String())
 	if job.Type == model.ActionMultiSchemaChange {
+		isDistTask := job.ReorgMeta != nil && job.ReorgMeta.IsDistReorg
 		for _, subJob := range job.MultiSchemaInfo.SubJobs {
 			req.AppendInt64(0, job.ID)
 			req.AppendString(1, schemaName)
 			req.AppendString(2, tableName)
-			req.AppendString(3, subJob.Type.String()+" /* subjob */"+showAddIdxReorgTpInSubJob(subJob))
+			req.AppendString(3, subJob.Type.String()+" /* subjob */"+showAddIdxReorgTpInSubJob(subJob, isDistTask))
 			req.AppendString(4, subJob.SchemaState.String())
 			req.AppendInt64(5, job.SchemaID)
 			req.AppendInt64(6, job.TableID)
@@ -524,7 +530,9 @@ func showAddIdxReorgTp(job *model.Job) string {
 			if len(tp) > 0 {
 				sb.WriteString(" /* ")
 				sb.WriteString(tp)
-				if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge && job.ReorgMeta.UseCloudStorage {
+				if job.ReorgMeta.ReorgTp == model.ReorgTypeLitMerge &&
+					job.ReorgMeta.IsDistReorg &&
+					job.ReorgMeta.UseCloudStorage {
 					sb.WriteString(" cloud")
 				}
 				sb.WriteString(" */")
@@ -535,14 +543,14 @@ func showAddIdxReorgTp(job *model.Job) string {
 	return ""
 }
 
-func showAddIdxReorgTpInSubJob(subJob *model.SubJob) string {
+func showAddIdxReorgTpInSubJob(subJob *model.SubJob, useDistTask bool) string {
 	if subJob.Type == model.ActionAddIndex || subJob.Type == model.ActionAddPrimaryKey {
 		sb := strings.Builder{}
 		tp := subJob.ReorgTp.String()
 		if len(tp) > 0 {
 			sb.WriteString(" /* ")
 			sb.WriteString(tp)
-			if subJob.ReorgTp == model.ReorgTypeLitMerge && subJob.UseCloud {
+			if subJob.ReorgTp == model.ReorgTypeLitMerge && useDistTask && subJob.UseCloud {
 				sb.WriteString(" cloud")
 			}
 			sb.WriteString(" */")
@@ -853,7 +861,7 @@ func (e *CheckTableExec) Open(ctx context.Context) error {
 		return err
 	}
 	for _, src := range e.srcs {
-		if err := src.Open(ctx); err != nil {
+		if err := exec.Open(ctx, src); err != nil {
 			return errors.Trace(err)
 		}
 	}
@@ -866,7 +874,7 @@ func (e *CheckTableExec) Close() error {
 	var firstErr error
 	close(e.exitCh)
 	for _, src := range e.srcs {
-		if err := src.Close(); err != nil && firstErr == nil {
+		if err := exec.Close(src); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -1465,8 +1473,8 @@ func init() {
 		if e.err != nil {
 			return nil, e.err
 		}
-		err := executor.Open(ctx)
-		defer terror.Call(executor.Close)
+		err := exec.Open(ctx, executor)
+		defer func() { terror.Log(exec.Close(executor)) }()
 		if err != nil {
 			return nil, err
 		}
@@ -1856,7 +1864,7 @@ func (e *UnionExec) resultPuller(ctx context.Context, workerID int) {
 			e.mu.maxOpenedChildID = childID
 		}
 		e.mu.Unlock()
-		if err := e.Children(childID).Open(ctx); err != nil {
+		if err := exec.Open(ctx, e.Children(childID)); err != nil {
 			result.err = err
 			e.stopFetchData.Store(true)
 			e.resultPool <- result
@@ -1936,7 +1944,7 @@ func (e *UnionExec) Close() error {
 	// promised to exit when reaching here (e.childIDChan been closed).
 	var firstErr error
 	for i := 0; i <= e.mu.maxOpenedChildID; i++ {
-		if err := e.Children(i).Close(); err != nil && firstErr == nil {
+		if err := exec.Close(e.Children(i)); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -1946,6 +1954,16 @@ func (e *UnionExec) Close() error {
 // ResetContextOfStmt resets the StmtContext and session variables.
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("ResetContextOfStmt panicked", zap.Stack("stack"), zap.Any("recover", r), zap.Error(err))
+			if err != nil {
+				err = stderrors.Join(err, util.GetRecoverError(r))
+			} else {
+				err = util.GetRecoverError(r)
+			}
+		}
+	}()
 	vars := ctx.GetSessionVars()
 	for name, val := range vars.StmtCtx.SetVarHintRestore {
 		err := vars.SetSystemVar(name, val)
@@ -1972,6 +1990,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.OptimizerCETrace = nil
 	sc.IsSyncStatsFailed = false
 	sc.IsExplainAnalyzeDML = false
+	sc.ResourceGroupName = vars.ResourceGroupName
 	// Firstly we assume that UseDynamicPruneMode can be enabled according session variable, then we will check other conditions
 	// in PlanBuilder.buildDataSource
 	if ctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
@@ -2086,22 +2105,32 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	// pushing them down to TiKV as flags.
 
 	sc.InRestrictedSQL = vars.InRestrictedSQL
+
+	errLevels := sc.ErrLevels()
+	errLevels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
 	switch stmt := s.(type) {
 	// `ResetUpdateStmtCtx` and `ResetDeleteStmtCtx` may modify the flags, so we'll need to store them.
 	case *ast.UpdateStmt:
 		ResetUpdateStmtCtx(sc, stmt, vars)
+		errLevels = sc.ErrLevels()
 	case *ast.DeleteStmt:
 		ResetDeleteStmtCtx(sc, stmt, vars)
+		errLevels = sc.ErrLevels()
 	case *ast.InsertStmt:
 		sc.InInsertStmt = true
 		// For insert statement (not for update statement), disabling the StrictSQLMode
 		// should make TruncateAsWarning and DividedByZeroAsWarning,
 		// but should not make DupKeyAsWarning.
 		sc.DupKeyAsWarning = stmt.IgnoreErr
-		sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
 		sc.IgnoreNoPartition = stmt.IgnoreErr
-		sc.ErrAutoincReadFailedAsWarning = stmt.IgnoreErr
-		sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+		if stmt.IgnoreErr {
+			errLevels[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelWarn
+		}
+		errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !vars.StrictSQLMode || stmt.IgnoreErr)
+		errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
+			!vars.SQLMode.HasErrorForDivisionByZeroMode(),
+			!vars.StrictSQLMode || stmt.IgnoreErr,
+		)
 		sc.Priority = stmt.Priority
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr).
@@ -2125,12 +2154,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.SelectStmt:
 		sc.InSelectStmt = true
 
-		// see https://dev.mysql.com/doc/refman/5.7/en/sql-mode.html#sql-mode-strict
-		// said "For statements such as SELECT that do not change data, invalid values
-		// generate a warning in strict mode, not an error."
-		// and https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
-		sc.OverflowAsWarning = true
-
 		// Return warning for truncate error in selection.
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithTruncateAsWarning(true).
@@ -2143,7 +2166,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.WeakConsistency = isWeakConsistencyRead(ctx, stmt)
 	case *ast.SetOprStmt:
 		sc.InSelectStmt = true
-		sc.OverflowAsWarning = true
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithTruncateAsWarning(true).
 			WithIgnoreZeroInDate(true).
@@ -2173,6 +2195,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			WithIgnoreTruncateErr(true).
 			WithIgnoreZeroInDate(true).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()))
+	}
+
+	if errLevels != sc.ErrLevels() {
+		sc.SetErrLevels(errLevels)
 	}
 
 	sc.SetTypeFlags(sc.TypeFlags().
@@ -2210,6 +2236,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(reuseObj)
 	}
 
+	sc.ForcePlanCache = fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false)
 	sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
 	errCount, warnCount := vars.StmtCtx.NumErrorWarnings()
 	vars.SysErrorCount = errCount
@@ -2231,9 +2258,14 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 // ResetUpdateStmtCtx resets statement context for UpdateStmt.
 func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars *variable.SessionVars) {
 	sc.InUpdateStmt = true
+	errLevels := sc.ErrLevels()
 	sc.DupKeyAsWarning = stmt.IgnoreErr
-	sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-	sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !vars.StrictSQLMode || stmt.IgnoreErr)
+	errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
+		!vars.SQLMode.HasErrorForDivisionByZeroMode(),
+		!vars.StrictSQLMode || stmt.IgnoreErr,
+	)
+	sc.SetErrLevels(errLevels)
 	sc.Priority = stmt.Priority
 	sc.IgnoreNoPartition = stmt.IgnoreErr
 	sc.SetTypeFlags(sc.TypeFlags().
@@ -2246,9 +2278,14 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 // ResetDeleteStmtCtx resets statement context for DeleteStmt.
 func ResetDeleteStmtCtx(sc *stmtctx.StatementContext, stmt *ast.DeleteStmt, vars *variable.SessionVars) {
 	sc.InDeleteStmt = true
+	errLevels := sc.ErrLevels()
 	sc.DupKeyAsWarning = stmt.IgnoreErr
-	sc.BadNullAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
-	sc.DividedByZeroAsWarning = !vars.StrictSQLMode || stmt.IgnoreErr
+	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !vars.StrictSQLMode || stmt.IgnoreErr)
+	errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
+		!vars.SQLMode.HasErrorForDivisionByZeroMode(),
+		!vars.StrictSQLMode || stmt.IgnoreErr,
+	)
+	sc.SetErrLevels(errLevels)
 	sc.Priority = stmt.Priority
 	sc.SetTypeFlags(sc.TypeFlags().
 		WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr).
@@ -2342,6 +2379,19 @@ func getCheckSum(ctx context.Context, se sessionctx.Context, sql string) ([]grou
 	return checksums, nil
 }
 
+func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
+	sessVars := se.GetSessionVars()
+	originOptUseInvisibleIdx := sessVars.OptimizerUseInvisibleIndexes
+	originMemQuotaQuery := sessVars.MemQuotaQuery
+
+	sessVars.OptimizerUseInvisibleIndexes = true
+	sessVars.MemQuotaQuery = w.sctx.GetSessionVars().MemQuotaQuery
+	return func() {
+		sessVars.OptimizerUseInvisibleIndexes = originOptUseInvisibleIdx
+		sessVars.MemQuotaQuery = originMemQuotaQuery
+	}
+}
+
 // HandleTask implements the Worker interface.
 func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.None)) {
 	defer w.e.wg.Done()
@@ -2354,15 +2404,15 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		w.e.err.CompareAndSwap(nil, &err)
 	}
 
-	se, err := w.e.Base().GetSysSession()
+	se, err := w.e.BaseExecutor.GetSysSession()
 	if err != nil {
 		trySaveErr(err)
 		return
 	}
-	se.GetSessionVars().OptimizerUseInvisibleIndexes = true
+	restoreCtx := w.initSessCtx(se)
 	defer func() {
-		se.GetSessionVars().OptimizerUseInvisibleIndexes = false
-		w.e.Base().ReleaseSysSession(ctx, se)
+		restoreCtx()
+		w.e.BaseExecutor.ReleaseSysSession(ctx, se)
 	}()
 
 	var pkCols []string
@@ -2556,13 +2606,15 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			return
 		}
 
+		errCtx := w.sctx.GetSessionVars().StmtCtx.ErrCtx()
 		getHandleFromRow := func(row chunk.Row) (kv.Handle, error) {
 			handleDatum := make([]types.Datum, 0)
 			for i, t := range pkTypes {
 				handleDatum = append(handleDatum, row.GetDatum(i, t))
 			}
 			if w.table.Meta().IsCommonHandle {
-				handleBytes, err := codec.EncodeKey(w.sctx.GetSessionVars().StmtCtx, nil, handleDatum...)
+				handleBytes, err := codec.EncodeKey(w.sctx.GetSessionVars().StmtCtx.TimeZone(), nil, handleDatum...)
+				err = errCtx.HandleError(err)
 				if err != nil {
 					return nil, err
 				}
@@ -2734,4 +2786,30 @@ func ColumnName(column string) string {
 
 func escapeName(name string) string {
 	return strings.ReplaceAll(name, "`", "``")
+}
+
+// AdminShowBDRRoleExec represents a show BDR role executor.
+type AdminShowBDRRoleExec struct {
+	exec.BaseExecutor
+
+	done bool
+}
+
+// Next implements the Executor Next interface.
+func (e *AdminShowBDRRoleExec) Next(ctx context.Context, req *chunk.Chunk) error {
+	req.Reset()
+	if e.done {
+		return nil
+	}
+
+	return kv.RunInNewTxn(kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin), e.Ctx().GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+		role, err := meta.NewMeta(txn).GetBDRRole()
+		if err != nil {
+			return err
+		}
+
+		req.AppendString(0, role)
+		e.done = true
+		return nil
+	})
 }

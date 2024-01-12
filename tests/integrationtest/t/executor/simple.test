@@ -391,6 +391,7 @@ SET RESOURCE GROUP ``;
 SELECT CURRENT_RESOURCE_GROUP();
 SET RESOURCE GROUP default;
 SELECT CURRENT_RESOURCE_GROUP();
+SELECT /*+ RESOURCE_GROUP(rg1)*/ CURRENT_RESOURCE_GROUP();
 
 connection conn1;
 SELECT CURRENT_RESOURCE_GROUP();
@@ -453,3 +454,31 @@ select user_attributes from mysql.user where user = 'usr1';
 
 set global tidb_enable_resource_control = default;
 disconnect conn1;
+
+# TestStmtAutoNewTxn
+-- echo ## Some statements are like DDL, they commit the previous txn automically.
+-- echo ## Fix issue https://github.com/pingcap/tidb/issues/10705
+begin;
+create user 'xxx'@'%';
+grant all privileges on *.* to 'xxx'@'%';
+create table auto_new (id int);
+begin;
+insert into auto_new values (1);
+revoke all privileges on *.* from 'xxx'@'%';
+-- echo ## insert statement has already committed
+rollback;
+
+-- echo ## Test the behavior when autocommit is false.
+select * from auto_new;
+set autocommit = 0;
+insert into auto_new values (2);
+create user 'yyy'@'%';
+rollback;
+select * from auto_new;
+
+drop user 'yyy'@'%';
+insert into auto_new values (3);
+rollback;
+select * from auto_new;
+
+set autocommit = default;

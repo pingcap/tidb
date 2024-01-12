@@ -25,10 +25,10 @@ go_library(
         "//pkg/table/tables",
         "//pkg/types",
         "//pkg/util",
-        "//pkg/util/pdapi",
         "//pkg/util/profile",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_tikv_pd_client//http",
     ],
 )
 
@@ -50,9 +50,9 @@ go_test(
         "//pkg/store/mockstore",
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
-        "//pkg/util/pdapi",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_pd_client//http",
         "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
     ],

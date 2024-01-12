@@ -44,7 +44,7 @@ func prepareTopNsAndHists(b *testing.B, partitions int, tz *time.Location) ([]*s
 				if i%2 == 0 && j%2 == 0 {
 					continue
 				}
-				key, err := codec.EncodeKey(sc, nil, types.NewIntDatum(int64(j)))
+				key, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(int64(j)))
 				require.NoError(b, err)
 				topN.AppendTopN(key, uint64(rand.Intn(1000)))
 			}

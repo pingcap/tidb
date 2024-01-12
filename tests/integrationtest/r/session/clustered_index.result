@@ -78,18 +78,15 @@ CREATE TABLE `tbl_1`(`col_5` char(84) NOT NULL DEFAULT 'BnHWZQY',   `col_6` char
 insert into tbl_1 values('BsXhVuVvPRcSOlkzuM','QXIEA','IHeTDzJJyfOhIOY','ddxnmRcIjVfosRVC','lizgVQd');
 replace into tbl_1 (col_6,col_7,col_8) values ( 'WzdD','S','UrQhNEUZy' );
 admin check table tbl_1;
-
 drop table if exists tbl_3;
 create table tbl_3 ( col_15 char(167) not null , col_16 varchar(56) not null , col_17 text(25) not null , col_18 char , col_19 char(12) not null , primary key idx_21 ( col_16(5) ) clustered, key idx_22 ( col_19(2),col_16(4) ) , unique key idx_23 ( col_19(6),col_16(4) ) , unique key idx_24 ( col_19(1),col_18(1) ) , key idx_25 ( col_17(3),col_16(2),col_19(4) ) , key idx_26 ( col_18(1),col_17(3) ) , key idx_27 ( col_18(1) ) , unique key idx_28 ( col_16(4),col_15(3) ) , unique key idx_29 ( col_16(2) ) , key idx_30 ( col_18(1),col_16(2),col_19(4),col_17(6) ) , key idx_31 ( col_19(2) ) , key idx_32 ( col_16(6) ) , unique key idx_33 ( col_18(1) ) , unique key idx_34 ( col_15(4) ) , key idx_35 ( col_19(6) ) , key idx_36 ( col_19(4),col_17(4),col_18(1) ) );
 insert into tbl_3 values('auZELjkOUG','yhFUdsZphsWDFG','mNbCXHOWlIMQvXhY','        ','NpQwmX');
 insert into tbl_3 (col_15,col_16,col_17,col_18,col_19) values ( 'PboEJsnVPBknRhpEC','PwqzUThyDHhxhXAdJ','szolY','','pzZfZeOa' ) on duplicate key update col_16 = values( col_16 ) , col_19 = 'zgLlCUA';
 admin check table tbl_3;
-
 create table t (c_int int, c_str varchar(40), primary key(c_str(8)) clustered, unique key(c_int), key(c_str));
 insert into t values (1, 'determined varahamihira');
 insert into t values (1, 'pensive mendeleev') on duplicate key update c_int=values(c_int), c_str=values(c_str);
 admin check table t;
-
 set tidb_cost_model_version=default;
 drop table if exists t;
 create table t (a int, b int, c int, d int, primary key (a, b));
@@ -163,7 +160,6 @@ drop table if exists t;
 create table t(name varchar(255), b int, c int, primary key(name(2)), index idx(b));
 insert into t(name, b) values('aaaaa', 1), ('bbbbb', 2);
 admin check table t;
-
 insert into t(name, b) values('aaa', 3);
 Error 1062 (23000): Duplicate entry 'aa' for key 't.PRIMARY'
 explain select * from t use index(primary) where name = 'aaaaa';
@@ -180,7 +176,6 @@ select * from t use index(primary) where name = 'aaaaa';
 name	b	c
 aaaaa	1	NULL
 admin check table t;
-
 drop table if exists t;
 create table t(name varchar(255), b int, c char(10), primary key(c(2), name(2)), index idx(b));
 insert into t values ('aaa', 1, 'aaa'), ('bbb', 1, 'bbb');
@@ -200,7 +195,6 @@ select group_concat(name order by name separator '.') from t use index(idx);
 group_concat(name order by name separator '.')
 aaa.bbb.bbb.ccc
 admin check table t;
-
 drop table if exists t;
 create table t(name varchar(255), b int, primary key(name(2)), index idx(b));
 insert into t values ('aaa', 1), ('bbb', 1);
@@ -208,12 +202,11 @@ select group_concat(name order by name separator '.') from t use index(idx);
 group_concat(name order by name separator '.')
 aaa.bbb
 update t set name = 'aaaaa' where name = 'bbb';
-Error 1062 (23000): Duplicate entry 'aaaaa' for key 't.PRIMARY'
+Error 1062 (23000): Duplicate entry 'aa' for key 't.PRIMARY'
 update ignore t set name = 'aaaaa' where name = 'bbb';
 Level	Code	Message
-Warning	1062	Duplicate entry 'aaaaa' for key 't.PRIMARY'
+Warning	1062	Duplicate entry 'aa' for key 't.PRIMARY'
 admin check table t;
-
 drop table if exists t1, t2;
 create table t1  (c_str varchar(40), c_decimal decimal(12, 6) , primary key(c_str(8)));
 create table t2  like t1;
@@ -273,11 +266,12 @@ c_int	c_str	c_datetime
 2	sharp yalow	2020-04-01 05:53:36
 commit;
 admin check index t `c_datetime`;
-
 drop table if exists t;
 create table t (a varchar(255), b int, primary key(a));
 insert into t values ('a', 1), ('b', 2), ('c', 3), ('u', 1);
 split table t between ('a') and ('z') regions 5;
+TOTAL_SPLIT_REGION	SCATTER_FINISH_RATIO
+4	1
 create index idx on t (b);
 select a from t order by a;
 a
@@ -445,22 +439,22 @@ bbbbb	-48
 insert into t values ('bb', 0);
 Error 1062 (23000): Duplicate entry 'b' for key 't.PRIMARY'
 insert into t values ('aa', 0);
-Error 1062 (23000): Duplicate entry 'aa' for key 't.PRIMARY'
+Error 1062 (23000): Duplicate entry 'a' for key 't.PRIMARY'
 commit;
 select * from t;
 col_1	col_2
 aaaaa	47
 bbbbb	-48
 admin check table t;
-
 drop table if exists t;
 create table t (a int, b enum('Alice'), c int, primary key (c, b));
 insert into t values (-1,'Alice',100);
 insert into t values (-1,'Alice',7000);
 split table t between (0,'Alice') and (10000,'Alice') regions 2;
+TOTAL_SPLIT_REGION	SCATTER_FINISH_RATIO
+1	1
 alter table t add index idx (c);
 admin check table t;
-
 drop table if exists t;
 create table t (a int primary key, b int);
 select tidb_pk_type from information_schema.tables where table_schema = 'session__clustered_index' and table_name = 't';
@@ -527,13 +521,13 @@ select tidb_pk_type from information_schema.tables where table_schema = 'session
 tidb_pk_type
 CLUSTERED
 create table t (a varchar(255) unique key clustered);
-[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 51 near "clustered);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 51 near "clustered);" 
 create table t (a varchar(255), foreign key (a) reference t1(a) clustered);
-[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 57 near "reference t1(a) clustered);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 57 near "reference t1(a) clustered);" 
 create table t (a varchar(255), foreign key (a) clustered reference t1(a));
-[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 57 near "clustered reference t1(a));" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 57 near "clustered reference t1(a));" 
 create table t (a varchar(255) clustered);
-[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 40 near "clustered);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 40 near "clustered);" 
 create table t (a varchar(255), unique key(a) clustered);
 Error 8200 (HY000): CLUSTERED/NONCLUSTERED keyword is only supported for primary key
 create table t (a varchar(255), unique key(a) nonclustered);
@@ -622,13 +616,13 @@ select tidb_pk_type from information_schema.tables where table_schema = 'session
 tidb_pk_type
 CLUSTERED
 create table t (a varchar(255) unique key clustered);
-[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 51 near "clustered);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 51 near "clustered);" 
 create table t (a varchar(255), foreign key (a) reference t1(a) clustered);
-[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 57 near "reference t1(a) clustered);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 57 near "reference t1(a) clustered);" 
 create table t (a varchar(255), foreign key (a) clustered reference t1(a));
-[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 57 near "clustered reference t1(a));" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 57 near "clustered reference t1(a));" 
 create table t (a varchar(255) clustered);
-[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 40 near "clustered);" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 40 near "clustered);" 
 create table t (a varchar(255), unique key(a) clustered);
 Error 8200 (HY000): CLUSTERED/NONCLUSTERED keyword is only supported for primary key
 create table t (a varchar(255), unique key(a) nonclustered);
@@ -658,7 +652,6 @@ select * from t use index(idx);
 a	b
 aaa	bbb
 admin check table t;
-
 admin recover index t idx;
 ADDED_COUNT	SCAN_COUNT
 0	1
@@ -666,7 +659,6 @@ select * from t use index(idx);
 a	b
 aaa	bbb
 admin check table t;
-
 drop table if exists t;
 create table t (id1 int, id2 varchar(10), a1 int, primary key(id1, id2) clustered) collate utf8mb4_general_ci;
 insert into t values (1, 'asd', 1), (1, 'dsa', 1);
@@ -681,12 +673,10 @@ id1	id2	a1
 1	asd	1
 commit;
 admin check table t;
-
 drop table if exists t;
 create table t (a text collate utf8mb4_general_ci not null, b int(11) not null, primary key (a(10), b) clustered, key idx(a(2)) ) default charset=utf8mb4 collate=utf8mb4_bin;
 insert into t values ('aaa', 2);
 admin check table t;
-
 drop table t;
 drop table if exists t;
 CREATE TABLE t (a int,b int,c int, PRIMARY KEY (a,b));

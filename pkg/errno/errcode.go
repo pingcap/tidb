@@ -1135,6 +1135,7 @@ const (
 	ErrCannotPauseDDLJob  = 8260
 	ErrCannotResumeDDLJob = 8261
 	ErrPausedDDLJob       = 8262
+	ErrBDRRestrictedDDL   = 8263
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248

@@ -2,12 +2,17 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "mock",
-    srcs = ["restricted_sql_executor_mock.go"],
+    srcs = [
+        "mock.go",
+        "restricted_sql_executor_mock.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/util/sqlexec/mock",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/parser/ast",
+        "//pkg/sessionctx",
         "//pkg/util/chunk",
+        "//pkg/util/mock",
         "//pkg/util/sqlexec",
         "@org_uber_go_mock//gomock",
     ],

@@ -25,6 +25,7 @@ import (
 	"io"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -734,7 +735,8 @@ func TestConnExecutionTimeout(t *testing.T) {
 
 	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(1);")
 	require.Equal(t, "[executor:3024]Query execution was interrupted, maximum statement execution time exceeded", err.Error())
-
+	err = cc.handleQuery(context.Background(), "select /*+ set_var(max_execution_time=100) */ age, sleep(1) from testTable2 union all select age, 1 from testTable2")
+	require.Equal(t, "[executor:3024]Query execution was interrupted, maximum statement execution time exceeded", err.Error())
 	// Killed because of max execution time, reset Killed to 0.
 	tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
 	tk.MustExec("set @@max_execution_time = 500;")
@@ -1617,25 +1619,25 @@ func TestAuthSessionTokenPlugin(t *testing.T) {
 	}
 	err = cc.handleAuthPlugin(ctx, &resp)
 	require.NoError(t, err)
-	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin)
+	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin, resp.ZstdLevel)
 	require.NoError(t, err)
 
 	// login succeeds even if the password expires now
 	tk.MustExec("ALTER USER auth_session_token PASSWORD EXPIRE")
-	err = cc.openSessionAndDoAuth([]byte{}, mysql.AuthNativePassword)
+	err = cc.openSessionAndDoAuth([]byte{}, mysql.AuthNativePassword, 0)
 	require.ErrorContains(t, err, "Your password has expired")
-	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin)
+	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin, resp.ZstdLevel)
 	require.NoError(t, err)
 
 	// wrong token should fail
 	tokenBytes[0] ^= 0xff
-	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin)
+	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin, resp.ZstdLevel)
 	require.ErrorContains(t, err, "Access denied")
 	tokenBytes[0] ^= 0xff
 
 	// using the token to auth with another user should fail
 	cc.user = "another_user"
-	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin)
+	err = cc.openSessionAndDoAuth(resp.Auth, resp.AuthPlugin, resp.ZstdLevel)
 	require.ErrorContains(t, err, "Access denied")
 }
 
@@ -1998,4 +2000,75 @@ func TestEmptyOrgName(t *testing.T) {
 	}
 
 	testDispatch(t, inputs, 0)
+}
+
+func TestStats(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	stats := &compressionStats{}
+
+	// No compression
+	vars := tk.Session().GetSessionVars()
+	m, err := stats.Stats(vars)
+	require.NoError(t, err)
+	require.Equal(t, "OFF", m["Compression"])
+	require.Equal(t, "", m["Compression_algorithm"])
+	require.Equal(t, 0, m["Compression_level"])
+
+	// zlib compression
+	vars.CompressionAlgorithm = mysql.CompressionZlib
+	m, err = stats.Stats(vars)
+	require.NoError(t, err)
+	require.Equal(t, "ON", m["Compression"])
+	require.Equal(t, "zlib", m["Compression_algorithm"])
+	require.Equal(t, mysql.ZlibCompressDefaultLevel, m["Compression_level"])
+
+	// zstd compression, with level 1
+	vars.CompressionAlgorithm = mysql.CompressionZstd
+	vars.CompressionLevel = 1
+	m, err = stats.Stats(vars)
+	require.NoError(t, err)
+	require.Equal(t, "ON", m["Compression"])
+	require.Equal(t, "zstd", m["Compression_algorithm"])
+	require.Equal(t, 1, m["Compression_level"])
+}
+
+func TestCloseConn(t *testing.T) {
+	var outBuffer bytes.Buffer
+
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	cfg := serverutil.NewTestConfig()
+	cfg.Port = 0
+	cfg.Status.StatusPort = 0
+	drv := NewTiDBDriver(store)
+	server, err := NewServer(cfg, drv)
+	require.NoError(t, err)
+
+	cc := &clientConn{
+		connectionID: 0,
+		salt: []byte{
+			0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A,
+			0x0B, 0x0C, 0x0D, 0x0E, 0x0F, 0x10, 0x11, 0x12, 0x13, 0x14,
+		},
+		server:     server,
+		pkt:        internal.NewPacketIOForTest(bufio.NewWriter(&outBuffer)),
+		collation:  mysql.DefaultCollationID,
+		peerHost:   "localhost",
+		alloc:      arena.NewAllocator(512),
+		chunkAlloc: chunk.NewAllocator(),
+		capability: mysql.ClientProtocol41,
+	}
+
+	var wg sync.WaitGroup
+	const numGoroutines = 10
+	wg.Add(numGoroutines)
+	for i := 0; i < numGoroutines; i++ {
+		go func() {
+			defer wg.Done()
+			err := closeConn(cc, "", 1)
+			require.NoError(t, err)
+		}()
+	}
+	wg.Wait()
 }

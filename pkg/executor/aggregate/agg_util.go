@@ -71,6 +71,7 @@ func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 		groupKey = append(groupKey, make([]byte, 0, 10*len(groupByItems)))
 	}
 
+	errCtx := ctx.GetSessionVars().StmtCtx.ErrCtx()
 	for _, item := range groupByItems {
 		tp := item.GetType()
 
@@ -102,7 +103,8 @@ func GetGroupKey(ctx sessionctx.Context, input *chunk.Chunk, groupKey [][]byte, 
 			tp = &newTp
 		}
 
-		groupKey, err = codec.HashGroupKey(ctx.GetSessionVars().StmtCtx, input.NumRows(), buf, groupKey, tp)
+		groupKey, err = codec.HashGroupKey(ctx.GetSessionVars().StmtCtx.TimeZone(), input.NumRows(), buf, groupKey, tp)
+		err = errCtx.HandleError(err)
 		if err != nil {
 			expression.PutColumn(buf)
 			return nil, err

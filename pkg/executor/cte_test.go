@@ -27,6 +27,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestCTEIssue49096(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test;")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mock_cte_exec_panic_avoid_deadlock", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mock_cte_exec_panic_avoid_deadlock"))
+	}()
+	insertStr := "insert into t1 values(0)"
+	rowNum := 10
+	vals := make([]int, rowNum)
+	vals[0] = 0
+	for i := 1; i < rowNum; i++ {
+		v := rand.Intn(100)
+		vals[i] = v
+		insertStr += fmt.Sprintf(", (%d)", v)
+	}
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("create table t1(c1 int);")
+	tk.MustExec("create table t2(c1 int);")
+	tk.MustExec(insertStr)
+	// should be insert statement, otherwise it couldn't step int resetCTEStorageMap in handleNoDelay func.
+	sql := "insert into t2 with cte1 as ( " +
+		"select c1 from t1) " +
+		"select c1 from cte1 natural join (select * from cte1 where c1 > 0) cte2 order by c1;"
+	tk.MustExec(sql) // No deadlock
+}
+
 func TestSpillToDisk(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -40,9 +69,9 @@ func TestSpillToDisk(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testCTEStorageSpill"))
 		tk.MustExec("set tidb_mem_quota_query = 1073741824;")
 	}()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testSortedRowContainerSpill", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/testSortedRowContainerSpill", "return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testSortedRowContainerSpill"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/testSortedRowContainerSpill"))
 	}()
 
 	// Use duplicated rows to test UNION DISTINCT.

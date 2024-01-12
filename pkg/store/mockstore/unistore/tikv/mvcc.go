@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/config"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/pd"
@@ -1001,7 +1000,7 @@ func encodeFromOldRow(oldRow, buf []byte) ([]byte, error) {
 	}
 	var encoder rowcodec.Encoder
 	buf = buf[:0]
-	return encoder.Encode(stmtctx.NewStmtCtx(), colIDs, datums, buf)
+	return encoder.Encode(time.UTC, colIDs, datums, buf)
 }
 
 func (store *MVCCStore) buildPrewriteLock(reqCtx *requestCtx, m *kvrpcpb.Mutation, item *badger.Item,

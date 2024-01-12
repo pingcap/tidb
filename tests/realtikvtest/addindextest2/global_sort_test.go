@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/util/callback"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -57,8 +57,7 @@ func genStorageURI(t *testing.T) (host string, port uint16, uri string) {
 func checkFileCleaned(t *testing.T, jobID int64, sortStorageURI string) {
 	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
 	require.NoError(t, err)
-	opts := &storage.ExternalStorageOptions{NoCredentials: true}
-	extStore, err := storage.New(context.Background(), storeBackend, opts)
+	extStore, err := storage.NewWithDefaultOpt(context.Background(), storeBackend)
 	require.NoError(t, err)
 	prefix := strconv.Itoa(int(jobID))
 	dataFiles, statFiles, err := external.GetAllFileNames(context.Background(), extStore, prefix)
@@ -82,7 +81,7 @@ func TestGlobalSortBasic(t *testing.T) {
 
 	store, dom := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/WaitCleanUpFinished", "return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()"))
 	tk.MustExec("drop database if exists addindexlit;")
 	tk.MustExec("create database addindexlit;")
 	tk.MustExec("use addindexlit;")
@@ -119,17 +118,17 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec("alter table t add index idx(a);")
 	dom.DDL().SetHook(origin)
 	tk.MustExec("admin check table t;")
-	<-dispatcher.WaitCleanUpFinished
+	<-scheduler.WaitCleanUpFinished
 	checkFileCleaned(t, jobID, cloudStorageURI)
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()"))
 	tk.MustExec("alter table t add index idx1(a);")
 	dom.DDL().SetHook(origin)
 	tk.MustExec("admin check table t;")
-	<-dispatcher.WaitCleanUpFinished
+	<-scheduler.WaitCleanUpFinished
 
 	checkFileCleaned(t, jobID, cloudStorageURI)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/WaitCleanUpFinished"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
 }
 
@@ -191,4 +190,42 @@ func TestGlobalSortMultiSchemaChange(t *testing.T) {
 
 	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
 	tk.MustExec("set @@global.tidb_cloud_storage_uri = '';")
+}
+
+func TestAddIndexIngestShowReorgTp(t *testing.T) {
+	gcsHost, gcsPort, cloudStorageURI := genStorageURI(t)
+	opt := fakestorage.Options{
+		Scheme:     "http",
+		Host:       gcsHost,
+		Port:       gcsPort,
+		PublicHost: gcsHost,
+	}
+	server, err := fakestorage.NewServerWithOptions(opt)
+	require.NoError(t, err)
+	t.Cleanup(server.Stop)
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec("set @@global.tidb_cloud_storage_uri = '" + cloudStorageURI + "';")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
+
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("alter table t add index idx(a);")
+	tk.MustQuery("select * from t use index(idx);").Check(testkit.Rows())
+	tk.MustExec("alter table t drop index idx;")
+
+	tk.MustExec("insert into t values (1), (2), (3);")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 0;")
+	tk.MustExec("alter table t add index idx(a);")
+
+	rows := tk.MustQuery("admin show ddl jobs 1;").Rows()
+	require.Len(t, rows, 1)
+	jobType, rowCnt := rows[0][3].(string), rows[0][7].(string)
+	require.True(t, strings.Contains(jobType, "ingest"))
+	require.False(t, strings.Contains(jobType, "cloud"))
+	require.Equal(t, rowCnt, "3")
 }

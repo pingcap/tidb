@@ -15,68 +15,67 @@
 package framework_test
 
 import (
-	"sync"
+	"context"
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dispatcher"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/mock/gomock"
 )
 
-func CheckSubtasksState(t *testing.T, taskID int64, state proto.TaskState, expectedCnt int64) {
+func CheckSubtasksState(ctx context.Context, t *testing.T, taskID int64, state proto.SubtaskState, expectedCnt int64) {
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	mgr.PrintSubtaskInfo(taskID)
-	cnt, err := mgr.GetSubtaskInStatesCnt(taskID, state)
+	mgr.PrintSubtaskInfo(ctx, taskID)
+	cntByStates, err := mgr.GetSubtaskCntGroupByStates(ctx, taskID, proto.StepTwo)
 	require.NoError(t, err)
-	historySubTasksCnt, err := storage.GetSubtasksFromHistoryByTaskIDForTest(mgr, taskID)
+	historySubTasksCnt, err := storage.GetSubtasksFromHistoryByTaskIDForTest(ctx, mgr, taskID)
 	require.NoError(t, err)
-	require.Equal(t, expectedCnt, cnt+int64(historySubTasksCnt))
+	require.Equal(t, expectedCnt, cntByStates[state]+int64(historySubTasksCnt))
 }
 
 func TestFrameworkPauseAndResume(t *testing.T) {
-	var m sync.Map
-	ctrl := gomock.NewController(t)
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
-	RegisterTaskMeta(t, ctrl, &m, &testDispatcherExt{})
-	distContext := testkit.NewDistExecutionContext(t, 3)
-	// 1. dispatch and pause one running task.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/pauseTaskAfterRefreshTask", "2*return(true)"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/syncAfterResume", "return()"))
-	DispatchTaskAndCheckState("key1", t, &m, proto.TaskStatePaused)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/pauseTaskAfterRefreshTask"))
-	// 4 subtask dispatched.
-	require.NoError(t, handle.ResumeTask("key1"))
-	<-dispatcher.TestSyncChan
-	WaitTaskExit(t, "key1")
-	CheckSubtasksState(t, 1, proto.TaskStateSucceed, 4)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/syncAfterResume"))
+
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
+	// 1. schedule and pause one running task.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pauseTaskAfterRefreshTask", "2*return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterResume", "return()"))
+	task1 := testutil.SubmitAndWaitTask(ctx, t, "key1")
+	require.Equal(t, proto.TaskStatePaused, task1.State)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pauseTaskAfterRefreshTask"))
+	// 4 subtask scheduled.
+	require.NoError(t, handle.ResumeTask(ctx, "key1"))
+	<-scheduler.TestSyncChan
+	testutil.WaitTaskDoneOrPaused(ctx, t, task1.Key)
+	CheckSubtasksState(ctx, t, 1, proto.SubtaskStateSucceed, 4)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterResume"))
 
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	errs, err := mgr.CollectSubTaskError(1)
+	errs, err := mgr.CollectSubTaskError(ctx, 1)
 	require.NoError(t, err)
 	require.Empty(t, errs)
 
 	// 2. pause pending task.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/pausePendingTask", "2*return(true)"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/syncAfterResume", "1*return()"))
-	DispatchTaskAndCheckState("key2", t, &m, proto.TaskStatePaused)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pausePendingTask", "2*return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterResume", "1*return()"))
+	task2 := testutil.SubmitAndWaitTask(ctx, t, "key2")
+	require.Equal(t, proto.TaskStatePaused, task2.State)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pausePendingTask"))
+	// 4 subtask scheduled.
+	require.NoError(t, handle.ResumeTask(ctx, "key2"))
+	<-scheduler.TestSyncChan
+	testutil.WaitTaskDoneOrPaused(ctx, t, task2.Key)
+	CheckSubtasksState(ctx, t, 1, proto.SubtaskStateSucceed, 4)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterResume"))
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/pausePendingTask"))
-	// 4 subtask dispatched.
-	require.NoError(t, handle.ResumeTask("key2"))
-	<-dispatcher.TestSyncChan
-	WaitTaskExit(t, "key2")
-	CheckSubtasksState(t, 1, proto.TaskStateSucceed, 4)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/dispatcher/syncAfterResume"))
-
-	errs, err = mgr.CollectSubTaskError(1)
+	errs, err = mgr.CollectSubTaskError(ctx, 1)
 	require.NoError(t, err)
 	require.Empty(t, errs)
 	distContext.Close()

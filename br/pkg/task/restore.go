@@ -5,6 +5,7 @@ package task
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -40,8 +41,9 @@ import (
 )
 
 const (
-	flagOnline   = "online"
-	flagNoSchema = "no-schema"
+	flagOnline      = "online"
+	flagNoSchema    = "no-schema"
+	flagGranularity = "granularity"
 
 	// FlagMergeRegionSizeBytes is the flag name of merge small regions by size
 	FlagMergeRegionSizeBytes = "merge-region-size-bytes"
@@ -96,7 +98,8 @@ const (
 
 // RestoreCommonConfig is the common configuration for all BR restore tasks.
 type RestoreCommonConfig struct {
-	Online bool `json:"online" toml:"online"`
+	Online      bool   `json:"online" toml:"online"`
+	Granularity string `json:"granularity" toml:"granularity"`
 
 	// MergeSmallRegionSizeBytes is the threshold of merging small regions (Default 96MB, region split size).
 	// MergeSmallRegionKeyCount is the threshold of merging smalle regions (Default 960_000, region split key count).
@@ -119,12 +122,16 @@ func (cfg *RestoreCommonConfig) adjust() {
 	if cfg.MergeSmallRegionSizeBytes == 0 {
 		cfg.MergeSmallRegionSizeBytes = conn.DefaultMergeRegionSizeBytes
 	}
+	if len(cfg.Granularity) == 0 {
+		cfg.Granularity = string(restore.FineGrained)
+	}
 }
 
 // DefineRestoreCommonFlags defines common flags for the restore command.
 func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 	// TODO remove experimental tag if it's stable
 	flags.Bool(flagOnline, false, "(experimental) Whether online when restore")
+	flags.String(flagGranularity, string(restore.FineGrained), "(experimental) Whether split & scatter regions using fine-grained way during restore")
 	flags.Uint32(flagConcurrency, 128, "The size of thread pool on BR that executes tasks, "+
 		"where each task restores one SST file to TiKV")
 	flags.Uint64(FlagMergeRegionSizeBytes, conn.DefaultMergeRegionSizeBytes,
@@ -152,6 +159,10 @@ func DefineRestoreCommonFlags(flags *pflag.FlagSet) {
 func (cfg *RestoreCommonConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	var err error
 	cfg.Online, err = flags.GetBool(flagOnline)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.Granularity, err = flags.GetString(flagGranularity)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -217,6 +228,7 @@ type RestoreConfig struct {
 	VolumeType          pconfig.EBSVolumeType `json:"volume-type" toml:"volume-type"`
 	VolumeIOPS          int64                 `json:"volume-iops" toml:"volume-iops"`
 	VolumeThroughput    int64                 `json:"volume-throughput" toml:"volume-throughput"`
+	VolumeEncrypted     bool                  `json:"volume-encrypted" toml:"volume-encrypted"`
 	ProgressFile        string                `json:"progress-file" toml:"progress-file"`
 	TargetAZ            string                `json:"target-az" toml:"target-az"`
 	UseFSR              bool                  `json:"use-fsr" toml:"use-fsr"`
@@ -382,6 +394,9 @@ func (cfg *RestoreConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 		if cfg.VolumeThroughput, err = flags.GetInt64(flagVolumeThroughput); err != nil {
 			return errors.Trace(err)
 		}
+		if cfg.VolumeEncrypted, err = flags.GetBool(flagVolumeEncrypted); err != nil {
+			return errors.Trace(err)
+		}
 
 		cfg.ProgressFile, err = flags.GetString(flagProgressFile)
 		if err != nil {
@@ -469,7 +484,7 @@ func (cfg *RestoreConfig) generateSnapshotRestoreTaskName(clusterID uint64) stri
 func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *RestoreConfig) error {
 	client.SetRateLimit(cfg.RateLimit)
 	client.SetCrypter(&cfg.CipherInfo)
-	client.SetConcurrency(uint(cfg.Concurrency))
+	client.SetGranularity(cfg.Granularity)
 	if cfg.Online {
 		client.EnableOnline()
 	}
@@ -492,6 +507,12 @@ func configureRestoreClient(ctx context.Context, client *restore.Client, cfg *Re
 	err = client.LoadRestoreStores(ctx)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	storeCount := client.GetStoreCount()
+	if storeCount > 0 {
+		client.SetConcurrency(uint(cfg.Concurrency) * uint(client.GetStoreCount()))
+	} else {
+		client.SetConcurrency(uint(cfg.Concurrency))
 	}
 
 	return nil
@@ -567,6 +588,23 @@ func removeCheckpointDataForLogRestore(ctx context.Context, storageName string, 
 		return errors.Trace(err)
 	}
 	return errors.Trace(checkpoint.RemoveCheckpointDataForLogRestore(ctx, s, taskName, clusterID))
+}
+
+func DefaultRestoreConfig() RestoreConfig {
+	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
+	DefineCommonFlags(fs)
+	DefineRestoreFlags(fs)
+	cfg := RestoreConfig{}
+	err := multierr.Combine(
+		cfg.ParseFromFlags(fs),
+		cfg.RestoreCommonConfig.ParseFromFlags(fs),
+		cfg.Config.ParseFromFlags(fs),
+	)
+	if err != nil {
+		log.Panic("infallible failed.", zap.Error(err))
+	}
+
+	return cfg
 }
 
 // RunRestore starts a restore task inside the current goroutine.
@@ -664,7 +702,13 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}
 
 	keepaliveCfg.PermitWithoutStream = true
-	client := restore.NewRestoreClient(mgr.GetPDClient(), mgr.GetTLSConfig(), keepaliveCfg, false)
+	client := restore.NewRestoreClient(
+		mgr.GetPDClient(),
+		mgr.GetPDHTTPClient(),
+		mgr.GetTLSConfig(),
+		keepaliveCfg,
+		false,
+	)
 	err = configureRestoreClient(ctx, client, cfg)
 	if err != nil {
 		return errors.Trace(err)
@@ -686,7 +730,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			return errors.Trace(versionErr)
 		}
 	}
-	if err = restore.CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), g, mgr.GetStorage(), cfg.CheckRequirements); err != nil {
+	if _, err = restore.CheckNewCollationEnable(backupMeta.GetNewCollationsEnabled(), g, mgr.GetStorage(), cfg.CheckRequirements); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -915,6 +959,10 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		})
 	}
 
+	if cfg.Granularity == string(restore.CoarseGrained) {
+		tableStream = GoBlockCreateTablesPipeline(ctx, maxRestoreBatchSizeLimit, tableStream)
+	}
+
 	tableFileMap := restore.MapTableToFiles(files)
 	log.Debug("mapped table to files", zap.Any("result map", tableFileMap))
 
@@ -956,7 +1004,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		progressLen,
 		!cfg.LogProgress)
 	defer updateCh.Close()
-	sender, err := restore.NewTiKVSender(ctx, client, updateCh, cfg.PDConcurrency)
+	sender, err := restore.NewTiKVSender(ctx, client, updateCh, cfg.PDConcurrency, cfg.Granularity)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1017,7 +1065,10 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	// The cost of rename user table / replace into system table wouldn't be so high.
 	// So leave it out of the pipeline for easier implementation.
-	client.RestoreSystemSchemas(ctx, cfg.TableFilter)
+	err = client.RestoreSystemSchemas(ctx, cfg.TableFilter)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	schedulersRemovable = true
 
@@ -1163,4 +1214,30 @@ func restoreTableStream(
 			batcher.Add(t)
 		}
 	}
+}
+
+func GoBlockCreateTablesPipeline(ctx context.Context, sz int, inCh <-chan restore.CreatedTable) <-chan restore.CreatedTable {
+	outCh := make(chan restore.CreatedTable, sz)
+
+	go func() {
+		defer close(outCh)
+		cachedTables := make([]restore.CreatedTable, 0, sz)
+		for tbl := range inCh {
+			cachedTables = append(cachedTables, tbl)
+		}
+
+		sort.Slice(cachedTables, func(a, b int) bool {
+			return cachedTables[a].Table.ID < cachedTables[b].Table.ID
+		})
+
+		for _, tbl := range cachedTables {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+				outCh <- tbl
+			}
+		}
+	}()
+	return outCh
 }

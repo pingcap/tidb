@@ -213,7 +213,7 @@ func (p *PacketIO) ReadPacket() ([]byte, error) {
 	}
 
 	if len(data) < mysql.MaxPayloadLen {
-		server_metrics.ReadPacketBytes.Add(float64(len(data)))
+		server_metrics.InPacketBytes.Add(float64(len(data)))
 		return data, nil
 	}
 
@@ -231,14 +231,15 @@ func (p *PacketIO) ReadPacket() ([]byte, error) {
 		}
 	}
 
-	server_metrics.ReadPacketBytes.Add(float64(len(data)))
+	server_metrics.InPacketBytes.Add(float64(len(data)))
 	return data, nil
 }
 
 // WritePacket writes data that already have header
 func (p *PacketIO) WritePacket(data []byte) error {
 	length := len(data) - 4
-	server_metrics.WritePacketBytes.Add(float64(len(data)))
+	server_metrics.OutPacketBytes.Add(float64(len(data)))
+
 	maxPayloadLen := mysql.MaxPayloadLen
 
 	for length >= maxPayloadLen {
@@ -275,21 +276,18 @@ func (p *PacketIO) WritePacket(data []byte) error {
 			return errors.Trace(mysql.ErrBadConn)
 		} else if n != len(data) {
 			return errors.Trace(mysql.ErrBadConn)
-		} else {
-			p.sequence++
-			return nil
 		}
-	} else {
-		if n, err := p.bufWriter.Write(data); err != nil {
-			terror.Log(errors.Trace(err))
-			return errors.Trace(mysql.ErrBadConn)
-		} else if n != len(data) {
-			return errors.Trace(mysql.ErrBadConn)
-		} else {
-			p.sequence++
-			return nil
-		}
+		p.sequence++
+		return nil
 	}
+	if n, err := p.bufWriter.Write(data); err != nil {
+		terror.Log(errors.Trace(err))
+		return errors.Trace(mysql.ErrBadConn)
+	} else if n != len(data) {
+		return errors.Trace(mysql.ErrBadConn)
+	}
+	p.sequence++
+	return nil
 }
 
 // Flush flushes buffered data to network.
@@ -364,13 +362,12 @@ func (cw *compressedWriter) Flush() error {
 	// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_compression_packet.html
 	// suggests a MIN_COMPRESS_LENGTH of 50.
 	minCompressLength := 50
-	zlibCompressDefaultLevel := 6
 	data := cw.buf.Bytes()
 	cw.buf.Reset()
 
 	switch cw.compressionAlgorithm {
 	case mysql.CompressionZlib:
-		w, err = zlib.NewWriterLevel(&payload, zlibCompressDefaultLevel)
+		w, err = zlib.NewWriterLevel(&payload, mysql.ZlibCompressDefaultLevel)
 	case mysql.CompressionZstd:
 		w, err = zstd.NewWriter(&payload, zstd.WithEncoderLevel(cw.zstdLevel))
 	default:

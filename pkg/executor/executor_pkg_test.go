@@ -15,20 +15,19 @@
 package executor
 
 import (
-	"context"
+	"fmt"
 	"runtime"
 	"strconv"
 	"testing"
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
-	"github.com/pingcap/tidb/pkg/executor/aggregate"
-	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
@@ -218,7 +217,7 @@ func TestAggPartialResultMapperB(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		aggMap := make(aggregate.AggPartialResultMapper)
+		aggMap := make(aggfuncs.AggPartialResultMapper)
 		tempSlice := make([]aggfuncs.PartialResult, 10)
 		for num := 0; num < tc.rowNum; num++ {
 			aggMap[strconv.Itoa(num)] = tempSlice
@@ -245,13 +244,13 @@ type hmap struct {
 	nevacuate  uintptr        // nolint:unused // progress counter for evacuation (buckets less than this have been evacuated)
 }
 
-func getB(m aggregate.AggPartialResultMapper) int {
+func getB(m aggfuncs.AggPartialResultMapper) int {
 	point := (**hmap)(unsafe.Pointer(&m))
 	value := *point
 	return int(value.B)
 }
 
-func getGrowing(m aggregate.AggPartialResultMapper) bool {
+func getGrowing(m aggfuncs.AggPartialResultMapper) bool {
 	point := (**hmap)(unsafe.Pointer(&m))
 	value := *point
 	return value.oldbuckets != nil
@@ -270,143 +269,110 @@ func TestFilterTemporaryTableKeys(t *testing.T) {
 	require.Len(t, res, 1)
 }
 
-func TestSortSpillDisk(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testSortedRowContainerSpill", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testSortedRowContainerSpill"))
-	}()
+func TestErrLevelsForResetStmtContext(t *testing.T) {
 	ctx := mock.NewContext()
-	ctx.GetSessionVars().MemQuota.MemQuotaQuery = 1
-	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	cas := &sortCase{rows: 2048, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
-	opt := mockDataSourceParameters{
-		schema: expression.NewSchema(cas.columns()...),
-		rows:   cas.rows,
-		ctx:    cas.ctx,
-		ndvs:   cas.ndvs,
+	domain.BindDomain(ctx, &domain.Domain{})
+
+	cases := []struct {
+		name    string
+		sqlMode mysql.SQLMode
+		stmt    []ast.StmtNode
+		levels  errctx.LevelMap
+	}{
+		{
+			name:    "strict,write",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.InsertStmt{}, &ast.UpdateStmt{}, &ast.DeleteStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelError
+				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelError
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "non-strict,write",
+			sqlMode: mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.InsertStmt{}, &ast.UpdateStmt{}, &ast.DeleteStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "strict,insert ignore",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.InsertStmt{IgnoreErr: true}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelWarn
+				return
+			}(),
+		},
+		{
+			name:    "strict,update/delete ignore",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.UpdateStmt{IgnoreErr: true}, &ast.DeleteStmt{IgnoreErr: true}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupBadNull] = errctx.LevelWarn
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "strict without error_for_division_by_zero,write",
+			sqlMode: mysql.ModeStrictAllTables,
+			stmt:    []ast.StmtNode{&ast.InsertStmt{}, &ast.UpdateStmt{}, &ast.DeleteStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelError
+				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelIgnore
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "strict,select/union",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.SelectStmt{}, &ast.SetOprStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				return
+			}(),
+		},
+		{
+			name:    "non-strict,select/union",
+			sqlMode: mysql.ModeStrictAllTables | mysql.ModeErrorForDivisionByZero,
+			stmt:    []ast.StmtNode{&ast.SelectStmt{}, &ast.SetOprStmt{}},
+			levels: func() (l errctx.LevelMap) {
+				l[errctx.ErrGroupTruncate] = errctx.LevelWarn
+				l[errctx.ErrGroupBadNull] = errctx.LevelError
+				l[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+				l[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelError
+				return
+			}(),
+		},
 	}
-	dataSource := buildMockDataSource(opt)
-	exe := &SortExec{
-		BaseExecutor: exec.NewBaseExecutor(cas.ctx, dataSource.Schema(), 0, dataSource),
-		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
-		schema:       dataSource.Schema(),
-	}
-	for _, idx := range cas.orderByIdx {
-		exe.ByItems = append(exe.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
-	}
-	tmpCtx := context.Background()
-	chk := exec.NewFirstChunk(exe)
-	dataSource.prepareChunks()
-	err := exe.Open(tmpCtx)
-	require.NoError(t, err)
-	for {
-		err = exe.Next(tmpCtx, chk)
-		require.NoError(t, err)
-		if chk.NumRows() == 0 {
-			break
+
+	for i, c := range cases {
+		for _, stmt := range c.stmt {
+			msg := fmt.Sprintf("%d: %s, stmt: %T", i, c.name, stmt)
+			ctx.GetSessionVars().SQLMode = c.sqlMode
+			ctx.GetSessionVars().StrictSQLMode = ctx.GetSessionVars().SQLMode.HasStrictMode()
+			require.NoError(t, ResetContextOfStmt(ctx, stmt), msg)
+			ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
+			require.Equal(t, c.levels, ec.LevelMap(), msg)
 		}
 	}
-	// Test only 1 partition and all data in memory.
-	require.Len(t, exe.partitionList, 1)
-	require.Equal(t, false, exe.partitionList[0].AlreadySpilledSafeForTest())
-	require.Equal(t, 2048, exe.partitionList[0].NumRow())
-	err = exe.Close()
-	require.NoError(t, err)
-
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 1)
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	dataSource.prepareChunks()
-	err = exe.Open(tmpCtx)
-	require.NoError(t, err)
-	for {
-		err = exe.Next(tmpCtx, chk)
-		require.NoError(t, err)
-		if chk.NumRows() == 0 {
-			break
-		}
-	}
-	// Test 2 partitions and all data in disk.
-	// Now spilling is in parallel.
-	// Maybe the second add() will called before spilling, depends on
-	// Golang goroutine scheduling. So the result has two possibilities.
-	if len(exe.partitionList) == 2 {
-		require.Len(t, exe.partitionList, 2)
-		require.Equal(t, true, exe.partitionList[0].AlreadySpilledSafeForTest())
-		require.Equal(t, true, exe.partitionList[1].AlreadySpilledSafeForTest())
-		require.Equal(t, 1024, exe.partitionList[0].NumRow())
-		require.Equal(t, 1024, exe.partitionList[1].NumRow())
-	} else {
-		require.Len(t, exe.partitionList, 1)
-		require.Equal(t, true, exe.partitionList[0].AlreadySpilledSafeForTest())
-		require.Equal(t, 2048, exe.partitionList[0].NumRow())
-	}
-
-	err = exe.Close()
-	require.NoError(t, err)
-
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 28000)
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	dataSource.prepareChunks()
-	err = exe.Open(tmpCtx)
-	require.NoError(t, err)
-	for {
-		err = exe.Next(tmpCtx, chk)
-		require.NoError(t, err)
-		if chk.NumRows() == 0 {
-			break
-		}
-	}
-	// Test only 1 partition but spill disk.
-	require.Len(t, exe.partitionList, 1)
-	require.Equal(t, true, exe.partitionList[0].AlreadySpilledSafeForTest())
-	require.Equal(t, 2048, exe.partitionList[0].NumRow())
-	err = exe.Close()
-	require.NoError(t, err)
-
-	// Test partition nums.
-	ctx = mock.NewContext()
-	ctx.GetSessionVars().InitChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().MaxChunkSize = variable.DefMaxChunkSize
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, 16864*50)
-	ctx.GetSessionVars().MemTracker.Consume(16864 * 45)
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	cas = &sortCase{rows: 20480, orderByIdx: []int{0, 1}, ndvs: []int{0, 0}, ctx: ctx}
-	opt = mockDataSourceParameters{
-		schema: expression.NewSchema(cas.columns()...),
-		rows:   cas.rows,
-		ctx:    cas.ctx,
-		ndvs:   cas.ndvs,
-	}
-	dataSource = buildMockDataSource(opt)
-	exe = &SortExec{
-		BaseExecutor: exec.NewBaseExecutor(cas.ctx, dataSource.Schema(), 0, dataSource),
-		ByItems:      make([]*plannerutil.ByItems, 0, len(cas.orderByIdx)),
-		schema:       dataSource.Schema(),
-	}
-	for _, idx := range cas.orderByIdx {
-		exe.ByItems = append(exe.ByItems, &plannerutil.ByItems{Expr: cas.columns()[idx]})
-	}
-	tmpCtx = context.Background()
-	chk = exec.NewFirstChunk(exe)
-	dataSource.prepareChunks()
-	err = exe.Open(tmpCtx)
-	require.NoError(t, err)
-	for {
-		err = exe.Next(tmpCtx, chk)
-		require.NoError(t, err)
-		if chk.NumRows() == 0 {
-			break
-		}
-	}
-	// Don't spill too many partitions.
-	require.True(t, len(exe.partitionList) <= 4)
-	err = exe.Close()
-	require.NoError(t, err)
 }

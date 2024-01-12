@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -550,8 +549,7 @@ func AnalyzeValuesFromBuckets(valueString string, cols []*model.ColumnInfo) ([]s
 	for i, col := range cols {
 		if IsTimeTypeAndNeedDecode(col.GetType()) {
 			// check if values[i] is already a time string
-			sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-			_, err := types.ParseTime(sc.TypeCtx(), values[i], col.GetType(), types.MinFsp, nil)
+			_, err := types.ParseTime(types.DefaultStmtNoWarningContext, values[i], col.GetType(), types.MinFsp)
 			if err == nil {
 				continue
 			}

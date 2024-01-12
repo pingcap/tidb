@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -211,7 +212,7 @@ func TestAddLockedTables(t *testing.T) {
 		gomock.Eq([]interface{}{int64(4), int64(4)}),
 	)
 
-	tables := map[int64]*util.StatsLockTable{
+	tables := map[int64]*statstypes.StatsLockTable{
 		1: {
 			FullName: "test.t1",
 			PartitionInfo: map[int64]string{

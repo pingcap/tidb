@@ -184,6 +184,7 @@ var tokenMap = map[string]int{
 	"BACKEND":                  backend,
 	"BACKUP":                   backup,
 	"BACKUPS":                  backups,
+	"BDR":                      bdr,
 	"BEGIN":                    begin,
 	"BETWEEN":                  between,
 	"BERNOULLI":                bernoulli,
@@ -494,6 +495,7 @@ var tokenMap = map[string]int{
 	"LOCATION":                 location,
 	"LOCK":                     lock,
 	"LOCKED":                   locked,
+	"LOG":                      log,
 	"LOGS":                     logs,
 	"LONG":                     long,
 	"LONGBLOB":                 longblobType,
@@ -684,6 +686,7 @@ var tokenMap = map[string]int{
 	"SCHEMAS":                  databases,
 	"SECOND_MICROSECOND":       secondMicrosecond,
 	"SECOND":                   second,
+	"SECONDARY":                secondary,
 	"SECONDARY_ENGINE":         secondaryEngine,
 	"SECONDARY_LOAD":           secondaryLoad,
 	"SECONDARY_UNLOAD":         secondaryUnload,
@@ -830,6 +833,7 @@ var tokenMap = map[string]int{
 	"TRUE":                     trueKwd,
 	"TRUNCATE":                 truncate,
 	"TRUE_CARD_COST":           trueCardCost,
+	"TSO":                      tsoType,
 	"TTL":                      ttl,
 	"TTL_ENABLE":               ttlEnable,
 	"TTL_JOB_INTERVAL":         ttlJobInterval,
@@ -843,6 +847,7 @@ var tokenMap = map[string]int{
 	"UNKNOWN":                  unknown,
 	"UNLOCK":                   unlock,
 	"UNLIMITED":                unlimited,
+	"UNSET":                    unset,
 	"UNSIGNED":                 unsigned,
 	"UNTIL":                    until,
 	"UNTIL_TS":                 untilTS,
@@ -895,7 +900,7 @@ var tokenMap = map[string]int{
 	"REUSE":                    reuse,
 }
 
-// See https://dev.mysql.com/doc/refman/5.7/en/function-resolution.html for details.
+// See https://dev.mysql.com/doc/refman/8.0/en/function-resolution.html for details.
 // ADDDATE, SESSION_USER, SUBDATE, and SYSTEM_USER are exceptions because they are actually recognized as
 // identifiers even in `create table adddate (a int)`.
 var btFuncTokenMap = map[string]int{
@@ -1078,9 +1083,8 @@ func (s *Scanner) isTokenIdentifier(lit string, offset int) int {
 			continue
 		} else if s.r.s[idx] == '.' {
 			return 0
-		} else {
-			break
 		}
+		break
 	}
 
 	buf := &s.buf

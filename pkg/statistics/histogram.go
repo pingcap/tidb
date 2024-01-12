@@ -16,10 +16,10 @@ package statistics
 
 import (
 	"bytes"
+	"cmp"
 	"fmt"
 	"math"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -34,14 +34,17 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
+	"go.uber.org/zap"
 )
 
 // Histogram represents statistics for a column or index.
@@ -116,7 +119,7 @@ func NewHistogram(id, ndv, nullCount int64, version uint64, tp *types.FieldType,
 		NullCount:         nullCount,
 		LastUpdateVersion: version,
 		Tp:                tp,
-		Bounds:            chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 2*bucketSize),
+		Bounds:            chunk.NewChunkFromPoolWithCapacity([]*types.FieldType{tp}, 2*bucketSize),
 		Buckets:           make([]Bucket, 0, bucketSize),
 		TotColSize:        totColSize,
 	}
@@ -173,11 +176,12 @@ func (hg *Histogram) updateLastBucket(upper *types.Datum, count, repeat int64, n
 	hg.Bounds.TruncateTo(2*l - 1)
 	hg.Bounds.AppendDatum(0, upper)
 	// The sampling case doesn't hold NDV since the low sampling rate. So check the NDV here.
-	if needBucketNDV && hg.Buckets[l-1].NDV > 0 {
-		hg.Buckets[l-1].NDV++
+	bucket := &hg.Buckets[l-1]
+	if needBucketNDV && bucket.NDV > 0 {
+		bucket.NDV++
 	}
-	hg.Buckets[l-1].Count = count
-	hg.Buckets[l-1].Repeat = repeat
+	bucket.Count = count
+	bucket.Repeat = repeat
 }
 
 // DecodeTo decodes the histogram bucket values into `tp`.
@@ -217,6 +221,14 @@ func (hg *Histogram) Len() int {
 	return len(hg.Buckets)
 }
 
+// DestroyAndPutToPool resets the FMSketch and puts it to the pool.
+func (hg *Histogram) DestroyAndPutToPool() {
+	if hg == nil {
+		return
+	}
+	hg.Bounds.Destroy(len(hg.Buckets), []*types.FieldType{hg.Tp})
+}
+
 // HistogramEqual tests if two histograms are equal.
 func HistogramEqual(a, b *Histogram, ignoreID bool) bool {
 	if ignoreID {
@@ -248,11 +260,6 @@ const (
 
 // AnalyzeFlag is set when the statistics comes from analyze.
 const AnalyzeFlag = 1
-
-// IsAnalyzed checks whether this flag contains AnalyzeFlag.
-func IsAnalyzed(flag int64) bool {
-	return (flag & AnalyzeFlag) > 0
-}
 
 // ValueToString converts a possible encoded value to a formatted string. If the value is encoded, then
 // idxCols equals to number of origin values, else idxCols is 0.
@@ -287,12 +294,13 @@ func (hg *Histogram) BucketToString(bktID, idxCols int) string {
 // BinarySearchRemoveVal removes the value from the TopN using binary search.
 func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 	lowIdx, highIdx := 0, hg.Len()-1
+	column := hg.Bounds.Column(0)
 	// if hg is too small, we don't need to check the branch. because the cost is more than binary search.
 	if hg.Len() > 4 {
-		if cmpResult := bytes.Compare(hg.Bounds.Column(0).GetRaw(highIdx*2+1), valCntPairs.Encoded); cmpResult < 0 {
+		if cmpResult := bytes.Compare(column.GetRaw(highIdx*2+1), valCntPairs.Encoded); cmpResult < 0 {
 			return
 		}
-		if cmpResult := bytes.Compare(hg.Bounds.Column(0).GetRaw(lowIdx), valCntPairs.Encoded); cmpResult > 0 {
+		if cmpResult := bytes.Compare(column.GetRaw(lowIdx), valCntPairs.Encoded); cmpResult > 0 {
 			return
 		}
 	}
@@ -300,25 +308,27 @@ func (hg *Histogram) BinarySearchRemoveVal(valCntPairs TopNMeta) {
 	var found bool
 	for lowIdx <= highIdx {
 		midIdx = (lowIdx + highIdx) / 2
-		cmpResult := bytes.Compare(hg.Bounds.Column(0).GetRaw(midIdx*2), valCntPairs.Encoded)
+		cmpResult := bytes.Compare(column.GetRaw(midIdx*2), valCntPairs.Encoded)
 		if cmpResult > 0 {
 			highIdx = midIdx - 1
 			continue
 		}
-		cmpResult = bytes.Compare(hg.Bounds.Column(0).GetRaw(midIdx*2+1), valCntPairs.Encoded)
+		cmpResult = bytes.Compare(column.GetRaw(midIdx*2+1), valCntPairs.Encoded)
 		if cmpResult < 0 {
 			lowIdx = midIdx + 1
 			continue
 		}
-		if hg.Buckets[midIdx].NDV > 0 {
-			hg.Buckets[midIdx].NDV--
+		midbucket := &hg.Buckets[midIdx]
+
+		if midbucket.NDV > 0 {
+			midbucket.NDV--
 		}
 		if cmpResult == 0 {
-			hg.Buckets[midIdx].Repeat = 0
+			midbucket.Repeat = 0
 		}
-		hg.Buckets[midIdx].Count -= int64(valCntPairs.Count)
-		if hg.Buckets[midIdx].Count < 0 {
-			hg.Buckets[midIdx].Count = 0
+		midbucket.Count -= int64(valCntPairs.Count)
+		if midbucket.Count < 0 {
+			midbucket.Count = 0
 		}
 		found = true
 		break
@@ -648,11 +658,13 @@ func validRange(sc *stmtctx.StatementContext, ran *ranger.Range, encoded bool) b
 		low, high = ran.LowVal[0].GetBytes(), ran.HighVal[0].GetBytes()
 	} else {
 		var err error
-		low, err = codec.EncodeKey(sc, nil, ran.LowVal[0])
+		low, err = codec.EncodeKey(sc.TimeZone(), nil, ran.LowVal[0])
+		err = sc.HandleError(err)
 		if err != nil {
 			return false
 		}
-		high, err = codec.EncodeKey(sc, nil, ran.HighVal[0])
+		high, err = codec.EncodeKey(sc.TimeZone(), nil, ran.HighVal[0])
+		err = sc.HandleError(err)
 		if err != nil {
 			return false
 		}
@@ -1088,17 +1100,6 @@ func (hg *Histogram) Copy() *Histogram {
 	return &newHist
 }
 
-// RemoveUpperBound removes the upper bound from histogram.
-// It is used when merge stats for incremental analyze.
-func (hg *Histogram) RemoveUpperBound() *Histogram {
-	hg.Buckets[hg.Len()-1].Count -= hg.Buckets[hg.Len()-1].Repeat
-	hg.Buckets[hg.Len()-1].Repeat = 0
-	if hg.NDV > 0 {
-		hg.NDV--
-	}
-	return hg
-}
-
 // TruncateHistogram truncates the histogram to `numBkt` buckets.
 func (hg *Histogram) TruncateHistogram(numBkt int) *Histogram {
 	hist := hg.Copy()
@@ -1158,7 +1159,7 @@ func (hg *Histogram) ExtractTopN(cms *CMSketch, topN *TopN, numCols int, numTopN
 			}
 		}
 	}
-	sort.SliceStable(dataCnts, func(i, j int) bool { return dataCnts[i].cnt >= dataCnts[j].cnt })
+	slices.SortStableFunc(dataCnts, func(a, b dataCnt) int { return -cmp.Compare(a.cnt, b.cnt) })
 	if len(dataCnts) > int(numTopN) {
 		dataCnts = dataCnts[:numTopN]
 	}
@@ -1184,6 +1185,10 @@ func newbucket4MergingForRecycle() *bucket4Merging {
 }
 
 func releasebucket4MergingForRecycle(b *bucket4Merging) {
+	b.disjointNDV = 0
+	b.Repeat = 0
+	b.NDV = 0
+	b.Count = 0
 	bucket4MergingPool.Put(b)
 }
 
@@ -1262,7 +1267,9 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 	// _______left____|
 	// illegal order.
 	if upperCompare < 0 {
-		return nil, errors.Errorf("illegal bucket order")
+		err := errors.Errorf("illegal bucket order")
+		statslogutil.StatsLogger().Warn("fail to mergeBucketNDV", zap.Error(err))
+		return nil, err
 	}
 	//  ___right_|
 	//  ___left__|
@@ -1276,7 +1283,9 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 		//         |__left____|
 		// illegal order.
 		if lowerCompare < 0 {
-			return nil, errors.Errorf("illegal bucket order")
+			err := errors.Errorf("illegal bucket order")
+			statslogutil.StatsLogger().Warn("fail to mergeBucketNDV", zap.Error(err))
+			return nil, err
 		}
 		// |___right___|
 		// |____left___|
@@ -1367,6 +1376,9 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	right := buckets[len(buckets)-1].Clone()
 
 	totNDV := int64(0)
+	intest.Assert(res.Count == 0, "Count in the new bucket4Merging should be 0")
+	intest.Assert(res.Repeat == 0, "Repeat in the new bucket4Merging should be 0")
+	intest.Assert(res.NDV == 0, "NDV in the new bucket4Merging bucket4Merging should be 0")
 	for i := len(buckets) - 1; i >= 0; i-- {
 		totNDV += buckets[i].NDV
 		res.Count += buckets[i].Count
@@ -1469,7 +1481,9 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	tail := 0
 	for i := range buckets {
 		if buckets[i].Count != 0 {
-			buckets[tail] = buckets[i]
+			// Because we will reuse the tail of the slice in `releasebucket4MergingForRecycle`,
+			// we need to shift the non-empty buckets to the front.
+			buckets[tail], buckets[i] = buckets[i], buckets[tail]
 			tail++
 		}
 	}

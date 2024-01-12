@@ -15,9 +15,9 @@
 package expression
 
 import (
+	"github.com/pingcap/errors"
 	mysql "github.com/pingcap/tidb/pkg/errno"
 	pmysql "github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
@@ -61,6 +61,7 @@ var (
 	errUserLockDeadlock              = dbterror.ClassExpression.NewStd(mysql.ErrUserLockDeadlock)
 	errUserLockWrongName             = dbterror.ClassExpression.NewStd(mysql.ErrUserLockWrongName)
 	errJSONInBooleanContext          = dbterror.ClassExpression.NewStd(mysql.ErrJSONInBooleanContext)
+	errBadNull                       = dbterror.ClassExpression.NewStd(mysql.ErrBadNull)
 
 	// Sequence usage privilege check.
 	errSequenceAccessDenied      = dbterror.ClassExpression.NewStd(mysql.ErrTableaccessDenied)
@@ -69,7 +70,7 @@ var (
 )
 
 // handleInvalidTimeError reports error or warning depend on the context.
-func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
+func handleInvalidTimeError(ctx EvalContext, err error) error {
 	if err == nil || !(types.ErrWrongValue.Equal(err) || types.ErrWrongValueForType.Equal(err) ||
 		types.ErrTruncatedWrongVal.Equal(err) || types.ErrInvalidWeekModeFormat.Equal(err) ||
 		types.ErrDatetimeFunctionOverflow.Equal(err) || types.ErrIncorrectDatetimeValue.Equal(err)) {
@@ -84,23 +85,14 @@ func handleInvalidTimeError(ctx sessionctx.Context, err error) error {
 }
 
 // handleDivisionByZeroError reports error or warning depend on the context.
-func handleDivisionByZeroError(ctx sessionctx.Context) error {
-	sc := ctx.GetSessionVars().StmtCtx
-	if sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt {
-		if !ctx.GetSessionVars().SQLMode.HasErrorForDivisionByZeroMode() {
-			return nil
-		}
-		if ctx.GetSessionVars().StrictSQLMode && !sc.DividedByZeroAsWarning {
-			return ErrDivisionByZero
-		}
-	}
-	sc.AppendWarning(ErrDivisionByZero)
-	return nil
+func handleDivisionByZeroError(ctx EvalContext) error {
+	ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
+	return ec.HandleError(ErrDivisionByZero)
 }
 
 // handleAllowedPacketOverflowed reports error or warning depend on the context.
-func handleAllowedPacketOverflowed(ctx sessionctx.Context, exprName string, maxAllowedPacketSize uint64) error {
-	err := errWarnAllowedPacketOverflowed.GenWithStackByArgs(exprName, maxAllowedPacketSize)
+func handleAllowedPacketOverflowed(ctx EvalContext, exprName string, maxAllowedPacketSize uint64) error {
+	err := errWarnAllowedPacketOverflowed.FastGenByArgs(exprName, maxAllowedPacketSize)
 	sc := ctx.GetSessionVars().StmtCtx
 
 	// insert|update|delete ignore ...
@@ -110,7 +102,7 @@ func handleAllowedPacketOverflowed(ctx sessionctx.Context, exprName string, maxA
 	}
 
 	if ctx.GetSessionVars().StrictSQLMode && (sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt) {
-		return err
+		return errors.Trace(err)
 	}
 	sc.AppendWarning(err)
 	return nil

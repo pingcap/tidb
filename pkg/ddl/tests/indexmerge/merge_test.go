@@ -97,7 +97,6 @@ func TestAddPrimaryKeyMergeProcess(t *testing.T) {
 	originHook := dom.DDL().GetHook()
 	callback := &callback.TestDDLCallback{
 		Do: nil, // We'll reload the schema manually.
-
 	}
 	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if !runDML && job.Type == model.ActionAddPrimaryKey && job.SchemaState == model.StateWriteReorganization {

@@ -313,6 +313,7 @@ func (s *metaMgrSuite) prepareMock(rowsVal [][]driver.Value, nextRowID *int64, u
 		WillReturnResult(sqlmock.NewResult(int64(0), int64(0)))
 	s.prepareMockInner(rowsVal, nextRowID, updateArgs, checksum, updateStatus, rollback)
 }
+
 func (s *metaMgrSuite) prepareMockInner(rowsVal [][]driver.Value, nextRowID *int64, updateArgs []driver.Value, checksum *verification.KVChecksum, updateStatus *string, rollback bool) {
 	s.mockDB.ExpectBegin()
 
@@ -325,7 +326,7 @@ func (s *metaMgrSuite) prepareMockInner(rowsVal [][]driver.Value, nextRowID *int
 		WillReturnRows(rows)
 
 	if nextRowID != nil {
-		allocs := autoid.NewAllocatorsFromTblInfo(s.mgr.tr.kvStore, s.mgr.tr.dbInfo.ID, s.mgr.tr.tableInfo.Core)
+		allocs := autoid.NewAllocatorsFromTblInfo(s.mgr.tr, s.mgr.tr.dbInfo.ID, s.mgr.tr.tableInfo.Core)
 		alloc := allocs.Get(autoid.RowIDAllocType)
 		alloc.ForceRebase(*nextRowID - 1)
 	}

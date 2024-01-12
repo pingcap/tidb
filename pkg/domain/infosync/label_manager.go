@@ -15,79 +15,59 @@
 package infosync
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"path"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/ddl/label"
-	"github.com/pingcap/tidb/pkg/util/pdapi"
-	clientv3 "go.etcd.io/etcd/client/v3"
+	pd "github.com/tikv/pd/client/http"
 )
 
 // LabelRuleManager manages label rules
 type LabelRuleManager interface {
 	PutLabelRule(ctx context.Context, rule *label.Rule) error
-	UpdateLabelRules(ctx context.Context, patch *label.RulePatch) error
+	UpdateLabelRules(ctx context.Context, patch *pd.LabelRulePatch) error
 	GetAllLabelRules(ctx context.Context) ([]*label.Rule, error)
 	GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rule, error)
 }
 
 // PDLabelManager manages rules with pd
 type PDLabelManager struct {
-	etcdCli *clientv3.Client
+	pdHTTPCli pd.Client
 }
 
 // PutLabelRule implements PutLabelRule
 func (lm *PDLabelManager) PutLabelRule(ctx context.Context, rule *label.Rule) error {
-	r, err := json.Marshal(rule)
-	if err != nil {
-		return err
-	}
-	_, err = doRequest(ctx, "PutLabelRule", lm.etcdCli.Endpoints(), path.Join(pdapi.Config, "region-label", "rule"), "POST", bytes.NewReader(r))
-	return err
+	return lm.pdHTTPCli.SetRegionLabelRule(ctx, (*pd.LabelRule)(rule))
 }
 
 // UpdateLabelRules implements UpdateLabelRules
-func (lm *PDLabelManager) UpdateLabelRules(ctx context.Context, patch *label.RulePatch) error {
-	r, err := json.Marshal(patch)
-	if err != nil {
-		return err
-	}
-
-	_, err = doRequest(ctx, "UpdateLabelRules", lm.etcdCli.Endpoints(), path.Join(pdapi.Config, "region-label", "rules"), "PATCH", bytes.NewReader(r))
-	return err
+func (lm *PDLabelManager) UpdateLabelRules(ctx context.Context, patch *pd.LabelRulePatch) error {
+	return lm.pdHTTPCli.PatchRegionLabelRules(ctx, patch)
 }
 
 // GetAllLabelRules implements GetAllLabelRules
 func (lm *PDLabelManager) GetAllLabelRules(ctx context.Context) ([]*label.Rule, error) {
-	var rules []*label.Rule
-	res, err := doRequest(ctx, "GetAllLabelRules", lm.etcdCli.Endpoints(), path.Join(pdapi.Config, "region-label", "rules"), "GET", nil)
-
-	if err == nil && res != nil {
-		err = json.Unmarshal(res, &rules)
-	}
-	return rules, err
-}
-
-// GetLabelRules implements GetLabelRules
-func (lm *PDLabelManager) GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rule, error) {
-	ids, err := json.Marshal(ruleIDs)
+	labelRules, err := lm.pdHTTPCli.GetAllRegionLabelRules(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	rules := []*label.Rule{}
-	res, err := doRequest(ctx, "GetLabelRules", lm.etcdCli.Endpoints(), path.Join(pdapi.Config, "region-label", "rules", "ids"), "GET", bytes.NewReader(ids))
-
-	if err == nil && res != nil {
-		err = json.Unmarshal(res, &rules)
+	r := make([]*label.Rule, 0, len(labelRules))
+	for _, labelRule := range labelRules {
+		r = append(r, (*label.Rule)(labelRule))
 	}
+	return r, nil
+}
 
-	ruleMap := make(map[string]*label.Rule, len((rules)))
-	for _, r := range rules {
-		ruleMap[r.ID] = r
+// GetLabelRules implements GetLabelRules
+func (lm *PDLabelManager) GetLabelRules(ctx context.Context, _ []string) (map[string]*label.Rule, error) {
+	labelRules, err := lm.pdHTTPCli.GetAllRegionLabelRules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ruleMap := make(map[string]*label.Rule, len((labelRules)))
+	for _, r := range labelRules {
+		ruleMap[r.ID] = (*label.Rule)(r)
 	}
 	return ruleMap, err
 }
@@ -98,7 +78,7 @@ type mockLabelManager struct {
 }
 
 // PutLabelRule implements PutLabelRule
-func (mm *mockLabelManager) PutLabelRule(ctx context.Context, rule *label.Rule) error {
+func (mm *mockLabelManager) PutLabelRule(_ context.Context, rule *label.Rule) error {
 	mm.Lock()
 	defer mm.Unlock()
 	if rule == nil {
@@ -113,7 +93,7 @@ func (mm *mockLabelManager) PutLabelRule(ctx context.Context, rule *label.Rule) 
 }
 
 // UpdateLabelRules implements UpdateLabelRules
-func (mm *mockLabelManager) UpdateLabelRules(ctx context.Context, patch *label.RulePatch) error {
+func (mm *mockLabelManager) UpdateLabelRules(_ context.Context, patch *pd.LabelRulePatch) error {
 	mm.Lock()
 	defer mm.Unlock()
 	if patch == nil {
@@ -136,7 +116,7 @@ func (mm *mockLabelManager) UpdateLabelRules(ctx context.Context, patch *label.R
 }
 
 // mockLabelManager implements GetAllLabelRules
-func (mm *mockLabelManager) GetAllLabelRules(ctx context.Context) ([]*label.Rule, error) {
+func (mm *mockLabelManager) GetAllLabelRules(context.Context) ([]*label.Rule, error) {
 	mm.RLock()
 	defer mm.RUnlock()
 	r := make([]*label.Rule, 0, len(mm.labelRules))
@@ -155,7 +135,7 @@ func (mm *mockLabelManager) GetAllLabelRules(ctx context.Context) ([]*label.Rule
 }
 
 // mockLabelManager implements GetLabelRules
-func (mm *mockLabelManager) GetLabelRules(ctx context.Context, ruleIDs []string) (map[string]*label.Rule, error) {
+func (mm *mockLabelManager) GetLabelRules(_ context.Context, ruleIDs []string) (map[string]*label.Rule, error) {
 	mm.RLock()
 	defer mm.RUnlock()
 	r := make(map[string]*label.Rule, len(ruleIDs))

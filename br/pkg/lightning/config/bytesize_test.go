@@ -61,7 +61,7 @@ func TestByteSizeTOMLDecode(t *testing.T) {
 		},
 		{
 			input: "x = 'invalid value'",
-			err:   "invalid size: 'invalid value'",
+			err:   "strconv.ParseFloat: parsing \"invalid\": invalid syntax",
 		},
 		{
 			input: "x = true",
@@ -85,7 +85,7 @@ func TestByteSizeTOMLDecode(t *testing.T) {
 		},
 		{
 			input: "x = 2020-01-01T00:00:00Z",
-			err:   "invalid size: '2020-01-01T00:00:00Z'",
+			err:   "strconv.ParseFloat: parsing \"2020-01-01T00:00:00\": invalid syntax",
 		},
 		{
 			input: "x = ['100000']",

@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
@@ -65,7 +65,7 @@ func (e *LockExec) Next(_ context.Context, _ *chunk.Chunk) error {
 			return err
 		}
 		if msg != "" {
-			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
+			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(msg))
 		}
 	} else {
 		tableWithPartitions, err := populateTableAndPartitionIDs(e.Tables, is)
@@ -78,7 +78,7 @@ func (e *LockExec) Next(_ context.Context, _ *chunk.Chunk) error {
 			return err
 		}
 		if msg != "" {
-			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
+			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(msg))
 		}
 	}
 
@@ -135,11 +135,11 @@ func populatePartitionIDAndNames(
 func populateTableAndPartitionIDs(
 	tables []*ast.TableName,
 	is infoschema.InfoSchema,
-) (map[int64]*util.StatsLockTable, error) {
+) (map[int64]*types.StatsLockTable, error) {
 	if len(tables) == 0 {
 		return nil, errors.New("table list should not be empty")
 	}
-	tableWithPartitions := make(map[int64]*util.StatsLockTable, len(tables))
+	tableWithPartitions := make(map[int64]*types.StatsLockTable, len(tables))
 
 	for _, table := range tables {
 		tbl, err := is.TableByName(table.Schema, table.Name)
@@ -147,7 +147,7 @@ func populateTableAndPartitionIDs(
 			return nil, err
 		}
 		tid := tbl.Meta().ID
-		tableWithPartitions[tid] = &util.StatsLockTable{
+		tableWithPartitions[tid] = &types.StatsLockTable{
 			FullName: fmt.Sprintf("%s.%s", table.Schema.L, table.Name.L),
 		}
 

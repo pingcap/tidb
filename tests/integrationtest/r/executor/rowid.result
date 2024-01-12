@@ -53,7 +53,6 @@ update tt set id = 2, _tidb_rowid = 1 where _tidb_rowid = 1;
 Error 1105 (HY000): insert, update and replace statements for _tidb_rowid are not supported
 update tt set id = 2 where _tidb_rowid = 1;
 admin check table tt;
-
 drop table tt;
 set tidb_enable_clustered_index = default;
 drop table if exists t;

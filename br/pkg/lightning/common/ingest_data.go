@@ -14,7 +14,11 @@
 
 package common
 
-import "context"
+import (
+	"context"
+
+	"github.com/pingcap/tidb/br/pkg/membuf"
+)
 
 // IngestData describes a common interface that is needed by TiKV write +
 // ingest RPC.
@@ -24,7 +28,12 @@ type IngestData interface {
 	// lowerBound must be less than upperBound.
 	// when there is no data in the range, it should return nil, nil, nil
 	GetFirstAndLastKey(lowerBound, upperBound []byte) ([]byte, []byte, error)
-	NewIter(ctx context.Context, lowerBound, upperBound []byte) ForwardIter
+	// NewIter creates an iterator. The only expected usage of the iterator is read
+	// batches of key-value pairs by caller. Due to the implementation of IngestData,
+	// the iterator may need to allocate memories to retain the key-value pair batch,
+	// these memories will be allocated from given bufPool and be released when the
+	// iterator is closed or ForwardIter.ReleaseBuf is called.
+	NewIter(ctx context.Context, lowerBound, upperBound []byte, bufPool *membuf.Pool) ForwardIter
 	// GetTS will be used as the start/commit TS of the data.
 	GetTS() uint64
 	// IncRef should be called every time when IngestData is referred by regionJob.
@@ -47,14 +56,21 @@ type ForwardIter interface {
 	Valid() bool
 	// Next moves this iter forward.
 	Next() bool
-	// Key represents current position pair's key.
+	// Key returns current position pair's key. The key is accessible after more
+	// Next() or Key() invocations but is invalidated by Close() or ReleaseBuf().
 	Key() []byte
-	// Value represents current position pair's Value.
+	// Value returns current position pair's Value. The value is accessible after
+	// more Next() or Value() invocations but is invalidated by Close() or
+	// ReleaseBuf().
 	Value() []byte
 	// Close close this iter.
 	Close() error
 	// Error return current error on this iter.
 	Error() error
+	// ReleaseBuf release the memory that saves the previously returned keys and
+	// values. These previously returned keys and values should not be accessed
+	// again.
+	ReleaseBuf()
 }
 
 // DataAndRange is a pair of IngestData and Range.

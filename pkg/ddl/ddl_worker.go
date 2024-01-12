@@ -26,12 +26,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -372,7 +374,11 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		return errors.Errorf("Can't add ddl job, have flashback cluster job")
 	}
 
-	startTS := uint64(0)
+	var (
+		startTS = uint64(0)
+		bdrRole = string(ast.BDRRoleNone)
+	)
+
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 	err = kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
@@ -380,6 +386,12 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		if err != nil {
 			return errors.Trace(err)
 		}
+
+		bdrRole, err = t.GetBDRRole()
+		if err != nil {
+			return errors.Trace(err)
+		}
+
 		startTS = txn.StartTS()
 		return nil
 	})
@@ -393,6 +405,21 @@ func (d *ddl) addBatchDDLJobs2Table(tasks []*limitJobTask) error {
 		job.Version = currentVersion
 		job.StartTS = startTS
 		job.ID = ids[i]
+		job.BDRRole = bdrRole
+
+		// BDR mode only affects the DDL not from CDC
+		if job.CDCWriteSource == 0 && bdrRole != string(ast.BDRRoleNone) {
+			if job.Type == model.ActionMultiSchemaChange && job.MultiSchemaInfo != nil {
+				for _, subJob := range job.MultiSchemaInfo.SubJobs {
+					if ast.DeniedByBDR(ast.BDRRole(bdrRole), subJob.Type, job) {
+						return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
+					}
+				}
+			} else if ast.DeniedByBDR(ast.BDRRole(bdrRole), job.Type, job) {
+				return dbterror.ErrBDRRestrictedDDL.FastGenByArgs(bdrRole)
+			}
+		}
+
 		setJobStateToQueueing(job)
 
 		if d.stateSyncer.IsUpgradingState() && !hasSysDB(job) {
@@ -439,6 +466,7 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 		}
 		// Reduce this txn entry size.
 		job.BinlogInfo.Clean()
+		job.InvolvingSchemaInfo = nil
 		job.Error = toTError(err)
 		job.ErrorCount++
 		job.SchemaState = model.StateNone
@@ -537,7 +565,11 @@ func needUpdateRawArgs(job *model.Job, meetErr bool) bool {
 	return true
 }
 
-func jobNeedGC(job *model.Job) bool {
+// JobNeedGC is called to determine whether delete-ranges need to be generated for the provided job.
+//
+// NOTICE: BR also uses jobNeedGC to determine whether delete-ranges need to be generated for the provided job.
+// Therefore, please make sure any modification is compatible with BR.
+func JobNeedGC(job *model.Job) bool {
 	if !job.IsCancelled() {
 		if job.Warning != nil && dbterror.ErrCantDropFieldOrKey.Equal(job.Warning) {
 			// For the field/key not exists warnings, there is no need to
@@ -557,7 +589,7 @@ func jobNeedGC(job *model.Job) bool {
 		case model.ActionMultiSchemaChange:
 			for i, sub := range job.MultiSchemaInfo.SubJobs {
 				proxyJob := sub.ToProxyJob(job, i)
-				needGC := jobNeedGC(&proxyJob)
+				needGC := JobNeedGC(&proxyJob)
 				if needGC {
 					return true
 				}
@@ -574,9 +606,10 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	startTime := time.Now()
 	defer func() {
 		metrics.DDLWorkerHistogram.WithLabelValues(metrics.WorkerFinishDDLJob, job.Type.String(), metrics.RetLabel(err)).Observe(time.Since(startTime).Seconds())
+		markJobFinish(job)
 	}()
 
-	if jobNeedGC(job) {
+	if JobNeedGC(job) {
 		err = w.delRangeManager.addDelRangeJob(w.ctx, job)
 		if err != nil {
 			return errors.Trace(err)
@@ -617,6 +650,15 @@ func (w *worker) finishDDLJob(t *meta.Meta, job *model.Job) (err error) {
 	w.removeJobCtx(job)
 	err = AddHistoryDDLJob(w.sess, t, job, updateRawArgs)
 	return errors.Trace(err)
+}
+
+func markJobFinish(job *model.Job) {
+	if (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
+		job.ReorgMeta != nil &&
+		job.ReorgMeta.IsFastReorg &&
+		ingest.LitBackCtxMgr != nil {
+		ingest.LitBackCtxMgr.MarkJobFinish()
+	}
 }
 
 func (w *worker) writeDDLSeqNum(job *model.Job) {
@@ -881,23 +923,6 @@ func writeBinlog(binlogCli *pumpcli.PumpsClient, txn kv.Transaction, job *model.
 			return
 		}
 		binloginfo.SetDDLBinlog(binlogCli, txn, job.ID, int32(job.SchemaState), job.Query)
-	}
-}
-
-// waitDependencyJobFinished waits for the dependency-job to be finished.
-// If the dependency job isn't finished yet, we'd better wait a moment.
-func (w *worker) waitDependencyJobFinished(job *model.Job, cnt *int) {
-	if job.DependencyID != noneDependencyJob {
-		intervalCnt := int(3 * time.Second / waitDependencyJobInterval)
-		if *cnt%intervalCnt == 0 {
-			w.jobLogger(job).Info("DDL job need to wait dependent job, sleeps a while, then retries it.",
-				zap.Int64("dependentJobID", job.DependencyID),
-				zap.Duration("waitTime", waitDependencyJobInterval))
-		}
-		time.Sleep(waitDependencyJobInterval)
-		*cnt++
-	} else {
-		*cnt = 0
 	}
 }
 
@@ -1229,9 +1254,8 @@ func waitSchemaSyncedForMDL(d *ddlCtx, job *model.Job, latestSchemaVersion int64
 		if val.(bool) {
 			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
 				panic("check down before update global version failed")
-			} else {
-				mockDDLErrOnce = -1
 			}
+			mockDDLErrOnce = -1
 		}
 	})
 
@@ -1273,9 +1297,8 @@ func waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Duration) error {
 		if val.(bool) {
 			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
 				panic("check down before update global version failed")
-			} else {
-				mockDDLErrOnce = -1
 			}
+			mockDDLErrOnce = -1
 		}
 	})
 
