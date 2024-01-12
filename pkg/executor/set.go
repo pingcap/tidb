@@ -170,13 +170,18 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		logutil.BgLogger().Info("set global var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", showValStr))
 		if name == variable.TiDBServiceScope {
 			dom := domain.GetDomain(e.Ctx())
-			config.GetGlobalConfig().Instance.TiDBServiceScope = valStr
+			oldConfig := config.GetGlobalConfig()
+			if oldConfig.Instance.TiDBServiceScope != valStr {
+				newConfig := *oldConfig
+				newConfig.Instance.TiDBServiceScope = valStr
+				config.StoreGlobalConfig(&newConfig)
+			}
 			serverID := disttaskutil.GenerateSubtaskExecID(ctx, dom.DDL().GetID())
 			taskMgr, err := storage.GetTaskManager()
 			if err != nil {
 				return err
 			}
-			return taskMgr.StartManagerSession(ctx, e.Ctx(), serverID, valStr)
+			return taskMgr.InitMetaSession(ctx, e.Ctx(), serverID, valStr)
 		}
 		return err
 	}
@@ -296,7 +301,8 @@ func (e *SetExecutor) getVarValue(ctx context.Context, v *expression.VarAssignme
 		// to the compiled-in MySQL default value, use the DEFAULT keyword.
 		// See http://dev.mysql.com/doc/refman/5.7/en/set-statement.html
 		if sysVar != nil {
-			return sysVar.Value, nil
+			defVal := variable.GlobalSystemVariableInitialValue(sysVar.Name, sysVar.Value)
+			return defVal, nil
 		}
 		return e.Ctx().GetSessionVars().GetGlobalSystemVar(ctx, v.Name)
 	}

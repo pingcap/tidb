@@ -477,6 +477,9 @@ func CalcTotalSelectivityForMVIdxPath(
 		//   Selectivity( a = 1 and 1 member of (d->'$.b') ) = 1 / 2
 		// Case 2: Here we should use the index total row count
 		//   Selectivity( a = 1 ) = 4 / 8
+		//
+		// Now, the `Case 2` above has been avoided because a mv index may not contain all rows. See the related issue
+		// https://github.com/pingcap/tidb/issues/50125 and fix https://github.com/pingcap/tidb/pull/50183
 		var virtualCol *expression.Column
 		for _, col := range coll.MVIdx2Columns[path.Index.ID] {
 			if col.VirtualExpr != nil {

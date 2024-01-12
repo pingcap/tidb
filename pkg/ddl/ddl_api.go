@@ -2875,6 +2875,55 @@ func (d *ddl) BatchCreateTableWithInfo(ctx sessionctx.Context,
 	return nil
 }
 
+// BatchCreateTableWithJobs combine CreateTableJobs to BatchCreateTableJob.
+func (*ddl) BatchCreateTableWithJobs(jobs []*model.Job) (*model.Job, error) {
+	if len(jobs) == 0 {
+		return nil, errors.Trace(fmt.Errorf("expect non-empty jobs"))
+	}
+
+	var combinedJob *model.Job
+
+	args := make([]*model.TableInfo, 0, len(jobs))
+	involvingSchemaInfo := make([]model.InvolvingSchemaInfo, 0, len(jobs))
+	var foreignKeyChecks bool
+
+	// if there is any duplicated table name
+	duplication := make(map[string]struct{})
+	for _, job := range jobs {
+		if combinedJob == nil {
+			combinedJob = job.Clone()
+			combinedJob.Type = model.ActionCreateTables
+			combinedJob.Args = combinedJob.Args[:0]
+			foreignKeyChecks = job.Args[1].(bool)
+		}
+		// append table job args
+		info, ok := job.Args[0].(*model.TableInfo)
+		if !ok {
+			return nil, errors.Trace(fmt.Errorf("expect model.TableInfo, but got %T", job.Args[0]))
+		}
+		args = append(args, info)
+
+		if _, ok := duplication[info.Name.L]; ok {
+			// return err even if create table if not exists
+			return nil, infoschema.ErrTableExists.FastGenByArgs("can not batch create tables with same name")
+		}
+
+		duplication[info.Name.L] = struct{}{}
+
+		involvingSchemaInfo = append(involvingSchemaInfo,
+			model.InvolvingSchemaInfo{
+				Database: job.SchemaName,
+				Table:    info.Name.L,
+			})
+	}
+
+	combinedJob.Args = append(combinedJob.Args, args)
+	combinedJob.Args = append(combinedJob.Args, foreignKeyChecks)
+	combinedJob.InvolvingSchemaInfo = involvingSchemaInfo
+
+	return combinedJob, nil
+}
+
 func (d *ddl) CreatePlacementPolicyWithInfo(ctx sessionctx.Context, policy *model.PolicyInfo, onExist OnExist) error {
 	if checkIgnorePlacementDDL(ctx) {
 		return nil

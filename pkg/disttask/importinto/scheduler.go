@@ -199,7 +199,7 @@ func (sch *ImportSchedulerExt) unregisterTask(ctx context.Context, task *proto.T
 // OnNextSubtasksBatch generate batch of next stage's plan.
 func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 	ctx context.Context,
-	taskHandle scheduler.TaskHandle,
+	taskHandle storage.TaskHandle,
 	task *proto.Task,
 	execIDs []string,
 	nextStep proto.Step,
@@ -309,7 +309,7 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 }
 
 // OnDone implements scheduler.Extension interface.
-func (sch *ImportSchedulerExt) OnDone(ctx context.Context, handle scheduler.TaskHandle, task *proto.Task) error {
+func (sch *ImportSchedulerExt) OnDone(ctx context.Context, handle storage.TaskHandle, task *proto.Task) error {
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", task.Type),
 		zap.Int64("task-id", task.ID),
@@ -405,12 +405,11 @@ type importScheduler struct {
 	*scheduler.BaseScheduler
 }
 
-func newImportScheduler(ctx context.Context, taskMgr scheduler.TaskManager,
-	nodeMgr *scheduler.NodeManager, task *proto.Task) scheduler.Scheduler {
+func newImportScheduler(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 	sch := importScheduler{
-		BaseScheduler: scheduler.NewBaseScheduler(subCtx, taskMgr, nodeMgr, task),
+		BaseScheduler: scheduler.NewBaseScheduler(subCtx, task, param),
 	}
 	return &sch
 }
@@ -419,11 +418,11 @@ func (sch *importScheduler) Init() (err error) {
 	defer func() {
 		if err != nil {
 			// if init failed, close is not called, so we need to unregister here.
-			metricsManager.unregister(sch.Task.ID)
+			metricsManager.unregister(sch.GetTask().ID)
 		}
 	}()
 	taskMeta := &TaskMeta{}
-	if err = json.Unmarshal(sch.BaseScheduler.Task.Meta, taskMeta); err != nil {
+	if err = json.Unmarshal(sch.BaseScheduler.GetTask().Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
 
@@ -434,12 +433,12 @@ func (sch *importScheduler) Init() (err error) {
 }
 
 func (sch *importScheduler) Close() {
-	metricsManager.unregister(sch.Task.ID)
+	metricsManager.unregister(sch.GetTask().ID)
 	sch.BaseScheduler.Close()
 }
 
 // nolint:deadcode
-func dropTableIndexes(ctx context.Context, handle scheduler.TaskHandle, taskMeta *TaskMeta, logger *zap.Logger) error {
+func dropTableIndexes(ctx context.Context, handle storage.TaskHandle, taskMeta *TaskMeta, logger *zap.Logger) error {
 	tblInfo := taskMeta.Plan.TableInfo
 	tableName := common.UniqueTable(taskMeta.Plan.DBName, tblInfo.Name.L)
 
@@ -536,7 +535,7 @@ func getStepOfEncode(globalSort bool) proto.Step {
 }
 
 // we will update taskMeta in place and make task.Meta point to the new taskMeta.
-func updateResult(handle scheduler.TaskHandle, task *proto.Task, taskMeta *TaskMeta, globalSort bool) error {
+func updateResult(handle storage.TaskHandle, task *proto.Task, taskMeta *TaskMeta, globalSort bool) error {
 	stepOfEncode := getStepOfEncode(globalSort)
 	metas, err := handle.GetPreviousSubtaskMetas(task.ID, stepOfEncode)
 	if err != nil {
@@ -570,7 +569,7 @@ func updateResult(handle scheduler.TaskHandle, task *proto.Task, taskMeta *TaskM
 	return updateMeta(task, taskMeta)
 }
 
-func getLoadedRowCountOnGlobalSort(handle scheduler.TaskHandle, task *proto.Task) (uint64, error) {
+func getLoadedRowCountOnGlobalSort(handle storage.TaskHandle, task *proto.Task) (uint64, error) {
 	metas, err := handle.GetPreviousSubtaskMetas(task.ID, StepWriteAndIngest)
 	if err != nil {
 		return 0, err
@@ -587,7 +586,7 @@ func getLoadedRowCountOnGlobalSort(handle scheduler.TaskHandle, task *proto.Task
 	return loadedRowCount, nil
 }
 
-func startJob(ctx context.Context, logger *zap.Logger, taskHandle scheduler.TaskHandle, taskMeta *TaskMeta, jobStep string) error {
+func startJob(ctx context.Context, logger *zap.Logger, taskHandle storage.TaskHandle, taskMeta *TaskMeta, jobStep string) error {
 	failpoint.Inject("syncBeforeJobStarted", func() {
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
@@ -631,7 +630,7 @@ func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step 
 }
 
 func (sch *ImportSchedulerExt) finishJob(ctx context.Context, logger *zap.Logger,
-	taskHandle scheduler.TaskHandle, task *proto.Task, taskMeta *TaskMeta) error {
+	taskHandle storage.TaskHandle, task *proto.Task, taskMeta *TaskMeta) error {
 	// we have already switch import-mode when switch to post-process step.
 	sch.unregisterTask(ctx, task)
 	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
@@ -647,7 +646,7 @@ func (sch *ImportSchedulerExt) finishJob(ctx context.Context, logger *zap.Logger
 	)
 }
 
-func (sch *ImportSchedulerExt) failJob(ctx context.Context, taskHandle scheduler.TaskHandle, task *proto.Task,
+func (sch *ImportSchedulerExt) failJob(ctx context.Context, taskHandle storage.TaskHandle, task *proto.Task,
 	taskMeta *TaskMeta, logger *zap.Logger, errorMsg string) error {
 	sch.switchTiKV2NormalMode(ctx, task, logger)
 	sch.unregisterTask(ctx, task)
@@ -663,7 +662,7 @@ func (sch *ImportSchedulerExt) failJob(ctx context.Context, taskHandle scheduler
 	)
 }
 
-func (sch *ImportSchedulerExt) cancelJob(ctx context.Context, taskHandle scheduler.TaskHandle, task *proto.Task,
+func (sch *ImportSchedulerExt) cancelJob(ctx context.Context, taskHandle storage.TaskHandle, task *proto.Task,
 	meta *TaskMeta, logger *zap.Logger) error {
 	sch.switchTiKV2NormalMode(ctx, task, logger)
 	sch.unregisterTask(ctx, task)
