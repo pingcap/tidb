@@ -67,14 +67,10 @@ func (c *ApplyCache) put(key applyCacheKey, val kvcache.Value) {
 	c.cache.Put(key, val)
 }
 
-// Get gets a cache item according to cache key. It's thread-safe.
-func (c *ApplyCache) Get(key applyCacheKey) (*chunk.List, error) {
-	value, hit := c.get(key)
-	if !hit {
-		return nil, nil
-	}
-	typedValue := value.(*chunk.List)
-	return typedValue, nil
+func (c *ApplyCache) removeOldest() (kvcache.Key, kvcache.Value, bool) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	return c.cache.RemoveOldest()
 }
 
 // Set inserts an item to the cache. It's thread-safe.
@@ -84,7 +80,7 @@ func (c *ApplyCache) Set(key applyCacheKey, value *chunk.List) (bool, error) {
 		return false, nil
 	}
 	for mem+c.memTracker.BytesConsumed() > c.memCapacity {
-		evictedKey, evictedValue, evicted := c.cache.RemoveOldest()
+		evictedKey, evictedValue, evicted := c.removeOldest()
 		if !evicted {
 			return false, nil
 		}
