@@ -76,7 +76,6 @@ type SortExec struct {
 		// The multi-way merge algorithm can refer to https://en.wikipedia.org/wiki/K-way_merge_algorithm
 		multiWayMerge *multiWayMerge
 
-		// spillAction save the Action for spill disk.
 		spillAction *sortPartitionSpillDiskAction
 	}
 
@@ -96,6 +95,7 @@ type SortExec struct {
 		err       error
 
 		spillHelper *parallelSortSpillHelper
+		spillAction *parallelSortSpillAction
 	}
 
 	enableTmpStorageOnOOM bool
@@ -151,6 +151,10 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Parallel.errRWLock = &sync.RWMutex{}
 		e.Parallel.err = nil
 		e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e))
+		e.Parallel.spillAction = newParallelSortSpillDiskAction(e.Parallel.spillHelper)
+		if e.enableTmpStorageOnOOM {
+			e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.Parallel.spillAction)
+		}
 	}
 
 	e.Unparallel.sortPartitions = e.Unparallel.sortPartitions[:0]
@@ -243,6 +247,7 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *SortExec) appendResultToChunkInParallelMode(req *chunk.Chunk) {
+	// TODO consider spill
 	for ; !req.IsFull() && e.Parallel.idx < e.Parallel.rowNum; e.Parallel.idx++ {
 		req.AppendRow(e.Parallel.result[e.Parallel.idx])
 	}
@@ -506,8 +511,23 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	err = e.Parallel.spillHelper.checkSpillError()
+	if err != nil {
+		return err
+	}
+	
+	e.spillRemainingRowsWhenNeeded()
 	e.fetchResultFromQueue()
 	return nil
+}
+
+func (e *SortExec) spillRemainingRowsWhenNeeded() {
+	e.Parallel.spillHelper.syncLock.Lock()
+	defer e.Parallel.spillHelper.syncLock.Unlock()
+
+	if e.Parallel.spillHelper.isSpillTriggered() {
+		
+	}
 }
 
 // Fetch chunks from child and put chunks into MPMCQueue
@@ -568,6 +588,13 @@ func (e *SortExec) processErrorForParallel(err error) {
 }
 
 func (e *SortExec) fetchResultFromQueue() {
+	e.Parallel.spillHelper.syncLock.Lock()
+	defer e.Parallel.spillHelper.syncLock.Unlock()
+	if e.Parallel.spillHelper.isSpillTriggered() {
+		// We will read chunks from disk when spill is triggered
+		return
+	}
+
 	sortedRowsNum := e.Parallel.globalSortedRowsQueue.getSortedRowsNumNoLock()
 	if sortedRowsNum > 1 {
 		panic("Sort is not completed.")

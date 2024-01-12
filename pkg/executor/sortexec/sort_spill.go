@@ -99,14 +99,17 @@ func (s *parallelSortSpillAction) Action(t *memory.Tracker) {
 		s.spillHelper.cond.Wait()
 	}
 
-	if t.CheckExceed() {
-		s.spillHelper.setInSpillingNoLock()
+	if t.CheckExceed() && s.spillHelper.isNotSpilledNoLock() {
+		// Ideally, all goroutines entering this action should wait for the finish of spill once
+		// spill is triggered(we consider spill is triggered when the spill goroutine gets the syncLock).
+		// However, out of some reasons, we have to directly return the goroutine before the finish of
+		// sort operation as sort will retrigger the action and lead to dead lock.
 		s.spillHelper.setSpillTriggeredNoLock()
 		go func() {
 			s.spillHelper.syncLock.Lock()
 			defer s.spillHelper.syncLock.Unlock()
 			s.spillHelper.spill()
-			s.spillHelper.resetInSpilling()
+			s.spillHelper.setNotSpilledNoLock()
 			s.spillHelper.cond.Broadcast()
 		}()
 	}
