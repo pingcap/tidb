@@ -70,13 +70,13 @@ func (b *memKVsAndBuffers) build() {
 	b.keys = make([][]byte, 0, sumKVCnt)
 	b.values = make([][]byte, 0, sumKVCnt)
 	for i := range b.keysPerFile {
-		keys := b.keysPerFile[i]
-		b.keys = append(b.keys, keys...)
+		b.keys = append(b.keys, b.keysPerFile[i]...)
 		b.keysPerFile[i] = nil
-		values := b.valuesPerFile[i]
-		b.values = append(b.values, values...)
+		b.values = append(b.values, b.valuesPerFile[i]...)
 		b.valuesPerFile[i] = nil
 	}
+	b.keysPerFile = nil
+	b.valuesPerFile = nil
 
 	b.droppedSize = 0
 	for _, size := range b.droppedSizePerFile {

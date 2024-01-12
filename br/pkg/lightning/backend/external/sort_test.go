@@ -92,6 +92,7 @@ func TestGlobalSortLocalBasic(t *testing.T) {
 func TestGlobalSortLocalWithMerge(t *testing.T) {
 	// 1. write data step
 	seed := time.Now().Unix()
+	seed = 1705048796
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()

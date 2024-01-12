@@ -139,6 +139,7 @@ func readOneFile(
 		}
 		if bytes.Compare(k, startKey) < 0 {
 			droppedSize += len(k) + len(v)
+			continue
 		}
 		if bytes.Compare(k, endKey) >= 0 {
 			break
