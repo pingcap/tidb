@@ -968,7 +968,7 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	historySubTasksCnt, err := testutil.GetSubtasksFromHistory(ctx, sm)
 	require.NoError(t, err)
 	require.Equal(t, 0, historySubTasksCnt)
-	subTasks, err = sm.GetSubtasksForImportInto(ctx, taskID, proto.StepInit)
+	subTasks, err = sm.GetSubtasksWithHistory(ctx, taskID, proto.StepInit)
 	require.NoError(t, err)
 	require.Len(t, subTasks, 3)
 
@@ -981,7 +981,7 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	historySubTasksCnt, err = testutil.GetSubtasksFromHistory(ctx, sm)
 	require.NoError(t, err)
 	require.Equal(t, 3, historySubTasksCnt)
-	subTasks, err = sm.GetSubtasksForImportInto(ctx, taskID, proto.StepInit)
+	subTasks, err = sm.GetSubtasksWithHistory(ctx, taskID, proto.StepInit)
 	require.NoError(t, err)
 	require.Len(t, subTasks, 3)
 

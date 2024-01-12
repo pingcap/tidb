@@ -64,7 +64,7 @@ var (
 	ErrUnstableSubtasks = errors.New("unstable subtasks")
 
 	// ErrTaskNotFound is the error when we can't found task.
-	// i.e. onFinished() in scheduler move task from tidb_global_task to tidb_global_task_history.
+	// i.e. TransferTasks2History move task from tidb_global_task to tidb_global_task_history.
 	ErrTaskNotFound = errors.New("task not found")
 
 	// ErrTaskAlreadyExists is the error when we submit a task with the same task key.
@@ -1115,8 +1115,8 @@ func (mgr *TaskManager) IsTaskCancelling(ctx context.Context, taskID int64) (boo
 	return len(rs) > 0, nil
 }
 
-// GetSubtasksForImportInto gets the subtasks for import into(show import jobs).
-func (mgr *TaskManager) GetSubtasksForImportInto(ctx context.Context, taskID int64, step proto.Step) ([]*proto.Subtask, error) {
+// GetSubtasksWithHistory gets the subtasks for import into(show import jobs).
+func (mgr *TaskManager) GetSubtasksWithHistory(ctx context.Context, taskID int64, step proto.Step) ([]*proto.Subtask, error) {
 	var (
 		rs  []chunk.Row
 		err error
@@ -1130,7 +1130,7 @@ func (mgr *TaskManager) GetSubtasksForImportInto(ctx context.Context, taskID int
 			return err
 		}
 
-		// To avoid the situation that the subtasks has been `TransferSubTasks2History`
+		// To avoid the situation that the subtasks has been `TransferTasks2History`
 		// when the user show import jobs, we need to check the history table.
 		rsFromHistory, err := sqlexec.ExecSQL(ctx, se,
 			`select `+SubtaskColumns+` from mysql.tidb_background_subtask_history where task_key = %? and step = %?`,
