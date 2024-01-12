@@ -54,6 +54,11 @@ type memKVsAndBuffers struct {
 	values       [][]byte
 	memKVBuffers []*membuf.Buffer
 	size         int
+
+	// temporary fields
+	keysPerFile        [][][]byte
+	valuesPerFile      [][][]byte
+	droppedSizePerFile []int
 }
 
 // Engine stored sorted key/value pairs in an external storage.
@@ -225,10 +230,33 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	if err != nil {
 		return err
 	}
+
+	sumKVCnt := 0
+	for _, keys := range e.memKVsAndBuffers.keysPerFile {
+		sumKVCnt += len(keys)
+	}
+	e.memKVsAndBuffers.keys = make([][]byte, 0, sumKVCnt)
+	e.memKVsAndBuffers.values = make([][]byte, 0, sumKVCnt)
+	for i := range e.memKVsAndBuffers.keysPerFile {
+		keys := e.memKVsAndBuffers.keysPerFile[i]
+		e.memKVsAndBuffers.keys = append(e.memKVsAndBuffers.keys, keys...)
+		e.memKVsAndBuffers.keysPerFile[i] = nil
+		values := e.memKVsAndBuffers.valuesPerFile[i]
+		e.memKVsAndBuffers.values = append(e.memKVsAndBuffers.values, values...)
+		e.memKVsAndBuffers.valuesPerFile[i] = nil
+	}
+
+	droppedSize := 0
+	for _, size := range e.memKVsAndBuffers.droppedSizePerFile {
+		droppedSize += size
+	}
+
 	readSecond := time.Since(readStart).Seconds()
 	readDurHist.Observe(readSecond)
 	logutil.Logger(ctx).Info("reading external storage in loadBatchRegionData",
-		zap.Duration("cost time", time.Since(readStart)))
+		zap.Duration("cost time", time.Since(readStart)),
+		zap.Int("droppedSize", droppedSize))
+
 	sortStart := time.Now()
 	oldSortyGor := sorty.MaxGor
 	sorty.MaxGor = uint64(e.workerConcurrency * 2)
@@ -296,7 +324,7 @@ func (e *Engine) LoadIngestData(
 	// currently we assume the region size is 96MB and will download 96MB*20 = 1.9GB
 	// data at once
 	// TODO(lance6716): testing
-	regionBatchSize := 30
+	regionBatchSize := 32
 	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
 		regionBatchSize = val.(int)
 	})
