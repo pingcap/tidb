@@ -15,16 +15,13 @@
 package importer
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	tidb "github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -175,8 +172,4 @@ func TestLoadDataControllerGetAdjustedMaxEngineSize(t *testing.T) {
 			}
 		})
 	}
-}
-
-func ChecksumTable(ctx context.Context, executor sessionctx.Context, plan *Plan, logger *zap.Logger) (*local.RemoteChecksum, error) {
-	return checksumTable(ctx, executor, plan, logger)
 }

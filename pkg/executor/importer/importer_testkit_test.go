@@ -21,6 +21,8 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -32,7 +34,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestChecksumTable(t *testing.T) {
+func TestVerifyChecksum(t *testing.T) {
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -46,27 +48,51 @@ func TestChecksumTable(t *testing.T) {
 		TableInfo: &model.TableInfo{
 			Name: model.NewCIStr("tb"),
 		},
+		Checksum: config.OpLevelRequired,
 	}
-	// fake result
-	localChecksum := verify.MakeKVChecksum(1, 1, 1)
 	tk.MustExec("create database db")
 	tk.MustExec("create table db.tb(id int)")
 	tk.MustExec("insert into db.tb values(1)")
-	remoteChecksum, err := importer.ChecksumTable(ctx, tk.Session(), plan, logutil.BgLogger())
-	require.NoError(t, err)
-	require.True(t, remoteChecksum.IsEqual(&localChecksum))
-	// again
-	remoteChecksum, err = importer.ChecksumTable(ctx, tk.Session(), plan, logutil.BgLogger())
-	require.NoError(t, err)
-	require.True(t, remoteChecksum.IsEqual(&localChecksum))
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum", `return(true)`)
-	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum")
-	}()
-	remoteChecksum, err = importer.ChecksumTable(ctx, tk.Session(), plan, logutil.BgLogger())
+	// admin checksum table always return 1, 1, 1 for memory store
+	// Checksum = required
+	localChecksum := verify.MakeKVChecksum(1, 1, 1)
+	err := importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
 	require.NoError(t, err)
-	require.True(t, remoteChecksum.IsEqual(&localChecksum))
+	localChecksum = verify.MakeKVChecksum(1, 2, 1)
+	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
+	require.ErrorIs(t, err, common.ErrChecksumMismatch)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum", `3*return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum"))
+	}()
+	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
+	require.ErrorContains(t, err, "occur an error when checksum")
+	// remote checksum success after retry
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum", `1*return(true)`))
+	localChecksum = verify.MakeKVChecksum(1, 1, 1)
+	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
+	require.NoError(t, err)
+
+	// checksum = optional
+	plan.Checksum = config.OpLevelOptional
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum"))
+	localChecksum = verify.MakeKVChecksum(1, 1, 1)
+	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
+	require.NoError(t, err)
+	localChecksum = verify.MakeKVChecksum(1, 2, 1)
+	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
+	require.NoError(t, err)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum", `3*return(true)`))
+	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
+	require.NoError(t, err)
+
+	// checksum = off
+	plan.Checksum = config.OpLevelOff
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum"))
+	localChecksum = verify.MakeKVChecksum(1, 2, 1)
+	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
+	require.NoError(t, err)
 }
 
 func TestGetTargetNodeCpuCnt(t *testing.T) {

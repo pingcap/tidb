@@ -928,9 +928,7 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 			}
 
 			failpoint.Inject("errWhenChecksum", func() {
-				if i == 0 {
-					failpoint.Return(errors.New("occur an error when checksum, coprocessor task terminated due to exceeding the deadline"))
-				}
+				failpoint.Return(errors.New("occur an error when checksum, coprocessor task terminated due to exceeding the deadline"))
 			})
 
 			// ADMIN CHECKSUM TABLE <schema>.<table>  example.
