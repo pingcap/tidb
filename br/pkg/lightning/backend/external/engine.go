@@ -82,6 +82,7 @@ func (b *memKVsAndBuffers) build() {
 	for _, size := range b.droppedSizePerFile {
 		b.droppedSize += size
 	}
+	b.droppedSizePerFile = nil
 }
 
 // Engine stored sorted key/value pairs in an external storage.
