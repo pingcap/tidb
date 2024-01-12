@@ -64,8 +64,8 @@ func (r rangeOrRegion) String() string {
 	return fmt.Sprintf("region(id=%d, range=%s)", r.id, rng)
 }
 
-func (r rangeOrRegion) Less(than btree.Item) bool {
-	return bytes.Compare(r.startKey, than.(rangeOrRegion).startKey) < 0
+func (r rangeOrRegion) compareWith(than rangeOrRegion) bool {
+	return bytes.Compare(r.startKey, than.startKey) < 0
 }
 
 type Preparer struct {
@@ -75,7 +75,7 @@ type Preparer struct {
 	/* Internal Status. */
 	inflightReqs         map[uint64]metapb.Region
 	failed               []rangeOrRegion
-	waitApplyDoneRegions btree.BTree
+	waitApplyDoneRegions btree.BTreeG[rangeOrRegion]
 	retryTime            int
 	nextRetry            *time.Timer
 
@@ -98,7 +98,7 @@ func New(env Env) *Preparer {
 		env: env,
 
 		inflightReqs:         make(map[uint64]metapb.Region),
-		waitApplyDoneRegions: *btree.New(16),
+		waitApplyDoneRegions: *btree.NewG(16, rangeOrRegion.compareWith),
 		eventChan:            make(chan event, 128),
 		clients:              make(map[uint64]*prepareStream),
 
@@ -270,9 +270,9 @@ func (p *Preparer) onEvent(ctx context.Context, e event) error {
 			p.nextRetry = time.NewTimer(p.RetryBackoff)
 			return nil
 		}
-		if item := p.waitApplyDoneRegions.ReplaceOrInsert(r); item != nil {
+		if item, ok := p.waitApplyDoneRegions.ReplaceOrInsert(r); ok {
 			logutil.CL(ctx).Warn("overlapping in success region",
-				zap.Stringer("old_region", item.(rangeOrRegion)),
+				zap.Stringer("old_region", item),
 				zap.Stringer("new_region", r))
 		}
 	default:
@@ -317,12 +317,11 @@ func (p *Preparer) checkHole() []rangeOrRegion {
 
 	last := []byte("")
 	failed := []rangeOrRegion{}
-	p.waitApplyDoneRegions.Ascend(func(item btree.Item) bool {
-		i := item.(rangeOrRegion)
-		if bytes.Compare(last, i.startKey) < 0 {
-			failed = append(failed, rangeOrRegion{startKey: last, endKey: i.startKey})
+	p.waitApplyDoneRegions.Ascend(func(item rangeOrRegion) bool {
+		if bytes.Compare(last, item.startKey) < 0 {
+			failed = append(failed, rangeOrRegion{startKey: last, endKey: item.startKey})
 		}
-		last = i.endKey
+		last = item.endKey
 		return true
 	})
 	// Not the end key of key space.
