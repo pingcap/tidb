@@ -31,7 +31,7 @@ import (
 	"github.com/pingcap/log"
 	. "github.com/pingcap/tidb/br/pkg/backup/prepare_snap"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
+	"github.com/pingcap/tidb/store/mockstore/unistore"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"

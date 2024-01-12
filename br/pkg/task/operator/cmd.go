@@ -137,7 +137,7 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 
 	cx.run(func() error { return pauseGCKeeper(cx) })
 	cx.run(func() error { return pauseSchedulerKeeper(cx) })
-	cx.run(func() error { return pauseImporting(cx) })
+	// cx.run(func() error { return pauseImporting(cx) })
 	cx.run(func() error { return pauseAdminAndWaitApply(cx) })
 	go func() {
 		cx.rdGrp.Wait()
