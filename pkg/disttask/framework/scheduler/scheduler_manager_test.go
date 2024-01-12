@@ -70,7 +70,10 @@ func TestCleanUpRoutine(t *testing.T) {
 	tasks := checkTaskRunningCnt()
 	checkSubtaskCnt(tasks, taskID)
 	for i := 1; i <= subtaskCnt; i++ {
-		err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateSucceed, nil)
+		err = mgr.UpdateSubtaskStateAndError(ctx, &proto.Subtask{
+			ID:     int64(i),
+			ExecID: ":4000",
+		}, proto.SubtaskStateSucceed, nil)
 		require.NoError(t, err)
 	}
 	sch.DoCleanUpRoutine()

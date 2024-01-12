@@ -41,17 +41,17 @@ func (m *MockTaskTable) EXPECT() *MockTaskTableMockRecorder {
 }
 
 // FinishSubtask mocks base method.
-func (m *MockTaskTable) FinishSubtask(arg0 context.Context, arg1 string, arg2 int64, arg3 []byte) error {
+func (m *MockTaskTable) FinishSubtask(arg0 context.Context, arg1 *proto.Subtask) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FinishSubtask", arg0, arg1, arg2, arg3)
+	ret := m.ctrl.Call(m, "FinishSubtask", arg0, arg1)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // FinishSubtask indicates an expected call of FinishSubtask.
-func (mr *MockTaskTableMockRecorder) FinishSubtask(arg0, arg1, arg2, arg3 any) *gomock.Call {
+func (mr *MockTaskTableMockRecorder) FinishSubtask(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FinishSubtask", reflect.TypeOf((*MockTaskTable)(nil).FinishSubtask), arg0, arg1, arg2, arg3)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FinishSubtask", reflect.TypeOf((*MockTaskTable)(nil).FinishSubtask), arg0, arg1)
 }
 
 // GetFirstSubtaskInStates mocks base method.
@@ -207,17 +207,17 @@ func (mr *MockTaskTableMockRecorder) RecoverMeta(arg0, arg1, arg2 any) *gomock.C
 }
 
 // StartSubtask mocks base method.
-func (m *MockTaskTable) StartSubtask(arg0 context.Context, arg1 int64, arg2 string) error {
+func (m *MockTaskTable) StartSubtask(arg0 context.Context, arg1 *proto.Subtask) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "StartSubtask", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "StartSubtask", arg0, arg1)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // StartSubtask indicates an expected call of StartSubtask.
-func (mr *MockTaskTableMockRecorder) StartSubtask(arg0, arg1, arg2 any) *gomock.Call {
+func (mr *MockTaskTableMockRecorder) StartSubtask(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StartSubtask", reflect.TypeOf((*MockTaskTable)(nil).StartSubtask), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StartSubtask", reflect.TypeOf((*MockTaskTable)(nil).StartSubtask), arg0, arg1)
 }
 
 // UpdateErrorToSubtask mocks base method.
@@ -235,17 +235,17 @@ func (mr *MockTaskTableMockRecorder) UpdateErrorToSubtask(arg0, arg1, arg2, arg3
 }
 
 // UpdateSubtaskStateAndError mocks base method.
-func (m *MockTaskTable) UpdateSubtaskStateAndError(arg0 context.Context, arg1 string, arg2 int64, arg3 proto.SubtaskState, arg4 error) error {
+func (m *MockTaskTable) UpdateSubtaskStateAndError(arg0 context.Context, arg1 *proto.Subtask, arg2 proto.SubtaskState, arg3 error) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateSubtaskStateAndError", arg0, arg1, arg2, arg3, arg4)
+	ret := m.ctrl.Call(m, "UpdateSubtaskStateAndError", arg0, arg1, arg2, arg3)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
 // UpdateSubtaskStateAndError indicates an expected call of UpdateSubtaskStateAndError.
-func (mr *MockTaskTableMockRecorder) UpdateSubtaskStateAndError(arg0, arg1, arg2, arg3, arg4 any) *gomock.Call {
+func (mr *MockTaskTableMockRecorder) UpdateSubtaskStateAndError(arg0, arg1, arg2, arg3 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateSubtaskStateAndError", reflect.TypeOf((*MockTaskTable)(nil).UpdateSubtaskStateAndError), arg0, arg1, arg2, arg3, arg4)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateSubtaskStateAndError", reflect.TypeOf((*MockTaskTable)(nil).UpdateSubtaskStateAndError), arg0, arg1, arg2, arg3)
 }
 
 // MockPool is a mock of Pool interface.

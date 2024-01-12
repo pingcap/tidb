@@ -110,7 +110,7 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	gotSubtasks, err := manager.GetSubtasksForImportInto(ctx, taskID, importinto.StepImport)
 	require.NoError(t, err)
 	for _, s := range gotSubtasks {
-		require.NoError(t, manager.FinishSubtask(ctx, s.ExecID, s.ID, []byte("{}")))
+		require.NoError(t, manager.FinishSubtask(ctx, s))
 	}
 	// to post-process stage, job should be running and in validating step
 	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
@@ -286,7 +286,8 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	sortStepMetaBytes, err := json.Marshal(sortStepMeta)
 	require.NoError(t, err)
 	for _, s := range gotSubtasks {
-		require.NoError(t, manager.FinishSubtask(ctx, s.ExecID, s.ID, sortStepMetaBytes))
+		s.Meta = sortStepMetaBytes
+		require.NoError(t, manager.FinishSubtask(ctx, s))
 	}
 
 	// to merge-sort stage
@@ -324,7 +325,8 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	mergeSortStepMetaBytes, err := json.Marshal(mergeSortStepMeta)
 	require.NoError(t, err)
 	for _, s := range gotSubtasks {
-		require.NoError(t, manager.FinishSubtask(ctx, s.ExecID, s.ID, mergeSortStepMetaBytes))
+		s.Meta = mergeSortStepMetaBytes
+		require.NoError(t, manager.FinishSubtask(ctx, s))
 	}
 
 	// to write-and-ingest stage

@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -681,7 +682,7 @@ func (mgr *TaskManager) HasSubtasksInStates(ctx context.Context, tidbID string, 
 }
 
 // StartSubtask updates the subtask state to running.
-func (mgr *TaskManager) StartSubtask(ctx context.Context, subtaskID int64, execID string) error {
+func (mgr *TaskManager) StartSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		vars := se.GetSessionVars()
 		_, err := sqlexec.ExecSQL(ctx,
@@ -690,8 +691,8 @@ func (mgr *TaskManager) StartSubtask(ctx context.Context, subtaskID int64, execI
 			 set state = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
 			 where id = %? and exec_id = %?`,
 			proto.TaskStateRunning,
-			subtaskID,
-			execID)
+			subtask.ID,
+			subtask.ExecID)
 		if err != nil {
 			return err
 		}
@@ -700,6 +701,13 @@ func (mgr *TaskManager) StartSubtask(ctx context.Context, subtaskID int64, execI
 		}
 		return nil
 	})
+	if err == nil {
+		metrics.DecDistTaskSubTaskCnt(subtask)
+		metrics.EndDistTaskSubTask(subtask)
+		subtask.State = proto.SubtaskStateRunning
+		metrics.IncDistTaskSubTaskCnt(subtask)
+		metrics.StartDistTaskSubTask(subtask)
+	}
 	return err
 }
 
@@ -741,21 +749,40 @@ func (mgr *TaskManager) RecoverMeta(ctx context.Context, execID string, role str
 // UpdateSubtaskStateAndError updates the subtask state.
 func (mgr *TaskManager) UpdateSubtaskStateAndError(
 	ctx context.Context,
-	execID string,
-	id int64, state proto.SubtaskState, subTaskErr error) error {
+	subtask *proto.Subtask,
+	state proto.SubtaskState, subTaskErr error) error {
 	_, err := mgr.ExecuteSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
 		set state = %?, error = %?, state_update_time = unix_timestamp() where id = %? and exec_id = %?`,
-		state, serializeErr(subTaskErr), id, execID)
-	return err
+		state, serializeErr(subTaskErr), subtask.ID, subtask.ExecID)
+	if err != nil {
+		return err
+	}
+
+	metrics.DecDistTaskSubTaskCnt(subtask)
+	metrics.EndDistTaskSubTask(subtask)
+	subtask.State = state
+	metrics.IncDistTaskSubTaskCnt(subtask)
+	if !subtask.IsDone() {
+		metrics.StartDistTaskSubTask(subtask)
+	}
+	return nil
 }
 
 // FinishSubtask updates the subtask meta and mark state to succeed.
-func (mgr *TaskManager) FinishSubtask(ctx context.Context, execID string, id int64, meta []byte) error {
+func (mgr *TaskManager) FinishSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	_, err := mgr.ExecuteSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
 		set meta = %?, state = %?, state_update_time = unix_timestamp(), end_time = CURRENT_TIMESTAMP()
 		where id = %? and exec_id = %?`,
-		meta, proto.TaskStateSucceed, id, execID)
-	return err
+		subtask.Meta, proto.TaskStateSucceed, subtask.ID, subtask.ExecID)
+	if err != nil {
+		return err
+	}
+
+	metrics.DecDistTaskSubTaskCnt(subtask)
+	metrics.EndDistTaskSubTask(subtask)
+	subtask.State = proto.SubtaskStateSucceed
+	metrics.IncDistTaskSubTaskCnt(subtask)
+	return nil
 }
 
 // DeleteSubtasksByTaskID deletes the subtask of the given task ID.
@@ -766,6 +793,7 @@ func (mgr *TaskManager) DeleteSubtasksByTaskID(ctx context.Context, taskID int64
 		return err
 	}
 
+	// TODO: add metrics
 	return nil
 }
 

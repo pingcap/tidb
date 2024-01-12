@@ -35,9 +35,9 @@ type TaskTable interface {
 	RecoverMeta(ctx context.Context, tidbID string, role string) error
 	// StartSubtask try to update the subtask's state to running if the subtask is owned by execID.
 	// If the update success, it means the execID's related task executor own the subtask.
-	StartSubtask(ctx context.Context, subtaskID int64, execID string) error
-	UpdateSubtaskStateAndError(ctx context.Context, tidbID string, subtaskID int64, state proto.SubtaskState, err error) error
-	FinishSubtask(ctx context.Context, tidbID string, subtaskID int64, meta []byte) error
+	StartSubtask(ctx context.Context, subtask *proto.Subtask) error
+	UpdateSubtaskStateAndError(ctx context.Context, subtask *proto.Subtask, state proto.SubtaskState, err error) error
+	FinishSubtask(ctx context.Context, subtask *proto.Subtask) error
 
 	HasSubtasksInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...proto.SubtaskState) (bool, error)
 	UpdateErrorToSubtask(ctx context.Context, tidbID string, taskID int64, err error) error

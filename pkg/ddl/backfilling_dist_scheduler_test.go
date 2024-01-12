@@ -208,7 +208,8 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	sortStepMetaBytes, err := json.Marshal(sortStepMeta)
 	require.NoError(t, err)
 	for _, s := range gotSubtasks {
-		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, sortStepMetaBytes))
+		s.Meta = sortStepMetaBytes
+		require.NoError(t, mgr.FinishSubtask(ctx, s))
 	}
 	// 2. to merge-sort stage.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort", `return()`))
@@ -247,7 +248,8 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	mergeSortStepMetaBytes, err := json.Marshal(mergeSortStepMeta)
 	require.NoError(t, err)
 	for _, s := range gotSubtasks {
-		require.NoError(t, mgr.FinishSubtask(ctx, s.ExecID, s.ID, mergeSortStepMetaBytes))
+		s.Meta = mergeSortStepMetaBytes
+		require.NoError(t, mgr.FinishSubtask(ctx, s))
 	}
 	// 3. to write&ingest stage.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockWriteIngest", "return(true)"))
