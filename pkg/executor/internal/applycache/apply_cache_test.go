@@ -17,6 +17,7 @@ package applycache
 import (
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -78,17 +79,16 @@ func TestApplyCache(t *testing.T) {
 	require.Nil(t, result)
 }
 
-func TestApplyCache2(t *testing.T) {
+func TestApplyCacheConcurrent(t *testing.T) {
 	ctx := mock.NewContext()
-	// To make sure that removeOldest will always be call in ApplyCache::Set
-	ctx.GetSessionVars().MemQuotaApplyCache = 1
+	ctx.GetSessionVars().MemQuotaApplyCache = 100
 	applyCache, err := NewApplyCache(ctx)
 	require.NoError(t, err)
 
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
-	value := make([]*chunk.List, 3)
-	key := make([][]byte, 3)
-	for i := 0; i < 3; i++ {
+	value := make([]*chunk.List, 2)
+	key := make([][]byte, 2)
+	for i := 0; i < 2; i++ {
 		value[i] = chunk.NewList(fields, 1, 1)
 		srcChunk := chunk.NewChunkWithCapacity(fields, 1)
 		srcChunk.AppendInt64(0, int64(i))
@@ -100,33 +100,39 @@ func TestApplyCache2(t *testing.T) {
 		require.Equal(t, int64(100), applyCacheKVMem(key[i], value[i]))
 	}
 
-	ok, err := applyCache.Set(key[0], value[0])
-	require.NoError(t, err)
-	require.True(t, ok)
+	applyCache.Set(key[0], value[0])
+	var wg sync.WaitGroup
+	wg.Add(2)
+	var func1 = func() {
+		for i := 0; i < 100; i++ {
+			for true {
+				result, err := applyCache.Get(key[0])
+				require.NoError(t, err)
+				if result != nil {
+					applyCache.Set(key[1], value[1])
+					break
+				}
+			}
+		}
+		wg.Done()
+	}
+	var func2 = func() {
+		for i := 0; i < 100; i++ {
+			for true {
+				result, err := applyCache.Get(key[1])
+				require.NoError(t, err)
+				if result != nil {
+					applyCache.Set(key[0], value[0])
+					break
+				}
+			}
+		}
+		wg.Done()
+	}
+	go func1()
+	go func2()
+	wg.Wait()
 	result, err := applyCache.Get(key[0])
 	require.NoError(t, err)
 	require.NotNil(t, result)
-
-	ok, err = applyCache.Set(key[1], value[1])
-	require.NoError(t, err)
-	require.True(t, ok)
-	result, err = applyCache.Get(key[1])
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	ok, err = applyCache.Set(key[2], value[2])
-	require.NoError(t, err)
-	require.True(t, ok)
-	result, err = applyCache.Get(key[2])
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	// Both key[0] and key[1] are not in the cache
-	result, err = applyCache.Get(key[0])
-	require.NoError(t, err)
-	require.Nil(t, result)
-
-	result, err = applyCache.Get(key[1])
-	require.NoError(t, err)
-	require.Nil(t, result)
 }
