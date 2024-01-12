@@ -41,7 +41,7 @@ import (
 func init() {
 	cardinality.CollectFilters4MVIndex = collectFilters4MVIndex
 	cardinality.BuildPartialPaths4MVIndex = buildPartialPaths4MVIndex
-	statistics.PrepareCols4MVIndex = prepareCols4MVIndex
+	statistics.PrepareCols4MVIndex = PrepareCols4MVIndex
 }
 
 // generateIndexMergePath generates IndexMerge AccessPaths on this DataSource.
@@ -690,7 +690,7 @@ func (ds *DataSource) generateMVIndexPartialPath4Or(normalPathCnt int, indexMerg
 			bestNeedSelection    bool
 		)
 		for _, onePossibleMVIndexPath := range possibleMVIndexPaths {
-			idxCols, ok := prepareCols4MVIndex(ds.table.Meta(), onePossibleMVIndexPath.Index, ds.TblCols)
+			idxCols, ok := PrepareCols4MVIndex(ds.table.Meta(), onePossibleMVIndexPath.Index, ds.TblCols)
 			if !ok {
 				continue
 			}
@@ -762,11 +762,11 @@ func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, in
 	mvAndPartialPath := make([]*util.AccessPath, 0, len(possibleMVIndexPaths))
 	usedAccessCondsMap := make(map[string]expression.Expression, len(indexMergeConds))
 	for idx := 0; idx < len(possibleMVIndexPaths); idx++ {
-		idxCols, ok := prepareCols4MVIndex(ds.table.Meta(), possibleMVIndexPaths[idx].Index, ds.TblCols)
+		idxCols, ok := PrepareCols4MVIndex(ds.table.Meta(), possibleMVIndexPaths[idx].Index, ds.TblCols)
 		if !ok {
 			continue
 		}
-		accessFilters, _, mvColOffset, mvFilterMutations := ds.collectFilters4MVIndexMutations(indexMergeConds, idxCols)
+		accessFilters, _, mvColOffset, mvFilterMutations := CollectFilters4MVIndexMutations(ds.SCtx(), indexMergeConds, idxCols)
 		if len(accessFilters) == 0 { // cannot use any filter on this MVIndex
 			continue
 		}
@@ -869,7 +869,7 @@ func (ds *DataSource) generateIndexMergeOnDNF4MVIndex(normalPathCnt int, filters
 			continue // not a MVIndex path
 		}
 
-		idxCols, ok := prepareCols4MVIndex(ds.table.Meta(), ds.possibleAccessPaths[idx].Index, ds.TblCols)
+		idxCols, ok := PrepareCols4MVIndex(ds.table.Meta(), ds.possibleAccessPaths[idx].Index, ds.TblCols)
 		if !ok {
 			continue
 		}
@@ -1130,7 +1130,7 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 			continue // not a MVIndex path
 		}
 
-		idxCols, ok := prepareCols4MVIndex(ds.table.Meta(), ds.possibleAccessPaths[idx].Index, ds.TblCols)
+		idxCols, ok := PrepareCols4MVIndex(ds.table.Meta(), ds.possibleAccessPaths[idx].Index, ds.TblCols)
 		if !ok {
 			continue
 		}
@@ -1317,7 +1317,8 @@ func buildPartialPath4MVIndex(
 	return partialPath, true, nil
 }
 
-func prepareCols4MVIndex(
+// PrepareCols4MVIndex exported for test.
+func PrepareCols4MVIndex(
 	tableInfo *model.TableInfo,
 	mvIndex *model.IndexInfo,
 	tblCols []*expression.Column,
@@ -1381,6 +1382,7 @@ func collectFilters4MVIndex(sctx sessionctx.Context, filters []expression.Expres
 	return accessFilters, remainingFilters
 }
 
+// CollectFilters4MVIndexMutations exported for unit test.
 // For idx(x, cast(a as array), z), `x=1 and (2 member of a) and (1 member of a) and z=1 and x+z>0` is split to:
 // accessFilters combination:
 // 1: `x=1 and (2 member of a) and z=1`, remaining: `x+z>0`.
@@ -1417,7 +1419,7 @@ func collectFilters4MVIndex(sctx sessionctx.Context, filters []expression.Expres
 //	accessFilters: [x=1, (2 member of a), z=1], remainingFilters: [x+z>0], mvColOffset: 1, mvFilterMutations[(2 member of a), (1 member of a)]
 //
 // the outer usage will be: accessFilter[mvColOffset] = each element of mvFilterMutations to get the mv access filters mutation combination.
-func (ds *DataSource) collectFilters4MVIndexMutations(filters []expression.Expression,
+func CollectFilters4MVIndexMutations(sctx sessionctx.Context, filters []expression.Expression,
 	idxCols []*expression.Column) (accessFilters, remainingFilters []expression.Expression, mvColOffset int, mvFilterMutations []expression.Expression) {
 	usedAsAccess := make([]bool, len(filters))
 	// accessFilters [x, a<json>, z]
@@ -1431,12 +1433,20 @@ func (ds *DataSource) collectFilters4MVIndexMutations(filters []expression.Expre
 			if usedAsAccess[i] {
 				continue
 			}
-			if checkFilter4MVIndexColumn(ds.SCtx(), f, col) {
+			if checkFilter4MVIndexColumn(sctx, f, col) {
 				if col.VirtualExpr != nil && col.VirtualExpr.GetType().IsArray() {
 					// assert jsonColOffset should always be the same.
 					// if the filter is from virtual expression, it means it is about the mv json col.
 					mvFilterMutations = append(mvFilterMutations, f)
-					mvColOffset = z
+					if mvColOffset == -1 {
+						// means first encountering, recording offset pos, and append it as occupation of access filter.
+						mvColOffset = z
+						accessFilters = append(accessFilters, f)
+					}
+					// additional encountering, just map it as used access.
+					usedAsAccess[i] = true
+					found = true
+					continue
 				}
 				accessFilters = append(accessFilters, f)
 				usedAsAccess[i] = true
