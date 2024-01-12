@@ -13,7 +13,7 @@ go_library(
     deps = [
         "//br/pkg/logutil",
         "//br/pkg/utils",
-        "//pkg/util/engine",
+        "//util/engine",
         "@com_github_google_btree//:btree",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
@@ -23,6 +23,7 @@ go_library(
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_pd_client//:client",
         "@org_golang_google_grpc//:grpc",
+        "@org_golang_x_exp//slices",
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_zap//:zap",
         "@org_uber_go_zap//zapcore",
@@ -38,7 +39,6 @@ go_test(
     deps = [
         ":prepare_snap",
         "//br/pkg/utils",
-        "//pkg/store/mockstore/unistore",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_kvproto//pkg/errorpb",

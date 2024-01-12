@@ -16,7 +16,6 @@ package preparesnap
 
 import (
 	"context"
-	"slices"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -25,7 +24,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/util/engine"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -54,12 +53,32 @@ type CliEnv struct {
 	Mgr   *utils.StoreManager
 }
 
+// Copy from slices.DeleteFunc at go 1.21.5.
+// Note: Perhaps we need something like polyfill...
+func deleteFunc[S ~[]E, E any](s S, del func(E) bool) S {
+	// Don't start copying elements until we find one to delete.
+	for i, v := range s {
+		if del(v) {
+			j := i
+			for i++; i < len(s); i++ {
+				v = s[i]
+				if !del(v) {
+					s[j] = v
+					j++
+				}
+			}
+			return s[:j]
+		}
+	}
+	return s
+}
+
 func (c CliEnv) GetAllLiveStores(ctx context.Context) ([]*metapb.Store, error) {
 	stores, err := c.Cache.PDClient().GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {
 		return nil, err
 	}
-	withoutTiFlash := slices.DeleteFunc(stores, engine.IsTiFlash)
+	withoutTiFlash := deleteFunc(stores, engine.IsTiFlash)
 	return withoutTiFlash, err
 }
 

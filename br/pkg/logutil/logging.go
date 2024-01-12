@@ -60,18 +60,6 @@ func (file zapFileMarshaler) MarshalLogObject(enc zapcore.ObjectEncoder) error {
 	return nil
 }
 
-func AbbreviatedStringers[T fmt.Stringer](key string, stringers []T) zap.Field {
-	if len(stringers) < 4 {
-		return zap.Stringers(key, stringers)
-	}
-	return zap.Array(key, zapcore.ArrayMarshalerFunc(func(ae zapcore.ArrayEncoder) error {
-		ae.AppendString(stringers[0].String())
-		ae.AppendString(fmt.Sprintf("(skip %d)", len(stringers)-2))
-		ae.AppendString(stringers[len(stringers)-1].String())
-		return nil
-	}))
-}
-
 type zapFilesMarshaler []*backuppb.File
 
 func (fs zapFilesMarshaler) MarshalLogObject(encoder zapcore.ObjectEncoder) error {
@@ -284,6 +272,7 @@ func Redact(field zap.Field) zap.Field {
 	return field
 }
 
+// StringifyRangeOf returns a stringer for a key range.
 func StringifyRangeOf(start, end []byte) StringifyRange {
 	return StringifyRange{StartKey: start, EndKey: end}
 }
