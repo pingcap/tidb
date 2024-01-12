@@ -285,13 +285,14 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 }
 
 func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat) bool {
-	failpoint.Inject("forceMergeSort", func(val failpoint.Value) {
-		in := val.(string)
-		if in == kvGroup || in == "*" {
-			failpoint.Return(false)
-		}
-	})
-	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
+	// failpoint.Inject("forceMergeSort", func(val failpoint.Value) {
+	// 	in := val.(string)
+	// 	if in == kvGroup || in == "*" {
+	// 		failpoint.Return(false)
+	// 	}
+	// })
+	// return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
+	return false
 }
 
 func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, error) {
