@@ -23,6 +23,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -47,8 +48,10 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
 	pd "github.com/tikv/pd/client/http"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
@@ -105,6 +108,7 @@ func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		e.isInspectionCacheableTable(tbl) {
 		// TODO: cached rows will be returned fully, we should refactor this part.
 		if !e.cacheRetrieved {
+			logutil.BgLogger().Warn("CCCCCCCC: cache memTableReaderExec Next", zap.Any("tbl", tbl))
 			// Obtain data from cache first.
 			cached, found := cache[tbl]
 			if !found {
@@ -116,6 +120,7 @@ func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			rows, err = cached.Rows, cached.Err
 		}
 	} else {
+		logutil.BgLogger().Warn("CCCCCCCC	: none cache memTableReaderExec Next")
 		rows, err = e.retriever.retrieve(ctx, e.Ctx())
 	}
 	if err != nil {
@@ -127,12 +132,22 @@ func (e *MemTableReaderExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 
+	logutil.BgLogger().Warn("CCCCCCCC	: memTableReaderExec Next got rows", zap.Any("rows", rows))
+
 	req.GrowAndReset(len(rows))
+	logutil.BgLogger().Warn("CCCCCCCC	: memTableReaderExec Next after grow and reset1", zap.Any("req", req))
 	mutableRow := chunk.MutRowFromTypes(exec.RetTypes(e))
+	logutil.BgLogger().Warn("CCCCCCCC	: memTableReaderExec Next after grow and reset2", zap.Any("req", req))
+	defer func() {
+		if r := recover(); r != nil {
+			logutil.BgLogger().Warn("CCCCCCCC: stacktrace from panic: \n" + string(debug.Stack()))
+		}
+	}()
 	for _, row := range rows {
 		mutableRow.SetDatums(row...)
 		req.AppendRow(mutableRow.ToRow())
 	}
+	logutil.BgLogger().Warn("CCCCCCCC: memTableReaderExec Next after append", zap.Any("req", req))
 	return nil
 }
 

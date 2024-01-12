@@ -219,6 +219,7 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 		ret[i-e.rowIdx] = e.rows[i]
 	}
 	e.rowIdx += retCount
+	logutil.BgLogger().Warn("CCCCCCCC: memtableRetriever retrieve", zap.Int("rowIdx", e.rowIdx), zap.Int("retCount", retCount), zap.Int("maxCount", maxCount))
 	return adjustColumns(ret, e.columns, e.table), nil
 }
 
@@ -3010,6 +3011,7 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 
 func adjustColumns(input [][]types.Datum, outColumns []*model.ColumnInfo, table *model.TableInfo) [][]types.Datum {
 	if len(outColumns) == len(table.Columns) {
+		logutil.BgLogger().Debug("CCCCCCCC: adjustColumns1", zap.Int("input", len(input)), zap.Int("output", len(input)))
 		return input
 	}
 	rows := make([][]types.Datum, len(input))
@@ -3020,6 +3022,7 @@ func adjustColumns(input [][]types.Datum, outColumns []*model.ColumnInfo, table 
 		}
 		rows[i] = row
 	}
+	logutil.BgLogger().Debug("CCCCCCCC: adjustColumns2", zap.Int("input", len(input)), zap.Int("output", len(rows)))
 	return rows
 }
 
