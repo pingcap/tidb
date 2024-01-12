@@ -1151,6 +1151,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 				if ctx := cc.getCtx(); ctx != nil && ctx.GetSessionVars() != nil && ctx.GetSessionVars().TxnCtx != nil {
 					startTS = ctx.GetSessionVars().TxnCtx.StartTS
 				}
+				err = errors.Trace(err)
 				logutil.Logger(ctx).Info("command dispatched failed",
 					zap.String("connInfo", cc.String()),
 					zap.String("command", mysql.Command2Str[data[0]]),
