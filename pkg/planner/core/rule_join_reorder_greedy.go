@@ -79,6 +79,9 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joi
 			// Getting here means that there is no join condition between the table used in the leading hint and other tables
 			// For example: select /*+ leading(t3) */ * from t1 join t2 on t1.a=t2.a cross join t3
 			// We can not let table t3 join first.
+			// TODO(hawkingrei): we find the problem in the TestHint.
+			// 	`select * from t1, t2, t3 union all select /*+ leading(t3, t2) */ * from t1, t2, t3 union all select * from t1, t2, t3`
+			//  this sql should not return the warning. but It will not affect the result. so we will fix it as soon as possible.
 			s.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("leading hint is inapplicable, check if the leading hint table has join conditions with other tables"))
 		}
 		cartesianGroup = append(cartesianGroup, newNode.p)

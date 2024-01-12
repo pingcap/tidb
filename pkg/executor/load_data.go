@@ -149,8 +149,8 @@ type LoadDataWorker struct {
 func setNonRestrictiveFlags(stmtCtx *stmtctx.StatementContext) {
 	// TODO: DupKeyAsWarning represents too many "ignore error" paths, the
 	// meaning of this flag is not clear. I can only reuse it here.
-	stmtCtx.DupKeyAsWarning = true
 	levels := stmtCtx.ErrLevels()
+	levels[errctx.ErrGroupDupKey] = errctx.LevelWarn
 	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
 	stmtCtx.SetErrLevels(levels)
 	stmtCtx.SetTypeFlags(stmtCtx.TypeFlags().WithTruncateAsWarning(true))

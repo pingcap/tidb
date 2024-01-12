@@ -21,15 +21,20 @@ import (
 
 // subtask state machine for normal subtask:
 //
+// NOTE: `running` -> `pending` only happens when some node is taken as dead, so
+// its running subtask is balanced to other node, and the subtask is idempotent,
+// we do this to make the subtask can be scheduled to other node again, it's NOT
+// a normal state transition.
+//
 //	               ┌──────────────┐
 //	               │          ┌───┴──┐
 //	               │ ┌───────►│paused│
 //	               ▼ │        └──────┘
 //	┌───────┐    ┌───┴───┐    ┌───────┐
 //	│pending├───►│running├───►│succeed│
-//	└───────┘    └───┬───┘    └───────┘
-//	                 │        ┌──────┐
-//	                 ├───────►│failed│
+//	└───────┘    └┬──┬───┘    └───────┘
+//	     ▲        │  │        ┌──────┐
+//	     └────────┘  ├───────►│failed│
 //	                 │        └──────┘
 //	                 │        ┌────────┐
 //	                 └───────►│canceled│
@@ -54,10 +59,10 @@ const (
 	SubtaskStateFailed        SubtaskState = "failed"
 	SubtaskStateCanceled      SubtaskState = "canceled"
 	SubtaskStatePaused        SubtaskState = "paused"
+	SubtaskStateRevertPending SubtaskState = "revert_pending"
 	SubtaskStateReverting     SubtaskState = "reverting"
 	SubtaskStateReverted      SubtaskState = "reverted"
 	SubtaskStateRevertFailed  SubtaskState = "revert_failed"
-	SubtaskStateRevertPending SubtaskState = "revert_pending"
 )
 
 type (

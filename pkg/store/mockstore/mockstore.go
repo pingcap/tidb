@@ -195,12 +195,13 @@ func NewMockStore(options ...MockTiKVStoreOption) (kv.Storage, error) {
 	case MockTiKV:
 		store, err = newMockTikvStore(&opt)
 	case EmbedUnistore:
-		if opt.path == "" && len(options) == 0 && ImageAvailable() {
-			// Create the store from the image.
-			if path, err := copyImage(); err == nil {
-				opt.path = path
-			}
-		}
+		// Don't do this unless we figure out why the test image does not accelerate out unit tests.
+		// if opt.path == "" && len(options) == 0 && ImageAvailable() {
+		// 	// Create the store from the image.
+		// 	if path, err := copyImage(); err == nil {
+		// 		opt.path = path
+		// 	}
+		// }
 
 		store, err = newUnistore(&opt)
 	default:

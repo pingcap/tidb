@@ -382,7 +382,7 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 		ColumnCnt:      len(e.Table.Meta().Columns),
 		EngineDataSize: adjustedMaxEngineSize,
 		MaxChunkSize:   int64(config.MaxRegionSize),
-		Concurrency:    int(e.ThreadCnt),
+		Concurrency:    e.ThreadCnt,
 		IOWorkers:      nil,
 		Store:          e.dataStore,
 		TableMeta:      tableMeta,

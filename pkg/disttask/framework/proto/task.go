@@ -43,19 +43,17 @@ import (
 //
 // TODO: we don't have revert_failed task for now.
 const (
-	TaskStatePending       TaskState = "pending"
-	TaskStateRunning       TaskState = "running"
-	TaskStateSucceed       TaskState = "succeed"
-	TaskStateReverting     TaskState = "reverting"
-	TaskStateFailed        TaskState = "failed"
-	TaskStateRevertFailed  TaskState = "revert_failed"
-	TaskStateCancelling    TaskState = "cancelling"
-	TaskStateCanceled      TaskState = "canceled"
-	TaskStatePausing       TaskState = "pausing"
-	TaskStatePaused        TaskState = "paused"
-	TaskStateResuming      TaskState = "resuming"
-	TaskStateRevertPending TaskState = "revert_pending"
-	TaskStateReverted      TaskState = "reverted"
+	TaskStatePending      TaskState = "pending"
+	TaskStateRunning      TaskState = "running"
+	TaskStateSucceed      TaskState = "succeed"
+	TaskStateFailed       TaskState = "failed"
+	TaskStateReverting    TaskState = "reverting"
+	TaskStateReverted     TaskState = "reverted"
+	TaskStateRevertFailed TaskState = "revert_failed"
+	TaskStateCancelling   TaskState = "cancelling"
+	TaskStatePausing      TaskState = "pausing"
+	TaskStatePaused       TaskState = "paused"
+	TaskStateResuming     TaskState = "resuming"
 )
 
 type (
@@ -147,37 +145,4 @@ func (t *Task) Compare(other *Task) int {
 		return 1
 	}
 	return int(t.ID - other.ID)
-}
-
-const (
-	// TaskTypeExample is TaskType of Example.
-	TaskTypeExample TaskType = "Example"
-	// ImportInto is TaskType of ImportInto.
-	ImportInto TaskType = "ImportInto"
-	// Backfill is TaskType of add index Backfilling process.
-	Backfill TaskType = "backfill"
-)
-
-// Type2Int converts task type to int.
-func Type2Int(t TaskType) int {
-	switch t {
-	case TaskTypeExample:
-		return 1
-	case ImportInto:
-		return 2
-	default:
-		return 0
-	}
-}
-
-// Int2Type converts int to task type.
-func Int2Type(i int) TaskType {
-	switch i {
-	case 1:
-		return TaskTypeExample
-	case 2:
-		return ImportInto
-	default:
-		return ""
-	}
 }
