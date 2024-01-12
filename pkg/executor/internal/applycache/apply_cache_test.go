@@ -77,3 +77,56 @@ func TestApplyCache(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, result)
 }
+
+func TestApplyCache2(t *testing.T) {
+	ctx := mock.NewContext()
+	// To make sure that removeOldest will always be call in ApplyCache::Set
+	ctx.GetSessionVars().MemQuotaApplyCache = 1
+	applyCache, err := NewApplyCache(ctx)
+	require.NoError(t, err)
+
+	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
+	value := make([]*chunk.List, 3)
+	key := make([][]byte, 3)
+	for i := 0; i < 3; i++ {
+		value[i] = chunk.NewList(fields, 1, 1)
+		srcChunk := chunk.NewChunkWithCapacity(fields, 1)
+		srcChunk.AppendInt64(0, int64(i))
+		srcRow := srcChunk.GetRow(0)
+		value[i].AppendRow(srcRow)
+		key[i] = []byte(strings.Repeat(strconv.Itoa(i), 100))
+
+		// TODO: *chunk.List.GetMemTracker().BytesConsumed() is not accurate, fix it later.
+		require.Equal(t, int64(100), applyCacheKVMem(key[i], value[i]))
+	}
+
+	ok, err := applyCache.Set(key[0], value[0])
+	require.NoError(t, err)
+	require.True(t, ok)
+	result, err := applyCache.Get(key[0])
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	ok, err = applyCache.Set(key[1], value[1])
+	require.NoError(t, err)
+	require.True(t, ok)
+	result, err = applyCache.Get(key[1])
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	ok, err = applyCache.Set(key[2], value[2])
+	require.NoError(t, err)
+	require.True(t, ok)
+	result, err = applyCache.Get(key[2])
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// Both key[0] and key[1] are not in the cache
+	result, err = applyCache.Get(key[0])
+	require.NoError(t, err)
+	require.Nil(t, result)
+
+	result, err = applyCache.Get(key[1])
+	require.NoError(t, err)
+	require.Nil(t, result)
+}

@@ -73,6 +73,16 @@ func (c *ApplyCache) removeOldest() (kvcache.Key, kvcache.Value, bool) {
 	return c.cache.RemoveOldest()
 }
 
+// Get gets a cache item according to cache key. It's thread-safe.
+func (c *ApplyCache) Get(key applyCacheKey) (*chunk.List, error) {
+	value, hit := c.get(key)
+	if !hit {
+		return nil, nil
+	}
+	typedValue := value.(*chunk.List)
+	return typedValue, nil
+}
+
 // Set inserts an item to the cache. It's thread-safe.
 func (c *ApplyCache) Set(key applyCacheKey, value *chunk.List) (bool, error) {
 	mem := applyCacheKVMem(key, value)
