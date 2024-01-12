@@ -105,7 +105,7 @@ func TestApplyCacheConcurrent(t *testing.T) {
 	wg.Add(2)
 	var func1 = func() {
 		for i := 0; i < 100; i++ {
-			for true {
+			for {
 				result, err := applyCache.Get(key[0])
 				require.NoError(t, err)
 				if result != nil {
@@ -118,7 +118,7 @@ func TestApplyCacheConcurrent(t *testing.T) {
 	}
 	var func2 = func() {
 		for i := 0; i < 100; i++ {
-			for true {
+			for {
 				result, err := applyCache.Get(key[1])
 				require.NoError(t, err)
 				if result != nil {
