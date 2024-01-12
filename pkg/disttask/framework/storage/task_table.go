@@ -411,7 +411,7 @@ func (mgr *TaskManager) GetUsedSlotsOnNodes(ctx context.Context) (map[string]int
 			group by exec_id, task_key
 		) a
 		group by exec_id`,
-		proto.TaskStatePending, proto.TaskStateRunning,
+		proto.SubtaskStatePending, proto.SubtaskStateRunning,
 	)
 	if err != nil {
 		return nil, err
@@ -551,8 +551,8 @@ func (mgr *TaskManager) UpdateErrorToSubtask(ctx context.Context, execID string,
 		serializeErr(err),
 		execID,
 		taskID,
-		proto.TaskStatePending,
-		proto.TaskStateRunning)
+		proto.SubtaskStatePending,
+		proto.SubtaskStateRunning)
 	return err1
 }
 
@@ -561,7 +561,7 @@ func (mgr *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64) ([]
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		select `+basicSubtaskColumns+` from mysql.tidb_background_subtask
 		where task_key = %? and state in (%?, %?)`,
-		taskID, proto.TaskStatePending, proto.TaskStateRunning)
+		taskID, proto.SubtaskStatePending, proto.SubtaskStateRunning)
 	if err != nil {
 		return nil, err
 	}
@@ -690,7 +690,7 @@ func (mgr *TaskManager) StartSubtask(ctx context.Context, subtask *proto.Subtask
 			`update mysql.tidb_background_subtask
 			 set state = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
 			 where id = %? and exec_id = %?`,
-			proto.TaskStateRunning,
+			proto.SubtaskStateRunning,
 			subtask.ID,
 			subtask.ExecID)
 		if err != nil {
