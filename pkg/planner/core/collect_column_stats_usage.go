@@ -284,6 +284,10 @@ func (c *columnStatsUsageCollector) collectFromPlan(lp LogicalPlan) {
 			c.addHistNeededColumns(x.Source)
 		case *LogicalTableScan:
 			c.addHistNeededColumns(x.Source)
+		case *LogicalJoin:
+			for _, child := range x.Children() {
+				c.collectFromPlan(child)
+			}
 		}
 	}
 }
