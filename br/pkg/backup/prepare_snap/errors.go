@@ -26,7 +26,7 @@ func convertErr(err *errorpb.Error) error {
 	return errors.New(err.Message)
 }
 
-func errLeaseExpired() error {
+func leaseExpired() error {
 	return errors.New("the lease has expired")
 }
 

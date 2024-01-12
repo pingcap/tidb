@@ -49,22 +49,23 @@ const (
 
 type pendingRequests map[uint64]*brpb.PrepareSnapshotBackupRequest
 
-type region struct {
-	maybeID  uint64
+type rangeOrRegion struct {
+	// If it is a range, this should be zero.
+	id       uint64
 	startKey []byte
 	endKey   []byte
 }
 
-func (r region) String() string {
+func (r rangeOrRegion) String() string {
 	rng := logutil.StringifyRangeOf(r.startKey, r.endKey)
-	if r.maybeID == 0 {
+	if r.id == 0 {
 		return fmt.Sprintf("range%s", rng)
 	}
-	return fmt.Sprintf("region(id=%d, range=%s)", r.maybeID, rng)
+	return fmt.Sprintf("region(id=%d, range=%s)", r.id, rng)
 }
 
-func (r region) Less(than btree.Item) bool {
-	return bytes.Compare(r.startKey, than.(region).startKey) < 0
+func (r rangeOrRegion) Less(than btree.Item) bool {
+	return bytes.Compare(r.startKey, than.(rangeOrRegion).startKey) < 0
 }
 
 type Preparer struct {
@@ -73,7 +74,7 @@ type Preparer struct {
 
 	/* Internal Status. */
 	inflightReqs         map[uint64]metapb.Region
-	failedRegions        []region
+	failed               []rangeOrRegion
 	waitApplyDoneRegions btree.BTree
 	retryTime            int
 	nextRetry            *time.Timer
@@ -111,10 +112,10 @@ func New(env Env) *Preparer {
 func (p *Preparer) MarshalLogObject(om zapcore.ObjectEncoder) error {
 	om.AddInt("inflight_requests", len(p.inflightReqs))
 	for _, r := range p.inflightReqs {
-		om.AddString("simple_inflight_region", region{maybeID: r.Id, startKey: r.StartKey, endKey: r.EndKey}.String())
+		om.AddString("simple_inflight_region", rangeOrRegion{id: r.Id, startKey: r.StartKey, endKey: r.EndKey}.String())
 	}
-	om.AddInt("failed_requests", len(p.failedRegions))
-	for _, r := range p.failedRegions {
+	om.AddInt("failed_requests", len(p.failed))
+	for _, r := range p.failed {
 		om.AddString("simple_failed_region", r.String())
 	}
 	err := om.AddArray("connected_stores", zapcore.ArrayMarshalerFunc(func(ae zapcore.ArrayEncoder) error {
@@ -252,14 +253,14 @@ func (p *Preparer) onEvent(ctx context.Context, e event) error {
 			logutil.CL(ctx).Warn("received unmatched response, perhaps stale, drop it", zap.Stringer("region", e.region))
 			return nil
 		}
-		r := region{
-			maybeID:  e.region.GetId(),
+		r := rangeOrRegion{
+			id:       e.region.GetId(),
 			startKey: e.region.GetStartKey(),
 			endKey:   e.region.GetEndKey(),
 		}
 		if e.err != nil {
 			logutil.CL(ctx).Warn("requesting a region failed.", zap.Uint64("store", e.storeID), logutil.ShortError(e.err))
-			p.failedRegions = append(p.failedRegions, r)
+			p.failed = append(p.failed, r)
 			if p.nextRetry != nil {
 				p.nextRetry.Stop()
 			}
@@ -271,7 +272,7 @@ func (p *Preparer) onEvent(ctx context.Context, e event) error {
 		}
 		if item := p.waitApplyDoneRegions.ReplaceOrInsert(r); item != nil {
 			logutil.CL(ctx).Warn("overlapping in success region",
-				zap.Stringer("old_region", item.(region)),
+				zap.Stringer("old_region", item.(rangeOrRegion)),
 				zap.Stringer("new_region", r))
 		}
 	default:
@@ -294,39 +295,39 @@ func (p *Preparer) retryChan() <-chan time.Time {
 // Generally `DriveLoopAndWaitPrepare` is all you need, you may not want to call this.
 func (p *Preparer) MaybeFinish(ctx context.Context) error {
 	logutil.CL(ctx).Info("Checking the progress of our work.", zap.Object("current", p))
-	if len(p.inflightReqs) == 0 && len(p.failedRegions) == 0 {
+	if len(p.inflightReqs) == 0 && len(p.failed) == 0 {
 		holes := p.checkHole()
 		if len(holes) == 0 {
 			p.waitApplyFinished = true
 			return nil
 		}
 		logutil.CL(ctx).Warn("It seems there are still some works to be done.", zap.Stringers("regions", holes))
-		p.failedRegions = holes
+		p.failed = holes
 		return p.workOnPendingRanges(ctx)
 	}
 
 	return nil
 }
 
-func (p *Preparer) checkHole() []region {
+func (p *Preparer) checkHole() []rangeOrRegion {
 	log.Info("Start checking the hole.", zap.Int("len", p.waitApplyDoneRegions.Len()))
 	if p.waitApplyDoneRegions.Len() == 0 {
-		return []region{{}}
+		return []rangeOrRegion{{}}
 	}
 
 	last := []byte("")
-	failed := []region{}
+	failed := []rangeOrRegion{}
 	p.waitApplyDoneRegions.Ascend(func(item btree.Item) bool {
-		i := item.(region)
+		i := item.(rangeOrRegion)
 		if bytes.Compare(last, i.startKey) < 0 {
-			failed = append(failed, region{startKey: last, endKey: i.startKey})
+			failed = append(failed, rangeOrRegion{startKey: last, endKey: i.startKey})
 		}
 		last = i.endKey
 		return true
 	})
 	// Not the end key of key space.
 	if len(last) > 0 {
-		failed = append(failed, region{
+		failed = append(failed, rangeOrRegion{
 			startKey: last,
 		})
 	}
@@ -335,7 +336,7 @@ func (p *Preparer) checkHole() []region {
 
 func (p *Preparer) workOnPendingRanges(ctx context.Context) error {
 	p.nextRetry = nil
-	if len(p.failedRegions) == 0 {
+	if len(p.failed) == 0 {
 		return nil
 	}
 	p.retryTime += 1
@@ -343,9 +344,9 @@ func (p *Preparer) workOnPendingRanges(ctx context.Context) error {
 		return retryLimitExceeded()
 	}
 
-	logutil.CL(ctx).Info("retrying some ranges incomplete.", zap.Int("ranges", len(p.failedRegions)))
+	logutil.CL(ctx).Info("retrying some ranges incomplete.", zap.Int("ranges", len(p.failed)))
 	preqs := pendingRequests{}
-	for _, r := range p.failedRegions {
+	for _, r := range p.failed {
 		rs, err := p.env.LoadRegionsInKeyRange(ctx, r.startKey, r.endKey)
 		if err != nil {
 			return errors.Annotatef(err, "retrying range of %s: get region", logutil.StringifyRangeOf(r.startKey, r.endKey))
@@ -355,7 +356,7 @@ func (p *Preparer) workOnPendingRanges(ctx context.Context) error {
 			p.pushWaitApply(preqs, region)
 		}
 	}
-	p.failedRegions = nil
+	p.failed = nil
 	return p.sendWaitApply(ctx, preqs)
 }
 

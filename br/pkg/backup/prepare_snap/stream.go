@@ -104,8 +104,8 @@ func (p *prepareStream) onResponse(ctx context.Context, res utils.Result[*brpb.P
 	}
 	resp := res.Item
 	logutil.CL(ctx).Debug("received response", zap.Stringer("resp", resp))
-	evt, ok := p.convertToEvent(resp)
-	if ok {
+	evt, needDeliver := p.convertToEvent(resp)
+	if needDeliver {
 		logutil.CL(ctx).Debug("generating internal event", zap.Stringer("event", evt))
 		p.output <- evt
 	}
@@ -116,6 +116,12 @@ func (p *prepareStream) stopClientLoop(ctx context.Context) error {
 	p.stopBgTasks()
 	if err := p.clientLoopHandle.Wait(); err != nil {
 		return err
+	}
+	err := p.cli.Send(&brpb.PrepareSnapshotBackupRequest{
+		Ty: brpb.PrepareSnapshotBackupRequestType_Finish,
+	})
+	if err != nil {
+		return errors.Annotate(err, "failed to send finish request")
 	}
 	for {
 		select {
@@ -142,9 +148,7 @@ func (p *prepareStream) clientLoop(ctx context.Context, dur time.Duration) error
 		select {
 		case <-ctx.Done():
 			logutil.CL(ctx).Info("client loop exits.", zap.Uint64("store", p.storeID))
-			return p.cli.Send(&brpb.PrepareSnapshotBackupRequest{
-				Ty: brpb.PrepareSnapshotBackupRequestType_Finish,
-			})
+			return nil
 		case res := <-p.serverStream:
 			if err := p.onResponse(ctx, res); err != nil {
 				p.sendErr(errors.Annotate(err, "failed to recv from the stream"))
@@ -157,8 +161,8 @@ func (p *prepareStream) clientLoop(ctx context.Context, dur time.Duration) error
 			})
 			if err != nil {
 				log.Warn("failed to update the lease loop", logutil.ShortError(err))
-				err := errors.Annotate(err, "too many times failed to update the lease, it is probably expired")
 				if time.Since(lastSuccess) > dur {
+					err := errors.Annotate(err, "too many times failed to update the lease, it is probably expired")
 					p.output <- event{
 						ty:      eventMiscErr,
 						storeID: p.storeID,
@@ -195,7 +199,7 @@ func (p *prepareStream) convertToEvent(resp *brpb.PrepareSnapshotBackupResponse)
 			return event{
 				ty:      eventMiscErr,
 				storeID: p.storeID,
-				err:     errLeaseExpired(),
+				err:     leaseExpired(),
 			}, true
 		}
 		return event{}, false

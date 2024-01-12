@@ -16,6 +16,7 @@ package preparesnap
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -24,6 +25,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -53,7 +55,12 @@ type CliEnv struct {
 }
 
 func (c CliEnv) GetAllLiveStores(ctx context.Context) ([]*metapb.Store, error) {
-	return c.Cache.PDClient().GetAllStores(ctx, pd.WithExcludeTombstone())
+	stores, err := c.Cache.PDClient().GetAllStores(ctx, pd.WithExcludeTombstone())
+	if err != nil {
+		return nil, err
+	}
+	withoutTiFlash := slices.DeleteFunc(stores, engine.IsTiFlash)
+	return withoutTiFlash, err
 }
 
 func (c CliEnv) ConnectToStore(ctx context.Context, storeID uint64) (PrepareClient, error) {
