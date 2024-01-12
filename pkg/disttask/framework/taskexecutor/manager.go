@@ -237,17 +237,18 @@ func (m *Manager) handleExecutableTasks(tasks []*proto.Task) {
 			continue
 		}
 		logutil.Logger(m.logCtx).Info("detect new subtask", zap.Int64("task-id", task.ID))
+		if task.State == proto.TaskStateRunning {
+			canAlloc, tasksNeedFree := m.slotManager.canAlloc(task)
+			if len(tasksNeedFree) > 0 {
+				m.cancelTaskExecutors(tasksNeedFree)
+				// do not handle the tasks with lower priority if current task is waiting tasks free.
+				break
+			}
 
-		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task)
-		if len(tasksNeedFree) > 0 {
-			m.cancelTaskExecutors(tasksNeedFree)
-			// do not handle the tasks with lower priority if current task is waiting tasks free.
-			break
-		}
-
-		if !canAlloc {
-			logutil.Logger(m.logCtx).Debug("no enough slots to run task", zap.Int64("task-id", task.ID))
-			continue
+			if !canAlloc {
+				logutil.Logger(m.logCtx).Debug("no enough slots to run task", zap.Int64("task-id", task.ID))
+				continue
+			}
 		}
 		m.addHandlingTask(task.ID)
 		m.slotManager.alloc(task)
