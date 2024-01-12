@@ -98,6 +98,11 @@ func seekPropsOffsets(
 	if iter.Error() != nil {
 		return nil, iter.Error()
 	}
+	for len(offsets4AllKey) < len(starts) {
+		newOffsets := slices.Clone(offsets)
+		offsets4AllKey = append(offsets4AllKey, newOffsets)
+		offsets = newOffsets
+	}
 	return offsets4AllKey, nil
 }
 

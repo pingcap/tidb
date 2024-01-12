@@ -101,6 +101,10 @@ func TestSeekPropsOffsets(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, [][]uint64{{50, 40}}, got)
 
+	got, err = seekPropsOffsets(ctx, []kv.Key{[]byte("key999"), []byte("key999")}, []string{file1, file2}, store, false)
+	require.NoError(t, err)
+	require.Equal(t, [][]uint64{{50, 40}, {50, 40}}, got)
+
 	file3 := "/test3"
 	w3, err := store.Create(ctx, file3, nil)
 	require.NoError(t, err)
