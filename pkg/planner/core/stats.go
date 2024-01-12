@@ -360,7 +360,8 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 			uniqueIdxAccessCols = append(uniqueIdxAccessCols, uniqueIdx.GetCol2LenFromAccessConds(ds.SCtx()))
 			// Find the unique index with the minimal number of ranges as `uniqueBest`.
 			/*
-				If the range is same but one of unique index can match all of where predicates, it will better than current unique index.
+				If the number of scan ranges are equal, choose the one with the least table predicates - meaning the unique index with the most index predicates.
+				Because the most index predicates means that it is more likely to fetch 0 index rows.
 				Example in the test "TestPointgetIndexChoosen".
 			*/
 			if uniqueBest == nil || len(uniqueIdx.Ranges) < len(uniqueBest.Ranges) ||

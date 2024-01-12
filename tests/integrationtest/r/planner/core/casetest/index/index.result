@@ -797,3 +797,18 @@ a	b	c	d
 1	111	1.1000000000	11
 3	333	3.3000000000	13
 set tidb_enable_clustered_index=default;
+drop table if exists t;
+create table t(item_primary_key varbinary(255) NOT NULL, domains json null, image_signatures json null, canonical_links json null, feed_profile_ids json null,  KEY `domains` ((cast(`domains` as char(253) array))), KEY `image_signatures` ((cast(`image_signatures` as char(32) array))),KEY `canonical_links` ((cast(`canonical_links` as char(1000) array))), KEY `feed_profile_ids` ((cast(`feed_profile_ids` as unsigned array))));
+explain SELECT   item_primary_key FROM  t WHERE   "B2c32" member of (domains)   OR "2eoqyp6399" member of (image_signatures)   OR "E33EAdAc2Bee.com/s/link" member of (canonical_links)   OR json_contains(feed_profile_ids, '[69236881]') LIMIT   10;
+id	estRows	task	access object	operator info
+Projection_24	10.00	root		planner__core__casetest__index__index.t.item_primary_key
+└─IndexMerge_23	10.00	root		type: union, limit embedded(offset:0, count:10)
+  ├─Limit_19(Build)	2.50	cop[tikv]		offset:0, count:10
+  │ └─IndexRangeScan_14	2.50	cop[tikv]	table:t, index:domains(cast(`domains` as char(253) array))	range:["B2c32","B2c32"], keep order:false, stats:pseudo
+  ├─Limit_20(Build)	2.50	cop[tikv]		offset:0, count:10
+  │ └─IndexRangeScan_15	2.50	cop[tikv]	table:t, index:image_signatures(cast(`image_signatures` as char(32) array))	range:["2eoqyp6399","2eoqyp6399"], keep order:false, stats:pseudo
+  ├─Limit_21(Build)	2.50	cop[tikv]		offset:0, count:10
+  │ └─IndexRangeScan_16	2.50	cop[tikv]	table:t, index:canonical_links(cast(`canonical_links` as char(1000) array))	range:["E33EAdAc2Bee.com/s/link","E33EAdAc2Bee.com/s/link"], keep order:false, stats:pseudo
+  ├─Limit_22(Build)	2.50	cop[tikv]		offset:0, count:10
+  │ └─IndexRangeScan_17	2.50	cop[tikv]	table:t, index:feed_profile_ids(cast(`feed_profile_ids` as unsigned array))	range:[69236881,69236881], keep order:false, stats:pseudo
+  └─TableRowIDScan_18(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo

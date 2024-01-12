@@ -185,7 +185,6 @@ type StatementContext struct {
 	InCreateOrAlterStmt    bool
 	InSetSessionStatesStmt bool
 	InPreparedPlanBuilding bool
-	DupKeyAsWarning        bool
 	InShowWarning          bool
 	UseCache               bool
 	ForcePlanCache         bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.
@@ -497,8 +496,12 @@ func (sc *StatementContext) SetErrLevels(otherLevels errctx.LevelMap) {
 
 // ErrLevels returns the current `errctx.LevelMap`
 func (sc *StatementContext) ErrLevels() errctx.LevelMap {
-	ec := sc.ErrCtx()
-	return ec.LevelMap()
+	return sc.errCtx.LevelMap()
+}
+
+// ErrGroupLevel returns the error level for the given error group
+func (sc *StatementContext) ErrGroupLevel(group errctx.ErrGroup) errctx.Level {
+	return sc.errCtx.LevelForGroup(group)
 }
 
 // TypeFlags returns the type flags

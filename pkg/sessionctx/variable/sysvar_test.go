@@ -1453,3 +1453,61 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 	require.Len(t, val, 0)
 	cancel()
 }
+
+func TestGlobalSystemVariableInitialValue(t *testing.T) {
+	vars := []struct {
+		name    string
+		val     string
+		initVal string
+	}{
+		{
+			TiDBTxnMode,
+			DefTiDBTxnMode,
+			"pessimistic",
+		},
+		{
+			TiDBEnableAsyncCommit,
+			BoolToOnOff(DefTiDBEnableAsyncCommit),
+			BoolToOnOff(DefTiDBEnableAsyncCommit),
+		},
+		{
+			TiDBEnable1PC,
+			BoolToOnOff(DefTiDBEnable1PC),
+			BoolToOnOff(DefTiDBEnable1PC),
+		},
+		{
+			TiDBMemOOMAction,
+			DefTiDBMemOOMAction,
+			OOMActionLog,
+		},
+		{
+			TiDBEnableAutoAnalyze,
+			BoolToOnOff(DefTiDBEnableAutoAnalyze),
+			Off,
+		},
+		{
+			TiDBRowFormatVersion,
+			strconv.Itoa(DefTiDBRowFormatV1),
+			strconv.Itoa(DefTiDBRowFormatV2),
+		},
+		{
+			TiDBTxnAssertionLevel,
+			DefTiDBTxnAssertionLevel,
+			AssertionFastStr,
+		},
+		{
+			TiDBEnableMutationChecker,
+			BoolToOnOff(DefTiDBEnableMutationChecker),
+			On,
+		},
+		{
+			TiDBPessimisticTransactionFairLocking,
+			BoolToOnOff(DefTiDBPessimisticTransactionFairLocking),
+			On,
+		},
+	}
+	for _, v := range vars {
+		initVal := GlobalSystemVariableInitialValue(v.name, v.val)
+		require.Equal(t, v.initVal, initVal)
+	}
+}

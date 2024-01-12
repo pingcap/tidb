@@ -344,26 +344,31 @@ func cmdRun(args ...string) bool {
 		}
 	}
 
+	if coverprofile != "" {
+		collectCoverProfileFile()
+	}
+
 	for _, work := range works {
 		if work.Fail {
 			return false
 		}
 	}
-	if coverprofile != "" {
-		collectCoverProfileFile()
-	}
 	return true
 }
 
 func parseCaseListFromFile(fileName string) (map[string]struct{}, error) {
+	ret := make(map[string]struct{})
+
 	f, err := os.Open(filepath.Clean(fileName))
+	if os.IsNotExist(err) {
+		return ret, nil
+	}
 	if err != nil {
 		return nil, withTrace(err)
 	}
 	//nolint: errcheck
 	defer f.Close()
 
-	ret := make(map[string]struct{})
 	s := bufio.NewScanner(f)
 	for s.Scan() {
 		line := s.Bytes()

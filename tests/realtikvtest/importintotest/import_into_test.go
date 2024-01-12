@@ -49,7 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
-	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/mock/gomock"
@@ -811,7 +811,7 @@ func (s *mockGCSSuite) TestImportMode() {
 	switcher.EXPECT().ToImportMode(gomock.Any(), gomock.Any()).DoAndReturn(toImportModeFn).Times(1)
 	switcher.EXPECT().ToNormalMode(gomock.Any(), gomock.Any()).DoAndReturn(toNormalModeFn).Times(1)
 	backup := importer.NewTiKVModeSwitcher
-	importer.NewTiKVModeSwitcher = func(tls *common.TLS, pdCli pd.Client, logger *zap.Logger) local.TiKVModeSwitcher {
+	importer.NewTiKVModeSwitcher = func(*common.TLS, pdhttp.Client, *zap.Logger) local.TiKVModeSwitcher {
 		return switcher
 	}
 	s.T().Cleanup(func() {
