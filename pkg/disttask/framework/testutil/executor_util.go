@@ -54,7 +54,7 @@ func InitTaskExecutor(ctrl *gomock.Controller, runSubtaskFn func(ctx context.Con
 	mockExtension := GetMockTaskExecutorExtension(ctrl, mockSubtaskExecutor)
 	taskexecutor.RegisterTaskType(proto.TaskTypeExample,
 		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
-			s := taskexecutor.NewBaseTaskExecutor(ctx, id, task.ID, taskTable)
+			s := taskexecutor.NewBaseTaskExecutor(ctx, id, task, taskTable)
 			s.Extension = mockExtension
 			return s
 		},
