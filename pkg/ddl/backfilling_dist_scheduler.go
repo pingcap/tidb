@@ -131,7 +131,6 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 				sch.d.store.(kv.StorageWithPD),
 				taskHandle,
 				task,
-				job.ID,
 				backfillMeta.CloudStorageURI,
 				prevStep,
 				logger)
@@ -338,7 +337,6 @@ func generateGlobalSortIngestPlan(
 	store kv.StorageWithPD,
 	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
-	jobID int64,
 	cloudStorageURI string,
 	step proto.Step,
 	logger *zap.Logger,
@@ -356,7 +354,7 @@ func generateGlobalSortIngestPlan(
 		return nil, err
 	}
 	splitter, err := getRangeSplitter(
-		ctx, store, cloudStorageURI, jobID, int64(totalSize), int64(len(instanceIDs)), multiFileStat, logger)
+		ctx, store, cloudStorageURI, int64(totalSize), int64(len(instanceIDs)), multiFileStat, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -473,7 +471,6 @@ func getRangeSplitter(
 	ctx context.Context,
 	store kv.StorageWithPD,
 	cloudStorageURI string,
-	jobID int64,
 	totalSize int64,
 	instanceCnt int64,
 	multiFileStat []external.MultipleFilesStat,
