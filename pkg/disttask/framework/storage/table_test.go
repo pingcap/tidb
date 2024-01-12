@@ -1163,3 +1163,28 @@ func TestSubtaskType(t *testing.T) {
 		require.Equal(t, c, subtask.Type)
 	}
 }
+
+func TestUpdateErrorToSubtask(t *testing.T) {
+	_, sm, ctx := testutil.InitTableTest(t)
+	execID := "tidb"
+
+	type updateCase struct {
+		from proto.SubtaskState
+		to   proto.SubtaskState
+	}
+
+	cases := []updateCase{
+		{proto.SubtaskStatePending, proto.SubtaskStateFailed},
+		{proto.SubtaskStateRunning, proto.SubtaskStateFailed},
+		{proto.SubtaskStateReverting, proto.SubtaskStateRevertFailed},
+		{proto.SubtaskStateRevertPending, proto.SubtaskStateRevertFailed},
+	}
+	for _, c := range cases {
+		testutil.CreateSubTask(t, sm, 1, proto.StepInit, execID, []byte("test"), proto.TaskTypeExample, 11, false)
+		sm.UpdateSubtaskStateAndError(ctx, execID, 1, c.from, nil)
+		require.NoError(t, sm.UpdateErrorToSubtask(ctx, execID, 1, errors.New("fail revert")))
+		subtask, err := sm.GetFirstSubtaskInStates(ctx, execID, 1, proto.StepInit, c.to)
+		require.NoError(t, err)
+		require.Equal(t, c.to, subtask.State)
+	}
+}

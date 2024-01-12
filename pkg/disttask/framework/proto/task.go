@@ -43,17 +43,16 @@ import (
 //
 // TODO: we don't have revert_failed task for now.
 const (
-	TaskStatePending      TaskState = "pending"
-	TaskStateRunning      TaskState = "running"
-	TaskStateSucceed      TaskState = "succeed"
-	TaskStateFailed       TaskState = "failed"
-	TaskStateReverting    TaskState = "reverting"
-	TaskStateReverted     TaskState = "reverted"
-	TaskStateRevertFailed TaskState = "revert_failed"
-	TaskStateCancelling   TaskState = "cancelling"
-	TaskStatePausing      TaskState = "pausing"
-	TaskStatePaused       TaskState = "paused"
-	TaskStateResuming     TaskState = "resuming"
+	TaskStatePending    TaskState = "pending"
+	TaskStateRunning    TaskState = "running"
+	TaskStateSucceed    TaskState = "succeed"
+	TaskStateFailed     TaskState = "failed"
+	TaskStateReverting  TaskState = "reverting"
+	TaskStateReverted   TaskState = "reverted"
+	TaskStateCancelling TaskState = "cancelling"
+	TaskStatePausing    TaskState = "pausing"
+	TaskStatePaused     TaskState = "paused"
+	TaskStateResuming   TaskState = "resuming"
 )
 
 type (

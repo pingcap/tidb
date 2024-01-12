@@ -353,6 +353,9 @@ func (m *Manager) handleExecutableTask(task *proto.Task) {
 	defer taskCancel(nil)
 	// executor should init before run()/pause()/rollback().
 	err := executor.Init(taskCtx)
+	failpoint.Inject("mockInitFailed", func() {
+		err = errors.New("init failed")
+	})
 	if err != nil {
 		m.logErrAndPersist(err, task.ID, executor)
 		return

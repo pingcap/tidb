@@ -38,3 +38,21 @@ func TestFrameworkRollback(t *testing.T) {
 	testContext.RollbackCnt.Store(0)
 	distContext.Close()
 }
+
+// TODO: remove rollback step.
+func TestRollbackInitFailed(t *testing.T) {
+	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
+	defer ctrl.Finish()
+	testutil.RegisterRollbackTaskMeta(t, ctrl, testutil.GetMockRollbackSchedulerExt(ctrl), testContext)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/cancelTaskAfterRefreshTask", "2*return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockInitFailed", "return()"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/cancelTaskAfterRefreshTask"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockInitFailed"))
+	}()
+
+	task := testutil.SubmitAndWaitTask(ctx, t, "key1")
+	require.Equal(t, proto.TaskStateReverted, task.State)
+	testContext.RollbackCnt.Store(0)
+	distContext.Close()
+}

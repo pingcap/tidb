@@ -537,21 +537,29 @@ func (mgr *TaskManager) UpdateErrorToSubtask(ctx context.Context, execID string,
 	}
 	_, err1 := mgr.ExecuteSQLWithNewSession(ctx,
 		`update mysql.tidb_background_subtask
-		set state = %?, 
+		set state = 
+		case 
+		when state = 'pending' then 'failed'
+		when state = 'running' then 'failed'
+        when state = 'reverting' then 'revert_failed'
+        when state = 'revert_pending' then 'revert_failed'
+		else state
+        end, 
 		error = %?, 
 		start_time = unix_timestamp(), 
 		state_update_time = unix_timestamp(),
 		end_time = CURRENT_TIMESTAMP()
 		where exec_id = %? and 
 		task_key = %? and 
-		state in (%?, %?) 
+		state in (%?, %?, %?, %?) 
 		limit 1;`,
-		proto.TaskStateFailed,
 		serializeErr(err),
 		execID,
 		taskID,
-		proto.TaskStatePending,
-		proto.TaskStateRunning)
+		proto.SubtaskStatePending,
+		proto.SubtaskStateRunning,
+		proto.SubtaskStateRevertPending,
+		proto.SubtaskStateReverting)
 	return err1
 }
 
