@@ -114,7 +114,7 @@ type backfillDistExecutor struct {
 
 func newBackfillDistExecutor(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable, d *ddl) taskexecutor.TaskExecutor {
 	s := &backfillDistExecutor{
-		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, id, task.ID, taskTable),
+		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, id, task, taskTable),
 		d:                d,
 		task:             task,
 		taskTable:        taskTable,
