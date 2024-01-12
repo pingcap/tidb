@@ -4588,13 +4588,13 @@ def go_deps():
         name = "com_github_ks3sdklib_aws_sdk_go",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/ks3sdklib/aws-sdk-go",
-        sha256 = "1edfac4a072a0180b308ddc1a9e96d51407e2e66573938e14e056ba6fef5bddb",
-        strip_prefix = "github.com/ks3sdklib/aws-sdk-go@v1.2.9",
+        sha256 = "21e8e063b2c274f9a34c23d7f9ebe180d22bf3ddaf9e11d9a9471aa3c93b4c97",
+        strip_prefix = "github.com/ks3sdklib/aws-sdk-go@v1.2.7",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ks3sdklib/aws-sdk-go/com_github_ks3sdklib_aws_sdk_go-v1.2.9.zip",
-            "http://ats.apps.svc/gomod/github.com/ks3sdklib/aws-sdk-go/com_github_ks3sdklib_aws_sdk_go-v1.2.9.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/ks3sdklib/aws-sdk-go/com_github_ks3sdklib_aws_sdk_go-v1.2.9.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ks3sdklib/aws-sdk-go/com_github_ks3sdklib_aws_sdk_go-v1.2.9.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ks3sdklib/aws-sdk-go/com_github_ks3sdklib_aws_sdk_go-v1.2.7.zip",
+            "http://ats.apps.svc/gomod/github.com/ks3sdklib/aws-sdk-go/com_github_ks3sdklib_aws_sdk_go-v1.2.7.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/ks3sdklib/aws-sdk-go/com_github_ks3sdklib_aws_sdk_go-v1.2.7.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ks3sdklib/aws-sdk-go/com_github_ks3sdklib_aws_sdk_go-v1.2.7.zip",
         ],
     )
     go_repository(
