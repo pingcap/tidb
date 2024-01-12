@@ -137,7 +137,7 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 	tk.MustExec("delete from test.t where test.t.a = 1")
 	err = h.DumpStatsDeltaToKV(handle.DumpAll)
 	require.NoError(t, err)
-	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = '%d' order by create_time desc", tableInfo.Meta().ID)).Sort().Check(
+	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = '%d'", tableInfo.Meta().ID)).Sort().Check(
 		testkit.Rows("40 20"))
 	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta_history where table_id = '%d' order by create_time desc limit 1", tableInfo.Meta().ID)).Sort().Check(
 		testkit.Rows("40 20"))
@@ -146,7 +146,7 @@ func TestRecordHistoryStatsMetaAfterAnalyze(t *testing.T) {
 	tk.MustExec("update test.t set test.t.b = 4 where test.t.a = 2")
 	err = h.DumpStatsDeltaToKV(handle.DumpAll)
 	require.NoError(t, err)
-	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = '%d' order by create_time desc", tableInfo.Meta().ID)).Sort().Check(
+	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta where table_id = '%d'", tableInfo.Meta().ID)).Sort().Check(
 		testkit.Rows("50 20"))
 	tk.MustQuery(fmt.Sprintf("select modify_count, count from mysql.stats_meta_history where table_id = '%d' order by create_time desc limit 1", tableInfo.Meta().ID)).Sort().Check(
 		testkit.Rows("50 20"))
