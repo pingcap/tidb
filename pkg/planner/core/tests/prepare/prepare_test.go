@@ -437,7 +437,7 @@ func TestPrepareCacheNow(t *testing.T) {
 	rs = tk.MustQuery("execute s").Rows()
 	tk.MustExec("set global tidb_sysdate_is_now=1;")
 	rs1 := tk.MustQuery("execute s").Rows()
-	require.Equal(t, rs, rs1)
+	require.NotEqual(t, rs, rs1)
 }
 
 func TestPrepareOverMaxPreparedStmtCount(t *testing.T) {
