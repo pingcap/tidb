@@ -111,12 +111,22 @@ func New(env Env) *Preparer {
 
 func (p *Preparer) MarshalLogObject(om zapcore.ObjectEncoder) error {
 	om.AddInt("inflight_requests", len(p.inflightReqs))
+	reqs := 0
 	for _, r := range p.inflightReqs {
 		om.AddString("simple_inflight_region", rangeOrRegion{id: r.Id, startKey: r.StartKey, endKey: r.EndKey}.String())
+		reqs += 1
+		if reqs > 3 {
+			break
+		}
 	}
 	om.AddInt("failed_requests", len(p.failed))
+	failed := 0
 	for _, r := range p.failed {
 		om.AddString("simple_failed_region", r.String())
+		failed += 1
+		if failed > 5 {
+			break
+		}
 	}
 	err := om.AddArray("connected_stores", zapcore.ArrayMarshalerFunc(func(ae zapcore.ArrayEncoder) error {
 		for id := range p.clients {
