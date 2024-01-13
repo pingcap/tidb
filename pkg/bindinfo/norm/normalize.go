@@ -36,12 +36,14 @@ type option struct {
 
 type optionFunc func(*option)
 
+// WithFuzz specifies whether to eliminate schema names.
 func WithFuzz(fuzz bool) optionFunc {
 	return func(user *option) {
 		user.fuzz = fuzz
 	}
 }
 
+// WithSpecifiedDB specifies the specified DB name.
 func WithSpecifiedDB(specifiedDB string) optionFunc {
 	return func(user *option) {
 		user.specifiedDB = specifiedDB
