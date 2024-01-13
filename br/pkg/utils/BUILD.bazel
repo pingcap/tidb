@@ -4,7 +4,6 @@ go_library(
     name = "utils",
     srcs = [
         "backoff.go",
-        "cdc.go",
         "db.go",
         "dyn_pprof_other.go",
         "dyn_pprof_unix.go",
@@ -52,7 +51,6 @@ go_library(
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_pd_client//:client",
-        "@io_etcd_go_etcd_client_v3//:client",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//backoff",
         "@org_golang_google_grpc//codes",
@@ -73,7 +71,6 @@ go_test(
     timeout = "short",
     srcs = [
         "backoff_test.go",
-        "cdc_test.go",
         "db_test.go",
         "env_test.go",
         "json_test.go",
@@ -115,8 +112,6 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_pd_client//:client",
-        "@io_etcd_go_etcd_client_v3//:client",
-        "@io_etcd_go_etcd_tests_v3//integration",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
