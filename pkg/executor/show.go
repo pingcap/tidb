@@ -323,10 +323,10 @@ func (*visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 func (e *ShowExec) fetchShowBind() error {
 	var tmp []*bindinfo.BindRecord
 	if !e.GlobalScope {
-		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(*bindinfo.SessionHandle)
-		tmp = handle.GetAllSessionBindRecord()
+		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
+		tmp = handle.GetAllSessionBindings()
 	} else {
-		tmp = domain.GetDomain(e.Ctx()).BindHandle().GetAllGlobalBinding()
+		tmp = domain.GetDomain(e.Ctx()).BindHandle().GetAllGlobalBindings()
 	}
 	bindRecords := make([]*bindinfo.BindRecord, 0)
 	for _, bindRecord := range tmp {
@@ -408,7 +408,7 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 
 	handle := domain.GetDomain(e.Ctx()).BindHandle()
 
-	bindRecords := handle.GetAllGlobalBinding()
+	bindRecords := handle.GetAllGlobalBindings()
 	numBindings := 0
 	for _, bindRecord := range bindRecords {
 		for _, binding := range bindRecord.Bindings {
@@ -1292,6 +1292,10 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *model.CISt
 			fmt.Fprintf(buf, "PRE_SPLIT_REGIONS=%d ", tableInfo.PreSplitRegions)
 		}
 		buf.WriteString("*/")
+	}
+
+	if tableInfo.AutoRandomBits > 0 && tableInfo.PreSplitRegions > 0 {
+		fmt.Fprintf(buf, " /*T! PRE_SPLIT_REGIONS=%d */", tableInfo.PreSplitRegions)
 	}
 
 	if len(tableInfo.Comment) > 0 {
@@ -2254,6 +2258,7 @@ func (e *ShowExec) fetchShowSessionStates(ctx context.Context) error {
 	e.appendRow([]interface{}{stateJSON, tokenJSON})
 	return nil
 }
+
 func fillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedRowCount int64) {
 	fullTableName := utils.EncloseDBAndTable(info.TableSchema, info.TableName)
 	result.AppendInt64(0, info.ID)
@@ -2309,14 +2314,14 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 		hasSuperPriv = pm.RequestVerification(e.Ctx().GetSessionVars().ActiveRoles, "", "", "", mysql.SuperPriv)
 	}
 	// we use sessionCtx from GetTaskManager, user ctx might not have system table privileges.
-	globalTaskManager, err := fstorage.GetTaskManager()
+	taskManager, err := fstorage.GetTaskManager()
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalDistTask)
 	if err != nil {
 		return err
 	}
 	if e.ImportJobID != nil {
 		var info *importer.JobInfo
-		if err = globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
+		if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
 			exec := se.(sqlexec.SQLExecutor)
 			var err2 error
 			info, err2 = importer.GetJob(ctx, exec, *e.ImportJobID, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
@@ -2327,7 +2332,7 @@ func (e *ShowExec) fetchShowImportJobs(ctx context.Context) error {
 		return handleImportJobInfo(ctx, info, e.result)
 	}
 	var infos []*importer.JobInfo
-	if err = globalTaskManager.WithNewSession(func(se sessionctx.Context) error {
+	if err = taskManager.WithNewSession(func(se sessionctx.Context) error {
 		exec := se.(sqlexec.SQLExecutor)
 		var err2 error
 		infos, err2 = importer.GetAllViewableJobs(ctx, exec, e.Ctx().GetSessionVars().User.String(), hasSuperPriv)
@@ -2358,7 +2363,7 @@ func tryFillViewColumnType(ctx context.Context, sctx sessionctx.Context, is info
 	return runWithSystemSession(ctx, sctx, func(s sessionctx.Context) error {
 		// Retrieve view columns info.
 		planBuilder, _ := plannercore.NewPlanBuilder(
-			plannercore.PlanBuilderOptNoExecution{}).Init(s, is, &hint.BlockHintProcessor{})
+			plannercore.PlanBuilderOptNoExecution{}).Init(s, is, hint.NewQBHintHandler(nil))
 		viewLogicalPlan, err := planBuilder.BuildDataSourceFromView(ctx, dbName, tbl, nil, nil)
 		if err != nil {
 			return err

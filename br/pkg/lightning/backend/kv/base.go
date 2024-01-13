@@ -270,7 +270,7 @@ func (e *BaseKVEncoder) getActualDatum(col *table.Column, rowID int64, inputDatu
 		// if MutRowFromDatums sees a nil it won't initialize the underlying storage and cause SetDatum to panic.
 		value = types.GetMinValue(&col.FieldType)
 	case isBadNullValue:
-		err = col.HandleBadNull(&value, e.SessionCtx.Vars.StmtCtx, 0)
+		err = col.HandleBadNull(e.SessionCtx.Vars.StmtCtx.ErrCtx(), &value, 0)
 	default:
 		// copy from the following GetColDefaultValue function, when this is true it will use getColDefaultExprValue
 		if col.DefaultIsExpr {

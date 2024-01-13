@@ -17,6 +17,7 @@ package variable
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -120,6 +121,8 @@ func TestCoprocessorOOMAction(t *testing.T) {
 	disableOOM := func(tk *testkit.TestKit, name, sql string) {
 		t.Logf("disable OOM, testcase: %v", name)
 		quota := 5*copr.MockResponseSizeForTest - 100
+		tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
+		defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 		tk.MustExec("use testoom")
 		tk.MustExec("set @@tidb_enable_rate_limit_action=0")
 		tk.MustExec("set @@tidb_distsql_scan_concurrency = 10")
@@ -171,9 +174,11 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		tk.MustExec("use testoom")
 		tk.MustExec("set tidb_distsql_scan_concurrency = 1")
 		tk.MustExec("set @@tidb_mem_quota_query=1;")
+		tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
 		err = tk.QueryToErr(testcase.sql)
 		require.Error(t, err)
 		require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
+		tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 		se.Close()
 	}
 }
@@ -361,4 +366,25 @@ func TestIsolationRead(t *testing.T) {
 	_, hasTiKV := engines[kv.TiKV]
 	require.True(t, hasTiFlash)
 	require.False(t, hasTiKV)
+}
+
+func TestLastQueryInfo(t *testing.T) {
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/mockRUConsumption", `return()`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/mockRUConsumption"))
+	}()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec(`prepare stmt1 from 'select * from t'`)
+	tk.MustExec("execute stmt1")
+	checkMatch := func(actual []string, expected []interface{}) bool {
+		return strings.Contains(actual[0], expected[0].(string))
+	}
+	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"ru_consumption":15`), checkMatch)
+	tk.MustExec("select a from t where a = 1")
+	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"ru_consumption":27`), checkMatch)
+	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"ru_consumption":30`), checkMatch)
 }

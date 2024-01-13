@@ -225,7 +225,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealErrPartitionColumnStatsMissin
 func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sctx sessionctx.Context, isIndex bool) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			statslogutil.StatsLogger.Warn("ioWorker panic", zap.Stack("stack"), zap.Any("error", r))
+			statslogutil.StatsLogger().Warn("ioWorker panic", zap.Stack("stack"), zap.Any("error", r))
 			close(a.ioWorkerExitWhenErrChan)
 			err = errors.New(fmt.Sprint(r))
 		}
@@ -260,7 +260,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) ioWorker(sctx sessionctx.Context,
 func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.StatementContext, sctx sessionctx.Context, opts map[ast.AnalyzeOptionType]uint64, isIndex bool, tz *time.Location, analyzeVersion int) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			statslogutil.StatsLogger.Warn("cpuWorker panic", zap.Stack("stack"), zap.Any("error", r))
+			statslogutil.StatsLogger().Warn("cpuWorker panic", zap.Stack("stack"), zap.Any("error", r))
 			err = errors.New(fmt.Sprint(r))
 		}
 		close(a.cpuWorkerExitChan)
@@ -282,7 +282,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 	}
 	err = a.dealCMSketch()
 	if err != nil {
-		statslogutil.StatsLogger.Warn("dealCMSketch failed", zap.Error(err))
+		statslogutil.StatsLogger().Warn("dealCMSketch failed", zap.Error(err))
 		return err
 	}
 	failpoint.Inject("PanicSameTime", func(val failpoint.Value) {
@@ -293,7 +293,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) cpuWorker(stmtCtx *stmtctx.Statem
 	})
 	err = a.dealHistogramAndTopN(stmtCtx, sctx, opts, isIndex, tz, analyzeVersion)
 	if err != nil {
-		statslogutil.StatsLogger.Warn("dealHistogramAndTopN failed", zap.Error(err))
+		statslogutil.StatsLogger().Warn("dealHistogramAndTopN failed", zap.Error(err))
 		return err
 	}
 	return nil
@@ -361,7 +361,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadFmsketch(sctx sessionctx.Cont
 				fmsketch, i,
 			}:
 			case <-a.cpuWorkerExitChan:
-				statslogutil.StatsLogger.Warn("ioWorker detects CPUWorker has exited")
+				statslogutil.StatsLogger().Warn("ioWorker detects CPUWorker has exited")
 				return nil
 			}
 		}
@@ -392,7 +392,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadCMsketch(sctx sessionctx.Cont
 				cmsketch, i,
 			}:
 			case <-a.cpuWorkerExitChan:
-				statslogutil.StatsLogger.Warn("ioWorker detects CPUWorker has exited")
+				statslogutil.StatsLogger().Warn("ioWorker detects CPUWorker has exited")
 				return nil
 			}
 		}
@@ -434,7 +434,7 @@ func (a *AsyncMergePartitionStats2GlobalStats) loadHistogramAndTopN(sctx session
 			NewStatsWrapper(hists, topn), i,
 		}:
 		case <-a.cpuWorkerExitChan:
-			statslogutil.StatsLogger.Warn("ioWorker detects CPUWorker has exited")
+			statslogutil.StatsLogger().Warn("ioWorker detects CPUWorker has exited")
 			return nil
 		}
 	}
@@ -515,17 +515,18 @@ func (a *AsyncMergePartitionStats2GlobalStats) dealHistogramAndTopN(stmtCtx *stm
 			}
 
 			// Merge histogram.
-			a.globalStats.Hg[item.idx], err = statistics.MergePartitionHist2GlobalHist(stmtCtx, allhg, poppedTopN,
+			globalHg := &(a.globalStats.Hg[item.idx])
+			*globalHg, err = statistics.MergePartitionHist2GlobalHist(stmtCtx, allhg, poppedTopN,
 				int64(opts[ast.AnalyzeOptNumBuckets]), isIndex)
 			if err != nil {
 				return err
 			}
 
 			// NOTICE: after merging bucket NDVs have the trend to be underestimated, so for safe we don't use them.
-			for j := range a.globalStats.Hg[item.idx].Buckets {
-				a.globalStats.Hg[item.idx].Buckets[j].NDV = 0
+			for j := range (*globalHg).Buckets {
+				(*globalHg).Buckets[j].NDV = 0
 			}
-			a.globalStats.Hg[item.idx].NDV = a.globalStatsNDV[item.idx]
+			(*globalHg).NDV = a.globalStatsNDV[item.idx]
 		case <-a.ioWorkerExitWhenErrChan:
 			return nil
 		}

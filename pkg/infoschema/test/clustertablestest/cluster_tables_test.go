@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/store/mockstore/mockstorage"
@@ -833,14 +834,21 @@ func (s *clusterTablesSuite) newTestKitWithRoot(t *testing.T) *testkit.TestKit {
 func TestMDLView(t *testing.T) {
 	testCases := []struct {
 		name        string
-		createTable string
+		createTable []string
 		ddl         string
 		queryInTxn  []string
 		sqlDigest   string
 	}{
-		{"add column", "create table t(a int)", "alter table test.t add column b int", []string{"select 1", "select * from t"}, "[\"begin\",\"select ?\",\"select * from `t`\"]"},
-		{"change column in 1 step", "create table t(a int)", "alter table test.t change column a b int", []string{"select 1", "select * from t"}, "[\"begin\",\"select ?\",\"select * from `t`\"]"},
+		{"add column", []string{"create table t(a int)"}, "alter table test.t add column b int", []string{"select 1", "select * from t"}, "[\"begin\",\"select ?\",\"select * from `t`\"]"},
+		{"change column in 1 step", []string{"create table t(a int)"}, "alter table test.t change column a b int", []string{"select 1", "select * from t"}, "[\"begin\",\"select ?\",\"select * from `t`\"]"},
+		{"rename tables", []string{"create table t(a int)", "create table t1(a int)"}, "rename table test.t to test.t2, test.t1 to test.t3", []string{"select 1", "select * from t"}, "[\"begin\",\"select ?\",\"select * from `t`\"]"},
+		{"err don't show rollbackdone ddl", []string{"create table t(a int)", "insert into t values (1);", "insert into t values (1);", "alter table t add unique idx(id);"}, "alter table test.t add column b int", []string{"select 1", "select * from t"}, "[\"begin\",\"select ?\",\"select * from `t`\"]"},
 	}
+	save := privileges.SkipWithGrant
+	privileges.SkipWithGrant = true
+	defer func() {
+		privileges.SkipWithGrant = save
+	}()
 	for _, c := range testCases {
 		t.Run(c.name, func(t *testing.T) {
 			// setup suite
@@ -855,7 +863,13 @@ func TestMDLView(t *testing.T) {
 			tk3 := s.newTestKitWithRoot(t)
 			tk.MustExec("use test")
 			tk.MustExec("set global tidb_enable_metadata_lock=1")
-			tk.MustExec(c.createTable)
+			for _, cr := range c.createTable {
+				if strings.Contains(c.name, "err") {
+					_, _ = tk.Exec(cr)
+				} else {
+					tk.MustExec(cr)
+				}
+			}
 
 			tk.MustExec("begin")
 			for _, q := range c.queryInTxn {
@@ -1080,6 +1094,57 @@ func TestQuickBinding(t *testing.T) {
 	}
 }
 
+// for testing, only returns Original_sql, Bind_sql, Default_db, Status, Source, Sql_digest
+func showBinding(tk *testkit.TestKit, showStmt string) [][]interface{} {
+	rows := tk.MustQuery(showStmt).Sort().Rows()
+	result := make([][]interface{}, len(rows))
+	for i, r := range rows {
+		result[i] = append(result[i], r[:4]...)
+		result[i] = append(result[i], r[8:10]...)
+	}
+	return result
+}
+
+func TestUniversalBindingFromHistory(t *testing.T) {
+	t.Skip("skip it temporarily")
+	s := new(clusterTablesSuite)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
+	s.rpcserver, s.listenAddr = s.setUpRPCService(t, "127.0.0.1:0", nil)
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
+	s.startTime = time.Now()
+	defer s.httpServer.Close()
+	defer s.rpcserver.Stop()
+	tk := s.newTestKitWithRoot(t)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table t (a int, b int, c int, key(a), key(b), key(c))`)
+	tk.MustExec(`select /*+ use_index(t, b) */ a from t where a=1`)
+	tk.MustExec(`select /*+ use_index(t, c) */ b from t where b=1`)
+
+	planDigest := tk.MustQuery(`select plan_digest from information_schema.statements_summary where query_sample_text='select /*+ use_index(t, b) */ a from t where a=1'`).Rows()
+	tk.MustExec(fmt.Sprintf("create global universal binding from history using plan digest '%s'", planDigest[0][0].(string)))
+	planDigest = tk.MustQuery(`select plan_digest from information_schema.statements_summary where query_sample_text='select /*+ use_index(t, c) */ b from t where b=1'`).Rows()
+	tk.MustExec(fmt.Sprintf("create global universal binding from history using plan digest '%s'", planDigest[0][0].(string)))
+
+	require.Equal(t, showBinding(tk, `show global bindings`), [][]interface{}{
+		{"select `a` from `t` where `a` = ?", "SELECT /*+ use_index(@`sel_1` `t` `b`) no_order_index(@`sel_1` `t` `b`)*/ `a` FROM `t` WHERE `a` = 1", "", "enabled", "history", "f8e294e078ed195998dee6717e71499d6a14b8e0f405952af8d0a5b24d0cae30"},
+		{"select `b` from `t` where `b` = ?", "SELECT /*+ use_index(@`sel_1` `t` `c`) no_order_index(@`sel_1` `t` `c`)*/ `b` FROM `t` WHERE `b` = 1", "", "enabled", "history", "cfb4dd59c4c75ff1ee126236c6bd365f7d04f6120990d922e75aa47ae8bd94eb"},
+	})
+
+	tk.MustExec(`admin reload bindings`)
+	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
+	tk.MustExec(`create database test2`)
+	tk.MustExec(`use test2`)
+	tk.MustExec(`create table t (a int, b int, c int, key(a), key(b), key(c))`)
+	tk.MustExec(`select a from t where a=10`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustExec(`select b from t where b=10`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+	tk.MustExec(`select b from test.t where b=10`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+}
+
 func TestCreateBindingFromHistory(t *testing.T) {
 	s := new(clusterTablesSuite)
 	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
@@ -1277,7 +1342,6 @@ func TestSetBindingStatusBySQLDigest(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("set binding enabled for sql digest '%s'", sqlDigest[0][9]))
 	tk.MustExec(sql)
 	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
-	tk.MustGetErrMsg("set binding enabled for sql digest '2'", "can't find any binding for '2'")
 	tk.MustGetErrMsg("set binding enabled for sql digest ''", "sql digest is empty")
 	tk.MustGetErrMsg("set binding disabled for sql digest ''", "sql digest is empty")
 }

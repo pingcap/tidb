@@ -147,6 +147,12 @@ func TestCreateStorage(t *testing.T) {
 	require.Equal(t, "https://gcs.example.com/", gcs.Endpoint)
 	require.Equal(t, "fakeCredentials", gcs.CredentialsBlob)
 
+	s, err = ParseBackend("gcs://bucket?endpoint=http://127.0.0.1/", gcsOpt)
+	require.NoError(t, err)
+	gcs = s.GetGcs()
+	require.NotNil(t, gcs)
+	require.Equal(t, "http://127.0.0.1/", gcs.Endpoint)
+
 	err = os.WriteFile(fakeCredentialsFile, []byte("fakeCreds2"), credFilePerm)
 	require.NoError(t, err)
 	s, err = ParseBackend("gs://bucket4/backup/?credentials-file="+url.QueryEscape(fakeCredentialsFile), nil)

@@ -63,6 +63,11 @@ func TestClusterIndexShowTableRegion(t *testing.T) {
 	// Check the region start key is int64.
 	require.Regexp(t, fmt.Sprintf("t_%d_", tbl.Meta().ID), rows[0][1])
 	require.Regexp(t, fmt.Sprintf("t_%d_r_50000", tbl.Meta().ID), rows[1][1])
+
+	// test split regions boundary, it's too slow in TiKV env, move it here.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, c int, d int, primary key(a, c, d));")
+	tk.MustQuery("split table t between (0, 0, 0) and (0, 0, 1) regions 1000;").Check(testkit.Rows("999 1"))
 }
 
 func TestShowTableRegion(t *testing.T) {

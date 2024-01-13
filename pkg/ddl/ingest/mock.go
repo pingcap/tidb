@@ -229,7 +229,14 @@ func (m *MockWriter) WriteRow(_ context.Context, key, idxVal []byte, _ kv.Handle
 	if err != nil {
 		return err
 	}
-	return txn.Set(key, idxVal)
+	err = txn.Set(key, idxVal)
+	if err != nil {
+		return err
+	}
+	if MockExecAfterWriteRow != nil {
+		MockExecAfterWriteRow()
+	}
+	return nil
 }
 
 // LockForWrite implements Writer.LockForWrite interface.
@@ -241,3 +248,6 @@ func (*MockWriter) LockForWrite() func() {
 func (*MockWriter) Close(_ context.Context) error {
 	return nil
 }
+
+// MockExecAfterWriteRow is only used for test.
+var MockExecAfterWriteRow func()

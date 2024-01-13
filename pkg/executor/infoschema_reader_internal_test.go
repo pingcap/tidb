@@ -123,3 +123,11 @@ func TestSetDataFromTiDBCheckConstraints(t *testing.T) {
 	require.Equal(t, types.NewStringDatum("t2"), mt.rows[0][4])
 	require.Equal(t, types.NewIntDatum(2), mt.rows[0][5])
 }
+
+func TestSetDataFromKeywords(t *testing.T) {
+	mt := memtableRetriever{}
+	err := mt.setDataFromKeywords()
+	require.NoError(t, err)
+	require.Equal(t, types.NewStringDatum("ADD"), mt.rows[0][0]) // Keyword: ADD
+	require.Equal(t, types.NewIntDatum(1), mt.rows[0][1])        // Reserved: true(1)
+}

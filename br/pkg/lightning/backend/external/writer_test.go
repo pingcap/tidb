@@ -17,7 +17,6 @@ package external
 import (
 	"bytes"
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -31,13 +30,75 @@ import (
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	"golang.org/x/exp/rand"
 )
+
+// only used in testing for now.
+func mergeOverlappingFilesImpl(ctx context.Context,
+	paths []string,
+	store storage.ExternalStorage,
+	readBufferSize int,
+	newFilePrefix string,
+	writerID string,
+	memSizeLimit uint64,
+	blockSize int,
+	writeBatchCount uint64,
+	propSizeDist uint64,
+	propKeysDist uint64,
+	onClose OnCloseFunc,
+	checkHotspot bool,
+) (err error) {
+	task := log.BeginTask(logutil.Logger(ctx).With(
+		zap.String("writer-id", writerID),
+		zap.Int("file-count", len(paths)),
+	), "merge overlapping files")
+	defer func() {
+		task.End(zap.ErrorLevel, err)
+	}()
+
+	zeroOffsets := make([]uint64, len(paths))
+	iter, err := NewMergeKVIter(ctx, paths, zeroOffsets, store, readBufferSize, checkHotspot, 0)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		err := iter.Close()
+		if err != nil {
+			logutil.Logger(ctx).Warn("close iterator failed", zap.Error(err))
+		}
+	}()
+
+	writer := NewWriterBuilder().
+		SetMemorySizeLimit(memSizeLimit).
+		SetBlockSize(blockSize).
+		SetOnCloseFunc(onClose).
+		SetWriterBatchCount(writeBatchCount).
+		SetPropSizeDistance(propSizeDist).
+		SetPropKeysDistance(propKeysDist).
+		Build(store, newFilePrefix, writerID)
+
+	// currently use same goroutine to do read and write. The main advantage is
+	// there's no KV copy and iter can reuse the buffer.
+	for iter.Next() {
+		err = writer.WriteRow(ctx, iter.Key(), iter.Value(), nil)
+		if err != nil {
+			return err
+		}
+	}
+	err = iter.Error()
+	if err != nil {
+		return err
+	}
+	return writer.Close(ctx)
+}
 
 func TestWriter(t *testing.T) {
 	seed := time.Now().Unix()
@@ -237,7 +298,11 @@ func TestWriterDuplicateDetect(t *testing.T) {
 }
 
 func TestMultiFileStat(t *testing.T) {
-	s := &MultipleFilesStat{}
+	s := &MultipleFilesStat{
+		Filenames: [][2]string{
+			{"3", "5"}, {"1", "3"}, {"2", "4"},
+		},
+	}
 	// [3, 5], [1, 3], [2, 4]
 	startKeys := []dbkv.Key{{3}, {1}, {2}}
 	endKeys := []dbkv.Key{{5}, {3}, {4}}
@@ -245,6 +310,7 @@ func TestMultiFileStat(t *testing.T) {
 	require.EqualValues(t, []byte{1}, s.MinKey)
 	require.EqualValues(t, []byte{5}, s.MaxKey)
 	require.EqualValues(t, 3, s.MaxOverlappingNum)
+	require.Equal(t, [][2]string{{"1", "3"}, {"2", "4"}, {"3", "5"}}, s.Filenames)
 }
 
 func TestMultiFileStatOverlap(t *testing.T) {
@@ -428,27 +494,6 @@ func TestWriterMultiFileStat(t *testing.T) {
 	require.Equal(t, expected, summary.MultipleFilesStats[2])
 	require.EqualValues(t, "key01", summary.Min)
 	require.EqualValues(t, "key24", summary.Max)
-}
-
-func TestCancelWhileWrite(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-	memStore := storage.NewMemStorage()
-
-	writer := NewWriterBuilder().
-		SetMemorySizeLimit(20).
-		Build(memStore, "/test", "0")
-
-	for {
-		err := writer.WriteRow(ctx, []byte("key45"), []byte("value"), nil)
-		if errors.Is(err, context.DeadlineExceeded) {
-			break
-		}
-		require.NoError(t, err)
-	}
-
-	err := writer.Close(ctx)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
 }
 
 func TestWriterSort(t *testing.T) {

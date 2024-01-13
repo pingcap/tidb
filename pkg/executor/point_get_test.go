@@ -228,39 +228,6 @@ func TestPartitionMemCacheReadLock(t *testing.T) {
 	mustExecDDL(tk, t, "unlock tables", dom)
 }
 
-func TestPointGetWriteLock(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableTableLock = true
-	})
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table point (id int primary key, c int, d varchar(10), unique c_d (c, d))")
-	tk.MustExec("insert point values (1, 1, 'a')")
-	tk.MustExec("insert point values (2, 2, 'b')")
-	tk.MustExec("lock tables point write")
-	tk.MustQuery(`select * from point where id = 1;`).Check(testkit.Rows(
-		`1 1 a`,
-	))
-	rows := tk.MustQuery("explain analyze select * from point where id = 1").Rows()
-	require.Len(t, rows, 1)
-	explain := fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*num_rpc.*", explain)
-	tk.MustExec("unlock tables")
-
-	tk.MustExec("update point set c = 3 where id = 1")
-	tk.MustExec("lock tables point write")
-	tk.MustQuery(`select * from point where id = 1;`).Check(testkit.Rows(
-		`1 3 a`,
-	))
-	rows = tk.MustQuery("explain analyze select * from point where id = 1").Rows()
-	require.Len(t, rows, 1)
-	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*num_rpc.*", explain)
-	tk.MustExec("unlock tables")
-}
-
 func TestPointGetLockExistKey(t *testing.T) {
 	testLock := func(rc bool, key string, tableName string) {
 		store := testkit.CreateMockStore(t)
@@ -407,4 +374,40 @@ func TestWithTiDBSnapshot(t *testing.T) {
 	tk.MustQuery("select * from xx where id = 8").Check(testkit.Rows())
 
 	tk.MustQuery("select * from xx").Check(testkit.Rows("1", "7"))
+}
+
+func TestGlobalIndexPointGet(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_global_index=true")
+	defer func() {
+		tk.MustExec("set tidb_enable_global_index=default")
+	}()
+
+	tk.MustExec(`CREATE TABLE t ( a int, b int, c int default 0)
+						PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (10),
+		PARTITION p1 VALUES LESS THAN (20),
+		PARTITION p2 VALUES LESS THAN (30),
+		PARTITION p3 VALUES LESS THAN (40))`)
+	tk.MustExec("INSERT INTO t(a, b) values(1, 1), (2, 2), (3, 3), (15, 15), (25, 25), (35, 35)")
+	tk.MustExec("ALTER TABLE t ADD UNIQUE INDEX idx(b)")
+	tk.MustExec("analyze table t")
+
+	tk.MustQuery("select * from t use index(idx) where b in (15, 25, 35)").Sort().Check(testkit.Rows("15 15 0", "25 25 0", "35 35 0"))
+	tk.MustQuery("explain select * from t use index(idx) where b in (15, 25, 35)").Check(
+		testkit.Rows("Batch_Point_Get_1 3.00 root table:t, index:idx(b) keep order:false, desc:false"))
+
+	tk.MustQuery("select * from t use index(idx) where b in (select b from t use index(idx) where b>10)").Sort().Check(testkit.Rows("15 15 0", "25 25 0", "35 35 0"))
+
+	tk.MustQuery("select * from t use index(idx) where b = 15").Check(testkit.Rows("15 15 0"))
+	tk.MustQuery("explain select * from t use index(idx) where b = 15").Check(
+		testkit.Rows("Point_Get_1 1.00 root table:t, index:idx(b) "))
+
+	tk.MustQuery("select * from t use index(idx) where b in (select b from t use index(idx) where b > 10)").Sort().Check(
+		testkit.Rows("15 15 0", "25 25 0", "35 35 0"))
+
+	tk.MustQuery("select * from t partition(p1) use index(idx) where b = 3").Check(testkit.Rows())
+	tk.MustQuery("select * from t partition(p1) use index(idx) where b in (15, 25, 35)").Check(testkit.Rows("15 15 0"))
 }

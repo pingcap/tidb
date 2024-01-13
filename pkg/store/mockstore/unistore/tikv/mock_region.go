@@ -369,6 +369,8 @@ func (rm *MockRegionManager) SplitTable(tableID int64, count int) {
 	tableStart := tablecodec.GenTableRecordPrefix(tableID)
 	tableEnd := tableStart.PrefixNext()
 	keys := rm.calculateSplitKeys(tableStart, tableEnd, count)
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
 	if _, err := rm.splitKeys(keys); err != nil {
 		panic(err)
 	}
@@ -379,6 +381,8 @@ func (rm *MockRegionManager) SplitIndex(tableID, indexID int64, count int) {
 	indexStart := tablecodec.EncodeTableIndexPrefix(tableID, indexID)
 	indexEnd := indexStart.PrefixNext()
 	keys := rm.calculateSplitKeys(indexStart, indexEnd, count)
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
 	if _, err := rm.splitKeys(keys); err != nil {
 		panic(err)
 	}
@@ -387,6 +391,8 @@ func (rm *MockRegionManager) SplitIndex(tableID, indexID int64, count int) {
 // SplitKeys evenly splits the start, end key into "count" regions.
 func (rm *MockRegionManager) SplitKeys(start, end kv.Key, count int) {
 	keys := rm.calculateSplitKeys(start, end, count)
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
 	if _, err := rm.splitKeys(keys); err != nil {
 		panic(err)
 	}
@@ -394,15 +400,49 @@ func (rm *MockRegionManager) SplitKeys(start, end kv.Key, count int) {
 
 // SplitRegion implements the RegionManager interface.
 func (rm *MockRegionManager) SplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb.SplitRegionResponse {
-	if _, err := rm.GetRegionFromCtx(req.Context); err != nil {
-		return &kvrpcpb.SplitRegionResponse{RegionError: err}
-	}
 	splitKeys := make([][]byte, 0, len(req.SplitKeys))
 	for _, rawKey := range req.SplitKeys {
 		splitKeys = append(splitKeys, codec.EncodeBytes(nil, rawKey))
 	}
 	slices.SortFunc(splitKeys, bytes.Compare)
 
+	ctxPeer := req.Context.GetPeer()
+	if ctxPeer != nil {
+		_, err := rm.GetStoreAddrByStoreID(ctxPeer.GetStoreId())
+		if err != nil {
+			return &kvrpcpb.SplitRegionResponse{RegionError: &errorpb.Error{
+				Message:       "store not match",
+				StoreNotMatch: &errorpb.StoreNotMatch{},
+			}}
+		}
+	}
+
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	ri := rm.regions[req.Context.RegionId]
+	if ri == nil {
+		return &kvrpcpb.SplitRegionResponse{RegionError: &errorpb.Error{
+			Message: "region not found",
+			RegionNotFound: &errorpb.RegionNotFound{
+				RegionId: req.Context.GetRegionId(),
+			},
+		}}
+	}
+	// Region epoch does not match.
+	if rm.isEpochStale(ri.getRegionEpoch(), req.Context.GetRegionEpoch()) {
+		return &kvrpcpb.SplitRegionResponse{RegionError: &errorpb.Error{
+			Message: "stale epoch",
+			EpochNotMatch: &errorpb.EpochNotMatch{
+				CurrentRegions: []*metapb.Region{{
+					Id:          ri.meta.Id,
+					StartKey:    ri.meta.StartKey,
+					EndKey:      ri.meta.EndKey,
+					RegionEpoch: ri.getRegionEpoch(),
+					Peers:       ri.meta.Peers,
+				}},
+			},
+		}}
+	}
 	newRegions, err := rm.splitKeys(splitKeys)
 	if err != nil {
 		return &kvrpcpb.SplitRegionResponse{RegionError: &errorpb.Error{Message: err.Error()}}
@@ -448,8 +488,8 @@ func (rm *MockRegionManager) calculateSplitKeys(start, end []byte, count int) []
 	return splitKeys
 }
 
+// Should call `rm.mu.Lock()` before call this method.
 func (rm *MockRegionManager) splitKeys(keys [][]byte) ([]*regionCtx, error) {
-	rm.mu.Lock()
 	newRegions := make([]*regionCtx, 0, len(keys))
 	rm.sortedRegions.AscendGreaterOrEqual(newBtreeSearchItem(keys[0]), func(item btree.Item) bool {
 		if len(keys) == 0 {
@@ -513,7 +553,6 @@ func (rm *MockRegionManager) splitKeys(keys [][]byte) ([]*regionCtx, error) {
 		rm.regions[region.meta.Id] = region
 		rm.sortedRegions.ReplaceOrInsert(newBtreeItem(region))
 	}
-	rm.mu.Unlock()
 	return newRegions, rm.saveRegions(newRegions)
 }
 
@@ -590,7 +629,7 @@ func (rm *MockRegionManager) saveRegions(regions []*regionCtx) error {
 // Limit limits the maximum number of regions returned.
 // If a region has no leader, corresponding leader will be placed by a peer
 // with empty value (PeerID is 0).
-func (rm *MockRegionManager) ScanRegions(startKey, endKey []byte, limit int) []*pdclient.Region {
+func (rm *MockRegionManager) ScanRegions(startKey, endKey []byte, limit int, _ ...pdclient.GetRegionOption) []*pdclient.Region {
 	rm.mu.RLock()
 	defer rm.mu.RUnlock()
 
@@ -854,8 +893,8 @@ func (pd *MockPD) GetAllStores(ctx context.Context, opts ...pdclient.GetStoreOpt
 // Limit limits the maximum number of regions returned.
 // If a region has no leader, corresponding leader will be placed by a peer
 // with empty value (PeerID is 0).
-func (pd *MockPD) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int) ([]*pdclient.Region, error) {
-	regions := pd.rm.ScanRegions(startKey, endKey, limit)
+func (pd *MockPD) ScanRegions(ctx context.Context, startKey []byte, endKey []byte, limit int, opts ...pdclient.GetRegionOption) ([]*pdclient.Region, error) {
+	regions := pd.rm.ScanRegions(startKey, endKey, limit, opts...)
 	return regions, nil
 }
 

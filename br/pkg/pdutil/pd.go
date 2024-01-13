@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/retry"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -41,7 +42,7 @@ const (
 	maxMsgSize   = int(128 * units.MiB) // pd.ScanRegion may return a large response
 	pauseTimeout = 5 * time.Minute
 	// pd request retry time when connection fail
-	pdRequestRetryTime = 120
+	PDRequestRetryTime = 120
 	// set max-pending-peer-count to a large value to avoid scatter region failed.
 	maxPendingPeerUnlimited uint64 = math.MaxInt32
 )
@@ -167,7 +168,7 @@ func pdRequestWithCode(
 		resp, err = cli.Do(req) //nolint:bodyclose
 		count++
 		failpoint.Inject("InjectClosed", func(v failpoint.Value) {
-			if failType, ok := v.(int); ok && count <= pdRequestRetryTime-1 {
+			if failType, ok := v.(int); ok && count <= PDRequestRetryTime-1 {
 				resp = nil
 				switch failType {
 				case 0:
@@ -183,7 +184,7 @@ func pdRequestWithCode(
 				}
 			}
 		})
-		if count > pdRequestRetryTime || (resp != nil && resp.StatusCode < 500) ||
+		if count > PDRequestRetryTime || (resp != nil && resp.StatusCode < 500) ||
 			(err != nil && !common.IsRetryableError(err)) {
 			break
 		}
@@ -234,10 +235,11 @@ func DefaultExpectPDCfgGenerators() map[string]pauseConfigGenerator {
 
 // PdController manage get/update config from pd.
 type PdController struct {
-	addrs    []string
-	cli      *http.Client
-	pdClient pd.Client
-	version  *semver.Version
+	addrs     []string
+	cli       *http.Client // TODO: replace it with pd HTTP client
+	pdClient  pd.Client
+	pdHTTPCli pdhttp.Client
+	version   *semver.Version
 
 	// control the pause schedulers goroutine
 	schedulerPauseCh chan struct{}
@@ -246,7 +248,7 @@ type PdController struct {
 // NewPdController creates a new PdController.
 func NewPdController(
 	ctx context.Context,
-	pdAddrs string,
+	pdAddrs string, // TODO(lance6716): use HTTP client?
 	tlsConf *tls.Config,
 	securityOption pd.SecurityOption,
 ) (*PdController, error) {
@@ -293,11 +295,18 @@ func NewPdController(
 		return nil, errors.Trace(err)
 	}
 
+	pdHTTPCliConfig := make([]pdhttp.ClientOption, 0, 1)
+	if tlsConf != nil {
+		pdHTTPCliConfig = append(pdHTTPCliConfig, pdhttp.WithTLSConfig(tlsConf))
+	}
+	pdHTTPCli := pdhttp.NewClient("br/lightning PD controller", addrs, pdHTTPCliConfig...).
+		WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, PDRequestRetryTime*time.Second))
 	return &PdController{
-		addrs:    processedAddrs,
-		cli:      cli,
-		pdClient: pdClient,
-		version:  version,
+		addrs:     processedAddrs,
+		cli:       cli,
+		pdClient:  pdClient,
+		pdHTTPCli: pdHTTPCli,
+		version:   version,
 		// We should make a buffered channel here otherwise when context canceled,
 		// gracefully shutdown will stick at resuming schedulers.
 		schedulerPauseCh: make(chan struct{}, 1),
@@ -354,6 +363,11 @@ func (p *PdController) GetPDClient() pd.Client {
 	return p.pdClient
 }
 
+// GetPDHTTPClient returns the pd http client.
+func (p *PdController) GetPDHTTPClient() pdhttp.Client {
+	return p.pdHTTPCli
+}
+
 // GetClusterVersion returns the current cluster version.
 func (p *PdController) GetClusterVersion(ctx context.Context) (string, error) {
 	return p.getClusterVersionWith(ctx, pdRequest)
@@ -389,7 +403,9 @@ func (p *PdController) getRegionCountWith(
 	}
 	var err error
 	for _, addr := range p.getAllPDAddrs() {
-		v, e := get(ctx, addr, pdhttp.RegionStatsByKeyRange(pdhttp.NewKeyRange(start, end)), p.cli, http.MethodGet, nil)
+		v, e := get(ctx, addr,
+			pdhttp.RegionStatsByKeyRange(pdhttp.NewKeyRange(start, end), false),
+			p.cli, http.MethodGet, nil)
 		if e != nil {
 			err = e
 			continue
@@ -957,67 +973,32 @@ type KeyRangeRule struct {
 	EndKeyHex   string `json:"end_key"`   // hex format end key, for marshal/unmarshal
 }
 
-// CreateOrUpdateRegionLabelRule creates or updates a region label rule.
-func (p *PdController) CreateOrUpdateRegionLabelRule(ctx context.Context, rule LabelRule) error {
-	reqData, err := json.Marshal(&rule)
-	if err != nil {
-		panic(err)
-	}
-	var lastErr error
-	addrs := p.getAllPDAddrs()
-	for i, addr := range addrs {
-		_, lastErr = pdRequest(ctx, addr, pdhttp.RegionLabelRule,
-			p.cli, http.MethodPost, reqData)
-		if lastErr == nil {
-			return nil
-		}
-		if berrors.IsContextCanceled(lastErr) {
-			return errors.Trace(lastErr)
-		}
-
-		if i < len(addrs) {
-			log.Warn("failed to create or update region label rule, will try next pd address",
-				zap.Error(lastErr), zap.String("pdAddr", addr))
-		}
-	}
-	return errors.Trace(lastErr)
-}
-
-// DeleteRegionLabelRule deletes a region label rule.
-func (p *PdController) DeleteRegionLabelRule(ctx context.Context, ruleID string) error {
-	var lastErr error
-	addrs := p.getAllPDAddrs()
-	for i, addr := range addrs {
-		_, lastErr = pdRequest(ctx, addr, fmt.Sprintf("%s/%s", pdhttp.RegionLabelRule, ruleID),
-			p.cli, http.MethodDelete, nil)
-		if lastErr == nil {
-			return nil
-		}
-		if berrors.IsContextCanceled(lastErr) {
-			return errors.Trace(lastErr)
-		}
-
-		if i < len(addrs) {
-			log.Warn("failed to delete region label rule, will try next pd address",
-				zap.Error(lastErr), zap.String("pdAddr", addr))
-		}
-	}
-	return errors.Trace(lastErr)
-}
-
 // PauseSchedulersByKeyRange will pause schedulers for regions in the specific key range.
 // This function will spawn a goroutine to keep pausing schedulers periodically until the context is done.
 // The return done channel is used to notify the caller that the background goroutine is exited.
-func (p *PdController) PauseSchedulersByKeyRange(ctx context.Context,
-	startKey, endKey []byte) (done <-chan struct{}, err error) {
-	return p.pauseSchedulerByKeyRangeWithTTL(ctx, startKey, endKey, pauseTimeout)
+func PauseSchedulersByKeyRange(
+	ctx context.Context,
+	pdHTTPCli pdhttp.Client,
+	startKey, endKey []byte,
+) (done <-chan struct{}, err error) {
+	done, err = pauseSchedulerByKeyRangeWithTTL(ctx, pdHTTPCli, startKey, endKey, pauseTimeout)
+	// Wait for the rule to take effect because the PD operator is processed asynchronously.
+	// To synchronize this, checking the operator status may not be enough. For details, see
+	// https://github.com/pingcap/tidb/issues/49477.
+	// Let's use two times default value of `patrol-region-interval` from PD configuration.
+	<-time.After(20 * time.Millisecond)
+	return
 }
 
-func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context,
-	startKey, endKey []byte, ttl time.Duration) (_done <-chan struct{}, err error) {
-	rule := LabelRule{
+func pauseSchedulerByKeyRangeWithTTL(
+	ctx context.Context,
+	pdHTTPCli pdhttp.Client,
+	startKey, endKey []byte,
+	ttl time.Duration,
+) (<-chan struct{}, error) {
+	rule := &pdhttp.LabelRule{
 		ID: uuid.New().String(),
-		Labels: []RegionLabel{{
+		Labels: []pdhttp.RegionLabel{{
 			Key:   "schedule",
 			Value: "deny",
 			TTL:   ttl.String(),
@@ -1031,7 +1012,8 @@ func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context,
 		}},
 	}
 	done := make(chan struct{})
-	if err := p.CreateOrUpdateRegionLabelRule(ctx, rule); err != nil {
+
+	if err := pdHTTPCli.SetRegionLabelRule(ctx, rule); err != nil {
 		close(done)
 		return nil, errors.Trace(err)
 	}
@@ -1044,7 +1026,7 @@ func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context,
 		for {
 			select {
 			case <-ticker.C:
-				if err := p.CreateOrUpdateRegionLabelRule(ctx, rule); err != nil {
+				if err := pdHTTPCli.SetRegionLabelRule(ctx, rule); err != nil {
 					if berrors.IsContextCanceled(err) {
 						break loop
 					}
@@ -1060,7 +1042,8 @@ func (p *PdController) pauseSchedulerByKeyRangeWithTTL(ctx context.Context,
 		defer cancel()
 		// Set ttl to 0 to remove the rule.
 		rule.Labels[0].TTL = time.Duration(0).String()
-		if err := p.DeleteRegionLabelRule(recoverCtx, rule.ID); err != nil {
+		deleteRule := &pdhttp.LabelRulePatch{DeleteRules: []string{rule.ID}}
+		if err := pdHTTPCli.PatchRegionLabelRules(recoverCtx, deleteRule); err != nil {
 			log.Warn("failed to delete region label rule, the rule will be removed after ttl expires",
 				zap.String("rule-id", rule.ID), zap.Duration("ttl", ttl), zap.Error(err))
 		}
@@ -1074,28 +1057,24 @@ func (p *PdController) CanPauseSchedulerByKeyRange() bool {
 	return p.version.Compare(minVersionForRegionLabelTTL) >= 0
 }
 
-// Close close the connection to pd.
+// Close closes the connection to pd.
 func (p *PdController) Close() {
 	p.pdClient.Close()
+	if p.pdHTTPCli != nil {
+		// nil in some unit tests
+		p.pdHTTPCli.Close()
+	}
 	if p.schedulerPauseCh != nil {
 		close(p.schedulerPauseCh)
 	}
 }
 
 // FetchPDVersion get pd version
-func FetchPDVersion(ctx context.Context, tls *common.TLS, pdAddr string) (*semver.Version, error) {
-	// An example of PD version API.
-	// curl http://pd_address/pd/api/v1/version
-	// {
-	//   "version": "v4.0.0-rc.2-451-g760fb650"
-	// }
-	var rawVersion struct {
-		Version string `json:"version"`
-	}
-	err := tls.WithHost(pdAddr).GetJSON(ctx, pdhttp.Version, &rawVersion)
+func FetchPDVersion(ctx context.Context, pdHTTPCli pdhttp.Client) (*semver.Version, error) {
+	ver, err := pdHTTPCli.GetPDVersion(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	return parseVersion([]byte(rawVersion.Version)), nil
+	return parseVersion([]byte(ver)), nil
 }

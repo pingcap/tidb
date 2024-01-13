@@ -19,31 +19,23 @@ import (
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+	"github.com/stretchr/testify/require"
 )
 
-func TestPlanErr(t *testing.T) {
+func TestRetryErrOnNextSubtasksBatch(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
 	defer ctrl.Finish()
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetPlanErrDispatcherExt(ctrl, testContext), testContext, nil)
-	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key1", testContext, nil)
-	testContext.CallTime = 0
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetPlanErrSchedulerExt(ctrl, testContext), testContext, nil)
+	submitTaskAndCheckSuccessForBasic(ctx, t, "key1", testContext)
 	distContext.Close()
 }
 
-func TestRevertPlanErr(t *testing.T) {
-	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
-	defer ctrl.Finish()
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetPlanErrDispatcherExt(ctrl, testContext), testContext, nil)
-	testutil.DispatchTaskAndCheckSuccess(ctx, t, "key1", testContext, nil)
-	testContext.CallTime = 0
-	distContext.Close()
-}
-
-func TestPlanNotRetryableErr(t *testing.T) {
+func TestPlanNotRetryableOnNextSubtasksBatchErr(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
 	defer ctrl.Finish()
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetPlanNotRetryableErrDispatcherExt(ctrl), testContext, nil)
-	testutil.DispatchTaskAndCheckState(ctx, t, "key1", testContext, proto.TaskStateFailed)
+	testutil.RegisterTaskMeta(t, ctrl, testutil.GetPlanNotRetryableErrSchedulerExt(ctrl), testContext, nil)
+	task := testutil.SubmitAndWaitTask(ctx, t, "key1")
+	require.Equal(t, proto.TaskStateFailed, task.State)
 	distContext.Close()
 }

@@ -328,8 +328,10 @@ func TestBindingSource(t *testing.T) {
 	// Test Source for SQL created sql
 	tk.MustExec("create global binding for select * from t where a > 10 using select * from t ignore index(idx_a) where a > 10")
 	bindHandle := dom.BindHandle()
-	sql, sqlDigest := internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
-	bindData := bindHandle.GetGlobalBinding(sqlDigest, sql, "test")
+	stmt, _, _ := internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
+	_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+	bindData, err := bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	require.NoError(t, err)
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
 	require.Len(t, bindData.Bindings, 1)
@@ -348,8 +350,10 @@ func TestBindingSource(t *testing.T) {
 	tk.MustExec("select * from t ignore index(idx_a) where a < 10")
 	tk.MustExec("admin capture bindings")
 	bindHandle.CaptureBaselines()
-	sql, sqlDigest = internal.UtilNormalizeWithDefaultDB(t, "select * from t where a < ?")
-	bindData = bindHandle.GetGlobalBinding(sqlDigest, sql, "test")
+	stmt, _, _ = internal.UtilNormalizeWithDefaultDB(t, "select * from t where a < ?")
+	_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+	bindData, err = bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	require.NoError(t, err)
 	require.NotNil(t, bindData)
 	require.Equal(t, "select * from `test` . `t` where `a` < ?", bindData.OriginalSQL)
 	require.Len(t, bindData.Bindings, 1)
@@ -923,6 +927,7 @@ func TestCaptureFilter(t *testing.T) {
 }
 
 func TestCaptureHints(t *testing.T) {
+	t.Skip("deprecated")
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("SET GLOBAL tidb_capture_plan_baselines = on")

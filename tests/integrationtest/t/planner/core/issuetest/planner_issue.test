@@ -153,16 +153,36 @@ select a from (select 100 as a, 100 as b union all select * from t) t where b !=
 set @@tidb_max_chunk_size = default;
 
 # https://github.com/pingcap/tidb/issues/48821
+# https://github.com/pingcap/tidb/issues/48983
 drop table if exists t1, t2;
 create table t1(a varchar(20) collate utf8mb4_bin, index ia(a));
-insert into t1 value('测试'),('测试  ');
+insert into t1 value('测试'),('测试  '),('xxx ');
 explain format = brief select *,length(a) from t1 where a like '测试 %';
 explain format = brief select *,length(a) from t1 where a like '测试';
 select *,length(a) from t1 where a like '测试 %';
 select *,length(a) from t1 where a like '测试';
+explain format = brief select * from t1 use index (ia) where a like 'xxx_';
+select * from t1 use index (ia) where a like 'xxx_';
 create table t2(a varchar(20) collate gbk_chinese_ci, index ia(a));
 insert into t2 value('测试'),('测试  ');
 explain format = brief select *,length(a) from t2 where a like '测试 %';
 explain format = brief select *,length(a) from t2 where a like '测试';
 select *,length(a) from t2 where a like '测试 %';
 select *,length(a) from t2 where a like '测试';
+
+# https://github.com/pingcap/tidb/issues/48969
+drop view if exists v1;
+create view v1(id) as
+with recursive cte(a) as (select 1 union select a+1 from cte where a<3)
+select * from cte;
+
+create table test2(id int,value int);
+insert into test2 values(1,1),(2,2),(3,3),(4,4),(5,5);
+
+update test2
+set value=0
+where test2.id in
+(
+  select * from v1
+);
+select * from test2;

@@ -67,6 +67,34 @@ func (t *TxStructure) Inc(key []byte, step int64) (int64, error) {
 	return n, errors.Trace(err)
 }
 
+// Iterate iterates all keys in the same prefix.
+func (t *TxStructure) Iterate(key, upperBound []byte, fn func(k []byte, v []byte) error) error {
+	dataPrefix := t.EncodeStringDataKey(key)
+	upperBoundDataPrefix := t.EncodeStringDataKey(upperBound)
+	it, err := t.reader.Iter(dataPrefix, upperBoundDataPrefix)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for it.Valid() {
+		k, err := t.decodeStringDataKey(it.Key())
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		if err = fn(k, it.Value()); err != nil {
+			return errors.Trace(err)
+		}
+
+		err = it.Next()
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+
+	return nil
+}
+
 // Clear removes the string value of the key.
 func (t *TxStructure) Clear(key []byte) error {
 	if t.readWriter == nil {
