@@ -114,15 +114,13 @@ func (p *prepareStream) onResponse(ctx context.Context, res utils.Result[*brpb.P
 
 func (p *prepareStream) stopClientLoop(ctx context.Context) error {
 	p.stopBgTasks()
-	if err := p.clientLoopHandle.Wait(); err != nil {
-		return err
-	}
 	err := p.cli.Send(&brpb.PrepareSnapshotBackupRequest{
 		Ty: brpb.PrepareSnapshotBackupRequestType_Finish,
 	})
 	if err != nil {
 		return errors.Annotate(err, "failed to send finish request")
 	}
+recv_loop:
 	for {
 		select {
 		case <-ctx.Done():
@@ -131,13 +129,14 @@ func (p *prepareStream) stopClientLoop(ctx context.Context) error {
 			err := p.onResponse(ctx, res)
 			if err == io.EOF || !ok {
 				logutil.CL(ctx).Info("close loop done.", zap.Uint64("store", p.storeID), zap.Bool("is-chan-closed", !ok))
-				return nil
+				break recv_loop
 			}
 			if err != nil {
 				return err
 			}
 		}
 	}
+	return p.clientLoopHandle.Wait()
 }
 
 func (p *prepareStream) clientLoop(ctx context.Context, dur time.Duration) error {
