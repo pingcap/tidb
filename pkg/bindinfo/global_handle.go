@@ -190,7 +190,7 @@ func buildFuzzyDigestMap(bindRecords []*BindRecord) map[string][]string {
 				p = parser.New()
 				continue
 			}
-			_, fuzzyDigest := norm.NormalizeStmtForFuzzyBinding(stmt)
+			_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
 			m[fuzzyDigest] = append(m[fuzzyDigest], binding.SQLDigest)
 		}
 	}

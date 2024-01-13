@@ -72,7 +72,7 @@ func getBindRecord(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Binding
 	var fuzzyDigest string
 	var tableNames []*ast.TableName
 	if info == nil || info.TableNames == nil || info.FuzzyDigest == "" {
-		_, fuzzyDigest = norm.NormalizeStmtForFuzzyBinding(stmtNode)
+		_, fuzzyDigest = norm.NormalizeStmtForBinding(stmtNode, norm.WithFuzz(true))
 		tableNames = CollectTableNames(stmtNode)
 		if info != nil {
 			info.FuzzyDigest = fuzzyDigest

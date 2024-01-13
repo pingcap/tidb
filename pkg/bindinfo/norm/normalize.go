@@ -29,10 +29,34 @@ func eraseLastSemicolon(stmt ast.StmtNode) {
 	}
 }
 
+type option struct {
+	specifiedDB string
+	fuzz        bool
+}
+
+type optionFunc func(*option)
+
+func WithFuzz(fuzz bool) optionFunc {
+	return func(user *option) {
+		user.fuzz = fuzz
+	}
+}
+
+func WithSpecifiedDB(specifiedDB string) optionFunc {
+	return func(user *option) {
+		user.specifiedDB = specifiedDB
+	}
+}
+
 // NormalizeStmtForBinding normalizes a statement for binding.
-// Schema names will be completed automatically: `select * from t` --> `select * from db . t`.
-func NormalizeStmtForBinding(stmtNode ast.StmtNode, specifiedDB string) (normalizedStmt, exactSQLDigest string) {
-	return normalizeStmt(stmtNode, specifiedDB, false)
+// when fuzz is false, schema names will be completed automatically: `select * from t` --> `select * from db . t`.
+// when fuzz is true, Schema names will be eliminated automatically: `select * from db . t` --> `select * from t`.
+func NormalizeStmtForBinding(stmtNode ast.StmtNode, options ...optionFunc) (normalizedStmt, exactSQLDigest string) {
+	opt := &option{}
+	for _, option := range options {
+		option(opt)
+	}
+	return normalizeStmt(stmtNode, opt.specifiedDB, opt.fuzz)
 }
 
 // NormalizeStmtForFuzzyBinding normalizes a statement for fuzzy matching.
