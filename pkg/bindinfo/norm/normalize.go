@@ -52,7 +52,7 @@ func WithSpecifiedDB(specifiedDB string) optionFunc {
 
 // NormalizeStmtForBinding normalizes a statement for binding.
 // when fuzz is false, schema names will be completed automatically: `select * from t` --> `select * from db . t`.
-// when fuzz is true, Schema names will be eliminated automatically: `select * from db . t` --> `select * from t`.
+// when fuzz is true, schema names will be eliminated automatically: `select * from db . t` --> `select * from t`.
 func NormalizeStmtForBinding(stmtNode ast.StmtNode, options ...optionFunc) (normalizedStmt, exactSQLDigest string) {
 	opt := &option{}
 	for _, option := range options {
