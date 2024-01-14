@@ -1278,6 +1278,8 @@ func TestDBAStmt(t *testing.T) {
 		{"show backups where start_time > now() - interval 10 hour", true, "SHOW BACKUPS WHERE `start_time`>DATE_SUB(NOW(), INTERVAL 10 HOUR)"},
 		{"show backup", false, ""},
 		{"show restore", false, ""},
+		{"show replica status", true, "SHOW REPLICA STATUS"},
+		{"show slave status", true, "SHOW REPLICA STATUS"},
 
 		// for load stats
 		{"load stats '/tmp/stats.json'", true, "LOAD STATS '/tmp/stats.json'"},
