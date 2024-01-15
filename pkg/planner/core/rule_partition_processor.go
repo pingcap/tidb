@@ -201,11 +201,7 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx sessionctx.Context,
 				if rangeScalar < uint64(numPartitions) && !highIsNull && !lowIsNull {
 					var i, idx int64
 					for i = 0; i <= int64(rangeScalar); i++ {
-						if mysql.HasUnsignedFlag(col.RetType.GetFlag()) {
-							idx = int64(uint64(posLow+i) % uint64(numPartitions))
-						} else {
-							idx = mathutil.Abs(posLow+i) % int64(numPartitions)
-						}
+						idx = mathutil.Abs((posLow+i) % int64(numPartitions))
 						if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
 							continue
 						}
