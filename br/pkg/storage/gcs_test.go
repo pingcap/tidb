@@ -502,7 +502,7 @@ func TestMultiPartUpload(t *testing.T) {
 	require.Zero(t, cmp)
 }
 
-func TestSpeedReadManySmallFiles(t *testing.T) {
+func TestSpeedReadManyFiles(t *testing.T) {
 	ctx := context.Background()
 
 	s := openTestingStorage(t)
@@ -515,29 +515,31 @@ func TestSpeedReadManySmallFiles(t *testing.T) {
 	for i := 0; i < fileNum; i++ {
 		filenames[i] = fmt.Sprintf("TestSpeedReadManySmallFiles/%d", i)
 	}
-	fileSize := 1024
-	data := make([]byte, fileSize)
-	eg := &errgroup.Group{}
-	for i := 0; i < fileNum; i++ {
-		filename := filenames[i]
-		eg.Go(func() error {
-			return s.WriteFile(ctx, filename, data)
-		})
-	}
-	require.NoError(t, eg.Wait())
-
-	testSize := []int{10, 100, 1000}
-	for _, size := range testSize {
-		testFiles := filenames[:size]
-		now := time.Now()
-		for i := range testFiles {
-			filename := testFiles[i]
+	fileSizes := []int{1024, 1024 * 1024}
+	for _, fileSize := range fileSizes {
+		data := make([]byte, fileSize)
+		eg := &errgroup.Group{}
+		for i := 0; i < fileNum; i++ {
+			filename := filenames[i]
 			eg.Go(func() error {
-				_, err := s.ReadFile(ctx, filename)
-				return err
+				return s.WriteFile(ctx, filename, data)
 			})
 		}
 		require.NoError(t, eg.Wait())
-		t.Logf("read %d files cost %v", len(testFiles), time.Since(now))
+
+		testSize := []int{10, 100, 1000}
+		for _, size := range testSize {
+			testFiles := filenames[:size]
+			now := time.Now()
+			for i := range testFiles {
+				filename := testFiles[i]
+				eg.Go(func() error {
+					_, err := s.ReadFile(ctx, filename)
+					return err
+				})
+			}
+			require.NoError(t, eg.Wait())
+			t.Logf("read %d files each of %d bytes cost %v", len(testFiles), fileSize, time.Since(now))
+		}
 	}
 }
