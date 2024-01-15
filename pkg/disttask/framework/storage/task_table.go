@@ -536,24 +536,52 @@ func (mgr *TaskManager) UpdateErrorToSubtask(ctx context.Context, execID string,
 	if err == nil {
 		return nil
 	}
-	_, err1 := mgr.ExecuteSQLWithNewSession(ctx,
-		`update mysql.tidb_background_subtask
-		set state = %?, 
-		error = %?, 
-		start_time = unix_timestamp(), 
-		state_update_time = unix_timestamp(),
-		end_time = CURRENT_TIMESTAMP()
-		where exec_id = %? and 
-		task_key = %? and 
-		state in (%?, %?) 
-		limit 1;`,
-		proto.TaskStateFailed,
-		serializeErr(err),
-		execID,
-		taskID,
-		proto.SubtaskStatePending,
-		proto.SubtaskStateRunning)
-	return err1
+
+	var rs []chunk.Row
+	var err1 error
+	err = mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		rs, err1 = sqlexec.ExecSQL(ctx, se,
+			`select `+basicSubtaskColumns+` from mysql.tidb_background_subtask
+			where exec_id = %? and task_key = %? and state in (%?, %?)`,
+			execID, taskID, proto.SubtaskStatePending, proto.SubtaskStateRunning,
+		)
+		if err1 != nil {
+			return err1
+		}
+		_, err1 = sqlexec.ExecSQL(ctx, se,
+			`update mysql.tidb_background_subtask
+			set state = %?, 
+				error = %?, 
+				start_time = unix_timestamp(), 
+				state_update_time = unix_timestamp(),
+				end_time = CURRENT_TIMESTAMP()
+			where exec_id = %? and 
+				task_key = %? and 
+				state in (%?, %?) 
+			limit 1;`,
+			proto.SubtaskStateFailed,
+			serializeErr(err),
+			execID,
+			taskID,
+			proto.SubtaskStatePending,
+			proto.SubtaskStateRunning)
+		if err1 != nil {
+			return err1
+		}
+
+		return nil
+	})
+
+	for _, r := range rs {
+		subtask := row2BasicSubTask(r)
+		metrics.DecDistTaskSubTaskCnt(subtask)
+		metrics.EndDistTaskSubTask(subtask)
+		subtask.State = proto.SubtaskStateFailed
+		metrics.IncDistTaskSubTaskCnt(subtask)
+		metrics.StartDistTaskSubTask(subtask)
+	}
+
+	return nil
 }
 
 // GetActiveSubtasks implements TaskManager.GetActiveSubtasks.
@@ -701,14 +729,16 @@ func (mgr *TaskManager) StartSubtask(ctx context.Context, subtask *proto.Subtask
 		}
 		return nil
 	})
-	if err == nil {
-		metrics.DecDistTaskSubTaskCnt(subtask)
-		metrics.EndDistTaskSubTask(subtask)
-		subtask.State = proto.SubtaskStateRunning
-		metrics.IncDistTaskSubTaskCnt(subtask)
-		metrics.StartDistTaskSubTask(subtask)
+	if err != nil {
+		return err
 	}
-	return err
+
+	metrics.DecDistTaskSubTaskCnt(subtask)
+	metrics.EndDistTaskSubTask(subtask)
+	subtask.State = proto.SubtaskStateRunning
+	metrics.IncDistTaskSubTaskCnt(subtask)
+	metrics.StartDistTaskSubTask(subtask)
+	return nil
 }
 
 // InitMeta insert the manager information into dist_framework_meta.
@@ -856,7 +886,20 @@ func (mgr *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, subtasks []*p
 		}
 		return nil
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	for _, subtask := range subtasks {
+		bak := subtask.ExecID
+		subtask.ExecID = subtask.PreExecID
+		metrics.DecDistTaskSubTaskCnt(subtask)
+		metrics.EndDistTaskSubTask(subtask)
+		subtask.ExecID = bak
+		metrics.IncDistTaskSubTaskCnt(subtask)
+		metrics.StartDistTaskSubTask(subtask)
+	}
+
+	return nil
 }
 
 // RunningSubtasksBack2Pending implements the taskexecutor.TaskTable interface.
@@ -878,6 +921,17 @@ func (mgr *TaskManager) RunningSubtasksBack2Pending(ctx context.Context, subtask
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	for _, subtask := range subtasks {
+		metrics.DecDistTaskSubTaskCnt(subtask)
+		metrics.EndDistTaskSubTask(subtask)
+		subtask.State = proto.SubtaskStatePending
+		metrics.IncDistTaskSubTaskCnt(subtask)
+		metrics.StartDistTaskSubTask(subtask)
+	}
+
 	return err
 }
 
@@ -905,15 +959,72 @@ func (mgr *TaskManager) DeleteDeadNodes(ctx context.Context, nodes []string) err
 
 // PauseSubtasks update all running/pending subtasks to pasued state.
 func (mgr *TaskManager) PauseSubtasks(ctx context.Context, execID string, taskID int64) error {
-	_, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`update mysql.tidb_background_subtask set state = "paused" where task_key = %? and state in ("running", "pending") and exec_id = %?`, taskID, execID)
+	var rs []chunk.Row
+	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		var err error
+		rs, err = sqlexec.ExecSQL(ctx, se,
+			`select `+basicSubtaskColumns+` from mysql.tidb_background_subtask
+			where exec_id = %? and task_key = %? and state in (%?, %?)`,
+			execID, taskID, proto.SubtaskStatePending, proto.SubtaskStateRunning,
+		)
+		if err != nil {
+			return err
+		}
+		_, err = sqlexec.ExecSQL(ctx, se,
+			`update mysql.tidb_background_subtask set state = %? where task_key = %? and state in (%?, %?) and exec_id = %?`,
+			proto.SubtaskStatePaused, taskID, proto.SubtaskStatePending, proto.SubtaskStateRunning, execID,
+		)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	for _, r := range rs {
+		subtask := row2BasicSubTask(r)
+		metrics.DecDistTaskSubTaskCnt(subtask)
+		metrics.EndDistTaskSubTask(subtask)
+		subtask.State = proto.SubtaskStatePaused
+		metrics.IncDistTaskSubTaskCnt(subtask)
+		metrics.StartDistTaskSubTask(subtask)
+	}
+
 	return err
 }
 
 // ResumeSubtasks update all paused subtasks to pending state.
 func (mgr *TaskManager) ResumeSubtasks(ctx context.Context, taskID int64) error {
-	_, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`update mysql.tidb_background_subtask set state = "pending", error = null where task_key = %? and state = "paused"`, taskID)
+	var rs []chunk.Row
+	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		var err error
+		rs, err = sqlexec.ExecSQL(ctx, se,
+			`select `+basicSubtaskColumns+` from mysql.tidb_background_subtask
+			where task_key = %? and state = %?`,
+			taskID, proto.SubtaskStatePaused,
+		)
+		if err != nil {
+			return err
+		}
+		_, err = sqlexec.ExecSQL(ctx, se,
+			`update mysql.tidb_background_subtask set state = %?, error = null where task_key = %? and state = %?`,
+			proto.SubtaskStatePending, taskID, proto.SubtaskStatePaused,
+		)
+		if err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	for _, r := range rs {
+		subtask := row2BasicSubTask(r)
+		metrics.DecDistTaskSubTaskCnt(subtask)
+		metrics.EndDistTaskSubTask(subtask)
+		subtask.State = proto.SubtaskStatePending
+		metrics.IncDistTaskSubTaskCnt(subtask)
+		metrics.StartDistTaskSubTask(subtask)
+	}
 	return err
 }
 
@@ -925,7 +1036,8 @@ func (mgr *TaskManager) SwitchTaskStep(
 	nextStep proto.Step,
 	subtasks []*proto.Subtask,
 ) error {
-	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+	var rs []chunk.Row
+	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		vars := se.GetSessionVars()
 		if vars.MemQuotaQuery < variable.DefTiDBMemQuotaQuery {
 			bak := vars.MemQuotaQuery
@@ -948,8 +1060,34 @@ func (mgr *TaskManager) SwitchTaskStep(
 			// Or when there is no such task.
 			return nil
 		}
-		return mgr.insertSubtasks(ctx, se, subtasks)
+		err = mgr.insertSubtasks(ctx, se, subtasks)
+		if err != nil {
+			return err
+		}
+
+		if len(subtasks) > 0 {
+			rs, err = sqlexec.ExecSQL(ctx, se,
+				`select `+basicSubtaskColumns+` from mysql.tidb_background_subtask
+			where exec_id = %? and task_key = %? and step = %?`,
+				subtasks[0].ExecID, subtasks[0].TaskID, subtasks[0].Step,
+			)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	for _, r := range rs {
+		subtask := row2BasicSubTask(r)
+		metrics.IncDistTaskSubTaskCnt(subtask)
+		metrics.StartDistTaskSubTask(subtask)
+	}
+	return nil
 }
 
 func (*TaskManager) updateTaskStateStep(ctx context.Context, se sessionctx.Context,
@@ -1006,9 +1144,11 @@ func (mgr *TaskManager) SwitchTaskStepInBatch(
 	nextStep proto.Step,
 	subtasks []*proto.Subtask,
 ) error {
-	return mgr.WithNewSession(func(se sessionctx.Context) error {
+	var rs []chunk.Row
+	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		var err error
 		// some subtasks may be inserted by other dispatchers, we can skip them.
-		rs, err := sqlexec.ExecSQL(ctx, se, `
+		rs, err = sqlexec.ExecSQL(ctx, se, `
 			select count(1) from mysql.tidb_background_subtask
 			where task_key = %? and step = %?`, task.ID, nextStep)
 		if err != nil {
@@ -1025,8 +1165,33 @@ func (mgr *TaskManager) SwitchTaskStepInBatch(
 				return err
 			}
 		}
-		return mgr.updateTaskStateStep(ctx, se, task, nextState, nextStep)
+		if err = mgr.updateTaskStateStep(ctx, se, task, nextState, nextStep); err != nil {
+			return err
+		}
+
+		if len(subtasks) > 0 {
+			rs, err = sqlexec.ExecSQL(ctx, se,
+				`select `+basicSubtaskColumns+` from mysql.tidb_background_subtask
+				where exec_id = %? and task_key = %? and step = %?`,
+				subtasks[0].ExecID, subtasks[0].TaskID, subtasks[0].Step,
+			)
+			if err != nil {
+				return err
+			}
+		}
+
+		return nil
 	})
+	if err != nil {
+		return err
+	}
+
+	for _, r := range rs {
+		subtask := row2BasicSubTask(r)
+		metrics.IncDistTaskSubTaskCnt(subtask)
+		metrics.StartDistTaskSubTask(subtask)
+	}
+	return nil
 }
 
 func (*TaskManager) splitSubtasks(subtasks []*proto.Subtask) [][]*proto.Subtask {

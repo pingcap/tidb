@@ -192,6 +192,7 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 			targetSubtaskCnt = averageSubtaskCnt + 1
 		}
 		for i := len(sts); i < targetSubtaskCnt && fillIdx < len(subtasksNeedSchedule); i++ {
+			subtasksNeedSchedule[fillIdx].PreExecID = subtasksNeedSchedule[fillIdx].ExecID
 			subtasksNeedSchedule[fillIdx].ExecID = node
 			fillIdx++
 		}

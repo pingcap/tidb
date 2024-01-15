@@ -26,19 +26,23 @@ import (
 // we do this to make the subtask can be scheduled to other node again, it's NOT
 // a normal state transition.
 //
-//	               ┌──────────────┐
-//	               │          ┌───┴──┐
-//	               │ ┌───────►│paused│
-//	               ▼ │        └──────┘
-//	┌───────┐    ┌───┴───┐    ┌───────┐
-//	│pending├───►│running├───►│succeed│
-//	└───────┘    └┬──┬───┘    └───────┘
-//	     ▲        │  │        ┌──────┐
-//	     └────────┘  ├───────►│failed│
-//	                 │        └──────┘
-//	                 │        ┌────────┐
-//	                 └───────►│canceled│
-//	                          └────────┘
+//			               ┌──────────────┐
+//			               │          ┌───┴──┐
+//			               │ ┌───────►│paused│
+//			               ▼ │        └──────┘
+//			┌───────┐    ┌───┴───┐    ┌───────┐
+//			│pending├───►│running├───►│succeed│
+//			└───────┘    └┬──┬───┘    └───────┘
+//			   │ ▲        │  │        ┌──────┐
+//			   │ └────────┘  ├───────►│failed│
+//			   │             │        └──────┘
+//		       │             │           ▲
+//		       ├──────────── │ ──────────┘
+//			   │             │        ┌────────┐
+//			   │             └───────►│canceled│
+//			   │                      └────────┘
+//	           │                         ▲
+//	           └─────────────────────────┘
 //
 // for reverting subtask:
 //
@@ -90,6 +94,7 @@ type Subtask struct {
 	// ExecID is the ID of target executor, right now it's the same as instance_id,
 	// its value is IP:PORT, see GenerateExecID
 	ExecID     string
+	PreExecID  string
 	CreateTime time.Time
 	// StartTime is the time when the subtask is started.
 	// it's 0 if it hasn't started yet.
