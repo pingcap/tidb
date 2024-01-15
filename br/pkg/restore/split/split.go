@@ -99,9 +99,10 @@ func PaginateScanRegion(
 		backoffer   = NewWaitRegionOnlineBackoffer().(*WaitRegionOnlineBackoffer)
 	)
 	retryCnt := 0
-	_ = utils.WithRetry(ctx, func() error {
-		if retryCnt == 10 {
-			log.Warn("failed to scan region 10 times, retrying", zap.Int("cnt", retryCnt), logutil.Key("startKey", startKey))
+	err = utils.WithRetry(ctx, func() error {
+		retryCnt += 1
+		if retryCnt == 5 {
+			log.Warn("failed to scan region 5 times, retrying", zap.Int("cnt", retryCnt), logutil.Key("startKey", startKey))
 		}
 		if retryCnt > 1000 {
 			log.Warn("failed to scan region 1000+times, retrying", zap.Int("cnt", retryCnt), logutil.Key("startKey", startKey))
@@ -190,7 +191,7 @@ func ScanRegionsWithRetry(
 	// actually we'd better remove all multierr in br/lightning.
 	// because it's not easy to check multierr equals normal error.
 	// see https://github.com/pingcap/tidb/issues/33419.
-	_ = utils.WithRetry(ctx, func() error {
+	err = utils.WithRetry(ctx, func() error {
 		regions, err = client.ScanRegions(ctx, startKey, endKey, limit)
 		if err != nil {
 			err = errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan regions from start-key:%s, err: %s",
