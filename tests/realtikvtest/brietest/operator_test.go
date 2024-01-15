@@ -152,6 +152,7 @@ func TestOperator(t *testing.T) {
 	verifySchedulerNotStopped(req, cfg)
 
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	go func() {
 		req.NoError(operator.AdaptEnvForSnapshotBackup(ctx, &cfg))
 	}()
@@ -163,8 +164,8 @@ func TestOperator(t *testing.T) {
 			return false
 		}
 	}, 10*time.Second, time.Second)
-	defer cancel()
 
+	cancel()
 	verifyGCStopped(req, cfg)
 	verifyLightningStopped(req, cfg)
 	verifySchedulersStopped(req, cfg)
