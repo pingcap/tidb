@@ -698,7 +698,7 @@ func (s *BaseTaskExecutor) updateErrorToSubtask(ctx context.Context, taskID int6
 			},
 		)
 		if err1 == nil {
-			logger.Warn("update error to subtask success", zap.Error(err))
+			logger.Warn("updating an error to subtask succeed", zap.Error(err))
 		}
 		return err1
 	}
