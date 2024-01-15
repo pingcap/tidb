@@ -66,6 +66,12 @@ func (c *applyCache) put(key applyCacheKey, val kvcache.Value) {
 	c.cache.Put(key, val)
 }
 
+func (c *applyCache) removeOldest() (kvcache.Key, kvcache.Value, bool) {
+	c.lock.Lock()
+	defer c.lock.Unlock()
+	return c.cache.RemoveOldest()
+}
+
 // Get gets a cache item according to cache key. It's thread-safe.
 func (c *applyCache) Get(key applyCacheKey) (*chunk.List, error) {
 	value, hit := c.get(key)
@@ -83,7 +89,7 @@ func (c *applyCache) Set(key applyCacheKey, value *chunk.List) (bool, error) {
 		return false, nil
 	}
 	for mem+c.memTracker.BytesConsumed() > c.memCapacity {
-		evictedKey, evictedValue, evicted := c.cache.RemoveOldest()
+		evictedKey, evictedValue, evicted := c.removeOldest()
 		if !evicted {
 			return false, nil
 		}
