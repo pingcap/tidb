@@ -29,7 +29,8 @@ func TestWarningWithDisablePlanCacheStmt(t *testing.T) {
 	tk.MustExec("prepare st from 'select * from t';")
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable"))
 	tk.MustExec("execute st;")
-	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable"))
 	tk.MustExec("execute st;")
-	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
