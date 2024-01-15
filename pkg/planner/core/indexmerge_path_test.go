@@ -15,13 +15,91 @@
 package core_test
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/stretchr/testify/require"
 )
+
+func TestCollectFilters4MVIndexMutations(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, domains json null, images json null, KEY `a_domains_b` (a, (cast(`domains` as char(253) array)), b))")
+	sql := "SELECT * FROM t WHERE   15975127 member of (domains)   AND 15975128 member of (domains) AND a = 1 AND b = 2"
+
+	par := parser.New()
+	par.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
+	// Make sure the table schema is the new schema.
+	err := domain.Reload()
+	require.NoError(t, err)
+	is := domain.InfoSchema()
+	is = &infoschema.SessionExtendedInfoSchema{InfoSchema: is}
+	require.NoError(t, tk.Session().PrepareTxnCtx(context.TODO()))
+	require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).OnStmtStart(context.TODO(), nil))
+	stmt, err := par.ParseOneStmt(sql, "", "")
+	require.NoError(t, err)
+	tk.Session().GetSessionVars().PlanID.Store(0)
+	tk.Session().GetSessionVars().PlanColumnID.Store(0)
+	err = core.Preprocess(context.Background(), tk.Session(), stmt, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+	require.NoError(t, err)
+	require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
+	builder, _ := core.NewPlanBuilder().Init(tk.Session(), is, hint.NewQBHintHandler(nil))
+	p, err := builder.Build(context.TODO(), stmt)
+	require.NoError(t, err)
+	logicalP, err := core.LogicalOptimizeTest(context.TODO(), builder.GetOptFlag(), p.(core.LogicalPlan))
+	require.NoError(t, err)
+
+	ds, ok := logicalP.(*core.DataSource)
+	for !ok {
+		p := logicalP.Children()[0]
+		ds, ok = p.(*core.DataSource)
+	}
+	cnfs := ds.GetAllConds()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	idxCols, ok := core.PrepareCols4MVIndex(tbl.Meta(), tbl.Meta().FindIndexByName("a_domains_b"), ds.TblCols)
+	require.True(t, ok)
+	accessFilters, _, mvColOffset, mvFilterMutations := core.CollectFilters4MVIndexMutations(tk.Session(), cnfs, idxCols)
+
+	// assert mv col access filters.
+	require.Equal(t, len(accessFilters), 3)
+	sf, ok := accessFilters[0].(*expression.ScalarFunction)
+	require.True(t, ok)
+	require.Equal(t, sf.FuncName.L, ast.EQ)
+	sf, ok = accessFilters[1].(*expression.ScalarFunction)
+	require.True(t, ok)
+	require.Equal(t, sf.FuncName.L, ast.JSONMemberOf)
+	sf, ok = accessFilters[2].(*expression.ScalarFunction)
+	require.True(t, ok)
+	require.Equal(t, sf.FuncName.L, ast.EQ)
+
+	// assert mv col offset
+	require.Equal(t, mvColOffset, 1)
+
+	// assert mv col condition mutations.
+	require.Equal(t, len(mvFilterMutations), 2)
+	sf, ok = mvFilterMutations[0].(*expression.ScalarFunction)
+	require.True(t, ok)
+	require.Equal(t, sf.FuncName.L, ast.JSONMemberOf)
+	sf, ok = mvFilterMutations[1].(*expression.ScalarFunction)
+	require.True(t, ok)
+	require.Equal(t, sf.FuncName.L, ast.JSONMemberOf)
+}
 
 func TestMultiMVIndexRandom(t *testing.T) {
 	store := testkit.CreateMockStore(t)

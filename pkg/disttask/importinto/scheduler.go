@@ -173,7 +173,7 @@ func (sch *ImportSchedulerExt) switchTiKVMode(ctx context.Context, task *proto.T
 	}
 
 	logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
-	pdCli, switcher, err := importer.GetTiKVModeSwitcherWithPDClient(ctx, logger)
+	pdCli, switcher, err := importer.GetTiKVModeSwitcherWithPDClient(logger)
 	if err != nil {
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
@@ -379,7 +379,7 @@ func (sch *ImportSchedulerExt) switchTiKV2NormalMode(ctx context.Context, task *
 	sch.mu.Lock()
 	defer sch.mu.Unlock()
 
-	pdCli, switcher, err := importer.GetTiKVModeSwitcherWithPDClient(ctx, logger)
+	pdCli, switcher, err := importer.GetTiKVModeSwitcherWithPDClient(logger)
 	if err != nil {
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return

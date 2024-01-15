@@ -645,17 +645,6 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, endTime, ts)
 
-	// test UpdateFailedTaskExecutorIDs and IsTaskExecutorCanceled
-	canceled, err := sm.IsTaskExecutorCanceled(ctx, "for_test999", 4)
-	require.NoError(t, err)
-	require.True(t, canceled)
-	canceled, err = sm.IsTaskExecutorCanceled(ctx, "for_test1", 4)
-	require.NoError(t, err)
-	require.False(t, canceled)
-	canceled, err = sm.IsTaskExecutorCanceled(ctx, "for_test2", 4)
-	require.NoError(t, err)
-	require.True(t, canceled)
-
 	// test UpdateSubtasksExecIDs
 	// 1. update one subtask
 	testutil.CreateSubTask(t, sm, 5, proto.StepInit, "tidb1", []byte("test"), proto.TaskTypeExample, 11, false)
@@ -1162,4 +1151,58 @@ func TestSubtaskType(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, c, subtask.Type)
 	}
+}
+
+func TestRunningSubtasksBack2Pending(t *testing.T) {
+	_, sm, ctx := testutil.InitTableTest(t)
+	subtasks := []*proto.Subtask{
+		{TaskID: 1, ExecID: "tidb-1", State: proto.SubtaskStatePending},
+		{TaskID: 1, ExecID: "tidb-1", State: proto.SubtaskStateRunning},
+		{TaskID: 1, ExecID: "tidb-2", State: proto.SubtaskStatePending},
+		{TaskID: 2, ExecID: "tidb-1", State: proto.SubtaskStatePending},
+	}
+	for _, st := range subtasks {
+		testutil.InsertSubtask(t, sm, st.TaskID, proto.StepOne, st.ExecID, []byte(""), st.State, proto.TaskTypeExample, 12)
+	}
+
+	getAllSubtasks := func() []*proto.Subtask {
+		res := make([]*proto.Subtask, 0, 3)
+		require.NoError(t, sm.WithNewSession(func(se sessionctx.Context) error {
+			rs, err := sqlexec.ExecSQL(ctx, se, `
+				select cast(task_key as signed), exec_id, state, state_update_time
+				from mysql.tidb_background_subtask
+				order by task_key, exec_id, state`)
+			require.NoError(t, err)
+			for _, r := range rs {
+				var updateTime time.Time
+				if !r.IsNull(3) {
+					updateTime = time.Unix(r.GetInt64(3), 0)
+				}
+				res = append(res, &proto.Subtask{
+					TaskID:     r.GetInt64(0),
+					ExecID:     r.GetString(1),
+					State:      proto.SubtaskState(r.GetString(2)),
+					UpdateTime: updateTime,
+				})
+			}
+			return nil
+		}))
+		return res
+	}
+
+	require.Equal(t, subtasks, getAllSubtasks())
+	require.NoError(t, sm.RunningSubtasksBack2Pending(ctx, nil))
+	require.Equal(t, subtasks, getAllSubtasks())
+
+	activeSubtasks, err := sm.GetActiveSubtasks(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, activeSubtasks, 3)
+	startTime := time.Unix(time.Now().Unix(), 0)
+	// this list contains running and pending subtasks, just for test.
+	require.NoError(t, sm.RunningSubtasksBack2Pending(ctx, activeSubtasks))
+	allSubtasks := getAllSubtasks()
+	require.GreaterOrEqual(t, allSubtasks[1].UpdateTime, startTime)
+	allSubtasks[1].UpdateTime = time.Time{}
+	subtasks[1].State = proto.SubtaskStatePending
+	require.Equal(t, subtasks, allSubtasks)
 }
