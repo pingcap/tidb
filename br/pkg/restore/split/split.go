@@ -98,7 +98,14 @@ func PaginateScanRegion(
 		err         error
 		backoffer   = NewWaitRegionOnlineBackoffer().(*WaitRegionOnlineBackoffer)
 	)
+	retryCnt := 0
 	_ = utils.WithRetry(ctx, func() error {
+		if retryCnt == 10 {
+			log.Warn("failed to scan region 10 times, retrying", zap.Int("cnt", retryCnt), logutil.Key("startKey", startKey))
+		}
+		if retryCnt > 1000 {
+			log.Warn("failed to scan region 1000+times, retrying", zap.Int("cnt", retryCnt), logutil.Key("startKey", startKey))
+		}
 		regions := make([]*RegionInfo, 0, 16)
 		scanStartKey := startKey
 		for {
@@ -212,7 +219,7 @@ func NewWaitRegionOnlineBackoffer() utils.Backoffer {
 		Stat: utils.InitialRetryState(
 			WaitRegionOnlineAttemptTimes,
 			time.Millisecond*100,
-			time.Second*4,
+			time.Second*40,
 		),
 	}
 }
