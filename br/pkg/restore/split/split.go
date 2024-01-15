@@ -227,6 +227,7 @@ func NewWaitRegionOnlineBackoffer() utils.Backoffer {
 // NextBackoff returns a duration to wait before retrying again
 func (b *WaitRegionOnlineBackoffer) NextBackoff(err error) time.Duration {
 	if berrors.ErrPDBatchScanRegion.Equal(err) {
+		log.Info("backoffer with", zap.Error(err), zap.Int("attempt", b.Stat.Attempt()))
 		// it needs more time to wait splitting the regions that contains data in PITR.
 		// 2s * 150
 		delayTime := b.Stat.ExponentialBackoff()
@@ -236,6 +237,8 @@ func (b *WaitRegionOnlineBackoffer) NextBackoff(err error) time.Duration {
 			}
 		})
 		return delayTime
+	} else {
+		log.Info("no backoffer")
 	}
 	b.Stat.StopRetry()
 	return 0
