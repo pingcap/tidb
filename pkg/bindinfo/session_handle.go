@@ -118,7 +118,7 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, fuzz
 			if err != nil {
 				return nil, err
 			}
-			_, bindingFuzzyDigest := norm.NormalizeStmtForFuzzyBinding(bindingStmt)
+			_, bindingFuzzyDigest := norm.NormalizeStmtForBinding(bindingStmt, norm.WithFuzz(true))
 			if bindingFuzzyDigest != fuzzyDigest {
 				continue
 			}
