@@ -321,15 +321,15 @@ func escapeIdentifiers(identifier []string) []any {
 	return escaped
 }
 
-// SprintfWithIdentifier escapes the identifiers and sprintf them. The input
+// SprintfWithIdentifiers escapes the identifiers and sprintf them. The input
 // identifiers must not be escaped.
-func SprintfWithIdentifier(format string, identifiers ...string) string {
+func SprintfWithIdentifiers(format string, identifiers ...string) string {
 	return fmt.Sprintf(format, escapeIdentifiers(identifiers)...)
 }
 
-// FprintfWithIdentifier escapes the identifiers and fprintf them. The input
+// FprintfWithIdentifiers escapes the identifiers and fprintf them. The input
 // identifiers must not be escaped.
-func FprintfWithIdentifier(w io.Writer, format string, identifiers ...string) (int, error) {
+func FprintfWithIdentifiers(w io.Writer, format string, identifiers ...string) (int, error) {
 	return fmt.Fprintf(w, format, escapeIdentifiers(identifiers)...)
 }
 
@@ -547,9 +547,9 @@ loop:
 // BuildDropIndexSQL builds the SQL statement to drop index.
 func BuildDropIndexSQL(dbName, tableName string, idxInfo *model.IndexInfo) string {
 	if idxInfo.Primary {
-		return SprintfWithIdentifier("ALTER TABLE %s.%s DROP PRIMARY KEY", dbName, tableName)
+		return SprintfWithIdentifiers("ALTER TABLE %s.%s DROP PRIMARY KEY", dbName, tableName)
 	}
-	return SprintfWithIdentifier("ALTER TABLE %s.%s DROP INDEX %s", dbName, tableName, idxInfo.Name.O)
+	return SprintfWithIdentifiers("ALTER TABLE %s.%s DROP INDEX %s", dbName, tableName, idxInfo.Name.O)
 }
 
 // BuildAddIndexSQL builds the SQL statement to create missing indexes.

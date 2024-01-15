@@ -730,40 +730,39 @@ type MySQLCheckpointsDB struct {
 
 // NewMySQLCheckpointsDB creates a new MySQLCheckpointsDB.
 func NewMySQLCheckpointsDB(ctx context.Context, db *sql.DB, schemaName string) (*MySQLCheckpointsDB, error) {
-	schema := common.EscapeIdentifier(schemaName)
 	sql := common.SQLWithRetry{
 		DB:           db,
 		Logger:       log.FromContext(ctx).With(zap.String("schema", schemaName)),
 		HideQueryLog: true,
 	}
-	err := sql.Exec(ctx, "create checkpoints database", fmt.Sprintf(CreateDBTemplate, schema))
+	err := sql.Exec(ctx, "create checkpoints database", common.SprintfWithIdentifiers(CreateDBTemplate, schemaName))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	err = sql.Exec(ctx, "create task checkpoints table", fmt.Sprintf(CreateTaskTableTemplate, schema, CheckpointTableNameTask))
+	err = sql.Exec(ctx, "create task checkpoints table", common.SprintfWithIdentifiers(CreateTaskTableTemplate, schemaName, CheckpointTableNameTask))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	err = sql.Exec(ctx, "create table checkpoints table", fmt.Sprintf(CreateTableTableTemplate, schema, CheckpointTableNameTable))
+	err = sql.Exec(ctx, "create table checkpoints table", common.SprintfWithIdentifiers(CreateTableTableTemplate, schemaName, CheckpointTableNameTable))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	err = sql.Exec(ctx, "create engine checkpoints table", fmt.Sprintf(CreateEngineTableTemplate, schema, CheckpointTableNameEngine))
+	err = sql.Exec(ctx, "create engine checkpoints table", common.SprintfWithIdentifiers(CreateEngineTableTemplate, schemaName, CheckpointTableNameEngine))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	err = sql.Exec(ctx, "create chunks checkpoints table", fmt.Sprintf(CreateChunkTableTemplate, schema, CheckpointTableNameChunk))
+	err = sql.Exec(ctx, "create chunks checkpoints table", common.SprintfWithIdentifiers(CreateChunkTableTemplate, schemaName, CheckpointTableNameChunk))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	return &MySQLCheckpointsDB{
 		db:     db,
-		schema: schema,
+		schema: common.EscapeIdentifier(schemaName),
 	}, nil
 }
 
