@@ -170,7 +170,7 @@ const (
 type ErrorManager struct {
 	db             *sql.DB
 	taskID         int64
-	schemaEscaped  string
+	schema         string
 	configError    *config.MaxError
 	remainingError config.MaxError
 
@@ -229,7 +229,7 @@ func New(db *sql.DB, cfg *config.Config, logger log.Logger) *ErrorManager {
 	}
 	if len(cfg.App.TaskInfoSchemaName) != 0 {
 		em.db = db
-		em.schemaEscaped = common.EscapeIdentifier(cfg.App.TaskInfoSchemaName)
+		em.schema = cfg.App.TaskInfoSchemaName
 	}
 	return em
 }
@@ -267,7 +267,7 @@ func (em *ErrorManager) Init(ctx context.Context) error {
 
 	for _, sql := range sqls {
 		// trim spaces for unit test pattern matching
-		err := exec.Exec(ctx, sql[0], strings.TrimSpace(fmt.Sprintf(sql[1], em.schemaEscaped)))
+		err := exec.Exec(ctx, sql[0], strings.TrimSpace(common.SprintfWithIdentifier(sql[1], em.schema)))
 		if err != nil {
 			return err
 		}
@@ -312,7 +312,7 @@ func (em *ErrorManager) RecordTypeError(
 			HideQueryLog: redact.NeedRedact(),
 		}
 		if err := exec.Exec(ctx, "insert type error record",
-			fmt.Sprintf(insertIntoTypeError, em.schemaEscaped),
+			common.SprintfWithIdentifier(insertIntoTypeError, em.schema),
 			em.taskID,
 			tableName,
 			path,
@@ -366,7 +366,7 @@ func (em *ErrorManager) RecordDataConflictError(
 	}
 	if err := exec.Transact(ctx, "insert data conflict error record", func(c context.Context, txn *sql.Tx) error {
 		sb := &strings.Builder{}
-		fmt.Fprintf(sb, insertIntoConflictErrorData, em.schemaEscaped)
+		common.FprintfWithIdentifier(sb, insertIntoConflictErrorData, em.schema)
 		var sqlArgs []interface{}
 		for i, conflictInfo := range conflictInfos {
 			if i > 0 {
@@ -425,7 +425,7 @@ func (em *ErrorManager) RecordIndexConflictError(
 	}
 	if err := exec.Transact(ctx, "insert index conflict error record", func(c context.Context, txn *sql.Tx) error {
 		sb := &strings.Builder{}
-		fmt.Fprintf(sb, insertIntoConflictErrorIndex, em.schemaEscaped)
+		common.FprintfWithIdentifier(sb, insertIntoConflictErrorIndex, em.schema)
 		var sqlArgs []interface{}
 		for i, conflictInfo := range conflictInfos {
 			if i > 0 {
@@ -487,7 +487,7 @@ func (em *ErrorManager) RemoveAllConflictKeys(
 			var handleRows [][2][]byte
 			for start < end {
 				rows, err := em.db.QueryContext(
-					gCtx, fmt.Sprintf(selectConflictKeysRemove, em.schemaEscaped),
+					gCtx, common.SprintfWithIdentifier(selectConflictKeysRemove, em.schema),
 					tableName, start, end, rowLimit)
 				if err != nil {
 					return errors.Trace(err)
@@ -567,7 +567,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		// demo for "replace" algorithm: https://github.com/lyzx2001/tidb-conflict-replace
 		// check index KV
 		indexKvRows, err := em.db.QueryContext(
-			gCtx, fmt.Sprintf(selectIndexConflictKeysReplace, em.schemaEscaped),
+			gCtx, common.SprintfWithIdentifier(selectIndexConflictKeysReplace, em.schema),
 			tableName)
 		if err != nil {
 			return errors.Trace(err)
@@ -666,7 +666,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					if err := exec.Transact(ctx, "insert data conflict error record for conflict detection 'replace' mode",
 						func(c context.Context, txn *sql.Tx) error {
 							sb := &strings.Builder{}
-							fmt.Fprintf(sb, insertIntoConflictErrorData, em.schemaEscaped)
+							common.FprintfWithIdentifier(sb, insertIntoConflictErrorData, em.schema)
 							var sqlArgs []interface{}
 							sb.WriteString(sqlValuesConflictErrorData)
 							sqlArgs = append(sqlArgs,
@@ -696,7 +696,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 
 		// check data KV
 		dataKvRows, err := em.db.QueryContext(
-			gCtx, fmt.Sprintf(selectDataConflictKeysReplace, em.schemaEscaped),
+			gCtx, common.SprintfWithIdentifier(selectDataConflictKeysReplace, em.schema),
 			tableName)
 		if err != nil {
 			return errors.Trace(err)
@@ -872,7 +872,7 @@ func (em *ErrorManager) recordDuplicate(
 		HideQueryLog: redact.NeedRedact(),
 	}
 	return exec.Exec(ctx, "insert duplicate record",
-		fmt.Sprintf(insertIntoDupRecord, em.schemaEscaped),
+		common.SprintfWithIdentifier(insertIntoDupRecord, em.schema),
 		em.taskID,
 		tableName,
 		path,
@@ -974,7 +974,7 @@ func (em *ErrorManager) LogErrorDetails() {
 }
 
 func (em *ErrorManager) fmtTableName(t string) string {
-	return fmt.Sprintf("%s.`%s`", em.schemaEscaped, t)
+	return common.UniqueTable(em.schema, t)
 }
 
 // Output renders a table which contains error summery for each error type.
