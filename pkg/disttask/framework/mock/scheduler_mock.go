@@ -592,20 +592,6 @@ func (mr *MockTaskManagerMockRecorder) SwitchTaskStepInBatch(arg0, arg1, arg2, a
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SwitchTaskStepInBatch", reflect.TypeOf((*MockTaskManager)(nil).SwitchTaskStepInBatch), arg0, arg1, arg2, arg3, arg4)
 }
 
-// TransferSubTasks2History mocks base method.
-func (m *MockTaskManager) TransferSubTasks2History(arg0 context.Context, arg1 int64) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "TransferSubTasks2History", arg0, arg1)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// TransferSubTasks2History indicates an expected call of TransferSubTasks2History.
-func (mr *MockTaskManagerMockRecorder) TransferSubTasks2History(arg0, arg1 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TransferSubTasks2History", reflect.TypeOf((*MockTaskManager)(nil).TransferSubTasks2History), arg0, arg1)
-}
-
 // TransferTasks2History mocks base method.
 func (m *MockTaskManager) TransferTasks2History(arg0 context.Context, arg1 []*proto.Task) error {
 	m.ctrl.T.Helper()
