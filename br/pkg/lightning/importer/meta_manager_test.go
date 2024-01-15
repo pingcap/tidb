@@ -99,7 +99,8 @@ func newMetaMgrSuite(t *testing.T) *metaMgrSuite {
 		taskID:  1,
 		tr: newTableRestore(t, "test", "t1", 1, 1,
 			"CREATE TABLE `t1` (`c1` varchar(5) NOT NULL)", kvStore),
-		tableName:    common.UniqueTable("test", TableMetaTableName),
+		schemaName:   "test",
+		tableName:    TableMetaTableName,
 		needChecksum: true,
 	}
 	s.mockDB = m
@@ -373,9 +374,10 @@ func newTaskMetaMgrSuite(t *testing.T) *taskMetaMgrSuite {
 
 	var s taskMetaMgrSuite
 	s.mgr = &dbTaskMetaMgr{
-		session:   db,
-		taskID:    1,
-		tableName: common.UniqueTable("test", "t1"),
+		session:    db,
+		taskID:     1,
+		tableName:  "t1",
+		schemaName: "test",
 	}
 	s.mockDB = m
 	return &s
@@ -386,7 +388,7 @@ func TestCheckTasksExclusively(t *testing.T) {
 	s.mockDB.ExpectExec("SET SESSION tidb_txn_mode = 'pessimistic';").
 		WillReturnResult(sqlmock.NewResult(int64(0), int64(0)))
 	s.mockDB.ExpectBegin()
-	s.mockDB.ExpectQuery("SELECT task_id, pd_cfgs, status, state, tikv_source_bytes, tiflash_source_bytes, tikv_avail, tiflash_avail from `test`.`t1` FOR UPDATE").
+	s.mockDB.ExpectQuery("SELECT task_id, pd_cfgs, status, state, tikv_source_bytes, tiflash_source_bytes, tikv_avail, tiflash_avail FROM `test`.`t1` FOR UPDATE").
 		WillReturnRows(sqlmock.NewRows([]string{"task_id", "pd_cfgs", "status", "state", "tikv_source_bytes", "tiflash_source_bytes", "tiflash_avail", "tiflash_avail"}).
 			AddRow("0", "", taskMetaStatusInitial.String(), "0", "0", "0", "0", "0").
 			AddRow("1", "", taskMetaStatusInitial.String(), "0", "0", "0", "0", "0").
