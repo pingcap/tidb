@@ -67,7 +67,7 @@ func (c *applyCache) put(key applyCacheKey, val kvcache.Value) {
 	c.cache.Put(key, val)
 }
 
-func (c *ApplyCache) removeOldest() (kvcache.Key, kvcache.Value, bool) {
+func (c *applyCache) removeOldest() (kvcache.Key, kvcache.Value, bool) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	return c.cache.RemoveOldest()
