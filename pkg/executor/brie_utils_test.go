@@ -300,7 +300,7 @@ func TestBRIECreateTables(t *testing.T) {
 	tk.MustExec("use test")
 	tableInfos := make([]*model.TableInfo, 100)
 	for i := range tableInfos {
-		tk.MustExec(fmt.Sprintf("drop table if exists TestBRIECreateTables_table_%d", i))
+		tk.MustExec(fmt.Sprintf("drop table if exists table_%d", i))
 	}
 
 	d := dom.DDL()
@@ -309,7 +309,7 @@ func TestBRIECreateTables(t *testing.T) {
 	sctx := tk.Session()
 	originQueryString := sctx.Value(sessionctx.QueryString)
 	for i := range tableInfos {
-		tableInfos[i] = mockTableInfo(t, sctx, fmt.Sprintf("create table test.TestBRIECreateTables_table_%d (a int primary key, b json, c varchar(20))", i))
+		tableInfos[i] = mockTableInfo(t, sctx, fmt.Sprintf("create table test.table_%d (a int primary key, b json, c varchar(20))", i))
 		tableInfos[i].ID = 1230 + int64(i)
 	}
 	err := executor.BRIECreateTables(sctx, map[string][]*model.TableInfo{"test": tableInfos}, "/* from test */")
@@ -317,6 +317,6 @@ func TestBRIECreateTables(t *testing.T) {
 
 	require.Equal(t, originQueryString, sctx.Value(sessionctx.QueryString))
 	for i := range tableInfos {
-		tk.MustExec(fmt.Sprintf("desc TestBRIECreateTables_table_%d", i))
+		tk.MustExec(fmt.Sprintf("desc table_%d", i))
 	}
 }
