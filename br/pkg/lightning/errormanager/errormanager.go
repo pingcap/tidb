@@ -366,7 +366,10 @@ func (em *ErrorManager) RecordDataConflictError(
 	}
 	if err := exec.Transact(ctx, "insert data conflict error record", func(c context.Context, txn *sql.Tx) error {
 		sb := &strings.Builder{}
-		common.FprintfWithIdentifiers(sb, insertIntoConflictErrorData, em.schema)
+		_, err := common.FprintfWithIdentifiers(sb, insertIntoConflictErrorData, em.schema)
+		if err != nil {
+			return err
+		}
 		var sqlArgs []interface{}
 		for i, conflictInfo := range conflictInfos {
 			if i > 0 {
@@ -383,7 +386,7 @@ func (em *ErrorManager) RecordDataConflictError(
 				tablecodec.IsRecordKey(conflictInfo.RawKey),
 			)
 		}
-		_, err := txn.ExecContext(c, sb.String(), sqlArgs...)
+		_, err = txn.ExecContext(c, sb.String(), sqlArgs...)
 		return err
 	}); err != nil {
 		gerr = err
@@ -425,7 +428,10 @@ func (em *ErrorManager) RecordIndexConflictError(
 	}
 	if err := exec.Transact(ctx, "insert index conflict error record", func(c context.Context, txn *sql.Tx) error {
 		sb := &strings.Builder{}
-		common.FprintfWithIdentifiers(sb, insertIntoConflictErrorIndex, em.schema)
+		_, err := common.FprintfWithIdentifiers(sb, insertIntoConflictErrorIndex, em.schema)
+		if err != nil {
+			return err
+		}
 		var sqlArgs []interface{}
 		for i, conflictInfo := range conflictInfos {
 			if i > 0 {
@@ -445,7 +451,7 @@ func (em *ErrorManager) RecordIndexConflictError(
 				tablecodec.IsRecordKey(conflictInfo.RawKey),
 			)
 		}
-		_, err := txn.ExecContext(c, sb.String(), sqlArgs...)
+		_, err = txn.ExecContext(c, sb.String(), sqlArgs...)
 		return err
 	}); err != nil {
 		gerr = err
@@ -666,7 +672,10 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					if err := exec.Transact(ctx, "insert data conflict error record for conflict detection 'replace' mode",
 						func(c context.Context, txn *sql.Tx) error {
 							sb := &strings.Builder{}
-							common.FprintfWithIdentifiers(sb, insertIntoConflictErrorData, em.schema)
+							_, err2 := common.FprintfWithIdentifiers(sb, insertIntoConflictErrorData, em.schema)
+							if err2 != nil {
+								return err2
+							}
 							var sqlArgs []interface{}
 							sb.WriteString(sqlValuesConflictErrorData)
 							sqlArgs = append(sqlArgs,
