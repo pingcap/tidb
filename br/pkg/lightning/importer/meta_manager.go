@@ -483,7 +483,7 @@ func (m *dbTableMetaMgr) FinishTable(ctx context.Context) error {
 		DB:     m.session,
 		Logger: m.tr.logger,
 	}
-	query := fmt.Sprintf("DELETE FROM %s where table_id = ? and (status = 'checksuming' or status = 'checksum_skipped')", m.tableName)
+	query := common.SprintfWithIdentifiers("DELETE FROM %s.%s where table_id = ? and (status = 'checksuming' or status = 'checksum_skipped')", m.schemaName, m.tableName)
 	return exec.Exec(ctx, "clean up metas", query, m.tr.tableInfo.ID)
 }
 
@@ -995,7 +995,7 @@ func MaybeCleanupAllMetas(
 
 	// check if all tables are finished
 	if tableMetaExist {
-		query := fmt.Sprintf("SELECT COUNT(*) from %s", common.UniqueTable(schemaName, TableMetaTableName))
+		query := common.SprintfWithIdentifiers("SELECT COUNT(*) from %s.%s", schemaName, TableMetaTableName)
 		var cnt int
 		if err := exec.QueryRow(ctx, "fetch table meta row count", query, &cnt); err != nil {
 			return errors.Trace(err)
