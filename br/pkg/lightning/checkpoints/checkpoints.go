@@ -79,7 +79,6 @@ const (
 const (
 	// Some frequently used table name or constants.
 	allTables       = "all"
-	stringLitAll    = "'all'"
 	columnTableName = "table_name"
 )
 
@@ -1602,8 +1601,8 @@ func (cpdb *MySQLCheckpointsDB) IgnoreErrorCheckpoint(ctx context.Context, table
 		query = common.SprintfWithIdentifiers("UPDATE %s.%s SET status = ? WHERE 'all' = ? AND status <= ?", cpdb.schema, CheckpointTableNameEngine)
 		query2 = common.SprintfWithIdentifiers("UPDATE %s.%s SET status = ? WHERE 'all' = ? AND status <= ?", cpdb.schema, CheckpointTableNameTable)
 	} else {
-		query = common.SprintfWithIdentifiers("UPDATE %s.%s SET status = ? WHERE %s = ? AND status <= ?", cpdb.schema, CheckpointTableNameEngine, columnTableName)
-		query2 = common.SprintfWithIdentifiers("UPDATE %s.%s SET status = ? WHERE %s = ? AND status <= ?", cpdb.schema, CheckpointTableNameTable, columnTableName)
+		query = common.SprintfWithIdentifiers("UPDATE %s.%s SET status = ? WHERE table_name = ? AND status <= ?", cpdb.schema, CheckpointTableNameEngine)
+		query2 = common.SprintfWithIdentifiers("UPDATE %s.%s SET status = ? WHERE table_name = ? AND status <= ?", cpdb.schema, CheckpointTableNameTable)
 	}
 
 	s := common.SQLWithRetry{
