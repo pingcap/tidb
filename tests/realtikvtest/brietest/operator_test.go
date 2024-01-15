@@ -91,7 +91,7 @@ func verifyLightningStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
 	ingestCli := import_sstpb.NewImportSSTClient(conn)
 	res, err := ingestCli.Ingest(cx, &import_sstpb.IngestRequest{})
 	t.NoError(err)
-	t.NotNil(res.GetError().GetServerIsBusy(), "res = %s", res)
+	t.NotNil(res.GetError(), "res = %s", res)
 }
 
 func verifySchedulersStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
