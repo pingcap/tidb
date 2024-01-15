@@ -710,9 +710,6 @@ func (p *LogicalJoin) constructIndexHashJoin(
 	path *util.AccessPath,
 	compareFilters *ColWithCmpFuncManager,
 ) []PhysicalPlan {
-	if strings.HasPrefix(p.SCtx().GetSessionVars().StmtCtx.OriginalSQL, "select * from tdbe45f5c t1 join (select * from `teef726a5`") {
-		fmt.Println(1)
-	}
 	indexJoins := p.constructIndexJoin(prop, outerIdx, innerTask, ranges, keyOff2IdxOff, path, compareFilters, true)
 	indexHashJoins := make([]PhysicalPlan, 0, len(indexJoins))
 	for _, plan := range indexJoins {
