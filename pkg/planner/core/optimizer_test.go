@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/types"
@@ -505,45 +504,4 @@ func TestPrunePhysicalColumns(t *testing.T) {
 	// Check recv1，no changes
 	require.True(t, len(recv1.Schema().Columns) == 1)
 	require.True(t, recv1.Schema().Contains(col3))
-}
-
-// Projection0(1) <= Projection1(all) <= DataSource(t0)
-func TestIssue50358(t *testing.T) {
-	ctx := MockContext()
-	defer func() {
-		domain.GetDomain(ctx).StatsHandle().Close()
-	}()
-	ctx.GetSessionVars().PlanID.Store(-1)
-	ds := DataSource{}.Init(ctx, 0)
-	tan := model.NewCIStr("t0")
-	ds.TableAsName = &tan
-	ds.schema = expression.NewSchema()
-	col0 := &expression.Column{
-		UniqueID: ctx.GetSessionVars().PlanColumnID.Add(1),
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
-	}
-	ds.schema.Append(col0)
-
-	// Projection1
-	exprs := make([]expression.Expression, 1)
-	exprs[0] = col0
-	proj1 := LogicalProjection{Exprs: exprs, AvoidColumnEvaluator: true}.Init(ctx, 0)
-	proj1.SetSchema(ds.schema.Clone())
-	proj1.SetChildren(ds)
-
-	// Projection0
-	constOne := expression.NewOne()
-	exprs0 := make([]expression.Expression, 1)
-	exprs0[0] = constOne
-	proj0 := LogicalProjection{Exprs: exprs0, AvoidColumnEvaluator: true}.Init(ctx, 0)
-	proj0.SetSchema(expression.NewSchema(&expression.Column{
-		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  constOne.GetType(),
-	}))
-	proj0.SetChildren(proj1)
-
-	err := proj0.PruneColumns(proj0.schema.Columns, nil, nil)
-	require.NoError(t, err)
-	require.Equal(t, len(proj1.schema.Columns), 1)
-	require.Equal(t, len(proj1.Exprs), 1)
 }

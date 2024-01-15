@@ -97,26 +97,14 @@ func (p *LogicalProjection) PruneColumns(parentUsedCols []*expression.Column, op
 	used := expression.GetUsedList(p.SCtx(), parentUsedCols, p.schema)
 	prunedColumns := make([]*expression.Column, 0)
 
-	leftColumnCount := 0
 	// for implicit projected cols, once the ancestor doesn't use it, the implicit expr will be automatically pruned here.
 	for i := len(used) - 1; i >= 0; i-- {
-		// Keep at least one column here to avoid empty result sets
-		// For example: select 3 from (select * from t) t1, logical plan might be like this:
-		// Projection0(3) <= Projection1(all) <= DataSource(t)
-		// To ensure correctness, Projection1's schema can't be empty here although none of its output columns are actually used
-		// TODO: The way that picks the "left-one-column" might be optimized further
-		if i == 0 && leftColumnCount == 0 {
-			break
-		}
 		if !used[i] && !exprHasSetVarOrSleep(p.Exprs[i]) {
 			prunedColumns = append(prunedColumns, p.schema.Columns[i])
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
 			p.Exprs = append(p.Exprs[:i], p.Exprs[i+1:]...)
-		} else {
-			leftColumnCount++
 		}
 	}
-
 	appendColumnPruneTraceStep(p, prunedColumns, opt)
 	selfUsedCols := make([]*expression.Column, 0, len(p.Exprs))
 	selfUsedCols = expression.ExtractColumnsFromExpressions(selfUsedCols, p.Exprs, nil)
