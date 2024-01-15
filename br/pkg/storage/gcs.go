@@ -101,14 +101,14 @@ type GCSStorage struct {
 	gcs       *backuppb.GCS
 	idx       *atomic.Int64
 	clientCnt int64
-	buckets   []*storage.BucketHandle
+	handles   []*storage.BucketHandle
 	clients   []*storage.Client
 }
 
 // GetBucketHandle gets the handle to the GCS API on the bucket.
 func (s *GCSStorage) GetBucketHandle() *storage.BucketHandle {
-	i := s.idx.Inc() % int64(len(s.buckets))
-	return s.buckets[i]
+	i := s.idx.Inc() % int64(len(s.handles))
+	return s.handles[i]
 }
 
 // getClient gets the GCS client.
@@ -421,7 +421,7 @@ skipHandleCred:
 		gcs:       gcs,
 		idx:       atomic.NewInt64(0),
 		clientCnt: gcsClientCnt,
-		buckets:   buckets,
+		handles:   buckets,
 		clients:   clients,
 	}, nil
 }
