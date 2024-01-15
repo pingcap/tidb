@@ -68,6 +68,9 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 	bufferItems := int64(64)
 
 	cache, err := ristretto.NewCache(&ristretto.Config{
+		KeyToHash: func(key interface{}) (uint64, uint64) {
+			return uint64(key.(int64)), 0
+		},
 		NumCounters:        max(min(cost/128, 1_000_000), 10), // assume the cost per table stats is 128
 		MaxCost:            cost,
 		BufferItems:        bufferItems,
