@@ -81,9 +81,7 @@ func (h *sessionBindingHandle) appendSessionBinding(sqlDigest string, meta *Bind
 // It replaces all the exists bindings for the same normalized SQL.
 func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, binding *Binding) (err error) {
 	if err := prepareHints(sctx, binding); err != nil {
-		if err != nil {
-			return err
-		}
+		return err
 	}
 	binding.Db = strings.ToLower(binding.Db)
 	now := types.NewTime(types.FromGoTime(time.Now().In(sctx.GetSessionVars().StmtCtx.TimeZone())), mysql.TypeTimestamp, 3)
@@ -169,9 +167,7 @@ func (h *sessionBindingHandle) DecodeSessionStates(_ context.Context, sctx sessi
 		// Restore hints and ID because hints are hard to encode.
 		for i := range record.Bindings {
 			if err := prepareHints(sctx, &record.Bindings[i]); err != nil {
-				if err != nil {
-					return err
-				}
+				return err
 			}
 		}
 		h.appendSessionBinding(parser.DigestNormalized(record.Bindings[0].OriginalSQL).String(), record)

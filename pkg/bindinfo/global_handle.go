@@ -296,9 +296,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 // It replaces all the exists bindings for the same normalized SQL.
 func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, binding *Binding) (err error) {
 	if err := prepareHints(sctx, binding); err != nil {
-		if err != nil {
-			return err
-		}
+		return err
 	}
 	defer func() {
 		if err == nil {
@@ -602,9 +600,6 @@ func newBindRecord(sctx sessionctx.Context, row chunk.Row) (string, *BindRecord,
 		SQLDigest:   row.GetString(9),
 		PlanDigest:  row.GetString(10),
 		TableNames:  tableNames,
-	}
-	if err != nil {
-		return "", nil, err
 	}
 	bindRecord := &BindRecord{
 		Bindings: []Binding{binding},
