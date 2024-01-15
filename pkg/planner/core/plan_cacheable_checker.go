@@ -629,8 +629,6 @@ func enablePlanCacheForGeneratedCols(sctx sessionctx.Context) bool {
 	return fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix45798, false)
 }
 
-const uncacheableQueryAccessToPartitionedTables = "query accesses partitioned tables is un-cacheable"
-
 // checkTableCacheable checks whether a query accessing this table is cacheable.
 func checkTableCacheable(ctx context.Context, sctx sessionctx.Context, schema infoschema.InfoSchema, node *ast.TableName, isNonPrep bool) (cacheable bool, reason string) {
 	tableSchema := node.Schema
@@ -660,7 +658,7 @@ func checkTableCacheable(ctx context.Context, sctx sessionctx.Context, schema in
 				return in, false // dynamic-mode for partition tables can use plan-cache
 			}
 		*/
-		return false, uncacheableQueryAccessToPartitionedTables
+		return false, "query accesses partitioned tables is un-cacheable"
 	}
 
 	if !enablePlanCacheForGeneratedCols(sctx) {
