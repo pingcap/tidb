@@ -280,7 +280,7 @@ func TestAllocTableRowIDsRetryOnTableInChecksum(t *testing.T) {
 	s.mockDB.ExpectExec("SET SESSION tidb_txn_mode = 'pessimistic';").
 		WillReturnResult(sqlmock.NewResult(int64(0), int64(0)))
 	s.mockDB.ExpectBegin()
-	s.mockDB.ExpectQuery("\\QSELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status from `test`.`table_meta` WHERE table_id = ? FOR UPDATE\\E").
+	s.mockDB.ExpectQuery("\\QSELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status FROM `test`.`table_meta` WHERE table_id = ? FOR UPDATE\\E").
 		WithArgs(int64(1)).
 		WillReturnError(errors.New("mock err"))
 	s.mockDB.ExpectRollback()
@@ -322,7 +322,7 @@ func (s *metaMgrSuite) prepareMockInner(rowsVal [][]driver.Value, nextRowID *int
 	for _, r := range rowsVal {
 		rows = rows.AddRow(r...)
 	}
-	s.mockDB.ExpectQuery("\\QSELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status from `test`.`table_meta` WHERE table_id = ? FOR UPDATE\\E").
+	s.mockDB.ExpectQuery("\\QSELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status FROM `test`.`table_meta` WHERE table_id = ? FOR UPDATE\\E").
 		WithArgs(int64(1)).
 		WillReturnRows(rows)
 
@@ -333,7 +333,7 @@ func (s *metaMgrSuite) prepareMockInner(rowsVal [][]driver.Value, nextRowID *int
 	}
 
 	if len(updateArgs) > 0 {
-		s.mockDB.ExpectExec("\\Qupdate `test`.`table_meta` set row_id_base = ?, row_id_max = ?, status = ? where table_id = ? and task_id = ?\\E").
+		s.mockDB.ExpectExec("\\QUPDATE `test`.`table_meta` SET row_id_base = ?, row_id_max = ?, status = ? WHERE table_id = ? AND task_id = ?\\E").
 			WithArgs(updateArgs...).
 			WillReturnResult(sqlmock.NewResult(int64(0), int64(1)))
 	}
