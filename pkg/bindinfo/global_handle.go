@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -189,7 +190,7 @@ func buildFuzzyDigestMap(bindRecords []*BindRecord) map[string][]string {
 				p = parser.New()
 				continue
 			}
-			_, fuzzyDigest := NormalizeStmtForFuzzyBinding(stmt)
+			_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
 			m[fuzzyDigest] = append(m[fuzzyDigest], binding.SQLDigest)
 		}
 	}

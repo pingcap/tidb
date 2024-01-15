@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -117,7 +118,7 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, fuzz
 			if err != nil {
 				return nil, err
 			}
-			_, bindingFuzzyDigest := NormalizeStmtForFuzzyBinding(bindingStmt)
+			_, bindingFuzzyDigest := norm.NormalizeStmtForBinding(bindingStmt, norm.WithFuzz(true))
 			if bindingFuzzyDigest != fuzzyDigest {
 				continue
 			}
