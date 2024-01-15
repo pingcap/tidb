@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/influxdata/tdigest"
+	"github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -1371,4 +1372,18 @@ func getUnit(d time.Duration) time.Duration {
 		return time.Microsecond
 	}
 	return time.Nanosecond
+}
+
+// MergeTiFlashRUConsumption merge execution summaries from selectResponse into ruDetails.
+func MergeTiFlashRUConsumption(exec_summaries []*tipb.ExecutorExecutionSummary, ruDetails *util.RUDetails) error {
+	for _, summary := range exec_summaries {
+		if summary != nil && summary.GetTiflashRuConsumption() != nil {
+			tiflash_ru := new(resource_manager.Consumption)
+			if err := tiflash_ru.Unmarshal(summary.GetTiflashRuConsumption()); err != nil {
+				return err
+			}
+			ruDetails.Merge(util.NewRUDetailsWith(tiflash_ru.GetRRU(), 0, 0))
+		}
+	}
+	return nil
 }

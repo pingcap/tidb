@@ -106,7 +106,8 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 				}
 			}
 
-			// Register the RU runtime stats to the runtime stats collection after the analyze executor has been executed.
+			// Register the RU runtime stats after the analyze executor has been executed
+			// to make sure all ru has been collected. For example, localMppCoordinator reports last ru consumption when Close().
 			ruDetailsRaw := ctx.Value(clientutil.RUDetailsCtxKey)
 			if coll := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil && ruDetailsRaw != nil {
 				ruDetails := ruDetailsRaw.(*clientutil.RUDetails)

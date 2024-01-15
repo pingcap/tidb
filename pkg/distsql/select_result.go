@@ -25,7 +25,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -535,7 +534,7 @@ func recordExecutionSummariesForTiFlashTasks(sctx *stmtctx.StatementContext, exe
 	FillDummySummariesForTiFlashTasks(sctx, callee, storeTypeName, allPlanIDs, recordedPlanIDs)
 }
 
-func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration) {
+func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration) (err error) {
 	callee := copStats.CalleeAddress
 	if r.rootPlanID <= 0 || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
 		return
@@ -578,15 +577,9 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 		}
 	}
 
-	ruDetailsRaw := ctx.Value(clientutil.RUDetailsCtxKey)
-	if ruDetailsRaw != nil && r.storeType == kv.TiFlash {
-		ruDetails := ruDetailsRaw.(*clientutil.RUDetails)
-		for _, detail := range r.selectResp.GetExecutionSummaries() {
-			if detail != nil && detail.GetTiflashRuConsumption() != nil {
-				tiflash_ru := new(resource_manager.Consumption)
-				tiflash_ru.Unmarshal(detail.GetTiflashRuConsumption())
-				ruDetails.Merge(clientutil.NewRUDetailsWith(tiflash_ru.GetRRU(), 0, 0))
-			}
+	if ruDetailsRaw := ctx.Value(clientutil.RUDetailsCtxKey); ruDetailsRaw != nil && r.storeType == kv.TiFlash {
+		if err = execdetails.MergeTiFlashRUConsumption(r.selectResp.GetExecutionSummaries(), ruDetailsRaw.(*clientutil.RUDetails)); err != nil {
+			return err
 		}
 	}
 	if hasExecutor {
@@ -613,6 +606,7 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			}
 		}
 	}
+	return
 }
 
 func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {

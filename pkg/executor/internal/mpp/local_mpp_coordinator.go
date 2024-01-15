@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/mpp"
-	"github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/executor/internal/builder"
@@ -581,7 +580,7 @@ func (c *localMppCoordinator) ReportStatus(info kv.ReportStatusRequest) error {
 	return nil
 }
 
-func (c *localMppCoordinator) handleAllReports() {
+func (c *localMppCoordinator) handleAllReports() error {
 	if c.reportExecutionInfo && atomic.LoadUint32(&c.dispatchFailed) == 0 && atomic.CompareAndSwapUint32(&c.allReportsHandled, 0, 1) {
 		startTime := time.Now()
 		select {
@@ -596,15 +595,9 @@ func (c *localMppCoordinator) handleAllReports() {
 							RecordOneCopTask(-1, kv.TiFlash.Name(), report.mppReq.Meta.GetAddress(), detail)] = 0
 					}
 				}
-				ruDetailsRaw := c.ctx.Value(clientutil.RUDetailsCtxKey)
-				if ruDetailsRaw != nil {
-					ruDetails := ruDetailsRaw.(*clientutil.RUDetails)
-					for _, detail := range report.executionSummaries {
-						if detail != nil && detail.GetTiflashRuConsumption() != nil {
-							tiflash_ru := new(resource_manager.Consumption)
-							tiflash_ru.Unmarshal(detail.GetTiflashRuConsumption())
-							ruDetails.Merge(clientutil.NewRUDetailsWith(tiflash_ru.GetRRU(), 0, 0))
-						}
+				if ruDetailsRaw := c.ctx.Value(clientutil.RUDetailsCtxKey); ruDetailsRaw != nil {
+					if err := execdetails.MergeTiFlashRUConsumption(report.executionSummaries, ruDetailsRaw.(*clientutil.RUDetails)); err != nil {
+						return err
 					}
 				}
 			}
@@ -618,6 +611,7 @@ func (c *localMppCoordinator) handleAllReports() {
 				zap.Int("actualCount", c.reportedReqCount))
 		}
 	}
+	return nil
 }
 
 // IsClosed implements MppCoordinator interface
@@ -629,8 +623,7 @@ func (c *localMppCoordinator) IsClosed() bool {
 // TODO: Test the case that user cancels the query.
 func (c *localMppCoordinator) Close() error {
 	c.closeWithoutReport()
-	c.handleAllReports()
-	return nil
+	return c.handleAllReports()
 }
 
 func (c *localMppCoordinator) closeWithoutReport() {
