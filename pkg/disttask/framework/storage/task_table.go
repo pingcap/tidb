@@ -809,15 +809,6 @@ func (mgr *TaskManager) GetTaskExecutorIDsByTaskIDAndStep(ctx context.Context, t
 	return instanceIDs, nil
 }
 
-// IsTaskExecutorCanceled checks if subtask 'execID' of task 'taskID' has been canceled somehow.
-func (mgr *TaskManager) IsTaskExecutorCanceled(ctx context.Context, execID string, taskID int64) (bool, error) {
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select 1 from mysql.tidb_background_subtask where task_key = %? and exec_id = %?", taskID, execID)
-	if err != nil {
-		return false, err
-	}
-	return len(rs) == 0, nil
-}
-
 // UpdateSubtasksExecIDs update subtasks' execID.
 func (mgr *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.Subtask) error {
 	// skip the update process.
@@ -831,6 +822,28 @@ func (mgr *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, subtasks []*p
 				set exec_id = %?
 				where id = %? and state = %?`,
 				subtask.ExecID, subtask.ID, subtask.State)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return err
+}
+
+// RunningSubtasksBack2Pending implements the taskexecutor.TaskTable interface.
+func (mgr *TaskManager) RunningSubtasksBack2Pending(ctx context.Context, subtasks []*proto.Subtask) error {
+	// skip the update process.
+	if len(subtasks) == 0 {
+		return nil
+	}
+	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		for _, subtask := range subtasks {
+			_, err := sqlexec.ExecSQL(ctx, se, `
+				update mysql.tidb_background_subtask
+				set state = %?, state_update_time = CURRENT_TIMESTAMP()
+				where id = %? and exec_id = %? and state = %?`,
+				proto.SubtaskStatePending, subtask.ID, subtask.ExecID, proto.SubtaskStateRunning)
 			if err != nil {
 				return err
 			}
