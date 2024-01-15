@@ -345,11 +345,11 @@ func TestRemoveAllCheckpoints_SQL(t *testing.T) {
 
 	s.mock.ExpectBegin()
 	s.mock.
-		ExpectQuery("SELECT .+ FROM `mock-schema`\\.engine_v\\d+").
+		ExpectQuery("SELECT .+ FROM `mock-schema`\\.`engine_v\\d+`").
 		WithArgs("`db1`.`t2`").
 		WillReturnRows(sqlmock.NewRows([]string{"engine_id", "status"}))
 	s.mock.
-		ExpectQuery("SELECT (?s:.+) FROM `mock-schema`\\.chunk_v\\d+").
+		ExpectQuery("SELECT (?s:.+) FROM `mock-schema`\\.`chunk_v\\d+`").
 		WithArgs("`db1`.`t2`").
 		WillReturnRows(
 			sqlmock.NewRows([]string{
@@ -358,7 +358,7 @@ func TestRemoveAllCheckpoints_SQL(t *testing.T) {
 				"kvc_bytes", "kvc_kvs", "kvc_checksum", "unix_timestamp(create_time)",
 			}))
 	s.mock.
-		ExpectQuery("SELECT .+ FROM `mock-schema`\\.table_v\\d+").
+		ExpectQuery("SELECT .+ FROM `mock-schema`\\.`table_v\\d+`").
 		WithArgs("`db1`.`t2`").
 		WillReturnRows(sqlmock.NewRows([]string{"status", "alloc_base", "table_id"}))
 	s.mock.ExpectRollback()
@@ -373,15 +373,15 @@ func TestRemoveOneCheckpoint_SQL(t *testing.T) {
 
 	s.mock.ExpectBegin()
 	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.chunk_v\\d+ WHERE table_name = \\?").
+		ExpectExec("DELETE FROM `mock-schema`\\.`chunk_v\\d+` WHERE table_name = \\?").
 		WithArgs("`db1`.`t2`").
 		WillReturnResult(sqlmock.NewResult(0, 4))
 	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.engine_v\\d+ WHERE table_name = \\?").
+		ExpectExec("DELETE FROM `mock-schema`\\.`engine_v\\d+` WHERE table_name = \\?").
 		WithArgs("`db1`.`t2`").
 		WillReturnResult(sqlmock.NewResult(0, 2))
 	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.table_v\\d+ WHERE table_name = \\?").
+		ExpectExec("DELETE FROM `mock-schema`\\.`table_v\\d+` WHERE table_name = \\?").
 		WithArgs("`db1`.`t2`").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	s.mock.ExpectCommit()
@@ -395,11 +395,11 @@ func TestIgnoreAllErrorCheckpoints_SQL(t *testing.T) {
 
 	s.mock.ExpectBegin()
 	s.mock.
-		ExpectExec("UPDATE `mock-schema`\\.engine_v\\d+ SET status = \\? WHERE 'all' = \\? AND status <= \\?").
+		ExpectExec("UPDATE `mock-schema`\\.`engine_v\\d+` SET status = \\? WHERE 'all' = \\? AND status <= \\?").
 		WithArgs(checkpoints.CheckpointStatusLoaded, sqlmock.AnyArg(), 25).
 		WillReturnResult(sqlmock.NewResult(5, 3))
 	s.mock.
-		ExpectExec("UPDATE `mock-schema`\\.table_v\\d+ SET status = \\? WHERE 'all' = \\? AND status <= \\?").
+		ExpectExec("UPDATE `mock-schema`\\.`table_v\\d+` SET status = \\? WHERE 'all' = \\? AND status <= \\?").
 		WithArgs(checkpoints.CheckpointStatusLoaded, sqlmock.AnyArg(), 25).
 		WillReturnResult(sqlmock.NewResult(6, 2))
 	s.mock.ExpectCommit()
@@ -413,11 +413,11 @@ func TestIgnoreOneErrorCheckpoint(t *testing.T) {
 
 	s.mock.ExpectBegin()
 	s.mock.
-		ExpectExec("UPDATE `mock-schema`\\.engine_v\\d+ SET status = \\? WHERE table_name = \\? AND status <= \\?").
+		ExpectExec("UPDATE `mock-schema`\\.`engine_v\\d+` SET status = \\? WHERE table_name = \\? AND status <= \\?").
 		WithArgs(checkpoints.CheckpointStatusLoaded, "`db1`.`t2`", 25).
 		WillReturnResult(sqlmock.NewResult(5, 2))
 	s.mock.
-		ExpectExec("UPDATE `mock-schema`\\.table_v\\d+ SET status = \\? WHERE table_name = \\? AND status <= \\?").
+		ExpectExec("UPDATE `mock-schema`\\.`table_v\\d+` SET status = \\? WHERE table_name = \\? AND status <= \\?").
 		WithArgs(checkpoints.CheckpointStatusLoaded, "`db1`.`t2`", 25).
 		WillReturnResult(sqlmock.NewResult(6, 1))
 	s.mock.ExpectCommit()
@@ -438,15 +438,15 @@ func TestDestroyAllErrorCheckpoints_SQL(t *testing.T) {
 				AddRow("`db1`.`t2`", -1, 0),
 		)
 	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.chunk_v\\d+ WHERE table_name IN .+ 'all' = \\?").
+		ExpectExec("DELETE FROM `mock-schema`\\.`chunk_v\\d+` WHERE table_name IN .+ 'all' = \\?").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 5))
 	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.engine_v\\d+ WHERE table_name IN .+ 'all' = \\?").
+		ExpectExec("DELETE FROM `mock-schema`\\.`engine_v\\d+` WHERE table_name IN .+ 'all' = \\?").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 3))
 	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.table_v\\d+ WHERE 'all' = \\?").
+		ExpectExec("DELETE FROM `mock-schema`\\.`table_v\\d+` WHERE 'all' = \\?").
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 2))
 	s.mock.ExpectCommit()
@@ -472,15 +472,15 @@ func TestDestroyOneErrorCheckpoints(t *testing.T) {
 				AddRow("`db1`.`t2`", -1, 0),
 		)
 	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.chunk_v\\d+ WHERE .+table_name = \\?").
+		ExpectExec("DELETE FROM `mock-schema`\\.`chunk_v\\d+` WHERE .+table_name = \\?").
 		WithArgs("`db1`.`t2`", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 4))
 	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.engine_v\\d+ WHERE .+table_name = \\?").
+		ExpectExec("DELETE FROM `mock-schema`\\.`engine_v\\d+` WHERE .+table_name = \\?").
 		WithArgs("`db1`.`t2`", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 2))
 	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.table_v\\d+ WHERE table_name = \\?").
+		ExpectExec("DELETE FROM `mock-schema`\\.`table_v\\d+` WHERE table_name = \\?").
 		WithArgs("`db1`.`t2`", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	s.mock.ExpectCommit()
@@ -500,7 +500,7 @@ func TestDump(t *testing.T) {
 	tm := time.Unix(1555555555, 0).UTC()
 
 	s.mock.
-		ExpectQuery("SELECT (?s:.+) FROM `mock-schema`\\.chunk_v\\d+").
+		ExpectQuery("SELECT (?s:.+) FROM `mock-schema`\\.`chunk_v\\d+`").
 		WillReturnRows(
 			sqlmock.NewRows([]string{
 				"table_name", "path", "offset", "type", "compression", "sort_key", "file_size", "columns",
@@ -525,7 +525,7 @@ func TestDump(t *testing.T) {
 	)
 
 	s.mock.
-		ExpectQuery("SELECT .+ FROM `mock-schema`\\.engine_v\\d+").
+		ExpectQuery("SELECT .+ FROM `mock-schema`\\.`engine_v\\d+`").
 		WillReturnRows(
 			sqlmock.NewRows([]string{"table_name", "engine_id", "status", "create_time", "update_time"}).
 				AddRow("`db1`.`t2`", -1, 30, tm, tm).
@@ -541,7 +541,7 @@ func TestDump(t *testing.T) {
 		csvBuilder.String())
 
 	s.mock.
-		ExpectQuery("SELECT .+ FROM `mock-schema`\\.table_v\\d+").
+		ExpectQuery("SELECT .+ FROM `mock-schema`\\.`table_v\\d+`").
 		WillReturnRows(
 			sqlmock.NewRows([]string{"task_id", "table_name", "hash", "status", "alloc_base", "create_time", "update_time"}).
 				AddRow(1555555555, "`db1`.`t2`", 0, 90, 132861, tm, tm),
@@ -564,16 +564,16 @@ func TestMoveCheckpoints(t *testing.T) {
 		ExpectExec("CREATE SCHEMA IF NOT EXISTS `mock-schema\\.12345678\\.bak`").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	s.mock.
-		ExpectExec("RENAME TABLE `mock-schema`\\.chunk_v\\d+ TO `mock-schema\\.12345678\\.bak`\\.chunk_v\\d+").
+		ExpectExec("RENAME TABLE `mock-schema`\\.`chunk_v\\d+` TO `mock-schema\\.12345678\\.bak`\\.`chunk_v\\d+`").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	s.mock.
-		ExpectExec("RENAME TABLE `mock-schema`\\.engine_v\\d+ TO `mock-schema\\.12345678\\.bak`\\.engine_v\\d+").
+		ExpectExec("RENAME TABLE `mock-schema`\\.`engine_v\\d+` TO `mock-schema\\.12345678\\.bak`\\.`engine_v\\d+`").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	s.mock.
-		ExpectExec("RENAME TABLE `mock-schema`\\.table_v\\d+ TO `mock-schema\\.12345678\\.bak`\\.table_v\\d+").
+		ExpectExec("RENAME TABLE `mock-schema`\\.`table_v\\d+` TO `mock-schema\\.12345678\\.bak`\\.`table_v\\d+`").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	s.mock.
-		ExpectExec("RENAME TABLE `mock-schema`\\.task_v\\d+ TO `mock-schema\\.12345678\\.bak`\\.task_v\\d+").
+		ExpectExec("RENAME TABLE `mock-schema`\\.`task_v\\d+` TO `mock-schema\\.12345678\\.bak`\\.`task_v\\d+`").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	err := s.cpdb.MoveCheckpoints(ctx, 12345678)
