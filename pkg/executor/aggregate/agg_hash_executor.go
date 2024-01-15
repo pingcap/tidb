@@ -368,6 +368,8 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 		e.partialOutputChs[i] = make(chan *aggfuncs.AggPartialResultMapper, partialConcurrency)
 	}
 
+	e.fetcherAndPartialSyncer = &sync.WaitGroup{}
+
 	isTrackerEnabled := e.Ctx().GetSessionVars().TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load()
 	isParallelHashAggSpillEnabled := e.Ctx().GetSessionVars().EnableConcurrentHashaggSpill
 	e.spillHelper = newSpillHelper(e.memTracker, e.PartialAggFuncs, partialConcurrency)
@@ -376,7 +378,6 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 		e.diskTracker.AttachTo(sessionVars.StmtCtx.DiskTracker)
 		e.spillHelper.diskTracker = e.diskTracker
 		sessionVars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
-		e.fetcherAndPartialSyncer = &sync.WaitGroup{}
 	}
 
 	e.partialWorkers = make([]HashAggPartialWorker, partialConcurrency)
