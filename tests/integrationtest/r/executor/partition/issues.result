@@ -557,3 +557,11 @@ col_29
 -1
 0
 1
+explain select * from t where col_29 between -7 and -6;
+id	estRows	task	access object	operator info
+TableReader_7	1.00	root	partition:p0,p6	data:Selection_6
+└─Selection_6	1.00	cop[tikv]		ge(executor__partition__issues.t.col_29, -7), le(executor__partition__issues.t.col_29, -6)
+  └─TableFullScan_5	48.00	cop[tikv]	table:t	keep order:false
+select * from t where col_29 between -7 and -6;
+col_29
+-6

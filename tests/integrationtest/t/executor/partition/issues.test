@@ -328,3 +328,7 @@ explain select * from t where col_29 between -2 and 1;
 --sorted_result
 select * from t where col_29 between -2 and 1;
 
+# TestIssue50427
+explain select * from t where col_29 between -7 and -6;
+--sorted_result
+select * from t where col_29 between -7 and -6;

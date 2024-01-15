@@ -181,14 +181,12 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx sessionctx.Context,
 				}
 
 				var rangeScalar uint64
-				var offset int64
 				if mysql.HasUnsignedFlag(col.RetType.GetFlag()) {
 					// Avoid integer overflow
 					if uint64(posHigh) < uint64(posLow) {
 						rangeScalar = 0
 					} else {
 						rangeScalar = uint64(posHigh) - uint64(posLow)
-						offset = int64(uint64(posLow) % uint64(numPartitions))
 					}
 				} else {
 					// Avoid integer overflow
@@ -196,15 +194,18 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx sessionctx.Context,
 						rangeScalar = 0
 					} else {
 						rangeScalar = uint64(posHigh - posLow)
-						offset = posLow % int64(numPartitions)
 					}
 				}
 
 				// if range is less than the number of partitions, there will be unused partitions we can prune out.
 				if rangeScalar < uint64(numPartitions) && !highIsNull && !lowIsNull {
-					var i int64
+					var i, idx int64
 					for i = 0; i <= int64(rangeScalar); i++ {
-						idx := mathutil.Abs(offset+i) % int64(numPartitions)
+						if mysql.HasUnsignedFlag(col.RetType.GetFlag()) {
+							idx = int64(uint64(posLow+i) % uint64(numPartitions))
+						} else {
+							idx = mathutil.Abs(posLow+i) % int64(numPartitions)
+						}
 						if len(partitionNames) > 0 && !s.findByName(partitionNames, pi.Definitions[idx].Name.L) {
 							continue
 						}
