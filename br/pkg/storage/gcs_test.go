@@ -502,7 +502,7 @@ func TestMultiPartUpload(t *testing.T) {
 	require.Zero(t, cmp)
 }
 
-func TestSpeedReadManySmallFiles(t *testing.T) {
+func TestSpeedReadManyFiles(t *testing.T) {
 	ctx := context.Background()
 
 	s := openTestingStorage(t)
@@ -538,6 +538,35 @@ func TestSpeedReadManySmallFiles(t *testing.T) {
 			})
 		}
 		require.NoError(t, eg.Wait())
-		t.Logf("read %d files cost %v", len(testFiles), time.Since(now))
+		t.Logf("read %d small files cost %v", len(testFiles), time.Since(now))
 	}
+
+	// test read 10 * 100MB files
+
+	fileNum = 30
+	filenames = make([]string, fileNum)
+	for i := 0; i < fileNum; i++ {
+		filenames[i] = fmt.Sprintf("TestSpeedReadManyLargeFiles/%d", i)
+	}
+	fileSize = 100 * 1024 * 1024
+	data = make([]byte, fileSize)
+	for i := 0; i < fileNum; i++ {
+		filename := filenames[i]
+		eg.Go(func() error {
+			return s.WriteFile(ctx, filename, data)
+		})
+	}
+	require.NoError(t, eg.Wait())
+
+	testFiles := filenames
+	now := time.Now()
+	for i := range testFiles {
+		filename := testFiles[i]
+		eg.Go(func() error {
+			_, err := s.ReadFile(ctx, filename)
+			return err
+		})
+	}
+	require.NoError(t, eg.Wait())
+	t.Logf("read %d large files cost %v", len(testFiles), time.Since(now))
 }
