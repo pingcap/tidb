@@ -118,10 +118,10 @@ func TestSessionBinding(t *testing.T) {
 		bindData, err := handle.MatchSessionBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 		require.NoError(t, err)
 		require.NotNil(t, bindData)
-		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
 		bind := bindData.Bindings[0]
+		require.Equal(t, testSQL.originSQL, bind.OriginalSQL)
 		require.Equal(t, testSQL.bindSQL, bind.BindSQL)
-		require.Equal(t, "test", bindData.Db)
+		require.Equal(t, "test", bind.Db)
 		require.Equal(t, bindinfo.Enabled, bind.Status)
 		require.NotNil(t, bind.Charset)
 		require.NotNil(t, bind.Collation)

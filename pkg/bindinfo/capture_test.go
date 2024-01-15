@@ -334,7 +334,7 @@ func TestBindingSource(t *testing.T) {
 	bindData, err := bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 	require.NoError(t, err)
 	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.Bindings[0].OriginalSQL)
 	require.Len(t, bindData.Bindings, 1)
 	bind := bindData.Bindings[0]
 	require.Equal(t, bindinfo.Manual, bind.Source)
@@ -356,7 +356,7 @@ func TestBindingSource(t *testing.T) {
 	bindData, err = bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 	require.NoError(t, err)
 	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` < ?", bindData.OriginalSQL)
+	require.Equal(t, "select * from `test` . `t` where `a` < ?", bindData.Bindings[0].OriginalSQL)
 	require.Len(t, bindData.Bindings, 1)
 	bind = bindData.Bindings[0]
 	require.Equal(t, bindinfo.Capture, bind.Source)
