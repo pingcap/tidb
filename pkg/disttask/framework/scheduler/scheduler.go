@@ -506,8 +506,46 @@ func (s *BaseScheduler) onError(err error) {
 		logutil.Logger(s.logCtx).Error("scheduler met first error", zap.Error(err))
 	}
 
+<<<<<<< HEAD
 	if s.mu.runtimeCancel != nil {
 		s.mu.runtimeCancel(err)
+=======
+			switch task.State {
+			case proto.TaskStateCancelling:
+				err = s.onCancelling()
+			case proto.TaskStatePausing:
+				err = s.onPausing()
+			case proto.TaskStatePaused:
+				err = s.onPaused()
+				// close the scheduler.
+				if err == nil {
+					return
+				}
+			case proto.TaskStateResuming:
+				err = s.onResuming()
+			case proto.TaskStateReverting:
+				err = s.onReverting()
+			case proto.TaskStatePending:
+				err = s.onPending()
+			case proto.TaskStateRunning:
+				err = s.onRunning()
+			case proto.TaskStateSucceed, proto.TaskStateReverted, proto.TaskStateFailed:
+				s.onFinished()
+				return
+			}
+			if err != nil {
+				logutil.Logger(s.logCtx).Info("schedule task meet err, reschedule it", zap.Error(err))
+			}
+
+			failpoint.Inject("mockOwnerChange", func(val failpoint.Value) {
+				if val.(bool) {
+					logutil.Logger(s.logCtx).Info("mockOwnerChange called")
+					MockOwnerChange()
+					time.Sleep(time.Second)
+				}
+			})
+		}
+>>>>>>> 720983a20c6 (disttask: merge transfer task/subtask (#50311))
 	}
 }
 
@@ -539,11 +577,223 @@ func (s *BaseScheduler) startSubtaskAndUpdateState(ctx context.Context, subtask 
 	metrics.StartDistTaskSubTask(subtask)
 }
 
+<<<<<<< HEAD
 func (s *BaseScheduler) updateSubtaskStateAndErrorImpl(ctx context.Context, tidbID string, subtaskID int64, state proto.TaskState, subTaskErr error) {
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	logger := logutil.Logger(s.logCtx)
 	backoffer := backoff.NewExponential(dispatcher.RetrySQLInterval, 2, dispatcher.RetrySQLMaxInterval)
 	err := handle.RunWithRetry(ctx, dispatcher.RetrySQLTimes, backoffer, logger,
+=======
+// handle task in reverting state, check all revert subtasks finishes.
+func (s *BaseScheduler) onReverting() error {
+	task := s.GetTask()
+	logutil.Logger(s.logCtx).Debug("on reverting state", zap.Stringer("state", task.State), zap.Int64("step", int64(task.Step)))
+	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
+	if err != nil {
+		logutil.Logger(s.logCtx).Warn("check task failed", zap.Error(err))
+		return err
+	}
+	activeRevertCnt := cntByStates[proto.SubtaskStateRevertPending] + cntByStates[proto.SubtaskStateReverting]
+	if activeRevertCnt == 0 {
+		if err = s.OnDone(s.ctx, s, task); err != nil {
+			return errors.Trace(err)
+		}
+		return s.taskMgr.RevertedTask(s.ctx, task.ID)
+	}
+	// Wait all subtasks in this step finishes.
+	s.OnTick(s.ctx, task)
+	logutil.Logger(s.logCtx).Debug("on reverting state, this task keeps current state", zap.Stringer("state", task.State))
+	return nil
+}
+
+// handle task in pending state, schedule subtasks.
+func (s *BaseScheduler) onPending() error {
+	task := s.GetTask()
+	logutil.Logger(s.logCtx).Debug("on pending state", zap.Stringer("state", task.State), zap.Int64("step", int64(task.Step)))
+	return s.switch2NextStep()
+}
+
+// handle task in running state, check all running subtasks finishes.
+// If subtasks finished, run into the next step.
+func (s *BaseScheduler) onRunning() error {
+	task := s.GetTask()
+	logutil.Logger(s.logCtx).Debug("on running state",
+		zap.Stringer("state", task.State),
+		zap.Int64("step", int64(task.Step)))
+	// check current step finishes.
+	cntByStates, err := s.taskMgr.GetSubtaskCntGroupByStates(s.ctx, task.ID, task.Step)
+	if err != nil {
+		logutil.Logger(s.logCtx).Warn("check task failed", zap.Error(err))
+		return err
+	}
+	if cntByStates[proto.SubtaskStateFailed] > 0 || cntByStates[proto.SubtaskStateCanceled] > 0 {
+		subTaskErrs, err := s.taskMgr.CollectSubTaskError(s.ctx, task.ID)
+		if err != nil {
+			logutil.Logger(s.logCtx).Warn("collect subtask error failed", zap.Error(err))
+			return err
+		}
+		if len(subTaskErrs) > 0 {
+			logutil.Logger(s.logCtx).Warn("subtasks encounter errors")
+			return s.onErrHandlingStage(subTaskErrs)
+		}
+	} else if s.isStepSucceed(cntByStates) {
+		return s.switch2NextStep()
+	}
+
+	// Wait all subtasks in this step finishes.
+	s.OnTick(s.ctx, task)
+	logutil.Logger(s.logCtx).Debug("on running state, this task keeps current state", zap.Stringer("state", task.State))
+	return nil
+}
+
+func (s *BaseScheduler) onFinished() {
+	task := s.GetTask()
+	metrics.UpdateMetricsForFinishTask(task)
+	logutil.Logger(s.logCtx).Debug("schedule task, task is finished", zap.Stringer("state", task.State))
+}
+
+// updateTask update the task in tidb_global_task table.
+func (s *BaseScheduler) updateTask(taskState proto.TaskState, newSubTasks []*proto.Subtask, retryTimes int) (err error) {
+	task := s.GetTask()
+	prevState := task.State
+	task.State = taskState
+	logutil.BgLogger().Info("task state transform", zap.Stringer("from", prevState), zap.Stringer("to", taskState))
+	if !VerifyTaskStateTransform(prevState, taskState) {
+		return errors.Errorf("invalid task state transform, from %s to %s", prevState, taskState)
+	}
+
+	var retryable bool
+	for i := 0; i < retryTimes; i++ {
+		retryable, err = s.taskMgr.UpdateTaskAndAddSubTasks(s.ctx, task, newSubTasks, prevState)
+		if err == nil || !retryable {
+			break
+		}
+		if err1 := s.ctx.Err(); err1 != nil {
+			return err1
+		}
+		if i%10 == 0 {
+			logutil.Logger(s.logCtx).Warn("updateTask first failed", zap.Stringer("from", prevState), zap.Stringer("to", task.State),
+				zap.Int("retry times", i), zap.Error(err))
+		}
+		time.Sleep(RetrySQLInterval)
+	}
+	if err != nil && retryTimes != nonRetrySQLTime {
+		logutil.Logger(s.logCtx).Warn("updateTask failed",
+			zap.Stringer("from", prevState), zap.Stringer("to", task.State), zap.Int("retry times", retryTimes), zap.Error(err))
+	}
+	return err
+}
+
+func (s *BaseScheduler) onErrHandlingStage(receiveErrs []error) error {
+	task := s.GetTask()
+	// we only store the first error.
+	task.Error = receiveErrs[0]
+
+	var subTasks []*proto.Subtask
+	// when step of task is `StepInit`, no need to do revert
+	if task.Step != proto.StepInit {
+		instanceIDs, err := s.GetAllTaskExecutorIDs(s.ctx, task)
+		if err != nil {
+			logutil.Logger(s.logCtx).Warn("get task's all instances failed", zap.Error(err))
+			return err
+		}
+
+		subTasks = make([]*proto.Subtask, 0, len(instanceIDs))
+		for _, id := range instanceIDs {
+			// reverting subtasks belong to the same step as current active step.
+			subTasks = append(subTasks, proto.NewSubtask(
+				task.Step, task.ID, task.Type, id,
+				task.Concurrency, proto.EmptyMeta, 0))
+		}
+	}
+	return s.updateTask(proto.TaskStateReverting, subTasks, RetrySQLTimes)
+}
+
+func (s *BaseScheduler) switch2NextStep() (err error) {
+	task := s.GetTask()
+	nextStep := s.GetNextStep(task)
+	logutil.Logger(s.logCtx).Info("on next step",
+		zap.Int64("current-step", int64(task.Step)),
+		zap.Int64("next-step", int64(nextStep)))
+
+	if nextStep == proto.StepDone {
+		task.Step = nextStep
+		task.StateUpdateTime = time.Now().UTC()
+		if err = s.OnDone(s.ctx, s, task); err != nil {
+			return errors.Trace(err)
+		}
+		return s.taskMgr.SucceedTask(s.ctx, task.ID)
+	}
+
+	eligibleNodes, err := getEligibleNodes(s.ctx, s, s.nodeMgr.getManagedNodes())
+	if err != nil {
+		return err
+	}
+	logutil.Logger(s.logCtx).Info("eligible instances", zap.Int("num", len(eligibleNodes)))
+	if len(eligibleNodes) == 0 {
+		return errors.New("no available TiDB node to dispatch subtasks")
+	}
+
+	metas, err := s.OnNextSubtasksBatch(s.ctx, s, task, eligibleNodes, nextStep)
+	if err != nil {
+		logutil.Logger(s.logCtx).Warn("generate part of subtasks failed", zap.Error(err))
+		return s.handlePlanErr(err)
+	}
+
+	return s.scheduleSubTask(nextStep, metas, eligibleNodes)
+}
+
+func (s *BaseScheduler) scheduleSubTask(
+	subtaskStep proto.Step,
+	metas [][]byte,
+	eligibleNodes []string) error {
+	task := s.GetTask()
+	logutil.Logger(s.logCtx).Info("schedule subtasks",
+		zap.Stringer("state", task.State),
+		zap.Int64("step", int64(task.Step)),
+		zap.Int("concurrency", task.Concurrency),
+		zap.Int("subtasks", len(metas)))
+
+	// the scheduled node of the subtask might not be optimal, as we run all
+	// scheduler in parallel, and update might be called too many times when
+	// multiple tasks are switching to next step.
+	if err := s.slotMgr.update(s.ctx, s.nodeMgr, s.taskMgr); err != nil {
+		return err
+	}
+	adjustedEligibleNodes := s.slotMgr.adjustEligibleNodes(eligibleNodes, task.Concurrency)
+	var size uint64
+	subTasks := make([]*proto.Subtask, 0, len(metas))
+	for i, meta := range metas {
+		// we assign the subtask to the instance in a round-robin way.
+		// TODO: assign the subtask to the instance according to the system load of each nodes
+		pos := i % len(adjustedEligibleNodes)
+		instanceID := adjustedEligibleNodes[pos]
+		logutil.Logger(s.logCtx).Debug("create subtasks", zap.String("instanceID", instanceID))
+		subTasks = append(subTasks, proto.NewSubtask(
+			subtaskStep, task.ID, task.Type, instanceID, task.Concurrency, meta, i+1))
+
+		size += uint64(len(meta))
+	}
+	failpoint.Inject("cancelBeforeUpdateTask", func() {
+		_ = s.taskMgr.CancelTask(s.ctx, task.ID)
+	})
+
+	// as other fields and generated key and index KV takes space too, we limit
+	// the size of subtasks to 80% of the transaction limit.
+	limit := max(uint64(float64(kv.TxnTotalSizeLimit.Load())*0.8), 1)
+	fn := s.taskMgr.SwitchTaskStep
+	if size >= limit {
+		// On default, transaction size limit is controlled by tidb_mem_quota_query
+		// which is 1G on default, so it's unlikely to reach this limit, but in
+		// case user set txn-total-size-limit explicitly, we insert in batch.
+		logutil.Logger(s.logCtx).Info("subtasks size exceed limit, will insert in batch",
+			zap.Uint64("size", size), zap.Uint64("limit", limit))
+		fn = s.taskMgr.SwitchTaskStepInBatch
+	}
+
+	backoffer := backoff.NewExponential(RetrySQLInterval, 2, RetrySQLMaxInterval)
+	return handle.RunWithRetry(s.ctx, RetrySQLTimes, backoffer, logutil.Logger(s.logCtx),
+>>>>>>> 720983a20c6 (disttask: merge transfer task/subtask (#50311))
 		func(ctx context.Context) (bool, error) {
 			return true, s.taskTable.UpdateSubtaskStateAndError(ctx, tidbID, subtaskID, state, subTaskErr)
 		},

@@ -109,7 +109,7 @@ func TestDispatcherExtLocalSort(t *testing.T) {
 	}
 	_, err = manager.UpdateGlobalTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
 	require.NoError(t, err)
-	gotSubtasks, err := manager.GetSubtasksForImportInto(ctx, taskID, importinto.StepImport)
+	gotSubtasks, err := manager.GetSubtasksWithHistory(ctx, taskID, importinto.StepImport)
 	require.NoError(t, err)
 	for _, s := range gotSubtasks {
 		require.NoError(t, manager.FinishSubtask(ctx, s.SchedulerID, s.ID, []byte("{}")))
@@ -257,7 +257,7 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 	}
 	_, err = manager.UpdateGlobalTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
 	require.NoError(t, err)
-	gotSubtasks, err := manager.GetSubtasksForImportInto(ctx, taskID, task.Step)
+	gotSubtasks, err := manager.GetSubtasksWithHistory(ctx, taskID, task.Step)
 	require.NoError(t, err)
 	sortStepMeta := &importinto.ImportStepMeta{
 		SortedDataMeta: &external.SortedKVMeta{
@@ -314,7 +314,7 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 	}
 	_, err = manager.UpdateGlobalTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
 	require.NoError(t, err)
-	gotSubtasks, err = manager.GetSubtasksForImportInto(ctx, taskID, task.Step)
+	gotSubtasks, err = manager.GetSubtasksWithHistory(ctx, taskID, task.Step)
 	require.NoError(t, err)
 	mergeSortStepMeta := &importinto.MergeSortStepMeta{
 		KVGroup: "data",

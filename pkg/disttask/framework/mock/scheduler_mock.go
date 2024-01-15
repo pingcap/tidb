@@ -437,5 +437,150 @@ func (m *MockExtension) IsIdempotent(arg0 *proto.Subtask) bool {
 // IsIdempotent indicates an expected call of IsIdempotent.
 func (mr *MockExtensionMockRecorder) IsIdempotent(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
+<<<<<<< HEAD
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsIdempotent", reflect.TypeOf((*MockExtension)(nil).IsIdempotent), arg0)
+=======
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PausedTask", reflect.TypeOf((*MockTaskManager)(nil).PausedTask), arg0, arg1)
+}
+
+// ResumeSubtasks mocks base method.
+func (m *MockTaskManager) ResumeSubtasks(arg0 context.Context, arg1 int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "ResumeSubtasks", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// ResumeSubtasks indicates an expected call of ResumeSubtasks.
+func (mr *MockTaskManagerMockRecorder) ResumeSubtasks(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "ResumeSubtasks", reflect.TypeOf((*MockTaskManager)(nil).ResumeSubtasks), arg0, arg1)
+}
+
+// RevertedTask mocks base method.
+func (m *MockTaskManager) RevertedTask(arg0 context.Context, arg1 int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RevertedTask", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RevertedTask indicates an expected call of RevertedTask.
+func (mr *MockTaskManagerMockRecorder) RevertedTask(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RevertedTask", reflect.TypeOf((*MockTaskManager)(nil).RevertedTask), arg0, arg1)
+}
+
+// SucceedTask mocks base method.
+func (m *MockTaskManager) SucceedTask(arg0 context.Context, arg1 int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SucceedTask", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SucceedTask indicates an expected call of SucceedTask.
+func (mr *MockTaskManagerMockRecorder) SucceedTask(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SucceedTask", reflect.TypeOf((*MockTaskManager)(nil).SucceedTask), arg0, arg1)
+}
+
+// SwitchTaskStep mocks base method.
+func (m *MockTaskManager) SwitchTaskStep(arg0 context.Context, arg1 *proto.Task, arg2 proto.TaskState, arg3 proto.Step, arg4 []*proto.Subtask) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SwitchTaskStep", arg0, arg1, arg2, arg3, arg4)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SwitchTaskStep indicates an expected call of SwitchTaskStep.
+func (mr *MockTaskManagerMockRecorder) SwitchTaskStep(arg0, arg1, arg2, arg3, arg4 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SwitchTaskStep", reflect.TypeOf((*MockTaskManager)(nil).SwitchTaskStep), arg0, arg1, arg2, arg3, arg4)
+}
+
+// SwitchTaskStepInBatch mocks base method.
+func (m *MockTaskManager) SwitchTaskStepInBatch(arg0 context.Context, arg1 *proto.Task, arg2 proto.TaskState, arg3 proto.Step, arg4 []*proto.Subtask) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "SwitchTaskStepInBatch", arg0, arg1, arg2, arg3, arg4)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// SwitchTaskStepInBatch indicates an expected call of SwitchTaskStepInBatch.
+func (mr *MockTaskManagerMockRecorder) SwitchTaskStepInBatch(arg0, arg1, arg2, arg3, arg4 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "SwitchTaskStepInBatch", reflect.TypeOf((*MockTaskManager)(nil).SwitchTaskStepInBatch), arg0, arg1, arg2, arg3, arg4)
+}
+
+// TransferTasks2History mocks base method.
+func (m *MockTaskManager) TransferTasks2History(arg0 context.Context, arg1 []*proto.Task) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "TransferTasks2History", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// TransferTasks2History indicates an expected call of TransferTasks2History.
+func (mr *MockTaskManagerMockRecorder) TransferTasks2History(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "TransferTasks2History", reflect.TypeOf((*MockTaskManager)(nil).TransferTasks2History), arg0, arg1)
+}
+
+// UpdateSubtasksExecIDs mocks base method.
+func (m *MockTaskManager) UpdateSubtasksExecIDs(arg0 context.Context, arg1 []*proto.Subtask) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateSubtasksExecIDs", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// UpdateSubtasksExecIDs indicates an expected call of UpdateSubtasksExecIDs.
+func (mr *MockTaskManagerMockRecorder) UpdateSubtasksExecIDs(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateSubtasksExecIDs", reflect.TypeOf((*MockTaskManager)(nil).UpdateSubtasksExecIDs), arg0, arg1)
+}
+
+// UpdateTaskAndAddSubTasks mocks base method.
+func (m *MockTaskManager) UpdateTaskAndAddSubTasks(arg0 context.Context, arg1 *proto.Task, arg2 []*proto.Subtask, arg3 proto.TaskState) (bool, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "UpdateTaskAndAddSubTasks", arg0, arg1, arg2, arg3)
+	ret0, _ := ret[0].(bool)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// UpdateTaskAndAddSubTasks indicates an expected call of UpdateTaskAndAddSubTasks.
+func (mr *MockTaskManagerMockRecorder) UpdateTaskAndAddSubTasks(arg0, arg1, arg2, arg3 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateTaskAndAddSubTasks", reflect.TypeOf((*MockTaskManager)(nil).UpdateTaskAndAddSubTasks), arg0, arg1, arg2, arg3)
+}
+
+// WithNewSession mocks base method.
+func (m *MockTaskManager) WithNewSession(arg0 func(sessionctx.Context) error) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WithNewSession", arg0)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// WithNewSession indicates an expected call of WithNewSession.
+func (mr *MockTaskManagerMockRecorder) WithNewSession(arg0 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WithNewSession", reflect.TypeOf((*MockTaskManager)(nil).WithNewSession), arg0)
+}
+
+// WithNewTxn mocks base method.
+func (m *MockTaskManager) WithNewTxn(arg0 context.Context, arg1 func(sessionctx.Context) error) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "WithNewTxn", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// WithNewTxn indicates an expected call of WithNewTxn.
+func (mr *MockTaskManagerMockRecorder) WithNewTxn(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "WithNewTxn", reflect.TypeOf((*MockTaskManager)(nil).WithNewTxn), arg0, arg1)
+>>>>>>> 720983a20c6 (disttask: merge transfer task/subtask (#50311))
 }

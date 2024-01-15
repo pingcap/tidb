@@ -508,7 +508,11 @@ func (s *mockGCSSuite) TestCancelJob() {
 	s.Require().Eventually(func() bool {
 		globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(ctx, taskKey)
 		s.NoError(err2)
+<<<<<<< HEAD
 		subtasks, err2 := globalTaskManager.GetSubtasksForImportInto(ctx, globalTask.ID, importinto.StepPostProcess)
+=======
+		subtasks, err2 := taskManager.GetSubtasksWithHistory(ctx, task2.ID, importinto.StepPostProcess)
+>>>>>>> 720983a20c6 (disttask: merge transfer task/subtask (#50311))
 		s.NoError(err2)
 		s.Len(subtasks, 2) // framework will generate a subtask when canceling
 		var cancelled bool

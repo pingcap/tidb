@@ -40,7 +40,41 @@ import (
 const (
 	defaultSubtaskKeepDays = 14
 
+<<<<<<< HEAD
 	subtaskColumns = `id, step, task_key, type, exec_id, state, start_time, state_update_time, meta, summary`
+=======
+	basicTaskColumns = `id, task_key, type, state, step, priority, concurrency, create_time`
+	// TODO: dispatcher_id will update to scheduler_id later
+	taskColumns = basicTaskColumns + `, start_time, state_update_time, meta, dispatcher_id, error`
+	// InsertTaskColumns is the columns used in insert task.
+	InsertTaskColumns   = `task_key, type, state, priority, concurrency, step, meta, create_time`
+	basicSubtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time, ordinal`
+	// SubtaskColumns is the columns for subtask.
+	SubtaskColumns = basicSubtaskColumns + `, start_time, state_update_time, meta, summary`
+	// InsertSubtaskColumns is the columns used in insert subtask.
+	InsertSubtaskColumns = `step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary`
+)
+
+var (
+	maxSubtaskBatchSize = 16 * units.MiB
+
+	// ErrUnstableSubtasks is the error when we detected that the subtasks are
+	// unstable, i.e. count, order and content of the subtasks are changed on
+	// different call.
+	ErrUnstableSubtasks = errors.New("unstable subtasks")
+
+	// ErrTaskNotFound is the error when we can't found task.
+	// i.e. TransferTasks2History move task from tidb_global_task to tidb_global_task_history.
+	ErrTaskNotFound = errors.New("task not found")
+
+	// ErrTaskAlreadyExists is the error when we submit a task with the same task key.
+	// i.e. SubmitTask in handle may submit a task twice.
+	ErrTaskAlreadyExists = errors.New("task already exists")
+
+	// ErrSubtaskNotFound is the error when can't find subtask by subtask_id and execId,
+	// i.e. scheduler change the subtask's execId when subtask need to balance to other nodes.
+	ErrSubtaskNotFound = errors.New("subtask not found")
+>>>>>>> 720983a20c6 (disttask: merge transfer task/subtask (#50311))
 )
 
 // SessionExecutor defines the interface for executing SQLs in a session.
@@ -837,6 +871,7 @@ func (stm *TaskManager) IsGlobalTaskCancelling(ctx context.Context, taskID int64
 	return len(rs) > 0, nil
 }
 
+<<<<<<< HEAD
 // PauseTask pauses the task.
 func (stm *TaskManager) PauseTask(ctx context.Context, taskKey string) (bool, error) {
 	found := false
@@ -885,6 +920,10 @@ func (stm *TaskManager) ResumeTask(ctx context.Context, taskKey string) (bool, e
 
 // GetSubtasksForImportInto gets the subtasks for import into(show import jobs).
 func (stm *TaskManager) GetSubtasksForImportInto(ctx context.Context, taskID int64, step proto.Step) ([]*proto.Subtask, error) {
+=======
+// GetSubtasksWithHistory gets the subtasks from tidb_global_task and tidb_global_task_history.
+func (mgr *TaskManager) GetSubtasksWithHistory(ctx context.Context, taskID int64, step proto.Step) ([]*proto.Subtask, error) {
+>>>>>>> 720983a20c6 (disttask: merge transfer task/subtask (#50311))
 	var (
 		rs  []chunk.Row
 		err error
@@ -898,7 +937,7 @@ func (stm *TaskManager) GetSubtasksForImportInto(ctx context.Context, taskID int
 			return err
 		}
 
-		// To avoid the situation that the subtasks has been `TransferSubTasks2History`
+		// To avoid the situation that the subtasks has been `TransferTasks2History`
 		// when the user show import jobs, we need to check the history table.
 		rsFromHistory, err := ExecSQL(ctx, se,
 			`select `+subtaskColumns+` from mysql.tidb_background_subtask_history where task_key = %? and step = %?`,
@@ -925,6 +964,7 @@ func (stm *TaskManager) GetSubtasksForImportInto(ctx context.Context, taskID int
 	return subtasks, nil
 }
 
+<<<<<<< HEAD
 // TransferSubTasks2History move all the finished subTask to tidb_background_subtask_history by taskID
 func (stm *TaskManager) TransferSubTasks2History(ctx context.Context, taskID int64) error {
 	return stm.WithNewTxn(ctx, func(se sessionctx.Context) error {
@@ -951,6 +991,16 @@ func (stm *TaskManager) GCSubtasks(ctx context.Context) error {
 		ctx,
 		fmt.Sprintf("DELETE FROM mysql.tidb_background_subtask_history WHERE state_update_time < UNIX_TIMESTAMP() - %d ;", subtaskHistoryKeepSeconds),
 	)
+=======
+// TransferSubtasks2HistoryWithSession transfer the selected subtasks into tidb_background_subtask_history table by taskID.
+func (*TaskManager) TransferSubtasks2HistoryWithSession(ctx context.Context, se sessionctx.Context, taskID int64) error {
+	_, err := sqlexec.ExecSQL(ctx, se, `insert into mysql.tidb_background_subtask_history select * from mysql.tidb_background_subtask where task_key = %?`, taskID)
+	if err != nil {
+		return err
+	}
+	// delete taskID subtask
+	_, err = sqlexec.ExecSQL(ctx, se, "delete from mysql.tidb_background_subtask where task_key = %?", taskID)
+>>>>>>> 720983a20c6 (disttask: merge transfer task/subtask (#50311))
 	return err
 }
 
@@ -985,6 +1035,7 @@ func (stm *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 			return err
 		}
 
+<<<<<<< HEAD
 		// delete taskIDs tasks
 		deleteSQL := new(strings.Builder)
 		if err := sqlexec.FormatSQL(deleteSQL, "delete from mysql.tidb_global_task where id in("); err != nil {
@@ -998,14 +1049,57 @@ func (stm *TaskManager) TransferTasks2History(ctx context.Context, tasks []*prot
 		deleteSQL.WriteString(strings.Join(deleteElems, ", "))
 		deleteSQL.WriteString(")")
 		_, err = ExecSQL(ctx, se, deleteSQL.String())
+=======
+		_, err = sqlexec.ExecSQL(ctx, se, `
+			delete from mysql.tidb_global_task
+			where id in(`+strings.Join(taskIDStrs, `, `)+`)`)
+
+		for _, t := range tasks {
+			err = mgr.TransferSubtasks2HistoryWithSession(ctx, se, t.ID)
+			if err != nil {
+				return err
+			}
+		}
+>>>>>>> 720983a20c6 (disttask: merge transfer task/subtask (#50311))
 		return err
 	})
 }
 
+<<<<<<< HEAD
 // GetNodesByRole gets nodes map from dist_framework_meta by role.
 func (stm *TaskManager) GetNodesByRole(ctx context.Context, role string) (map[string]bool, error) {
 	rs, err := stm.executeSQLWithNewSession(ctx,
 		"select host from mysql.dist_framework_meta where role = %?", role)
+=======
+// GCSubtasks deletes the history subtask which is older than the given days.
+func (mgr *TaskManager) GCSubtasks(ctx context.Context) error {
+	subtaskHistoryKeepSeconds := defaultSubtaskKeepDays * 24 * 60 * 60
+	failpoint.Inject("subtaskHistoryKeepSeconds", func(val failpoint.Value) {
+		if val, ok := val.(int); ok {
+			subtaskHistoryKeepSeconds = val
+		}
+	})
+	_, err := mgr.ExecuteSQLWithNewSession(
+		ctx,
+		fmt.Sprintf("DELETE FROM mysql.tidb_background_subtask_history WHERE state_update_time < UNIX_TIMESTAMP() - %d ;", subtaskHistoryKeepSeconds),
+	)
+	return err
+}
+
+// GetManagedNodes implements scheduler.TaskManager interface.
+func (mgr *TaskManager) GetManagedNodes(ctx context.Context) ([]proto.ManagedNode, error) {
+	var nodes []proto.ManagedNode
+	err := mgr.WithNewSession(func(se sessionctx.Context) error {
+		var err2 error
+		nodes, err2 = mgr.getManagedNodesWithSession(ctx, se)
+		return err2
+	})
+	return nodes, err
+}
+
+func (mgr *TaskManager) getManagedNodesWithSession(ctx context.Context, se sessionctx.Context) ([]proto.ManagedNode, error) {
+	nodes, err := mgr.getAllNodesWithSession(ctx, se)
+>>>>>>> 720983a20c6 (disttask: merge transfer task/subtask (#50311))
 	if err != nil {
 		return nil, err
 	}

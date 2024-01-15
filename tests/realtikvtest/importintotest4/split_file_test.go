@@ -65,7 +65,11 @@ func (s *mockGCSSuite) TestSplitFile() {
 	globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(ctx, taskKey)
 	s.NoError(err2)
 
+<<<<<<< HEAD
 	subtasks, err2 := globalTaskManager.GetSubtasksForImportInto(ctx, globalTask.ID, importinto.StepImport)
+=======
+	subtasks, err2 := taskManager.GetSubtasksWithHistory(ctx, task.ID, importinto.StepImport)
+>>>>>>> 720983a20c6 (disttask: merge transfer task/subtask (#50311))
 	s.NoError(err2)
 	s.Len(subtasks, 3)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))

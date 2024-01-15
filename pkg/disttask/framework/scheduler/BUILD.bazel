@@ -46,8 +46,13 @@ go_test(
     ],
     embed = [":scheduler"],
     flaky = True,
+<<<<<<< HEAD
     race = "on",
     shard_count = 8,
+=======
+    race = "off",
+    shard_count = 30,
+>>>>>>> 720983a20c6 (disttask: merge transfer task/subtask (#50311))
     deps = [
         "//pkg/disttask/framework/mock",
         "//pkg/disttask/framework/mock/execute",

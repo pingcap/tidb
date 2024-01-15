@@ -266,7 +266,11 @@ func GetTaskImportedRows(ctx context.Context, jobID int64) (uint64, error) {
 	}
 	var importedRows uint64
 	if taskMeta.Plan.CloudStorageURI == "" {
+<<<<<<< HEAD
 		subtasks, err := globalTaskManager.GetSubtasksForImportInto(ctx, task.ID, StepImport)
+=======
+		subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, StepImport)
+>>>>>>> 720983a20c6 (disttask: merge transfer task/subtask (#50311))
 		if err != nil {
 			return 0, err
 		}
@@ -278,7 +282,11 @@ func GetTaskImportedRows(ctx context.Context, jobID int64) (uint64, error) {
 			importedRows += subtaskMeta.Result.LoadedRowCnt
 		}
 	} else {
+<<<<<<< HEAD
 		subtasks, err := globalTaskManager.GetSubtasksForImportInto(ctx, task.ID, StepWriteAndIngest)
+=======
+		subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, StepWriteAndIngest)
+>>>>>>> 720983a20c6 (disttask: merge transfer task/subtask (#50311))
 		if err != nil {
 			return 0, err
 		}
