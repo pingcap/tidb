@@ -26,7 +26,10 @@ go_test(
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/import_sstpb",
+<<<<<<< HEAD
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+=======
+>>>>>>> ac712397b2e (ebs_br: allow temporary TiKV unreachable during starting snapshot backup (#49154))
         "@com_github_pingcap_log//:log",
         "@com_github_pingcap_tipb//go-binlog",
         "@com_github_stretchr_testify//require",

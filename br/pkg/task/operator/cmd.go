@@ -8,20 +8,29 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+<<<<<<< HEAD
 	"runtime/debug"
+=======
+>>>>>>> ac712397b2e (ebs_br: allow temporary TiKV unreachable during starting snapshot backup (#49154))
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+<<<<<<< HEAD
 	preparesnap "github.com/pingcap/tidb/br/pkg/backup/prepare_snap"
+=======
+>>>>>>> ac712397b2e (ebs_br: allow temporary TiKV unreachable during starting snapshot backup (#49154))
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utils"
+<<<<<<< HEAD
 	"github.com/tikv/client-go/v2/tikv"
+=======
+>>>>>>> ac712397b2e (ebs_br: allow temporary TiKV unreachable during starting snapshot backup (#49154))
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -56,6 +65,7 @@ func (cx *AdaptEnvForSnapshotBackupContext) cleanUpWithRetErr(errOut *error, f f
 	if errOut != nil {
 		*errOut = multierr.Combine(*errOut, err)
 	}
+<<<<<<< HEAD
 }
 
 func (cx *AdaptEnvForSnapshotBackupContext) run(f func() error) {
@@ -68,6 +78,8 @@ func (cx *AdaptEnvForSnapshotBackupContext) run(f func() error) {
 		}
 		return err
 	})
+=======
+>>>>>>> ac712397b2e (ebs_br: allow temporary TiKV unreachable during starting snapshot backup (#49154))
 }
 
 type AdaptEnvForSnapshotBackupContext struct {
@@ -134,6 +146,11 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 		runGrp:  eg,
 	}
 	defer cx.Close()
+<<<<<<< HEAD
+=======
+
+	cx.rdGrp.Add(3)
+>>>>>>> ac712397b2e (ebs_br: allow temporary TiKV unreachable during starting snapshot backup (#49154))
 
 	cx.run(func() error { return pauseGCKeeper(cx) })
 	cx.run(func() error { return pauseSchedulerKeeper(cx) })
@@ -154,6 +171,7 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	return eg.Wait()
 }
 
+<<<<<<< HEAD
 func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext) error {
 	env := preparesnap.CliEnv{
 		Cache: tikv.NewRegionCache(cx.pdMgr.GetPDClient()),
@@ -169,6 +187,46 @@ func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext) error {
 		if err := prep.Finalize(ctx); err != nil {
 			logutil.CL(ctx).Warn("failed to finalize the prepare stream", logutil.ShortError(err))
 		}
+=======
+func getCallerName() string {
+	name, err := os.Hostname()
+	if err != nil {
+		name = fmt.Sprintf("UNKNOWN-%d", rand.Int63())
+	}
+	return fmt.Sprintf("operator@%sT%d#%d", name, time.Now().Unix(), os.Getpid())
+}
+
+func pauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
+	suspendLightning := utils.NewSuspendImporting(getCallerName(), cx.kvMgr)
+	_, err := utils.WithRetryV2(cx, cx.GetBackOffer("suspend_lightning"), func(_ context.Context) (map[uint64]bool, error) {
+		return suspendLightning.DenyAllStores(cx, cx.cfg.TTL)
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cx.ReadyL("pause_lightning")
+	cx.runGrp.Go(func() (err error) {
+		defer cx.cleanUpWithRetErr(&err, func(ctx context.Context) error {
+			if ctx.Err() != nil {
+				return errors.Annotate(ctx.Err(), "cleaning up timed out")
+			}
+			res, err := utils.WithRetryV2(ctx, cx.GetBackOffer("restore_lightning"),
+				func(ctx context.Context) (map[uint64]bool, error) { return suspendLightning.AllowAllStores(ctx) })
+			if err != nil {
+				return errors.Annotatef(err, "failed to allow all stores")
+			}
+			return suspendLightning.ConsistentWithPrev(res)
+		})
+
+		err = suspendLightning.Keeper(cx, cx.cfg.TTL)
+		if errors.Cause(err) != context.Canceled {
+			logutil.CL(cx).Warn("keeper encounters error.", logutil.ShortError(err))
+			return err
+		}
+		// Clean up the canceled error.
+		err = nil
+		return
+>>>>>>> ac712397b2e (ebs_br: allow temporary TiKV unreachable during starting snapshot backup (#49154))
 	})
 
 	// We must use our own context here, or once we are cleaning up the client will be invalid.
@@ -182,6 +240,7 @@ func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext) error {
 	return nil
 }
 
+<<<<<<< HEAD
 func getCallerName() string {
 	name, err := os.Hostname()
 	if err != nil {
@@ -190,6 +249,8 @@ func getCallerName() string {
 	return fmt.Sprintf("operator@%sT%d#%d", name, time.Now().Unix(), os.Getpid())
 }
 
+=======
+>>>>>>> ac712397b2e (ebs_br: allow temporary TiKV unreachable during starting snapshot backup (#49154))
 func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext) (err error) {
 	// Note: should we remove the service safepoint as soon as this exits?
 	sp := utils.BRServiceSafePoint{
@@ -210,7 +271,10 @@ func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext) (err error) {
 		return err
 	}
 	cx.ReadyL("pause_gc", zap.Object("safepoint", sp))
+<<<<<<< HEAD
 	//nolint:all_revive
+=======
+>>>>>>> ac712397b2e (ebs_br: allow temporary TiKV unreachable during starting snapshot backup (#49154))
 	defer cx.cleanUpWithRetErr(&err, func(ctx context.Context) error {
 		cancelSP := utils.BRServiceSafePoint{
 			ID:  sp.ID,

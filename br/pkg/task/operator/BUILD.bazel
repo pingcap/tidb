@@ -9,7 +9,10 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/task/operator",
     visibility = ["//visibility:public"],
     deps = [
+<<<<<<< HEAD
         "//br/pkg/backup/prepare_snap",
+=======
+>>>>>>> ac712397b2e (ebs_br: allow temporary TiKV unreachable during starting snapshot backup (#49154))
         "//br/pkg/errors",
         "//br/pkg/logutil",
         "//br/pkg/pdutil",

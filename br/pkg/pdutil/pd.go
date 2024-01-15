@@ -462,7 +462,11 @@ func (p *PdController) doPauseSchedulers(ctx context.Context,
 		prefix := fmt.Sprintf("%s/%s", schedulerPrefix, scheduler)
 		for _, addr := range p.getAllPDAddrs() {
 			var resp []byte
+<<<<<<< HEAD
 			resp, err = post(ctx, addr, prefix, p.cli, http.MethodPost, body)
+=======
+			resp, err = post(ctx, addr, pdhttp.SchedulerByName(scheduler), p.cli, http.MethodPost, body)
+>>>>>>> ac712397b2e (ebs_br: allow temporary TiKV unreachable during starting snapshot backup (#49154))
 			if err == nil {
 				removedSchedulers = append(removedSchedulers, scheduler)
 				log.Info("Paused scheduler.", zap.String("response", string(resp)), zap.String("on", addr))
@@ -646,8 +650,12 @@ func (p *PdController) doUpdatePDScheduleConfig(
 
 func (p *PdController) doPauseConfigs(ctx context.Context, cfg map[string]interface{}, post pdHTTPRequest) error {
 	// pause this scheduler with 300 seconds
+<<<<<<< HEAD
 	prefix := fmt.Sprintf("%s?ttlSecond=%.0f", configPrefix, p.ttlOfPausing().Seconds())
 	return p.doUpdatePDScheduleConfig(ctx, cfg, post, prefix)
+=======
+	return p.doUpdatePDScheduleConfig(ctx, cfg, post, pdhttp.ConfigWithTTLSeconds(p.ttlOfPausing().Seconds()))
+>>>>>>> ac712397b2e (ebs_br: allow temporary TiKV unreachable during starting snapshot backup (#49154))
 }
 
 func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg ClusterConfig,

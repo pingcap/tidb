@@ -22,9 +22,13 @@ import (
 	"testing"
 	"time"
 
+<<<<<<< HEAD
 	"github.com/google/uuid"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+=======
+	"github.com/pingcap/kvproto/pkg/import_sstpb"
+>>>>>>> ac712397b2e (ebs_br: allow temporary TiKV unreachable during starting snapshot backup (#49154))
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/task/operator"
 	"github.com/stretchr/testify/require"
@@ -85,6 +89,7 @@ func verifyLightningStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
 	pdc, err := pd.NewClient(cfg.Config.PD, pd.SecurityOption{})
 	t.NoError(err)
 	defer pdc.Close()
+<<<<<<< HEAD
 	t.NoError(err)
 	region, err := pdc.GetRegion(cx, []byte("a"))
 	t.NoError(err)
@@ -134,6 +139,17 @@ func verifyLightningStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
 	t.NoError(err)
 	t.Contains(res.GetError().GetMessage(), "Suspended", "res = %s", res)
 	t.NotNil(res.GetError().GetServerIsBusy(), "res = %s", res)
+=======
+	stores, err := pdc.GetAllStores(cx, pd.WithExcludeTombstone())
+	t.NoError(err)
+	s := stores[0]
+	conn, err := grpc.DialContext(cx, s.Address, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
+	t.NoError(err)
+	ingestCli := import_sstpb.NewImportSSTClient(conn)
+	res, err := ingestCli.Ingest(cx, &import_sstpb.IngestRequest{})
+	t.NoError(err)
+	t.NotNil(res.GetError(), "res = %s", res)
+>>>>>>> ac712397b2e (ebs_br: allow temporary TiKV unreachable during starting snapshot backup (#49154))
 }
 
 func verifySchedulersStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
@@ -207,10 +223,17 @@ func TestOperator(t *testing.T) {
 		}
 	}, 10*time.Second, time.Second)
 
+<<<<<<< HEAD
 	verifyGCStopped(req, cfg)
 	verifyLightningStopped(req, cfg)
 	verifySchedulersStopped(req, cfg)
 	cancel()
+=======
+	cancel()
+	verifyGCStopped(req, cfg)
+	verifyLightningStopped(req, cfg)
+	verifySchedulersStopped(req, cfg)
+>>>>>>> ac712397b2e (ebs_br: allow temporary TiKV unreachable during starting snapshot backup (#49154))
 
 	req.Eventually(func() bool {
 		select {
