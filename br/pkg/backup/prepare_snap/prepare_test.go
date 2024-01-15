@@ -398,11 +398,13 @@ func TestRetryEnv(t *testing.T) {
 }
 
 type counterClient struct {
-	send int
+	send    int
+	regions []*metapb.Region
 }
 
-func (c *counterClient) Send(_ *brpb.PrepareSnapshotBackupRequest) error {
+func (c *counterClient) Send(req *brpb.PrepareSnapshotBackupRequest) error {
 	c.send += 1
+	c.regions = append(c.regions, req.Regions...)
 	return nil
 }
 
@@ -413,13 +415,16 @@ func (c *counterClient) Recv() (*brpb.PrepareSnapshotBackupResponse, error) {
 func TestSplitEnv(t *testing.T) {
 	log.SetLevel(zapcore.DebugLevel)
 	cc := SplitRequestClient{PrepareClient: &counterClient{}, MaxRequestSize: 1024}
-	reset := func() { cc.PrepareClient.(*counterClient).send = 0 }
+	reset := func() {
+		cc.PrepareClient.(*counterClient).send = 0
+		cc.PrepareClient.(*counterClient).regions = nil
+	}
 	makeHugeRequestRegions := func(n int, eachSize int) []*metapb.Region {
 		regions := []*metapb.Region{}
 		for i := 0; i < n; i++ {
 			regions = append(regions, &metapb.Region{
-				StartKey: make([]byte, eachSize),
-				EndKey:   make([]byte, eachSize),
+				StartKey: append(make([]byte, eachSize-1), byte(i)),
+				EndKey:   append(make([]byte, eachSize-1), byte(i+1)),
 			})
 		}
 		return regions
@@ -431,6 +436,7 @@ func TestSplitEnv(t *testing.T) {
 	}
 	require.NoError(t, cc.Send(&hugeRequest))
 	require.GreaterOrEqual(t, cc.PrepareClient.(*counterClient).send, 20)
+	require.ElementsMatch(t, cc.PrepareClient.(*counterClient).regions, hugeRequest.Regions)
 
 	reset()
 	reallyHugeRequest := brpb.PrepareSnapshotBackupRequest{
@@ -439,6 +445,7 @@ func TestSplitEnv(t *testing.T) {
 	}
 	require.NoError(t, cc.Send(&reallyHugeRequest))
 	require.Equal(t, cc.PrepareClient.(*counterClient).send, 10)
+	require.ElementsMatch(t, cc.PrepareClient.(*counterClient).regions, reallyHugeRequest.Regions)
 
 	reset()
 	tinyRequest := brpb.PrepareSnapshotBackupRequest{
@@ -447,4 +454,5 @@ func TestSplitEnv(t *testing.T) {
 	}
 	require.NoError(t, cc.Send(&tinyRequest))
 	require.Equal(t, cc.PrepareClient.(*counterClient).send, 1)
+	require.ElementsMatch(t, cc.PrepareClient.(*counterClient).regions, tinyRequest.Regions)
 }

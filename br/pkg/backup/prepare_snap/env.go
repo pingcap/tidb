@@ -58,9 +58,11 @@ type SplitRequestClient struct {
 }
 
 func (s SplitRequestClient) Send(req *brpb.PrepareSnapshotBackupRequest) error {
+	// Try best to keeping the request untouched.
+	rs := req.Regions
 	if req.Ty == brpb.PrepareSnapshotBackupRequestType_WaitApply && req.Size() > s.MaxRequestSize {
 		findSplitIndex := func() int {
-			if len(req.Regions) == 0 {
+			if len(rs) == 0 {
 				return -1
 			}
 
@@ -68,18 +70,18 @@ func (s SplitRequestClient) Send(req *brpb.PrepareSnapshotBackupRequest) error {
 			// So we won't get sutck if there were a really huge (!) request.
 			collected := 0
 			lastI := 1
-			for i := 2; i < len(req.Regions) && collected+req.Regions[i].Size() < s.MaxRequestSize; i++ {
+			for i := 2; i < len(rs) && collected+rs[i].Size() < s.MaxRequestSize; i++ {
 				lastI = i
-				collected += req.Regions[i].Size()
+				collected += rs[i].Size()
 			}
 			return lastI
 		}
 		for splitIdx := findSplitIndex(); splitIdx > 0; splitIdx = findSplitIndex() {
 			split := &brpb.PrepareSnapshotBackupRequest{
 				Ty:      brpb.PrepareSnapshotBackupRequestType_WaitApply,
-				Regions: req.Regions[:splitIdx],
+				Regions: rs[:splitIdx],
 			}
-			req.Regions = req.Regions[splitIdx:]
+			rs = rs[splitIdx:]
 			if err := s.PrepareClient.Send(split); err != nil {
 				return err
 			}
