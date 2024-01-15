@@ -277,7 +277,7 @@ func TestGetCorrectResult(t *testing.T) {
 	hardLimitBytesNum := int64(6000000)
 
 	ctx := mock.NewContext()
-	initCtx(ctx, newRootExceedAction, hardLimitBytesNum, 30000)
+	initCtx(ctx, newRootExceedAction, hardLimitBytesNum, 256)
 
 	rowNum := 100000 + rand.Intn(100000)
 	ndv := 50000 + rand.Intn(50000)

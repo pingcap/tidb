@@ -47,12 +47,11 @@ const (
 
 type parallelHashAggSpillHelper struct {
 	lock struct {
-		mu                  *sync.Mutex
-		cond                *sync.Cond
-		nextPartitionIdx    int
-		spilledChunksIO     [][]*chunk.DataInDiskByChunks
-		spillStatus         int
-		inSpillingWorkerNum int
+		mu               *sync.Mutex
+		cond             *sync.Cond
+		nextPartitionIdx int
+		spilledChunksIO  [][]*chunk.DataInDiskByChunks
+		spillStatus      int
 	}
 
 	partialWorkerNum int
@@ -75,19 +74,17 @@ func newSpillHelper(tracker *memory.Tracker, aggFuncsForRestoring []aggfuncs.Agg
 	mu := new(sync.Mutex)
 	return &parallelHashAggSpillHelper{
 		lock: struct {
-			mu                  *sync.Mutex
-			cond                *sync.Cond
-			nextPartitionIdx    int
-			spilledChunksIO     [][]*chunk.DataInDiskByChunks
-			spillStatus         int
-			inSpillingWorkerNum int
+			mu               *sync.Mutex
+			cond             *sync.Cond
+			nextPartitionIdx int
+			spilledChunksIO  [][]*chunk.DataInDiskByChunks
+			spillStatus      int
 		}{
-			mu:                  mu,
-			cond:                sync.NewCond(mu),
-			spilledChunksIO:     make([][]*chunk.DataInDiskByChunks, spilledPartitionNum),
-			spillStatus:         noSpill,
-			nextPartitionIdx:    spilledPartitionNum - 1,
-			inSpillingWorkerNum: 0,
+			mu:               mu,
+			cond:             sync.NewCond(mu),
+			spilledChunksIO:  make([][]*chunk.DataInDiskByChunks, spilledPartitionNum),
+			spillStatus:      noSpill,
+			nextPartitionIdx: spilledPartitionNum - 1,
 		},
 		partialWorkerNum:     partialWorkerNum,
 		spillTriggered:       atomic.Bool{},
@@ -131,27 +128,21 @@ func (p *parallelHashAggSpillHelper) getListInDisks(partitionNum int) []*chunk.D
 	return p.lock.spilledChunksIO[partitionNum]
 }
 
-func (p *parallelHashAggSpillHelper) tryToSetInSpilling() {
+func (p *parallelHashAggSpillHelper) setInSpilling() {
 	p.lock.mu.Lock()
 	defer p.lock.mu.Unlock()
-	p.lock.inSpillingWorkerNum++
-	if p.lock.inSpillingWorkerNum == p.partialWorkerNum {
-		p.setIsSpillingNoLock()
-		p.setSpillTriggered()
-		logutil.BgLogger().Info(spillLogInfo,
-			zap.Int64("consumed", p.memoryConsumption.Load()),
-			zap.Int64("quota", p.memoryQuota.Load()))
-	}
+	p.setIsSpillingNoLock()
+	p.setSpillTriggered()
+	logutil.BgLogger().Info(spillLogInfo,
+		zap.Int64("consumed", p.memoryConsumption.Load()),
+		zap.Int64("quota", p.memoryQuota.Load()))
 }
 
-func (p *parallelHashAggSpillHelper) tryToUnsetInSpilling() {
+func (p *parallelHashAggSpillHelper) unsetInSpilling() {
 	p.lock.mu.Lock()
 	defer p.lock.mu.Unlock()
-	p.lock.inSpillingWorkerNum--
-	if p.lock.inSpillingWorkerNum == 0 {
-		p.setNoSpillNoLock()
-		p.lock.cond.Broadcast()
-	}
+	p.setNoSpillNoLock()
+	p.lock.cond.Broadcast()
 }
 
 func (p *parallelHashAggSpillHelper) isSpillTriggered() bool {
@@ -348,7 +339,7 @@ func (p *ParallelAggSpillDiskAction) Action(t *memory.Tracker) {
 	}
 }
 
-// Return true if we should keep executing.
+// Return true if we need further execution.
 func (p *ParallelAggSpillDiskAction) actionImpl(t *memory.Tracker) bool {
 	p.spillHelper.lock.mu.Lock()
 	defer p.spillHelper.lock.mu.Unlock()

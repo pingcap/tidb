@@ -63,13 +63,15 @@ type HashAggPartialWorker struct {
 	chk *chunk.Chunk
 
 	isSpillPrepared       bool
-	parallelSpillWaiter   *sync.WaitGroup
 	spillHelper           *parallelHashAggSpillHelper
 	tmpChksForSpill       []*chunk.Chunk
 	spillSerializeHelpers *aggfuncs.SerializeHelper
 	getNewSpillChunkFunc  func() *chunk.Chunk
 	spillChunkFieldTypes  []*types.FieldType
 	spilledChunksIO       []*chunk.DataInDiskByChunks
+
+	// It's useful when spill is triggered and the fetcher could know when partial workers finish their works.
+	fetcherAndPartialSyncer *sync.WaitGroup
 }
 
 func (w *HashAggPartialWorker) getChildInput() bool {
@@ -89,26 +91,7 @@ func (w *HashAggPartialWorker) getChildInput() bool {
 	return true
 }
 
-func (w *HashAggPartialWorker) checkAndExecuteSpill() error {
-	if !w.spillHelper.checkNeedSpill() {
-		return nil
-	}
-
-	w.spillHelper.tryToSetInSpilling()
-	err := w.spillDataToDisk()
-	w.spillHelper.tryToUnsetInSpilling()
-	return err
-}
-
 func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasError *bool, needShuffle *bool) bool {
-	err := w.checkAndExecuteSpill()
-	if err != nil {
-		*hasError = true
-		w.processError(err)
-		return false
-	}
-
-	// Other partial workers may encounter error.
 	if w.spillHelper.checkError() {
 		*hasError = true
 		return false
@@ -123,6 +106,8 @@ func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasE
 	if !ok {
 		return false
 	}
+
+	defer w.fetcherAndPartialSyncer.Done()
 
 	execStart := time.Now()
 	if err := w.updatePartialResult(ctx, w.chk, len(w.partialResultsMap)); err != nil {
@@ -153,7 +138,9 @@ func (w *HashAggPartialWorker) intestDuringPartialWorkerRun() {
 			} else if num < 6 {
 				w.processError(errors.Errorf("Random fail is triggered in partial worker"))
 			} else if num < 9 {
-				w.memTracker.Consume(500000)
+				consumedMem := int64(500000)
+				w.memTracker.Consume(consumedMem)
+				w.partialResultsMapMem.Add(consumedMem)
 			}
 
 			// Slow some partial workers
@@ -174,35 +161,13 @@ func (w *HashAggPartialWorker) intestDuringPartialWorkerRun() {
 	})
 }
 
-func (w *HashAggPartialWorker) handleSpillBeforeExit() {
-	if w.spillHelper.checkError() {
-		return
-	}
-
-	if len(w.groupKey) > 0 {
-		if err := w.spillDataToDisk(); err != nil {
-			w.processError(err)
-			return
-		}
-	}
-	w.spillHelper.addListInDisks(w.spilledChunksIO)
-}
-
 func (w *HashAggPartialWorker) sendDataToFinalWorkersBeforeExit(needShuffle bool, finalConcurrency int, hasError bool) {
-	w.parallelSpillWaiter.Done()
-
-	// If spill is triggered, only the last finished worker will set spill triggered flag.
-	// So only when all workers exist can we know if spill was triggered before.
-	w.parallelSpillWaiter.Wait()
-
 	if hasError {
 		return
 	}
 
-	// We should always check spill status first.
 	if w.spillHelper.isSpillTriggered() {
-		w.handleSpillBeforeExit()
-		return
+		w.spillHelper.addListInDisks(w.spilledChunksIO)
 	}
 
 	if needShuffle {
@@ -223,6 +188,17 @@ func intestBeforePartialWorkerRun() {
 	})
 }
 
+// Consume all chunks to avoid hang of fetcher
+func (w *HashAggPartialWorker) consumeAllChunksBeforeExit() {
+	for {
+		ok := w.getChildInput()
+		if !ok {
+			break
+		}
+		w.fetcherAndPartialSyncer.Done()
+	}
+}
+
 func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
 	start := time.Now()
 	hasError := false
@@ -232,6 +208,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 			recoveryHashAgg(w.globalOutputCh, r)
 		}
 
+		w.consumeAllChunksBeforeExit()
 		w.sendDataToFinalWorkersBeforeExit(needShuffle, finalConcurrency, hasError)
 
 		w.memTracker.Consume(-w.chk.MemoryUsage())
@@ -295,7 +272,8 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, chk *
 	memSize := getGroupKeyMemUsage(w.groupKey)
 	w.groupKey, err = GetGroupKey(w.ctx, chk, w.groupKey, w.groupByItems)
 	failpoint.Inject("ConsumeRandomPanic", nil)
-	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKey) - memSize)
+	allMemDelta := int64(getGroupKeyMemUsage(w.groupKey) - memSize)
+	w.memTracker.Consume(allMemDelta)
 	if err != nil {
 		return err
 	}
@@ -304,7 +282,6 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, chk *
 
 	numRows := chk.NumRows()
 	rows := make([]chunk.Row, 1)
-	allMemDelta := int64(0)
 	for i := 0; i < numRows; i++ {
 		partialResult := partialResultOfEachRow[i]
 		rows[0] = chk.GetRow(i)

@@ -141,6 +141,8 @@ type HashAggExec struct {
 	inSpillMode uint32
 	// tmpChkForSpill is the temp chunk for spilling.
 	tmpChkForSpill *chunk.Chunk
+	// It's useful when spill is triggered and the fetcher could know when partial workers finish their works.
+	fetcherAndPartialSyncer *sync.WaitGroup
 	// spillAction save the Action for spilling.
 	spillAction *AggSpillDiskAction
 	// parallelAggSpillAction save the Action for spilling of parallel aggregation.
@@ -265,7 +267,6 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 	}
 	spillChunkFieldTypes[baseRetTypeNum] = types.NewFieldType(mysql.TypeString)
 
-	parallelSpillWaiter := &sync.WaitGroup{}
 	for i := 0; i < partialConcurrency; i++ {
 		partialResultsMap := make([]aggfuncs.AggPartialResultMapper, finalConcurrency)
 		for i := 0; i < finalConcurrency; i++ {
@@ -289,11 +290,11 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			getNewSpillChunkFunc: func() *chunk.Chunk {
 				return chunk.New(spillChunkFieldTypes, e.InitCap(), e.MaxChunkSize())
 			},
-			spillChunkFieldTypes:  spillChunkFieldTypes,
-			spillSerializeHelpers: aggfuncs.NewSerializeHelper(),
-			isSpillPrepared:       false,
-			parallelSpillWaiter:   parallelSpillWaiter,
-			spillHelper:           e.spillHelper,
+			spillChunkFieldTypes:    spillChunkFieldTypes,
+			spillSerializeHelpers:   aggfuncs.NewSerializeHelper(),
+			isSpillPrepared:         false,
+			spillHelper:             e.spillHelper,
+			fetcherAndPartialSyncer: e.fetcherAndPartialSyncer,
 		}
 
 		e.partialWorkers[i].partialResultNumInRow = e.partialWorkers[i].getPartialResultSliceLenConsiderByteAlign()
@@ -316,8 +317,6 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 		e.memTracker.Consume(input.chk.MemoryUsage())
 		e.inputCh <- input
 	}
-
-	parallelSpillWaiter.Add(partialConcurrency)
 }
 
 func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
@@ -369,22 +368,23 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 		e.partialOutputChs[i] = make(chan *aggfuncs.AggPartialResultMapper, partialConcurrency)
 	}
 
-	e.partialWorkers = make([]HashAggPartialWorker, partialConcurrency)
-	e.finalWorkers = make([]HashAggFinalWorker, finalConcurrency)
-	e.initRuntimeStats()
-
-	e.spillHelper = newSpillHelper(e.memTracker, e.PartialAggFuncs, partialConcurrency)
-	e.initPartialWorkers(partialConcurrency, finalConcurrency, ctx)
-	e.initFinalWorkers(finalConcurrency)
-
 	isTrackerEnabled := e.Ctx().GetSessionVars().TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load()
 	isParallelHashAggSpillEnabled := e.Ctx().GetSessionVars().EnableConcurrentHashaggSpill
+	e.spillHelper = newSpillHelper(e.memTracker, e.PartialAggFuncs, partialConcurrency)
 	if isTrackerEnabled && isParallelHashAggSpillEnabled {
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
 		e.diskTracker.AttachTo(sessionVars.StmtCtx.DiskTracker)
 		e.spillHelper.diskTracker = e.diskTracker
 		sessionVars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
+		e.fetcherAndPartialSyncer = &sync.WaitGroup{}
 	}
+
+	e.partialWorkers = make([]HashAggPartialWorker, partialConcurrency)
+	e.finalWorkers = make([]HashAggFinalWorker, finalConcurrency)
+	e.initRuntimeStats()
+
+	e.initPartialWorkers(partialConcurrency, finalConcurrency, ctx)
+	e.initFinalWorkers(finalConcurrency)
 	e.parallelExecValid = true
 	return nil
 }
@@ -409,6 +409,15 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		if r := recover(); r != nil {
 			recoveryHashAgg(e.finalOutputCh, r)
 		}
+
+		// Wait for the finish of all partial workers
+		e.fetcherAndPartialSyncer.Wait()
+
+		if e.spillHelper.isSpillTriggered() && !e.spillHelper.checkError() {
+			// Spill the remaining data
+			e.spill()
+		}
+
 		for i := range e.partialInputChs {
 			close(e.partialInputChs[i])
 		}
@@ -431,14 +440,48 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 			e.memTracker.Consume(-mSize)
 			return
 		}
+		if e.spillHelper.checkError() {
+			return
+		}
 		if chk.NumRows() == 0 {
 			e.memTracker.Consume(-mSize)
 			return
 		}
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		e.memTracker.Consume(chk.MemoryUsage() - mSize)
+		e.fetcherAndPartialSyncer.Add(1)
 		input.giveBackCh <- chk
+		e.checkAndExecuteSpill()
 	}
+}
+
+func (e *HashAggExec) checkAndExecuteSpill() {
+	if !e.spillHelper.checkNeedSpill() {
+		return
+	}
+
+	// Wait for the finish of all partial workers
+	e.fetcherAndPartialSyncer.Wait()
+	e.spillHelper.setInSpilling()
+	e.spill()
+	e.spillHelper.unsetInSpilling()
+}
+
+func (e *HashAggExec) spill() {
+	spillWaiter := &sync.WaitGroup{}
+	spillWaiter.Add(len(e.partialWorkers))
+
+	for i := range e.partialWorkers {
+		go func(worker *HashAggPartialWorker) {
+			defer spillWaiter.Done()
+			err := worker.spillDataToDisk()
+			if err != nil {
+				worker.processError(err)
+			}
+		}(&e.partialWorkers[i])
+	}
+
+	spillWaiter.Wait()
 }
 
 func (e *HashAggExec) waitPartialWorkerAndCloseOutputChs(waitGroup *sync.WaitGroup) {
