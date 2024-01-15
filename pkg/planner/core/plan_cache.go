@@ -131,7 +131,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	// So we need to clear the current session's plan cache.
 	// And update lastUpdateTime to the newest one.
 	expiredTimeStamp4PC := domain.GetDomain(sctx).ExpiredTimeStamp4PC()
-	if stmt.StmtCacheable && expiredTimeStamp4PC.Compare(vars.LastUpdateTime4PC) > 0 {
+	if expiredTimeStamp4PC.Compare(vars.LastUpdateTime4PC) > 0 {
 		sctx.GetSessionPlanCache().DeleteAll()
 		stmtAst.CachedPlan = nil
 		vars.LastUpdateTime4PC = expiredTimeStamp4PC
@@ -162,9 +162,9 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		stmtCtx.CacheType = stmtctx.SessionPrepared
 		cacheEnabled = sctx.GetSessionVars().EnablePreparedPlanCache
 	}
-	stmtCtx.UseCache = stmt.StmtCacheable && cacheEnabled
-	if !stmt.StmtCacheable && stmt.UncacheableReason != "" {
-		stmtCtx.SetSkipPlanCache(errors.New(stmt.UncacheableReason))
+	stmtCtx.UseCache = stmt.UncacheableReason == "" && cacheEnabled
+	if stmt.UncacheableReason != "" && stmt.UncacheableReasonWarning {
+		stmtCtx.SetSkipPlanCache(errors.New(stmt.UncacheableReason), stmt.UncacheableReasonWarning)
 	}
 
 	var bindSQL string
@@ -172,7 +172,7 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		var ignoreByBinding bool
 		bindSQL, ignoreByBinding = bindinfo.MatchSQLBindingForPlanCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
 		if ignoreByBinding {
-			stmtCtx.SetSkipPlanCache(errors.Errorf("ignore plan cache by binding"))
+			stmtCtx.SetSkipPlanCache(errors.Errorf("ignore plan cache by binding"), stmtCtx.UseCache)
 		}
 	}
 
@@ -322,8 +322,8 @@ func generateNewPlan(ctx context.Context, sctx sessionctx.Context, isNonPrepared
 
 	// check whether this plan is cacheable.
 	if stmtCtx.UseCache {
-		if cacheable, reason := isPlanCacheable(sctx, p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount), matchOpts.HasSubQuery); !cacheable {
-			stmtCtx.SetSkipPlanCache(errors.Errorf(reason))
+		if warn, reason := isPlanCacheable(sctx, p, len(matchOpts.ParamTypes), len(matchOpts.LimitOffsetAndCount), matchOpts.HasSubQuery); reason != "" {
+			stmtCtx.SetSkipPlanCache(errors.Errorf(reason), warn)
 		}
 	}
 

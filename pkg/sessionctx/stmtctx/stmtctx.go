@@ -808,11 +808,9 @@ const (
 )
 
 // SetSkipPlanCache sets to skip the plan cache and records the reason.
-func (sc *StatementContext) SetSkipPlanCache(reason error) {
-	if !sc.UseCache {
-		if !(sc.CacheType == SessionPrepared && reason.Error() == "query accesses partitioned tables is un-cacheable") {
-			return // avoid unnecessary warnings
-		}
+func (sc *StatementContext) SetSkipPlanCache(reason error, warnUseCache bool) {
+	if !sc.UseCache && !warnUseCache {
+		return // avoid unnecessary warnings
 	}
 
 	if sc.ForcePlanCache {
@@ -1295,7 +1293,7 @@ func (sc *StatementContext) RecordRangeFallback(rangeMaxSize int64) {
 	// If range fallback happens, it means ether the query is unreasonable(for example, several long IN lists) or tidb_opt_range_max_size is too small
 	// and the generated plan is probably suboptimal. In that case we don't put it into plan cache.
 	if sc.UseCache {
-		sc.SetSkipPlanCache(errors.NewNoStackError("in-list is too long"))
+		sc.SetSkipPlanCache(errors.NewNoStackError("in-list is too long"), sc.UseCache)
 	}
 	if !sc.RangeFallback {
 		sc.AppendWarning(errors.NewNoStackErrorf("Memory capacity of %v bytes for 'tidb_opt_range_max_size' exceeded when building ranges. Less accurate ranges such as full range are chosen", rangeMaxSize))

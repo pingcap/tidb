@@ -43,8 +43,8 @@ import (
 // Cacheable checks whether the input ast(query) is cacheable with empty session context, which is mainly for testing.
 // TODO: only for test, remove this function later on.
 func Cacheable(node ast.Node, is infoschema.InfoSchema) bool {
-	c, _ := IsASTCacheable(nil, nil, node, is)
-	return c
+	c, reason := IsASTCacheable(nil, nil, node, is)
+	return c && reason == ""
 }
 
 // CacheableWithCtx checks whether the input ast(query) is cacheable.
@@ -213,7 +213,7 @@ func (checker *cacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 var nonPrepCacheCheckerPool = &sync.Pool{New: func() any { return &nonPreparedPlanCacheableChecker{} }}
 
 // NonPreparedPlanCacheableWithCtx checks whether this SQL is cacheable for non-prepared plan cache.
-func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (ok bool, reason string) {
+func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (warning bool, reason string) {
 	selStmt, isSelect := node.(*ast.SelectStmt)
 	if !sctx.GetSessionVars().EnableNonPreparedPlanCacheForDML &&
 		(!isSelect || selStmt.LockInfo != nil) {
@@ -224,9 +224,9 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 	var tableNames []*ast.TableName
 	switch x := node.(type) {
 	case *ast.SelectStmt:
-		tableNames, ok, reason = isSelectStmtNonPrepCacheableFastCheck(sctx, x)
-		if !ok {
-			return ok, reason
+		tableNames, warning, reason = isSelectStmtNonPrepCacheableFastCheck(sctx, x)
+		if reason != "" {
+			return warning, reason
 		}
 	case *ast.UpdateStmt:
 		if len(x.TableHints) > 0 {
@@ -235,9 +235,9 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 		if x.MultipleTable {
 			return false, "not support multiple tables update statements"
 		}
-		tableNames, ok, reason = extractTableNames(x.TableRefs.TableRefs, tableNames)
-		if !ok {
-			return ok, reason
+		tableNames, warning, reason = extractTableNames(x.TableRefs.TableRefs, tableNames)
+		if reason != "" {
+			return warning, reason
 		}
 	case *ast.InsertStmt:
 		if len(x.TableHints) > 0 {
@@ -252,22 +252,22 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 			if nRows*nCols > maxNumParam { // to save memory
 				return false, "too many values in the insert statement"
 			}
-			tableNames, ok, reason = extractTableNames(x.Table.TableRefs, tableNames)
-			if !ok {
-				return ok, reason
+			tableNames, warning, reason = extractTableNames(x.Table.TableRefs, tableNames)
+			if reason != "" {
+				return warning, reason
 			}
 		} else { // `insert into t select ...`
 			selectStmt, ok := x.Select.(*ast.SelectStmt)
 			if !ok {
 				return false, "not a select statement"
 			}
-			tableNames, ok, reason = isSelectStmtNonPrepCacheableFastCheck(sctx, selectStmt)
-			if !ok {
-				return ok, reason
+			tableNames, warning, reason = isSelectStmtNonPrepCacheableFastCheck(sctx, selectStmt)
+			if reason != "" {
+				return warning, reason
 			}
-			tableNames, ok, reason = extractTableNames(x.Table.TableRefs, tableNames)
-			if !ok {
-				return ok, reason
+			tableNames, warning, reason = extractTableNames(x.Table.TableRefs, tableNames)
+			if reason != "" {
+				return warning, reason
 			}
 		}
 	case *ast.DeleteStmt:
@@ -277,9 +277,9 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 		if x.IsMultiTable {
 			return false, "not support multiple tables delete statements"
 		}
-		tableNames, ok, reason = extractTableNames(x.TableRefs.TableRefs, tableNames)
-		if !ok {
-			return ok, reason
+		tableNames, warning, reason = extractTableNames(x.TableRefs.TableRefs, tableNames)
+		if reason != "" {
+			return warning, reason
 		}
 	default:
 		return false, "not a SELECT/UPDATE/INSERT/DELETE statement"
@@ -290,20 +290,20 @@ func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is 
 	checker.reset(sctx, is, tableNames, maxNumParam)
 
 	node.Accept(checker)
-	cacheable, reason := checker.cacheable, checker.reason
+	warning, reason = checker.warning, checker.reason
 
-	if !cacheable {
+	if reason != "" {
 		// this metrics can measure the extra overhead of non-prep plan cache.
 		core_metrics.GetNonPrepPlanCacheUnsupportedCounter().Inc()
 	}
 
 	// put the checker back
 	nonPrepCacheCheckerPool.Put(checker)
-	return cacheable, reason
+	return warning, reason
 }
 
 // isSelectStmtNonPrepCacheableFastCheck checks whether the input select statement is cacheable for non-prepared plan cache.
-func isSelectStmtNonPrepCacheableFastCheck(sctx sessionctx.Context, selectStmt *ast.SelectStmt) (names []*ast.TableName, ok bool, reason string) {
+func isSelectStmtNonPrepCacheableFastCheck(sctx sessionctx.Context, selectStmt *ast.SelectStmt) (names []*ast.TableName, warning bool, reason string) {
 	if selectStmt.Kind != ast.SelectStmtKindSelect {
 		return nil, false, "not a select statement"
 	}
@@ -312,26 +312,26 @@ func isSelectStmtNonPrepCacheableFastCheck(sctx sessionctx.Context, selectStmt *
 		selectStmt.WindowSpecs != nil || // window function
 		(selectStmt.Limit != nil && !sctx.GetSessionVars().EnablePlanCacheForParamLimit) || // limit
 		selectStmt.SelectIntoOpt != nil { // select-into statement
-		return nil, false, "queries that have hints, having-clause, window-function are not supported"
+		return nil, true, "queries that have hints, having-clause, window-function are not supported"
 	}
 	from := selectStmt.From
 	if from == nil || selectStmt.From.TableRefs == nil {
-		return nil, false, "queries that have sub-queries are not supported"
+		return nil, true, "queries that have sub-queries are not supported"
 	}
 	tableRefs := from.TableRefs
 
 	// match table names, currently only support 2 tables(2-way join) at most.
-	tableNames, ok, reason := extractTableNames(tableRefs, nil)
-	if !ok {
-		return nil, false, reason
+	tableNames, warning, reason := extractTableNames(tableRefs, nil)
+	if reason != "" {
+		return nil, warning, reason
 	}
-	return tableNames, true, ""
+	return tableNames, false, ""
 }
 
 // extractTableNames extracts table names from the input node.
 // Currently support 2 tables(2-way join) at most.
 func extractTableNames(node ast.ResultSetNode, names []*ast.TableName) ([]*ast.TableName, bool, string) {
-	var ok bool
+	var warn bool
 	var reason string
 	switch x := node.(type) {
 	case *ast.TableSource:
@@ -340,41 +340,41 @@ func extractTableNames(node ast.ResultSetNode, names []*ast.TableName) ([]*ast.T
 			names = append(names, name)
 		} else {
 			if x.Source != nil {
-				names, ok, reason = extractTableNames(x.Source, names)
-				if !ok {
-					return nil, ok, reason
+				names, warn, reason = extractTableNames(x.Source, names)
+				if reason != "" {
+					return nil, warn, reason
 				}
 			}
 		}
 	case *ast.Join:
 		if x.Left != nil {
-			names, ok, reason = extractTableNames(x.Left, names)
-			if !ok {
-				return nil, ok, reason
+			names, warn, reason = extractTableNames(x.Left, names)
+			if reason != "" {
+				return nil, warn, reason
 			}
 		}
 		if x.Right != nil {
-			names, ok, reason = extractTableNames(x.Right, names)
-			if !ok {
-				return nil, ok, reason
+			names, warn, reason = extractTableNames(x.Right, names)
+			if reason != "" {
+				return nil, warn, reason
 			}
 		}
 	default:
-		return names, false, "queries that have sub-queries are not supported"
+		return names, true, "queries that have sub-queries are not supported"
 	}
 	if len(names) > 2 {
 		return names, false, "queries that have more than 2 tables are not supported"
 	}
-	return names, true, ""
+	return names, false, ""
 }
 
 // nonPreparedPlanCacheableChecker checks whether a query's plan can be cached for non-prepared plan cache.
 // NOTE: we can add more rules in the future.
 type nonPreparedPlanCacheableChecker struct {
-	sctx      sessionctx.Context
-	cacheable bool
-	reason    string // reason why this statement cannot hit the cache
-	schema    infoschema.InfoSchema
+	sctx    sessionctx.Context
+	warning bool   // warning is to control whether the reason adds to the warning.
+	reason  string // reason why this statement cannot hit the cache
+	schema  infoschema.InfoSchema
 
 	tableNodes []*ast.TableName // only support 2-way joins currently
 
@@ -386,7 +386,7 @@ type nonPreparedPlanCacheableChecker struct {
 
 func (checker *nonPreparedPlanCacheableChecker) reset(sctx sessionctx.Context, schema infoschema.InfoSchema, tableNodes []*ast.TableName, maxNumberParam int) {
 	checker.sctx = sctx
-	checker.cacheable = true
+	checker.warning = true
 	checker.schema = schema
 	checker.reason = ""
 	checker.tableNodes = tableNodes
@@ -405,13 +405,13 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join, *ast.BetweenExpr, *ast.OnCondition,
 		*ast.InsertStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.Assignment, *ast.ParenthesesExpr, *ast.RowExpr,
 		*ast.TableSource, *ast.ColumnNameExpr, *ast.PatternInExpr, *ast.BinaryOperationExpr, *ast.ByItem, *ast.AggregateFuncExpr:
-		return in, !checker.cacheable // skip child if un-cacheable
+		return in, checker.reason != "" // skip child if un-cacheable
 	case *ast.Limit:
 		if !checker.sctx.GetSessionVars().EnablePlanCacheForParamLimit {
-			checker.cacheable = false
+			checker.warning = false
 			checker.reason = "query has 'limit ?' is un-cacheable"
 		}
-		return in, !checker.cacheable
+		return in, checker.reason != ""
 	case *ast.ColumnName:
 		if checker.filterCnt > 0 {
 			// this column is appearing some filters, e.g. `col = 1`
@@ -423,80 +423,80 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 				if colType, found := getColType(checker.schema, tableNode, node); found {
 					colFound = found
 					if colType == mysql.TypeJSON || colType == mysql.TypeEnum || colType == mysql.TypeSet || colType == mysql.TypeBit {
-						checker.cacheable = false
+						checker.warning = true
 						checker.reason = "query has some filters with JSON, Enum, Set or Bit columns"
 					}
 				}
 			}
 			if !colFound {
-				checker.cacheable = false
+				checker.warning = false
 				checker.reason = "some column is not found in table schema"
 			}
 		}
-		return in, !checker.cacheable
+		return in, checker.reason != ""
 	case *ast.FuncCallExpr:
 		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
-			checker.cacheable = false
+			checker.warning = false
 			checker.reason = "query has un-cacheable functions"
 		}
-		return in, !checker.cacheable
+		return in, checker.reason != ""
 	case *driver.ValueExpr:
 		if node.GetType().GetFlag()&mysql.UnderScoreCharsetFlag > 0 {
 			// for safety, not support values with under-score charsets, e.g. select _latin1'abc' from t.
-			checker.cacheable = false
+			checker.warning = false
 			checker.reason = "query has values with under-score charset"
 		}
 		if node.Kind() == types.KindBinaryLiteral {
 			// for safety, BIT / HEX literals are not supported.
-			checker.cacheable = false
+			checker.warning = false
 			checker.reason = "query has BIT / HEX literals are not supported"
 		}
 		if node.IsNull() {
 			// for a condition like `not-null-col = null`, the planner will optimize it to `False` and generate a
 			// table-dual plan, but if it is converted to `not-null-col = ?` here, then the planner cannot do this
 			// optimization and a table-full-scan will be generated.
-			checker.cacheable = false
+			checker.warning = true
 			checker.reason = "query has null constants"
 		}
 		checker.constCnt++
 		if checker.maxNumberParam > 0 && checker.constCnt > checker.maxNumberParam { // just for safety and reduce memory cost
-			checker.cacheable = false
+			checker.warning = false
 			checker.reason = "query has too many constants"
 		}
-		return in, !checker.cacheable
+		return in, checker.reason != ""
 	case *ast.GroupByClause:
 		for _, item := range node.Items {
 			if _, isCol := item.Expr.(*ast.ColumnNameExpr); !isCol {
-				checker.cacheable = false
+				checker.warning = false
 				checker.reason = "only support group by {columns}'"
-				return in, !checker.cacheable
+				return in, checker.reason != ""
 			}
 		}
-		return in, !checker.cacheable
+		return in, checker.reason != ""
 	case *ast.OrderByClause:
 		for _, item := range node.Items {
 			if _, isCol := item.Expr.(*ast.ColumnNameExpr); !isCol {
-				checker.cacheable = false
+				checker.warning = false
 				checker.reason = "only support order by {columns}'"
-				return in, !checker.cacheable
+				return in, checker.reason != ""
 			}
 		}
-		return in, !checker.cacheable
+		return in, checker.reason != ""
 	case *ast.TableName:
 		if filter.IsSystemSchema(node.Schema.O) {
-			checker.cacheable = false
+			checker.warning = true
 			checker.reason = "access tables in system schema"
-			return in, !checker.cacheable
+			return in, checker.reason != ""
 		}
 		if checker.schema != nil {
-			checker.cacheable, checker.reason = checkTableCacheable(nil, checker.sctx, checker.schema, node, true)
+			checker.warning, checker.reason = checkTableCacheable(nil, checker.sctx, checker.schema, node, true)
 		}
-		return in, !checker.cacheable
+		return in, checker.reason != ""
 	}
 
-	checker.cacheable = false // unexpected cases
+	checker.warning = false // unexpected cases
 	checker.reason = "query has some unsupported Node"
-	return in, !checker.cacheable
+	return in, checker.reason != ""
 }
 
 // Leave implements Visitor interface.
@@ -504,7 +504,7 @@ func (checker *nonPreparedPlanCacheableChecker) Leave(in ast.Node) (out ast.Node
 	if checker.isFilterNode(in) {
 		checker.filterCnt--
 	}
-	return in, checker.cacheable
+	return in, checker.warning
 }
 
 func (*nonPreparedPlanCacheableChecker) isFilterNode(node ast.Node) bool {
@@ -630,7 +630,7 @@ func enablePlanCacheForGeneratedCols(sctx sessionctx.Context) bool {
 }
 
 // checkTableCacheable checks whether a query accessing this table is cacheable.
-func checkTableCacheable(ctx context.Context, sctx sessionctx.Context, schema infoschema.InfoSchema, node *ast.TableName, isNonPrep bool) (cacheable bool, reason string) {
+func checkTableCacheable(ctx context.Context, sctx sessionctx.Context, schema infoschema.InfoSchema, node *ast.TableName, isNonPrep bool) (warning bool, reason string) {
 	tableSchema := node.Schema
 	if tableSchema.L == "" {
 		tableSchema.O = sctx.GetSessionVars().CurrentDB
@@ -658,23 +658,23 @@ func checkTableCacheable(ctx context.Context, sctx sessionctx.Context, schema in
 				return in, false // dynamic-mode for partition tables can use plan-cache
 			}
 		*/
-		return false, "query accesses partitioned tables is un-cacheable"
+		return true, "query accesses partitioned tables is un-cacheable"
 	}
 
 	if !enablePlanCacheForGeneratedCols(sctx) {
 		for _, col := range tb.Cols() {
 			if col.IsGenerated() {
-				return false, "query accesses generated columns is un-cacheable"
+				return true, "query accesses generated columns is un-cacheable"
 			}
 		}
 	}
 	if tb.Meta().TempTableType != model.TempTableNone {
-		return false, "query accesses temporary tables is un-cacheable"
+		return true, "query accesses temporary tables is un-cacheable"
 	}
 
 	if isNonPrep { // non-prep plan cache is stricter
 		if tb.Meta().IsView() {
-			return false, "queries that access views are not supported"
+			return true, "queries that access views are not supported"
 		}
 		if !tb.Type().IsNormalTable() {
 			return false, "queries that access in-memory tables"

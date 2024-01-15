@@ -282,7 +282,7 @@ func (s *propConstSolver) propagateColumnEQ() {
 
 func (s *propConstSolver) setConds2ConstFalse() {
 	if MaybeOverOptimized4PlanCache(s.ctx, s.conditions) {
-		s.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("some parameters may be overwritten when constant propagation"))
+		s.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("some parameters may be overwritten when constant propagation"), s.ctx.GetSessionVars().StmtCtx.UseCache)
 	}
 	s.conditions = []Expression{&Constant{
 		Value:   types.NewDatum(false),
@@ -398,7 +398,7 @@ func (s *basePropConstSolver) dealWithPossibleHybridType(col *Column, con *Const
 			return nil, false
 		}
 		if MaybeOverOptimized4PlanCache(s.ctx, []Expression{con}) {
-			s.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("Skip plan cache since mutable constant is restored and propagated"))
+			s.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("Skip plan cache since mutable constant is restored and propagated"), s.ctx.GetSessionVars().StmtCtx.UseCache)
 		}
 		switch d.Kind() {
 		case types.KindInt64:

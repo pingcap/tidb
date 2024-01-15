@@ -129,27 +129,26 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 
 	var (
-		cacheable bool
-		reason    string
+		warn   bool
+		reason string
 	)
 	if (isPrepStmt && !vars.EnablePreparedPlanCache) || // prepared statement
 		(!isPrepStmt && !vars.EnableNonPreparedPlanCache) { // non-prepared statement
-		cacheable = false
+		warn = false
 		reason = "plan cache is disabled"
 	} else {
 		if isPrepStmt {
-			cacheable, reason = IsASTCacheable(ctx, sctx, paramStmt, ret.InfoSchema)
-		} else {
-			cacheable = true // it is already checked here
+			warn, reason = IsASTCacheable(ctx, sctx, paramStmt, ret.InfoSchema)
 		}
+		// non prepare is already checked here
 
-		if !cacheable && fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false) {
+		if reason != "" && fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false) {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("force plan-cache: may use risky cached plan: %s", reason))
-			cacheable = true
+			warn = true
 			reason = ""
 		}
 
-		if !cacheable {
+		if reason != "" {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: " + reason))
 		}
 	}
@@ -176,17 +175,17 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	paramStmt.Accept(features)
 
 	preparedObj := &PlanCacheStmt{
-		PreparedAst:         prepared,
-		StmtDB:              vars.CurrentDB,
-		StmtText:            paramSQL,
-		VisitInfos:          destBuilder.GetVisitInfo(),
-		NormalizedSQL:       normalizedSQL,
-		SQLDigest:           digest,
-		ForUpdateRead:       destBuilder.GetIsForUpdateRead(),
-		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
-		StmtCacheable:       cacheable,
-		UncacheableReason:   reason,
-		QueryFeatures:       features,
+		PreparedAst:              prepared,
+		StmtDB:                   vars.CurrentDB,
+		StmtText:                 paramSQL,
+		VisitInfos:               destBuilder.GetVisitInfo(),
+		NormalizedSQL:            normalizedSQL,
+		SQLDigest:                digest,
+		ForUpdateRead:            destBuilder.GetIsForUpdateRead(),
+		SnapshotTSEvaluator:      ret.SnapshotTSEvaluator,
+		UncacheableReasonWarning: warn,
+		UncacheableReason:        reason,
+		QueryFeatures:            features,
 	}
 	if err = CheckPreparedPriv(sctx, preparedObj, ret.InfoSchema); err != nil {
 		return nil, nil, 0, err
@@ -445,9 +444,9 @@ type PlanCacheStmt struct {
 	// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
 	Executor interface{}
 
-	StmtCacheable     bool   // Whether this stmt is cacheable.
-	UncacheableReason string // Why this stmt is uncacheable.
-	QueryFeatures     *PlanCacheQueryFeatures
+	UncacheableReasonWarning bool   // Whether UncacheableReason should be warning.
+	UncacheableReason        string // Why this stmt is uncacheable.
+	QueryFeatures            *PlanCacheQueryFeatures
 
 	NormalizedSQL       string
 	NormalizedPlan      string
@@ -502,11 +501,11 @@ func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanC
 				if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
 					typeExpected, val := CheckParamTypeInt64orUint64(count)
 					if !typeExpected {
-						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("unexpected value after LIMIT"))
+						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("unexpected value after LIMIT"), sctx.GetSessionVars().StmtCtx.UseCache)
 						break
 					}
 					if val > MaxCacheableLimitCount {
-						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("limit count is too large"))
+						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("limit count is too large"), sctx.GetSessionVars().StmtCtx.UseCache)
 						break
 					}
 					limitOffsetAndCount = append(limitOffsetAndCount, val)
@@ -516,7 +515,7 @@ func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanC
 				if offset, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
 					typeExpected, val := CheckParamTypeInt64orUint64(offset)
 					if !typeExpected {
-						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("unexpected value after LIMIT"))
+						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("unexpected value after LIMIT"), sctx.GetSessionVars().StmtCtx.UseCache)
 						break
 					}
 					limitOffsetAndCount = append(limitOffsetAndCount, val)

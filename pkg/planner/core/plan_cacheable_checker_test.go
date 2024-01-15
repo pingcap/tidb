@@ -425,8 +425,8 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 	for _, q := range unsupported {
 		stmt, err := p.ParseOneStmt(q, charset, collation)
 		require.NoError(t, err)
-		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
-		require.False(t, ok)
+		ok, reason := core.NonPreparedPlanCacheableWithCtx(sctx, stmt, is)
+		require.False(t, ok && reason == "")
 	}
 
 	for _, q := range supported {

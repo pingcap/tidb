@@ -1536,7 +1536,7 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 		exprEvalType := exprType.EvalType()
 		if exprType.GetType() == mysql.TypeYear {
 			reason := errors.Errorf("'%v' may be converted to INT", args[conIdx].String())
-			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason, ctx.GetSessionVars().StmtCtx.UseCache)
 			return true
 		}
 
@@ -1546,7 +1546,7 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 		if exprEvalType == types.ETInt &&
 			(conEvalType == types.ETString || conEvalType == types.ETReal || conEvalType == types.ETDecimal) {
 			reason := errors.Errorf("'%v' may be converted to INT", args[conIdx].String())
-			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason, ctx.GetSessionVars().StmtCtx.UseCache)
 			return true
 		}
 
@@ -1556,7 +1556,7 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 		_, exprIsCon := args[1-conIdx].(*Constant)
 		if !exprIsCon && matchRefineRule3Pattern(conEvalType, exprType) {
 			reason := errors.Errorf("'%v' may be converted to datetime", args[conIdx].String())
-			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
+			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason, ctx.GetSessionVars().StmtCtx.UseCache)
 			return true
 		}
 	}
