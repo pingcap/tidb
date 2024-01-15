@@ -190,7 +190,7 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 	cancelCtx, checkCancel := context.WithCancel(ctx)
 	s.startCancelCheck(cancelCtx, &wg, runCancel)
 
-	defer func() error {
+	defer func() {
 		err := subtaskExecutor.Cleanup(runCtx)
 		if err != nil {
 			logutil.Logger(s.logCtx).Error("cleanup subtask exec env failed", zap.Error(err))
@@ -198,7 +198,6 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 		}
 		checkCancel()
 		wg.Wait()
-		return s.getError()
 	}()
 
 	subtasks, err := s.taskTable.GetSubtasksByStepAndStates(
