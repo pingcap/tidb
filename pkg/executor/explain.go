@@ -105,6 +105,13 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 					err = err1
 				}
 			}
+
+			// Register the RU runtime stats to the runtime stats collection after the analyze executor has been executed.
+			ruDetailsRaw := ctx.Value(clientutil.RUDetailsCtxKey)
+			if coll := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil && ruDetailsRaw != nil {
+				ruDetails := ruDetailsRaw.(*clientutil.RUDetails)
+				coll.RegisterStats(e.explain.TargetPlan.ID(), &ruRuntimeStats{ruDetails})
+			}
 		}()
 		if minHeapInUse, alarmRatio := e.Ctx().GetSessionVars().MemoryDebugModeMinHeapInUse, e.Ctx().GetSessionVars().MemoryDebugModeAlarmRatio; minHeapInUse != 0 && alarmRatio != 0 {
 			memoryDebugModeCtx, cancel := context.WithCancel(ctx)
@@ -131,14 +138,6 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 			if err != nil || chk.NumRows() == 0 {
 				break
 			}
-		}
-	}
-	// Register the RU runtime stats to the runtime stats collection after the analyze executor has been executed.
-	if e.analyzeExec != nil && e.executed {
-		ruDetailsRaw := ctx.Value(clientutil.RUDetailsCtxKey)
-		if coll := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil && ruDetailsRaw != nil {
-			ruDetails := ruDetailsRaw.(*clientutil.RUDetails)
-			coll.RegisterStats(e.explain.TargetPlan.ID(), &ruRuntimeStats{ruDetails})
 		}
 	}
 	return err

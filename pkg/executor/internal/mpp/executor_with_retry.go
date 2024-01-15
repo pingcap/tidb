@@ -149,7 +149,7 @@ func (r *ExecutorWithRetry) setupMPPCoordinator(ctx context.Context, recoverying
 	// Make sure gatherID is updated before build coord.
 	r.gatherID = allocMPPGatherID(r.sctx)
 
-	r.coord = r.buildCoordinator()
+	r.coord = r.buildCoordinator(ctx)
 	if err := mppcoordmanager.InstanceMPPCoordinatorManager.Register(r.getCoordUniqueID(), r.coord); err != nil {
 		return nil, err
 	}
@@ -238,9 +238,9 @@ func allocMPPGatherID(ctx sessionctx.Context) uint64 {
 	return mppQueryInfo.AllocatedMPPGatherID.Add(1)
 }
 
-func (r *ExecutorWithRetry) buildCoordinator() kv.MppCoordinator {
+func (r *ExecutorWithRetry) buildCoordinator(ctx context.Context) kv.MppCoordinator {
 	_, serverAddr := mppcoordmanager.InstanceMPPCoordinatorManager.GetServerAddr()
-	return NewLocalMPPCoordinator(r.sctx, r.is, r.plan, r.planIDs, r.startTS, r.queryID,
+	return NewLocalMPPCoordinator(r.ctx, r.sctx, r.is, r.plan, r.planIDs, r.startTS, r.queryID,
 		r.gatherID, serverAddr, r.memTracker)
 }
 

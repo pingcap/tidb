@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/mpp"
+	"github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/executor/internal/builder"
@@ -44,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
+	clientutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
@@ -102,6 +104,7 @@ type mppRequestReport struct {
 
 // localMppCoordinator stands for constructing and dispatching mpp tasks in local tidb server, since these work might be done remotely too
 type localMppCoordinator struct {
+	ctx          context.Context
 	sessionCtx   sessionctx.Context
 	is           infoschema.InfoSchema
 	originalPlan plannercore.PhysicalPlan
@@ -149,11 +152,12 @@ type localMppCoordinator struct {
 }
 
 // NewLocalMPPCoordinator creates a new localMppCoordinator instance
-func NewLocalMPPCoordinator(sctx sessionctx.Context, is infoschema.InfoSchema, plan plannercore.PhysicalPlan, planIDs []int, startTS uint64, mppQueryID kv.MPPQueryID, gatherID uint64, coordinatorAddr string, memTracker *memory.Tracker) *localMppCoordinator {
+func NewLocalMPPCoordinator(ctx context.Context, sctx sessionctx.Context, is infoschema.InfoSchema, plan plannercore.PhysicalPlan, planIDs []int, startTS uint64, mppQueryID kv.MPPQueryID, gatherID uint64, coordinatorAddr string, memTracker *memory.Tracker) *localMppCoordinator {
 	if sctx.GetSessionVars().ChooseMppVersion() < kv.MppVersionV2 {
 		coordinatorAddr = ""
 	}
 	coord := &localMppCoordinator{
+		ctx:             ctx,
 		sessionCtx:      sctx,
 		is:              is,
 		originalPlan:    plan,
@@ -590,6 +594,17 @@ func (c *localMppCoordinator) handleAllReports() {
 						detail.NumProducedRows != nil && detail.NumIterations != nil {
 						recordedPlanIDs[c.sessionCtx.GetSessionVars().StmtCtx.RuntimeStatsColl.
 							RecordOneCopTask(-1, kv.TiFlash.Name(), report.mppReq.Meta.GetAddress(), detail)] = 0
+					}
+				}
+				ruDetailsRaw := c.ctx.Value(clientutil.RUDetailsCtxKey)
+				if ruDetailsRaw != nil {
+					ruDetails := ruDetailsRaw.(*clientutil.RUDetails)
+					for _, detail := range report.executionSummaries {
+						if detail != nil && detail.GetTiflashRuConsumption() != nil {
+							tiflash_ru := new(resource_manager.Consumption)
+							tiflash_ru.Unmarshal(detail.GetTiflashRuConsumption())
+							ruDetails.Merge(clientutil.NewRUDetailsWith(tiflash_ru.GetRRU(), 0, 0))
+						}
 					}
 				}
 			}
