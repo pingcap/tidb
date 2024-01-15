@@ -20,21 +20,31 @@ import (
 	pdhttp "github.com/tikv/pd/client/http"
 )
 
-func TestIsTiFlashForHTTPAPI(t *testing.T) {
+func TestIsTiFlashHTTPResp(t *testing.T) {
 	tests := []struct {
 		name  string
-		store *pdhttp.StoreInfo
+		store *pdhttp.MetaStore
 		want  bool
 	}{
 		{
 			name: "Test with TiFlash label",
-			store: &pdhttp.StoreInfo{
-				Store: pdhttp.MetaStore{
-					Labels: []pdhttp.StoreLabel{
-						{
-							Key:   "engine",
-							Value: "tiflash",
-						},
+			store: &pdhttp.MetaStore{
+				Labels: []pdhttp.StoreLabel{
+					{
+						Key:   "engine",
+						Value: "tiflash",
+					},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "Test with TiFlash label 2",
+			store: &pdhttp.MetaStore{
+				Labels: []pdhttp.StoreLabel{
+					{
+						Key:   "engine",
+						Value: "tiflash_compute",
 					},
 				},
 			},
@@ -42,13 +52,11 @@ func TestIsTiFlashForHTTPAPI(t *testing.T) {
 		},
 		{
 			name: "Test without TiFlash label",
-			store: &pdhttp.StoreInfo{
-				Store: pdhttp.MetaStore{
-					Labels: []pdhttp.StoreLabel{
-						{
-							Key:   "engine",
-							Value: "not_tiflash",
-						},
+			store: &pdhttp.MetaStore{
+				Labels: []pdhttp.StoreLabel{
+					{
+						Key:   "engine",
+						Value: "not_tiflash",
 					},
 				},
 			},
@@ -56,10 +64,8 @@ func TestIsTiFlashForHTTPAPI(t *testing.T) {
 		},
 		{
 			name: "Test with no labels",
-			store: &pdhttp.StoreInfo{
-				Store: pdhttp.MetaStore{
-					Labels: []pdhttp.StoreLabel{},
-				},
+			store: &pdhttp.MetaStore{
+				Labels: []pdhttp.StoreLabel{},
 			},
 			want: false,
 		},
@@ -67,7 +73,7 @@ func TestIsTiFlashForHTTPAPI(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, IsTiFlashForHTTPAPI(tt.store))
+			require.Equal(t, tt.want, IsTiFlashHTTPResp(tt.store))
 		})
 	}
 }

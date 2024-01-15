@@ -187,7 +187,7 @@ func (d *DBStore) adjust(
 		if d.Security.TLSConfig == nil {
 			/* #nosec G402 */
 			d.Security.TLSConfig = &tls.Config{
-				MinVersion:         tls.VersionTLS10,
+				MinVersion:         tls.VersionTLS12,
 				InsecureSkipVerify: true,
 				NextProtos:         []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
 			}

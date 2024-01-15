@@ -60,7 +60,7 @@ func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, co
 	if err != nil {
 		return nil, err
 	}
-	task, err := taskManager.GetTaskByKey(ctx, taskKey)
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	if err != nil && err != storage.ErrTaskNotFound {
 		return nil, err
 	}

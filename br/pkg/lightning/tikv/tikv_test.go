@@ -16,21 +16,17 @@ package tikv_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"sort"
 	"sync"
 	"testing"
 
 	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/kvproto/pkg/metapb"
 	kv "github.com/pingcap/tidb/br/pkg/lightning/tikv"
 	"github.com/stretchr/testify/require"
-	pd "github.com/tikv/pd/client/http"
+	pdhttp "github.com/tikv/pd/client/http"
 )
 
 var (
@@ -42,71 +38,53 @@ var (
 	requiredMaxTiKVVersion = *semver.New("6.0.0")
 )
 
+type mockGetStoresCli struct {
+	pdhttp.Client
+	storesInfo *pdhttp.StoresInfo
+}
+
+func (c mockGetStoresCli) GetStores(context.Context) (*pdhttp.StoresInfo, error) {
+	return c.storesInfo, nil
+}
+
 func TestForAllStores(t *testing.T) {
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		_, err := w.Write([]byte(`
+	cli := mockGetStoresCli{}
+	cli.storesInfo = &pdhttp.StoresInfo{
+		Count: 3,
+		Stores: []pdhttp.StoreInfo{
 			{
-				"count": 5,
-				"stores": [
-					{
-						"store": {
-							"id": 1,
-							"address": "127.0.0.1:20160",
-							"version": "3.0.0-beta.1",
-							"state_name": "Up"
-						},
-						"status": {}
-					},
-					{
-						"store": {
-							"id": 2,
-							"address": "127.0.0.1:20161",
-							"version": "3.0.0-rc.1",
-							"state_name": "Down"
-						},
-						"status": {}
-					},
-					{
-						"store": {
-							"id": 3,
-							"address": "127.0.0.1:20162",
-							"version": "3.0.0-rc.2",
-							"state_name": "Disconnected"
-						},
-						"status": {}
-					},
-					{
-						"store": {
-							"id": 4,
-							"address": "127.0.0.1:20163",
-							"version": "3.0.0",
-							"state_name": "Tombstone"
-						},
-						"status": {}
-					},
-					{
-						"store": {
-							"id": 5,
-							"address": "127.0.0.1:20164",
-							"version": "3.0.1",
-							"state_name": "Offline"
-						},
-						"status": {}
-					}
-				]
-			}
-		`))
-		require.NoError(t, err)
-	}))
-	defer server.Close()
+				Store: pdhttp.MetaStore{
+					ID:      1,
+					Address: "127.0.0.1:20160",
+					Version: "3.0.0-beta.1",
+					State:   int64(metapb.StoreState_Up),
+				},
+			},
+			{
+				Store: pdhttp.MetaStore{
+					ID:      5,
+					Address: "127.0.0.1:20164",
+					Version: "3.0.1",
+					State:   int64(metapb.StoreState_Offline),
+				},
+			},
+			{
+				Store: pdhttp.MetaStore{
+					ID:      4,
+					Address: "127.0.0.1:20163",
+					Version: "3.0.0",
+					State:   int64(metapb.StoreState_Tombstone),
+				},
+			},
+		},
+	}
 
 	ctx := context.Background()
 	var (
 		allStoresLock sync.Mutex
-		allStores     []*kv.Store
+		allStores     []*pdhttp.MetaStore
 	)
-	tls := common.NewTLSFromMockServer(server)
-	err := kv.ForAllStores(ctx, tls, kv.StoreStateDown, func(c2 context.Context, store *kv.Store) error {
+	err := kv.ForAllStores(ctx, cli, metapb.StoreState_Offline, func(c2 context.Context, store *pdhttp.MetaStore) error {
 		allStoresLock.Lock()
 		allStores = append(allStores, store)
 		allStoresLock.Unlock()
@@ -115,26 +93,18 @@ func TestForAllStores(t *testing.T) {
 	require.NoError(t, err)
 
 	sort.Slice(allStores, func(i, j int) bool { return allStores[i].Address < allStores[j].Address })
-	require.Equal(t, []*kv.Store{
+	require.Equal(t, []*pdhttp.MetaStore{
 		{
+			ID:      1,
 			Address: "127.0.0.1:20160",
 			Version: "3.0.0-beta.1",
-			State:   kv.StoreStateUp,
+			State:   int64(metapb.StoreState_Up),
 		},
 		{
-			Address: "127.0.0.1:20161",
-			Version: "3.0.0-rc.1",
-			State:   kv.StoreStateDown,
-		},
-		{
-			Address: "127.0.0.1:20162",
-			Version: "3.0.0-rc.2",
-			State:   kv.StoreStateDisconnected,
-		},
-		{
+			ID:      5,
 			Address: "127.0.0.1:20164",
 			Version: "3.0.1",
-			State:   kv.StoreStateOffline,
+			State:   int64(metapb.StoreState_Offline),
 		},
 	}, allStores)
 }
@@ -171,108 +141,91 @@ func TestFetchModeFromMetrics(t *testing.T) {
 	}
 }
 
+type mockGetPDVersionCli struct {
+	pdhttp.Client
+	version string
+}
+
+func (c mockGetPDVersionCli) GetPDVersion(context.Context) (string, error) {
+	return c.version, nil
+}
+
 func TestCheckPDVersion(t *testing.T) {
-	var version string
 	ctx := context.Background()
+	cli := mockGetPDVersionCli{}
 
-	mockServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		require.Equal(t, pd.Version, req.URL.Path)
-		w.WriteHeader(http.StatusOK)
-		_, err := w.Write([]byte(version))
-		require.NoError(t, err)
-	}))
-	mockURL, err := url.Parse(mockServer.URL)
-	require.NoError(t, err)
+	cli.version = "v4.0.0-rc.2-451-g760fb650"
+	require.NoError(t, kv.CheckPDVersion(ctx, cli, requiredMinPDVersion, requiredMaxPDVersion))
 
-	tls := common.NewTLSFromMockServer(mockServer)
+	cli.version = "v4.0.0"
+	require.NoError(t, kv.CheckPDVersion(ctx, cli, requiredMinPDVersion, requiredMaxPDVersion))
 
-	version = `{
-    "version": "v4.0.0-rc.2-451-g760fb650"
-}`
-	require.NoError(t, kv.CheckPDVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion))
-
-	version = `{
-    "version": "v4.0.0"
-}`
-	require.NoError(t, kv.CheckPDVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion))
-
-	version = `{
-    "version": "v9999.0.0"
-}`
-	err = kv.CheckPDVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion)
+	cli.version = "v9999.0.0"
+	err := kv.CheckPDVersion(ctx, cli, requiredMinPDVersion, requiredMaxPDVersion)
 	require.Error(t, err)
 	require.Regexp(t, "PD version too new.*", err.Error())
 
-	version = `{
-    "version": "v6.0.0"
-}`
-	err = kv.CheckPDVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion)
+	cli.version = "v6.0.0"
+	err = kv.CheckPDVersion(ctx, cli, requiredMinPDVersion, requiredMaxPDVersion)
 	require.Error(t, err)
 	require.Regexp(t, "PD version too new.*", err.Error())
 
-	version = `{
-    "version": "v6.0.0-beta"
-}`
-	err = kv.CheckPDVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion)
+	cli.version = "v6.0.0-beta"
+	err = kv.CheckPDVersion(ctx, cli, requiredMinPDVersion, requiredMaxPDVersion)
 	require.Error(t, err)
 	require.Regexp(t, "PD version too new.*", err.Error())
 
-	version = `{
-    "version": "v1.0.0"
-}`
-	err = kv.CheckPDVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion)
+	cli.version = "v1.0.0"
+	err = kv.CheckPDVersion(ctx, cli, requiredMinPDVersion, requiredMaxPDVersion)
 	require.Error(t, err)
 	require.Regexp(t, "PD version too old.*", err.Error())
 }
 
 func TestCheckTiKVVersion(t *testing.T) {
-	var versions []string
 	ctx := context.Background()
+	cli := mockGetStoresCli{}
 
-	mockServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		require.Equal(t, pd.Stores, req.URL.Path)
-		w.WriteHeader(http.StatusOK)
-
-		stores := make([]map[string]interface{}, 0, len(versions))
+	genStoresInfo := func(versions []string) *pdhttp.StoresInfo {
+		stores := make([]pdhttp.StoreInfo, 0, len(versions))
 		for i, v := range versions {
-			stores = append(stores, map[string]interface{}{
-				"store": map[string]interface{}{
-					"address": fmt.Sprintf("tikv%d.test:20160", i),
-					"version": v,
+			stores = append(stores, pdhttp.StoreInfo{
+				Store: pdhttp.MetaStore{
+					Address: fmt.Sprintf("tikv%d.test:20160", i),
+					Version: v,
 				},
 			})
 		}
-		err := json.NewEncoder(w).Encode(map[string]interface{}{
-			"count":  len(versions),
-			"stores": stores,
-		})
-		require.NoError(t, err)
-	}))
-	mockURL, err := url.Parse(mockServer.URL)
-	require.NoError(t, err)
+		return &pdhttp.StoresInfo{
+			Count:  len(versions),
+			Stores: stores,
+		}
+	}
 
-	tls := common.NewTLSFromMockServer(mockServer)
-
-	versions = []string{"4.1.0", "v4.1.0-alpha-9-ga27a7dd"}
-	require.NoError(t, kv.CheckTiKVVersion(ctx, tls, mockURL.Host, requiredMinTiKVVersion, requiredMaxTiKVVersion))
+	versions := []string{"4.1.0", "v4.1.0-alpha-9-ga27a7dd"}
+	cli.storesInfo = genStoresInfo(versions)
+	require.NoError(t, kv.CheckTiKVVersion(ctx, cli, requiredMinTiKVVersion, requiredMaxTiKVVersion))
 
 	versions = []string{"9999.0.0", "4.0.0"}
-	err = kv.CheckTiKVVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion)
+	cli.storesInfo = genStoresInfo(versions)
+	err := kv.CheckTiKVVersion(ctx, cli, requiredMinPDVersion, requiredMaxPDVersion)
 	require.Error(t, err)
 	require.Regexp(t, `TiKV \(at tikv0\.test:20160\) version too new.*`, err.Error())
 
 	versions = []string{"4.0.0", "1.0.0"}
-	err = kv.CheckTiKVVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion)
+	cli.storesInfo = genStoresInfo(versions)
+	err = kv.CheckTiKVVersion(ctx, cli, requiredMinPDVersion, requiredMaxPDVersion)
 	require.Error(t, err)
 	require.Regexp(t, `TiKV \(at tikv1\.test:20160\) version too old.*`, err.Error())
 
 	versions = []string{"6.0.0"}
-	err = kv.CheckTiKVVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion)
+	cli.storesInfo = genStoresInfo(versions)
+	err = kv.CheckTiKVVersion(ctx, cli, requiredMinPDVersion, requiredMaxPDVersion)
 	require.Error(t, err)
 	require.Regexp(t, `TiKV \(at tikv0\.test:20160\) version too new.*`, err.Error())
 
 	versions = []string{"6.0.0-beta"}
-	err = kv.CheckTiKVVersion(ctx, tls, mockURL.Host, requiredMinPDVersion, requiredMaxPDVersion)
+	cli.storesInfo = genStoresInfo(versions)
+	err = kv.CheckTiKVVersion(ctx, cli, requiredMinPDVersion, requiredMaxPDVersion)
 	require.Error(t, err)
 	require.Regexp(t, `TiKV \(at tikv0\.test:20160\) version too new.*`, err.Error())
 }
