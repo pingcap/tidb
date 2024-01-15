@@ -812,3 +812,18 @@ Projection_24	10.00	root		planner__core__casetest__index__index.t.item_primary_k
   ├─Limit_22(Build)	2.50	cop[tikv]		offset:0, count:10
   │ └─IndexRangeScan_17	2.50	cop[tikv]	table:t, index:feed_profile_ids(cast(`feed_profile_ids` as unsigned array))	range:[69236881,69236881], keep order:false, stats:pseudo
   └─TableRowIDScan_18(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+drop table if exists t1, t2;
+CREATE TABLE `t1` (`a` varchar(488) COLLATE utf8_general_ci DEFAULT NULL, `b` binary(206) DEFAULT '0', `c` json DEFAULT NULL, UNIQUE KEY `idx_29` (`a`,(cast(`c` as signed array)),`b`), UNIQUE KEY `idx_30` ((cast(`c` as signed array)),`a`(5))) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+CREATE TABLE `t2` (`a` float NOT NULL DEFAULT '5217.6055',`b` json NOT NULL,`c` json NOT NULL,`d` varchar(181) COLLATE gbk_bin NOT NULL DEFAULT 'FbVkA~^', KEY `idx_26` (`a`),PRIMARY KEY (`a`,`d`) /*T![clustered_index] NONCLUSTERED */,UNIQUE KEY `idx_28` (`a`,(cast(`b` as binary(64) array)),`d`)) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin;
+EXPLAIN SELECT /*+ inl_join(t1)*/ `t2`.`c` AS `r0` FROM `t1` JOIN `t2` ON `t1`.`a`=`t2`.`d` WHERE `t2`.`d`='' AND NOT (6252179388429456273 MEMBER OF (`t1`.`c`));
+id	estRows	task	access object	operator info
+HashJoin_12	12.50	root		inner join, equal:[eq(planner__core__casetest__index__index.t2.d, planner__core__casetest__index__index.t1.a)]
+├─TableReader_15(Build)	10.00	root		data:Selection_14
+│ └─Selection_14	10.00	cop[tikv]		eq(planner__core__casetest__index__index.t2.d, "")
+│   └─TableFullScan_13	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader_18(Probe)	7992.00	root		data:Selection_17
+  └─Selection_17	7992.00	cop[tikv]		not(isnull(planner__core__casetest__index__index.t1.a)), not(istrue_with_null(json_memberof(cast(6252179388429456273, json BINARY), planner__core__casetest__index__index.t1.c)))
+    └─TableFullScan_16	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+SHOW WARNINGS
+Level	Code	Message
+Warning	1815	Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable
