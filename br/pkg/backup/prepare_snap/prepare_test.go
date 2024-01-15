@@ -386,7 +386,7 @@ func TestRetryEnv(t *testing.T) {
 		}
 		return nil
 	}
-	ms := RetryEnv{Env: tms}
+	ms := RetryAndSplitRequestEnv{Env: tms}
 	ms.GetBackoffer = func() utils.Backoffer {
 		o := utils.InitialRetryState(2, 0, 0)
 		return &o
@@ -395,4 +395,56 @@ func TestRetryEnv(t *testing.T) {
 	ctx := context.Background()
 	req.NoError(prep.DriveLoopAndWaitPrepare(ctx))
 	req.NoError(prep.Finalize(ctx))
+}
+
+type counterClient struct {
+	send int
+}
+
+func (c *counterClient) Send(_ *brpb.PrepareSnapshotBackupRequest) error {
+	c.send += 1
+	return nil
+}
+
+func (c *counterClient) Recv() (*brpb.PrepareSnapshotBackupResponse, error) {
+	panic("not implemented")
+}
+
+func TestSplitEnv(t *testing.T) {
+	log.SetLevel(zapcore.DebugLevel)
+	cc := SplitRequestClient{PrepareClient: &counterClient{}, MaxRequestSize: 1024}
+	reset := func() { cc.PrepareClient.(*counterClient).send = 0 }
+	makeHugeRequestRegions := func(n int, eachSize int) []*metapb.Region {
+		regions := []*metapb.Region{}
+		for i := 0; i < n; i++ {
+			regions = append(regions, &metapb.Region{
+				StartKey: make([]byte, eachSize),
+				EndKey:   make([]byte, eachSize),
+			})
+		}
+		return regions
+	}
+
+	hugeRequest := brpb.PrepareSnapshotBackupRequest{
+		Ty:      brpb.PrepareSnapshotBackupRequestType_WaitApply,
+		Regions: makeHugeRequestRegions(100, 128),
+	}
+	require.NoError(t, cc.Send(&hugeRequest))
+	require.GreaterOrEqual(t, cc.PrepareClient.(*counterClient).send, 20)
+
+	reset()
+	reallyHugeRequest := brpb.PrepareSnapshotBackupRequest{
+		Ty:      brpb.PrepareSnapshotBackupRequestType_WaitApply,
+		Regions: makeHugeRequestRegions(10, 2048),
+	}
+	require.NoError(t, cc.Send(&reallyHugeRequest))
+	require.Equal(t, cc.PrepareClient.(*counterClient).send, 10)
+
+	reset()
+	tinyRequest := brpb.PrepareSnapshotBackupRequest{
+		Ty:      brpb.PrepareSnapshotBackupRequestType_WaitApply,
+		Regions: makeHugeRequestRegions(10, 10),
+	}
+	require.NoError(t, cc.Send(&tinyRequest))
+	require.Equal(t, cc.PrepareClient.(*counterClient).send, 1)
 }

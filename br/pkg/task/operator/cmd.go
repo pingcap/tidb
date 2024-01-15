@@ -130,7 +130,7 @@ func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext) error {
 		Cache: tikv.NewRegionCache(cx.pdMgr.GetPDClient()),
 		Mgr:   cx.kvMgr,
 	}
-	retryEnv := preparesnap.RetryEnv{Env: env}
+	retryEnv := preparesnap.RetryAndSplitRequestEnv{Env: env}
 	begin := time.Now()
 	prep := preparesnap.New(retryEnv)
 	prep.LeaseDuration = cx.cfg.TTL

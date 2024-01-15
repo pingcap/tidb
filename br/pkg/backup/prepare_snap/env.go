@@ -19,6 +19,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	brpb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
@@ -32,6 +33,13 @@ import (
 	"google.golang.org/grpc"
 )
 
+const (
+	// default max gRPC message size is 10MiB.
+	// split requests to chunks of 1MiB will reduce the possibility of being rejected
+	// due to max gRPC message size.
+	maxRequestSize = units.MiB
+)
+
 type Env interface {
 	ConnectToStore(ctx context.Context, storeID uint64) (PrepareClient, error)
 	GetAllLiveStores(ctx context.Context) ([]*metapb.Store, error)
@@ -42,6 +50,43 @@ type Env interface {
 type PrepareClient interface {
 	Send(*brpb.PrepareSnapshotBackupRequest) error
 	Recv() (*brpb.PrepareSnapshotBackupResponse, error)
+}
+
+type SplitRequestClient struct {
+	PrepareClient
+	MaxRequestSize int
+}
+
+func (s SplitRequestClient) Send(req *brpb.PrepareSnapshotBackupRequest) error {
+	if req.Ty == brpb.PrepareSnapshotBackupRequestType_WaitApply && req.Size() > s.MaxRequestSize {
+		findSplitIndex := func() int {
+			if len(req.Regions) == 0 {
+				return -1
+			}
+
+			// Select at least one request.
+			// So we won't get sutck if there were a really huge (!) request.
+			collected := 0
+			lastI := 1
+			for i := 2; i < len(req.Regions) && collected+req.Regions[i].Size() < s.MaxRequestSize; i++ {
+				lastI = i
+				collected += req.Regions[i].Size()
+			}
+			return lastI
+		}
+		for splitIdx := findSplitIndex(); splitIdx > 0; splitIdx = findSplitIndex() {
+			split := &brpb.PrepareSnapshotBackupRequest{
+				Ty:      brpb.PrepareSnapshotBackupRequestType_WaitApply,
+				Regions: req.Regions[:splitIdx],
+			}
+			req.Regions = req.Regions[splitIdx:]
+			if err := s.PrepareClient.Send(split); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return s.PrepareClient.Send(req)
 }
 
 type Region interface {
@@ -98,18 +143,18 @@ func (c CliEnv) LoadRegionsInKeyRange(ctx context.Context, startKey []byte, endK
 	return rrs, nil
 }
 
-type RetryEnv struct {
+type RetryAndSplitRequestEnv struct {
 	Env
 	GetBackoffer func() utils.Backoffer
 }
 
-func (r RetryEnv) ConnectToStore(ctx context.Context, storeID uint64) (PrepareClient, error) {
+func (r RetryAndSplitRequestEnv) ConnectToStore(ctx context.Context, storeID uint64) (PrepareClient, error) {
 	rs := utils.InitialRetryState(50, 10*time.Second, 10*time.Second)
 	bo := utils.Backoffer(&rs)
 	if r.GetBackoffer != nil {
 		bo = r.GetBackoffer()
 	}
-	return utils.WithRetryV2(ctx, bo, func(ctx context.Context) (PrepareClient, error) {
+	cli, err := utils.WithRetryV2(ctx, bo, func(ctx context.Context) (PrepareClient, error) {
 		cli, err := r.Env.ConnectToStore(ctx, storeID)
 		if err != nil {
 			log.Warn("Failed to connect to store, will retry.", zap.Uint64("store", storeID), logutil.ShortError(err))
@@ -117,4 +162,8 @@ func (r RetryEnv) ConnectToStore(ctx context.Context, storeID uint64) (PrepareCl
 		}
 		return cli, nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return SplitRequestClient{PrepareClient: cli, MaxRequestSize: maxRequestSize}, nil
 }
