@@ -346,7 +346,7 @@ func (s *metaMgrSuite) prepareMockInner(rowsVal [][]driver.Value, nextRowID *int
 	s.mockDB.ExpectCommit()
 
 	if checksum != nil {
-		s.mockDB.ExpectExec("\\Qupdate `test`.`table_meta` set total_kvs_base = ?, total_bytes_base = ?, checksum_base = ?, status = ? where table_id = ? and task_id = ?\\E").
+		s.mockDB.ExpectExec("\\QUPDATE `test`.`table_meta` SET total_kvs_base = ?, total_bytes_base = ?, checksum_base = ?, status = ? WHERE table_id = ? AND task_id = ?\\E").
 			WithArgs(checksum.SumKVS(), checksum.SumSize(), checksum.Sum(), metaStatusRestoreStarted.String(), int64(1), int64(1)).
 			WillReturnResult(sqlmock.NewResult(int64(0), int64(1)))
 		s.checksumMgr.checksum = local.RemoteChecksum{
@@ -357,7 +357,7 @@ func (s *metaMgrSuite) prepareMockInner(rowsVal [][]driver.Value, nextRowID *int
 	}
 
 	if updateStatus != nil {
-		s.mockDB.ExpectExec("\\Qupdate `test`.`table_meta` set status = ? where table_id = ? and task_id = ?\\E").
+		s.mockDB.ExpectExec("\\QUPDATE `test`.`table_meta` SET status = ? WHERE table_id = ? AND task_id = ?\\E").
 			WithArgs(*updateStatus, int64(1), int64(1)).
 			WillReturnResult(sqlmock.NewResult(int64(0), int64(1)))
 	}
