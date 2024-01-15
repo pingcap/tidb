@@ -95,7 +95,7 @@ func AdjustRowCountForIndexScanByLimit(sctx sessionctx.Context,
 		// This formula is to bias away from non-filtering (or poorly filtering) indexes that provide order due, where filtering exists
 		// outside of that index. Such plans have high risk since we cannot estimate when rows will be found.
 		orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
-		if dsStatsInfo.RowCount < path.CountAfterAccess && orderRatio > -1 {
+		if dsStatsInfo.RowCount < path.CountAfterAccess && orderRatio >= 0 {
 			rowsToMeetFirst := (((path.CountAfterAccess - path.CountAfterIndex) * orderRatio) + (path.CountAfterIndex - dsStatsInfo.RowCount)) * orderRatio
 			rowCount = rowsToMeetFirst + expectedCnt
 		} else {
