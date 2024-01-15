@@ -138,6 +138,10 @@ func (s *BaseTaskExecutor) Run(ctx context.Context, task *proto.Task) (err error
 		return err
 	}
 	if err == nil {
+		// may have error in defer function in run(ctx, task)
+		err = s.getError()
+	}
+	if err == nil {
 		return nil
 	}
 	return s.updateErrorToSubtask(ctx, task.ID, err)
@@ -146,7 +150,6 @@ func (s *BaseTaskExecutor) Run(ctx context.Context, task *proto.Task) (err error
 func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr error) {
 	if ctx.Err() != nil {
 		s.onError(ctx.Err())
-		return s.getError()
 	}
 	runCtx, runCancel := context.WithCancelCause(ctx)
 	defer runCancel(ErrFinishSubtask)
@@ -180,7 +183,6 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 	})
 	if err := subtaskExecutor.Init(runCtx); err != nil {
 		s.onError(err)
-		// 没有兜底
 		return s.getError()
 	}
 
@@ -188,14 +190,15 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 	cancelCtx, checkCancel := context.WithCancel(ctx)
 	s.startCancelCheck(cancelCtx, &wg, runCancel)
 
-	defer func() {
-		// 没有兜底
+	defer func() error {
 		err := subtaskExecutor.Cleanup(runCtx)
 		if err != nil {
 			logutil.Logger(s.logCtx).Error("cleanup subtask exec env failed", zap.Error(err))
+			s.onError(err)
 		}
 		checkCancel()
 		wg.Wait()
+		return s.getError()
 	}()
 
 	subtasks, err := s.taskTable.GetSubtasksByStepAndStates(
@@ -203,11 +206,6 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 		proto.SubtaskStatePending, proto.SubtaskStateRunning)
 	if err != nil {
 		s.onError(err)
-		// 有问题。。。。
-		if common.IsRetryableError(err) {
-			logutil.Logger(s.logCtx).Warn("met retryable error", zap.Error(err))
-			return nil
-		}
 		return s.getError()
 	}
 	for _, subtask := range subtasks {
@@ -263,7 +261,6 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 				break
 			}
 		} else if subtask.State == proto.SubtaskStatePending {
-			// ywq todo
 			err := s.startSubtaskAndUpdateState(runCtx, subtask)
 			if err != nil {
 				logutil.Logger(s.logCtx).Warn("startSubtaskAndUpdateState meets error", zap.Error(err))
@@ -273,7 +270,6 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 					continue
 				}
 				s.onError(err)
-				// 有 bug 把，没有更新成功怎么办
 				continue
 			}
 		} else {
@@ -475,6 +471,9 @@ func runSummaryCollectLoop(
 	task *proto.Task,
 	taskTable TaskTable,
 ) (summary *execute.Summary, cleanup func(), err error) {
+	failpoint.Inject("mockSummaryCollectErr", func() {
+		failpoint.Return(nil, func() {}, errors.New("summary collect err"))
+	})
 	taskMgr, ok := taskTable.(*storage.TaskManager)
 	if !ok {
 		return nil, func() {}, nil

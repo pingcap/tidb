@@ -19,6 +19,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -423,21 +424,135 @@ func TestExecutorErrHandling(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mockSubtaskTable := mock.NewMockTaskTable(ctrl)
-	// mockSubtaskExecutor := mockexecute.NewMockSubtaskExecutor(ctrl)
+	mockSubtaskExecutor := mockexecute.NewMockSubtaskExecutor(ctrl)
 	mockExtension := mock.NewMockExtension(ctrl)
 	mockSubtaskTable.EXPECT().IsTaskExecutorCanceled(gomock.Any(), gomock.Any(), gomock.Any()).Return(false, nil).AnyTimes()
 	taskExecutor := NewBaseTaskExecutor(ctx, "id", 1, mockSubtaskTable)
 	taskExecutor.Extension = mockExtension
+	mockSubtaskTable.EXPECT().IsTaskExecutorCanceled(ctx, gomock.Any(), gomock.Any()).Return(false, nil).AnyTimes()
 
 	// 1. GetSubtaskExecutor met retryable error.
 	getSubtaskExecutorErr := errors.New("get executor err")
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, getSubtaskExecutorErr)
 	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(true)
 	require.NoError(t, taskExecutor.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency}))
-
+	require.True(t, ctrl.Satisfied())
 	// 2. GetSubtaskExecutor met non retryable error.
 	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, getSubtaskExecutorErr)
 	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false)
 	mockSubtaskTable.EXPECT().UpdateErrorToSubtask(runCtx, taskExecutor.id, taskExecutor.taskID, getSubtaskExecutorErr)
 	require.NoError(t, taskExecutor.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency}))
+	require.True(t, ctrl.Satisfied())
+
+	// 3. Init met retryable error.
+	initErr := errors.New("executor init err")
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil)
+	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(initErr)
+	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(true)
+	require.NoError(t, taskExecutor.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency}))
+	require.True(t, ctrl.Satisfied())
+
+	// 4. Init met non retryable error.
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil)
+	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(initErr)
+	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false)
+	mockSubtaskTable.EXPECT().UpdateErrorToSubtask(runCtx, taskExecutor.id, taskExecutor.taskID, initErr)
+	require.NoError(t, taskExecutor.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency}))
+	require.True(t, ctrl.Satisfied())
+
+	// 5. GetSubtasksByStepAndStates met retryable error.
+	getSubtasksByStepAndStatesErr := errors.New("get subtasks err")
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil)
+	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().GetSubtasksByStepAndStates(
+		gomock.Any(),
+		taskExecutor.id,
+		taskExecutor.taskID,
+		proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(nil, getSubtasksByStepAndStatesErr)
+	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
+	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(true)
+	require.NoError(t, taskExecutor.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency}))
+	require.True(t, ctrl.Satisfied())
+
+	// 6. GetSubtasksByStepAndStates met non retryable error.
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil)
+	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().GetSubtasksByStepAndStates(
+		gomock.Any(),
+		taskExecutor.id,
+		taskExecutor.taskID,
+		proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(nil, getSubtasksByStepAndStatesErr)
+	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
+	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false)
+	mockSubtaskTable.EXPECT().UpdateErrorToSubtask(runCtx, taskExecutor.id, taskExecutor.taskID, getSubtasksByStepAndStatesErr)
+	require.NoError(t, taskExecutor.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency}))
+	require.True(t, ctrl.Satisfied())
+
+	// 7. Cleanup met retryable error.
+	cleanupErr := errors.New("cleanup err")
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil)
+	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().GetSubtasksByStepAndStates(
+		gomock.Any(),
+		taskExecutor.id,
+		taskExecutor.taskID,
+		proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return([]*proto.Subtask{{
+		ID: 1, Type: tp, Step: proto.StepOne, State: proto.SubtaskStatePending, ExecID: "id"}}, nil)
+	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(&proto.Subtask{
+		ID: 1, Type: tp, Step: proto.StepOne, State: proto.SubtaskStatePending, ExecID: "id"}, nil)
+	mockSubtaskTable.EXPECT().StartSubtask(gomock.Any(), taskID, "id").Return(nil)
+	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(nil)
+	mockSubtaskExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().FinishSubtask(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(nil, nil)
+	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), gomock.Any()).Return(&proto.Task{ID: taskID, Step: proto.StepTwo}, nil)
+	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(cleanupErr)
+	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(true)
+	require.NoError(t, taskExecutor.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency}))
+	require.True(t, ctrl.Satisfied())
+
+	// 8. Cleanup met non retryable error.
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil)
+	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().GetSubtasksByStepAndStates(
+		gomock.Any(),
+		taskExecutor.id,
+		taskExecutor.taskID,
+		proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return([]*proto.Subtask{{
+		ID: 1, Type: tp, Step: proto.StepOne, State: proto.SubtaskStatePending, ExecID: "id"}}, nil)
+	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(&proto.Subtask{
+		ID: 1, Type: tp, Step: proto.StepOne, State: proto.SubtaskStatePending, ExecID: "id"}, nil)
+	mockSubtaskTable.EXPECT().StartSubtask(gomock.Any(), taskID, "id").Return(nil)
+	mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(nil)
+	mockSubtaskExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().FinishSubtask(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(nil, nil)
+	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), gomock.Any()).Return(&proto.Task{ID: taskID, Step: proto.StepTwo}, nil)
+	mockSubtaskExecutor.EXPECT().Cleanup(gomock.Any()).Return(cleanupErr)
+	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false)
+	mockSubtaskTable.EXPECT().UpdateErrorToSubtask(runCtx, taskExecutor.id, taskExecutor.taskID, cleanupErr)
+	require.NoError(t, taskExecutor.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency}))
+	require.True(t, ctrl.Satisfied())
+
+	// 9. runSummaryCollectLoop met retryable error
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockSummaryCollectErr", "return()"))
+	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(true)
+	require.NoError(t, taskExecutor.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency}))
+	require.True(t, ctrl.Satisfied())
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockSummaryCollectErr"))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockSummaryCollectErr", "return()"))
+	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false)
+	mockSubtaskTable.EXPECT().UpdateErrorToSubtask(runCtx, taskExecutor.id, taskExecutor.taskID, gomock.Any())
+	require.NoError(t, taskExecutor.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency}))
+	require.True(t, ctrl.Satisfied())
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockSummaryCollectErr"))
 }
