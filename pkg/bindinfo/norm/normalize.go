@@ -22,13 +22,6 @@ import (
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 )
 
-func eraseLastSemicolon(stmt ast.StmtNode) {
-	sql := stmt.Text()
-	if len(sql) > 0 && sql[len(sql)-1] == ';' {
-		stmt.SetText(nil, sql[:len(sql)-1])
-	}
-}
-
 type option struct {
 	specifiedDB string
 	fuzz        bool
@@ -59,12 +52,6 @@ func NormalizeStmtForBinding(stmtNode ast.StmtNode, options ...optionFunc) (norm
 		option(opt)
 	}
 	return normalizeStmt(stmtNode, opt.specifiedDB, opt.fuzz)
-}
-
-// NormalizeStmtForFuzzyBinding normalizes a statement for fuzzy matching.
-// Schema names will be eliminated automatically: `select * from db . t` --> `select * from t`.
-func NormalizeStmtForFuzzyBinding(stmtNode ast.StmtNode) (normalizedStmt, fuzzySQLDigest string) {
-	return normalizeStmt(stmtNode, "", true)
 }
 
 // NormalizeStmtForBinding normalizes a statement for binding.
@@ -130,4 +117,11 @@ func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, fuzzy bool) (norma
 		return normalizedSQL, digest
 	}
 	return "", ""
+}
+
+func eraseLastSemicolon(stmt ast.StmtNode) {
+	sql := stmt.Text()
+	if len(sql) > 0 && sql[len(sql)-1] == ';' {
+		stmt.SetText(nil, sql[:len(sql)-1])
+	}
 }
