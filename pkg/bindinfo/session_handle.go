@@ -37,7 +37,7 @@ import (
 // SessionBindingHandle is used to handle all session sql bind operations.
 type SessionBindingHandle interface {
 	// CreateSessionBinding creates a binding to the cache.
-	CreateSessionBinding(sctx sessionctx.Context, record *BindRecord) (err error)
+	CreateSessionBinding(sctx sessionctx.Context, sqlDigest string, record *BindRecord) (err error)
 
 	// DropSessionBinding drops a binding by the sql digest.
 	DropSessionBinding(sqlDigest string) error
@@ -79,7 +79,7 @@ func (h *sessionBindingHandle) appendSessionBinding(sqlDigest string, meta *Bind
 
 // CreateSessionBinding creates a BindRecord to the cache.
 // It replaces all the exists bindings for the same normalized SQL.
-func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, record *BindRecord) (err error) {
+func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, sqlDigest string, record *BindRecord) (err error) {
 	err = record.prepareHints(sctx)
 	if err != nil {
 		return err
@@ -92,7 +92,7 @@ func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, rec
 	}
 
 	// update the BindMeta to the cache.
-	h.appendSessionBinding(parser.DigestNormalized(record.OriginalSQL).String(), record)
+	h.appendSessionBinding(sqlDigest, record)
 	return nil
 }
 
