@@ -219,8 +219,8 @@ func NewWaitRegionOnlineBackoffer() utils.Backoffer {
 	return &WaitRegionOnlineBackoffer{
 		Stat: utils.InitialRetryState(
 			WaitRegionOnlineAttemptTimes,
-			time.Millisecond*100,
-			time.Second*40,
+			time.Millisecond*10,
+			time.Second*2,
 		),
 	}
 }
