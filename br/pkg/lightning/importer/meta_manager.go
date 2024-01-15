@@ -43,15 +43,15 @@ func (b *dbMetaMgrBuilder) Init(ctx context.Context) error {
 		Logger:       log.FromContext(ctx),
 		HideQueryLog: redact.NeedRedact(),
 	}
-	metaDBSQL := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", common.EscapeIdentifier(b.schema))
+	metaDBSQL := common.SprintfWithIdentifier("CREATE DATABASE IF NOT EXISTS %s", b.schema)
 	if err := exec.Exec(ctx, "create meta schema", metaDBSQL); err != nil {
 		return errors.Annotate(err, "create meta schema failed")
 	}
-	taskMetaSQL := fmt.Sprintf(CreateTaskMetaTable, common.UniqueTable(b.schema, TaskMetaTableName))
+	taskMetaSQL := common.SprintfWithIdentifier(CreateTaskMetaTable, b.schema, TaskMetaTableName)
 	if err := exec.Exec(ctx, "create meta table", taskMetaSQL); err != nil {
 		return errors.Annotate(err, "create task meta table failed")
 	}
-	tableMetaSQL := fmt.Sprintf(CreateTableMetadataTable, common.UniqueTable(b.schema, TableMetaTableName))
+	tableMetaSQL := common.SprintfWithIdentifier(CreateTableMetadataTable, b.schema, TableMetaTableName)
 	if err := exec.Exec(ctx, "create meta table", tableMetaSQL); err != nil {
 		return errors.Annotate(err, "create table meta table failed")
 	}
@@ -982,7 +982,7 @@ func MaybeCleanupAllMetas(
 	}
 
 	// avoid override existing metadata if the meta is already inserted.
-	stmt := fmt.Sprintf("DROP DATABASE %s;", common.EscapeIdentifier(schemaName))
+	stmt := common.SprintfWithIdentifier("DROP DATABASE %s;", schemaName)
 	if err := exec.Exec(ctx, "cleanup task meta tables", stmt); err != nil {
 		return errors.Trace(err)
 	}

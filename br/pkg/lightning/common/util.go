@@ -313,6 +313,16 @@ func UniqueTable(schema string, table string) string {
 	return builder.String()
 }
 
+// SprintfWithIdentifier escapes the identifiers and sprintf them. The input
+// identifiers must not be escaped.
+func SprintfWithIdentifier(format string, identifiers ...string) string {
+	escaped := make([]any, len(identifiers))
+	for i, identifier := range identifiers {
+		escaped[i] = EscapeIdentifier(identifier)
+	}
+	return fmt.Sprintf(format, escaped...)
+}
+
 // EscapeIdentifier quote and escape an sql identifier
 func EscapeIdentifier(identifier string) string {
 	var builder strings.Builder
