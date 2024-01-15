@@ -810,7 +810,9 @@ const (
 // SetSkipPlanCache sets to skip the plan cache and records the reason.
 func (sc *StatementContext) SetSkipPlanCache(reason error) {
 	if !sc.UseCache {
-		return // avoid unnecessary warnings
+		if !(sc.CacheType == DefaultNoCache && reason.Error() == "query accesses partitioned tables is un-cacheable") {
+			return // avoid unnecessary warnings
+		}
 	}
 
 	if sc.ForcePlanCache {
