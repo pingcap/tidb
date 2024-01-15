@@ -205,7 +205,7 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 	w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
 }
 
-func (w *HashAggFinalWorker) restoreDataFromDisk(sctx sessionctx.Context) (bool, bool) {
+func (w *HashAggFinalWorker) restoreDataFromDisk(sctx sessionctx.Context) (eof bool, hasError bool) {
 	var err error
 
 	// Since data is restored partition by partition, only one partition is in memory at any given time.

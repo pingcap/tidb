@@ -272,7 +272,7 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, chk *
 	memSize := getGroupKeyMemUsage(w.groupKey)
 	w.groupKey, err = GetGroupKey(w.ctx, chk, w.groupKey, w.groupByItems)
 	failpoint.Inject("ConsumeRandomPanic", nil)
-	allMemDelta := int64(getGroupKeyMemUsage(w.groupKey) - memSize)
+	allMemDelta := getGroupKeyMemUsage(w.groupKey) - memSize
 	w.memTracker.Consume(allMemDelta)
 	if err != nil {
 		return err
