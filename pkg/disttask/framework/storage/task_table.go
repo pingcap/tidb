@@ -1115,7 +1115,7 @@ func (mgr *TaskManager) IsTaskCancelling(ctx context.Context, taskID int64) (boo
 	return len(rs) > 0, nil
 }
 
-// GetSubtasksWithHistory gets the subtasks for import into(show import jobs).
+// GetSubtasksWithHistory gets the subtasks from tidb_global_task and tidb_global_task_history.
 func (mgr *TaskManager) GetSubtasksWithHistory(ctx context.Context, taskID int64, step proto.Step) ([]*proto.Subtask, error) {
 	var (
 		rs  []chunk.Row
