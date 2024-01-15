@@ -68,6 +68,7 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 	bufferItems := int64(64)
 
 	cache, err := ristretto.NewCache(&ristretto.Config{
+		// We always use the int64 as the key, so we can use the identity hash function.
 		KeyToHash: func(key interface{}) (uint64, uint64) {
 			return uint64(key.(int64)), 0
 		},
