@@ -90,7 +90,11 @@ go_test(
     ],
     embed = [":utils"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 29,
+=======
+    shard_count = 37,
+>>>>>>> ac712397b2e (ebs_br: allow temporary TiKV unreachable during starting snapshot backup (#49154))
     deps = [
         "//br/pkg/errors",
         "//br/pkg/metautil",

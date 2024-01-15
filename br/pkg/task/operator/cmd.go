@@ -5,16 +5,21 @@ package operator
 import (
 	"context"
 	"crypto/tls"
+	"fmt"
+	"math/rand"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/keepalive"
@@ -38,13 +43,16 @@ func dialPD(ctx context.Context, cfg *task.Config) (*pdutil.PdController, error)
 }
 
 func (cx *AdaptEnvForSnapshotBackupContext) cleanUpWith(f func(ctx context.Context)) {
-	_ = cx.cleanUpWithErr(func(ctx context.Context) error { f(ctx); return nil })
+	cx.cleanUpWithRetErr(nil, func(ctx context.Context) error { f(ctx); return nil })
 }
 
-func (cx *AdaptEnvForSnapshotBackupContext) cleanUpWithErr(f func(ctx context.Context) error) error {
+func (cx *AdaptEnvForSnapshotBackupContext) cleanUpWithRetErr(errOut *error, f func(ctx context.Context) error) {
 	ctx, cancel := context.WithTimeout(context.Background(), cx.cfg.TTL)
 	defer cancel()
-	return f(ctx)
+	err := f(ctx)
+	if errOut != nil {
+		*errOut = multierr.Combine(*errOut, err)
+	}
 }
 
 type AdaptEnvForSnapshotBackupContext struct {
@@ -56,6 +64,18 @@ type AdaptEnvForSnapshotBackupContext struct {
 
 	rdGrp  sync.WaitGroup
 	runGrp *errgroup.Group
+}
+
+func (cx *AdaptEnvForSnapshotBackupContext) Close() {
+	cx.pdMgr.Close()
+	cx.kvMgr.Close()
+}
+
+func (cx *AdaptEnvForSnapshotBackupContext) GetBackOffer(operation string) utils.Backoffer {
+	state := utils.InitialRetryState(64, 1*time.Second, 10*time.Second)
+	bo := utils.GiveUpRetryOn(&state, berrors.ErrPossibleInconsistency)
+	bo = utils.VerboseRetry(bo, logutil.CL(cx).With(zap.String("operation", operation)))
+	return bo
 }
 
 func (cx *AdaptEnvForSnapshotBackupContext) ReadyL(name string, notes ...zap.Field) {
@@ -77,6 +97,7 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	if err != nil {
 		return errors.Annotate(err, "failed to dial PD")
 	}
+	mgr.SchedulerPauseTTL = cfg.TTL
 	var tconf *tls.Config
 	if cfg.TLS.IsEnabled() {
 		tconf, err = cfg.TLS.ToTLSConfig()
@@ -97,6 +118,8 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 		rdGrp:   sync.WaitGroup{},
 		runGrp:  eg,
 	}
+	defer cx.Close()
+
 	cx.rdGrp.Add(3)
 
 	eg.Go(func() error { return pauseGCKeeper(cx) })
@@ -104,66 +127,93 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	eg.Go(func() error { return pauseImporting(cx) })
 	go func() {
 		cx.rdGrp.Wait()
+		if cfg.OnAllReady != nil {
+			cfg.OnAllReady()
+		}
 		hintAllReady()
+	}()
+	defer func() {
+		if cfg.OnExit != nil {
+			cfg.OnExit()
+		}
 	}()
 
 	return eg.Wait()
 }
 
+func getCallerName() string {
+	name, err := os.Hostname()
+	if err != nil {
+		name = fmt.Sprintf("UNKNOWN-%d", rand.Int63())
+	}
+	return fmt.Sprintf("operator@%sT%d#%d", name, time.Now().Unix(), os.Getpid())
+}
+
 func pauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
-	denyLightning := utils.NewSuspendImporting("prepare_for_snapshot_backup", cx.kvMgr)
-	if _, err := denyLightning.DenyAllStores(cx, cx.cfg.TTL); err != nil {
+	suspendLightning := utils.NewSuspendImporting(getCallerName(), cx.kvMgr)
+	_, err := utils.WithRetryV2(cx, cx.GetBackOffer("suspend_lightning"), func(_ context.Context) (map[uint64]bool, error) {
+		return suspendLightning.DenyAllStores(cx, cx.cfg.TTL)
+	})
+	if err != nil {
 		return errors.Trace(err)
 	}
 	cx.ReadyL("pause_lightning")
-	cx.runGrp.Go(func() error {
-		err := denyLightning.Keeper(cx, cx.cfg.TTL)
+	cx.runGrp.Go(func() (err error) {
+		defer cx.cleanUpWithRetErr(&err, func(ctx context.Context) error {
+			if ctx.Err() != nil {
+				return errors.Annotate(ctx.Err(), "cleaning up timed out")
+			}
+			res, err := utils.WithRetryV2(ctx, cx.GetBackOffer("restore_lightning"),
+				func(ctx context.Context) (map[uint64]bool, error) { return suspendLightning.AllowAllStores(ctx) })
+			if err != nil {
+				return errors.Annotatef(err, "failed to allow all stores")
+			}
+			return suspendLightning.ConsistentWithPrev(res)
+		})
+
+		err = suspendLightning.Keeper(cx, cx.cfg.TTL)
 		if errors.Cause(err) != context.Canceled {
 			logutil.CL(cx).Warn("keeper encounters error.", logutil.ShortError(err))
+			return err
 		}
-		return cx.cleanUpWithErr(func(ctx context.Context) error {
-			for {
-				if ctx.Err() != nil {
-					return errors.Annotate(ctx.Err(), "cleaning up timed out")
-				}
-				res, err := denyLightning.AllowAllStores(ctx)
-				if err != nil {
-					logutil.CL(ctx).Warn("Failed to restore lightning, will retry.", logutil.ShortError(err))
-					// Retry for 10 times.
-					time.Sleep(cx.cfg.TTL / 10)
-					continue
-				}
-				return denyLightning.ConsistentWithPrev(res)
-			}
-		})
+		// Clean up the canceled error.
+		err = nil
+		return
 	})
 	return nil
 }
 
-func pauseGCKeeper(ctx *AdaptEnvForSnapshotBackupContext) error {
+func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext) (err error) {
 	// Note: should we remove the service safepoint as soon as this exits?
 	sp := utils.BRServiceSafePoint{
 		ID:       utils.MakeSafePointID(),
-		TTL:      int64(ctx.cfg.TTL.Seconds()),
-		BackupTS: ctx.cfg.SafePoint,
+		TTL:      int64(cx.cfg.TTL.Seconds()),
+		BackupTS: cx.cfg.SafePoint,
 	}
 	if sp.BackupTS == 0 {
-		rts, err := ctx.pdMgr.GetMinResolvedTS(ctx)
+		rts, err := cx.pdMgr.GetMinResolvedTS(cx)
 		if err != nil {
 			return err
 		}
-		logutil.CL(ctx).Info("No service safepoint provided, using the minimal resolved TS.", zap.Uint64("min-resolved-ts", rts))
+		logutil.CL(cx).Info("No service safepoint provided, using the minimal resolved TS.", zap.Uint64("min-resolved-ts", rts))
 		sp.BackupTS = rts
 	}
-	err := utils.StartServiceSafePointKeeper(ctx, ctx.pdMgr.GetPDClient(), sp)
+	err = utils.StartServiceSafePointKeeper(cx, cx.pdMgr.GetPDClient(), sp)
 	if err != nil {
 		return err
 	}
-	ctx.ReadyL("pause_gc", zap.Object("safepoint", sp))
+	cx.ReadyL("pause_gc", zap.Object("safepoint", sp))
+	defer cx.cleanUpWithRetErr(&err, func(ctx context.Context) error {
+		cancelSP := utils.BRServiceSafePoint{
+			ID:  sp.ID,
+			TTL: 0,
+		}
+		return utils.UpdateServiceSafePoint(ctx, cx.pdMgr.GetPDClient(), cancelSP)
+	})
 	// Note: in fact we can directly return here.
 	// But the name `keeper` implies once the function exits,
 	// the GC should be resume, so let's block here.
-	<-ctx.Done()
+	<-cx.Done()
 	return nil
 }
 
