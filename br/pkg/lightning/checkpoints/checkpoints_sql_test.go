@@ -36,16 +36,16 @@ func newCPSQLSuite(t *testing.T) *cpSQLSuite {
 		ExpectExec("CREATE DATABASE IF NOT EXISTS `mock-schema`").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	s.mock.
-		ExpectExec("CREATE TABLE IF NOT EXISTS `mock-schema`\\.task_v\\d+ .+").
+		ExpectExec("CREATE TABLE IF NOT EXISTS `mock-schema`\\.`task_v\\d+` .+").
 		WillReturnResult(sqlmock.NewResult(2, 1))
 	s.mock.
-		ExpectExec("CREATE TABLE IF NOT EXISTS `mock-schema`\\.table_v\\d+ .+").
+		ExpectExec("CREATE TABLE IF NOT EXISTS `mock-schema`\\.`table_v\\d+` .+").
 		WillReturnResult(sqlmock.NewResult(3, 1))
 	s.mock.
-		ExpectExec("CREATE TABLE IF NOT EXISTS `mock-schema`\\.engine_v\\d+ .+").
+		ExpectExec("CREATE TABLE IF NOT EXISTS `mock-schema`\\.`engine_v\\d+` .+").
 		WillReturnResult(sqlmock.NewResult(4, 1))
 	s.mock.
-		ExpectExec("CREATE TABLE IF NOT EXISTS `mock-schema`\\.chunk_v\\d+ .+").
+		ExpectExec("CREATE TABLE IF NOT EXISTS `mock-schema`\\.`chunk_v\\d+` .+").
 		WillReturnResult(sqlmock.NewResult(5, 1))
 
 	cpdb, err := checkpoints.NewMySQLCheckpointsDB(context.Background(), s.db, "mock-schema")
@@ -82,12 +82,12 @@ func TestNormalOperations(t *testing.T) {
 
 	s.mock.ExpectBegin()
 	initializeStmt := s.mock.ExpectPrepare(
-		"REPLACE INTO `mock-schema`\\.task_v\\d+")
+		"REPLACE INTO `mock-schema`\\.`task_v\\d+`")
 	initializeStmt.ExpectExec().
 		WithArgs(123, "/data", "local", "127.0.0.1:8287", "127.0.0.1", 4000, "127.0.0.1:2379", "/tmp/sorted-kv", build.ReleaseVersion).
 		WillReturnResult(sqlmock.NewResult(6, 1))
 	initializeStmt = s.mock.
-		ExpectPrepare("INSERT INTO `mock-schema`\\.table_v\\d+")
+		ExpectPrepare("INSERT INTO `mock-schema`\\.`table_v\\d+`")
 	initializeStmt.ExpectExec().
 		WithArgs(123, "`db1`.`t1`", sqlmock.AnyArg(), int64(1), t1Info).
 		WillReturnResult(sqlmock.NewResult(7, 1))
@@ -142,7 +142,7 @@ func TestNormalOperations(t *testing.T) {
 
 	s.mock.ExpectBegin()
 	insertEngineStmt := s.mock.
-		ExpectPrepare("REPLACE INTO `mock-schema`\\.engine_v\\d+ .+")
+		ExpectPrepare("REPLACE INTO `mock-schema`\\.`engine_v\\d+` .+")
 	insertEngineStmt.
 		ExpectExec().
 		WithArgs("`db1`.`t2`", 0, 30).
@@ -152,7 +152,7 @@ func TestNormalOperations(t *testing.T) {
 		WithArgs("`db1`.`t2`", -1, 30).
 		WillReturnResult(sqlmock.NewResult(9, 1))
 	insertChunkStmt := s.mock.
-		ExpectPrepare("REPLACE INTO `mock-schema`\\.chunk_v\\d+ .+")
+		ExpectPrepare("REPLACE INTO `mock-schema`\\.`chunk_v\\d+` .+")
 	insertChunkStmt.
 		ExpectExec().
 		WithArgs("`db1`.`t2`", 0, "/tmp/path/1.sql", 0, mydump.SourceTypeSQL, 0, "", 123, []byte("null"), 12, 102400, 1, 5000, 1234567890).
@@ -223,7 +223,7 @@ func TestNormalOperations(t *testing.T) {
 
 	s.mock.ExpectBegin()
 	s.mock.
-		ExpectPrepare("UPDATE `mock-schema`\\.chunk_v\\d+ SET pos = .+").
+		ExpectPrepare("UPDATE `mock-schema`\\.`chunk_v\\d+` SET pos = .+").
 		ExpectExec().
 		WithArgs(
 			55904, 681, 4491, 586, 486070148917, []byte("null"),
@@ -231,22 +231,22 @@ func TestNormalOperations(t *testing.T) {
 		).
 		WillReturnResult(sqlmock.NewResult(11, 1))
 	s.mock.
-		ExpectPrepare("UPDATE `mock-schema`\\.table_v\\d+ SET alloc_base = .+").
+		ExpectPrepare("UPDATE `mock-schema`\\.`table_v\\d+` SET alloc_base = .+").
 		ExpectExec().
 		WithArgs(132861, "`db1`.`t2`").
 		WillReturnResult(sqlmock.NewResult(12, 1))
 	s.mock.
-		ExpectPrepare("UPDATE `mock-schema`\\.engine_v\\d+ SET status = .+").
+		ExpectPrepare("UPDATE `mock-schema`\\.`engine_v\\d+` SET status = .+").
 		ExpectExec().
 		WithArgs(120, "`db1`.`t2`", 0).
 		WillReturnResult(sqlmock.NewResult(13, 1))
 	s.mock.
-		ExpectPrepare("UPDATE `mock-schema`\\.table_v\\d+ SET status = .+").
+		ExpectPrepare("UPDATE `mock-schema`\\.`table_v\\d+` SET status = .+").
 		ExpectExec().
 		WithArgs(60, "`db1`.`t2`").
 		WillReturnResult(sqlmock.NewResult(14, 1))
 	s.mock.
-		ExpectPrepare("UPDATE `mock-schema`\\.table_v\\d+ SET kv_bytes = .+").
+		ExpectPrepare("UPDATE `mock-schema`\\.`table_v\\d+` SET kv_bytes = .+").
 		ExpectExec().
 		WithArgs(4492, 686, 486070148910, "`db1`.`t2`").
 		WillReturnResult(sqlmock.NewResult(15, 1))
@@ -262,7 +262,7 @@ func TestNormalOperations(t *testing.T) {
 
 	s.mock.ExpectBegin()
 	s.mock.
-		ExpectQuery("SELECT .+ FROM `mock-schema`\\.engine_v\\d+").
+		ExpectQuery("SELECT .+ FROM `mock-schema`\\.`engine_v\\d+`").
 		WithArgs("`db1`.`t2`").
 		WillReturnRows(
 			sqlmock.NewRows([]string{"engine_id", "status"}).
@@ -270,7 +270,7 @@ func TestNormalOperations(t *testing.T) {
 				AddRow(-1, 30),
 		)
 	s.mock.
-		ExpectQuery("SELECT (?s:.+) FROM `mock-schema`\\.chunk_v\\d+").
+		ExpectQuery("SELECT (?s:.+) FROM `mock-schema`\\.`chunk_v\\d+`").
 		WithArgs("`db1`.`t2`").
 		WillReturnRows(
 			sqlmock.NewRows([]string{
@@ -285,7 +285,7 @@ func TestNormalOperations(t *testing.T) {
 				),
 		)
 	s.mock.
-		ExpectQuery("SELECT .+ FROM `mock-schema`\\.table_v\\d+").
+		ExpectQuery("SELECT .+ FROM `mock-schema`\\.`table_v\\d+`").
 		WithArgs("`db1`.`t2`").
 		WillReturnRows(
 			sqlmock.NewRows([]string{"status", "alloc_base", "table_id", "table_info", "kv_bytes", "kv_kvs", "kv_checksum"}).

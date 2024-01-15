@@ -79,6 +79,7 @@ const (
 const (
 	// Some frequently used table name or constants.
 	allTables       = "all"
+	stringLitAll    = "'all'"
 	columnTableName = "table_name"
 )
 
