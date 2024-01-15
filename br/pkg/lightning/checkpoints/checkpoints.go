@@ -1498,7 +1498,7 @@ func (cpdb *MySQLCheckpointsDB) RemoveCheckpoint(ctx context.Context, tableName 
 	}
 
 	if tableName == allTables {
-		return s.Exec(ctx, "remove all checkpoints", "DROP SCHEMA "+cpdb.schema)
+		return s.Exec(ctx, "remove all checkpoints", common.SprintfWithIdentifiers("DROP SCHEMA %s", cpdb.schema))
 	}
 
 	deleteChunkQuery := common.SprintfWithIdentifiers(DeleteCheckpointRecordTemplate, cpdb.schema, CheckpointTableNameChunk)
