@@ -46,7 +46,7 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-func getCSVParser(t *testing.T, ctx context.Context, fileName string) mydump.Parser {
+func getCSVParser(ctx context.Context, t *testing.T, fileName string) mydump.Parser {
 	file, err := os.Open(fileName)
 	require.NoError(t, err)
 	csvParser, err := mydump.NewCSVParser(ctx, &config.CSVConfig{Separator: `,`, Delimiter: `"`},
@@ -105,7 +105,7 @@ func TestFileChunkProcess(t *testing.T) {
 		fileName := path.Join(tempDir, "test.csv")
 		sourceData := []byte("1,2,3\n4,5,6\n7,8,9\n")
 		require.NoError(t, os.WriteFile(fileName, sourceData, 0o644))
-		csvParser := getCSVParser(t, ctx, fileName)
+		csvParser := getCSVParser(ctx, t, fileName)
 		defer func() {
 			require.NoError(t, csvParser.Close())
 		}()
@@ -159,7 +159,7 @@ func TestFileChunkProcess(t *testing.T) {
 		fileName := path.Join(tempDir, "test.csv")
 		sourceData := []byte(`1,2,3\n4,aa,6\n7,8,9\n`)
 		require.NoError(t, os.WriteFile(fileName, sourceData, 0o644))
-		csvParser := getCSVParser(t, ctx, fileName)
+		csvParser := getCSVParser(ctx, t, fileName)
 		defer func() {
 			require.NoError(t, csvParser.Close())
 		}()
@@ -184,7 +184,7 @@ func TestFileChunkProcess(t *testing.T) {
 		fileName := path.Join(tempDir, "test.csv")
 		sourceData := []byte(`1,"`)
 		require.NoError(t, os.WriteFile(fileName, sourceData, 0o644))
-		csvParser := getCSVParser(t, ctx, fileName)
+		csvParser := getCSVParser(ctx, t, fileName)
 		defer func() {
 			require.NoError(t, csvParser.Close())
 		}()
@@ -209,7 +209,7 @@ func TestFileChunkProcess(t *testing.T) {
 		fileName := path.Join(tempDir, "test.csv")
 		sourceData := []byte("1,2,3\n4,5,6\n7,8,9\n")
 		require.NoError(t, os.WriteFile(fileName, sourceData, 0o644))
-		csvParser := getCSVParser(t, ctx, fileName)
+		csvParser := getCSVParser(ctx, t, fileName)
 		defer func() {
 			require.NoError(t, csvParser.Close())
 		}()
@@ -233,7 +233,7 @@ func TestFileChunkProcess(t *testing.T) {
 		fileName := path.Join(tempDir, "test.csv")
 		sourceData := []byte("1,2,3\n4,5,6\n7,8,9\n")
 		require.NoError(t, os.WriteFile(fileName, sourceData, 0o644))
-		csvParser := getCSVParser(t, ctx, fileName)
+		csvParser := getCSVParser(ctx, t, fileName)
 		defer func() {
 			require.NoError(t, csvParser.Close())
 		}()

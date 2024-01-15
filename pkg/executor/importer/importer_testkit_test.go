@@ -221,7 +221,7 @@ func TestPostProcess(t *testing.T) {
 	tk.MustQuery("select * from db.tb2").Check(testkit.Rows("124"))
 }
 
-func getTableImporter(t *testing.T, ctx context.Context, store kv.Storage, tableName, path string, opts []*plannercore.LoadDataOpt) *importer.TableImporter {
+func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, tableName, path string, opts []*plannercore.LoadDataOpt) *importer.TableImporter {
 	tk := testkit.NewTestKit(t, store)
 	do, err := session.GetDomain(store)
 	require.NoError(t, err)
@@ -271,7 +271,7 @@ func TestProcessChunkWith(t *testing.T) {
 			FileMeta: mydump.SourceFileMeta{Type: mydump.SourceTypeCSV, Path: "test.csv"},
 			Chunk:    mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
-		ti := getTableImporter(t, ctx, store, "t", fileName, []*plannercore.LoadDataOpt{
+		ti := getTableImporter(ctx, t, store, "t", fileName, []*plannercore.LoadDataOpt{
 			{Name: "skip_rows", Value: expression.NewInt64Const(1)}})
 		defer ti.Backend().CloseEngineMgr()
 		kvWriter := mock.NewMockEngineWriter(ctrl)
@@ -288,7 +288,7 @@ func TestProcessChunkWith(t *testing.T) {
 			FileMeta: mydump.SourceFileMeta{Type: mydump.SourceTypeCSV, Path: "test.csv"},
 			Chunk:    mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
-		ti := getTableImporter(t, ctx, store, "t", "", nil)
+		ti := getTableImporter(ctx, t, store, "t", "", nil)
 		defer ti.Backend().CloseEngineMgr()
 		rowsCh := make(chan importer.QueryRow, 3)
 		for i := 1; i <= 3; i++ {
@@ -328,8 +328,7 @@ func TestPopulateChunks(t *testing.T) {
 		[]byte("8,8,8\n"), 0o644))
 	require.NoError(t, os.WriteFile(path.Join(tidbCfg.TempDir, "test-03.csv"),
 		[]byte("9,9,9\n10,10,10\n"), 0o644))
-	ti := getTableImporter(t, ctx, store, "t", fmt.Sprintf("%s/test-*.csv", tidbCfg.TempDir),
-		[]*plannercore.LoadDataOpt{{Name: "__max_engine_size", Value: expression.NewStrConst("20")}})
+	ti := getTableImporter(ctx, t, store, "t", fmt.Sprintf("%s/test-*.csv", tidbCfg.TempDir), []*plannercore.LoadDataOpt{{Name: "__max_engine_size", Value: expression.NewStrConst("20")}})
 	defer ti.Backend().CloseEngineMgr()
 	require.NoError(t, ti.InitDataFiles(ctx))
 	engines, err := ti.PopulateChunks(ctx)
