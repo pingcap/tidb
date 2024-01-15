@@ -325,7 +325,7 @@ func (e *Engine) LoadIngestData(
 ) error {
 	// for thread=16, and the region size is 96MB, we will download 96MB*32 = 3GB
 	// data at once
-	regionBatchSize := e.workerConcurrency
+	regionBatchSize := 32
 	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
 		regionBatchSize = val.(int)
 	})
