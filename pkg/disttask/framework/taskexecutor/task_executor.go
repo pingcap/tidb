@@ -180,6 +180,7 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 	})
 	if err := subtaskExecutor.Init(runCtx); err != nil {
 		s.onError(err)
+		// 没有兜底
 		return s.getError()
 	}
 
@@ -188,6 +189,7 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 	s.startCancelCheck(cancelCtx, &wg, runCancel)
 
 	defer func() {
+		// 没有兜底
 		err := subtaskExecutor.Cleanup(runCtx)
 		if err != nil {
 			logutil.Logger(s.logCtx).Error("cleanup subtask exec env failed", zap.Error(err))
@@ -201,6 +203,7 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 		proto.SubtaskStatePending, proto.SubtaskStateRunning)
 	if err != nil {
 		s.onError(err)
+		// 有问题。。。。
 		if common.IsRetryableError(err) {
 			logutil.Logger(s.logCtx).Warn("met retryable error", zap.Error(err))
 			return nil
@@ -259,8 +262,8 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 				s.markErrorHandled()
 				break
 			}
-		} else {
-			// subtask.State == proto.TaskStatePending
+		} else if subtask.State == proto.SubtaskStatePending {
+			// ywq todo
 			err := s.startSubtaskAndUpdateState(runCtx, subtask)
 			if err != nil {
 				logutil.Logger(s.logCtx).Warn("startSubtaskAndUpdateState meets error", zap.Error(err))
@@ -270,8 +273,11 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 					continue
 				}
 				s.onError(err)
+				// 有 bug 把，没有更新成功怎么办
 				continue
 			}
+		} else {
+
 		}
 
 		failpoint.Inject("mockCleanExecutor", func() {
@@ -632,15 +638,23 @@ func (s *BaseTaskExecutor) markSubTaskCanceledOrFailed(ctx context.Context, subt
 }
 
 func (s *BaseTaskExecutor) updateErrorToSubtask(ctx context.Context, taskID int64, err error) error {
-	logger := logutil.Logger(s.logCtx)
-	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
-	err1 := handle.RunWithRetry(s.logCtx, scheduler.RetrySQLTimes, backoffer, logger,
-		func(_ context.Context) (bool, error) {
-			return true, s.taskTable.UpdateErrorToSubtask(ctx, s.id, taskID, err)
-		},
-	)
-	if err1 == nil {
-		logger.Warn("update error to subtask success", zap.Error(err))
+	err = errors.Cause(err)
+	if s.IsRetryableError(err) {
+		logutil.Logger(s.logCtx).Warn("met retryable error", zap.Error(err))
+	} else if common.IsContextCanceledError(err) {
+		logutil.Logger(s.logCtx).Info("met context canceled for gracefully shutdown", zap.Error(err))
+	} else {
+		logger := logutil.Logger(s.logCtx)
+		backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
+		err1 := handle.RunWithRetry(s.logCtx, scheduler.RetrySQLTimes, backoffer, logger,
+			func(_ context.Context) (bool, error) {
+				return true, s.taskTable.UpdateErrorToSubtask(ctx, s.id, taskID, err)
+			},
+		)
+		if err1 == nil {
+			logger.Warn("update error to subtask success", zap.Error(err))
+		}
+		return err1
 	}
-	return err1
+	return nil
 }

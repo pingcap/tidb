@@ -411,3 +411,33 @@ func TestTaskExecutor(t *testing.T) {
 	err = taskExecutor.run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency})
 	require.NoError(t, err)
 }
+
+func TestExecutorErrHandling(t *testing.T) {
+	var tp proto.TaskType = "test_task_executor"
+	var taskID int64 = 1
+	var concurrency = 10
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	runCtx, runCancel := context.WithCancel(ctx)
+	defer runCancel()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockSubtaskTable := mock.NewMockTaskTable(ctrl)
+	// mockSubtaskExecutor := mockexecute.NewMockSubtaskExecutor(ctrl)
+	mockExtension := mock.NewMockExtension(ctrl)
+	mockSubtaskTable.EXPECT().IsTaskExecutorCanceled(gomock.Any(), gomock.Any(), gomock.Any()).Return(false, nil).AnyTimes()
+	taskExecutor := NewBaseTaskExecutor(ctx, "id", 1, mockSubtaskTable)
+	taskExecutor.Extension = mockExtension
+
+	// 1. GetSubtaskExecutor met retryable error.
+	getSubtaskExecutorErr := errors.New("get executor err")
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, getSubtaskExecutorErr)
+	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(true)
+	require.NoError(t, taskExecutor.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency}))
+
+	// 2. GetSubtaskExecutor met non retryable error.
+	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, getSubtaskExecutorErr)
+	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false)
+	mockSubtaskTable.EXPECT().UpdateErrorToSubtask(runCtx, taskExecutor.id, taskExecutor.taskID, getSubtaskExecutorErr)
+	require.NoError(t, taskExecutor.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency}))
+}
