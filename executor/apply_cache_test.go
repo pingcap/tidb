@@ -82,7 +82,7 @@ func TestApplyCache(t *testing.T) {
 func TestApplyCacheConcurrent(t *testing.T) {
 	ctx := mock.NewContext()
 	ctx.GetSessionVars().MemQuotaApplyCache = 100
-	applyCache, err := NewApplyCache(ctx)
+	applyCache, err := newApplyCache(ctx)
 	require.NoError(t, err)
 
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
