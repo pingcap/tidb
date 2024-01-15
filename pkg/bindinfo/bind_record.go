@@ -53,8 +53,8 @@ const (
 
 // Binding stores the basic bind hint info.
 type Binding struct {
-	OriginalSQL string `json:"-"`
-	Db          string `json:"-"`
+	OriginalSQL string
+	Db          string
 	BindSQL     string
 	// Status represents the status of the binding. It can only be one of the following values:
 	// 1. deleted: BindRecord is deleted, can not be used anymore.
