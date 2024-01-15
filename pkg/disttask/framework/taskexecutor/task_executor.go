@@ -259,7 +259,8 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 				s.markErrorHandled()
 				break
 			}
-		} else if subtask.State == proto.SubtaskStatePending {
+		} else {
+			// subtask.State == proto.SubtaskStatePending
 			err := s.startSubtaskAndUpdateState(runCtx, subtask)
 			if err != nil {
 				logutil.Logger(s.logCtx).Warn("startSubtaskAndUpdateState meets error", zap.Error(err))
@@ -271,8 +272,6 @@ func (s *BaseTaskExecutor) run(ctx context.Context, task *proto.Task) (resErr er
 				s.onError(err)
 				continue
 			}
-		} else {
-
 		}
 
 		failpoint.Inject("mockCleanExecutor", func() {
