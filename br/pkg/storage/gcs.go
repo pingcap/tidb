@@ -5,6 +5,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	goerrors "errors"
 	"io"
 	"os"
 	"path"
@@ -21,7 +22,9 @@ import (
 	"github.com/spf13/pflag"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/net/http2"
 	"golang.org/x/oauth2/google"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 	htransport "google.golang.org/api/transport/http"
@@ -391,6 +394,7 @@ skipHandleCred:
 			if err != nil {
 				return errors.Trace(err)
 			}
+			client.SetRetry(storage.WithErrorFunc(shouldRetry))
 			clients[i] = client
 			return nil
 		})
@@ -428,6 +432,30 @@ skipHandleCred:
 		handles:   buckets,
 		clients:   clients,
 	}, nil
+}
+
+func shouldRetry(err error) bool {
+	if storage.ShouldRetry(err) {
+		return true
+	}
+
+	// workaround for https://github.com/googleapis/google-cloud-go/issues/7440
+	if e := (http2.StreamError{}); goerrors.As(err, &e) {
+		if e.Code == http2.ErrCodeInternal {
+			log.Warn("retrying gcs request due to internal HTTP2 error", zap.Error(err))
+			return true
+		}
+	}
+
+	// workaround for https://github.com/googleapis/google-cloud-go/issues/9262
+	if e := (&googleapi.Error{}); goerrors.As(err, &e) {
+		if e.Code == 401 && strings.Contains(e.Message, "Authentication required.") {
+			log.Warn("retrying gcs request due to internal authentication error", zap.Error(err))
+			return true
+		}
+	}
+
+	return false
 }
 
 func hasSSTFiles(ctx context.Context, bucket *storage.BucketHandle, prefix string) bool {
