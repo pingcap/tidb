@@ -686,7 +686,7 @@ func (s *BaseTaskExecutor) updateErrorToSubtask(ctx context.Context, taskID int6
 	err = errors.Cause(err)
 	logger := logutil.Logger(s.logCtx)
 	if s.IsRetryableError(err) {
-		logger.Warn("met retryable error", zap.Error(err))
+		logger.Warn("meet retryable error", zap.Error(err))
 	} else if common.IsContextCanceledError(err) {
 		logger.Info("met context canceled for gracefully shutdown", zap.Error(err))
 	} else {
