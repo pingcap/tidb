@@ -89,8 +89,9 @@ func verifyLightningStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
 	conn, err := grpc.DialContext(cx, s.Address, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 	t.NoError(err)
 	ingestCli := import_sstpb.NewImportSSTClient(conn)
-	_, err = ingestCli.Ingest(cx, &import_sstpb.IngestRequest{})
-	t.ErrorContains(err, "Suspended")
+	res, err := ingestCli.Ingest(cx, &import_sstpb.IngestRequest{})
+	t.NoError(err)
+	t.NotNil(res.GetError().GetNotLeader(), "res = %s", res)
 }
 
 func verifySchedulersStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
@@ -162,12 +163,12 @@ func TestOperator(t *testing.T) {
 			return false
 		}
 	}, 10*time.Second, time.Second)
+	defer cancel()
 
 	verifyGCStopped(req, cfg)
 	verifyLightningStopped(req, cfg)
 	verifySchedulersStopped(req, cfg)
 
-	cancel()
 	req.Eventually(func() bool {
 		select {
 		case <-ex:
