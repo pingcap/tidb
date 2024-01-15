@@ -684,10 +684,11 @@ func (s *BaseTaskExecutor) markSubTaskCanceledOrFailed(ctx context.Context, subt
 
 func (s *BaseTaskExecutor) updateErrorToSubtask(ctx context.Context, taskID int64, err error) error {
 	err = errors.Cause(err)
+	logger := logutil.Logger(s.logCtx)
 	if s.IsRetryableError(err) {
-		logutil.Logger(s.logCtx).Warn("met retryable error", zap.Error(err))
+		logger.Warn("met retryable error", zap.Error(err))
 	} else if common.IsContextCanceledError(err) {
-		logutil.Logger(s.logCtx).Info("met context canceled for gracefully shutdown", zap.Error(err))
+		logger.Info("met context canceled for gracefully shutdown", zap.Error(err))
 	} else {
 		logger := logutil.Logger(s.logCtx)
 		backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
