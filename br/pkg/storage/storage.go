@@ -190,11 +190,7 @@ func Create(ctx context.Context, backend *backuppb.StorageBackend, sendCreds boo
 
 // NewWithDefaultOpt creates ExternalStorage with default options.
 func NewWithDefaultOpt(ctx context.Context, backend *backuppb.StorageBackend) (ExternalStorage, error) {
-	var opts ExternalStorageOptions
-	if gcs := backend.GetGcs(); gcs != nil {
-		opts.HTTPClient = gcsHttpClientForThroughput()
-	}
-	return New(ctx, backend, &opts)
+	return New(ctx, backend, nil)
 }
 
 // NewFromURL creates an ExternalStorage from URL.
