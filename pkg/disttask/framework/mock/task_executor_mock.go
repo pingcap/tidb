@@ -40,32 +40,32 @@ func (m *MockTaskTable) EXPECT() *MockTaskTableMockRecorder {
 	return m.recorder
 }
 
-// CanceledSubtask mocks base method.
-func (m *MockTaskTable) CanceledSubtask(arg0 context.Context, arg1 string, arg2 int64) error {
+// CancelSubtask mocks base method.
+func (m *MockTaskTable) CancelSubtask(arg0 context.Context, arg1 string, arg2 int64) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "CanceledSubtask", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "CancelSubtask", arg0, arg1, arg2)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// CanceledSubtask indicates an expected call of CanceledSubtask.
-func (mr *MockTaskTableMockRecorder) CanceledSubtask(arg0, arg1, arg2 any) *gomock.Call {
+// CancelSubtask indicates an expected call of CancelSubtask.
+func (mr *MockTaskTableMockRecorder) CancelSubtask(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CanceledSubtask", reflect.TypeOf((*MockTaskTable)(nil).CanceledSubtask), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelSubtask", reflect.TypeOf((*MockTaskTable)(nil).CancelSubtask), arg0, arg1, arg2)
 }
 
-// FailedSubtask mocks base method.
-func (m *MockTaskTable) FailedSubtask(arg0 context.Context, arg1 string, arg2 int64, arg3 error) error {
+// FailSubtask mocks base method.
+func (m *MockTaskTable) FailSubtask(arg0 context.Context, arg1 string, arg2 int64, arg3 error) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "FailedSubtask", arg0, arg1, arg2, arg3)
+	ret := m.ctrl.Call(m, "FailSubtask", arg0, arg1, arg2, arg3)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// FailedSubtask indicates an expected call of FailedSubtask.
-func (mr *MockTaskTableMockRecorder) FailedSubtask(arg0, arg1, arg2, arg3 any) *gomock.Call {
+// FailSubtask indicates an expected call of FailSubtask.
+func (mr *MockTaskTableMockRecorder) FailSubtask(arg0, arg1, arg2, arg3 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FailedSubtask", reflect.TypeOf((*MockTaskTable)(nil).FailedSubtask), arg0, arg1, arg2, arg3)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FailSubtask", reflect.TypeOf((*MockTaskTable)(nil).FailSubtask), arg0, arg1, arg2, arg3)
 }
 
 // FinishSubtask mocks base method.

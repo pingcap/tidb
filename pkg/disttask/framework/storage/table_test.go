@@ -1176,9 +1176,9 @@ func TestSubtasksState(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
 	ts := time.Now()
 	time.Sleep(1 * time.Second)
-	// 1. test FailedSubtask do update start/update time
+	// 1. test FailSubtask do update start/update time
 	testutil.CreateSubTask(t, sm, 3, proto.StepInit, "for_test", []byte("test"), proto.TaskTypeExample, 11, false)
-	require.NoError(t, sm.FailedSubtask(ctx, "for_test", 3, errors.New("fail")))
+	require.NoError(t, sm.FailSubtask(ctx, "for_test", 3, errors.New("fail")))
 	subtask, err := sm.GetFirstSubtaskInStates(ctx, "for_test", 3, proto.StepInit, proto.SubtaskStateFailed)
 	require.NoError(t, err)
 	require.Equal(t, proto.SubtaskStateFailed, subtask.State)
@@ -1211,9 +1211,9 @@ func TestSubtasksState(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, endTime, ts)
 
-	// 3. test CanceledSubtask
+	// 3. test CancelSubtask
 	testutil.CreateSubTask(t, sm, 3, proto.StepInit, "for_test", []byte("test"), proto.TaskTypeExample, 11, false)
-	require.NoError(t, sm.CanceledSubtask(ctx, "for_test", 3))
+	require.NoError(t, sm.CancelSubtask(ctx, "for_test", 3))
 	subtask, err = sm.GetFirstSubtaskInStates(ctx, "for_test", 3, proto.StepInit, proto.SubtaskStateCanceled)
 	require.NoError(t, err)
 	require.Equal(t, proto.SubtaskStateCanceled, subtask.State)
