@@ -42,11 +42,12 @@ type TaskTable interface {
 	FailedSubtask(ctx context.Context, execID string, taskID int64, err error) error
 	// CancelSubtask update the task's subtasks' state to canceled.
 	CanceledSubtask(ctx context.Context, exe string, taskID int64) error
-
+	// FinishSubtask updates the subtask meta and mark state to succeed.
 	FinishSubtask(ctx context.Context, execID string, subtaskID int64, meta []byte) error
+	// PauseSubtasks update subtasks state to paused.
+	PauseSubtasks(ctx context.Context, execID string, taskID int64) error
 
 	HasSubtasksInStates(ctx context.Context, execID string, taskID int64, step proto.Step, states ...proto.SubtaskState) (bool, error)
-	PauseSubtasks(ctx context.Context, execID string, taskID int64) error
 	// RunningSubtasksBack2Pending update the state of subtask which belongs to this
 	// node from running to pending.
 	// see subtask state machine for more detail.
