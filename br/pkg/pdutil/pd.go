@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"math"
 	"net/http"
@@ -21,7 +20,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
@@ -133,8 +131,6 @@ func DefaultExpectPDCfgGenerators() map[string]pauseConfigGenerator {
 
 // PdController manage get/update config from pd.
 type PdController struct {
-	addrs     []string
-	cli       *http.Client // TODO: replace it with pd HTTP client
 	pdClient  pd.Client
 	pdHTTPCli pdhttp.Client
 	version   *semver.Version
@@ -150,20 +146,7 @@ func NewPdController(
 	tlsConf *tls.Config,
 	securityOption pd.SecurityOption,
 ) (*PdController, error) {
-	cli := httputil.NewClient(tlsConf)
-
 	addrs := strings.Split(pdAddrs, ",")
-	processedAddrs := make([]string, 0, len(addrs))
-	for _, addr := range addrs {
-		if !strings.HasPrefix(addr, "http") {
-			if tlsConf != nil {
-				addr = "https://" + addr
-			} else {
-				addr = "http://" + addr
-			}
-		}
-		processedAddrs = append(processedAddrs, addr)
-	}
 	maxCallMsgSize := []grpc.DialOption{
 		grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxMsgSize)),
 		grpc.WithDefaultCallOptions(grpc.MaxCallSendMsgSize(maxMsgSize)),
@@ -196,8 +179,6 @@ func NewPdController(
 	version := parseVersion(versionStr)
 
 	return &PdController{
-		addrs:     processedAddrs,
-		cli:       cli,
 		pdClient:  pdClient,
 		pdHTTPCli: pdHTTPCli,
 		version:   version,
@@ -384,12 +365,8 @@ func (p *PdController) UpdatePDScheduleConfig(ctx context.Context) error {
 }
 
 func (p *PdController) doUpdatePDScheduleConfig(
-	ctx context.Context, cfg map[string]interface{}, prefixes ...string,
+	ctx context.Context, cfg map[string]interface{}, ttlSeconds ...float64,
 ) error {
-	prefix := pdhttp.Config
-	if len(prefixes) != 0 {
-		prefix = prefixes[0]
-	}
 	newCfg := make(map[string]interface{})
 	for k, v := range cfg {
 		// if we want use ttl, we need use config prefix first.
@@ -398,24 +375,15 @@ func (p *PdController) doUpdatePDScheduleConfig(
 		newCfg[sc] = v
 	}
 
-	for _, addr := range p.getAllPDAddrs() {
-		reqData, err := json.Marshal(newCfg)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		_, e := post(ctx, addr, prefix,
-			p.cli, http.MethodPost, reqData)
-		if e == nil {
-			return nil
-		}
-		log.Warn("failed to update PD config, will try next", zap.Error(e), zap.String("pd", addr))
+	if err := p.pdHTTPCli.SetConfig(ctx, newCfg, ttlSeconds...); err != nil {
+		return errors.Annotate(berrors.ErrPDUpdateFailed, "failed to update PD schedule config")
 	}
-	return errors.Annotate(berrors.ErrPDUpdateFailed, "failed to update PD schedule config")
+	return nil
 }
 
 func (p *PdController) doPauseConfigs(ctx context.Context, cfg map[string]interface{}) error {
 	// pause this scheduler with 300 seconds
-	return p.doUpdatePDScheduleConfig(ctx, cfg, pdhttp.ConfigWithTTLSeconds(pauseTimeout.Seconds()))
+	return p.doUpdatePDScheduleConfig(ctx, cfg, pauseTimeout.Seconds())
 }
 
 func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg ClusterConfig,
@@ -434,10 +402,10 @@ func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg Cluster
 		mergeCfg[cfgKey] = value
 	}
 
-	prefix := make([]string, 0, 1)
+	prefix := make([]float64, 0, 1)
 	if pd.isPauseConfigEnabled() {
 		// set config's ttl to zero, make temporary config invalid immediately.
-		prefix = append(prefix, pdhttp.ConfigWithTTLSeconds(0))
+		prefix = append(prefix, 0)
 	}
 	// reset config with previous value.
 	if err := pd.doUpdatePDScheduleConfig(ctx, mergeCfg, prefix...); err != nil {
@@ -631,7 +599,15 @@ func (p *PdController) RecoverBaseAllocID(ctx context.Context, id uint64) error 
 func (p *PdController) ResetTS(ctx context.Context, ts uint64) error {
 	// reset-ts of PD will never set ts < current pd ts
 	// we set force-use-larger=true to allow ts > current pd ts + 24h(on default)
-	return p.pdHTTPCli.ResetTS(ctx, ts, true)
+	err := p.pdHTTPCli.ResetTS(ctx, ts, true)
+	if err == nil {
+		return nil
+	}
+	if strings.Contains(err.Error(), http.StatusText(http.StatusForbidden)) {
+		log.Info("reset-ts returns with status forbidden, ignore")
+		return nil
+	}
+	return err
 }
 
 // MarkRecovering mark pd into recovering
