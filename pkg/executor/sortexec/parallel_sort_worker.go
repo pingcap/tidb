@@ -90,7 +90,7 @@ func (p *parallelSortWorker) injectFailPointForParallelSortWorker() {
 	})
 }
 
-// Fetching chunks from MPMCQueue and sort them.
+// Fetching chunks from chunkChannel and sort them.
 // Rows are sorted only inside a chunk.
 // Return false if there is some error.
 func (p *parallelSortWorker) fetchChunksAndSort() bool {
