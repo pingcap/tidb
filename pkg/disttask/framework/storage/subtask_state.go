@@ -54,6 +54,51 @@ func (mgr *TaskManager) FinishSubtask(ctx context.Context, execID string, id int
 	return err
 }
 
+// FailSubtask update the task's subtask state to failed and set the err.
+func (mgr *TaskManager) FailSubtask(ctx context.Context, execID string, taskID int64, err error) error {
+	if err == nil {
+		return nil
+	}
+	_, err1 := mgr.ExecuteSQLWithNewSession(ctx,
+		`update mysql.tidb_background_subtask
+		set state = %?, 
+		error = %?, 
+		start_time = unix_timestamp(), 
+		state_update_time = unix_timestamp(),
+		end_time = CURRENT_TIMESTAMP()
+		where exec_id = %? and 
+		task_key = %? and 
+		state in (%?, %?) 
+		limit 1;`,
+		proto.SubtaskStateFailed,
+		serializeErr(err),
+		execID,
+		taskID,
+		proto.SubtaskStatePending,
+		proto.SubtaskStateRunning)
+	return err1
+}
+
+// CancelSubtask update the task's subtasks' state to canceled.
+func (mgr *TaskManager) CancelSubtask(ctx context.Context, execID string, taskID int64) error {
+	_, err1 := mgr.ExecuteSQLWithNewSession(ctx,
+		`update mysql.tidb_background_subtask
+		set state = %?, 
+		start_time = unix_timestamp(), 
+		state_update_time = unix_timestamp(),
+		end_time = CURRENT_TIMESTAMP()
+		where exec_id = %? and 
+		task_key = %? and 
+		state in (%?, %?) 
+		limit 1;`,
+		proto.SubtaskStateCanceled,
+		execID,
+		taskID,
+		proto.SubtaskStatePending,
+		proto.SubtaskStateRunning)
+	return err1
+}
+
 // PauseSubtasks update all running/pending subtasks to pasued state.
 func (mgr *TaskManager) PauseSubtasks(ctx context.Context, execID string, taskID int64) error {
 	_, err := mgr.ExecuteSQLWithNewSession(ctx,
@@ -87,5 +132,16 @@ func (mgr *TaskManager) RunningSubtasksBack2Pending(ctx context.Context, subtask
 		}
 		return nil
 	})
+	return err
+}
+
+// UpdateSubtaskStateAndError updates the subtask state.
+func (mgr *TaskManager) UpdateSubtaskStateAndError(
+	ctx context.Context,
+	execID string,
+	id int64, state proto.SubtaskState, subTaskErr error) error {
+	_, err := mgr.ExecuteSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
+		set state = %?, error = %?, state_update_time = unix_timestamp() where id = %? and exec_id = %?`,
+		state, serializeErr(subTaskErr), id, execID)
 	return err
 }

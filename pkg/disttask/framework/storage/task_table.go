@@ -358,51 +358,6 @@ func (mgr *TaskManager) GetFirstSubtaskInStates(ctx context.Context, tidbID stri
 	return Row2SubTask(rs[0]), nil
 }
 
-// FailSubtask update the task's subtask state to failed and set the err.
-func (mgr *TaskManager) FailSubtask(ctx context.Context, execID string, taskID int64, err error) error {
-	if err == nil {
-		return nil
-	}
-	_, err1 := mgr.ExecuteSQLWithNewSession(ctx,
-		`update mysql.tidb_background_subtask
-		set state = %?, 
-		error = %?, 
-		start_time = unix_timestamp(), 
-		state_update_time = unix_timestamp(),
-		end_time = CURRENT_TIMESTAMP()
-		where exec_id = %? and 
-		task_key = %? and 
-		state in (%?, %?) 
-		limit 1;`,
-		proto.SubtaskStateFailed,
-		serializeErr(err),
-		execID,
-		taskID,
-		proto.SubtaskStatePending,
-		proto.SubtaskStateRunning)
-	return err1
-}
-
-// CancelSubtask update the task's subtasks' state to canceled.
-func (mgr *TaskManager) CancelSubtask(ctx context.Context, execID string, taskID int64) error {
-	_, err1 := mgr.ExecuteSQLWithNewSession(ctx,
-		`update mysql.tidb_background_subtask
-		set state = %?, 
-		start_time = unix_timestamp(), 
-		state_update_time = unix_timestamp(),
-		end_time = CURRENT_TIMESTAMP()
-		where exec_id = %? and 
-		task_key = %? and 
-		state in (%?, %?) 
-		limit 1;`,
-		proto.SubtaskStateCanceled,
-		execID,
-		taskID,
-		proto.SubtaskStatePending,
-		proto.SubtaskStateRunning)
-	return err1
-}
-
 // GetActiveSubtasks implements TaskManager.GetActiveSubtasks.
 func (mgr *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64) ([]*proto.Subtask, error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `
@@ -526,17 +481,6 @@ func (mgr *TaskManager) HasSubtasksInStates(ctx context.Context, tidbID string, 
 	}
 
 	return len(rs) > 0, nil
-}
-
-// UpdateSubtaskStateAndError updates the subtask state.
-func (mgr *TaskManager) UpdateSubtaskStateAndError(
-	ctx context.Context,
-	execID string,
-	id int64, state proto.SubtaskState, subTaskErr error) error {
-	_, err := mgr.ExecuteSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
-		set state = %?, error = %?, state_update_time = unix_timestamp() where id = %? and exec_id = %?`,
-		state, serializeErr(subTaskErr), id, execID)
-	return err
 }
 
 // GetTaskExecutorIDsByTaskID gets the task executor IDs of the given task ID.
