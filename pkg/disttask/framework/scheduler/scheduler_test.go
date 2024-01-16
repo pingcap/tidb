@@ -535,6 +535,9 @@ func TestManagerDispatchLoop(t *testing.T) {
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 			idx := counter.Load()
+			if int(idx) > len(concurrencies) {
+				return nil
+			}
 			mockScheduler = mock.NewMockScheduler(ctrl)
 			// below 2 are for balancer loop, it's async, cannot determine how
 			// many times it will be called.
