@@ -106,8 +106,6 @@ func (s *parallelSortSpillAction) Action(t *memory.Tracker) {
 		// sort operation as sort will retrigger the action and lead to dead lock.
 		s.spillHelper.setSpillTriggeredNoLock()
 		go func() {
-			s.spillHelper.syncLock.Lock()
-			defer s.spillHelper.syncLock.Unlock()
 			s.spillHelper.spill()
 			s.spillHelper.setNotSpilledNoLock()
 			s.spillHelper.cond.Broadcast()

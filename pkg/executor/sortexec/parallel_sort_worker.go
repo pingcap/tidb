@@ -40,6 +40,7 @@ type parallelSortWorker struct {
 	globalSortedRowsQueue *sortedRowsList
 
 	chunkChannel chan *chunkWithMemoryUsage
+	fetcherAndWorkerSyncer *sync.WaitGroup
 	checkError   func() error
 	processError func(error)
 
@@ -59,6 +60,7 @@ func newParallelSortWorker(
 	waitGroup *sync.WaitGroup,
 	result *sortedRows,
 	chunkChannel chan *chunkWithMemoryUsage,
+	fetcherAndWorkerSyncer *sync.WaitGroup,
 	checkError func() error,
 	processError func(error),
 	memTracker *memory.Tracker,
@@ -70,6 +72,7 @@ func newParallelSortWorker(
 		waitGroup:             waitGroup,
 		result:                result,
 		chunkChannel:          chunkChannel,
+		fetcherAndWorkerSyncer: fetcherAndWorkerSyncer,
 		checkError:            checkError,
 		processError:          processError,
 		timesOfRowCompare:     0,
@@ -109,15 +112,6 @@ func (p *parallelSortWorker) injectFailPointForParallelSortWorker() {
 // Fetching chunks from chunkChannel and sort them.
 // Rows are sorted only inside a chunk.
 func (p *parallelSortWorker) fetchChunksAndSortImpl() (bool, error) {
-	p.spillHelper.syncLock.RLock()
-	for p.spillHelper.isInSpilling() {
-		p.spillHelper.syncLock.RUnlock()
-		// Repeatedly release lock so that spill action has more chance to get write lock
-		time.Sleep(10 * time.Millisecond)
-		p.spillHelper.syncLock.RLock()
-	}
-	defer p.spillHelper.syncLock.RUnlock()
-
 	err := p.checkError()
 	if err != nil {
 		return true, err
@@ -128,6 +122,8 @@ func (p *parallelSortWorker) fetchChunksAndSortImpl() (bool, error) {
 	if !ok {
 		return true, nil
 	}
+
+	defer p.fetcherAndWorkerSyncer.Done()
 
 	p.totalMemoryUsage += chk.MemoryUsage
 
@@ -148,43 +144,21 @@ func (p *parallelSortWorker) sortChunkAndGetSortedRows(chk *chunk.Chunk) sortedR
 }
 
 func (p *parallelSortWorker) mergeSortGlobalRows() {
-	for p.mergeSortGlobalRowsCalledByWorker() {
+	for {
+		err := p.checkError()
+		if err != nil {
+			return
+		}
+
+		sortedRowsLeft, sortedRowsRight := p.globalSortedRowsQueue.fetchTwoSortedRows()
+		if sortedRowsLeft == nil {
+			return
+		}
+
+		mergedSortedRows := p.mergeTwoSortedRows(sortedRowsLeft, sortedRowsRight)
+		p.globalSortedRowsQueue.add(mergedSortedRows)
+		p.injectFailPointForParallelSortWorker()
 	}
-}
-
-func (p *parallelSortWorker) mergeSortGlobalRowsForSpillAction() {
-	for p.mergeSortGlobalRowsImpl() {
-	}
-}
-
-func (p *parallelSortWorker) mergeSortGlobalRowsCalledByWorker() bool {
-	p.spillHelper.syncLock.RLock()
-	for p.spillHelper.isInSpilling() {
-		p.spillHelper.syncLock.RUnlock()
-		// Repeatedly release lock so that spill action has more chance to get write lock
-		time.Sleep(10 * time.Millisecond)
-		p.spillHelper.syncLock.RLock()
-	}
-	defer p.spillHelper.syncLock.RUnlock()
-
-	return p.mergeSortGlobalRowsImpl()
-}
-
-func (p *parallelSortWorker) mergeSortGlobalRowsImpl() bool {
-	err := p.checkError()
-	if err != nil {
-		return false
-	}
-
-	sortedRowsLeft, sortedRowsRight := p.globalSortedRowsQueue.fetchTwoSortedRows()
-	if sortedRowsLeft == nil {
-		return false
-	}
-
-	mergedSortedRows := p.mergeTwoSortedRows(sortedRowsLeft, sortedRowsRight)
-	p.globalSortedRowsQueue.add(mergedSortedRows)
-	p.injectFailPointForParallelSortWorker()
-	return true
 }
 
 func (p *parallelSortWorker) mergeTwoSortedRows(sortedRowsLeft sortedRows, sortedRowsRight sortedRows) sortedRows {

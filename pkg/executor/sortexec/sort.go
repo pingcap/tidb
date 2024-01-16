@@ -76,9 +76,11 @@ type SortExec struct {
 		rowNum int64
 		idx    int64
 
-		chunkChannel    chan *chunkWithMemoryUsage
-		isChannelClosed *atomic.Bool
-		workers         []*parallelSortWorker
+		chunkChannel chan *chunkWithMemoryUsage
+		// It's useful when spill is triggered and the fetcher could know when workers finish their works.
+		fetcherAndWorkerSyncer *sync.WaitGroup
+		isChannelClosed        *atomic.Bool
+		workers                []*parallelSortWorker
 
 		// All workers' sorted rows will be put into this list to be merged
 		globalSortedRowsQueue *sortedRowsList
@@ -136,6 +138,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Parallel.idx = 0
 		e.Parallel.workers = make([]*parallelSortWorker, e.Ctx().GetSessionVars().ExecutorConcurrency)
 		e.Parallel.chunkChannel = make(chan *chunkWithMemoryUsage, e.Ctx().GetSessionVars().ExecutorConcurrency)
+		e.Parallel.fetcherAndWorkerSyncer = &sync.WaitGroup{}
 		e.Parallel.isChannelClosed = &atomic.Bool{}
 		e.Parallel.isChannelClosed.Store(false)
 		e.Parallel.globalSortedRowsQueue = &sortedRowsList{}
@@ -478,6 +481,26 @@ func (e *SortExec) fetchChunksUnparallel(ctx context.Context) error {
 	return nil
 }
 
+// Consume all chunks in chunkChannel to avoid the hang of chunk fetcher
+func (e *SortExec) drainChunkChannel() {
+	defer func() {
+		// chunkChannel may have been closed, it's ok
+		recover()
+
+		// Workers may panic, then no one could consume chunkChannel and
+		// the chunk fetcher may hang in this channel.
+		e.tryToCloseChunkChannel()
+	}()
+
+	for {
+		_, ok := <-e.Parallel.chunkChannel
+		if !ok {
+			return
+		}
+		e.Parallel.fetcherAndWorkerSyncer.Done()
+	}
+}
+
 func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	workerNum := len(e.Parallel.workers)
 
@@ -494,16 +517,13 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	go e.fetchChunksFromChild(ctx, &fetcherWaiter)
 
 	for i := range e.Parallel.workers {
-		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.globalSortedRowsQueue, &workersWaiter, &e.Parallel.result, e.Parallel.chunkChannel, e.checkErrorForParallel, e.processErrorForParallel, e.memTracker, e.Parallel.spillHelper)
+		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.globalSortedRowsQueue, &workersWaiter, &e.Parallel.result, e.Parallel.chunkChannel, e.Parallel.fetcherAndWorkerSyncer, e.checkErrorForParallel, e.processErrorForParallel, e.memTracker, e.Parallel.spillHelper)
 		go e.Parallel.workers[i].run()
 	}
 
 	workersWaiter.Wait()
 
-	// Workers may panic, then no one could consume chunkChannel and
-	// the chunk fetcher may hang in this channel.
-	e.tryToCloseChunkChannel()
-
+	e.drainChunkChannel()
 	fetcherWaiter.Wait()
 
 	err := e.checkErrorForParallel()
@@ -521,9 +541,6 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 }
 
 func (e *SortExec) spillRemainingRowsWhenNeeded() {
-	e.Parallel.spillHelper.syncLock.Lock()
-	defer e.Parallel.spillHelper.syncLock.Unlock()
-
 	if e.Parallel.spillHelper.isSpillTriggered() {
 
 	}
@@ -535,6 +552,10 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context, waitGroup *sync.Wai
 		if r := recover(); r != nil {
 			processPanicAndLog(e.processErrorForParallel, r)
 		}
+
+		// Wait for the finish of all workers
+		e.Parallel.fetcherAndWorkerSyncer.Wait()
+
 		e.tryToCloseChunkChannel()
 		waitGroup.Done()
 	}()
@@ -559,7 +580,9 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context, waitGroup *sync.Wai
 
 		e.memTracker.Consume(chkWithMemoryUsage.MemoryUsage)
 
-		// chunkChannel may be closed in advance and it's ok to let it panic
+		e.Parallel.fetcherAndWorkerSyncer.Add(1)
+
+		// chunkChannel may be closed by workers and it's ok to let it panic
 		// as workers have panicked and the query can't keep on running.
 		e.Parallel.chunkChannel <- chkWithMemoryUsage
 
@@ -587,13 +610,6 @@ func (e *SortExec) processErrorForParallel(err error) {
 }
 
 func (e *SortExec) fetchResultFromQueue() {
-	e.Parallel.spillHelper.syncLock.Lock()
-	defer e.Parallel.spillHelper.syncLock.Unlock()
-	if e.Parallel.spillHelper.isSpillTriggered() {
-		// We will read chunks from disk when spill is triggered
-		return
-	}
-
 	sortedRowsNum := e.Parallel.globalSortedRowsQueue.getSortedRowsNumNoLock()
 	if sortedRowsNum > 1 {
 		panic("Sort is not completed.")

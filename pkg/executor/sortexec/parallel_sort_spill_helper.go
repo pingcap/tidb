@@ -23,8 +23,6 @@ import (
 )
 
 type parallelSortSpillHelper struct {
-	syncLock sync.RWMutex
-
 	cond             *sync.Cond
 	spillStatus      int
 	sortedRowsInDisk []*chunk.DataInDiskByChunks
@@ -113,7 +111,7 @@ func (p *parallelSortSpillHelper) spill() {
 			}()
 
 			// Let workers sort existing rows
-			p.sortExec.Parallel.workers[idx].mergeSortGlobalRowsForSpillAction()
+			p.sortExec.Parallel.workers[idx].mergeSortGlobalRows()
 		}(i)
 	}
 
