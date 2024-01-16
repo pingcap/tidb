@@ -81,7 +81,9 @@ type TaskManager interface {
 	// returned nodes are sorted by node id(host:port).
 	GetManagedNodes(ctx context.Context) ([]proto.ManagedNode, error)
 	GetTaskExecutorIDsByTaskID(ctx context.Context, taskID int64) ([]string, error)
-	GetSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error)
+
+	// GetAllSubtasksByStepAndState gets all subtasks by given states for one step.
+	GetAllSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error)
 	GetSubtasksByExecIdsAndStepAndState(ctx context.Context, tidbIDs []string, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error)
 	GetTaskExecutorIDsByTaskIDAndStep(ctx context.Context, taskID int64, step proto.Step) ([]string, error)
 

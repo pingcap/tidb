@@ -471,9 +471,9 @@ func Row2SubTask(r chunk.Row) *proto.Subtask {
 	return subtask
 }
 
-// GetSubtasksByStepAndStates gets all subtasks by given states.
-func (mgr *TaskManager) GetSubtasksByStepAndStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...proto.SubtaskState) ([]*proto.Subtask, error) {
-	args := []interface{}{tidbID, taskID, step}
+// GetSubtasksByExecIDAndStepAndStates gets all subtasks by given states on one node.
+func (mgr *TaskManager) GetSubtasksByExecIDAndStepAndStates(ctx context.Context, execID string, taskID int64, step proto.Step, states ...proto.SubtaskState) ([]*proto.Subtask, error) {
+	args := []interface{}{execID, taskID, step}
 	for _, state := range states {
 		args = append(args, state)
 	}
@@ -572,7 +572,7 @@ func (mgr *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64) ([]
 }
 
 // GetSubtasksByStepAndState gets the subtask by step and state.
-func (mgr *TaskManager) GetSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error) {
+func (mgr *TaskManager) GetAllSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select `+SubtaskColumns+` from mysql.tidb_background_subtask
 		where task_key = %? and state = %? and step = %?`,
 		taskID, state, step)
