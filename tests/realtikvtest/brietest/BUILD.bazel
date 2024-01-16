@@ -13,21 +13,6 @@ go_test(
     flaky = True,
     race = "on",
     deps = [
-<<<<<<< HEAD
-        "//config",
-        "//ddl/util",
-        "//parser/mysql",
-        "//sessionctx/binloginfo",
-        "//store/mockstore/mockcopr",
-        "//testkit",
-        "//testkit/testsetup",
-        "//tests/realtikvtest",
-        "@com_github_pingcap_failpoint//:failpoint",
-        "@com_github_pingcap_tipb//go-binlog",
-        "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//oracle",
-        "@com_github_tikv_client_go_v2//util",
-=======
         "//br/pkg/task",
         "//br/pkg/task/operator",
         "//pkg/config",
@@ -45,7 +30,6 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_pd_client//:client",
->>>>>>> ac712397b2e (ebs_br: allow temporary TiKV unreachable during starting snapshot backup (#49154))
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//credentials/insecure",
         "@org_uber_go_goleak//:goleak",

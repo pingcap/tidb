@@ -4,11 +4,8 @@ package utils
 
 import (
 	"context"
-<<<<<<< HEAD
-=======
 	stderrs "errors"
 	"fmt"
->>>>>>> ac712397b2e (ebs_br: allow temporary TiKV unreachable during starting snapshot backup (#49154))
 	"strings"
 	"sync"
 	"time"
@@ -16,11 +13,8 @@ import (
 <<<<<<< HEAD
 	"github.com/cznic/mathutil"
 =======
-	"github.com/google/uuid"
 >>>>>>> ac712397b2e (ebs_br: allow temporary TiKV unreachable during starting snapshot backup (#49154))
-	"github.com/pingcap/errors"
 	tmysql "github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser/terror"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/multierr"
 )
