@@ -47,8 +47,7 @@ type parallelSortWorker struct {
 
 	timesOfRowCompare uint
 
-	totalMemoryUsage int64
-	memTracker       *memory.Tracker
+	memTracker *memory.Tracker
 }
 
 func newParallelSortWorker(
@@ -72,7 +71,6 @@ func newParallelSortWorker(
 		tryToCloseChunkChannel: tryToCloseChunkChannel,
 		checkError:             checkError,
 		processError:           processError,
-		totalMemoryUsage:       0,
 		timesOfRowCompare:      0,
 		memTracker:             memTracker,
 	}
@@ -107,8 +105,6 @@ func (p *parallelSortWorker) fetchChunksAndSort() bool {
 		if !ok {
 			return true
 		}
-
-		p.totalMemoryUsage += chk.MemoryUsage
 
 		sortedRows := p.sortChunkAndGetSortedRows(chk.Chk)
 		p.globalSortedRowsQueue.add(sortedRows)

@@ -35,8 +35,6 @@ import (
 
 type sortedRows []chunk.Row
 
-const defaultChunkChannelSize = 100
-
 // SortExec represents sorting executor.
 type SortExec struct {
 	exec.BaseExecutor
@@ -63,14 +61,8 @@ type SortExec struct {
 	Unparallel struct {
 		Idx int
 
-		// rowChunks is the chunks to store row values.
-		rowChunks *chunk.SortedRowContainer
-
 		// sortPartitions is the chunks to store row values for partitions. Every partition is a sorted list.
 		sortPartitions []*sortPartition
-
-		// PartitionList is the chunks to store row values for partitions. Every partition is a sorted list.
-		PartitionList []*chunk.SortedRowContainer
 
 		// multiWayMerge uses multi-way merge for spill disk.
 		// The multi-way merge algorithm can refer to https://en.wikipedia.org/wiki/K-way_merge_algorithm
@@ -138,11 +130,10 @@ func (e *SortExec) Open(ctx context.Context) error {
 	e.IsUnparallel = !e.Ctx().GetSessionVars().EnableParallelSort
 	if e.IsUnparallel {
 		e.Unparallel.Idx = 0
-		e.Unparallel.PartitionList = e.Unparallel.PartitionList[:0]
 	} else {
 		e.Parallel.idx = 0
 		e.Parallel.workers = make([]*parallelSortWorker, e.Ctx().GetSessionVars().ExecutorConcurrency)
-		e.Parallel.chunkChannel = make(chan *chunkWithMemoryUsage, defaultChunkChannelSize)
+		e.Parallel.chunkChannel = make(chan *chunkWithMemoryUsage, e.Ctx().GetSessionVars().ExecutorConcurrency)
 		e.Parallel.isChannelClosed = &atomic.Bool{}
 		e.Parallel.isChannelClosed.Store(false)
 		e.Parallel.globalSortedRowsQueue = &sortedRowsList{}
@@ -488,7 +479,7 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	// Add before the start of goroutine to avoid that the counter is minus to negative.
 	workersWaiter.Add(workerNum + 1)
 
-	// Fetch chunks from child and put chunks into MPMCQueue
+	// Fetch chunks from child and put chunks into chunkChannel
 	go e.fetchChunksFromChild(ctx, &workersWaiter)
 
 	// Create and run workers
@@ -507,7 +498,7 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	return nil
 }
 
-// Fetch chunks from child and put chunks into MPMCQueue
+// Fetch chunks from child and put chunks into chunkChannel
 func (e *SortExec) fetchChunksFromChild(ctx context.Context, waitGroup *sync.WaitGroup) {
 	defer func() {
 		if r := recover(); r != nil {
