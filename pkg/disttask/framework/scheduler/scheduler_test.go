@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -496,7 +495,7 @@ func TestIsCancelledErr(t *testing.T) {
 	require.True(t, scheduler.IsCancelledErr(errors.New("cancelled by user")))
 }
 
-func TestManagerDispatchLoop(t *testing.T) {
+func TestManagerScheduleLoop(t *testing.T) {
 	// Mock 16 cpu node.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)"))
 	t.Cleanup(func() {
@@ -527,14 +526,12 @@ func TestManagerDispatchLoop(t *testing.T) {
 		testutil.InsertSubtask(t, taskMgr, 1000000, proto.StepOne, execID, []byte(""), proto.SubtaskStatePending, proto.TaskTypeExample, 16)
 	}
 	concurrencies := []int{4, 6, 16, 2, 4, 4}
-	waitChannels := make([]chan struct{}, len(concurrencies))
-	for i := range waitChannels {
-		waitChannels[i] = make(chan struct{})
+	waitChannels := make(map[string](chan struct{}))
+	for i := 0; i < len(concurrencies); i++ {
+		waitChannels[fmt.Sprintf("key/%d", i)] = make(chan struct{})
 	}
-	var counter atomic.Int32
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
-			idx := counter.Load()
 			mockScheduler = mock.NewMockScheduler(ctrl)
 			// below 2 are for balancer loop, it's async, cannot determine how
 			// many times it will be called.
@@ -542,12 +539,15 @@ func TestManagerDispatchLoop(t *testing.T) {
 			mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 			mockScheduler.EXPECT().Init().Return(nil)
 			mockScheduler.EXPECT().ScheduleTask().Do(func() {
+				if task.IsDone() {
+					return
+				}
 				require.NoError(t, taskMgr.WithNewSession(func(se sessionctx.Context) error {
 					_, err := sqlexec.ExecSQL(ctx, se, "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
 						proto.TaskStateRunning, proto.StepOne, task.ID)
 					return err
 				}))
-				<-waitChannels[idx]
+				<-waitChannels[task.Key]
 				require.NoError(t, taskMgr.WithNewSession(func(se sessionctx.Context) error {
 					_, err := sqlexec.ExecSQL(ctx, se, "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
 						proto.TaskStateSucceed, proto.StepDone, task.ID)
@@ -555,7 +555,6 @@ func TestManagerDispatchLoop(t *testing.T) {
 				}))
 			})
 			mockScheduler.EXPECT().Close()
-			counter.Add(1)
 			return mockScheduler
 		},
 	)
@@ -580,7 +579,7 @@ func TestManagerDispatchLoop(t *testing.T) {
 			taskKeys[2] == "key/3" && taskKeys[3] == "key/4"
 	}, time.Second*10, time.Millisecond*100)
 	// finish the first task
-	close(waitChannels[0])
+	close(waitChannels["key/0"])
 	require.Eventually(t, func() bool {
 		taskKeys := getRunningTaskKeys()
 		return err == nil && len(taskKeys) == 4 &&
@@ -588,7 +587,7 @@ func TestManagerDispatchLoop(t *testing.T) {
 			taskKeys[2] == "key/4" && taskKeys[3] == "key/5"
 	}, time.Second*10, time.Millisecond*100)
 	// finish the second task
-	close(waitChannels[1])
+	close(waitChannels["key/1"])
 	require.Eventually(t, func() bool {
 		taskKeys := getRunningTaskKeys()
 		return err == nil && len(taskKeys) == 4 &&
@@ -597,7 +596,7 @@ func TestManagerDispatchLoop(t *testing.T) {
 	}, time.Second*10, time.Millisecond*100)
 	// close others
 	for i := 2; i < len(concurrencies); i++ {
-		close(waitChannels[i])
+		close(waitChannels[fmt.Sprintf("key/%d", i)])
 	}
 	require.Eventually(t, func() bool {
 		taskKeys := getRunningTaskKeys()
