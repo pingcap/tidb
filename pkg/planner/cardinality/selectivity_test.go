@@ -1089,21 +1089,58 @@ func TestOrderingIdxSelectivityRatio(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	h := dom.StatsHandle()
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(b int, c int, index ib(b), index ic(c))")
-	// Insert 1000 rows using a limited number of SQL statements
-	testKit.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10)")
-	testKit.MustExec("insert into t select b * 10, c * 10 from t where b > 1")
-	for i := 1; i < 10; i++ {
-		testKit.MustExec(fmt.Sprintf("insert into t select b + %v, c + %v from t where b < 100 and mod(b, 10) = 0", i, i))
+	testKit.MustExec("create table t(a int primary key, b int, c int, index ib(b), index ic(c))")
+	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
+	is := dom.InfoSchema()
+	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tb.Meta()
+
+	// Mock the stats:
+	// total row count 1000
+	// column b, c: from 1 to 1000, NDV 1000
+	// indexes are created on (b), (c) respectively
+	mockStatsTbl := mockStatsTable(tblInfo, 1000)
+	pkColValues, err := generateIntDatum(1, 1000)
+	require.NoError(t, err)
+	mockStatsTbl.Columns[1] = &statistics.Column{
+		Histogram:         *mockStatsHistogram(1, pkColValues, 1, types.NewFieldType(mysql.TypeLonglong)),
+		Info:              tblInfo.Columns[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
 	}
-	for j := 0; j < 9; j++ {
-		testKit.MustExec(fmt.Sprintf("insert into t select b + 100, c + 100 from t where b > %v * 100", j))
+	colValues, err := generateIntDatum(1, 1000)
+	require.NoError(t, err)
+	idxValues := make([]types.Datum, 0)
+	for _, val := range colValues {
+		b, err := codec.EncodeKey(sc.TimeZone(), nil, val)
+		require.NoError(t, err)
+		idxValues = append(idxValues, types.NewBytesDatum(b))
 	}
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
-	testKit.MustExec(`analyze table t`)
+
+	for i := 2; i <= 3; i++ {
+		mockStatsTbl.Columns[int64(i)] = &statistics.Column{
+			Histogram:         *mockStatsHistogram(int64(i), colValues, 1, types.NewFieldType(mysql.TypeLonglong)),
+			Info:              tblInfo.Columns[i-1],
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		}
+	}
+	for i := 1; i <= 2; i++ {
+		mockStatsTbl.Indices[int64(i)] = &statistics.Index{
+			Histogram:         *mockStatsHistogram(int64(i), idxValues, 1, types.NewFieldType(mysql.TypeBlob)),
+			Info:              tblInfo.Indices[i-1],
+			StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+			StatsVer:          2,
+		}
+	}
+	generateMapsForMockStatsTbl(mockStatsTbl)
+	stat := h.GetTableStats(tblInfo)
+	stat.HistColl = mockStatsTbl.HistColl
 
 	var (
 		input  []string
@@ -1112,6 +1149,7 @@ func TestOrderingIdxSelectivityRatio(t *testing.T) {
 			Result []string
 		}
 	)
+
 	integrationSuiteData := cardinality.GetCardinalitySuiteData()
 	integrationSuiteData.LoadTestCases(t, &input, &output)
 	for i := 0; i < len(input); i++ {

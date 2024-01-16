@@ -24,7 +24,7 @@
       {
         "Start": 800,
         "End": 900,
-        "Count": 756.504166655054
+        "Count": 717.504166655054
       },
       {
         "Start": 900,
@@ -79,7 +79,7 @@
       {
         "Start": 800,
         "End": 1000,
-        "Count": 1214.696869573942
+        "Count": 1175.696869573942
       },
       {
         "Start": 900,
@@ -104,7 +104,7 @@
       {
         "Start": 200,
         "End": 400,
-        "Count": 1236.0288209899081
+        "Count": 1188.0288209899081
       },
       {
         "Start": 200,
@@ -1193,22 +1193,20 @@
         "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
-          "└─Projection 1.00 root  test.t.b, test.t.c",
-          "  └─IndexLookUp 1.00 root  ",
-          "    ├─IndexFullScan(Build) 9.90 cop[tikv] table:t, index:ic(c) keep order:true",
-          "    └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
-          "      └─TableRowIDScan 9.90 cop[tikv] table:t keep order:false"
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
         "Result": [
           "Limit 10.00 root  offset:0, count:10",
-          "└─Projection 10.00 root  test.t.b, test.t.c",
-          "  └─IndexLookUp 10.00 root  ",
-          "    ├─IndexFullScan(Build) 99.01 cop[tikv] table:t, index:ic(c) keep order:true",
-          "    └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
-          "      └─TableRowIDScan 99.01 cop[tikv] table:t keep order:false"
+          "└─IndexLookUp 10.00 root  ",
+          "  ├─IndexFullScan(Build) 100.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 100.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1219,22 +1217,20 @@
         "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
-          "└─Projection 1.00 root  test.t.b, test.t.c",
-          "  └─IndexLookUp 1.00 root  ",
-          "    ├─IndexFullScan(Build) 1.00 cop[tikv] table:t, index:ic(c) keep order:true",
-          "    └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
-          "      └─TableRowIDScan 1.00 cop[tikv] table:t keep order:false"
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 1.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
         "Result": [
           "Limit 10.00 root  offset:0, count:10",
-          "└─Projection 10.00 root  test.t.b, test.t.c",
-          "  └─IndexLookUp 10.00 root  ",
-          "    ├─IndexFullScan(Build) 10.00 cop[tikv] table:t, index:ic(c) keep order:true",
-          "    └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
-          "      └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false"
+          "└─IndexLookUp 10.00 root  ",
+          "  ├─IndexFullScan(Build) 10.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 10.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1245,22 +1241,20 @@
         "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
-          "└─Projection 1.00 root  test.t.b, test.t.c",
-          "  └─IndexLookUp 1.00 root  ",
-          "    ├─IndexFullScan(Build) 90.90 cop[tikv] table:t, index:ic(c) keep order:true",
-          "    └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
-          "      └─TableRowIDScan 90.90 cop[tikv] table:t keep order:false"
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 91.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 91.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
         "Result": [
           "Limit 10.00 root  offset:0, count:10",
-          "└─Projection 10.00 root  test.t.b, test.t.c",
-          "  └─IndexLookUp 10.00 root  ",
-          "    ├─IndexFullScan(Build) 99.90 cop[tikv] table:t, index:ic(c) keep order:true",
-          "    └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
-          "      └─TableRowIDScan 99.90 cop[tikv] table:t keep order:false"
+          "└─IndexLookUp 10.00 root  ",
+          "  ├─IndexFullScan(Build) 100.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 100.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1271,22 +1265,20 @@
         "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 1",
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
-          "└─Projection 1.00 root  test.t.b, test.t.c",
-          "  └─IndexLookUp 1.00 root  ",
-          "    ├─IndexFullScan(Build) 450.50 cop[tikv] table:t, index:ic(c) keep order:true",
-          "    └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
-          "      └─TableRowIDScan 450.50 cop[tikv] table:t keep order:false"
+          "└─IndexLookUp 1.00 root  ",
+          "  ├─IndexFullScan(Build) 451.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 1.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 451.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
         "Query": "explain format = 'brief' select * from t use index (ic) where b >= 900 order by c limit 10",
         "Result": [
           "Limit 10.00 root  offset:0, count:10",
-          "└─Projection 10.00 root  test.t.b, test.t.c",
-          "  └─IndexLookUp 10.00 root  ",
-          "    ├─IndexFullScan(Build) 459.50 cop[tikv] table:t, index:ic(c) keep order:true",
-          "    └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
-          "      └─TableRowIDScan 459.50 cop[tikv] table:t keep order:false"
+          "└─IndexLookUp 10.00 root  ",
+          "  ├─IndexFullScan(Build) 460.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  └─Selection(Probe) 10.00 cop[tikv]  ge(test.t.b, 900)",
+          "    └─TableRowIDScan 460.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -1480,7 +1472,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1097
+                    "TopN total count": 1095
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
@@ -2409,7 +2401,7 @@
                   {
                     "Histogram NotNull Count": 3080,
                     "Increase Factor": 1,
-                    "TopN total count": 1097
+                    "TopN total count": 1095
                   },
                   {
                     "github.com/pingcap/tidb/pkg/planner/cardinality.GetColumnRowCount": [
