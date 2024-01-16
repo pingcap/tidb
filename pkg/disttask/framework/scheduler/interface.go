@@ -36,6 +36,7 @@ type TaskManager interface {
 	GCSubtasks(ctx context.Context) error
 	GetAllNodes(ctx context.Context) ([]proto.ManagedNode, error)
 	DeleteDeadNodes(ctx context.Context, nodes []string) error
+	// TransferTask2History transfer tasks and it's related subtasks to history tables.
 	TransferTasks2History(ctx context.Context, tasks []*proto.Task) error
 	// CancelTask updated task state to canceling.
 	CancelTask(ctx context.Context, taskID int64) error
@@ -73,7 +74,6 @@ type TaskManager interface {
 	GetSubtaskCntGroupByStates(ctx context.Context, taskID int64, step proto.Step) (map[proto.SubtaskState]int64, error)
 	ResumeSubtasks(ctx context.Context, taskID int64) error
 	CollectSubTaskError(ctx context.Context, taskID int64) ([]error, error)
-	TransferSubTasks2History(ctx context.Context, taskID int64) error
 	UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.Subtask) error
 	// GetManagedNodes returns the nodes managed by dist framework and can be used
 	// to execute tasks. If there are any nodes with background role, we use them,

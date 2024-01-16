@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/bindinfo/internal"
+	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -320,14 +321,14 @@ func TestBindingSymbolList(t *testing.T) {
 	stmt, err := parser.New().ParseOneStmt("select a, b from test . t where a = 1 limit 0, 1", "", "")
 	require.NoError(t, err)
 
-	_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+	_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
 	bindData, err := dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 	require.NoError(t, err)
 	require.NotNil(t, bindData)
-	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` = ? limit ...", bindData.OriginalSQL)
+	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` = ? limit ...", bindData.Bindings[0].OriginalSQL)
 	bind := bindData.Bindings[0]
 	require.Equal(t, "SELECT `a`,`b` FROM `test`.`t` USE INDEX (`ib`) WHERE `a` = 1 LIMIT 0,1", bind.BindSQL)
-	require.Equal(t, "test", bindData.Db)
+	require.Equal(t, "test", bind.Db)
 	require.Equal(t, bindinfo.Enabled, bind.Status)
 	require.NotNil(t, bind.Charset)
 	require.NotNil(t, bind.Collation)
@@ -367,14 +368,14 @@ func TestBindingInListWithSingleLiteral(t *testing.T) {
 	stmt, err := parser.New().ParseOneStmt("select a, b from test . t where a in (1)", "", "")
 	require.NoError(t, err)
 
-	_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+	_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
 	bindData, err := dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 	require.NoError(t, err)
 	require.NotNil(t, bindData)
-	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` in ( ... )", bindData.OriginalSQL)
+	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` in ( ... )", bindData.Bindings[0].OriginalSQL)
 	bind := bindData.Bindings[0]
 	require.Equal(t, "SELECT `a`,`b` FROM `test`.`t` USE INDEX (`ib`) WHERE `a` IN (1,2,3)", bind.BindSQL)
-	require.Equal(t, "test", bindData.Db)
+	require.Equal(t, "test", bind.Db)
 	require.Equal(t, bindinfo.Enabled, bind.Status)
 	require.NotNil(t, bind.Charset)
 	require.NotNil(t, bind.Collation)
@@ -405,14 +406,14 @@ func TestBestPlanInBaselines(t *testing.T) {
 
 	stmt, _, _ := internal.UtilNormalizeWithDefaultDB(t, "select a, b from t where a = 1 limit 0, 1")
 
-	_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+	_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
 	bindData, err := dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 	require.NoError(t, err)
 	require.NotNil(t, bindData)
-	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` = ? limit ...", bindData.OriginalSQL)
+	require.Equal(t, "select `a` , `b` from `test` . `t` where `a` = ? limit ...", bindData.Bindings[0].OriginalSQL)
 	bind := bindData.Bindings[0]
 	require.Equal(t, "SELECT /*+ use_index(@`sel_1` `test`.`t` `ia`)*/ `a`,`b` FROM `test`.`t` WHERE `a` = 1 LIMIT 0,1", bind.BindSQL)
-	require.Equal(t, "test", bindData.Db)
+	require.Equal(t, "test", bind.Db)
 	require.Equal(t, bindinfo.Enabled, bind.Status)
 
 	tk.MustQuery("select a, b from t where a = 3 limit 1, 10")
@@ -441,14 +442,14 @@ func TestErrorBind(t *testing.T) {
 
 	stmt, err := parser.New().ParseOneStmt("select * from test . t where i > ?", "", "")
 	require.NoError(t, err)
-	_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+	_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
 	bindData, err := dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 	require.NoError(t, err)
 	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `i` > ?", bindData.OriginalSQL)
+	require.Equal(t, "select * from `test` . `t` where `i` > ?", bindData.Bindings[0].OriginalSQL)
 	bind := bindData.Bindings[0]
 	require.Equal(t, "SELECT * FROM `test`.`t` USE INDEX (`index_t`) WHERE `i` > 100", bind.BindSQL)
-	require.Equal(t, "test", bindData.Db)
+	require.Equal(t, "test", bind.Db)
 	require.Equal(t, bindinfo.Enabled, bind.Status)
 	require.NotNil(t, bind.Charset)
 	require.NotNil(t, bind.Collation)
@@ -500,55 +501,55 @@ func TestHintsSetID(t *testing.T) {
 	// Verify the added Binding contains ID with restored query block.
 	stmt, err := parser.New().ParseOneStmt("select * from t where a > ?", "", "")
 	require.NoError(t, err)
-	_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+	_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
 	bindData, err := dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 	require.NoError(t, err)
 	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.Bindings[0].OriginalSQL)
 	require.Len(t, bindData.Bindings, 1)
 	bind := bindData.Bindings[0]
 	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", bind.ID)
 
 	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(t, idx_a) */ * from t where a > 10")
-	_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+	_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
 	bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 	require.NoError(t, err)
 	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.Bindings[0].OriginalSQL)
 	require.Len(t, bindData.Bindings, 1)
 	bind = bindData.Bindings[0]
 	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", bind.ID)
 
 	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@sel_1 t, idx_a) */ * from t where a > 10")
-	_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+	_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
 	bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 	require.NoError(t, err)
 	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.Bindings[0].OriginalSQL)
 	require.Len(t, bindData.Bindings, 1)
 	bind = bindData.Bindings[0]
 	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", bind.ID)
 
 	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(@qb1 t, idx_a) qb_name(qb1) */ * from t where a > 10")
-	_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+	_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
 	bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 	require.NoError(t, err)
 	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.Bindings[0].OriginalSQL)
 	require.Len(t, bindData.Bindings, 1)
 	bind = bindData.Bindings[0]
 	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", bind.ID)
 
 	internal.UtilCleanBindingEnv(tk, dom)
 	tk.MustExec("create global binding for select * from t where a > 10 using select /*+ use_index(T, IDX_A) */ * from t where a > 10")
-	_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+	_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
 	bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 	require.NoError(t, err)
 	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.Bindings[0].OriginalSQL)
 	require.Len(t, bindData.Bindings, 1)
 	bind = bindData.Bindings[0]
 	require.Equal(t, "use_index(@`sel_1` `test`.`t` `idx_a`)", bind.ID)
@@ -557,11 +558,11 @@ func TestHintsSetID(t *testing.T) {
 	err = tk.ExecToErr("create global binding for select * from t using select /*+ non_exist_hint() */ * from t")
 	require.True(t, terror.ErrorEqual(err, parser.ErrParse))
 	tk.MustExec("create global binding for select * from t where a > 10 using select * from t where a > 10")
-	_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+	_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
 	bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 	require.NoError(t, err)
 	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.Bindings[0].OriginalSQL)
 	require.Len(t, bindData.Bindings, 1)
 	bind = bindData.Bindings[0]
 	require.Equal(t, "", bind.ID)

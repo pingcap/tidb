@@ -508,7 +508,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 	s.Require().Eventually(func() bool {
 		task2, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 		s.NoError(err2)
-		subtasks, err2 := taskManager.GetSubtasksForImportInto(ctx, task2.ID, importinto.StepPostProcess)
+		subtasks, err2 := taskManager.GetSubtasksWithHistory(ctx, task2.ID, importinto.StepPostProcess)
 		s.NoError(err2)
 		s.Len(subtasks, 2) // framework will generate a subtask when canceling
 		var cancelled bool
