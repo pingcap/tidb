@@ -79,7 +79,9 @@ type Extension interface {
 	// the Executor will mark the subtask as failed.
 	IsIdempotent(subtask *proto.Subtask) bool
 	// GetSubtaskExecutor returns the subtask executor for the subtask.
-	// Note: summary is the summary manager of all subtask of the same type now.
+	// Note:
+	// 1. summary is the summary manager of all subtask of the same type now.
+	// 2. should not retry the error from it.
 	GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error)
 	// IsRetryableError returns whether the error is transient.
 	// When error is transient, the framework won't mark subtasks as failed,

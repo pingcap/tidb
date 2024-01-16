@@ -662,15 +662,8 @@ func TestExecutorErrHandling(t *testing.T) {
 	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(true)
 	require.NoError(t, taskExecutor.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency}))
 	require.True(t, ctrl.Satisfied())
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockSummaryCollectErr"))
 
 	// 10. runSummaryCollectLoop meet non retryable error.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockSummaryCollectErr", "return()"))
-	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(true)
-	require.NoError(t, taskExecutor.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency}))
-	require.True(t, ctrl.Satisfied())
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockSummaryCollectErr"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockSummaryCollectErr", "return()"))
 	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false)
 	mockSubtaskTable.EXPECT().FailedSubtask(runCtx, taskExecutor.id, gomock.Any(), gomock.Any())
 	require.NoError(t, taskExecutor.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID, Concurrency: concurrency}))
