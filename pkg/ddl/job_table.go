@@ -93,23 +93,34 @@ type jobType int
 
 func (t jobType) String() string {
 	switch t {
-	case general:
+	case jobTypeGeneral:
 		return "general"
-	case reorg:
+	case jobTypeReorg:
 		return "reorg"
+<<<<<<< HEAD
+=======
+	case jobTypeLocal:
+		return "local"
+>>>>>>> a257521b359 (ddl: use another way to get index uniqueness during task exec init (#50378))
 	}
 	return "unknown job type: " + strconv.Itoa(int(t))
 }
 
 const (
+<<<<<<< HEAD
 	general jobType = iota
 	reorg
+=======
+	jobTypeGeneral jobType = iota
+	jobTypeReorg
+	jobTypeLocal
+>>>>>>> a257521b359 (ddl: use another way to get index uniqueness during task exec init (#50378))
 )
 
 func (d *ddl) getJob(se *sess.Session, tp jobType, filter func(*model.Job) (bool, error)) (*model.Job, error) {
 	not := "not"
 	label := "get_job_general"
-	if tp == reorg {
+	if tp == jobTypeReorg {
 		not = ""
 		label = "get_job_reorg"
 	}
@@ -224,7 +235,14 @@ func (d *ddl) processJobDuringUpgrade(sess *sess.Session, job *model.Job) (isRun
 }
 
 func (d *ddl) getGeneralJob(sess *sess.Session) (*model.Job, error) {
+<<<<<<< HEAD
 	return d.getJob(sess, general, func(job *model.Job) (bool, error) {
+=======
+	return d.getJob(sess, jobTypeGeneral, func(job *model.Job) (bool, error) {
+		if !d.runningJobs.checkRunnable(job) {
+			return false, nil
+		}
+>>>>>>> a257521b359 (ddl: use another way to get index uniqueness during task exec init (#50378))
 		if job.Type == model.ActionDropSchema {
 			// Check if there is any reorg job on this schema.
 			sql := fmt.Sprintf("select job_id from mysql.tidb_ddl_job where CONCAT(',', schema_ids, ',') REGEXP CONCAT(',', %s, ',') != 0 and processing limit 1", strconv.Quote(strconv.FormatInt(job.SchemaID, 10)))
@@ -244,7 +262,14 @@ func (*ddl) NoConflictJob(se *sess.Session, sql string) (bool, error) {
 }
 
 func (d *ddl) getReorgJob(sess *sess.Session) (*model.Job, error) {
+<<<<<<< HEAD
 	return d.getJob(sess, reorg, func(job *model.Job) (bool, error) {
+=======
+	return d.getJob(sess, jobTypeReorg, func(job *model.Job) (bool, error) {
+		if !d.runningJobs.checkRunnable(job) {
+			return false, nil
+		}
+>>>>>>> a257521b359 (ddl: use another way to get index uniqueness during task exec init (#50378))
 		if (job.Type == model.ActionAddIndex || job.Type == model.ActionAddPrimaryKey) &&
 			job.ReorgMeta != nil &&
 			job.ReorgMeta.IsFastReorg &&

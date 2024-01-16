@@ -1574,11 +1574,14 @@ func (local *Backend) ImportEngine(
 	return err
 }
 
+<<<<<<< HEAD
 // GetRegionSplitSizeKeys gets the region split size and keys from PD.
 func (local *Backend) GetRegionSplitSizeKeys(ctx context.Context) (finalSize int64, finalKeys int64, err error) {
 	return GetRegionSplitSizeKeys(ctx, local.pdCtl.GetPDClient(), local.tls)
 }
 
+=======
+>>>>>>> a257521b359 (ddl: use another way to get index uniqueness during task exec init (#50378))
 // expose these variables to unit test.
 var (
 	testJobToWorkerCh = make(chan *regionJob)
