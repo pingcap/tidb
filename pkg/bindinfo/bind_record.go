@@ -118,37 +118,19 @@ func (br *BindRecord) Copy() *BindRecord {
 	return nbr
 }
 
-// HasEnabledBinding checks if there are any enabled bindings in bind record.
-func (br *BindRecord) HasEnabledBinding() bool {
-	for _, binding := range br.Bindings {
-		if binding.IsBindingEnabled() {
-			return true
-		}
-	}
-	return false
-}
-
 // HasAvailableBinding checks if there are any available bindings in bind record.
 // The available means the binding can be used or can be converted into a usable status.
 // It includes the 'Enabled', 'Using' and 'Disabled' status.
-func (br *BindRecord) HasAvailableBinding() bool {
+func HasAvailableBinding(br *BindRecord) bool {
+	if br == nil {
+		return false
+	}
 	for _, binding := range br.Bindings {
 		if binding.IsBindingAvailable() {
 			return true
 		}
 	}
 	return false
-}
-
-// FindEnabledBinding gets the enabled binding.
-// There is at most one binding that can be used now.
-func (br *BindRecord) FindEnabledBinding() *Binding {
-	for _, binding := range br.Bindings {
-		if binding.IsBindingEnabled() {
-			return &binding
-		}
-	}
-	return nil
 }
 
 // prepareHints builds ID and Hint for BindRecord. If sctx is not nil, we check if
@@ -205,7 +187,7 @@ func merge(lBindRecord, rBindRecord *BindRecord) *BindRecord {
 	if rBindRecord == nil {
 		return lBindRecord
 	}
-	result := lBindRecord.shallowCopy()
+	result := lBindRecord.Copy()
 	for i := range rBindRecord.Bindings {
 		rbind := rBindRecord.Bindings[i]
 		found := false
@@ -225,22 +207,13 @@ func merge(lBindRecord, rBindRecord *BindRecord) *BindRecord {
 	return result
 }
 
-func (br *BindRecord) removeDeletedBindings() *BindRecord {
+func removeDeletedBindings(br *BindRecord) *BindRecord {
 	result := BindRecord{Bindings: make([]Binding, 0, len(br.Bindings))}
 	for _, binding := range br.Bindings {
 		if binding.Status != deleted {
 			result.Bindings = append(result.Bindings, binding)
 		}
 	}
-	return &result
-}
-
-// shallowCopy shallow copies the BindRecord.
-func (br *BindRecord) shallowCopy() *BindRecord {
-	result := BindRecord{
-		Bindings: make([]Binding, len(br.Bindings)),
-	}
-	copy(result.Bindings, br.Bindings)
 	return &result
 }
 
@@ -259,7 +232,7 @@ var statusIndex = map[string]int{
 	Invalid: 2,
 }
 
-func (br *BindRecord) metrics() ([]float64, []int) {
+func bindingMetrics(br *BindRecord) ([]float64, []int) {
 	sizes := make([]float64, len(statusIndex))
 	count := make([]int, len(statusIndex))
 	if br == nil {
@@ -288,8 +261,8 @@ func (b *Binding) size() float64 {
 }
 
 func updateMetrics(scope string, before *BindRecord, after *BindRecord, sizeOnly bool) {
-	beforeSize, beforeCount := before.metrics()
-	afterSize, afterCount := after.metrics()
+	beforeSize, beforeCount := bindingMetrics(before)
+	afterSize, afterCount := bindingMetrics(after)
 	for status, index := range statusIndex {
 		metrics.BindMemoryUsage.WithLabelValues(scope, status).Add(afterSize[index] - beforeSize[index])
 		if !sizeOnly {
