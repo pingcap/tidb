@@ -40,10 +40,9 @@ type parallelSortWorker struct {
 	result                *sortedRows
 	globalSortedRowsQueue *sortedRowsList
 
-	chunkChannel           chan *chunkWithMemoryUsage
-	tryToCloseChunkChannel func()
-	checkError             func() error
-	processError           func(error)
+	chunkChannel chan *chunkWithMemoryUsage
+	checkError   func() error
+	processError func(error)
 
 	timesOfRowCompare uint
 
@@ -57,22 +56,20 @@ func newParallelSortWorker(
 	waitGroup *sync.WaitGroup,
 	result *sortedRows,
 	chunkChannel chan *chunkWithMemoryUsage,
-	tryToCloseChunkChannel func(),
 	checkError func() error,
 	processError func(error),
 	memTracker *memory.Tracker) *parallelSortWorker {
 	return &parallelSortWorker{
-		workerIDForTest:        workerIDForTest,
-		lessRowFunc:            lessRowFunc,
-		globalSortedRowsQueue:  globalSortedRowsQueue,
-		waitGroup:              waitGroup,
-		result:                 result,
-		chunkChannel:           chunkChannel,
-		tryToCloseChunkChannel: tryToCloseChunkChannel,
-		checkError:             checkError,
-		processError:           processError,
-		timesOfRowCompare:      0,
-		memTracker:             memTracker,
+		workerIDForTest:       workerIDForTest,
+		lessRowFunc:           lessRowFunc,
+		globalSortedRowsQueue: globalSortedRowsQueue,
+		waitGroup:             waitGroup,
+		result:                result,
+		chunkChannel:          chunkChannel,
+		checkError:            checkError,
+		processError:          processError,
+		timesOfRowCompare:     0,
+		memTracker:            memTracker,
 	}
 }
 
@@ -199,7 +196,6 @@ func (p *parallelSortWorker) run() {
 	defer func() {
 		if r := recover(); r != nil {
 			processPanicAndLog(p.processError, r)
-			p.tryToCloseChunkChannel()
 		}
 		p.waitGroup.Done()
 	}()

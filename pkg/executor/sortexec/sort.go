@@ -475,21 +475,29 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 
 	// Wait for the finish of all workers
 	workersWaiter := sync.WaitGroup{}
+	// Wait for the finish of chunk fetcher
+	fetcherWaiter := sync.WaitGroup{}
 
 	// Add before the start of goroutine to avoid that the counter is minus to negative.
-	workersWaiter.Add(workerNum + 1)
+	workersWaiter.Add(workerNum)
+	fetcherWaiter.Add(1)
 
 	// Fetch chunks from child and put chunks into chunkChannel
-	go e.fetchChunksFromChild(ctx, &workersWaiter)
+	go e.fetchChunksFromChild(ctx, &fetcherWaiter)
 
-	// Create and run workers
 	for i := range e.Parallel.workers {
-		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.globalSortedRowsQueue, &workersWaiter, &e.Parallel.result, e.Parallel.chunkChannel, e.tryToCloseChunkChannel, e.checkErrorForParallel, e.processErrorForParallel, e.memTracker)
+		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.globalSortedRowsQueue, &workersWaiter, &e.Parallel.result, e.Parallel.chunkChannel, e.checkErrorForParallel, e.processErrorForParallel, e.memTracker)
 		go e.Parallel.workers[i].run()
 	}
 
-	// Wait for the finish of all workers
 	workersWaiter.Wait()
+
+	// Workers may panic, then no one could consume chunkChannel and
+	// the chunk fetcher may hang in this channel.
+	e.tryToCloseChunkChannel()
+
+	fetcherWaiter.Wait()
+
 	err := e.checkErrorForParallel()
 	if err != nil {
 		return err
@@ -528,7 +536,7 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context, waitGroup *sync.Wai
 
 		e.memTracker.Consume(chkWithMemoryUsage.MemoryUsage)
 
-		// chunkChannel may be closed by workers and it's ok to let it panic
+		// chunkChannel may be closed in advance and it's ok to let it panic
 		// as workers have panicked and the query can't keep on running.
 		e.Parallel.chunkChannel <- chkWithMemoryUsage
 

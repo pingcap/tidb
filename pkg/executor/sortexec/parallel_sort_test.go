@@ -94,7 +94,7 @@ func TestFailpoint(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail", `return(true)`)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
-	testNum := 50
+	testNum := 100
 	for i := 0; i < testNum; i++ {
 		failpointTest(t, ctx, sortCase, dataSource)
 	}
