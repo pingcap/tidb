@@ -52,7 +52,7 @@ func runOneTask(ctx context.Context, t *testing.T, mgr *storage.TaskManager, tas
 	factory := taskexecutor.GetTaskExecutorFactory(task.Type)
 	require.NotNil(t, factory)
 	executor := factory(ctx, "test", task, mgr)
-	require.NoError(t, executor.Run(ctx, task))
+	require.NoError(t, executor.RunStep(ctx, task, nil))
 	// 2. stepTwo
 	task.Step = proto.StepTwo
 	_, err = mgr.UpdateTaskAndAddSubTasks(ctx, task, nil, proto.TaskStateRunning)
@@ -62,7 +62,7 @@ func runOneTask(ctx context.Context, t *testing.T, mgr *storage.TaskManager, tas
 	}
 	task, err = mgr.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
-	require.NoError(t, executor.Run(ctx, task))
+	require.NoError(t, executor.RunStep(ctx, task, nil))
 }
 
 func TestTaskExecutorBasic(t *testing.T) {

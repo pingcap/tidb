@@ -147,9 +147,8 @@ func (*BaseTaskExecutor) Init(_ context.Context) error {
 	return nil
 }
 
-// Run start to fetch and run all subtasks of the task on the node.
-// TODO: rename it too when we move the loop here from manager.
-func (s *BaseTaskExecutor) Run(ctx context.Context, task *proto.Task) (err error) {
+// RunStep start to fetch and run all subtasks of the task on the node.
+func (s *BaseTaskExecutor) RunStep(ctx context.Context, task *proto.Task, resource *proto.StepResource) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.Logger(s.logCtx).Error("BaseTaskExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
@@ -162,7 +161,7 @@ func (s *BaseTaskExecutor) Run(ctx context.Context, task *proto.Task) (err error
 	}()
 	// TODO: we can centralized this when we move handleExecutableTask loop here.
 	s.task.Store(task)
-	err = s.runStep(ctx, task)
+	err = s.runStep(ctx, task, resource)
 	if s.mu.handled {
 		return err
 	}
@@ -172,7 +171,7 @@ func (s *BaseTaskExecutor) Run(ctx context.Context, task *proto.Task) (err error
 	return s.updateErrorToSubtask(ctx, task.ID, err)
 }
 
-func (s *BaseTaskExecutor) runStep(ctx context.Context, task *proto.Task) (resErr error) {
+func (s *BaseTaskExecutor) runStep(ctx context.Context, task *proto.Task, resource *proto.StepResource) (resErr error) {
 	if ctx.Err() != nil {
 		s.onError(ctx.Err())
 		return s.getError()
@@ -198,7 +197,7 @@ func (s *BaseTaskExecutor) runStep(ctx context.Context, task *proto.Task) (resEr
 		return s.getError()
 	}
 	defer cleanup()
-	subtaskExecutor, err := s.GetSubtaskExecutor(ctx, task, summary)
+	stepExecutor, err := s.GetStepExecutor(ctx, task, summary, resource)
 	if err != nil {
 		s.onError(err)
 		return s.getError()
@@ -207,13 +206,13 @@ func (s *BaseTaskExecutor) runStep(ctx context.Context, task *proto.Task) (resEr
 	failpoint.Inject("mockExecSubtaskInitEnvErr", func() {
 		failpoint.Return(errors.New("mockExecSubtaskInitEnvErr"))
 	})
-	if err := subtaskExecutor.Init(runCtx); err != nil {
+	if err := stepExecutor.Init(runCtx); err != nil {
 		s.onError(err)
 		return s.getError()
 	}
 
 	defer func() {
-		err := subtaskExecutor.Cleanup(runCtx)
+		err := stepExecutor.Cleanup(runCtx)
 		if err != nil {
 			logutil.Logger(s.logCtx).Error("cleanup subtask exec env failed", zap.Error(err))
 		}
@@ -309,12 +308,12 @@ func (s *BaseTaskExecutor) runStep(ctx context.Context, task *proto.Task) (resEr
 			runCancel(nil)
 		})
 
-		s.runSubtask(runCtx, subtaskExecutor, subtask)
+		s.runSubtask(runCtx, stepExecutor, subtask)
 	}
 	return s.getError()
 }
 
-func (s *BaseTaskExecutor) runSubtask(ctx context.Context, subtaskExecutor execute.SubtaskExecutor, subtask *proto.Subtask) {
+func (s *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.StepExecutor, subtask *proto.Subtask) {
 	err := func() error {
 		s.currSubtaskID.Store(subtask.ID)
 
@@ -328,7 +327,7 @@ func (s *BaseTaskExecutor) runSubtask(ctx context.Context, subtaskExecutor execu
 			wg.Wait()
 		}()
 
-		return subtaskExecutor.RunSubtask(ctx, subtask)
+		return stepExecutor.RunSubtask(ctx, subtask)
 	}()
 	failpoint.Inject("MockRunSubtaskCancel", func(val failpoint.Value) {
 		if val.(bool) {
@@ -401,10 +400,10 @@ func (s *BaseTaskExecutor) runSubtask(ctx context.Context, subtaskExecutor execu
 			}
 		}
 	})
-	s.onSubtaskFinished(ctx, subtaskExecutor, subtask)
+	s.onSubtaskFinished(ctx, stepExecutor, subtask)
 }
 
-func (s *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execute.SubtaskExecutor, subtask *proto.Subtask) {
+func (s *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execute.StepExecutor, subtask *proto.Subtask) {
 	if err := s.getError(); err == nil {
 		if err = executor.OnFinished(ctx, subtask); err != nil {
 			s.onError(err)
@@ -464,7 +463,7 @@ func (s *BaseTaskExecutor) Rollback(ctx context.Context, task *proto.Task) error
 		}
 	}
 
-	executor, err := s.GetSubtaskExecutor(ctx, task, nil)
+	executor, err := s.GetStepExecutor(ctx, task, nil, nil)
 	if err != nil {
 		s.onError(err)
 		return s.getError()

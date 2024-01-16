@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -31,6 +32,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
 
@@ -85,10 +87,25 @@ type Manager struct {
 	logCtx      context.Context
 	newPool     func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
 	slotManager *slotManager
+
+	totalCPU int
+	totalMem int64
 }
 
 // BuildManager builds a Manager.
 func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, error) {
+	totalMem, err := memory.MemTotal()
+	if err != nil {
+		// should not happen normally, as in main function of tidb-server, we assert
+		// that memory.MemTotal() will not fail.
+		return nil, err
+	}
+	totalCPU := cpu.GetCPUCount()
+	if totalCPU <= 0 || totalMem <= 0 {
+		return nil, errors.Errorf("invalid cpu or memory, cpu: %d, memory: %d", totalCPU, totalMem)
+	}
+	logutil.BgLogger().Info("build manager", zap.Int("total-cpu", totalCPU),
+		zap.String("total-mem", units.BytesSize(float64(totalMem))))
 	m := &Manager{
 		id:        id,
 		taskTable: taskTable,
@@ -97,8 +114,10 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 		slotManager: &slotManager{
 			taskID2Index:  make(map[int64]int),
 			executorTasks: make([]*proto.Task, 0),
-			available:     cpu.GetCPUCount(),
+			available:     totalCPU,
 		},
+		totalCPU: totalCPU,
+		totalMem: int64(totalMem),
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.handlingTasks = make(map[int64]context.CancelCauseFunc)
@@ -393,20 +412,33 @@ func (m *Manager) handleExecutableTask(task *proto.Task) {
 		} else if !exist {
 			continue
 		}
+		stepResource := m.getStepResource(task.Concurrency)
+		logutil.Logger(m.logCtx).Info("execute task step with resource",
+			zap.Int64("task-id", task.ID), zap.Int64("step", int64(task.Step)),
+			zap.Stringer("resource", stepResource))
 		switch task.State {
 		case proto.TaskStateRunning:
 			if taskCtx.Err() != nil {
 				return
 			}
 			// use taskCtx for canceling.
-			err = executor.Run(taskCtx, task)
+			err = executor.RunStep(taskCtx, task, stepResource)
 		case proto.TaskStateReverting:
 			// use m.ctx since this process should not be canceled.
+			// TODO: will remove it later, leave it now.
 			err = executor.Rollback(m.ctx, task)
 		}
 		if err != nil {
 			logutil.Logger(m.logCtx).Error("failed to handle task", zap.Error(err))
 		}
+	}
+}
+
+func (m *Manager) getStepResource(concurrency int) *proto.StepResource {
+	return &proto.StepResource{
+		CPU: proto.NewAllocatable(int64(concurrency)),
+		// same proportion as CPU
+		Mem: proto.NewAllocatable(int64(float64(concurrency) / float64(m.totalCPU) * float64(m.totalMem))),
 	}
 }
 
