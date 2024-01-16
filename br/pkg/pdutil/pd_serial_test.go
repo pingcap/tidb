@@ -89,9 +89,6 @@ func TestPDVersion(t *testing.T) {
 	require.Equal(t, expectV.PreRelease, r.PreRelease)
 }
 
-type mockResetTS struct {
-}
-
 func TestPDResetTSCompatibility(t *testing.T) {
 	ctx := context.Background()
 	cli := &mockPDHTTPClient{
