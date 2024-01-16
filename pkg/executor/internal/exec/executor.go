@@ -28,10 +28,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"go.uber.org/zap"
 )
 
 // Executor is the physical implementation of an algebra operator.
@@ -296,6 +298,11 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = util.GetRecoverError(r)
+			logutil.Logger(ctx).Error(
+				"execute sql panic",
+				zap.Stack("stack"),
+				zap.Any("recover", r),
+			)
 		}
 	}()
 	if e.RuntimeStats() != nil {
