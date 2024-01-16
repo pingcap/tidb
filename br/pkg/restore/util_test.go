@@ -282,6 +282,10 @@ func TestPaginateScanRegion(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, regions[1:2], batch)
 
+	_, err = split.PaginateScanRegion(
+		ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.EndKey, regions[1].Region.EndKey, 3)
+	require.Error(t, err)
+
 	_, err = split.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{2}, []byte{1}, 3)
 	require.Error(t, err)
 	require.True(t, berrors.ErrRestoreInvalidRange.Equal(err))

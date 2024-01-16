@@ -1116,7 +1116,12 @@ func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 	}
 	ratio := available * 100 / capacity
 	if ratio < 10 {
-		return errors.Errorf("the remaining storage capacity of TiKV(%s) is less than 10%%; please increase the storage capacity of TiKV and try again", store.Store.Address)
+		storeType := "TiKV"
+		if engine.IsTiFlashHTTPResp(&store.Store) {
+			storeType = "TiFlash"
+		}
+		return errors.Errorf("the remaining storage capacity of %s(%s) is less than 10%%; please increase the storage capacity of %s and try again",
+			storeType, store.Store.Address, storeType)
 	}
 	return nil
 }
@@ -1287,11 +1292,6 @@ func (local *Backend) ImportEngine(
 			zap.Int64("importedCount", importedLength))
 	}
 	return err
-}
-
-// GetRegionSplitSizeKeys gets the region split size and keys from PD.
-func (local *Backend) GetRegionSplitSizeKeys(ctx context.Context) (finalSize int64, finalKeys int64, err error) {
-	return GetRegionSplitSizeKeys(ctx, local.pdCli, local.tls)
 }
 
 // expose these variables to unit test.

@@ -298,10 +298,17 @@ func TestFrameworkRunSubtaskCancel(t *testing.T) {
 }
 
 func TestFrameworkCleanUpRoutine(t *testing.T) {
+	bak := scheduler.DefaultCleanUpInterval
+	defer func() {
+		scheduler.DefaultCleanUpInterval = bak
+	}()
+	scheduler.DefaultCleanUpInterval = 500 * time.Millisecond
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
 	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()"))
+
+	// normal
 	submitTaskAndCheckSuccessForBasic(ctx, t, "key1", testContext)
 	<-scheduler.WaitCleanUpFinished
 	mgr, err := storage.GetTaskManager()
@@ -309,7 +316,26 @@ func TestFrameworkCleanUpRoutine(t *testing.T) {
 	tasks, err := mgr.GetTaskByKeyWithHistory(ctx, "key1")
 	require.NoError(t, err)
 	require.NotEmpty(t, tasks)
+	subtasks, err := testutil.GetSubtasksFromHistory(ctx, mgr)
+	require.NoError(t, err)
+	require.NotEmpty(t, subtasks)
+
+	// transfer err
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTransferErr", "1*return()"))
+	submitTaskAndCheckSuccessForBasic(ctx, t, "key2", testContext)
+	<-scheduler.WaitCleanUpFinished
+	mgr, err = storage.GetTaskManager()
+	require.NoError(t, err)
+	tasks, err = mgr.GetTaskByKeyWithHistory(ctx, "key1")
+	require.NoError(t, err)
+	require.NotEmpty(t, tasks)
+	subtasks, err = testutil.GetSubtasksFromHistory(ctx, mgr)
+	require.NoError(t, err)
+	require.NotEmpty(t, subtasks)
+
 	distContext.Close()
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTransferErr"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished"))
 }
 
 func TestTaskCancelledBeforeUpdateTask(t *testing.T) {

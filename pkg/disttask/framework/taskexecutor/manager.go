@@ -448,7 +448,7 @@ func (m *Manager) logErrAndPersist(err error, taskID int64, taskExecutor TaskExe
 		logutil.Logger(m.logCtx).Error("met retryable err", zap.Error(err), zap.Stack("stack"))
 		return
 	}
-	err1 := m.taskTable.UpdateErrorToSubtask(m.ctx, m.id, taskID, err)
+	err1 := m.taskTable.FailSubtask(m.ctx, m.id, taskID, err)
 	if err1 != nil {
 		logutil.Logger(m.logCtx).Error("update to subtask failed", zap.Error(err1), zap.Stack("stack"))
 	}

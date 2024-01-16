@@ -13,6 +13,7 @@ go_test(
     deps = [
         "//pkg/bindinfo",
         "//pkg/bindinfo/internal",
+        "//pkg/bindinfo/norm",
         "//pkg/domain",
         "//pkg/parser",
         "//pkg/parser/model",
