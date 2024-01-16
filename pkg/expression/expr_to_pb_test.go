@@ -812,6 +812,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
+	// ScalarFuncSig_Pow
+	function, err = NewFunction(mock.NewContext(), ast.Power, types.NewFieldType(mysql.TypeDouble), realColumn, realColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
 	// ScalarFuncSig_Radians
 	function, err = NewFunction(mock.NewContext(), ast.Radians, types.NewFieldType(mysql.TypeDouble), realColumn)
 	require.NoError(t, err)
