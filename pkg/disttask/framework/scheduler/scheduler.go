@@ -339,7 +339,7 @@ func (s *BaseScheduler) onRunning() error {
 		return err
 	}
 	if cntByStates[proto.SubtaskStateFailed] > 0 || cntByStates[proto.SubtaskStateCanceled] > 0 {
-		subTaskErrs, err := s.taskMgr.CollectSubTaskError(s.ctx, task.ID)
+		subTaskErrs, err := s.taskMgr.GetSubtaskErrors(s.ctx, task.ID)
 		if err != nil {
 			logutil.Logger(s.logCtx).Warn("collect subtask error failed", zap.Error(err))
 			return err

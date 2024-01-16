@@ -75,7 +75,7 @@ func TestCleanUpRoutine(t *testing.T) {
 	}
 	sch.DoCleanUpRoutine()
 	require.Eventually(t, func() bool {
-		tasks, err := mgr.GetTasksFromHistoryInStates(ctx, proto.TaskStateSucceed)
+		tasks, err := GetTasksFromHistoryInStates(ctx, mgr, proto.TaskStateSucceed)
 		require.NoError(t, err)
 		return len(tasks) != 0
 	}, 5*time.Second*10, time.Millisecond*300)
