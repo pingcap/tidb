@@ -5346,11 +5346,25 @@ ExplainStmt:
 			ConnectionID: getUint64FromNUM($4),
 		}
 	}
+|	ExplainSym "FOR" "CONNECTION" BuiltinFunction
+	{
+		$$ = &ast.ExplainForStmt{
+			Format:       "row",
+			Expr:         $4,
+		}
+	}
 |	ExplainSym "FORMAT" "=" stringLit "FOR" "CONNECTION" NUM
 	{
 		$$ = &ast.ExplainForStmt{
 			Format:       $4,
 			ConnectionID: getUint64FromNUM($7),
+		}
+	}
+|	ExplainSym "FORMAT" "=" stringLit "FOR" "CONNECTION" BuiltinFunction
+	{
+		$$ = &ast.ExplainForStmt{
+			Format:       $4,
+			Expr:         $7,
 		}
 	}
 |	ExplainSym "FORMAT" "=" stringLit ExplainableStmt
@@ -5365,6 +5379,13 @@ ExplainStmt:
 		$$ = &ast.ExplainForStmt{
 			Format:       $4,
 			ConnectionID: getUint64FromNUM($7),
+		}
+	}
+|	ExplainSym "FORMAT" "=" ExplainFormatType "FOR" "CONNECTION" BuiltinFunction
+	{
+		$$ = &ast.ExplainForStmt{
+			Format:       $4,
+			Expr:         $7,
 		}
 	}
 |	ExplainSym "FORMAT" "=" ExplainFormatType ExplainableStmt

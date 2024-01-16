@@ -29,6 +29,22 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func rowsToCompactText(rows [][]interface{}) string {
+	buf := bytes.NewBuffer(nil)
+	for i, row := range rows {
+		if i > 0 {
+			buf.WriteString("\n")
+		}
+		for j, v := range row {
+			if j > 0 {
+				buf.WriteString(" ")
+			}
+			buf.WriteString(fmt.Sprintf("%v", v))
+		}
+	}
+	return buf.String()
+}
+
 func TestExplainFor(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -62,21 +78,9 @@ func TestExplainFor(t *testing.T) {
 		rows := tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Rows()
 		require.Len(t, rows, 2)
 		require.Len(t, rows[0], 9)
-		buf := bytes.NewBuffer(nil)
-		for i, row := range rows {
-			if i > 0 {
-				buf.WriteString("\n")
-			}
-			for j, v := range row {
-				if j > 0 {
-					buf.WriteString(" ")
-				}
-				buf.WriteString(fmt.Sprintf("%v", v))
-			}
-		}
 		require.Regexp(t, "TableReader_5 10000.00 0 root  time:.*, loops:1,( RU:.*,)? cop_task: {num:.*, max:.*, proc_keys:.* rpc_num: 1, rpc_time:.*} data:TableFullScan_4 N/A N/A\n"+
 			"└─TableFullScan_4 10000.00 0 cop.* table:t1 tikv_task:{time:.*, loops:0} keep order:false, stats:pseudo N/A N/A",
-			buf.String())
+			rowsToCompactText(rows))
 	}
 	tkRoot.MustQuery("select * from t1;")
 	check()
@@ -91,6 +95,50 @@ func TestExplainFor(t *testing.T) {
 	ps = []*util.ProcessInfo{tkRootProcess}
 	tkRoot.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tkRoot.MustExec(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
+}
+
+func TestExplainForUsingConnectionIDFunc(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tkRoot := testkit.NewTestKit(t, store)
+	tkRoot.MustExec("use test")
+	tkRoot.MustExec("drop table if exists t1, t2;")
+	tkRoot.MustExec("create table t1(c1 int, c2 int)")
+	tkRoot.MustExec("create table t2(c1 int, c2 int)")
+	tkRoot.MustExec("create user tu@'%'")
+	tkRoot.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
+
+	tkRoot.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tkRoot.MustQuery("select * from t1;")
+	tkRootProcess := tkRoot.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkRootProcess}
+	tkRoot.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tkRoot.MustQuery("explain for connection connection_id();").Check(testkit.Rows(
+		"TableReader_5 10000.00 root  data:TableFullScan_4",
+		"└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+	))
+
+	tkRoot.MustExec("set @@tidb_enable_collect_execution_info=1;")
+	check := func() {
+		tkRootProcess = tkRoot.Session().ShowProcess()
+		ps = []*util.ProcessInfo{tkRootProcess}
+		tkRoot.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+		rows := tkRoot.MustQuery("explain for connection connection_id();").Rows()
+		require.Len(t, rows, 2)
+		require.Len(t, rows[0], 9)
+		require.Regexp(t, "TableReader_5 10000.00 0 root  time:.*, loops:1,( RU:.*,)? cop_task: {num:.*, max:.*, proc_keys:.* rpc_num: 1, rpc_time:.*} data:TableFullScan_4 N/A N/A\n"+
+			"└─TableFullScan_4 10000.00 0 cop.* table:t1 tikv_task:{time:.*, loops:0} keep order:false, stats:pseudo N/A N/A",
+			rowsToCompactText(rows))
+	}
+	tkRoot.MustQuery("select * from t1;")
+	check()
+	tkRoot.MustQuery("explain analyze select * from t1;")
+	check()
+
+	tkRootProcess.Plan = nil
+	ps = []*util.ProcessInfo{tkRootProcess}
+	tkRoot.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tkRoot.MustExec("explain for connection connection_id();")
 }
 
 func TestExplainForVerbose(t *testing.T) {
