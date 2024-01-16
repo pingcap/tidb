@@ -410,7 +410,7 @@ func (mgr *TaskManager) GetUsedSlotsOnNodes(ctx context.Context) (map[string]int
 			group by exec_id, task_key
 		) a
 		group by exec_id`,
-		proto.TaskStatePending, proto.TaskStateRunning,
+		proto.SubtaskStatePending, proto.SubtaskStateRunning,
 	)
 	if err != nil {
 		return nil, err
@@ -560,7 +560,7 @@ func (mgr *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64) ([]
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		select `+basicSubtaskColumns+` from mysql.tidb_background_subtask
 		where task_key = %? and state in (%?, %?)`,
-		taskID, proto.TaskStatePending, proto.TaskStateRunning)
+		taskID, proto.SubtaskStatePending, proto.SubtaskStateRunning)
 	if err != nil {
 		return nil, err
 	}
@@ -572,7 +572,7 @@ func (mgr *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64) ([]
 }
 
 // GetSubtasksByStepAndState gets the subtask by step and state.
-func (mgr *TaskManager) GetSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error) {
+func (mgr *TaskManager) GetSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select `+SubtaskColumns+` from mysql.tidb_background_subtask
 		where task_key = %? and state = %? and step = %?`,
 		taskID, state, step)
@@ -689,7 +689,7 @@ func (mgr *TaskManager) StartSubtask(ctx context.Context, subtaskID int64, execI
 			`update mysql.tidb_background_subtask
 			 set state = %?, start_time = unix_timestamp(), state_update_time = unix_timestamp()
 			 where id = %? and exec_id = %?`,
-			proto.TaskStateRunning,
+			proto.SubtaskStateRunning,
 			subtaskID,
 			execID)
 		if err != nil {
@@ -754,7 +754,7 @@ func (mgr *TaskManager) FinishSubtask(ctx context.Context, execID string, id int
 	_, err := mgr.ExecuteSQLWithNewSession(ctx, `update mysql.tidb_background_subtask
 		set meta = %?, state = %?, state_update_time = unix_timestamp(), end_time = CURRENT_TIMESTAMP()
 		where id = %? and exec_id = %?`,
-		meta, proto.TaskStateSucceed, id, execID)
+		meta, proto.SubtaskStateSucceed, id, execID)
 	return err
 }
 
@@ -950,7 +950,7 @@ func (*TaskManager) insertSubtasks(ctx context.Context, se sessionctx.Context, s
 	for _, subtask := range subtasks {
 		markerList = append(markerList, "(%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')")
 		args = append(args, subtask.Step, subtask.TaskID, subtask.ExecID, subtask.Meta,
-			proto.TaskStatePending, proto.Type2Int(subtask.Type), subtask.Concurrency, subtask.Ordinal)
+			proto.SubtaskStatePending, proto.Type2Int(subtask.Type), subtask.Concurrency, subtask.Ordinal)
 	}
 	sb.WriteString(strings.Join(markerList, ","))
 	_, err := sqlexec.ExecSQL(ctx, se, sb.String(), args...)
