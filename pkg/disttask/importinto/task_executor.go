@@ -493,7 +493,7 @@ func (*importExecutor) IsRetryableError(err error) bool {
 	return common.IsRetryableError(err)
 }
 
-func (*importExecutor) GetStepExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary, _ *proto.StepResource) (execute.StepExecutor, error) {
+func (*importExecutor) GetStepExecutor(_ context.Context, task *proto.Task, _ *execute.Summary, _ *proto.StepResource) (execute.StepExecutor, error) {
 	taskMeta := TaskMeta{}
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
