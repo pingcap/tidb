@@ -283,3 +283,28 @@ func ReadLines(reader *bufio.Reader, count int, maxLineSize int) ([][]byte, erro
 	}
 	return lines, nil
 }
+<<<<<<< HEAD:util/util.go
+=======
+
+// IsInCorrectIdentifierName checks if the identifier is incorrect.
+// See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
+func IsInCorrectIdentifierName(name string) bool {
+	if len(name) == 0 {
+		return true
+	}
+	if name[len(name)-1] == ' ' {
+		return true
+	}
+	return false
+}
+
+// GetRecoverError gets the error from recover.
+func GetRecoverError(r interface{}) error {
+	if err, ok := r.(error); ok {
+		// Runtime panic also implements error interface.
+		// So do not forget to add stack info for it.
+		return errors.Trace(err)
+	}
+	return errors.Errorf("%v", r)
+}
+>>>>>>> da501a0e384 (exectuor: add stack trace for runtime panic (#50449)):pkg/util/util.go
