@@ -31,18 +31,17 @@ const SignalCheckpointForSort uint = 20000
 type parallelSortWorker struct {
 	workerIDForTest int
 
-	// This list is shared by all workers and all workers will put their sorted rows into this list
-	globalSortedRowsQueue *sortedRowsList
+	waitGroup *sync.WaitGroup
+
 	// Temporarily store rows that will be sorted.
 	rowBuffer sortedRows
 	result    *sortedRows
+	// This list is shared by all workers and all workers will put their sorted rows into this list
+	globalSortedRowsQueue *sortedRowsList
 
-	waitGroup *sync.WaitGroup
-
-	chunkChannel           chan *chunkWithMemoryUsage
-	tryToCloseChunkChannel func()
-	checkError             func() error
-	processError           func(error)
+	chunkChannel chan *chunkWithMemoryUsage
+	checkError   func() error
+	processError func(error)
 
 	lessRowFunc       func(chunk.Row, chunk.Row) int
 	timesOfRowCompare uint
@@ -60,24 +59,22 @@ func newParallelSortWorker(
 	waitGroup *sync.WaitGroup,
 	result *sortedRows,
 	chunkChannel chan *chunkWithMemoryUsage,
-	tryToCloseChunkChannel func(),
 	checkError func() error,
 	processError func(error),
 	memTracker *memory.Tracker,
 	spillHelper *parallelSortSpillHelper) *parallelSortWorker {
 	return &parallelSortWorker{
-		workerIDForTest:        workerIDForTest,
-		lessRowFunc:            lessRowFunc,
-		globalSortedRowsQueue:  globalSortedRowsQueue,
-		waitGroup:              waitGroup,
-		result:                 result,
-		chunkChannel:           chunkChannel,
-		tryToCloseChunkChannel: tryToCloseChunkChannel,
-		checkError:             checkError,
-		processError:           processError,
-		timesOfRowCompare:      0,
-		memTracker:             memTracker,
-		spillHelper:            spillHelper,
+		workerIDForTest:       workerIDForTest,
+		lessRowFunc:           lessRowFunc,
+		globalSortedRowsQueue: globalSortedRowsQueue,
+		waitGroup:             waitGroup,
+		result:                result,
+		chunkChannel:          chunkChannel,
+		checkError:            checkError,
+		processError:          processError,
+		timesOfRowCompare:     0,
+		memTracker:            memTracker,
+		spillHelper:           spillHelper,
 	}
 }
 
@@ -249,7 +246,6 @@ func (p *parallelSortWorker) run() {
 	defer func() {
 		if r := recover(); r != nil {
 			processPanicAndLog(p.processError, r)
-			p.tryToCloseChunkChannel()
 		}
 		p.waitGroup.Done()
 	}()
