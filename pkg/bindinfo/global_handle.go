@@ -550,8 +550,8 @@ func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, fuzzyD
 // GetAllGlobalBindings returns all bind records in cache.
 func (h *globalBindingHandle) GetAllGlobalBindings() (bindings []*Binding) {
 	for _, record := range h.getCache().GetAllBindings() {
-		for _, binding := range record.Bindings {
-			bindings = append(bindings, &binding)
+		for i := range record.Bindings {
+			bindings = append(bindings, &record.Bindings[i])
 		}
 	}
 	return
