@@ -204,9 +204,9 @@ func (s *BaseTaskExecutor) runStep(ctx context.Context, task *proto.Task) (resEr
 		return s.getError()
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("mockExecSubtaskInitEnvErr")); _err_ == nil {
-		return errors.New("mockExecSubtaskInitEnvErr")
-	}
+	failpoint.Inject("mockExecSubtaskInitEnvErr", func() {
+		failpoint.Return(errors.New("mockExecSubtaskInitEnvErr"))
+	})
 	if err := subtaskExecutor.Init(runCtx); err != nil {
 		s.onError(err)
 		return s.getError()
@@ -252,9 +252,9 @@ func (s *BaseTaskExecutor) runStep(ctx context.Context, task *proto.Task) (resEr
 			continue
 		}
 		if subtask == nil {
-			if _, _err_ := failpoint.Eval(_curpkg_("breakInTaskExecutorUT")); _err_ == nil {
-				break
-			}
+			failpoint.Inject("breakInTaskExecutorUT", func() {
+				failpoint.Break()
+			})
 			newTask, err := s.taskTable.GetTaskByID(runCtx, task.ID)
 			// When the task move history table of not found, the task executor should exit.
 			if err == storage.ErrTaskNotFound {
@@ -296,18 +296,18 @@ func (s *BaseTaskExecutor) runStep(ctx context.Context, task *proto.Task) (resEr
 			}
 		}
 
-		if _, _err_ := failpoint.Eval(_curpkg_("mockCleanExecutor")); _err_ == nil {
+		failpoint.Inject("mockCleanExecutor", func() {
 			v, ok := testContexts.Load(s.id)
 			if ok {
 				if v.(*TestContext).mockDown.Load() {
-					break
+					failpoint.Break()
 				}
 			}
-		}
+		})
 
-		if _, _err_ := failpoint.Eval(_curpkg_("cancelBeforeRunSubtask")); _err_ == nil {
+		failpoint.Inject("cancelBeforeRunSubtask", func() {
 			runCancel(nil)
-		}
+		})
 
 		s.runSubtask(runCtx, subtaskExecutor, subtask)
 	}
@@ -330,17 +330,17 @@ func (s *BaseTaskExecutor) runSubtask(ctx context.Context, subtaskExecutor execu
 
 		return subtaskExecutor.RunSubtask(ctx, subtask)
 	}()
-	if val, _err_ := failpoint.Eval(_curpkg_("MockRunSubtaskCancel")); _err_ == nil {
+	failpoint.Inject("MockRunSubtaskCancel", func(val failpoint.Value) {
 		if val.(bool) {
 			err = ErrCancelSubtask
 		}
-	}
+	})
 
-	if val, _err_ := failpoint.Eval(_curpkg_("MockRunSubtaskContextCanceled")); _err_ == nil {
+	failpoint.Inject("MockRunSubtaskContextCanceled", func(val failpoint.Value) {
 		if val.(bool) {
 			err = context.Canceled
 		}
-	}
+	})
 
 	if err != nil {
 		s.onError(err)
@@ -351,7 +351,7 @@ func (s *BaseTaskExecutor) runSubtask(ctx context.Context, subtaskExecutor execu
 		return
 	}
 
-	if val, _err_ := failpoint.Eval(_curpkg_("mockTiDBDown")); _err_ == nil {
+	failpoint.Inject("mockTiDBDown", func(val failpoint.Value) {
 		logutil.Logger(s.logCtx).Info("trigger mockTiDBDown")
 		if s.id == val.(string) || s.id == ":4001" || s.id == ":4002" {
 			v, ok := testContexts.Load(s.id)
@@ -360,11 +360,11 @@ func (s *BaseTaskExecutor) runSubtask(ctx context.Context, subtaskExecutor execu
 				v.(*TestContext).mockDown.Store(true)
 				logutil.Logger(s.logCtx).Info("mockTiDBDown")
 				time.Sleep(2 * time.Second)
-				return
+				failpoint.Return()
 			}
 		}
-	}
-	if _, _err_ := failpoint.Eval(_curpkg_("mockTiDBDown2")); _err_ == nil {
+	})
+	failpoint.Inject("mockTiDBDown2", func() {
 		if s.id == ":4003" && subtask.Step == proto.StepTwo {
 			v, ok := testContexts.Load(s.id)
 			if ok {
@@ -374,21 +374,21 @@ func (s *BaseTaskExecutor) runSubtask(ctx context.Context, subtaskExecutor execu
 				return
 			}
 		}
-	}
+	})
 
-	if val, _err_ := failpoint.Eval(_curpkg_("mockTiDBPartitionThenResume")); _err_ == nil {
+	failpoint.Inject("mockTiDBPartitionThenResume", func(val failpoint.Value) {
 		if val.(bool) && (s.id == ":4000" || s.id == ":4001" || s.id == ":4002") {
 			infosync.MockGlobalServerInfoManagerEntry.DeleteByExecID(s.id)
 			time.Sleep(20 * time.Second)
 		}
-	}
+	})
 
-	if val, _err_ := failpoint.Eval(_curpkg_("MockExecutorRunErr")); _err_ == nil {
+	failpoint.Inject("MockExecutorRunErr", func(val failpoint.Value) {
 		if val.(bool) {
 			s.onError(errors.New("MockExecutorRunErr"))
 		}
-	}
-	if val, _err_ := failpoint.Eval(_curpkg_("MockExecutorRunCancel")); _err_ == nil {
+	})
+	failpoint.Inject("MockExecutorRunCancel", func(val failpoint.Value) {
 		if taskID, ok := val.(int); ok {
 			mgr, err := storage.GetTaskManager()
 			if err != nil {
@@ -400,7 +400,7 @@ func (s *BaseTaskExecutor) runSubtask(ctx context.Context, subtaskExecutor execu
 				}
 			}
 		}
-	}
+	})
 	s.onSubtaskFinished(ctx, subtaskExecutor, subtask)
 }
 
@@ -410,11 +410,11 @@ func (s *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execu
 			s.onError(err)
 		}
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("MockSubtaskFinishedCancel")); _err_ == nil {
+	failpoint.Inject("MockSubtaskFinishedCancel", func(val failpoint.Value) {
 		if val.(bool) {
 			s.onError(ErrCancelSubtask)
 		}
-	}
+	})
 
 	finished := s.markSubTaskCanceledOrFailed(ctx, subtask)
 	if finished {
@@ -428,10 +428,10 @@ func (s *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execu
 		return
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("syncAfterSubtaskFinish")); _err_ == nil {
+	failpoint.Inject("syncAfterSubtaskFinish", func() {
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
-	}
+	})
 }
 
 // Rollback rollbacks the subtask.

@@ -409,12 +409,12 @@ func (em *engineManager) resetEngine(ctx context.Context, engineUUID uuid.UUID) 
 		if err = em.allocateTSIfNotExists(ctx, localEngine); err != nil {
 			return errors.Trace(err)
 		}
-		if _, _err_ := failpoint.Eval(_curpkg_("mockAllocateTSErr")); _err_ == nil {
+		failpoint.Inject("mockAllocateTSErr", func() {
 			// mock generate timestamp error when reset engine.
 			localEngine.TS = 0
 			mockGRPCErr, _ := status.FromError(errors.Errorf("mock generate timestamp error"))
-			return errors.Trace(mockGRPCErr.Err())
-		}
+			failpoint.Return(errors.Trace(mockGRPCErr.Err()))
+		})
 	}
 	localEngine.pendingFileSize.Store(0)
 

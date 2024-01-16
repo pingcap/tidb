@@ -194,11 +194,11 @@ func debugTraceGetStatsTbl(
 		Outdated:          outdated,
 		StatsTblInfo:      statistics.TraceStatsTbl(statsTbl),
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("DebugTraceStableStatsTbl")); _err_ == nil {
+	failpoint.Inject("DebugTraceStableStatsTbl", func(val failpoint.Value) {
 		if val.(bool) {
 			stabilizeGetStatsTblInfo(traceInfo)
 		}
-	}
+	})
 	root.AppendStepToCurrentContext(traceInfo)
 }
 

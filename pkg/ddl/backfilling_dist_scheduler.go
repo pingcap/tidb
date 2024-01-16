@@ -116,15 +116,15 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 				prevStep = StepMergeSort
 			}
 
-			if _, _err_ := failpoint.Eval(_curpkg_("mockWriteIngest")); _err_ == nil {
+			failpoint.Inject("mockWriteIngest", func() {
 				m := &BackfillSubTaskMeta{
 					SortedKVMeta: external.SortedKVMeta{},
 				}
 				metaBytes, _ := json.Marshal(m)
 				metaArr := make([][]byte, 0, 16)
 				metaArr = append(metaArr, metaBytes)
-				return metaArr, nil
-			}
+				failpoint.Return(metaArr, nil)
+			})
 			return generateGlobalSortIngestPlan(
 				ctx,
 				taskHandle,
@@ -169,9 +169,9 @@ func (sch *BackfillingSchedulerExt) GetNextStep(task *proto.Task) proto.Step {
 }
 
 func skipMergeSort(stats []external.MultipleFilesStat) bool {
-	if _, _err_ := failpoint.Eval(_curpkg_("forceMergeSort")); _err_ == nil {
-		return false
-	}
+	failpoint.Inject("forceMergeSort", func() {
+		failpoint.Return(false)
+	})
 	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
 }
 

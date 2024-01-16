@@ -365,7 +365,7 @@ func (m *Manager) handleExecutableTask(task *proto.Task) {
 			return
 		case <-time.After(checkTime):
 		}
-		if _, _err_ := failpoint.Eval(_curpkg_("mockStopManager")); _err_ == nil {
+		failpoint.Inject("mockStopManager", func() {
 			testContexts.Store(m.id, &TestContext{make(chan struct{}), atomic.Bool{}})
 			go func() {
 				v, ok := testContexts.Load(m.id)
@@ -375,7 +375,7 @@ func (m *Manager) handleExecutableTask(task *proto.Task) {
 					m.Stop()
 				}
 			}()
-		}
+		})
 		task, err = m.taskTable.GetTaskByID(m.ctx, task.ID)
 		if err != nil {
 			m.logErr(err)

@@ -36,11 +36,11 @@ var MemUsed func() (uint64, error)
 // GetMemTotalIgnoreErr returns the total amount of RAM on this system/container. If error occurs, return 0.
 func GetMemTotalIgnoreErr() uint64 {
 	if memTotal, err := MemTotal(); err == nil {
-		if val, _err_ := failpoint.Eval(_curpkg_("GetMemTotalError")); _err_ == nil {
+		failpoint.Inject("GetMemTotalError", func(val failpoint.Value) {
 			if val, ok := val.(bool); val && ok {
 				memTotal = 0
 			}
-		}
+		})
 		return memTotal
 	}
 	return 0

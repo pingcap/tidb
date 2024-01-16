@@ -130,10 +130,10 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 		prepareV2AnalyzeJobInfo(task.colExec, false)
 		AddNewAnalyzeJob(e.Ctx(), task.job)
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("mockKillPendingAnalyzeJob")); _err_ == nil {
+	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
 		dom := domain.GetDomain(e.Ctx())
 		dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
-	}
+	})
 TASKLOOP:
 	for _, task := range tasks {
 		select {
@@ -158,10 +158,10 @@ TASKLOOP:
 		return err
 	}
 
-	if _, _err_ := failpoint.Eval(_curpkg_("mockKillFinishedAnalyzeJob")); _err_ == nil {
+	failpoint.Inject("mockKillFinishedAnalyzeJob", func() {
 		dom := domain.GetDomain(e.Ctx())
 		dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
-	}
+	})
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
 	if needGlobalStats {
 		err = e.handleGlobalStats(ctx, globalStatsMap)
@@ -404,7 +404,7 @@ func (e *AnalyzeExec) handleResultsError(
 			return err
 		}
 	}
-	failpoint.Eval(_curpkg_("handleResultsErrorSingleThreadPanic"))
+	failpoint.Inject("handleResultsErrorSingleThreadPanic", nil)
 	tableIDs := map[int64]struct{}{}
 
 	// save analyze results in single-thread.
@@ -531,7 +531,7 @@ func (e *AnalyzeExec) analyzeWorker(taskCh <-chan *analyzeTask, resultsCh chan<-
 		if !ok {
 			break
 		}
-		failpoint.Eval(_curpkg_("handleAnalyzeWorkerPanic"))
+		failpoint.Inject("handleAnalyzeWorkerPanic", nil)
 		StartAnalyzeJob(e.Ctx(), task.job)
 		switch task.taskType {
 		case colTask:
@@ -601,14 +601,14 @@ func StartAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	if err != nil {
 		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzePending, statistics.AnalyzeRunning)), zap.Error(err))
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("DebugAnalyzeJobOperations")); _err_ == nil {
+	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
 		if val.(bool) {
 			logutil.BgLogger().Info("StartAnalyzeJob",
 				zap.Time("start_time", job.StartTime),
 				zap.Uint64("job id", *job.ID),
 			)
 		}
-	}
+	})
 }
 
 // UpdateAnalyzeJob updates count of the processed rows when increment reaches a threshold.
@@ -627,14 +627,14 @@ func UpdateAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, rowCo
 	if err != nil {
 		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("process %v rows", delta)), zap.Error(err))
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("DebugAnalyzeJobOperations")); _err_ == nil {
+	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
 		if val.(bool) {
 			logutil.BgLogger().Info("UpdateAnalyzeJob",
 				zap.Int64("increase processed_rows", delta),
 				zap.Uint64("job id", *job.ID),
 			)
 		}
-	}
+	})
 }
 
 // FinishAnalyzeMergeJob finishes analyze merge job
@@ -670,14 +670,14 @@ func FinishAnalyzeMergeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, 
 		}
 		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzeRunning, state)), zap.Error(err))
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("DebugAnalyzeJobOperations")); _err_ == nil {
+	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
 		if val.(bool) {
 			logutil.BgLogger().Info("FinishAnalyzeMergeJob",
 				zap.Time("end_time", job.EndTime),
 				zap.Uint64("job id", *job.ID),
 			)
 		}
-	}
+	})
 }
 
 // FinishAnalyzeJob updates the state of the analyze job to finished/failed according to `meetError` and sets the end time.
@@ -714,7 +714,7 @@ func FinishAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 		}
 		logutil.BgLogger().Warn("failed to update analyze job", zap.String("update", fmt.Sprintf("%s->%s", statistics.AnalyzeRunning, state)), zap.Error(err))
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("DebugAnalyzeJobOperations")); _err_ == nil {
+	failpoint.Inject("DebugAnalyzeJobOperations", func(val failpoint.Value) {
 		if val.(bool) {
 			logutil.BgLogger().Info("FinishAnalyzeJob",
 				zap.Int64("increase processed_rows", job.Progress.GetDeltaCount()),
@@ -723,7 +723,7 @@ func FinishAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 				zap.Error(analyzeErr),
 			)
 		}
-	}
+	})
 }
 
 func finishJobWithLog(sctx sessionctx.Context, job *statistics.AnalyzeJob, analyzeErr error) {

@@ -50,9 +50,9 @@ func (t *TxnWriteThroughputSLI) FinishExecuteStmt(cost time.Duration, affectRow 
 		t.reportMetric()
 
 		// Skip reset for test.
-		if _, _err_ := failpoint.Eval(_curpkg_("CheckTxnWriteThroughput")); _err_ == nil {
-			return
-		}
+		failpoint.Inject("CheckTxnWriteThroughput", func() {
+			failpoint.Return()
+		})
 
 		// Reset for next transaction.
 		t.Reset()

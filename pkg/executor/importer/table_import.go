@@ -693,9 +693,9 @@ func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChec
 	}
 	logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 
-	if _, _err_ := failpoint.Eval(_curpkg_("waitCtxDone")); _err_ == nil {
+	failpoint.Inject("waitCtxDone", func() {
 		<-ctx.Done()
-	}
+	})
 
 	remoteChecksum, err := checksumTable(ctx, se, plan, logger)
 	if err != nil {
@@ -756,11 +756,11 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 				return errors.New("empty checksum result")
 			}
 
-			if _, _err_ := failpoint.Eval(_curpkg_("errWhenChecksum")); _err_ == nil {
+			failpoint.Inject("errWhenChecksum", func() {
 				if i == 0 {
-					return errors.New("occur an error when checksum, coprocessor task terminated due to exceeding the deadline")
+					failpoint.Return(errors.New("occur an error when checksum, coprocessor task terminated due to exceeding the deadline"))
 				}
-			}
+			})
 
 			// ADMIN CHECKSUM TABLE <schema>.<table>  example.
 			// 	mysql> admin checksum table test.t;

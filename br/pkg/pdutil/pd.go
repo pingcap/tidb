@@ -167,7 +167,7 @@ func pdRequestWithCode(
 		}
 		resp, err = cli.Do(req) //nolint:bodyclose
 		count++
-		if v, _err_ := failpoint.Eval(_curpkg_("InjectClosed")); _err_ == nil {
+		failpoint.Inject("InjectClosed", func(v failpoint.Value) {
 			if failType, ok := v.(int); ok && count <= PDRequestRetryTime-1 {
 				resp = nil
 				switch failType {
@@ -183,7 +183,7 @@ func pdRequestWithCode(
 					}
 				}
 			}
-		}
+		})
 		if count > PDRequestRetryTime || (resp != nil && resp.StatusCode < 500) ||
 			(err != nil && !common.IsRetryableError(err)) {
 			break
@@ -216,11 +216,11 @@ func pdRequestWithCode(
 }
 
 func pdRequestRetryInterval() time.Duration {
-	if v, _err_ := failpoint.Eval(_curpkg_("FastRetry")); _err_ == nil {
+	failpoint.Inject("FastRetry", func(v failpoint.Value) {
 		if v.(bool) {
-			return 0
+			failpoint.Return(0)
 		}
-	}
+	})
 	return time.Second
 }
 
@@ -324,12 +324,12 @@ func parseVersion(versionBytes []byte) *semver.Version {
 			zap.ByteString("version", versionBytes), zap.Error(err))
 		version = &semver.Version{Major: 0, Minor: 0, Patch: 0}
 	}
-	if val, _err_ := failpoint.Eval(_curpkg_("PDEnabledPauseConfig")); _err_ == nil {
+	failpoint.Inject("PDEnabledPauseConfig", func(val failpoint.Value) {
 		if val.(bool) {
 			// test pause config is enable
 			version = &semver.Version{Major: 5, Minor: 0, Patch: 0}
 		}
-	}
+	})
 	return version
 }
 

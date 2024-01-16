@@ -48,7 +48,7 @@ func (killer *SQLKiller) SendKillSignal(reason killSignal) {
 
 // HandleSignal handles the kill signal and return the error.
 func (killer *SQLKiller) HandleSignal() error {
-	if val, _err_ := failpoint.Eval(_curpkg_("randomPanic")); _err_ == nil {
+	failpoint.Inject("randomPanic", func(val failpoint.Value) {
 		if p, ok := val.(int); ok {
 			if rand.Float64() > (float64)(p)/1000 {
 				if killer.ConnID != 0 {
@@ -57,7 +57,7 @@ func (killer *SQLKiller) HandleSignal() error {
 				}
 			}
 		}
-	}
+	})
 	status := atomic.LoadUint32(&killer.Signal)
 	switch status {
 	case QueryInterrupted:

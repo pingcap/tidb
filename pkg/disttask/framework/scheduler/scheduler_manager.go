@@ -148,9 +148,9 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) (*Man
 
 // Start the schedulerManager, start the scheduleTaskLoop to start multiple schedulers.
 func (sm *Manager) Start() {
-	if _, _err_ := failpoint.Eval(_curpkg_("disableSchedulerManager")); _err_ == nil {
-		return
-	}
+	failpoint.Inject("disableSchedulerManager", func() {
+		failpoint.Return()
+	})
 	// init cached managed nodes
 	sm.nodeMgr.refreshManagedNodes(sm.ctx, sm.taskMgr, sm.slotMgr)
 
@@ -262,13 +262,13 @@ func (sm *Manager) failTask(id int64, currState proto.TaskState, err error) {
 
 func (sm *Manager) gcSubtaskHistoryTableLoop() {
 	historySubtaskTableGcInterval := defaultHistorySubtaskTableGcInterval
-	if val, _err_ := failpoint.Eval(_curpkg_("historySubtaskTableGcInterval")); _err_ == nil {
+	failpoint.Inject("historySubtaskTableGcInterval", func(val failpoint.Value) {
 		if seconds, ok := val.(int); ok {
 			historySubtaskTableGcInterval = time.Second * time.Duration(seconds)
 		}
 
 		<-WaitTaskFinished
-	}
+	})
 
 	logutil.Logger(sm.ctx).Info("subtask table gc loop start")
 	ticker := time.NewTicker(historySubtaskTableGcInterval)
@@ -368,9 +368,9 @@ func (sm *Manager) doCleanupTask() {
 		logutil.BgLogger().Warn("cleanUp routine failed", zap.Error(err))
 		return
 	}
-	if _, _err_ := failpoint.Eval(_curpkg_("WaitCleanUpFinished")); _err_ == nil {
+	failpoint.Inject("WaitCleanUpFinished", func() {
 		WaitCleanUpFinished <- struct{}{}
-	}
+	})
 	logutil.Logger(sm.ctx).Info("cleanUp routine success")
 }
 

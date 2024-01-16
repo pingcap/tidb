@@ -3200,7 +3200,7 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is info
 	checker := privilege.GetPrivilegeManager(ctx)
 	rules, err := infosync.GetAllLabelRules(context.TODO())
 	skipValidateTable := false
-	if _, _err_ := failpoint.Eval(_curpkg_("mockOutputOfAttributes")); _err_ == nil {
+	failpoint.Inject("mockOutputOfAttributes", func() {
 		convert := func(i interface{}) []interface{} {
 			return []interface{}{i}
 		}
@@ -3235,7 +3235,7 @@ func (e *memtableRetriever) setDataForAttributes(ctx sessionctx.Context, is info
 		}
 		err = nil
 		skipValidateTable = true
-	}
+	})
 
 	if err != nil {
 		return errors.Wrap(err, "get the label rules failed")
