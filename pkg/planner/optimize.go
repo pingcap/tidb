@@ -220,9 +220,9 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	enableUseBinding := sessVars.UsePlanBaselines
 	stmtNode, isStmtNode := node.(ast.StmtNode)
 	binding, match, scope := bindinfo.MatchSQLBinding(sctx, stmtNode)
-	var bindRecord *bindinfo.BindRecord
+	var bindRecord bindinfo.Bindings
 	if match {
-		bindRecord = &bindinfo.BindRecord{Bindings: []bindinfo.Binding{binding}}
+		bindRecord = []bindinfo.Binding{binding}
 	}
 
 	useBinding := enableUseBinding && isStmtNode && match
@@ -230,9 +230,9 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		failpoint.Inject("SetBindingTimeToZero", func(val failpoint.Value) {
 			if val.(bool) && bindRecord != nil {
 				bindRecord = bindRecord.Copy()
-				for i := range bindRecord.Bindings {
-					bindRecord.Bindings[i].CreateTime = types.ZeroTime
-					bindRecord.Bindings[i].UpdateTime = types.ZeroTime
+				for i := range bindRecord {
+					bindRecord[i].CreateTime = types.ZeroTime
+					bindRecord[i].UpdateTime = types.ZeroTime
 				}
 			}
 		})
@@ -275,7 +275,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		var bindStmtHints stmtctx.StmtHints
 		originHints := hint.CollectHint(stmtNode)
 		// bindRecord must be not nil when coming here, try to find the best binding.
-		for _, binding := range bindRecord.Bindings {
+		for _, binding := range bindRecord {
 			if !binding.IsBindingEnabled() {
 				continue
 			}
@@ -352,7 +352,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if sessVars.EvolvePlanBaselines && bestPlanFromBind != nil &&
 		sessVars.SelectLimit == math.MaxUint64 { // do not evolve this query if sql_select_limit is enabled
 		// Check bestPlanFromBind firstly to avoid nil stmtNode.
-		if _, ok := stmtNode.(*ast.SelectStmt); ok && !bindRecord.Bindings[0].Hint.ContainTableHint(hint.HintReadFromStorage) {
+		if _, ok := stmtNode.(*ast.SelectStmt); ok && !bindRecord[0].Hint.ContainTableHint(hint.HintReadFromStorage) {
 			sessVars.StmtCtx.StmtHints = originStmtHints
 			defPlan, _, _, err := optimize(ctx, sctx, node, is)
 			if err != nil {
