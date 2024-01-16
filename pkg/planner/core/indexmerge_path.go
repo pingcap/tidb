@@ -41,7 +41,7 @@ import (
 func init() {
 	cardinality.CollectFilters4MVIndex = collectFilters4MVIndex
 	cardinality.BuildPartialPaths4MVIndex = buildPartialPaths4MVIndex
-	statistics.PrepareCols4MVIndex = prepareCols4MVIndex
+	statistics.PrepareCols4MVIndex = PrepareCols4MVIndex
 }
 
 // generateIndexMergePath generates IndexMerge AccessPaths on this DataSource.
@@ -109,24 +109,27 @@ func (ds *DataSource) generateIndexMergePath() error {
 	}
 
 	// If without hints, it means that `enableIndexMerge` is true
-	if len(ds.indexMergeHints) == 0 {
-		return nil
-	}
-	// If len(indexMergeHints) > 0, then add warnings if index-merge hints cannot work.
-	if regularPathCount == len(ds.possibleAccessPaths) {
-		if warningMsg == "" {
-			warningMsg = "IndexMerge is inapplicable"
+	if len(ds.indexMergeHints) != 0 {
+		// If len(indexMergeHints) > 0, then add warnings if index-merge hints cannot work.
+		if regularPathCount == len(ds.possibleAccessPaths) {
+			if warningMsg == "" {
+				warningMsg = "IndexMerge is inapplicable"
+			}
+			return nil
 		}
-		return nil
+
+		// If len(indexMergeHints) > 0 and some index-merge paths were added, then prune all other non-index-merge paths.
+		// if len(ds.possibleAccessPaths) > oldIndexMergeCount, it means composed index merge path is generated, prune others.
+		if len(ds.possibleAccessPaths) > oldIndexMergeCount {
+			ds.possibleAccessPaths = ds.possibleAccessPaths[oldIndexMergeCount:]
+		} else {
+			ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
+		}
 	}
 
-	// If len(indexMergeHints) > 0 and some index-merge paths were added, then prune all other non-index-merge paths.
-	// if len(ds.possibleAccessPaths) > oldIndexMergeCount, it means composed index merge path is generated, prune others.
-	if len(ds.possibleAccessPaths) > oldIndexMergeCount {
-		ds.possibleAccessPaths = ds.possibleAccessPaths[oldIndexMergeCount:]
-	} else {
-		ds.possibleAccessPaths = ds.possibleAccessPaths[regularPathCount:]
-	}
+	// If there is a multi-valued index hint, remove all paths which don't use the specified index.
+	ds.cleanAccessPathForMVIndexHint()
+
 	return nil
 }
 
@@ -687,7 +690,7 @@ func (ds *DataSource) generateMVIndexPartialPath4Or(normalPathCnt int, indexMerg
 			bestNeedSelection    bool
 		)
 		for _, onePossibleMVIndexPath := range possibleMVIndexPaths {
-			idxCols, ok := prepareCols4MVIndex(ds.table.Meta(), onePossibleMVIndexPath.Index, ds.TblCols)
+			idxCols, ok := PrepareCols4MVIndex(ds.table.Meta(), onePossibleMVIndexPath.Index, ds.TblCols)
 			if !ok {
 				continue
 			}
@@ -702,10 +705,14 @@ func (ds *DataSource) generateMVIndexPartialPath4Or(normalPathCnt int, indexMerg
 				logutil.BgLogger().Debug("build index merge partial mv index paths failed", zap.Error(err))
 				return nil, nil, false, err
 			}
-			if isIntersection || !ok { // limitation 2
+			if !ok || len(paths) == 0 {
 				continue
 			}
-			if len(paths) == 0 {
+			// only under 2 cases we can fallthrough it.
+			// 1: the index merge only has one partial path.
+			// 2: index merge is UNION type.
+			canFallThrough := len(paths) == 1 || !isIntersection
+			if !canFallThrough {
 				continue
 			}
 			// UNION case, use the max count after access for simplicity.
@@ -755,11 +762,11 @@ func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, in
 	mvAndPartialPath := make([]*util.AccessPath, 0, len(possibleMVIndexPaths))
 	usedAccessCondsMap := make(map[string]expression.Expression, len(indexMergeConds))
 	for idx := 0; idx < len(possibleMVIndexPaths); idx++ {
-		idxCols, ok := prepareCols4MVIndex(ds.table.Meta(), possibleMVIndexPaths[idx].Index, ds.TblCols)
+		idxCols, ok := PrepareCols4MVIndex(ds.table.Meta(), possibleMVIndexPaths[idx].Index, ds.TblCols)
 		if !ok {
 			continue
 		}
-		accessFilters, _, mvColOffset, mvFilterMutations := ds.collectFilters4MVIndexMutations(indexMergeConds, idxCols)
+		accessFilters, _, mvColOffset, mvFilterMutations := CollectFilters4MVIndexMutations(ds.SCtx(), indexMergeConds, idxCols)
 		if len(accessFilters) == 0 { // cannot use any filter on this MVIndex
 			continue
 		}
@@ -862,7 +869,7 @@ func (ds *DataSource) generateIndexMergeOnDNF4MVIndex(normalPathCnt int, filters
 			continue // not a MVIndex path
 		}
 
-		idxCols, ok := prepareCols4MVIndex(ds.table.Meta(), ds.possibleAccessPaths[idx].Index, ds.TblCols)
+		idxCols, ok := PrepareCols4MVIndex(ds.table.Meta(), ds.possibleAccessPaths[idx].Index, ds.TblCols)
 		if !ok {
 			continue
 		}
@@ -1123,7 +1130,7 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 			continue // not a MVIndex path
 		}
 
-		idxCols, ok := prepareCols4MVIndex(ds.table.Meta(), ds.possibleAccessPaths[idx].Index, ds.TblCols)
+		idxCols, ok := PrepareCols4MVIndex(ds.table.Meta(), ds.possibleAccessPaths[idx].Index, ds.TblCols)
 		if !ok {
 			continue
 		}
@@ -1193,10 +1200,17 @@ func buildPartialPaths4MVIndex(
 	if virColID == -1 { // unexpected, no vir-col on this MVIndex
 		return nil, false, false, nil
 	}
-	if len(accessFilters) <= virColID { // no filter related to the vir-col, build a partial path directly.
-		partialPath, ok, err := buildPartialPath4MVIndex(sctx, accessFilters, idxCols, mvIndex, histColl)
-		return []*util.AccessPath{partialPath}, false, ok, err
+	if len(accessFilters) <= virColID {
+		// No filter related to the vir-col, cannot build a path for multi-valued index. Scanning on a multi-valued
+		// index will only produce the rows whose corresponding array is not empty.
+		return nil, false, false, nil
 	}
+	// If the condition is related with the array column, all following condition assumes that the array is not empty:
+	// `member of`, `json_contains`, `json_overlaps` all return false when the array is empty, except that
+	// `json_contains('[]', '[]')` is true. Therefore, using `json_contains(array, '[]')` is also not allowed here.
+	//
+	// Only when the condition implies that the array is not empty, it'd be safe to scan on multi-valued index without
+	// worrying whether the row with empty array will be lost in the result.
 
 	virCol := idxCols[virColID]
 	jsonType := virCol.GetType().ArrayType()
@@ -1221,7 +1235,9 @@ func buildPartialPaths4MVIndex(
 	case ast.JSONContains: // (json_contains(a->'$.zip', '[1, 2, 3]')
 		isIntersection = true
 		virColVals, ok = jsonArrayExpr2Exprs(sctx, sf.GetArgs()[1], jsonType)
-		if !ok || len(virColVals) == 0 { // json_contains(JSON, '[]') is TRUE
+		if !ok || len(virColVals) == 0 {
+			// json_contains(JSON, '[]') is TRUE. If the row has an empty array, it'll not exist on multi-valued index,
+			// but the `json_contains(array, '[]')` is still true, so also don't try to scan on the index.
 			return nil, false, false, nil
 		}
 	case ast.JSONOverlaps: // (json_overlaps(a->'$.zip', '[1, 2, 3]')
@@ -1301,7 +1317,8 @@ func buildPartialPath4MVIndex(
 	return partialPath, true, nil
 }
 
-func prepareCols4MVIndex(
+// PrepareCols4MVIndex exported for test.
+func PrepareCols4MVIndex(
 	tableInfo *model.TableInfo,
 	mvIndex *model.IndexInfo,
 	tblCols []*expression.Column,
@@ -1365,6 +1382,7 @@ func collectFilters4MVIndex(sctx sessionctx.Context, filters []expression.Expres
 	return accessFilters, remainingFilters
 }
 
+// CollectFilters4MVIndexMutations exported for unit test.
 // For idx(x, cast(a as array), z), `x=1 and (2 member of a) and (1 member of a) and z=1 and x+z>0` is split to:
 // accessFilters combination:
 // 1: `x=1 and (2 member of a) and z=1`, remaining: `x+z>0`.
@@ -1401,7 +1419,7 @@ func collectFilters4MVIndex(sctx sessionctx.Context, filters []expression.Expres
 //	accessFilters: [x=1, (2 member of a), z=1], remainingFilters: [x+z>0], mvColOffset: 1, mvFilterMutations[(2 member of a), (1 member of a)]
 //
 // the outer usage will be: accessFilter[mvColOffset] = each element of mvFilterMutations to get the mv access filters mutation combination.
-func (ds *DataSource) collectFilters4MVIndexMutations(filters []expression.Expression,
+func CollectFilters4MVIndexMutations(sctx sessionctx.Context, filters []expression.Expression,
 	idxCols []*expression.Column) (accessFilters, remainingFilters []expression.Expression, mvColOffset int, mvFilterMutations []expression.Expression) {
 	usedAsAccess := make([]bool, len(filters))
 	// accessFilters [x, a<json>, z]
@@ -1415,12 +1433,20 @@ func (ds *DataSource) collectFilters4MVIndexMutations(filters []expression.Expre
 			if usedAsAccess[i] {
 				continue
 			}
-			if checkFilter4MVIndexColumn(ds.SCtx(), f, col) {
+			if checkFilter4MVIndexColumn(sctx, f, col) {
 				if col.VirtualExpr != nil && col.VirtualExpr.GetType().IsArray() {
 					// assert jsonColOffset should always be the same.
 					// if the filter is from virtual expression, it means it is about the mv json col.
 					mvFilterMutations = append(mvFilterMutations, f)
-					mvColOffset = z
+					if mvColOffset == -1 {
+						// means first encountering, recording offset pos, and append it as occupation of access filter.
+						mvColOffset = z
+						accessFilters = append(accessFilters, f)
+					}
+					// additional encountering, just map it as used access.
+					usedAsAccess[i] = true
+					found = true
+					continue
 				}
 				accessFilters = append(accessFilters, f)
 				usedAsAccess[i] = true
@@ -1438,6 +1464,57 @@ func (ds *DataSource) collectFilters4MVIndexMutations(filters []expression.Expre
 		}
 	}
 	return accessFilters, remainingFilters, mvColOffset, mvFilterMutations
+}
+
+// cleanAccessPathForMVIndexHint removes all other access path if there is a multi-valued index hint, and this hint
+// has a valid path
+func (ds *DataSource) cleanAccessPathForMVIndexHint() {
+	forcedMultiValuedIndex := make(map[int64]struct{}, len(ds.possibleAccessPaths))
+	for _, p := range ds.possibleAccessPaths {
+		if !isMVIndexPath(p) || !p.Forced {
+			continue
+		}
+		forcedMultiValuedIndex[p.Index.ID] = struct{}{}
+	}
+	// no multi-valued index specified, just return
+	if len(forcedMultiValuedIndex) == 0 {
+		return
+	}
+
+	validMVIndexPath := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
+	for _, p := range ds.possibleAccessPaths {
+		if indexMergeContainSpecificIndex(p, forcedMultiValuedIndex) {
+			validMVIndexPath = append(validMVIndexPath, p)
+		}
+	}
+	if len(validMVIndexPath) > 0 {
+		ds.possibleAccessPaths = validMVIndexPath
+	}
+}
+
+// indexMergeContainSpecificIndex checks whether the index merge path contains at least one index in the `indexSet`
+func indexMergeContainSpecificIndex(path *util.AccessPath, indexSet map[int64]struct{}) bool {
+	if path.PartialIndexPaths == nil {
+		return false
+	}
+	for _, p := range path.PartialIndexPaths {
+		// NOTE: currently, an index merge access path can only be "a single layer", it's impossible to meet this
+		// condition. These codes are just left here for future change.
+		if len(p.PartialIndexPaths) > 0 {
+			contain := indexMergeContainSpecificIndex(p, indexSet)
+			if contain {
+				return true
+			}
+		}
+
+		if p.Index != nil {
+			if _, ok := indexSet[p.Index.ID]; ok {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // checkFilter4MVIndexColumn checks whether this filter can be used as an accessFilter to access the MVIndex column.

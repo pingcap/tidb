@@ -182,7 +182,7 @@ func TestPDRequestRetry(t *testing.T) {
 		bytes, err := io.ReadAll(r.Body)
 		require.NoError(t, err)
 		require.Equal(t, "test", string(bytes))
-		if count <= pdRequestRetryTime-1 {
+		if count <= PDRequestRetryTime-1 {
 			w.WriteHeader(http.StatusGatewayTimeout)
 			return
 		}
@@ -203,7 +203,7 @@ func TestPDRequestRetry(t *testing.T) {
 	count = 0
 	ts = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		count++
-		if count <= pdRequestRetryTime+1 {
+		if count <= PDRequestRetryTime+1 {
 			w.WriteHeader(http.StatusGatewayTimeout)
 			return
 		}

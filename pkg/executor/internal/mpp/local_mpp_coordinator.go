@@ -613,13 +613,17 @@ func (c *localMppCoordinator) IsClosed() bool {
 // Close implements MppCoordinator interface
 // TODO: Test the case that user cancels the query.
 func (c *localMppCoordinator) Close() error {
+	c.closeWithoutReport()
+	c.handleAllReports()
+	return nil
+}
+
+func (c *localMppCoordinator) closeWithoutReport() {
 	if atomic.CompareAndSwapUint32(&c.closed, 0, 1) {
 		close(c.finishCh)
 	}
 	c.cancelFunc()
 	<-c.wgDoneChan
-	c.handleAllReports()
-	return nil
 }
 
 func (c *localMppCoordinator) handleMPPStreamResponse(bo *backoff.Backoffer, response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {
@@ -668,10 +672,17 @@ func (c *localMppCoordinator) nextImpl(ctx context.Context) (resp *mppResponse, 
 		case resp, ok = <-c.respChan:
 			return
 		case <-ticker.C:
-			if c.vars != nil && c.vars.Killed != nil && atomic.LoadUint32(c.vars.Killed) == 1 {
-				err = derr.ErrQueryInterrupted
-				exit = true
-				return
+			if c.vars != nil && c.vars.Killed != nil {
+				killed := atomic.LoadUint32(c.vars.Killed)
+				if killed != 0 {
+					logutil.Logger(ctx).Info(
+						"a killed signal is received",
+						zap.Uint32("signal", killed),
+					)
+					err = derr.ErrQueryInterrupted
+					exit = true
+					return
+				}
 			}
 		case <-c.finishCh:
 			exit = true

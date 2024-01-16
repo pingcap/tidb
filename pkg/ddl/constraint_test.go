@@ -97,7 +97,6 @@ func TestAlterAddConstraintStateChange(t *testing.T) {
 			tableCommon, ok := constraintTable.(*tables.TableCommon)
 			require.True(t, ok)
 			originCons := tableCommon.Constraints
-			tableCommon.WritableConstraints = []*table.Constraint{}
 			tableCommon.Constraints = []*table.Constraint{}
 			// insert data
 			tk1.MustExec("insert into t values(1)")
@@ -130,15 +129,11 @@ func TestAlterAddConstraintStateChange1(t *testing.T) {
 	tk1.MustExec("use test")
 	tk1.MustExec("insert into t values(12)")
 
-	var checkErr error
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	callback := &callback.TestDDLCallback{}
 	// StatNone -> StateWriteOnly
 	onJobUpdatedExportedFunc1 := func(job *model.Job) {
-		if checkErr != nil {
-			return
-		}
 		originalCallback.OnChanged(nil)
 		if job.SchemaState == model.StateWriteOnly {
 			// set constraint state
@@ -146,7 +141,6 @@ func TestAlterAddConstraintStateChange1(t *testing.T) {
 			tableCommon, ok := constraintTable.(*tables.TableCommon)
 			require.True(t, ok)
 			originCons := tableCommon.Constraints
-			tableCommon.WritableConstraints = []*table.Constraint{}
 			tableCommon.Constraints = []*table.Constraint{}
 			// insert data
 			tk1.MustExec("insert into t values(1)")
@@ -174,15 +168,11 @@ func TestAlterAddConstraintStateChange2(t *testing.T) {
 	tk1.MustExec("use test")
 	tk1.MustExec("insert into t values(12)")
 
-	var checkErr error
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	callback := &callback.TestDDLCallback{}
 	// StateWriteOnly -> StateWriteReorganization
 	onJobUpdatedExportedFunc2 := func(job *model.Job) {
-		if checkErr != nil {
-			return
-		}
 		originalCallback.OnChanged(nil)
 		if job.SchemaState == model.StateWriteReorganization {
 			// set constraint state
@@ -190,7 +180,6 @@ func TestAlterAddConstraintStateChange2(t *testing.T) {
 			tableCommon, ok := constraintTable.(*tables.TableCommon)
 			require.True(t, ok)
 			tableCommon.Constraints[0].State = model.StateWriteOnly
-			tableCommon.WritableConstraints = []*table.Constraint{}
 			// insert data
 			tk1.MustGetErrMsg("insert into t values(1)", "[table:3819]Check constraint 'c2' is violated.")
 			// recover
@@ -217,13 +206,13 @@ func TestAlterAddConstraintStateChange3(t *testing.T) {
 	tk1.MustExec("use test")
 	tk1.MustExec("insert into t values(12)")
 
-	var checkErr error
+	addCheckDone := false
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	callback := &callback.TestDDLCallback{}
 	// StateWriteReorganization -> StatePublic
 	onJobUpdatedExportedFunc3 := func(job *model.Job) {
-		if checkErr != nil {
+		if job.Type != model.ActionAddCheckConstraint || job.TableName != "t" {
 			return
 		}
 		originalCallback.OnChanged(nil)
@@ -233,19 +222,24 @@ func TestAlterAddConstraintStateChange3(t *testing.T) {
 			tableCommon, ok := constraintTable.(*tables.TableCommon)
 			require.True(t, ok)
 			tableCommon.Constraints[0].State = model.StateWriteReorganization
-			tableCommon.WritableConstraints = []*table.Constraint{}
 			// insert data
 			tk1.MustGetErrMsg("insert into t values(1)", "[table:3819]Check constraint 'c3' is violated.")
 			// recover
 			tableCommon.Constraints[0].State = model.StatePublic
 			tableCommon.WritableConstraint()
+			addCheckDone = true
 		}
 	}
 	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc3)
 	d.SetHook(callback)
 	tk.MustExec("alter table t add constraint c3 check ( a > 10)")
 	// Issue TiDB#48123.
-	time.Sleep(50 * time.Millisecond)
+	for i := 0; i <= 100; i++ {
+		if addCheckDone {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	tk.MustQuery("select * from t").Check(testkit.Rows("12"))
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n  `a` int(11) DEFAULT NULL,\nCONSTRAINT `c3` CHECK ((`a` > 10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }
@@ -261,15 +255,11 @@ func TestAlterEnforcedConstraintStateChange(t *testing.T) {
 	tk1.MustExec("use test")
 	tk1.MustExec("insert into t values(12)")
 
-	var checkErr error
 	d := dom.DDL()
 	originalCallback := d.GetHook()
 	callback := &callback.TestDDLCallback{}
 	// StateWriteReorganization -> StatePublic
 	onJobUpdatedExportedFunc3 := func(job *model.Job) {
-		if checkErr != nil {
-			return
-		}
 		originalCallback.OnChanged(nil)
 		if job.SchemaState == model.StateWriteReorganization {
 			// set constraint state
@@ -277,7 +267,6 @@ func TestAlterEnforcedConstraintStateChange(t *testing.T) {
 			tableCommon, ok := constraintTable.(*tables.TableCommon)
 			require.True(t, ok)
 			tableCommon.Constraints[0].State = model.StateWriteOnly
-			tableCommon.WritableConstraints = []*table.Constraint{}
 			// insert data
 			tk1.MustGetErrMsg("insert into t values(1)", "[table:3819]Check constraint 'c1' is violated.")
 			// recover

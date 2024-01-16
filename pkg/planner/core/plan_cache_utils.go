@@ -24,6 +24,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -141,6 +142,13 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		} else {
 			cacheable = true // it is already checked here
 		}
+
+		if !cacheable && fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false) {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("force plan-cache: may use risky cached plan: %s", reason))
+			cacheable = true
+			reason = ""
+		}
+
 		if !cacheable {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: " + reason))
 		}
@@ -447,6 +455,8 @@ type PlanCacheStmt struct {
 	PlanDigest          *parser.Digest
 	ForUpdateRead       bool
 	SnapshotTSEvaluator func(sessionctx.Context) (uint64, error)
+
+	BindingInfo bindinfo.BindingMatchInfo
 
 	// the different between NormalizedSQL, NormalizedSQL4PC and StmtText:
 	//  for the query `select * from t where a>1 and b<?`, then

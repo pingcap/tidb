@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -42,6 +43,11 @@ type Granularity string
 const (
 	FineGrained   Granularity = "fine-grained"
 	CoarseGrained Granularity = "coarse-grained"
+)
+
+const (
+	splitRegionKeysConcurrency   = 8
+	splitRegionRangesConcurrency = 16
 )
 
 type SplitContext struct {
@@ -99,12 +105,19 @@ func (rs *RegionSplitter) ExecuteSplit(
 	if errSplit != nil {
 		return errors.Trace(errSplit)
 	}
+	if len(sortedRanges) == 0 {
+		log.Info("skip split regions after sorted, no range")
+		return nil
+	}
 	sortedKeys := make([][]byte, 0, len(sortedRanges))
 	totalRangeSize := uint64(0)
 	for _, r := range sortedRanges {
 		sortedKeys = append(sortedKeys, r.EndKey)
 		totalRangeSize += r.Size
 	}
+	// need use first range's start key to scan region
+	// and the range size must be greater than 0 here
+	scanStartKey := sortedRanges[0].StartKey
 	sctx := SplitContext{
 		isRawKv:     isRawKv,
 		needScatter: true,
@@ -115,7 +128,7 @@ func (rs *RegionSplitter) ExecuteSplit(
 	if granularity == string(CoarseGrained) {
 		return rs.executeSplitByRanges(ctx, sctx, sortedRanges)
 	}
-	return rs.executeSplitByKeys(ctx, sctx, sortedKeys)
+	return rs.executeSplitByKeys(ctx, sctx, scanStartKey, sortedKeys)
 }
 
 func (rs *RegionSplitter) executeSplitByRanges(
@@ -164,8 +177,9 @@ func (rs *RegionSplitter) executeSplitByRanges(
 				}
 			}
 		}
-
-		workerPool := utils.NewWorkerPool(uint(splitContext.storeCount), "split ranges")
+		// pd cannot handling too many scan regions requests.
+		poolSize := mathutil.Clamp(uint(splitContext.storeCount), 1, splitRegionRangesConcurrency)
+		workerPool := utils.NewWorkerPool(poolSize, "split ranges")
 		eg, ectx := errgroup.WithContext(ctx)
 		for rID, rgs := range splitRangeMap {
 			region := regionMap[rID]
@@ -183,6 +197,13 @@ func (rs *RegionSplitter) executeSplitByRanges(
 				for _, rg := range ranges {
 					rangeSize += rg.Size
 					allKeys = append(allKeys, rg.EndKey)
+				}
+				// need use first range's start key to scan region
+				// and the range size must be greater than 0 here
+				scanStartKey := ranges[0].StartKey
+				// if ranges is less than store count, we can't split it by range
+				if len(ranges) <= sctx.storeCount {
+					return rs.executeSplitByKeys(ectx, sctx, scanStartKey, allKeys)
 				}
 				expectSplitSize := rangeSize / uint64(sctx.storeCount)
 				size := uint64(0)
@@ -216,7 +237,7 @@ func (rs *RegionSplitter) executeSplitByRanges(
 				}
 				sctx.onSplit(keys)
 				sctx.needScatter = false
-				return rs.executeSplitByKeys(ectx, sctx, allKeys)
+				return rs.executeSplitByKeys(ectx, sctx, scanStartKey, allKeys)
 			})
 		}
 		return eg.Wait()
@@ -236,11 +257,12 @@ func (rs *RegionSplitter) executeSplitByRanges(
 func (rs *RegionSplitter) executeSplitByKeys(
 	ctx context.Context,
 	splitContext SplitContext,
+	scanStartKey []byte,
 	sortedKeys [][]byte,
 ) error {
 	var mutex sync.Mutex
 	startTime := time.Now()
-	minKey := codec.EncodeBytesExt(nil, sortedKeys[0], splitContext.isRawKv)
+	minKey := codec.EncodeBytesExt(nil, scanStartKey, splitContext.isRawKv)
 	maxKey := codec.EncodeBytesExt(nil, sortedKeys[len(sortedKeys)-1], splitContext.isRawKv)
 	scatterRegions := make([]*split.RegionInfo, 0)
 	regionsMap := make(map[uint64]*split.RegionInfo)
@@ -256,7 +278,7 @@ func (rs *RegionSplitter) executeSplitByKeys(
 		for _, region := range regions {
 			regionMap[region.Region.GetId()] = region
 		}
-		workerPool := utils.NewWorkerPool(8, "split keys")
+		workerPool := utils.NewWorkerPool(splitRegionKeysConcurrency, "split keys")
 		eg, ectx := errgroup.WithContext(ctx)
 		for regionID, splitKeys := range splitKeyMap {
 			region := regionMap[regionID]

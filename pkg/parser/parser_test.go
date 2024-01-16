@@ -3961,6 +3961,12 @@ func TestErrorMsg(t *testing.T) {
 	_, _, err = p.Parse("create table t(f_year year(5))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", "", "")
 	require.EqualError(t, err, "[parser:1818]Supports only YEAR or YEAR(4) column")
 
+	_, _, err = p.Parse("create table ``.t (id int);", "", "")
+	require.EqualError(t, err, "[parser:1102]Incorrect database name ''")
+
+	_, _, err = p.Parse("create table ` `.t (id int);", "", "")
+	require.EqualError(t, err, "[parser:1102]Incorrect database name ' '")
+
 	_, _, err = p.Parse("select ifnull(a,0) & ifnull(a,0) like '55' ESCAPE '\\\\a' from t;", "", "")
 	require.EqualError(t, err, "[parser:1210]Incorrect arguments to ESCAPE")
 
@@ -5493,13 +5499,6 @@ func TestBinding(t *testing.T) {
 		{"create global binding using select * from *.t1 where t1.a > (select max(a) from t2)", true, "CREATE GLOBAL BINDING FOR SELECT * FROM `*`.`t1` WHERE `t1`.`a`>(SELECT MAX(`a`) FROM `t2`) USING SELECT * FROM `*`.`t1` WHERE `t1`.`a`>(SELECT MAX(`a`) FROM `t2`)"},
 		{"create session binding using select * from *.t1", true, "CREATE SESSION BINDING FOR SELECT * FROM `*`.`t1` USING SELECT * FROM `*`.`t1`"},
 		{"create binding using select * from *.t1", true, "CREATE SESSION BINDING FOR SELECT * FROM `*`.`t1` USING SELECT * FROM `*`.`t1`"},
-		// Universal bindings
-		{"create global universal binding for select * from t using select * from t", true, "CREATE GLOBAL UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
-		{"create session universal binding for select * from t using select * from t", true, "CREATE SESSION UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
-		{"create universal binding for select * from t using select * from t", true, "CREATE SESSION UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
-		{"create global universal binding using select * from t", true, "CREATE GLOBAL UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
-		{"create session universal binding using select * from t", true, "CREATE SESSION UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
-		{"create universal binding using select * from t", true, "CREATE SESSION UNIVERSAL BINDING FOR SELECT * FROM `t` USING SELECT * FROM `t`"},
 		// Update cases.
 		{"CREATE GLOBAL BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1", true, "CREATE GLOBAL BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1"},
 		{"CREATE SESSION BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1", true, "CREATE SESSION BINDING FOR UPDATE `t` SET `a`=1 WHERE `b`=1 USING UPDATE /*+ USE_INDEX(`t` `b`)*/ `t` SET `a`=1 WHERE `b`=1"},

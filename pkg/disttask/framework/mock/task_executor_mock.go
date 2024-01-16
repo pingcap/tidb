@@ -149,19 +149,18 @@ func (mr *MockTaskTableMockRecorder) HasSubtasksInStates(arg0, arg1, arg2, arg3 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "HasSubtasksInStates", reflect.TypeOf((*MockTaskTable)(nil).HasSubtasksInStates), varargs...)
 }
 
-// IsTaskExecutorCanceled mocks base method.
-func (m *MockTaskTable) IsTaskExecutorCanceled(arg0 context.Context, arg1 string, arg2 int64) (bool, error) {
+// InitMeta mocks base method.
+func (m *MockTaskTable) InitMeta(arg0 context.Context, arg1, arg2 string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsTaskExecutorCanceled", arg0, arg1, arg2)
-	ret0, _ := ret[0].(bool)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
+	ret := m.ctrl.Call(m, "InitMeta", arg0, arg1, arg2)
+	ret0, _ := ret[0].(error)
+	return ret0
 }
 
-// IsTaskExecutorCanceled indicates an expected call of IsTaskExecutorCanceled.
-func (mr *MockTaskTableMockRecorder) IsTaskExecutorCanceled(arg0, arg1, arg2 any) *gomock.Call {
+// InitMeta indicates an expected call of InitMeta.
+func (mr *MockTaskTableMockRecorder) InitMeta(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsTaskExecutorCanceled", reflect.TypeOf((*MockTaskTable)(nil).IsTaskExecutorCanceled), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InitMeta", reflect.TypeOf((*MockTaskTable)(nil).InitMeta), arg0, arg1, arg2)
 }
 
 // PauseSubtasks mocks base method.
@@ -178,18 +177,32 @@ func (mr *MockTaskTableMockRecorder) PauseSubtasks(arg0, arg1, arg2 any) *gomock
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "PauseSubtasks", reflect.TypeOf((*MockTaskTable)(nil).PauseSubtasks), arg0, arg1, arg2)
 }
 
-// StartManager mocks base method.
-func (m *MockTaskTable) StartManager(arg0 context.Context, arg1, arg2 string) error {
+// RecoverMeta mocks base method.
+func (m *MockTaskTable) RecoverMeta(arg0 context.Context, arg1, arg2 string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "StartManager", arg0, arg1, arg2)
+	ret := m.ctrl.Call(m, "RecoverMeta", arg0, arg1, arg2)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// StartManager indicates an expected call of StartManager.
-func (mr *MockTaskTableMockRecorder) StartManager(arg0, arg1, arg2 any) *gomock.Call {
+// RecoverMeta indicates an expected call of RecoverMeta.
+func (mr *MockTaskTableMockRecorder) RecoverMeta(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StartManager", reflect.TypeOf((*MockTaskTable)(nil).StartManager), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecoverMeta", reflect.TypeOf((*MockTaskTable)(nil).RecoverMeta), arg0, arg1, arg2)
+}
+
+// RunningSubtasksBack2Pending mocks base method.
+func (m *MockTaskTable) RunningSubtasksBack2Pending(arg0 context.Context, arg1 []*proto.Subtask) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RunningSubtasksBack2Pending", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RunningSubtasksBack2Pending indicates an expected call of RunningSubtasksBack2Pending.
+func (mr *MockTaskTableMockRecorder) RunningSubtasksBack2Pending(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunningSubtasksBack2Pending", reflect.TypeOf((*MockTaskTable)(nil).RunningSubtasksBack2Pending), arg0, arg1)
 }
 
 // StartSubtask mocks base method.
@@ -358,20 +371,6 @@ func (m *MockTaskExecutor) IsRetryableError(arg0 error) bool {
 func (mr *MockTaskExecutorMockRecorder) IsRetryableError(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsRetryableError", reflect.TypeOf((*MockTaskExecutor)(nil).IsRetryableError), arg0)
-}
-
-// Pause mocks base method.
-func (m *MockTaskExecutor) Pause(arg0 context.Context, arg1 *proto.Task) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Pause", arg0, arg1)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// Pause indicates an expected call of Pause.
-func (mr *MockTaskExecutorMockRecorder) Pause(arg0, arg1 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Pause", reflect.TypeOf((*MockTaskExecutor)(nil).Pause), arg0, arg1)
 }
 
 // Rollback mocks base method.

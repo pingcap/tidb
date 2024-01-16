@@ -43,6 +43,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -57,7 +58,7 @@ import (
 
 func TestGetLock(t *testing.T) {
 	ctx := context.Background()
-	store := testkit.CreateMockStore(t)
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
 	tk := testkit.NewTestKit(t, store)
 
 	// Increase pessimistic txn max retry count to make test more stable.

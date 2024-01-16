@@ -188,34 +188,56 @@ const (
 	ErrGroupDividedByZero
 	// ErrGroupAutoIncReadFailed is the group of auto increment read failed errors
 	ErrGroupAutoIncReadFailed
+	// ErrGroupNoMatchedPartition is the group of no partition is matched errors.
+	ErrGroupNoMatchedPartition
 	// errGroupCount is the count of all `ErrGroup`. Please leave it at the end of the list.
 	errGroupCount
 )
 
 func init() {
-	truncateErrCodes := []errors.ErrCode{
-		errno.ErrTruncatedWrongValue,
-		errno.ErrDataTooLong,
-		errno.ErrTruncatedWrongValueForField,
-		errno.ErrWarnDataOutOfRange,
-		errno.ErrDataOutOfRange,
-		errno.ErrBadNumber,
-		errno.ErrWrongValueForType,
-		errno.ErrDatetimeFunctionOverflow,
-		errno.WarnDataTruncated,
-		errno.ErrIncorrectDatetimeValue,
-	}
-	for _, errCode := range truncateErrCodes {
-		errGroupMap[errCode] = ErrGroupTruncate
+	group2Errors := map[ErrGroup][]errors.ErrCode{
+		ErrGroupTruncate: {
+			errno.ErrTruncatedWrongValue,
+			errno.ErrDataTooLong,
+			errno.ErrTruncatedWrongValueForField,
+			errno.ErrWarnDataOutOfRange,
+			errno.ErrDataOutOfRange,
+			errno.ErrBadNumber,
+			errno.ErrWrongValueForType,
+			errno.ErrDatetimeFunctionOverflow,
+			errno.WarnDataTruncated,
+			errno.ErrIncorrectDatetimeValue,
+		},
+		ErrGroupBadNull: {
+			errno.ErrBadNull,
+			errno.ErrWarnNullToNotnull,
+		},
+		ErrGroupDividedByZero: {
+			errno.ErrDivisionByZero,
+		},
+		ErrGroupAutoIncReadFailed: {
+			errno.ErrAutoincReadFailed,
+		},
+		ErrGroupNoMatchedPartition: {
+			errno.ErrNoPartitionForGivenValue,
+			errno.ErrRowDoesNotMatchGivenPartitionSet,
+		},
+		ErrGroupDupKey: {
+			errno.ErrDupEntry,
+		},
 	}
 
-	errGroupMap[errno.ErrDivisionByZero] = ErrGroupDividedByZero
-	errGroupMap[errno.ErrAutoincReadFailed] = ErrGroupAutoIncReadFailed
+	for group, codes := range group2Errors {
+		for _, errCode := range codes {
+			errGroupMap[errCode] = group
+		}
+	}
 }
 
 // ResolveErrLevel resolves the error level according to the `ignore` and `warn` flags
 // if ignore is true, it will return `LevelIgnore` to ignore the error,
 // otherwise, it will return `LevelWarn` or `LevelError` according to the `warn` flag
+// Only one of `ignore` and `warn` can be true.
 func ResolveErrLevel(ignore bool, warn bool) Level {
 	if ignore {
 		return LevelIgnore
