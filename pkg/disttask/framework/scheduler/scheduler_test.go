@@ -527,6 +527,9 @@ func TestManagerScheduleLoop(t *testing.T) {
 	}
 	concurrencies := []int{4, 6, 16, 2, 4, 4}
 	waitChannels := make(map[string](chan struct{}))
+	for i := 0; i < len(concurrencies); i++ {
+		waitChannels[fmt.Sprintf("key/%d", i)] = make(chan struct{})
+	}
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 			mockScheduler = mock.NewMockScheduler(ctrl)
@@ -550,10 +553,8 @@ func TestManagerScheduleLoop(t *testing.T) {
 						proto.TaskStateSucceed, proto.StepDone, task.ID)
 					return err
 				}))
-
 			})
 			mockScheduler.EXPECT().Close()
-			waitChannels[task.Key] = make(chan struct{})
 			return mockScheduler
 		},
 	)
