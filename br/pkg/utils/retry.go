@@ -15,7 +15,6 @@ import (
 	tmysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/tikv/client-go/v2/tikv"
-	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
@@ -233,7 +232,7 @@ func WithRetryV2[T any](
 			log.Info("retry success", zap.Int("attempt", backoffer.Attempt()))
 			return res, nil
 		}
-		allErrors = multierr.Append(allErrors, err)
+		allErrors = err
 		select {
 		case <-ctx.Done():
 			log.Info("retry context done", zap.Int("attempt", backoffer.Attempt()))
