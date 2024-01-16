@@ -288,6 +288,11 @@ func Open(ctx context.Context, e Executor) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = util.GetRecoverError(r)
+			logutil.Logger(ctx).Error(
+				"open executor panic",
+				zap.Stack("stack"),
+				zap.Any("recover", r),
+			)
 		}
 	}()
 	return e.Open(ctx)
@@ -332,6 +337,11 @@ func Close(e Executor) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = util.GetRecoverError(r)
+			logutil.BgLogger().Error(
+				"close executor panic",
+				zap.Stack("stack"),
+				zap.Any("recover", r),
+			)
 		}
 	}()
 	return e.Close()
