@@ -167,14 +167,10 @@ func (s *BaseTaskExecutor) Run(ctx context.Context, task *proto.Task) (err error
 		return err
 	}
 	if err == nil {
-		// may have error in
-		// 1. defer function in run(ctx, task)
-		// 2. cancel ctx
+		// may have error in defer function of run(ctx, task).
 		// TODO: refine onError/getError
 		if s.getError() != nil {
 			err = s.getError()
-		} else if ctx.Err() != nil {
-			err = ctx.Err()
 		} else {
 			return nil
 		}
