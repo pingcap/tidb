@@ -1652,7 +1652,7 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 				COALESCE(MAX(e.engine_id), -1)
 			FROM %[1]s.%[2]s t
 			LEFT JOIN %[1]s.%[3]s e ON t.table_name = e.table_name
-			WHERE table_name = ? AND t.status <= ?
+			WHERE t.table_name = ? AND t.status <= ?
 			GROUP BY t.table_name;
 		`, cpdb.schema, CheckpointTableNameTable, CheckpointTableNameEngine)
 		deleteChunkQuery = common.SprintfWithIdentifiers(`
