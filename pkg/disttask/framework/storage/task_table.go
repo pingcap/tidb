@@ -19,7 +19,6 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/docker/go-units"
 	"github.com/ngaut/pools"
@@ -31,11 +30,9 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
-	"go.uber.org/zap"
 )
 
 const (
@@ -129,48 +126,6 @@ func GetTaskManager() (*TaskManager, error) {
 // SetTaskManager sets the task manager.
 func SetTaskManager(is *TaskManager) {
 	taskManagerInstance.Store(is)
-}
-
-func row2TaskBasic(r chunk.Row) *proto.Task {
-	task := &proto.Task{
-		ID:          r.GetInt64(0),
-		Key:         r.GetString(1),
-		Type:        proto.TaskType(r.GetString(2)),
-		State:       proto.TaskState(r.GetString(3)),
-		Step:        proto.Step(r.GetInt64(4)),
-		Priority:    int(r.GetInt64(5)),
-		Concurrency: int(r.GetInt64(6)),
-	}
-	task.CreateTime, _ = r.GetTime(7).GoTime(time.Local)
-	return task
-}
-
-// Row2Task converts a row to a task.
-func Row2Task(r chunk.Row) *proto.Task {
-	task := row2TaskBasic(r)
-	var startTime, updateTime time.Time
-	if !r.IsNull(8) {
-		startTime, _ = r.GetTime(8).GoTime(time.Local)
-	}
-	if !r.IsNull(9) {
-		updateTime, _ = r.GetTime(9).GoTime(time.Local)
-	}
-	task.StartTime = startTime
-	task.StateUpdateTime = updateTime
-	task.Meta = r.GetBytes(10)
-	task.SchedulerID = r.GetString(11)
-	if !r.IsNull(12) {
-		errBytes := r.GetBytes(12)
-		stdErr := errors.Normalize("")
-		err := stdErr.UnmarshalJSON(errBytes)
-		if err != nil {
-			logutil.BgLogger().Error("unmarshal task error", zap.Error(err))
-			task.Error = errors.New(string(errBytes))
-		} else {
-			task.Error = stdErr
-		}
-	}
-	return task
 }
 
 // WithNewSession executes the function with a new session.
@@ -362,53 +317,6 @@ func (mgr *TaskManager) GetTaskByKeyWithHistory(ctx context.Context, key string)
 	}
 
 	return Row2Task(rs[0]), nil
-}
-
-// row2BasicSubTask converts a row to a subtask with basic info
-func row2BasicSubTask(r chunk.Row) *proto.Subtask {
-	taskIDStr := r.GetString(2)
-	tid, err := strconv.Atoi(taskIDStr)
-	if err != nil {
-		logutil.BgLogger().Warn("unexpected subtask id", zap.String("subtask-id", taskIDStr))
-	}
-	createTime, _ := r.GetTime(7).GoTime(time.Local)
-	var ordinal int
-	if !r.IsNull(8) {
-		ordinal = int(r.GetInt64(8))
-	}
-	subtask := &proto.Subtask{
-		ID:          r.GetInt64(0),
-		Step:        proto.Step(r.GetInt64(1)),
-		TaskID:      int64(tid),
-		Type:        proto.Int2Type(int(r.GetInt64(3))),
-		ExecID:      r.GetString(4),
-		State:       proto.SubtaskState(r.GetString(5)),
-		Concurrency: int(r.GetInt64(6)),
-		CreateTime:  createTime,
-		Ordinal:     ordinal,
-	}
-	return subtask
-}
-
-// Row2SubTask converts a row to a subtask.
-func Row2SubTask(r chunk.Row) *proto.Subtask {
-	subtask := row2BasicSubTask(r)
-	// subtask defines start/update time as bigint, to ensure backward compatible,
-	// we keep it that way, and we convert it here.
-	var startTime, updateTime time.Time
-	if !r.IsNull(9) {
-		ts := r.GetInt64(9)
-		startTime = time.Unix(ts, 0)
-	}
-	if !r.IsNull(10) {
-		ts := r.GetInt64(10)
-		updateTime = time.Unix(ts, 0)
-	}
-	subtask.StartTime = startTime
-	subtask.UpdateTime = updateTime
-	subtask.Meta = r.GetBytes(11)
-	subtask.Summary = r.GetJSON(12).String()
-	return subtask
 }
 
 // GetSubtasksByExecIDAndStepAndStates gets all subtasks by given states on one node.

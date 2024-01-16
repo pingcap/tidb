@@ -80,6 +80,7 @@ type TaskManager interface {
 	// else we use nodes without role.
 	// returned nodes are sorted by node id(host:port).
 	GetManagedNodes(ctx context.Context) ([]proto.ManagedNode, error)
+	// GetTaskExecutorIDsByTaskID gets the task executor IDs of the given task ID.
 	GetTaskExecutorIDsByTaskID(ctx context.Context, taskID int64) ([]string, error)
 
 	// GetAllSubtasksByStepAndState gets all subtasks by given states for one step.
