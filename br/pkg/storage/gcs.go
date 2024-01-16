@@ -5,6 +5,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	goerrors "errors"
 	"io"
 	"net/http"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2/google"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 	htransport "google.golang.org/api/transport/http"
@@ -370,6 +372,7 @@ skipHandleCred:
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	client.SetRetry(storage.WithErrorFunc(shouldRetry))
 
 	if !opts.SendCredentials {
 		// Clear the credentials if exists so that they will not be sent to TiKV
@@ -390,6 +393,22 @@ skipHandleCred:
 		gcs.Prefix += "//"
 	}
 	return &GCSStorage{gcs: gcs, bucket: bucket, cli: client}, nil
+}
+
+func shouldRetry(err error) bool {
+	if storage.ShouldRetry(err) {
+		return true
+	}
+
+	// workaround for https://github.com/googleapis/google-cloud-go/issues/9262
+	if e := (&googleapi.Error{}); goerrors.As(err, &e) {
+		if e.Code == 401 && strings.Contains(e.Message, "Authentication required.") {
+			log.Warn("retrying gcs request due to internal authentication error", zap.Error(err))
+			return true
+		}
+	}
+
+	return false
 }
 
 func hasSSTFiles(ctx context.Context, bucket *storage.BucketHandle, prefix string) bool {
