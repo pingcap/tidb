@@ -66,9 +66,9 @@ func NewSessionBindingHandle() SessionBindingHandle {
 	return sessionHandle
 }
 
-// appendSessionBinding adds the BindRecord to the cache, all the stale bindMetas are
+// appendSessionBinding adds the Bindings to the cache, all the stale bindMetas are
 // removed from the cache after this operation.
-func (h *sessionBindingHandle) appendSessionBinding(sqlDigest string, meta *BindRecord) {
+func (h *sessionBindingHandle) appendSessionBinding(sqlDigest string, meta Bindings) {
 	oldRecord := h.ch.GetBinding(sqlDigest)
 	err := h.ch.SetBinding(sqlDigest, meta)
 	if err != nil {
@@ -77,7 +77,7 @@ func (h *sessionBindingHandle) appendSessionBinding(sqlDigest string, meta *Bind
 	updateMetrics(metrics.ScopeSession, oldRecord, meta, false)
 }
 
-// CreateSessionBinding creates a BindRecord to the cache.
+// CreateSessionBinding creates a Bindings to the cache.
 // It replaces all the exists bindings for the same normalized SQL.
 func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, binding Binding) (err error) {
 	if err := prepareHints(sctx, &binding); err != nil {
@@ -89,11 +89,11 @@ func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, bin
 	binding.UpdateTime = now
 
 	// update the BindMeta to the cache.
-	h.appendSessionBinding(parser.DigestNormalized(binding.OriginalSQL).String(), &BindRecord{Bindings: []Binding{binding}})
+	h.appendSessionBinding(parser.DigestNormalized(binding.OriginalSQL).String(), []Binding{binding})
 	return nil
 }
 
-// DropSessionBinding drop BindRecord in the cache.
+// DropSessionBinding drop Bindings in the cache.
 func (h *sessionBindingHandle) DropSessionBinding(sqlDigest string) error {
 	if sqlDigest == "" {
 		return errors.New("sql digest is empty")
@@ -109,7 +109,7 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, fuzz
 	leastWildcards := len(tableNames) + 1
 	bindRecords := h.ch.GetAllBindings()
 	for _, bindRecord := range bindRecords {
-		for _, binding := range bindRecord.Bindings {
+		for _, binding := range bindRecord {
 			bindingStmt, err := parser.New().ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
 			if err != nil {
 				return
@@ -138,7 +138,7 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, fuzz
 // GetAllSessionBindings return all session bind info.
 func (h *sessionBindingHandle) GetAllSessionBindings() (bindings []Binding) {
 	for _, record := range h.ch.GetAllBindings() {
-		bindings = append(bindings, record.Bindings...)
+		bindings = append(bindings, record...)
 	}
 	return
 }
@@ -162,18 +162,18 @@ func (h *sessionBindingHandle) DecodeSessionStates(_ context.Context, sctx sessi
 	if len(sessionStates.Bindings) == 0 {
 		return nil
 	}
-	var records []*BindRecord
+	var records []Bindings
 	if err := json.Unmarshal(hack.Slice(sessionStates.Bindings), &records); err != nil {
 		return err
 	}
 	for _, record := range records {
 		// Restore hints and ID because hints are hard to encode.
-		for i := range record.Bindings {
-			if err := prepareHints(sctx, &record.Bindings[i]); err != nil {
+		for i := range record {
+			if err := prepareHints(sctx, &record[i]); err != nil {
 				return err
 			}
 		}
-		h.appendSessionBinding(parser.DigestNormalized(record.Bindings[0].OriginalSQL).String(), record)
+		h.appendSessionBinding(parser.DigestNormalized(record[0].OriginalSQL).String(), record)
 	}
 	return nil
 }

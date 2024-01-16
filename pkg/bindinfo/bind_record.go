@@ -57,7 +57,7 @@ type Binding struct {
 	Db          string
 	BindSQL     string
 	// Status represents the status of the binding. It can only be one of the following values:
-	// 1. deleted: BindRecord is deleted, can not be used anymore.
+	// 1. deleted: Bindings is deleted, can not be used anymore.
 	// 2. enabled, using: Binding is in the normal active mode.
 	Status     string
 	CreateTime types.Time
@@ -105,27 +105,23 @@ func (b *Binding) SinceUpdateTime() (time.Duration, error) {
 	return time.Since(updateTime), nil
 }
 
-// BindRecord represents a sql bind record retrieved from the storage.
-type BindRecord struct {
-	Bindings []Binding
-}
+// Bindings represents a sql bind record retrieved from the storage.
+type Bindings []Binding
 
 // Copy get the copy of bindRecord
-func (br *BindRecord) Copy() *BindRecord {
-	nbr := &BindRecord{}
-	nbr.Bindings = make([]Binding, len(br.Bindings))
-	copy(nbr.Bindings, br.Bindings)
+func (br Bindings) Copy() Bindings {
+	nbr := append(make([]Binding, 0, len(br)), br...)
 	return nbr
 }
 
 // HasAvailableBinding checks if there are any available bindings in bind record.
 // The available means the binding can be used or can be converted into a usable status.
 // It includes the 'Enabled', 'Using' and 'Disabled' status.
-func HasAvailableBinding(br *BindRecord) bool {
+func HasAvailableBinding(br Bindings) bool {
 	if br == nil {
 		return false
 	}
-	for _, binding := range br.Bindings {
+	for _, binding := range br {
 		if binding.IsBindingAvailable() {
 			return true
 		}
@@ -133,7 +129,7 @@ func HasAvailableBinding(br *BindRecord) bool {
 	return false
 }
 
-// prepareHints builds ID and Hint for BindRecord. If sctx is not nil, we check if
+// prepareHints builds ID and Hint for Bindings. If sctx is not nil, we check if
 // the BindSQL is still valid.
 func prepareHints(sctx sessionctx.Context, binding *Binding) error {
 	p := parser.New()
@@ -179,8 +175,8 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) error {
 	return nil
 }
 
-// `merge` merges two BindRecord. It will replace old bindings with new bindings if there are new updates.
-func merge(lBindRecord, rBindRecord *BindRecord) *BindRecord {
+// `merge` merges two Bindings. It will replace old bindings with new bindings if there are new updates.
+func merge(lBindRecord, rBindRecord Bindings) Bindings {
 	if lBindRecord == nil {
 		return rBindRecord
 	}
@@ -188,39 +184,39 @@ func merge(lBindRecord, rBindRecord *BindRecord) *BindRecord {
 		return lBindRecord
 	}
 	result := lBindRecord.Copy()
-	for i := range rBindRecord.Bindings {
-		rbind := rBindRecord.Bindings[i]
+	for i := range rBindRecord {
+		rbind := rBindRecord[i]
 		found := false
-		for j, lbind := range lBindRecord.Bindings {
+		for j, lbind := range lBindRecord {
 			if lbind.isSame(&rbind) {
 				found = true
 				if rbind.UpdateTime.Compare(lbind.UpdateTime) >= 0 {
-					result.Bindings[j] = rbind
+					result[j] = rbind
 				}
 				break
 			}
 		}
 		if !found {
-			result.Bindings = append(result.Bindings, rbind)
+			result = append(result, rbind)
 		}
 	}
 	return result
 }
 
-func removeDeletedBindings(br *BindRecord) *BindRecord {
-	result := BindRecord{Bindings: make([]Binding, 0, len(br.Bindings))}
-	for _, binding := range br.Bindings {
+func removeDeletedBindings(br Bindings) Bindings {
+	result := make([]Binding, 0, len(br))
+	for _, binding := range br {
 		if binding.Status != deleted {
-			result.Bindings = append(result.Bindings, binding)
+			result = append(result, binding)
 		}
 	}
-	return &result
+	return result
 }
 
-// size calculates the memory size of a BindRecord.
-func (br *BindRecord) size() float64 {
+// size calculates the memory size of a Bindings.
+func (br Bindings) size() float64 {
 	mem := float64(0)
-	for _, binding := range br.Bindings {
+	for _, binding := range br {
 		mem += binding.size()
 	}
 	return mem
@@ -232,7 +228,7 @@ var statusIndex = map[string]int{
 	Invalid: 2,
 }
 
-func bindingMetrics(br *BindRecord) ([]float64, []int) {
+func bindingMetrics(br Bindings) ([]float64, []int) {
 	sizes := make([]float64, len(statusIndex))
 	count := make([]int, len(statusIndex))
 	if br == nil {
@@ -240,14 +236,14 @@ func bindingMetrics(br *BindRecord) ([]float64, []int) {
 	}
 	commonLength := float64(0)
 	// We treat it as deleted if there are no bindings. It could only occur in session handles.
-	if len(br.Bindings) == 0 {
+	if len(br) == 0 {
 		sizes[statusIndex[deleted]] = commonLength
 		count[statusIndex[deleted]] = 1
 		return sizes, count
 	}
 	// Make the common length counted in the first binding.
-	sizes[statusIndex[br.Bindings[0].Status]] = commonLength
-	for _, binding := range br.Bindings {
+	sizes[statusIndex[br[0].Status]] = commonLength
+	for _, binding := range br {
 		sizes[statusIndex[binding.Status]] += binding.size()
 		count[statusIndex[binding.Status]]++
 	}
@@ -260,7 +256,7 @@ func (b *Binding) size() float64 {
 	return float64(res)
 }
 
-func updateMetrics(scope string, before *BindRecord, after *BindRecord, sizeOnly bool) {
+func updateMetrics(scope string, before Bindings, after Bindings, sizeOnly bool) {
 	beforeSize, beforeCount := bindingMetrics(before)
 	afterSize, afterCount := bindingMetrics(after)
 	for status, index := range statusIndex {
