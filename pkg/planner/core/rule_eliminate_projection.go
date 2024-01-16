@@ -128,6 +128,7 @@ func doPhysicalProjectionElimination(p PhysicalPlan) PhysicalPlan {
 	tableReader, isTableReader := p.(*PhysicalTableReader)
 	if isTableReader && tableReader.StoreType == kv.TiFlash {
 		tableReader.tablePlan = eliminatePhysicalProjection(tableReader.tablePlan)
+		tableReader.SetSchema(tableReader.tablePlan.Schema())
 		tableReader.TablePlans = flattenPushDownPlan(tableReader.tablePlan)
 		return p
 	}
