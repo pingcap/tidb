@@ -3,20 +3,14 @@
 package pdutil
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
-	"net"
 	"net/http"
-	"net/url"
-	"os"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/coreos/go-semver/semver"
@@ -128,101 +122,6 @@ var (
 	}
 )
 
-// pdHTTPRequest defines the interface to send a request to pd and return the result in bytes.
-type pdHTTPRequest func(ctx context.Context, addr string, prefix string,
-	cli *http.Client, method string, body []byte) ([]byte, error)
-
-// pdRequest is a func to send an HTTP to pd and return the result bytes.
-func pdRequest(
-	ctx context.Context,
-	addr string, prefix string,
-	cli *http.Client, method string, body []byte) ([]byte, error) {
-	_, respBody, err := pdRequestWithCode(ctx, addr, prefix, cli, method, body)
-	return respBody, err
-}
-
-func pdRequestWithCode(
-	ctx context.Context,
-	addr string, prefix string,
-	cli *http.Client, method string, body []byte) (int, []byte, error) {
-	u, err := url.Parse(addr)
-	if err != nil {
-		return 0, nil, errors.Trace(err)
-	}
-	reqURL := fmt.Sprintf("%s%s", u, prefix)
-	var (
-		req  *http.Request
-		resp *http.Response
-	)
-	if body == nil {
-		body = []byte("")
-	}
-	count := 0
-	// the total retry duration: 120*1 = 2min
-	for {
-		req, err = http.NewRequestWithContext(ctx, method, reqURL, bytes.NewBuffer(body))
-		if err != nil {
-			return 0, nil, errors.Trace(err)
-		}
-		resp, err = cli.Do(req) //nolint:bodyclose
-		count++
-		failpoint.Inject("InjectClosed", func(v failpoint.Value) {
-			if failType, ok := v.(int); ok && count <= PDRequestRetryTime-1 {
-				resp = nil
-				switch failType {
-				case 0:
-					err = &net.OpError{
-						Op:  "read",
-						Err: os.NewSyscallError("connect", syscall.ECONNREFUSED),
-					}
-				default:
-					err = &url.Error{
-						Op:  "read",
-						Err: os.NewSyscallError("connect", syscall.ECONNREFUSED),
-					}
-				}
-			}
-		})
-		if count > PDRequestRetryTime || (resp != nil && resp.StatusCode < 500) ||
-			(err != nil && !common.IsRetryableError(err)) {
-			break
-		}
-		log.Warn("request failed, will retry later",
-			zap.String("url", reqURL), zap.Int("retry-count", count), zap.Error(err))
-		if resp != nil {
-			_ = resp.Body.Close()
-		}
-		time.Sleep(pdRequestRetryInterval())
-	}
-	if err != nil {
-		return 0, nil, errors.Trace(err)
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		res, _ := io.ReadAll(resp.Body)
-		return resp.StatusCode, nil, errors.Annotatef(berrors.ErrPDInvalidResponse,
-			"[%d] %s %s", resp.StatusCode, res, reqURL)
-	}
-
-	r, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return resp.StatusCode, nil, errors.Trace(err)
-	}
-	return resp.StatusCode, r, nil
-}
-
-func pdRequestRetryInterval() time.Duration {
-	failpoint.Inject("FastRetry", func(v failpoint.Value) {
-		if v.(bool) {
-			failpoint.Return(0)
-		}
-	})
-	return time.Second
-}
-
 // DefaultExpectPDCfgGenerators returns default pd config generators
 func DefaultExpectPDCfgGenerators() map[string]pauseConfigGenerator {
 	clone := make(map[string]pauseConfigGenerator, len(expectPDCfgGenerators))
@@ -327,16 +226,6 @@ func parseVersion(versionStr string) *semver.Version {
 	})
 	return version
 }
-
-// TODO: always read latest PD nodes from PD client
-//func (p *PdController) getAllPDAddrs() []string {
-//	ret := make([]string, 0, len(p.addrs)+1)
-//	if p.pdClient != nil {
-//		ret = append(ret, p.pdClient.GetLeaderAddr())
-//	}
-//	ret = append(ret, p.addrs...)
-//	return ret
-//}
 
 func (p *PdController) isPauseConfigEnabled() bool {
 	return p.version.Compare(pauseConfigVersion) >= 0
@@ -455,10 +344,10 @@ func (p *PdController) pauseSchedulersAndConfigWith(
 
 // ResumeSchedulers resume pd scheduler.
 func (p *PdController) ResumeSchedulers(ctx context.Context, schedulers []string) error {
-	return p.resumeSchedulerWith(ctx, schedulers, pdRequest)
+	return p.resumeSchedulerWith(ctx, schedulers)
 }
 
-func (p *PdController) resumeSchedulerWith(ctx context.Context, schedulers []string, post pdHTTPRequest) (err error) {
+func (p *PdController) resumeSchedulerWith(ctx context.Context, schedulers []string) (err error) {
 	log.Info("resume scheduler", zap.Strings("schedulers", schedulers))
 	p.schedulerPauseCh <- struct{}{}
 
@@ -735,77 +624,24 @@ func (p *PdController) GetMinResolvedTS(ctx context.Context) (uint64, error) {
 
 // RecoverBaseAllocID recover base alloc id
 func (p *PdController) RecoverBaseAllocID(ctx context.Context, id uint64) error {
-	reqData, _ := json.Marshal(&struct {
-		ID string `json:"id"`
-	}{
-		ID: fmt.Sprintf("%d", id),
-	})
-	var err error
-	for _, addr := range p.getAllPDAddrs() {
-		_, e := pdRequest(ctx, addr, pdhttp.BaseAllocID, p.cli, http.MethodPost, reqData)
-		if e != nil {
-			log.Warn("failed to recover base alloc id", zap.String("addr", addr), zap.Error(e))
-			err = e
-			continue
-		}
-		return nil
-	}
-	return errors.Trace(err)
+	return p.pdHTTPCli.ResetBaseAllocID(ctx, id)
 }
 
 // ResetTS reset current ts of pd
 func (p *PdController) ResetTS(ctx context.Context, ts uint64) error {
 	// reset-ts of PD will never set ts < current pd ts
 	// we set force-use-larger=true to allow ts > current pd ts + 24h(on default)
-	reqData, _ := json.Marshal(&struct {
-		Tso            string `json:"tso"`
-		ForceUseLarger bool   `json:"force-use-larger"`
-	}{
-		Tso:            fmt.Sprintf("%d", ts),
-		ForceUseLarger: true,
-	})
-	var err error
-	for _, addr := range p.getAllPDAddrs() {
-		code, _, e := pdRequestWithCode(ctx, addr, pdhttp.ResetTS, p.cli, http.MethodPost, reqData)
-		if e != nil {
-			// for pd version <= 6.2, if the given ts < current ts of pd, pd returns StatusForbidden.
-			// it's not an error for br
-			if code == http.StatusForbidden {
-				log.Info("reset-ts returns with status forbidden, ignore")
-				return nil
-			}
-			log.Warn("failed to reset ts", zap.Uint64("ts", ts), zap.String("addr", addr), zap.Error(e))
-			err = e
-			continue
-		}
-		return nil
-	}
-	return errors.Trace(err)
+	return p.pdHTTPCli.ResetTS(ctx, ts, true)
 }
 
 // MarkRecovering mark pd into recovering
 func (p *PdController) MarkRecovering(ctx context.Context) error {
-	return p.operateRecoveringMark(ctx, http.MethodPost)
+	return p.pdHTTPCli.SetSnapshotRecoveringMark(ctx)
 }
 
 // UnmarkRecovering unmark pd recovering
 func (p *PdController) UnmarkRecovering(ctx context.Context) error {
-	return p.operateRecoveringMark(ctx, http.MethodDelete)
-}
-
-func (p *PdController) operateRecoveringMark(ctx context.Context, method string) error {
-	var err error
-	for _, addr := range p.getAllPDAddrs() {
-		_, e := pdRequest(ctx, addr, pdhttp.SnapshotRecoveringMark, p.cli, method, nil)
-		if e != nil {
-			log.Warn("failed to operate recovering mark", zap.String("method", method),
-				zap.String("addr", addr), zap.Error(e))
-			err = e
-			continue
-		}
-		return nil
-	}
-	return errors.Trace(err)
+	return p.pdHTTPCli.DeleteSnapshotRecoveringMark(ctx)
 }
 
 // RegionLabel is the label of a region. This struct is partially copied from
