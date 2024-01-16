@@ -690,12 +690,12 @@ func (s *BaseTaskExecutor) markSubTaskCanceledOrFailed(ctx context.Context, subt
 	return false
 }
 
-func (s *BaseTaskExecutor) failedSubtaskWithRetry(ctx context.Context, taskID int64, err error) error {
+func (s *BaseTaskExecutor) FailSubtaskWithRetry(ctx context.Context, taskID int64, err error) error {
 	logger := logutil.Logger(s.logCtx)
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	err1 := handle.RunWithRetry(s.logCtx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(_ context.Context) (bool, error) {
-			return true, s.taskTable.FailedSubtask(ctx, s.id, taskID, err)
+			return true, s.taskTable.FailSubtask(ctx, s.id, taskID, err)
 		},
 	)
 	if err1 == nil {
@@ -704,13 +704,13 @@ func (s *BaseTaskExecutor) failedSubtaskWithRetry(ctx context.Context, taskID in
 	return err1
 }
 
-func (s *BaseTaskExecutor) canceledSubtaskWithRetry(ctx context.Context, taskID int64, err error) error {
+func (s *BaseTaskExecutor) CancelSubtaskWithRetry(ctx context.Context, taskID int64, err error) error {
 	logutil.Logger(s.logCtx).Warn("subtask canceled", zap.NamedError("subtask-cancel", err))
 	logger := logutil.Logger(s.logCtx)
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	err1 := handle.RunWithRetry(s.logCtx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(_ context.Context) (bool, error) {
-			return true, s.taskTable.CanceledSubtask(ctx, s.id, taskID)
+			return true, s.taskTable.CancelSubtask(ctx, s.id, taskID)
 		},
 	)
 	if err1 == nil {
@@ -729,13 +729,13 @@ func (s *BaseTaskExecutor) updateSubtask(ctx context.Context, taskID int64, err 
 	err = errors.Cause(err)
 	logger := logutil.Logger(s.logCtx)
 	if ctx.Err() != nil && context.Cause(ctx) == ErrCancelSubtask {
-		return s.canceledSubtaskWithRetry(ctx, taskID, ErrCancelSubtask)
+		return s.CancelSubtaskWithRetry(ctx, taskID, ErrCancelSubtask)
 	} else if s.IsRetryableError(err) {
 		logger.Warn("meet retryable error", zap.Error(err))
 	} else if common.IsContextCanceledError(err) {
 		logger.Info("meet context canceled for gracefully shutdown", zap.Error(err))
 	} else {
-		return s.failedSubtaskWithRetry(ctx, taskID, err)
+		return s.FailSubtaskWithRetry(ctx, taskID, err)
 	}
 	return nil
 }

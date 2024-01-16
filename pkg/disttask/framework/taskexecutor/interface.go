@@ -38,10 +38,10 @@ type TaskTable interface {
 	StartSubtask(ctx context.Context, subtaskID int64, execID string) error
 	// UpdateSubtaskStateAndError update the subtask's state and error.
 	UpdateSubtaskStateAndError(ctx context.Context, execID string, subtaskID int64, state proto.SubtaskState, err error) error
-	// FailedSubtask update the task's subtask state to failed and set the err.
-	FailedSubtask(ctx context.Context, execID string, taskID int64, err error) error
+	// FailSubtask update the task's subtask state to failed and set the err.
+	FailSubtask(ctx context.Context, execID string, taskID int64, err error) error
 	// CancelSubtask update the task's subtasks' state to canceled.
-	CanceledSubtask(ctx context.Context, exe string, taskID int64) error
+	CancelSubtask(ctx context.Context, exe string, taskID int64) error
 	// FinishSubtask updates the subtask meta and mark state to succeed.
 	FinishSubtask(ctx context.Context, execID string, subtaskID int64, meta []byte) error
 	// PauseSubtasks update subtasks state to paused.
