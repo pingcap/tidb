@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -36,7 +37,7 @@ import (
 // SessionBindingHandle is used to handle all session sql bind operations.
 type SessionBindingHandle interface {
 	// CreateSessionBinding creates a binding to the cache.
-	CreateSessionBinding(sctx sessionctx.Context, record *BindRecord) (err error)
+	CreateSessionBinding(sctx sessionctx.Context, binding *Binding) (err error)
 
 	// DropSessionBinding drops a binding by the sql digest.
 	DropSessionBinding(sqlDigest string) error
@@ -78,20 +79,17 @@ func (h *sessionBindingHandle) appendSessionBinding(sqlDigest string, meta *Bind
 
 // CreateSessionBinding creates a BindRecord to the cache.
 // It replaces all the exists bindings for the same normalized SQL.
-func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, record *BindRecord) (err error) {
-	err = record.prepareHints(sctx)
-	if err != nil {
+func (h *sessionBindingHandle) CreateSessionBinding(sctx sessionctx.Context, binding *Binding) (err error) {
+	if err := prepareHints(sctx, binding); err != nil {
 		return err
 	}
-	record.Db = strings.ToLower(record.Db)
+	binding.Db = strings.ToLower(binding.Db)
 	now := types.NewTime(types.FromGoTime(time.Now().In(sctx.GetSessionVars().StmtCtx.TimeZone())), mysql.TypeTimestamp, 3)
-	for i := range record.Bindings {
-		record.Bindings[i].CreateTime = now
-		record.Bindings[i].UpdateTime = now
-	}
+	binding.CreateTime = now
+	binding.UpdateTime = now
 
 	// update the BindMeta to the cache.
-	h.appendSessionBinding(parser.DigestNormalized(record.OriginalSQL).String(), record)
+	h.appendSessionBinding(parser.DigestNormalized(binding.OriginalSQL).String(), &BindRecord{Bindings: []Binding{*binding}})
 	return nil
 }
 
@@ -117,7 +115,7 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, fuzz
 			if err != nil {
 				return nil, err
 			}
-			_, bindingFuzzyDigest := NormalizeStmtForFuzzyBinding(bindingStmt)
+			_, bindingFuzzyDigest := norm.NormalizeStmtForBinding(bindingStmt, norm.WithFuzz(true))
 			if bindingFuzzyDigest != fuzzyDigest {
 				continue
 			}
@@ -167,10 +165,12 @@ func (h *sessionBindingHandle) DecodeSessionStates(_ context.Context, sctx sessi
 	}
 	for _, record := range records {
 		// Restore hints and ID because hints are hard to encode.
-		if err := record.prepareHints(sctx); err != nil {
-			return err
+		for i := range record.Bindings {
+			if err := prepareHints(sctx, &record.Bindings[i]); err != nil {
+				return err
+			}
 		}
-		h.appendSessionBinding(parser.DigestNormalized(record.OriginalSQL).String(), record)
+		h.appendSessionBinding(parser.DigestNormalized(record.Bindings[0].OriginalSQL).String(), record)
 	}
 	return nil
 }

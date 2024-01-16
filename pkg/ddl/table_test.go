@@ -549,20 +549,31 @@ func TestRenameTableIntermediateState(t *testing.T) {
 		{"rename table db2.t to db1.t;", "insert into db1.t values(1);", "", "db1.t"},
 	}
 
+	var finishedJobID int64
 	for _, tc := range testCases {
 		hook := &callback.TestDDLCallback{Do: dom}
 		runInsert := false
+		var jobID int64 = 0
 		fn := func(job *model.Job) {
+			if job.ID <= finishedJobID {
+				// The job has been done, OnJobUpdated may be invoked later asynchronously.
+				// We should skip the done job.
+				return
+			}
 			if job.Type == model.ActionRenameTable &&
 				job.SchemaState == model.StatePublic && !runInsert && !t.Failed() {
 				_, err := tk2.Exec(tc.insertSQL)
+				// In rename table intermediate state, new table is public.
 				if len(tc.errMsg) > 0 {
+					// Old table should not be visible to DML.
 					assert.NotNil(t, err)
 					assert.Equal(t, tc.errMsg, err.Error())
 				} else {
+					// New table should be visible to DML.
 					assert.NoError(t, err)
 				}
 				runInsert = true
+				jobID = job.ID
 			}
 		}
 		hook.OnJobUpdatedExported.Store(&fn)
@@ -575,6 +586,7 @@ func TestRenameTableIntermediateState(t *testing.T) {
 			result.Check(testkit.Rows("1"))
 		}
 		tk.MustExec(fmt.Sprintf("delete from %s;", tc.finalDB))
+		finishedJobID = jobID
 	}
 	dom.DDL().SetHook(originHook)
 }

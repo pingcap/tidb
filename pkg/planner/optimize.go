@@ -293,9 +293,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			if err != nil {
 				binding.Status = bindinfo.Invalid
 				handleInvalidBinding(ctx, sctx, scope, bindinfo.BindRecord{
-					OriginalSQL: bindRecord.OriginalSQL,
-					Db:          bindRecord.Db,
-					Bindings:    []bindinfo.Binding{binding},
+					Bindings: []bindinfo.Binding{binding},
 				})
 				continue
 			}

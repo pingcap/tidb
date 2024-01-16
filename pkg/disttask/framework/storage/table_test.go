@@ -140,7 +140,7 @@ func TestTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskStateFailed, task.State)
 	require.ErrorContains(t, task.Error, "test error")
-	endTime, err := storage.GetTaskEndTimeForTest(ctx, gm, id)
+	endTime, err := testutil.GetTaskEndTime(ctx, gm, id)
 	require.NoError(t, err)
 	require.LessOrEqual(t, endTime.Sub(curTime), time.Since(curTime))
 	require.GreaterOrEqual(t, endTime, curTime)
@@ -619,7 +619,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.Greater(t, subtask.StartTime, ts)
 	require.Greater(t, subtask.UpdateTime, ts)
 
-	endTime, err := storage.GetSubtaskEndTimeForTest(ctx, sm, subtask.ID)
+	endTime, err := testutil.GetSubtaskEndTime(ctx, sm, subtask.ID)
 	require.NoError(t, err)
 	require.Greater(t, endTime, ts)
 
@@ -641,20 +641,9 @@ func TestSubTaskTable(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, subtask2.StartTime, subtask.StartTime)
 	require.Greater(t, subtask2.UpdateTime, subtask.UpdateTime)
-	endTime, err = storage.GetSubtaskEndTimeForTest(ctx, sm, subtask.ID)
+	endTime, err = testutil.GetSubtaskEndTime(ctx, sm, subtask.ID)
 	require.NoError(t, err)
 	require.Greater(t, endTime, ts)
-
-	// test UpdateFailedTaskExecutorIDs and IsTaskExecutorCanceled
-	canceled, err := sm.IsTaskExecutorCanceled(ctx, "for_test999", 4)
-	require.NoError(t, err)
-	require.True(t, canceled)
-	canceled, err = sm.IsTaskExecutorCanceled(ctx, "for_test1", 4)
-	require.NoError(t, err)
-	require.False(t, canceled)
-	canceled, err = sm.IsTaskExecutorCanceled(ctx, "for_test2", 4)
-	require.NoError(t, err)
-	require.True(t, canceled)
 
 	// test UpdateSubtasksExecIDs
 	// 1. update one subtask
@@ -860,13 +849,12 @@ func TestDistFrameworkMeta(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
 
 	// when no node
-	_, err := storage.GetCPUCountOfManagedNodes(ctx, sm)
+	_, err := sm.GetCPUCountOfManagedNode(ctx)
 	require.ErrorContains(t, err, "no managed nodes")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(0)"))
 	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
-	cpuCount, err := storage.GetCPUCountOfManagedNodes(ctx, sm)
-	require.NoError(t, err)
-	require.Equal(t, 0, cpuCount)
+	_, err = sm.GetCPUCountOfManagedNode(ctx)
+	require.ErrorContains(t, err, "no managed node have enough resource")
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(100)"))
 	require.NoError(t, sm.InitMeta(ctx, ":4000", "background"))
@@ -893,7 +881,7 @@ func TestDistFrameworkMeta(t *testing.T) {
 		{ID: ":4002", Role: "", CPUCount: 100},
 		{ID: ":4003", Role: "background", CPUCount: 100},
 	}, nodes)
-	cpuCount, err = storage.GetCPUCountOfManagedNodes(ctx, sm)
+	cpuCount, err := sm.GetCPUCountOfManagedNode(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 100, cpuCount)
 
@@ -920,7 +908,7 @@ func TestDistFrameworkMeta(t *testing.T) {
 	require.Equal(t, []proto.ManagedNode{
 		{ID: ":4001", Role: "", CPUCount: 8},
 	}, nodes)
-	cpuCount, err = storage.GetCPUCountOfManagedNodes(ctx, sm)
+	cpuCount, err = sm.GetCPUCountOfManagedNode(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 8, cpuCount)
 
@@ -963,26 +951,26 @@ func TestSubtaskHistoryTable(t *testing.T) {
 	testutil.CreateSubTask(t, sm, taskID, proto.StepInit, tidb3, []byte(meta), proto.TaskTypeExample, 11, false)
 	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, tidb3, subTask3, proto.SubtaskStateFailed, nil))
 
-	subTasks, err := storage.GetSubtasksByTaskIDForTest(ctx, sm, taskID)
+	subTasks, err := testutil.GetSubtasksByTaskID(ctx, sm, taskID)
 	require.NoError(t, err)
 	require.Len(t, subTasks, 3)
-	historySubTasksCnt, err := storage.GetSubtasksFromHistoryForTest(ctx, sm)
+	historySubTasksCnt, err := testutil.GetSubtasksFromHistory(ctx, sm)
 	require.NoError(t, err)
 	require.Equal(t, 0, historySubTasksCnt)
-	subTasks, err = sm.GetSubtasksForImportInto(ctx, taskID, proto.StepInit)
+	subTasks, err = sm.GetSubtasksWithHistory(ctx, taskID, proto.StepInit)
 	require.NoError(t, err)
 	require.Len(t, subTasks, 3)
 
 	// test TransferSubTasks2History
-	require.NoError(t, sm.TransferSubTasks2History(ctx, taskID))
+	require.NoError(t, testutil.TransferSubTasks2History(ctx, sm, taskID))
 
-	subTasks, err = storage.GetSubtasksByTaskIDForTest(ctx, sm, taskID)
+	subTasks, err = testutil.GetSubtasksByTaskID(ctx, sm, taskID)
 	require.NoError(t, err)
 	require.Len(t, subTasks, 0)
-	historySubTasksCnt, err = storage.GetSubtasksFromHistoryForTest(ctx, sm)
+	historySubTasksCnt, err = testutil.GetSubtasksFromHistory(ctx, sm)
 	require.NoError(t, err)
 	require.Equal(t, 3, historySubTasksCnt)
-	subTasks, err = sm.GetSubtasksForImportInto(ctx, taskID, proto.StepInit)
+	subTasks, err = sm.GetSubtasksWithHistory(ctx, taskID, proto.StepInit)
 	require.NoError(t, err)
 	require.Len(t, subTasks, 3)
 
@@ -995,11 +983,11 @@ func TestSubtaskHistoryTable(t *testing.T) {
 
 	testutil.CreateSubTask(t, sm, taskID2, proto.StepInit, tidb1, []byte(meta), proto.TaskTypeExample, 11, false)
 	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, tidb1, subTask4, proto.SubtaskStateFailed, nil))
-	require.NoError(t, sm.TransferSubTasks2History(ctx, taskID2))
+	require.NoError(t, testutil.TransferSubTasks2History(ctx, sm, taskID2))
 
 	require.NoError(t, sm.GCSubtasks(ctx))
 
-	historySubTasksCnt, err = storage.GetSubtasksFromHistoryForTest(ctx, sm)
+	historySubTasksCnt, err = testutil.GetSubtasksFromHistory(ctx, sm)
 	require.NoError(t, err)
 	require.Equal(t, 1, historySubTasksCnt)
 }
@@ -1016,15 +1004,23 @@ func TestTaskHistoryTable(t *testing.T) {
 	tasks, err := gm.GetTasksInStates(ctx, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, 2, len(tasks))
-
+	testutil.InsertSubtask(t, gm, tasks[0].ID, proto.StepOne, "tidb1", proto.EmptyMeta, proto.SubtaskStateRunning, proto.TaskTypeExample, 1)
+	testutil.InsertSubtask(t, gm, tasks[1].ID, proto.StepOne, "tidb1", proto.EmptyMeta, proto.SubtaskStateRunning, proto.TaskTypeExample, 1)
+	oldTasks := tasks
 	require.NoError(t, gm.TransferTasks2History(ctx, tasks))
 
 	tasks, err = gm.GetTasksInStates(ctx, proto.TaskStatePending)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(tasks))
-	num, err := storage.GetTasksFromHistoryForTest(ctx, gm)
+	num, err := testutil.GetTasksFromHistory(ctx, gm)
 	require.NoError(t, err)
 	require.Equal(t, 2, num)
+	num, err = testutil.GetSubtasksFromHistoryByTaskID(ctx, gm, oldTasks[0].ID)
+	require.NoError(t, err)
+	require.Equal(t, 1, num)
+	num, err = testutil.GetSubtasksFromHistoryByTaskID(ctx, gm, oldTasks[1].ID)
+	require.NoError(t, err)
+	require.Equal(t, 1, num)
 
 	task, err := gm.GetTaskByIDWithHistory(ctx, taskID)
 	require.NoError(t, err)
@@ -1042,7 +1038,7 @@ func TestTaskHistoryTable(t *testing.T) {
 	require.Equal(t, 1, len(tasks))
 	tasks[0].Error = errors.New("mock err")
 	require.NoError(t, gm.TransferTasks2History(ctx, tasks))
-	num, err = storage.GetTasksFromHistoryForTest(ctx, gm)
+	num, err = testutil.GetTasksFromHistory(ctx, gm)
 	require.NoError(t, err)
 	require.Equal(t, 3, num)
 }
@@ -1095,7 +1091,7 @@ func TestCancelAndExecIdChanged(t *testing.T) {
 
 	// 2. change the exec_id
 	// exec_id changed
-	require.NoError(t, sm.UpdateSubtaskExecID(ctx, "tidb2", subtask.ID))
+	require.NoError(t, testutil.UpdateSubtaskExecID(ctx, sm, "tidb2", subtask.ID))
 	// exec_id in memory unchanged, call UpdateSubtaskStateAndError.
 	require.NoError(t, sm.UpdateSubtaskStateAndError(ctx, subtask.ExecID, subtask.ID, proto.SubtaskStateFailed, nil))
 	subtask, err = sm.GetFirstSubtaskInStates(ctx, "tidb2", 1, proto.StepInit, proto.SubtaskStatePending)
@@ -1163,4 +1159,58 @@ func TestSubtaskType(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, c, subtask.Type)
 	}
+}
+
+func TestRunningSubtasksBack2Pending(t *testing.T) {
+	_, sm, ctx := testutil.InitTableTest(t)
+	subtasks := []*proto.Subtask{
+		{TaskID: 1, ExecID: "tidb-1", State: proto.SubtaskStatePending},
+		{TaskID: 1, ExecID: "tidb-1", State: proto.SubtaskStateRunning},
+		{TaskID: 1, ExecID: "tidb-2", State: proto.SubtaskStatePending},
+		{TaskID: 2, ExecID: "tidb-1", State: proto.SubtaskStatePending},
+	}
+	for _, st := range subtasks {
+		testutil.InsertSubtask(t, sm, st.TaskID, proto.StepOne, st.ExecID, []byte(""), st.State, proto.TaskTypeExample, 12)
+	}
+
+	getAllSubtasks := func() []*proto.Subtask {
+		res := make([]*proto.Subtask, 0, 3)
+		require.NoError(t, sm.WithNewSession(func(se sessionctx.Context) error {
+			rs, err := sqlexec.ExecSQL(ctx, se, `
+				select cast(task_key as signed), exec_id, state, state_update_time
+				from mysql.tidb_background_subtask
+				order by task_key, exec_id, state`)
+			require.NoError(t, err)
+			for _, r := range rs {
+				var updateTime time.Time
+				if !r.IsNull(3) {
+					updateTime = time.Unix(r.GetInt64(3), 0)
+				}
+				res = append(res, &proto.Subtask{
+					TaskID:     r.GetInt64(0),
+					ExecID:     r.GetString(1),
+					State:      proto.SubtaskState(r.GetString(2)),
+					UpdateTime: updateTime,
+				})
+			}
+			return nil
+		}))
+		return res
+	}
+
+	require.Equal(t, subtasks, getAllSubtasks())
+	require.NoError(t, sm.RunningSubtasksBack2Pending(ctx, nil))
+	require.Equal(t, subtasks, getAllSubtasks())
+
+	activeSubtasks, err := sm.GetActiveSubtasks(ctx, 1)
+	require.NoError(t, err)
+	require.Len(t, activeSubtasks, 3)
+	startTime := time.Unix(time.Now().Unix(), 0)
+	// this list contains running and pending subtasks, just for test.
+	require.NoError(t, sm.RunningSubtasksBack2Pending(ctx, activeSubtasks))
+	allSubtasks := getAllSubtasks()
+	require.GreaterOrEqual(t, allSubtasks[1].UpdateTime, startTime)
+	allSubtasks[1].UpdateTime = time.Time{}
+	subtasks[1].State = proto.SubtaskStatePending
+	require.Equal(t, subtasks, allSubtasks)
 }

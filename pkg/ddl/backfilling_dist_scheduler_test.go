@@ -187,7 +187,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	}
 	_, err = mgr.UpdateTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
 	require.NoError(t, err)
-	gotSubtasks, err := mgr.GetSubtasksForImportInto(ctx, taskID, ddl.StepReadIndex)
+	gotSubtasks, err := mgr.GetSubtasksWithHistory(ctx, taskID, ddl.StepReadIndex)
 	require.NoError(t, err)
 
 	// update meta, same as import into.
@@ -228,7 +228,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	}
 	_, err = mgr.UpdateTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
 	require.NoError(t, err)
-	gotSubtasks, err = mgr.GetSubtasksForImportInto(ctx, taskID, task.Step)
+	gotSubtasks, err = mgr.GetSubtasksWithHistory(ctx, taskID, task.Step)
 	require.NoError(t, err)
 	mergeSortStepMeta := &ddl.BackfillSubTaskMeta{
 		SortedKVMeta: external.SortedKVMeta{

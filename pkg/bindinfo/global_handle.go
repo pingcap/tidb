@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -53,7 +54,7 @@ type GlobalBindingHandle interface {
 
 	// CreateGlobalBinding creates a BindRecord to the storage and the cache.
 	// It replaces all the exists bindings for the same normalized SQL.
-	CreateGlobalBinding(sctx sessionctx.Context, record *BindRecord) (err error)
+	CreateGlobalBinding(sctx sessionctx.Context, binding *Binding) (err error)
 
 	// DropGlobalBinding drop BindRecord to the storage and BindRecord int the cache.
 	DropGlobalBinding(sqlDigest string) (deletedRows uint64, err error)
@@ -189,7 +190,7 @@ func buildFuzzyDigestMap(bindRecords []*BindRecord) map[string][]string {
 				p = parser.New()
 				continue
 			}
-			_, fuzzyDigest := NormalizeStmtForFuzzyBinding(stmt)
+			_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
 			m[fuzzyDigest] = append(m[fuzzyDigest], binding.SQLDigest)
 		}
 	}
@@ -293,9 +294,8 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 
 // CreateGlobalBinding creates a BindRecord to the storage and the cache.
 // It replaces all the exists bindings for the same normalized SQL.
-func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, record *BindRecord) (err error) {
-	err = record.prepareHints(sctx)
-	if err != nil {
+func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, binding *Binding) (err error) {
+	if err := prepareHints(sctx, binding); err != nil {
 		return err
 	}
 	defer func() {
@@ -304,7 +304,6 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, recor
 		}
 	}()
 
-	record.Db = strings.ToLower(record.Db)
 	return h.callWithSCtx(true, func(sctx sessionctx.Context) error {
 		// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
 		if err = lockBindInfoTable(sctx); err != nil {
@@ -315,32 +314,30 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, recor
 
 		updateTs := now.String()
 		_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
-			deleted, updateTs, record.OriginalSQL, updateTs)
+			deleted, updateTs, binding.OriginalSQL, updateTs)
 		if err != nil {
 			return err
 		}
 
-		for i := range record.Bindings {
-			record.Bindings[i].CreateTime = now
-			record.Bindings[i].UpdateTime = now
+		binding.CreateTime = now
+		binding.UpdateTime = now
 
-			// Insert the BindRecord to the storage.
-			_, err = exec(sctx, `INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
-				record.OriginalSQL,
-				record.Bindings[i].BindSQL,
-				record.Db,
-				record.Bindings[i].Status,
-				record.Bindings[i].CreateTime.String(),
-				record.Bindings[i].UpdateTime.String(),
-				record.Bindings[i].Charset,
-				record.Bindings[i].Collation,
-				record.Bindings[i].Source,
-				record.Bindings[i].SQLDigest,
-				record.Bindings[i].PlanDigest,
-			)
-			if err != nil {
-				return err
-			}
+		// Insert the BindRecord to the storage.
+		_, err = exec(sctx, `INSERT INTO mysql.bind_info VALUES (%?,%?, %?, %?, %?, %?, %?, %?, %?, %?, %?)`,
+			binding.OriginalSQL,
+			binding.BindSQL,
+			strings.ToLower(binding.Db),
+			binding.Status,
+			binding.CreateTime.String(),
+			binding.UpdateTime.String(),
+			binding.Charset,
+			binding.Collation,
+			binding.Source,
+			binding.SQLDigest,
+			binding.PlanDigest,
+		)
+		if err != nil {
+			return err
 		}
 		return nil
 	})
@@ -481,7 +478,7 @@ func (tmpMap *tmpBindRecordMap) flushToStore() {
 
 // Add puts a BindRecord into tmpBindRecordMap.
 func (tmpMap *tmpBindRecordMap) Add(bindRecord *BindRecord) {
-	key := bindRecord.OriginalSQL + ":" + bindRecord.Db + ":" + bindRecord.Bindings[0].ID
+	key := bindRecord.Bindings[0].OriginalSQL + ":" + bindRecord.Bindings[0].Db + ":" + bindRecord.Bindings[0].ID
 	if _, ok := tmpMap.Load().(map[string]*bindRecordUpdate)[key]; ok {
 		return
 	}
@@ -591,25 +588,25 @@ func newBindRecord(sctx sessionctx.Context, row chunk.Row) (string, *BindRecord,
 	tableNames := CollectTableNames(stmt)
 
 	binding := Binding{
-		BindSQL:    bindSQL,
-		Status:     status,
-		CreateTime: row.GetTime(4),
-		UpdateTime: row.GetTime(5),
-		Charset:    charset,
-		Collation:  collation,
-		Source:     row.GetString(8),
-		SQLDigest:  row.GetString(9),
-		PlanDigest: row.GetString(10),
-		TableNames: tableNames,
-	}
-	bindRecord := &BindRecord{
 		OriginalSQL: row.GetString(0),
 		Db:          strings.ToLower(defaultDB),
-		Bindings:    []Binding{binding},
+		BindSQL:     bindSQL,
+		Status:      status,
+		CreateTime:  row.GetTime(4),
+		UpdateTime:  row.GetTime(5),
+		Charset:     charset,
+		Collation:   collation,
+		Source:      row.GetString(8),
+		SQLDigest:   row.GetString(9),
+		PlanDigest:  row.GetString(10),
+		TableNames:  tableNames,
 	}
-	sqlDigest := parser.DigestNormalized(bindRecord.OriginalSQL)
-	sctx.GetSessionVars().CurrentDB = bindRecord.Db
-	err = bindRecord.prepareHints(sctx)
+	bindRecord := &BindRecord{
+		Bindings: []Binding{binding},
+	}
+	sqlDigest := parser.DigestNormalized(binding.OriginalSQL)
+	err = prepareHints(sctx, &bindRecord.Bindings[0])
+	sctx.GetSessionVars().CurrentDB = binding.Db
 	return sqlDigest.String(), bindRecord, err
 }
 

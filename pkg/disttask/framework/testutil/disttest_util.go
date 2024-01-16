@@ -75,7 +75,7 @@ func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, mockExtension 
 
 	taskexecutor.RegisterTaskType(taskType,
 		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
-			s := taskexecutor.NewBaseTaskExecutor(ctx, id, task.ID, taskTable)
+			s := taskexecutor.NewBaseTaskExecutor(ctx, id, task, taskTable)
 			s.Extension = mockExtension
 			return s
 		},
