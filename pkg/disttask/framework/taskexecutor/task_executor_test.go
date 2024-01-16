@@ -62,13 +62,8 @@ func TestTaskExecutorRun(t *testing.T) {
 	taskExecutor.Extension = mockExtension
 	err := taskExecutor.run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp})
 	require.EqualError(t, err, taskExecutorRegisterErr.Error())
-<<<<<<< HEAD
-	mockSubtaskTable.EXPECT().UpdateErrorToSubtask(runCtx, gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	err = taskExecutor.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp})
-=======
 	mockSubtaskTable.EXPECT().FailSubtask(runCtx, gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	err = taskExecutor.Run(runCtx, task1)
->>>>>>> caa5539686c (disttask: fix executor err handling missing part (#50429))
+	err = taskExecutor.Run(runCtx, &proto.Task{Step: proto.StepOne, Type: tp})
 	require.NoError(t, err)
 
 	// 2. init subtask exec env failed
@@ -455,8 +450,7 @@ func TestExecutorErrHandling(t *testing.T) {
 	mockSubtaskTable := mock.NewMockTaskTable(ctrl)
 	mockSubtaskExecutor := mockexecute.NewMockSubtaskExecutor(ctrl)
 	mockExtension := mock.NewMockExtension(ctrl)
-	task := &proto.Task{Step: proto.StepOne, Type: tp}
-	taskExecutor := NewBaseTaskExecutor(ctx, "id", task, mockSubtaskTable)
+	taskExecutor := NewBaseTaskExecutor(ctx, "id", 1, mockSubtaskTable)
 	taskExecutor.Extension = mockExtension
 
 	// 1. GetSubtaskExecutor meet retryable error.

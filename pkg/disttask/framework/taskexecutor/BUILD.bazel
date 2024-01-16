@@ -48,11 +48,7 @@ go_test(
     ],
     embed = [":taskexecutor"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 12,
-=======
-    shard_count = 15,
->>>>>>> caa5539686c (disttask: fix executor err handling missing part (#50429))
+    shard_count = 13,
     deps = [
         "//pkg/disttask/framework/mock",
         "//pkg/disttask/framework/mock/execute",

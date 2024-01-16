@@ -121,13 +121,8 @@ func TestOnRunnableTasks(t *testing.T) {
 	m.onRunnableTasks(nil)
 
 	// type not found
-<<<<<<< HEAD
-	mockTaskTable.EXPECT().UpdateErrorToSubtask(m.ctx, id, taskID, gomock.Any())
-	m.onRunnableTask(task)
-=======
 	mockTaskTable.EXPECT().FailSubtask(m.ctx, id, taskID, gomock.Any())
-	m.handleExecutableTask(task)
->>>>>>> caa5539686c (disttask: fix executor err handling missing part (#50429))
+	m.onRunnableTask(task)
 
 	RegisterTaskType("type",
 		func(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) TaskExecutor {
@@ -138,13 +133,9 @@ func TestOnRunnableTasks(t *testing.T) {
 	executorErr := errors.New("executor init failed")
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(executorErr)
 	mockInternalExecutor.EXPECT().IsRetryableError(executorErr).Return(false)
-<<<<<<< HEAD
-	mockTaskTable.EXPECT().UpdateErrorToSubtask(m.ctx, id, taskID, executorErr)
-	m.onRunnableTask(task)
-=======
 	mockTaskTable.EXPECT().FailSubtask(m.ctx, id, taskID, executorErr)
-	m.handleExecutableTask(task)
->>>>>>> caa5539686c (disttask: fix executor err handling missing part (#50429))
+	m.onRunnableTask(task)
+
 	m.removeHandlingTask(taskID)
 	require.Equal(t, true, ctrl.Satisfied())
 
