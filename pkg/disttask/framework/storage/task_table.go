@@ -530,8 +530,8 @@ func (mgr *TaskManager) GetFirstSubtaskInStates(ctx context.Context, tidbID stri
 	return Row2SubTask(rs[0]), nil
 }
 
-// UpdateErrorToSubtask updates the error to subtask.
-func (mgr *TaskManager) UpdateErrorToSubtask(ctx context.Context, execID string, taskID int64, err error) error {
+// FailedSubtask update the task's subtask state to failed and set the err.
+func (mgr *TaskManager) FailedSubtask(ctx context.Context, execID string, taskID int64, err error) error {
 	if err == nil {
 		return nil
 	}
@@ -548,6 +548,26 @@ func (mgr *TaskManager) UpdateErrorToSubtask(ctx context.Context, execID string,
 		limit 1;`,
 		proto.TaskStateFailed,
 		serializeErr(err),
+		execID,
+		taskID,
+		proto.TaskStatePending,
+		proto.TaskStateRunning)
+	return err1
+}
+
+// CanceledSubtask update the task's subtasks' state to canceled.
+func (mgr *TaskManager) CanceledSubtask(ctx context.Context, execID string, taskID int64) error {
+	_, err1 := mgr.ExecuteSQLWithNewSession(ctx,
+		`update mysql.tidb_background_subtask
+		set state = %?, 
+		start_time = unix_timestamp(), 
+		state_update_time = unix_timestamp(),
+		end_time = CURRENT_TIMESTAMP()
+		where exec_id = %? and 
+		task_key = %? and 
+		state in (%?, %?) 
+		limit 1;`,
+		proto.SubtaskStateCanceled,
 		execID,
 		taskID,
 		proto.TaskStatePending,

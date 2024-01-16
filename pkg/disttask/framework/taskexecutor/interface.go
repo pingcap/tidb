@@ -25,23 +25,28 @@ import (
 type TaskTable interface {
 	GetTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
-	GetSubtasksByStepAndStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...proto.SubtaskState) ([]*proto.Subtask, error)
+	GetSubtasksByStepAndStates(ctx context.Context, execID string, taskID int64, step proto.Step, states ...proto.SubtaskState) ([]*proto.Subtask, error)
 	GetFirstSubtaskInStates(ctx context.Context, instanceID string, taskID int64, step proto.Step, states ...proto.SubtaskState) (*proto.Subtask, error)
 	// InitMeta insert the manager information into dist_framework_meta.
 	// Call it when starting task executor or in set variable operation.
-	InitMeta(ctx context.Context, tidbID string, role string) error
+	InitMeta(ctx context.Context, execID string, role string) error
 	// RecoverMeta recover the manager information into dist_framework_meta.
 	// Call it periodically to recover deleted meta.
-	RecoverMeta(ctx context.Context, tidbID string, role string) error
+	RecoverMeta(ctx context.Context, execID string, role string) error
 	// StartSubtask try to update the subtask's state to running if the subtask is owned by execID.
 	// If the update success, it means the execID's related task executor own the subtask.
 	StartSubtask(ctx context.Context, subtaskID int64, execID string) error
-	UpdateSubtaskStateAndError(ctx context.Context, tidbID string, subtaskID int64, state proto.SubtaskState, err error) error
-	FinishSubtask(ctx context.Context, tidbID string, subtaskID int64, meta []byte) error
+	// UpdateSubtaskStateAndError update the subtask's state and error.
+	UpdateSubtaskStateAndError(ctx context.Context, execID string, subtaskID int64, state proto.SubtaskState, err error) error
+	// FailedSubtask update the task's subtask state to failed and set the err.
+	FailedSubtask(ctx context.Context, execID string, taskID int64, err error) error
+	// CancelSubtask update the task's subtasks' state to canceled.
+	CanceledSubtask(ctx context.Context, exe string, taskID int64) error
 
-	HasSubtasksInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...proto.SubtaskState) (bool, error)
-	UpdateErrorToSubtask(ctx context.Context, tidbID string, taskID int64, err error) error
-	PauseSubtasks(ctx context.Context, tidbID string, taskID int64) error
+	FinishSubtask(ctx context.Context, execID string, subtaskID int64, meta []byte) error
+
+	HasSubtasksInStates(ctx context.Context, execID string, taskID int64, step proto.Step, states ...proto.SubtaskState) (bool, error)
+	PauseSubtasks(ctx context.Context, execID string, taskID int64) error
 	// RunningSubtasksBack2Pending update the state of subtask which belongs to this
 	// node from running to pending.
 	// see subtask state machine for more detail.
