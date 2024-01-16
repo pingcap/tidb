@@ -2126,7 +2126,7 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 			zap.Int("worker-cnt", workerCntLimit), zap.Int("task-concurrency", concurrency),
 			zap.String("task-key", taskKey))
 		taskMeta := &BackfillTaskMeta{
-			Job:             *reorgInfo.Job.Clone(),
+			Job:             *job.Clone(),
 			EleIDs:          elemIDs,
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
 			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
