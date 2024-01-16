@@ -292,9 +292,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			plan, curNames, cost, err := optimize(ctx, sctx, node, is)
 			if err != nil {
 				binding.Status = bindinfo.Invalid
-				handleInvalidBinding(ctx, sctx, scope, bindinfo.BindRecord{
-					Bindings: []bindinfo.Binding{binding},
-				})
+				handleInvalidBinding(ctx, sctx, scope, binding)
 				continue
 			}
 			if cost < minCost {
@@ -557,20 +555,18 @@ func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Nod
 	return p, nil
 }
 
-func handleInvalidBinding(ctx context.Context, sctx sessionctx.Context, level string, bindRecord bindinfo.BindRecord) {
+func handleInvalidBinding(ctx context.Context, sctx sessionctx.Context, level string, binding bindinfo.Binding) {
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-	if len(bindRecord.Bindings) > 0 {
-		err := sessionHandle.DropSessionBinding(bindRecord.Bindings[0].SQLDigest)
-		if err != nil {
-			logutil.Logger(ctx).Info("drop session bindings failed")
-		}
+	err := sessionHandle.DropSessionBinding(binding.SQLDigest)
+	if err != nil {
+		logutil.Logger(ctx).Info("drop session bindings failed")
 	}
 	if level == metrics.ScopeSession {
 		return
 	}
 
 	globalHandle := domain.GetDomain(sctx).BindHandle()
-	globalHandle.AddInvalidGlobalBinding(&bindRecord)
+	globalHandle.AddInvalidGlobalBinding(&binding)
 }
 
 func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHints, offs []int, warns []error) {

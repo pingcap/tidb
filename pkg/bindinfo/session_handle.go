@@ -46,7 +46,7 @@ type SessionBindingHandle interface {
 	MatchSessionBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (*BindRecord, error)
 
 	// GetAllSessionBindings return all bindings.
-	GetAllSessionBindings() (bindRecords []*BindRecord)
+	GetAllSessionBindings() (bindings []*Binding)
 
 	// Close closes the SessionBindingHandle.
 	Close()
@@ -136,8 +136,13 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, fuzz
 }
 
 // GetAllSessionBindings return all session bind info.
-func (h *sessionBindingHandle) GetAllSessionBindings() (bindRecords []*BindRecord) {
-	return h.ch.GetAllBindings()
+func (h *sessionBindingHandle) GetAllSessionBindings() (bindings []*Binding) {
+	for _, record := range h.ch.GetAllBindings() {
+		for i := range record.Bindings {
+			bindings = append(bindings, &record.Bindings[i])
+		}
+	}
+	return
 }
 
 // EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.

@@ -321,78 +321,53 @@ func (*visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 func (e *ShowExec) fetchShowBind() error {
-	var tmp []*bindinfo.BindRecord
+	var bindings []*bindinfo.Binding
 	if !e.GlobalScope {
 		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-		tmp = handle.GetAllSessionBindings()
+		bindings = handle.GetAllSessionBindings()
 	} else {
-		tmp = domain.GetDomain(e.Ctx()).BindHandle().GetAllGlobalBindings()
-	}
-	bindRecords := make([]*bindinfo.BindRecord, 0)
-	for _, bindRecord := range tmp {
-		bindRecords = append(bindRecords, bindRecord.Copy())
+		bindings = domain.GetDomain(e.Ctx()).BindHandle().GetAllGlobalBindings()
 	}
 	// Remove the invalid bindRecord.
-	ind := 0
-	for _, bindData := range bindRecords {
-		if len(bindData.Bindings) > 0 {
-			bindRecords[ind] = bindData
-			ind++
-		}
-	}
-	bindRecords = bindRecords[:ind]
 	parser := parser.New()
-	for _, bindData := range bindRecords {
-		// For the same origin_sql, sort the bindings according to their update time.
-		sort.Slice(bindData.Bindings, func(i int, j int) bool {
-			cmpResult := bindData.Bindings[i].UpdateTime.Compare(bindData.Bindings[j].UpdateTime)
-			if cmpResult == 0 {
-				// Because the create time must be different, the result of sorting is stable.
-				cmpResult = bindData.Bindings[i].CreateTime.Compare(bindData.Bindings[j].CreateTime)
-			}
-			return cmpResult > 0
-		})
-	}
 	// For the different origin_sql, sort the bindRecords according to their max update time.
-	sort.Slice(bindRecords, func(i int, j int) bool {
-		cmpResult := bindRecords[i].Bindings[0].UpdateTime.Compare(bindRecords[j].Bindings[0].UpdateTime)
+	sort.Slice(bindings, func(i int, j int) bool {
+		cmpResult := bindings[i].UpdateTime.Compare(bindings[j].UpdateTime)
 		if cmpResult == 0 {
 			// Because the create time must be different, the result of sorting is stable.
-			cmpResult = bindRecords[i].Bindings[0].CreateTime.Compare(bindRecords[j].Bindings[0].CreateTime)
+			cmpResult = bindings[i].CreateTime.Compare(bindings[j].CreateTime)
 		}
 		return cmpResult > 0
 	})
-	for _, bindData := range bindRecords {
-		for _, hint := range bindData.Bindings {
-			stmt, err := parser.ParseOneStmt(hint.BindSQL, hint.Charset, hint.Collation)
-			if err != nil {
-				return err
-			}
-			checker := visibleChecker{
-				defaultDB: hint.Db,
-				ctx:       e.Ctx(),
-				is:        e.is,
-				manager:   privilege.GetPrivilegeManager(e.Ctx()),
-				ok:        true,
-			}
-			stmt.Accept(&checker)
-			if !checker.ok {
-				continue
-			}
-			e.appendRow([]any{
-				hint.OriginalSQL,
-				hint.BindSQL,
-				hint.Db,
-				hint.Status,
-				hint.CreateTime,
-				hint.UpdateTime,
-				hint.Charset,
-				hint.Collation,
-				hint.Source,
-				hint.SQLDigest,
-				hint.PlanDigest,
-			})
+	for _, hint := range bindings {
+		stmt, err := parser.ParseOneStmt(hint.BindSQL, hint.Charset, hint.Collation)
+		if err != nil {
+			return err
 		}
+		checker := visibleChecker{
+			defaultDB: hint.Db,
+			ctx:       e.Ctx(),
+			is:        e.is,
+			manager:   privilege.GetPrivilegeManager(e.Ctx()),
+			ok:        true,
+		}
+		stmt.Accept(&checker)
+		if !checker.ok {
+			continue
+		}
+		e.appendRow([]any{
+			hint.OriginalSQL,
+			hint.BindSQL,
+			hint.Db,
+			hint.Status,
+			hint.CreateTime,
+			hint.UpdateTime,
+			hint.Charset,
+			hint.Collation,
+			hint.Source,
+			hint.SQLDigest,
+			hint.PlanDigest,
+		})
 	}
 	return nil
 }
@@ -408,13 +383,11 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 
 	handle := domain.GetDomain(e.Ctx()).BindHandle()
 
-	bindRecords := handle.GetAllGlobalBindings()
+	bindings := handle.GetAllGlobalBindings()
 	numBindings := 0
-	for _, bindRecord := range bindRecords {
-		for _, binding := range bindRecord.Bindings {
-			if binding.IsBindingEnabled() {
-				numBindings++
-			}
+	for _, binding := range bindings {
+		if binding.IsBindingEnabled() {
+			numBindings++
 		}
 	}
 
