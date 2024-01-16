@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/bindinfo/internal"
+	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -113,14 +114,14 @@ func TestSessionBinding(t *testing.T) {
 		stmt, err := parser.New().ParseOneStmt(testSQL.originSQL, "", "")
 		require.NoError(t, err)
 
-		_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+		_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
 		bindData, err := handle.MatchSessionBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 		require.NoError(t, err)
 		require.NotNil(t, bindData)
-		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
 		bind := bindData.Bindings[0]
+		require.Equal(t, testSQL.originSQL, bind.OriginalSQL)
 		require.Equal(t, testSQL.bindSQL, bind.BindSQL)
-		require.Equal(t, "test", bindData.Db)
+		require.Equal(t, "test", bind.Db)
 		require.Equal(t, bindinfo.Enabled, bind.Status)
 		require.NotNil(t, bind.Charset)
 		require.NotNil(t, bind.Collation)
@@ -152,7 +153,7 @@ func TestSessionBinding(t *testing.T) {
 
 		_, err = tk.Exec("drop session " + testSQL.dropSQL)
 		require.NoError(t, err)
-		_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
+		_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
 		bindData, err = handle.MatchSessionBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
 		require.NoError(t, err)
 		require.Nil(t, bindData) // dropped
@@ -264,25 +265,16 @@ func TestShowGlobalBindings(t *testing.T) {
 	rows := tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0)
 	// Simulate existing bindings in the mysql.bind_info.
-	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select * from `spm` . `t` USE INDEX (`a`)', 'SPM', 'enabled', '2000-01-01 09:00:00', '2000-01-01 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
-	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t0`', 'select * from `spm` . `t0` USE INDEX (`a`)', 'SPM', 'enabled', '2000-01-02 09:00:00', '2000-01-02 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
-	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t`', 'select /*+ use_index(`t` `a`)*/ * from `spm` . `t`', 'SPM', 'enabled', '2000-01-03 09:00:00', '2000-01-03 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
-	tk.MustExec("insert into mysql.bind_info values('select * from `spm` . `t0`', 'select /*+ use_index(`t0` `a`)*/ * from `spm` . `t0`', 'SPM', 'enabled', '2000-01-04 09:00:00', '2000-01-04 09:00:00', '', '','" +
-		bindinfo.Manual + "', '', '')")
+	tk.MustExec("create global binding using select * from `spm` . `t` USE INDEX (`a`)")
+	tk.MustExec("create global binding using select * from `spm` . `t0` USE INDEX (`a`)")
+	tk.MustExec("create global binding using select /*+ use_index(`t` `a`)*/ * from `spm` . `t`")
+	tk.MustExec("create global binding using select /*+ use_index(`t0` `a`)*/ * from `spm` . `t0`")
+
 	tk.MustExec("admin reload bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
-	require.Len(t, rows, 4)
+	require.Len(t, rows, 2)
 	require.Equal(t, "select * from `spm` . `t0`", rows[0][0])
-	require.Equal(t, "2000-01-04 09:00:00.000", rows[0][5])
-	require.Equal(t, "select * from `spm` . `t0`", rows[1][0])
-	require.Equal(t, "2000-01-02 09:00:00.000", rows[1][5])
-	require.Equal(t, "select * from `spm` . `t`", rows[2][0])
-	require.Equal(t, "2000-01-03 09:00:00.000", rows[2][5])
-	require.Equal(t, "select * from `spm` . `t`", rows[3][0])
-	require.Equal(t, "2000-01-01 09:00:00.000", rows[3][5])
+	require.Equal(t, "select * from `spm` . `t`", rows[1][0])
 
 	rows = tk.MustQuery("show session bindings").Rows()
 	require.Len(t, rows, 0)

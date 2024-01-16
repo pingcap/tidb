@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -121,7 +122,7 @@ func prepareSortDir(e *LoadDataController, id string, tidbCfg *tidb.Config) (str
 }
 
 // GetTiKVModeSwitcherWithPDClient creates a new TiKV mode switcher with its pd Client.
-func GetTiKVModeSwitcherWithPDClient(ctx context.Context, logger *zap.Logger) (pd.Client, local.TiKVModeSwitcher, error) {
+func GetTiKVModeSwitcherWithPDClient(logger *zap.Logger) (pdhttp.Client, local.TiKVModeSwitcher, error) {
 	tidbCfg := tidb.GetGlobalConfig()
 	hostPort := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(tidbCfg.Status.StatusPort)))
 	tls, err := common.NewTLS(
@@ -134,14 +135,14 @@ func GetTiKVModeSwitcherWithPDClient(ctx context.Context, logger *zap.Logger) (p
 	if err != nil {
 		return nil, nil, err
 	}
-	tlsOpt := tls.ToPDSecurityOption()
 	addrs := strings.Split(tidbCfg.Path, ",")
-	pdCli, err := pd.NewClientWithContext(ctx, addrs, tlsOpt)
-	if err != nil {
-		return nil, nil, errors.Trace(err)
+	var opts []pdhttp.ClientOption
+	if o := tls.TLSConfig(); o != nil {
+		opts = append(opts, pdhttp.WithTLSConfig(o))
 	}
-
-	return pdCli, NewTiKVModeSwitcher(tls, pdCli, logger), nil
+	pdHTTPCli := pdhttp.NewClient("dist-task", addrs, opts...)
+	// TODO: let disttask framework pass-in the PD HTTP client from domain
+	return pdHTTPCli, NewTiKVModeSwitcher(tls, pdHTTPCli, logger), nil
 }
 
 // GetCachedKVStoreFrom gets a cached kv store from PD address.

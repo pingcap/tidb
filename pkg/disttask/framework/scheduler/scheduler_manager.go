@@ -37,8 +37,8 @@ var (
 	checkTaskRunningInterval = 3 * time.Second
 	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
 	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
-	// defaultCleanUpInterval is the interval of cleanUp routine.
-	defaultCleanUpInterval = 10 * time.Minute
+	// DefaultCleanUpInterval is the interval of cleanUp routine.
+	DefaultCleanUpInterval = 10 * time.Minute
 )
 
 // WaitTaskFinished is used to sync the test.
@@ -326,7 +326,7 @@ func (sm *Manager) startScheduler(basicTask *proto.Task, reservedExecID string) 
 
 func (sm *Manager) cleanupTaskLoop() {
 	logutil.Logger(sm.ctx).Info("cleanUp loop start")
-	ticker := time.NewTicker(defaultCleanUpInterval)
+	ticker := time.NewTicker(DefaultCleanUpInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -342,7 +342,7 @@ func (sm *Manager) cleanupTaskLoop() {
 }
 
 // WaitCleanUpFinished is used to sync the test.
-var WaitCleanUpFinished = make(chan struct{})
+var WaitCleanUpFinished = make(chan struct{}, 1)
 
 // doCleanupTask processes clean up routine defined by each type of tasks and cleanUpMeta.
 // For example:
@@ -395,6 +395,10 @@ func (sm *Manager) cleanUpFinishedTasks(tasks []*proto.Task) error {
 	if firstErr != nil {
 		logutil.BgLogger().Warn("cleanUp routine failed", zap.Error(errors.Trace(firstErr)))
 	}
+
+	failpoint.Inject("mockTransferErr", func() {
+		failpoint.Return(errors.New("transfer err"))
+	})
 
 	return sm.taskMgr.TransferTasks2History(sm.ctx, cleanedTasks)
 }
