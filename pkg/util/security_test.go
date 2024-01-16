@@ -130,6 +130,53 @@ func TestVerifyCommonNameAndRotate(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 }
 
+func TestTLSVersion(t *testing.T) {
+	caData, certs, keys := generateCerts(t, []string{"server", "client"})
+	serverCert, serverKey := certs[0], keys[0]
+	clientCert, clientKey := certs[1], keys[1]
+
+	serverTLS, err := util.NewTLSConfig(
+		util.WithCAContent(caData),
+		util.WithCertAndKeyContent(serverCert, serverKey),
+	)
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	server, port := runServer(ctx, serverTLS, t)
+	defer func() {
+		cancel()
+		server.Close()
+	}()
+	url := fmt.Sprintf("https://127.0.0.1:%d", port)
+
+	clientTLS1, err := util.NewTLSConfig(
+		util.WithCAContent(caData),
+		util.WithCertAndKeyContent(clientCert, clientKey),
+	)
+	require.NoError(t, err)
+
+	type testCase struct {
+		version uint16
+		succ    bool
+	}
+	testCases := []testCase{
+		{tls.VersionTLS10, false},
+		{tls.VersionTLS11, false},
+		{tls.VersionTLS12, true},
+		{tls.VersionTLS13, true},
+	}
+	for _, c := range testCases {
+		clientTLS1.MinVersion = c.version
+		clientTLS1.MaxVersion = c.version
+		resp, err := util.ClientWithTLS(clientTLS1).Get(url)
+		if c.succ {
+			require.NoError(t, err)
+			require.NoError(t, resp.Body.Close())
+		} else {
+			require.Error(t, err)
+		}
+	}
+}
+
 func TestCA(t *testing.T) {
 	caData, certs, keys := generateCerts(t, []string{"server", "client"})
 	serverCert, serverKey := certs[0], keys[0]
