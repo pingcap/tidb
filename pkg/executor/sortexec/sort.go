@@ -58,6 +58,9 @@ type SortExec struct {
 
 	IsUnparallel bool
 
+	finishCh              chan struct{}
+	isFinishChannelClosed *atomic.Bool
+
 	Unparallel struct {
 		Idx int
 
@@ -105,11 +108,14 @@ func (e *SortExec) Close() error {
 		if e.Parallel.err != nil {
 			return e.Parallel.err
 		}
+		e.tryToCloseChunkChannel()
 	}
 
 	if e.memTracker != nil {
 		e.memTracker.ReplaceBytesUsed(0)
 	}
+
+	e.tryToCloseFinishChannel()
 	return e.Children(0).Close()
 }
 
@@ -117,6 +123,9 @@ func (e *SortExec) Close() error {
 func (e *SortExec) Open(ctx context.Context) error {
 	e.fetched = false
 	e.enableTmpStorageOnOOM = variable.EnableTmpStorageOnOOM.Load()
+	e.isFinishChannelClosed = &atomic.Bool{}
+	e.isFinishChannelClosed.Store(false)
+	e.finishCh = make(chan struct{}, 1)
 
 	// To avoid duplicated initialization for TopNExec.
 	if e.memTracker == nil {
@@ -367,6 +376,12 @@ func (e *SortExec) tryToCloseChunkChannel() {
 	}
 }
 
+func (e *SortExec) tryToCloseFinishChannel() {
+	if e.isFinishChannelClosed.CompareAndSwap(false, true) {
+		close(e.finishCh)
+	}
+}
+
 func (e *SortExec) checkError() error {
 	for _, partition := range e.Unparallel.sortPartitions {
 		err := partition.checkError()
@@ -486,7 +501,7 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	go e.fetchChunksFromChild(ctx, &fetcherWaiter)
 
 	for i := range e.Parallel.workers {
-		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.globalSortedRowsQueue, &workersWaiter, &e.Parallel.result, e.Parallel.chunkChannel, e.checkErrorForParallel, e.processErrorForParallel, e.memTracker)
+		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.globalSortedRowsQueue, &workersWaiter, &e.Parallel.result, e.Parallel.chunkChannel, e.processErrorForParallel, e.finishCh, e.memTracker)
 		go e.Parallel.workers[i].run()
 	}
 
@@ -536,13 +551,12 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context, waitGroup *sync.Wai
 
 		e.memTracker.Consume(chkWithMemoryUsage.MemoryUsage)
 
-		// chunkChannel may be closed in advance and it's ok to let it panic
-		// as workers have panicked and the query can't keep on running.
-		e.Parallel.chunkChannel <- chkWithMemoryUsage
-
-		err = e.checkErrorForParallel()
-		if err != nil {
+		select {
+		case <-e.finishCh:
 			return
+		case e.Parallel.chunkChannel <- chkWithMemoryUsage:
+			// chunkChannel may be closed in advance and it's ok to let it panic
+			// as workers have panicked and the query can't keep on running.
 		}
 
 		injectParallelSortRandomFail()
@@ -561,6 +575,7 @@ func (e *SortExec) processErrorForParallel(err error) {
 	if e.Parallel.err == nil {
 		e.Parallel.err = err
 	}
+	e.tryToCloseFinishChannel()
 }
 
 func (e *SortExec) fetchResultFromQueue() {

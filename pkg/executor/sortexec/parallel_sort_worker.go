@@ -41,8 +41,8 @@ type parallelSortWorker struct {
 	globalSortedRowsQueue *sortedRowsList
 
 	chunkChannel chan *chunkWithMemoryUsage
-	checkError   func() error
 	processError func(error)
+	finishCh     chan struct{}
 
 	timesOfRowCompare uint
 
@@ -56,8 +56,8 @@ func newParallelSortWorker(
 	waitGroup *sync.WaitGroup,
 	result *sortedRows,
 	chunkChannel chan *chunkWithMemoryUsage,
-	checkError func() error,
 	processError func(error),
+	finishCh chan struct{},
 	memTracker *memory.Tracker) *parallelSortWorker {
 	return &parallelSortWorker{
 		workerIDForTest:       workerIDForTest,
@@ -66,8 +66,8 @@ func newParallelSortWorker(
 		waitGroup:             waitGroup,
 		result:                result,
 		chunkChannel:          chunkChannel,
-		checkError:            checkError,
 		processError:          processError,
+		finishCh:              finishCh,
 		timesOfRowCompare:     0,
 		memTracker:            memTracker,
 	}
@@ -89,18 +89,22 @@ func (p *parallelSortWorker) injectFailPointForParallelSortWorker() {
 
 // Fetching chunks from chunkChannel and sort them.
 // Rows are sorted only inside a chunk.
-// Return false if there is some error.
+// Return false if we want to stop further execution
 func (p *parallelSortWorker) fetchChunksAndSort() bool {
-	for {
-		err := p.checkError()
-		if err != nil {
-			return false
-		}
+	var (
+		chk *chunkWithMemoryUsage
+		ok  bool
+	)
 
-		// Memory usage of the chunk has been consumed at the producer side.
-		chk, ok := <-p.chunkChannel
-		if !ok {
-			return true
+	for {
+		select {
+		case <-p.finishCh:
+			return false
+		case chk, ok = <-p.chunkChannel:
+			// Memory usage of the chunk has been consumed at the producer side.
+			if !ok {
+				return true
+			}
 		}
 
 		sortedRows := p.sortChunkAndGetSortedRows(chk.Chk)
@@ -121,9 +125,10 @@ func (p *parallelSortWorker) sortChunkAndGetSortedRows(chk *chunk.Chunk) sortedR
 
 func (p *parallelSortWorker) mergeSortGlobalRows() {
 	for {
-		err := p.checkError()
-		if err != nil {
+		select {
+		case <-p.finishCh:
 			return
+		default:
 		}
 
 		sortedRowsLeft, sortedRowsRight := p.globalSortedRowsQueue.fetchTwoSortedRows()
