@@ -93,7 +93,7 @@ func (w *HashAggFinalWorker) consumeIntermData(sctx sessionctx.Context) (err err
 			continue
 		}
 
-		failpoint.Inject("ConsumeRandomPanic", nil)
+		failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 
 		execStart := time.Now()
 		allMemDelta := int64(0)
@@ -136,7 +136,7 @@ func (w *HashAggFinalWorker) loadFinalResult(sctx sessionctx.Context) {
 		return
 	}
 
-	failpoint.Inject("ConsumeRandomPanic", nil)
+	failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 
 	execStart := time.Now()
 	for _, results := range w.partialResultMap {

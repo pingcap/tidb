@@ -61,12 +61,12 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 			},
 		}
 	}
-	failpoint.Inject("assertRequestBuilderReplicaOption", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("assertRequestBuilderReplicaOption")); _err_ == nil {
 		assertScope := val.(string)
 		if builder.ReplicaRead.IsClosestRead() && assertScope != builder.ReadReplicaScope {
 			panic("request builder get staleness option fail")
 		}
-	})
+	}
 	err := builder.verifyTxnScope()
 	if err != nil {
 		builder.err = err

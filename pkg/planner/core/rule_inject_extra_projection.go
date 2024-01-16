@@ -33,11 +33,11 @@ import (
 // 2. TiDB can be used as a coprocessor, when a plan tree been pushed down to
 // TiDB, we need to inject extra projections for the plan tree as well.
 func InjectExtraProjection(plan PhysicalPlan) PhysicalPlan {
-	failpoint.Inject("DisableProjectionPostOptimization", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("DisableProjectionPostOptimization")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(plan)
+			return plan
 		}
-	})
+	}
 
 	return NewProjInjector().inject(plan)
 }

@@ -126,9 +126,9 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 		return err
 	}
 
-	failpoint.Inject("mockFinishImportErr", func() {
-		failpoint.Return(fmt.Errorf("mock finish import error"))
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("mockFinishImportErr")); _err_ == nil {
+		return fmt.Errorf("mock finish import error")
+	}
 
 	// Check remote duplicate value for the index.
 	if unique {
@@ -271,11 +271,11 @@ func (bc *litBackendCtx) ShouldSync(mode FlushMode) (shouldFlush bool, shouldImp
 	} else {
 		interval := bc.updateInterval
 		// This failpoint will be manually set through HTTP status port.
-		failpoint.Inject("mockSyncIntervalMs", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("mockSyncIntervalMs")); _err_ == nil {
 			if v, ok := val.(int); ok {
 				interval = time.Duration(v) * time.Millisecond
 			}
-		})
+		}
 		shouldFlush = shouldImport ||
 			time.Since(bc.timeOfLastFlush.Load()) >= interval
 	}

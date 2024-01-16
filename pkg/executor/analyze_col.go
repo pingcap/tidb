@@ -173,16 +173,16 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		}
 	}
 	for {
-		failpoint.Inject("mockKillRunningV1AnalyzeJob", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("mockKillRunningV1AnalyzeJob")); _err_ == nil {
 			dom := domain.GetDomain(e.ctx)
 			dom.SysProcTracker().KillSysProcess(dom.GetAutoAnalyzeProcID())
-		})
+		}
 		if err := e.ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {
 			return nil, nil, nil, nil, nil, err
 		}
-		failpoint.Inject("mockSlowAnalyzeV1", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("mockSlowAnalyzeV1")); _err_ == nil {
 			time.Sleep(1000 * time.Second)
-		})
+		}
 		data, err1 := e.resultHandler.nextRaw(context.TODO())
 		if err1 != nil {
 			return nil, nil, nil, nil, nil, err1

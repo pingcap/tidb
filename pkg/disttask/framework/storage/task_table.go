@@ -261,7 +261,9 @@ func (mgr *TaskManager) CreateTaskWithSession(ctx context.Context, se sessionctx
 	}
 
 	taskID = int64(rs[0].GetUint64(0))
-	failpoint.Inject("testSetLastTaskID", func() { TestLastTaskID.Store(taskID) })
+	if _, _err_ := failpoint.Eval(_curpkg_("testSetLastTaskID")); _err_ == nil {
+		TestLastTaskID.Store(taskID)
+	}
 
 	return taskID, nil
 }
@@ -950,10 +952,10 @@ func (*TaskManager) insertSubtasks(ctx context.Context, se sessionctx.Context, s
 	if len(subtasks) == 0 {
 		return nil
 	}
-	failpoint.Inject("waitBeforeInsertSubtasks", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("waitBeforeInsertSubtasks")); _err_ == nil {
 		<-TestChannel
 		<-TestChannel
-	})
+	}
 	var (
 		sb         strings.Builder
 		markerList = make([]string, 0, len(subtasks))
@@ -1062,11 +1064,11 @@ func (mgr *TaskManager) UpdateTaskAndAddSubTasks(ctx context.Context, task *prot
 			}
 		}
 
-		failpoint.Inject("MockUpdateTaskErr", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("MockUpdateTaskErr")); _err_ == nil {
 			if val.(bool) {
-				failpoint.Return(errors.New("updateTaskErr"))
+				return errors.New("updateTaskErr")
 			}
-		})
+		}
 		if len(subtasks) > 0 {
 			subtaskState := proto.SubtaskStatePending
 			if task.State == proto.TaskStateReverting {
@@ -1187,11 +1189,11 @@ func (mgr *TaskManager) TransferSubTasks2History(ctx context.Context, taskID int
 // GCSubtasks deletes the history subtask which is older than the given days.
 func (mgr *TaskManager) GCSubtasks(ctx context.Context) error {
 	subtaskHistoryKeepSeconds := defaultSubtaskKeepDays * 24 * 60 * 60
-	failpoint.Inject("subtaskHistoryKeepSeconds", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("subtaskHistoryKeepSeconds")); _err_ == nil {
 		if val, ok := val.(int); ok {
 			subtaskHistoryKeepSeconds = val
 		}
-	})
+	}
 	_, err := mgr.ExecuteSQLWithNewSession(
 		ctx,
 		fmt.Sprintf("DELETE FROM mysql.tidb_background_subtask_history WHERE state_update_time < UNIX_TIMESTAMP() - %d ;", subtaskHistoryKeepSeconds),

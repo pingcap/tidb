@@ -52,11 +52,11 @@ func convertAddIdxJob2RollbackJob(
 	allIndexInfos []*model.IndexInfo,
 	err error,
 ) (int64, error) {
-	failpoint.Inject("mockConvertAddIdxJob2RollbackJobError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockConvertAddIdxJob2RollbackJobError")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(0, errors.New("mock convert add index job to rollback job error"))
+			return 0, errors.New("mock convert add index job to rollback job error")
 		}
-	})
+	}
 
 	originalState := allIndexInfos[0].State
 	idxNames := make([]model.CIStr, 0, len(allIndexInfos))

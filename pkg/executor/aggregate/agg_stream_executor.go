@@ -53,11 +53,11 @@ type StreamAggExec struct {
 
 // Open implements the Executor Open interface.
 func (e *StreamAggExec) Open(ctx context.Context) error {
-	failpoint.Inject("mockStreamAggExecBaseExecutorOpenReturnedError", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockStreamAggExecBaseExecutorOpenReturnedError")); _err_ == nil {
 		if val, _ := val.(bool); val {
-			failpoint.Return(errors.New("mock StreamAggExec.baseExecutor.Open returned error"))
+			return errors.New("mock StreamAggExec.baseExecutor.Open returned error")
 		}
-	})
+	}
 
 	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
@@ -87,7 +87,7 @@ func (e *StreamAggExec) Open(ctx context.Context) error {
 	if e.Ctx().GetSessionVars().TrackAggregateMemoryUsage {
 		e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 	}
-	failpoint.Inject("ConsumeRandomPanic", nil)
+	failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 	e.memTracker.Consume(e.childResult.MemoryUsage() + e.memUsageOfInitialPartialResult)
 	return nil
 }
@@ -174,7 +174,7 @@ func (e *StreamAggExec) consumeGroupRows() error {
 		}
 		allMemDelta += memDelta
 	}
-	failpoint.Inject("ConsumeRandomPanic", nil)
+	failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 	e.memTracker.Consume(allMemDelta)
 	e.groupRows = e.groupRows[:0]
 	return nil
@@ -189,7 +189,7 @@ func (e *StreamAggExec) consumeCurGroupRowsAndFetchChild(ctx context.Context, ch
 
 	mSize := e.childResult.MemoryUsage()
 	err = exec.Next(ctx, e.Children(0), e.childResult)
-	failpoint.Inject("ConsumeRandomPanic", nil)
+	failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 	e.memTracker.Consume(e.childResult.MemoryUsage() - mSize)
 	if err != nil {
 		return err
@@ -221,7 +221,7 @@ func (e *StreamAggExec) appendResult2Chunk(chk *chunk.Chunk) error {
 		}
 		aggFunc.ResetPartialResult(e.partialResults[i])
 	}
-	failpoint.Inject("ConsumeRandomPanic", nil)
+	failpoint.Eval(_curpkg_("ConsumeRandomPanic"))
 	// All partial results have been reset, so reset the memory usage.
 	e.memTracker.ReplaceBytesUsed(e.childResult.MemoryUsage() + e.memUsageOfInitialPartialResult)
 	if len(e.AggFuncs) == 0 {

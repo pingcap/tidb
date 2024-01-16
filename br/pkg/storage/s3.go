@@ -1115,12 +1115,12 @@ func isConnectionRefusedError(err error) bool {
 
 func (rl retryerWithLog) ShouldRetry(r *request.Request) bool {
 	// for unit test
-	failpoint.Inject("replace-error-to-connection-reset-by-peer", func(_ failpoint.Value) {
+	if _, _err_ := failpoint.Eval(_curpkg_("replace-error-to-connection-reset-by-peer")); _err_ == nil {
 		log.Info("original error", zap.Error(r.Error))
 		if r.Error != nil {
 			r.Error = errors.New("read tcp *.*.*.*:*->*.*.*.*:*: read: connection reset by peer")
 		}
-	})
+	}
 	if r.HTTPRequest.URL.Host == ec2MetaAddress && (isDeadlineExceedError(r.Error) || isConnectionResetError(r.Error)) {
 		// fast fail for unreachable linklocal address in EC2 containers.
 		log.Warn("failed to get EC2 metadata. skipping.", logutil.ShortError(r.Error))

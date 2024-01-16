@@ -347,12 +347,12 @@ func (cc *clientConn) executePreparedStmtAndWriteResult(ctx context.Context, stm
 		rowContainer.GetDiskTracker().AttachTo(vars.DiskTracker)
 		rowContainer.GetDiskTracker().SetLabel(memory.LabelForCursorFetch)
 		if variable.EnableTmpStorageOnOOM.Load() {
-			failpoint.Inject("testCursorFetchSpill", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("testCursorFetchSpill")); _err_ == nil {
 				if val, ok := val.(bool); val && ok {
 					actionSpill := rowContainer.ActionSpillForTest()
 					defer actionSpill.WaitForTest()
 				}
-			})
+			}
 			action := memory.NewActionWithPriority(rowContainer.ActionSpill(), memory.DefCursorFetchSpillPriority)
 			vars.MemTracker.FallbackOldAndSetNewAction(action)
 		}

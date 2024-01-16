@@ -58,16 +58,16 @@ func newImportMinimalTaskExecutor0(t *importStepMinimalTask) MiniTaskExecutor {
 func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWriter backend.EngineWriter) error {
 	logger := logutil.BgLogger().With(zap.Stringer("type", proto.ImportInto), zap.Int64("table-id", e.mTtask.Plan.TableInfo.ID))
 	logger.Info("execute chunk")
-	failpoint.Inject("waitBeforeSortChunk", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("waitBeforeSortChunk")); _err_ == nil {
 		time.Sleep(3 * time.Second)
-	})
-	failpoint.Inject("errorWhenSortChunk", func() {
-		failpoint.Return(errors.New("occur an error when sort chunk"))
-	})
-	failpoint.Inject("syncBeforeSortChunk", func() {
+	}
+	if _, _err_ := failpoint.Eval(_curpkg_("errorWhenSortChunk")); _err_ == nil {
+		return errors.New("occur an error when sort chunk")
+	}
+	if _, _err_ := failpoint.Eval(_curpkg_("syncBeforeSortChunk")); _err_ == nil {
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
-	})
+	}
 	chunkCheckpoint := toChunkCheckpoint(e.mTtask.Chunk)
 	sharedVars := e.mTtask.SharedVars
 	if sharedVars.TableImporter.IsLocalSort() {
@@ -88,10 +88,10 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 
 // postProcess does the post-processing for the task.
 func postProcess(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProcessStepMeta, logger *zap.Logger) (err error) {
-	failpoint.Inject("syncBeforePostProcess", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("syncBeforePostProcess")); _err_ == nil {
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
-	})
+	}
 
 	callLog := log.BeginTask(logger, "post process")
 	defer func() {

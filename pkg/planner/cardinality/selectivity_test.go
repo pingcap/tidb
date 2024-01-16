@@ -1092,9 +1092,15 @@ func TestOrderingIdxSelectivityRatio(t *testing.T) {
 
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int primary key, b int, c int, index ib(b), index ic(c))")
-	for i := 0; i < 10000; i++ {
-		testKit.MustExec(fmt.Sprintf("insert into t values (%v, %v, %v)", i, i, i)) // [0, 10000)
+	testKit.MustExec("create table t(b int, c int, index ib(b), index ic(c))")
+	// Insert 1000 rows using a limited number of SQL statements
+	testKit.MustExec("insert into t values (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10)")
+	testKit.MustExec("insert into t select b * 10, c * 10 from t where b > 1")
+	for i := 1; i < 10; i++ {
+		testKit.MustExec(fmt.Sprintf("insert into t select b + %v, c + %v from t where b < 100 and mod(b, 10) = 0", i, i))
+	}
+	for j := 0; j < 9; j++ {
+		testKit.MustExec(fmt.Sprintf("insert into t select b + 100, c + 100 from t where b > %v * 100", j))
 	}
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	testKit.MustExec(`analyze table t`)

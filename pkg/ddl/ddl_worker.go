@@ -338,11 +338,11 @@ func (d *ddl) addBatchDDLJobs2Queue(tasks []*limitJobTask) error {
 				return errors.Trace(err)
 			}
 		}
-		failpoint.Inject("mockAddBatchDDLJobsErr", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("mockAddBatchDDLJobsErr")); _err_ == nil {
 			if val.(bool) {
-				failpoint.Return(errors.Errorf("mockAddBatchDDLJobsErr"))
+				return errors.Errorf("mockAddBatchDDLJobsErr")
 			}
-		})
+		}
 		return nil
 	})
 }
@@ -361,7 +361,7 @@ func (*ddl) checkFlashbackJobInQueue(t *meta.Meta) error {
 }
 
 func injectModifyJobArgFailPoint(job *model.Job) {
-	failpoint.Inject("MockModifyJobArg", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("MockModifyJobArg")); _err_ == nil {
 		if val.(bool) {
 			// Corrupt the DDL job argument.
 			if job.Type == model.ActionMultiSchemaChange {
@@ -372,7 +372,7 @@ func injectModifyJobArgFailPoint(job *model.Job) {
 				job.Args[0] = 1
 			}
 		}
-	})
+	}
 }
 
 func setJobStateToQueueing(job *model.Job) {
@@ -536,12 +536,12 @@ func injectFailPointForGetJob(job *model.Job) {
 	if job == nil {
 		return
 	}
-	failpoint.Inject("mockModifyJobSchemaId", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockModifyJobSchemaId")); _err_ == nil {
 		job.SchemaID = int64(val.(int))
-	})
-	failpoint.Inject("MockModifyJobTableId", func(val failpoint.Value) {
+	}
+	if val, _err_ := failpoint.Eval(_curpkg_("MockModifyJobTableId")); _err_ == nil {
 		job.TableID = int64(val.(int))
-	})
+	}
 }
 
 // handleUpdateJobError handles the too large DDL job.
@@ -571,11 +571,11 @@ func (w *worker) handleUpdateJobError(t *meta.Meta, job *model.Job, err error) e
 // updateDDLJob updates the DDL job information.
 // Every time we enter another state except final state, we must call this function.
 func (w *worker) updateDDLJob(job *model.Job, meetErr bool) error {
-	failpoint.Inject("mockErrEntrySizeTooLarge", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockErrEntrySizeTooLarge")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(kv.ErrEntryTooLarge)
+			return kv.ErrEntryTooLarge
 		}
-	})
+	}
 	updateRawArgs := needUpdateRawArgs(job, meetErr)
 	if !updateRawArgs {
 		w.jobLogger(job).Info("meet something wrong before update DDL job, shouldn't update raw args",
@@ -872,11 +872,11 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 	if err != nil {
 		return nil, err
 	}
-	failpoint.Inject("mockRunJobTime", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockRunJobTime")); _err_ == nil {
 		if val.(bool) {
 			time.Sleep(time.Duration(rand.Intn(500)) * time.Millisecond) // #nosec G404
 		}
-	})
+	}
 	txn, err := w.sess.Txn()
 	if err != nil {
 		w.sess.Rollback()
@@ -1168,7 +1168,7 @@ func (w *worker) runDDLJob(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, 
 		}, false)
 
 	// Mock for run ddl job panic.
-	failpoint.Inject("mockPanicInRunDDLJob", func(val failpoint.Value) {})
+	failpoint.Eval(_curpkg_("mockPanicInRunDDLJob"))
 
 	if job.Type != model.ActionMultiSchemaChange {
 		w.jobLogger(job).Info("run DDL job", zap.String("category", "ddl"), zap.String("job", job.String()))
@@ -1414,14 +1414,14 @@ func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion in
 
 // waitSchemaSyncedForMDL likes waitSchemaSynced, but it waits for getting the metadata lock of the latest version of this DDL.
 func waitSchemaSyncedForMDL(d *ddlCtx, job *model.Job, latestSchemaVersion int64) error {
-	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("checkDownBeforeUpdateGlobalVersion")); _err_ == nil {
 		if val.(bool) {
 			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
 				panic("check down before update global version failed")
 			}
 			mockDDLErrOnce = -1
 		}
-	})
+	}
 
 	timeStart := time.Now()
 	// OwnerCheckAllVersions returns only when all TiDB schemas are synced(exclude the isolated TiDB).
@@ -1457,14 +1457,14 @@ func waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Duration) error {
 		return err
 	}
 
-	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("checkDownBeforeUpdateGlobalVersion")); _err_ == nil {
 		if val.(bool) {
 			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
 				panic("check down before update global version failed")
 			}
 			mockDDLErrOnce = -1
 		}
-	})
+	}
 
 	return waitSchemaChanged(d, waitTime, latestSchemaVersion, job)
 }

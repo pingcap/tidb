@@ -1017,13 +1017,13 @@ func (bc *Client) FindTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 	var leader *metapb.Peer
 	key = codec.EncodeBytesExt([]byte{}, key, isRawKv)
 	state := utils.InitialRetryState(60, 100*time.Millisecond, 2*time.Second)
-	failpoint.Inject("retry-state-on-find-target-peer", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("retry-state-on-find-target-peer")); _err_ == nil {
 		logutil.CL(ctx).Info("reset state for FindTargetPeer")
 		state = utils.InitialRetryState(v.(int), 100*time.Millisecond, 100*time.Millisecond)
-	})
+	}
 	err := utils.WithRetry(ctx, func() error {
 		region, err := bc.mgr.GetPDClient().GetRegion(ctx, key)
-		failpoint.Inject("return-region-on-find-target-peer", func(v failpoint.Value) {
+		if v, _err_ := failpoint.Eval(_curpkg_("return-region-on-find-target-peer")); _err_ == nil {
 			switch v.(string) {
 			case "nil":
 				{
@@ -1068,7 +1068,7 @@ func (bc *Client) FindTargetPeer(ctx context.Context, key []byte, isRawKv bool, 
 					}
 				}
 			}
-		})
+		}
 		if err != nil || region == nil {
 			logutil.CL(ctx).Error("find region failed", zap.Error(err), zap.Reflect("region", region))
 			return errors.Annotate(berrors.ErrPDLeaderNotFound, "cannot find region from pd client")
@@ -1118,7 +1118,7 @@ func (bc *Client) fineGrainedBackup(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	failpoint.Inject("hint-fine-grained-backup", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("hint-fine-grained-backup")); _err_ == nil {
 		log.Info("failpoint hint-fine-grained-backup injected, "+
 			"process will sleep for 3s and notify the shell.", zap.String("file", v.(string)))
 		if sigFile, ok := v.(string); ok {
@@ -1131,7 +1131,7 @@ func (bc *Client) fineGrainedBackup(
 			}
 			time.Sleep(3 * time.Second)
 		}
-	})
+	}
 
 	bo := utils.AdaptTiKVBackoffer(ctx, backupFineGrainedMaxBackoff, berrors.ErrUnknown)
 	for {
@@ -1349,7 +1349,7 @@ func doSendBackup(
 	req backuppb.BackupRequest,
 	respFn func(*backuppb.BackupResponse) error,
 ) error {
-	failpoint.Inject("hint-backup-start", func(v failpoint.Value) {
+	if v, _err_ := failpoint.Eval(_curpkg_("hint-backup-start")); _err_ == nil {
 		logutil.CL(ctx).Info("failpoint hint-backup-start injected, " +
 			"process will notify the shell.")
 		if sigFile, ok := v.(string); ok {
@@ -1362,9 +1362,9 @@ func doSendBackup(
 			}
 		}
 		time.Sleep(3 * time.Second)
-	})
+	}
 	bCli, err := client.Backup(ctx, &req)
-	failpoint.Inject("reset-retryable-error", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("reset-retryable-error")); _err_ == nil {
 		switch val.(string) {
 		case "Unavaiable":
 			{
@@ -1377,13 +1377,13 @@ func doSendBackup(
 				err = status.Error(codes.Internal, "Internal error")
 			}
 		}
-	})
-	failpoint.Inject("reset-not-retryable-error", func(val failpoint.Value) {
+	}
+	if val, _err_ := failpoint.Eval(_curpkg_("reset-not-retryable-error")); _err_ == nil {
 		if val.(bool) {
 			logutil.CL(ctx).Debug("failpoint reset-not-retryable-error injected.")
 			err = status.Error(codes.Unknown, "Your server was haunted hence doesn't work, meow :3")
 		}
-	})
+	}
 	if err != nil {
 		return err
 	}

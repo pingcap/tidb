@@ -35,36 +35,36 @@ const ttlTaskHeartBeatTickerInterval = time.Minute
 const ttlGCInterval = time.Hour
 
 func getUpdateInfoSchemaCacheInterval() time.Duration {
-	failpoint.Inject("update-info-schema-cache-interval", func(val failpoint.Value) time.Duration {
+	if val, _err_ := failpoint.Eval(_curpkg_("update-info-schema-cache-interval")); _err_ == nil {
 		return time.Duration(val.(int))
-	})
+	}
 	return updateInfoSchemaCacheInterval
 }
 
 func getUpdateTTLTableStatusCacheInterval() time.Duration {
-	failpoint.Inject("update-status-table-cache-interval", func(val failpoint.Value) time.Duration {
+	if val, _err_ := failpoint.Eval(_curpkg_("update-status-table-cache-interval")); _err_ == nil {
 		return time.Duration(val.(int))
-	})
+	}
 	return updateTTLTableStatusCacheInterval
 }
 
 func getResizeWorkersInterval() time.Duration {
-	failpoint.Inject("resize-workers-interval", func(val failpoint.Value) time.Duration {
+	if val, _err_ := failpoint.Eval(_curpkg_("resize-workers-interval")); _err_ == nil {
 		return time.Duration(val.(int))
-	})
+	}
 	return resizeWorkersInterval
 }
 
 func getTaskManagerLoopTickerInterval() time.Duration {
-	failpoint.Inject("task-manager-loop-interval", func(val failpoint.Value) time.Duration {
+	if val, _err_ := failpoint.Eval(_curpkg_("task-manager-loop-interval")); _err_ == nil {
 		return time.Duration(val.(int))
-	})
+	}
 	return taskManagerLoopTickerInterval
 }
 
 func getTaskManagerHeartBeatExpireInterval() time.Duration {
-	failpoint.Inject("task-manager-heartbeat-expire-interval", func(val failpoint.Value) time.Duration {
+	if val, _err_ := failpoint.Eval(_curpkg_("task-manager-heartbeat-expire-interval")); _err_ == nil {
 		return time.Duration(val.(int))
-	})
+	}
 	return 2 * ttlTaskHeartBeatTickerInterval
 }

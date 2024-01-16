@@ -117,13 +117,13 @@ func (e *CTEExec) Close() (err error) {
 		e.producer.resTbl.Lock()
 		defer e.producer.resTbl.Unlock()
 		if !e.producer.closed {
-			failpoint.Inject("mock_cte_exec_panic_avoid_deadlock", func(v failpoint.Value) {
+			if v, _err_ := failpoint.Eval(_curpkg_("mock_cte_exec_panic_avoid_deadlock")); _err_ == nil {
 				ok := v.(bool)
 				if ok {
 					// mock an oom panic, returning ErrMemoryExceedForQuery for error identification in recovery work.
 					panic(exeerrors.ErrMemoryExceedForQuery)
 				}
-			})
+			}
 			// closeProducer() only close seedExec and recursiveExec, will not touch resTbl.
 			// It means you can still read resTbl after call closeProducer().
 			// You can even call all three functions(openProducer/produce/closeProducer) in CTEExec.Next().
@@ -320,7 +320,7 @@ func (p *cteProducer) produce(ctx context.Context, cteExec *CTEExec) (err error)
 		iterOutAction = setupCTEStorageTracker(p.iterOutTbl, cteExec.Ctx(), p.memTracker, p.diskTracker)
 	}
 
-	failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("testCTEStorageSpill")); _err_ == nil {
 		if val.(bool) && variable.EnableTmpStorageOnOOM.Load() {
 			defer resAction.WaitForTest()
 			defer iterInAction.WaitForTest()
@@ -328,7 +328,7 @@ func (p *cteProducer) produce(ctx context.Context, cteExec *CTEExec) (err error)
 				defer iterOutAction.WaitForTest()
 			}
 		}
-	})
+	}
 
 	if err = p.computeSeedPart(ctx); err != nil {
 		p.resTbl.SetError(err)
@@ -348,7 +348,7 @@ func (p *cteProducer) computeSeedPart(ctx context.Context) (err error) {
 			err = util.GetRecoverError(r)
 		}
 	}()
-	failpoint.Inject("testCTESeedPanic", nil)
+	failpoint.Eval(_curpkg_("testCTESeedPanic"))
 	p.curIter = 0
 	p.iterInTbl.SetIter(p.curIter)
 	chks := make([]*chunk.Chunk, 0, 10)
@@ -387,7 +387,7 @@ func (p *cteProducer) computeRecursivePart(ctx context.Context) (err error) {
 			err = util.GetRecoverError(r)
 		}
 	}()
-	failpoint.Inject("testCTERecursivePanic", nil)
+	failpoint.Eval(_curpkg_("testCTERecursivePanic"))
 	if p.recursiveExec == nil || p.iterInTbl.NumChunks() == 0 {
 		return
 	}
@@ -517,11 +517,11 @@ func setupCTEStorageTracker(tbl cteutil.Storage, ctx sessionctx.Context, parentM
 
 	if variable.EnableTmpStorageOnOOM.Load() {
 		actionSpill = tbl.ActionSpill()
-		failpoint.Inject("testCTEStorageSpill", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("testCTEStorageSpill")); _err_ == nil {
 			if val.(bool) {
 				actionSpill = tbl.(*cteutil.StorageRC).ActionSpillForTest()
 			}
-		})
+		}
 		ctx.GetSessionVars().MemTracker.FallbackOldAndSetNewAction(actionSpill)
 	}
 	return actionSpill

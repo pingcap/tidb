@@ -296,9 +296,9 @@ func (e *Engine) LoadIngestData(
 	// currently we assume the region size is 96MB and will download 96MB*40 = 3.8GB
 	// data at once
 	regionBatchSize := 40
-	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("LoadIngestDataBatchSize")); _err_ == nil {
 		regionBatchSize = val.(int)
-	})
+	}
 	for i := 0; i < len(regionRanges); i += regionBatchSize {
 		err := e.loadBatchRegionData(ctx, regionRanges[i].Start, regionRanges[min(i+regionBatchSize, len(regionRanges))-1].End, outCh)
 		if err != nil {

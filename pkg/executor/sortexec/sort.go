@@ -308,28 +308,28 @@ func (e *SortExec) fetchRowChunks(ctx context.Context) error {
 			return err
 		}
 
-		failpoint.Inject("unholdSyncLock", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("unholdSyncLock")); _err_ == nil {
 			if val.(bool) {
 				// Ensure that spill can get `syncLock`.
 				time.Sleep(1 * time.Millisecond)
 			}
-		})
+		}
 	}
 
-	failpoint.Inject("waitForSpill", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("waitForSpill")); _err_ == nil {
 		if val.(bool) {
 			// Ensure that spill is triggered before returning data.
 			time.Sleep(50 * time.Millisecond)
 		}
-	})
+	}
 
-	failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("SignalCheckpointForSort")); _err_ == nil {
 		if val.(bool) {
 			if e.Ctx().GetSessionVars().ConnectionID == 123456 {
 				e.Ctx().GetSessionVars().MemTracker.Killer.SendKillSignal(sqlkiller.QueryMemoryExceeded)
 			}
 		}
-	})
+	}
 
 	err = e.handleCurrentPartitionBeforeExit()
 	if err != nil {

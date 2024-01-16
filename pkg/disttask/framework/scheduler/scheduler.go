@@ -163,16 +163,16 @@ func (s *BaseScheduler) scheduleTask() {
 				continue
 			}
 			task := s.GetTask()
-			failpoint.Inject("cancelTaskAfterRefreshTask", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("cancelTaskAfterRefreshTask")); _err_ == nil {
 				if val.(bool) && task.State == proto.TaskStateRunning {
 					err := s.taskMgr.CancelTask(s.ctx, task.ID)
 					if err != nil {
 						logutil.Logger(s.logCtx).Error("cancel task failed", zap.Error(err))
 					}
 				}
-			})
+			}
 
-			failpoint.Inject("pausePendingTask", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("pausePendingTask")); _err_ == nil {
 				if val.(bool) && task.State == proto.TaskStatePending {
 					_, err := s.taskMgr.PauseTask(s.ctx, task.Key)
 					if err != nil {
@@ -180,9 +180,9 @@ func (s *BaseScheduler) scheduleTask() {
 					}
 					task.State = proto.TaskStatePausing
 				}
-			})
+			}
 
-			failpoint.Inject("pauseTaskAfterRefreshTask", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("pauseTaskAfterRefreshTask")); _err_ == nil {
 				if val.(bool) && task.State == proto.TaskStateRunning {
 					_, err := s.taskMgr.PauseTask(s.ctx, task.Key)
 					if err != nil {
@@ -190,7 +190,7 @@ func (s *BaseScheduler) scheduleTask() {
 					}
 					task.State = proto.TaskStatePausing
 				}
-			})
+			}
 
 			switch task.State {
 			case proto.TaskStateCancelling:
@@ -221,13 +221,13 @@ func (s *BaseScheduler) scheduleTask() {
 				logutil.Logger(s.logCtx).Info("schedule task meet err, reschedule it", zap.Error(err))
 			}
 
-			failpoint.Inject("mockOwnerChange", func(val failpoint.Value) {
+			if val, _err_ := failpoint.Eval(_curpkg_("mockOwnerChange")); _err_ == nil {
 				if val.(bool) {
 					logutil.Logger(s.logCtx).Info("mockOwnerChange called")
 					MockOwnerChange()
 					time.Sleep(time.Second)
 				}
-			})
+			}
 		}
 	}
 }
@@ -265,11 +265,11 @@ var MockDMLExecutionOnPausedState func(task *proto.Task)
 func (s *BaseScheduler) onPaused() error {
 	task := s.GetTask()
 	logutil.Logger(s.logCtx).Info("on paused state", zap.Stringer("state", task.State), zap.Int64("step", int64(task.Step)))
-	failpoint.Inject("mockDMLExecutionOnPausedState", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockDMLExecutionOnPausedState")); _err_ == nil {
 		if val.(bool) {
 			MockDMLExecutionOnPausedState(task)
 		}
-	})
+	}
 	return nil
 }
 
@@ -289,9 +289,9 @@ func (s *BaseScheduler) onResuming() error {
 		// Finish the resuming process.
 		logutil.Logger(s.logCtx).Info("all paused tasks converted to pending state, update the task to running state")
 		err := s.updateTask(proto.TaskStateRunning, nil, RetrySQLTimes)
-		failpoint.Inject("syncAfterResume", func() {
+		if _, _err_ := failpoint.Eval(_curpkg_("syncAfterResume")); _err_ == nil {
 			TestSyncChan <- struct{}{}
-		})
+		}
 		return err
 	}
 
@@ -489,9 +489,9 @@ func (s *BaseScheduler) scheduleSubTask(
 
 		size += uint64(len(meta))
 	}
-	failpoint.Inject("cancelBeforeUpdateTask", func() {
+	if _, _err_ := failpoint.Eval(_curpkg_("cancelBeforeUpdateTask")); _err_ == nil {
 		_ = s.taskMgr.CancelTask(s.ctx, task.ID)
-	})
+	}
 
 	// as other fields and generated key and index KV takes space too, we limit
 	// the size of subtasks to 80% of the transaction limit.
@@ -538,9 +538,9 @@ var MockServerInfo []*infosync.ServerInfo
 
 // GenerateTaskExecutorNodes generate a eligible TiDB nodes.
 func GenerateTaskExecutorNodes(ctx context.Context) (serverNodes []*infosync.ServerInfo, err error) {
-	failpoint.Inject("mockTaskExecutorNodes", func() {
-		failpoint.Return(MockServerInfo, nil)
-	})
+	if _, _err_ := failpoint.Eval(_curpkg_("mockTaskExecutorNodes")); _err_ == nil {
+		return MockServerInfo, nil
+	}
 	var serverInfos map[string]*infosync.ServerInfo
 	_, etcd := ctx.Value("etcd").(bool)
 	if intest.InTest && !etcd {

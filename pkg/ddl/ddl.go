@@ -803,11 +803,11 @@ func (d *ddl) prepareWorkers4ConcurrencyDDL() {
 	d.reorgWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(addIdxWorker), reorgCnt, reorgCnt, 0), reorg)
 	d.generalDDLWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(generalWorker), generalWorkerCnt, generalWorkerCnt, 0), general)
 	d.localWorkerPool = newDDLWorkerPool(pools.NewResourcePool(workerFactory(localWorker), localCnt, localCnt, 0), local)
-	failpoint.Inject("NoDDLDispatchLoop", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("NoDDLDispatchLoop")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return()
+			return
 		}
-	})
+	}
 	d.wg.Run(d.startDispatchLoop)
 	d.wg.Run(d.startLocalWorkerLoop)
 }
@@ -978,11 +978,11 @@ func (d *ddl) genGlobalIDs(count int) ([]int64, error) {
 	d.globalIDLock.Lock()
 	defer d.globalIDLock.Unlock()
 	err := kv.RunInNewTxn(ctx, d.store, true, func(ctx context.Context, txn kv.Transaction) error {
-		failpoint.Inject("mockGenGlobalIDFail", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("mockGenGlobalIDFail")); _err_ == nil {
 			if val.(bool) {
-				failpoint.Return(errors.New("gofail genGlobalIDs error"))
+				return errors.New("gofail genGlobalIDs error")
 			}
-		})
+		}
 
 		m := meta.NewMeta(txn)
 		var err error
@@ -1158,7 +1158,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	task := &limitJobTask{job, []chan error{make(chan error)}, nil}
 	d.deliverJobTask(task)
 
-	failpoint.Inject("mockParallelSameDDLJobTwice", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockParallelSameDDLJobTwice")); _err_ == nil {
 		if val.(bool) {
 			<-task.errChs[0]
 			// The same job will be put to the DDL queue twice.
@@ -1168,7 +1168,7 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 			// The second job result is used for test.
 			task = task1
 		}
-	})
+	}
 
 	// worker should restart to continue handling tasks in limitJobCh, and send back through task.err
 	err := <-task.errChs[0]
@@ -1209,9 +1209,9 @@ func (d *ddl) DoDDLJob(ctx sessionctx.Context, job *model.Job) error {
 	}()
 	i := 0
 	for {
-		failpoint.Inject("storeCloseInLoop", func(_ failpoint.Value) {
+		if _, _err_ := failpoint.Eval(_curpkg_("storeCloseInLoop")); _err_ == nil {
 			_ = d.Stop()
-		})
+		}
 
 		select {
 		case <-d.ddlJobDoneCh:
@@ -1736,11 +1736,11 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 	sessCtx sessionctx.Context,
 	ids []int64,
 	byWho model.AdminCommandOperator) (jobErrs []error, err error) {
-	failpoint.Inject("mockFailedCommandOnConcurencyDDL", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("mockFailedCommandOnConcurencyDDL")); _err_ == nil {
 		if val.(bool) {
-			failpoint.Return(nil, errors.New("mock failed admin command on ddl jobs"))
+			return nil, errors.New("mock failed admin command on ddl jobs")
 		}
-	})
+	}
 
 	if len(ids) == 0 {
 		return nil, nil
@@ -1791,11 +1791,11 @@ func processJobs(process func(*sess.Session, *model.Job, model.AdminCommandOpera
 			}
 		}
 
-		failpoint.Inject("mockCommitFailedOnDDLCommand", func(val failpoint.Value) {
+		if val, _err_ := failpoint.Eval(_curpkg_("mockCommitFailedOnDDLCommand")); _err_ == nil {
 			if val.(bool) {
-				failpoint.Return(jobErrs, errors.New("mock commit failed on admin command on ddl jobs"))
+				return jobErrs, errors.New("mock commit failed on admin command on ddl jobs")
 			}
-		})
+		}
 
 		// There may be some conflict during the update, try it again
 		if err = ns.Commit(); err != nil {

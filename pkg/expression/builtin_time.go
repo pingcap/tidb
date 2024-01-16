@@ -2507,9 +2507,9 @@ func evalNowWithFsp(ctx EvalContext, fsp int) (types.Time, bool, error) {
 		return types.ZeroTime, true, err
 	}
 
-	failpoint.Inject("injectNow", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("injectNow")); _err_ == nil {
 		nowTs = time.Unix(int64(val.(int)), 0)
-	})
+	}
 
 	// In MySQL's implementation, now() will truncate the result instead of rounding it.
 	// Results below are from MySQL 5.7, which can prove it.
@@ -6699,10 +6699,10 @@ func getMinSafeTime(ctx EvalContext, timeZone *time.Location) time.Time {
 		minSafeTS = store.GetMinSafeTS(txnScope)
 	}
 	// Inject mocked SafeTS for test.
-	failpoint.Inject("injectSafeTS", func(val failpoint.Value) {
+	if val, _err_ := failpoint.Eval(_curpkg_("injectSafeTS")); _err_ == nil {
 		injectTS := val.(int)
 		minSafeTS = uint64(injectTS)
-	})
+	}
 	// Try to get from the stmt cache to make sure this function is deterministic.
 	stmtCtx := ctx.GetSessionVars().StmtCtx
 	minSafeTS = stmtCtx.GetOrStoreStmtCache(stmtctx.StmtSafeTSCacheKey, minSafeTS).(uint64)
