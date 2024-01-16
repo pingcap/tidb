@@ -153,7 +153,7 @@ func (s *BaseTaskExecutor) RunStep(ctx context.Context, task *proto.Task, resour
 		if r := recover(); r != nil {
 			logutil.Logger(s.logCtx).Error("BaseTaskExecutor panicked", zap.Any("recover", r), zap.Stack("stack"))
 			err4Panic := errors.Errorf("%v", r)
-			err1 := s.updateErrorToSubtask(ctx, task.ID, err4Panic)
+			err1 := s.updateSubtask(ctx, task.ID, err4Panic)
 			if err == nil {
 				err = err1
 			}
@@ -166,9 +166,20 @@ func (s *BaseTaskExecutor) RunStep(ctx context.Context, task *proto.Task, resour
 		return err
 	}
 	if err == nil {
-		return nil
+		// may have error in
+		// 1. defer function in run(ctx, task)
+		// 2. cancel ctx
+		// TODO: refine onError/getError
+		if s.getError() != nil {
+			err = s.getError()
+		} else if ctx.Err() != nil {
+			err = ctx.Err()
+		} else {
+			return nil
+		}
 	}
-	return s.updateErrorToSubtask(ctx, task.ID, err)
+
+	return s.updateSubtask(ctx, task.ID, err)
 }
 
 func (s *BaseTaskExecutor) runStep(ctx context.Context, task *proto.Task, resource *proto.StepResource) (resErr error) {
@@ -215,6 +226,7 @@ func (s *BaseTaskExecutor) runStep(ctx context.Context, task *proto.Task, resour
 		err := stepExecutor.Cleanup(runCtx)
 		if err != nil {
 			logutil.Logger(s.logCtx).Error("cleanup subtask exec env failed", zap.Error(err))
+			s.onError(err)
 		}
 	}()
 
@@ -223,10 +235,6 @@ func (s *BaseTaskExecutor) runStep(ctx context.Context, task *proto.Task, resour
 		proto.SubtaskStatePending, proto.SubtaskStateRunning)
 	if err != nil {
 		s.onError(err)
-		if common.IsRetryableError(err) {
-			logutil.Logger(s.logCtx).Warn("met retryable error", zap.Error(err))
-			return nil
-		}
 		return s.getError()
 	}
 	for _, subtask := range subtasks {
@@ -281,7 +289,7 @@ func (s *BaseTaskExecutor) runStep(ctx context.Context, task *proto.Task, resour
 				break
 			}
 		} else {
-			// subtask.State == proto.TaskStatePending
+			// subtask.State == proto.SubtaskStatePending
 			err := s.startSubtaskAndUpdateState(runCtx, subtask)
 			if err != nil {
 				logutil.Logger(s.logCtx).Warn("startSubtaskAndUpdateState meets error", zap.Error(err))
@@ -506,6 +514,9 @@ func runSummaryCollectLoop(
 	task *proto.Task,
 	taskTable TaskTable,
 ) (summary *execute.Summary, cleanup func(), err error) {
+	failpoint.Inject("mockSummaryCollectErr", func() {
+		failpoint.Return(nil, func() {}, errors.New("summary collect err"))
+	})
 	taskMgr, ok := taskTable.(*storage.TaskManager)
 	if !ok {
 		return nil, func() {}, nil
@@ -665,9 +676,9 @@ func (s *BaseTaskExecutor) markSubTaskCanceledOrFailed(ctx context.Context, subt
 			logutil.Logger(s.logCtx).Warn("subtask canceled", zap.Error(err))
 			s.updateSubtaskStateAndError(s.ctx, subtask, proto.SubtaskStateCanceled, nil)
 		} else if s.IsRetryableError(err) {
-			logutil.Logger(s.logCtx).Warn("met retryable error", zap.Error(err))
+			logutil.Logger(s.logCtx).Warn("meet retryable error", zap.Error(err))
 		} else if common.IsContextCanceledError(err) {
-			logutil.Logger(s.logCtx).Info("met context canceled for gracefully shutdown", zap.Error(err))
+			logutil.Logger(s.logCtx).Info("meet context canceled for gracefully shutdown", zap.Error(err))
 		} else {
 			logutil.Logger(s.logCtx).Warn("subtask failed", zap.Error(err))
 			s.updateSubtaskStateAndError(s.ctx, subtask, proto.SubtaskStateFailed, err)
@@ -678,16 +689,52 @@ func (s *BaseTaskExecutor) markSubTaskCanceledOrFailed(ctx context.Context, subt
 	return false
 }
 
-func (s *BaseTaskExecutor) updateErrorToSubtask(ctx context.Context, taskID int64, err error) error {
+func (s *BaseTaskExecutor) failSubtaskWithRetry(ctx context.Context, taskID int64, err error) error {
 	logger := logutil.Logger(s.logCtx)
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	err1 := handle.RunWithRetry(s.logCtx, scheduler.RetrySQLTimes, backoffer, logger,
 		func(_ context.Context) (bool, error) {
-			return true, s.taskTable.UpdateErrorToSubtask(ctx, s.id, taskID, err)
+			return true, s.taskTable.FailSubtask(ctx, s.id, taskID, err)
 		},
 	)
 	if err1 == nil {
-		logger.Warn("update error to subtask success", zap.Error(err))
+		logger.Info("failed one subtask succeed", zap.NamedError("subtask-err", err))
 	}
 	return err1
+}
+
+func (s *BaseTaskExecutor) cancelSubtaskWithRetry(ctx context.Context, taskID int64, err error) error {
+	logutil.Logger(s.logCtx).Warn("subtask canceled", zap.NamedError("subtask-cancel", err))
+	logger := logutil.Logger(s.logCtx)
+	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
+	err1 := handle.RunWithRetry(s.logCtx, scheduler.RetrySQLTimes, backoffer, logger,
+		func(_ context.Context) (bool, error) {
+			return true, s.taskTable.CancelSubtask(ctx, s.id, taskID)
+		},
+	)
+	if err1 == nil {
+		logger.Info("canceled one subtask succeed", zap.NamedError("subtask-cancel", err))
+	}
+	return err1
+}
+
+// updateSubtask check the error type and decide the subtasks' state.
+// 1. Only cancel subtasks when meet ErrCancelSubtask.
+// 2. Only fail subtasks when meet non retryable error.
+// 3. When meet other errors, don't change subtasks' state.
+// Handled errors should not happened during subtasks execution.
+// Only handle errors before subtasks execution and after subtasks execution.
+func (s *BaseTaskExecutor) updateSubtask(ctx context.Context, taskID int64, err error) error {
+	err = errors.Cause(err)
+	logger := logutil.Logger(s.logCtx)
+	if ctx.Err() != nil && context.Cause(ctx) == ErrCancelSubtask {
+		return s.cancelSubtaskWithRetry(ctx, taskID, ErrCancelSubtask)
+	} else if s.IsRetryableError(err) {
+		logger.Warn("meet retryable error", zap.Error(err))
+	} else if common.IsContextCanceledError(err) {
+		logger.Info("meet context canceled for gracefully shutdown", zap.Error(err))
+	} else {
+		return s.failSubtaskWithRetry(ctx, taskID, err)
+	}
+	return nil
 }

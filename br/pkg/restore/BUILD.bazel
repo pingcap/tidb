@@ -64,6 +64,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/codec",
         "//pkg/util/collate",
+        "//pkg/util/engine",
         "//pkg/util/hack",
         "//pkg/util/mathutil",
         "//pkg/util/sqlexec",
