@@ -331,7 +331,7 @@ func TestManagerHandleTasks(t *testing.T) {
 	mockTaskTable.EXPECT().GetTaskByID(m.ctx, task1.ID).Return(task1, nil)
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, task1.ID, proto.StepOne,
 		unfinishedSubtaskStates).Return(true, nil)
-	mockInternalExecutor.EXPECT().RunStep(gomock.Any(), task1, gomock.Any()).DoAndReturn(func(ctx context.Context, _ *proto.Task) error {
+	mockInternalExecutor.EXPECT().RunStep(gomock.Any(), task1, gomock.Any()).DoAndReturn(func(ctx context.Context, _ *proto.Task, _ *proto.StepResource) error {
 		mu.Lock()
 		task1Ctx = ctx
 		mu.Unlock()
@@ -437,7 +437,7 @@ func TestSlotManagerInManager(t *testing.T) {
 		unfinishedSubtaskStates).
 		Return(true, nil)
 	// task1 start running
-	mockInternalExecutor.EXPECT().RunStep(gomock.Any(), task1, gomock.Any()).DoAndReturn(func(_ context.Context, _ *proto.Task) error {
+	mockInternalExecutor.EXPECT().RunStep(gomock.Any(), task1, gomock.Any()).DoAndReturn(func(_ context.Context, _ *proto.Task, _ *proto.StepResource) error {
 		return <-ch
 	})
 
@@ -490,7 +490,7 @@ func TestSlotManagerInManager(t *testing.T) {
 		unfinishedSubtaskStates).
 		Return(true, nil)
 	// task1 start running
-	mockInternalExecutor.EXPECT().RunStep(gomock.Any(), task1, gomock.Any()).DoAndReturn(func(_ context.Context, _ *proto.Task) error {
+	mockInternalExecutor.EXPECT().RunStep(gomock.Any(), task1, gomock.Any()).DoAndReturn(func(_ context.Context, _ *proto.Task, _ *proto.StepResource) error {
 		return <-ch
 	})
 
@@ -547,7 +547,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID3, proto.StepOne,
 		unfinishedSubtaskStates).
 		Return(true, nil)
-	mockInternalExecutor.EXPECT().RunStep(gomock.Any(), task3, gomock.Any()).DoAndReturn(func(_ context.Context, _ *proto.Task) error {
+	mockInternalExecutor.EXPECT().RunStep(gomock.Any(), task3, gomock.Any()).DoAndReturn(func(_ context.Context, _ *proto.Task, _ *proto.StepResource) error {
 		return <-ch
 	})
 
@@ -557,7 +557,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID2, proto.StepOne,
 		unfinishedSubtaskStates).
 		Return(true, nil)
-	mockInternalExecutor.EXPECT().RunStep(gomock.Any(), task2, gomock.Any()).DoAndReturn(func(_ context.Context, _ *proto.Task) error {
+	mockInternalExecutor.EXPECT().RunStep(gomock.Any(), task2, gomock.Any()).DoAndReturn(func(_ context.Context, _ *proto.Task, _ *proto.StepResource) error {
 		return <-ch
 	})
 
