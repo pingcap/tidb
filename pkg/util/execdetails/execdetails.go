@@ -1378,11 +1378,11 @@ func getUnit(d time.Duration) time.Duration {
 func MergeTiFlashRUConsumption(exec_summaries []*tipb.ExecutorExecutionSummary, ruDetails *util.RUDetails) error {
 	for _, summary := range exec_summaries {
 		if summary != nil && summary.GetRuConsumption() != nil {
-			tiflash_ru := new(resource_manager.Consumption)
-			if err := tiflash_ru.Unmarshal(summary.GetRuConsumption()); err != nil {
+			tiflashRU := new(resource_manager.Consumption)
+			if err := tiflashRU.Unmarshal(summary.GetRuConsumption()); err != nil {
 				return err
 			}
-			ruDetails.Merge(util.NewRUDetailsWith(tiflash_ru.GetRRU(), 0, 0))
+			ruDetails.Merge(util.NewRUDetailsWith(tiflashRU.GetRRU(), 0, 0))
 		}
 	}
 	return nil
