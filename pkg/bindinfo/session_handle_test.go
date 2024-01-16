@@ -115,18 +115,16 @@ func TestSessionBinding(t *testing.T) {
 		require.NoError(t, err)
 
 		_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
-		bindData, err := handle.MatchSessionBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
-		require.NoError(t, err)
-		require.NotNil(t, bindData)
-		bind := bindData.Bindings[0]
-		require.Equal(t, testSQL.originSQL, bind.OriginalSQL)
-		require.Equal(t, testSQL.bindSQL, bind.BindSQL)
-		require.Equal(t, "test", bind.Db)
-		require.Equal(t, bindinfo.Enabled, bind.Status)
-		require.NotNil(t, bind.Charset)
-		require.NotNil(t, bind.Collation)
-		require.NotNil(t, bind.CreateTime)
-		require.NotNil(t, bind.UpdateTime)
+		binding, matched := handle.MatchSessionBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+		require.True(t, matched)
+		require.Equal(t, testSQL.originSQL, binding.OriginalSQL)
+		require.Equal(t, testSQL.bindSQL, binding.BindSQL)
+		require.Equal(t, "test", binding.Db)
+		require.Equal(t, bindinfo.Enabled, binding.Status)
+		require.NotNil(t, binding.Charset)
+		require.NotNil(t, binding.Collation)
+		require.NotNil(t, binding.CreateTime)
+		require.NotNil(t, binding.UpdateTime)
 
 		rs, err := tk.Exec("show global bindings")
 		require.NoError(t, err)
@@ -154,9 +152,8 @@ func TestSessionBinding(t *testing.T) {
 		_, err = tk.Exec("drop session " + testSQL.dropSQL)
 		require.NoError(t, err)
 		_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
-		bindData, err = handle.MatchSessionBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
-		require.NoError(t, err)
-		require.Nil(t, bindData) // dropped
+		_, matched = handle.MatchSessionBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+		require.False(t, matched) // dropped
 	}
 }
 

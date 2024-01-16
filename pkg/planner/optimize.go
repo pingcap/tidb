@@ -219,7 +219,12 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	enableUseBinding := sessVars.UsePlanBaselines
 	stmtNode, isStmtNode := node.(ast.StmtNode)
-	bindRecord, scope, match := bindinfo.MatchSQLBinding(sctx, stmtNode)
+	binding, match, scope := bindinfo.MatchSQLBinding(sctx, stmtNode)
+	var bindRecord *bindinfo.BindRecord
+	if match {
+		bindRecord = &bindinfo.BindRecord{Bindings: []bindinfo.Binding{binding}}
+	}
+
 	useBinding := enableUseBinding && isStmtNode && match
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		failpoint.Inject("SetBindingTimeToZero", func(val failpoint.Value) {
@@ -566,7 +571,7 @@ func handleInvalidBinding(ctx context.Context, sctx sessionctx.Context, level st
 	}
 
 	globalHandle := domain.GetDomain(sctx).BindHandle()
-	globalHandle.AddInvalidGlobalBinding(&binding)
+	globalHandle.AddInvalidGlobalBinding(binding)
 }
 
 func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHints, offs []int, warns []error) {
