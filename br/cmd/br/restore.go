@@ -64,6 +64,9 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 		return nil
 	}
 
+	// No need to cache the coproceesor result
+	config.GetGlobalConfig().TiKVClient.CoprCache.CapacityMB = 0
+
 	if err := task.RunRestore(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to restore", zap.Error(err))
 		printWorkaroundOnFullRestoreError(command, err)
