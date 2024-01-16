@@ -669,9 +669,9 @@ func (s *BaseTaskExecutor) markSubTaskCanceledOrFailed(ctx context.Context, subt
 			logutil.Logger(s.logCtx).Warn("subtask canceled", zap.Error(err))
 			s.updateSubtaskStateAndError(s.ctx, subtask, proto.SubtaskStateCanceled, nil)
 		} else if s.IsRetryableError(err) {
-			logutil.Logger(s.logCtx).Warn("met retryable error", zap.Error(err))
+			logutil.Logger(s.logCtx).Warn("meet retryable error", zap.Error(err))
 		} else if common.IsContextCanceledError(err) {
-			logutil.Logger(s.logCtx).Info("met context canceled for gracefully shutdown", zap.Error(err))
+			logutil.Logger(s.logCtx).Info("meet context canceled for gracefully shutdown", zap.Error(err))
 		} else {
 			logutil.Logger(s.logCtx).Warn("subtask failed", zap.Error(err))
 			s.updateSubtaskStateAndError(s.ctx, subtask, proto.SubtaskStateFailed, err)
@@ -686,9 +686,9 @@ func (s *BaseTaskExecutor) updateErrorToSubtask(ctx context.Context, taskID int6
 	err = errors.Cause(err)
 	logger := logutil.Logger(s.logCtx)
 	if s.IsRetryableError(err) {
-		logger.Warn("met retryable error", zap.Error(err))
+		logger.Warn("meet retryable error", zap.Error(err))
 	} else if common.IsContextCanceledError(err) {
-		logger.Info("met context canceled for gracefully shutdown", zap.Error(err))
+		logger.Info("meet context canceled for gracefully shutdown", zap.Error(err))
 	} else {
 		logger := logutil.Logger(s.logCtx)
 		backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
@@ -698,7 +698,7 @@ func (s *BaseTaskExecutor) updateErrorToSubtask(ctx context.Context, taskID int6
 			},
 		)
 		if err1 == nil {
-			logger.Info("update error to subtask success", zap.Error(err))
+			logger.Info("updating an error to subtask succeed", zap.Error(err))
 		}
 		return err1
 	}
