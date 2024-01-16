@@ -535,9 +535,6 @@ func TestManagerScheduleLoop(t *testing.T) {
 	scheduler.RegisterSchedulerFactory(proto.TaskTypeExample,
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 			idx := counter.Load()
-			if int(idx) > len(concurrencies) {
-				return nil
-			}
 			mockScheduler = mock.NewMockScheduler(ctrl)
 			// below 2 are for balancer loop, it's async, cannot determine how
 			// many times it will be called.
@@ -545,6 +542,9 @@ func TestManagerScheduleLoop(t *testing.T) {
 			mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).Return(nil, nil).AnyTimes()
 			mockScheduler.EXPECT().Init().Return(nil)
 			mockScheduler.EXPECT().ScheduleTask().Do(func() {
+				if task.IsDone() {
+					return
+				}
 				require.NoError(t, taskMgr.WithNewSession(func(se sessionctx.Context) error {
 					_, err := sqlexec.ExecSQL(ctx, se, "update mysql.tidb_global_task set state=%?, step=%? where id=%?",
 						proto.TaskStateRunning, proto.StepOne, task.ID)
@@ -556,9 +556,9 @@ func TestManagerScheduleLoop(t *testing.T) {
 						proto.TaskStateSucceed, proto.StepDone, task.ID)
 					return err
 				}))
+				counter.Add(1)
 			})
 			mockScheduler.EXPECT().Close()
-			counter.Add(1)
 			return mockScheduler
 		},
 	)
