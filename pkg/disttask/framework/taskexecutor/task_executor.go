@@ -690,7 +690,7 @@ func (s *BaseTaskExecutor) markSubTaskCanceledOrFailed(ctx context.Context, subt
 	return false
 }
 
-func (s *BaseTaskExecutor) FailSubtaskWithRetry(ctx context.Context, taskID int64, err error) error {
+func (s *BaseTaskExecutor) failSubtaskWithRetry(ctx context.Context, taskID int64, err error) error {
 	logger := logutil.Logger(s.logCtx)
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
 	err1 := handle.RunWithRetry(s.logCtx, scheduler.RetrySQLTimes, backoffer, logger,
@@ -704,7 +704,7 @@ func (s *BaseTaskExecutor) FailSubtaskWithRetry(ctx context.Context, taskID int6
 	return err1
 }
 
-func (s *BaseTaskExecutor) CancelSubtaskWithRetry(ctx context.Context, taskID int64, err error) error {
+func (s *BaseTaskExecutor) cancelSubtaskWithRetry(ctx context.Context, taskID int64, err error) error {
 	logutil.Logger(s.logCtx).Warn("subtask canceled", zap.NamedError("subtask-cancel", err))
 	logger := logutil.Logger(s.logCtx)
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
@@ -729,13 +729,13 @@ func (s *BaseTaskExecutor) updateSubtask(ctx context.Context, taskID int64, err 
 	err = errors.Cause(err)
 	logger := logutil.Logger(s.logCtx)
 	if ctx.Err() != nil && context.Cause(ctx) == ErrCancelSubtask {
-		return s.CancelSubtaskWithRetry(ctx, taskID, ErrCancelSubtask)
+		return s.cancelSubtaskWithRetry(ctx, taskID, ErrCancelSubtask)
 	} else if s.IsRetryableError(err) {
 		logger.Warn("meet retryable error", zap.Error(err))
 	} else if common.IsContextCanceledError(err) {
 		logger.Info("meet context canceled for gracefully shutdown", zap.Error(err))
 	} else {
-		return s.FailSubtaskWithRetry(ctx, taskID, err)
+		return s.failSubtaskWithRetry(ctx, taskID, err)
 	}
 	return nil
 }
