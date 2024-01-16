@@ -714,3 +714,28 @@ id	estRows	task	access object	operator info
 IndexMerge_7	1.00	root		type: union
 ├─IndexRangeScan_5(Build)	1.00	cop[tikv]	table:t, index:ibb(cast(json_extract(`b`, _utf8mb4'$.b') as signed array))	range:[10,10], keep order:false, stats:partial[ibb:missing, b:unInitialized]
 └─TableRowIDScan_6(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:partial[ibb:missing, b:unInitialized]
+drop table if exists t, t1;
+create table t (j json, i bigint(20) not null primary key, key mvi((cast(j as unsigned array))));
+insert into t values ('[1,2,3]', 1);
+explain format=brief select * from t force index(mvi) where isnull(i) or json_contains(j, '1');
+id	estRows	task	access object	operator info
+IndexMerge	10.00	root		type: union
+├─TableFullScan(Build)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:mvi(cast(`j` as unsigned array))	range:[1,1], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+select * from t force index(mvi) where isnull(i) or json_contains(j, '1');
+j	i
+[1, 2, 3]	1
+create table t1 (j json, a bigint(20), b int, primary key(a,b), key mvi((cast(j as unsigned array))));
+explain format=brief select /*+ use_index_merge(t1, mvi, primary) */ * from t1 where a = 1 or json_contains(j, '1');
+id	estRows	task	access object	operator info
+IndexMerge	19.99	root		type: union
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:PRIMARY(a, b)	range:[1,1], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:mvi(cast(`j` as unsigned array))	range:[1,1], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	19.99	cop[tikv]	table:t1	keep order:false, stats:pseudo
+explain format=brief select /*+ use_index_merge(t1, mvi, primary) */ * from t1 where (a = 1 and b = 2) or json_contains(j, '1');
+id	estRows	task	access object	operator info
+IndexMerge	11.00	root		type: union
+├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t1, index:PRIMARY(a, b)	range:[1 2,1 2], keep order:false, stats:pseudo
+├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t1, index:mvi(cast(`j` as unsigned array))	range:[1,1], keep order:false, stats:pseudo
+└─TableRowIDScan(Probe)	11.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
