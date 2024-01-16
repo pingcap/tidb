@@ -496,7 +496,7 @@ func TestIsCancelledErr(t *testing.T) {
 	require.True(t, scheduler.IsCancelledErr(errors.New("cancelled by user")))
 }
 
-func TestManagerDispatchLoop(t *testing.T) {
+func TestManagerScheduleLoop(t *testing.T) {
 	// Mock 16 cpu node.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)"))
 	t.Cleanup(func() {
