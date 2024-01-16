@@ -546,12 +546,12 @@ func (mgr *TaskManager) FailSubtask(ctx context.Context, execID string, taskID i
 		task_key = %? and 
 		state in (%?, %?) 
 		limit 1;`,
-		proto.TaskStateFailed,
+		proto.SubtaskStateFailed,
 		serializeErr(err),
 		execID,
 		taskID,
-		proto.TaskStatePending,
-		proto.TaskStateRunning)
+		proto.SubtaskStatePending,
+		proto.SubtaskStateRunning)
 	return err1
 }
 
@@ -570,8 +570,8 @@ func (mgr *TaskManager) CancelSubtask(ctx context.Context, execID string, taskID
 		proto.SubtaskStateCanceled,
 		execID,
 		taskID,
-		proto.TaskStatePending,
-		proto.TaskStateRunning)
+		proto.SubtaskStatePending,
+		proto.SubtaskStateRunning)
 	return err1
 }
 
@@ -580,7 +580,7 @@ func (mgr *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64) ([]
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `
 		select `+basicSubtaskColumns+` from mysql.tidb_background_subtask
 		where task_key = %? and state in (%?, %?)`,
-		taskID, proto.TaskStatePending, proto.TaskStateRunning)
+		taskID, proto.SubtaskStatePending, proto.SubtaskStateRunning)
 	if err != nil {
 		return nil, err
 	}
