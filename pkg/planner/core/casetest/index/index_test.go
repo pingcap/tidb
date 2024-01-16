@@ -417,3 +417,36 @@ func TestAccessPathOnClusterIndex(t *testing.T) {
 		tk.MustQuery(tt).Sort().Check(testkit.Rows(output[i].Res...))
 	}
 }
+
+func TestIndexMergeIssue50382(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE `t1` (`a` varchar(488) COLLATE utf8_general_ci DEFAULT NULL, `b` binary(206) DEFAULT '0', `c` json DEFAULT NULL, UNIQUE KEY `idx_29` (`a`,(cast(`c` as signed array)),`b`), UNIQUE KEY `idx_30` ((cast(`c` as signed array)),`a`(5))) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;")
+	tk.MustExec("CREATE TABLE `t2` (`a` float NOT NULL DEFAULT '5217.6055',`b` json NOT NULL,`c` json NOT NULL,`d` varchar(181) COLLATE gbk_bin NOT NULL DEFAULT 'FbVkA~^', KEY `idx_26` (`a`),PRIMARY KEY (`a`,`d`) /*T![clustered_index] NONCLUSTERED */,UNIQUE KEY `idx_28` (`a`,(cast(`b` as binary(64) array)),`d`)) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_bin;")
+
+	var input []string
+	var output []struct {
+		SQL  string
+		Plan []string
+		Warn []string
+	}
+	integrationSuiteData := GetIntegrationSuiteData()
+	integrationSuiteData.LoadTestCases(t, &input, &output)
+	for i, tt := range input {
+		setStmt := strings.HasPrefix(tt, "set")
+		testdata.OnRecord(func() {
+			output[i].SQL = tt
+			if !setStmt {
+				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='brief'" + tt).Rows())
+				output[i].Warn = testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings())
+			}
+		})
+		if setStmt {
+			tk.MustExec(tt)
+		} else {
+			tk.MustQuery("explain format='brief'" + tt).Check(testkit.Rows(output[i].Plan...))
+			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(tk.Session().GetSessionVars().StmtCtx.GetWarnings()))
+		}
+	}
+}
