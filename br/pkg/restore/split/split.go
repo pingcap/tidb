@@ -227,8 +227,6 @@ func (b *WaitRegionOnlineBackoffer) NextBackoff(err error) time.Duration {
 			}
 		})
 		return delayTime
-	} else {
-		log.Info("no backoffer")
 	}
 	b.Stat.StopRetry()
 	return 0

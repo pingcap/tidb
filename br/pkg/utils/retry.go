@@ -230,15 +230,18 @@ func WithRetryV2[T any](
 	for backoffer.Attempt() > 0 {
 		res, err := fn(ctx)
 		if err == nil {
+			log.Info("retry success", zap.Int("attempt", backoffer.Attempt()))
 			return res, nil
 		}
 		allErrors = multierr.Append(allErrors, err)
 		select {
 		case <-ctx.Done():
+			log.Info("retry context done", zap.Int("attempt", backoffer.Attempt()))
 			return *new(T), allErrors
 		case <-time.After(backoffer.NextBackoff(err)):
 		}
 	}
+	log.Info("retry finished", zap.Int("attempt", backoffer.Attempt()))
 	return *new(T), allErrors // nolint:wrapcheck
 }
 
