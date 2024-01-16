@@ -1340,6 +1340,7 @@ var DefaultDisabledLogicalRulesList *atomic.Value
 func init() {
 	expression.EvalAstExpr = evalAstExpr
 	expression.RewriteAstExpr = rewriteAstExpr
+	expression.BuildExprWithAst = buildExprWithAst
 	DefaultDisabledLogicalRulesList = new(atomic.Value)
 	DefaultDisabledLogicalRulesList.Store(set.NewStringSet())
 }
