@@ -228,6 +228,7 @@ func (b *WaitRegionOnlineBackoffer) NextBackoff(err error) time.Duration {
 		})
 		return delayTime
 	}
+	// unreachable
 	b.Stat.StopRetry()
 	return 0
 }
