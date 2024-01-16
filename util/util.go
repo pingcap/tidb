@@ -202,3 +202,104 @@ func FmtNonASCIIPrintableCharToHex(str string) string {
 	}
 	return b.String()
 }
+<<<<<<< HEAD:util/util.go
+=======
+
+// TCPConnWithIOCounter is a wrapper of net.TCPConn with counter that accumulates
+// the bytes this connection reads/writes.
+type TCPConnWithIOCounter struct {
+	*net.TCPConn
+	c *atomic.Uint64
+}
+
+// NewTCPConnWithIOCounter creates a new TCPConnWithIOCounter.
+func NewTCPConnWithIOCounter(conn *net.TCPConn, c *atomic.Uint64) net.Conn {
+	return &TCPConnWithIOCounter{
+		TCPConn: conn,
+		c:       c,
+	}
+}
+
+func (t *TCPConnWithIOCounter) Read(b []byte) (n int, err error) {
+	n, err = t.TCPConn.Read(b)
+	t.c.Add(uint64(n))
+	return n, err
+}
+
+func (t *TCPConnWithIOCounter) Write(b []byte) (n int, err error) {
+	n, err = t.TCPConn.Write(b)
+	t.c.Add(uint64(n))
+	return n, err
+}
+
+// ReadLine tries to read a complete line from bufio.Reader.
+// maxLineSize specifies the maximum size of a single line.
+func ReadLine(reader *bufio.Reader, maxLineSize int) ([]byte, error) {
+	var resByte []byte
+	lineByte, isPrefix, err := reader.ReadLine()
+	if isPrefix {
+		// Need to read more data.
+		resByte = make([]byte, len(lineByte), len(lineByte)*2)
+	} else {
+		resByte = make([]byte, len(lineByte))
+	}
+	// Use copy here to avoid shallow copy problem.
+	copy(resByte, lineByte)
+	if err != nil {
+		return resByte, err
+	}
+	var tempLine []byte
+	for isPrefix {
+		tempLine, isPrefix, err = reader.ReadLine()
+		resByte = append(resByte, tempLine...) // nozero
+		// Use maxLineSize to check the single line length.
+		if len(resByte) > maxLineSize {
+			return resByte, errors.Errorf("single line length exceeds limit: %v", maxLineSize)
+		}
+		if err != nil {
+			return resByte, err
+		}
+	}
+	return resByte, err
+}
+
+// ReadLines tries to read lines from bufio.Reader.
+// count specifies the number of lines.
+// maxLineSize specifies the maximum size of a single line.
+func ReadLines(reader *bufio.Reader, count int, maxLineSize int) ([][]byte, error) {
+	lines := make([][]byte, 0, count)
+	for i := 0; i < count; i++ {
+		line, err := ReadLine(reader, maxLineSize)
+		if err == io.EOF && len(lines) > 0 {
+			return lines, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, line)
+	}
+	return lines, nil
+}
+
+// IsInCorrectIdentifierName checks if the identifier is incorrect.
+// See https://dev.mysql.com/doc/refman/5.7/en/identifiers.html
+func IsInCorrectIdentifierName(name string) bool {
+	if len(name) == 0 {
+		return true
+	}
+	if name[len(name)-1] == ' ' {
+		return true
+	}
+	return false
+}
+
+// GetRecoverError gets the error from recover.
+func GetRecoverError(r interface{}) error {
+	if err, ok := r.(error); ok {
+		// Runtime panic also implements error interface.
+		// So do not forget to add stack info for it.
+		return errors.Trace(err)
+	}
+	return errors.Errorf("%v", r)
+}
+>>>>>>> da501a0e384 (exectuor: add stack trace for runtime panic (#50449)):pkg/util/util.go
