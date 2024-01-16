@@ -525,8 +525,13 @@ func (stm *TaskManager) UpdateSubtaskExecID(ctx context.Context, tidbID string, 
 	return err
 }
 
+<<<<<<< HEAD
 // UpdateErrorToSubtask updates the error to subtask.
 func (stm *TaskManager) UpdateErrorToSubtask(ctx context.Context, execID string, taskID int64, err error) error {
+=======
+// FailSubtask update the task's subtask state to failed and set the err.
+func (mgr *TaskManager) FailSubtask(ctx context.Context, execID string, taskID int64, err error) error {
+>>>>>>> caa5539686c (disttask: fix executor err handling missing part (#50429))
 	if err == nil {
 		return nil
 	}
@@ -541,15 +546,54 @@ func (stm *TaskManager) UpdateErrorToSubtask(ctx context.Context, execID string,
 		task_key = %? and 
 		state in (%?, %?) 
 		limit 1;`,
-		proto.TaskStateFailed,
+		proto.SubtaskStateFailed,
 		serializeErr(err),
 		execID,
 		taskID,
-		proto.TaskStatePending,
-		proto.TaskStateRunning)
+		proto.SubtaskStatePending,
+		proto.SubtaskStateRunning)
 	return err1
 }
 
+// CancelSubtask update the task's subtasks' state to canceled.
+func (mgr *TaskManager) CancelSubtask(ctx context.Context, execID string, taskID int64) error {
+	_, err1 := mgr.ExecuteSQLWithNewSession(ctx,
+		`update mysql.tidb_background_subtask
+		set state = %?, 
+		start_time = unix_timestamp(), 
+		state_update_time = unix_timestamp(),
+		end_time = CURRENT_TIMESTAMP()
+		where exec_id = %? and 
+		task_key = %? and 
+		state in (%?, %?) 
+		limit 1;`,
+		proto.SubtaskStateCanceled,
+		execID,
+		taskID,
+		proto.SubtaskStatePending,
+		proto.SubtaskStateRunning)
+	return err1
+}
+
+<<<<<<< HEAD
+=======
+// GetActiveSubtasks implements TaskManager.GetActiveSubtasks.
+func (mgr *TaskManager) GetActiveSubtasks(ctx context.Context, taskID int64) ([]*proto.Subtask, error) {
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `
+		select `+basicSubtaskColumns+` from mysql.tidb_background_subtask
+		where task_key = %? and state in (%?, %?)`,
+		taskID, proto.SubtaskStatePending, proto.SubtaskStateRunning)
+	if err != nil {
+		return nil, err
+	}
+	subtasks := make([]*proto.Subtask, 0, len(rs))
+	for _, r := range rs {
+		subtasks = append(subtasks, row2BasicSubTask(r))
+	}
+	return subtasks, nil
+}
+
+>>>>>>> caa5539686c (disttask: fix executor err handling missing part (#50429))
 // GetSubtasksByStepAndState gets the subtask by step and state.
 func (stm *TaskManager) GetSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error) {
 	rs, err := stm.executeSQLWithNewSession(ctx, `select `+subtaskColumns+` from mysql.tidb_background_subtask

@@ -40,7 +40,11 @@ go_test(
     embed = [":storage"],
     flaky = True,
     race = "on",
+<<<<<<< HEAD
     shard_count = 17,
+=======
+    shard_count = 21,
+>>>>>>> caa5539686c (disttask: fix executor err handling missing part (#50429))
     deps = [
         "//pkg/config",
         "//pkg/disttask/framework/proto",
