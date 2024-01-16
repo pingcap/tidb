@@ -272,7 +272,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 			}
 
 			oldRecord := newCache.GetBinding(sqlDigest)
-			newRecord := removeDeletedBindings(merge(oldRecord, []Binding{*binding}))
+			newRecord := removeDeletedBindings(merge(oldRecord, []Binding{binding}))
 			if len(newRecord) > 0 {
 				err = newCache.SetBinding(sqlDigest, newRecord)
 				if err != nil {
@@ -571,7 +571,7 @@ func (h *globalBindingHandle) GetMemCapacity() (memCapacity int64) {
 }
 
 // newBindRecord builds Bindings from a tuple in storage.
-func newBindRecord(sctx sessionctx.Context, row chunk.Row) (string, *Binding, error) {
+func newBindRecord(sctx sessionctx.Context, row chunk.Row) (string, Binding, error) {
 	status := row.GetString(3)
 	// For compatibility, the 'Using' status binding will be converted to the 'Enabled' status binding.
 	if status == Using {
@@ -583,11 +583,11 @@ func newBindRecord(sctx sessionctx.Context, row chunk.Row) (string, *Binding, er
 	charset, collation := row.GetString(6), row.GetString(7)
 	stmt, err := parser.New().ParseOneStmt(bindSQL, charset, collation)
 	if err != nil {
-		return "", nil, err
+		return "", Binding{}, err
 	}
 	tableNames := CollectTableNames(stmt)
 
-	binding := &Binding{
+	binding := Binding{
 		OriginalSQL: row.GetString(0),
 		Db:          strings.ToLower(defaultDB),
 		BindSQL:     bindSQL,
@@ -602,7 +602,7 @@ func newBindRecord(sctx sessionctx.Context, row chunk.Row) (string, *Binding, er
 		TableNames:  tableNames,
 	}
 	sqlDigest := parser.DigestNormalized(binding.OriginalSQL)
-	err = prepareHints(sctx, binding)
+	err = prepareHints(sctx, &binding)
 	sctx.GetSessionVars().CurrentDB = binding.Db
 	return sqlDigest.String(), binding, err
 }
