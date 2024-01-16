@@ -138,9 +138,7 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, fuzz
 // GetAllSessionBindings return all session bind info.
 func (h *sessionBindingHandle) GetAllSessionBindings() (bindings []Binding) {
 	for _, record := range h.ch.GetAllBindings() {
-		for i := range record.Bindings {
-			bindings = append(bindings, record.Bindings[i])
-		}
+		bindings = append(bindings, record.Bindings...)
 	}
 	return
 }
