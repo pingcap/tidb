@@ -29,7 +29,6 @@ explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member o
 explain select /*+ use_index_merge(t2, idx2, idx) */ * from t2 where (1 member of (a) and 1 member of (b) and c=3) or (3 member of (b) and c=4) or e=1; -- 8: OR index merge from multi complicated mv index (memberof), each DNF item should be strict or lax used as index partial path.;
 explain select /*+ use_index_merge(t2, idx2, idx, idx4) */ * from t2 where (1 member of (a) and 1 member of (b) and c=3) or (3 member of (b) and c=4) or d=1; -- 9: OR index merge from multi complicated mv index (memberof), each DNF item should be strict or lax used as index partial path, specify the index in index merge hint;
 
-
 # TestIndexMergeFromComposedCNFCondition
 drop table if exists t1, t2;
 create table t1(pk int primary key, a json, b json, c int, d int, index idx((cast(a as signed array))), index idx2((cast(b as signed array))));
@@ -273,3 +272,9 @@ explain format='brief' select /*+ use_index_merge(t1 primary, c) */ * from t1 wh
 --sorted_result
 select /*+ use_index_merge(t1 primary, c) */ * from t1 where t1.a = 1 and t1.b = '111' or t1.c = 3.3;
 set tidb_enable_clustered_index=default;
+
+# TestIndexMergeIssue50265
+drop table if exists t;
+create table t(item_primary_key varbinary(255) NOT NULL, domains json null, image_signatures json null, canonical_links json null, feed_profile_ids json null,  KEY `domains` ((cast(`domains` as char(253) array))), KEY `image_signatures` ((cast(`image_signatures` as char(32) array))),KEY `canonical_links` ((cast(`canonical_links` as char(1000) array))), KEY `feed_profile_ids` ((cast(`feed_profile_ids` as unsigned array))));
+explain SELECT   item_primary_key FROM  t WHERE   "B2c32" member of (domains)   OR "2eoqyp6399" member of (image_signatures)   OR "E33EAdAc2Bee.com/s/link" member of (canonical_links)   OR json_contains(feed_profile_ids, '[69236881]') LIMIT   10;
+

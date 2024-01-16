@@ -705,10 +705,14 @@ func (ds *DataSource) generateMVIndexPartialPath4Or(normalPathCnt int, indexMerg
 				logutil.BgLogger().Debug("build index merge partial mv index paths failed", zap.Error(err))
 				return nil, nil, false, err
 			}
-			if isIntersection || !ok { // limitation 2
+			if !ok || len(paths) == 0 {
 				continue
 			}
-			if len(paths) == 0 {
+			// only under 2 cases we can fallthrough it.
+			// 1: the index merge only has one partial path.
+			// 2: index merge is UNION type.
+			canFallThrough := len(paths) == 1 || !isIntersection
+			if !canFallThrough {
 				continue
 			}
 			// UNION case, use the max count after access for simplicity.
