@@ -98,24 +98,14 @@ func PaginateScanRegion(
 		err         error
 		backoffer   = NewWaitRegionOnlineBackoffer().(*WaitRegionOnlineBackoffer)
 	)
-	retryCnt := 0
 	err = utils.WithRetry(ctx, func() error {
-		retryCnt += 1
-		if retryCnt == 5 {
-			log.Warn("failed to scan region 5 times, retrying", zap.Int("cnt", retryCnt), logutil.Key("startKey", startKey))
-		}
-		if retryCnt > 1000 {
-			log.Warn("failed to scan region 1000+times, retrying", zap.Int("cnt", retryCnt), logutil.Key("startKey", startKey))
-		}
 		regions := make([]*RegionInfo, 0, 16)
 		scanStartKey := startKey
 		for {
-			var batch []*RegionInfo
-			batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit)
-			if err != nil {
-				err = errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan regions from start-key:%s, err: %s",
-					redact.Key(scanStartKey), err.Error())
-				return err
+			batch, errScan := client.ScanRegions(ctx, scanStartKey, endKey, limit)
+			if errScan != nil {
+				return errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan regions from start-key:%s, err: %s",
+					redact.Key(scanStartKey), errScan.Error())
 			}
 			regions = append(regions, batch...)
 			if len(batch) < limit {
@@ -136,15 +126,15 @@ func PaginateScanRegion(
 		}
 		lastRegions = regions
 
-		if err = CheckRegionConsistency(startKey, endKey, regions); err != nil {
+		if errCheck := CheckRegionConsistency(startKey, endKey, regions); errCheck != nil {
 			log.Warn("failed to scan region, retrying",
 				logutil.ShortError(err),
 				zap.Int("regionLength", len(regions)))
-			return err
+			return errCheck
 		}
 		return nil
 	}, backoffer)
-
+	log.Warn("return backoffer", zap.Error(err), zap.Int("retry cnt", backoffer.Attempt()), zap.Int("len", len(lastRegions)))
 	return lastRegions, err
 }
 
@@ -228,7 +218,6 @@ func NewWaitRegionOnlineBackoffer() utils.Backoffer {
 // NextBackoff returns a duration to wait before retrying again
 func (b *WaitRegionOnlineBackoffer) NextBackoff(err error) time.Duration {
 	if berrors.ErrPDBatchScanRegion.Equal(err) {
-		log.Info("backoffer with", zap.Error(err), zap.Int("attempt", b.Stat.Attempt()))
 		// it needs more time to wait splitting the regions that contains data in PITR.
 		// 2s * 150
 		delayTime := b.Stat.ExponentialBackoff()
