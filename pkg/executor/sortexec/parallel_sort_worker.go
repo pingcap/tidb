@@ -75,7 +75,6 @@ func newParallelSortWorker(
 		tryToCloseChunkChannel: tryToCloseChunkChannel,
 		checkError:             checkError,
 		processError:           processError,
-		totalMemoryUsage:       0,
 		timesOfRowCompare:      0,
 		memTracker:             memTracker,
 		spillHelper:            spillHelper,
@@ -110,7 +109,7 @@ func (p *parallelSortWorker) injectFailPointForParallelSortWorker() {
 	})
 }
 
-// Fetching chunks from MPMCQueue and sort them.
+// Fetching chunks from chunkChannel and sort them.
 // Rows are sorted only inside a chunk.
 func (p *parallelSortWorker) fetchChunksAndSortImpl() (bool, error) {
 	p.spillHelper.syncLock.RLock()
