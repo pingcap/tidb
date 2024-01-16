@@ -167,10 +167,14 @@ func (s *BaseTaskExecutor) Run(ctx context.Context, task *proto.Task) (err error
 		return err
 	}
 	if err == nil {
-		// may have error in defer function of run(ctx, task).
+		// may have error in
+		// 1. defer function in run(ctx, task)
+		// 2. cancel ctx
 		// TODO: refine onError/getError
 		if s.getError() != nil {
 			err = s.getError()
+		} else if ctx.Err() != nil {
+			err = ctx.Err()
 		} else {
 			return nil
 		}
@@ -719,13 +723,13 @@ func (s *BaseTaskExecutor) canceledSubtaskWithRetry(ctx context.Context, taskID 
 // 1. Only cancel subtasks when meet ErrCancelSubtask.
 // 2. Only fail subtasks when meet non retryable error.
 // 3. When meet other errors, don't change subtasks' state.
-// Handled errors should not happended during subtasks execution.
+// Handled errors should not happened during subtasks execution.
 // Only handle errors before subtasks execution and after subtasks execution.
 func (s *BaseTaskExecutor) updateSubtask(ctx context.Context, taskID int64, err error) error {
 	err = errors.Cause(err)
 	logger := logutil.Logger(s.logCtx)
 	if ctx.Err() != nil && context.Cause(ctx) == ErrCancelSubtask {
-		s.canceledSubtaskWithRetry(ctx, taskID, ErrCancelSubtask)
+		return s.canceledSubtaskWithRetry(ctx, taskID, ErrCancelSubtask)
 	} else if s.IsRetryableError(err) {
 		logger.Warn("meet retryable error", zap.Error(err))
 	} else if common.IsContextCanceledError(err) {
