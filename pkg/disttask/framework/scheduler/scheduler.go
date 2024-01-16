@@ -212,9 +212,7 @@ func (s *BaseScheduler) scheduleTask() {
 			case proto.TaskStateRunning:
 				err = s.onRunning()
 			case proto.TaskStateSucceed, proto.TaskStateReverted, proto.TaskStateFailed:
-				if err := s.onFinished(); err != nil {
-					logutil.Logger(s.logCtx).Error("schedule task meet error", zap.Stringer("state", task.State), zap.Error(err))
-				}
+				s.onFinished()
 				return
 			}
 			if err != nil {
@@ -360,11 +358,10 @@ func (s *BaseScheduler) onRunning() error {
 	return nil
 }
 
-func (s *BaseScheduler) onFinished() error {
+func (s *BaseScheduler) onFinished() {
 	task := s.GetTask()
 	metrics.UpdateMetricsForFinishTask(task)
 	logutil.Logger(s.logCtx).Debug("schedule task, task is finished", zap.Stringer("state", task.State))
-	return s.taskMgr.TransferSubTasks2History(s.ctx, task.ID)
 }
 
 // updateTask update the task in tidb_global_task table.

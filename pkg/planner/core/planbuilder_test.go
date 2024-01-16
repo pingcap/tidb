@@ -131,9 +131,9 @@ func TestRewriterPool(t *testing.T) {
 	builder.rewriterCounter++
 	dirtyRewriter := builder.getExpressionRewriter(context.TODO(), nil)
 	dirtyRewriter.asScalar = true
-	dirtyRewriter.aggrMap = make(map[*ast.AggregateFuncExpr]int)
+	dirtyRewriter.planCtx.aggrMap = make(map[*ast.AggregateFuncExpr]int)
 	dirtyRewriter.preprocess = func(ast.Node) ast.Node { return nil }
-	dirtyRewriter.insertPlan = &Insert{}
+	dirtyRewriter.planCtx.insertPlan = &Insert{}
 	dirtyRewriter.disableFoldCounter = 1
 	dirtyRewriter.ctxStack = make([]expression.Expression, 2)
 	dirtyRewriter.ctxNameStk = make([]*types.FieldName, 2)
@@ -143,9 +143,9 @@ func TestRewriterPool(t *testing.T) {
 	cleanRewriter := builder.getExpressionRewriter(context.TODO(), nil)
 	require.Equal(t, dirtyRewriter, cleanRewriter)
 	require.Equal(t, false, cleanRewriter.asScalar)
-	require.Nil(t, cleanRewriter.aggrMap)
+	require.Nil(t, cleanRewriter.planCtx.aggrMap)
 	require.Nil(t, cleanRewriter.preprocess)
-	require.Nil(t, cleanRewriter.insertPlan)
+	require.Nil(t, cleanRewriter.planCtx.insertPlan)
 	require.Zero(t, cleanRewriter.disableFoldCounter)
 	require.Len(t, cleanRewriter.ctxStack, 0)
 	builder.rewriterCounter--

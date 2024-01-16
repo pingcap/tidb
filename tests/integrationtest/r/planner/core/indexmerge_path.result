@@ -704,3 +704,13 @@ select * from t ignore index (mvi) where json_contains(j, '[]');
 j
 []
 ["abc"]
+drop table if exists t;
+create table t(a int, b json);
+insert into t value (1, '{"a":[1,2,3], "b": [2,3,4]}');
+analyze table t;
+alter table t add index ibb( (cast(b->'$.b' as signed array)) );
+explain select /*+ use_index_merge(t) */ * from t where 10 member of (b->'$.b');
+id	estRows	task	access object	operator info
+IndexMerge_7	1.00	root		type: union
+├─IndexRangeScan_5(Build)	1.00	cop[tikv]	table:t, index:ibb(cast(json_extract(`b`, _utf8mb4'$.b') as signed array))	range:[10,10], keep order:false, stats:partial[ibb:missing, b:unInitialized]
+└─TableRowIDScan_6(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:partial[ibb:missing, b:unInitialized]

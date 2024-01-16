@@ -598,9 +598,9 @@ func dumpSessionBindRecords(records []*bindinfo.BindRecord, zw *zip.Writer) erro
 	for _, bindData := range records {
 		for _, hint := range bindData.Bindings {
 			sRows = append(sRows, []string{
-				bindData.OriginalSQL,
+				hint.OriginalSQL,
 				hint.BindSQL,
-				bindData.Db,
+				hint.Db,
 				hint.Status,
 				hint.CreateTime.String(),
 				hint.UpdateTime.String(),

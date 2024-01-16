@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -137,12 +136,14 @@ type PdController struct {
 
 	// control the pause schedulers goroutine
 	schedulerPauseCh chan struct{}
+	// control the ttl of pausing schedulers
+	SchedulerPauseTTL time.Duration
 }
 
 // NewPdController creates a new PdController.
 func NewPdController(
 	ctx context.Context,
-	pdAddrs string,
+	pdAddrs string, // TODO(lance6716): use HTTP client?
 	tlsConf *tls.Config,
 	securityOption pd.SecurityOption,
 ) (*PdController, error) {
@@ -257,7 +258,7 @@ func (p *PdController) doPauseSchedulers(
 	schedulers []string,
 ) ([]string, error) {
 	// pause this scheduler with 300 seconds
-	delay := int64(pauseTimeout.Seconds())
+	delay := int64(p.ttlOfPausing().Seconds())
 	removedSchedulers := make([]string, 0, len(schedulers))
 	for _, scheduler := range schedulers {
 		err := p.pdHTTPCli.SetSchedulerDelay(ctx, scheduler, delay)
@@ -294,7 +295,7 @@ func (p *PdController) pauseSchedulersAndConfigWith(
 	}
 
 	go func() {
-		tick := time.NewTicker(pauseTimeout / 3)
+		tick := time.NewTicker(p.ttlOfPausing() / 3)
 		defer tick.Stop()
 
 		for {
@@ -383,7 +384,7 @@ func (p *PdController) doUpdatePDScheduleConfig(
 
 func (p *PdController) doPauseConfigs(ctx context.Context, cfg map[string]interface{}) error {
 	// pause this scheduler with 300 seconds
-	return p.doUpdatePDScheduleConfig(ctx, cfg, pauseTimeout.Seconds())
+	return p.doUpdatePDScheduleConfig(ctx, cfg, p.ttlOfPausing().Seconds())
 }
 
 func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg ClusterConfig,
@@ -741,21 +742,19 @@ func (p *PdController) Close() {
 	}
 }
 
-// FetchPDVersion get pd version
-// TODO(lance6716): use PD HTTP client to get PD version.
-func FetchPDVersion(ctx context.Context, tls *common.TLS, pdAddr string) (*semver.Version, error) {
-	// An example of PD version API.
-	// curl http://pd_address/pd/api/v1/version
-	// {
-	//   "version": "v4.0.0-rc.2-451-g760fb650"
-	// }
-	var rawVersion struct {
-		Version string `json:"version"`
+func (p *PdController) ttlOfPausing() time.Duration {
+	if p.SchedulerPauseTTL > 0 {
+		return p.SchedulerPauseTTL
 	}
-	err := tls.WithHost(pdAddr).GetJSON(ctx, pdhttp.Version, &rawVersion)
+	return pauseTimeout
+}
+
+// FetchPDVersion get pd version
+func FetchPDVersion(ctx context.Context, pdHTTPCli pdhttp.Client) (*semver.Version, error) {
+	ver, err := pdHTTPCli.GetPDVersion(ctx)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	return parseVersion(rawVersion.Version), nil
+	return parseVersion(ver), nil
 }
