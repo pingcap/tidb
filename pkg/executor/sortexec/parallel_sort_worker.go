@@ -40,7 +40,7 @@ type parallelSortWorker struct {
 	result                *sortedRows
 	globalSortedRowsQueue *sortedRowsList
 
-	chunkChannel chan *chunkWithMemoryUsage
+	chunkChannel chan *chunk.Chunk
 	processError func(error)
 	finishCh     chan struct{}
 
@@ -55,7 +55,7 @@ func newParallelSortWorker(
 	globalSortedRowsQueue *sortedRowsList,
 	waitGroup *sync.WaitGroup,
 	result *sortedRows,
-	chunkChannel chan *chunkWithMemoryUsage,
+	chunkChannel chan *chunk.Chunk,
 	processError func(error),
 	finishCh chan struct{},
 	memTracker *memory.Tracker) *parallelSortWorker {
@@ -92,7 +92,7 @@ func (p *parallelSortWorker) injectFailPointForParallelSortWorker() {
 // Return false if we want to stop further execution
 func (p *parallelSortWorker) fetchChunksAndSort() bool {
 	var (
-		chk *chunkWithMemoryUsage
+		chk *chunk.Chunk
 		ok  bool
 	)
 
@@ -101,13 +101,13 @@ func (p *parallelSortWorker) fetchChunksAndSort() bool {
 		case <-p.finishCh:
 			return false
 		case chk, ok = <-p.chunkChannel:
-			// Memory usage of the chunk has been consumed at the producer side.
+			// Memory usage of the chunk has been consumed at the chunk fetcher
 			if !ok {
 				return true
 			}
 		}
 
-		sortedRows := p.sortChunkAndGetSortedRows(chk.Chk)
+		sortedRows := p.sortChunkAndGetSortedRows(chk)
 		p.globalSortedRowsQueue.add(sortedRows)
 		p.injectFailPointForParallelSortWorker()
 	}

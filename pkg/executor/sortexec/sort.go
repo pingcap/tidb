@@ -80,7 +80,7 @@ type SortExec struct {
 		rowNum int64
 		idx    int64
 
-		chunkChannel    chan *chunkWithMemoryUsage
+		chunkChannel    chan *chunk.Chunk
 		isChannelClosed *atomic.Bool
 		workers         []*parallelSortWorker
 
@@ -142,7 +142,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 	} else {
 		e.Parallel.idx = 0
 		e.Parallel.workers = make([]*parallelSortWorker, e.Ctx().GetSessionVars().ExecutorConcurrency)
-		e.Parallel.chunkChannel = make(chan *chunkWithMemoryUsage, e.Ctx().GetSessionVars().ExecutorConcurrency)
+		e.Parallel.chunkChannel = make(chan *chunk.Chunk, e.Ctx().GetSessionVars().ExecutorConcurrency)
 		e.Parallel.isChannelClosed = &atomic.Bool{}
 		e.Parallel.isChannelClosed.Store(false)
 		e.Parallel.globalSortedRowsQueue = &sortedRowsList{}
@@ -544,17 +544,12 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context, waitGroup *sync.Wai
 			break
 		}
 
-		chkWithMemoryUsage := &chunkWithMemoryUsage{
-			Chk:         chk,
-			MemoryUsage: chk.MemoryUsage() + chunk.RowSize*int64(rowCount),
-		}
-
-		e.memTracker.Consume(chkWithMemoryUsage.MemoryUsage)
+		e.memTracker.Consume(chk.MemoryUsage() + chunk.RowSize*int64(rowCount))
 
 		select {
 		case <-e.finishCh:
 			return
-		case e.Parallel.chunkChannel <- chkWithMemoryUsage:
+		case e.Parallel.chunkChannel <- chk:
 			// chunkChannel may be closed in advance and it's ok to let it panic
 			// as workers have panicked and the query can't keep on running.
 		}
