@@ -444,7 +444,7 @@ func CalcTotalSelectivityForMVIdxPath(
 ) float64 {
 	selectivities := make([]float64, 0, len(partialPaths))
 	for _, path := range partialPaths {
-		// For a partial path, we distinguish between two cases.
+		// For a partial path, we distinguish between two cases if it's a mv index path.
 		// 1. We will access a single value on the virtual column of the mv index.
 		//   In this case, handles from a single partial path must be unique.
 		//   The CountAfterAccess of a partial path will never be larger than the table total row count.
@@ -480,20 +480,26 @@ func CalcTotalSelectivityForMVIdxPath(
 		//
 		// Now, the `Case 2` above has been avoided because a mv index may not contain all rows. See the related issue
 		// https://github.com/pingcap/tidb/issues/50125 and fix https://github.com/pingcap/tidb/pull/50183
-		var virtualCol *expression.Column
-		for _, col := range coll.MVIdx2Columns[path.Index.ID] {
-			if col.VirtualExpr != nil {
-				virtualCol = col
-				break
-			}
-		}
-		cols := expression.ExtractColumnsFromExpressions(nil, path.AccessConds, func(column *expression.Column) bool {
-			return virtualCol != nil && column.UniqueID == virtualCol.UniqueID
-		})
 		realtimeCount := coll.RealtimeCount
-		// If we can't find the virtual column from the access conditions, it's the case 2.
-		if len(cols) == 0 {
-			realtimeCount, _ = coll.GetScaledRealtimeAndModifyCnt(coll.Indices[path.Index.ID])
+		if !path.IsTablePath() && path.Index.MVIndex {
+			var virtualCol *expression.Column
+			for _, col := range coll.MVIdx2Columns[path.Index.ID] {
+				if col.VirtualExpr != nil {
+					virtualCol = col
+					break
+				}
+			}
+			cols := expression.ExtractColumnsFromExpressions(
+				nil,
+				path.AccessConds,
+				func(column *expression.Column) bool {
+					return virtualCol != nil && column.UniqueID == virtualCol.UniqueID
+				},
+			)
+			// If we can't find the virtual column from the access conditions, it's the case 2.
+			if len(cols) == 0 {
+				realtimeCount, _ = coll.GetScaledRealtimeAndModifyCnt(coll.Indices[path.Index.ID])
+			}
 		}
 		sel := path.CountAfterAccess / float64(realtimeCount)
 		sel = mathutil.Clamp(sel, 0, 1)
