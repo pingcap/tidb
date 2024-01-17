@@ -75,7 +75,7 @@ func (e *LoadDataController) checkTotalFileSize() error {
 }
 
 func (e *LoadDataController) checkTableEmpty(ctx context.Context, conn sqlexec.SQLExecutor) error {
-	sql := fmt.Sprintf("SELECT 1 FROM %s USE INDEX() LIMIT 1", common.UniqueTable(e.DBName, e.Table.Meta().Name.L))
+	sql := common.SprintfWithIdentifiers("SELECT 1 FROM %s.%s USE INDEX() LIMIT 1", e.DBName, e.Table.Meta().Name.L)
 	rs, err := conn.ExecuteInternal(ctx, sql)
 	if err != nil {
 		return err
