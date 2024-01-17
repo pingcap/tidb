@@ -18,6 +18,11 @@ go_library(
     deps = [
         "//br/pkg/aws",
         "//br/pkg/backup",
+<<<<<<< HEAD
+=======
+        "//br/pkg/backup/prepare_snap",
+        "//br/pkg/checkpoint",
+>>>>>>> bbbada0dde3 (backup: advacned prepare implementation (#48439))
         "//br/pkg/checksum",
         "//br/pkg/common",
         "//br/pkg/config",
