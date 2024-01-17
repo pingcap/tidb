@@ -546,9 +546,6 @@ func (c *localMppCoordinator) ReportStatus(info kv.ReportStatusRequest) error {
 	}
 	executionInfo := new(tipb.TiFlashExecutionInfo)
 	err := executionInfo.Unmarshal(info.Request.GetData())
-	logutil.BgLogger().Info("gjt report status 1",
-	zap.Any("report cnt", c.reportedReqCount),
-	zap.Any("err", err))
 	if err != nil {
 		// since it is very corner case to reach here, and it won't cause forever hang due to not close reportStatusCh
 		return err
