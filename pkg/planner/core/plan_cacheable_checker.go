@@ -79,7 +79,6 @@ type cacheableChecker struct {
 	ctx       context.Context
 	sctx      sessionctx.Context
 	cacheable bool
-	forceWarn bool
 	schema    infoschema.InfoSchema
 	reason    string // reason why cannot use plan-cache
 
