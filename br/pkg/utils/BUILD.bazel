@@ -38,7 +38,10 @@ go_library(
         "//pkg/parser/types",
         "//pkg/sessionctx",
         "//pkg/util",
+<<<<<<< HEAD
         "//pkg/util/mathutil",
+=======
+>>>>>>> bbbada0dde3 (backup: advacned prepare implementation (#48439))
         "//pkg/util/sqlexec",
         "@com_github_cheggaaa_pb_v3//:pb",
         "@com_github_docker_go_units//:go-units",
@@ -90,7 +93,11 @@ go_test(
     ],
     embed = [":utils"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 36,
+=======
+    shard_count = 33,
+>>>>>>> bbbada0dde3 (backup: advacned prepare implementation (#48439))
     deps = [
         "//br/pkg/errors",
         "//br/pkg/metautil",

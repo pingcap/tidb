@@ -164,7 +164,11 @@ func (mgr *StoreManager) getGrpcConnLocked(ctx context.Context, storeID uint64) 
 	return conn, nil
 }
 
+<<<<<<< HEAD
 func (mgr *StoreManager) RemoveConn(ctx context.Context, storeID uint64) error {
+=======
+func (mgr *StoreManager) TryWithConn(ctx context.Context, storeID uint64, f func(*grpc.ClientConn) error) error {
+>>>>>>> bbbada0dde3 (backup: advacned prepare implementation (#48439))
 	if ctx.Err() != nil {
 		return errors.Trace(ctx.Err())
 	}
@@ -174,12 +178,16 @@ func (mgr *StoreManager) RemoveConn(ctx context.Context, storeID uint64) error {
 
 	if conn, ok := mgr.grpcClis.clis[storeID]; ok {
 		// Find a cached backup client.
+<<<<<<< HEAD
 		err := conn.Close()
 		if err != nil {
 			log.Warn("close backup connection failed, ignore it", zap.Uint64("storeID", storeID))
 		}
 		delete(mgr.grpcClis.clis, storeID)
 		return nil
+=======
+		return f(conn)
+>>>>>>> bbbada0dde3 (backup: advacned prepare implementation (#48439))
 	}
 	return nil
 }
