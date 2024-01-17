@@ -28,7 +28,7 @@ type parallelSortSpillHelper struct {
 	sortedRowsInDisk []*chunk.DataInDiskByChunks
 	cursor           []*dataCursor
 	spillError       error
-	sortExec *SortExec
+	sortExec         *SortExec
 
 	finishCh chan struct{}
 
@@ -56,12 +56,6 @@ func (p *parallelSortSpillHelper) isInSpillingNoLock() bool {
 	return p.spillStatus == inSpilling
 }
 
-func (p *parallelSortSpillHelper) isInSpilling() bool {
-	p.cond.L.Lock()
-	defer p.cond.L.Unlock()
-	return p.spillStatus == inSpilling
-}
-
 func (p *parallelSortSpillHelper) isSpillNeeded() bool {
 	p.cond.L.Lock()
 	defer p.cond.L.Unlock()
@@ -71,10 +65,6 @@ func (p *parallelSortSpillHelper) isSpillNeeded() bool {
 func (p *parallelSortSpillHelper) isSpillTriggered() bool {
 	p.cond.L.Lock()
 	defer p.cond.L.Unlock()
-	return len(p.sortedRowsInDisk) > 0
-}
-
-func (p *parallelSortSpillHelper) isSpillTriggeredNoLock() bool {
 	return len(p.sortedRowsInDisk) > 0
 }
 
