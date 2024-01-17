@@ -532,7 +532,7 @@ func getColType(schema infoschema.InfoSchema, tbl *ast.TableName, col *ast.Colum
 }
 
 // isPlanCacheable returns whether this plan is cacheable and the reason if not.
-func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum int, hasSubQuery bool) (cacheable bool, reason string) {
+func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum int, hasSubQuery bool) (warn bool, reason string) {
 	var pp PhysicalPlan
 	switch x := p.(type) {
 	case *Insert:
@@ -544,64 +544,64 @@ func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum in
 	case PhysicalPlan:
 		pp = x
 	default:
-		return false, fmt.Sprintf("unexpected un-cacheable plan %v", p.ExplainID().String())
+		return true, fmt.Sprintf("unexpected un-cacheable plan %v", p.ExplainID().String())
 	}
 	if pp == nil { // simple DML statements
 		return true, ""
 	}
 	if limitParamNum != 0 && !sctx.GetSessionVars().EnablePlanCacheForParamLimit {
-		return false, "the switch 'tidb_enable_plan_cache_for_param_limit' is off"
+		return true, "the switch 'tidb_enable_plan_cache_for_param_limit' is off"
 	}
 	if hasSubQuery && !sctx.GetSessionVars().EnablePlanCacheForSubquery {
-		return false, "the switch 'tidb_enable_plan_cache_for_subquery' is off"
+		return true, "the switch 'tidb_enable_plan_cache_for_subquery' is off"
 	}
 	if sctx.GetSessionVars().PlanCacheMaxPlanSize > 0 && uint64(pp.MemoryUsage()) > sctx.GetSessionVars().PlanCacheMaxPlanSize { // to save memory
-		return false, "plan is too large(decided by the variable @@tidb_plan_cache_max_plan_size)"
+		return true, "plan is too large(decided by the variable @@tidb_plan_cache_max_plan_size)"
 	}
 	return isPhysicalPlanCacheable(sctx, pp, paramNum, limitParamNum, false)
 }
 
 // isPhysicalPlanCacheable returns whether this physical plan is cacheable and return the reason if not.
-func isPhysicalPlanCacheable(sctx sessionctx.Context, p PhysicalPlan, paramNum, limitParamNum int, underIndexMerge bool) (cacheable bool, reason string) {
+func isPhysicalPlanCacheable(sctx sessionctx.Context, p PhysicalPlan, paramNum, limitParamNum int, underIndexMerge bool) (warn bool, reason string) {
 	var subPlans []PhysicalPlan
 	switch x := p.(type) {
 	case *PhysicalTableDual:
 		if paramNum > 0 {
-			return false, "get a TableDual plan"
+			return true, "get a TableDual plan"
 		}
 	case *PhysicalTableReader:
 		if x.StoreType == kv.TiFlash {
-			return false, "TiFlash plan is un-cacheable"
+			return true, "TiFlash plan is un-cacheable"
 		}
 	case *PhysicalShuffle, *PhysicalShuffleReceiverStub:
-		return false, "get a Shuffle plan"
+		return true, "get a Shuffle plan"
 	case *PhysicalMemTable:
-		return false, "PhysicalMemTable plan is un-cacheable"
+		return true, "PhysicalMemTable plan is un-cacheable"
 	case *PhysicalIndexMergeReader:
 		if x.AccessMVIndex && !enablePlanCacheForGeneratedCols(sctx) {
-			return false, "the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"
+			return true, "the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"
 		}
 		underIndexMerge = true
 		subPlans = append(subPlans, x.partialPlans...)
 	case *PhysicalIndexScan:
 		if underIndexMerge && x.isFullScan() {
-			return false, "IndexMerge plan with full-scan is un-cacheable"
+			return true, "IndexMerge plan with full-scan is un-cacheable"
 		}
 	case *PhysicalTableScan:
 		if underIndexMerge && x.isFullScan() {
-			return false, "IndexMerge plan with full-scan is un-cacheable"
+			return true, "IndexMerge plan with full-scan is un-cacheable"
 		}
 	case *PhysicalApply:
-		return false, "PhysicalApply plan is un-cacheable"
+		return true, "PhysicalApply plan is un-cacheable"
 	}
 
 	subPlans = append(subPlans, p.Children()...)
 	for _, c := range subPlans {
-		if cacheable, reason = isPhysicalPlanCacheable(sctx, c, paramNum, limitParamNum, underIndexMerge); !cacheable {
-			return cacheable, reason
+		if warn, reason = isPhysicalPlanCacheable(sctx, c, paramNum, limitParamNum, underIndexMerge); reason != "" && warn {
+			return warn, reason
 		}
 	}
-	return true, ""
+	return false, ""
 }
 
 // getMaxParamLimit returns the maximum number of parameters for a query that can be cached in the Plan Cache.
