@@ -827,3 +827,11 @@ HashJoin_12	12.50	root		inner join, equal:[eq(planner__core__casetest__index__in
 SHOW WARNINGS
 Level	Code	Message
 Warning	1815	Optimizer Hint /*+ INL_JOIN(t1) */ or /*+ TIDB_INLJ(t1) */ is inapplicable
+DROP table if exists items;
+CREATE TABLE `items` (`item_primary_key` varbinary(255) NOT NULL,`normalized_short_link_clusters` json DEFAULT NULL,`feed_profile_ids` json DEFAULT NULL,`point_of_sale_country` varchar(2) DEFAULT NULL,PRIMARY KEY (`item_primary_key`) /*T![clustered_index] CLUSTERED */,KEY `feed_profile_ids` ((cast(`feed_profile_ids` as unsigned array))),KEY `normalized_short_link_clusters` ((cast(`normalized_short_link_clusters` as char(1000) array)),`point_of_sale_country`),KEY `normalized_short_link_clusters_old` ((cast(`normalized_short_link_clusters` as char(1000) array))));
+EXPLAIN SELECT /*+ use_index_merge(items, feed_profile_ids, normalized_short_link_clusters_old, normalized_short_link_clusters) */ * FROM   items WHERE   15975127 member of (feed_profile_ids)   AND "OC8p0106XTkt.org/s/link" member of (normalized_short_link_clusters) LIMIT   10;
+id	estRows	task	access object	operator info
+IndexMerge_14	0.01	root		type: intersection, limit embedded(offset:0, count:10)
+├─IndexRangeScan_11(Build)	10.00	cop[tikv]	table:items, index:feed_profile_ids(cast(`feed_profile_ids` as unsigned array))	range:[15975127,15975127], keep order:false, stats:pseudo
+├─IndexRangeScan_12(Build)	10.00	cop[tikv]	table:items, index:normalized_short_link_clusters(cast(`normalized_short_link_clusters` as char(1000) array), point_of_sale_country)	range:["OC8p0106XTkt.org/s/link","OC8p0106XTkt.org/s/link"], keep order:false, stats:pseudo
+└─TableRowIDScan_13(Probe)	0.01	cop[tikv]	table:items	keep order:false, stats:pseudo
