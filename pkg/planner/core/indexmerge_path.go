@@ -197,13 +197,27 @@ func (ds *DataSource) generateNormalIndexPartialPaths4DNF(dnfItems []expression.
 }
 
 // getIndexMergeOrPath generates all possible IndexMergeOrPaths.
-// For index merge union case，the order property from its partial
+// For index merge union case, the order property from its partial
 // path can be kept and multi-way merged and output. So we don't
 // generate a concrete index merge path out, but an un-determined
 // alternatives set index merge path instead.
+//
+//	    `create table t (a int, b int, c int, key a(a), key b(b), key ac(a, c), key bc(b, c))`
+//		`explain format='verbose' select * from t where a=1 or b=1 order by c`
+//
+// like the case here:
+// normal index merge OR path should be:
+// for a=1, it has two partial alternative paths: [a, ac]
+// for b=1, it has two partial alternative paths: [b, bc]
+// and the index merge path:
+//
+//	indexMergePath: {
+//	    PartialIndexPaths: empty                          // 1D array here, currently is not decided yet.
+//	    PartialAlternativeIndexPaths: [[a, ac], [b, bc]]  // 2D array here, each for one DNF item choices.
+//	}
 func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression) error {
 	usedIndexCount := len(ds.possibleAccessPaths)
-	for i, cond := range filters {
+	for k, cond := range filters {
 		sf, ok := cond.(*expression.ScalarFunction)
 		if !ok || sf.FuncName.L != ast.LogicOr {
 			continue
@@ -243,21 +257,21 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 		// 2: Compute a theoretical best countAfterAccess(pick its accessConds) for every alternative path(s).
 		indexMap := make(map[int64]struct{}, 1)
 		accessConds := make([]expression.Expression, 0, len(partialAlternativePaths))
-		for i := len(partialAlternativePaths) - 1; i >= 0; i-- {
+		for _, oneAlternativeSet := range partialAlternativePaths {
 			// 1: mark used map.
-			for j := len(partialAlternativePaths[i]) - 1; j >= 0; j-- {
-				if partialAlternativePaths[i][j].IsTablePath() {
+			for _, oneAlternativePath := range oneAlternativeSet {
+				if oneAlternativePath.IsTablePath() {
 					// table path
 					indexMap[-1] = struct{}{}
 				} else {
 					// index path
-					indexMap[partialAlternativePaths[i][j].Index.ID] = struct{}{}
+					indexMap[oneAlternativePath.Index.ID] = struct{}{}
 				}
 			}
 			// 2.1: trade off on countAfterAccess.
-			theoreticalMinCountAfterAccessPath := ds.buildIndexMergePartialPath(partialAlternativePaths[i])
-			indexCondsForP := theoreticalMinCountAfterAccessPath.AccessConds[:]
-			indexCondsForP = append(indexCondsForP, theoreticalMinCountAfterAccessPath.IndexFilters...)
+			minCountAfterAccessPath := ds.buildIndexMergePartialPath(oneAlternativeSet)
+			indexCondsForP := minCountAfterAccessPath.AccessConds[:]
+			indexCondsForP = append(indexCondsForP, minCountAfterAccessPath.IndexFilters...)
 			if len(indexCondsForP) > 0 {
 				accessConds = append(accessConds, expression.ComposeCNFCondition(ds.SCtx(), indexCondsForP...))
 			}
@@ -274,7 +288,7 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 		}
 
 		if len(partialAlternativePaths) > 1 {
-			possiblePath := ds.buildIndexMergeOrPath(filters, partialAlternativePaths, i, shouldKeepCurrentFilter)
+			possiblePath := ds.buildIndexMergeOrPath(filters, partialAlternativePaths, k, shouldKeepCurrentFilter)
 			if possiblePath == nil {
 				return nil
 			}
@@ -458,9 +472,9 @@ func (ds *DataSource) buildIndexMergeOrPath(
 		}
 	}
 	// since shouldKeepCurrentFilter may be changed in alternative paths converging, kept the filer expression anyway here.
-	indexMergePath.ShouldBeKeptCurrentFilter = shouldKeepCurrentFilter
+	indexMergePath.KeepIndexMergeORSourceFilter = shouldKeepCurrentFilter
 	// this filter will be merged into indexPath's table filters when converging.
-	indexMergePath.ShouldBeKeptCurrentFilterExpression = filters[current]
+	indexMergePath.IndexMergeORSourceFilter = filters[current]
 	return indexMergePath
 }
 
