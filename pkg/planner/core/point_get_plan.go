@@ -1910,14 +1910,12 @@ func getPartitionDef(ctx sessionctx.Context, tbl *model.TableInfo, schema *expre
 		// The key partition table supports FastPlan when it contains only one partition column
 		if len(pi.Columns) == 1 {
 			// We need to change the partition column index!
-			partCols, _ := partitionExpr.GetPartColumnsForKeyPartition(schema.Columns)
-			if len(partCols) != 1 {
-				return nil, 0, 0, false
-			}
-			pe := &tables.ForKeyPruning{KeyPartCols: partCols}
-			colName := partCols[0].OrigName
+			col := &expression.Column{}
+			*col = *partitionExpr.KeyPartCols[0]
+			col.Index = 0
+			pe := &tables.ForKeyPruning{KeyPartCols: []*expression.Column{col}}
 			for i, pair := range pairs {
-				if colName == pair.colName {
+				if col.OrigName == pair.colName {
 					pos, err := pe.LocateKeyPartition(pi.Num, []types.Datum{pair.value})
 					if err != nil {
 						return nil, 0, 0, false
