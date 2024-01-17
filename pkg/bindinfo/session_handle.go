@@ -69,12 +69,12 @@ func NewSessionBindingHandle() SessionBindingHandle {
 // appendSessionBinding adds the Bindings to the cache, all the stale bindMetas are
 // removed from the cache after this operation.
 func (h *sessionBindingHandle) appendSessionBinding(sqlDigest string, meta Bindings) {
-	oldRecord := h.ch.GetBinding(sqlDigest)
+	oldBindings := h.ch.GetBinding(sqlDigest)
 	err := h.ch.SetBinding(sqlDigest, meta)
 	if err != nil {
 		logutil.BgLogger().Warn("SessionHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err))
 	}
-	updateMetrics(metrics.ScopeSession, oldRecord, meta, false)
+	updateMetrics(metrics.ScopeSession, oldBindings, meta, false)
 }
 
 // CreateSessionBinding creates a Bindings to the cache.

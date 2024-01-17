@@ -176,18 +176,18 @@ func prepareHints(sctx sessionctx.Context, binding *Binding) error {
 }
 
 // `merge` merges two Bindings. It will replace old bindings with new bindings if there are new updates.
-func merge(lBindRecord, rBindRecord Bindings) Bindings {
-	if lBindRecord == nil {
-		return rBindRecord
+func merge(lBindings, rBindings Bindings) Bindings {
+	if lBindings == nil {
+		return rBindings
 	}
-	if rBindRecord == nil {
-		return lBindRecord
+	if rBindings == nil {
+		return lBindings
 	}
-	result := lBindRecord.Copy()
-	for i := range rBindRecord {
-		rbind := rBindRecord[i]
+	result := lBindings.Copy()
+	for i := range rBindings {
+		rbind := rBindings[i]
 		found := false
-		for j, lbind := range lBindRecord {
+		for j, lbind := range lBindings {
 			if lbind.isSame(&rbind) {
 				found = true
 				if rbind.UpdateTime.Compare(lbind.UpdateTime) >= 0 {
