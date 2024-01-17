@@ -130,6 +130,20 @@ func verifySchedulerNotStopped(t *require.Assertions, cfg operator.PauseGcConfig
 	}
 }
 
+func cleanUpGCSafepoint(cfg operator.PauseGcConfig, t *testing.T) {
+	var result GcSafePoints
+	pdCli, err := pd.NewClient(cfg.PD, pd.SecurityOption{})
+	require.NoError(t, err)
+	getJSON(pdAPI(cfg, serviceGCSafepointPrefix), &result)
+	for _, sp := range result.SPs {
+		if sp.ServiceID != "gc_worker" {
+			sp.SafePoint = 0
+			_, err := pdCli.UpdateServiceGCSafePoint(context.Background(), sp.ServiceID, 0, 0)
+			require.NoError(t, err)
+		}
+	}
+}
+
 func TestOperator(t *testing.T) {
 	req := require.New(t)
 	rd := make(chan struct{})
@@ -147,6 +161,8 @@ func TestOperator(t *testing.T) {
 			close(ex)
 		},
 	}
+
+	cleanUpGCSafepoint(cfg, t)
 
 	verifyGCNotStopped(req, cfg)
 	verifySchedulerNotStopped(req, cfg)
