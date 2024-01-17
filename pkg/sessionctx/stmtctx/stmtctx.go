@@ -822,7 +822,7 @@ func (sc *StatementContext) SetSkipPlanCache(reason error) {
 
 // ForceSetSkipPlanCache sets to skip the plan cache and records the reason.
 func (sc *StatementContext) ForceSetSkipPlanCache(reason error) {
-	if sc.CacheType == DefaultNoCache{
+	if sc.CacheType == DefaultNoCache {
 		return
 	}
 	sc.setSkipPlanCache(reason)
@@ -842,8 +842,6 @@ func (sc *StatementContext) setSkipPlanCache(reason error) {
 		}
 	}
 }
-
-func
 
 // TableEntry presents table in db.
 type TableEntry struct {
