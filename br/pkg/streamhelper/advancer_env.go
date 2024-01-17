@@ -104,6 +104,11 @@ func (t clusterEnv) GetLogBackupClient(ctx context.Context, storeID uint64) (log
 	return cli, nil
 }
 
+// ClearCache clears the log backup client connection cache.
+func (t clusterEnv) ClearCache(ctx context.Context, storeID uint64) error {
+	return t.clis.RemoveConn(ctx, storeID)
+}
+
 // CliEnv creates the Env for CLI usage.
 func CliEnv(cli *utils.StoreManager, tikvStore tikv.Storage, etcdCli *clientv3.Client) Env {
 	return clusterEnv{
@@ -134,6 +139,8 @@ func TiDBEnv(tikvStore tikv.Storage, pdCli pd.Client, etcdCli *clientv3.Client, 
 type LogBackupService interface {
 	// GetLogBackupClient gets the log backup client.
 	GetLogBackupClient(ctx context.Context, storeID uint64) (logbackup.LogBackupClient, error)
+	// Disable log backup client connection cache.
+	ClearCache(ctx context.Context, storeID uint64) error
 }
 
 // StreamMeta connects to the metadata service (normally PD).
