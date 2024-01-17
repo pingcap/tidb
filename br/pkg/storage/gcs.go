@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	goerrors "errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -412,7 +413,9 @@ func shouldRetry(err error) bool {
 		}
 	}
 
-	log.Warn("other error when requesting gcs", zap.Error(err))
+	log.Warn("other error when requesting gcs",
+		zap.Error(err),
+		zap.String("info", fmt.Sprintf("type: %T, value: %+v", err, err)))
 	return false
 }
 
