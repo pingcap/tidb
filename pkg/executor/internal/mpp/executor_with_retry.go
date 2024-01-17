@@ -141,9 +141,9 @@ func (r *ExecutorWithRetry) Close() error {
 	logutil.BgLogger().Info("gjt close 2", zap.Any("now", time.Now()))
 	r.memTracker.Detach()
 	logutil.BgLogger().Info("gjt close 3", zap.Any("now", time.Now()))
-	mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(r.getCoordUniqueID())
-	logutil.BgLogger().Info("gjt close 4", zap.Any("now", time.Now()))
 	err := r.coord.Close()
+	logutil.BgLogger().Info("gjt close 4", zap.Any("now", time.Now()))
+	mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(r.getCoordUniqueID())
 	logutil.BgLogger().Info("gjt close 5", zap.Any("now", time.Now()))
 	return err
 }
