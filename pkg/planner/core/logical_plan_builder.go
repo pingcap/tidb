@@ -4114,7 +4114,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid"))
 		}
 	}
-	b.tableHintInfo = append(b.tableHintInfo, h.TableHintInfo{
+	b.tableHintInfo = append(b.tableHintInfo, &h.TableHintInfo{
 		SortMergeJoinTables:       sortMergeTables,
 		BroadcastJoinTables:       bcTables,
 		ShuffleJoinTables:         shuffleJoinTables,
@@ -4157,7 +4157,7 @@ func (b *PlanBuilder) TableHints() *h.TableHintInfo {
 	if len(b.tableHintInfo) == 0 {
 		return nil
 	}
-	return &(b.tableHintInfo[len(b.tableHintInfo)-1])
+	return b.tableHintInfo[len(b.tableHintInfo)-1]
 }
 
 func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p LogicalPlan, err error) {

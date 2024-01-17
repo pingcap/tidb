@@ -28,6 +28,12 @@ import (
 // SignalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
 const SignalCheckpointForSort uint = 20000
 
+const (
+	normal = iota
+	eof
+	finish
+)
+
 type parallelSortWorker struct {
 	workerIDForTest int
 
@@ -39,10 +45,11 @@ type parallelSortWorker struct {
 	// This list is shared by all workers and all workers will put their sorted rows into this list
 	globalSortedRowsQueue *sortedRowsList
 
-	chunkChannel chan *chunkWithMemoryUsage
+	chunkChannel           chan *chunkWithMemoryUsage
 	fetcherAndWorkerSyncer *sync.WaitGroup
-	checkError   func() error
-	processError func(error)
+	checkError             func() error
+	processError           func(error)
+	finishCh               chan struct{}
 
 	lessRowFunc       func(chunk.Row, chunk.Row) int
 	timesOfRowCompare uint
@@ -63,35 +70,36 @@ func newParallelSortWorker(
 	fetcherAndWorkerSyncer *sync.WaitGroup,
 	checkError func() error,
 	processError func(error),
+	finishCh chan struct{},
 	memTracker *memory.Tracker,
 	spillHelper *parallelSortSpillHelper) *parallelSortWorker {
 	return &parallelSortWorker{
-		workerIDForTest:       workerIDForTest,
-		lessRowFunc:           lessRowFunc,
-		globalSortedRowsQueue: globalSortedRowsQueue,
-		waitGroup:             waitGroup,
-		result:                result,
-		chunkChannel:          chunkChannel,
+		workerIDForTest:        workerIDForTest,
+		lessRowFunc:            lessRowFunc,
+		globalSortedRowsQueue:  globalSortedRowsQueue,
+		waitGroup:              waitGroup,
+		result:                 result,
+		chunkChannel:           chunkChannel,
 		fetcherAndWorkerSyncer: fetcherAndWorkerSyncer,
-		checkError:            checkError,
-		processError:          processError,
-		timesOfRowCompare:     0,
-		memTracker:            memTracker,
-		spillHelper:           spillHelper,
+		checkError:             checkError,
+		processError:           processError,
+		finishCh:               finishCh,
+		timesOfRowCompare:      0,
+		memTracker:             memTracker,
+		spillHelper:            spillHelper,
 	}
 }
 
 func (p *parallelSortWorker) fetchChunksAndSort() bool {
 	for {
-		eof, err := p.fetchChunksAndSortImpl()
-		if err != nil {
+		status:= p.fetchChunksAndSortImpl()
+		if status == finish {
 			return false
 		}
 
-		if eof {
+		if status == eof {
 			return true
 		}
-
 	}
 }
 
@@ -111,26 +119,29 @@ func (p *parallelSortWorker) injectFailPointForParallelSortWorker() {
 
 // Fetching chunks from chunkChannel and sort them.
 // Rows are sorted only inside a chunk.
-func (p *parallelSortWorker) fetchChunksAndSortImpl() (bool, error) {
-	err := p.checkError()
-	if err != nil {
-		return true, err
+// Return true if we want to stop further execution
+func (p *parallelSortWorker) fetchChunksAndSortImpl() int {
+	var (
+		chkWithMemoryUsage *chunkWithMemoryUsage
+		ok                 bool
+	)
+
+	select {
+	case <-p.finishCh:
+		return finish
+	case chkWithMemoryUsage, ok = <-p.chunkChannel:
+		// Memory usage of the chunk has been consumed at the chunk fetcher
+		if !ok {
+			return eof
+		}
+		p.totalMemoryUsage += chkWithMemoryUsage.MemoryUsage
+		defer p.fetcherAndWorkerSyncer.Done()
 	}
 
-	// Memory usage of the chunk has been consumed at the producer side.
-	chk, ok := <-p.chunkChannel
-	if !ok {
-		return true, nil
-	}
-
-	defer p.fetcherAndWorkerSyncer.Done()
-
-	p.totalMemoryUsage += chk.MemoryUsage
-
-	sortedRows := p.sortChunkAndGetSortedRows(chk.Chk)
+	sortedRows := p.sortChunkAndGetSortedRows(chkWithMemoryUsage.Chk)
 	p.globalSortedRowsQueue.add(sortedRows)
 	p.injectFailPointForParallelSortWorker()
-	return false, nil
+	return normal
 }
 
 func (p *parallelSortWorker) sortChunkAndGetSortedRows(chk *chunk.Chunk) sortedRows {
@@ -145,9 +156,10 @@ func (p *parallelSortWorker) sortChunkAndGetSortedRows(chk *chunk.Chunk) sortedR
 
 func (p *parallelSortWorker) mergeSortGlobalRows() {
 	for {
-		err := p.checkError()
-		if err != nil {
+		select {
+		case <-p.finishCh:
 			return
+		default:
 		}
 
 		sortedRowsLeft, sortedRowsRight := p.globalSortedRowsQueue.fetchTwoSortedRows()

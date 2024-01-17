@@ -22,6 +22,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/bindinfo/internal"
+	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
@@ -70,12 +71,10 @@ func TestBindingLastUpdateTime(t *testing.T) {
 	stmt, err := parser.New().ParseOneStmt("select * from test . t0", "", "")
 	require.NoError(t, err)
 
-	_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
-	bindData, err := bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
-	require.NoError(t, err)
-	require.Equal(t, 1, len(bindData.Bindings))
-	bind := bindData.Bindings[0]
-	updateTime := bind.UpdateTime.String()
+	_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+	binding, matched := bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	require.True(t, matched)
+	updateTime := binding.UpdateTime.String()
 
 	rows1 := tk.MustQuery("show status like 'last_plan_binding_update_time';").Rows()
 	updateTime1 := rows1[0][1]
@@ -139,20 +138,18 @@ func TestBindParse(t *testing.T) {
 
 	stmt, err := parser.New().ParseOneStmt("select * from test . t", "", "")
 	require.NoError(t, err)
-	_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
-	bindData, err := bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
-	require.NoError(t, err)
-	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t`", bindData.OriginalSQL)
-	bind := bindData.Bindings[0]
-	require.Equal(t, "select * from `test` . `t` use index(index_t)", bind.BindSQL)
-	require.Equal(t, "test", bindData.Db)
-	require.Equal(t, bindinfo.Enabled, bind.Status)
-	require.Equal(t, "utf8mb4", bind.Charset)
-	require.Equal(t, "utf8mb4_bin", bind.Collation)
-	require.NotNil(t, bind.CreateTime)
-	require.NotNil(t, bind.UpdateTime)
-	dur, err := bind.SinceUpdateTime()
+	_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+	binding, matched := bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	require.True(t, matched)
+	require.Equal(t, "select * from `test` . `t`", binding.OriginalSQL)
+	require.Equal(t, "select * from `test` . `t` use index(index_t)", binding.BindSQL)
+	require.Equal(t, "test", binding.Db)
+	require.Equal(t, bindinfo.Enabled, binding.Status)
+	require.Equal(t, "utf8mb4", binding.Charset)
+	require.Equal(t, "utf8mb4_bin", binding.Collation)
+	require.NotNil(t, binding.CreateTime)
+	require.NotNil(t, binding.UpdateTime)
+	dur, err := binding.SinceUpdateTime()
 	require.NoError(t, err)
 	require.GreaterOrEqual(t, int64(dur), int64(0))
 
@@ -441,19 +438,17 @@ func TestGlobalBinding(t *testing.T) {
 
 		stmt, _, _ := internal.UtilNormalizeWithDefaultDB(t, testSQL.querySQL)
 
-		_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
-		bindData, err := dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
-		require.NoError(t, err)
-		require.NotNil(t, bindData)
-		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
-		bind := bindData.Bindings[0]
-		require.Equal(t, testSQL.bindSQL, bind.BindSQL)
-		require.Equal(t, "test", bindData.Db)
-		require.Equal(t, bindinfo.Enabled, bind.Status)
-		require.NotNil(t, bind.Charset)
-		require.NotNil(t, bind.Collation)
-		require.NotNil(t, bind.CreateTime)
-		require.NotNil(t, bind.UpdateTime)
+		_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+		binding, matched := dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+		require.True(t, matched)
+		require.Equal(t, testSQL.originSQL, binding.OriginalSQL)
+		require.Equal(t, testSQL.bindSQL, binding.BindSQL)
+		require.Equal(t, "test", binding.Db)
+		require.Equal(t, bindinfo.Enabled, binding.Status)
+		require.NotNil(t, binding.Charset)
+		require.NotNil(t, binding.Collation)
+		require.NotNil(t, binding.CreateTime)
+		require.NotNil(t, binding.UpdateTime)
 
 		rs, err := tk.Exec("show global bindings")
 		require.NoError(t, err)
@@ -476,37 +471,33 @@ func TestGlobalBinding(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 1, bindHandle.Size())
 
-		_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
-		bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
-		require.NoError(t, err)
-		require.NotNil(t, bindData)
-		require.Equal(t, testSQL.originSQL, bindData.OriginalSQL)
-		bind = bindData.Bindings[0]
-		require.Equal(t, testSQL.bindSQL, bind.BindSQL)
-		require.Equal(t, "test", bindData.Db)
-		require.Equal(t, bindinfo.Enabled, bind.Status)
-		require.NotNil(t, bind.Charset)
-		require.NotNil(t, bind.Collation)
-		require.NotNil(t, bind.CreateTime)
-		require.NotNil(t, bind.UpdateTime)
+		_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+		binding, matched = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+		require.True(t, matched)
+		require.Equal(t, testSQL.originSQL, binding.OriginalSQL)
+		require.Equal(t, testSQL.bindSQL, binding.BindSQL)
+		require.Equal(t, "test", binding.Db)
+		require.Equal(t, bindinfo.Enabled, binding.Status)
+		require.NotNil(t, binding.Charset)
+		require.NotNil(t, binding.Collation)
+		require.NotNil(t, binding.CreateTime)
+		require.NotNil(t, binding.UpdateTime)
 
 		_, err = tk.Exec("drop global " + testSQL.dropSQL)
 		require.Equal(t, uint64(1), tk.Session().AffectedRows())
 		require.NoError(t, err)
-		_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
-		bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
-		require.NoError(t, err)
-		require.Nil(t, bindData)
+		_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+		_, matched = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+		require.False(t, matched) // dropped
 
 		bindHandle = bindinfo.NewGlobalBindingHandle(&mockSessionPool{tk.Session()})
 		err = bindHandle.LoadFromStorageToCache(true)
 		require.NoError(t, err)
 		require.Equal(t, 0, bindHandle.Size())
 
-		_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
-		bindData, err = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
-		require.NoError(t, err)
-		require.Nil(t, bindData)
+		_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+		_, matched = dom.BindHandle().MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+		require.False(t, matched) // dropped
 
 		rs, err = tk.Exec("show global bindings")
 		require.NoError(t, err)

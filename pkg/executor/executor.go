@@ -2121,10 +2121,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		// For insert statement (not for update statement), disabling the StrictSQLMode
 		// should make TruncateAsWarning and DividedByZeroAsWarning,
 		// but should not make DupKeyAsWarning.
-		sc.DupKeyAsWarning = stmt.IgnoreErr
-		sc.IgnoreNoPartition = stmt.IgnoreErr
 		if stmt.IgnoreErr {
+			errLevels[errctx.ErrGroupDupKey] = errctx.LevelWarn
 			errLevels[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelWarn
+			errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
 		}
 		errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !vars.StrictSQLMode || stmt.IgnoreErr)
 		errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
@@ -2150,7 +2150,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.LoadDataStmt:
 		sc.InLoadDataStmt = true
 		// return warning instead of error when load data meet no partition for value
-		sc.IgnoreNoPartition = true
+		errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
 	case *ast.SelectStmt:
 		sc.InSelectStmt = true
 
@@ -2259,15 +2259,15 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars *variable.SessionVars) {
 	sc.InUpdateStmt = true
 	errLevels := sc.ErrLevels()
-	sc.DupKeyAsWarning = stmt.IgnoreErr
+	errLevels[errctx.ErrGroupDupKey] = errctx.ResolveErrLevel(false, stmt.IgnoreErr)
 	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !vars.StrictSQLMode || stmt.IgnoreErr)
 	errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
 		!vars.SQLMode.HasErrorForDivisionByZeroMode(),
 		!vars.StrictSQLMode || stmt.IgnoreErr,
 	)
+	errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.ResolveErrLevel(false, stmt.IgnoreErr)
 	sc.SetErrLevels(errLevels)
 	sc.Priority = stmt.Priority
-	sc.IgnoreNoPartition = stmt.IgnoreErr
 	sc.SetTypeFlags(sc.TypeFlags().
 		WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr).
 		WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
@@ -2279,7 +2279,7 @@ func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars
 func ResetDeleteStmtCtx(sc *stmtctx.StatementContext, stmt *ast.DeleteStmt, vars *variable.SessionVars) {
 	sc.InDeleteStmt = true
 	errLevels := sc.ErrLevels()
-	sc.DupKeyAsWarning = stmt.IgnoreErr
+	errLevels[errctx.ErrGroupDupKey] = errctx.ResolveErrLevel(false, stmt.IgnoreErr)
 	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !vars.StrictSQLMode || stmt.IgnoreErr)
 	errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
 		!vars.SQLMode.HasErrorForDivisionByZeroMode(),

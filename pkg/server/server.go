@@ -737,10 +737,6 @@ func (cc *clientConn) connectInfo() *variable.ConnectionInfo {
 		connType = variable.ConnTypeTLS
 		sslVersionNum := cc.tlsConn.ConnectionState().Version
 		switch sslVersionNum {
-		case tls.VersionTLS10:
-			sslVersion = "TLSv1.0"
-		case tls.VersionTLS11:
-			sslVersion = "TLSv1.1"
 		case tls.VersionTLS12:
 			sslVersion = "TLSv1.2"
 		case tls.VersionTLS13:

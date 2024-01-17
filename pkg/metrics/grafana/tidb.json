@@ -14621,10 +14621,10 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "tidb_disttask_task_status{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}",
+              "expr": "sum(tidb_disttask_task_status{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}) by (status, task_type)",
               "hide": false,
               "interval": "",
-              "legendFormat": "{{task_type}}_{{task_id}}_{{status}}",
+              "legendFormat": "{{task_type}}_{{status}}",
               "queryType": "randomWalk",
               "refId": "A"
             }
