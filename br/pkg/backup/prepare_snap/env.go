@@ -59,8 +59,8 @@ type SplitRequestClient struct {
 
 func (s SplitRequestClient) Send(req *brpb.PrepareSnapshotBackupRequest) error {
 	// Try best to keeping the request untouched.
-	rs := req.Regions
 	if req.Ty == brpb.PrepareSnapshotBackupRequestType_WaitApply && req.Size() > s.MaxRequestSize {
+		rs := req.Regions
 		findSplitIndex := func() int {
 			if len(rs) == 0 {
 				return -1
@@ -151,7 +151,8 @@ type RetryAndSplitRequestEnv struct {
 }
 
 func (r RetryAndSplitRequestEnv) ConnectToStore(ctx context.Context, storeID uint64) (PrepareClient, error) {
-	rs := utils.InitialRetryState(50, 10*time.Second, 10*time.Second)
+	// Retry for about 2 minutes.
+	rs := utils.InitialRetryState(12, 10*time.Second, 10*time.Second)
 	bo := utils.Backoffer(&rs)
 	if r.GetBackoffer != nil {
 		bo = r.GetBackoffer()
