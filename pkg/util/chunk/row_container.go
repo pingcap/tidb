@@ -180,6 +180,7 @@ func (c *RowContainer) spillToDisk(preSpillError error) {
 			c.m.records.spillError = err
 			return
 		}
+		c.m.records.inMemory.GetMemTracker().CheckKillSignalAndPanic()
 	}
 	c.m.records.inMemory.Clear()
 }
