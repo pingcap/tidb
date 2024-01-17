@@ -111,7 +111,7 @@ func (s *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 		}
 
 		task := s.task.Load()
-		subtasks, err := s.taskTable.GetSubtasksByStepAndStates(ctx, s.id, task.ID, task.Step,
+		subtasks, err := s.taskTable.GetSubtasksByExecIDAndStepAndStates(ctx, s.id, task.ID, task.Step,
 			proto.SubtaskStateRunning)
 		if err != nil {
 			logutil.Logger(s.logCtx).Error("get subtasks failed", zap.Error(err))
@@ -231,7 +231,7 @@ func (s *BaseTaskExecutor) runStep(ctx context.Context, task *proto.Task) (resEr
 		}
 	}()
 
-	subtasks, err := s.taskTable.GetSubtasksByStepAndStates(
+	subtasks, err := s.taskTable.GetSubtasksByExecIDAndStepAndStates(
 		runCtx, s.id, task.ID, task.Step,
 		proto.SubtaskStatePending, proto.SubtaskStateRunning)
 	if err != nil {
