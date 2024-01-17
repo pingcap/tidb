@@ -395,12 +395,12 @@ func TestIgnoreAllErrorCheckpoints_SQL(t *testing.T) {
 
 	s.mock.ExpectBegin()
 	s.mock.
-		ExpectExec("UPDATE `mock-schema`\\.`engine_v\\d+` SET status = \\? WHERE 'all' = \\? AND status <= \\?").
-		WithArgs(checkpoints.CheckpointStatusLoaded, sqlmock.AnyArg(), 25).
+		ExpectExec("UPDATE `mock-schema`\\.`engine_v\\d+` SET status = \\? WHERE status <= \\?").
+		WithArgs(checkpoints.CheckpointStatusLoaded, 25).
 		WillReturnResult(sqlmock.NewResult(5, 3))
 	s.mock.
-		ExpectExec("UPDATE `mock-schema`\\.`table_v\\d+` SET status = \\? WHERE 'all' = \\? AND status <= \\?").
-		WithArgs(checkpoints.CheckpointStatusLoaded, sqlmock.AnyArg(), 25).
+		ExpectExec("UPDATE `mock-schema`\\.`table_v\\d+` SET status = \\? WHERE status <= \\?").
+		WithArgs(checkpoints.CheckpointStatusLoaded, 25).
 		WillReturnResult(sqlmock.NewResult(6, 2))
 	s.mock.ExpectCommit()
 
@@ -431,23 +431,23 @@ func TestDestroyAllErrorCheckpoints_SQL(t *testing.T) {
 
 	s.mock.ExpectBegin()
 	s.mock.
-		ExpectQuery("SELECT (?s:.+)'all' = \\?").
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
+		ExpectQuery("SELECT (?s:.+)").
+		WithArgs(sqlmock.AnyArg()).
 		WillReturnRows(
 			sqlmock.NewRows([]string{"table_name", "__min__", "__max__"}).
 				AddRow("`db1`.`t2`", -1, 0),
 		)
 	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.`chunk_v\\d+` WHERE table_name IN .+ 'all' = \\?").
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
+		ExpectExec("DELETE FROM `mock-schema`\\.`chunk_v\\d+` WHERE table_name IN").
+		WithArgs(sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 5))
 	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.`engine_v\\d+` WHERE table_name IN .+ 'all' = \\?").
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
+		ExpectExec("DELETE FROM `mock-schema`\\.`engine_v\\d+` WHERE table_name IN").
+		WithArgs(sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 3))
 	s.mock.
-		ExpectExec("DELETE FROM `mock-schema`\\.`table_v\\d+` WHERE 'all' = \\?").
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
+		ExpectExec("DELETE FROM `mock-schema`\\.`table_v\\d+`").
+		WithArgs(sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(0, 2))
 	s.mock.ExpectCommit()
 
