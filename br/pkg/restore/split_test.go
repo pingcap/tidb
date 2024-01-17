@@ -641,6 +641,94 @@ FindRegion:
 	return true
 }
 
+func TestChooseSplitKeysBySize(t *testing.T) {
+	// case #0 store count is zero, return nil
+	keys, _ := restore.ChooseSplitKeysBySize(0, 0, nil)
+	require.Len(t, keys, 0)
+
+	// case #1 choose the first two keys as split keys
+	rg := rtree.NewRangeTree()
+	firstEndKey := []byte("2")
+	SecondEndKey := []byte("3")
+	rg.InsertRange(rtree.Range{
+		StartKey: []byte("1"),
+		EndKey:   firstEndKey,
+		Size:     3,
+	})
+	rg.InsertRange(rtree.Range{
+		StartKey: []byte("2"),
+		EndKey:   SecondEndKey,
+		Size:     3,
+	})
+	rg.InsertRange(rtree.Range{
+		StartKey: []byte("3"),
+		EndKey:   []byte("4"),
+		Size:     4,
+	})
+
+	keys, size := restore.ChooseSplitKeysBySize(10, 3, rg.GetSortedRanges())
+	require.Len(t, keys, 2)
+	require.EqualValues(t, size, 3)
+	require.ElementsMatch(t, keys, [][]byte{firstEndKey, SecondEndKey})
+
+	// case #2 choose the first key as split key, because the first range is large enough
+	rg = rtree.NewRangeTree()
+	rg.InsertRange(rtree.Range{
+		StartKey: []byte("1"),
+		EndKey:   firstEndKey,
+		Size:     8,
+	})
+	rg.InsertRange(rtree.Range{
+		StartKey: []byte("2"),
+		EndKey:   SecondEndKey,
+		Size:     1,
+	})
+	rg.InsertRange(rtree.Range{
+		StartKey: []byte("3"),
+		EndKey:   []byte("4"),
+		Size:     1,
+	})
+
+	keys, size = restore.ChooseSplitKeysBySize(10, 3, rg.GetSortedRanges())
+	require.Len(t, keys, 1)
+	require.ElementsMatch(t, keys, [][]byte{firstEndKey})
+	require.EqualValues(t, size, 3)
+
+	// case #3 choose the second key as split key, because the first+second range is large enough
+	rg = rtree.NewRangeTree()
+	rg.InsertRange(rtree.Range{
+		StartKey: []byte("1"),
+		EndKey:   firstEndKey,
+		Size:     1,
+	})
+	rg.InsertRange(rtree.Range{
+		StartKey: []byte("3"),
+		EndKey:   SecondEndKey,
+		Size:     8,
+	})
+	rg.InsertRange(rtree.Range{
+		StartKey: []byte("4"),
+		EndKey:   []byte("5"),
+		Size:     1,
+	})
+
+	keys, size = restore.ChooseSplitKeysBySize(10, 3, rg.GetSortedRanges())
+	require.Len(t, keys, 1)
+	require.ElementsMatch(t, keys, [][]byte{SecondEndKey})
+	require.EqualValues(t, size, 3)
+
+	// case #4 too many stores, no need to split
+	rg = rtree.NewRangeTree()
+	rg.InsertRange(rtree.Range{
+		StartKey: []byte("1"),
+		EndKey:   []byte("2"),
+		Size:     8,
+	})
+	keys, size = restore.ChooseSplitKeysBySize(10, 100, rg.GetSortedRanges())
+	require.Len(t, keys, 0)
+	require.EqualValues(t, size, 0)
+}
+
 func TestNeedSplit(t *testing.T) {
 	testNeedSplit(t, false)
 	testNeedSplit(t, true)
