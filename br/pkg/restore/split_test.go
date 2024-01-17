@@ -727,7 +727,6 @@ func TestChooseSplitKeysBySize(t *testing.T) {
 	keys, size = restore.ChooseSplitKeysBySize(10, 100, rg.GetSortedRanges())
 	require.Len(t, keys, 0)
 	require.EqualValues(t, size, 0)
-
 }
 
 func TestNeedSplit(t *testing.T) {
