@@ -365,12 +365,6 @@ func TestSplitAndScatter(t *testing.T) {
 	})
 }
 
-func TestXXX(t *testing.T) {
-	client := initTestClient(false)
-	client.InstallBatchScatterSupport()
-	runWaitScatter(t, client)
-}
-
 // +------------+----------------------------
 // |   region   | states
 // +------------+----------------------------
