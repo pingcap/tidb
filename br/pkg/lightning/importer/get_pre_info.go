@@ -196,7 +196,7 @@ func (g *TargetInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName stri
 		// the data is partially imported, but the index data has not been imported.
 		// In this situation, if no hint is added, the SQL executor might fetch the record from index,
 		// which is empty.  This will result in missing check.
-		fmt.Sprintf("SELECT 1 FROM %s USE INDEX() LIMIT 1", common.UniqueTable(schemaName, tableName)),
+		common.SprintfWithIdentifiers("SELECT 1 FROM %s.%s USE INDEX() LIMIT 1", schemaName, tableName),
 		&dump,
 	)
 

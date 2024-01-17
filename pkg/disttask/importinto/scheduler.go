@@ -440,11 +440,10 @@ func (sch *importScheduler) Close() {
 // nolint:deadcode
 func dropTableIndexes(ctx context.Context, handle storage.TaskHandle, taskMeta *TaskMeta, logger *zap.Logger) error {
 	tblInfo := taskMeta.Plan.TableInfo
-	tableName := common.UniqueTable(taskMeta.Plan.DBName, tblInfo.Name.L)
 
 	remainIndexes, dropIndexes := common.GetDropIndexInfos(tblInfo)
 	for _, idxInfo := range dropIndexes {
-		sqlStr := common.BuildDropIndexSQL(tableName, idxInfo)
+		sqlStr := common.BuildDropIndexSQL(taskMeta.Plan.DBName, tblInfo.Name.L, idxInfo)
 		if err := executeSQL(ctx, handle, logger, sqlStr); err != nil {
 			if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
 				switch merr.Number {
