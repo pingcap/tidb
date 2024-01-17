@@ -5,16 +5,33 @@ package operator
 import (
 	"context"
 	"crypto/tls"
+<<<<<<< HEAD
+=======
+	"fmt"
+	"math/rand"
+	"os"
+	"runtime/debug"
+>>>>>>> bbbada0dde3 (backup: advacned prepare implementation (#48439))
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+<<<<<<< HEAD
+=======
+	preparesnap "github.com/pingcap/tidb/br/pkg/backup/prepare_snap"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
+>>>>>>> bbbada0dde3 (backup: advacned prepare implementation (#48439))
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utils"
+<<<<<<< HEAD
+=======
+	"github.com/tikv/client-go/v2/tikv"
+	"go.uber.org/multierr"
+>>>>>>> bbbada0dde3 (backup: advacned prepare implementation (#48439))
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/keepalive"
@@ -45,6 +62,18 @@ func (cx *AdaptEnvForSnapshotBackupContext) cleanUpWithErr(f func(ctx context.Co
 	ctx, cancel := context.WithTimeout(context.Background(), cx.cfg.TTL)
 	defer cancel()
 	return f(ctx)
+}
+
+func (cx *AdaptEnvForSnapshotBackupContext) run(f func() error) {
+	cx.rdGrp.Add(1)
+	buf := debug.Stack()
+	cx.runGrp.Go(func() error {
+		err := f()
+		if err != nil {
+			log.Error("A task failed.", zap.Error(err), zap.ByteString("task-created-at", buf))
+		}
+		return err
+	})
 }
 
 type AdaptEnvForSnapshotBackupContext struct {
@@ -97,11 +126,19 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 		rdGrp:   sync.WaitGroup{},
 		runGrp:  eg,
 	}
+<<<<<<< HEAD
 	cx.rdGrp.Add(3)
 
 	eg.Go(func() error { return pauseGCKeeper(cx) })
 	eg.Go(func() error { return pauseSchedulerKeeper(cx) })
 	eg.Go(func() error { return pauseImporting(cx) })
+=======
+	defer cx.Close()
+
+	cx.run(func() error { return pauseGCKeeper(cx) })
+	cx.run(func() error { return pauseSchedulerKeeper(cx) })
+	cx.run(func() error { return pauseAdminAndWaitApply(cx) })
+>>>>>>> bbbada0dde3 (backup: advacned prepare implementation (#48439))
 	go func() {
 		cx.rdGrp.Wait()
 		hintAllReady()
@@ -110,6 +147,7 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	return eg.Wait()
 }
 
+<<<<<<< HEAD
 func pauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
 	denyLightning := utils.NewSuspendImporting("prepare_for_snapshot_backup", cx.kvMgr)
 	if _, err := denyLightning.DenyAllStores(cx, cx.cfg.TTL); err != nil {
@@ -141,6 +179,45 @@ func pauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
 }
 
 func pauseGCKeeper(ctx *AdaptEnvForSnapshotBackupContext) error {
+=======
+func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext) error {
+	env := preparesnap.CliEnv{
+		Cache: tikv.NewRegionCache(cx.pdMgr.GetPDClient()),
+		Mgr:   cx.kvMgr,
+	}
+	defer env.Cache.Close()
+	retryEnv := preparesnap.RetryAndSplitRequestEnv{Env: env}
+	begin := time.Now()
+	prep := preparesnap.New(retryEnv)
+	prep.LeaseDuration = cx.cfg.TTL
+
+	defer cx.cleanUpWith(func(ctx context.Context) {
+		if err := prep.Finalize(ctx); err != nil {
+			logutil.CL(ctx).Warn("failed to finalize the prepare stream", logutil.ShortError(err))
+		}
+	})
+
+	// We must use our own context here, or once we are cleaning up the client will be invalid.
+	myCtx := logutil.ContextWithField(context.Background(), zap.String("category", "pause_admin_and_wait_apply"))
+	if err := prep.DriveLoopAndWaitPrepare(myCtx); err != nil {
+		return err
+	}
+
+	cx.ReadyL("pause_admin_and_wait_apply", zap.Stringer("take", time.Since(begin)))
+	<-cx.Done()
+	return nil
+}
+
+func getCallerName() string {
+	name, err := os.Hostname()
+	if err != nil {
+		name = fmt.Sprintf("UNKNOWN-%d", rand.Int63())
+	}
+	return fmt.Sprintf("operator@%sT%d#%d", name, time.Now().Unix(), os.Getpid())
+}
+
+func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext) (err error) {
+>>>>>>> bbbada0dde3 (backup: advacned prepare implementation (#48439))
 	// Note: should we remove the service safepoint as soon as this exits?
 	sp := utils.BRServiceSafePoint{
 		ID:       utils.MakeSafePointID(),

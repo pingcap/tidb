@@ -18,6 +18,14 @@ go_test(
         "//testkit",
         "//testkit/testsetup",
         "//tests/realtikvtest",
+<<<<<<< HEAD
+=======
+        "@com_github_google_uuid//:uuid",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_log//:log",
+>>>>>>> bbbada0dde3 (backup: advacned prepare implementation (#48439))
         "@com_github_pingcap_tipb//go-binlog",
         "@com_github_stretchr_testify//require",
         "@org_golang_google_grpc//:grpc",
