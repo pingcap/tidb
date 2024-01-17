@@ -20,10 +20,12 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	atomicutil "go.uber.org/atomic"
+	"go.uber.org/zap"
 )
 
 // GlobalMemoryLimitTuner only allow one memory limit tuner in one process
@@ -157,6 +159,11 @@ func (t *memoryLimitTuner) UpdateMemoryLimit() {
 
 func (*memoryLimitTuner) calcMemoryLimit(percentage float64) int64 {
 	memoryLimit := int64(float64(memory.ServerMemoryLimit.Load()) * percentage) // `tidb_server_memory_limit` * `tidb_server_memory_limit_gc_trigger`
+	log.Info("memlimit",
+		zap.Int64("memoryLimit", memoryLimit),
+		zap.Float64("percentage", percentage),
+		zap.Int64("initGOMemoryLimitValue", initGOMemoryLimitValue),
+	)
 	if memoryLimit == 0 {
 		memoryLimit = math.MaxInt64
 	}

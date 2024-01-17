@@ -176,7 +176,12 @@ func init() {
 // the cgroup memory limit is smaller, we use the cgroup memory hook.
 func InitMemoryHook() {
 	if cgroup.InContainer() {
-		logutil.BgLogger().Info("use cgroup memory hook because TiDB is in the container")
+		total, _ := MemTotal()
+		used, _ := MemUsed()
+		logutil.BgLogger().Info("use cgroup memory hook because TiDB is in the container",
+			zap.Uint64("total", total),
+			zap.Uint64("used", used),
+		)
 		return
 	}
 	cgroupValue, err := cgroup.GetMemoryLimit()
