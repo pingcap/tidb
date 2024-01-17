@@ -50,24 +50,41 @@ func (j *TableAnalysisJob) Execute(
 	defer statsHandle.SPool().Put(se)
 
 	sctx := se.(sessionctx.Context)
-	if len(j.PartitionIndexes) > 0 {
+	j.analyze(sctx, statsHandle, sysProcTracker)
+	return nil
+}
+
+func (j *TableAnalysisJob) analyze(sctx sessionctx.Context, statsHandle statstypes.StatsHandle, sysProcTracker sessionctx.SysProcTracker) {
+	switch {
+	case len(j.PartitionIndexes) > 0:
 		j.analyzePartitionIndexes(sctx, statsHandle, sysProcTracker)
-		return nil
-	}
-	if len(j.Partitions) > 0 {
+	case len(j.Partitions) > 0:
 		j.analyzePartitions(sctx, statsHandle, sysProcTracker)
-		return nil
+	case len(j.Indexes) > 0:
+		j.analyzeIndexes(sctx, statsHandle, sysProcTracker)
+	default:
+		j.analyzeTable(sctx, statsHandle, sysProcTracker)
 	}
-	if len(j.Indexes) > 0 {
-		for _, index := range j.Indexes {
-			sql, params := j.genSQLForAnalyzeIndex(index)
-			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
-		}
-		return nil
-	}
+}
+
+func (j *TableAnalysisJob) analyzeTable(
+	sctx sessionctx.Context,
+	statsHandle statstypes.StatsHandle,
+	sysProcTracker sessionctx.SysProcTracker,
+) {
 	sql, params := j.genSQLForAnalyzeTable()
 	exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
-	return nil
+}
+
+func (j *TableAnalysisJob) analyzeIndexes(
+	sctx sessionctx.Context,
+	statsHandle statstypes.StatsHandle,
+	sysProcTracker sessionctx.SysProcTracker,
+) {
+	for _, index := range j.Indexes {
+		sql, params := j.genSQLForAnalyzeIndex(index)
+		exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
+	}
 }
 
 func (j *TableAnalysisJob) analyzePartitions(
