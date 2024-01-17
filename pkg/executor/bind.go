@@ -129,25 +129,22 @@ func (e *SQLBindExec) createSQLBind() error {
 		e.Ctx().GetSessionVars().StmtCtx = saveStmtCtx
 	}()
 
-	bindInfo := bindinfo.Binding{
-		BindSQL:    e.bindSQL,
-		Charset:    e.charset,
-		Collation:  e.collation,
-		Status:     bindinfo.Enabled,
-		Source:     e.source,
-		SQLDigest:  e.sqlDigest,
-		PlanDigest: e.planDigest,
-	}
-	record := &bindinfo.BindRecord{
+	binding := bindinfo.Binding{
 		OriginalSQL: e.normdOrigSQL,
 		Db:          e.db,
-		Bindings:    []bindinfo.Binding{bindInfo},
+		BindSQL:     e.bindSQL,
+		Charset:     e.charset,
+		Collation:   e.collation,
+		Status:      bindinfo.Enabled,
+		Source:      e.source,
+		SQLDigest:   e.sqlDigest,
+		PlanDigest:  e.planDigest,
 	}
 	if !e.isGlobal {
 		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-		return handle.CreateSessionBinding(e.Ctx(), record)
+		return handle.CreateSessionBinding(e.Ctx(), binding)
 	}
-	return domain.GetDomain(e.Ctx()).BindHandle().CreateGlobalBinding(e.Ctx(), record)
+	return domain.GetDomain(e.Ctx()).BindHandle().CreateGlobalBinding(e.Ctx(), binding)
 }
 
 func (e *SQLBindExec) flushBindings() error {

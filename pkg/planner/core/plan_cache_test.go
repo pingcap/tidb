@@ -385,6 +385,25 @@ func TestIssue49736(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
+func TestIssue49736Partition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int) partition by hash(a) partitions 4")
+	tk.MustExec(`analyze table t`)
+	tk.MustExec(`prepare st from 'select * from t where a=?'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable"))
+
+	tk.MustExec(`set @@tidb_opt_fix_control = "49736:ON"`)
+	tk.MustExec(`prepare st from 'select * from t where a=?'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 force plan-cache: may use risky cached plan: query accesses partitioned tables is un-cacheable"))
+	tk.MustExec(`set @a=1`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
 func TestIssue40224(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

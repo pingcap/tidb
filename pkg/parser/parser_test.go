@@ -1278,6 +1278,8 @@ func TestDBAStmt(t *testing.T) {
 		{"show backups where start_time > now() - interval 10 hour", true, "SHOW BACKUPS WHERE `start_time`>DATE_SUB(NOW(), INTERVAL 10 HOUR)"},
 		{"show backup", false, ""},
 		{"show restore", false, ""},
+		{"show replica status", true, "SHOW REPLICA STATUS"},
+		{"show slave status", true, "SHOW REPLICA STATUS"},
 
 		// for load stats
 		{"load stats '/tmp/stats.json'", true, "LOAD STATS '/tmp/stats.json'"},
@@ -3960,6 +3962,12 @@ func TestErrorMsg(t *testing.T) {
 
 	_, _, err = p.Parse("create table t(f_year year(5))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", "", "")
 	require.EqualError(t, err, "[parser:1818]Supports only YEAR or YEAR(4) column")
+
+	_, _, err = p.Parse("create table ``.t (id int);", "", "")
+	require.EqualError(t, err, "[parser:1102]Incorrect database name ''")
+
+	_, _, err = p.Parse("create table ` `.t (id int);", "", "")
+	require.EqualError(t, err, "[parser:1102]Incorrect database name ' '")
 
 	_, _, err = p.Parse("select ifnull(a,0) & ifnull(a,0) like '55' ESCAPE '\\\\a' from t;", "", "")
 	require.EqualError(t, err, "[parser:1210]Incorrect arguments to ESCAPE")

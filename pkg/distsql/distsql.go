@@ -36,8 +36,8 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
-// GenSelectResultFromResponse generates an iterator from response.
-func GenSelectResultFromResponse(sctx sessionctx.Context, fieldTypes []*types.FieldType, planIDs []int, rootID int, resp kv.Response) SelectResult {
+// GenSelectResultFromMPPResponse generates an iterator from response.
+func GenSelectResultFromMPPResponse(sctx sessionctx.Context, fieldTypes []*types.FieldType, planIDs []int, rootID int, resp kv.Response) SelectResult {
 	// TODO: Add metric label and set open tracing.
 	return &selectResult{
 		label:      "mpp",

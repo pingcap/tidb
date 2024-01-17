@@ -55,8 +55,7 @@ const (
 )
 
 const (
-	importScanRegionTime = 20 * time.Second
-	gRPCBackOffMaxDelay  = 3 * time.Second
+	gRPCBackOffMaxDelay = 3 * time.Second
 	// Todo: make it configable
 	gRPCTimeOut = 25 * time.Minute
 )
@@ -545,11 +544,9 @@ func (importer *FileImporter) ImportSSTFiles(
 	}
 
 	err = utils.WithRetry(ctx, func() error {
-		tctx, cancel := context.WithTimeout(ctx, importScanRegionTime)
-		defer cancel()
 		// Scan regions covered by the file range
 		regionInfos, errScanRegion := split.PaginateScanRegion(
-			tctx, importer.metaClient, startKey, endKey, split.ScanRegionPaginationLimit)
+			ctx, importer.metaClient, startKey, endKey, split.ScanRegionPaginationLimit)
 		if errScanRegion != nil {
 			return errors.Trace(errScanRegion)
 		}
@@ -993,14 +990,14 @@ func (importer *FileImporter) downloadSSTV2(
 			} else {
 				importer.storeWorkerPoolRWLock.RUnlock()
 			}
-			defer func() {
-				workerCh <- struct{}{}
-			}()
 			select {
 			case <-ectx.Done():
 				return ectx.Err()
 			case <-workerCh:
 			}
+			defer func() {
+				workerCh <- struct{}{}
+			}()
 			for _, file := range files {
 				req, ok := downloadReqsMap[file.Name]
 				if !ok {

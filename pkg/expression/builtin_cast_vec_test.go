@@ -158,7 +158,7 @@ func TestVectorizedBuiltinCastFunc(t *testing.T) {
 
 func TestVectorizedCastRealAsTime(t *testing.T) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeDouble), Index: 0}
-	ctx := mock.NewContext()
+	ctx := createContext(t)
 	baseFunc, err := newBaseBuiltinFunc(ctx, "", []Expression{col}, types.NewFieldType(mysql.TypeDatetime))
 	if err != nil {
 		panic(err)

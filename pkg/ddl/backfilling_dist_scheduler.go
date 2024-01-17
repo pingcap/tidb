@@ -25,11 +25,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	diststorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -67,7 +69,7 @@ func (*BackfillingSchedulerExt) OnTick(_ context.Context, _ *proto.Task) {
 // OnNextSubtasksBatch generate batch of next step's plan.
 func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 	ctx context.Context,
-	taskHandle scheduler.TaskHandle,
+	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
 	execIDs []string,
 	nextStep proto.Step,
@@ -126,9 +128,9 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 			})
 			return generateGlobalSortIngestPlan(
 				ctx,
+				sch.d.store.(kv.StorageWithPD),
 				taskHandle,
 				task,
-				job.ID,
 				backfillMeta.CloudStorageURI,
 				prevStep,
 				logger)
@@ -175,7 +177,7 @@ func skipMergeSort(stats []external.MultipleFilesStat) bool {
 }
 
 // OnDone implements scheduler.Extension interface.
-func (*BackfillingSchedulerExt) OnDone(_ context.Context, _ scheduler.TaskHandle, _ *proto.Task) error {
+func (*BackfillingSchedulerExt) OnDone(_ context.Context, _ diststorage.TaskHandle, _ *proto.Task) error {
 	return nil
 }
 
@@ -195,11 +197,10 @@ type LitBackfillScheduler struct {
 	d *ddl
 }
 
-func newLitBackfillScheduler(ctx context.Context, d *ddl, taskMgr scheduler.TaskManager,
-	nodeMgr *scheduler.NodeManager, task *proto.Task) scheduler.Scheduler {
+func newLitBackfillScheduler(ctx context.Context, d *ddl, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 	sch := LitBackfillScheduler{
 		d:             d,
-		BaseScheduler: scheduler.NewBaseScheduler(ctx, taskMgr, nodeMgr, task),
+		BaseScheduler: scheduler.NewBaseScheduler(ctx, task, param),
 	}
 	return &sch
 }
@@ -207,7 +208,7 @@ func newLitBackfillScheduler(ctx context.Context, d *ddl, taskMgr scheduler.Task
 // Init implements BaseScheduler interface.
 func (sch *LitBackfillScheduler) Init() (err error) {
 	taskMeta := &BackfillTaskMeta{}
-	if err = json.Unmarshal(sch.BaseScheduler.Task.Meta, taskMeta); err != nil {
+	if err = json.Unmarshal(sch.BaseScheduler.GetTask().Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
 	sch.BaseScheduler.Extension = &BackfillingSchedulerExt{
@@ -333,9 +334,9 @@ func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool
 
 func generateGlobalSortIngestPlan(
 	ctx context.Context,
-	taskHandle scheduler.TaskHandle,
+	store kv.StorageWithPD,
+	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
-	jobID int64,
 	cloudStorageURI string,
 	step proto.Step,
 	logger *zap.Logger,
@@ -353,7 +354,7 @@ func generateGlobalSortIngestPlan(
 		return nil, err
 	}
 	splitter, err := getRangeSplitter(
-		ctx, cloudStorageURI, jobID, int64(totalSize), int64(len(instanceIDs)), multiFileStat, logger)
+		ctx, store, cloudStorageURI, int64(totalSize), int64(len(instanceIDs)), multiFileStat, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -408,7 +409,7 @@ func generateGlobalSortIngestPlan(
 }
 
 func generateMergePlan(
-	taskHandle scheduler.TaskHandle,
+	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
 	logger *zap.Logger,
 ) ([][]byte, error) {
@@ -468,8 +469,8 @@ func generateMergePlan(
 
 func getRangeSplitter(
 	ctx context.Context,
+	store kv.StorageWithPD,
 	cloudStorageURI string,
-	jobID int64,
 	totalSize int64,
 	instanceCnt int64,
 	multiFileStat []external.MultipleFilesStat,
@@ -486,28 +487,31 @@ func getRangeSplitter(
 
 	rangeGroupSize := totalSize / instanceCnt
 	rangeGroupKeys := int64(math.MaxInt64)
-	bcCtx, ok := ingest.LitBackCtxMgr.Load(jobID)
-	if !ok {
-		return nil, errors.Errorf("backend context not found")
-	}
 
-	local := bcCtx.GetLocalBackend()
-	if local == nil {
-		return nil, errors.Errorf("local backend not found")
+	var maxSizePerRange = int64(config.SplitRegionSize)
+	var maxKeysPerRange = int64(config.SplitRegionKeys)
+	if store != nil {
+		pdCli := store.GetPDClient()
+		tls, err := ingest.NewDDLTLS()
+		if err == nil {
+			size, keys, err := local.GetRegionSplitSizeKeys(ctx, pdCli, tls)
+			if err == nil {
+				maxSizePerRange = max(maxSizePerRange, size)
+				maxKeysPerRange = max(maxKeysPerRange, keys)
+			} else {
+				logger.Warn("fail to get region split keys and size", zap.Error(err))
+			}
+		} else {
+			logger.Warn("fail to get region split keys and size", zap.Error(err))
+		}
 	}
-	maxSizePerRange, maxKeysPerRange, err := local.GetRegionSplitSizeKeys(ctx)
-	if err != nil {
-		logger.Warn("fail to get region split keys and size", zap.Error(err))
-	}
-	maxSizePerRange = max(maxSizePerRange, int64(config.SplitRegionSize))
-	maxKeysPerRange = max(maxKeysPerRange, int64(config.SplitRegionKeys))
 
 	return external.NewRangeSplitter(ctx, multiFileStat, extStore,
 		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange, true)
 }
 
 func getSummaryFromLastStep(
-	taskHandle scheduler.TaskHandle,
+	taskHandle diststorage.TaskHandle,
 	gTaskID int64,
 	step proto.Step,
 ) (startKey, endKey kv.Key, totalKVSize uint64, multiFileStat []external.MultipleFilesStat, err error) {

@@ -613,13 +613,17 @@ func (c *localMppCoordinator) IsClosed() bool {
 // Close implements MppCoordinator interface
 // TODO: Test the case that user cancels the query.
 func (c *localMppCoordinator) Close() error {
+	c.closeWithoutReport()
+	c.handleAllReports()
+	return nil
+}
+
+func (c *localMppCoordinator) closeWithoutReport() {
 	if atomic.CompareAndSwapUint32(&c.closed, 0, 1) {
 		close(c.finishCh)
 	}
 	c.cancelFunc()
 	<-c.wgDoneChan
-	c.handleAllReports()
-	return nil
 }
 
 func (c *localMppCoordinator) handleMPPStreamResponse(bo *backoff.Backoffer, response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {

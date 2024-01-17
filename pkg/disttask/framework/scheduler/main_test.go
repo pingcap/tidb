@@ -21,12 +21,12 @@ import (
 	"go.uber.org/goleak"
 )
 
-// GetRunningGTaskCnt implements Scheduler.GetRunningGTaskCnt interface.
+// GetRunningTaskCnt implements Scheduler.GetRunningTaskCnt interface.
 func (sm *Manager) GetRunningTaskCnt() int {
 	return sm.getSchedulerCount()
 }
 
-// DelRunningGTask implements Scheduler.DelRunningGTask interface.
+// DelRunningTask implements Scheduler.DelRunningTask interface.
 func (sm *Manager) DelRunningTask(id int64) {
 	sm.delScheduler(id)
 }
@@ -40,10 +40,6 @@ func (s *BaseScheduler) Switch2NextStep() (err error) {
 	return s.switch2NextStep()
 }
 
-func (s *BaseScheduler) DoBalanceSubtasks(eligibleNodes []string) error {
-	return s.doBalanceSubtasks(eligibleNodes)
-}
-
 func NewNodeManager() *NodeManager {
 	return newNodeManager()
 }
@@ -52,9 +48,9 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 
 	// Make test more fast.
-	checkTaskRunningInterval = checkTaskRunningInterval / 10
-	checkTaskFinishedInterval = checkTaskFinishedInterval / 10
-	RetrySQLInterval = RetrySQLInterval / 20
+	checkTaskRunningInterval /= 10
+	checkTaskFinishedInterval /= 10
+	RetrySQLInterval /= 20
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),

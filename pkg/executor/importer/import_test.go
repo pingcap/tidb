@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/expression"
+	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
@@ -42,20 +43,20 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
+	tikvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
 func TestInitDefaultOptions(t *testing.T) {
 	plan := &Plan{}
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(1)"))
 	variable.CloudStorageURI.Store("s3://bucket/path")
 	t.Cleanup(func() {
 		variable.CloudStorageURI.Store("")
 	})
-	plan.initDefaultOptions()
+	plan.initDefaultOptions(1)
 	require.Equal(t, config.ByteSize(0), plan.DiskQuota)
 	require.Equal(t, config.OpLevelRequired, plan.Checksum)
-	require.Equal(t, int64(1), plan.ThreadCnt)
+	require.Equal(t, 1, plan.ThreadCnt)
 	require.Equal(t, unlimitedWriteSpeed, plan.MaxWriteSpeed)
 	require.Equal(t, false, plan.SplitFile)
 	require.Equal(t, int64(100), plan.MaxRecordedErrors)
@@ -65,15 +66,15 @@ func TestInitDefaultOptions(t *testing.T) {
 	require.Equal(t, config.ByteSize(defaultMaxEngineSize), plan.MaxEngineSize)
 	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(10)"))
-	plan.initDefaultOptions()
-	require.Equal(t, int64(5), plan.ThreadCnt)
+	plan.initDefaultOptions(10)
+	require.Equal(t, 5, plan.ThreadCnt)
 }
 
 // for negative case see TestImportIntoOptionsNegativeCase
 func TestInitOptionsPositiveCase(t *testing.T) {
-	ctx := mock.NewContext()
-	defer ctx.Close()
+	sctx := mock.NewContext()
+	defer sctx.Close()
+	ctx := tikvutil.WithInternalSourceType(context.Background(), tidbkv.InternalImportInto)
 
 	convertOptions := func(inOptions []*ast.LoadDataOpt) []*plannercore.LoadDataOpt {
 		options := []*plannercore.LoadDataOpt{}
@@ -81,7 +82,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		for _, opt := range inOptions {
 			loadDataOpt := plannercore.LoadDataOpt{Name: opt.Name}
 			if opt.Value != nil {
-				loadDataOpt.Value, err = expression.RewriteSimpleExprWithNames(ctx, opt.Value, nil, nil)
+				loadDataOpt.Value, err = expression.RewriteSimpleExprWithNames(sctx, opt.Value, nil, nil)
 				require.NoError(t, err)
 			}
 			options = append(options, &loadDataOpt)
@@ -111,7 +112,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err, sql)
 	plan := &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql)
 	require.Equal(t, "utf8", *plan.Charset, sql)
 	require.Equal(t, "aaa", plan.FieldsTerminatedBy, sql)
@@ -122,7 +123,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	require.Equal(t, uint64(1), plan.IgnoreLines, sql)
 	require.Equal(t, config.ByteSize(100<<30), plan.DiskQuota, sql)
 	require.Equal(t, config.OpLevelOptional, plan.Checksum, sql)
-	require.Equal(t, int64(runtime.GOMAXPROCS(0)), plan.ThreadCnt, sql) // it's adjusted to the number of CPUs
+	require.Equal(t, runtime.GOMAXPROCS(0), plan.ThreadCnt, sql) // it's adjusted to the number of CPUs
 	require.Equal(t, config.ByteSize(200<<20), plan.MaxWriteSpeed, sql)
 	require.True(t, plan.SplitFile, sql)
 	require.Equal(t, int64(123), plan.MaxRecordedErrors, sql)
@@ -137,7 +138,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 		variable.CloudStorageURI.Store("")
 	})
 	plan = &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql)
 	require.Equal(t, "s3://bucket/path", plan.CloudStorageURI, sql)
 
@@ -146,7 +147,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	stmt, err = p.ParseOneStmt(sql2, "", "")
 	require.NoError(t, err, sql2)
 	plan = &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql2)
 	require.Equal(t, "s3://bucket/path2", plan.CloudStorageURI, sql2)
 	// override with gs
@@ -154,7 +155,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	stmt, err = p.ParseOneStmt(sql3, "", "")
 	require.NoError(t, err, sql3)
 	plan = &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql3)
 	require.Equal(t, "gs://bucket/path2", plan.CloudStorageURI, sql3)
 	// override with empty string, force use local sort
@@ -162,7 +163,7 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 	stmt, err = p.ParseOneStmt(sql4, "", "")
 	require.NoError(t, err, sql4)
 	plan = &Plan{Format: DataFormatCSV}
-	err = plan.initOptions(ctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
+	err = plan.initOptions(ctx, sctx, convertOptions(stmt.(*ast.ImportIntoStmt).Options))
 	require.NoError(t, err, sql4)
 	require.Equal(t, "", plan.CloudStorageURI, sql4)
 }
@@ -173,8 +174,8 @@ func TestAdjustOptions(t *testing.T) {
 		ThreadCnt:     100000000,
 		MaxWriteSpeed: 10,
 	}
-	plan.adjustOptions()
-	require.Equal(t, int64(runtime.GOMAXPROCS(0)), plan.ThreadCnt)
+	plan.adjustOptions(16)
+	require.Equal(t, 16, plan.ThreadCnt)
 	require.Equal(t, config.ByteSize(10), plan.MaxWriteSpeed) // not adjusted
 }
 

@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -199,7 +200,7 @@ type Plan struct {
 
 	DiskQuota             config.ByteSize
 	Checksum              config.PostOpLevel
-	ThreadCnt             int64
+	ThreadCnt             int
 	MaxWriteSpeed         config.ByteSize
 	SplitFile             bool
 	MaxRecordedErrors     int64
@@ -347,7 +348,7 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 }
 
 // NewImportPlan creates a new import into plan.
-func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*Plan, error) {
+func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*Plan, error) {
 	var format string
 	if plan.Format != nil {
 		format = strings.ToLower(*plan.Format)
@@ -386,7 +387,7 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 		InImportInto:           true,
 		User:                   userSctx.GetSessionVars().User.String(),
 	}
-	if err := p.initOptions(userSctx, plan.Options); err != nil {
+	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
 		return nil, err
 	}
 	if err := p.initParameters(plan); err != nil {
@@ -499,14 +500,11 @@ func (e *LoadDataController) checkFieldParams() error {
 	return nil
 }
 
-func (p *Plan) initDefaultOptions() {
-	// we're using cpu count of current node, not of framework managed nodes,
-	// but it seems more intuitive.
-	threadCnt := cpu.GetCPUCount()
-	threadCnt = int(math.Max(1, float64(threadCnt)*0.5))
+func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
+	threadCnt := int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
 
 	p.Checksum = config.OpLevelRequired
-	p.ThreadCnt = int64(threadCnt)
+	p.ThreadCnt = threadCnt
 	p.MaxWriteSpeed = unlimitedWriteSpeed
 	p.SplitFile = false
 	p.MaxRecordedErrors = 100
@@ -519,8 +517,12 @@ func (p *Plan) initDefaultOptions() {
 	p.Charset = &v
 }
 
-func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
-	p.initDefaultOptions()
+func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
+	targetNodeCPUCnt, err := GetTargetNodeCPUCnt(ctx, p.Path)
+	if err != nil {
+		return err
+	}
+	p.initDefaultOptions(targetNodeCPUCnt)
 
 	specifiedOptions := map[string]*plannercore.LoadDataOpt{}
 	for _, opt := range options {
@@ -637,7 +639,7 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		if err != nil || vInt <= 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		p.ThreadCnt = vInt
+		p.ThreadCnt = int(vInt)
 	}
 	if opt, ok := specifiedOptions[maxWriteSpeedOption]; ok {
 		v, err := optAsString(opt)
@@ -708,16 +710,15 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("skip_rows, should be <= 1 when split-file is enabled")
 	}
 
-	p.adjustOptions()
+	p.adjustOptions(targetNodeCPUCnt)
 	return nil
 }
 
-func (p *Plan) adjustOptions() {
+func (p *Plan) adjustOptions(targetNodeCPUCnt int) {
 	// max value is cpu-count
-	numCPU := int64(runtime.GOMAXPROCS(0))
-	if p.ThreadCnt > numCPU {
+	if p.ThreadCnt > targetNodeCPUCnt {
 		log.L().Info("IMPORT INTO thread count is larger than cpu-count, set to cpu-count")
-		p.ThreadCnt = numCPU
+		p.ThreadCnt = targetNodeCPUCnt
 	}
 }
 
@@ -1252,7 +1253,7 @@ func (e *LoadDataController) getBackendWorkerConcurrency() int {
 	// The real concurrency used is adjusted in external engine later.
 	// when using local sort, use the default value as lightning.
 	if e.IsGlobalSort() {
-		return int(e.ThreadCnt) * 2
+		return e.ThreadCnt * 2
 	}
 	return config.DefaultRangeConcurrency * 2
 }
@@ -1333,6 +1334,24 @@ func GetMsgFromBRError(err error) string {
 		return raw
 	}
 	return raw[:len(raw)-len(berrMsg)-len(": ")]
+}
+
+// GetTargetNodeCPUCnt get cpu count of target node where the import into job will be executed.
+// target node is current node if it's server-disk import or disttask is disabled,
+// else it's the node managed by disttask.
+// exported for testing.
+func GetTargetNodeCPUCnt(ctx context.Context, path string) (int, error) {
+	u, err2 := storage.ParseRawURL(path)
+	if err2 != nil {
+		return 0, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			err2.Error())
+	}
+
+	serverDiskImport := storage.IsLocal(u)
+	if serverDiskImport || !variable.EnableDistTask.Load() {
+		return cpu.GetCPUCount(), nil
+	}
+	return handle.GetCPUCountOfManagedNode(ctx)
 }
 
 // TestSyncCh is used in unit test to synchronize the execution.

@@ -323,7 +323,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		1*size.MB,
 		8*1024,
 		onClose,
-		int(m.taskMeta.Plan.ThreadCnt),
+		m.taskMeta.Plan.ThreadCnt,
 		false)
 }
 
@@ -470,7 +470,7 @@ type importExecutor struct {
 
 func newImportExecutor(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
 	s := &importExecutor{
-		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, id, task.ID, taskTable),
+		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, id, task, taskTable),
 	}
 	s.BaseTaskExecutor.Extension = s
 	return s

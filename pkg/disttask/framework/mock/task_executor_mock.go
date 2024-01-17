@@ -40,6 +40,34 @@ func (m *MockTaskTable) EXPECT() *MockTaskTableMockRecorder {
 	return m.recorder
 }
 
+// CancelSubtask mocks base method.
+func (m *MockTaskTable) CancelSubtask(arg0 context.Context, arg1 string, arg2 int64) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "CancelSubtask", arg0, arg1, arg2)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// CancelSubtask indicates an expected call of CancelSubtask.
+func (mr *MockTaskTableMockRecorder) CancelSubtask(arg0, arg1, arg2 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelSubtask", reflect.TypeOf((*MockTaskTable)(nil).CancelSubtask), arg0, arg1, arg2)
+}
+
+// FailSubtask mocks base method.
+func (m *MockTaskTable) FailSubtask(arg0 context.Context, arg1 string, arg2 int64, arg3 error) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "FailSubtask", arg0, arg1, arg2, arg3)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// FailSubtask indicates an expected call of FailSubtask.
+func (mr *MockTaskTableMockRecorder) FailSubtask(arg0, arg1, arg2, arg3 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "FailSubtask", reflect.TypeOf((*MockTaskTable)(nil).FailSubtask), arg0, arg1, arg2, arg3)
+}
+
 // FinishSubtask mocks base method.
 func (m *MockTaskTable) FinishSubtask(arg0 context.Context, arg1 string, arg2 int64, arg3 []byte) error {
 	m.ctrl.T.Helper()
@@ -163,21 +191,6 @@ func (mr *MockTaskTableMockRecorder) InitMeta(arg0, arg1, arg2 any) *gomock.Call
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "InitMeta", reflect.TypeOf((*MockTaskTable)(nil).InitMeta), arg0, arg1, arg2)
 }
 
-// IsTaskExecutorCanceled mocks base method.
-func (m *MockTaskTable) IsTaskExecutorCanceled(arg0 context.Context, arg1 string, arg2 int64) (bool, error) {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "IsTaskExecutorCanceled", arg0, arg1, arg2)
-	ret0, _ := ret[0].(bool)
-	ret1, _ := ret[1].(error)
-	return ret0, ret1
-}
-
-// IsTaskExecutorCanceled indicates an expected call of IsTaskExecutorCanceled.
-func (mr *MockTaskTableMockRecorder) IsTaskExecutorCanceled(arg0, arg1, arg2 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsTaskExecutorCanceled", reflect.TypeOf((*MockTaskTable)(nil).IsTaskExecutorCanceled), arg0, arg1, arg2)
-}
-
 // PauseSubtasks mocks base method.
 func (m *MockTaskTable) PauseSubtasks(arg0 context.Context, arg1 string, arg2 int64) error {
 	m.ctrl.T.Helper()
@@ -206,6 +219,20 @@ func (mr *MockTaskTableMockRecorder) RecoverMeta(arg0, arg1, arg2 any) *gomock.C
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RecoverMeta", reflect.TypeOf((*MockTaskTable)(nil).RecoverMeta), arg0, arg1, arg2)
 }
 
+// RunningSubtasksBack2Pending mocks base method.
+func (m *MockTaskTable) RunningSubtasksBack2Pending(arg0 context.Context, arg1 []*proto.Subtask) error {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RunningSubtasksBack2Pending", arg0, arg1)
+	ret0, _ := ret[0].(error)
+	return ret0
+}
+
+// RunningSubtasksBack2Pending indicates an expected call of RunningSubtasksBack2Pending.
+func (mr *MockTaskTableMockRecorder) RunningSubtasksBack2Pending(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunningSubtasksBack2Pending", reflect.TypeOf((*MockTaskTable)(nil).RunningSubtasksBack2Pending), arg0, arg1)
+}
+
 // StartSubtask mocks base method.
 func (m *MockTaskTable) StartSubtask(arg0 context.Context, arg1 int64, arg2 string) error {
 	m.ctrl.T.Helper()
@@ -218,20 +245,6 @@ func (m *MockTaskTable) StartSubtask(arg0 context.Context, arg1 int64, arg2 stri
 func (mr *MockTaskTableMockRecorder) StartSubtask(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "StartSubtask", reflect.TypeOf((*MockTaskTable)(nil).StartSubtask), arg0, arg1, arg2)
-}
-
-// UpdateErrorToSubtask mocks base method.
-func (m *MockTaskTable) UpdateErrorToSubtask(arg0 context.Context, arg1 string, arg2 int64, arg3 error) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "UpdateErrorToSubtask", arg0, arg1, arg2, arg3)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// UpdateErrorToSubtask indicates an expected call of UpdateErrorToSubtask.
-func (mr *MockTaskTableMockRecorder) UpdateErrorToSubtask(arg0, arg1, arg2, arg3 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "UpdateErrorToSubtask", reflect.TypeOf((*MockTaskTable)(nil).UpdateErrorToSubtask), arg0, arg1, arg2, arg3)
 }
 
 // UpdateSubtaskStateAndError mocks base method.
@@ -372,20 +385,6 @@ func (m *MockTaskExecutor) IsRetryableError(arg0 error) bool {
 func (mr *MockTaskExecutorMockRecorder) IsRetryableError(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsRetryableError", reflect.TypeOf((*MockTaskExecutor)(nil).IsRetryableError), arg0)
-}
-
-// Pause mocks base method.
-func (m *MockTaskExecutor) Pause(arg0 context.Context, arg1 *proto.Task) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Pause", arg0, arg1)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// Pause indicates an expected call of Pause.
-func (mr *MockTaskExecutorMockRecorder) Pause(arg0, arg1 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Pause", reflect.TypeOf((*MockTaskExecutor)(nil).Pause), arg0, arg1)
 }
 
 // Rollback mocks base method.

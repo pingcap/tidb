@@ -22,9 +22,12 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 )
@@ -64,4 +67,35 @@ func TestChecksumTable(t *testing.T) {
 	remoteChecksum, err = importer.ChecksumTable(ctx, tk.Session(), plan, logutil.BgLogger())
 	require.NoError(t, err)
 	require.True(t, remoteChecksum.IsEqual(&localChecksum))
+}
+
+func TestGetTargetNodeCpuCnt(t *testing.T) {
+	_, tm, ctx := testutil.InitTableTest(t)
+	require.False(t, variable.EnableDistTask.Load())
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
+		variable.EnableDistTask.Store(false)
+	})
+	require.NoError(t, tm.InitMeta(ctx, "tidb1", ""))
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
+	// invalid path
+	_, err := importer.GetTargetNodeCPUCnt(ctx, ":xx")
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataInvalidURI)
+	// server disk import
+	targetNodeCPUCnt, err := importer.GetTargetNodeCPUCnt(ctx, "/path/to/xxx.csv")
+	require.NoError(t, err)
+	require.Equal(t, 8, targetNodeCPUCnt)
+	// disttask disabled
+	targetNodeCPUCnt, err = importer.GetTargetNodeCPUCnt(ctx, "s3://path/to/xxx.csv")
+	require.NoError(t, err)
+	require.Equal(t, 8, targetNodeCPUCnt)
+	// disttask enabled
+	variable.EnableDistTask.Store(true)
+
+	targetNodeCPUCnt, err = importer.GetTargetNodeCPUCnt(ctx, "s3://path/to/xxx.csv")
+	require.NoError(t, err)
+	require.Equal(t, 16, targetNodeCPUCnt)
 }

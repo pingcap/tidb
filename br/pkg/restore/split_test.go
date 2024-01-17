@@ -230,6 +230,9 @@ func (c *TestClient) ScanRegions(ctx context.Context, key, endKey []byte, limit 
 		c.InjectTimes -= 1
 		return nil, status.Error(codes.Unavailable, "not leader")
 	}
+	if len(key) != 0 && bytes.Equal(key, endKey) {
+		return nil, status.Error(codes.Internal, "key and endKey are the same")
+	}
 
 	infos := c.regionsInfo.ScanRange(key, endKey, limit)
 	regions := make([]*split.RegionInfo, 0, len(infos))
@@ -285,6 +288,19 @@ func (b *assertRetryLessThanBackoffer) NextBackoff(err error) time.Duration {
 // Attempt returns the remain attempt times
 func (b *assertRetryLessThanBackoffer) Attempt() int {
 	return b.max - b.already
+}
+func TestScanEmptyRegion(t *testing.T) {
+	client := initTestClient(false)
+	ranges := initRanges()
+	// make ranges has only one
+	ranges = ranges[0:1]
+	rewriteRules := initRewriteRules()
+	regionSplitter := restore.NewRegionSplitter(client)
+
+	ctx := context.Background()
+	err := regionSplitter.ExecuteSplit(ctx, ranges, rewriteRules, 0, "", false, func(key [][]byte) {})
+	// should not return error with only one range entry
+	require.NoError(t, err)
 }
 
 func TestScatterFinishInTime(t *testing.T) {

@@ -107,8 +107,10 @@ func TestMockTargetInfoBasic(t *testing.T) {
 	const replicaCount = 3
 	const emptyRegionCount = 5
 	const s01TotalSize uint64 = 10 << 30
+	const s01TotalSizeStr = "10GiB"
 	const s01UsedSize uint64 = 7<<30 + 500<<20
 	const s02TotalSize uint64 = 50 << 30
+	const s02TotalSizeStr = "50GiB"
 	const s02UsedSize uint64 = 35<<30 + 700<<20
 
 	ti.SetSysVar("aaa", "111")
@@ -122,9 +124,9 @@ func TestMockTargetInfoBasic(t *testing.T) {
 	require.Equal(t, "222", v)
 
 	ti.MaxReplicasPerRegion = replicaCount
-	rcfg, err := ti.GetReplicationConfig(ctx)
+	cnt, err := ti.GetMaxReplica(ctx)
 	require.NoError(t, err)
-	require.Equal(t, uint64(replicaCount), rcfg.MaxReplicas)
+	require.Equal(t, uint64(replicaCount), cnt)
 
 	ti.StorageInfos = append(ti.StorageInfos,
 		StorageInfo{
@@ -142,18 +144,18 @@ func TestMockTargetInfoBasic(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, si.Count)
 	store := si.Stores[0]
-	require.Equal(t, s01TotalSize, uint64(store.Status.Capacity))
-	require.Equal(t, s01UsedSize, uint64(store.Status.UsedSize))
+	require.Equal(t, s01TotalSizeStr, store.Status.Capacity)
+	require.Equal(t, s01UsedSize, uint64(store.Status.RegionSize))
 	store = si.Stores[1]
-	require.Equal(t, s02TotalSize, uint64(store.Status.Capacity))
-	require.Equal(t, s02UsedSize, uint64(store.Status.UsedSize))
+	require.Equal(t, s02TotalSizeStr, store.Status.Capacity)
+	require.Equal(t, s02UsedSize, uint64(store.Status.RegionSize))
 
 	ti.EmptyRegionCountMap = map[uint64]int{
 		1: emptyRegionCount,
 	}
 	ri, err := ti.GetEmptyRegionsInfo(ctx)
 	require.NoError(t, err)
-	require.Equal(t, emptyRegionCount, ri.Count)
+	require.EqualValues(t, emptyRegionCount, ri.Count)
 	require.Equal(t, emptyRegionCount, len(ri.Regions))
 
 	ti.SetTableInfo("testdb", "testtbl1",
