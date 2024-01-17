@@ -68,15 +68,23 @@ func TestAnalyzeTable(t *testing.T) {
 		TableStatsVer: 2,
 	}
 
+	// Before analyze table.
 	se := tk.Session()
 	sctx := se.(sessionctx.Context)
 	handle := dom.StatsHandle()
-	job.analyze(sctx, handle, dom.SysProcTracker())
 	// Check the result of analyze.
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblStats := handle.GetTableStats(tbl.Meta())
+	require.True(t, tblStats.Pseudo)
+
+	job.analyze(sctx, handle, dom.SysProcTracker())
+	// Check the result of analyze.
+	is = dom.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblStats = handle.GetTableStats(tbl.Meta())
 	require.Equal(t, int64(3), tblStats.RealtimeCount)
 }
 
