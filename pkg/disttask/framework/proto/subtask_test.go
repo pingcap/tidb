@@ -49,6 +49,13 @@ func TestAllocatable(t *testing.T) {
 	require.Equal(t, int64(123456), allocatable.Capacity())
 	require.Equal(t, int64(0), allocatable.Used())
 
+	require.False(t, allocatable.Alloc(123457))
+	require.Equal(t, int64(0), allocatable.Used())
+	require.True(t, allocatable.Alloc(123))
+	require.Equal(t, int64(123), allocatable.Used())
+	allocatable.Free(123)
+	require.Equal(t, int64(0), allocatable.Used())
+
 	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
 		i := i

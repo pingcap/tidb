@@ -157,21 +157,21 @@ func (a *Allocatable) Used() int64 {
 }
 
 // Alloc allocates v from the Allocatable.
-func (a *Allocatable) Alloc(v int64) bool {
+func (a *Allocatable) Alloc(n int64) bool {
 	for {
 		used := a.used.Load()
-		if used+v > a.capacity {
+		if used+n > a.capacity {
 			return false
 		}
-		if a.used.CompareAndSwap(used, used+v) {
+		if a.used.CompareAndSwap(used, used+n) {
 			return true
 		}
 	}
 }
 
 // Free frees v from the Allocatable.
-func (a *Allocatable) Free(v int64) {
-	a.used.Add(-v)
+func (a *Allocatable) Free(n int64) {
+	a.used.Add(-n)
 }
 
 // StepResource is the max resource that a task step can use.
