@@ -334,12 +334,8 @@ func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool
 
 func generateGlobalSortIngestPlan(
 	ctx context.Context,
-<<<<<<< HEAD
-	taskHandle scheduler.TaskHandle,
-=======
 	store kv.StorageWithPD,
-	taskHandle diststorage.TaskHandle,
->>>>>>> a257521b359 (ddl: use another way to get index uniqueness during task exec init (#50378))
+	taskHandle scheduler.TaskHandle,
 	task *proto.Task,
 	cloudStorageURI string,
 	step proto.Step,
