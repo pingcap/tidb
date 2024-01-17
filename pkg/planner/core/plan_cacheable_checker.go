@@ -43,24 +43,24 @@ import (
 // Cacheable checks whether the input ast(query) is cacheable with empty session context, which is mainly for testing.
 // TODO: only for test, remove this function later on.
 func Cacheable(node ast.Node, is infoschema.InfoSchema) bool {
-	c, _, _ := IsASTCacheable(nil, nil, node, is)
+	c, _ := IsASTCacheable(nil, nil, node, is)
 	return c
 }
 
 // CacheableWithCtx checks whether the input ast(query) is cacheable.
 // TODO: only for test, remove this function later on.
-func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (bool, string, bool) {
+func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (bool, string) {
 	return IsASTCacheable(nil, sctx, node, is)
 }
 
 // IsASTCacheable checks whether the input ast(query) is cacheable.
 // Handle "ignore_plan_cache()" hint
 // If there are multiple hints, only one will take effect
-func IsASTCacheable(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (bool, string, bool) {
+func IsASTCacheable(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (bool, string) {
 	switch node.(type) {
 	case *ast.SelectStmt, *ast.UpdateStmt, *ast.InsertStmt, *ast.DeleteStmt, *ast.SetOprStmt:
 	default:
-		return false, "not a SELECT/UPDATE/INSERT/DELETE/SET statement", false
+		return false, "not a SELECT/UPDATE/INSERT/DELETE/SET statement"
 	}
 	checker := cacheableChecker{
 		ctx:          ctx,
@@ -71,7 +71,7 @@ func IsASTCacheable(ctx context.Context, sctx sessionctx.Context, node ast.Node,
 		maxNumParam:  getMaxParamLimit(sctx),
 	}
 	node.Accept(&checker)
-	return checker.cacheable, checker.reason, checker.forceWarn
+	return checker.cacheable, checker.reason
 }
 
 // cacheableChecker checks whether a query can be cached:
