@@ -25,6 +25,7 @@ import (
 	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
+	htransport "google.golang.org/api/transport/http"
 )
 
 const (
@@ -355,19 +356,19 @@ skipHandleCred:
 	}
 
 	if opts.HTTPClient != nil {
-		//	// see https://github.com/pingcap/tidb/issues/47022#issuecomment-1722913455
-		//	// https://www.googleapis.com/auth/cloud-platform must be set to use service_account
-		//	// type of credential-file.
-		//	newTransport, err := htransport.NewTransport(ctx, opts.HTTPClient.Transport,
-		//		append(clientOps, option.WithScopes(storage.ScopeFullControl, "https://www.googleapis.com/auth/cloud-platform"))...)
-		//	if err != nil {
-		//		if intest.InTest && !mustReportCredErr {
-		//			goto skipHandleTransport
-		//		}
-		//		return nil, errors.Trace(err)
-		//	}
-		//	opts.HTTPClient.Transport = newTransport
-		//skipHandleTransport:
+		// see https://github.com/pingcap/tidb/issues/47022#issuecomment-1722913455
+		// https://www.googleapis.com/auth/cloud-platform must be set to use service_account
+		// type of credential-file.
+		newTransport, err := htransport.NewTransport(ctx, opts.HTTPClient.Transport,
+			append(clientOps, option.WithScopes(storage.ScopeFullControl, "https://www.googleapis.com/auth/cloud-platform"))...)
+		if err != nil {
+			if intest.InTest && !mustReportCredErr {
+				goto skipHandleTransport
+			}
+			return nil, errors.Trace(err)
+		}
+		opts.HTTPClient.Transport = newTransport
+	skipHandleTransport:
 		clientOps = append(clientOps, option.WithHTTPClient(opts.HTTPClient))
 	}
 
