@@ -112,7 +112,6 @@ func (e *SortExec) Close() error {
 		if e.Parallel.err != nil {
 			return e.Parallel.err
 		}
-		e.tryToCloseChunkChannel()
 	}
 
 	if e.memTracker != nil {
@@ -497,22 +496,28 @@ func (e *SortExec) fetchChunksUnparallel(ctx context.Context) error {
 }
 
 // Consume all chunks in chunkChannel to avoid the hang of chunk fetcher
-func (e *SortExec) drainChunkChannel() {
+func (e *SortExec) drainChunkChannel(fetcherFinishCh chan struct{}) {
 	defer func() {
-		// chunkChannel may have been closed, it's ok
-		recover()
-
-		// Workers may panic, then no one could consume chunkChannel and
-		// the chunk fetcher may hang in this channel.
-		e.tryToCloseChunkChannel()
+		// Maybe some remaining chunks haven't been consumed
+		for {
+			_, ok := <-e.Parallel.chunkChannel
+			if !ok {
+				break
+			}
+			e.Parallel.fetcherAndWorkerSyncer.Done()
+		}
 	}()
 
 	for {
-		_, ok := <-e.Parallel.chunkChannel
-		if !ok {
+		select {
+		case _, ok := <-e.Parallel.chunkChannel:
+			if !ok {
+				return
+			}
+			e.Parallel.fetcherAndWorkerSyncer.Done()
+		case <-fetcherFinishCh:
 			return
 		}
-		e.Parallel.fetcherAndWorkerSyncer.Done()
 	}
 }
 
@@ -528,8 +533,10 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	workersWaiter.Add(workerNum)
 	fetcherWaiter.Add(1)
 
+	fetcherFinishCh := make(chan struct{})
+
 	// Fetch chunks from child and put chunks into chunkChannel
-	go e.fetchChunksFromChild(ctx, &fetcherWaiter)
+	go e.fetchChunksFromChild(ctx, &fetcherWaiter, fetcherFinishCh)
 
 	for i := range e.Parallel.workers {
 		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.globalSortedRowsQueue, &workersWaiter, &e.Parallel.result, e.Parallel.chunkChannel, e.Parallel.fetcherAndWorkerSyncer, e.checkErrorForParallel, e.processErrorForParallel, e.finishCh, e.memTracker, e.Parallel.spillHelper)
@@ -537,14 +544,16 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	}
 
 	workersWaiter.Wait()
-
-	e.drainChunkChannel()
+	e.drainChunkChannel(fetcherFinishCh)
 	fetcherWaiter.Wait()
 
+	// TODO check error with finish channel
 	err := e.checkErrorForParallel()
 	if err != nil {
 		return err
 	}
+
+	// TODO check error with finish channel
 	err = e.Parallel.spillHelper.checkSpillError()
 	if err != nil {
 		return err
@@ -562,16 +571,18 @@ func (e *SortExec) spillRemainingRowsWhenNeeded() {
 }
 
 // Fetch chunks from child and put chunks into chunkChannel
-func (e *SortExec) fetchChunksFromChild(ctx context.Context, waitGroup *sync.WaitGroup) {
+func (e *SortExec) fetchChunksFromChild(ctx context.Context, waitGroup *sync.WaitGroup, fetcherFinishCh chan struct{}) {
 	defer func() {
 		if r := recover(); r != nil {
 			processPanicAndLog(e.processErrorForParallel, r)
 		}
 
+		close(fetcherFinishCh)
+		e.tryToCloseChunkChannel()
+
 		// Wait for the finish of all workers
 		e.Parallel.fetcherAndWorkerSyncer.Wait()
 
-		e.tryToCloseChunkChannel()
 		waitGroup.Done()
 	}()
 
@@ -598,12 +609,14 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context, waitGroup *sync.Wai
 
 		select {
 		case <-e.finishCh:
+			e.Parallel.fetcherAndWorkerSyncer.Done()
 			return
 		case e.Parallel.chunkChannel <- chkWithMemoryUsage:
 			// chunkChannel may be closed in advance and it's ok to let it panic
 			// as workers have panicked and the query can't keep on running.
 		}
 
+		// TODO check spill flag and spill
 		injectParallelSortRandomFail()
 	}
 }

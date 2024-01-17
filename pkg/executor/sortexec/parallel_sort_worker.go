@@ -130,10 +130,10 @@ func (p *parallelSortWorker) fetchChunksAndSortImpl() int {
 	case <-p.finishCh:
 		return finish
 	case chkWithMemoryUsage, ok = <-p.chunkChannel:
-		// Memory usage of the chunk has been consumed at the chunk fetcher
 		if !ok {
 			return eof
 		}
+		// Memory usage of the chunk has been consumed at the chunk fetcher
 		p.totalMemoryUsage += chkWithMemoryUsage.MemoryUsage
 		defer p.fetcherAndWorkerSyncer.Done()
 	}
