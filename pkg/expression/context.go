@@ -75,3 +75,15 @@ func warningCount(ctx EvalContext) int {
 func truncateWarnings(ctx EvalContext, start int) []stmtctx.SQLWarn {
 	return ctx.GetSessionVars().StmtCtx.TruncateWarnings(start)
 }
+
+// BuildContext is used to build an expression
+type BuildContext interface {
+	EvalContext
+	// GetSessionVars gets the session variables.
+	GetSessionVars() *variable.SessionVars
+	// SetValue saves a value associated with this context for key.
+	SetValue(key fmt.Stringer, value interface{})
+	// BuiltinFunctionUsageInc increase the counting of each builtin function usage
+	// Notice that this is a thread safe function
+	BuiltinFunctionUsageInc(scalarFuncSigName string)
+}

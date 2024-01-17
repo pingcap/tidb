@@ -63,7 +63,7 @@ func evalAstExprWithPlanCtx(sctx sessionctx.Context, expr ast.ExprNode) (types.D
 }
 
 // evalAstExpr evaluates ast expression directly.
-func evalAstExpr(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error) {
+func evalAstExpr(ctx expression.BuildContext, expr ast.ExprNode) (types.Datum, error) {
 	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
@@ -97,7 +97,7 @@ func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expressi
 	return newExpr, nil
 }
 
-func buildExprWithAst(ctx sessionctx.Context, node ast.ExprNode, opts ...expression.BuildOption) (expression.Expression, error) {
+func buildExprWithAst(ctx expression.BuildContext, node ast.ExprNode, opts ...expression.BuildOption) (expression.Expression, error) {
 	var options expression.BuildOptions
 	for _, opt := range opts {
 		opt(&options)
@@ -306,7 +306,7 @@ type expressionRewriter struct {
 	names      []*types.FieldName
 	err        error
 
-	sctx sessionctx.Context
+	sctx expression.BuildContext
 	ctx  context.Context
 
 	// asScalar indicates the return value must be a scalar value.
@@ -2075,7 +2075,7 @@ func (er *expressionRewriter) rowToScalarFunc(v *ast.RowExpr) {
 func (er *expressionRewriter) wrapExpWithCast() (expr, lexp, rexp expression.Expression) {
 	stkLen := len(er.ctxStack)
 	expr, lexp, rexp = er.ctxStack[stkLen-3], er.ctxStack[stkLen-2], er.ctxStack[stkLen-1]
-	var castFunc func(sessionctx.Context, expression.Expression) expression.Expression
+	var castFunc func(expression.BuildContext, expression.Expression) expression.Expression
 	switch expression.ResolveType4Between([3]expression.Expression{expr, lexp, rexp}) {
 	case types.ETInt:
 		castFunc = expression.WrapWithCastAsInt
@@ -2084,7 +2084,7 @@ func (er *expressionRewriter) wrapExpWithCast() (expr, lexp, rexp expression.Exp
 	case types.ETDecimal:
 		castFunc = expression.WrapWithCastAsDecimal
 	case types.ETString:
-		castFunc = func(ctx sessionctx.Context, e expression.Expression) expression.Expression {
+		castFunc = func(ctx expression.BuildContext, e expression.Expression) expression.Expression {
 			// string kind expression do not need cast
 			if e.GetType().EvalType().IsStringKind() {
 				return e

@@ -20,7 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -189,7 +188,7 @@ func deriveCoercibilityForColumn(c *Column) Coercibility {
 	return CoercibilityImplicit
 }
 
-func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression, retType types.EvalType, argTps ...types.EvalType) (ec *ExprCollation, err error) {
+func deriveCollation(ctx BuildContext, funcName string, args []Expression, retType types.EvalType, argTps ...types.EvalType) (ec *ExprCollation, err error) {
 	switch funcName {
 	case ast.Concat, ast.ConcatWS, ast.Lower, ast.Lcase, ast.Reverse, ast.Upper, ast.Ucase, ast.Quote, ast.Coalesce, ast.Greatest, ast.Least:
 		return CheckAndDeriveCollationFromExprs(ctx, funcName, retType, args...)
@@ -300,7 +299,7 @@ func deriveCollation(ctx sessionctx.Context, funcName string, args []Expression,
 }
 
 // CheckAndDeriveCollationFromExprs derives collation information from these expressions, return error if derives collation error.
-func CheckAndDeriveCollationFromExprs(ctx sessionctx.Context, funcName string, evalType types.EvalType, args ...Expression) (et *ExprCollation, err error) {
+func CheckAndDeriveCollationFromExprs(ctx BuildContext, funcName string, evalType types.EvalType, args ...Expression) (et *ExprCollation, err error) {
 	ec := inferCollation(args...)
 	if ec == nil {
 		return nil, illegalMixCollationErr(funcName, args)
@@ -323,7 +322,7 @@ func CheckAndDeriveCollationFromExprs(ctx sessionctx.Context, funcName string, e
 	return ec, nil
 }
 
-func safeConvert(ctx sessionctx.Context, ec *ExprCollation, args ...Expression) bool {
+func safeConvert(ctx BuildContext, ec *ExprCollation, args ...Expression) bool {
 	enc := charset.FindEncodingTakeUTF8AsNoop(ec.Charset)
 	for _, arg := range args {
 		if arg.GetType().GetCharset() == ec.Charset {

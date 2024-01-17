@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -38,25 +37,25 @@ func TestSetFlenDecimal4RealOrDecimal(t *testing.T) {
 	b := &types.FieldType{}
 	b.SetDecimal(0)
 	b.SetFlag(2)
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
+	setFlenDecimal4RealOrDecimal(ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
 	require.Equal(t, 1, ret.GetDecimal())
 	require.Equal(t, 4, ret.GetFlen())
 
 	b.SetFlen(65)
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
+	setFlenDecimal4RealOrDecimal(ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
 	require.Equal(t, 1, ret.GetDecimal())
 	require.Equal(t, mysql.MaxRealWidth, ret.GetFlen())
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, false, false)
+	setFlenDecimal4RealOrDecimal(ret, &Constant{RetType: a}, &Constant{RetType: b}, false, false)
 	require.Equal(t, 1, ret.GetDecimal())
 	require.Equal(t, mysql.MaxDecimalWidth, ret.GetFlen())
 
 	b.SetFlen(types.UnspecifiedLength)
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
+	setFlenDecimal4RealOrDecimal(ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
 	require.Equal(t, 1, ret.GetDecimal())
 	require.Equal(t, types.UnspecifiedLength, ret.GetFlen())
 
 	b.SetDecimal(types.UnspecifiedLength)
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
+	setFlenDecimal4RealOrDecimal(ret, &Constant{RetType: a}, &Constant{RetType: b}, true, false)
 	require.Equal(t, types.UnspecifiedLength, ret.GetDecimal())
 	require.Equal(t, types.UnspecifiedLength, ret.GetFlen())
 
@@ -69,25 +68,25 @@ func TestSetFlenDecimal4RealOrDecimal(t *testing.T) {
 	b.SetDecimal(0)
 	b.SetFlen(2)
 
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
+	setFlenDecimal4RealOrDecimal(ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
 	require.Equal(t, 1, ret.GetDecimal())
 	require.Equal(t, 5, ret.GetFlen())
 
 	b.SetFlen(65)
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
+	setFlenDecimal4RealOrDecimal(ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
 	require.Equal(t, 1, ret.GetDecimal())
 	require.Equal(t, mysql.MaxRealWidth, ret.GetFlen())
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, false, true)
+	setFlenDecimal4RealOrDecimal(ret, &Constant{RetType: a}, &Constant{RetType: b}, false, true)
 	require.Equal(t, 1, ret.GetDecimal())
 	require.Equal(t, mysql.MaxDecimalWidth, ret.GetFlen())
 
 	b.SetFlen(types.UnspecifiedLength)
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
+	setFlenDecimal4RealOrDecimal(ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
 	require.Equal(t, 1, ret.GetDecimal())
 	require.Equal(t, types.UnspecifiedLength, ret.GetFlen())
 
 	b.SetDecimal(types.UnspecifiedLength)
-	setFlenDecimal4RealOrDecimal(mock.NewContext(), ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
+	setFlenDecimal4RealOrDecimal(ret, &Constant{RetType: a}, &Constant{RetType: b}, true, true)
 	require.Equal(t, types.UnspecifiedLength, ret.GetDecimal())
 	require.Equal(t, types.UnspecifiedLength, ret.GetFlen())
 }
