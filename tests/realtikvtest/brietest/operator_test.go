@@ -134,6 +134,7 @@ func cleanUpGCSafepoint(cfg operator.PauseGcConfig, t *testing.T) {
 	var result GcSafePoints
 	pdCli, err := pd.NewClient(cfg.PD, pd.SecurityOption{})
 	require.NoError(t, err)
+	defer pdCli.Close()
 	getJSON(pdAPI(cfg, serviceGCSafepointPrefix), &result)
 	for _, sp := range result.SPs {
 		if sp.ServiceID != "gc_worker" {
