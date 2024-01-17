@@ -28,19 +28,21 @@ type parallelSortSpillHelper struct {
 	sortedRowsInDisk []*chunk.DataInDiskByChunks
 	cursor           []*dataCursor
 	spillError       error
-	// closed           bool // TODO is this field needed?
 	sortExec *SortExec
+
+	finishCh chan struct{}
 
 	fieldTypes    []*types.FieldType
 	tmpSpillChunk *chunk.Chunk
 }
 
-func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldType) *parallelSortSpillHelper {
+func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldType, finishCh chan struct{}) *parallelSortSpillHelper {
 	return &parallelSortSpillHelper{
 		cond:          sync.NewCond(new(sync.Mutex)),
 		spillStatus:   notSpilled,
 		spillError:    nil,
 		sortExec:      sortExec,
+		finishCh:      finishCh,
 		fieldTypes:    fieldTypes,
 		tmpSpillChunk: chunk.NewChunkWithCapacity(fieldTypes, spillChunkSize),
 	}
@@ -58,6 +60,12 @@ func (p *parallelSortSpillHelper) isInSpilling() bool {
 	p.cond.L.Lock()
 	defer p.cond.L.Unlock()
 	return p.spillStatus == inSpilling
+}
+
+func (p *parallelSortSpillHelper) isSpillNeeded() bool {
+	p.cond.L.Lock()
+	defer p.cond.L.Unlock()
+	return p.spillStatus == needSpill
 }
 
 func (p *parallelSortSpillHelper) isSpillTriggered() bool {
@@ -92,11 +100,12 @@ func (p *parallelSortSpillHelper) setSpillTriggeredNoLock() {
 	p.spillStatus = spillTriggered
 }
 
-func (p *parallelSortSpillHelper) setNotSpilledNoLock() {
+func (p *parallelSortSpillHelper) setNotSpilled() {
+	p.cond.L.Lock()
+	defer p.cond.L.Unlock()
 	p.spillStatus = notSpilled
 }
 
-// This function should be protected by `syncLock`
 func (p *parallelSortSpillHelper) spill() {
 	workerNum := len(p.sortExec.Parallel.workers)
 	workerWaiter := &sync.WaitGroup{}
@@ -118,6 +127,26 @@ func (p *parallelSortSpillHelper) spill() {
 	workerWaiter.Wait()
 	p.setInSpilling()
 	p.spillImpl()
+
+	// Spill is done, broadcast to wake up some sleep goroutine
+	p.setNotSpilled()
+	p.cond.Broadcast()
+}
+
+func (p *parallelSortSpillHelper) reloadCursor(i int) (bool, error) {
+	spilledChkNum := p.sortedRowsInDisk[i].NumChunks()
+	restoredChkID := p.cursor[i].getChkID() + 1
+	if restoredChkID >= spilledChkNum {
+		// All data has been consumed
+		return false, nil
+	}
+
+	chk, err := p.sortedRowsInDisk[i].GetChunk(restoredChkID)
+	if err != nil {
+		return false, err
+	}
+	p.cursor[i].setChunk(chk, restoredChkID)
+	return true, nil
 }
 
 func (p *parallelSortSpillHelper) releaseMemory() {
@@ -129,7 +158,7 @@ func (p *parallelSortSpillHelper) releaseMemory() {
 	p.sortExec.memTracker.Consume(-totalReleasedMemory)
 }
 
-func (p *parallelSortSpillHelper) getSpilledRows() sortedRows {
+func (p *parallelSortSpillHelper) getRowsNeedingSpill() sortedRows {
 	partitionNum := p.sortExec.Parallel.globalSortedRowsQueue.getSortedRowsNumNoLock()
 	var spilledRows sortedRows
 	if partitionNum > 1 {
@@ -139,7 +168,7 @@ func (p *parallelSortSpillHelper) getSpilledRows() sortedRows {
 
 	if partitionNum == 0 {
 		spilledRows = p.sortExec.Parallel.result[p.sortExec.Parallel.idx:]
-		p.sortExec.Parallel.result = nil // Clear the result
+		p.sortExec.Parallel.result = nil
 		p.sortExec.Parallel.rowNum = 0
 	} else {
 		spilledRows = popFromList(&p.sortExec.Parallel.globalSortedRowsQueue.sortedRowsQueue)
@@ -148,7 +177,7 @@ func (p *parallelSortSpillHelper) getSpilledRows() sortedRows {
 }
 
 func (p *parallelSortSpillHelper) spillImpl() {
-	spilledRows := p.getSpilledRows()
+	spilledRows := p.getRowsNeedingSpill()
 	if len(spilledRows) == 0 {
 		return
 	}
@@ -158,6 +187,12 @@ func (p *parallelSortSpillHelper) spillImpl() {
 	inDisk.GetDiskTracker().AttachTo(p.sortExec.diskTracker)
 
 	for _, row := range spilledRows {
+		select {
+		case <-p.finishCh:
+			return
+		default:
+		}
+
 		p.tmpSpillChunk.AppendRow(row)
 		if p.tmpSpillChunk.IsFull() {
 			err := inDisk.Add(p.tmpSpillChunk)

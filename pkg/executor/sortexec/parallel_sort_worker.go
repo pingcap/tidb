@@ -92,7 +92,7 @@ func newParallelSortWorker(
 
 func (p *parallelSortWorker) fetchChunksAndSort() bool {
 	for {
-		status:= p.fetchChunksAndSortImpl()
+		status := p.fetchChunksAndSortImpl()
 		if status == finish {
 			return false
 		}
@@ -109,7 +109,7 @@ func (p *parallelSortWorker) injectFailPointForParallelSortWorker() {
 		if val.(bool) {
 			if p.workerIDForTest%2 == 0 {
 				randNum := rand.Int31n(10000)
-				if randNum < 100 {
+				if randNum < 10 {
 					time.Sleep(5 * time.Millisecond)
 				}
 			}

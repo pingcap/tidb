@@ -38,6 +38,7 @@ const signalCheckpointForSort uint = 10240
 
 const (
 	notSpilled = iota
+	needSpill
 	inSpilling
 	spillTriggered
 )
@@ -137,7 +138,7 @@ func injectParallelSortRandomFail() {
 	failpoint.Inject("ParallelSortRandomFail", func(val failpoint.Value) {
 		if val.(bool) {
 			randNum := rand.Int31n(10000)
-			if randNum < 5 {
+			if randNum < 3 {
 				panic("panic is triggered by random fail")
 			}
 		}

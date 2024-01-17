@@ -61,15 +61,15 @@ type SortExec struct {
 	finishCh              chan struct{}
 	isFinishChannelClosed *atomic.Bool
 
+	// multiWayMerge uses multi-way merge for spill disk.
+	// The multi-way merge algorithm can refer to https://en.wikipedia.org/wiki/K-way_merge_algorithm
+	multiWayMerge *multiWayMerge
+
 	Unparallel struct {
 		Idx int
 
 		// sortPartitions is the chunks to store row values for partitions. Every partition is a sorted list.
 		sortPartitions []*sortPartition
-
-		// multiWayMerge uses multi-way merge for spill disk.
-		// The multi-way merge algorithm can refer to https://en.wikipedia.org/wiki/K-way_merge_algorithm
-		multiWayMerge *multiWayMerge
 
 		spillAction *sortPartitionSpillDiskAction
 	}
@@ -152,7 +152,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Parallel.globalSortedRowsQueue = &sortedRowsList{}
 		e.Parallel.errRWLock = &sync.RWMutex{}
 		e.Parallel.err = nil
-		e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e))
+		e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh)
 		e.Parallel.spillAction = newParallelSortSpillDiskAction(e.Parallel.spillHelper)
 		if e.enableTmpStorageOnOOM {
 			e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.Parallel.spillAction)
@@ -244,15 +244,26 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.IsUnparallel {
 		return e.appendResultToChunkInUnparallelMode(req)
 	}
-	e.appendResultToChunkInParallelMode(req)
-	return nil
+	return e.appendResultToChunkInParallelMode(req)
 }
 
-func (e *SortExec) appendResultToChunkInParallelMode(req *chunk.Chunk) {
-	// TODO consider spill
+func (e *SortExec) appendResultToChunkInParallelMode(req *chunk.Chunk) error {
+	if e.Parallel.spillHelper.isSpillNeeded() {
+		e.Parallel.spillHelper.spill()
+		err := e.Parallel.spillHelper.checkSpillError()
+		if err != nil {
+			return err
+		}
+	}
+
+	if e.Parallel.spillHelper.isSpillTriggered() {
+		return e.externalSortingForParallel(req)
+	}
+
 	for ; !req.IsFull() && e.Parallel.idx < e.Parallel.rowNum; e.Parallel.idx++ {
 		req.AppendRow(e.Parallel.result[e.Parallel.idx])
 	}
+	return nil
 }
 
 func (e *SortExec) appendResultToChunkInUnparallelMode(req *chunk.Chunk) error {
@@ -274,7 +285,7 @@ func (e *SortExec) appendResultToChunkInUnparallelMode(req *chunk.Chunk) error {
 }
 
 func (e *SortExec) initExternalSorting() error {
-	e.Unparallel.multiWayMerge = &multiWayMerge{e.lessRow, make([]rowWithPartition, 0, len(e.Unparallel.sortPartitions))}
+	e.multiWayMerge = &multiWayMerge{e.lessRow, make([]rowWithPartition, 0, len(e.Unparallel.sortPartitions))}
 	for i := 0; i < len(e.Unparallel.sortPartitions); i++ {
 		// We should always get row here
 		row, err := e.Unparallel.sortPartitions[i].getNextSortedRow()
@@ -282,9 +293,30 @@ func (e *SortExec) initExternalSorting() error {
 			return err
 		}
 
-		e.Unparallel.multiWayMerge.elements = append(e.Unparallel.multiWayMerge.elements, rowWithPartition{row: row, partitionID: i})
+		e.multiWayMerge.elements = append(e.multiWayMerge.elements, rowWithPartition{row: row, partitionID: i})
 	}
-	heap.Init(e.Unparallel.multiWayMerge)
+	heap.Init(e.multiWayMerge)
+	return nil
+}
+
+func (e *SortExec) initExternalSortingForParallel() error {
+	diskFileNum := len(e.Parallel.spillHelper.sortedRowsInDisk)
+	e.multiWayMerge = &multiWayMerge{e.lessRow, make([]rowWithPartition, 0, diskFileNum)}
+	e.Parallel.spillHelper.cursor = make([]*dataCursor, diskFileNum)
+	for i := 0; i < diskFileNum; i++ {
+		e.Parallel.spillHelper.cursor[i] = NewDataCursor()
+		hasData, err := e.Parallel.spillHelper.reloadCursor(i)
+		if !hasData {
+			continue
+		}
+
+		if err != nil {
+			return err
+		}
+
+		e.multiWayMerge.elements = append(e.multiWayMerge.elements, rowWithPartition{row: e.Parallel.spillHelper.cursor[i].begin(), partitionID: i})
+	}
+	heap.Init(e.multiWayMerge)
 	return nil
 }
 
@@ -317,16 +349,16 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 		return err
 	}
 
-	if e.Unparallel.multiWayMerge == nil {
+	if e.multiWayMerge == nil {
 		err := e.initExternalSorting()
 		if err != nil {
 			return err
 		}
 	}
 
-	for !req.IsFull() && e.Unparallel.multiWayMerge.Len() > 0 {
+	for !req.IsFull() && e.multiWayMerge.Len() > 0 {
 		// Get and insert data
-		element := e.Unparallel.multiWayMerge.elements[0]
+		element := e.multiWayMerge.elements[0]
 		req.AppendRow(element.row)
 
 		// Get a new row from that partition which inserted data belongs to
@@ -338,12 +370,48 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 
 		if row.IsEmpty() {
 			// All data in this partition have been consumed
-			heap.Remove(e.Unparallel.multiWayMerge, 0)
+			heap.Remove(e.multiWayMerge, 0)
 			continue
 		}
 
-		e.Unparallel.multiWayMerge.elements[0].row = row
-		heap.Fix(e.Unparallel.multiWayMerge, 0)
+		e.multiWayMerge.elements[0].row = row
+		heap.Fix(e.multiWayMerge, 0)
+	}
+	return nil
+}
+
+func (e *SortExec) externalSortingForParallel(req *chunk.Chunk) error {
+	if e.multiWayMerge == nil {
+		err := e.initExternalSortingForParallel()
+		if err != nil {
+			return err
+		}
+	}
+
+	for !req.IsFull() && e.multiWayMerge.Len() > 0 {
+		// Get and insert data
+		element := e.multiWayMerge.elements[0]
+		req.AppendRow(element.row)
+
+		partitionID := element.partitionID
+		row := e.Parallel.spillHelper.cursor[partitionID].next()
+		if row.IsEmpty() {
+			hasData, err := e.Parallel.spillHelper.reloadCursor(partitionID)
+			if err != nil {
+				return err
+			}
+
+			if !hasData {
+				// All data in this partition have been consumed
+				heap.Remove(e.multiWayMerge, 0)
+				continue
+			}
+
+			row = e.Parallel.spillHelper.cursor[partitionID].begin()
+		}
+
+		e.multiWayMerge.elements[0].row = row
+		heap.Fix(e.multiWayMerge, 0)
 	}
 	return nil
 }
@@ -522,15 +590,12 @@ func (e *SortExec) drainChunkChannel(fetcherFinishCh chan struct{}) {
 }
 
 func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
-	workerNum := len(e.Parallel.workers)
-
-	// Wait for the finish of all workers
 	workersWaiter := sync.WaitGroup{}
 	// Wait for the finish of chunk fetcher
 	fetcherWaiter := sync.WaitGroup{}
 
 	// Add before the start of goroutine to avoid that the counter is minus to negative.
-	workersWaiter.Add(workerNum)
+	workersWaiter.Add(len(e.Parallel.workers))
 	fetcherWaiter.Add(1)
 
 	fetcherFinishCh := make(chan struct{})
@@ -547,26 +612,34 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	e.drainChunkChannel(fetcherFinishCh)
 	fetcherWaiter.Wait()
 
-	// TODO check error with finish channel
+	e.spillRemainingRowsWhenNeeded()
+
 	err := e.checkErrorForParallel()
 	if err != nil {
 		return err
 	}
 
-	// TODO check error with finish channel
 	err = e.Parallel.spillHelper.checkSpillError()
 	if err != nil {
 		return err
 	}
 
-	e.spillRemainingRowsWhenNeeded()
 	e.fetchResultFromQueue()
 	return nil
 }
 
 func (e *SortExec) spillRemainingRowsWhenNeeded() {
 	if e.Parallel.spillHelper.isSpillTriggered() {
+		e.Parallel.spillHelper.spill()
+	}
+}
 
+func (e *SortExec) checkSpillAndExecute() {
+	if e.Parallel.spillHelper.isSpillNeeded() {
+		// Wait for the stop of all workers
+		e.Parallel.fetcherAndWorkerSyncer.Wait()
+
+		e.Parallel.spillHelper.spill()
 	}
 }
 
@@ -616,7 +689,7 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context, waitGroup *sync.Wai
 			// as workers have panicked and the query can't keep on running.
 		}
 
-		// TODO check spill flag and spill
+		e.checkSpillAndExecute()
 		injectParallelSortRandomFail()
 	}
 }
