@@ -73,17 +73,18 @@ type TaskManager interface {
 	// GetSubtaskCntGroupByStates returns the count of subtasks of some step group by state.
 	GetSubtaskCntGroupByStates(ctx context.Context, taskID int64, step proto.Step) (map[proto.SubtaskState]int64, error)
 	ResumeSubtasks(ctx context.Context, taskID int64) error
-	CollectSubTaskError(ctx context.Context, taskID int64) ([]error, error)
+	GetSubtaskErrors(ctx context.Context, taskID int64) ([]error, error)
 	UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.Subtask) error
 	// GetManagedNodes returns the nodes managed by dist framework and can be used
 	// to execute tasks. If there are any nodes with background role, we use them,
 	// else we use nodes without role.
 	// returned nodes are sorted by node id(host:port).
 	GetManagedNodes(ctx context.Context) ([]proto.ManagedNode, error)
+	// GetTaskExecutorIDsByTaskID gets the task executor IDs of the given task ID.
 	GetTaskExecutorIDsByTaskID(ctx context.Context, taskID int64) ([]string, error)
-	GetSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error)
-	GetSubtasksByExecIdsAndStepAndState(ctx context.Context, tidbIDs []string, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error)
-	GetTaskExecutorIDsByTaskIDAndStep(ctx context.Context, taskID int64, step proto.Step) ([]string, error)
+
+	// GetAllSubtasksByStepAndState gets all subtasks by given states for one step.
+	GetAllSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error)
 
 	WithNewSession(fn func(se sessionctx.Context) error) error
 	WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error

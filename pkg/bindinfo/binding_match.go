@@ -39,33 +39,27 @@ type BindingMatchInfo struct {
 
 // MatchSQLBindingForPlanCache matches binding for plan cache.
 func MatchSQLBindingForPlanCache(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (bindingSQL string, ignoreBinding bool) {
-	bindRecord, _ := getBindRecord(sctx, stmtNode, info)
-	if bindRecord != nil {
-		if enabledBinding := bindRecord.FindEnabledBinding(); enabledBinding != nil {
-			bindingSQL = enabledBinding.BindSQL
-			ignoreBinding = enabledBinding.Hint.ContainTableHint(hint.HintIgnorePlanCache)
-		}
+	binding, matched, _ := matchSQLBinding(sctx, stmtNode, info)
+	if matched {
+		bindingSQL = binding.BindSQL
+		ignoreBinding = binding.Hint.ContainTableHint(hint.HintIgnorePlanCache)
 	}
 	return
 }
 
 // MatchSQLBinding returns the matched binding for this statement.
-func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord *BindRecord, scope string, matched bool) {
-	bindRecord, scope = getBindRecord(sctx, stmtNode, nil)
-	if bindRecord == nil || len(bindRecord.Bindings) == 0 {
-		return nil, "", false
-	}
-	return bindRecord, scope, true
+func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding Binding, matched bool, scope string) {
+	return matchSQLBinding(sctx, stmtNode, nil)
 }
 
-func getBindRecord(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (*BindRecord, string) {
+func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (binding Binding, matched bool, scope string) {
 	useBinding := sctx.GetSessionVars().UsePlanBaselines
 	if !useBinding || stmtNode == nil {
-		return nil, ""
+		return
 	}
 	// When the domain is initializing, the bind will be nil.
 	if sctx.Value(SessionBindInfoKeyType) == nil {
-		return nil, ""
+		return
 	}
 
 	// record the normalization result into info to avoid repeat normalization next time.
@@ -84,17 +78,17 @@ func getBindRecord(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Binding
 	}
 
 	sessionHandle := sctx.Value(SessionBindInfoKeyType).(SessionBindingHandle)
-	if bindRecord, err := sessionHandle.MatchSessionBinding(sctx, fuzzyDigest, tableNames); err == nil && bindRecord != nil && bindRecord.HasEnabledBinding() {
-		return bindRecord, metrics.ScopeSession
+	if binding, matched := sessionHandle.MatchSessionBinding(sctx, fuzzyDigest, tableNames); matched {
+		return binding, matched, metrics.ScopeSession
 	}
 	globalHandle := GetGlobalBindingHandle(sctx)
 	if globalHandle == nil {
-		return nil, ""
+		return
 	}
-	if bindRecord, err := globalHandle.MatchGlobalBinding(sctx, fuzzyDigest, tableNames); err == nil && bindRecord != nil && bindRecord.HasEnabledBinding() {
-		return bindRecord, metrics.ScopeGlobal
+	if binding, matched := globalHandle.MatchGlobalBinding(sctx, fuzzyDigest, tableNames); matched {
+		return binding, matched, metrics.ScopeGlobal
 	}
-	return nil, ""
+	return
 }
 
 func fuzzyMatchBindingTableName(currentDB string, stmtTableNames, bindingTableNames []*ast.TableName) (numWildcards int, matched bool) {

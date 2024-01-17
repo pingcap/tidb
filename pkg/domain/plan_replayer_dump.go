@@ -593,10 +593,10 @@ func dumpVariables(sctx sessionctx.Context, sessionVars *variable.SessionVars, z
 	return nil
 }
 
-func dumpSessionBindRecords(records []*bindinfo.BindRecord, zw *zip.Writer) error {
+func dumpSessionBindRecords(records []bindinfo.Bindings, zw *zip.Writer) error {
 	sRows := make([][]string, 0)
 	for _, bindData := range records {
-		for _, hint := range bindData.Bindings {
+		for _, hint := range bindData {
 			sRows = append(sRows, []string{
 				hint.OriginalSQL,
 				hint.BindSQL,
