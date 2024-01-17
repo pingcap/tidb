@@ -147,7 +147,7 @@ func (*BaseTaskExecutor) Init(_ context.Context) error {
 	return nil
 }
 
-// RunStep start to fetch and run all subtasks of the task on the node.
+// RunStep start to fetch and run all subtasks for the step of task on the node.
 func (s *BaseTaskExecutor) RunStep(ctx context.Context, task *proto.Task, resource *proto.StepResource) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
