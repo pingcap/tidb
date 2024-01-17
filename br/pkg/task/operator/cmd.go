@@ -190,47 +190,6 @@ func getCallerName() string {
 	return fmt.Sprintf("operator@%sT%d#%d", name, time.Now().Unix(), os.Getpid())
 }
 
-<<<<<<< HEAD
-func pauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
-	suspendLightning := utils.NewSuspendImporting(getCallerName(), cx.kvMgr)
-	_, err := utils.WithRetryV2(cx, cx.GetBackOffer("suspend_lightning"), func(_ context.Context) (map[uint64]bool, error) {
-		return suspendLightning.DenyAllStores(cx, cx.cfg.TTL)
-	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cx.ReadyL("pause_lightning")
-	cx.runGrp.Go(func() (err error) {
-		defer cx.cleanUpWithRetErr(&err, func(ctx context.Context) error {
-			if ctx.Err() != nil {
-				//nolint: all_revive,revive // There is a false positive on returning in `defer`.
-				return errors.Annotate(ctx.Err(), "cleaning up timed out")
-			}
-			res, err := utils.WithRetryV2(ctx, cx.GetBackOffer("restore_lightning"),
-				//nolint: all_revive,revive // There is a false positive on returning in `defer`.
-				func(ctx context.Context) (map[uint64]bool, error) { return suspendLightning.AllowAllStores(ctx) })
-			if err != nil {
-				//nolint: all_revive,revive // There is a false positive on returning in `defer`.
-				return errors.Annotatef(err, "failed to allow all stores")
-			}
-			//nolint: all_revive,revive // There is a false positive on returning in `defer`.
-			return suspendLightning.ConsistentWithPrev(res)
-		})
-
-		err = suspendLightning.Keeper(cx, cx.cfg.TTL)
-		if errors.Cause(err) != context.Canceled {
-			logutil.CL(cx).Warn("keeper encounters error.", logutil.ShortError(err))
-			return err
-		}
-		// Clean up the canceled error.
-		err = nil
-		return
-	})
-	return nil
-}
-
-=======
->>>>>>> bbbada0dde3 (backup: advacned prepare implementation (#48439))
 func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext) (err error) {
 	// Note: should we remove the service safepoint as soon as this exits?
 	sp := utils.BRServiceSafePoint{

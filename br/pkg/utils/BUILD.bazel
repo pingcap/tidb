@@ -28,19 +28,6 @@ go_library(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/logutil",
-<<<<<<< HEAD
-        "//br/pkg/metautil",
-        "//errno",
-        "//kv",
-        "//parser/model",
-        "//parser/mysql",
-        "//parser/terror",
-        "//parser/types",
-        "//sessionctx",
-        "//util",
-        "//util/engine",
-        "//util/sqlexec",
-=======
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/parser/model",
@@ -50,7 +37,6 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/util",
         "//pkg/util/sqlexec",
->>>>>>> bbbada0dde3 (backup: advacned prepare implementation (#48439))
         "@com_github_cheggaaa_pb_v3//:pb",
         "@com_github_cznic_mathutil//:mathutil",
         "@com_github_google_uuid//:uuid",
@@ -118,13 +104,7 @@ go_test(
         "@com_github_golang_protobuf//proto",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
-<<<<<<< HEAD
-        "@com_github_pingcap_kvproto//pkg/encryptionpb",
-        "@com_github_pingcap_kvproto//pkg/import_sstpb",
-        "@com_github_pingcap_kvproto//pkg/metapb",
-=======
         "@com_github_pingcap_kvproto//pkg/errorpb",
->>>>>>> bbbada0dde3 (backup: advacned prepare implementation (#48439))
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_pd_client//:client",

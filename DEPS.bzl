@@ -2973,10 +2973,6 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-<<<<<<< HEAD
-        sum = "h1:tBKPWWqgWEBs04BV4UN7RhtUkZDs0oz+WyMbtRDVtL8=",
-        version = "v0.0.0-20230928035022-1bdcc25ed63c",
-=======
         sha256 = "53da7bf27e06dedfeea1b523941e8adb94d7d7ed5f93dbfb7467cb71b5d19bd6",
         strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20240109063850-932639606bcf",
         urls = [
@@ -2985,7 +2981,6 @@ def go_deps():
             "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20240109063850-932639606bcf.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20240109063850-932639606bcf.zip",
         ],
->>>>>>> bbbada0dde3 (backup: advacned prepare implementation (#48439))
     )
     go_repository(
         name = "com_github_pingcap_log",

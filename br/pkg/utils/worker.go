@@ -130,8 +130,6 @@ func PanicToErr(err *error) {
 		log.Warn("PanicToErr: panicked, recovering and returning error", zap.StackSkip("stack", 1), logutil.ShortError(*err))
 	}
 }
-<<<<<<< HEAD
-=======
 
 type Result[T any] struct {
 	Err  error
@@ -161,4 +159,3 @@ func BuildWorkerTokenChannel(size uint) chan struct{} {
 	}
 	return ch
 }
->>>>>>> bbbada0dde3 (backup: advacned prepare implementation (#48439))
