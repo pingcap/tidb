@@ -1915,13 +1915,7 @@ func getPartitionDef(ctx sessionctx.Context, tbl *model.TableInfo, schema *expre
 				return nil, 0, 0, false
 			}
 			pe := &tables.ForKeyPruning{KeyPartCols: partCols}
-			colName := ""
-			for _, col := range tbl.Columns {
-				if partCols[0].ID == col.ID {
-					colName = col.Name.L
-					break
-				}
-			}
+			colName := partCols[0].OrigName
 			for i, pair := range pairs {
 				if colName == pair.colName {
 					pos, err := pe.LocateKeyPartition(pi.Num, []types.Datum{pair.value})
