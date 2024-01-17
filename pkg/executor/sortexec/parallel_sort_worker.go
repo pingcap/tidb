@@ -15,15 +15,14 @@
 package sortexec
 
 import (
-	"fmt"
 	"math/rand"
 	"time"
 
+	"slices"
+
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"golang.org/x/exp/slices"
 )
 
 // SignalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
