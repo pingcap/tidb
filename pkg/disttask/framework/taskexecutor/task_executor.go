@@ -91,8 +91,7 @@ func NewBaseTaskExecutor(ctx context.Context, id string, task *proto.Task, taskT
 		taskTable: taskTable,
 		ctx:       ctx,
 		logger: log.L().With(zap.Int64("task-id", task.ID),
-			zap.String("task-type", string(task.Type)),
-			zap.Int64("task-step", int64(task.Step))),
+			zap.String("task-type", string(task.Type))),
 	}
 	taskExecutorImpl.task.Store(task)
 	return taskExecutorImpl
@@ -196,6 +195,7 @@ func (e *BaseTaskExecutor) runStep(ctx context.Context, task *proto.Task) (resEr
 	e.registerCancelFunc(runCancel)
 	e.resetError()
 	stepLogger := llog.BeginTask(e.logger.With(
+		zap.Int64("task-step", int64(task.Step)),
 		zap.Int("concurrency", task.Concurrency),
 		zap.Float64("mem-limit-percent", gctuner.GlobalMemoryLimitTuner.GetPercentage()),
 		zap.String("server-mem-limit", memory.ServerMemoryLimitOriginText.Load()),
