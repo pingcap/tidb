@@ -339,7 +339,7 @@ func (s *BaseScheduler) onRunning() error {
 		return err
 	}
 	if cntByStates[proto.SubtaskStateFailed] > 0 || cntByStates[proto.SubtaskStateCanceled] > 0 {
-		subTaskErrs, err := s.taskMgr.CollectSubTaskError(s.ctx, task.ID)
+		subTaskErrs, err := s.taskMgr.GetSubtaskErrors(s.ctx, task.ID)
 		if err != nil {
 			logutil.Logger(s.logCtx).Warn("collect subtask error failed", zap.Error(err))
 			return err
@@ -586,7 +586,7 @@ func (s *BaseScheduler) GetAllTaskExecutorIDs(ctx context.Context, task *proto.T
 
 // GetPreviousSubtaskMetas get subtask metas from specific step.
 func (s *BaseScheduler) GetPreviousSubtaskMetas(taskID int64, step proto.Step) ([][]byte, error) {
-	previousSubtasks, err := s.taskMgr.GetSubtasksByStepAndState(s.ctx, taskID, step, proto.TaskStateSucceed)
+	previousSubtasks, err := s.taskMgr.GetAllSubtasksByStepAndState(s.ctx, taskID, step, proto.SubtaskStateSucceed)
 	if err != nil {
 		logutil.Logger(s.logCtx).Warn("get previous succeed subtask failed", zap.Int64("step", int64(step)))
 		return nil, err
