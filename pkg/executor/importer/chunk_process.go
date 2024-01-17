@@ -104,7 +104,7 @@ func (b *deliverKVBatch) add(kvs *kv.Pairs) {
 type chunkEncoder interface {
 	init() error
 	encodeLoop(ctx context.Context) error
-	logFields() []zap.Field
+	summaryFields() []zap.Field
 }
 
 // fileChunkEncoder encode data chunk(either a data file or part of a file).
@@ -228,7 +228,7 @@ func (p *fileChunkEncoder) encodeLoop(ctx context.Context) error {
 	return nil
 }
 
-func (p *fileChunkEncoder) logFields() []zap.Field {
+func (p *fileChunkEncoder) summaryFields() []zap.Field {
 	return []zap.Field{
 		zap.Duration("readDur", p.readTotalDur),
 		zap.Duration("encodeDur", p.encodeTotalDur),
@@ -252,7 +252,7 @@ type baseChunkProcessor struct {
 func (p *baseChunkProcessor) Process(ctx context.Context) (err error) {
 	task := log.BeginTask(p.logger, "process chunk")
 	defer func() {
-		logFields := append(p.enc.logFields(), p.deliver.logFields()...)
+		logFields := append(p.enc.summaryFields(), p.deliver.logFields()...)
 		logFields = append(logFields, zap.Stringer("type", p.sourceType))
 		task.End(zap.ErrorLevel, err, logFields...)
 		if metrics, ok := metric.GetCommonMetric(ctx); ok && err == nil {
@@ -449,6 +449,7 @@ func (*queryChunkEncoder) init() error {
 	return nil
 }
 
+// TODO logic is very similar to fileChunkEncoder, consider merge them.
 func (e *queryChunkEncoder) encodeLoop(ctx context.Context) error {
 	var err error
 	reachEOF := false
@@ -523,7 +524,7 @@ func (e *queryChunkEncoder) encodeLoop(ctx context.Context) error {
 	return nil
 }
 
-func (e *queryChunkEncoder) logFields() []zap.Field {
+func (e *queryChunkEncoder) summaryFields() []zap.Field {
 	return []zap.Field{
 		zap.Duration("readDur", e.readTotalDur),
 		zap.Duration("encodeDur", e.encodeTotalDur),
