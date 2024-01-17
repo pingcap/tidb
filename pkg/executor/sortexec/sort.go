@@ -24,9 +24,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/planner/util"
+	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -39,7 +40,7 @@ type sortedRows []chunk.Row
 type SortExec struct {
 	exec.BaseExecutor
 
-	ByItems    []*util.ByItems
+	ByItems    []*plannerutil.ByItems
 	fetched    bool
 	ExecSchema *expression.Schema
 
@@ -112,11 +113,13 @@ func (e *SortExec) Close() error {
 	}
 
 	if e.memTracker != nil {
+		// TODO clear some data
+		e.Parallel.globalSortedRowsQueue.clear()
 		e.memTracker.ReplaceBytesUsed(0)
 	}
 
 	e.tryToCloseFinishChannel()
-	return e.Children(0).Close()
+	return exec.Close(e.Children(0))
 }
 
 // Open implements the Executor Open interface.
@@ -486,23 +489,22 @@ func (e *SortExec) fetchChunksUnparallel(ctx context.Context) error {
 }
 
 func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
-	workerNum := len(e.Parallel.workers)
-
 	// Wait for the finish of all workers
-	workersWaiter := sync.WaitGroup{}
+	workersWaiter := util.WaitGroupWrapper{}
 	// Wait for the finish of chunk fetcher
-	fetcherWaiter := sync.WaitGroup{}
-
-	// Add before the start of goroutine to avoid that the counter is minus to negative.
-	workersWaiter.Add(workerNum)
-	fetcherWaiter.Add(1)
+	fetcherWaiter := util.WaitGroupWrapper{}
 
 	// Fetch chunks from child and put chunks into chunkChannel
-	go e.fetchChunksFromChild(ctx, &fetcherWaiter)
+	fetcherWaiter.Run(func() {
+		e.fetchChunksFromChild(ctx)
+	})
 
 	for i := range e.Parallel.workers {
-		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.globalSortedRowsQueue, &workersWaiter, &e.Parallel.result, e.Parallel.chunkChannel, e.processErrorForParallel, e.finishCh, e.memTracker)
-		go e.Parallel.workers[i].run()
+		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.globalSortedRowsQueue, &e.Parallel.result, e.Parallel.chunkChannel, e.processErrorForParallel, e.finishCh, e.memTracker)
+		worker := e.Parallel.workers[i]
+		workersWaiter.Run(func() {
+			worker.run()
+		})
 	}
 
 	workersWaiter.Wait()
@@ -522,13 +524,12 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 }
 
 // Fetch chunks from child and put chunks into chunkChannel
-func (e *SortExec) fetchChunksFromChild(ctx context.Context, waitGroup *sync.WaitGroup) {
+func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
 			processPanicAndLog(e.processErrorForParallel, r)
 		}
 		e.tryToCloseChunkChannel()
-		waitGroup.Done()
 	}()
 
 	for {

@@ -15,11 +15,12 @@
 package sortexec
 
 import (
+	"fmt"
 	"math/rand"
-	"sync"
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"golang.org/x/exp/slices"
@@ -32,8 +33,6 @@ type parallelSortWorker struct {
 	workerIDForTest int
 
 	lessRowFunc func(chunk.Row, chunk.Row) int
-
-	waitGroup *sync.WaitGroup
 
 	// Temporarily store rows that will be sorted.
 	rowBuffer             sortedRows
@@ -53,7 +52,6 @@ func newParallelSortWorker(
 	workerIDForTest int,
 	lessRowFunc func(chunk.Row, chunk.Row) int,
 	globalSortedRowsQueue *sortedRowsList,
-	waitGroup *sync.WaitGroup,
 	result *sortedRows,
 	chunkChannel chan *chunk.Chunk,
 	processError func(error),
@@ -63,7 +61,6 @@ func newParallelSortWorker(
 		workerIDForTest:       workerIDForTest,
 		lessRowFunc:           lessRowFunc,
 		globalSortedRowsQueue: globalSortedRowsQueue,
-		waitGroup:             waitGroup,
 		result:                result,
 		chunkChannel:          chunkChannel,
 		processError:          processError,
@@ -202,7 +199,6 @@ func (p *parallelSortWorker) run() {
 		if r := recover(); r != nil {
 			processPanicAndLog(p.processError, r)
 		}
-		p.waitGroup.Done()
 	}()
 
 	ok := p.fetchChunksAndSort()
