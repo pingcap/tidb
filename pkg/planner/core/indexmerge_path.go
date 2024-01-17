@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 
 func init() {
@@ -769,6 +770,7 @@ func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, in
 		paths            []*util.AccessPath
 		countAfterAccess float64
 	}
+	// mm is a map here used for de-duplicate partial paths which is derived from **same** accessFilters, not necessary to keep them both.
 	mm := make(map[string]*record, 0)
 	for idx := 0; idx < len(possibleMVIndexPaths); idx++ {
 		idxCols, ok := PrepareCols4MVIndex(ds.table.Meta(), possibleMVIndexPaths[idx].Index, ds.TblCols)
@@ -822,23 +824,19 @@ func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, in
 		// sort allHashCodes to make the unified hashcode for slices of all accessFilters.
 		slices.Sort(allHashCodes)
 		allHashCodesKey := strings.Join(allHashCodes, "")
+		countAfterAccess := float64(histColl.RealtimeCount) * cardinality.CalcTotalSelectivityForMVIdxPath(histColl, partialPaths4ThisMvIndex, true)
 		if rec, ok := mm[allHashCodesKey]; !ok {
 			// compute the count after access from those intersection partial paths, for this mv index usage.
-			countAfterAccess := float64(histColl.RealtimeCount) * cardinality.CalcTotalSelectivityForMVIdxPath(histColl, partialPaths4ThisMvIndex, true)
 			mm[allHashCodesKey] = &record{idx, partialPaths4ThisMvIndex, countAfterAccess}
 		} else {
 			// pick the minimum countAfterAccess's paths.
-			countAfterAccess := float64(histColl.RealtimeCount) * cardinality.CalcTotalSelectivityForMVIdxPath(histColl, partialPaths4ThisMvIndex, true)
 			if rec.countAfterAccess > countAfterAccess {
 				mm[allHashCodesKey] = &record{idx, partialPaths4ThisMvIndex, countAfterAccess}
 			}
 		}
 	}
 	// after all mv index is traversed, pick those remained paths which has already been de-duplicated for its accessFilters.
-	recordsCollection := make([]*record, 0, len(mm))
-	for _, one := range mm {
-		recordsCollection = append(recordsCollection, one)
-	}
+	recordsCollection := maps.Values(mm)
 	// according origin offset to stable the partial paths order. (golang map is not order stable)
 	slices.SortFunc(recordsCollection, func(a, b *record) int {
 		return cmp.Compare(a.originOffset, b.originOffset)
