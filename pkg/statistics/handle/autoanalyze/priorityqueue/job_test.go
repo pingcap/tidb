@@ -17,7 +17,10 @@ package priorityqueue
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGenSQLForAnalyzeTable(t *testing.T) {
@@ -31,8 +34,8 @@ func TestGenSQLForAnalyzeTable(t *testing.T) {
 
 	sql, params := job.genSQLForAnalyzeTable()
 
-	assert.Equal(t, expectedSQL, sql)
-	assert.Equal(t, expectedParams, params)
+	require.Equal(t, expectedSQL, sql)
+	require.Equal(t, expectedParams, params)
 }
 
 func TestGenSQLForAnalyzeIndex(t *testing.T) {
@@ -48,6 +51,31 @@ func TestGenSQLForAnalyzeIndex(t *testing.T) {
 
 	sql, params := job.genSQLForAnalyzeIndex(index)
 
-	assert.Equal(t, expectedSQL, sql)
-	assert.Equal(t, expectedParams, params)
+	require.Equal(t, expectedSQL, sql)
+	require.Equal(t, expectedParams, params)
+}
+
+func TestAnalyzeTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int, b int, index idx(a))")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+	job := &TableAnalysisJob{
+		TableSchema:   "test",
+		TableName:     "t",
+		TableStatsVer: 2,
+	}
+
+	se := tk.Session()
+	sctx := se.(sessionctx.Context)
+	handle := dom.StatsHandle()
+	job.analyzeTable(sctx, handle, dom.SysProcTracker())
+	// Check the result of analyze.
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblStats := handle.GetTableStats(tbl.Meta())
+	require.Equal(t, int64(3), tblStats.RealtimeCount)
 }
