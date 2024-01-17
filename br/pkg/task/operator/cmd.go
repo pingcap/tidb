@@ -161,13 +161,17 @@ func pauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
 	cx.runGrp.Go(func() (err error) {
 		defer cx.cleanUpWithRetErr(&err, func(ctx context.Context) error {
 			if ctx.Err() != nil {
+				//nolint: all_revive,revive // There is a false positive on returning in `defer`.
 				return errors.Annotate(ctx.Err(), "cleaning up timed out")
 			}
 			res, err := utils.WithRetryV2(ctx, cx.GetBackOffer("restore_lightning"),
+				//nolint: all_revive,revive // There is a false positive on returning in `defer`.
 				func(ctx context.Context) (map[uint64]bool, error) { return suspendLightning.AllowAllStores(ctx) })
 			if err != nil {
+				//nolint: all_revive,revive // There is a false positive on returning in `defer`.
 				return errors.Annotatef(err, "failed to allow all stores")
 			}
+			//nolint: all_revive,revive // There is a false positive on returning in `defer`.
 			return suspendLightning.ConsistentWithPrev(res)
 		})
 
@@ -208,6 +212,7 @@ func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext) (err error) {
 			ID:  sp.ID,
 			TTL: 0,
 		}
+		//nolint: all_revive,revive // There is a false positive on returning in `defer`.
 		return utils.UpdateServiceSafePoint(ctx, cx.pdMgr.GetPDClient(), cancelSP)
 	})
 	// Note: in fact we can directly return here.
