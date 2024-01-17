@@ -664,28 +664,20 @@ func ChooseSplitKeysBySize(totalSize uint64, storeCount int, ranges []rtree.Rang
 	}
 	size := uint64(0)
 	keys := make([][]byte, 0, storeCount)
-	cnt := 0
 	for _, rg := range ranges {
 		size += rg.Size
 		if size >= expectSplitSize {
 			// collect enough ranges, choose this one
-			cnt += 1
 			keys = append(keys, rg.EndKey)
 			log.Info("choose the split key", zap.Uint64("split size", size), logutil.Key("key", rg.EndKey))
 			size = 0
 		}
 	}
-	if cnt >= storeCount {
-		// we only use the first storeCount-1 ranges to split
-		// because we want have storeCount regions after split
-		keys = keys[:storeCount-1]
-	}
-	if cnt < storeCount {
-		// the range size are not balance
-		// in this case we should try best effort to split
-		// even not reach the storeCount
-		keys = keys[:cnt]
-	}
+	// we only use the first storeCount-1 ranges to split
+	// because we want have storeCount regions after split
+	// but in some case we should try best effort to split
+	// even the keys not reach the storeCount
+	keys = keys[:min(len(keys), storeCount-1)]
 	return keys, expectSplitSize
 }
 
