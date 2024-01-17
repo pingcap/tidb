@@ -209,7 +209,7 @@ func (rs *RegionSplitter) executeSplitByRanges(
 				keys, expectSplitSize := ChooseSplitKeysBySize(rangeSize, sctx.storeCount, ranges)
 				if len(keys) == 0 {
 					// no need split by ranges, fallback to split by keys
-					log.Info("no keys are choosen for region, fallback to split by keys", logutil.Region(region.Region))
+					log.Info("no keys are chosen for region, fallback to split by keys", logutil.Region(region.Region))
 					return rs.executeSplitByKeys(ectx, sctx, scanStartKey, allKeys)
 				}
 				log.Info("get split ranges for region",
