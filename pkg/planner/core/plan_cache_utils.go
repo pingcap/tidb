@@ -444,7 +444,7 @@ type PlanCacheStmt struct {
 	// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
 	Executor interface{}
 
-	UncacheableReasonWarning bool   // Whether UncacheableReason should be warning.
+	UncacheableReasonWarning bool   // Whether this stmt should warn.
 	UncacheableReason        string // Why this stmt is uncacheable.
 	QueryFeatures            *PlanCacheQueryFeatures
 
