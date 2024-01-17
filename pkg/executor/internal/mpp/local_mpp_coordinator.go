@@ -616,24 +616,17 @@ func (c *localMppCoordinator) IsClosed() bool {
 // Close implements MppCoordinator interface
 // TODO: Test the case that user cancels the query.
 func (c *localMppCoordinator) Close() error {
-	logutil.BgLogger().Info("gjt coord 0", zap.Any("now", time.Now()))
 	c.closeWithoutReport()
-	logutil.BgLogger().Info("gjt coord 5", zap.Any("now", time.Now()))
 	c.handleAllReports()
-	logutil.BgLogger().Info("gjt coord 6", zap.Any("now", time.Now()))
 	return nil
 }
 
 func (c *localMppCoordinator) closeWithoutReport() {
-	logutil.BgLogger().Info("gjt coord 1", zap.Any("now", time.Now()))
 	if atomic.CompareAndSwapUint32(&c.closed, 0, 1) {
 		close(c.finishCh)
 	}
-	logutil.BgLogger().Info("gjt coord 2", zap.Any("now", time.Now()))
 	c.cancelFunc()
-	logutil.BgLogger().Info("gjt coord 3", zap.Any("now", time.Now()))
 	<-c.wgDoneChan
-	logutil.BgLogger().Info("gjt coord 4", zap.Any("now", time.Now()))
 }
 
 func (c *localMppCoordinator) handleMPPStreamResponse(bo *backoff.Backoffer, response *mpp.MPPDataPacket, req *kv.MPPDispatchRequest) (err error) {
