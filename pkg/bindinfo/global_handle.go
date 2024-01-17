@@ -17,7 +17,6 @@ package bindinfo
 import (
 	"context"
 	"fmt"
-	"maps"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -148,11 +147,6 @@ const (
          SELECT _tidb_rowid FROM mysql.bind_info WHERE original_sql='builtin_pseudo_sql_for_bind_lock' limit 1)`
 )
 
-type bindRecordUpdate struct {
-	binding    Binding
-	updateTime time.Time
-}
-
 // NewGlobalBindingHandle creates a new GlobalBindingHandle.
 func NewGlobalBindingHandle(sPool SessionPool) GlobalBindingHandle {
 	handle := &globalBindingHandle{sPool: sPool}
@@ -250,7 +244,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 			if row.GetString(0) == BuiltinPseudoSQL4BindLock {
 				continue
 			}
-			sqlDigest, binding, err := newBindRecord(sctx, row)
+			sqlDigest, binding, err := newBinding(sctx, row)
 
 			// Update lastUpdateTime to the newest one.
 			// Even if this one is an invalid bind.
@@ -511,8 +505,8 @@ func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, fuzzyD
 	leastWildcards := len(tableNames) + 1
 	for _, exactDigest := range fuzzyDigestMap[fuzzyDigest] {
 		sqlDigest := exactDigest
-		if bindRecord := bindingCache.GetBinding(sqlDigest); bindRecord != nil {
-			for _, binding := range bindRecord {
+		if bindings := bindingCache.GetBinding(sqlDigest); bindings != nil {
+			for _, binding := range bindings {
 				numWildcards, matched := fuzzyMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
 				if matched && numWildcards > 0 && sctx != nil && !sctx.GetSessionVars().EnableFuzzyBinding {
 					continue // fuzzy binding is disabled, skip this binding
@@ -553,8 +547,8 @@ func (h *globalBindingHandle) GetMemCapacity() (memCapacity int64) {
 	return h.getCache().GetMemCapacity()
 }
 
-// newBindRecord builds Bindings from a tuple in storage.
-func newBindRecord(sctx sessionctx.Context, row chunk.Row) (string, Binding, error) {
+// newBinding builds Bindings from a tuple in storage.
+func newBinding(sctx sessionctx.Context, row chunk.Row) (string, Binding, error) {
 	status := row.GetString(3)
 	// For compatibility, the 'Using' status binding will be converted to the 'Enabled' status binding.
 	if status == Using {
@@ -588,12 +582,6 @@ func newBindRecord(sctx sessionctx.Context, row chunk.Row) (string, Binding, err
 	err = prepareHints(sctx, &binding)
 	sctx.GetSessionVars().CurrentDB = binding.Db
 	return sqlDigest.String(), binding, err
-}
-
-func copyBindRecordUpdateMap(oldMap map[string]*bindRecordUpdate) map[string]*bindRecordUpdate {
-	newMap := make(map[string]*bindRecordUpdate, len(oldMap))
-	maps.Copy(newMap, oldMap)
-	return newMap
 }
 
 func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
