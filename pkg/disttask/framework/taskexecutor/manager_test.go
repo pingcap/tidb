@@ -121,7 +121,7 @@ func TestOnRunnableTasks(t *testing.T) {
 	m.onRunnableTasks(nil)
 
 	// type not found
-	mockTaskTable.EXPECT().UpdateErrorToSubtask(m.ctx, id, taskID, gomock.Any())
+	mockTaskTable.EXPECT().FailSubtask(m.ctx, id, taskID, gomock.Any())
 	m.onRunnableTask(task)
 
 	RegisterTaskType("type",
@@ -133,8 +133,9 @@ func TestOnRunnableTasks(t *testing.T) {
 	executorErr := errors.New("executor init failed")
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(executorErr)
 	mockInternalExecutor.EXPECT().IsRetryableError(executorErr).Return(false)
-	mockTaskTable.EXPECT().UpdateErrorToSubtask(m.ctx, id, taskID, executorErr)
+	mockTaskTable.EXPECT().FailSubtask(m.ctx, id, taskID, executorErr)
 	m.onRunnableTask(task)
+
 	m.removeHandlingTask(taskID)
 	require.Equal(t, true, ctrl.Satisfied())
 
