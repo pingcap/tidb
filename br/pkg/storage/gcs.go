@@ -373,6 +373,12 @@ skipHandleCred:
 		clientOps = append(clientOps, option.WithHTTPClient(opts.HTTPClient))
 	}
 
+	debugMsg := make([]string, 0, len(clientOps))
+	for _, ops := range clientOps {
+		debugMsg = append(debugMsg, fmt.Sprintf("%#v", ops))
+	}
+	log.Warn("create gcs client with options", zap.Strings("options", debugMsg))
+
 	client, err := storage.NewClient(ctx, clientOps...)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -413,9 +419,12 @@ func shouldRetry(err error) bool {
 		}
 	}
 
-	log.Warn("other error when requesting gcs",
-		zap.Error(err),
-		zap.String("info", fmt.Sprintf("type: %T, value: %+v", err, err)))
+	if err != nil {
+		log.Warn("other error when requesting gcs",
+			zap.Error(err),
+			zap.String("info", fmt.Sprintf("type: %T, value: %#v", err, err)))
+	}
+
 	return false
 }
 
