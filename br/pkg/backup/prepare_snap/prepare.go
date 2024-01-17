@@ -159,7 +159,7 @@ func (p *Preparer) DriveLoopAndWaitPrepare(ctx context.Context) error {
 		log.Error("failed to prepare connections", logutil.ShortError(err))
 		return errors.Annotate(err, "failed to prepare connections")
 	}
-	if err := p.MaybeFinish(ctx); err != nil {
+	if err := p.AdvanceState(ctx); err != nil {
 		log.Error("failed to check the progress of our work", logutil.ShortError(err))
 		return errors.Annotate(err, "failed to begin step")
 	}
@@ -232,7 +232,7 @@ func (p *Preparer) WaitAndHandleNextEvent(ctx context.Context) error {
 				return errors.Annotatef(err, "failed to handle event %v", evt)
 			}
 		}
-		return p.MaybeFinish(ctx)
+		return p.AdvanceState(ctx)
 	case <-p.retryChan():
 		return p.workOnPendingRanges(ctx)
 	}
@@ -299,11 +299,11 @@ func (p *Preparer) retryChan() <-chan time.Time {
 	return p.nextRetry.C
 }
 
-// MaybeFinish is exported for test usage.
+// AdvanceState is exported for test usage.
 // This call will check whether now we are safe to forward the whole procedure.
 // If we can, this will set `p.waitApplyFinished` to true.
 // Generally `DriveLoopAndWaitPrepare` is all you need, you may not want to call this.
-func (p *Preparer) MaybeFinish(ctx context.Context) error {
+func (p *Preparer) AdvanceState(ctx context.Context) error {
 	logutil.CL(ctx).Info("Checking the progress of our work.", zap.Object("current", p))
 	if len(p.inflightReqs) == 0 && len(p.failed) == 0 {
 		holes := p.checkHole()

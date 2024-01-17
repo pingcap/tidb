@@ -354,7 +354,7 @@ func TestLeaseTimeoutWhileTakingSnapshot(t *testing.T) {
 	ctx := context.Background()
 	prep := New(ms)
 	prep.LeaseDuration = 4 * time.Second
-	req.NoError(prep.MaybeFinish(ctx))
+	req.NoError(prep.AdvanceState(ctx))
 	tt.mu.Lock()
 	tt.now = tt.now.Add(100 * time.Minute)
 	tt.mu.Unlock()
