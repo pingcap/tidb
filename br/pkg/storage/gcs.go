@@ -407,7 +407,7 @@ func shouldRetry(err error) bool {
 
 	// workaround for https://github.com/googleapis/google-cloud-go/issues/9262
 	if e := (&googleapi.Error{}); goerrors.As(err, &e) {
-		if e.Code == 401 && strings.Contains(e.Message, "Authentication required.") {
+		if e.Code == 401 {
 			log.Warn("retrying gcs request due to internal authentication error", zap.Error(err))
 			return true
 		}
