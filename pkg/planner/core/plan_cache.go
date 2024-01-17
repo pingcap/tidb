@@ -163,8 +163,12 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		cacheEnabled = sctx.GetSessionVars().EnablePreparedPlanCache
 	}
 	stmtCtx.UseCache = stmt.StmtCacheable && cacheEnabled
-	if (cacheEnabled || stmt.ForceCacheableWarn) && stmt.UncacheableReason != "" {
-		stmtCtx.ForceSetSkipPlanCache(errors.New(stmt.UncacheableReason))
+	if stmt.UncacheableReason != "" {
+		if stmt.ForceCacheableWarn {
+			stmtCtx.ForceSetSkipPlanCache(errors.New(stmt.UncacheableReason))
+		} else if !stmt.StmtCacheable {
+			stmtCtx.SetSkipPlanCache(errors.New(stmt.UncacheableReason))
+		}
 	}
 
 	var bindSQL string
