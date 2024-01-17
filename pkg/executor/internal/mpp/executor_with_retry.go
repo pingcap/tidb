@@ -131,6 +131,7 @@ func (r *ExecutorWithRetry) Next(ctx context.Context) (resp kv.ResultSubset, err
 func (r *ExecutorWithRetry) Close() error {
 	r.mppErrRecovery.ResetHolder()
 	r.memTracker.Detach()
+	// Need to close coordinator before unregister to avoid coord.Close() takes too long.
 	err := r.coord.Close()
 	mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(r.getCoordUniqueID())
 	return err
