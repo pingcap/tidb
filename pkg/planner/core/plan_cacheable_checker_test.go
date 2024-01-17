@@ -166,7 +166,7 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Where:     &ast.ExistsSubqueryExpr{Sel: &ast.SubqueryExpr{Query: &ast.SelectStmt{}}},
 	}
-	c, _ := core.CacheableWithCtx(mockCtx, stmt, is)
+	c, _, _ := core.CacheableWithCtx(mockCtx, stmt, is)
 	require.True(t, c)
 
 	limitStmt := &ast.Limit{
@@ -176,7 +176,7 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	c, _, _ = core.CacheableWithCtx(mockCtx, stmt, is)
 	require.True(t, c)
 
 	limitStmt = &ast.Limit{
@@ -186,7 +186,7 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	c, _, _ = core.CacheableWithCtx(mockCtx, stmt, is)
 	require.True(t, c)
 
 	limitStmt = &ast.Limit{}
@@ -194,7 +194,7 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	c, _, _ = core.CacheableWithCtx(mockCtx, stmt, is)
 	require.True(t, c)
 
 	stmt.(*ast.DeleteStmt).TableHints = append(stmt.(*ast.DeleteStmt).TableHints, &ast.TableOptimizerHint{
@@ -222,7 +222,7 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Where:     &ast.ExistsSubqueryExpr{Sel: &ast.SubqueryExpr{Query: &ast.SelectStmt{}}},
 	}
-	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	c, _, _ = core.CacheableWithCtx(mockCtx, stmt, is)
 	require.True(t, c)
 
 	limitStmt = &ast.Limit{
@@ -232,7 +232,7 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	c, _, _ = core.CacheableWithCtx(mockCtx, stmt, is)
 	require.True(t, c)
 
 	limitStmt = &ast.Limit{
@@ -242,7 +242,7 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	c, _, _ = core.CacheableWithCtx(mockCtx, stmt, is)
 	require.True(t, c)
 
 	limitStmt = &ast.Limit{}
@@ -250,7 +250,7 @@ func TestCacheable(t *testing.T) {
 		TableRefs: tableRefsClause,
 		Limit:     limitStmt,
 	}
-	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	c, _, _ = core.CacheableWithCtx(mockCtx, stmt, is)
 	require.True(t, c)
 
 	stmt.(*ast.UpdateStmt).TableHints = append(stmt.(*ast.UpdateStmt).TableHints, &ast.TableOptimizerHint{
@@ -276,7 +276,7 @@ func TestCacheable(t *testing.T) {
 	stmt = &ast.SelectStmt{
 		Where: &ast.ExistsSubqueryExpr{Sel: &ast.SubqueryExpr{Query: &ast.SelectStmt{}}},
 	}
-	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	c, _, _ = core.CacheableWithCtx(mockCtx, stmt, is)
 	require.True(t, c)
 
 	limitStmt = &ast.Limit{
@@ -285,7 +285,7 @@ func TestCacheable(t *testing.T) {
 	stmt = &ast.SelectStmt{
 		Limit: limitStmt,
 	}
-	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	c, _, _ = core.CacheableWithCtx(mockCtx, stmt, is)
 	require.True(t, c)
 
 	limitStmt = &ast.Limit{
@@ -294,14 +294,14 @@ func TestCacheable(t *testing.T) {
 	stmt = &ast.SelectStmt{
 		Limit: limitStmt,
 	}
-	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	c, _, _ = core.CacheableWithCtx(mockCtx, stmt, is)
 	require.True(t, c)
 
 	limitStmt = &ast.Limit{}
 	stmt = &ast.SelectStmt{
 		Limit: limitStmt,
 	}
-	c, _ = core.CacheableWithCtx(mockCtx, stmt, is)
+	c, _, _ = core.CacheableWithCtx(mockCtx, stmt, is)
 	require.True(t, c)
 
 	paramExpr := &driver.ParamMarkerExpr{}

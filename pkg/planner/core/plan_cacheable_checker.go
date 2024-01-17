@@ -43,24 +43,24 @@ import (
 // Cacheable checks whether the input ast(query) is cacheable with empty session context, which is mainly for testing.
 // TODO: only for test, remove this function later on.
 func Cacheable(node ast.Node, is infoschema.InfoSchema) bool {
-	c, _ := IsASTCacheable(nil, nil, node, is)
+	c, _, _ := IsASTCacheable(nil, nil, node, is)
 	return c
 }
 
 // CacheableWithCtx checks whether the input ast(query) is cacheable.
 // TODO: only for test, remove this function later on.
-func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (bool, string) {
+func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (bool, string, bool) {
 	return IsASTCacheable(nil, sctx, node, is)
 }
 
 // IsASTCacheable checks whether the input ast(query) is cacheable.
 // Handle "ignore_plan_cache()" hint
 // If there are multiple hints, only one will take effect
-func IsASTCacheable(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (bool, string) {
+func IsASTCacheable(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (bool, string, bool) {
 	switch node.(type) {
 	case *ast.SelectStmt, *ast.UpdateStmt, *ast.InsertStmt, *ast.DeleteStmt, *ast.SetOprStmt:
 	default:
-		return false, "not a SELECT/UPDATE/INSERT/DELETE/SET statement"
+		return false, "not a SELECT/UPDATE/INSERT/DELETE/SET statement", false
 	}
 	checker := cacheableChecker{
 		ctx:          ctx,
@@ -71,7 +71,7 @@ func IsASTCacheable(ctx context.Context, sctx sessionctx.Context, node ast.Node,
 		maxNumParam:  getMaxParamLimit(sctx),
 	}
 	node.Accept(&checker)
-	return checker.cacheable, checker.reason
+	return checker.cacheable, checker.reason, checker.forceWarn
 }
 
 // cacheableChecker checks whether a query can be cached:
@@ -79,6 +79,7 @@ type cacheableChecker struct {
 	ctx       context.Context
 	sctx      sessionctx.Context
 	cacheable bool
+	forceWarn bool
 	schema    infoschema.InfoSchema
 	reason    string // reason why cannot use plan-cache
 
@@ -196,7 +197,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 		}
 	case *ast.TableName:
 		if checker.schema != nil {
-			checker.cacheable, checker.reason = checkTableCacheable(checker.ctx, checker.sctx, checker.schema, node, false)
+			checker.cacheable, checker.reason, checker.forceWarn = checkTableCacheable(checker.ctx, checker.sctx, checker.schema, node, false)
 			if !checker.cacheable {
 				return in, true
 			}
@@ -373,6 +374,7 @@ func extractTableNames(node ast.ResultSetNode, names []*ast.TableName) ([]*ast.T
 type nonPreparedPlanCacheableChecker struct {
 	sctx      sessionctx.Context
 	cacheable bool
+	forceWarn bool
 	reason    string // reason why this statement cannot hit the cache
 	schema    infoschema.InfoSchema
 
@@ -489,7 +491,7 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node
 			return in, !checker.cacheable
 		}
 		if checker.schema != nil {
-			checker.cacheable, checker.reason = checkTableCacheable(nil, checker.sctx, checker.schema, node, true)
+			checker.cacheable, checker.reason, checker.forceWarn = checkTableCacheable(nil, checker.sctx, checker.schema, node, true)
 		}
 		return in, !checker.cacheable
 	}
@@ -630,7 +632,7 @@ func enablePlanCacheForGeneratedCols(sctx sessionctx.Context) bool {
 }
 
 // checkTableCacheable checks whether a query accessing this table is cacheable.
-func checkTableCacheable(ctx context.Context, sctx sessionctx.Context, schema infoschema.InfoSchema, node *ast.TableName, isNonPrep bool) (cacheable bool, reason string) {
+func checkTableCacheable(ctx context.Context, sctx sessionctx.Context, schema infoschema.InfoSchema, node *ast.TableName, isNonPrep bool) (cacheable bool, reason string, forceWarn bool) {
 	tableSchema := node.Schema
 	if tableSchema.L == "" {
 		tableSchema.O = sctx.GetSessionVars().CurrentDB
@@ -647,7 +649,7 @@ func checkTableCacheable(ctx context.Context, sctx sessionctx.Context, schema in
 		}
 		logutil.BgLogger().Warn("find table failed", zap.Error(err), zap.String("sql", sql),
 			zap.String("table_schema", tableSchema.O), zap.String("table_name", node.Name.O))
-		return false, fmt.Sprintf("find table %s.%s failed: %s", tableSchema, node.Name, err.Error())
+		return false, fmt.Sprintf("find table %s.%s failed: %s", tableSchema, node.Name, err.Error()), false
 	}
 
 	if tb.Meta().GetPartitionInfo() != nil {
@@ -658,28 +660,28 @@ func checkTableCacheable(ctx context.Context, sctx sessionctx.Context, schema in
 				return in, false // dynamic-mode for partition tables can use plan-cache
 			}
 		*/
-		return false, "query accesses partitioned tables is un-cacheable"
+		return false, "query accesses partitioned tables is un-cacheable", true
 	}
 
 	if !enablePlanCacheForGeneratedCols(sctx) {
 		for _, col := range tb.Cols() {
 			if col.IsGenerated() {
-				return false, "query accesses generated columns is un-cacheable"
+				return false, "query accesses generated columns is un-cacheable", false
 			}
 		}
 	}
 	if tb.Meta().TempTableType != model.TempTableNone {
-		return false, "query accesses temporary tables is un-cacheable"
+		return false, "query accesses temporary tables is un-cacheable", false
 	}
 
 	if isNonPrep { // non-prep plan cache is stricter
 		if tb.Meta().IsView() {
-			return false, "queries that access views are not supported"
+			return false, "queries that access views are not supported", false
 		}
 		if !tb.Type().IsNormalTable() {
-			return false, "queries that access in-memory tables"
+			return false, "queries that access in-memory tables", false
 		}
 	}
 
-	return true, ""
+	return true, "", false
 }

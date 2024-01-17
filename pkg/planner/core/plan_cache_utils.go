@@ -129,8 +129,8 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 	normalizedSQL, digest := parser.NormalizeDigest(prepared.Stmt.Text())
 
 	var (
-		cacheable bool
-		reason    string
+		cacheable, forceWarn bool
+		reason               string
 	)
 	if (isPrepStmt && !vars.EnablePreparedPlanCache) || // prepared statement
 		(!isPrepStmt && !vars.EnableNonPreparedPlanCache) { // non-prepared statement
@@ -138,7 +138,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		reason = "plan cache is disabled"
 	} else {
 		if isPrepStmt {
-			cacheable, reason = IsASTCacheable(ctx, sctx, paramStmt, ret.InfoSchema)
+			cacheable, reason, forceWarn = IsASTCacheable(ctx, sctx, paramStmt, ret.InfoSchema)
 		} else {
 			cacheable = true // it is already checked here
 		}
@@ -185,6 +185,7 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		ForUpdateRead:       destBuilder.GetIsForUpdateRead(),
 		SnapshotTSEvaluator: ret.SnapshotTSEvaluator,
 		StmtCacheable:       cacheable,
+		ForceCacheableWarn:  forceWarn,
 		UncacheableReason:   reason,
 		QueryFeatures:       features,
 	}
@@ -445,9 +446,10 @@ type PlanCacheStmt struct {
 	// If the current plan is not PointGet or does not use MaxTS optimization, this value should be nil here.
 	Executor interface{}
 
-	StmtCacheable     bool   // Whether this stmt is cacheable.
-	UncacheableReason string // Why this stmt is uncacheable.
-	QueryFeatures     *PlanCacheQueryFeatures
+	ForceCacheableWarn bool
+	StmtCacheable      bool   // Whether this stmt is cacheable.
+	UncacheableReason  string // Why this stmt is uncacheable.
+	QueryFeatures      *PlanCacheQueryFeatures
 
 	NormalizedSQL       string
 	NormalizedPlan      string
