@@ -47,7 +47,7 @@ const (
 
 const (
 	splitRegionKeysConcurrency   = 8
-	splitRegionRangesConcurrency = 16
+	splitRegionRangesConcurrency = 32
 )
 
 type SplitContext struct {
