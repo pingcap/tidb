@@ -121,6 +121,8 @@ type globalBindingHandle struct {
 	// This value is used to avoid reload duplicated bindings from storage.
 	lastUpdateTime atomic.Value
 
+	// invalidBindRecordMap indicates the invalid bindings found during querying.
+	// A binding will be deleted from this map, after 2 bind-lease, after it is dropped from the kv.
 	invalidBindings *invalidBindingCache
 }
 
