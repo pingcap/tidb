@@ -1804,11 +1804,12 @@ func GetClusterServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 	})
 
 	type retriever func(ctx sessionctx.Context) ([]ServerInfo, error)
+	retrievers := []retriever{GetTiDBServerInfo, GetPDServerInfo, func(ctx sessionctx.Context) ([]ServerInfo, error) {
+		return GetStoreServerInfo(ctx.GetStore())
+	}, GetTiProxyServerInfo, GetTiCDCServerInfo}
 	//nolint: prealloc
 	var servers []ServerInfo
-	for _, r := range []retriever{GetTiDBServerInfo, GetPDServerInfo, func(ctx sessionctx.Context) ([]ServerInfo, error) {
-		return GetStoreServerInfo(ctx.GetStore())
-	}, GetTiProxyServerInfo} {
+	for _, r := range retrievers {
 		nodes, err := r(ctx)
 		if err != nil {
 			return nil, err
@@ -2076,6 +2077,26 @@ func GetTiProxyServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
 			ServerType:     "tiproxy",
 			Address:        net.JoinHostPort(node.IP, node.Port),
 			StatusAddr:     net.JoinHostPort(node.IP, node.StatusPort),
+			Version:        node.Version,
+			GitHash:        node.GitHash,
+			StartTimestamp: node.StartTimestamp,
+		})
+	}
+	return servers, nil
+}
+
+// GetTiCDCServerInfo gets server info of TiCDC from PD.
+func GetTiCDCServerInfo(ctx sessionctx.Context) ([]ServerInfo, error) {
+	ticdcNodes, err := infosync.GetTiCDCServerInfo(context.Background())
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	var servers = make([]ServerInfo, 0, len(ticdcNodes))
+	for _, node := range ticdcNodes {
+		servers = append(servers, ServerInfo{
+			ServerType:     "ticdc",
+			Address:        node.Address,
+			StatusAddr:     node.Address,
 			Version:        node.Version,
 			GitHash:        node.GitHash,
 			StartTimestamp: node.StartTimestamp,
