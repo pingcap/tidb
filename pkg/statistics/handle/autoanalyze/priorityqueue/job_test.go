@@ -71,11 +71,44 @@ func TestAnalyzeTable(t *testing.T) {
 	se := tk.Session()
 	sctx := se.(sessionctx.Context)
 	handle := dom.StatsHandle()
-	job.analyzeTable(sctx, handle, dom.SysProcTracker())
+	job.analyze(sctx, handle, dom.SysProcTracker())
 	// Check the result of analyze.
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblStats := handle.GetTableStats(tbl.Meta())
 	require.Equal(t, int64(3), tblStats.RealtimeCount)
+}
+
+func TestAnalyzeIndexes(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int, b int, index idx(a))")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+	job := &TableAnalysisJob{
+		TableSchema:   "test",
+		TableName:     "t",
+		Indexes:       []string{"idx"},
+		TableStatsVer: 2,
+	}
+	se := tk.Session()
+	sctx := se.(sessionctx.Context)
+	handle := dom.StatsHandle()
+	// Before analyze indexes.
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblStats := handle.GetTableStats(tbl.Meta())
+	require.False(t, tblStats.Indices[1].IsAnalyzed())
+
+	job.analyze(sctx, handle, dom.SysProcTracker())
+	// Check the result of analyze.
+	is = dom.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblStats = handle.GetTableStats(tbl.Meta())
+	require.NotNil(t, tblStats.Indices[1])
+	require.True(t, tblStats.Indices[1].IsAnalyzed())
 }
