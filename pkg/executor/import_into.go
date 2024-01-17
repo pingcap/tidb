@@ -268,6 +268,7 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 		return err
 	}
 
+	// TODO: we didn't use this `group` here, but have to init GroupCtx, refactor this later.
 	group, groupCtx := errgroup.WithContext(ctx)
 	param := &importer.JobImportParam{
 		Job:      &importer.Job{},
