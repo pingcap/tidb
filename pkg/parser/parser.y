@@ -7098,20 +7098,25 @@ ProcedureCall:
 InsertIntoStmt:
 	"INSERT" TableOptimizerHintsOpt PriorityOpt IgnoreOptional IntoOpt TableName PartitionNameListOpt InsertValues OnDuplicateKeyUpdate
 	{
-		x := $8.(*ast.InsertStmt)
-		x.Priority = $3.(mysql.PriorityEnum)
-		x.IgnoreErr = $4.(bool)
-		// Wraps many layers here so that it can be processed the same way as select statement.
-		ts := &ast.TableSource{Source: $6.(*ast.TableName)}
-		x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
-		if $9 != nil {
-			x.OnDuplicate = $9.([]*ast.Assignment)
+		switch x := $8.(type) {
+			case *ast.InsertStmt:
+				x.Priority = $3.(mysql.PriorityEnum)
+				x.IgnoreErr = $4.(bool)
+				// Wraps many layers here so that it can be processed the same way as select statement.
+				ts := &ast.TableSource{Source: $6.(*ast.TableName)}
+				x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
+				if $9 != nil {
+					x.OnDuplicate = $9.([]*ast.Assignment)
+				}
+				if $2 != nil {
+					x.TableHints = $2.([]*ast.TableOptimizerHint)
+				}
+				x.PartitionNames = $7.([]model.CIStr)
+				$$ = x
+			case *ast.ImportIntoStmt:
+				x.Table = $6.(*ast.TableName)
+				$$ = x
 		}
-		if $2 != nil {
-			x.TableHints = $2.([]*ast.TableOptimizerHint)
-		}
-		x.PartitionNames = $7.([]model.CIStr)
-		$$ = x
 	}
 
 IntoOpt:
@@ -7161,7 +7166,7 @@ InsertValues:
 	}
 |	SelectStmt
 	{
-		$$ = &ast.InsertStmt{Select: $1.(ast.ResultSetNode)}
+		$$ = &ast.ImportIntoStmt{Select: $1.(ast.ResultSetNode)}
 	}
 |	SelectStmtWithClause
 	{
