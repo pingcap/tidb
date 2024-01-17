@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -75,6 +76,7 @@ func NewExecutorWithRetry(ctx context.Context, sctx sessionctx.Context, parentTr
 	// For now, use the number of tipb.DataPacket as capacity.
 	const holdCap = 2
 
+	logutil.BgLogger().Info("gjt 1", zap.Any("now", time.Now()))
 	disaggTiFlashWithAutoScaler := config.GetGlobalConfig().DisaggregatedTiFlash && config.GetGlobalConfig().UseAutoScaler
 	_, allowTiFlashFallback := sctx.GetSessionVars().AllowFallbackToTiKV[kv.TiFlash]
 
@@ -105,34 +107,45 @@ func NewExecutorWithRetry(ctx context.Context, sctx sessionctx.Context, parentTr
 		queryID:        queryID,
 		mppErrRecovery: recoveryHandler,
 	}
+	logutil.BgLogger().Info("gjt 2", zap.Any("now", time.Now()))
 
 	var err error
 	retryer.KVRanges, err = retryer.setupMPPCoordinator(ctx, false)
+	logutil.BgLogger().Info("gjt 3", zap.Any("now", time.Now()))
 	return retryer, err
 }
 
 // Next implements kv.Response interface.
 func (r *ExecutorWithRetry) Next(ctx context.Context) (resp kv.ResultSubset, err error) {
+   logutil.BgLogger().Info("gjt next 1", zap.Any("now", time.Now()))
 	if err = r.nextWithRecovery(ctx); err != nil {
 		return nil, err
 	}
 
 	if r.mppErrRecovery.NumHoldResp() != 0 {
+	   logutil.BgLogger().Info("gjt nextWithRecovery 2", zap.Any("now", time.Now()))
 		if resp, err = r.mppErrRecovery.PopFrontResp(); err != nil {
 			return nil, err
 		}
 	} else if resp, err = r.coord.Next(ctx); err != nil {
 		return nil, err
 	}
+   logutil.BgLogger().Info("gjt next 2", zap.Any("now", time.Now()))
 	return resp, nil
 }
 
 // Close implements kv.Response interface.
 func (r *ExecutorWithRetry) Close() error {
+	logutil.BgLogger().Info("gjt close 1", zap.Any("now", time.Now()))
 	r.mppErrRecovery.ResetHolder()
+	logutil.BgLogger().Info("gjt close 2", zap.Any("now", time.Now()))
 	r.memTracker.Detach()
+	logutil.BgLogger().Info("gjt close 3", zap.Any("now", time.Now()))
 	mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(r.getCoordUniqueID())
-	return r.coord.Close()
+	logutil.BgLogger().Info("gjt close 4", zap.Any("now", time.Now()))
+	err := r.coord.Close()
+	logutil.BgLogger().Info("gjt close 5", zap.Any("now", time.Now()))
+	return err
 }
 
 func (r *ExecutorWithRetry) setupMPPCoordinator(ctx context.Context, recoverying bool) ([]kv.KeyRange, error) {
@@ -146,6 +159,7 @@ func (r *ExecutorWithRetry) setupMPPCoordinator(ctx context.Context, recoverying
 		mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(r.getCoordUniqueID())
 	}
 
+   logutil.BgLogger().Info("gjt setup coord 1", zap.Any("now", time.Now()))
 	// Make sure gatherID is updated before build coord.
 	r.gatherID = allocMPPGatherID(r.sctx)
 
@@ -153,15 +167,18 @@ func (r *ExecutorWithRetry) setupMPPCoordinator(ctx context.Context, recoverying
 	if err := mppcoordmanager.InstanceMPPCoordinatorManager.Register(r.getCoordUniqueID(), r.coord); err != nil {
 		return nil, err
 	}
+   logutil.BgLogger().Info("gjt setup coord 2", zap.Any("now", time.Now()))
 
 	_, kvRanges, err := r.coord.Execute(ctx)
 	if err != nil {
 		return nil, err
 	}
+   logutil.BgLogger().Info("gjt setup coord 3", zap.Any("now", time.Now()))
 
 	if r.nodeCnt = r.coord.GetNodeCnt(); r.nodeCnt <= 0 {
 		return nil, errors.Errorf("tiflash node count should be greater than zero: %v", r.nodeCnt)
 	}
+   logutil.BgLogger().Info("gjt setup coord 4", zap.Any("now", time.Now()))
 	return kvRanges, err
 }
 
@@ -169,6 +186,7 @@ func (r *ExecutorWithRetry) nextWithRecovery(ctx context.Context) error {
 	if !r.mppErrRecovery.Enabled() {
 		return nil
 	}
+	logutil.BgLogger().Info("gjt nextWithRecovery", zap.Any("now", time.Now()))
 
 	for r.mppErrRecovery.CanHoldResult() {
 		resp, mppErr := r.coord.Next(ctx)
