@@ -137,7 +137,6 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 
 	cx.run(func() error { return pauseGCKeeper(cx) })
 	cx.run(func() error { return pauseSchedulerKeeper(cx) })
-	cx.run(func() error { return pauseImporting(cx) })
 	cx.run(func() error { return pauseAdminAndWaitApply(cx) })
 	go func() {
 		cx.rdGrp.Wait()
@@ -189,40 +188,6 @@ func getCallerName() string {
 		name = fmt.Sprintf("UNKNOWN-%d", rand.Int63())
 	}
 	return fmt.Sprintf("operator@%sT%d#%d", name, time.Now().Unix(), os.Getpid())
-}
-
-func pauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
-	suspendLightning := utils.NewSuspendImporting(getCallerName(), cx.kvMgr)
-	_, err := utils.WithRetryV2(cx, cx.GetBackOffer("suspend_lightning"), func(_ context.Context) (map[uint64]bool, error) {
-		return suspendLightning.DenyAllStores(cx, cx.cfg.TTL)
-	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cx.ReadyL("pause_lightning")
-	cx.runGrp.Go(func() (err error) {
-		defer cx.cleanUpWithRetErr(&err, func(ctx context.Context) error {
-			if ctx.Err() != nil {
-				return errors.Annotate(ctx.Err(), "cleaning up timed out")
-			}
-			res, err := utils.WithRetryV2(ctx, cx.GetBackOffer("restore_lightning"),
-				func(ctx context.Context) (map[uint64]bool, error) { return suspendLightning.AllowAllStores(ctx) })
-			if err != nil {
-				return errors.Annotatef(err, "failed to allow all stores")
-			}
-			return suspendLightning.ConsistentWithPrev(res)
-		})
-
-		err = suspendLightning.Keeper(cx, cx.cfg.TTL)
-		if errors.Cause(err) != context.Canceled {
-			logutil.CL(cx).Warn("keeper encounters error.", logutil.ShortError(err))
-			return err
-		}
-		// Clean up the canceled error.
-		err = nil
-		return
-	})
-	return nil
 }
 
 func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext) (err error) {
