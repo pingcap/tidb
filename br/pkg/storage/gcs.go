@@ -412,6 +412,7 @@ func shouldRetry(err error) bool {
 		}
 	}
 
+	log.Warn("other error when requesting gcs", zap.Error(err))
 	return false
 }
 
