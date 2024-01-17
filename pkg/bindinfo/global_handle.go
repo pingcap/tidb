@@ -431,7 +431,7 @@ func lockBindInfoTable(sctx sessionctx.Context) error {
 
 // invalidBindingCache is used to store invalid bindings temporarily.
 type invalidBindingCache struct {
-	mu sync.Mutex
+	mu sync.RWMutex
 	m  map[string]Binding // key: sqlDigest
 }
 
