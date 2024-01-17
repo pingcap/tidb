@@ -526,11 +526,11 @@ func (stm *TaskManager) UpdateSubtaskExecID(ctx context.Context, tidbID string, 
 }
 
 // FailSubtask update the task's subtask state to failed and set the err.
-func (mgr *TaskManager) FailSubtask(ctx context.Context, execID string, taskID int64, err error) error {
+func (stm *TaskManager) FailSubtask(ctx context.Context, execID string, taskID int64, err error) error {
 	if err == nil {
 		return nil
 	}
-	_, err1 := mgr.executeSQLWithNewSession(ctx,
+	_, err1 := stm.executeSQLWithNewSession(ctx,
 		`update mysql.tidb_background_subtask
 		set state = %?, 
 		error = %?, 
@@ -551,8 +551,8 @@ func (mgr *TaskManager) FailSubtask(ctx context.Context, execID string, taskID i
 }
 
 // CancelSubtask update the task's subtasks' state to canceled.
-func (mgr *TaskManager) CancelSubtask(ctx context.Context, execID string, taskID int64) error {
-	_, err1 := mgr.executeSQLWithNewSession(ctx,
+func (stm *TaskManager) CancelSubtask(ctx context.Context, execID string, taskID int64) error {
+	_, err1 := stm.executeSQLWithNewSession(ctx,
 		`update mysql.tidb_background_subtask
 		set state = %?, 
 		start_time = unix_timestamp(), 
