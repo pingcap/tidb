@@ -90,7 +90,9 @@ func NewBaseTaskExecutor(ctx context.Context, id string, task *proto.Task, taskT
 		id:        id,
 		taskTable: taskTable,
 		ctx:       ctx,
-		logger:    log.L().With(zap.Int64("task-id", task.ID)),
+		logger: log.L().With(zap.Int64("task-id", task.ID),
+			zap.String("task-type", string(task.Type)),
+			zap.Int64("task-step", int64(task.Step))),
 	}
 	taskExecutorImpl.task.Store(task)
 	return taskExecutorImpl
@@ -194,7 +196,6 @@ func (e *BaseTaskExecutor) runStep(ctx context.Context, task *proto.Task) (resEr
 	e.registerCancelFunc(runCancel)
 	e.resetError()
 	stepLogger := llog.BeginTask(e.logger.With(
-		zap.Any("step", task.Step),
 		zap.Int("concurrency", task.Concurrency),
 		zap.Float64("mem-limit-percent", gctuner.GlobalMemoryLimitTuner.GetPercentage()),
 		zap.String("server-mem-limit", memory.ServerMemoryLimitOriginText.Load()),
@@ -452,7 +453,7 @@ func (e *BaseTaskExecutor) Rollback(ctx context.Context, task *proto.Task) error
 	e.registerCancelFunc(rollbackCancel)
 
 	e.resetError()
-	e.logger.Info("taskExecutor rollback a step", zap.Any("step", task.Step))
+	e.logger.Info("taskExecutor rollback a step")
 
 	// We should cancel all subtasks before rolling back
 	for {
@@ -485,7 +486,7 @@ func (e *BaseTaskExecutor) Rollback(ctx context.Context, task *proto.Task) error
 		return e.getError()
 	}
 	if subtask == nil {
-		logutil.BgLogger().Warn("taskExecutor rollback a step, but no subtask in revert_pending state", zap.Any("step", task.Step))
+		logutil.BgLogger().Warn("taskExecutor rollback a step, but no subtask in revert_pending state")
 		return nil
 	}
 	if subtask.State == proto.SubtaskStateRevertPending {
