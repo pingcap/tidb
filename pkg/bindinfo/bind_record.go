@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/hint"
 )
 
@@ -42,17 +41,10 @@ const (
 	deleted = "deleted"
 	// Invalid is the bind info's invalid status.
 	Invalid = "invalid"
-	// PendingVerify means the bind info needs to be verified.
-	PendingVerify = "pending verify"
-	// Rejected means that the bind has been rejected after verify process.
-	// We can retry it after certain time has passed.
-	Rejected = "rejected"
 	// Manual indicates the binding is created by SQL like "create binding for ...".
 	Manual = "manual"
 	// Capture indicates the binding is captured by TiDB automatically.
 	Capture = "capture"
-	// Evolve indicates the binding is evolved by TiDB from old bindings.
-	Evolve = "evolve"
 	// Builtin indicates the binding is a builtin record for internal locking purpose. It is also the status for the builtin binding.
 	Builtin = "builtin"
 	// History indicate the binding is created from statement summary by plan digest
@@ -61,9 +53,11 @@ const (
 
 // Binding stores the basic bind hint info.
 type Binding struct {
-	BindSQL string
+	OriginalSQL string
+	Db          string
+	BindSQL     string
 	// Status represents the status of the binding. It can only be one of the following values:
-	// 1. deleted: BindRecord is deleted, can not be used anymore.
+	// 1. deleted: Bindings is deleted, can not be used anymore.
 	// 2. enabled, using: Binding is in the normal active mode.
 	Status     string
 	CreateTime types.Time
@@ -111,40 +105,23 @@ func (b *Binding) SinceUpdateTime() (time.Duration, error) {
 	return time.Since(updateTime), nil
 }
 
-// BindRecord represents a sql bind record retrieved from the storage.
-type BindRecord struct {
-	OriginalSQL string
-	Db          string
-
-	Bindings []Binding
-}
+// Bindings represents a sql bind record retrieved from the storage.
+type Bindings []Binding
 
 // Copy get the copy of bindRecord
-func (br *BindRecord) Copy() *BindRecord {
-	nbr := &BindRecord{
-		OriginalSQL: br.OriginalSQL,
-		Db:          br.Db,
-	}
-	nbr.Bindings = make([]Binding, len(br.Bindings))
-	copy(nbr.Bindings, br.Bindings)
+func (br Bindings) Copy() Bindings {
+	nbr := append(make([]Binding, 0, len(br)), br...)
 	return nbr
-}
-
-// HasEnabledBinding checks if there are any enabled bindings in bind record.
-func (br *BindRecord) HasEnabledBinding() bool {
-	for _, binding := range br.Bindings {
-		if binding.IsBindingEnabled() {
-			return true
-		}
-	}
-	return false
 }
 
 // HasAvailableBinding checks if there are any available bindings in bind record.
 // The available means the binding can be used or can be converted into a usable status.
 // It includes the 'Enabled', 'Using' and 'Disabled' status.
-func (br *BindRecord) HasAvailableBinding() bool {
-	for _, binding := range br.Bindings {
+func HasAvailableBinding(br Bindings) bool {
+	if br == nil {
+		return false
+	}
+	for _, binding := range br {
 		if binding.IsBindingAvailable() {
 			return true
 		}
@@ -152,133 +129,94 @@ func (br *BindRecord) HasAvailableBinding() bool {
 	return false
 }
 
-// FindEnabledBinding gets the enabled binding.
-// There is at most one binding that can be used now.
-func (br *BindRecord) FindEnabledBinding() *Binding {
-	for _, binding := range br.Bindings {
-		if binding.IsBindingEnabled() {
-			return &binding
-		}
-	}
-	return nil
-}
-
-// FindBinding find bindings in BindRecord.
-func (br *BindRecord) FindBinding(hint string) *Binding {
-	for i := range br.Bindings {
-		binding := br.Bindings[i]
-		if binding.ID == hint {
-			return &binding
-		}
-	}
-	return nil
-}
-
-// prepareHints builds ID and Hint for BindRecord. If sctx is not nil, we check if
+// prepareHints builds ID and Hint for Bindings. If sctx is not nil, we check if
 // the BindSQL is still valid.
-func (br *BindRecord) prepareHints(sctx sessionctx.Context) error {
+func prepareHints(sctx sessionctx.Context, binding *Binding) error {
 	p := parser.New()
-	for i, bind := range br.Bindings {
-		if (bind.Hint != nil && bind.ID != "") || bind.Status == deleted {
-			continue
-		}
-		dbName := br.Db
-		bindingStmt, err := p.ParseOneStmt(bind.BindSQL, bind.Charset, bind.Collation)
-		if err != nil {
-			return err
-		}
-		isFuzzy := isFuzzyBinding(bindingStmt)
-		if isFuzzy {
-			dbName = "*" // ues '*' for universal bindings
-		}
+	if (binding.Hint != nil && binding.ID != "") || binding.Status == deleted {
+		return nil
+	}
+	dbName := binding.Db
+	bindingStmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
+	if err != nil {
+		return err
+	}
+	isFuzzy := isFuzzyBinding(bindingStmt)
+	if isFuzzy {
+		dbName = "*" // ues '*' for universal bindings
+	}
 
-		hintsSet, stmt, warns, err := hint.ParseHintsSet(p, bind.BindSQL, bind.Charset, bind.Collation, dbName)
-		if err != nil {
-			return err
-		}
-		if sctx != nil && !isFuzzy {
-			paramChecker := &paramMarkerChecker{}
-			stmt.Accept(paramChecker)
-			if !paramChecker.hasParamMarker {
-				_, err = getHintsForSQL(sctx, bind.BindSQL)
-				if err != nil {
-					return err
-				}
+	hintsSet, stmt, warns, err := hint.ParseHintsSet(p, binding.BindSQL, binding.Charset, binding.Collation, dbName)
+	if err != nil {
+		return err
+	}
+	if sctx != nil && !isFuzzy {
+		paramChecker := &paramMarkerChecker{}
+		stmt.Accept(paramChecker)
+		if !paramChecker.hasParamMarker {
+			_, err = getHintsForSQL(sctx, binding.BindSQL)
+			if err != nil {
+				return err
 			}
 		}
-		hintsStr, err := hintsSet.Restore()
-		if err != nil {
-			return err
-		}
-		// For `create global binding for select * from t using select * from t`, we allow it though hintsStr is empty.
-		// For `create global binding for select * from t using select /*+ non_exist_hint() */ * from t`,
-		// the hint is totally invalid, we escalate warning to error.
-		if hintsStr == "" && len(warns) > 0 {
-			return warns[0]
-		}
-		br.Bindings[i].Hint = hintsSet
-		br.Bindings[i].ID = hintsStr
 	}
+	hintsStr, err := hintsSet.Restore()
+	if err != nil {
+		return err
+	}
+	// For `create global binding for select * from t using select * from t`, we allow it though hintsStr is empty.
+	// For `create global binding for select * from t using select /*+ non_exist_hint() */ * from t`,
+	// the hint is totally invalid, we escalate warning to error.
+	if hintsStr == "" && len(warns) > 0 {
+		return warns[0]
+	}
+	binding.Hint = hintsSet
+	binding.ID = hintsStr
 	return nil
 }
 
-// `merge` merges two BindRecord. It will replace old bindings with new bindings if there are new updates.
-func merge(lBindRecord, rBindRecord *BindRecord) *BindRecord {
-	if lBindRecord == nil {
-		return rBindRecord
+// `merge` merges two Bindings. It will replace old bindings with new bindings if there are new updates.
+func merge(lBindings, rBindings Bindings) Bindings {
+	if lBindings == nil {
+		return rBindings
 	}
-	if rBindRecord == nil {
-		return lBindRecord
+	if rBindings == nil {
+		return lBindings
 	}
-	result := lBindRecord.shallowCopy()
-	for i := range rBindRecord.Bindings {
-		rbind := rBindRecord.Bindings[i]
+	result := lBindings.Copy()
+	for i := range rBindings {
+		rbind := rBindings[i]
 		found := false
-		for j, lbind := range lBindRecord.Bindings {
+		for j, lbind := range lBindings {
 			if lbind.isSame(&rbind) {
 				found = true
 				if rbind.UpdateTime.Compare(lbind.UpdateTime) >= 0 {
-					result.Bindings[j] = rbind
+					result[j] = rbind
 				}
 				break
 			}
 		}
 		if !found {
-			result.Bindings = append(result.Bindings, rbind)
+			result = append(result, rbind)
 		}
 	}
 	return result
 }
 
-func (br *BindRecord) removeDeletedBindings() *BindRecord {
-	result := BindRecord{OriginalSQL: br.OriginalSQL, Db: br.Db, Bindings: make([]Binding, 0, len(br.Bindings))}
-	for _, binding := range br.Bindings {
+func removeDeletedBindings(br Bindings) Bindings {
+	result := make([]Binding, 0, len(br))
+	for _, binding := range br {
 		if binding.Status != deleted {
-			result.Bindings = append(result.Bindings, binding)
+			result = append(result, binding)
 		}
 	}
-	return &result
+	return result
 }
 
-// shallowCopy shallow copies the BindRecord.
-func (br *BindRecord) shallowCopy() *BindRecord {
-	result := BindRecord{
-		OriginalSQL: br.OriginalSQL,
-		Db:          br.Db,
-		Bindings:    make([]Binding, len(br.Bindings)),
-	}
-	copy(result.Bindings, br.Bindings)
-	return &result
-}
-
-func (br *BindRecord) isSame(other *BindRecord) bool {
-	return br.OriginalSQL == other.OriginalSQL
-}
-
-// size calculates the memory size of a BindRecord.
-func (br *BindRecord) size() float64 {
-	mem := float64(len(hack.Slice(br.OriginalSQL)) + len(hack.Slice(br.Db)))
-	for _, binding := range br.Bindings {
+// size calculates the memory size of a Bindings.
+func (br Bindings) size() float64 {
+	mem := float64(0)
+	for _, binding := range br {
 		mem += binding.size()
 	}
 	return mem
@@ -290,22 +228,22 @@ var statusIndex = map[string]int{
 	Invalid: 2,
 }
 
-func (br *BindRecord) metrics() ([]float64, []int) {
+func bindingMetrics(br Bindings) ([]float64, []int) {
 	sizes := make([]float64, len(statusIndex))
 	count := make([]int, len(statusIndex))
 	if br == nil {
 		return sizes, count
 	}
-	commonLength := float64(len(br.OriginalSQL) + len(br.Db))
+	commonLength := float64(0)
 	// We treat it as deleted if there are no bindings. It could only occur in session handles.
-	if len(br.Bindings) == 0 {
+	if len(br) == 0 {
 		sizes[statusIndex[deleted]] = commonLength
 		count[statusIndex[deleted]] = 1
 		return sizes, count
 	}
 	// Make the common length counted in the first binding.
-	sizes[statusIndex[br.Bindings[0].Status]] = commonLength
-	for _, binding := range br.Bindings {
+	sizes[statusIndex[br[0].Status]] = commonLength
+	for _, binding := range br {
 		sizes[statusIndex[binding.Status]] += binding.size()
 		count[statusIndex[binding.Status]]++
 	}
@@ -314,13 +252,13 @@ func (br *BindRecord) metrics() ([]float64, []int) {
 
 // size calculates the memory size of a bind info.
 func (b *Binding) size() float64 {
-	res := len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation) + len(b.ID)
+	res := len(b.OriginalSQL) + len(b.Db) + len(b.BindSQL) + len(b.Status) + 2*int(unsafe.Sizeof(b.CreateTime)) + len(b.Charset) + len(b.Collation) + len(b.ID)
 	return float64(res)
 }
 
-func updateMetrics(scope string, before *BindRecord, after *BindRecord, sizeOnly bool) {
-	beforeSize, beforeCount := before.metrics()
-	afterSize, afterCount := after.metrics()
+func updateMetrics(scope string, before Bindings, after Bindings, sizeOnly bool) {
+	beforeSize, beforeCount := bindingMetrics(before)
+	afterSize, afterCount := bindingMetrics(after)
 	for status, index := range statusIndex {
 		metrics.BindMemoryUsage.WithLabelValues(scope, status).Add(afterSize[index] - beforeSize[index])
 		if !sizeOnly {

@@ -15,6 +15,7 @@
 package core
 
 import (
+	"cmp"
 	"math"
 	"slices"
 	"strings"
@@ -36,12 +37,13 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 
 func init() {
 	cardinality.CollectFilters4MVIndex = collectFilters4MVIndex
 	cardinality.BuildPartialPaths4MVIndex = buildPartialPaths4MVIndex
-	statistics.PrepareCols4MVIndex = prepareCols4MVIndex
+	statistics.PrepareCols4MVIndex = PrepareCols4MVIndex
 }
 
 // generateIndexMergePath generates IndexMerge AccessPaths on this DataSource.
@@ -690,7 +692,7 @@ func (ds *DataSource) generateMVIndexPartialPath4Or(normalPathCnt int, indexMerg
 			bestNeedSelection    bool
 		)
 		for _, onePossibleMVIndexPath := range possibleMVIndexPaths {
-			idxCols, ok := prepareCols4MVIndex(ds.table.Meta(), onePossibleMVIndexPath.Index, ds.TblCols)
+			idxCols, ok := PrepareCols4MVIndex(ds.table.Meta(), onePossibleMVIndexPath.Index, ds.TblCols)
 			if !ok {
 				continue
 			}
@@ -705,10 +707,14 @@ func (ds *DataSource) generateMVIndexPartialPath4Or(normalPathCnt int, indexMerg
 				logutil.BgLogger().Debug("build index merge partial mv index paths failed", zap.Error(err))
 				return nil, nil, false, err
 			}
-			if isIntersection || !ok { // limitation 2
+			if !ok || len(paths) == 0 {
 				continue
 			}
-			if len(paths) == 0 {
+			// only under 2 cases we can fallthrough it.
+			// 1: the index merge only has one partial path.
+			// 2: index merge is UNION type.
+			canFallThrough := len(paths) == 1 || !isIntersection
+			if !canFallThrough {
 				continue
 			}
 			// UNION case, use the max count after access for simplicity.
@@ -742,7 +748,7 @@ func (ds *DataSource) generateMVIndexPartialPath4Or(normalPathCnt int, indexMerg
 }
 
 // generateMVIndexMergePartialPaths4And try to find mv index merge partial path from a collection of cnf conditions.
-func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, indexMergeConds []expression.Expression) ([]*util.AccessPath, map[string]expression.Expression, error) {
+func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, indexMergeConds []expression.Expression, histColl *statistics.HistColl) ([]*util.AccessPath, map[string]expression.Expression, error) {
 	// step1: collect all mv index paths
 	possibleMVIndexPaths := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
 	for idx := 0; idx < normalPathCnt; idx++ {
@@ -757,17 +763,39 @@ func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, in
 	// step2: mapping index merge conditions into possible mv index path
 	mvAndPartialPath := make([]*util.AccessPath, 0, len(possibleMVIndexPaths))
 	usedAccessCondsMap := make(map[string]expression.Expression, len(indexMergeConds))
+	// fill the possible indexMergeConds down to possible index merge paths. If two index merge path
+	// share same accessFilters, pick the one with minimum countAfterAccess.
+	type record struct {
+		originOffset     int
+		paths            []*util.AccessPath
+		countAfterAccess float64
+	}
+	// mm is a map here used for de-duplicate partial paths which is derived from **same** accessFilters, not necessary to keep them both.
+	mm := make(map[string]*record, 0)
 	for idx := 0; idx < len(possibleMVIndexPaths); idx++ {
-		idxCols, ok := prepareCols4MVIndex(ds.table.Meta(), possibleMVIndexPaths[idx].Index, ds.TblCols)
+		idxCols, ok := PrepareCols4MVIndex(ds.table.Meta(), possibleMVIndexPaths[idx].Index, ds.TblCols)
 		if !ok {
 			continue
 		}
-		accessFilters, _, mvColOffset, mvFilterMutations := ds.collectFilters4MVIndexMutations(indexMergeConds, idxCols)
+		accessFilters, _, mvColOffset, mvFilterMutations := CollectFilters4MVIndexMutations(ds.SCtx(), indexMergeConds, idxCols)
 		if len(accessFilters) == 0 { // cannot use any filter on this MVIndex
 			continue
 		}
+		// record the all hashcodes before accessFilters is mutated.
+		allHashCodes := make([]string, 0, len(accessFilters)+len(mvFilterMutations)-1)
+		for _, accessF := range accessFilters {
+			allHashCodes = append(allHashCodes, string(accessF.HashCode()))
+		}
+		for i, mvF := range mvFilterMutations {
+			if i == 0 {
+				// skip the first one, because it has already in accessFilters.
+				continue
+			}
+			allHashCodes = append(allHashCodes, string(mvF.HashCode()))
+		}
 		// in traveling of these mv index conditions, we can only use one of them to build index merge path, just fetch it out first.
 		// build index merge partial path for every mutation combination access filters.
+		var partialPaths4ThisMvIndex []*util.AccessPath
 		for _, mvFilterMu := range mvFilterMutations {
 			// derive each mutation access filters
 			accessFilters[mvColOffset] = mvFilterMu
@@ -790,9 +818,31 @@ func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, in
 				for _, accessF := range accessFilters {
 					usedAccessCondsMap[string(accessF.HashCode())] = accessF
 				}
-				mvAndPartialPath = append(mvAndPartialPath, partialPaths...)
+				partialPaths4ThisMvIndex = append(partialPaths4ThisMvIndex, partialPaths...)
 			}
 		}
+		// sort allHashCodes to make the unified hashcode for slices of all accessFilters.
+		slices.Sort(allHashCodes)
+		allHashCodesKey := strings.Join(allHashCodes, "")
+		countAfterAccess := float64(histColl.RealtimeCount) * cardinality.CalcTotalSelectivityForMVIdxPath(histColl, partialPaths4ThisMvIndex, true)
+		if rec, ok := mm[allHashCodesKey]; !ok {
+			// compute the count after access from those intersection partial paths, for this mv index usage.
+			mm[allHashCodesKey] = &record{idx, partialPaths4ThisMvIndex, countAfterAccess}
+		} else {
+			// pick the minimum countAfterAccess's paths.
+			if rec.countAfterAccess > countAfterAccess {
+				mm[allHashCodesKey] = &record{idx, partialPaths4ThisMvIndex, countAfterAccess}
+			}
+		}
+	}
+	// after all mv index is traversed, pick those remained paths which has already been de-duplicated for its accessFilters.
+	recordsCollection := maps.Values(mm)
+	// according origin offset to stable the partial paths order. (golang map is not order stable)
+	slices.SortFunc(recordsCollection, func(a, b *record) int {
+		return cmp.Compare(a.originOffset, b.originOffset)
+	})
+	for _, one := range recordsCollection {
+		mvAndPartialPath = append(mvAndPartialPath, one.paths...)
 	}
 	return mvAndPartialPath, usedAccessCondsMap, nil
 }
@@ -865,7 +915,7 @@ func (ds *DataSource) generateIndexMergeOnDNF4MVIndex(normalPathCnt int, filters
 			continue // not a MVIndex path
 		}
 
-		idxCols, ok := prepareCols4MVIndex(ds.table.Meta(), ds.possibleAccessPaths[idx].Index, ds.TblCols)
+		idxCols, ok := PrepareCols4MVIndex(ds.table.Meta(), ds.possibleAccessPaths[idx].Index, ds.TblCols)
 		if !ok {
 			continue
 		}
@@ -1063,7 +1113,7 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 	// step1: firstly collect all the potential normal index partial paths.
 	// step2: secondly collect all the potential mv index partial path, and merge them into one if possible.
 	// step3: thirdly merge normal index paths and mv index paths together to compose a bigger index merge path.
-	mvIndexPartialPaths, usedAccessMap, err := ds.generateMVIndexMergePartialPaths4And(normalPathCnt, indexMergeConds)
+	mvIndexPartialPaths, usedAccessMap, err := ds.generateMVIndexMergePartialPaths4And(normalPathCnt, indexMergeConds, ds.tableStats.HistColl)
 	if err != nil {
 		return err
 	}
@@ -1126,7 +1176,7 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 			continue // not a MVIndex path
 		}
 
-		idxCols, ok := prepareCols4MVIndex(ds.table.Meta(), ds.possibleAccessPaths[idx].Index, ds.TblCols)
+		idxCols, ok := PrepareCols4MVIndex(ds.table.Meta(), ds.possibleAccessPaths[idx].Index, ds.TblCols)
 		if !ok {
 			continue
 		}
@@ -1313,7 +1363,8 @@ func buildPartialPath4MVIndex(
 	return partialPath, true, nil
 }
 
-func prepareCols4MVIndex(
+// PrepareCols4MVIndex exported for test.
+func PrepareCols4MVIndex(
 	tableInfo *model.TableInfo,
 	mvIndex *model.IndexInfo,
 	tblCols []*expression.Column,
@@ -1377,6 +1428,7 @@ func collectFilters4MVIndex(sctx sessionctx.Context, filters []expression.Expres
 	return accessFilters, remainingFilters
 }
 
+// CollectFilters4MVIndexMutations exported for unit test.
 // For idx(x, cast(a as array), z), `x=1 and (2 member of a) and (1 member of a) and z=1 and x+z>0` is split to:
 // accessFilters combination:
 // 1: `x=1 and (2 member of a) and z=1`, remaining: `x+z>0`.
@@ -1413,7 +1465,7 @@ func collectFilters4MVIndex(sctx sessionctx.Context, filters []expression.Expres
 //	accessFilters: [x=1, (2 member of a), z=1], remainingFilters: [x+z>0], mvColOffset: 1, mvFilterMutations[(2 member of a), (1 member of a)]
 //
 // the outer usage will be: accessFilter[mvColOffset] = each element of mvFilterMutations to get the mv access filters mutation combination.
-func (ds *DataSource) collectFilters4MVIndexMutations(filters []expression.Expression,
+func CollectFilters4MVIndexMutations(sctx sessionctx.Context, filters []expression.Expression,
 	idxCols []*expression.Column) (accessFilters, remainingFilters []expression.Expression, mvColOffset int, mvFilterMutations []expression.Expression) {
 	usedAsAccess := make([]bool, len(filters))
 	// accessFilters [x, a<json>, z]
@@ -1427,12 +1479,20 @@ func (ds *DataSource) collectFilters4MVIndexMutations(filters []expression.Expre
 			if usedAsAccess[i] {
 				continue
 			}
-			if checkFilter4MVIndexColumn(ds.SCtx(), f, col) {
+			if checkFilter4MVIndexColumn(sctx, f, col) {
 				if col.VirtualExpr != nil && col.VirtualExpr.GetType().IsArray() {
 					// assert jsonColOffset should always be the same.
 					// if the filter is from virtual expression, it means it is about the mv json col.
 					mvFilterMutations = append(mvFilterMutations, f)
-					mvColOffset = z
+					if mvColOffset == -1 {
+						// means first encountering, recording offset pos, and append it as occupation of access filter.
+						mvColOffset = z
+						accessFilters = append(accessFilters, f)
+					}
+					// additional encountering, just map it as used access.
+					usedAsAccess[i] = true
+					found = true
+					continue
 				}
 				accessFilters = append(accessFilters, f)
 				usedAsAccess[i] = true

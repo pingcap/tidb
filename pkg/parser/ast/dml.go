@@ -3024,6 +3024,7 @@ const (
 	ShowImportJobs
 	ShowCreateProcedure
 	ShowBinlogStatus
+	ShowReplicaStatus
 )
 
 const (
@@ -3405,6 +3406,8 @@ func (n *ShowStmt) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("PLACEMENT LABELS")
 		case ShowSessionStates:
 			ctx.WriteKeyWord("SESSION_STATES")
+		case ShowReplicaStatus:
+			ctx.WriteKeyWord("REPLICA STATUS")
 		default:
 			return errors.New("Unknown ShowStmt type")
 		}
