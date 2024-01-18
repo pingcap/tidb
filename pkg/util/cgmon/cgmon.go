@@ -62,10 +62,10 @@ func StopCgroupMonitor() {
 func refreshCgroupLoop() {
 	ticker := time.NewTicker(refreshInterval)
 	defer func() {
-		util.Recover("cgmon", "refreshCgroupLoop", nil, false)
 		wg.Done()
 		ticker.Stop()
 	}()
+	defer util.Recover("cgmon", "refreshCgroupLoop", nil, false)
 
 	refreshCgroupCPU()
 	refreshCgroupMemory()
