@@ -170,9 +170,12 @@ func TestAggPartialResultMapperB(t *testing.T) {
 	// skip err, since we guarantee the success of execution
 	go113, _ := version.NewVersion(`1.13`)
 	actualVerStr := strings.SplitAfter(runtime.Version(), `go`)[1]
-	actualVer, _ := version.NewVersion(actualVerStr)
+	actualVer, err := version.NewVersion(actualVerStr)
+	if err != nil {
+		t.Fatalf("Cannot get actual go version with error %v\n", err)
+	}
 	if actualVer.LessThan(go113) {
-		t.Fatalf("Unsupported version and should never use any version less than go1.13")
+		t.Fatalf("Unsupported version and should never use any version less than go1.13\n")
 	}
 	type testCase struct {
 		rowNum          int
