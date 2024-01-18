@@ -373,12 +373,6 @@ skipHandleCred:
 		clientOps = append(clientOps, option.WithHTTPClient(opts.HTTPClient))
 	}
 
-	debugMsg := make([]string, 0, len(clientOps))
-	for _, ops := range clientOps {
-		debugMsg = append(debugMsg, fmt.Sprintf("%#v", ops))
-	}
-	log.Warn("create gcs client with options", zap.Strings("options", debugMsg))
-
 	client, err := storage.NewClient(ctx, clientOps...)
 	if err != nil {
 		return nil, errors.Trace(err)
