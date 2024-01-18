@@ -108,7 +108,7 @@ func Row2SubTask(r chunk.Row) *proto.Subtask {
 		updateTime = time.Unix(ts, 0)
 	}
 	subtask.StartTime = startTime
-	subtask.UpdateTime = updateTime
+	subtask.StateUpdateTime = updateTime
 	subtask.Meta = r.GetBytes(11)
 	subtask.Summary = r.GetJSON(12).String()
 	return subtask

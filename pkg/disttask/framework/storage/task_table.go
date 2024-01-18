@@ -792,3 +792,18 @@ func (mgr *TaskManager) GetSubtasksWithHistory(ctx context.Context, taskID int64
 	}
 	return subtasks, nil
 }
+
+func (mgr *TaskManager) GetAllSubtasks(ctx context.Context) ([]*proto.Subtask, error) {
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select `+SubtaskColumns+` from mysql.tidb_background_subtask`)
+	if err != nil {
+		return nil, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+	subtasks := make([]*proto.Subtask, 0, len(rs))
+	for _, r := range rs {
+		subtasks = append(subtasks, Row2SubTask(r))
+	}
+	return subtasks, nil
+}

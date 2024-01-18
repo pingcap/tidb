@@ -68,6 +68,20 @@ const (
 	SubtaskStateRevertFailed  SubtaskState = "revert_failed"
 )
 
+// AllSubtaskStates is all subtask state.
+var AllSubtaskStates = []SubtaskState{
+	SubtaskStatePending,
+	SubtaskStateRunning,
+	SubtaskStateSucceed,
+	SubtaskStateFailed,
+	SubtaskStateCanceled,
+	SubtaskStatePaused,
+	SubtaskStateRevertPending,
+	SubtaskStateReverting,
+	SubtaskStateReverted,
+	SubtaskStateRevertFailed,
+}
+
 type (
 	// SubtaskState is the state of subtask.
 	SubtaskState string
@@ -97,10 +111,10 @@ type Subtask struct {
 	// StartTime is the time when the subtask is started.
 	// it's 0 if it hasn't started yet.
 	StartTime time.Time
-	// UpdateTime is the time when the subtask is updated.
+	// StateUpdateTime is the time when the subtask state is updated.
 	// it can be used as subtask end time if the subtask is finished.
 	// it's 0 if it hasn't started yet.
-	UpdateTime time.Time
+	StateUpdateTime time.Time
 	// Meta is the metadata of subtask, should not be nil.
 	// meta of different subtasks of same step must be different too.
 	Meta    []byte

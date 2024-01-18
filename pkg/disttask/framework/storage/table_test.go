@@ -511,7 +511,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.GreaterOrEqual(t, subtask.CreateTime, timeBeforeCreate)
 	require.Equal(t, 0, subtask.Ordinal)
 	require.Zero(t, subtask.StartTime)
-	require.Zero(t, subtask.UpdateTime)
+	require.Zero(t, subtask.StateUpdateTime)
 	require.Equal(t, "{}", subtask.Summary)
 
 	subtask2, err := sm.GetFirstSubtaskInStates(ctx, "tidb1", 1, proto.StepInit, proto.SubtaskStatePending, proto.SubtaskStateReverted)
@@ -558,7 +558,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.Equal(t, "tidb1", subtask.ExecID)
 	require.Equal(t, []byte("test"), subtask.Meta)
 	require.GreaterOrEqual(t, subtask.StartTime, ts)
-	require.GreaterOrEqual(t, subtask.UpdateTime, ts)
+	require.GreaterOrEqual(t, subtask.StateUpdateTime, ts)
 
 	// check update time after state change to cancel
 	time.Sleep(time.Second)
@@ -566,7 +566,7 @@ func TestSubTaskTable(t *testing.T) {
 	subtask2, err = sm.GetFirstSubtaskInStates(ctx, "tidb1", 1, proto.StepInit, proto.SubtaskStateReverting)
 	require.NoError(t, err)
 	require.Equal(t, proto.SubtaskStateReverting, subtask2.State)
-	require.Greater(t, subtask2.UpdateTime, subtask.UpdateTime)
+	require.Greater(t, subtask2.StateUpdateTime, subtask.StateUpdateTime)
 
 	cntByStates, err = sm.GetSubtaskCntGroupByStates(ctx, 1, proto.StepInit)
 	require.NoError(t, err)
@@ -1128,10 +1128,10 @@ func TestRunningSubtasksBack2Pending(t *testing.T) {
 					updateTime = time.Unix(r.GetInt64(3), 0)
 				}
 				res = append(res, &proto.Subtask{
-					TaskID:     r.GetInt64(0),
-					ExecID:     r.GetString(1),
-					State:      proto.SubtaskState(r.GetString(2)),
-					UpdateTime: updateTime,
+					TaskID:          r.GetInt64(0),
+					ExecID:          r.GetString(1),
+					State:           proto.SubtaskState(r.GetString(2)),
+					StateUpdateTime: updateTime,
 				})
 			}
 			return nil
@@ -1150,8 +1150,8 @@ func TestRunningSubtasksBack2Pending(t *testing.T) {
 	// this list contains running and pending subtasks, just for test.
 	require.NoError(t, sm.RunningSubtasksBack2Pending(ctx, activeSubtasks))
 	allSubtasks := getAllSubtasks()
-	require.GreaterOrEqual(t, allSubtasks[1].UpdateTime, startTime)
-	allSubtasks[1].UpdateTime = time.Time{}
+	require.GreaterOrEqual(t, allSubtasks[1].StateUpdateTime, startTime)
+	allSubtasks[1].StateUpdateTime = time.Time{}
 	subtasks[1].State = proto.SubtaskStatePending
 	require.Equal(t, subtasks, allSubtasks)
 }
@@ -1167,7 +1167,7 @@ func TestSubtasksState(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, proto.SubtaskStateFailed, subtask.State)
 	require.Greater(t, subtask.StartTime, ts)
-	require.Greater(t, subtask.UpdateTime, ts)
+	require.Greater(t, subtask.StateUpdateTime, ts)
 
 	endTime, err := testutil.GetSubtaskEndTime(ctx, sm, subtask.ID)
 	require.NoError(t, err)
@@ -1183,14 +1183,14 @@ func TestSubtasksState(t *testing.T) {
 	subtask, err = sm.GetFirstSubtaskInStates(ctx, "for_test1", 4, proto.StepInit, proto.SubtaskStateRunning)
 	require.NoError(t, err)
 	require.Greater(t, subtask.StartTime, ts)
-	require.Greater(t, subtask.UpdateTime, ts)
+	require.Greater(t, subtask.StateUpdateTime, ts)
 	ts = time.Now()
 	time.Sleep(time.Second)
 	require.NoError(t, sm.FinishSubtask(ctx, "for_test1", subtask.ID, []byte{}))
 	subtask2, err := sm.GetFirstSubtaskInStates(ctx, "for_test1", 4, proto.StepInit, proto.SubtaskStateSucceed)
 	require.NoError(t, err)
 	require.Equal(t, subtask2.StartTime, subtask.StartTime)
-	require.Greater(t, subtask2.UpdateTime, subtask.UpdateTime)
+	require.Greater(t, subtask2.StateUpdateTime, subtask.StateUpdateTime)
 	endTime, err = testutil.GetSubtaskEndTime(ctx, sm, subtask.ID)
 	require.NoError(t, err)
 	require.Greater(t, endTime, ts)
@@ -1202,7 +1202,7 @@ func TestSubtasksState(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, proto.SubtaskStateCanceled, subtask.State)
 	require.Greater(t, subtask.StartTime, ts)
-	require.Greater(t, subtask.UpdateTime, ts)
+	require.Greater(t, subtask.StateUpdateTime, ts)
 
 	endTime, err = testutil.GetSubtaskEndTime(ctx, sm, subtask.ID)
 	require.NoError(t, err)

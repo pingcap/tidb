@@ -28,6 +28,7 @@ const (
 	lblTaskType   = "task_type"
 	lblTaskID     = "task_id"
 	lblSubTaskID  = "subtask_id"
+	lblExecID     = "exec_id"
 )
 
 // status for task
@@ -47,6 +48,7 @@ var (
 	DistTaskSubTaskCntGauge *prometheus.GaugeVec
 	// DistTaskSubTaskStartTimeGauge is the gauge of dist task subtask start time.
 	DistTaskSubTaskStartTimeGauge *prometheus.GaugeVec
+	DistTaskSubTaskDurationGauge  *prometheus.GaugeVec
 )
 
 // InitDistTaskMetrics initializes disttask metrics.
@@ -73,7 +75,7 @@ func InitDistTaskMetrics() {
 			Subsystem: "disttask",
 			Name:      "subtask_cnt",
 			Help:      "Gauge of subtask count.",
-		}, []string{lblTaskType, lblTaskID, lblTaskStatus})
+		}, []string{lblTaskType, lblTaskID, lblTaskStatus, lblExecID})
 
 	DistTaskSubTaskStartTimeGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -82,6 +84,14 @@ func InitDistTaskMetrics() {
 			Name:      "subtask_start_time",
 			Help:      "Gauge of subtask start time.",
 		}, []string{lblTaskType, lblTaskID, lblTaskStatus, lblSubTaskID})
+
+	DistTaskSubTaskDurationGauge = NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "disttask",
+			Name:      "subtask_duration",
+			Help:      "Gauge of subtask duration.",
+		}, []string{lblTaskType, lblTaskID, lblTaskStatus, lblSubTaskID, lblExecID})
 }
 
 // IncDistTaskSubTaskCnt increases the count of dist task subtask.
