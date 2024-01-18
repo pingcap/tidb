@@ -18,7 +18,6 @@ import (
 	"container/heap"
 	"context"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -59,8 +58,7 @@ type SortExec struct {
 
 	IsUnparallel bool
 
-	finishCh              chan struct{}
-	isFinishChannelClosed *atomic.Bool
+	finishCh chan struct{}
 
 	Unparallel struct {
 		Idx int
@@ -82,9 +80,8 @@ type SortExec struct {
 		rowNum     int64
 		idx        int64
 
-		chunkChannel    chan *chunk.Chunk
-		isChannelClosed *atomic.Bool
-		workers         []*parallelSortWorker
+		chunkChannel chan *chunk.Chunk
+		workers      []*parallelSortWorker
 
 		// Closed closeChannel means the finish of `fetchChunksParallel` function
 		closeChannel chan struct{}
@@ -101,7 +98,7 @@ type SortExec struct {
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
-	e.tryToCloseFinishChannel()
+	close(e.finishCh)
 	if e.Unparallel.spillAction != nil {
 		e.Unparallel.spillAction.SetFinished()
 	}
@@ -111,21 +108,18 @@ func (e *SortExec) Close() error {
 			partition.close()
 		}
 	} else {
-		e.tryToCloseChunkChannel()
-
-		// All chunks in chunkChannel must be consumed when closeChannel is closed
 		<-e.Parallel.closeChannel
+		for {
+			_, ok := <-e.Parallel.chunkChannel
+			if !ok {
+				break
+			}
+		}
 		e.Parallel.globalSortedRowsQueue.clear()
 		e.Parallel.resultLock.Lock()
 		defer e.Parallel.resultLock.Unlock()
 		e.Parallel.result = nil
 		e.Parallel.rowNum = 0
-
-		e.Parallel.errRWLock.RLock()
-		defer e.Parallel.errRWLock.RUnlock()
-		if e.Parallel.err != nil {
-			return e.Parallel.err
-		}
 	}
 
 	if e.memTracker != nil {
@@ -139,8 +133,6 @@ func (e *SortExec) Close() error {
 func (e *SortExec) Open(ctx context.Context) error {
 	e.fetched = false
 	e.enableTmpStorageOnOOM = variable.EnableTmpStorageOnOOM.Load()
-	e.isFinishChannelClosed = &atomic.Bool{}
-	e.isFinishChannelClosed.Store(false)
 	e.finishCh = make(chan struct{}, 1)
 
 	// To avoid duplicated initialization for TopNExec.
@@ -160,8 +152,6 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Parallel.workers = make([]*parallelSortWorker, e.Ctx().GetSessionVars().ExecutorConcurrency)
 		e.Parallel.closeChannel = make(chan struct{})
 		e.Parallel.chunkChannel = make(chan *chunk.Chunk, e.Ctx().GetSessionVars().ExecutorConcurrency)
-		e.Parallel.isChannelClosed = &atomic.Bool{}
-		e.Parallel.isChannelClosed.Store(false)
 		e.Parallel.globalSortedRowsQueue = &sortedRowsList{}
 		e.Parallel.errRWLock = &sync.RWMutex{}
 		e.Parallel.err = nil
@@ -389,18 +379,6 @@ func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDe
 	return nil
 }
 
-func (e *SortExec) tryToCloseChunkChannel() {
-	if e.Parallel.isChannelClosed.CompareAndSwap(false, true) {
-		close(e.Parallel.chunkChannel)
-	}
-}
-
-func (e *SortExec) tryToCloseFinishChannel() {
-	if e.isFinishChannelClosed.CompareAndSwap(false, true) {
-		close(e.finishCh)
-	}
-}
-
 func (e *SortExec) checkError() error {
 	for _, partition := range e.Unparallel.sortPartitions {
 		err := partition.checkError()
@@ -527,16 +505,18 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 
 	workersWaiter.Wait()
 
-	// Workers may panic, then no one could consume chunkChannel and
-	// the chunk fetcher may hang in this channel.
-	e.tryToCloseChunkChannel()
-
-	fetcherWaiter.Wait()
-
 	err := e.checkErrorForParallel()
 	if err != nil {
 		return err
 	}
+
+	fetcherWaiter.Wait()
+
+	err = e.checkErrorForParallel()
+	if err != nil {
+		return err
+	}
+
 	e.fetchResultFromQueue()
 	return nil
 }
@@ -547,7 +527,7 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 		if r := recover(); r != nil {
 			processPanicAndLog(e.processErrorForParallel, r)
 		}
-		e.tryToCloseChunkChannel()
+		close(e.Parallel.chunkChannel)
 	}()
 
 	for {
@@ -569,8 +549,6 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 		case <-e.finishCh:
 			return
 		case e.Parallel.chunkChannel <- chk:
-			// chunkChannel may be closed in advance and it's ok to let it panic
-			// as workers have panicked and the query can't keep on running.
 		}
 
 		injectParallelSortRandomFail()
@@ -589,7 +567,6 @@ func (e *SortExec) processErrorForParallel(err error) {
 	if e.Parallel.err == nil {
 		e.Parallel.err = err
 	}
-	e.tryToCloseFinishChannel()
 }
 
 func (e *SortExec) fetchResultFromQueue() {
