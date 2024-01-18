@@ -1646,14 +1646,13 @@ func (b *builtinCoalesceIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, 
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	sc := ctx.GetSessionVars().StmtCtx
-	beforeWarns := sc.WarningCount()
+	beforeWarns := warningCount(ctx)
 	for j := 0; j < len(b.args); j++ {
 		err := b.args[j].VecEvalInt(ctx, input, buf1)
-		afterWarns := sc.WarningCount()
+		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
 			if afterWarns > beforeWarns {
-				sc.TruncateWarnings(int(beforeWarns))
+				truncateWarnings(ctx, beforeWarns)
 			}
 			return b.fallbackEvalInt(ctx, input, result)
 		}
@@ -1703,14 +1702,13 @@ func (b *builtinCoalesceRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	sc := ctx.GetSessionVars().StmtCtx
-	beforeWarns := sc.WarningCount()
+	beforeWarns := warningCount(ctx)
 	for j := 0; j < len(b.args); j++ {
 		err := b.args[j].VecEvalReal(ctx, input, buf1)
-		afterWarns := sc.WarningCount()
+		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
 			if afterWarns > beforeWarns {
-				sc.TruncateWarnings(int(beforeWarns))
+				truncateWarnings(ctx, beforeWarns)
 			}
 			return b.fallbackEvalReal(ctx, input, result)
 		}
@@ -1760,14 +1758,13 @@ func (b *builtinCoalesceDecimalSig) vecEvalDecimal(ctx EvalContext, input *chunk
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	sc := ctx.GetSessionVars().StmtCtx
-	beforeWarns := sc.WarningCount()
+	beforeWarns := warningCount(ctx)
 	for j := 0; j < len(b.args); j++ {
 		err := b.args[j].VecEvalDecimal(ctx, input, buf1)
-		afterWarns := sc.WarningCount()
+		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
 			if afterWarns > beforeWarns {
-				sc.TruncateWarnings(int(beforeWarns))
+				truncateWarnings(ctx, beforeWarns)
 			}
 			return b.fallbackEvalDecimal(ctx, input, result)
 		}
@@ -1811,8 +1808,7 @@ func (b *builtinCoalesceStringSig) vecEvalString(ctx EvalContext, input *chunk.C
 	argLen := len(b.args)
 
 	bufs := make([]*chunk.Column, argLen)
-	sc := ctx.GetSessionVars().StmtCtx
-	beforeWarns := sc.WarningCount()
+	beforeWarns := warningCount(ctx)
 	for i := 0; i < argLen; i++ {
 		buf, err := b.bufAllocator.get()
 		if err != nil {
@@ -1820,10 +1816,10 @@ func (b *builtinCoalesceStringSig) vecEvalString(ctx EvalContext, input *chunk.C
 		}
 		defer b.bufAllocator.put(buf)
 		err = b.args[i].VecEvalString(ctx, input, buf)
-		afterWarns := sc.WarningCount()
+		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
 			if afterWarns > beforeWarns {
-				sc.TruncateWarnings(int(beforeWarns))
+				truncateWarnings(ctx, beforeWarns)
 			}
 			return b.fallbackEvalString(ctx, input, result)
 		}
@@ -1880,15 +1876,14 @@ func (b *builtinCoalesceTimeSig) vecEvalTime(ctx EvalContext, input *chunk.Chunk
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	sc := ctx.GetSessionVars().StmtCtx
-	beforeWarns := sc.WarningCount()
+	beforeWarns := warningCount(ctx)
 	for j := 0; j < len(b.args); j++ {
 		err := b.args[j].VecEvalTime(ctx, input, buf1)
 		fsp := b.tp.GetDecimal()
-		afterWarns := sc.WarningCount()
+		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
 			if afterWarns > beforeWarns {
-				sc.TruncateWarnings(int(beforeWarns))
+				truncateWarnings(ctx, beforeWarns)
 			}
 			return b.fallbackEvalTime(ctx, input, result)
 		}
@@ -1939,14 +1934,13 @@ func (b *builtinCoalesceDurationSig) vecEvalDuration(ctx EvalContext, input *chu
 		return err
 	}
 	defer b.bufAllocator.put(buf1)
-	sc := ctx.GetSessionVars().StmtCtx
-	beforeWarns := sc.WarningCount()
+	beforeWarns := warningCount(ctx)
 	for j := 0; j < len(b.args); j++ {
 		err := b.args[j].VecEvalDuration(ctx, input, buf1)
-		afterWarns := sc.WarningCount()
+		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
 			if afterWarns > beforeWarns {
-				sc.TruncateWarnings(int(beforeWarns))
+				truncateWarnings(ctx, beforeWarns)
 			}
 			return b.fallbackEvalDuration(ctx, input, result)
 		}
@@ -1990,8 +1984,7 @@ func (b *builtinCoalesceJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk
 	argLen := len(b.args)
 
 	bufs := make([]*chunk.Column, argLen)
-	sc := ctx.GetSessionVars().StmtCtx
-	beforeWarns := sc.WarningCount()
+	beforeWarns := warningCount(ctx)
 	for i := 0; i < argLen; i++ {
 		buf, err := b.bufAllocator.get()
 		if err != nil {
@@ -1999,10 +1992,10 @@ func (b *builtinCoalesceJSONSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk
 		}
 		defer b.bufAllocator.put(buf)
 		err = b.args[i].VecEvalJSON(ctx, input, buf)
-		afterWarns := sc.WarningCount()
+		afterWarns := warningCount(ctx)
 		if err != nil || afterWarns > beforeWarns {
 			if afterWarns > beforeWarns {
-				sc.TruncateWarnings(int(beforeWarns))
+				truncateWarnings(ctx, beforeWarns)
 			}
 			return b.fallbackEvalJSON(ctx, input, result)
 		}

@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
@@ -243,6 +242,7 @@ func ExprNotNull(expr Expression) bool {
 // first returned values is false.
 func EvalBool(ctx EvalContext, exprList CNFExprs, row chunk.Row) (bool, bool, error) {
 	hasNull := false
+	tc := typeCtx(ctx)
 	for _, expr := range exprList {
 		data, err := expr.Eval(ctx, row)
 		if err != nil {
@@ -261,7 +261,7 @@ func EvalBool(ctx EvalContext, exprList CNFExprs, row chunk.Row) (bool, bool, er
 			continue
 		}
 
-		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		i, err := data.ToBool(tc)
 		if err != nil {
 			return false, false, err
 		}
@@ -358,7 +358,7 @@ func VecEvalBool(ctx EvalContext, exprList CNFExprs, input *chunk.Chunk, selecte
 			return nil, nil, err
 		}
 
-		err = toBool(ctx.GetSessionVars().StmtCtx, tp, eType, buf, sel, isZero)
+		err = toBool(typeCtx(ctx), tp, eType, buf, sel, isZero)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -398,7 +398,7 @@ func VecEvalBool(ctx EvalContext, exprList CNFExprs, input *chunk.Chunk, selecte
 	return selected, nulls, nil
 }
 
-func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
+func toBool(tc types.Context, tp *types.FieldType, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
 	switch eType {
 	case types.ETInt:
 		i64s := buf.Int64s()
@@ -478,14 +478,14 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalT
 						}
 					case mysql.TypeBit:
 						var bl types.BinaryLiteral = buf.GetBytes(i)
-						iVal, err := bl.ToInt(sc.TypeCtx())
+						iVal, err := bl.ToInt(tc)
 						if err != nil {
 							return err
 						}
 						fVal = float64(iVal)
 					}
 				} else {
-					fVal, err = types.StrToFloat(sc.TypeCtx(), sVal, false)
+					fVal, err = types.StrToFloat(tc, sVal, false)
 					if err != nil {
 						return err
 					}
