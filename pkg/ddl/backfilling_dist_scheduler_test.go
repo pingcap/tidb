@@ -178,15 +178,16 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	subtaskMetas, err := sch.OnNextSubtasksBatch(ctx, sch, task, execIDs, sch.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
-	task.Step = ext.GetNextStep(task)
-	require.Equal(t, ddl.StepReadIndex, task.Step)
+	nextStep := ext.GetNextStep(task)
+	require.Equal(t, ddl.StepReadIndex, nextStep)
 	// update task/subtask, and finish subtask, so we can go to next stage
 	subtasks := make([]*proto.Subtask, 0, len(subtaskMetas))
-	for _, m := range subtaskMetas {
-		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", 1, m, 0))
+	for i, m := range subtaskMetas {
+		subtasks = append(subtasks, proto.NewSubtask(nextStep, task.ID, task.Type, "", 1, m, i+1))
 	}
-	_, err = mgr.UpdateTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
+	err = mgr.SwitchTaskStep(ctx, task, proto.TaskStatePending, nextStep, subtasks)
 	require.NoError(t, err)
+	task.Step = nextStep
 	gotSubtasks, err := mgr.GetSubtasksWithHistory(ctx, taskID, ddl.StepReadIndex)
 	require.NoError(t, err)
 
@@ -218,16 +219,17 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
-	task.Step = ext.GetNextStep(task)
-	require.Equal(t, ddl.StepMergeSort, task.Step)
+	nextStep = ext.GetNextStep(task)
+	require.Equal(t, ddl.StepMergeSort, nextStep)
 
 	// update meta, same as import into.
 	subtasks = make([]*proto.Subtask, 0, len(subtaskMetas))
-	for _, m := range subtaskMetas {
-		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", 1, m, 0))
+	for i, m := range subtaskMetas {
+		subtasks = append(subtasks, proto.NewSubtask(nextStep, task.ID, task.Type, "", 1, m, i+1))
 	}
-	_, err = mgr.UpdateTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
+	err = mgr.SwitchTaskStepInBatch(ctx, task, proto.TaskStatePending, nextStep, subtasks)
 	require.NoError(t, err)
+	task.Step = nextStep
 	gotSubtasks, err = mgr.GetSubtasksWithHistory(ctx, taskID, task.Step)
 	require.NoError(t, err)
 	mergeSortStepMeta := &ddl.BackfillSubTaskMeta{
