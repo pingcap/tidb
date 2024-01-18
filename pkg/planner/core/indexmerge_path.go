@@ -15,6 +15,7 @@
 package core
 
 import (
+	"cmp"
 	"math"
 	"slices"
 	"strings"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 )
 
 func init() {
@@ -746,7 +748,7 @@ func (ds *DataSource) generateMVIndexPartialPath4Or(normalPathCnt int, indexMerg
 }
 
 // generateMVIndexMergePartialPaths4And try to find mv index merge partial path from a collection of cnf conditions.
-func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, indexMergeConds []expression.Expression) ([]*util.AccessPath, map[string]expression.Expression, error) {
+func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, indexMergeConds []expression.Expression, histColl *statistics.HistColl) ([]*util.AccessPath, map[string]expression.Expression, error) {
 	// step1: collect all mv index paths
 	possibleMVIndexPaths := make([]*util.AccessPath, 0, len(ds.possibleAccessPaths))
 	for idx := 0; idx < normalPathCnt; idx++ {
@@ -761,6 +763,15 @@ func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, in
 	// step2: mapping index merge conditions into possible mv index path
 	mvAndPartialPath := make([]*util.AccessPath, 0, len(possibleMVIndexPaths))
 	usedAccessCondsMap := make(map[string]expression.Expression, len(indexMergeConds))
+	// fill the possible indexMergeConds down to possible index merge paths. If two index merge path
+	// share same accessFilters, pick the one with minimum countAfterAccess.
+	type record struct {
+		originOffset     int
+		paths            []*util.AccessPath
+		countAfterAccess float64
+	}
+	// mm is a map here used for de-duplicate partial paths which is derived from **same** accessFilters, not necessary to keep them both.
+	mm := make(map[string]*record, 0)
 	for idx := 0; idx < len(possibleMVIndexPaths); idx++ {
 		idxCols, ok := PrepareCols4MVIndex(ds.table.Meta(), possibleMVIndexPaths[idx].Index, ds.TblCols)
 		if !ok {
@@ -770,8 +781,21 @@ func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, in
 		if len(accessFilters) == 0 { // cannot use any filter on this MVIndex
 			continue
 		}
+		// record the all hashcodes before accessFilters is mutated.
+		allHashCodes := make([]string, 0, len(accessFilters)+len(mvFilterMutations)-1)
+		for _, accessF := range accessFilters {
+			allHashCodes = append(allHashCodes, string(accessF.HashCode()))
+		}
+		for i, mvF := range mvFilterMutations {
+			if i == 0 {
+				// skip the first one, because it has already in accessFilters.
+				continue
+			}
+			allHashCodes = append(allHashCodes, string(mvF.HashCode()))
+		}
 		// in traveling of these mv index conditions, we can only use one of them to build index merge path, just fetch it out first.
 		// build index merge partial path for every mutation combination access filters.
+		var partialPaths4ThisMvIndex []*util.AccessPath
 		for _, mvFilterMu := range mvFilterMutations {
 			// derive each mutation access filters
 			accessFilters[mvColOffset] = mvFilterMu
@@ -794,9 +818,31 @@ func (ds *DataSource) generateMVIndexMergePartialPaths4And(normalPathCnt int, in
 				for _, accessF := range accessFilters {
 					usedAccessCondsMap[string(accessF.HashCode())] = accessF
 				}
-				mvAndPartialPath = append(mvAndPartialPath, partialPaths...)
+				partialPaths4ThisMvIndex = append(partialPaths4ThisMvIndex, partialPaths...)
 			}
 		}
+		// sort allHashCodes to make the unified hashcode for slices of all accessFilters.
+		slices.Sort(allHashCodes)
+		allHashCodesKey := strings.Join(allHashCodes, "")
+		countAfterAccess := float64(histColl.RealtimeCount) * cardinality.CalcTotalSelectivityForMVIdxPath(histColl, partialPaths4ThisMvIndex, true)
+		if rec, ok := mm[allHashCodesKey]; !ok {
+			// compute the count after access from those intersection partial paths, for this mv index usage.
+			mm[allHashCodesKey] = &record{idx, partialPaths4ThisMvIndex, countAfterAccess}
+		} else {
+			// pick the minimum countAfterAccess's paths.
+			if rec.countAfterAccess > countAfterAccess {
+				mm[allHashCodesKey] = &record{idx, partialPaths4ThisMvIndex, countAfterAccess}
+			}
+		}
+	}
+	// after all mv index is traversed, pick those remained paths which has already been de-duplicated for its accessFilters.
+	recordsCollection := maps.Values(mm)
+	// according origin offset to stable the partial paths order. (golang map is not order stable)
+	slices.SortFunc(recordsCollection, func(a, b *record) int {
+		return cmp.Compare(a.originOffset, b.originOffset)
+	})
+	for _, one := range recordsCollection {
+		mvAndPartialPath = append(mvAndPartialPath, one.paths...)
 	}
 	return mvAndPartialPath, usedAccessCondsMap, nil
 }
@@ -1067,7 +1113,7 @@ func (ds *DataSource) generateIndexMerge4ComposedIndex(normalPathCnt int, indexM
 	// step1: firstly collect all the potential normal index partial paths.
 	// step2: secondly collect all the potential mv index partial path, and merge them into one if possible.
 	// step3: thirdly merge normal index paths and mv index paths together to compose a bigger index merge path.
-	mvIndexPartialPaths, usedAccessMap, err := ds.generateMVIndexMergePartialPaths4And(normalPathCnt, indexMergeConds)
+	mvIndexPartialPaths, usedAccessMap, err := ds.generateMVIndexMergePartialPaths4And(normalPathCnt, indexMergeConds, ds.tableStats.HistColl)
 	if err != nil {
 		return err
 	}

@@ -46,7 +46,7 @@ import (
 )
 
 // importStepExecutor is a executor for import step.
-// SubtaskExecutor is equivalent to a Lightning instance.
+// StepExecutor is equivalent to a Lightning instance.
 type importStepExecutor struct {
 	taskID        int64
 	taskMeta      *TaskMeta
@@ -258,7 +258,7 @@ func (s *importStepExecutor) Rollback(context.Context) error {
 }
 
 type mergeSortStepExecutor struct {
-	taskexecutor.EmptySubtaskExecutor
+	taskexecutor.EmptyStepExecutor
 	taskID     int64
 	taskMeta   *TaskMeta
 	logger     *zap.Logger
@@ -269,7 +269,7 @@ type mergeSortStepExecutor struct {
 	partSize            int64
 }
 
-var _ execute.SubtaskExecutor = &mergeSortStepExecutor{}
+var _ execute.StepExecutor = &mergeSortStepExecutor{}
 
 func (m *mergeSortStepExecutor) Init(ctx context.Context) error {
 	controller, err := buildController(&m.taskMeta.Plan, m.taskMeta.Stmt)
@@ -349,7 +349,7 @@ type writeAndIngestStepExecutor struct {
 	tableImporter *importer.TableImporter
 }
 
-var _ execute.SubtaskExecutor = &writeAndIngestStepExecutor{}
+var _ execute.StepExecutor = &writeAndIngestStepExecutor{}
 
 func (e *writeAndIngestStepExecutor) Init(ctx context.Context) error {
 	tableImporter, err := getTableImporter(ctx, e.taskID, e.taskMeta)
@@ -430,17 +430,17 @@ func (e *writeAndIngestStepExecutor) Rollback(context.Context) error {
 }
 
 type postProcessStepExecutor struct {
-	taskexecutor.EmptySubtaskExecutor
+	taskexecutor.EmptyStepExecutor
 	taskID   int64
 	taskMeta *TaskMeta
 	logger   *zap.Logger
 }
 
-var _ execute.SubtaskExecutor = &postProcessStepExecutor{}
+var _ execute.StepExecutor = &postProcessStepExecutor{}
 
 // NewPostProcessStepExecutor creates a new post process step executor.
 // exported for testing.
-func NewPostProcessStepExecutor(taskID int64, taskMeta *TaskMeta, logger *zap.Logger) execute.SubtaskExecutor {
+func NewPostProcessStepExecutor(taskID int64, taskMeta *TaskMeta, logger *zap.Logger) execute.StepExecutor {
 	return &postProcessStepExecutor{
 		taskID:   taskID,
 		taskMeta: taskMeta,
@@ -476,11 +476,11 @@ func newImportExecutor(ctx context.Context, id string, task *proto.Task, taskTab
 	return s
 }
 
-func (s *importExecutor) Run(ctx context.Context, task *proto.Task) error {
+func (s *importExecutor) RunStep(ctx context.Context, task *proto.Task, resource *proto.StepResource) error {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	defer metricsManager.unregister(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
-	return s.BaseTaskExecutor.Run(subCtx, task)
+	return s.BaseTaskExecutor.RunStep(subCtx, task, resource)
 }
 
 func (*importExecutor) IsIdempotent(*proto.Subtask) bool {
@@ -493,7 +493,7 @@ func (*importExecutor) IsRetryableError(err error) bool {
 	return common.IsRetryableError(err)
 }
 
-func (*importExecutor) GetSubtaskExecutor(_ context.Context, task *proto.Task, _ *execute.Summary) (execute.SubtaskExecutor, error) {
+func (*importExecutor) GetStepExecutor(_ context.Context, task *proto.Task, _ *execute.Summary, _ *proto.StepResource) (execute.StepExecutor, error) {
 	taskMeta := TaskMeta{}
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
