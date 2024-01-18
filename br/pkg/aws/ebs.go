@@ -73,6 +73,10 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 		}
 	}
 
+	tags := []*ec2.Tag{
+		ec2Tag("TiDBCluster-BR", "new"),
+	}
+
 	workerPool := utils.NewWorkerPool(e.concurrency, "create snapshots")
 	for i := range backupInfo.TiKVComponent.Stores {
 		store := backupInfo.TiKVComponent.Stores[i]
@@ -136,6 +140,12 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 				createSnapshotInput.SetInstanceSpecification(&instanceSpecification)
 				// Copy tags from source volume
 				createSnapshotInput.SetCopyTagsFromSource("volume")
+				createSnapshotInput.SetTagSpecifications([]*ec2.TagSpecification{
+					{
+						ResourceType: aws.String(ec2.ResourceTypeSnapshot),
+						Tags:         tags,
+					},
+				})
 				resp, err := e.createSnapshotsWithRetry(context.TODO(), &createSnapshotInput)
 
 				if err != nil {
