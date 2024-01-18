@@ -8,17 +8,20 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	preparesnap "github.com/pingcap/tidb/br/pkg/backup/prepare_snap"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -53,6 +56,18 @@ func (cx *AdaptEnvForSnapshotBackupContext) cleanUpWithRetErr(errOut *error, f f
 	if errOut != nil {
 		*errOut = multierr.Combine(*errOut, err)
 	}
+}
+
+func (cx *AdaptEnvForSnapshotBackupContext) run(f func() error) {
+	cx.rdGrp.Add(1)
+	buf := debug.Stack()
+	cx.runGrp.Go(func() error {
+		err := f()
+		if err != nil {
+			log.Error("A task failed.", zap.Error(err), zap.ByteString("task-created-at", buf))
+		}
+		return err
+	})
 }
 
 type AdaptEnvForSnapshotBackupContext struct {
@@ -120,11 +135,9 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	}
 	defer cx.Close()
 
-	cx.rdGrp.Add(3)
-
-	eg.Go(func() error { return pauseGCKeeper(cx) })
-	eg.Go(func() error { return pauseSchedulerKeeper(cx) })
-	eg.Go(func() error { return pauseImporting(cx) })
+	cx.run(func() error { return pauseGCKeeper(cx) })
+	cx.run(func() error { return pauseSchedulerKeeper(cx) })
+	cx.run(func() error { return pauseAdminAndWaitApply(cx) })
 	go func() {
 		cx.rdGrp.Wait()
 		if cfg.OnAllReady != nil {
@@ -141,46 +154,40 @@ func AdaptEnvForSnapshotBackup(ctx context.Context, cfg *PauseGcConfig) error {
 	return eg.Wait()
 }
 
+func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext) error {
+	env := preparesnap.CliEnv{
+		Cache: tikv.NewRegionCache(cx.pdMgr.GetPDClient()),
+		Mgr:   cx.kvMgr,
+	}
+	defer env.Cache.Close()
+	retryEnv := preparesnap.RetryAndSplitRequestEnv{Env: env}
+	begin := time.Now()
+	prep := preparesnap.New(retryEnv)
+	prep.LeaseDuration = cx.cfg.TTL
+
+	defer cx.cleanUpWith(func(ctx context.Context) {
+		if err := prep.Finalize(ctx); err != nil {
+			logutil.CL(ctx).Warn("failed to finalize the prepare stream", logutil.ShortError(err))
+		}
+	})
+
+	// We must use our own context here, or once we are cleaning up the client will be invalid.
+	myCtx := logutil.ContextWithField(context.Background(), zap.String("category", "pause_admin_and_wait_apply"))
+	if err := prep.DriveLoopAndWaitPrepare(myCtx); err != nil {
+		return err
+	}
+
+	cx.ReadyL("pause_admin_and_wait_apply", zap.Stringer("take", time.Since(begin)))
+	<-cx.Done()
+	return nil
+}
+
 func getCallerName() string {
 	name, err := os.Hostname()
 	if err != nil {
 		name = fmt.Sprintf("UNKNOWN-%d", rand.Int63())
 	}
 	return fmt.Sprintf("operator@%sT%d#%d", name, time.Now().Unix(), os.Getpid())
-}
-
-func pauseImporting(cx *AdaptEnvForSnapshotBackupContext) error {
-	suspendLightning := utils.NewSuspendImporting(getCallerName(), cx.kvMgr)
-	_, err := utils.WithRetryV2(cx, cx.GetBackOffer("suspend_lightning"), func(_ context.Context) (map[uint64]bool, error) {
-		return suspendLightning.DenyAllStores(cx, cx.cfg.TTL)
-	})
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cx.ReadyL("pause_lightning")
-	cx.runGrp.Go(func() (err error) {
-		defer cx.cleanUpWithRetErr(&err, func(ctx context.Context) error {
-			if ctx.Err() != nil {
-				return errors.Annotate(ctx.Err(), "cleaning up timed out")
-			}
-			res, err := utils.WithRetryV2(ctx, cx.GetBackOffer("restore_lightning"),
-				func(ctx context.Context) (map[uint64]bool, error) { return suspendLightning.AllowAllStores(ctx) })
-			if err != nil {
-				return errors.Annotatef(err, "failed to allow all stores")
-			}
-			return suspendLightning.ConsistentWithPrev(res)
-		})
-
-		err = suspendLightning.Keeper(cx, cx.cfg.TTL)
-		if errors.Cause(err) != context.Canceled {
-			logutil.CL(cx).Warn("keeper encounters error.", logutil.ShortError(err))
-			return err
-		}
-		// Clean up the canceled error.
-		err = nil
-		return
-	})
-	return nil
 }
 
 func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext) (err error) {
