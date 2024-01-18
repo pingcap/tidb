@@ -235,7 +235,7 @@ func onePartitionAndAllDataInMemoryCase(t *testing.T, ctx *mock.Context, sortCas
 	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
 
-func onePartitionAndAllDataInDiskCase(t *tsting.T, ctx *mock.Context, sortCase *testutil.SortCase) {
+func onePartitionAndAllDataInDiskCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) {
 	ctx.GetSessionVars().InitChunkSize = 1024
 	ctx.GetSessionVars().MaxChunkSize = 1024
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 50000)

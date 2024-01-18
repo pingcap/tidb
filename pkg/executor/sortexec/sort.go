@@ -18,7 +18,6 @@ import (
 	"container/heap"
 	"context"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -59,8 +58,7 @@ type SortExec struct {
 
 	IsUnparallel bool
 
-	finishCh              chan struct{}
-	isFinishChannelClosed *atomic.Bool
+	finishCh chan struct{}
 
 	// multiWayMerge uses multi-way merge for spill disk.
 	// The multi-way merge algorithm can refer to https://en.wikipedia.org/wiki/K-way_merge_algorithm
@@ -84,11 +82,7 @@ type SortExec struct {
 		chunkChannel chan *chunkWithMemoryUsage
 		// It's useful when spill is triggered and the fetcher could know when workers finish their works.
 		fetcherAndWorkerSyncer *sync.WaitGroup
-		isChannelClosed        *atomic.Bool
 		workers                []*parallelSortWorker
-
-		// Closed closeChannel means the finish of `fetchChunksParallel` function
-		closeChannel chan struct{}
 
 		// All workers' sorted rows will be put into this list to be merged
 		globalSortedRowsQueue *sortedRowsList
@@ -105,7 +99,7 @@ type SortExec struct {
 
 // Close implements the Executor Close interface.
 func (e *SortExec) Close() error {
-	e.tryToCloseFinishChannel()
+	close(e.finishCh)
 	if e.Unparallel.spillAction != nil {
 		e.Unparallel.spillAction.SetFinished()
 	}
@@ -115,10 +109,13 @@ func (e *SortExec) Close() error {
 			partition.close()
 		}
 	} else {
-		e.tryToCloseChunkChannel()
-
-		// All chunks in chunkChannel must be consumed when closeChannel is closed
-		<-e.Parallel.closeChannel
+		for {
+			_, ok := <-e.Parallel.chunkChannel
+			if !ok {
+				break
+			}
+			e.Parallel.fetcherAndWorkerSyncer.Done()
+		}
 		e.Parallel.globalSortedRowsQueue.clear()
 
 		e.Parallel.closeLock.Lock()
@@ -130,12 +127,6 @@ func (e *SortExec) Close() error {
 			for _, disk := range e.Parallel.spillHelper.sortedRowsInDisk {
 				disk.Close()
 			}
-		}
-
-		e.Parallel.errRWLock.RLock()
-		defer e.Parallel.errRWLock.RUnlock()
-		if e.Parallel.err != nil {
-			return e.Parallel.err
 		}
 	}
 
@@ -150,8 +141,6 @@ func (e *SortExec) Close() error {
 func (e *SortExec) Open(ctx context.Context) error {
 	e.fetched = false
 	e.enableTmpStorageOnOOM = variable.EnableTmpStorageOnOOM.Load()
-	e.isFinishChannelClosed = &atomic.Bool{}
-	e.isFinishChannelClosed.Store(false)
 	e.finishCh = make(chan struct{}, 1)
 
 	// To avoid duplicated initialization for TopNExec.
@@ -171,13 +160,10 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Parallel.workers = make([]*parallelSortWorker, e.Ctx().GetSessionVars().ExecutorConcurrency)
 		e.Parallel.chunkChannel = make(chan *chunkWithMemoryUsage, e.Ctx().GetSessionVars().ExecutorConcurrency)
 		e.Parallel.fetcherAndWorkerSyncer = &sync.WaitGroup{}
-		e.Parallel.closeChannel = make(chan struct{})
-		e.Parallel.isChannelClosed = &atomic.Bool{}
-		e.Parallel.isChannelClosed.Store(false)
 		e.Parallel.globalSortedRowsQueue = &sortedRowsList{}
 		e.Parallel.errRWLock = &sync.RWMutex{}
 		e.Parallel.err = nil
-		e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh, e.tryToCloseFinishChannel)
+		e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh)
 		e.Parallel.spillAction = newParallelSortSpillDiskAction(e.Parallel.spillHelper)
 		if e.enableTmpStorageOnOOM {
 			e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.Parallel.spillAction)
@@ -276,7 +262,7 @@ func (e *SortExec) appendResultToChunkInParallelMode(req *chunk.Chunk) error {
 	e.Parallel.closeLock.Lock()
 	defer e.Parallel.closeLock.Unlock()
 
-	if e.Parallel.spillHelper.isSpillNeeded() {
+	if e.Parallel.spillHelper.isSpillNeeded() && !e.Parallel.spillHelper.isSpillTriggered() {
 		e.Parallel.spillHelper.spill()
 		err := e.Parallel.spillHelper.checkSpillError()
 		if err != nil {
@@ -482,18 +468,6 @@ func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDe
 	return nil
 }
 
-func (e *SortExec) tryToCloseChunkChannel() {
-	if e.Parallel.isChannelClosed.CompareAndSwap(false, true) {
-		close(e.Parallel.chunkChannel)
-	}
-}
-
-func (e *SortExec) tryToCloseFinishChannel() {
-	if e.isFinishChannelClosed.CompareAndSwap(false, true) {
-		close(e.finishCh)
-	}
-}
-
 func (e *SortExec) checkError() error {
 	for _, partition := range e.Unparallel.sortPartitions {
 		err := partition.checkError()
@@ -597,45 +571,15 @@ func (e *SortExec) fetchChunksUnparallel(ctx context.Context) error {
 	return nil
 }
 
-// Consume all chunks in chunkChannel to avoid the hang of chunk fetcher
-func (e *SortExec) drainChunkChannel(fetcherFinishCh chan struct{}) {
-	defer func() {
-		// Maybe some remaining chunks haven't been consumed
-		for {
-			_, ok := <-e.Parallel.chunkChannel
-			if !ok {
-				break
-			}
-			e.Parallel.fetcherAndWorkerSyncer.Done()
-		}
-	}()
-
-	for {
-		select {
-		case _, ok := <-e.Parallel.chunkChannel:
-			if !ok {
-				return
-			}
-			e.Parallel.fetcherAndWorkerSyncer.Done()
-		case <-fetcherFinishCh:
-			return
-		}
-	}
-}
-
 func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
-	defer close(e.Parallel.closeChannel)
-
 	// Wait for the finish of all workers
 	workersWaiter := util.WaitGroupWrapper{}
 	// Wait for the finish of chunk fetcher
 	fetcherWaiter := util.WaitGroupWrapper{}
 
-	fetcherFinishCh := make(chan struct{})
-
 	// Fetch chunks from child and put chunks into chunkChannel
 	fetcherWaiter.Run(func() {
-		e.fetchChunksFromChild(ctx, fetcherFinishCh)
+		e.fetchChunksFromChild(ctx)
 	})
 
 	for i := range e.Parallel.workers {
@@ -647,17 +591,13 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	}
 
 	workersWaiter.Wait()
-	e.drainChunkChannel(fetcherFinishCh)
-	fetcherWaiter.Wait()
-
-	e.spillRemainingRowsWhenNeeded()
-
 	err := e.checkErrorForParallel()
 	if err != nil {
 		return err
 	}
+	fetcherWaiter.Wait()
 
-	err = e.Parallel.spillHelper.checkSpillError()
+	err = e.checkErrorForParallel()
 	if err != nil {
 		return err
 	}
@@ -682,17 +622,18 @@ func (e *SortExec) checkSpillAndExecute() {
 }
 
 // Fetch chunks from child and put chunks into chunkChannel
-func (e *SortExec) fetchChunksFromChild(ctx context.Context, fetcherFinishCh chan struct{}) {
+func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
 			processPanicAndLog(e.processErrorForParallel, r)
 		}
 
-		close(fetcherFinishCh)
-		e.tryToCloseChunkChannel()
+		close(e.Parallel.chunkChannel)
 
 		// Wait for the finish of all workers
 		e.Parallel.fetcherAndWorkerSyncer.Wait()
+
+		e.spillRemainingRowsWhenNeeded()
 	}()
 
 	for {
@@ -721,8 +662,6 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context, fetcherFinishCh cha
 			e.Parallel.fetcherAndWorkerSyncer.Done()
 			return
 		case e.Parallel.chunkChannel <- chkWithMemoryUsage:
-			// chunkChannel may be closed in advance and it's ok to let it panic
-			// as workers have panicked and the query can't keep on running.
 		}
 
 		e.checkSpillAndExecute()
@@ -731,6 +670,11 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context, fetcherFinishCh cha
 }
 
 func (e *SortExec) checkErrorForParallel() error {
+	err := e.Parallel.spillHelper.checkSpillError()
+	if err != nil {
+		return err
+	}
+
 	e.Parallel.errRWLock.RLock()
 	defer e.Parallel.errRWLock.RUnlock()
 	return e.Parallel.err
@@ -742,7 +686,6 @@ func (e *SortExec) processErrorForParallel(err error) {
 	if e.Parallel.err == nil {
 		e.Parallel.err = err
 	}
-	e.tryToCloseFinishChannel()
 }
 
 func (e *SortExec) fetchResultFromQueue() {

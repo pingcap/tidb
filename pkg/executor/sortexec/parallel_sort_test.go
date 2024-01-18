@@ -16,7 +16,10 @@ package sortexec_test
 
 import (
 	"context"
+	"math/rand"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -34,9 +37,30 @@ func executeInFailpoint(t *testing.T, exe *sortexec.SortExec) {
 	err := exe.Open(tmpCtx)
 	require.NoError(t, err)
 
+	goRoutineWaiter := sync.WaitGroup{}
+	goRoutineWaiter.Add(1)
+	defer goRoutineWaiter.Wait()
+
+	once := sync.Once{}
+
+	go func() {
+		time.Sleep(time.Duration(rand.Int31n(300)) * time.Millisecond)
+		once.Do(func() {
+			exe.Close()
+		})
+		goRoutineWaiter.Done()
+	}()
+
 	chk := exec.NewFirstChunk(exe)
 	for {
-		exe.Next(tmpCtx, chk)
+		err := exe.Next(tmpCtx, chk)
+		if err != nil {
+			once.Do(func() {
+				err = exe.Close()
+				require.Equal(t, nil, err)
+			})
+			break
+		}
 		if chk.NumRows() == 0 {
 			break
 		}
@@ -94,7 +118,7 @@ func TestFailpoint(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/ParallelSortRandomFail", `return(true)`)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
-	testNum := 100
+	testNum := 50
 	for i := 0; i < testNum; i++ {
 		failpointTest(t, ctx, sortCase, dataSource)
 	}

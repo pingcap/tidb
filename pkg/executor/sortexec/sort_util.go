@@ -73,7 +73,7 @@ func (p *sortedRowsList) clear() {
 	elem := p.sortedRowsQueue.Front()
 	for elem != nil {
 		p.sortedRowsQueue.Remove(elem)
-		p.sortedRowsQueue.Front()
+		elem = p.sortedRowsQueue.Front()
 	}
 }
 
