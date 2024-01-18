@@ -28,6 +28,7 @@ const (
 )
 
 // Step2Str converts step to string.
+// it's too bad that we define step as int 🙃.
 func Step2Str(t TaskType, s Step) string {
 	// StepInit and StepDone are special steps, we don't check task type for them.
 	if s == StepInit {
