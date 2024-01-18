@@ -14,7 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -eu
+set -eux
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 DB="$TEST_NAME"
 
@@ -25,6 +25,8 @@ if [ "$VOTER_COUNT" -lt "1" ];then
 fi
 
 # set random store to read only
+test_res=$(run_pd_ctl -u https://$PD_ADDR store)
+echo "test result: $test_res"
 random_store_id=$(run_pd_ctl -u https://$PD_ADDR store | jq 'first(.stores[]|select(.store.labels|(.!= null and any(.key == "engine" and .value=="tiflash"))| not)|.store.id)')
 echo "random store id: $random_store_id"
 run_pd_ctl -u https://$PD_ADDR store label $random_store_id '$mode' 'read_only'
