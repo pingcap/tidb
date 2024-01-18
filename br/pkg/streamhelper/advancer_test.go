@@ -277,6 +277,8 @@ func TestClearCache(t *testing.T) {
 			return nil
 		}
 		s.clientMu.Unlock()
+		// mark one store failed is enough
+		break
 	}
 	env := &testEnv{fakeCluster: c, testCtx: t}
 	adv := streamhelper.NewCheckpointAdvancer(env)

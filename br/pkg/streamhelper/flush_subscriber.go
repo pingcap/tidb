@@ -228,7 +228,7 @@ func (s *subscription) doConnect(ctx context.Context, dialer LogBackupService) e
 	})
 	if err != nil {
 		cancel()
-		dialer.ClearCache(ctx, s.storeID)
+		_ = dialer.ClearCache(ctx, s.storeID)
 		return errors.Annotate(err, "failed to subscribe events")
 	}
 	lcx := logutil.ContextWithField(cx, zap.Uint64("store-id", s.storeID),
