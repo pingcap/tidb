@@ -413,7 +413,7 @@ func (m *Manager) handleExecutableTask(task *proto.Task) {
 			continue
 		}
 		stepResource := m.getStepResource(task.Concurrency)
-		logutil.Logger(m.logCtx).Info("execute task step with resource",
+		m.logger.Info("execute task step with resource",
 			zap.Int64("task-id", task.ID), zap.Int64("step", int64(task.Step)),
 			zap.Stringer("resource", stepResource))
 		switch task.State {
