@@ -19,6 +19,7 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/util/chunk",
         "//pkg/util/cpu",
+        "//pkg/util/distrole",
         "//pkg/util/intest",
         "//pkg/util/logutil",
         "//pkg/util/sqlescape",
