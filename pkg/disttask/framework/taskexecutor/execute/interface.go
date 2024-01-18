@@ -22,9 +22,12 @@ import (
 
 // StepExecutor defines the executor of a subtask.
 // the calling sequence is:
-//  1. Init
-//  2. call RunSubtask for every subtask of this step, if error occurs, goto 3, otherwise call OnFinished
-//  3. Cleanup
+//
+//	Init
+//	for every subtask of this step:
+//		if RunSubtask failed then break
+//		else OnFinished
+//	Cleanup
 type StepExecutor interface {
 	// Init is used to initialize the environment for the subtask executor.
 	Init(context.Context) error

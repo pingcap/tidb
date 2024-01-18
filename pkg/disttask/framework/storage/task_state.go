@@ -61,11 +61,11 @@ func (mgr *TaskManager) FailTask(ctx context.Context, taskID int64, currentState
 
 // RevertTask implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) RevertTask(ctx context.Context, taskID int64, taskState proto.TaskState, taskErr error) error {
-	_, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`update mysql.tidb_global_task
-		 set state = %?,
-		     error = %?,
-			 state_update_time = CURRENT_TIMESTAMP()
+	_, err := mgr.ExecuteSQLWithNewSession(ctx, `
+		update mysql.tidb_global_task
+		set state = %?,
+			error = %?,
+			state_update_time = CURRENT_TIMESTAMP()
 		 where id = %? and state = %?`,
 		proto.TaskStateReverting, serializeErr(taskErr), taskID, taskState,
 	)
@@ -149,11 +149,11 @@ func (mgr *TaskManager) ResumeTask(ctx context.Context, taskKey string) (bool, e
 
 // ResumedTask implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) ResumedTask(ctx context.Context, taskID int64) error {
-	_, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`update mysql.tidb_global_task
-		 set state = %?,
-			 state_update_time = CURRENT_TIMESTAMP()
-		 where id = %? and state = %?`,
+	_, err := mgr.ExecuteSQLWithNewSession(ctx, `
+		update mysql.tidb_global_task
+		set state = %?,
+			state_update_time = CURRENT_TIMESTAMP()
+		where id = %? and state = %?`,
 		proto.TaskStateRunning, taskID, proto.TaskStateResuming,
 	)
 	return err

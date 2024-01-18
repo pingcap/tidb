@@ -105,6 +105,10 @@ func TestTaskState(t *testing.T) {
 	task, err = gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskStateResuming, task.State)
+	require.NoError(t, gm.ResumedTask(ctx, id))
+	task, err = gm.GetTaskByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, proto.TaskStateRunning, task.State)
 
 	// 8. succeed task
 	id, err = gm.CreateTask(ctx, "key6", "test", 4, []byte("test"))

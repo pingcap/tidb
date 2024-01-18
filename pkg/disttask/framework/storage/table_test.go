@@ -171,6 +171,7 @@ func TestTaskTable(t *testing.T) {
 	task, err = gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
 	require.Equal(t, proto.TaskStateReverting, task.State)
+	require.ErrorContains(t, task.Error, "test error")
 	require.NoError(t, gm.RevertedTask(ctx, task.ID))
 	task, err = gm.GetTaskByID(ctx, id)
 	require.NoError(t, err)
