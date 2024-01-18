@@ -44,7 +44,7 @@ func executeInFailpoint(t *testing.T, exe *sortexec.SortExec) {
 	once := sync.Once{}
 
 	go func() {
-		time.Sleep(time.Duration(rand.Int31n(300) * int32(time.Millisecond)))
+		time.Sleep(time.Duration(rand.Int31n(300)) * time.Millisecond)
 		once.Do(func() {
 			exe.Close()
 		})
