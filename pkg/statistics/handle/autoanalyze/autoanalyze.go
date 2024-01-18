@@ -251,6 +251,10 @@ func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
 			}
 			refresher = r
 		}
+		if err := refresher.buildTableAnalysisJobQueue(); err != nil {
+			logutil.BgLogger().Error("build table analysis job queue failed", zap.Error(err))
+			return false
+		}
 		refresher.pickOneTableForAnalysisByPriority()
 	} else {
 		_ = statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {

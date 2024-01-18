@@ -18,7 +18,6 @@ import (
 	"container/heap"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -34,18 +33,13 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	refreshInterval = 3 * time.Second
-)
-
 // Refresher represents a struct with a goroutine that periodically rebuilds the jobs queue.
 type Refresher struct {
 	statsHandle    statstypes.StatsHandle
 	sysProcTracker sessionctx.SysProcTracker
 
-	ticker *time.Ticker
-	stop   chan struct{}
-	jobs   *analyzequeue.AnalysisQueue
+	stop chan struct{}
+	jobs *analyzequeue.AnalysisQueue
 	// Used to protect the jobs queue.
 	mu sync.RWMutex
 }
@@ -57,7 +51,6 @@ func NewRefresher(
 ) (*Refresher, error) {
 	r := &Refresher{
 		stop:           make(chan struct{}),
-		ticker:         time.NewTicker(refreshInterval),
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,
 	}
@@ -67,32 +60,11 @@ func NewRefresher(
 		return nil, err
 	}
 
-	go r.runRefresher()
-
 	return r, nil
-}
-
-// runRefresher is the goroutine function that periodically rebuilds the jobs queue.
-func (r *Refresher) runRefresher() {
-	for {
-		select {
-		case <-r.ticker.C:
-			err := r.buildTableAnalysisJobQueue()
-			if err != nil {
-				statslogutil.StatsLogger().Error(
-					"build table analysis job queue failed",
-					zap.Error(err),
-				)
-			}
-		case <-r.stop:
-			return
-		}
-	}
 }
 
 // Stop stops the refresher goroutine.
 func (r *Refresher) Stop() {
-	r.ticker.Stop()
 	close(r.stop)
 }
 
