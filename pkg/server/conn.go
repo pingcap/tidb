@@ -1260,7 +1260,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cfg := config.GetGlobalConfig()
 	if cfg.OpenTracing.Enable {
 		var r tracing.Region
-		r, ctx = tracing.StartRegionEx(ctx, "server.dispatch")
+		r, ctx = tracing.StartRegionWithNewRootSpan(ctx, "server.dispatch")
 		defer r.End()
 	}
 
