@@ -152,7 +152,7 @@ retry:
 	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(start).Seconds())
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
-			sp.ResetConn(ver, err)
+			sp.resetConn(ver, err)
 			bo.Backoff()
 			goto retry
 		}
@@ -191,18 +191,20 @@ func (b *backoffer) Backoff() {
 	time.Sleep(b.Duration)
 }
 
-// ResetConn reset the AutoIDAllocClient and underlying grpc connection.
-// The next GetClient() call will recreate the client connecting to the correct leader by querying etcd.
-func (d *ClientDiscover) ResetConn(version uint64, reason error) {
+func (d *ClientDiscover) resetConn(version uint64, reason error) {
 	// Avoid repeated Reset operation
 	if !atomic.CompareAndSwapUint64(&d.version, version, version+1) {
 		return
 	}
+	d.ResetConn(reason)
+}
 
+// ResetConn reset the AutoIDAllocClient and underlying grpc connection.
+// The next GetClient() call will recreate the client connecting to the correct leader by querying etcd.
+func (d *ClientDiscover) ResetConn(reason error) {
 	if reason != nil {
 		logutil.BgLogger().Info("reset grpc connection", zap.String("category", "autoid client"),
-			zap.String("reason", reason.Error()),
-			zap.Uint64("version", version))
+			zap.String("reason", reason.Error()))
 	}
 
 	metrics.ResetAutoIDConnCounter.Add(1)
@@ -262,7 +264,7 @@ retry:
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
-			sp.ResetConn(ver, err)
+			sp.resetConn(ver, err)
 			bo.Backoff()
 			goto retry
 		}
