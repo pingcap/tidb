@@ -58,7 +58,7 @@ func (mgr *TaskManager) RecoverMeta(ctx context.Context, execID string, role str
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
 		values (%?, %?, %?, -1)
 		on duplicate key
-		update cpu_count = %?`,
+		update cpu_count = %?, dead = false`,
 		execID, role, cpuCount, cpuCount)
 	return err
 }

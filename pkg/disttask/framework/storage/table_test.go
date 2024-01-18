@@ -847,9 +847,8 @@ func TestDistFrameworkMeta(t *testing.T) {
 	nodes, err = sm.GetManagedNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{}, nodes)
-	cpuCount, err = sm.GetCPUCountOfManagedNode(ctx)
-	require.NoError(t, err)
-	require.Equal(t, 8, cpuCount)
+	_, err = sm.GetCPUCountOfManagedNode(ctx)
+	require.Error(t, err)
 
 	require.NoError(t, sm.RecoverMeta(ctx, ":4002", "background"))
 	nodes, err = sm.GetManagedNodes(ctx)
