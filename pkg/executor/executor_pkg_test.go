@@ -169,8 +169,9 @@ func TestSlowQueryRuntimeStats(t *testing.T) {
 func TestAggPartialResultMapperB(t *testing.T) {
 	// skip err, since we guarantee the success of execution
 	go113, _ := version.NewVersion(`1.13`)
-	actualVerStr := strings.SplitAfter(runtime.Version(), `go`)[1]
-	actualVer, err := version.NewVersion(actualVerStr)
+	// go version format is `gox.y.z foobar`, we only need x.y.z part
+	// The following is pretty hacky, but it only in test which is ok to do so.
+	actualVer, err := version.NewVersion(runtime.Version()[2:6])
 	if err != nil {
 		t.Fatalf("Cannot get actual go version with error %v\n", err)
 	}
