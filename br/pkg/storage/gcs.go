@@ -290,6 +290,7 @@ func newGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 	}
 
 	bucket := client.Bucket(gcs.Bucket)
+<<<<<<< HEAD
 	// check whether it's a bug before #647, to solve case #2
 	// If the storage is set as gcs://bucket/prefix/,
 	// the backupmeta is written correctly to gcs://bucket/prefix/backupmeta,
@@ -303,27 +304,25 @@ func newGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *ExternalStorage
 		gcs.Prefix += "//"
 	}
 	return &gcsStorage{gcs: gcs, bucket: bucket}, nil
+=======
+	return &GCSStorage{gcs: gcs, bucket: bucket, cli: client}, nil
 }
 
-func hasSSTFiles(ctx context.Context, bucket *storage.BucketHandle, prefix string) bool {
-	query := storage.Query{Prefix: prefix}
-	_ = query.SetAttrSelection([]string{"Name"})
-	it := bucket.Objects(ctx, &query)
-	for {
-		attrs, err := it.Next()
-		if err == iterator.Done { // nolint:errorlint
-			break
-		}
-		if err != nil {
-			log.Warn("failed to list objects on gcs, will use default value for `prefix`", zap.Error(err))
-			break
-		}
-		if strings.HasSuffix(attrs.Name, ".sst") {
-			log.Info("sst file found in prefix slash", zap.String("file", attrs.Name))
+func shouldRetry(err error) bool {
+	if storage.ShouldRetry(err) {
+		return true
+	}
+
+	// workaround for https://github.com/googleapis/google-cloud-go/issues/9262
+	if e := (&googleapi.Error{}); goerrors.As(err, &e) {
+		if e.Code == 401 && strings.Contains(e.Message, "Authentication required.") {
+			log.Warn("retrying gcs request due to internal authentication error", zap.Error(err))
 			return true
 		}
 	}
+
 	return false
+>>>>>>> c92094fcb48 (external: remove old compatibility check of BR (#50534))
 }
 
 // gcsObjectReader wrap storage.Reader and add the `Seek` method.
