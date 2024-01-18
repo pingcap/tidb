@@ -43,7 +43,7 @@ func (*TaskManager) InitMetaSession(ctx context.Context, se sessionctx.Context, 
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
 		values (%?, %?, %?, -1)
 		on duplicate key
-		update cpu_count = %?, role = %?`,
+		update cpu_count = %?, role = %?, dead = false`,
 		execID, role, cpuCount, cpuCount, role)
 	return err
 }

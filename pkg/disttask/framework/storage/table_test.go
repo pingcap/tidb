@@ -846,9 +846,7 @@ func TestDistFrameworkMeta(t *testing.T) {
 	require.NoError(t, sm.MarkDeadNodes(ctx, []string{":4002"}))
 	nodes, err = sm.GetManagedNodes(ctx)
 	require.NoError(t, err)
-	require.Equal(t, []proto.ManagedNode{
-		{ID: ":4001", Role: "", CPUCount: 8},
-	}, nodes)
+	require.Equal(t, []proto.ManagedNode{}, nodes)
 	cpuCount, err = sm.GetCPUCountOfManagedNode(ctx)
 	require.NoError(t, err)
 	require.Equal(t, 8, cpuCount)

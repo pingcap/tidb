@@ -612,7 +612,7 @@ const (
         host VARCHAR(100) NOT NULL PRIMARY KEY,
         role VARCHAR(64),
         cpu_count int default 0,
-		dead TINYINT(2);
+		dead TINYINT(2),
         keyspace_id bigint(8) NOT NULL DEFAULT -1
     );`
 
