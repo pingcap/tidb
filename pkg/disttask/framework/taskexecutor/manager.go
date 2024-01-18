@@ -84,7 +84,7 @@ type Manager struct {
 	wg          tidbutil.WaitGroupWrapper
 	ctx         context.Context
 	cancel      context.CancelFunc
-	logCtx      context.Context
+	logger      *zap.Logger
 	newPool     func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
 	slotManager *slotManager
 
@@ -109,7 +109,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 	m := &Manager{
 		id:        id,
 		taskTable: taskTable,
-		logCtx:    logutil.WithFields(context.Background()),
+		logger:    logutil.BgLogger(),
 		newPool:   b.newPool,
 		slotManager: &slotManager{
 			taskID2Index:  make(map[int64]int),
@@ -144,7 +144,7 @@ func (m *Manager) InitMeta() (err error) {
 			return err1
 		}
 		if i%10 == 0 {
-			logutil.Logger(m.logCtx).Warn("start manager failed",
+			m.logger.Warn("start manager failed",
 				zap.String("scope", config.GetGlobalConfig().Instance.TiDBServiceScope),
 				zap.Int("retry times", i),
 				zap.Error(err))
@@ -164,7 +164,7 @@ func (m *Manager) recoverMeta() (err error) {
 			return err1
 		}
 		if i%10 == 0 {
-			logutil.Logger(m.logCtx).Warn("recover meta failed",
+			m.logger.Warn("recover meta failed",
 				zap.String("scope", config.GetGlobalConfig().Instance.TiDBServiceScope),
 				zap.Int("retry times", i),
 				zap.Error(err))
@@ -176,7 +176,7 @@ func (m *Manager) recoverMeta() (err error) {
 
 // Start starts the Manager.
 func (m *Manager) Start() error {
-	logutil.Logger(m.logCtx).Debug("manager start")
+	m.logger.Debug("manager start")
 	m.wg.Run(m.handleTasksLoop)
 	m.wg.Run(m.recoverMetaLoop)
 	return nil
@@ -203,7 +203,7 @@ func (m *Manager) handleTasksLoop() {
 	for {
 		select {
 		case <-m.ctx.Done():
-			logutil.Logger(m.logCtx).Info("handle tasks loop done")
+			m.logger.Info("handle tasks loop done")
 			return
 		case <-ticker.C:
 		}
@@ -248,14 +248,14 @@ func (m *Manager) handleExecutableTasks(tasks []*proto.Task) {
 	for _, task := range tasks {
 		exist, err := m.taskTable.HasSubtasksInStates(m.ctx, m.id, task.ID, task.Step, unfinishedSubtaskStates...)
 		if err != nil {
-			logutil.Logger(m.logCtx).Error("check subtask exist failed", zap.Error(err))
+			m.logger.Error("check subtask exist failed", zap.Error(err))
 			m.logErr(err)
 			continue
 		}
 		if !exist {
 			continue
 		}
-		logutil.Logger(m.logCtx).Info("detect new subtask", zap.Int64("task-id", task.ID))
+		m.logger.Info("detect new subtask", zap.Int64("task-id", task.ID))
 
 		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task)
 		if len(tasksNeedFree) > 0 {
@@ -265,7 +265,7 @@ func (m *Manager) handleExecutableTasks(tasks []*proto.Task) {
 		}
 
 		if !canAlloc {
-			logutil.Logger(m.logCtx).Debug("no enough slots to run task", zap.Int64("task-id", task.ID))
+			m.logger.Debug("no enough slots to run task", zap.Int64("task-id", task.ID))
 			continue
 		}
 		m.addHandlingTask(task.ID)
@@ -292,7 +292,7 @@ func (m *Manager) cancelRunningSubtaskOf(task *proto.Task) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
-		logutil.Logger(m.logCtx).Info("onCanceledTasks", zap.Int64("task-id", task.ID))
+		m.logger.Info("onCanceledTasks", zap.Int64("task-id", task.ID))
 		// subtask needs to change its state to `canceled`.
 		cancel(ErrCancelSubtask)
 	}
@@ -302,7 +302,7 @@ func (m *Manager) cancelRunningSubtaskOf(task *proto.Task) {
 func (m *Manager) handlePausingTask(task *proto.Task) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	logutil.Logger(m.logCtx).Info("handle pausing task", zap.Int64("task-id", task.ID))
+	m.logger.Info("handle pausing task", zap.Int64("task-id", task.ID))
 	if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
 		// cancel the task executor
 		cancel(nil)
@@ -323,7 +323,7 @@ func (m *Manager) recoverMetaLoop() {
 	for {
 		select {
 		case <-m.ctx.Done():
-			logutil.Logger(m.logCtx).Info("recoverMetaLoop done")
+			m.logger.Info("recoverMetaLoop done")
 			return
 		case <-ticker.C:
 			if err := m.recoverMeta(); err != nil {
@@ -340,7 +340,7 @@ func (m *Manager) cancelTaskExecutors(tasks []*proto.Task) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, task := range tasks {
-		logutil.Logger(m.logCtx).Info("cancelTasks", zap.Any("task_id", task.ID))
+		m.logger.Info("cancelTasks", zap.Any("task_id", task.ID))
 		if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
 			// only cancel the executor, subtask state is not changed.
 			cancel(nil)
@@ -358,7 +358,7 @@ var testContexts sync.Map
 
 // handleExecutableTask handles a runnable task.
 func (m *Manager) handleExecutableTask(task *proto.Task) {
-	logutil.Logger(m.logCtx).Info("handleExecutableTask", zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type))
+	m.logger.Info("handleExecutableTask", zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type))
 	// runCtx only used in executor.Run, cancel in m.fetchAndFastCancelTasks.
 	factory := GetTaskExecutorFactory(task.Type)
 	if factory == nil {
@@ -380,7 +380,7 @@ func (m *Manager) handleExecutableTask(task *proto.Task) {
 	for {
 		select {
 		case <-m.ctx.Done():
-			logutil.Logger(m.logCtx).Info("handleExecutableTask exit for cancel", zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type))
+			m.logger.Info("handleExecutableTask exit for cancel", zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type))
 			return
 		case <-time.After(checkTime):
 		}
@@ -401,7 +401,7 @@ func (m *Manager) handleExecutableTask(task *proto.Task) {
 			return
 		}
 		if task.State != proto.TaskStateRunning && task.State != proto.TaskStateReverting {
-			logutil.Logger(m.logCtx).Info("handleExecutableTask exit",
+			m.logger.Info("handleExecutableTask exit",
 				zap.Int64("task-id", task.ID), zap.Int64("step", int64(task.Step)), zap.Stringer("state", task.State))
 			return
 		}
@@ -413,7 +413,7 @@ func (m *Manager) handleExecutableTask(task *proto.Task) {
 			continue
 		}
 		stepResource := m.getStepResource(task.Concurrency)
-		logutil.Logger(m.logCtx).Info("execute task step with resource",
+		m.logger.Info("execute task step with resource",
 			zap.Int64("task-id", task.ID), zap.Int64("step", int64(task.Step)),
 			zap.Stringer("resource", stepResource))
 		switch task.State {
@@ -429,7 +429,7 @@ func (m *Manager) handleExecutableTask(task *proto.Task) {
 			err = executor.Rollback(m.ctx, task)
 		}
 		if err != nil {
-			logutil.Logger(m.logCtx).Error("failed to handle task", zap.Error(err))
+			m.logger.Error("failed to handle task", zap.Error(err))
 		}
 	}
 }
@@ -471,18 +471,18 @@ func (m *Manager) isExecutorStarted(taskID int64) bool {
 }
 
 func (m *Manager) logErr(err error) {
-	logutil.Logger(m.logCtx).Error("task manager met error", zap.Error(err), zap.Stack("stack"))
+	m.logger.Error("task manager met error", zap.Error(err), zap.Stack("stack"))
 }
 
 func (m *Manager) logErrAndPersist(err error, taskID int64, taskExecutor TaskExecutor) {
 	m.logErr(err)
 	if taskExecutor != nil && taskExecutor.IsRetryableError(err) {
-		logutil.Logger(m.logCtx).Error("met retryable err", zap.Error(err), zap.Stack("stack"))
+		m.logger.Error("met retryable err", zap.Error(err), zap.Stack("stack"))
 		return
 	}
 	err1 := m.taskTable.FailSubtask(m.ctx, m.id, taskID, err)
 	if err1 != nil {
-		logutil.Logger(m.logCtx).Error("update to subtask failed", zap.Error(err1), zap.Stack("stack"))
+		m.logger.Error("update to subtask failed", zap.Error(err1), zap.Stack("stack"))
 	}
-	logutil.Logger(m.logCtx).Error("update error to subtask", zap.Int64("task-id", taskID), zap.Error(err1), zap.Stack("stack"))
+	m.logger.Error("update error to subtask", zap.Int64("task-id", taskID), zap.Error(err1), zap.Stack("stack"))
 }

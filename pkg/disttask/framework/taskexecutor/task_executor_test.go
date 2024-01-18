@@ -440,9 +440,9 @@ func TestRunStepCurrentSubtaskScheduledAway(t *testing.T) {
 	mockStepExecutor := mockexecute.NewMockStepExecutor(ctrl)
 	mockExtension := mock.NewMockExtension(ctrl)
 
-	task := &proto.Task{Step: proto.StepOne, Type: "type", ID: 1, Concurrency: 1}
+	task := &proto.Task{Step: proto.StepOne, Type: "example", ID: 1, Concurrency: 1}
 	subtasks := []*proto.Subtask{
-		{ID: 1, Type: "type", Step: proto.StepOne, State: proto.SubtaskStatePending, ExecID: "tidb1"},
+		{ID: 1, Type: "example", Step: proto.StepOne, State: proto.SubtaskStatePending, ExecID: "tidb1"},
 	}
 	ctx := context.Background()
 	taskExecutor := NewBaseTaskExecutor(ctx, "tidb1", task, mockSubtaskTable)
