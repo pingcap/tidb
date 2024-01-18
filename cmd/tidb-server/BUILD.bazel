@@ -36,6 +36,7 @@ go_library(
         "//pkg/store/mockstore",
         "//pkg/tidb-binlog/pump_client",
         "//pkg/util",
+        "//pkg/util/cgmon",
         "//pkg/util/chunk",
         "//pkg/util/cpuprofile",
         "//pkg/util/deadlockhistory",
