@@ -16,7 +16,6 @@ package preparesnap
 
 import (
 	"context"
-	"slices"
 	"time"
 
 	"github.com/docker/go-units"
@@ -26,12 +25,31 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/util/engine"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
+
+// deleteFunc is copied from the "slices" package from go1.21.
+func deleteFunc[S ~[]E, E any](s S, del func(E) bool) S {
+	// Don't start copying elements until we find one to delete.
+	for i, v := range s {
+		if del(v) {
+			j := i
+			for i++; i < len(s); i++ {
+				v = s[i]
+				if !del(v) {
+					s[j] = v
+					j++
+				}
+			}
+			return s[:j]
+		}
+	}
+	return s
+}
 
 const (
 	// default max gRPC message size is 10MiB.
@@ -106,7 +124,7 @@ func (c CliEnv) GetAllLiveStores(ctx context.Context) ([]*metapb.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	withoutTiFlash := slices.DeleteFunc(stores, engine.IsTiFlash)
+	withoutTiFlash := deleteFunc(stores, engine.IsTiFlash)
 	return withoutTiFlash, err
 }
 

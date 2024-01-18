@@ -18,11 +18,7 @@ go_library(
     deps = [
         "//br/pkg/aws",
         "//br/pkg/backup",
-<<<<<<< HEAD
-=======
         "//br/pkg/backup/prepare_snap",
-        "//br/pkg/checkpoint",
->>>>>>> bbbada0dde3 (backup: advacned prepare implementation (#48439))
         "//br/pkg/checksum",
         "//br/pkg/common",
         "//br/pkg/config",
@@ -72,6 +68,7 @@ go_library(
         "@com_github_spf13_pflag//:pflag",
         "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_client_go_v2//oracle",
+        "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_pd_client//:client",
         "@com_google_cloud_go_storage//:storage",
         "@io_etcd_go_etcd_client_pkg_v3//transport",
