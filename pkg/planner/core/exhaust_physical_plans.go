@@ -963,7 +963,7 @@ func (p *LogicalJoin) buildIndexJoinInner2IndexScan(
 		if path.IsTablePath() {
 			return false
 		}
-		// if path is index path. index path currently include two kind of, one is normal, and the other is mv index.
+		// if the path is index path. index path currently include two kind of, one is normal, and the other is mv index.
 		// for mv index like mvi(a, json, b), if driving condition is a=1, and we build a prefix scan with range [1,1]
 		// on mvi, it will return many index rows which breaks handle-unique attribute here.
 		//
