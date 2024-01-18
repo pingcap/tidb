@@ -14,6 +14,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/trace"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/spf13/cobra"
@@ -38,6 +39,9 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 		}
 	}
 
+	// have to skip grant table, in order to NotifyUpdatePrivilege in binary mode
+	config.GetGlobalConfig().Security.SkipGrantTable = true
+
 	ctx := GetDefaultContext()
 	if cfg.EnableOpenTracing {
 		var store *appdash.MemoryStore
@@ -60,6 +64,9 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 		return nil
 	}
 
+	// No need to cache the coproceesor result
+	config.GetGlobalConfig().TiKVClient.CoprCache.CapacityMB = 0
+
 	if err := task.RunRestore(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to restore", zap.Error(err))
 		printWorkaroundOnFullRestoreError(command, err)
@@ -81,7 +88,7 @@ func printWorkaroundOnFullRestoreError(command *cobra.Command, err error) {
 		fmt.Println("# you can drop existing databases and tables and start restore again")
 	case errors.ErrorEqual(err, berrors.ErrRestoreIncompatibleSys):
 		fmt.Println("# the target cluster is not compatible with the backup data,")
-		fmt.Println("# you can remove 'with-sys-table' flag to skip restoring system tables")
+		fmt.Println("# you can use '--with-sys-table=false' to skip restoring system tables")
 	}
 	fmt.Println("#######################################################################")
 }

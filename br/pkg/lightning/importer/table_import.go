@@ -449,6 +449,7 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 				Compact:            threshold > 0,
 				CompactConcurrency: 4,
 				CompactThreshold:   threshold,
+				BlockSize:          int(rc.cfg.TikvImporter.BlockSize),
 			}
 		}
 		// import backend can't reopen engine if engine is closed, so
@@ -950,7 +951,6 @@ func (tr *TableImporter) postProcess(
 
 	// alter table set auto_increment
 	if cp.Status < checkpoints.CheckpointStatusAlteredAutoInc {
-		rc.alterTableLock.Lock()
 		tblInfo := tr.tableInfo.Core
 		var err error
 		if tblInfo.ContainsAutoRandomBits() {
@@ -975,7 +975,6 @@ func (tr *TableImporter) postProcess(
 				err = common.RebaseGlobalAutoID(ctx, adjustIDBase(newBase), tr, tr.dbInfo.ID, tr.tableInfo.Core)
 			}
 		}
-		rc.alterTableLock.Unlock()
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusAlteredAutoInc)
 		if err = firstErr(err, saveCpErr); err != nil {
 			return false, errors.Trace(err)
@@ -1394,10 +1393,9 @@ func (tr *TableImporter) dropIndexes(ctx context.Context, db *sql.DB) error {
 	logger := log.FromContext(ctx).With(zap.String("table", tr.tableName))
 
 	tblInfo := tr.tableInfo
-	tableName := common.UniqueTable(tblInfo.DB, tblInfo.Name)
 	remainIndexes, dropIndexes := common.GetDropIndexInfos(tblInfo.Core)
 	for _, idxInfo := range dropIndexes {
-		sqlStr := common.BuildDropIndexSQL(tableName, idxInfo)
+		sqlStr := common.BuildDropIndexSQL(tblInfo.DB, tblInfo.Name, idxInfo)
 
 		logger.Info("drop index", zap.String("sql", sqlStr))
 

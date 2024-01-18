@@ -124,16 +124,16 @@ func TestRewriterPool(t *testing.T) {
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
-	builder, _ := NewPlanBuilder().Init(ctx, nil, &hint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
 
 	// Make sure PlanBuilder.getExpressionRewriter() provides clean rewriter from pool.
 	// First, pick one rewriter from the pool and make it dirty.
 	builder.rewriterCounter++
 	dirtyRewriter := builder.getExpressionRewriter(context.TODO(), nil)
 	dirtyRewriter.asScalar = true
-	dirtyRewriter.aggrMap = make(map[*ast.AggregateFuncExpr]int)
+	dirtyRewriter.planCtx.aggrMap = make(map[*ast.AggregateFuncExpr]int)
 	dirtyRewriter.preprocess = func(ast.Node) ast.Node { return nil }
-	dirtyRewriter.insertPlan = &Insert{}
+	dirtyRewriter.planCtx.insertPlan = &Insert{}
 	dirtyRewriter.disableFoldCounter = 1
 	dirtyRewriter.ctxStack = make([]expression.Expression, 2)
 	dirtyRewriter.ctxNameStk = make([]*types.FieldName, 2)
@@ -143,9 +143,9 @@ func TestRewriterPool(t *testing.T) {
 	cleanRewriter := builder.getExpressionRewriter(context.TODO(), nil)
 	require.Equal(t, dirtyRewriter, cleanRewriter)
 	require.Equal(t, false, cleanRewriter.asScalar)
-	require.Nil(t, cleanRewriter.aggrMap)
+	require.Nil(t, cleanRewriter.planCtx.aggrMap)
 	require.Nil(t, cleanRewriter.preprocess)
-	require.Nil(t, cleanRewriter.insertPlan)
+	require.Nil(t, cleanRewriter.planCtx.insertPlan)
 	require.Zero(t, cleanRewriter.disableFoldCounter)
 	require.Len(t, cleanRewriter.ctxStack, 0)
 	builder.rewriterCounter--
@@ -181,7 +181,7 @@ func TestDisableFold(t *testing.T) {
 		stmt := st.(*ast.SelectStmt)
 		expr := stmt.Fields.Fields[0].Expr
 
-		builder, _ := NewPlanBuilder().Init(ctx, nil, &hint.BlockHintProcessor{})
+		builder, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
 		builder.rewriterCounter++
 		rewriter := builder.getExpressionRewriter(context.TODO(), nil)
 		require.NotNil(t, rewriter)
@@ -658,7 +658,7 @@ func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
-	pb, _ := NewPlanBuilder().Init(ctx, nil, &hint.BlockHintProcessor{})
+	pb, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
 
 	// Create a new TableName instance.
 	tableName := &ast.TableName{
@@ -714,7 +714,7 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
-	pb, _ := NewPlanBuilder().Init(ctx, nil, &hint.BlockHintProcessor{})
+	pb, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
 
 	tables := []*ast.TableName{
 		{

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -33,7 +34,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -257,7 +257,7 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 	// if NO_ZERO_IN_DATE is enabled, dates with zero parts are inserted as '0000-00-00' and produce a warning
 	// If NO_ZERO_IN_DATE mode and strict mode are enabled, dates with zero parts are not permitted and inserts produce an error, unless IGNORE is given as well. For INSERT IGNORE and UPDATE IGNORE, dates with zero parts are inserted as '0000-00-00' and produce a warning.
 
-	ignoreErr := sc.DupKeyAsWarning
+	ignoreErr := sc.ErrGroupLevel(errctx.ErrGroupDupKey) != errctx.LevelError
 
 	// Timestamp in MySQL is since EPOCH 1970-01-01 00:00:00 UTC and can by definition not have invalid dates!
 	// Zero date is special for MySQL timestamp and *NOT* 1970-01-01 00:00:00, but 0000-00-00 00:00:00!
@@ -272,9 +272,9 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 	// * **ST**: STRICT_TRANS_TABLES
 	// * **ELSE**: empty or NO_ZERO_IN_DATE_MODE
 	if tm.IsZero() && col.GetType() == mysql.TypeTimestamp {
-		innerErr := types.ErrWrongValue.GenWithStackByArgs(zeroT, str)
+		innerErr := types.ErrWrongValue.FastGenByArgs(zeroT, str)
 		if mode.HasStrictMode() && !ignoreErr && (tmIsInvalid || mode.HasNoZeroDateMode()) {
-			return types.NewDatum(zeroV), true, innerErr
+			return types.NewDatum(zeroV), true, errors.Trace(innerErr)
 		}
 
 		if tmIsInvalid || mode.HasNoZeroDateMode() {
@@ -283,11 +283,12 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 		return types.NewDatum(zeroV), true, nil
 	} else if tmIsInvalid && col.GetType() == mysql.TypeTimestamp {
 		// Prevent from being stored! Invalid timestamp!
+		warn := types.ErrWrongValue.FastGenByArgs(zeroT, str)
 		if mode.HasStrictMode() {
-			return types.NewDatum(zeroV), true, types.ErrWrongValue.GenWithStackByArgs(zeroT, str)
+			return types.NewDatum(zeroV), true, errors.Trace(warn)
 		}
 		// no strict mode, truncate to 0000-00-00 00:00:00
-		sc.AppendWarning(types.ErrWrongValue.GenWithStackByArgs(zeroT, str))
+		sc.AppendWarning(warn)
 		return types.NewDatum(zeroV), true, nil
 	} else if tm.IsZero() || tm.InvalidZero() {
 		if tm.IsZero() {
@@ -301,9 +302,9 @@ func handleZeroDatetime(ctx sessionctx.Context, col *model.ColumnInfo, casted ty
 			}
 		}
 
-		innerErr := types.ErrWrongValue.GenWithStackByArgs(zeroT, str)
+		innerErr := types.ErrWrongValue.FastGenByArgs(zeroT, str)
 		if mode.HasStrictMode() && !ignoreErr {
-			return types.NewDatum(zeroV), true, innerErr
+			return types.NewDatum(zeroV), true, errors.Trace(innerErr)
 		}
 
 		// TODO: as in MySQL 8.0's implement, warning message is `types.ErrWarnDataOutOfRange`,
@@ -492,10 +493,9 @@ func (c *Column) CheckNotNull(data *types.Datum, rowCntInLoadData uint64) error 
 // error is ErrWarnNullToNotnull.
 // Otherwise, the error is ErrColumnCantNull.
 // If BadNullAsWarning is true, it will append the error as a warning, else return the error.
-func (c *Column) HandleBadNull(d *types.Datum, sc *stmtctx.StatementContext, rowCntInLoadData uint64) error {
+func (c *Column) HandleBadNull(ec errctx.Context, d *types.Datum, rowCntInLoadData uint64) error {
 	if err := c.CheckNotNull(d, rowCntInLoadData); err != nil {
-		if sc.BadNullAsWarning {
-			sc.AppendWarning(err)
+		if ec.HandleError(err) == nil {
 			*d = GetZeroValue(c.ToInfo())
 			return nil
 		}
@@ -654,8 +654,8 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo, ar
 			return types.Datum{}, nil
 		}
 	}
-	if sc.BadNullAsWarning {
-		sc.AppendWarning(ErrColumnCantNull.FastGenByArgs(col.Name))
+	ec := sc.ErrCtx()
+	if ec.HandleError(ErrColumnCantNull.FastGenByArgs(col.Name)) == nil {
 		return GetZeroValue(col), nil
 	}
 	return types.Datum{}, ErrNoDefaultValue.GenWithStackByArgs(col.Name)

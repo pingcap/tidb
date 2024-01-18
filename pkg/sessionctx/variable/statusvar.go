@@ -122,9 +122,8 @@ var tlsCiphers = []uint16{
 var tlsSupportedCiphers string
 
 // Taken from https://github.com/openssl/openssl/blob/c784a838e0947fcca761ee62def7d077dc06d37f/include/openssl/ssl.h#L141 .
+// Update: remove tlsv1.0 and v1.1 support
 var tlsVersionString = map[uint16]string{
-	tls.VersionTLS10: "TLSv1",
-	tls.VersionTLS11: "TLSv1.1",
 	tls.VersionTLS12: "TLSv1.2",
 	tls.VersionTLS13: "TLSv1.3",
 }

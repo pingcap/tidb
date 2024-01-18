@@ -76,7 +76,7 @@ func (s *KeyValueStore) addEncodedData(data []byte) error {
 		s.rc.currProp.keys >= s.rc.propKeysDist {
 		newProp := *s.rc.currProp
 		s.rc.props = append(s.rc.props, &newProp)
-
+		// reset currProp, and start to update this prop.
 		s.rc.currProp.firstKey = nil
 		s.rc.currProp.offset = s.offset
 		s.rc.currProp.keys = 0

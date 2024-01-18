@@ -236,7 +236,7 @@ func onDropSchema(d *ddlCtx, t *meta.Meta, job *model.Job) (ver int64, _ error) 
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
-		if err = t.DropDatabase(dbInfo.ID); err != nil {
+		if err = t.DropDatabase(dbInfo.ID, dbInfo.Name.L); err != nil {
 			break
 		}
 

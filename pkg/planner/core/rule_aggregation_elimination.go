@@ -183,7 +183,7 @@ func CheckCanConvertAggToProj(agg *LogicalAggregation) bool {
 func ConvertAggToProj(agg *LogicalAggregation, schema *expression.Schema) (bool, *LogicalProjection) {
 	proj := LogicalProjection{
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
-	}.Init(agg.SCtx(), agg.SelectBlockOffset())
+	}.Init(agg.SCtx(), agg.QueryBlockOffset())
 	for _, fun := range agg.AggFuncs {
 		ok, expr := rewriteExpr(agg.SCtx(), fun)
 		if !ok {

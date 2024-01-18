@@ -830,7 +830,7 @@ func TestCanceledJobTakeTime(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				return m.DropTableOrView(job.SchemaID, job.TableID)
+				return m.DropTableOrView(job.SchemaID, job.SchemaName, job.TableID, job.TableName)
 			})
 			require.NoError(t, err)
 		})

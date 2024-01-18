@@ -17,6 +17,7 @@ package importinto
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"sync"
 	"time"
 
@@ -45,7 +46,7 @@ import (
 )
 
 // importStepExecutor is a executor for import step.
-// SubtaskExecutor is equivalent to a Lightning instance.
+// StepExecutor is equivalent to a Lightning instance.
 type importStepExecutor struct {
 	taskID        int64
 	taskMeta      *TaskMeta
@@ -82,7 +83,7 @@ func getTableImporter(ctx context.Context, taskID int64, taskMeta *TaskMeta) (*i
 		GroupCtx: ctx,
 		Progress: importer.NewProgress(),
 		Job:      &importer.Job{},
-	}, controller, taskID)
+	}, controller, strconv.FormatInt(taskID, 10))
 }
 
 func (s *importStepExecutor) Init(ctx context.Context) error {
@@ -257,7 +258,7 @@ func (s *importStepExecutor) Rollback(context.Context) error {
 }
 
 type mergeSortStepExecutor struct {
-	taskexecutor.EmptySubtaskExecutor
+	taskexecutor.EmptyStepExecutor
 	taskID     int64
 	taskMeta   *TaskMeta
 	logger     *zap.Logger
@@ -268,7 +269,7 @@ type mergeSortStepExecutor struct {
 	partSize            int64
 }
 
-var _ execute.SubtaskExecutor = &mergeSortStepExecutor{}
+var _ execute.StepExecutor = &mergeSortStepExecutor{}
 
 func (m *mergeSortStepExecutor) Init(ctx context.Context) error {
 	controller, err := buildController(&m.taskMeta.Plan, m.taskMeta.Stmt)
@@ -309,9 +310,21 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	logger.Info("merge sort partSize", zap.String("size", units.BytesSize(float64(m.partSize))))
 
-	return external.MergeOverlappingFiles(ctx, sm.DataFiles, m.controller.GlobalSortStore, m.partSize, 64*1024,
-		prefix, getKVGroupBlockSize(sm.KVGroup), 8*1024, 1*size.MB, 8*1024,
-		onClose, int(m.taskMeta.Plan.ThreadCnt), false)
+	return external.MergeOverlappingFiles(
+		ctx,
+		sm.DataFiles,
+		m.controller.GlobalSortStore,
+		m.partSize,
+		64*1024,
+		prefix,
+		getKVGroupBlockSize(sm.KVGroup),
+		external.DefaultMemSizeLimit,
+		8*1024,
+		1*size.MB,
+		8*1024,
+		onClose,
+		m.taskMeta.Plan.ThreadCnt,
+		false)
 }
 
 func (m *mergeSortStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
@@ -336,7 +349,7 @@ type writeAndIngestStepExecutor struct {
 	tableImporter *importer.TableImporter
 }
 
-var _ execute.SubtaskExecutor = &writeAndIngestStepExecutor{}
+var _ execute.StepExecutor = &writeAndIngestStepExecutor{}
 
 func (e *writeAndIngestStepExecutor) Init(ctx context.Context) error {
 	tableImporter, err := getTableImporter(ctx, e.taskID, e.taskMeta)
@@ -417,17 +430,17 @@ func (e *writeAndIngestStepExecutor) Rollback(context.Context) error {
 }
 
 type postProcessStepExecutor struct {
-	taskexecutor.EmptySubtaskExecutor
+	taskexecutor.EmptyStepExecutor
 	taskID   int64
 	taskMeta *TaskMeta
 	logger   *zap.Logger
 }
 
-var _ execute.SubtaskExecutor = &postProcessStepExecutor{}
+var _ execute.StepExecutor = &postProcessStepExecutor{}
 
 // NewPostProcessStepExecutor creates a new post process step executor.
 // exported for testing.
-func NewPostProcessStepExecutor(taskID int64, taskMeta *TaskMeta, logger *zap.Logger) execute.SubtaskExecutor {
+func NewPostProcessStepExecutor(taskID int64, taskMeta *TaskMeta, logger *zap.Logger) execute.StepExecutor {
 	return &postProcessStepExecutor{
 		taskID:   taskID,
 		taskMeta: taskMeta,
@@ -457,17 +470,17 @@ type importExecutor struct {
 
 func newImportExecutor(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
 	s := &importExecutor{
-		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, id, task.ID, taskTable),
+		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, id, task, taskTable),
 	}
 	s.BaseTaskExecutor.Extension = s
 	return s
 }
 
-func (s *importExecutor) Run(ctx context.Context, task *proto.Task) error {
+func (s *importExecutor) RunStep(ctx context.Context, task *proto.Task, resource *proto.StepResource) error {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	defer metricsManager.unregister(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
-	return s.BaseTaskExecutor.Run(subCtx, task)
+	return s.BaseTaskExecutor.RunStep(subCtx, task, resource)
 }
 
 func (*importExecutor) IsIdempotent(*proto.Subtask) bool {
@@ -480,7 +493,7 @@ func (*importExecutor) IsRetryableError(err error) bool {
 	return common.IsRetryableError(err)
 }
 
-func (*importExecutor) GetSubtaskExecutor(_ context.Context, task *proto.Task, _ *execute.Summary) (execute.SubtaskExecutor, error) {
+func (*importExecutor) GetStepExecutor(_ context.Context, task *proto.Task, _ *execute.Summary, _ *proto.StepResource) (execute.StepExecutor, error) {
 	taskMeta := TaskMeta{}
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)

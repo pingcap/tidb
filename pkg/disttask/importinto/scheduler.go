@@ -35,12 +35,12 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/backoff"
+	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -173,7 +173,7 @@ func (sch *ImportSchedulerExt) switchTiKVMode(ctx context.Context, task *proto.T
 	}
 
 	logger := logutil.BgLogger().With(zap.Int64("task-id", task.ID))
-	pdCli, switcher, err := importer.GetTiKVModeSwitcherWithPDClient(ctx, logger)
+	pdCli, switcher, err := importer.GetTiKVModeSwitcherWithPDClient(logger)
 	if err != nil {
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
@@ -199,9 +199,9 @@ func (sch *ImportSchedulerExt) unregisterTask(ctx context.Context, task *proto.T
 // OnNextSubtasksBatch generate batch of next stage's plan.
 func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 	ctx context.Context,
-	taskHandle scheduler.TaskHandle,
+	taskHandle storage.TaskHandle,
 	task *proto.Task,
-	serverInfos []*infosync.ServerInfo,
+	execIDs []string,
 	nextStep proto.Step,
 ) (
 	resSubtaskMeta [][]byte, err error) {
@@ -290,7 +290,7 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 		PreviousSubtaskMetas: previousSubtaskMetas,
 		GlobalSort:           sch.GlobalSort,
 		NextTaskStep:         nextStep,
-		ExecuteNodesCnt:      len(serverInfos),
+		ExecuteNodesCnt:      len(execIDs),
 	}
 	logicalPlan := &LogicalPlan{}
 	if err := logicalPlan.FromTaskMeta(task.Meta); err != nil {
@@ -309,7 +309,7 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 }
 
 // OnDone implements scheduler.Extension interface.
-func (sch *ImportSchedulerExt) OnDone(ctx context.Context, handle scheduler.TaskHandle, task *proto.Task) error {
+func (sch *ImportSchedulerExt) OnDone(ctx context.Context, handle storage.TaskHandle, task *proto.Task) error {
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", task.Type),
 		zap.Int64("task-id", task.ID),
@@ -331,17 +331,17 @@ func (sch *ImportSchedulerExt) OnDone(ctx context.Context, handle scheduler.Task
 }
 
 // GetEligibleInstances implements scheduler.Extension interface.
-func (*ImportSchedulerExt) GetEligibleInstances(ctx context.Context, task *proto.Task) ([]*infosync.ServerInfo, bool, error) {
+func (*ImportSchedulerExt) GetEligibleInstances(_ context.Context, task *proto.Task) ([]string, error) {
 	taskMeta := &TaskMeta{}
 	err := json.Unmarshal(task.Meta, taskMeta)
 	if err != nil {
-		return nil, true, errors.Trace(err)
+		return nil, errors.Trace(err)
 	}
-	if len(taskMeta.EligibleInstances) > 0 {
-		return taskMeta.EligibleInstances, false, nil
+	res := make([]string, 0, len(taskMeta.EligibleInstances))
+	for _, instance := range taskMeta.EligibleInstances {
+		res = append(res, disttaskutil.GenerateExecID(instance))
 	}
-	serverInfo, err := scheduler.GenerateTaskExecutorNodes(ctx)
-	return serverInfo, true, err
+	return res, nil
 }
 
 // IsRetryableErr implements scheduler.Extension interface.
@@ -379,7 +379,7 @@ func (sch *ImportSchedulerExt) switchTiKV2NormalMode(ctx context.Context, task *
 	sch.mu.Lock()
 	defer sch.mu.Unlock()
 
-	pdCli, switcher, err := importer.GetTiKVModeSwitcherWithPDClient(ctx, logger)
+	pdCli, switcher, err := importer.GetTiKVModeSwitcherWithPDClient(logger)
 	if err != nil {
 		logger.Warn("get tikv mode switcher failed", zap.Error(err))
 		return
@@ -405,12 +405,11 @@ type importScheduler struct {
 	*scheduler.BaseScheduler
 }
 
-func newImportScheduler(ctx context.Context, taskMgr scheduler.TaskManager,
-	serverID string, task *proto.Task) scheduler.Scheduler {
+func newImportScheduler(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 	sch := importScheduler{
-		BaseScheduler: scheduler.NewBaseScheduler(subCtx, taskMgr, serverID, task),
+		BaseScheduler: scheduler.NewBaseScheduler(subCtx, task, param),
 	}
 	return &sch
 }
@@ -419,11 +418,11 @@ func (sch *importScheduler) Init() (err error) {
 	defer func() {
 		if err != nil {
 			// if init failed, close is not called, so we need to unregister here.
-			metricsManager.unregister(sch.Task.ID)
+			metricsManager.unregister(sch.GetTask().ID)
 		}
 	}()
 	taskMeta := &TaskMeta{}
-	if err = json.Unmarshal(sch.BaseScheduler.Task.Meta, taskMeta); err != nil {
+	if err = json.Unmarshal(sch.BaseScheduler.GetTask().Meta, taskMeta); err != nil {
 		return errors.Annotate(err, "unmarshal task meta failed")
 	}
 
@@ -434,18 +433,17 @@ func (sch *importScheduler) Init() (err error) {
 }
 
 func (sch *importScheduler) Close() {
-	metricsManager.unregister(sch.Task.ID)
+	metricsManager.unregister(sch.GetTask().ID)
 	sch.BaseScheduler.Close()
 }
 
 // nolint:deadcode
-func dropTableIndexes(ctx context.Context, handle scheduler.TaskHandle, taskMeta *TaskMeta, logger *zap.Logger) error {
+func dropTableIndexes(ctx context.Context, handle storage.TaskHandle, taskMeta *TaskMeta, logger *zap.Logger) error {
 	tblInfo := taskMeta.Plan.TableInfo
-	tableName := common.UniqueTable(taskMeta.Plan.DBName, tblInfo.Name.L)
 
 	remainIndexes, dropIndexes := common.GetDropIndexInfos(tblInfo)
 	for _, idxInfo := range dropIndexes {
-		sqlStr := common.BuildDropIndexSQL(tableName, idxInfo)
+		sqlStr := common.BuildDropIndexSQL(taskMeta.Plan.DBName, tblInfo.Name.L, idxInfo)
 		if err := executeSQL(ctx, handle, logger, sqlStr); err != nil {
 			if merr, ok := errors.Cause(err).(*dmysql.MySQLError); ok {
 				switch merr.Number {
@@ -536,7 +534,7 @@ func getStepOfEncode(globalSort bool) proto.Step {
 }
 
 // we will update taskMeta in place and make task.Meta point to the new taskMeta.
-func updateResult(handle scheduler.TaskHandle, task *proto.Task, taskMeta *TaskMeta, globalSort bool) error {
+func updateResult(handle storage.TaskHandle, task *proto.Task, taskMeta *TaskMeta, globalSort bool) error {
 	stepOfEncode := getStepOfEncode(globalSort)
 	metas, err := handle.GetPreviousSubtaskMetas(task.ID, stepOfEncode)
 	if err != nil {
@@ -570,7 +568,7 @@ func updateResult(handle scheduler.TaskHandle, task *proto.Task, taskMeta *TaskM
 	return updateMeta(task, taskMeta)
 }
 
-func getLoadedRowCountOnGlobalSort(handle scheduler.TaskHandle, task *proto.Task) (uint64, error) {
+func getLoadedRowCountOnGlobalSort(handle storage.TaskHandle, task *proto.Task) (uint64, error) {
 	metas, err := handle.GetPreviousSubtaskMetas(task.ID, StepWriteAndIngest)
 	if err != nil {
 		return 0, err
@@ -587,7 +585,7 @@ func getLoadedRowCountOnGlobalSort(handle scheduler.TaskHandle, task *proto.Task
 	return loadedRowCount, nil
 }
 
-func startJob(ctx context.Context, logger *zap.Logger, taskHandle scheduler.TaskHandle, taskMeta *TaskMeta, jobStep string) error {
+func startJob(ctx context.Context, logger *zap.Logger, taskHandle storage.TaskHandle, taskMeta *TaskMeta, jobStep string) error {
 	failpoint.Inject("syncBeforeJobStarted", func() {
 		TestSyncChan <- struct{}{}
 		<-TestSyncChan
@@ -631,7 +629,7 @@ func job2Step(ctx context.Context, logger *zap.Logger, taskMeta *TaskMeta, step 
 }
 
 func (sch *ImportSchedulerExt) finishJob(ctx context.Context, logger *zap.Logger,
-	taskHandle scheduler.TaskHandle, task *proto.Task, taskMeta *TaskMeta) error {
+	taskHandle storage.TaskHandle, task *proto.Task, taskMeta *TaskMeta) error {
 	// we have already switch import-mode when switch to post-process step.
 	sch.unregisterTask(ctx, task)
 	summary := &importer.JobSummary{ImportedRows: taskMeta.Result.LoadedRowCnt}
@@ -647,7 +645,7 @@ func (sch *ImportSchedulerExt) finishJob(ctx context.Context, logger *zap.Logger
 	)
 }
 
-func (sch *ImportSchedulerExt) failJob(ctx context.Context, taskHandle scheduler.TaskHandle, task *proto.Task,
+func (sch *ImportSchedulerExt) failJob(ctx context.Context, taskHandle storage.TaskHandle, task *proto.Task,
 	taskMeta *TaskMeta, logger *zap.Logger, errorMsg string) error {
 	sch.switchTiKV2NormalMode(ctx, task, logger)
 	sch.unregisterTask(ctx, task)
@@ -663,7 +661,7 @@ func (sch *ImportSchedulerExt) failJob(ctx context.Context, taskHandle scheduler
 	)
 }
 
-func (sch *ImportSchedulerExt) cancelJob(ctx context.Context, taskHandle scheduler.TaskHandle, task *proto.Task,
+func (sch *ImportSchedulerExt) cancelJob(ctx context.Context, taskHandle storage.TaskHandle, task *proto.Task,
 	meta *TaskMeta, logger *zap.Logger) error {
 	sch.switchTiKV2NormalMode(ctx, task, logger)
 	sch.unregisterTask(ctx, task)

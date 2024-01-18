@@ -321,11 +321,11 @@ func (e *InsertValues) handleErr(col *table.Column, val *types.Datum, rowIdx int
 		err = completeInsertErr(c, val, rowIdx, err)
 	}
 
-	if !e.Ctx().GetSessionVars().StmtCtx.DupKeyAsWarning {
-		return err
-	}
 	// TODO: should not filter all types of errors here.
-	e.handleWarning(err)
+	if err != nil {
+		ec := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()
+		return ec.HandleErrorWithAlias(kv.ErrKeyExists, err, err)
+	}
 	return nil
 }
 
@@ -685,7 +685,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 				return nil, err
 			}
 			if !e.lazyFillAutoID || (e.lazyFillAutoID && !mysql.HasAutoIncrementFlag(c.GetFlag())) {
-				if err = c.HandleBadNull(&row[i], e.Ctx().GetSessionVars().StmtCtx, rowCntInLoadData); err != nil {
+				if err = c.HandleBadNull(e.Ctx().GetSessionVars().StmtCtx.ErrCtx(), &row[i], rowCntInLoadData); err != nil {
 					return nil, err
 				}
 			}
@@ -724,7 +724,7 @@ func (e *InsertValues) fillRow(ctx context.Context, row []types.Datum, hasValue 
 			warnCnt += len(newWarnings)
 		}
 		// Handle the bad null error.
-		if err = gCol.HandleBadNull(&row[colIdx], sc, rowCntInLoadData); err != nil {
+		if err = gCol.HandleBadNull(sc.ErrCtx(), &row[colIdx], rowCntInLoadData); err != nil {
 			return nil, err
 		}
 	}

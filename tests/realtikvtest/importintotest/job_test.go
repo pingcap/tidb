@@ -459,7 +459,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/waitBeforeSortChunk"))
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/syncAfterJobStarted"))
 	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforePostProcess", "return(true)")
-	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/waitCtxDone", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/executor/importer/waitCtxDone", "return(true)")
 	result2 := s.tk.MustQuery(fmt.Sprintf(`import into t2 FROM 'gs://test_cancel_job/t.csv?endpoint=%s' with detached`,
 		gcsEndpoint)).Rows()
 	s.Len(result2, 1)
@@ -508,12 +508,12 @@ func (s *mockGCSSuite) TestCancelJob() {
 	s.Require().Eventually(func() bool {
 		task2, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 		s.NoError(err2)
-		subtasks, err2 := taskManager.GetSubtasksForImportInto(ctx, task2.ID, importinto.StepPostProcess)
+		subtasks, err2 := taskManager.GetSubtasksWithHistory(ctx, task2.ID, importinto.StepPostProcess)
 		s.NoError(err2)
 		s.Len(subtasks, 2) // framework will generate a subtask when canceling
 		var cancelled bool
 		for _, st := range subtasks {
-			if st.State == proto.TaskStateCanceled {
+			if st.State == proto.SubtaskStateCanceled {
 				cancelled = true
 				break
 			}
@@ -523,7 +523,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 
 	// cancel a pending job created by test_cancel_job2 using root
 	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforePostProcess"))
-	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/importinto/waitCtxDone"))
+	s.NoError(failpoint.Disable("github.com/pingcap/tidb/pkg/executor/importer/waitCtxDone"))
 	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/syncBeforeJobStarted", "return(true)")
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	s.tk.MustExec("truncate table t2")

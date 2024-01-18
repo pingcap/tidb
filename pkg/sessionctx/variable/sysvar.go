@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
@@ -43,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	distroleutil "github.com/pingcap/tidb/pkg/util/distrole"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -706,6 +708,12 @@ var defaultSysVars = []*SysVar{
 		(*SetPDClientDynamicOption.Load())(TiDBEnableTSOFollowerProxy, val)
 		return nil
 	}},
+	{Scope: ScopeGlobal, Name: PDEnableFollowerHandleRegion, Value: BoolToOnOff(DefPDEnableFollowerHandleRegion), Type: TypeBool, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
+		return BoolToOnOff(EnablePDFollowerHandleRegion.Load()), nil
+	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		(*SetPDClientDynamicOption.Load())(PDEnableFollowerHandleRegion, val)
+		return nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableLocalTxn, Value: BoolToOnOff(DefTiDBEnableLocalTxn), Hidden: true, Type: TypeBool, Depended: true, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 		return BoolToOnOff(EnableLocalTxn.Load()), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
@@ -1044,7 +1052,7 @@ var defaultSysVars = []*SysVar{
 				intVal = bt
 			}
 			if intVal > 0 && intVal < 128 { // 128 Bytes
-				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimitSessMinSize, originalValue))
+				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(TiDBServerMemoryLimitSessMinSize, originalValue))
 				intVal = 128
 			}
 			return strconv.FormatUint(intVal, 10), nil
@@ -1214,8 +1222,8 @@ var defaultSysVars = []*SysVar{
 		s.EnableNonPreparedPlanCacheForDML = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnableUniversalBinding, Value: BoolToOnOff(false), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableUniversalBinding = TiDBOptOn(val)
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptEnableFuzzyBinding, Value: BoolToOnOff(false), Type: TypeBool, IsHintUpdatableVerfied: true, SetSession: func(s *SessionVars, val string) error {
+		s.EnableFuzzyBinding = TiDBOptOn(val)
 		return nil
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBNonPreparedPlanCacheSize, Value: strconv.FormatUint(uint64(DefTiDBNonPreparedPlanCacheSize), 10), Type: TypeUnsigned, MinValue: 1, MaxValue: 100000, SetSession: func(s *SessionVars, val string) error {
@@ -1281,6 +1289,18 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableDistTask.Load()), nil
 	}},
+	{Scope: ScopeGlobal, Name: TiDBDDLVersion, Value: strconv.FormatInt(model.TiDBDDLV1, 10), Type: TypeEnum, PossibleValues: []string{strconv.FormatInt(model.TiDBDDLV1, 10), strconv.FormatInt(model.TiDBDDLV2, 10)}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		v := TidbOptInt64(val, model.TiDBDDLV1)
+		if DDLVersion.Load() != v {
+			err := SwitchDDLVersion(v)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+		return strconv.FormatInt(DDLVersion.Load(), 10), nil
+	}},
 	{Scope: ScopeGlobal, Name: TiDBEnableNoopVariables, Value: BoolToOnOff(DefTiDBEnableNoopVariables), Type: TypeEnum, PossibleValues: []string{Off, On}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		EnableNoopVariables.Store(TiDBOptOn(val))
 		return nil
@@ -1300,7 +1320,7 @@ var defaultSysVars = []*SysVar{
 		return BoolToOnOff(EnableTmpStorageOnOOM.Load()), nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBAutoBuildStatsConcurrency, Value: strconv.Itoa(DefTiDBAutoBuildStatsConcurrency), Type: TypeInt, MinValue: 1, MaxValue: MaxConfigurableConcurrency},
-	{Scope: ScopeGlobal, Name: TiDBSysProcScanConcurrency, Value: strconv.Itoa(DefTiDBSysProcScanConcurrency), Type: TypeInt, MinValue: 1, MaxValue: MaxConfigurableConcurrency},
+	{Scope: ScopeGlobal, Name: TiDBSysProcScanConcurrency, Value: strconv.Itoa(DefTiDBSysProcScanConcurrency), Type: TypeInt, MinValue: 1, MaxValue: math.MaxInt32},
 	{Scope: ScopeGlobal, Name: TiDBMemoryUsageAlarmRatio, Value: strconv.FormatFloat(DefMemoryUsageAlarmRatio, 'f', -1, 64), Type: TypeFloat, MinValue: 0.0, MaxValue: 1.0, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		MemoryUsageAlarmRatio.Store(tidbOptFloat64(val, DefMemoryUsageAlarmRatio))
 		return nil
@@ -1566,7 +1586,7 @@ var defaultSysVars = []*SysVar{
 		if mathutil.IntBits == 32 {
 			if val, err := strconv.ParseUint(normalizedValue, 10, 64); err == nil {
 				if val > uint64(math.MaxUint32) {
-					vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(GroupConcatMaxLen, originalValue))
+					vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(GroupConcatMaxLen, originalValue))
 					return strconv.FormatInt(int64(math.MaxUint32), 10), nil
 				}
 			}
@@ -1603,7 +1623,7 @@ var defaultSysVars = []*SysVar{
 			}
 			remainder := u % 1024
 			if remainder != 0 {
-				vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(MaxAllowedPacket, normalizedValue))
+				vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(MaxAllowedPacket, normalizedValue))
 				u -= remainder
 			}
 			return strconv.FormatUint(u, 10), nil
@@ -1675,7 +1695,7 @@ var defaultSysVars = []*SysVar{
 		s.distSQLScanConcurrency = tidbOptPositiveInt32(val, DefDistSQLScanConcurrency)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeDistSQLScanConcurrency, Value: strconv.Itoa(DefAnalyzeDistSQLScanConcurrency), Type: TypeUnsigned, MinValue: 1, MaxValue: MaxConfigurableConcurrency, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBAnalyzeDistSQLScanConcurrency, Value: strconv.Itoa(DefAnalyzeDistSQLScanConcurrency), Type: TypeUnsigned, MinValue: 1, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.analyzeDistSQLScanConcurrency = tidbOptPositiveInt32(val, DefAnalyzeDistSQLScanConcurrency)
 		return nil
 	}},
@@ -1889,6 +1909,13 @@ var defaultSysVars = []*SysVar{
 		s.KVVars.BackOffWeight = tidbOptPositiveInt32(val, tikvstore.DefBackOffWeight)
 		return nil
 	}},
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTxnEntrySizeLimit, Value: strconv.Itoa(DefTiDBTxnEntrySizeLimit), Type: TypeUnsigned, MinValue: 0, MaxValue: config.MaxTxnEntrySizeLimit, SetSession: func(s *SessionVars, val string) error {
+		s.TxnEntrySizeLimit = TidbOptUint64(val, DefTiDBTxnEntrySizeLimit)
+		return nil
+	}, SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
+		TxnEntrySizeLimit.Store(TidbOptUint64(val, DefTiDBTxnEntrySizeLimit))
+		return nil
+	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBRetryLimit, Value: strconv.Itoa(DefTiDBRetryLimit), Type: TypeInt, MinValue: -1, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.RetryLimit = TidbOptInt64(val, DefTiDBRetryLimit)
 		return nil
@@ -1901,7 +1928,7 @@ var defaultSysVars = []*SysVar{
 		s.ConstraintCheckInPlace = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTxnMode, Value: DefTiDBTxnMode, AllowEmptyAll: true, Type: TypeEnum, PossibleValues: []string{"pessimistic", "optimistic"}, SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTxnMode, Value: DefTiDBTxnMode, AllowEmptyAll: true, Type: TypeEnum, PossibleValues: []string{PessimisticTxnMode, OptimisticTxnMode}, SetSession: func(s *SessionVars, val string) error {
 		s.TxnMode = strings.ToUpper(val)
 		return nil
 	}},
@@ -1924,7 +1951,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableFastAnalyze, Value: BoolToOnOff(DefTiDBUseFastAnalyze), Type: TypeBool,
 		Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 			if TiDBOptOn(normalizedValue) {
-				vars.StmtCtx.AppendWarning(errors.New("the fast analyze feature has already been removed in TiDB v7.5.0, so this will have no effect"))
+				vars.StmtCtx.AppendWarning(errors.NewNoStackError("the fast analyze feature has already been removed in TiDB v7.5.0, so this will have no effect"))
 			}
 			return normalizedValue, nil
 		},
@@ -2076,15 +2103,15 @@ var defaultSysVars = []*SysVar{
 	}, SetSession: func(s *SessionVars, val string) error {
 		newMode := strings.ToLower(strings.TrimSpace(val))
 		if PartitionPruneMode(s.PartitionPruneMode.Load()) == Static && PartitionPruneMode(newMode) == Dynamic {
-			s.StmtCtx.AppendWarning(errors.New("Please analyze all partition tables again for consistency between partition and global stats"))
-			s.StmtCtx.AppendWarning(errors.New("Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level"))
+			s.StmtCtx.AppendWarning(errors.NewNoStackError("Please analyze all partition tables again for consistency between partition and global stats"))
+			s.StmtCtx.AppendWarning(errors.NewNoStackError("Please avoid setting partition prune mode to dynamic at session level and set partition prune mode to dynamic at global level"))
 		}
 		s.PartitionPruneMode.Store(newMode)
 		return nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
 		newMode := strings.ToLower(strings.TrimSpace(val))
 		if PartitionPruneMode(newMode) == Dynamic {
-			s.StmtCtx.AppendWarning(errors.New("Please analyze all partition tables again for consistency between partition and global stats"))
+			s.StmtCtx.AppendWarning(errors.NewNoStackError("Please analyze all partition tables again for consistency between partition and global stats"))
 		}
 		return nil
 	}},
@@ -2132,7 +2159,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableExchangePartition, Value: On, Type: TypeBool,
 		Validation: func(vars *SessionVars, s string, s2 string, flag ScopeFlag) (string, error) {
 			if s == Off {
-				vars.StmtCtx.AppendWarning(errors.New("tidb_enable_exchange_partition is always turned on. This variable has been deprecated and will be removed in the future releases"))
+				vars.StmtCtx.AppendWarning(errors.NewNoStackError("tidb_enable_exchange_partition is always turned on. This variable has been deprecated and will be removed in the future releases"))
 			}
 			return On, nil
 		},
@@ -2251,7 +2278,7 @@ var defaultSysVars = []*SysVar{
 	}, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		intVal := TidbOptInt64(normalizedValue, DefTiDBMemQuotaQuery)
 		if intVal > 0 && intVal < 128 {
-			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBMemQuotaQuery, originalValue))
+			vars.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(TiDBMemQuotaQuery, originalValue))
 			normalizedValue = "128"
 		}
 		return normalizedValue, nil
@@ -2350,7 +2377,7 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableTiFlashReadForWriteStmt, Value: On, Type: TypeBool,
 		Validation: func(vars *SessionVars, s string, s2 string, flag ScopeFlag) (string, error) {
 			if s == Off {
-				vars.StmtCtx.AppendWarning(errors.New("tidb_enable_tiflash_read_for_write_stmt is always turned on. This variable has been deprecated and will be removed in the future releases"))
+				vars.StmtCtx.AppendWarning(errors.NewNoStackError("tidb_enable_tiflash_read_for_write_stmt is always turned on. This variable has been deprecated and will be removed in the future releases"))
 			}
 			return On, nil
 		},
@@ -2412,7 +2439,7 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableReusechunk, Value: BoolToOnOff(DefTiDBEnableReusechunk), Type: TypeBool,
 		SetSession: func(s *SessionVars, val string) error {
-			s.EnableReuseCheck = TiDBOptOn(val)
+			s.EnableReuseChunk = TiDBOptOn(val)
 			return nil
 		}},
 	{Scope: ScopeGlobal, Name: TiDBIgnoreInlistPlanDigest, Value: BoolToOnOff(DefTiDBIgnoreInlistPlanDigest), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
@@ -2641,7 +2668,7 @@ var defaultSysVars = []*SysVar{
 				return err
 			}
 			for _, warning := range warnings {
-				vars.StmtCtx.AppendWarning(errors.New(warning))
+				vars.StmtCtx.AppendWarning(errors.NewNoStackError(warning))
 			}
 			return nil
 		},
@@ -2651,7 +2678,7 @@ var defaultSysVars = []*SysVar{
 				return err
 			}
 			for _, warning := range warnings {
-				s.StmtCtx.AppendWarning(errors.New(warning))
+				s.StmtCtx.AppendWarning(errors.NewNoStackError(warning))
 			}
 			s.OptimizerFixControl = newMap
 			return nil
@@ -2905,7 +2932,7 @@ var defaultSysVars = []*SysVar{
 			chars := []rune(normalizedValue)
 			warningAdded := false
 			if len(chars) > 64 {
-				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBSessionAlias, originalValue))
+				s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(TiDBSessionAlias, originalValue))
 				warningAdded = true
 				chars = chars[:64]
 				normalizedValue = string(chars)
@@ -2914,7 +2941,7 @@ var defaultSysVars = []*SysVar{
 			// truncate to a valid identifier
 			for normalizedValue != "" && util.IsInCorrectIdentifierName(normalizedValue) {
 				if !warningAdded {
-					s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBSessionAlias, originalValue))
+					s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(TiDBSessionAlias, originalValue))
 					warningAdded = true
 				}
 				chars = chars[:len(chars)-1]
@@ -2952,7 +2979,14 @@ var defaultSysVars = []*SysVar{
 			return normalizedValue, nil
 		},
 		SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-			ServiceScope.Store(strings.ToLower(s))
+			newValue := strings.ToLower(s)
+			ServiceScope.Store(newValue)
+			oldConfig := config.GetGlobalConfig()
+			if oldConfig.Instance.TiDBServiceScope != newValue {
+				newConfig := *oldConfig
+				newConfig.Instance.TiDBServiceScope = newValue
+				config.StoreGlobalConfig(&newConfig)
+			}
 			return nil
 		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 			return ServiceScope.Load(), nil
@@ -2967,6 +3001,37 @@ var defaultSysVars = []*SysVar{
 			s.IdleTransactionTimeout = tidbOptPositiveInt32(val, DefTiDBIdleTransactionTimeout)
 			return nil
 		}},
+}
+
+// GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)
+func GlobalSystemVariableInitialValue(varName, varVal string) string {
+	switch varName {
+	case TiDBEnableAsyncCommit, TiDBEnable1PC:
+		if config.GetGlobalConfig().Store == "tikv" {
+			varVal = On
+		}
+	case TiDBMemOOMAction:
+		if intest.InTest {
+			varVal = OOMActionLog
+		}
+	case TiDBEnableAutoAnalyze:
+		if intest.InTest {
+			varVal = Off
+		}
+	// For the following sysvars, we change the default
+	// FOR NEW INSTALLS ONLY. In most cases you don't want to do this.
+	// It is better to change the value in the Sysvar struct, so that
+	// all installs will have the same value.
+	case TiDBRowFormatVersion:
+		varVal = strconv.Itoa(DefTiDBRowFormatV2)
+	case TiDBTxnAssertionLevel:
+		varVal = AssertionFastStr
+	case TiDBEnableMutationChecker:
+		varVal = On
+	case TiDBPessimisticTransactionFairLocking:
+		varVal = On
+	}
+	return varVal
 }
 
 func setTiFlashComputeDispatchPolicy(s *SessionVars, val string) error {
@@ -2994,6 +3059,11 @@ var SetCharsetVariables = []string{
 const (
 	// MaskPwd is the mask of password for LDAP variables.
 	MaskPwd = "******"
+
+	// PessimisticTxnMode is the name for tidb_txn_mode system variable.
+	PessimisticTxnMode = "pessimistic"
+	// OptimisticTxnMode is the name for tidb_txn_mode system variable.
+	OptimisticTxnMode = "optimistic"
 )
 
 const (

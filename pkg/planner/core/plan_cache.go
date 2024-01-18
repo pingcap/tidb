@@ -163,14 +163,14 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		cacheEnabled = sctx.GetSessionVars().EnablePreparedPlanCache
 	}
 	stmtCtx.UseCache = stmt.StmtCacheable && cacheEnabled
-	if !stmt.StmtCacheable && stmt.UncacheableReason != "" {
-		stmtCtx.SetSkipPlanCache(errors.New(stmt.UncacheableReason))
+	if stmt.UncacheableReason != "" {
+		stmtCtx.ForceSetSkipPlanCache(errors.New(stmt.UncacheableReason))
 	}
 
 	var bindSQL string
 	if stmtCtx.UseCache {
 		var ignoreByBinding bool
-		bindSQL, ignoreByBinding = GetBindSQL4PlanCache(sctx, stmt)
+		bindSQL, ignoreByBinding = bindinfo.MatchSQLBindingForPlanCache(sctx, stmt.PreparedAst.Stmt, &stmt.BindingInfo)
 		if ignoreByBinding {
 			stmtCtx.SetSkipPlanCache(errors.Errorf("ignore plan cache by binding"))
 		}
@@ -488,7 +488,7 @@ func rebuildRange(p Plan) error {
 		}
 		// The code should never run here as long as we're not using point get for partition table.
 		// And if we change the logic one day, here work as defensive programming to cache the error.
-		if x.PartitionInfo != nil {
+		if x.PartitionDef != nil {
 			// TODO: relocate the partition after rebuilding range to make PlanCache support PointGet
 			return errors.New("point get for partition table can not use plan cache")
 		}
@@ -787,40 +787,6 @@ func tryCachePointPlan(_ context.Context, sctx sessionctx.Context,
 		sctx.GetSessionVars().StmtCtx.SetPlanDigest(stmt.NormalizedPlan, stmt.PlanDigest)
 	}
 	return err
-}
-
-// GetBindSQL4PlanCache used to get the bindSQL for plan cache to build the plan cache key.
-func GetBindSQL4PlanCache(sctx sessionctx.Context, stmt *PlanCacheStmt) (string, bool) {
-	useBinding := sctx.GetSessionVars().UsePlanBaselines
-	ignore := false
-	if !useBinding || stmt.PreparedAst.Stmt == nil || stmt.NormalizedSQL4PC == "" || stmt.SQLDigest4PC == "" {
-		return "", ignore
-	}
-	if sctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
-		return "", ignore
-	}
-	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-	bindRecord := sessionHandle.GetSessionBinding(stmt.SQLDigest4PC, stmt.NormalizedSQL4PC, "")
-	if bindRecord != nil {
-		enabledBinding := bindRecord.FindEnabledBinding()
-		if enabledBinding != nil {
-			ignore = enabledBinding.Hint.ContainTableHint(HintIgnorePlanCache)
-			return enabledBinding.BindSQL, ignore
-		}
-	}
-	globalHandle := domain.GetDomain(sctx).BindHandle()
-	if globalHandle == nil {
-		return "", ignore
-	}
-	bindRecord = globalHandle.GetGlobalBinding(stmt.SQLDigest4PC, stmt.NormalizedSQL4PC, "")
-	if bindRecord != nil {
-		enabledBinding := bindRecord.FindEnabledBinding()
-		if enabledBinding != nil {
-			ignore = enabledBinding.Hint.ContainTableHint(HintIgnorePlanCache)
-			return enabledBinding.BindSQL, ignore
-		}
-	}
-	return "", ignore
 }
 
 // IsPointGetPlanShortPathOK check if we can execute using plan cached in prepared structure

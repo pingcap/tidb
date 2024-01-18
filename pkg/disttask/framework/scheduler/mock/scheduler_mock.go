@@ -13,8 +13,7 @@ import (
 	reflect "reflect"
 
 	proto "github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	scheduler "github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
-	infosync "github.com/pingcap/tidb/pkg/domain/infosync"
+	storage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -42,13 +41,12 @@ func (m *MockExtension) EXPECT() *MockExtensionMockRecorder {
 }
 
 // GetEligibleInstances mocks base method.
-func (m *MockExtension) GetEligibleInstances(arg0 context.Context, arg1 *proto.Task) ([]*infosync.ServerInfo, bool, error) {
+func (m *MockExtension) GetEligibleInstances(arg0 context.Context, arg1 *proto.Task) ([]string, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "GetEligibleInstances", arg0, arg1)
-	ret0, _ := ret[0].([]*infosync.ServerInfo)
-	ret1, _ := ret[1].(bool)
-	ret2, _ := ret[2].(error)
-	return ret0, ret1, ret2
+	ret0, _ := ret[0].([]string)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
 }
 
 // GetEligibleInstances indicates an expected call of GetEligibleInstances.
@@ -86,7 +84,7 @@ func (mr *MockExtensionMockRecorder) IsRetryableErr(arg0 any) *gomock.Call {
 }
 
 // OnDone mocks base method.
-func (m *MockExtension) OnDone(arg0 context.Context, arg1 scheduler.TaskHandle, arg2 *proto.Task) error {
+func (m *MockExtension) OnDone(arg0 context.Context, arg1 storage.TaskHandle, arg2 *proto.Task) error {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "OnDone", arg0, arg1, arg2)
 	ret0, _ := ret[0].(error)
@@ -100,7 +98,7 @@ func (mr *MockExtensionMockRecorder) OnDone(arg0, arg1, arg2 any) *gomock.Call {
 }
 
 // OnNextSubtasksBatch mocks base method.
-func (m *MockExtension) OnNextSubtasksBatch(arg0 context.Context, arg1 scheduler.TaskHandle, arg2 *proto.Task, arg3 []*infosync.ServerInfo, arg4 proto.Step) ([][]byte, error) {
+func (m *MockExtension) OnNextSubtasksBatch(arg0 context.Context, arg1 storage.TaskHandle, arg2 *proto.Task, arg3 []string, arg4 proto.Step) ([][]byte, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "OnNextSubtasksBatch", arg0, arg1, arg2, arg3, arg4)
 	ret0, _ := ret[0].([][]byte)
