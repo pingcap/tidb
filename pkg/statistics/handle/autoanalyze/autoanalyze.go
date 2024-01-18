@@ -255,6 +255,7 @@ func (sa *statsAnalyze) HandleAutoAnalyze() (analyzed bool) {
 			logutil.BgLogger().Error("build table analysis job queue failed", zap.Error(err))
 			return false
 		}
+		logutil.BgLogger().Info("start to analyze tables", zap.Int("num of tables", refresher.jobs.Len()))
 		refresher.pickOneTableForAnalysisByPriority()
 	} else {
 		_ = statsutil.CallWithSCtx(sa.statsHandle.SPool(), func(sctx sessionctx.Context) error {
