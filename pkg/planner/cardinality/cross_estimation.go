@@ -91,7 +91,7 @@ func AdjustRowCountForIndexScanByLimit(sctx sessionctx.Context,
 	} else if abs := math.Abs(corr); abs < 1 {
 		// If OptOrderingIdxSelRatio is enabled - estimate the difference between index and table filtering, as this represents
 		// the possible scan range when LIMIT rows will be found. orderRatio is the estimated percentage of that range when the first
-		// row isexpected to be found. Index filtering applies orderRatio twice. Once found - rows are estimated to be clustered (expectedCnt).
+		// row is expected to be found. Index filtering applies orderRatio twice. Once found - rows are estimated to be clustered (expectedCnt).
 		// This formula is to bias away from non-filtering (or poorly filtering) indexes that provide order due, where filtering exists
 		// outside of that index. Such plans have high risk since we cannot estimate when rows will be found.
 		orderRatio := sctx.GetSessionVars().OptOrderingIdxSelRatio
