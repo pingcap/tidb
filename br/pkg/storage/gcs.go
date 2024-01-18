@@ -380,18 +380,6 @@ skipHandleCred:
 	}
 
 	bucket := client.Bucket(gcs.Bucket)
-	// check whether it's a bug before #647, to solve case #2
-	// If the storage is set as gcs://bucket/prefix/,
-	// the backupmeta is written correctly to gcs://bucket/prefix/backupmeta,
-	// but the SSTs are written wrongly to gcs://bucket/prefix//*.sst (note the extra slash).
-	// see details about case 2 at https://github.com/pingcap/br/issues/675#issuecomment-753780742
-	sstInPrefix := hasSSTFiles(ctx, bucket, gcs.Prefix)
-	sstInPrefixSlash := hasSSTFiles(ctx, bucket, gcs.Prefix+"//")
-	if sstInPrefixSlash && !sstInPrefix {
-		// This is a old bug, but we must make it compatible.
-		// so we need find sst in slash directory
-		gcs.Prefix += "//"
-	}
 	return &GCSStorage{gcs: gcs, bucket: bucket, cli: client}, nil
 }
 
@@ -408,27 +396,6 @@ func shouldRetry(err error) bool {
 		}
 	}
 
-	return false
-}
-
-func hasSSTFiles(ctx context.Context, bucket *storage.BucketHandle, prefix string) bool {
-	query := storage.Query{Prefix: prefix}
-	_ = query.SetAttrSelection([]string{"Name"})
-	it := bucket.Objects(ctx, &query)
-	for {
-		attrs, err := it.Next()
-		if err == iterator.Done { // nolint:errorlint
-			break
-		}
-		if err != nil {
-			log.Warn("failed to list objects on gcs, will use default value for `prefix`", zap.Error(err))
-			break
-		}
-		if strings.HasSuffix(attrs.Name, ".sst") {
-			log.Info("sst file found in prefix slash", zap.String("file", attrs.Name))
-			return true
-		}
-	}
 	return false
 }
 
