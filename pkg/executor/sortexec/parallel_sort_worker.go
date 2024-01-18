@@ -19,10 +19,11 @@ import (
 	"sync"
 	"time"
 
+	"slices"
+
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
-	"golang.org/x/exp/slices"
 )
 
 // SignalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
@@ -36,8 +37,6 @@ const (
 
 type parallelSortWorker struct {
 	workerIDForTest int
-
-	waitGroup *sync.WaitGroup
 
 	// Temporarily store rows that will be sorted.
 	rowBuffer sortedRows
@@ -64,11 +63,9 @@ func newParallelSortWorker(
 	workerIDForTest int,
 	lessRowFunc func(chunk.Row, chunk.Row) int,
 	globalSortedRowsQueue *sortedRowsList,
-	waitGroup *sync.WaitGroup,
 	result *sortedRows,
 	chunkChannel chan *chunkWithMemoryUsage,
 	fetcherAndWorkerSyncer *sync.WaitGroup,
-	checkError func() error,
 	processError func(error),
 	finishCh chan struct{},
 	memTracker *memory.Tracker,
@@ -77,11 +74,9 @@ func newParallelSortWorker(
 		workerIDForTest:        workerIDForTest,
 		lessRowFunc:            lessRowFunc,
 		globalSortedRowsQueue:  globalSortedRowsQueue,
-		waitGroup:              waitGroup,
 		result:                 result,
 		chunkChannel:           chunkChannel,
 		fetcherAndWorkerSyncer: fetcherAndWorkerSyncer,
-		checkError:             checkError,
 		processError:           processError,
 		finishCh:               finishCh,
 		timesOfRowCompare:      0,
@@ -233,7 +228,6 @@ func (p *parallelSortWorker) run() {
 		if r := recover(); r != nil {
 			processPanicAndLog(p.processError, r)
 		}
-		p.waitGroup.Done()
 	}()
 
 	ok := p.fetchChunksAndSort()

@@ -67,6 +67,16 @@ func (p *sortedRowsList) fetchTwoSortedRows() (res1 sortedRows, res2 sortedRows)
 	return nil, nil
 }
 
+func (p *sortedRowsList) clear() {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	elem := p.sortedRowsQueue.Front()
+	for elem != nil {
+		p.sortedRowsQueue.Remove(elem)
+		p.sortedRowsQueue.Front()
+	}
+}
+
 func (p *sortedRowsList) fetchSortedRowsNoLock() sortedRows {
 	return popFromList(&p.sortedRowsQueue)
 }
