@@ -14,11 +14,9 @@ import (
 	"cloud.google.com/go/storage"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/spf13/pflag"
-	"go.uber.org/zap"
 	"golang.org/x/oauth2/google"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
@@ -378,43 +376,6 @@ skipHandleCred:
 
 	bucket := client.Bucket(gcs.Bucket)
 	return &GCSStorage{gcs: gcs, bucket: bucket, cli: client}, nil
-}
-
-<<<<<<< HEAD
-func hasSSTFiles(ctx context.Context, bucket *storage.BucketHandle, prefix string) bool {
-	query := storage.Query{Prefix: prefix}
-	_ = query.SetAttrSelection([]string{"Name"})
-	it := bucket.Objects(ctx, &query)
-	for {
-		attrs, err := it.Next()
-		if err == iterator.Done { // nolint:errorlint
-			break
-		}
-		if err != nil {
-			log.Warn("failed to list objects on gcs, will use default value for `prefix`", zap.Error(err))
-			break
-		}
-		if strings.HasSuffix(attrs.Name, ".sst") {
-			log.Info("sst file found in prefix slash", zap.String("file", attrs.Name))
-			return true
-		}
-	}
-=======
-func shouldRetry(err error) bool {
-	if storage.ShouldRetry(err) {
-		return true
-	}
-
-	// workaround for https://github.com/googleapis/google-cloud-go/issues/9262
-	if e := (&googleapi.Error{}); goerrors.As(err, &e) {
-		if e.Code == 401 && strings.Contains(e.Message, "Authentication required.") {
-			log.Warn("retrying gcs request due to internal authentication error", zap.Error(err))
-			return true
-		}
-	}
-
->>>>>>> c92094fcb48 (external: remove old compatibility check of BR (#50534))
-	return false
 }
 
 // gcsObjectReader wrap storage.Reader and add the `Seek` method.
