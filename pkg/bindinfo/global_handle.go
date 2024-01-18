@@ -49,7 +49,7 @@ type GlobalBindingHandle interface {
 	MatchGlobalBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool)
 
 	// GetAllGlobalBindings returns all bind records in cache.
-	GetAllGlobalBindings() (bindings Bindings)
+	GetAllGlobalBindings() (bindings []Bindings)
 
 	// CreateGlobalBinding creates a Bindings to the storage and the cache.
 	// It replaces all the exists bindings for the same normalized SQL.
@@ -173,18 +173,20 @@ func (h *globalBindingHandle) setFuzzyDigestMap(m map[string][]string) {
 	h.fuzzyDigestMap.Store(m)
 }
 
-func buildFuzzyDigestMap(bindRecords Bindings) map[string][]string {
+func buildFuzzyDigestMap(bindRecords []Bindings) map[string][]string {
 	m := make(map[string][]string)
 	p := parser.New()
-	for _, binding := range bindRecords {
-		stmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
-		if err != nil {
-			logutil.BgLogger().Warn("parse bindSQL failed", zap.String("bindSQL", binding.BindSQL), zap.Error(err))
-			p = parser.New()
-			continue
+	for _, bindRecord := range bindRecords {
+		for _, binding := range bindRecord {
+			stmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
+			if err != nil {
+				logutil.BgLogger().Warn("parse bindSQL failed", zap.String("bindSQL", binding.BindSQL), zap.Error(err))
+				p = parser.New()
+				continue
+			}
+			_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+			m[fuzzyDigest] = append(m[fuzzyDigest], binding.SQLDigest)
 		}
-		_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
-		m[fuzzyDigest] = append(m[fuzzyDigest], binding.SQLDigest)
 	}
 	return m
 }
@@ -524,7 +526,7 @@ func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, fuzzyD
 }
 
 // GetAllGlobalBindings returns all bind records in cache.
-func (h *globalBindingHandle) GetAllGlobalBindings() (bindings Bindings) {
+func (h *globalBindingHandle) GetAllGlobalBindings() (bindings []Bindings) {
 	bindings = append(bindings, h.getCache().GetAllBindings()...)
 	return
 }

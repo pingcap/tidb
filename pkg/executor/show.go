@@ -324,9 +324,18 @@ func (e *ShowExec) fetchShowBind() error {
 	var bindings []bindinfo.Binding
 	if !e.GlobalScope {
 		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-		bindings = handle.GetAllSessionBindings()
+		for _, bs := range handle.GetAllSessionBindings() {
+			for _, b := range bs {
+				bindings = append(bindings, b)
+			}
+		}
+
 	} else {
-		bindings = domain.GetDomain(e.Ctx()).BindHandle().GetAllGlobalBindings()
+		for _, bs := range domain.GetDomain(e.Ctx()).BindHandle().GetAllGlobalBindings() {
+			for _, b := range bs {
+				bindings = append(bindings, b)
+			}
+		}
 	}
 	// Remove the invalid bindRecord.
 	parser := parser.New()
@@ -386,8 +395,10 @@ func (e *ShowExec) fetchShowBindingCacheStatus(ctx context.Context) error {
 	bindings := handle.GetAllGlobalBindings()
 	numBindings := 0
 	for _, binding := range bindings {
-		if binding.IsBindingEnabled() {
-			numBindings++
+		for _, b := range binding {
+			if b.IsBindingEnabled() {
+				numBindings++
+			}
 		}
 	}
 
