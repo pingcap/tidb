@@ -110,7 +110,7 @@ func verifyLightningStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
 		RegionEpoch: region.Meta.GetRegionEpoch(),
 		Peer:        region.Leader,
 	}
-	t.NoError(wcli.Send(&import_sstpb.WriteRequest{Chunk: &import_sstpb.WriteRequest_Meta{Meta: meta}, Context: &rpcCx}))
+	t.NoError(wcli.Send(&import_sstpb.WriteRequest{Chunk: &import_sstpb.WriteRequest_Meta{Meta: meta}}))
 	phy, log, err := pdc.GetTS(cx)
 	t.NoError(err)
 	wb := &import_sstpb.WriteBatch{
@@ -121,7 +121,7 @@ func verifyLightningStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
 			{Key: []byte("a3"), Value: []byte("I dunno too. But we need to have a try.")},
 		},
 	}
-	t.NoError(wcli.Send(&import_sstpb.WriteRequest{Chunk: &import_sstpb.WriteRequest_Batch{Batch: wb}, Context: &rpcCx}))
+	t.NoError(wcli.Send(&import_sstpb.WriteRequest{Chunk: &import_sstpb.WriteRequest_Batch{Batch: wb}}))
 	resp, err := wcli.CloseAndRecv()
 	t.NoError(err)
 	t.Nil(resp.Error, "res = %s", resp)
