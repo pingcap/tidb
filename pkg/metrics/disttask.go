@@ -16,7 +16,6 @@ package metrics
 
 import (
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -45,10 +44,8 @@ var (
 	//DistTaskStarttimeGauge is the gauge of dist task count.
 	DistTaskStarttimeGauge *prometheus.GaugeVec
 	// DistTaskSubTaskCntGauge is the gauge of dist task subtask count.
-	DistTaskSubTaskCntGauge *prometheus.GaugeVec
-	// DistTaskSubTaskStartTimeGauge is the gauge of dist task subtask start time.
-	DistTaskSubTaskStartTimeGauge *prometheus.GaugeVec
-	DistTaskSubTaskDurationGauge  *prometheus.GaugeVec
+	DistTaskSubTaskCntGauge      *prometheus.GaugeVec
+	DistTaskSubTaskDurationGauge *prometheus.GaugeVec
 )
 
 // InitDistTaskMetrics initializes disttask metrics.
@@ -77,14 +74,6 @@ func InitDistTaskMetrics() {
 			Help:      "Gauge of subtask count.",
 		}, []string{lblTaskType, lblTaskID, lblTaskStatus, lblExecID})
 
-	DistTaskSubTaskStartTimeGauge = NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "tidb",
-			Subsystem: "disttask",
-			Name:      "subtask_start_time",
-			Help:      "Gauge of subtask start time.",
-		}, []string{lblTaskType, lblTaskID, lblTaskStatus, lblSubTaskID})
-
 	DistTaskSubTaskDurationGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
@@ -92,44 +81,6 @@ func InitDistTaskMetrics() {
 			Name:      "subtask_duration",
 			Help:      "Gauge of subtask duration.",
 		}, []string{lblTaskType, lblTaskID, lblTaskStatus, lblSubTaskID, lblExecID})
-}
-
-// IncDistTaskSubTaskCnt increases the count of dist task subtask.
-func IncDistTaskSubTaskCnt(subtask *proto.Subtask) {
-	DistTaskSubTaskCntGauge.WithLabelValues(
-		subtask.Type.String(),
-		strconv.Itoa(int(subtask.TaskID)),
-		subtask.State.String(),
-	).Inc()
-}
-
-// DecDistTaskSubTaskCnt decreases the count of dist task subtask.
-func DecDistTaskSubTaskCnt(subtask *proto.Subtask) {
-	DistTaskSubTaskCntGauge.WithLabelValues(
-		subtask.Type.String(),
-		strconv.Itoa(int(subtask.TaskID)),
-		subtask.State.String(),
-	).Dec()
-}
-
-// StartDistTaskSubTask sets the start time of dist task subtask.
-func StartDistTaskSubTask(subtask *proto.Subtask) {
-	DistTaskSubTaskStartTimeGauge.WithLabelValues(
-		subtask.Type.String(),
-		strconv.Itoa(int(subtask.TaskID)),
-		subtask.State.String(),
-		strconv.Itoa(int(subtask.ID)),
-	).SetToCurrentTime()
-}
-
-// EndDistTaskSubTask deletes the start time of dist task subtask.
-func EndDistTaskSubTask(subtask *proto.Subtask) {
-	DistTaskSubTaskStartTimeGauge.DeleteLabelValues(
-		subtask.Type.String(),
-		strconv.Itoa(int(subtask.TaskID)),
-		subtask.State.String(),
-		strconv.Itoa(int(subtask.ID)),
-	)
 }
 
 // UpdateMetricsForAddTask update metrics when a task is added

@@ -271,7 +271,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(DistTaskGauge)
 	prometheus.MustRegister(DistTaskStarttimeGauge)
 	prometheus.MustRegister(DistTaskSubTaskCntGauge)
-	prometheus.MustRegister(DistTaskSubTaskStartTimeGauge)
+	prometheus.MustRegister(DistTaskSubTaskDurationGauge)
 
 	prometheus.MustRegister(RunawayCheckerCounter)
 	prometheus.MustRegister(GlobalSortWriteToCloudStorageDuration)

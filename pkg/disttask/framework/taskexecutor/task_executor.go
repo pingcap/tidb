@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
@@ -229,18 +228,6 @@ func (s *BaseTaskExecutor) runStep(ctx context.Context, task *proto.Task, resour
 			s.onError(err)
 		}
 	}()
-
-	subtasks, err := s.taskTable.GetSubtasksByExecIDAndStepAndStates(
-		runCtx, s.id, task.ID, task.Step,
-		proto.SubtaskStatePending, proto.SubtaskStateRunning)
-	if err != nil {
-		s.onError(err)
-		return s.getError()
-	}
-	for _, subtask := range subtasks {
-		metrics.IncDistTaskSubTaskCnt(subtask)
-		metrics.StartDistTaskSubTask(subtask)
-	}
 
 	for {
 		// check if any error occurs.
@@ -589,15 +576,7 @@ func (s *BaseTaskExecutor) resetError() {
 }
 
 func (s *BaseTaskExecutor) startSubtaskAndUpdateState(ctx context.Context, subtask *proto.Subtask) error {
-	err := s.startSubtask(ctx, subtask.ID)
-	if err == nil {
-		metrics.DecDistTaskSubTaskCnt(subtask)
-		metrics.EndDistTaskSubTask(subtask)
-		subtask.State = proto.SubtaskStateRunning
-		metrics.IncDistTaskSubTaskCnt(subtask)
-		metrics.StartDistTaskSubTask(subtask)
-	}
-	return err
+	return s.startSubtask(ctx, subtask.ID)
 }
 
 func (s *BaseTaskExecutor) updateSubtaskStateAndErrorImpl(ctx context.Context, execID string, subtaskID int64, state proto.SubtaskState, subTaskErr error) {
@@ -647,22 +626,11 @@ func (s *BaseTaskExecutor) finishSubtask(ctx context.Context, subtask *proto.Sub
 }
 
 func (s *BaseTaskExecutor) updateSubtaskStateAndError(ctx context.Context, subtask *proto.Subtask, state proto.SubtaskState, subTaskErr error) {
-	metrics.DecDistTaskSubTaskCnt(subtask)
-	metrics.EndDistTaskSubTask(subtask)
 	s.updateSubtaskStateAndErrorImpl(ctx, subtask.ExecID, subtask.ID, state, subTaskErr)
-	subtask.State = state
-	metrics.IncDistTaskSubTaskCnt(subtask)
-	if !subtask.IsDone() {
-		metrics.StartDistTaskSubTask(subtask)
-	}
 }
 
 func (s *BaseTaskExecutor) finishSubtaskAndUpdateState(ctx context.Context, subtask *proto.Subtask) {
-	metrics.DecDistTaskSubTaskCnt(subtask)
-	metrics.EndDistTaskSubTask(subtask)
 	s.finishSubtask(ctx, subtask)
-	subtask.State = proto.SubtaskStateSucceed
-	metrics.IncDistTaskSubTaskCnt(subtask)
 }
 
 // markSubTaskCanceledOrFailed check the error type and decide the subtasks' state.
