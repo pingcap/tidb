@@ -607,3 +607,77 @@ func TestReloadBindings(t *testing.T) {
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Equal(t, 0, len(rows))
 }
+<<<<<<< HEAD:pkg/bindinfo/handle_test.go
+=======
+
+func TestSetVarFixControlWithBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec(`create table t(id int, a varchar(100), b int, c int, index idx_ab(a, b))`)
+	tk.MustQuery(`explain select * from t where c = 10 and (a = 'xx' or (a = 'kk' and b = 1))`).Check(
+		testkit.Rows(
+			`IndexLookUp_12 0.01 root  `,
+			`├─Selection_10(Build) 0.02 cop[tikv]  or(eq(test.t.a, "xx"), and(eq(test.t.a, "kk"), eq(test.t.b, 1)))`,
+			`│ └─IndexRangeScan_8 20.00 cop[tikv] table:t, index:idx_ab(a, b) range:["kk","kk"], ["xx","xx"], keep order:false, stats:pseudo`,
+			`└─Selection_11(Probe) 0.01 cop[tikv]  eq(test.t.c, 10)`,
+			`  └─TableRowIDScan_9 0.02 cop[tikv] table:t keep order:false, stats:pseudo`))
+
+	tk.MustExec(`create global binding using select /*+ set_var(tidb_opt_fix_control='44389:ON') */ * from t where c = 10 and (a = 'xx' or (a = 'kk' and b = 1))`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows()) // no warning
+
+	// the fix control can take effect
+	tk.MustQuery(`explain select * from t where c = 10 and (a = 'xx' or (a = 'kk' and b = 1))`).Check(
+		testkit.Rows(`IndexLookUp_11 0.01 root  `,
+			`├─IndexRangeScan_8(Build) 10.10 cop[tikv] table:t, index:idx_ab(a, b) range:["kk" 1,"kk" 1], ["xx","xx"], keep order:false, stats:pseudo`,
+			`└─Selection_10(Probe) 0.01 cop[tikv]  eq(test.t.c, 10)`,
+			`  └─TableRowIDScan_9 10.10 cop[tikv] table:t keep order:false, stats:pseudo`))
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+}
+
+func TestRemoveDuplicatedPseudoBinding(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	checkPseudoBinding := func(num int) {
+		tk.MustQuery(fmt.Sprintf("select count(1) from mysql.bind_info where original_sql='%s'",
+			bindinfo.BuiltinPseudoSQL4BindLock)).Check(testkit.Rows(fmt.Sprintf("%d", num)))
+	}
+	insertPseudoBinding := func() {
+		tk.MustExec(fmt.Sprintf(`INSERT INTO mysql.bind_info(original_sql, bind_sql, default_db, status, create_time, update_time, charset, collation, source)
+            VALUES ('%v', '%v', "mysql", '%v', "2000-01-01 00:00:00", "2000-01-01 00:00:00", "", "", '%v')`,
+			bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.BuiltinPseudoSQL4BindLock, bindinfo.Builtin, bindinfo.Builtin))
+	}
+	removeDuplicated := func() {
+		tk.MustExec(bindinfo.StmtRemoveDuplicatedPseudoBinding)
+	}
+
+	checkPseudoBinding(1)
+	insertPseudoBinding()
+	checkPseudoBinding(2)
+	removeDuplicated()
+	checkPseudoBinding(1)
+
+	insertPseudoBinding()
+	insertPseudoBinding()
+	insertPseudoBinding()
+	checkPseudoBinding(4)
+	removeDuplicated()
+	checkPseudoBinding(1)
+	removeDuplicated()
+	checkPseudoBinding(1)
+}
+
+type mockSessionPool struct {
+	se sessiontypes.Session
+}
+
+func (p *mockSessionPool) Get() (pools.Resource, error) {
+	return p.se, nil
+}
+
+func (p *mockSessionPool) Put(pools.Resource) {
+}
+>>>>>>> 5a2c79b4d87 (parser: restore set_var value to string instead of plain text (#50515)):pkg/bindinfo/global_handle_test.go
