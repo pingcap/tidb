@@ -377,21 +377,10 @@ skipHandleCred:
 	}
 
 	bucket := client.Bucket(gcs.Bucket)
-	// check whether it's a bug before #647, to solve case #2
-	// If the storage is set as gcs://bucket/prefix/,
-	// the backupmeta is written correctly to gcs://bucket/prefix/backupmeta,
-	// but the SSTs are written wrongly to gcs://bucket/prefix//*.sst (note the extra slash).
-	// see details about case 2 at https://github.com/pingcap/br/issues/675#issuecomment-753780742
-	sstInPrefix := hasSSTFiles(ctx, bucket, gcs.Prefix)
-	sstInPrefixSlash := hasSSTFiles(ctx, bucket, gcs.Prefix+"//")
-	if sstInPrefixSlash && !sstInPrefix {
-		// This is a old bug, but we must make it compatible.
-		// so we need find sst in slash directory
-		gcs.Prefix += "//"
-	}
 	return &GCSStorage{gcs: gcs, bucket: bucket, cli: client}, nil
 }
 
+<<<<<<< HEAD
 func hasSSTFiles(ctx context.Context, bucket *storage.BucketHandle, prefix string) bool {
 	query := storage.Query{Prefix: prefix}
 	_ = query.SetAttrSelection([]string{"Name"})
@@ -410,6 +399,21 @@ func hasSSTFiles(ctx context.Context, bucket *storage.BucketHandle, prefix strin
 			return true
 		}
 	}
+=======
+func shouldRetry(err error) bool {
+	if storage.ShouldRetry(err) {
+		return true
+	}
+
+	// workaround for https://github.com/googleapis/google-cloud-go/issues/9262
+	if e := (&googleapi.Error{}); goerrors.As(err, &e) {
+		if e.Code == 401 && strings.Contains(e.Message, "Authentication required.") {
+			log.Warn("retrying gcs request due to internal authentication error", zap.Error(err))
+			return true
+		}
+	}
+
+>>>>>>> c92094fcb48 (external: remove old compatibility check of BR (#50534))
 	return false
 }
 
