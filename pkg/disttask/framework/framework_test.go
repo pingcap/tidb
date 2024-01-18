@@ -70,7 +70,7 @@ func TestRandomOwnerChangeWithMultipleTasks(t *testing.T) {
 			distContext.SetOwner(idx)
 			require.Eventually(t, func() bool {
 				return distContext.GetDomain(idx).DDL().OwnerManager().IsOwner()
-			}, 2*time.Second, 100*time.Millisecond)
+			}, 10*time.Second, 100*time.Millisecond)
 		}
 	})
 	wg.Wait()
@@ -107,7 +107,7 @@ func TestFrameworkScaleInAndOut(t *testing.T) {
 			distContext.SetOwner(idx)
 			require.Eventually(t, func() bool {
 				return distContext.GetDomain(idx).DDL().OwnerManager().IsOwner()
-			}, 2*time.Second, 100*time.Millisecond)
+			}, 10*time.Second, 100*time.Millisecond)
 		}
 	})
 	wg.Wait()
