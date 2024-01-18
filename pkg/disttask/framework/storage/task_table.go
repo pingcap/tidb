@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/cpu"
+	distroleutil "github.com/pingcap/tidb/pkg/util/distrole"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
@@ -718,7 +719,7 @@ func (*TaskManager) InitMetaSession(ctx context.Context, se sessionctx.Context, 
 		insert into mysql.dist_framework_meta(host, role, cpu_count, keyspace_id)
 		values (%?, %?, %?, -1)
 		on duplicate key
-		update cpu_count = %?, role = %?`,
+		update cpu_count = %?, role = %?, dead = 0`,
 		execID, role, cpuCount, cpuCount, role)
 	return err
 }
@@ -840,24 +841,25 @@ func (mgr *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, subtasks []*p
 	return err
 }
 
-// DeleteDeadNodes deletes the dead nodes from mysql.dist_framework_meta.
-func (mgr *TaskManager) DeleteDeadNodes(ctx context.Context, nodes []string) error {
+// MarkDeadNodes marks the dead nodes.
+func (mgr *TaskManager) MarkDeadNodes(ctx context.Context, nodes []string) error {
 	if len(nodes) == 0 {
 		return nil
 	}
 	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		deleteSQL := new(strings.Builder)
-		if err := sqlescape.FormatSQL(deleteSQL, "delete from mysql.dist_framework_meta where host in("); err != nil {
+		updateSQL := new(strings.Builder)
+		if err := sqlescape.FormatSQL(updateSQL, `update mysql.dist_framework_meta
+			set dead = true where host in(`); err != nil {
 			return err
 		}
-		deleteElems := make([]string, 0, len(nodes))
+		updateElems := make([]string, 0, len(nodes))
 		for _, node := range nodes {
-			deleteElems = append(deleteElems, fmt.Sprintf(`"%s"`, node))
+			updateElems = append(updateElems, fmt.Sprintf(`"%s"`, node))
 		}
 
-		deleteSQL.WriteString(strings.Join(deleteElems, ", "))
-		deleteSQL.WriteString(")")
-		_, err := sqlexec.ExecSQL(ctx, se, deleteSQL.String())
+		updateSQL.WriteString(strings.Join(updateElems, ", "))
+		updateSQL.WriteString(")")
+		_, err := sqlexec.ExecSQL(ctx, se, updateSQL.String())
 		return err
 	})
 }
@@ -1237,14 +1239,22 @@ func (mgr *TaskManager) getManagedNodesWithSession(ctx context.Context, se sessi
 	if err != nil {
 		return nil, err
 	}
-	nodeMap := make(map[string][]proto.ManagedNode, 2)
+	managedNodes := make([]proto.ManagedNode, 0)
+	var setTiDBServiceScopeBackground bool
 	for _, node := range nodes {
-		nodeMap[node.Role] = append(nodeMap[node.Role], node)
+		if node.Role != distroleutil.TiDBServiceScopeBackground {
+			continue
+		}
+		setTiDBServiceScopeBackground = true
+		if !node.Dead {
+			managedNodes = append(managedNodes, node)
+		}
 	}
-	if len(nodeMap["background"]) == 0 {
-		return nodeMap[""], nil
+	if !setTiDBServiceScopeBackground {
+		return nodes, nil
 	}
-	return nodeMap["background"], nil
+
+	return managedNodes, nil
 }
 
 // GetAllNodes gets nodes in dist_framework_meta.
@@ -1260,7 +1270,7 @@ func (mgr *TaskManager) GetAllNodes(ctx context.Context) ([]proto.ManagedNode, e
 
 func (*TaskManager) getAllNodesWithSession(ctx context.Context, se sessionctx.Context) ([]proto.ManagedNode, error) {
 	rs, err := sqlexec.ExecSQL(ctx, se, `
-		select host, role, cpu_count
+		select host, role, cpu_count, dead
 		from mysql.dist_framework_meta
 		order by host`)
 	if err != nil {
@@ -1272,6 +1282,7 @@ func (*TaskManager) getAllNodesWithSession(ctx context.Context, se sessionctx.Co
 			ID:       r.GetString(0),
 			Role:     r.GetString(1),
 			CPUCount: int(r.GetInt64(2)),
+			Dead:     r.GetInt64(3) != 0,
 		})
 	}
 	return nodes, nil

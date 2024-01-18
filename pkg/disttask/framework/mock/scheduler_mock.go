@@ -266,18 +266,18 @@ func (mr *MockTaskManagerMockRecorder) CollectSubTaskError(arg0, arg1 any) *gomo
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CollectSubTaskError", reflect.TypeOf((*MockTaskManager)(nil).CollectSubTaskError), arg0, arg1)
 }
 
-// DeleteDeadNodes mocks base method.
-func (m *MockTaskManager) DeleteDeadNodes(arg0 context.Context, arg1 []string) error {
+// MarkDeadNodes mocks base method.
+func (m *MockTaskManager) MarkDeadNodes(arg0 context.Context, arg1 []string) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "DeleteDeadNodes", arg0, arg1)
+	ret := m.ctrl.Call(m, "MarkDeadNodes", arg0, arg1)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// DeleteDeadNodes indicates an expected call of DeleteDeadNodes.
-func (mr *MockTaskManagerMockRecorder) DeleteDeadNodes(arg0, arg1 any) *gomock.Call {
+// MarkDeadNodes indicates an expected call of MarkDeadNodes.
+func (mr *MockTaskManagerMockRecorder) MarkDeadNodes(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "DeleteDeadNodes", reflect.TypeOf((*MockTaskManager)(nil).DeleteDeadNodes), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "MarkDeadNodes", reflect.TypeOf((*MockTaskManager)(nil).MarkDeadNodes), arg0, arg1)
 }
 
 // FailTask mocks base method.

@@ -22,4 +22,5 @@ type ManagedNode struct {
 	// all managed node should have the same role
 	Role     string
 	CPUCount int
+	Dead     bool
 }

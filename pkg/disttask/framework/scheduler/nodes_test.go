@@ -66,13 +66,13 @@ func TestMaintainLiveNodes(t *testing.T) {
 
 	// fail on clean
 	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]proto.ManagedNode{{ID: ":4000"}, {ID: ":4001"}, {ID: ":4002"}}, nil)
-	mockTaskMgr.EXPECT().DeleteDeadNodes(gomock.Any(), gomock.Any()).Return(errors.New("mock error"))
+	mockTaskMgr.EXPECT().MarkDeadNodes(gomock.Any(), gomock.Any()).Return(errors.New("mock error"))
 	nodeMgr.maintainLiveNodes(ctx, mockTaskMgr)
 	require.Equal(t, map[string]struct{}{":4000": {}}, nodeMgr.prevLiveNodes)
 	require.True(t, ctrl.Satisfied())
 	// remove 1 node
 	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]proto.ManagedNode{{ID: ":4000"}, {ID: ":4001"}, {ID: ":4002"}}, nil)
-	mockTaskMgr.EXPECT().DeleteDeadNodes(gomock.Any(), gomock.Any()).Return(nil)
+	mockTaskMgr.EXPECT().MarkDeadNodes(gomock.Any(), gomock.Any()).Return(nil)
 	nodeMgr.maintainLiveNodes(ctx, mockTaskMgr)
 	require.Equal(t, map[string]struct{}{":4000": {}, ":4001": {}}, nodeMgr.prevLiveNodes)
 	require.True(t, ctrl.Satisfied())
@@ -87,7 +87,7 @@ func TestMaintainLiveNodes(t *testing.T) {
 	}
 
 	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]proto.ManagedNode{{ID: ":4000"}, {ID: ":4001"}, {ID: ":4002"}}, nil)
-	mockTaskMgr.EXPECT().DeleteDeadNodes(gomock.Any(), gomock.Any()).Return(nil)
+	mockTaskMgr.EXPECT().MarkDeadNodes(gomock.Any(), gomock.Any()).Return(nil)
 	nodeMgr.maintainLiveNodes(ctx, mockTaskMgr)
 	require.Equal(t, map[string]struct{}{":4000": {}}, nodeMgr.prevLiveNodes)
 	require.True(t, ctrl.Satisfied())

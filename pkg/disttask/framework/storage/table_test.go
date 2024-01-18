@@ -898,7 +898,7 @@ func TestDistFrameworkMeta(t *testing.T) {
 
 	require.NoError(t, sm.InitMeta(ctx, ":4002", "background"))
 
-	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{":4000"}))
+	require.NoError(t, sm.MarkDeadNodes(ctx, []string{":4000"}))
 	nodes, err = sm.GetManagedNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
@@ -906,14 +906,14 @@ func TestDistFrameworkMeta(t *testing.T) {
 		{ID: ":4003", Role: "background", CPUCount: 100},
 	}, nodes)
 
-	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{":4003"}))
+	require.NoError(t, sm.MarkDeadNodes(ctx, []string{":4003"}))
 	nodes, err = sm.GetManagedNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
 		{ID: ":4002", Role: "background", CPUCount: 100},
 	}, nodes)
 
-	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{":4002"}))
+	require.NoError(t, sm.MarkDeadNodes(ctx, []string{":4002"}))
 	nodes, err = sm.GetManagedNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
@@ -1130,20 +1130,20 @@ func TestInitMeta(t *testing.T) {
 	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows(""))
 
 	// 1. delete then start.
-	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{"tidb1"}))
+	require.NoError(t, sm.MarkDeadNodes(ctx, []string{"tidb1"}))
 	require.NoError(t, sm.InitMeta(ctx, "tidb1", ""))
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host="tidb1"`).Check(testkit.Rows(""))
 
-	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{"tidb1"}))
+	require.NoError(t, sm.MarkDeadNodes(ctx, []string{"tidb1"}))
 	require.NoError(t, sm.InitMeta(ctx, "tidb1", "background"))
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host="tidb1"`).Check(testkit.Rows("background"))
 
 	// 2. delete then set.
-	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{"tidb1"}))
+	require.NoError(t, sm.MarkDeadNodes(ctx, []string{"tidb1"}))
 	tk.MustExec(`set global tidb_service_scope=""`)
 	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows(""))
 
-	require.NoError(t, sm.DeleteDeadNodes(ctx, []string{"tidb1"}))
+	require.NoError(t, sm.MarkDeadNodes(ctx, []string{"tidb1"}))
 	tk.MustExec(`set global tidb_service_scope="background"`)
 	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
 }

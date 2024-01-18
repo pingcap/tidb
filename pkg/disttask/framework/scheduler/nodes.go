@@ -93,7 +93,7 @@ func (nm *NodeManager) maintainLiveNodes(ctx context.Context, taskMgr TaskManage
 
 	deadNodes := make([]string, 0)
 	for _, node := range oldNodes {
-		if _, ok := currLiveNodes[node.ID]; !ok {
+		if _, ok := currLiveNodes[node.ID]; !ok && !node.Dead {
 			deadNodes = append(deadNodes, node.ID)
 		}
 	}
@@ -103,7 +103,7 @@ func (nm *NodeManager) maintainLiveNodes(ctx context.Context, taskMgr TaskManage
 	}
 	logutil.BgLogger().Info("delete dead nodes from dist_framework_meta",
 		zap.Int("dead-nodes", len(deadNodes)))
-	err = taskMgr.DeleteDeadNodes(ctx, deadNodes)
+	err = taskMgr.MarkDeadNodes(ctx, deadNodes)
 	if err != nil {
 		logutil.BgLogger().Warn("delete dead nodes from dist_framework_meta failed", log.ShortError(err))
 		return

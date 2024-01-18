@@ -612,6 +612,7 @@ const (
         host VARCHAR(100) NOT NULL PRIMARY KEY,
         role VARCHAR(64),
         cpu_count int default 0,
+		dead TINYINT(2);
         keyspace_id bigint(8) NOT NULL DEFAULT -1
     );`
 
@@ -1063,11 +1064,14 @@ const (
 	// version 183
 	//   replace `mysql.tidb_mdl_view` table
 	version183 = 183
+
+	// version 184
+	version184 = 184
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version183
+var currentBootstrapVersion int64 = version184
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1226,6 +1230,7 @@ var (
 		upgradeToVer181,
 		upgradeToVer182,
 		upgradeToVer183,
+		upgradeToVer184,
 	}
 )
 
@@ -2987,6 +2992,14 @@ func upgradeToVer183(s sessiontypes.Session, ver int64) {
 		return
 	}
 	doReentrantDDL(s, CreateMDLView)
+}
+
+func upgradeToVer184(s sessiontypes.Session, ver int64) {
+	if ver >= version184 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.dist_framework_meta ADD COLUMN `dead` TINYINT(2) AFTER `cpu_count`", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s sessiontypes.Session) {
