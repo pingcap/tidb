@@ -27,6 +27,7 @@ import (
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
 
@@ -190,23 +191,20 @@ func (c *mockPDClient) GetAllStores(context.Context, ...pd.GetStoreOption) ([]*m
 func (c *mockPDClient) Close() {
 }
 
-func TestGetTiKVModeSwitcherWithPDClient(t *testing.T) {
-	bak := NewClientWithContext
-	t.Cleanup(func() {
-		NewClientWithContext = bak
-	})
-	NewClientWithContext = func(_ context.Context, _ []string, _ pd.SecurityOption, _ ...pd.ClientOption) (pd.Client, error) {
-		return nil, errors.New("mock error")
-	}
-	pdClient, switcher, err := GetTiKVModeSwitcherWithPDClient(context.Background(), zap.NewExample())
-	require.ErrorContains(t, err, "mock error")
-	require.Nil(t, pdClient)
-	require.Nil(t, switcher)
+type mockPDHttpClient struct {
+	pdhttp.Client
+}
 
-	NewClientWithContext = func(_ context.Context, _ []string, _ pd.SecurityOption, _ ...pd.ClientOption) (pd.Client, error) {
-		return &mockPDClient{}, nil
+func TestGetTiKVModeSwitcherWithPDClient(t *testing.T) {
+	bak := NewPDHttpClient
+	t.Cleanup(func() {
+		NewPDHttpClient = bak
+	})
+
+	NewPDHttpClient = func(string, []string, ...pdhttp.ClientOption) pdhttp.Client {
+		return &mockPDHttpClient{}
 	}
-	pdClient, switcher, err = GetTiKVModeSwitcherWithPDClient(context.Background(), zap.NewExample())
+	pdClient, switcher, err := GetTiKVModeSwitcherWithPDClient(zap.NewExample())
 	require.NoError(t, err)
 	require.NotNil(t, pdClient)
 	require.NotNil(t, switcher)
@@ -228,5 +226,5 @@ func TestGetRegionSplitSizeKeys(t *testing.T) {
 	}
 	_, _, err = GetRegionSplitSizeKeys(context.Background())
 	require.ErrorContains(t, err, "get region split size and keys failed")
-	// no positive case, complex to mock it
+	// no positive case, more complex to mock it
 }

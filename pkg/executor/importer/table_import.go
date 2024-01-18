@@ -144,7 +144,7 @@ func GetTiKVModeSwitcherWithPDClient(logger *zap.Logger) (pdhttp.Client, local.T
 	if o := tls.TLSConfig(); o != nil {
 		opts = append(opts, pdhttp.WithTLSConfig(o))
 	}
-	pdHTTPCli := pdhttp.NewClient("dist-task", addrs, opts...)
+	pdHTTPCli := NewPDHttpClient("dist-task", addrs, opts...)
 	// TODO: let disttask framework pass-in the PD HTTP client from domain
 	return pdHTTPCli, NewTiKVModeSwitcher(tls, pdHTTPCli, logger), nil
 }
