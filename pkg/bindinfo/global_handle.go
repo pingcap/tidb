@@ -49,7 +49,7 @@ type GlobalBindingHandle interface {
 	MatchGlobalBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool)
 
 	// GetAllGlobalBindings returns all bind records in cache.
-	GetAllGlobalBindings() (bindings []Binding)
+	GetAllGlobalBindings() (bindings Bindings)
 
 	// CreateGlobalBinding creates a Bindings to the storage and the cache.
 	// It replaces all the exists bindings for the same normalized SQL.
@@ -173,20 +173,18 @@ func (h *globalBindingHandle) setFuzzyDigestMap(m map[string][]string) {
 	h.fuzzyDigestMap.Store(m)
 }
 
-func buildFuzzyDigestMap(bindRecords []Bindings) map[string][]string {
+func buildFuzzyDigestMap(bindRecords Bindings) map[string][]string {
 	m := make(map[string][]string)
 	p := parser.New()
-	for _, bindRecord := range bindRecords {
-		for _, binding := range bindRecord {
-			stmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
-			if err != nil {
-				logutil.BgLogger().Warn("parse bindSQL failed", zap.String("bindSQL", binding.BindSQL), zap.Error(err))
-				p = parser.New()
-				continue
-			}
-			_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
-			m[fuzzyDigest] = append(m[fuzzyDigest], binding.SQLDigest)
+	for _, binding := range bindRecords {
+		stmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
+		if err != nil {
+			logutil.BgLogger().Warn("parse bindSQL failed", zap.String("bindSQL", binding.BindSQL), zap.Error(err))
+			p = parser.New()
+			continue
 		}
+		_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+		m[fuzzyDigest] = append(m[fuzzyDigest], binding.SQLDigest)
 	}
 	return m
 }
@@ -449,10 +447,10 @@ func (c *invalidBindingCache) add(binding Binding) {
 	c.m[binding.SQLDigest] = binding
 }
 
-func (c *invalidBindingCache) getAll() []Binding {
+func (c *invalidBindingCache) getAll() Bindings {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	bindings := make([]Binding, 0, len(c.m))
+	bindings := make(Bindings, 0, len(c.m))
 	for _, binding := range c.m {
 		bindings = append(bindings, binding)
 	}
@@ -526,9 +524,9 @@ func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, fuzzyD
 }
 
 // GetAllGlobalBindings returns all bind records in cache.
-func (h *globalBindingHandle) GetAllGlobalBindings() (bindings []Binding) {
+func (h *globalBindingHandle) GetAllGlobalBindings() (bindings Bindings) {
 	for _, record := range h.getCache().GetAllBindings() {
-		bindings = append(bindings, record...)
+		bindings = append(bindings, record)
 	}
 	return
 }

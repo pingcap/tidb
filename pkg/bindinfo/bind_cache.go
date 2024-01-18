@@ -125,13 +125,13 @@ func (c *bindCache) GetBinding(sqlDigest string) Bindings {
 // GetAllBindings return all the bindRecords from the bindCache.
 // The return value is not read-only, but it shouldn't be changed in the caller functions.
 // The function is thread-safe.
-func (c *bindCache) GetAllBindings() []Bindings {
+func (c *bindCache) GetAllBindings() Bindings {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	values := c.cache.Values()
-	bindRecords := make([]Bindings, 0, len(values))
+	bindRecords := make(Bindings, 0, len(values))
 	for _, vals := range values {
-		bindRecords = append(bindRecords, vals.(Bindings))
+		bindRecords = append(bindRecords, vals.(Bindings)...)
 	}
 	return bindRecords
 }
