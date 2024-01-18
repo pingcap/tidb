@@ -2161,7 +2161,7 @@ func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.
 	bindings := handle.GetAllSessionBindings()
 	bindRecords := make([]bindinfo.Bindings, 0, len(bindings))
 	for _, binding := range bindings {
-		bindRecords = append(bindRecords, binding)
+		bindRecords = append(bindRecords, []bindinfo.Binding{binding})
 	}
 	dumpTask := &domain.PlanReplayerDumpTask{
 		PlanReplayerTaskKey: key,

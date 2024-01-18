@@ -49,7 +49,7 @@ type GlobalBindingHandle interface {
 	MatchGlobalBinding(sctx sessionctx.Context, fuzzyDigest string, tableNames []*ast.TableName) (matchedBinding Binding, isMatched bool)
 
 	// GetAllGlobalBindings returns all bind records in cache.
-	GetAllGlobalBindings() (bindings []Bindings)
+	GetAllGlobalBindings() (bindings Bindings)
 
 	// CreateGlobalBinding creates a Bindings to the storage and the cache.
 	// It replaces all the exists bindings for the same normalized SQL.
@@ -526,8 +526,10 @@ func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, fuzzyD
 }
 
 // GetAllGlobalBindings returns all bind records in cache.
-func (h *globalBindingHandle) GetAllGlobalBindings() (bindings []Bindings) {
-	bindings = append(bindings, h.getCache().GetAllBindings()...)
+func (h *globalBindingHandle) GetAllGlobalBindings() (bindings Bindings) {
+	for _, record := range h.getCache().GetAllBindings() {
+		bindings = append(bindings, record...)
+	}
 	return
 }
 
