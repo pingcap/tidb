@@ -46,7 +46,6 @@ type parallelSortWorker struct {
 
 	chunkChannel           chan *chunkWithMemoryUsage
 	fetcherAndWorkerSyncer *sync.WaitGroup
-	checkError             func() error
 	processError           func(error)
 	finishCh               chan struct{}
 
@@ -105,7 +104,7 @@ func (p *parallelSortWorker) injectFailPointForParallelSortWorker() {
 			if p.workerIDForTest%2 == 0 {
 				randNum := rand.Int31n(10000)
 				if randNum < 10 {
-					time.Sleep(5 * time.Millisecond)
+					time.Sleep(1 * time.Millisecond)
 				}
 			}
 		}

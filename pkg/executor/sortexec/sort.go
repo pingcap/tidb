@@ -76,10 +76,10 @@ type SortExec struct {
 	}
 
 	Parallel struct {
-		resultLock sync.Mutex
-		result     sortedRows
-		rowNum     int64
-		idx        int64
+		closeLock sync.Mutex
+		result    sortedRows
+		rowNum    int64
+		idx       int64
 
 		chunkChannel chan *chunkWithMemoryUsage
 		// It's useful when spill is triggered and the fetcher could know when workers finish their works.
@@ -120,10 +120,17 @@ func (e *SortExec) Close() error {
 		// All chunks in chunkChannel must be consumed when closeChannel is closed
 		<-e.Parallel.closeChannel
 		e.Parallel.globalSortedRowsQueue.clear()
-		e.Parallel.resultLock.Lock()
-		defer e.Parallel.resultLock.Unlock()
+
+		e.Parallel.closeLock.Lock()
+		defer e.Parallel.closeLock.Unlock()
 		e.Parallel.result = nil
 		e.Parallel.rowNum = 0
+
+		if e.Parallel.spillHelper.isSpillTriggered() {
+			for _, disk := range e.Parallel.spillHelper.sortedRowsInDisk {
+				disk.Close()
+			}
+		}
 
 		e.Parallel.errRWLock.RLock()
 		defer e.Parallel.errRWLock.RUnlock()
@@ -266,6 +273,9 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *SortExec) appendResultToChunkInParallelMode(req *chunk.Chunk) error {
+	e.Parallel.closeLock.Lock()
+	defer e.Parallel.closeLock.Unlock()
+
 	if e.Parallel.spillHelper.isSpillNeeded() {
 		e.Parallel.spillHelper.spill()
 		err := e.Parallel.spillHelper.checkSpillError()
@@ -278,8 +288,6 @@ func (e *SortExec) appendResultToChunkInParallelMode(req *chunk.Chunk) error {
 		return e.externalSortingForParallel(req)
 	}
 
-	e.Parallel.resultLock.Lock()
-	defer e.Parallel.resultLock.Unlock()
 	for ; !req.IsFull() && e.Parallel.idx < e.Parallel.rowNum; e.Parallel.idx++ {
 		req.AppendRow(e.Parallel.result[e.Parallel.idx])
 	}
@@ -401,6 +409,12 @@ func (e *SortExec) externalSorting(req *chunk.Chunk) (err error) {
 }
 
 func (e *SortExec) externalSortingForParallel(req *chunk.Chunk) error {
+	select {
+	case <-e.finishCh:
+		return nil
+	default:
+	}
+
 	if e.multiWayMerge == nil {
 		err := e.initExternalSortingForParallel()
 		if err != nil {
@@ -795,6 +809,20 @@ func (e *SortExec) compressRow(rowI, rowJ chunk.Row) int {
 		}
 	}
 	return 0
+}
+
+// IsSpillTriggeredInParallelSortForTest tells if spill is triggered in parallel sort.
+func (e *SortExec) IsSpillTriggeredInParallelSortForTest() bool {
+	return e.Parallel.spillHelper.isSpillTriggered()
+}
+
+// GetSpilledRowNumInParallelSortForTest tells if spill is triggered in parallel sort.
+func (e *SortExec) GetSpilledRowNumInParallelSortForTest() int64 {
+	totalSpilledRows := int64(0)
+	for _, disk := range e.Parallel.spillHelper.sortedRowsInDisk {
+		totalSpilledRows += disk.NumRows()
+	}
+	return totalSpilledRows
 }
 
 // IsSpillTriggeredInOnePartitionForTest tells if spill is triggered in a specific partition, it's only used in test.
