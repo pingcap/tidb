@@ -469,9 +469,9 @@ func (t *Tracker) Consume(bs int64) {
 	}
 }
 
-// CheckKillSignalAndPanic checks if a kill signal has been sent to the session root tracker.
+// HandleKillSignal checks if a kill signal has been sent to the session root tracker.
 // If a kill signal is detected, it panics with the error returned by the signal handler.
-func (t *Tracker) CheckKillSignalAndPanic() {
+func (t *Tracker) HandleKillSignal() {
 	var sessionRootTracker *Tracker
 	for tracker := t; tracker != nil; tracker = tracker.getParent() {
 		if tracker.IsRootTrackerOfSess {
