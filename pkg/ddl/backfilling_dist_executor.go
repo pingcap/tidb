@@ -61,7 +61,7 @@ type BackfillSubTaskMeta struct {
 
 // NewBackfillSubtaskExecutor creates a new backfill subtask executor.
 func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
-	bc ingest.BackendCtx, stage proto.Step, summary *execute.Summary) (execute.SubtaskExecutor, error) {
+	bc ingest.BackendCtx, stage proto.Step, summary *execute.Summary) (execute.StepExecutor, error) {
 	bgm := &BackfillTaskMeta{}
 	err := json.Unmarshal(taskMeta, bgm)
 	if err != nil {
@@ -165,7 +165,7 @@ func decodeIndexUniqueness(job *model.Job) (bool, error) {
 	return unique[0], nil
 }
 
-func (s *backfillDistExecutor) GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error) {
+func (s *backfillDistExecutor) GetStepExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary, _ *proto.StepResource) (execute.StepExecutor, error) {
 	switch task.Step {
 	case StepReadIndex, StepMergeSort, StepWriteAndIngest:
 		return NewBackfillSubtaskExecutor(ctx, task.Meta, s.d, s.backendCtx, task.Step, summary)

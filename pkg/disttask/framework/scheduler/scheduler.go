@@ -82,6 +82,8 @@ type Scheduler interface {
 type BaseScheduler struct {
 	ctx context.Context
 	Param
+	// task might be accessed by multiple goroutines, so don't change its fields
+	// directly, make a copy, update and store it back to the atomic pointer.
 	task   atomic.Pointer[proto.Task]
 	logCtx context.Context
 	// when RegisterSchedulerFactory, the factory MUST initialize this fields.
@@ -128,11 +130,6 @@ func (*BaseScheduler) Close() {
 
 // GetTask implements the Scheduler interface.
 func (s *BaseScheduler) GetTask() *proto.Task {
-	// Note: be careful when accessing state/step/meta/error of the task, they
-	// will be changed in scheduler, so there might be data race if they're accessed
-	// in other goroutines. Also clone them won't work, as we need read first.
-	// balancer is the only goroutine that accesses the task except scheduler now,
-	// and it only uses ID field, so it's safe.
 	return s.task.Load()
 }
 
@@ -162,7 +159,7 @@ func (s *BaseScheduler) scheduleTask() {
 			if err != nil {
 				continue
 			}
-			task := s.GetTask()
+			task := *s.GetTask()
 			failpoint.Inject("cancelTaskAfterRefreshTask", func(val failpoint.Value) {
 				if val.(bool) && task.State == proto.TaskStateRunning {
 					err := s.taskMgr.CancelTask(s.ctx, task.ID)
@@ -179,6 +176,7 @@ func (s *BaseScheduler) scheduleTask() {
 						logutil.Logger(s.logCtx).Error("pause task failed", zap.Error(err))
 					}
 					task.State = proto.TaskStatePausing
+					s.task.Store(&task)
 				}
 			})
 
@@ -189,6 +187,7 @@ func (s *BaseScheduler) scheduleTask() {
 						logutil.Logger(s.logCtx).Error("pause task failed", zap.Error(err))
 					}
 					task.State = proto.TaskStatePausing
+					s.task.Store(&task)
 				}
 			})
 
@@ -339,7 +338,7 @@ func (s *BaseScheduler) onRunning() error {
 		return err
 	}
 	if cntByStates[proto.SubtaskStateFailed] > 0 || cntByStates[proto.SubtaskStateCanceled] > 0 {
-		subTaskErrs, err := s.taskMgr.CollectSubTaskError(s.ctx, task.ID)
+		subTaskErrs, err := s.taskMgr.GetSubtaskErrors(s.ctx, task.ID)
 		if err != nil {
 			logutil.Logger(s.logCtx).Warn("collect subtask error failed", zap.Error(err))
 			return err
@@ -366,9 +365,10 @@ func (s *BaseScheduler) onFinished() {
 
 // updateTask update the task in tidb_global_task table.
 func (s *BaseScheduler) updateTask(taskState proto.TaskState, newSubTasks []*proto.Subtask, retryTimes int) (err error) {
-	task := s.GetTask()
+	task := *s.GetTask()
 	prevState := task.State
 	task.State = taskState
+	s.task.Store(&task)
 	logutil.BgLogger().Info("task state transform", zap.Stringer("from", prevState), zap.Stringer("to", taskState))
 	if !VerifyTaskStateTransform(prevState, taskState) {
 		return errors.Errorf("invalid task state transform, from %s to %s", prevState, taskState)
@@ -376,7 +376,7 @@ func (s *BaseScheduler) updateTask(taskState proto.TaskState, newSubTasks []*pro
 
 	var retryable bool
 	for i := 0; i < retryTimes; i++ {
-		retryable, err = s.taskMgr.UpdateTaskAndAddSubTasks(s.ctx, task, newSubTasks, prevState)
+		retryable, err = s.taskMgr.UpdateTaskAndAddSubTasks(s.ctx, &task, newSubTasks, prevState)
 		if err == nil || !retryable {
 			break
 		}
@@ -397,14 +397,15 @@ func (s *BaseScheduler) updateTask(taskState proto.TaskState, newSubTasks []*pro
 }
 
 func (s *BaseScheduler) onErrHandlingStage(receiveErrs []error) error {
-	task := s.GetTask()
+	task := *s.GetTask()
 	// we only store the first error.
 	task.Error = receiveErrs[0]
+	s.task.Store(&task)
 
 	var subTasks []*proto.Subtask
 	// when step of task is `StepInit`, no need to do revert
 	if task.Step != proto.StepInit {
-		instanceIDs, err := s.GetAllTaskExecutorIDs(s.ctx, task)
+		instanceIDs, err := s.GetAllTaskExecutorIDs(s.ctx, &task)
 		if err != nil {
 			logutil.Logger(s.logCtx).Warn("get task's all instances failed", zap.Error(err))
 			return err
@@ -422,8 +423,8 @@ func (s *BaseScheduler) onErrHandlingStage(receiveErrs []error) error {
 }
 
 func (s *BaseScheduler) switch2NextStep() (err error) {
-	task := s.GetTask()
-	nextStep := s.GetNextStep(task)
+	task := *s.GetTask()
+	nextStep := s.GetNextStep(&task)
 	logutil.Logger(s.logCtx).Info("on next step",
 		zap.Int64("current-step", int64(task.Step)),
 		zap.Int64("next-step", int64(nextStep)))
@@ -431,7 +432,8 @@ func (s *BaseScheduler) switch2NextStep() (err error) {
 	if nextStep == proto.StepDone {
 		task.Step = nextStep
 		task.StateUpdateTime = time.Now().UTC()
-		if err = s.OnDone(s.ctx, s, task); err != nil {
+		s.task.Store(&task)
+		if err = s.OnDone(s.ctx, s, &task); err != nil {
 			return errors.Trace(err)
 		}
 		return s.taskMgr.SucceedTask(s.ctx, task.ID)
@@ -446,11 +448,13 @@ func (s *BaseScheduler) switch2NextStep() (err error) {
 		return errors.New("no available TiDB node to dispatch subtasks")
 	}
 
-	metas, err := s.OnNextSubtasksBatch(s.ctx, s, task, eligibleNodes, nextStep)
+	metas, err := s.OnNextSubtasksBatch(s.ctx, s, &task, eligibleNodes, nextStep)
 	if err != nil {
 		logutil.Logger(s.logCtx).Warn("generate part of subtasks failed", zap.Error(err))
 		return s.handlePlanErr(err)
 	}
+	// OnNextSubtasksBatch might change meta of task.
+	s.task.Store(&task)
 
 	return s.scheduleSubTask(nextStep, metas, eligibleNodes)
 }
@@ -516,14 +520,15 @@ func (s *BaseScheduler) scheduleSubTask(
 }
 
 func (s *BaseScheduler) handlePlanErr(err error) error {
-	task := s.GetTask()
+	task := *s.GetTask()
 	logutil.Logger(s.logCtx).Warn("generate plan failed", zap.Error(err), zap.Stringer("state", task.State))
 	if s.IsRetryableErr(err) {
 		return err
 	}
 	task.Error = err
+	s.task.Store(&task)
 
-	if err = s.OnDone(s.ctx, s, task); err != nil {
+	if err = s.OnDone(s.ctx, s, &task); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -586,7 +591,7 @@ func (s *BaseScheduler) GetAllTaskExecutorIDs(ctx context.Context, task *proto.T
 
 // GetPreviousSubtaskMetas get subtask metas from specific step.
 func (s *BaseScheduler) GetPreviousSubtaskMetas(taskID int64, step proto.Step) ([][]byte, error) {
-	previousSubtasks, err := s.taskMgr.GetSubtasksByStepAndState(s.ctx, taskID, step, proto.TaskStateSucceed)
+	previousSubtasks, err := s.taskMgr.GetAllSubtasksByStepAndState(s.ctx, taskID, step, proto.SubtaskStateSucceed)
 	if err != nil {
 		logutil.Logger(s.logCtx).Warn("get previous succeed subtask failed", zap.Int64("step", int64(step)))
 		return nil, err

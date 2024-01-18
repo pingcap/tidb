@@ -25,7 +25,8 @@ import (
 type TaskTable interface {
 	GetTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
-	GetSubtasksByStepAndStates(ctx context.Context, execID string, taskID int64, step proto.Step, states ...proto.SubtaskState) ([]*proto.Subtask, error)
+	// GetSubtasksByExecIDAndStepAndStates gets all subtasks by given states and execID.
+	GetSubtasksByExecIDAndStepAndStates(ctx context.Context, execID string, taskID int64, step proto.Step, states ...proto.SubtaskState) ([]*proto.Subtask, error)
 	GetFirstSubtaskInStates(ctx context.Context, instanceID string, taskID int64, step proto.Step, states ...proto.SubtaskState) (*proto.Subtask, error)
 	// InitMeta insert the manager information into dist_framework_meta.
 	// Call it when starting task executor or in set variable operation.
@@ -65,7 +66,7 @@ type Pool interface {
 // Each task type should implement this interface.
 type TaskExecutor interface {
 	Init(context.Context) error
-	Run(context.Context, *proto.Task) error
+	RunStep(context.Context, *proto.Task, *proto.StepResource) error
 	Rollback(context.Context, *proto.Task) error
 	Close()
 	IsRetryableError(err error) bool
@@ -79,45 +80,45 @@ type Extension interface {
 	// if it's idempotent, the Executor can rerun the subtask, else
 	// the Executor will mark the subtask as failed.
 	IsIdempotent(subtask *proto.Subtask) bool
-	// GetSubtaskExecutor returns the subtask executor for the subtask.
+	// GetStepExecutor returns the subtask executor for the subtask.
 	// Note:
 	// 1. summary is the summary manager of all subtask of the same type now.
 	// 2. should not retry the error from it.
-	GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error)
+	GetStepExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary, resource *proto.StepResource) (execute.StepExecutor, error)
 	// IsRetryableError returns whether the error is transient.
 	// When error is transient, the framework won't mark subtasks as failed,
 	// then the TaskExecutor can load the subtask again and redo it.
 	IsRetryableError(err error) bool
 }
 
-// EmptySubtaskExecutor is an empty Executor.
+// EmptyStepExecutor is an empty Executor.
 // it can be used for the task that does not need to split into subtasks.
-type EmptySubtaskExecutor struct {
+type EmptyStepExecutor struct {
 }
 
-var _ execute.SubtaskExecutor = &EmptySubtaskExecutor{}
+var _ execute.StepExecutor = &EmptyStepExecutor{}
 
-// Init implements the SubtaskExecutor interface.
-func (*EmptySubtaskExecutor) Init(context.Context) error {
+// Init implements the StepExecutor interface.
+func (*EmptyStepExecutor) Init(context.Context) error {
 	return nil
 }
 
-// RunSubtask implements the SubtaskExecutor interface.
-func (*EmptySubtaskExecutor) RunSubtask(context.Context, *proto.Subtask) error {
+// RunSubtask implements the StepExecutor interface.
+func (*EmptyStepExecutor) RunSubtask(context.Context, *proto.Subtask) error {
 	return nil
 }
 
-// Cleanup implements the SubtaskExecutor interface.
-func (*EmptySubtaskExecutor) Cleanup(context.Context) error {
+// Cleanup implements the StepExecutor interface.
+func (*EmptyStepExecutor) Cleanup(context.Context) error {
 	return nil
 }
 
-// OnFinished implements the SubtaskExecutor interface.
-func (*EmptySubtaskExecutor) OnFinished(_ context.Context, _ *proto.Subtask) error {
+// OnFinished implements the StepExecutor interface.
+func (*EmptyStepExecutor) OnFinished(_ context.Context, _ *proto.Subtask) error {
 	return nil
 }
 
-// Rollback implements the SubtaskExecutor interface.
-func (*EmptySubtaskExecutor) Rollback(context.Context) error {
+// Rollback implements the StepExecutor interface.
+func (*EmptyStepExecutor) Rollback(context.Context) error {
 	return nil
 }

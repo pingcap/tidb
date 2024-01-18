@@ -341,7 +341,7 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 			if len(tasks) == taskCnt {
 				break
 			}
-			historyTasks, err := mgr.GetTasksFromHistoryInStates(ctx, expectedState)
+			historyTasks, err := testutil.GetTasksFromHistoryInStates(ctx, mgr, expectedState)
 			require.NoError(t, err)
 			if len(tasks)+len(historyTasks) == taskCnt {
 				break

@@ -3,6 +3,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "storage",
     srcs = [
+        "converter.go",
+        "history.go",
+        "nodes.go",
+        "subtask_state.go",
         "task_state.go",
         "task_table.go",
     ],

@@ -60,7 +60,7 @@ func TestFrameworkPauseAndResume(t *testing.T) {
 
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	errs, err := mgr.CollectSubTaskError(ctx, 1)
+	errs, err := mgr.GetSubtaskErrors(ctx, 1)
 	require.NoError(t, err)
 	require.Empty(t, errs)
 
@@ -77,7 +77,7 @@ func TestFrameworkPauseAndResume(t *testing.T) {
 	CheckSubtasksState(ctx, t, 1, proto.SubtaskStateSucceed, 4)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterResume"))
 
-	errs, err = mgr.CollectSubTaskError(ctx, 1)
+	errs, err = mgr.GetSubtaskErrors(ctx, 1)
 	require.NoError(t, err)
 	require.Empty(t, errs)
 	distContext.Close()
