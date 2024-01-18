@@ -5,7 +5,6 @@ package aws
 import (
 	"context"
 	"fmt"
-	"math"
 	"strings"
 	"sync"
 	"time"
