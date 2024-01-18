@@ -56,7 +56,7 @@ type memKVsAndBuffers struct {
 	size         int
 	droppedSize  int
 
-	// temporary fields
+	// temporary fields to store KVs to reduce slice allocations.
 	keysPerFile        [][][]byte
 	valuesPerFile      [][][]byte
 	droppedSizePerFile []int
