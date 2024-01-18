@@ -45,10 +45,8 @@ func runBackupCommand(command *cobra.Command, cmdName string) error {
 		return nil
 	}
 
-	if cfg.IgnoreStats {
-		// Do not run stat worker in BR.
-		session.DisableStats4Test()
-	}
+	// No need to cache the coproceesor result
+	config.GetGlobalConfig().TiKVClient.CoprCache.CapacityMB = 0
 
 	if err := task.RunBackup(ctx, tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to backup", zap.Error(err))
@@ -110,6 +108,8 @@ func NewBackupCommand() *cobra.Command {
 			build.LogInfo(build.BR)
 			utils.LogEnvVariables()
 			task.LogArguments(c)
+			// Do not run stat worker in BR.
+			session.DisableStats4Test()
 
 			// Do not run ddl worker in BR.
 			config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(false)

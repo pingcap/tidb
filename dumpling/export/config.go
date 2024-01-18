@@ -279,7 +279,7 @@ func (conf *Config) GetDriverConfig(db string) *mysql.Config {
 		/* #nosec G402 */
 		driverCfg.TLS = &tls.Config{
 			InsecureSkipVerify: true,
-			MinVersion:         tls.VersionTLS10,
+			MinVersion:         tls.VersionTLS12,
 			NextProtos:         []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
 		}
 	}

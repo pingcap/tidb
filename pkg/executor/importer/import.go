@@ -101,6 +101,7 @@ const (
 )
 
 var (
+	// all supported options.
 	// name -> whether the option has value
 	supportedOptions = map[string]bool{
 		characterSetOption:          true,
@@ -133,6 +134,10 @@ var (
 		splitFileOption:           {},
 	}
 
+	allowedOptionsOfImportFromQuery = map[string]struct{}{
+		threadOption: {},
+	}
+
 	// LoadDataReadBlockSize is exposed for test.
 	LoadDataReadBlockSize = int64(config.ReadBlockSize)
 
@@ -143,6 +148,21 @@ var (
 		".snappy",
 	}
 )
+
+// DataSourceType indicates the data source type of IMPORT INTO.
+type DataSourceType string
+
+const (
+	// DataSourceTypeFile represents the data source of IMPORT INTO is file.
+	// exported for test.
+	DataSourceTypeFile DataSourceType = "file"
+	// DataSourceTypeQuery represents the data source of IMPORT INTO is query.
+	DataSourceTypeQuery DataSourceType = "query"
+)
+
+func (t DataSourceType) String() string {
+	return string(t)
+}
 
 // GetKVStore returns a kv.Storage.
 // kv encoder of physical mode needs it.
@@ -174,7 +194,8 @@ type Plan struct {
 	// after import.
 	DesiredTableInfo *model.TableInfo
 
-	Path   string
+	Path string
+	// only effective when data source is file.
 	Format string
 	// Data interpretation is restrictive if the SQL mode is restrictive and neither
 	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
@@ -213,7 +234,8 @@ type Plan struct {
 	DistSQLScanConcurrency int
 
 	// todo: remove it when load data code is reverted.
-	InImportInto bool
+	InImportInto   bool
+	DataSourceType DataSourceType
 	// only initialized for IMPORT INTO, used when creating job.
 	Parameters *ImportParameters `json:"-"`
 	// the user who executes the statement, in the form of user@host
@@ -344,6 +366,7 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 		ImportantSysVars: getImportantSysVars(userSctx),
 
 		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
+		DataSourceType:         DataSourceTypeFile,
 	}, nil
 }
 
@@ -385,6 +408,7 @@ func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plann
 
 		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
 		InImportInto:           true,
+		DataSourceType:         getDataSourceType(plan),
 		User:                   userSctx.GetSessionVars().User.String(),
 	}
 	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
@@ -471,7 +495,7 @@ func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*Load
 }
 
 func (e *LoadDataController) checkFieldParams() error {
-	if e.Path == "" {
+	if e.DataSourceType == DataSourceTypeFile && e.Path == "" {
 		return exeerrors.ErrLoadDataEmptyPath
 	}
 	if e.InImportInto {
@@ -502,6 +526,10 @@ func (e *LoadDataController) checkFieldParams() error {
 
 func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
 	threadCnt := int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
+	if p.DataSourceType == DataSourceTypeQuery {
+		// TODO: change after spec is ready.
+		threadCnt = 1
+	}
 
 	p.Checksum = config.OpLevelRequired
 	p.ThreadCnt = threadCnt
@@ -518,7 +546,7 @@ func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
 }
 
 func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
-	targetNodeCPUCnt, err := GetTargetNodeCPUCnt(ctx, p.Path)
+	targetNodeCPUCnt, err := GetTargetNodeCPUCnt(ctx, p.DataSourceType, p.Path)
 	if err != nil {
 		return err
 	}
@@ -543,6 +571,13 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		for k := range csvOnlyOptions {
 			if _, ok := specifiedOptions[k]; ok {
 				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "non-CSV format")
+			}
+		}
+	}
+	if p.DataSourceType == DataSourceTypeQuery {
+		for k := range specifiedOptions {
+			if _, ok := allowedOptionsOfImportFromQuery[k]; !ok {
+				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "import from query")
 			}
 		}
 	}
@@ -715,10 +750,18 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 }
 
 func (p *Plan) adjustOptions(targetNodeCPUCnt int) {
+	limit := targetNodeCPUCnt
+	if p.DataSourceType == DataSourceTypeQuery {
+		// for query, row is produced using 1 thread, the max cpu used is much
+		// lower than import from file, so we set limit to 2*targetNodeCPUCnt.
+		// TODO: adjust after spec is ready.
+		limit *= 2
+	}
 	// max value is cpu-count
-	if p.ThreadCnt > targetNodeCPUCnt {
-		log.L().Info("IMPORT INTO thread count is larger than cpu-count, set to cpu-count")
-		p.ThreadCnt = targetNodeCPUCnt
+	if p.ThreadCnt > limit {
+		log.L().Info("adjust IMPORT INTO thread count",
+			zap.Int("before", p.ThreadCnt), zap.Int("after", limit))
+		p.ThreadCnt = limit
 	}
 }
 
@@ -1287,6 +1330,18 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 	return backendConfig
 }
 
+// FullTableName return FQDN of the table.
+func (e *LoadDataController) FullTableName() string {
+	return common.UniqueTable(e.DBName, e.Table.Meta().Name.O)
+}
+
+func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
+	if p.SelectPlan != nil {
+		return DataSourceTypeQuery
+	}
+	return DataSourceTypeFile
+}
+
 // JobImportParam is the param of the job import.
 type JobImportParam struct {
 	Job      *Job
@@ -1337,10 +1392,14 @@ func GetMsgFromBRError(err error) string {
 }
 
 // GetTargetNodeCPUCnt get cpu count of target node where the import into job will be executed.
-// target node is current node if it's server-disk import or disttask is disabled,
+// target node is current node if it's server-disk import, import from query or disttask is disabled,
 // else it's the node managed by disttask.
 // exported for testing.
-func GetTargetNodeCPUCnt(ctx context.Context, path string) (int, error) {
+func GetTargetNodeCPUCnt(ctx context.Context, sourceType DataSourceType, path string) (int, error) {
+	if sourceType == DataSourceTypeQuery {
+		return cpu.GetCPUCount(), nil
+	}
+
 	u, err2 := storage.ParseRawURL(path)
 	if err2 != nil {
 		return 0, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,

@@ -1407,6 +1407,11 @@ type LogicalUnionScan struct {
 	handleCols HandleCols
 }
 
+// GetAllConds Exported for unit test.
+func (ds *DataSource) GetAllConds() []expression.Expression {
+	return ds.allConds
+}
+
 // DataSource represents a tableScan without condition push down.
 type DataSource struct {
 	logicalSchemaProducer
