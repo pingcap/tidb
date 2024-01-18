@@ -16,7 +16,6 @@ package executor
 
 import (
 	"fmt"
-	"github.com/hashicorp/go-version"
 	"runtime"
 	"strconv"
 	"strings"
@@ -24,6 +23,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/hashicorp/go-version"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
