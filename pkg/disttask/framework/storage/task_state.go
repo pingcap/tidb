@@ -67,7 +67,7 @@ func (mgr *TaskManager) RevertTask(ctx context.Context, taskID int64, taskState 
 		     error = %?,
 			 state_update_time = CURRENT_TIMESTAMP()
 		 where id = %? and state = %?`,
-		proto.TaskStateReverting, taskErr, taskID, taskState,
+		proto.TaskStateReverting, serializeErr(taskErr), taskID, taskState,
 	)
 	return err
 }

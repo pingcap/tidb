@@ -325,12 +325,6 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		checkGetTaskState(proto.TaskStateSucceed)
 		return
 	} else {
-		// Test each task has a subtask failed.
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/MockUpdateTaskErr", "1*return(true)"))
-		defer func() {
-			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/storage/MockUpdateTaskErr"))
-		}()
-
 		if isSubtaskCancel {
 			// Mock a subtask canceled
 			for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
@@ -348,11 +342,14 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 
 	checkGetTaskState(proto.TaskStateReverting)
 	require.Len(t, tasks, taskCnt)
-	// Mock all subtask reverted.
-	start := subtaskCnt * taskCnt
-	for i := start; i <= start+subtaskCnt*taskCnt; i++ {
-		err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateReverted, nil)
+	for _, task := range tasks {
+		subtasks, err := mgr.GetSubtasksByExecIDAndStepAndStates(
+			ctx, ":4000", task.ID, task.Step,
+			proto.SubtaskStatePending, proto.SubtaskStateRunning)
 		require.NoError(t, err)
+		for _, subtask := range subtasks {
+			require.NoError(t, mgr.UpdateSubtaskStateAndError(ctx, ":4000", subtask.ID, proto.SubtaskStateCanceled, nil))
+		}
 	}
 	checkGetTaskState(proto.TaskStateReverted)
 	require.Len(t, tasks, taskCnt)
