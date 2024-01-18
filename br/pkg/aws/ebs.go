@@ -347,30 +347,8 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 	if len(resp.Snapshots) <= 0 {
 		return errors.Errorf("specified snapshot [%s] is not found", *snapShotIDs[0])
 	}
-
-<<<<<<< HEAD
-	for _, s := range resp.Snapshots {
-		if *s.VolumeSize > maxVolumeSize {
-			maxVolumeSize = *s.VolumeSize
-		}
-	}
-
-	// Calculate the time in minutes to fill 1.0 credit according to
-	// https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ebs-fast-snapshot-restore.html#volume-creation-credits
-	// 5 minutes more is just for safe
-	fillElapsedTime := 60.0/(math.Min(10, 1024.0/(float64)(maxVolumeSize))) + 5
-
-	// We have to sleep for at least fillElapsedTime minutes in order to make credits are filled to 1.0
-	// Let's heartbeat every 5 minutes
-	for time.Since(start) <= time.Duration(fillElapsedTime)*time.Minute {
-		log.Info("FSR enablement is ongoing, going to sleep for 5 minutes...")
-		time.Sleep(5 * time.Minute)
-	}
-
-	// Wait that all snapshot has enough fsr credit balance, it's very likely true since we have wait for long enough
-=======
+	
 	// Wait that all snapshot has enough fsr credit balance
->>>>>>> 7ba2330394b (ebs br: new snapshot tagging (#50548))
 	log.Info("Start check and wait all snapshots have enough fsr credit balance")
 
 	startIdx := 0
