@@ -109,6 +109,8 @@ func (s *parallelSortSpillAction) Action(t *memory.Tracker) {
 		// However, out of some reasons, we have to directly return before the finish of
 		// sort operation executed in spill as sort will retrigger the action and lead to dead lock.
 		s.spillHelper.setSpillTriggeredNoLock()
+		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
+			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
 	}
 }
 

@@ -170,7 +170,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Parallel.globalSortedRowsQueue = &sortedRowsList{}
 		e.Parallel.errRWLock = &sync.RWMutex{}
 		e.Parallel.err = nil
-		e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh)
+		e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh, e.tryToCloseFinishChannel)
 		e.Parallel.spillAction = newParallelSortSpillDiskAction(e.Parallel.spillHelper)
 		if e.enableTmpStorageOnOOM {
 			e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.Parallel.spillAction)

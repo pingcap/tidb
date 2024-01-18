@@ -30,21 +30,23 @@ type parallelSortSpillHelper struct {
 	spillError       error
 	sortExec         *SortExec
 
-	finishCh chan struct{}
+	finishCh                chan struct{}
+	tryToCloseFinishChannel func()
 
 	fieldTypes    []*types.FieldType
 	tmpSpillChunk *chunk.Chunk
 }
 
-func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldType, finishCh chan struct{}) *parallelSortSpillHelper {
+func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldType, finishCh chan struct{}, tryToCloseFinishChannel func()) *parallelSortSpillHelper {
 	return &parallelSortSpillHelper{
-		cond:          sync.NewCond(new(sync.Mutex)),
-		spillStatus:   notSpilled,
-		spillError:    nil,
-		sortExec:      sortExec,
-		finishCh:      finishCh,
-		fieldTypes:    fieldTypes,
-		tmpSpillChunk: chunk.NewChunkWithCapacity(fieldTypes, spillChunkSize),
+		cond:                    sync.NewCond(new(sync.Mutex)),
+		spillStatus:             notSpilled,
+		spillError:              nil,
+		sortExec:                sortExec,
+		finishCh:                finishCh,
+		tryToCloseFinishChannel: tryToCloseFinishChannel,
+		fieldTypes:              fieldTypes,
+		tmpSpillChunk:           chunk.NewChunkWithCapacity(fieldTypes, spillChunkSize),
 	}
 }
 
@@ -78,6 +80,7 @@ func (p *parallelSortSpillHelper) setSpillError(err error) {
 	p.cond.L.Lock()
 	defer p.cond.L.Unlock()
 	p.spillError = err
+	p.tryToCloseFinishChannel()
 }
 
 func (p *parallelSortSpillHelper) setInSpilling() {
@@ -191,6 +194,14 @@ func (p *parallelSortSpillHelper) spillImpl() {
 			}
 			p.tmpSpillChunk.Reset()
 		}
+	}
+
+	if p.tmpSpillChunk.NumRows() > 0 {
+		err := inDisk.Add(p.tmpSpillChunk)
+		if err != nil {
+			p.setSpillError(err)
+		}
+		p.tmpSpillChunk.Reset()
 	}
 
 	p.sortedRowsInDisk = append(p.sortedRowsInDisk, inDisk)
