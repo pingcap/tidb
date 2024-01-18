@@ -73,6 +73,10 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 		}
 	}
 
+	tags := []*ec2.Tag{
+		ec2Tag("TiDBCluster-BR", "new"),
+	}
+
 	workerPool := utils.NewWorkerPool(e.concurrency, "create snapshots")
 	for i := range backupInfo.TiKVComponent.Stores {
 		store := backupInfo.TiKVComponent.Stores[i]
@@ -136,6 +140,12 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 				createSnapshotInput.SetInstanceSpecification(&instanceSpecification)
 				// Copy tags from source volume
 				createSnapshotInput.SetCopyTagsFromSource("volume")
+				createSnapshotInput.SetTagSpecifications([]*ec2.TagSpecification{
+					{
+						ResourceType: aws.String(ec2.ResourceTypeSnapshot),
+						Tags:         tags,
+					},
+				})
 				resp, err := e.createSnapshotsWithRetry(context.TODO(), &createSnapshotInput)
 
 				if err != nil {
@@ -337,7 +347,7 @@ func (e *EC2Session) waitDataFSREnabled(snapShotIDs []*string, targetAZ string) 
 		return errors.Errorf("specified snapshot [%s] is not found", *snapShotIDs[0])
 	}
 
-	// Wait that all snapshot has enough fsr credit balance, it's very likely true since we have wait for long enough
+	// Wait that all snapshot has enough fsr credit balance
 	log.Info("Start check and wait all snapshots have enough fsr credit balance")
 
 	startIdx := 0
