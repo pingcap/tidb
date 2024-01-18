@@ -120,3 +120,41 @@ func TestAnalyzeIndexes(t *testing.T) {
 	require.NotNil(t, tblStats.Indices[1])
 	require.True(t, tblStats.Indices[1].IsAnalyzed())
 }
+
+func TestAnalyzePartitions(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+	job := &TableAnalysisJob{
+		TableSchema:   "test",
+		TableName:     "t",
+		Partitions:    []string{"p0", "p1"},
+		TableStatsVer: 2,
+	}
+
+	// Before analyze partitions.
+	se := tk.Session()
+	sctx := se.(sessionctx.Context)
+	handle := dom.StatsHandle()
+	// Check the result of analyze.
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
+	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
+	require.True(t, tblStats.Pseudo)
+
+	job.analyze(sctx, handle, dom.SysProcTracker())
+	err = handle.Update(is)
+	require.NoError(t, err)
+	// Check the result of analyze.
+	is = dom.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
+	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
+	require.Equal(t, int64(1), tblStats.RealtimeCount)
+}
