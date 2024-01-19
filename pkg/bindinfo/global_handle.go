@@ -61,7 +61,7 @@ type GlobalBindingHandle interface {
 	// SetGlobalBindingStatus set a Bindings's status to the storage and bind cache.
 	SetGlobalBindingStatus(newStatus, sqlDigest string) (ok bool, err error)
 
-	// AddInvalidGlobalBinding adds Bindings which needs to be deleted into invalidBindRecordMap.
+	// AddInvalidGlobalBinding adds Bindings which needs to be deleted into invalidBindingCache.
 	AddInvalidGlobalBinding(invalidBinding Binding)
 
 	// DropInvalidGlobalBinding executes the drop Bindings tasks.
@@ -121,7 +121,7 @@ type globalBindingHandle struct {
 	// This value is used to avoid reload duplicated bindings from storage.
 	lastUpdateTime atomic.Value
 
-	// invalidBindRecordMap indicates the invalid bindings found during querying.
+	// invalidBindings indicates the invalid bindings found during querying.
 	// A binding will be deleted from this map, after 2 bind-lease, after it is dropped from the kv.
 	invalidBindings *invalidBindingCache
 }
@@ -173,10 +173,10 @@ func (h *globalBindingHandle) setFuzzyDigestMap(m map[string][]string) {
 	h.fuzzyDigestMap.Store(m)
 }
 
-func buildFuzzyDigestMap(bindRecords Bindings) map[string][]string {
+func buildFuzzyDigestMap(bindings Bindings) map[string][]string {
 	m := make(map[string][]string)
 	p := parser.New()
-	for _, binding := range bindRecords {
+	for _, binding := range bindings {
 		stmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
 		if err != nil {
 			logutil.BgLogger().Warn("parse bindSQL failed", zap.String("bindSQL", binding.BindSQL), zap.Error(err))
@@ -289,7 +289,7 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindi
 	}()
 
 	return h.callWithSCtx(true, func(sctx sessionctx.Context) error {
-		// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
+		// Lock mysql.bind_info to synchronize with CreateBinding / AddBinding / DropBinding on other tidb instances.
 		if err = lockBindInfoTable(sctx); err != nil {
 			return err
 		}
@@ -330,7 +330,7 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindi
 // dropGlobalBinding drops a Bindings to the storage and Bindings int the cache.
 func (h *globalBindingHandle) dropGlobalBinding(sqlDigest string) (deletedRows uint64, err error) {
 	err = h.callWithSCtx(false, func(sctx sessionctx.Context) error {
-		// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
+		// Lock mysql.bind_info to synchronize with CreateBinding / AddBinding / DropBinding on other tidb instances.
 		if err = lockBindInfoTable(sctx); err != nil {
 			return err
 		}
@@ -403,7 +403,7 @@ func (h *globalBindingHandle) SetGlobalBindingStatus(newStatus, sqlDigest string
 // GCGlobalBinding physically removes the deleted bind records in mysql.bind_info.
 func (h *globalBindingHandle) GCGlobalBinding() (err error) {
 	return h.callWithSCtx(true, func(sctx sessionctx.Context) error {
-		// Lock mysql.bind_info to synchronize with CreateBindRecord / AddBindRecord / DropBindRecord on other tidb instances.
+		// Lock mysql.bind_info to synchronize with CreateBinding / AddBinding / DropBinding on other tidb instances.
 		if err = lockBindInfoTable(sctx); err != nil {
 			return err
 		}
@@ -480,7 +480,7 @@ func (h *globalBindingHandle) DropInvalidGlobalBinding() {
 	}
 }
 
-// AddInvalidGlobalBinding adds Bindings which needs to be deleted into invalidBindRecordMap.
+// AddInvalidGlobalBinding adds Bindings which needs to be deleted into invalidBindings.
 func (h *globalBindingHandle) AddInvalidGlobalBinding(invalidBinding Binding) {
 	h.invalidBindings.add(invalidBinding)
 }
@@ -530,7 +530,7 @@ func (h *globalBindingHandle) GetAllGlobalBindings() (bindings Bindings) {
 }
 
 // SetBindCacheCapacity reset the capacity for the bindCache.
-// It will not affect already cached BindRecords.
+// It will not affect already cached Bindings.
 func (h *globalBindingHandle) SetBindCacheCapacity(capacity int64) {
 	h.getCache().SetMemCapacity(capacity)
 }

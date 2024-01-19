@@ -108,7 +108,7 @@ func (b *Binding) SinceUpdateTime() (time.Duration, error) {
 // Bindings represents a sql bind record retrieved from the storage.
 type Bindings []Binding
 
-// Copy get the copy of bindRecord
+// Copy get the copy of bindings
 func (br Bindings) Copy() Bindings {
 	nbr := append(make(Bindings, 0, len(br)), br...)
 	return nbr
