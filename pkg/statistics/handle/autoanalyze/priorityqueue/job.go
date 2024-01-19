@@ -93,7 +93,10 @@ func (j *TableAnalysisJob) analyzePartitions(
 	sysProcTracker sessionctx.SysProcTracker,
 ) {
 	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
-	needAnalyzePartitionNames := j.Partitions
+	needAnalyzePartitionNames := make([]interface{}, 0, len(j.Partitions))
+	for _, partition := range j.Partitions {
+		needAnalyzePartitionNames = append(needAnalyzePartitionNames, partition)
+	}
 	for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
 		start := i
 		end := start + analyzePartitionBatchSize
@@ -102,7 +105,7 @@ func (j *TableAnalysisJob) analyzePartitions(
 		}
 
 		sql := getPartitionSQL("analyze table %n.%n partition", "", end-start)
-		params := append([]interface{}{j.TableSchema, j.TableName}, []interface{}{needAnalyzePartitionNames[start:end]}...)
+		params := append([]interface{}{j.TableSchema, j.TableName}, needAnalyzePartitionNames[start:end]...)
 		exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 	}
 }

@@ -148,13 +148,12 @@ func TestAnalyzePartitions(t *testing.T) {
 	require.True(t, tblStats.Pseudo)
 
 	job.analyze(sctx, handle, dom.SysProcTracker())
-	err = handle.Update(is)
-	require.NoError(t, err)
 	// Check the result of analyze.
 	is = dom.InfoSchema()
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	pid = tbl.Meta().GetPartitionInfo().Definitions[0].ID
 	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
+	require.False(t, tblStats.Pseudo)
 	require.Equal(t, int64(1), tblStats.RealtimeCount)
 }
