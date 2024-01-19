@@ -147,7 +147,6 @@ require (
 
 require (
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
-	github.com/chzyer/readline v1.5.1 // indirect
 	github.com/dennwc/varint v1.0.0 // indirect
 	github.com/dolthub/maphash v0.1.0 // indirect
 	github.com/go-kit/log v0.2.1 // indirect
@@ -157,7 +156,6 @@ require (
 	github.com/google/s2a-go v0.1.7 // indirect
 	github.com/grafana/regexp v0.0.0-20221122212121-6b5c0a4cb7fd // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.16.0 // indirect
-	github.com/ianlancetaylor/demangle v0.0.0-20240117034632-964b1d53ca6c // indirect
 	github.com/jfcg/sixb v1.3.8 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/ryszard/goskiplist v0.0.0-20150312221310-2dfbae5fcf46 // indirect
