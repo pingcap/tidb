@@ -23,12 +23,24 @@ type Item struct {
 	schemaTS  uint64
 }
 
+type schemaItem struct {
+	schemaTS uint64
+	dbInfo *model.DBInfo
+}
+
+func (si *schemaItem) Name() string {
+	return si.dbInfo.Name.L
+}
+
 type InfoSchemaData struct {
 	// For the TableByID API, sorted by {id, schemaTS}
 	byID *btree.BTreeG[Item]
 	// For the TableByName API, sorted by {name, schemaTS}
 	byName *btree.BTreeG[Item]
 	cache  *ristretto.Cache // {id, schemaTS} => table.Table
+
+	// For the SchemaByName API, {dbName, schemaTS} => model.DBInfo
+	schemaMap *btree.BTreeG[schemaItem]
 }
 
 type cacheKey struct {
@@ -56,6 +68,7 @@ func NewInfoSchemaData() (*InfoSchemaData, error) {
 		cache:  cache,
 		byID:   btree.NewBTreeG[Item](compareByID),
 		byName: btree.NewBTreeG[Item](compareByName),
+		schemaMap: btree.NewBTreeG[schemaItem](compareBySchema),
 	}, nil
 }
 
@@ -67,6 +80,10 @@ func (isd *InfoSchemaData) add(item Item, tbl table.Table) {
 	isd.byID.Set(item)
 	isd.byName.Set(item)
 	isd.cache.Set(cacheKey{item.tableID, item.schemaTS}, tbl, cacheTableCost(tbl))
+}
+
+func (isd *InfoSchemaData) addDB(schemaTS uint64, dbInfo *model.DBInfo) {
+	isd.schemaMap.Set(schemaItem{schemaTS: schemaTS, dbInfo: dbInfo})
 }
 
 func compareByID(a, b Item) bool {
@@ -97,6 +114,16 @@ func compareByName(a, b Item) bool {
 	return a.schemaTS < b.schemaTS
 }
 
+func compareBySchema(a, b schemaItem) bool {
+	if a.Name() < b.Name() {
+		return true
+	}
+	if a.Name() > b.Name() {
+		return false
+	}
+	return a.schemaTS < b.schemaTS
+}
+
 type infoschemaV2 struct {
 	ts uint64
 	r  autoid.Requirement
@@ -104,6 +131,10 @@ type infoschemaV2 struct {
 }
 
 func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
+	if isTableVirtual(id) {
+		return nil, false
+	}
+
 	var itm Item
 	// Find the first item whose schemaTS is smaller than ts.
 	is.byID.Descend(Item{tableID: id, schemaTS: math.MaxUint64}, func(item Item) bool {
@@ -132,6 +163,62 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 	ret := loadTableInfo(is.r, is.InfoSchemaData, id, itm.dbID, is.ts)
 	is.cache.Set(key, ret, cacheTableCost(ret))
 	return ret, true
+}
+
+func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err error) {
+	if schema.L == "information_schema" {
+		return nil, errors.New("not support yet")
+	}
+
+	var ok bool
+	var itm Item
+	// Find the first item whose schemaTS is smaller than ts.
+	is.byName.Descend(Item{dbName: schema.L, tableName: tbl.L, schemaTS: math.MaxUint64}, func(item Item) bool {
+		if item.dbName != schema.L || item.tableName != tbl.L {
+			ok = false
+			return false
+		}
+		if item.schemaTS <= is.ts {
+			ok = true
+			itm = item
+			return false
+		}
+		return true
+	})
+	if !ok {
+		return nil, ErrTableNotExists.GenWithStackByArgs(schema, tbl)
+	}
+	// Get from the cache.
+	key := cacheKey{itm.tableID, itm.schemaTS}
+	res, found := is.cache.Get(key)
+	if found && res != nil {
+		return res.(table.Table), nil
+	}
+
+	// Maybe the table is evicted? need to reload.
+	// fmt.Println("load table ===", schema, tbl)
+	ret := loadTableInfo(is.r, is.InfoSchemaData, itm.tableID, itm.dbID, is.ts)
+	is.cache.Set(key, ret, cacheTableCost(ret))
+	return ret, nil
+}
+
+func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
+	// Find the first item whose schemaTS is smaller than ts.
+	var dbInfo model.DBInfo
+	dbInfo.Name = schema
+	is.schemaMap.Descend(schemaItem{dbInfo: &dbInfo, schemaTS: math.MaxUint64}, func(item schemaItem) bool {
+		if item.Name() != schema.L {
+			ok = false
+			return false
+		}
+		if item.schemaTS <= is.ts {
+			ok = true
+			val = item.dbInfo
+			return false
+		}
+		return true
+	})
+	return
 }
 
 func loadTableInfo(r autoid.Requirement, infoData *InfoSchemaData, tblID, dbID int64, ts uint64) table.Table {

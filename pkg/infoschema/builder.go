@@ -198,7 +198,7 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff, schemaTS uint6
 	b.is.schemaMetaVersion = diff.Version
 	switch diff.Type {
 	case model.ActionCreateSchema:
-		return nil, b.applyCreateSchema(m, diff)
+		return nil, b.applyCreateSchema(m, diff, schemaTS)
 	case model.ActionDropSchema:
 		return b.applyDropSchema(diff.SchemaID), nil
 	case model.ActionRecoverSchema:
@@ -671,7 +671,7 @@ func (b *Builder) applyAlterPolicy(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	return []int64{}, nil
 }
 
-func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error {
+func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff, schemaTS uint64) error {
 	di, err := m.GetDatabase(diff.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
@@ -684,6 +684,7 @@ func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error 
 		)
 	}
 	b.is.schemaMap[di.Name.L] = &schemaTables{dbInfo: di, tables: make(map[string]table.Table)}
+	b.infoData.addDB(schemaTS, di)
 	return nil
 }
 
@@ -1073,6 +1074,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		b.infoData.addDB(schemaTS, di)
 	}
 
 	// Initialize virtual tables.
@@ -1081,6 +1083,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		b.infoData.addDB(schemaTS, driver.DBInfo)
 	}
 
 	// Sort all tables by `ID`

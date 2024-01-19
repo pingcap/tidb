@@ -15,11 +15,13 @@
 package infoschema
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"sync"
 
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -101,7 +103,35 @@ func (proxy *infoschemaProxy) TableByID(id int64) (val table.Table, ok bool) {
 	if ok {
 		return val, ok
 	}
-	return proxy.InfoSchema.TableByID(id)
+	val, ok = proxy.InfoSchema.TableByID(id)
+	if ok {
+		fmt.Println("fuck, inconsistent table by id ===", id)
+	}
+	return val, ok
+}
+
+func (proxy *infoschemaProxy) TableByName(schema, table model.CIStr) (t table.Table, err error) {
+	t, err = proxy.v2.TableByName(schema, table)
+	if err == nil {
+		return
+	}
+	t, err = proxy.InfoSchema.TableByName(schema, table)
+	if err == nil {
+		fmt.Println("fuck, inconsistent table by name ===", schema, table)
+	}
+	return t, err
+}
+
+func (proxy *infoschemaProxy) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
+	val, ok = proxy.v2.SchemaByName(schema)
+	if ok {
+		return val, ok
+	}
+	val, ok = proxy.InfoSchema.SchemaByName(schema)
+	if ok {
+		fmt.Println("fuck, inconsistent schema by name ===", schema)
+	}
+	return val, ok
 }
 
 // GetLatest gets the newest information schema.
