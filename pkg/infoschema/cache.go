@@ -15,10 +15,13 @@
 package infoschema
 
 import (
+	"math"
 	"sort"
 	"sync"
 
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -30,6 +33,9 @@ type InfoCache struct {
 	mu sync.RWMutex
 	// cache is sorted by both SchemaVersion and timestamp in descending order, assume they have same order
 	cache []schemaAndTimestamp
+
+	r    autoid.Requirement
+	Data *InfoSchemaData
 }
 
 type schemaAndTimestamp struct {
@@ -38,10 +44,20 @@ type schemaAndTimestamp struct {
 }
 
 // NewCache creates a new InfoCache.
-func NewCache(capacity int) *InfoCache {
+func NewCache(r autoid.Requirement, capacity int) *InfoCache {
+	infoData, err := NewInfoSchemaData()
+	if err != nil {
+		panic(err)
+	}
 	return &InfoCache{
 		cache: make([]schemaAndTimestamp, 0, capacity),
+		r:     r,
+		Data:  infoData,
 	}
+}
+
+func (h *InfoCache) Close() {
+	h.Data.Close()
 }
 
 // ReSize re-size the cache.
@@ -75,6 +91,19 @@ func (h *InfoCache) Reset(capacity int) {
 	h.cache = make([]schemaAndTimestamp, 0, capacity)
 }
 
+type infoschemaProxy struct {
+	v2 infoschemaV2
+	InfoSchema
+}
+
+func (proxy *infoschemaProxy) TableByID(id int64) (val table.Table, ok bool) {
+	val, ok = proxy.v2.TableByID(id)
+	if ok {
+		return val, ok
+	}
+	return proxy.InfoSchema.TableByID(id)
+}
+
 // GetLatest gets the newest information schema.
 func (h *InfoCache) GetLatest() InfoSchema {
 	h.mu.RLock()
@@ -82,7 +111,15 @@ func (h *InfoCache) GetLatest() InfoSchema {
 	infoschema_metrics.GetLatestCounter.Inc()
 	if len(h.cache) > 0 {
 		infoschema_metrics.HitLatestCounter.Inc()
-		return h.cache[0].infoschema
+		// return h.cache[0].infoschema
+		return &infoschemaProxy{
+			v2: infoschemaV2{
+				ts:             math.MaxUint64,
+				r:              h.r,
+				InfoSchemaData: h.Data,
+			},
+			InfoSchema: h.cache[0].infoschema,
+		}
 	}
 	return nil
 }

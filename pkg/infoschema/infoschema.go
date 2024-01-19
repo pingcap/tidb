@@ -20,19 +20,13 @@ import (
 	"slices"
 	"sort"
 	"sync"
-	"math"
-	// "runtime/debug"
 
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/dgraph-io/ristretto"
-	"golang.org/x/sync/singleflight"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
@@ -76,17 +70,13 @@ type InfoSchema interface {
 	GetTableReferredForeignKeys(schema, table string) []*model.ReferredFKInfo
 }
 
-type sortedTableItem struct {
-	tableID int64
-	dbID int64
-	// []table.Table
-}
+type sortedTables []table.Table
 
-func searchTable(s []sortedTableItem, id int64) int {
+func (s sortedTables) searchTable(id int64) int {
 	idx := sort.Search(len(s), func(i int) bool {
-		return s[i].tableID >= id
+		return s[i].Meta().ID >= id
 	})
-	if idx == len(s) || s[idx].tableID != id {
+	if idx == len(s) || s[idx].Meta().ID != id {
 		return -1
 	}
 	return idx
@@ -100,7 +90,6 @@ type schemaTables struct {
 const bucketCount = 512
 
 type infoSchema struct {
-	r autoid.Requirement
 	// ruleBundleMap stores all placement rules
 	ruleBundleMap map[int64]*placement.Bundle
 
@@ -115,12 +104,7 @@ type infoSchema struct {
 	schemaMap map[string]*schemaTables
 
 	// sortedTablesBuckets is a slice of sortedTables, a table's bucket index is (tableID % bucketCount).
-	sortedTablesBuckets [bucketCount][]sortedTableItem
-
-	// Store the (table id => table.Table) mapping, and this is the single source of truth data.
-	// To save memory, not all the data are loaded, it caches the most frequently used table schema.
-	tables *ristretto.Cache
-	virtual map[int64]table.Table
+	sortedTablesBuckets []sortedTables
 
 	// temporaryTables stores the temporary table ids
 	temporaryTableIDs map[int64]struct{}
@@ -131,6 +115,8 @@ type infoSchema struct {
 	// referredForeignKeyMap records all table's ReferredFKInfo.
 	// referredSchemaAndTableName => child SchemaAndTableAndForeignKeyName => *model.ReferredFKInfo
 	referredForeignKeyMap map[SchemaAndTableName][]*model.ReferredFKInfo
+
+	infoData *InfoSchemaData
 }
 
 // SchemaAndTableName contains the lower-case schema name and table name.
@@ -146,7 +132,7 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result.policyMap = make(map[string]*model.PolicyInfo)
 	result.resourceGroupMap = make(map[string]*model.ResourceGroupInfo)
 	result.ruleBundleMap = make(map[int64]*placement.Bundle)
-	// result.sortedTablesBuckets = make([]sortedTables, bucketCount)
+	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
@@ -157,11 +143,11 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 		tbl := table.MockTableFromMeta(tb)
 		tableNames.tables[tb.Name.L] = tbl
 		bucketIdx := tableBucketIdx(tb.ID)
-		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], sortedTableItem{tb.ID, dbInfo.ID})
+		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
 	for i := range result.sortedTablesBuckets {
-		slices.SortFunc(result.sortedTablesBuckets[i], func(i, j sortedTableItem) int {
-			return cmp.Compare(i.tableID, j.tableID)
+		slices.SortFunc(result.sortedTablesBuckets[i], func(i, j table.Table) int {
+			return cmp.Compare(i.Meta().ID, j.Meta().ID)
 		})
 	}
 	return result
@@ -174,7 +160,7 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 	result.policyMap = make(map[string]*model.PolicyInfo)
 	result.resourceGroupMap = make(map[string]*model.ResourceGroupInfo)
 	result.ruleBundleMap = make(map[int64]*placement.Bundle)
-	// result.sortedTablesBuckets = make([]sortedTables, bucketCount)
+	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
 	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
@@ -185,11 +171,11 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 		tbl := table.MockTableFromMeta(tb)
 		tableNames.tables[tb.Name.L] = tbl
 		bucketIdx := tableBucketIdx(tb.ID)
-		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], sortedTableItem{tb.ID, dbInfo.ID})
+		result.sortedTablesBuckets[bucketIdx] = append(result.sortedTablesBuckets[bucketIdx], tbl)
 	}
 	for i := range result.sortedTablesBuckets {
-		slices.SortFunc(result.sortedTablesBuckets[i], func(i, j sortedTableItem) int {
-			return cmp.Compare(i.tableID, j.tableID)
+		slices.SortFunc(result.sortedTablesBuckets[i], func(i, j table.Table) int {
+			return cmp.Compare(i.Meta().ID, j.Meta().ID)
 		})
 	}
 	result.schemaMetaVersion = schemaVer
@@ -295,85 +281,13 @@ func (is *infoSchema) SchemaByTable(tableInfo *model.TableInfo) (val *model.DBIn
 	return nil, false
 }
 
-var sf = &singleflight.Group{}
-
-func cacheTableCost(t table.Table) int64 {
-	info := t.Meta()
-	pi := info.GetPartitionInfo()
-	if pi == nil {
-		return 1;
-	}
-	return int64(len(pi.Definitions))
-}
-
-func isTableVirtual(id int64) bool {
-	return (id & (1<<62)) > 0
-}
-
-func (is *infoSchema) addTable(id int64, tbl table.Table) {
-	if isTableVirtual(id) {
-		is.virtual[id] = tbl
-	} else {
-		is.tables.Set(id, tbl, cacheTableCost(tbl))
-	}
-}
-
-
 func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
-	tbl, found := is.tables.Get(id)
-	if found && tbl != nil {
-		return tbl.(table.Table), true
-	}
-
-	// Maybe the table is evicted? need to check sortedTables to confirm.
 	slice := is.sortedTablesBuckets[tableBucketIdx(id)]
-	idx := searchTable(slice, id)
+	idx := slice.searchTable(id)
 	if idx == -1 {
-		// fmt.Println("not in the sorted table??", id)
 		return nil, false
 	}
-
-	// Maybe the table is a virtual table?
-	dbID := slice[idx].dbID
-	if isTableVirtual(id) {
-		ret, ok := is.virtual[id]
-		return ret, ok
-	}
-
-	fmt.Println("what happened?? ... ==", id, dbID, is.schemaMetaVersion)
-
-	// TODO: should use the correct TS
-	snapshot := is.r.Store().GetSnapshot(kv.NewVersion(math.MaxUint64))
-	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
-	// the meta region leader is slow.
-	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
-	m := meta.NewSnapshotMeta(snapshot)
-
-	// Try to avoid repeated concurrency loading.
-	res, err, _ := sf.Do(fmt.Sprintf("%d-%d", dbID, id), func() (interface{}, error) {
-		return m.GetTable(dbID, id)
-	})
-	if err != nil {
-		// TODO???
-		panic(err)
-		return nil, false
-	}
-	tblInfo := res.(*model.TableInfo)
-
-	ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
-	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
-	allocs := autoid.NewAllocatorsFromTblInfo(is.r, dbID, tblInfo)
-	b := NewBuilder(is.r, nil) // TODO: handle cached table!!!
-	ret, err := b.tableFromMeta(allocs, tblInfo)
-	if err != nil {
-		panic("todo, wtf")
-		return nil, false
-	}
-
-	// refill the cache
-	is.addTable(id, ret)
-
-	return ret, true
+	return slice[idx], true
 }
 
 func (is *infoSchema) AllocByID(id int64) (autoid.Allocators, bool) {

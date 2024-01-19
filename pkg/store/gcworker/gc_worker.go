@@ -817,7 +817,7 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 		return errors.Trace(err)
 	}
 	// Cache table ids on which placement rules have been GC-ed, to avoid redundantly GC the same table id multiple times.
-	// gcPlacementRuleCache := make(map[int64]interface{}, len(ranges))
+	gcPlacementRuleCache := make(map[int64]interface{}, len(ranges))
 
 	logutil.Logger(ctx).Info("start delete ranges", zap.String("category", "gc worker"),
 		zap.String("uuid", w.uuid),
@@ -855,22 +855,22 @@ func (w *GCWorker) deleteRanges(ctx context.Context, safePoint uint64, concurren
 			metrics.GCUnsafeDestroyRangeFailuresCounterVec.WithLabelValues("save").Inc()
 		}
 
-		// if err := w.doGCPlacementRules(se, safePoint, r, gcPlacementRuleCache); err != nil {
-		// 	logutil.Logger(ctx).Error("gc placement rules failed on range", zap.String("category", "gc worker"),
-		// 		zap.String("uuid", w.uuid),
-		// 		zap.Int64("jobID", r.JobID),
-		// 		zap.Int64("elementID", r.ElementID),
-		// 		zap.Error(err))
-		// 	continue
-		// }
-		// if err := w.doGCLabelRules(r); err != nil {
-		// 	logutil.Logger(ctx).Error("gc label rules failed on range", zap.String("category", "gc worker"),
-		// 		zap.String("uuid", w.uuid),
-		// 		zap.Int64("jobID", r.JobID),
-		// 		zap.Int64("elementID", r.ElementID),
-		// 		zap.Error(err))
-		// 	continue
-		// }
+		if err := w.doGCPlacementRules(se, safePoint, r, gcPlacementRuleCache); err != nil {
+			logutil.Logger(ctx).Error("gc placement rules failed on range", zap.String("category", "gc worker"),
+				zap.String("uuid", w.uuid),
+				zap.Int64("jobID", r.JobID),
+				zap.Int64("elementID", r.ElementID),
+				zap.Error(err))
+			continue
+		}
+		if err := w.doGCLabelRules(r); err != nil {
+			logutil.Logger(ctx).Error("gc label rules failed on range", zap.String("category", "gc worker"),
+				zap.String("uuid", w.uuid),
+				zap.Int64("jobID", r.JobID),
+				zap.Int64("elementID", r.ElementID),
+				zap.Error(err))
+			continue
+		}
 	}
 	logutil.Logger(ctx).Info("finish delete ranges", zap.String("category", "gc worker"),
 		zap.String("uuid", w.uuid),
