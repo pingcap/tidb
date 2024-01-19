@@ -503,12 +503,13 @@ func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, fuzzyD
 	}
 
 	leastWildcards := len(tableNames) + 1
+	enableFuzzyBinding := sctx.GetSessionVars().EnableFuzzyBinding
 	for _, exactDigest := range fuzzyDigestMap[fuzzyDigest] {
 		sqlDigest := exactDigest
 		if bindings := bindingCache.GetBinding(sqlDigest); bindings != nil {
 			for _, binding := range bindings {
 				numWildcards, matched := fuzzyMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
-				if matched && numWildcards > 0 && sctx != nil && !sctx.GetSessionVars().EnableFuzzyBinding {
+				if matched && numWildcards > 0 && sctx != nil && !enableFuzzyBinding {
 					continue // fuzzy binding is disabled, skip this binding
 				}
 				if matched && numWildcards < leastWildcards {

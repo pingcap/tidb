@@ -108,6 +108,7 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, fuzz
 	// there shouldn't be many session bindings, and to keep it simple, this implementation is acceptable.
 	leastWildcards := len(tableNames) + 1
 	bindRecords := h.ch.GetAllBindings()
+	enableFuzzyBinding := sctx.GetSessionVars().EnableFuzzyBinding
 	for _, binding := range bindRecords {
 		bindingStmt, err := parser.New().ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
 		if err != nil {
@@ -120,7 +121,7 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, fuzz
 		bindingTableNames := CollectTableNames(bindingStmt)
 
 		numWildcards, matched := fuzzyMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, bindingTableNames)
-		if matched && numWildcards > 0 && sctx != nil && !sctx.GetSessionVars().EnableFuzzyBinding {
+		if matched && numWildcards > 0 && sctx != nil && !enableFuzzyBinding {
 			continue // fuzzy binding is disabled, skip this binding
 		}
 		if matched && numWildcards < leastWildcards {
