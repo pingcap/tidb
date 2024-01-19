@@ -118,19 +118,19 @@ func (j *TableAnalysisJob) analyzePartitionIndexes(
 	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
 
 	for indexName, partitionNames := range j.PartitionIndexes {
-		for i := 0; i < len(partitionNames); i += analyzePartitionBatchSize {
+		needAnalyzePartitionNames := make([]interface{}, 0, len(partitionNames))
+		for _, partition := range partitionNames {
+			needAnalyzePartitionNames = append(needAnalyzePartitionNames, partition)
+		}
+		for i := 0; i < len(needAnalyzePartitionNames); i += analyzePartitionBatchSize {
 			start := i
 			end := start + analyzePartitionBatchSize
-			if end >= len(partitionNames) {
-				end = len(partitionNames)
-			}
-			partitions := make([]interface{}, 0, end-start)
-			for _, name := range partitionNames[start:end] {
-				partitions = append(partitions, name)
+			if end >= len(needAnalyzePartitionNames) {
+				end = len(needAnalyzePartitionNames)
 			}
 
 			sql := getPartitionSQL("analyze table %n.%n partition", " index %n", end-start)
-			params := append([]interface{}{j.TableSchema, j.TableName}, partitions...)
+			params := append([]interface{}{j.TableSchema, j.TableName}, needAnalyzePartitionNames[start:end]...)
 			params = append(params, indexName)
 			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 		}
