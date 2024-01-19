@@ -47,6 +47,14 @@ func readAllData(
 	)
 	defer func() {
 		task.End(zap.ErrorLevel, err)
+		if err != nil {
+			output.keysPerFile = nil
+			output.valuesPerFile = nil
+			for _, b := range output.memKVBuffers {
+				b.Destroy()
+			}
+			output.memKVBuffers = nil
+		}
 	}()
 
 	concurrences, startOffsets, err := getFilesReadConcurrency(
