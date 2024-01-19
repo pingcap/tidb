@@ -39,6 +39,7 @@ type TableAnalysisJob struct {
 	Weight           float64
 }
 
+// Execute executes the analyze statement.
 func (j *TableAnalysisJob) Execute(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sessionctx.SysProcTracker,
