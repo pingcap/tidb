@@ -177,13 +177,13 @@ def go_deps():
         name = "com_github_alecthomas_kingpin_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/alecthomas/kingpin/v2",
-        sha256 = "8f330f35ca429b669c397cf2e6b58b8cd6894fb6d6437f7099931d2d1400b909",
-        strip_prefix = "github.com/alecthomas/kingpin/v2@v2.3.2",
+        sha256 = "ef1ea6fead21e5fcc9e1532187888c8c7c4f3ebbdb00587ab67a19245206ca66",
+        strip_prefix = "github.com/alecthomas/kingpin/v2@v2.4.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/alecthomas/kingpin/v2/com_github_alecthomas_kingpin_v2-v2.3.2.zip",
-            "http://ats.apps.svc/gomod/github.com/alecthomas/kingpin/v2/com_github_alecthomas_kingpin_v2-v2.3.2.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/alecthomas/kingpin/v2/com_github_alecthomas_kingpin_v2-v2.3.2.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/alecthomas/kingpin/v2/com_github_alecthomas_kingpin_v2-v2.3.2.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/alecthomas/kingpin/v2/com_github_alecthomas_kingpin_v2-v2.4.0.zip",
+            "http://ats.apps.svc/gomod/github.com/alecthomas/kingpin/v2/com_github_alecthomas_kingpin_v2-v2.4.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/alecthomas/kingpin/v2/com_github_alecthomas_kingpin_v2-v2.4.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/alecthomas/kingpin/v2/com_github_alecthomas_kingpin_v2-v2.4.0.zip",
         ],
     )
     go_repository(
@@ -3171,13 +3171,13 @@ def go_deps():
         name = "com_github_google_pprof",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/google/pprof",
-        sha256 = "60f026eec86d52690ca1ee088f62bceafc25a93073ab62994434542ff9d708d6",
-        strip_prefix = "github.com/google/pprof@v0.0.0-20230926050212-f7f687d19a98",
+        sha256 = "587c3a10510505eb10369aa89f5648eee6632187f9a83b11f96be9e567284791",
+        strip_prefix = "github.com/google/pprof@v0.0.0-20240117000934-35fc243c5815",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/google/pprof/com_github_google_pprof-v0.0.0-20230926050212-f7f687d19a98.zip",
-            "http://ats.apps.svc/gomod/github.com/google/pprof/com_github_google_pprof-v0.0.0-20230926050212-f7f687d19a98.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/google/pprof/com_github_google_pprof-v0.0.0-20230926050212-f7f687d19a98.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/google/pprof/com_github_google_pprof-v0.0.0-20230926050212-f7f687d19a98.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/google/pprof/com_github_google_pprof-v0.0.0-20240117000934-35fc243c5815.zip",
+            "http://ats.apps.svc/gomod/github.com/google/pprof/com_github_google_pprof-v0.0.0-20240117000934-35fc243c5815.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/google/pprof/com_github_google_pprof-v0.0.0-20240117000934-35fc243c5815.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/google/pprof/com_github_google_pprof-v0.0.0-20240117000934-35fc243c5815.zip",
         ],
     )
     go_repository(
@@ -5758,13 +5758,13 @@ def go_deps():
         name = "com_github_petermattis_goid",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/petermattis/goid",
-        sha256 = "9f536c5d39d6a3c851670ec585e1c876fe31f3402556d215ebbaffcecbacb30a",
-        strip_prefix = "github.com/petermattis/goid@v0.0.0-20211229010228-4d14c490ee36",
+        sha256 = "c85422e507367742d767fb4102d312f959feec26c11122f91a0e5e73948740f7",
+        strip_prefix = "github.com/petermattis/goid@v0.0.0-20231207134359-e60b3f734c67",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/petermattis/goid/com_github_petermattis_goid-v0.0.0-20211229010228-4d14c490ee36.zip",
-            "http://ats.apps.svc/gomod/github.com/petermattis/goid/com_github_petermattis_goid-v0.0.0-20211229010228-4d14c490ee36.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/petermattis/goid/com_github_petermattis_goid-v0.0.0-20211229010228-4d14c490ee36.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/petermattis/goid/com_github_petermattis_goid-v0.0.0-20211229010228-4d14c490ee36.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/petermattis/goid/com_github_petermattis_goid-v0.0.0-20231207134359-e60b3f734c67.zip",
+            "http://ats.apps.svc/gomod/github.com/petermattis/goid/com_github_petermattis_goid-v0.0.0-20231207134359-e60b3f734c67.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/petermattis/goid/com_github_petermattis_goid-v0.0.0-20231207134359-e60b3f734c67.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/petermattis/goid/com_github_petermattis_goid-v0.0.0-20231207134359-e60b3f734c67.zip",
         ],
     )
     go_repository(
@@ -6070,13 +6070,13 @@ def go_deps():
         name = "com_github_prometheus_common",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/prometheus/common",
-        sha256 = "982e3d15cacb3f0c4ac95f80610ffd9b20945cff04cc25e65efce0038a264473",
-        strip_prefix = "github.com/prometheus/common@v0.45.0",
+        sha256 = "8770d74e2907762143707c7c4979623843354105a4e1cc37fe119124848f7240",
+        strip_prefix = "github.com/prometheus/common@v0.46.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.45.0.zip",
-            "http://ats.apps.svc/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.45.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.45.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.45.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.46.0.zip",
+            "http://ats.apps.svc/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.46.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.46.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.46.0.zip",
         ],
     )
     go_repository(
@@ -6382,13 +6382,13 @@ def go_deps():
         name = "com_github_sasha_s_go_deadlock",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/sasha-s/go-deadlock",
-        sha256 = "6c3f90c7947da1090f545438f4b3fd461cfeec79ee1c6e5e83a0eed7258622b1",
-        strip_prefix = "github.com/sasha-s/go-deadlock@v0.2.0",
+        sha256 = "82eaa020f254a21d5025b6cae9a908315ffa382f941ef228431c10177b9657d4",
+        strip_prefix = "github.com/sasha-s/go-deadlock@v0.3.1",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.2.0.zip",
-            "http://ats.apps.svc/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.2.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.2.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.2.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.1.zip",
+            "http://ats.apps.svc/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.1.zip",
         ],
     )
     go_repository(

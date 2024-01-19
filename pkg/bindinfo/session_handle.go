@@ -72,7 +72,7 @@ func (h *sessionBindingHandle) appendSessionBinding(sqlDigest string, meta Bindi
 	oldBindings := h.ch.GetBinding(sqlDigest)
 	err := h.ch.SetBinding(sqlDigest, meta)
 	if err != nil {
-		logutil.BgLogger().Warn("SessionHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err))
+		logutil.BgLogger().Warn("SessionHandle.appendSessionBinding", zap.String("category", "sql-bind"), zap.Error(err))
 	}
 	updateMetrics(metrics.ScopeSession, oldBindings, meta, false)
 }
@@ -107,29 +107,27 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, fuzz
 	// The current implementation is simplistic, but session binding is only for test purpose, so
 	// there shouldn't be many session bindings, and to keep it simple, this implementation is acceptable.
 	leastWildcards := len(tableNames) + 1
-	bindRecords := h.ch.GetAllBindings()
-	for _, bindRecord := range bindRecords {
-		for _, binding := range bindRecord {
-			bindingStmt, err := parser.New().ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
-			if err != nil {
-				return
-			}
-			_, bindingFuzzyDigest := norm.NormalizeStmtForBinding(bindingStmt, norm.WithFuzz(true))
-			if bindingFuzzyDigest != fuzzyDigest {
-				continue
-			}
-			bindingTableNames := CollectTableNames(bindingStmt)
+	bindings := h.ch.GetAllBindings()
+	enableFuzzyBinding := sctx.GetSessionVars().EnableFuzzyBinding
+	for _, binding := range bindings {
+		bindingStmt, err := parser.New().ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
+		if err != nil {
+			return
+		}
+		_, bindingFuzzyDigest := norm.NormalizeStmtForBinding(bindingStmt, norm.WithFuzz(true))
+		if bindingFuzzyDigest != fuzzyDigest {
+			continue
+		}
+		bindingTableNames := CollectTableNames(bindingStmt)
 
-			numWildcards, matched := fuzzyMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, bindingTableNames)
-			if matched && numWildcards > 0 && sctx != nil && !sctx.GetSessionVars().EnableFuzzyBinding {
-				continue // fuzzy binding is disabled, skip this binding
-			}
-			if matched && numWildcards < leastWildcards {
-				matchedBinding = binding
-				isMatched = true
-				leastWildcards = numWildcards
-				break
-			}
+		numWildcards, matched := fuzzyMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, bindingTableNames)
+		if matched && numWildcards > 0 && sctx != nil && !enableFuzzyBinding {
+			continue // fuzzy binding is disabled, skip this binding
+		}
+		if matched && numWildcards < leastWildcards {
+			matchedBinding = binding
+			isMatched = true
+			leastWildcards = numWildcards
 		}
 	}
 	return
@@ -137,19 +135,16 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, fuzz
 
 // GetAllSessionBindings return all session bind info.
 func (h *sessionBindingHandle) GetAllSessionBindings() (bindings Bindings) {
-	for _, record := range h.ch.GetAllBindings() {
-		bindings = append(bindings, record...)
-	}
-	return
+	return h.ch.GetAllBindings()
 }
 
 // EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.
 func (h *sessionBindingHandle) EncodeSessionStates(_ context.Context, _ sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
-	bindRecords := h.ch.GetAllBindings()
-	if len(bindRecords) == 0 {
+	bindings := h.ch.GetAllBindings()
+	if len(bindings) == 0 {
 		return nil
 	}
-	bytes, err := json.Marshal(bindRecords)
+	bytes, err := json.Marshal([]Binding(bindings))
 	if err != nil {
 		return err
 	}
@@ -162,27 +157,24 @@ func (h *sessionBindingHandle) DecodeSessionStates(_ context.Context, sctx sessi
 	if len(sessionStates.Bindings) == 0 {
 		return nil
 	}
-	var records []Bindings
+	var records []Binding
 	if err := json.Unmarshal(hack.Slice(sessionStates.Bindings), &records); err != nil {
 		return err
 	}
 	for _, record := range records {
 		// Restore hints and ID because hints are hard to encode.
-		for i := range record {
-			if err := prepareHints(sctx, &record[i]); err != nil {
-				return err
-			}
+		if err := prepareHints(sctx, &record); err != nil {
+			return err
 		}
-		h.appendSessionBinding(parser.DigestNormalized(record[0].OriginalSQL).String(), record)
+		h.appendSessionBinding(parser.DigestNormalized(record.OriginalSQL).String(), []Binding{record})
 	}
+
 	return nil
 }
 
 // Close closes the session handle.
 func (h *sessionBindingHandle) Close() {
-	for _, bindRecord := range h.ch.GetAllBindings() {
-		updateMetrics(metrics.ScopeSession, bindRecord, nil, false)
-	}
+	updateMetrics(metrics.ScopeSession, h.ch.GetAllBindings(), nil, false)
 }
 
 // sessionBindInfoKeyType is a dummy type to avoid naming collision in context.
