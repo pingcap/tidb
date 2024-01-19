@@ -3,9 +3,12 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "storage",
     srcs = [
+        "converter.go",
+        "history.go",
+        "nodes.go",
+        "subtask_state.go",
         "task_state.go",
         "task_table.go",
-        "util.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/disttask/framework/storage",
     visibility = ["//visibility:public"],
@@ -40,7 +43,7 @@ go_test(
     embed = [":storage"],
     flaky = True,
     race = "on",
-    shard_count = 17,
+    shard_count = 21,
     deps = [
         "//pkg/config",
         "//pkg/disttask/framework/proto",

@@ -20,8 +20,8 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 )
 
-// SubtaskExecutor defines the executor of a subtask.
-type SubtaskExecutor interface {
+// StepExecutor defines the executor of a subtask.
+type StepExecutor interface {
 	// Init is used to initialize the environment for the subtask executor.
 	Init(context.Context) error
 	// RunSubtask is used to run the subtask.

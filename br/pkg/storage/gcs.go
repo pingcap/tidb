@@ -5,6 +5,7 @@ package storage
 import (
 	"bytes"
 	"context"
+	goerrors "errors"
 	"io"
 	"net/http"
 	"os"
@@ -20,6 +21,7 @@ import (
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2/google"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 	htransport "google.golang.org/api/transport/http"
@@ -370,6 +372,7 @@ skipHandleCred:
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	client.SetRetry(storage.WithErrorFunc(shouldRetry))
 
 	if !opts.SendCredentials {
 		// Clear the credentials if exists so that they will not be sent to TiKV
@@ -377,39 +380,22 @@ skipHandleCred:
 	}
 
 	bucket := client.Bucket(gcs.Bucket)
-	// check whether it's a bug before #647, to solve case #2
-	// If the storage is set as gcs://bucket/prefix/,
-	// the backupmeta is written correctly to gcs://bucket/prefix/backupmeta,
-	// but the SSTs are written wrongly to gcs://bucket/prefix//*.sst (note the extra slash).
-	// see details about case 2 at https://github.com/pingcap/br/issues/675#issuecomment-753780742
-	sstInPrefix := hasSSTFiles(ctx, bucket, gcs.Prefix)
-	sstInPrefixSlash := hasSSTFiles(ctx, bucket, gcs.Prefix+"//")
-	if sstInPrefixSlash && !sstInPrefix {
-		// This is a old bug, but we must make it compatible.
-		// so we need find sst in slash directory
-		gcs.Prefix += "//"
-	}
 	return &GCSStorage{gcs: gcs, bucket: bucket, cli: client}, nil
 }
 
-func hasSSTFiles(ctx context.Context, bucket *storage.BucketHandle, prefix string) bool {
-	query := storage.Query{Prefix: prefix}
-	_ = query.SetAttrSelection([]string{"Name"})
-	it := bucket.Objects(ctx, &query)
-	for {
-		attrs, err := it.Next()
-		if err == iterator.Done { // nolint:errorlint
-			break
-		}
-		if err != nil {
-			log.Warn("failed to list objects on gcs, will use default value for `prefix`", zap.Error(err))
-			break
-		}
-		if strings.HasSuffix(attrs.Name, ".sst") {
-			log.Info("sst file found in prefix slash", zap.String("file", attrs.Name))
+func shouldRetry(err error) bool {
+	if storage.ShouldRetry(err) {
+		return true
+	}
+
+	// workaround for https://github.com/googleapis/google-cloud-go/issues/9262
+	if e := (&googleapi.Error{}); goerrors.As(err, &e) {
+		if e.Code == 401 && strings.Contains(e.Message, "Authentication required.") {
+			log.Warn("retrying gcs request due to internal authentication error", zap.Error(err))
 			return true
 		}
 	}
+
 	return false
 }
 

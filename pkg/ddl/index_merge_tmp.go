@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	driver "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -53,6 +54,9 @@ func (w *mergeIndexWorker) batchCheckTemporaryUniqueKey(
 			// Found a value in the original index key.
 			err := checkTempIndexKey(txn, idxRecords[i], val, w.table)
 			if err != nil {
+				if kv.ErrKeyExists.Equal(err) {
+					return driver.ExtractKeyExistsErrFromIndex(key, val, w.table.Meta(), idxInfo.ID)
+				}
 				return errors.Trace(err)
 			}
 		} else if idxRecords[i].distinct {
@@ -114,7 +118,6 @@ type temporaryIndexRecord struct {
 	unique   bool
 	distinct bool
 	handle   kv.Handle
-	rowKey   kv.Key
 }
 
 type mergeIndexWorker struct {

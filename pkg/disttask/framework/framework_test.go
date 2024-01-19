@@ -70,7 +70,7 @@ func TestRandomOwnerChangeWithMultipleTasks(t *testing.T) {
 			distContext.SetOwner(idx)
 			require.Eventually(t, func() bool {
 				return distContext.GetDomain(idx).DDL().OwnerManager().IsOwner()
-			}, 2*time.Second, 100*time.Millisecond)
+			}, 10*time.Second, 100*time.Millisecond)
 		}
 	})
 	wg.Wait()
@@ -107,7 +107,7 @@ func TestFrameworkScaleInAndOut(t *testing.T) {
 			distContext.SetOwner(idx)
 			require.Eventually(t, func() bool {
 				return distContext.GetDomain(idx).DDL().OwnerManager().IsOwner()
-			}, 2*time.Second, 100*time.Millisecond)
+			}, 10*time.Second, 100*time.Millisecond)
 		}
 	})
 	wg.Wait()
@@ -140,7 +140,7 @@ func TestFrameworkWithQuery(t *testing.T) {
 	distContext.Close()
 }
 
-func TestFrameworkCancelGTask(t *testing.T) {
+func TestFrameworkCancelTask(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
 	defer ctrl.Finish()
 
@@ -231,36 +231,6 @@ func TestTaskExecutorDownManyNodes(t *testing.T) {
 	distContext.Close()
 }
 
-func TestFrameworkSetLabel(t *testing.T) {
-	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
-	defer ctrl.Finish()
-
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
-	tk := testkit.NewTestKit(t, distContext.Store)
-
-	// 1. all "" role.
-	submitTaskAndCheckSuccessForBasic(ctx, t, "😁", testContext)
-
-	// 2. one "background" role.
-	tk.MustExec("set global tidb_service_scope=background")
-	tk.MustQuery("select @@global.tidb_service_scope").Check(testkit.Rows("background"))
-	tk.MustQuery("select @@tidb_service_scope").Check(testkit.Rows("background"))
-	submitTaskAndCheckSuccessForBasic(ctx, t, "😊", testContext)
-
-	// 3. 2 "background" role.
-	tk.MustExec("update mysql.dist_framework_meta set role = \"background\" where host = \":4001\"")
-	submitTaskAndCheckSuccessForBasic(ctx, t, "😆", testContext)
-
-	// 4. set wrong sys var.
-	tk.MustMatchErrMsg("set global tidb_service_scope=wrong", `incorrect value: .*. tidb_service_scope options: "", background`)
-
-	// 5. set keyspace id.
-	tk.MustExec("update mysql.dist_framework_meta set keyspace_id = 16777216 where host = \":4001\"")
-	tk.MustQuery("select keyspace_id from mysql.dist_framework_meta where host = \":4001\"").Check(testkit.Rows("16777216"))
-
-	distContext.Close()
-}
-
 func TestGC(t *testing.T) {
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
@@ -281,7 +251,7 @@ func TestGC(t *testing.T) {
 
 	var historySubTasksCnt int
 	require.Eventually(t, func() bool {
-		historySubTasksCnt, err = storage.GetSubtasksFromHistoryForTest(ctx, mgr)
+		historySubTasksCnt, err = testutil.GetSubtasksFromHistory(ctx, mgr)
 		if err != nil {
 			return false
 		}
@@ -291,7 +261,7 @@ func TestGC(t *testing.T) {
 	scheduler.WaitTaskFinished <- struct{}{}
 
 	require.Eventually(t, func() bool {
-		historySubTasksCnt, err := storage.GetSubtasksFromHistoryForTest(ctx, mgr)
+		historySubTasksCnt, err := testutil.GetSubtasksFromHistory(ctx, mgr)
 		if err != nil {
 			return false
 		}
@@ -328,10 +298,17 @@ func TestFrameworkRunSubtaskCancel(t *testing.T) {
 }
 
 func TestFrameworkCleanUpRoutine(t *testing.T) {
+	bak := scheduler.DefaultCleanUpInterval
+	defer func() {
+		scheduler.DefaultCleanUpInterval = bak
+	}()
+	scheduler.DefaultCleanUpInterval = 500 * time.Millisecond
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
 	defer ctrl.Finish()
 	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "return()"))
+
+	// normal
 	submitTaskAndCheckSuccessForBasic(ctx, t, "key1", testContext)
 	<-scheduler.WaitCleanUpFinished
 	mgr, err := storage.GetTaskManager()
@@ -339,7 +316,26 @@ func TestFrameworkCleanUpRoutine(t *testing.T) {
 	tasks, err := mgr.GetTaskByKeyWithHistory(ctx, "key1")
 	require.NoError(t, err)
 	require.NotEmpty(t, tasks)
+	subtasks, err := testutil.GetSubtasksFromHistory(ctx, mgr)
+	require.NoError(t, err)
+	require.NotEmpty(t, subtasks)
+
+	// transfer err
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTransferErr", "1*return()"))
+	submitTaskAndCheckSuccessForBasic(ctx, t, "key2", testContext)
+	<-scheduler.WaitCleanUpFinished
+	mgr, err = storage.GetTaskManager()
+	require.NoError(t, err)
+	tasks, err = mgr.GetTaskByKeyWithHistory(ctx, "key1")
+	require.NoError(t, err)
+	require.NotEmpty(t, tasks)
+	subtasks, err = testutil.GetSubtasksFromHistory(ctx, mgr)
+	require.NoError(t, err)
+	require.NotEmpty(t, subtasks)
+
 	distContext.Close()
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTransferErr"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished"))
 }
 
 func TestTaskCancelledBeforeUpdateTask(t *testing.T) {

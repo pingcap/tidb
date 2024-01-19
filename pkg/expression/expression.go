@@ -237,18 +237,6 @@ func ExprNotNull(expr Expression) bool {
 	return mysql.HasNotNullFlag(expr.GetType().GetFlag())
 }
 
-// HandleOverflowOnSelection handles Overflow errors when evaluating selection filters.
-// We should ignore overflow errors when evaluating selection conditions:
-//
-//	INSERT INTO t VALUES ("999999999999999999");
-//	SELECT * FROM t WHERE v;
-func HandleOverflowOnSelection(sc *stmtctx.StatementContext, val int64, err error) (int64, error) {
-	if sc.InSelectStmt && err != nil && types.ErrOverflow.Equal(err) {
-		return -1, nil
-	}
-	return val, err
-}
-
 // EvalBool evaluates expression list to a boolean value. The first returned value
 // indicates bool result of the expression list, the second returned value indicates
 // whether the result of the expression list is null, it can only be true when the
@@ -275,10 +263,7 @@ func EvalBool(ctx EvalContext, exprList CNFExprs, row chunk.Row) (bool, bool, er
 
 		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtx())
 		if err != nil {
-			i, err = HandleOverflowOnSelection(ctx.GetSessionVars().StmtCtx, i, err)
-			if err != nil {
-				return false, false, err
-			}
+			return false, false, err
 		}
 		if i == 0 {
 			return false, false, nil
@@ -819,7 +804,7 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
-		ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("%v affects null check"))
+		ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError("%v affects null check"))
 	}
 	if ctx.GetSessionVars().StmtCtx.InNullRejectCheck {
 		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)

@@ -182,7 +182,7 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 			SessionCtx: se,
 			TaskKey:    TaskKey(jobID),
 			TaskType:   proto.ImportInto,
-			ThreadCnt:  int(plan.ThreadCnt),
+			ThreadCnt:  plan.ThreadCnt,
 		}
 		p := planner.NewPlanner()
 		taskID, err2 = p.Run(planCtx, logicalPlan)
@@ -206,7 +206,7 @@ func (ti *DistImporter) SubmitTask(ctx context.Context) (int64, *proto.Task, err
 	ti.logger = ti.logger.With(zap.Int64("task-id", task.ID))
 
 	ti.logger.Info("job submitted to task queue",
-		zap.Int64("job-id", jobID), zap.Int64("thread-cnt", plan.ThreadCnt))
+		zap.Int64("job-id", jobID), zap.Int("thread-cnt", plan.ThreadCnt))
 
 	return jobID, task, nil
 }
@@ -258,7 +258,7 @@ func GetTaskImportedRows(ctx context.Context, jobID int64) (uint64, error) {
 	}
 	var importedRows uint64
 	if taskMeta.Plan.CloudStorageURI == "" {
-		subtasks, err := taskManager.GetSubtasksForImportInto(ctx, task.ID, StepImport)
+		subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, StepImport)
 		if err != nil {
 			return 0, err
 		}
@@ -270,7 +270,7 @@ func GetTaskImportedRows(ctx context.Context, jobID int64) (uint64, error) {
 			importedRows += subtaskMeta.Result.LoadedRowCnt
 		}
 	} else {
-		subtasks, err := taskManager.GetSubtasksForImportInto(ctx, task.ID, StepWriteAndIngest)
+		subtasks, err := taskManager.GetSubtasksWithHistory(ctx, task.ID, StepWriteAndIngest)
 		if err != nil {
 			return 0, err
 		}

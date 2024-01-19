@@ -1393,10 +1393,9 @@ func (tr *TableImporter) dropIndexes(ctx context.Context, db *sql.DB) error {
 	logger := log.FromContext(ctx).With(zap.String("table", tr.tableName))
 
 	tblInfo := tr.tableInfo
-	tableName := common.UniqueTable(tblInfo.DB, tblInfo.Name)
 	remainIndexes, dropIndexes := common.GetDropIndexInfos(tblInfo.Core)
 	for _, idxInfo := range dropIndexes {
-		sqlStr := common.BuildDropIndexSQL(tableName, idxInfo)
+		sqlStr := common.BuildDropIndexSQL(tblInfo.DB, tblInfo.Name, idxInfo)
 
 		logger.Info("drop index", zap.String("sql", sqlStr))
 
