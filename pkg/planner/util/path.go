@@ -120,7 +120,9 @@ func (path *AccessPath) Clone() *AccessPath {
 		IsSingleScan:                 path.IsSingleScan,
 		IsUkShardIndexPath:           path.IsUkShardIndexPath,
 		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
-		IndexMergeORSourceFilter:     path.IndexMergeORSourceFilter.Clone(),
+	}
+	if path.IndexMergeORSourceFilter != nil {
+		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
 	}
 	for _, partialPath := range path.PartialIndexPaths {
 		ret.PartialIndexPaths = append(ret.PartialIndexPaths, partialPath.Clone())
