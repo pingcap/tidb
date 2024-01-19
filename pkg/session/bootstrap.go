@@ -612,7 +612,7 @@ const (
         host VARCHAR(100) NOT NULL PRIMARY KEY,
         role VARCHAR(64),
         cpu_count int default 0,
-		dead TINYINT(2),
+		dead BOOL,
         keyspace_id bigint(8) NOT NULL DEFAULT -1
     );`
 
@@ -2999,7 +2999,7 @@ func upgradeToVer184(s sessiontypes.Session, ver int64) {
 		return
 	}
 
-	doReentrantDDL(s, "ALTER TABLE mysql.dist_framework_meta ADD COLUMN `dead` TINYINT(2) AFTER `cpu_count`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.dist_framework_meta ADD COLUMN `dead` BOOL AFTER `cpu_count`", infoschema.ErrColumnExists)
 }
 
 func writeOOMAction(s sessiontypes.Session) {

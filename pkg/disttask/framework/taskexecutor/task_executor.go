@@ -359,7 +359,7 @@ func (s *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 	}
 
 	failpoint.Inject("mockTiDBDown", func(val failpoint.Value) {
-		logutil.Logger(s.logCtx).Info("trigger mockTiDBDown")
+		logutil.Logger(s.logCtx).Info("trigger mockTiDBDown", zap.Int64("subtask-id", subtask.ID), zap.String("exec-id", s.id))
 		if s.id == val.(string) || s.id == ":4001" || s.id == ":4002" {
 			v, ok := testContexts.Load(s.id)
 			if ok {
