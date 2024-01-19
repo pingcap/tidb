@@ -1059,17 +1059,29 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		return nil
 	}
 
+<<<<<<< HEAD
 	var partitionInfo *model.PartitionDefinition
 	var pos int
 	if pi != nil {
 		partitionInfo, pos, _, isTableDual = getPartitionInfo(ctx, tbl, pairs)
+=======
+	var partitionDef *model.PartitionDefinition
+	var pairIdx int
+	if pi != nil {
+		partitionDef, pairIdx, _, isTableDual = getPartitionDef(ctx, tbl, pairs)
+>>>>>>> 6db1d6b79c2 (planner/core: Key partitioning uses an column index, which did not match value pairs in fast plan (#50210))
 		if isTableDual {
 			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 			p.IsTableDual = true
 			return p
 		}
+<<<<<<< HEAD
 		if partitionInfo == nil {
 			return nil
+=======
+		if partitionDef == nil {
+			return checkTblIndexForPointPlan(ctx, tblName, schema, names, pairs, nil, pairIdx, true, isTableDual, check)
+>>>>>>> 6db1d6b79c2 (planner/core: Key partitioning uses an column index, which did not match value pairs in fast plan (#50210))
 		}
 		// Take partition selection into consideration.
 		if len(tblName.PartitionNames) > 0 {
@@ -1100,6 +1112,30 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		return nil
 	}
 
+<<<<<<< HEAD
+=======
+	return checkTblIndexForPointPlan(ctx, tblName, schema, names, pairs, partitionDef, pairIdx, false, isTableDual, check)
+}
+
+func checkTblIndexForPointPlan(ctx sessionctx.Context, tblName *ast.TableName, schema *expression.Schema,
+	names []*types.FieldName, pairs []nameValuePair, partitionDef *model.PartitionDefinition,
+	pos int, globalIndexCheck, isTableDual, check bool) *PointGetPlan {
+	if globalIndexCheck {
+		// when partitions are specified or some partition is in ddl, not use point get plan for global index.
+		// TODO: Add partition ID filter for Global Index Point Get.
+		// partitions are specified in select stmt.
+		if len(tblName.PartitionNames) > 0 {
+			return nil
+		}
+		tbl := tblName.TableInfo
+		// some partition is in ddl.
+		if tbl == nil ||
+			len(tbl.GetPartitionInfo().AddingDefinitions) > 0 ||
+			len(tbl.GetPartitionInfo().DroppingDefinitions) > 0 {
+			return nil
+		}
+	}
+>>>>>>> 6db1d6b79c2 (planner/core: Key partitioning uses an column index, which did not match value pairs in fast plan (#50210))
 	check = check || ctx.GetSessionVars().IsIsolation(ast.ReadCommitted)
 	check = check && ctx.GetSessionVars().ConnectionID > 0
 	var latestIndexes map[int64]*model.IndexInfo
@@ -1864,9 +1900,14 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 	case model.PartitionTypeKey:
 		// The key partition table supports FastPlan when it contains only one partition column
 		if len(pi.Columns) == 1 {
+			// We need to change the partition column index!
+			col := &expression.Column{}
+			*col = *partitionExpr.KeyPartCols[0]
+			col.Index = 0
+			pe := &tables.ForKeyPruning{KeyPartCols: []*expression.Column{col}}
 			for i, pair := range pairs {
 				if pi.Columns[0].L == pair.colName {
-					pos, err := partitionExpr.LocateKeyPartition(pi.Num, []types.Datum{pair.value})
+					pos, err := pe.LocateKeyPartition(pi.Num, []types.Datum{pair.value})
 					if err != nil {
 						return nil, 0, 0, false
 					}
