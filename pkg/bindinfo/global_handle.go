@@ -173,20 +173,18 @@ func (h *globalBindingHandle) setFuzzyDigestMap(m map[string][]string) {
 	h.fuzzyDigestMap.Store(m)
 }
 
-func buildFuzzyDigestMap(bindRecords []Bindings) map[string][]string {
+func buildFuzzyDigestMap(bindRecords Bindings) map[string][]string {
 	m := make(map[string][]string)
 	p := parser.New()
-	for _, bindRecord := range bindRecords {
-		for _, binding := range bindRecord {
-			stmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
-			if err != nil {
-				logutil.BgLogger().Warn("parse bindSQL failed", zap.String("bindSQL", binding.BindSQL), zap.Error(err))
-				p = parser.New()
-				continue
-			}
-			_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
-			m[fuzzyDigest] = append(m[fuzzyDigest], binding.SQLDigest)
+	for _, binding := range bindRecords {
+		stmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
+		if err != nil {
+			logutil.BgLogger().Warn("parse bindSQL failed", zap.String("bindSQL", binding.BindSQL), zap.Error(err))
+			p = parser.New()
+			continue
 		}
+		_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+		m[fuzzyDigest] = append(m[fuzzyDigest], binding.SQLDigest)
 	}
 	return m
 }
@@ -527,10 +525,7 @@ func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, fuzzyD
 
 // GetAllGlobalBindings returns all bind records in cache.
 func (h *globalBindingHandle) GetAllGlobalBindings() (bindings Bindings) {
-	for _, record := range h.getCache().GetAllBindings() {
-		bindings = append(bindings, record...)
-	}
-	return
+	return h.getCache().GetAllBindings()
 }
 
 // SetBindCacheCapacity reset the capacity for the bindCache.
