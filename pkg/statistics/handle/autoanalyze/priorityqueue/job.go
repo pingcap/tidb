@@ -25,16 +25,16 @@ import (
 
 // TableAnalysisJob defines the structure for table analysis job information.
 type TableAnalysisJob struct {
-	TableID     int64
-	TableSchema string
-	TableName   string
-	// Only set when table's indexes need to be analyzed.
-	Indexes       []string
-	TableStatsVer int
-	// Only set when table's partitions need to be analyzed.
-	Partitions []string
 	// Only set when partitions's indexes need to be analyzed.
 	PartitionIndexes map[string][]string
+	TableSchema      string
+	TableName        string
+	// Only set when table's indexes need to be analyzed.
+	Indexes []string
+	// Only set when table's partitions need to be analyzed.
+	Partitions       []string
+	TableID          int64
+	TableStatsVer    int
 	ChangePercentage float64
 	Weight           float64
 }
