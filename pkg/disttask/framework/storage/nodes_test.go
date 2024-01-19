@@ -147,7 +147,7 @@ func TestAllNormalNodesForDistFramework(t *testing.T) {
 	nodes, err = sm.GetManagedNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
-		{ID: ":4000", Role: "", CPUCount: 100},
+		{ID: ":4000", Role: "", CPUCount: 8},
 		{ID: ":4001", Role: "", CPUCount: 8},
 		{ID: ":4002", Role: "", CPUCount: 8},
 	}, nodes)
@@ -156,7 +156,7 @@ func TestAllNormalNodesForDistFramework(t *testing.T) {
 	nodes, err = sm.GetManagedNodes(ctx)
 	require.NoError(t, err)
 	require.Equal(t, []proto.ManagedNode{
-		{ID: ":4000", Role: "background", CPUCount: 100},
+		{ID: ":4000", Role: "background", CPUCount: 8},
 	}, nodes)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
 }
