@@ -173,20 +173,18 @@ func (h *globalBindingHandle) setFuzzyDigestMap(m map[string][]string) {
 	h.fuzzyDigestMap.Store(m)
 }
 
-func buildFuzzyDigestMap(bindRecords []Bindings) map[string][]string {
+func buildFuzzyDigestMap(bindRecords Bindings) map[string][]string {
 	m := make(map[string][]string)
 	p := parser.New()
-	for _, bindRecord := range bindRecords {
-		for _, binding := range bindRecord {
-			stmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
-			if err != nil {
-				logutil.BgLogger().Warn("parse bindSQL failed", zap.String("bindSQL", binding.BindSQL), zap.Error(err))
-				p = parser.New()
-				continue
-			}
-			_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
-			m[fuzzyDigest] = append(m[fuzzyDigest], binding.SQLDigest)
+	for _, binding := range bindRecords {
+		stmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
+		if err != nil {
+			logutil.BgLogger().Warn("parse bindSQL failed", zap.String("bindSQL", binding.BindSQL), zap.Error(err))
+			p = parser.New()
+			continue
 		}
+		_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+		m[fuzzyDigest] = append(m[fuzzyDigest], binding.SQLDigest)
 	}
 	return m
 }
@@ -505,12 +503,13 @@ func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, fuzzyD
 	}
 
 	leastWildcards := len(tableNames) + 1
+	enableFuzzyBinding := sctx.GetSessionVars().EnableFuzzyBinding
 	for _, exactDigest := range fuzzyDigestMap[fuzzyDigest] {
 		sqlDigest := exactDigest
 		if bindings := bindingCache.GetBinding(sqlDigest); bindings != nil {
 			for _, binding := range bindings {
 				numWildcards, matched := fuzzyMatchBindingTableName(sctx.GetSessionVars().CurrentDB, tableNames, binding.TableNames)
-				if matched && numWildcards > 0 && sctx != nil && !sctx.GetSessionVars().EnableFuzzyBinding {
+				if matched && numWildcards > 0 && sctx != nil && !enableFuzzyBinding {
 					continue // fuzzy binding is disabled, skip this binding
 				}
 				if matched && numWildcards < leastWildcards {
@@ -527,10 +526,7 @@ func (h *globalBindingHandle) MatchGlobalBinding(sctx sessionctx.Context, fuzzyD
 
 // GetAllGlobalBindings returns all bind records in cache.
 func (h *globalBindingHandle) GetAllGlobalBindings() (bindings Bindings) {
-	for _, record := range h.getCache().GetAllBindings() {
-		bindings = append(bindings, record...)
-	}
-	return
+	return h.getCache().GetAllBindings()
 }
 
 // SetBindCacheCapacity reset the capacity for the bindCache.
