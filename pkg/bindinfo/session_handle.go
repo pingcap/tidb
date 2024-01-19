@@ -128,7 +128,6 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, fuzz
 			matchedBinding = binding
 			isMatched = true
 			leastWildcards = numWildcards
-			return
 		}
 	}
 	return
