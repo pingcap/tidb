@@ -279,7 +279,7 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 // (1) there's no IndexMerge hint, (2) there's IndexMerge hint but no specified index names, or (3) the input index
 // name is specified in the IndexMerge hints.
 func (ds *DataSource) isInIndexMergeHints(name string) bool {
-	// if not index merge hints, all mv index is accessible,
+	// if no index merge hints, all mv index is accessible
 	if len(ds.indexMergeHints) == 0 {
 		return true
 	}
