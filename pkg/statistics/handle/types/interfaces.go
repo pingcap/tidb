@@ -67,25 +67,9 @@ type StatsUsage interface {
 	// CollectColumnsInExtendedStats returns IDs of the columns involved in extended stats.
 	CollectColumnsInExtendedStats(tableID int64) ([]int64, error)
 
-	// Below methods are for index usage.
+	IndexUsage
 
-	// NewSessionIndexUsageCollector creates a new Collector on the list.
-	// The returned value's type should be *usage.SessionIndexUsageCollector, use interface{} to avoid cycle import now.
-	// TODO: use *usage.SessionIndexUsageCollector instead of interface{}.
-	NewSessionIndexUsageCollector() *indexusage.SessionIndexUsageCollector
-
-	// GCIndexUsage removes unnecessary index usage data.
-	GCIndexUsage() error
-
-	// StartWorker starts for the collector worker.
-	StartWorker()
-
-	// Close closes and waits for the index usage collector worker.
-	Close()
-
-	// GetIndexUsage returns the index usage information
-	GetIndexUsage(tableID int64, indexID int64) *indexusage.Sample
-
+	// TODO: extract these function to a new interface only for delta/stats usage, like `IndexUsage`.
 	// Blow methods are for table delta and stats usage.
 
 	// NewSessionStatsItem allocates a stats collector for a session.
@@ -100,6 +84,24 @@ type StatsUsage interface {
 
 	// DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
 	DumpColStatsUsageToKV() error
+}
+
+// IndexUsage is an interface to define the function of collecting index usage stats.
+type IndexUsage interface {
+	// NewSessionIndexUsageCollector creates a new Collector for a session.
+	NewSessionIndexUsageCollector() *indexusage.SessionIndexUsageCollector
+
+	// GCIndexUsage removes unnecessary index usage data.
+	GCIndexUsage() error
+
+	// StartWorker starts for the collector worker.
+	StartWorker()
+
+	// Close closes and waits for the index usage collector worker.
+	Close()
+
+	// GetIndexUsage returns the index usage information
+	GetIndexUsage(tableID int64, indexID int64) indexusage.Sample
 }
 
 // StatsHistory is used to manage historical stats.

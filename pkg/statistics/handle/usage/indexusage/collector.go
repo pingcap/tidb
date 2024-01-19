@@ -30,11 +30,17 @@ type GlobalIndexID struct {
 
 // Sample is the data structure to store index usage information.
 type Sample struct {
-	LastUsedAt     time.Time
-	QueryTotal     uint64
-	KvReqTotal     uint64
+	// LastUsedAt records the last time the index is used.
+	LastUsedAt time.Time
+	// QueryTotal records the total counts of queries which used this index.
+	QueryTotal uint64
+	// KvReqTotal records the count of KV requests which are sent to read this index.
+	KvReqTotal uint64
+	// RowAccessTotal sums the number of the rows scanned using this index.
 	RowAccessTotal uint64
-	// 0, 0-1, 1-10, 10-20, 20-50, 50-100, 100
+	// PercentageAccess is a histogram where each bucket represents the number of accesses to the index where the
+	// percentage of scanned rows to the total number of rows in the table falls within the ranges of
+	// 0, 0-1, 1-10, 10-20, 20-50, 50-100, and 100.
 	PercentageAccess [7]uint64
 }
 
@@ -111,8 +117,8 @@ func (m indexUsage) merge(destMap indexUsage) {
 
 // Collector represents a data structure to record the index usage for the whole node
 type Collector struct {
-	collector collector.GlobalCollector[indexUsage]
-	mapper    indexUsage
+	collector  collector.GlobalCollector[indexUsage]
+	indexUsage indexUsage
 	sync.RWMutex
 
 	closed bool
@@ -121,7 +127,7 @@ type Collector struct {
 // NewCollector create an index usage collector
 func NewCollector() *Collector {
 	iuc := &Collector{
-		mapper: make(indexUsage),
+		indexUsage: make(indexUsage),
 	}
 	iuc.collector = collector.NewGlobalCollector[indexUsage](iuc.merge)
 
@@ -129,29 +135,32 @@ func NewCollector() *Collector {
 }
 
 // GetIndexUsage returns the index usage information
-func (c *Collector) GetIndexUsage(tableID int64, indexID int64) *Sample {
+func (c *Collector) GetIndexUsage(tableID int64, indexID int64) Sample {
 	c.RLock()
 	defer c.RUnlock()
 
-	info, ok := c.mapper[GlobalIndexID{tableID, indexID}]
+	info, ok := c.indexUsage[GlobalIndexID{tableID, indexID}]
 	if !ok {
-		return nil
+		// It seems fine to return an empty sample if the caller doesn't care whether this index actually exists in the
+		// collector. If the caller needs to know whether it exists (though I cannot image the scenario now), we can
+		// change the return value from `Sample` to `Sample, bool`.
+		return Sample{}
 	}
-	return &info
+	return info
 }
 
 func (c *Collector) merge(delta indexUsage) {
 	c.Lock()
 	defer c.Unlock()
 
-	c.mapper.merge(delta)
+	c.indexUsage.merge(delta)
 }
 
 // SpawnSessionCollector creates a new session collector attached to this global collector
 func (c *Collector) SpawnSessionCollector() *SessionIndexUsageCollector {
 	return &SessionIndexUsageCollector{
-		mapper:    make(indexUsage),
-		collector: c.collector.SpawnSession(),
+		indexUsage: make(indexUsage),
+		collector:  c.collector.SpawnSession(),
 	}
 }
 
@@ -173,10 +182,10 @@ func (c *Collector) GCIndexUsage(tableMetaLookup func(id int64) (*model.TableInf
 	// However, as all these operations are infrequent, keeping a simpler mutex is enough.
 	c.Lock()
 	defer c.Unlock()
-	for k := range c.mapper {
+	for k := range c.indexUsage {
 		tbl, ok := tableMetaLookup(k.TableID)
 		if !ok {
-			delete(c.mapper, k)
+			delete(c.indexUsage, k)
 			continue
 		}
 		foundIdx := false
@@ -187,39 +196,39 @@ func (c *Collector) GCIndexUsage(tableMetaLookup func(id int64) (*model.TableInf
 			}
 		}
 		if !foundIdx {
-			delete(c.mapper, k)
+			delete(c.indexUsage, k)
 		}
 	}
 }
 
 // SessionIndexUsageCollector collects index usage per-session
 type SessionIndexUsageCollector struct {
-	mapper indexUsage
+	indexUsage indexUsage
 
 	collector collector.SessionCollector[indexUsage]
 }
 
-// Update updates the mapper in SessionIndexUsageCollector
+// Update updates the indexUsage in SessionIndexUsageCollector
 func (s *SessionIndexUsageCollector) Update(tableID int64, indexID int64, sample Sample) {
-	s.mapper.update(tableID, indexID, sample)
+	s.indexUsage.update(tableID, indexID, sample)
 }
 
-// Report reports the mapper in `SessionIndexUsageCollector` to the global collector
+// Report reports the indexUsage in `SessionIndexUsageCollector` to the global collector
 func (s *SessionIndexUsageCollector) Report() {
-	if len(s.mapper) == 0 {
+	if len(s.indexUsage) == 0 {
 		return
 	}
-	if s.collector.SendDelta(s.mapper) {
-		s.mapper = make(indexUsage)
+	if s.collector.SendDelta(s.indexUsage) {
+		s.indexUsage = make(indexUsage)
 	}
 }
 
-// Flush reports the mapper in `SessionIndexUsageCollector` to the global collector. It'll block until the data is
+// Flush reports the indexUsage in `SessionIndexUsageCollector` to the global collector. It'll block until the data is
 // received
 func (s *SessionIndexUsageCollector) Flush() {
-	if len(s.mapper) == 0 {
+	if len(s.indexUsage) == 0 {
 		return
 	}
-	s.collector.SendDeltaSync(s.mapper)
-	s.mapper = make(indexUsage)
+	s.collector.SendDeltaSync(s.indexUsage)
+	s.indexUsage = make(indexUsage)
 }

@@ -66,13 +66,12 @@ func TestGCIndexUsage(t *testing.T) {
 			for idxPos, idx := range tbl.Indices {
 				info := dom.StatsHandle().GetIndexUsage(tbl.ID, idx.ID)
 				if exist(tblPos, tbl, idxPos, idx) {
-					require.NotNil(t, info)
 					require.Equal(t, uint64(1), info.QueryTotal)
 					require.Equal(t, uint64(2), info.KvReqTotal)
 					require.Equal(t, uint64(3), info.RowAccessTotal)
 					require.Equal(t, [7]uint64{0, 0, 0, 0, 0, 1, 0}, info.PercentageAccess)
 				} else {
-					require.Nil(t, info)
+					require.Equal(t, indexusage.Sample{}, info)
 				}
 			}
 		}

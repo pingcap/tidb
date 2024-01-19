@@ -25,7 +25,7 @@ import (
 
 // GetIndexUsageForTest returns the index usage information
 func (s *SessionIndexUsageCollector) GetIndexUsageForTest(tableID int64, indexID int64) *Sample {
-	info, ok := s.mapper[GlobalIndexID{tableID, indexID}]
+	info, ok := s.indexUsage[GlobalIndexID{tableID, indexID}]
 	if !ok {
 		return nil
 	}
@@ -162,7 +162,7 @@ func TestFlushConcurrentIndexCollector(t *testing.T) {
 
 	expectCollector.Close()
 	iuc.Close()
-	require.Equal(t, expectCollector.mapper, iuc.mapper)
+	require.Equal(t, expectCollector.indexUsage, iuc.indexUsage)
 }
 
 func benchmarkIndexCollector(b *testing.B, reportPerOp int) {

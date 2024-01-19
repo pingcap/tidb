@@ -55,6 +55,6 @@ func (u *statsUsageImpl) Close() {
 }
 
 // GetIndexUsage returns the index usage information
-func (u *statsUsageImpl) GetIndexUsage(tableID int64, indexID int64) *indexusage.Sample {
+func (u *statsUsageImpl) GetIndexUsage(tableID int64, indexID int64) indexusage.Sample {
 	return u.idxUsageCollector.GetIndexUsage(tableID, indexID)
 }
