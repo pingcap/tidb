@@ -124,9 +124,13 @@ func (j *TableAnalysisJob) analyzePartitionIndexes(
 			if end >= len(partitionNames) {
 				end = len(partitionNames)
 			}
+			partitions := make([]interface{}, 0, end-start)
+			for _, name := range partitionNames[start:end] {
+				partitions = append(partitions, name)
+			}
 
 			sql := getPartitionSQL("analyze table %n.%n partition", " index %n", end-start)
-			params := append([]interface{}{j.TableSchema, j.TableName}, []interface{}{partitionNames[start:end]}...)
+			params := append([]interface{}{j.TableSchema, j.TableName}, partitions...)
 			params = append(params, indexName)
 			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 		}
