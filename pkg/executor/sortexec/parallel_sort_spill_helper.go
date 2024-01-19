@@ -19,7 +19,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pkg/errors"
 )
 
 type parallelSortSpillHelper struct {
@@ -86,8 +85,8 @@ func (p *parallelSortSpillHelper) setInSpilling() {
 	p.spillStatus = inSpilling
 }
 
-func (p *parallelSortSpillHelper) setSpillTriggeredNoLock() {
-	p.spillStatus = spillTriggered
+func (p *parallelSortSpillHelper) setNeedSpillNoLock() {
+	p.spillStatus = needSpill
 }
 
 func (p *parallelSortSpillHelper) setNotSpilled() {
@@ -155,33 +154,28 @@ func (p *parallelSortSpillHelper) releaseMemory() {
 }
 
 func (p *parallelSortSpillHelper) getRowsNeedingSpill() sortedRows {
-	partitionNum := p.sortExec.Parallel.globalSortedRowsQueue.getSortedRowsNumNoLock()
-	var spilledRows sortedRows
-	if partitionNum > 1 {
-		p.setSpillError(errors.New("Sort is not completed."))
-		return nil
+	sortedRowsNum := p.sortExec.Parallel.globalSortedRowsQueue.getSortedRowsNumNoLock()
+	if sortedRowsNum > 1 {
+		panic("sorted is not completed")
 	}
 
-	if partitionNum == 0 {
-		spilledRows = p.sortExec.Parallel.result[p.sortExec.Parallel.idx:]
+	if sortedRowsNum == 0 && p.sortExec.Parallel.idx < int64(len(p.sortExec.Parallel.result)) {
+		spilledRows := p.sortExec.Parallel.result[p.sortExec.Parallel.idx:]
 		p.sortExec.Parallel.result = nil
 		p.sortExec.Parallel.rowNum = 0
-	} else {
-		spilledRows = popFromList(&p.sortExec.Parallel.globalSortedRowsQueue.sortedRowsQueue)
+		return spilledRows
 	}
-	return spilledRows
+
+	ret := p.sortExec.Parallel.globalSortedRowsQueue.fetchSortedRowsNoLock()
+	return ret
 }
 
 func (p *parallelSortSpillHelper) spillImpl() {
-	spilledRows := p.getRowsNeedingSpill()
-	if len(spilledRows) == 0 {
-		return
-	}
-
 	p.tmpSpillChunk.Reset()
 	inDisk := chunk.NewDataInDiskByChunks(p.fieldTypes)
 	inDisk.GetDiskTracker().AttachTo(p.sortExec.diskTracker)
 
+	spilledRows := p.getRowsNeedingSpill()
 	for _, row := range spilledRows {
 		select {
 		case <-p.finishCh:

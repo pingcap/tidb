@@ -596,6 +596,7 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 		return err
 	}
 	fetcherWaiter.Wait()
+	e.spillRemainingRowsWhenNeeded()
 
 	err = e.checkErrorForParallel()
 	if err != nil {
@@ -632,8 +633,6 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 
 		// Wait for the finish of all workers
 		e.Parallel.fetcherAndWorkerSyncer.Wait()
-
-		e.spillRemainingRowsWhenNeeded()
 	}()
 
 	for {

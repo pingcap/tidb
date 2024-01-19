@@ -32,14 +32,14 @@ func oneSpillCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) 
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 100000)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	ctx.GetSessionVars().EnableParallelSort = false
+	ctx.GetSessionVars().EnableParallelSort = true
 	schema := expression.NewSchema(sortCase.Columns()...)
 	dataSource := buildDataSource(ctx, sortCase, schema)
 	exe := buildSortExec(ctx, sortCase, dataSource)
 	resultChunks := executeSortExecutor(t, exe)
 
 	require.True(t, exe.IsSpillTriggeredInParallelSortForTest())
-	require.Equal(t, sortCase.Rows, exe.GetSpilledRowNumInParallelSortForTest())
+	require.Equal(t, int64(sortCase.Rows), exe.GetSpilledRowNumInParallelSortForTest())
 
 	err := exe.Close()
 	require.NoError(t, err)

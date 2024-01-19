@@ -38,9 +38,7 @@ const (
 type parallelSortWorker struct {
 	workerIDForTest int
 
-	// Temporarily store rows that will be sorted.
-	rowBuffer sortedRows
-	result    *sortedRows
+	result *sortedRows
 	// This list is shared by all workers and all workers will put their sorted rows into this list
 	globalSortedRowsQueue *sortedRowsList
 
@@ -140,12 +138,12 @@ func (p *parallelSortWorker) fetchChunksAndSortImpl() int {
 
 func (p *parallelSortWorker) sortChunkAndGetSortedRows(chk *chunk.Chunk) sortedRows {
 	rowNum := chk.NumRows()
-	p.rowBuffer = make(sortedRows, rowNum)
+	rowBuffer := make(sortedRows, rowNum)
 	for i := 0; i < rowNum; i++ {
-		p.rowBuffer[i] = chk.GetRow(i)
+		rowBuffer[i] = chk.GetRow(i)
 	}
-	slices.SortFunc(p.rowBuffer, p.keyColumnsLess)
-	return p.rowBuffer
+	slices.SortFunc(rowBuffer, p.keyColumnsLess)
+	return rowBuffer
 }
 
 func (p *parallelSortWorker) mergeSortGlobalRows() {
