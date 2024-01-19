@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/spool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -595,7 +596,7 @@ func TestManagerInitMeta(t *testing.T) {
 	m := &Manager{
 		taskTable: mockTaskTable,
 		ctx:       ctx,
-		logCtx:    ctx,
+		logger:    logutil.BgLogger(),
 	}
 	mockTaskTable.EXPECT().InitMeta(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil)
 	require.NoError(t, m.InitMeta())
