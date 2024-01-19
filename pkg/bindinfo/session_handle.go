@@ -127,6 +127,7 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, fuzz
 			matchedBinding = binding
 			isMatched = true
 			leastWildcards = numWildcards
+			return
 		}
 	}
 	return
@@ -143,7 +144,7 @@ func (h *sessionBindingHandle) EncodeSessionStates(_ context.Context, _ sessionc
 	if len(bindRecords) == 0 {
 		return nil
 	}
-	bytes, err := json.Marshal(bindRecords)
+	bytes, err := json.Marshal([]Binding(bindRecords))
 	if err != nil {
 		return err
 	}
@@ -156,19 +157,18 @@ func (h *sessionBindingHandle) DecodeSessionStates(_ context.Context, sctx sessi
 	if len(sessionStates.Bindings) == 0 {
 		return nil
 	}
-	var records []Bindings
+	var records []Binding
 	if err := json.Unmarshal(hack.Slice(sessionStates.Bindings), &records); err != nil {
 		return err
 	}
 	for _, record := range records {
 		// Restore hints and ID because hints are hard to encode.
-		for i := range record {
-			if err := prepareHints(sctx, &record[i]); err != nil {
-				return err
-			}
+		if err := prepareHints(sctx, &record); err != nil {
+			return err
 		}
-		h.appendSessionBinding(parser.DigestNormalized(record[0].OriginalSQL).String(), record)
+		h.appendSessionBinding(parser.DigestNormalized(record.OriginalSQL).String(), []Binding{record})
 	}
+
 	return nil
 }
 
