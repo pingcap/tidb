@@ -72,7 +72,7 @@ func (h *sessionBindingHandle) appendSessionBinding(sqlDigest string, meta Bindi
 	oldBindings := h.ch.GetBinding(sqlDigest)
 	err := h.ch.SetBinding(sqlDigest, meta)
 	if err != nil {
-		logutil.BgLogger().Warn("SessionHandle.appendBindRecord", zap.String("category", "sql-bind"), zap.Error(err))
+		logutil.BgLogger().Warn("SessionHandle.appendSessionBinding", zap.String("category", "sql-bind"), zap.Error(err))
 	}
 	updateMetrics(metrics.ScopeSession, oldBindings, meta, false)
 }
@@ -107,9 +107,9 @@ func (h *sessionBindingHandle) MatchSessionBinding(sctx sessionctx.Context, fuzz
 	// The current implementation is simplistic, but session binding is only for test purpose, so
 	// there shouldn't be many session bindings, and to keep it simple, this implementation is acceptable.
 	leastWildcards := len(tableNames) + 1
-	bindRecords := h.ch.GetAllBindings()
+	bindings := h.ch.GetAllBindings()
 	enableFuzzyBinding := sctx.GetSessionVars().EnableFuzzyBinding
-	for _, binding := range bindRecords {
+	for _, binding := range bindings {
 		bindingStmt, err := parser.New().ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
 		if err != nil {
 			return
@@ -140,11 +140,11 @@ func (h *sessionBindingHandle) GetAllSessionBindings() (bindings Bindings) {
 
 // EncodeSessionStates implements SessionStatesHandler.EncodeSessionStates interface.
 func (h *sessionBindingHandle) EncodeSessionStates(_ context.Context, _ sessionctx.Context, sessionStates *sessionstates.SessionStates) error {
-	bindRecords := h.ch.GetAllBindings()
-	if len(bindRecords) == 0 {
+	bindings := h.ch.GetAllBindings()
+	if len(bindings) == 0 {
 		return nil
 	}
-	bytes, err := json.Marshal([]Binding(bindRecords))
+	bytes, err := json.Marshal([]Binding(bindings))
 	if err != nil {
 		return err
 	}
