@@ -653,7 +653,7 @@ func newMergePropBaseIter(
 	// we are rely on the caller have reduced the overall overlapping to less than
 	// MergeSortOverlapThreshold for []MultipleFilesStat. And we are going to open
 	// about 8000 connection to read files.
-	preOpenLimit := limit * 8
+	preOpenLimit := limit * 2
 	preOpenLimit = min(preOpenLimit, int64(len(multiStat.Filenames)))
 	preOpenCh := make(chan chan readerAndError, preOpenLimit-limit)
 	closeCh := make(chan struct{})
@@ -690,10 +690,12 @@ func newMergePropBaseIter(
 					if !ok {
 						continue
 					}
-					_ = t.r.close()
+					if t.err == nil {
+						_ = t.r.close()
+					}
 				}
 				t, ok := <-asyncTask
-				if ok {
+				if ok && t.err == nil {
 					_ = t.r.close()
 				}
 				return
