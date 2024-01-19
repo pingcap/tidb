@@ -170,7 +170,7 @@ const (
 type ErrorManager struct {
 	db             *sql.DB
 	taskID         int64
-	schemaEscaped  string
+	schema         string
 	configError    *config.MaxError
 	remainingError config.MaxError
 
@@ -229,7 +229,7 @@ func New(db *sql.DB, cfg *config.Config, logger log.Logger) *ErrorManager {
 	}
 	if len(cfg.App.TaskInfoSchemaName) != 0 {
 		em.db = db
-		em.schemaEscaped = common.EscapeIdentifier(cfg.App.TaskInfoSchemaName)
+		em.schema = cfg.App.TaskInfoSchemaName
 	}
 	return em
 }
@@ -267,7 +267,7 @@ func (em *ErrorManager) Init(ctx context.Context) error {
 
 	for _, sql := range sqls {
 		// trim spaces for unit test pattern matching
-		err := exec.Exec(ctx, sql[0], strings.TrimSpace(fmt.Sprintf(sql[1], em.schemaEscaped)))
+		err := exec.Exec(ctx, sql[0], strings.TrimSpace(common.SprintfWithIdentifiers(sql[1], em.schema)))
 		if err != nil {
 			return err
 		}
@@ -312,7 +312,7 @@ func (em *ErrorManager) RecordTypeError(
 			HideQueryLog: redact.NeedRedact(),
 		}
 		if err := exec.Exec(ctx, "insert type error record",
-			fmt.Sprintf(insertIntoTypeError, em.schemaEscaped),
+			common.SprintfWithIdentifiers(insertIntoTypeError, em.schema),
 			em.taskID,
 			tableName,
 			path,
@@ -366,7 +366,10 @@ func (em *ErrorManager) RecordDataConflictError(
 	}
 	if err := exec.Transact(ctx, "insert data conflict error record", func(c context.Context, txn *sql.Tx) error {
 		sb := &strings.Builder{}
-		fmt.Fprintf(sb, insertIntoConflictErrorData, em.schemaEscaped)
+		_, err := common.FprintfWithIdentifiers(sb, insertIntoConflictErrorData, em.schema)
+		if err != nil {
+			return err
+		}
 		var sqlArgs []interface{}
 		for i, conflictInfo := range conflictInfos {
 			if i > 0 {
@@ -383,7 +386,7 @@ func (em *ErrorManager) RecordDataConflictError(
 				tablecodec.IsRecordKey(conflictInfo.RawKey),
 			)
 		}
-		_, err := txn.ExecContext(c, sb.String(), sqlArgs...)
+		_, err = txn.ExecContext(c, sb.String(), sqlArgs...)
 		return err
 	}); err != nil {
 		gerr = err
@@ -425,7 +428,10 @@ func (em *ErrorManager) RecordIndexConflictError(
 	}
 	if err := exec.Transact(ctx, "insert index conflict error record", func(c context.Context, txn *sql.Tx) error {
 		sb := &strings.Builder{}
-		fmt.Fprintf(sb, insertIntoConflictErrorIndex, em.schemaEscaped)
+		_, err := common.FprintfWithIdentifiers(sb, insertIntoConflictErrorIndex, em.schema)
+		if err != nil {
+			return err
+		}
 		var sqlArgs []interface{}
 		for i, conflictInfo := range conflictInfos {
 			if i > 0 {
@@ -445,7 +451,7 @@ func (em *ErrorManager) RecordIndexConflictError(
 				tablecodec.IsRecordKey(conflictInfo.RawKey),
 			)
 		}
-		_, err := txn.ExecContext(c, sb.String(), sqlArgs...)
+		_, err = txn.ExecContext(c, sb.String(), sqlArgs...)
 		return err
 	}); err != nil {
 		gerr = err
@@ -487,7 +493,7 @@ func (em *ErrorManager) RemoveAllConflictKeys(
 			var handleRows [][2][]byte
 			for start < end {
 				rows, err := em.db.QueryContext(
-					gCtx, fmt.Sprintf(selectConflictKeysRemove, em.schemaEscaped),
+					gCtx, common.SprintfWithIdentifiers(selectConflictKeysRemove, em.schema),
 					tableName, start, end, rowLimit)
 				if err != nil {
 					return errors.Trace(err)
@@ -567,7 +573,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 		// demo for "replace" algorithm: https://github.com/lyzx2001/tidb-conflict-replace
 		// check index KV
 		indexKvRows, err := em.db.QueryContext(
-			gCtx, fmt.Sprintf(selectIndexConflictKeysReplace, em.schemaEscaped),
+			gCtx, common.SprintfWithIdentifiers(selectIndexConflictKeysReplace, em.schema),
 			tableName)
 		if err != nil {
 			return errors.Trace(err)
@@ -666,7 +672,10 @@ func (em *ErrorManager) ReplaceConflictKeys(
 					if err := exec.Transact(ctx, "insert data conflict error record for conflict detection 'replace' mode",
 						func(c context.Context, txn *sql.Tx) error {
 							sb := &strings.Builder{}
-							fmt.Fprintf(sb, insertIntoConflictErrorData, em.schemaEscaped)
+							_, err2 := common.FprintfWithIdentifiers(sb, insertIntoConflictErrorData, em.schema)
+							if err2 != nil {
+								return err2
+							}
 							var sqlArgs []interface{}
 							sb.WriteString(sqlValuesConflictErrorData)
 							sqlArgs = append(sqlArgs,
@@ -696,7 +705,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 
 		// check data KV
 		dataKvRows, err := em.db.QueryContext(
-			gCtx, fmt.Sprintf(selectDataConflictKeysReplace, em.schemaEscaped),
+			gCtx, common.SprintfWithIdentifiers(selectDataConflictKeysReplace, em.schema),
 			tableName)
 		if err != nil {
 			return errors.Trace(err)
@@ -872,7 +881,7 @@ func (em *ErrorManager) recordDuplicate(
 		HideQueryLog: redact.NeedRedact(),
 	}
 	return exec.Exec(ctx, "insert duplicate record",
-		fmt.Sprintf(insertIntoDupRecord, em.schemaEscaped),
+		common.SprintfWithIdentifiers(insertIntoDupRecord, em.schema),
 		em.taskID,
 		tableName,
 		path,
@@ -974,7 +983,7 @@ func (em *ErrorManager) LogErrorDetails() {
 }
 
 func (em *ErrorManager) fmtTableName(t string) string {
-	return fmt.Sprintf("%s.`%s`", em.schemaEscaped, t)
+	return common.UniqueTable(em.schema, t)
 }
 
 // Output renders a table which contains error summery for each error type.

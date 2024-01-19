@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/engine"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
@@ -438,11 +439,8 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 		}
 		stores := make(map[int64]pdhttp.StoreInfo)
 		for _, store := range tikvStats.Stores {
-			for _, l := range store.Store.Labels {
-				if l.Key == "engine" && l.Value == "tiflash" {
-					stores[store.Store.ID] = store
-					logutil.BgLogger().Debug("Found tiflash store", zap.Int64("id", store.Store.ID), zap.String("Address", store.Store.Address), zap.String("StatusAddress", store.Store.StatusAddress))
-				}
+			if engine.IsTiFlashHTTPResp(&store.Store) {
+				stores[store.Store.ID] = store
 			}
 		}
 		*tiFlashStores = stores

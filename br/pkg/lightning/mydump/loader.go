@@ -69,7 +69,7 @@ func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storage.ExternalSt
 		}
 	}
 	// set default if schema sql is empty or failed to extract.
-	return "CREATE DATABASE IF NOT EXISTS " + common.EscapeIdentifier(m.Name)
+	return common.SprintfWithIdentifiers("CREATE DATABASE IF NOT EXISTS %s", m.Name)
 }
 
 // MDTableMeta contains some parsed metadata for a table in the source by MyDumper Loader.

@@ -33,6 +33,7 @@ go_library(
         "//pkg/util/syncutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",
     ],
 )

@@ -111,7 +111,7 @@ func TestLocalSortChunkProcess(t *testing.T) {
 
 	diskQuotaLock := &syncutil.RWMutex{}
 	codec := tikv.NewCodecV1(tikv.ModeRaw)
-	processor := importer.NewLocalSortChunkProcessor(
+	processor := importer.NewFileChunkProcessor(
 		csvParser, encoder, codec,
 		chunkInfo, logger.Logger, diskQuotaLock, engineWriter, engineWriter,
 	)
