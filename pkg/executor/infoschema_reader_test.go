@@ -285,7 +285,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 		"  `FAIL_REASON` longtext DEFAULT NULL,\n" +
 		"  `INSTANCE` varchar(512) DEFAULT NULL,\n" +
 		"  `PROCESS_ID` bigint(64) unsigned DEFAULT NULL,\n" +
-		"  `REMAINING_SECONDS` bigint(64) unsigned DEFAULT NULL,\n" +
+		"  `REMAINING_SECONDS` varchar(512) DEFAULT NULL,\n" +
 		"  `PROGRESS` double(22,6) DEFAULT NULL,\n" +
 		"  `ESTIMATED_TOTAL_ROWS` bigint(64) unsigned DEFAULT NULL\n" +
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"
