@@ -119,6 +119,30 @@ func TestAnalyzeIndexes(t *testing.T) {
 	tblStats = handle.GetTableStats(tbl.Meta())
 	require.NotNil(t, tblStats.Indices[1])
 	require.True(t, tblStats.Indices[1].IsAnalyzed())
+	// Add a new index.
+	tk.MustExec("alter table t add index idx2(b)")
+	job = &TableAnalysisJob{
+		TableSchema:   "test",
+		TableName:     "t",
+		Indexes:       []string{"idx", "idx2"},
+		TableStatsVer: 2,
+	}
+	require.NoError(t, handle.Update(dom.InfoSchema()))
+	// Before analyze indexes.
+	is = dom.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblStats = handle.GetTableStats(tbl.Meta())
+	require.Len(t, tblStats.Indices, 1)
+
+	job.analyze(sctx, handle, dom.SysProcTracker())
+	// Check the result of analyze.
+	is = dom.InfoSchema()
+	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tblStats = handle.GetTableStats(tbl.Meta())
+	require.NotNil(t, tblStats.Indices[2])
+	require.True(t, tblStats.Indices[2].IsAnalyzed())
 }
 
 func TestAnalyzePartitions(t *testing.T) {
@@ -198,6 +222,14 @@ func TestAnalyzePartitionIndexes(t *testing.T) {
 	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
 	require.False(t, tblStats.Pseudo)
 	require.Equal(t, int64(1), tblStats.RealtimeCount)
+	// Check the result of analyze index.
+	require.NotNil(t, tblStats.Indices[1])
+	require.True(t, tblStats.Indices[1].IsAnalyzed())
+	// partition p1
+	pid = tbl.Meta().GetPartitionInfo().Definitions[1].ID
+	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
+	require.False(t, tblStats.Pseudo)
+	require.Equal(t, int64(2), tblStats.RealtimeCount)
 	// Check the result of analyze index.
 	require.NotNil(t, tblStats.Indices[1])
 	require.True(t, tblStats.Indices[1].IsAnalyzed())
