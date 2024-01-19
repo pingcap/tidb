@@ -838,8 +838,9 @@ func RebaseAllocatorBases(ctx context.Context, maxIDs map[autoid.AllocatorType]i
 	if err2 != nil {
 		return errors.Trace(err2)
 	}
+	addrs := strings.Split(tidbCfg.Path, ",")
 	etcdCli, err := clientv3.New(clientv3.Config{
-		Endpoints:        []string{tidbCfg.Path},
+		Endpoints:        addrs,
 		AutoSyncInterval: 30 * time.Second,
 		TLS:              tls.TLSConfig(),
 	})
