@@ -157,11 +157,6 @@ func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren 
 			checker.reason = fmt.Sprintf("query has '%v' is un-cacheable", node.FnName.L)
 			return in, true
 		}
-		if found := expression.IsDeferredFunctions(checker.sctx, node.FnName.L); found {
-			checker.cacheable = false
-			checker.reason = fmt.Sprintf("query has '%v' is un-cacheable", node.FnName.L)
-			return in, true
-		}
 	case *ast.OrderByClause:
 		for _, item := range node.Items {
 			if _, isParamMarker := item.Expr.(*driver.ParamMarkerExpr); isParamMarker {
