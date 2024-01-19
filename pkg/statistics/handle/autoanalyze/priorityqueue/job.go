@@ -87,6 +87,10 @@ func (j *TableAnalysisJob) analyzeIndexes(
 	}
 }
 
+// analyzePartitions performs analysis on the specified partitions.
+// This function uses a batch mode for efficiency. After analyzing the partitions,
+// it's necessary to merge their statistics. By analyzing them in batches,
+// we can reduce the overhead of this merging process.
 func (j *TableAnalysisJob) analyzePartitions(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
@@ -110,6 +114,7 @@ func (j *TableAnalysisJob) analyzePartitions(
 	}
 }
 
+// analyzePartitionIndexes performs analysis on the specified partition indexes.
 func (j *TableAnalysisJob) analyzePartitionIndexes(
 	sctx sessionctx.Context,
 	statsHandle statstypes.StatsHandle,
