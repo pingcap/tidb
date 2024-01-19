@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 )
 
 // TableAnalysisJob defines the structure for table analysis job information.
@@ -44,15 +45,10 @@ func (j *TableAnalysisJob) Execute(
 	statsHandle statstypes.StatsHandle,
 	sysProcTracker sessionctx.SysProcTracker,
 ) error {
-	se, err := statsHandle.SPool().Get()
-	if err != nil {
-		return err
-	}
-	defer statsHandle.SPool().Put(se)
-
-	sctx := se.(sessionctx.Context)
-	j.analyze(sctx, statsHandle, sysProcTracker)
-	return nil
+	return statsutil.CallWithSCtx(statsHandle.SPool(), func(sctx sessionctx.Context) error {
+		j.analyze(sctx, statsHandle, sysProcTracker)
+		return nil
+	})
 }
 
 func (j *TableAnalysisJob) analyze(sctx sessionctx.Context, statsHandle statstypes.StatsHandle, sysProcTracker sessionctx.SysProcTracker) {
