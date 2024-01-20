@@ -151,13 +151,8 @@ retry:
 	metrics.AutoIDHistogram.WithLabelValues(metrics.TableAutoIDAlloc, metrics.RetLabel(err)).Observe(time.Since(start).Seconds())
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
-<<<<<<< HEAD:meta/autoid/autoid_service.go
 			time.Sleep(backoffDuration)
-			sp.ResetConn(err)
-=======
 			sp.resetConn(ver, err)
-			bo.Backoff()
->>>>>>> d8298d59356 (meta/autoid: make autoid client ResetConn operation concurrency-safe (#50522)):pkg/meta/autoid/autoid_service.go
 			goto retry
 		}
 		return 0, 0, errors.Trace(err)
@@ -197,12 +192,6 @@ func (d *ClientDiscover) ResetConn(reason error) {
 	d.mu.Unlock()
 	// Close grpc.ClientConn to release resource.
 	if grpcConn != nil {
-<<<<<<< HEAD:meta/autoid/autoid_service.go
-		err := grpcConn.Close()
-		if err != nil {
-			logutil.BgLogger().Warn("[autoid client] close grpc connection error", zap.Error(err))
-		}
-=======
 		go func() {
 			// Doen't close the conn immediately, in case the other sessions are still using it.
 			time.Sleep(200 * time.Millisecond)
@@ -211,7 +200,6 @@ func (d *ClientDiscover) ResetConn(reason error) {
 				logutil.BgLogger().Warn("close grpc connection error", zap.String("category", "autoid client"), zap.Error(err))
 			}
 		}()
->>>>>>> d8298d59356 (meta/autoid: make autoid client ResetConn operation concurrency-safe (#50522)):pkg/meta/autoid/autoid_service.go
 	}
 }
 
@@ -254,13 +242,8 @@ retry:
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "rpc error") {
-<<<<<<< HEAD:meta/autoid/autoid_service.go
 			time.Sleep(backoffDuration)
-			sp.ResetConn(err)
-=======
 			sp.resetConn(ver, err)
-			bo.Backoff()
->>>>>>> d8298d59356 (meta/autoid: make autoid client ResetConn operation concurrency-safe (#50522)):pkg/meta/autoid/autoid_service.go
 			goto retry
 		}
 		return errors.Trace(err)
