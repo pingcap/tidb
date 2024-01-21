@@ -109,6 +109,7 @@ func TestParallelSort(t *testing.T) {
 	}
 }
 
+// TODO update fail point
 func TestFailpoint(t *testing.T) {
 	ctx := mock.NewContext()
 	rowNum := 65536
