@@ -84,6 +84,7 @@ const (
 	flagPushDownTopN
 	flagSyncWaitStatsLoadPoint
 	flagJoinReOrder
+	flagEliminateProjectionAgain
 	flagPrunColumnsAgain
 	flagPushDownSequence
 	flagResolveExpand
@@ -111,7 +112,8 @@ var optRuleList = []logicalOptRule{
 	&pushDownTopNOptimizer{},
 	&syncWaitStatsLoadPoint{},
 	&joinReOrderSolver{},
-	&columnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
+	&projectionEliminator{}, // joinReOrderSolver may add new projection, thus add projectionEliminator here
+	&columnPruner{},         // column pruning again at last, note it will mess up the results of buildKeySolver
 	&pushDownSequenceSolver{},
 	&resolveExpand{},
 }
@@ -322,6 +324,9 @@ func doOptimize(
 	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
 		// When we use the straight Join Order hint, we should disable the join reorder optimization.
 		flag &= ^flagJoinReOrder
+	}
+	if flag&flagJoinReOrder > 0 {
+		flag |= flagEliminateProjectionAgain
 	}
 	flag |= flagCollectPredicateColumnsPoint
 	flag |= flagSyncWaitStatsLoadPoint
