@@ -15,9 +15,7 @@
 package sortexec
 
 import (
-	"container/list"
 	"math/rand"
-	"sync"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util"
@@ -25,48 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
-
-// All elements in publicQueue are row slices that have been sorted
-type sortedRowsList struct {
-	lock            sync.Mutex
-	sortedRowsQueue list.List
-}
-
-func (p *sortedRowsList) add(rows sortedRows) {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-	p.sortedRowsQueue.PushBack(rows)
-}
-
-func (p *sortedRowsList) fetchTwoSortedRows() (res1 sortedRows, res2 sortedRows) {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-
-	if p.sortedRowsQueue.Len() > 1 {
-		res1 := popFromList(&p.sortedRowsQueue)
-		res2 := popFromList(&p.sortedRowsQueue)
-		return res1, res2
-	}
-	return nil, nil
-}
-
-func (p *sortedRowsList) clear() {
-	p.lock.Lock()
-	defer p.lock.Unlock()
-	elem := p.sortedRowsQueue.Front()
-	for elem != nil {
-		p.sortedRowsQueue.Remove(elem)
-		elem = p.sortedRowsQueue.Front()
-	}
-}
-
-func (p *sortedRowsList) fetchSortedRowsNoLock() sortedRows {
-	return popFromList(&p.sortedRowsQueue)
-}
-
-func (p *sortedRowsList) getSortedRowsNumNoLock() int {
-	return p.sortedRowsQueue.Len()
-}
 
 type rowWithPartition struct {
 	row         chunk.Row
@@ -106,17 +62,6 @@ func processPanicAndLog(processError func(error), r interface{}) {
 	err := util.GetRecoverError(r)
 	processError(err)
 	logutil.BgLogger().Error("parallel sort panicked", zap.Error(err), zap.Stack("stack"))
-}
-
-// The type of Element.Value should always be `sortedRows`.
-func popFromList(l *list.List) sortedRows {
-	elem := l.Front()
-	if elem == nil {
-		return nil
-	}
-	res, _ := elem.Value.(sortedRows) // Should always success
-	l.Remove(elem)
-	return res
 }
 
 func injectParallelSortRandomFail() {

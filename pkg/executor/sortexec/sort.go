@@ -33,8 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
-type sortedRows []chunk.Row
-
 // SortExec represents sorting executor.
 type SortExec struct {
 	exec.BaseExecutor
@@ -75,19 +73,11 @@ type SortExec struct {
 	}
 
 	Parallel struct {
-		resultLock sync.Mutex
-		result     sortedRows
-		rowNum     int64
-		idx        int64
-
 		chunkChannel chan *chunk.Chunk
 		workers      []*parallelSortWorker
 
 		// Closed closeChannel means the finish of `fetchChunksParallel` function
 		closeChannel chan struct{}
-
-		// All workers' sorted rows will be put into this list to be merged
-		globalSortedRowsQueue *sortedRowsList
 
 		errRWLock *sync.RWMutex
 		err       error
@@ -121,11 +111,6 @@ func (e *SortExec) Close() error {
 				break
 			}
 		}
-		e.Parallel.globalSortedRowsQueue.clear()
-		e.Parallel.resultLock.Lock()
-		defer e.Parallel.resultLock.Unlock()
-		e.Parallel.result = nil
-		e.Parallel.rowNum = 0
 	}
 
 	if e.memTracker != nil {
@@ -154,11 +139,9 @@ func (e *SortExec) Open(ctx context.Context) error {
 	if e.IsUnparallel {
 		e.Unparallel.Idx = 0
 	} else {
-		e.Parallel.idx = 0
 		e.Parallel.workers = make([]*parallelSortWorker, e.Ctx().GetSessionVars().ExecutorConcurrency)
 		e.Parallel.closeChannel = make(chan struct{})
 		e.Parallel.chunkChannel = make(chan *chunk.Chunk, len(e.Parallel.workers))
-		e.Parallel.globalSortedRowsQueue = &sortedRowsList{}
 		e.Parallel.errRWLock = &sync.RWMutex{}
 		e.Parallel.err = nil
 		e.Parallel.sortedRowsIters = make([]chunk.Iterator4Slice, len(e.Parallel.workers))
@@ -301,9 +284,6 @@ func (e *SortExec) generateResultWithKWayMerge() {
 
 	maxChunkSize := e.MaxChunkSize()
 	resBuf := make([]chunk.Row, 0, maxChunkSize)
-
-	e.Parallel.resultLock.Lock()
-	defer e.Parallel.resultLock.Unlock()
 
 	for e.Parallel.kWayMerge.Len() > 0 {
 		for i := 0; i < maxChunkSize; i++ {
@@ -553,7 +533,7 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	})
 
 	for i := range e.Parallel.workers {
-		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.globalSortedRowsQueue, &e.Parallel.result, e.Parallel.chunkChannel, e.processErrorForParallel, e.finishCh, e.memTracker, &e.Parallel.sortedRowsIters[i], e.MaxChunkSize())
+		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.chunkChannel, e.processErrorForParallel, e.finishCh, e.memTracker, &e.Parallel.sortedRowsIters[i], e.MaxChunkSize())
 		worker := e.Parallel.workers[i]
 		workersWaiter.Run(func() {
 			worker.run()

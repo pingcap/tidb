@@ -34,11 +34,6 @@ type parallelSortWorker struct {
 
 	lessRowFunc func(chunk.Row, chunk.Row) int
 
-	// Temporarily store rows that will be sorted.
-	rowBuffer             sortedRows
-	result                *sortedRows
-	globalSortedRowsQueue *sortedRowsList
-
 	chunkChannel chan *chunk.Chunk
 	processError func(error)
 	finishCh     chan struct{}
@@ -56,8 +51,6 @@ type parallelSortWorker struct {
 func newParallelSortWorker(
 	workerIDForTest int,
 	lessRowFunc func(chunk.Row, chunk.Row) int,
-	globalSortedRowsQueue *sortedRowsList,
-	result *sortedRows,
 	chunkChannel chan *chunk.Chunk,
 	processError func(error),
 	finishCh chan struct{},
@@ -65,17 +58,15 @@ func newParallelSortWorker(
 	sortedRowsIter *chunk.Iterator4Slice,
 	maxChunkSize int) *parallelSortWorker {
 	return &parallelSortWorker{
-		workerIDForTest:       workerIDForTest,
-		lessRowFunc:           lessRowFunc,
-		globalSortedRowsQueue: globalSortedRowsQueue,
-		result:                result,
-		chunkChannel:          chunkChannel,
-		processError:          processError,
-		finishCh:              finishCh,
-		timesOfRowCompare:     0,
-		memTracker:            memTracker,
-		sortedRowsIter:        sortedRowsIter,
-		maxSortedRowsLimit:    maxChunkSize * 30,
+		workerIDForTest:    workerIDForTest,
+		lessRowFunc:        lessRowFunc,
+		chunkChannel:       chunkChannel,
+		processError:       processError,
+		finishCh:           finishCh,
+		timesOfRowCompare:  0,
+		memTracker:         memTracker,
+		sortedRowsIter:     sortedRowsIter,
+		maxSortedRowsLimit: maxChunkSize * 30,
 	}
 }
 
