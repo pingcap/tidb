@@ -95,18 +95,19 @@ func TestSchedulerExtLocalSort(t *testing.T) {
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
-	task.Step = ext.GetNextStep(task)
-	require.Equal(t, proto.ImportStepImport, task.Step)
+	nextStep := ext.GetNextStep(task)
+	require.Equal(t, proto.ImportStepImport, nextStep)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "running", gotJobInfo.Status)
 	// update task/subtask, and finish subtask, so we can go to next stage
 	subtasks := make([]*proto.Subtask, 0, len(subtaskMetas))
-	for _, m := range subtaskMetas {
-		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", 1, m, 0))
+	for i, m := range subtaskMetas {
+		subtasks = append(subtasks, proto.NewSubtask(nextStep, task.ID, task.Type, "", 1, m, i+1))
 	}
-	_, err = manager.UpdateTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
+	err = manager.SwitchTaskStep(ctx, task, proto.TaskStateRunning, nextStep, subtasks)
 	require.NoError(t, err)
+	task.Step = nextStep
 	gotSubtasks, err := manager.GetSubtasksWithHistory(ctx, taskID, proto.ImportStepImport)
 	require.NoError(t, err)
 	for _, s := range gotSubtasks {
@@ -240,18 +241,19 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	subtaskMetas, err := ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 2)
-	task.Step = ext.GetNextStep(task)
-	require.Equal(t, proto.ImportStepEncodeAndSort, task.Step)
+	nextStep := ext.GetNextStep(task)
+	require.Equal(t, proto.ImportStepEncodeAndSort, nextStep)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "global-sorting", gotJobInfo.Step)
 	// update task/subtask, and finish subtask, so we can go to next stage
 	subtasks := make([]*proto.Subtask, 0, len(subtaskMetas))
-	for _, m := range subtaskMetas {
-		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", 1, m, 0))
+	for i, m := range subtaskMetas {
+		subtasks = append(subtasks, proto.NewSubtask(nextStep, task.ID, task.Type, "", 1, m, i+1))
 	}
-	_, err = manager.UpdateTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
+	err = manager.SwitchTaskStep(ctx, task, proto.TaskStatePending, nextStep, subtasks)
+	task.Step = nextStep
 	require.NoError(t, err)
 	gotSubtasks, err := manager.GetSubtasksWithHistory(ctx, taskID, task.Step)
 	require.NoError(t, err)
@@ -297,19 +299,20 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(task))
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
-	task.Step = ext.GetNextStep(task)
-	require.Equal(t, proto.ImportStepMergeSort, task.Step)
+	nextStep = ext.GetNextStep(task)
+	require.Equal(t, proto.ImportStepMergeSort, nextStep)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "global-sorting", gotJobInfo.Step)
 	// update task/subtask, and finish subtask, so we can go to next stage
 	subtasks = make([]*proto.Subtask, 0, len(subtaskMetas))
-	for _, m := range subtaskMetas {
-		subtasks = append(subtasks, proto.NewSubtask(task.Step, task.ID, task.Type, "", 1, m, 0))
+	for i, m := range subtaskMetas {
+		subtasks = append(subtasks, proto.NewSubtask(nextStep, task.ID, task.Type, "", 1, m, i+1))
 	}
-	_, err = manager.UpdateTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
+	err = manager.SwitchTaskStep(ctx, task, proto.TaskStatePending, nextStep, subtasks)
 	require.NoError(t, err)
+	task.Step = nextStep
 	gotSubtasks, err = manager.GetSubtasksWithHistory(ctx, taskID, task.Step)
 	require.NoError(t, err)
 	mergeSortStepMeta := &importinto.MergeSortStepMeta{

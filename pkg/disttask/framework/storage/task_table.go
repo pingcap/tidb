@@ -29,8 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -483,26 +481,6 @@ func (mgr *TaskManager) HasSubtasksInStates(ctx context.Context, tidbID string, 
 	return len(rs) > 0, nil
 }
 
-// GetTaskExecutorIDsByTaskID gets the task executor IDs of the given task ID.
-func (mgr *TaskManager) GetTaskExecutorIDsByTaskID(ctx context.Context, taskID int64) ([]string, error) {
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select distinct(exec_id) from mysql.tidb_background_subtask
-		where task_key = %?`, taskID)
-	if err != nil {
-		return nil, err
-	}
-	if len(rs) == 0 {
-		return nil, nil
-	}
-
-	instanceIDs := make([]string, 0, len(rs))
-	for _, r := range rs {
-		id := r.GetString(0)
-		instanceIDs = append(instanceIDs, id)
-	}
-
-	return instanceIDs, nil
-}
-
 // UpdateSubtasksExecIDs update subtasks' execID.
 func (mgr *TaskManager) UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.Subtask) error {
 	// skip the update process.
@@ -657,82 +635,6 @@ func (*TaskManager) splitSubtasks(subtasks []*proto.Subtask) [][]*proto.Subtask 
 		res = append(res, currBatch)
 	}
 	return res
-}
-
-// UpdateTaskAndAddSubTasks update the task and add new subtasks
-// TODO: remove this when we remove reverting subtasks.
-func (mgr *TaskManager) UpdateTaskAndAddSubTasks(ctx context.Context, task *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error) {
-	retryable := true
-	err := mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
-		_, err := sqlexec.ExecSQL(ctx, se, "update mysql.tidb_global_task "+
-			"set state = %?, dispatcher_id = %?, step = %?, concurrency = %?, meta = %?, error = %?, state_update_time = CURRENT_TIMESTAMP()"+
-			"where id = %? and state = %?",
-			task.State, task.SchedulerID, task.Step, task.Concurrency, task.Meta, serializeErr(task.Error), task.ID, prevState)
-		if err != nil {
-			return err
-		}
-		// When AffectedRows == 0, means other admin command have changed the task state, it's illegal to schedule subtasks.
-		if se.GetSessionVars().StmtCtx.AffectedRows() == 0 {
-			if !intest.InTest {
-				// task state have changed by other admin command
-				retryable = false
-				return errors.New("invalid task state transform, state already changed")
-			}
-			// TODO: remove it, when OnNextSubtasksBatch returns subtasks, just insert subtasks without updating tidb_global_task.
-			// Currently the business running on distributed task framework will update proto.Task in OnNextSubtasksBatch.
-			// So when scheduling subtasks, framework needs to update task and insert subtasks in one Txn.
-			//
-			// In future, it's needed to restrict changes of task in OnNextSubtasksBatch.
-			// If OnNextSubtasksBatch won't update any fields in proto.Task, we can insert subtasks only.
-			//
-			// For now, we update nothing in proto.Task in UT's OnNextSubtasksBatch, so the AffectedRows will be 0. So UT can't fully compatible
-			// with current UpdateTaskAndAddSubTasks implementation.
-			rs, err := sqlexec.ExecSQL(ctx, se, "select id from mysql.tidb_global_task where id = %? and state = %?", task.ID, prevState)
-			if err != nil {
-				return err
-			}
-			// state have changed.
-			if len(rs) == 0 {
-				retryable = false
-				return errors.New("invalid task state transform, state already changed")
-			}
-		}
-
-		failpoint.Inject("MockUpdateTaskErr", func(val failpoint.Value) {
-			if val.(bool) {
-				failpoint.Return(errors.New("updateTaskErr"))
-			}
-		})
-		if len(subtasks) > 0 {
-			subtaskState := proto.SubtaskStatePending
-			if task.State == proto.TaskStateReverting {
-				subtaskState = proto.SubtaskStateRevertPending
-			}
-
-			sql := new(strings.Builder)
-			if err := sqlescape.FormatSQL(sql, `insert into mysql.tidb_background_subtask(`+InsertSubtaskColumns+`) values`); err != nil {
-				return err
-			}
-			for i, subtask := range subtasks {
-				if i != 0 {
-					if err := sqlescape.FormatSQL(sql, ","); err != nil {
-						return err
-					}
-				}
-				if err := sqlescape.FormatSQL(sql, "(%?, %?, %?, %?, %?, %?, %?, NULL, CURRENT_TIMESTAMP(), '{}', '{}')",
-					subtask.Step, task.ID, subtask.ExecID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), subtask.Concurrency); err != nil {
-					return err
-				}
-			}
-			_, err := sqlexec.ExecSQL(ctx, se, sql.String())
-			if err != nil {
-				return nil
-			}
-		}
-		return nil
-	})
-
-	return retryable, err
 }
 
 func serializeErr(err error) []byte {

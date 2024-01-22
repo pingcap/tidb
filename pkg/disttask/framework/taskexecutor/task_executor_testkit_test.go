@@ -40,25 +40,22 @@ func runOneTask(ctx context.Context, t *testing.T, mgr *storage.TaskManager, tas
 	task, err := mgr.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
 	// 1. stepOne
-	task.Step = proto.StepOne
-	task.State = proto.TaskStateRunning
-	_, err = mgr.UpdateTaskAndAddSubTasks(ctx, task, nil, proto.TaskStatePending)
+	err = mgr.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil)
 	require.NoError(t, err)
 	for i := 0; i < subtaskCnt; i++ {
-		testutil.CreateSubTask(t, mgr, taskID, proto.StepOne, "test", nil, proto.TaskTypeExample, 11, false)
+		testutil.CreateSubTask(t, mgr, taskID, proto.StepOne, ":4000", nil, proto.TaskTypeExample, 11)
 	}
 	task, err = mgr.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
 	factory := taskexecutor.GetTaskExecutorFactory(task.Type)
 	require.NotNil(t, factory)
-	executor := factory(ctx, "test", task, mgr)
+	executor := factory(ctx, ":4000", task, mgr)
 	require.NoError(t, executor.RunStep(ctx, task, nil))
 	// 2. stepTwo
-	task.Step = proto.StepTwo
-	_, err = mgr.UpdateTaskAndAddSubTasks(ctx, task, nil, proto.TaskStateRunning)
+	err = mgr.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepTwo, nil)
 	require.NoError(t, err)
 	for i := 0; i < subtaskCnt; i++ {
-		testutil.CreateSubTask(t, mgr, taskID, proto.StepTwo, "test", nil, proto.TaskTypeExample, 11, false)
+		testutil.CreateSubTask(t, mgr, taskID, proto.StepTwo, ":4000", nil, proto.TaskTypeExample, 11)
 	}
 	task, err = mgr.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
