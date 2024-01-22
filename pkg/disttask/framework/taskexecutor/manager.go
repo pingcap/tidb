@@ -40,7 +40,9 @@ import (
 var (
 	executorPoolSize int32 = 4
 	// same as scheduler
-	checkTime               = 300 * time.Millisecond
+	checkInterval           = 300 * time.Millisecond
+	maxCheckInterval        = 2 * time.Second
+	maxChecksWhenNoSubtask  = 7
 	recoverMetaInterval     = 90 * time.Second
 	retrySQLTimes           = 30
 	retrySQLInterval        = 500 * time.Millisecond
@@ -200,7 +202,7 @@ func (m *Manager) Stop() {
 // NOT running by executor before mark the task as paused.
 func (m *Manager) handleTasksLoop() {
 	defer tidbutil.Recover(metrics.LabelDomain, "handleTasksLoop", m.handleTasksLoop, false)
-	ticker := time.NewTicker(checkTime)
+	ticker := time.NewTicker(checkInterval)
 	for {
 		select {
 		case <-m.ctx.Done():
@@ -382,7 +384,7 @@ func (m *Manager) handleExecutableTask(task *proto.Task) {
 		case <-m.ctx.Done():
 			m.logger.Info("handleExecutableTask exit for cancel", zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type))
 			return
-		case <-time.After(checkTime):
+		case <-time.After(checkInterval):
 		}
 		failpoint.Inject("mockStopManager", func() {
 			testContexts.Store(m.id, &TestContext{make(chan struct{}), atomic.Bool{}})
