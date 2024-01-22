@@ -262,31 +262,34 @@ func (rc *Client) InitCheckpoint(
 	taskName string,
 	config *pdutil.ClusterConfig,
 	useCheckpoint bool,
-) (map[int64]map[string]struct{}, *pdutil.ClusterConfig, error) {
+) (map[int64]map[string]struct{}, *pdutil.ClusterConfig, bool, error) {
 	var (
 		// checkpoint sets distinguished by range key
 		checkpointSetWithTableID = make(map[int64]map[string]struct{})
 
 		checkpointClusterConfig *pdutil.ClusterConfig
+
+		firstRun bool = true
 	)
 
 	// if not use checkpoint, return empty checkpoint ranges and new gc-safepoint id
 	if !useCheckpoint {
-		return checkpointSetWithTableID, nil, nil
+		return checkpointSetWithTableID, nil, firstRun, nil
 	}
 
 	// if the checkpoint metadata exists in the external storage, the restore is not
 	// for the first time.
 	exists, err := checkpoint.ExistsRestoreCheckpoint(ctx, s, taskName)
 	if err != nil {
-		return checkpointSetWithTableID, nil, errors.Trace(err)
+		return checkpointSetWithTableID, nil, firstRun, errors.Trace(err)
 	}
 
 	if exists {
+		firstRun = false
 		// load the checkpoint since this is not the first time to restore
 		meta, err := checkpoint.LoadCheckpointMetadataForRestore(ctx, s, taskName)
 		if err != nil {
-			return checkpointSetWithTableID, nil, errors.Trace(err)
+			return checkpointSetWithTableID, nil, firstRun, errors.Trace(err)
 		}
 
 		// The schedulers config is nil, so the restore-schedulers operation is just nil.
@@ -306,12 +309,12 @@ func (rc *Client) InitCheckpoint(
 			checkpointSet[rangeKey.RangeKey] = struct{}{}
 		})
 		if err != nil {
-			return checkpointSetWithTableID, nil, errors.Trace(err)
+			return checkpointSetWithTableID, nil, firstRun, errors.Trace(err)
 		}
 		// t2 is the latest time the checkpoint checksum persisted to the external storage.
 		checkpointChecksum, t2, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, s, taskName)
 		if err != nil {
-			return checkpointSetWithTableID, nil, errors.Trace(err)
+			return checkpointSetWithTableID, nil, firstRun, errors.Trace(err)
 		}
 		rc.checkpointChecksum = checkpointChecksum
 		// use the later time to adjust the summary elapsed time.
@@ -328,12 +331,12 @@ func (rc *Client) InitCheckpoint(
 			meta.SchedulersConfig = &pdutil.ClusterConfig{Schedulers: config.Schedulers, ScheduleCfg: config.ScheduleCfg}
 		}
 		if err = checkpoint.SaveCheckpointMetadataForRestore(ctx, s, meta, taskName); err != nil {
-			return checkpointSetWithTableID, nil, errors.Trace(err)
+			return checkpointSetWithTableID, nil, firstRun, errors.Trace(err)
 		}
 	}
 
 	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, s, rc.cipher, taskName)
-	return checkpointSetWithTableID, checkpointClusterConfig, errors.Trace(err)
+	return checkpointSetWithTableID, checkpointClusterConfig, firstRun, errors.Trace(err)
 }
 
 func (rc *Client) WaitForFinishCheckpoint(ctx context.Context, flush bool) {

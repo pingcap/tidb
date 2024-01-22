@@ -751,9 +751,10 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	}()
 
 	var checkpointSetWithTableID map[int64]map[string]struct{}
+	var checkpointFirstRun bool
 	if cfg.UseCheckpoint {
 		taskName := cfg.generateSnapshotRestoreTaskName(client.GetClusterID(ctx))
-		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(ctx, s, taskName, schedulersConfig, cfg.UseCheckpoint)
+		sets, restoreSchedulersConfigFromCheckpoint, firstRun, err := client.InitCheckpoint(ctx, s, taskName, schedulersConfig, cfg.UseCheckpoint)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -761,6 +762,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			restoreSchedulers = mgr.MakeUndoFunctionByConfig(*restoreSchedulersConfigFromCheckpoint)
 		}
 		checkpointSetWithTableID = sets
+		checkpointFirstRun = firstRun
 
 		defer func() {
 			// need to flush the whole checkpoint data so that br can quickly jump to
@@ -772,7 +774,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	if isFullRestore(cmdName) {
 		// we need check cluster is fresh every time. except restore from a checkpoint.
-		if client.IsFull() && len(checkpointSetWithTableID) == 0 {
+		if client.IsFull() && checkpointFirstRun {
 			if err = client.CheckTargetClusterFresh(ctx); err != nil {
 				return errors.Trace(err)
 			}
