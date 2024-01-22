@@ -282,6 +282,8 @@ func (e *SortExec) generateResultWithKWayMerge() {
 		}
 	}()
 
+	e.initKWayMerge()
+
 	maxChunkSize := e.MaxChunkSize()
 	resBuf := make([]chunk.Row, 0, maxChunkSize)
 
@@ -554,7 +556,6 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 		return err
 	}
 
-	e.initKWayMerge()
 	go e.generateResultWithKWayMerge()
 	return nil
 }
