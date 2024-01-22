@@ -800,26 +800,17 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		log.Info("finish removing pd scheduler")
 	}()
 
-	var checkpointSetWithTableID map[int64]map[string]struct{}
-	var checkpointFirstRun bool
+	var checkpointTaskName string
+	var checkpointFirstRun bool = true
 	if cfg.UseCheckpoint {
-		taskName := cfg.generateSnapshotRestoreTaskName(client.GetClusterID(ctx))
-		sets, restoreSchedulersConfigFromCheckpoint, firstRun, err := client.InitCheckpoint(ctx, s, taskName, schedulersConfig, cfg.UseCheckpoint)
+		checkpointTaskName = cfg.generateSnapshotRestoreTaskName(client.GetClusterID(ctx))
+		// if the checkpoint metadata exists in the external storage, the restore is not
+		// for the first time.
+		existsCheckpointMetadata, err := checkpoint.ExistsRestoreCheckpoint(ctx, s, checkpointTaskName)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if restoreSchedulersConfigFromCheckpoint != nil {
-			restoreSchedulers = mgr.MakeUndoFunctionByConfig(*restoreSchedulersConfigFromCheckpoint)
-		}
-		checkpointSetWithTableID = sets
-		checkpointFirstRun = firstRun
-
-		defer func() {
-			// need to flush the whole checkpoint data so that br can quickly jump to
-			// the log kv restore step when the next retry.
-			log.Info("wait for flush checkpoint...")
-			client.WaitForFinishCheckpoint(ctx, len(cfg.FullBackupStorage) > 0 || !schedulersRemovable)
-		}()
+		checkpointFirstRun = !existsCheckpointMetadata
 	}
 
 	if isFullRestore(cmdName) {
@@ -842,6 +833,26 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		if err = client.CheckSysTableCompatibility(mgr.GetDomain(), tables); err != nil {
 			return errors.Trace(err)
 		}
+	}
+
+	// reload or register the checkpoint
+	var checkpointSetWithTableID map[int64]map[string]struct{}
+	if cfg.UseCheckpoint {
+		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(ctx, s, checkpointTaskName, schedulersConfig, checkpointFirstRun)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if restoreSchedulersConfigFromCheckpoint != nil {
+			restoreSchedulers = mgr.MakeUndoFunctionByConfig(*restoreSchedulersConfigFromCheckpoint)
+		}
+		checkpointSetWithTableID = sets
+
+		defer func() {
+			// need to flush the whole checkpoint data so that br can quickly jump to
+			// the log kv restore step when the next retry.
+			log.Info("wait for flush checkpoint...")
+			client.WaitForFinishCheckpoint(ctx, len(cfg.FullBackupStorage) > 0 || !schedulersRemovable)
+		}()
 	}
 
 	sp := utils.BRServiceSafePoint{
