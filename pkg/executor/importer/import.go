@@ -60,6 +60,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	kvconfig "github.com/tikv/client-go/v2/config"
+	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -164,9 +166,15 @@ func (t DataSourceType) String() string {
 	return string(t)
 }
 
-// GetKVStore returns a kv.Storage.
-// kv encoder of physical mode needs it.
-var GetKVStore func(path string, tls kvconfig.Security) (tidbkv.Storage, error)
+var (
+	// GetKVStore returns a kv.Storage.
+	// kv encoder of physical mode needs it.
+	GetKVStore func(path string, tls kvconfig.Security) (tidbkv.Storage, error)
+	// NewClientWithContext returns a kv.Client.
+	NewClientWithContext = pd.NewClientWithContext
+	// NewPDHttpClient returns a pdhttp.Client.
+	NewPDHttpClient = pdhttp.NewClient
+)
 
 // FieldMapping indicates the relationship between input field and table column or user variable
 type FieldMapping struct {

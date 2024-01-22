@@ -37,11 +37,11 @@ func TestImportTaskExecutor(t *testing.T) {
 	require.True(t, executor.IsIdempotent(&proto.Subtask{}))
 
 	for _, step := range []proto.Step{
-		StepImport,
-		StepEncodeAndSort,
-		StepMergeSort,
-		StepWriteAndIngest,
-		StepPostProcess,
+		proto.ImportStepImport,
+		proto.ImportStepEncodeAndSort,
+		proto.ImportStepMergeSort,
+		proto.ImportStepWriteAndIngest,
+		proto.ImportStepPostProcess,
 	} {
 		exe, err := executor.GetStepExecutor(ctx, &proto.Task{Step: step, Meta: []byte("{}")}, nil, nil)
 		require.NoError(t, err)
@@ -49,6 +49,6 @@ func TestImportTaskExecutor(t *testing.T) {
 	}
 	_, err := executor.GetStepExecutor(ctx, &proto.Task{Step: proto.StepInit, Meta: []byte("{}")}, nil, nil)
 	require.Error(t, err)
-	_, err = executor.GetStepExecutor(ctx, &proto.Task{Step: StepImport, Meta: []byte("")}, nil, nil)
+	_, err = executor.GetStepExecutor(ctx, &proto.Task{Step: proto.ImportStepImport, Meta: []byte("")}, nil, nil)
 	require.Error(t, err)
 }

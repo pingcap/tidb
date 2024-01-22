@@ -131,7 +131,7 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) (*Man
 		slotMgr:  newSlotManager(),
 		nodeMgr:  newNodeManager(),
 	}
-	gPool, err := spool.NewPool("schedule_pool", int32(proto.MaxConcurrentTask), util.DistTask, spool.WithBlocking(true))
+	gPool, err := spool.NewPool("scheduler_pool", int32(proto.MaxConcurrentTask), util.DistTask, spool.WithBlocking(true))
 	if err != nil {
 		return nil, err
 	}
@@ -273,7 +273,7 @@ func (sm *Manager) gcSubtaskHistoryTableLoop() {
 		<-WaitTaskFinished
 	})
 
-	logutil.Logger(sm.ctx).Info("subtask table gc loop start")
+	logutil.BgLogger().Info("subtask table gc loop start")
 	ticker := time.NewTicker(historySubtaskTableGcInterval)
 	defer ticker.Stop()
 	for {
@@ -286,7 +286,7 @@ func (sm *Manager) gcSubtaskHistoryTableLoop() {
 			if err != nil {
 				logutil.BgLogger().Warn("subtask history table gc failed", zap.Error(err))
 			} else {
-				logutil.Logger(sm.ctx).Info("subtask history table gc success")
+				logutil.BgLogger().Info("subtask history table gc success")
 			}
 		}
 	}
@@ -328,7 +328,7 @@ func (sm *Manager) startScheduler(basicTask *proto.Task, reservedExecID string) 
 }
 
 func (sm *Manager) cleanupTaskLoop() {
-	logutil.Logger(sm.ctx).Info("cleanUp loop start")
+	logutil.BgLogger().Info("cleanUp loop start")
 	ticker := time.NewTicker(DefaultCleanUpInterval)
 	defer ticker.Stop()
 	for {
@@ -365,7 +365,7 @@ func (sm *Manager) doCleanupTask() {
 	if len(tasks) == 0 {
 		return
 	}
-	logutil.Logger(sm.ctx).Info("cleanUp routine start")
+	logutil.BgLogger().Info("cleanUp routine start")
 	err = sm.cleanUpFinishedTasks(tasks)
 	if err != nil {
 		logutil.BgLogger().Warn("cleanUp routine failed", zap.Error(err))
@@ -374,7 +374,7 @@ func (sm *Manager) doCleanupTask() {
 	failpoint.Inject("WaitCleanUpFinished", func() {
 		WaitCleanUpFinished <- struct{}{}
 	})
-	logutil.Logger(sm.ctx).Info("cleanUp routine success")
+	logutil.BgLogger().Info("cleanUp routine success")
 }
 
 func (sm *Manager) cleanUpFinishedTasks(tasks []*proto.Task) error {

@@ -279,6 +279,7 @@ func (ds *DataSource) generateIndexMergeOrPaths(filters []expression.Expression)
 // (1) there's no IndexMerge hint, (2) there's IndexMerge hint but no specified index names, or (3) the input index
 // name is specified in the IndexMerge hints.
 func (ds *DataSource) isInIndexMergeHints(name string) bool {
+	// if no index merge hints, all mv index is accessible
 	if len(ds.indexMergeHints) == 0 {
 		return true
 	}
@@ -915,6 +916,11 @@ func (ds *DataSource) generateIndexMergeOnDNF4MVIndex(normalPathCnt int, filters
 			continue // not a MVIndex path
 		}
 
+		// for single MV index usage, if specified use the specified one, if not, all can be access and chosen by cost model.
+		if !ds.isInIndexMergeHints(ds.possibleAccessPaths[idx].Index.Name.L) {
+			continue
+		}
+
 		idxCols, ok := PrepareCols4MVIndex(ds.table.Meta(), ds.possibleAccessPaths[idx].Index, ds.TblCols)
 		if !ok {
 			continue
@@ -1174,6 +1180,11 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 	for idx := 0; idx < normalPathCnt; idx++ {
 		if !isMVIndexPath(ds.possibleAccessPaths[idx]) {
 			continue // not a MVIndex path
+		}
+
+		// for single MV index usage, if specified use the specified one, if not, all can be access and chosen by cost model.
+		if !ds.isInIndexMergeHints(ds.possibleAccessPaths[idx].Index.Name.L) {
+			continue
 		}
 
 		idxCols, ok := PrepareCols4MVIndex(ds.table.Meta(), ds.possibleAccessPaths[idx].Index, ds.TblCols)

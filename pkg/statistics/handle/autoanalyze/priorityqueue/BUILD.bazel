@@ -11,6 +11,9 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/statistics/handle/autoanalyze/exec",
+        "//pkg/statistics/handle/types",
         "//pkg/statistics/handle/util",
     ],
 )
@@ -20,13 +23,15 @@ go_test(
     timeout = "short",
     srcs = [
         "interval_test.go",
+        "job_test.go",
         "main_test.go",
         "queue_test.go",
     ],
     embed = [":priorityqueue"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 10,
     deps = [
+        "//pkg/parser/model",
         "//pkg/session",
         "//pkg/sessionctx",
         "//pkg/testkit",

@@ -39,14 +39,6 @@ import (
 )
 
 func TestBackfillingSchedulerLocalMode(t *testing.T) {
-	/// test str
-	require.Equal(t, "init", ddl.StepStr(proto.StepInit))
-	require.Equal(t, "read-index", ddl.StepStr(ddl.StepReadIndex))
-	require.Equal(t, "merge-sort", ddl.StepStr(ddl.StepMergeSort))
-	require.Equal(t, "write&ingest", ddl.StepStr(ddl.StepWriteAndIngest))
-	require.Equal(t, "done", ddl.StepStr(proto.StepDone))
-	require.Equal(t, "unknown", ddl.StepStr(111))
-
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sch, err := ddl.NewBackfillingSchedulerExt(dom.DDL())
 	require.NoError(t, err)
@@ -68,7 +60,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 
 	// 1.1 OnNextSubtasksBatch
 	task.Step = sch.GetNextStep(task)
-	require.Equal(t, ddl.StepReadIndex, task.Step)
+	require.Equal(t, proto.BackfillStepReadIndex, task.Step)
 	execIDs := []string{":4000"}
 	metas, err := sch.OnNextSubtasksBatch(context.Background(), nil, task, execIDs, task.Step)
 	require.NoError(t, err)
@@ -79,7 +71,7 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 		require.Equal(t, par.ID, subTask.PhysicalTableID)
 	}
 
-	// 1.2 test partition table OnNextSubtasksBatch after StepReadIndex
+	// 1.2 test partition table OnNextSubtasksBatch after BackfillStepReadIndex
 	task.State = proto.TaskStateRunning
 	task.Step = sch.GetNextStep(task)
 	require.Equal(t, proto.StepDone, task.Step)
@@ -110,8 +102,8 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 	metas, err = sch.OnNextSubtasksBatch(context.Background(), nil, task, execIDs, task.Step)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(metas))
-	require.Equal(t, ddl.StepReadIndex, task.Step)
-	// 2.2.2 StepReadIndex
+	require.Equal(t, proto.BackfillStepReadIndex, task.Step)
+	// 2.2.2 BackfillStepReadIndex
 	task.State = proto.TaskStateRunning
 	task.Step = sch.GetNextStep(task)
 	require.Equal(t, proto.StepDone, task.Step)
@@ -179,7 +171,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(task)
-	require.Equal(t, ddl.StepReadIndex, task.Step)
+	require.Equal(t, proto.BackfillStepReadIndex, task.Step)
 	// update task/subtask, and finish subtask, so we can go to next stage
 	subtasks := make([]*proto.Subtask, 0, len(subtaskMetas))
 	for _, m := range subtaskMetas {
@@ -187,7 +179,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	}
 	_, err = mgr.UpdateTaskAndAddSubTasks(ctx, task, subtasks, proto.TaskStatePending)
 	require.NoError(t, err)
-	gotSubtasks, err := mgr.GetSubtasksWithHistory(ctx, taskID, ddl.StepReadIndex)
+	gotSubtasks, err := mgr.GetSubtasksWithHistory(ctx, taskID, proto.BackfillStepReadIndex)
 	require.NoError(t, err)
 
 	// update meta, same as import into.
@@ -219,7 +211,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(task)
-	require.Equal(t, ddl.StepMergeSort, task.Step)
+	require.Equal(t, proto.BackfillStepMergeSort, task.Step)
 
 	// update meta, same as import into.
 	subtasks = make([]*proto.Subtask, 0, len(subtaskMetas))
@@ -258,7 +250,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, subtaskMetas, 1)
 	task.Step = ext.GetNextStep(task)
-	require.Equal(t, ddl.StepWriteAndIngest, task.Step)
+	require.Equal(t, proto.BackfillStepWriteAndIngest, task.Step)
 	// 4. to done stage.
 	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, sch, task, execIDs, ext.GetNextStep(task))
 	require.NoError(t, err)
@@ -274,14 +266,14 @@ func TestGetNextStep(t *testing.T) {
 	ext := &ddl.BackfillingSchedulerExt{}
 
 	// 1. local mode
-	for _, nextStep := range []proto.Step{ddl.StepReadIndex, proto.StepDone} {
+	for _, nextStep := range []proto.Step{proto.BackfillStepReadIndex, proto.StepDone} {
 		require.Equal(t, nextStep, ext.GetNextStep(task))
 		task.Step = nextStep
 	}
 	// 2. global sort mode
 	ext = &ddl.BackfillingSchedulerExt{GlobalSort: true}
 	task.Step = proto.StepInit
-	for _, nextStep := range []proto.Step{ddl.StepReadIndex, ddl.StepMergeSort, ddl.StepWriteAndIngest} {
+	for _, nextStep := range []proto.Step{proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest} {
 		require.Equal(t, nextStep, ext.GetNextStep(task))
 		task.Step = nextStep
 	}
