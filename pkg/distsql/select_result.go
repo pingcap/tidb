@@ -404,7 +404,9 @@ func (r *selectResult) fetchResp(ctx context.Context) error {
 		if ok {
 			copStats := hasStats.GetCopRuntimeStats()
 			if copStats != nil {
-				r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime())
+				if err := r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime()); err != nil {
+					return err
+				}
 				copStats.CopTime = duration
 				sc.MergeExecDetails(&copStats.ExecDetails, nil)
 			}
