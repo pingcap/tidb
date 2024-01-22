@@ -2183,32 +2183,3 @@ func TestTiDBUpgradeToVer179(t *testing.T) {
 
 	dom.Close()
 }
-
-func TestTiDBUpgradeToVer184(t *testing.T) {
-	store, _ := CreateStoreAndBootstrap(t)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
-	ver183 := version183
-	seV183 := CreateSessionAndSetID(t, store)
-	txn, err := store.Begin()
-	require.NoError(t, err)
-	m := meta.NewMeta(txn)
-	err = m.FinishBootstrap(int64(ver183))
-	require.NoError(t, err)
-	MustExec(t, seV183, fmt.Sprintf("update mysql.tidb set variable_value=%d where variable_name='tidb_server_version'", ver183))
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-
-	unsetStoreBootstrapped(store.UUID())
-	ver, err := getBootstrapVersion(seV183)
-	require.NoError(t, err)
-	require.Equal(t, int64(ver183), ver)
-
-	dom, err := BootstrapSession(store)
-	require.NoError(t, err)
-	ver, err = getBootstrapVersion(seV183)
-	require.NoError(t, err)
-	require.Less(t, int64(ver183), ver)
-	dom.Close()
-}
