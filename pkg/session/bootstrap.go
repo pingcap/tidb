@@ -612,7 +612,7 @@ const (
         host VARCHAR(100) NOT NULL PRIMARY KEY,
         role VARCHAR(64),
         cpu_count int default 0,
-		dead BOOL NOT NULL DEFAULT FALSE,
+        dead BOOL NOT NULL DEFAULT FALSE,
         keyspace_id bigint(8) NOT NULL DEFAULT -1
     );`
 
@@ -1066,6 +1066,7 @@ const (
 	version183 = 183
 
 	// version 184
+	//   add dead to `mysql.dist_framework_meta`
 	version184 = 184
 )
 
