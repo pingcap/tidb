@@ -19,15 +19,16 @@ import "sync"
 // Limiter will block on Acquire if the number it has acquired and not released
 // exceeds the limit.
 type Limiter struct {
-	limit    int
-	mu       sync.Mutex
-	waitNums []int
-	waitChs  []chan struct{}
+	initLimit int
+	limit     int
+	mu        sync.Mutex
+	waitNums  []int
+	waitChs   []chan struct{}
 }
 
 // NewLimiter creates a new Limiter with the given limit.
 func NewLimiter(limit int) *Limiter {
-	return &Limiter{limit: limit}
+	return &Limiter{limit: limit, initLimit: limit}
 }
 
 // Acquire acquires n tokens from the limiter. If the number of tokens acquired
@@ -61,6 +62,10 @@ func (l *Limiter) Release(n int) {
 		close(l.waitChs[0])
 		l.waitNums = l.waitNums[1:]
 		l.waitChs = l.waitChs[1:]
+	}
+
+	if l.limit > l.initLimit {
+		panic("limit overflow")
 	}
 
 	l.mu.Unlock()
