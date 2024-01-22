@@ -1375,15 +1375,17 @@ func getUnit(d time.Duration) time.Duration {
 }
 
 // MergeTiFlashRUConsumption merge execution summaries from selectResponse into ruDetails.
-func MergeTiFlashRUConsumption(exec_summaries []*tipb.ExecutorExecutionSummary, ruDetails *util.RUDetails) error {
-	for _, summary := range exec_summaries {
+func MergeTiFlashRUConsumption(executionSummaries []*tipb.ExecutorExecutionSummary, ruDetails *util.RUDetails) error {
+	newRUDetails := util.NewRUDetails()
+	for _, summary := range executionSummaries {
 		if summary != nil && summary.GetRuConsumption() != nil {
 			tiflashRU := new(resource_manager.Consumption)
 			if err := tiflashRU.Unmarshal(summary.GetRuConsumption()); err != nil {
 				return err
 			}
-			ruDetails.Merge(util.NewRUDetailsWith(tiflashRU.GetRRU(), 0, 0))
+			newRUDetails.Update(tiflashRU, 0)
 		}
 	}
+	ruDetails.Merge(newRUDetails)
 	return nil
 }
