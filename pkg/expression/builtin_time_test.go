@@ -1162,7 +1162,7 @@ func TestSysDate(t *testing.T) {
 				geners:        []dataGenerator{newRangeInt64Gener(0, 7)},
 			})
 		resetStmtContext(ctx)
-		loc := ctx.GetSessionVars().Location()
+		loc := location(ctx)
 		startTm := time.Now().In(loc)
 		err = baseFunc.vecEvalTime(ctx, input, output)
 		require.NoError(t, err)

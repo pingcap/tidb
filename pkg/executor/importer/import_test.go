@@ -48,7 +48,15 @@ import (
 )
 
 func TestInitDefaultOptions(t *testing.T) {
-	plan := &Plan{}
+	plan := &Plan{
+		DataSourceType: DataSourceTypeQuery,
+	}
+	plan.initDefaultOptions(10)
+	require.Equal(t, 1, plan.ThreadCnt)
+
+	plan = &Plan{
+		DataSourceType: DataSourceTypeFile,
+	}
 	variable.CloudStorageURI.Store("s3://bucket/path")
 	t.Cleanup(func() {
 		variable.CloudStorageURI.Store("")
@@ -170,13 +178,19 @@ func TestInitOptionsPositiveCase(t *testing.T) {
 
 func TestAdjustOptions(t *testing.T) {
 	plan := &Plan{
-		DiskQuota:     1,
-		ThreadCnt:     100000000,
-		MaxWriteSpeed: 10,
+		DiskQuota:      1,
+		ThreadCnt:      100000000,
+		MaxWriteSpeed:  10,
+		DataSourceType: DataSourceTypeFile,
 	}
 	plan.adjustOptions(16)
 	require.Equal(t, 16, plan.ThreadCnt)
 	require.Equal(t, config.ByteSize(10), plan.MaxWriteSpeed) // not adjusted
+
+	plan.ThreadCnt = 100000000
+	plan.DataSourceType = DataSourceTypeQuery
+	plan.adjustOptions(16)
+	require.Equal(t, 32, plan.ThreadCnt)
 }
 
 func TestAdjustDiskQuota(t *testing.T) {
@@ -397,4 +411,11 @@ func TestSupportedSuffixForServerDisk(t *testing.T) {
 	require.NoError(t, os.Chmod(path.Join(tempDir, "no-perm"), 0o400))
 	c.Path = path.Join(tempDir, "server-*.csv")
 	require.NoError(t, c.InitDataFiles(ctx))
+}
+
+func TestGetDataSourceType(t *testing.T) {
+	require.Equal(t, DataSourceTypeQuery, getDataSourceType(&plannercore.ImportInto{
+		SelectPlan: &plannercore.PhysicalSelection{},
+	}))
+	require.Equal(t, DataSourceTypeFile, getDataSourceType(&plannercore.ImportInto{}))
 }

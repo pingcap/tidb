@@ -19,7 +19,7 @@ import (
 	pdhttp "github.com/tikv/pd/client/http"
 )
 
-// IsTiFlash tests whether the store is based on tiflash engine.
+// IsTiFlash check whether the store is based on tiflash engine.
 func IsTiFlash(store *metapb.Store) bool {
 	for _, label := range store.Labels {
 		if label.Key == "engine" && (label.Value == "tiflash_compute" || label.Value == "tiflash") {

@@ -724,6 +724,7 @@ func (rs *S3Storage) URI() string {
 func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (ExternalFileReader, error) {
 	start := int64(0)
 	end := int64(0)
+	prefetchSize := 0
 	if o != nil {
 		if o.StartOffset != nil {
 			start = *o.StartOffset
@@ -731,20 +732,22 @@ func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 		if o.EndOffset != nil {
 			end = *o.EndOffset
 		}
+		prefetchSize = o.PrefetchSize
 	}
 	reader, r, err := rs.open(ctx, path, start, end)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if o != nil && o.PrefetchSize > 0 {
+	if prefetchSize > 0 {
 		reader = prefetch.NewReader(reader, o.PrefetchSize)
 	}
 	return &s3ObjectReader{
-		storage:   rs,
-		name:      path,
-		reader:    reader,
-		ctx:       ctx,
-		rangeInfo: r,
+		storage:      rs,
+		name:         path,
+		reader:       reader,
+		ctx:          ctx,
+		rangeInfo:    r,
+		prefetchSize: prefetchSize,
 	}, nil
 }
 
@@ -868,8 +871,9 @@ type s3ObjectReader struct {
 	// reader context used for implement `io.Seek`
 	// currently, lightning depends on package `xitongsys/parquet-go` to read parquet file and it needs `io.Seeker`
 	// See: https://github.com/xitongsys/parquet-go/blob/207a3cee75900b2b95213627409b7bac0f190bb3/source/source.go#L9-L10
-	ctx      context.Context
-	retryCnt int
+	ctx          context.Context
+	retryCnt     int
+	prefetchSize int
 }
 
 // Read implement the io.Reader interface.
@@ -898,6 +902,9 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 			return
 		}
 		r.reader = newReader
+		if r.prefetchSize > 0 {
+			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+		}
 		r.retryCnt++
 		n, err = r.reader.Read(p[:maxCnt])
 	}
@@ -967,6 +974,9 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 		return 0, errors.Trace(err)
 	}
 	r.reader = newReader
+	if r.prefetchSize > 0 {
+		r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+	}
 	r.rangeInfo = info
 	r.pos = realOffset
 	return realOffset, nil

@@ -142,6 +142,13 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		} else {
 			cacheable = true // it is already checked here
 		}
+
+		if !cacheable && fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false) {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("force plan-cache: may use risky cached plan: %s", reason))
+			cacheable = true
+			reason = ""
+		}
+
 		if !cacheable {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("skip prepared plan-cache: " + reason))
 		}
@@ -495,11 +502,11 @@ func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanC
 				if count, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker {
 					typeExpected, val := CheckParamTypeInt64orUint64(count)
 					if !typeExpected {
-						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("unexpected value after LIMIT"))
+						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError("unexpected value after LIMIT"))
 						break
 					}
 					if val > MaxCacheableLimitCount {
-						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("limit count is too large"))
+						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError("limit count is too large"))
 						break
 					}
 					limitOffsetAndCount = append(limitOffsetAndCount, val)
@@ -509,7 +516,7 @@ func GetMatchOpts(sctx sessionctx.Context, is infoschema.InfoSchema, stmt *PlanC
 				if offset, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker {
 					typeExpected, val := CheckParamTypeInt64orUint64(offset)
 					if !typeExpected {
-						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("unexpected value after LIMIT"))
+						sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError("unexpected value after LIMIT"))
 						break
 					}
 					limitOffsetAndCount = append(limitOffsetAndCount, val)
