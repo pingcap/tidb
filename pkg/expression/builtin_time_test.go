@@ -41,7 +41,6 @@ import (
 
 func TestDate(t *testing.T) {
 	ctx := createContext(t)
-	ctx.GetSessionVars().SQLMode = mysql.DelSQLMode(ctx.GetSessionVars().SQLMode, mysql.ModeNoZeroDate)
 	tblDate := []struct {
 		Input  interface{}
 		Expect interface{}
@@ -213,6 +212,7 @@ func TestDate(t *testing.T) {
 	}
 
 	// test nil
+	ctx.GetSessionVars().SQLMode = mysql.DelSQLMode(ctx.GetSessionVars().SQLMode, mysql.ModeNoZeroDate)
 	tblNil := []struct {
 		Input      interface{}
 		Year       interface{}
