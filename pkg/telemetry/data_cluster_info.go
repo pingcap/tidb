@@ -62,8 +62,10 @@ func getClusterInfo(ctx context.Context, sctx sessionctx.Context) ([]*clusterInf
 			StatusPort:     statusPort,
 			Version:        row.GetString(3),
 			GitHash:        row.GetString(4),
-			StartTime:      row.GetString(5),
-			UpTime:         row.GetString(6),
+			// check https://github.com/pingcap/tidb/issues/50426
+			// datatype is changed by https://github.com/pingcap/tidb/pull/29771
+			StartTime: row.GetTime(5).String(),
+			UpTime:    row.GetString(6),
 		})
 	}
 	return r, nil

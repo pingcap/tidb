@@ -45,12 +45,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	_ "github.com/pingcap/tidb/pkg/planner/core" // to setup expression.EvalAstExpr. Otherwise we cannot parse the default value
-	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/mock"
-	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"golang.org/x/exp/maps"
@@ -100,12 +98,12 @@ type TargetInfoGetter interface {
 	IsTableEmpty(ctx context.Context, schemaName string, tableName string) (*bool, error)
 	// GetTargetSysVariablesForImport gets some important systam variables for importing on the target.
 	GetTargetSysVariablesForImport(ctx context.Context, opts ...ropts.GetPreInfoOption) map[string]string
-	// GetReplicationConfig gets the replication config on the target.
-	GetReplicationConfig(ctx context.Context) (*pdtypes.ReplicationConfig, error)
+	// GetMaxReplica gets the max-replica from replication config on the target.
+	GetMaxReplica(ctx context.Context) (uint64, error)
 	// GetStorageInfo gets the storage information on the target.
-	GetStorageInfo(ctx context.Context) (*pdtypes.StoresInfo, error)
+	GetStorageInfo(ctx context.Context) (*pdhttp.StoresInfo, error)
 	// GetEmptyRegionsInfo gets the region information of all the empty regions on the target.
-	GetEmptyRegionsInfo(ctx context.Context) (*pdtypes.RegionsInfo, error)
+	GetEmptyRegionsInfo(ctx context.Context) (*pdhttp.RegionsInfo, error)
 }
 
 type preInfoGetterKey string
@@ -121,18 +119,17 @@ func WithPreInfoGetterDBMetas(ctx context.Context, dbMetas []*mydump.MDDatabaseM
 
 // TargetInfoGetterImpl implements the operations to get information from the target.
 type TargetInfoGetterImpl struct {
-	cfg     *config.Config
-	db      *sql.DB
-	tls     *common.TLS
-	backend backend.TargetInfoGetter
-	pdCli   pd.Client
+	cfg       *config.Config
+	db        *sql.DB
+	backend   backend.TargetInfoGetter
+	pdHTTPCli pdhttp.Client
 }
 
 // NewTargetInfoGetterImpl creates a TargetInfoGetterImpl object.
 func NewTargetInfoGetterImpl(
 	cfg *config.Config,
 	targetDB *sql.DB,
-	pdCli pd.Client,
+	pdHTTPCli pdhttp.Client,
 ) (*TargetInfoGetterImpl, error) {
 	tls, err := cfg.ToTLS()
 	if err != nil {
@@ -143,19 +140,18 @@ func NewTargetInfoGetterImpl(
 	case config.BackendTiDB:
 		backendTargetInfoGetter = tidb.NewTargetInfoGetter(targetDB)
 	case config.BackendLocal:
-		if pdCli == nil {
-			return nil, common.ErrUnknown.GenWithStack("pd client is required when using local backend")
+		if pdHTTPCli == nil {
+			return nil, common.ErrUnknown.GenWithStack("pd HTTP client is required when using local backend")
 		}
-		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDB, pdCli)
+		backendTargetInfoGetter = local.NewTargetInfoGetter(tls, targetDB, pdHTTPCli)
 	default:
 		return nil, common.ErrUnknownBackend.GenWithStackByArgs(cfg.TikvImporter.Backend)
 	}
 	return &TargetInfoGetterImpl{
-		cfg:     cfg,
-		tls:     tls,
-		db:      targetDB,
-		backend: backendTargetInfoGetter,
-		pdCli:   pdCli,
+		cfg:       cfg,
+		db:        targetDB,
+		backend:   backendTargetInfoGetter,
+		pdHTTPCli: pdHTTPCli,
 	}, nil
 }
 
@@ -200,7 +196,7 @@ func (g *TargetInfoGetterImpl) IsTableEmpty(ctx context.Context, schemaName stri
 		// the data is partially imported, but the index data has not been imported.
 		// In this situation, if no hint is added, the SQL executor might fetch the record from index,
 		// which is empty.  This will result in missing check.
-		fmt.Sprintf("SELECT 1 FROM %s USE INDEX() LIMIT 1", common.UniqueTable(schemaName, tableName)),
+		common.SprintfWithIdentifiers("SELECT 1 FROM %s.%s USE INDEX() LIMIT 1", schemaName, tableName),
 		&dump,
 	)
 
@@ -232,37 +228,28 @@ func (g *TargetInfoGetterImpl) GetTargetSysVariablesForImport(ctx context.Contex
 	return sysVars
 }
 
-// GetReplicationConfig gets the replication config on the target.
-// It implements the TargetInfoGetter interface.
-// It uses the PD interface through TLS to get the information.
-func (g *TargetInfoGetterImpl) GetReplicationConfig(ctx context.Context) (*pdtypes.ReplicationConfig, error) {
-	result := new(pdtypes.ReplicationConfig)
-	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdhttp.ReplicateConfig, &result); err != nil {
-		return nil, errors.Trace(err)
+// GetMaxReplica implements the TargetInfoGetter interface.
+func (g *TargetInfoGetterImpl) GetMaxReplica(ctx context.Context) (uint64, error) {
+	cfg, err := g.pdHTTPCli.GetReplicateConfig(ctx)
+	if err != nil {
+		return 0, errors.Trace(err)
 	}
-	return result, nil
+	val := cfg["max-replicas"].(float64)
+	return uint64(val), nil
 }
 
 // GetStorageInfo gets the storage information on the target.
 // It implements the TargetInfoGetter interface.
 // It uses the PD interface through TLS to get the information.
-func (g *TargetInfoGetterImpl) GetStorageInfo(ctx context.Context) (*pdtypes.StoresInfo, error) {
-	result := new(pdtypes.StoresInfo)
-	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdhttp.Stores, result); err != nil {
-		return nil, errors.Trace(err)
-	}
-	return result, nil
+func (g *TargetInfoGetterImpl) GetStorageInfo(ctx context.Context) (*pdhttp.StoresInfo, error) {
+	return g.pdHTTPCli.GetStores(ctx)
 }
 
 // GetEmptyRegionsInfo gets the region information of all the empty regions on the target.
 // It implements the TargetInfoGetter interface.
 // It uses the PD interface through TLS to get the information.
-func (g *TargetInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdtypes.RegionsInfo, error) {
-	result := new(pdtypes.RegionsInfo)
-	if err := g.tls.WithHost(g.pdCli.GetLeaderAddr()).GetJSON(ctx, pdhttp.EmptyRegions, &result); err != nil {
-		return nil, errors.Trace(err)
-	}
-	return result, nil
+func (g *TargetInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdhttp.RegionsInfo, error) {
+	return g.pdHTTPCli.GetEmptyRegions(ctx)
 }
 
 // PreImportInfoGetterImpl implements the operations to get information used in importing preparation.
@@ -777,21 +764,20 @@ outloop:
 	return resultIndexRatio, isRowOrdered, nil
 }
 
-// GetReplicationConfig gets the replication config on the target.
-// It implements the PreImportInfoGetter interface.
-func (p *PreImportInfoGetterImpl) GetReplicationConfig(ctx context.Context) (*pdtypes.ReplicationConfig, error) {
-	return p.targetInfoGetter.GetReplicationConfig(ctx)
+// GetMaxReplica implements the PreImportInfoGetter interface.
+func (p *PreImportInfoGetterImpl) GetMaxReplica(ctx context.Context) (uint64, error) {
+	return p.targetInfoGetter.GetMaxReplica(ctx)
 }
 
 // GetStorageInfo gets the storage information on the target.
 // It implements the PreImportInfoGetter interface.
-func (p *PreImportInfoGetterImpl) GetStorageInfo(ctx context.Context) (*pdtypes.StoresInfo, error) {
+func (p *PreImportInfoGetterImpl) GetStorageInfo(ctx context.Context) (*pdhttp.StoresInfo, error) {
 	return p.targetInfoGetter.GetStorageInfo(ctx)
 }
 
 // GetEmptyRegionsInfo gets the region information of all the empty regions on the target.
 // It implements the PreImportInfoGetter interface.
-func (p *PreImportInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdtypes.RegionsInfo, error) {
+func (p *PreImportInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdhttp.RegionsInfo, error) {
 	return p.targetInfoGetter.GetEmptyRegionsInfo(ctx)
 }
 

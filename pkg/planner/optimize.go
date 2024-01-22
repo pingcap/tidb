@@ -20,7 +20,6 @@ import (
 	"math"
 	"math/rand"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -31,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cascades"
 	"github.com/pingcap/tidb/pkg/planner/core"
@@ -45,7 +43,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	"go.uber.org/zap"
 )
@@ -61,19 +58,6 @@ func IsReadOnly(node ast.Node, vars *variable.SessionVars) bool {
 		return ast.IsReadOnly(prepareStmt.PreparedAst.Stmt)
 	}
 	return ast.IsReadOnly(node)
-}
-
-func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindRecord *bindinfo.BindRecord, scope string, matched bool) {
-	useBinding := sctx.GetSessionVars().UsePlanBaselines
-	if !useBinding || stmtNode == nil {
-		return nil, "", false
-	}
-	var err error
-	bindRecord, scope, err = getBindRecord(sctx, stmtNode)
-	if err != nil || bindRecord == nil || len(bindRecord.Bindings) == 0 {
-		return nil, "", false
-	}
-	return bindRecord, scope, true
 }
 
 // getPlanFromNonPreparedPlanCache tries to get an available cached plan from the NonPrepared Plan Cache for this stmt.
@@ -213,7 +197,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
 	}
 	if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
-		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("SET_VAR is used in the SQL"))
+		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError("SET_VAR is used in the SQL"))
 	}
 
 	txnManger := sessiontxn.GetTxnManager(sctx)
@@ -235,15 +219,20 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 
 	enableUseBinding := sessVars.UsePlanBaselines
 	stmtNode, isStmtNode := node.(ast.StmtNode)
-	bindRecord, scope, match := matchSQLBinding(sctx, stmtNode)
+	binding, match, scope := bindinfo.MatchSQLBinding(sctx, stmtNode)
+	var bindings bindinfo.Bindings
+	if match {
+		bindings = []bindinfo.Binding{binding}
+	}
+
 	useBinding := enableUseBinding && isStmtNode && match
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		failpoint.Inject("SetBindingTimeToZero", func(val failpoint.Value) {
-			if val.(bool) && bindRecord != nil {
-				bindRecord = bindRecord.Copy()
-				for i := range bindRecord.Bindings {
-					bindRecord.Bindings[i].CreateTime = types.ZeroTime
-					bindRecord.Bindings[i].UpdateTime = types.ZeroTime
+			if val.(bool) && bindings != nil {
+				bindings = bindings.Copy()
+				for i := range bindings {
+					bindings[i].CreateTime = types.ZeroTime
+					bindings[i].UpdateTime = types.ZeroTime
 				}
 			}
 		})
@@ -253,7 +242,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			"IsStmtNode", isStmtNode,
 			"Matched", match,
 			"Scope", scope,
-			"Matched bindings", bindRecord,
+			"Matched bindings", bindings,
 		)
 	}
 	if isStmtNode {
@@ -285,8 +274,8 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		minCost := math.MaxFloat64
 		var bindStmtHints stmtctx.StmtHints
 		originHints := hint.CollectHint(stmtNode)
-		// bindRecord must be not nil when coming here, try to find the best binding.
-		for _, binding := range bindRecord.Bindings {
+		// bindings must be not nil when coming here, try to find the best binding.
+		for _, binding := range bindings {
 			if !binding.IsBindingEnabled() {
 				continue
 			}
@@ -308,11 +297,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			plan, curNames, cost, err := optimize(ctx, sctx, node, is)
 			if err != nil {
 				binding.Status = bindinfo.Invalid
-				handleInvalidBinding(ctx, sctx, scope, bindinfo.BindRecord{
-					OriginalSQL: bindRecord.OriginalSQL,
-					Db:          bindRecord.Db,
-					Bindings:    []bindinfo.Binding{binding},
-				})
+				handleInvalidBinding(ctx, sctx, scope, binding)
 				continue
 			}
 			if cost < minCost {
@@ -367,7 +352,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if sessVars.EvolvePlanBaselines && bestPlanFromBind != nil &&
 		sessVars.SelectLimit == math.MaxUint64 { // do not evolve this query if sql_select_limit is enabled
 		// Check bestPlanFromBind firstly to avoid nil stmtNode.
-		if _, ok := stmtNode.(*ast.SelectStmt); ok && !bindRecord.Bindings[0].Hint.ContainTableHint(hint.HintReadFromStorage) {
+		if _, ok := stmtNode.(*ast.SelectStmt); ok && !bindings[0].Hint.ContainTableHint(hint.HintReadFromStorage) {
 			sessVars.StmtCtx.StmtHints = originStmtHints
 			defPlan, _, _, err := optimize(ctx, sctx, node, is)
 			if err != nil {
@@ -575,138 +560,9 @@ func buildLogicalPlan(ctx context.Context, sctx sessionctx.Context, node ast.Nod
 	return p, nil
 }
 
-// NormalizeStmtForPlanCache normalizes a statement for plan cache.
-// This function skips Explain and complete DB name automatically, and each literal will be normalized as a placeholder '?'.
-//
-//	e.g. `explain select * from t where a in (1, 2, 3)` --> `select * from test.t where a in (?, ?, ?)`
-func NormalizeStmtForPlanCache(stmtNode ast.StmtNode, specifiedDB string) (stmt ast.StmtNode, normalizedStmt, sqlDigest string, err error) {
-	return normalizeStmt(stmtNode, specifiedDB, 0)
-}
-
-// NormalizeStmtForBinding normalizes a statement for binding.
-// This function skips Explain automatically, and literals in in-lists will be normalized as '...'.
-// For normal bindings, DB name will be completed automatically:
-//
-//	e.g. `select * from t where a in (1, 2, 3)` --> `select * from test.t where a in (...)`
-//
-// For universal bindings, DB name will be ignored:
-//
-//	e.g. `select * from test.t where a in (1, 2, 3)` --> `select * from t where a in (...)`
-func NormalizeStmtForBinding(stmtNode ast.StmtNode, specifiedDB string, isUniversalBinding bool) (stmt ast.StmtNode, normalizedStmt, sqlDigest string, err error) {
-	if isUniversalBinding {
-		return normalizeStmt(stmtNode, specifiedDB, 2)
-	}
-	return normalizeStmt(stmtNode, specifiedDB, 1)
-}
-
-// flag 0 is for plan cache, 1 is for normal bindings and 2 is for universal bindings.
-// see comments in NormalizeStmtForPlanCache and NormalizeStmtForBinding.
-func normalizeStmt(stmtNode ast.StmtNode, specifiedDB string, flag int) (stmt ast.StmtNode, normalizedStmt, sqlDigest string, err error) {
-	normalize := func(n ast.StmtNode) (normalizedStmt, sqlDigest string) {
-		core.EraseLastSemicolon(n)
-		var digest *parser.Digest
-		switch flag {
-		case 0:
-			normalizedStmt, digest = parser.NormalizeDigest(utilparser.RestoreWithDefaultDB(n, specifiedDB, n.Text()))
-		case 1:
-			normalizedStmt, digest = parser.NormalizeDigestForBinding(utilparser.RestoreWithDefaultDB(n, specifiedDB, n.Text()))
-		case 2:
-			normalizedStmt, digest = parser.NormalizeDigestForBinding(utilparser.RestoreWithoutDB(n))
-		}
-		return normalizedStmt, digest.String()
-	}
-
-	switch x := stmtNode.(type) {
-	case *ast.ExplainStmt:
-		// This function is only used to find bind record.
-		// For some SQLs, such as `explain select * from t`, they will be entered here many times,
-		// but some of them do not want to obtain bind record.
-		// The difference between them is whether len(x.Text()) is empty. They cannot be distinguished by stmt.restore.
-		// For these cases, we need return "" as normalize SQL and hash.
-		if len(x.Text()) == 0 {
-			return x.Stmt, "", "", nil
-		}
-		switch x.Stmt.(type) {
-		case *ast.SelectStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
-			normalizeSQL, digest := normalize(x.Stmt)
-			return x.Stmt, normalizeSQL, digest, nil
-		case *ast.SetOprStmt:
-			normalizeExplainSQL, _ := normalize(x)
-
-			idx := strings.Index(normalizeExplainSQL, "select")
-			parenthesesIdx := strings.Index(normalizeExplainSQL, "(")
-			if parenthesesIdx != -1 && parenthesesIdx < idx {
-				idx = parenthesesIdx
-			}
-			// If the SQL is `EXPLAIN ((VALUES ROW ()) ORDER BY 1);`, the idx will be -1.
-			if idx == -1 {
-				hash := parser.DigestNormalized(normalizeExplainSQL)
-				return x.Stmt, normalizeExplainSQL, hash.String(), nil
-			}
-			normalizeSQL := normalizeExplainSQL[idx:]
-			hash := parser.DigestNormalized(normalizeSQL)
-			return x.Stmt, normalizeSQL, hash.String(), nil
-		}
-	case *ast.SelectStmt, *ast.SetOprStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
-		// This function is only used to find bind record.
-		// For some SQLs, such as `explain select * from t`, they will be entered here many times,
-		// but some of them do not want to obtain bind record.
-		// The difference between them is whether len(x.Text()) is empty. They cannot be distinguished by stmt.restore.
-		// For these cases, we need return "" as normalize SQL and hash.
-		if len(x.Text()) == 0 {
-			return x, "", "", nil
-		}
-		normalizedSQL, digest := normalize(x)
-		return x, normalizedSQL, digest, nil
-	}
-	return nil, "", "", nil
-}
-
-func getBindRecord(ctx sessionctx.Context, stmt ast.StmtNode) (*bindinfo.BindRecord, string, error) {
-	// When the domain is initializing, the bind will be nil.
-	if ctx.Value(bindinfo.SessionBindInfoKeyType) == nil {
-		return nil, "", nil
-	}
-	stmtNode, normalizedSQL, sqlDigest, err := NormalizeStmtForBinding(stmt, ctx.GetSessionVars().CurrentDB, false)
-	if err != nil || stmtNode == nil {
-		return nil, "", err
-	}
-	var normalizedSQLUni, sqlDigestUni string
-	if ctx.GetSessionVars().EnableUniversalBinding {
-		_, normalizedSQLUni, sqlDigestUni, err = NormalizeStmtForBinding(stmt, ctx.GetSessionVars().CurrentDB, true)
-		if err != nil {
-			return nil, "", err
-		}
-	}
-
-	// the priority: session normal > session universal > global normal > global universal
-	sessionHandle := ctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-	if bindRecord := sessionHandle.GetSessionBinding(sqlDigest, normalizedSQL, ""); bindRecord != nil && bindRecord.HasEnabledBinding() {
-		return bindRecord, metrics.ScopeSession, nil
-	}
-	if ctx.GetSessionVars().EnableUniversalBinding {
-		if bindRecord := sessionHandle.GetSessionBinding(sqlDigestUni, normalizedSQLUni, ""); bindRecord != nil && bindRecord.HasEnabledBinding() {
-			return bindRecord, metrics.ScopeSession, nil
-		}
-	}
-	globalHandle := domain.GetDomain(ctx).BindHandle()
-	if globalHandle == nil {
-		return nil, "", nil
-	}
-	if bindRecord := globalHandle.GetGlobalBinding(sqlDigest, normalizedSQL, ""); bindRecord != nil && bindRecord.HasEnabledBinding() {
-		return bindRecord, metrics.ScopeGlobal, nil
-	}
-	if ctx.GetSessionVars().EnableUniversalBinding {
-		if bindRecord := globalHandle.GetGlobalBinding(sqlDigestUni, normalizedSQLUni, ""); bindRecord != nil && bindRecord.HasEnabledBinding() {
-			return bindRecord, metrics.ScopeGlobal, nil
-		}
-	}
-	return nil, "", nil
-}
-
-func handleInvalidBinding(ctx context.Context, sctx sessionctx.Context, level string, bindRecord bindinfo.BindRecord) {
+func handleInvalidBinding(ctx context.Context, sctx sessionctx.Context, level string, binding bindinfo.Binding) {
 	sessionHandle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
-	err := sessionHandle.DropSessionBinding(bindRecord.OriginalSQL, bindRecord.Db, &bindRecord.Bindings[0])
+	err := sessionHandle.DropSessionBinding(binding.SQLDigest)
 	if err != nil {
 		logutil.Logger(ctx).Info("drop session bindings failed")
 	}
@@ -715,7 +571,7 @@ func handleInvalidBinding(ctx context.Context, sctx sessionctx.Context, level st
 	}
 
 	globalHandle := domain.GetDomain(sctx).BindHandle()
-	globalHandle.AddInvalidGlobalBinding(&bindRecord)
+	globalHandle.AddInvalidGlobalBinding(binding)
 }
 
 func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHints, offs []int, warns []error) {
@@ -894,5 +750,7 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHin
 func init() {
 	core.OptimizeAstNode = Optimize
 	core.IsReadOnly = IsReadOnly
-	core.NormalizeStmtForPlanCache = NormalizeStmtForPlanCache
+	bindinfo.GetGlobalBindingHandle = func(sctx sessionctx.Context) bindinfo.GlobalBindingHandle {
+		return domain.GetDomain(sctx).BindHandle()
+	}
 }

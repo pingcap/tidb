@@ -473,7 +473,6 @@ import (
 	level                 "LEVEL"
 	list                  "LIST"
 	local                 "LOCAL"
-	local_only            "LOCAL_ONLY"
 	location              "LOCATION"
 	locked                "LOCKED"
 	logs                  "LOGS"
@@ -668,8 +667,8 @@ import (
 	undefined             "UNDEFINED"
 	unicodeSym            "UNICODE"
 	unknown               "UNKNOWN"
+	unset                 "UNSET"
 	user                  "USER"
-	universal             "UNIVERSAL"
 	validation            "VALIDATION"
 	value                 "VALUE"
 	variables             "VARIABLES"
@@ -1004,6 +1003,7 @@ import (
 	CallStmt                   "CALL statement"
 	IndexAdviseStmt            "INDEX ADVISE statement"
 	ImportIntoStmt             "IMPORT INTO statement"
+	ImportFromSelectStmt       "SELECT statement of IMPORT INTO"
 	KillStmt                   "Kill statement"
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
@@ -1097,7 +1097,7 @@ import (
 	AuthOption                             "User auth option"
 	AutoRandomOpt                          "Auto random option"
 	Boolean                                "Boolean (0, 1, false, true)"
-	BDRRole                                "BDR role (none, primary, secondary, local_only)"
+	BDRRole                                "BDR role (primary, secondary)"
 	OptionalBraces                         "optional braces"
 	CastType                               "Cast function target type"
 	CharsetOpt                             "CHARACTER SET option in LOAD DATA"
@@ -1165,7 +1165,6 @@ import (
 	GetFormatSelector                      "{DATE|DATETIME|TIME|TIMESTAMP}"
 	GlobalScope                            "The scope of variable"
 	StatementScope                         "The scope of statement"
-	BindingType                            "The type of binding"
 	GroupByClause                          "GROUP BY clause"
 	HavingClause                           "HAVING clause"
 	AsOfClause                             "AS OF clause"
@@ -1548,6 +1547,7 @@ import (
 	EncryptionOpt     "Encryption option 'Y' or 'N'"
 	FirstOrNext       "FIRST or NEXT"
 	RowOrRows         "ROW or ROWS"
+	Replica           "{REPLICA | SLAVE}"
 
 %type	<ident>
 	Identifier                      "identifier or unreserved keyword"
@@ -6607,7 +6607,6 @@ UnReservedKeyword:
 |	"INSERT_METHOD"
 |	"LESS"
 |	"LOCAL"
-|	"LOCAL_ONLY"
 |	"LAST"
 |	"NAMES"
 |	"NVARCHAR"
@@ -6650,6 +6649,7 @@ UnReservedKeyword:
 |	"TSO"
 |	"UNBOUNDED"
 |	"UNKNOWN"
+|	"UNSET"
 |	"VALUE" %prec lowerThanValueKeyword
 |	"WARNINGS"
 |	"YEAR"
@@ -6802,7 +6802,6 @@ UnReservedKeyword:
 |	"DISCARD"
 |	"TABLE_CHECKSUM"
 |	"UNICODE"
-|	"UNIVERSAL"
 |	"AUTO_RANDOM"
 |	"AUTO_RANDOM_BASE"
 |	"SQL_TSI_DAY"
@@ -7293,14 +7292,17 @@ OnDuplicateKeyUpdate:
  *
  **********************************************************************************/
 ReplaceIntoStmt:
-	"REPLACE" PriorityOpt IntoOpt TableName PartitionNameListOpt InsertValues
+	"REPLACE" TableOptimizerHintsOpt PriorityOpt IntoOpt TableName PartitionNameListOpt InsertValues
 	{
-		x := $6.(*ast.InsertStmt)
+		x := $7.(*ast.InsertStmt)
+		if $2 != nil {
+			x.TableHints = $2.([]*ast.TableOptimizerHint)
+		}
 		x.IsReplace = true
-		x.Priority = $2.(mysql.PriorityEnum)
-		ts := &ast.TableSource{Source: $4.(*ast.TableName)}
+		x.Priority = $3.(mysql.PriorityEnum)
+		ts := &ast.TableSource{Source: $5.(*ast.TableName)}
 		x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
-		x.PartitionNames = $5.([]model.CIStr)
+		x.PartitionNames = $6.([]model.CIStr)
 		$$ = x
 	}
 
@@ -8787,7 +8789,16 @@ TableName:
 	}
 |	Identifier '.' Identifier
 	{
-		$$ = &ast.TableName{Schema: model.NewCIStr($1), Name: model.NewCIStr($3)}
+		schema := $1
+		if isInCorrectIdentifierName(schema) {
+			yylex.AppendError(ErrWrongDBName.GenWithStackByArgs(schema))
+			return 1
+		}
+		$$ = &ast.TableName{Schema: model.NewCIStr(schema), Name: model.NewCIStr($3)}
+	}
+|	'*' '.' Identifier
+	{
+		$$ = &ast.TableName{Schema: model.NewCIStr("*"), Name: model.NewCIStr($3)}
 	}
 
 TableNameList:
@@ -10260,6 +10271,8 @@ SetOprStmtWithLimitOrderBy:
 		}
 		var setOprList2 []ast.Node
 		var with2 *ast.WithClause
+		var limit2 *ast.Limit
+		var orderBy2 *ast.OrderByClause
 		switch x := $3.(*ast.SubqueryExpr).Query.(type) {
 		case *ast.SelectStmt:
 			setOprList2 = []ast.Node{x}
@@ -10267,8 +10280,10 @@ SetOprStmtWithLimitOrderBy:
 		case *ast.SetOprStmt:
 			setOprList2 = x.SelectList.Selects
 			with2 = x.With
+			limit2 = x.Limit
+			orderBy2 = x.OrderBy
 		}
-		nextSetOprList := &ast.SetOprSelectList{Selects: setOprList2, With: with2}
+		nextSetOprList := &ast.SetOprSelectList{Selects: setOprList2, With: with2, Limit: limit2, OrderBy: orderBy2}
 		nextSetOprList.AfterSetOperator = $2.(*ast.SetOprType)
 		setOprList := append(setOprList1, nextSetOprList)
 		setOpr := &ast.SetOprStmt{SelectList: &ast.SetOprSelectList{Selects: setOprList}}
@@ -10284,6 +10299,8 @@ SetOprStmtWithLimitOrderBy:
 		}
 		var setOprList2 []ast.Node
 		var with2 *ast.WithClause
+		var limit2 *ast.Limit
+		var orderBy2 *ast.OrderByClause
 		switch x := $3.(*ast.SubqueryExpr).Query.(type) {
 		case *ast.SelectStmt:
 			setOprList2 = []ast.Node{x}
@@ -10291,8 +10308,10 @@ SetOprStmtWithLimitOrderBy:
 		case *ast.SetOprStmt:
 			setOprList2 = x.SelectList.Selects
 			with2 = x.With
+			limit2 = x.Limit
+			orderBy2 = x.OrderBy
 		}
-		nextSetOprList := &ast.SetOprSelectList{Selects: setOprList2, With: with2}
+		nextSetOprList := &ast.SetOprSelectList{Selects: setOprList2, With: with2, Limit: limit2, OrderBy: orderBy2}
 		nextSetOprList.AfterSetOperator = $2.(*ast.SetOprType)
 		setOprList := append(setOprList1, nextSetOprList)
 		setOpr := &ast.SetOprStmt{SelectList: &ast.SetOprSelectList{Selects: setOprList}}
@@ -10308,6 +10327,8 @@ SetOprStmtWithLimitOrderBy:
 		}
 		var setOprList2 []ast.Node
 		var with2 *ast.WithClause
+		var limit2 *ast.Limit
+		var orderBy2 *ast.OrderByClause
 		switch x := $3.(*ast.SubqueryExpr).Query.(type) {
 		case *ast.SelectStmt:
 			setOprList2 = []ast.Node{x}
@@ -10315,8 +10336,10 @@ SetOprStmtWithLimitOrderBy:
 		case *ast.SetOprStmt:
 			setOprList2 = x.SelectList.Selects
 			with2 = x.With
+			limit2 = x.Limit
+			orderBy2 = x.OrderBy
 		}
-		nextSetOprList := &ast.SetOprSelectList{Selects: setOprList2, With: with2}
+		nextSetOprList := &ast.SetOprSelectList{Selects: setOprList2, With: with2, Limit: limit2, OrderBy: orderBy2}
 		nextSetOprList.AfterSetOperator = $2.(*ast.SetOprType)
 		setOprList := append(setOprList1, nextSetOprList)
 		setOpr := &ast.SetOprStmt{SelectList: &ast.SetOprSelectList{Selects: setOprList}}
@@ -10327,48 +10350,39 @@ SetOprStmtWithLimitOrderBy:
 |	SubSelect OrderBy
 	{
 		var setOprList []ast.Node
-		var with *ast.WithClause
 		switch x := $1.(*ast.SubqueryExpr).Query.(type) {
 		case *ast.SelectStmt:
-			setOprList = []ast.Node{x}
-			with = x.With
+			setOprList = []ast.Node{&ast.SetOprSelectList{Selects: []ast.Node{x}, With: x.With}}
 		case *ast.SetOprStmt:
-			setOprList = x.SelectList.Selects
-			with = x.With
+			setOprList = []ast.Node{&ast.SetOprSelectList{Selects: x.SelectList.Selects, With: x.With, Limit: x.Limit, OrderBy: x.OrderBy}}
 		}
-		setOpr := &ast.SetOprStmt{SelectList: &ast.SetOprSelectList{Selects: setOprList}, With: with}
+		setOpr := &ast.SetOprStmt{SelectList: &ast.SetOprSelectList{Selects: setOprList}}
 		setOpr.OrderBy = $2.(*ast.OrderByClause)
 		$$ = setOpr
 	}
 |	SubSelect SelectStmtLimit
 	{
 		var setOprList []ast.Node
-		var with *ast.WithClause
 		switch x := $1.(*ast.SubqueryExpr).Query.(type) {
 		case *ast.SelectStmt:
-			setOprList = []ast.Node{x}
-			with = x.With
+			setOprList = []ast.Node{&ast.SetOprSelectList{Selects: []ast.Node{x}, With: x.With}}
 		case *ast.SetOprStmt:
-			setOprList = x.SelectList.Selects
-			with = x.With
+			setOprList = []ast.Node{&ast.SetOprSelectList{Selects: x.SelectList.Selects, With: x.With, Limit: x.Limit, OrderBy: x.OrderBy}}
 		}
-		setOpr := &ast.SetOprStmt{SelectList: &ast.SetOprSelectList{Selects: setOprList}, With: with}
+		setOpr := &ast.SetOprStmt{SelectList: &ast.SetOprSelectList{Selects: setOprList}}
 		setOpr.Limit = $2.(*ast.Limit)
 		$$ = setOpr
 	}
 |	SubSelect OrderBy SelectStmtLimit
 	{
 		var setOprList []ast.Node
-		var with *ast.WithClause
 		switch x := $1.(*ast.SubqueryExpr).Query.(type) {
 		case *ast.SelectStmt:
-			setOprList = []ast.Node{x}
-			with = x.With
+			setOprList = []ast.Node{&ast.SetOprSelectList{Selects: []ast.Node{x}, With: x.With}}
 		case *ast.SetOprStmt:
-			setOprList = x.SelectList.Selects
-			with = x.With
+			setOprList = []ast.Node{&ast.SetOprSelectList{Selects: x.SelectList.Selects, With: x.With, Limit: x.Limit, OrderBy: x.OrderBy}}
 		}
-		setOpr := &ast.SetOprStmt{SelectList: &ast.SetOprSelectList{Selects: setOprList}, With: with}
+		setOpr := &ast.SetOprStmt{SelectList: &ast.SetOprSelectList{Selects: setOprList}}
 		setOpr.OrderBy = $2.(*ast.OrderByClause)
 		setOpr.Limit = $3.(*ast.Limit)
 		$$ = setOpr
@@ -10405,7 +10419,7 @@ SetOprClause:
 		case *ast.SelectStmt:
 			setOprList = []ast.Node{&ast.SetOprSelectList{Selects: []ast.Node{x}}}
 		case *ast.SetOprStmt:
-			setOprList = []ast.Node{&ast.SetOprSelectList{Selects: x.SelectList.Selects, With: x.With}}
+			setOprList = []ast.Node{&ast.SetOprSelectList{Selects: x.SelectList.Selects, With: x.With, Limit: x.Limit, OrderBy: x.OrderBy}}
 		}
 		$$ = setOprList
 	}
@@ -10920,14 +10934,6 @@ BDRRole:
 	{
 		$$ = ast.BDRRoleSecondary
 	}
-|	"LOCAL_ONLY"
-	{
-		$$ = ast.BDRRoleLocalOnly
-	}
-|	"NONE"
-	{
-		$$ = ast.BDRRoleNone
-	}
 
 AdminStmt:
 	"ADMIN" "SHOW" "DDL"
@@ -11158,6 +11164,12 @@ AdminStmt:
 			Tp: ast.AdminShowBDRRole,
 		}
 	}
+|	"ADMIN" "UNSET" "BDR" "ROLE"
+	{
+		$$ = &ast.AdminStmt{
+			Tp: ast.AdminUnsetBDRRole,
+		}
+	}
 
 AdminShowSlow:
 	"RECENT" NUM
@@ -11348,6 +11360,15 @@ ShowStmt:
 	{
 		$$ = &ast.ShowStmt{
 			Tp: ast.ShowBinlogStatus,
+		}
+	}
+|	"SHOW" Replica "STATUS"
+	// From MySQL 8.0.22, use SHOW REPLICA STATUS in place of SHOW SLAVE STATUS,
+	// which is deprecated from that release. In releases before MySQL 8.0.22,
+	// use SHOW SLAVE STATUS.
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowReplicaStatus,
 		}
 	}
 |	"SHOW" OptFull "PROCESSLIST"
@@ -11771,15 +11792,6 @@ ShowLikeOrWhereOpt:
 		$$ = $2
 	}
 
-BindingType:
-	{
-		$$ = false
-	}
-|	"UNIVERSAL"
-	{
-		$$ = true
-	}
-
 GlobalScope:
 	{
 		$$ = false
@@ -11833,6 +11845,10 @@ ShowTableAliasOpt:
 	{
 		$$ = $2.(*ast.TableName)
 	}
+
+Replica:
+	"REPLICA"
+|	"SLAVE"
 
 FlushStmt:
 	"FLUSH" NoWriteToBinLogAliasOpt FlushOption
@@ -12130,6 +12146,7 @@ ExplainableStmt:
 		$$ = sel
 	}
 |	AlterTableStmt
+|	ImportIntoStmt
 
 StatementList:
 	Statement
@@ -13795,47 +13812,44 @@ BindableStmt:
  *      CREATE GLOBAL BINDING FOR select Col1,Col2 from table USING select Col1,Col2 from table use index(Col1)
  *******************************************************************/
 CreateBindingStmt:
-	"CREATE" GlobalScope BindingType "BINDING" "FOR" BindableStmt "USING" BindableStmt
+	"CREATE" GlobalScope "BINDING" "FOR" BindableStmt "USING" BindableStmt
 	{
 		startOffset := parser.startOffset(&yyS[yypt-2])
 		endOffset := parser.startOffset(&yyS[yypt-1])
-		originStmt := $6
+		originStmt := $5
 		originStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:endOffset]))
 
 		startOffset = parser.startOffset(&yyS[yypt])
-		hintedStmt := $8
+		hintedStmt := $7
 		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.CreateBindingStmt{
 			OriginNode:  originStmt,
 			HintedNode:  hintedStmt,
 			GlobalScope: $2.(bool),
-			IsUniversal: $3.(bool),
 		}
 
 		$$ = x
 	}
-|	"CREATE" GlobalScope BindingType "BINDING" "USING" BindableStmt
+|	"CREATE" GlobalScope "BINDING" "USING" BindableStmt
 	{
 		startOffset := parser.startOffset(&yyS[yypt])
-		hintedStmt := $6
+		hintedStmt := $5
 		hintedStmt.SetText(parser.lexer.client, strings.TrimSpace(parser.src[startOffset:]))
 
 		x := &ast.CreateBindingStmt{
 			OriginNode:  hintedStmt,
 			HintedNode:  hintedStmt,
 			GlobalScope: $2.(bool),
-			IsUniversal: $3.(bool),
 		}
 
 		$$ = x
 	}
-|	"CREATE" GlobalScope BindingType "BINDING" "FROM" "HISTORY" "USING" "PLAN" "DIGEST" stringLit
+|	"CREATE" GlobalScope "BINDING" "FROM" "HISTORY" "USING" "PLAN" "DIGEST" stringLit
 	{
 		x := &ast.CreateBindingStmt{
 			GlobalScope: $2.(bool),
-			IsUniversal: $3.(bool),
-			PlanDigest:  $10,
+			PlanDigest:  $9,
 		}
 
 		$$ = x
@@ -14612,6 +14626,54 @@ ImportIntoStmt:
 			Format:             $8.(*string),
 			Options:            $9.([]*ast.LoadDataOpt),
 		}
+	}
+|	"IMPORT" "INTO" TableName ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt "FROM" ImportFromSelectStmt LoadDataOptionListOpt
+	/* LoadDataSetSpecOpt is used to avoid shift/reduce conflict, we don't support it actually */
+	{
+		st := &ast.ImportIntoStmt{
+			Table:              $3.(*ast.TableName),
+			ColumnsAndUserVars: $4.([]*ast.ColumnNameOrUserVar),
+			Select:             $7.(ast.ResultSetNode),
+			Options:            $8.([]*ast.LoadDataOpt),
+		}
+		for _, cu := range st.ColumnsAndUserVars {
+			if cu.ColumnName == nil {
+				yylex.AppendError(yylex.Errorf("Cannot use user variable(%s) in IMPORT INTO FROM SELECT statement.", cu.UserVar.Name))
+				return 1
+			}
+		}
+		if $5.([]*ast.Assignment) != nil {
+			yylex.AppendError(yylex.Errorf("Cannot use SET clause in IMPORT INTO FROM SELECT statement."))
+			return 1
+		}
+		$$ = st
+	}
+
+ImportFromSelectStmt:
+	SelectStmt
+	{
+		$$ = $1
+	}
+|	SetOprStmt
+	{
+		$$ = $1
+	}
+|	SelectStmtWithClause
+	{
+		$$ = $1
+	}
+|	SubSelect
+	{
+		var sel ast.ResultSetNode
+		switch x := $1.(*ast.SubqueryExpr).Query.(type) {
+		case *ast.SelectStmt:
+			x.IsInBraces = true
+			sel = x
+		case *ast.SetOprStmt:
+			x.IsInBraces = true
+			sel = x
+		}
+		$$ = sel.(ast.StmtNode)
 	}
 
 /*********************************************************************

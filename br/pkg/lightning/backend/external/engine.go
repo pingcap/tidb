@@ -54,6 +54,35 @@ type memKVsAndBuffers struct {
 	values       [][]byte
 	memKVBuffers []*membuf.Buffer
 	size         int
+	droppedSize  int
+
+	// temporary fields to store KVs to reduce slice allocations.
+	keysPerFile        [][][]byte
+	valuesPerFile      [][][]byte
+	droppedSizePerFile []int
+}
+
+func (b *memKVsAndBuffers) build() {
+	sumKVCnt := 0
+	for _, keys := range b.keysPerFile {
+		sumKVCnt += len(keys)
+	}
+	b.keys = make([][]byte, 0, sumKVCnt)
+	b.values = make([][]byte, 0, sumKVCnt)
+	for i := range b.keysPerFile {
+		b.keys = append(b.keys, b.keysPerFile[i]...)
+		b.keysPerFile[i] = nil
+		b.values = append(b.values, b.valuesPerFile[i]...)
+		b.valuesPerFile[i] = nil
+	}
+	b.keysPerFile = nil
+	b.valuesPerFile = nil
+
+	b.droppedSize = 0
+	for _, size := range b.droppedSizePerFile {
+		b.droppedSize += size
+	}
+	b.droppedSizePerFile = nil
 }
 
 // Engine stored sorted key/value pairs in an external storage.
@@ -182,14 +211,11 @@ func getFilesReadConcurrency(
 	startKey, endKey []byte,
 ) ([]uint64, []uint64, error) {
 	result := make([]uint64, len(statsFiles))
-	startOffs, err := seekPropsOffsets(ctx, startKey, statsFiles, storage, false)
+	offsets, err := seekPropsOffsets(ctx, []kv.Key{startKey, endKey}, statsFiles, storage, false)
 	if err != nil {
 		return nil, nil, err
 	}
-	endOffs, err := seekPropsOffsets(ctx, endKey, statsFiles, storage, false)
-	if err != nil {
-		return nil, nil, err
-	}
+	startOffs, endOffs := offsets[0], offsets[1]
 	for i := range statsFiles {
 		result[i] = (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
 		result[i] = max(result[i], 1)
@@ -225,10 +251,14 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	if err != nil {
 		return err
 	}
+	e.memKVsAndBuffers.build()
+
 	readSecond := time.Since(readStart).Seconds()
 	readDurHist.Observe(readSecond)
 	logutil.Logger(ctx).Info("reading external storage in loadBatchRegionData",
-		zap.Duration("cost time", time.Since(readStart)))
+		zap.Duration("cost time", time.Since(readStart)),
+		zap.Int("droppedSize", e.memKVsAndBuffers.droppedSize))
+
 	sortStart := time.Now()
 	oldSortyGor := sorty.MaxGor
 	sorty.MaxGor = uint64(e.workerConcurrency * 2)
@@ -293,9 +323,9 @@ func (e *Engine) LoadIngestData(
 	regionRanges []common.Range,
 	outCh chan<- common.DataAndRange,
 ) error {
-	// currently we assume the region size is 96MB and will download 96MB*40 = 3.8GB
+	// currently we assume the region size is 96MB and will download 96MB*32 = 3GB
 	// data at once
-	regionBatchSize := 40
+	regionBatchSize := 32
 	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
 		regionBatchSize = val.(int)
 	})
@@ -338,11 +368,11 @@ func (e *Engine) createMergeIter(ctx context.Context, start kv.Key) (*MergeKVIte
 		logger.Info("no stats files",
 			zap.String("startKey", hex.EncodeToString(start)))
 	} else {
-		offs, err := seekPropsOffsets(ctx, start, e.statsFiles, e.storage, e.checkHotspot)
+		offs, err := seekPropsOffsets(ctx, []kv.Key{start}, e.statsFiles, e.storage, e.checkHotspot)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		offsets = offs
+		offsets = offs[0]
 		logger.Debug("seek props offsets",
 			zap.Uint64s("offsets", offsets),
 			zap.String("startKey", hex.EncodeToString(start)),

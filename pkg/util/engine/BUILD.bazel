@@ -1,9 +1,24 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "engine",
     srcs = ["engine.go"],
     importpath = "github.com/pingcap/tidb/pkg/util/engine",
     visibility = ["//visibility:public"],
-    deps = ["@com_github_pingcap_kvproto//pkg/metapb"],
+    deps = [
+        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_tikv_pd_client//http",
+    ],
+)
+
+go_test(
+    name = "engine_test",
+    timeout = "short",
+    srcs = ["engine_test.go"],
+    embed = [":engine"],
+    flaky = True,
+    deps = [
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_pd_client//http",
+    ],
 )

@@ -1025,14 +1025,26 @@ func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Execut
 		return nil
 	}
 
-	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
-	exec, err := newImportIntoExec(base, b.ctx, v, tbl)
+	var (
+		selectExec exec.Executor
+		base       exec.BaseExecutor
+	)
+	if v.SelectPlan != nil {
+		selectExec = b.build(v.SelectPlan)
+		if b.err != nil {
+			return nil
+		}
+		base = exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), selectExec)
+	} else {
+		base = exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())
+	}
+	executor, err := newImportIntoExec(base, selectExec, b.ctx, v, tbl)
 	if err != nil {
 		b.err = err
 		return nil
 	}
 
-	return exec
+	return executor
 }
 
 func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) exec.Executor {
@@ -2559,11 +2571,17 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
-
+	var concurrency int
+	if b.ctx.GetSessionVars().InRestrictedSQL {
+		// In restricted SQL, we use the default value of IndexSerialScanConcurrency. it is copied from tidb_sysproc_scan_concurrency.
+		concurrency = b.ctx.GetSessionVars().IndexSerialScanConcurrency()
+	} else {
+		concurrency = b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
+	}
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
-		concurrency: b.ctx.GetSessionVars().IndexSerialScanConcurrency(),
+		concurrency: concurrency,
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeIndex,
 			Flags:          sc.PushDownFlags(),
@@ -3404,6 +3422,10 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 			failpoint.Return(nil)
 		}
 	})
+	// https://github.com/pingcap/tidb/issues/50358
+	if len(v.Schema().Columns) == 0 && len(v.GetTablePlan().Schema().Columns) > 0 {
+		v.SetSchema(v.GetTablePlan().Schema())
+	}
 	useMPP := useMPPExecution(b.ctx, v)
 	useTiFlashBatchCop := v.ReadReqType == plannercore.BatchCop
 	useTiFlash := useMPP || useTiFlashBatchCop
@@ -3453,7 +3475,7 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 
 	tmp, _ := b.is.TableByID(ts.Table.ID)
 	tbl := tmp.(table.PartitionedTable)
-	partitions, err := partitionPruning(b.ctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
+	partitions, err := partitionPruning(b.ctx, tbl, &v.PlanPartInfo)
 	if err != nil {
 		b.err = err
 		return nil
@@ -3539,14 +3561,14 @@ func getPartitionKeyColOffsets(keyColIDs []int64, pt table.PartitionedTable) []i
 	return keyColOffsets
 }
 
-func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table, partitionInfo *plannercore.PartitionInfo,
+func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table, physPlanPartInfo *plannercore.PhysPlanPartInfo,
 	lookUpContent []*indexJoinLookUpContent) (usedPartition []table.PhysicalTable, canPrune bool, contentPos []int64, err error) {
 	partitionTbl := tbl.(table.PartitionedTable)
 
 	// In index join, this is called by multiple goroutines simultaneously, but partitionPruning is not thread-safe.
 	// Use once.Do to avoid DATA RACE here.
 	// TODO: condition based pruning can be do in advance.
-	condPruneResult, err := builder.partitionPruning(partitionTbl, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
+	condPruneResult, err := builder.partitionPruning(partitionTbl, physPlanPartInfo)
 	if err != nil {
 		return nil, false, nil, err
 	}
@@ -3692,7 +3714,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) e
 			b.err = exeerrors.ErrBuildExecutor
 			return nil
 		}
-		ret.partitionIDMap, err = getPartitionIdsAfterPruning(b.ctx, tbl, &v.PartitionInfo)
+		ret.partitionIDMap, err = getPartitionIdsAfterPruning(b.ctx, tbl, &v.PlanPartInfo)
 		if err != nil {
 			b.err = err
 			return nil
@@ -3702,7 +3724,7 @@ func (b *executorBuilder) buildIndexReader(v *plannercore.PhysicalIndexReader) e
 
 	tmp, _ := b.is.TableByID(is.Table.ID)
 	tbl := tmp.(table.PartitionedTable)
-	partitions, err := partitionPruning(b.ctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
+	partitions, err := partitionPruning(b.ctx, tbl, &v.PlanPartInfo)
 	if err != nil {
 		b.err = err
 		return nil
@@ -3889,7 +3911,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 			b.err = exeerrors.ErrBuildExecutor
 			return nil
 		}
-		ret.partitionIDMap, err = getPartitionIdsAfterPruning(b.ctx, tbl, &v.PartitionInfo)
+		ret.partitionIDMap, err = getPartitionIdsAfterPruning(b.ctx, tbl, &v.PlanPartInfo)
 		if err != nil {
 			b.err = err
 			return nil
@@ -3906,7 +3928,7 @@ func (b *executorBuilder) buildIndexLookUpReader(v *plannercore.PhysicalIndexLoo
 
 	tmp, _ := b.is.TableByID(is.Table.ID)
 	tbl := tmp.(table.PartitionedTable)
-	partitions, err := partitionPruning(b.ctx, tbl, v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
+	partitions, err := partitionPruning(b.ctx, tbl, &v.PlanPartInfo)
 	if err != nil {
 		b.err = err
 		return nil
@@ -4036,7 +4058,7 @@ func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMerg
 	}
 
 	tmp, _ := b.is.TableByID(ts.Table.ID)
-	partitions, err := partitionPruning(b.ctx, tmp.(table.PartitionedTable), v.PartitionInfo.PruningConds, v.PartitionInfo.PartitionNames, v.PartitionInfo.Columns, v.PartitionInfo.ColumnNames)
+	partitions, err := partitionPruning(b.ctx, tmp.(table.PartitionedTable), &v.PlanPartInfo)
 	if err != nil {
 		b.err = err
 		return nil
@@ -4163,8 +4185,7 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 	}
 	tbl, _ := builder.is.TableByID(tbInfo.ID)
 	pt := tbl.(table.PartitionedTable)
-	partitionInfo := &v.PartitionInfo
-	usedPartitionList, err := builder.partitionPruning(pt, partitionInfo.PruningConds, partitionInfo.PartitionNames, partitionInfo.Columns, partitionInfo.ColumnNames)
+	usedPartitionList, err := builder.partitionPruning(pt, &v.PlanPartInfo)
 	if err != nil {
 		return nil, err
 	}
@@ -4428,7 +4449,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		if !ok {
 			return nil, exeerrors.ErrBuildExecutor
 		}
-		e.partitionIDMap, err = getPartitionIdsAfterPruning(builder.ctx, tbl, &v.PartitionInfo)
+		e.partitionIDMap, err = getPartitionIdsAfterPruning(builder.ctx, tbl, &v.PlanPartInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -4443,7 +4464,7 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 	}
 
 	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
-	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, &v.PartitionInfo, lookUpContents)
+	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, &v.PlanPartInfo, lookUpContents)
 	if err != nil {
 		return nil, err
 	}
@@ -4503,7 +4524,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		if !ok {
 			return nil, exeerrors.ErrBuildExecutor
 		}
-		e.partitionIDMap, err = getPartitionIdsAfterPruning(builder.ctx, tbl, &v.PartitionInfo)
+		e.partitionIDMap, err = getPartitionIdsAfterPruning(builder.ctx, tbl, &v.PlanPartInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -4518,7 +4539,7 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 	}
 
 	tbl, _ := builder.executorBuilder.is.TableByID(tbInfo.ID)
-	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, &v.PartitionInfo, lookUpContents)
+	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, &v.PlanPartInfo, lookUpContents)
 	if err != nil {
 		return nil, err
 	}
@@ -4913,7 +4934,6 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) exec.Exec
 		collation:    v.Collation,
 		db:           v.Db,
 		isGlobal:     v.IsGlobal,
-		isUniversal:  v.IsUniversal,
 		bindAst:      v.BindStmt,
 		newStatus:    v.NewStatus,
 		source:       v.Source,
@@ -5154,19 +5174,17 @@ func (b *executorBuilder) buildAdminResetTelemetryID(v *plannercore.AdminResetTe
 	return &AdminResetTelemetryIDExec{BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID())}
 }
 
-func (builder *dataReaderBuilder) partitionPruning(tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr,
-	columns []*expression.Column, columnNames types.NameSlice) ([]table.PhysicalTable, error) {
+func (builder *dataReaderBuilder) partitionPruning(tbl table.PartitionedTable, planPartInfo *plannercore.PhysPlanPartInfo) ([]table.PhysicalTable, error) {
 	builder.once.Do(func() {
-		condPruneResult, err := partitionPruning(builder.executorBuilder.ctx, tbl, conds, partitionNames, columns, columnNames)
+		condPruneResult, err := partitionPruning(builder.executorBuilder.ctx, tbl, planPartInfo)
 		builder.once.condPruneResult = condPruneResult
 		builder.once.err = err
 	})
 	return builder.once.condPruneResult, builder.once.err
 }
 
-func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds []expression.Expression, partitionNames []model.CIStr,
-	columns []*expression.Column, columnNames types.NameSlice) ([]table.PhysicalTable, error) {
-	idxArr, err := plannercore.PartitionPruning(ctx, tbl, conds, partitionNames, columns, columnNames)
+func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, planPartInfo *plannercore.PhysPlanPartInfo) ([]table.PhysicalTable, error) {
+	idxArr, err := plannercore.PartitionPruning(ctx, tbl, planPartInfo.PruningConds, planPartInfo.PartitionNames, planPartInfo.Columns, planPartInfo.ColumnNames)
 	if err != nil {
 		return nil, err
 	}
@@ -5190,11 +5208,11 @@ func partitionPruning(ctx sessionctx.Context, tbl table.PartitionedTable, conds 
 	return ret, nil
 }
 
-func getPartitionIdsAfterPruning(ctx sessionctx.Context, tbl table.PartitionedTable, partInfo *plannercore.PartitionInfo) (map[int64]struct{}, error) {
-	if partInfo == nil {
-		return nil, errors.New("partInfo in getPartitionIdsAfterPruning must not be nil")
+func getPartitionIdsAfterPruning(ctx sessionctx.Context, tbl table.PartitionedTable, physPlanPartInfo *plannercore.PhysPlanPartInfo) (map[int64]struct{}, error) {
+	if physPlanPartInfo == nil {
+		return nil, errors.New("physPlanPartInfo in getPartitionIdsAfterPruning must not be nil")
 	}
-	idxArr, err := plannercore.PartitionPruning(ctx, tbl, partInfo.PruningConds, partInfo.PartitionNames, partInfo.Columns, partInfo.ColumnNames)
+	idxArr, err := plannercore.PartitionPruning(ctx, tbl, physPlanPartInfo.PruningConds, physPlanPartInfo.PartitionNames, physPlanPartInfo.Columns, physPlanPartInfo.ColumnNames)
 	if err != nil {
 		return nil, err
 	}

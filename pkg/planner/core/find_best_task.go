@@ -209,46 +209,20 @@ func (p *baseLogicalPlan) rebuildChildTasks(childTasks *[]task, pp PhysicalPlan,
 	return nil
 }
 
-func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPlan,
-	prop *property.PhysicalProperty, addEnforcer bool, planCounter *PlanCounterTp, opt *physicalOptimizeOp) (task, int64, error) {
+func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(
+	physicalPlans []PhysicalPlan,
+	prop *property.PhysicalProperty,
+	addEnforcer bool,
+	planCounter *PlanCounterTp,
+	opt *physicalOptimizeOp,
+) (task, int64, error) {
 	var bestTask task = invalidTask
 	var curCntPlan, cntPlan int64
 	var err error
 	childTasks := make([]task, 0, len(p.children))
 	childCnts := make([]int64, len(p.children))
 	cntPlan = 0
-	iteration := func(
-		selfPhysicalPlan PhysicalPlan,
-		childTasks []task,
-		childCnts []int64,
-		prop *property.PhysicalProperty,
-		opt *physicalOptimizeOp,
-	) ([]task, int64, []int64, error) {
-		// Find best child tasks firstly.
-		childTasks = childTasks[:0]
-		// The curCntPlan records the number of possible plans for pp
-		curCntPlan := int64(1)
-		for j, child := range p.children {
-			childProp := selfPhysicalPlan.GetChildReqProps(j)
-			childTask, cnt, err := child.findBestTask(childProp, &PlanCounterDisabled, opt)
-			childCnts[j] = cnt
-			if err != nil {
-				return nil, 0, childCnts, err
-			}
-			curCntPlan = curCntPlan * cnt
-			if childTask != nil && childTask.invalid() {
-				return nil, 0, childCnts, nil
-			}
-			childTasks = append(childTasks, childTask)
-		}
-
-		// This check makes sure that there is no invalid child task.
-		if len(childTasks) != len(p.children) {
-			return nil, 0, childCnts, nil
-		}
-		return childTasks, curCntPlan, childCnts, nil
-	}
-
+	iteration := p.iteratePhysicalPlan
 	if seq, ok := p.self.(*LogicalSequence); ok {
 		iteration = seq.iterateChildPlan
 	}
@@ -258,7 +232,6 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		savedPlanID := p.SCtx().GetSessionVars().PlanID.Load()
 
 		childTasks, curCntPlan, childCnts, err = iteration(pp, childTasks, childCnts, prop, opt)
-
 		if err != nil {
 			return nil, 0, err
 		}
@@ -278,9 +251,8 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 			}
 		}
 
-		// Combine best child tasks with parent physical plan.
+		// Combine the best child tasks with parent physical plan.
 		curTask := pp.attach2Task(childTasks...)
-
 		if curTask.invalid() {
 			continue
 		}
@@ -317,6 +289,39 @@ func (p *baseLogicalPlan) enumeratePhysicalPlans4Task(physicalPlans []PhysicalPl
 		}
 	}
 	return bestTask, cntPlan, nil
+}
+
+// iteratePhysicalPlan is used to iterate the physical plan and get all child tasks.
+func (p *baseLogicalPlan) iteratePhysicalPlan(
+	selfPhysicalPlan PhysicalPlan,
+	childTasks []task,
+	childCnts []int64,
+	_ *property.PhysicalProperty,
+	opt *physicalOptimizeOp,
+) ([]task, int64, []int64, error) {
+	// Find best child tasks firstly.
+	childTasks = childTasks[:0]
+	// The curCntPlan records the number of possible plans for pp
+	curCntPlan := int64(1)
+	for j, child := range p.children {
+		childProp := selfPhysicalPlan.GetChildReqProps(j)
+		childTask, cnt, err := child.findBestTask(childProp, &PlanCounterDisabled, opt)
+		childCnts[j] = cnt
+		if err != nil {
+			return nil, 0, childCnts, err
+		}
+		curCntPlan = curCntPlan * cnt
+		if childTask != nil && childTask.invalid() {
+			return nil, 0, childCnts, nil
+		}
+		childTasks = append(childTasks, childTask)
+	}
+
+	// This check makes sure that there is no invalid child task.
+	if len(childTasks) != len(p.children) {
+		return nil, 0, childCnts, nil
+	}
+	return childTasks, curCntPlan, childCnts, nil
 }
 
 // iterateChildPlan does the special part for sequence. We need to iterate its child one by one to check whether the former child is a valid plan and then go to the nex
@@ -1158,7 +1163,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 		if len(path.Ranges) == 0 {
 			// We should uncache the tableDual plan.
 			if expression.MaybeOverOptimized4PlanCache(ds.SCtx(), path.AccessConds) {
-				ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("get a TableDual plan"))
+				ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError("get a TableDual plan"))
 			}
 			dual := PhysicalTableDual{}.Init(ds.SCtx(), ds.StatsInfo(), ds.QueryBlockOffset())
 			dual.SetSchema(ds.schema)
@@ -1236,7 +1241,7 @@ func (ds *DataSource) findBestTask(prop *property.PhysicalProperty, planCounter 
 				// Batch/PointGet plans may be over-optimized, like `a>=1(?) and a<=1(?)` --> `a=1` --> PointGet(a=1).
 				// For safety, prevent these plans from the plan cache here.
 				if !pointGetTask.invalid() && expression.MaybeOverOptimized4PlanCache(ds.SCtx(), candidate.path.AccessConds) && !isSafePointGetPath4PlanCache(ds.SCtx(), candidate.path) {
-					ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("Batch/PointGet plans may be over-optimized"))
+					ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError("Batch/PointGet plans may be over-optimized"))
 				}
 
 				appendCandidate(ds, pointGetTask, prop, opt)
@@ -1346,7 +1351,7 @@ func (ds *DataSource) convertToIndexMergeScan(prop *property.PhysicalProperty, c
 		indexPlanFinished: false,
 		tblColHists:       ds.TblColHists,
 	}
-	cop.partitionInfo = PartitionInfo{
+	cop.physPlanPartInfo = PhysPlanPartInfo{
 		PruningConds:   pushDownNot(ds.SCtx(), ds.allConds),
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
@@ -1757,7 +1762,7 @@ func (ds *DataSource) convertToIndexScan(prop *property.PhysicalProperty,
 		tblCols:     ds.TblCols,
 		expectCnt:   uint64(prop.ExpectedCnt),
 	}
-	cop.partitionInfo = PartitionInfo{
+	cop.physPlanPartInfo = PhysPlanPartInfo{
 		PruningConds:   pushDownNot(ds.SCtx(), ds.allConds),
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
@@ -2179,7 +2184,7 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 			partTp:      property.AnyType,
 			tblColHists: ds.TblColHists,
 		}
-		ts.PartitionInfo = PartitionInfo{
+		ts.PlanPartInfo = PhysPlanPartInfo{
 			PruningConds:   pushDownNot(ds.SCtx(), ds.allConds),
 			PartitionNames: ds.partitionNames,
 			Columns:        ds.TblCols,
@@ -2213,13 +2218,13 @@ func (ds *DataSource) convertToTableScan(prop *property.PhysicalProperty, candid
 		indexPlanFinished: true,
 		tblColHists:       ds.TblColHists,
 	}
-	copTask.partitionInfo = PartitionInfo{
+	copTask.physPlanPartInfo = PhysPlanPartInfo{
 		PruningConds:   pushDownNot(ds.SCtx(), ds.allConds),
 		PartitionNames: ds.partitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.names,
 	}
-	ts.PartitionInfo = copTask.partitionInfo
+	ts.PlanPartInfo = copTask.physPlanPartInfo
 	task = copTask
 	if candidate.isMatchProp {
 		copTask.keepOrder = true
@@ -2298,7 +2303,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		LockWaitTime:     ds.SCtx().GetSessionVars().LockWaitTimeout,
 		Columns:          ds.Columns,
 	}.Init(ds.SCtx(), ds.tableStats.ScaleByExpectCnt(accessCnt), ds.QueryBlockOffset())
-	var partitionInfo *model.PartitionDefinition
+	var partitionDef *model.PartitionDefinition
 	pi := ds.tableInfo.GetPartitionInfo()
 	if ds.isPartition {
 		// static prune
@@ -2306,12 +2311,12 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 			for i := range pi.Definitions {
 				def := pi.Definitions[i]
 				if def.ID == ds.physicalTableID {
-					partitionInfo = &def
+					partitionDef = &def
 					break
 				}
 			}
 		}
-		if partitionInfo == nil {
+		if partitionDef == nil {
 			return invalidTask
 		}
 	} else if pi != nil {
@@ -2324,9 +2329,9 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 			if len(pi.Definitions) != 1 {
 				return invalidTask
 			}
-			partitionInfo = &pi.Definitions[0]
+			partitionDef = &pi.Definitions[0]
 		} else if len(idxs) == 1 {
-			partitionInfo = &pi.Definitions[idxs[0]]
+			partitionDef = &pi.Definitions[idxs[0]]
 		} else {
 			return invalidTask
 		}
@@ -2335,7 +2340,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 	if candidate.path.IsIntHandlePath {
 		pointGetPlan.Handle = kv.IntHandle(candidate.path.Ranges[0].LowVal[0].GetInt64())
 		pointGetPlan.UnsignedHandle = mysql.HasUnsignedFlag(ds.handleCols.GetCol(0).RetType.GetFlag())
-		pointGetPlan.PartitionInfo = partitionInfo
+		pointGetPlan.PartitionDef = partitionDef
 		pointGetPlan.accessCols = ds.TblCols
 		// Add filter condition to table plan now.
 		if len(candidate.path.TableFilters) > 0 {
@@ -2350,7 +2355,7 @@ func (ds *DataSource) convertToPointGet(prop *property.PhysicalProperty, candida
 		pointGetPlan.IdxCols = candidate.path.IdxCols
 		pointGetPlan.IdxColLens = candidate.path.IdxColLens
 		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
-		pointGetPlan.PartitionInfo = partitionInfo
+		pointGetPlan.PartitionDef = partitionDef
 		if candidate.path.IsSingleScan {
 			pointGetPlan.accessCols = candidate.path.IdxCols
 		} else {
@@ -2565,7 +2570,14 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 			ds.StatsInfo(), ds.tableStats, ds.statisticTable,
 			path, prop.ExpectedCnt, isMatchProp && prop.SortItems[0].Desc)
 	}
-	is.SetStats(ds.tableStats.ScaleByExpectCnt(rowCount))
+	// ScaleByExpectCnt only allows to scale the row count smaller than the table total row count.
+	// But for MV index, it's possible that the IndexRangeScan row count is larger than the table total row count.
+	// Please see the Case 2 in CalcTotalSelectivityForMVIdxPath for an example.
+	if idx.MVIndex && rowCount > ds.tableStats.RowCount {
+		is.SetStats(ds.tableStats.Scale(rowCount / ds.tableStats.RowCount))
+	} else {
+		is.SetStats(ds.tableStats.ScaleByExpectCnt(rowCount))
+	}
 	usedStats := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(false)
 	if usedStats != nil && usedStats[is.physicalTableID] != nil {
 		is.usedStatsInfo = usedStats[is.physicalTableID]

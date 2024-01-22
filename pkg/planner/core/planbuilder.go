@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -210,7 +211,7 @@ type PlanBuilder struct {
 	colMapper map[*ast.ColumnNameExpr]int
 	// visitInfo is used for privilege check.
 	visitInfo     []visitInfo
-	tableHintInfo []hint.TableHintInfo
+	tableHintInfo []*hint.TableHintInfo
 	// optFlag indicates the flags of the optimizer rules.
 	optFlag uint64
 	// capFlag indicates the capability flags.
@@ -734,11 +735,13 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 	var p *SQLBindPlan
 	if v.OriginNode != nil {
+		normdOrigSQL, sqlDigestWithDB := norm.NormalizeStmtForBinding(v.OriginNode, norm.WithSpecifiedDB(b.ctx.GetSessionVars().CurrentDB))
 		p = &SQLBindPlan{
 			SQLBindOp:    OpSQLBindDrop,
-			NormdOrigSQL: parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
+			NormdOrigSQL: normdOrigSQL,
 			IsGlobal:     v.GlobalScope,
 			Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
+			SQLDigest:    sqlDigestWithDB,
 		}
 		if v.HintedNode != nil {
 			p.BindSQL = utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text())
@@ -856,11 +859,6 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 	restoredSQL := utilparser.RestoreWithDefaultDB(originNode, bindableStmt.Schema, bindableStmt.Query)
 	bindSQL = utilparser.RestoreWithDefaultDB(hintNode, bindableStmt.Schema, hintNode.Text())
 	db := utilparser.GetDefaultDB(originNode, bindableStmt.Schema)
-	if v.IsUniversal { // hide schema name if it's universal binding
-		restoredSQL = utilparser.RestoreWithoutDB(originNode)
-		bindSQL = utilparser.RestoreWithoutDB(hintNode)
-		db = ""
-	}
 	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(restoredSQL)
 
 	p := &SQLBindPlan{
@@ -868,7 +866,6 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 		NormdOrigSQL: normdOrigSQL,
 		BindSQL:      bindSQL,
 		IsGlobal:     v.GlobalScope,
-		IsUniversal:  v.IsUniversal,
 		BindStmt:     hintNode,
 		Db:           db,
 		Charset:      bindableStmt.Charset,
@@ -899,18 +896,12 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (Plan, error
 	restoredSQL := utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())
 	bindSQL := utilparser.RestoreWithDefaultDB(v.HintedNode, b.ctx.GetSessionVars().CurrentDB, v.HintedNode.Text())
 	db := utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB)
-	if v.IsUniversal { // hide schema name if it's universal binding
-		restoredSQL = utilparser.RestoreWithoutDB(v.OriginNode)
-		bindSQL = utilparser.RestoreWithoutDB(v.HintedNode)
-		db = ""
-	}
 	normdOrigSQL, sqlDigestWithDB := parser.NormalizeDigestForBinding(restoredSQL)
 	p := &SQLBindPlan{
 		SQLBindOp:    OpSQLBindCreate,
 		NormdOrigSQL: normdOrigSQL,
 		BindSQL:      bindSQL,
 		IsGlobal:     v.GlobalScope,
-		IsUniversal:  v.IsUniversal,
 		BindStmt:     v.HintedNode,
 		Db:           db,
 		Charset:      charSet,
@@ -1226,6 +1217,19 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *hint.TableHintIn
 	if len(available) == 0 {
 		available = append(available, tablePath)
 	}
+
+	// If all available paths are Multi-Valued Index, it's possible that the only multi-valued index is inapplicable,
+	// so that the table paths are still added here to avoid failing to find any physical plan.
+	allMVIIndexPath := true
+	for _, availablePath := range available {
+		if !isMVIndexPath(availablePath) {
+			allMVIIndexPath = false
+		}
+	}
+	if allMVIIndexPath {
+		available = append(available, tablePath)
+	}
+
 	return available, nil
 }
 
@@ -1298,17 +1302,6 @@ func removeGlobalIndexPaths(paths []*util.AccessPath) []*util.AccessPath {
 		i++
 	}
 	return paths[:i]
-}
-
-func removeTiflashDuringStaleRead(paths []*util.AccessPath) []*util.AccessPath {
-	n := 0
-	for _, path := range paths {
-		if path.StoreType != kv.TiFlash {
-			paths[n] = path
-			n++
-		}
-	}
-	return paths[:n]
 }
 
 func (b *PlanBuilder) buildSelectLock(src LogicalPlan, lock *ast.SelectLockInfo) (*LogicalLock, error) {
@@ -1475,7 +1468,7 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (Plan, 
 		return &Simple{Statement: as}, nil
 	case ast.AdminFlushPlanCache:
 		return &Simple{Statement: as}, nil
-	case ast.AdminSetBDRRole:
+	case ast.AdminSetBDRRole, ast.AdminUnsetBDRRole:
 		return &Simple{Statement: as}, nil
 	case ast.AdminShowBDRRole:
 		p := &AdminShowBDRRole{}
@@ -2150,7 +2143,11 @@ func getColOffsetForAnalyze(colsInfo []*model.ColumnInfo, colID int64) int {
 // TODO: find a better way to find indexed columns in ANALYZE rather than use IndexColumn.Offset
 // For multi-valued index, we need to collect it separately here and analyze it as independent index analyze task.
 // See comments for AnalyzeResults.ForMVIndex for more details.
-func getModifiedIndexesInfoForAnalyze(sctx sessionctx.Context, tblInfo *model.TableInfo, allColumns bool, colsInfo []*model.ColumnInfo) ([]*model.IndexInfo, []*model.IndexInfo) {
+func getModifiedIndexesInfoForAnalyze(
+	tblInfo *model.TableInfo,
+	allColumns bool,
+	colsInfo []*model.ColumnInfo,
+) ([]*model.IndexInfo, []*model.IndexInfo) {
 	idxsInfo := make([]*model.IndexInfo, 0, len(tblInfo.Indices))
 	independentIdxsInfo := make([]*model.IndexInfo, 0)
 	for _, originIdx := range tblInfo.Indices {
@@ -2158,7 +2155,7 @@ func getModifiedIndexesInfoForAnalyze(sctx sessionctx.Context, tblInfo *model.Ta
 			continue
 		}
 		if originIdx.MVIndex {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("analyzing multi-valued indexes is not supported, skip %s", originIdx.Name.L))
+			independentIdxsInfo = append(independentIdxsInfo, originIdx)
 			continue
 		}
 		if allColumns {
@@ -2277,7 +2274,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		}
 		execColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
 		allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
-		indexes, independentIndexes := getModifiedIndexesInfoForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
+		indexes, independentIndexes := getModifiedIndexesInfoForAnalyze(tbl.TableInfo, allColumns, execColsInfo)
 		handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
 		newTask := AnalyzeColumnsTask{
 			HandleCols:  handleCols,
@@ -2696,11 +2693,11 @@ func generateIndexTasks(idx *model.IndexInfo, as *ast.AnalyzeTableStmt, tblInfo 
 var CMSketchSizeLimit = kv.TxnEntrySizeLimit.Load() / binary.MaxVarintLen32
 
 var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
-	ast.AnalyzeOptNumBuckets:    1024,
-	ast.AnalyzeOptNumTopN:       16384,
+	ast.AnalyzeOptNumBuckets:    100000,
+	ast.AnalyzeOptNumTopN:       100000,
 	ast.AnalyzeOptCMSketchWidth: CMSketchSizeLimit,
 	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
-	ast.AnalyzeOptNumSamples:    500000,
+	ast.AnalyzeOptNumSamples:    5000000,
 	ast.AnalyzeOptSampleRate:    math.Float64bits(1),
 }
 
@@ -3242,6 +3239,8 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		if tableInfo.Meta().TempTableType != model.TempTableNone {
 			return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions")
 		}
+	case ast.ShowReplicaStatus:
+		return nil, dbterror.ErrNotSupportedYet.GenWithStackByArgs("SHOW {REPLICA | SLAVE} STATUS")
 	}
 
 	schema, names := buildShowSchema(show, isView, isSequence)
@@ -4167,9 +4166,11 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		importFromServer bool
 	)
 
-	importFromServer, err = storage.IsLocalPath(ld.Path)
-	if err != nil {
-		return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
+	if ld.Select == nil {
+		importFromServer, err = storage.IsLocalPath(ld.Path)
+		if err != nil {
+			return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
+		}
 	}
 
 	if importFromServer && sem.IsEnabled() {
@@ -4232,8 +4233,26 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		return nil, err
 	}
 
-	outputSchema, outputFields := convert2OutputSchemasAndNames(importIntoSchemaNames, importIntoSchemaFTypes)
-	p.setSchemaAndNames(outputSchema, outputFields)
+	if ld.Select != nil {
+		// privilege of tables in select will be checked here
+		selectPlan, err2 := b.Build(ctx, ld.Select)
+		if err2 != nil {
+			return nil, err2
+		}
+		// it's allowed to use IMPORT INTO t FROM SELECT * FROM t
+		// as we pre-check that the target table must be empty.
+		if (len(ld.ColumnsAndUserVars) > 0 && len(selectPlan.Schema().Columns) != len(ld.ColumnsAndUserVars)) ||
+			(len(ld.ColumnsAndUserVars) == 0 && len(selectPlan.Schema().Columns) != len(tableInPlan.VisibleCols())) {
+			return nil, ErrWrongValueCountOnRow.GenWithStackByArgs(1)
+		}
+		p.SelectPlan, _, err2 = DoOptimize(ctx, b.ctx, b.optFlag, selectPlan.(LogicalPlan))
+		if err2 != nil {
+			return nil, err2
+		}
+	} else {
+		outputSchema, outputFields := convert2OutputSchemasAndNames(importIntoSchemaNames, importIntoSchemaFTypes)
+		p.setSchemaAndNames(outputSchema, outputFields)
+	}
 	return p, nil
 }
 

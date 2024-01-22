@@ -58,6 +58,8 @@ var (
 	ErrWarnDeprecatedSyntaxNoReplacement = terror.ClassParser.NewStd(mysql.ErrWarnDeprecatedSyntaxNoReplacement)
 	// ErrWrongUsage returns for incorrect usages.
 	ErrWrongUsage = terror.ClassParser.NewStd(mysql.ErrWrongUsage)
+	// ErrWrongDBName returns for incorrect DB name.
+	ErrWrongDBName = terror.ClassParser.NewStd(mysql.ErrWrongDBName)
 	// SpecFieldPattern special result field pattern
 	SpecFieldPattern = regexp.MustCompile(`(\/\*!(M?[0-9]{5,6})?|\*\/)`)
 	specCodeStart    = regexp.MustCompile(`^\/\*!(M?[0-9]{5,6})?[ \t]*`)

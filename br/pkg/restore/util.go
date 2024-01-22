@@ -255,6 +255,7 @@ func GetSSTMetaFromFile(
 	}
 
 	log.Debug("get sstMeta",
+		logutil.Region(region),
 		logutil.File(file),
 		logutil.Key("startKey", rangeStart),
 		logutil.Key("endKey", rangeEnd))
@@ -510,9 +511,14 @@ func SplitRanges(
 	updateCh glue.Progress,
 	isRawKv bool,
 ) error {
-	splitter := NewRegionSplitter(split.NewSplitClient(client.GetPDClient(), client.GetTLSConfig(), isRawKv))
+	splitter := NewRegionSplitter(split.NewSplitClient(
+		client.GetPDClient(),
+		client.pdHTTPClient,
+		client.GetTLSConfig(),
+		isRawKv,
+	))
 
-	return splitter.Split(ctx, ranges, rewriteRules, isRawKv, func(keys [][]byte) {
+	return splitter.ExecuteSplit(ctx, ranges, rewriteRules, client.GetStoreCount(), client.GetGranularity(), isRawKv, func(keys [][]byte) {
 		for range keys {
 			updateCh.Inc()
 		}

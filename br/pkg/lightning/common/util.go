@@ -313,6 +313,26 @@ func UniqueTable(schema string, table string) string {
 	return builder.String()
 }
 
+func escapeIdentifiers(identifier []string) []any {
+	escaped := make([]any, len(identifier))
+	for i, id := range identifier {
+		escaped[i] = EscapeIdentifier(id)
+	}
+	return escaped
+}
+
+// SprintfWithIdentifiers escapes the identifiers and sprintf them. The input
+// identifiers must not be escaped.
+func SprintfWithIdentifiers(format string, identifiers ...string) string {
+	return fmt.Sprintf(format, escapeIdentifiers(identifiers)...)
+}
+
+// FprintfWithIdentifiers escapes the identifiers and fprintf them. The input
+// identifiers must not be escaped.
+func FprintfWithIdentifiers(w io.Writer, format string, identifiers ...string) (int, error) {
+	return fmt.Fprintf(w, format, escapeIdentifiers(identifiers)...)
+}
+
 // EscapeIdentifier quote and escape an sql identifier
 func EscapeIdentifier(identifier string) string {
 	var builder strings.Builder
@@ -525,11 +545,11 @@ loop:
 }
 
 // BuildDropIndexSQL builds the SQL statement to drop index.
-func BuildDropIndexSQL(tableName string, idxInfo *model.IndexInfo) string {
+func BuildDropIndexSQL(dbName, tableName string, idxInfo *model.IndexInfo) string {
 	if idxInfo.Primary {
-		return fmt.Sprintf("ALTER TABLE %s DROP PRIMARY KEY", tableName)
+		return SprintfWithIdentifiers("ALTER TABLE %s.%s DROP PRIMARY KEY", dbName, tableName)
 	}
-	return fmt.Sprintf("ALTER TABLE %s DROP INDEX %s", tableName, EscapeIdentifier(idxInfo.Name.O))
+	return SprintfWithIdentifiers("ALTER TABLE %s.%s DROP INDEX %s", dbName, tableName, idxInfo.Name.O)
 }
 
 // BuildAddIndexSQL builds the SQL statement to create missing indexes.

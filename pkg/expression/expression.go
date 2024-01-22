@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
@@ -84,6 +83,24 @@ type TraverseAction interface {
 	Transform(Expression) Expression
 }
 
+// ConstLevel indicates the const level for an expression
+type ConstLevel uint
+
+const (
+	// ConstNone indicates the expression is not a constant expression.
+	// The evaluation result may be different for different input rows.
+	// e.g. `col_a * 2`, `substring(col_b, 5, 3)`.
+	ConstNone ConstLevel = iota
+	// ConstOnlyInContext indicates the expression is only a constant for a same context.
+	// This is mainly for Plan Cache, e.g. `prepare st from 'select * from t where a<1+?'`, where
+	// the value of `?` may change between different Contexts (executions).
+	ConstOnlyInContext
+	// ConstStrict indicates the expression is a constant expression.
+	// The evaluation result is always the same no matter the input context or rows.
+	// e.g. `1 + 2`, `substring("TiDB SQL Tutorial", 5, 3) + 'abcde'`
+	ConstStrict
+)
+
 // Expression represents all scalar expression in SQL.
 type Expression interface {
 	fmt.Stringer
@@ -129,17 +146,8 @@ type Expression interface {
 	// IsCorrelated checks if this expression has correlated key.
 	IsCorrelated() bool
 
-	// ConstItem checks if this expression is constant item, regardless of query evaluation state.
-	// If the argument `acrossCtxs` is true,
-	// it will check if this expression returns a constant value even across multiple contexts.
-	// An expression is constant item if it:
-	// refers no tables.
-	// refers no correlated column.
-	// refers no subqueries that refers any tables.
-	// refers no non-deterministic functions.
-	// refers no statement parameters.
-	// refers no param markers when prepare plan cache is enabled.
-	ConstItem(acrossCtx bool) bool
+	// ConstLevel returns the const level of the expression.
+	ConstLevel() ConstLevel
 
 	// Decorrelate try to decorrelate the expression by schema.
 	Decorrelate(schema *Schema) Expression
@@ -228,24 +236,13 @@ func ExprNotNull(expr Expression) bool {
 	return mysql.HasNotNullFlag(expr.GetType().GetFlag())
 }
 
-// HandleOverflowOnSelection handles Overflow errors when evaluating selection filters.
-// We should ignore overflow errors when evaluating selection conditions:
-//
-//	INSERT INTO t VALUES ("999999999999999999");
-//	SELECT * FROM t WHERE v;
-func HandleOverflowOnSelection(sc *stmtctx.StatementContext, val int64, err error) (int64, error) {
-	if sc.InSelectStmt && err != nil && types.ErrOverflow.Equal(err) {
-		return -1, nil
-	}
-	return val, err
-}
-
 // EvalBool evaluates expression list to a boolean value. The first returned value
 // indicates bool result of the expression list, the second returned value indicates
 // whether the result of the expression list is null, it can only be true when the
 // first returned values is false.
 func EvalBool(ctx EvalContext, exprList CNFExprs, row chunk.Row) (bool, bool, error) {
 	hasNull := false
+	tc := typeCtx(ctx)
 	for _, expr := range exprList {
 		data, err := expr.Eval(ctx, row)
 		if err != nil {
@@ -264,12 +261,9 @@ func EvalBool(ctx EvalContext, exprList CNFExprs, row chunk.Row) (bool, bool, er
 			continue
 		}
 
-		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		i, err := data.ToBool(tc)
 		if err != nil {
-			i, err = HandleOverflowOnSelection(ctx.GetSessionVars().StmtCtx, i, err)
-			if err != nil {
-				return false, false, err
-			}
+			return false, false, err
 		}
 		if i == 0 {
 			return false, false, nil
@@ -364,7 +358,7 @@ func VecEvalBool(ctx EvalContext, exprList CNFExprs, input *chunk.Chunk, selecte
 			return nil, nil, err
 		}
 
-		err = toBool(ctx.GetSessionVars().StmtCtx, tp, eType, buf, sel, isZero)
+		err = toBool(typeCtx(ctx), tp, eType, buf, sel, isZero)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -404,7 +398,7 @@ func VecEvalBool(ctx EvalContext, exprList CNFExprs, input *chunk.Chunk, selecte
 	return selected, nulls, nil
 }
 
-func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
+func toBool(tc types.Context, tp *types.FieldType, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
 	switch eType {
 	case types.ETInt:
 		i64s := buf.Int64s()
@@ -484,14 +478,14 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalT
 						}
 					case mysql.TypeBit:
 						var bl types.BinaryLiteral = buf.GetBytes(i)
-						iVal, err := bl.ToInt(sc.TypeCtx())
+						iVal, err := bl.ToInt(tc)
 						if err != nil {
 							return err
 						}
 						fVal = float64(iVal)
 					}
 				} else {
-					fVal, err = types.StrToFloat(sc.TypeCtx(), sVal, false)
+					fVal, err = types.StrToFloat(tc, sVal, false)
 					if err != nil {
 						return err
 					}
@@ -810,7 +804,7 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
-		ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("%v affects null check"))
+		ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError("%v affects null check"))
 	}
 	if ctx.GetSessionVars().StmtCtx.InNullRejectCheck {
 		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)

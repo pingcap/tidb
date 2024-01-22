@@ -178,18 +178,18 @@ func (*ScalarSubQueryExpr) IsCorrelated() bool {
 	return false
 }
 
-// ConstItem implements the Expression interface.
-func (*ScalarSubQueryExpr) ConstItem(_ bool) bool {
-	return true
+// ConstLevel returns the const level for the expression
+func (*ScalarSubQueryExpr) ConstLevel() expression.ConstLevel {
+	return expression.ConstNone
 }
 
 // Decorrelate implements the Expression interface.
-func (s *ScalarSubQueryExpr) Decorrelate(_ *expression.Schema) expression.Expression {
+func (s *ScalarSubQueryExpr) Decorrelate(*expression.Schema) expression.Expression {
 	return s
 }
 
 // resolveIndices implements the Expression interface.
-func (*ScalarSubQueryExpr) resolveIndices(_ *expression.Schema) error {
+func (*ScalarSubQueryExpr) resolveIndices(*expression.Schema) error {
 	return nil
 }
 

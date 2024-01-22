@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -93,7 +94,22 @@ func createPlannerSuite() (s *plannerSuite) {
 		}
 	}
 	s.is = infoschema.MockInfoSchema(tblInfos)
-	s.ctx = MockContext()
+	ctx := mock.NewContext()
+	ctx.Store = &mock.Store{
+		Client: &mock.Client{},
+	}
+	initStatsCtx := mock.NewContext()
+	initStatsCtx.Store = &mock.Store{
+		Client: &mock.Client{},
+	}
+	ctx.GetSessionVars().CurrentDB = "test"
+	do := domain.NewMockDomain()
+	if err := do.CreateStatsHandle(ctx, initStatsCtx); err != nil {
+		panic(fmt.Sprintf("create mock context panic: %+v", err))
+	}
+	domain.BindDomain(ctx, do)
+	ctx.SetInfoSchema(s.is)
+	s.ctx = ctx
 	domain.GetDomain(s.ctx).MockInfoCacheAndLoadInfoSchema(s.is)
 	s.ctx.GetSessionVars().EnableWindowFunction = true
 	s.p = parser.New()
@@ -1759,6 +1775,7 @@ func TestWindowFunction(t *testing.T) {
 	})
 	s := new(plannerSuiteWithOptimizeVars)
 	s.plannerSuite = createPlannerSuite()
+	defer s.plannerSuite.Close()
 
 	s.optimizeVars = map[string]string{
 		variable.TiDBWindowConcurrency: "1",
@@ -1781,6 +1798,7 @@ func TestWindowParallelFunction(t *testing.T) {
 	})
 	s := new(plannerSuiteWithOptimizeVars)
 	s.plannerSuite = createPlannerSuite()
+	defer s.plannerSuite.Close()
 	s.optimizeVars = map[string]string{
 		variable.TiDBWindowConcurrency: "4",
 		variable.TiDBCostModelVersion:  "1",

@@ -120,7 +120,7 @@ type PointGetExecutor struct {
 	tblInfo          *model.TableInfo
 	handle           kv.Handle
 	idxInfo          *model.IndexInfo
-	partInfo         *model.PartitionDefinition
+	partitionDef     *model.PartitionDefinition
 	idxKey           kv.Key
 	handleVal        []byte
 	idxVals          []types.Datum
@@ -162,7 +162,7 @@ func (e *PointGetExecutor) Init(p *plannercore.PointGetPlan) {
 		e.lockWaitTime = 0
 	}
 	e.rowDecoder = decoder
-	e.partInfo = p.PartitionInfo
+	e.partitionDef = p.PartitionDef
 	e.columns = p.Columns
 	e.buildVirtualColumnInfo()
 }
@@ -200,13 +200,6 @@ func (e *PointGetExecutor) Close() error {
 	if e.RuntimeStats() != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
-	if e.idxInfo != nil && e.tblInfo != nil {
-		actRows := int64(0)
-		if e.RuntimeStats() != nil {
-			actRows = e.RuntimeStats().GetActRows()
-		}
-		e.Ctx().StoreIndexUsage(e.tblInfo.ID, e.idxInfo.ID, actRows)
-	}
 	e.done = false
 	return nil
 }
@@ -221,8 +214,8 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 
 	var tblID int64
 	var err error
-	if e.partInfo != nil {
-		tblID = e.partInfo.ID
+	if e.partitionDef != nil {
+		tblID = e.partitionDef.ID
 	} else {
 		tblID = e.tblInfo.ID
 	}
@@ -303,6 +296,14 @@ func (e *PointGetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				// Wait `UPDATE` finished
 				failpoint.InjectContext(ctx, "pointGetRepeatableReadTest-step2", nil)
 			})
+			if e.idxInfo.Global {
+				segs := tablecodec.SplitIndexValue(e.handleVal)
+				_, pid, err := codec.DecodeInt(segs.PartitionID)
+				if err != nil {
+					return err
+				}
+				tblID = pid
+			}
 		}
 	}
 
@@ -502,8 +503,8 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 	var tblName string
 	var partName string
 	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
-	if e.partInfo != nil {
-		tblID = e.partInfo.ID
+	if e.partitionDef != nil {
+		tblID = e.partitionDef.ID
 		tblInfo, _, partInfo := is.FindTableByPartitionID(tblID)
 		tblName = tblInfo.Meta().Name.String()
 		partName = partInfo.Name.String()

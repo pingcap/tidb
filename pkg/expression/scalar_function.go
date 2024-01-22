@@ -352,18 +352,26 @@ func (sf *ScalarFunction) IsCorrelated() bool {
 	return false
 }
 
-// ConstItem implements Expression interface.
-func (sf *ScalarFunction) ConstItem(acrossCtx bool) bool {
+// ConstLevel returns the const level for the expression
+func (sf *ScalarFunction) ConstLevel() ConstLevel {
 	// Note: some unfoldable functions are deterministic, we use unFoldableFunctions here for simplification.
 	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
-		return false
+		return ConstNone
 	}
+
+	level := ConstStrict
 	for _, arg := range sf.GetArgs() {
-		if !arg.ConstItem(acrossCtx) {
-			return false
+		argLevel := arg.ConstLevel()
+		if argLevel == ConstNone {
+			return ConstNone
+		}
+
+		if argLevel < level {
+			level = argLevel
 		}
 	}
-	return true
+
+	return level
 }
 
 // Decorrelate implements Expression interface.
@@ -410,9 +418,8 @@ func (sf *ScalarFunction) Eval(ctx EvalContext, row chunk.Row) (d types.Datum, e
 		str, isNull, err = sf.EvalString(ctx, row)
 		if !isNull && err == nil && tp.GetType() == mysql.TypeEnum {
 			res, err = types.ParseEnum(tp.GetElems(), str, tp.GetCollate())
-			if sc := ctx.GetSessionVars().StmtCtx; sc != nil {
-				err = sc.HandleTruncate(err)
-			}
+			tc := typeCtx(ctx)
+			err = tc.HandleTruncate(err)
 		} else {
 			res = str
 		}

@@ -140,22 +140,21 @@ func (b *builtinSleepSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, 
 		return 0, isNull, err
 	}
 
-	sessVars := ctx.GetSessionVars()
+	ec := errCtx(ctx)
 	if isNull || val < 0 {
 		// for insert ignore stmt, the StrictSQLMode and ignoreErr should both be considered.
-		if !sessVars.StmtCtx.BadNullAsWarning {
-			return 0, false, errIncorrectArgs.GenWithStackByArgs("sleep")
-		}
-		err := errIncorrectArgs.FastGenByArgs("sleep")
-		sessVars.StmtCtx.AppendWarning(err)
-		return 0, false, nil
+		return 0, false, ec.HandleErrorWithAlias(
+			errBadNull,
+			errIncorrectArgs.GenWithStackByArgs("sleep"),
+			errIncorrectArgs.FastGenByArgs("sleep"),
+		)
 	}
 
 	if val > math.MaxFloat64/float64(time.Second.Nanoseconds()) {
 		return 0, false, errIncorrectArgs.GenWithStackByArgs("sleep")
 	}
 
-	if isKilled := doSleep(val, sessVars); isKilled {
+	if isKilled := doSleep(val, ctx.GetSessionVars()); isKilled {
 		return 1, false, nil
 	}
 
@@ -217,7 +216,8 @@ func (b *builtinLockSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, e
 	// So users are aware, we also attach a warning.
 	if timeout < 0 || timeout > maxTimeout {
 		err := errTruncatedWrongValue.FastGenByArgs("get_lock", strconv.FormatInt(timeout, 10))
-		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+		tc := typeCtx(ctx)
+		tc.AppendWarning(err)
 		timeout = maxTimeout
 	}
 

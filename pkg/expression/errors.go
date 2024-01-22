@@ -61,6 +61,7 @@ var (
 	errUserLockDeadlock              = dbterror.ClassExpression.NewStd(mysql.ErrUserLockDeadlock)
 	errUserLockWrongName             = dbterror.ClassExpression.NewStd(mysql.ErrUserLockWrongName)
 	errJSONInBooleanContext          = dbterror.ClassExpression.NewStd(mysql.ErrJSONInBooleanContext)
+	errBadNull                       = dbterror.ClassExpression.NewStd(mysql.ErrBadNull)
 
 	// Sequence usage privilege check.
 	errSequenceAccessDenied      = dbterror.ClassExpression.NewStd(mysql.ErrTableaccessDenied)
@@ -75,43 +76,23 @@ func handleInvalidTimeError(ctx EvalContext, err error) error {
 		types.ErrDatetimeFunctionOverflow.Equal(err) || types.ErrIncorrectDatetimeValue.Equal(err)) {
 		return err
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	err = sc.HandleTruncate(err)
-	if ctx.GetSessionVars().StrictSQLMode && (sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt) {
-		return err
-	}
-	return nil
+	ec := errCtx(ctx)
+	return ec.HandleError(err)
 }
 
 // handleDivisionByZeroError reports error or warning depend on the context.
 func handleDivisionByZeroError(ctx EvalContext) error {
-	sc := ctx.GetSessionVars().StmtCtx
-	if sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt {
-		if !ctx.GetSessionVars().SQLMode.HasErrorForDivisionByZeroMode() {
-			return nil
-		}
-		if ctx.GetSessionVars().StrictSQLMode && !sc.DividedByZeroAsWarning {
-			return ErrDivisionByZero
-		}
-	}
-	sc.AppendWarning(ErrDivisionByZero)
-	return nil
+	ec := errCtx(ctx)
+	return ec.HandleError(ErrDivisionByZero)
 }
 
 // handleAllowedPacketOverflowed reports error or warning depend on the context.
 func handleAllowedPacketOverflowed(ctx EvalContext, exprName string, maxAllowedPacketSize uint64) error {
 	err := errWarnAllowedPacketOverflowed.FastGenByArgs(exprName, maxAllowedPacketSize)
-	sc := ctx.GetSessionVars().StmtCtx
-
-	// insert|update|delete ignore ...
-	if sc.TypeFlags().TruncateAsWarning() {
-		sc.AppendWarning(err)
+	tc := typeCtx(ctx)
+	if f := tc.Flags(); f.TruncateAsWarning() || f.IgnoreTruncateErr() {
+		tc.AppendWarning(err)
 		return nil
 	}
-
-	if ctx.GetSessionVars().StrictSQLMode && (sc.InInsertStmt || sc.InUpdateStmt || sc.InDeleteStmt) {
-		return errors.Trace(err)
-	}
-	sc.AppendWarning(err)
-	return nil
+	return errors.Trace(err)
 }

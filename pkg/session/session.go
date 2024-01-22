@@ -79,6 +79,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
+	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -185,7 +186,7 @@ type session struct {
 	mppClient kv.MPPClient
 
 	// indexUsageCollector collects index usage information.
-	idxUsageCollector *usage.SessionIndexUsageCollector
+	idxUsageCollector *indexusage.SessionIndexUsageCollector
 
 	functionUsageMu struct {
 		syncutil.RWMutex
@@ -296,7 +297,7 @@ func (s *session) cleanRetryInfo() {
 			if ok {
 				preparedAst = preparedObj.PreparedAst
 				stmtText, stmtDB = preparedObj.StmtText, preparedObj.StmtDB
-				bindSQL, _ := plannercore.GetBindSQL4PlanCache(s, preparedObj)
+				bindSQL, _ := bindinfo.MatchSQLBindingForPlanCache(s, preparedObj.PreparedAst.Stmt, &preparedObj.BindingInfo)
 				cacheKey, err = plannercore.NewPlanCacheKey(s.sessionVars, stmtText, stmtDB, preparedAst.SchemaVersion,
 					0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load())
 				if err != nil {
@@ -412,14 +413,6 @@ func (s *session) UpdateColStatsUsage(predicateColumns []model.TableItemID) {
 		colMap[col] = t
 	}
 	s.statsCollector.UpdateColStatsUsage(colMap)
-}
-
-// StoreIndexUsage stores index usage information in idxUsageCollector.
-func (s *session) StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64) {
-	if s.idxUsageCollector == nil {
-		return
-	}
-	s.idxUsageCollector.Update(tblID, idxID, &usage.IndexUsageInformation{QueryCount: 1, RowsSelected: rowsSelected})
 }
 
 // FieldList returns fields list of a table.
@@ -1092,21 +1085,32 @@ func (*session) isTxnRetryableError(err error) bool {
 	return kv.IsTxnRetryableError(err) || domain.ErrInfoSchemaChanged.Equal(err)
 }
 
+func isEndTxnStmt(stmt ast.StmtNode, vars *variable.SessionVars) (bool, error) {
+	switch n := stmt.(type) {
+	case *ast.RollbackStmt, *ast.CommitStmt:
+		return true, nil
+	case *ast.ExecuteStmt:
+		ps, err := plannercore.GetPreparedStmt(n, vars)
+		if err != nil {
+			return false, err
+		}
+		return isEndTxnStmt(ps.PreparedAst.Stmt, vars)
+	}
+	return false, nil
+}
+
 func (s *session) checkTxnAborted(stmt sqlexec.Statement) error {
-	var err error
 	if atomic.LoadUint32(&s.GetSessionVars().TxnCtx.LockExpire) == 0 {
 		return nil
 	}
-	err = kv.ErrLockExpire
 	// If the transaction is aborted, the following statements do not need to execute, except `commit` and `rollback`,
 	// because they are used to finish the aborted transaction.
-	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.CommitStmt); ok {
+	if ok, err := isEndTxnStmt(stmt.(*executor.ExecStmt).StmtNode, s.sessionVars); err == nil && ok {
 		return nil
+	} else if err != nil {
+		return err
 	}
-	if _, ok := stmt.(*executor.ExecStmt).StmtNode.(*ast.RollbackStmt); ok {
-		return nil
-	}
-	return err
+	return kv.ErrLockExpire
 }
 
 func (s *session) retry(ctx context.Context, maxCnt uint) (err error) {
@@ -2232,7 +2236,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	// current session is attached with a resource group.
 	resourceGroupName := s.GetSessionVars().StmtCtx.ResourceGroupName
 	if len(resourceGroupName) > 0 {
-		metrics.ResourceGroupQueryTotalCounter.WithLabelValues(resourceGroupName).Inc()
+		metrics.ResourceGroupQueryTotalCounter.WithLabelValues(resourceGroupName, resourceGroupName).Inc()
 	}
 
 	if err != nil {
@@ -2350,23 +2354,6 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 	}
 
 	sessVars := se.sessionVars
-
-	// Record diagnostic information for DML statements
-	if stmt, ok := s.(*executor.ExecStmt).StmtNode.(ast.DMLNode); ok {
-		// Keep the previous queryInfo for `show session_states` because the statement needs to encode it.
-		if showStmt, ok := stmt.(*ast.ShowStmt); !ok || showStmt.Tp != ast.ShowSessionStates {
-			defer func() {
-				sessVars.LastQueryInfo = sessionstates.QueryInfo{
-					TxnScope:    sessVars.CheckAndGetTxnScope(),
-					StartTS:     sessVars.TxnCtx.StartTS,
-					ForUpdateTS: sessVars.TxnCtx.GetForUpdateTS(),
-				}
-				if err != nil {
-					sessVars.LastQueryInfo.ErrMsg = err.Error()
-				}
-			}()
-		}
-	}
 
 	// Save origTxnCtx here to avoid it reset in the transaction retry.
 	origTxnCtx := sessVars.TxnCtx
@@ -2588,7 +2575,7 @@ func (s *session) Close() {
 		s.statsCollector.Delete()
 	}
 	if s.idxUsageCollector != nil {
-		s.idxUsageCollector.Delete()
+		s.idxUsageCollector.Flush()
 	}
 	telemetry.GlobalBuiltinFunctionsUsage.Collect(s.GetBuiltinFunctionUsage())
 	bindValue := s.Value(bindinfo.SessionBindInfoKeyType)
@@ -2992,6 +2979,13 @@ func (s *session) SetSessionStatesHandler(stateType sessionstates.SessionStateTy
 	s.sessionStatesHandlers[stateType] = handler
 }
 
+// ReportUsageStats reports the usage stats
+func (s *session) ReportUsageStats() {
+	if s.idxUsageCollector != nil {
+		s.idxUsageCollector.Report()
+	}
+}
+
 // CreateSession4Test creates a new session environment for test.
 func CreateSession4Test(store kv.Storage) (types.Session, error) {
 	se, err := CreateSession4TestWithOpt(store, nil)
@@ -3055,9 +3049,7 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (types.Session, error) {
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {
 		s.statsCollector = do.StatsHandle().NewSessionStatsItem().(*usage.SessionStatsItem)
-		if GetIndexUsageSyncLease() > 0 {
-			s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector().(*usage.SessionIndexUsageCollector)
-		}
+		s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
 	}
 
 	return s, nil
@@ -3157,7 +3149,7 @@ func createAndSplitTables(store kv.Storage, t *meta.Meta, dbID int64, tables []t
 		tblInfo.State = model.StatePublic
 		tblInfo.ID = tbl.id
 		tblInfo.UpdateTS = t.StartTS
-		err = t.CreateTableOrView(dbID, tblInfo)
+		err = t.CreateTableOrView(dbID, "", tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3190,7 +3182,7 @@ func InitMDLTable(store kv.Storage) error {
 		tblInfo.State = model.StatePublic
 		tblInfo.ID = ddl.MDLTableID
 		tblInfo.UpdateTS = t.StartTS
-		err = t.CreateTableOrView(dbID, tblInfo)
+		err = t.CreateTableOrView(dbID, "", tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3493,7 +3485,7 @@ func bootstrapSessionImpl(store kv.Storage, createSessionsImpl func(store kv.Sto
 		dom.Close()
 		return nil, errors.New("Fail to load or parse sql file")
 	}
-	err = dom.InitDistTaskLoop(ctx)
+	err = dom.InitDistTaskLoop()
 	if err != nil {
 		return nil, err
 	}
@@ -3608,8 +3600,8 @@ func attachStatsCollector(s *session, dom *domain.Domain) *session {
 		if s.statsCollector == nil {
 			s.statsCollector = dom.StatsHandle().NewSessionStatsItem().(*usage.SessionStatsItem)
 		}
-		if s.idxUsageCollector == nil && GetIndexUsageSyncLease() > 0 {
-			s.idxUsageCollector = dom.StatsHandle().NewSessionIndexUsageCollector().(*usage.SessionIndexUsageCollector)
+		if s.idxUsageCollector == nil {
+			s.idxUsageCollector = dom.StatsHandle().NewSessionIndexUsageCollector()
 		}
 	}
 
@@ -3623,7 +3615,7 @@ func detachStatsCollector(s *session) *session {
 		s.statsCollector = nil
 	}
 	if s.idxUsageCollector != nil {
-		s.idxUsageCollector.Delete()
+		s.idxUsageCollector.Flush()
 		s.idxUsageCollector = nil
 	}
 	return s
@@ -3713,6 +3705,11 @@ func (s *session) loadCommonGlobalVariablesIfNeeded() error {
 	}
 	if s.Value(sessionctx.Initing) != nil {
 		// When running bootstrap or upgrade, we should not access global storage.
+		// But we need to init max_allowed_packet to use concat function during bootstrap or upgrade.
+		err := vars.SetSystemVar(variable.MaxAllowedPacket, strconv.FormatUint(variable.DefMaxAllowedPacket, 10))
+		if err != nil {
+			logutil.BgLogger().Error("set system variable max_allowed_packet error", zap.Error(err))
+		}
 		return nil
 	}
 
