@@ -468,7 +468,7 @@ func (sm *Manager) collectMetrics() {
 			subtask.State.String(),
 			strconv.Itoa(int(subtask.ID)),
 			subtask.ExecID,
-		).Set(float64(time.Since(subtask.StateUpdateTime).Seconds()))
+		).Set(time.Since(subtask.StateUpdateTime).Seconds())
 		for _, state := range proto.AllSubtaskStates {
 			if state == subtask.State {
 				continue
