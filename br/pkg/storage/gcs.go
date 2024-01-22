@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	goerrors "errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/prefetch"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2/google"
@@ -203,6 +205,7 @@ func (s *GCSStorage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 	}
 	pos := int64(0)
 	endPos := attrs.Size
+	prefetchSize := 0
 	if o != nil {
 		if o.StartOffset != nil {
 			pos = *o.StartOffset
@@ -210,17 +213,19 @@ func (s *GCSStorage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 		if o.EndOffset != nil {
 			endPos = *o.EndOffset
 		}
+		prefetchSize = o.PrefetchSize
 	}
 
 	return &gcsObjectReader{
-		storage:   s,
-		name:      path,
-		objHandle: handle,
-		reader:    nil, // lazy create
-		ctx:       ctx,
-		pos:       pos,
-		endPos:    endPos,
-		totalSize: attrs.Size,
+		storage:      s,
+		name:         path,
+		objHandle:    handle,
+		reader:       nil, // lazy create
+		ctx:          ctx,
+		pos:          pos,
+		endPos:       endPos,
+		prefetchSize: prefetchSize,
+		totalSize:    attrs.Size,
 	}, nil
 }
 
@@ -390,10 +395,16 @@ func shouldRetry(err error) bool {
 
 	// workaround for https://github.com/googleapis/google-cloud-go/issues/9262
 	if e := (&googleapi.Error{}); goerrors.As(err, &e) {
-		if e.Code == 401 && strings.Contains(e.Message, "Authentication required.") {
+		if e.Code == 401 {
 			log.Warn("retrying gcs request due to internal authentication error", zap.Error(err))
 			return true
 		}
+	}
+
+	if err != nil {
+		log.Warn("other error when requesting gcs",
+			zap.Error(err),
+			zap.String("info", fmt.Sprintf("type: %T, value: %#v", err, err)))
 	}
 
 	return false
@@ -408,6 +419,8 @@ type gcsObjectReader struct {
 	pos       int64
 	endPos    int64
 	totalSize int64
+
+	prefetchSize int
 	// reader context used for implement `io.Seek`
 	// currently, lightning depends on package `xitongsys/parquet-go` to read parquet file and it needs `io.Seeker`
 	// See: https://github.com/xitongsys/parquet-go/blob/207a3cee75900b2b95213627409b7bac0f190bb3/source/source.go#L9-L10
@@ -428,6 +441,9 @@ func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
 				r.storage.gcs.Bucket, r.name)
 		}
 		r.reader = rc
+		if r.prefetchSize > 0 {
+			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+		}
 	}
 	n, err = r.reader.Read(p)
 	r.pos += int64(n)
@@ -485,6 +501,9 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 			r.storage.gcs.Bucket, r.name)
 	}
 	r.reader = rc
+	if r.prefetchSize > 0 {
+		r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+	}
 
 	return realOffset, nil
 }

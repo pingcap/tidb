@@ -19,13 +19,21 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"net/http"
+	_ "net/http/pprof"
+	"slices"
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
+	"github.com/google/uuid"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
+	"golang.org/x/sync/errgroup"
 )
 
 func TestGeneralProperties(t *testing.T) {
@@ -350,4 +358,147 @@ func TestExactlyKeyNum(t *testing.T) {
 	require.Equal(t, dataFiles, splitDataFiles)
 	require.Equal(t, statFiles, splitStatFiles)
 	require.Equal(t, [][]byte{[]byte("key001"), []byte("key002")}, splitKeys)
+}
+
+func Test3KFilesRangeSplitter(t *testing.T) {
+	store := openTestingStorage(t)
+	ctx := context.Background()
+
+	// use HTTP pprof to debug
+	go func() {
+		http.ListenAndServe("localhost:6060", nil)
+	}()
+
+	// test the case that after one round merge step, we have 3000 stat files. In
+	// current merge step parameters, we will merge 4000 files of 256MB into 16
+	// files, so we directly write 4000*256MB/16 = 64GB data to onefile writer.
+	fileNum := 3000
+	statCh := make(chan []MultipleFilesStat, fileNum)
+	onClose := func(s *WriterSummary) {
+		statCh <- s.MultipleFilesStats
+	}
+
+	eg := errgroup.Group{}
+	eg.SetLimit(30)
+	for i := 0; i < fileNum; i++ {
+		i := i
+		eg.Go(func() error {
+			w := NewWriterBuilder().
+				SetMemorySizeLimit(DefaultMemSizeLimit).
+				SetBlockSize(32*units.MiB). // dataKVGroupBlockSize
+				SetWriterBatchCount(8*1024).
+				SetPropKeysDistance(8*1024).
+				SetPropSizeDistance(size.MB).
+				SetOnCloseFunc(onClose).
+				BuildOneFile(store, "/mock-test", uuid.New().String())
+			err := w.Init(ctx, int64(5*size.MB))
+			require.NoError(t, err)
+			// we don't need data files
+			err = w.dataWriter.Close(ctx)
+			require.NoError(t, err)
+			w.dataWriter = storage.NoopWriter{}
+
+			kvSize := 20 * size.KB
+			keySize := size.KB
+			key := make([]byte, keySize)
+			key[keySize-1] = byte(i % 256)
+			key[keySize-2] = byte(i / 256)
+			minKey := slices.Clone(key)
+			var maxKey []byte
+
+			memSize := uint64(0)
+			for j := 0; j < int(64*size.GB/kvSize); j++ {
+
+				// copied from OneFileWriter.WriteRow
+
+				if memSize >= DefaultMemSizeLimit {
+					memSize = 0
+					w.kvStore.Close()
+					encodedStat := w.rc.encode()
+					_, err := w.statWriter.Write(ctx, encodedStat)
+					if err != nil {
+						return err
+					}
+					w.rc.reset()
+					// the new prop should have the same offset with kvStore.
+					w.rc.currProp.offset = w.kvStore.offset
+				}
+				if len(w.rc.currProp.firstKey) == 0 {
+					w.rc.currProp.firstKey = key
+				}
+				w.rc.currProp.lastKey = key
+
+				memSize += kvSize
+				w.totalSize += kvSize
+				w.rc.currProp.size += kvSize - 2*lengthBytes
+				w.rc.currProp.keys++
+
+				if w.rc.currProp.size >= w.rc.propSizeDist ||
+					w.rc.currProp.keys >= w.rc.propKeysDist {
+					newProp := *w.rc.currProp
+					w.rc.props = append(w.rc.props, &newProp)
+					// reset currProp, and start to update this prop.
+					w.rc.currProp.firstKey = nil
+					w.rc.currProp.offset = memSize
+					w.rc.currProp.keys = 0
+					w.rc.currProp.size = 0
+				}
+
+				if j == int(64*size.GB/kvSize)-1 {
+					maxKey = slices.Clone(key)
+				}
+
+				// increase the key
+
+				for k := keySize - 3; k >= 0; k-- {
+					key[k]++
+					if key[k] != 0 {
+						break
+					}
+				}
+			}
+
+			// copied from mergeOverlappingFilesInternal
+			var stat MultipleFilesStat
+			stat.Filenames = append(stat.Filenames,
+				[2]string{w.dataFile, w.statFile})
+			stat.build([]kv.Key{minKey}, []kv.Key{maxKey})
+			statCh <- []MultipleFilesStat{stat}
+			return w.Close(ctx)
+		})
+	}
+
+	require.NoError(t, eg.Wait())
+
+	multiStat := make([]MultipleFilesStat, 0, fileNum)
+	for i := 0; i < fileNum; i++ {
+		multiStat = append(multiStat, <-statCh...)
+	}
+	splitter, err := NewRangeSplitter(
+		ctx,
+		multiStat,
+		store,
+		int64(config.DefaultBatchSize),
+		int64(math.MaxInt64),
+		int64(config.SplitRegionSize),
+		int64(config.SplitRegionKeys),
+		false,
+	)
+	require.NoError(t, err)
+	var lastEndKey []byte
+	for {
+		endKey, _, statFiles, _, err := splitter.SplitOneRangesGroup()
+		require.NoError(t, err)
+		require.Greater(t, len(statFiles), 0)
+		if endKey == nil {
+			break
+		}
+		if lastEndKey != nil {
+			cmp := bytes.Compare(endKey, lastEndKey)
+			require.Equal(t, 1, cmp, "endKey: %v, lastEndKey: %v", endKey, lastEndKey)
+		}
+		lastEndKey = slices.Clone(endKey)
+	}
+	err = splitter.Close()
+	require.NoError(t, err)
 }
