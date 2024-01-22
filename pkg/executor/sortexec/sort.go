@@ -76,9 +76,6 @@ type SortExec struct {
 		chunkChannel chan *chunk.Chunk
 		workers      []*parallelSortWorker
 
-		// Closed closeChannel means the finish of `fetchChunksParallel` function
-		closeChannel chan struct{}
-
 		errRWLock *sync.RWMutex
 		err       error
 
@@ -104,13 +101,13 @@ func (e *SortExec) Close() error {
 			partition.close()
 		}
 	} else {
-		<-e.Parallel.closeChannel
 		for {
 			_, ok := <-e.Parallel.chunkChannel
 			if !ok {
 				break
 			}
 		}
+
 	}
 
 	if e.memTracker != nil {
@@ -140,7 +137,6 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Unparallel.Idx = 0
 	} else {
 		e.Parallel.workers = make([]*parallelSortWorker, e.Ctx().GetSessionVars().ExecutorConcurrency)
-		e.Parallel.closeChannel = make(chan struct{})
 		e.Parallel.chunkChannel = make(chan *chunk.Chunk, len(e.Parallel.workers))
 		e.Parallel.errRWLock = &sync.RWMutex{}
 		e.Parallel.err = nil
@@ -280,7 +276,12 @@ func (e *SortExec) initKWayMerge() {
 }
 
 func (e *SortExec) generateResultWithKWayMerge() {
-	defer close(e.Parallel.resultChannel)
+	defer func() {
+		close(e.Parallel.resultChannel)
+		for i := range e.Parallel.sortedRowsIters {
+			e.Parallel.sortedRowsIters[i].Reset(nil)
+		}
+	}()
 
 	maxChunkSize := e.MaxChunkSize()
 	resBuf := make([]chunk.Row, 0, maxChunkSize)
@@ -306,6 +307,8 @@ func (e *SortExec) generateResultWithKWayMerge() {
 			}
 		}
 		resBuf = resBuf[:0]
+
+		injectParallelSortRandomFail()
 	}
 }
 
@@ -520,8 +523,6 @@ func (e *SortExec) fetchChunksUnparallel(ctx context.Context) error {
 }
 
 func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
-	defer close(e.Parallel.closeChannel)
-
 	// Wait for the finish of all workers
 	workersWaiter := util.WaitGroupWrapper{}
 	// Wait for the finish of chunk fetcher
