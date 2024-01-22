@@ -71,7 +71,7 @@ func (mgr *TaskManager) MarkDeadNodes(ctx context.Context, nodes []string) error
 	return mgr.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		updateSQL := new(strings.Builder)
 		if err := sqlescape.FormatSQL(updateSQL, `update mysql.dist_framework_meta
-			set dead = 1 where host in(`); err != nil {
+			set dead = true where host in(`); err != nil {
 			return err
 		}
 		updateElems := make([]string, 0, len(nodes))
@@ -104,10 +104,10 @@ func (mgr *TaskManager) getManagedNodesWithSession(ctx context.Context, se sessi
 	}
 	managedNodes := make([]proto.ManagedNode, 0)
 	liveNodes := make([]proto.ManagedNode, 0)
-	var setTiDBServiceScopeBackground bool
+	var existBackgroundNode bool
 	for _, node := range nodes {
 		if node.Role == distroleutil.TiDBServiceScopeBackground {
-			setTiDBServiceScopeBackground = true
+			existBackgroundNode = true
 		}
 		if node.Dead {
 			continue
@@ -117,7 +117,7 @@ func (mgr *TaskManager) getManagedNodesWithSession(ctx context.Context, se sessi
 			managedNodes = append(managedNodes, node)
 		}
 	}
-	if !setTiDBServiceScopeBackground {
+	if !existBackgroundNode {
 		return liveNodes, nil
 	}
 
