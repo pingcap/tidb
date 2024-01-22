@@ -296,7 +296,7 @@ func (p *baseLogicalPlan) iteratePhysicalPlan(
 	selfPhysicalPlan PhysicalPlan,
 	childTasks []task,
 	childCnts []int64,
-	prop *property.PhysicalProperty,
+	_ *property.PhysicalProperty,
 	opt *physicalOptimizeOp,
 ) ([]task, int64, []int64, error) {
 	// Find best child tasks firstly.
