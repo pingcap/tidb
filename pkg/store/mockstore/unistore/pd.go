@@ -269,3 +269,7 @@ func (c *pdClient) UpdateServiceSafePointV2(ctx context.Context, keyspaceID uint
 func (c *pdClient) WatchGCSafePointV2(ctx context.Context, revision int64) (chan []*pdpb.SafePointEvent, error) {
 	panic("unimplemented")
 }
+
+func (c *pdClient) GetServiceDiscovery() pd.ServiceDiscovery {
+	panic("unimplemented")
+}
