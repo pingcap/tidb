@@ -62,6 +62,8 @@ var AllowCartesianProduct = atomic.NewBool(true)
 // IsReadOnly check whether the ast.Node is a read only statement.
 var IsReadOnly func(node ast.Node, vars *variable.SessionVars) bool
 
+// Note: The order of flags is same as the order of optRule in the list.
+// Do not mess up the order.
 const (
 	flagGcSubstitute uint64 = 1 << iota
 	flagPrunColumns
