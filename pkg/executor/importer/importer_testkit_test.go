@@ -16,23 +16,44 @@ package importer_test
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path"
 	"testing"
 	"time"
 
 	"github.com/ngaut/pools"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/br/pkg/lightning/checkpoints"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/lightning/config"
+	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
+	"github.com/pingcap/tidb/br/pkg/mock"
+	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
+	kvconfig "github.com/tikv/client-go/v2/config"
+	"go.etcd.io/etcd/tests/v3/integration"
+	"go.uber.org/mock/gomock"
+	"go.uber.org/zap"
 )
 
-func TestChecksumTable(t *testing.T) {
+func TestVerifyChecksum(t *testing.T) {
 	ctx := context.Background()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -46,27 +67,51 @@ func TestChecksumTable(t *testing.T) {
 		TableInfo: &model.TableInfo{
 			Name: model.NewCIStr("tb"),
 		},
+		Checksum: config.OpLevelRequired,
 	}
-	// fake result
-	localChecksum := verify.MakeKVChecksum(1, 1, 1)
 	tk.MustExec("create database db")
 	tk.MustExec("create table db.tb(id int)")
 	tk.MustExec("insert into db.tb values(1)")
-	remoteChecksum, err := importer.ChecksumTable(ctx, tk.Session(), plan, logutil.BgLogger())
-	require.NoError(t, err)
-	require.True(t, remoteChecksum.IsEqual(&localChecksum))
-	// again
-	remoteChecksum, err = importer.ChecksumTable(ctx, tk.Session(), plan, logutil.BgLogger())
-	require.NoError(t, err)
-	require.True(t, remoteChecksum.IsEqual(&localChecksum))
 
-	_ = failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum", `return(true)`)
-	defer func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum")
-	}()
-	remoteChecksum, err = importer.ChecksumTable(ctx, tk.Session(), plan, logutil.BgLogger())
+	// admin checksum table always return 1, 1, 1 for memory store
+	// Checksum = required
+	localChecksum := verify.MakeKVChecksum(1, 1, 1)
+	err := importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
 	require.NoError(t, err)
-	require.True(t, remoteChecksum.IsEqual(&localChecksum))
+	localChecksum = verify.MakeKVChecksum(1, 2, 1)
+	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
+	require.ErrorIs(t, err, common.ErrChecksumMismatch)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum", `3*return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum"))
+	}()
+	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
+	require.ErrorContains(t, err, "occur an error when checksum")
+	// remote checksum success after retry
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum", `1*return(true)`))
+	localChecksum = verify.MakeKVChecksum(1, 1, 1)
+	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
+	require.NoError(t, err)
+
+	// checksum = optional
+	plan.Checksum = config.OpLevelOptional
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum"))
+	localChecksum = verify.MakeKVChecksum(1, 1, 1)
+	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
+	require.NoError(t, err)
+	localChecksum = verify.MakeKVChecksum(1, 2, 1)
+	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
+	require.NoError(t, err)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum", `3*return(true)`))
+	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
+	require.NoError(t, err)
+
+	// checksum = off
+	plan.Checksum = config.OpLevelOff
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum"))
+	localChecksum = verify.MakeKVChecksum(1, 2, 1)
+	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
+	require.NoError(t, err)
 }
 
 func TestGetTargetNodeCpuCnt(t *testing.T) {
@@ -102,4 +147,193 @@ func TestGetTargetNodeCpuCnt(t *testing.T) {
 	targetNodeCPUCnt, err = importer.GetTargetNodeCPUCnt(ctx, importer.DataSourceTypeFile, "s3://path/to/xxx.csv")
 	require.NoError(t, err)
 	require.Equal(t, 16, targetNodeCPUCnt)
+}
+
+func TestPostProcess(t *testing.T) {
+	ctx := context.Background()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	pool := pools.NewResourcePool(func() (pools.Resource, error) {
+		return tk.Session(), nil
+	}, 1, 1, time.Second)
+	defer pool.Close()
+	bak := importer.GetKVStore
+	defer func() {
+		importer.GetKVStore = bak
+	}()
+
+	tk.MustExec("create database db")
+	tk.MustExec("create table db.tb(id int primary key)")
+	tk.MustExec("insert into db.tb values(1)")
+	do, err := session.GetDomain(store)
+	require.NoError(t, err)
+	dbInfo, ok := do.InfoSchema().SchemaByName(model.NewCIStr("db"))
+	require.True(t, ok)
+	table, err := do.InfoSchema().TableByName(model.NewCIStr("db"), model.NewCIStr("tb"))
+	require.NoError(t, err)
+	plan := &importer.Plan{
+		DBID:             dbInfo.ID,
+		DBName:           "db",
+		TableInfo:        table.Meta(),
+		DesiredTableInfo: table.Meta(),
+		Checksum:         config.OpLevelRequired,
+	}
+	logger := zap.NewExample()
+
+	// verify checksum failed
+	localChecksum := verify.MakeKVChecksum(1, 2, 1)
+	require.ErrorIs(t, importer.PostProcess(ctx, tk.Session(), nil, plan, localChecksum, logger), common.ErrChecksumMismatch)
+	// success
+	localChecksum = verify.MakeKVChecksum(1, 1, 1)
+	require.NoError(t, importer.PostProcess(ctx, tk.Session(), nil, plan, localChecksum, logger))
+	// get KV store failed
+	importer.GetKVStore = func(path string, tls kvconfig.Security) (kv.Storage, error) {
+		return nil, errors.New("mock get kv store failed")
+	}
+	tk.MustExec("create table db.tb2(id int auto_increment primary key)")
+	table, err = do.InfoSchema().TableByName(model.NewCIStr("db"), model.NewCIStr("tb2"))
+	require.NoError(t, err)
+	plan.TableInfo, plan.DesiredTableInfo = table.Meta(), table.Meta()
+	require.ErrorContains(t, importer.PostProcess(ctx, tk.Session(), nil, plan, localChecksum, logger), "mock get kv store failed")
+	// rebase success
+	importer.GetKVStore = func(path string, tls kvconfig.Security) (kv.Storage, error) {
+		return store, nil
+	}
+	integration.BeforeTestExternal(t)
+	testEtcdCluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	t.Cleanup(func() {
+		testEtcdCluster.Terminate(t)
+	})
+	tidbCfg := tidb.GetGlobalConfig()
+	pathBak := tidbCfg.Path
+	defer func() {
+		tidbCfg.Path = pathBak
+	}()
+	tidbCfg.Path = testEtcdCluster.Members[0].ClientURLs[0].String()
+	require.NoError(t, importer.PostProcess(ctx, tk.Session(), map[autoid.AllocatorType]int64{
+		autoid.RowIDAllocType: 123,
+	}, plan, localChecksum, logger))
+	allocators := table.Allocators(tk.Session())
+	nextGlobalAutoID, err := allocators.Get(autoid.RowIDAllocType).NextGlobalAutoID()
+	require.NoError(t, err)
+	require.Equal(t, int64(124), nextGlobalAutoID)
+	tk.MustExec("insert into db.tb2 values(default)")
+	tk.MustQuery("select * from db.tb2").Check(testkit.Rows("124"))
+}
+
+func getTableImporter(ctx context.Context, t *testing.T, store kv.Storage, tableName, path string, opts []*plannercore.LoadDataOpt) *importer.TableImporter {
+	tk := testkit.NewTestKit(t, store)
+	do, err := session.GetDomain(store)
+	require.NoError(t, err)
+	dbInfo, ok := do.InfoSchema().SchemaByName(model.NewCIStr("test"))
+	require.True(t, ok)
+	table, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(tableName))
+	require.NoError(t, err)
+	var selectPlan plannercore.PhysicalPlan
+	if path == "" {
+		selectPlan = &plannercore.PhysicalSelection{}
+	}
+	plan, err := importer.NewImportPlan(ctx, tk.Session(), &plannercore.ImportInto{
+		Path:       path,
+		Table:      &ast.TableName{Name: table.Meta().Name, DBInfo: dbInfo},
+		Options:    opts,
+		SelectPlan: selectPlan,
+	}, table)
+	require.NoError(t, err)
+	controller, err := importer.NewLoadDataController(plan, table, &importer.ASTArgs{})
+	require.NoError(t, err)
+	if path != "" {
+		require.NoError(t, controller.InitDataStore(ctx))
+	}
+	ti, err := importer.NewTableImporterForTest(&importer.JobImportParam{GroupCtx: ctx},
+		controller, "11", store, &storeHelper{kvStore: store})
+	require.NoError(t, err)
+	return ti
+}
+
+func TestProcessChunkWith(t *testing.T) {
+	ctx := context.Background()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	tidbCfg := tidb.GetGlobalConfig()
+	tidbCfg.TempDir = t.TempDir()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int)")
+	fileName := path.Join(tidbCfg.TempDir, "test.csv")
+	sourceData := []byte("1,2,3\n4,5,6\n7,8,9\n")
+	require.NoError(t, os.WriteFile(fileName, sourceData, 0o644))
+
+	t.Run("file chunk", func(t *testing.T) {
+		chunkInfo := &checkpoints.ChunkCheckpoint{
+			FileMeta: mydump.SourceFileMeta{Type: mydump.SourceTypeCSV, Path: "test.csv"},
+			Chunk:    mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
+		}
+		ti := getTableImporter(ctx, t, store, "t", fileName, []*plannercore.LoadDataOpt{
+			{Name: "skip_rows", Value: expression.NewInt64Const(1)}})
+		defer ti.Backend().CloseEngineMgr()
+		kvWriter := mock.NewMockEngineWriter(ctrl)
+		kvWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+		progress := importer.NewProgress()
+		err := importer.ProcessChunkWith(ctx, chunkInfo, ti, kvWriter, kvWriter, progress, zap.NewExample())
+		require.NoError(t, err)
+		require.Len(t, progress.GetColSize(), 3)
+		require.Equal(t, verify.MakeKVChecksum(74, 2, 15625182175392723123), chunkInfo.Checksum)
+	})
+
+	t.Run("query chunk", func(t *testing.T) {
+		chunkInfo := &checkpoints.ChunkCheckpoint{
+			FileMeta: mydump.SourceFileMeta{Type: mydump.SourceTypeCSV, Path: "test.csv"},
+			Chunk:    mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
+		}
+		ti := getTableImporter(ctx, t, store, "t", "", nil)
+		defer ti.Backend().CloseEngineMgr()
+		rowsCh := make(chan importer.QueryRow, 3)
+		for i := 1; i <= 3; i++ {
+			rowsCh <- importer.QueryRow{
+				ID: int64(i),
+				Data: []types.Datum{
+					types.NewIntDatum(int64((i-1)*3 + 1)),
+					types.NewIntDatum(int64((i-1)*3 + 2)),
+					types.NewIntDatum(int64((i-1)*3 + 3)),
+				},
+			}
+		}
+		close(rowsCh)
+		ti.SetSelectedRowCh(rowsCh)
+		kvWriter := mock.NewMockEngineWriter(ctrl)
+		kvWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+		progress := importer.NewProgress()
+		err := importer.ProcessChunkWith(ctx, chunkInfo, ti, kvWriter, kvWriter, progress, zap.NewExample())
+		require.NoError(t, err)
+		require.Len(t, progress.GetColSize(), 3)
+		require.Equal(t, verify.MakeKVChecksum(111, 3, 14231358899564314836), chunkInfo.Checksum)
+	})
+}
+
+func TestPopulateChunks(t *testing.T) {
+	ctx := context.Background()
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tidbCfg := tidb.GetGlobalConfig()
+	tidbCfg.TempDir = t.TempDir()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int)")
+	require.NoError(t, os.WriteFile(path.Join(tidbCfg.TempDir, "test-01.csv"),
+		[]byte("1,2,3\n4,5,6\n7,8,9\n"), 0o644))
+	require.NoError(t, os.WriteFile(path.Join(tidbCfg.TempDir, "test-02.csv"),
+		[]byte("8,8,8\n"), 0o644))
+	require.NoError(t, os.WriteFile(path.Join(tidbCfg.TempDir, "test-03.csv"),
+		[]byte("9,9,9\n10,10,10\n"), 0o644))
+	ti := getTableImporter(ctx, t, store, "t", fmt.Sprintf("%s/test-*.csv", tidbCfg.TempDir), []*plannercore.LoadDataOpt{{Name: "__max_engine_size", Value: expression.NewStrConst("20")}})
+	defer ti.Backend().CloseEngineMgr()
+	require.NoError(t, ti.InitDataFiles(ctx))
+	engines, err := ti.PopulateChunks(ctx)
+	require.NoError(t, err)
+	require.Len(t, engines, 3)
+	require.Len(t, engines[0].Chunks, 2)
+	require.Len(t, engines[1].Chunks, 1)
 }
