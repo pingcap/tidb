@@ -1299,3 +1299,23 @@ func TestAdjustConflict(t *testing.T) {
 	cfg.Conflict.MaxRecordRows = 1
 	require.ErrorContains(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App), `cannot record duplication (conflict.max-record-rows > 0) when use tikv-importer.backend = "tidb" and conflict.strategy = "replace"`)
 }
+
+func TestAdjustBlockSize(t *testing.T) {
+	ts, host, port := startMockServer(t, http.StatusOK, "{}")
+
+	cfg := NewConfig()
+	cfg.TiDB.Host = host
+	cfg.TiDB.StatusPort = port
+	cfg.TikvImporter.Backend = BackendLocal
+	cfg.TikvImporter.SortedKVDir = "."
+	cfg.TiDB.DistSQLScanConcurrency = 1
+	cfg.Mydumper.SourceDir = "."
+	cfg.TikvImporter.BlockSize = 0
+
+	ts.Close() // immediately close to ensure connection refused.
+
+	err := cfg.Adjust(context.Background())
+	require.Error(t, err)
+	fmt.Println(cfg.TikvImporter.BlockSize)
+	require.Regexp(t, "cannot fetch settings from TiDB.*", err.Error())
+}
