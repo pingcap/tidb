@@ -251,12 +251,6 @@ func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
 	return s.tableImporter.Close()
 }
 
-func (s *importStepExecutor) Rollback(context.Context) error {
-	// TODO: add rollback
-	s.logger.Info("rollback")
-	return nil
-}
-
 type mergeSortStepExecutor struct {
 	taskexecutor.EmptyStepExecutor
 	taskID     int64
@@ -422,11 +416,6 @@ func (e *writeAndIngestStepExecutor) OnFinished(_ context.Context, subtask *prot
 func (e *writeAndIngestStepExecutor) Cleanup(_ context.Context) (err error) {
 	e.logger.Info("cleanup subtask env")
 	return e.tableImporter.Close()
-}
-
-func (e *writeAndIngestStepExecutor) Rollback(context.Context) error {
-	e.logger.Info("rollback")
-	return nil
 }
 
 type postProcessStepExecutor struct {

@@ -71,7 +71,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 		bytes, err := json.Marshal(m)
 		require.NoError(t, err)
 		testutil.CreateSubTask(t, manager, taskID, proto.ImportStepImport,
-			"", bytes, proto.ImportInto, 11, false)
+			"", bytes, proto.ImportInto, 11)
 	}
 	rows, err := importinto.GetTaskImportedRows(ctx, 111)
 	require.NoError(t, err)
@@ -103,7 +103,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 		bytes, err := json.Marshal(m)
 		require.NoError(t, err)
 		testutil.CreateSubTask(t, manager, taskID, proto.ImportStepWriteAndIngest,
-			"", bytes, proto.ImportInto, 11, false)
+			"", bytes, proto.ImportInto, 11)
 	}
 	rows, err = importinto.GetTaskImportedRows(ctx, 222)
 	require.NoError(t, err)

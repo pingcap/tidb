@@ -16,10 +16,15 @@ package expression
 
 import (
 	"fmt"
+	"time"
 
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 // EvalContext is used to evaluate an expression
@@ -44,4 +49,32 @@ type EvalContext interface {
 	GetInfoSchema() sessionctx.InfoschemaMetaVersion
 	// GetDomainInfoSchema returns the latest information schema in domain
 	GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion
+}
+
+func sqlMode(ctx EvalContext) mysql.SQLMode {
+	return ctx.GetSessionVars().SQLMode
+}
+
+func strictMode(ctx EvalContext) bool {
+	return ctx.GetSessionVars().StrictSQLMode
+}
+
+func typeCtx(ctx EvalContext) types.Context {
+	return ctx.GetSessionVars().StmtCtx.TypeCtx()
+}
+
+func errCtx(ctx EvalContext) errctx.Context {
+	return ctx.GetSessionVars().StmtCtx.ErrCtx()
+}
+
+func location(ctx EvalContext) *time.Location {
+	return ctx.GetSessionVars().Location()
+}
+
+func warningCount(ctx EvalContext) int {
+	return int(ctx.GetSessionVars().StmtCtx.WarningCount())
+}
+
+func truncateWarnings(ctx EvalContext, start int) []stmtctx.SQLWarn {
+	return ctx.GetSessionVars().StmtCtx.TruncateWarnings(start)
 }
