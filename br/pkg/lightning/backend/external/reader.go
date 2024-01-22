@@ -47,6 +47,14 @@ func readAllData(
 	)
 	defer func() {
 		task.End(zap.ErrorLevel, err)
+		if err != nil {
+			output.keysPerFile = nil
+			output.valuesPerFile = nil
+			for _, b := range output.memKVBuffers {
+				b.Destroy()
+			}
+			output.memKVBuffers = nil
+		}
 	}()
 
 	concurrences, startOffsets, err := getFilesReadConcurrency(
@@ -67,7 +75,8 @@ func readAllData(
 		return err
 	}
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	// TODO(lance6716): limit the concurrency of eg to 30 does not help
+	// limit the concurrency to avoid open too many connections at the same time
+	eg.SetLimit(1000)
 	for i := range dataFiles {
 		i := i
 		eg.Go(func() error {
@@ -126,6 +135,7 @@ func readOneFile(
 	keys := make([][]byte, 0, 1024)
 	values := make([][]byte, 0, 1024)
 	size := 0
+	droppedSize := 0
 
 	for {
 		k, v, err := rd.nextKV()
@@ -136,6 +146,7 @@ func readOneFile(
 			return err
 		}
 		if bytes.Compare(k, startKey) < 0 {
+			droppedSize += len(k) + len(v)
 			continue
 		}
 		if bytes.Compare(k, endKey) >= 0 {
@@ -149,10 +160,11 @@ func readOneFile(
 	}
 	readAndSortDurHist.Observe(time.Since(ts).Seconds())
 	output.mu.Lock()
-	output.keys = append(output.keys, keys...)
-	output.values = append(output.values, values...)
+	output.keysPerFile = append(output.keysPerFile, keys)
+	output.valuesPerFile = append(output.valuesPerFile, values)
 	output.memKVBuffers = append(output.memKVBuffers, memBuf)
 	output.size += size
+	output.droppedSizePerFile = append(output.droppedSizePerFile, droppedSize)
 	output.mu.Unlock()
 	return nil
 }

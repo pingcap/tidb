@@ -39,7 +39,7 @@ import (
 //	 1. succeed:		pending -> running -> succeed
 //	 2. failed:			pending -> running -> reverting -> reverted/revert_failed, pending -> failed
 //	 3. canceled:		pending -> running -> cancelling -> reverting -> reverted/revert_failed
-//	 3. pause/resume:	pending -> running -> pausing -> paused -> running
+//	 4. pause/resume:	pending -> running -> pausing -> paused -> running
 //
 // TODO: we don't have revert_failed task for now.
 const (
@@ -61,8 +61,6 @@ type (
 	TaskState string
 	// TaskType is the type of task.
 	TaskType string
-	// Step is the step of task.
-	Step int64
 )
 
 func (t TaskType) String() string {
@@ -72,17 +70,6 @@ func (t TaskType) String() string {
 func (s TaskState) String() string {
 	return string(s)
 }
-
-// TaskStep is the step of task.
-// DO NOT change the value of the constants, will break backward compatibility.
-// successfully task MUST go from StepInit to business steps, then StepDone.
-const (
-	StepInit  Step = -1
-	StepDone  Step = -2
-	StepOne   Step = 1
-	StepTwo   Step = 2
-	StepThree Step = 3
-)
 
 const (
 	// TaskIDLabelName is the label name of task id.

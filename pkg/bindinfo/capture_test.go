@@ -331,13 +331,10 @@ func TestBindingSource(t *testing.T) {
 	bindHandle := dom.BindHandle()
 	stmt, _, _ := internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
 	_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
-	bindData, err := bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
-	require.NoError(t, err)
-	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.Bindings[0].OriginalSQL)
-	require.Len(t, bindData.Bindings, 1)
-	bind := bindData.Bindings[0]
-	require.Equal(t, bindinfo.Manual, bind.Source)
+	binding, matched := bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	require.True(t, matched)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
+	require.Equal(t, bindinfo.Manual, binding.Source)
 
 	// Test Source for captured sqls
 	stmtsummary.StmtSummaryByDigestMap.Clear()
@@ -353,13 +350,10 @@ func TestBindingSource(t *testing.T) {
 	bindHandle.CaptureBaselines()
 	stmt, _, _ = internal.UtilNormalizeWithDefaultDB(t, "select * from t where a < ?")
 	_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
-	bindData, err = bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
-	require.NoError(t, err)
-	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` < ?", bindData.Bindings[0].OriginalSQL)
-	require.Len(t, bindData.Bindings, 1)
-	bind = bindData.Bindings[0]
-	require.Equal(t, bindinfo.Capture, bind.Source)
+	binding, matched = bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	require.True(t, matched)
+	require.Equal(t, "select * from `test` . `t` where `a` < ?", binding.OriginalSQL)
+	require.Equal(t, bindinfo.Capture, binding.Source)
 }
 
 func TestCapturedBindingCharset(t *testing.T) {

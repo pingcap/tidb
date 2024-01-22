@@ -82,6 +82,17 @@ func NewInt64Const(num int64) *Constant {
 	}
 }
 
+// NewStrConst stands for constant of a given string.
+// used in test only now.
+func NewStrConst(str string) *Constant {
+	retT := types.NewFieldType(mysql.TypeVarString)
+	retT.SetFlen(len(str))
+	return &Constant{
+		Value:   types.NewDatum(str),
+		RetType: retT,
+	}
+}
+
 // NewNull stands for null constant.
 func NewNull() *Constant {
 	retT := types.NewFieldType(mysql.TypeTiny)

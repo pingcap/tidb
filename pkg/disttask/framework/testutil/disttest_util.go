@@ -34,9 +34,9 @@ func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, schedulerHandle sch
 	mockExtension := mock.NewMockExtension(ctrl)
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
 	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	mockSubtaskExecutor := GetMockSubtaskExecutor(ctrl)
+	mockStepExecutor := GetMockStepExecutor(ctrl)
 	if runSubtaskFn == nil {
-		mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
+		mockStepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
 			func(ctx context.Context, subtask *proto.Subtask) error {
 				switch subtask.Step {
 				case proto.StepOne, proto.StepTwo:
@@ -47,10 +47,10 @@ func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, schedulerHandle sch
 				return nil
 			}).AnyTimes()
 	} else {
-		mockSubtaskExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(runSubtaskFn).AnyTimes()
+		mockStepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(runSubtaskFn).AnyTimes()
 	}
 	mockExtension.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
-	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil).AnyTimes()
+	mockExtension.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(mockStepExecutor, nil).AnyTimes()
 	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
 	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, schedulerHandle)
 }
@@ -85,7 +85,7 @@ func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, mockExtension 
 // RegisterRollbackTaskMeta register rollback task meta.
 func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, mockScheduler scheduler.Extension, testContext *TestContext) {
 	mockExtension := mock.NewMockExtension(ctrl)
-	mockExecutor := mockexecute.NewMockSubtaskExecutor(ctrl)
+	mockExecutor := mockexecute.NewMockStepExecutor(ctrl)
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
 	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockExecutor.EXPECT().Init(gomock.Any()).Return(nil).AnyTimes()
@@ -103,7 +103,7 @@ func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, mockSchedul
 		}).AnyTimes()
 	mockExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockExtension.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
-	mockExtension.EXPECT().GetSubtaskExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockExecutor, nil).AnyTimes()
+	mockExtension.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(mockExecutor, nil).AnyTimes()
 	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
 
 	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, mockScheduler)

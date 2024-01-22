@@ -16,7 +16,10 @@ package proto
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
+
+	"github.com/docker/go-units"
 )
 
 // subtask state machine for normal subtask:
@@ -130,4 +133,57 @@ func NewSubtask(step Step, taskID int64, tp TaskType, execID string, concurrency
 		Ordinal:     ordinal,
 	}
 	return s
+}
+
+// Allocatable is a resource with capacity that can be allocated, it's routine safe.
+type Allocatable struct {
+	capacity int64
+	used     atomic.Int64
+}
+
+// NewAllocatable creates a new Allocatable.
+func NewAllocatable(capacity int64) *Allocatable {
+	return &Allocatable{capacity: capacity}
+}
+
+// Capacity returns the capacity of the Allocatable.
+func (a *Allocatable) Capacity() int64 {
+	return a.capacity
+}
+
+// Used returns the used resource of the Allocatable.
+func (a *Allocatable) Used() int64 {
+	return a.used.Load()
+}
+
+// Alloc allocates v from the Allocatable.
+func (a *Allocatable) Alloc(n int64) bool {
+	for {
+		used := a.used.Load()
+		if used+n > a.capacity {
+			return false
+		}
+		if a.used.CompareAndSwap(used, used+n) {
+			return true
+		}
+	}
+}
+
+// Free frees v from the Allocatable.
+func (a *Allocatable) Free(n int64) {
+	a.used.Add(-n)
+}
+
+// StepResource is the max resource that a task step can use.
+// it's also the max resource that a subtask can use, as we run subtasks of task
+// step in sequence.
+type StepResource struct {
+	CPU *Allocatable
+	Mem *Allocatable
+}
+
+// String implements Stringer interface.
+func (s *StepResource) String() string {
+	return fmt.Sprintf("[CPU=%d, Mem=%s]", s.CPU.Capacity(),
+		units.BytesSize(float64(s.Mem.Capacity())))
 }

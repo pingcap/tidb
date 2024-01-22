@@ -321,16 +321,16 @@ func (*visibleChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 }
 
 func (e *ShowExec) fetchShowBind() error {
-	var bindings []*bindinfo.Binding
+	var bindings []bindinfo.Binding
 	if !e.GlobalScope {
 		handle := e.Ctx().Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 		bindings = handle.GetAllSessionBindings()
 	} else {
 		bindings = domain.GetDomain(e.Ctx()).BindHandle().GetAllGlobalBindings()
 	}
-	// Remove the invalid bindRecord.
+	// Remove the invalid bindings.
 	parser := parser.New()
-	// For the different origin_sql, sort the bindRecords according to their max update time.
+	// For the different origin_sql, sort the bindings according to their max update time.
 	sort.Slice(bindings, func(i int, j int) bool {
 		cmpResult := bindings[i].UpdateTime.Compare(bindings[j].UpdateTime)
 		if cmpResult == 0 {

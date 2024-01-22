@@ -1547,6 +1547,7 @@ import (
 	EncryptionOpt     "Encryption option 'Y' or 'N'"
 	FirstOrNext       "FIRST or NEXT"
 	RowOrRows         "ROW or ROWS"
+	Replica           "{REPLICA | SLAVE}"
 
 %type	<ident>
 	Identifier                      "identifier or unreserved keyword"
@@ -11361,6 +11362,15 @@ ShowStmt:
 			Tp: ast.ShowBinlogStatus,
 		}
 	}
+|	"SHOW" Replica "STATUS"
+	// From MySQL 8.0.22, use SHOW REPLICA STATUS in place of SHOW SLAVE STATUS,
+	// which is deprecated from that release. In releases before MySQL 8.0.22,
+	// use SHOW SLAVE STATUS.
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowReplicaStatus,
+		}
+	}
 |	"SHOW" OptFull "PROCESSLIST"
 	{
 		$$ = &ast.ShowStmt{
@@ -11835,6 +11845,10 @@ ShowTableAliasOpt:
 	{
 		$$ = $2.(*ast.TableName)
 	}
+
+Replica:
+	"REPLICA"
+|	"SLAVE"
 
 FlushStmt:
 	"FLUSH" NoWriteToBinLogAliasOpt FlushOption
