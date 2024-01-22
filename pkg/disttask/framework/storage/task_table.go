@@ -75,10 +75,11 @@ var (
 // TaskExecInfo is the execution information of a task, on some exec node.
 type TaskExecInfo struct {
 	*proto.Task
-	ExecutableSubtaskCnt int
 	// SubtaskConcurrency is the concurrency of subtask in current task step.
 	// TODO: will be used when support subtask have smaller concurrency than task,
-	// such as post-process of import-into.
+	// TODO: such as post-process of import-into.
+	// TODO: we might need create one task executor for each step in this case, to alloc
+	// TODO: minimal resource
 	SubtaskConcurrency int
 }
 
@@ -255,13 +256,14 @@ func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) (task []*prot
 	return task, nil
 }
 
-// GetActiveTaskExecInfo implements the scheduler.TaskManager interface.
-func (mgr *TaskManager) GetActiveTaskExecInfo(ctx context.Context, execID string) ([]*TaskExecInfo, error) {
+// GetTaskExecInfoByExecID implements the scheduler.TaskManager interface.
+func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID string) ([]*TaskExecInfo, error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`select `+TaskColumns+`, count(1), max(st.concurrency)
-			from mysql.tidb_global_task t left join mysql.tidb_background_subtask st
+		`select `+TaskColumns+`, max(st.concurrency)
+			from mysql.tidb_global_task t join mysql.tidb_background_subtask st
 				on t.id = st.task_key and t.step = st.step
 			where t.state in (%?, %?, %?) and st.state in (%?, %?) and st.exec_id = %?
+			group by t.id
 			order by priority asc, create_time asc, id asc`,
 		proto.TaskStateRunning, proto.TaskStateReverting, proto.TaskStatePausing,
 		proto.SubtaskStatePending, proto.SubtaskStateRunning, execID)
@@ -271,11 +273,9 @@ func (mgr *TaskManager) GetActiveTaskExecInfo(ctx context.Context, execID string
 
 	res := make([]*TaskExecInfo, 0, len(rs))
 	for _, r := range rs {
-		val, _ := r.GetMyDecimal(14).ToInt()
 		res = append(res, &TaskExecInfo{
-			Task:                 Row2Task(r),
-			ExecutableSubtaskCnt: int(r.GetInt64(13)),
-			SubtaskConcurrency:   int(val),
+			Task:               Row2Task(r),
+			SubtaskConcurrency: int(r.GetInt64(13)),
 		})
 	}
 	return res, nil

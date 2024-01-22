@@ -216,7 +216,7 @@ func (m *Manager) handleTasksLoop() {
 }
 
 func (m *Manager) handleTasks() {
-	tasks, err := m.taskTable.GetActiveTaskExecInfo(m.ctx, m.id)
+	tasks, err := m.taskTable.GetTaskExecInfoByExecID(m.ctx, m.id)
 	if err != nil {
 		m.logErr(err)
 		return
@@ -230,7 +230,7 @@ func (m *Manager) handleTasks() {
 				m.cancelRunningSubtaskOf(task.ID)
 			}
 			// TaskStateReverting require executor to run rollback logic.
-			if !m.isExecutorStarted(task.ID) && task.ExecutableSubtaskCnt > 0 {
+			if !m.isExecutorStarted(task.ID) {
 				executableTasks = append(executableTasks, task)
 			}
 		case proto.TaskStatePausing:
