@@ -248,15 +248,6 @@ func (m *Manager) handleTasks() {
 // handleExecutableTasks handles executable tasks.
 func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 	for _, task := range taskInfos {
-		exist, err := m.taskTable.HasSubtasksInStates(m.ctx, m.id, task.ID, task.Step, unfinishedSubtaskStates...)
-		if err != nil {
-			m.logger.Error("check subtask exist failed", zap.Error(err))
-			m.logErr(err)
-			continue
-		}
-		if !exist {
-			continue
-		}
 		m.logger.Info("detect new subtask", zap.Int64("task-id", task.ID))
 
 		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task.Task)
@@ -273,7 +264,7 @@ func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 		m.addHandlingTask(task.ID)
 		m.slotManager.alloc(task.Task)
 		t := task.Task
-		err = m.executorPool.Run(func() {
+		err := m.executorPool.Run(func() {
 			defer m.slotManager.free(t.ID)
 			m.handleExecutableTask(t)
 			m.removeHandlingTask(t.ID)
@@ -412,7 +403,8 @@ func (m *Manager) handleExecutableTask(task *proto.Task) {
 			m.logErr(err)
 			return
 		} else if !exist {
-			continue
+			// TODO we can remove previous HasSubtasksInStates check if we merge it with RunStep loop.
+			return
 		}
 		stepResource := m.getStepResource(task.Concurrency)
 		m.logger.Info("execute task step with resource",
