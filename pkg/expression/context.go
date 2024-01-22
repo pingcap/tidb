@@ -68,7 +68,8 @@ func errCtx(ctx EvalContext) errctx.Context {
 }
 
 func location(ctx EvalContext) *time.Location {
-	return ctx.GetSessionVars().Location()
+	tc := ctx.GetSessionVars().StmtCtx.TypeCtx()
+	return tc.Location()
 }
 
 func warningCount(ctx EvalContext) int {
