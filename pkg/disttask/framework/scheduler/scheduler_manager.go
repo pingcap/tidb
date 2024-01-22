@@ -403,6 +403,7 @@ func (sm *Manager) cleanUpFinishedTasks(tasks []*proto.Task) error {
 		failpoint.Return(errors.New("transfer err"))
 	})
 
+	sm.collectMetrics()
 	return sm.taskMgr.TransferTasks2History(sm.ctx, cleanedTasks)
 }
 
@@ -467,18 +468,22 @@ func (sm *Manager) collectMetrics() {
 			subtask.State.String(),
 			strconv.Itoa(int(subtask.ID)),
 			subtask.ExecID,
-		).Set(float64(time.Since(subtask.StateUpdateTime)))
+		).Set(float64(time.Since(subtask.StateUpdateTime).Seconds()))
 		for _, state := range proto.AllSubtaskStates {
 			if state == subtask.State {
 				continue
 			}
-			metrics.DistTaskSubTaskDurationGauge.DeleteLabelValues(
-				subtask.Type.String(),
-				strconv.Itoa(int(subtask.TaskID)),
-				state.String(),
-				strconv.Itoa(int(subtask.ID)),
-				subtask.ExecID,
-			)
+
+			// exec_id maybe has been changed.
+			for _, node := range allNodes {
+				metrics.DistTaskSubTaskDurationGauge.DeleteLabelValues(
+					subtask.Type.String(),
+					strconv.Itoa(int(subtask.TaskID)),
+					state.String(),
+					strconv.Itoa(int(subtask.ID)),
+					node.ID,
+				)
+			}
 		}
 	}
 	for taskID, execIDMap := range subtaskCnt {
@@ -502,5 +507,4 @@ func (sm *Manager) collectMetrics() {
 			}
 		}
 	}
-
 }

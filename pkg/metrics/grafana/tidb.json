@@ -14584,7 +14584,7 @@
             "h": 8,
             "w": 12,
             "x": 0,
-            "y": 1
+            "y": 20
           },
           "hiddenSeries": false,
           "id": 322,
@@ -14774,6 +14774,452 @@
           }
         },
         {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 20
+          },
+          "hiddenSeries": false,
+          "id": 328,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.11",
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "tidb_disttask_subtask_duration{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"pending\"}",
+              "interval": "",
+              "legendFormat": "{{task_type}}_task{{task_id}}_subtask{{subtask_id}}",
+              "queryType": "randomWalk",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Distributed Task SubTask Pending Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 30
+          },
+          "hiddenSeries": false,
+          "id": 329,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.11",
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "sum(tidb_disttask_subtask_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"pending\"}) by (exec_id)",
+              "interval": "",
+              "legendFormat": "{{exec_id}}_pending_cnt",
+              "queryType": "randomWalk",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Distributed Task Pending SubTask Cnt",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 1,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 48
+          },
+          "hiddenSeries": false,
+          "id": 330,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.11",
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "tidb_disttask_subtask_duration{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"running\"}",
+              "interval": "",
+              "legendFormat": "{{task_type}}_task{{task_id}}_subtask{{subtask_id}}",
+              "queryType": "randomWalk",
+              "refId": "A"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Distributed Task SubTask Running Duration",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "s",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
+        },
+        {
+          "datasource": "${DS_TEST-CLUSTER}",
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": null,
+                "filterable": false
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 80
+                  }
+                ]
+              },
+              "mappings": [
+                {
+                  "from": "",
+                  "id": 1,
+                  "text": "",
+                  "to": "",
+                  "type": 1,
+                  "value": ""
+                }
+              ],
+              "color": {
+                "mode": "thresholds"
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "status"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 84
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "exec_id"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 112
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "subtask_id"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 91
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "task_id"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 76
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "task_type"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 108
+                  }
+                ]
+              },
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "pending_duration"
+                },
+                "properties": [
+                  {
+                    "id": "unit",
+                    "value": "s"
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 36
+          },
+          "id": 331,
+          "options": {
+            "showHeader": true,
+            "sortBy": [
+              {
+                "desc": true,
+                "displayName": "pending_duration"
+              }
+            ]
+          },
+          "pluginVersion": "7.5.11",
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "tidb_disttask_subtask_duration{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=\"pending\"}",
+              "format": "table",
+              "instant": true,
+              "interval": "",
+              "legendFormat": "",
+              "queryType": "randomWalk",
+              "refId": "A"
+            }
+          ],
+          "title": "Pending duration",
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true,
+                  "__name__": true,
+                  "instance": true,
+                  "job": true
+                },
+                "indexByName": {},
+                "renameByName": {
+                  "Time": "",
+                  "Value": "pending_duration",
+                  "__name__": ""
+                }
+              }
+            }
+          ],
+          "type": "table"
+        },
+        {
           "datasource": "${DS_TEST-CLUSTER}",
           "fieldConfig": {
             "defaults": {
@@ -14781,6 +15227,7 @@
                 "mode": "palette-classic"
               },
               "mappings": [],
+              "nullValueMode": "null as zero",
               "thresholds": {
                 "mode": "absolute",
                 "steps": [
@@ -14801,10 +15248,10 @@
           "gridPos": {
             "h": 8,
             "w": 12,
-            "x": 0,
-            "y": 36
+            "x": 20,
+            "y": 56
           },
-          "id": 23763571993,
+          "id": 332,
           "options": {
             "displayLabels": [],
             "legend": {
@@ -14815,7 +15262,7 @@
             "pieType": "pie",
             "reduceOptions": {
               "calcs": [
-                "lastNotNull"
+                "last"
               ],
               "fields": "",
               "values": false
@@ -14826,7 +15273,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(tidb_disttask_subtask_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"pending|running|reverting|revert_pending|paused\"}) by (instance)",
+              "expr": "sum(tidb_disttask_subtask_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"pending|running|reverting|revert_pending|paused\"}) by (exec_id)",
               "interval": "",
               "legendFormat": "",
               "queryType": "randomWalk",

@@ -48,7 +48,7 @@ const (
 	// SubtaskColumns is the columns for subtask.
 	SubtaskColumns = basicSubtaskColumns + `, start_time, state_update_time, meta, summary`
 	// InsertSubtaskColumns is the columns used in insert subtask.
-	InsertSubtaskColumns = `step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary`
+	InsertSubtaskColumns = `step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, state_update_time, checkpoint, summary`
 )
 
 var (
@@ -597,7 +597,7 @@ func (*TaskManager) insertSubtasks(ctx context.Context, se sessionctx.Context, s
 	)
 	sb.WriteString(`insert into mysql.tidb_background_subtask(` + InsertSubtaskColumns + `) values `)
 	for _, subtask := range subtasks {
-		markerList = append(markerList, "(%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), '{}', '{}')")
+		markerList = append(markerList, "(%?, %?, %?, %?, %?, %?, %?, %?, CURRENT_TIMESTAMP(), unix_timestamp(), '{}', '{}')")
 		args = append(args, subtask.Step, subtask.TaskID, subtask.ExecID, subtask.Meta,
 			proto.SubtaskStatePending, proto.Type2Int(subtask.Type), subtask.Concurrency, subtask.Ordinal)
 	}
@@ -719,7 +719,7 @@ func (mgr *TaskManager) UpdateTaskAndAddSubTasks(ctx context.Context, task *prot
 						return err
 					}
 				}
-				if err := sqlescape.FormatSQL(sql, "(%?, %?, %?, %?, %?, %?, %?, NULL, CURRENT_TIMESTAMP(), '{}', '{}')",
+				if err := sqlescape.FormatSQL(sql, "(%?, %?, %?, %?, %?, %?, %?, NULL, CURRENT_TIMESTAMP(), unix_timestamp(), '{}', '{}')",
 					subtask.Step, task.ID, subtask.ExecID, subtask.Meta, subtaskState, proto.Type2Int(subtask.Type), subtask.Concurrency); err != nil {
 					return err
 				}
