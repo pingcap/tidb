@@ -703,9 +703,9 @@ func (b *builtinCastIntAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row)
 	} else {
 		res = types.NewDecFromUint(uint64(val))
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), res, b.tp)
-	err = sc.HandleError(err)
+	tc, ec := typeCtx(ctx), errCtx(ctx)
+	res, err = types.ProduceDecWithSpecifiedTp(tc, res, b.tp)
+	err = ec.HandleError(err)
 	return res, isNull, err
 }
 
@@ -733,7 +733,7 @@ func (b *builtinCastIntAsStringSig) evalString(ctx EvalContext, row chunk.Row) (
 	if tp.GetType() == mysql.TypeYear && res == "0" {
 		res = "0000"
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, ctx.GetSessionVars().StmtCtx.TypeCtx(), false)
+	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, typeCtx(ctx), false)
 	if err != nil {
 		return res, false, err
 	}
@@ -759,7 +759,7 @@ func (b *builtinCastIntAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res 
 	if b.args[0].GetType().GetType() == mysql.TypeYear {
 		res, err = types.ParseTimeFromYear(val)
 	} else {
-		res, err = types.ParseTimeFromNum(ctx.GetSessionVars().StmtCtx.TypeCtx(), val, b.tp.GetType(), b.tp.GetDecimal())
+		res, err = types.ParseTimeFromNum(typeCtx(ctx), val, b.tp.GetType(), b.tp.GetDecimal())
 	}
 
 	if err != nil {
@@ -789,11 +789,9 @@ func (b *builtinCastIntAsDurationSig) evalDuration(ctx EvalContext, row chunk.Ro
 	}
 	dur, err := types.NumberToDuration(val, b.tp.GetDecimal())
 	if err != nil {
-		if types.ErrOverflow.Equal(err) {
-			err = ctx.GetSessionVars().StmtCtx.HandleError(err)
-		}
-		if types.ErrTruncatedWrongVal.Equal(err) {
-			err = ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
+		if types.ErrOverflow.Equal(err) || types.ErrTruncatedWrongVal.Equal(err) {
+			ec := errCtx(ctx)
+			err = ec.HandleError(err)
 		}
 		return res, true, err
 	}
@@ -982,12 +980,13 @@ func (b *builtinCastRealAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (res i
 		res = 0
 	} else {
 		var uintVal uint64
-		sc := ctx.GetSessionVars().StmtCtx
-		uintVal, err = types.ConvertFloatToUint(sc.TypeFlags(), val, types.IntergerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
+		tc := typeCtx(ctx)
+		uintVal, err = types.ConvertFloatToUint(tc.Flags(), val, types.IntergerUnsignedUpperBound(mysql.TypeLonglong), mysql.TypeLonglong)
 		res = int64(uintVal)
 	}
 	if types.ErrOverflow.Equal(err) {
-		err = ctx.GetSessionVars().StmtCtx.HandleError(err)
+		ec := errCtx(ctx)
+		err = ec.HandleError(err)
 	}
 	return res, isNull, err
 }
@@ -1008,11 +1007,12 @@ func (b *builtinCastRealAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 		return res, isNull, err
 	}
 	res = new(types.MyDecimal)
+	ec := errCtx(ctx)
 	if !b.inUnion || val >= 0 {
 		err = res.FromFloat64(val)
 		if types.ErrOverflow.Equal(err) {
 			warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", b.args[0])
-			err = ctx.GetSessionVars().StmtCtx.HandleErrorWithAlias(err, err, warnErr)
+			err = ec.HandleErrorWithAlias(err, err, warnErr)
 		} else if types.ErrTruncated.Equal(err) {
 			// This behavior is consistent with MySQL.
 			err = nil
@@ -1021,9 +1021,8 @@ func (b *builtinCastRealAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 			return res, false, err
 		}
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), res, b.tp)
-	err = sc.HandleError(err)
+	res, err = types.ProduceDecWithSpecifiedTp(typeCtx(ctx), res, b.tp)
+	err = ec.HandleError(err)
 	return res, false, err
 }
 
@@ -1050,7 +1049,7 @@ func (b *builtinCastRealAsStringSig) evalString(ctx EvalContext, row chunk.Row) 
 		// If we strconv.FormatFloat the value with 64bits, the result is incorrect!
 		bits = 32
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(val, 'f', -1, bits), b.tp, ctx.GetSessionVars().StmtCtx.TypeCtx(), false)
+	res, err = types.ProduceStrWithSpecifiedTp(strconv.FormatFloat(val, 'f', -1, bits), b.tp, typeCtx(ctx), false)
 	if err != nil {
 		return res, false, err
 	}
@@ -1077,8 +1076,7 @@ func (b *builtinCastRealAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (typ
 	if fv == "0" {
 		return types.ZeroTime, false, nil
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	res, err := types.ParseTimeFromFloatString(sc.TypeCtx(), fv, b.tp.GetType(), b.tp.GetDecimal())
+	res, err := types.ParseTimeFromFloatString(typeCtx(ctx), fv, b.tp.GetType(), b.tp.GetDecimal())
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
@@ -1104,10 +1102,11 @@ func (b *builtinCastRealAsDurationSig) evalDuration(ctx EvalContext, row chunk.R
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	res, _, err = types.ParseDuration(ctx.GetSessionVars().StmtCtx.TypeCtx(), strconv.FormatFloat(val, 'f', -1, 64), b.tp.GetDecimal())
+	tc := typeCtx(ctx)
+	res, _, err = types.ParseDuration(tc, strconv.FormatFloat(val, 'f', -1, 64), b.tp.GetDecimal())
 	if err != nil {
 		if types.ErrTruncatedWrongVal.Equal(err) {
-			err = ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
+			err = tc.HandleTruncate(err)
 			// ErrTruncatedWrongVal needs to be considered NULL.
 			return res, true, err
 		}
@@ -1134,9 +1133,9 @@ func (b *builtinCastDecimalAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.
 	if !(b.inUnion && mysql.HasUnsignedFlag(b.tp.GetFlag()) && evalDecimal.IsNegative()) {
 		*res = *evalDecimal
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), res, b.tp)
-	err = sc.HandleError(err)
+	res, err = types.ProduceDecWithSpecifiedTp(typeCtx(ctx), res, b.tp)
+	ec := errCtx(ctx)
+	err = ec.HandleError(err)
 	return res, false, err
 }
 
@@ -1174,8 +1173,9 @@ func (b *builtinCastDecimalAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (re
 	}
 
 	if types.ErrOverflow.Equal(err) {
+		ec := errCtx(ctx)
 		warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", val)
-		err = ctx.GetSessionVars().StmtCtx.HandleErrorWithAlias(err, err, warnErr)
+		err = ec.HandleErrorWithAlias(err, err, warnErr)
 	}
 
 	return res, false, err
@@ -1196,8 +1196,7 @@ func (b *builtinCastDecimalAsStringSig) evalString(ctx EvalContext, row chunk.Ro
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceStrWithSpecifiedTp(string(val.ToString()), b.tp, sc.TypeCtx(), false)
+	res, err = types.ProduceStrWithSpecifiedTp(string(val.ToString()), b.tp, typeCtx(ctx), false)
 	if err != nil {
 		return res, false, err
 	}
@@ -1256,8 +1255,7 @@ func (b *builtinCastDecimalAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	res, err = types.ParseTimeFromFloatString(sc.TypeCtx(), string(val.ToString()), b.tp.GetType(), b.tp.GetDecimal())
+	res, err = types.ParseTimeFromFloatString(typeCtx(ctx), string(val.ToString()), b.tp.GetType(), b.tp.GetDecimal())
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
@@ -1283,9 +1281,10 @@ func (b *builtinCastDecimalAsDurationSig) evalDuration(ctx EvalContext, row chun
 	if isNull || err != nil {
 		return res, true, err
 	}
-	res, _, err = types.ParseDuration(ctx.GetSessionVars().StmtCtx.TypeCtx(), string(val.ToString()), b.tp.GetDecimal())
+	res, _, err = types.ParseDuration(typeCtx(ctx), string(val.ToString()), b.tp.GetDecimal())
 	if types.ErrTruncatedWrongVal.Equal(err) {
-		err = ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
+		ec := errCtx(ctx)
+		err = ec.HandleError(err)
 		// ErrTruncatedWrongVal needs to be considered NULL.
 		return res, true, err
 	}
@@ -1307,7 +1306,7 @@ func (b *builtinCastStringAsStringSig) evalString(ctx EvalContext, row chunk.Row
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, ctx.GetSessionVars().StmtCtx.TypeCtx(), false)
+	res, err = types.ProduceStrWithSpecifiedTp(res, b.tp, typeCtx(ctx), false)
 	if err != nil {
 		return res, false, err
 	}
@@ -1334,7 +1333,7 @@ func (*builtinCastStringAsIntSig) handleOverflow(ctx EvalContext, origRes int64,
 		return
 	}
 
-	sc := ctx.GetSessionVars().StmtCtx
+	ec := errCtx(ctx)
 	if types.ErrOverflow.Equal(origErr) {
 		if isNegative {
 			res = math.MinInt64
@@ -1343,7 +1342,7 @@ func (*builtinCastStringAsIntSig) handleOverflow(ctx EvalContext, origRes int64,
 			res = int64(uval)
 		}
 		warnErr := types.ErrTruncatedWrongVal.GenWithStackByArgs("INTEGER", origStr)
-		err = sc.HandleErrorWithAlias(origErr, origErr, warnErr)
+		err = ec.HandleErrorWithAlias(origErr, origErr, warnErr)
 	}
 	return
 }
@@ -1370,21 +1369,21 @@ func (b *builtinCastStringAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (res
 	}
 
 	var ures uint64
-	sc := ctx.GetSessionVars().StmtCtx
+	tc := typeCtx(ctx)
 	if !isNegative {
-		ures, err = types.StrToUint(sc.TypeCtx(), val, true)
+		ures, err = types.StrToUint(tc, val, true)
 		res = int64(ures)
 
 		if err == nil && !mysql.HasUnsignedFlag(b.tp.GetFlag()) && ures > uint64(math.MaxInt64) {
-			sc.AppendWarning(types.ErrCastAsSignedOverflow)
+			tc.AppendWarning(types.ErrCastAsSignedOverflow)
 		}
 	} else if b.inUnion && mysql.HasUnsignedFlag(b.tp.GetFlag()) {
 		res = 0
 	} else {
-		res, err = types.StrToInt(sc.TypeCtx(), val, true)
+		res, err = types.StrToInt(tc, val, true)
 		if err == nil && mysql.HasUnsignedFlag(b.tp.GetFlag()) {
 			// If overflow, don't append this warnings
-			sc.AppendWarning(types.ErrCastNegIntAsUnsigned)
+			tc.AppendWarning(types.ErrCastNegIntAsUnsigned)
 		}
 	}
 
@@ -1416,8 +1415,7 @@ func (b *builtinCastStringAsRealSig) evalReal(ctx EvalContext, row chunk.Row) (r
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	res, err = types.StrToFloat(sc.TypeCtx(), val, true)
+	res, err = types.StrToFloat(typeCtx(ctx), val, true)
 	if err != nil {
 		return 0, false, err
 	}
@@ -1449,19 +1447,19 @@ func (b *builtinCastStringAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.R
 	val = strings.TrimSpace(val)
 	isNegative := len(val) > 1 && val[0] == '-'
 	res = new(types.MyDecimal)
-	sc := ctx.GetSessionVars().StmtCtx
+	ec := errCtx(ctx)
 	if !(b.inUnion && mysql.HasUnsignedFlag(b.tp.GetFlag()) && isNegative) {
 		err = res.FromString([]byte(val))
 		if err == types.ErrTruncated {
 			err = types.ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", []byte(val))
 		}
-		err = sc.HandleTruncate(err)
+		err = ec.HandleError(err)
 		if err != nil {
 			return res, false, err
 		}
 	}
-	res, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), res, b.tp)
-	err = sc.HandleError(err)
+	res, err = types.ProduceDecWithSpecifiedTp(typeCtx(ctx), res, b.tp)
+	err = ec.HandleError(err)
 	return res, false, err
 }
 
@@ -1480,12 +1478,11 @@ func (b *builtinCastStringAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (r
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	res, err = types.ParseTime(sc.TypeCtx(), val, b.tp.GetType(), b.tp.GetDecimal())
+	res, err = types.ParseTime(typeCtx(ctx), val, b.tp.GetType(), b.tp.GetDecimal())
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
-	if res.IsZero() && ctx.GetSessionVars().SQLMode.HasNoZeroDateMode() {
+	if res.IsZero() && sqlMode(ctx).HasNoZeroDateMode() {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, types.ErrWrongValue.GenWithStackByArgs(types.DateTimeStr, res.String()))
 	}
 	if b.tp.GetType() == mysql.TypeDate {
@@ -1510,10 +1507,10 @@ func (b *builtinCastStringAsDurationSig) evalDuration(ctx EvalContext, row chunk
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	res, isNull, err = types.ParseDuration(ctx.GetSessionVars().StmtCtx.TypeCtx(), val, b.tp.GetDecimal())
+	res, isNull, err = types.ParseDuration(typeCtx(ctx), val, b.tp.GetDecimal())
 	if types.ErrTruncatedWrongVal.Equal(err) {
-		sc := ctx.GetSessionVars().StmtCtx
-		err = sc.HandleTruncate(err)
+		ec := errCtx(ctx)
+		err = ec.HandleError(err)
 	}
 	return res, isNull, err
 }
@@ -1534,11 +1531,11 @@ func (b *builtinCastTimeAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res
 		return res, isNull, err
 	}
 
-	sc := ctx.GetSessionVars().StmtCtx
-	if res, err = res.Convert(sc.TypeCtx(), b.tp.GetType()); err != nil {
+	tc := typeCtx(ctx)
+	if res, err = res.Convert(tc, b.tp.GetType()); err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
-	res, err = res.RoundFrac(sc.TypeCtx(), b.tp.GetDecimal())
+	res, err = res.RoundFrac(tc, b.tp.GetDecimal())
 	if b.tp.GetType() == mysql.TypeDate {
 		// Truncate hh:mm:ss part if the type is Date.
 		res.SetCoreTime(types.FromDate(res.Year(), res.Month(), res.Day(), 0, 0, 0, 0))
@@ -1562,8 +1559,8 @@ func (b *builtinCastTimeAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (res i
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	t, err := val.RoundFrac(sc.TypeCtx(), types.DefaultFsp)
+	tc := typeCtx(ctx)
+	t, err := val.RoundFrac(tc, types.DefaultFsp)
 	if err != nil {
 		return res, false, err
 	}
@@ -1605,9 +1602,9 @@ func (b *builtinCastTimeAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), val.ToNumber(), b.tp)
-	err = sc.HandleError(err)
+	tc, ec := typeCtx(ctx), errCtx(ctx)
+	res, err = types.ProduceDecWithSpecifiedTp(tc, val.ToNumber(), b.tp)
+	err = ec.HandleError(err)
 	return res, false, err
 }
 
@@ -1626,8 +1623,7 @@ func (b *builtinCastTimeAsStringSig) evalString(ctx EvalContext, row chunk.Row) 
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.tp, sc.TypeCtx(), false)
+	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.tp, typeCtx(ctx), false)
 	if err != nil {
 		return res, false, err
 	}
@@ -1653,7 +1649,7 @@ func (b *builtinCastTimeAsDurationSig) evalDuration(ctx EvalContext, row chunk.R
 	if err != nil {
 		return res, false, err
 	}
-	res, err = res.RoundFrac(b.tp.GetDecimal(), ctx.GetSessionVars().Location())
+	res, err = res.RoundFrac(b.tp.GetDecimal(), location(ctx))
 	return res, false, err
 }
 
@@ -1672,7 +1668,7 @@ func (b *builtinCastDurationAsDurationSig) evalDuration(ctx EvalContext, row chu
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	res, err = res.RoundFrac(b.tp.GetDecimal(), ctx.GetSessionVars().Location())
+	res, err = res.RoundFrac(b.tp.GetDecimal(), location(ctx))
 	return res, false, err
 }
 
@@ -1693,10 +1689,10 @@ func (b *builtinCastDurationAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (r
 	}
 
 	if b.tp.GetType() == mysql.TypeYear {
-		res, err = val.ConvertToYear(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		res, err = val.ConvertToYear(typeCtx(ctx))
 	} else {
 		var dur types.Duration
-		dur, err = val.RoundFrac(types.DefaultFsp, ctx.GetSessionVars().Location())
+		dur, err = val.RoundFrac(types.DefaultFsp, location(ctx))
 		if err != nil {
 			return res, false, err
 		}
@@ -1745,9 +1741,9 @@ func (b *builtinCastDurationAsDecimalSig) evalDecimal(ctx EvalContext, row chunk
 	if val.Fsp, err = types.CheckFsp(val.Fsp); err != nil {
 		return res, false, err
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), val.ToNumber(), b.tp)
-	err = sc.HandleError(err)
+	tc, ec := typeCtx(ctx), errCtx(ctx)
+	res, err = types.ProduceDecWithSpecifiedTp(tc, val.ToNumber(), b.tp)
+	err = ec.HandleError(err)
 	return res, false, err
 }
 
@@ -1766,8 +1762,7 @@ func (b *builtinCastDurationAsStringSig) evalString(ctx EvalContext, row chunk.R
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.tp, sc.TypeCtx(), false)
+	res, err = types.ProduceStrWithSpecifiedTp(val.String(), b.tp, typeCtx(ctx), false)
 	if err != nil {
 		return res, false, err
 	}
@@ -1806,16 +1801,16 @@ func (b *builtinCastDurationAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) 
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	sc := ctx.GetSessionVars().StmtCtx
+	tc := typeCtx(ctx)
 	ts, err := getStmtTimestamp(ctx)
 	if err != nil {
 		ts = gotime.Now()
 	}
-	res, err = val.ConvertToTimeWithTimestamp(sc.TypeCtx(), b.tp.GetType(), ts)
+	res, err = val.ConvertToTimeWithTimestamp(tc, b.tp.GetType(), ts)
 	if err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
-	res, err = res.RoundFrac(sc.TypeCtx(), b.tp.GetDecimal())
+	res, err = res.RoundFrac(tc, b.tp.GetDecimal())
 	return res, false, err
 }
 
@@ -1848,9 +1843,9 @@ func (b *builtinCastJSONAsIntSig) evalInt(ctx EvalContext, row chunk.Row) (res i
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	res, err = types.ConvertJSONToInt64(sc.TypeCtx(), val, mysql.HasUnsignedFlag(b.tp.GetFlag()))
-	err = sc.HandleError(err)
+	res, err = types.ConvertJSONToInt64(typeCtx(ctx), val, mysql.HasUnsignedFlag(b.tp.GetFlag()))
+	ec := errCtx(ctx)
+	err = ec.HandleError(err)
 	return
 }
 
@@ -1869,8 +1864,7 @@ func (b *builtinCastJSONAsRealSig) evalReal(ctx EvalContext, row chunk.Row) (res
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	res, err = types.ConvertJSONToFloat(sc.TypeCtx(), val)
+	res, err = types.ConvertJSONToFloat(typeCtx(ctx), val)
 	return
 }
 
@@ -1889,13 +1883,13 @@ func (b *builtinCastJSONAsDecimalSig) evalDecimal(ctx EvalContext, row chunk.Row
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	sc := ctx.GetSessionVars().StmtCtx
-	res, err = types.ConvertJSONToDecimal(sc.TypeCtx(), val)
+	tc, ec := typeCtx(ctx), errCtx(ctx)
+	res, err = types.ConvertJSONToDecimal(tc, val)
 	if err != nil {
 		return res, false, err
 	}
-	res, err = types.ProduceDecWithSpecifiedTp(sc.TypeCtx(), res, b.tp)
-	err = sc.HandleError(err)
+	res, err = types.ProduceDecWithSpecifiedTp(tc, res, b.tp)
+	err = ec.HandleError(err)
 	return res, false, err
 }
 
@@ -1914,7 +1908,7 @@ func (b *builtinCastJSONAsStringSig) evalString(ctx EvalContext, row chunk.Row) 
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	s, err := types.ProduceStrWithSpecifiedTp(val.String(), b.tp, ctx.GetSessionVars().StmtCtx.TypeCtx(), false)
+	s, err := types.ProduceStrWithSpecifiedTp(val.String(), b.tp, typeCtx(ctx), false)
 	if err != nil {
 		return res, false, err
 	}
@@ -1949,24 +1943,23 @@ func (b *builtinCastJSONAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res
 	case types.JSONTypeCodeDuration:
 		duration := val.GetDuration()
 
-		sc := ctx.GetSessionVars().StmtCtx
+		tc := typeCtx(ctx)
 		ts, err := getStmtTimestamp(ctx)
 		if err != nil {
 			ts = gotime.Now()
 		}
-		res, err = duration.ConvertToTimeWithTimestamp(sc.TypeCtx(), b.tp.GetType(), ts)
+		res, err = duration.ConvertToTimeWithTimestamp(tc, b.tp.GetType(), ts)
 		if err != nil {
 			return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 		}
-		res, err = res.RoundFrac(sc.TypeCtx(), b.tp.GetDecimal())
+		res, err = res.RoundFrac(tc, b.tp.GetDecimal())
 		return res, isNull, err
 	case types.JSONTypeCodeString:
 		s, err := val.Unquote()
 		if err != nil {
 			return res, false, err
 		}
-		sc := ctx.GetSessionVars().StmtCtx
-		res, err = types.ParseTime(sc.TypeCtx(), s, b.tp.GetType(), b.tp.GetDecimal())
+		res, err = types.ParseTime(typeCtx(ctx), s, b.tp.GetType(), b.tp.GetDecimal())
 		if err != nil {
 			return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 		}
@@ -1976,8 +1969,9 @@ func (b *builtinCastJSONAsTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res
 		}
 		return res, isNull, err
 	default:
+		ec := errCtx(ctx)
 		err = types.ErrTruncatedWrongVal.GenWithStackByArgs(types.TypeStr(b.tp.GetType()), val.String())
-		return res, true, ctx.GetSessionVars().StmtCtx.HandleTruncate(err)
+		return res, true, ec.HandleError(err)
 	}
 }
 
@@ -1997,7 +1991,7 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(ctx EvalContext, row chunk.R
 		return res, isNull, err
 	}
 
-	stmtCtx := ctx.GetSessionVars().StmtCtx
+	tc := typeCtx(ctx)
 
 	switch val.TypeCode {
 	case types.JSONTypeCodeDate, types.JSONTypeCodeDatetime, types.JSONTypeCodeTimestamp:
@@ -2006,7 +2000,7 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(ctx EvalContext, row chunk.R
 		if err != nil {
 			return res, false, err
 		}
-		res, err = res.RoundFrac(b.tp.GetDecimal(), ctx.GetSessionVars().Location())
+		res, err = res.RoundFrac(b.tp.GetDecimal(), location(ctx))
 		return res, isNull, err
 	case types.JSONTypeCodeDuration:
 		res = val.GetDuration()
@@ -2016,15 +2010,14 @@ func (b *builtinCastJSONAsDurationSig) evalDuration(ctx EvalContext, row chunk.R
 		if err != nil {
 			return res, false, err
 		}
-		res, _, err = types.ParseDuration(stmtCtx.TypeCtx(), s, b.tp.GetDecimal())
+		res, _, err = types.ParseDuration(tc, s, b.tp.GetDecimal())
 		if types.ErrTruncatedWrongVal.Equal(err) {
-			sc := ctx.GetSessionVars().StmtCtx
-			err = sc.HandleTruncate(err)
+			err = tc.HandleTruncate(err)
 		}
 		return res, isNull, err
 	default:
 		err = types.ErrTruncatedWrongVal.GenWithStackByArgs("TIME", val.String())
-		return res, true, stmtCtx.HandleTruncate(err)
+		return res, true, tc.HandleTruncate(err)
 	}
 }
 
