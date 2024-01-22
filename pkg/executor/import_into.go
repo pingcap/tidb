@@ -16,8 +16,10 @@ package executor
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
@@ -104,6 +106,11 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	}
 	e.importPlan = importPlan
 	e.controller = controller
+
+	if e.selectExec != nil {
+		// `import from select` doesn't return rows, so no need to set dataFilled.
+		return e.importFromSelect(ctx)
+	}
 
 	if err2 := e.controller.InitDataFiles(ctx); err2 != nil {
 		return err2
@@ -237,10 +244,105 @@ func (e *ImportIntoExec) doImport(ctx context.Context, se sessionctx.Context, di
 		// use background, since ctx is canceled already.
 		return cancelAndWaitImportJob(context.Background(), taskManager, distImporter.JobID())
 	}
-	if err2 := flushStats(ctx, se, e.importPlan.TableInfo.ID, distImporter.Result(ctx)); err2 != nil {
+	importResult := distImporter.Result(ctx)
+	if err2 := flushStats(ctx, se, e.importPlan.TableInfo.ID, &importResult); err2 != nil {
 		logutil.Logger(ctx).Error("flush stats failed", zap.Error(err2))
 	}
 	return err
+}
+
+func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
+	e.dataFilled = true
+	// must use a new session to pre-check, else the stmt in show processlist will be changed.
+	newSCtx, err2 := CreateSession(e.userSctx)
+	if err2 != nil {
+		return err2
+	}
+	defer CloseSession(newSCtx)
+
+	sqlExec := newSCtx.(sqlexec.SQLExecutor)
+	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
+		return err2
+	}
+	if err := e.importPlan.InitTiKVConfigs(ctx, newSCtx); err != nil {
+		return err
+	}
+
+	// TODO: we didn't use this `group` here, but have to init GroupCtx, refactor this later.
+	group, groupCtx := errgroup.WithContext(ctx)
+	param := &importer.JobImportParam{
+		Job:      &importer.Job{},
+		Group:    group,
+		GroupCtx: groupCtx,
+		Done:     make(chan struct{}),
+		Progress: importer.NewProgress(),
+	}
+	importID := uuid.New().String()
+	logutil.Logger(ctx).Info("importing data from select statement",
+		zap.String("import-id", importID), zap.Int("concurrency", e.controller.ThreadCnt),
+		zap.String("target-table", e.controller.FullTableName()),
+		zap.Int64("target-table-id", e.controller.TableInfo.ID))
+	ti, err2 := importer.NewTableImporter(param, e.controller, importID)
+	if err2 != nil {
+		return err2
+	}
+	defer func() {
+		if err := ti.Close(); err != nil {
+			logutil.Logger(ctx).Error("close importer failed", zap.Error(err))
+		}
+	}()
+	selectedRowCh := make(chan importer.QueryRow)
+	ti.SetSelectedRowCh(selectedRowCh)
+
+	var importResult *importer.JobImportResult
+	eg, egCtx := errgroup.WithContext(ctx)
+	eg.Go(func() error {
+		var err error
+		importResult, err = ti.ImportSelectedRows(egCtx, newSCtx)
+		return err
+	})
+	eg.Go(func() error {
+		defer close(selectedRowCh)
+		fields := exec.RetTypes(e.selectExec)
+		var idAllocator int64
+		for {
+			// rows will be consumed concurrently, we cannot use chunk pool in session ctx.
+			chk := exec.NewFirstChunk(e.selectExec)
+			iter := chunk.NewIterator4Chunk(chk)
+			err := exec.Next(egCtx, e.selectExec, chk)
+			if err != nil {
+				return err
+			}
+			if chk.NumRows() == 0 {
+				break
+			}
+			for innerChunkRow := iter.Begin(); innerChunkRow != iter.End(); innerChunkRow = iter.Next() {
+				idAllocator++
+				select {
+				case selectedRowCh <- importer.QueryRow{
+					ID:   idAllocator,
+					Data: innerChunkRow.GetDatumRow(fields),
+				}:
+				case <-egCtx.Done():
+					return egCtx.Err()
+				}
+			}
+		}
+		return nil
+	})
+	if err := eg.Wait(); err != nil {
+		return err
+	}
+
+	if err2 = flushStats(ctx, e.userSctx, e.importPlan.TableInfo.ID, importResult); err2 != nil {
+		logutil.Logger(ctx).Error("flush stats failed", zap.Error(err2))
+	}
+
+	stmtCtx := e.userSctx.GetSessionVars().StmtCtx
+	stmtCtx.SetAffectedRows(importResult.Affected)
+	// TODO: change it after spec is ready.
+	stmtCtx.SetMessage(fmt.Sprintf("Records: %d, ID: %s", importResult.Affected, importID))
+	return nil
 }
 
 // ImportIntoActionExec represents a import into action executor.
@@ -297,7 +399,7 @@ func (e *ImportIntoActionExec) checkPrivilegeAndStatus(ctx context.Context, mana
 }
 
 // flushStats flushes the stats of the table.
-func flushStats(ctx context.Context, se sessionctx.Context, tableID int64, result importer.JobImportResult) error {
+func flushStats(ctx context.Context, se sessionctx.Context, tableID int64, result *importer.JobImportResult) error {
 	if err := sessiontxn.NewTxn(ctx, se); err != nil {
 		return err
 	}

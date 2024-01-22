@@ -49,7 +49,7 @@ func (*noopStorage) URI() string {
 
 // Create implements ExternalStorage interface.
 func (*noopStorage) Create(_ context.Context, _ string, _ *WriterOption) (ExternalFileWriter, error) {
-	return &noopWriter{}, nil
+	return &NoopWriter{}, nil
 }
 
 // Rename implements ExternalStorage interface.
@@ -79,12 +79,13 @@ func (noopReader) GetFileSize() (int64, error) {
 	return 0, nil
 }
 
-type noopWriter struct{}
+// NoopWriter is a writer that does nothing.
+type NoopWriter struct{}
 
-func (noopWriter) Write(_ context.Context, p []byte) (int, error) {
+func (NoopWriter) Write(_ context.Context, p []byte) (int, error) {
 	return len(p), nil
 }
 
-func (noopWriter) Close(_ context.Context) error {
+func (NoopWriter) Close(_ context.Context) error {
 	return nil
 }

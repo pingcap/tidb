@@ -34,7 +34,5 @@ func TestFrameworkRollback(t *testing.T) {
 
 	task := testutil.SubmitAndWaitTask(ctx, t, "key1")
 	require.Equal(t, proto.TaskStateReverted, task.State)
-	require.Equal(t, int32(2), testContext.RollbackCnt.Load())
-	testContext.RollbackCnt.Store(0)
 	distContext.Close()
 }

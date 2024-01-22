@@ -5,6 +5,8 @@ package storage
 import (
 	"bytes"
 	"context"
+	goerrors "errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -17,9 +19,11 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/prefetch"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 	"golang.org/x/oauth2/google"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
 	htransport "google.golang.org/api/transport/http"
@@ -201,6 +205,7 @@ func (s *GCSStorage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 	}
 	pos := int64(0)
 	endPos := attrs.Size
+	prefetchSize := 0
 	if o != nil {
 		if o.StartOffset != nil {
 			pos = *o.StartOffset
@@ -208,17 +213,19 @@ func (s *GCSStorage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 		if o.EndOffset != nil {
 			endPos = *o.EndOffset
 		}
+		prefetchSize = o.PrefetchSize
 	}
 
 	return &gcsObjectReader{
-		storage:   s,
-		name:      path,
-		objHandle: handle,
-		reader:    nil, // lazy create
-		ctx:       ctx,
-		pos:       pos,
-		endPos:    endPos,
-		totalSize: attrs.Size,
+		storage:      s,
+		name:         path,
+		objHandle:    handle,
+		reader:       nil, // lazy create
+		ctx:          ctx,
+		pos:          pos,
+		endPos:       endPos,
+		prefetchSize: prefetchSize,
+		totalSize:    attrs.Size,
 	}, nil
 }
 
@@ -370,6 +377,7 @@ skipHandleCred:
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	client.SetRetry(storage.WithErrorFunc(shouldRetry))
 
 	if !opts.SendCredentials {
 		// Clear the credentials if exists so that they will not be sent to TiKV
@@ -377,39 +385,28 @@ skipHandleCred:
 	}
 
 	bucket := client.Bucket(gcs.Bucket)
-	// check whether it's a bug before #647, to solve case #2
-	// If the storage is set as gcs://bucket/prefix/,
-	// the backupmeta is written correctly to gcs://bucket/prefix/backupmeta,
-	// but the SSTs are written wrongly to gcs://bucket/prefix//*.sst (note the extra slash).
-	// see details about case 2 at https://github.com/pingcap/br/issues/675#issuecomment-753780742
-	sstInPrefix := hasSSTFiles(ctx, bucket, gcs.Prefix)
-	sstInPrefixSlash := hasSSTFiles(ctx, bucket, gcs.Prefix+"//")
-	if sstInPrefixSlash && !sstInPrefix {
-		// This is a old bug, but we must make it compatible.
-		// so we need find sst in slash directory
-		gcs.Prefix += "//"
-	}
 	return &GCSStorage{gcs: gcs, bucket: bucket, cli: client}, nil
 }
 
-func hasSSTFiles(ctx context.Context, bucket *storage.BucketHandle, prefix string) bool {
-	query := storage.Query{Prefix: prefix}
-	_ = query.SetAttrSelection([]string{"Name"})
-	it := bucket.Objects(ctx, &query)
-	for {
-		attrs, err := it.Next()
-		if err == iterator.Done { // nolint:errorlint
-			break
-		}
-		if err != nil {
-			log.Warn("failed to list objects on gcs, will use default value for `prefix`", zap.Error(err))
-			break
-		}
-		if strings.HasSuffix(attrs.Name, ".sst") {
-			log.Info("sst file found in prefix slash", zap.String("file", attrs.Name))
+func shouldRetry(err error) bool {
+	if storage.ShouldRetry(err) {
+		return true
+	}
+
+	// workaround for https://github.com/googleapis/google-cloud-go/issues/9262
+	if e := (&googleapi.Error{}); goerrors.As(err, &e) {
+		if e.Code == 401 {
+			log.Warn("retrying gcs request due to internal authentication error", zap.Error(err))
 			return true
 		}
 	}
+
+	if err != nil {
+		log.Warn("other error when requesting gcs",
+			zap.Error(err),
+			zap.String("info", fmt.Sprintf("type: %T, value: %#v", err, err)))
+	}
+
 	return false
 }
 
@@ -422,6 +419,8 @@ type gcsObjectReader struct {
 	pos       int64
 	endPos    int64
 	totalSize int64
+
+	prefetchSize int
 	// reader context used for implement `io.Seek`
 	// currently, lightning depends on package `xitongsys/parquet-go` to read parquet file and it needs `io.Seeker`
 	// See: https://github.com/xitongsys/parquet-go/blob/207a3cee75900b2b95213627409b7bac0f190bb3/source/source.go#L9-L10
@@ -442,6 +441,9 @@ func (r *gcsObjectReader) Read(p []byte) (n int, err error) {
 				r.storage.gcs.Bucket, r.name)
 		}
 		r.reader = rc
+		if r.prefetchSize > 0 {
+			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+		}
 	}
 	n, err = r.reader.Read(p)
 	r.pos += int64(n)
@@ -499,6 +501,9 @@ func (r *gcsObjectReader) Seek(offset int64, whence int) (int64, error) {
 			r.storage.gcs.Bucket, r.name)
 	}
 	r.reader = rc
+	if r.prefetchSize > 0 {
+		r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+	}
 
 	return realOffset, nil
 }
