@@ -263,7 +263,6 @@ func (e *SortExec) appendResultToChunkInUnparallelMode(req *chunk.Chunk) error {
 }
 
 func (e *SortExec) initKWayMerge() {
-	// TODO add resultLock?
 	e.Parallel.kWayMerge = &multiWayMerge{e.lessRow, make([]rowWithPartition, 0, len(e.Parallel.workers))}
 	for i := range e.Parallel.sortedRowsIters {
 		row := e.Parallel.sortedRowsIters[i].Begin()
