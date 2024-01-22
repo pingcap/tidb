@@ -33,6 +33,7 @@ go_library(
         "//pkg/util/syncutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -52,7 +53,7 @@ go_test(
     embed = [":scheduler"],
     flaky = True,
     race = "off",
-    shard_count = 29,
+    shard_count = 30,
     deps = [
         "//pkg/config",
         "//pkg/disttask/framework/mock",

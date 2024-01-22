@@ -59,7 +59,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
@@ -2118,14 +2117,16 @@ func (w *worker) executeDistTask(reorgInfo *reorgInfo) error {
 
 		job := reorgInfo.Job
 		workerCntLimit := int(variable.GetDDLReorgWorkerCounter())
-		// we're using cpu count of current node, not of framework managed nodes,
-		// but it seems more intuitive.
-		concurrency := min(workerCntLimit, cpu.GetCPUCount())
+		cpuCount, err := handle.GetCPUCountOfManagedNode(ctx)
+		if err != nil {
+			return err
+		}
+		concurrency := min(workerCntLimit, cpuCount)
 		logutil.BgLogger().Info("adjusted add-index task concurrency",
 			zap.Int("worker-cnt", workerCntLimit), zap.Int("task-concurrency", concurrency),
 			zap.String("task-key", taskKey))
 		taskMeta := &BackfillTaskMeta{
-			Job:             *reorgInfo.Job.Clone(),
+			Job:             *job.Clone(),
 			EleIDs:          elemIDs,
 			EleTypeKey:      reorgInfo.currElement.TypeKey,
 			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
@@ -2203,7 +2204,7 @@ func (w *worker) updateJobRowCount(taskKey string, jobID int64) {
 		logutil.BgLogger().Warn("cannot get task", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 		return
 	}
-	rowCount, err := taskMgr.GetSubtaskRowCount(w.ctx, task.ID, StepReadIndex)
+	rowCount, err := taskMgr.GetSubtaskRowCount(w.ctx, task.ID, proto.BackfillStepReadIndex)
 	if err != nil {
 		logutil.BgLogger().Warn("cannot get subtask row count", zap.String("category", "ddl"), zap.String("task_key", taskKey), zap.Error(err))
 		return

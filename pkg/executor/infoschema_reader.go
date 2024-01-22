@@ -264,10 +264,14 @@ func (e *memtableRetriever) setDataForVariablesInfo(ctx sessionctx.Context) erro
 		if sv.IsNoop {
 			isNoop = "YES"
 		}
+		defVal := sv.Value
+		if sv.HasGlobalScope() {
+			defVal = variable.GlobalSystemVariableInitialValue(sv.Name, defVal)
+		}
 		row := types.MakeDatums(
 			sv.Name,           // VARIABLE_NAME
 			sv.Scope.String(), // VARIABLE_SCOPE
-			sv.Value,          // DEFAULT_VALUE
+			defVal,            // DEFAULT_VALUE
 			currentVal,        // CURRENT_VALUE
 			sv.MinValue,       // MIN_VALUE
 			sv.MaxValue,       // MAX_VALUE
@@ -2181,7 +2185,7 @@ func getRemainDurationForAnalyzeStatusHelper(
 				totalCnt = float64(statsTbl.RealtimeCount)
 			}
 		}
-		if tid > 0 && totalCnt == 0 {
+		if (tid > 0 && totalCnt == 0) || float64(processedRows) > totalCnt {
 			totalCnt, _ = pdhelper.GlobalPDHelper.GetApproximateTableCountFromStorage(ctx, sctx, tid, dbName, tableName, partitionName)
 		}
 		remainingDuration, percentage = calRemainInfoForAnalyzeStatus(ctx, int64(totalCnt), processedRows, duration)

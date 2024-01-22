@@ -22,7 +22,6 @@ import (
 	"io"
 	"math"
 	"net"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -60,6 +59,7 @@ import (
 	tikvclient "github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/retry"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/backoff"
@@ -72,7 +72,7 @@ import (
 
 const (
 	dialTimeout             = 5 * time.Minute
-	maxRetryTimes           = 5
+	maxRetryTimes           = 20
 	defaultRetryBackoffTime = 3 * time.Second
 	// maxWriteAndIngestRetryTimes is the max retry times for write and ingest.
 	// A large retry times is for tolerating tikv cluster failures.
@@ -256,17 +256,17 @@ func (*encodingBuilder) MakeEmptyRows() encode.Rows {
 }
 
 type targetInfoGetter struct {
-	tls      *common.TLS
-	targetDB *sql.DB
-	pdCli    pd.Client
+	tls       *common.TLS
+	targetDB  *sql.DB
+	pdHTTPCli pdhttp.Client
 }
 
 // NewTargetInfoGetter creates an TargetInfoGetter with local backend implementation.
-func NewTargetInfoGetter(tls *common.TLS, db *sql.DB, pdCli pd.Client) backend.TargetInfoGetter {
+func NewTargetInfoGetter(tls *common.TLS, db *sql.DB, pdHTTPCli pdhttp.Client) backend.TargetInfoGetter {
 	return &targetInfoGetter{
-		tls:      tls,
-		targetDB: db,
-		pdCli:    pdCli,
+		tls:       tls,
+		targetDB:  db,
+		pdHTTPCli: pdHTTPCli,
 	}
 }
 
@@ -287,10 +287,10 @@ func (g *targetInfoGetter) CheckRequirements(ctx context.Context, checkCtx *back
 	if err := checkTiDBVersion(ctx, versionStr, localMinTiDBVersion, localMaxTiDBVersion); err != nil {
 		return err
 	}
-	if err := tikv.CheckPDVersion(ctx, g.tls, g.pdCli.GetLeaderAddr(), localMinPDVersion, localMaxPDVersion); err != nil {
+	if err := tikv.CheckPDVersion(ctx, g.pdHTTPCli, localMinPDVersion, localMaxPDVersion); err != nil {
 		return err
 	}
-	if err := tikv.CheckTiKVVersion(ctx, g.tls, g.pdCli.GetLeaderAddr(), localMinTiKVVersion, localMaxTiKVVersion); err != nil {
+	if err := tikv.CheckTiKVVersion(ctx, g.pdHTTPCli, localMinTiKVVersion, localMaxTiKVVersion); err != nil {
 		return err
 	}
 
@@ -516,24 +516,6 @@ func NewBackend(
 		return nil, common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 	}
 
-	shouldCreate := true
-	if config.CheckpointEnabled {
-		if info, err := os.Stat(config.LocalStoreDir); err != nil {
-			if !os.IsNotExist(err) {
-				return nil, err
-			}
-		} else if info.IsDir() {
-			shouldCreate = false
-		}
-	}
-
-	if shouldCreate {
-		err = os.Mkdir(config.LocalStoreDir, 0o700)
-		if err != nil {
-			return nil, common.ErrInvalidSortedKVDir.Wrap(err).GenWithStackByArgs(config.LocalStoreDir)
-		}
-	}
-
 	// The following copies tikv.NewTxnClient without creating yet another pdClient.
 	spkv, err := tikvclient.NewEtcdSafePointKV(strings.Split(config.PDAddr, ","), tls.TLSConfig())
 	if err != nil {
@@ -556,7 +538,8 @@ func NewBackend(
 	if err != nil {
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
-	pdHTTPCli := pdhttp.NewClient("lightning", pdAddrs, pdhttp.WithTLSConfig(tls.TLSConfig()))
+	pdHTTPCli := pdhttp.NewClient("lightning", pdAddrs, pdhttp.WithTLSConfig(tls.TLSConfig())).
+		WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
 	splitCli := split.NewSplitClient(pdCli, pdHTTPCli, tls.TLSConfig(), false)
 	importClientFactory := newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
 	var writeLimiter StoreWriteLimiter
@@ -590,6 +573,27 @@ func NewBackend(
 	}
 	if err = local.checkMultiIngestSupport(ctx); err != nil {
 		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
+	}
+
+	return local, nil
+}
+
+// NewBackendForTest creates a new Backend for test.
+func NewBackendForTest(ctx context.Context, config BackendConfig, storeHelper StoreHelper) (*Backend, error) {
+	config.adjust()
+
+	logger := log.FromContext(ctx)
+	engineMgr, err := newEngineManager(config, storeHelper, logger)
+	if err != nil {
+		return nil, err
+	}
+	local := &Backend{
+		BackendConfig: config,
+		logger:        logger,
+		engineMgr:     engineMgr,
+	}
+	if m, ok := metric.GetCommonMetric(ctx); ok {
+		local.metrics = m
 	}
 
 	return local, nil
@@ -670,14 +674,6 @@ func (local *Backend) Close() {
 	local.engineMgr.close()
 	local.importClientFactory.Close()
 
-	// if checkpoint is disabled, or we finish load all data successfully, then files in this
-	// dir will be useless, so we clean up this dir and all files in it.
-	if !local.CheckpointEnabled || common.IsEmptyDir(local.LocalStoreDir) {
-		err := os.RemoveAll(local.LocalStoreDir)
-		if err != nil {
-			local.logger.Warn("remove local db file failed", zap.Error(err))
-		}
-	}
 	_ = local.tikvCli.Close()
 	local.pdHTTPCli.Close()
 	local.pdCli.Close()
@@ -1114,7 +1110,12 @@ func checkDiskAvail(ctx context.Context, store *pdhttp.StoreInfo) error {
 	}
 	ratio := available * 100 / capacity
 	if ratio < 10 {
-		return errors.Errorf("the remaining storage capacity of TiKV(%s) is less than 10%%; please increase the storage capacity of TiKV and try again", store.Store.Address)
+		storeType := "TiKV"
+		if engine.IsTiFlashHTTPResp(&store.Store) {
+			storeType = "TiFlash"
+		}
+		return errors.Errorf("the remaining storage capacity of %s(%s) is less than 10%%; please increase the storage capacity of %s and try again",
+			storeType, store.Store.Address, storeType)
 	}
 	return nil
 }
@@ -1285,11 +1286,6 @@ func (local *Backend) ImportEngine(
 			zap.Int64("importedCount", importedLength))
 	}
 	return err
-}
-
-// GetRegionSplitSizeKeys gets the region split size and keys from PD.
-func (local *Backend) GetRegionSplitSizeKeys(ctx context.Context) (finalSize int64, finalKeys int64, err error) {
-	return GetRegionSplitSizeKeys(ctx, local.pdCli, local.tls)
 }
 
 // expose these variables to unit test.
@@ -1489,7 +1485,7 @@ func (local *Backend) LocalWriter(ctx context.Context, cfg *backend.LocalWriterC
 // This function will spawn a goroutine to keep switch mode periodically until the context is done.
 // The return done channel is used to notify the caller that the background goroutine is exited.
 func (local *Backend) SwitchModeByKeyRanges(ctx context.Context, ranges []common.Range) (<-chan struct{}, error) {
-	switcher := NewTiKVModeSwitcher(local.tls, local.pdCli, log.FromContext(ctx).Logger)
+	switcher := NewTiKVModeSwitcher(local.tls, local.pdHTTPCli, log.FromContext(ctx).Logger)
 	done := make(chan struct{})
 
 	keyRanges := make([]*sst.Range, 0, len(ranges))
@@ -1588,6 +1584,12 @@ func (local *Backend) GetTS(ctx context.Context) (physical, logical int64, err e
 // GetTiKVCodec implements StoreHelper interface.
 func (local *Backend) GetTiKVCodec() tikvclient.Codec {
 	return local.tikvCodec
+}
+
+// CloseEngineMgr close the engine manager.
+// This function is used for test.
+func (local *Backend) CloseEngineMgr() {
+	local.engineMgr.close()
 }
 
 var getSplitConfFromStoreFunc = getSplitConfFromStore

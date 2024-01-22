@@ -3813,7 +3813,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		hintData := n.HintData.(HintSetVar)
 		ctx.WritePlain(hintData.VarName)
 		ctx.WritePlain(" = ")
-		ctx.WritePlain(hintData.Value)
+		ctx.WriteString(hintData.Value)
 	}
 	ctx.WritePlain(")")
 	return nil

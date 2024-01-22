@@ -36,7 +36,6 @@ import (
 type index struct {
 	idxInfo  *model.IndexInfo
 	tblInfo  *model.TableInfo
-	prefix   kv.Key
 	phyTblID int64
 	// initNeedRestoreData is used to initialize `needRestoredData` in `index.Create()`.
 	// This routine cannot be done in `NewIndex()` because `needRestoreData` relies on `NewCollationEnabled()` and
@@ -58,19 +57,9 @@ func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo
 
 // NewIndex builds a new Index object.
 func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
-	// The prefix can't encode from tblInfo.ID, because table partition may change the id to partition id.
-	var prefix kv.Key
-	if indexInfo.Global {
-		// In glabal index of partition table, prefix start with tblInfo.ID.
-		prefix = tablecodec.EncodeTableIndexPrefix(tblInfo.ID, indexInfo.ID)
-	} else {
-		// Otherwise, start with physicalID.
-		prefix = tablecodec.EncodeTableIndexPrefix(physicalID, indexInfo.ID)
-	}
 	index := &index{
 		idxInfo:  indexInfo,
 		tblInfo:  tblInfo,
-		prefix:   prefix,
 		phyTblID: physicalID,
 	}
 	return index

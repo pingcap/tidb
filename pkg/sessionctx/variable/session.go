@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -1515,6 +1516,14 @@ type SessionVars struct {
 	// use the ExpectedCnt to adjust the estimated row count for index scan.
 	OptOrderingIdxSelThresh float64
 
+	// OptOrderingIdxSelRatio is the ratio for optimizer to determine when qualified rows from filtering outside
+	// of the index will be found during the scan of an ordering index.
+	// If all filtering is applied as matching on the ordering index, this ratio will have no impact.
+	// Value < 0 disables this enhancement.
+	// Value 0 will estimate row(s) found immediately.
+	// 0 > value <= 1 applies that percentage as the estimate when rows are found. For example 0.1 = 10%.
+	OptOrderingIdxSelRatio float64
+
 	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
 	EnableMPPSharedCTEExecution bool
 
@@ -2606,7 +2615,7 @@ func (s *SessionVars) GetPrevStmtDigest() string {
 
 // LazyCheckKeyNotExists returns if we can lazy check key not exists.
 func (s *SessionVars) LazyCheckKeyNotExists() bool {
-	return s.PresumeKeyNotExists || (s.TxnCtx != nil && s.TxnCtx.IsPessimistic && !s.StmtCtx.DupKeyAsWarning)
+	return s.PresumeKeyNotExists || (s.TxnCtx != nil && s.TxnCtx.IsPessimistic && s.StmtCtx.ErrGroupLevel(errctx.ErrGroupDupKey) == errctx.LevelError)
 }
 
 // GetTemporaryTable returns a TempTable by tableInfo.

@@ -81,8 +81,9 @@ func testReadAndCompare(
 			bufPool,
 			loaded,
 		)
-
 		require.NoError(t, err)
+		loaded.build()
+
 		// check kvs sorted
 		sorty.MaxGor = uint64(8)
 		sorty.Sort(len(loaded.keys), func(i, k, r, s int) bool {

@@ -45,13 +45,22 @@ func NotifyTaskChange() {
 	}
 }
 
+// GetCPUCountOfManagedNode gets the CPU count of the managed node.
+func GetCPUCountOfManagedNode(ctx context.Context) (int, error) {
+	manager, err := storage.GetTaskManager()
+	if err != nil {
+		return 0, err
+	}
+	return manager.GetCPUCountOfManagedNode(ctx)
+}
+
 // SubmitTask submits a task.
 func SubmitTask(ctx context.Context, taskKey string, taskType proto.TaskType, concurrency int, taskMeta []byte) (*proto.Task, error) {
 	taskManager, err := storage.GetTaskManager()
 	if err != nil {
 		return nil, err
 	}
-	task, err := taskManager.GetTaskByKey(ctx, taskKey)
+	task, err := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 	if err != nil && err != storage.ErrTaskNotFound {
 		return nil, err
 	}

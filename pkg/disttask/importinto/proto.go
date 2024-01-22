@@ -22,33 +22,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-)
-
-// Steps of IMPORT INTO, each step is represented by one or multiple subtasks.
-// the initial step is StepInit(-1)
-// steps are processed in the following order:
-// - local sort: StepInit -> StepImport -> StepPostProcess -> StepDone
-// - global sort:
-// StepInit -> StepEncodeAndSort -> StepMergeSort -> StepWriteAndIngest
-// -> StepPostProcess -> StepDone
-const (
-	// StepImport we sort source data and ingest it into TiKV in this step.
-	StepImport proto.Step = 1
-	// StepPostProcess we verify checksum and add index in this step.
-	StepPostProcess proto.Step = 2
-	// StepEncodeAndSort encode source data and write sorted kv into global storage.
-	StepEncodeAndSort proto.Step = 3
-	// StepMergeSort merge sorted kv from global storage, so we can have better
-	// read performance during StepWriteAndIngest.
-	// depends on how much kv files are overlapped, there's might 0 subtasks
-	// in this step.
-	StepMergeSort proto.Step = 4
-	// StepWriteAndIngest write sorted kv into TiKV and ingest it.
-	StepWriteAndIngest proto.Step = 5
 )
 
 // TaskMeta is the task of IMPORT INTO.

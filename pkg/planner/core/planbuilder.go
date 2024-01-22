@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -210,7 +211,7 @@ type PlanBuilder struct {
 	colMapper map[*ast.ColumnNameExpr]int
 	// visitInfo is used for privilege check.
 	visitInfo     []visitInfo
-	tableHintInfo []hint.TableHintInfo
+	tableHintInfo []*hint.TableHintInfo
 	// optFlag indicates the flags of the optimizer rules.
 	optFlag uint64
 	// capFlag indicates the capability flags.
@@ -734,7 +735,7 @@ func (b *PlanBuilder) buildSet(ctx context.Context, v *ast.SetStmt) (Plan, error
 func (b *PlanBuilder) buildDropBindPlan(v *ast.DropBindingStmt) (Plan, error) {
 	var p *SQLBindPlan
 	if v.OriginNode != nil {
-		normdOrigSQL, sqlDigestWithDB := bindinfo.NormalizeStmtForBinding(v.OriginNode, b.ctx.GetSessionVars().CurrentDB)
+		normdOrigSQL, sqlDigestWithDB := norm.NormalizeStmtForBinding(v.OriginNode, norm.WithSpecifiedDB(b.ctx.GetSessionVars().CurrentDB))
 		p = &SQLBindPlan{
 			SQLBindOp:    OpSQLBindDrop,
 			NormdOrigSQL: normdOrigSQL,
@@ -1216,6 +1217,19 @@ func getPossibleAccessPaths(ctx sessionctx.Context, tableHints *hint.TableHintIn
 	if len(available) == 0 {
 		available = append(available, tablePath)
 	}
+
+	// If all available paths are Multi-Valued Index, it's possible that the only multi-valued index is inapplicable,
+	// so that the table paths are still added here to avoid failing to find any physical plan.
+	allMVIIndexPath := true
+	for _, availablePath := range available {
+		if !isMVIndexPath(availablePath) {
+			allMVIIndexPath = false
+		}
+	}
+	if allMVIIndexPath {
+		available = append(available, tablePath)
+	}
+
 	return available, nil
 }
 
@@ -2679,11 +2693,11 @@ func generateIndexTasks(idx *model.IndexInfo, as *ast.AnalyzeTableStmt, tblInfo 
 var CMSketchSizeLimit = kv.TxnEntrySizeLimit.Load() / binary.MaxVarintLen32
 
 var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
-	ast.AnalyzeOptNumBuckets:    1024,
-	ast.AnalyzeOptNumTopN:       16384,
+	ast.AnalyzeOptNumBuckets:    100000,
+	ast.AnalyzeOptNumTopN:       100000,
 	ast.AnalyzeOptCMSketchWidth: CMSketchSizeLimit,
 	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
-	ast.AnalyzeOptNumSamples:    500000,
+	ast.AnalyzeOptNumSamples:    5000000,
 	ast.AnalyzeOptSampleRate:    math.Float64bits(1),
 }
 
@@ -3225,6 +3239,8 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (Plan, 
 		if tableInfo.Meta().TempTableType != model.TempTableNone {
 			return nil, ErrOptOnTemporaryTable.GenWithStackByArgs("show table regions")
 		}
+	case ast.ShowReplicaStatus:
+		return nil, dbterror.ErrNotSupportedYet.GenWithStackByArgs("SHOW {REPLICA | SLAVE} STATUS")
 	}
 
 	schema, names := buildShowSchema(show, isView, isSequence)
