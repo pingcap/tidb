@@ -14831,7 +14831,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Pending SubTask Count",
+          "title": "Pending Subtask Count",
           "tooltip": {
             "shared": true,
             "sort": 0,
