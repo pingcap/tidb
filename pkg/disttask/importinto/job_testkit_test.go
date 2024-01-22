@@ -70,7 +70,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 	for _, m := range importStepMetas {
 		bytes, err := json.Marshal(m)
 		require.NoError(t, err)
-		testutil.CreateSubTask(t, manager, taskID, importinto.StepImport,
+		testutil.CreateSubTask(t, manager, taskID, proto.ImportStepImport,
 			"", bytes, proto.ImportInto, 11, false)
 	}
 	rows, err := importinto.GetTaskImportedRows(ctx, 111)
@@ -102,7 +102,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 	for _, m := range ingestStepMetas {
 		bytes, err := json.Marshal(m)
 		require.NoError(t, err)
-		testutil.CreateSubTask(t, manager, taskID, importinto.StepWriteAndIngest,
+		testutil.CreateSubTask(t, manager, taskID, proto.ImportStepWriteAndIngest,
 			"", bytes, proto.ImportInto, 11, false)
 	}
 	rows, err = importinto.GetTaskImportedRows(ctx, 222)

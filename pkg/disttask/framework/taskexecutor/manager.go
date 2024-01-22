@@ -340,7 +340,7 @@ func (m *Manager) cancelTaskExecutors(tasks []*proto.Task) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, task := range tasks {
-		m.logger.Info("cancelTasks", zap.Any("task_id", task.ID))
+		m.logger.Info("cancelTasks", zap.Int64("task-id", task.ID))
 		if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
 			// only cancel the executor, subtask state is not changed.
 			cancel(nil)
@@ -402,7 +402,7 @@ func (m *Manager) handleExecutableTask(task *proto.Task) {
 		}
 		if task.State != proto.TaskStateRunning && task.State != proto.TaskStateReverting {
 			m.logger.Info("handleExecutableTask exit",
-				zap.Int64("task-id", task.ID), zap.Int64("step", int64(task.Step)), zap.Stringer("state", task.State))
+				zap.Int64("task-id", task.ID), zap.String("step", proto.Step2Str(task.Type, task.Step)), zap.Stringer("state", task.State))
 			return
 		}
 		if exist, err := m.taskTable.HasSubtasksInStates(m.ctx, m.id, task.ID, task.Step,
@@ -414,7 +414,7 @@ func (m *Manager) handleExecutableTask(task *proto.Task) {
 		}
 		stepResource := m.getStepResource(task.Concurrency)
 		m.logger.Info("execute task step with resource",
-			zap.Int64("task-id", task.ID), zap.Int64("step", int64(task.Step)),
+			zap.Int64("task-id", task.ID), zap.String("step", proto.Step2Str(task.Type, task.Step)),
 			zap.Stringer("resource", stepResource))
 		switch task.State {
 		case proto.TaskStateRunning:

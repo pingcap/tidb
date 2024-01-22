@@ -18,7 +18,6 @@ go_library(
         "backfilling_import_cloud.go",
         "backfilling_merge_sort.go",
         "backfilling_operators.go",
-        "backfilling_proto.go",
         "backfilling_read_index.go",
         "backfilling_scheduler.go",
         "bdr.go",

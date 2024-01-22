@@ -194,7 +194,7 @@ func (e *BaseTaskExecutor) runStep(ctx context.Context, task *proto.Task, resour
 	e.registerCancelFunc(runCancel)
 	e.resetError()
 	stepLogger := llog.BeginTask(e.logger.With(
-		zap.Int64("task-step", int64(task.Step)),
+		zap.String("step", proto.Step2Str(task.Type, task.Step)),
 		zap.Int("concurrency", task.Concurrency),
 		zap.Float64("mem-limit-percent", gctuner.GlobalMemoryLimitTuner.GetPercentage()),
 		zap.String("server-mem-limit", memory.ServerMemoryLimitOriginText.Load()),
@@ -452,7 +452,7 @@ func (e *BaseTaskExecutor) Rollback(ctx context.Context, task *proto.Task) error
 	e.registerCancelFunc(rollbackCancel)
 
 	e.resetError()
-	e.logger.Info("taskExecutor rollback a step")
+	e.logger.Info("taskExecutor rollback a step", zap.String("step", proto.Step2Str(task.Type, task.Step)))
 
 	// We should cancel all subtasks before rolling back
 	for {
