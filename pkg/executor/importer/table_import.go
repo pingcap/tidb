@@ -61,7 +61,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/util"
-	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
@@ -145,7 +144,7 @@ func GetTiKVModeSwitcherWithPDClient(logger *zap.Logger) (pdhttp.Client, local.T
 	if o := tls.TLSConfig(); o != nil {
 		opts = append(opts, pdhttp.WithTLSConfig(o))
 	}
-	pdHTTPCli := pdhttp.NewClient("dist-task", addrs, opts...)
+	pdHTTPCli := NewPDHttpClient("dist-task", addrs, opts...)
 	// TODO: let disttask framework pass-in the PD HTTP client from domain
 	return pdHTTPCli, NewTiKVModeSwitcher(tls, pdHTTPCli, logger), nil
 }
@@ -178,7 +177,7 @@ func GetRegionSplitSizeKeys(ctx context.Context) (regionSplitSize int64, regionS
 	}
 	tlsOpt := tls.ToPDSecurityOption()
 	addrs := strings.Split(tidbCfg.Path, ",")
-	pdCli, err := pd.NewClientWithContext(ctx, addrs, tlsOpt)
+	pdCli, err := NewClientWithContext(ctx, addrs, tlsOpt)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
 	}
@@ -739,7 +738,7 @@ func (ti *TableImporter) ImportSelectedRows(ctx context.Context, se sessionctx.C
 		autoid.AutoIncrementType: allocators.Get(autoid.AutoIncrementType).Base(),
 		autoid.AutoRandomType:    allocators.Get(autoid.AutoRandomType).Base(),
 	}
-	if err = postProcess(ctx, se, maxIDs, ti.Plan, checksum, ti.logger); err != nil {
+	if err = PostProcess(ctx, se, maxIDs, ti.Plan, checksum, ti.logger); err != nil {
 		return nil, err
 	}
 
@@ -775,8 +774,9 @@ func adjustDiskQuota(diskQuota int64, sortDir string, logger *zap.Logger) int64 
 	}
 }
 
-// postProcess does the post-processing for the task.
-func postProcess(
+// PostProcess does the post-processing for the task.
+// exported for testing.
+func PostProcess(
 	ctx context.Context,
 	se sessionctx.Context,
 	maxIDs map[autoid.AllocatorType]int64,
@@ -929,9 +929,7 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 			}
 
 			failpoint.Inject("errWhenChecksum", func() {
-				if i == 0 {
-					failpoint.Return(errors.New("occur an error when checksum, coprocessor task terminated due to exceeding the deadline"))
-				}
+				failpoint.Return(errors.New("occur an error when checksum, coprocessor task terminated due to exceeding the deadline"))
 			})
 
 			// ADMIN CHECKSUM TABLE <schema>.<table>  example.
