@@ -2693,11 +2693,11 @@ func generateIndexTasks(idx *model.IndexInfo, as *ast.AnalyzeTableStmt, tblInfo 
 var CMSketchSizeLimit = kv.TxnEntrySizeLimit.Load() / binary.MaxVarintLen32
 
 var analyzeOptionLimit = map[ast.AnalyzeOptionType]uint64{
-	ast.AnalyzeOptNumBuckets:    1024,
-	ast.AnalyzeOptNumTopN:       16384,
+	ast.AnalyzeOptNumBuckets:    100000,
+	ast.AnalyzeOptNumTopN:       100000,
 	ast.AnalyzeOptCMSketchWidth: CMSketchSizeLimit,
 	ast.AnalyzeOptCMSketchDepth: CMSketchSizeLimit,
-	ast.AnalyzeOptNumSamples:    500000,
+	ast.AnalyzeOptNumSamples:    5000000,
 	ast.AnalyzeOptSampleRate:    math.Float64bits(1),
 }
 

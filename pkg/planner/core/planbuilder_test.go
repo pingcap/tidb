@@ -559,11 +559,11 @@ func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 			opts: []ast.AnalyzeOpt{
 				{
 					Type:  ast.AnalyzeOptNumTopN,
-					Value: ast.NewValueExpr(16384+1, "", ""),
+					Value: ast.NewValueExpr(100000+1, "", ""),
 				},
 			},
 			statsVer:    statistics.Version1,
-			ExpectedErr: "Value of analyze option TOPN should not be larger than 16384",
+			ExpectedErr: "Value of analyze option TOPN should not be larger than 100000",
 		},
 		{
 			name: "Use SampleRate option in stats version 1",
@@ -592,11 +592,11 @@ func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
 			opts: []ast.AnalyzeOpt{
 				{
 					Type:  ast.AnalyzeOptNumBuckets,
-					Value: ast.NewValueExpr(1024+1, "", ""),
+					Value: ast.NewValueExpr(100000+1, "", ""),
 				},
 			},
 			statsVer:    2,
-			ExpectedErr: "Value of analyze option BUCKETS should be positive and not larger than 1024",
+			ExpectedErr: "Value of analyze option BUCKETS should be positive and not larger than 100000",
 		},
 		{
 			name: "Set both sample num and sample rate",

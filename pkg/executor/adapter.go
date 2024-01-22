@@ -1454,6 +1454,8 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 			executor_metrics.FairLockingTxnEffectiveCount.Inc()
 		}
 	}
+
+	a.Ctx.ReportUsageStats()
 }
 
 func (a *ExecStmt) recordLastQueryInfo(err error) {
@@ -2159,15 +2161,11 @@ func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	handle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 	bindings := handle.GetAllSessionBindings()
-	bindRecords := make([]bindinfo.Bindings, 0, len(bindings))
-	for _, binding := range bindings {
-		bindRecords = append(bindRecords, []bindinfo.Binding{binding})
-	}
 	dumpTask := &domain.PlanReplayerDumpTask{
 		PlanReplayerTaskKey: key,
 		StartTS:             startTS,
 		TblStats:            stmtCtx.TableStats,
-		SessionBindings:     bindRecords,
+		SessionBindings:     []bindinfo.Bindings{bindings},
 		SessionVars:         sctx.GetSessionVars(),
 		ExecStmts:           []ast.StmtNode{stmtNode},
 		DebugTrace:          []interface{}{stmtCtx.OptimizerDebugTrace},

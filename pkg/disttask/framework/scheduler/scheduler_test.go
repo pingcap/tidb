@@ -132,76 +132,6 @@ func deleteTasks(t *testing.T, store kv.Storage, taskID int64) {
 	tk.MustExec(fmt.Sprintf("delete from mysql.tidb_global_task where id = %d", taskID))
 }
 
-func TestGetInstance(t *testing.T) {
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "scheduler")
-
-	store := testkit.CreateMockStore(t)
-	gtk := testkit.NewTestKit(t, store)
-	pool := pools.NewResourcePool(func() (pools.Resource, error) {
-		return gtk.Session(), nil
-	}, 1, 1, time.Second)
-	defer pool.Close()
-	ctrl := gomock.NewController(t)
-	defer ctrl.Finish()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTaskExecutorNodes", "return()"))
-	schManager, mgr := MockSchedulerManager(t, ctrl, pool, getTestSchedulerExt(ctrl), nil)
-	// test no server
-	task := &proto.Task{ID: 1, Type: proto.TaskTypeExample}
-	sch := schManager.MockScheduler(task)
-	sch.Extension = getTestSchedulerExt(ctrl)
-	instanceIDs, err := sch.GetAllTaskExecutorIDs(ctx, task)
-	require.Lenf(t, instanceIDs, 0, "GetAllTaskExecutorIDs when there's no subtask")
-	require.NoError(t, err)
-
-	// test 2 servers
-	// server ids: uuid0, uuid1
-	// subtask instance ids: nil
-	uuids := []string{"ddl_id_1", "ddl_id_2"}
-	serverIDs := []string{"10.123.124.10:32457", "[ABCD:EF01:2345:6789:ABCD:EF01:2345:6789]:65535"}
-
-	scheduler.MockServerInfo = []*infosync.ServerInfo{
-		{
-			ID:   uuids[0],
-			IP:   "10.123.124.10",
-			Port: 32457,
-		},
-		{
-			ID:   uuids[1],
-			IP:   "ABCD:EF01:2345:6789:ABCD:EF01:2345:6789",
-			Port: 65535,
-		},
-	}
-	instanceIDs, err = sch.GetAllTaskExecutorIDs(ctx, task)
-	require.Lenf(t, instanceIDs, 0, "GetAllTaskExecutorIDs")
-	require.NoError(t, err)
-
-	// server ids: uuid0, uuid1
-	// subtask instance ids: uuid1
-	subtask := &proto.Subtask{
-		Type:   proto.TaskTypeExample,
-		TaskID: task.ID,
-		ExecID: serverIDs[1],
-	}
-	testutil.CreateSubTask(t, mgr, task.ID, proto.StepInit, subtask.ExecID, nil, subtask.Type, 11, true)
-	instanceIDs, err = sch.GetAllTaskExecutorIDs(ctx, task)
-	require.NoError(t, err)
-	require.Equal(t, []string{serverIDs[1]}, instanceIDs)
-	// server ids: uuid0, uuid1
-	// subtask instance ids: uuid0, uuid1
-	subtask = &proto.Subtask{
-		Type:   proto.TaskTypeExample,
-		TaskID: task.ID,
-		ExecID: serverIDs[0],
-	}
-	testutil.CreateSubTask(t, mgr, task.ID, proto.StepInit, subtask.ExecID, nil, subtask.Type, 11, true)
-	instanceIDs, err = sch.GetAllTaskExecutorIDs(ctx, task)
-	require.NoError(t, err)
-	require.Len(t, instanceIDs, len(serverIDs))
-	require.ElementsMatch(t, instanceIDs, serverIDs)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTaskExecutorNodes"))
-}
-
 func TestTaskFailInManager(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	gtk := testkit.NewTestKit(t, store)
@@ -395,12 +325,6 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 		checkGetTaskState(proto.TaskStateSucceed)
 		return
 	} else {
-		// Test each task has a subtask failed.
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/storage/MockUpdateTaskErr", "1*return(true)"))
-		defer func() {
-			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/storage/MockUpdateTaskErr"))
-		}()
-
 		if isSubtaskCancel {
 			// Mock a subtask canceled
 			for i := 1; i <= subtaskCnt*taskCnt; i += subtaskCnt {
@@ -418,11 +342,14 @@ func checkDispatch(t *testing.T, taskCnt int, isSucc, isCancel, isSubtaskCancel,
 
 	checkGetTaskState(proto.TaskStateReverting)
 	require.Len(t, tasks, taskCnt)
-	// Mock all subtask reverted.
-	start := subtaskCnt * taskCnt
-	for i := start; i <= start+subtaskCnt*taskCnt; i++ {
-		err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateReverted, nil)
+	for _, task := range tasks {
+		subtasks, err := mgr.GetSubtasksByExecIDAndStepAndStates(
+			ctx, ":4000", task.ID, task.Step,
+			proto.SubtaskStatePending, proto.SubtaskStateRunning)
 		require.NoError(t, err)
+		for _, subtask := range subtasks {
+			require.NoError(t, mgr.UpdateSubtaskStateAndError(ctx, ":4000", subtask.ID, proto.SubtaskStateCanceled, nil))
+		}
 	}
 	checkGetTaskState(proto.TaskStateReverted)
 	require.Len(t, tasks, taskCnt)
