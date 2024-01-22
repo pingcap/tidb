@@ -20,7 +20,7 @@ import (
 
 // task state machine
 //
-// Note: if task fail during running, it will end with `reverted` state.
+// Note: if a task fails during running, it will end with `reverted` state.
 // The `failed` state is used to mean the framework cannot run the task, such as
 // invalid task type, scheduler init error(fatal), etc.
 //
