@@ -188,6 +188,7 @@ type StatementContext struct {
 	ErrAutoincReadFailedAsWarning bool
 	InShowWarning                 bool
 	UseCache                      bool
+	ForcePlanCache                bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.
 	CacheType                     PlanCacheType
 	BatchCheck                    bool
 	InNullRejectCheck             bool
@@ -747,6 +748,10 @@ const (
 func (sc *StatementContext) SetSkipPlanCache(reason error) {
 	if !sc.UseCache {
 		return // avoid unnecessary warnings
+	}
+	if sc.ForcePlanCache {
+		sc.AppendWarning(errors.NewNoStackError(fmt.Sprintf("ignore-plan-cache-checker: %s", reason.Error())))
+		return
 	}
 	sc.UseCache = false
 	switch sc.CacheType {

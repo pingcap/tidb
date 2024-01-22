@@ -537,7 +537,7 @@ var tokenMap = map[string]int{
 	"NEVER":                    never,
 	"NEXT_ROW_ID":              next_row_id,
 	"NEXT":                     next,
-	"SEQ_NEXTVAL":              seq_nextval,
+	"NEXTVAL":                  nextval,
 	"NO_WRITE_TO_BINLOG":       noWriteToBinLog,
 	"NO":                       no,
 	"NOCACHE":                  nocache,

@@ -17,6 +17,7 @@ package core
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"math"
 	"slices"
 	"strconv"
@@ -142,6 +143,13 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 		} else {
 			cacheable = true // it is already checked here
 		}
+
+		if !cacheable && fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false) {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(fmt.Sprintf("ignore-plan-cache-checker: %s", reason)))
+			cacheable = true
+			reason = ""
+		}
+
 		if !cacheable {
 			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("skip prepared plan-cache: " + reason))
 		}

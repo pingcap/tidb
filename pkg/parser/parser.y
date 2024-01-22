@@ -500,7 +500,7 @@ import (
 	ncharType             "NCHAR"
 	never                 "NEVER"
 	next                  "NEXT"
-	seq_nextval           "SEQ_NEXTVAL"
+	nextval               "NEXTVAL"
 	no                    "NO"
 	nocache               "NOCACHE"
 	nocycle               "NOCYCLE"
@@ -3950,7 +3950,7 @@ NextValueForSequence:
 			Args:   []ast.ExprNode{objNameExpr},
 		}
 	}
-|	"SEQ_NEXTVAL" '(' TableName ')'
+|	"NEXTVAL" '(' TableName ')'
 	{
 		objNameExpr := &ast.TableNameExpr{
 			Name: $3.(*ast.TableName),
@@ -6812,7 +6812,7 @@ UnReservedKeyword:
 |	"PER_TABLE"
 |	"PER_DB"
 |	"NEXT"
-|	"SEQ_NEXTVAL"
+|	"NEXTVAL"
 |	"LASTVAL"
 |	"SETVAL"
 |	"AGO"
