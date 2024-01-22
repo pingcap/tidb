@@ -2412,7 +2412,7 @@ func (b *builtinCharSig) evalString(ctx EvalContext, row chunk.Row) (string, boo
 	res, err := enc.Transform(nil, dBytes, charset.OpDecode)
 	if err != nil {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(err)
-		if ctx.GetSessionVars().StrictSQLMode {
+		if ctx.GetSessionVars().SQLMode.HasStrictMode() {
 			return "", true, nil
 		}
 	}

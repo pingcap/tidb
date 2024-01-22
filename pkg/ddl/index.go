@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
+	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
@@ -77,7 +78,16 @@ const (
 
 var (
 	telemetryAddIndexIngestUsage = metrics.TelemetryAddIndexIngestCnt
+	// SuppressErrorTooLongKeyKey is used by SchemaTracker to suppress err too long key error
+	SuppressErrorTooLongKeyKey stringutil.StringerStr = "suppressErrorTooLongKeyKey"
 )
+
+func suppressErrorTooLongKeyKey(sctx sessionctx.Context) bool {
+	if suppress, ok := sctx.Value(SuppressErrorTooLongKeyKey).(bool); ok && suppress {
+		return true
+	}
+	return false
+}
 
 func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification) ([]*model.IndexColumn, bool, error) {
 	// Build offsets.
@@ -113,7 +123,8 @@ func buildIndexColumns(ctx sessionctx.Context, columns []*model.ColumnInfo, inde
 		if sumLength > maxIndexLength {
 			// The multiple column index and the unique index in which the length sum exceeds the maximum size
 			// will return an error instead produce a warning.
-			if ctx == nil || ctx.GetSessionVars().StrictSQLMode || mysql.HasUniKeyFlag(col.GetFlag()) || len(indexPartSpecifications) > 1 {
+			suppress := suppressErrorTooLongKeyKey(ctx)
+			if ctx == nil || (ctx.GetSessionVars().SQLMode.HasStrictMode() && !suppress) || mysql.HasUniKeyFlag(col.GetFlag()) || len(indexPartSpecifications) > 1 {
 				return nil, false, dbterror.ErrTooLongKey.GenWithStackByArgs(sumLength, maxIndexLength)
 			}
 			// truncate index length and produce warning message in non-restrict sql mode.
@@ -222,9 +233,12 @@ func checkIndexColumn(ctx sessionctx.Context, col *model.ColumnInfo, indexColumn
 	}
 	// Specified length must be shorter than the max length for prefix.
 	maxIndexLength := config.GetGlobalConfig().MaxIndexLength
-	if indexColumnLen > maxIndexLength && (ctx == nil || ctx.GetSessionVars().StrictSQLMode) {
-		// return error in strict sql mode
-		return dbterror.ErrTooLongKey.GenWithStackByArgs(indexColumnLen, maxIndexLength)
+	if indexColumnLen > maxIndexLength {
+		suppress := suppressErrorTooLongKeyKey(ctx)
+		if ctx == nil || (ctx.GetSessionVars().SQLMode.HasStrictMode() && !suppress) {
+			// return error in strict sql mode
+			return dbterror.ErrTooLongKey.GenWithStackByArgs(indexColumnLen, maxIndexLength)
+		}
 	}
 	return nil
 }

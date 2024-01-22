@@ -484,7 +484,6 @@ func TestErrLevelsForResetStmtContext(t *testing.T) {
 		for _, stmt := range c.stmt {
 			msg := fmt.Sprintf("%d: %s, stmt: %T", i, c.name, stmt)
 			ctx.GetSessionVars().SQLMode = c.sqlMode
-			ctx.GetSessionVars().StrictSQLMode = ctx.GetSessionVars().SQLMode.HasStrictMode()
 			require.NoError(t, ResetContextOfStmt(ctx, stmt), msg)
 			ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
 			require.Equal(t, c.levels, ec.LevelMap(), msg)
