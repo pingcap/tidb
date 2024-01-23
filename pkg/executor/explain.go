@@ -44,11 +44,12 @@ import (
 type ExplainExec struct {
 	exec.BaseExecutor
 
-	explain     *core.Explain
-	analyzeExec exec.Executor
-	executed    bool
-	rows        [][]string
-	cursor      int
+	explain       *core.Explain
+	analyzeExec   exec.Executor
+	executed      bool
+	rows          [][]string
+	cursor        int
+	lastRUDetails *clientutil.RUDetails
 }
 
 // Open implements the Executor Open interface.
@@ -94,14 +95,32 @@ func (e *ExplainExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
-	handleRUDetails := func() {
-		ruDetailsRaw := ctx.Value(clientutil.RUDetailsCtxKey)
-		if coll := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil && ruDetailsRaw != nil {
-			ruDetails := ruDetailsRaw.(*clientutil.RUDetails)
-			coll.RegisterStats(e.explain.TargetPlan.ID(), &ruRuntimeStats{ruDetails})
+func (e *ExplainExec) handleRUDetails(ctx context.Context) {
+	ruDetailsRaw := ctx.Value(clientutil.RUDetailsCtxKey)
+	if coll := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil && ruDetailsRaw != nil {
+		ruDetails := ruDetailsRaw.(*clientutil.RUDetails)
+		newRUDetails := ruDetails.Clone()
+		if e.lastRUDetails != nil {
+			rruDelta := newRUDetails.RRU() - e.lastRUDetails.RRU()
+			if rruDelta < 0 {
+				rruDelta = 0
+			}
+			wruDelta := newRUDetails.WRU() - e.lastRUDetails.WRU()
+			if wruDelta < 0 {
+				wruDelta = 0
+			}
+			duraDelta := newRUDetails.RUWaitDuration() - e.lastRUDetails.RUWaitDuration()
+			if duraDelta < 0 {
+				duraDelta = 0
+			}
+			newRUDetails = clientutil.NewRUDetailsWith(rruDelta, wruDelta, duraDelta)
 		}
+		e.lastRUDetails = ruDetails.Clone()
+		coll.RegisterStats(e.explain.TargetPlan.ID(), &ruRuntimeStats{newRUDetails})
 	}
+}
+
+func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 	if e.analyzeExec != nil && !e.executed {
 		defer func() {
 			err1 := exec.Close(e.analyzeExec)
@@ -113,10 +132,9 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 				}
 			}
 
-			// Handle RU runtime stats again after the analyze executor has been executed
-			// to make sure all ru has been collected.
+			// Handle RU runtime stats again after Close() to make sure all ru has been collected.
 			// For example, localMppCoordinator reports last ru consumption when Close().
-			handleRUDetails()
+			e.handleRUDetails(ctx)
 		}()
 		if minHeapInUse, alarmRatio := e.Ctx().GetSessionVars().MemoryDebugModeMinHeapInUse, e.Ctx().GetSessionVars().MemoryDebugModeAlarmRatio; minHeapInUse != 0 && alarmRatio != 0 {
 			memoryDebugModeCtx, cancel := context.WithCancel(ctx)
@@ -145,7 +163,7 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 			}
 		}
 	}
-	handleRUDetails()
+	e.handleRUDetails(ctx)
 	return err
 }
 
