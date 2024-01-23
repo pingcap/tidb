@@ -372,7 +372,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 
 	isTrackerEnabled := e.Ctx().GetSessionVars().TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load()
 	isParallelHashAggSpillEnabled := e.Ctx().GetSessionVars().EnableConcurrentHashaggSpill
-	e.spillHelper = newSpillHelper(e.memTracker, e.PartialAggFuncs, partialConcurrency)
+	e.spillHelper = newSpillHelper(e.memTracker, e.PartialAggFuncs)
 	if isTrackerEnabled && isParallelHashAggSpillEnabled {
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
 		e.diskTracker.AttachTo(sessionVars.StmtCtx.DiskTracker)
@@ -434,6 +434,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 			}
 			chk = input.chk
 		}
+
 		mSize := chk.MemoryUsage()
 		err = exec.Next(ctx, e.Children(0), chk)
 		if err != nil {
@@ -441,34 +442,45 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 			e.memTracker.Consume(-mSize)
 			return
 		}
-		if e.spillHelper.checkError() {
-			return
-		}
+
 		if chk.NumRows() == 0 {
 			e.memTracker.Consume(-mSize)
 			return
 		}
+
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		e.memTracker.Consume(chk.MemoryUsage() - mSize)
 		e.fetcherAndPartialSyncer.Add(1)
 		input.giveBackCh <- chk
-		e.checkAndExecuteSpill()
+
+		if hasError := e.spillIfNeed(); hasError {
+			return
+		}
 	}
 }
 
-func (e *HashAggExec) checkAndExecuteSpill() {
+func (e *HashAggExec) spillIfNeed() bool {
+	if e.spillHelper.checkError() {
+		return true
+	}
+
 	if !e.spillHelper.checkNeedSpill() {
-		return
+		return false
 	}
 
 	// Wait for the finish of all partial workers
 	e.fetcherAndPartialSyncer.Wait()
 	e.spillHelper.setInSpilling()
 	e.spill()
-	e.spillHelper.unsetInSpilling()
+	return false
 }
 
 func (e *HashAggExec) spill() {
+	defer func() {
+		e.spillHelper.setSpillTriggered()
+		e.spillHelper.lock.cond.Broadcast()
+	}()
+
 	spillWaiter := &sync.WaitGroup{}
 	spillWaiter.Add(len(e.partialWorkers))
 

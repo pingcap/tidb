@@ -168,6 +168,7 @@ func (w *HashAggPartialWorker) sendDataToFinalWorkersBeforeExit(needShuffle bool
 
 	if w.spillHelper.isSpillTriggered() {
 		w.spillHelper.addListInDisks(w.spilledChunksIO)
+		return
 	}
 
 	if needShuffle {
@@ -191,9 +192,14 @@ func intestBeforePartialWorkerRun() {
 // Consume all chunks to avoid hang of fetcher
 func (w *HashAggPartialWorker) consumeAllChunksBeforeExit() {
 	for {
-		ok := w.getChildInput()
+		chk, ok := <-w.inputCh
 		if !ok {
 			break
+		}
+		w.chk.SwapColumns(chk)
+		w.giveBackCh <- &HashAggInput{
+			chk:        chk,
+			giveBackCh: w.inputCh,
 		}
 		w.fetcherAndPartialSyncer.Done()
 	}

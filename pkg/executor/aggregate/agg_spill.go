@@ -28,16 +28,21 @@ import (
 	"go.uber.org/zap"
 )
 
+type SpillStatus int32
+
+const (
+	noSpill SpillStatus = iota
+	needSpill
+	inSpilling
+	spillTriggered
+)
+
 const (
 	// maxSpillTimes indicates how many times the data can spill at most.
 	maxSpillTimes       = 10
 	partialStageFlag    = 1
 	spilledPartitionNum = 256
 	spillTasksDoneFlag  = -1
-
-	noSpill = iota
-	needSpill
-	inSpilling
 
 	notSpillMode = 0
 	spillMode    = 1
@@ -51,15 +56,12 @@ type parallelHashAggSpillHelper struct {
 		cond             *sync.Cond
 		nextPartitionIdx int
 		spilledChunksIO  [][]*chunk.DataInDiskByChunks
-		spillStatus      int
+		spillStatus      SpillStatus
 	}
 
-	partialWorkerNum int
-
-	spillTriggered atomic.Bool
-	memTracker     *memory.Tracker
-	diskTracker    *disk.Tracker
-	hasError       atomic.Bool
+	memTracker  *memory.Tracker
+	diskTracker *disk.Tracker
+	hasError    atomic.Bool
 
 	// memory consumption when needSpill flag is set.
 	memoryConsumption atomic.Int64
@@ -70,7 +72,7 @@ type parallelHashAggSpillHelper struct {
 	aggFuncsForRestoring []aggfuncs.AggFunc
 }
 
-func newSpillHelper(tracker *memory.Tracker, aggFuncsForRestoring []aggfuncs.AggFunc, partialWorkerNum int) *parallelHashAggSpillHelper {
+func newSpillHelper(tracker *memory.Tracker, aggFuncsForRestoring []aggfuncs.AggFunc) *parallelHashAggSpillHelper {
 	mu := new(sync.Mutex)
 	return &parallelHashAggSpillHelper{
 		lock: struct {
@@ -78,7 +80,7 @@ func newSpillHelper(tracker *memory.Tracker, aggFuncsForRestoring []aggfuncs.Agg
 			cond             *sync.Cond
 			nextPartitionIdx int
 			spilledChunksIO  [][]*chunk.DataInDiskByChunks
-			spillStatus      int
+			spillStatus      SpillStatus
 		}{
 			mu:               mu,
 			cond:             sync.NewCond(mu),
@@ -86,8 +88,6 @@ func newSpillHelper(tracker *memory.Tracker, aggFuncsForRestoring []aggfuncs.Agg
 			spillStatus:      noSpill,
 			nextPartitionIdx: spilledPartitionNum - 1,
 		},
-		partialWorkerNum:     partialWorkerNum,
-		spillTriggered:       atomic.Bool{},
 		memTracker:           tracker,
 		hasError:             atomic.Bool{},
 		aggFuncsForRestoring: aggFuncsForRestoring,
@@ -95,6 +95,8 @@ func newSpillHelper(tracker *memory.Tracker, aggFuncsForRestoring []aggfuncs.Agg
 }
 
 func (p *parallelHashAggSpillHelper) close() {
+	p.lock.mu.Lock()
+	defer p.lock.mu.Unlock()
 	for _, ios := range p.lock.spilledChunksIO {
 		for _, io := range ios {
 			io.Close()
@@ -132,25 +134,21 @@ func (p *parallelHashAggSpillHelper) setInSpilling() {
 	p.lock.mu.Lock()
 	defer p.lock.mu.Unlock()
 	p.setIsSpillingNoLock()
-	p.setSpillTriggered()
 	logutil.BgLogger().Info(spillLogInfo,
 		zap.Int64("consumed", p.memoryConsumption.Load()),
 		zap.Int64("quota", p.memoryQuota.Load()))
 }
 
-func (p *parallelHashAggSpillHelper) unsetInSpilling() {
+func (p *parallelHashAggSpillHelper) isSpillTriggered() bool {
 	p.lock.mu.Lock()
 	defer p.lock.mu.Unlock()
-	p.setNoSpillNoLock()
-	p.lock.cond.Broadcast()
-}
-
-func (p *parallelHashAggSpillHelper) isSpillTriggered() bool {
-	return p.spillTriggered.Load()
+	return p.lock.spillStatus != noSpill
 }
 
 func (p *parallelHashAggSpillHelper) setSpillTriggered() {
-	p.spillTriggered.Store(true)
+	p.lock.mu.Lock()
+	defer p.lock.mu.Unlock()
+	p.lock.spillStatus = spillTriggered
 }
 
 func (p *parallelHashAggSpillHelper) isInSpillingNoLock() bool {
@@ -169,10 +167,6 @@ func (p *parallelHashAggSpillHelper) setIsSpillingNoLock() {
 
 func (p *parallelHashAggSpillHelper) setNeedSpillNoLock() {
 	p.lock.spillStatus = needSpill
-}
-
-func (p *parallelHashAggSpillHelper) setNoSpillNoLock() {
-	p.lock.spillStatus = noSpill
 }
 
 // We need to check error with atmoic as multi partial workers may access it.
