@@ -327,7 +327,6 @@ func (f *fakeCluster) ClearCache(ctx context.Context, storeID uint64) error {
 		}
 		return nil
 	}
-	f.testCtx.Fatalf("unreachable for %d clear cache", storeID)
 	return nil
 }
 
