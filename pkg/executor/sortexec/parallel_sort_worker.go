@@ -17,9 +17,8 @@ package sortexec
 import (
 	"container/heap"
 	"math/rand"
-	"time"
-
 	"slices"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
