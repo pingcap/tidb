@@ -79,6 +79,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
+	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -185,7 +186,7 @@ type session struct {
 	mppClient kv.MPPClient
 
 	// indexUsageCollector collects index usage information.
-	idxUsageCollector *usage.SessionIndexUsageCollector
+	idxUsageCollector *indexusage.SessionIndexUsageCollector
 
 	functionUsageMu struct {
 		syncutil.RWMutex
@@ -412,14 +413,6 @@ func (s *session) UpdateColStatsUsage(predicateColumns []model.TableItemID) {
 		colMap[col] = t
 	}
 	s.statsCollector.UpdateColStatsUsage(colMap)
-}
-
-// StoreIndexUsage stores index usage information in idxUsageCollector.
-func (s *session) StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64) {
-	if s.idxUsageCollector == nil {
-		return
-	}
-	s.idxUsageCollector.Update(tblID, idxID, &usage.IndexUsageInformation{QueryCount: 1, RowsSelected: rowsSelected})
 }
 
 // FieldList returns fields list of a table.
@@ -2582,7 +2575,7 @@ func (s *session) Close() {
 		s.statsCollector.Delete()
 	}
 	if s.idxUsageCollector != nil {
-		s.idxUsageCollector.Delete()
+		s.idxUsageCollector.Flush()
 	}
 	telemetry.GlobalBuiltinFunctionsUsage.Collect(s.GetBuiltinFunctionUsage())
 	bindValue := s.Value(bindinfo.SessionBindInfoKeyType)
@@ -2986,6 +2979,13 @@ func (s *session) SetSessionStatesHandler(stateType sessionstates.SessionStateTy
 	s.sessionStatesHandlers[stateType] = handler
 }
 
+// ReportUsageStats reports the usage stats
+func (s *session) ReportUsageStats() {
+	if s.idxUsageCollector != nil {
+		s.idxUsageCollector.Report()
+	}
+}
+
 // CreateSession4Test creates a new session environment for test.
 func CreateSession4Test(store kv.Storage) (types.Session, error) {
 	se, err := CreateSession4TestWithOpt(store, nil)
@@ -3049,9 +3049,7 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (types.Session, error) {
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {
 		s.statsCollector = do.StatsHandle().NewSessionStatsItem().(*usage.SessionStatsItem)
-		if GetIndexUsageSyncLease() > 0 {
-			s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector().(*usage.SessionIndexUsageCollector)
-		}
+		s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
 	}
 
 	return s, nil
@@ -3602,8 +3600,8 @@ func attachStatsCollector(s *session, dom *domain.Domain) *session {
 		if s.statsCollector == nil {
 			s.statsCollector = dom.StatsHandle().NewSessionStatsItem().(*usage.SessionStatsItem)
 		}
-		if s.idxUsageCollector == nil && GetIndexUsageSyncLease() > 0 {
-			s.idxUsageCollector = dom.StatsHandle().NewSessionIndexUsageCollector().(*usage.SessionIndexUsageCollector)
+		if s.idxUsageCollector == nil {
+			s.idxUsageCollector = dom.StatsHandle().NewSessionIndexUsageCollector()
 		}
 	}
 
@@ -3617,7 +3615,7 @@ func detachStatsCollector(s *session) *session {
 		s.statsCollector = nil
 	}
 	if s.idxUsageCollector != nil {
-		s.idxUsageCollector.Delete()
+		s.idxUsageCollector.Flush()
 		s.idxUsageCollector = nil
 	}
 	return s

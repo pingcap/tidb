@@ -45,9 +45,9 @@ var (
 
 	// MergeSortOverlapThreshold is the threshold of overlap between sorted kv files.
 	// if the overlap ratio is greater than this threshold, we will merge the files.
-	MergeSortOverlapThreshold int64 = 1000
+	MergeSortOverlapThreshold int64 = 4000
 	// MergeSortFileCountStep is the step of file count when we split the sorted kv files.
-	MergeSortFileCountStep = 1000
+	MergeSortFileCountStep = 4000
 )
 
 const (
@@ -209,8 +209,10 @@ func (b *WriterBuilder) Build(
 	return ret
 }
 
-// BuildOneFile builds a new one file Writer. The writer will create only one file under the prefix
-// of "{prefix}/{writerID}".
+// BuildOneFile builds a new one file Writer. The writer will create only one
+// file under the prefix of "{prefix}/{writerID}".
+//
+// BuildOneFile will ignore SetOnCloseFunc.
 func (b *WriterBuilder) BuildOneFile(
 	store storage.ExternalStorage,
 	prefix string,

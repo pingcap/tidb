@@ -62,6 +62,8 @@ var AllowCartesianProduct = atomic.NewBool(true)
 // IsReadOnly check whether the ast.Node is a read only statement.
 var IsReadOnly func(node ast.Node, vars *variable.SessionVars) bool
 
+// Note: The order of flags is same as the order of optRule in the list.
+// Do not mess up the order.
 const (
 	flagGcSubstitute uint64 = 1 << iota
 	flagPrunColumns
@@ -312,19 +314,7 @@ func doOptimize(
 	logic LogicalPlan,
 ) (LogicalPlan, PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
-	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
-	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
-		flag |= flagPrunColumnsAgain
-	}
-	if checkStableResultMode(logic.SCtx()) {
-		flag |= flagStabilizeResults
-	}
-	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
-		// When we use the straight Join Order hint, we should disable the join reorder optimization.
-		flag &= ^flagJoinReOrder
-	}
-	flag |= flagCollectPredicateColumnsPoint
-	flag |= flagSyncWaitStatsLoadPoint
+	flag = adjustOptimizationFlags(flag, logic)
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, nil, 0, err
@@ -353,6 +343,24 @@ func doOptimize(
 		sessVars.StmtCtx.OptimizeTracer.RecordFinalPlan(finalPlan.BuildPlanTrace())
 	}
 	return logic, finalPlan, cost, nil
+}
+
+func adjustOptimizationFlags(flag uint64, logic LogicalPlan) uint64 {
+	// If there is something after flagPrunColumns, do flagPrunColumnsAgain.
+	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
+		flag |= flagPrunColumnsAgain
+	}
+	if checkStableResultMode(logic.SCtx()) {
+		flag |= flagStabilizeResults
+	}
+	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
+		// When we use the straight Join Order hint, we should disable the join reorder optimization.
+		flag &= ^flagJoinReOrder
+	}
+	flag |= flagCollectPredicateColumnsPoint
+	flag |= flagSyncWaitStatsLoadPoint
+
+	return flag
 }
 
 // DoOptimize optimizes a logical plan to a physical plan.

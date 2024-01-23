@@ -401,18 +401,18 @@ func (mr *MockTaskExecutorMockRecorder) Rollback(arg0, arg1 any) *gomock.Call {
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Rollback", reflect.TypeOf((*MockTaskExecutor)(nil).Rollback), arg0, arg1)
 }
 
-// Run mocks base method.
-func (m *MockTaskExecutor) Run(arg0 context.Context, arg1 *proto.Task) error {
+// RunStep mocks base method.
+func (m *MockTaskExecutor) RunStep(arg0 context.Context, arg1 *proto.Task, arg2 *proto.StepResource) error {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Run", arg0, arg1)
+	ret := m.ctrl.Call(m, "RunStep", arg0, arg1, arg2)
 	ret0, _ := ret[0].(error)
 	return ret0
 }
 
-// Run indicates an expected call of Run.
-func (mr *MockTaskExecutorMockRecorder) Run(arg0, arg1 any) *gomock.Call {
+// RunStep indicates an expected call of RunStep.
+func (mr *MockTaskExecutorMockRecorder) RunStep(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Run", reflect.TypeOf((*MockTaskExecutor)(nil).Run), arg0, arg1)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunStep", reflect.TypeOf((*MockTaskExecutor)(nil).RunStep), arg0, arg1, arg2)
 }
 
 // MockExtension is a mock of Extension interface.
@@ -438,19 +438,19 @@ func (m *MockExtension) EXPECT() *MockExtensionMockRecorder {
 	return m.recorder
 }
 
-// GetSubtaskExecutor mocks base method.
-func (m *MockExtension) GetSubtaskExecutor(arg0 context.Context, arg1 *proto.Task, arg2 *execute.Summary) (execute.SubtaskExecutor, error) {
+// GetStepExecutor mocks base method.
+func (m *MockExtension) GetStepExecutor(arg0 context.Context, arg1 *proto.Task, arg2 *execute.Summary, arg3 *proto.StepResource) (execute.StepExecutor, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetSubtaskExecutor", arg0, arg1, arg2)
-	ret0, _ := ret[0].(execute.SubtaskExecutor)
+	ret := m.ctrl.Call(m, "GetStepExecutor", arg0, arg1, arg2, arg3)
+	ret0, _ := ret[0].(execute.StepExecutor)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
-// GetSubtaskExecutor indicates an expected call of GetSubtaskExecutor.
-func (mr *MockExtensionMockRecorder) GetSubtaskExecutor(arg0, arg1, arg2 any) *gomock.Call {
+// GetStepExecutor indicates an expected call of GetStepExecutor.
+func (mr *MockExtensionMockRecorder) GetStepExecutor(arg0, arg1, arg2, arg3 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetSubtaskExecutor", reflect.TypeOf((*MockExtension)(nil).GetSubtaskExecutor), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetStepExecutor", reflect.TypeOf((*MockExtension)(nil).GetStepExecutor), arg0, arg1, arg2, arg3)
 }
 
 // IsIdempotent mocks base method.

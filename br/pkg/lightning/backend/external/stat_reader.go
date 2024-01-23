@@ -26,7 +26,7 @@ type statsReader struct {
 }
 
 func newStatsReader(ctx context.Context, store storage.ExternalStorage, name string, bufSize int) (*statsReader, error) {
-	sr, err := openStoreReaderAndSeek(ctx, store, name, 0, 0)
+	sr, err := openStoreReaderAndSeek(ctx, store, name, 0, 250*1024)
 	if err != nil {
 		return nil, err
 	}
