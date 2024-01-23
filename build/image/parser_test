@@ -1,0 +1,16 @@
+FROM rockylinux:9
+
+ENV GOLANG_VERSION 1.21.6
+ENV ARCH amd64
+ENV GOLANG_DOWNLOAD_URL https://dl.google.com/go/go$GOLANG_VERSION.linux-$ARCH.tar.gz
+ENV GOPATH /home/prow/go
+ENV GOROOT /usr/local/go
+ENV PATH $GOPATH/bin:$GOROOT/bin:$PATH
+
+ADD run.sh /bin
+RUN chmod 700 /bin/run.sh
+RUN dnf update -y
+RUN dnf install -y git mysql-server
+RUN curl -fsSL "$GOLANG_DOWNLOAD_URL" -o golang.tar.gz \
+	&& tar -C /usr/local -xzf golang.tar.gz \
+	&& rm golang.tar.gz
