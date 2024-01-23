@@ -63,9 +63,16 @@ require (
 	github.com/spf13/pflag v1.0.5
 	github.com/stretchr/testify v1.7.2-0.20220504104629-106ec21d14df
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
+<<<<<<< HEAD
 	github.com/tikv/client-go/v2 v2.0.1-0.20230704072904-34f99fa358b6
 	github.com/tikv/pd/client v0.0.0-20220307081149-841fa61e9710
 	github.com/twmb/murmur3 v1.1.3
+=======
+	github.com/tikv/client-go/v2 v2.0.8-0.20240123055405-3480b5ed7ce1
+	github.com/tikv/pd/client v0.0.0-20240109100024-dd8df25316e9
+	github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966
+	github.com/twmb/murmur3 v1.1.6
+>>>>>>> 8a53c483787 (store/tikv: Update client-go to fix issues about retrying for too long time on RPC timeout and unnecessary backoff on NotLeader errors (#50506))
 	github.com/uber/jaeger-client-go v2.22.1+incompatible
 	github.com/wangjohn/quickselect v0.0.0-20161129230411-ed8402a42d5f
 	github.com/xitongsys/parquet-go v1.5.5-0.20201110004701-b09c49d6d457
