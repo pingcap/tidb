@@ -106,8 +106,10 @@ type GCSStorage struct {
 	gcs       *backuppb.GCS
 	idx       *atomic.Int64
 	clientCnt int64
-	handles   []*storage.BucketHandle
-	clients   []*storage.Client
+	clientOps []option.ClientOption
+
+	handles []*storage.BucketHandle
+	clients []*storage.Client
 }
 
 // GetBucketHandle gets the handle to the GCS API on the bucket.
@@ -395,41 +397,53 @@ skipHandleCred:
 		clientOps = append(clientOps, option.WithHTTPClient(opts.HTTPClient))
 	}
 
-	clients := make([]*storage.Client, gcsClientCnt)
-	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	for i := range clients {
-		i := i
-		eg.Go(func() error {
-			client, err := storage.NewClient(egCtx, clientOps...)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			client.SetRetry(storage.WithErrorFunc(shouldRetry))
-			clients[i] = client
-			return nil
-		})
-	}
-	err := eg.Wait()
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
 	if !opts.SendCredentials {
 		// Clear the credentials if exists so that they will not be sent to TiKV
 		gcs.CredentialsBlob = ""
 	}
 
-	buckets := make([]*storage.BucketHandle, gcsClientCnt)
-	for i := range buckets {
-		buckets[i] = clients[i].Bucket(gcs.Bucket)
-	}
-	return &GCSStorage{
+	ret := &GCSStorage{
 		gcs:       gcs,
 		idx:       atomic.NewInt64(0),
 		clientCnt: gcsClientCnt,
-		handles:   buckets,
-		clients:   clients,
-	}, nil
+		clientOps: clientOps,
+	}
+	if err := ret.Reset(ctx); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return ret, nil
+}
+
+// Reset resets the GCS storage.
+func (s *GCSStorage) Reset(ctx context.Context) error {
+	for _, client := range s.clients {
+		_ = client.Close()
+	}
+
+	s.clients = make([]*storage.Client, gcsClientCnt)
+	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
+	for i := range s.clients {
+		i := i
+		eg.Go(func() error {
+			client, err := storage.NewClient(egCtx, s.clientOps...)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			client.SetRetry(storage.WithErrorFunc(shouldRetry))
+			s.clients[i] = client
+			return nil
+		})
+	}
+	err := eg.Wait()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	s.handles = make([]*storage.BucketHandle, gcsClientCnt)
+	for i := range s.handles {
+		s.handles[i] = s.clients[i].Bucket(s.gcs.Bucket)
+	}
+	return nil
 }
 
 func shouldRetry(err error) bool {
