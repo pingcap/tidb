@@ -3603,8 +3603,19 @@ def go_deps():
         name = "com_github_tikv_client_go_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
+<<<<<<< HEAD
         sum = "h1:gj/NorS/bO3Y7zi9KS09s7VyinfOZHxpQl0gxmbJ1aI=",
         version = "v2.0.4-0.20231121073938-194639470f84",
+=======
+        sha256 = "dfc92ddf47606d8e9d9fe165f4cb344f1ad631f04bcd7f372e11266d6a2206bc",
+        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20240123055405-3480b5ed7ce1",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240123055405-3480b5ed7ce1.zip",
+            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240123055405-3480b5ed7ce1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240123055405-3480b5ed7ce1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20240123055405-3480b5ed7ce1.zip",
+        ],
+>>>>>>> 8a53c483787 (store/tikv: Update client-go to fix issues about retrying for too long time on RPC timeout and unnecessary backoff on NotLeader errors (#50506))
     )
     go_repository(
         name = "com_github_tikv_pd_client",
