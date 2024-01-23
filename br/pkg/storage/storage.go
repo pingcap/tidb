@@ -131,6 +131,8 @@ type ExternalStorage interface {
 	Create(ctx context.Context, path string, option *WriterOption) (ExternalFileWriter, error)
 	// Rename file name from oldFileName to newFileName
 	Rename(ctx context.Context, oldFileName, newFileName string) error
+	// Close release the resources of the storage.
+	Close()
 }
 
 // ExternalFileReader represents the streaming external file reader.

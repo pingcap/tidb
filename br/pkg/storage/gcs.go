@@ -329,6 +329,15 @@ func (s *GCSStorage) Rename(ctx context.Context, oldFileName, newFileName string
 	return s.DeleteFile(ctx, oldFileName)
 }
 
+// Close implements ExternalStorage interface.
+func (s *GCSStorage) Close() {
+	for _, client := range s.clients {
+		if err := client.Close(); err != nil {
+			log.Warn("failed to close gcs client", zap.Error(err))
+		}
+	}
+}
+
 // used in tests
 var mustReportCredErr = false
 
