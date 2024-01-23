@@ -90,12 +90,6 @@ func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, mockSchedul
 	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockExecutor.EXPECT().Init(gomock.Any()).Return(nil).AnyTimes()
 	mockExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil).AnyTimes()
-	mockExecutor.EXPECT().Rollback(gomock.Any()).DoAndReturn(
-		func(_ context.Context) error {
-			testContext.RollbackCnt.Add(1)
-			return nil
-		},
-	).AnyTimes()
 	mockExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, subtask *proto.Subtask) error {
 			testContext.CollectSubtask(subtask)
@@ -107,7 +101,6 @@ func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, mockSchedul
 	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
 
 	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, mockScheduler)
-	testContext.RollbackCnt.Store(0)
 }
 
 // SubmitAndWaitTask schedule one task.

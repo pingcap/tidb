@@ -455,6 +455,9 @@ func (c *Context) SetInfoSchema(is sessionctx.InfoschemaMetaVersion) {
 	c.is = is
 }
 
+// ReportUsageStats implements the sessionctx.Context interface.
+func (*Context) ReportUsageStats() {}
+
 // Close implements the sessionctx.Context interface.
 func (*Context) Close() {}
 

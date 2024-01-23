@@ -63,6 +63,7 @@ go_library(
         "//pkg/sessiontxn/isolation",
         "//pkg/sessiontxn/staleread",
         "//pkg/statistics/handle/usage",
+        "//pkg/statistics/handle/usage/indexusage",
         "//pkg/store/driver/error",
         "//pkg/store/driver/txn",
         "//pkg/store/helper",
@@ -124,7 +125,6 @@ go_test(
     srcs = [
         "bench_test.go",
         "bootstrap_test.go",
-        "index_usage_sync_lease_test.go",
         "main_test.go",
         "tidb_test.go",
     ],

@@ -738,8 +738,6 @@ func setGlobalVars() {
 	session.SetSchemaLease(ddlLeaseDuration)
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
 	session.SetStatsLease(statsLeaseDuration)
-	indexUsageSyncLeaseDuration := parseDuration(cfg.Performance.IndexUsageSyncLease)
-	session.SetIndexUsageSyncLease(indexUsageSyncLeaseDuration)
 	planReplayerGCLease := parseDuration(cfg.Performance.PlanReplayerGCLease)
 	session.SetPlanReplayerGCLease(planReplayerGCLease)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)

@@ -44,9 +44,8 @@ var (
 	retrySQLTimes           = 30
 	retrySQLInterval        = 500 * time.Millisecond
 	unfinishedSubtaskStates = []proto.SubtaskState{
-		proto.SubtaskStatePending, proto.SubtaskStateRevertPending,
-		// for the case that the tidb is restarted when the subtask is running.
-		proto.SubtaskStateRunning, proto.SubtaskStateReverting,
+		proto.SubtaskStatePending,
+		proto.SubtaskStateRunning,
 	}
 )
 
