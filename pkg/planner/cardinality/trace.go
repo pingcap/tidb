@@ -198,7 +198,11 @@ func recordUsedItemStatsStatus(sctx sessionctx.Context, stats interface{}, table
 	}
 
 	if missing {
-		recordForColOrIdx[id] = "missing"
+		if recordForTbl.ColAndIdxStatus != nil && recordForTbl.ColAndIdxStatus.(*statistics.ColAndIdxExistenceMap).Has(id, isIndex) {
+			recordForColOrIdx[id] = statistics.StatusToString(statistics.AllEvicted)
+		} else {
+			recordForColOrIdx[id] = "missing"
+		}
 		return
 	}
 	recordForColOrIdx[id] = loadStatus.StatusToString()
