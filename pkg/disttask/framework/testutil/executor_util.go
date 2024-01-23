@@ -29,7 +29,6 @@ func GetMockStepExecutor(ctrl *gomock.Controller) *mockexecute.MockStepExecutor 
 	executor := mockexecute.NewMockStepExecutor(ctrl)
 	executor.EXPECT().Init(gomock.Any()).Return(nil).AnyTimes()
 	executor.EXPECT().Cleanup(gomock.Any()).Return(nil).AnyTimes()
-	executor.EXPECT().Rollback(gomock.Any()).Return(nil).AnyTimes()
 	executor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	return executor
 }

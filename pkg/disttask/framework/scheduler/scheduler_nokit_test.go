@@ -211,7 +211,6 @@ func TestSchedulerIsStepSucceed(t *testing.T) {
 	for _, state := range []proto.SubtaskState{
 		proto.SubtaskStateCanceled,
 		proto.SubtaskStateFailed,
-		proto.SubtaskStateReverting,
 	} {
 		require.False(t, s.isStepSucceed(map[proto.SubtaskState]int64{
 			state: 1,

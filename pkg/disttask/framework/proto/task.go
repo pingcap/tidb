@@ -20,40 +20,37 @@ import (
 
 // task state machine
 //
-//		                            ┌────────┐
-//		                ┌───────────│resuming│◄────────┐
-//		                │           └────────┘         │
-//		┌──────┐        │           ┌───────┐       ┌──┴───┐
-//		│failed│        │ ┌────────►│pausing├──────►│paused│
-//		└──────┘        │ │         └───────┘       └──────┘
-//		   ▲            ▼ │
-//		┌──┴────┐     ┌───┴───┐     ┌────────┐
-//		│pending├────►│running├────►│succeed │
-//		└──┬────┘     └──┬┬───┘     └────────┘
-//		   │             ││         ┌─────────┐     ┌────────┐
-//		   │             │└────────►│reverting├────►│reverted│
-//		   │             ▼          └────┬────┘     └────────┘
-//		   │          ┌──────────┐    ▲  │          ┌─────────────┐
-//		   └─────────►│cancelling├────┘  └─────────►│revert_failed│
-//		              └──────────┘                  └─────────────┘
-//	 1. succeed:		pending -> running -> succeed
-//	 2. failed:			pending -> running -> reverting -> reverted/revert_failed, pending -> failed
-//	 3. canceled:		pending -> running -> cancelling -> reverting -> reverted/revert_failed
-//	 4. pause/resume:	pending -> running -> pausing -> paused -> running
+// Note: if a task fails during running, it will end with `reverted` state.
+// The `failed` state is used to mean the framework cannot run the task, such as
+// invalid task type, scheduler init error(fatal), etc.
 //
-// TODO: we don't have revert_failed task for now.
+//	                            ┌────────┐
+//	                ┌───────────│resuming│◄────────┐
+//	                │           └────────┘         │
+//	┌──────┐        │           ┌───────┐       ┌──┴───┐
+//	│failed│        │ ┌────────►│pausing├──────►│paused│
+//	└──────┘        │ │         └───────┘       └──────┘
+//	   ▲            ▼ │
+//	┌──┴────┐     ┌───┴───┐     ┌────────┐
+//	│pending├────►│running├────►│succeed │
+//	└──┬────┘     └──┬┬───┘     └────────┘
+//	   │             ││         ┌─────────┐     ┌────────┐
+//	   │             │└────────►│reverting├────►│reverted│
+//	   │             ▼          └─────────┘     └────────┘
+//	   │          ┌──────────┐    ▲
+//	   └─────────►│cancelling├────┘
+//	              └──────────┘
 const (
-	TaskStatePending      TaskState = "pending"
-	TaskStateRunning      TaskState = "running"
-	TaskStateSucceed      TaskState = "succeed"
-	TaskStateFailed       TaskState = "failed"
-	TaskStateReverting    TaskState = "reverting"
-	TaskStateReverted     TaskState = "reverted"
-	TaskStateRevertFailed TaskState = "revert_failed"
-	TaskStateCancelling   TaskState = "cancelling"
-	TaskStatePausing      TaskState = "pausing"
-	TaskStatePaused       TaskState = "paused"
-	TaskStateResuming     TaskState = "resuming"
+	TaskStatePending    TaskState = "pending"
+	TaskStateRunning    TaskState = "running"
+	TaskStateSucceed    TaskState = "succeed"
+	TaskStateFailed     TaskState = "failed"
+	TaskStateReverting  TaskState = "reverting"
+	TaskStateReverted   TaskState = "reverted"
+	TaskStateCancelling TaskState = "cancelling"
+	TaskStatePausing    TaskState = "pausing"
+	TaskStatePaused     TaskState = "paused"
+	TaskStateResuming   TaskState = "resuming"
 )
 
 type (
