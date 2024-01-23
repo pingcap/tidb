@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -37,14 +38,11 @@ func getFilesReadConcurrency(
 	startKey, endKey []byte,
 ) ([]uint64, []uint64, error) {
 	result := make([]uint64, len(statsFiles))
-	startOffs, err := seekPropsOffsets(ctx, startKey, statsFiles, storage, false)
+	offsets, err := seekPropsOffsets(ctx, []kv.Key{startKey, endKey}, statsFiles, storage, false)
 	if err != nil {
 		return nil, nil, err
 	}
-	endOffs, err := seekPropsOffsets(ctx, endKey, statsFiles, storage, false)
-	if err != nil {
-		return nil, nil, err
-	}
+	startOffs, endOffs := offsets[0], offsets[1]
 	for i := range statsFiles {
 		result[i] = (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
 		result[i] = max(result[i], 1)
