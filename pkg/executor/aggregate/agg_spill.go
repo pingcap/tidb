@@ -52,20 +52,18 @@ const (
 
 type parallelHashAggSpillHelper struct {
 	lock struct {
-		mu               *sync.Mutex
-		cond             *sync.Cond
-		nextPartitionIdx int
-		spilledChunksIO  [][]*chunk.DataInDiskByChunks
-		spillStatus      SpillStatus
+		*sync.Mutex
+		waitIfInSpilling  *sync.Cond
+		nextPartitionIdx  int
+		spilledChunksIO   [][]*chunk.DataInDiskByChunks
+		spillStatus       SpillStatus
+		memoryConsumption int64
+		memoryQuota       int64
 	}
 
 	memTracker  *memory.Tracker
 	diskTracker *disk.Tracker
 	hasError    atomic.Bool
-
-	// memory consumption when needSpill flag is set.
-	memoryConsumption atomic.Int64
-	memoryQuota       atomic.Int64
 
 	// These agg functions are partial agg functions that are same with partial workers'.
 	// They only be used for restoring data that are spilled to disk in partial stage.
@@ -76,17 +74,21 @@ func newSpillHelper(tracker *memory.Tracker, aggFuncsForRestoring []aggfuncs.Agg
 	mu := new(sync.Mutex)
 	return &parallelHashAggSpillHelper{
 		lock: struct {
-			mu               *sync.Mutex
-			cond             *sync.Cond
-			nextPartitionIdx int
-			spilledChunksIO  [][]*chunk.DataInDiskByChunks
-			spillStatus      SpillStatus
+			*sync.Mutex
+			waitIfInSpilling  *sync.Cond
+			nextPartitionIdx  int
+			spilledChunksIO   [][]*chunk.DataInDiskByChunks
+			spillStatus       SpillStatus
+			memoryConsumption int64
+			memoryQuota       int64
 		}{
-			mu:               mu,
-			cond:             sync.NewCond(mu),
-			spilledChunksIO:  make([][]*chunk.DataInDiskByChunks, spilledPartitionNum),
-			spillStatus:      noSpill,
-			nextPartitionIdx: spilledPartitionNum - 1,
+			Mutex:             mu,
+			waitIfInSpilling:  sync.NewCond(mu),
+			spilledChunksIO:   make([][]*chunk.DataInDiskByChunks, spilledPartitionNum),
+			spillStatus:       noSpill,
+			nextPartitionIdx:  spilledPartitionNum - 1,
+			memoryConsumption: 0,
+			memoryQuota:       0,
 		},
 		memTracker:           tracker,
 		hasError:             atomic.Bool{},
@@ -95,8 +97,8 @@ func newSpillHelper(tracker *memory.Tracker, aggFuncsForRestoring []aggfuncs.Agg
 }
 
 func (p *parallelHashAggSpillHelper) close() {
-	p.lock.mu.Lock()
-	defer p.lock.mu.Unlock()
+	p.lock.Lock()
+	defer p.lock.Unlock()
 	for _, ios := range p.lock.spilledChunksIO {
 		for _, io := range ios {
 			io.Close()
@@ -105,8 +107,8 @@ func (p *parallelHashAggSpillHelper) close() {
 }
 
 func (p *parallelHashAggSpillHelper) getNextPartition() (int, bool) {
-	p.lock.mu.Lock()
-	defer p.lock.mu.Unlock()
+	p.lock.Lock()
+	defer p.lock.Unlock()
 	partitionIdx := p.lock.nextPartitionIdx
 	if partitionIdx < 0 {
 		return -1, false
@@ -117,37 +119,37 @@ func (p *parallelHashAggSpillHelper) getNextPartition() (int, bool) {
 }
 
 func (p *parallelHashAggSpillHelper) addListInDisks(dataInDisk []*chunk.DataInDiskByChunks) {
-	p.lock.mu.Lock()
-	defer p.lock.mu.Unlock()
+	p.lock.Lock()
+	defer p.lock.Unlock()
 	for i, data := range dataInDisk {
 		p.lock.spilledChunksIO[i] = append(p.lock.spilledChunksIO[i], data)
 	}
 }
 
 func (p *parallelHashAggSpillHelper) getListInDisks(partitionNum int) []*chunk.DataInDiskByChunks {
-	p.lock.mu.Lock()
-	defer p.lock.mu.Unlock()
+	p.lock.Lock()
+	defer p.lock.Unlock()
 	return p.lock.spilledChunksIO[partitionNum]
 }
 
 func (p *parallelHashAggSpillHelper) setInSpilling() {
-	p.lock.mu.Lock()
-	defer p.lock.mu.Unlock()
+	p.lock.Lock()
+	defer p.lock.Unlock()
 	p.setIsSpillingNoLock()
 	logutil.BgLogger().Info(spillLogInfo,
-		zap.Int64("consumed", p.memoryConsumption.Load()),
-		zap.Int64("quota", p.memoryQuota.Load()))
+		zap.Int64("consumed", p.lock.memoryConsumption),
+		zap.Int64("quota", p.lock.memoryQuota))
 }
 
 func (p *parallelHashAggSpillHelper) isSpillTriggered() bool {
-	p.lock.mu.Lock()
-	defer p.lock.mu.Unlock()
+	p.lock.Lock()
+	defer p.lock.Unlock()
 	return p.lock.spillStatus != noSpill
 }
 
 func (p *parallelHashAggSpillHelper) setSpillTriggered() {
-	p.lock.mu.Lock()
-	defer p.lock.mu.Unlock()
+	p.lock.Lock()
+	defer p.lock.Unlock()
 	p.lock.spillStatus = spillTriggered
 }
 
@@ -156,8 +158,8 @@ func (p *parallelHashAggSpillHelper) isInSpillingNoLock() bool {
 }
 
 func (p *parallelHashAggSpillHelper) checkNeedSpill() bool {
-	p.lock.mu.Lock()
-	defer p.lock.mu.Unlock()
+	p.lock.Lock()
+	defer p.lock.Unlock()
 	return p.lock.spillStatus == needSpill
 }
 
@@ -335,17 +337,17 @@ func (p *ParallelAggSpillDiskAction) Action(t *memory.Tracker) {
 
 // Return true if we need further execution.
 func (p *ParallelAggSpillDiskAction) actionImpl(t *memory.Tracker) bool {
-	p.spillHelper.lock.mu.Lock()
-	defer p.spillHelper.lock.mu.Unlock()
+	p.spillHelper.lock.Lock()
+	defer p.spillHelper.lock.Unlock()
 
 	for p.spillHelper.isInSpillingNoLock() {
-		p.spillHelper.lock.cond.Wait()
+		p.spillHelper.lock.waitIfInSpilling.Wait()
 	}
 
 	if hasEnoughDataToSpill(p.e.memTracker, t) {
 		p.spillHelper.setNeedSpillNoLock()
-		p.spillHelper.memoryConsumption.Store(t.BytesConsumed())
-		p.spillHelper.memoryQuota.Store(t.GetBytesLimit())
+		p.spillHelper.lock.memoryConsumption = t.BytesConsumed()
+		p.spillHelper.lock.memoryQuota = t.GetBytesLimit()
 		return false
 	}
 

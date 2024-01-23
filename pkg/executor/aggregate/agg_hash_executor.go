@@ -478,7 +478,7 @@ func (e *HashAggExec) spillIfNeed() bool {
 func (e *HashAggExec) spill() {
 	defer func() {
 		e.spillHelper.setSpillTriggered()
-		e.spillHelper.lock.cond.Broadcast()
+		e.spillHelper.lock.waitIfInSpilling.Broadcast()
 	}()
 
 	spillWaiter := &sync.WaitGroup{}
