@@ -95,6 +95,13 @@ func (e *ExplainExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
+	handleRUDetails := func() {
+		ruDetailsRaw := ctx.Value(clientutil.RUDetailsCtxKey)
+		if coll := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil && ruDetailsRaw != nil {
+			ruDetails := ruDetailsRaw.(*clientutil.RUDetails)
+			coll.RegisterStats(e.explain.TargetPlan.ID(), &ruRuntimeStats{ruDetails})
+		}
+	}
 	if e.analyzeExec != nil && !e.executed {
 		defer func() {
 			err1 := exec.Close(e.analyzeExec)
@@ -106,13 +113,10 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 				}
 			}
 
-			// Register the RU runtime stats after the analyze executor has been executed
-			// to make sure all ru has been collected. For example, localMppCoordinator reports last ru consumption when Close().
-			ruDetailsRaw := ctx.Value(clientutil.RUDetailsCtxKey)
-			if coll := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil && ruDetailsRaw != nil {
-				ruDetails := ruDetailsRaw.(*clientutil.RUDetails)
-				coll.RegisterStats(e.explain.TargetPlan.ID(), &ruRuntimeStats{ruDetails})
-			}
+			// Handle RU runtime stats again after the analyze executor has been executed
+			// to make sure all ru has been collected.
+			// For example, localMppCoordinator reports last ru consumption when Close().
+			handleRUDetails()
 		}()
 		if minHeapInUse, alarmRatio := e.Ctx().GetSessionVars().MemoryDebugModeMinHeapInUse, e.Ctx().GetSessionVars().MemoryDebugModeAlarmRatio; minHeapInUse != 0 && alarmRatio != 0 {
 			memoryDebugModeCtx, cancel := context.WithCancel(ctx)
@@ -141,6 +145,7 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 			}
 		}
 	}
+	handleRUDetails()
 	return err
 }
 
