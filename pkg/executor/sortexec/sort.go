@@ -106,6 +106,7 @@ func (e *SortExec) Close() error {
 			if !ok {
 				break
 			}
+			e.Parallel.kWayMerge = nil
 		}
 
 	}
@@ -142,6 +143,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Parallel.err = nil
 		e.Parallel.sortedRowsIters = make([]chunk.Iterator4Slice, len(e.Parallel.workers))
 		e.Parallel.resultChannel = make(chan chunk.Row, e.MaxChunkSize())
+		e.Parallel.kWayMerge = &multiWayMerge{e.lessRow, make([]rowWithPartition, 0, len(e.Parallel.workers))}
 	}
 
 	e.Unparallel.sortPartitions = e.Unparallel.sortPartitions[:0]
@@ -263,7 +265,6 @@ func (e *SortExec) appendResultToChunkInUnparallelMode(req *chunk.Chunk) error {
 }
 
 func (e *SortExec) initKWayMerge() {
-	e.Parallel.kWayMerge = &multiWayMerge{e.lessRow, make([]rowWithPartition, 0, len(e.Parallel.workers))}
 	for i := range e.Parallel.sortedRowsIters {
 		row := e.Parallel.sortedRowsIters[i].Begin()
 		if row.IsEmpty() {
