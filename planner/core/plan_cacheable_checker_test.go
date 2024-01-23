@@ -273,9 +273,6 @@ func TestCacheable(t *testing.T) {
 	require.True(t, core.Cacheable(stmt, is))
 }
 
-<<<<<<< HEAD:planner/core/plan_cacheable_checker_test.go
-func TestGeneralPlanCacheable(t *testing.T) {
-=======
 func TestIssue49166(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -284,8 +281,7 @@ func TestIssue49166(t *testing.T) {
 	tk.MustContainErrMsg(`prepare stmt from "select c from t limit 1 into outfile 'text'"`, "This command is not supported in the prepared statement protocol yet")
 }
 
-func TestNonPreparedPlanCacheable(t *testing.T) {
->>>>>>> cf23666766d (planner: return an error when using prepared protocol with select-into statement (#49357)):pkg/planner/core/plan_cacheable_checker_test.go
+func TestGeneralPlanCacheable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
