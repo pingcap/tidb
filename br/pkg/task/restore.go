@@ -1036,12 +1036,15 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 	var finish <-chan struct{}
 	postHandleCh := afterTableRestoredCh
 
-	// pipeline checksum and load stats
+	// pipeline checksum
 	if cfg.Checksum {
-		afterTableCheckesumedCh := client.GoValidateChecksum(
-			ctx, afterTableRestoredCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
-		afterTableLoadStatsCh := client.GoUpdateMetaAndLoadStats(ctx, s, &cfg.CipherInfo, afterTableCheckesumedCh, errCh, cfg.StatsConcurrency)
-		postHandleCh = afterTableLoadStatsCh
+		postHandleCh = client.GoValidateChecksum(
+			ctx, postHandleCh, mgr.GetStorage().GetClient(), errCh, updateCh, cfg.ChecksumConcurrency)
+	}
+
+	// pipeline load stats
+	if cfg.LoadStats {
+		postHandleCh = client.GoUpdateMetaAndLoadStats(ctx, s, &cfg.CipherInfo, postHandleCh, errCh, cfg.StatsConcurrency)
 	}
 
 	// pipeline wait Tiflash synced
