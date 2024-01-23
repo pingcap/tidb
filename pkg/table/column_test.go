@@ -466,8 +466,16 @@ func TestGetDefaultValue(t *testing.T) {
 		expression.EvalAstExpr = exp
 	}()
 
+	defaultMode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
+	require.NoError(t, err)
+	require.True(t, defaultMode.HasStrictMode())
 	for _, tt := range tests {
 		sc := ctx.GetSessionVars().StmtCtx
+		if tt.strict {
+			ctx.GetSessionVars().SQLMode = defaultMode
+		} else {
+			ctx.GetSessionVars().SQLMode = mysql.DelSQLMode(defaultMode, mysql.ModeStrictAllTables|mysql.ModeStrictTransTables)
+		}
 		levels := sc.ErrLevels()
 		levels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !tt.strict)
 		sc.SetErrLevels(levels)
@@ -485,6 +493,11 @@ func TestGetDefaultValue(t *testing.T) {
 
 	for _, tt := range tests {
 		sc := ctx.GetSessionVars().StmtCtx
+		if tt.strict {
+			ctx.GetSessionVars().SQLMode = defaultMode
+		} else {
+			ctx.GetSessionVars().SQLMode = mysql.DelSQLMode(defaultMode, mysql.ModeStrictAllTables|mysql.ModeStrictTransTables)
+		}
 		levels := sc.ErrLevels()
 		levels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !tt.strict)
 		sc.SetErrLevels(levels)

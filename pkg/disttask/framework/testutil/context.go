@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -34,8 +33,6 @@ type TestContext struct {
 	sync.RWMutex
 	// taskID/step -> subtask map.
 	subtasksHasRun map[string]map[int64]struct{}
-	// for rollback tests.
-	RollbackCnt atomic.Int32
 	// for plan err handling tests.
 	CallTime int
 }

@@ -271,7 +271,11 @@ func (em *engineManager) openEngine(ctx context.Context, cfg *backend.EngineConf
 }
 
 // closeEngine closes backend engine by uuid.
-func (em *engineManager) closeEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
+func (em *engineManager) closeEngine(
+	ctx context.Context,
+	cfg *backend.EngineConfig,
+	engineUUID uuid.UUID,
+) (errRet error) {
 	if externalCfg := cfg.External; externalCfg != nil {
 		storeBackend, err := storage.ParseBackend(externalCfg.StorageURI, nil)
 		if err != nil {
@@ -281,6 +285,11 @@ func (em *engineManager) closeEngine(ctx context.Context, cfg *backend.EngineCon
 		if err != nil {
 			return err
 		}
+		defer func() {
+			if errRet != nil {
+				store.Close()
+			}
+		}()
 		physical, logical, err := em.GetTS(ctx)
 		if err != nil {
 			return err
