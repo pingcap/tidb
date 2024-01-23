@@ -396,7 +396,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	return localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 }
 
-func (e *writeAndIngestStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
+func (e *writeAndIngestStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
 	var subtaskMeta WriteIngestStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
@@ -410,6 +410,10 @@ func (e *writeAndIngestStepExecutor) OnFinished(_ context.Context, subtask *prot
 	localBackend := e.tableImporter.Backend()
 	_, kvCount := localBackend.GetExternalEngineKVStatistics(engineUUID)
 	subtaskMeta.Result.LoadedRowCnt = uint64(kvCount)
+	err := localBackend.CleanupEngine(ctx, engineUUID)
+	if err != nil {
+		e.logger.Warn("failed to cleanup engine", zap.Error(err))
+	}
 
 	newMeta, err := json.Marshal(subtaskMeta)
 	if err != nil {
