@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -164,9 +165,12 @@ func initSessCtx(
 		return errors.Trace(err)
 	}
 	sessCtx.GetSessionVars().StmtCtx.SetTimeZone(sessCtx.GetSessionVars().Location())
-	sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
-	sessCtx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = !sqlMode.HasStrictMode()
+
+	errLevels := sessCtx.GetSessionVars().StmtCtx.ErrLevels()
+	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !sqlMode.HasStrictMode())
+	errLevels[errctx.ErrGroupDividedByZero] =
+		errctx.ResolveErrLevel(!sqlMode.HasErrorForDivisionByZeroMode(), !sqlMode.HasStrictMode())
+	sessCtx.GetSessionVars().StmtCtx.SetErrLevels(errLevels)
 
 	typeFlags := types.StrictFlags.
 		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
@@ -174,8 +178,7 @@ func initSessCtx(
 		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()).
 		WithCastTimeToYearThroughConcat(true)
 	sessCtx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags)
-
-	sessCtx.GetSessionVars().ResourceGroupName = resGroupName
+	sessCtx.GetSessionVars().StmtCtx.ResourceGroupName = resGroupName
 
 	// Prevent initializing the mock context in the workers concurrently.
 	// For details, see https://github.com/pingcap/tidb/issues/40879.
@@ -195,21 +198,17 @@ func restoreSessCtx(sessCtx sessionctx.Context) func(sessCtx sessionctx.Context)
 		tz := *sv.TimeZone
 		timezone = &tz
 	}
-	badNullAsWarn := sv.StmtCtx.BadNullAsWarning
-	overflowAsWarn := sv.StmtCtx.OverflowAsWarning
-	dividedZeroAsWarn := sv.StmtCtx.DividedByZeroAsWarning
 	typeFlags := sv.StmtCtx.TypeFlags()
-	resGroupName := sv.ResourceGroupName
+	errLevels := sv.StmtCtx.ErrLevels()
+	resGroupName := sv.StmtCtx.ResourceGroupName
 	return func(usedSessCtx sessionctx.Context) {
 		uv := usedSessCtx.GetSessionVars()
 		uv.RowEncoder.Enable = rowEncoder
 		uv.SQLMode = sqlMode
 		uv.TimeZone = timezone
-		uv.StmtCtx.BadNullAsWarning = badNullAsWarn
-		uv.StmtCtx.OverflowAsWarning = overflowAsWarn
-		uv.StmtCtx.DividedByZeroAsWarning = dividedZeroAsWarn
 		uv.StmtCtx.SetTypeFlags(typeFlags)
-		uv.ResourceGroupName = resGroupName
+		uv.StmtCtx.SetErrLevels(errLevels)
+		uv.StmtCtx.ResourceGroupName = resGroupName
 	}
 }
 

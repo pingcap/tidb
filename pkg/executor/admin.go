@@ -216,7 +216,7 @@ func (e *RecoverIndexExec) columnsTypes() []*types.FieldType {
 
 // Open implements the Executor Open interface.
 func (e *RecoverIndexExec) Open(ctx context.Context) error {
-	if err := exec.Open(ctx, e.BaseExecutor.Base()); err != nil {
+	if err := exec.Open(ctx, &e.BaseExecutor); err != nil {
 		return err
 	}
 

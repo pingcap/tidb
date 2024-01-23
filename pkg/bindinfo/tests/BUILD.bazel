@@ -9,11 +9,11 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 19,
+    shard_count = 14,
     deps = [
         "//pkg/bindinfo",
         "//pkg/bindinfo/internal",
-        "//pkg/config",
+        "//pkg/bindinfo/norm",
         "//pkg/domain",
         "//pkg/parser",
         "//pkg/parser/model",

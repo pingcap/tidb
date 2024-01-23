@@ -53,7 +53,10 @@ type Handle struct {
 	// LeaseGetter is used to get stats lease.
 	util.LeaseGetter
 
-	// initStatsCtx is the ctx only used for initStats
+	// initStatsCtx is a context specifically used for initStats.
+	// It's not designed for concurrent use, so avoid using it in such scenarios.
+	// Currently, it's only utilized within initStats, which is exclusively used during bootstrap.
+	// Since bootstrap is a one-time operation, using this context remains safe.
 	initStatsCtx sessionctx.Context
 
 	// TableInfoGetter is used to fetch table meta info.
@@ -132,7 +135,11 @@ func NewHandle(
 	handle.StatsAnalyze = autoanalyze.NewStatsAnalyze(handle, tracker)
 	handle.StatsSyncLoad = syncload.NewStatsSyncLoad(handle)
 	handle.StatsGlobal = globalstats.NewStatsGlobal(handle)
-	handle.DDL = ddl.NewDDLHandler(handle.StatsReadWriter, handle, handle.StatsGlobal)
+	handle.DDL = ddl.NewDDLHandler(
+		handle.StatsReadWriter,
+		handle,
+		handle.StatsGlobal,
+	)
 	return handle, nil
 }
 
@@ -142,9 +149,18 @@ func (h *Handle) GetTableStats(tblInfo *model.TableInfo) *statistics.Table {
 	return h.GetPartitionStats(tblInfo, tblInfo.ID)
 }
 
+// GetTableStatsForAutoAnalyze is to get table stats but it will
+func (h *Handle) GetTableStatsForAutoAnalyze(tblInfo *model.TableInfo) *statistics.Table {
+	return h.getPartitionStats(tblInfo, tblInfo.ID, false)
+}
+
 // GetPartitionStats retrieves the partition stats from cache.
 // TODO: remove GetTableStats later on.
 func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statistics.Table {
+	return h.getPartitionStats(tblInfo, pid, true)
+}
+
+func (h *Handle) getPartitionStats(tblInfo *model.TableInfo, pid int64, returnPseudo bool) *statistics.Table {
 	var tbl *statistics.Table
 	if h == nil {
 		tbl = statistics.PseudoTable(tblInfo, false)
@@ -153,12 +169,15 @@ func (h *Handle) GetPartitionStats(tblInfo *model.TableInfo, pid int64) *statist
 	}
 	tbl, ok := h.Get(pid)
 	if !ok {
-		tbl = statistics.PseudoTable(tblInfo, false)
-		tbl.PhysicalID = pid
-		if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
-			h.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+		if returnPseudo {
+			tbl = statistics.PseudoTable(tblInfo, false)
+			tbl.PhysicalID = pid
+			if tblInfo.GetPartitionInfo() == nil || h.Len() < 64 {
+				h.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+			}
+			return tbl
 		}
-		return tbl
+		return nil
 	}
 	return tbl
 }
@@ -168,11 +187,11 @@ func (h *Handle) FlushStats() {
 	for len(h.DDLEventCh()) > 0 {
 		e := <-h.DDLEventCh()
 		if err := h.HandleDDLEvent(e); err != nil {
-			statslogutil.StatsLogger.Error("handle ddl event fail", zap.Error(err))
+			statslogutil.StatsLogger().Error("handle ddl event fail", zap.Error(err))
 		}
 	}
 	if err := h.DumpStatsDeltaToKV(true); err != nil {
-		statslogutil.StatsLogger.Error("dump stats delta fail", zap.Error(err))
+		statslogutil.StatsLogger().Error("dump stats delta fail", zap.Error(err))
 	}
 }
 

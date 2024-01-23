@@ -470,29 +470,6 @@ func BenchmarkEncodeFlatPlan(b *testing.B) {
 	}
 }
 
-func TestIssue35090(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("drop table if exists p, t;")
-	tk.MustExec("create table p (id int, c int, key i_id(id), key i_c(c));")
-	tk.MustExec("create table t (id int);")
-	tk.MustExec("insert into p values (3,3), (4,4), (6,6), (9,9);")
-	tk.MustExec("insert into t values (4), (9);")
-	tk.MustExec("select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id;")
-	rows := [][]interface{}{
-		{"IndexJoin"},
-		{"├─TableReader(Build)"},
-		{"│ └─Selection"},
-		{"│   └─TableFullScan"},
-		{"└─IndexLookUp(Probe)"},
-		{"  ├─Selection(Build)"},
-		{"  │ └─IndexRangeScan"},
-		{"  └─TableRowIDScan(Probe)"},
-	}
-	tk.MustQuery("explain analyze format='brief' select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id;").CheckAt([]int{0}, rows)
-}
-
 func TestCopPaging(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -729,4 +706,17 @@ func TestCloneFineGrainedShuffleStreamCount(t *testing.T) {
 	newSort, ok = newPlan.(*core.PhysicalSort)
 	require.Equal(t, ok, true)
 	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
+}
+
+func TestImportIntoBuildPlan(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1 (a int, b int);")
+	tk.MustExec("create table t2 (a int, b int);")
+	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t1 FROM select a from t2;"),
+		core.ErrWrongValueCountOnRow)
+	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t1(a) FROM select * from t2;"),
+		core.ErrWrongValueCountOnRow)
 }

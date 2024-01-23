@@ -181,10 +181,10 @@ func isPrefixNext(key []byte, expected []byte) bool {
 func newDagContext(t require.TestingT, store *testStore, keyRanges []kv.KeyRange, dagReq *tipb.DAGRequest, startTs uint64) *dagContext {
 	tz, err := timeutil.ConstructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
 	require.NoError(t, err)
-	sc := flagsAndTzToStatementContext(dagReq.Flags, tz)
+	sctx := flagsAndTzToSessionContext(dagReq.Flags, tz)
 	txn := store.db.NewTransaction(false)
 	dagCtx := &dagContext{
-		evalContext: &evalContext{sc: sc},
+		evalContext: &evalContext{sctx: sctx},
 		dbReader:    dbreader.NewDBReader(nil, []byte{255}, txn),
 		lockStore:   store.locks,
 		dagReq:      dagReq,

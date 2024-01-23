@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/pkg/config"
 	sess "github.com/pingcap/tidb/pkg/ddl/internal/session"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
@@ -535,7 +534,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 		}
 		// Note that linear hash is simply ignored, and creates non-linear hash/key.
 		if s.Linear {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("LINEAR %s is not supported, using non-linear %s instead", s.Tp.String(), s.Tp.String())))
+			ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.FastGen(fmt.Sprintf("LINEAR %s is not supported, using non-linear %s instead", s.Tp.String(), s.Tp.String())))
 		}
 		if s.Tp == model.PartitionTypeHash || len(s.ColumnNames) != 0 {
 			enable = true
@@ -543,11 +542,11 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 	}
 
 	if !enable {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.Tp)))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.FastGen(fmt.Sprintf("Unsupported partition type %v, treat as normal table", s.Tp)))
 		return nil
 	}
 	if s.Sub != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.GenWithStack(fmt.Sprintf("Unsupported subpartitioning, only using %v partitioning", s.Tp)))
+		ctx.GetSessionVars().StmtCtx.AppendWarning(dbterror.ErrUnsupportedCreatePartition.FastGen(fmt.Sprintf("Unsupported subpartitioning, only using %v partitioning", s.Tp)))
 	}
 
 	pi := &model.PartitionInfo{
@@ -611,7 +610,7 @@ func buildTablePartitionInfo(ctx sessionctx.Context, s *ast.PartitionOptions, tb
 
 	for _, index := range tbInfo.Indices {
 		if index.Unique && !checkUniqueKeyIncludePartKey(partCols, index.Columns) {
-			index.Global = config.GetGlobalConfig().EnableGlobalIndex
+			index.Global = ctx.GetSessionVars().EnableGlobalIndex
 		}
 	}
 	return nil
@@ -2588,13 +2587,16 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 	// Recreate non-partition table meta info,
 	// by first delete it with the old table id
-	err = t.DropTableOrView(job.SchemaID, nt.ID)
+	err = t.DropTableOrView(job.SchemaID, job.SchemaName, nt.ID, nt.Name.L)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
 
 	// exchange table meta id
 	pt.ExchangePartitionInfo = nil
+	// Used below to update the partitioned table's stats meta.
+	originalPartitionDef := partDef.Clone()
+	originalNt := nt.Clone()
 	partDef.ID, nt.ID = nt.ID, partDef.ID
 
 	err = t.UpdateTable(ptSchemaID, pt)
@@ -2602,7 +2604,7 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		return ver, errors.Trace(err)
 	}
 
-	err = t.CreateTableOrView(job.SchemaID, nt)
+	err = t.CreateTableOrView(job.SchemaID, job.SchemaName, nt)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -2698,6 +2700,12 @@ func (w *worker) onExchangeTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 	}
 
 	job.FinishTableJob(model.JobStateDone, model.StateNone, ver, pt)
+	exchangePartitionEvent := statsutil.NewExchangePartitionEvent(
+		pt,
+		&model.PartitionInfo{Definitions: []model.PartitionDefinition{originalPartitionDef}},
+		originalNt,
+	)
+	asyncNotifyEvent(d, exchangePartitionEvent)
 	return ver, nil
 }
 
@@ -2992,14 +3000,12 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		tblInfo.Partition.AddingDefinitions = nil
 		tblInfo.Partition.DDLState = model.StateNone
 
+		var oldTblID int64
 		if job.Type != model.ActionReorganizePartition {
 			// ALTER TABLE ... PARTITION BY
 			// REMOVE PARTITIONING
-			// New Table ID, so needs to recreate the table by drop+create.
-			oldTblID := tblInfo.ID
-			// Overloading the NewTableID here with the oldTblID instead,
-			// for keeping the old global statistics
-			statisticsPartInfo.NewTableID = oldTblID
+			// Storing the old table ID, used for updating statistics.
+			oldTblID = tblInfo.ID
 			// TODO: Handle bundles?
 			// TODO: Add concurrent test!
 			// TODO: Will this result in big gaps?
@@ -3010,7 +3016,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
 			}
-			err = t.DropTableOrView(job.SchemaID, tblInfo.ID)
+			err = t.DropTableOrView(job.SchemaID, job.SchemaName, tblInfo.ID, tblInfo.Name.L)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
@@ -3036,7 +3042,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				return ver, errors.Trace(err)
 			}
 			// TODO: Add failpoint here?
-			err = t.CreateTableOrView(job.SchemaID, tblInfo)
+			err = t.CreateTableOrView(job.SchemaID, job.SchemaName, tblInfo)
 			if err != nil {
 				job.State = model.JobStateCancelled
 				return ver, errors.Trace(err)
@@ -3059,7 +3065,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		// Include the old table ID, if changed, which may contain global statistics,
 		// so it can be reused for the new (non)partitioned table.
 		event, err := newStatsDDLEventForJob(
-			job.Type, tblInfo, statisticsPartInfo, droppedPartInfo,
+			job.Type, oldTblID, tblInfo, statisticsPartInfo, droppedPartInfo,
 		)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -3079,6 +3085,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 // It is used for reorganize partition, add partitioning and remove partitioning.
 func newStatsDDLEventForJob(
 	jobType model.ActionType,
+	oldTblID int64,
 	tblInfo *model.TableInfo,
 	addedPartInfo *model.PartitionInfo,
 	droppedPartInfo *model.PartitionInfo,
@@ -3093,13 +3100,15 @@ func newStatsDDLEventForJob(
 		)
 	case model.ActionAlterTablePartitioning:
 		event = statsutil.NewAddPartitioningEvent(
+			oldTblID,
 			tblInfo,
 			addedPartInfo,
 		)
 	case model.ActionRemovePartitioning:
 		event = statsutil.NewRemovePartitioningEvent(
+			oldTblID,
 			tblInfo,
-			addedPartInfo,
+			droppedPartInfo,
 		)
 	default:
 		return nil, errors.Errorf("unknown job type: %s", jobType.String())
@@ -3205,6 +3214,7 @@ func (w *reorgPartitionWorker) BackfillData(handleRange reorgBackfillTask) (task
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
+		updateTxnEntrySizeLimitIfNeeded(txn)
 		txn.SetOption(kv.Priority, handleRange.priority)
 		if tagger := w.GetCtx().getResourceGroupTaggerForTopSQL(handleRange.getJobID()); tagger != nil {
 			txn.SetOption(kv.ResourceGroupTagger, tagger)
@@ -3808,11 +3818,11 @@ func checkPartitioningKeysConstraints(sctx sessionctx.Context, s *ast.CreateTabl
 				if tblInfo.IsCommonHandle {
 					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("CLUSTERED INDEX")
 				}
-				if !config.GetGlobalConfig().EnableGlobalIndex {
+				if !sctx.GetSessionVars().EnableGlobalIndex {
 					return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("PRIMARY KEY")
 				}
 			}
-			if !config.GetGlobalConfig().EnableGlobalIndex {
+			if !sctx.GetSessionVars().EnableGlobalIndex {
 				return dbterror.ErrUniqueKeyNeedAllFieldsInPf.GenWithStackByArgs("UNIQUE INDEX")
 			}
 		}

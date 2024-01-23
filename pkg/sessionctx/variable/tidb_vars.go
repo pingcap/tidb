@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable/featuretag/disttask"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -297,6 +298,9 @@ const (
 	// Higher concurrency may reduce latency, but with the cost of higher memory usage and system performance impact.
 	// If the query has a LIMIT clause, high concurrency makes the system do much more work than needed.
 	TiDBDistSQLScanConcurrency = "tidb_distsql_scan_concurrency"
+
+	// TiDBAnalyzeDistSQLScanConcurrency is used to set the concurrency of a distsql scan task for analyze statement.
+	TiDBAnalyzeDistSQLScanConcurrency = "tidb_analyze_distsql_scan_concurrency"
 
 	// TiDBOptInSubqToJoinAndAgg is used to enable/disable the optimizer rule of rewriting IN subquery.
 	TiDBOptInSubqToJoinAndAgg = "tidb_opt_insubq_to_join_and_agg"
@@ -602,6 +606,9 @@ const (
 	// TiDBEvolvePlanBaselines indicates whether the evolution of plan baselines is enabled.
 	TiDBEvolvePlanBaselines = "tidb_evolve_plan_baselines"
 
+	// TiDBOptEnableFuzzyBinding indicates whether to enable the universal binding.
+	TiDBOptEnableFuzzyBinding = "tidb_opt_enable_fuzzy_binding"
+
 	// TiDBEnableExtendedStats indicates whether the extended statistics feature is enabled.
 	TiDBEnableExtendedStats = "tidb_enable_extended_stats"
 
@@ -629,6 +636,9 @@ const (
 
 	// TiDBEnableClusteredIndex indicates if clustered index feature is enabled.
 	TiDBEnableClusteredIndex = "tidb_enable_clustered_index"
+
+	// TiDBEnableGlobalIndex means if we could create an global index on a partition table or not.
+	TiDBEnableGlobalIndex = "tidb_enable_global_index"
 
 	// TiDBPartitionPruneMode indicates the partition prune mode used.
 	TiDBPartitionPruneMode = "tidb_partition_prune_mode"
@@ -712,6 +722,9 @@ const (
 
 	// TiDBEnableTSOFollowerProxy indicates whether to enable the TSO Follower Proxy feature of PD client.
 	TiDBEnableTSOFollowerProxy = "tidb_enable_tso_follower_proxy"
+
+	// PDEnableFollowerHandleRegion indicates whether to enable the PD Follower handle region API.
+	PDEnableFollowerHandleRegion = "pd_enable_follower_handle_region"
 
 	// TiDBEnableOrderedResultMode indicates if stabilize query results.
 	TiDBEnableOrderedResultMode = "tidb_enable_ordered_result_mode"
@@ -920,6 +933,9 @@ const (
 	// TiDBOptObjective indicates whether the optimizer should be more stable, predictable or more aggressive.
 	// Please see comments of SessionVars.OptObjective for details.
 	TiDBOptObjective = "tidb_opt_objective"
+
+	// TiDBTxnEntrySizeLimit indicates the max size of a entry in membuf.
+	TiDBTxnEntrySizeLimit = "tidb_txn_entry_size_limit"
 )
 
 // TiDB vars that have only global scope
@@ -933,7 +949,7 @@ const (
 	TiDBGCLifetime = "tidb_gc_life_time"
 	// TiDBGCConcurrency sets the concurrency of garbage collection. -1 = AUTO value
 	TiDBGCConcurrency = "tidb_gc_concurrency"
-	// TiDBGCScanLockMode enables the green GC feature (default)
+	// TiDBGCScanLockMode enables the green GC feature (deprecated)
 	TiDBGCScanLockMode = "tidb_gc_scan_lock_mode"
 	// TiDBGCMaxWaitTime sets max time for gc advances the safepoint delayed by active transactions
 	TiDBGCMaxWaitTime = "tidb_gc_max_wait_time"
@@ -977,6 +993,8 @@ const (
 	TiDBMaxAutoAnalyzeTime = "tidb_max_auto_analyze_time"
 	// TiDBEnableDistTask indicates whether to enable the distributed execute background tasks(For example DDL, Import etc).
 	TiDBEnableDistTask = "tidb_enable_dist_task"
+	// TiDBDDLVersion is used to store tidb ddl version.
+	TiDBDDLVersion = "tidb_ddl_version"
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
 	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
@@ -1114,6 +1132,10 @@ const (
 	// TiDBEnableTiFlashPipelineMode means if we should use pipeline model to execute query or not in tiflash.
 	// It's deprecated and setting it will not have any effect.
 	TiDBEnableTiFlashPipelineMode = "tidb_enable_tiflash_pipeline_model"
+	// TiDBIdleTransactionTimeout indicates the maximum time duration a transaction could be idle, unit is second.
+	// Any idle transaction will be killed after being idle for `tidb_idle_transaction_timeout` seconds.
+	// This is similar to https://docs.percona.com/percona-server/5.7/management/innodb_kill_idle_trx.html and https://mariadb.com/kb/en/transaction-timeouts/
+	TiDBIdleTransactionTimeout = "tidb_idle_transaction_timeout"
 )
 
 // TiDB intentional limits
@@ -1134,6 +1156,7 @@ const (
 	DefIndexJoinBatchSize                          = 25000
 	DefIndexLookupSize                             = 20000
 	DefDistSQLScanConcurrency                      = 15
+	DefAnalyzeDistSQLScanConcurrency               = 4
 	DefBuildStatsConcurrency                       = 2
 	DefBuildSamplingStatsConcurrency               = 2
 	DefAutoAnalyzeRatio                            = 0.5
@@ -1206,7 +1229,7 @@ const (
 	DefTiFlashQuerySpillRatio                      = 0.7
 	DefTiDBEnableTiFlashPipelineMode               = true
 	DefTiDBMPPStoreFailTTL                         = "60s"
-	DefTiDBTxnMode                                 = ""
+	DefTiDBTxnMode                                 = PessimisticTxnMode
 	DefTiDBRowFormatV1                             = 1
 	DefTiDBRowFormatV2                             = 2
 	DefTiDBDDLReorgWorkerCount                     = 4
@@ -1252,6 +1275,7 @@ const (
 	DefTiDBEnableCollectExecutionInfo              = true
 	DefTiDBAllowAutoRandExplicitInsert             = false
 	DefTiDBEnableClusteredIndex                    = ClusteredIndexDefModeOn
+	DefTiDBEnableGlobalIndex                       = false
 	DefTiDBRedactLog                               = false
 	DefTiDBRestrictedReadOnly                      = false
 	DefTiDBSuperReadOnly                           = false
@@ -1272,6 +1296,7 @@ const (
 	DefTiDBEnableLocalTxn                          = false
 	DefTiDBTSOClientBatchMaxWaitTime               = 0.0 // 0ms
 	DefTiDBEnableTSOFollowerProxy                  = false
+	DefPDEnableFollowerHandleRegion                = false
 	DefTiDBEnableOrderedResultMode                 = false
 	DefTiDBEnablePseudoForOutdatedStats            = false
 	DefTiDBRegardNULLAsPoint                       = true
@@ -1428,6 +1453,8 @@ const (
 	DefTiDBOptEnableHashJoin                          = true
 	DefTiDBOptObjective                               = OptObjectiveModerate
 	DefTiDBSchemaVersionCacheLimit                    = 16
+	DefTiDBIdleTransactionTimeout                     = 0
+	DefTiDBTxnEntrySizeLimit                          = 0
 )
 
 // Process global variables.
@@ -1456,6 +1483,7 @@ var (
 	EnableLocalTxn                       = atomic.NewBool(DefTiDBEnableLocalTxn)
 	MaxTSOBatchWaitInterval              = atomic.NewFloat64(DefTiDBTSOClientBatchMaxWaitTime)
 	EnableTSOFollowerProxy               = atomic.NewBool(DefTiDBEnableTSOFollowerProxy)
+	EnablePDFollowerHandleRegion         = atomic.NewBool(DefPDEnableFollowerHandleRegion)
 	RestrictedReadOnly                   = atomic.NewBool(DefTiDBRestrictedReadOnly)
 	VarTiDBSuperReadOnly                 = atomic.NewBool(DefTiDBSuperReadOnly)
 	PersistAnalyzeOptions                = atomic.NewBool(DefTiDBPersistAnalyzeOptions)
@@ -1471,6 +1499,7 @@ var (
 	// variables for plan cache
 	PreparedPlanCacheMemoryGuardRatio = atomic.NewFloat64(DefTiDBPrepPlanCacheMemoryGuardRatio)
 	EnableDistTask                    = atomic.NewBool(DefTiDBEnableDistTask)
+	DDLVersion                        = atomic.NewInt64(model.TiDBDDLV1)
 	DDLForce2Queue                    = atomic.NewBool(false)
 	EnableNoopVariables               = atomic.NewBool(DefTiDBEnableNoopVariables)
 	EnableMDL                         = atomic.NewBool(false)
@@ -1528,6 +1557,7 @@ var (
 	SchemaVersionCacheLimit   = atomic.NewInt64(DefTiDBSchemaVersionCacheLimit)
 	CloudStorageURI           = atomic.NewString("")
 	IgnoreInlistPlanDigest    = atomic.NewBool(DefTiDBIgnoreInlistPlanDigest)
+	TxnEntrySizeLimit         = atomic.NewUint64(DefTiDBTxnEntrySizeLimit)
 )
 
 var (
@@ -1545,6 +1575,8 @@ var (
 	EnableDDL func() error = nil
 	// DisableDDL is the func registered by ddl to disable running ddl in this instance.
 	DisableDDL func() error = nil
+	// SwitchDDLVersion is the func registered by DDL to switch DDL version.
+	SwitchDDLVersion func(version int64) error
 	// SetExternalTimestamp is the func registered by staleread to set externaltimestamp in pd
 	SetExternalTimestamp func(ctx context.Context, ts uint64) error
 	// GetExternalTimestamp is the func registered by staleread to get externaltimestamp from pd

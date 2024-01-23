@@ -133,6 +133,9 @@ func TestIngestSSTWithClosedEngine(t *testing.T) {
 
 func TestGetFirstAndLastKey(t *testing.T) {
 	db, tmpPath := makePebbleDB(t, nil)
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
 	f := &Engine{
 		sstDir: tmpPath,
 	}
@@ -172,6 +175,9 @@ func TestGetFirstAndLastKey(t *testing.T) {
 
 func TestIterOutputHasUniqueMemorySpace(t *testing.T) {
 	db, tmpPath := makePebbleDB(t, nil)
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
 	f := &Engine{
 		sstDir: tmpPath,
 	}

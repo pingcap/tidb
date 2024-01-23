@@ -467,7 +467,9 @@ func (h *Handle) initStatsBuckets(cache statstypes.StatsCache) error {
 }
 
 // InitStatsLite initiates the stats cache. The function is liter and faster than InitStats.
-// Column/index stats are not loaded, i.e., we only load scalars such as NDV, NullCount, Correlation and don't load CMSketch/Histogram/TopN.
+// 1. Basic stats meta data is loaded.(count, modify count, etc.)
+// 2. Column/index stats are loaded. (only histogram)
+// 3. TopN, Bucket, FMSketch are not loaded.
 func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 	defer func() {
 		_, err1 := util.Exec(h.initStatsCtx, "commit")
@@ -492,8 +494,8 @@ func (h *Handle) InitStatsLite(is infoschema.InfoSchema) (err error) {
 }
 
 // InitStats initiates the stats cache.
-// Index/PK stats are fully loaded.
-// Column stats are not loaded, i.e., we only load scalars such as NDV, NullCount, Correlation and don't load CMSketch/Histogram/TopN.
+// 1. Basic stats meta data is loaded.(count, modify count, etc.)
+// 2. Column/index stats are loaded. (histogram, topn, buckets, FMSketch)
 func (h *Handle) InitStats(is infoschema.InfoSchema) (err error) {
 	loadFMSketch := config.GetGlobalConfig().Performance.EnableLoadFMSketch
 	defer func() {

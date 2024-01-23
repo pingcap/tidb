@@ -23,26 +23,24 @@ import (
 	"sort"
 	"strings"
 
+	pd "github.com/tikv/pd/client/http"
 	"gopkg.in/yaml.v2"
 )
 
-// Constraints is a slice of constraints.
-type Constraints []Constraint
-
 // NewConstraints will check each labels, and build the Constraints.
-func NewConstraints(labels []string) (Constraints, error) {
+func NewConstraints(labels []string) ([]pd.LabelConstraint, error) {
 	if len(labels) == 0 {
 		return nil, nil
 	}
 
-	constraints := make(Constraints, 0, len(labels))
+	constraints := make([]pd.LabelConstraint, 0, len(labels))
 	for _, str := range labels {
 		label, err := NewConstraint(strings.TrimSpace(str))
 		if err != nil {
 			return constraints, err
 		}
 
-		err = constraints.Add(label)
+		err = AddConstraint(&constraints, label)
 		if err != nil {
 			return constraints, err
 		}
@@ -52,7 +50,7 @@ func NewConstraints(labels []string) (Constraints, error) {
 
 // preCheckDictConstraintStr will check the label string, and return the new labels and role.
 // role maybe be override by the label string, eg `#evict-leader`.
-func preCheckDictConstraintStr(labelStr string, role PeerRoleType) ([]string, PeerRoleType, error) {
+func preCheckDictConstraintStr(labelStr string, role pd.PeerRoleType) ([]string, pd.PeerRoleType, error) {
 	innerLabels := strings.Split(labelStr, ",")
 	overrideRole := role
 	newLabels := make([]string, 0, len(innerLabels))
@@ -60,8 +58,8 @@ func preCheckDictConstraintStr(labelStr string, role PeerRoleType) ([]string, Pe
 		if strings.HasPrefix(str, attributePrefix) {
 			switch str[1:] {
 			case attributeEvictLeader:
-				if role == Voter {
-					overrideRole = Follower
+				if role == pd.Voter {
+					overrideRole = pd.Follower
 				}
 			default:
 				return newLabels, overrideRole, fmt.Errorf("%w: unsupported attribute '%s'", ErrUnsupportedConstraint, str)
@@ -75,7 +73,7 @@ func preCheckDictConstraintStr(labelStr string, role PeerRoleType) ([]string, Pe
 
 // NewConstraintsFromYaml will transform parse the raw 'array' constraints and call NewConstraints.
 // Refer to https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-24-placement-rules-in-sql.md.
-func NewConstraintsFromYaml(c []byte) (Constraints, error) {
+func NewConstraintsFromYaml(c []byte) ([]pd.LabelConstraint, error) {
 	constraints := []string{}
 	err := yaml.UnmarshalStrict(c, &constraints)
 	if err != nil {
@@ -85,19 +83,19 @@ func NewConstraintsFromYaml(c []byte) (Constraints, error) {
 }
 
 // NewConstraintsDirect is a helper for creating new constraints from individual constraint.
-func NewConstraintsDirect(c ...Constraint) Constraints {
+func NewConstraintsDirect(c ...pd.LabelConstraint) []pd.LabelConstraint {
 	return c
 }
 
-// Restore converts label constraints to a string.
-func (constraints *Constraints) Restore() (string, error) {
+// RestoreConstraints converts label constraints to a string.
+func RestoreConstraints(constraints *[]pd.LabelConstraint) (string, error) {
 	var sb strings.Builder
 	for i, constraint := range *constraints {
 		if i > 0 {
 			sb.WriteByte(',')
 		}
 		sb.WriteByte('"')
-		conStr, err := constraint.Restore()
+		conStr, err := RestoreConstraint(&constraint)
 		if err != nil {
 			return "", err
 		}
@@ -107,14 +105,14 @@ func (constraints *Constraints) Restore() (string, error) {
 	return sb.String(), nil
 }
 
-// Add will add a new label constraint, with validation of all constraints.
+// AddConstraint will add a new label constraint, with validation of all constraints.
 // Note that Add does not validate one single constraint.
-func (constraints *Constraints) Add(label Constraint) error {
+func AddConstraint(constraints *[]pd.LabelConstraint, label pd.LabelConstraint) error {
 	pass := true
 
 	for i := range *constraints {
 		cnst := (*constraints)[i]
-		res := label.CompatibleWith(&cnst)
+		res := ConstraintCompatibleWith(&label, &cnst)
 		if res == ConstraintCompatible {
 			continue
 		}
@@ -122,11 +120,11 @@ func (constraints *Constraints) Add(label Constraint) error {
 			pass = false
 			continue
 		}
-		s1, err := label.Restore()
+		s1, err := RestoreConstraint(&label)
 		if err != nil {
 			s1 = err.Error()
 		}
-		s2, err := cnst.Restore()
+		s2, err := RestoreConstraint(&cnst)
 		if err != nil {
 			s2 = err.Error()
 		}
@@ -139,11 +137,11 @@ func (constraints *Constraints) Add(label Constraint) error {
 	return nil
 }
 
-// FingerPrint returns a unique string for the constraints.
-func (constraints *Constraints) FingerPrint() string {
-	copied := make(Constraints, len(*constraints))
+// ConstraintsFingerPrint returns a unique string for the constraints.
+func ConstraintsFingerPrint(constraints *[]pd.LabelConstraint) string {
+	copied := make([]pd.LabelConstraint, len(*constraints))
 	copy(copied, *constraints)
-	slices.SortStableFunc(copied, func(i, j Constraint) int {
+	slices.SortStableFunc(copied, func(i, j pd.LabelConstraint) int {
 		a, b := constraintToString(&i), constraintToString(&j)
 		return cmp.Compare(a, b)
 	})
@@ -161,7 +159,7 @@ func (constraints *Constraints) FingerPrint() string {
 	return hashStr
 }
 
-func constraintToString(c *Constraint) string {
+func constraintToString(c *pd.LabelConstraint) string {
 	// Sort the values in the constraint
 	sortedValues := make([]string, len(c.Values))
 	copy(sortedValues, c.Values)

@@ -83,6 +83,7 @@ func refine4NeighbourProj(p, childProj *PhysicalProjection) {
 func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	lSchema := p.children[0].Schema()
 	rSchema := p.children[1].Schema()
+	ctx := p.SCtx()
 	for i, fun := range p.EqualConditions {
 		lArg, err := fun.GetArgs()[0].ResolveIndices(lSchema)
 		if err != nil {
@@ -94,7 +95,7 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 			return err
 		}
 		p.RightJoinKeys[i] = rArg.(*expression.Column)
-		p.EqualConditions[i] = expression.NewFunctionInternal(fun.GetCtx(), fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
+		p.EqualConditions[i] = expression.NewFunctionInternal(ctx, fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
 	}
 	for i, fun := range p.NAEqualConditions {
 		lArg, err := fun.GetArgs()[0].ResolveIndices(lSchema)
@@ -107,7 +108,7 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 			return err
 		}
 		p.RightNAJoinKeys[i] = rArg.(*expression.Column)
-		p.NAEqualConditions[i] = expression.NewFunctionInternal(fun.GetCtx(), fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
+		p.NAEqualConditions[i] = expression.NewFunctionInternal(ctx, fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
 	}
 	for i, expr := range p.LeftConditions {
 		p.LeftConditions[i], err = expr.ResolveIndices(lSchema)

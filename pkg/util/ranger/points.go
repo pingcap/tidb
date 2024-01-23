@@ -24,12 +24,14 @@ import (
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
 // Error instances.
@@ -134,6 +136,50 @@ func rangePointEqualValueLess(a, b *point) bool {
 	return a.excl && !b.excl
 }
 
+func pointsConvertToSortKey(sctx sessionctx.Context, inputPs []*point, newTp *types.FieldType) ([]*point, error) {
+	// Only handle normal string type here.
+	// Currently, set won't be pushed down and it shouldn't reach here in theory.
+	// For enum, we have separate logic for it, like handleEnumFromBinOp(). For now, it only supports point range,
+	// intervals are not supported. So we also don't need to handle enum here.
+	if newTp.EvalType() != types.ETString ||
+		newTp.GetType() == mysql.TypeEnum ||
+		newTp.GetType() == mysql.TypeSet {
+		return inputPs, nil
+	}
+	ps := make([]*point, 0, len(inputPs))
+	for _, p := range inputPs {
+		np, err := pointConvertToSortKey(sctx, p, newTp, true)
+		if err != nil {
+			return nil, err
+		}
+		ps = append(ps, np)
+	}
+	return ps, nil
+}
+
+func pointConvertToSortKey(
+	sctx sessionctx.Context,
+	inputP *point,
+	newTp *types.FieldType,
+	trimTrailingSpace bool,
+) (*point, error) {
+	p, err := convertPoint(sctx, inputP, newTp)
+	if err != nil {
+		return nil, err
+	}
+	if p.value.Kind() != types.KindString || newTp.GetCollate() == charset.CollationBin || !collate.NewCollationEnabled() {
+		return p, nil
+	}
+	sortKey := p.value.GetBytes()
+	if !trimTrailingSpace {
+		sortKey = collate.GetCollator(newTp.GetCollate()).KeyWithoutTrimRightSpace(string(hack.String(sortKey)))
+	} else {
+		sortKey = collate.GetCollator(newTp.GetCollate()).Key(string(hack.String(sortKey)))
+	}
+
+	return &point{value: types.NewBytesDatum(sortKey), excl: p.excl, start: p.start}, nil
+}
+
 func (r *pointSorter) Swap(i, j int) {
 	r.points[i], r.points[j] = r.points[j], r.points[i]
 }
@@ -182,16 +228,28 @@ func NullRange() Ranges {
 
 // builder is the range builder struct.
 type builder struct {
-	err error
-	ctx sessionctx.Context
+	err  error
+	sctx sessionctx.Context
 }
 
-func (r *builder) build(expr expression.Expression, collator collate.Collator) []*point {
+// build converts Expression on one column into point, which can be further built into Range.
+// If the input prefixLen is not types.UnspecifiedLength, it means it's for a prefix column in a prefix index. In such
+// cases, we should cut the prefix and adjust the exclusiveness. Ref: cutPrefixForPoints().
+// convertToSortKey indicates whether the string values should be converted to sort key.
+// Converting to sort key can make `like` function be built into Range for new collation column. But we can't restore
+// the original value from the sort key, so the usage of the result may be limited, like when you need to restore the
+// result points back to Expression.
+func (r *builder) build(
+	expr expression.Expression,
+	newTp *types.FieldType,
+	prefixLen int,
+	convertToSortKey bool,
+) []*point {
 	switch x := expr.(type) {
 	case *expression.Column:
 		return r.buildFromColumn()
 	case *expression.ScalarFunction:
-		return r.buildFromScalarFunc(x, collator)
+		return r.buildFromScalarFunc(x, newTp, prefixLen, convertToSortKey)
 	case *expression.Constant:
 		return r.buildFromConstant(x)
 	}
@@ -200,7 +258,7 @@ func (r *builder) build(expr expression.Expression, collator collate.Collator) [
 }
 
 func (r *builder) buildFromConstant(expr *expression.Constant) []*point {
-	dt, err := expr.Eval(r.ctx, chunk.Row{})
+	dt, err := expr.Eval(r.sctx, chunk.Row{})
 	if err != nil {
 		r.err = err
 		return nil
@@ -209,7 +267,7 @@ func (r *builder) buildFromConstant(expr *expression.Constant) []*point {
 		return nil
 	}
 
-	tc := r.ctx.GetSessionVars().StmtCtx.TypeCtx()
+	tc := r.sctx.GetSessionVars().StmtCtx.TypeCtx()
 	val, err := dt.ToBool(tc)
 	if err != nil {
 		r.err = err
@@ -233,7 +291,12 @@ func (*builder) buildFromColumn() []*point {
 	return []*point{startPoint1, endPoint1, startPoint2, endPoint2}
 }
 
-func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
+func (r *builder) buildFromBinOp(
+	expr *expression.ScalarFunction,
+	newTp *types.FieldType,
+	prefixLen int,
+	convertToSortKey bool,
+) []*point {
 	// This has been checked that the binary operation is comparison operation, and one of
 	// the operand is column name expression.
 	var (
@@ -243,7 +306,7 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 		ft    *types.FieldType
 	)
 
-	tc := r.ctx.GetSessionVars().StmtCtx.TypeCtx()
+	tc := r.sctx.GetSessionVars().StmtCtx.TypeCtx()
 	// refineValueAndOp refines the constant datum and operator:
 	// 1. for string type since we may eval the constant to another collation instead of its own collation.
 	// 2. for year type since 2-digit year value need adjustment, see https://dev.mysql.com/doc/refman/5.6/en/year.html
@@ -285,7 +348,7 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 	var ok bool
 	if col, ok = expr.GetArgs()[0].(*expression.Column); ok {
 		ft = col.RetType
-		value, err = expr.GetArgs()[1].Eval(r.ctx, chunk.Row{})
+		value, err = expr.GetArgs()[1].Eval(r.sctx, chunk.Row{})
 		if err != nil {
 			return nil
 		}
@@ -296,7 +359,7 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 			return nil
 		}
 		ft = col.RetType
-		value, err = expr.GetArgs()[0].Eval(r.ctx, chunk.Row{})
+		value, err = expr.GetArgs()[0].Eval(r.sctx, chunk.Row{})
 		if err != nil {
 			return nil
 		}
@@ -340,40 +403,50 @@ func (r *builder) buildFromBinOp(expr *expression.ScalarFunction) []*point {
 		return handleEnumFromBinOp(tc, ft, value, op)
 	}
 
+	var res []*point
 	switch op {
 	case ast.NullEQ:
 		if value.IsNull() {
-			return []*point{{start: true}, {}} // [null, null]
+			res = []*point{{start: true}, {}} // [null, null]
+			break
 		}
 		fallthrough
 	case ast.EQ:
 		startPoint := &point{value: value, start: true}
 		endPoint := &point{value: value}
-		return []*point{startPoint, endPoint}
+		res = []*point{startPoint, endPoint}
 	case ast.NE:
 		startPoint1 := &point{value: types.MinNotNullDatum(), start: true}
 		endPoint1 := &point{value: value, excl: true}
 		startPoint2 := &point{value: value, start: true, excl: true}
 		endPoint2 := &point{value: types.MaxValueDatum()}
-		return []*point{startPoint1, endPoint1, startPoint2, endPoint2}
+		res = []*point{startPoint1, endPoint1, startPoint2, endPoint2}
 	case ast.LT:
 		startPoint := &point{value: types.MinNotNullDatum(), start: true}
 		endPoint := &point{value: value, excl: true}
-		return []*point{startPoint, endPoint}
+		res = []*point{startPoint, endPoint}
 	case ast.LE:
 		startPoint := &point{value: types.MinNotNullDatum(), start: true}
 		endPoint := &point{value: value}
-		return []*point{startPoint, endPoint}
+		res = []*point{startPoint, endPoint}
 	case ast.GT:
 		startPoint := &point{value: value, start: true, excl: true}
 		endPoint := &point{value: types.MaxValueDatum()}
-		return []*point{startPoint, endPoint}
+		res = []*point{startPoint, endPoint}
 	case ast.GE:
 		startPoint := &point{value: value, start: true}
 		endPoint := &point{value: types.MaxValueDatum()}
-		return []*point{startPoint, endPoint}
+		res = []*point{startPoint, endPoint}
 	}
-	return nil
+	cutPrefixForPoints(res, prefixLen, ft)
+	if convertToSortKey {
+		res, err = pointsConvertToSortKey(r.sctx, res, newTp)
+		if err != nil {
+			r.err = err
+			return getFullRange()
+		}
+	}
+	return res
 }
 
 // handleUnsignedCol handles the case when unsigned column meets negative value.
@@ -555,19 +628,25 @@ func (*builder) buildFromIsFalse(_ *expression.ScalarFunction, isNot int) []*poi
 	return []*point{startPoint, endPoint}
 }
 
-func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) {
+func (r *builder) buildFromIn(
+	expr *expression.ScalarFunction,
+	newTp *types.FieldType,
+	prefixLen int,
+	convertToSortKey bool,
+) ([]*point, bool) {
 	list := expr.GetArgs()[1:]
 	rangePoints := make([]*point, 0, len(list)*2)
 	hasNull := false
-	colCollate := expr.GetArgs()[0].GetType().GetCollate()
-	tc := r.ctx.GetSessionVars().StmtCtx.TypeCtx()
+	ft := expr.GetArgs()[0].GetType()
+	colCollate := ft.GetCollate()
+	tc := r.sctx.GetSessionVars().StmtCtx.TypeCtx()
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
 			r.err = ErrUnsupportedType.GenWithStack("expr:%v is not constant", e)
 			return getFullRange(), hasNull
 		}
-		dt, err := v.Eval(r.ctx, chunk.Row{})
+		dt, err := v.Eval(r.sctx, chunk.Row{})
 		if err != nil {
 			r.err = ErrUnsupportedType.GenWithStack("expr:%v is not evaluated", e)
 			return getFullRange(), hasNull
@@ -632,15 +711,30 @@ func (r *builder) buildFromIn(expr *expression.ScalarFunction) ([]*point, bool) 
 	if curPos > 0 {
 		curPos++
 	}
-	return rangePoints[:curPos], hasNull
+	rangePoints = rangePoints[:curPos]
+	cutPrefixForPoints(rangePoints, prefixLen, ft)
+	var err error
+	if convertToSortKey {
+		rangePoints, err = pointsConvertToSortKey(r.sctx, rangePoints, newTp)
+		if err != nil {
+			r.err = err
+			return getFullRange(), false
+		}
+	}
+	return rangePoints, hasNull
 }
 
-func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*point {
+func (r *builder) newBuildFromPatternLike(
+	expr *expression.ScalarFunction,
+	newTp *types.FieldType,
+	prefixLen int,
+	convertToSortKey bool,
+) []*point {
 	_, collation := expr.CharsetAndCollation()
 	if !collate.CompatibleCollate(expr.GetArgs()[0].GetType().GetCollate(), collation) {
 		return getFullRange()
 	}
-	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(r.ctx, chunk.Row{})
+	pdt, err := expr.GetArgs()[1].(*expression.Constant).Eval(r.sctx, chunk.Row{})
 	tpOfPattern := expr.GetArgs()[0].GetType()
 	if err != nil {
 		r.err = errors.Trace(err)
@@ -651,13 +745,22 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 		r.err = errors.Trace(err)
 		return getFullRange()
 	}
+	// non-exceptional return case 1: empty pattern
 	if pattern == "" {
 		startPoint := &point{value: types.NewStringDatum(""), start: true}
 		endPoint := &point{value: types.NewStringDatum("")}
-		return []*point{startPoint, endPoint}
+		res := []*point{startPoint, endPoint}
+		if convertToSortKey {
+			res, err = pointsConvertToSortKey(r.sctx, res, newTp)
+			if err != nil {
+				r.err = err
+				return getFullRange()
+			}
+		}
+		return res
 	}
 	lowValue := make([]byte, 0, len(pattern))
-	edt, err := expr.GetArgs()[2].(*expression.Constant).Eval(r.ctx, chunk.Row{})
+	edt, err := expr.GetArgs()[2].(*expression.Constant).Eval(r.sctx, chunk.Row{})
 	if err != nil {
 		r.err = errors.Trace(err)
 		return getFullRange()
@@ -681,36 +784,86 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 			break
 		} else if pattern[i] == '_' {
 			// Get the prefix, but exclude the prefix.
-			// e.g., "abc_x", the start point exclude "abc",
-			// because the string length is more than 3.
-			exclude = true
+			// e.g., "abc_x", the start point excludes "abc" because the string length is more than 3.
+			//
+			// However, like the similar check in (*conditionChecker).checkLikeFunc(), in tidb's implementation, for
+			// PAD SPACE collations, the trailing spaces are removed in the index key. So we are unable to distinguish
+			// 'xxx' from 'xxx   ' by a single index range scan. If we exclude the start point for PAD SPACE collation,
+			// we will actually miss 'xxx   ', which will cause wrong results.
+			if !isPadSpaceCollation(collation) {
+				exclude = true
+			}
 			isExactMatch = false
 			break
 		}
 		lowValue = append(lowValue, pattern[i])
 	}
+	// non-exceptional return case 2: no characters before the wildcard
 	if len(lowValue) == 0 {
 		return []*point{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
 	}
+	// non-exceptional return case 3: pattern contains valid characters and doesn't contain the wildcard
 	if isExactMatch {
 		val := types.NewCollationStringDatum(string(lowValue), tpOfPattern.GetCollate())
-		return []*point{{value: val, start: true}, {value: val}}
+		startPoint := &point{value: val, start: true}
+		endPoint := &point{value: val}
+		res := []*point{startPoint, endPoint}
+		cutPrefixForPoints(res, prefixLen, tpOfPattern)
+		if convertToSortKey {
+			res, err = pointsConvertToSortKey(r.sctx, res, newTp)
+			if err != nil {
+				r.err = err
+				return getFullRange()
+			}
+		}
+		return res
 	}
-	startPoint := &point{start: true, excl: exclude}
-	startPoint.value.SetBytesAsString(lowValue, tpOfPattern.GetCollate(), uint32(tpOfPattern.GetFlen()))
-	highValue := make([]byte, len(lowValue))
-	copy(highValue, lowValue)
-	endPoint := &point{excl: true}
-	for i := len(highValue) - 1; i >= 0; i-- {
+
+	// non-exceptional return case 4: pattern contains valid characters and contains the wildcard
+
+	// non-exceptional return case 4-1
+	// If it's not a _bin or binary collation, and we don't convert the value to the sort key, we can't build
+	// a range for the wildcard.
+	if !convertToSortKey &&
+		!collate.IsBinCollation(tpOfPattern.GetCollate()) {
+		return []*point{{value: types.MinNotNullDatum(), start: true}, {value: types.MaxValueDatum()}}
+	}
+
+	// non-exceptional return case 4-2: build a range for the wildcard
+	// the end_key is sortKey(start_value) + 1
+	originalStartPoint := &point{start: true, excl: exclude}
+	originalStartPoint.value.SetBytesAsString(lowValue, tpOfPattern.GetCollate(), uint32(tpOfPattern.GetFlen()))
+	cutPrefixForPoints([]*point{originalStartPoint}, prefixLen, tpOfPattern)
+
+	// If we don't trim the trailing spaces, which means using KeyWithoutTrimRightSpace() instead of Key(), we can build
+	// a smaller range for better performance, e.g., LIKE '  %'.
+	// However, if it's a PAD SPACE collation, we must trim the trailing spaces for the start point to ensure the correctness.
+	// Because the trailing spaces are trimmed in the stored index key. For example, for LIKE 'abc  %' on utf8mb4_bin
+	// column, the start key should be 'abd' instead of 'abc ', but the end key can be 'abc!'. ( ' ' is 32 and '!' is 33
+	// in ASCII)
+	shouldTrimTrailingSpace := isPadSpaceCollation(collation)
+	startPoint, err := pointConvertToSortKey(r.sctx, originalStartPoint, newTp, shouldTrimTrailingSpace)
+	if err != nil {
+		r.err = errors.Trace(err)
+		return getFullRange()
+	}
+	sortKeyPointWithoutTrim, err := pointConvertToSortKey(r.sctx, originalStartPoint, newTp, false)
+	if err != nil {
+		r.err = errors.Trace(err)
+		return getFullRange()
+	}
+	sortKeyWithoutTrim := append([]byte{}, sortKeyPointWithoutTrim.value.GetBytes()...)
+	endPoint := &point{value: types.MaxValueDatum(), excl: true}
+	for i := len(sortKeyWithoutTrim) - 1; i >= 0; i-- {
 		// Make the end point value more than the start point value,
 		// and the length of the end point value is the same as the length of the start point value.
 		// e.g., the start point value is "abc", so the end point value is "abd".
-		highValue[i]++
-		if highValue[i] != 0 {
-			endPoint.value.SetBytesAsString(highValue, tpOfPattern.GetCollate(), uint32(tpOfPattern.GetFlen()))
+		sortKeyWithoutTrim[i]++
+		if sortKeyWithoutTrim[i] != 0 {
+			endPoint.value.SetBytes(sortKeyWithoutTrim)
 			break
 		}
-		// If highValue[i] is 255 and highValue[i]++ is 0, then the end point value is max value.
+		// If sortKeyWithoutTrim[i] is 255 and sortKeyWithoutTrim[i]++ is 0, then the end point value is max value.
 		if i == 0 {
 			endPoint.value = types.MaxValueDatum()
 		}
@@ -718,7 +871,20 @@ func (r *builder) newBuildFromPatternLike(expr *expression.ScalarFunction) []*po
 	return []*point{startPoint, endPoint}
 }
 
-func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
+// isPadSpaceCollation returns whether the collation is a PAD SPACE collation.
+// Since all collations, except for binary, implemented in tidb are PAD SPACE collations for now, we use a simple
+// collation != binary check here. We may also move it to collation related packages when NO PAD collations are
+// implemented in the future.
+func isPadSpaceCollation(collation string) bool {
+	return collation != charset.CollationBin
+}
+
+func (r *builder) buildFromNot(
+	expr *expression.ScalarFunction,
+	newTp *types.FieldType,
+	prefixLen int,
+	convertToSortKey bool,
+) []*point {
 	switch n := expr.FuncName.L; n {
 	case ast.IsTruthWithoutNull:
 		return r.buildFromIsTrue(expr, 1, false)
@@ -731,7 +897,14 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
 			isUnsignedIntCol bool
 			nonNegativePos   int
 		)
-		rangePoints, hasNull := r.buildFromIn(expr)
+		// Note that we must handle the cutting prefix and converting to sort key in buildFromNot, because if we cut the
+		// prefix inside buildFromIn(), the inversion logic here would make an incomplete and wrong range.
+		// For example, for index col(1), col NOT IN ('aaa', 'bbb'), if we cut the prefix in buildFromIn(), we would get
+		// ['a', 'a'], ['b', 'b'] from there. Then after in this function we would get ['' 'a'), ('a', 'b'), ('b', +inf]
+		// as the result. This is wrong because data like 'ab' would be missed. Actually we are unable to build a range
+		// for this case.
+		// So we must cut the prefix in this function, therefore converting to sort key must also be done here.
+		rangePoints, hasNull := r.buildFromIn(expr, newTp, types.UnspecifiedLength, false)
 		if hasNull {
 			return nil
 		}
@@ -757,6 +930,15 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
 		// Append the interval (last element, max value].
 		retRangePoints = append(retRangePoints, &point{value: previousValue, start: true, excl: true})
 		retRangePoints = append(retRangePoints, &point{value: types.MaxValueDatum()})
+		cutPrefixForPoints(retRangePoints, prefixLen, expr.GetArgs()[0].GetType())
+		if convertToSortKey {
+			var err error
+			retRangePoints, err = pointsConvertToSortKey(r.sctx, retRangePoints, newTp)
+			if err != nil {
+				r.err = err
+				return getFullRange()
+			}
+		}
 		return retRangePoints
 	case ast.Like:
 		// Pattern not like is not supported.
@@ -773,14 +955,27 @@ func (r *builder) buildFromNot(expr *expression.ScalarFunction) []*point {
 	return getFullRange()
 }
 
-func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction, collator collate.Collator) []*point {
+func (r *builder) buildFromScalarFunc(
+	expr *expression.ScalarFunction,
+	newTp *types.FieldType,
+	prefixLen int,
+	convertToSortKey bool,
+) []*point {
 	switch op := expr.FuncName.L; op {
 	case ast.GE, ast.GT, ast.LT, ast.LE, ast.EQ, ast.NE, ast.NullEQ:
-		return r.buildFromBinOp(expr)
+		return r.buildFromBinOp(expr, newTp, prefixLen, convertToSortKey)
 	case ast.LogicAnd:
-		return r.intersection(r.build(expr.GetArgs()[0], collator), r.build(expr.GetArgs()[1], collator), collator)
+		collator := collate.GetCollator(newTp.GetCollate())
+		if convertToSortKey {
+			collator = collate.GetCollator(charset.CollationBin)
+		}
+		return r.intersection(r.build(expr.GetArgs()[0], newTp, prefixLen, convertToSortKey), r.build(expr.GetArgs()[1], newTp, prefixLen, convertToSortKey), collator)
 	case ast.LogicOr:
-		return r.union(r.build(expr.GetArgs()[0], collator), r.build(expr.GetArgs()[1], collator), collator)
+		collator := collate.GetCollator(newTp.GetCollate())
+		if convertToSortKey {
+			collator = collate.GetCollator(charset.CollationBin)
+		}
+		return r.union(r.build(expr.GetArgs()[0], newTp, prefixLen, convertToSortKey), r.build(expr.GetArgs()[1], newTp, prefixLen, convertToSortKey), collator)
 	case ast.IsTruthWithoutNull:
 		return r.buildFromIsTrue(expr, 0, false)
 	case ast.IsTruthWithNull:
@@ -788,25 +983,31 @@ func (r *builder) buildFromScalarFunc(expr *expression.ScalarFunction, collator 
 	case ast.IsFalsity:
 		return r.buildFromIsFalse(expr, 0)
 	case ast.In:
-		retPoints, _ := r.buildFromIn(expr)
+		retPoints, _ := r.buildFromIn(expr, newTp, prefixLen, convertToSortKey)
 		return retPoints
 	case ast.Like:
-		return r.newBuildFromPatternLike(expr)
+		return r.newBuildFromPatternLike(expr, newTp, prefixLen, convertToSortKey)
 	case ast.IsNull:
 		startPoint := &point{start: true}
 		endPoint := &point{}
 		return []*point{startPoint, endPoint}
 	case ast.UnaryNot:
-		return r.buildFromNot(expr.GetArgs()[0].(*expression.ScalarFunction))
+		return r.buildFromNot(expr.GetArgs()[0].(*expression.ScalarFunction), newTp, prefixLen, convertToSortKey)
 	}
 
 	return nil
 }
 
+// We need an input collator because our (*Datum).Compare(), which is used in this method, needs an explicit collator
+// input to handle comparison for string and bytes.
+// Note that if the points are converted to sort key, the collator should be set to charset.CollationBin.
 func (r *builder) intersection(a, b []*point, collator collate.Collator) []*point {
 	return r.merge(a, b, false, collator)
 }
 
+// We need an input collator because our (*Datum).Compare(), which is used in this method, needs an explicit collator
+// input to handle comparison for string and bytes.
+// Note that if the points are converted to sort key, the collator should be set to charset.CollationBin.
 func (r *builder) union(a, b []*point, collator collate.Collator) []*point {
 	return r.merge(a, b, true, collator)
 }
@@ -814,7 +1015,7 @@ func (r *builder) union(a, b []*point, collator collate.Collator) []*point {
 func (r *builder) mergeSorted(a, b []*point, collator collate.Collator) []*point {
 	ret := make([]*point, 0, len(a)+len(b))
 	i, j := 0, 0
-	tc := r.ctx.GetSessionVars().StmtCtx.TypeCtx()
+	tc := r.sctx.GetSessionVars().StmtCtx.TypeCtx()
 	for i < len(a) && j < len(b) {
 		less, err := rangePointLess(tc, a[i], b[j], collator)
 		if err != nil {

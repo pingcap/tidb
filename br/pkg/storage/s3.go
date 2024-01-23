@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/pkg/util/prefetch"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 )
@@ -735,6 +736,9 @@ func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if o != nil && o.PrefetchSize > 0 {
+		reader = prefetch.NewReader(reader, o.PrefetchSize)
+	}
 	return &s3ObjectReader{
 		storage:   rs,
 		name:      path,
@@ -873,6 +877,9 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 	maxCnt := r.rangeInfo.End + 1 - r.pos
 	if maxCnt > int64(len(p)) {
 		maxCnt = int64(len(p))
+	}
+	if maxCnt == 0 {
+		return 0, io.EOF
 	}
 	n, err = r.reader.Read(p[:maxCnt])
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
@@ -1055,7 +1062,11 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 		}()
 		uploader = s3Writer
 	}
-	uploaderWriter := newBufferedWriter(uploader, WriteBufferSize, NoCompression)
+	bufSize := WriteBufferSize
+	if option != nil && option.PartSize > 0 {
+		bufSize = int(option.PartSize)
+	}
+	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression)
 	return uploaderWriter, nil
 }
 

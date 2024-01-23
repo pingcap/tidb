@@ -521,13 +521,13 @@ analyze table t;
 insert ignore into t values (1);
 update ignore t set a=2 where a=1;
 affected rows: 0
-info: Rows matched: 1  Changed: 0  Warnings: 0
+info: Rows matched: 1  Changed: 0  Warnings: 1
 drop table if exists t;
 create table t (a int key) partition by list (a) (partition p0 values in (0,1));
 insert ignore into t values (1);
 update ignore t set a=2 where a=1;
 affected rows: 0
-info: Rows matched: 1  Changed: 0  Warnings: 0
+info: Rows matched: 1  Changed: 0  Warnings: 1
 set @@session.tidb_enable_list_partition = default;
 drop table if exists t;
 create table t(id integer auto_increment, t1 datetime, t2 datetime, primary key (id));

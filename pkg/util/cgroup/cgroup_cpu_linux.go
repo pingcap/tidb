@@ -17,6 +17,7 @@
 package cgroup
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"runtime"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 )
 
 // GetCgroupCPU returns the CPU usage and quota for the current cgroup.
@@ -66,10 +68,30 @@ func inContainer(path string) bool {
 	if err != nil {
 		return false
 	}
-	if strings.Contains(string(v), "docker") ||
-		strings.Contains(string(v), "kubepods") ||
-		strings.Contains(string(v), "containerd") {
-		return true
+
+	// For cgroup V1, check /proc/self/cgroup
+	if path == procPathCGroup {
+		if strings.Contains(string(v), "docker") ||
+			strings.Contains(string(v), "kubepods") ||
+			strings.Contains(string(v), "containerd") {
+			return true
+		}
 	}
+
+	// For cgroup V2, check /proc/self/mountinfo
+	if path == procPathMountInfo {
+		lines := strings.Split(string(v), "\n")
+		for _, line := range lines {
+			v := strings.Split(line, " ")
+			// check mount point is on overlay or not.
+			// v[4] means `mount point`, v[8] means `filesystem type`.
+			// see details from https://man7.org/linux/man-pages/man5/proc.5.html
+			if len(v) >= 8 && v[4] == "\\" && v[8] == "overlay" {
+				log.Info(fmt.Sprintf("TiDB runs in a container, mount info: %s", line))
+				return true
+			}
+		}
+	}
+
 	return false
 }

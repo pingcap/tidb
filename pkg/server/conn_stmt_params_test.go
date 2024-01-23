@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/stretchr/testify/require"
 )
 
@@ -268,9 +269,9 @@ func TestParseExecArgs(t *testing.T) {
 	}
 	for _, tt := range tests {
 		var warn error
-		typectx := types.NewContext(types.DefaultStmtFlags.WithTruncateAsWarning(true), time.UTC, func(err error) {
+		typectx := types.NewContext(types.DefaultStmtFlags.WithTruncateAsWarning(true), time.UTC, contextutil.NewFuncWarnHandlerForTest(func(err error) {
 			warn = err
-		})
+		}))
 		err := decodeAndParse(typectx, tt.args.args, tt.args.boundParams, tt.args.nullBitmap, tt.args.paramTypes, tt.args.paramValues, nil)
 		require.Truef(t, terror.ErrorEqual(err, tt.err), "err %v", err)
 		require.Truef(t, terror.ErrorEqual(warn, tt.warn), "warn %v", warn)
@@ -340,7 +341,7 @@ func expectedDatetimeExecuteResult(t *testing.T, c *mockConn, time types.Time, w
 		require.NoError(t, conn.writePacket(data))
 
 		for i := 0; i < warnCount; i++ {
-			conn.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.New("any error"))
+			conn.ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("any error"))
 		}
 		require.NoError(t, conn.writeEOF(context.Background(), mysql.ServerStatusAutocommit))
 	})

@@ -114,25 +114,25 @@ func TestGroupSetsTargetOneCompoundArgs(t *testing.T) {
 	require.Equal(t, offset, 0) // default
 
 	// mock normal agg count(d+1)
-	normalAggArgs = newFunction(ast.Plus, d, newLonglong(1))
+	normalAggArgs = newFunctionWithMockCtx(ast.Plus, d, newLonglong(1))
 	offset = newGroupingSets.TargetOne([]Expression{normalAggArgs})
 	require.NotEqual(t, offset, -1)
 	require.Equal(t, offset, 0) // default
 
 	// mock normal agg count(d+c)
-	normalAggArgs = newFunction(ast.Plus, d, c)
+	normalAggArgs = newFunctionWithMockCtx(ast.Plus, d, c)
 	offset = newGroupingSets.TargetOne([]Expression{normalAggArgs})
 	require.NotEqual(t, offset, -1)
 	require.Equal(t, offset, 1) // only {c} can supply d and c
 
 	// mock normal agg count(d+a)
-	normalAggArgs = newFunction(ast.Plus, d, a)
+	normalAggArgs = newFunctionWithMockCtx(ast.Plus, d, a)
 	offset = newGroupingSets.TargetOne([]Expression{normalAggArgs})
 	require.NotEqual(t, offset, -1)
 	require.Equal(t, offset, 0) // only {a,b} can supply d and a
 
 	// mock normal agg count(d+a+c)
-	normalAggArgs = newFunction(ast.Plus, d, newFunction(ast.Plus, a, c))
+	normalAggArgs = newFunctionWithMockCtx(ast.Plus, d, newFunctionWithMockCtx(ast.Plus, a, c))
 	offset = newGroupingSets.TargetOne([]Expression{normalAggArgs})
 	require.Equal(t, offset, -1) // couldn't find a group that supply d, a and c simultaneously.
 }

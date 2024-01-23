@@ -23,4 +23,5 @@ import (
 func TestShouldRun(t *testing.T) {
 	require.True(t, shouldRun("gofmt", "some.go"))
 	require.False(t, shouldRun("gofmt", "uca_generated.go"))
+	require.True(t, shouldRun("revive", "/pkg/meta/distributed_lock.go"))
 }

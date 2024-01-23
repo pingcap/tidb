@@ -136,7 +136,6 @@ go_test(
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_pd_client//http",
-        "@io_etcd_go_etcd_client_v3//:client",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
         "@org_uber_go_goleak//:goleak",

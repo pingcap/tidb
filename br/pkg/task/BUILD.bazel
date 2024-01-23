@@ -20,6 +20,7 @@ go_library(
     deps = [
         "//br/pkg/aws",
         "//br/pkg/backup",
+        "//br/pkg/backup/prepare_snap",
         "//br/pkg/checkpoint",
         "//br/pkg/checksum",
         "//br/pkg/common",
@@ -99,7 +100,7 @@ go_test(
     ],
     embed = [":task"],
     flaky = True,
-    shard_count = 21,
+    shard_count = 22,
     deps = [
         "//br/pkg/conn",
         "//br/pkg/errors",

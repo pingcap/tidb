@@ -209,9 +209,11 @@ func (e *UpdateExec) exec(ctx context.Context, _ *expression.Schema, row, newDat
 			continue
 		}
 
-		sc := e.Ctx().GetSessionVars().StmtCtx
-		if (kv.ErrKeyExists.Equal(err1) || table.ErrCheckConstraintViolated.Equal(err1)) && sc.DupKeyAsWarning {
-			sc.AppendWarning(err1)
+		if kv.ErrKeyExists.Equal(err1) || table.ErrCheckConstraintViolated.Equal(err1) {
+			ec := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()
+			if err1 = ec.HandleErrorWithAlias(kv.ErrKeyExists, err1, err1); err1 != nil {
+				return err1
+			}
 			continue
 		}
 		return err1
@@ -437,7 +439,7 @@ func (e *UpdateExec) Close() error {
 		}
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
-	return e.Children(0).Close()
+	return exec.Close(e.Children(0))
 }
 
 // Open implements the Executor Open interface.

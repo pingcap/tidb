@@ -1630,6 +1630,24 @@ select /*+ set_var(max_execution_time=100) */ @@max_execution_time;
 select @@max_execution_time;
 @@max_execution_time
 1000
+select @@tidb_max_chunk_size;
+@@tidb_max_chunk_size
+32
+select /*+ set_var(tidb_max_chunk_size=32) */ @@tidb_max_chunk_size;
+@@tidb_max_chunk_size
+32
+select @@tidb_max_chunk_size;
+@@tidb_max_chunk_size
+32
+select @@tidb_init_chunk_size;
+@@tidb_init_chunk_size
+1
+select /*+ set_var(tidb_init_chunk_size=3) */ @@tidb_init_chunk_size;
+@@tidb_init_chunk_size
+3
+select @@tidb_init_chunk_size;
+@@tidb_init_chunk_size
+1
 set @@global.max_execution_time=1000;
 select @@max_execution_time;
 @@max_execution_time

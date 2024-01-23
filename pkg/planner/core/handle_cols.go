@@ -164,7 +164,7 @@ func (cb *CommonHandleCols) String() string {
 		if i != 0 {
 			b.WriteByte(',')
 		}
-		b.WriteString(col.ExplainInfo())
+		b.WriteString(col.ColumnExplainInfo(false))
 	}
 	b.WriteByte(']')
 	return b.String()
@@ -269,7 +269,7 @@ func (*IntHandleCols) IsInt() bool {
 
 // String implements the kv.HandleCols interface.
 func (ib *IntHandleCols) String() string {
-	return ib.col.ExplainInfo()
+	return ib.col.ColumnExplainInfo(false)
 }
 
 // GetCol implements the kv.HandleCols interface.

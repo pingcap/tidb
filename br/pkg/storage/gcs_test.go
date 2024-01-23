@@ -3,7 +3,10 @@
 package storage
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -11,10 +14,12 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 )
 
 func TestGCS(t *testing.T) {
+	require.True(t, intest.InTest)
 	ctx := context.Background()
 
 	opts := fakestorage.Options{
@@ -255,6 +260,7 @@ func TestGCS(t *testing.T) {
 }
 
 func TestNewGCSStorage(t *testing.T) {
+	require.True(t, intest.InTest)
 	ctx := context.Background()
 
 	opts := fakestorage.Options{
@@ -299,7 +305,7 @@ func TestNewGCSStorage(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "", gcs.CredentialsBlob)
 	}
-
+	mustReportCredErr = true
 	{
 		fakeCredentialsFile, err := os.CreateTemp(testDir, "fakeCredentialsFile")
 		require.NoError(t, err)
@@ -379,7 +385,22 @@ func TestNewGCSStorage(t *testing.T) {
 		})
 		require.Error(t, err)
 	}
-
+	// without http client
+	{
+		gcs := &backuppb.GCS{
+			Bucket:          bucketName,
+			Prefix:          "a/b",
+			StorageClass:    "NEARLINE",
+			PredefinedAcl:   "private",
+			CredentialsBlob: `{"type": "service_account"}`,
+		}
+		_, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{
+			SendCredentials:  false,
+			CheckPermissions: []Permission{AccessBuckets},
+		})
+		require.NoError(t, err)
+	}
+	mustReportCredErr = false
 	{
 		gcs := &backuppb.GCS{
 			Bucket:          bucketName,
@@ -400,6 +421,7 @@ func TestNewGCSStorage(t *testing.T) {
 }
 
 func TestReadRange(t *testing.T) {
+	require.True(t, intest.InTest)
 	ctx := context.Background()
 
 	opts := fakestorage.Options{
@@ -440,4 +462,40 @@ func TestReadRange(t *testing.T) {
 	n, err := r.Read(content)
 	require.NoError(t, err)
 	require.Equal(t, []byte("234"), content[:n])
+}
+
+var testingStorageURI = flag.String("testing-storage-uri", "", "the URI of the storage used for testing")
+
+func openTestingStorage(t *testing.T) ExternalStorage {
+	if *testingStorageURI == "" {
+		t.Skip("testingStorageURI is not set")
+	}
+	s, err := NewFromURL(context.Background(), *testingStorageURI)
+	require.NoError(t, err)
+	return s
+}
+
+func TestMultiPartUpload(t *testing.T) {
+	ctx := context.Background()
+
+	s := openTestingStorage(t)
+	if _, ok := s.(*GCSStorage); !ok {
+		t.Skipf("only test GCSStorage, got %T", s)
+	}
+
+	filename := "TestMultiPartUpload"
+	// just get some random content, use any seed is enough
+	data := make([]byte, 100*1024*1024)
+	rand.Read(data)
+	w, err := s.Create(ctx, filename, &WriterOption{Concurrency: 10})
+	require.NoError(t, err)
+	_, err = w.Write(ctx, data)
+	require.NoError(t, err)
+	err = w.Close(ctx)
+	require.NoError(t, err)
+
+	got, err := s.ReadFile(ctx, filename)
+	require.NoError(t, err)
+	cmp := bytes.Compare(data, got)
+	require.Zero(t, cmp)
 }

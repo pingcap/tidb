@@ -87,7 +87,7 @@ func TestFilterDifferentAllocators(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 1, len(allHandles))
 		orderedHandles = testutil.MaskSortHandles(allHandles, 5, mysql.TypeLonglong)
-		require.Greater(t, orderedHandles[0], int64(3000001))
+		require.GreaterOrEqual(t, orderedHandles[0], int64(3000001))
 
 		tk.MustExec("drop table t1")
 	}

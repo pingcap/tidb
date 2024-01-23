@@ -194,7 +194,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 		AggFuncs:     bottomAggFuncs,
 		GroupByItems: bottomAggGroupbyItems,
 		aggHints:     agg.aggHints,
-	}.Init(agg.SCtx(), agg.SelectBlockOffset())
+	}.Init(agg.SCtx(), agg.QueryBlockOffset())
 	bottomAgg.SetChildren(agg.children...)
 	bottomAgg.SetSchema(bottomAggSchema)
 
@@ -202,7 +202,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 		AggFuncs:     topAggFuncs,
 		GroupByItems: agg.GroupByItems,
 		aggHints:     agg.aggHints,
-	}.Init(agg.SCtx(), agg.SelectBlockOffset())
+	}.Init(agg.SCtx(), agg.QueryBlockOffset())
 	topAgg.SetChildren(bottomAgg)
 	topAgg.SetSchema(topAggSchema)
 
@@ -215,7 +215,7 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 	// we have to return a project operator that casts decimal to bigint
 	proj := LogicalProjection{
 		Exprs: make([]expression.Expression, 0, len(agg.AggFuncs)),
-	}.Init(agg.SCtx(), agg.SelectBlockOffset())
+	}.Init(agg.SCtx(), agg.QueryBlockOffset())
 	for _, column := range topAggSchema.Columns {
 		proj.Exprs = append(proj.Exprs, column.Clone())
 	}

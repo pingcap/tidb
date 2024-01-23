@@ -1123,3 +1123,12 @@ select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER
 COLLATION_NAME	CHARACTER_SET_NAME	ID	IS_DEFAULT	IS_COMPILED	SORTLEN
 utf8mb4_bin	utf8mb4	46	Yes	Yes	1
 set @@session.default_collation_for_utf8mb4=default;
+DROP TABLE IF EXISTS `t`;
+CREATE TABLE `t` (a BIGINT PRIMARY KEY AUTO_RANDOM(2), b INT) PRE_SPLIT_REGIONS=4;
+SHOW CREATE TABLE `t`;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` bigint(20) NOT NULL /*T![auto_rand] AUTO_RANDOM(2) */,
+  `b` int(11) DEFAULT NULL,
+  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T! PRE_SPLIT_REGIONS=2 */

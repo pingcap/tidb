@@ -158,6 +158,20 @@ func (w *WaitGroupWrapper) Run(exec func()) {
 	}()
 }
 
+// Go works like Run, but it also logs on panic.
+func (w *WaitGroupWrapper) Go(exec func()) {
+	w.Add(1)
+	go func() {
+		defer w.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				logutil.BgLogger().Error("panic in wait group", zap.Any("recover", r), zap.Stack("stack"))
+			}
+		}()
+		exec()
+	}()
+}
+
 // RunWithRecover wraps goroutine startup call with force recovery, add 1 to WaitGroup
 // and call done when function return. it will dump current goroutine stack into log if catch any recover result.
 // exec is that execute logic function. recoverFn is that handler will be called after recover and before dump stack,
@@ -229,8 +243,7 @@ func (g *ErrorGroupWithRecover) Go(fn func() error) {
 	g.Group.Go(func() (err error) {
 		defer func() {
 			if r := recover(); r != nil {
-				// stack is automatically printed
-				logutil.BgLogger().Error("panic in error group", zap.Any("recover", r))
+				logutil.BgLogger().Error("panic in error group", zap.Any("recover", r), zap.Stack("stack"))
 				err = GetRecoverError(r)
 			}
 		}()

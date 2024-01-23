@@ -60,13 +60,13 @@ func validInterval(sctx sessionctx.Context, low, high *point) (bool, error) {
 
 // convertPoints does some preprocessing on rangePoints to make them ready to build ranges. Preprocessing includes converting
 // points to the specified type, validating intervals and skipping impossible intervals.
-func convertPoints(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType, skipNull bool, tableRange bool) ([]*point, error) {
+func convertPoints(sctx sessionctx.Context, rangePoints []*point, newTp *types.FieldType, skipNull bool, tableRange bool) ([]*point, error) {
 	i := 0
 	numPoints := len(rangePoints)
 	var minValueDatum, maxValueDatum types.Datum
 	if tableRange {
 		// Currently, table's kv range cannot accept encoded value of MaxValueDatum. we need to convert it.
-		isUnsigned := mysql.HasUnsignedFlag(tp.GetFlag())
+		isUnsigned := mysql.HasUnsignedFlag(newTp.GetFlag())
 		if isUnsigned {
 			minValueDatum.SetUint64(0)
 			maxValueDatum.SetUint64(math.MaxUint64)
@@ -76,7 +76,7 @@ func convertPoints(sctx sessionctx.Context, rangePoints []*point, tp *types.Fiel
 		}
 	}
 	for j := 0; j < numPoints; j += 2 {
-		startPoint, err := convertPoint(sctx, rangePoints[j], tp)
+		startPoint, err := convertPoint(sctx, rangePoints[j], newTp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -88,7 +88,7 @@ func convertPoints(sctx sessionctx.Context, rangePoints []*point, tp *types.Fiel
 				startPoint.value = minValueDatum
 			}
 		}
-		endPoint, err := convertPoint(sctx, rangePoints[j+1], tp)
+		endPoint, err := convertPoint(sctx, rangePoints[j+1], newTp)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -124,15 +124,15 @@ func estimateMemUsageForPoints2Ranges(rangePoints []*point) int64 {
 // Only one column is built there. If there're multiple columns, use appendPoints2Ranges.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // If the second return value is true, it means that the estimated memory usage of ranges exceeds rangeMaxSize and it falls back to full range.
-func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
-	convertedPoints, err := convertPoints(sctx, rangePoints, tp, mysql.HasNotNullFlag(tp.GetFlag()), false)
+func points2Ranges(sctx sessionctx.Context, rangePoints []*point, newTp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
+	convertedPoints, err := convertPoints(sctx, rangePoints, newTp, mysql.HasNotNullFlag(newTp.GetFlag()), false)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
 	// Estimate whether rangeMaxSize will be exceeded first before converting points to ranges.
 	if rangeMaxSize > 0 && estimateMemUsageForPoints2Ranges(convertedPoints) > rangeMaxSize {
 		var fullRange Ranges
-		if mysql.HasNotNullFlag(tp.GetFlag()) {
+		if mysql.HasNotNullFlag(newTp.GetFlag()) {
 			fullRange = FullNotNullRange()
 		} else {
 			fullRange = FullRange()
@@ -147,46 +147,46 @@ func points2Ranges(sctx sessionctx.Context, rangePoints []*point, tp *types.Fiel
 			LowExclude:  startPoint.excl,
 			HighVal:     []types.Datum{endPoint.value},
 			HighExclude: endPoint.excl,
-			Collators:   []collate.Collator{collate.GetCollator(tp.GetCollate())},
+			Collators:   []collate.Collator{collate.GetCollator(newTp.GetCollate())},
 		}
 		ranges = append(ranges, ran)
 	}
 	return ranges, false, nil
 }
 
-func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*point, error) {
+func convertPoint(sctx sessionctx.Context, point *point, newTp *types.FieldType) (*point, error) {
 	sc := sctx.GetSessionVars().StmtCtx
 	switch point.value.Kind() {
 	case types.KindMaxValue, types.KindMinNotNull:
 		return point, nil
 	}
-	casted, err := point.value.ConvertTo(sc.TypeCtx(), tp)
+	casted, err := point.value.ConvertTo(sc.TypeCtx(), newTp)
 	if err != nil {
 		if sctx.GetSessionVars().StmtCtx.InPreparedPlanBuilding {
 			// skip plan cache in this case for safety.
 			sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("%s when converting %v", err.Error(), point.value))
 		}
 		//revive:disable:empty-block
-		if tp.GetType() == mysql.TypeYear && terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
+		if newTp.GetType() == mysql.TypeYear && terror.ErrorEqual(err, types.ErrWarnDataOutOfRange) {
 			// see issue #20101: overflow when converting integer to year
-		} else if tp.GetType() == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {
+		} else if newTp.GetType() == mysql.TypeBit && terror.ErrorEqual(err, types.ErrDataTooLong) {
 			// see issue #19067: we should ignore the types.ErrDataTooLong when we convert value to TypeBit value
-		} else if tp.GetType() == mysql.TypeNewDecimal && terror.ErrorEqual(err, types.ErrOverflow) {
+		} else if newTp.GetType() == mysql.TypeNewDecimal && terror.ErrorEqual(err, types.ErrOverflow) {
 			// Ignore the types.ErrOverflow when we convert TypeNewDecimal values.
 			// A trimmed valid boundary point value would be returned then. Accordingly, the `excl` of the point
 			// would be adjusted. Impossible ranges would be skipped by the `validInterval` call later.
-		} else if point.value.Kind() == types.KindMysqlTime && tp.GetType() == mysql.TypeTimestamp && terror.ErrorEqual(err, types.ErrWrongValue) {
+		} else if point.value.Kind() == types.KindMysqlTime && newTp.GetType() == mysql.TypeTimestamp && terror.ErrorEqual(err, types.ErrWrongValue) {
 			// See issue #28424: query failed after add index
 			// Ignore conversion from Date[Time] to Timestamp since it must be either out of range or impossible date, which will not match a point select
-		} else if tp.GetType() == mysql.TypeEnum && terror.ErrorEqual(err, types.ErrTruncated) {
+		} else if newTp.GetType() == mysql.TypeEnum && terror.ErrorEqual(err, types.ErrTruncated) {
 			// Ignore the types.ErrorTruncated when we convert TypeEnum values.
 			// We should cover Enum upper overflow, and convert to the biggest value.
 			if point.value.GetInt64() > 0 {
-				upperEnum, err := types.ParseEnumValue(tp.GetElems(), uint64(len(tp.GetElems())))
+				upperEnum, err := types.ParseEnumValue(newTp.GetElems(), uint64(len(newTp.GetElems())))
 				if err != nil {
 					return nil, err
 				}
-				casted.SetMysqlEnum(upperEnum, tp.GetCollate())
+				casted.SetMysqlEnum(upperEnum, newTp.GetCollate())
 			}
 		} else if terror.ErrorEqual(err, charset.ErrInvalidCharacterString) {
 			// The invalid string can be produced by changing datum's underlying bytes directly.
@@ -198,7 +198,7 @@ func convertPoint(sctx sessionctx.Context, point *point, tp *types.FieldType) (*
 		}
 		//revive:enable:empty-block
 	}
-	valCmpCasted, err := point.value.Compare(sc.TypeCtx(), &casted, collate.GetCollator(tp.GetCollate()))
+	valCmpCasted, err := point.value.Compare(sc.TypeCtx(), &casted, collate.GetCollator(newTp.GetCollate()))
 	if err != nil {
 		return point, errors.Trace(err)
 	}
@@ -272,8 +272,8 @@ func estimateMemUsageForAppendPoints2Ranges(origin Ranges, rangePoints []*point)
 // If the second return value is true, it means that the estimated memory usage of ranges after appending points exceeds
 // rangeMaxSize and the function rejects appending points to ranges.
 func appendPoints2Ranges(sctx sessionctx.Context, origin Ranges, rangePoints []*point,
-	ft *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
-	convertedPoints, err := convertPoints(sctx, rangePoints, ft, false, false)
+	newTp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
+	convertedPoints, err := convertPoints(sctx, rangePoints, newTp, false, false)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
@@ -287,7 +287,7 @@ func appendPoints2Ranges(sctx sessionctx.Context, origin Ranges, rangePoints []*
 		if !oRange.IsPoint(sctx) {
 			newIndexRanges = append(newIndexRanges, oRange)
 		} else {
-			newRanges, err := appendPoints2IndexRange(oRange, convertedPoints, ft)
+			newRanges, err := appendPoints2IndexRange(oRange, convertedPoints, newTp)
 			if err != nil {
 				return nil, false, errors.Trace(err)
 			}
@@ -384,13 +384,13 @@ func AppendRanges2PointRanges(pointRanges Ranges, ranges Ranges, rangeMaxSize in
 // It will remove the nil and convert MinNotNull and MaxValue to MinInt64 or MinUint64 and MaxInt64 or MaxUint64.
 // rangeMaxSize is the max memory limit for ranges. O indicates no memory limit.
 // If the second return value is true, it means that the estimated memory usage of ranges exceeds rangeMaxSize and it falls back to full range.
-func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
-	convertedPoints, err := convertPoints(sctx, rangePoints, tp, true, true)
+func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, newTp *types.FieldType, rangeMaxSize int64) (Ranges, bool, error) {
+	convertedPoints, err := convertPoints(sctx, rangePoints, newTp, true, true)
 	if err != nil {
 		return nil, false, errors.Trace(err)
 	}
 	if rangeMaxSize > 0 && estimateMemUsageForPoints2Ranges(convertedPoints) > rangeMaxSize {
-		return FullIntRange(mysql.HasUnsignedFlag(tp.GetFlag())), true, nil
+		return FullIntRange(mysql.HasUnsignedFlag(newTp.GetFlag())), true, nil
 	}
 	ranges := make(Ranges, 0, len(convertedPoints)/2)
 	for i := 0; i < len(convertedPoints); i += 2 {
@@ -400,7 +400,7 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 			LowExclude:  startPoint.excl,
 			HighVal:     []types.Datum{endPoint.value},
 			HighExclude: endPoint.excl,
-			Collators:   []collate.Collator{collate.GetCollator(tp.GetCollate())},
+			Collators:   []collate.Collator{collate.GetCollator(newTp.GetCollate())},
 		}
 		ranges = append(ranges, ran)
 	}
@@ -412,11 +412,12 @@ func points2TableRanges(sctx sessionctx.Context, rangePoints []*point, tp *types
 // The second return value is the conditions used to build ranges and the third return value is the remained conditions.
 func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.Context, tp *types.FieldType, tableRange bool,
 	colLen int, rangeMaxSize int64) (Ranges, []expression.Expression, []expression.Expression, error) {
-	rb := builder{ctx: sctx}
+	rb := builder{sctx: sctx}
+	newTp := newFieldType(tp)
 	rangePoints := getFullRange()
 	for _, cond := range accessConditions {
-		collator := collate.GetCollator(tp.GetCollate())
-		rangePoints = rb.intersection(rangePoints, rb.build(cond, collator), collator)
+		collator := collate.GetCollator(charset.CollationBin)
+		rangePoints = rb.intersection(rangePoints, rb.build(cond, newTp, colLen, true), collator)
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
@@ -426,7 +427,7 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 		rangeFallback bool
 		err           error
 	)
-	newTp := newFieldType(tp)
+	newTp = convertStringFTToBinaryCollate(newTp)
 	if tableRange {
 		ranges, rangeFallback, err = points2TableRanges(sctx, rangePoints, newTp, rangeMaxSize)
 	} else {
@@ -440,17 +441,6 @@ func buildColumnRange(accessConditions []expression.Expression, sctx sessionctx.
 		return ranges, nil, accessConditions, nil
 	}
 	if colLen != types.UnspecifiedLength {
-		for _, ran := range ranges {
-			// If the length of the last column of LowVal is equal to the prefix length, LowExclude should be set false.
-			// For example, `col_varchar > 'xx'` should be converted to range [xx, +inf) when the prefix index length of
-			// `col_varchar` is 2. Otherwise we would miss values like 'xxx' if we execute (xx, +inf) index range scan.
-			if CutDatumByPrefixLen(&ran.LowVal[0], colLen, tp) || ReachPrefixLen(&ran.LowVal[0], colLen, tp) {
-				ran.LowExclude = false
-			}
-			if CutDatumByPrefixLen(&ran.HighVal[0], colLen, tp) {
-				ran.HighExclude = false
-			}
-		}
 		ranges, err = UnionRanges(sctx, ranges, true)
 		if err != nil {
 			return nil, nil, nil, err
@@ -486,7 +476,7 @@ func BuildColumnRange(conds []expression.Expression, sctx sessionctx.Context, tp
 
 func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAndInCount int,
 	accessConds []expression.Expression) (Ranges, []expression.Expression, []expression.Expression, error) {
-	rb := builder{ctx: d.sctx}
+	rb := builder{sctx: d.sctx}
 	var (
 		ranges        Ranges
 		rangeFallback bool
@@ -494,14 +484,15 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	)
 	for i := 0; i < eqAndInCount; i++ {
 		// Build ranges for equal or in access conditions.
-		point := rb.build(accessConds[i], collate.GetCollator(newTp[i].GetCollate()))
+		point := rb.build(accessConds[i], newTp[i], d.lengths[i], d.convertToSortKey)
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
+		tmpNewTp := convertStringFTToBinaryCollate(newTp[i])
 		if i == 0 {
-			ranges, rangeFallback, err = points2Ranges(d.sctx, point, newTp[i], d.rangeMaxSize)
+			ranges, rangeFallback, err = points2Ranges(d.sctx, point, tmpNewTp, d.rangeMaxSize)
 		} else {
-			ranges, rangeFallback, err = appendPoints2Ranges(d.sctx, ranges, point, newTp[i], d.rangeMaxSize)
+			ranges, rangeFallback, err = appendPoints2Ranges(d.sctx, ranges, point, tmpNewTp, d.rangeMaxSize)
 		}
 		if err != nil {
 			return nil, nil, nil, errors.Trace(err)
@@ -515,15 +506,26 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 	// Build rangePoints for non-equal access conditions.
 	for i := eqAndInCount; i < len(accessConds); i++ {
 		collator := collate.GetCollator(newTp[eqAndInCount].GetCollate())
-		rangePoints = rb.intersection(rangePoints, rb.build(accessConds[i], collator), collator)
+		if d.convertToSortKey {
+			collator = collate.GetCollator(charset.CollationBin)
+		}
+		rangePoints = rb.intersection(rangePoints, rb.build(accessConds[i], newTp[eqAndInCount], d.lengths[eqAndInCount], d.convertToSortKey), collator)
 		if rb.err != nil {
 			return nil, nil, nil, errors.Trace(rb.err)
 		}
 	}
+	var tmpNewTp *types.FieldType
+	if eqAndInCount == 0 || eqAndInCount < len(accessConds) {
+		if d.convertToSortKey {
+			tmpNewTp = convertStringFTToBinaryCollate(newTp[eqAndInCount])
+		} else {
+			tmpNewTp = newTp[eqAndInCount]
+		}
+	}
 	if eqAndInCount == 0 {
-		ranges, rangeFallback, err = points2Ranges(d.sctx, rangePoints, newTp[0], d.rangeMaxSize)
+		ranges, rangeFallback, err = points2Ranges(d.sctx, rangePoints, tmpNewTp, d.rangeMaxSize)
 	} else if eqAndInCount < len(accessConds) {
-		ranges, rangeFallback, err = appendPoints2Ranges(d.sctx, ranges, rangePoints, newTp[eqAndInCount], d.rangeMaxSize)
+		ranges, rangeFallback, err = appendPoints2Ranges(d.sctx, ranges, rangePoints, tmpNewTp, d.rangeMaxSize)
 	}
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
@@ -533,6 +535,18 @@ func (d *rangeDetacher) buildRangeOnColsByCNFCond(newTp []*types.FieldType, eqAn
 		return ranges, accessConds[:eqAndInCount], accessConds[eqAndInCount:], nil
 	}
 	return ranges, accessConds, nil, nil
+}
+
+func convertStringFTToBinaryCollate(ft *types.FieldType) *types.FieldType {
+	if ft.EvalType() != types.ETString ||
+		ft.GetType() == mysql.TypeEnum ||
+		ft.GetType() == mysql.TypeSet {
+		return ft
+	}
+	newTp := ft.Clone()
+	newTp.SetCharset(charset.CharsetBin)
+	newTp.SetCollate(charset.CollationBin)
+	return newTp
 }
 
 // buildCNFIndexRange builds the range for index where the top layer is CNF.
@@ -545,11 +559,9 @@ func (d *rangeDetacher) buildCNFIndexRange(newTp []*types.FieldType, eqAndInCoun
 
 	// Take prefix index into consideration.
 	if hasPrefix(d.lengths) {
-		if fixPrefixColRange(ranges, d.lengths, newTp) {
-			ranges, err = UnionRanges(d.sctx, ranges, d.mergeConsecutive)
-			if err != nil {
-				return nil, nil, nil, errors.Trace(err)
-			}
+		ranges, err = UnionRanges(d.sctx, ranges, d.mergeConsecutive)
+		if err != nil {
+			return nil, nil, nil, errors.Trace(err)
 		}
 	}
 
@@ -622,47 +634,28 @@ func hasPrefix(lengths []int) bool {
 	return false
 }
 
-// fixPrefixColRange checks whether the range of one column exceeds the length and needs to be cut.
-// It specially handles the last column of each range point. If the last one need to be cut, it will
-// change the exclude status of that point and return `true` to tell
-// that we need do a range merging since that interval may have intersection.
-// e.g. if the interval is (-inf -inf, a xxxxx), (a xxxxx, +inf +inf) and the length of the last column is 3,
-//
-//	then we'll change it to (-inf -inf, a xxx], [a xxx, +inf +inf). You can see that this two interval intersect,
-//	so we need a merge operation.
-//
-// Q: only checking the last column to decide whether the endpoint's exclude status needs to be reset is enough?
-// A: Yes, suppose that the interval is (-inf -inf, a xxxxx b) and only the second column needs to be cut.
-//
-//	The result would be (-inf -inf, a xxx b) if the length of it is 3. Obviously we only need to care about the data
-//	whose the first two key is `a` and `xxx`. It read all data whose index value begins with `a` and `xxx` and the third
-//	value less than `b`, covering the values begin with `a` and `xxxxx` and the third value less than `b` perfectly.
-//	So in this case we don't need to reset its exclude status. The right endpoint case can be proved in the same way.
-func fixPrefixColRange(ranges Ranges, lengths []int, tp []*types.FieldType) bool {
-	var hasCut bool
-	for _, ran := range ranges {
-		lowTail := len(ran.LowVal) - 1
-		for i := 0; i < lowTail; i++ {
-			hasCut = CutDatumByPrefixLen(&ran.LowVal[i], lengths[i], tp[i]) || hasCut
-		}
-		lowCut := CutDatumByPrefixLen(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail])
-		// If the length of the last column of LowVal is equal to the prefix length, LowExclude should be set false.
-		// For example, `col_varchar > 'xx'` should be converted to range [xx, +inf) when the prefix index length of
-		// `col_varchar` is 2. Otherwise we would miss values like 'xxx' if we execute (xx, +inf) index range scan.
-		if lowCut || ReachPrefixLen(&ran.LowVal[lowTail], lengths[lowTail], tp[lowTail]) {
-			ran.LowExclude = false
-		}
-		highTail := len(ran.HighVal) - 1
-		for i := 0; i < highTail; i++ {
-			hasCut = CutDatumByPrefixLen(&ran.HighVal[i], lengths[i], tp[i]) || hasCut
-		}
-		highCut := CutDatumByPrefixLen(&ran.HighVal[highTail], lengths[highTail], tp[highTail])
-		if highCut {
-			ran.HighExclude = false
-		}
-		hasCut = hasCut || lowCut || highCut
+// cutPrefixForPoints cuts the prefix of points according to the prefix length of the prefix index.
+// It may modify the point.value and point.excl. The modification is in-place.
+// This function doesn't require the start and end points to be paired in the input.
+func cutPrefixForPoints(points []*point, length int, tp *types.FieldType) {
+	if length == types.UnspecifiedLength {
+		return
 	}
-	return hasCut
+	for _, p := range points {
+		if p == nil {
+			continue
+		}
+		cut := CutDatumByPrefixLen(&p.value, length, tp)
+		// In two cases, we need to convert the exclusive point to an inclusive point.
+		// case 1: we actually cut the value to accommodate the prefix index.
+		if cut ||
+			// case 2: the value is already equal to the prefix index.
+			// For example, col_varchar > 'xx' should be converted to range [xx, +inf) when the prefix index length of
+			// `col_varchar` is 2. Otherwise, we would miss values like 'xxx' if we execute (xx, +inf) index range scan.
+			(p.start && ReachPrefixLen(&p.value, length, tp)) {
+			p.excl = false
+		}
+	}
 }
 
 // CutDatumByPrefixLen cuts the datum according to the prefix length.
@@ -705,8 +698,10 @@ func ReachPrefixLen(v *types.Datum, length int, tp *types.FieldType) bool {
 	return false
 }
 
-// We cannot use the FieldType of column directly. e.g. the column a is int32 and we have a > 1111111111111111111.
+// In util/ranger, for each datum that is used in the Range, we will convert data type for them.
+// But we cannot use the FieldType of column directly. e.g. the column a is int32 and we have a > 1111111111111111111.
 // Obviously the constant is bigger than MaxInt32, so we will get overflow error if we use the FieldType of column a.
+// In util/ranger here, we usually use "newTp" to emphasize its difference from the original FieldType of the column.
 func newFieldType(tp *types.FieldType) *types.FieldType {
 	switch tp.GetType() {
 	// To avoid overflow error.

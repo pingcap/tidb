@@ -21,12 +21,6 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
-	"io/fs"
-	"os"
-	"path/filepath"
-	"strconv"
-	"strings"
-	"syscall"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -334,25 +328,11 @@ func TestCursorFetchErrorInFetch(t *testing.T) {
 		mysql.CursorTypeReadOnly, 0x1, 0x0, 0x0, 0x0,
 	)))
 
-	// close these disk files to produce error
-	filepath.Walk("/proc/self/fd", func(path string, info fs.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		target, err := os.Readlink(path)
-		if err != nil {
-			return nil
-		}
-		if strings.HasPrefix(target, tmpStoragePath) {
-			fd, err := strconv.Atoi(filepath.Base(path))
-			require.NoError(t, err)
-			require.NoError(t, syscall.Close(fd))
-		}
-		return nil
-	})
-
-	// it'll get "bad file descriptor", as it has been closed in the test.
-	require.Error(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 1024)))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/get-chunk-error", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/chunk/get-chunk-error"))
+	}()
+	require.ErrorContains(t, c.Dispatch(ctx, appendUint32(appendUint32([]byte{mysql.ComStmtFetch}, uint32(stmt.ID())), 1024)), "fail to get chunk for test")
 	// after getting a failed FETCH, the cursor should have been reseted
 	require.False(t, stmt.GetCursorActive())
 	require.Len(t, tk.Session().GetSessionVars().MemTracker.GetChildrenForTest(), 0)

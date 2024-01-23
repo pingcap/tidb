@@ -188,7 +188,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 		address := srv.Address
 		statusAddr := srv.StatusAddr
 		if len(statusAddr) == 0 {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s does not contain status address", typ, address))
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("%s node %s does not contain status address", typ, address))
 			continue
 		}
 		wg.Add(1)
@@ -456,7 +456,7 @@ func (e *clusterLogRetriever) startRetrieving(
 		address := srv.Address
 		statusAddr := srv.StatusAddr
 		if len(statusAddr) == 0 {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("%s node %s does not contain status address", typ, address))
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("%s node %s does not contain status address", typ, address))
 			continue
 		}
 		ch := make(chan logStreamResult)

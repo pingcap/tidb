@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -42,17 +43,17 @@ type HashAggFinalWorker struct {
 
 	rowBuffer           []types.Datum
 	mutableRow          chunk.MutRow
-	partialResultMap    AggPartialResultMapper
+	partialResultMap    aggfuncs.AggPartialResultMapper
 	BInMap              int
 	isFirstInput        bool
 	groupSet            set.StringSetWithMemoryUsage
-	inputCh             chan *AggPartialResultMapper
+	inputCh             chan *aggfuncs.AggPartialResultMapper
 	outputCh            chan *AfFinalResult
 	finalResultHolderCh chan *chunk.Chunk
 	groupKeys           [][]byte
 }
 
-func (w *HashAggFinalWorker) getPartialInput() (input *AggPartialResultMapper, ok bool) {
+func (w *HashAggFinalWorker) getPartialInput() (input *aggfuncs.AggPartialResultMapper, ok bool) {
 	select {
 	case <-w.finishCh:
 		return nil, false

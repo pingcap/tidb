@@ -522,7 +522,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 				defer func() {
 					// To make sure SelectResult.Close() is called even got panic in fetchHandles().
 					if !tableReaderClosed {
-						terror.Call(worker.tableReader.Close)
+						terror.Log(exec.Close(worker.tableReader))
 					}
 				}()
 				for parTblIdx, tbl := range tbls {
@@ -555,7 +555,7 @@ func (e *IndexMergeReaderExecutor) startPartialTableWorker(ctx context.Context, 
 					// release related resources
 					cancel()
 					tableReaderClosed = true
-					if err = worker.tableReader.Close(); err != nil {
+					if err = exec.Close(worker.tableReader); err != nil {
 						logutil.Logger(ctx).Error("close Select result failed:", zap.Error(err))
 					}
 					// this error is reported in fetchHandles(), so ignore it here.
@@ -631,7 +631,7 @@ func (w *partialTableWorker) needPartitionHandle() (bool, error) {
 
 func (w *partialTableWorker) fetchHandles(ctx context.Context, exitCh <-chan struct{}, fetchCh chan<- *indexMergeTableTask,
 	finished <-chan struct{}, handleCols plannercore.HandleCols, parTblIdx int, partialPlanIndex int) (count int64, err error) {
-	chk := w.sc.GetSessionVars().GetNewChunkWithCapacity(w.getRetTpsForTableScan(), w.maxChunkSize, w.maxChunkSize, w.tableReader.Base().AllocPool)
+	chk := w.tableReader.NewChunkWithCapacity(w.getRetTpsForTableScan(), w.maxChunkSize, w.maxBatchSize)
 	for {
 		start := time.Now()
 		handles, retChunk, err := w.extractTaskHandles(ctx, chk, handleCols)
@@ -686,8 +686,8 @@ func (w *partialTableWorker) extractTaskHandles(ctx context.Context, chk *chunk.
 		if err != nil {
 			return nil, nil, err
 		}
-		if be := w.tableReader.Base(); be != nil && be.RuntimeStats() != nil {
-			be.RuntimeStats().Record(time.Since(start), chk.NumRows())
+		if w.tableReader != nil && w.tableReader.RuntimeStats() != nil {
+			w.tableReader.RuntimeStats().Record(time.Since(start), chk.NumRows())
 		}
 		if chk.NumRows() == 0 {
 			failpoint.Inject("testIndexMergeErrorPartialTableWorker", func(v failpoint.Value) {
@@ -1899,7 +1899,7 @@ func (w *indexMergeTableScanWorker) executeTask(ctx context.Context, task *index
 		logutil.Logger(ctx).Error("build table reader failed", zap.Error(err))
 		return err
 	}
-	defer terror.Call(tableReader.Close)
+	defer func() { terror.Log(exec.Close(tableReader)) }()
 	task.memTracker = w.memTracker
 	memUsage := int64(cap(task.handles) * 8)
 	task.memUsage = memUsage

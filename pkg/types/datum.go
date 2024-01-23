@@ -1157,10 +1157,10 @@ func ProduceStrWithSpecifiedTp(s string, tp *FieldType, ctx Context, padZero boo
 			trimed := strings.TrimRight(overflowed, " \t\n\r")
 			if len(trimed) == 0 && !IsBinaryStr(tp) && IsTypeChar(tp.GetType()) {
 				if tp.GetType() == mysql.TypeVarchar {
-					ctx.AppendWarning(ErrTruncated.GenWithStack("Data truncated, field len %d, data len %d", flen, characterLen))
+					ctx.AppendWarning(ErrTruncated.FastGen("Data truncated, field len %d, data len %d", flen, characterLen))
 				}
 			} else {
-				err = ErrDataTooLong.GenWithStack("Data Too Long, field len %d, data len %d", flen, characterLen)
+				err = ErrDataTooLong.FastGen("Data Too Long, field len %d, data len %d", flen, characterLen)
 			}
 		}
 
@@ -1515,7 +1515,7 @@ func ProduceDecWithSpecifiedTp(ctx Context, dec *MyDecimal, tp *FieldType) (_ *M
 			// select cast(111 as decimal(1)) causes a warning in MySQL.
 			err = ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%d, %d)", flen, decimal))
 		} else if old != nil && dec.Compare(old) != 0 {
-			ctx.AppendWarning(ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", old))
+			ctx.AppendWarning(ErrTruncatedWrongVal.FastGenByArgs("DECIMAL", old))
 		}
 	}
 

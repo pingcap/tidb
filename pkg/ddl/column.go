@@ -53,7 +53,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	kvutil "github.com/tikv/client-go/v2/util"
-	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
 
@@ -1462,6 +1461,7 @@ func (w *updateColumnWorker) BackfillData(handleRange reorgBackfillTask) (taskCt
 	errInTxn = kv.RunInNewTxn(ctx, w.sessCtx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
 		taskCtx.addedCount = 0
 		taskCtx.scanCount = 0
+		updateTxnEntrySizeLimitIfNeeded(txn)
 
 		// Because TiCDC do not want this kind of change,
 		// so we set the lossy DDL reorg txn source to 1 to
@@ -1705,8 +1705,8 @@ func (r *asAutoIDRequirement) Store() kv.Storage {
 	return r.store
 }
 
-func (r *asAutoIDRequirement) GetEtcdClient() *clientv3.Client {
-	return r.etcdCli
+func (r *asAutoIDRequirement) AutoIDClient() *autoid.ClientDiscover {
+	return r.autoidCli
 }
 
 // applyNewAutoRandomBits set auto_random bits to TableInfo and

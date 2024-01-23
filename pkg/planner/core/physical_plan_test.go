@@ -423,39 +423,6 @@ func testDAGPlanBuilderSplitAvg(t *testing.T, root core.PhysicalPlan) {
 	}
 }
 
-func TestHJBuildAndProbeHintWithBinding(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_cost_model_version=2")
-	tk.MustExec("drop table if exists t, t1, t2, t3;")
-	tk.MustExec("create table t(a int, b int, key(a));")
-	tk.MustExec("create table t1(a int, b int, key(a));")
-	tk.MustExec("create table t2(a int, b int, key(a));")
-	tk.MustExec("create table t3(a int, b int, key(a));")
-
-	tk.MustExec("select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
-	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
-	tk.MustExec("create global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b using select /*+ hash_join_build(t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
-	tk.MustExec("select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
-	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
-	res := tk.MustQuery("show global bindings").Rows()
-	require.Equal(t, res[0][0], "select * from ( `test` . `t1` join `test` . `t2` on `t1` . `a` = `t2` . `a` ) join `test` . `t3` on `t2` . `b` = `t3` . `b`", "SELECT /*+ hash_join_build(t1)*/ * FROM (`test`.`t1` JOIN `test`.`t2` ON `t1`.`a` = `t2`.`a`) JOIN `test`.`t3` ON `t2`.`b` = `t3`.`b`")
-
-	tk.MustExec("create global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b using select /*+ hash_join_probe(t1) */ * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
-	tk.MustExec("select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
-	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("1"))
-	res = tk.MustQuery("show global bindings").Rows()
-	require.Equal(t, res[0][0], "select * from ( `test` . `t1` join `test` . `t2` on `t1` . `a` = `t2` . `a` ) join `test` . `t3` on `t2` . `b` = `t3` . `b`", "SELECT /*+ hash_join_probe(t1)*/ * FROM (`test`.`t1` JOIN `test`.`t2` ON `t1`.`a` = `t2`.`a`) JOIN `test`.`t3` ON `t2`.`b` = `t3`.`b`")
-
-	tk.MustExec("drop global binding for select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
-	tk.MustExec("select * from t1 join t2 on t1.a=t2.a join t3 on t2.b=t3.b")
-	tk.MustQuery("select @@last_plan_from_binding").Check(testkit.Rows("0"))
-	res = tk.MustQuery("show global bindings").Rows()
-	require.Equal(t, len(res), 0)
-}
-
 func TestPhysicalPlanMemoryTrace(t *testing.T) {
 	// PhysicalSort
 	ls := core.PhysicalSort{}
