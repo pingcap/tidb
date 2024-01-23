@@ -59,10 +59,6 @@ var AllSubtaskStates = []SubtaskState{
 	SubtaskStateFailed,
 	SubtaskStateCanceled,
 	SubtaskStatePaused,
-	SubtaskStateRevertPending,
-	SubtaskStateReverting,
-	SubtaskStateReverted,
-	SubtaskStateRevertFailed,
 }
 
 type (
