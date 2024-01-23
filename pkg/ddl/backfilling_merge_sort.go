@@ -126,7 +126,7 @@ func (m *mergeSortExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
 	}
-	subtaskMeta.SortedKVMeta = *m.subtaskSortedKVMeta
+	subtaskMeta.MetaGroups = []*external.SortedKVMeta{m.subtaskSortedKVMeta}
 	m.subtaskSortedKVMeta = nil
 	newMeta, err := json.Marshal(subtaskMeta)
 	if err != nil {

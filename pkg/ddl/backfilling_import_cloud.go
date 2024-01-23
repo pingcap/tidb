@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -78,15 +79,21 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		return errors.Errorf("local backend not found")
 	}
 	_, engineUUID := backend.MakeUUID(m.ptbl.Meta().Name.L, m.index.ID)
+
+	all := external.SortedKVMeta{}
+	for _, g := range sm.MetaGroups {
+		all.Merge(g)
+	}
+
 	err = local.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
 			StorageURI:    m.cloudStoreURI,
 			DataFiles:     sm.DataFiles,
 			StatFiles:     sm.StatFiles,
-			StartKey:      sm.StartKey,
-			EndKey:        sm.EndKey,
+			StartKey:      all.StartKey,
+			EndKey:        all.EndKey,
 			SplitKeys:     sm.RangeSplitKeys,
-			TotalFileSize: int64(sm.TotalKVSize),
+			TotalFileSize: int64(all.TotalKVSize),
 			TotalKVCount:  0,
 			CheckHotspot:  true,
 		},

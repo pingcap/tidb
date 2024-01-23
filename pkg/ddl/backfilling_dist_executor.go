@@ -53,10 +53,15 @@ type BackfillTaskMeta struct {
 type BackfillSubTaskMeta struct {
 	PhysicalTableID int64 `json:"physical_table_id"`
 
-	RangeSplitKeys        [][]byte `json:"range_split_keys"`
-	DataFiles             []string `json:"data-files"`
-	StatFiles             []string `json:"stat-files"`
-	external.SortedKVMeta `json:",inline"`
+	// Used by read index step.
+	RowStart []byte `json:"row_start"`
+	RowEnd   []byte `json:"row_end"`
+
+	// Used by global sort write & ingest step.
+	RangeSplitKeys [][]byte                 `json:"range_split_keys,omitempty"`
+	DataFiles      []string                 `json:"data_files,omitempty"`
+	StatFiles      []string                 `json:"stat_files,omitempty"`
+	MetaGroups     []*external.SortedKVMeta `json:"meta_groups,omitempty"`
 }
 
 // NewBackfillSubtaskExecutor creates a new backfill subtask executor.
