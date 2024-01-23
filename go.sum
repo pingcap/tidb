@@ -967,12 +967,21 @@ github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2 h1:mbAskLJ0oJf
 github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2/go.mod h1:2PfKggNGDuadAa0LElHrByyrz4JPZ9fFx6Gs7nx7ZZU=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a h1:J/YdBZ46WKpXsxsW93SG+q0F8KI+yFrcIDT4c/RNoc4=
 github.com/tiancaiamao/gp v0.0.0-20221230034425-4025bc8a4d4a/go.mod h1:h4xBhSNtOeEosLJ4P7JyKXX7Cabg7AVkWCK5gV2vOrM=
+<<<<<<< HEAD
 github.com/tikv/client-go/v2 v2.0.8-0.20231211100325-d44bb7f9cb9e h1:MuTNChL77sMvCvtOuGhuU/u1YBaSDPfqnO6roUCKwOA=
 github.com/tikv/client-go/v2 v2.0.8-0.20231211100325-d44bb7f9cb9e/go.mod h1:45NuHB8x+VAoztMIjF6hEgXvPQXhXWPfMxDg0N8CoRY=
 github.com/tikv/pd/client v0.0.0-20231211083919-fe6fd1721aa6 h1:BBwUZAaBl7DKdyaduOxXqias4xCtdDgIAGsDBuri3lg=
 github.com/tikv/pd/client v0.0.0-20231211083919-fe6fd1721aa6/go.mod h1:8XEP9aqUvvc9guWJZ7vo0av0H6QsJtjIrOmLAQlL2Jo=
 github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e h1:MV6KaVu/hzByHP0UvJ4HcMGE/8a6A4Rggc/0wx2AvJo=
 github.com/timakin/bodyclose v0.0.0-20221125081123-e39cf3fc478e/go.mod h1:27bSVNWSBOHm+qRp1T9qzaIpsWEP6TbUnei/43HK+PQ=
+=======
+github.com/tikv/client-go/v2 v2.0.8-0.20240123055405-3480b5ed7ce1 h1:y0of+EkoUDL1N1k6JItuA0ZMMrDU71vKhQ2p+pA0Fw4=
+github.com/tikv/client-go/v2 v2.0.8-0.20240123055405-3480b5ed7ce1/go.mod h1:byff6zglNXgereADRRJmKQnurwy1Z9hthX2I5ObKMNE=
+github.com/tikv/pd/client v0.0.0-20240109100024-dd8df25316e9 h1:LnNWRdtxryzxl31GmxOJEFKUmwiG8nph9f5Wqdv8olY=
+github.com/tikv/pd/client v0.0.0-20240109100024-dd8df25316e9/go.mod h1:ZilHJZR8wgqENRi26gtnPoKIXAB1EqytFweUhzxetx0=
+github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966 h1:quvGphlmUVU+nhpFa4gg4yJyTRJ13reZMDHrKwYw53M=
+github.com/timakin/bodyclose v0.0.0-20230421092635-574207250966/go.mod h1:27bSVNWSBOHm+qRp1T9qzaIpsWEP6TbUnei/43HK+PQ=
+>>>>>>> 8a53c483787 (store/tikv: Update client-go to fix issues about retrying for too long time on RPC timeout and unnecessary backoff on NotLeader errors (#50506))
 github.com/tklauser/go-sysconf v0.3.9/go.mod h1:11DU/5sG7UexIrp/O6g35hrWzu0JxlwQ3LSFUzyeuhs=
 github.com/tklauser/go-sysconf v0.3.11 h1:89WgdJhk5SNwJfu+GKyYveZ4IaJ7xAkecBo+KdJV0CM=
 github.com/tklauser/go-sysconf v0.3.11/go.mod h1:GqXfhXY3kiPa0nAXPDIQIWzJbMCB7AmcWpGR8lSZfqI=
