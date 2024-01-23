@@ -166,6 +166,8 @@ func TestHandleExecutableTasks(t *testing.T) {
 	// StepOne succeed
 	wg, runFn := getPoolRunFn()
 	mockPool.EXPECT().Run(gomock.Any()).DoAndReturn(runFn)
+	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
+	mockInternalExecutor.EXPECT().Close()
 	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID).Return(task, nil)
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID, proto.StepOne,
 		unfinishedSubtaskStates).Return(true, nil)
@@ -194,6 +196,8 @@ func TestHandleExecutableTasks(t *testing.T) {
 	// no subtask to run
 	wg, runFn = getPoolRunFn()
 	mockPool.EXPECT().Run(gomock.Any()).DoAndReturn(runFn)
+	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
+	mockInternalExecutor.EXPECT().Close()
 	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID).Return(task, nil)
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID, proto.StepOne,
 		unfinishedSubtaskStates).Return(false, nil)
@@ -230,50 +234,42 @@ func TestManager(t *testing.T) {
 
 	mockTaskTable.EXPECT().InitMeta(m.ctx, "test", "").Return(nil).Times(1)
 	mockTaskTable.EXPECT().GetTaskExecInfoByExecID(m.ctx, m.id).
-		Return([]*storage.TaskExecInfo{{Task: task1}, {Task: task2}, {Task: task3}}, nil).AnyTimes()
-	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
+		Return([]*storage.TaskExecInfo{{Task: task1}, {Task: task2}, {Task: task3}}, nil)
+	mockTaskTable.EXPECT().GetTaskExecInfoByExecID(m.ctx, m.id).Return(nil, nil).AnyTimes()
 	// task1
-	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
-		unfinishedSubtaskStates).
-		Return(true, nil)
 	wg, runFn := getPoolRunFn()
 	mockPool.EXPECT().Run(gomock.Any()).DoAndReturn(runFn)
+	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID1).Return(task1, nil).AnyTimes()
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
-		unfinishedSubtaskStates).
-		Return(true, nil)
+		unfinishedSubtaskStates).Return(true, nil)
 	mockInternalExecutor.EXPECT().RunStep(gomock.Any(), task1, gomock.Any()).Return(nil)
-
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
-		unfinishedSubtaskStates).
-		Return(false, nil).AnyTimes()
+		unfinishedSubtaskStates).Return(false, nil).AnyTimes()
 	mockInternalExecutor.EXPECT().Close()
 	// task2
-	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID2, proto.StepOne,
-		unfinishedSubtaskStates).
-		Return(true, nil)
 	mockPool.EXPECT().Run(gomock.Any()).DoAndReturn(runFn)
+	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID2).Return(task2, nil).AnyTimes()
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID2, proto.StepOne,
-		unfinishedSubtaskStates).
-		Return(true, nil)
-	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
+		unfinishedSubtaskStates).Return(true, nil)
 	mockInternalExecutor.EXPECT().Rollback(gomock.Any(), task2).Return(nil)
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID2, proto.StepOne,
-		unfinishedSubtaskStates).
-		Return(false, nil).AnyTimes()
+		unfinishedSubtaskStates).Return(false, nil).AnyTimes()
 	mockInternalExecutor.EXPECT().Close()
 	// task3
 	mockTaskTable.EXPECT().PauseSubtasks(m.ctx, id, taskID3).Return(nil).AnyTimes()
+
+	require.NoError(t, m.InitMeta())
+	require.NoError(t, m.Start())
+	require.Eventually(t, func() bool {
+		return ctrl.Satisfied()
+	}, 5*time.Second, 100*time.Millisecond)
 
 	// for taskExecutor pool
 	mockPool.EXPECT().ReleaseAndWait().Do(func() {
 		wg.Wait()
 	})
-
-	require.NoError(t, m.InitMeta())
-	require.NoError(t, m.Start())
-	time.Sleep(5 * time.Second)
 	m.Stop()
 }
 
@@ -322,8 +318,6 @@ func TestManagerHandleTasks(t *testing.T) {
 	var mu sync.Mutex
 	mockTaskTable.EXPECT().GetTaskExecInfoByExecID(m.ctx, m.id).
 		Return([]*storage.TaskExecInfo{{Task: task1}}, nil)
-	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, task1.ID, proto.StepOne,
-		unfinishedSubtaskStates).Return(true, nil)
 	mockPool.EXPECT().Run(gomock.Any()).DoAndReturn(runFn)
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockTaskTable.EXPECT().GetTaskByID(m.ctx, task1.ID).Return(task1, nil)

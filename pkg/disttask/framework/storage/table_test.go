@@ -1127,20 +1127,14 @@ func TestGetActiveTaskExecInfo(t *testing.T) {
 		task, err := tm.GetTaskByID(ctx, taskID)
 		require.NoError(t, err)
 		tasks = append(tasks, task)
+		require.NoError(t, tm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepTwo, nil))
+		task.State = expectedState
+		task.Step = proto.StepTwo
 		switch expectedState {
-		case proto.TaskStateRunning:
-			require.NoError(t, tm.SwitchTaskStep(ctx, task, expectedState, proto.StepTwo, nil))
-			task.State = expectedState
-			task.Step = proto.StepTwo
 		case proto.TaskStateReverting:
-			task.State = expectedState
-			task.Step = proto.StepTwo
-			_, err := tm.UpdateTaskAndAddSubTasks(ctx, task, nil, proto.TaskStatePending)
-			require.NoError(t, err)
+			require.NoError(t, tm.RevertTask(ctx, task.ID, proto.TaskStateRunning, nil))
 		case proto.TaskStatePausing:
-			task.State = expectedState
-			task.Step = proto.StepTwo
-			_, err := tm.UpdateTaskAndAddSubTasks(ctx, task, nil, proto.TaskStatePending)
+			_, err = tm.PauseTask(ctx, task.Key)
 			require.NoError(t, err)
 		}
 	}
