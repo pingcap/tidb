@@ -1059,21 +1059,21 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		return nil
 	}
 
-	var partitionDef *model.PartitionDefinition
-	var pairIdx int
+	var partitionInfo *model.PartitionDefinition
+	var pos int
 	if pi != nil {
-		partitionDef, pairIdx, _, isTableDual = getPartitionInfo(ctx, tbl, pairs)
+		partitionInfo, pos, _, isTableDual = getPartitionInfo(ctx, tbl, pairs)
 		if isTableDual {
 			p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 			p.IsTableDual = true
 			return p
 		}
-		if partitionDef == nil {
+		if partitionInfo == nil {
 			return nil
 		}
 		// Take partition selection into consideration.
 		if len(tblName.PartitionNames) > 0 {
-			if !partitionNameInSet(partitionDef.Name, tblName.PartitionNames) {
+			if !partitionNameInSet(partitionInfo.Name, tblName.PartitionNames) {
 				p := newPointGetPlan(ctx, tblName.Schema.O, schema, tbl, names)
 				p.IsTableDual = true
 				return p
@@ -1094,7 +1094,7 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		p.UnsignedHandle = mysql.HasUnsignedFlag(fieldType.GetFlag())
 		p.handleFieldType = fieldType
 		p.HandleConstant = handlePair.con
-		p.PartitionInfo = partitionDef
+		p.PartitionInfo = partitionInfo
 		return p
 	} else if handlePair.value.Kind() != types.KindNull {
 		return nil
@@ -1148,9 +1148,9 @@ func tryPointGetPlan(ctx sessionctx.Context, selStmt *ast.SelectStmt, check bool
 		p.IndexValues = idxValues
 		p.IndexConstants = idxConstant
 		p.ColsFieldType = colsFieldType
-		p.PartitionInfo = partitionDef
+		p.PartitionInfo = partitionInfo
 		if p.PartitionInfo != nil {
-			p.partitionColumnPos = findPartitionIdx(idxInfo, pairIdx, pairs)
+			p.partitionColumnPos = findPartitionIdx(idxInfo, pos, pairs)
 		}
 		return p
 	}
