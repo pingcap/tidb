@@ -88,10 +88,8 @@ func ExtractTableHintsFromStmtNode(node ast.Node, sctx sessionctx.Context) []*as
 		// check duplicated hints
 		checkInsertStmtHintDuplicated(node, sctx)
 		return x.TableHints
-<<<<<<< HEAD:util/hint/hint_processor.go
 	case *ast.ExplainStmt:
 		return ExtractTableHintsFromStmtNode(x.Stmt, sctx)
-=======
 	case *ast.SetOprStmt:
 		var result []*ast.TableOptimizerHint
 		if x.SelectList == nil {
@@ -104,7 +102,6 @@ func ExtractTableHintsFromStmtNode(node ast.Node, sctx sessionctx.Context) []*as
 			}
 		}
 		return result
->>>>>>> 62c83d40fe2 (bindinfo: extract the table hint from the union statement (#50070)):pkg/util/hint/hint_processor.go
 	default:
 		return nil
 	}
