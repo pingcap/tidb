@@ -721,8 +721,8 @@ a	b	c	d
 3	333	3.3000000000	13
 explain format='brief' select * from t1 where t1.a = 1 and t1.b < "333";
 id	estRows	task	access object	operator info
-TableReader	0.82	root		data:TableRangeScan
-└─TableRangeScan	0.82	cop[tikv]	table:t1	range:[1 -inf,1 "333"), keep order:false
+TableReader	1.00	root		data:TableRangeScan
+└─TableRangeScan	1.00	cop[tikv]	table:t1	range:[1 -inf,1 "333"), keep order:false
 select * from t1 where t1.a = 1 and t1.b < "333";
 a	b	c	d
 1	111	1.1000000000	11
