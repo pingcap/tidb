@@ -117,8 +117,3 @@ func (*EmptyStepExecutor) Cleanup(context.Context) error {
 func (*EmptyStepExecutor) OnFinished(_ context.Context, _ *proto.Subtask) error {
 	return nil
 }
-
-// Rollback implements the StepExecutor interface.
-func (*EmptyStepExecutor) Rollback(context.Context) error {
-	return nil
-}

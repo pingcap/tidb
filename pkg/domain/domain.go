@@ -110,6 +110,10 @@ var (
 	LoadSchemaDiffVersionGapThreshold int64 = 100
 )
 
+const (
+	indexUsageGCDuration = 30 * time.Minute
+)
+
 func init() {
 	if intest.InTest {
 		// In test we can set duration lower to make test faster.
@@ -160,7 +164,6 @@ type Domain struct {
 	wg                  *util.WaitGroupEnhancedWrapper
 	statsUpdating       atomicutil.Int32
 	cancelFns           []context.CancelFunc
-	indexUsageSyncLease time.Duration
 	dumpFileGcChecker   *dumpFileGcChecker
 	planReplayerHandle  *planReplayerHandle
 	extractTaskHandle   *ExtractHandle
@@ -1062,17 +1065,16 @@ func (do *Domain) Close() {
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, idxUsageSyncLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
+func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
-		store:               store,
-		exit:                make(chan struct{}),
-		sysSessionPool:      newSessionPool(capacity, factory),
-		statsLease:          statsLease,
-		infoCache:           infoschema.NewCache(int(variable.SchemaVersionCacheLimit.Load())),
-		slowQuery:           newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
-		indexUsageSyncLease: idxUsageSyncLease,
-		dumpFileGcChecker:   &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
+		store:             store,
+		exit:              make(chan struct{}),
+		sysSessionPool:    newSessionPool(capacity, factory),
+		statsLease:        statsLease,
+		infoCache:         infoschema.NewCache(int(variable.SchemaVersionCacheLimit.Load())),
+		slowQuery:         newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
+		dumpFileGcChecker: &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
 		mdlCheckTableInfo: &mdlCheckTableInfo{
 			mu:         sync.Mutex{},
 			jobsVerMap: make(map[int64]int64),
@@ -2176,6 +2178,7 @@ func (do *Domain) CreateStatsHandle(ctx, initStatsCtx sessionctx.Context) error 
 	if err != nil {
 		return err
 	}
+	h.StartWorker()
 	do.statsHandle.Store(h)
 	return nil
 }
@@ -2252,6 +2255,7 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 	if err != nil {
 		return err
 	}
+	statsHandle.StartWorker()
 	do.statsHandle.Store(statsHandle)
 	do.ddl.RegisterStatsHandle(statsHandle)
 	// Negative stats lease indicates that it is in test or in br binary mode, it does not need update.
@@ -2259,11 +2263,9 @@ func (do *Domain) UpdateTableStatsLoop(ctx, initStatsCtx sessionctx.Context) err
 		do.wg.Run(do.loadStatsWorker, "loadStatsWorker")
 	}
 	owner := do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
-	if do.indexUsageSyncLease > 0 {
-		do.wg.Run(func() {
-			do.syncIndexUsageWorker(owner)
-		}, "syncIndexUsageWorker")
-	}
+	do.wg.Run(func() {
+		do.indexUsageWorker()
+	}, "indexUsageWorker")
 	if do.statsLease <= 0 {
 		// For statsLease > 0, `updateStatsWorker` handles the quit of stats owner.
 		do.wg.Run(func() { quitStatsOwner(do, owner) }, "quitStatsOwner")
@@ -2365,28 +2367,18 @@ func (do *Domain) loadStatsWorker() {
 	}
 }
 
-func (do *Domain) syncIndexUsageWorker(owner owner.Manager) {
-	defer util.Recover(metrics.LabelDomain, "syncIndexUsageWorker", nil, false)
-	idxUsageSyncTicker := time.NewTicker(do.indexUsageSyncLease)
-	gcStatsTicker := time.NewTicker(100 * do.indexUsageSyncLease)
+func (do *Domain) indexUsageWorker() {
+	defer util.Recover(metrics.LabelDomain, "indexUsageWorker", nil, false)
+	gcStatsTicker := time.NewTicker(indexUsageGCDuration)
 	handle := do.StatsHandle()
 	defer func() {
-		idxUsageSyncTicker.Stop()
-		logutil.BgLogger().Info("syncIndexUsageWorker exited.")
+		logutil.BgLogger().Info("indexUsageWorker exited.")
 	}()
 	for {
 		select {
 		case <-do.exit:
-			// TODO: need flush index usage
 			return
-		case <-idxUsageSyncTicker.C:
-			if err := handle.DumpIndexUsageToKV(); err != nil {
-				logutil.BgLogger().Debug("dump index usage failed", zap.Error(err))
-			}
 		case <-gcStatsTicker.C:
-			if !owner.IsOwner() {
-				continue
-			}
 			if err := handle.GCIndexUsage(); err != nil {
 				statslogutil.StatsLogger().Error("gc index usage failed", zap.Error(err))
 			}

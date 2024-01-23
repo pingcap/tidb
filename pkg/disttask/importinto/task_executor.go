@@ -251,12 +251,6 @@ func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
 	return s.tableImporter.Close()
 }
 
-func (s *importStepExecutor) Rollback(context.Context) error {
-	// TODO: add rollback
-	s.logger.Info("rollback")
-	return nil
-}
-
 type mergeSortStepExecutor struct {
 	taskexecutor.EmptyStepExecutor
 	taskID     int64
@@ -424,11 +418,6 @@ func (e *writeAndIngestStepExecutor) Cleanup(_ context.Context) (err error) {
 	return e.tableImporter.Close()
 }
 
-func (e *writeAndIngestStepExecutor) Rollback(context.Context) error {
-	e.logger.Info("rollback")
-	return nil
-}
-
 type postProcessStepExecutor struct {
 	taskexecutor.EmptyStepExecutor
 	taskID   int64
@@ -501,30 +490,29 @@ func (*importExecutor) GetStepExecutor(_ context.Context, task *proto.Task, _ *e
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", proto.ImportInto),
 		zap.Int64("task-id", task.ID),
-		zap.String("step", stepStr(task.Step)),
+		zap.String("step", proto.Step2Str(task.Type, task.Step)),
 	)
-	logger.Info("create step executor")
 
 	switch task.Step {
-	case StepImport, StepEncodeAndSort:
+	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
 		return &importStepExecutor{
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
 		}, nil
-	case StepMergeSort:
+	case proto.ImportStepMergeSort:
 		return &mergeSortStepExecutor{
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
 		}, nil
-	case StepWriteAndIngest:
+	case proto.ImportStepWriteAndIngest:
 		return &writeAndIngestStepExecutor{
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
 		}, nil
-	case StepPostProcess:
+	case proto.ImportStepPostProcess:
 		return NewPostProcessStepExecutor(task.ID, &taskMeta, logger), nil
 	default:
 		return nil, errors.Errorf("unknown step %d for import task %d", task.Step, task.ID)

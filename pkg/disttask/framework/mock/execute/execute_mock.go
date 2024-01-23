@@ -81,20 +81,6 @@ func (mr *MockStepExecutorMockRecorder) OnFinished(arg0, arg1 any) *gomock.Call 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OnFinished", reflect.TypeOf((*MockStepExecutor)(nil).OnFinished), arg0, arg1)
 }
 
-// Rollback mocks base method.
-func (m *MockStepExecutor) Rollback(arg0 context.Context) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Rollback", arg0)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// Rollback indicates an expected call of Rollback.
-func (mr *MockStepExecutorMockRecorder) Rollback(arg0 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Rollback", reflect.TypeOf((*MockStepExecutor)(nil).Rollback), arg0)
-}
-
 // RunSubtask mocks base method.
 func (m *MockStepExecutor) RunSubtask(arg0 context.Context, arg1 *proto.Subtask) error {
 	m.ctrl.T.Helper()

@@ -151,7 +151,7 @@ func (sch *ImportSchedulerExt) OnTick(ctx context.Context, task *proto.Task) {
 }
 
 func (*ImportSchedulerExt) isImporting2TiKV(task *proto.Task) bool {
-	return task.Step == StepImport || task.Step == StepWriteAndIngest
+	return task.Step == proto.ImportStepImport || task.Step == proto.ImportStepWriteAndIngest
 }
 
 func (sch *ImportSchedulerExt) switchTiKVMode(ctx context.Context, task *proto.Task) {
@@ -208,8 +208,8 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", task.Type),
 		zap.Int64("task-id", task.ID),
-		zap.String("curr-step", stepStr(task.Step)),
-		zap.String("next-step", stepStr(nextStep)),
+		zap.String("curr-step", proto.Step2Str(task.Type, task.Step)),
+		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
 	)
 	taskMeta := &TaskMeta{}
 	err = json.Unmarshal(task.Meta, taskMeta)
@@ -220,7 +220,7 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 
 	previousSubtaskMetas := make(map[proto.Step][][]byte, 1)
 	switch nextStep {
-	case StepImport, StepEncodeAndSort:
+	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
 		if metrics, ok := metric.GetCommonMetric(ctx); ok {
 			metrics.BytesCounter.WithLabelValues(metric.StateTotalRestore).Add(float64(taskMeta.Plan.TotalFileSize))
 		}
@@ -231,32 +231,32 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 		if err = startJob(ctx, logger, taskHandle, taskMeta, jobStep); err != nil {
 			return nil, err
 		}
-	case StepMergeSort:
-		sortAndEncodeMeta, err := taskHandle.GetPreviousSubtaskMetas(task.ID, StepEncodeAndSort)
+	case proto.ImportStepMergeSort:
+		sortAndEncodeMeta, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepEncodeAndSort)
 		if err != nil {
 			return nil, err
 		}
-		previousSubtaskMetas[StepEncodeAndSort] = sortAndEncodeMeta
-	case StepWriteAndIngest:
+		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = sortAndEncodeMeta
+	case proto.ImportStepWriteAndIngest:
 		failpoint.Inject("failWhenDispatchWriteIngestSubtask", func() {
 			failpoint.Return(nil, errors.New("injected error"))
 		})
 		// merge sort might be skipped for some kv groups, so we need to get all
-		// subtask metas of StepEncodeAndSort step too.
-		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, StepEncodeAndSort)
+		// subtask metas of ImportStepEncodeAndSort step too.
+		encodeAndSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepEncodeAndSort)
 		if err != nil {
 			return nil, err
 		}
-		mergeSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, StepMergeSort)
+		mergeSortMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepMergeSort)
 		if err != nil {
 			return nil, err
 		}
-		previousSubtaskMetas[StepEncodeAndSort] = encodeAndSortMetas
-		previousSubtaskMetas[StepMergeSort] = mergeSortMetas
+		previousSubtaskMetas[proto.ImportStepEncodeAndSort] = encodeAndSortMetas
+		previousSubtaskMetas[proto.ImportStepMergeSort] = mergeSortMetas
 		if err = job2Step(ctx, logger, taskMeta, importer.JobStepImporting); err != nil {
 			return nil, err
 		}
-	case StepPostProcess:
+	case proto.ImportStepPostProcess:
 		sch.switchTiKV2NormalMode(ctx, task, logger)
 		failpoint.Inject("clearLastSwitchTime", func() {
 			sch.lastSwitchTime.Store(time.Time{})
@@ -265,7 +265,7 @@ func (sch *ImportSchedulerExt) OnNextSubtasksBatch(
 			return nil, err
 		}
 		failpoint.Inject("failWhenDispatchPostProcessSubtask", func() {
-			failpoint.Return(nil, errors.New("injected error after StepImport"))
+			failpoint.Return(nil, errors.New("injected error after ImportStepImport"))
 		})
 		// we need get metas where checksum is stored.
 		if err := updateResult(taskHandle, task, taskMeta, sch.GlobalSort); err != nil {
@@ -313,7 +313,7 @@ func (sch *ImportSchedulerExt) OnDone(ctx context.Context, handle storage.TaskHa
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", task.Type),
 		zap.Int64("task-id", task.ID),
-		zap.String("step", stepStr(task.Step)),
+		zap.String("step", proto.Step2Str(task.Type, task.Step)),
 	)
 	logger.Info("task done", zap.Stringer("state", task.State), zap.Error(task.Error))
 	taskMeta := &TaskMeta{}
@@ -355,17 +355,17 @@ func (sch *ImportSchedulerExt) GetNextStep(task *proto.Task) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
 		if sch.GlobalSort {
-			return StepEncodeAndSort
+			return proto.ImportStepEncodeAndSort
 		}
-		return StepImport
-	case StepEncodeAndSort:
-		return StepMergeSort
-	case StepMergeSort:
-		return StepWriteAndIngest
-	case StepImport, StepWriteAndIngest:
-		return StepPostProcess
+		return proto.ImportStepImport
+	case proto.ImportStepEncodeAndSort:
+		return proto.ImportStepMergeSort
+	case proto.ImportStepMergeSort:
+		return proto.ImportStepWriteAndIngest
+	case proto.ImportStepImport, proto.ImportStepWriteAndIngest:
+		return proto.ImportStepPostProcess
 	default:
-		// current step must be StepPostProcess
+		// current step must be ImportStepPostProcess
 		return proto.StepDone
 	}
 }
@@ -528,9 +528,9 @@ func toChunkMap(engineCheckpoints map[int32]*checkpoints.EngineCheckpoint) map[i
 
 func getStepOfEncode(globalSort bool) proto.Step {
 	if globalSort {
-		return StepEncodeAndSort
+		return proto.ImportStepEncodeAndSort
 	}
-	return StepImport
+	return proto.ImportStepImport
 }
 
 // we will update taskMeta in place and make task.Meta point to the new taskMeta.
@@ -569,7 +569,7 @@ func updateResult(handle storage.TaskHandle, task *proto.Task, taskMeta *TaskMet
 }
 
 func getLoadedRowCountOnGlobalSort(handle storage.TaskHandle, task *proto.Task) (uint64, error) {
-	metas, err := handle.GetPreviousSubtaskMetas(task.ID, StepWriteAndIngest)
+	metas, err := handle.GetPreviousSubtaskMetas(task.ID, proto.ImportStepWriteAndIngest)
 	if err != nil {
 		return 0, err
 	}
@@ -686,27 +686,6 @@ func redactSensitiveInfo(task *proto.Task, taskMeta *TaskMeta) {
 	if err := updateMeta(task, taskMeta); err != nil {
 		// marshal failed, should not happen
 		logutil.BgLogger().Warn("failed to update task meta", zap.Error(err))
-	}
-}
-
-func stepStr(step proto.Step) string {
-	switch step {
-	case proto.StepInit:
-		return "init"
-	case StepImport:
-		return "import"
-	case StepPostProcess:
-		return "post-process"
-	case StepEncodeAndSort:
-		return "encode&sort"
-	case StepMergeSort:
-		return "merge-sort"
-	case StepWriteAndIngest:
-		return "write&ingest"
-	case proto.StepDone:
-		return "done"
-	default:
-		return "unknown"
 	}
 }
 

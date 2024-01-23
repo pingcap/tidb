@@ -37,7 +37,6 @@ func TestTaskIsDone(t *testing.T) {
 		{TaskStateSucceed, true},
 		{TaskStateReverting, false},
 		{TaskStateFailed, true},
-		{TaskStateRevertFailed, false},
 		{TaskStateCancelling, false},
 		{TaskStatePausing, false},
 		{TaskStatePaused, false},
