@@ -55,10 +55,6 @@ func sqlMode(ctx EvalContext) mysql.SQLMode {
 	return ctx.GetSessionVars().SQLMode
 }
 
-func strictMode(ctx EvalContext) bool {
-	return ctx.GetSessionVars().StrictSQLMode
-}
-
 func typeCtx(ctx EvalContext) types.Context {
 	return ctx.GetSessionVars().StmtCtx.TypeCtx()
 }
@@ -68,7 +64,8 @@ func errCtx(ctx EvalContext) errctx.Context {
 }
 
 func location(ctx EvalContext) *time.Location {
-	return ctx.GetSessionVars().Location()
+	tc := ctx.GetSessionVars().StmtCtx.TypeCtx()
+	return tc.Location()
 }
 
 func warningCount(ctx EvalContext) int {

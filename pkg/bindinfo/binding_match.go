@@ -15,6 +15,7 @@
 package bindinfo
 
 import (
+	"strings"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
@@ -103,7 +104,7 @@ func fuzzyMatchBindingTableName(currentDB string, stmtTableNames, bindingTableNa
 			numWildcards++
 		}
 		if bindingTableNames[i].Schema.L == stmtTableNames[i].Schema.L || // exactly same, or
-			(stmtTableNames[i].Schema.L == "" && bindingTableNames[i].Schema.L == currentDB) || // equal to the current DB, or
+			(stmtTableNames[i].Schema.L == "" && bindingTableNames[i].Schema.L == strings.ToLower(currentDB)) || // equal to the current DB, or
 			bindingTableNames[i].Schema.L == "*" { // fuzzy match successfully
 			continue
 		}

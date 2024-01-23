@@ -51,8 +51,6 @@ var (
 	ErrCancelSubtask = errors.New("cancel subtasks")
 	// ErrFinishSubtask is the cancel cause when TaskExecutor successfully processed subtasks.
 	ErrFinishSubtask = errors.New("finish subtasks")
-	// ErrFinishRollback is the cancel cause when TaskExecutor rollback successfully.
-	ErrFinishRollback = errors.New("finish rollback")
 	// ErrNonIdempotentSubtask means the subtask is left in running state and is not idempotent,
 	// so cannot be run again.
 	ErrNonIdempotentSubtask = errors.New("subtask in running state and is not idempotent")
@@ -444,18 +442,18 @@ func (e *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execu
 }
 
 // Rollback rollbacks the subtask.
+// TODO no need to start executor to do it, refactor it later.
 func (e *BaseTaskExecutor) Rollback(ctx context.Context, task *proto.Task) error {
 	// TODO: we can centralized this when we move handleExecutableTask loop here.
 	e.task.Store(task)
-	rollbackCtx, rollbackCancel := context.WithCancelCause(ctx)
-	defer rollbackCancel(ErrFinishRollback)
-	e.registerCancelFunc(rollbackCancel)
 
 	e.resetError()
 	e.logger.Info("taskExecutor rollback a step", zap.String("step", proto.Step2Str(task.Type, task.Step)))
 
 	// We should cancel all subtasks before rolling back
 	for {
+		// TODO we can update them using one sql, but requires change the metric
+		// gathering logic.
 		subtask, err := e.taskTable.GetFirstSubtaskInStates(ctx, e.id, task.ID, task.Step,
 			proto.SubtaskStatePending, proto.SubtaskStateRunning)
 		if err != nil {
@@ -471,38 +469,6 @@ func (e *BaseTaskExecutor) Rollback(ctx context.Context, task *proto.Task) error
 		if err = e.getError(); err != nil {
 			return err
 		}
-	}
-
-	executor, err := e.GetStepExecutor(ctx, task, nil, nil)
-	if err != nil {
-		e.onError(err)
-		return e.getError()
-	}
-	subtask, err := e.taskTable.GetFirstSubtaskInStates(ctx, e.id, task.ID, task.Step,
-		proto.SubtaskStateRevertPending, proto.SubtaskStateReverting)
-	if err != nil {
-		e.onError(err)
-		return e.getError()
-	}
-	if subtask == nil {
-		logutil.BgLogger().Warn("taskExecutor rollback a step, but no subtask in revert_pending state")
-		return nil
-	}
-	if subtask.State == proto.SubtaskStateRevertPending {
-		e.updateSubtaskStateAndError(ctx, subtask, proto.SubtaskStateReverting, nil)
-	}
-	if err := e.getError(); err != nil {
-		return err
-	}
-
-	// right now all impl of Rollback is empty, so we don't check idempotent here.
-	// will try to remove this rollback completely in the future.
-	err = executor.Rollback(rollbackCtx)
-	if err != nil {
-		e.updateSubtaskStateAndError(ctx, subtask, proto.SubtaskStateRevertFailed, nil)
-		e.onError(err)
-	} else {
-		e.updateSubtaskStateAndError(ctx, subtask, proto.SubtaskStateReverted, nil)
 	}
 	return e.getError()
 }

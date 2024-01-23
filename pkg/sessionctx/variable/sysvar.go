@@ -1446,7 +1446,6 @@ var defaultSysVars = []*SysVar{
 		if err != nil {
 			return errors.Trace(err)
 		}
-		s.StrictSQLMode = sqlMode.HasStrictMode()
 		s.SQLMode = sqlMode
 		s.SetStatusFlag(mysql.ServerStatusNoBackslashEscaped, sqlMode.HasNoBackslashEscapesMode())
 		return nil

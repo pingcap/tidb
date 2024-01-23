@@ -31,12 +31,8 @@ func TestSubtaskIsDone(t *testing.T) {
 		{SubtaskStatePending, false},
 		{SubtaskStateRunning, false},
 		{SubtaskStateSucceed, true},
-		{SubtaskStateReverting, false},
-		{SubtaskStateRevertPending, false},
 		{SubtaskStateFailed, true},
-		{SubtaskStateRevertFailed, true},
 		{SubtaskStatePaused, false},
-		{SubtaskStateReverted, true},
 		{SubtaskStateCanceled, true},
 	}
 	for _, c := range cases {
