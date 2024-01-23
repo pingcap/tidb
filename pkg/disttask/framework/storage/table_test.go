@@ -479,6 +479,7 @@ func TestSubTaskTable(t *testing.T) {
 		[]*proto.Subtask{proto.NewSubtask(proto.StepOne, 1, proto.TaskTypeExample, "tidb1", 11, []byte("test"), 1)},
 	)
 	require.NoError(t, err)
+	startTime := time.Unix(time.Now().Unix(), 0)
 
 	nilTask, err := sm.GetFirstSubtaskInStates(ctx, "tidb2", 1, proto.StepOne, proto.SubtaskStatePending)
 	require.NoError(t, err)
@@ -496,7 +497,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.GreaterOrEqual(t, subtask.CreateTime, timeBeforeCreate)
 	require.Equal(t, 1, subtask.Ordinal)
 	require.Zero(t, subtask.StartTime)
-	require.Zero(t, subtask.StateUpdateTime)
+	require.GreaterOrEqual(t, startTime, subtask.StateUpdateTime)
 	require.Equal(t, "{}", subtask.Summary)
 
 	subtask2, err := sm.GetFirstSubtaskInStates(ctx, "tidb1", 1, proto.StepOne, proto.SubtaskStatePending)
