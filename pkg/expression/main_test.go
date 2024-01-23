@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit/testmain"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -58,6 +59,10 @@ func TestMain(m *testing.M) {
 
 func createContext(t *testing.T) *mock.Context {
 	ctx := mock.NewContext()
+	sqlMode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
+	require.NoError(t, err)
+	require.True(t, sqlMode.HasStrictMode())
+	ctx.GetSessionVars().SQLMode = sqlMode
 	ctx.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
 	sc := ctx.GetSessionVars().StmtCtx
 	sc.SetTypeFlags(sc.TypeFlags().WithTruncateAsWarning(true))

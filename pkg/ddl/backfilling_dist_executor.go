@@ -61,7 +61,7 @@ type BackfillSubTaskMeta struct {
 
 // NewBackfillSubtaskExecutor creates a new backfill subtask executor.
 func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
-	bc ingest.BackendCtx, stage proto.Step, summary *execute.Summary) (execute.SubtaskExecutor, error) {
+	bc ingest.BackendCtx, stage proto.Step, summary *execute.Summary) (execute.StepExecutor, error) {
 	bgm := &BackfillTaskMeta{}
 	err := json.Unmarshal(taskMeta, bgm)
 	if err != nil {
@@ -85,15 +85,15 @@ func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
 	}
 
 	switch stage {
-	case StepReadIndex:
+	case proto.BackfillStepReadIndex:
 		jc := d.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		d.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		d.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
 		return newReadIndexExecutor(
 			d, &bgm.Job, indexInfos, tbl.(table.PhysicalTable), jc, bc, summary, bgm.CloudStorageURI), nil
-	case StepMergeSort:
+	case proto.BackfillStepMergeSort:
 		return newMergeSortExecutor(jobMeta.ID, len(indexInfos), tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
-	case StepWriteAndIngest:
+	case proto.BackfillStepWriteAndIngest:
 		if len(bgm.CloudStorageURI) > 0 {
 			return newCloudImportExecutor(&bgm.Job, jobMeta.ID, indexInfos[0], tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
 		}
@@ -136,18 +136,13 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 		return errors.Trace(err)
 	}
 	job := &bgm.Job
-	_, tbl, err := d.getTableByTxn((*asAutoIDRequirement)(d.ddlCtx), job.SchemaID, job.TableID)
+
+	unique, err := decodeIndexUniqueness(job)
 	if err != nil {
-		return errors.Trace(err)
-	}
-	// We only support adding multiple unique indexes or multiple non-unique indexes,
-	// we use the first index uniqueness here.
-	idx := model.FindIndexInfoByID(tbl.Meta().Indices, bgm.EleIDs[0])
-	if idx == nil {
-		return errors.Trace(errors.Errorf("index info not found: %d", bgm.EleIDs[0]))
+		return err
 	}
 	pdLeaderAddr := d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
-	bc, err := ingest.LitBackCtxMgr.Register(ctx, idx.Unique, job.ID, d.etcdCli, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
+	bc, err := ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -156,9 +151,23 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 	return nil
 }
 
-func (s *backfillDistExecutor) GetSubtaskExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary) (execute.SubtaskExecutor, error) {
+func decodeIndexUniqueness(job *model.Job) (bool, error) {
+	unique := make([]bool, 1)
+	err := job.DecodeArgs(&unique[0])
+	if err != nil {
+		err = job.DecodeArgs(&unique)
+	}
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	// We only support adding multiple unique indexes or multiple non-unique indexes,
+	// we use the first index uniqueness here.
+	return unique[0], nil
+}
+
+func (s *backfillDistExecutor) GetStepExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary, _ *proto.StepResource) (execute.StepExecutor, error) {
 	switch task.Step {
-	case StepReadIndex, StepMergeSort, StepWriteAndIngest:
+	case proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest:
 		return NewBackfillSubtaskExecutor(ctx, task.Meta, s.d, s.backendCtx, task.Step, summary)
 	default:
 		return nil, errors.Errorf("unknown backfill step %d for task %d", task.Step, task.ID)

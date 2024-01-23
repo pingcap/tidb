@@ -17,6 +17,7 @@ package testutil
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -76,6 +78,20 @@ func getTaskManager(t *testing.T, pool *pools.ResourcePool) *storage.TaskManager
 	manager, err := storage.GetTaskManager()
 	require.NoError(t, err)
 	return manager
+}
+
+// GetOneTask get a task from task table
+func GetOneTask(ctx context.Context, mgr *storage.TaskManager) (task *proto.Task, err error) {
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+storage.TaskColumns+" from mysql.tidb_global_task where state = %? limit 1", proto.TaskStatePending)
+	if err != nil {
+		return task, err
+	}
+
+	if len(rs) == 0 {
+		return nil, nil
+	}
+
+	return storage.Row2Task(rs[0]), nil
 }
 
 // GetSubtasksFromHistory gets subtasks from history table for test.
@@ -181,6 +197,54 @@ func UpdateSubtaskExecID(ctx context.Context, mgr *storage.TaskManager, tidbID s
 		 where id = %?`,
 		tidbID, subtaskID)
 	return err
+}
+
+// TransferSubTasks2History move subtasks from tidb_background_subtask to tidb_background_subtask_history.
+func TransferSubTasks2History(ctx context.Context, mgr *storage.TaskManager, taskID int64) error {
+	return mgr.WithNewSession(func(se sessionctx.Context) error {
+		return mgr.TransferSubtasks2HistoryWithSession(ctx, se, taskID)
+	})
+}
+
+// GetTasksFromHistoryInStates gets the tasks in history table in the states.
+func GetTasksFromHistoryInStates(ctx context.Context, mgr *storage.TaskManager, states ...interface{}) (task []*proto.Task, err error) {
+	if len(states) == 0 {
+		return task, nil
+	}
+
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+storage.TaskColumns+" from mysql.tidb_global_task_history where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", states...)
+	if err != nil {
+		return task, err
+	}
+
+	for _, r := range rs {
+		task = append(task, storage.Row2Task(r))
+	}
+	return task, nil
+}
+
+// DeleteSubtasksByTaskID deletes the subtask of the given task ID.
+func DeleteSubtasksByTaskID(ctx context.Context, mgr *storage.TaskManager, taskID int64) error {
+	_, err := mgr.ExecuteSQLWithNewSession(ctx, `delete from mysql.tidb_background_subtask
+		where task_key = %?`, taskID)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// IsTaskCancelling checks whether the task state is cancelling.
+func IsTaskCancelling(ctx context.Context, mgr *storage.TaskManager, taskID int64) (bool, error) {
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select 1 from mysql.tidb_global_task where id=%? and state = %?",
+		taskID, proto.TaskStateCancelling,
+	)
+
+	if err != nil {
+		return false, err
+	}
+
+	return len(rs) > 0, nil
 }
 
 // PrintSubtaskInfo log the subtask info by taskKey for test.

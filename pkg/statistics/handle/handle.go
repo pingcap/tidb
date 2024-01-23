@@ -195,8 +195,14 @@ func (h *Handle) FlushStats() {
 	}
 }
 
+// StartWorker starts the background collector worker inside
+func (h *Handle) StartWorker() {
+	h.StatsUsage.StartWorker()
+}
+
 // Close stops the background
 func (h *Handle) Close() {
 	h.Pool.Close()
 	h.StatsCache.Close()
+	h.StatsUsage.Close()
 }

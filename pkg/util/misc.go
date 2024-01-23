@@ -487,10 +487,6 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 
 	var minTLSVersion uint16 = tls.VersionTLS12
 	switch tlsver := config.GetGlobalConfig().Security.MinTLSVersion; tlsver {
-	case "TLSv1.0":
-		minTLSVersion = tls.VersionTLS10
-	case "TLSv1.1":
-		minTLSVersion = tls.VersionTLS11
 	case "TLSv1.2":
 		minTLSVersion = tls.VersionTLS12
 	case "TLSv1.3":
@@ -503,9 +499,8 @@ func LoadTLSCertificates(ca, key, cert string, autoTLS bool, rsaKeySize int) (tl
 		)
 	}
 	if minTLSVersion < tls.VersionTLS12 {
-		logutil.BgLogger().Warn(
-			"Minimum TLS version allows pre-TLSv1.2 protocols, this is not recommended",
-		)
+		err = errors.New("Minimum TLS version pre-TLSv1.2 protocols are not allowed")
+		return
 	}
 
 	// Try loading CA cert.

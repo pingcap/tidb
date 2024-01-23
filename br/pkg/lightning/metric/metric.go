@@ -396,6 +396,16 @@ func ReadCounter(counter prometheus.Counter) float64 {
 	return metric.Counter.GetValue()
 }
 
+// ReadHistogram reports the current value of the histogram.
+// for test only.
+func ReadHistogram(counter prometheus.Histogram) *dto.Metric {
+	var metric dto.Metric
+	if err := counter.Write(&metric); err != nil {
+		return nil
+	}
+	return &metric
+}
+
 func metricHasLabel(labelPairs []*dto.LabelPair, labels prometheus.Labels) bool {
 	for _, label := range labelPairs {
 		if v, ok := labels[label.GetName()]; ok && v == label.GetValue() {
