@@ -1268,7 +1268,7 @@ func TestSubsetIdxCardinality(t *testing.T) {
 		testKit.MustExec(fmt.Sprintf("insert into t select a + 10 + %v, b + 1, c from t", i))
 	}
 	for j := 0; j < 3; j++ {
-		testKit.MustExec(fmt.Sprintf("insert into t select a, b, c from t"))
+		testKit.MustExec("insert into t select a, b, c from t")
 	}
 	testKit.MustExec("insert into t select a, b + 10, c from t")
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
