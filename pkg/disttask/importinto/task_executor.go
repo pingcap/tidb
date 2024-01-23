@@ -387,6 +387,12 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	if err != nil {
 		return err
 	}
+	defer func() {
+		err2 := localBackend.CleanupEngine(ctx, engineUUID)
+		if err2 != nil {
+			logger.Warn("failed to cleanup engine", log.ShortError(err2))
+		}
+	}()
 	return localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 }
 
