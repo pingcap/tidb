@@ -96,6 +96,9 @@ func (e *ExplainExec) Next(ctx context.Context, req *chunk.Chunk) error {
 }
 
 func (e *ExplainExec) handleRUDetails(ctx context.Context) {
+	if e.analyzeExec == nil || !e.executed {
+		return
+	}
 	ruDetailsRaw := ctx.Value(clientutil.RUDetailsCtxKey)
 	if coll := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil && ruDetailsRaw != nil {
 		ruDetails := ruDetailsRaw.(*clientutil.RUDetails)
