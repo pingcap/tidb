@@ -15,11 +15,11 @@
 package sortexec
 
 import (
+	"container/heap"
 	"math/rand"
+	"slices"
 	"sync"
 	"time"
-
-	"slices"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -29,18 +29,8 @@ import (
 // SignalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
 const SignalCheckpointForSort uint = 20000
 
-const (
-	normal = iota
-	eof
-	finish
-)
-
 type parallelSortWorker struct {
 	workerIDForTest int
-
-	result *sortedRows
-	// This list is shared by all workers and all workers will put their sorted rows into this list
-	globalSortedRowsQueue *sortedRowsList
 
 	chunkChannel           chan *chunkWithMemoryUsage
 	fetcherAndWorkerSyncer *sync.WaitGroup
@@ -54,44 +44,36 @@ type parallelSortWorker struct {
 	totalMemoryUsage int64
 
 	spillHelper *parallelSortSpillHelper
+
+	localSortedRows    []*chunk.Iterator4Slice
+	sortedRowsIter     *chunk.Iterator4Slice
+	maxSortedRowsLimit int
+	kWayMerge          *multiWayMerge
 }
 
 func newParallelSortWorker(
 	workerIDForTest int,
 	lessRowFunc func(chunk.Row, chunk.Row) int,
-	globalSortedRowsQueue *sortedRowsList,
-	result *sortedRows,
 	chunkChannel chan *chunkWithMemoryUsage,
 	fetcherAndWorkerSyncer *sync.WaitGroup,
 	processError func(error),
 	finishCh chan struct{},
 	memTracker *memory.Tracker,
+	sortedRowsIter *chunk.Iterator4Slice,
+	maxChunkSize int,
 	spillHelper *parallelSortSpillHelper) *parallelSortWorker {
 	return &parallelSortWorker{
 		workerIDForTest:        workerIDForTest,
 		lessRowFunc:            lessRowFunc,
-		globalSortedRowsQueue:  globalSortedRowsQueue,
-		result:                 result,
 		chunkChannel:           chunkChannel,
 		fetcherAndWorkerSyncer: fetcherAndWorkerSyncer,
 		processError:           processError,
 		finishCh:               finishCh,
 		timesOfRowCompare:      0,
 		memTracker:             memTracker,
+		sortedRowsIter:         sortedRowsIter,
+		maxSortedRowsLimit:     maxChunkSize * 30,
 		spillHelper:            spillHelper,
-	}
-}
-
-func (p *parallelSortWorker) fetchChunksAndSort() bool {
-	for {
-		status := p.fetchChunksAndSortImpl()
-		if status == finish {
-			return false
-		}
-
-		if status == eof {
-			return true
-		}
 	}
 }
 
@@ -109,98 +91,94 @@ func (p *parallelSortWorker) injectFailPointForParallelSortWorker() {
 	})
 }
 
-// Fetching chunks from chunkChannel and sort them.
-// Rows are sorted only inside a chunk.
-// Return true if we want to stop further execution
-func (p *parallelSortWorker) fetchChunksAndSortImpl() int {
-	var (
-		chkWithMemoryUsage *chunkWithMemoryUsage
-		ok                 bool
-	)
+func (p *parallelSortWorker) kWayMergeSortedRows() {
+	totalRowNum := 0
+	for _, rows := range p.localSortedRows {
+		totalRowNum += rows.Len()
+	}
+	resultRows := make([]chunk.Row, 0, totalRowNum)
+	p.kWayMerge = &multiWayMerge{p.lessRowFunc, make([]rowWithPartition, 0, len(p.localSortedRows))}
+	for i := range p.localSortedRows {
+		row := p.localSortedRows[i].Begin()
+		if row.IsEmpty() {
+			continue
+		}
+		p.kWayMerge.elements = append(p.kWayMerge.elements, rowWithPartition{row: row, partitionID: i})
+	}
+	heap.Init(p.kWayMerge)
 
+	for p.kWayMerge.Len() > 0 {
+		elem := p.kWayMerge.elements[0]
+		resultRows = append(resultRows, elem.row)
+		newRow := p.localSortedRows[elem.partitionID].Next()
+		if newRow.IsEmpty() {
+			heap.Remove(p.kWayMerge, 0)
+			continue
+		}
+		p.kWayMerge.elements[0].row = newRow
+		heap.Fix(p.kWayMerge, 0)
+	}
+
+	// Put resultRows into this iter who will be read by sort executor
+	p.sortedRowsIter.Reset(resultRows)
+}
+
+func (p *parallelSortWorker) sortBatchRows(batchRows []chunk.Row) {
+	slices.SortFunc(batchRows, p.keyColumnsLess)
+	p.localSortedRows = append(p.localSortedRows, chunk.NewIterator4Slice(batchRows))
+}
+
+// Fetching a bunch of chunks from chunkChannel and sort them.
+// After receiving all chunks, we will get several sorted rows slices and we use k-way merge to sort them.
+func (p *parallelSortWorker) fetchChunksAndSort() {
+	batchRows := make([]chunk.Row, 0, p.maxSortedRowsLimit)
+	var keepExecution bool
+	for {
+		batchRows, keepExecution = p.fetchChunksAndSortImpl(batchRows)
+		if !keepExecution {
+			break
+		}
+	}
+}
+
+func (p *parallelSortWorker) fetchChunksAndSortImpl(batchRows []chunk.Row) ([]chunk.Row, bool) {
+	var (
+		chk *chunkWithMemoryUsage
+		ok  bool
+	)
 	select {
 	case <-p.finishCh:
-		return finish
-	case chkWithMemoryUsage, ok = <-p.chunkChannel:
-		if !ok {
-			return eof
-		}
+		return nil, false
+	case chk, ok = <-p.chunkChannel:
 		// Memory usage of the chunk has been consumed at the chunk fetcher
-		p.totalMemoryUsage += chkWithMemoryUsage.MemoryUsage
-		defer p.fetcherAndWorkerSyncer.Done()
-	}
-
-	sortedRows := p.sortChunkAndGetSortedRows(chkWithMemoryUsage.Chk)
-	p.globalSortedRowsQueue.add(sortedRows)
-	p.injectFailPointForParallelSortWorker()
-	return normal
-}
-
-func (p *parallelSortWorker) sortChunkAndGetSortedRows(chk *chunk.Chunk) sortedRows {
-	rowNum := chk.NumRows()
-	rowBuffer := make(sortedRows, rowNum)
-	for i := 0; i < rowNum; i++ {
-		rowBuffer[i] = chk.GetRow(i)
-	}
-	slices.SortFunc(rowBuffer, p.keyColumnsLess)
-	return rowBuffer
-}
-
-func (p *parallelSortWorker) mergeSortGlobalRows() {
-	for {
-		select {
-		case <-p.finishCh:
-			return
-		default:
-		}
-
-		sortedRowsLeft, sortedRowsRight := p.globalSortedRowsQueue.fetchTwoSortedRows()
-		if sortedRowsLeft == nil {
-			return
-		}
-
-		mergedSortedRows := p.mergeTwoSortedRows(sortedRowsLeft, sortedRowsRight)
-		p.globalSortedRowsQueue.add(mergedSortedRows)
-		p.injectFailPointForParallelSortWorker()
-	}
-}
-
-func (p *parallelSortWorker) mergeTwoSortedRows(sortedRowsLeft sortedRows, sortedRowsRight sortedRows) sortedRows {
-	sortedRowsLeftLen := len(sortedRowsLeft)
-	sortedRowsRightLen := len(sortedRowsRight)
-	mergedSortedRows := make(sortedRows, 0, sortedRowsLeftLen+sortedRowsRightLen)
-	cursorLeft := 0  // Point to sortedRowsLeft
-	cursorRight := 0 // Point to sortedRowsRight
-
-	// Merge
-	for cursorLeft < sortedRowsLeftLen && cursorRight < sortedRowsRightLen {
-		if p.timesOfRowCompare >= SignalCheckpointForSort {
-			// Trigger Consume for checking the NeedKill signal
-			p.memTracker.Consume(1)
-			p.timesOfRowCompare = 0
-		}
-
-		failpoint.Inject("SignalCheckpointForSort", func(val failpoint.Value) {
-			if val.(bool) {
-				p.timesOfRowCompare += 1024
+		if !ok {
+			// Handle Remaining batchRows whose row number is not over the `maxSortedRowsLimit`
+			if len(batchRows) > 0 {
+				p.sortBatchRows(batchRows)
 			}
-		})
-		p.timesOfRowCompare++
 
-		if p.lessRowFunc(sortedRowsLeft[cursorLeft], sortedRowsRight[cursorRight]) < 0 {
-			mergedSortedRows = append(mergedSortedRows, sortedRowsLeft[cursorLeft])
-			cursorLeft++
-		} else {
-			mergedSortedRows = append(mergedSortedRows, sortedRowsRight[cursorRight])
-			cursorRight++
+			p.kWayMergeSortedRows()
+			return batchRows, false
 		}
+		defer p.fetcherAndWorkerSyncer.Done()
+		p.totalMemoryUsage += chk.MemoryUsage
 	}
 
-	// Append the remaining rows
-	mergedSortedRows = append(mergedSortedRows, sortedRowsLeft[cursorLeft:]...)
-	mergedSortedRows = append(mergedSortedRows, sortedRowsRight[cursorRight:]...)
+	chkIter := chunk.NewIterator4Chunk(chk.Chk)
+	row := chkIter.Begin()
+	for !row.IsEmpty() {
+		batchRows = append(batchRows, row)
+		row = chkIter.Next()
+	}
 
-	return mergedSortedRows
+	// Sort a bunch of chunks
+	if len(batchRows) >= p.maxSortedRowsLimit {
+		p.sortBatchRows(batchRows)
+		batchRows = make([]chunk.Row, 0, p.maxSortedRowsLimit)
+	}
+
+	p.injectFailPointForParallelSortWorker()
+	return batchRows, true
 }
 
 func (p *parallelSortWorker) keyColumnsLess(i, j chunk.Row) int {
@@ -227,10 +205,5 @@ func (p *parallelSortWorker) run() {
 		}
 	}()
 
-	ok := p.fetchChunksAndSort()
-	if !ok {
-		return
-	}
-
-	p.mergeSortGlobalRows()
+	p.fetchChunksAndSort()
 }

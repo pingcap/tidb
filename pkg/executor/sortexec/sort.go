@@ -33,8 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
 
-type sortedRows []chunk.Row
-
 // SortExec represents sorting executor.
 type SortExec struct {
 	exec.BaseExecutor
@@ -74,21 +72,19 @@ type SortExec struct {
 	}
 
 	Parallel struct {
-		closeLock sync.Mutex
-		result    sortedRows
-		rowNum    int64
-		idx       int64
-
 		chunkChannel chan *chunkWithMemoryUsage
 		// It's useful when spill is triggered and the fetcher could know when workers finish their works.
 		fetcherAndWorkerSyncer *sync.WaitGroup
 		workers                []*parallelSortWorker
 
-		// All workers' sorted rows will be put into this list to be merged
-		globalSortedRowsQueue *sortedRowsList
-
 		errRWLock *sync.RWMutex
 		err       error
+
+		// Each worker will put their results into the given iter
+		sortedRowsIters []chunk.Iterator4Slice
+		kWayMerge       *multiWayMerge
+
+		resultChannel chan chunk.Row
 
 		spillHelper *parallelSortSpillHelper
 		spillAction *parallelSortSpillAction
@@ -115,18 +111,6 @@ func (e *SortExec) Close() error {
 				break
 			}
 			e.Parallel.fetcherAndWorkerSyncer.Done()
-		}
-		e.Parallel.globalSortedRowsQueue.clear()
-
-		e.Parallel.closeLock.Lock()
-		defer e.Parallel.closeLock.Unlock()
-		e.Parallel.result = nil
-		e.Parallel.rowNum = 0
-
-		if e.Parallel.spillHelper.isSpillTriggered() {
-			for _, disk := range e.Parallel.spillHelper.sortedRowsInDisk {
-				disk.Close()
-			}
 		}
 	}
 
@@ -156,13 +140,14 @@ func (e *SortExec) Open(ctx context.Context) error {
 	if e.IsUnparallel {
 		e.Unparallel.Idx = 0
 	} else {
-		e.Parallel.idx = 0
 		e.Parallel.workers = make([]*parallelSortWorker, e.Ctx().GetSessionVars().ExecutorConcurrency)
 		e.Parallel.chunkChannel = make(chan *chunkWithMemoryUsage, e.Ctx().GetSessionVars().ExecutorConcurrency)
 		e.Parallel.fetcherAndWorkerSyncer = &sync.WaitGroup{}
-		e.Parallel.globalSortedRowsQueue = &sortedRowsList{}
 		e.Parallel.errRWLock = &sync.RWMutex{}
 		e.Parallel.err = nil
+		e.Parallel.sortedRowsIters = make([]chunk.Iterator4Slice, len(e.Parallel.workers))
+		e.Parallel.resultChannel = make(chan chunk.Row, e.MaxChunkSize())
+		e.Parallel.kWayMerge = &multiWayMerge{e.lessRow, make([]rowWithPartition, 0, len(e.Parallel.workers))}
 		e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh)
 		e.Parallel.spillAction = newParallelSortSpillDiskAction(e.Parallel.spillHelper)
 		if e.enableTmpStorageOnOOM {
@@ -183,6 +168,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 //  4. Merge sort if the count of partitions is larger than 1. If there is only one partition in step 4, it works
 //     just like in-memory sort before.
 //
+// TODO update the introduction
 // Here we explain the execution flow of the parallel sort implementation.
 // There are 2 main components:
 //  1. Chunks Fetcher: Fetcher is responsible for fetching chunks from child and send them to channel.
@@ -255,29 +241,18 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.IsUnparallel {
 		return e.appendResultToChunkInUnparallelMode(req)
 	}
-	return e.appendResultToChunkInParallelMode(req)
+	e.appendResultToChunkInParallelMode(req)
+	return nil
 }
 
-func (e *SortExec) appendResultToChunkInParallelMode(req *chunk.Chunk) error {
-	e.Parallel.closeLock.Lock()
-	defer e.Parallel.closeLock.Unlock()
-
-	if e.Parallel.spillHelper.isSpillNeeded() && !e.Parallel.spillHelper.isSpillTriggered() {
-		e.Parallel.spillHelper.spill()
-		err := e.Parallel.spillHelper.checkSpillError()
-		if err != nil {
-			return err
+func (e *SortExec) appendResultToChunkInParallelMode(req *chunk.Chunk) {
+	for !req.IsFull() {
+		row, ok := <-e.Parallel.resultChannel
+		if !ok {
+			return
 		}
+		req.AppendRow(row)
 	}
-
-	if e.Parallel.spillHelper.isSpillTriggered() {
-		return e.externalSortingForParallel(req)
-	}
-
-	for ; !req.IsFull() && e.Parallel.idx < e.Parallel.rowNum; e.Parallel.idx++ {
-		req.AppendRow(e.Parallel.result[e.Parallel.idx])
-	}
-	return nil
 }
 
 func (e *SortExec) appendResultToChunkInUnparallelMode(req *chunk.Chunk) error {
@@ -296,6 +271,61 @@ func (e *SortExec) appendResultToChunkInUnparallelMode(req *chunk.Chunk) error {
 		}
 	}
 	return nil
+}
+
+func (e *SortExec) initKWayMerge() {
+	for i := range e.Parallel.sortedRowsIters {
+		row := e.Parallel.sortedRowsIters[i].Begin()
+		if row.IsEmpty() {
+			continue
+		}
+		e.Parallel.kWayMerge.elements = append(e.Parallel.kWayMerge.elements, rowWithPartition{row: row, partitionID: i})
+	}
+	heap.Init(e.Parallel.kWayMerge)
+}
+
+func (e *SortExec) generateResultWithKWayMerge() {
+	defer func() {
+		close(e.Parallel.resultChannel)
+		for i := range e.Parallel.sortedRowsIters {
+			e.Parallel.sortedRowsIters[i].Reset(nil)
+		}
+		if e.Parallel.spillHelper.isSpillTriggered() {
+			for _, disk := range e.Parallel.spillHelper.sortedRowsInDisk {
+				disk.Close()
+			}
+		}
+		e.Parallel.kWayMerge = nil
+	}()
+	e.initKWayMerge()
+
+	maxChunkSize := e.MaxChunkSize()
+	resBuf := make([]chunk.Row, 0, maxChunkSize)
+
+	for e.Parallel.kWayMerge.Len() > 0 {
+		for i := 0; i < maxChunkSize; i++ {
+			elem := e.Parallel.kWayMerge.elements[0]
+			resBuf = append(resBuf, elem.row)
+			newRow := e.Parallel.sortedRowsIters[elem.partitionID].Next()
+			if newRow.IsEmpty() {
+				heap.Remove(e.Parallel.kWayMerge, 0)
+				break
+			}
+			e.Parallel.kWayMerge.elements[0].row = newRow
+			heap.Fix(e.Parallel.kWayMerge, 0)
+		}
+
+		for _, row := range resBuf {
+			select {
+			case <-e.finishCh:
+				return
+			case e.Parallel.resultChannel <- row:
+			}
+		}
+		resBuf = resBuf[:0]
+
+		injectParallelSortRandomFail()
+	}
 }
 
 func (e *SortExec) initExternalSorting() error {
@@ -583,7 +613,7 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	})
 
 	for i := range e.Parallel.workers {
-		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.globalSortedRowsQueue, &e.Parallel.result, e.Parallel.chunkChannel, e.Parallel.fetcherAndWorkerSyncer, e.processErrorForParallel, e.finishCh, e.memTracker, e.Parallel.spillHelper)
+		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.chunkChannel, e.Parallel.fetcherAndWorkerSyncer, e.processErrorForParallel, e.finishCh, e.memTracker, &e.Parallel.sortedRowsIters[i], e.MaxChunkSize(), e.Parallel.spillHelper)
 		worker := e.Parallel.workers[i]
 		workersWaiter.Run(func() {
 			worker.run()
@@ -603,7 +633,7 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 		return err
 	}
 
-	e.fetchResultFromQueue()
+	go e.generateResultWithKWayMerge()
 	return nil
 }
 
@@ -617,7 +647,6 @@ func (e *SortExec) checkSpillAndExecute() {
 	if e.Parallel.spillHelper.isSpillNeeded() {
 		// Wait for the stop of all workers
 		e.Parallel.fetcherAndWorkerSyncer.Wait()
-
 		e.Parallel.spillHelper.spill()
 	}
 }
@@ -636,6 +665,7 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 	}()
 
 	for {
+
 		chk := exec.TryNewCacheChunk(e.Children(0))
 		err := exec.Next(ctx, e.Children(0), chk)
 		if err != nil {
@@ -652,6 +682,7 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 			Chk:         chk,
 			MemoryUsage: chk.MemoryUsage() + chunk.RowSize*int64(rowCount),
 		}
+
 		e.memTracker.Consume(chkWithMemoryUsage.MemoryUsage)
 
 		e.Parallel.fetcherAndWorkerSyncer.Add(1)
@@ -685,28 +716,6 @@ func (e *SortExec) processErrorForParallel(err error) {
 	if e.Parallel.err == nil {
 		e.Parallel.err = err
 	}
-}
-
-func (e *SortExec) fetchResultFromQueue() {
-	select {
-	case <-e.finishCh:
-		return
-	default:
-	}
-
-	sortedRowsNum := e.Parallel.globalSortedRowsQueue.getSortedRowsNumNoLock()
-	if sortedRowsNum > 1 {
-		panic("Sort is not completed.")
-	}
-
-	if sortedRowsNum == 0 {
-		e.Parallel.rowNum = 0
-		return
-	}
-
-	sortedRows := e.Parallel.globalSortedRowsQueue.fetchSortedRowsNoLock()
-	e.Parallel.rowNum = int64(len(sortedRows))
-	e.Parallel.result = sortedRows
 }
 
 func (e *SortExec) initCompareFuncs() {

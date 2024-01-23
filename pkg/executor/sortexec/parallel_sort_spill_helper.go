@@ -115,7 +115,7 @@ func (p *parallelSortSpillHelper) spill() {
 			}()
 
 			// Let workers sort existing rows
-			p.sortExec.Parallel.workers[idx].mergeSortGlobalRows()
+			// p.sortExec.Parallel.workers[idx].mergeSortGlobalRows()
 		}(i)
 	}
 
@@ -153,21 +153,8 @@ func (p *parallelSortSpillHelper) releaseMemory() {
 	p.sortExec.memTracker.Consume(-totalReleasedMemory)
 }
 
-func (p *parallelSortSpillHelper) getRowsNeedingSpill() sortedRows {
-	sortedRowsNum := p.sortExec.Parallel.globalSortedRowsQueue.getSortedRowsNumNoLock()
-	if sortedRowsNum > 1 {
-		panic("sorted is not completed")
-	}
-
-	if sortedRowsNum == 0 && p.sortExec.Parallel.idx < int64(len(p.sortExec.Parallel.result)) {
-		spilledRows := p.sortExec.Parallel.result[p.sortExec.Parallel.idx:]
-		p.sortExec.Parallel.result = nil
-		p.sortExec.Parallel.rowNum = 0
-		return spilledRows
-	}
-
-	ret := p.sortExec.Parallel.globalSortedRowsQueue.fetchSortedRowsNoLock()
-	return ret
+func (p *parallelSortSpillHelper) getRowsNeedingSpill() []chunk.Row {
+	return nil
 }
 
 func (p *parallelSortSpillHelper) spillImpl() {
