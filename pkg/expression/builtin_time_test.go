@@ -212,6 +212,7 @@ func TestDate(t *testing.T) {
 	}
 
 	// test nil
+	ctx.GetSessionVars().SQLMode = mysql.DelSQLMode(ctx.GetSessionVars().SQLMode, mysql.ModeNoZeroDate)
 	tblNil := []struct {
 		Input      interface{}
 		Year       interface{}
