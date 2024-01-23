@@ -285,7 +285,8 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 	return importSpecs, nil
 }
 
-func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat) bool {
+// TODO: will revert it, only for test now.
+func skipMergeSort(_ string, _ []external.MultipleFilesStat) bool {
 	// failpoint.Inject("forceMergeSort", func(val failpoint.Value) {
 	// 	in := val.(string)
 	// 	if in == kvGroup || in == "*" {
