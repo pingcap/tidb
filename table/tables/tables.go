@@ -70,12 +70,6 @@ type TableCommon struct {
 	meta                            *model.TableInfo
 	allocs                          autoid.Allocators
 	sequence                        *sequenceCommon
-<<<<<<< HEAD:table/tables/tables.go
-=======
-	dependencyColumnOffsets         []int
-	Constraints                     []*table.Constraint
-	writableConstraints             []*table.Constraint
->>>>>>> e56efc64212 (*: memory is not allocated first if the user does not use some information from the table. (#50062)):pkg/table/tables/tables.go
 
 	// recordPrefix and indexPrefix are generated using physicalTableID.
 	recordPrefix kv.Key
@@ -175,15 +169,6 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 	t.allocs = allocs
 	t.meta = tblInfo
 	t.Columns = cols
-<<<<<<< HEAD:table/tables/tables.go
-	t.PublicColumns = t.Cols()
-	t.VisibleColumns = t.VisibleCols()
-	t.HiddenColumns = t.HiddenCols()
-	t.WritableColumns = t.WritableCols()
-	t.FullHiddenColsAndVisibleColumns = t.FullHiddenColsAndVisibleCols()
-=======
-	t.Constraints = constraints
->>>>>>> e56efc64212 (*: memory is not allocated first if the user does not use some information from the table. (#50062)):pkg/table/tables/tables.go
 	t.recordPrefix = tablecodec.GenTableRecordPrefix(physicalTableID)
 	t.indexPrefix = tablecodec.GenTableIndexPrefix(physicalTableID)
 	if tblInfo.IsSequence() {
@@ -312,44 +297,6 @@ func (t *TableCommon) DeletableCols() []*table.Column {
 	return t.Columns
 }
 
-<<<<<<< HEAD:table/tables/tables.go
-=======
-// WritableConstraint returns constraints of the table in writable states.
-func (t *TableCommon) WritableConstraint() []*table.Constraint {
-	if len(t.writableConstraints) > 0 {
-		return t.writableConstraints
-	}
-	if t.Constraints == nil {
-		return nil
-	}
-	writeableConstraint := make([]*table.Constraint, 0, len(t.Constraints))
-	for _, con := range t.Constraints {
-		if !con.Enforced {
-			continue
-		}
-		if con.State == model.StateDeleteOnly || con.State == model.StateDeleteReorganization {
-			continue
-		}
-		writeableConstraint = append(writeableConstraint, con)
-	}
-	return writeableConstraint
-}
-
-// CheckRowConstraint verify row check constraints.
-func (t *TableCommon) CheckRowConstraint(sctx sessionctx.Context, rowToCheck []types.Datum) error {
-	for _, constraint := range t.WritableConstraint() {
-		ok, isNull, err := constraint.ConstraintExpr.EvalInt(sctx, chunk.MutRowFromDatums(rowToCheck).ToRow())
-		if err != nil {
-			return err
-		}
-		if ok == 0 && !isNull {
-			return table.ErrCheckConstraintViolated.FastGenByArgs(constraint.Name.O)
-		}
-	}
-	return nil
-}
-
->>>>>>> e56efc64212 (*: memory is not allocated first if the user does not use some information from the table. (#50062)):pkg/table/tables/tables.go
 // FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
 func (t *TableCommon) FullHiddenColsAndVisibleCols() []*table.Column {
 	if len(t.fullHiddenColsAndVisibleColumns) > 0 {
