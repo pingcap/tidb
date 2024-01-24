@@ -2284,7 +2284,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 	if !isJoinHintSupportedInMPPMode(p.preferJoinType) {
 		if hasMPPJoinHints(p.preferJoinType) {
 			// If there are MPP hints but has some conflicts join method hints, all the join hints are invalid.
-			p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("The MPP join hints are in conflict, and you can only specify join method hints that are currently supported by MPP mode now"))
+			p.SCtx().GetSessionVars().StmtCtx.SetSkipHintWarning(ErrInternal.FastGen("The MPP join hints are in conflict, and you can only specify join method hints that are currently supported by MPP mode now"))
 			p.preferJoinType = 0
 		} else {
 			// If there are no MPP hints but has some conflicts join method hints, the MPP mode will be blocked.
@@ -2329,7 +2329,7 @@ func (p *LogicalJoin) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]P
 			hasMppHints = true
 		}
 		if hasMppHints {
-			p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(errMsg))
+			p.SCtx().GetSessionVars().StmtCtx.SetSkipHintWarning(ErrInternal.FastGen(errMsg))
 		}
 	}
 	if prop.IsFlashProp() {
@@ -2694,7 +2694,7 @@ func pushLimitOrTopNForcibly(p LogicalPlan) bool {
 		}
 		if *preferPushDown {
 			errMsg := "Optimizer Hint LIMIT_TO_COP is inapplicable"
-			p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(errMsg))
+			p.SCtx().GetSessionVars().StmtCtx.SetSkipHintWarning(ErrInternal.FastGen(errMsg))
 			*preferPushDown = false
 		}
 	}
@@ -3405,7 +3405,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 			hasMppHints = true
 		}
 		if hasMppHints {
-			la.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(errMsg))
+			la.SCtx().GetSessionVars().StmtCtx.SetSkipHintWarning(ErrInternal.FastGen(errMsg))
 		}
 	}
 	if prop.IsFlashProp() {
@@ -3435,7 +3435,7 @@ func (la *LogicalAggregation) ResetHintIfConflicted() (preferHash bool, preferSt
 	if preferHash && preferStream {
 		errMsg := "Optimizer aggregation hints are conflicted"
 		warning := ErrInternal.FastGen(errMsg)
-		la.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
+		la.SCtx().GetSessionVars().StmtCtx.SetSkipHintWarning(warning)
 		la.aggHints.PreferAggType = 0
 		preferHash, preferStream = false, false
 	}
@@ -3445,9 +3445,8 @@ func (la *LogicalAggregation) ResetHintIfConflicted() (preferHash bool, preferSt
 func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
 	if la.aggHints.PreferAggToCop {
 		if !la.canPushToCop(kv.TiKV) {
-			errMsg := "Optimizer Hint AGG_TO_COP is inapplicable"
-			warning := ErrInternal.FastGen(errMsg)
-			la.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
+			la.SCtx().GetSessionVars().StmtCtx.SetSkipHintWarning(
+				ErrInternal.FastGen("Optimizer Hint AGG_TO_COP is inapplicable"))
 			la.aggHints.PreferAggToCop = false
 		}
 	}
@@ -3469,7 +3468,7 @@ func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProper
 	if streamAggs == nil && preferStream && !prop.IsSortItemEmpty() {
 		errMsg := "Optimizer Hint STREAM_AGG is inapplicable"
 		warning := ErrInternal.FastGen(errMsg)
-		la.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
+		la.SCtx().GetSessionVars().StmtCtx.SetSkipHintWarning(warning)
 	}
 
 	return aggs, !(preferStream || preferHash), nil

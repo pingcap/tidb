@@ -278,12 +278,12 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 			if useGreedy {
 				ok, leftJoinGroup := baseGroupSolver.generateLeadingJoinGroup(curJoinGroup, leadingHintInfo, hasOuterJoin)
 				if !ok {
-					ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("leading hint is inapplicable, check if the leading hint table is valid"))
+					ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(ErrInternal.FastGen("leading hint is inapplicable, check if the leading hint table is valid"))
 				} else {
 					curJoinGroup = leftJoinGroup
 				}
 			} else {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("leading hint is inapplicable for the DP join reorder algorithm"))
+				ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(ErrInternal.FastGen("leading hint is inapplicable for the DP join reorder algorithm"))
 			}
 		}
 
