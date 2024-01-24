@@ -44,7 +44,8 @@ var (
 	//DistTaskStarttimeGauge is the gauge of dist task count.
 	DistTaskStarttimeGauge *prometheus.GaugeVec
 	// DistTaskSubTaskCntGauge is the gauge of dist task subtask count.
-	DistTaskSubTaskCntGauge      *prometheus.GaugeVec
+	DistTaskSubTaskCntGauge *prometheus.GaugeVec
+	// DistTaskSubTaskDurationGauge is the gauge of dist task subtask duration.
 	DistTaskSubTaskDurationGauge *prometheus.GaugeVec
 )
 
