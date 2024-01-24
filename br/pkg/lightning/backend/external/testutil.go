@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -63,7 +64,7 @@ func testReadAndCompare(
 	)
 	require.NoError(t, err)
 
-	bufPool := membuf.NewPool()
+	bufPool := membuf.NewPool(membuf.WithBlockSize(int(1 * size.MB)))
 	loaded := &memKVsAndBuffers{}
 	curStart := startKey.Clone()
 	kvIdx := 0
