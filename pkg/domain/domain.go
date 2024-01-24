@@ -1485,7 +1485,7 @@ func (do *Domain) InitDistTaskLoop() error {
 	}
 	managerCtx, cancel := context.WithCancel(ctx)
 	do.cancelFns = append(do.cancelFns, cancel)
-	executorManager, err := taskexecutor.NewManagerBuilder().BuildManager(managerCtx, serverID, taskManager)
+	executorManager, err := taskexecutor.NewManager(managerCtx, serverID, taskManager)
 	if err != nil {
 		return err
 	}
@@ -1523,12 +1523,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		if schedulerManager != nil && schedulerManager.Initialized() {
 			return
 		}
-		var err error
-		schedulerManager, err = scheduler.NewManager(ctx, taskManager, serverID)
-		if err != nil {
-			logutil.BgLogger().Error("failed to create a dist task scheduler manager", zap.Error(err))
-			return
-		}
+		schedulerManager = scheduler.NewManager(ctx, taskManager, serverID)
 		schedulerManager.Start()
 	}
 	stopSchedulerMgrIfNeeded := func() {

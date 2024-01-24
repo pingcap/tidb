@@ -27,8 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/resourcemanager/pool/spool"
-	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -37,7 +35,6 @@ import (
 )
 
 var (
-	executorPoolSize int32 = 4
 	// same as scheduler
 	checkTime               = 300 * time.Millisecond
 	recoverMetaInterval     = 90 * time.Second
@@ -49,30 +46,10 @@ var (
 	}
 )
 
-// ManagerBuilder is used to build a Manager.
-type ManagerBuilder struct {
-	newPool func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
-}
-
-// NewManagerBuilder creates a new ManagerBuilder.
-func NewManagerBuilder() *ManagerBuilder {
-	return &ManagerBuilder{
-		newPool: func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
-			return spool.NewPool(name, size, component, options...)
-		},
-	}
-}
-
-// setPoolFactory sets the poolFactory to mock the Pool in unit test.
-func (b *ManagerBuilder) setPoolFactory(poolFactory func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)) {
-	b.newPool = poolFactory
-}
-
 // Manager monitors the task table and manages the taskExecutors.
 type Manager struct {
-	taskTable    TaskTable
-	executorPool Pool
-	mu           struct {
+	taskTable TaskTable
+	mu        struct {
 		sync.RWMutex
 		// taskID -> CancelCauseFunc.
 		// CancelCauseFunc is used to fast cancel the executor.Run.
@@ -81,18 +58,18 @@ type Manager struct {
 	// id, it's the same as server id now, i.e. host:port.
 	id          string
 	wg          tidbutil.WaitGroupWrapper
+	executorWG  tidbutil.WaitGroupWrapper
 	ctx         context.Context
 	cancel      context.CancelFunc
 	logger      *zap.Logger
-	newPool     func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
 	slotManager *slotManager
 
 	totalCPU int
 	totalMem int64
 }
 
-// BuildManager builds a Manager.
-func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, error) {
+// NewManager creates a new task executor Manager.
+func NewManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, error) {
 	totalMem, err := memory.MemTotal()
 	if err != nil {
 		// should not happen normally, as in main function of tidb-server, we assert
@@ -109,7 +86,6 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 		id:        id,
 		taskTable: taskTable,
 		logger:    logutil.BgLogger(),
-		newPool:   b.newPool,
 		slotManager: &slotManager{
 			taskID2Index:  make(map[int64]int),
 			executorTasks: make([]*proto.Task, 0),
@@ -120,12 +96,6 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.handlingTasks = make(map[int64]context.CancelCauseFunc)
-
-	executorPool, err := m.newPool("executor_pool", executorPoolSize, util.DistTask)
-	if err != nil {
-		return nil, err
-	}
-	m.executorPool = executorPool
 
 	return m, nil
 }
@@ -184,7 +154,7 @@ func (m *Manager) Start() error {
 // Stop stops the Manager.
 func (m *Manager) Stop() {
 	m.cancel()
-	m.executorPool.ReleaseAndWait()
+	m.executorWG.Wait()
 	m.wg.Wait()
 }
 
@@ -270,18 +240,11 @@ func (m *Manager) handleExecutableTasks(tasks []*proto.Task) {
 		m.addHandlingTask(task.ID)
 		m.slotManager.alloc(task)
 		t := task
-		err = m.executorPool.Run(func() {
+		m.executorWG.RunWithLog(func() {
 			defer m.slotManager.free(t.ID)
 			m.handleExecutableTask(t)
 			m.removeHandlingTask(t.ID)
 		})
-		// pool closed.
-		if err != nil {
-			m.slotManager.free(t.ID)
-			m.removeHandlingTask(task.ID)
-			m.logErr(err)
-			return
-		}
 	}
 }
 
