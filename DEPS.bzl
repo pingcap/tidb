@@ -4770,13 +4770,13 @@ def go_deps():
         name = "com_github_lestrrat_go_jwx_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/lestrrat-go/jwx/v2",
-        sha256 = "98630c9e00fa85bfc16d33cffb225d7ac86ab2f8eabeb9cc95a8e78d898de7f3",
-        strip_prefix = "github.com/lestrrat-go/jwx/v2@v2.0.17",
+        sha256 = "28e43e9f0b531d806db5c31f47076375a6f0c87207f1a8a69cc6bde242c83c65",
+        strip_prefix = "github.com/lestrrat-go/jwx/v2@v2.0.19",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/lestrrat-go/jwx/v2/com_github_lestrrat_go_jwx_v2-v2.0.17.zip",
-            "http://ats.apps.svc/gomod/github.com/lestrrat-go/jwx/v2/com_github_lestrrat_go_jwx_v2-v2.0.17.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/lestrrat-go/jwx/v2/com_github_lestrrat_go_jwx_v2-v2.0.17.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/lestrrat-go/jwx/v2/com_github_lestrrat_go_jwx_v2-v2.0.17.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/lestrrat-go/jwx/v2/com_github_lestrrat_go_jwx_v2-v2.0.19.zip",
+            "http://ats.apps.svc/gomod/github.com/lestrrat-go/jwx/v2/com_github_lestrrat_go_jwx_v2-v2.0.19.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/lestrrat-go/jwx/v2/com_github_lestrrat_go_jwx_v2-v2.0.19.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/lestrrat-go/jwx/v2/com_github_lestrrat_go_jwx_v2-v2.0.19.zip",
         ],
     )
     go_repository(
