@@ -166,6 +166,10 @@ func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, resu
 		}
 
 		if result.IsFull() {
+			if w.checkFinishChClosed() {
+				return
+			}
+
 			w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
 			result, finished = w.receiveFinalResultHolder()
 			if finished {
@@ -189,6 +193,10 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 	defer w.increaseExecTime(execStart)
 	if w.isSpilledTriggered {
 		for {
+			if w.checkFinishChClosed() {
+				return
+			}
+			
 			eof, hasError := w.restoreDataFromDisk(sctx)
 			if hasError {
 				return

@@ -237,6 +237,28 @@ func initCtx(ctx *mock.Context, newRootExceedAction *testutil.MockActionOnExceed
 	ctx.GetSessionVars().MemTracker.SetActionOnExceed(newRootExceedAction)
 }
 
+func getCorrecResultTest(t *testing.T, ctx *mock.Context, dataSource *testutil.MockDataSource, result map[string]float64) {
+	aggExec := buildHashAggExecutor(t, ctx, dataSource)
+	dataSource.PrepareChunks()
+	tmpCtx := context.Background()
+	chk := exec.NewFirstChunk(aggExec)
+	resContainer := resultsContainer{}
+	aggExec.Open(tmpCtx)
+
+	for {
+		aggExec.Next(tmpCtx, chk)
+		if chk.NumRows() == 0 {
+			break
+		}
+		resContainer.add(chk)
+		chk.Reset()
+	}
+	aggExec.Close()
+
+	require.True(t, aggExec.IsSpillTriggeredForTest())
+	require.True(t, resContainer.check(result))
+}
+
 func fallBackActionTest(t *testing.T) {
 	newRootExceedAction := new(testutil.MockActionOnExceed)
 	hardLimitBytesNum := int64(6000000)
@@ -272,6 +294,46 @@ func fallBackActionTest(t *testing.T) {
 	require.Less(t, 0, newRootExceedAction.GetTriggeredNum())
 }
 
+func randomFailTest(t *testing.T, ctx *mock.Context, dataSource *testutil.MockDataSource) {
+	dataSource.PrepareChunks()
+	aggExec := buildHashAggExecutor(t, ctx, dataSource)
+	tmpCtx := context.Background()
+	chk := exec.NewFirstChunk(aggExec)
+	aggExec.Open(tmpCtx)
+
+	goRoutineWaiter := sync.WaitGroup{}
+	goRoutineWaiter.Add(1)
+	defer goRoutineWaiter.Wait()
+
+	once := sync.Once{}
+
+	go func() {
+		time.Sleep(time.Duration(rand.Int31n(300)) * time.Millisecond)
+		once.Do(func() {
+			aggExec.Close()
+		})
+		goRoutineWaiter.Done()
+	}()
+
+	for {
+		err := aggExec.Next(tmpCtx, chk)
+		if err != nil {
+			once.Do(func() {
+				err = aggExec.Close()
+				require.Equal(t, nil, err)
+			})
+			break
+		}
+		if chk.NumRows() == 0 {
+			break
+		}
+		chk.Reset()
+	}
+	once.Do(func() {
+		aggExec.Close()
+	})
+}
+
 func TestGetCorrectResult(t *testing.T) {
 	newRootExceedAction := new(testutil.MockActionOnExceed)
 	hardLimitBytesNum := int64(6000000)
@@ -305,25 +367,7 @@ func TestGetCorrectResult(t *testing.T) {
 	}()
 
 	for i := 0; i < 5; i++ {
-		aggExec := buildHashAggExecutor(t, ctx, dataSource)
-		dataSource.PrepareChunks()
-		tmpCtx := context.Background()
-		chk := exec.NewFirstChunk(aggExec)
-		resContainer := resultsContainer{}
-		aggExec.Open(tmpCtx)
-
-		for {
-			aggExec.Next(tmpCtx, chk)
-			if chk.NumRows() == 0 {
-				break
-			}
-			resContainer.add(chk)
-			chk.Reset()
-		}
-		aggExec.Close()
-
-		require.True(t, aggExec.IsSpillTriggeredForTest())
-		require.True(t, resContainer.check(result))
+		getCorrecResultTest(t, ctx, dataSource, result)
 	}
 	require.Equal(t, 0, newRootExceedAction.GetTriggeredNum())
 	finished.Store(true)
@@ -351,13 +395,13 @@ func TestRandomFail(t *testing.T) {
 	opt := getMockDataSourceParameters(ctx)
 	dataSource := buildMockDataSource(opt, col1, col2)
 
-	finished := atomic.Bool{}
+	finishChan := atomic.Bool{}
 	wg := sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
 		tracker := ctx.GetSessionVars().MemTracker
 		for {
-			if finished.Load() {
+			if finishChan.Load() {
 				break
 			}
 			// Mock consuming in another goroutine, so that we can test potential data race.
@@ -369,21 +413,9 @@ func TestRandomFail(t *testing.T) {
 
 	// Test is successful when all sqls are not hung
 	for i := 0; i < 50; i++ {
-		dataSource.PrepareChunks()
-		aggExec := buildHashAggExecutor(t, ctx, dataSource)
-		tmpCtx := context.Background()
-		chk := exec.NewFirstChunk(aggExec)
-		aggExec.Open(tmpCtx)
-		for {
-			aggExec.Next(tmpCtx, chk)
-			if chk.NumRows() == 0 {
-				break
-			}
-			chk.Reset()
-		}
-		aggExec.Close()
+		randomFailTest(t, ctx, dataSource)
 	}
 
-	finished.Store(true)
+	finishChan.Store(true)
 	wg.Wait()
 }

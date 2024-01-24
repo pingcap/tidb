@@ -151,6 +151,7 @@ func (p *parallelHashAggSpillHelper) setSpillTriggered() {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	p.lock.spillStatus = spillTriggered
+	p.lock.waitIfInSpilling.Broadcast()
 }
 
 func (p *parallelHashAggSpillHelper) isInSpillingNoLock() bool {
@@ -167,8 +168,26 @@ func (p *parallelHashAggSpillHelper) setIsSpillingNoLock() {
 	p.lock.spillStatus = inSpilling
 }
 
-func (p *parallelHashAggSpillHelper) setNeedSpillNoLock() {
-	p.lock.spillStatus = needSpill
+// Return true if we successfully set flag
+func (p *parallelHashAggSpillHelper) setNeedSpill(executorTracker *memory.Tracker, triggeredTracker *memory.Tracker) bool {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	if hasEnoughDataToSpill(executorTracker, triggeredTracker) {
+		p.lock.spillStatus = needSpill
+		p.lock.memoryConsumption = triggeredTracker.BytesConsumed()
+		p.lock.memoryQuota = triggeredTracker.GetBytesLimit()
+		return true
+	}
+	return false
+}
+
+func (p *parallelHashAggSpillHelper) waitForTheEndOfSpill() {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	for p.isInSpillingNoLock() {
+		p.lock.waitIfInSpilling.Wait()
+	}
 }
 
 // We need to check error with atmoic as multi partial workers may access it.
@@ -326,7 +345,7 @@ type ParallelAggSpillDiskAction struct {
 
 // Action set HashAggExec spill mode.
 func (p *ParallelAggSpillDiskAction) Action(t *memory.Tracker) {
-	if !p.actionImpl(t) {
+	if p.actionImpl(t) {
 		return
 	}
 
@@ -335,23 +354,10 @@ func (p *ParallelAggSpillDiskAction) Action(t *memory.Tracker) {
 	}
 }
 
-// Return true if we need further execution.
+// Return true if we successfully set flag
 func (p *ParallelAggSpillDiskAction) actionImpl(t *memory.Tracker) bool {
-	p.spillHelper.lock.Lock()
-	defer p.spillHelper.lock.Unlock()
-
-	for p.spillHelper.isInSpillingNoLock() {
-		p.spillHelper.lock.waitIfInSpilling.Wait()
-	}
-
-	if hasEnoughDataToSpill(p.e.memTracker, t) {
-		p.spillHelper.setNeedSpillNoLock()
-		p.spillHelper.lock.memoryConsumption = t.BytesConsumed()
-		p.spillHelper.lock.memoryQuota = t.GetBytesLimit()
-		return false
-	}
-
-	return true
+	p.spillHelper.waitForTheEndOfSpill()
+	return p.spillHelper.setNeedSpill(p.e.memTracker, t)
 }
 
 func (p *ParallelAggSpillDiskAction) triggerFallBackAction(t *memory.Tracker) {

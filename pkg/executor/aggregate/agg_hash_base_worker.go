@@ -53,3 +53,12 @@ func (w *baseHashAggWorker) getPartialResultSliceLenConsiderByteAlign() int {
 	}
 	return length + length&1
 }
+
+func (w *baseHashAggWorker) checkFinishChClosed() bool {
+	select {
+	case <-w.finishCh:
+		return true
+	default:
+	}
+	return false
+}

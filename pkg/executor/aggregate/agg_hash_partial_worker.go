@@ -91,6 +91,19 @@ func (w *HashAggPartialWorker) getChildInput() bool {
 	return true
 }
 
+func (w *HashAggPartialWorker) updateWaitTime(startTime time.Time) {
+	if w.stats != nil {
+		w.stats.WaitTime += int64(time.Since(startTime))
+	}
+}
+
+func (w *HashAggPartialWorker) updateExecTime(startTime time.Time) {
+	if w.stats != nil {
+		w.stats.ExecTime += int64(time.Since(startTime))
+		w.stats.TaskNum++
+	}
+}
+
 func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasError *bool, needShuffle *bool) bool {
 	if w.spillHelper.checkError() {
 		*hasError = true
@@ -99,9 +112,7 @@ func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasE
 
 	waitStart := time.Now()
 	ok := w.getChildInput()
-	if w.stats != nil {
-		w.stats.WaitTime += int64(time.Since(waitStart))
-	}
+	w.updateWaitTime(waitStart)
 
 	if !ok {
 		return false
@@ -115,11 +126,7 @@ func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasE
 		w.processError(err)
 		return false
 	}
-
-	if w.stats != nil {
-		w.stats.ExecTime += int64(time.Since(execStart))
-		w.stats.TaskNum++
-	}
+	w.updateExecTime(execStart)
 
 	// The intermData can be promised to be not empty if reaching here,
 	// so we set needShuffle to be true.
@@ -162,6 +169,10 @@ func (w *HashAggPartialWorker) intestDuringPartialWorkerRun() {
 }
 
 func (w *HashAggPartialWorker) sendDataToFinalWorkersBeforeExit(needShuffle bool, finalConcurrency int, hasError bool) {
+	if w.checkFinishChClosed() {
+		return
+	}
+
 	if hasError {
 		return
 	}

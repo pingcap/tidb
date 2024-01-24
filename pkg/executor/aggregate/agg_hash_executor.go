@@ -176,17 +176,6 @@ func (e *HashAggExec) Close() error {
 		return nil
 	}
 	if e.parallelExecValid {
-		// `Close` may be called after `Open` without calling `Next` in test.
-		if !e.prepared {
-			close(e.inputCh)
-			for _, ch := range e.partialOutputChs {
-				close(ch)
-			}
-			for _, ch := range e.partialInputChs {
-				close(ch)
-			}
-			close(e.finalOutputCh)
-		}
 		close(e.finishCh)
 		for _, ch := range e.partialOutputChs {
 			channel.Clear(ch)
@@ -476,10 +465,7 @@ func (e *HashAggExec) spillIfNeed() bool {
 
 func (e *HashAggExec) spill() {
 	e.spillHelper.setInSpilling()
-	defer func() {
-		e.spillHelper.setSpillTriggered()
-		e.spillHelper.lock.waitIfInSpilling.Broadcast()
-	}()
+	defer e.spillHelper.setSpillTriggered()
 
 	spillWaiter := &sync.WaitGroup{}
 	spillWaiter.Add(len(e.partialWorkers))
