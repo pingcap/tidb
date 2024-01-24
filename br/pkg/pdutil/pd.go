@@ -169,8 +169,11 @@ func NewPdController(
 	if tlsConf != nil {
 		pdHTTPCliConfig = append(pdHTTPCliConfig, pdhttp.WithTLSConfig(tlsConf))
 	}
-	pdHTTPCli := pdhttp.NewClient("br/lightning PD controller", addrs, pdHTTPCliConfig...).
-		WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, PDRequestRetryTime*time.Second))
+	pdHTTPCli := pdhttp.NewClientWithServiceDiscovery(
+		"br/lightning PD controller",
+		pdClient.GetServiceDiscovery(),
+		pdHTTPCliConfig...,
+	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, PDRequestRetryTime*time.Second))
 	versionStr, err := pdHTTPCli.GetPDVersion(ctx)
 	if err != nil {
 		pdHTTPCli.Close()
