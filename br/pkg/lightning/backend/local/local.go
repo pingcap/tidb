@@ -1531,19 +1531,18 @@ loopWrite:
 					continue
 				}
 			}
+			if err != nil {
+				log.FromContext(ctx).Warn("batch ingest fail after retry, will retry import full range", log.ShortError(err),
+					logutil.Region(region.Region), zap.Reflect("meta", ingestMetas))
+				return errors.Trace(err)
+			}
 		}
 
-		if err != nil {
-			log.FromContext(ctx).Warn("write and ingest region, will retry import full range", log.ShortError(err),
-				logutil.Region(region.Region), logutil.Key("start", start),
-				logutil.Key("end", end))
-		} else {
-			engine.importedKVSize.Add(rangeStats.totalBytes)
-			engine.importedKVCount.Add(rangeStats.count)
-			engine.finishedRanges.add(finishedRange)
-			if local.metrics != nil {
-				local.metrics.BytesCounter.WithLabelValues(metric.BytesStateImported).Add(float64(rangeStats.totalBytes))
-			}
+		engine.importedKVSize.Add(rangeStats.totalBytes)
+		engine.importedKVCount.Add(rangeStats.count)
+		engine.finishedRanges.add(finishedRange)
+		if local.metrics != nil {
+			local.metrics.BytesCounter.WithLabelValues(metric.BytesStateImported).Add(float64(rangeStats.totalBytes))
 		}
 		return errors.Trace(err)
 	}
