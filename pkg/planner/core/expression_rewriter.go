@@ -653,7 +653,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, planCtx
 
 	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
 	if noDecorrelate && len(extractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())) == 0 {
-		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
+		er.sctx.GetSessionVars().StmtCtx.SetHintWarning(ErrInternal.FastGen(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))
 		noDecorrelate = false
 	}
@@ -962,13 +962,13 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 
 	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
 	if noDecorrelate && len(extractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())) == 0 {
-		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
+		er.sctx.GetSessionVars().StmtCtx.SetHintWarning(ErrInternal.FastGen(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))
 		noDecorrelate = false
 	}
 	semiJoinRewrite := hintFlags&hint.HintFlagSemiJoinRewrite > 0
 	if semiJoinRewrite && noDecorrelate {
-		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
+		er.sctx.GetSessionVars().StmtCtx.SetHintWarning(ErrInternal.FastGen(
 			"NO_DECORRELATE() and SEMI_JOIN_REWRITE() are in conflict. Both will be ineffective."))
 		noDecorrelate = false
 		semiJoinRewrite = false
@@ -1138,7 +1138,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 	noDecorrelate := hintFlags&hint.HintFlagNoDecorrelate > 0
 	corCols := extractCorColumnsBySchema4LogicalPlan(np, planCtx.plan.Schema())
 	if len(corCols) == 0 && noDecorrelate {
-		er.sctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
+		er.sctx.GetSessionVars().StmtCtx.SetHintWarning(ErrInternal.FastGen(
 			"NO_DECORRELATE() is inapplicable because there are no correlated columns."))
 		noDecorrelate = false
 	}
