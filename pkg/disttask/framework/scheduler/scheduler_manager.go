@@ -24,8 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/resourcemanager/pool/spool"
-	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
@@ -103,7 +101,7 @@ type Manager struct {
 	cancel      context.CancelFunc
 	taskMgr     TaskManager
 	wg          tidbutil.WaitGroupWrapper
-	gPool       *spool.Pool
+	schedulerWG tidbutil.WaitGroupWrapper
 	slotMgr     *SlotManager
 	nodeMgr     *NodeManager
 	balancer    *balancer
@@ -122,18 +120,13 @@ type Manager struct {
 }
 
 // NewManager creates a scheduler struct.
-func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) (*Manager, error) {
+func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) *Manager {
 	schedulerManager := &Manager{
 		taskMgr:  taskMgr,
 		serverID: serverID,
 		slotMgr:  newSlotManager(),
 		nodeMgr:  newNodeManager(),
 	}
-	gPool, err := spool.NewPool("scheduler_pool", int32(proto.MaxConcurrentTask), util.DistTask, spool.WithBlocking(true))
-	if err != nil {
-		return nil, err
-	}
-	schedulerManager.gPool = gPool
 	schedulerManager.ctx, schedulerManager.cancel = context.WithCancel(ctx)
 	schedulerManager.mu.schedulerMap = make(map[int64]Scheduler)
 	schedulerManager.finishCh = make(chan struct{}, proto.MaxConcurrentTask)
@@ -143,7 +136,7 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) (*Man
 		slotMgr: schedulerManager.slotMgr,
 	})
 
-	return schedulerManager, nil
+	return schedulerManager
 }
 
 // Start the schedulerManager, start the scheduleTaskLoop to start multiple schedulers.
@@ -172,7 +165,7 @@ func (sm *Manager) Start() {
 // Stop the schedulerManager.
 func (sm *Manager) Stop() {
 	sm.cancel()
-	sm.gPool.ReleaseAndWait()
+	sm.schedulerWG.Wait()
 	sm.wg.Wait()
 	sm.clearSchedulers()
 	sm.initialized = false
@@ -310,7 +303,7 @@ func (sm *Manager) startScheduler(basicTask *proto.Task, reservedExecID string) 
 	sm.addScheduler(task.ID, scheduler)
 	sm.slotMgr.reserve(basicTask, reservedExecID)
 	// Using the pool with block, so it wouldn't return an error.
-	_ = sm.gPool.Run(func() {
+	sm.schedulerWG.RunWithLog(func() {
 		defer func() {
 			scheduler.Close()
 			sm.delScheduler(task.ID)

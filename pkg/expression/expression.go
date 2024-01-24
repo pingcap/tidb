@@ -51,6 +51,47 @@ var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, e
 // import expression and planner/core together to use EvalAstExpr
 var RewriteAstExpr func(sctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names types.NameSlice, allowCastArray bool) (Expression, error)
 
+// BuildOptions is used to provide optional settings to build an expression
+type BuildOptions struct {
+	// InputSchema is the input schema for expression to build
+	InputSchema *Schema
+	// InputNames is the input names for expression to build
+	InputNames types.NameSlice
+	// SourceTable is used to provide some extra column info.
+	SourceTable *model.TableInfo
+	// AllowCastArray specifies whether to allow casting to an array type.
+	AllowCastArray bool
+}
+
+// BuildOption is a function to apply optional settings
+type BuildOption func(*BuildOptions)
+
+// WithSourceTable specifies the table info to provide some extra column info when building expressions.
+// When `WithInputSchemaAndNames` is not sepecified, it also use the table info to build input schema and names.
+func WithSourceTable(tblInfo *model.TableInfo) BuildOption {
+	return func(options *BuildOptions) {
+		options.SourceTable = tblInfo
+	}
+}
+
+// WithInputSchemaAndNames specifies the input schema and names for the expression to build.
+func WithInputSchemaAndNames(schema *Schema, names types.NameSlice) BuildOption {
+	return func(options *BuildOptions) {
+		options.InputSchema = schema
+		options.InputNames = names
+	}
+}
+
+// WithAllowCastArray specifies whether to allow casting to an array type.
+func WithAllowCastArray(allow bool) BuildOption {
+	return func(options *BuildOptions) {
+		options.AllowCastArray = allow
+	}
+}
+
+// BuildExprWithAst builds an expression from an ast.
+var BuildExprWithAst func(ctx sessionctx.Context, expr ast.ExprNode, opts ...BuildOption) (Expression, error)
+
 // VecExpr contains all vectorized evaluation methods.
 type VecExpr interface {
 	// Vectorized returns if this expression supports vectorized evaluation.

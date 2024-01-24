@@ -7890,7 +7890,7 @@ func validateCommentLength(vars *variable.SessionVars, name string, comment *str
 	}
 	if len(*comment) > maxLen {
 		err := errTooLongComment.GenWithStackByArgs(name, maxLen)
-		if vars.StrictSQLMode {
+		if vars.SQLMode.HasStrictMode() {
 			// may be treated like an error.
 			return "", err
 		}

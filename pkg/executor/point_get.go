@@ -200,13 +200,6 @@ func (e *PointGetExecutor) Close() error {
 	if e.RuntimeStats() != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
 	}
-	if e.idxInfo != nil && e.tblInfo != nil {
-		actRows := int64(0)
-		if e.RuntimeStats() != nil {
-			actRows = e.RuntimeStats().GetActRows()
-		}
-		e.Ctx().StoreIndexUsage(e.tblInfo.ID, e.idxInfo.ID, actRows)
-	}
 	e.done = false
 	return nil
 }
