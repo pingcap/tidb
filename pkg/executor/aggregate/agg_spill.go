@@ -28,10 +28,10 @@ import (
 	"go.uber.org/zap"
 )
 
-type SpillStatus int32
+type spillStatus int32
 
 const (
-	noSpill SpillStatus = iota
+	noSpill spillStatus = iota
 	needSpill
 	inSpilling
 	spillTriggered
@@ -56,7 +56,7 @@ type parallelHashAggSpillHelper struct {
 		waitIfInSpilling  *sync.Cond
 		nextPartitionIdx  int
 		spilledChunksIO   [][]*chunk.DataInDiskByChunks
-		spillStatus       SpillStatus
+		status       spillStatus
 		memoryConsumption int64
 		memoryQuota       int64
 	}
@@ -78,14 +78,14 @@ func newSpillHelper(tracker *memory.Tracker, aggFuncsForRestoring []aggfuncs.Agg
 			waitIfInSpilling  *sync.Cond
 			nextPartitionIdx  int
 			spilledChunksIO   [][]*chunk.DataInDiskByChunks
-			spillStatus       SpillStatus
+			status       spillStatus
 			memoryConsumption int64
 			memoryQuota       int64
 		}{
 			Mutex:             mu,
 			waitIfInSpilling:  sync.NewCond(mu),
 			spilledChunksIO:   make([][]*chunk.DataInDiskByChunks, spilledPartitionNum),
-			spillStatus:       noSpill,
+			status:       noSpill,
 			nextPartitionIdx:  spilledPartitionNum - 1,
 			memoryConsumption: 0,
 			memoryQuota:       0,
@@ -144,28 +144,28 @@ func (p *parallelHashAggSpillHelper) setInSpilling() {
 func (p *parallelHashAggSpillHelper) isSpillTriggered() bool {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	return p.lock.spillStatus != noSpill
+	return p.lock.status != noSpill
 }
 
 func (p *parallelHashAggSpillHelper) setSpillTriggered() {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	p.lock.spillStatus = spillTriggered
+	p.lock.status = spillTriggered
 	p.lock.waitIfInSpilling.Broadcast()
 }
 
 func (p *parallelHashAggSpillHelper) isInSpillingNoLock() bool {
-	return p.lock.spillStatus == inSpilling
+	return p.lock.status == inSpilling
 }
 
 func (p *parallelHashAggSpillHelper) checkNeedSpill() bool {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	return p.lock.spillStatus == needSpill
+	return p.lock.status == needSpill
 }
 
 func (p *parallelHashAggSpillHelper) setIsSpillingNoLock() {
-	p.lock.spillStatus = inSpilling
+	p.lock.status = inSpilling
 }
 
 // Return true if we successfully set flag
@@ -173,7 +173,7 @@ func (p *parallelHashAggSpillHelper) setNeedSpill(executorTracker *memory.Tracke
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	if hasEnoughDataToSpill(executorTracker, triggeredTracker) {
-		p.lock.spillStatus = needSpill
+		p.lock.status = needSpill
 		p.lock.memoryConsumption = triggeredTracker.BytesConsumed()
 		p.lock.memoryQuota = triggeredTracker.GetBytesLimit()
 		return true
