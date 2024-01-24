@@ -120,7 +120,7 @@ func (t *TikvHandlerTool) GetMvccByIdxValue(idx table.Index, values url.Values, 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	encodedKey, _, err := idx.GenIndexKey(sc, idxRow, handle, nil)
+	encodedKey, _, err := idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxRow, handle, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

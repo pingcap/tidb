@@ -2649,7 +2649,8 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 					if idx == nil {
 						return nil
 					}
-					k, _, err := idx.GenIndexKey(w.sctx.GetSessionVars().StmtCtx, idxRow.Values[:len(idx.Meta().Columns)], idxRow.Handle, nil)
+					sc := w.sctx.GetSessionVars().StmtCtx
+					k, _, err := idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxRow.Values[:len(idx.Meta().Columns)], idxRow.Handle, nil)
 					if err != nil {
 						return nil
 					}
