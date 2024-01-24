@@ -23,10 +23,8 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/failpoint"
 	"github.com/hashicorp/go-version"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/errctx"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/aggregate"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
