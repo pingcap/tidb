@@ -273,7 +273,7 @@ func (e *SortExec) appendResultToChunkInUnparallelMode(req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *SortExec) initKWayMerge() {
+func (e *SortExec) initMultiWayMerge() {
 	for i := range e.Parallel.sortedRowsIters {
 		row := e.Parallel.sortedRowsIters[i].Begin()
 		if row.IsEmpty() {
@@ -284,7 +284,7 @@ func (e *SortExec) initKWayMerge() {
 	heap.Init(e.Parallel.merger)
 }
 
-func (e *SortExec) generateResultWithKWayMerge() {
+func (e *SortExec) generateResultWithMultiWayMerge() {
 	defer func() {
 		close(e.Parallel.resultChannel)
 		for i := range e.Parallel.sortedRowsIters {
@@ -297,7 +297,8 @@ func (e *SortExec) generateResultWithKWayMerge() {
 		}
 		e.Parallel.merger = nil
 	}()
-	e.initKWayMerge()
+
+	e.initMultiWayMerge()
 
 	maxChunkSize := e.MaxChunkSize()
 	resBuf := make([]chunk.Row, 0, maxChunkSize)
@@ -626,14 +627,13 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 		return err
 	}
 	fetcherWaiter.Wait()
-	e.spillRemainingRowsWhenNeeded()
 
 	err = e.checkErrorForParallel()
 	if err != nil {
 		return err
 	}
 
-	go e.generateResultWithKWayMerge()
+	go e.generateResultWithMultiWayMerge()
 	return nil
 }
 
@@ -662,10 +662,10 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 
 		// Wait for the finish of all workers
 		e.Parallel.fetcherAndWorkerSyncer.Wait()
+		e.spillRemainingRowsWhenNeeded()
 	}()
 
 	for {
-
 		chk := exec.TryNewCacheChunk(e.Children(0))
 		err := exec.Next(ctx, e.Children(0), chk)
 		if err != nil {

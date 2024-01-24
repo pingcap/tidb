@@ -115,7 +115,7 @@ func TestInterruptedDuringSpilling(t *testing.T) {
 		rootTracker.Killer.SendKillSignal(sqlkiller.QueryInterrupted)
 		cancelTime = time.Now()
 	}()
-	err = sp.spillToDisk(rootTracker)
+	err = sp.spillToDisk()
 	cancelDuration := time.Since(cancelTime)
 	require.Less(t, cancelDuration, 1*time.Second)
 	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err))

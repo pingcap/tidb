@@ -114,8 +114,7 @@ func (p *parallelSortSpillHelper) spill() {
 				workerWaiter.Done()
 			}()
 
-			// Let workers sort existing rows
-			// p.sortExec.Parallel.workers[idx].mergeSortGlobalRows()
+			
 		}(i)
 	}
 
