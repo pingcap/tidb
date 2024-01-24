@@ -66,7 +66,7 @@ type SortExec struct {
 
 		// multiWayMerge uses multi-way merge for spill disk.
 		// The multi-way merge algorithm can refer to https://en.wikipedia.org/wiki/K-way_merge_algorithm
-		multiWayMerge *multiWayMerge
+		multiWayMerge *multiWayMergeImpl
 
 		// spillAction save the Action for spill disk.
 		spillAction *sortPartitionSpillDiskAction
@@ -80,8 +80,9 @@ type SortExec struct {
 		err       error
 
 		// Each worker will put their results into the given iter
-		sortedRowsIters []chunk.Iterator4Slice
-		merger       *multiWayMerge
+		sortedRowsIters []*chunk.Iterator4Slice
+		merger          *multiWayMerger
+		mergerLock      *sync.Mutex
 
 		resultChannel chan chunk.Row
 	}
@@ -106,8 +107,10 @@ func (e *SortExec) Close() error {
 			if !ok {
 				break
 			}
-			e.Parallel.merger = nil
 		}
+		e.Parallel.mergerLock.Lock()
+		e.Parallel.merger = nil
+		e.Parallel.mergerLock.Unlock()
 	}
 
 	if e.memTracker != nil {
@@ -140,9 +143,13 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Parallel.chunkChannel = make(chan *chunk.Chunk, len(e.Parallel.workers))
 		e.Parallel.errRWLock = &sync.RWMutex{}
 		e.Parallel.err = nil
-		e.Parallel.sortedRowsIters = make([]chunk.Iterator4Slice, len(e.Parallel.workers))
+		e.Parallel.sortedRowsIters = make([]*chunk.Iterator4Slice, len(e.Parallel.workers))
 		e.Parallel.resultChannel = make(chan chunk.Row, e.MaxChunkSize())
-		e.Parallel.merger = &multiWayMerge{e.lessRow, make([]rowWithPartition, 0, len(e.Parallel.workers))}
+		e.Parallel.merger = newMultiWayMerger(e.Parallel.sortedRowsIters, e.lessRow)
+		e.Parallel.mergerLock = &sync.Mutex{}
+		for i := range e.Parallel.sortedRowsIters {
+			e.Parallel.sortedRowsIters[i] = chunk.NewIterator4Slice(nil)
+		}
 	}
 
 	e.Unparallel.sortPartitions = e.Unparallel.sortPartitions[:0]
@@ -263,58 +270,44 @@ func (e *SortExec) appendResultToChunkInUnparallelMode(req *chunk.Chunk) error {
 	return nil
 }
 
-func (e *SortExec) initKWayMerge() {
-	for i := range e.Parallel.sortedRowsIters {
-		row := e.Parallel.sortedRowsIters[i].Begin()
-		if row.IsEmpty() {
-			continue
-		}
-		e.Parallel.merger.elements = append(e.Parallel.merger.elements, rowWithPartition{row: row, partitionID: i})
-	}
-	heap.Init(e.Parallel.merger)
-}
-
 func (e *SortExec) generateResultWithKWayMerge() {
 	defer func() {
+		if r := recover(); r != nil {
+			processPanicAndLog(e.processErrorForParallel, r)
+		}
+
 		close(e.Parallel.resultChannel)
 		for i := range e.Parallel.sortedRowsIters {
 			e.Parallel.sortedRowsIters[i].Reset(nil)
 		}
 	}()
 
-	e.initKWayMerge()
+	e.Parallel.mergerLock.Lock()
+	defer e.Parallel.mergerLock.Unlock()
+	if e.Parallel.merger == nil {
+		// Sort has been closed
+		return
+	}
+	e.Parallel.merger.init()
 
-	maxChunkSize := e.MaxChunkSize()
-	resBuf := make([]chunk.Row, 0, maxChunkSize)
-
-	for e.Parallel.merger.Len() > 0 {
-		for i := 0; i < maxChunkSize; i++ {
-			elem := e.Parallel.merger.elements[0]
-			resBuf = append(resBuf, elem.row)
-			newRow := e.Parallel.sortedRowsIters[elem.partitionID].Next()
-			if newRow.IsEmpty() {
-				heap.Remove(e.Parallel.merger, 0)
-				break
-			}
-			e.Parallel.merger.elements[0].row = newRow
-			heap.Fix(e.Parallel.merger, 0)
+	for {
+		row := e.Parallel.merger.next()
+		if row.IsEmpty() {
+			break
 		}
 
-		for _, row := range resBuf {
-			select {
-			case <-e.finishCh:
-				return
-			case e.Parallel.resultChannel <- row:
-			}
+		select {
+		case <-e.finishCh:
+			return
+		case e.Parallel.resultChannel <- row:
 		}
-		resBuf = resBuf[:0]
 
 		injectParallelSortRandomFail()
 	}
 }
 
 func (e *SortExec) initExternalSorting() error {
-	e.Unparallel.multiWayMerge = &multiWayMerge{e.lessRow, make([]rowWithPartition, 0, len(e.Unparallel.sortPartitions))}
+	e.Unparallel.multiWayMerge = &multiWayMergeImpl{e.lessRow, make([]rowWithPartition, 0, len(e.Unparallel.sortPartitions))}
 	for i := 0; i < len(e.Unparallel.sortPartitions); i++ {
 		// We should always get row here
 		row, err := e.Unparallel.sortPartitions[i].getNextSortedRow()
@@ -535,7 +528,7 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	})
 
 	for i := range e.Parallel.workers {
-		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.chunkChannel, e.processErrorForParallel, e.finishCh, e.memTracker, &e.Parallel.sortedRowsIters[i], e.MaxChunkSize())
+		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.chunkChannel, e.processErrorForParallel, e.finishCh, e.memTracker, e.Parallel.sortedRowsIters[i], e.MaxChunkSize())
 		worker := e.Parallel.workers[i]
 		workersWaiter.Run(func() {
 			worker.run()

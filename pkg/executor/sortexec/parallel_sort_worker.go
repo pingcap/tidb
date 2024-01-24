@@ -15,7 +15,6 @@
 package sortexec
 
 import (
-	"container/heap"
 	"math/rand"
 	"slices"
 	"time"
@@ -44,7 +43,8 @@ type parallelSortWorker struct {
 	localSortedRows    []*chunk.Iterator4Slice
 	sortedRowsIter     *chunk.Iterator4Slice
 	maxSortedRowsLimit int
-	merger          *multiWayMerge
+	batchRows          []chunk.Row
+	merger             *multiWayMerger
 }
 
 func newParallelSortWorker(
@@ -56,6 +56,7 @@ func newParallelSortWorker(
 	memTracker *memory.Tracker,
 	sortedRowsIter *chunk.Iterator4Slice,
 	maxChunkSize int) *parallelSortWorker {
+	maxSortedRowsLimit := maxChunkSize * 30
 	return &parallelSortWorker{
 		workerIDForTest:    workerIDForTest,
 		lessRowFunc:        lessRowFunc,
@@ -65,7 +66,8 @@ func newParallelSortWorker(
 		timesOfRowCompare:  0,
 		memTracker:         memTracker,
 		sortedRowsIter:     sortedRowsIter,
-		maxSortedRowsLimit: maxChunkSize * 30,
+		maxSortedRowsLimit: maxSortedRowsLimit,
+		batchRows:          make([]chunk.Row, 0, maxSortedRowsLimit),
 	}
 }
 
@@ -83,41 +85,37 @@ func (p *parallelSortWorker) injectFailPointForParallelSortWorker() {
 	})
 }
 
-func (p *parallelSortWorker) multiWayMergeSortedRows() {
+func (p *parallelSortWorker) multiWayMergeLocalSortedRows() []chunk.Row {
 	totalRowNum := 0
 	for _, rows := range p.localSortedRows {
 		totalRowNum += rows.Len()
 	}
-	resultRows := make([]chunk.Row, 0, totalRowNum)
-	p.merger = &multiWayMerge{p.lessRowFunc, make([]rowWithPartition, 0, len(p.localSortedRows))}
-	for i := range p.localSortedRows {
-		row := p.localSortedRows[i].Begin()
+	resultSortedRows := make([]chunk.Row, 0, totalRowNum)
+	p.merger = newMultiWayMerger(p.localSortedRows, p.lessRowFunc)
+	p.merger.init()
+
+	for {
+		row := p.merger.next()
 		if row.IsEmpty() {
-			continue
+			break
 		}
-		p.merger.elements = append(p.merger.elements, rowWithPartition{row: row, partitionID: i})
+		resultSortedRows = append(resultSortedRows, row)
 	}
-	heap.Init(p.merger)
-
-	for p.merger.Len() > 0 {
-		elem := p.merger.elements[0]
-		resultRows = append(resultRows, elem.row)
-		newRow := p.localSortedRows[elem.partitionID].Next()
-		if newRow.IsEmpty() {
-			heap.Remove(p.merger, 0)
-			continue
-		}
-		p.merger.elements[0].row = newRow
-		heap.Fix(p.merger, 0)
-	}
-
-	// Put resultRows into this iter who will be read by sort executor
-	p.sortedRowsIter.Reset(resultRows)
+	return resultSortedRows
 }
 
 func (p *parallelSortWorker) sortBatchRows(batchRows []chunk.Row) {
 	slices.SortFunc(batchRows, p.keyColumnsLess)
 	p.localSortedRows = append(p.localSortedRows, chunk.NewIterator4Slice(batchRows))
+}
+
+func (p *parallelSortWorker) sortLocalRows() []chunk.Row {
+	// Handle Remaining batchRows whose row number is not over the `maxSortedRowsLimit`
+	if len(p.batchRows) > 0 {
+		p.sortBatchRows(p.batchRows)
+	}
+
+	return p.multiWayMergeLocalSortedRows()
 }
 
 // Fetching a bunch of chunks from chunkChannel and sort them.
@@ -128,7 +126,6 @@ func (p *parallelSortWorker) fetchChunksAndSort() {
 		ok  bool
 	)
 
-	batchRows := make([]chunk.Row, 0, p.maxSortedRowsLimit)
 	for {
 		select {
 		case <-p.finishCh:
@@ -136,12 +133,8 @@ func (p *parallelSortWorker) fetchChunksAndSort() {
 		case chk, ok = <-p.chunkChannel:
 			// Memory usage of the chunk has been consumed at the chunk fetcher
 			if !ok {
-				// Handle Remaining batchRows whose row number is not over the `maxSortedRowsLimit`
-				if len(batchRows) > 0 {
-					p.sortBatchRows(batchRows)
-				}
-
-				p.multiWayMergeSortedRows()
+				rows := p.sortLocalRows()
+				p.sortedRowsIter.Reset(rows)
 				return
 			}
 		}
@@ -149,14 +142,14 @@ func (p *parallelSortWorker) fetchChunksAndSort() {
 		chkIter := chunk.NewIterator4Chunk(chk)
 		row := chkIter.Begin()
 		for !row.IsEmpty() {
-			batchRows = append(batchRows, row)
+			p.batchRows = append(p.batchRows, row)
 			row = chkIter.Next()
 		}
 
 		// Sort a bunch of chunks
-		if len(batchRows) >= p.maxSortedRowsLimit {
-			p.sortBatchRows(batchRows)
-			batchRows = make([]chunk.Row, 0, p.maxSortedRowsLimit)
+		if len(p.batchRows) >= p.maxSortedRowsLimit {
+			p.sortBatchRows(p.batchRows)
+			p.batchRows = make([]chunk.Row, 0, p.maxSortedRowsLimit)
 		}
 
 		p.injectFailPointForParallelSortWorker()
