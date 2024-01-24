@@ -1563,7 +1563,7 @@ func (s *session) UpdateProcessInfo() {
 	// Update the current transaction start timestamp.
 	shallowCP.CurTxnStartTS = s.sessionVars.TxnCtx.StartTS
 	shallowCP.CurTxnCreateTime = s.sessionVars.TxnCtx.CreateTime
-	s.processInfo.Store(&shallowCP)
+	s.processInfo.Store(shallowCP)
 }
 
 func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
