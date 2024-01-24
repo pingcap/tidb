@@ -789,6 +789,7 @@ func TestIssue44369(t *testing.T) {
 }
 
 func TestIssue49986(t *testing.T) {
+	// test
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
