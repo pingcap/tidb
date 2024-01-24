@@ -1352,10 +1352,6 @@ func (local *local) writeAndIngestByRange(
 
 	var regions []*split.RegionInfo
 	var err error
-<<<<<<< HEAD
-	ctx, cancel := context.WithCancel(ctxt)
-	defer cancel()
-=======
 	// split region by given ranges
 	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
 		needSplit = true
@@ -1367,7 +1363,6 @@ func (local *local) writeAndIngestByRange(
 		failpoint.Inject("skipSplitAndScatter", func() {
 			failpoint.Break()
 		})
->>>>>>> 2a564d4a8ca (Lightning: increase backoff if split fails (#49518))
 
 WriteAndIngest:
 	for retry := 0; retry < maxRetryTimes; {
@@ -1414,8 +1409,6 @@ WriteAndIngest:
 			}
 		}
 
-<<<<<<< HEAD
-=======
 		log.FromContext(ctx).Warn("split and scatter failed in retry", zap.String("engine ID", engine.ID()),
 			log.ShortError(err), zap.Int("retry", i))
 		select {
@@ -1430,7 +1423,6 @@ WriteAndIngest:
 	}
 	logger.End(zap.ErrorLevel, err)
 	if err != nil {
->>>>>>> 2a564d4a8ca (Lightning: increase backoff if split fails (#49518))
 		return err
 	}
 
