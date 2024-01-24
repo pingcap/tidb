@@ -370,7 +370,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 	}
 }
 
-func recordHeapForMaxInUse(filename string) (chan struct{}, *sync.WaitGroup) {
+func RecordHeapForMaxInUse(filename string) (chan struct{}, *sync.WaitGroup) {
 	doneCh := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -379,7 +379,7 @@ func recordHeapForMaxInUse(filename string) (chan struct{}, *sync.WaitGroup) {
 		defer wg.Done()
 
 		var m runtime.MemStats
-		ticker := time.NewTicker(300 * time.Millisecond)
+		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
 
 		for {
@@ -387,6 +387,7 @@ func recordHeapForMaxInUse(filename string) (chan struct{}, *sync.WaitGroup) {
 			case <-doneCh:
 				return
 			case <-ticker.C:
+				logutil.BgLogger().Info("ywq test record")
 				runtime.ReadMemStats(&m)
 				if m.HeapInuse <= maxInUse {
 					continue
@@ -432,7 +433,7 @@ func TestCompareWriter(t *testing.T) {
 		cpuProfCloser = fgprof.Start(fileCPU, fgprof.FormatPprof)
 
 		filenameHeap = fmt.Sprintf("heap-profile-%d.prof", testIdx)
-		heapProfDoneCh, heapWg = recordHeapForMaxInUse(filenameHeap)
+		heapProfDoneCh, heapWg = RecordHeapForMaxInUse(filenameHeap)
 
 		now = time.Now()
 	}
@@ -701,7 +702,7 @@ func TestCompareReaderEvenlyDistributedContent(t *testing.T) {
 		cpuProfCloser = fgprof.Start(fileCPU, fgprof.FormatPprof)
 
 		filenameHeap = fmt.Sprintf("heap-profile-%d.prof", fileIdx)
-		heapProfDoneCh, heapWg = recordHeapForMaxInUse(filenameHeap)
+		heapProfDoneCh, heapWg = RecordHeapForMaxInUse(filenameHeap)
 
 		now = time.Now()
 	}
@@ -847,7 +848,7 @@ func testCompareReaderWithContent(
 		cpuProfCloser = fgprof.Start(fileCPU, fgprof.FormatPprof)
 
 		filenameHeap = fmt.Sprintf("heap-profile-%d.prof", fileIdx)
-		heapProfDoneCh, heapWg = recordHeapForMaxInUse(filenameHeap)
+		heapProfDoneCh, heapWg = RecordHeapForMaxInUse(filenameHeap)
 	}
 	afterClose := func() {
 		err = cpuProfCloser()

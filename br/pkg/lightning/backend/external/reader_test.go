@@ -25,8 +25,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	"golang.org/x/exp/rand"
 )
 
@@ -105,4 +107,44 @@ func TestReadAllOneFile(t *testing.T) {
 	require.NoError(t, err)
 
 	testReadAndCompare(ctx, t, kvs, memStore, datas, stats, kvs[0].Key, memSizeLimit)
+}
+
+func TestRead4KFiles(t *testing.T) {
+	seed := time.Now().Unix()
+	rand.Seed(uint64(seed))
+	t.Logf("seed: %d", seed)
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+	memSizeLimit := 80
+
+	w := NewWriterBuilder().
+		SetPropSizeDistance(100).
+		SetPropKeysDistance(2).
+		SetMemorySizeLimit(uint64(memSizeLimit)).
+		SetBlockSize(memSizeLimit).
+		Build(memStore, "/test", "0")
+
+	writer := NewEngineWriter(w)
+	kvCnt := 10000
+	kvs := make([]common.KvPair, kvCnt)
+	for i := 0; i < kvCnt; i++ {
+		kvs[i] = common.KvPair{
+			Key: []byte(fmt.Sprintf("key%05d", i)),
+			Val: []byte("56789"),
+		}
+	}
+
+	require.NoError(t, writer.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvs)))
+	_, err := writer.Close(ctx)
+	require.NoError(t, err)
+
+	slices.SortFunc(kvs, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
+	})
+
+	datas, stats, err := GetAllFileNames(ctx, memStore, "")
+	require.NoError(t, err)
+	logutil.BgLogger().Info("ywq test files", zap.Any("len", len(datas)))
+
+	testReadAndCompare(ctx, t, kvs, memStore, datas, stats, kvs[0].Key, int(4*size.GB))
 }

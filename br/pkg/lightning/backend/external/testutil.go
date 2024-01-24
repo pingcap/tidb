@@ -17,15 +17,20 @@ package external
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 func mockOneMultiFileStat(data, stat []string) []MultipleFilesStat {
@@ -63,6 +68,9 @@ func testReadAndCompare(
 	curStart := startKey.Clone()
 	kvIdx := 0
 
+	var heapProfDoneCh chan struct{}
+	var heapWg *sync.WaitGroup
+
 	for {
 		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err := splitter.SplitOneRangesGroup()
 		require.NoError(t, err)
@@ -70,6 +78,8 @@ func testReadAndCompare(
 		if len(endKeyOfGroup) == 0 {
 			curEnd = dbkv.Key(kvs[len(kvs)-1].Key).Next()
 		}
+
+		logutil.BgLogger().Info("ywq test file", zap.Any("len", len(dataFilesOfGroup)))
 
 		err = readAllData(
 			ctx,
@@ -83,6 +93,11 @@ func testReadAndCompare(
 		)
 		require.NoError(t, err)
 		loaded.build()
+
+		filenameHeap := fmt.Sprintf("heap-profile-%d.prof", 1)
+		heapProfDoneCh, heapWg = RecordHeapForMaxInUse(filenameHeap)
+
+		time.Sleep(1 * time.Second)
 
 		// check kvs sorted
 		sorty.MaxGor = uint64(8)
@@ -114,6 +129,9 @@ func testReadAndCompare(
 	}
 	err = splitter.Close()
 	require.NoError(t, err)
+
+	close(heapProfDoneCh)
+	heapWg.Wait()
 }
 
 // split data and stat files into groups for merge step.
