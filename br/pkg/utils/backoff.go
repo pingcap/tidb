@@ -6,6 +6,7 @@ import (
 	"context"
 	"database/sql"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -26,6 +27,10 @@ const (
 	downloadSSTWaitInterval    = 1 * time.Second
 	downloadSSTMaxWaitInterval = 4 * time.Second
 
+	backupSSTRetryTimes      = 5
+	backupSSTWaitInterval    = 2 * time.Second
+	backupSSTMaxWaitInterval = 3 * time.Second
+
 	resetTSRetryTime       = 16
 	resetTSWaitInterval    = 50 * time.Millisecond
 	resetTSMaxWaitInterval = 500 * time.Millisecond
@@ -42,7 +47,20 @@ const (
 	ChecksumRetryTime       = 8
 	ChecksumWaitInterval    = 1 * time.Second
 	ChecksumMaxWaitInterval = 30 * time.Second
+
+	gRPC_Cancel = "the client connection is closing"
 )
+
+// At least, there are two possible cancel() call,
+// one from go context, another from gRPC, here we retry when gRPC cancel with connection closing
+func isGRPCCancel(err error) bool {
+	if s, ok := status.FromError(err); ok {
+		if strings.Contains(s.Message(), gRPC_Cancel) {
+			return true
+		}
+	}
+	return false
+}
 
 // RetryState is the mutable state needed for retrying.
 // It likes the `utils.Backoffer`, but more fundamental:
@@ -139,6 +157,11 @@ func NewDownloadSSTBackoffer() Backoffer {
 	return NewBackoffer(downloadSSTRetryTimes, downloadSSTWaitInterval, downloadSSTMaxWaitInterval)
 }
 
+func NewBackupSSTBackoffer() Backoffer {
+	errContext := NewErrorContext("backup sst", 3)
+	return NewBackoffer(backupSSTRetryTimes, backupSSTWaitInterval, backupSSTMaxWaitInterval, errContext)
+}
+
 func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 	log.Warn("retry to import ssts", zap.Int("attempt", bo.attempt), zap.Error(err))
 	if MessageIsRetryableStorageError(err.Error()) {
@@ -156,9 +179,21 @@ func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
 			bo.attempt = 0
 		default:
 			switch status.Code(e) {
+<<<<<<< HEAD
 			case codes.Unavailable, codes.Aborted:
+=======
+			case codes.Unavailable, codes.Aborted, codes.DeadlineExceeded, codes.ResourceExhausted, codes.Internal:
+>>>>>>> d6ef1c722a9 (br: add more retry strategy (s3.ReadFile: body reader / pushBackup: backoffer) (#50541))
 				bo.delayTime = 2 * bo.delayTime
 				bo.attempt--
+			case codes.Canceled:
+				if isGRPCCancel(err) {
+					bo.delayTime = 2 * bo.delayTime
+					bo.attempt--
+				} else {
+					bo.delayTime = 0
+					bo.attempt = 0
+				}
 			default:
 				// Unexcepted error
 				bo.delayTime = 0
