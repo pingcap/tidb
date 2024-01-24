@@ -423,7 +423,7 @@ func (sm *Manager) collectMetricsLoop() {
 	for {
 		select {
 		case <-sm.ctx.Done():
-			logutil.BgLogger().Info("collect metrics loop exits", zap.Error(sm.ctx.Err()))
+			logutil.BgLogger().Info("collect metrics loop exits")
 			return
 		case <-ticker.C:
 			sm.collectMetrics()
