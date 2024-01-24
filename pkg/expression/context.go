@@ -55,10 +55,6 @@ func sqlMode(ctx EvalContext) mysql.SQLMode {
 	return ctx.GetSessionVars().SQLMode
 }
 
-func strictMode(ctx EvalContext) bool {
-	return ctx.GetSessionVars().StrictSQLMode
-}
-
 func typeCtx(ctx EvalContext) types.Context {
 	return ctx.GetSessionVars().StmtCtx.TypeCtx()
 }

@@ -1424,9 +1424,11 @@ func TestChar(t *testing.T) {
 		run(i, v.result, v.warnings, v.str, v.iNum, v.fNum, v.charset)
 	}
 	// char() returns null only when the sql_mode is strict.
-	ctx.GetSessionVars().StrictSQLMode = true
+	require.True(t, ctx.GetSessionVars().SQLMode.HasStrictMode())
 	run(-1, nil, 1, 123456, "utf8")
-	ctx.GetSessionVars().StrictSQLMode = false
+
+	ctx.GetSessionVars().SQLMode = ctx.GetSessionVars().SQLMode &^ (mysql.ModeStrictTransTables | mysql.ModeStrictAllTables)
+	require.False(t, ctx.GetSessionVars().SQLMode.HasStrictMode())
 	run(-2, string([]byte{1}), 1, 123456, "utf8")
 }
 

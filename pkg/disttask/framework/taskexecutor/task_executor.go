@@ -242,6 +242,12 @@ func (e *BaseTaskExecutor) runStep(ctx context.Context, task *proto.Task, resour
 		metrics.StartDistTaskSubTask(subtask)
 	}
 
+	// task executor occupies resources, if there's no subtask to run for 10s,
+	// we release the resources so that other tasks can use them.
+	// 300ms + 600ms + 1.2s + 2s * 4 = 10.1s
+	backoffer := backoff.NewExponential(checkInterval, 2, maxCheckInterval)
+	noSubtaskCheckCnt := 0
+outer:
 	for {
 		// check if any error occurs.
 		if err := e.getError(); err != nil {
@@ -275,9 +281,19 @@ func (e *BaseTaskExecutor) runStep(ctx context.Context, task *proto.Task, resour
 			if newTask.Step != task.Step || newTask.State != task.State {
 				break
 			}
-			time.Sleep(checkTime)
-			continue
+			if noSubtaskCheckCnt >= maxChecksWhenNoSubtask {
+				break
+			}
+			select {
+			case <-runCtx.Done():
+				break outer
+			case <-time.After(backoffer.Backoff(noSubtaskCheckCnt)):
+				noSubtaskCheckCnt++
+				continue
+			}
 		}
+		// reset it when we get a subtask
+		noSubtaskCheckCnt = 0
 
 		if subtask.State == proto.SubtaskStateRunning {
 			if !e.IsIdempotent(subtask) {
@@ -327,7 +343,7 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 
 		var wg util.WaitGroupWrapper
 		checkCtx, checkCancel := context.WithCancel(ctx)
-		wg.Go(func() {
+		wg.RunWithLog(func() {
 			e.checkBalanceSubtask(checkCtx)
 		})
 		defer func() {

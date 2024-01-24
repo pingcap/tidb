@@ -643,7 +643,7 @@ func getColDefaultValueFromNil(ctx sessionctx.Context, col *model.ColumnInfo, ar
 	if args != nil {
 		strictSQLMode = args.StrictSQLMode
 	} else {
-		strictSQLMode = vars.StrictSQLMode
+		strictSQLMode = vars.SQLMode.HasStrictMode()
 	}
 	if !strictSQLMode {
 		sc.AppendWarning(ErrNoDefaultValue.FastGenByArgs(col.Name))

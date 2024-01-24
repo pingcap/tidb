@@ -36,10 +36,10 @@ import (
 const (
 	defaultSubtaskKeepDays = 14
 
-	basicTaskColumns = `id, task_key, type, state, step, priority, concurrency, create_time`
+	basicTaskColumns = `t.id, t.task_key, t.type, t.state, t.step, t.priority, t.concurrency, t.create_time`
 	// TaskColumns is the columns for task.
 	// TODO: dispatcher_id will update to scheduler_id later
-	TaskColumns = basicTaskColumns + `, start_time, state_update_time, meta, dispatcher_id, error`
+	TaskColumns = basicTaskColumns + `, t.start_time, t.state_update_time, t.meta, t.dispatcher_id, t.error`
 	// InsertTaskColumns is the columns used in insert task.
 	InsertTaskColumns   = `task_key, type, state, priority, concurrency, step, meta, create_time`
 	basicSubtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time, ordinal`
@@ -69,6 +69,17 @@ var (
 	// i.e. scheduler change the subtask's execId when subtask need to balance to other nodes.
 	ErrSubtaskNotFound = errors.New("subtask not found")
 )
+
+// TaskExecInfo is the execution information of a task, on some exec node.
+type TaskExecInfo struct {
+	*proto.Task
+	// SubtaskConcurrency is the concurrency of subtask in current task step.
+	// TODO: will be used when support subtask have smaller concurrency than task,
+	// TODO: such as post-process of import-into.
+	// TODO: we might need create one task executor for each step in this case, to alloc
+	// TODO: minimal resource
+	SubtaskConcurrency int
+}
 
 // SessionExecutor defines the interface for executing SQLs in a session.
 type SessionExecutor interface {
@@ -221,7 +232,7 @@ func (mgr *TaskManager) CreateTaskWithSession(ctx context.Context, se sessionctx
 // GetTopUnfinishedTasks implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) (task []*proto.Task, err error) {
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`select `+basicTaskColumns+` from mysql.tidb_global_task
+		`select `+basicTaskColumns+` from mysql.tidb_global_task t
 		where state in (%?, %?, %?, %?, %?, %?)
 		order by priority asc, create_time asc, id asc
 		limit %?`,
@@ -243,6 +254,31 @@ func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) (task []*prot
 	return task, nil
 }
 
+// GetTaskExecInfoByExecID implements the scheduler.TaskManager interface.
+func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID string) ([]*TaskExecInfo, error) {
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
+		`select `+TaskColumns+`, max(st.concurrency)
+			from mysql.tidb_global_task t join mysql.tidb_background_subtask st
+				on t.id = st.task_key and t.step = st.step
+			where t.state in (%?, %?, %?) and st.state in (%?, %?) and st.exec_id = %?
+			group by t.id
+			order by priority asc, create_time asc, id asc`,
+		proto.TaskStateRunning, proto.TaskStateReverting, proto.TaskStatePausing,
+		proto.SubtaskStatePending, proto.SubtaskStateRunning, execID)
+	if err != nil {
+		return nil, err
+	}
+
+	res := make([]*TaskExecInfo, 0, len(rs))
+	for _, r := range rs {
+		res = append(res, &TaskExecInfo{
+			Task:               Row2Task(r),
+			SubtaskConcurrency: int(r.GetInt64(13)),
+		})
+	}
+	return res, nil
+}
+
 // GetTasksInStates gets the tasks in the states(order by priority asc, create_time acs, id asc).
 func (mgr *TaskManager) GetTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error) {
 	if len(states) == 0 {
@@ -250,7 +286,7 @@ func (mgr *TaskManager) GetTasksInStates(ctx context.Context, states ...interfac
 	}
 
 	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
-		"select "+TaskColumns+" from mysql.tidb_global_task "+
+		"select "+TaskColumns+" from mysql.tidb_global_task t "+
 			"where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)"+
 			" order by priority asc, create_time asc, id asc", states...)
 	if err != nil {
@@ -265,7 +301,7 @@ func (mgr *TaskManager) GetTasksInStates(ctx context.Context, states ...interfac
 
 // GetTaskByID gets the task by the task ID.
 func (mgr *TaskManager) GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error) {
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+TaskColumns+" from mysql.tidb_global_task where id = %?", taskID)
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+TaskColumns+" from mysql.tidb_global_task t where id = %?", taskID)
 	if err != nil {
 		return task, err
 	}
@@ -278,8 +314,8 @@ func (mgr *TaskManager) GetTaskByID(ctx context.Context, taskID int64) (task *pr
 
 // GetTaskByIDWithHistory gets the task by the task ID from both tidb_global_task and tidb_global_task_history.
 func (mgr *TaskManager) GetTaskByIDWithHistory(ctx context.Context, taskID int64) (task *proto.Task, err error) {
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+TaskColumns+" from mysql.tidb_global_task where id = %? "+
-		"union select "+TaskColumns+" from mysql.tidb_global_task_history where id = %?", taskID, taskID)
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+TaskColumns+" from mysql.tidb_global_task t where id = %? "+
+		"union select "+TaskColumns+" from mysql.tidb_global_task_history t where id = %?", taskID, taskID)
 	if err != nil {
 		return task, err
 	}
@@ -292,7 +328,7 @@ func (mgr *TaskManager) GetTaskByIDWithHistory(ctx context.Context, taskID int64
 
 // GetTaskByKey gets the task by the task key.
 func (mgr *TaskManager) GetTaskByKey(ctx context.Context, key string) (task *proto.Task, err error) {
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+TaskColumns+" from mysql.tidb_global_task where task_key = %?", key)
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+TaskColumns+" from mysql.tidb_global_task t where task_key = %?", key)
 	if err != nil {
 		return task, err
 	}
@@ -305,8 +341,8 @@ func (mgr *TaskManager) GetTaskByKey(ctx context.Context, key string) (task *pro
 
 // GetTaskByKeyWithHistory gets the task from history table by the task key.
 func (mgr *TaskManager) GetTaskByKeyWithHistory(ctx context.Context, key string) (task *proto.Task, err error) {
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+TaskColumns+" from mysql.tidb_global_task where task_key = %?"+
-		"union select "+TaskColumns+" from mysql.tidb_global_task_history where task_key = %?", key, key)
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+TaskColumns+" from mysql.tidb_global_task t where task_key = %?"+
+		"union select "+TaskColumns+" from mysql.tidb_global_task_history t where task_key = %?", key, key)
 	if err != nil {
 		return task, err
 	}

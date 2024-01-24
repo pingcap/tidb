@@ -158,8 +158,8 @@ func (w *WaitGroupWrapper) Run(exec func()) {
 	}()
 }
 
-// Go works like Run, but it also logs on panic.
-func (w *WaitGroupWrapper) Go(exec func()) {
+// RunWithLog works like Run, but it also logs on panic.
+func (w *WaitGroupWrapper) RunWithLog(exec func()) {
 	w.Add(1)
 	go func() {
 		defer w.Done()

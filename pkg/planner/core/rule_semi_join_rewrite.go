@@ -59,7 +59,7 @@ func (smj *semiJoinRewriter) recursivePlan(p LogicalPlan) (LogicalPlan, error) {
 	join.preferJoinType &= ^h.PreferRewriteSemiJoin
 
 	if join.JoinType == LeftOuterSemiJoin {
-		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("SEMI_JOIN_REWRITE() is inapplicable for LeftOuterSemiJoin."))
+		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(ErrInternal.FastGen("SEMI_JOIN_REWRITE() is inapplicable for LeftOuterSemiJoin."))
 		return p, nil
 	}
 
@@ -67,7 +67,7 @@ func (smj *semiJoinRewriter) recursivePlan(p LogicalPlan) (LogicalPlan, error) {
 
 	// If there's left condition or other condition, we cannot rewrite
 	if len(join.LeftConditions) > 0 || len(join.OtherConditions) > 0 {
-		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("SEMI_JOIN_REWRITE() is inapplicable for SemiJoin with left conditions or other conditions."))
+		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(ErrInternal.FastGen("SEMI_JOIN_REWRITE() is inapplicable for SemiJoin with left conditions or other conditions."))
 		return p, nil
 	}
 

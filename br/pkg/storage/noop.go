@@ -57,6 +57,9 @@ func (*noopStorage) Rename(_ context.Context, _, _ string) error {
 	return nil
 }
 
+// Close implements ExternalStorage interface.
+func (*noopStorage) Close() {}
+
 func newNoopStorage() *noopStorage {
 	return &noopStorage{}
 }

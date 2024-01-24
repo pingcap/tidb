@@ -1042,7 +1042,7 @@ func (s *session) String() string {
 		"user":       sessVars.User,
 		"currDBName": sessVars.CurrentDB,
 		"status":     sessVars.Status,
-		"strictMode": sessVars.StrictSQLMode,
+		"strictMode": sessVars.SQLMode.HasStrictMode(),
 	}
 	if s.txn.Valid() {
 		// if txn is committed or rolled back, txn is nil.
