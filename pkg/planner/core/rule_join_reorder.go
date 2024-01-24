@@ -271,7 +271,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 
 		leadingHintInfo, hasDiffLeadingHint := checkAndGenerateLeadingHint(joinOrderHintInfo)
 		if hasDiffLeadingHint {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"))
+			ctx.GetSessionVars().StmtCtx.SkipHintWarning(ErrInternal.FastGen("We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"))
 		}
 
 		if leadingHintInfo != nil && leadingHintInfo.LeadingJoinOrder != nil {
@@ -325,7 +325,7 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 		return p, nil
 	}
 	if len(curJoinGroup) == 1 && joinOrderHintInfo != nil {
-		ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("leading hint is inapplicable, check the join type or the join algorithm hint"))
+		ctx.GetSessionVars().StmtCtx.SkipHintWarning(ErrInternal.FastGen("leading hint is inapplicable, check the join type or the join algorithm hint"))
 	}
 	newChildren := make([]LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
