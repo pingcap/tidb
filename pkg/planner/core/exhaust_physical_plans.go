@@ -237,7 +237,7 @@ func (p *LogicalJoin) GetMergeJoin(prop *property.PhysicalProperty, schema *expr
 		if p.preferJoinType&h.PreferMergeJoin == 0 {
 			return nil
 		}
-		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
+		p.SCtx().GetSessionVars().StmtCtx.SetSkipHintWarning(ErrInternal.FastGen(
 			"Some MERGE_JOIN and NO_MERGE_JOIN hints conflict, NO_MERGE_JOIN is ignored"))
 	}
 
@@ -458,7 +458,7 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []Phy
 	if !forced && p.shouldSkipHashJoin() {
 		return nil, false
 	} else if forced && p.shouldSkipHashJoin() {
-		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(
+		p.SCtx().GetSessionVars().StmtCtx.SetSkipHintWarning(ErrInternal.FastGen(
 			"A conflict between the HASH_JOIN hint and the NO_HASH_JOIN hint, " +
 				"or the tidb_opt_enable_hash_join system variable, the HASH_JOIN hint will take precedence."))
 	}
@@ -2140,7 +2140,7 @@ func (p *LogicalJoin) handleForceIndexJoinHints(prop *property.PhysicalProperty,
 			errMsg += " without column equal ON condition"
 		}
 		// Generate warning message to client.
-		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(errMsg))
+		p.SCtx().GetSessionVars().StmtCtx.SetSkipHintWarning(ErrInternal.FastGen(errMsg))
 	}
 	return candidates, false
 }
