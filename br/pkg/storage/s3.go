@@ -577,6 +577,11 @@ func (rs *S3Storage) ReadFile(ctx context.Context, file string) ([]byte, error) 
 		data, readErr = io.ReadAll(result.Body)
 		// close the body of response since data has been already read out
 		result.Body.Close()
+		// for unit test
+		failpoint.Inject("read-s3-body-failed", func(_ failpoint.Value) {
+			log.Info("original error", zap.Error(readErr))
+			readErr = errors.Errorf("read: connection reset by peer")
+		})
 		if readErr != nil {
 			if isDeadlineExceedError(readErr) || isCancelError(readErr) {
 				return nil, errors.Annotatef(readErr, "failed to read body from get object result, file info: input.bucket='%s', input.key='%s', retryCnt='%d'",
