@@ -59,7 +59,7 @@ func (smj *semiJoinRewriter) recursivePlan(p LogicalPlan) (LogicalPlan, error) {
 	join.preferJoinType &= ^h.PreferRewriteSemiJoin
 
 	if join.JoinType == LeftOuterSemiJoin {
-		p.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache(ErrInternal.FastGen("SEMI_JOIN_REWRITE() is inapplicable for LeftOuterSemiJoin."))
+		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(ErrInternal.FastGen("SEMI_JOIN_REWRITE() is inapplicable for LeftOuterSemiJoin."))
 		return p, nil
 	}
 
