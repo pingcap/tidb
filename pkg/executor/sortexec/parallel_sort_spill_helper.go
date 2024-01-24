@@ -105,6 +105,7 @@ func (p *parallelSortSpillHelper) spill() {
 	workerNum := len(p.sortExec.Parallel.workers)
 	workerWaiter := &sync.WaitGroup{}
 	workerWaiter.Add(workerNum)
+	sortedRowsIters := make([]chunk.Iterator4Slice, workerNum)
 	for i := 0; i < workerNum; i++ {
 		go func(idx int) {
 			defer func() {
@@ -114,15 +115,15 @@ func (p *parallelSortSpillHelper) spill() {
 				workerWaiter.Done()
 			}()
 
-			
+			sortedRowsIters[idx].Reset(p.sortExec.Parallel.workers[idx].sortLocalRows())
 		}(i)
 	}
 
 	workerWaiter.Wait()
 	p.setInSpilling()
-	p.spillImpl()
+	p.spillImpl(sortedRowsIters)
 
-	// Spill is done, broadcast to wake up some sleep goroutine
+	// Spill is done, broadcast to wake up all sleep goroutines
 	p.setNotSpilled()
 	p.cond.Broadcast()
 }
@@ -156,10 +157,15 @@ func (p *parallelSortSpillHelper) getRowsNeedingSpill() []chunk.Row {
 	return nil
 }
 
-func (p *parallelSortSpillHelper) spillImpl() {
+func (p *parallelSortSpillHelper) spillImpl(sortedRowsIters []chunk.Iterator4Slice) {
 	p.tmpSpillChunk.Reset()
 	inDisk := chunk.NewDataInDiskByChunks(p.fieldTypes)
 	inDisk.GetDiskTracker().AttachTo(p.sortExec.diskTracker)
+
+	spilledRowChannel := make(chan chunk.Row, 10000)
+	go func() {
+		
+	}()
 
 	spilledRows := p.getRowsNeedingSpill()
 	for _, row := range spilledRows {

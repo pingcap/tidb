@@ -15,7 +15,6 @@
 package sortexec
 
 import (
-	"container/heap"
 	"math/rand"
 	"slices"
 	"sync"
@@ -49,7 +48,7 @@ type parallelSortWorker struct {
 	localSortedRows    []*chunk.Iterator4Slice
 	sortedRowsIter     *chunk.Iterator4Slice
 	maxSortedRowsLimit int
-	merger             *multiWayMerge
+	merger             *multiWayMerger
 }
 
 func newParallelSortWorker(
@@ -99,26 +98,15 @@ func (p *parallelSortWorker) multiWayMergeSortedRows() []chunk.Row {
 		totalRowNum += rows.Len()
 	}
 	resultRows := make([]chunk.Row, 0, totalRowNum)
-	p.merger = &multiWayMerge{p.lessRowFunc, make([]rowWithPartition, 0, len(p.localSortedRows))}
-	for i := range p.localSortedRows {
-		row := p.localSortedRows[i].Begin()
-		if row.IsEmpty() {
-			continue
-		}
-		p.merger.elements = append(p.merger.elements, rowWithPartition{row: row, partitionID: i})
-	}
-	heap.Init(p.merger)
+	p.merger = newMultiWayMerger(p.localSortedRows, p.lessRowFunc)
+	p.merger.init()
 
-	for p.merger.Len() > 0 {
-		elem := p.merger.elements[0]
-		resultRows = append(resultRows, elem.row)
-		newRow := p.localSortedRows[elem.partitionID].Next()
-		if newRow.IsEmpty() {
-			heap.Remove(p.merger, 0)
-			continue
+	for {
+		row := p.merger.next()
+		if row.IsEmpty() {
+			break
 		}
-		p.merger.elements[0].row = newRow
-		heap.Fix(p.merger, 0)
+		resultRows = append(resultRows, row)
 	}
 
 	return resultRows

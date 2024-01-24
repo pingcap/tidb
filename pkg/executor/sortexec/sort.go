@@ -60,7 +60,7 @@ type SortExec struct {
 
 	// multiWayMerge uses multi-way merge for spill disk.
 	// The multi-way merge algorithm can refer to https://en.wikipedia.org/wiki/K-way_merge_algorithm
-	multiWayMerge *multiWayMerge
+	multiWayMerge *multiWayMergeImpl
 
 	Unparallel struct {
 		Idx int
@@ -82,7 +82,7 @@ type SortExec struct {
 
 		// Each worker will put their results into the given iter
 		sortedRowsIters []chunk.Iterator4Slice
-		merger          *multiWayMerge
+		merger          *multiWayMergeImpl
 
 		resultChannel chan chunk.Row
 
@@ -147,7 +147,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Parallel.err = nil
 		e.Parallel.sortedRowsIters = make([]chunk.Iterator4Slice, len(e.Parallel.workers))
 		e.Parallel.resultChannel = make(chan chunk.Row, e.MaxChunkSize())
-		e.Parallel.merger = &multiWayMerge{e.lessRow, make([]rowWithPartition, 0, len(e.Parallel.workers))}
+		e.Parallel.merger = &multiWayMergeImpl{e.lessRow, make([]rowWithPartition, 0, len(e.Parallel.workers))}
 		e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh)
 		e.Parallel.spillAction = newParallelSortSpillDiskAction(e.Parallel.spillHelper)
 		if e.enableTmpStorageOnOOM {
@@ -330,7 +330,7 @@ func (e *SortExec) generateResultWithMultiWayMerge() {
 }
 
 func (e *SortExec) initExternalSorting() error {
-	e.multiWayMerge = &multiWayMerge{e.lessRow, make([]rowWithPartition, 0, len(e.Unparallel.sortPartitions))}
+	e.multiWayMerge = &multiWayMergeImpl{e.lessRow, make([]rowWithPartition, 0, len(e.Unparallel.sortPartitions))}
 	for i := 0; i < len(e.Unparallel.sortPartitions); i++ {
 		// We should always get row here
 		row, err := e.Unparallel.sortPartitions[i].getNextSortedRow()
@@ -346,7 +346,7 @@ func (e *SortExec) initExternalSorting() error {
 
 func (e *SortExec) initExternalSortingForParallel() error {
 	diskFileNum := len(e.Parallel.spillHelper.sortedRowsInDisk)
-	e.multiWayMerge = &multiWayMerge{e.lessRow, make([]rowWithPartition, 0, diskFileNum)}
+	e.multiWayMerge = &multiWayMergeImpl{e.lessRow, make([]rowWithPartition, 0, diskFileNum)}
 	e.Parallel.spillHelper.cursor = make([]*dataCursor, diskFileNum)
 	for i := 0; i < diskFileNum; i++ {
 		e.Parallel.spillHelper.cursor[i] = NewDataCursor()

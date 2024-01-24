@@ -15,6 +15,7 @@
 package sortexec
 
 import (
+	"container/heap"
 	"math/rand"
 
 	"github.com/pingcap/errors"
@@ -46,33 +47,76 @@ type rowWithPartition struct {
 	partitionID int
 }
 
-type multiWayMerge struct {
+type multiWayMergeImpl struct {
 	lessRowFunction func(rowI chunk.Row, rowJ chunk.Row) int
 	elements        []rowWithPartition
 }
 
-func (h *multiWayMerge) Less(i, j int) bool {
+func (h *multiWayMergeImpl) Less(i, j int) bool {
 	rowI := h.elements[i].row
 	rowJ := h.elements[j].row
 	ret := h.lessRowFunction(rowI, rowJ)
 	return ret < 0
 }
 
-func (h *multiWayMerge) Len() int {
+func (h *multiWayMergeImpl) Len() int {
 	return len(h.elements)
 }
 
-func (*multiWayMerge) Push(interface{}) {
+func (*multiWayMergeImpl) Push(interface{}) {
 	// Should never be called.
 }
 
-func (h *multiWayMerge) Pop() interface{} {
+func (h *multiWayMergeImpl) Pop() interface{} {
 	h.elements = h.elements[:len(h.elements)-1]
 	return nil
 }
 
-func (h *multiWayMerge) Swap(i, j int) {
+func (h *multiWayMergeImpl) Swap(i, j int) {
 	h.elements[i], h.elements[j] = h.elements[j], h.elements[i]
+}
+
+type multiWayMerger struct {
+	sortedRowsIters []*chunk.Iterator4Slice
+	multiWayMerge   *multiWayMergeImpl
+}
+
+func newMultiWayMerger(
+	sortedRowsIters []*chunk.Iterator4Slice,
+	lessRowFunction func(rowI chunk.Row, rowJ chunk.Row) int) *multiWayMerger {
+	return &multiWayMerger{
+		sortedRowsIters: sortedRowsIters,
+		multiWayMerge: &multiWayMergeImpl{
+			lessRowFunction: lessRowFunction,
+			elements:        make([]rowWithPartition, len(sortedRowsIters)),
+		},
+	}
+}
+
+func (m *multiWayMerger) init() {
+	for i := range m.sortedRowsIters {
+		row := m.sortedRowsIters[i].Begin()
+		if row.IsEmpty() {
+			continue
+		}
+		m.multiWayMerge.elements = append(m.multiWayMerge.elements, rowWithPartition{row: row, partitionID: i})
+	}
+	heap.Init(m.multiWayMerge)
+}
+
+func (m *multiWayMerger) next() chunk.Row {
+	if m.multiWayMerge.Len() > 0 {
+		elem := m.multiWayMerge.elements[0]
+		newRow := m.sortedRowsIters[elem.partitionID].Next()
+		if newRow.IsEmpty() {
+			heap.Remove(m.multiWayMerge, 0)
+			return elem.row
+		}
+		m.multiWayMerge.elements[0].row = newRow
+		heap.Fix(m.multiWayMerge, 0)
+		return elem.row
+	}
+	return chunk.Row{}
 }
 
 func processPanicAndLog(processError func(error), r interface{}) {
