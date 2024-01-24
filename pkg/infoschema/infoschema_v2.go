@@ -55,8 +55,8 @@ func keyToHash(key interface{}) (uint64, uint64) {
 
 func NewInfoSchemaData() (*InfoSchemaData, error) {
 	cache, err := ristretto.NewCache(&ristretto.Config{
-		NumCounters: 1e6,   // this means at most 10,000 items, recommand num is 10x items
-		MaxCost:     10000, // if we measure one partition cost as 1, at most 10,000 partitions.
+		NumCounters: 50000,   // this means at most 10,000 items, recommand num is 10x items
+		MaxCost:     5000, // if we measure one partition cost as 1, at most 10,000 partitions.
 		// MaxCost:     1000000, // if we measure one partition cost as 1, at most 10,000 partitions.
 		BufferItems: 64,
 		KeyToHash:   keyToHash,
@@ -221,6 +221,42 @@ func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok 
 	return
 }
 
+func (is *infoschemaV2) SchemaByTable(tableInfo *model.TableInfo) (val *model.DBInfo, ok bool) {
+	var itm Item
+	// Find the first item whose schemaTS is smaller than ts.
+	is.byID.Descend(Item{tableID: tableInfo.ID, schemaTS: math.MaxUint64}, func(item Item) bool {
+		if item.tableID != tableInfo.ID {
+			ok = false
+			return false
+		}
+		if item.schemaTS <= is.ts {
+			ok = true
+			itm = item
+			return false
+		}
+		return true
+	})
+	if !ok {
+		return nil, ok
+	}
+
+	var dbInfo model.DBInfo
+	dbInfo.Name.L = itm.dbName
+	is.schemaMap.Descend(schemaItem{dbInfo: &dbInfo, schemaTS: math.MaxUint64}, func(item schemaItem) bool {
+		if item.Name() != itm.dbName {
+			ok = false
+			return false
+		}
+		if item.schemaTS <= is.ts {
+			ok = true
+			val = item.dbInfo
+			return false
+		}
+		return true
+	})
+	return
+}
+
 func loadTableInfo(r autoid.Requirement, infoData *InfoSchemaData, tblID, dbID int64, ts uint64) table.Table {
 	snapshot := r.Store().GetSnapshot(kv.NewVersion(ts))
 	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
@@ -236,7 +272,7 @@ func loadTableInfo(r autoid.Requirement, infoData *InfoSchemaData, tblID, dbID i
 		// TODO???
 		panic(err)
 	}
-	tblInfo := res.(*model.TableInfo)
+	tblInfo := res.(*model.TableInfo)  // TODO: it could be missing!!!
 
 	ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
 	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)

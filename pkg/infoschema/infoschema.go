@@ -36,12 +36,12 @@ import (
 // InfoSchema is read-only, and the returned value is a copy.
 // TODO: add more methods to retrieve tables and columns.
 type InfoSchema interface {
-	SchemaByName(schema model.CIStr) (*model.DBInfo, bool)
+	    SchemaByName(schema model.CIStr) (*model.DBInfo, bool)
 	SchemaExists(schema model.CIStr) bool
-	TableByName(schema, table model.CIStr) (table.Table, error)
+	    TableByName(schema, table model.CIStr) (table.Table, error)
 	TableExists(schema, table model.CIStr) bool
 	SchemaByID(id int64) (*model.DBInfo, bool)
-	SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool)
+	    SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool)
 	PolicyByName(name model.CIStr) (*model.PolicyInfo, bool)
 	ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool)
 	TableByID(id int64) (table.Table, bool)

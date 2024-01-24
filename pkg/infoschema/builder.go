@@ -1125,15 +1125,20 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 	b.is.schemaMap[di.Name.L] = schTbls
 
 	for _, t := range di.Tables {
+
+		fmt.Println("===== create table ====", di.Name.L, t.Name.L)
+
 		allocs := autoid.NewAllocatorsFromTblInfo(b.Requirement, di.ID, t)
 		var tbl table.Table
 		tbl, err := tableFromMeta(allocs, t)
 		if err != nil {
 			return errors.Wrap(err, fmt.Sprintf("Build table `%s`.`%s` schema failed", di.Name.O, t.Name.O))
 		}
-		schTbls.tables[t.Name.L] = tbl
-		sortedTbls := b.is.sortedTablesBuckets[tableBucketIdx(t.ID)]
-		b.is.sortedTablesBuckets[tableBucketIdx(t.ID)] = append(sortedTbls, tbl)
+		if di.Name.L == "information_schema" || di.Name.L == "performance_schema" {
+			schTbls.tables[t.Name.L] = tbl
+			sortedTbls := b.is.sortedTablesBuckets[tableBucketIdx(t.ID)]
+			b.is.sortedTablesBuckets[tableBucketIdx(t.ID)] = append(sortedTbls, tbl)
+		}
 		b.infoData.add(Item{
 			dbName:    di.Name.L,
 			dbID:      di.ID,
@@ -1145,6 +1150,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 			b.addTemporaryTable(tblInfo.ID)
 		}
 	}
+
 	return nil
 }
 
