@@ -779,9 +779,8 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *h.TableHintInfo) {
 		}
 	}
 	if hasConflict {
-		errMsg := "Join hints are conflict, you can only specify one type of join"
-		warning := ErrInternal.FastGen(errMsg)
-		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
+		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
+			ErrInternal.FastGen("Join hints are conflict, you can only specify one type of join"))
 		p.preferJoinType = 0
 	}
 	// set the join order
@@ -851,7 +850,7 @@ func (p *LogicalJoin) setPreferredJoinType() {
 	if containDifferentJoinTypes(p.preferJoinType) {
 		errMsg := "Join hints conflict after join reorder phase, you can only specify one type of join"
 		warning := ErrInternal.FastGen(errMsg)
-		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
+		p.SCtx().GetSessionVars().StmtCtx.SetHintWarning(warning)
 		p.preferJoinType = 0
 	}
 }
@@ -880,7 +879,7 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *h.TableHintInfo) {
 				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
 				ds.DBName.O, ds.table.Meta().Name.O, kv.TiKV.Name(), ds.SCtx().GetSessionVars().GetIsolationReadEngines())
 			warning := ErrInternal.FastGen(errMsg)
-			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
+			ds.SCtx().GetSessionVars().StmtCtx.SetHintWarning(warning)
 		} else {
 			ds.SCtx().GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because you have set a hint to read table `" + hintTbl.TblName.O + "` from TiKV.")
 		}
@@ -892,7 +891,7 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *h.TableHintInfo) {
 			errMsg := fmt.Sprintf("Storage hints are conflict, you can only specify one storage type of table %s.%s",
 				alias.DBName.L, alias.TblName.L)
 			warning := ErrInternal.FastGen(errMsg)
-			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
+			ds.SCtx().GetSessionVars().StmtCtx.SetHintWarning(warning)
 			ds.preferStoreType = 0
 			return
 		}
@@ -908,7 +907,7 @@ func (ds *DataSource) setPreferredStoreType(hintInfo *h.TableHintInfo) {
 				"please check the status of the table replica and variable value of tidb_isolation_read_engines(%v)",
 				ds.DBName.O, ds.table.Meta().Name.O, kv.TiFlash.Name(), ds.SCtx().GetSessionVars().GetIsolationReadEngines())
 			warning := ErrInternal.FastGen(errMsg)
-			ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(warning)
+			ds.SCtx().GetSessionVars().StmtCtx.SetHintWarning(warning)
 		}
 	}
 }
@@ -4147,7 +4146,7 @@ func (b *PlanBuilder) popVisitInfo() {
 func (b *PlanBuilder) popTableHints() {
 	hintInfo := b.tableHintInfo[len(b.tableHintInfo)-1]
 	for _, warning := range h.CollectUnmatchedHintWarnings(hintInfo) {
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(warning)
+		b.ctx.GetSessionVars().StmtCtx.SetHintWarning(warning)
 	}
 	b.tableHintInfo = b.tableHintInfo[:len(b.tableHintInfo)-1]
 }
