@@ -85,6 +85,49 @@ func rewriteAstExpr(sctx sessionctx.Context, expr ast.ExprNode, schema *expressi
 	return newExpr, nil
 }
 
+func buildExprWithAst(ctx sessionctx.Context, node ast.ExprNode, opts ...expression.BuildOption) (expression.Expression, error) {
+	var options expression.BuildOptions
+	for _, opt := range opts {
+		opt(&options)
+	}
+
+	if options.InputSchema == nil && len(options.InputNames) > 0 {
+		return nil, errors.New("InputSchema and InputNames should be specified at the same time")
+	}
+
+	if options.InputSchema != nil && len(options.InputSchema.Columns) != len(options.InputNames) {
+		return nil, errors.New("InputSchema and InputNames should be the same length")
+	}
+
+	rewriter := &expressionRewriter{
+		ctx:                 context.TODO(),
+		sctx:                ctx,
+		schema:              options.InputSchema,
+		names:               options.InputNames,
+		sourceTable:         options.SourceTable,
+		allowBuildCastArray: options.AllowCastArray,
+		asScalar:            true,
+	}
+
+	if tbl := options.SourceTable; tbl != nil && rewriter.schema == nil {
+		cols, names, err := expression.ColumnInfos2ColumnsAndNames(ctx, model.NewCIStr(""), tbl.Name, tbl.Cols(), tbl)
+		if err != nil {
+			return nil, err
+		}
+		intest.Assert(len(cols) == len(names))
+		rewriter.schema = expression.NewSchema(cols...)
+		rewriter.names = names
+	}
+
+	if rewriter.schema == nil {
+		rewriter.schema = expression.NewSchema()
+	}
+	rewriter.sctx.SetValue(expression.TiDBDecodeKeyFunctionKey, decodeKeyFromString)
+
+	expr, _, err := rewriteExprNode(rewriter, node, rewriter.asScalar)
+	return expr, err
+}
+
 func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNode ast.ExprNode, mockPlan LogicalPlan, insertPlan *Insert) (expression.Expression, error) {
 	b.rewriterCounter++
 	defer func() { b.rewriterCounter-- }()
@@ -101,8 +144,9 @@ func (b *PlanBuilder) rewriteInsertOnDuplicateUpdate(ctx context.Context, exprNo
 
 	rewriter.planCtx.insertPlan = insertPlan
 	rewriter.asScalar = true
+	rewriter.allowBuildCastArray = b.allowBuildCastArray
 
-	expr, _, err := b.rewriteExprNode(rewriter, exprNode, true)
+	expr, _, err := rewriteExprNode(rewriter, exprNode, true)
 	return expr, err
 }
 
@@ -141,9 +185,10 @@ func (b *PlanBuilder) rewriteWithPreprocess(
 	rewriter.planCtx.aggrMap = aggMapper
 	rewriter.planCtx.windowMap = windowMapper
 	rewriter.asScalar = asScalar
+	rewriter.allowBuildCastArray = b.allowBuildCastArray
 	rewriter.preprocess = preprocess
 
-	expr, resultPlan, err := b.rewriteExprNode(rewriter, exprNode, asScalar)
+	expr, resultPlan, err := rewriteExprNode(rewriter, exprNode, asScalar)
 	return expr, resultPlan, err
 }
 
@@ -181,9 +226,12 @@ func (b *PlanBuilder) getExpressionRewriter(ctx context.Context, p LogicalPlan) 
 	return
 }
 
-func (*PlanBuilder) rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScalar bool) (expression.Expression, LogicalPlan, error) {
+func rewriteExprNode(rewriter *expressionRewriter, exprNode ast.ExprNode, asScalar bool) (expression.Expression, LogicalPlan, error) {
 	planCtx := rewriter.planCtx
-	if planCtx.plan != nil {
+	// sourceTable is only used to build simple expression with one table
+	// when planCtx is present, sourceTable should be nil.
+	intest.Assert(planCtx == nil || rewriter.sourceTable == nil)
+	if planCtx != nil && planCtx.plan != nil {
 		curColLen := planCtx.plan.Schema().Len()
 		defer func() {
 			names := planCtx.plan.OutputNames().Shallow()[:curColLen]
@@ -206,8 +254,14 @@ func (*PlanBuilder) rewriteExprNode(rewriter *expressionRewriter, exprNode ast.E
 	if rewriter.err != nil {
 		return nil, nil, errors.Trace(rewriter.err)
 	}
+
+	var plan LogicalPlan
+	if planCtx != nil {
+		plan = planCtx.plan
+	}
+
 	if !asScalar && len(rewriter.ctxStack) == 0 {
-		return nil, rewriter.planCtx.plan, nil
+		return nil, plan, nil
 	}
 	if len(rewriter.ctxStack) != 1 {
 		return nil, nil, errors.Errorf("context len %v is invalid", len(rewriter.ctxStack))
@@ -216,7 +270,7 @@ func (*PlanBuilder) rewriteExprNode(rewriter *expressionRewriter, exprNode ast.E
 	if rewriter.err != nil {
 		return nil, nil, errors.Trace(rewriter.err)
 	}
-	return rewriter.ctxStack[0], rewriter.planCtx.plan, nil
+	return rewriter.ctxStack[0], plan, nil
 }
 
 type exprRewriterPlanCtx struct {
@@ -246,6 +300,10 @@ type expressionRewriter struct {
 	// asScalar indicates the return value must be a scalar value.
 	// NOTE: This value can be changed during expression rewritten.
 	asScalar bool
+	// allowBuildCastArray indicates whether allow cast(... as ... array).
+	allowBuildCastArray bool
+	// sourceTable is only used to build simple expression without all columns from a single table
+	sourceTable *model.TableInfo
 
 	// preprocess is called for every ast.Node in Leave.
 	preprocess func(ast.Node) ast.Node
@@ -370,49 +428,71 @@ func (er *expressionRewriter) buildSubquery(ctx context.Context, planCtx *exprRe
 	return np, hintFlags, nil
 }
 
+func (er *expressionRewriter) requirePlanCtx(inNode ast.Node) (ctx *exprRewriterPlanCtx, err error) {
+	if ctx = er.planCtx; ctx == nil {
+		err = errors.Errorf("node '%T' is not allowed when building an expression without planner", inNode)
+	}
+	return
+}
+
 // Enter implements Visitor interface.
 func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
-	planCtx := er.planCtx
+	enterWithPlanCtx := func(fn func(*exprRewriterPlanCtx) (ast.Node, bool)) (ast.Node, bool) {
+		planCtx, err := er.requirePlanCtx(inNode)
+		if err != nil {
+			er.err = err
+			return inNode, true
+		}
+		return fn(planCtx)
+	}
+
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr:
-		intest.AssertNotNil(planCtx)
-		index, ok := -1, false
-		if planCtx.aggrMap != nil {
-			index, ok = planCtx.aggrMap[v]
-		}
-		if ok {
-			// index < 0 indicates this is a correlated aggregate belonging to outer query,
-			// for which a correlated column will be created later, so we append a null constant
-			// as a temporary result expression.
-			if index < 0 {
-				er.ctxStackAppend(expression.NewNull(), types.EmptyName)
-			} else {
-				// index >= 0 indicates this is a regular aggregate column
-				er.ctxStackAppend(er.schema.Columns[index], er.names[index])
+		return enterWithPlanCtx(func(planCtx *exprRewriterPlanCtx) (ast.Node, bool) {
+			index, ok := -1, false
+			if planCtx.aggrMap != nil {
+				index, ok = planCtx.aggrMap[v]
 			}
+			if ok {
+				// index < 0 indicates this is a correlated aggregate belonging to outer query,
+				// for which a correlated column will be created later, so we append a null constant
+				// as a temporary result expression.
+				if index < 0 {
+					er.ctxStackAppend(expression.NewNull(), types.EmptyName)
+				} else {
+					// index >= 0 indicates this is a regular aggregate column
+					er.ctxStackAppend(er.schema.Columns[index], er.names[index])
+				}
+				return inNode, true
+			}
+			// replace correlated aggregate in sub-query with its corresponding correlated column
+			if col, ok := planCtx.builder.correlatedAggMapper[v]; ok {
+				er.ctxStackAppend(col, types.EmptyName)
+				return inNode, true
+			}
+			er.err = ErrInvalidGroupFuncUse
 			return inNode, true
-		}
-		// replace correlated aggregate in sub-query with its corresponding correlated column
-		if col, ok := planCtx.builder.correlatedAggMapper[v]; ok {
-			er.ctxStackAppend(col, types.EmptyName)
-			return inNode, true
-		}
-		er.err = ErrInvalidGroupFuncUse
-		return inNode, true
+		})
 	case *ast.ColumnNameExpr:
-		if planCtx != nil {
+		if planCtx := er.planCtx; planCtx != nil {
 			if index, ok := planCtx.builder.colMapper[v]; ok {
 				er.ctxStackAppend(er.schema.Columns[index], er.names[index])
 				return inNode, true
 			}
 		}
 	case *ast.CompareSubqueryExpr:
-		return er.handleCompareSubquery(er.ctx, planCtx, v)
+		return enterWithPlanCtx(func(planCtx *exprRewriterPlanCtx) (ast.Node, bool) {
+			return er.handleCompareSubquery(er.ctx, planCtx, v)
+		})
 	case *ast.ExistsSubqueryExpr:
-		return er.handleExistSubquery(er.ctx, planCtx, v)
+		return enterWithPlanCtx(func(planCtx *exprRewriterPlanCtx) (ast.Node, bool) {
+			return er.handleExistSubquery(er.ctx, planCtx, v)
+		})
 	case *ast.PatternInExpr:
 		if v.Sel != nil {
-			return er.handleInSubquery(er.ctx, planCtx, v)
+			return enterWithPlanCtx(func(planCtx *exprRewriterPlanCtx) (ast.Node, bool) {
+				return er.handleInSubquery(er.ctx, planCtx, v)
+			})
 		}
 		if len(v.List) != 1 {
 			break
@@ -424,7 +504,9 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			switch y := x.(type) {
 			case *ast.SubqueryExpr:
 				v.Sel = y
-				return er.handleInSubquery(er.ctx, planCtx, v)
+				return enterWithPlanCtx(func(planCtx *exprRewriterPlanCtx) (ast.Node, bool) {
+					return er.handleInSubquery(er.ctx, planCtx, v)
+				})
 			case *ast.ParenthesesExpr:
 				x = y.Expr
 			default:
@@ -432,42 +514,47 @@ func (er *expressionRewriter) Enter(inNode ast.Node) (ast.Node, bool) {
 			}
 		}
 	case *ast.SubqueryExpr:
-		return er.handleScalarSubquery(er.ctx, planCtx, v)
+		return enterWithPlanCtx(func(planCtx *exprRewriterPlanCtx) (ast.Node, bool) {
+			return er.handleScalarSubquery(er.ctx, planCtx, v)
+		})
 	case *ast.ParenthesesExpr:
 	case *ast.ValuesExpr:
-		intest.AssertNotNil(planCtx)
-		schema, names := er.schema, er.names
-		// NOTE: "er.insertPlan != nil" means that we are rewriting the
-		// expressions inside the assignment of "INSERT" statement. we have to
-		// use the "tableSchema" of that "insertPlan".
-		if planCtx.insertPlan != nil {
-			schema = planCtx.insertPlan.tableSchema
-			names = planCtx.insertPlan.tableColNames
-		}
-		idx, err := expression.FindFieldName(names, v.Column.Name)
-		if err != nil {
-			er.err = err
-			return inNode, false
-		}
-		if idx < 0 {
-			er.err = ErrUnknownColumn.GenWithStackByArgs(v.Column.Name.OrigColName(), "field list")
-			return inNode, false
-		}
-		col := schema.Columns[idx]
-		er.ctxStackAppend(expression.NewValuesFunc(er.sctx, col.Index, col.RetType), types.EmptyName)
-		return inNode, true
-	case *ast.WindowFuncExpr:
-		intest.AssertNotNil(planCtx)
-		index, ok := -1, false
-		if planCtx.windowMap != nil {
-			index, ok = planCtx.windowMap[v]
-		}
-		if !ok {
-			er.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(strings.ToLower(v.Name))
+		return enterWithPlanCtx(func(planCtx *exprRewriterPlanCtx) (ast.Node, bool) {
+			schema, names := er.schema, er.names
+			// NOTE: "er.insertPlan != nil" means that we are rewriting the
+			// expressions inside the assignment of "INSERT" statement. we have to
+			// use the "tableSchema" of that "insertPlan".
+			if planCtx.insertPlan != nil {
+				schema = planCtx.insertPlan.tableSchema
+				names = planCtx.insertPlan.tableColNames
+			}
+			idx, err := expression.FindFieldName(names, v.Column.Name)
+			if err != nil {
+				er.err = err
+				return inNode, false
+			}
+			if idx < 0 {
+				er.err = ErrUnknownColumn.GenWithStackByArgs(v.Column.Name.OrigColName(), "field list")
+				return inNode, false
+			}
+			col := schema.Columns[idx]
+			er.ctxStackAppend(expression.NewValuesFunc(er.sctx, col.Index, col.RetType), types.EmptyName)
 			return inNode, true
-		}
-		er.ctxStackAppend(er.schema.Columns[index], er.names[index])
-		return inNode, true
+		})
+	case *ast.WindowFuncExpr:
+		return enterWithPlanCtx(func(planCtx *exprRewriterPlanCtx) (ast.Node, bool) {
+			intest.AssertNotNil(planCtx)
+			index, ok := -1, false
+			if planCtx.windowMap != nil {
+				index, ok = planCtx.windowMap[v]
+			}
+			if !ok {
+				er.err = ErrWindowInvalidWindowFuncUse.GenWithStackByArgs(strings.ToLower(v.Name))
+				return inNode, true
+			}
+			er.ctxStackAppend(er.schema.Columns[index], er.names[index])
+			return inNode, true
+		})
 	case *ast.FuncCallExpr:
 		er.asScalar = true
 		if _, ok := expression.DisableFoldFunctions[v.FnName.L]; ok {
@@ -1249,7 +1336,16 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 	if er.preprocess != nil {
 		inNode = er.preprocess(inNode)
 	}
-	planCtx := er.planCtx
+
+	withPlanCtx := func(fn func(*exprRewriterPlanCtx)) {
+		planCtx, err := er.requirePlanCtx(inNode)
+		if err != nil {
+			er.err = err
+			return
+		}
+		fn(planCtx)
+	}
+
 	switch v := inNode.(type) {
 	case *ast.AggregateFuncExpr, *ast.ColumnNameExpr, *ast.ParenthesesExpr, *ast.WhenClause,
 		*ast.SubqueryExpr, *ast.ExistsSubqueryExpr, *ast.CompareSubqueryExpr, *ast.ValuesExpr, *ast.WindowFuncExpr, *ast.TableNameExpr:
@@ -1283,14 +1379,23 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 		er.ctxStackAppend(value, types.EmptyName)
 	case *ast.VariableExpr:
-		er.rewriteVariable(planCtx, v)
+		withPlanCtx(func(planCtx *exprRewriterPlanCtx) {
+			er.rewriteVariable(planCtx, v)
+		})
 	case *ast.FuncCallExpr:
-		if _, ok := expression.TryFoldFunctions[v.FnName.L]; ok {
-			er.tryFoldCounter--
-		}
-		er.funcCallToExpression(v)
-		if _, ok := expression.DisableFoldFunctions[v.FnName.L]; ok {
-			er.disableFoldCounter--
+		switch v.FnName.L {
+		case ast.Grouping:
+			withPlanCtx(func(planCtx *exprRewriterPlanCtx) {
+				er.funcCallToExpressionWithPlanCtx(planCtx, v)
+			})
+		default:
+			if _, ok := expression.TryFoldFunctions[v.FnName.L]; ok {
+				er.tryFoldCounter--
+			}
+			er.funcCallToExpression(v)
+			if _, ok := expression.DisableFoldFunctions[v.FnName.L]; ok {
+				er.disableFoldCounter--
+			}
 		}
 	case *ast.TableName:
 		er.toTable(v)
@@ -1314,8 +1419,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			er.disableFoldCounter--
 		}
 	case *ast.FuncCastExpr:
-		intest.AssertNotNil(planCtx)
-		if v.Tp.IsArray() && !planCtx.builder.allowBuildCastArray {
+		if v.Tp.IsArray() && !er.allowBuildCastArray {
 			er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions")
 			return retNode, false
 		}
@@ -1361,13 +1465,21 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			er.inToExpression(len(v.List), v.Not, &v.Type)
 		}
 	case *ast.PositionExpr:
-		er.positionToScalarFunc(planCtx, v)
+		withPlanCtx(func(planCtx *exprRewriterPlanCtx) {
+			er.positionToScalarFunc(planCtx, v)
+		})
 	case *ast.IsNullExpr:
 		er.isNullToExpression(v)
 	case *ast.IsTruthExpr:
 		er.isTrueToScalarFunc(v)
 	case *ast.DefaultExpr:
-		er.evalDefaultExpr(planCtx, v)
+		if planCtx := er.planCtx; planCtx != nil {
+			er.evalDefaultExprWithPlanCtx(planCtx, v)
+		} else if er.sourceTable != nil {
+			er.evalDefaultExprForTable(v, er.sourceTable)
+		} else {
+			er.err = errors.Errorf("Unsupported expr %T when source table not provided", v)
+		}
 	// TODO: Perhaps we don't need to transcode these back to generic integers/strings
 	case *ast.TrimDirectionExpr:
 		er.ctxStackAppend(&expression.Constant{
@@ -2109,7 +2221,7 @@ func (er *expressionRewriter) rewriteFuncCall(v *ast.FuncCallExpr) bool {
 	}
 }
 
-func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
+func (er *expressionRewriter) funcCallToExpressionWithPlanCtx(planCtx *exprRewriterPlanCtx, v *ast.FuncCallExpr) {
 	stackLen := len(er.ctxStack)
 	args := er.ctxStack[stackLen-len(v.Args):]
 	er.err = expression.CheckArgsNotMultiColumnRow(args...)
@@ -2117,30 +2229,15 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 		return
 	}
 
-	if er.rewriteFuncCall(v) {
-		return
-	}
-
 	var function expression.Expression
 	er.ctxStackPop(len(v.Args))
-	if _, ok := expression.DeferredFunctions[v.FnName.L]; er.useCache() && ok {
-		// When the expression is unix_timestamp and the number of argument is not zero,
-		// we deal with it as normal expression.
-		if v.FnName.L == ast.UnixTimestamp && len(v.Args) != 0 {
-			function, er.err = er.newFunction(v.FnName.L, &v.Type, args...)
-			er.ctxStackAppend(function, types.EmptyName)
-		} else {
-			function, er.err = expression.NewFunctionBase(er.sctx, v.FnName.L, &v.Type, args...)
-			c := &expression.Constant{Value: types.NewDatum(nil), RetType: function.GetType().Clone(), DeferredExpr: function}
-			er.ctxStackAppend(c, types.EmptyName)
-		}
-	} else if v.FnName.L == ast.Grouping {
+	switch v.FnName.L {
+	case ast.Grouping:
 		// grouping function should fetch the underlying grouping-sets meta and rewrite the args here.
 		// eg: grouping(a) actually is try to find in which grouping-set that the column 'a' is remained,
 		// collecting those gid as a collection and filling it into the grouping function meta. Besides,
 		// the first arg of grouping function should be rewritten as gid column defined/passed by Expand
 		// from the bottom up.
-		planCtx := er.planCtx
 		intest.AssertNotNil(planCtx)
 		if planCtx.rollExpand == nil {
 			er.err = ErrInvalidGroupFuncUse
@@ -2175,6 +2272,37 @@ func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
 			function, er.err = er.newFunctionWithInit(v.FnName.L, &v.Type, init, newArg)
 			er.ctxStackAppend(function, types.EmptyName)
 		}
+	default:
+		er.err = errors.Errorf("invalid function: %s", v.FnName.L)
+		er.ctxStackAppend(nil, types.EmptyName)
+	}
+}
+
+func (er *expressionRewriter) funcCallToExpression(v *ast.FuncCallExpr) {
+	stackLen := len(er.ctxStack)
+	args := er.ctxStack[stackLen-len(v.Args):]
+	er.err = expression.CheckArgsNotMultiColumnRow(args...)
+	if er.err != nil {
+		return
+	}
+
+	if er.rewriteFuncCall(v) {
+		return
+	}
+
+	var function expression.Expression
+	er.ctxStackPop(len(v.Args))
+	if _, ok := expression.DeferredFunctions[v.FnName.L]; er.useCache() && ok {
+		// When the expression is unix_timestamp and the number of argument is not zero,
+		// we deal with it as normal expression.
+		if v.FnName.L == ast.UnixTimestamp && len(v.Args) != 0 {
+			function, er.err = er.newFunction(v.FnName.L, &v.Type, args...)
+			er.ctxStackAppend(function, types.EmptyName)
+		} else {
+			function, er.err = expression.NewFunctionBase(er.sctx, v.FnName.L, &v.Type, args...)
+			c := &expression.Constant{Value: types.NewDatum(nil), RetType: function.GetType().Clone(), DeferredExpr: function}
+			er.ctxStackAppend(c, types.EmptyName)
+		}
 	} else {
 		function, er.err = er.newFunction(v.FnName.L, &v.Type, args...)
 		er.ctxStackAppend(function, types.EmptyName)
@@ -2195,9 +2323,14 @@ func (er *expressionRewriter) toTable(v *ast.TableName) {
 	er.ctxStackAppend(val, types.EmptyName)
 }
 
+func (er *expressionRewriter) clause() clauseCode {
+	if er.planCtx != nil {
+		return er.planCtx.builder.curClause
+	}
+	return expressionClause
+}
+
 func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
-	planCtx := er.planCtx
-	intest.AssertNotNil(planCtx)
 	idx, err := expression.FindFieldName(er.names, v)
 	if err != nil {
 		er.err = ErrAmbiguous.GenWithStackByArgs(v.Name, clauseMsg[fieldList])
@@ -2206,12 +2339,19 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 	if idx >= 0 {
 		column := er.schema.Columns[idx]
 		if column.IsHidden {
-			er.err = ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[planCtx.builder.curClause])
+			er.err = ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.clause()])
 			return
 		}
 		er.ctxStackAppend(column, er.names[idx])
 		return
 	}
+
+	planCtx := er.planCtx
+	if planCtx == nil {
+		er.err = ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.clause()])
+		return
+	}
+
 	col, name, err := findFieldNameFromNaturalUsingJoin(planCtx.plan, v)
 	if err != nil {
 		er.err = err
@@ -2261,7 +2401,21 @@ func findFieldNameFromNaturalUsingJoin(p LogicalPlan, v *ast.ColumnName) (col *e
 	return nil, nil, nil
 }
 
-func (er *expressionRewriter) evalDefaultExpr(planCtx *exprRewriterPlanCtx, v *ast.DefaultExpr) {
+func (er *expressionRewriter) evalDefaultExprForTable(v *ast.DefaultExpr, tbl *model.TableInfo) {
+	idx, err := expression.FindFieldName(er.names, v.Name)
+	if err != nil {
+		er.err = err
+		return
+	}
+	if idx < 0 {
+		er.err = ErrUnknownColumn.GenWithStackByArgs(v.Name.OrigColName(), "field list")
+		return
+	}
+	name := er.names[idx]
+	er.evalFieldDefaultValue(name, tbl)
+}
+
+func (er *expressionRewriter) evalDefaultExprWithPlanCtx(planCtx *exprRewriterPlanCtx, v *ast.DefaultExpr) {
 	intest.AssertNotNil(planCtx)
 	var name *types.FieldName
 	// Here we will find the corresponding column for default function. At the same time, we need to consider the issue
@@ -2298,7 +2452,7 @@ func (er *expressionRewriter) evalDefaultExpr(planCtx *exprRewriterPlanCtx, v *a
 	dbName := name.DBName
 	if dbName.O == "" {
 		// if database name is not specified, use current database name
-		dbName = model.NewCIStr(er.sctx.GetSessionVars().CurrentDB)
+		dbName = model.NewCIStr(planCtx.builder.ctx.GetSessionVars().CurrentDB)
 	}
 	if name.OrigTblName.O == "" {
 		// column is evaluated by some expressions, for example:
@@ -2312,14 +2466,18 @@ func (er *expressionRewriter) evalDefaultExpr(planCtx *exprRewriterPlanCtx, v *a
 	if er.err != nil {
 		return
 	}
-	colName := name.OrigColName.O
+	er.evalFieldDefaultValue(name, tbl.Meta())
+}
+
+func (er *expressionRewriter) evalFieldDefaultValue(field *types.FieldName, tblInfo *model.TableInfo) {
+	colName := field.OrigColName.L
 	if colName == "" {
 		// in some cases, OrigColName is empty, use ColName instead
-		colName = name.ColName.O
+		colName = field.ColName.L
 	}
-	col := table.FindCol(tbl.Cols(), colName)
+	col := tblInfo.FindPublicColumnByName(colName)
 	if col == nil {
-		er.err = ErrUnknownColumn.GenWithStackByArgs(v.Name, "field_list")
+		er.err = ErrUnknownColumn.GenWithStackByArgs(colName, "field_list")
 		return
 	}
 	isCurrentTimestamp := hasCurrentDatetimeDefault(col)
@@ -2336,7 +2494,15 @@ func (er *expressionRewriter) evalDefaultExpr(planCtx *exprRewriterPlanCtx, v *a
 		}
 	default:
 		// for other columns, just use what it is
-		val, er.err = planCtx.builder.getDefaultValue(col)
+		d, err := table.GetColDefaultValue(er.sctx, col)
+		if err != nil {
+			er.err = err
+			return
+		}
+		val = &expression.Constant{
+			Value:   d,
+			RetType: col.FieldType.Clone(),
+		}
 	}
 	if er.err != nil {
 		return
@@ -2345,7 +2511,7 @@ func (er *expressionRewriter) evalDefaultExpr(planCtx *exprRewriterPlanCtx, v *a
 }
 
 // hasCurrentDatetimeDefault checks if column has current_timestamp default value
-func hasCurrentDatetimeDefault(col *table.Column) bool {
+func hasCurrentDatetimeDefault(col *model.ColumnInfo) bool {
 	x, ok := col.DefaultValue.(string)
 	if !ok {
 		return false

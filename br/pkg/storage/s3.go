@@ -1096,6 +1096,9 @@ func (rs *S3Storage) Rename(ctx context.Context, oldFileName, newFileName string
 	return nil
 }
 
+// Close implements ExternalStorage interface.
+func (*S3Storage) Close() {}
+
 // retryerWithLog wrappes the client.DefaultRetryer, and logging when retry triggered.
 type retryerWithLog struct {
 	client.DefaultRetryer
