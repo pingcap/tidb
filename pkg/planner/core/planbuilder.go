@@ -3310,7 +3310,7 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (Plan,
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("RELOAD")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ReloadPriv, "", "", "", err)
 	case *ast.AlterInstanceStmt:
-		err := ErrSpecificAccessDenied.GenWithStack("SUPER")
+		err := ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
 	case *ast.RenameUserStmt:
 		err := ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
