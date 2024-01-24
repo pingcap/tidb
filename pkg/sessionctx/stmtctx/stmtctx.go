@@ -820,8 +820,8 @@ func (sc *StatementContext) SetSkipPlanCache(reason error) {
 	sc.setSkipPlanCache(reason)
 }
 
-// SetSkipHintWarning sets the hint warning and records the reason.
-func (sc *StatementContext) SetSkipHintWarning(reason error) {
+// SkipHintWarning sets the hint warning and records the reason.
+func (sc *StatementContext) SkipHintWarning(reason error) {
 	sc.AppendWarning(reason)
 }
 
