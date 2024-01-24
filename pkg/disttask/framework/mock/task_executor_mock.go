@@ -13,6 +13,7 @@ import (
 	reflect "reflect"
 
 	proto "github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	storage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	execute "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	gomock "go.uber.org/mock/gomock"
 )
@@ -135,6 +136,21 @@ func (m *MockTaskTable) GetTaskByID(arg0 context.Context, arg1 int64) (*proto.Ta
 func (mr *MockTaskTableMockRecorder) GetTaskByID(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskByID", reflect.TypeOf((*MockTaskTable)(nil).GetTaskByID), arg0, arg1)
+}
+
+// GetTaskExecInfoByExecID mocks base method.
+func (m *MockTaskTable) GetTaskExecInfoByExecID(arg0 context.Context, arg1 string) ([]*storage.TaskExecInfo, error) {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTaskExecInfoByExecID", arg0, arg1)
+	ret0, _ := ret[0].([]*storage.TaskExecInfo)
+	ret1, _ := ret[1].(error)
+	return ret0, ret1
+}
+
+// GetTaskExecInfoByExecID indicates an expected call of GetTaskExecInfoByExecID.
+func (mr *MockTaskTableMockRecorder) GetTaskExecInfoByExecID(arg0, arg1 any) *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTaskExecInfoByExecID", reflect.TypeOf((*MockTaskTable)(nil).GetTaskExecInfoByExecID), arg0, arg1)
 }
 
 // GetTasksInStates mocks base method.
