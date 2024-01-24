@@ -289,6 +289,11 @@ func MergeOverlappingFilesOpt(
 		checkHotspot,
 	)
 
+	if err != nil {
+		logutil.Logger(ctx).Warn("new range splitter failed", zap.Error(err))
+		return
+	}
+
 	defer func() {
 		err1 := splitter.Close()
 		if err != nil {
@@ -296,11 +301,6 @@ func MergeOverlappingFilesOpt(
 			logutil.Logger(ctx).Warn("close range splitter failed", zap.Error(err))
 		}
 	}()
-
-	if err != nil {
-		logutil.Logger(ctx).Warn("new range splitter failed", zap.Error(err))
-		return
-	}
 
 	groups, err := getGroups(ctx, splitter, kv.Key(startKey).Clone(), kv.Key(endKey).Clone())
 	if err != nil {
@@ -354,7 +354,7 @@ func runGroups(
 	}()
 
 	writer := NewWriterBuilder().
-		SetMemorySizeLimit(DefaultMemSizeLimit*2).
+		SetMemorySizeLimit(DefaultMemSizeLimit).
 		SetBlockSize(blockSize).
 		SetPropKeysDistance(propKeysDist).
 		SetPropSizeDistance(propSizeDist).

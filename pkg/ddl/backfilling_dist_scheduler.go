@@ -420,8 +420,6 @@ func generateMergePlan(
 		return nil, err
 	}
 	multiStats := make([]external.MultipleFilesStat, 0, 100)
-	dataFiles := make([]string, 0, 100)
-	statFiles := make([]string, 0, 100)
 	for _, bs := range subTaskMetas {
 		var subtask BackfillSubTaskMeta
 		err = json.Unmarshal(bs, &subtask)
@@ -429,12 +427,6 @@ func generateMergePlan(
 			return nil, err
 		}
 		multiStats = append(multiStats, subtask.MultipleFilesStats...)
-		for _, stat := range subtask.MultipleFilesStats {
-			for _, files := range stat.Filenames {
-				dataFiles = append(dataFiles, files[0])
-				statFiles = append(statFiles, files[1])
-			}
-		}
 	}
 	if skipMergeSort(multiStats) {
 		logger.Info("skip merge sort")

@@ -316,28 +316,17 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, er
 			startKey := tidbkv.Key(external.BytesMin(kvMeta.MultipleFilesStats[i].MinKey, kvMeta.MultipleFilesStats[i+1].MinKey)).Clone()
 			endKey := tidbkv.Key(external.BytesMax(kvMeta.MultipleFilesStats[i].MaxKey.Next(), kvMeta.MultipleFilesStats[i+1].MaxKey.Next())).Clone()
 
-			var dataFiles []string
-			var statFiles []string
-			for _, files := range kvMeta.MultipleFilesStats[i].Filenames {
-				dataFiles = append(dataFiles, files[0])
-				statFiles = append(statFiles, files[1])
-			}
-			for _, files := range kvMeta.MultipleFilesStats[i+1].Filenames {
-				dataFiles = append(dataFiles, files[0])
-				statFiles = append(statFiles, files[1])
-			}
 			if startKey.Cmp(endKey) > 0 {
 				return nil, errors.Errorf("invalid kv range, startKey: %s, endKey: %s",
 					hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 			}
 			result = append(result, &MergeSortSpec{
 				MergeSortStepMeta: &MergeSortStepMeta{
-					KVGroup:   kvGroup,
-					DataFiles: dataFiles,
-					StatFiles: statFiles,
+					KVGroup: kvGroup,
 					SortedKVMeta: external.SortedKVMeta{
-						StartKey: startKey,
-						EndKey:   endKey,
+						StartKey:           startKey,
+						EndKey:             endKey,
+						MultipleFilesStats: kvMeta.MultipleFilesStats[i : i+1],
 					},
 				},
 			})
@@ -345,24 +334,17 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, er
 		if i == len(kvMeta.MultipleFilesStats)-1 {
 			startKey := kvMeta.MultipleFilesStats[i].MinKey.Clone()
 			endKey := kvMeta.MultipleFilesStats[i].MaxKey.Next().Clone()
-			var dataFiles []string
-			var statFiles []string
-			for _, files := range kvMeta.MultipleFilesStats[i].Filenames {
-				dataFiles = append(dataFiles, files[0])
-				statFiles = append(statFiles, files[1])
-			}
 			if startKey.Cmp(endKey) > 0 {
 				return nil, errors.Errorf("invalid kv range, startKey: %s, endKey: %s",
 					hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 			}
 			result = append(result, &MergeSortSpec{
 				MergeSortStepMeta: &MergeSortStepMeta{
-					KVGroup:   kvGroup,
-					DataFiles: dataFiles,
-					StatFiles: statFiles,
+					KVGroup: kvGroup,
 					SortedKVMeta: external.SortedKVMeta{
-						StartKey: startKey,
-						EndKey:   endKey,
+						StartKey:           startKey,
+						EndKey:             endKey,
+						MultipleFilesStats: kvMeta.MultipleFilesStats[i : i+1],
 					},
 				},
 			})
