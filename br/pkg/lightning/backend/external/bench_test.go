@@ -31,6 +31,8 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/felixge/fgprof"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -1119,4 +1121,31 @@ func TestReadStatFile(t *testing.T) {
 			zap.Int("prop size", int(prop.size)),
 			zap.Int("prop keys", int(prop.keys)))
 	}
+}
+
+func TestLoadBatchRegionDataWithRealStore(t *testing.T) {
+	ctx := context.Background()
+	store := openTestingStorage(t)
+	memSizeLimit := (rand.Intn(10) + 1) * 400
+	kvs := prepareFiles(ctx, t, store, memSizeLimit)
+
+	datas, stats, err := GetAllFileNames(ctx, store, "")
+	require.NoError(t, err)
+	memLimiter := membuf.NewLimiter(memLimit)
+
+	engine := Engine{
+		storage:    store,
+		dataFiles:  datas,
+		statsFiles: stats,
+		bufPool: membuf.NewPool(
+			membuf.WithBlockNum(0),
+			membuf.WithPoolMemoryLimiter(memLimiter),
+			membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
+		),
+	}
+
+	ch := make(chan common.DataAndRange, 1)
+	require.NoError(t, engine.loadBatchRegionData(ctx, kvs[0].Key, kvs[len(kvs)-1].Key, ch))
+	close(ch)
+	require.NoError(t, engine.Close())
 }

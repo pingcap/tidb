@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
@@ -348,4 +349,63 @@ func TestGetAdjustedConcurrency(t *testing.T) {
 	require.Equal(t, 10, e.getAdjustedConcurrency())
 	e.dataFiles = genFiles(10000)
 	require.Equal(t, 1, e.getAdjustedConcurrency())
+}
+
+func prepareFiles(ctx context.Context, t *testing.T, store storage.ExternalStorage, memSizeLimit int) []common.KvPair {
+	w := NewWriterBuilder().
+		SetPropSizeDistance(100).
+		SetPropKeysDistance(2).
+		SetMemorySizeLimit(uint64(memSizeLimit)).
+		SetBlockSize(memSizeLimit).
+		Build(store, "/test", "0")
+
+	writer := NewEngineWriter(w)
+	kvCnt := rand.Intn(10) + 10000
+	kvs := make([]common.KvPair, kvCnt)
+	for i := 0; i < kvCnt; i++ {
+		kvs[i] = common.KvPair{
+			Key: []byte(fmt.Sprintf("key%05d", i)),
+			Val: []byte("56789"),
+		}
+	}
+
+	require.NoError(t, writer.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvs)))
+	_, err := writer.Close(ctx)
+	require.NoError(t, err)
+	slices.SortFunc(kvs, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
+	})
+	return kvs
+}
+
+func TestLoadBatchRegionData(t *testing.T) {
+	seed := time.Now().Unix()
+	rand.Seed(uint64(seed))
+	t.Logf("seed: %d", seed)
+	ctx := context.Background()
+	memStore := storage.NewMemStorage()
+	memSizeLimit := (rand.Intn(10) + 1) * 400
+
+	kvs := prepareFiles(ctx, t, memStore, memSizeLimit)
+
+	datas, stats, err := GetAllFileNames(ctx, memStore, "")
+	require.NoError(t, err)
+
+	memLimiter := membuf.NewLimiter(memLimit)
+
+	engine := Engine{
+		storage:    memStore,
+		dataFiles:  datas,
+		statsFiles: stats,
+		bufPool: membuf.NewPool(
+			membuf.WithBlockNum(0),
+			membuf.WithPoolMemoryLimiter(memLimiter),
+			membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
+		),
+	}
+
+	ch := make(chan common.DataAndRange, 1)
+	require.NoError(t, engine.loadBatchRegionData(ctx, kvs[0].Key, kvs[len(kvs)-1].Key, ch))
+	close(ch)
+	engine.Close()
 }
