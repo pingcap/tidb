@@ -220,6 +220,10 @@ func (mgr *StoreManager) ResetBackupClient(ctx context.Context, storeID uint64) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+
+	mgr.grpcClis.mu.Lock()
+	defer mgr.grpcClis.mu.Unlock()
+
 	for retry := 0; retry < resetRetryTimes; retry++ {
 		conn, err = mgr.getGrpcConnLocked(ctx, storeID)
 		if err != nil {
