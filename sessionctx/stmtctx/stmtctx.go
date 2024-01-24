@@ -144,7 +144,6 @@ type StatementContext struct {
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
-<<<<<<< HEAD:sessionctx/stmtctx/stmtctx.go
 	IsDDLJobInQueue               bool
 	DDLJobID                      int64
 	InInsertStmt                  bool
@@ -156,6 +155,7 @@ type StatementContext struct {
 	InCreateOrAlterStmt           bool
 	InSetSessionStatesStmt        bool
 	InPreparedPlanBuilding        bool
+	InReorg                       bool
 	IgnoreTruncate                bool
 	IgnoreZeroInDate              bool
 	NoZeroDate                    bool
@@ -176,34 +176,6 @@ type StatementContext struct {
 	SkipASCIICheck                bool
 	SkipUTF8MB4Check              bool
 	MultiSchemaInfo               *model.MultiSchemaInfo
-=======
-	IsDDLJobInQueue        bool
-	DDLJobID               int64
-	InInsertStmt           bool
-	InUpdateStmt           bool
-	InDeleteStmt           bool
-	InSelectStmt           bool
-	InLoadDataStmt         bool
-	InExplainStmt          bool
-	InExplainAnalyzeStmt   bool
-	ExplainFormat          string
-	InCreateOrAlterStmt    bool
-	InSetSessionStatesStmt bool
-	InPreparedPlanBuilding bool
-	InReorg                bool
-	DupKeyAsWarning        bool
-	BadNullAsWarning       bool
-	DividedByZeroAsWarning bool
-	InShowWarning          bool
-	UseCache               bool
-	ForcePlanCache         bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.
-	CacheType              PlanCacheType
-	BatchCheck             bool
-	InNullRejectCheck      bool
-	IgnoreNoPartition      bool
-	IgnoreExplainIDSuffix  bool
-	MultiSchemaInfo        *model.MultiSchemaInfo
->>>>>>> 6f3266498df (ddl: fix reorg cannot handle divide 0 error (#50057)):pkg/sessionctx/stmtctx/stmtctx.go
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
 	// or is affected by the tidb_read_staleness session variable, then the statement will be makred as isStaleness
 	// in stmtCtx

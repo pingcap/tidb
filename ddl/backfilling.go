@@ -659,6 +659,7 @@ func (b *backfillScheduler) newSessCtx() (sessionctx.Context, error) {
 	if err := setSessCtxLocation(sessCtx, reorgInfo); err != nil {
 		return nil, errors.Trace(err)
 	}
+	sessCtx.GetSessionVars().StmtCtx.InReorg = true
 	sessCtx.GetSessionVars().StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.TruncateAsWarning = !sqlMode.HasStrictMode()
 	sessCtx.GetSessionVars().StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
