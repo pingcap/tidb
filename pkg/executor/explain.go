@@ -101,7 +101,7 @@ func (e *ExplainExec) handleRUDetails(ctx context.Context, onlyRegister bool) {
 	if coll := e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl; coll != nil {
 		if onlyRegister {
 			// Register RU stats to make sure the output of explain analyze doesn't change.
-			newRUDetails := clientutil.NewRUDetailsWith(0.0, 0.0, 0)
+			newRUDetails := clientutil.NewRUDetails()
 			coll.RegisterStats(e.explain.TargetPlan.ID(), &ruRuntimeStats{newRUDetails})
 			return
 		}
