@@ -44,7 +44,7 @@ type parallelSortWorker struct {
 	localSortedRows    []*chunk.Iterator4Slice
 	sortedRowsIter     *chunk.Iterator4Slice
 	maxSortedRowsLimit int
-	kWayMerge          *multiWayMerge
+	merger          *multiWayMerge
 }
 
 func newParallelSortWorker(
@@ -83,32 +83,32 @@ func (p *parallelSortWorker) injectFailPointForParallelSortWorker() {
 	})
 }
 
-func (p *parallelSortWorker) kWayMergeSortedRows() {
+func (p *parallelSortWorker) multiWayMergeSortedRows() {
 	totalRowNum := 0
 	for _, rows := range p.localSortedRows {
 		totalRowNum += rows.Len()
 	}
 	resultRows := make([]chunk.Row, 0, totalRowNum)
-	p.kWayMerge = &multiWayMerge{p.lessRowFunc, make([]rowWithPartition, 0, len(p.localSortedRows))}
+	p.merger = &multiWayMerge{p.lessRowFunc, make([]rowWithPartition, 0, len(p.localSortedRows))}
 	for i := range p.localSortedRows {
 		row := p.localSortedRows[i].Begin()
 		if row.IsEmpty() {
 			continue
 		}
-		p.kWayMerge.elements = append(p.kWayMerge.elements, rowWithPartition{row: row, partitionID: i})
+		p.merger.elements = append(p.merger.elements, rowWithPartition{row: row, partitionID: i})
 	}
-	heap.Init(p.kWayMerge)
+	heap.Init(p.merger)
 
-	for p.kWayMerge.Len() > 0 {
-		elem := p.kWayMerge.elements[0]
+	for p.merger.Len() > 0 {
+		elem := p.merger.elements[0]
 		resultRows = append(resultRows, elem.row)
 		newRow := p.localSortedRows[elem.partitionID].Next()
 		if newRow.IsEmpty() {
-			heap.Remove(p.kWayMerge, 0)
+			heap.Remove(p.merger, 0)
 			continue
 		}
-		p.kWayMerge.elements[0].row = newRow
-		heap.Fix(p.kWayMerge, 0)
+		p.merger.elements[0].row = newRow
+		heap.Fix(p.merger, 0)
 	}
 
 	// Put resultRows into this iter who will be read by sort executor
@@ -141,7 +141,7 @@ func (p *parallelSortWorker) fetchChunksAndSort() {
 					p.sortBatchRows(batchRows)
 				}
 
-				p.kWayMergeSortedRows()
+				p.multiWayMergeSortedRows()
 				return
 			}
 		}

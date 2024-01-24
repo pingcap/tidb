@@ -81,7 +81,7 @@ type SortExec struct {
 
 		// Each worker will put their results into the given iter
 		sortedRowsIters []chunk.Iterator4Slice
-		kWayMerge       *multiWayMerge
+		merger       *multiWayMerge
 
 		resultChannel chan chunk.Row
 	}
@@ -106,9 +106,8 @@ func (e *SortExec) Close() error {
 			if !ok {
 				break
 			}
-			e.Parallel.kWayMerge = nil
+			e.Parallel.merger = nil
 		}
-
 	}
 
 	if e.memTracker != nil {
@@ -143,7 +142,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Parallel.err = nil
 		e.Parallel.sortedRowsIters = make([]chunk.Iterator4Slice, len(e.Parallel.workers))
 		e.Parallel.resultChannel = make(chan chunk.Row, e.MaxChunkSize())
-		e.Parallel.kWayMerge = &multiWayMerge{e.lessRow, make([]rowWithPartition, 0, len(e.Parallel.workers))}
+		e.Parallel.merger = &multiWayMerge{e.lessRow, make([]rowWithPartition, 0, len(e.Parallel.workers))}
 	}
 
 	e.Unparallel.sortPartitions = e.Unparallel.sortPartitions[:0]
@@ -270,9 +269,9 @@ func (e *SortExec) initKWayMerge() {
 		if row.IsEmpty() {
 			continue
 		}
-		e.Parallel.kWayMerge.elements = append(e.Parallel.kWayMerge.elements, rowWithPartition{row: row, partitionID: i})
+		e.Parallel.merger.elements = append(e.Parallel.merger.elements, rowWithPartition{row: row, partitionID: i})
 	}
-	heap.Init(e.Parallel.kWayMerge)
+	heap.Init(e.Parallel.merger)
 }
 
 func (e *SortExec) generateResultWithKWayMerge() {
@@ -288,17 +287,17 @@ func (e *SortExec) generateResultWithKWayMerge() {
 	maxChunkSize := e.MaxChunkSize()
 	resBuf := make([]chunk.Row, 0, maxChunkSize)
 
-	for e.Parallel.kWayMerge.Len() > 0 {
+	for e.Parallel.merger.Len() > 0 {
 		for i := 0; i < maxChunkSize; i++ {
-			elem := e.Parallel.kWayMerge.elements[0]
+			elem := e.Parallel.merger.elements[0]
 			resBuf = append(resBuf, elem.row)
 			newRow := e.Parallel.sortedRowsIters[elem.partitionID].Next()
 			if newRow.IsEmpty() {
-				heap.Remove(e.Parallel.kWayMerge, 0)
+				heap.Remove(e.Parallel.merger, 0)
 				break
 			}
-			e.Parallel.kWayMerge.elements[0].row = newRow
-			heap.Fix(e.Parallel.kWayMerge, 0)
+			e.Parallel.merger.elements[0].row = newRow
+			heap.Fix(e.Parallel.merger, 0)
 		}
 
 		for _, row := range resBuf {
