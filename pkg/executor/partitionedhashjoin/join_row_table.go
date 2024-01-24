@@ -18,7 +18,7 @@ import (
 	"unsafe"
 )
 
-const SizeOfNextPtr = unsafe.Sizeof(new(unsafe.Pointer))
+const SizeOfNextPtr = unsafe.Sizeof(*new(unsafe.Pointer))
 const SizeOfHashValue = unsafe.Sizeof(int(0))
 
 type rowTableSegment struct {
