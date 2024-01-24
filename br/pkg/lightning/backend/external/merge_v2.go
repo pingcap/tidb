@@ -244,7 +244,7 @@ func getGroups(ctx context.Context, splitter *RangeSplitter, startKey kv.Key, en
 
 // MergeOverlappingFilesOpt reads from given files whose key range may overlap
 // and writes to new sorted, nonoverlapping files.
-// Using concurrency * (readAllData and writer).
+// Using mergeConcurrency * (readAllData and writer).
 func MergeOverlappingFilesOpt(
 	ctx context.Context,
 	multiFileStat []MultipleFilesStat,
@@ -379,6 +379,9 @@ func runGroups(
 		bufPool := membuf.NewPool()
 		loaded := &memKVsAndBuffers{}
 		now := time.Now()
+		logutil.Logger(ctx).Info("ywq test start end key", zap.Any("cmp", rdGroup.startKey.Cmp(rdGroup.endKey)),
+			zap.Binary("start", rdGroup.startKey),
+			zap.Binary("end", rdGroup.endKey))
 		err = readAllData(
 			ctx,
 			store,
@@ -392,6 +395,7 @@ func runGroups(
 		if err != nil {
 			return
 		}
+		loaded.build()
 		readTime := time.Since(now)
 		now = time.Now()
 		sorty.MaxGor = uint64(concurrency)
