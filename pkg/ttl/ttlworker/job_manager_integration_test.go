@@ -930,6 +930,10 @@ func TestManagerJobAdapterCanSubmitJob(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	adapter := ttlworker.NewManagerJobAdapter(store, dom.SysSessionPool(), nil)
 
+	// stop TTLJobManager to avoid unnecessary job schedule and make test stable
+	dom.TTLJobManager().Stop()
+	require.NoError(t, dom.TTLJobManager().WaitStopped(context.Background(), time.Minute))
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
