@@ -265,11 +265,10 @@ func (p *PdController) doPauseSchedulers(
 	removedSchedulers := make([]string, 0, len(schedulers))
 	for _, scheduler := range schedulers {
 		err := p.pdHTTPCli.SetSchedulerDelay(ctx, scheduler, delay)
-		if err == nil {
-			removedSchedulers = append(removedSchedulers, scheduler)
-		} else {
+		if err != nil {
 			return removedSchedulers, errors.Trace(err)
 		}
+		removedSchedulers = append(removedSchedulers, scheduler)
 	}
 	return removedSchedulers, nil
 }
@@ -577,15 +576,11 @@ func (p *PdController) doRemoveSchedulersWith(
 	needRemoveSchedulers []string,
 	disablePDCfg map[string]interface{},
 ) ([]string, error) {
-	var removedSchedulers []string
-	var err error
-	if p.isPauseConfigEnabled() {
-		// after 4.0.8 we can set these config with TTL
-		removedSchedulers, err = p.pauseSchedulersAndConfigWith(ctx, needRemoveSchedulers, disablePDCfg)
-	} else {
+	if !p.isPauseConfigEnabled() {
 		return nil, errors.Errorf("pd version %s not support pause config, please upgrade", p.version.String())
 	}
-	return removedSchedulers, err
+	// after 4.0.8 we can set these config with TTL
+	return p.pauseSchedulersAndConfigWith(ctx, needRemoveSchedulers, disablePDCfg)
 }
 
 // GetMinResolvedTS get min-resolved-ts from pd
