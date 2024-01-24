@@ -113,7 +113,7 @@ func TestHandleExecutableTasks(t *testing.T) {
 
 	// type not found
 	mockTaskTable.EXPECT().FailSubtask(m.ctx, id, taskID, gomock.Any())
-	m.handleExecutableTask(task)
+	m.startTaskExecutor(task)
 	require.True(t, ctrl.Satisfied())
 
 	RegisterTaskType("type",
@@ -126,14 +126,14 @@ func TestHandleExecutableTasks(t *testing.T) {
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(executorErr)
 	mockInternalExecutor.EXPECT().IsRetryableError(executorErr).Return(false)
 	mockTaskTable.EXPECT().FailSubtask(m.ctx, id, taskID, executorErr)
-	m.handleExecutableTask(task)
+	m.startTaskExecutor(task)
 	m.removeHandlingTask(taskID)
 	require.Equal(t, true, ctrl.Satisfied())
 
 	// executor init failed retryable
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(executorErr)
 	mockInternalExecutor.EXPECT().IsRetryableError(executorErr).Return(true)
-	m.handleExecutableTask(task)
+	m.startTaskExecutor(task)
 	m.removeHandlingTask(taskID)
 	require.Equal(t, true, ctrl.Satisfied())
 
@@ -358,7 +358,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	// 2. task2 alloc failed
 	// 3. task1 run success
 
-	// mock inside handleExecutableTask
+	// mock inside startTaskExecutor
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID1).Return(task1, nil)
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
@@ -404,7 +404,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	)
 	// 1. task1 alloc success
 
-	// mock inside handleExecutableTask
+	// mock inside startTaskExecutor
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID1).Return(task1, nil)
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID1, proto.StepOne,
@@ -446,7 +446,7 @@ func TestSlotManagerInManager(t *testing.T) {
 	require.Len(t, m.slotManager.executorTasks, 0)
 	require.True(t, ctrl.Satisfied())
 
-	// mock inside handleExecutableTask
+	// mock inside startTaskExecutor
 	mockInternalExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockTaskTable.EXPECT().GetTaskByID(m.ctx, taskID3).Return(task3, nil)
 	mockTaskTable.EXPECT().HasSubtasksInStates(m.ctx, id, taskID3, proto.StepOne,

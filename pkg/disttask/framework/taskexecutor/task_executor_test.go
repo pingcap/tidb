@@ -394,13 +394,13 @@ func TestTaskExecutor(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 
 	// no subtask to run, should exit the loop after some time.
-	checkIntervalBak := checkInterval
+	checkIntervalBak := defaultCheckInterval
 	maxIntervalBak := maxCheckInterval
 	defer func() {
-		checkInterval = checkIntervalBak
+		defaultCheckInterval = checkIntervalBak
 		maxCheckInterval = maxIntervalBak
 	}()
-	maxCheckInterval, checkInterval = time.Millisecond, time.Millisecond
+	maxCheckInterval, defaultCheckInterval = time.Millisecond, time.Millisecond
 	mockStepExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockSubtaskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(nil, nil)
@@ -499,7 +499,7 @@ func TestCheckBalanceSubtask(t *testing.T) {
 	mockSubtaskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "tidb1",
 		task.ID, task.Step, proto.SubtaskStateRunning).Return([]*proto.Subtask{}, nil)
 	runCtx, cancelCause := context.WithCancelCause(ctx)
-	taskExecutor.registerCancelFunc(cancelCause)
+	taskExecutor.registerRunStepCancelFunc(cancelCause)
 	require.NoError(t, runCtx.Err())
 	taskExecutor.checkBalanceSubtask(ctx)
 	require.ErrorIs(t, runCtx.Err(), context.Canceled)
