@@ -267,6 +267,7 @@ go_test(
         "//pkg/types/parser_driver",
         "//pkg/util",
         "//pkg/util/benchdaily",
+        "//pkg/util/chunk",
         "//pkg/util/collate",
         "//pkg/util/dbterror",
         "//pkg/util/hack",

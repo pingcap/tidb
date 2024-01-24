@@ -1103,7 +1103,8 @@ func (b *builtinJSONMergeSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, r
 			if result.IsNull(i) {
 				continue
 			}
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("JSON_MERGE"))
+			tc := typeCtx(ctx)
+			tc.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("JSON_MERGE"))
 		}
 	}
 

@@ -2571,11 +2571,17 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
-
+	var concurrency int
+	if b.ctx.GetSessionVars().InRestrictedSQL {
+		// In restricted SQL, we use the default value of IndexSerialScanConcurrency. it is copied from tidb_sysproc_scan_concurrency.
+		concurrency = b.ctx.GetSessionVars().IndexSerialScanConcurrency()
+	} else {
+		concurrency = b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
+	}
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
-		concurrency: b.ctx.GetSessionVars().IndexSerialScanConcurrency(),
+		concurrency: concurrency,
 		analyzePB: &tipb.AnalyzeReq{
 			Tp:             tipb.AnalyzeType_TypeIndex,
 			Flags:          sc.PushDownFlags(),

@@ -428,7 +428,7 @@ func (s *builtinArithmeticMinusIntSig) evalInt(ctx EvalContext, row chunk.Row) (
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
-	forceToSigned := ctx.GetSessionVars().SQLMode.HasNoUnsignedSubtractionMode()
+	forceToSigned := sqlMode(ctx).HasNoUnsignedSubtractionMode()
 	isLHSUnsigned := mysql.HasUnsignedFlag(s.args[0].GetType().GetFlag())
 	isRHSUnsigned := mysql.HasUnsignedFlag(s.args[1].GetType().GetFlag())
 
@@ -723,8 +723,8 @@ func (s *builtinArithmeticDivideDecimalSig) evalDecimal(ctx EvalContext, row chu
 	if err == types.ErrDivByZero {
 		return c, true, handleDivisionByZeroError(ctx)
 	} else if err == types.ErrTruncated {
-		sc := ctx.GetSessionVars().StmtCtx
-		err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
+		tc := typeCtx(ctx)
+		err = tc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
 	} else if err == nil {
 		_, frac := c.PrecisionAndFrac()
 		if frac < s.baseBuiltinFunc.tp.GetDecimal() {
@@ -824,7 +824,7 @@ func (s *builtinArithmeticIntDivideIntSig) evalInt(ctx EvalContext, row chunk.Ro
 }
 
 func (s *builtinArithmeticIntDivideDecimalSig) evalInt(ctx EvalContext, row chunk.Row) (ret int64, isNull bool, err error) {
-	sc := ctx.GetSessionVars().StmtCtx
+	ec := errCtx(ctx)
 	var num [2]*types.MyDecimal
 	for i, arg := range s.args {
 		num[i], isNull, err = arg.EvalDecimal(ctx, row)
@@ -839,11 +839,11 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(ctx EvalContext, row chun
 		return 0, true, handleDivisionByZeroError(ctx)
 	}
 	if err == types.ErrTruncated {
-		err = sc.HandleTruncate(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
+		err = ec.HandleError(errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c))
 	}
 	if err == types.ErrOverflow {
 		newErr := errTruncatedWrongValue.GenWithStackByArgs("DECIMAL", c)
-		err = sc.HandleError(newErr)
+		err = ec.HandleError(newErr)
 	}
 	if err != nil {
 		return 0, true, err

@@ -251,12 +251,6 @@ func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
 	return s.tableImporter.Close()
 }
 
-func (s *importStepExecutor) Rollback(context.Context) error {
-	// TODO: add rollback
-	s.logger.Info("rollback")
-	return nil
-}
-
 type mergeSortStepExecutor struct {
 	taskexecutor.EmptyStepExecutor
 	taskID     int64
@@ -396,7 +390,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	return localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 }
 
-func (e *writeAndIngestStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
+func (e *writeAndIngestStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
 	var subtaskMeta WriteIngestStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
@@ -410,6 +404,10 @@ func (e *writeAndIngestStepExecutor) OnFinished(_ context.Context, subtask *prot
 	localBackend := e.tableImporter.Backend()
 	_, kvCount := localBackend.GetExternalEngineKVStatistics(engineUUID)
 	subtaskMeta.Result.LoadedRowCnt = uint64(kvCount)
+	err := localBackend.CleanupEngine(ctx, engineUUID)
+	if err != nil {
+		e.logger.Warn("failed to cleanup engine", zap.Error(err))
+	}
 
 	newMeta, err := json.Marshal(subtaskMeta)
 	if err != nil {
@@ -422,11 +420,6 @@ func (e *writeAndIngestStepExecutor) OnFinished(_ context.Context, subtask *prot
 func (e *writeAndIngestStepExecutor) Cleanup(_ context.Context) (err error) {
 	e.logger.Info("cleanup subtask env")
 	return e.tableImporter.Close()
-}
-
-func (e *writeAndIngestStepExecutor) Rollback(context.Context) error {
-	e.logger.Info("rollback")
-	return nil
 }
 
 type postProcessStepExecutor struct {

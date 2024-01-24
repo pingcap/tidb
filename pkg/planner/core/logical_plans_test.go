@@ -1775,6 +1775,7 @@ func TestWindowFunction(t *testing.T) {
 	})
 	s := new(plannerSuiteWithOptimizeVars)
 	s.plannerSuite = createPlannerSuite()
+	defer s.plannerSuite.Close()
 
 	s.optimizeVars = map[string]string{
 		variable.TiDBWindowConcurrency: "1",
@@ -1797,6 +1798,7 @@ func TestWindowParallelFunction(t *testing.T) {
 	})
 	s := new(plannerSuiteWithOptimizeVars)
 	s.plannerSuite = createPlannerSuite()
+	defer s.plannerSuite.Close()
 	s.optimizeVars = map[string]string{
 		variable.TiDBWindowConcurrency: "4",
 		variable.TiDBCostModelVersion:  "1",

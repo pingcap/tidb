@@ -23,7 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -579,8 +578,7 @@ func BenchmarkVectorizedBuiltinTimeFunc(b *testing.B) {
 }
 
 func TestVecMonth(t *testing.T) {
-	ctx := mock.NewContext()
-	ctx.GetSessionVars().SQLMode |= mysql.ModeNoZeroDate
+	ctx := createContext(t)
 	typeFlags := ctx.GetSessionVars().StmtCtx.TypeFlags()
 	ctx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags.WithTruncateAsWarning(true))
 	input := chunk.New([]*types.FieldType{types.NewFieldType(mysql.TypeDatetime)}, 3, 3)
@@ -590,7 +588,7 @@ func TestVecMonth(t *testing.T) {
 	input.AppendTime(0, types.ZeroDate)
 
 	f, _, _, result := genVecBuiltinFuncBenchCase(ctx, ast.Month, vecExprBenchCase{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}})
-	require.True(t, ctx.GetSessionVars().StrictSQLMode)
+	require.True(t, ctx.GetSessionVars().SQLMode.HasStrictMode())
 	require.NoError(t, f.vecEvalInt(ctx, input, result))
 	require.Equal(t, 0, len(ctx.GetSessionVars().StmtCtx.GetWarnings()))
 

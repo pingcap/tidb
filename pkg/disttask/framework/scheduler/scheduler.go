@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/backoff"
-	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -285,7 +284,7 @@ func (s *BaseScheduler) onResuming() error {
 	if cntByStates[proto.SubtaskStatePaused] == 0 {
 		// Finish the resuming process.
 		s.logger.Info("all paused tasks converted to pending state, update the task to running state")
-		err := s.updateTask(proto.TaskStateRunning, nil, RetrySQLTimes)
+		err := s.taskMgr.ResumedTask(s.ctx, task.ID)
 		failpoint.Inject("syncAfterResume", func() {
 			TestSyncChan <- struct{}{}
 		})
@@ -304,7 +303,7 @@ func (s *BaseScheduler) onReverting() error {
 		s.logger.Warn("check task failed", zap.Error(err))
 		return err
 	}
-	activeRevertCnt := cntByStates[proto.SubtaskStateRevertPending] + cntByStates[proto.SubtaskStateReverting]
+	activeRevertCnt := cntByStates[proto.SubtaskStatePending] + cntByStates[proto.SubtaskStateRunning]
 	if activeRevertCnt == 0 {
 		if err = s.OnDone(s.ctx, s, task); err != nil {
 			return errors.Trace(err)
@@ -363,63 +362,13 @@ func (s *BaseScheduler) onFinished() {
 	s.logger.Debug("schedule task, task is finished", zap.Stringer("state", task.State))
 }
 
-// updateTask update the task in tidb_global_task table.
-func (s *BaseScheduler) updateTask(taskState proto.TaskState, newSubTasks []*proto.Subtask, retryTimes int) (err error) {
-	task := *s.GetTask()
-	prevState := task.State
-	task.State = taskState
-	s.task.Store(&task)
-	logutil.BgLogger().Info("task state transform", zap.Stringer("from", prevState), zap.Stringer("to", taskState))
-	if !VerifyTaskStateTransform(prevState, taskState) {
-		return errors.Errorf("invalid task state transform, from %s to %s", prevState, taskState)
-	}
-
-	var retryable bool
-	for i := 0; i < retryTimes; i++ {
-		retryable, err = s.taskMgr.UpdateTaskAndAddSubTasks(s.ctx, &task, newSubTasks, prevState)
-		if err == nil || !retryable {
-			break
-		}
-		if err1 := s.ctx.Err(); err1 != nil {
-			return err1
-		}
-		if i%10 == 0 {
-			s.logger.Warn("updateTask first failed", zap.Stringer("from", prevState), zap.Stringer("to", task.State),
-				zap.Int("retry times", i), zap.Error(err))
-		}
-		time.Sleep(RetrySQLInterval)
-	}
-	if err != nil && retryTimes != nonRetrySQLTime {
-		s.logger.Warn("updateTask failed",
-			zap.Stringer("from", prevState), zap.Stringer("to", task.State), zap.Int("retry times", retryTimes), zap.Error(err))
-	}
-	return err
-}
-
 func (s *BaseScheduler) onErrHandlingStage(receiveErrs []error) error {
 	task := *s.GetTask()
 	// we only store the first error.
 	task.Error = receiveErrs[0]
 	s.task.Store(&task)
 
-	var subTasks []*proto.Subtask
-	// when step of task is `StepInit`, no need to do revert
-	if task.Step != proto.StepInit {
-		instanceIDs, err := s.GetAllTaskExecutorIDs(s.ctx, &task)
-		if err != nil {
-			s.logger.Warn("get task's all instances failed", zap.Error(err))
-			return err
-		}
-
-		subTasks = make([]*proto.Subtask, 0, len(instanceIDs))
-		for _, id := range instanceIDs {
-			// reverting subtasks belong to the same step as current active step.
-			subTasks = append(subTasks, proto.NewSubtask(
-				task.Step, task.ID, task.Type, id,
-				task.Concurrency, proto.EmptyMeta, 0))
-		}
-	}
-	return s.updateTask(proto.TaskStateReverting, subTasks, RetrySQLTimes)
+	return s.taskMgr.RevertTask(s.ctx, task.ID, task.State, task.Error)
 }
 
 func (s *BaseScheduler) switch2NextStep() (err error) {
@@ -532,6 +481,7 @@ func (s *BaseScheduler) handlePlanErr(err error) error {
 		return errors.Trace(err)
 	}
 
+	// TODO: to reverting state?
 	return s.taskMgr.FailTask(s.ctx, task.ID, task.State, task.Error)
 }
 
@@ -562,31 +512,6 @@ func GenerateTaskExecutorNodes(ctx context.Context) (serverNodes []*infosync.Ser
 		serverNodes = append(serverNodes, serverInfo)
 	}
 	return serverNodes, nil
-}
-
-// GetAllTaskExecutorIDs gets all the task executor IDs.
-func (s *BaseScheduler) GetAllTaskExecutorIDs(ctx context.Context, task *proto.Task) ([]string, error) {
-	// We get all servers instead of eligible servers here
-	// because eligible servers may change during the task execution.
-	serverInfos, err := GenerateTaskExecutorNodes(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if len(serverInfos) == 0 {
-		return nil, nil
-	}
-
-	executorIDs, err := s.taskMgr.GetTaskExecutorIDsByTaskID(s.ctx, task.ID)
-	if err != nil {
-		return nil, err
-	}
-	ids := make([]string, 0, len(executorIDs))
-	for _, id := range executorIDs {
-		if ok := disttaskutil.MatchServerInfo(serverInfos, id); ok {
-			ids = append(ids, id)
-		}
-	}
-	return ids, nil
 }
 
 // GetPreviousSubtaskMetas get subtask metas from specific step.

@@ -42,30 +42,13 @@ import (
 //	                 │        ┌────────┐
 //	                 └───────►│canceled│
 //	                          └────────┘
-//
-// for reverting subtask:
-//
-//	┌──────────────┐    ┌─────────┐   ┌─────────┐
-//	│revert_pending├───►│reverting├──►│ reverted│
-//	└──────────────┘    └────┬────┘   └─────────┘
-//	                         │         ┌─────────────┐
-//	                         └────────►│revert_failed│
-//	                                   └─────────────┘
-//	 1. succeed/failed:	pending -> running -> succeed/failed
-//	 2. canceled:		pending -> running -> canceled
-//	 3. rollback:		revert_pending -> reverting -> reverted/revert_failed
-//	 4. pause/resume:	pending -> running -> paused -> running
 const (
-	SubtaskStatePending       SubtaskState = "pending"
-	SubtaskStateRunning       SubtaskState = "running"
-	SubtaskStateSucceed       SubtaskState = "succeed"
-	SubtaskStateFailed        SubtaskState = "failed"
-	SubtaskStateCanceled      SubtaskState = "canceled"
-	SubtaskStatePaused        SubtaskState = "paused"
-	SubtaskStateRevertPending SubtaskState = "revert_pending"
-	SubtaskStateReverting     SubtaskState = "reverting"
-	SubtaskStateReverted      SubtaskState = "reverted"
-	SubtaskStateRevertFailed  SubtaskState = "revert_failed"
+	SubtaskStatePending  SubtaskState = "pending"
+	SubtaskStateRunning  SubtaskState = "running"
+	SubtaskStateSucceed  SubtaskState = "succeed"
+	SubtaskStateFailed   SubtaskState = "failed"
+	SubtaskStateCanceled SubtaskState = "canceled"
+	SubtaskStatePaused   SubtaskState = "paused"
 )
 
 type (
@@ -117,8 +100,8 @@ func (t *Subtask) String() string {
 
 // IsDone checks if the subtask is done.
 func (t *Subtask) IsDone() bool {
-	return t.State == SubtaskStateSucceed || t.State == SubtaskStateReverted || t.State == SubtaskStateCanceled ||
-		t.State == SubtaskStateFailed || t.State == SubtaskStateRevertFailed
+	return t.State == SubtaskStateSucceed || t.State == SubtaskStateCanceled ||
+		t.State == SubtaskStateFailed
 }
 
 // NewSubtask create a new subtask.
