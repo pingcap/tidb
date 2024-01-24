@@ -1273,6 +1273,21 @@ func TestBuiltinFuncFlen(t *testing.T) {
 	}
 }
 
+func TestWarningWithDisablePlanCacheStmt(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int) partition by hash(a) partitions 4;")
+	tk.MustExec("analyze table t;")
+	tk.MustExec("prepare st from 'select * from t';")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable"))
+	tk.MustExec("execute st;")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable"))
+	tk.MustExec("execute st;")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+}
+
 func BenchmarkPlanCacheBindingMatch(b *testing.B) {
 	store := testkit.CreateMockStore(b)
 	tk := testkit.NewTestKit(b, store)

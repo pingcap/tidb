@@ -74,6 +74,10 @@ func newEngineManager(config BackendConfig, storeHelper StoreHelper, logger log.
 		}
 	}()
 
+	if err = prepareSortDir(config); err != nil {
+		return nil, err
+	}
+
 	keyAdapter := common.KeyAdapter(common.NoopKeyAdapter{})
 	if config.DupeDetectEnabled {
 		duplicateDB, err = openDuplicateDB(config.LocalStoreDir)
@@ -267,7 +271,11 @@ func (em *engineManager) openEngine(ctx context.Context, cfg *backend.EngineConf
 }
 
 // closeEngine closes backend engine by uuid.
-func (em *engineManager) closeEngine(ctx context.Context, cfg *backend.EngineConfig, engineUUID uuid.UUID) error {
+func (em *engineManager) closeEngine(
+	ctx context.Context,
+	cfg *backend.EngineConfig,
+	engineUUID uuid.UUID,
+) (errRet error) {
 	if externalCfg := cfg.External; externalCfg != nil {
 		storeBackend, err := storage.ParseBackend(externalCfg.StorageURI, nil)
 		if err != nil {
@@ -277,6 +285,11 @@ func (em *engineManager) closeEngine(ctx context.Context, cfg *backend.EngineCon
 		if err != nil {
 			return err
 		}
+		defer func() {
+			if errRet != nil {
+				store.Close()
+			}
+		}()
 		physical, logical, err := em.GetTS(ctx)
 		if err != nil {
 			return err
@@ -525,6 +538,15 @@ func (em *engineManager) close() {
 		}
 		em.duplicateDB = nil
 	}
+
+	// if checkpoint is disabled, or we finish load all data successfully, then files in this
+	// dir will be useless, so we clean up this dir and all files in it.
+	if !em.CheckpointEnabled || common.IsEmptyDir(em.LocalStoreDir) {
+		err := os.RemoveAll(em.LocalStoreDir)
+		if err != nil {
+			em.logger.Warn("remove local db file failed", zap.Error(err))
+		}
+	}
 }
 
 func (em *engineManager) getExternalEngine(uuid uuid.UUID) (common.Engine, bool) {
@@ -565,4 +587,25 @@ func openDuplicateDB(storeDir string) (*pebble.DB, error) {
 		},
 	}
 	return pebble.Open(dbPath, opts)
+}
+
+func prepareSortDir(config BackendConfig) error {
+	shouldCreate := true
+	if config.CheckpointEnabled {
+		if info, err := os.Stat(config.LocalStoreDir); err != nil {
+			if !os.IsNotExist(err) {
+				return err
+			}
+		} else if info.IsDir() {
+			shouldCreate = false
+		}
+	}
+
+	if shouldCreate {
+		err := os.Mkdir(config.LocalStoreDir, 0o700)
+		if err != nil {
+			return common.ErrInvalidSortedKVDir.Wrap(err).GenWithStackByArgs(config.LocalStoreDir)
+		}
+	}
+	return nil
 }

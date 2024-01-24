@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
-// bindCache uses the LRU cache to store the bindRecord.
+// bindCache uses the LRU cache to store the bindings.
 // The key of the LRU cache is original sql, the value is a slice of Bindings.
 // Note: The bindCache should be accessed with lock.
 type bindCache struct {
@@ -81,10 +81,10 @@ func (c *bindCache) set(key bindCacheKey, value Bindings) (ok bool, err error) {
 		err = errors.New("The memory usage of all available bindings exceeds the cache's mem quota. As a result, all available bindings cannot be held on the cache. Please increase the value of the system variable 'tidb_mem_quota_binding_cache' and execute 'admin reload bindings' to ensure that all bindings exist in the cache and can be used normally")
 		return
 	}
-	bindRecords := c.get(key)
-	if bindRecords != nil {
+	bindings := c.get(key)
+	if bindings != nil {
 		// Remove the origin key-value pair.
-		mem -= calcBindCacheKVMem(key, bindRecords)
+		mem -= calcBindCacheKVMem(key, bindings)
 	}
 	for mem+c.memTracker.BytesConsumed() > c.memCapacity {
 		err = errors.New("The memory usage of all available bindings exceeds the cache's mem quota. As a result, all available bindings cannot be held on the cache. Please increase the value of the system variable 'tidb_mem_quota_binding_cache' and execute 'admin reload bindings' to ensure that all bindings exist in the cache and can be used normally")
@@ -103,9 +103,9 @@ func (c *bindCache) set(key bindCacheKey, value Bindings) (ok bool, err error) {
 // delete remove an item from the cache. It's not thread-safe.
 // Only other functions of the bindCache can use this function.
 func (c *bindCache) delete(key bindCacheKey) bool {
-	bindRecords := c.get(key)
-	if bindRecords != nil {
-		mem := calcBindCacheKVMem(key, bindRecords)
+	bindings := c.get(key)
+	if bindings != nil {
+		mem := calcBindCacheKVMem(key, bindings)
 		c.cache.Delete(key)
 		c.memTracker.Consume(-mem)
 		return true
@@ -122,18 +122,18 @@ func (c *bindCache) GetBinding(sqlDigest string) Bindings {
 	return c.get(bindCacheKey(sqlDigest))
 }
 
-// GetAllBindings return all the bindRecords from the bindCache.
+// GetAllBindings return all the bindings from the bindCache.
 // The return value is not read-only, but it shouldn't be changed in the caller functions.
 // The function is thread-safe.
-func (c *bindCache) GetAllBindings() []Bindings {
+func (c *bindCache) GetAllBindings() Bindings {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	values := c.cache.Values()
-	bindRecords := make([]Bindings, 0, len(values))
+	bindings := make(Bindings, 0, len(values))
 	for _, vals := range values {
-		bindRecords = append(bindRecords, vals.(Bindings))
+		bindings = append(bindings, vals.(Bindings)...)
 	}
-	return bindRecords
+	return bindings
 }
 
 // SetBinding sets the Bindings to the cache.
@@ -159,7 +159,7 @@ func (c *bindCache) RemoveBinding(sqlDigest string) {
 func (c *bindCache) SetMemCapacity(capacity int64) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	// Only change the capacity size without affecting the cached bindRecord
+	// Only change the capacity size without affecting the cached bindings
 	c.memCapacity = capacity
 }
 

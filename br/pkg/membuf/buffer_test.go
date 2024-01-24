@@ -20,6 +20,7 @@ import (
 	rand2 "math/rand"
 	"runtime"
 	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -77,21 +78,21 @@ func TestBufferPool(t *testing.T) {
 }
 
 func TestPoolMemLimit(t *testing.T) {
-	limiter := NewLimiter(1024 + 2*sizeOfSlice)
+	limiter := NewLimiter(2*1024*1024 + 2*smallObjOverheadBatch)
 	// only allow to allocate one block
 	pool := NewPool(
-		WithBlockSize(1024),
+		WithBlockSize(2*1024*1024),
 		WithPoolMemoryLimiter(limiter),
 	)
 	defer pool.Destroy()
 	buf := pool.NewBuffer()
-	buf.AllocBytes(512 - sizeOfSlice)
-	buf.AllocBytes(512 - sizeOfSlice)
+	buf.AllocBytes(1024 * 1024)
+	buf.AllocBytes(1024 * 1024)
 
 	buf2 := pool.NewBuffer()
 	done := make(chan struct{}, 1)
 	go func() {
-		buf2.AllocBytes(512)
+		buf2.AllocBytes(1024 * 1024)
 		buf2.Destroy()
 		done <- struct{}{}
 	}()
@@ -101,8 +102,8 @@ func TestPoolMemLimit(t *testing.T) {
 	require.Len(t, done, 0)
 	// reset will not release memory to pool
 	buf.Reset()
-	buf.AllocBytes(512 - sizeOfSlice)
-	buf.AllocBytes(512 - sizeOfSlice)
+	buf.AllocBytes(1024 * 1024)
+	buf.AllocBytes(1024 * 1024)
 	require.Len(t, done, 0)
 	// destroy will release memory to pool
 	buf.Destroy()
@@ -111,7 +112,7 @@ func TestPoolMemLimit(t *testing.T) {
 		return len(done) > 0
 	}, time.Second, 10*time.Millisecond)
 	// after buf2 is finished, still can allocate memory from pool
-	buf.AllocBytes(1024 - sizeOfSlice)
+	buf.AllocBytes(2 * 1024 * 1024)
 	buf.Destroy()
 }
 
@@ -300,5 +301,28 @@ func BenchmarkSortLocationWithGC(b *testing.B) {
 				return bytes.Compare(bytesBuf.GetSlice(a), bytesBuf.GetSlice(b))
 			})
 		}()
+	}
+}
+
+func BenchmarkConcurrentAcquire(b *testing.B) {
+	for i := 0; i < b.N; i++ {
+		limiter := NewLimiter(512 * 1024 * 1024)
+		pool := NewPool(WithPoolMemoryLimiter(limiter), WithBlockSize(4*1024))
+		// start 1000 clients, each client will acquire 100B for 1000 times.
+		wg := sync.WaitGroup{}
+		clientNum := 1000
+		wg.Add(clientNum)
+		for j := 0; j < clientNum; j++ {
+			go func() {
+				defer wg.Done()
+				buf := pool.NewBuffer()
+				for k := 0; k < 1000; k++ {
+					buf.AllocBytes(100)
+				}
+				buf.Destroy()
+			}()
+		}
+		wg.Wait()
+		pool.Destroy()
 	}
 }
