@@ -114,7 +114,7 @@ func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 		8*1024,
 		onClose,
 		int(variable.GetDDLReorgWorkerCounter()),
-		2, // decided by bench test.
+		4, // decided by bench test.
 		false)
 }
 

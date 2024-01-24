@@ -152,7 +152,7 @@ func readOneFile(
 			storage,
 			dataFile,
 			int(concurrency),
-			ConcurrentReaderBufferSizePerConc,
+			ConcurrentReaderBufferSizePerConc/4,
 			bufPool.NewBuffer(),
 		)
 		err = rd.byteReader.switchConcurrentMode(true)
