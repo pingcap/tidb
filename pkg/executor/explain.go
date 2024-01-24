@@ -125,7 +125,7 @@ func (e *ExplainExec) executeAnalyzeExec(ctx context.Context) (err error) {
 				}
 			}
 
-			// Handle RU runtime stats again after Close() to make sure all ru has been collected.
+			// Handle RU runtime stats after Close() to make sure all ru has been collected.
 			// For example, localMppCoordinator reports last ru consumption when Close().
 			e.handleRUDetails(ctx, false)
 		}()
