@@ -817,7 +817,18 @@ func (sc *StatementContext) SetSkipPlanCache(reason error) {
 		sc.AppendWarning(errors.NewNoStackErrorf("force plan-cache: may use risky cached plan: %s", reason.Error()))
 		return
 	}
+	sc.setSkipPlanCache(reason)
+}
 
+// ForceSetSkipPlanCache sets to skip the plan cache and records the reason.
+func (sc *StatementContext) ForceSetSkipPlanCache(reason error) {
+	if sc.CacheType == DefaultNoCache {
+		return
+	}
+	sc.setSkipPlanCache(reason)
+}
+
+func (sc *StatementContext) setSkipPlanCache(reason error) {
 	sc.UseCache = false
 	switch sc.CacheType {
 	case DefaultNoCache:

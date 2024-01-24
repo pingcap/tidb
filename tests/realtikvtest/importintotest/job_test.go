@@ -508,9 +508,9 @@ func (s *mockGCSSuite) TestCancelJob() {
 	s.Require().Eventually(func() bool {
 		task2, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
 		s.NoError(err2)
-		subtasks, err2 := taskManager.GetSubtasksWithHistory(ctx, task2.ID, importinto.StepPostProcess)
+		subtasks, err2 := taskManager.GetSubtasksWithHistory(ctx, task2.ID, proto.ImportStepPostProcess)
 		s.NoError(err2)
-		s.Len(subtasks, 2) // framework will generate a subtask when canceling
+		s.Len(subtasks, 1)
 		var cancelled bool
 		for _, st := range subtasks {
 			if st.State == proto.SubtaskStateCanceled {
@@ -595,13 +595,13 @@ func (s *mockGCSSuite) TestJobFailWhenDispatchSubtask() {
 		SourceFileSize: 3,
 		Status:         "failed",
 		Step:           importer.JobStepValidating,
-		ErrorMessage:   "injected error after StepImport",
+		ErrorMessage:   "injected error after ImportStepImport",
 	}
 	s.enableFailpoint("github.com/pingcap/tidb/pkg/disttask/importinto/failWhenDispatchPostProcessSubtask", "return(true)")
 	s.enableFailpoint("github.com/pingcap/tidb/pkg/executor/importer/setLastImportJobID", `return(true)`)
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	err = s.tk.QueryToErr(fmt.Sprintf(`import into t1 FROM 'gs://fail_job_after_import/t.csv?endpoint=%s'`, gcsEndpoint))
-	s.ErrorContains(err, "injected error after StepImport")
+	s.ErrorContains(err, "injected error after ImportStepImport")
 	result1 := s.tk.MustQuery(fmt.Sprintf("show import job %d", importer.TestLastImportJobID.Load())).Rows()
 	s.Len(result1, 1)
 	jobID1, err := strconv.Atoi(result1[0][0].(string))

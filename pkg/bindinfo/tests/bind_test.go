@@ -419,6 +419,19 @@ func TestBestPlanInBaselines(t *testing.T) {
 	require.True(t, tk.MustUseIndex("select a, b from t where b = 3 limit 1, 100", "ib(b)"))
 }
 
+func TestIssue50646(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`create database TICASE;`)
+	tk.MustExec(`use TICASE;`)
+	tk.MustExec(`create table t(a int, b int, index idx(a));`)
+	tk.MustExec(`create table t1(a int, b int, index idx(a));`)
+	tk.MustExec(`create global binding for delete t, t1 from t use index(idx) join t1 use index(idx) on t.a=t1.a using delete /*+ merge_join(t) */ t, t1 from t use index(idx) join t1 use index(idx) on t.a=t1.a;`)
+	tk.MustHavePlan(`delete /*+ inl_merge_join(t) */ t, t1 from t ignore index(idx) join t1 ignore index(idx) on t.a=t1.a;`, "MergeJoin")
+	tk.MustExec(`delete t, t1 from t ignore index(idx) join t1 ignore index(idx) on t.a=t1.a;`)
+	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
+}
+
 func TestErrorBind(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
