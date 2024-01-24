@@ -165,7 +165,7 @@ func (c *inFunctionClass) verifyArgs(ctx sessionctx.Context, args []Expression) 
 			case columnType.GetType() == mysql.TypeBit && constant.Value.Kind() == types.KindInt64:
 				if constant.Value.GetInt64() < 0 {
 					if MaybeOverOptimized4PlanCache(ctx, args) {
-						ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("Bit Column in (%v)", constant.Value.GetInt64()))
+						ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackErrorf("Bit Column in (%v)", constant.Value.GetInt64()))
 					}
 					continue
 				}
@@ -1210,7 +1210,7 @@ func (b *builtinValuesIntSig) evalInt(ctx EvalContext, _ chunk.Row) (int64, bool
 		}
 		if len(val) < 8 {
 			var binary types.BinaryLiteral = val
-			v, err := binary.ToInt(ctx.GetSessionVars().StmtCtx.TypeCtx())
+			v, err := binary.ToInt(typeCtx(ctx))
 			if err != nil {
 				return 0, true, errors.Trace(err)
 			}

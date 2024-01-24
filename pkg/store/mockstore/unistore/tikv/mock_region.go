@@ -398,6 +398,19 @@ func (rm *MockRegionManager) SplitKeys(start, end kv.Key, count int) {
 	}
 }
 
+// SplitArbitrary splits the cluster by the split point manually provided.
+// The keys provided are raw key.
+func (rm *MockRegionManager) SplitArbitrary(keys ...[]byte) {
+	splitKeys := make([][]byte, 0, len(keys))
+	for _, key := range keys {
+		encKey := codec.EncodeBytes(nil, key)
+		splitKeys = append(splitKeys, encKey)
+	}
+	if _, err := rm.splitKeys(splitKeys); err != nil {
+		panic(err)
+	}
+}
+
 // SplitRegion implements the RegionManager interface.
 func (rm *MockRegionManager) SplitRegion(req *kvrpcpb.SplitRegionRequest) *kvrpcpb.SplitRegionResponse {
 	splitKeys := make([][]byte, 0, len(req.SplitKeys))
