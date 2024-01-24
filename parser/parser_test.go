@@ -1048,6 +1048,8 @@ AAAAAAAAAAAA5gm5Mg==
 		{"SET SESSION_STATES", false, ""},
 		{"SET SESSION_STATES 1", false, ""},
 		{"SET SESSION_STATES now()", false, ""},
+		// for issue 34325, "replace into" with hints
+		{"replace /*+ SET_VAR(sql_mode='ALLOW_INVALID_DATES') */ into t values ('2004-04-31');", true, "REPLACE /*+ SET_VAR(sql_mode = ALLOW_INVALID_DATES)*/ INTO `t` VALUES (_UTF8MB4'2004-04-31')"},
 	}
 	RunTest(t, table, false)
 }
