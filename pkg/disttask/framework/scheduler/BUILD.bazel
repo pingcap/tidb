@@ -21,8 +21,6 @@ go_library(
         "//pkg/domain/infosync",
         "//pkg/kv",
         "//pkg/metrics",
-        "//pkg/resourcemanager/pool/spool",
-        "//pkg/resourcemanager/util",
         "//pkg/sessionctx",
         "//pkg/util",
         "//pkg/util/backoff",

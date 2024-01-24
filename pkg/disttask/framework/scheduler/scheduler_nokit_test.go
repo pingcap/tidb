@@ -141,8 +141,7 @@ func TestDispatcherOnNextStage(t *testing.T) {
 func TestManagerSchedulersOrdered(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
-	mgr, err := NewManager(context.Background(), nil, "1")
-	require.NoError(t, err)
+	mgr := NewManager(context.Background(), nil, "1")
 	for i := 1; i <= 5; i++ {
 		task := &proto.Task{
 			ID: int64(i * 10),
@@ -227,8 +226,7 @@ func TestSchedulerCleanupTask(t *testing.T) {
 	defer ctrl.Finish()
 	taskMgr := mock.NewMockTaskManager(ctrl)
 	ctx := context.Background()
-	mgr, err := NewManager(ctx, taskMgr, "1")
-	require.NoError(t, err)
+	mgr := NewManager(ctx, taskMgr, "1")
 
 	// normal
 	tasks := []*proto.Task{
