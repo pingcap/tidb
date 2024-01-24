@@ -115,7 +115,7 @@ func TestRead4KFiles(t *testing.T) {
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
 	memStore := storage.NewMemStorage()
-	memSizeLimit := 80
+	memSizeLimit := 10000
 
 	w := NewWriterBuilder().
 		SetPropSizeDistance(100).
@@ -125,7 +125,7 @@ func TestRead4KFiles(t *testing.T) {
 		Build(memStore, "/test", "0")
 
 	writer := NewEngineWriter(w)
-	kvCnt := 10000
+	kvCnt := 1000000
 	kvs := make([]common.KvPair, kvCnt)
 	for i := 0; i < kvCnt; i++ {
 		kvs[i] = common.KvPair{
