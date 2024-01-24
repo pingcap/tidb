@@ -165,8 +165,9 @@ func (b *builtinAesDecryptSig) evalString(ctx EvalContext, row chunk.Row) (strin
 		return "", true, err
 	}
 	if !b.ivRequired && len(b.args) == 3 {
+		tc := typeCtx(ctx)
 		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.FastGenByArgs("IV"))
+		tc.AppendWarning(errWarnOptionIgnored.FastGenByArgs("IV"))
 	}
 
 	key := encrypt.DeriveKeyMySQL([]byte(keyStr), b.keySize)
@@ -299,8 +300,9 @@ func (b *builtinAesEncryptSig) evalString(ctx EvalContext, row chunk.Row) (strin
 		return "", true, err
 	}
 	if !b.ivRequired && len(b.args) == 3 {
+		tc := typeCtx(ctx)
 		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
-		ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.FastGenByArgs("IV"))
+		tc.AppendWarning(errWarnOptionIgnored.FastGenByArgs("IV"))
 	}
 
 	key := encrypt.DeriveKeyMySQL([]byte(keyStr), b.keySize)
@@ -539,7 +541,8 @@ func (b *builtinPasswordSig) evalString(ctx EvalContext, row chunk.Row) (val str
 
 	// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
 	// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
-	ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("PASSWORD"))
+	tc := typeCtx(ctx)
+	tc.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("PASSWORD"))
 
 	return auth.EncodePassword(pass), false, nil
 }
@@ -933,7 +936,7 @@ func (b *builtinUncompressSig) Clone() builtinFunc {
 // evalString evals UNCOMPRESS(compressed_string).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompress
 func (b *builtinUncompressSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	sc := ctx.GetSessionVars().StmtCtx
+	tc := typeCtx(ctx)
 	payload, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
@@ -943,17 +946,17 @@ func (b *builtinUncompressSig) evalString(ctx EvalContext, row chunk.Row) (strin
 	}
 	if len(payload) <= 4 {
 		// corrupted
-		sc.AppendWarning(errZlibZData)
+		tc.AppendWarning(errZlibZData)
 		return "", true, nil
 	}
 	length := binary.LittleEndian.Uint32([]byte(payload[0:4]))
 	bytes, err := inflate([]byte(payload[4:]))
 	if err != nil {
-		sc.AppendWarning(errZlibZData)
+		tc.AppendWarning(errZlibZData)
 		return "", true, nil
 	}
 	if length < uint32(len(bytes)) {
-		sc.AppendWarning(errZlibZBuf)
+		tc.AppendWarning(errZlibZBuf)
 		return "", true, nil
 	}
 	return string(bytes), false, nil
@@ -990,7 +993,7 @@ func (b *builtinUncompressedLengthSig) Clone() builtinFunc {
 // evalInt evals UNCOMPRESSED_LENGTH(str).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompressed-length
 func (b *builtinUncompressedLengthSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
-	sc := ctx.GetSessionVars().StmtCtx
+	tc := typeCtx(ctx)
 	payload, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, true, err
@@ -1000,7 +1003,7 @@ func (b *builtinUncompressedLengthSig) evalInt(ctx EvalContext, row chunk.Row) (
 	}
 	if len(payload) <= 4 {
 		// corrupted
-		sc.AppendWarning(errZlibZData)
+		tc.AppendWarning(errZlibZData)
 		return 0, false, nil
 	}
 	return int64(binary.LittleEndian.Uint32([]byte(payload)[0:4])), false, nil

@@ -759,9 +759,6 @@ type SessionVars struct {
 	// the slow log to make it be compatible with MySQL, https://github.com/pingcap/tidb/issues/17846.
 	CurrentDBChanged bool
 
-	// StrictSQLMode indicates if the session is in strict mode.
-	StrictSQLMode bool
-
 	// CommonGlobalLoaded indicates if common global variable has been loaded for this session.
 	CommonGlobalLoaded bool
 
@@ -1516,6 +1513,14 @@ type SessionVars struct {
 	// use the ExpectedCnt to adjust the estimated row count for index scan.
 	OptOrderingIdxSelThresh float64
 
+	// OptOrderingIdxSelRatio is the ratio for optimizer to determine when qualified rows from filtering outside
+	// of the index will be found during the scan of an ordering index.
+	// If all filtering is applied as matching on the ordering index, this ratio will have no impact.
+	// Value < 0 disables this enhancement.
+	// Value 0 will estimate row(s) found immediately.
+	// 0 > value <= 1 applies that percentage as the estimate when rows are found. For example 0.1 = 10%.
+	OptOrderingIdxSelRatio float64
+
 	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
 	EnableMPPSharedCTEExecution bool
 
@@ -1939,7 +1944,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		TxnCtx:                        &TransactionContext{},
 		RetryInfo:                     &RetryInfo{},
 		ActiveRoles:                   make([]*auth.RoleIdentity, 0, 10),
-		StrictSQLMode:                 true,
 		AutoIncrementIncrement:        DefAutoIncrementIncrement,
 		AutoIncrementOffset:           DefAutoIncrementOffset,
 		Status:                        mysql.ServerStatusAutocommit,

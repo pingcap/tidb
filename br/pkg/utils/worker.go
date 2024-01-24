@@ -131,6 +131,27 @@ func PanicToErr(err *error) {
 	}
 }
 
+type Result[T any] struct {
+	Err  error
+	Item T
+}
+
+func AsyncStreamBy[T any](generator func() (T, error)) <-chan Result[T] {
+	out := make(chan Result[T])
+	go func() {
+		defer close(out)
+		for {
+			item, err := generator()
+			if err != nil {
+				out <- Result[T]{Err: err}
+				return
+			}
+			out <- Result[T]{Item: item}
+		}
+	}()
+	return out
+}
+
 func BuildWorkerTokenChannel(size uint) chan struct{} {
 	ch := make(chan struct{}, size)
 	for i := 0; i < int(size); i += 1 {

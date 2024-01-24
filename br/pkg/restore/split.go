@@ -47,7 +47,7 @@ const (
 
 const (
 	splitRegionKeysConcurrency   = 8
-	splitRegionRangesConcurrency = 16
+	splitRegionRangesConcurrency = 32
 )
 
 type SplitContext struct {
@@ -203,21 +203,15 @@ func (rs *RegionSplitter) executeSplitByRanges(
 				scanStartKey := ranges[0].StartKey
 				// if ranges is less than store count, we can't split it by range
 				if len(ranges) <= sctx.storeCount {
+					log.Info("no enouth ranges for split region, fallback to split by keys", logutil.Region(region.Region))
 					return rs.executeSplitByKeys(ectx, sctx, scanStartKey, allKeys)
 				}
-				expectSplitSize := rangeSize / uint64(sctx.storeCount)
-				size := uint64(0)
-				keys := make([][]byte, 0, sctx.storeCount)
-				for _, rg := range ranges {
-					if size >= expectSplitSize {
-						// collect enough ranges, choose this one
-						keys = append(keys, rg.EndKey)
-						log.Info("choose the split key", zap.Uint64("split size", size), logutil.Key("key", rg.EndKey))
-						size = 0
-					}
-					size += rg.Size
+				keys, expectSplitSize := ChooseSplitKeysBySize(rangeSize, sctx.storeCount, ranges)
+				if len(keys) == 0 {
+					// no need split by ranges, fallback to split by keys
+					log.Info("no keys are chosen for region, fallback to split by keys", logutil.Region(region.Region))
+					return rs.executeSplitByKeys(ectx, sctx, scanStartKey, allKeys)
 				}
-				keys = keys[:sctx.storeCount-1]
 				log.Info("get split ranges for region",
 					zap.Int("keys", len(keys)),
 					zap.Uint64("expect split size", expectSplitSize),
@@ -658,6 +652,33 @@ func (rs *RegionSplitter) WaitForScatterRegionsTimeout(ctx context.Context, regi
 	}
 
 	return len(leftRegions)
+}
+
+func ChooseSplitKeysBySize(totalSize uint64, storeCount int, ranges []rtree.Range) ([][]byte, uint64) {
+	if storeCount <= 0 {
+		return nil, 0
+	}
+	expectSplitSize := totalSize / uint64(storeCount)
+	if expectSplitSize <= 0 {
+		return nil, 0
+	}
+	size := uint64(0)
+	keys := make([][]byte, 0, storeCount)
+	for _, rg := range ranges {
+		size += rg.Size
+		if size >= expectSplitSize {
+			// collect enough ranges, choose this one
+			keys = append(keys, rg.EndKey)
+			log.Info("choose the split key", zap.Uint64("split size", size), logutil.Key("key", rg.EndKey))
+			size = 0
+		}
+	}
+	// we only use the first storeCount-1 ranges to split
+	// because we want have storeCount regions after split
+	// but in some case we should try best effort to split
+	// even the keys not reach the storeCount
+	keys = keys[:min(len(keys), storeCount-1)]
+	return keys, expectSplitSize
 }
 
 func mapRegionInfoSlice(regionInfos []*split.RegionInfo) map[uint64]*split.RegionInfo {

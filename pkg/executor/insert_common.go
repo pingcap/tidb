@@ -607,7 +607,7 @@ func (e *InsertValues) fillColValue(
 		if !hasValue && mysql.HasNoDefaultValueFlag(column.ToInfo().GetFlag()) {
 			vars := e.Ctx().GetSessionVars()
 			sc := vars.StmtCtx
-			if vars.StrictSQLMode {
+			if vars.SQLMode.HasStrictMode() {
 				return datum, table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name)
 			}
 			sc.AppendWarning(table.ErrNoDefaultValue.FastGenByArgs(column.ToInfo().Name))

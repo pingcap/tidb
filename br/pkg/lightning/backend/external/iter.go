@@ -653,7 +653,7 @@ func newMergePropBaseIter(
 	// we are rely on the caller have reduced the overall overlapping to less than
 	// MergeSortOverlapThreshold for []MultipleFilesStat. And we are going to open
 	// about 8000 connection to read files.
-	preOpenLimit := limit * 8
+	preOpenLimit := limit * 2
 	preOpenLimit = min(preOpenLimit, int64(len(multiStat.Filenames)))
 	preOpenCh := make(chan chan readerAndError, preOpenLimit-limit)
 	closeCh := make(chan struct{})
@@ -672,7 +672,7 @@ func newMergePropBaseIter(
 			go func() {
 				defer close(asyncTask)
 				defer wg.Done()
-				rd, err := newStatsReader(ctx, exStorage, path, 500*1024)
+				rd, err := newStatsReader(ctx, exStorage, path, 250*1024)
 				select {
 				case <-closeCh:
 					_ = rd.Close()
@@ -690,10 +690,12 @@ func newMergePropBaseIter(
 					if !ok {
 						continue
 					}
-					_ = t.r.close()
+					if t.err == nil {
+						_ = t.r.close()
+					}
 				}
 				t, ok := <-asyncTask
-				if ok {
+				if ok && t.err == nil {
 					_ = t.r.close()
 				}
 				return
@@ -707,7 +709,7 @@ func newMergePropBaseIter(
 	for i := 0; i < int(limit); i++ {
 		path := multiStat.Filenames[i][1]
 		readerOpeners = append(readerOpeners, func() (*statReaderProxy, error) {
-			rd, err := newStatsReader(ctx, exStorage, path, 500*1024)
+			rd, err := newStatsReader(ctx, exStorage, path, 250*1024)
 			if err != nil {
 				return nil, err
 			}
