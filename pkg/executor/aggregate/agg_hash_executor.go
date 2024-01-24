@@ -470,12 +470,12 @@ func (e *HashAggExec) spillIfNeed() bool {
 
 	// Wait for the finish of all partial workers
 	e.fetcherAndPartialSyncer.Wait()
-	e.spillHelper.setInSpilling()
 	e.spill()
 	return false
 }
 
 func (e *HashAggExec) spill() {
+	e.spillHelper.setInSpilling()
 	defer func() {
 		e.spillHelper.setSpillTriggered()
 		e.spillHelper.lock.waitIfInSpilling.Broadcast()
