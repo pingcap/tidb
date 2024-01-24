@@ -15,7 +15,6 @@
 package types
 
 import (
-	"cmp"
 	"math"
 	"time"
 
@@ -136,21 +135,21 @@ func CompareInt(arg0 int64, isUnsigned0 bool, arg1 int64, isUnsigned1 bool) int 
 	var res int
 	switch {
 	case isUnsigned0 && isUnsigned1:
-		res = cmp.Compare(uint64(arg0), uint64(arg1))
+		res = compareUint64(uint64(arg0), uint64(arg1))
 	case isUnsigned0 && !isUnsigned1:
 		if arg1 < 0 || uint64(arg0) > math.MaxInt64 {
 			res = 1
 		} else {
-			res = cmp.Compare(arg0, arg1)
+			res = CompareInt64(arg0, arg1)
 		}
 	case !isUnsigned0 && isUnsigned1:
 		if arg0 < 0 || uint64(arg1) > math.MaxInt64 {
 			res = -1
 		} else {
-			res = cmp.Compare(arg0, arg1)
+			res = CompareInt64(arg0, arg1)
 		}
 	case !isUnsigned0 && !isUnsigned1:
-		res = cmp.Compare(arg0, arg1)
+		res = CompareInt64(arg0, arg1)
 	}
 	return res
 }
