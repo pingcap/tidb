@@ -402,7 +402,7 @@ func (p *LogicalJoin) getHashJoins(prop *property.PhysicalProperty) (joins []Phy
 	forceLeftToBuild := ((p.preferJoinType & h.PreferLeftAsHJBuild) > 0) || ((p.preferJoinType & h.PreferRightAsHJProbe) > 0)
 	forceRightToBuild := ((p.preferJoinType & h.PreferRightAsHJBuild) > 0) || ((p.preferJoinType & h.PreferLeftAsHJProbe) > 0)
 	if forceLeftToBuild && forceRightToBuild {
-		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are conflicts, please check the hints"))
+		p.SCtx().GetSessionVars().StmtCtx.SetSkipHintWarning(ErrInternal.FastGen("Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are conflicts, please check the hints"))
 		forceLeftToBuild = false
 		forceRightToBuild = false
 	}
@@ -2054,13 +2054,13 @@ func (p *LogicalJoin) tryToGetIndexJoin(prop *property.PhysicalProperty) (indexJ
 	// Handle hints conflict first.
 	stmtCtx := p.SCtx().GetSessionVars().StmtCtx
 	if p.preferAny(h.PreferLeftAsINLJInner, h.PreferRightAsINLJInner) && p.preferAny(h.PreferNoIndexJoin) {
-		stmtCtx.AppendWarning(ErrInternal.FastGen("Some INL_JOIN and NO_INDEX_JOIN hints conflict, NO_INDEX_JOIN may be ignored"))
+		stmtCtx.SetSkipHintWarning(ErrInternal.FastGen("Some INL_JOIN and NO_INDEX_JOIN hints conflict, NO_INDEX_JOIN may be ignored"))
 	}
 	if p.preferAny(h.PreferLeftAsINLHJInner, h.PreferRightAsINLHJInner) && p.preferAny(h.PreferNoIndexHashJoin) {
-		stmtCtx.AppendWarning(ErrInternal.FastGen("Some INL_HASH_JOIN and NO_INDEX_HASH_JOIN hints conflict, NO_INDEX_HASH_JOIN may be ignored"))
+		stmtCtx.SetSkipHintWarning(ErrInternal.FastGen("Some INL_HASH_JOIN and NO_INDEX_HASH_JOIN hints conflict, NO_INDEX_HASH_JOIN may be ignored"))
 	}
 	if p.preferAny(h.PreferLeftAsINLMJInner, h.PreferRightAsINLMJInner) && p.preferAny(h.PreferNoIndexMergeJoin) {
-		stmtCtx.AppendWarning(ErrInternal.FastGen("Some INL_MERGE_JOIN and NO_INDEX_MERGE_JOIN hints conflict, NO_INDEX_MERGE_JOIN may be ignored"))
+		stmtCtx.SetSkipHintWarning(ErrInternal.FastGen("Some INL_MERGE_JOIN and NO_INDEX_MERGE_JOIN hints conflict, NO_INDEX_MERGE_JOIN may be ignored"))
 	}
 
 	candidates, canForced = p.handleForceIndexJoinHints(prop, candidates)
@@ -2451,7 +2451,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 	forceLeftToBuild := ((p.preferJoinType & h.PreferLeftAsHJBuild) > 0) || ((p.preferJoinType & h.PreferRightAsHJProbe) > 0)
 	forceRightToBuild := ((p.preferJoinType & h.PreferRightAsHJBuild) > 0) || ((p.preferJoinType & h.PreferLeftAsHJProbe) > 0)
 	if forceLeftToBuild && forceRightToBuild {
-		p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are conflicts, please check the hints"))
+		p.SCtx().GetSessionVars().StmtCtx.SetSkipHintWarning(ErrInternal.FastGen("Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are conflicts, please check the hints"))
 		forceLeftToBuild = false
 		forceRightToBuild = false
 	}
@@ -2499,7 +2499,7 @@ func (p *LogicalJoin) tryToGetMppHashJoin(prop *property.PhysicalProperty, useBC
 		if !match {
 			if fixedBuildSide {
 				// A warning will be generated if the build side is fixed, but we attempt to change it using the hint.
-				p.SCtx().GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen("Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints"))
+				p.SCtx().GetSessionVars().StmtCtx.SetSkipHintWarning(ErrInternal.FastGen("Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints"))
 			} else {
 				// The HASH_JOIN_BUILD OR HASH_JOIN_PROBE hints can take effective.
 				preferredBuildIndex = 1 - preferredBuildIndex
