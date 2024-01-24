@@ -1091,6 +1091,8 @@ var (
 // NewConfig creates a new config instance with default value.
 func NewConfig() *Config {
 	conf := defaultConf
+	// TODO(hawkingrei): it is an experimental feature, we will close it before the next release.
+	conf.TiKVClient.GrpcSharedBufferPool = true
 	return &conf
 }
 
@@ -1476,6 +1478,8 @@ func init() {
 
 func initByLDFlags(edition, checkBeforeDropLDFlag string) {
 	conf := defaultConf
+	// TODO(hawkingrei): it is an experimental feature, we will close it before the next release.
+	conf.TiKVClient.GrpcSharedBufferPool = true
 	StoreGlobalConfig(&conf)
 	if checkBeforeDropLDFlag == "1" {
 		CheckTableBeforeDrop = true
