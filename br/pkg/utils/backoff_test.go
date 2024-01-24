@@ -178,3 +178,22 @@ func TestNewDownloadSSTBackofferWithCancel(t *testing.T) {
 		context.Canceled,
 	}, multierr.Errors(err))
 }
+
+func TestNewBackupSSTBackofferWithCancel(t *testing.T) {
+	var counter int
+	backoffer := utils.NewBackupSSTBackoffer()
+	err := utils.WithRetry(context.Background(), func() error {
+		defer func() { counter++ }()
+		if counter == 3 {
+			return context.Canceled
+		}
+		return berrors.ErrKVIngestFailed
+	}, backoffer)
+	require.Equal(t, 4, counter)
+	require.Equal(t, []error{
+		berrors.ErrKVIngestFailed,
+		berrors.ErrKVIngestFailed,
+		berrors.ErrKVIngestFailed,
+		context.Canceled,
+	}, multierr.Errors(err))
+}
