@@ -79,16 +79,23 @@ func row2BasicSubTask(r chunk.Row) *proto.Subtask {
 	if !r.IsNull(8) {
 		ordinal = int(r.GetInt64(8))
 	}
+	var stateUpdateTime time.Time
+	if !r.IsNull(9) {
+		ts := r.GetInt64(9)
+		stateUpdateTime = time.Unix(ts, 0)
+	}
+
 	subtask := &proto.Subtask{
-		ID:          r.GetInt64(0),
-		Step:        proto.Step(r.GetInt64(1)),
-		TaskID:      int64(tid),
-		Type:        proto.Int2Type(int(r.GetInt64(3))),
-		ExecID:      r.GetString(4),
-		State:       proto.SubtaskState(r.GetString(5)),
-		Concurrency: int(r.GetInt64(6)),
-		CreateTime:  createTime,
-		Ordinal:     ordinal,
+		ID:              r.GetInt64(0),
+		Step:            proto.Step(r.GetInt64(1)),
+		TaskID:          int64(tid),
+		Type:            proto.Int2Type(int(r.GetInt64(3))),
+		ExecID:          r.GetString(4),
+		State:           proto.SubtaskState(r.GetString(5)),
+		Concurrency:     int(r.GetInt64(6)),
+		CreateTime:      createTime,
+		Ordinal:         ordinal,
+		StateUpdateTime: stateUpdateTime,
 	}
 	return subtask
 }
@@ -98,17 +105,12 @@ func Row2SubTask(r chunk.Row) *proto.Subtask {
 	subtask := row2BasicSubTask(r)
 	// subtask defines start/update time as bigint, to ensure backward compatible,
 	// we keep it that way, and we convert it here.
-	var startTime, updateTime time.Time
-	if !r.IsNull(9) {
-		ts := r.GetInt64(9)
-		startTime = time.Unix(ts, 0)
-	}
+	var startTime time.Time
 	if !r.IsNull(10) {
 		ts := r.GetInt64(10)
-		updateTime = time.Unix(ts, 0)
+		startTime = time.Unix(ts, 0)
 	}
 	subtask.StartTime = startTime
-	subtask.StateUpdateTime = updateTime
 	subtask.Meta = r.GetBytes(11)
 	subtask.Summary = r.GetJSON(12).String()
 	return subtask
