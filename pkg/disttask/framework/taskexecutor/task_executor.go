@@ -327,7 +327,7 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 
 		var wg util.WaitGroupWrapper
 		checkCtx, checkCancel := context.WithCancel(ctx)
-		wg.Go(func() {
+		wg.RunWithLog(func() {
 			e.checkBalanceSubtask(checkCtx)
 		})
 		defer func() {

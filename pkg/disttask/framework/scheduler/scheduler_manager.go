@@ -303,7 +303,7 @@ func (sm *Manager) startScheduler(basicTask *proto.Task, reservedExecID string) 
 	sm.addScheduler(task.ID, scheduler)
 	sm.slotMgr.reserve(basicTask, reservedExecID)
 	// Using the pool with block, so it wouldn't return an error.
-	sm.schedulerWG.Go(func() {
+	sm.schedulerWG.RunWithLog(func() {
 		defer func() {
 			scheduler.Close()
 			sm.delScheduler(task.ID)

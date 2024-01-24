@@ -240,7 +240,7 @@ func (m *Manager) handleExecutableTasks(tasks []*proto.Task) {
 		m.addHandlingTask(task.ID)
 		m.slotManager.alloc(task)
 		t := task
-		m.executorWG.Go(func() {
+		m.executorWG.RunWithLog(func() {
 			defer m.slotManager.free(t.ID)
 			m.handleExecutableTask(t)
 			m.removeHandlingTask(t.ID)
