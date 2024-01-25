@@ -459,7 +459,7 @@ func (sm *Manager) collectMetrics() {
 		metrics.SetDistSubTaskDuration(subtask)
 
 		for _, state := range proto.AllSubtaskStates {
-			if state != proto.SubtaskStatePending && subtask.State != proto.SubtaskStateRunning {
+			if state != proto.SubtaskStatePending && state != proto.SubtaskStateRunning {
 				continue
 			}
 
