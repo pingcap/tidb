@@ -224,23 +224,20 @@ type PlanHints struct {
 	IndexMergeHintList []HintedIndex  // use_index_merge
 	TiFlashTables      []HintedTable  // isolation_read_engines(xx=tiflash)
 	TiKVTables         []HintedTable  // isolation_read_engines(xx=tikv)
-	Agg                AggHints       // hash_agg, merge_agg, agg_to_cop
-	Limit              LimitHints     // limit_to_cop
-	CTEMerge           CTEMergeHints  // merge
 	LeadingJoinOrder   []HintedTable  // leading
 	HJBuild            []HintedTable  // hash_join_build
 	HJProbe            []HintedTable  // hash_join_probe
-	TimeRangeHint      ast.HintTimeRange
+
+	// Hints belows are not associated with any particular table.
+	Agg           AggHints   // hash_agg, merge_agg, agg_to_cop
+	Limit         LimitHints // limit_to_cop
+	CTEMerge      bool       // merge
+	TimeRangeHint ast.HintTimeRange
 }
 
 // LimitHints stores limit hint information.
 type LimitHints struct {
 	PreferLimitToCop bool
-}
-
-// CTEMergeHints ...one bool flag for cte
-type CTEMergeHints struct {
-	PreferMerge bool
 }
 
 // HintedTable indicates which table this hint should take effect on.

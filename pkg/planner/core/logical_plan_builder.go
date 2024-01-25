@@ -3967,7 +3967,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		aggHints                                                                        h.AggHints
 		timeRangeHint                                                                   ast.HintTimeRange
 		limitHints                                                                      h.LimitHints
-		MergeHints                                                                      h.CTEMergeHints
+		cteMerge                                                                        bool
 		leadingJoinOrder                                                                []h.HintedTable
 		hjBuildTables, hjProbeTables                                                    []h.HintedTable
 		leadingHintCnt                                                                  int
@@ -4082,7 +4082,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 				b.ctx.GetSessionVars().StmtCtx.SetHintWarning(ErrInternal.FastGen("The MERGE hint is not used correctly, maybe it inputs a table name."))
 				continue
 			}
-			MergeHints.PreferMerge = true
+			cteMerge = true
 		case h.HintLeading:
 			if leadingHintCnt == 0 {
 				leadingJoinOrder = append(leadingJoinOrder, h.TableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
@@ -4129,7 +4129,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		IndexMergeHintList: indexMergeHintList,
 		TimeRangeHint:      timeRangeHint,
 		Limit:              limitHints,
-		CTEMerge:           MergeHints,
+		CTEMerge:           cteMerge,
 		LeadingJoinOrder:   leadingJoinOrder,
 		HJBuild:            hjBuildTables,
 		HJProbe:            hjProbeTables,
@@ -4205,7 +4205,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		b.isForUpdateRead = true
 	}
 
-	if hints := b.TableHints(); hints != nil && hints.CTEMerge.PreferMerge {
+	if hints := b.TableHints(); hints != nil && hints.CTEMerge {
 		// Verify Merge hints in the current query,
 		// we will update parameters for those that meet the rules, and warn those that do not.
 		// If the current query uses Merge Hint and the query is a CTE,
