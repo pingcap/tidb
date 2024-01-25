@@ -1331,6 +1331,7 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 		KeyspaceName:                tidb.GetGlobalKeyspaceName(),
 		PausePDSchedulerScope:       config.PausePDSchedulerScopeTable,
 		DisableAutomaticCompactions: true,
+		BlockSize:                   config.DefaultBlockSize,
 	}
 	if e.IsRaftKV2 {
 		backendConfig.RaftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval
