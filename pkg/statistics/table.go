@@ -184,6 +184,26 @@ func NewColAndIndexExistenceMap(colCap, idxCap int) *ColAndIdxExistenceMap {
 	}
 }
 
+// ColAndIdxExistenceMapIsEqual is used in testing, checking whether the two are equal.
+func ColAndIdxExistenceMapIsEqual(m1, m2 *ColAndIdxExistenceMap) bool {
+	if len(m1.colAnalyzed) != len(m2.colAnalyzed) || len(m1.indexAnalyzed) != len(m2.indexAnalyzed) {
+		return false
+	}
+	for k, v := range m1.colAnalyzed {
+		v2, ok := m2.colAnalyzed[k]
+		if !ok || v != v2 {
+			return false
+		}
+	}
+	for k, v := range m1.indexAnalyzed {
+		v2, ok := m2.indexAnalyzed[k]
+		if !ok || v != v2 {
+			return false
+		}
+	}
+	return true
+}
+
 // ExtendedStatsItem is the cached item of a mysql.stats_extended record.
 type ExtendedStatsItem struct {
 	StringVals string

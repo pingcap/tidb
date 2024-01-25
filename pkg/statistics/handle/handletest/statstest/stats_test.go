@@ -233,7 +233,7 @@ func TestInitStats(t *testing.T) {
 	h.Clear()
 	require.NoError(t, h.Update(is))
 	// Index and pk are loaded.
-	needed := `Table:102 RealtimeCount:6
+	needed := fmt.Sprintf(`Table:%v RealtimeCount:6
 column:1 ndv:6 totColSize:0
 num: 1 lower_bound: 1 upper_bound: 1 repeats: 1 ndv: 0
 num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0
@@ -249,7 +249,7 @@ num: 1 lower_bound: 2 upper_bound: 2 repeats: 1 ndv: 0
 num: 1 lower_bound: 3 upper_bound: 3 repeats: 1 ndv: 0
 num: 1 lower_bound: 4 upper_bound: 4 repeats: 1 ndv: 0
 num: 1 lower_bound: 5 upper_bound: 5 repeats: 1 ndv: 0
-num: 1 lower_bound: 7 upper_bound: 7 repeats: 1 ndv: 0`
+num: 1 lower_bound: 7 upper_bound: 7 repeats: 1 ndv: 0`, tbl.Meta().ID)
 	require.Equal(t, needed, table0.String())
 	h.SetLease(0)
 }

@@ -78,7 +78,7 @@ func Selectivity(
 	// TODO: If len(exprs) is bigger than 63, we could use bitset structure to replace the int64.
 	// This will simplify some code and speed up if we use this rather than a boolean slice.
 	if len(exprs) > 63 || (len(coll.Columns) == 0 && len(coll.Indices) == 0) {
-		ret = pseudoSelectivity(coll, exprs)
+		ret = pseudoSelectivity(ctx, coll, exprs)
 		if sc.EnableOptimizerCETrace {
 			ceTraceExpr(ctx, tableID, "Table Stats-Pseudo-Expression",
 				expression.ComposeCNFCondition(ctx, exprs...), ret*float64(coll.RealtimeCount))
@@ -152,6 +152,7 @@ func Selectivity(
 		} else {
 			// TODO: We are able to remove this path if we remove the async stats load.
 			statistics.ColumnStatsIsInvalid(nil, ctx, coll, col.ID)
+			recordUsedItemStatsStatus(ctx, (*statistics.Column)(nil), tableID, col.ID)
 		}
 	}
 	id2Paths := make(map[int64]*planutil.AccessPath)
