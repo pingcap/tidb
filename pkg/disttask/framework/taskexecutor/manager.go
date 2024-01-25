@@ -296,7 +296,7 @@ type TestContext struct {
 	mockDown           atomic.Bool
 }
 
-var testContexts sync.Map
+var TestContexts sync.Map
 
 // startTaskExecutor handles a runnable task.
 func (m *Manager) startTaskExecutor(task *proto.Task) {
