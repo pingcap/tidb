@@ -525,7 +525,7 @@ func NewMergeKVIter(
 	for i := range paths {
 		i := i
 		readerOpeners = append(readerOpeners, func() (*kvReaderProxy, error) {
-			rd, err := newKVReader(ctx, paths[i], exStorage, pathsStartOffset[i], readBufferSize)
+			rd, err := newKVReader(ctx, paths[i], exStorage, pathsStartOffset[i], readBufferSize, 0)
 			if err != nil {
 				return nil, err
 			}

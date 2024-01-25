@@ -63,13 +63,16 @@ type byteReader struct {
 	logger *zap.Logger
 }
 
-func openStoreReaderAndSeek(
-	ctx context.Context,
-	store storage.ExternalStorage,
-	name string,
-	initFileOffset uint64,
-	prefetchSize int,
-) (storage.ExternalFileReader, error) {
+func openStoreReaderAndSeek(ctx context.Context, store storage.ExternalStorage, name string, initFileOffset uint64, prefetchSize int, maxOffset uint64) (storage.ExternalFileReader, error) {
+	if maxOffset > 0 {
+		is := int64(initFileOffset)
+		im := int64(maxOffset)
+		storageReader, err := store.Open(ctx, name, &storage.ReaderOption{StartOffset: &is, EndOffset: &im, PrefetchSize: prefetchSize})
+		if err != nil {
+			return nil, err
+		}
+		return storageReader, nil
+	}
 	storageReader, err := store.Open(ctx, name, &storage.ReaderOption{PrefetchSize: prefetchSize})
 	if err != nil {
 		return nil, err

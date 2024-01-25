@@ -167,7 +167,7 @@ func TestKVReadWrite(t *testing.T) {
 	require.NoError(t, err)
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := newKVReader(ctx, "/test", memStore, 0, bufSize)
+	kvReader, err := newKVReader(ctx, "/test", memStore, 0, bufSize, 0)
 	require.NoError(t, err)
 	for i := 0; i < kvCnt; i++ {
 		key, value, err := kvReader.nextKV()

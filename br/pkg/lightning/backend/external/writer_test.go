@@ -136,7 +136,7 @@ func TestWriter(t *testing.T) {
 	})
 
 	bufSize := rand.Intn(100) + 1
-	kvReader, err := newKVReader(ctx, "/test/0/0", memStore, 0, bufSize)
+	kvReader, err := newKVReader(ctx, "/test/0/0", memStore, 0, bufSize, 0)
 	require.NoError(t, err)
 	for i := 0; i < kvCnt; i++ {
 		key, value, err := kvReader.nextKV()
@@ -257,7 +257,7 @@ func TestWriterDuplicateDetect(t *testing.T) {
 	keys := make([][]byte, 0, kvCount)
 	values := make([][]byte, 0, kvCount)
 
-	kvReader, err := newKVReader(ctx, "/test2/mergeID/0", memStore, 0, 100)
+	kvReader, err := newKVReader(ctx, "/test2/mergeID/0", memStore, 0, 100, 0)
 	require.NoError(t, err)
 	for i := 0; i < kvCount; i++ {
 		key, value, err := kvReader.nextKV()

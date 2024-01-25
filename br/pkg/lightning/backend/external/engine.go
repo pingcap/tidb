@@ -209,11 +209,11 @@ func getFilesReadConcurrency(
 	storage storage.ExternalStorage,
 	statsFiles []string,
 	startKey, endKey []byte,
-) ([]uint64, []uint64, error) {
+) ([]uint64, []uint64, []uint64, error) {
 	result := make([]uint64, len(statsFiles))
 	offsets, err := seekPropsOffsets(ctx, []kv.Key{startKey, endKey}, statsFiles, storage, false)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	startOffs, endOffs := offsets[0], offsets[1]
 	for i := range statsFiles {
@@ -226,7 +226,7 @@ func getFilesReadConcurrency(
 			zap.Uint64("expected concurrency", result[i]),
 		)
 	}
-	return result, startOffs, nil
+	return result, startOffs, endOffs, nil
 }
 
 func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byte, outCh chan<- common.DataAndRange) error {

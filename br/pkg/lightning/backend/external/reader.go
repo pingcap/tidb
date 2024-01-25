@@ -62,7 +62,7 @@ func readAllData(
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	concurrences, startOffsets, err := getFilesReadConcurrency(
+	concurrences, startOffsets, endOffsets, err := getFilesReadConcurrency(
 		ctx,
 		store,
 		statsFiles,
@@ -92,6 +92,7 @@ func readAllData(
 				startKey,
 				endKey,
 				startOffsets[i],
+				endOffsets[i],
 				concurrences[i],
 				bufPool,
 				output,
@@ -108,6 +109,7 @@ func readOneFile(
 	dataFile string,
 	startKey, endKey []byte,
 	startOffset uint64,
+	endOffsets uint64,
 	concurrency uint64,
 	bufPool *membuf.Pool,
 	output *memKVsAndBuffers,
@@ -116,7 +118,7 @@ func readOneFile(
 
 	ts := time.Now()
 
-	rd, err := newKVReader(ctx, dataFile, storage, startOffset, 64*1024)
+	rd, err := newKVReader(ctx, dataFile, storage, startOffset, 64*1024, endOffsets)
 	if err != nil {
 		return err
 	}
