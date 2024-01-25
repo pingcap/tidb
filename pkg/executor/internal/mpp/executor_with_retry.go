@@ -242,7 +242,7 @@ func allocMPPGatherID(ctx sessionctx.Context) uint64 {
 
 func (r *ExecutorWithRetry) buildCoordinator() kv.MppCoordinator {
 	_, serverAddr := mppcoordmanager.InstanceMPPCoordinatorManager.GetServerAddr()
-	return NewLocalMPPCoordinator(r.sctx, r.is, r.plan, r.planIDs, r.startTS, r.queryID,
+	return NewLocalMPPCoordinator(r.ctx, r.sctx, r.is, r.plan, r.planIDs, r.startTS, r.queryID,
 		r.gatherID, serverAddr, r.memTracker)
 }
 

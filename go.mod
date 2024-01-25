@@ -14,6 +14,7 @@ require (
 	github.com/Shopify/sarama v1.29.0
 	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
 	github.com/apache/skywalking-eyes v0.4.0
+	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
 	github.com/ashanbrown/makezero v1.1.1
 	github.com/aws/aws-sdk-go v1.45.25
 	github.com/bazelbuild/buildtools v0.0.0-20230926111657-7d855c59baeb
@@ -89,7 +90,7 @@ require (
 	github.com/pingcap/log v1.1.1-0.20230317032135-a0d097d16e22
 	github.com/pingcap/sysutil v1.0.1-0.20230407040306-fb007c5aff21
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20230919054518-dfd7d194838f
+	github.com/pingcap/tipb v0.0.0-20240116032918-9bb28c43bbfc
 	github.com/prometheus/client_golang v1.18.0
 	github.com/prometheus/client_model v0.5.0
 	github.com/prometheus/common v0.46.0

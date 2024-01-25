@@ -111,8 +111,11 @@ func TestTikvRegionPeers(t *testing.T) {
 	router.HandleFunc(pd.RegionByIDPrefix+"/"+"{id}", regionsInfoHandler)
 	defer server.Close()
 
+	pdAddrs := []string{mockAddr}
 	store := testkit.CreateMockStore(t,
-		mockstore.WithTiKVOptions(tikv.WithPDHTTPClient("tikv-regions-peers-table-test", []string{mockAddr})))
+		mockstore.WithTiKVOptions(tikv.WithPDHTTPClient("tikv-regions-peers-table-test", pdAddrs)),
+		mockstore.WithPDAddr(pdAddrs),
+	)
 
 	store = &mockStore{
 		store.(helper.Storage),

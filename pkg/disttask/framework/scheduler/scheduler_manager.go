@@ -35,7 +35,7 @@ var (
 	checkTaskRunningInterval = 3 * time.Second
 	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
 	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
-	// DefaultCleanUpInterval is the interval of cleanUp routine.
+	// DefaultCleanUpInterval is the interval of cleanup routine.
 	DefaultCleanUpInterval = 10 * time.Minute
 )
 
@@ -318,13 +318,13 @@ func (sm *Manager) startScheduler(basicTask *proto.Task, reservedExecID string) 
 }
 
 func (sm *Manager) cleanupTaskLoop() {
-	logutil.BgLogger().Info("cleanUp loop start")
+	logutil.BgLogger().Info("cleanup loop start")
 	ticker := time.NewTicker(DefaultCleanUpInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-sm.ctx.Done():
-			logutil.BgLogger().Info("cleanUp loop exits", zap.Error(sm.ctx.Err()))
+			logutil.BgLogger().Info("cleanup loop exits", zap.Error(sm.ctx.Err()))
 			return
 		case <-sm.finishCh:
 			sm.doCleanupTask()
@@ -337,7 +337,7 @@ func (sm *Manager) cleanupTaskLoop() {
 // WaitCleanUpFinished is used to sync the test.
 var WaitCleanUpFinished = make(chan struct{}, 1)
 
-// doCleanupTask processes clean up routine defined by each type of tasks and cleanUpMeta.
+// doCleanupTask processes clean up routine defined by each type of tasks and cleanupMeta.
 // For example:
 //
 //	tasks with global sort should clean up tmp files stored on S3.
@@ -349,44 +349,45 @@ func (sm *Manager) doCleanupTask() {
 		proto.TaskStateSucceed,
 	)
 	if err != nil {
-		logutil.BgLogger().Warn("cleanUp routine failed", zap.Error(err))
+		logutil.BgLogger().Warn("cleanup routine failed", zap.Error(err))
 		return
 	}
 	if len(tasks) == 0 {
 		return
 	}
-	logutil.BgLogger().Info("cleanUp routine start")
-	err = sm.cleanUpFinishedTasks(tasks)
+	logutil.BgLogger().Info("cleanup routine start")
+	err = sm.cleanupFinishedTasks(tasks)
 	if err != nil {
-		logutil.BgLogger().Warn("cleanUp routine failed", zap.Error(err))
+		logutil.BgLogger().Warn("cleanup routine failed", zap.Error(err))
 		return
 	}
 	failpoint.Inject("WaitCleanUpFinished", func() {
 		WaitCleanUpFinished <- struct{}{}
 	})
-	logutil.BgLogger().Info("cleanUp routine success")
+	logutil.BgLogger().Info("cleanup routine success")
 }
 
-func (sm *Manager) cleanUpFinishedTasks(tasks []*proto.Task) error {
+func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 	cleanedTasks := make([]*proto.Task, 0)
 	var firstErr error
 	for _, task := range tasks {
-		cleanUpFactory := getSchedulerCleanUpFactory(task.Type)
-		if cleanUpFactory != nil {
-			cleanUp := cleanUpFactory()
-			err := cleanUp.CleanUp(sm.ctx, task)
+		logutil.BgLogger().Info("cleanup task", zap.Int64("task-id", task.ID))
+		cleanupFactory := getSchedulerCleanUpFactory(task.Type)
+		if cleanupFactory != nil {
+			cleanup := cleanupFactory()
+			err := cleanup.CleanUp(sm.ctx, task)
 			if err != nil {
 				firstErr = err
 				break
 			}
 			cleanedTasks = append(cleanedTasks, task)
 		} else {
-			// if task doesn't register cleanUp function, mark it as cleaned.
+			// if task doesn't register cleanup function, mark it as cleaned.
 			cleanedTasks = append(cleanedTasks, task)
 		}
 	}
 	if firstErr != nil {
-		logutil.BgLogger().Warn("cleanUp routine failed", zap.Error(errors.Trace(firstErr)))
+		logutil.BgLogger().Warn("cleanup routine failed", zap.Error(errors.Trace(firstErr)))
 	}
 
 	failpoint.Inject("mockTransferErr", func() {

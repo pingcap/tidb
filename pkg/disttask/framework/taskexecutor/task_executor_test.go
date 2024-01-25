@@ -392,6 +392,47 @@ func TestTaskExecutor(t *testing.T) {
 	err = taskExecutor.runStep(runCtx, task, nil)
 	require.NoError(t, err)
 	require.True(t, ctrl.Satisfied())
+
+	// no subtask to run, should exit the loop after some time.
+	checkIntervalBak := checkInterval
+	maxIntervalBak := maxCheckInterval
+	defer func() {
+		checkInterval = checkIntervalBak
+		maxCheckInterval = maxIntervalBak
+	}()
+	maxCheckInterval, checkInterval = time.Millisecond, time.Millisecond
+	mockStepExecutor.EXPECT().Init(gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(nil, nil)
+	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(nil, nil).Times(8)
+	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), gomock.Any()).Return(task, nil).Times(8)
+	mockStepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
+	err = taskExecutor.runStep(runCtx, task, nil)
+	require.NoError(t, err)
+	require.True(t, ctrl.Satisfied())
+
+	// no-subtask check counter should be reset after a subtask is run.
+	mockStepExecutor.EXPECT().Init(gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(nil, nil)
+	// no subtask to run for 4 times.
+	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(nil, nil).Times(4)
+	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), gomock.Any()).Return(task, nil).Times(4)
+	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(subtasks[0], nil)
+	mockSubtaskTable.EXPECT().StartSubtask(gomock.Any(), taskID, "id").Return(nil)
+	mockStepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(nil)
+	mockStepExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().FinishSubtask(gomock.Any(), "id", int64(1), gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(nil, nil).Times(8)
+	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), gomock.Any()).Return(task, nil).Times(8)
+	mockStepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
+	err = taskExecutor.runStep(runCtx, task, nil)
+	require.NoError(t, err)
+	require.True(t, ctrl.Satisfied())
 }
 
 func TestRunStepCurrentSubtaskScheduledAway(t *testing.T) {
