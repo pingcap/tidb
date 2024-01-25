@@ -62,11 +62,21 @@ type memKVsAndBuffers struct {
 	droppedSizePerFile []int
 }
 
-func (b *memKVsAndBuffers) build() {
+func (b *memKVsAndBuffers) build(ctx context.Context) {
 	sumKVCnt := 0
 	for _, keys := range b.keysPerFile {
 		sumKVCnt += len(keys)
 	}
+	b.droppedSize = 0
+	for _, size := range b.droppedSizePerFile {
+		b.droppedSize += size
+	}
+	b.droppedSizePerFile = nil
+
+	logutil.Logger(ctx).Info("building memKVsAndBuffers",
+		zap.Int("sumKVCnt", sumKVCnt),
+		zap.Int("droppedSize", b.droppedSize))
+
 	b.keys = make([][]byte, 0, sumKVCnt)
 	b.values = make([][]byte, 0, sumKVCnt)
 	for i := range b.keysPerFile {
@@ -77,12 +87,6 @@ func (b *memKVsAndBuffers) build() {
 	}
 	b.keysPerFile = nil
 	b.valuesPerFile = nil
-
-	b.droppedSize = 0
-	for _, size := range b.droppedSizePerFile {
-		b.droppedSize += size
-	}
-	b.droppedSizePerFile = nil
 }
 
 // Engine stored sorted key/value pairs in an external storage.
@@ -121,7 +125,7 @@ type Engine struct {
 	importedKVCount *atomic.Int64
 }
 
-const memLimit = 16 * 1024 * 1024 * 1024
+const memLimit = 12 * 1024 * 1024 * 1024
 
 // NewExternalEngine creates an (external) engine.
 func NewExternalEngine(
@@ -253,7 +257,7 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	if err != nil {
 		return err
 	}
-	e.memKVsAndBuffers.build()
+	e.memKVsAndBuffers.build(ctx)
 
 	readSecond := time.Since(readStart).Seconds()
 	readDurHist.Observe(readSecond)
@@ -327,8 +331,7 @@ func (e *Engine) LoadIngestData(
 ) error {
 	// currently we assume the region size is 96MB and will download 96MB*32 = 3GB
 	// data at once
-	// TODO(lance6716): update it
-	regionBatchSize := 32
+	regionBatchSize := e.workerConcurrency
 	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
 		regionBatchSize = val.(int)
 	})
