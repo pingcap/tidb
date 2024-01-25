@@ -18,8 +18,8 @@ import (
 	"unsafe"
 )
 
-const SizeOfNextPtr = unsafe.Sizeof(*new(unsafe.Pointer))
-const SizeOfHashValue = unsafe.Sizeof(int(0))
+const SizeOfNextPtr = int(unsafe.Sizeof(*new(unsafe.Pointer)))
+const SizeOfHashValue = int(unsafe.Sizeof(uint64(0)))
 
 type rowTableSegment struct {
 	/*
@@ -55,7 +55,24 @@ func (rts *rowTableSegment) rowCount() int64 {
 	return int64(len(rts.rowLocations))
 }
 
-func (rts *rowTableSegment) getHashValue(rowIndex int) int64 {
+func (rts *rowTableSegment) validKeyCount() int64 {
+	return int64(len(rts.validJoinKeyPos))
+}
+
+func setHashValue(rowStart unsafe.Pointer, hashValue uint64) {
+	*(*uint64)(unsafe.Add(rowStart, SizeOfNextPtr)) = hashValue
+}
+
+func getHashValue(rowStart unsafe.Pointer) uint64 {
+	return *(*uint64)(unsafe.Add(rowStart, SizeOfNextPtr))
+}
+
+func setNextRowOffset(rowStart unsafe.Pointer, nextRowOffset unsafe.Pointer) {
+	*(*unsafe.Pointer)(rowStart) = nextRowOffset
+}
+
+func getNextRowOffset(rowStart unsafe.Pointer) unsafe.Pointer {
+	return *(*unsafe.Pointer)(rowStart)
 }
 
 type tableMeta struct {
@@ -82,6 +99,14 @@ func (rt *rowTable) rowCount() int64 {
 	ret := int64(0)
 	for _, s := range rt.segments {
 		ret += s.rowCount()
+	}
+	return ret
+}
+
+func (rt *rowTable) validKeyCount() int64 {
+	ret := int64(0)
+	for _, s := range rt.segments {
+		ret += s.validKeyCount()
 	}
 	return ret
 }
