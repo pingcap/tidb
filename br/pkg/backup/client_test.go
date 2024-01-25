@@ -51,7 +51,7 @@ type testBackup struct {
 }
 
 func createBackupSuite(t *testing.T) *testBackup {
-	tikvClient, mockCluster, pdClient, err := testutils.NewMockTiKV("", nil, nil)
+	tikvClient, mockCluster, pdClient, err := testutils.NewMockTiKV("", nil)
 	require.NoError(t, err)
 	s := new(testBackup)
 	s.mockGlue = &gluetidb.MockGlue{}

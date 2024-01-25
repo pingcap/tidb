@@ -44,7 +44,7 @@ func TestResolvedLargeTxnLocks(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/DisablePaging"))
 	}()
 
-	rpcClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil, mockcopr.NewCoprRPCHandler())
+	rpcClient, cluster, pdClient, err := testutils.NewMockTiKV("", mockcopr.NewCoprRPCHandler())
 	require.NoError(t, err)
 
 	testutils.BootstrapWithSingleStore(cluster)
