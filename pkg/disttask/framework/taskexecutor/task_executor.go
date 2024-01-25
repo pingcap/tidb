@@ -258,7 +258,6 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 	task := e.task.Load()
 	stepLogger := llog.BeginTask(e.logger.With(
 		zap.String("step", proto.Step2Str(task.Type, task.Step)),
-		zap.Int("concurrency", task.Concurrency),
 		zap.Float64("mem-limit-percent", gctuner.GlobalMemoryLimitTuner.GetPercentage()),
 		zap.String("server-mem-limit", memory.ServerMemoryLimitOriginText.Load()),
 		zap.Stringer("resource", resource),

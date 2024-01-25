@@ -304,13 +304,13 @@ func (m *Manager) startTaskExecutor(task *proto.Task) {
 	factory := GetTaskExecutorFactory(task.Type)
 	if factory == nil {
 		err := errors.Errorf("task type %s not found", task.Type)
-		m.logErrAndPersist(err, task.ID)
+		m.logErrAndPersist(err, task.ID, nil)
 		return
 	}
 	executor := factory(m.ctx, m.id, task, m.taskTable)
 	err := executor.Init(m.ctx)
 	if err != nil {
-		m.logErrAndPersist(err, task.ID)
+		m.logErrAndPersist(err, task.ID, executor)
 		return
 	}
 	m.logger.Info("task executor started", zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type))
@@ -359,8 +359,14 @@ func (m *Manager) logErr(err error) {
 	m.logger.Error("task manager met error", zap.Error(err), zap.Stack("stack"))
 }
 
-func (m *Manager) logErrAndPersist(err error, taskID int64) {
+func (m *Manager) logErrAndPersist(err error, taskID int64, taskExecutor TaskExecutor) {
 	m.logErr(err)
+	// TODO we want to define err of taskexecutor.Init as fatal, but add-index have
+	// some code in Init that need retry, remove it after it's decoupled.
+	if taskExecutor != nil && taskExecutor.IsRetryableError(err) {
+		m.logger.Error("met retryable err", zap.Error(err), zap.Stack("stack"))
+		return
+	}
 	err1 := m.taskTable.FailSubtask(m.ctx, m.id, taskID, err)
 	if err1 != nil {
 		m.logger.Error("update to subtask failed", zap.Error(err1), zap.Stack("stack"))

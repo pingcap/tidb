@@ -363,6 +363,30 @@ func (m *MockTaskExecutor) EXPECT() *MockTaskExecutorMockRecorder {
 	return m.recorder
 }
 
+// Cancel mocks base method.
+func (m *MockTaskExecutor) Cancel() {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "Cancel")
+}
+
+// Cancel indicates an expected call of Cancel.
+func (mr *MockTaskExecutorMockRecorder) Cancel() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Cancel", reflect.TypeOf((*MockTaskExecutor)(nil).Cancel))
+}
+
+// CancelRunningSubtask mocks base method.
+func (m *MockTaskExecutor) CancelRunningSubtask() {
+	m.ctrl.T.Helper()
+	m.ctrl.Call(m, "CancelRunningSubtask")
+}
+
+// CancelRunningSubtask indicates an expected call of CancelRunningSubtask.
+func (mr *MockTaskExecutorMockRecorder) CancelRunningSubtask() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "CancelRunningSubtask", reflect.TypeOf((*MockTaskExecutor)(nil).CancelRunningSubtask))
+}
+
 // Close mocks base method.
 func (m *MockTaskExecutor) Close() {
 	m.ctrl.T.Helper()
@@ -373,6 +397,20 @@ func (m *MockTaskExecutor) Close() {
 func (mr *MockTaskExecutorMockRecorder) Close() *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Close", reflect.TypeOf((*MockTaskExecutor)(nil).Close))
+}
+
+// GetTask mocks base method.
+func (m *MockTaskExecutor) GetTask() *proto.Task {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "GetTask")
+	ret0, _ := ret[0].(*proto.Task)
+	return ret0
+}
+
+// GetTask indicates an expected call of GetTask.
+func (mr *MockTaskExecutorMockRecorder) GetTask() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetTask", reflect.TypeOf((*MockTaskExecutor)(nil).GetTask))
 }
 
 // Init mocks base method.
@@ -403,32 +441,16 @@ func (mr *MockTaskExecutorMockRecorder) IsRetryableError(arg0 any) *gomock.Call 
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "IsRetryableError", reflect.TypeOf((*MockTaskExecutor)(nil).IsRetryableError), arg0)
 }
 
-// Rollback mocks base method.
-func (m *MockTaskExecutor) Rollback(arg0 context.Context, arg1 *proto.Task) error {
+// Run mocks base method.
+func (m *MockTaskExecutor) Run(arg0 *proto.StepResource) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "Rollback", arg0, arg1)
-	ret0, _ := ret[0].(error)
-	return ret0
+	m.ctrl.Call(m, "Run", arg0)
 }
 
-// Rollback indicates an expected call of Rollback.
-func (mr *MockTaskExecutorMockRecorder) Rollback(arg0, arg1 any) *gomock.Call {
+// Run indicates an expected call of Run.
+func (mr *MockTaskExecutorMockRecorder) Run(arg0 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Rollback", reflect.TypeOf((*MockTaskExecutor)(nil).Rollback), arg0, arg1)
-}
-
-// RunStep mocks base method.
-func (m *MockTaskExecutor) RunStep(arg0 context.Context, arg1 *proto.Task, arg2 *proto.StepResource) error {
-	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "RunStep", arg0, arg1, arg2)
-	ret0, _ := ret[0].(error)
-	return ret0
-}
-
-// RunStep indicates an expected call of RunStep.
-func (mr *MockTaskExecutorMockRecorder) RunStep(arg0, arg1, arg2 any) *gomock.Call {
-	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RunStep", reflect.TypeOf((*MockTaskExecutor)(nil).RunStep), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "Run", reflect.TypeOf((*MockTaskExecutor)(nil).Run), arg0)
 }
 
 // MockExtension is a mock of Extension interface.
@@ -455,18 +477,18 @@ func (m *MockExtension) EXPECT() *MockExtensionMockRecorder {
 }
 
 // GetStepExecutor mocks base method.
-func (m *MockExtension) GetStepExecutor(arg0 context.Context, arg1 *proto.Task, arg2 *execute.Summary, arg3 *proto.StepResource) (execute.StepExecutor, error) {
+func (m *MockExtension) GetStepExecutor(arg0 *proto.Task, arg1 *execute.Summary, arg2 *proto.StepResource) (execute.StepExecutor, error) {
 	m.ctrl.T.Helper()
-	ret := m.ctrl.Call(m, "GetStepExecutor", arg0, arg1, arg2, arg3)
+	ret := m.ctrl.Call(m, "GetStepExecutor", arg0, arg1, arg2)
 	ret0, _ := ret[0].(execute.StepExecutor)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
 
 // GetStepExecutor indicates an expected call of GetStepExecutor.
-func (mr *MockExtensionMockRecorder) GetStepExecutor(arg0, arg1, arg2, arg3 any) *gomock.Call {
+func (mr *MockExtensionMockRecorder) GetStepExecutor(arg0, arg1, arg2 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetStepExecutor", reflect.TypeOf((*MockExtension)(nil).GetStepExecutor), arg0, arg1, arg2, arg3)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetStepExecutor", reflect.TypeOf((*MockExtension)(nil).GetStepExecutor), arg0, arg1, arg2)
 }
 
 // IsIdempotent mocks base method.

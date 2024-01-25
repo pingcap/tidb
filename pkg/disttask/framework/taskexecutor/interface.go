@@ -68,6 +68,11 @@ type Pool interface {
 
 // TaskExecutor is the executor for a task.
 // Each task type should implement this interface.
+// context tree of task execution:
+//
+//	Manager.ctx
+//	└── TaskExecutor.ctx: Cancel cancels this one
+//	   └── RunStep.ctx: CancelRunningSubtask cancels this one
 type TaskExecutor interface {
 	// Init initializes the TaskExecutor, the returned error is fatal, it will fail
 	// the task directly, so be careful what to put into it.
@@ -91,6 +96,7 @@ type TaskExecutor interface {
 	Cancel()
 	// Close closes the TaskExecutor.
 	Close()
+	IsRetryableError(err error) bool
 }
 
 // Extension extends the TaskExecutor.
