@@ -188,30 +188,6 @@ func HandleAutoAnalyze(sctx sessionctx.Context,
 		})
 
 		// We need to check every partition of every table to see if it needs to be analyzed.
-<<<<<<< HEAD
-		tidsAndPids := make([]int64, 0, len(tbls))
-		for _, tbl := range tbls {
-			tidsAndPids = append(tidsAndPids, tbl.Meta().ID)
-			tblInfo := tbl.Meta()
-			pi := tblInfo.GetPartitionInfo()
-			if pi != nil {
-				for _, def := range pi.Definitions {
-					tidsAndPids = append(tidsAndPids, def.ID)
-				}
-			}
-		}
-
-		lockedTables, err := statsHandle.GetLockedTables(tidsAndPids...)
-		if err != nil {
-			statslogutil.StatsLogger().Error(
-				"check table lock failed",
-				zap.Error(err),
-			)
-			continue
-		}
-
-=======
->>>>>>> 23953a7cbe8 (statistics: only query locks once (#49473))
 		for _, tbl := range tbls {
 			// If table locked, skip analyze all partitions of the table.
 			// FIXME: This check is not accurate, because other nodes may change the table lock status at any time.

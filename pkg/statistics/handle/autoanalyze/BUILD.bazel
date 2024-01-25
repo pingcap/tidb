@@ -33,11 +33,7 @@ go_test(
     timeout = "short",
     srcs = ["autoanalyze_test.go"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 6,
-=======
-    shard_count = 10,
->>>>>>> 23953a7cbe8 (statistics: only query locks once (#49473))
+    shard_count = 8,
     deps = [
         ":autoanalyze",
         "//pkg/parser/model",

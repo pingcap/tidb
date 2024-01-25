@@ -28,8 +28,6 @@ import (
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-<<<<<<< HEAD
-=======
 func TestAutoAnalyzeLockedTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -89,7 +87,6 @@ func TestDisableAutoAnalyze(t *testing.T) {
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze(dom.InfoSchema()))
 }
 
->>>>>>> 23953a7cbe8 (statistics: only query locks once (#49473))
 func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
