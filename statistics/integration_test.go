@@ -907,3 +907,24 @@ func TestIssue44369(t *testing.T) {
 	tk.MustExec("alter table t rename column b to bb;")
 	tk.MustExec("select * from t where a = 10 and bb > 20;")
 }
+
+func TestIssue49986(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists test.t;")
+	tk.MustExec("create table if not exists test.ast (i varchar(20));")
+	tk.MustExec("create table if not exists test.acc (j varchar(20), k varchar(20), l varchar(20), m varchar(20));")
+	tk.MustQuery("explain format='brief' with t as(select i, (case when b.j = '20001' then b.l else b.k end) an from test.ast a inner join test.acc b on (a.i = b.m) and a.i = 'astp2019121731703151'), t1 as (select i, group_concat(an order by an separator '; ') an from t group by i) select * from t1;").Check(
+		testkit.Rows("Projection 8.00 root  test.ast.i, Column#32",
+			"└─HashAgg 8.00 root  group by:Column#37, funcs:group_concat(Column#34 order by Column#35 separator \"; \")->Column#32, funcs:firstrow(Column#36)->test.ast.i",
+			"  └─Projection 100.00 root  case(eq(test.acc.j, 20001), test.acc.l, test.acc.k)->Column#34, case(eq(test.acc.j, 20001), test.acc.l, test.acc.k)->Column#35, test.ast.i, test.ast.i",
+			"    └─HashJoin 100.00 root  CARTESIAN inner join",
+			"      ├─TableReader(Build) 10.00 root  data:Selection",
+			"      │ └─Selection 10.00 cop[tikv]  eq(test.ast.i, \"astp2019121731703151\")",
+			"      │   └─TableFullScan 10000.00 cop[tikv] table:a keep order:false, stats:pseudo",
+			"      └─TableReader(Probe) 10.00 root  data:Selection",
+			"        └─Selection 10.00 cop[tikv]  eq(\"astp2019121731703151\", test.acc.m)",
+			"          └─TableFullScan 10000.00 cop[tikv] table:b keep order:false, stats:pseudo"))
+}
