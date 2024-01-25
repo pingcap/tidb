@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package session
+package proto
 
 import (
 	"testing"
@@ -20,25 +20,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestIndexUsageSyncLease(t *testing.T) {
-	store, dom := CreateStoreAndBootstrap(t)
-	defer func() { require.NoError(t, store.Close()) }()
-	defer dom.Close()
+func TestTaskType(t *testing.T) {
+	cases := []struct {
+		tp  TaskType
+		val int
+	}{
+		{TaskTypeExample, 1},
+		{ImportInto, 2},
+		{Backfill, 3},
+		{"", 0},
+	}
+	for _, c := range cases {
+		require.Equal(t, c.val, Type2Int(c.tp))
+	}
 
-	dom.SetStatsUpdating(true)
-	se, err := CreateSession(store)
-	require.NoError(t, err)
-
-	sess, ok := se.(*session)
-	require.True(t, ok)
-	require.Nil(t, sess.idxUsageCollector)
-
-	SetIndexUsageSyncLease(1)
-	defer SetIndexUsageSyncLease(0)
-
-	se, err = CreateSession(store)
-	require.NoError(t, err)
-	sess, ok = se.(*session)
-	require.True(t, ok)
-	require.NotNil(t, sess.idxUsageCollector)
+	for _, c := range cases {
+		require.Equal(t, c.tp, Int2Type(c.val))
+	}
 }

@@ -251,6 +251,47 @@ func TestTaskRangesWithSplit(t *testing.T) {
 	require.Greater(t, env.getCheckpoint(), fstCheckpoint)
 }
 
+func TestClearCache(t *testing.T) {
+	c := createFakeCluster(t, 4, true)
+	ctx := context.Background()
+	req := require.New(t)
+	c.splitAndScatter("0012", "0034", "0048")
+
+	clearedCache := make(map[uint64]bool)
+	c.onGetClient = func(u uint64) error {
+		// make store u cache cleared
+		clearedCache[u] = true
+		return nil
+	}
+	failedStoreID := uint64(0)
+	hasFailed := false
+	for _, s := range c.stores {
+		s.clientMu.Lock()
+		s.onGetRegionCheckpoint = func(glftrr *logbackup.GetLastFlushTSOfRegionRequest) error {
+			// mark this store cache cleared
+			failedStoreID = s.GetID()
+			if hasFailed {
+				hasFailed = true
+				return errors.New("failed to get checkpoint")
+			}
+			return nil
+		}
+		s.clientMu.Unlock()
+		// mark one store failed is enough
+		break
+	}
+	env := &testEnv{fakeCluster: c, testCtx: t}
+	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv.StartTaskListener(ctx)
+	var err error
+	shouldFinishInTime(t, time.Second, "ticking", func() {
+		err = adv.OnTick(ctx)
+	})
+	req.NoError(err)
+	req.True(failedStoreID > 0, "failed to mark the cluster: ")
+	req.Equal(clearedCache[failedStoreID], true)
+}
+
 func TestBlocked(t *testing.T) {
 	log.SetLevel(zapcore.DebugLevel)
 	c := createFakeCluster(t, 4, true)

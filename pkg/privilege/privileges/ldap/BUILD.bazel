@@ -29,5 +29,6 @@ go_test(
         "test/ldap.key",
     ],
     flaky = True,
+    shard_count = 3,
     deps = ["@com_github_stretchr_testify//require"],
 )

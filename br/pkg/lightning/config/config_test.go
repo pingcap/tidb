@@ -987,7 +987,11 @@ func TestAdjustConflictStrategy(t *testing.T) {
 	cfg.TikvImporter.Backend = BackendLocal
 	cfg.Conflict.Strategy = ReplaceOnDup
 	cfg.TikvImporter.ParallelImport = true
-	require.ErrorContains(t, cfg.Adjust(ctx), "conflict.strategy cannot be used with tikv-importer.parallel-import")
+	require.ErrorContains(t, cfg.Adjust(ctx), `conflict.strategy cannot be used with tikv-importer.parallel-import and tikv-importer.backend = "local"`)
+
+	cfg.TikvImporter.Backend = BackendTiDB
+	cfg.Conflict.Strategy = IgnoreOnDup
+	require.NoError(t, cfg.Adjust(ctx))
 
 	cfg.TikvImporter.Backend = BackendLocal
 	cfg.Conflict.Strategy = ReplaceOnDup
@@ -1294,4 +1298,17 @@ func TestAdjustConflict(t *testing.T) {
 	cfg.Conflict.Threshold = 1
 	cfg.Conflict.MaxRecordRows = 1
 	require.ErrorContains(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App), `cannot record duplication (conflict.max-record-rows > 0) when use tikv-importer.backend = "tidb" and conflict.strategy = "replace"`)
+}
+
+func TestAdjustBlockSize(t *testing.T) {
+	cfg := NewConfig()
+	cfg.TikvImporter.Backend = BackendLocal
+	cfg.TikvImporter.SortedKVDir = "."
+	cfg.TiDB.DistSQLScanConcurrency = 1
+	cfg.Mydumper.SourceDir = "."
+	cfg.TikvImporter.BlockSize = 0
+
+	err := cfg.Adjust(context.Background())
+	require.Error(t, err)
+	require.Equal(t, ByteSize(16384), cfg.TikvImporter.BlockSize)
 }

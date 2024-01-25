@@ -2,7 +2,11 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "mpp",
-    srcs = ["local_mpp_coordinator.go"],
+    srcs = [
+        "executor_with_retry.go",
+        "local_mpp_coordinator.go",
+        "recovery_handler.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/executor/internal/mpp",
     visibility = ["//pkg/executor:__subpackages__"],
     deps = [
@@ -11,6 +15,7 @@ go_library(
         "//pkg/executor/internal/builder",
         "//pkg/executor/internal/util",
         "//pkg/executor/metrics",
+        "//pkg/executor/mppcoordmanager",
         "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/planner/core",
@@ -23,10 +28,12 @@ go_library(
         "//pkg/util/execdetails",
         "//pkg/util/logutil",
         "//pkg/util/memory",
+        "//pkg/util/tiflashcompute",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/mpp",
         "@com_github_pingcap_tipb//go-tipb",
+        "@com_github_tikv_client_go_v2//util",
         "@org_uber_go_zap//:zap",
     ],
 )

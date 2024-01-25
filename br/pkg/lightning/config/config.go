@@ -100,6 +100,7 @@ const (
 
 	DefaultEngineMemCacheSize      = 512 * units.MiB
 	DefaultLocalWriterMemCacheSize = 128 * units.MiB
+	DefaultBlockSize               = 16 * units.KiB
 
 	defaultCSVDataCharacterSet       = "binary"
 	defaultCSVDataInvalidCharReplace = utf8.RuneError
@@ -187,7 +188,7 @@ func (d *DBStore) adjust(
 		if d.Security.TLSConfig == nil {
 			/* #nosec G402 */
 			d.Security.TLSConfig = &tls.Config{
-				MinVersion:         tls.VersionTLS10,
+				MinVersion:         tls.VersionTLS12,
 				InsecureSkipVerify: true,
 				NextProtos:         []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
 			}
@@ -1115,6 +1116,9 @@ func (t *TikvImporter) adjust() error {
 		if t.LocalWriterMemCacheSize == 0 {
 			t.LocalWriterMemCacheSize = DefaultLocalWriterMemCacheSize
 		}
+		if t.BlockSize == 0 {
+			t.BlockSize = DefaultBlockSize
+		}
 
 		if t.ParallelImport && t.AddIndexBySQL {
 			return common.ErrInvalidConfig.
@@ -1347,9 +1351,9 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 			"unsupported `%s` (%s)", strategyConfigFrom, c.Strategy)
 	}
 	if c.Strategy != "" {
-		if i.ParallelImport {
+		if i.ParallelImport && i.Backend == BackendLocal {
 			return common.ErrInvalidConfig.GenWithStack(
-				"%s cannot be used with tikv-importer.parallel-import",
+				`%s cannot be used with tikv-importer.parallel-import and tikv-importer.backend = "local"`,
 				strategyConfigFrom)
 		}
 		if i.DuplicateResolution != DupeResAlgNone {

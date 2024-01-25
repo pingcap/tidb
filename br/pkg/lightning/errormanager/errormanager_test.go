@@ -623,7 +623,7 @@ func TestErrorMgrErrorOutput(t *testing.T) {
 		remainingError:    cfg.App.MaxError,
 		configConflict:    &cfg.Conflict,
 		conflictErrRemain: atomic.NewInt64(100),
-		schemaEscaped:     "`error_info`",
+		schema:            "error_info",
 		conflictV1Enabled: true,
 	}
 

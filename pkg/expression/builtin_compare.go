@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -655,13 +654,12 @@ func (b *builtinGreatestCmpStringAsTimeSig) Clone() builtinFunc {
 // evalString evals a builtinGreatestCmpStringAsTimeSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#function_greatest
 func (b *builtinGreatestCmpStringAsTimeSig) evalString(ctx EvalContext, row chunk.Row) (strRes string, isNull bool, err error) {
-	sc := ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err := b.args[i].EvalString(ctx, row)
 		if isNull || err != nil {
 			return "", true, err
 		}
-		v, err = doTimeConversionForGL(b.cmpAsDate, ctx, sc, v)
+		v, err = doTimeConversionForGL(b.cmpAsDate, ctx, v)
 		if err != nil {
 			return v, true, err
 		}
@@ -673,18 +671,19 @@ func (b *builtinGreatestCmpStringAsTimeSig) evalString(ctx EvalContext, row chun
 	return strRes, false, nil
 }
 
-func doTimeConversionForGL(cmpAsDate bool, ctx EvalContext, sc *stmtctx.StatementContext, strVal string) (string, error) {
+func doTimeConversionForGL(cmpAsDate bool, ctx EvalContext, strVal string) (string, error) {
 	var t types.Time
 	var err error
+	tc := typeCtx(ctx)
 	if cmpAsDate {
-		t, err = types.ParseDate(sc.TypeCtx(), strVal)
+		t, err = types.ParseDate(tc, strVal)
 		if err == nil {
-			t, err = t.Convert(sc.TypeCtx(), mysql.TypeDate)
+			t, err = t.Convert(tc, mysql.TypeDate)
 		}
 	} else {
-		t, err = types.ParseDatetime(sc.TypeCtx(), strVal)
+		t, err = types.ParseDatetime(tc, strVal)
 		if err == nil {
-			t, err = t.Convert(sc.TypeCtx(), mysql.TypeDatetime)
+			t, err = t.Convert(tc, mysql.TypeDatetime)
 		}
 	}
 	if err != nil {
@@ -720,9 +719,9 @@ func (b *builtinGreatestTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res t
 		}
 	}
 	// Convert ETType Time value to MySQL actual type, distinguish date and datetime
-	sc := ctx.GetSessionVars().StmtCtx
+	tc := typeCtx(ctx)
 	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
-	if res, err = res.Convert(sc.TypeCtx(), resTimeTp); err != nil {
+	if res, err = res.Convert(tc, resTimeTp); err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
 	return res, false, nil
@@ -953,13 +952,12 @@ func (b *builtinLeastCmpStringAsTimeSig) Clone() builtinFunc {
 // evalString evals a builtinLeastCmpStringAsTimeSig.
 // See http://dev.mysql.com/doc/refman/5.7/en/comparison-operators.html#functionleast
 func (b *builtinLeastCmpStringAsTimeSig) evalString(ctx EvalContext, row chunk.Row) (strRes string, isNull bool, err error) {
-	sc := ctx.GetSessionVars().StmtCtx
 	for i := 0; i < len(b.args); i++ {
 		v, isNull, err := b.args[i].EvalString(ctx, row)
 		if isNull || err != nil {
 			return "", true, err
 		}
-		v, err = doTimeConversionForGL(b.cmpAsDate, ctx, sc, v)
+		v, err = doTimeConversionForGL(b.cmpAsDate, ctx, v)
 		if err != nil {
 			return v, true, err
 		}
@@ -994,9 +992,9 @@ func (b *builtinLeastTimeSig) evalTime(ctx EvalContext, row chunk.Row) (res type
 		}
 	}
 	// Convert ETType Time value to MySQL actual type, distinguish date and datetime
-	sc := ctx.GetSessionVars().StmtCtx
+	tc := typeCtx(ctx)
 	resTimeTp := getAccurateTimeTypeForGLRet(b.cmpAsDate)
-	if res, err = res.Convert(sc.TypeCtx(), resTimeTp); err != nil {
+	if res, err = res.Convert(tc, resTimeTp); err != nil {
 		return types.ZeroTime, true, handleInvalidTimeError(ctx, err)
 	}
 	return res, false, nil
@@ -1535,7 +1533,7 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 		exprType := args[1-conIdx].GetType()
 		exprEvalType := exprType.EvalType()
 		if exprType.GetType() == mysql.TypeYear {
-			reason := errors.Errorf("'%v' may be converted to INT", args[conIdx].String())
+			reason := errors.NewNoStackErrorf("'%v' may be converted to INT", args[conIdx].String())
 			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
 			return true
 		}
@@ -1545,7 +1543,7 @@ func allowCmpArgsRefining4PlanCache(ctx sessionctx.Context, args []Expression) (
 		conEvalType := args[conIdx].GetType().EvalType()
 		if exprEvalType == types.ETInt &&
 			(conEvalType == types.ETString || conEvalType == types.ETReal || conEvalType == types.ETDecimal) {
-			reason := errors.Errorf("'%v' may be converted to INT", args[conIdx].String())
+			reason := errors.NewNoStackErrorf("'%v' may be converted to INT", args[conIdx].String())
 			ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(reason)
 			return true
 		}
@@ -2578,22 +2576,8 @@ func (b *builtinNullEQIntSig) evalInt(ctx EvalContext, row chunk.Row) (val int64
 		res = 1
 	case isNull0 != isNull1:
 		return res, false, nil
-	case isUnsigned0 && isUnsigned1 && cmp.Compare(uint64(arg0), uint64(arg1)) == 0:
-		res = 1
-	case !isUnsigned0 && !isUnsigned1 && cmp.Compare(arg0, arg1) == 0:
-		res = 1
-	case isUnsigned0 && !isUnsigned1:
-		if arg1 < 0 {
-			return res, false, nil
-		}
-		if cmp.Compare(arg0, arg1) == 0 {
-			res = 1
-		}
-	case !isUnsigned0 && isUnsigned1:
-		if arg0 < 0 {
-			return res, false, nil
-		}
-		if cmp.Compare(arg0, arg1) == 0 {
+	default:
+		if types.CompareInt(arg0, isUnsigned0, arg1, isUnsigned1) == 0 {
 			res = 1
 		}
 	}
@@ -2896,26 +2880,7 @@ func CompareInt(sctx EvalContext, lhsArg, rhsArg Expression, lhsRow, rhsRow chun
 	}
 
 	isUnsigned0, isUnsigned1 := mysql.HasUnsignedFlag(lhsArg.GetType().GetFlag()), mysql.HasUnsignedFlag(rhsArg.GetType().GetFlag())
-	var res int
-	switch {
-	case isUnsigned0 && isUnsigned1:
-		res = cmp.Compare(uint64(arg0), uint64(arg1))
-	case isUnsigned0 && !isUnsigned1:
-		if arg1 < 0 || uint64(arg0) > math.MaxInt64 {
-			res = 1
-		} else {
-			res = cmp.Compare(arg0, arg1)
-		}
-	case !isUnsigned0 && isUnsigned1:
-		if arg0 < 0 || uint64(arg1) > math.MaxInt64 {
-			res = -1
-		} else {
-			res = cmp.Compare(arg0, arg1)
-		}
-	case !isUnsigned0 && !isUnsigned1:
-		res = cmp.Compare(arg0, arg1)
-	}
-	return int64(res), false, nil
+	return int64(types.CompareInt(arg0, isUnsigned0, arg1, isUnsigned1)), false, nil
 }
 
 func genCompareString(collation string) func(sctx EvalContext, lhsArg Expression, rhsArg Expression, lhsRow chunk.Row, rhsRow chunk.Row) (int64, bool, error) {

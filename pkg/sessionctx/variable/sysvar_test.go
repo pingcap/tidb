@@ -67,7 +67,7 @@ func TestSQLModeVar(t *testing.T) {
 	require.Equal(t, "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION", val)
 
 	require.Nil(t, sv.SetSessionFromHook(vars, val)) // sets to strict from above
-	require.True(t, vars.StrictSQLMode)
+	require.True(t, vars.SQLMode.HasStrictMode())
 
 	sqlMode, err := mysql.GetSQLMode(val)
 	require.NoError(t, err)
@@ -79,7 +79,7 @@ func TestSQLModeVar(t *testing.T) {
 	require.Equal(t, "ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION", val)
 
 	require.Nil(t, sv.SetSessionFromHook(vars, val)) // sets to non-strict from above
-	require.False(t, vars.StrictSQLMode)
+	require.False(t, vars.SQLMode.HasStrictMode())
 	sqlMode, err = mysql.GetSQLMode(val)
 	require.NoError(t, err)
 	require.Equal(t, sqlMode, vars.SQLMode)
@@ -1452,4 +1452,62 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 	require.NoError(t, err1)
 	require.Len(t, val, 0)
 	cancel()
+}
+
+func TestGlobalSystemVariableInitialValue(t *testing.T) {
+	vars := []struct {
+		name    string
+		val     string
+		initVal string
+	}{
+		{
+			TiDBTxnMode,
+			DefTiDBTxnMode,
+			"pessimistic",
+		},
+		{
+			TiDBEnableAsyncCommit,
+			BoolToOnOff(DefTiDBEnableAsyncCommit),
+			BoolToOnOff(DefTiDBEnableAsyncCommit),
+		},
+		{
+			TiDBEnable1PC,
+			BoolToOnOff(DefTiDBEnable1PC),
+			BoolToOnOff(DefTiDBEnable1PC),
+		},
+		{
+			TiDBMemOOMAction,
+			DefTiDBMemOOMAction,
+			OOMActionLog,
+		},
+		{
+			TiDBEnableAutoAnalyze,
+			BoolToOnOff(DefTiDBEnableAutoAnalyze),
+			Off,
+		},
+		{
+			TiDBRowFormatVersion,
+			strconv.Itoa(DefTiDBRowFormatV1),
+			strconv.Itoa(DefTiDBRowFormatV2),
+		},
+		{
+			TiDBTxnAssertionLevel,
+			DefTiDBTxnAssertionLevel,
+			AssertionFastStr,
+		},
+		{
+			TiDBEnableMutationChecker,
+			BoolToOnOff(DefTiDBEnableMutationChecker),
+			On,
+		},
+		{
+			TiDBPessimisticTransactionFairLocking,
+			BoolToOnOff(DefTiDBPessimisticTransactionFairLocking),
+			On,
+		},
+	}
+	for _, v := range vars {
+		initVal := GlobalSystemVariableInitialValue(v.name, v.val)
+		require.Equal(t, v.initVal, initVal)
+	}
 }

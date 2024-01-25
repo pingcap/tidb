@@ -218,7 +218,7 @@ func init() {
 	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID
 }
 
-// getTblInfoForUsedStatsByPhysicalID get table name, partition name and TableInfo that will be used to record used stats.
+// getTblInfoForUsedStatsByPhysicalID get table name, partition name and HintedTable that will be used to record used stats.
 func getTblInfoForUsedStatsByPhysicalID(sctx sessionctx.Context, id int64) (fullName string, tblInfo *model.TableInfo) {
 	fullName = "tableID " + strconv.FormatInt(id, 10)
 
@@ -359,7 +359,13 @@ func (ds *DataSource) derivePathStatsAndTryHeuristics() error {
 		for _, uniqueIdx := range uniqueIdxsWithDoubleScan {
 			uniqueIdxAccessCols = append(uniqueIdxAccessCols, uniqueIdx.GetCol2LenFromAccessConds(ds.SCtx()))
 			// Find the unique index with the minimal number of ranges as `uniqueBest`.
-			if uniqueBest == nil || len(uniqueIdx.Ranges) < len(uniqueBest.Ranges) {
+			/*
+				If the number of scan ranges are equal, choose the one with the least table predicates - meaning the unique index with the most index predicates.
+				Because the most index predicates means that it is more likely to fetch 0 index rows.
+				Example in the test "TestPointgetIndexChoosen".
+			*/
+			if uniqueBest == nil || len(uniqueIdx.Ranges) < len(uniqueBest.Ranges) ||
+				(len(uniqueIdx.Ranges) == len(uniqueBest.Ranges) && len(uniqueIdx.TableFilters) < len(uniqueBest.TableFilters)) {
 				uniqueBest = uniqueIdx
 			}
 		}
