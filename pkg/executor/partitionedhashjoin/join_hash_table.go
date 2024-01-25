@@ -15,9 +15,10 @@
 package partitionedhashjoin
 
 import (
-	"github.com/cznic/mathutil"
 	"sync/atomic"
 	"unsafe"
+
+	"github.com/cznic/mathutil"
 )
 
 type subTable struct {
