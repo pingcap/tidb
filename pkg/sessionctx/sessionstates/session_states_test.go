@@ -364,7 +364,7 @@ func TestSessionCtx(t *testing.T) {
 		{
 			// check Status
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				require.Equal(t, mysql.ServerStatusAutocommit, tk.Session().GetSessionVars().Status&mysql.ServerStatusAutocommit)
+				require.True(t, tk.Session().GetSessionVars().IsAutocommit())
 			},
 		},
 		{
@@ -374,7 +374,7 @@ func TestSessionCtx(t *testing.T) {
 				return nil
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				require.Equal(t, uint16(0), tk.Session().GetSessionVars().Status&mysql.ServerStatusAutocommit)
+				require.False(t, tk.Session().GetSessionVars().IsAutocommit())
 			},
 		},
 		{
