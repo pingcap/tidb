@@ -15,7 +15,6 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/parser/format",
         "//pkg/parser/model",
-        "//pkg/sessionctx",
         "//pkg/util/dbterror",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",

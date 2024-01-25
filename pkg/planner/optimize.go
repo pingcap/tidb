@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/types"
@@ -164,7 +163,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		return p, names, err
 	}
 
-	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
+	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx.GetSessionVars().StmtCtx.SetHintWarning)
 	originStmtHints, _, warns := handleStmtHints(tableHints)
 	sessVars.StmtCtx.StmtHints = originStmtHints
 	for _, warn := range warns {
@@ -272,7 +271,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	)
 	if useBinding {
 		minCost := math.MaxFloat64
-		var bindStmtHints stmtctx.StmtHints
+		var bindStmtHints hint.StmtHints
 		originHints := hint.CollectHint(stmtNode)
 		// bindings must be not nil when coming here, try to find the best binding.
 		for _, binding := range bindings {
@@ -377,7 +376,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 func OptimizeForForeignKeyCascade(ctx context.Context, sctx sessionctx.Context, node ast.StmtNode, is infoschema.InfoSchema) (core.Plan, error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
-	hintProcessor := hint.NewQBHintHandler(sctx)
+	hintProcessor := hint.NewQBHintHandler(sctx.GetSessionVars().StmtCtx.SetHintWarning)
 	builder.Init(sctx, is, hintProcessor)
 	p, err := builder.Build(ctx, node)
 	if err != nil {
@@ -459,7 +458,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	// build logical plan
-	hintProcessor := hint.NewQBHintHandler(sctx)
+	hintProcessor := hint.NewQBHintHandler(sctx.GetSessionVars().StmtCtx.SetHintWarning)
 	node.Accept(hintProcessor)
 	defer hintProcessor.HandleUnusedViewHints()
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
@@ -574,7 +573,7 @@ func handleInvalidBinding(ctx context.Context, sctx sessionctx.Context, level st
 	globalHandle.AddInvalidGlobalBinding(binding)
 }
 
-func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHints, offs []int, warns []error) {
+func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints hint.StmtHints, offs []int, warns []error) {
 	if len(hints) == 0 {
 		return
 	}
