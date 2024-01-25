@@ -392,7 +392,7 @@ func updateRange(p PhysicalPlan, ranges ranger.Ranges, rangeInfo string) {
 //     ranges from x.AccessConditions. The only difference between the last ranges and new ranges is the change of parameter
 //     values, which doesn't cause much change on the mem usage of complete ranges.
 //  2. Different parameter values can change the mem usage of complete ranges. If we set range mem limit here, range fallback
-//     may happen and cause correctness problem. For example, a in (?, ?, ?) is the access condition. When the plan is firstly
+//     may heppen and cause correctness problem. For example, a in (?, ?, ?) is the access condition. When the plan is firstly
 //     generated, its complete ranges are ['a','a'], ['b','b'], ['c','c'], whose mem usage is under range mem limit 100B.
 //     When the cached plan is hit, the complete ranges may become ['aaa','aaa'], ['bbb','bbb'], ['ccc','ccc'], whose mem
 //     usage exceeds range mem limit 100B, and range fallback happens and tidb may fetch more rows than users expect.
@@ -476,6 +476,7 @@ func rebuildRange(p Plan) error {
 				for i := range x.IndexValues {
 					x.IndexValues[i] = ranges.Ranges[0].LowVal[i]
 				}
+				panic("What??")
 			} else {
 				var pkCol *expression.Column
 				var unsignedIntHandle bool
@@ -538,13 +539,11 @@ func rebuildRange(p Plan) error {
 		if len(x.IndexConstants) > 0 {
 			for i, param := range x.IndexConstants {
 				if param != nil {
-					// TODO: Can this happen with partitioned tables?
 					dVal, err := convertConstant2Datum(sctx, param, x.ColsFieldType[i])
 					if err != nil {
 						return err
 					}
 					x.IndexValues[i] = *dVal
-					// TODO: Also check non-clustered partitioned tables?
 					if x.PartitionDef != nil &&
 						x.IndexInfo.Columns[i].Offset == x.partitionColumnPos {
 						// Single column PK <=> Must be the partitioning columns!
@@ -552,7 +551,6 @@ func rebuildRange(p Plan) error {
 							return errors.New("point get for partition table can not use plan cache, PK is not handle")
 						}
 						// Re-calculate the pruning!
-						// TODO: Check how expressions are handled...
 						partDef, _, _, isTableDual = getPartitionDef(sctx, x.TblInfo, []nameValuePair{{x.TblInfo.Columns[x.partitionColumnPos].Name.L, &x.TblInfo.Columns[x.partitionColumnPos].FieldType, *dVal, x.IndexConstants[i]}})
 						// TODO: Support isTableDual?
 						if isTableDual {
@@ -570,10 +568,8 @@ func rebuildRange(p Plan) error {
 			}
 			return nil
 		}
-		// TODO: Also check non-clustered partitioned tables?
 		if x.PartitionDef != nil {
 			// TODO: difference between IndexValues and handles?
-			// Should this be moved to Access conds above?
 			// Re-calculate the pruning!
 			// For now, use the fully fledged pruner!
 			is := domain.GetDomain(sctx).InfoSchema()

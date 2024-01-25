@@ -1493,7 +1493,6 @@ func containMutableConst(ctx EvalContext, exprs []Expression) bool {
 }
 
 // ReEvaluateParamMarkerConst updates all constants to their current ParamMarkers
-// TODO: Does it need to handle DeferredExpr as well?
 func ReEvaluateParamMarkerConst(ctx sessionctx.Context, exprs []Expression) error {
 	var err error
 	for _, expr := range exprs {
