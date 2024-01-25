@@ -1352,22 +1352,8 @@ func (local *local) writeAndIngestByRange(
 
 	var regions []*split.RegionInfo
 	var err error
-<<<<<<< HEAD
 	ctx, cancel := context.WithCancel(ctxt)
 	defer cancel()
-=======
-	// split region by given ranges
-	failpoint.Inject("failToSplit", func(_ failpoint.Value) {
-		needSplit = true
-	})
-	logger := log.FromContext(ctx).With(zap.String("uuid", engine.ID())).Begin(zap.InfoLevel, "split and scatter ranges")
-	backOffTime := 10 * time.Second
-	maxbackoffTime := 120 * time.Second
-	for i := 0; i < maxRetryTimes; i++ {
-		failpoint.Inject("skipSplitAndScatter", func() {
-			failpoint.Break()
-		})
->>>>>>> 2a564d4a8ca (Lightning: increase backoff if split fails (#49518))
 
 WriteAndIngest:
 	for retry := 0; retry < maxRetryTimes; {
@@ -1414,23 +1400,6 @@ WriteAndIngest:
 			}
 		}
 
-<<<<<<< HEAD
-=======
-		log.FromContext(ctx).Warn("split and scatter failed in retry", zap.String("engine ID", engine.ID()),
-			log.ShortError(err), zap.Int("retry", i))
-		select {
-		case <-time.After(backOffTime):
-		case <-ctx.Done():
-			return ctx.Err()
-		}
-		backOffTime *= 2
-		if backOffTime > maxbackoffTime {
-			backOffTime = maxbackoffTime
-		}
-	}
-	logger.End(zap.ErrorLevel, err)
-	if err != nil {
->>>>>>> 2a564d4a8ca (Lightning: increase backoff if split fails (#49518))
 		return err
 	}
 
@@ -1724,6 +1693,9 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		failpoint.Inject("failToSplit", func(_ failpoint.Value) {
 			needSplit = true
 		})
+
+		backOffTime := 10 * time.Second
+		maxbackoffTime := 120 * time.Second
 		for i := 0; i < maxRetryTimes; i++ {
 			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, needSplit, maxBatchSplitRanges)
 			if err == nil || common.IsContextCanceledError(err) {
@@ -1732,6 +1704,16 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 
 			log.FromContext(ctx).Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
 				log.ShortError(err), zap.Int("retry", i))
+
+			select {
+			case <-time.After(backOffTime):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			backOffTime *= 2
+			if backOffTime > maxbackoffTime {
+				backOffTime = maxbackoffTime
+			}
 		}
 		if err != nil {
 			log.FromContext(ctx).Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))
