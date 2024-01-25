@@ -807,5 +807,4 @@ func TestIssue49986(t *testing.T) {
 			"      └─TableReader(Probe) 10.00 root  data:Selection",
 			"        └─Selection 10.00 cop[tikv]  eq(\"astp2019121731703151\", test.acc.m)",
 			"          └─TableFullScan 10000.00 cop[tikv] table:b keep order:false, stats:pseudo"))
-
 }
