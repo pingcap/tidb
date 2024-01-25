@@ -1558,9 +1558,12 @@ func (s *session) UpdateProcessInfo() {
 	if pi == nil || pi.CurTxnStartTS != 0 {
 		return
 	}
+	// do not modify this two fields in place, see issue: issues/50607
+	shallowCP := pi.Clone()
 	// Update the current transaction start timestamp.
-	pi.CurTxnStartTS = s.sessionVars.TxnCtx.StartTS
-	pi.CurTxnCreateTime = s.sessionVars.TxnCtx.CreateTime
+	shallowCP.CurTxnStartTS = s.sessionVars.TxnCtx.StartTS
+	shallowCP.CurTxnCreateTime = s.sessionVars.TxnCtx.CreateTime
+	s.processInfo.Store(shallowCP)
 }
 
 func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
