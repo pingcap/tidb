@@ -181,7 +181,7 @@ func (c *columnStatsUsageCollector) addHistNeededColumns(ds *DataSource) {
 		c.histNeededCols[tblColID] = true
 	}
 	for _, col := range ds.Columns {
-		if !colIDSet.Has(int(col.ID)) {
+		if !colIDSet.Has(int(col.ID)) && !col.Hidden {
 			tblColID := model.TableItemID{TableID: ds.physicalTableID, ID: col.ID, IsIndex: false}
 			if _, ok := c.histNeededCols[tblColID]; ok {
 				continue
