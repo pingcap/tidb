@@ -361,14 +361,14 @@ func TestTaskExecutor(t *testing.T) {
 	// no subtask to run, should exit the loop after some time.
 	checkIntervalBak := checkInterval
 	maxIntervalBak := maxCheckInterval
+	checkBalanceSubtaskIntervalBak := checkBalanceSubtaskInterval
 	defer func() {
 		checkInterval = checkIntervalBak
 		maxCheckInterval = maxIntervalBak
+		checkBalanceSubtaskInterval = checkBalanceSubtaskIntervalBak
 	}()
-	maxCheckInterval, checkInterval = time.Millisecond, time.Millisecond
+	maxCheckInterval, checkInterval, checkBalanceSubtaskInterval = time.Millisecond, time.Millisecond, time.Millisecond
 	mockStepExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-	mockSubtaskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "id", taskID, proto.StepOne,
-		unfinishedNormalSubtaskStates...).Return(nil, nil)
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(nil, nil).Times(8)
 	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), gomock.Any()).Return(task, nil).Times(8)
@@ -380,7 +380,7 @@ func TestTaskExecutor(t *testing.T) {
 	// no-subtask check counter should be reset after a subtask is run.
 	mockStepExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockSubtaskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "id", taskID, proto.StepOne,
-		unfinishedNormalSubtaskStates...).Return(nil, nil)
+		unfinishedNormalSubtaskStates...).Return(nil, nil).AnyTimes()
 	// no subtask to run for 4 times.
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(nil, nil).Times(4)
