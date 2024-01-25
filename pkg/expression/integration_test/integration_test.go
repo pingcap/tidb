@@ -1413,11 +1413,6 @@ func TestTimeBuiltin(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
-	originSQLMode := tk.Session().GetSessionVars().StrictSQLMode
-	tk.Session().GetSessionVars().StrictSQLMode = true
-	defer func() {
-		tk.Session().GetSessionVars().StrictSQLMode = originSQLMode
-	}()
 	tk.MustExec("use test")
 
 	// for makeDate

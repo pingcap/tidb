@@ -24,8 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/resourcemanager/pool/spool"
-	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
@@ -37,7 +35,7 @@ var (
 	checkTaskRunningInterval = 3 * time.Second
 	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
 	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
-	// DefaultCleanUpInterval is the interval of cleanUp routine.
+	// DefaultCleanUpInterval is the interval of cleanup routine.
 	DefaultCleanUpInterval = 10 * time.Minute
 )
 
@@ -103,7 +101,7 @@ type Manager struct {
 	cancel      context.CancelFunc
 	taskMgr     TaskManager
 	wg          tidbutil.WaitGroupWrapper
-	gPool       *spool.Pool
+	schedulerWG tidbutil.WaitGroupWrapper
 	slotMgr     *SlotManager
 	nodeMgr     *NodeManager
 	balancer    *balancer
@@ -122,18 +120,13 @@ type Manager struct {
 }
 
 // NewManager creates a scheduler struct.
-func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) (*Manager, error) {
+func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) *Manager {
 	schedulerManager := &Manager{
 		taskMgr:  taskMgr,
 		serverID: serverID,
 		slotMgr:  newSlotManager(),
 		nodeMgr:  newNodeManager(),
 	}
-	gPool, err := spool.NewPool("scheduler_pool", int32(proto.MaxConcurrentTask), util.DistTask, spool.WithBlocking(true))
-	if err != nil {
-		return nil, err
-	}
-	schedulerManager.gPool = gPool
 	schedulerManager.ctx, schedulerManager.cancel = context.WithCancel(ctx)
 	schedulerManager.mu.schedulerMap = make(map[int64]Scheduler)
 	schedulerManager.finishCh = make(chan struct{}, proto.MaxConcurrentTask)
@@ -143,7 +136,7 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) (*Man
 		slotMgr: schedulerManager.slotMgr,
 	})
 
-	return schedulerManager, nil
+	return schedulerManager
 }
 
 // Start the schedulerManager, start the scheduleTaskLoop to start multiple schedulers.
@@ -172,7 +165,7 @@ func (sm *Manager) Start() {
 // Stop the schedulerManager.
 func (sm *Manager) Stop() {
 	sm.cancel()
-	sm.gPool.ReleaseAndWait()
+	sm.schedulerWG.Wait()
 	sm.wg.Wait()
 	sm.clearSchedulers()
 	sm.initialized = false
@@ -310,7 +303,7 @@ func (sm *Manager) startScheduler(basicTask *proto.Task, reservedExecID string) 
 	sm.addScheduler(task.ID, scheduler)
 	sm.slotMgr.reserve(basicTask, reservedExecID)
 	// Using the pool with block, so it wouldn't return an error.
-	_ = sm.gPool.Run(func() {
+	sm.schedulerWG.RunWithLog(func() {
 		defer func() {
 			scheduler.Close()
 			sm.delScheduler(task.ID)
@@ -325,13 +318,13 @@ func (sm *Manager) startScheduler(basicTask *proto.Task, reservedExecID string) 
 }
 
 func (sm *Manager) cleanupTaskLoop() {
-	logutil.BgLogger().Info("cleanUp loop start")
+	logutil.BgLogger().Info("cleanup loop start")
 	ticker := time.NewTicker(DefaultCleanUpInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-sm.ctx.Done():
-			logutil.BgLogger().Info("cleanUp loop exits", zap.Error(sm.ctx.Err()))
+			logutil.BgLogger().Info("cleanup loop exits", zap.Error(sm.ctx.Err()))
 			return
 		case <-sm.finishCh:
 			sm.doCleanupTask()
@@ -344,7 +337,7 @@ func (sm *Manager) cleanupTaskLoop() {
 // WaitCleanUpFinished is used to sync the test.
 var WaitCleanUpFinished = make(chan struct{}, 1)
 
-// doCleanupTask processes clean up routine defined by each type of tasks and cleanUpMeta.
+// doCleanupTask processes clean up routine defined by each type of tasks and cleanupMeta.
 // For example:
 //
 //	tasks with global sort should clean up tmp files stored on S3.
@@ -356,44 +349,45 @@ func (sm *Manager) doCleanupTask() {
 		proto.TaskStateSucceed,
 	)
 	if err != nil {
-		logutil.BgLogger().Warn("cleanUp routine failed", zap.Error(err))
+		logutil.BgLogger().Warn("cleanup routine failed", zap.Error(err))
 		return
 	}
 	if len(tasks) == 0 {
 		return
 	}
-	logutil.BgLogger().Info("cleanUp routine start")
-	err = sm.cleanUpFinishedTasks(tasks)
+	logutil.BgLogger().Info("cleanup routine start")
+	err = sm.cleanupFinishedTasks(tasks)
 	if err != nil {
-		logutil.BgLogger().Warn("cleanUp routine failed", zap.Error(err))
+		logutil.BgLogger().Warn("cleanup routine failed", zap.Error(err))
 		return
 	}
 	failpoint.Inject("WaitCleanUpFinished", func() {
 		WaitCleanUpFinished <- struct{}{}
 	})
-	logutil.BgLogger().Info("cleanUp routine success")
+	logutil.BgLogger().Info("cleanup routine success")
 }
 
-func (sm *Manager) cleanUpFinishedTasks(tasks []*proto.Task) error {
+func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 	cleanedTasks := make([]*proto.Task, 0)
 	var firstErr error
 	for _, task := range tasks {
-		cleanUpFactory := getSchedulerCleanUpFactory(task.Type)
-		if cleanUpFactory != nil {
-			cleanUp := cleanUpFactory()
-			err := cleanUp.CleanUp(sm.ctx, task)
+		logutil.BgLogger().Info("cleanup task", zap.Int64("task-id", task.ID))
+		cleanupFactory := getSchedulerCleanUpFactory(task.Type)
+		if cleanupFactory != nil {
+			cleanup := cleanupFactory()
+			err := cleanup.CleanUp(sm.ctx, task)
 			if err != nil {
 				firstErr = err
 				break
 			}
 			cleanedTasks = append(cleanedTasks, task)
 		} else {
-			// if task doesn't register cleanUp function, mark it as cleaned.
+			// if task doesn't register cleanup function, mark it as cleaned.
 			cleanedTasks = append(cleanedTasks, task)
 		}
 	}
 	if firstErr != nil {
-		logutil.BgLogger().Warn("cleanUp routine failed", zap.Error(errors.Trace(firstErr)))
+		logutil.BgLogger().Warn("cleanup routine failed", zap.Error(errors.Trace(firstErr)))
 	}
 
 	failpoint.Inject("mockTransferErr", func() {

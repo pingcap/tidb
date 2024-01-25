@@ -2413,7 +2413,7 @@ func (b *builtinCharSig) evalString(ctx EvalContext, row chunk.Row) (string, boo
 	if err != nil {
 		tc := typeCtx(ctx)
 		tc.AppendWarning(err)
-		if strictMode(ctx) {
+		if sqlMode(ctx).HasStrictMode() {
 			return "", true, nil
 		}
 	}

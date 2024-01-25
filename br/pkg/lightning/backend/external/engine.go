@@ -441,6 +441,7 @@ func (e *Engine) Close() error {
 		e.bufPool.Destroy()
 		e.bufPool = nil
 	}
+	e.storage.Close()
 	return nil
 }
 

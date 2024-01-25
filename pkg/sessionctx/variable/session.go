@@ -759,9 +759,6 @@ type SessionVars struct {
 	// the slow log to make it be compatible with MySQL, https://github.com/pingcap/tidb/issues/17846.
 	CurrentDBChanged bool
 
-	// StrictSQLMode indicates if the session is in strict mode.
-	StrictSQLMode bool
-
 	// CommonGlobalLoaded indicates if common global variable has been loaded for this session.
 	CommonGlobalLoaded bool
 
@@ -1944,7 +1941,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		TxnCtx:                        &TransactionContext{},
 		RetryInfo:                     &RetryInfo{},
 		ActiveRoles:                   make([]*auth.RoleIdentity, 0, 10),
-		StrictSQLMode:                 true,
 		AutoIncrementIncrement:        DefAutoIncrementIncrement,
 		AutoIncrementOffset:           DefAutoIncrementOffset,
 		Status:                        mysql.ServerStatusAutocommit,

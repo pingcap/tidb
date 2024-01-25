@@ -510,7 +510,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 		s.NoError(err2)
 		subtasks, err2 := taskManager.GetSubtasksWithHistory(ctx, task2.ID, proto.ImportStepPostProcess)
 		s.NoError(err2)
-		s.Len(subtasks, 2) // framework will generate a subtask when canceling
+		s.Len(subtasks, 1)
 		var cancelled bool
 		for _, st := range subtasks {
 			if st.State == proto.SubtaskStateCanceled {
