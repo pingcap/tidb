@@ -412,6 +412,8 @@ func (store *MVCCStore) checkExtraTxnStatus(reqCtx *requestCtx, key []byte, star
 	return extraTxnStatus{commitTS: userMeta.CommitTS()}
 }
 
+// PessimisticRollbackWithScanFirst is used to scan the region first to collect related pessimistic locks and
+// then pessimistic rollback them.
 func (store *MVCCStore) PessimisticRollbackWithScanFirst(reqCtx *requestCtx, req *kvrpcpb.PessimisticRollbackRequest) error {
 	if len(req.Keys) > 0 {
 		return errors.Errorf("pessimistic rollback request invalid: there should be no input lock keys but got %v", len(req.Keys))
