@@ -85,6 +85,7 @@ func InitDistTaskMetrics() {
 		}, []string{lblTaskType, lblTaskID, lblTaskStatus, lblSubTaskID, lblExecID})
 }
 
+// SetDistSubTaskDuration set the duration of subtask.
 func SetDistSubTaskDuration(subtask *proto.Subtask) {
 	switch subtask.State {
 	case proto.SubtaskStatePending:
