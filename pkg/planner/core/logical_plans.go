@@ -1917,10 +1917,10 @@ type LogicalTopN struct {
 
 	ByItems []*util.ByItems
 	// PartitionBy is used for extended TopN to consider K heaps. Used by rule_derive_topn_from_window
-	PartitionBy []property.SortItem // This is used for enhanced topN optimization
-	Offset      uint64
-	Count       uint64
-	limitHints  h.LimitHints
+	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
+	Offset           uint64
+	Count            uint64
+	PreferLimitToCop bool
 }
 
 // GetPartitionBy returns partition by fields
@@ -1946,11 +1946,11 @@ func (lt *LogicalTopN) isLimit() bool {
 type LogicalLimit struct {
 	logicalSchemaProducer
 
-	PartitionBy []property.SortItem // This is used for enhanced topN optimization
-	Offset      uint64
-	Count       uint64
-	limitHints  h.LimitHints
-	IsPartial   bool
+	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
+	Offset           uint64
+	Count            uint64
+	PreferLimitToCop bool
+	IsPartial        bool
 }
 
 // GetPartitionBy returns partition by fields

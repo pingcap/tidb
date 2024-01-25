@@ -229,15 +229,10 @@ type PlanHints struct {
 	HJProbe            []HintedTable  // hash_join_probe
 
 	// Hints belows are not associated with any particular table.
-	Agg           AggHints   // hash_agg, merge_agg, agg_to_cop
-	Limit         LimitHints // limit_to_cop
-	CTEMerge      bool       // merge
-	TimeRangeHint ast.HintTimeRange
-}
-
-// LimitHints stores limit hint information.
-type LimitHints struct {
-	PreferLimitToCop bool
+	Agg              AggHints // hash_agg, merge_agg, agg_to_cop
+	PreferLimitToCop bool     // limit_to_cop
+	CTEMerge         bool     // merge
+	TimeRangeHint    ast.HintTimeRange
 }
 
 // HintedTable indicates which table this hint should take effect on.

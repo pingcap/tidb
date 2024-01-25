@@ -66,10 +66,10 @@ func (lt *LogicalTopN) setChild(p LogicalPlan, opt *logicalOptimizeOp) LogicalPl
 
 	if lt.isLimit() {
 		limit := LogicalLimit{
-			Count:       lt.Count,
-			Offset:      lt.Offset,
-			limitHints:  lt.limitHints,
-			PartitionBy: lt.GetPartitionBy(),
+			Count:            lt.Count,
+			Offset:           lt.Offset,
+			PreferLimitToCop: lt.PreferLimitToCop,
+			PartitionBy:      lt.GetPartitionBy(),
 		}.Init(lt.SCtx(), lt.QueryBlockOffset())
 		limit.SetChildren(p)
 		appendTopNPushDownTraceStep(limit, p, opt)
@@ -94,7 +94,7 @@ func (ls *LogicalSort) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) L
 }
 
 func (p *LogicalLimit) convertToTopN(opt *logicalOptimizeOp) *LogicalTopN {
-	topn := LogicalTopN{Offset: p.Offset, Count: p.Count, limitHints: p.limitHints}.Init(p.SCtx(), p.QueryBlockOffset())
+	topn := LogicalTopN{Offset: p.Offset, Count: p.Count, PreferLimitToCop: p.PreferLimitToCop}.Init(p.SCtx(), p.QueryBlockOffset())
 	appendConvertTopNTraceStep(p, topn, opt)
 	return topn
 }
@@ -111,7 +111,7 @@ func (p *LogicalUnionAll) pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp
 	for i, child := range p.children {
 		var newTopN *LogicalTopN
 		if topN != nil {
-			newTopN = LogicalTopN{Count: topN.Count + topN.Offset, limitHints: topN.limitHints}.Init(p.SCtx(), topN.QueryBlockOffset())
+			newTopN = LogicalTopN{Count: topN.Count + topN.Offset, PreferLimitToCop: topN.PreferLimitToCop}.Init(p.SCtx(), topN.QueryBlockOffset())
 			for _, by := range topN.ByItems {
 				newTopN.ByItems = append(newTopN.ByItems, &util.ByItems{Expr: by.Expr, Desc: by.Desc})
 			}
@@ -187,9 +187,9 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int, opt *logic
 	}
 
 	newTopN := LogicalTopN{
-		Count:      topN.Count + topN.Offset,
-		ByItems:    make([]*util.ByItems, len(topN.ByItems)),
-		limitHints: topN.limitHints,
+		Count:            topN.Count + topN.Offset,
+		ByItems:          make([]*util.ByItems, len(topN.ByItems)),
+		PreferLimitToCop: topN.PreferLimitToCop,
 	}.Init(topN.SCtx(), topN.QueryBlockOffset())
 	for i := range topN.ByItems {
 		newTopN.ByItems[i] = topN.ByItems[i].Clone()
