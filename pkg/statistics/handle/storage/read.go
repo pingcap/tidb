@@ -340,7 +340,7 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 		if histID != colInfo.ID {
 			continue
 		}
-		table.ColAndIdxExistenceMap.InsertCol(histID, colInfo, statsVer != statistics.Version0)
+		table.ColAndIdxExistenceMap.InsertCol(histID, colInfo, statsVer != statistics.Version0 || distinct > 0 || nullCount > 0)
 		isHandle := tableInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag())
 		// We will not load buckets, topn and cmsketch if:
 		// 1. lease > 0, and:
