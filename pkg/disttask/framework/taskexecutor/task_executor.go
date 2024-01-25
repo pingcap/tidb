@@ -187,6 +187,7 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 		}
 		if exist, err := e.taskTable.HasSubtasksInStates(e.ctx, e.id, task.ID, task.Step,
 			unfinishedSubtaskStates...); err != nil {
+			e.logger.Error("check whether there are subtasks to run failed", zap.Error(err))
 			continue
 		} else if !exist {
 			if noSubtaskCheckCnt >= maxChecksWhenNoSubtask {
@@ -766,6 +767,7 @@ func (e *BaseTaskExecutor) cancelSubtaskWithRetry(ctx context.Context, taskID in
 func (e *BaseTaskExecutor) updateSubtask(err error) error {
 	task := e.task.Load()
 	err = errors.Cause(err)
+	// TODO this branch is unreachable now, remove it when we refactor error handling.
 	if e.ctx.Err() != nil && context.Cause(e.ctx) == ErrCancelSubtask {
 		return e.cancelSubtaskWithRetry(e.ctx, task.ID, ErrCancelSubtask)
 	} else if e.IsRetryableError(err) {

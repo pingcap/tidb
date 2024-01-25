@@ -49,7 +49,7 @@ func TestTaskExecutorRun(t *testing.T) {
 	mockExtension := mock.NewMockExtension(ctrl)
 	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
 
-	task1 := &proto.Task{Step: proto.StepOne, Type: tp, ID: 1, Concurrency: concurrency}
+	task1 := &proto.Task{State: proto.TaskStateRunning, Step: proto.StepOne, Type: tp, ID: 1, Concurrency: concurrency}
 	// mock for checkBalanceSubtask
 	mockSubtaskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "id",
 		task1.ID, proto.StepOne, proto.SubtaskStateRunning).Return([]*proto.Subtask{{ID: 1}}, nil).AnyTimes()
@@ -263,6 +263,67 @@ func TestTaskExecutorRun(t *testing.T) {
 	mockStepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
 	err = taskExecutor.RunStep(nil)
 	require.NoError(t, err)
+	require.True(t, ctrl.Satisfied())
+
+	// task not found when Run
+	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), task1.ID).Return(nil, storage.ErrTaskNotFound)
+	taskExecutor.Run(nil)
+	require.True(t, ctrl.Satisfied())
+	// task Succeed inside Run
+	task1.State = proto.TaskStateSucceed
+	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), task1.ID).Return(task1, nil)
+	taskExecutor.Run(nil)
+	require.True(t, ctrl.Satisfied())
+
+	task1.State = proto.TaskStateRunning
+	ReduceCheckInterval(t)
+
+	// GetTaskByID error, should continue
+	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), task1.ID).Return(nil, errors.New("mock err"))
+	// HasSubtasksInStates error, should continue
+	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), task1.ID).Return(task1, nil)
+	mockSubtaskTable.EXPECT().HasSubtasksInStates(gomock.Any(), "id", task1.ID, task1.Step,
+		unfinishedNormalSubtaskStates...).Return(false, errors.New("failed to check"))
+	// no subtask to run, should exit the loop after some time.
+	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), task1.ID).Return(task1, nil).Times(8)
+	mockSubtaskTable.EXPECT().HasSubtasksInStates(gomock.Any(), "id", task1.ID, task1.Step,
+		unfinishedNormalSubtaskStates...).Return(false, nil).Times(8)
+	taskExecutor.Run(nil)
+	require.True(t, ctrl.Satisfied())
+
+	// no-subtask check counter should be reset after a subtask is run.
+	// loop 4 times without subtask, then 1 time with subtask.
+	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), task1.ID).Return(task1, nil).Times(4)
+	mockSubtaskTable.EXPECT().HasSubtasksInStates(gomock.Any(), "id", task1.ID, task1.Step,
+		unfinishedNormalSubtaskStates...).Return(false, nil).Times(4)
+	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), task1.ID).Return(task1, nil)
+	mockSubtaskTable.EXPECT().HasSubtasksInStates(gomock.Any(), "id", task1.ID, task1.Step,
+		unfinishedNormalSubtaskStates...).Return(true, nil)
+	mockStepExecutor.EXPECT().Init(gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "id", task1.ID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(nil, nil)
+	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", task1.ID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(nil, nil)
+	mockStepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
+	// should loop for another 8 times
+	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), task1.ID).Return(task1, nil).Times(8)
+	mockSubtaskTable.EXPECT().HasSubtasksInStates(gomock.Any(), "id", task1.ID, task1.Step,
+		unfinishedNormalSubtaskStates...).Return(false, nil).Times(8)
+	taskExecutor.Run(nil)
+	require.True(t, ctrl.Satisfied())
+
+	task1.State = proto.TaskStateReverting
+	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), task1.ID).Return(task1, nil)
+	mockSubtaskTable.EXPECT().HasSubtasksInStates(gomock.Any(), "id", task1.ID, task1.Step,
+		unfinishedNormalSubtaskStates...).Return(true, nil)
+	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", task1.ID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(nil, nil)
+	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), task1.ID).Return(nil, storage.ErrTaskNotFound)
+	taskExecutor.Run(nil)
+	require.True(t, ctrl.Satisfied())
+
+	taskExecutor.Cancel()
+	taskExecutor.Run(nil)
 	require.True(t, ctrl.Satisfied())
 }
 
