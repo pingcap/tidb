@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -39,6 +38,7 @@ import (
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/linter/constructor"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -168,7 +168,7 @@ type StatementContext struct {
 	errCtx errctx.Context
 
 	// Set the following variables before execution
-	StmtHints
+	hint.StmtHints
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
@@ -539,77 +539,6 @@ func (sc *StatementContext) HandleErrorWithAlias(internalErr, err, warnErr error
 	}
 	errCtx := sc.ErrCtx()
 	return errCtx.HandleErrorWithAlias(internalErr, err, warnErr)
-}
-
-// StmtHints are SessionVars related sql hints.
-type StmtHints struct {
-	// Hint Information
-	MemQuotaQuery           int64
-	MaxExecutionTime        uint64
-	ReplicaRead             byte
-	AllowInSubqToJoinAndAgg bool
-	NoIndexMergeHint        bool
-	StraightJoinOrder       bool
-	// EnableCascadesPlanner is use cascades planner for a single query only.
-	EnableCascadesPlanner bool
-	// ForceNthPlan indicates the PlanCounterTp number for finding physical plan.
-	// -1 for disable.
-	ForceNthPlan  int64
-	ResourceGroup string
-
-	// Hint flags
-	HasAllowInSubqToJoinAndAggHint bool
-	HasMemQuotaHint                bool
-	HasReplicaReadHint             bool
-	HasMaxExecutionTime            bool
-	HasEnableCascadesPlannerHint   bool
-	HasResourceGroup               bool
-	SetVars                        map[string]string
-
-	// the original table hints
-	OriginalTableHints []*ast.TableOptimizerHint
-}
-
-// TaskMapNeedBackUp indicates that whether we need to back up taskMap during physical optimizing.
-func (sh *StmtHints) TaskMapNeedBackUp() bool {
-	return sh.ForceNthPlan != -1
-}
-
-// Clone the StmtHints struct and returns the pointer of the new one.
-func (sh *StmtHints) Clone() *StmtHints {
-	var (
-		vars       map[string]string
-		tableHints []*ast.TableOptimizerHint
-	)
-	if len(sh.SetVars) > 0 {
-		vars = make(map[string]string, len(sh.SetVars))
-		for k, v := range sh.SetVars {
-			vars[k] = v
-		}
-	}
-	if len(sh.OriginalTableHints) > 0 {
-		tableHints = make([]*ast.TableOptimizerHint, len(sh.OriginalTableHints))
-		copy(tableHints, sh.OriginalTableHints)
-	}
-	return &StmtHints{
-		MemQuotaQuery:                  sh.MemQuotaQuery,
-		MaxExecutionTime:               sh.MaxExecutionTime,
-		ReplicaRead:                    sh.ReplicaRead,
-		AllowInSubqToJoinAndAgg:        sh.AllowInSubqToJoinAndAgg,
-		NoIndexMergeHint:               sh.NoIndexMergeHint,
-		StraightJoinOrder:              sh.StraightJoinOrder,
-		EnableCascadesPlanner:          sh.EnableCascadesPlanner,
-		ForceNthPlan:                   sh.ForceNthPlan,
-		ResourceGroup:                  sh.ResourceGroup,
-		HasAllowInSubqToJoinAndAggHint: sh.HasAllowInSubqToJoinAndAggHint,
-		HasMemQuotaHint:                sh.HasMemQuotaHint,
-		HasReplicaReadHint:             sh.HasReplicaReadHint,
-		HasMaxExecutionTime:            sh.HasMaxExecutionTime,
-		HasEnableCascadesPlannerHint:   sh.HasEnableCascadesPlannerHint,
-		HasResourceGroup:               sh.HasResourceGroup,
-		SetVars:                        vars,
-		OriginalTableHints:             tableHints,
-	}
 }
 
 // StmtCacheKey represents the key type in the StmtCache.

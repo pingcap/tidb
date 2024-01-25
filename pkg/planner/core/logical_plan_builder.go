@@ -3945,16 +3945,6 @@ func (b *PlanBuilder) addAliasName(ctx context.Context, selectStmt *ast.SelectSt
 	return resultList, nil
 }
 
-func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) {
-	var sb strings.Builder
-	ctx := format.NewRestoreCtx(0, &sb)
-	if err := hint.Restore(ctx); err != nil {
-		return
-	}
-	errMsg := fmt.Sprintf("Hint %s is inapplicable. Please specify the table names in the arguments.", sb.String())
-	b.ctx.GetSessionVars().StmtCtx.AppendWarning(ErrInternal.FastGen(errMsg))
-}
-
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLevel int) {
 	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel)
 	var (
@@ -3972,6 +3962,8 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		hjBuildTables, hjProbeTables                                                    []h.HintedTable
 		leadingHintCnt                                                                  int
 	)
+	currentDB := b.ctx.GetSessionVars().CurrentDB
+	warnHandler := b.ctx.GetSessionVars().StmtCtx.SetHintWarning
 	for _, hint := range hints {
 		// Set warning for the hint that requires the table name.
 		switch hint.HintName.L {
@@ -3979,44 +3971,50 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			h.HintNoHashJoin, h.HintNoMergeJoin, h.TiDBHashJoin, h.HintHJ, h.HintUseIndex, h.HintIgnoreIndex,
 			h.HintForceIndex, h.HintOrderIndex, h.HintNoOrderIndex, h.HintIndexMerge, h.HintLeading:
 			if len(hint.Tables) == 0 {
-				b.pushHintWithoutTableWarning(hint)
+				var sb strings.Builder
+				ctx := format.NewRestoreCtx(0, &sb)
+				if err := hint.Restore(ctx); err != nil {
+					return
+				}
+				errMsg := fmt.Sprintf("Hint %s is inapplicable. Please specify the table names in the arguments.", sb.String())
+				b.ctx.GetSessionVars().StmtCtx.SetHintWarning(ErrInternal.FastGen(errMsg))
 				continue
 			}
 		}
 
 		switch hint.HintName.L {
 		case h.TiDBMergeJoin, h.HintSMJ:
-			sortMergeTables = append(sortMergeTables, h.TableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+			sortMergeTables = append(sortMergeTables, h.TableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel, warnHandler)...)
 		case h.TiDBBroadCastJoin, h.HintBCJ:
-			bcTables = append(bcTables, h.TableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+			bcTables = append(bcTables, h.TableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel, warnHandler)...)
 		case h.HintShuffleJoin:
-			shuffleJoinTables = append(shuffleJoinTables, h.TableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+			shuffleJoinTables = append(shuffleJoinTables, h.TableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel, warnHandler)...)
 		case h.TiDBIndexNestedLoopJoin, h.HintINLJ:
-			inljTables = append(inljTables, h.TableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+			inljTables = append(inljTables, h.TableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel, warnHandler)...)
 		case h.HintINLHJ:
-			inlhjTables = append(inlhjTables, h.TableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+			inlhjTables = append(inlhjTables, h.TableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel, warnHandler)...)
 		case h.HintINLMJ:
-			inlmjTables = append(inlmjTables, h.TableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+			inlmjTables = append(inlmjTables, h.TableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel, warnHandler)...)
 		case h.TiDBHashJoin, h.HintHJ:
-			hashJoinTables = append(hashJoinTables, h.TableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+			hashJoinTables = append(hashJoinTables, h.TableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel, warnHandler)...)
 		case h.HintNoHashJoin:
-			noHashJoinTables = append(noHashJoinTables, h.TableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+			noHashJoinTables = append(noHashJoinTables, h.TableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel, warnHandler)...)
 		case h.HintNoMergeJoin:
-			noMergeJoinTables = append(noMergeJoinTables, h.TableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+			noMergeJoinTables = append(noMergeJoinTables, h.TableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel, warnHandler)...)
 		case h.HintNoIndexJoin:
-			noIndexJoinTables = append(noIndexJoinTables, h.TableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+			noIndexJoinTables = append(noIndexJoinTables, h.TableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel, warnHandler)...)
 		case h.HintNoIndexHashJoin:
-			noIndexHashJoinTables = append(noIndexHashJoinTables, h.TableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+			noIndexHashJoinTables = append(noIndexHashJoinTables, h.TableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel, warnHandler)...)
 		case h.HintNoIndexMergeJoin:
-			noIndexMergeJoinTables = append(noIndexMergeJoinTables, h.TableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+			noIndexMergeJoinTables = append(noIndexMergeJoinTables, h.TableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel, warnHandler)...)
 		case h.HintMPP1PhaseAgg:
 			aggHints.PreferAggType |= h.PreferMPP1PhaseAgg
 		case h.HintMPP2PhaseAgg:
 			aggHints.PreferAggType |= h.PreferMPP2PhaseAgg
 		case h.HintHashJoinBuild:
-			hjBuildTables = append(hjBuildTables, h.TableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+			hjBuildTables = append(hjBuildTables, h.TableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel, warnHandler)...)
 		case h.HintHashJoinProbe:
-			hjProbeTables = append(hjProbeTables, h.TableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+			hjProbeTables = append(hjProbeTables, h.TableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel, warnHandler)...)
 		case h.HintHashAgg:
 			aggHints.PreferAggType |= h.PreferHashAgg
 		case h.HintStreamAgg:
@@ -4054,9 +4052,9 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		case h.HintReadFromStorage:
 			switch hint.HintData.(model.CIStr).L {
 			case h.HintTiFlash:
-				tiflashTables = append(tiflashTables, h.TableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+				tiflashTables = append(tiflashTables, h.TableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel, warnHandler)...)
 			case h.HintTiKV:
-				tikvTables = append(tikvTables, h.TableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+				tikvTables = append(tikvTables, h.TableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel, warnHandler)...)
 			}
 		case h.HintIndexMerge:
 			dbName := hint.Tables[0].DBName
@@ -4085,7 +4083,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			cteMerge = true
 		case h.HintLeading:
 			if leadingHintCnt == 0 {
-				leadingJoinOrder = append(leadingJoinOrder, h.TableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
+				leadingJoinOrder = append(leadingJoinOrder, h.TableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel, warnHandler)...)
 			}
 			leadingHintCnt++
 		case h.HintSemiJoinRewrite:
@@ -5521,7 +5519,7 @@ func (b *PlanBuilder) BuildDataSourceFromView(ctx context.Context, dbName model.
 		b.buildingCTE = o
 	}()
 
-	hintProcessor := h.NewQBHintHandler(b.ctx)
+	hintProcessor := h.NewQBHintHandler(b.ctx.GetSessionVars().StmtCtx.AppendWarning)
 	selectNode.Accept(hintProcessor)
 	currentQbNameMap4View := make(map[string][]ast.HintTable)
 	currentQbHints4View := make(map[string][]*ast.TableOptimizerHint)

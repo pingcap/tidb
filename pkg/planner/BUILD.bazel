@@ -17,7 +17,6 @@ go_library(
         "//pkg/planner/util/debugtrace",
         "//pkg/privilege",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
         "//pkg/types",

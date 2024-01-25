@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -76,7 +75,7 @@ func setTableHints4StmtNode(node ast.Node, hints []*ast.TableOptimizerHint) {
 }
 
 // ExtractTableHintsFromStmtNode extracts table hints from this node.
-func ExtractTableHintsFromStmtNode(node ast.Node, sctx sessionctx.Context) []*ast.TableOptimizerHint {
+func ExtractTableHintsFromStmtNode(node ast.Node, warnHandler func(warning error)) []*ast.TableOptimizerHint {
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		return x.TableHints
@@ -86,7 +85,7 @@ func ExtractTableHintsFromStmtNode(node ast.Node, sctx sessionctx.Context) []*as
 		return x.TableHints
 	case *ast.InsertStmt:
 		// check duplicated hints
-		checkInsertStmtHintDuplicated(node, sctx)
+		checkInsertStmtHintDuplicated(node, warnHandler)
 		return x.TableHints
 	case *ast.SetOprStmt:
 		var result []*ast.TableOptimizerHint
@@ -94,7 +93,7 @@ func ExtractTableHintsFromStmtNode(node ast.Node, sctx sessionctx.Context) []*as
 			return nil
 		}
 		for _, s := range x.SelectList.Selects {
-			tmp := ExtractTableHintsFromStmtNode(s, sctx)
+			tmp := ExtractTableHintsFromStmtNode(s, warnHandler)
 			if len(tmp) != 0 {
 				result = append(result, tmp...)
 			}
@@ -107,7 +106,7 @@ func ExtractTableHintsFromStmtNode(node ast.Node, sctx sessionctx.Context) []*as
 
 // checkInsertStmtHintDuplicated check whether existed the duplicated hints in both insertStmt and its selectStmt.
 // If existed, it would send a warning message.
-func checkInsertStmtHintDuplicated(node ast.Node, sctx sessionctx.Context) {
+func checkInsertStmtHintDuplicated(node ast.Node, warnHandler func(warning error)) {
 	switch x := node.(type) {
 	case *ast.InsertStmt:
 		if len(x.TableHints) > 0 {
@@ -128,7 +127,7 @@ func checkInsertStmtHintDuplicated(node ast.Node, sctx sessionctx.Context) {
 				}
 				if duplicatedHint != nil {
 					hint := fmt.Sprintf("%s(`%v`)", duplicatedHint.HintName.O, duplicatedHint.HintData)
-					sctx.GetSessionVars().StmtCtx.AppendWarning(errWarnConflictingHint.FastGenByArgs(hint))
+					warnHandler(errWarnConflictingHint.FastGenByArgs(hint))
 				}
 			}
 		}
