@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/util"
@@ -902,7 +903,19 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 		distSQLScanConcurrencyFactor = 1
 		remoteChecksum               *local.RemoteChecksum
 		txnErr                       error
+		doneCh                       = make(chan struct{})
 	)
+	ctx, cancel := context.WithCancel(ctx)
+	defer func() {
+		cancel()
+		<-doneCh
+	}()
+
+	go func() {
+		<-ctx.Done()
+		se.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+		close(doneCh)
+	}()
 
 	ctx = util.WithInternalSourceType(ctx, tidbkv.InternalImportInto)
 	for i := 0; i < maxErrorRetryCount; i++ {
