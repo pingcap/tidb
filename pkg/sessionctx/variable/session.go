@@ -2295,6 +2295,7 @@ func (s *SessionVars) HasStatusFlag(flag uint16) bool {
 	return s.status.Load()&uint32(flag) > 0
 }
 
+// Status returns the server status.
 func (s *SessionVars) Status() uint16 {
 	return uint16(s.status.Load())
 }
