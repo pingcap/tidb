@@ -70,9 +70,10 @@ const (
 // otherwise it returns an error and the corresponding index's offset.
 func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
 	// Here we need check all indexes, includes invisible index
+	originOptUseInvisibleIdx := ctx.GetSessionVars().OptimizerUseInvisibleIndexes
 	ctx.GetSessionVars().OptimizerUseInvisibleIndexes = true
 	defer func() {
-		ctx.GetSessionVars().OptimizerUseInvisibleIndexes = false
+		ctx.GetSessionVars().OptimizerUseInvisibleIndexes = originOptUseInvisibleIdx
 	}()
 
 	var snapshot uint64
