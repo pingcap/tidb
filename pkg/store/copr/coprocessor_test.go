@@ -40,7 +40,7 @@ func buildTestCopTasks(bo *Backoffer, cache *RegionCache, ranges *KeyRanges, req
 func TestBuildTasksWithoutBuckets(t *testing.T) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
-	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil, nil)
 	require.NoError(t, err)
 	defer func() {
 		pdClient.Close()
@@ -164,7 +164,7 @@ func TestBuildTasksWithoutBuckets(t *testing.T) {
 }
 
 func TestBuildTasksByBuckets(t *testing.T) {
-	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil, nil)
 	require.NoError(t, err)
 	defer func() {
 		pdClient.Close()
@@ -364,7 +364,7 @@ func TestBuildTasksByBuckets(t *testing.T) {
 func TestSplitRegionRanges(t *testing.T) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
-	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil, nil)
 	require.NoError(t, err)
 	defer func() {
 		pdClient.Close()
@@ -431,7 +431,7 @@ func TestSplitRegionRanges(t *testing.T) {
 func TestRebuild(t *testing.T) {
 	// nil --- 'm' --- nil
 	// <-  0  -> <- 1 ->
-	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil, nil)
 	require.NoError(t, err)
 	defer func() {
 		pdClient.Close()
@@ -494,7 +494,7 @@ func rangeEqual(t *testing.T, ranges []kv.KeyRange, keys ...string) {
 func TestBuildPagingTasks(t *testing.T) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
-	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil, nil)
 	require.NoError(t, err)
 	defer func() {
 		pdClient.Close()
@@ -524,7 +524,7 @@ func TestBuildPagingTasks(t *testing.T) {
 }
 
 func TestBuildPagingTasksDisablePagingForSmallLimit(t *testing.T) {
-	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil, nil)
 	require.NoError(t, err)
 	defer func() {
 		pdClient.Close()
@@ -703,7 +703,7 @@ func TestBasicSmallTaskConc(t *testing.T) {
 func TestBuildCopTasksWithRowCountHint(t *testing.T) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
-	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil, nil)
 	require.NoError(t, err)
 	defer func() {
 		pdClient.Close()

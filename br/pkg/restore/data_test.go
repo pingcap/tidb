@@ -87,7 +87,7 @@ func createStores() []*metapb.Store {
 }
 
 func createDataSuite(t *testing.T) *testData {
-	tikvClient, _, pdClient, err := testutils.NewMockTiKV("", nil)
+	tikvClient, _, pdClient, err := testutils.NewMockTiKV("", nil, nil)
 	require.NoError(t, err)
 	mockGlue := &gluetidb.MockGlue{}
 	ctx, cancel := context.WithCancel(context.Background())

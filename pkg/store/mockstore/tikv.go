@@ -26,7 +26,7 @@ import (
 // newMockTikvStore creates a mocked tikv store, the path is the file path to store the data.
 // If path is an empty string, a memory storage will be created.
 func newMockTikvStore(opt *mockOptions) (kv.Storage, error) {
-	client, cluster, pdClient, err := testutils.NewMockTiKV(opt.path, mockcopr.NewCoprRPCHandler())
+	client, cluster, pdClient, err := testutils.NewMockTiKV(opt.path, opt.pdAddrs, mockcopr.NewCoprRPCHandler())
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

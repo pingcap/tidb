@@ -87,7 +87,7 @@ func createTiKVStore(t *testing.T) (kv.Storage, *domain.Domain) {
 }
 
 func createUnistore(t *testing.T) (kv.Storage, *domain.Domain) {
-	client, pdClient, cluster, err := unistore.New("")
+	client, pdClient, cluster, err := unistore.New("", nil)
 	require.NoError(t, err)
 
 	unistore.BootstrapWithSingleStore(cluster)

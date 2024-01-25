@@ -17,10 +17,13 @@ package unistore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
+	"strings"
 	"sync"
 	"sync/atomic"
 
+	"github.com/asaskevich/govalidator"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
@@ -29,6 +32,7 @@ import (
 	us "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
+	"google.golang.org/grpc"
 )
 
 var _ pd.Client = new(pdClient)
@@ -41,14 +45,19 @@ type pdClient struct {
 	gcSafePointMu     sync.Mutex
 	globalConfig      map[string]string
 	externalTimestamp atomic.Uint64
+
+	// After using PD http client, we should impl mock PD service discovery
+	// which needs PD server HTTP address.
+	addrs []string
 }
 
-func newPDClient(pd *us.MockPD) *pdClient {
+func newPDClient(pd *us.MockPD, addrs []string) *pdClient {
 	return &pdClient{
 		MockPD:                pd,
 		ResourceManagerClient: infosync.NewMockResourceManagerClient(),
 		serviceSafePoints:     make(map[string]uint64),
 		globalConfig:          make(map[string]string),
+		addrs:                 addrs,
 	}
 }
 
@@ -99,6 +108,117 @@ func (c *pdClient) GetTSAsync(ctx context.Context) pd.TSFuture {
 func (c *pdClient) GetLocalTSAsync(ctx context.Context, dcLocation string) pd.TSFuture {
 	return &mockTSFuture{c, ctx, false}
 }
+
+func (c *pdClient) GetServiceDiscovery() pd.ServiceDiscovery {
+	return newMockPDServiceDiscovery(c.addrs)
+}
+
+var _ pd.ServiceDiscovery = (*MockPDServiceDiscovery)(nil)
+var _ pd.ServiceClient = (*MockPDServiceClient)(nil)
+
+type MockPDServiceClient struct {
+	addr string
+}
+
+func newMockPDServiceClient(addr string) *MockPDServiceClient {
+	if !strings.HasPrefix(addr, "http") {
+		addr = fmt.Sprintf("%s://%s", "http", addr)
+	}
+	return &MockPDServiceClient{addr: addr}
+}
+
+func (c *MockPDServiceClient) GetAddress() string {
+	return c.addr
+}
+
+func (c *MockPDServiceClient) GetHTTPAddress() string {
+	return c.addr
+}
+
+func (c *MockPDServiceClient) GetClientConn() *grpc.ClientConn {
+	return nil
+}
+
+func (c *MockPDServiceClient) BuildGRPCTargetContext(ctx context.Context, _ bool) context.Context {
+	return ctx
+}
+
+func (c *MockPDServiceClient) Available() bool {
+	return true
+}
+
+func (c *MockPDServiceClient) NeedRetry(*pdpb.Error, error) bool {
+	return false
+}
+
+func (c *MockPDServiceClient) IsConnectedToLeader() bool {
+	return true
+}
+
+type MockPDServiceDiscovery struct {
+	addrs []string
+	clis  []pd.ServiceClient
+}
+
+func newMockPDServiceDiscovery(addrs []string) pd.ServiceDiscovery {
+	addresses := make([]string, 0)
+	clis := make([]pd.ServiceClient, 0)
+	for _, addr := range addrs {
+		if check := govalidator.IsURL(addr); !check {
+			continue
+		}
+		addresses = append(addresses, addr)
+		clis = append(clis, newMockPDServiceClient(addr))
+	}
+	return &MockPDServiceDiscovery{addrs: addresses, clis: clis}
+}
+
+func (c *MockPDServiceDiscovery) Init() error {
+	return nil
+}
+
+func (c *MockPDServiceDiscovery) Close() {}
+
+func (c *MockPDServiceDiscovery) GetClusterID() uint64 { return 0 }
+
+func (c *MockPDServiceDiscovery) GetKeyspaceID() uint32 { return 0 }
+
+func (c *MockPDServiceDiscovery) GetKeyspaceGroupID() uint32 { return 0 }
+
+func (c *MockPDServiceDiscovery) GetServiceURLs() []string {
+	return c.addrs
+}
+
+func (c *MockPDServiceDiscovery) GetServingEndpointClientConn() *grpc.ClientConn { return nil }
+
+func (c *MockPDServiceDiscovery) GetClientConns() *sync.Map { return nil }
+
+func (c *MockPDServiceDiscovery) GetServingAddr() string { return "" }
+
+func (c *MockPDServiceDiscovery) GetBackupAddrs() []string { return nil }
+
+func (c *MockPDServiceDiscovery) GetServiceClient() pd.ServiceClient {
+	if len(c.clis) > 0 {
+		return c.clis[0]
+	}
+	return nil
+}
+
+func (c *MockPDServiceDiscovery) GetAllServiceClients() []pd.ServiceClient {
+	return c.clis
+}
+
+func (c *MockPDServiceDiscovery) GetOrCreateGRPCConn(addr string) (*grpc.ClientConn, error) {
+	return nil, nil
+}
+
+func (c *MockPDServiceDiscovery) ScheduleCheckMemberChanged() {}
+
+func (c *MockPDServiceDiscovery) CheckMemberChanged() error { return nil }
+
+func (c *MockPDServiceDiscovery) AddServingAddrSwitchedCallback(callbacks ...func()) {}
+
+func (c *MockPDServiceDiscovery) AddServiceAddrsSwitchedCallback(callbacks ...func()) {}
 
 type mockTSFuture struct {
 	pdc  *pdClient

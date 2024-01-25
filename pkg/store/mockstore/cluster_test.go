@@ -35,7 +35,7 @@ import (
 )
 
 func TestClusterSplit(t *testing.T) {
-	rpcClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
+	rpcClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil, nil)
 	require.NoError(t, err)
 	testutils.BootstrapWithSingleStore(cluster)
 	mvccStore := rpcClient.MvccStore
