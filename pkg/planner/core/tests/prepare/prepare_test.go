@@ -1581,9 +1581,10 @@ func TestPrepareCacheForDynamicPartitionPruning(t *testing.T) {
 		tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows("-5 7"))
 		if pruneMode == string(variable.Dynamic) {
 			require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+			tk.MustQuery(`show warnings`).Check(testkit.Rows())
 		} else {
 			require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+			tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable if tidb_partition_pruning_mode = 'static'"))
 		}
-		tk.MustQuery(`show warnings`).Check(testkit.Rows())
 	}
 }

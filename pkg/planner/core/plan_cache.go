@@ -476,7 +476,6 @@ func rebuildRange(p Plan) error {
 				for i := range x.IndexValues {
 					x.IndexValues[i] = ranges.Ranges[0].LowVal[i]
 				}
-				panic("What??")
 			} else {
 				var pkCol *expression.Column
 				var unsignedIntHandle bool
