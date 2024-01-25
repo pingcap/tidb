@@ -113,49 +113,49 @@ func (c *pdClient) GetServiceDiscovery() pd.ServiceDiscovery {
 	return newMockPDServiceDiscovery(c.addrs)
 }
 
-var _ pd.ServiceDiscovery = (*MockPDServiceDiscovery)(nil)
-var _ pd.ServiceClient = (*MockPDServiceClient)(nil)
+var _ pd.ServiceDiscovery = (*mockPDServiceDiscovery)(nil)
+var _ pd.ServiceClient = (*mockPDServiceClient)(nil)
 
-type MockPDServiceClient struct {
+type mockPDServiceClient struct {
 	addr string
 }
 
-func newMockPDServiceClient(addr string) *MockPDServiceClient {
+func newMockPDServiceClient(addr string) pd.ServiceClient {
 	if !strings.HasPrefix(addr, "http") {
 		addr = fmt.Sprintf("%s://%s", "http", addr)
 	}
-	return &MockPDServiceClient{addr: addr}
+	return &mockPDServiceClient{addr: addr}
 }
 
-func (c *MockPDServiceClient) GetAddress() string {
+func (c *mockPDServiceClient) GetAddress() string {
 	return c.addr
 }
 
-func (c *MockPDServiceClient) GetHTTPAddress() string {
+func (c *mockPDServiceClient) GetHTTPAddress() string {
 	return c.addr
 }
 
-func (c *MockPDServiceClient) GetClientConn() *grpc.ClientConn {
+func (c *mockPDServiceClient) GetClientConn() *grpc.ClientConn {
 	return nil
 }
 
-func (c *MockPDServiceClient) BuildGRPCTargetContext(ctx context.Context, _ bool) context.Context {
+func (c *mockPDServiceClient) BuildGRPCTargetContext(ctx context.Context, _ bool) context.Context {
 	return ctx
 }
 
-func (c *MockPDServiceClient) Available() bool {
+func (c *mockPDServiceClient) Available() bool {
 	return true
 }
 
-func (c *MockPDServiceClient) NeedRetry(*pdpb.Error, error) bool {
+func (c *mockPDServiceClient) NeedRetry(*pdpb.Error, error) bool {
 	return false
 }
 
-func (c *MockPDServiceClient) IsConnectedToLeader() bool {
+func (c *mockPDServiceClient) IsConnectedToLeader() bool {
 	return true
 }
 
-type MockPDServiceDiscovery struct {
+type mockPDServiceDiscovery struct {
 	addrs []string
 	clis  []pd.ServiceClient
 }
@@ -170,55 +170,55 @@ func newMockPDServiceDiscovery(addrs []string) pd.ServiceDiscovery {
 		addresses = append(addresses, addr)
 		clis = append(clis, newMockPDServiceClient(addr))
 	}
-	return &MockPDServiceDiscovery{addrs: addresses, clis: clis}
+	return &mockPDServiceDiscovery{addrs: addresses, clis: clis}
 }
 
-func (c *MockPDServiceDiscovery) Init() error {
+func (c *mockPDServiceDiscovery) Init() error {
 	return nil
 }
 
-func (c *MockPDServiceDiscovery) Close() {}
+func (c *mockPDServiceDiscovery) Close() {}
 
-func (c *MockPDServiceDiscovery) GetClusterID() uint64 { return 0 }
+func (c *mockPDServiceDiscovery) GetClusterID() uint64 { return 0 }
 
-func (c *MockPDServiceDiscovery) GetKeyspaceID() uint32 { return 0 }
+func (c *mockPDServiceDiscovery) GetKeyspaceID() uint32 { return 0 }
 
-func (c *MockPDServiceDiscovery) GetKeyspaceGroupID() uint32 { return 0 }
+func (c *mockPDServiceDiscovery) GetKeyspaceGroupID() uint32 { return 0 }
 
-func (c *MockPDServiceDiscovery) GetServiceURLs() []string {
+func (c *mockPDServiceDiscovery) GetServiceURLs() []string {
 	return c.addrs
 }
 
-func (c *MockPDServiceDiscovery) GetServingEndpointClientConn() *grpc.ClientConn { return nil }
+func (c *mockPDServiceDiscovery) GetServingEndpointClientConn() *grpc.ClientConn { return nil }
 
-func (c *MockPDServiceDiscovery) GetClientConns() *sync.Map { return nil }
+func (c *mockPDServiceDiscovery) GetClientConns() *sync.Map { return nil }
 
-func (c *MockPDServiceDiscovery) GetServingAddr() string { return "" }
+func (c *mockPDServiceDiscovery) GetServingAddr() string { return "" }
 
-func (c *MockPDServiceDiscovery) GetBackupAddrs() []string { return nil }
+func (c *mockPDServiceDiscovery) GetBackupAddrs() []string { return nil }
 
-func (c *MockPDServiceDiscovery) GetServiceClient() pd.ServiceClient {
+func (c *mockPDServiceDiscovery) GetServiceClient() pd.ServiceClient {
 	if len(c.clis) > 0 {
 		return c.clis[0]
 	}
 	return nil
 }
 
-func (c *MockPDServiceDiscovery) GetAllServiceClients() []pd.ServiceClient {
+func (c *mockPDServiceDiscovery) GetAllServiceClients() []pd.ServiceClient {
 	return c.clis
 }
 
-func (c *MockPDServiceDiscovery) GetOrCreateGRPCConn(addr string) (*grpc.ClientConn, error) {
+func (c *mockPDServiceDiscovery) GetOrCreateGRPCConn(addr string) (*grpc.ClientConn, error) {
 	return nil, nil
 }
 
-func (c *MockPDServiceDiscovery) ScheduleCheckMemberChanged() {}
+func (c *mockPDServiceDiscovery) ScheduleCheckMemberChanged() {}
 
-func (c *MockPDServiceDiscovery) CheckMemberChanged() error { return nil }
+func (c *mockPDServiceDiscovery) CheckMemberChanged() error { return nil }
 
-func (c *MockPDServiceDiscovery) AddServingAddrSwitchedCallback(callbacks ...func()) {}
+func (c *mockPDServiceDiscovery) AddServingAddrSwitchedCallback(callbacks ...func()) {}
 
-func (c *MockPDServiceDiscovery) AddServiceAddrsSwitchedCallback(callbacks ...func()) {}
+func (c *mockPDServiceDiscovery) AddServiceAddrsSwitchedCallback(callbacks ...func()) {}
 
 type mockTSFuture struct {
 	pdc  *pdClient
