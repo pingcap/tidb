@@ -240,7 +240,8 @@ func (s StatsLoadedStatus) StatusToString() string {
 	return "unknown"
 }
 
-func StatusToString(evictedStatus int) string {
+// EvictedStatusToString converts the int type evictedStatus to string value.
+func EvictedStatusToString(evictedStatus int) string {
 	switch evictedStatus {
 	case AllLoaded:
 		return "allLoaded"
