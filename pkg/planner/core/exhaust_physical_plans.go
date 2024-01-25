@@ -2121,9 +2121,9 @@ func (p *LogicalJoin) handleForceIndexJoinHints(prop *property.PhysicalProperty,
 	// If the required property is not empty, we will enforce it and try the hint again.
 	// So we only need to generate warning message when the property is empty.
 	if prop.IsSortItemEmpty() {
-		var indexJoinTables, indexHashJoinTables, indexMergeJoinTables []h.TableInfo
+		var indexJoinTables, indexHashJoinTables, indexMergeJoinTables []h.HintedTable
 		if p.hintInfo != nil {
-			t := p.hintInfo.IndexNestedLoopJoinTables
+			t := p.hintInfo.IndexJoin
 			indexJoinTables, indexHashJoinTables, indexMergeJoinTables = t.INLJTables, t.INLHJTables, t.INLMJTables
 		}
 		var errMsg string

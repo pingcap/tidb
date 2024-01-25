@@ -1868,7 +1868,7 @@ func (is *PhysicalIndexScan) getScanRowSize() float64 {
 // initSchema is used to set the schema of PhysicalIndexScan. Before calling this,
 // make sure the following field of PhysicalIndexScan are initialized:
 //
-//	PhysicalIndexScan.Table         *model.TableInfo
+//	PhysicalIndexScan.Table         *model.HintedTable
 //	PhysicalIndexScan.Index         *model.IndexInfo
 //	PhysicalIndexScan.Index.Columns []*IndexColumn
 //	PhysicalIndexScan.IdxCols       []*expression.Column

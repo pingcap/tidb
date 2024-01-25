@@ -35,7 +35,7 @@ type QBHintHandler struct {
 	QBOffsetToHints   map[int][]*ast.TableOptimizerHint // map[QueryBlockOffset]Hints
 
 	// Used for the view's hint
-	ViewQBNameToTable map[string][]ast.HintTable           // map[QBName]TableInfo
+	ViewQBNameToTable map[string][]ast.HintTable           // map[QBName]HintedTable
 	ViewQBNameToHints map[string][]*ast.TableOptimizerHint // map[QBName]Hints
 	ViewQBNameUsed    map[string]struct{}                  // map[QBName]Used
 
