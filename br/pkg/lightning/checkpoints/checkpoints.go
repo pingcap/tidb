@@ -1633,33 +1633,10 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 	var colName, aliasedColName string
 
 	if tableName == allTables {
-<<<<<<< HEAD
 		// These will expand to `WHERE 'all' = 'all'` and effectively allowing
 		// all tables to be included.
 		colName = stringLitAll
 		aliasedColName = stringLitAll
-=======
-		selectQuery = common.SprintfWithIdentifiers(`
-			SELECT
-				t.table_name,
-				COALESCE(MIN(e.engine_id), 0),
-				COALESCE(MAX(e.engine_id), -1)
-			FROM %[1]s.%[2]s t
-			LEFT JOIN %[1]s.%[3]s e ON t.table_name = e.table_name
-			WHERE t.status <= ?
-			GROUP BY t.table_name;
-		`, cpdb.schema, CheckpointTableNameTable, CheckpointTableNameEngine)
-		deleteChunkQuery = common.SprintfWithIdentifiers(`
-			DELETE FROM %[1]s.%[2]s WHERE table_name IN (SELECT table_name FROM %[1]s.%[3]s WHERE status <= ?)
-		`, cpdb.schema, CheckpointTableNameChunk, CheckpointTableNameTable)
-		deleteEngineQuery = common.SprintfWithIdentifiers(`
-			DELETE FROM %[1]s.%[2]s WHERE table_name IN (SELECT table_name FROM %[1]s.%[3]s WHERE status <= ?)
-		`, cpdb.schema, CheckpointTableNameEngine, CheckpointTableNameTable)
-		deleteTableQuery = common.SprintfWithIdentifiers(`
-			DELETE FROM %s.%s WHERE status <= ?
-		`, cpdb.schema, CheckpointTableNameTable)
-		args = []any{CheckpointStatusMaxInvalid}
->>>>>>> c852515fe2f (lightning: convert pebbleDB block size to default when user passes in 0 (#50690))
 	} else {
 		colName = columnTableName
 		aliasedColName = "t.table_name"
