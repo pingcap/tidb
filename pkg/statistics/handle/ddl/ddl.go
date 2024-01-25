@@ -105,7 +105,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			if err := h.statsWriter.InsertColStats2KV(id, newColumnInfo); err != nil {
 				return err
 			}
-			// Let the sync load can load the stats 
+			// Let the sync load can load the stats immediately.
 			statsTbl, ok := h.statsHandler.Get(id)
 			for _, colInfo := range newColumnInfo {
 				if ok && !statsTbl.Pseudo {
@@ -127,7 +127,7 @@ func (h *ddlHandlerImpl) HandleDDLEvent(t *util.DDLEvent) error {
 			if err := h.statsWriter.InsertColStats2KV(id, modifiedColumnInfo); err != nil {
 				return err
 			}
-			// It will only be used when the stats-lease is 0.
+			// Let the sync load can load the stats immediately.
 			statsTbl, ok := h.statsHandler.Get(id)
 			for _, colInfo := range modifiedColumnInfo {
 				if ok && !statsTbl.Pseudo {
