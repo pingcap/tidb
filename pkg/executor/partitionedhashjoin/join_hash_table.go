@@ -14,24 +14,58 @@
 
 package partitionedhashjoin
 
-import "unsafe"
+import (
+	"github.com/cznic/mathutil"
+	"sync/atomic"
+	"unsafe"
+)
 
 type subTable struct {
 	rowData   *rowTable
 	hashTable []unsafe.Pointer
+	posMask   uint64
+}
+
+func nextPowerOfTwo(value uint64) uint64 {
+	ret := uint64(2)
+	for ; ret < value; ret = ret << 1 {
+	}
+	return ret
 }
 
 func newSubTable(table *rowTable) *subTable {
-	return &subTable{
-		rowData:   table,
-		hashTable: make([]unsafe.Pointer, table.rowCount()),
+	ret := &subTable{
+		rowData: table,
 	}
+	capacity := mathutil.MaxUint64(nextPowerOfTwo(uint64(table.validKeyCount())), uint64(1024))
+	ret.hashTable = make([]unsafe.Pointer, capacity)
+	ret.posMask = capacity - 1
+	return ret
 }
 
 func (st *subTable) build(threadSafe bool, startSegmentIndex int, segmentStep int) {
+	updateHashValue := func(pos uint64, rowAddress unsafe.Pointer) {
+		prev := st.hashTable[pos]
+		st.hashTable[pos] = rowAddress
+		setNextRowOffset(rowAddress, prev)
+	}
+	if !threadSafe {
+		updateHashValue = func(pos uint64, rowAddress unsafe.Pointer) {
+			for true {
+				prev := atomic.LoadPointer(&st.hashTable[pos])
+				if atomic.CompareAndSwapPointer(&st.hashTable[pos], prev, rowAddress) {
+					setNextRowOffset(rowAddress, prev)
+					break
+				}
+			}
+		}
+	}
 	for i := startSegmentIndex; i < len(st.rowData.segments); i += segmentStep {
 		for index := range st.rowData.segments[i].validJoinKeyPos {
-			hashValue = st.rowData.get
+			rowAddress := st.rowData.segments[i].rowLocations[index]
+			hashValue := getHashValue(rowAddress)
+			pos := hashValue & st.posMask
+			updateHashValue(pos, rowAddress)
 		}
 	}
 }
@@ -53,4 +87,5 @@ func newJoinHashTable(isThreadSafe bool, partitionedRowTables []*rowTable) *join
 }
 
 func (jht *joinHashTable) buildHashTable(partitionIndex int, startSegmentIndex int, segmentStep int) {
+	jht.tables[partitionIndex].build(jht.isThreadSafe, startSegmentIndex, segmentStep)
 }
