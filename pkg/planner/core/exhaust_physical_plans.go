@@ -2679,10 +2679,10 @@ func pushLimitOrTopNForcibly(p LogicalPlan) bool {
 	var preferPushDown *bool
 	switch lp := p.(type) {
 	case *LogicalTopN:
-		preferPushDown = &lp.limitHints.PreferLimitToCop
+		preferPushDown = &lp.PreferLimitToCop
 		meetThreshold = lp.Count+lp.Offset <= uint64(lp.SCtx().GetSessionVars().LimitPushDownThreshold)
 	case *LogicalLimit:
-		preferPushDown = &lp.limitHints.PreferLimitToCop
+		preferPushDown = &lp.PreferLimitToCop
 		meetThreshold = true // always push Limit down in this case since it has no side effect
 	default:
 		return false
