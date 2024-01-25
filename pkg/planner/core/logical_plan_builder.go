@@ -2435,7 +2435,7 @@ func (b *PlanBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan
 		Count:  count,
 	}.Init(b.ctx, b.getSelectOffset())
 	if hint := b.TableHints(); hint != nil {
-		li.limitHints = hint.Limit
+		li.PreferLimitToCop = hint.PreferLimitToCop
 	}
 	li.SetChildren(src)
 	return li, nil
@@ -3966,7 +3966,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		tiflashTables, tikvTables                                                       []h.HintedTable
 		aggHints                                                                        h.AggHints
 		timeRangeHint                                                                   ast.HintTimeRange
-		limitHints                                                                      h.LimitHints
+		preferLimitToCop                                                                bool
 		cteMerge                                                                        bool
 		leadingJoinOrder                                                                []h.HintedTable
 		hjBuildTables, hjProbeTables                                                    []h.HintedTable
@@ -4076,7 +4076,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		case h.HintTimeRange:
 			timeRangeHint = hint.HintData.(ast.HintTimeRange)
 		case h.HintLimitToCop:
-			limitHints.PreferLimitToCop = true
+			preferLimitToCop = true
 		case h.HintMerge:
 			if hint.Tables != nil {
 				b.ctx.GetSessionVars().StmtCtx.SetHintWarning(ErrInternal.FastGen("The MERGE hint is not used correctly, maybe it inputs a table name."))
@@ -4128,7 +4128,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 		Agg:                aggHints,
 		IndexMergeHintList: indexMergeHintList,
 		TimeRangeHint:      timeRangeHint,
-		Limit:              limitHints,
+		PreferLimitToCop:   preferLimitToCop,
 		CTEMerge:           cteMerge,
 		LeadingJoinOrder:   leadingJoinOrder,
 		HJBuild:            hjBuildTables,
