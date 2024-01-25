@@ -108,7 +108,7 @@ func TestMockPDServiceDiscovery(t *testing.T) {
 			re.False(check)
 		}
 	}
-	sd := newMockPDServiceDiscovery(pdAddrs)
+	sd := NewMockPDServiceDiscovery(pdAddrs)
 	clis := sd.GetAllServiceClients()
 	re.Len(clis, 2)
 	re.Equal(clis[0].GetHTTPAddress(), "http://127.0.0.1:2379")

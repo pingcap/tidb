@@ -110,7 +110,7 @@ func (c *pdClient) GetLocalTSAsync(ctx context.Context, dcLocation string) pd.TS
 }
 
 func (c *pdClient) GetServiceDiscovery() pd.ServiceDiscovery {
-	return newMockPDServiceDiscovery(c.addrs)
+	return NewMockPDServiceDiscovery(c.addrs)
 }
 
 var _ pd.ServiceDiscovery = (*mockPDServiceDiscovery)(nil)
@@ -160,7 +160,8 @@ type mockPDServiceDiscovery struct {
 	clis  []pd.ServiceClient
 }
 
-func newMockPDServiceDiscovery(addrs []string) pd.ServiceDiscovery {
+// NewMockPDServiceDiscovery returns a mock PD ServiceDiscovery
+func NewMockPDServiceDiscovery(addrs []string) pd.ServiceDiscovery {
 	addresses := make([]string, 0)
 	clis := make([]pd.ServiceClient, 0)
 	for _, addr := range addrs {
