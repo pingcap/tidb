@@ -80,7 +80,7 @@ func row2BasicSubTask(r chunk.Row) *proto.Subtask {
 		ordinal = int(r.GetInt64(8))
 	}
 
-	// subtask defines start/update time as bigint, to ensure backward compatible,
+	// subtask defines start time as bigint, to ensure backward compatible,
 	// we keep it that way, and we convert it here.
 	var startTime time.Time
 	if !r.IsNull(9) {
@@ -107,7 +107,16 @@ func row2BasicSubTask(r chunk.Row) *proto.Subtask {
 func Row2SubTask(r chunk.Row) *proto.Subtask {
 	subtask := row2BasicSubTask(r)
 
-	subtask.Meta = r.GetBytes(10)
-	subtask.Summary = r.GetJSON(11).String()
+	// subtask defines update time as bigint, to ensure backward compatible,
+	// we keep it that way, and we convert it here.
+	var updateTime time.Time
+	if !r.IsNull(10) {
+		ts := r.GetInt64(10)
+		updateTime = time.Unix(ts, 0)
+	}
+
+	subtask.UpdateTime = updateTime
+	subtask.Meta = r.GetBytes(11)
+	subtask.Summary = r.GetJSON(12).String()
 	return subtask
 }
