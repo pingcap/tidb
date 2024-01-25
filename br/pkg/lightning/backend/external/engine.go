@@ -679,6 +679,8 @@ func (m *MemoryIngestData) IncRef() {
 // DecRef implements IngestData.DecRef.
 func (m *MemoryIngestData) DecRef() {
 	if m.refCnt.Dec() == 0 {
+		m.keys = nil
+		m.values = nil
 		for _, b := range m.memBuf {
 			b.Destroy()
 		}

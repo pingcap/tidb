@@ -57,15 +57,15 @@ func (l *Limiter) Release(n int) {
 	l.mu.Lock()
 
 	l.limit += n
+	if l.limit > l.initLimit {
+		panic("limit overflow")
+	}
+
 	for len(l.waitNums) > 0 && l.limit >= l.waitNums[0] {
 		l.limit -= l.waitNums[0]
 		close(l.waitChs[0])
 		l.waitNums = l.waitNums[1:]
 		l.waitChs = l.waitChs[1:]
-	}
-
-	if l.limit > l.initLimit {
-		panic("limit overflow")
 	}
 
 	l.mu.Unlock()
