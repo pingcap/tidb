@@ -128,7 +128,7 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 				continue
 			}
 			if !e.IsIdempotent(st) {
-				e.updateSubtaskStateAndError(ctx, st, proto.SubtaskStateFailed, ErrNonIdempotentSubtask)
+				e.updateSubtaskStateAndErrorImpl(ctx, st.ExecID, st.ID, proto.SubtaskStateFailed, ErrNonIdempotentSubtask)
 				return
 			}
 			extraRunningSubtasks = append(extraRunningSubtasks, st)
@@ -287,15 +287,15 @@ outer:
 				e.logger.Info("subtask in running state and is not idempotent, fail it",
 					zap.Int64("subtask-id", subtask.ID))
 				e.onError(ErrNonIdempotentSubtask)
-				e.updateSubtaskStateAndError(runCtx, subtask, proto.SubtaskStateFailed, ErrNonIdempotentSubtask)
+				e.updateSubtaskStateAndErrorImpl(runCtx, subtask.ExecID, subtask.ID, proto.SubtaskStateFailed, ErrNonIdempotentSubtask)
 				e.markErrorHandled()
 				break
 			}
 		} else {
 			// subtask.State == proto.SubtaskStatePending
-			err := e.startSubtaskAndUpdateState(runCtx, subtask)
+			err := e.startSubtask(runCtx, subtask.ID)
 			if err != nil {
-				e.logger.Warn("startSubtaskAndUpdateState meets error", zap.Error(err))
+				e.logger.Warn("startSubtask meets error", zap.Error(err))
 				// should ignore ErrSubtaskNotFound
 				// since the err only indicate that the subtask not owned by current task executor.
 				if err == storage.ErrSubtaskNotFound {
@@ -431,7 +431,7 @@ func (e *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execu
 		return
 	}
 
-	e.finishSubtaskAndUpdateState(ctx, subtask)
+	e.finishSubtask(ctx, subtask)
 
 	finished = e.markSubTaskCanceledOrFailed(ctx, subtask)
 	if finished {
@@ -468,7 +468,7 @@ func (e *BaseTaskExecutor) Rollback(ctx context.Context, task *proto.Task) error
 			break
 		}
 
-		e.updateSubtaskStateAndError(ctx, subtask, proto.SubtaskStateCanceled, nil)
+		e.updateSubtaskStateAndErrorImpl(ctx, subtask.ExecID, subtask.ID, proto.SubtaskStateCanceled, nil)
 		if err = e.getError(); err != nil {
 			return err
 		}
@@ -559,10 +559,6 @@ func (e *BaseTaskExecutor) resetError() {
 	e.mu.handled = false
 }
 
-func (e *BaseTaskExecutor) startSubtaskAndUpdateState(ctx context.Context, subtask *proto.Subtask) error {
-	return e.startSubtask(ctx, subtask.ID)
-}
-
 func (e *BaseTaskExecutor) updateSubtaskStateAndErrorImpl(ctx context.Context, execID string, subtaskID int64, state proto.SubtaskState, subTaskErr error) {
 	// retry for 3+6+12+24+(30-4)*30 ~= 825s ~= 14 minutes
 	backoffer := backoff.NewExponential(scheduler.RetrySQLInterval, 2, scheduler.RetrySQLMaxInterval)
@@ -606,14 +602,6 @@ func (e *BaseTaskExecutor) finishSubtask(ctx context.Context, subtask *proto.Sub
 	}
 }
 
-func (e *BaseTaskExecutor) updateSubtaskStateAndError(ctx context.Context, subtask *proto.Subtask, state proto.SubtaskState, subTaskErr error) {
-	e.updateSubtaskStateAndErrorImpl(ctx, subtask.ExecID, subtask.ID, state, subTaskErr)
-}
-
-func (e *BaseTaskExecutor) finishSubtaskAndUpdateState(ctx context.Context, subtask *proto.Subtask) {
-	e.finishSubtask(ctx, subtask)
-}
-
 // markSubTaskCanceledOrFailed check the error type and decide the subtasks' state.
 // 1. Only cancel subtasks when meet ErrCancelSubtask.
 // 2. Only fail subtasks when meet non retryable error.
@@ -623,14 +611,14 @@ func (e *BaseTaskExecutor) markSubTaskCanceledOrFailed(ctx context.Context, subt
 		err := errors.Cause(err)
 		if ctx.Err() != nil && context.Cause(ctx) == ErrCancelSubtask {
 			e.logger.Warn("subtask canceled", zap.Error(err))
-			e.updateSubtaskStateAndError(e.ctx, subtask, proto.SubtaskStateCanceled, nil)
+			e.updateSubtaskStateAndErrorImpl(e.ctx, subtask.ExecID, subtask.ID, proto.SubtaskStateCanceled, nil)
 		} else if e.IsRetryableError(err) {
 			e.logger.Warn("meet retryable error", zap.Error(err))
 		} else if common.IsContextCanceledError(err) {
 			e.logger.Info("meet context canceled for gracefully shutdown", zap.Error(err))
 		} else {
 			e.logger.Warn("subtask failed", zap.Error(err))
-			e.updateSubtaskStateAndError(e.ctx, subtask, proto.SubtaskStateFailed, err)
+			e.updateSubtaskStateAndErrorImpl(e.ctx, subtask.ExecID, subtask.ID, proto.SubtaskStateFailed, err)
 		}
 		e.markErrorHandled()
 		return true
