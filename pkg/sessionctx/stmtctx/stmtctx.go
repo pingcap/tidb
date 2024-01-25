@@ -1458,6 +1458,8 @@ type UsedStatsInfoForTable struct {
 	ModifyCount           int64
 	ColumnStatsLoadStatus map[int64]string
 	IndexStatsLoadStatus  map[int64]string
+	StatsTbl              interface{}
+	ColAndIdxStatus       interface{}
 }
 
 // FormatForExplain format the content in the format expected to be printed in the execution plan.

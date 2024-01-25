@@ -169,7 +169,7 @@ func recordUsedItemStatsStatus(sctx sessionctx.Context, stats interface{}, table
 	}
 
 	// no need to record
-	if !missing && loadStatus.IsFullLoad() {
+	if !missing && loadStatus != nil && loadStatus.IsFullLoad() {
 		return
 	}
 
@@ -198,8 +198,8 @@ func recordUsedItemStatsStatus(sctx sessionctx.Context, stats interface{}, table
 	}
 
 	if missing {
-		if recordForTbl.ColAndIdxStatus != nil && recordForTbl.ColAndIdxStatus.(*statistics.ColAndIdxExistenceMap).Has(id, isIndex) {
-			recordForColOrIdx[id] = statistics.StatusToString(statistics.AllEvicted)
+		if recordForTbl.ColAndIdxStatus != nil && recordForTbl.ColAndIdxStatus.(*statistics.ColAndIdxExistenceMap).HasAnalyzed(id, isIndex) {
+			recordForColOrIdx[id] = statistics.StatsLoadedStatus{}.StatusToString()
 		} else {
 			recordForColOrIdx[id] = "missing"
 		}

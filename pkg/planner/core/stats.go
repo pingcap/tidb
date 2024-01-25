@@ -262,11 +262,12 @@ func (ds *DataSource) initStats(colGroups [][]*expression.Column) {
 	statsRecord := ds.SCtx().GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
 	name, tblInfo := getTblInfoForUsedStatsByPhysicalID(ds.SCtx(), ds.physicalTableID)
 	statsRecord[ds.physicalTableID] = &stmtctx.UsedStatsInfoForTable{
-		Name:          name,
-		TblInfo:       tblInfo,
-		Version:       tableStats.StatsVersion,
-		RealtimeCount: tableStats.HistColl.RealtimeCount,
-		ModifyCount:   tableStats.HistColl.ModifyCount,
+		Name:            name,
+		TblInfo:         tblInfo,
+		Version:         tableStats.StatsVersion,
+		RealtimeCount:   tableStats.HistColl.RealtimeCount,
+		ModifyCount:     tableStats.HistColl.ModifyCount,
+		ColAndIdxStatus: ds.statisticTable.ColAndIdxExistenceMap,
 	}
 
 	for _, col := range ds.schema.Columns {

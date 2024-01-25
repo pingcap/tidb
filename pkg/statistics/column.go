@@ -240,6 +240,16 @@ func (s StatsLoadedStatus) StatusToString() string {
 	return "unknown"
 }
 
+func StatusToString(evictedStatus int) string {
+	switch evictedStatus {
+	case AllLoaded:
+		return "allLoaded"
+	case AllEvicted:
+		return "allEvicted"
+	}
+	return "unknown"
+}
+
 // IsAnalyzed indicates whether the column is analyzed.
 // The set of IsAnalyzed columns is a subset of the set of StatsAvailable columns.
 func (c *Column) IsAnalyzed() bool {
