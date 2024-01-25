@@ -90,10 +90,10 @@ type Subtask struct {
 	// StartTime is the time when the subtask is started.
 	// it's 0 if it hasn't started yet.
 	StartTime time.Time
-	// StateUpdateTime is the time when the subtask state is updated.
+	// UpdateTime is the time when the subtask is updated.
 	// it can be used as subtask end time if the subtask is finished.
 	// it's 0 if it hasn't started yet.
-	StateUpdateTime time.Time
+	UpdateTime time.Time
 	// Meta is the metadata of subtask, should not be nil.
 	// meta of different subtasks of same step must be different too.
 	Meta    []byte

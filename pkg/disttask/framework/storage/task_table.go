@@ -42,9 +42,9 @@ const (
 	TaskColumns = basicTaskColumns + `, t.start_time, t.state_update_time, t.meta, t.dispatcher_id, t.error`
 	// InsertTaskColumns is the columns used in insert task.
 	InsertTaskColumns   = `task_key, type, state, priority, concurrency, step, meta, create_time`
-	basicSubtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time, ordinal, state_update_time`
+	basicSubtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time, ordinal, start_time`
 	// SubtaskColumns is the columns for subtask.
-	SubtaskColumns = basicSubtaskColumns + `, start_time, meta, summary`
+	SubtaskColumns = basicSubtaskColumns + `, meta, summary`
 	// InsertSubtaskColumns is the columns used in insert subtask.
 	InsertSubtaskColumns = `step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, state_update_time, checkpoint, summary`
 )

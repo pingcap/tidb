@@ -497,7 +497,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.GreaterOrEqual(t, subtask.CreateTime, timeBeforeCreate)
 	require.Equal(t, 1, subtask.Ordinal)
 	require.Zero(t, subtask.StartTime)
-	require.GreaterOrEqual(t, startTime, subtask.StateUpdateTime)
+	require.GreaterOrEqual(t, startTime, subtask.UpdateTime)
 	require.Equal(t, "{}", subtask.Summary)
 
 	subtask2, err := sm.GetFirstSubtaskInStates(ctx, "tidb1", 1, proto.StepOne, proto.SubtaskStatePending)
@@ -532,7 +532,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.Equal(t, "tidb1", subtask.ExecID)
 	require.Equal(t, []byte("test"), subtask.Meta)
 	require.GreaterOrEqual(t, subtask.StartTime, ts)
-	require.GreaterOrEqual(t, subtask.StateUpdateTime, ts)
+	require.GreaterOrEqual(t, subtask.UpdateTime, ts)
 
 	// check update time after state change to cancel
 	time.Sleep(time.Second)
@@ -540,7 +540,7 @@ func TestSubTaskTable(t *testing.T) {
 	subtask2, err = sm.GetFirstSubtaskInStates(ctx, "tidb1", 1, proto.StepOne, proto.SubtaskStateFailed)
 	require.NoError(t, err)
 	require.Equal(t, proto.SubtaskStateFailed, subtask2.State)
-	require.Greater(t, subtask2.StateUpdateTime, subtask.StateUpdateTime)
+	require.Greater(t, subtask2.UpdateTime, subtask.UpdateTime)
 
 	cntByStates, err = sm.GetSubtaskCntGroupByStates(ctx, 1, proto.StepOne)
 	require.NoError(t, err)
@@ -1001,10 +1001,10 @@ func TestSubtaskType(t *testing.T) {
 func TestRunningSubtasksBack2Pending(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
 	subtasks := []*proto.Subtask{
-		{TaskID: 1, ExecID: "tidb-1", State: proto.SubtaskStatePending, StateUpdateTime: time.Unix(time.Now().Unix(), 0)},
-		{TaskID: 1, ExecID: "tidb-1", State: proto.SubtaskStateRunning, StateUpdateTime: time.Unix(time.Now().Unix(), 0)},
-		{TaskID: 1, ExecID: "tidb-2", State: proto.SubtaskStatePending, StateUpdateTime: time.Unix(time.Now().Unix(), 0)},
-		{TaskID: 2, ExecID: "tidb-1", State: proto.SubtaskStatePending, StateUpdateTime: time.Unix(time.Now().Unix(), 0)},
+		{TaskID: 1, ExecID: "tidb-1", State: proto.SubtaskStatePending, UpdateTime: time.Unix(time.Now().Unix(), 0)},
+		{TaskID: 1, ExecID: "tidb-1", State: proto.SubtaskStateRunning, UpdateTime: time.Unix(time.Now().Unix(), 0)},
+		{TaskID: 1, ExecID: "tidb-2", State: proto.SubtaskStatePending, UpdateTime: time.Unix(time.Now().Unix(), 0)},
+		{TaskID: 2, ExecID: "tidb-1", State: proto.SubtaskStatePending, UpdateTime: time.Unix(time.Now().Unix(), 0)},
 	}
 	for _, st := range subtasks {
 		testutil.InsertSubtask(t, sm, st.TaskID, proto.StepOne, st.ExecID, []byte(""), st.State, proto.TaskTypeExample, 12)
@@ -1024,10 +1024,10 @@ func TestRunningSubtasksBack2Pending(t *testing.T) {
 					updateTime = time.Unix(r.GetInt64(3), 0)
 				}
 				res = append(res, &proto.Subtask{
-					TaskID:          r.GetInt64(0),
-					ExecID:          r.GetString(1),
-					State:           proto.SubtaskState(r.GetString(2)),
-					StateUpdateTime: updateTime,
+					TaskID:     r.GetInt64(0),
+					ExecID:     r.GetString(1),
+					State:      proto.SubtaskState(r.GetString(2)),
+					UpdateTime: updateTime,
 				})
 			}
 			return nil
@@ -1041,7 +1041,7 @@ func TestRunningSubtasksBack2Pending(t *testing.T) {
 			require.Equal(t, subtasks1[i].TaskID, subtasks2[i].TaskID)
 			require.Equal(t, subtasks1[i].ExecID, subtasks2[i].ExecID)
 			require.Equal(t, subtasks1[i].State, subtasks2[i].State)
-			require.GreaterOrEqual(t, subtasks2[i].StateUpdateTime, subtasks1[i].StateUpdateTime)
+			require.GreaterOrEqual(t, subtasks2[i].UpdateTime, subtasks1[i].UpdateTime)
 		}
 	}
 
@@ -1053,7 +1053,7 @@ func TestRunningSubtasksBack2Pending(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, activeSubtasks, 3)
 	subtasks[1].State = proto.SubtaskStatePending
-	subtasks[1].StateUpdateTime = time.Unix(time.Now().Unix(), 0)
+	subtasks[1].UpdateTime = time.Unix(time.Now().Unix(), 0)
 	// this list contains running and pending subtasks, just for test.
 	require.NoError(t, sm.RunningSubtasksBack2Pending(ctx, activeSubtasks))
 	checkSubtasksEqual(subtasks, getAllSubtasks())
@@ -1070,7 +1070,7 @@ func TestSubtasksState(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, proto.SubtaskStateFailed, subtask.State)
 	require.Greater(t, subtask.StartTime, ts)
-	require.Greater(t, subtask.StateUpdateTime, ts)
+	require.Greater(t, subtask.UpdateTime, ts)
 
 	endTime, err := testutil.GetSubtaskEndTime(ctx, sm, subtask.ID)
 	require.NoError(t, err)
@@ -1086,14 +1086,14 @@ func TestSubtasksState(t *testing.T) {
 	subtask, err = sm.GetFirstSubtaskInStates(ctx, "for_test1", 4, proto.StepInit, proto.SubtaskStateRunning)
 	require.NoError(t, err)
 	require.Greater(t, subtask.StartTime, ts)
-	require.Greater(t, subtask.StateUpdateTime, ts)
+	require.Greater(t, subtask.UpdateTime, ts)
 	ts = time.Now()
 	time.Sleep(time.Second)
 	require.NoError(t, sm.FinishSubtask(ctx, "for_test1", subtask.ID, []byte{}))
 	subtask2, err := sm.GetFirstSubtaskInStates(ctx, "for_test1", 4, proto.StepInit, proto.SubtaskStateSucceed)
 	require.NoError(t, err)
 	require.Equal(t, subtask2.StartTime, subtask.StartTime)
-	require.Greater(t, subtask2.StateUpdateTime, subtask.StateUpdateTime)
+	require.Greater(t, subtask2.UpdateTime, subtask.UpdateTime)
 	endTime, err = testutil.GetSubtaskEndTime(ctx, sm, subtask.ID)
 	require.NoError(t, err)
 	require.Greater(t, endTime, ts)
@@ -1105,7 +1105,7 @@ func TestSubtasksState(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, proto.SubtaskStateCanceled, subtask.State)
 	require.Greater(t, subtask.StartTime, ts)
-	require.Greater(t, subtask.StateUpdateTime, ts)
+	require.Greater(t, subtask.UpdateTime, ts)
 
 	endTime, err = testutil.GetSubtaskEndTime(ctx, sm, subtask.ID)
 	require.NoError(t, err)

@@ -428,7 +428,7 @@ func (sm *Manager) collectMetricsLoop() {
 func (sm *Manager) collectMetrics() {
 	subtasks, err := sm.taskMgr.GetAllSubtasks(sm.ctx)
 	if err != nil {
-		logutil.BgLogger().Warn("collect metrics failed", zap.Error(err))
+		logutil.BgLogger().Warn("get all subtasks failed", zap.Error(err))
 		return
 	}
 	allNodes, err := sm.taskMgr.GetAllNodes(sm.ctx)
@@ -456,20 +456,18 @@ func (sm *Manager) collectMetrics() {
 		subtaskCnt[subtask.TaskID][subtask.ExecID][subtask.State]++
 		taskType[subtask.TaskID] = subtask.Type
 
-		metrics.DistTaskSubTaskDurationGauge.WithLabelValues(
-			subtask.Type.String(),
-			strconv.Itoa(int(subtask.TaskID)),
-			subtask.State.String(),
-			strconv.Itoa(int(subtask.ID)),
-			subtask.ExecID,
-		).Set(time.Since(subtask.StateUpdateTime).Seconds())
+		metrics.SetDistSubTaskDuration(subtask)
+
 		for _, state := range proto.AllSubtaskStates {
-			if state == subtask.State {
+			if state != proto.SubtaskStatePending && subtask.State != proto.SubtaskStateRunning {
 				continue
 			}
 
 			// exec_id maybe has been changed.
 			for _, node := range allNodes {
+				if node.ID == subtask.ExecID && subtask.State == state {
+					continue
+				}
 				metrics.DistTaskSubTaskDurationGauge.DeleteLabelValues(
 					subtask.Type.String(),
 					strconv.Itoa(int(subtask.TaskID)),
