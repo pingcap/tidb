@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/util/hack"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -872,6 +873,20 @@ func newMockImportClient() *mockImportClient {
 	}
 }
 
+func (c *mockImportClient) Ingest(context.Context, *sst.IngestRequest, ...grpc.CallOption) (*sst.IngestResponse, error) {
+	defer func() {
+		c.cnt++
+	}()
+	if c.apiInvokeRecorder != nil {
+		c.apiInvokeRecorder["Ingest"] = append(c.apiInvokeRecorder["Ingest"], c.store.GetId())
+	}
+	if c.cnt < c.retry && (c.err != nil || c.resp != nil) {
+		return c.resp, c.err
+	}
+
+	return &sst.IngestResponse{}, nil
+}
+
 func (c *mockImportClient) MultiIngest(context.Context, *sst.MultiIngestRequest, ...grpc.CallOption) (*sst.IngestResponse, error) {
 	defer func() {
 		c.cnt++
@@ -1421,4 +1436,68 @@ func TestNotLeaderErrorNeedUpdatePeers(t *testing.T) {
 	// repeat above for 11,12,13
 	require.Equal(t, []uint64{1, 2, 3, 11, 12, 13}, apiInvokeRecorder["Write"])
 	require.Equal(t, []uint64{1, 2, 3, 1, 11, 12, 13, 11}, apiInvokeRecorder["MultiIngest"])
+}
+
+func TestIngestFailOnFirstBatch(t *testing.T) {
+	logger := log.Logger{Logger: zap.NewExample()}
+	ctx := log.NewContext(context.Background(), logger)
+
+	apiInvokeRecorder := map[string][]uint64{}
+	importCli := newMockImportClient()
+
+	local := &local{
+		importClientFactory: &mockImportClientFactory{
+			stores: []*metapb.Store{
+				{Id: 1}, {Id: 2}, {Id: 3},
+				{Id: 11}, {Id: 12}, {Id: 13},
+			},
+			createClientFn: func(store *metapb.Store) sst.ImportSSTClient {
+				importCli.store = store
+				importCli.apiInvokeRecorder = apiInvokeRecorder
+				if store.Id == 1 {
+					importCli.retry = 5
+					importCli.err = status.Error(codes.Unknown, "Suspended { time_to_lease_expire: 1.204s }")
+				}
+				return importCli
+			},
+		},
+		logger:                logger,
+		ingestConcurrency:     worker.NewPool(ctx, 1, "ingest"),
+		writeLimiter:          noopStoreWriteLimiter{},
+		bufferPool:            membuf.NewPool(),
+		supportMultiIngest:    false,
+		shouldCheckWriteStall: false,
+	}
+
+	db, tmpPath := makePebbleDB(t, nil)
+	_, engineUUID := backend.MakeUUID("ww", 0)
+	engineCtx, cancel := context.WithCancel(context.Background())
+	f := &Engine{
+		UUID:         engineUUID,
+		sstDir:       tmpPath,
+		ctx:          engineCtx,
+		cancel:       cancel,
+		sstMetasChan: make(chan metaOrFlush, 64),
+		keyAdapter:   noopKeyAdapter{},
+		logger:       log.L(),
+	}
+	f.db.Store(db)
+	err := db.Set([]byte("a"), []byte("a"), nil)
+	require.NoError(t, err)
+	require.False(t, local.supportMultiIngest)
+	err = local.writeAndIngestPairs(ctx, f, &split.RegionInfo{
+		Region: &metapb.Region{
+			Id: 1,
+			Peers: []*metapb.Peer{
+				{Id: 1, StoreId: 1},
+			},
+		},
+		Leader: &metapb.Peer{
+			Id:      1,
+			StoreId: 1,
+		},
+	}, []byte{}, []byte("b"), 0, 0)
+	require.ErrorContains(t, err, "Suspended { time_to_lease_expire: 1.204s }")
+	require.Equal(t, []uint64{1}, apiInvokeRecorder["Write"])
+	require.Equal(t, []uint64{1, 1, 1, 1, 1}, apiInvokeRecorder["Ingest"])
 }

@@ -131,6 +131,7 @@ func NewDownloadSSTBackoffer() Backoffer {
 }
 
 func (bo *importerBackoffer) NextBackoff(err error) time.Duration {
+	log.Warn("retry to import ssts", zap.Int("attempt", bo.attempt), zap.Error(err))
 	if MessageIsRetryableStorageError(err.Error()) {
 		bo.delayTime = 2 * bo.delayTime
 		bo.attempt--

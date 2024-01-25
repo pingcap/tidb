@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/errno"
 	"github.com/pingcap/tidb/kv"
 	tmysql "github.com/pingcap/tidb/parser/mysql"
@@ -2150,6 +2151,18 @@ func (cli *testServerClient) runTestMultiStatements(t *testing.T) {
 		// the create table + drop table statements will return errors.
 		dbt.MustExec("CREATE DATABASE multistmtuse")
 		dbt.MustExec("use multistmtuse; create table if not exists t1 (id int); drop table t1;")
+
+		// Test issue #50012
+		dbt.MustExec("create database if not exists test;")
+		dbt.MustExec("use test;")
+		dbt.MustExec("CREATE TABLE t (a bigint(20), b int(10), PRIMARY KEY (b, a), UNIQUE KEY uk_a (a));")
+		dbt.MustExec("insert into t values (1, 1);")
+		dbt.MustExec("begin;")
+		rs := dbt.MustQuery("delete from t where a = 1; select 1;")
+		rs.Close()
+		rs = dbt.MustQuery("update t set b = 2 where a = 1; select 1;")
+		rs.Close()
+		dbt.MustExec("commit;")
 	})
 }
 
@@ -2570,5 +2583,78 @@ func (cli *testServerClient) runTestLoadDataReplaceNonclusteredPK(t *testing.T) 
 			require.NoError(t, err)
 		}
 		require.Falsef(t, rows.Next(), "expect end")
+	})
+}
+
+func (cli *testServerClient) RunTestStmtCountLimit(t *testing.T) {
+	originalStmtCountLimit := config.GetGlobalConfig().Performance.StmtCountLimit
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.StmtCountLimit = 3
+	})
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.Performance.StmtCountLimit = originalStmtCountLimit
+		})
+	}()
+
+	cli.runTests(t, nil, func(dbt *testkit.DBTestKit) {
+		dbt.MustExec("create table t (id int key);")
+		dbt.MustExec("set @@tidb_disable_txn_auto_retry=0;")
+		dbt.MustExec("set autocommit=0;")
+		dbt.MustExec("begin optimistic;")
+		dbt.MustExec("insert into t values (1);")
+		dbt.MustExec("insert into t values (2);")
+		_, err := dbt.GetDB().Query("select * from t for update;")
+		require.Error(t, err)
+		require.Equal(t, "Error 1105: statement count 4 exceeds the transaction limitation, transaction has been rollback, autocommit = false", err.Error())
+		dbt.MustExec("insert into t values (3);")
+		dbt.MustExec("commit;")
+		rows := dbt.MustQuery("select * from t;")
+		var id int
+		count := 0
+		for rows.Next() {
+			rows.Scan(&id)
+			count++
+		}
+		require.NoError(t, rows.Close())
+		require.Equal(t, 3, id)
+		require.Equal(t, 1, count)
+
+		dbt.MustExec("delete from t;")
+		dbt.MustExec("commit;")
+		dbt.MustExec("set @@tidb_disable_txn_auto_retry=0;")
+		dbt.MustExec("set autocommit=0;")
+		dbt.MustExec("begin optimistic;")
+		dbt.MustExec("insert into t values (1);")
+		dbt.MustExec("insert into t values (2);")
+		_, err = dbt.GetDB().Exec("insert into t values (3);")
+		require.Error(t, err)
+		require.Equal(t, "Error 1105: statement count 4 exceeds the transaction limitation, transaction has been rollback, autocommit = false", err.Error())
+		dbt.MustExec("commit;")
+		rows = dbt.MustQuery("select count(*) from t;")
+		for rows.Next() {
+			rows.Scan(&count)
+		}
+		require.NoError(t, rows.Close())
+		require.Equal(t, 0, count)
+
+		dbt.MustExec("delete from t;")
+		dbt.MustExec("commit;")
+		dbt.MustExec("set @@tidb_batch_commit=1;")
+		dbt.MustExec("set @@tidb_disable_txn_auto_retry=0;")
+		dbt.MustExec("set autocommit=0;")
+		dbt.MustExec("begin optimistic;")
+		dbt.MustExec("insert into t values (1);")
+		dbt.MustExec("insert into t values (2);")
+		dbt.MustExec("insert into t values (3);")
+		dbt.MustExec("insert into t values (4);")
+		dbt.MustExec("insert into t values (5);")
+		dbt.MustExec("commit;")
+		rows = dbt.MustQuery("select count(*) from t;")
+		for rows.Next() {
+			rows.Scan(&count)
+		}
+		require.NoError(t, rows.Close())
+		require.Equal(t, 5, count)
 	})
 }

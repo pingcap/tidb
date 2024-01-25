@@ -2807,3 +2807,28 @@ func TestIssue37901(t *testing.T) {
 	tk.MustExec(`execute st1 using @t`)
 	tk.MustQuery(`select count(*) from t4`).Check(testkit.Rows("2"))
 }
+
+func TestIssue42739(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec(`use test`)
+	tk.MustExec(`drop table if exists t0;`)
+	tk.MustExec(`CREATE TABLE t0 (c1 double, c2 double);`)
+	tk.MustExec(`select
+  exists (
+    select
+          subq_2.c0 as c8
+        from
+          (select
+                ref_153.c1 as c0
+              from
+                t0 as ref_153
+              group by ref_153.c1 having 0 <> (
+                  select 1
+                    from
+                      t0 as ref_173
+                    where count(ref_153.c2) = avg(ref_153.c2)
+                    order by c1 desc limit 1)) as subq_2
+     ) as c10;`)
+}

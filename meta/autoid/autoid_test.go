@@ -34,6 +34,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type mockRequirement struct {
+	kv.Storage
+}
+
+func (r mockRequirement) Store() kv.Storage {
+	return r.Storage
+}
+
+func (r mockRequirement) AutoIDClient() *autoid.ClientDiscover {
+	return nil
+}
+
 func TestSignedAutoid(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/meta/autoid/mockAutoIDChange", `return(true)`))
 	defer func() {
@@ -67,7 +79,7 @@ func TestSignedAutoid(t *testing.T) {
 	require.NoError(t, err)
 
 	// Since the test here is applicable to any type of allocators, autoid.RowIDAllocType is chosen.
-	alloc := autoid.NewAllocator(store, 1, 1, false, autoid.RowIDAllocType)
+	alloc := autoid.NewAllocator(mockRequirement{store}, 1, 1, false, autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
 
 	globalAutoID, err := alloc.NextGlobalAutoID()
@@ -105,13 +117,13 @@ func TestSignedAutoid(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(3011), id)
 
-	alloc = autoid.NewAllocator(store, 1, 1, false, autoid.RowIDAllocType)
+	alloc = autoid.NewAllocator(mockRequirement{store}, 1, 1, false, autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
 	require.Equal(t, autoid.GetStep()+1, id)
 
-	alloc = autoid.NewAllocator(store, 1, 2, false, autoid.RowIDAllocType)
+	alloc = autoid.NewAllocator(mockRequirement{store}, 1, 2, false, autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
 	err = alloc.Rebase(context.Background(), int64(1), false)
 	require.NoError(t, err)
@@ -119,11 +131,11 @@ func TestSignedAutoid(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(2), id)
 
-	alloc = autoid.NewAllocator(store, 1, 3, false, autoid.RowIDAllocType)
+	alloc = autoid.NewAllocator(mockRequirement{store}, 1, 3, false, autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
 	err = alloc.Rebase(context.Background(), int64(3210), false)
 	require.NoError(t, err)
-	alloc = autoid.NewAllocator(store, 1, 3, false, autoid.RowIDAllocType)
+	alloc = autoid.NewAllocator(mockRequirement{store}, 1, 3, false, autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
 	err = alloc.Rebase(context.Background(), int64(3000), false)
 	require.NoError(t, err)
@@ -145,7 +157,7 @@ func TestSignedAutoid(t *testing.T) {
 	require.NoError(t, err)
 
 	// alloc N for signed
-	alloc = autoid.NewAllocator(store, 1, 4, false, autoid.RowIDAllocType)
+	alloc = autoid.NewAllocator(mockRequirement{store}, 1, 4, false, autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
 	globalAutoID, err = alloc.NextGlobalAutoID()
 	require.NoError(t, err)
@@ -188,7 +200,7 @@ func TestSignedAutoid(t *testing.T) {
 	require.Greater(t, min+1, lastRemainOne)
 
 	// Test for increment & offset for signed.
-	alloc = autoid.NewAllocator(store, 1, 5, false, autoid.RowIDAllocType)
+	alloc = autoid.NewAllocator(mockRequirement{store}, 1, 5, false, autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
 
 	increment := int64(2)
@@ -271,7 +283,7 @@ func TestUnsignedAutoid(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	alloc := autoid.NewAllocator(store, 1, 1, true, autoid.RowIDAllocType)
+	alloc := autoid.NewAllocator(mockRequirement{store}, 1, 1, true, autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
 
 	globalAutoID, err := alloc.NextGlobalAutoID()
@@ -309,13 +321,13 @@ func TestUnsignedAutoid(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(3011), id)
 
-	alloc = autoid.NewAllocator(store, 1, 1, true, autoid.RowIDAllocType)
+	alloc = autoid.NewAllocator(mockRequirement{store}, 1, 1, true, autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
 	_, id, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
 	require.Equal(t, autoid.GetStep()+1, id)
 
-	alloc = autoid.NewAllocator(store, 1, 2, true, autoid.RowIDAllocType)
+	alloc = autoid.NewAllocator(mockRequirement{store}, 1, 2, true, autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
 	err = alloc.Rebase(context.Background(), int64(1), false)
 	require.NoError(t, err)
@@ -323,11 +335,11 @@ func TestUnsignedAutoid(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(2), id)
 
-	alloc = autoid.NewAllocator(store, 1, 3, true, autoid.RowIDAllocType)
+	alloc = autoid.NewAllocator(mockRequirement{store}, 1, 3, true, autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
 	err = alloc.Rebase(context.Background(), int64(3210), false)
 	require.NoError(t, err)
-	alloc = autoid.NewAllocator(store, 1, 3, true, autoid.RowIDAllocType)
+	alloc = autoid.NewAllocator(mockRequirement{store}, 1, 3, true, autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
 	err = alloc.Rebase(context.Background(), int64(3000), false)
 	require.NoError(t, err)
@@ -352,7 +364,7 @@ func TestUnsignedAutoid(t *testing.T) {
 	require.NoError(t, err)
 
 	// alloc N for unsigned
-	alloc = autoid.NewAllocator(store, 1, 4, true, autoid.RowIDAllocType)
+	alloc = autoid.NewAllocator(mockRequirement{store}, 1, 4, true, autoid.RowIDAllocType)
 	require.NotNil(t, alloc)
 	globalAutoID, err = alloc.NextGlobalAutoID()
 	require.NoError(t, err)
@@ -381,7 +393,7 @@ func TestUnsignedAutoid(t *testing.T) {
 	require.Greater(t, min+1, lastRemainOne)
 
 	// Test increment & offset for unsigned. Using AutoRandomType to avoid valid range check for increment and offset.
-	alloc = autoid.NewAllocator(store, 1, 5, true, autoid.AutoRandomType)
+	alloc = autoid.NewAllocator(mockRequirement{store}, 1, 5, true, autoid.AutoRandomType)
 	require.NotNil(t, alloc)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), globalAutoID)
@@ -435,7 +447,7 @@ func TestConcurrentAlloc(t *testing.T) {
 
 	allocIDs := func() {
 		ctx := context.Background()
-		alloc := autoid.NewAllocator(store, dbID, tblID, false, autoid.RowIDAllocType)
+		alloc := autoid.NewAllocator(mockRequirement{store}, dbID, tblID, false, autoid.RowIDAllocType)
 		for j := 0; j < int(autoid.GetStep())+5; j++ {
 			_, id, err1 := alloc.Alloc(ctx, 1, 1, 1)
 			if err1 != nil {
@@ -516,7 +528,7 @@ func TestRollbackAlloc(t *testing.T) {
 	injectConf := new(kv.InjectionConfig)
 	injectConf.SetCommitError(errors.New("injected"))
 	injectedStore := kv.NewInjectedStore(store, injectConf)
-	alloc := autoid.NewAllocator(injectedStore, 1, 2, false, autoid.RowIDAllocType)
+	alloc := autoid.NewAllocator(mockRequirement{injectedStore}, 1, 2, false, autoid.RowIDAllocType)
 	_, _, err = alloc.Alloc(ctx, 1, 1, 1)
 	require.Error(t, err)
 	require.Equal(t, int64(0), alloc.Base())
@@ -566,11 +578,11 @@ func TestAllocComputationIssue(t *testing.T) {
 	require.NoError(t, err)
 
 	// Since the test here is applicable to any type of allocators, autoid.RowIDAllocType is chosen.
-	unsignedAlloc1 := autoid.NewAllocator(store, 1, 1, true, autoid.RowIDAllocType)
+	unsignedAlloc1 := autoid.NewAllocator(mockRequirement{store}, 1, 1, true, autoid.RowIDAllocType)
 	require.NotNil(t, unsignedAlloc1)
-	signedAlloc1 := autoid.NewAllocator(store, 1, 1, false, autoid.RowIDAllocType)
+	signedAlloc1 := autoid.NewAllocator(mockRequirement{store}, 1, 1, false, autoid.RowIDAllocType)
 	require.NotNil(t, signedAlloc1)
-	signedAlloc2 := autoid.NewAllocator(store, 1, 2, false, autoid.RowIDAllocType)
+	signedAlloc2 := autoid.NewAllocator(mockRequirement{store}, 1, 2, false, autoid.RowIDAllocType)
 	require.NotNil(t, signedAlloc2)
 
 	// the next valid two value must be 13 & 16, batch size = 6.

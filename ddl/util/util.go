@@ -225,7 +225,7 @@ func GetTimeZone(sctx sessionctx.Context) (string, int) {
 		}
 	}
 	_, offset := time.Now().In(loc).Zone()
-	return "UTC", offset
+	return "", offset
 }
 
 // enableEmulatorGC means whether to enable emulator GC. The default is enable.

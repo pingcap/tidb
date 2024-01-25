@@ -17,6 +17,7 @@ package local
 import (
 	"bytes"
 	"context"
+	goerrors "errors"
 	"fmt"
 	"io"
 	"math"
@@ -907,17 +908,30 @@ type rangeStats struct {
 // we don't need to do cleanup for the pairs written to tikv if encounters an error,
 // tikv will takes the responsibility to do so.
 func (local *local) WriteToTiKV(
-	ctx context.Context,
+	pCtx context.Context,
 	engine *Engine,
 	region *split.RegionInfo,
 	start, end []byte,
 	regionSplitSize int64,
 	regionSplitKeys int64,
-) ([]*sst.SSTMeta, Range, rangeStats, error) {
+) (s []*sst.SSTMeta, r Range, r2 rangeStats, errRet error) {
 	failpoint.Inject("WriteToTiKVNotEnoughDiskSpace", func(_ failpoint.Value) {
 		failpoint.Return(nil, Range{}, rangeStats{},
 			errors.Errorf("The available disk of TiKV (%s) only left %d, and capacity is %d", "", 0, 0))
 	})
+	ctx, cancel := context.WithTimeout(pCtx, 15*time.Minute)
+	defer cancel()
+	defer func() {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			// should not happen
+			return
+		}
+		if goerrors.Is(errRet, context.DeadlineExceeded) && time.Now().After(deadline) {
+			errRet = common.ErrWriteTooSlow
+		}
+	}()
+
 	if local.checkTiKVAvaliable {
 		for _, peer := range region.Region.GetPeers() {
 			var e error
@@ -1517,19 +1531,18 @@ loopWrite:
 					continue
 				}
 			}
+			if err != nil {
+				log.FromContext(ctx).Warn("batch ingest fail after retry, will retry import full range", log.ShortError(err),
+					logutil.Region(region.Region), zap.Reflect("meta", ingestMetas))
+				return errors.Trace(err)
+			}
 		}
 
-		if err != nil {
-			log.FromContext(ctx).Warn("write and ingest region, will retry import full range", log.ShortError(err),
-				logutil.Region(region.Region), logutil.Key("start", start),
-				logutil.Key("end", end))
-		} else {
-			engine.importedKVSize.Add(rangeStats.totalBytes)
-			engine.importedKVCount.Add(rangeStats.count)
-			engine.finishedRanges.add(finishedRange)
-			if local.metrics != nil {
-				local.metrics.BytesCounter.WithLabelValues(metric.BytesStateImported).Add(float64(rangeStats.totalBytes))
-			}
+		engine.importedKVSize.Add(rangeStats.totalBytes)
+		engine.importedKVCount.Add(rangeStats.count)
+		engine.finishedRanges.add(finishedRange)
+		if local.metrics != nil {
+			local.metrics.BytesCounter.WithLabelValues(metric.BytesStateImported).Add(float64(rangeStats.totalBytes))
 		}
 		return errors.Trace(err)
 	}
@@ -1679,14 +1692,27 @@ func (local *local) ImportEngine(ctx context.Context, engineUUID uuid.UUID, regi
 		failpoint.Inject("failToSplit", func(_ failpoint.Value) {
 			needSplit = true
 		})
+
+		backOffTime := 10 * time.Second
+		maxbackoffTime := 120 * time.Second
 		for i := 0; i < maxRetryTimes; i++ {
-			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, lf.tableInfo, needSplit, regionSplitSize, maxBatchSplitRanges)
+			err = local.SplitAndScatterRegionInBatches(ctx, unfinishedRanges, needSplit, maxBatchSplitRanges)
 			if err == nil || common.IsContextCanceledError(err) {
 				break
 			}
 
 			log.FromContext(ctx).Warn("split and scatter failed in retry", zap.Stringer("uuid", engineUUID),
 				log.ShortError(err), zap.Int("retry", i))
+
+			select {
+			case <-time.After(backOffTime):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+			backOffTime *= 2
+			if backOffTime > maxbackoffTime {
+				backOffTime = maxbackoffTime
+			}
 		}
 		if err != nil {
 			log.FromContext(ctx).Error("split & scatter ranges failed", zap.Stringer("uuid", engineUUID), log.ShortError(err))

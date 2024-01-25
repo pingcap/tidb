@@ -324,7 +324,7 @@ func (s *metaMgrSuite) prepareMockInner(rowsVal [][]driver.Value, nextRowID *int
 		WillReturnRows(rows)
 
 	if nextRowID != nil {
-		allocs := autoid.NewAllocatorsFromTblInfo(s.mgr.tr.kvStore, s.mgr.tr.dbInfo.ID, s.mgr.tr.tableInfo.Core)
+		allocs := autoid.NewAllocatorsFromTblInfo(s.mgr.tr, s.mgr.tr.dbInfo.ID, s.mgr.tr.tableInfo.Core)
 		alloc := allocs.Get(autoid.RowIDAllocType)
 		alloc.ForceRebase(*nextRowID - 1)
 	}
@@ -480,6 +480,18 @@ func newTableInfo2(t *testing.T,
 	return tableInfo
 }
 
+type mockRequirement struct {
+	kv.Storage
+}
+
+func (r mockRequirement) Store() kv.Storage {
+	return r.Storage
+}
+
+func (r mockRequirement) AutoIDClient() *autoid.ClientDiscover {
+	return nil
+}
+
 func TestAllocGlobalAutoID(t *testing.T) {
 	storePath := t.TempDir()
 	kvStore, err := mockstore.NewMockStore(mockstore.WithPath(storePath))
@@ -557,11 +569,11 @@ func TestAllocGlobalAutoID(t *testing.T) {
 	ctx := context.Background()
 	for _, c := range cases {
 		ti := newTableInfo2(t, 1, c.tableID, c.createTableSQL, kvStore)
-		allocators, err := getGlobalAutoIDAlloc(kvStore, 1, ti)
+		allocators, err := getGlobalAutoIDAlloc(mockRequirement{kvStore}, 1, ti)
 		if c.expectErrStr == "" {
 			require.NoError(t, err, c.tableID)
-			require.NoError(t, rebaseGlobalAutoID(ctx, 123, kvStore, 1, ti))
-			base, idMax, err := allocGlobalAutoID(ctx, 100, kvStore, 1, ti)
+			require.NoError(t, rebaseGlobalAutoID(ctx, 123, mockRequirement{kvStore}, 1, ti))
+			base, idMax, err := allocGlobalAutoID(ctx, 100, mockRequirement{kvStore}, 1, ti)
 			require.NoError(t, err, c.tableID)
 			require.Equal(t, int64(123), base, c.tableID)
 			require.Equal(t, int64(223), idMax, c.tableID)

@@ -130,7 +130,7 @@ func TestForeignKey(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		var t table.Table
-		t, err = testGetTableWithError(store, dbInfo.ID, tblInfo.ID)
+		t, err = testGetTableWithError(dom, dbInfo.ID, tblInfo.ID)
 		if err != nil {
 			hookErr = errors.Trace(err)
 			return
@@ -172,7 +172,7 @@ func TestForeignKey(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		var t table.Table
-		t, err = testGetTableWithError(store, dbInfo.ID, tblInfo.ID)
+		t, err = testGetTableWithError(dom, dbInfo.ID, tblInfo.ID)
 		if err != nil {
 			hookErr = errors.Trace(err)
 			return
@@ -1849,7 +1849,7 @@ func TestRenameTablesWithForeignKey(t *testing.T) {
 	// check the schema diff
 	diff := getLatestSchemaDiff(t, tk)
 	require.Equal(t, model.ActionRenameTables, diff.Type)
-	require.Equal(t, 3, len(diff.AffectedOpts))
+	require.Equal(t, 2, len(diff.AffectedOpts))
 
 	// check referred foreign key information.
 	t1ReferredFKs := getTableInfoReferredForeignKeys(t, dom, "test", "t1")

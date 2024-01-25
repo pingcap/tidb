@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "explain_test",
+    srcs = [
+        "explain_test.go",
+        "main_test.go",
+    ],
+    deps = [
+        "//config",
+        "//testkit",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

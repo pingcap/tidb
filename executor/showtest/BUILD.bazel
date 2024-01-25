@@ -11,6 +11,7 @@ go_test(
     race = "on",
     shard_count = 45,
     deps = [
+        "//autoid_service",
         "//config",
         "//executor",
         "//infoschema",
