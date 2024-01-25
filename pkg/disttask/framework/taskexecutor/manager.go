@@ -296,6 +296,7 @@ type TestContext struct {
 	mockDown           atomic.Bool
 }
 
+// TestContexts only used in tests.
 var TestContexts sync.Map
 
 // startTaskExecutor handles a runnable task.

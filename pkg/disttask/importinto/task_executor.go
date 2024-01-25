@@ -463,7 +463,6 @@ type importExecutor struct {
 
 func newImportExecutor(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
 	metrics := metricsManager.getOrCreateMetrics(task.ID)
-	defer metricsManager.unregister(task.ID)
 	subCtx := metric.WithCommonMetric(ctx, metrics)
 	s := &importExecutor{
 		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(subCtx, id, task, taskTable),
@@ -517,6 +516,12 @@ func (*importExecutor) GetStepExecutor(task *proto.Task, _ *execute.Summary, _ *
 	default:
 		return nil, errors.Errorf("unknown step %d for import task %d", task.Step, task.ID)
 	}
+}
+
+func (e *importExecutor) Close() {
+	task := e.GetTask()
+	defer metricsManager.unregister(task.ID)
+	e.BaseTaskExecutor.Close()
 }
 
 func init() {
