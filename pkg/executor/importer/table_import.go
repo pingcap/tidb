@@ -905,19 +905,19 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 		txnErr                       error
 		doneCh                       = make(chan struct{})
 	)
-	ctx, cancel := context.WithCancel(ctx)
+	checkCtx, cancel := context.WithCancel(ctx)
 	defer func() {
 		cancel()
 		<-doneCh
 	}()
 
 	go func() {
-		<-ctx.Done()
+		<-checkCtx.Done()
 		se.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 		close(doneCh)
 	}()
 
-	ctx = util.WithInternalSourceType(ctx, tidbkv.InternalImportInto)
+	ctx = util.WithInternalSourceType(checkCtx, tidbkv.InternalImportInto)
 	for i := 0; i < maxErrorRetryCount; i++ {
 		txnErr = func() error {
 			// increase backoff weight
