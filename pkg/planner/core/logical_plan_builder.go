@@ -261,7 +261,7 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 
 	plan4Agg := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, len(aggFuncList))}.Init(b.ctx, b.getSelectOffset())
 	if hint := b.TableHints(); hint != nil {
-		plan4Agg.aggHints = hint.AggHints
+		plan4Agg.aggHints = hint.Agg
 	}
 	schema4Agg := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)
 	names := make(types.NameSlice, 0, len(aggFuncList)+p.Schema().Len())
@@ -622,7 +622,7 @@ func (p *LogicalJoin) ExtractOnCondition(
 // extractTableAlias returns table alias of the LogicalPlan's columns.
 // It will return nil when there are multiple table alias, because the alias is only used to check if
 // the logicalPlan Match some optimizer hints, and hints are not expected to take effect in this case.
-func extractTableAlias(p Plan, parentOffset int) *h.TableInfo {
+func extractTableAlias(p Plan, parentOffset int) *h.HintedTable {
 	if len(p.OutputNames()) > 0 && p.OutputNames()[0].TblName.L != "" {
 		firstName := p.OutputNames()[0]
 		for _, name := range p.OutputNames() {
@@ -644,12 +644,12 @@ func extractTableAlias(p Plan, parentOffset int) *h.TableInfo {
 		if dbName.L == "" {
 			dbName = model.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
 		}
-		return &h.TableInfo{DBName: dbName, TblName: firstName.TblName, SelectOffset: qbOffset}
+		return &h.HintedTable{DBName: dbName, TblName: firstName.TblName, SelectOffset: qbOffset}
 	}
 	return nil
 }
 
-func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *h.TableHintInfo) {
+func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *h.PlanHints) {
 	if hintInfo == nil {
 		return
 	}
@@ -785,7 +785,7 @@ func (p *LogicalJoin) setPreferredJoinTypeAndOrder(hintInfo *h.TableHintInfo) {
 	}
 	// set the join order
 	if hintInfo.LeadingJoinOrder != nil {
-		p.preferJoinOrder = hintInfo.MatchTableName([]*h.TableInfo{lhsAlias, rhsAlias}, hintInfo.LeadingJoinOrder)
+		p.preferJoinOrder = hintInfo.MatchTableName([]*h.HintedTable{lhsAlias, rhsAlias}, hintInfo.LeadingJoinOrder)
 	}
 	// set hintInfo for further usage if this hint info can be used.
 	if p.preferJoinType != 0 || p.preferJoinOrder {
@@ -855,16 +855,16 @@ func (p *LogicalJoin) setPreferredJoinType() {
 	}
 }
 
-func (ds *DataSource) setPreferredStoreType(hintInfo *h.TableHintInfo) {
+func (ds *DataSource) setPreferredStoreType(hintInfo *h.PlanHints) {
 	if hintInfo == nil {
 		return
 	}
 
-	var alias *h.TableInfo
+	var alias *h.HintedTable
 	if len(ds.TableAsName.L) != 0 {
-		alias = &h.TableInfo{DBName: ds.DBName, TblName: *ds.TableAsName, SelectOffset: ds.QueryBlockOffset()}
+		alias = &h.HintedTable{DBName: ds.DBName, TblName: *ds.TableAsName, SelectOffset: ds.QueryBlockOffset()}
 	} else {
-		alias = &h.TableInfo{DBName: ds.DBName, TblName: ds.tableInfo.Name, SelectOffset: ds.QueryBlockOffset()}
+		alias = &h.HintedTable{DBName: ds.DBName, TblName: ds.tableInfo.Name, SelectOffset: ds.QueryBlockOffset()}
 	}
 	if hintTbl := hintInfo.IfPreferTiKV(alias); hintTbl != nil {
 		for _, path := range ds.possibleAccessPaths {
@@ -1826,7 +1826,7 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggr
 		GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length]),
 	}.Init(b.ctx, child.QueryBlockOffset())
 	if hint := b.TableHints(); hint != nil {
-		plan4Agg.aggHints = hint.AggHints
+		plan4Agg.aggHints = hint.Agg
 	}
 	for _, col := range child.Schema().Columns {
 		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
@@ -2435,7 +2435,7 @@ func (b *PlanBuilder) buildLimit(src LogicalPlan, limit *ast.Limit) (LogicalPlan
 		Count:  count,
 	}.Init(b.ctx, b.getSelectOffset())
 	if hint := b.TableHints(); hint != nil {
-		li.limitHints = hint.LimitHints
+		li.limitHints = hint.Limit
 	}
 	li.SetChildren(src)
 	return li, nil
@@ -3958,18 +3958,18 @@ func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) 
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLevel int) {
 	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel)
 	var (
-		sortMergeTables, inljTables, inlhjTables, inlmjTables, hashJoinTables, bcTables []h.TableInfo
-		noIndexJoinTables, noIndexHashJoinTables, noIndexMergeJoinTables                []h.TableInfo
-		noHashJoinTables, noMergeJoinTables                                             []h.TableInfo
-		shuffleJoinTables                                                               []h.TableInfo
-		indexHintList, indexMergeHintList                                               []h.IndexHintInfo
-		tiflashTables, tikvTables                                                       []h.TableInfo
-		aggHints                                                                        h.AggHintInfo
+		sortMergeTables, inljTables, inlhjTables, inlmjTables, hashJoinTables, bcTables []h.HintedTable
+		noIndexJoinTables, noIndexHashJoinTables, noIndexMergeJoinTables                []h.HintedTable
+		noHashJoinTables, noMergeJoinTables                                             []h.HintedTable
+		shuffleJoinTables                                                               []h.HintedTable
+		indexHintList, indexMergeHintList                                               []h.HintedIndex
+		tiflashTables, tikvTables                                                       []h.HintedTable
+		aggHints                                                                        h.AggHints
 		timeRangeHint                                                                   ast.HintTimeRange
-		limitHints                                                                      h.LimitHintInfo
-		MergeHints                                                                      h.MergeHintInfo
-		leadingJoinOrder                                                                []h.TableInfo
-		hjBuildTables, hjProbeTables                                                    []h.TableInfo
+		limitHints                                                                      h.LimitHints
+		cteMerge                                                                        bool
+		leadingJoinOrder                                                                []h.HintedTable
+		hjBuildTables, hjProbeTables                                                    []h.HintedTable
 		leadingHintCnt                                                                  int
 	)
 	for _, hint := range hints {
@@ -4041,7 +4041,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			case h.HintNoOrderIndex:
 				hintType = ast.HintNoOrderIndex
 			}
-			indexHintList = append(indexHintList, h.IndexHintInfo{
+			indexHintList = append(indexHintList, h.HintedIndex{
 				DBName:     dbName,
 				TblName:    hint.Tables[0].TableName,
 				Partitions: hint.Tables[0].PartitionList,
@@ -4063,7 +4063,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			if dbName.L == "" {
 				dbName = model.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 			}
-			indexMergeHintList = append(indexMergeHintList, h.IndexHintInfo{
+			indexMergeHintList = append(indexMergeHintList, h.HintedIndex{
 				DBName:     dbName,
 				TblName:    hint.Tables[0].TableName,
 				Partitions: hint.Tables[0].PartitionList,
@@ -4082,7 +4082,7 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 				b.ctx.GetSessionVars().StmtCtx.SetHintWarning(ErrInternal.FastGen("The MERGE hint is not used correctly, maybe it inputs a table name."))
 				continue
 			}
-			MergeHints.PreferMerge = true
+			cteMerge = true
 		case h.HintLeading:
 			if leadingHintCnt == 0 {
 				leadingJoinOrder = append(leadingJoinOrder, h.TableNames2HintTableInfo(b.ctx, hint.HintName.L, hint.Tables, b.hintProcessor, currentLevel)...)
@@ -4113,26 +4113,26 @@ func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLev
 			b.ctx.GetSessionVars().StmtCtx.SetHintWarning(ErrInternal.FastGen("We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid"))
 		}
 	}
-	b.tableHintInfo = append(b.tableHintInfo, &h.TableHintInfo{
-		SortMergeJoinTables:       sortMergeTables,
-		BroadcastJoinTables:       bcTables,
-		ShuffleJoinTables:         shuffleJoinTables,
-		IndexNestedLoopJoinTables: h.IndexNestedLoopJoinTables{INLJTables: inljTables, INLHJTables: inlhjTables, INLMJTables: inlmjTables},
-		NoIndexJoinTables:         h.IndexNestedLoopJoinTables{INLJTables: noIndexJoinTables, INLHJTables: noIndexHashJoinTables, INLMJTables: noIndexMergeJoinTables},
-		HashJoinTables:            hashJoinTables,
-		NoHashJoinTables:          noHashJoinTables,
-		NoMergeJoinTables:         noMergeJoinTables,
-		IndexHintList:             indexHintList,
-		TiFlashTables:             tiflashTables,
-		TiKVTables:                tikvTables,
-		AggHints:                  aggHints,
-		IndexMergeHintList:        indexMergeHintList,
-		TimeRangeHint:             timeRangeHint,
-		LimitHints:                limitHints,
-		MergeHints:                MergeHints,
-		LeadingJoinOrder:          leadingJoinOrder,
-		HJBuildTables:             hjBuildTables,
-		HJProbeTables:             hjProbeTables,
+	b.tableHintInfo = append(b.tableHintInfo, &h.PlanHints{
+		SortMergeJoin:      sortMergeTables,
+		BroadcastJoin:      bcTables,
+		ShuffleJoin:        shuffleJoinTables,
+		IndexJoin:          h.IndexJoinHints{INLJTables: inljTables, INLHJTables: inlhjTables, INLMJTables: inlmjTables},
+		NoIndexJoin:        h.IndexJoinHints{INLJTables: noIndexJoinTables, INLHJTables: noIndexHashJoinTables, INLMJTables: noIndexMergeJoinTables},
+		HashJoin:           hashJoinTables,
+		NoHashJoin:         noHashJoinTables,
+		NoMergeJoin:        noMergeJoinTables,
+		IndexHintList:      indexHintList,
+		TiFlashTables:      tiflashTables,
+		TiKVTables:         tikvTables,
+		Agg:                aggHints,
+		IndexMergeHintList: indexMergeHintList,
+		TimeRangeHint:      timeRangeHint,
+		Limit:              limitHints,
+		CTEMerge:           cteMerge,
+		LeadingJoinOrder:   leadingJoinOrder,
+		HJBuild:            hjBuildTables,
+		HJProbe:            hjProbeTables,
 	})
 }
 
@@ -4152,7 +4152,7 @@ func (b *PlanBuilder) popTableHints() {
 }
 
 // TableHints returns the *TableHintInfo of PlanBuilder.
-func (b *PlanBuilder) TableHints() *h.TableHintInfo {
+func (b *PlanBuilder) TableHints() *h.PlanHints {
 	if len(b.tableHintInfo) == 0 {
 		return nil
 	}
@@ -4205,7 +4205,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 		b.isForUpdateRead = true
 	}
 
-	if hints := b.TableHints(); hints != nil && hints.MergeHints.PreferMerge {
+	if hints := b.TableHints(); hints != nil && hints.CTEMerge {
 		// Verify Merge hints in the current query,
 		// we will update parameters for those that meet the rules, and warn those that do not.
 		// If the current query uses Merge Hint and the query is a CTE,
@@ -4333,7 +4333,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p L
 			b.ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 		for _, tName := range l.Tables {
-			// CTE has no *model.TableInfo, we need to skip it.
+			// CTE has no *model.HintedTable, we need to skip it.
 			if tName.TableInfo == nil {
 				continue
 			}
@@ -5042,7 +5042,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		columns = tbl.Cols()
 	}
 	// extract the IndexMergeHint
-	var indexMergeHints []h.IndexHintInfo
+	var indexMergeHints []h.HintedIndex
 	if hints := b.TableHints(); hints != nil {
 		for i, hint := range hints.IndexMergeHintList {
 			if hint.Match(dbName, tblName) {
@@ -6051,7 +6051,7 @@ func CheckUpdateList(assignFlags []int, updt *Update, newTblID2Table map[int64]t
 	return nil
 }
 
-// If tl is CTE, its TableInfo will be nil.
+// If tl is CTE, its HintedTable will be nil.
 // Only used in build plan from AST after preprocess.
 func isCTE(tl *ast.TableName) bool {
 	return tl.TableInfo == nil

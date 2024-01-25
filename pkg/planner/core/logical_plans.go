@@ -127,7 +127,7 @@ type LogicalJoin struct {
 	StraightJoin  bool
 
 	// hintInfo stores the join algorithm hint information specified by client.
-	hintInfo            *h.TableHintInfo
+	hintInfo            *h.PlanHints
 	preferJoinType      uint
 	preferJoinOrder     bool
 	leftPreferJoinType  uint
@@ -917,7 +917,7 @@ type LogicalAggregation struct {
 	GroupByItems []expression.Expression
 
 	// aggHints stores aggregation hint information.
-	aggHints h.AggHintInfo
+	aggHints h.AggHints
 
 	possibleProperties [][]*expression.Column
 	inputCount         float64 // inputCount is the input count of this plan.
@@ -1417,7 +1417,7 @@ type DataSource struct {
 	logicalSchemaProducer
 
 	astIndexHints []*ast.IndexHint
-	IndexHints    []h.IndexHintInfo
+	IndexHints    []h.HintedIndex
 	table         table.Table
 	tableInfo     *model.TableInfo
 	Columns       []*model.ColumnInfo
@@ -1425,7 +1425,7 @@ type DataSource struct {
 
 	TableAsName *model.CIStr
 	// indexMergeHints are the hint for indexmerge.
-	indexMergeHints []h.IndexHintInfo
+	indexMergeHints []h.HintedIndex
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
 	// allConds contains all the filters on this table. For now it's maintained
@@ -1920,7 +1920,7 @@ type LogicalTopN struct {
 	PartitionBy []property.SortItem // This is used for enhanced topN optimization
 	Offset      uint64
 	Count       uint64
-	limitHints  h.LimitHintInfo
+	limitHints  h.LimitHints
 }
 
 // GetPartitionBy returns partition by fields
@@ -1949,7 +1949,7 @@ type LogicalLimit struct {
 	PartitionBy []property.SortItem // This is used for enhanced topN optimization
 	Offset      uint64
 	Count       uint64
-	limitHints  h.LimitHintInfo
+	limitHints  h.LimitHints
 	IsPartial   bool
 }
 

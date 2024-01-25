@@ -1636,7 +1636,7 @@ func pruneUseBinarySearch(lessThan lessThanDataInt, data dataForPrune) (start in
 
 func (*partitionProcessor) resolveAccessPaths(ds *DataSource) error {
 	possiblePaths, err := getPossibleAccessPaths(
-		ds.SCtx(), &h.TableHintInfo{IndexMergeHintList: ds.indexMergeHints, IndexHintList: ds.IndexHints},
+		ds.SCtx(), &h.PlanHints{IndexMergeHintList: ds.indexMergeHints, IndexHintList: ds.IndexHints},
 		ds.astIndexHints, ds.table, ds.DBName, ds.tableInfo.Name, ds.isForUpdateRead, true)
 	if err != nil {
 		return err
@@ -1652,7 +1652,7 @@ func (*partitionProcessor) resolveAccessPaths(ds *DataSource) error {
 func (s *partitionProcessor) resolveOptimizeHint(ds *DataSource, partitionName model.CIStr) error {
 	// index hint
 	if len(ds.IndexHints) > 0 {
-		newIndexHint := make([]h.IndexHintInfo, 0, len(ds.IndexHints))
+		newIndexHint := make([]h.HintedIndex, 0, len(ds.IndexHints))
 		for _, idxHint := range ds.IndexHints {
 			if len(idxHint.Partitions) == 0 {
 				newIndexHint = append(newIndexHint, idxHint)
@@ -1670,7 +1670,7 @@ func (s *partitionProcessor) resolveOptimizeHint(ds *DataSource, partitionName m
 
 	// index merge hint
 	if len(ds.indexMergeHints) > 0 {
-		newIndexMergeHint := make([]h.IndexHintInfo, 0, len(ds.indexMergeHints))
+		newIndexMergeHint := make([]h.HintedIndex, 0, len(ds.indexMergeHints))
 		for _, idxHint := range ds.indexMergeHints {
 			if len(idxHint.Partitions) == 0 {
 				newIndexMergeHint = append(newIndexMergeHint, idxHint)

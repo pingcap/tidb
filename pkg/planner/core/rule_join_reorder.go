@@ -38,7 +38,7 @@ func extractJoinGroup(p LogicalPlan) *joinGroupResult {
 	joinMethodHintInfo := make(map[int]*joinMethodHint)
 	var (
 		group             []LogicalPlan
-		joinOrderHintInfo []*h.TableHintInfo
+		joinOrderHintInfo []*h.PlanHints
 		eqEdges           []*expression.ScalarFunction
 		otherConds        []expression.Expression
 		joinTypes         []*joinTypeWithExtMsg
@@ -346,9 +346,9 @@ func (s *joinReOrderSolver) optimizeRecursive(ctx sessionctx.Context, p LogicalP
 // The Join Group {t1, t2, t3} contains two leading hints includes leading(t3) and leading(t1).
 // Although they are in different query blocks, they are conflicting.
 // In addition, the table alias 't4' cannot be recognized because of the join group.
-func checkAndGenerateLeadingHint(hintInfo []*h.TableHintInfo) (*h.TableHintInfo, bool) {
+func checkAndGenerateLeadingHint(hintInfo []*h.PlanHints) (*h.PlanHints, bool) {
 	leadingHintNum := len(hintInfo)
-	var leadingHintInfo *h.TableHintInfo
+	var leadingHintInfo *h.PlanHints
 	hasDiffLeadingHint := false
 	if leadingHintNum > 0 {
 		leadingHintInfo = hintInfo[0]
@@ -368,7 +368,7 @@ func checkAndGenerateLeadingHint(hintInfo []*h.TableHintInfo) (*h.TableHintInfo,
 
 type joinMethodHint struct {
 	preferredJoinMethod uint
-	joinMethodHintInfo  *h.TableHintInfo
+	joinMethodHintInfo  *h.PlanHints
 }
 
 // basicJoinGroupInfo represents basic information for a join group in the join reorder process.
@@ -385,7 +385,7 @@ type basicJoinGroupInfo struct {
 type joinGroupResult struct {
 	group             []LogicalPlan
 	hasOuterJoin      bool
-	joinOrderHintInfo []*h.TableHintInfo
+	joinOrderHintInfo []*h.PlanHints
 	*basicJoinGroupInfo
 }
 
@@ -397,7 +397,7 @@ type baseSingleGroupJoinOrderSolver struct {
 	*basicJoinGroupInfo
 }
 
-func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup []LogicalPlan, hintInfo *h.TableHintInfo, hasOuterJoin bool) (bool, []LogicalPlan) {
+func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(curJoinGroup []LogicalPlan, hintInfo *h.PlanHints, hasOuterJoin bool) (bool, []LogicalPlan) {
 	var leadingJoinGroup []LogicalPlan
 	leftJoinGroup := make([]LogicalPlan, len(curJoinGroup))
 	copy(leftJoinGroup, curJoinGroup)
