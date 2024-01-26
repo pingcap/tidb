@@ -461,4 +461,8 @@ func TestBuildExpression(t *testing.T) {
 	// subquery not supported
 	_, err = buildExpr(t, ctx, "a + (select b from t)", expression.WithSourceTable(tbl))
 	require.EqualError(t, err, "node '*ast.SubqueryExpr' is not allowed when building an expression without planner")
+
+	// param marker not supported
+	_, err = buildExpr(t, ctx, "a + ?", expression.WithSourceTable(tbl))
+	require.EqualError(t, err, "node '*driver.ParamMarkerExpr' is not allowed when building an expression without planner")
 }

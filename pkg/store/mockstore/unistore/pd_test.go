@@ -16,7 +16,6 @@ package unistore
 
 import (
 	"context"
-	"fmt"
 	"testing"
 
 	"github.com/asaskevich/govalidator"
@@ -101,7 +100,6 @@ func TestMockPDServiceDiscovery(t *testing.T) {
 	pdAddrs := []string{"invalid_pd_address", "127.0.0.1:2379", "http://172.32.21.32:2379"}
 	for i, addr := range pdAddrs {
 		check := govalidator.IsURL(addr)
-		fmt.Println(i)
 		if i > 0 {
 			re.True(check)
 		} else {

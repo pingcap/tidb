@@ -73,6 +73,12 @@ type ProcessInfo struct {
 	RedactSQL        bool
 }
 
+// Clone return a shallow clone copy of this processInfo.
+func (pi *ProcessInfo) Clone() *ProcessInfo {
+	cp := *pi
+	return &cp
+}
+
 // ToRowForShow returns []interface{} for the row data of "SHOW [FULL] PROCESSLIST".
 func (pi *ProcessInfo) ToRowForShow(full bool) []interface{} {
 	var info interface{}

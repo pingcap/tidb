@@ -65,6 +65,7 @@ go_library(
         "//pkg/util/mathutil",
         "//pkg/util/promutil",
         "//pkg/util/sqlexec",
+        "//pkg/util/sqlkiller",
         "//pkg/util/stringutil",
         "//pkg/util/syncutil",
         "@com_github_docker_go_units//:go-units",

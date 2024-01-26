@@ -70,9 +70,10 @@ const (
 // otherwise it returns an error and the corresponding index's offset.
 func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
 	// Here we need check all indexes, includes invisible index
+	originOptUseInvisibleIdx := ctx.GetSessionVars().OptimizerUseInvisibleIndexes
 	ctx.GetSessionVars().OptimizerUseInvisibleIndexes = true
 	defer func() {
-		ctx.GetSessionVars().OptimizerUseInvisibleIndexes = false
+		ctx.GetSessionVars().OptimizerUseInvisibleIndexes = originOptUseInvisibleIdx
 	}()
 
 	var snapshot uint64
@@ -139,7 +140,7 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 				if matchingIdx == nil {
 					return nil
 				}
-				k, _, err := matchingIdx.GenIndexKey(sessCtx.GetSessionVars().StmtCtx, idxRow.Values, idxRow.Handle, nil)
+				k, _, err := matchingIdx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxRow.Values, idxRow.Handle, nil)
 				if err != nil {
 					return nil
 				}
@@ -167,7 +168,7 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 				vals1[i] = colDefVal
 			}
 		}
-		isExist, h2, err := idx.Exist(sc, txn, vals1, h1)
+		isExist, h2, err := idx.Exist(sc.ErrCtx(), sc.TimeZone(), txn, vals1, h1)
 		if kv.ErrKeyExists.Equal(err) {
 			record1 := &consistency.RecordData{Handle: h1, Values: vals1}
 			record2 := &consistency.RecordData{Handle: h2, Values: vals1}

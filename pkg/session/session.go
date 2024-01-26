@@ -1558,9 +1558,12 @@ func (s *session) UpdateProcessInfo() {
 	if pi == nil || pi.CurTxnStartTS != 0 {
 		return
 	}
+	// do not modify this two fields in place, see issue: issues/50607
+	shallowCP := pi.Clone()
 	// Update the current transaction start timestamp.
-	pi.CurTxnStartTS = s.sessionVars.TxnCtx.StartTS
-	pi.CurTxnCreateTime = s.sessionVars.TxnCtx.CreateTime
+	shallowCP.CurTxnStartTS = s.sessionVars.TxnCtx.StartTS
+	shallowCP.CurTxnCreateTime = s.sessionVars.TxnCtx.CreateTime
+	s.processInfo.Store(shallowCP)
 }
 
 func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
@@ -1957,9 +1960,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	if cache := s.sessionVars.InspectionTableCache; cache != nil {
 		se.sessionVars.InspectionTableCache = cache
 	}
-	if ok := s.sessionVars.OptimizerUseInvisibleIndexes; ok {
-		se.sessionVars.OptimizerUseInvisibleIndexes = true
-	}
+	se.sessionVars.OptimizerUseInvisibleIndexes = s.sessionVars.OptimizerUseInvisibleIndexes
 
 	if execOption.SnapshotTS != 0 {
 		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {

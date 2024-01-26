@@ -100,6 +100,7 @@ const (
 
 	DefaultEngineMemCacheSize      = 512 * units.MiB
 	DefaultLocalWriterMemCacheSize = 128 * units.MiB
+	DefaultBlockSize               = 16 * units.KiB
 
 	defaultCSVDataCharacterSet       = "binary"
 	defaultCSVDataInvalidCharReplace = utf8.RuneError
@@ -1114,6 +1115,9 @@ func (t *TikvImporter) adjust() error {
 		}
 		if t.LocalWriterMemCacheSize == 0 {
 			t.LocalWriterMemCacheSize = DefaultLocalWriterMemCacheSize
+		}
+		if t.BlockSize == 0 {
+			t.BlockSize = DefaultBlockSize
 		}
 
 		if t.ParallelImport && t.AddIndexBySQL {
