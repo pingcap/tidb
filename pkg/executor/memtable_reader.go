@@ -46,6 +46,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/set"
 	pd "github.com/tikv/pd/client/http"
@@ -166,7 +167,7 @@ func fetchClusterConfig(sctx sessionctx.Context, nodeTypes, nodeAddrs set.String
 		err  error
 	}
 	if !hasPriv(sctx, mysql.ConfigPriv) {
-		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
+		return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
 	}
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterConfigServerInfo", func(val failpoint.Value) {
@@ -302,11 +303,11 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 	case diagnosticspb.ServerInfoType_LoadInfo,
 		diagnosticspb.ServerInfoType_SystemInfo:
 		if !hasPriv(sctx, mysql.ProcessPriv) {
-			return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+			return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 		}
 	case diagnosticspb.ServerInfoType_HardwareInfo:
 		if !hasPriv(sctx, mysql.ConfigPriv) {
-			return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
+			return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CONFIG")
 		}
 	}
 	if e.extractor.SkipRequest || e.retrieved {
@@ -384,7 +385,7 @@ func (h *logResponseHeap) Pop() interface{} {
 
 func (e *clusterLogRetriever) initialize(ctx context.Context, sctx sessionctx.Context) ([]chan logStreamResult, error) {
 	if !hasPriv(sctx, mysql.ProcessPriv) {
-		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+		return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 	serversInfo, err := infoschema.GetClusterServerInfo(sctx)
 	failpoint.Inject("mockClusterLogServerInfo", func(val failpoint.Value) {
@@ -668,7 +669,7 @@ type HistoryHotRegion struct {
 
 func (e *hotRegionsHistoryRetriver) initialize(_ context.Context, sctx sessionctx.Context) ([]chan hotRegionsResult, error) {
 	if !hasPriv(sctx, mysql.ProcessPriv) {
-		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+		return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 	pdServers, err := infoschema.GetPDServerInfo(sctx)
 	if err != nil {

@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -49,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/tests/realtikvtest"
@@ -2403,7 +2403,7 @@ func TestTransactionIsolationAndForeignKey(t *testing.T) {
 	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t2 values (1,1)")
-	tk.MustGetDBError("insert into t2 values (2,2)", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 values (2,2)", plannererrors.ErrNoReferencedRow2)
 	tk2.MustExec("insert into t1 values (2)")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "2"))
 	tk.MustExec("insert into t2 values (2,2)")

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -46,7 +47,7 @@ func CalculateAsOfTsExpr(ctx context.Context, sctx sessionctx.Context, tsExpr as
 	}
 
 	if tsVal.IsNull() {
-		return 0, errAsOf.FastGenWithCause("as of timestamp cannot be NULL")
+		return 0, plannererrors.ErrAsOf.FastGenWithCause("as of timestamp cannot be NULL")
 	}
 
 	toTypeTimestamp := types.NewFieldType(mysql.TypeTimestamp)
@@ -88,7 +89,7 @@ func GetExternalTimestamp(ctx context.Context, sctx sessionctx.Context) (uint64,
 	})
 
 	if err != nil {
-		return 0, errAsOf.FastGenWithCause(err.Error())
+		return 0, plannererrors.ErrAsOf.FastGenWithCause(err.Error())
 	}
 	return externalTimestamp.(uint64), nil
 }

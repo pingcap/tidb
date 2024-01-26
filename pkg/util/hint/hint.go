@@ -19,10 +19,8 @@ import (
 	"fmt"
 	"strings"
 
-	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
 // Hint flags listed here are used by PlanBuilder.subQueryHintFlags.
@@ -501,7 +499,7 @@ func RemoveDuplicatedHints(hints []*ast.TableOptimizerHint) []*ast.TableOptimize
 
 // TableNames2HintTableInfo converts table names to HintedTable.
 func TableNames2HintTableInfo(currentDB, hintName string, hintTables []ast.HintTable,
-	p *QBHintHandler, currentOffset int, warnHandler func(warning error)) []HintedTable {
+	p *QBHintHandler, currentOffset int, warnHandler hintWarnHandler) []HintedTable {
 	if len(hintTables) == 0 {
 		return nil
 	}
@@ -528,7 +526,7 @@ func TableNames2HintTableInfo(currentDB, hintName string, hintTables []ast.HintT
 		hintTableInfos = append(hintTableInfos, tableInfo)
 	}
 	if isInapplicable {
-		warnHandler(fmt.Errorf("Optimizer Hint %s is inapplicable on specified partitions", Restore2JoinHint(hintName, hintTableInfos)))
+		warnHandler.SetHintWarningFromError(fmt.Errorf("Optimizer Hint %s is inapplicable on specified partitions", Restore2JoinHint(hintName, hintTableInfos)))
 		return nil
 	}
 	return hintTableInfos
@@ -623,12 +621,8 @@ func ExtractUnmatchedTables(hintTables []HintedTable) []string {
 	return tableNames
 }
 
-var (
-	errInternal = dbterror.ClassOptimizer.NewStd(mysql.ErrInternal)
-)
-
 // CollectUnmatchedHintWarnings collects warnings for unmatched hints from this TableHintInfo.
-func CollectUnmatchedHintWarnings(hintInfo *PlanHints) (warnings []error) {
+func CollectUnmatchedHintWarnings(hintInfo *PlanHints) (warnings []string) {
 	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.IndexHintList, false)...)
 	warnings = append(warnings, collectUnmatchedIndexHintWarning(hintInfo.IndexMergeHintList, true)...)
 	warnings = append(warnings, collectUnmatchedJoinHintWarning(HintINLJ, TiDBIndexNestedLoopJoin, hintInfo.IndexJoin.INLJTables)...)
@@ -645,7 +639,7 @@ func CollectUnmatchedHintWarnings(hintInfo *PlanHints) (warnings []error) {
 	return warnings
 }
 
-func collectUnmatchedIndexHintWarning(indexHints []HintedIndex, usedForIndexMerge bool) (warnings []error) {
+func collectUnmatchedIndexHintWarning(indexHints []HintedIndex, usedForIndexMerge bool) (warnings []string) {
 	for _, hint := range indexHints {
 		if !hint.Matched {
 			var hintTypeString string
@@ -660,13 +654,13 @@ func collectUnmatchedIndexHintWarning(indexHints []HintedIndex, usedForIndexMerg
 				hint.DBName,
 				hint.TblName,
 			)
-			warnings = append(warnings, errInternal.FastGen(errMsg))
+			warnings = append(warnings, errMsg)
 		}
 	}
 	return warnings
 }
 
-func collectUnmatchedJoinHintWarning(joinType string, joinTypeAlias string, hintTables []HintedTable) (warnings []error) {
+func collectUnmatchedJoinHintWarning(joinType string, joinTypeAlias string, hintTables []HintedTable) (warnings []string) {
 	unMatchedTables := ExtractUnmatchedTables(hintTables)
 	if len(unMatchedTables) == 0 {
 		return
@@ -677,11 +671,11 @@ func collectUnmatchedJoinHintWarning(joinType string, joinTypeAlias string, hint
 
 	errMsg := fmt.Sprintf("There are no matching table names for (%s) in optimizer hint %s%s. Maybe you can use the table alias name",
 		strings.Join(unMatchedTables, ", "), Restore2JoinHint(joinType, hintTables), joinTypeAlias)
-	warnings = append(warnings, errInternal.GenWithStack(errMsg))
+	warnings = append(warnings, errMsg)
 	return warnings
 }
 
-func collectUnmatchedStorageHintWarning(tiflashTables, tikvTables []HintedTable) (warnings []error) {
+func collectUnmatchedStorageHintWarning(tiflashTables, tikvTables []HintedTable) (warnings []string) {
 	unMatchedTiFlashTables := ExtractUnmatchedTables(tiflashTables)
 	unMatchedTiKVTables := ExtractUnmatchedTables(tikvTables)
 	if len(unMatchedTiFlashTables)+len(unMatchedTiKVTables) == 0 {
@@ -690,6 +684,6 @@ func collectUnmatchedStorageHintWarning(tiflashTables, tikvTables []HintedTable)
 	errMsg := fmt.Sprintf("There are no matching table names for (%s) in optimizer hint %s. Maybe you can use the table alias name",
 		strings.Join(append(unMatchedTiFlashTables, unMatchedTiKVTables...), ", "),
 		Restore2StorageHint(tiflashTables, tikvTables))
-	warnings = append(warnings, errInternal.GenWithStack(errMsg))
+	warnings = append(warnings, errMsg)
 	return warnings
 }

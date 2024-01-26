@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/stretchr/testify/require"
 )
@@ -716,7 +717,7 @@ func TestImportIntoBuildPlan(t *testing.T) {
 	tk.MustExec("create table t1 (a int, b int);")
 	tk.MustExec("create table t2 (a int, b int);")
 	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t1 FROM select a from t2;"),
-		core.ErrWrongValueCountOnRow)
+		plannererrors.ErrWrongValueCountOnRow)
 	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t1(a) FROM select * from t2;"),
-		core.ErrWrongValueCountOnRow)
+		plannererrors.ErrWrongValueCountOnRow)
 }

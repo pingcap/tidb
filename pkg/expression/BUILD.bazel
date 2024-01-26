@@ -96,6 +96,7 @@ go_library(
         "//pkg/util/codec",
         "//pkg/util/collate",
         "//pkg/util/dbterror",
+        "//pkg/util/dbterror/plannererrors",
         "//pkg/util/disjointset",
         "//pkg/util/encrypt",
         "//pkg/util/generatedexpr",

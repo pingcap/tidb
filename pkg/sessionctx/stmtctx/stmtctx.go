@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -750,7 +751,12 @@ func (sc *StatementContext) SetSkipPlanCache(reason error) {
 }
 
 // SetHintWarning sets the hint warning and records the reason.
-func (sc *StatementContext) SetHintWarning(reason error) {
+func (sc *StatementContext) SetHintWarning(reason string) {
+	sc.AppendWarning(plannererrors.ErrInternal.FastGen(reason))
+}
+
+// SetHintWarningFromError sets the hint warning and records the reason.
+func (sc *StatementContext) SetHintWarningFromError(reason error) {
 	sc.AppendWarning(reason)
 }
 

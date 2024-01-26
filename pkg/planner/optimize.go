@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -139,7 +140,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			return nil, nil, err
 		}
 		if !allowed {
-			return nil, nil, errors.Trace(core.ErrSQLInReadOnlyMode)
+			return nil, nil, errors.Trace(plannererrors.ErrSQLInReadOnlyMode)
 		}
 	}
 
@@ -163,7 +164,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		return p, names, err
 	}
 
-	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx.GetSessionVars().StmtCtx.SetHintWarning)
+	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx.GetSessionVars().StmtCtx)
 	originStmtHints, _, warns := handleStmtHints(tableHints)
 	sessVars.StmtCtx.StmtHints = originStmtHints
 	for _, warn := range warns {
@@ -376,7 +377,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 func OptimizeForForeignKeyCascade(ctx context.Context, sctx sessionctx.Context, node ast.StmtNode, is infoschema.InfoSchema) (core.Plan, error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
-	hintProcessor := hint.NewQBHintHandler(sctx.GetSessionVars().StmtCtx.SetHintWarning)
+	hintProcessor := hint.NewQBHintHandler(sctx.GetSessionVars().StmtCtx)
 	builder.Init(sctx, is, hintProcessor)
 	p, err := builder.Build(ctx, node)
 	if err != nil {
@@ -458,7 +459,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	// build logical plan
-	hintProcessor := hint.NewQBHintHandler(sctx.GetSessionVars().StmtCtx.SetHintWarning)
+	hintProcessor := hint.NewQBHintHandler(sctx.GetSessionVars().StmtCtx)
 	node.Accept(hintProcessor)
 	defer hintProcessor.HandleUnusedViewHints()
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
@@ -617,16 +618,16 @@ func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints hint.StmtHints,
 			// Not all session variables are permitted for use with SET_VAR
 			sysVar := variable.GetSysVar(setVarHint.VarName)
 			if sysVar == nil {
-				warns = append(warns, core.ErrUnresolvedHintName.FastGenByArgs(setVarHint.VarName, hint.HintName.String()))
+				warns = append(warns, plannererrors.ErrUnresolvedHintName.FastGenByArgs(setVarHint.VarName, hint.HintName.String()))
 				continue
 			}
 			if !sysVar.IsHintUpdatableVerfied {
-				warns = append(warns, core.ErrNotHintUpdatable.FastGenByArgs(setVarHint.VarName))
+				warns = append(warns, plannererrors.ErrNotHintUpdatable.FastGenByArgs(setVarHint.VarName))
 			}
 			// If several hints with the same variable name appear in the same statement, the first one is applied and the others are ignored with a warning
 			if _, ok := setVars[setVarHint.VarName]; ok {
 				msg := fmt.Sprintf("%s(%s=%s)", hint.HintName.String(), setVarHint.VarName, setVarHint.Value)
-				warns = append(warns, core.ErrWarnConflictingHint.FastGenByArgs(msg))
+				warns = append(warns, plannererrors.ErrWarnConflictingHint.FastGenByArgs(msg))
 				continue
 			}
 			setVars[setVarHint.VarName] = setVarHint.Value

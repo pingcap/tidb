@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/filter"
 	"github.com/pingcap/tidb/pkg/util/format"
@@ -2041,7 +2042,7 @@ func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
 		}
 	} else {
 		if len(e.Table.PartitionNames) != 0 {
-			return plannercore.ErrPartitionClauseOnNonpartitioned
+			return plannererrors.ErrPartitionClauseOnNonpartitioned
 		}
 		physicalIDs = append(physicalIDs, tb.Meta().ID)
 	}
@@ -2052,7 +2053,7 @@ func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
 		// show table * index * region
 		indexInfo := tb.Meta().FindIndexByName(e.IndexName.L)
 		if indexInfo == nil {
-			return plannercore.ErrKeyDoesNotExist.GenWithStackByArgs(e.IndexName, tb.Meta().Name)
+			return plannererrors.ErrKeyDoesNotExist.GenWithStackByArgs(e.IndexName, tb.Meta().Name)
 		}
 		if indexInfo.Global {
 			regions, err = getTableIndexRegions(indexInfo, []int64{tb.Meta().ID}, tikvStore, splitStore)
