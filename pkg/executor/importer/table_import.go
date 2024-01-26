@@ -141,9 +141,6 @@ func GetTiKVModeSwitcherWithPDClient(logger *zap.Logger) (pdhttp.Client, local.T
 		return nil, nil, err
 	}
 	addrs := strings.Split(tidbCfg.Path, ",")
-	for i := range addrs {
-		addrs[i] = "http://" + addrs[i]
-	}
 	var opts []pdhttp.ClientOption
 	if o := tls.TLSConfig(); o != nil {
 		opts = append(opts, pdhttp.WithTLSConfig(o))
