@@ -366,7 +366,7 @@ func NewImportControllerWithPauser(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		pdHTTPCli = pdhttp.NewClient("lightning", addrs, pdhttp.WithTLSConfig(tls.TLSConfig()))
+		pdHTTPCli = pdhttp.NewClientWithServiceDiscovery("lightning", pdCli.GetServiceDiscovery(), pdhttp.WithTLSConfig(tls.TLSConfig()))
 
 		if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 			if err := tikv.CheckTiKVVersion(ctx, pdHTTPCli, minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {

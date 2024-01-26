@@ -19,6 +19,7 @@ import (
 	"github.com/coreos/go-semver/semver"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
@@ -337,7 +338,7 @@ func TestPauseSchedulersByKeyRange(t *testing.T) {
 	}))
 	defer httpSrv.Close()
 
-	pdHTTPCli := pdhttp.NewClient("test", []string{httpSrv.URL})
+	pdHTTPCli := pdhttp.NewClientWithServiceDiscovery("test", unistore.NewMockPDServiceDiscovery([]string{httpSrv.URL}))
 	defer pdHTTPCli.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -41,6 +41,7 @@ go_test(
     flaky = True,
     shard_count = 8,
     deps = [
+        "//pkg/store/mockstore/unistore",
         "//pkg/store/pdtypes",
         "//pkg/testkit/testsetup",
         "//pkg/util/codec",
