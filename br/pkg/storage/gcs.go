@@ -474,11 +474,18 @@ func shouldRetry(err error) bool {
 		}
 	}
 
-	// workaround for a strange unknown error
 	errMsg := err.Error()
-	if strings.Contains(errMsg, "http2: client connection force closed via ClientConn.Close") {
-		log.Warn("retrying gcs request due to unexpected close", zap.Error(err))
-		return true
+	// workaround for strange unknown errors
+	retryableErrMsg := []string{
+		"http2: client connection force closed via ClientConn.Close",
+		"broken pipe",
+	}
+
+	for _, msg := range retryableErrMsg {
+		if strings.Contains(errMsg, msg) {
+			log.Warn("retrying gcs request", zap.Error(err))
+			return true
+		}
 	}
 
 	// just log the new unknown error, in case we can add it to this function
