@@ -30,6 +30,7 @@ type TaskManager interface {
 	// The returned tasks are sorted by task order, see proto.Task, and only contains
 	// some fields, see row2TaskBasic.
 	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.Task, error)
+	// GetAllSubtasks gets all subtasks with basic columns.
 	GetAllSubtasks(ctx context.Context) ([]*proto.Subtask, error)
 	GetTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
