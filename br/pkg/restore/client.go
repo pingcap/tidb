@@ -2906,7 +2906,7 @@ func CheckNewCollationEnable(
 					"if you ensure the value 'new_collations_enabled_on_first_bootstrap' in backup cluster is as same as restore cluster, use --check-requirements=false to skip this check",
 			)
 		}
-		log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not in backupmeta")
+		log.Warn("the config 'new_collations_enabled_on_first_bootstrap' is not found in backupmeta")
 		return enabled, nil
 	}
 
