@@ -13,11 +13,12 @@ go_library(
     srcs = [
         "backfilling.go",
         "backfilling_clean_s3.go",
+        "backfilling_cloud_import.go",
         "backfilling_dist_executor.go",
         "backfilling_dist_scheduler.go",
-        "backfilling_import_cloud.go",
         "backfilling_merge_sort.go",
         "backfilling_operators.go",
+        "backfilling_proto.go",
         "backfilling_read_index.go",
         "backfilling_scheduler.go",
         "bdr.go",
