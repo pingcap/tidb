@@ -39,7 +39,7 @@ func InsertSubtask(t *testing.T, gm *storage.TaskManager, taskID int64, step pro
 	require.NoError(t, gm.WithNewSession(func(se sessionctx.Context) error {
 		_, err := sqlexec.ExecSQL(ctx, se, `
 			insert into mysql.tidb_background_subtask(`+storage.InsertSubtaskColumns+`) values`+
-			`(%?, %?, %?, %?, %?, %?, %?, NULL, CURRENT_TIMESTAMP(), unix_timestamp(), '{}', '{}')`,
+			`(%?, %?, %?, %?, %?, %?, %?, NULL, CURRENT_TIMESTAMP(), '{}', '{}')`,
 			step, taskID, execID, meta, state, proto.Type2Int(tp), concurrency)
 		return err
 	}))

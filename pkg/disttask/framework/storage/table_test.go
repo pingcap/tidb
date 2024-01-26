@@ -479,7 +479,6 @@ func TestSubTaskTable(t *testing.T) {
 		[]*proto.Subtask{proto.NewSubtask(proto.StepOne, 1, proto.TaskTypeExample, "tidb1", 11, []byte("test"), 1)},
 	)
 	require.NoError(t, err)
-	startTime := time.Unix(time.Now().Unix(), 0)
 
 	nilTask, err := sm.GetFirstSubtaskInStates(ctx, "tidb2", 1, proto.StepOne, proto.SubtaskStatePending)
 	require.NoError(t, err)
@@ -497,7 +496,7 @@ func TestSubTaskTable(t *testing.T) {
 	require.GreaterOrEqual(t, subtask.CreateTime, timeBeforeCreate)
 	require.Equal(t, 1, subtask.Ordinal)
 	require.Zero(t, subtask.StartTime)
-	require.GreaterOrEqual(t, startTime, subtask.UpdateTime)
+	require.Zero(t, subtask.UpdateTime)
 	require.Equal(t, "{}", subtask.Summary)
 
 	subtask2, err := sm.GetFirstSubtaskInStates(ctx, "tidb1", 1, proto.StepOne, proto.SubtaskStatePending)
@@ -1001,10 +1000,10 @@ func TestSubtaskType(t *testing.T) {
 func TestRunningSubtasksBack2Pending(t *testing.T) {
 	_, sm, ctx := testutil.InitTableTest(t)
 	subtasks := []*proto.Subtask{
-		{TaskID: 1, ExecID: "tidb-1", State: proto.SubtaskStatePending, UpdateTime: time.Unix(time.Now().Unix(), 0)},
-		{TaskID: 1, ExecID: "tidb-1", State: proto.SubtaskStateRunning, UpdateTime: time.Unix(time.Now().Unix(), 0)},
-		{TaskID: 1, ExecID: "tidb-2", State: proto.SubtaskStatePending, UpdateTime: time.Unix(time.Now().Unix(), 0)},
-		{TaskID: 2, ExecID: "tidb-1", State: proto.SubtaskStatePending, UpdateTime: time.Unix(time.Now().Unix(), 0)},
+		{TaskID: 1, ExecID: "tidb-1", State: proto.SubtaskStatePending},
+		{TaskID: 1, ExecID: "tidb-1", State: proto.SubtaskStateRunning},
+		{TaskID: 1, ExecID: "tidb-2", State: proto.SubtaskStatePending},
+		{TaskID: 2, ExecID: "tidb-1", State: proto.SubtaskStatePending},
 	}
 	for _, st := range subtasks {
 		testutil.InsertSubtask(t, sm, st.TaskID, proto.StepOne, st.ExecID, []byte(""), st.State, proto.TaskTypeExample, 12)
@@ -1035,28 +1034,21 @@ func TestRunningSubtasksBack2Pending(t *testing.T) {
 		return res
 	}
 
-	checkSubtasksEqual := func(subtasks1, subtasks2 []*proto.Subtask) {
-		require.Equal(t, len(subtasks1), len(subtasks2))
-		for i := range subtasks1 {
-			require.Equal(t, subtasks1[i].TaskID, subtasks2[i].TaskID)
-			require.Equal(t, subtasks1[i].ExecID, subtasks2[i].ExecID)
-			require.Equal(t, subtasks1[i].State, subtasks2[i].State)
-			require.GreaterOrEqual(t, subtasks2[i].UpdateTime, subtasks1[i].UpdateTime)
-		}
-	}
-
-	checkSubtasksEqual(subtasks, getAllSubtasks())
+	require.Equal(t, subtasks, getAllSubtasks())
 	require.NoError(t, sm.RunningSubtasksBack2Pending(ctx, nil))
-	checkSubtasksEqual(subtasks, getAllSubtasks())
+	require.Equal(t, subtasks, getAllSubtasks())
 
 	activeSubtasks, err := sm.GetActiveSubtasks(ctx, 1)
 	require.NoError(t, err)
 	require.Len(t, activeSubtasks, 3)
-	subtasks[1].State = proto.SubtaskStatePending
-	subtasks[1].UpdateTime = time.Unix(time.Now().Unix(), 0)
+	startTime := time.Unix(time.Now().Unix(), 0)
 	// this list contains running and pending subtasks, just for test.
 	require.NoError(t, sm.RunningSubtasksBack2Pending(ctx, activeSubtasks))
-	checkSubtasksEqual(subtasks, getAllSubtasks())
+	allSubtasks := getAllSubtasks()
+	require.GreaterOrEqual(t, allSubtasks[1].UpdateTime, startTime)
+	allSubtasks[1].UpdateTime = time.Time{}
+	subtasks[1].State = proto.SubtaskStatePending
+	require.Equal(t, subtasks, allSubtasks)
 }
 
 func TestSubtasksState(t *testing.T) {
