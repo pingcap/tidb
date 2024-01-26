@@ -103,22 +103,6 @@ func (s *sortPartition) close() {
 	s.getMemTracker().ReplaceBytesUsed(0)
 }
 
-func (s *sortPartition) reloadCursor() (bool, error) {
-	spilledChkNum := s.inDisk.NumChunks()
-	restoredChkID := s.cursor.getChkID() + 1
-	if restoredChkID >= spilledChkNum {
-		// All data has been consumed
-		return false, nil
-	}
-
-	chk, err := s.inDisk.GetChunk(restoredChkID)
-	if err != nil {
-		return false, err
-	}
-	s.cursor.setChunk(chk, restoredChkID)
-	return true, nil
-}
-
 // Return false if the spill is triggered in this partition.
 func (s *sortPartition) add(chk *chunk.Chunk) bool {
 	rowNum := chk.NumRows()
@@ -244,7 +228,7 @@ func (s *sortPartition) getNextSortedRow() (chunk.Row, error) {
 	if s.isSpillTriggered() {
 		row := s.cursor.next()
 		if row.IsEmpty() {
-			success, err := s.reloadCursor()
+			success, err := reloadCursor(s.cursor, s.inDisk)
 			if err != nil {
 				return chunk.Row{}, err
 			}

@@ -143,3 +143,55 @@ func injectParallelSortRandomFail() {
 		}
 	})
 }
+
+type rowWithError struct {
+	row chunk.Row
+	err error
+}
+
+// It's used only when spill is triggered
+type dataCursor struct {
+	chkID     int
+	chunkIter *chunk.Iterator4Chunk
+}
+
+// NewDataCursor creates a new dataCursor
+func NewDataCursor() *dataCursor {
+	return &dataCursor{
+		chkID:     -1,
+		chunkIter: chunk.NewIterator4Chunk(nil),
+	}
+}
+
+func (d *dataCursor) getChkID() int {
+	return d.chkID
+}
+
+func (d *dataCursor) begin() chunk.Row {
+	return d.chunkIter.Begin()
+}
+
+func (d *dataCursor) next() chunk.Row {
+	return d.chunkIter.Next()
+}
+
+func (d *dataCursor) setChunk(chk *chunk.Chunk, chkID int) {
+	d.chkID = chkID
+	d.chunkIter.ResetChunk(chk)
+}
+
+func reloadCursor(cursor *dataCursor, inDisk *chunk.DataInDiskByChunks) (bool, error) {
+	spilledChkNum := inDisk.NumChunks()
+	restoredChkID := cursor.getChkID() + 1
+	if restoredChkID >= spilledChkNum {
+		// All data has been consumed
+		return false, nil
+	}
+
+	chk, err := inDisk.GetChunk(restoredChkID)
+	if err != nil {
+		return false, err
+	}
+	cursor.setChunk(chk, restoredChkID)
+	return true, nil
+}

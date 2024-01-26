@@ -25,22 +25,23 @@ type parallelSortSpillHelper struct {
 	cond             *sync.Cond
 	spillStatus      int
 	sortedRowsInDisk []*chunk.DataInDiskByChunks
-	cursor           []*dataCursor
 	spillError       error
 	sortExec         *SortExec
 
-	finishCh chan struct{}
+	lessRowFunc func(chunk.Row, chunk.Row) int
+	finishCh    chan struct{}
 
 	fieldTypes    []*types.FieldType
 	tmpSpillChunk *chunk.Chunk
 }
 
-func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldType, finishCh chan struct{}) *parallelSortSpillHelper {
+func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldType, finishCh chan struct{}, lessRowFunc func(chunk.Row, chunk.Row) int) *parallelSortSpillHelper {
 	return &parallelSortSpillHelper{
 		cond:          sync.NewCond(new(sync.Mutex)),
 		spillStatus:   notSpilled,
 		spillError:    nil,
 		sortExec:      sortExec,
+		lessRowFunc:   lessRowFunc,
 		finishCh:      finishCh,
 		fieldTypes:    fieldTypes,
 		tmpSpillChunk: chunk.NewChunkWithCapacity(fieldTypes, spillChunkSize),
@@ -95,17 +96,17 @@ func (p *parallelSortSpillHelper) setNotSpilled() {
 	p.spillStatus = notSpilled
 }
 
-func (p *parallelSortSpillHelper) spill() {
+func (p *parallelSortSpillHelper) spill() error {
 	select {
 	case <-p.finishCh:
-		return
+		return nil
 	default:
 	}
 
 	workerNum := len(p.sortExec.Parallel.workers)
 	workerWaiter := &sync.WaitGroup{}
 	workerWaiter.Add(workerNum)
-	sortedRowsIters := make([]chunk.Iterator4Slice, workerNum)
+	sortedRowsIters := make([]*chunk.Iterator4Slice, workerNum)
 	for i := 0; i < workerNum; i++ {
 		go func(idx int) {
 			defer func() {
@@ -115,33 +116,19 @@ func (p *parallelSortSpillHelper) spill() {
 				workerWaiter.Done()
 			}()
 
+			sortedRowsIters[idx] = chunk.NewIterator4Slice(nil)
 			sortedRowsIters[idx].Reset(p.sortExec.Parallel.workers[idx].sortLocalRows())
 		}(i)
 	}
 
 	workerWaiter.Wait()
 	p.setInSpilling()
-	p.spillImpl(sortedRowsIters)
 
 	// Spill is done, broadcast to wake up all sleep goroutines
-	p.setNotSpilled()
-	p.cond.Broadcast()
-}
+	defer p.cond.Broadcast()
+	defer p.setNotSpilled()
 
-func (p *parallelSortSpillHelper) reloadCursor(i int) (bool, error) {
-	spilledChkNum := p.sortedRowsInDisk[i].NumChunks()
-	restoredChkID := p.cursor[i].getChkID() + 1
-	if restoredChkID >= spilledChkNum {
-		// All data has been consumed
-		return false, nil
-	}
-
-	chk, err := p.sortedRowsInDisk[i].GetChunk(restoredChkID)
-	if err != nil {
-		return false, err
-	}
-	p.cursor[i].setChunk(chk, restoredChkID)
-	return true, nil
+	return p.spillImpl(sortedRowsIters)
 }
 
 func (p *parallelSortSpillHelper) releaseMemory() {
@@ -153,46 +140,64 @@ func (p *parallelSortSpillHelper) releaseMemory() {
 	p.sortExec.memTracker.Consume(-totalReleasedMemory)
 }
 
-func (p *parallelSortSpillHelper) getRowsNeedingSpill() []chunk.Row {
+func (p *parallelSortSpillHelper) spillTmpSpillChunk(inDisk *chunk.DataInDiskByChunks) error {
+	err := inDisk.Add(p.tmpSpillChunk)
+	if err != nil {
+		p.setSpillError(err)
+		return err
+	}
+	p.tmpSpillChunk.Reset()
 	return nil
 }
 
-func (p *parallelSortSpillHelper) spillImpl(sortedRowsIters []chunk.Iterator4Slice) {
+func (p *parallelSortSpillHelper) spillImpl(sortedRowsIters []*chunk.Iterator4Slice) error {
 	p.tmpSpillChunk.Reset()
 	inDisk := chunk.NewDataInDiskByChunks(p.fieldTypes)
 	inDisk.GetDiskTracker().AttachTo(p.sortExec.diskTracker)
 
 	spilledRowChannel := make(chan chunk.Row, 10000)
 	go func() {
-		
+		defer close(spilledRowChannel)
+		merger := newMultiWayMerger(sortedRowsIters, p.lessRowFunc)
+		merger.init()
+		for {
+			row := merger.next()
+			if row.IsEmpty() {
+				break
+			}
+			spilledRowChannel <- row
+		}
 	}()
 
-	spilledRows := p.getRowsNeedingSpill()
-	for _, row := range spilledRows {
+	var (
+		row chunk.Row
+		ok  bool
+	)
+	for {
 		select {
 		case <-p.finishCh:
-			return
-		default:
+			return nil
+		case row, ok = <-spilledRowChannel:
+			if !ok {
+				if p.tmpSpillChunk.NumRows() > 0 {
+					err := p.spillTmpSpillChunk(inDisk)
+					if err != nil {
+						return err
+					}
+				}
+
+				p.sortedRowsInDisk = append(p.sortedRowsInDisk, inDisk)
+				p.releaseMemory()
+				return nil
+			}
 		}
 
 		p.tmpSpillChunk.AppendRow(row)
 		if p.tmpSpillChunk.IsFull() {
-			err := inDisk.Add(p.tmpSpillChunk)
+			err := p.spillTmpSpillChunk(inDisk)
 			if err != nil {
-				p.setSpillError(err)
+				return err
 			}
-			p.tmpSpillChunk.Reset()
 		}
 	}
-
-	if p.tmpSpillChunk.NumRows() > 0 {
-		err := inDisk.Add(p.tmpSpillChunk)
-		if err != nil {
-			p.setSpillError(err)
-		}
-		p.tmpSpillChunk.Reset()
-	}
-
-	p.sortedRowsInDisk = append(p.sortedRowsInDisk, inDisk)
-	p.releaseMemory()
 }

@@ -17,7 +17,6 @@ package sortexec
 import (
 	"sync"
 
-	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
@@ -112,35 +111,4 @@ func (s *parallelSortSpillAction) Action(t *memory.Tracker) {
 		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
 			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
 	}
-}
-
-// It's used only when spill is triggered
-type dataCursor struct {
-	chkID     int
-	chunkIter *chunk.Iterator4Chunk
-}
-
-// NewDataCursor creates a new dataCursor
-func NewDataCursor() *dataCursor {
-	return &dataCursor{
-		chkID:     -1,
-		chunkIter: chunk.NewIterator4Chunk(nil),
-	}
-}
-
-func (d *dataCursor) getChkID() int {
-	return d.chkID
-}
-
-func (d *dataCursor) begin() chunk.Row {
-	return d.chunkIter.Begin()
-}
-
-func (d *dataCursor) next() chunk.Row {
-	return d.chunkIter.Next()
-}
-
-func (d *dataCursor) setChunk(chk *chunk.Chunk, chkID int) {
-	d.chkID = chkID
-	d.chunkIter = chunk.NewIterator4Chunk(chk)
 }
