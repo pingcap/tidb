@@ -40,7 +40,7 @@ func CalculateAsOfTsExpr(ctx context.Context, sctx sessionctx.Context, tsExpr as
 		// this can be more accurate than `time.Now() - staleness`, because TiDB's local time can drift.
 		return sctx.GetStore().GetOracle().GetStaleTimestamp(ctx, oracle.GlobalTxnScope, 0)
 	})
-	tsVal, err := expression.EvalAstExpr(sctx, tsExpr)
+	tsVal, err := expression.EvalAstExprWithPlanCtx(sctx, tsExpr)
 	if err != nil {
 		return 0, err
 	}

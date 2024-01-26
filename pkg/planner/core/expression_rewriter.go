@@ -50,8 +50,8 @@ import (
 // EvalSubqueryFirstRow evaluates incorrelated subqueries once, and get first row.
 var EvalSubqueryFirstRow func(ctx context.Context, p PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) (row []types.Datum, err error)
 
-// evalAstExpr evaluates ast expression directly.
-func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error) {
+// evalAstExprWithPlanCtx evaluates ast expression with plan context.
+func evalAstExprWithPlanCtx(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error) {
 	if val, ok := expr.(*driver.ValueExpr); ok {
 		return val.Datum, nil
 	}
@@ -60,6 +60,18 @@ func evalAstExpr(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error
 		return types.Datum{}, err
 	}
 	return newExpr.Eval(sctx, chunk.Row{})
+}
+
+// evalAstExpr evaluates ast expression directly.
+func evalAstExpr(ctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error) {
+	if val, ok := expr.(*driver.ValueExpr); ok {
+		return val.Datum, nil
+	}
+	newExpr, err := buildExprWithAst(ctx, expr)
+	if err != nil {
+		return types.Datum{}, err
+	}
+	return newExpr.Eval(ctx, chunk.Row{})
 }
 
 // rewriteAstExpr rewrites ast expression directly.
@@ -738,7 +750,7 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, planCtx
 // it will be rewrote to t.id < (select max(s.id) from s).
 func (er *expressionRewriter) handleOtherComparableSubq(planCtx *exprRewriterPlanCtx, lexpr, rexpr expression.Expression, np LogicalPlan, useMin bool, cmpFunc string, all, markNoDecorrelate bool) {
 	intest.AssertNotNil(planCtx)
-	plan4Agg := LogicalAggregation{}.Init(er.sctx, planCtx.builder.getSelectOffset())
+	plan4Agg := LogicalAggregation{}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
 	if hint := planCtx.builder.TableHints(); hint != nil {
 		plan4Agg.aggHints = hint.Agg
 	}
@@ -749,7 +761,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(planCtx *exprRewriterPla
 	if useMin {
 		funcName = ast.AggFuncMin
 	}
-	funcMaxOrMin, err := aggregation.NewAggFuncDesc(er.sctx, funcName, []expression.Expression{rexpr}, false)
+	funcMaxOrMin, err := aggregation.NewAggFuncDesc(planCtx.builder.ctx, funcName, []expression.Expression{rexpr}, false)
 	if err != nil {
 		er.err = err
 		return
@@ -777,7 +789,7 @@ func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, 
 	innerIsNull := expression.NewFunctionInternal(er.sctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), rexpr)
 	outerIsNull := expression.NewFunctionInternal(er.sctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), lexpr)
 
-	funcSum, err := aggregation.NewAggFuncDesc(er.sctx, ast.AggFuncSum, []expression.Expression{innerIsNull}, false)
+	funcSum, err := aggregation.NewAggFuncDesc(planCtx.builder.ctx, ast.AggFuncSum, []expression.Expression{innerIsNull}, false)
 	if err != nil {
 		er.err = err
 		return
@@ -791,7 +803,7 @@ func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, 
 	innerHasNull := expression.NewFunctionInternal(er.sctx, ast.NE, types.NewFieldType(mysql.TypeTiny), colSum, expression.NewZero())
 
 	// Build `count(1)` aggregation to check if subquery is empty.
-	funcCount, err := aggregation.NewAggFuncDesc(er.sctx, ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
+	funcCount, err := aggregation.NewAggFuncDesc(planCtx.builder.ctx, ast.AggFuncCount, []expression.Expression{expression.NewOne()}, false)
 	if err != nil {
 		er.err = err
 		return
@@ -838,7 +850,7 @@ func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, 
 	joinSchema := planCtx.plan.Schema()
 	proj := LogicalProjection{
 		Exprs: expression.Column2Exprs(joinSchema.Clone().Columns[:outerSchemaLen]),
-	}.Init(er.sctx, planCtx.builder.getSelectOffset())
+	}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
 	proj.names = make([]*types.FieldName, outerSchemaLen, outerSchemaLen+1)
 	copy(proj.names, planCtx.plan.OutputNames())
 	proj.SetSchema(expression.NewSchema(joinSchema.Clone().Columns[:outerSchemaLen]...))
@@ -857,21 +869,22 @@ func (er *expressionRewriter) buildQuantifierPlan(planCtx *exprRewriterPlanCtx, 
 // there must exist a s.id that doesn't equal to t.id.
 func (er *expressionRewriter) handleNEAny(planCtx *exprRewriterPlanCtx, lexpr, rexpr expression.Expression, np LogicalPlan, markNoDecorrelate bool) {
 	intest.AssertNotNil(planCtx)
+	sctx := planCtx.builder.ctx
 	// If there is NULL in s.id column, s.id should be the value that isn't null in condition t.id != s.id.
 	// So use function max to filter NULL.
-	maxFunc, err := aggregation.NewAggFuncDesc(er.sctx, ast.AggFuncMax, []expression.Expression{rexpr}, false)
+	maxFunc, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncMax, []expression.Expression{rexpr}, false)
 	if err != nil {
 		er.err = err
 		return
 	}
-	countFunc, err := aggregation.NewAggFuncDesc(er.sctx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
+	countFunc, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
 	if err != nil {
 		er.err = err
 		return
 	}
 	plan4Agg := LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{maxFunc, countFunc},
-	}.Init(er.sctx, planCtx.builder.getSelectOffset())
+	}.Init(sctx, planCtx.builder.getSelectOffset())
 	if hint := planCtx.builder.TableHints(); hint != nil {
 		plan4Agg.aggHints = hint.Agg
 	}
@@ -897,19 +910,20 @@ func (er *expressionRewriter) handleNEAny(planCtx *exprRewriterPlanCtx, lexpr, r
 // t.id = (select s.id from s having count(distinct s.id) <= 1 and [all checker]).
 func (er *expressionRewriter) handleEQAll(planCtx *exprRewriterPlanCtx, lexpr, rexpr expression.Expression, np LogicalPlan, markNoDecorrelate bool) {
 	intest.AssertNotNil(planCtx)
-	firstRowFunc, err := aggregation.NewAggFuncDesc(er.sctx, ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
+	sctx := planCtx.builder.ctx
+	firstRowFunc, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncFirstRow, []expression.Expression{rexpr}, false)
 	if err != nil {
 		er.err = err
 		return
 	}
-	countFunc, err := aggregation.NewAggFuncDesc(er.sctx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
+	countFunc, err := aggregation.NewAggFuncDesc(sctx, ast.AggFuncCount, []expression.Expression{rexpr}, true)
 	if err != nil {
 		er.err = err
 		return
 	}
 	plan4Agg := LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
-	}.Init(er.sctx, planCtx.builder.getSelectOffset())
+	}.Init(sctx, planCtx.builder.getSelectOffset())
 	if hint := planCtx.builder.TableHints(); hint != nil {
 		plan4Agg.aggHints = hint.Agg
 	}
@@ -984,7 +998,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 		// We don't want nth_plan hint to affect separately executed subqueries here, so disable nth_plan temporarily.
 		nthPlanBackup := er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan
 		er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = -1
-		physicalPlan, _, err := DoOptimize(ctx, er.sctx, b.optFlag, np)
+		physicalPlan, _, err := DoOptimize(ctx, planCtx.builder.ctx, b.optFlag, np)
 		er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = nthPlanBackup
 		if err != nil {
 			er.err = err
@@ -1033,7 +1047,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 
 // popExistsSubPlan will remove the useless plan in exist's child.
 // See comments inside the method for more details.
-func (er *expressionRewriter) popExistsSubPlan(planCtx *exprRewriterPlanCtx, p LogicalPlan) LogicalPlan {
+func (*expressionRewriter) popExistsSubPlan(planCtx *exprRewriterPlanCtx, p LogicalPlan) LogicalPlan {
 	intest.AssertNotNil(planCtx)
 out:
 	for {
@@ -1044,7 +1058,7 @@ out:
 			p = p.Children()[0]
 		case *LogicalAggregation:
 			if len(plan.GroupByItems) == 0 {
-				p = LogicalTableDual{RowCount: 1}.Init(er.sctx, planCtx.builder.getSelectOffset())
+				p = LogicalTableDual{RowCount: 1}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
 				break out
 			}
 			p = p.Children()[0]
@@ -1159,7 +1173,7 @@ func (er *expressionRewriter) handleInSubquery(ctx context.Context, planCtx *exp
 			return v, true
 		}
 		// Build inner join above the aggregation.
-		join := LogicalJoin{JoinType: InnerJoin}.Init(er.sctx, planCtx.builder.getSelectOffset())
+		join := LogicalJoin{JoinType: InnerJoin}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
 		join.SetChildren(planCtx.plan, agg)
 		join.SetSchema(expression.MergeSchema(planCtx.plan.Schema(), agg.schema))
 		join.names = make([]*types.FieldName, planCtx.plan.Schema().Len()+agg.Schema().Len())
@@ -1225,7 +1239,7 @@ func (er *expressionRewriter) handleScalarSubquery(ctx context.Context, planCtx 
 	// We don't want nth_plan hint to affect separately executed subqueries here, so disable nth_plan temporarily.
 	nthPlanBackup := er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan
 	er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = -1
-	physicalPlan, _, err := DoOptimize(ctx, er.sctx, planCtx.builder.optFlag, np)
+	physicalPlan, _, err := DoOptimize(ctx, planCtx.builder.ctx, planCtx.builder.optFlag, np)
 	er.sctx.GetSessionVars().StmtCtx.StmtHints.ForceNthPlan = nthPlanBackup
 	if err != nil {
 		er.err = err
@@ -1367,17 +1381,19 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 		er.ctxStackAppend(value, types.EmptyName)
 	case *driver.ParamMarkerExpr:
-		var value *expression.Constant
-		value, er.err = expression.ParamMarkerExpression(er.sctx, v, false)
-		if er.err != nil {
-			return retNode, false
-		}
-		initConstantRepertoire(value)
-		er.adjustUTF8MB4Collation(value.RetType)
-		if er.err != nil {
-			return retNode, false
-		}
-		er.ctxStackAppend(value, types.EmptyName)
+		withPlanCtx(func(planCtx *exprRewriterPlanCtx) {
+			var value *expression.Constant
+			value, er.err = expression.ParamMarkerExpression(planCtx.builder.ctx, v, false)
+			if er.err != nil {
+				return
+			}
+			initConstantRepertoire(value)
+			er.adjustUTF8MB4Collation(value.RetType)
+			if er.err != nil {
+				return
+			}
+			er.ctxStackAppend(value, types.EmptyName)
+		})
 	case *ast.VariableExpr:
 		withPlanCtx(func(planCtx *exprRewriterPlanCtx) {
 			er.rewriteVariable(planCtx, v)
@@ -2348,7 +2364,7 @@ func (er *expressionRewriter) toColumn(v *ast.ColumnName) {
 
 	planCtx := er.planCtx
 	if planCtx == nil {
-		er.err = ErrUnknownColumn.GenWithStackByArgs(v.Name, clauseMsg[er.clause()])
+		er.err = ErrUnknownColumn.GenWithStackByArgs(v.String(), clauseMsg[er.clause()])
 		return
 	}
 

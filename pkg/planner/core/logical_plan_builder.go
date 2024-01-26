@@ -6676,7 +6676,7 @@ func (b *PlanBuilder) buildWindowFunctionFrameBound(_ context.Context, spec *ast
 
 	col := orderByItems[0].Col
 	// TODO: We also need to raise error for non-deterministic expressions, like rand().
-	val, err := evalAstExpr(b.ctx, boundClause.Expr)
+	val, err := evalAstExprWithPlanCtx(b.ctx, boundClause.Expr)
 	if err != nil {
 		return nil, ErrWindowRangeBoundNotConstant.GenWithStackByArgs(getWindowName(spec.Name.O))
 	}
