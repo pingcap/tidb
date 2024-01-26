@@ -278,22 +278,6 @@ func (e *SortExec) appendResultToChunkInUnparallelMode(req *chunk.Chunk) error {
 	return nil
 }
 
-func (p *SortExec) reloadCursor(cursor *dataCursor, i int) (bool, error) {
-	spilledChkNum := p.Parallel.spillHelper.sortedRowsInDisk[i].NumChunks()
-	restoredChkID := cursor.getChkID() + 1
-	if restoredChkID >= spilledChkNum {
-		// All data has been consumed
-		return false, nil
-	}
-
-	chk, err := p.Parallel.spillHelper.sortedRowsInDisk[i].GetChunk(restoredChkID)
-	if err != nil {
-		return false, err
-	}
-	cursor.setChunk(chk, restoredChkID)
-	return true, nil
-}
-
 func (e *SortExec) generateResultWhenSpillTriggeredOnlyOnce() {
 	inDisk := e.Parallel.spillHelper.sortedRowsInDisk[0]
 	chunkNum := inDisk.NumChunks()
