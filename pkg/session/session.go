@@ -322,7 +322,7 @@ func (s *session) cleanRetryInfo() {
 }
 
 func (s *session) Status() uint16 {
-	return s.sessionVars.Status
+	return s.sessionVars.Status()
 }
 
 func (s *session) LastInsertID() uint64 {
@@ -1042,7 +1042,7 @@ func (s *session) String() string {
 		"id":         sessVars.ConnectionID,
 		"user":       sessVars.User,
 		"currDBName": sessVars.CurrentDB,
-		"status":     sessVars.Status,
+		"status":     sessVars.Status(),
 		"strictMode": sessVars.SQLMode.HasStrictMode(),
 	}
 	if s.txn.Valid() {

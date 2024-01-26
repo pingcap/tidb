@@ -1973,7 +1973,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	vars.StmtCtx.SetVarHintRestore = nil
 	var sc *stmtctx.StatementContext
-	if vars.TxnCtx.CouldRetry || mysql.HasCursorExistsFlag(vars.Status) {
+	if vars.TxnCtx.CouldRetry || vars.HasStatusFlag(mysql.ServerStatusCursorExists) {
 		// Must construct new statement context object, the retry history need context for every statement.
 		// TODO: Maybe one day we can get rid of transaction retry, then this logic can be deleted.
 		sc = stmtctx.NewStmtCtx()
