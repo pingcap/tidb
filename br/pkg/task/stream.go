@@ -1087,7 +1087,7 @@ func checkTaskExists(ctx context.Context, cfg *RestoreConfig, etcdCLI *clientv3.
 			return err
 		}
 		if !nameSet.Empty() {
-			return errors.Errorf("%splease stop changefeed(s) before restore", nameSet.MessageToUser())
+			return errors.Errorf("%splease remove changefeed(s) before restore", nameSet.MessageToUser())
 		}
 	}
 	return nil
