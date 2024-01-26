@@ -67,7 +67,7 @@ func TestSQLModeVar(t *testing.T) {
 	require.Equal(t, "ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION", val)
 
 	require.Nil(t, sv.SetSessionFromHook(vars, val)) // sets to strict from above
-	require.True(t, vars.StrictSQLMode)
+	require.True(t, vars.SQLMode.HasStrictMode())
 
 	sqlMode, err := mysql.GetSQLMode(val)
 	require.NoError(t, err)
@@ -79,7 +79,7 @@ func TestSQLModeVar(t *testing.T) {
 	require.Equal(t, "ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION", val)
 
 	require.Nil(t, sv.SetSessionFromHook(vars, val)) // sets to non-strict from above
-	require.False(t, vars.StrictSQLMode)
+	require.False(t, vars.SQLMode.HasStrictMode())
 	sqlMode, err = mysql.GetSQLMode(val)
 	require.NoError(t, err)
 	require.Equal(t, sqlMode, vars.SQLMode)

@@ -77,8 +77,8 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", task.Type),
 		zap.Int64("task-id", task.ID),
-		zap.String("curr-step", StepStr(task.Step)),
-		zap.String("next-step", StepStr(nextStep)),
+		zap.String("curr-step", proto.Step2Str(task.Type, task.Step)),
+		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
 	)
 	var backfillMeta BackfillTaskMeta
 	if err := json.Unmarshal(task.Meta, &backfillMeta); err != nil {
@@ -93,12 +93,12 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 
 	// TODO: use planner.
 	switch nextStep {
-	case StepReadIndex:
+	case proto.BackfillStepReadIndex:
 		if tblInfo.Partition != nil {
 			return generatePartitionPlan(tblInfo)
 		}
 		return generateNonPartitionPlan(sch.d, tblInfo, job, sch.GlobalSort, len(execIDs))
-	case StepMergeSort:
+	case proto.BackfillStepMergeSort:
 		res, err := generateMergePlan(taskHandle, task, logger)
 		if err != nil {
 			return nil, err
@@ -110,11 +110,11 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 			}
 		}
 		return res, nil
-	case StepWriteAndIngest:
+	case proto.BackfillStepWriteAndIngest:
 		if sch.GlobalSort {
-			prevStep := StepReadIndex
+			prevStep := proto.BackfillStepReadIndex
 			if backfillMeta.UseMergeSort {
-				prevStep = StepMergeSort
+				prevStep = proto.BackfillStepMergeSort
 			}
 
 			failpoint.Inject("mockWriteIngest", func() {
@@ -154,15 +154,15 @@ func updateMeta(task *proto.Task, taskMeta *BackfillTaskMeta) error {
 func (sch *BackfillingSchedulerExt) GetNextStep(task *proto.Task) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
-		return StepReadIndex
-	case StepReadIndex:
+		return proto.BackfillStepReadIndex
+	case proto.BackfillStepReadIndex:
 		if sch.GlobalSort {
-			return StepMergeSort
+			return proto.BackfillStepMergeSort
 		}
 		return proto.StepDone
-	case StepMergeSort:
-		return StepWriteAndIngest
-	case StepWriteAndIngest:
+	case proto.BackfillStepMergeSort:
+		return proto.BackfillStepWriteAndIngest
+	case proto.BackfillStepWriteAndIngest:
 		return proto.StepDone
 	default:
 		return proto.StepDone
@@ -415,7 +415,7 @@ func generateMergePlan(
 ) ([][]byte, error) {
 	// check data files overlaps,
 	// if data files overlaps too much, we need a merge step.
-	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, StepReadIndex)
+	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.BackfillStepReadIndex)
 	if err != nil {
 		return nil, err
 	}
@@ -434,7 +434,7 @@ func generateMergePlan(
 	}
 
 	// generate merge sort plan.
-	_, _, _, multiFileStat, err := getSummaryFromLastStep(taskHandle, task.ID, StepReadIndex)
+	_, _, _, multiFileStat, err := getSummaryFromLastStep(taskHandle, task.ID, proto.BackfillStepReadIndex)
 	if err != nil {
 		return nil, err
 	}
@@ -546,22 +546,4 @@ func getSummaryFromLastStep(
 		multiFileStat = append(multiFileStat, subtask.MultipleFilesStats...)
 	}
 	return startKey, endKey, totalKVSize, multiFileStat, nil
-}
-
-// StepStr convert proto.Step to string.
-func StepStr(step proto.Step) string {
-	switch step {
-	case proto.StepInit:
-		return "init"
-	case StepReadIndex:
-		return "read-index"
-	case StepMergeSort:
-		return "merge-sort"
-	case StepWriteAndIngest:
-		return "write&ingest"
-	case proto.StepDone:
-		return "done"
-	default:
-		return "unknown"
-	}
 }

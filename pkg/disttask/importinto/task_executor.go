@@ -251,12 +251,6 @@ func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
 	return s.tableImporter.Close()
 }
 
-func (s *importStepExecutor) Rollback(context.Context) error {
-	// TODO: add rollback
-	s.logger.Info("rollback")
-	return nil
-}
-
 type mergeSortStepExecutor struct {
 	taskexecutor.EmptyStepExecutor
 	taskID     int64
@@ -396,7 +390,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	return localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 }
 
-func (e *writeAndIngestStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
+func (e *writeAndIngestStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
 	var subtaskMeta WriteIngestStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
@@ -410,6 +404,10 @@ func (e *writeAndIngestStepExecutor) OnFinished(_ context.Context, subtask *prot
 	localBackend := e.tableImporter.Backend()
 	_, kvCount := localBackend.GetExternalEngineKVStatistics(engineUUID)
 	subtaskMeta.Result.LoadedRowCnt = uint64(kvCount)
+	err := localBackend.CleanupEngine(ctx, engineUUID)
+	if err != nil {
+		e.logger.Warn("failed to cleanup engine", zap.Error(err))
+	}
 
 	newMeta, err := json.Marshal(subtaskMeta)
 	if err != nil {
@@ -422,11 +420,6 @@ func (e *writeAndIngestStepExecutor) OnFinished(_ context.Context, subtask *prot
 func (e *writeAndIngestStepExecutor) Cleanup(_ context.Context) (err error) {
 	e.logger.Info("cleanup subtask env")
 	return e.tableImporter.Close()
-}
-
-func (e *writeAndIngestStepExecutor) Rollback(context.Context) error {
-	e.logger.Info("rollback")
-	return nil
 }
 
 type postProcessStepExecutor struct {
@@ -501,30 +494,29 @@ func (*importExecutor) GetStepExecutor(_ context.Context, task *proto.Task, _ *e
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", proto.ImportInto),
 		zap.Int64("task-id", task.ID),
-		zap.String("step", stepStr(task.Step)),
+		zap.String("step", proto.Step2Str(task.Type, task.Step)),
 	)
-	logger.Info("create step executor")
 
 	switch task.Step {
-	case StepImport, StepEncodeAndSort:
+	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
 		return &importStepExecutor{
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
 		}, nil
-	case StepMergeSort:
+	case proto.ImportStepMergeSort:
 		return &mergeSortStepExecutor{
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
 		}, nil
-	case StepWriteAndIngest:
+	case proto.ImportStepWriteAndIngest:
 		return &writeAndIngestStepExecutor{
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
 		}, nil
-	case StepPostProcess:
+	case proto.ImportStepPostProcess:
 		return NewPostProcessStepExecutor(task.ID, &taskMeta, logger), nil
 	default:
 		return nil, errors.Errorf("unknown step %d for import task %d", task.Step, task.ID)

@@ -3051,3 +3051,13 @@ func randStr(n int, r *rand.Rand) string {
 	}
 	return sb.String()
 }
+
+func TestPointGetKeyPartitioning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`CREATE TABLE t (a VARCHAR(30) NOT NULL, b VARCHAR(45) NOT NULL,
+ c VARCHAR(45) NOT NULL, PRIMARY KEY (b, a)) PARTITION BY KEY(b) PARTITIONS 5`)
+	tk.MustExec(`INSERT INTO t VALUES ('Aa', 'Ab', 'Ac'), ('Ba', 'Bb', 'Bc')`)
+	tk.MustQuery(`SELECT * FROM t WHERE b = 'Ab'`).Check(testkit.Rows("Aa Ab Ac"))
+}

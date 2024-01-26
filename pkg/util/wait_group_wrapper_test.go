@@ -97,7 +97,7 @@ func TestWaitGroupWrapperCheck(t *testing.T) {
 func TestWaitGroupWrapperGo(t *testing.T) {
 	file, fileName := prepareStdoutLogger(t)
 	var wg WaitGroupWrapper
-	wg.Go(func() {
+	wg.RunWithLog(func() {
 		middleF()
 	})
 	wg.Wait()

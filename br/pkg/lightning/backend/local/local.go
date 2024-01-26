@@ -72,7 +72,7 @@ import (
 
 const (
 	dialTimeout             = 5 * time.Minute
-	maxRetryTimes           = 5
+	maxRetryTimes           = 20
 	defaultRetryBackoffTime = 3 * time.Second
 	// maxWriteAndIngestRetryTimes is the max retry times for write and ingest.
 	// A large retry times is for tolerating tikv cluster failures.

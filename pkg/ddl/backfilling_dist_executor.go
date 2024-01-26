@@ -85,15 +85,15 @@ func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
 	}
 
 	switch stage {
-	case StepReadIndex:
+	case proto.BackfillStepReadIndex:
 		jc := d.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		d.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		d.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
 		return newReadIndexExecutor(
 			d, &bgm.Job, indexInfos, tbl.(table.PhysicalTable), jc, bc, summary, bgm.CloudStorageURI), nil
-	case StepMergeSort:
+	case proto.BackfillStepMergeSort:
 		return newMergeSortExecutor(jobMeta.ID, len(indexInfos), tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
-	case StepWriteAndIngest:
+	case proto.BackfillStepWriteAndIngest:
 		if len(bgm.CloudStorageURI) > 0 {
 			return newCloudImportExecutor(&bgm.Job, jobMeta.ID, indexInfos[0], tbl.(table.PhysicalTable), bc, bgm.CloudStorageURI)
 		}
@@ -167,7 +167,7 @@ func decodeIndexUniqueness(job *model.Job) (bool, error) {
 
 func (s *backfillDistExecutor) GetStepExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary, _ *proto.StepResource) (execute.StepExecutor, error) {
 	switch task.Step {
-	case StepReadIndex, StepMergeSort, StepWriteAndIngest:
+	case proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest:
 		return NewBackfillSubtaskExecutor(ctx, task.Meta, s.d, s.backendCtx, task.Step, summary)
 	default:
 		return nil, errors.Errorf("unknown backfill step %d for task %d", task.Step, task.ID)

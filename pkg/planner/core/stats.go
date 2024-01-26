@@ -218,7 +218,7 @@ func init() {
 	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID
 }
 
-// getTblInfoForUsedStatsByPhysicalID get table name, partition name and TableInfo that will be used to record used stats.
+// getTblInfoForUsedStatsByPhysicalID get table name, partition name and HintedTable that will be used to record used stats.
 func getTblInfoForUsedStatsByPhysicalID(sctx sessionctx.Context, id int64) (fullName string, tblInfo *model.TableInfo) {
 	fullName = "tableID " + strconv.FormatInt(id, 10)
 

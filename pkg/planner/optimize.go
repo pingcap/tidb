@@ -36,7 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/types"
@@ -144,7 +143,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		}
 	}
 
-	if sctx.GetSessionVars().StrictSQLMode && !IsReadOnly(node, sessVars) {
+	if sctx.GetSessionVars().SQLMode.HasStrictMode() && !IsReadOnly(node, sessVars) {
 		sessVars.StmtCtx.TiFlashEngineRemovedDueToStrictSQLMode = true
 		_, hasTiFlashAccess := sessVars.IsolationReadEngines[kv.TiFlash]
 		if hasTiFlashAccess {
@@ -164,7 +163,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		return p, names, err
 	}
 
-	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx)
+	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx.GetSessionVars().StmtCtx.SetHintWarning)
 	originStmtHints, _, warns := handleStmtHints(tableHints)
 	sessVars.StmtCtx.StmtHints = originStmtHints
 	for _, warn := range warns {
@@ -197,7 +196,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 		sessVars.StmtCtx.AddSetVarHintRestore(name, oldV)
 	}
 	if len(sessVars.StmtCtx.StmtHints.SetVars) > 0 {
-		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.Errorf("SET_VAR is used in the SQL"))
+		sctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError("SET_VAR is used in the SQL"))
 	}
 
 	txnManger := sessiontxn.GetTxnManager(sctx)
@@ -220,19 +219,19 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	enableUseBinding := sessVars.UsePlanBaselines
 	stmtNode, isStmtNode := node.(ast.StmtNode)
 	binding, match, scope := bindinfo.MatchSQLBinding(sctx, stmtNode)
-	var bindRecord bindinfo.Bindings
+	var bindings bindinfo.Bindings
 	if match {
-		bindRecord = []bindinfo.Binding{binding}
+		bindings = []bindinfo.Binding{binding}
 	}
 
 	useBinding := enableUseBinding && isStmtNode && match
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		failpoint.Inject("SetBindingTimeToZero", func(val failpoint.Value) {
-			if val.(bool) && bindRecord != nil {
-				bindRecord = bindRecord.Copy()
-				for i := range bindRecord {
-					bindRecord[i].CreateTime = types.ZeroTime
-					bindRecord[i].UpdateTime = types.ZeroTime
+			if val.(bool) && bindings != nil {
+				bindings = bindings.Copy()
+				for i := range bindings {
+					bindings[i].CreateTime = types.ZeroTime
+					bindings[i].UpdateTime = types.ZeroTime
 				}
 			}
 		})
@@ -242,7 +241,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			"IsStmtNode", isStmtNode,
 			"Matched", match,
 			"Scope", scope,
-			"Matched bindings", bindRecord,
+			"Matched bindings", bindings,
 		)
 	}
 	if isStmtNode {
@@ -272,10 +271,10 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	)
 	if useBinding {
 		minCost := math.MaxFloat64
-		var bindStmtHints stmtctx.StmtHints
+		var bindStmtHints hint.StmtHints
 		originHints := hint.CollectHint(stmtNode)
-		// bindRecord must be not nil when coming here, try to find the best binding.
-		for _, binding := range bindRecord {
+		// bindings must be not nil when coming here, try to find the best binding.
+		for _, binding := range bindings {
 			if !binding.IsBindingEnabled() {
 				continue
 			}
@@ -352,7 +351,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	if sessVars.EvolvePlanBaselines && bestPlanFromBind != nil &&
 		sessVars.SelectLimit == math.MaxUint64 { // do not evolve this query if sql_select_limit is enabled
 		// Check bestPlanFromBind firstly to avoid nil stmtNode.
-		if _, ok := stmtNode.(*ast.SelectStmt); ok && !bindRecord[0].Hint.ContainTableHint(hint.HintReadFromStorage) {
+		if _, ok := stmtNode.(*ast.SelectStmt); ok && !bindings[0].Hint.ContainTableHint(hint.HintReadFromStorage) {
 			sessVars.StmtCtx.StmtHints = originStmtHints
 			defPlan, _, _, err := optimize(ctx, sctx, node, is)
 			if err != nil {
@@ -377,7 +376,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 func OptimizeForForeignKeyCascade(ctx context.Context, sctx sessionctx.Context, node ast.StmtNode, is infoschema.InfoSchema) (core.Plan, error) {
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
 	defer planBuilderPool.Put(builder.ResetForReuse())
-	hintProcessor := hint.NewQBHintHandler(sctx)
+	hintProcessor := hint.NewQBHintHandler(sctx.GetSessionVars().StmtCtx.SetHintWarning)
 	builder.Init(sctx, is, hintProcessor)
 	p, err := builder.Build(ctx, node)
 	if err != nil {
@@ -459,7 +458,7 @@ func optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	// build logical plan
-	hintProcessor := hint.NewQBHintHandler(sctx)
+	hintProcessor := hint.NewQBHintHandler(sctx.GetSessionVars().StmtCtx.SetHintWarning)
 	node.Accept(hintProcessor)
 	defer hintProcessor.HandleUnusedViewHints()
 	builder := planBuilderPool.Get().(*core.PlanBuilder)
@@ -574,7 +573,7 @@ func handleInvalidBinding(ctx context.Context, sctx sessionctx.Context, level st
 	globalHandle.AddInvalidGlobalBinding(binding)
 }
 
-func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints stmtctx.StmtHints, offs []int, warns []error) {
+func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints hint.StmtHints, offs []int, warns []error) {
 	if len(hints) == 0 {
 		return
 	}

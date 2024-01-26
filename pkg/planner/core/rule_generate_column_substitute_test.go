@@ -257,6 +257,7 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 	}
 	condition = fmt.Sprintf(condition, addresses...)
 	s := core.CreatePlannerSuite(tk.Session(), is)
+	defer s.Close()
 	ctx := context.Background()
 	sql := "select * from tai where " + condition
 	fmt.Println(sql)

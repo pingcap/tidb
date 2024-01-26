@@ -35,9 +35,6 @@ var (
 	unfinishedNormalSubtaskStates = []interface{}{
 		proto.SubtaskStatePending, proto.SubtaskStateRunning,
 	}
-	unfinishedRevertSubtaskStates = []interface{}{
-		proto.SubtaskStateRevertPending, proto.SubtaskStateReverting,
-	}
 )
 
 func TestTaskExecutorRun(t *testing.T) {
@@ -292,14 +289,8 @@ func TestTaskExecutorRollback(t *testing.T) {
 
 	// 1. no taskExecutor constructor
 	task1 := &proto.Task{Step: proto.StepOne, ID: 1, Type: tp}
-	taskExecutorRegisterErr := errors.Errorf("constructor of taskExecutor for key not found")
-	mockExtension.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, taskExecutorRegisterErr)
 	taskExecutor := NewBaseTaskExecutor(ctx, "id", task1, mockSubtaskTable)
 	taskExecutor.Extension = mockExtension
-	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(runCtx, "id", int64(1), proto.StepOne,
-		unfinishedNormalSubtaskStates...).Return(nil, nil)
-	err := taskExecutor.Rollback(runCtx, task1)
-	require.EqualError(t, err, taskExecutorRegisterErr.Error())
 
 	mockExtension.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).Return(mockStepExecutor, nil).AnyTimes()
 
@@ -307,31 +298,15 @@ func TestTaskExecutorRollback(t *testing.T) {
 	getSubtaskErr := errors.New("get subtask error")
 	var taskID int64 = 1
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(runCtx, "id", taskID, proto.StepOne,
-		unfinishedNormalSubtaskStates...).Return(nil, nil)
-	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(runCtx, "id", taskID, proto.StepOne,
-		unfinishedRevertSubtaskStates...).Return(nil, getSubtaskErr)
-	err = taskExecutor.Rollback(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID})
+		unfinishedNormalSubtaskStates...).Return(nil, getSubtaskErr)
+	err := taskExecutor.Rollback(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID})
 	require.EqualError(t, err, getSubtaskErr.Error())
 
 	// 3. no subtask
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(runCtx, "id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(nil, nil)
-	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(runCtx, "id", taskID, proto.StepOne,
-		unfinishedRevertSubtaskStates...).Return(nil, nil)
 	err = taskExecutor.Rollback(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID})
 	require.NoError(t, err)
-
-	// 4. rollback failed
-	rollbackErr := errors.New("rollback error")
-	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(runCtx, "id", taskID, proto.StepOne,
-		unfinishedNormalSubtaskStates...).Return(nil, nil)
-	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(runCtx, "id", taskID, proto.StepOne,
-		unfinishedRevertSubtaskStates...).Return(&proto.Subtask{ID: 1, State: proto.SubtaskStateRevertPending, ExecID: "id"}, nil)
-	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(runCtx, "id", taskID, proto.SubtaskStateReverting, nil).Return(nil)
-	mockStepExecutor.EXPECT().Rollback(gomock.Any()).Return(rollbackErr)
-	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(runCtx, "id", taskID, proto.SubtaskStateRevertFailed, nil).Return(nil)
-	err = taskExecutor.Rollback(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID})
-	require.EqualError(t, err, rollbackErr.Error())
 
 	// 5. rollback success
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(runCtx, "id", taskID, proto.StepOne,
@@ -342,21 +317,12 @@ func TestTaskExecutorRollback(t *testing.T) {
 	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(runCtx, "id", int64(2), proto.SubtaskStateCanceled, nil).Return(nil)
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(runCtx, "id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(nil, nil)
-	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(runCtx, "id", taskID, proto.StepOne,
-		unfinishedRevertSubtaskStates...).Return(&proto.Subtask{ID: 3, State: proto.SubtaskStateRevertPending, ExecID: "id"}, nil)
-	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(runCtx, "id", int64(3), proto.SubtaskStateReverting, nil).Return(nil)
-	mockStepExecutor.EXPECT().Rollback(gomock.Any()).Return(nil)
-	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(runCtx, "id", int64(3), proto.SubtaskStateReverted, nil).Return(nil)
 	err = taskExecutor.Rollback(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID})
 	require.NoError(t, err)
 
 	// rollback again for previous left subtask in TaskStateReverting state
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(runCtx, "id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(nil, nil)
-	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(runCtx, "id", taskID, proto.StepOne,
-		unfinishedRevertSubtaskStates...).Return(&proto.Subtask{ID: 3, State: proto.SubtaskStateReverting, ExecID: "id"}, nil)
-	mockStepExecutor.EXPECT().Rollback(gomock.Any()).Return(nil)
-	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(runCtx, "id", int64(3), proto.SubtaskStateReverted, nil).Return(nil)
 	err = taskExecutor.Rollback(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID})
 	require.NoError(t, err)
 }
@@ -405,11 +371,6 @@ func TestTaskExecutor(t *testing.T) {
 	// 2. rollback success.
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(runCtx, "id", taskID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(nil, nil)
-	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(runCtx, "id", taskID, proto.StepOne,
-		unfinishedRevertSubtaskStates...).Return(&proto.Subtask{ID: 1, Type: tp, State: proto.SubtaskStateRevertPending, ExecID: "id"}, nil)
-	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(runCtx, "id", taskID, proto.SubtaskStateReverting, nil).Return(nil)
-	mockStepExecutor.EXPECT().Rollback(gomock.Any()).Return(nil)
-	mockSubtaskTable.EXPECT().UpdateSubtaskStateAndError(runCtx, "id", taskID, proto.SubtaskStateReverted, nil).Return(nil)
 	err = taskExecutor.Rollback(runCtx, &proto.Task{Step: proto.StepOne, Type: tp, ID: taskID})
 	require.NoError(t, err)
 	require.True(t, ctrl.Satisfied())
@@ -431,6 +392,47 @@ func TestTaskExecutor(t *testing.T) {
 	err = taskExecutor.runStep(runCtx, task, nil)
 	require.NoError(t, err)
 	require.True(t, ctrl.Satisfied())
+
+	// no subtask to run, should exit the loop after some time.
+	checkIntervalBak := checkInterval
+	maxIntervalBak := maxCheckInterval
+	defer func() {
+		checkInterval = checkIntervalBak
+		maxCheckInterval = maxIntervalBak
+	}()
+	maxCheckInterval, checkInterval = time.Millisecond, time.Millisecond
+	mockStepExecutor.EXPECT().Init(gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(nil, nil)
+	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(nil, nil).Times(8)
+	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), gomock.Any()).Return(task, nil).Times(8)
+	mockStepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
+	err = taskExecutor.runStep(runCtx, task, nil)
+	require.NoError(t, err)
+	require.True(t, ctrl.Satisfied())
+
+	// no-subtask check counter should be reset after a subtask is run.
+	mockStepExecutor.EXPECT().Init(gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(nil, nil)
+	// no subtask to run for 4 times.
+	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(nil, nil).Times(4)
+	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), gomock.Any()).Return(task, nil).Times(4)
+	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(subtasks[0], nil)
+	mockSubtaskTable.EXPECT().StartSubtask(gomock.Any(), taskID, "id").Return(nil)
+	mockStepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).Return(nil)
+	mockStepExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().FinishSubtask(gomock.Any(), "id", int64(1), gomock.Any()).Return(nil)
+	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", taskID, proto.StepOne,
+		unfinishedNormalSubtaskStates...).Return(nil, nil).Times(8)
+	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), gomock.Any()).Return(task, nil).Times(8)
+	mockStepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
+	err = taskExecutor.runStep(runCtx, task, nil)
+	require.NoError(t, err)
+	require.True(t, ctrl.Satisfied())
 }
 
 func TestRunStepCurrentSubtaskScheduledAway(t *testing.T) {
@@ -440,9 +442,9 @@ func TestRunStepCurrentSubtaskScheduledAway(t *testing.T) {
 	mockStepExecutor := mockexecute.NewMockStepExecutor(ctrl)
 	mockExtension := mock.NewMockExtension(ctrl)
 
-	task := &proto.Task{Step: proto.StepOne, Type: "type", ID: 1, Concurrency: 1}
+	task := &proto.Task{Step: proto.StepOne, Type: "example", ID: 1, Concurrency: 1}
 	subtasks := []*proto.Subtask{
-		{ID: 1, Type: "type", Step: proto.StepOne, State: proto.SubtaskStatePending, ExecID: "tidb1"},
+		{ID: 1, Type: "example", Step: proto.StepOne, State: proto.SubtaskStatePending, ExecID: "tidb1"},
 	}
 	ctx := context.Background()
 	taskExecutor := NewBaseTaskExecutor(ctx, "tidb1", task, mockSubtaskTable)

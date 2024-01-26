@@ -851,7 +851,8 @@ const (
 
 	// TiDBOptAdvancedJoinHint indicates whether the join method hint is compatible with join order hint.
 	TiDBOptAdvancedJoinHint = "tidb_opt_advanced_join_hint"
-
+	// TiDBOptUseInvisibleIndexes indicates whether to use invisible indexes.
+	TiDBOptUseInvisibleIndexes = "tidb_opt_use_invisible_indexes"
 	// TiDBAnalyzePartitionConcurrency indicates concurrency for save/read partitions stats in Analyze
 	TiDBAnalyzePartitionConcurrency = "tidb_analyze_partition_concurrency"
 	// TiDBMergePartitionStatsConcurrency indicates the concurrency when merge partition stats into global stats
@@ -905,6 +906,10 @@ const (
 
 	// TiDBOptOrderingIdxSelThresh is the threshold for optimizer to consider the ordering index.
 	TiDBOptOrderingIdxSelThresh = "tidb_opt_ordering_index_selectivity_threshold"
+
+	// TiDBOptOrderingIdxSelRatio is the ratio the optimizer will assume applies when non indexed filtering rows are found
+	// via the ordering index.
+	TiDBOptOrderingIdxSelRatio = "tidb_opt_ordering_index_selectivity_ratio"
 
 	// TiDBOptEnableMPPSharedCTEExecution indicates whether the optimizer try to build shared CTE scan during MPP execution.
 	TiDBOptEnableMPPSharedCTEExecution = "tidb_opt_enable_mpp_shared_cte_execution"
@@ -1428,6 +1433,7 @@ const (
 	DefTiDBLoadBasedReplicaReadThreshold              = time.Second
 	DefTiDBOptEnableLateMaterialization               = true
 	DefTiDBOptOrderingIdxSelThresh                    = 0.0
+	DefTiDBOptOrderingIdxSelRatio                     = -1
 	DefTiDBOptEnableMPPSharedCTEExecution             = false
 	DefTiDBPlanCacheInvalidationOnFreshStats          = true
 	DefTiDBEnableRowLevelChecksum                     = false
