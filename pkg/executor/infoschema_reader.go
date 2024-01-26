@@ -64,6 +64,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
@@ -99,7 +100,7 @@ type memtableRetriever struct {
 // retrieve implements the infoschemaRetriever interface
 func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
 	if e.table.Name.O == infoschema.TableClusterInfo && !hasPriv(sctx, mysql.ProcessPriv) {
-		return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+		return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 	if e.retrieved {
 		return nil, nil
@@ -2368,7 +2369,7 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 	switch tableName {
 	case infoschema.TableClientErrorsSummaryGlobal:
 		if !hasProcessPriv {
-			return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+			return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 		}
 		for code, summary := range errno.GlobalStats() {
 			firstSeen := types.NewTime(types.FromGoTime(summary.FirstSeen), mysql.TypeTimestamp, types.DefaultFsp)
@@ -2406,7 +2407,7 @@ func (e *memtableRetriever) setDataForClientErrorsSummary(ctx sessionctx.Context
 		}
 	case infoschema.TableClientErrorsSummaryByHost:
 		if !hasProcessPriv {
-			return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+			return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 		}
 		for host, agg := range errno.HostStats() {
 			for code, summary := range agg {
@@ -2645,7 +2646,7 @@ func (r *dataLockWaitsTableRetriever) retrieve(ctx context.Context, sctx session
 
 	if !r.initialized {
 		if !hasPriv(sctx, mysql.ProcessPriv) {
-			return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+			return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 		}
 
 		r.initialized = true
@@ -2849,7 +2850,7 @@ func (r *deadlocksTableRetriever) retrieve(ctx context.Context, sctx sessionctx.
 
 	if !r.initialized {
 		if !hasPriv(sctx, mysql.ProcessPriv) {
-			return nil, plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+			return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 		}
 
 		r.initialized = true

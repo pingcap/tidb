@@ -1731,7 +1731,7 @@ func appendWarnForUnknownPartitions(ctx sessionctx.Context, hintName string, unk
 	}
 
 	warning := fmt.Errorf("unknown partitions (%s) in optimizer hint %s", strings.Join(unknownPartitions, ","), hintName)
-	ctx.GetSessionVars().StmtCtx.SetHintWarning(warning)
+	ctx.GetSessionVars().StmtCtx.SetHintWarningFromError(warning)
 }
 
 func (*partitionProcessor) checkHintsApplicable(ds *DataSource, partitionSet set.StringSet) {

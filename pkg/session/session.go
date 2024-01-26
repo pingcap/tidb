@@ -92,6 +92,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
@@ -430,7 +431,7 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 				u = user.AuthUsername
 				h = user.AuthHostname
 			}
-			return nil, plannercore.ErrTableaccessDenied.GenWithStackByArgs("SELECT", u, h, tableName)
+			return nil, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", u, h, tableName)
 		}
 	}
 	table, err := is.TableByName(dbName, tName)
@@ -508,7 +509,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		roles := s.sessionVars.ActiveRoles
 		if pm != nil && !pm.HasExplicitlyGrantedDynamicPrivilege(roles, "RESTRICTED_REPLICA_WRITER_ADMIN", false) {
 			s.RollbackTxn(ctx)
-			return plannercore.ErrSQLInReadOnlyMode
+			return plannererrors.ErrSQLInReadOnlyMode
 		}
 	}
 	err := s.checkPlacementPolicyBeforeCommit()
@@ -2502,7 +2503,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, params []expression.Expression) (sqlexec.RecordSet, error) {
 	prepStmt, err := s.sessionVars.GetPreparedStmtByID(stmtID)
 	if err != nil {
-		err = plannercore.ErrStmtNotFound
+		err = plannererrors.ErrStmtNotFound
 		logutil.Logger(ctx).Error("prepared statement not found", zap.Uint32("stmtID", stmtID))
 		return nil, err
 	}
@@ -2520,7 +2521,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, params
 func (s *session) DropPreparedStmt(stmtID uint32) error {
 	vars := s.sessionVars
 	if _, ok := vars.PreparedStmts[stmtID]; !ok {
-		return plannercore.ErrStmtNotFound
+		return plannererrors.ErrStmtNotFound
 	}
 	vars.RetryInfo.DroppedPreparedStmtIDs = append(vars.RetryInfo.DroppedPreparedStmtIDs, stmtID)
 	return nil

@@ -38,12 +38,17 @@ type QBHintHandler struct {
 	ViewQBNameToHints map[string][]*ast.TableOptimizerHint // map[QBName]Hints
 	ViewQBNameUsed    map[string]struct{}                  // map[QBName]Used
 
-	warnHandler      func(warning error)
+	warnHandler      HintWarnInterface
 	selectStmtOffset int
 }
 
+type HintWarnInterface interface {
+	SetHintWarning(warn string)
+	SetHintWarningFromError(err error)
+}
+
 // NewQBHintHandler creates a QBHintHandler.
-func NewQBHintHandler(warnHandler func(warning error)) *QBHintHandler {
+func NewQBHintHandler(warnHandler HintWarnInterface) *QBHintHandler {
 	return &QBHintHandler{
 		warnHandler: warnHandler,
 	}
@@ -91,7 +96,7 @@ func (p *QBHintHandler) checkQueryBlockHints(hints []*ast.TableOptimizerHint, of
 		}
 		if qbName != "" {
 			if p.warnHandler != nil {
-				p.warnHandler(fmt.Errorf("There are more than two query names in same query block, using the first one %s", qbName))
+				p.warnHandler.SetHintWarning(fmt.Sprintf("There are more than two query names in same query block, using the first one %s", qbName))
 			}
 		} else {
 			qbName = hint.QBName.L
@@ -105,7 +110,7 @@ func (p *QBHintHandler) checkQueryBlockHints(hints []*ast.TableOptimizerHint, of
 	}
 	if _, ok := p.QBNameToSelOffset[qbName]; ok {
 		if p.warnHandler != nil {
-			p.warnHandler(fmt.Errorf("Duplicate query block name %s, only the first one is effective", qbName))
+			p.warnHandler.SetHintWarning(fmt.Sprintf("Duplicate query block name %s, only the first one is effective", qbName))
 		}
 	} else {
 		p.QBNameToSelOffset[qbName] = offset
@@ -134,7 +139,7 @@ func (p *QBHintHandler) handleViewHints(hints []*ast.TableOptimizerHint, offset 
 		}
 		if _, ok := p.ViewQBNameToTable[qbName]; ok {
 			if p.warnHandler != nil {
-				p.warnHandler(fmt.Errorf("Duplicate query block name %s for view's query block hint, only the first one is effective", qbName))
+				p.warnHandler.SetHintWarning(fmt.Sprintf("Duplicate query block name %s for view's query block hint, only the first one is effective", qbName))
 			}
 		} else {
 			if offset != 1 {
@@ -171,7 +176,7 @@ func (p *QBHintHandler) handleViewHints(hints []*ast.TableOptimizerHint, offset 
 					}
 				}
 				if !ok {
-					p.warnHandler(fmt.Errorf("Only one query block name is allowed in a view hint, otherwise the hint will be invalid"))
+					p.warnHandler.SetHintWarning("Only one query block name is allowed in a view hint, otherwise the hint will be invalid")
 					usedHints[i] = true
 				}
 			}
@@ -200,7 +205,7 @@ func (p *QBHintHandler) HandleUnusedViewHints() {
 		for qbName := range p.ViewQBNameToTable {
 			_, ok := p.ViewQBNameUsed[qbName]
 			if !ok && p.warnHandler != nil {
-				p.warnHandler(fmt.Errorf("The qb_name hint %s is unused, please check whether the table list in the qb_name hint %s is correct", qbName, qbName))
+				p.warnHandler.SetHintWarning(fmt.Sprintf("The qb_name hint %s is unused, please check whether the table list in the qb_name hint %s is correct", qbName, qbName))
 			}
 		}
 	}
@@ -285,7 +290,7 @@ func (p *QBHintHandler) GetCurrentStmtHints(hints []*ast.TableOptimizerHint, cur
 		if offset < 0 || !p.checkTableQBName(hint.Tables) {
 			if p.warnHandler != nil {
 				hintStr := RestoreTableOptimizerHint(hint)
-				p.warnHandler(fmt.Errorf("Hint %s is ignored due to unknown query block name", hintStr))
+				p.warnHandler.SetHintWarning(fmt.Sprintf("Hint %s is ignored due to unknown query block name", hintStr))
 			}
 			continue
 		}

@@ -19,9 +19,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
@@ -246,7 +246,7 @@ func TestGetAndCancelJob(t *testing.T) {
 	_, err = importer.GetJob(ctx, conn, 999999999, jobInfo.CreatedBy, false)
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataJobNotFound)
 	_, err = importer.GetJob(ctx, conn, jobID2, "aaa", false)
-	require.ErrorIs(t, err, core.ErrSpecificAccessDenied)
+	require.ErrorIs(t, err, plannererrors.ErrSpecificAccessDenied)
 	_, err = importer.GetJob(ctx, conn, jobID2, "aaa", true)
 	require.NoError(t, err)
 

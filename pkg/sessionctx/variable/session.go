@@ -50,6 +50,7 @@ import (
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
@@ -1671,7 +1672,7 @@ func (s *SessionVars) ClearAlloc(alloc *chunk.Allocator, hasErr bool) {
 func (s *SessionVars) GetPreparedStmtByName(stmtName string) (interface{}, error) {
 	stmtID, ok := s.PreparedStmtNameToID[stmtName]
 	if !ok {
-		return nil, ErrStmtNotFound
+		return nil, plannererrors.ErrStmtNotFound
 	}
 	return s.GetPreparedStmtByID(stmtID)
 }
@@ -1680,7 +1681,7 @@ func (s *SessionVars) GetPreparedStmtByName(stmtName string) (interface{}, error
 func (s *SessionVars) GetPreparedStmtByID(stmtID uint32) (interface{}, error) {
 	stmt, ok := s.PreparedStmts[stmtID]
 	if !ok {
-		return nil, ErrStmtNotFound
+		return nil, plannererrors.ErrStmtNotFound
 	}
 	return stmt, nil
 }
