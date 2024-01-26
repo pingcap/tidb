@@ -15,8 +15,14 @@
 package expression
 
 import (
+<<<<<<< HEAD:expression/function_traits.go
 	"github.com/pingcap/tidb/parser/ast"
 	"github.com/pingcap/tidb/parser/opcode"
+=======
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/opcode"
+	"github.com/pingcap/tidb/pkg/sessionctx"
+>>>>>>> f72e1d966ce (planner: add Sysdate into deferredFunctions when enable SysdateIsNow (#49949)):pkg/expression/function_traits.go
 )
 
 // UnCacheableFunctions stores functions which can not be cached to plan cache.
@@ -133,9 +139,21 @@ var IllegalFunctions4GeneratedColumns = map[string]struct{}{
 	ast.ReleaseAllLocks:  {},
 }
 
+// IsDeferredFunctions checks whether the function is in DeferredFunctions.
 // DeferredFunctions stores functions which are foldable but should be deferred as well when plan cache is enabled.
 // Note that, these functions must be foldable at first place, i.e, they are not in `unFoldableFunctions`.
-var DeferredFunctions = map[string]struct{}{
+func IsDeferredFunctions(ctx sessionctx.Context, fn string) bool {
+	_, ok := deferredFunctions[fn]
+	if ok {
+		return ok
+	}
+	if fn == ast.Sysdate && ctx.GetSessionVars().SysdateIsNow {
+		return true
+	}
+	return ok
+}
+
+var deferredFunctions = map[string]struct{}{
 	ast.Now:              {},
 	ast.RandomBytes:      {},
 	ast.CurrentTimestamp: {},
