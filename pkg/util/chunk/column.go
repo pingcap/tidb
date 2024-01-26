@@ -87,7 +87,7 @@ func (DefaultColumnAllocator) NewColumn(ft *types.FieldType, capacity int) *Colu
 func NewEmptyColumn(ft *types.FieldType) *Column {
 	elemLen := getFixedLen(ft)
 	col := Column{}
-	if elemLen != varElemLen {
+	if elemLen != VarElemLen {
 		col.elemBuf = make([]byte, elemLen)
 	}
 	return &col
@@ -100,7 +100,7 @@ func NewColumn(ft *types.FieldType, capacity int) *Column {
 
 func newColumn(ts, capacity int) *Column {
 	var col *Column
-	if ts == varElemLen {
+	if ts == VarElemLen {
 		col = newVarLenColumn(capacity)
 	} else {
 		col = newFixedLenColumn(ts, capacity)
@@ -134,7 +134,7 @@ func (c *Column) typeSize() int {
 	if len(c.elemBuf) > 0 {
 		return len(c.elemBuf)
 	}
-	return varElemLen
+	return VarElemLen
 }
 
 func (c *Column) isFixed() bool {
