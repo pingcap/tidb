@@ -290,7 +290,7 @@ type PlanBuilder struct {
 	subQueryCtx subQueryCtx
 	// subQueryHintFlags stores subquery related hints that are set and applicable in the query block.
 	// It's for returning information to buildSubquery().
-	subQueryHintFlags uint64
+	subQueryHintFlags uint64 // TODO: move this field to hint.PlanHints
 
 	// disableSubQueryPreprocessing indicates whether to pre-process uncorrelated sub-queries in rewriting stage.
 	disableSubQueryPreprocessing bool

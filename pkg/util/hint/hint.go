@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
@@ -479,6 +480,197 @@ func (*PlanHints) MatchTableName(tables []*HintedTable, hintTables []HintedTable
 	return hintMatched
 }
 
+// ParsePlanHints parses *ast.TableOptimizerHint to PlanHints.
+func ParsePlanHints(hints []*ast.TableOptimizerHint,
+	currentLevel int, currentDB string,
+	hintProcessor *QBHintHandler, straightJoinOrder bool,
+	handlingExistsSubquery, notHandlingSubquery bool,
+	warnHandler hintWarnHandler) (p *PlanHints, subQueryHintFlags uint64, err error) {
+	var (
+		sortMergeTables, inljTables, inlhjTables, inlmjTables, hashJoinTables, bcTables []HintedTable
+		noIndexJoinTables, noIndexHashJoinTables, noIndexMergeJoinTables                []HintedTable
+		noHashJoinTables, noMergeJoinTables                                             []HintedTable
+		shuffleJoinTables                                                               []HintedTable
+		indexHintList, indexMergeHintList                                               []HintedIndex
+		tiflashTables, tikvTables                                                       []HintedTable
+		aggHints                                                                        AggHints
+		timeRangeHint                                                                   ast.HintTimeRange
+		preferLimitToCop                                                                bool
+		cteMerge                                                                        bool
+		leadingJoinOrder                                                                []HintedTable
+		hjBuildTables, hjProbeTables                                                    []HintedTable
+		leadingHintCnt                                                                  int
+	)
+	for _, hint := range hints {
+		// Set warning for the hint that requires the table name.
+		switch hint.HintName.L {
+		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
+			HintNoHashJoin, HintNoMergeJoin, TiDBHashJoin, HintHJ, HintUseIndex, HintIgnoreIndex,
+			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexMerge, HintLeading:
+			if len(hint.Tables) == 0 {
+				var sb strings.Builder
+				ctx := format.NewRestoreCtx(0, &sb)
+				if err := hint.Restore(ctx); err != nil {
+					return nil, 0, err
+				}
+				errMsg := fmt.Sprintf("Hint %s is inapplicable. Please specify the table names in the arguments.", sb.String())
+				warnHandler.SetHintWarning(errMsg)
+				continue
+			}
+		}
+
+		switch hint.HintName.L {
+		case TiDBMergeJoin, HintSMJ:
+			sortMergeTables = append(sortMergeTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+		case TiDBBroadCastJoin, HintBCJ:
+			bcTables = append(bcTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+		case HintShuffleJoin:
+			shuffleJoinTables = append(shuffleJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+		case TiDBIndexNestedLoopJoin, HintINLJ:
+			inljTables = append(inljTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+		case HintINLHJ:
+			inlhjTables = append(inlhjTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+		case HintINLMJ:
+			inlmjTables = append(inlmjTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+		case TiDBHashJoin, HintHJ:
+			hashJoinTables = append(hashJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+		case HintNoHashJoin:
+			noHashJoinTables = append(noHashJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+		case HintNoMergeJoin:
+			noMergeJoinTables = append(noMergeJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+		case HintNoIndexJoin:
+			noIndexJoinTables = append(noIndexJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+		case HintNoIndexHashJoin:
+			noIndexHashJoinTables = append(noIndexHashJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+		case HintNoIndexMergeJoin:
+			noIndexMergeJoinTables = append(noIndexMergeJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+		case HintMPP1PhaseAgg:
+			aggHints.PreferAggType |= PreferMPP1PhaseAgg
+		case HintMPP2PhaseAgg:
+			aggHints.PreferAggType |= PreferMPP2PhaseAgg
+		case HintHashJoinBuild:
+			hjBuildTables = append(hjBuildTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+		case HintHashJoinProbe:
+			hjProbeTables = append(hjProbeTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+		case HintHashAgg:
+			aggHints.PreferAggType |= PreferHashAgg
+		case HintStreamAgg:
+			aggHints.PreferAggType |= PreferStreamAgg
+		case HintAggToCop:
+			aggHints.PreferAggToCop = true
+		case HintUseIndex, HintIgnoreIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex:
+			dbName := hint.Tables[0].DBName
+			if dbName.L == "" {
+				dbName = model.NewCIStr(currentDB)
+			}
+			var hintType ast.IndexHintType
+			switch hint.HintName.L {
+			case HintUseIndex:
+				hintType = ast.HintUse
+			case HintIgnoreIndex:
+				hintType = ast.HintIgnore
+			case HintForceIndex:
+				hintType = ast.HintForce
+			case HintOrderIndex:
+				hintType = ast.HintOrderIndex
+			case HintNoOrderIndex:
+				hintType = ast.HintNoOrderIndex
+			}
+			indexHintList = append(indexHintList, HintedIndex{
+				DBName:     dbName,
+				TblName:    hint.Tables[0].TableName,
+				Partitions: hint.Tables[0].PartitionList,
+				IndexHint: &ast.IndexHint{
+					IndexNames: hint.Indexes,
+					HintType:   hintType,
+					HintScope:  ast.HintForScan,
+				},
+			})
+		case HintReadFromStorage:
+			switch hint.HintData.(model.CIStr).L {
+			case HintTiFlash:
+				tiflashTables = append(tiflashTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+			case HintTiKV:
+				tikvTables = append(tikvTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+			}
+		case HintIndexMerge:
+			dbName := hint.Tables[0].DBName
+			if dbName.L == "" {
+				dbName = model.NewCIStr(currentDB)
+			}
+			indexMergeHintList = append(indexMergeHintList, HintedIndex{
+				DBName:     dbName,
+				TblName:    hint.Tables[0].TableName,
+				Partitions: hint.Tables[0].PartitionList,
+				IndexHint: &ast.IndexHint{
+					IndexNames: hint.Indexes,
+					HintType:   ast.HintUse,
+					HintScope:  ast.HintForScan,
+				},
+			})
+		case HintTimeRange:
+			timeRangeHint = hint.HintData.(ast.HintTimeRange)
+		case HintLimitToCop:
+			preferLimitToCop = true
+		case HintMerge:
+			if hint.Tables != nil {
+				warnHandler.SetHintWarning("The MERGE hint is not used correctly, maybe it inputs a table name.")
+				continue
+			}
+			cteMerge = true
+		case HintLeading:
+			if leadingHintCnt == 0 {
+				leadingJoinOrder = append(leadingJoinOrder, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
+			}
+			leadingHintCnt++
+		case HintSemiJoinRewrite:
+			if !handlingExistsSubquery {
+				warnHandler.SetHintWarning("The SEMI_JOIN_REWRITE hint is not used correctly, maybe it's not in a subquery or the subquery is not EXISTS clause.")
+				continue
+			}
+			subQueryHintFlags |= HintFlagSemiJoinRewrite
+		case HintNoDecorrelate:
+			if notHandlingSubquery {
+				warnHandler.SetHintWarning("NO_DECORRELATE() is inapplicable because it's not in an IN subquery, an EXISTS subquery, an ANY/ALL/SOME subquery or a scalar subquery.")
+				continue
+			}
+			subQueryHintFlags |= HintFlagNoDecorrelate
+		default:
+			// ignore hints that not implemented
+		}
+	}
+	if leadingHintCnt > 1 || (leadingHintCnt > 0 && straightJoinOrder) {
+		// If there are more leading hints or the straight_join hint existes, all leading hints will be invalid.
+		leadingJoinOrder = leadingJoinOrder[:0]
+		if leadingHintCnt > 1 {
+			warnHandler.SetHintWarning("We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid")
+		} else if straightJoinOrder {
+			warnHandler.SetHintWarning("We can only use the straight_join hint, when we use the leading hint and straight_join hint at the same time, all leading hints will be invalid")
+		}
+	}
+	return &PlanHints{
+		SortMergeJoin:      sortMergeTables,
+		BroadcastJoin:      bcTables,
+		ShuffleJoin:        shuffleJoinTables,
+		IndexJoin:          IndexJoinHints{INLJTables: inljTables, INLHJTables: inlhjTables, INLMJTables: inlmjTables},
+		NoIndexJoin:        IndexJoinHints{INLJTables: noIndexJoinTables, INLHJTables: noIndexHashJoinTables, INLMJTables: noIndexMergeJoinTables},
+		HashJoin:           hashJoinTables,
+		NoHashJoin:         noHashJoinTables,
+		NoMergeJoin:        noMergeJoinTables,
+		IndexHintList:      indexHintList,
+		TiFlashTables:      tiflashTables,
+		TiKVTables:         tikvTables,
+		Agg:                aggHints,
+		IndexMergeHintList: indexMergeHintList,
+		TimeRangeHint:      timeRangeHint,
+		PreferLimitToCop:   preferLimitToCop,
+		CTEMerge:           cteMerge,
+		LeadingJoinOrder:   leadingJoinOrder,
+		HJBuild:            hjBuildTables,
+		HJProbe:            hjProbeTables,
+	}, subQueryHintFlags, nil
+}
+
 // RemoveDuplicatedHints removes duplicated hints in this hit list.
 func RemoveDuplicatedHints(hints []*ast.TableOptimizerHint) []*ast.TableOptimizerHint {
 	if len(hints) < 2 {
@@ -497,8 +689,8 @@ func RemoveDuplicatedHints(hints []*ast.TableOptimizerHint) []*ast.TableOptimize
 	return res
 }
 
-// TableNames2HintTableInfo converts table names to HintedTable.
-func TableNames2HintTableInfo(currentDB, hintName string, hintTables []ast.HintTable,
+// tableNames2HintTableInfo converts table names to HintedTable.
+func tableNames2HintTableInfo(currentDB, hintName string, hintTables []ast.HintTable,
 	p *QBHintHandler, currentOffset int, warnHandler hintWarnHandler) []HintedTable {
 	if len(hintTables) == 0 {
 		return nil
