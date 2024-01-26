@@ -143,7 +143,7 @@ type PdController struct {
 // NewPdController creates a new PdController.
 func NewPdController(
 	ctx context.Context,
-	pdAddrs string, // TODO(lance6716): use HTTP client?
+	pdAddrs string,
 	tlsConf *tls.Config,
 	securityOption pd.SecurityOption,
 ) (*PdController, error) {
@@ -233,7 +233,8 @@ func (p *PdController) GetPDHTTPClient() pdhttp.Client {
 
 // GetClusterVersion returns the current cluster version.
 func (p *PdController) GetClusterVersion(ctx context.Context) (string, error) {
-	return p.pdHTTPCli.GetClusterVersion(ctx)
+	v, err := p.pdHTTPCli.GetClusterVersion(ctx)
+	return v, errors.Trace(err)
 }
 
 // GetRegionCount returns the region count in the specified range.
@@ -253,7 +254,8 @@ func (p *PdController) GetRegionCount(ctx context.Context, startKey, endKey []by
 
 // GetStoreInfo returns the info of store with the specified id.
 func (p *PdController) GetStoreInfo(ctx context.Context, storeID uint64) (*pdhttp.StoreInfo, error) {
-	return p.pdHTTPCli.GetStore(ctx, storeID)
+	info, err := p.pdHTTPCli.GetStore(ctx, storeID)
+	return info, errors.Trace(err)
 }
 
 func (p *PdController) doPauseSchedulers(
@@ -328,7 +330,7 @@ func (p *PdController) pauseSchedulersAndConfigWith(
 
 // ResumeSchedulers resume pd scheduler.
 func (p *PdController) ResumeSchedulers(ctx context.Context, schedulers []string) error {
-	return p.resumeSchedulerWith(ctx, schedulers)
+	return errors.Trace(p.resumeSchedulerWith(ctx, schedulers))
 }
 
 func (p *PdController) resumeSchedulerWith(ctx context.Context, schedulers []string) (err error) {
@@ -352,19 +354,21 @@ func (p *PdController) resumeSchedulerWith(ctx context.Context, schedulers []str
 
 // ListSchedulers list all pd scheduler.
 func (p *PdController) ListSchedulers(ctx context.Context) ([]string, error) {
-	return p.pdHTTPCli.GetSchedulers(ctx)
+	s, err := p.pdHTTPCli.GetSchedulers(ctx)
+	return s, errors.Trace(err)
 }
 
 // GetPDScheduleConfig returns PD schedule config value associated with the key.
 // It returns nil if there is no such config item.
 func (p *PdController) GetPDScheduleConfig(ctx context.Context) (map[string]interface{}, error) {
-	return p.pdHTTPCli.GetScheduleConfig(ctx)
+	cfg, err := p.pdHTTPCli.GetScheduleConfig(ctx)
+	return cfg, errors.Trace(err)
 }
 
 // UpdatePDScheduleConfig updates PD schedule config value associated with the key.
 func (p *PdController) UpdatePDScheduleConfig(ctx context.Context) error {
 	log.Info("update pd with default config", zap.Any("cfg", defaultPDCfg))
-	return p.doUpdatePDScheduleConfig(ctx, defaultPDCfg)
+	return errors.Trace(p.doUpdatePDScheduleConfig(ctx, defaultPDCfg))
 }
 
 func (p *PdController) doUpdatePDScheduleConfig(
@@ -379,14 +383,18 @@ func (p *PdController) doUpdatePDScheduleConfig(
 	}
 
 	if err := p.pdHTTPCli.SetConfig(ctx, newCfg, ttlSeconds...); err != nil {
-		return errors.Annotate(berrors.ErrPDUpdateFailed, "failed to update PD schedule config")
+		return errors.Annotatef(
+			berrors.ErrPDUpdateFailed,
+			"failed to update PD schedule config: %s",
+			err.Error(),
+		)
 	}
 	return nil
 }
 
 func (p *PdController) doPauseConfigs(ctx context.Context, cfg map[string]interface{}) error {
 	// pause this scheduler with 300 seconds
-	return p.doUpdatePDScheduleConfig(ctx, cfg, p.ttlOfPausing().Seconds())
+	return errors.Trace(p.doUpdatePDScheduleConfig(ctx, cfg, p.ttlOfPausing().Seconds()))
 }
 
 func restoreSchedulers(ctx context.Context, pd *PdController, clusterCfg ClusterConfig,
@@ -500,15 +508,21 @@ func (p *PdController) RemoveAllPDSchedulers(ctx context.Context) (undo UndoFunc
 }
 
 // RemoveSchedulersWithOrigin pause and remove br related schedule configs and return the origin and modified configs
-func (p *PdController) RemoveSchedulersWithOrigin(ctx context.Context) (origin ClusterConfig,
-	modified ClusterConfig, err error) {
-	return p.RemoveSchedulersWithConfigGenerator(ctx, expectPDCfgGenerators)
+func (p *PdController) RemoveSchedulersWithOrigin(ctx context.Context) (
+	origin ClusterConfig,
+	modified ClusterConfig,
+	err error,
+) {
+	origin, modified, err = p.RemoveSchedulersWithConfigGenerator(ctx, expectPDCfgGenerators)
+	err = errors.Trace(err)
+	return
 }
 
 // RemoveSchedulersWithConfigGenerator pause scheduler with custom config generator
-func (p *PdController) RemoveSchedulersWithConfigGenerator(ctx context.Context,
-	pdConfigGenerators map[string]pauseConfigGenerator) (
-	origin ClusterConfig, modified ClusterConfig, err error) {
+func (p *PdController) RemoveSchedulersWithConfigGenerator(
+	ctx context.Context,
+	pdConfigGenerators map[string]pauseConfigGenerator,
+) (origin ClusterConfig, modified ClusterConfig, err error) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span1 := span.Tracer().StartSpan("PdController.RemoveSchedulers",
 			opentracing.ChildOf(span.Context()))
@@ -520,11 +534,11 @@ func (p *PdController) RemoveSchedulersWithConfigGenerator(ctx context.Context,
 	removedCfg := ClusterConfig{}
 	stores, err := p.pdClient.GetAllStores(ctx)
 	if err != nil {
-		return originCfg, removedCfg, err
+		return originCfg, removedCfg, errors.Trace(err)
 	}
 	scheduleCfg, err := p.GetPDScheduleConfig(ctx)
 	if err != nil {
-		return originCfg, removedCfg, err
+		return originCfg, removedCfg, errors.Trace(err)
 	}
 	disablePDCfg := make(map[string]interface{}, len(pdConfigGenerators))
 	originPDCfg := make(map[string]interface{}, len(pdConfigGenerators))
@@ -545,7 +559,7 @@ func (p *PdController) RemoveSchedulersWithConfigGenerator(ctx context.Context,
 	// Remove default PD scheduler that may affect restore process.
 	existSchedulers, err := p.ListSchedulers(ctx)
 	if err != nil {
-		return originCfg, removedCfg, err
+		return originCfg, removedCfg, errors.Trace(err)
 	}
 	needRemoveSchedulers := make([]string, 0, len(existSchedulers))
 	for _, s := range existSchedulers {
@@ -556,7 +570,7 @@ func (p *PdController) RemoveSchedulersWithConfigGenerator(ctx context.Context,
 
 	removedSchedulers, err := p.doRemoveSchedulersWith(ctx, needRemoveSchedulers, disablePDCfg)
 	if err != nil {
-		return originCfg, removedCfg, err
+		return originCfg, removedCfg, errors.Trace(err)
 	}
 
 	originCfg.Schedulers = removedSchedulers
@@ -568,7 +582,7 @@ func (p *PdController) RemoveSchedulersWithConfigGenerator(ctx context.Context,
 // RemoveSchedulersWithCfg removes pd schedulers and configs with specified ClusterConfig
 func (p *PdController) RemoveSchedulersWithCfg(ctx context.Context, removeCfg ClusterConfig) error {
 	_, err := p.doRemoveSchedulersWith(ctx, removeCfg.Schedulers, removeCfg.ScheduleCfg)
-	return err
+	return errors.Trace(err)
 }
 
 func (p *PdController) doRemoveSchedulersWith(
@@ -580,7 +594,8 @@ func (p *PdController) doRemoveSchedulersWith(
 		return nil, errors.Errorf("pd version %s not support pause config, please upgrade", p.version.String())
 	}
 	// after 4.0.8 we can set these config with TTL
-	return p.pauseSchedulersAndConfigWith(ctx, needRemoveSchedulers, disablePDCfg)
+	s, err := p.pauseSchedulersAndConfigWith(ctx, needRemoveSchedulers, disablePDCfg)
+	return s, errors.Trace(err)
 }
 
 // GetMinResolvedTS get min-resolved-ts from pd
@@ -591,7 +606,7 @@ func (p *PdController) GetMinResolvedTS(ctx context.Context) (uint64, error) {
 
 // RecoverBaseAllocID recover base alloc id
 func (p *PdController) RecoverBaseAllocID(ctx context.Context, id uint64) error {
-	return p.pdHTTPCli.ResetBaseAllocID(ctx, id)
+	return errors.Trace(p.pdHTTPCli.ResetBaseAllocID(ctx, id))
 }
 
 // ResetTS reset current ts of pd
@@ -606,17 +621,17 @@ func (p *PdController) ResetTS(ctx context.Context, ts uint64) error {
 		log.Info("reset-ts returns with status forbidden, ignore")
 		return nil
 	}
-	return err
+	return errors.Trace(err)
 }
 
 // MarkRecovering mark pd into recovering
 func (p *PdController) MarkRecovering(ctx context.Context) error {
-	return p.pdHTTPCli.SetSnapshotRecoveringMark(ctx)
+	return errors.Trace(p.pdHTTPCli.SetSnapshotRecoveringMark(ctx))
 }
 
 // UnmarkRecovering unmark pd recovering
 func (p *PdController) UnmarkRecovering(ctx context.Context) error {
-	return p.pdHTTPCli.DeleteSnapshotRecoveringMark(ctx)
+	return errors.Trace(p.pdHTTPCli.DeleteSnapshotRecoveringMark(ctx))
 }
 
 // RegionLabel is the label of a region. This struct is partially copied from
@@ -658,7 +673,7 @@ func PauseSchedulersByKeyRange(
 	// https://github.com/pingcap/tidb/issues/49477.
 	// Let's use two times default value of `patrol-region-interval` from PD configuration.
 	<-time.After(20 * time.Millisecond)
-	return
+	return done, errors.Trace(err)
 }
 
 func pauseSchedulerByKeyRangeWithTTL(
