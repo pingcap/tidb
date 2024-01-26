@@ -69,6 +69,43 @@ func RecordHeapForMaxInUse(filename string) (chan struct{}, *sync.WaitGroup) {
 	return doneCh, &wg
 }
 
+func RecordHeapForMaxInUse1() (chan struct{}, *sync.WaitGroup) {
+	doneCh := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	maxInUse := uint64(0)
+	idx := 0
+	go func() {
+		defer wg.Done()
+
+		var m runtime.MemStats
+		ticker := time.NewTicker(300 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-doneCh:
+				return
+			case <-ticker.C:
+				runtime.ReadMemStats(&m)
+				if m.HeapInuse <= maxInUse {
+					continue
+				}
+				maxInUse = m.HeapInuse
+				filenameHeap := fmt.Sprintf("heap-profile-%d.prof", idx)
+				idx++
+				file, err := os.Create(filenameHeap)
+				intest.AssertNoError(err)
+				err = pprof.WriteHeapProfile(file)
+				intest.AssertNoError(err)
+				err = file.Close()
+				intest.AssertNoError(err)
+			}
+		}
+	}()
+	return doneCh, &wg
+}
+
 func mockOneMultiFileStat(data, stat []string) []MultipleFilesStat {
 	m := MultipleFilesStat{}
 	for i := range data {

@@ -15,7 +15,6 @@
 package external
 
 import (
-	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -34,8 +33,10 @@ import (
 	"github.com/felixge/fgprof"
 	bkv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -1092,8 +1093,7 @@ func TestReadStatFile(t *testing.T) {
 func TestRead4KFiles(t *testing.T) {
 	ctx := context.Background()
 	store := openTestingStorage(t)
-	memSizeLimit := 100 * size.MB
-
+	memSizeLimit := 10 * size.MB
 	w := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
@@ -1105,26 +1105,91 @@ func TestRead4KFiles(t *testing.T) {
 
 	writer := NewEngineWriter(w)
 	kvCnt := int(300 * size.MB)
-	kvs := make([]common.KvPair, kvCnt)
-	for i := 0; i < kvCnt; i++ {
-		kvs[i] = common.KvPair{
-			Key: []byte(fmt.Sprintf("key%05d", i)),
-			Val: []byte("56789"),
+	var startKey kv.Key
+	for i := 0; i < 10; i++ {
+		kvs := make([]common.KvPair, kvCnt/10)
+		for j := 0; j < kvCnt/10; j++ {
+			kvs[j] = common.KvPair{
+				Key: []byte(fmt.Sprintf("key%05d", i*kvCnt/10+j)),
+				Val: []byte("56789"),
+			}
+			if i == 0 && j == 0 {
+				startKey = kvs[0].Key
+			}
 		}
+		require.NoError(t, writer.AppendRows(ctx, nil, bkv.MakeRowsFromKvPairs(kvs)))
 	}
-
-	require.NoError(t, writer.AppendRows(ctx, nil, bkv.MakeRowsFromKvPairs(kvs)))
 	_, err := writer.Close(ctx)
 	require.NoError(t, err)
-
-	slices.SortFunc(kvs, func(i, j common.KvPair) int {
-		return bytes.Compare(i.Key, j.Key)
-	})
-
 	datas, stats, err := GetAllFileNames(ctx, store, "")
 	require.NoError(t, err)
 
 	logutil.BgLogger().Info("debug file-cnt", zap.Any("len", len(datas)))
 
-	testReadAndCompare(ctx, t, kvs, store, datas, stats, kvs[0].Key, int(4*size.GB))
+	testRead(ctx, t, store, datas, stats, startKey, int(4*size.GB))
+}
+
+func testRead(
+	ctx context.Context,
+	t *testing.T,
+	store storage.ExternalStorage,
+	datas []string,
+	stats []string,
+	startKey dbkv.Key,
+	memSizeLimit int) {
+
+	splitter, err := NewRangeSplitter(
+		ctx,
+		mockOneMultiFileStat(datas, stats),
+		store,
+		int64(memSizeLimit),
+		math.MaxInt64,
+		4*1024*1024*1024,
+		math.MaxInt64,
+		true,
+	)
+	require.NoError(t, err)
+
+	bufPool := membuf.NewPool()
+	loaded := &memKVsAndBuffers{}
+	curStart := startKey.Clone()
+
+	var heapProfDoneCh chan struct{}
+	var heapWg *sync.WaitGroup
+	heapProfDoneCh, heapWg = RecordHeapForMaxInUse1()
+
+	for {
+		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err := splitter.SplitOneRangesGroup()
+		require.NoError(t, err)
+		curEnd := dbkv.Key(endKeyOfGroup).Clone()
+		if len(endKeyOfGroup) == 0 {
+			break
+		}
+
+		err = readAllData(
+			ctx,
+			store,
+			dataFilesOfGroup,
+			statFilesOfGroup,
+			curStart,
+			curEnd,
+			bufPool,
+			loaded,
+		)
+		require.NoError(t, err)
+		loaded.build()
+
+		time.Sleep(1 * time.Second)
+		curStart = curEnd.Clone()
+
+		// release
+		loaded.keys = nil
+		loaded.values = nil
+		loaded.memKVBuffers = nil
+
+	}
+	err = splitter.Close()
+	require.NoError(t, err)
+	close(heapProfDoneCh)
+	heapWg.Wait()
 }
