@@ -30,38 +30,46 @@ import (
 )
 
 type cloudImportExecutor struct {
+	d             *ddl
 	job           *model.Job
 	jobID         int64
 	index         *model.IndexInfo
 	ptbl          table.PhysicalTable
 	bc            ingest.BackendCtx
+	unique        bool
+	pdLeaderAddr  string
 	cloudStoreURI string
 }
 
 func newCloudImportExecutor(
+	d *ddl,
 	job *model.Job,
 	jobID int64,
 	index *model.IndexInfo,
 	ptbl table.PhysicalTable,
-	bc ingest.BackendCtx,
 	cloudStoreURI string,
 ) (*cloudImportExecutor, error) {
 	return &cloudImportExecutor{
+		d:             d,
 		job:           job,
 		jobID:         jobID,
 		index:         index,
 		ptbl:          ptbl,
-		bc:            bc,
 		cloudStoreURI: cloudStoreURI,
 	}, nil
 }
 
-func (*cloudImportExecutor) Init(ctx context.Context) error {
+func (ci *cloudImportExecutor) Init(ctx context.Context) error {
 	logutil.Logger(ctx).Info("cloud import executor init subtask exec env")
+	bc, err := ingest.LitBackCtxMgr.Register(ctx, ci.unique, ci.job.ID, ci.d.etcdCli, ci.pdLeaderAddr, ci.job.ReorgMeta.ResourceGroupName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ci.bc = bc
 	return nil
 }
 
-func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
+func (ci *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("cloud import executor run subtask")
 
 	sm := &BackfillSubTaskMeta{}
@@ -73,14 +81,14 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		return err
 	}
 
-	local := m.bc.GetLocalBackend()
+	local := ci.bc.GetLocalBackend()
 	if local == nil {
 		return errors.Errorf("local backend not found")
 	}
-	_, engineUUID := backend.MakeUUID(m.ptbl.Meta().Name.L, m.index.ID)
+	_, engineUUID := backend.MakeUUID(ci.ptbl.Meta().Name.L, ci.index.ID)
 	err = local.CloseEngine(ctx, &backend.EngineConfig{
 		External: &backend.ExternalEngineConfig{
-			StorageURI:    m.cloudStoreURI,
+			StorageURI:    ci.cloudStoreURI,
 			DataFiles:     sm.DataFiles,
 			StatFiles:     sm.StatFiles,
 			StartKey:      sm.StartKey,

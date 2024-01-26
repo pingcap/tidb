@@ -47,14 +47,12 @@ func newMergeSortExecutor(
 	jobID int64,
 	idxNum int,
 	ptbl table.PhysicalTable,
-	bc ingest.BackendCtx,
 	cloudStoreURI string,
 ) (*mergeSortExecutor, error) {
 	return &mergeSortExecutor{
 		jobID:         jobID,
 		idxNum:        idxNum,
 		ptbl:          ptbl,
-		bc:            bc,
 		cloudStoreURI: cloudStoreURI,
 	}, nil
 }

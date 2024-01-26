@@ -45,9 +45,10 @@ type readIndexExecutor struct {
 	jc      *JobContext
 
 	cloudStorageURI string
-
-	bc      ingest.BackendCtx
-	summary *execute.Summary
+	unique          bool
+	pdLeaderAddr    string
+	bc              ingest.BackendCtx
+	summary         *execute.Summary
 
 	subtaskSummary sync.Map // subtaskID => readIndexSummary
 }
@@ -66,7 +67,8 @@ func newReadIndexExecutor(
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	jc *JobContext,
-	bc ingest.BackendCtx,
+	unique bool,
+	pdLeaderAddr string,
 	summary *execute.Summary,
 	cloudStorageURI string,
 ) *readIndexExecutor {
@@ -76,15 +78,22 @@ func newReadIndexExecutor(
 		indexes:         indexes,
 		ptbl:            ptbl,
 		jc:              jc,
-		bc:              bc,
+		unique:          unique,
+		pdLeaderAddr:    pdLeaderAddr,
 		summary:         summary,
 		cloudStorageURI: cloudStorageURI,
 	}
 }
 
-func (*readIndexExecutor) Init(_ context.Context) error {
+func (r *readIndexExecutor) Init(ctx context.Context) error {
 	logutil.BgLogger().Info("read index executor init subtask exec env",
 		zap.String("category", "ddl"))
+
+	bc, err := ingest.LitBackCtxMgr.Register(ctx, r.unique, r.job.ID, r.d.etcdCli, r.pdLeaderAddr, r.job.ReorgMeta.ResourceGroupName)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	r.bc = bc
 	return nil
 }
 
@@ -146,9 +155,12 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	return nil
 }
 
-func (*readIndexExecutor) Cleanup(ctx context.Context) error {
+func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
 	logutil.Logger(ctx).Info("read index executor cleanup subtask exec env",
 		zap.String("category", "ddl"))
+	if r.bc != nil {
+		ingest.LitBackCtxMgr.Unregister(r.job.ID)
+	}
 	return nil
 }
 
