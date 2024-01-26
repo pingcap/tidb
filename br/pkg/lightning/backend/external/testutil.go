@@ -17,16 +17,57 @@ package external
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
+	"os"
+	"runtime"
+	"runtime/pprof"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 )
+
+func RecordHeapForMaxInUse(filename string) (chan struct{}, *sync.WaitGroup) {
+	doneCh := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	maxInUse := uint64(0)
+	go func() {
+		defer wg.Done()
+
+		var m runtime.MemStats
+		ticker := time.NewTicker(300 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-doneCh:
+				return
+			case <-ticker.C:
+				runtime.ReadMemStats(&m)
+				if m.HeapInuse <= maxInUse {
+					continue
+				}
+				maxInUse = m.HeapInuse
+				file, err := os.Create(filename)
+				intest.AssertNoError(err)
+				err = pprof.WriteHeapProfile(file)
+				intest.AssertNoError(err)
+				err = file.Close()
+				intest.AssertNoError(err)
+			}
+		}
+	}()
+	return doneCh, &wg
+}
 
 func mockOneMultiFileStat(data, stat []string) []MultipleFilesStat {
 	m := MultipleFilesStat{}
@@ -63,6 +104,9 @@ func testReadAndCompare(
 	curStart := startKey.Clone()
 	kvIdx := 0
 
+	var heapProfDoneCh chan struct{}
+	var heapWg *sync.WaitGroup
+
 	for {
 		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err := splitter.SplitOneRangesGroup()
 		require.NoError(t, err)
@@ -84,6 +128,10 @@ func testReadAndCompare(
 		require.NoError(t, err)
 		loaded.build()
 
+		filenameHeap := fmt.Sprintf("heap-profile-%d.prof", 1)
+		heapProfDoneCh, heapWg = RecordHeapForMaxInUse(filenameHeap)
+
+		time.Sleep(1 * time.Second)
 		// check kvs sorted
 		sorty.MaxGor = uint64(8)
 		sorty.Sort(len(loaded.keys), func(i, k, r, s int) bool {
@@ -114,6 +162,8 @@ func testReadAndCompare(
 	}
 	err = splitter.Close()
 	require.NoError(t, err)
+	close(heapProfDoneCh)
+	heapWg.Wait()
 }
 
 // split data and stat files into groups for merge step.
