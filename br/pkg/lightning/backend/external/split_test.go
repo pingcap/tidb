@@ -391,7 +391,7 @@ func Test3KFilesRangeSplitter(t *testing.T) {
 				SetPropSizeDistance(size.MB).
 				SetOnCloseFunc(onClose).
 				BuildOneFile(store, "/mock-test", uuid.New().String())
-			err := w.Init(ctx, int64(5*size.MB))
+			err := w.Init(ctx, int64(5*size.MB), 2)
 			require.NoError(t, err)
 			// we don't need data files
 			err = w.dataWriter.Close(ctx)

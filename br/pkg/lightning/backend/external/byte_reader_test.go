@@ -219,7 +219,7 @@ func TestSwitchMode(t *testing.T) {
 		SetPropKeysDistance(2).
 		BuildOneFile(st, "/test", "0")
 
-	err := writer.Init(ctx, 5*1024*1024)
+	err := writer.Init(ctx, 5*1024*1024, 20)
 	require.NoError(t, err)
 
 	kvCnt := 1000000

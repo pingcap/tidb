@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/hex"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -220,7 +219,6 @@ func (b *WriterBuilder) BuildOneFile(
 ) *OneFileWriter {
 	filenamePrefix := filepath.Join(prefix, writerID)
 	p := membuf.NewPool(membuf.WithBlockNum(0), membuf.WithBlockSize(b.blockSize))
-
 	ret := &OneFileWriter{
 		rc: &rangePropertiesCollector{
 			props:        make([]*rangeProperty, 0, 1024),
@@ -399,8 +397,8 @@ func (w *Writer) Close(ctx context.Context) error {
 	logutil.Logger(ctx).Info("close writer",
 		zap.String("writerID", w.writerID),
 		zap.Int("kv-cnt-cap", cap(w.kvLocations)),
-		zap.String("minKey", hex.EncodeToString(w.minKey)),
-		zap.String("maxKey", hex.EncodeToString(w.maxKey)))
+		zap.Binary("minKey", w.minKey),
+		zap.Binary("maxKey", w.maxKey))
 
 	w.kvLocations = nil
 	w.onClose(&WriterSummary{

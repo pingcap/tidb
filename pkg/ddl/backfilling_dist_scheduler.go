@@ -434,35 +434,48 @@ func generateMergePlan(
 	}
 
 	// generate merge sort plan.
-	_, _, _, multiFileStat, err := getSummaryFromLastStep(taskHandle, task.ID, proto.BackfillStepReadIndex)
-	if err != nil {
-		return nil, err
-	}
-	dataFiles := make([]string, 0, 1000)
-	for _, m := range multiFileStat {
-		for _, filePair := range m.Filenames {
-			dataFiles = append(dataFiles, filePair[0])
-		}
-	}
-
-	start := 0
-	step := external.MergeSortFileCountStep
 	metaArr := make([][]byte, 0, 16)
-	for start < len(dataFiles) {
-		end := start + step
-		if end > len(dataFiles) {
-			end = len(dataFiles)
+
+	i := 0
+	for ; i < len(multiStats)-1; i += 2 {
+		startKey := kv.Key(external.BytesMin(multiStats[i].MinKey, multiStats[i+1].MinKey)).Clone()
+		endKey := kv.Key(external.BytesMax(multiStats[i].MaxKey.Next(), multiStats[i+1].MaxKey.Next())).Clone()
+		if startKey.Cmp(endKey) > 0 {
+			return nil, errors.Errorf("invalid kv range, startKey: %s, endKey: %s",
+				hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 		}
 		m := &BackfillSubTaskMeta{
-			DataFiles: dataFiles[start:end],
+			SortedKVMeta: external.SortedKVMeta{
+				StartKey:           startKey,
+				EndKey:             endKey,
+				MultipleFilesStats: multiStats[i : i+1],
+			},
 		}
 		metaBytes, err := json.Marshal(m)
 		if err != nil {
 			return nil, err
 		}
 		metaArr = append(metaArr, metaBytes)
-
-		start = end
+	}
+	if i == len(multiStats)-1 {
+		startKey := multiStats[i].MinKey.Clone()
+		endKey := multiStats[i].MaxKey.Next().Clone()
+		if startKey.Cmp(endKey) > 0 {
+			return nil, errors.Errorf("invalid kv range, startKey: %s, endKey: %s",
+				hex.EncodeToString(startKey), hex.EncodeToString(endKey))
+		}
+		m := &BackfillSubTaskMeta{
+			SortedKVMeta: external.SortedKVMeta{
+				StartKey:           startKey,
+				EndKey:             endKey,
+				MultipleFilesStats: multiStats[i : i+1],
+			},
+		}
+		metaBytes, err := json.Marshal(m)
+		if err != nil {
+			return nil, err
+		}
+		metaArr = append(metaArr, metaBytes)
 	}
 	return metaArr, nil
 }

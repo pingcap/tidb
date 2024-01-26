@@ -285,18 +285,19 @@ func generateImportSpecs(pCtx planner.PlanCtx, p *LogicalPlan) ([]planner.Pipeli
 	return importSpecs, nil
 }
 
-func skipMergeSort(kvGroup string, stats []external.MultipleFilesStat) bool {
-	failpoint.Inject("forceMergeSort", func(val failpoint.Value) {
-		in := val.(string)
-		if in == kvGroup || in == "*" {
-			failpoint.Return(false)
-		}
-	})
-	return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
+// TODO: will revert it, only for test now.
+func skipMergeSort(_ string, _ []external.MultipleFilesStat) bool {
+	// failpoint.Inject("forceMergeSort", func(val failpoint.Value) {
+	// 	in := val.(string)
+	// 	if in == kvGroup || in == "*" {
+	// 		failpoint.Return(false)
+	// 	}
+	// })
+	// return external.GetMaxOverlappingTotal(stats) <= external.MergeSortOverlapThreshold
+	return false
 }
 
 func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, error) {
-	step := external.MergeSortFileCountStep
 	result := make([]planner.PipelineSpec, 0, 16)
 	kvMetas, err := getSortedKVMetasOfEncodeStep(planCtx.PreviousSubtaskMetas[proto.ImportStepEncodeAndSort])
 	if err != nil {
@@ -309,17 +310,42 @@ func generateMergeSortSpecs(planCtx planner.PlanCtx) ([]planner.PipelineSpec, er
 				zap.String("kv-group", kvGroup))
 			continue
 		}
-		dataFiles := kvMeta.GetDataFiles()
-		length := len(dataFiles)
-		for start := 0; start < length; start += step {
-			end := start + step
-			if end > length {
-				end = length
+
+		i := 0
+		for ; i < len(kvMeta.MultipleFilesStats)-1; i += 2 {
+			startKey := tidbkv.Key(external.BytesMin(kvMeta.MultipleFilesStats[i].MinKey, kvMeta.MultipleFilesStats[i+1].MinKey)).Clone()
+			endKey := tidbkv.Key(external.BytesMax(kvMeta.MultipleFilesStats[i].MaxKey.Next(), kvMeta.MultipleFilesStats[i+1].MaxKey.Next())).Clone()
+
+			if startKey.Cmp(endKey) > 0 {
+				return nil, errors.Errorf("invalid kv range, startKey: %s, endKey: %s",
+					hex.EncodeToString(startKey), hex.EncodeToString(endKey))
 			}
 			result = append(result, &MergeSortSpec{
 				MergeSortStepMeta: &MergeSortStepMeta{
-					KVGroup:   kvGroup,
-					DataFiles: dataFiles[start:end],
+					KVGroup: kvGroup,
+					SortedKVMeta: external.SortedKVMeta{
+						StartKey:           startKey,
+						EndKey:             endKey,
+						MultipleFilesStats: kvMeta.MultipleFilesStats[i : i+1],
+					},
+				},
+			})
+		}
+		if i == len(kvMeta.MultipleFilesStats)-1 {
+			startKey := kvMeta.MultipleFilesStats[i].MinKey.Clone()
+			endKey := kvMeta.MultipleFilesStats[i].MaxKey.Next().Clone()
+			if startKey.Cmp(endKey) > 0 {
+				return nil, errors.Errorf("invalid kv range, startKey: %s, endKey: %s",
+					hex.EncodeToString(startKey), hex.EncodeToString(endKey))
+			}
+			result = append(result, &MergeSortSpec{
+				MergeSortStepMeta: &MergeSortStepMeta{
+					KVGroup: kvGroup,
+					SortedKVMeta: external.SortedKVMeta{
+						StartKey:           startKey,
+						EndKey:             endKey,
+						MultipleFilesStats: kvMeta.MultipleFilesStats[i : i+1],
+					},
 				},
 			})
 		}

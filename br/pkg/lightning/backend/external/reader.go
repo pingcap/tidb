@@ -24,11 +24,37 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
+
+func getFilesReadConcurrency(
+	ctx context.Context,
+	storage storage.ExternalStorage,
+	statsFiles []string,
+	startKey, endKey []byte,
+) ([]uint64, []uint64, error) {
+	result := make([]uint64, len(statsFiles))
+	offsets, err := seekPropsOffsets(ctx, []kv.Key{startKey, endKey}, statsFiles, storage, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	startOffs, endOffs := offsets[0], offsets[1]
+	for i := range statsFiles {
+		result[i] = (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
+		result[i] = max(result[i], 1)
+		logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
+			zap.String("filename", statsFiles[i]),
+			zap.Uint64("startOffset", startOffs[i]),
+			zap.Uint64("endOffset", endOffs[i]),
+			zap.Uint64("expected concurrency", result[i]),
+		)
+	}
+	return result, startOffs, nil
+}
 
 func readAllData(
 	ctx context.Context,
@@ -126,7 +152,7 @@ func readOneFile(
 			storage,
 			dataFile,
 			int(concurrency),
-			ConcurrentReaderBufferSizePerConc,
+			ConcurrentReaderBufferSizePerConc/4,
 			bufPool.NewBuffer(),
 		)
 		err = rd.byteReader.switchConcurrentMode(true)

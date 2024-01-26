@@ -204,31 +204,6 @@ func (e *Engine) getAdjustedConcurrency() int {
 	return max(adjusted, 1)
 }
 
-func getFilesReadConcurrency(
-	ctx context.Context,
-	storage storage.ExternalStorage,
-	statsFiles []string,
-	startKey, endKey []byte,
-) ([]uint64, []uint64, error) {
-	result := make([]uint64, len(statsFiles))
-	offsets, err := seekPropsOffsets(ctx, []kv.Key{startKey, endKey}, statsFiles, storage, false)
-	if err != nil {
-		return nil, nil, err
-	}
-	startOffs, endOffs := offsets[0], offsets[1]
-	for i := range statsFiles {
-		result[i] = (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
-		result[i] = max(result[i], 1)
-		logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
-			zap.String("filename", statsFiles[i]),
-			zap.Uint64("startOffset", startOffs[i]),
-			zap.Uint64("endOffset", endOffs[i]),
-			zap.Uint64("expected concurrency", result[i]),
-		)
-	}
-	return result, startOffs, nil
-}
-
 func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byte, outCh chan<- common.DataAndRange) error {
 	readAndSortRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("read_and_sort")
 	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_and_sort")
