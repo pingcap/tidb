@@ -499,7 +499,7 @@ func RemoveDuplicatedHints(hints []*ast.TableOptimizerHint) []*ast.TableOptimize
 
 // TableNames2HintTableInfo converts table names to HintedTable.
 func TableNames2HintTableInfo(currentDB, hintName string, hintTables []ast.HintTable,
-	p *QBHintHandler, currentOffset int, warnHandler HintWarnInterface) []HintedTable {
+	p *QBHintHandler, currentOffset int, warnHandler HintWarnHandler) []HintedTable {
 	if len(hintTables) == 0 {
 		return nil
 	}

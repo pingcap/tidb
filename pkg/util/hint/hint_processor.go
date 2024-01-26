@@ -73,7 +73,7 @@ func setTableHints4StmtNode(node ast.Node, hints []*ast.TableOptimizerHint) {
 }
 
 // ExtractTableHintsFromStmtNode extracts table hints from this node.
-func ExtractTableHintsFromStmtNode(node ast.Node, warnHandler HintWarnInterface) []*ast.TableOptimizerHint {
+func ExtractTableHintsFromStmtNode(node ast.Node, warnHandler HintWarnHandler) []*ast.TableOptimizerHint {
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		return x.TableHints
@@ -104,7 +104,7 @@ func ExtractTableHintsFromStmtNode(node ast.Node, warnHandler HintWarnInterface)
 
 // checkInsertStmtHintDuplicated check whether existed the duplicated hints in both insertStmt and its selectStmt.
 // If existed, it would send a warning message.
-func checkInsertStmtHintDuplicated(node ast.Node, warnHandler HintWarnInterface) {
+func checkInsertStmtHintDuplicated(node ast.Node, warnHandler HintWarnHandler) {
 	switch x := node.(type) {
 	case *ast.InsertStmt:
 		if len(x.TableHints) > 0 {

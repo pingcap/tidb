@@ -38,17 +38,18 @@ type QBHintHandler struct {
 	ViewQBNameToHints map[string][]*ast.TableOptimizerHint // map[QBName]Hints
 	ViewQBNameUsed    map[string]struct{}                  // map[QBName]Used
 
-	warnHandler      HintWarnInterface
+	warnHandler      HintWarnHandler
 	selectStmtOffset int
 }
 
-type HintWarnInterface interface {
+// HintWarnHandler is used to handle the warning when parsing hints.
+type HintWarnHandler interface {
 	SetHintWarning(warn string)
 	SetHintWarningFromError(err error)
 }
 
 // NewQBHintHandler creates a QBHintHandler.
-func NewQBHintHandler(warnHandler HintWarnInterface) *QBHintHandler {
+func NewQBHintHandler(warnHandler HintWarnHandler) *QBHintHandler {
 	return &QBHintHandler{
 		warnHandler: warnHandler,
 	}
