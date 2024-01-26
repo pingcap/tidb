@@ -15,6 +15,7 @@
 package external
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -31,6 +32,8 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/felixge/fgprof"
+	bkv "github.com/pingcap/tidb/br/pkg/lightning/backend/kv"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -370,7 +373,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 	}
 }
 
-func recordHeapForMaxInUse(filename string) (chan struct{}, *sync.WaitGroup) {
+func RecordHeapForMaxInUse(filename string) (chan struct{}, *sync.WaitGroup) {
 	doneCh := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -379,7 +382,7 @@ func recordHeapForMaxInUse(filename string) (chan struct{}, *sync.WaitGroup) {
 		defer wg.Done()
 
 		var m runtime.MemStats
-		ticker := time.NewTicker(300 * time.Millisecond)
+		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
 
 		for {
@@ -432,7 +435,7 @@ func TestCompareWriter(t *testing.T) {
 		cpuProfCloser = fgprof.Start(fileCPU, fgprof.FormatPprof)
 
 		filenameHeap = fmt.Sprintf("heap-profile-%d.prof", testIdx)
-		heapProfDoneCh, heapWg = recordHeapForMaxInUse(filenameHeap)
+		heapProfDoneCh, heapWg = RecordHeapForMaxInUse(filenameHeap)
 
 		now = time.Now()
 	}
@@ -701,7 +704,7 @@ func TestCompareReaderEvenlyDistributedContent(t *testing.T) {
 		cpuProfCloser = fgprof.Start(fileCPU, fgprof.FormatPprof)
 
 		filenameHeap = fmt.Sprintf("heap-profile-%d.prof", fileIdx)
-		heapProfDoneCh, heapWg = recordHeapForMaxInUse(filenameHeap)
+		heapProfDoneCh, heapWg = RecordHeapForMaxInUse(filenameHeap)
 
 		now = time.Now()
 	}
@@ -847,7 +850,7 @@ func testCompareReaderWithContent(
 		cpuProfCloser = fgprof.Start(fileCPU, fgprof.FormatPprof)
 
 		filenameHeap = fmt.Sprintf("heap-profile-%d.prof", fileIdx)
-		heapProfDoneCh, heapWg = recordHeapForMaxInUse(filenameHeap)
+		heapProfDoneCh, heapWg = RecordHeapForMaxInUse(filenameHeap)
 	}
 	afterClose := func() {
 		err = cpuProfCloser()
@@ -1119,4 +1122,40 @@ func TestReadStatFile(t *testing.T) {
 			zap.Int("prop size", int(prop.size)),
 			zap.Int("prop keys", int(prop.keys)))
 	}
+}
+
+func TestRead4KFiles(t *testing.T) {
+	ctx := context.Background()
+	store := openTestingStorage(t)
+	memSizeLimit := 100 * size.MB
+
+	w := NewWriterBuilder().
+		SetPropSizeDistance(100).
+		SetPropKeysDistance(2).
+		SetMemorySizeLimit(uint64(memSizeLimit)).
+		SetBlockSize(int(memSizeLimit)).
+		Build(store, "/test", "0")
+
+	writer := NewEngineWriter(w)
+	kvCnt := int(2500 * size.MB)
+	kvs := make([]common.KvPair, kvCnt)
+	for i := 0; i < kvCnt; i++ {
+		kvs[i] = common.KvPair{
+			Key: []byte(fmt.Sprintf("key%05d", i)),
+			Val: []byte("56789"),
+		}
+	}
+
+	require.NoError(t, writer.AppendRows(ctx, nil, bkv.MakeRowsFromKvPairs(kvs)))
+	_, err := writer.Close(ctx)
+	require.NoError(t, err)
+
+	slices.SortFunc(kvs, func(i, j common.KvPair) int {
+		return bytes.Compare(i.Key, j.Key)
+	})
+
+	datas, stats, err := GetAllFileNames(ctx, store, "")
+	require.NoError(t, err)
+
+	testReadAndCompare(ctx, t, kvs, store, datas, stats, kvs[0].Key, int(4*size.GB))
 }

@@ -17,8 +17,11 @@ package external
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -63,6 +66,9 @@ func testReadAndCompare(
 	curStart := startKey.Clone()
 	kvIdx := 0
 
+	var heapProfDoneCh chan struct{}
+	var heapWg *sync.WaitGroup
+
 	for {
 		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err := splitter.SplitOneRangesGroup()
 		require.NoError(t, err)
@@ -83,6 +89,10 @@ func testReadAndCompare(
 		)
 		require.NoError(t, err)
 		loaded.build()
+		filenameHeap := fmt.Sprintf("heap-profile-%d.prof", 1)
+		heapProfDoneCh, heapWg = RecordHeapForMaxInUse(filenameHeap)
+
+		time.Sleep(1 * time.Second)
 
 		// check kvs sorted
 		sorty.MaxGor = uint64(8)
@@ -114,6 +124,9 @@ func testReadAndCompare(
 	}
 	err = splitter.Close()
 	require.NoError(t, err)
+
+	close(heapProfDoneCh)
+	heapWg.Wait()
 }
 
 // split data and stat files into groups for merge step.
