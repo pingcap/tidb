@@ -1288,7 +1288,8 @@ func TestTiDBEnableResourceControl(t *testing.T) {
 		}
 	}
 	SetGlobalResourceControl.Store(&setGlobalResourceControlFunc)
-	require.False(t, EnableResourceControl.Load())
+	// Reset the switch. It may be set by other tests.
+	EnableResourceControl.Store(false)
 
 	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()
