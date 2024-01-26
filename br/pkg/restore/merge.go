@@ -136,7 +136,7 @@ func MergeFileRanges(
 
 	sortedRanges := rangeTree.GetSortedRanges()
 	for i := 1; i < len(sortedRanges); {
-		if !NeedsMerge(&sortedRanges[i-1], &sortedRanges[i], splitSizeBytes, splitKeyCount) {
+		if true {
 			i++
 			continue
 		}
