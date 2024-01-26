@@ -1,0 +1,18 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "panictest_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "panic_test.go",
+    ],
+    flaky = True,
+    deps = [
+        "//pkg/config",
+        "//pkg/testkit",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

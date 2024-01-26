@@ -35,14 +35,14 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/keyspace"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/store/driver/txn"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/extsort"
+	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/store/driver/txn"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/extsort"
 	"go.uber.org/zap"
 )
 
@@ -84,7 +84,7 @@ func openParser(
 	tblInfo *model.TableInfo,
 ) (mydump.Parser, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
-	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store)
+	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{})
 	if err != nil {
 		return nil, err
 	}
@@ -422,7 +422,7 @@ func (cr *chunkProcessor) encodeLoop(
 					lastOffset := curOffset
 					curOffset = newOffset
 
-					if rc.errorMgr.RemainRecord() <= 0 {
+					if rc.errorMgr.ConflictRecordsRemain() <= 0 {
 						continue
 					}
 
@@ -435,7 +435,7 @@ func (cr *chunkProcessor) encodeLoop(
 						logger,
 					)
 					rowText := tidb.EncodeRowForRecord(ctx, t.encTable, rc.cfg.TiDB.SQLMode, lastRow.Row, cr.chunk.ColumnPermutation)
-					err = rc.errorMgr.RecordConflictErrorV2(
+					err = rc.errorMgr.RecordDuplicate(
 						ctx,
 						logger,
 						t.tableName,

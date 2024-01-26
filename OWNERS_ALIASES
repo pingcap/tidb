@@ -1,0 +1,123 @@
+# Sort the member alphabetically.
+aliases:
+  sig-critical-approvers-tidb-server:
+    - yudongusa
+    - easonn7
+  sig-critical-approvers-tidb-lightning:
+    - yudongusa
+    - easonn7
+  sig-critical-approvers-parser:
+    - yudongusa
+    - easonn7
+  sig-approvers-autoid-service: # approvers for auto-id service
+    - bb7133
+    - tiancaiamao
+  sig-approvers-br: # approvers for br module
+    - BornChanger
+    - 3pointer
+    - YuJuncen
+    - Leavrth
+  sig-approvers-distsql: # approvers for distsql pkg
+    - windtalker
+    - XuHuaiyu
+    - zanmato1984
+    - cfzjywxk
+    - Benjamin2037
+  sig-approvers-executor: # approvers for executor pkg
+    - windtalker
+    - XuHuaiyu
+    - zanmato1984
+  sig-approvers-executor-import: # approvers for importer part of executor pkg.
+    - D3Hunter
+    - gmhdbjd
+    - lance6716    
+  sig-approvers-expression: # approvers for expression pkg
+    - windtalker
+    - XuHuaiyu
+    - zanmato1984
+  sig-approvers-lightning: # approvers for lightning module
+    - Benjamin2037
+    - D3Hunter
+    - gmhdbjd
+    - lance6716
+    - lichunzhu
+    - okJiang
+  sig-approvers-domain: # approvers for domain pkg
+    - zimulala
+    - D3Hunter
+    - gmhdbjd
+    - lance6716
+    - tangenta
+    - wjhuang2016
+  sig-approvers-ddl: # approvers for ddl pkg
+    - Benjamin2037
+    - tangenta
+    - wjhuang2016
+    - ywqzzy
+    - zimulala
+  sig-approvers-disttask: # approvers for disttask pkg
+    - Benjamin2037
+    - D3Hunter
+    - gmhdbjd
+    - lance6716
+    - tangenta
+    - wjhuang2016
+    - ywqzzy
+  sig-approvers-dumpling: # approvers for dumpling module
+    - Benjamin2037
+    - gmhdbjd
+    - lichunzhu
+    - okJiang
+  sig-approvers-infoschema: # approvers for infoschema pkg
+    - zimulala
+    - wjhuang2016
+    - tangenta
+    - ywqzzy
+    - D3Hunter
+    - Benjamin2037
+    - gmhdbjd
+  sig-approvers-meta: # approvers for meta pkg
+    - Benjamin2037
+    - gmhdbjd
+    - tangenta
+    - wjhuang2016
+    - ywqzzy
+    - zimulala    
+  sig-approvers-owner: # approvers for `owner` pkg
+    - Benjamin2037
+    - lichunzhu
+    - tangenta
+    - wjhuang2016
+    - ywqzzy
+    - zimulala
+  sig-approvers-parser: # approvers for `parser` module.
+    - bb7133
+    - BornChanger
+    - D3Hunter
+    - tangenta
+  sig-approvers-resourcemanager: # approvers for resourcemanager pkg
+    - Benjamin2037
+    - D3Hunter
+    - gmhdbjd
+    - lance6716
+    - tangenta
+    - wjhuang2016
+    - ywqzzy
+  sig-approvers-table: # approvers for table packages.
+    - Benjamin2037
+    - cfzjywxk
+    - gmhdbjd
+    - tangenta
+    - wjhuang2016
+    - ywqzzy
+    - zimulala
+  sig-approvers-lock: # approvers for lock pkg
+    - Benjamin2037
+    - lance6716
+    - tangenta
+    - wjhuang2016
+    - zimulala
+  sig-approvers-tidb-binlog: # approvers for tidb-binlog module
+    - Benjamin2037
+    - gmhdbjd
+    - lichunzhu

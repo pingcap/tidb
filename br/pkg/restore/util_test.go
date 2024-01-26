@@ -16,9 +16,9 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
-	"github.com/pingcap/tidb/store/pdtypes"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/pkg/store/pdtypes"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -281,6 +281,10 @@ func TestPaginateScanRegion(t *testing.T) {
 		ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.StartKey, regions[1].Region.EndKey, 3)
 	require.NoError(t, err)
 	require.Equal(t, regions[1:2], batch)
+
+	_, err = split.PaginateScanRegion(
+		ctx, NewTestClient(stores, regionMap, 0), regions[1].Region.EndKey, regions[1].Region.EndKey, 3)
+	require.Error(t, err)
 
 	_, err = split.PaginateScanRegion(ctx, NewTestClient(stores, regionMap, 0), []byte{2}, []byte{1}, 3)
 	require.Error(t, err)

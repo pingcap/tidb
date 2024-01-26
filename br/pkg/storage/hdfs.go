@@ -102,8 +102,13 @@ func (*HDFSStorage) DeleteFile(_ context.Context, _ string) error {
 	return errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
 
+// DeleteFiles deletes files in storage
+func (*HDFSStorage) DeleteFiles(_ context.Context, _ []string) error {
+	return errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
+}
+
 // Open a Reader by file path. path is relative path to storage base path
-func (*HDFSStorage) Open(_ context.Context, _ string) (ExternalFileReader, error) {
+func (*HDFSStorage) Open(_ context.Context, _ string, _ *ReaderOption) (ExternalFileReader, error) {
 	return nil, errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
 
@@ -123,7 +128,7 @@ func (s *HDFSStorage) URI() string {
 }
 
 // Create opens a file writer by path. path is relative path to storage base path
-func (*HDFSStorage) Create(_ context.Context, _ string) (ExternalFileWriter, error) {
+func (*HDFSStorage) Create(_ context.Context, _ string, _ *WriterOption) (ExternalFileWriter, error) {
 	return nil, errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
 
@@ -131,3 +136,6 @@ func (*HDFSStorage) Create(_ context.Context, _ string) (ExternalFileWriter, err
 func (*HDFSStorage) Rename(_ context.Context, _, _ string) error {
 	return errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
+
+// Close implements ExternalStorage interface.
+func (*HDFSStorage) Close() {}

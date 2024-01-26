@@ -23,7 +23,7 @@ import (
 
 	"github.com/bazelbuild/buildtools/build"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
 

@@ -11,10 +11,9 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/lightning/log",
-        "//util/codec",
-        "//util/extsort",
+        "//pkg/util/codec",
+        "//pkg/util/extsort",
         "@com_github_pingcap_errors//:errors",
-        "@org_golang_x_exp//slices",
         "@org_golang_x_sync//errgroup",
         "@org_uber_go_zap//:zap",
     ],
@@ -33,8 +32,7 @@ go_test(
     shard_count = 4,
     deps = [
         "//br/pkg/lightning/log",
-        "//util/extsort",
+        "//pkg/util/extsort",
         "@com_github_stretchr_testify//require",
-        "@org_golang_x_exp//slices",
     ],
 )

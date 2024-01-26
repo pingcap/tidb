@@ -1,0 +1,56 @@
+# TestCBOPointGet
+drop table if exists t;
+set session tidb_enable_clustered_index = 'INT_ONLY';
+create table t (a varchar(20), b int, c int, d int, primary key(a), unique key(b, c));
+insert into t values('1',4,4,1), ('2',3,3,2), ('3',2,2,3), ('4',1,1,4);
+explain format = 'brief' select * from t where t.a in ('1','2','4') and t.a+1=2 order by t.a desc;
+select * from t where t.a in ('1','2','4') and t.a+1=2 order by t.a desc;
+explain format = 'brief' select b, c from t where t.b = 2 and t.c = 2 and t.b+1=3;
+select b, c from t where t.b = 2 and t.c = 2 and t.b+1=3;
+explain format = 'brief' select * from t where t.a = '1' and t.b = 4;
+select * from t where t.a = '1' and t.b = 4;
+explain format = 'brief' select * from t where t.a in ('1','3') and t.d = 3;
+select * from t where t.a in ('1','3') and t.d = 3;
+explain format = 'brief' select * from t t1 join t t2 on t1.a = t2.a where t1.a = '4' and (t2.b, t2.c) in ((1,1),(2,2));
+select * from t t1 join t t2 on t1.a = t2.a where t1.a = '4' and (t2.b, t2.c) in ((1,1),(2,2));
+explain format = 'brief' select * from t where (t.b, t.c) in ((2,2), (3,3), (4,4)) order by t.b, t.c;
+select * from t where (t.b, t.c) in ((2,2), (3,3), (4,4)) order by t.b, t.c;
+
+# TestCBOShouldNotUsePointGet
+drop tables if exists t1, t2, t3, t4, t5;
+set session tidb_enable_clustered_index = 'INT_ONLY';
+create table t1(id varchar(20) primary key);
+create table t2(id varchar(20), unique(id));
+create table t3(id varchar(20), d varchar(20), unique(id, d));
+create table t4(id int, d varchar(20), c varchar(20), unique(id, d));
+create table t5(id bit(64) primary key);
+insert into t1 values('asdf'), ('1asdf');
+insert into t2 values('asdf'), ('1asdf');
+insert into t3 values('asdf', 't'), ('1asdf', 't');
+insert into t4 values(1, 'b', 'asdf'), (1, 'c', 'jkl'), (1, 'd', '1jkl');
+insert into t5 values(48);
+explain format = 'brief' select * from t1 where id = 0;
+select * from t1 where id = 0;
+explain format = 'brief' select * from t1 where id = x'00';
+select * from t1 where id = x'00';
+explain format = 'brief' select * from t1 where id = b'00';
+select * from t1 where id = b'00';
+explain format = 'brief' select * from t1 where id = 0.0;
+select * from t1 where id = 0.0;
+explain format = 'brief' select * from t1 where id = 1.0;
+select * from t1 where id = 1.0;
+explain format = 'brief' select * from t1 where id in (0, 1);
+select * from t1 where id in (0, 1);
+explain format = 'brief' select * from t2 where id = 0;
+select * from t2 where id = 0;
+explain format = 'brief' select * from t2 where id in (0, 1);
+select * from t2 where id in (0, 1);
+explain format = 'brief' select * from t3 where (id, d) in ((0, 't'), (1, 't'));
+select * from t3 where (id, d) in ((0, 't'), (1, 't'));
+explain format = 'brief' select * from t4 where (id, d, c) in ((1, 'b', 0));
+select * from t4 where (id, d, c) in ((1, 'b', 0));
+explain format = 'brief' select * from t4 where (id, d, c) in ((1, 0, 0));
+select * from t4 where (id, d, c) in ((1, 0, 0));
+explain format = 'brief' select * from t5 where id in ('0');
+select * from t5 where id in ('0');
+

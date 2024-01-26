@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -80,66 +80,57 @@ func newCheckSumCommand() *cobra.Command {
 			}
 
 			reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-			dbs, err := utils.LoadBackupTables(ctx, reader)
+			dbs, err := metautil.LoadBackupTables(ctx, reader)
 			if err != nil {
 				return errors.Trace(err)
 			}
 
-			for _, schema := range backupMeta.Schemas {
-				dbInfo := &model.DBInfo{}
-				err = json.Unmarshal(schema.Db, dbInfo)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				if schema.Table == nil {
-					continue
-				}
-				tblInfo := &model.TableInfo{}
-				err = json.Unmarshal(schema.Table, tblInfo)
-				if err != nil {
-					return errors.Trace(err)
-				}
-				tbl := dbs[dbInfo.Name.String()].GetTable(tblInfo.Name.String())
+			for _, db := range dbs {
+				for _, tbl := range db.Tables {
+					var calCRC64 uint64
+					var totalKVs uint64
+					var totalBytes uint64
+					for _, file := range tbl.Files {
+						calCRC64 ^= file.Crc64Xor
+						totalKVs += file.GetTotalKvs()
+						totalBytes += file.GetTotalBytes()
+						log.Info("file info", zap.Stringer("table", tbl.Info.Name),
+							zap.String("file", file.GetName()),
+							zap.Uint64("crc64xor", file.GetCrc64Xor()),
+							zap.Uint64("totalKvs", file.GetTotalKvs()),
+							zap.Uint64("totalBytes", file.GetTotalBytes()),
+							zap.Uint64("startVersion", file.GetStartVersion()),
+							zap.Uint64("endVersion", file.GetEndVersion()),
+							logutil.Key("startKey", file.GetStartKey()),
+							logutil.Key("endKey", file.GetEndKey()),
+						)
 
-				var calCRC64 uint64
-				var totalKVs uint64
-				var totalBytes uint64
-				for _, file := range tbl.Files {
-					calCRC64 ^= file.Crc64Xor
-					totalKVs += file.GetTotalKvs()
-					totalBytes += file.GetTotalBytes()
-					log.Info("file info", zap.Stringer("table", tblInfo.Name),
-						zap.String("file", file.GetName()),
-						zap.Uint64("crc64xor", file.GetCrc64Xor()),
-						zap.Uint64("totalKvs", file.GetTotalKvs()),
-						zap.Uint64("totalBytes", file.GetTotalBytes()),
-						zap.Uint64("startVersion", file.GetStartVersion()),
-						zap.Uint64("endVersion", file.GetEndVersion()),
-						logutil.Key("startKey", file.GetStartKey()),
-						logutil.Key("endKey", file.GetEndKey()),
-					)
-
-					var data []byte
-					data, err = s.ReadFile(ctx, file.Name)
-					if err != nil {
-						return errors.Trace(err)
-					}
-					s := sha256.Sum256(data)
-					if !bytes.Equal(s[:], file.Sha256) {
-						return errors.Annotatef(berrors.ErrBackupChecksumMismatch, `
+						var data []byte
+						data, err = s.ReadFile(ctx, file.Name)
+						if err != nil {
+							return errors.Trace(err)
+						}
+						s := sha256.Sum256(data)
+						if !bytes.Equal(s[:], file.Sha256) {
+							return errors.Annotatef(berrors.ErrBackupChecksumMismatch, `
 backup data checksum failed: %s may be changed
 calculated sha256 is %s,
 origin sha256 is %s`,
-							file.Name, hex.EncodeToString(s[:]), hex.EncodeToString(file.Sha256))
+								file.Name, hex.EncodeToString(s[:]), hex.EncodeToString(file.Sha256))
+						}
+					}
+					if tbl.Info == nil {
+						log.Info("table info(empty)", zap.Stringer("db", db.Info.Name))
+					} else {
+						log.Info("table info", zap.Stringer("table", tbl.Info.Name),
+							zap.Uint64("CRC64", calCRC64),
+							zap.Uint64("totalKvs", totalKVs),
+							zap.Uint64("totalBytes", totalBytes),
+							zap.Uint64("schemaTotalKvs", tbl.TotalKvs),
+							zap.Uint64("schemaTotalBytes", tbl.TotalBytes),
+							zap.Uint64("schemaCRC64", tbl.Crc64Xor))
 					}
 				}
-				log.Info("table info", zap.Stringer("table", tblInfo.Name),
-					zap.Uint64("CRC64", calCRC64),
-					zap.Uint64("totalKvs", totalKVs),
-					zap.Uint64("totalBytes", totalBytes),
-					zap.Uint64("schemaTotalKvs", schema.TotalKvs),
-					zap.Uint64("schemaTotalBytes", schema.TotalBytes),
-					zap.Uint64("schemaCRC64", schema.Crc64Xor))
 			}
 			cmd.Println("backup data checksum succeed!")
 			return nil
@@ -182,7 +173,7 @@ func newBackupMetaValidateCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			reader := metautil.NewMetaReader(backupMeta, s, &cfg.CipherInfo)
-			dbs, err := utils.LoadBackupTables(ctx, reader)
+			dbs, err := metautil.LoadBackupTables(ctx, reader)
 			if err != nil {
 				log.Error("load tables failed", zap.Error(err))
 				return errors.Trace(err)
@@ -238,6 +229,21 @@ func newBackupMetaValidateCommand() *cobra.Command {
 						Name: indexInfo.Name,
 					}
 				}
+				if table.Info.Partition != nil {
+					if table.Info.Partition != nil {
+						newTable.Partition = &model.PartitionInfo{
+							Definitions: make([]model.PartitionDefinition, len(table.Info.Partition.Definitions)),
+						}
+					}
+					for _, old := range table.Info.Partition.Definitions {
+						partitionID, _ := tableIDAllocator.Alloc()
+						newTable.Partition.Definitions = append(newTable.Partition.Definitions, model.PartitionDefinition{
+							ID:   int64(partitionID),
+							Name: old.Name,
+						})
+					}
+				}
+
 				rules := restore.GetRewriteRules(newTable, table.Info, 0, true)
 				rewriteRules.Data = append(rewriteRules.Data, rules.Data...)
 				tableIDMap[table.Info.ID] = int64(tableID)

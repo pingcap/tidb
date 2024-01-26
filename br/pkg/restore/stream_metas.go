@@ -16,7 +16,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -29,7 +29,8 @@ type StreamMetadataSet struct {
 
 	// keeps the meta-information of metadata as little as possible
 	// to save the memory
-	metadataInfos map[string]*MetadataInfo
+	metadataInfos             map[string]*MetadataInfo
+	MetadataDownloadBatchSize uint
 
 	// a parser of metadata
 	Helper *stream.MetadataHelper
@@ -62,7 +63,7 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(ctx context.Context, s
 	metadataMap.metas = make(map[string]*MetadataInfo)
 	// `shiftUntilTS` must be less than `until`
 	metadataMap.shiftUntilTS = until
-	err := stream.FastUnmarshalMetaData(ctx, s, func(path string, raw []byte) error {
+	err := stream.FastUnmarshalMetaData(ctx, s, ms.MetadataDownloadBatchSize, func(path string, raw []byte) error {
 		m, err := ms.Helper.ParseToMetadataHard(raw)
 		if err != nil {
 			return err
@@ -154,7 +155,7 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(ctx context
 		item []string
 		sync.Mutex
 	}
-	worker := utils.NewWorkerPool(128, "delete files")
+	worker := utils.NewWorkerPool(ms.MetadataDownloadBatchSize, "delete files")
 	eg, cx := errgroup.WithContext(ctx)
 	for path, metaInfo := range ms.metadataInfos {
 		path := path
@@ -221,13 +222,13 @@ func (ms *StreamMetadataSet) removeDataFilesAndUpdateMetadata(ctx context.Contex
 	num = int64(len(removed))
 
 	if ms.DryRun {
-		log.Debug("dry run, skip deletion ...")
+		log.Info("dry run, skip deletion ...")
 		return num, notDeleted, nil
 	}
 
 	// remove data file groups
 	for _, f := range removed {
-		log.Debug("Deleting file", zap.String("path", f.Path))
+		log.Info("Deleting file", zap.String("path", f.Path))
 		if err := storage.DeleteFile(ctx, f.Path); err != nil {
 			log.Warn("File not deleted.", zap.String("path", f.Path), logutil.ShortError(err))
 			notDeleted = append(notDeleted, f.Path)
@@ -248,6 +249,7 @@ func (ms *StreamMetadataSet) removeDataFilesAndUpdateMetadata(ctx context.Contex
 		ReplaceMetadata(meta, remainedDataFiles)
 
 		if ms.BeforeDoWriteBack != nil && ms.BeforeDoWriteBack(metaPath, meta) {
+			log.Info("Skipped writeback meta by the hook.", zap.String("meta", metaPath))
 			return num, notDeleted, nil
 		}
 

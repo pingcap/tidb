@@ -15,11 +15,13 @@
 package importer
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -40,20 +42,22 @@ import (
 	verify "github.com/pingcap/tidb/br/pkg/lightning/verification"
 	"github.com/pingcap/tidb/br/pkg/lightning/web"
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
+	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/errno"
-	tidbkv "github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/extsort"
-	"github.com/pingcap/tidb/util/mathutil"
+	"github.com/pingcap/tidb/pkg/errno"
+	tidbkv "github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/extsort"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // TableImporter is a helper struct to import a table.
@@ -67,6 +71,8 @@ type TableImporter struct {
 	alloc     autoid.Allocators
 	logger    log.Logger
 	kvStore   tidbkv.Storage
+	etcdCli   *clientv3.Client
+	autoidCli *autoid.ClientDiscover
 
 	// dupIgnoreRows tracks the rowIDs of rows that are duplicated and should be ignored.
 	dupIgnoreRows extsort.ExternalSorter
@@ -83,6 +89,7 @@ func NewTableImporter(
 	cp *checkpoints.TableCheckpoint,
 	ignoreColumns map[string]struct{},
 	kvStore tidbkv.Storage,
+	etcdCli *clientv3.Client,
 	logger log.Logger,
 ) (*TableImporter, error) {
 	idAlloc := kv.NewPanickingAllocators(cp.AllocBase)
@@ -90,6 +97,7 @@ func NewTableImporter(
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
 	}
+	autoidCli := autoid.NewClientDiscover(etcdCli)
 
 	return &TableImporter{
 		tableName:     tableName,
@@ -99,6 +107,8 @@ func NewTableImporter(
 		encTable:      tbl,
 		alloc:         idAlloc,
 		kvStore:       kvStore,
+		etcdCli:       etcdCli,
+		autoidCli:     autoidCli,
 		logger:        logger.With(zap.String("table", tableName)),
 		ignoreColumns: ignoreColumns,
 	}, nil
@@ -179,12 +189,12 @@ func (tr *TableImporter) importTable(
 
 		// rebase the allocator so it exceeds the number of rows.
 		if tr.tableInfo.Core.ContainsAutoRandomBits() {
-			cp.AllocBase = mathutil.Max(cp.AllocBase, tr.tableInfo.Core.AutoRandID)
+			cp.AllocBase = max(cp.AllocBase, tr.tableInfo.Core.AutoRandID)
 			if err := tr.alloc.Get(autoid.AutoRandomType).Rebase(context.Background(), cp.AllocBase, false); err != nil {
 				return false, err
 			}
 		} else {
-			cp.AllocBase = mathutil.Max(cp.AllocBase, tr.tableInfo.Core.AutoIncID)
+			cp.AllocBase = max(cp.AllocBase, tr.tableInfo.Core.AutoIncID)
 			if err := tr.alloc.Get(autoid.RowIDAllocType).Rebase(context.Background(), cp.AllocBase, false); err != nil {
 				return false, err
 			}
@@ -198,7 +208,7 @@ func (tr *TableImporter) importTable(
 	}
 
 	// 2. Do duplicate detection if needed
-	if isLocalBackend(rc.cfg) && rc.cfg.TikvImporter.OnDuplicate != "" {
+	if isLocalBackend(rc.cfg) && rc.cfg.Conflict.Strategy != "" {
 		_, uuid := backend.MakeUUID(tr.tableName, common.IndexEngineID)
 		workingDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupDetectDirSuffix)
 		resultDir := filepath.Join(rc.cfg.TikvImporter.SortedKVDir, uuid.String()+local.DupResultDirSuffix)
@@ -314,6 +324,19 @@ func (tr *TableImporter) populateChunks(ctx context.Context, rc *Controller, cp 
 	return err
 }
 
+// AutoIDRequirement implements autoid.Requirement.
+var _ autoid.Requirement = &TableImporter{}
+
+// Store implements the autoid.Requirement interface.
+func (tr *TableImporter) Store() tidbkv.Storage {
+	return tr.kvStore
+}
+
+// AutoIDClient implements the autoid.Requirement interface.
+func (tr *TableImporter) AutoIDClient() *autoid.ClientDiscover {
+	return tr.autoidCli
+}
+
 // RebaseChunkRowIDs rebase the row id of the chunks.
 func (*TableImporter) RebaseChunkRowIDs(cp *checkpoints.TableCheckpoint, rowIDBase int64) {
 	if rowIDBase == 0 {
@@ -426,6 +449,7 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 				Compact:            threshold > 0,
 				CompactConcurrency: 4,
 				CompactThreshold:   threshold,
+				BlockSize:          int(rc.cfg.TikvImporter.BlockSize),
 			}
 		}
 		// import backend can't reopen engine if engine is closed, so
@@ -462,7 +486,7 @@ func (tr *TableImporter) importEngines(pCtx context.Context, rc *Controller, cp 
 		for engineID, engine := range cp.Engines {
 			allEngines = append(allEngines, engineCheckpoint{engineID: engineID, checkpoint: engine})
 		}
-		slices.SortFunc(allEngines, func(i, j engineCheckpoint) bool { return i.engineID < j.engineID })
+		slices.SortFunc(allEngines, func(i, j engineCheckpoint) int { return cmp.Compare(i.engineID, j.engineID) })
 
 		for _, ecp := range allEngines {
 			engineID := ecp.engineID
@@ -746,6 +770,13 @@ ChunkLoop:
 			break
 		}
 
+		if chunk.FileMeta.Type == mydump.SourceTypeParquet {
+			// TODO: use the compressed size of the chunk to conduct memory control
+			if _, err = getChunkCompressedSizeForParquet(ctx, chunk, rc.store); err != nil {
+				return nil, errors.Trace(err)
+			}
+		}
+
 		restoreWorker := rc.regionWorkers.Apply()
 		wg.Add(1)
 		go func(w *worker.Worker, cr *chunkProcessor) {
@@ -920,7 +951,6 @@ func (tr *TableImporter) postProcess(
 
 	// alter table set auto_increment
 	if cp.Status < checkpoints.CheckpointStatusAlteredAutoInc {
-		rc.alterTableLock.Lock()
 		tblInfo := tr.tableInfo.Core
 		var err error
 		if tblInfo.ContainsAutoRandomBits() {
@@ -929,13 +959,25 @@ func (tr *TableImporter) postProcess(
 			maxCap := shardFmt.IncrementalBitsCapacity()
 			err = AlterAutoRandom(ctx, rc.db, tr.tableName, uint64(tr.alloc.Get(autoid.AutoRandomType).Base())+1, maxCap)
 		} else if common.TableHasAutoRowID(tblInfo) || tblInfo.GetAutoIncrementColInfo() != nil {
-			// only alter auto increment id iff table contains auto-increment column or generated handle
-			err = AlterAutoIncrement(ctx, rc.db, tr.tableName, uint64(tr.alloc.Get(autoid.RowIDAllocType).Base())+1)
+			// only alter auto increment id iff table contains auto-increment column or generated handle.
+			// ALTER TABLE xxx AUTO_INCREMENT = yyy has a bad naming.
+			// if a table has implicit _tidb_rowid column & tbl.SepAutoID=false, then it works on _tidb_rowid
+			// allocator, even if the table has NO auto-increment column.
+			newBase := uint64(tr.alloc.Get(autoid.RowIDAllocType).Base()) + 1
+			err = AlterAutoIncrement(ctx, rc.db, tr.tableName, newBase)
+
+			if err == nil && isLocalBackend(rc.cfg) {
+				// for TiDB version >= 6.5.0, a table might have separate allocators for auto_increment column and _tidb_rowid,
+				// especially when a table has auto_increment non-clustered PK, it will use both allocators.
+				// And in this case, ALTER TABLE xxx AUTO_INCREMENT = xxx only works on the allocator of auto_increment column,
+				// not for allocator of _tidb_rowid.
+				// So we need to rebase IDs for those 2 allocators explicitly.
+				err = common.RebaseGlobalAutoID(ctx, adjustIDBase(newBase), tr, tr.dbInfo.ID, tr.tableInfo.Core)
+			}
 		}
-		rc.alterTableLock.Unlock()
 		saveCpErr := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, err, checkpoints.CheckpointStatusAlteredAutoInc)
 		if err = firstErr(err, saveCpErr); err != nil {
-			return false, err
+			return false, errors.Trace(err)
 		}
 		cp.Status = checkpoints.CheckpointStatusAlteredAutoInc
 	}
@@ -955,6 +997,7 @@ func (tr *TableImporter) postProcess(
 	defer rc.checksumWorks.Recycle(w)
 
 	shouldSkipAnalyze := false
+	estimatedModifyCnt := 100_000_000
 	if cp.Status < checkpoints.CheckpointStatusChecksumSkipped {
 		// 4. do table checksum
 		var localChecksum verify.KVChecksum
@@ -963,6 +1006,11 @@ func (tr *TableImporter) postProcess(
 				localChecksum.Add(&chunk.Checksum)
 			}
 		}
+		indexNum := len(tr.tableInfo.Core.Indices)
+		if common.TableHasAutoRowID(tr.tableInfo.Core) {
+			indexNum++
+		}
+		estimatedModifyCnt = int(localChecksum.SumKVS()) / (1 + indexNum)
 		tr.logger.Info("local checksum", zap.Object("checksum", &localChecksum))
 
 		// 4.5. do duplicate detection.
@@ -981,7 +1029,7 @@ func (tr *TableImporter) postProcess(
 			hasLocalDupe, err := dupeController.CollectLocalDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
 			if err != nil {
 				tr.logger.Error("collect local duplicate keys failed", log.ShortError(err))
-				return false, err
+				return false, errors.Trace(err)
 			}
 			hasDupe = hasLocalDupe
 		}
@@ -994,7 +1042,7 @@ func (tr *TableImporter) postProcess(
 
 		otherHasDupe, needRemoteDupe, baseTotalChecksum, err := metaMgr.CheckAndUpdateLocalChecksum(ctx, &localChecksum, hasDupe)
 		if err != nil {
-			return false, err
+			return false, errors.Trace(err)
 		}
 		needChecksum := !otherHasDupe && needRemoteDupe
 		hasDupe = hasDupe || otherHasDupe
@@ -1007,14 +1055,14 @@ func (tr *TableImporter) postProcess(
 			hasRemoteDupe, e := dupeController.CollectRemoteDuplicateRows(ctx, tr.encTable, tr.tableName, opts)
 			if e != nil {
 				tr.logger.Error("collect remote duplicate keys failed", log.ShortError(e))
-				return false, e
+				return false, errors.Trace(e)
 			}
 			hasDupe = hasDupe || hasRemoteDupe
 
 			if hasDupe {
 				if err = dupeController.ResolveDuplicateRows(ctx, tr.encTable, tr.tableName, rc.cfg.TikvImporter.DuplicateResolution); err != nil {
 					tr.logger.Error("resolve remote duplicate keys failed", log.ShortError(err))
-					return false, err
+					return false, errors.Trace(err)
 				}
 			}
 		}
@@ -1034,15 +1082,26 @@ func (tr *TableImporter) postProcess(
 
 			var remoteChecksum *local.RemoteChecksum
 			remoteChecksum, err = DoChecksum(ctx, tr.tableInfo)
+			failpoint.Inject("checksum-error", func() {
+				tr.logger.Info("failpoint checksum-error injected.")
+				remoteChecksum = nil
+				err = status.Error(codes.Unknown, "Checksum meets error.")
+			})
 			if err != nil {
-				return false, err
+				if rc.cfg.PostRestore.Checksum != config.OpLevelOptional {
+					return false, errors.Trace(err)
+				}
+				tr.logger.Warn("do checksum failed, will skip this error and go on", log.ShortError(err))
+				err = nil
 			}
-			err = tr.compareChecksum(remoteChecksum, localChecksum)
-			// with post restore level 'optional', we will skip checksum error
-			if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
-				if err != nil {
-					tr.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
-					err = nil
+			if remoteChecksum != nil {
+				err = tr.compareChecksum(remoteChecksum, localChecksum)
+				// with post restore level 'optional', we will skip checksum error
+				if rc.cfg.PostRestore.Checksum == config.OpLevelOptional {
+					if err != nil {
+						tr.logger.Warn("compare checksum failed, will skip this error and go on", log.ShortError(err))
+						err = nil
+					}
 				}
 			}
 		} else {
@@ -1092,6 +1151,9 @@ func (tr *TableImporter) postProcess(
 	if cp.Status < checkpoints.CheckpointStatusAnalyzeSkipped {
 		switch {
 		case shouldSkipAnalyze || rc.cfg.PostRestore.Analyze == config.OpLevelOff:
+			if !shouldSkipAnalyze {
+				updateStatsMeta(ctx, rc.db, tr.tableInfo.ID, estimatedModifyCnt)
+			}
 			tr.logger.Info("skip analyze")
 			if err := rc.saveStatusCheckpoint(ctx, tr.tableName, checkpoints.WholeTableEngineID, nil, checkpoints.CheckpointStatusAnalyzeSkipped); err != nil {
 				return false, errors.Trace(err)
@@ -1115,6 +1177,70 @@ func (tr *TableImporter) postProcess(
 	}
 
 	return true, nil
+}
+
+func getChunkCompressedSizeForParquet(
+	ctx context.Context,
+	chunk *checkpoints.ChunkCheckpoint,
+	store storage.ExternalStorage,
+) (int64, error) {
+	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{})
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	parser, err := mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
+	if err != nil {
+		_ = reader.Close()
+		return 0, errors.Trace(err)
+	}
+	//nolint: errcheck
+	defer parser.Close()
+	err = parser.Reader.ReadFooter()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	rowGroups := parser.Reader.Footer.GetRowGroups()
+	var maxRowGroupSize int64
+	for _, rowGroup := range rowGroups {
+		var rowGroupSize int64
+		columnChunks := rowGroup.GetColumns()
+		for _, columnChunk := range columnChunks {
+			columnChunkSize := columnChunk.MetaData.GetTotalCompressedSize()
+			rowGroupSize += columnChunkSize
+		}
+		maxRowGroupSize = max(maxRowGroupSize, rowGroupSize)
+	}
+	return maxRowGroupSize, nil
+}
+
+func updateStatsMeta(ctx context.Context, db *sql.DB, tableID int64, count int) {
+	s := common.SQLWithRetry{
+		DB:     db,
+		Logger: log.FromContext(ctx).With(zap.Int64("tableID", tableID)),
+	}
+	err := s.Transact(ctx, "update stats_meta", func(ctx context.Context, tx *sql.Tx) error {
+		rs, err := tx.ExecContext(ctx, `
+update mysql.stats_meta
+	set modify_count = ?,
+		count = ?,
+		version = @@tidb_current_ts
+	where table_id = ?;
+`, count, count, tableID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		affected, err := rs.RowsAffected()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if affected == 0 {
+			return errors.Errorf("record with table_id %d not found", tableID)
+		}
+		return nil
+	})
+	if err != nil {
+		s.Logger.Warn("failed to update stats_meta", zap.Error(err))
+	}
 }
 
 func parseColumnPermutations(
@@ -1199,7 +1325,7 @@ func (tr *TableImporter) importKV(
 		regionSplitSize = int64(config.SplitRegionSize)
 		if err := rc.taskMgr.CheckTasksExclusively(ctx, func(tasks []taskMeta) ([]taskMeta, error) {
 			if len(tasks) > 0 {
-				regionSplitSize = int64(config.SplitRegionSize) * int64(mathutil.Min(len(tasks), config.MaxSplitRegionSizeRatio))
+				regionSplitSize = int64(config.SplitRegionSize) * int64(min(len(tasks), config.MaxSplitRegionSizeRatio))
 			}
 			return nil, nil
 		}); err != nil {
@@ -1267,10 +1393,9 @@ func (tr *TableImporter) dropIndexes(ctx context.Context, db *sql.DB) error {
 	logger := log.FromContext(ctx).With(zap.String("table", tr.tableName))
 
 	tblInfo := tr.tableInfo
-	tableName := common.UniqueTable(tblInfo.DB, tblInfo.Name)
 	remainIndexes, dropIndexes := common.GetDropIndexInfos(tblInfo.Core)
 	for _, idxInfo := range dropIndexes {
-		sqlStr := common.BuildDropIndexSQL(tableName, idxInfo)
+		sqlStr := common.BuildDropIndexSQL(tblInfo.DB, tblInfo.Name, idxInfo)
 
 		logger.Info("drop index", zap.String("sql", sqlStr))
 
@@ -1616,8 +1741,12 @@ func (tr *TableImporter) preDeduplicate(
 		return errors.Trace(originalErr)
 	}
 	if !rc.cfg.Checkpoint.Enable {
-		return errors.Errorf("duplicate key in table %s caused by index `%s`, you can turn on checkpoint and re-run to see the conflicting rows",
+		err := errors.Errorf("duplicate key in table %s caused by index `%s`, but because checkpoint is off we can't have more details",
 			tr.tableName, idxName)
+		rc.errorMgr.RecordDuplicateOnce(
+			ctx, tr.logger, tr.tableName, "<unknown-path>", -1, err.Error(), -1, "<unknown-data>",
+		)
+		return err
 	}
 	conflictEncodedRowIDs := dupErr.Args()[1].([][]byte)
 	if len(conflictEncodedRowIDs) < 2 {
@@ -1648,6 +1777,9 @@ func (tr *TableImporter) preDeduplicate(
 		tr.logger.Error("failed to get table checkpoint", zap.Error(err))
 		return errors.Trace(err)
 	}
+	var (
+		secondConflictPath string
+	)
 	for _, engineCp := range tableCp.Engines {
 		for _, chunkCp := range engineCp.Chunks {
 			if chunkCp.Chunk.PrevRowIDMax <= rowID[0] && rowID[0] < chunkCp.Chunk.RowIDMax {
@@ -1657,6 +1789,7 @@ func (tr *TableImporter) preDeduplicate(
 					chunkCp.FileMeta.Path)
 			}
 			if chunkCp.Chunk.PrevRowIDMax <= rowID[1] && rowID[1] < chunkCp.Chunk.RowIDMax {
+				secondConflictPath = chunkCp.FileMeta.Path
 				otherConflictMsg = fmt.Sprintf("row %d counting from offset %d in file %s",
 					rowID[1]-chunkCp.Chunk.PrevRowIDMax,
 					chunkCp.Chunk.Offset,
@@ -1670,6 +1803,10 @@ func (tr *TableImporter) preDeduplicate(
 			zap.Int64("rowID[1]", rowID[1]))
 		return errors.Trace(originalErr)
 	}
-	return errors.Errorf("duplicate entry for key '%s', a pair of conflicting rows are (%s, %s)",
+	err = errors.Errorf("duplicate entry for key '%s', a pair of conflicting rows are (%s, %s)",
 		idxName, oneConflictMsg, otherConflictMsg)
+	rc.errorMgr.RecordDuplicateOnce(
+		ctx, tr.logger, tr.tableName, secondConflictPath, -1, err.Error(), rowID[1], "<unknown-data>",
+	)
+	return err
 }

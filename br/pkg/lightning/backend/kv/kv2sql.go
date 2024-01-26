@@ -19,12 +19,12 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/table"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/tablecodec"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/pingcap/tidb/pkg/types"
 )
 
 // TableKVDecoder is a KVDecoder that decodes the key-value pairs of a table.
@@ -88,17 +88,24 @@ func (t *TableKVDecoder) IterRawIndexKeys(h kv.Handle, rawRow []byte, fn func([]
 	}
 
 	indices := t.tbl.Indices()
+	isCommonHandle := t.tbl.Meta().IsCommonHandle
 
 	var buffer []types.Datum
 	var indexBuffer []byte
 	for _, index := range indices {
+		// skip clustered PK
+		if index.Meta().Primary && isCommonHandle {
+			continue
+		}
+
 		indexValues, err := index.FetchValues(row, buffer)
 		if err != nil {
 			return err
 		}
-		iter := index.GenIndexKVIter(t.se.Vars.StmtCtx, indexValues, h, nil)
+		sc := t.se.Vars.StmtCtx
+		iter := index.GenIndexKVIter(sc.ErrCtx(), sc.TimeZone(), indexValues, h, nil)
 		for iter.Valid() {
-			indexKey, _, _, err := iter.Next(indexBuffer)
+			indexKey, _, _, err := iter.Next(indexBuffer, nil)
 			if err != nil {
 				return err
 			}

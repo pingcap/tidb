@@ -1,0 +1,105 @@
+[
+  {
+    "Name": "TestCollectDependingVirtualCols",
+    "Cases": [
+      {
+        "TableName": "t",
+        "InputColNames": [
+          "a",
+          "b"
+        ],
+        "OutputColNames": []
+      },
+      {
+        "TableName": "t",
+        "InputColNames": [
+          "c"
+        ],
+        "OutputColNames": [
+          "_v$_ic_char_0",
+          "_v$_ic_signed_0",
+          "_v$_ic_unsigned_0"
+        ]
+      },
+      {
+        "TableName": "t",
+        "InputColNames": [
+          "b",
+          "c"
+        ],
+        "OutputColNames": [
+          "_v$_ic_char_0",
+          "_v$_ic_signed_0",
+          "_v$_ic_unsigned_0"
+        ]
+      },
+      {
+        "TableName": "t1",
+        "InputColNames": [
+          "a"
+        ],
+        "OutputColNames": [
+          "vab"
+        ]
+      },
+      {
+        "TableName": "t1",
+        "InputColNames": [
+          "b"
+        ],
+        "OutputColNames": [
+          "_v$_ib_0",
+          "vab",
+          "vvc"
+        ]
+      },
+      {
+        "TableName": "t1",
+        "InputColNames": [
+          "c"
+        ],
+        "OutputColNames": [
+          "_v$_icvab_0",
+          "vc"
+        ]
+      },
+      {
+        "TableName": "t1",
+        "InputColNames": [
+          "vab"
+        ],
+        "OutputColNames": [
+          "_v$_icvab_0",
+          "_v$_ivvcvab_0",
+          "vvabvvc"
+        ]
+      },
+      {
+        "TableName": "t1",
+        "InputColNames": [
+          "vab",
+          "c"
+        ],
+        "OutputColNames": [
+          "_v$_icvab_0",
+          "_v$_ivvcvab_0",
+          "vc",
+          "vvabvvc"
+        ]
+      },
+      {
+        "TableName": "t1",
+        "InputColNames": [
+          "vc",
+          "c",
+          "vvc"
+        ],
+        "OutputColNames": [
+          "_v$_icvab_0",
+          "_v$_ivvcvab_0",
+          "vvabvvc"
+        ]
+      }
+    ]
+  }
+]

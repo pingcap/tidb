@@ -1,0 +1,19 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "ttlhandler",
+    srcs = ["ttl.go"],
+    importpath = "github.com/pingcap/tidb/pkg/server/handler/ttlhandler",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/kv",
+        "//pkg/server/handler",
+        "//pkg/session",
+        "//pkg/ttl/client",
+        "//pkg/util/logutil",
+        "@com_github_gorilla_mux//:mux",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)

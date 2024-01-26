@@ -1,5 +1,5 @@
-[lightning]
-max-error-records = 50
+[conflict]
+max-record-rows = 50
 
 [tikv-importer]
 on-duplicate = "replace"

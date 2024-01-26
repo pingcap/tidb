@@ -9,13 +9,13 @@ go_library(
         "//br/pkg/lightning/importer/opts",
         "//br/pkg/lightning/mydump",
         "//br/pkg/storage",
-        "//errno",
-        "//parser/model",
-        "//store/pdtypes",
-        "//util/dbterror",
-        "//util/filter",
+        "//pkg/errno",
+        "//pkg/parser/model",
+        "//pkg/util/dbterror",
+        "//pkg/util/filter",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_kvproto//pkg/metapb",
+        "@com_github_tikv_pd_client//http",
     ],
 )
 
@@ -27,7 +27,7 @@ go_test(
     flaky = True,
     deps = [
         "//br/pkg/lightning/importer",
-        "//parser/model",
+        "//pkg/parser/model",
         "@com_github_stretchr_testify//require",
     ],
 )

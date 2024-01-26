@@ -17,9 +17,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/statistics/handle"
-	"github.com/pingcap/tidb/tablecodec"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 	"google.golang.org/grpc/keepalive"
@@ -55,7 +55,7 @@ func TestConfigureRestoreClient(t *testing.T) {
 		RestoreCommonConfig: restoreComCfg,
 		DdlBatchSize:        128,
 	}
-	client := restore.NewRestoreClient(mockPDClient{}, nil, keepalive.ClientParameters{}, false)
+	client := restore.NewRestoreClient(mockPDClient{}, nil, nil, keepalive.ClientParameters{}, false)
 	ctx := context.Background()
 	err := configureRestoreClient(ctx, client, restoreCfg)
 	require.NoError(t, err)
@@ -77,7 +77,7 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 	cases := []struct {
 		cfgSchemas map[string]struct{}
 		cfgTables  map[string]struct{}
-		backupDBs  map[string]*utils.Database
+		backupDBs  map[string]*metautil.Database
 	}{
 		{
 			cfgSchemas: map[string]struct{}{
@@ -167,7 +167,7 @@ func TestCheckRestoreDBAndTable(t *testing.T) {
 	}
 }
 
-func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) map[string]*utils.Database {
+func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) map[string]*metautil.Database {
 	testDir := t.TempDir()
 	store, err := storage.NewLocalStorage(testDir)
 	require.NoError(t, err)
@@ -187,7 +187,7 @@ func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) 
 			}
 			mockTblList = append(mockTblList, mockTbl)
 
-			mockStats := handle.JSONTable{
+			mockStats := util.JSONTable{
 				DatabaseName: dbName.String(),
 				TableName:    tblName.String(),
 			}
@@ -236,7 +236,7 @@ func mockReadSchemasFromBackupMeta(t *testing.T, db2Tables map[string][]string) 
 	err = store.WriteFile(ctx, metautil.MetaFile, data)
 	require.NoError(t, err)
 
-	dbs, err := utils.LoadBackupTables(
+	dbs, err := metautil.LoadBackupTables(
 		ctx,
 		metautil.NewMetaReader(
 			meta,

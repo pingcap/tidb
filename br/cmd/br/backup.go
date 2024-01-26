@@ -11,9 +11,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/trace"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/session"
-	"github.com/pingcap/tidb/util/metricsutil"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/util/metricsutil"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"sourcegraph.com/sourcegraph/appdash"
@@ -45,10 +45,8 @@ func runBackupCommand(command *cobra.Command, cmdName string) error {
 		return nil
 	}
 
-	if cfg.IgnoreStats {
-		// Do not run stat worker in BR.
-		session.DisableStats4Test()
-	}
+	// No need to cache the coproceesor result
+	config.GetGlobalConfig().TiKVClient.CoprCache.CapacityMB = 0
 
 	if err := task.RunBackup(ctx, tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to backup", zap.Error(err))
@@ -110,6 +108,8 @@ func NewBackupCommand() *cobra.Command {
 			build.LogInfo(build.BR)
 			utils.LogEnvVariables()
 			task.LogArguments(c)
+			// Do not run stat worker in BR.
+			session.DisableStats4Test()
 
 			// Do not run ddl worker in BR.
 			config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(false)

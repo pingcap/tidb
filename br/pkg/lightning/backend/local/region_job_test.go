@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/errorpb"
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/stretchr/testify/require"
 )
@@ -56,9 +57,9 @@ func TestIsIngestRetryable(t *testing.T) {
 	}
 	job := regionJob{
 		stage: wrote,
-		keyRange: Range{
-			start: []byte{1},
-			end:   []byte{3},
+		keyRange: common.Range{
+			Start: []byte{1},
+			End:   []byte{3},
 		},
 		region: region,
 		writeResult: &tikvWriteResult{
@@ -206,8 +207,8 @@ func TestRegionJobRetryer(t *testing.T) {
 	}
 
 	job := &regionJob{
-		keyRange: Range{
-			start: []byte("123"),
+		keyRange: common.Range{
+			Start: []byte("123"),
 		},
 		waitUntil: time.Now().Add(-time.Second),
 	}
@@ -235,8 +236,8 @@ func TestRegionJobRetryer(t *testing.T) {
 	retryer = startRegionJobRetryer(ctx, putBackCh, &jobWg)
 
 	job = &regionJob{
-		keyRange: Range{
-			start: []byte("123"),
+		keyRange: common.Range{
+			Start: []byte("123"),
 		},
 		waitUntil: time.Now().Add(-time.Second),
 	}
@@ -246,8 +247,8 @@ func TestRegionJobRetryer(t *testing.T) {
 	time.Sleep(3 * time.Second)
 	// now retryer is sending to putBackCh, but putBackCh is blocked
 	job = &regionJob{
-		keyRange: Range{
-			start: []byte("456"),
+		keyRange: common.Range{
+			Start: []byte("456"),
 		},
 		waitUntil: time.Now().Add(-time.Second),
 	}

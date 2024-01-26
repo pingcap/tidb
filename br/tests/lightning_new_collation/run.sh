@@ -51,7 +51,7 @@ for BACKEND in local tidb; do
   check_contains "v: aA"
 
 
-  run_lightning --backend $BACKEND -d "tests/$TEST_NAME/data-gbk" --config "tests/$TEST_NAME/gbk.toml"
+  run_lightning --backend $BACKEND -d "$cur/data-gbk" --config "$cur/gbk.toml"
 
   run_sql 'SELECT count(*) from nc.gbk_source;'
   check_contains "count(*): 3"

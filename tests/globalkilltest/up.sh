@@ -26,5 +26,10 @@ cd ../..
 TIDB_PATH=$(pwd)
 
 docker build -t globalkilltest -f tests/globalkilltest/Dockerfile .
-docker run --name globalkilltest -it --rm -v $TIDB_PATH:/tidb globalkilltest /bin/bash -c \
+
+# To see the logs, mount an additional volume to /tmp. E.g. -v $TIDB_PATH/tmp:/tmp
+docker run --name globalkilltest -it --rm \
+  -v $TIDB_PATH:/tidb \
+  globalkilltest \
+  /bin/bash -c \
   'git config --global --add safe.directory /tidb && cd /tidb/tests/globalkilltest && make && ./run-tests.sh'

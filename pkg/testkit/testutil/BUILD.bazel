@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "testutil",
+    srcs = [
+        "handle.go",
+        "loghook.go",
+        "require.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/testkit/testutil",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/kv",
+        "//pkg/parser/mysql",
+        "//pkg/sessionctx/stmtctx",
+        "//pkg/types",
+        "//pkg/util/codec",
+        "//pkg/util/collate",
+        "//pkg/util/logutil",
+        "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
+    ],
+)
+
+go_test(
+    name = "testutil_test",
+    timeout = "short",
+    srcs = ["require_test.go"],
+    embed = [":testutil"],
+    flaky = True,
+    deps = ["@com_github_stretchr_testify//require"],
+)

@@ -28,7 +28,9 @@ import (
 	"github.com/cockroachdb/pebble/sstable"
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
+	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/stretchr/testify/require"
 )
 
@@ -61,7 +63,7 @@ func TestGetEngineSizeWhenImport(t *testing.T) {
 		ctx:          engineCtx,
 		cancel:       cancel,
 		sstMetasChan: make(chan metaOrFlush, 64),
-		keyAdapter:   noopKeyAdapter{},
+		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
 	f.db.Store(db)
@@ -99,7 +101,7 @@ func TestIngestSSTWithClosedEngine(t *testing.T) {
 		ctx:          engineCtx,
 		cancel:       cancel,
 		sstMetasChan: make(chan metaOrFlush, 64),
-		keyAdapter:   noopKeyAdapter{},
+		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
 	f.db.Store(db)
@@ -131,6 +133,9 @@ func TestIngestSSTWithClosedEngine(t *testing.T) {
 
 func TestGetFirstAndLastKey(t *testing.T) {
 	db, tmpPath := makePebbleDB(t, nil)
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
 	f := &Engine{
 		sstDir: tmpPath,
 	}
@@ -142,28 +147,87 @@ func TestGetFirstAndLastKey(t *testing.T) {
 	err = db.Set([]byte("e"), []byte("e"), nil)
 	require.NoError(t, err)
 
-	first, last, err := f.getFirstAndLastKey(nil, nil)
+	first, last, err := f.GetFirstAndLastKey(nil, nil)
 	require.NoError(t, err)
 	require.Equal(t, []byte("a"), first)
 	require.Equal(t, []byte("e"), last)
 
-	first, last, err = f.getFirstAndLastKey([]byte("b"), []byte("d"))
+	first, last, err = f.GetFirstAndLastKey([]byte("b"), []byte("d"))
 	require.NoError(t, err)
 	require.Equal(t, []byte("c"), first)
 	require.Equal(t, []byte("c"), last)
 
-	first, last, err = f.getFirstAndLastKey([]byte("b"), []byte("f"))
+	first, last, err = f.GetFirstAndLastKey([]byte("b"), []byte("f"))
 	require.NoError(t, err)
 	require.Equal(t, []byte("c"), first)
 	require.Equal(t, []byte("e"), last)
 
-	first, last, err = f.getFirstAndLastKey([]byte("y"), []byte("z"))
+	first, last, err = f.GetFirstAndLastKey([]byte("y"), []byte("z"))
 	require.NoError(t, err)
 	require.Nil(t, first)
 	require.Nil(t, last)
 
-	first, last, err = f.getFirstAndLastKey([]byte("e"), []byte(""))
+	first, last, err = f.GetFirstAndLastKey([]byte("e"), []byte(""))
 	require.NoError(t, err)
 	require.Equal(t, []byte("e"), first)
 	require.Equal(t, []byte("e"), last)
+}
+
+func TestIterOutputHasUniqueMemorySpace(t *testing.T) {
+	db, tmpPath := makePebbleDB(t, nil)
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
+	f := &Engine{
+		sstDir: tmpPath,
+	}
+	f.db.Store(db)
+	err := db.Set([]byte("a"), []byte("a"), nil)
+	require.NoError(t, err)
+	err = db.Set([]byte("c"), []byte("c"), nil)
+	require.NoError(t, err)
+	err = db.Set([]byte("e"), []byte("e"), nil)
+	require.NoError(t, err)
+	err = db.Set([]byte("g"), []byte("g"), nil)
+	require.NoError(t, err)
+
+	pool := membuf.NewPool()
+	ctx := context.Background()
+	iter := f.NewIter(ctx, nil, nil, pool)
+	keys := make([][]byte, 0, 2)
+	values := make([][]byte, 0, 2)
+	require.True(t, iter.First())
+	keys = append(keys, iter.Key())
+	values = append(values, iter.Value())
+	require.True(t, iter.Next())
+	keys = append(keys, iter.Key())
+	values = append(values, iter.Value())
+	expectKeys := [][]byte{[]byte("a"), []byte("c")}
+	expectValues := [][]byte{[]byte("a"), []byte("c")}
+	require.Equal(t, expectKeys, keys)
+	require.Equal(t, expectValues, values)
+
+	iter.ReleaseBuf()
+
+	keys2 := make([][]byte, 0, 2)
+	values2 := make([][]byte, 0, 2)
+	require.True(t, iter.Next())
+	keys2 = append(keys2, iter.Key())
+	values2 = append(values2, iter.Value())
+	require.True(t, iter.Next())
+	keys2 = append(keys2, iter.Key())
+	values2 = append(values2, iter.Value())
+	expectKeys2 := [][]byte{[]byte("e"), []byte("g")}
+	expectValues2 := [][]byte{[]byte("e"), []byte("g")}
+	require.Equal(t, expectKeys2, keys2)
+	require.Equal(t, expectValues2, values2)
+	require.False(t, iter.Next())
+
+	// just to reveal that after iter.ReleaseBuf() keys and values are not valid anymore
+	require.Equal(t, keys2, keys)
+
+	require.Equal(t, int64(0), pool.TotalSize())
+	require.NoError(t, iter.Close())
+	// after iter closed, the memory buffer of iter goes to pool
+	require.Greater(t, pool.TotalSize(), int64(0))
 }

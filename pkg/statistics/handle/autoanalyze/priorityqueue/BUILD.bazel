@@ -1,0 +1,42 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "priorityqueue",
+    srcs = [
+        "interval.go",
+        "job.go",
+        "queue.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
+        "//pkg/statistics/handle/autoanalyze/exec",
+        "//pkg/statistics/handle/types",
+        "//pkg/statistics/handle/util",
+    ],
+)
+
+go_test(
+    name = "priorityqueue_test",
+    timeout = "short",
+    srcs = [
+        "interval_test.go",
+        "job_test.go",
+        "main_test.go",
+        "queue_test.go",
+    ],
+    embed = [":priorityqueue"],
+    flaky = True,
+    shard_count = 10,
+    deps = [
+        "//pkg/parser/model",
+        "//pkg/session",
+        "//pkg/sessionctx",
+        "//pkg/testkit",
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

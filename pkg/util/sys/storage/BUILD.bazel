@@ -1,0 +1,34 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "storage",
+    srcs = [
+        "sys_other.go",
+        "sys_posix.go",
+        "sys_windows.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/sys/storage",
+    visibility = ["//visibility:public"],
+    deps = select({
+        "@io_bazel_rules_go//go/platform:windows": [
+            "@org_golang_x_sys//windows",
+        ],
+        "//conditions:default": [],
+    }),
+)
+
+go_test(
+    name = "storage_test",
+    timeout = "short",
+    srcs = [
+        "main_test.go",
+        "sys_test.go",
+    ],
+    embed = [":storage"],
+    flaky = True,
+    deps = [
+        "//pkg/testkit/testsetup",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
+    ],
+)

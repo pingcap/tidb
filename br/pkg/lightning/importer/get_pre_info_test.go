@@ -30,9 +30,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/importer/mock"
 	ropts "github.com/pingcap/tidb/br/pkg/lightning/importer/opts"
 	"github.com/pingcap/tidb/br/pkg/lightning/mydump"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/types"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 	pqt_buf_src "github.com/xitongsys/parquet-go-source/buffer"
 	pqtwriter "github.com/xitongsys/parquet-go/writer"
@@ -757,7 +757,10 @@ func TestGetPreInfoIsTableEmpty(t *testing.T) {
 	require.NoError(t, err)
 	lnConfig := config.NewConfig()
 	lnConfig.TikvImporter.Backend = config.BackendLocal
-	targetGetter, err := NewTargetInfoGetterImpl(lnConfig, db)
+	_, err = NewTargetInfoGetterImpl(lnConfig, db, nil)
+	require.ErrorContains(t, err, "pd HTTP client is required when using local backend")
+	lnConfig.TikvImporter.Backend = config.BackendTiDB
+	targetGetter, err := NewTargetInfoGetterImpl(lnConfig, db, nil)
 	require.NoError(t, err)
 	require.Equal(t, lnConfig, targetGetter.cfg)
 

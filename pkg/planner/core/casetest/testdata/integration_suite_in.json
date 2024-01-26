@@ -1,0 +1,142 @@
+[
+  {
+    "name": "TestIssue31240",
+    "cases": [
+      "explain format = 'brief' select count(*) from t31240;",
+      "set @@tidb_isolation_read_engines=\"tiflash,tidb\";",
+      "explain format = 'brief' select count(*) from t31240;"
+    ]
+  },
+  {
+    "name": "TestVerboseExplain",
+    "cases": [
+      "explain format = 'verbose' select count(*) from t3",
+      "explain format = 'verbose' select count(*) from t2",
+      "explain format = 'verbose' select * from t3 order by a",
+      "explain format = 'verbose' select * from t3 order by b",
+      "explain format = 'verbose' select * from t3 order by a limit 1",
+      "explain format = 'verbose' select * from t3 order by b limit 1",
+      "explain format = 'verbose' select count(*) from t2 group by a",
+      "explain format = 'verbose' select count(*) from t3 where b = 0",
+      "explain format = 'verbose' select /*+ use_index(t3, c) */ count(a) from t3 where b = 0",
+      "explain format = 'verbose' select count(*) from t2 where a = 0",
+      "explain format = 'verbose' select count(*) from t3 t join t3 on t.a = t3.b",
+      "explain format = 'verbose' select /*+ read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a",
+      "explain format = 'verbose' select /*+ read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
+      "explain format = 'verbose' select (2) in (select /*+ read_from_storage(tiflash[t1]) */ count(*) from t1) from (select t.b < (select /*+ read_from_storage(tiflash[t2]) */ t.b from t2 limit 1 )  from t3 t) t; -- we do generate the agg pushed-down plan of mpp, but cost-cmp failed",
+      "explain format = 'verbose' select /*+ merge_join(t1), read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a"
+    ]
+  },
+  {
+    "name": "TestIsolationReadDoNotFilterSystemDB",
+    "cases": [
+      "desc format = 'brief' select * from metrics_schema.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'",
+      "desc format = 'brief' select * from information_schema.tables",
+      "desc format = 'brief' select * from mysql.stats_meta"
+    ]
+  },
+  {
+    "name": "TestIsolationReadTiFlashNotChoosePointGet",
+    "cases": [
+      "explain format = 'brief' select * from t where t.a = 1",
+      "explain format = 'brief' select * from t where t.a in (1, 2)"
+    ]
+  },
+  {
+    "name": "TestMergeContinuousSelections",
+    "cases": [
+      "desc format = 'brief' SELECT table2 . `col_char_64` AS field1 FROM `ts` AS table2 INNER JOIN (SELECT DISTINCT SUBQUERY3_t1 . * FROM `ts` AS SUBQUERY3_t1 LEFT OUTER JOIN `ts` AS SUBQUERY3_t2 ON SUBQUERY3_t2 . `col_varchar_64_not_null` = SUBQUERY3_t1 . `col_varchar_key`) AS table3 ON (table3 . `col_varchar_key` = table2 . `col_varchar_64`) WHERE table3 . `col_char_64_not_null` >= SOME (SELECT SUBQUERY4_t1 . `col_varchar_64` AS SUBQUERY4_field1 FROM `ts` AS SUBQUERY4_t1) GROUP BY field1 ;"
+    ]
+  },
+  {
+    "name": "TestPushDownGroupConcatToTiFlash",
+    "cases": [
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(col_0, col_1, id) from ts",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0, col_1, id) from ts",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(col_0, col_1, id order by col_0) from ts",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0, col_1, id order by col_0) from ts",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(col_0, col_1, id order by col_0),count(*),min(col_1) from ts",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0, col_1, id order by col_0),count(*),max(col_0) from ts",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(col_0, col_1, id) from ts group by col_2",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0, col_1, id) from ts group by col_2",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(col_0, col_1, id order by col_0) from ts group by col_2",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0, col_1, id order by col_0) from ts group by col_2",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(col_1, id order by col_0) from ts group by col_2",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_1, id order by col_0) from ts group by col_2",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(col_0, col_1, id order by col_0),count(*),min(col_0),avg(id) from ts group by col_2",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0, col_1, id order by col_0),count(*),max(col_1),avg(id) from ts group by col_2",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(col_0, col_1, id order by col_0),count(distinct id),min(col_0),avg(id) from ts",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0, col_1, id order by col_0),count(distinct id),max(col_1),avg(id) from ts",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(col_0, col_1, id),count(distinct id),min(col_0),avg(id) from ts group by col_2",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0, col_1, id),count(distinct id),max(col_1),avg(id) from ts group by col_2",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(col_0, col_1, id),count(distinct id),min(col_0),avg(id) from ts",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0, col_1, id),count(distinct id),max(col_1),avg(id) from ts",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(col_0, col_1, id),count(distinct id),group_concat(col_0 order by 1),avg(id) from ts group by col_2",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0),count(distinct id),group_concat(col_1, id order by 1,2),avg(id) from ts group by col_2",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(col_0, id),count(distinct id),group_concat(col_1, id order by 1,2),min(col_0),avg(id) from ts",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0, col_1, id),count(distinct id),group_concat(col_1, id order by 1,2),max(col_1),avg(id) from ts",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0, col_1, id),count(distinct col_2),group_concat(col_1, id),max(col_1),avg(id) from ts",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0, col_1, id),count(distinct col_2),group_concat(col_1, id),max(col_1),avg(id) from ts group by col_0",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct 0,'GG') from ts",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct 0,'01') from ts",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct 0,1) from ts",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct 0,0) from ts",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct 0,10) from ts group by '010'",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct 0,0) from ts group by '011'",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct 0,'GG') from ts group by 'GG'",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct 'GG','GG') from ts",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct 'Gg','GG') from ts",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct 'GG-10','GG') from ts",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct '1200-01-01 00:00:00.023',1200) from ts",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(col_0, col_0) from ts group by id",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(col_0, col_0,id) from ts group by id",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0 order by id<10) from ts",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0 order by id<10) from ts group by col_1",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0>10 order by id<10) from ts group by col_1",
+      "desc format = 'brief' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0 order by col_0<=>null) from ts"
+    ]
+  },
+  {
+    "name": "TestIssue32632",
+    "cases": [
+      "explain format = 'brief' select sum(ps_supplycost) from partsupp, supplier where ps_suppkey = s_suppkey;"
+    ]
+  },
+  {
+    "name": "TestTiFlashPartitionTableScan",
+    "cases": [
+      "explain format = 'brief' select * from rp_t where a = 1 or a = 20",
+      "explain format = 'brief' select * from hp_t where a = 1 or a = 20",
+      "explain format = 'brief' select count(*) from rp_t where a = 1 or a = 20",
+      "explain format = 'brief' select count(*) from hp_t where a = 1 or a = 20"
+    ]
+  },
+  {
+    "name": "TestTiFlashFineGrainedShuffle",
+    "cases": [
+      // 1. Can use fine grained shuffle.
+      "explain format = 'brief' select row_number() over w1 from t1 window w1 as (partition by c1 order by c1);",
+      // Test two window function.
+      "explain format = 'brief' select row_number() over w1, rank() over w2 from t1 window w1 as (partition by c1 order by c1), w2 as (partition by c2);",
+      // Limit + Order.
+      "explain format = 'brief' select row_number() over w1, rank() over w2 from t1 window w1 as (partition by c1 order by c1), w2 as (partition by c2) order by 1, 2 limit 10;",
+      // // No partition by key in w2, so disabled. But w1 is still enabled. BUG: https://github.com/pingcap/tidb/pull/35256#discussion_r913324160
+      // "explain format = 'brief' select row_number() over w1, row_number() over w2 from t1 window w1 as (partition by c1 order by c1), w2 as (order by c1);",
+      // GroupBy key and window function partition key are not same.
+      "explain format = 'brief' select row_number() over w1, count(c2) from t1 group by c1 having c1 > 10 window w1 as (partition by c2 order by c2);",
+      "explain format = 'brief' select row_number() over w1, count(c1) from t1 group by c2 having c2 > 10 window w1 as (partition by c1 order by c2);",
+      // Join, same as GroupBy.
+      "explain format = 'brief' select row_number() over w1 from t1 a join t1 b on a.c1 = b.c2 window w1 as (partition by a.c1);",
+      // Selection.
+      "explain format = 'brief' select row_number() over w1 from t1 where c1 < 100 window w1 as (partition by c1 order by c1);",
+      // 2. Cannot use fine grained shuffle.
+      // No window function, so disabled.
+      "explain format = 'brief' select * from t1;",
+      // No partition key in window function, so disabled.
+      "explain format = 'brief' select row_number() over w1 from t1 window w1 as (order by c1);",
+      // GroupBy key is same with window function partition key, so they are in one fragment.
+      // But fine grained shuffle doesn't support group by for now.
+      "explain format = 'brief' select row_number() over w1, count(c2) from t1 group by c1 having c1 > 10 window w1 as (partition by c1 order by c2);"
+    ]
+  }
+]

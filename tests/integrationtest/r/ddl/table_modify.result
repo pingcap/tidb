@@ -1,0 +1,86 @@
+drop table if exists t;
+CREATE TABLE `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );
+CREATE TABLE IF NOT EXISTS `t` (`a` double DEFAULT 1.0 DEFAULT now() DEFAULT 2.0 );
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` double DEFAULT '2'
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table t;
+CREATE TABLE `t` (`a` int) DEFAULT CHARSET=abcdefg;
+Error 1115 (42000): Unknown character set: 'abcdefg'
+CREATE TABLE `collateTest` (`a` int, `b` varchar(10)) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci;
+show create table collateTest;
+Table	Create Table
+collateTest	CREATE TABLE `collateTest` (
+  `a` int(11) DEFAULT NULL,
+  `b` varchar(10) COLLATE utf8_general_ci DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci
+CREATE TABLE `collateTest2` (`a` int) CHARSET utf8 COLLATE utf8mb4_unicode_ci;
+Error 1253 (42000): COLLATION 'utf8mb4_unicode_ci' is not valid for CHARACTER SET 'utf8'
+CREATE TABLE `collateTest3` (`a` int) COLLATE utf8mb4_unicode_ci CHARSET utf8;
+Error 1302 (HY000): Conflicting declarations: 'CHARACTER SET utf8mb4' and 'CHARACTER SET utf8'
+CREATE TABLE `collateTest4` (`a` int) COLLATE utf8_uniCOde_ci;
+show create table collateTest4;
+Table	Create Table
+collateTest4	CREATE TABLE `collateTest4` (
+  `a` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci
+create database test2 default charset utf8 collate utf8_general_ci;
+use test2;
+create table dbCollateTest (a varchar(10));
+show create table dbCollateTest;
+Table	Create Table
+dbCollateTest	CREATE TABLE `dbCollateTest` (
+  `a` varchar(10) COLLATE utf8_general_ci DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_general_ci
+create table t_enum (a enum('e','e'));
+Error 1291 (HY000): Column 'a' has duplicated value 'e' in ENUM
+create table t_enum (a enum('e','E')) charset=utf7 collate=utf8_general_ci;
+Error 1115 (42000): Unknown character set: 'utf7'
+create table t_enum (a enum('abc','Abc')) charset=utf7 collate=utf8_general_ci;
+Error 1115 (42000): Unknown character set: 'utf7'
+create table t_enum (a enum('e','E')) charset=utf7 collate=utf8_unicode_ci;
+Error 1115 (42000): Unknown character set: 'utf7'
+create table t_enum (a enum('ss','ß')) charset=utf7 collate=utf8_unicode_ci;
+Error 1115 (42000): Unknown character set: 'utf7'
+create table t_enum (a enum('æ','ae')) charset=utf7mb4 collate=utf8mb4_0900_ai_ci;
+Error 1115 (42000): Unknown character set: 'utf7mb4'
+create table t_enum (a set('e','e'));
+Error 1291 (HY000): Column 'a' has duplicated value 'e' in SET
+create table t_enum (a set('e','E')) charset=utf7 collate=utf8_general_ci;
+Error 1115 (42000): Unknown character set: 'utf7'
+create table t_enum (a set('abc','Abc')) charset=utf7 collate=utf8_general_ci;
+Error 1115 (42000): Unknown character set: 'utf7'
+create table t_enum (a enum('B','b')) charset=utf7 collate=utf8_general_ci;
+Error 1115 (42000): Unknown character set: 'utf7'
+create table t_enum (a set('e','E')) charset=utf7 collate=utf8_unicode_ci;
+Error 1115 (42000): Unknown character set: 'utf7'
+create table t_enum (a set('ss','ß')) charset=utf7 collate=utf8_unicode_ci;
+Error 1115 (42000): Unknown character set: 'utf7'
+create table t_enum (a enum('ss','ß')) charset=utf7 collate=utf8_unicode_ci;
+Error 1115 (42000): Unknown character set: 'utf7'
+create table t_enum (a set('æ','ae')) charset=utf7mb4 collate=utf8mb4_0900_ai_ci;
+Error 1115 (42000): Unknown character set: 'utf7mb4'
+CREATE TABLE x (a INT) ENGINE = MyISAM;
+CREATE TABLE y (a INT) ENGINE = MyISAM;
+CREATE TABLE z (a INT) ENGINE = MERGE UNION = (x, y);
+Error 8232 (HY000): CREATE/ALTER table with union option is not supported
+ALTER TABLE x UNION = (y);
+Error 8232 (HY000): CREATE/ALTER table with union option is not supported
+drop table x;
+drop table y;
+CREATE TABLE x (a INT) ENGINE = MyISAM;
+CREATE TABLE y (a INT) ENGINE = MyISAM;
+CREATE TABLE z (a INT) ENGINE = MERGE INSERT_METHOD=LAST;
+Error 8233 (HY000): CREATE/ALTER table with insert method option is not supported
+ALTER TABLE x INSERT_METHOD=LAST;
+Error 8233 (HY000): CREATE/ALTER table with insert method option is not supported
+drop table x;
+drop table y;
+drop database test2;
+use ddl__table_modify;
+drop table if exists t;
+create table t(a char(10) not null,b char(20)) shard_row_id_bits=6;
+alter table t pre_split_regions=6;
+Error 8200 (HY000): This type of ALTER TABLE is currently unsupported

@@ -15,8 +15,8 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
-	"github.com/pingcap/tidb/metrics"
-	"github.com/pingcap/tidb/util/codec"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
@@ -94,7 +94,7 @@ func (f *FlushSubscriber) UpdateStoreTopology(ctx context.Context) error {
 
 // Clear clears all the subscriptions.
 func (f *FlushSubscriber) Clear() {
-	log.Info("[log backup flush subscriber] Clearing.")
+	log.Info("Clearing.", zap.String("category", "log backup flush subscriber"))
 	for id := range f.subscriptions {
 		f.removeSubscription(id)
 	}
@@ -115,7 +115,7 @@ func (f *FlushSubscriber) HandleErrors(ctx context.Context) {
 		err := sub.loadError()
 		if err != nil {
 			retry := f.canBeRetried(err)
-			log.Warn("[log backup flush subscriber] Meet error.",
+			log.Warn("Meet error.", zap.String("category", "log backup flush subscriber"),
 				logutil.ShortError(err), zap.Bool("can-retry?", retry), zap.Uint64("store", id))
 			if retry {
 				sub.connect(f.masterCtx, f.dialer)
@@ -211,7 +211,7 @@ func (s *subscription) connect(ctx context.Context, dialer LogBackupService) {
 }
 
 func (s *subscription) doConnect(ctx context.Context, dialer LogBackupService) error {
-	log.Info("[log backup subscription manager] Adding subscription.",
+	log.Info("Adding subscription.", zap.String("category", "log backup subscription manager"),
 		zap.Uint64("store", s.storeID), zap.Uint64("boot", s.storeBootAt))
 	// We should shutdown the background task firstly.
 	// Once it yields some error during shuting down, the error won't be brought to next run.
@@ -228,10 +228,13 @@ func (s *subscription) doConnect(ctx context.Context, dialer LogBackupService) e
 	})
 	if err != nil {
 		cancel()
+		_ = dialer.ClearCache(ctx, s.storeID)
 		return errors.Annotate(err, "failed to subscribe events")
 	}
+	lcx := logutil.ContextWithField(cx, zap.Uint64("store-id", s.storeID),
+		zap.String("category", "log backup flush subscriber"))
 	s.cancel = cancel
-	s.background = spawnJoinable(func() { s.listenOver(cli) })
+	s.background = spawnJoinable(func() { s.listenOver(lcx, cli) })
 	return nil
 }
 
@@ -244,15 +247,16 @@ func (s *subscription) close() {
 	// because it is a ever-sharing channel.
 }
 
-func (s *subscription) listenOver(cli eventStream) {
+func (s *subscription) listenOver(ctx context.Context, cli eventStream) {
 	storeID := s.storeID
-	log.Info("[log backup flush subscriber] Listen starting.", zap.Uint64("store", storeID))
+	logutil.CL(ctx).Info("Listen starting.", zap.Uint64("store", storeID))
 	for {
 		// Shall we use RecvMsg for better performance?
 		// Note that the spans.Full requires the input slice be immutable.
 		msg, err := cli.Recv()
 		if err != nil {
-			log.Info("[log backup flush subscriber] Listen stopped.", zap.Uint64("store", storeID), logutil.ShortError(err))
+			logutil.CL(ctx).Info("Listen stopped.",
+				zap.Uint64("store", storeID), logutil.ShortError(err))
 			if err == io.EOF || err == context.Canceled || status.Code(err) == codes.Canceled {
 				return
 			}
@@ -263,13 +267,13 @@ func (s *subscription) listenOver(cli eventStream) {
 		for _, m := range msg.Events {
 			start, err := decodeKey(m.StartKey)
 			if err != nil {
-				log.Warn("start key not encoded, skipping",
+				logutil.CL(ctx).Warn("start key not encoded, skipping",
 					logutil.Key("event", m.StartKey), logutil.ShortError(err))
 				continue
 			}
 			end, err := decodeKey(m.EndKey)
 			if err != nil {
-				log.Warn("end key not encoded, skipping",
+				logutil.CL(ctx).Warn("end key not encoded, skipping",
 					logutil.Key("event", m.EndKey), logutil.ShortError(err))
 				continue
 			}
@@ -293,7 +297,8 @@ func (f *FlushSubscriber) addSubscription(ctx context.Context, toStore Store) {
 func (f *FlushSubscriber) removeSubscription(toStore uint64) {
 	subs, ok := f.subscriptions[toStore]
 	if ok {
-		log.Info("[log backup subscription manager] Removing subscription.", zap.Uint64("store", toStore))
+		log.Info("Removing subscription.", zap.String("category", "log backup subscription manager"),
+			zap.Uint64("store", toStore))
 		subs.close()
 		delete(f.subscriptions, toStore)
 	}

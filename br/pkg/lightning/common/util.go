@@ -36,14 +36,14 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/errno"
-	"github.com/pingcap/tidb/parser/model"
-	tmysql "github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
-	"github.com/pingcap/tidb/table/tables"
-	"github.com/pingcap/tidb/types"
-	"github.com/pingcap/tidb/util/codec"
-	"github.com/pingcap/tidb/util/format"
+	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/format"
 	"go.uber.org/zap"
 )
 
@@ -313,6 +313,26 @@ func UniqueTable(schema string, table string) string {
 	return builder.String()
 }
 
+func escapeIdentifiers(identifier []string) []any {
+	escaped := make([]any, len(identifier))
+	for i, id := range identifier {
+		escaped[i] = EscapeIdentifier(id)
+	}
+	return escaped
+}
+
+// SprintfWithIdentifiers escapes the identifiers and sprintf them. The input
+// identifiers must not be escaped.
+func SprintfWithIdentifiers(format string, identifiers ...string) string {
+	return fmt.Sprintf(format, escapeIdentifiers(identifiers)...)
+}
+
+// FprintfWithIdentifiers escapes the identifiers and fprintf them. The input
+// identifiers must not be escaped.
+func FprintfWithIdentifiers(w io.Writer, format string, identifiers ...string) (int, error) {
+	return fmt.Fprintf(w, format, escapeIdentifiers(identifiers)...)
+}
+
 // EscapeIdentifier quote and escape an sql identifier
 func EscapeIdentifier(identifier string) string {
 	var builder strings.Builder
@@ -525,11 +545,11 @@ loop:
 }
 
 // BuildDropIndexSQL builds the SQL statement to drop index.
-func BuildDropIndexSQL(tableName string, idxInfo *model.IndexInfo) string {
+func BuildDropIndexSQL(dbName, tableName string, idxInfo *model.IndexInfo) string {
 	if idxInfo.Primary {
-		return fmt.Sprintf("ALTER TABLE %s DROP PRIMARY KEY", tableName)
+		return SprintfWithIdentifiers("ALTER TABLE %s.%s DROP PRIMARY KEY", dbName, tableName)
 	}
-	return fmt.Sprintf("ALTER TABLE %s DROP INDEX %s", tableName, EscapeIdentifier(idxInfo.Name.O))
+	return SprintfWithIdentifiers("ALTER TABLE %s.%s DROP INDEX %s", dbName, tableName, idxInfo.Name.O)
 }
 
 // BuildAddIndexSQL builds the SQL statement to create missing indexes.
@@ -616,6 +636,11 @@ func GetBackoffWeightFromDB(ctx context.Context, db *sql.DB) (int, error) {
 	return strconv.Atoi(val)
 }
 
+// GetExplicitRequestSourceTypeFromDB gets the explicit request source type from database.
+func GetExplicitRequestSourceTypeFromDB(ctx context.Context, db *sql.DB) (string, error) {
+	return getSessionVariable(ctx, db, variable.TiDBExplicitRequestSourceType)
+}
+
 // copy from dbutil to avoid import cycle
 func getSessionVariable(ctx context.Context, db *sql.DB, variable string) (value string, err error) {
 	query := fmt.Sprintf("SHOW VARIABLES LIKE '%s'", variable)
@@ -647,4 +672,36 @@ func getSessionVariable(ctx context.Context, db *sql.DB, variable string) (value
 	}
 
 	return value, nil
+}
+
+// IsFunctionNotExistErr checks if err is a function not exist error.
+func IsFunctionNotExistErr(err error, functionName string) bool {
+	return err != nil &&
+		(strings.Contains(err.Error(), "No database selected") ||
+			strings.Contains(err.Error(), fmt.Sprintf("%s does not exist", functionName)))
+}
+
+// IsRaftKV2 checks whether the raft-kv2 is enabled
+func IsRaftKV2(ctx context.Context, db *sql.DB) (bool, error) {
+	var (
+		getRaftKvVersionSQL       = "show config where type = 'tikv' and name = 'storage.engine'"
+		raftKv2                   = "raft-kv2"
+		tp, instance, name, value string
+	)
+
+	rows, err := db.QueryContext(ctx, getRaftKvVersionSQL)
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		if err = rows.Scan(&tp, &instance, &name, &value); err != nil {
+			return false, errors.Trace(err)
+		}
+		if value == raftKv2 {
+			return true, nil
+		}
+	}
+	return false, rows.Err()
 }

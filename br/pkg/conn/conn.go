@@ -27,9 +27,9 @@ import (
 	"github.com/pingcap/tidb/br/pkg/pdutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/config"
-	"github.com/pingcap/tidb/domain"
-	"github.com/pingcap/tidb/kv"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
@@ -71,7 +71,7 @@ type Mgr struct {
 }
 
 func GetAllTiKVStoresWithRetry(ctx context.Context,
-	pdClient pd.Client,
+	pdClient util.StoreMeta,
 	storeBehavior util.StoreBehavior,
 ) ([]*metapb.Store, error) {
 	stores := make([]*metapb.Store, 0)
@@ -243,6 +243,11 @@ func (mgr *Mgr) GetStorage() kv.Storage {
 // GetTLSConfig returns the tls config.
 func (mgr *Mgr) GetTLSConfig() *tls.Config {
 	return mgr.StoreManager.TLSConfig()
+}
+
+// GetStore gets the tikvStore.
+func (mgr *Mgr) GetStore() tikv.Storage {
+	return mgr.tikvStore
 }
 
 // GetLockResolver gets the LockResolver.

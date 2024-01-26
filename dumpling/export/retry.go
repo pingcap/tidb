@@ -10,7 +10,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
-	"github.com/pingcap/tidb/util/dbutil"
+	"github.com/pingcap/tidb/pkg/util/dbutil"
 	"go.uber.org/zap"
 )
 

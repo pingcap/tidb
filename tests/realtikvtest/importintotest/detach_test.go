@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/executor"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,7 +44,7 @@ func (s *mockGCSSuite) TestSameBehaviourDetachedOrNot() {
 		executor.TestDetachedTaskFinished.Store(false)
 	})
 
-	s.enableFailpoint("github.com/pingcap/tidb/executor/testDetachedTaskFinished", "return(true)")
+	s.enableFailpoint("github.com/pingcap/tidb/pkg/executor/testDetachedTaskFinished", "return(true)")
 	s.tk.MustExec("SET SESSION TIME_ZONE = '+08:00';")
 	for _, ca := range detachedCases {
 		s.tk.MustExec("DROP DATABASE IF EXISTS test_detached;")
@@ -67,7 +67,7 @@ func (s *mockGCSSuite) TestSameBehaviourDetachedOrNot() {
 		require.Len(s.T(), rows, 1)
 		require.Eventually(s.T(), func() bool {
 			return executor.TestDetachedTaskFinished.Load()
-		}, 10*time.Second, time.Second)
+		}, maxWaitTime, time.Second)
 
 		r1 := s.tk.MustQuery("SELECT * FROM test_detached.t1").Sort().Rows()
 		s.tk.MustQuery("SELECT * FROM test_detached.t2").Sort().Check(r1)

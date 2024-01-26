@@ -265,7 +265,7 @@ func (r *CheckpointRunner[K, V]) WaitForFinish(ctx context.Context, flush bool) 
 		case r.doneCh <- flush:
 
 		default:
-			log.Warn("[checkpoint] not the first close the checkpoint runner")
+			log.Warn("not the first close the checkpoint runner", zap.String("category", "checkpoint"))
 		}
 	}
 	// wait the range flusher exit
@@ -373,7 +373,7 @@ func (r *CheckpointRunner[K, V]) startCheckpointFlushLoop(ctx context.Context, w
 func (r *CheckpointRunner[K, V]) sendError(err error) {
 	select {
 	case r.errCh <- err:
-		log.Error("[checkpoint] send the error", zap.Error(err))
+		log.Error("send the error", zap.String("category", "checkpoint"), zap.Error(err))
 		r.errLock.Lock()
 		r.err = err
 		r.errLock.Unlock()

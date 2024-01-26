@@ -1,0 +1,247 @@
+[
+  {
+    "Name": "TestFixControl",
+    "Cases": [
+      {
+        "SQL": "set @@tidb_opt_fix_control = \"1000:'on', 10000:1\"",
+        "FixControl": {
+          "1000": {
+            "ValueInMap": "on",
+            "GetStr": "on",
+            "GetBool": true,
+            "GetInt": 12345,
+            "GetFloat": 1234.5
+          },
+          "10000": {
+            "ValueInMap": "1",
+            "GetStr": "1",
+            "GetBool": true,
+            "GetInt": 1,
+            "GetFloat": 1
+          }
+        },
+        "Error": "",
+        "Warnings": [],
+        "Variable": [
+          "1000:'on', 10000:1"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_fix_control = \"100:'on', 100:1\"",
+        "FixControl": {
+          "100": {
+            "ValueInMap": "1",
+            "GetStr": "1",
+            "GetBool": true,
+            "GetInt": 1,
+            "GetFloat": 1
+          }
+        },
+        "Error": "",
+        "Warnings": [
+          [
+            "Warning",
+            "1105",
+            "repeated assignment for fix control: 100. existing value: \"on\". new value: \"1\"."
+          ]
+        ],
+        "Variable": [
+          "100:'on', 100:1"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_fix_control = \"100:2,100:2\"",
+        "FixControl": {
+          "100": {
+            "ValueInMap": "2",
+            "GetStr": "2",
+            "GetBool": false,
+            "GetInt": 2,
+            "GetFloat": 2
+          }
+        },
+        "Error": "",
+        "Warnings": [],
+        "Variable": [
+          "100:2,100:2"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_fix_control = \"  111 : 'test1'  ,\"",
+        "FixControl": {
+          "111": {
+            "ValueInMap": "test1",
+            "GetStr": "test1",
+            "GetBool": false,
+            "GetInt": 12345,
+            "GetFloat": 1234.5
+          }
+        },
+        "Error": "",
+        "Warnings": [],
+        "Variable": [
+          "  111 : 'test1'  ,"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_fix_control = '  4321 : \\'55.5\\'  , '",
+        "FixControl": {
+          "4321": {
+            "ValueInMap": "55.5",
+            "GetStr": "55.5",
+            "GetBool": false,
+            "GetInt": 12345,
+            "GetFloat": 55.5
+          }
+        },
+        "Error": "",
+        "Warnings": [],
+        "Variable": [
+          "  4321 : '55.5'  , "
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_fix_control = '  4321 : \\'55.5\\'  '",
+        "FixControl": {
+          "4321": {
+            "ValueInMap": "55.5",
+            "GetStr": "55.5",
+            "GetBool": false,
+            "GetInt": 12345,
+            "GetFloat": 55.5
+          }
+        },
+        "Error": "",
+        "Warnings": [],
+        "Variable": [
+          "  4321 : '55.5'  "
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_fix_control = '  5000 : 55.5  , '",
+        "FixControl": {
+          "5000": {
+            "ValueInMap": "55.5",
+            "GetStr": "55.5",
+            "GetBool": false,
+            "GetInt": 12345,
+            "GetFloat": 55.5
+          }
+        },
+        "Error": "",
+        "Warnings": [],
+        "Variable": [
+          "  5000 : 55.5  , "
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_fix_control = '  5000 : 55.5  , 2000: \\'-10\\',100:5000 ,'",
+        "FixControl": {
+          "100": {
+            "ValueInMap": "5000",
+            "GetStr": "5000",
+            "GetBool": false,
+            "GetInt": 5000,
+            "GetFloat": 5000
+          },
+          "2000": {
+            "ValueInMap": "-10",
+            "GetStr": "-10",
+            "GetBool": false,
+            "GetInt": -10,
+            "GetFloat": -10
+          },
+          "5000": {
+            "ValueInMap": "55.5",
+            "GetStr": "55.5",
+            "GetBool": false,
+            "GetInt": 12345,
+            "GetFloat": 55.5
+          }
+        },
+        "Error": "",
+        "Warnings": [],
+        "Variable": [
+          "  5000 : 55.5  , 2000: '-10',100:5000 ,"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_fix_control = \"  2000 : 'test1'  ,\"",
+        "FixControl": {
+          "2000": {
+            "ValueInMap": "test1",
+            "GetStr": "test1",
+            "GetBool": false,
+            "GetInt": 12345,
+            "GetFloat": 1234.5
+          }
+        },
+        "Error": "",
+        "Warnings": [],
+        "Variable": [
+          "  2000 : 'test1'  ,"
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_fix_control = \"  1.5 : 'test1'\"",
+        "FixControl": {},
+        "Error": "strconv.ParseUint: parsing \"1.5\": invalid syntax",
+        "Warnings": [
+          [
+            "Error",
+            "1105",
+            "strconv.ParseUint: parsing \"1.5\": invalid syntax"
+          ]
+        ],
+        "Variable": [
+          ""
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_fix_control = \"-1: 'test1' \"",
+        "FixControl": {},
+        "Error": "strconv.ParseUint: parsing \"-1\": invalid syntax",
+        "Warnings": [
+          [
+            "Error",
+            "1105",
+            "strconv.ParseUint: parsing \"-1\": invalid syntax"
+          ]
+        ],
+        "Variable": [
+          ""
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_fix_control = \"  2000 : 'test1\"",
+        "FixControl": {},
+        "Error": "invalid fix control: expected quote not found",
+        "Warnings": [
+          [
+            "Error",
+            "1105",
+            "invalid fix control: expected quote not found"
+          ]
+        ],
+        "Variable": [
+          ""
+        ]
+      },
+      {
+        "SQL": "set @@tidb_opt_fix_control = \"100, 100\"",
+        "FixControl": {},
+        "Error": "invalid fix control: expected colon not found",
+        "Warnings": [
+          [
+            "Error",
+            "1105",
+            "invalid fix control: expected colon not found"
+          ]
+        ],
+        "Variable": [
+          ""
+        ]
+      }
+    ]
+  }
+]

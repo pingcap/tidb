@@ -25,7 +25,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/golang/mock/gomock"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
@@ -41,16 +40,17 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/worker"
 	"github.com/pingcap/tidb/br/pkg/mock"
 	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/parser/mysql"
-	"github.com/pingcap/tidb/types"
-	tmock "github.com/pingcap/tidb/util/mock"
-	filter "github.com/pingcap/tidb/util/table-filter"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
+	tmock "github.com/pingcap/tidb/pkg/util/mock"
+	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+	"go.uber.org/mock/gomock"
 )
 
 type chunkRestoreSuite struct {
@@ -425,7 +425,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopDeliverLimit() {
 	require.NoError(s.T(), err)
 	cfg := config.NewConfig()
 
-	reader, err := store.Open(ctx, fileName)
+	reader, err := store.Open(ctx, fileName, nil)
 	require.NoError(s.T(), err)
 	w := worker.NewPool(ctx, 1, "io")
 	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, false, nil)
@@ -504,7 +504,7 @@ func (s *chunkRestoreSuite) TestEncodeLoopColumnsMismatch() {
 	errorMgr := errormanager.New(nil, cfg, logger)
 	rc := &Controller{pauser: DeliverPauser, cfg: cfg, errorMgr: errorMgr}
 
-	reader, err := store.Open(ctx, fileName)
+	reader, err := store.Open(ctx, fileName, nil)
 	require.NoError(s.T(), err)
 	w := worker.NewPool(ctx, 5, "io")
 	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, false, nil)
@@ -603,7 +603,7 @@ func (s *chunkRestoreSuite) testEncodeLoopIgnoreColumnsCSV(
 	cfg.Mydumper.CSV.Header = header
 	rc := &Controller{pauser: DeliverPauser, cfg: cfg}
 
-	reader, err := store.Open(ctx, fileName)
+	reader, err := store.Open(ctx, fileName, nil)
 	require.NoError(s.T(), err)
 	w := worker.NewPool(ctx, 5, "io")
 	p, err := mydump.NewCSVParser(ctx, &cfg.Mydumper.CSV, reader, 111, w, cfg.Mydumper.CSV.Header, nil)

@@ -1,5 +1,5 @@
 [tikv-importer]
-store-write-bwlimit = "1Mi"
+store-write-bwlimit = "1MiB"
 
 [mydumper.csv]
 header = false

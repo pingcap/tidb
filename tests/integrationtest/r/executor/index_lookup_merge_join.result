@@ -1,0 +1,229 @@
+drop table if exists t;
+CREATE TABLE `t` (`col_tinyint_key_signed` tinyint(4) DEFAULT NULL,`col_year_key_signed` year(4) DEFAULT NULL,KEY `col_tinyint_key_signed` (`col_tinyint_key_signed`),KEY `col_year_key_signed` (`col_year_key_signed`) ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
+insert into t values(-100,NULL);
+select /*+ inl_merge_join(t1, t2) */ count(*) from t t1 right join t t2 on t1. `col_year_key_signed` = t2. `col_tinyint_key_signed`;
+count(*)
+1
+drop table if exists t1, t2;
+create table t1(a int, b int, c int, d int, primary key(a,b,c));
+create table t2(a int, b int, c int, d int, primary key(a,b,c));
+insert into t1 values(1,1,1,1),(2,2,2,2),(3,3,3,3);
+insert into t2 values(1,1,1,1),(2,2,2,2);
+explain format = 'brief' select /*+ inl_merge_join(t1,t2) */ * from t1 left join t2 on t1.a = t2.a and t1.c = t2.c and t1.b = t2.b order by t1.a desc;
+id	estRows	task	access object	operator info
+IndexMergeJoin	100000000.00	root		left outer join, inner:Projection, outer key:executor__index_lookup_merge_join.t1.a, executor__index_lookup_merge_join.t1.c, executor__index_lookup_merge_join.t1.b, inner key:executor__index_lookup_merge_join.t2.a, executor__index_lookup_merge_join.t2.c, executor__index_lookup_merge_join.t2.b
+├─Projection(Build)	10000.00	root		executor__index_lookup_merge_join.t1.a, executor__index_lookup_merge_join.t1.b, executor__index_lookup_merge_join.t1.c, executor__index_lookup_merge_join.t1.d
+│ └─IndexLookUp	10000.00	root		
+│   ├─IndexFullScan(Build)	10000.00	cop[tikv]	table:t1, index:PRIMARY(a, b, c)	keep order:true, desc, stats:pseudo
+│   └─TableRowIDScan(Probe)	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+└─Projection(Probe)	10000.00	root		executor__index_lookup_merge_join.t2.a, executor__index_lookup_merge_join.t2.b, executor__index_lookup_merge_join.t2.c, executor__index_lookup_merge_join.t2.d
+  └─IndexLookUp	10000.00	root		
+    ├─IndexRangeScan(Build)	10000.00	cop[tikv]	table:t2, index:PRIMARY(a, b, c)	range: decided by [eq(executor__index_lookup_merge_join.t2.a, executor__index_lookup_merge_join.t1.a) eq(executor__index_lookup_merge_join.t2.b, executor__index_lookup_merge_join.t1.b) eq(executor__index_lookup_merge_join.t2.c, executor__index_lookup_merge_join.t1.c)], keep order:true, desc, stats:pseudo
+    └─TableRowIDScan(Probe)	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+select /*+ inl_merge_join(t1,t2) */ * from t1 left join t2 on t1.a = t2.a and t1.c = t2.c and t1.b = t2.b order by t1.a desc;
+a	b	c	d	a	b	c	d
+3	3	3	3	NULL	NULL	NULL	NULL
+2	2	2	2	2	2	2	2
+1	1	1	1	1	1	1	1
+drop table if exists t1, t2;
+create table t1  (c_int int, primary key(c_int));
+create table t2  (c_int int, unique key (c_int)) partition by hash (c_int) partitions 4;
+insert into t1 values (1), (2), (3), (4), (5);
+insert into t2 select * from t1;
+begin;
+delete from t1 where c_int = 1;
+select /*+ INL_MERGE_JOIN(t1,t2) */ * from t1, t2 where t1.c_int = t2.c_int;
+c_int	c_int
+2	2
+3	3
+4	4
+5	5
+select /*+ INL_JOIN(t1,t2) */ * from t1, t2 where t1.c_int = t2.c_int;
+c_int	c_int
+2	2
+3	3
+4	4
+5	5
+select /*+ INL_HASH_JOIN(t1,t2) */ * from t1, t2 where t1.c_int = t2.c_int;
+c_int	c_int
+2	2
+3	3
+4	4
+5	5
+commit;
+drop table if exists t1, t2;
+create table t1 (id bigint(20) unsigned, primary key(id));
+create table t2 (id bigint(20) unsigned);
+insert into t1 values (8738875760185212610);
+insert into t1 values (9814441339970117597);
+insert into t2 values (8738875760185212610);
+insert into t2 values (9814441339970117597);
+select /*+ INL_MERGE_JOIN(t1, t2) */ * from t2 left join t1 on t1.id = t2.id order by t1.id;
+id	id
+8738875760185212610	8738875760185212610
+9814441339970117597	9814441339970117597
+set @@tidb_opt_advanced_join_hint=0;
+set @@tidb_partition_prune_mode= 'static';
+drop table if exists t1, t2;
+create table t1  (c_int int, c_str varchar(40), primary key (c_int) ) partition by range (c_int) ( partition p0 values less than (10), partition p1 values less than maxvalue );
+create table t2  (c_int int, c_str varchar(40), primary key (c_int) ) partition by range (c_int) ( partition p0 values less than (10), partition p1 values less than maxvalue );
+insert into t1 values (1, 'Alice');
+insert into t2 values (1, 'Bob');
+analyze table t1, t2;
+select /*+ INL_MERGE_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
+c_int	c_str	c_int	c_str
+1	Alice	1	Bob
+explain format = 'brief' select /*+ INL_MERGE_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
+id	estRows	task	access object	operator info
+HashJoin	1.25	root		inner join, equal:[eq(executor__index_lookup_merge_join.t1.c_int, executor__index_lookup_merge_join.t2.c_int)], other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
+├─TableReader(Build)	1.00	root		data:Selection
+│ └─Selection	1.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t2.c_str))
+│   └─TableFullScan	1.00	cop[tikv]	table:t2, partition:p0	keep order:false
+└─PartitionUnion(Probe)	9991.00	root		
+  ├─TableReader	1.00	root		data:Selection
+  │ └─Selection	1.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t1.c_str))
+  │   └─TableFullScan	1.00	cop[tikv]	table:t1, partition:p0	keep order:false
+  └─TableReader	9990.00	root		data:Selection
+    └─Selection	9990.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t1.c_str))
+      └─TableFullScan	10000.00	cop[tikv]	table:t1, partition:p1	keep order:false, stats:pseudo
+show warnings;
+Level	Code	Message
+Warning	1815	Optimizer Hint /*+ INL_MERGE_JOIN(t1, t2) */ is inapplicable
+select /*+ INL_HASH_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
+c_int	c_str	c_int	c_str
+1	Alice	1	Bob
+explain format = 'brief' select /*+ INL_HASH_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
+id	estRows	task	access object	operator info
+IndexHashJoin	1.25	root		inner join, inner:TableReader, outer key:executor__index_lookup_merge_join.t1.c_int, inner key:executor__index_lookup_merge_join.t2.c_int, equal cond:eq(executor__index_lookup_merge_join.t1.c_int, executor__index_lookup_merge_join.t2.c_int), other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
+├─PartitionUnion(Build)	9991.00	root		
+│ ├─TableReader	1.00	root		data:Selection
+│ │ └─Selection	1.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t1.c_str))
+│ │   └─TableFullScan	1.00	cop[tikv]	table:t1, partition:p0	keep order:false
+│ └─TableReader	9990.00	root		data:Selection
+│   └─Selection	9990.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t1.c_str))
+│     └─TableFullScan	10000.00	cop[tikv]	table:t1, partition:p1	keep order:false, stats:pseudo
+└─TableReader(Probe)	1.25	root		data:Selection
+  └─Selection	1.25	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t2.c_str))
+    └─TableRangeScan	1.25	cop[tikv]	table:t2, partition:p0	range: decided by [executor__index_lookup_merge_join.t1.c_int], keep order:false
+select /*+ INL_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
+c_int	c_str	c_int	c_str
+1	Alice	1	Bob
+explain format = 'brief' select /*+ INL_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
+id	estRows	task	access object	operator info
+IndexJoin	1.25	root		inner join, inner:TableReader, outer key:executor__index_lookup_merge_join.t1.c_int, inner key:executor__index_lookup_merge_join.t2.c_int, equal cond:eq(executor__index_lookup_merge_join.t1.c_int, executor__index_lookup_merge_join.t2.c_int), other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
+├─PartitionUnion(Build)	9991.00	root		
+│ ├─TableReader	1.00	root		data:Selection
+│ │ └─Selection	1.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t1.c_str))
+│ │   └─TableFullScan	1.00	cop[tikv]	table:t1, partition:p0	keep order:false
+│ └─TableReader	9990.00	root		data:Selection
+│   └─Selection	9990.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t1.c_str))
+│     └─TableFullScan	10000.00	cop[tikv]	table:t1, partition:p1	keep order:false, stats:pseudo
+└─TableReader(Probe)	1.25	root		data:Selection
+  └─Selection	1.25	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t2.c_str))
+    └─TableRangeScan	1.25	cop[tikv]	table:t2, partition:p0	range: decided by [executor__index_lookup_merge_join.t1.c_int], keep order:false
+set @@tidb_partition_prune_mode= 'dynamic';
+drop table if exists t1, t2;
+create table t1  (c_int int, c_str varchar(40), primary key (c_int) ) partition by range (c_int) ( partition p0 values less than (10), partition p1 values less than maxvalue );
+create table t2  (c_int int, c_str varchar(40), primary key (c_int) ) partition by range (c_int) ( partition p0 values less than (10), partition p1 values less than maxvalue );
+insert into t1 values (1, 'Alice');
+insert into t2 values (1, 'Bob');
+analyze table t1, t2;
+select /*+ INL_MERGE_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
+c_int	c_str	c_int	c_str
+1	Alice	1	Bob
+explain format = 'brief' select /*+ INL_MERGE_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
+id	estRows	task	access object	operator info
+MergeJoin	1.00	root		inner join, left key:executor__index_lookup_merge_join.t1.c_int, right key:executor__index_lookup_merge_join.t2.c_int, other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
+├─TableReader(Build)	1.00	root	partition:p0	data:Selection
+│ └─Selection	1.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t2.c_str))
+│   └─TableFullScan	1.00	cop[tikv]	table:t2	keep order:true
+└─TableReader(Probe)	1.00	root	partition:all	data:Selection
+  └─Selection	1.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t1.c_str))
+    └─TableFullScan	1.00	cop[tikv]	table:t1	keep order:true
+show warnings;
+Level	Code	Message
+Warning	1815	Optimizer Hint /*+ INL_MERGE_JOIN(t1, t2) */ is inapplicable
+select /*+ INL_HASH_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
+c_int	c_str	c_int	c_str
+1	Alice	1	Bob
+explain format = 'brief' select /*+ INL_HASH_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
+id	estRows	task	access object	operator info
+IndexHashJoin	1.00	root		inner join, inner:TableReader, outer key:executor__index_lookup_merge_join.t2.c_int, inner key:executor__index_lookup_merge_join.t1.c_int, equal cond:eq(executor__index_lookup_merge_join.t2.c_int, executor__index_lookup_merge_join.t1.c_int), other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
+├─TableReader(Build)	1.00	root	partition:p0	data:Selection
+│ └─Selection	1.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t2.c_str))
+│   └─TableFullScan	1.00	cop[tikv]	table:t2	keep order:false
+└─TableReader(Probe)	1.00	root	partition:all	data:Selection
+  └─Selection	1.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t1.c_str))
+    └─TableRangeScan	1.00	cop[tikv]	table:t1	range: decided by [executor__index_lookup_merge_join.t2.c_int], keep order:false
+select /*+ INL_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
+c_int	c_str	c_int	c_str
+1	Alice	1	Bob
+explain format = 'brief' select /*+ INL_JOIN(t1,t2) */ * from t1 join t2 partition(p0) on t1.c_int = t2.c_int and t1.c_str < t2.c_str;
+id	estRows	task	access object	operator info
+IndexJoin	1.00	root		inner join, inner:TableReader, outer key:executor__index_lookup_merge_join.t2.c_int, inner key:executor__index_lookup_merge_join.t1.c_int, equal cond:eq(executor__index_lookup_merge_join.t2.c_int, executor__index_lookup_merge_join.t1.c_int), other cond:lt(executor__index_lookup_merge_join.t1.c_str, executor__index_lookup_merge_join.t2.c_str)
+├─TableReader(Build)	1.00	root	partition:p0	data:Selection
+│ └─Selection	1.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t2.c_str))
+│   └─TableFullScan	1.00	cop[tikv]	table:t2	keep order:false
+└─TableReader(Probe)	1.00	root	partition:all	data:Selection
+  └─Selection	1.00	cop[tikv]		not(isnull(executor__index_lookup_merge_join.t1.c_str))
+    └─TableRangeScan	1.00	cop[tikv]	table:t1	range: decided by [executor__index_lookup_merge_join.t2.c_int], keep order:false
+set @@tidb_opt_advanced_join_hint=DEFAULT;
+set @@tidb_partition_prune_mode= DEFAULT;
+drop table if exists t, s;
+create table s(a int, index(a));
+create table t(a int);
+insert into t values(1);
+select /*+ hash_join(t,s)*/ * from t left join s on t.a=s.a and t.a>1;
+a	a
+1	NULL
+select /*+ inl_merge_join(t,s)*/ * from t left join s on t.a=s.a and t.a>1;
+a	a
+1	NULL
+drop table if exists t1, t2;
+CREATE TABLE `t1` (`id` bigint(20) NOT NULL AUTO_INCREMENT, `t2id` bigint(20) DEFAULT NULL, PRIMARY KEY (`id`), KEY `t2id` (`t2id`));
+INSERT INTO `t1` VALUES (1,NULL);
+CREATE TABLE `t2` (`id` bigint(20) NOT NULL AUTO_INCREMENT, PRIMARY KEY (`id`));
+SELECT /*+ INL_MERGE_JOIN(t1,t2)  */ 1 from t1 left outer join t2 on t1.t2id=t2.id;
+1
+1
+SELECT /*+ HASH_JOIN(t1,t2)  */ 1 from t1 left outer join t2 on t1.t2id=t2.id;
+1
+1
+drop table if exists x;
+CREATE TABLE `x` (  `a` enum('y','b','1','x','0','null') DEFAULT NULL,  KEY `a` (`a`));
+insert into x values("x"),("x"),("b"),("y");
+SELECT /*+ merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t3.a;
+a	a
+b	b
+x	x
+x	x
+x	x
+x	x
+y	y
+SELECT /*+ inl_merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t3.a;
+a	a
+b	b
+x	x
+x	x
+x	x
+x	x
+y	y
+drop table if exists x;
+CREATE TABLE `x` (  `a` set('y','b','1','x','0','null') DEFAULT NULL,  KEY `a` (`a`));
+insert into x values("x"),("x"),("b"),("y");
+SELECT /*+ merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t3.a;
+a	a
+b	b
+x	x
+x	x
+x	x
+x	x
+y	y
+SELECT /*+ inl_merge_join (t2,t3) */ t2.a,t3.a FROM x t2 inner join x t3 on t2.a = t3.a;
+a	a
+b	b
+x	x
+x	x
+x	x
+x	x
+y	y

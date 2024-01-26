@@ -16,15 +16,15 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
-	"github.com/pingcap/tidb/ddl"
-	"github.com/pingcap/tidb/kv"
-	"github.com/pingcap/tidb/meta"
-	"github.com/pingcap/tidb/meta/autoid"
-	"github.com/pingcap/tidb/parser"
-	"github.com/pingcap/tidb/parser/ast"
-	"github.com/pingcap/tidb/parser/model"
-	"github.com/pingcap/tidb/store/mockstore"
-	tmock "github.com/pingcap/tidb/util/mock"
+	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta"
+	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
+	tmock "github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -35,43 +35,45 @@ type metaMgrSuite struct {
 	checksumMgr *testChecksumMgr
 }
 
-func newTableRestore(t *testing.T, kvStore kv.Storage) *TableImporter {
+func newTableRestore(t *testing.T,
+	db, table string,
+	dbID, tableID int64,
+	createTableSQL string, kvStore kv.Storage,
+) *TableImporter {
 	p := parser.New()
 	se := tmock.NewContext()
 
-	node, err := p.ParseOneStmt("CREATE TABLE `t1` (`c1` varchar(5) NOT NULL)", "utf8mb4", "utf8mb4_bin")
+	node, err := p.ParseOneStmt(createTableSQL, "utf8mb4", "utf8mb4_bin")
 	require.NoError(t, err)
-	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), int64(1))
+	tableInfo, err := ddl.MockTableInfo(se, node.(*ast.CreateTableStmt), tableID)
 	require.NoError(t, err)
 	tableInfo.State = model.StatePublic
 
-	schema := "test"
-	tb := "t1"
 	ti := &checkpoints.TidbTableInfo{
 		ID:   tableInfo.ID,
-		DB:   schema,
-		Name: tb,
+		DB:   db,
+		Name: table,
 		Core: tableInfo,
 	}
 	dbInfo := &checkpoints.TidbDBInfo{
-		ID:   1,
-		Name: schema,
+		ID:   dbID,
+		Name: db,
 		Tables: map[string]*checkpoints.TidbTableInfo{
-			tb: ti,
+			table: ti,
 		},
 	}
 
-	ctx := kv.WithInternalSourceType(context.Background(), "test")
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnLightning)
 	err = kv.RunInNewTxn(ctx, kvStore, false, func(ctx context.Context, txn kv.Transaction) error {
 		m := meta.NewMeta(txn)
-		if err := m.CreateDatabase(&model.DBInfo{ID: dbInfo.ID}); err != nil {
+		if err := m.CreateDatabase(&model.DBInfo{ID: dbInfo.ID}); err != nil && !errors.ErrorEqual(err, meta.ErrDBExists) {
 			return err
 		}
-		return m.CreateTableOrView(dbInfo.ID, ti.Core)
+		return m.CreateTableOrView(dbInfo.ID, db, ti.Core)
 	})
 	require.NoError(t, err)
 
-	tableName := common.UniqueTable(schema, tb)
+	tableName := common.UniqueTable(db, table)
 	logger := log.With(zap.String("table", tableName))
 
 	return &TableImporter{
@@ -93,10 +95,12 @@ func newMetaMgrSuite(t *testing.T) *metaMgrSuite {
 
 	var s metaMgrSuite
 	s.mgr = &dbTableMetaMgr{
-		session:      db,
-		taskID:       1,
-		tr:           newTableRestore(t, kvStore),
-		tableName:    common.UniqueTable("test", TableMetaTableName),
+		session: db,
+		taskID:  1,
+		tr: newTableRestore(t, "test", "t1", 1, 1,
+			"CREATE TABLE `t1` (`c1` varchar(5) NOT NULL)", kvStore),
+		schemaName:   "test",
+		tableName:    TableMetaTableName,
 		needChecksum: true,
 	}
 	s.mockDB = m
@@ -276,7 +280,7 @@ func TestAllocTableRowIDsRetryOnTableInChecksum(t *testing.T) {
 	s.mockDB.ExpectExec("SET SESSION tidb_txn_mode = 'pessimistic';").
 		WillReturnResult(sqlmock.NewResult(int64(0), int64(0)))
 	s.mockDB.ExpectBegin()
-	s.mockDB.ExpectQuery("\\QSELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status from `test`.`table_meta` WHERE table_id = ? FOR UPDATE\\E").
+	s.mockDB.ExpectQuery("\\QSELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status FROM `test`.`table_meta` WHERE table_id = ? FOR UPDATE\\E").
 		WithArgs(int64(1)).
 		WillReturnError(errors.New("mock err"))
 	s.mockDB.ExpectRollback()
@@ -310,6 +314,7 @@ func (s *metaMgrSuite) prepareMock(rowsVal [][]driver.Value, nextRowID *int64, u
 		WillReturnResult(sqlmock.NewResult(int64(0), int64(0)))
 	s.prepareMockInner(rowsVal, nextRowID, updateArgs, checksum, updateStatus, rollback)
 }
+
 func (s *metaMgrSuite) prepareMockInner(rowsVal [][]driver.Value, nextRowID *int64, updateArgs []driver.Value, checksum *verification.KVChecksum, updateStatus *string, rollback bool) {
 	s.mockDB.ExpectBegin()
 
@@ -317,18 +322,18 @@ func (s *metaMgrSuite) prepareMockInner(rowsVal [][]driver.Value, nextRowID *int
 	for _, r := range rowsVal {
 		rows = rows.AddRow(r...)
 	}
-	s.mockDB.ExpectQuery("\\QSELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status from `test`.`table_meta` WHERE table_id = ? FOR UPDATE\\E").
+	s.mockDB.ExpectQuery("\\QSELECT task_id, row_id_base, row_id_max, total_kvs_base, total_bytes_base, checksum_base, status FROM `test`.`table_meta` WHERE table_id = ? FOR UPDATE\\E").
 		WithArgs(int64(1)).
 		WillReturnRows(rows)
 
 	if nextRowID != nil {
-		allocs := autoid.NewAllocatorsFromTblInfo(s.mgr.tr.kvStore, s.mgr.tr.dbInfo.ID, s.mgr.tr.tableInfo.Core)
+		allocs := autoid.NewAllocatorsFromTblInfo(s.mgr.tr, s.mgr.tr.dbInfo.ID, s.mgr.tr.tableInfo.Core)
 		alloc := allocs.Get(autoid.RowIDAllocType)
 		alloc.ForceRebase(*nextRowID - 1)
 	}
 
 	if len(updateArgs) > 0 {
-		s.mockDB.ExpectExec("\\Qupdate `test`.`table_meta` set row_id_base = ?, row_id_max = ?, status = ? where table_id = ? and task_id = ?\\E").
+		s.mockDB.ExpectExec("\\QUPDATE `test`.`table_meta` SET row_id_base = ?, row_id_max = ?, status = ? WHERE table_id = ? AND task_id = ?\\E").
 			WithArgs(updateArgs...).
 			WillReturnResult(sqlmock.NewResult(int64(0), int64(1)))
 	}
@@ -341,7 +346,7 @@ func (s *metaMgrSuite) prepareMockInner(rowsVal [][]driver.Value, nextRowID *int
 	s.mockDB.ExpectCommit()
 
 	if checksum != nil {
-		s.mockDB.ExpectExec("\\Qupdate `test`.`table_meta` set total_kvs_base = ?, total_bytes_base = ?, checksum_base = ?, status = ? where table_id = ? and task_id = ?\\E").
+		s.mockDB.ExpectExec("\\QUPDATE `test`.`table_meta` SET total_kvs_base = ?, total_bytes_base = ?, checksum_base = ?, status = ? WHERE table_id = ? AND task_id = ?\\E").
 			WithArgs(checksum.SumKVS(), checksum.SumSize(), checksum.Sum(), metaStatusRestoreStarted.String(), int64(1), int64(1)).
 			WillReturnResult(sqlmock.NewResult(int64(0), int64(1)))
 		s.checksumMgr.checksum = local.RemoteChecksum{
@@ -352,7 +357,7 @@ func (s *metaMgrSuite) prepareMockInner(rowsVal [][]driver.Value, nextRowID *int
 	}
 
 	if updateStatus != nil {
-		s.mockDB.ExpectExec("\\Qupdate `test`.`table_meta` set status = ? where table_id = ? and task_id = ?\\E").
+		s.mockDB.ExpectExec("\\QUPDATE `test`.`table_meta` SET status = ? WHERE table_id = ? AND task_id = ?\\E").
 			WithArgs(*updateStatus, int64(1), int64(1)).
 			WillReturnResult(sqlmock.NewResult(int64(0), int64(1)))
 	}
@@ -369,9 +374,10 @@ func newTaskMetaMgrSuite(t *testing.T) *taskMetaMgrSuite {
 
 	var s taskMetaMgrSuite
 	s.mgr = &dbTaskMetaMgr{
-		session:   db,
-		taskID:    1,
-		tableName: common.UniqueTable("test", "t1"),
+		session:    db,
+		taskID:     1,
+		tableName:  "t1",
+		schemaName: "test",
 	}
 	s.mockDB = m
 	return &s
@@ -382,7 +388,7 @@ func TestCheckTasksExclusively(t *testing.T) {
 	s.mockDB.ExpectExec("SET SESSION tidb_txn_mode = 'pessimistic';").
 		WillReturnResult(sqlmock.NewResult(int64(0), int64(0)))
 	s.mockDB.ExpectBegin()
-	s.mockDB.ExpectQuery("SELECT task_id, pd_cfgs, status, state, tikv_source_bytes, tiflash_source_bytes, tikv_avail, tiflash_avail from `test`.`t1` FOR UPDATE").
+	s.mockDB.ExpectQuery("SELECT task_id, pd_cfgs, status, state, tikv_source_bytes, tiflash_source_bytes, tikv_avail, tiflash_avail FROM `test`.`t1` FOR UPDATE").
 		WillReturnRows(sqlmock.NewRows([]string{"task_id", "pd_cfgs", "status", "state", "tikv_source_bytes", "tiflash_source_bytes", "tiflash_avail", "tiflash_avail"}).
 			AddRow("0", "", taskMetaStatusInitial.String(), "0", "0", "0", "0", "0").
 			AddRow("1", "", taskMetaStatusInitial.String(), "0", "0", "0", "0", "0").
