@@ -2270,7 +2270,7 @@ func (s *SessionVars) SetStatusFlag(flag uint16, on bool) {
 	if on {
 		for {
 			status := s.status.Load()
-			if status&uint32(flag) > 0 {
+			if status&uint32(flag) == uint32(flag) {
 				break
 			}
 			if s.status.CompareAndSwap(status, status|uint32(flag)) {

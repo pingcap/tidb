@@ -1288,6 +1288,7 @@ func TestTiDBEnableResourceControl(t *testing.T) {
 		}
 	}
 	SetGlobalResourceControl.Store(&setGlobalResourceControlFunc)
+	require.False(t, EnableResourceControl.Load())
 
 	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()
