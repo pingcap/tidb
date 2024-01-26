@@ -29,11 +29,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/manual"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
 	"go.uber.org/zap"
 )
@@ -286,14 +286,20 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	vars.SkipUTF8Check = true
 	vars.StmtCtx.InInsertStmt = true
 	vars.StmtCtx.BatchCheck = true
-	vars.StmtCtx.BadNullAsWarning = !sqlMode.HasStrictMode()
-	vars.StmtCtx.OverflowAsWarning = !sqlMode.HasStrictMode()
-	vars.StmtCtx.AllowInvalidDate = sqlMode.HasAllowInvalidDatesMode()
-	vars.StmtCtx.IgnoreZeroInDate = !sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode()
 	vars.SQLMode = sqlMode
 
-	typeFlags := vars.StmtCtx.TypeFlags().WithTruncateAsWarning(!sqlMode.HasStrictMode())
+	typeFlags := vars.StmtCtx.TypeFlags().
+		WithTruncateAsWarning(!sqlMode.HasStrictMode()).
+		WithIgnoreInvalidDateErr(sqlMode.HasAllowInvalidDatesMode()).
+		WithIgnoreZeroInDate(!sqlMode.HasStrictMode() || sqlMode.HasAllowInvalidDatesMode())
 	vars.StmtCtx.SetTypeFlags(typeFlags)
+
+	errLevels := vars.StmtCtx.ErrLevels()
+	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !sqlMode.HasStrictMode())
+	errLevels[errctx.ErrGroupDividedByZero] =
+		errctx.ResolveErrLevel(!sqlMode.HasErrorForDivisionByZeroMode(), !sqlMode.HasStrictMode())
+	vars.StmtCtx.SetErrLevels(errLevels)
+
 	if options.SysVars != nil {
 		for k, v := range options.SysVars {
 			// since 6.3(current master) tidb checks whether we can set a system variable
@@ -314,9 +320,6 @@ func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 		}
 	}
 	vars.StmtCtx.SetTimeZone(vars.Location())
-	vars.StmtCtx.SetTypeFlags(types.StrictFlags.
-		WithClipNegativeToZero(true),
-	)
 	if err := vars.SetSystemVar("timestamp", strconv.FormatInt(options.Timestamp, 10)); err != nil {
 		logger.Warn("new session: failed to set timestamp",
 			log.ShortError(err))

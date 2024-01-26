@@ -83,6 +83,7 @@ func refine4NeighbourProj(p, childProj *PhysicalProjection) {
 func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	lSchema := p.children[0].Schema()
 	rSchema := p.children[1].Schema()
+	ctx := p.SCtx()
 	for i, fun := range p.EqualConditions {
 		lArg, err := fun.GetArgs()[0].ResolveIndices(lSchema)
 		if err != nil {
@@ -94,7 +95,7 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 			return err
 		}
 		p.RightJoinKeys[i] = rArg.(*expression.Column)
-		p.EqualConditions[i] = expression.NewFunctionInternal(fun.GetCtx(), fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
+		p.EqualConditions[i] = expression.NewFunctionInternal(ctx, fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
 	}
 	for i, fun := range p.NAEqualConditions {
 		lArg, err := fun.GetArgs()[0].ResolveIndices(lSchema)
@@ -107,7 +108,7 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 			return err
 		}
 		p.RightNAJoinKeys[i] = rArg.(*expression.Column)
-		p.NAEqualConditions[i] = expression.NewFunctionInternal(fun.GetCtx(), fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
+		p.NAEqualConditions[i] = expression.NewFunctionInternal(ctx, fun.FuncName.L, fun.GetType(), lArg, rArg).(*expression.ScalarFunction)
 	}
 	for i, expr := range p.LeftConditions {
 		p.LeftConditions[i], err = expr.ResolveIndices(lSchema)
@@ -147,7 +148,7 @@ func (p *PhysicalHashJoin) ResolveIndicesItself() (err error) {
 	//   e.g. The schema of child_0 is [col0, col0, col1]
 	//        ResolveIndices will only resolve all col0 reference of the current plan to the first col0.
 	for i, j := 0, 0; i < colsNeedResolving && j < len(mergedSchema.Columns); {
-		if !p.schema.Columns[i].Equal(nil, mergedSchema.Columns[j]) {
+		if !p.schema.Columns[i].EqualColumn(mergedSchema.Columns[j]) {
 			j++
 			continue
 		}
@@ -233,7 +234,7 @@ func (p *PhysicalMergeJoin) ResolveIndices() (err error) {
 	//   e.g. The schema of child_0 is [col0, col0, col1]
 	//        ResolveIndices will only resolve all col0 reference of the current plan to the first col0.
 	for i, j := 0, 0; i < colsNeedResolving && j < len(mergedSchema.Columns); {
-		if !p.schema.Columns[i].Equal(nil, mergedSchema.Columns[j]) {
+		if !p.schema.Columns[i].EqualColumn(mergedSchema.Columns[j]) {
 			j++
 			continue
 		}
@@ -329,7 +330,7 @@ func (p *PhysicalIndexJoin) ResolveIndices() (err error) {
 	//   e.g. The schema of child_0 is [col0, col0, col1]
 	//        ResolveIndices will only resolve all col0 reference of the current plan to the first col0.
 	for i, j := 0, 0; i < colsNeedResolving && j < len(mergedSchema.Columns); {
-		if !p.schema.Columns[i].Equal(nil, mergedSchema.Columns[j]) {
+		if !p.schema.Columns[i].EqualColumn(mergedSchema.Columns[j]) {
 			j++
 			continue
 		}
@@ -403,7 +404,8 @@ func (p *PhysicalIndexReader) ResolveIndices() (err error) {
 		newCol, err := col.ResolveIndices(p.indexPlan.Schema())
 		if err != nil {
 			// Check if there is duplicate virtual expression column matched.
-			newExprCol, isOK := col.ResolveIndicesByVirtualExpr(p.indexPlan.Schema())
+			sctx := p.SCtx()
+			newExprCol, isOK := col.ResolveIndicesByVirtualExpr(sctx, p.indexPlan.Schema())
 			if isOK {
 				p.OutputColumns[i] = newExprCol.(*expression.Column)
 				continue
@@ -483,7 +485,7 @@ func (p *PhysicalSelection) ResolveIndices() (err error) {
 		p.Conditions[i], err = expr.ResolveIndices(p.children[0].Schema())
 		if err != nil {
 			// Check if there is duplicate virtual expression column matched.
-			newCond, isOk := expr.ResolveIndicesByVirtualExpr(p.children[0].Schema())
+			newCond, isOk := expr.ResolveIndicesByVirtualExpr(p.SCtx(), p.children[0].Schema())
 			if isOk {
 				p.Conditions[i] = newCond
 				continue
@@ -733,7 +735,7 @@ func (p *PhysicalLimit) ResolveIndices() (err error) {
 	//   e.g. The schema of child_0 is [col0, col0, col1]
 	//        ResolveIndices will only resolve all col0 reference of the current plan to the first col0.
 	for i, j := 0, 0; i < p.schema.Len() && j < p.children[0].Schema().Len(); {
-		if !p.schema.Columns[i].Equal(nil, p.children[0].Schema().Columns[j]) {
+		if !p.schema.Columns[i].EqualColumn(p.children[0].Schema().Columns[j]) {
 			j++
 			continue
 		}

@@ -245,6 +245,75 @@ func TestWriteInsertInCsvReturnsError(t *testing.T) {
 	require.Equal(t, float64(0), ReadGauge(m.finishedSizeGauge))
 }
 
+func TestWriteInsertInCsvWithDialect(t *testing.T) {
+	cfg := createMockConfig()
+
+	data := [][]driver.Value{
+		{"1", "male", "bob@mail.com", "020-1234", "blob1"},
+		{"2", "female", "sarah@mail.com", "020-1253", "blob2"},
+		{"3", "male", "john@mail.com", "020-1256", "blob3"},
+		{"4", "female", "sarah@mail.com", "020-1235", "blob4"},
+	}
+	colTypes := []string{"INT", "SET", "VARCHAR", "VARCHAR", "BLOB"}
+	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
+	conf := configForWriteCSV(cfg, true, opt)
+
+	{
+		// test UTF8
+		conf.CsvOutputDialect = CSVDialectDefault
+		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
+		m := newMetrics(conf.PromFactory, conf.Labels)
+		bf := storage.NewBufferWriter()
+		n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
+		require.NoError(t, err)
+		require.Equal(t, uint64(4), n)
+
+		expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\"blob1\"\r\n" +
+			"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"blob2\"\r\n" +
+			"3,\"male\",\"john@mail.com\",\"020-1256\",\"blob3\"\r\n" +
+			"4,\"female\",\"sarah@mail.com\",\"020-1235\",\"blob4\"\r\n"
+		require.Equal(t, expected, bf.String())
+		require.Equal(t, float64(4), ReadGauge(m.finishedRowsGauge))
+		require.Equal(t, float64(185), ReadGauge(m.finishedSizeGauge))
+	}
+	{
+		// test HEX
+		conf.CsvOutputDialect = CSVDialectRedshift
+		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
+		m := newMetrics(conf.PromFactory, conf.Labels)
+		bf := storage.NewBufferWriter()
+		n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
+		require.NoError(t, err)
+		require.Equal(t, uint64(4), n)
+
+		expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\"626c6f6231\"\r\n" +
+			"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"626c6f6232\"\r\n" +
+			"3,\"male\",\"john@mail.com\",\"020-1256\",\"626c6f6233\"\r\n" +
+			"4,\"female\",\"sarah@mail.com\",\"020-1235\",\"626c6f6234\"\r\n"
+		require.Equal(t, expected, bf.String())
+		require.Equal(t, float64(4), ReadGauge(m.finishedRowsGauge))
+		require.Equal(t, float64(205), ReadGauge(m.finishedSizeGauge))
+	}
+	{
+		// test Base64
+		conf.CsvOutputDialect = CSVDialectBigQuery
+		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
+		m := newMetrics(conf.PromFactory, conf.Labels)
+		bf := storage.NewBufferWriter()
+		n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
+		require.NoError(t, err)
+		require.Equal(t, uint64(4), n)
+
+		expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\"YmxvYjE=\"\r\n" +
+			"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"YmxvYjI=\"\r\n" +
+			"3,\"male\",\"john@mail.com\",\"020-1256\",\"YmxvYjM=\"\r\n" +
+			"4,\"female\",\"sarah@mail.com\",\"020-1235\",\"YmxvYjQ=\"\r\n"
+		require.Equal(t, expected, bf.String())
+		require.Equal(t, float64(4), ReadGauge(m.finishedRowsGauge))
+		require.Equal(t, float64(197), ReadGauge(m.finishedSizeGauge))
+	}
+}
+
 func TestSQLDataTypes(t *testing.T) {
 	cfg := createMockConfig()
 

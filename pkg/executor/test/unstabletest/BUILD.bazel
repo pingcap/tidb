@@ -6,15 +6,14 @@ go_test(
     srcs = [
         "main_test.go",
         "memory_test.go",
-        "unstable_test.go",
     ],
     flaky = True,
-    shard_count = 4,
     deps = [
         "//pkg/config",
         "//pkg/meta/autoid",
         "//pkg/testkit",
         "//pkg/util",
+        "//pkg/util/dbterror/exeerrors",
         "//pkg/util/memory",
         "//pkg/util/skip",
         "@com_github_stretchr_testify//require",

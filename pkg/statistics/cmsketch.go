@@ -17,17 +17,14 @@ package statistics
 import (
 	"bytes"
 	"cmp"
-	"container/heap"
 	"fmt"
 	"math"
 	"reflect"
 	"slices"
 	"sort"
 	"strings"
-	"sync/atomic"
 	"time"
 
-	"github.com/bits-and-blooms/bitset"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -39,10 +36,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
-	"go.uber.org/zap"
 )
 
 // topNThreshold is the minimum ratio of the number of topN elements in CMSketch, 10 means 1 / 10 = 10%.
@@ -265,10 +260,15 @@ func (c *CMSketch) SubValue(h1, h2 uint64, count uint64) {
 // QueryValue is used to query the count of specified value.
 func QueryValue(sctx sessionctx.Context, c *CMSketch, t *TopN, val types.Datum) (uint64, error) {
 	var sc *stmtctx.StatementContext
+	tz := time.UTC
 	if sctx != nil {
 		sc = sctx.GetSessionVars().StmtCtx
+		tz = sc.TimeZone()
 	}
-	rawData, err := tablecodec.EncodeValue(sc, nil, val)
+	rawData, err := tablecodec.EncodeValue(tz, nil, val)
+	if sc != nil {
+		err = sc.HandleError(err)
+	}
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -536,6 +536,13 @@ type TopN struct {
 	TopN []TopNMeta
 }
 
+// Scale scales the TopN by the given factor.
+func (c *TopN) Scale(scaleFactor float64) {
+	for i := range c.TopN {
+		c.TopN[i].Count = uint64(float64(c.TopN[i].Count) * scaleFactor)
+	}
+}
+
 // AppendTopN appends a topn into the TopN struct.
 func (c *TopN) AppendTopN(data []byte, count uint64) {
 	if c == nil {
@@ -657,6 +664,9 @@ func (c *TopN) FindTopN(d []byte) int {
 		return -1
 	}
 	if bytes.Compare(c.TopN[len(c.TopN)-1].Encoded, d) < 0 {
+		return -1
+	}
+	if bytes.Compare(c.TopN[0].Encoded, d) > 0 {
 		return -1
 	}
 	idx, match := slices.BinarySearchFunc(c.TopN, d, func(a TopNMeta, b []byte) int {
@@ -799,284 +809,6 @@ func NewTopN(n int) *TopN {
 	return &TopN{TopN: make([]TopNMeta, 0, n)}
 }
 
-type histIter struct {
-	hist             *Histogram
-	totalSubstracted int64
-	curBucketPos     int
-}
-
-// remove removes the value from the histogram. The removed value is always bigger than the previous one.
-func (hi *histIter) remove(v *types.Datum) int64 {
-	for {
-		if hi.curBucketPos >= len(hi.hist.Buckets) {
-			return 0
-		}
-		// The value is smaller than the lower bound. We skip it since the histogram doesn't contain this value.
-		// This situation is not very reasonable :(
-		cmp := chunk.Compare(hi.hist.Bounds.GetRow(hi.curBucketPos*2), 0, v)
-		if cmp > 0 {
-			return 0
-		}
-		cmp = chunk.Compare(hi.hist.Bounds.GetRow(hi.curBucketPos*2+1), 0, v)
-		if cmp < 0 {
-			// This value is bigger than current bucket's upper bound, goto next bucket.
-			hi.hist.Buckets[hi.curBucketPos].Count -= hi.totalSubstracted
-			hi.curBucketPos++
-			continue
-		}
-		if cmp == 0 {
-			// This value is just the upper bound of the bucket. Remove it.
-			ret := hi.hist.Buckets[hi.curBucketPos].Repeat
-			hi.totalSubstracted += ret
-			hi.hist.Buckets[hi.curBucketPos].Repeat = 0
-			hi.hist.Buckets[hi.curBucketPos].Count -= hi.totalSubstracted
-			hi.curBucketPos++
-			return ret
-		}
-		ret := int64(hi.hist.NotNullCount() / float64(hi.hist.NDV))
-		hi.totalSubstracted += ret
-		return ret
-	}
-}
-
-// finish cleans the unfinished substraction.
-func (hi *histIter) finish() {
-	for i := hi.curBucketPos; i < len(hi.hist.Buckets); i++ {
-		hi.hist.Buckets[i].Count -= hi.totalSubstracted
-	}
-}
-
-type heapItem struct {
-	item          *TopNMeta
-	idx           int
-	nextPosInTopN int
-}
-
-type topnHeap []*heapItem
-
-func (h topnHeap) Len() int {
-	return len(h)
-}
-
-func (h topnHeap) Less(i, j int) bool {
-	return bytes.Compare(h[i].item.Encoded, h[j].item.Encoded) < 0
-}
-
-func (h topnHeap) Swap(i, j int) {
-	h[i], h[j] = h[j], h[i]
-}
-
-func (h *topnHeap) Push(x any) {
-	*h = append(*h, x.(*heapItem))
-}
-
-func (h *topnHeap) Pop() any {
-	old := *h
-	n := len(old)
-	x := old[n-1]
-	*h = old[0 : n-1]
-	return x
-}
-
-type topNMeataHeap []TopNMeta
-
-func (h topNMeataHeap) Len() int {
-	return len(h)
-}
-
-func (h topNMeataHeap) Less(i, j int) bool {
-	return bytes.Compare(h[i].Encoded, h[j].Encoded) < 0
-}
-
-func (h topNMeataHeap) Swap(i, j int) {
-	h[i], h[j] = h[j], h[i]
-}
-
-func (h *topNMeataHeap) Push(x any) {
-	*h = append(*h, x.(TopNMeta))
-}
-
-func (h *topNMeataHeap) Pop() any {
-	old := *h
-	n := len(old)
-	x := old[n-1]
-	*h = old[0 : n-1]
-	return x
-}
-
-// MergePartTopN2GlobalTopN is used to merge the partition-level topN to global-level topN.
-// The input parameters:
-//  1. `topNs` are the partition-level topNs to be merged.
-//  2. `n` is the size of the global-level topN. Notice: This value can be 0 and has no default value, we must explicitly specify this value.
-//  3. `hists` are the partition-level histograms. Some values not in topN may be placed in the histogram. We need it here to make the value in the global-level TopN more accurate.
-//
-// The output parameters:
-//  1. `*TopN` is the final global-level topN.
-//  2. `[]TopNMeta` is the left topN value from the partition-level TopNs, but is not placed to global-level TopN. We should put them back to histogram latter.
-//  3. `[]*Histogram` are the partition-level histograms which just delete some values when we merge the global-level topN.
-func MergePartTopN2GlobalTopN(loc *time.Location, version int, topNs []*TopN, n uint32, hists []*Histogram,
-	isIndex bool, killed *uint32) (*TopN, []TopNMeta, []*Histogram, error) {
-	var mergingHeap topnHeap = make([]*heapItem, 0, len(topNs))
-	sumTopN := 0
-	for i, topN := range topNs {
-		if topN.Num() == 0 {
-			continue
-		}
-		sumTopN += topN.Num()
-		heap.Push(&mergingHeap, &heapItem{
-			item:          &topN.TopN[0],
-			idx:           i,
-			nextPosInTopN: 1,
-		})
-	}
-	maxPossibleAdded := make([]int64, len(hists))
-	for i, hist := range hists {
-		curMax := int64(hist.NotNullCount() / float64(hist.NDV))
-		for _, bkt := range hist.Buckets {
-			curMax = max(curMax, bkt.Repeat)
-		}
-		maxPossibleAdded[i] = curMax
-	}
-	logutil.BgLogger().Warn("merging topn", zap.Int("total topn num", sumTopN))
-	if mergingHeap.Len() == 0 {
-		return nil, nil, hists, nil
-	}
-	histIters := make([]histIter, len(hists))
-	for i, hist := range hists {
-		histIters[i].hist = hist
-	}
-	type maintaining struct {
-		item          TopNMeta
-		affectedTopNs *bitset.BitSet
-		cleared       bool
-	}
-	cur := maintaining{
-		affectedTopNs: bitset.New(uint(len(hists))),
-		cleared:       true,
-	}
-	mergedTopNs := make([]TopNMeta, 0, n)
-	step := int64(0)
-	histRemoveCnt := int64(0)
-	var finalTopNs topNMeataHeap = make([]TopNMeta, 0, n+1)
-	remainedTopNs := make([]TopNMeta, 0, n)
-	skipCount := 0
-	affectedHist := make([]int, 0, len(hists))
-	for {
-		if atomic.LoadUint32(killed) == 1 {
-			return nil, nil, nil, errors.Trace(ErrQueryInterrupted)
-		}
-		if mergingHeap.Len() == 0 {
-			break
-		}
-		step++
-		head := mergingHeap[0]
-		headTopN := head.item
-		if step%1000000 == 1 {
-			logutil.BgLogger().Warn("merging topn", zap.Int64("dealing with the %d-th topn", step), zap.String("info", fmt.Sprintf("topn is from partition %d, position: %d", head.idx, head.nextPosInTopN-1)))
-		}
-		if head.nextPosInTopN < topNs[head.idx].Num() {
-			head.item = &topNs[head.idx].TopN[head.nextPosInTopN]
-			head.nextPosInTopN++
-			heap.Fix(&mergingHeap, 0)
-		} else {
-			heap.Pop(&mergingHeap)
-		}
-		// The maintained one is cleared before. Set it and goto next round.
-		if cur.cleared {
-			cur.item.Encoded = headTopN.Encoded
-			cur.item.Count = headTopN.Count
-			cur.affectedTopNs.Set(uint(head.idx))
-			cur.cleared = false
-			continue
-		}
-		cmp := bytes.Compare(cur.item.Encoded, headTopN.Encoded)
-		cnt := headTopN.Count
-		metaHeapInit := false
-		// The heap's head move forward.
-		if cmp < 0 {
-			// Initializing the datum.
-			d, err := topNMetaValToDatum(cur.item.Encoded, hists[0].Tp.GetType(), isIndex, loc)
-			if err != nil {
-				return nil, nil, hists, err
-			}
-			affectedHist = affectedHist[:0]
-			// The following codes might accesss the NextClear loop twice. Record it here for saving CPU.
-			for histPos, found := cur.affectedTopNs.NextClear(0); found; histPos, found = cur.affectedTopNs.NextClear(histPos + 1) {
-				affectedHist = append(affectedHist, int(histPos))
-			}
-			// Hacking skip.
-			if uint32(len(finalTopNs)) >= n {
-				maxPossible := int64(0)
-				for _, histPos := range affectedHist {
-					maxPossible += maxPossibleAdded[histPos]
-				}
-				// The maximum possible added value still cannot make it replace the smallest topn.
-				if maxPossible+int64(cur.item.Count) < int64(finalTopNs[0].Count) {
-					skipCount++
-					remainedTopNs = append(remainedTopNs, TopNMeta{Encoded: cur.item.Encoded, Count: cur.item.Count})
-					cur.cleared = true
-					cur.affectedTopNs.ClearAll()
-					continue
-				}
-			}
-			for _, histPos := range affectedHist {
-				histRemoveCnt++
-				if histRemoveCnt%1000000 == 1 {
-					logutil.BgLogger().Warn("merging topn", zap.String("current hist pos for removing each 1w step", fmt.Sprintf("hist is from partition %d, bucket position %d", histPos, histIters[histPos].curBucketPos)))
-				}
-				// Remove the value from the hist and add it into the current maintained value.
-				cur.item.Count += uint64(histIters[histPos].remove(&d))
-				if histRemoveCnt%1000000 == 1 {
-					logutil.BgLogger().Warn("merging topn", zap.String("current hist pos for removing each 1w step", fmt.Sprintf("hist bucket position %d after removing", histIters[histPos].curBucketPos)))
-				}
-			}
-			cur.item.Count += cnt
-			if metaHeapInit {
-				if finalTopNs[0].Count < cur.item.Count {
-					finalTopNs[0].Encoded = cur.item.Encoded
-					finalTopNs[0].Count = cur.item.Count
-					heap.Fix(&finalTopNs, 0)
-				}
-			} else if finalTopNs.Len() < int(n) {
-				finalTopNs = append(finalTopNs, TopNMeta{Encoded: cur.item.Encoded, Count: cur.item.Count})
-			} else {
-				heap.Init(&finalTopNs)
-			}
-			cur.cleared = true
-			cur.affectedTopNs.ClearAll()
-			continue
-		} else {
-			// The cmp result cannot be 1 because the value is strictly increasing.
-			// Here is cmp == 0.
-			cur.item.Count += cnt
-			cur.affectedTopNs.Set(uint(head.idx))
-		}
-	}
-	logutil.BgLogger().Warn("merging topn", zap.Int("the num of tops which skipped checking with hist", skipCount))
-	if !cur.cleared {
-		// There's uncleared item. Clear it.
-		// Initializing the datum.
-		d, err := topNMetaValToDatum(cur.item.Encoded, hists[0].Tp.GetType(), isIndex, loc)
-		if err != nil {
-			return nil, nil, hists, err
-		}
-		for histPos, found := cur.affectedTopNs.NextClear(0); found; histPos, found = cur.affectedTopNs.NextClear(histPos + 1) {
-			// Remove the value from the hist and add it into the current maintained value.
-			cur.item.Count += uint64(histIters[histPos].remove(&d))
-		}
-		mergedTopNs = append(mergedTopNs, TopNMeta{Encoded: cur.item.Encoded, Count: cur.item.Count})
-		cur.cleared = true
-	}
-	for _, iter := range histIters {
-		iter.finish()
-	}
-	SortTopnMeta(finalTopNs)
-	SortTopnMeta(remainedTopNs)
-	var globalTopN TopN
-	globalTopN.TopN = finalTopNs
-	return &globalTopN, remainedTopNs, hists, nil
-}
-
 // MergeTopN is used to merge more TopN structures to generate a new TopN struct by the given size.
 // The input parameters are multiple TopN structures to be merged and the size of the new TopN that will be generated.
 // The output parameters are the newly generated TopN structure and the remaining numbers.
@@ -1109,14 +841,12 @@ func MergeTopN(topNs []*TopN, n uint32) (*TopN, []TopNMeta) {
 
 // CheckEmptyTopNs checks whether all TopNs are empty.
 func CheckEmptyTopNs(topNs []*TopN) bool {
-	count := uint64(0)
 	for _, topN := range topNs {
-		count += topN.TotalCount()
-		if count != 0 {
+		if topN.TotalCount() != 0 {
 			return false
 		}
 	}
-	return count == 0
+	return true
 }
 
 // SortTopnMeta sort topnMeta
@@ -1131,8 +861,8 @@ func SortTopnMeta(topnMetas []TopNMeta) {
 
 // TopnMetaCompare compare topnMeta
 func TopnMetaCompare(i, j TopNMeta) int {
-	c := cmp.Compare(i.Count, j.Count)
-	if c == 0 {
+	c := cmp.Compare(j.Count, i.Count)
+	if c != 0 {
 		return c
 	}
 	return bytes.Compare(i.Encoded, j.Encoded)

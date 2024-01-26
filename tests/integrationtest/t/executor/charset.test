@@ -60,3 +60,22 @@ insert into t values ('a', '中文'), ('中文', '中文'), ('一二三', '一�
 --sorted_result
 select * from t;
 
+# TestForbidUnsupportedCollations
+-- error 1273
+select 'a' collate utf8_roman_ci;
+-- error 1273
+select cast('a' as char) collate utf8_roman_ci;
+-- error 1273
+set names utf8 collate utf8_roman_ci;
+-- error 1273
+set session collation_server = 'utf8_roman_ci';
+-- error 1273
+set session collation_database = 'utf8_roman_ci';
+-- error 1273
+set session collation_connection = 'utf8_roman_ci';
+-- error 1273
+set global collation_server = 'utf8_roman_ci';
+-- error 1273
+set global collation_database = 'utf8_roman_ci';
+-- error 1273
+set global collation_connection = 'utf8_roman_ci';

@@ -18,9 +18,9 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -138,7 +138,7 @@ func TestAddIngestRecorder(t *testing.T) {
 	}
 	recorder := ingestrec.New()
 	// no ingest job, should ignore it
-	err := recorder.AddJob(fakeJob(
+	err := recorder.TryAddJob(fakeJob(
 		model.ReorgTypeTxn,
 		model.ActionAddIndex,
 		model.JobStateSynced,
@@ -154,7 +154,7 @@ func TestAddIngestRecorder(t *testing.T) {
 	require.NoError(t, err)
 
 	// no add-index job, should ignore it
-	err = recorder.AddJob(fakeJob(
+	err = recorder.TryAddJob(fakeJob(
 		model.ReorgTypeLitMerge,
 		model.ActionDropIndex,
 		model.JobStateSynced,
@@ -170,7 +170,7 @@ func TestAddIngestRecorder(t *testing.T) {
 	require.NoError(t, err)
 
 	// no synced job, should ignore it
-	err = recorder.AddJob(fakeJob(
+	err = recorder.TryAddJob(fakeJob(
 		model.ReorgTypeLitMerge,
 		model.ActionAddIndex,
 		model.JobStateRollbackDone,
@@ -188,7 +188,7 @@ func TestAddIngestRecorder(t *testing.T) {
 	{
 		recorder := ingestrec.New()
 		// a normal ingest add index job
-		err = recorder.AddJob(fakeJob(
+		err = recorder.TryAddJob(fakeJob(
 			model.ReorgTypeLitMerge,
 			model.ActionAddIndex,
 			model.JobStateSynced,
@@ -209,7 +209,7 @@ func TestAddIngestRecorder(t *testing.T) {
 	{
 		recorder := ingestrec.New()
 		// a normal ingest add primary index job
-		err = recorder.AddJob(fakeJob(
+		err = recorder.TryAddJob(fakeJob(
 			model.ReorgTypeLitMerge,
 			model.ActionAddPrimaryKey,
 			model.JobStateSynced,
@@ -229,7 +229,7 @@ func TestAddIngestRecorder(t *testing.T) {
 
 	{
 		// a sub job as add primary index job
-		err = recorder.AddJob(fakeJob(
+		err = recorder.TryAddJob(fakeJob(
 			model.ReorgTypeLitMerge,
 			model.ActionAddPrimaryKey,
 			model.JobStateDone,
@@ -304,7 +304,7 @@ func TestIndexesKind(t *testing.T) {
 	}
 
 	recorder := ingestrec.New()
-	err := recorder.AddJob(fakeJob(
+	err := recorder.TryAddJob(fakeJob(
 		model.ReorgTypeLitMerge,
 		model.ActionAddIndex,
 		model.JobStateSynced,
@@ -382,7 +382,7 @@ func TestRewriteTableID(t *testing.T) {
 		},
 	}
 	recorder := ingestrec.New()
-	err := recorder.AddJob(fakeJob(
+	err := recorder.TryAddJob(fakeJob(
 		model.ReorgTypeLitMerge,
 		model.ActionAddIndex,
 		model.JobStateSynced,

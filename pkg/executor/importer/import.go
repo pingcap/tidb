@@ -28,7 +28,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
@@ -38,7 +37,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/executor/asyncloaddata"
+	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -54,13 +53,15 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/filter"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	kvconfig "github.com/tikv/client-go/v2/config"
+	pd "github.com/tikv/pd/client"
+	pdhttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 )
@@ -102,6 +103,7 @@ const (
 )
 
 var (
+	// all supported options.
 	// name -> whether the option has value
 	supportedOptions = map[string]bool{
 		characterSetOption:          true,
@@ -134,13 +136,45 @@ var (
 		splitFileOption:           {},
 	}
 
+	allowedOptionsOfImportFromQuery = map[string]struct{}{
+		threadOption: {},
+	}
+
 	// LoadDataReadBlockSize is exposed for test.
 	LoadDataReadBlockSize = int64(config.ReadBlockSize)
+
+	supportedSuffixForServerDisk = []string{
+		".csv", ".sql", ".parquet",
+		".gz", ".gzip",
+		".zstd", ".zst",
+		".snappy",
+	}
 )
 
-// GetKVStore returns a kv.Storage.
-// kv encoder of physical mode needs it.
-var GetKVStore func(path string, tls kvconfig.Security) (tidbkv.Storage, error)
+// DataSourceType indicates the data source type of IMPORT INTO.
+type DataSourceType string
+
+const (
+	// DataSourceTypeFile represents the data source of IMPORT INTO is file.
+	// exported for test.
+	DataSourceTypeFile DataSourceType = "file"
+	// DataSourceTypeQuery represents the data source of IMPORT INTO is query.
+	DataSourceTypeQuery DataSourceType = "query"
+)
+
+func (t DataSourceType) String() string {
+	return string(t)
+}
+
+var (
+	// GetKVStore returns a kv.Storage.
+	// kv encoder of physical mode needs it.
+	GetKVStore func(path string, tls kvconfig.Security) (tidbkv.Storage, error)
+	// NewClientWithContext returns a kv.Client.
+	NewClientWithContext = pd.NewClientWithContext
+	// NewPDHttpClient returns a pdhttp.Client.
+	NewPDHttpClient = pdhttp.NewClient
+)
 
 // FieldMapping indicates the relationship between input field and table column or user variable
 type FieldMapping struct {
@@ -168,7 +202,8 @@ type Plan struct {
 	// after import.
 	DesiredTableInfo *model.TableInfo
 
-	Path   string
+	Path string
+	// only effective when data source is file.
 	Format string
 	// Data interpretation is restrictive if the SQL mode is restrictive and neither
 	// the IGNORE nor the LOCAL modifier is specified. Errors terminate the load
@@ -194,7 +229,7 @@ type Plan struct {
 
 	DiskQuota             config.ByteSize
 	Checksum              config.PostOpLevel
-	ThreadCnt             int64
+	ThreadCnt             int
 	MaxWriteSpeed         config.ByteSize
 	SplitFile             bool
 	MaxRecordedErrors     int64
@@ -207,7 +242,8 @@ type Plan struct {
 	DistSQLScanConcurrency int
 
 	// todo: remove it when load data code is reverted.
-	InImportInto bool
+	InImportInto   bool
+	DataSourceType DataSourceType
 	// only initialized for IMPORT INTO, used when creating job.
 	Parameters *ImportParameters `json:"-"`
 	// the user who executes the statement, in the form of user@host
@@ -257,6 +293,8 @@ type LoadDataController struct {
 	dataFiles []*mydump.SourceFileMeta
 	// GlobalSortStore is used to store sorted data when using global sort.
 	GlobalSortStore storage.ExternalStorage
+	// ExecuteNodesCnt is the count of execute nodes.
+	ExecuteNodesCnt int
 }
 
 func getImportantSysVars(sctx sessionctx.Context) map[string]string {
@@ -336,11 +374,12 @@ func NewPlanFromLoadDataPlan(userSctx sessionctx.Context, plan *plannercore.Load
 		ImportantSysVars: getImportantSysVars(userSctx),
 
 		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
+		DataSourceType:         DataSourceTypeFile,
 	}, nil
 }
 
 // NewImportPlan creates a new import into plan.
-func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*Plan, error) {
+func NewImportPlan(ctx context.Context, userSctx sessionctx.Context, plan *plannercore.ImportInto, tbl table.Table) (*Plan, error) {
 	var format string
 	if plan.Format != nil {
 		format = strings.ToLower(*plan.Format)
@@ -377,9 +416,10 @@ func NewImportPlan(userSctx sessionctx.Context, plan *plannercore.ImportInto, tb
 
 		DistSQLScanConcurrency: userSctx.GetSessionVars().DistSQLScanConcurrency(),
 		InImportInto:           true,
+		DataSourceType:         getDataSourceType(plan),
 		User:                   userSctx.GetSessionVars().User.String(),
 	}
-	if err := p.initOptions(userSctx, plan.Options); err != nil {
+	if err := p.initOptions(ctx, userSctx, plan.Options); err != nil {
 		return nil, err
 	}
 	if err := p.initParameters(plan); err != nil {
@@ -445,10 +485,11 @@ func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*Load
 	fullTableName := tbl.Meta().Name.String()
 	logger := log.L().With(zap.String("table", fullTableName))
 	c := &LoadDataController{
-		Plan:    plan,
-		ASTArgs: astArgs,
-		Table:   tbl,
-		logger:  logger,
+		Plan:            plan,
+		ASTArgs:         astArgs,
+		Table:           tbl,
+		logger:          logger,
+		ExecuteNodesCnt: 1,
 	}
 	if err := c.checkFieldParams(); err != nil {
 		return nil, err
@@ -462,7 +503,7 @@ func NewLoadDataController(plan *Plan, tbl table.Table, astArgs *ASTArgs) (*Load
 }
 
 func (e *LoadDataController) checkFieldParams() error {
-	if e.Path == "" {
+	if e.DataSourceType == DataSourceTypeFile && e.Path == "" {
 		return exeerrors.ErrLoadDataEmptyPath
 	}
 	if e.InImportInto {
@@ -491,15 +532,15 @@ func (e *LoadDataController) checkFieldParams() error {
 	return nil
 }
 
-func (p *Plan) initDefaultOptions() {
-	threadCnt := runtime.GOMAXPROCS(0)
-	failpoint.Inject("mockNumCpu", func(val failpoint.Value) {
-		threadCnt = val.(int)
-	})
-	threadCnt = int(math.Max(1, float64(threadCnt)*0.5))
+func (p *Plan) initDefaultOptions(targetNodeCPUCnt int) {
+	threadCnt := int(math.Max(1, float64(targetNodeCPUCnt)*0.5))
+	if p.DataSourceType == DataSourceTypeQuery {
+		// TODO: change after spec is ready.
+		threadCnt = 1
+	}
 
 	p.Checksum = config.OpLevelRequired
-	p.ThreadCnt = int64(threadCnt)
+	p.ThreadCnt = threadCnt
 	p.MaxWriteSpeed = unlimitedWriteSpeed
 	p.SplitFile = false
 	p.MaxRecordedErrors = 100
@@ -512,8 +553,12 @@ func (p *Plan) initDefaultOptions() {
 	p.Charset = &v
 }
 
-func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
-	p.initDefaultOptions()
+func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, options []*plannercore.LoadDataOpt) error {
+	targetNodeCPUCnt, err := GetTargetNodeCPUCnt(ctx, p.DataSourceType, p.Path)
+	if err != nil {
+		return err
+	}
+	p.initDefaultOptions(targetNodeCPUCnt)
 
 	specifiedOptions := map[string]*plannercore.LoadDataOpt{}
 	for _, opt := range options {
@@ -534,6 +579,13 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		for k := range csvOnlyOptions {
 			if _, ok := specifiedOptions[k]; ok {
 				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "non-CSV format")
+			}
+		}
+	}
+	if p.DataSourceType == DataSourceTypeQuery {
+		for k := range specifiedOptions {
+			if _, ok := allowedOptionsOfImportFromQuery[k]; !ok {
+				return exeerrors.ErrLoadDataUnsupportedOption.FastGenByArgs(k, "import from query")
 			}
 		}
 	}
@@ -630,7 +682,7 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		if err != nil || vInt <= 0 {
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
-		p.ThreadCnt = vInt
+		p.ThreadCnt = int(vInt)
 	}
 	if opt, ok := specifiedOptions[maxWriteSpeedOption]; ok {
 		v, err := optAsString(opt)
@@ -656,7 +708,6 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 			return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 		}
 		p.MaxRecordedErrors = vInt
-		// todo: set a max value for this param?
 	}
 	if _, ok := specifiedOptions[detachedOption]; ok {
 		p.Detached = true
@@ -702,16 +753,23 @@ func (p *Plan) initOptions(seCtx sessionctx.Context, options []*plannercore.Load
 		return exeerrors.ErrInvalidOptionVal.FastGenByArgs("skip_rows, should be <= 1 when split-file is enabled")
 	}
 
-	p.adjustOptions()
+	p.adjustOptions(targetNodeCPUCnt)
 	return nil
 }
 
-func (p *Plan) adjustOptions() {
+func (p *Plan) adjustOptions(targetNodeCPUCnt int) {
+	limit := targetNodeCPUCnt
+	if p.DataSourceType == DataSourceTypeQuery {
+		// for query, row is produced using 1 thread, the max cpu used is much
+		// lower than import from file, so we set limit to 2*targetNodeCPUCnt.
+		// TODO: adjust after spec is ready.
+		limit *= 2
+	}
 	// max value is cpu-count
-	numCPU := int64(runtime.GOMAXPROCS(0))
-	if p.ThreadCnt > numCPU {
-		log.L().Info("IMPORT INTO thread count is larger than cpu-count, set to cpu-count")
-		p.ThreadCnt = numCPU
+	if p.ThreadCnt > limit {
+		log.L().Info("adjust IMPORT INTO thread count",
+			zap.Int("before", p.ThreadCnt), zap.Int("after", limit))
+		p.ThreadCnt = limit
 	}
 }
 
@@ -936,11 +994,7 @@ func (*LoadDataController) initExternalStore(ctx context.Context, u *url.URL, ta
 		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, GetMsgFromBRError(err2))
 	}
 
-	opt := &storage.ExternalStorageOptions{}
-	if intest.InTest {
-		opt.NoCredentials = true
-	}
-	s, err := storage.New(ctx, b, opt)
+	s, err := storage.NewWithDefaultOpt(ctx, b)
 	if err != nil {
 		return nil, exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(target, GetMsgFromBRError(err))
 	}
@@ -969,7 +1023,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		}
 		// we add this check for security, we don't want user import any sensitive system files,
 		// most of which is readable text file and don't have a suffix, such as /etc/passwd
-		if !slices.Contains([]string{".csv", ".sql", ".parquet"}, strings.ToLower(filepath.Ext(e.Path))) {
+		if !slices.Contains(supportedSuffixForServerDisk, strings.ToLower(filepath.Ext(e.Path))) {
 			return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
 				"the file suffix is not supported when import from server disk")
 		}
@@ -1242,13 +1296,26 @@ func (e *LoadDataController) CreateColAssignExprs(sctx sessionctx.Context) ([]ex
 	return res, allWarnings, nil
 }
 
+func (e *LoadDataController) getBackendWorkerConcurrency() int {
+	// when using global sort, write&ingest step buffers KV data in memory,
+	// suppose cpu:mem ratio 1:2(true in most case), and we assign 1G per concurrency,
+	// so we can use 2 * threadCnt as concurrency. write&ingest step is mostly
+	// IO intensive, so CPU usage is below ThreadCnt in our tests.
+	// The real concurrency used is adjusted in external engine later.
+	// when using local sort, use the default value as lightning.
+	if e.IsGlobalSort() {
+		return e.ThreadCnt * 2
+	}
+	return config.DefaultRangeConcurrency * 2
+}
+
 func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.BackendConfig {
 	backendConfig := local.BackendConfig{
 		PDAddr:                 pdAddr,
 		LocalStoreDir:          dataDir,
 		MaxConnPerStore:        config.DefaultRangeConcurrency,
 		ConnCompressType:       config.CompressionNone,
-		WorkerConcurrency:      config.DefaultRangeConcurrency * 2,
+		WorkerConcurrency:      e.getBackendWorkerConcurrency(),
 		KVWriteBatchSize:       config.KVWriteBatchSize,
 		RegionSplitBatchSize:   config.DefaultRegionSplitBatchSize,
 		RegionSplitConcurrency: runtime.GOMAXPROCS(0),
@@ -1271,15 +1338,27 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 	return backendConfig
 }
 
+// FullTableName return FQDN of the table.
+func (e *LoadDataController) FullTableName() string {
+	return common.UniqueTable(e.DBName, e.Table.Meta().Name.O)
+}
+
+func getDataSourceType(p *plannercore.ImportInto) DataSourceType {
+	if p.SelectPlan != nil {
+		return DataSourceTypeQuery
+	}
+	return DataSourceTypeFile
+}
+
 // JobImportParam is the param of the job import.
 type JobImportParam struct {
-	Job      *asyncloaddata.Job
+	Job      *Job
 	Group    *errgroup.Group
 	GroupCtx context.Context
 	// should be closed in the end of the job.
 	Done chan struct{}
 
-	Progress *asyncloaddata.Progress
+	Progress *Progress
 }
 
 // JobImportResult is the result of the job import.
@@ -1318,6 +1397,28 @@ func GetMsgFromBRError(err error) string {
 		return raw
 	}
 	return raw[:len(raw)-len(berrMsg)-len(": ")]
+}
+
+// GetTargetNodeCPUCnt get cpu count of target node where the import into job will be executed.
+// target node is current node if it's server-disk import, import from query or disttask is disabled,
+// else it's the node managed by disttask.
+// exported for testing.
+func GetTargetNodeCPUCnt(ctx context.Context, sourceType DataSourceType, path string) (int, error) {
+	if sourceType == DataSourceTypeQuery {
+		return cpu.GetCPUCount(), nil
+	}
+
+	u, err2 := storage.ParseRawURL(path)
+	if err2 != nil {
+		return 0, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
+			err2.Error())
+	}
+
+	serverDiskImport := storage.IsLocal(u)
+	if serverDiskImport || !variable.EnableDistTask.Load() {
+		return cpu.GetCPUCount(), nil
+	}
+	return handle.GetCPUCountOfManagedNode(ctx)
 }
 
 // TestSyncCh is used in unit test to synchronize the execution.

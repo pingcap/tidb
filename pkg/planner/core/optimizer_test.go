@@ -431,6 +431,7 @@ func TestPrunePhysicalColumns(t *testing.T) {
 		ExchangeType: tipb.ExchangeType_PassThrough,
 	}
 	hashJoin := &PhysicalHashJoin{}
+	hashJoin = hashJoin.Init(sctx, nil, 0)
 	recv := &PhysicalExchangeReceiver{}
 	recv1 := &PhysicalExchangeReceiver{}
 	hashSender := &PhysicalExchangeSender{

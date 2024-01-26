@@ -17,16 +17,16 @@ OUT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/bin)
 
 include $(BASE_DIR)/Makefile.common
 
-GLOBAL_KILL_TEST_SERVER_LDFLAGS =  -X "github.com/pingcap/tidb/domain.ldflagIsGlobalKillTest=1"
-GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/domain.ldflagServerIDTTL=10"
-GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/domain.ldflagServerIDTimeToKeepAlive=1"
-GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/domain.ldflagServerIDTimeToCheckPDConnectionRestored=1"
-GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/domain.ldflagLostConnectionToPDTimeout=5"
-GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/store.ldflagGetEtcdAddrsFromConfig=1"
+GLOBAL_KILL_TEST_SERVER_LDFLAGS =  -X "github.com/pingcap/tidb/pkg/domain.ldflagIsGlobalKillTest=1"
+GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/pkg/domain.ldflagServerIDTTL=10"
+GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/pkg/domain.ldflagServerIDTimeToKeepAlive=1"
+GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/pkg/domain.ldflagServerIDTimeToCheckPDConnectionRestored=1"
+GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/pkg/domain.ldflagLostConnectionToPDTimeout=5"
+GLOBAL_KILL_TEST_SERVER_LDFLAGS += -X "github.com/pingcap/tidb/pkg/store.ldflagGetEtcdAddrsFromConfig=1"
 
-GLOBAL_KILL_TEST_SERVER_LDFLAGS +=  -X "github.com/pingcap/tidb/util/globalconn.ldflagIsGlobalKillTest=1"
-GLOBAL_KILL_TEST_SERVER_LDFLAGS +=  -X "github.com/pingcap/tidb/util/globalconn.ldflagServerIDBits32=2"
-GLOBAL_KILL_TEST_SERVER_LDFLAGS +=  -X "github.com/pingcap/tidb/util/globalconn.ldflagLocalConnIDBits32=4"
+GLOBAL_KILL_TEST_SERVER_LDFLAGS +=  -X "github.com/pingcap/tidb/pkg/util/globalconn.ldflagIsGlobalKillTest=1"
+GLOBAL_KILL_TEST_SERVER_LDFLAGS +=  -X "github.com/pingcap/tidb/pkg/util/globalconn.ldflagServerIDBits32=2"
+GLOBAL_KILL_TEST_SERVER_LDFLAGS +=  -X "github.com/pingcap/tidb/pkg/util/globalconn.ldflagLocalConnIDBits32=4"
 
 .PHONY: server buildsucc
 

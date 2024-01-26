@@ -15,10 +15,10 @@
 package expression
 
 import (
-	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/stretchr/testify/require"
 )
 
@@ -104,34 +105,37 @@ func TestSleep(t *testing.T) {
 
 	fc := funcs[ast.Sleep]
 	// non-strict model
-	sessVars.StmtCtx.BadNullAsWarning = true
+	var levels errctx.LevelMap
+	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
+	sessVars.StmtCtx.SetErrLevels(levels)
 	d := make([]types.Datum, 1)
 	f, err := fc.getFunction(ctx, datumsToConstants(d))
 	require.NoError(t, err)
-	ret, isNull, err := f.evalInt(chunk.Row{})
+	ret, isNull, err := f.evalInt(ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.False(t, isNull)
 	require.Equal(t, int64(0), ret)
 	d[0].SetInt64(-1)
 	f, err = fc.getFunction(ctx, datumsToConstants(d))
 	require.NoError(t, err)
-	ret, isNull, err = f.evalInt(chunk.Row{})
+	ret, isNull, err = f.evalInt(ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.False(t, isNull)
 	require.Equal(t, int64(0), ret)
 
 	// for error case under the strict model
-	sessVars.StmtCtx.BadNullAsWarning = false
+	levels[errctx.ErrGroupBadNull] = errctx.LevelError
+	sessVars.StmtCtx.SetErrLevels(levels)
 	d[0].SetNull()
 	_, err = fc.getFunction(ctx, datumsToConstants(d))
 	require.NoError(t, err)
-	_, isNull, err = f.evalInt(chunk.Row{})
+	_, isNull, err = f.evalInt(ctx, chunk.Row{})
 	require.Error(t, err)
 	require.False(t, isNull)
 	d[0].SetFloat64(-2.5)
 	_, err = fc.getFunction(ctx, datumsToConstants(d))
 	require.NoError(t, err)
-	_, isNull, err = f.evalInt(chunk.Row{})
+	_, isNull, err = f.evalInt(ctx, chunk.Row{})
 	require.Error(t, err)
 	require.False(t, isNull)
 
@@ -140,7 +144,7 @@ func TestSleep(t *testing.T) {
 	start := time.Now()
 	f, err = fc.getFunction(ctx, datumsToConstants(d))
 	require.NoError(t, err)
-	ret, isNull, err = f.evalInt(chunk.Row{})
+	ret, isNull, err = f.evalInt(ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.False(t, isNull)
 	require.Equal(t, int64(0), ret)
@@ -152,9 +156,9 @@ func TestSleep(t *testing.T) {
 	start = time.Now()
 	go func() {
 		time.Sleep(1 * time.Second)
-		atomic.CompareAndSwapUint32(&ctx.GetSessionVars().Killed, 0, 1)
+		ctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	}()
-	ret, isNull, err = f.evalInt(chunk.Row{})
+	ret, isNull, err = f.evalInt(ctx, chunk.Row{})
 	sub = time.Since(start)
 	require.NoError(t, err)
 	require.False(t, isNull)
@@ -204,7 +208,7 @@ func TestBinopComparison(t *testing.T) {
 		fc := funcs[tt.op]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		val, err := v.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtx())
 		require.NoError(t, err)
@@ -235,7 +239,7 @@ func TestBinopComparison(t *testing.T) {
 		fc := funcs[tt.op]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		require.Equal(t, types.KindNull, v.Kind())
 	}
@@ -269,7 +273,7 @@ func TestBinopLogic(t *testing.T) {
 		fc := funcs[tt.op]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		switch x := tt.ret.(type) {
 		case nil:
@@ -305,7 +309,7 @@ func TestBinopBitop(t *testing.T) {
 		fc := funcs[tt.op]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 
 		switch x := tt.ret.(type) {
@@ -399,7 +403,7 @@ func TestBinopNumeric(t *testing.T) {
 		fc := funcs[tt.op]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		switch v.Kind() {
 		case types.KindNull:
@@ -438,23 +442,24 @@ func TestBinopNumeric(t *testing.T) {
 		{types.NewDecFromInt(10), ast.Mod, 0},
 	}
 
-	ctx.GetSessionVars().StmtCtx.InSelectStmt = false
-	ctx.GetSessionVars().SQLMode |= mysql.ModeErrorForDivisionByZero
-	ctx.GetSessionVars().StmtCtx.InInsertStmt = true
+	levels := ctx.GetSessionVars().StmtCtx.ErrLevels()
+	levels[errctx.ErrGroupDividedByZero] = errctx.LevelError
+	ctx.GetSessionVars().StmtCtx.SetErrLevels(levels)
 	for _, tt := range testcases {
 		fc := funcs[tt.op]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
 		require.NoError(t, err)
-		_, err = evalBuiltinFunc(f, chunk.Row{})
+		_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.Error(t, err)
 	}
 
-	ctx.GetSessionVars().StmtCtx.DividedByZeroAsWarning = true
+	levels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+	ctx.GetSessionVars().StmtCtx.SetErrLevels(levels)
 	for _, tt := range testcases {
 		fc := funcs[tt.op]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.lhs, tt.rhs)))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		require.Equal(t, types.KindNull, v.Kind())
 	}
@@ -492,7 +497,7 @@ func TestExtract(t *testing.T) {
 		fc := funcs[ast.Extract]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.Unit, str)))
 		require.NoError(t, err)
-		v, err := evalBuiltinFunc(f, chunk.Row{})
+		v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		require.Equal(t, types.NewDatum(tt.Expect), v)
 	}
@@ -501,7 +506,7 @@ func TestExtract(t *testing.T) {
 	fc := funcs[ast.Extract]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums("SECOND", nil)))
 	require.NoError(t, err)
-	v, err := evalBuiltinFunc(f, chunk.Row{})
+	v, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, types.KindNull, v.Kind())
 }
@@ -544,7 +549,7 @@ func TestUnaryOp(t *testing.T) {
 		fc := funcs[tt.op]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.arg)))
 		require.NoError(t, err)
-		result, err := evalBuiltinFunc(f, chunk.Row{})
+		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		require.Equalf(t, types.NewDatum(tt.result), result, "%d", i)
 	}
@@ -564,11 +569,11 @@ func TestUnaryOp(t *testing.T) {
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.arg)))
 		require.NoError(t, err)
 		require.NotNil(t, f)
-		result, err := evalBuiltinFunc(f, chunk.Row{})
+		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 
 		expect := types.NewDatum(tt.result)
-		ret, err := result.Compare(ctx.GetSessionVars().StmtCtx, &expect, collate.GetBinaryCollator())
+		ret, err := result.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &expect, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equalf(t, 0, ret, "%v %s", tt.arg, tt.op)
 	}
@@ -579,17 +584,17 @@ func TestMod(t *testing.T) {
 	fc := funcs[ast.Mod]
 	f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(234, 10)))
 	require.NoError(t, err)
-	r, err := evalBuiltinFunc(f, chunk.Row{})
+	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, types.NewIntDatum(4), r)
 	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(29, 9)))
 	require.NoError(t, err)
-	r, err = evalBuiltinFunc(f, chunk.Row{})
+	r, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, types.NewIntDatum(2), r)
 	f, err = fc.getFunction(ctx, datumsToConstants(types.MakeDatums(34.5, 3)))
 	require.NoError(t, err)
-	r, err = evalBuiltinFunc(f, chunk.Row{})
+	r, err = evalBuiltinFunc(f, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, types.NewDatum(1.5), r)
 }

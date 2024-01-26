@@ -23,7 +23,7 @@ go_test(
     srcs = ["packetio_test.go"],
     embed = [":internal"],
     flaky = True,
-    shard_count = 4,
+    shard_count = 8,
     deps = [
         "//pkg/parser/mysql",
         "//pkg/server/internal/testutil",

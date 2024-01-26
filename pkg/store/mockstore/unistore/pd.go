@@ -165,7 +165,7 @@ func (c *pdClient) SplitAndScatterRegions(ctx context.Context, splitKeys [][]byt
 	return nil, nil
 }
 
-func (c *pdClient) GetRegionFromMember(ctx context.Context, key []byte, memberURLs []string) (*pd.Region, error) {
+func (c *pdClient) GetRegionFromMember(ctx context.Context, key []byte, memberURLs []string, opts ...pd.GetRegionOption) (*pd.Region, error) {
 	return nil, nil
 }
 

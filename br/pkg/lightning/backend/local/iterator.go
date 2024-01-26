@@ -16,39 +16,49 @@ package local
 
 import (
 	"github.com/cockroachdb/pebble"
-	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"go.uber.org/multierr"
 )
 
-// Iter abstract iterator method for Ingester.
-type Iter interface {
+// IngestLocalEngineIter abstract iterator method for iterator.
+type IngestLocalEngineIter interface {
 	common.ForwardIter
-	// Seek seek to specify position.
-	// if key not found, seeks next key position in iter.
-	Seek(key []byte) bool
 	// Last moves this iter to the last key.
 	Last() bool
-	// OpType represents operations of pair. currently we have two types.
-	// 1. Put
-	// 2. Delete
-	OpType() sst.Pair_OP
 }
 
 type pebbleIter struct {
 	*pebble.Iterator
+	buf *membuf.Buffer
 }
 
-func (p pebbleIter) Seek(key []byte) bool {
-	return p.SeekGE(key)
+func (p *pebbleIter) ReleaseBuf() {
+	p.buf.Reset()
 }
 
-func (pebbleIter) OpType() sst.Pair_OP {
-	return sst.Pair_Put
+func (p *pebbleIter) Close() error {
+	// only happens for GetFirstAndLastKey
+	if p.buf != nil {
+		p.buf.Destroy()
+	}
+	return p.Iterator.Close()
 }
 
-var _ Iter = pebbleIter{}
+func (p *pebbleIter) Key() []byte {
+	// only happens for GetFirstAndLastKey
+	if p.buf == nil {
+		return p.Iterator.Key()
+	}
+	return p.buf.AddBytes(p.Iterator.Key())
+}
+
+func (p *pebbleIter) Value() []byte {
+	return p.buf.AddBytes(p.Iterator.Value())
+}
+
+var _ IngestLocalEngineIter = &pebbleIter{}
 
 type dupDetectIter struct {
 	keyAdapter  common.KeyAdapter
@@ -57,16 +67,8 @@ type dupDetectIter struct {
 	err         error
 
 	curKey, curVal []byte
+	buf            *membuf.Buffer
 	logger         log.Logger
-}
-
-func (d *dupDetectIter) Seek(key []byte) bool {
-	rawKey := d.keyAdapter.Encode(nil, key, common.ZeroRowID)
-	if d.err != nil || !d.iter.SeekGE(rawKey) {
-		return false
-	}
-	d.fill()
-	return d.err == nil
 }
 
 func (d *dupDetectIter) First() bool {
@@ -106,11 +108,15 @@ func (d *dupDetectIter) Next() bool {
 }
 
 func (d *dupDetectIter) Key() []byte {
-	return d.curKey
+	// only happens for GetFirstAndLastKey
+	if d.buf == nil {
+		return d.curKey
+	}
+	return d.buf.AddBytes(d.curKey)
 }
 
 func (d *dupDetectIter) Value() []byte {
-	return d.curVal
+	return d.buf.AddBytes(d.curVal)
 }
 
 func (d *dupDetectIter) Valid() bool {
@@ -122,6 +128,10 @@ func (d *dupDetectIter) Error() error {
 }
 
 func (d *dupDetectIter) Close() error {
+	// only happens for GetFirstAndLastKey
+	if d.buf != nil {
+		d.buf.Destroy()
+	}
 	firstErr := d.dupDetector.Close()
 	err := d.iter.Close()
 	if firstErr != nil {
@@ -130,11 +140,11 @@ func (d *dupDetectIter) Close() error {
 	return err
 }
 
-func (*dupDetectIter) OpType() sst.Pair_OP {
-	return sst.Pair_Put
+func (d *dupDetectIter) ReleaseBuf() {
+	d.buf.Reset()
 }
 
-var _ Iter = &dupDetectIter{}
+var _ IngestLocalEngineIter = &dupDetectIter{}
 
 func newDupDetectIter(
 	db *pebble.DB,
@@ -143,6 +153,7 @@ func newDupDetectIter(
 	dupDB *pebble.DB,
 	logger log.Logger,
 	dupOpt common.DupDetectOpt,
+	buf *membuf.Buffer,
 ) *dupDetectIter {
 	newOpts := &pebble.IterOptions{TableFilter: opts.TableFilter}
 	if len(opts.LowerBound) > 0 {
@@ -156,6 +167,7 @@ func newDupDetectIter(
 	return &dupDetectIter{
 		keyAdapter:  keyAdapter,
 		iter:        db.NewIter(newOpts),
+		buf:         buf,
 		dupDetector: detector,
 		logger:      logger,
 	}
@@ -224,8 +236,23 @@ func (d *dupDBIter) Close() error {
 	return d.iter.Close()
 }
 
-func (*dupDBIter) OpType() sst.Pair_OP {
-	return sst.Pair_Put
+// Iter describes an iterator.
+type Iter interface {
+	// Valid check this iter reach the end.
+	Valid() bool
+	// Next moves this iter forward.
+	Next() bool
+	// Key returns current position pair's key. The key is accessible after more
+	// Next() or Key() invocations but is invalidated by Close() or ReleaseBuf().
+	Key() []byte
+	// Value returns current position pair's Value. The value is accessible after
+	// more Next() or Value() invocations but is invalidated by Close() or
+	// ReleaseBuf().
+	Value() []byte
+	// Close close this iter.
+	Close() error
+	// Error return current error on this iter.
+	Error() error
 }
 
 var _ Iter = &dupDBIter{}

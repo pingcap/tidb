@@ -73,7 +73,8 @@ func topNMetaToDatum(val TopNMeta,
 	return dat, err
 }
 
-func topNMetaValToDatum(val []byte, tp byte, isIndex bool, loc *time.Location) (d types.Datum, err error) {
+// TopNMetaValToDatum transforms the value of the TopN item to the datum.
+func TopNMetaValToDatum(val []byte, tp byte, isIndex bool, loc *time.Location) (d types.Datum, err error) {
 	if isIndex {
 		d.SetBytes(val)
 	} else {

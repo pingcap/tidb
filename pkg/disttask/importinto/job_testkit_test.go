@@ -23,8 +23,10 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -38,7 +40,9 @@ func TestGetTaskImportedRows(t *testing.T) {
 	}, 1, 1, time.Second)
 	defer pool.Close()
 	ctx := context.WithValue(context.Background(), "etcd", true)
-	mgr := storage.NewTaskManager(util.WithInternalSourceType(ctx, "taskManager"), pool)
+	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+
+	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
 	manager, err := storage.GetTaskManager()
 	require.NoError(t, err)
@@ -49,7 +53,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 	}
 	bytes, err := json.Marshal(taskMeta)
 	require.NoError(t, err)
-	taskID, err := manager.AddNewGlobalTask(importinto.TaskKey(111), proto.ImportInto, 1, bytes)
+	taskID, err := manager.CreateTask(ctx, importinto.TaskKey(111), proto.ImportInto, 1, bytes)
 	require.NoError(t, err)
 	importStepMetas := []*importinto.ImportStepMeta{
 		{
@@ -66,10 +70,10 @@ func TestGetTaskImportedRows(t *testing.T) {
 	for _, m := range importStepMetas {
 		bytes, err := json.Marshal(m)
 		require.NoError(t, err)
-		require.NoError(t, manager.AddNewSubTask(taskID, importinto.StepImport,
-			"", bytes, proto.ImportInto, false))
+		testutil.CreateSubTask(t, manager, taskID, proto.ImportStepImport,
+			"", bytes, proto.ImportInto, 11)
 	}
-	rows, err := importinto.GetTaskImportedRows(111)
+	rows, err := importinto.GetTaskImportedRows(ctx, 111)
 	require.NoError(t, err)
 	require.Equal(t, uint64(3), rows)
 
@@ -81,7 +85,7 @@ func TestGetTaskImportedRows(t *testing.T) {
 	}
 	bytes, err = json.Marshal(taskMeta)
 	require.NoError(t, err)
-	taskID, err = manager.AddNewGlobalTask(importinto.TaskKey(222), proto.ImportInto, 1, bytes)
+	taskID, err = manager.CreateTask(ctx, importinto.TaskKey(222), proto.ImportInto, 1, bytes)
 	require.NoError(t, err)
 	ingestStepMetas := []*importinto.WriteIngestStepMeta{
 		{
@@ -98,10 +102,10 @@ func TestGetTaskImportedRows(t *testing.T) {
 	for _, m := range ingestStepMetas {
 		bytes, err := json.Marshal(m)
 		require.NoError(t, err)
-		require.NoError(t, manager.AddNewSubTask(taskID, importinto.StepWriteAndIngest,
-			"", bytes, proto.ImportInto, false))
+		testutil.CreateSubTask(t, manager, taskID, proto.ImportStepWriteAndIngest,
+			"", bytes, proto.ImportInto, 11)
 	}
-	rows, err = importinto.GetTaskImportedRows(222)
+	rows, err = importinto.GetTaskImportedRows(ctx, 222)
 	require.NoError(t, err)
 	require.Equal(t, uint64(33), rows)
 }

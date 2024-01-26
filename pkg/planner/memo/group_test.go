@@ -104,7 +104,7 @@ func TestGroupFingerPrint(t *testing.T) {
 		do := domain.GetDomain(ctx)
 		do.StatsHandle().Close()
 	}()
-	plan, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt1, is)
+	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt1, is)
 	require.NoError(t, err)
 	logic1, ok := plan.(plannercore.LogicalPlan)
 	require.True(t, ok)
@@ -140,7 +140,7 @@ func TestGroupFingerPrint(t *testing.T) {
 	// Insert two LogicalSelections with same conditions but different order.
 	require.Len(t, sel.Conditions, 2)
 	newSelection := plannercore.LogicalSelection{
-		Conditions: make([]expression.Expression, 2)}.Init(sel.SCtx(), sel.SelectBlockOffset())
+		Conditions: make([]expression.Expression, 2)}.Init(sel.SCtx(), sel.QueryBlockOffset())
 	newSelection.Conditions[0], newSelection.Conditions[1] = sel.Conditions[1], sel.Conditions[0]
 	newGroupExpr4 := NewGroupExpr(sel)
 	newGroupExpr5 := NewGroupExpr(newSelection)
@@ -259,7 +259,7 @@ func TestBuildKeyInfo(t *testing.T) {
 	// case 1: primary key has constant constraint
 	stmt1, err := p.ParseOneStmt("select a from t where a = 10", "", "")
 	require.NoError(t, err)
-	p1, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt1, is)
+	p1, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt1, is)
 	require.NoError(t, err)
 	logic1, ok := p1.(plannercore.LogicalPlan)
 	require.True(t, ok)
@@ -271,7 +271,7 @@ func TestBuildKeyInfo(t *testing.T) {
 	// case 2: group by column is key
 	stmt2, err := p.ParseOneStmt("select b, sum(a) from t group by b", "", "")
 	require.NoError(t, err)
-	p2, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt2, is)
+	p2, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt2, is)
 	require.NoError(t, err)
 	logic2, ok := p2.(plannercore.LogicalPlan)
 	require.True(t, ok)

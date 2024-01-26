@@ -1079,6 +1079,8 @@ const (
 	ErrLoadDataLocalUnsupportedOption      = 8172
 	ErrLoadDataPreCheckFailed              = 8173
 	ErrBRJobNotFound                       = 8174
+	ErrMemoryExceedForQuery                = 8175
+	ErrMemoryExceedForInstance             = 8176
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200
@@ -1133,6 +1135,7 @@ const (
 	ErrCannotPauseDDLJob  = 8260
 	ErrCannotResumeDDLJob = 8261
 	ErrPausedDDLJob       = 8262
+	ErrBDRRestrictedDDL   = 8263
 
 	// Resource group errors.
 	ErrResourceGroupExists                    = 8248

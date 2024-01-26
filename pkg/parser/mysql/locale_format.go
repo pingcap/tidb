@@ -49,10 +49,9 @@ func formatENUS(number string, precision string) (string, error) {
 			continue
 		} else if v == '.' && number[1] != '.' {
 			continue
-		} else {
-			number = number[:i]
-			break
 		}
+		number = number[:i]
+		break
 	}
 
 	comma := []byte{','}

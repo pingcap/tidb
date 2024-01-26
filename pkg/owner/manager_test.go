@@ -139,17 +139,20 @@ func TestSetAndGetOwnerOpValue(t *testing.T) {
 	op, err := owner.GetOwnerOpValue(context.Background(), tInfo.client, DDLOwnerKey, "log prefix")
 	require.NoError(t, err)
 	require.Equal(t, op, owner.OpNone)
-	err = manager.SetOwnerOpValue(context.Background(), owner.OpGetUpgradingState)
+	require.False(t, op.IsSyncedUpgradingState())
+	err = manager.SetOwnerOpValue(context.Background(), owner.OpSyncUpgradingState)
 	require.NoError(t, err)
 	op, err = owner.GetOwnerOpValue(context.Background(), tInfo.client, DDLOwnerKey, "log prefix")
 	require.NoError(t, err)
-	require.Equal(t, op, owner.OpGetUpgradingState)
+	require.Equal(t, op, owner.OpSyncUpgradingState)
+	require.True(t, op.IsSyncedUpgradingState())
 	// update the same as the original value
-	err = manager.SetOwnerOpValue(context.Background(), owner.OpGetUpgradingState)
+	err = manager.SetOwnerOpValue(context.Background(), owner.OpSyncUpgradingState)
 	require.NoError(t, err)
 	op, err = owner.GetOwnerOpValue(context.Background(), tInfo.client, DDLOwnerKey, "log prefix")
 	require.NoError(t, err)
-	require.Equal(t, op, owner.OpGetUpgradingState)
+	require.Equal(t, op, owner.OpSyncUpgradingState)
+	require.True(t, op.IsSyncedUpgradingState())
 	// test del owner key when SetOwnerOpValue
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/owner/MockDelOwnerKey", `return("delOwnerKeyAndNotOwner")`))
 	err = manager.SetOwnerOpValue(context.Background(), owner.OpNone)
@@ -158,6 +161,7 @@ func TestSetAndGetOwnerOpValue(t *testing.T) {
 	require.NotNil(t, err)
 	require.Equal(t, concurrency.ErrElectionNoLeader.Error(), err.Error())
 	require.Equal(t, op, owner.OpNone)
+	require.False(t, op.IsSyncedUpgradingState())
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/owner/MockDelOwnerKey"))
 
 	// Let ddl run for the owner again.
@@ -167,7 +171,7 @@ func TestSetAndGetOwnerOpValue(t *testing.T) {
 	// Mock the manager become not owner because the owner is deleted(like TTL is timeout).
 	// And then the manager campaigns the owner again, and become the owner.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/owner/MockDelOwnerKey", `return("onlyDelOwnerKey")`))
-	err = manager.SetOwnerOpValue(context.Background(), owner.OpGetUpgradingState)
+	err = manager.SetOwnerOpValue(context.Background(), owner.OpSyncUpgradingState)
 	require.Error(t, err, "put owner key failed, cmp is false")
 	isOwner = checkOwner(tInfo.ddl, true)
 	require.True(t, isOwner)
@@ -199,11 +203,11 @@ func TestGetOwnerOpValueBeforeSet(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, op, owner.OpNone)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/owner/MockNotSetOwnerOp"))
-	err = manager.SetOwnerOpValue(context.Background(), owner.OpGetUpgradingState)
+	err = manager.SetOwnerOpValue(context.Background(), owner.OpSyncUpgradingState)
 	require.NoError(t, err)
 	op, err = owner.GetOwnerOpValue(context.Background(), nil, DDLOwnerKey, "log prefix")
 	require.NoError(t, err)
-	require.Equal(t, op, owner.OpGetUpgradingState)
+	require.Equal(t, op, owner.OpSyncUpgradingState)
 }
 
 func TestCluster(t *testing.T) {

@@ -18,7 +18,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/kv",
-        "//pkg/sessionctx/stmtctx",
         "//pkg/store/mockstore/unistore/client",
         "//pkg/store/mockstore/unistore/config",
         "//pkg/store/mockstore/unistore/cophandler",
@@ -33,7 +32,6 @@ go_library(
         "//pkg/tablecodec",
         "//pkg/types",
         "//pkg/util/codec",
-        "//pkg/util/mathutil",
         "//pkg/util/rowcodec",
         "@com_github_dgryski_go_farm//:go-farm",
         "@com_github_gogo_protobuf//proto",

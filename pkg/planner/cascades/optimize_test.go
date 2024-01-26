@@ -42,7 +42,7 @@ func TestImplGroupZeroCost(t *testing.T) {
 	stmt, err := p.ParseOneStmt("select t1.a, t2.a from t as t1 left join t as t2 on t1.a = t2.a where t1.a < 1.0", "", "")
 	require.NoError(t, err)
 
-	plan, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
+	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
 	logic, ok := plan.(plannercore.LogicalPlan)
@@ -69,7 +69,7 @@ func TestInitGroupSchema(t *testing.T) {
 	stmt, err := p.ParseOneStmt("select a from t", "", "")
 	require.NoError(t, err)
 
-	plan, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
+	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
 	logic, ok := plan.(plannercore.LogicalPlan)
@@ -94,7 +94,7 @@ func TestFillGroupStats(t *testing.T) {
 	stmt, err := p.ParseOneStmt("select * from t t1 join t t2 on t1.a = t2.a", "", "")
 	require.NoError(t, err)
 
-	plan, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
+	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
 	logic, ok := plan.(plannercore.LogicalPlan)
@@ -128,7 +128,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	stmt, err := p.ParseOneStmt("select f, sum(a) from t group by f", "", "")
 	require.NoError(t, err)
 
-	plan, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
+	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
 	logic, ok := plan.(plannercore.LogicalPlan)
@@ -175,7 +175,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	aggProp := preparePossibleProperties(group, propMap)
 	// We only have one prop for Group0 : f
 	require.Len(t, aggProp, 1)
-	require.True(t, aggProp[0][0].Equal(nil, columnF))
+	require.True(t, aggProp[0][0].EqualColumn(columnF))
 
 	gatherGroup := group.Equivalents.Front().Value.(*memo.GroupExpr).Children[0]
 	gatherProp, ok := propMap[gatherGroup]
@@ -184,7 +184,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	require.Len(t, gatherProp, 2)
 	for _, prop := range gatherProp {
 		require.Len(t, prop, 1)
-		require.True(t, prop[0].Equal(nil, columnA) || prop[0].Equal(nil, columnF))
+		require.True(t, prop[0].EqualColumn(columnA) || prop[0].EqualColumn(columnF))
 	}
 }
 
@@ -225,7 +225,7 @@ func TestAppliedRuleSet(t *testing.T) {
 	stmt, err := p.ParseOneStmt("select 1", "", "")
 	require.NoError(t, err)
 
-	plan, _, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
+	plan, err := plannercore.BuildLogicalPlanForTest(context.Background(), ctx, stmt, is)
 	require.NoError(t, err)
 
 	logic, ok := plan.(plannercore.LogicalPlan)

@@ -16,6 +16,7 @@ package aggregation
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -33,7 +34,7 @@ func (ff *firstRowFunction) Update(evalCtx *AggEvaluateContext, _ *stmtctx.State
 	if len(ff.Args) != 1 {
 		return errors.New("Wrong number of args for AggFuncFirstRow")
 	}
-	value, err := ff.Args[0].Eval(row)
+	value, err := ff.Args[0].Eval(evalCtx.Ctx, row)
 	if err != nil {
 		return err
 	}
@@ -47,7 +48,8 @@ func (*firstRowFunction) GetResult(evalCtx *AggEvaluateContext) types.Datum {
 	return evalCtx.Value
 }
 
-func (*firstRowFunction) ResetContext(_ *stmtctx.StatementContext, evalCtx *AggEvaluateContext) {
+func (*firstRowFunction) ResetContext(ctx expression.EvalContext, evalCtx *AggEvaluateContext) {
+	evalCtx.Ctx = ctx
 	evalCtx.GotFirstRow = false
 }
 

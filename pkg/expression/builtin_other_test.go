@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -61,15 +60,14 @@ func TestBitCount(t *testing.T) {
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{in}))
 		require.NoError(t, err)
 		require.NotNil(t, f)
-		count, err := evalBuiltinFunc(f, chunk.Row{})
+		count, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err)
 		if count.IsNull() {
 			require.Nil(t, test.count)
 			continue
 		}
-		sc := stmtctx.NewStmtCtxWithTimeZone(stmtCtx.TimeZone())
-		sc.SetTypeFlags(sc.TypeFlags().WithIgnoreTruncateErr(true))
-		res, err := count.ToInt64(sc)
+		ctx := types.DefaultStmtNoWarningContext.WithFlags(types.DefaultStmtFlags.WithIgnoreTruncateErr(true))
+		res, err := count.ToInt64(ctx)
 		require.NoError(t, err)
 		require.Equal(t, test.count, res)
 	}
@@ -104,7 +102,7 @@ func TestSetVar(t *testing.T) {
 	for _, tc := range testCases {
 		fn, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(fn, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
+		d, err := evalBuiltinFunc(fn, ctx, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
 		require.NoError(t, err)
 		require.Equal(t, tc.res, d.GetValue())
 		if tc.args[1] != nil {
@@ -165,7 +163,7 @@ func TestGetVar(t *testing.T) {
 		}
 		fn, err := BuildGetVarFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...))[0], tp)
 		require.NoError(t, err)
-		d, err := fn.Eval(chunk.Row{})
+		d, err := fn.Eval(ctx, chunk.Row{})
 		require.NoError(t, err)
 		require.Equal(t, tc.res, d.GetValue())
 	}
@@ -181,21 +179,21 @@ func TestValues(t *testing.T) {
 	sig, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums()))
 	require.NoError(t, err)
 
-	ret, err := evalBuiltinFunc(sig, chunk.Row{})
+	ret, err := evalBuiltinFunc(sig, ctx, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, ret.IsNull())
 
 	ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(types.MakeDatums("1")).ToRow()
-	ret, err = evalBuiltinFunc(sig, chunk.Row{})
+	ret, err = evalBuiltinFunc(sig, ctx, chunk.Row{})
 	require.Error(t, err)
 	require.Regexp(t, "^Session current insert values len", err.Error())
 
 	currInsertValues := types.MakeDatums("1", "2")
 	ctx.GetSessionVars().CurrInsertValues = chunk.MutRowFromDatums(currInsertValues).ToRow()
-	ret, err = evalBuiltinFunc(sig, chunk.Row{})
+	ret, err = evalBuiltinFunc(sig, ctx, chunk.Row{})
 	require.NoError(t, err)
 
-	cmp, err := ret.Compare(nil, &currInsertValues[1], collate.GetBinaryCollator())
+	cmp, err := ret.Compare(types.DefaultStmtNoWarningContext, &currInsertValues[1], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 }
@@ -297,7 +295,7 @@ func TestInFunc(t *testing.T) {
 	for _, tc := range testCases {
 		fn, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tc.args...)))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(fn, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
+		d, err := evalBuiltinFunc(fn, ctx, chunk.MutRowFromDatums(types.MakeDatums(tc.args...)).ToRow())
 		require.NoError(t, err)
 		require.Equalf(t, tc.res, d.GetValue(), "%v", types.MakeDatums(tc.args))
 	}
@@ -305,14 +303,14 @@ func TestInFunc(t *testing.T) {
 	strD2 := types.NewCollationStringDatum("Á", "utf8_general_ci")
 	fn, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{strD1, strD2}))
 	require.NoError(t, err)
-	d, isNull, err := fn.evalInt(chunk.Row{})
+	d, isNull, err := fn.evalInt(ctx, chunk.Row{})
 	require.False(t, isNull)
 	require.NoError(t, err)
 	require.Equalf(t, int64(1), d, "%v, %v", strD1, strD2)
 	chk1 := chunk.NewChunkWithCapacity(nil, 1)
 	chk1.SetNumVirtualRows(1)
 	chk2 := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeTiny)}, 1)
-	err = fn.vecEvalInt(chk1, chk2.Column(0))
+	err = fn.vecEvalInt(ctx, chk1, chk2.Column(0))
 	require.NoError(t, err)
 	require.Equal(t, int64(1), chk2.Column(0).GetInt64(0))
 }

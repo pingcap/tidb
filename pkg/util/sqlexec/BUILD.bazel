@@ -5,19 +5,17 @@ go_library(
     srcs = [
         "restricted_sql_executor.go",
         "simple_record_set.go",
-        "utils.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/sqlexec",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/parser",
         "//pkg/parser/ast",
+        "//pkg/parser/terror",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/types",
         "//pkg/util/chunk",
-        "//pkg/util/hack",
-        "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
     ],
 )
@@ -25,15 +23,11 @@ go_library(
 go_test(
     name = "sqlexec_test",
     timeout = "short",
-    srcs = [
-        "main_test.go",
-        "utils_test.go",
-    ],
+    srcs = ["main_test.go"],
     embed = [":sqlexec"],
     flaky = True,
     deps = [
         "//pkg/testkit/testsetup",
-        "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
 )

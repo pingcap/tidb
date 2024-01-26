@@ -40,6 +40,7 @@ go_library(
         "//pkg/util/dbterror",
         "//pkg/util/generic",
         "//pkg/util/logutil",
+        "//pkg/util/memory",
         "//pkg/util/size",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
@@ -65,7 +66,7 @@ go_test(
     embed = [":ingest"],
     flaky = True,
     race = "on",
-    shard_count = 15,
+    shard_count = 16,
     deps = [
         "//pkg/config",
         "//pkg/ddl",

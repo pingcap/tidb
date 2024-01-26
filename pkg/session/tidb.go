@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
+	"github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -74,17 +75,15 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 
 	ddlLease := time.Duration(atomic.LoadInt64(&schemaLease))
 	statisticLease := time.Duration(atomic.LoadInt64(&statsLease))
-	idxUsageSyncLease := GetIndexUsageSyncLease()
 	planReplayerGCLease := GetPlanReplayerGCLease()
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
 		logutil.BgLogger().Info("new domain",
 			zap.String("store", store.UUID()),
 			zap.Stringer("ddl lease", ddlLease),
-			zap.Stringer("stats lease", statisticLease),
-			zap.Stringer("index usage sync lease", idxUsageSyncLease))
+			zap.Stringer("stats lease", statisticLease))
 		factory := createSessionFunc(store)
 		sysFactory := createSessionWithDomainFunc(store)
-		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, planReplayerGCLease, factory)
+		d = domain.NewDomain(store, ddlLease, statisticLease, planReplayerGCLease, factory)
 
 		var ddlInjector func(ddl.DDL) *schematracker.Checker
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {
@@ -135,11 +134,6 @@ var (
 	// statsLease is the time for reload stats table.
 	statsLease = int64(3 * time.Second)
 
-	// indexUsageSyncLease is the time for index usage synchronization.
-	// Because we have not completed GC and other functions, we set it to 0.
-	// TODO: Set indexUsageSyncLease to 60s.
-	indexUsageSyncLease = int64(0 * time.Second)
-
 	// planReplayerGCLease is the time for plan replayer gc.
 	planReplayerGCLease = int64(10 * time.Minute)
 )
@@ -175,16 +169,6 @@ func SetSchemaLease(lease time.Duration) {
 // SetStatsLease changes the default stats lease time for loading stats info.
 func SetStatsLease(lease time.Duration) {
 	atomic.StoreInt64(&statsLease, int64(lease))
-}
-
-// SetIndexUsageSyncLease changes the default index usage sync lease time for loading info.
-func SetIndexUsageSyncLease(lease time.Duration) {
-	atomic.StoreInt64(&indexUsageSyncLease, int64(lease))
-}
-
-// GetIndexUsageSyncLease returns the index usage sync lease time.
-func GetIndexUsageSyncLease() time.Duration {
-	return time.Duration(atomic.LoadInt64(&indexUsageSyncLease))
 }
 
 // SetPlanReplayerGCLease changes the default plan repalyer gc lease time.
@@ -271,7 +255,7 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 	if err != nil {
 		return err
 	}
-	return checkStmtLimit(ctx, se)
+	return checkStmtLimit(ctx, se, true)
 }
 
 func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
@@ -305,18 +289,29 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 	return nil
 }
 
-func checkStmtLimit(ctx context.Context, se *session) error {
+func checkStmtLimit(ctx context.Context, se *session, isFinish bool) error {
 	// If the user insert, insert, insert ... but never commit, TiDB would OOM.
 	// So we limit the statement count in a transaction here.
 	var err error
 	sessVars := se.GetSessionVars()
 	history := GetHistory(se)
-	if history.Count() > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
+	stmtCount := history.Count()
+	if !isFinish {
+		// history stmt count + current stmt, since current stmt is not finish, it has not add to history.
+		stmtCount++
+	}
+	if stmtCount > int(config.GetGlobalConfig().Performance.StmtCountLimit) {
 		if !sessVars.BatchCommit {
 			se.RollbackTxn(ctx)
-			return errors.Errorf("statement count %d exceeds the transaction limitation, autocommit = %t",
-				history.Count(), sessVars.IsAutocommit())
+			return errors.Errorf("statement count %d exceeds the transaction limitation, transaction has been rollback, autocommit = %t",
+				stmtCount, sessVars.IsAutocommit())
 		}
+		if !isFinish {
+			// if the stmt is not finish execute, then just return, since some work need to be done such as StmtCommit.
+			return nil
+		}
+		// If the stmt is finish execute, and exceed the StmtCountLimit, and BatchCommit is true,
+		// then commit the current transaction and create a new transaction.
 		err = sessiontxn.NewTxn(ctx, se)
 		// The transaction does not committed yet, we need to keep it in transaction.
 		// The last history could not be "commit"/"rollback" statement.
@@ -328,6 +323,7 @@ func checkStmtLimit(ctx context.Context, se *session) error {
 }
 
 // GetHistory get all stmtHistory in current txn. Exported only for test.
+// If stmtHistory is nil, will create a new one for current txn.
 func GetHistory(ctx sessionctx.Context) *StmtHistory {
 	hist, ok := ctx.GetSessionVars().TxnCtx.History.(*StmtHistory)
 	if ok {
@@ -364,7 +360,7 @@ func GetRows4Test(ctx context.Context, _ sessionctx.Context, rs sqlexec.RecordSe
 }
 
 // ResultSetToStringSlice changes the RecordSet to [][]string.
-func ResultSetToStringSlice(ctx context.Context, s Session, rs sqlexec.RecordSet) ([][]string, error) {
+func ResultSetToStringSlice(ctx context.Context, s types.Session, rs sqlexec.RecordSet) ([][]string, error) {
 	rows, err := GetRows4Test(ctx, s, rs)
 	if err != nil {
 		return nil, err

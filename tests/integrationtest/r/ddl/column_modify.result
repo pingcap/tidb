@@ -248,7 +248,6 @@ insert into ddl__column_modify2.test (a) values (5);
 insert ddl__column_modify2.test values (6, 6);
 alter table ddl__column_modify2.test add index idx1 (a, b);
 admin check table test;
-
 use ddl__column_modify;
 drop table if exists test_rename_column;
 create table test_rename_column (id int not null primary key auto_increment, col1 int);

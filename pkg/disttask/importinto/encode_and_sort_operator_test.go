@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
@@ -200,4 +201,10 @@ func TestGetWriterMemorySizeLimit(t *testing.T) {
 			DesiredTableInfo: info,
 		}), c.createSQL)
 	}
+}
+
+func TestGetKVGroupBlockSize(t *testing.T) {
+	require.Equal(t, 32*units.MiB, getKVGroupBlockSize(dataKVGroup))
+	require.Equal(t, 16*units.MiB, getKVGroupBlockSize(""))
+	require.Equal(t, 16*units.MiB, getKVGroupBlockSize("1"))
 }

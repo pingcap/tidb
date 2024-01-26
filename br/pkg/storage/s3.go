@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
+	"github.com/pingcap/tidb/pkg/util/prefetch"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 )
@@ -723,6 +724,7 @@ func (rs *S3Storage) URI() string {
 func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (ExternalFileReader, error) {
 	start := int64(0)
 	end := int64(0)
+	prefetchSize := 0
 	if o != nil {
 		if o.StartOffset != nil {
 			start = *o.StartOffset
@@ -730,17 +732,22 @@ func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (Ex
 		if o.EndOffset != nil {
 			end = *o.EndOffset
 		}
+		prefetchSize = o.PrefetchSize
 	}
 	reader, r, err := rs.open(ctx, path, start, end)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	if prefetchSize > 0 {
+		reader = prefetch.NewReader(reader, o.PrefetchSize)
+	}
 	return &s3ObjectReader{
-		storage:   rs,
-		name:      path,
-		reader:    reader,
-		ctx:       ctx,
-		rangeInfo: r,
+		storage:      rs,
+		name:         path,
+		reader:       reader,
+		ctx:          ctx,
+		rangeInfo:    r,
+		prefetchSize: prefetchSize,
 	}, nil
 }
 
@@ -864,8 +871,9 @@ type s3ObjectReader struct {
 	// reader context used for implement `io.Seek`
 	// currently, lightning depends on package `xitongsys/parquet-go` to read parquet file and it needs `io.Seeker`
 	// See: https://github.com/xitongsys/parquet-go/blob/207a3cee75900b2b95213627409b7bac0f190bb3/source/source.go#L9-L10
-	ctx      context.Context
-	retryCnt int
+	ctx          context.Context
+	retryCnt     int
+	prefetchSize int
 }
 
 // Read implement the io.Reader interface.
@@ -873,6 +881,9 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 	maxCnt := r.rangeInfo.End + 1 - r.pos
 	if maxCnt > int64(len(p)) {
 		maxCnt = int64(len(p))
+	}
+	if maxCnt == 0 {
+		return 0, io.EOF
 	}
 	n, err = r.reader.Read(p[:maxCnt])
 	// TODO: maybe we should use !errors.Is(err, io.EOF) here to avoid error lint, but currently, pingcap/errors
@@ -891,6 +902,9 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 			return
 		}
 		r.reader = newReader
+		if r.prefetchSize > 0 {
+			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+		}
 		r.retryCnt++
 		n, err = r.reader.Read(p[:maxCnt])
 	}
@@ -960,6 +974,9 @@ func (r *s3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 		return 0, errors.Trace(err)
 	}
 	r.reader = newReader
+	if r.prefetchSize > 0 {
+		r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+	}
 	r.rangeInfo = info
 	r.pos = realOffset
 	return realOffset, nil
@@ -1031,6 +1048,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 		}
 	} else {
 		up := s3manager.NewUploaderWithClient(rs.svc, func(u *s3manager.Uploader) {
+			u.PartSize = option.PartSize
 			u.Concurrency = option.Concurrency
 			u.BufferProvider = s3manager.NewBufferedReadSeekerWriteToPool(option.Concurrency * hardcodedS3ChunkSize)
 		})
@@ -1044,16 +1062,21 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 		s3Writer.wg.Add(1)
 		go func() {
 			_, err := up.UploadWithContext(ctx, upParams)
-			err1 := rd.Close()
+			// like a channel we only let sender close the pipe in happy path
 			if err != nil {
-				log.Warn("upload to s3 failed", zap.String("filename", name), zap.Error(err), zap.Error(err1))
+				log.Warn("upload to s3 failed", zap.String("filename", name), zap.Error(err))
+				_ = rd.CloseWithError(err)
 			}
 			s3Writer.err = err
 			s3Writer.wg.Done()
 		}()
 		uploader = s3Writer
 	}
-	uploaderWriter := newBufferedWriter(uploader, WriteBufferSize, NoCompression)
+	bufSize := WriteBufferSize
+	if option != nil && option.PartSize > 0 {
+		bufSize = int(option.PartSize)
+	}
+	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression)
 	return uploaderWriter, nil
 }
 

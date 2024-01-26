@@ -266,6 +266,7 @@ func main() {
 		checkTempStorageQuota()
 	}
 	setupLog()
+	memory.InitMemoryHook()
 	setupExtensions()
 	setupStmtSummary()
 
@@ -737,8 +738,6 @@ func setGlobalVars() {
 	session.SetSchemaLease(ddlLeaseDuration)
 	statsLeaseDuration := parseDuration(cfg.Performance.StatsLease)
 	session.SetStatsLease(statsLeaseDuration)
-	indexUsageSyncLeaseDuration := parseDuration(cfg.Performance.IndexUsageSyncLease)
-	session.SetIndexUsageSyncLease(indexUsageSyncLeaseDuration)
 	planReplayerGCLease := parseDuration(cfg.Performance.PlanReplayerGCLease)
 	session.SetPlanReplayerGCLease(planReplayerGCLease)
 	bindinfo.Lease = parseDuration(cfg.Performance.BindInfoLease)
@@ -757,7 +756,7 @@ func setGlobalVars() {
 	if cfg.Performance.TxnEntrySizeLimit > config.MaxTxnEntrySizeLimit {
 		log.Fatal("cannot set txn entry size limit larger than 120M")
 	}
-	kv.TxnEntrySizeLimit = cfg.Performance.TxnEntrySizeLimit
+	kv.TxnEntrySizeLimit.Store(cfg.Performance.TxnEntrySizeLimit)
 
 	priority := mysql.Str2Priority(cfg.Instance.ForcePriority)
 	variable.ForcePriority = int32(priority)

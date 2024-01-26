@@ -48,9 +48,12 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
+	tikvcfg "github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
@@ -287,10 +290,10 @@ func TestSingleStatementRollback(t *testing.T) {
 	tableStart := tablecodec.GenTableRecordPrefix(tblID)
 	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 2)
 	region1Key := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(1)))
-	region1, _, _ := cluster.GetRegionByKey(region1Key)
+	region1, _, _, _ := cluster.GetRegionByKey(region1Key)
 	region1ID := region1.Id
 	region2Key := codec.EncodeBytes(nil, tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(3)))
-	region2, _, _ := cluster.GetRegionByKey(region2Key)
+	region2, _, _, _ := cluster.GetRegionByKey(region2Key)
 	region2ID := region2.Id
 
 	syncCh := make(chan bool)
@@ -728,8 +731,8 @@ func TestWaitLockKill(t *testing.T) {
 	go func() {
 		time.Sleep(500 * time.Millisecond)
 		sessVars := tk2.Session().GetSessionVars()
-		succ := atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
-		require.True(t, succ)
+		sessVars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+		require.True(t, exeerrors.ErrQueryInterrupted.Equal(sessVars.SQLKiller.HandleSignal())) // Send success.
 		wg.Wait()
 	}()
 	_, err := tk2.Exec("update test_kill set c = c + 1 where id = 1")
@@ -756,13 +759,12 @@ func TestKillStopTTLManager(t *testing.T) {
 	tk2.MustExec("begin pessimistic")
 	tk.MustQuery("select * from test_kill where id = 1 for update")
 	sessVars := tk.Session().GetSessionVars()
-	succ := atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
-	require.True(t, succ)
+	sessVars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(sessVars.SQLKiller.HandleSignal())) // Send success.
 
 	// This query should success rather than returning a ResolveLock error.
 	tk2.MustExec("update test_kill set c = c + 1 where id = 1")
-	succ = atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0)
-	require.True(t, succ)
+	sessVars.SQLKiller.Reset()
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
 }
@@ -1716,13 +1718,13 @@ func TestKillWaitLockTxn(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	sessVars := tk.Session().GetSessionVars()
 	// lock query in tk is killed, the ttl manager will stop
-	succ := atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
-	require.True(t, succ)
+	sessVars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+	require.True(t, exeerrors.ErrQueryInterrupted.Equal(sessVars.SQLKiller.HandleSignal())) // Send success.
 	err := <-errCh
 	require.NoError(t, err)
 	_, _ = tk.Exec("rollback")
 	// reset kill
-	atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0)
+	sessVars.SQLKiller.Reset()
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
 }
@@ -2834,7 +2836,7 @@ func TestRCPointWriteLockIfExists(t *testing.T) {
 	tk.MustQuery("show variables like 'transaction_isolation'").Check(testkit.Rows("transaction_isolation READ-COMMITTED"))
 
 	tableID := external.GetTableByName(t, tk, "test", "t1").Meta().ID
-	idxVal, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
+	idxVal, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, types.NewIntDatum(1))
 	require.NoError(t, err)
 	secIdxKey1 := tablecodec.EncodeIndexSeekKey(tableID, 1, idxVal)
 	key1 := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(1))
@@ -3487,7 +3489,7 @@ func TestIssueBatchResolveLocks(t *testing.T) {
 	// Simulate a later GC that should resolve all stale lock produced in above steps.
 	currentTS, err := store.CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(t, err)
-	_, err = gcworker.RunResolveLocks(context.Background(), store.(tikv.Storage), domain.GetPDClient(), currentTS.Ver, "gc-worker-test-batch-resolve-locks", 1, false)
+	err = gcworker.RunResolveLocks(context.Background(), store.(tikv.Storage), domain.GetPDClient(), currentTS.Ver, "gc-worker-test-batch-resolve-locks", 1)
 	require.NoError(t, err)
 
 	// Check row 6 unlocked
@@ -3565,4 +3567,38 @@ func TestIssue42937(t *testing.T) {
 		"4 41",
 		"5 11",
 	))
+}
+
+func TestEndTxnOnLockExpire(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("prepare ps_commit from 'commit'")
+	tk.MustExec("prepare ps_rollback from 'rollback'")
+
+	defer setLockTTL(300).restore()
+	defer tikvcfg.UpdateGlobal(func(conf *tikvcfg.Config) {
+		conf.MaxTxnTTL = 500
+	})()
+
+	for _, tt := range []struct {
+		name      string
+		endTxnSQL string
+	}{
+		{"CommitTxt", "commit"},
+		{"CommitBin", "execute ps_commit"},
+		{"RollbackTxt", "rollback"},
+		{"RollbackBin", "execute ps_rollback"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			tk.Exec("delete from t")
+			tk.Exec("insert into t values (1, 1)")
+			tk.Exec("begin pessimistic")
+			tk.Exec("update t set b = 10 where a = 1")
+			time.Sleep(time.Second)
+			tk.MustContainErrMsg("select * from t", "TTL manager has timed out")
+			tk.MustExec(tt.endTxnSQL)
+		})
+	}
 }

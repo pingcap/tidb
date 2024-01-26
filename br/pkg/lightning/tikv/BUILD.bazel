@@ -18,7 +18,9 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/debugpb",
         "@com_github_pingcap_kvproto//pkg/import_sstpb",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
+        "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_tikv_client_go_v2//util",
+        "@com_github_tikv_pd_client//http",
         "@org_golang_google_grpc//:grpc",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
@@ -35,9 +37,10 @@ go_test(
     shard_count = 4,
     deps = [
         ":tikv",
-        "//br/pkg/lightning/common",
         "@com_github_coreos_go_semver//semver",
         "@com_github_pingcap_kvproto//pkg/import_sstpb",
+        "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_pd_client//http",
     ],
 )

@@ -22,14 +22,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"github.com/pkg/errors"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 )
 
 func writeHex(in io.Writer, d types.Datum) error {
@@ -45,7 +45,7 @@ func writeDatum(restoreCtx *format.RestoreCtx, d types.Datum, ft *types.FieldTyp
 		if mysql.HasBinaryFlag(ft.GetFlag()) {
 			return writeHex(restoreCtx.In, d)
 		}
-		_, err := fmt.Fprintf(restoreCtx.In, "'%s'", sqlexec.EscapeString(d.GetString()))
+		_, err := fmt.Fprintf(restoreCtx.In, "'%s'", sqlescape.EscapeString(d.GetString()))
 		return err
 	}
 	expr := ast.NewValueExpr(d.GetValue(), ft.GetCharset(), ft.GetCollate())

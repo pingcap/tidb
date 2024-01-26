@@ -19,6 +19,8 @@ import (
 	"runtime"
 	"sync"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 )
 
@@ -122,6 +124,11 @@ func (reader *rowContainerReader) startWorker() {
 
 		for chkIdx := 0; chkIdx < reader.rc.NumChunks(); chkIdx++ {
 			chk, err := reader.rc.GetChunk(chkIdx)
+			failpoint.Inject("get-chunk-error", func(val failpoint.Value) {
+				if val.(bool) {
+					err = errors.New("fail to get chunk for test")
+				}
+			})
 			if err != nil {
 				reader.err = err
 				return

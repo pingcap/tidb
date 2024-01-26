@@ -20,6 +20,7 @@ import (
 	"runtime/trace"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -43,7 +44,7 @@ func (e *ReplaceExec) Close() error {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
 	if e.SelectExec != nil {
-		return e.SelectExec.Close()
+		return exec.Close(e.SelectExec)
 	}
 	return nil
 }
@@ -54,7 +55,7 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
 	if e.SelectExec != nil {
-		return e.SelectExec.Open(ctx)
+		return exec.Open(ctx, e.SelectExec)
 	}
 	e.initEvalBuffer()
 	return nil

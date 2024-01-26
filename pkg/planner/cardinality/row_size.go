@@ -88,8 +88,8 @@ func GetAvgRowSize(ctx sessionctx.Context, coll *statistics.HistColl, cols []*ex
 	return size + float64(len(cols))
 }
 
-// GetAvgRowSizeListInDisk computes average row size for given columns.
-func GetAvgRowSizeListInDisk(coll *statistics.HistColl, cols []*expression.Column) (size float64) {
+// GetAvgRowSizeDataInDiskByRows computes average row size for given columns.
+func GetAvgRowSizeDataInDiskByRows(coll *statistics.HistColl, cols []*expression.Column) (size float64) {
 	if coll.Pseudo || len(coll.Columns) == 0 || coll.RealtimeCount == 0 {
 		for _, col := range cols {
 			size += float64(chunk.EstimateTypeWidth(col.GetType()))
@@ -103,10 +103,10 @@ func GetAvgRowSizeListInDisk(coll *statistics.HistColl, cols []*expression.Colum
 				size += float64(chunk.EstimateTypeWidth(col.GetType()))
 				continue
 			}
-			size += AvgColSizeListInDisk(colHist, coll.RealtimeCount)
+			size += AvgColSizeDataInDiskByRows(colHist, coll.RealtimeCount)
 		}
 	}
-	// Add 8 byte for each column's size record. See `ListInDisk` for details.
+	// Add 8 byte for each column's size record. See `DataInDiskByRows` for details.
 	return size + float64(8*len(cols))
 }
 
@@ -160,9 +160,9 @@ func AvgColSizeChunkFormat(c *statistics.Column, count int64) float64 {
 	return math.Round((avgSize-math.Log2(avgSize))*100)/100 + 8
 }
 
-// AvgColSizeListInDisk is the average column size of the histogram. These sizes are derived
-// from `chunk.ListInDisk` so we need to update them if those 2 functions are changed.
-func AvgColSizeListInDisk(c *statistics.Column, count int64) float64 {
+// AvgColSizeDataInDiskByRows is the average column size of the histogram. These sizes are derived
+// from `chunk.DataInDiskByRows` so we need to update them if those 2 functions are changed.
+func AvgColSizeDataInDiskByRows(c *statistics.Column, count int64) float64 {
 	if count == 0 {
 		return 0
 	}

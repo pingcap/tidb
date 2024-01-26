@@ -15,11 +15,14 @@
 package util
 
 import (
+	"context"
 	"sync"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/tiancaiamao/gp"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 // WaitGroupEnhancedWrapper wrapper wg, it provides the basic ability of WaitGroupWrapper with checking unexited process
@@ -155,6 +158,20 @@ func (w *WaitGroupWrapper) Run(exec func()) {
 	}()
 }
 
+// Go works like Run, but it also logs on panic.
+func (w *WaitGroupWrapper) Go(exec func()) {
+	w.Add(1)
+	go func() {
+		defer w.Done()
+		defer func() {
+			if r := recover(); r != nil {
+				logutil.BgLogger().Error("panic in wait group", zap.Any("recover", r), zap.Stack("stack"))
+			}
+		}()
+		exec()
+	}()
+}
+
 // RunWithRecover wraps goroutine startup call with force recovery, add 1 to WaitGroup
 // and call done when function return. it will dump current goroutine stack into log if catch any recover result.
 // exec is that execute logic function. recoverFn is that handler will be called after recover and before dump stack,
@@ -171,4 +188,65 @@ func (w *WaitGroupWrapper) RunWithRecover(exec func(), recoverFn func(r interfac
 		}()
 		exec()
 	}()
+}
+
+// WaitGroupPool is a wrapper for sync.WaitGroup and support goroutine pool
+type WaitGroupPool struct {
+	sync.WaitGroup
+	gp *gp.Pool
+}
+
+// NewWaitGroupPool returns WaitGroupPool
+func NewWaitGroupPool(gp *gp.Pool) *WaitGroupPool {
+	var wg WaitGroupPool
+	wg.gp = gp
+	return &wg
+}
+
+// Run runs a function in a goroutine, adds 1 to WaitGroup
+// and calls done when function returns. Please DO NOT use panic
+// in the cb function.
+func (w *WaitGroupPool) Run(exec func()) {
+	w.Add(1)
+	w.gp.Go(func() {
+		defer w.Done()
+		exec()
+	})
+}
+
+// ErrorGroupWithRecover will recover panic from error group. Please note that
+// panic will break the control flow unexpectedly, even if we recover it some key
+// logic may be skipped due to panic, for example, Mutex.Unlock(), and continue
+// running may cause unexpected behaviour. Use it with caution.
+type ErrorGroupWithRecover struct {
+	*errgroup.Group
+}
+
+// NewErrorGroupWithRecover creates a ErrorGroupWithRecover.
+func NewErrorGroupWithRecover() *ErrorGroupWithRecover {
+	return &ErrorGroupWithRecover{
+		&errgroup.Group{},
+	}
+}
+
+// NewErrorGroupWithRecoverWithCtx is like errgroup.WithContext, but returns a
+// ErrorGroupWithRecover.
+func NewErrorGroupWithRecoverWithCtx(ctx context.Context) (*ErrorGroupWithRecover, context.Context) {
+	eg, ctx2 := errgroup.WithContext(ctx)
+	return &ErrorGroupWithRecover{
+		eg,
+	}, ctx2
+}
+
+// Go is like errgroup.Group.Go, but convert panic and its stack into error.
+func (g *ErrorGroupWithRecover) Go(fn func() error) {
+	g.Group.Go(func() (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				logutil.BgLogger().Error("panic in error group", zap.Any("recover", r), zap.Stack("stack"))
+				err = GetRecoverError(r)
+			}
+		}()
+		return fn()
+	})
 }

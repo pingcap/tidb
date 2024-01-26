@@ -121,3 +121,214 @@ select  /*+ use_index_merge( tbl_39) */ col_239  from tbl_39 where not( tbl_39.c
 col_239
 1994
 1997
+drop table if exists t, t1, t2;
+create table t (id int,name varchar(10));
+insert into t values(1,'tt');
+create table t1(id int,name varchar(10),name1 varchar(10),name2 varchar(10));
+insert into t1 values(1,'tt','ttt','tttt'),(2,'dd','ddd','dddd');
+create table t2(id int,name varchar(10),name1 varchar(10),name2 varchar(10),`date1` date);
+insert into t2 values(1,'tt','ttt','tttt','2099-12-31'),(2,'dd','ddd','dddd','2099-12-31');
+WITH bzzs AS (
+SELECT
+count(1) AS bzn
+FROM
+t c
+),
+tmp1 AS (
+SELECT
+t1.*
+FROM
+t1
+LEFT JOIN bzzs ON 1 = 1
+WHERE
+name IN ('tt')
+AND bzn <> 1
+),
+tmp2 AS (
+SELECT
+tmp1.*,
+date('2099-12-31') AS endate
+FROM
+tmp1
+),
+tmp3 AS (
+SELECT
+*
+FROM
+tmp2
+WHERE
+endate > CURRENT_DATE
+UNION ALL
+SELECT
+'1' AS id,
+'ss' AS name,
+'sss' AS name1,
+'ssss' AS name2,
+date('2099-12-31') AS endate
+FROM
+bzzs t1
+WHERE
+bzn = 1
+)
+SELECT
+c2.id,
+c3.id
+FROM
+t2 db
+LEFT JOIN tmp3 c2 ON c2.id = '1'
+LEFT JOIN tmp3 c3 ON c3.id = '1';
+id	id
+1	1
+1	1
+drop table if exists t;
+create table t(a int, b int);
+set @@tidb_max_chunk_size = 32;
+insert into t values(1, 1);
+insert into t select a+1, a+1 from t;
+insert into t select a+2, a+2 from t;
+insert into t select a+4, a+4 from t;
+insert into t select a+8, a+8 from t;
+insert into t select a+16, a+16 from t;
+insert into t select a+32, a+32 from t;
+select a from (select 100 as a, 100 as b union all select * from t) t where b != 0;
+a
+100
+1
+2
+3
+4
+5
+6
+7
+8
+9
+10
+11
+12
+13
+14
+15
+16
+17
+18
+19
+20
+21
+22
+23
+24
+25
+26
+27
+28
+29
+30
+31
+32
+33
+34
+35
+36
+37
+38
+39
+40
+41
+42
+43
+44
+45
+46
+47
+48
+49
+50
+51
+52
+53
+54
+55
+56
+57
+58
+59
+60
+61
+62
+63
+64
+set @@tidb_max_chunk_size = default;
+drop table if exists t1, t2;
+create table t1(a varchar(20) collate utf8mb4_bin, index ia(a));
+insert into t1 value('测试'),('测试  '),('xxx ');
+explain format = brief select *,length(a) from t1 where a like '测试 %';
+id	estRows	task	access object	operator info
+Projection	250.00	root		planner__core__issuetest__planner_issue.t1.a, length(planner__core__issuetest__planner_issue.t1.a)->Column#3
+└─UnionScan	250.00	root		like(planner__core__issuetest__planner_issue.t1.a, "测试 %", 92)
+  └─IndexReader	250.00	root		index:Selection
+    └─Selection	250.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t1.a, "测试 %", 92)
+      └─IndexRangeScan	250.00	cop[tikv]	table:t1, index:ia(a)	range:["测试","测试!"), keep order:false, stats:pseudo
+explain format = brief select *,length(a) from t1 where a like '测试';
+id	estRows	task	access object	operator info
+Projection	10.00	root		planner__core__issuetest__planner_issue.t1.a, length(planner__core__issuetest__planner_issue.t1.a)->Column#3
+└─UnionScan	10.00	root		like(planner__core__issuetest__planner_issue.t1.a, "测试", 92)
+  └─IndexReader	10.00	root		index:Selection
+    └─Selection	10.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t1.a, "测试", 92)
+      └─IndexRangeScan	10.00	cop[tikv]	table:t1, index:ia(a)	range:["测试","测试"], keep order:false, stats:pseudo
+select *,length(a) from t1 where a like '测试 %';
+a	length(a)
+测试  	8
+select *,length(a) from t1 where a like '测试';
+a	length(a)
+测试	6
+explain format = brief select * from t1 use index (ia) where a like 'xxx_';
+id	estRows	task	access object	operator info
+Projection	250.00	root		planner__core__issuetest__planner_issue.t1.a
+└─UnionScan	250.00	root		like(planner__core__issuetest__planner_issue.t1.a, "xxx_", 92)
+  └─IndexReader	250.00	root		index:Selection
+    └─Selection	250.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t1.a, "xxx_", 92)
+      └─IndexRangeScan	250.00	cop[tikv]	table:t1, index:ia(a)	range:["xxx","xxy"), keep order:false, stats:pseudo
+select * from t1 use index (ia) where a like 'xxx_';
+a
+xxx 
+create table t2(a varchar(20) collate gbk_chinese_ci, index ia(a));
+insert into t2 value('测试'),('测试  ');
+explain format = brief select *,length(a) from t2 where a like '测试 %';
+id	estRows	task	access object	operator info
+Projection	250.00	root		planner__core__issuetest__planner_issue.t2.a, length(to_binary(planner__core__issuetest__planner_issue.t2.a))->Column#3
+└─UnionScan	250.00	root		like(planner__core__issuetest__planner_issue.t2.a, "测试 %", 92)
+  └─IndexReader	250.00	root		index:Selection
+    └─Selection	250.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t2.a, "测试 %", 92)
+      └─IndexRangeScan	250.00	cop[tikv]	table:t2, index:ia(a)	range:["\x89\a\xba%","\x89\a\xba%!"), keep order:false, stats:pseudo
+explain format = brief select *,length(a) from t2 where a like '测试';
+id	estRows	task	access object	operator info
+Projection	10.00	root		planner__core__issuetest__planner_issue.t2.a, length(to_binary(planner__core__issuetest__planner_issue.t2.a))->Column#3
+└─UnionScan	10.00	root		like(planner__core__issuetest__planner_issue.t2.a, "测试", 92)
+  └─IndexReader	10.00	root		index:Selection
+    └─Selection	10.00	cop[tikv]		like(planner__core__issuetest__planner_issue.t2.a, "测试", 92)
+      └─IndexRangeScan	10.00	cop[tikv]	table:t2, index:ia(a)	range:["\x89\a\xba%","\x89\a\xba%"], keep order:false, stats:pseudo
+select *,length(a) from t2 where a like '测试 %';
+a	length(a)
+测试  	6
+select *,length(a) from t2 where a like '测试';
+a	length(a)
+测试	4
+drop view if exists v1;
+create view v1(id) as
+with recursive cte(a) as (select 1 union select a+1 from cte where a<3)
+select * from cte;
+create table test2(id int,value int);
+insert into test2 values(1,1),(2,2),(3,3),(4,4),(5,5);
+update test2
+set value=0
+where test2.id in
+(
+select * from v1
+);
+select * from test2;
+id	value
+1	0
+2	0
+3	0
+4	4
+5	5

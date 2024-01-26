@@ -585,7 +585,6 @@ drop table if exists t;
 create table t(name char(255) primary key, b int, c int, index idx(name), unique index uidx(name));
 insert into t values("aaaa", 1, 1), ("bbb", 2, 2), ("ccc", 3, 3);
 admin check table t;
-
 drop table if exists t;
 set tidb_enable_clustered_index=ON;
 create table t(d double primary key, a int, name varchar(255), index idx(name(2)), index midx(a, name));
@@ -653,7 +652,6 @@ a	a
 A	A
 update t set a = 'B';
 admin check table t;
-
 drop table if exists t;
 set tidb_enable_clustered_index=ON;
 create table t(a int, b char(10) collate utf8mb4_bin, c char(10) collate utf8mb4_general_ci,d varchar(10) collate utf8mb4_bin, e varchar(10) collate utf8mb4_general_ci, f char(10) collate utf8mb4_unicode_ci, g varchar(10) collate utf8mb4_unicode_ci, primary key(a, b, c, d, e, f, g), key a(a), unique key ua(a), key b(b), unique key ub(b), key c(c), unique key uc(c),key d(d), unique key ud(d),key e(e), unique key ue(e), key f(f), key g(g), unique key uf(f), unique key ug(g));
@@ -744,7 +742,9 @@ select * from t use index(ue);
 a	b	c	d	e	f	g	h	i
 1	啊	啊	啊  	啊  	啊	啊  	🐸	🐸
 admin check table t;
-
+admin recover index t a;
+ADDED_COUNT	SCAN_COUNT
+0	1
 alter table t add column n char(10) COLLATE utf8mb4_unicode_ci;
 alter table t add index n(n);
 update t set n = '吧';
@@ -755,7 +755,6 @@ select * from t use index(n);
 a	b	c	d	e	f	g	h	i	n
 1	啊	啊	啊  	啊  	啊	啊  	🐸	🐸	吧
 admin check table t;
-
 drop table if exists t;
 create table t (a varchar(255) COLLATE utf8_general_ci primary key clustered, b int) partition by range columns(a) (partition p0 values less than ('0'), partition p1 values less than MAXVALUE);
 alter table t add index b(b);
@@ -767,7 +766,6 @@ select * from t use index();
 a	b
 0	1
 admin check table t;
-
 set tidb_enable_clustered_index=default;
 drop table if exists t;
 set tidb_enable_clustered_index=ON;
@@ -880,7 +878,6 @@ select * from t use index(idx);
 k	v
 01233	1
 admin check table t;
-
 drop table if exists t;
 CREATE TABLE t (`COL1` tinyblob NOT NULL,  `COL2` binary(1) NOT NULL,  `COL3` bigint(11) NOT NULL,  PRIMARY KEY (`COL1`(5),`COL2`,`COL3`) /*T![clustered_index] CLUSTERED */);
 insert into t values(0x1E,0xEC,6966939640596047133);
@@ -1898,7 +1895,7 @@ c	1
 explain format="brief" select v from t where v < 'b'  order by v;
 id	estRows	task	access object	operator info
 IndexReader	3323.33	root		index:IndexRangeScan
-└─IndexRangeScan	3323.33	cop[tikv]	table:t, index:v(v)	range:[-inf,"b"), keep order:true, stats:pseudo
+└─IndexRangeScan	3323.33	cop[tikv]	table:t, index:v(v)	range:[-inf,"\x00B"), keep order:true, stats:pseudo
 select v from t where v < 'b' order by v;
 v
  
@@ -1909,7 +1906,7 @@ a
 explain format="brief" select v from t where v < 'b' and v > ' ' order by v;
 id	estRows	task	access object	operator info
 IndexReader	250.00	root		index:IndexRangeScan
-└─IndexRangeScan	250.00	cop[tikv]	table:t, index:v(v)	range:(" ","b"), keep order:true, stats:pseudo
+└─IndexRangeScan	250.00	cop[tikv]	table:t, index:v(v)	range:("","\x00B"), keep order:true, stats:pseudo
 select v from t where v < 'b' and v > ' ' order by v;
 v
 a
@@ -1919,7 +1916,7 @@ a
 explain format="brief" select v from t_bin where v < 'b' order by v;
 id	estRows	task	access object	operator info
 IndexReader	3323.33	root		index:IndexRangeScan
-└─IndexRangeScan	3323.33	cop[tikv]	table:t_bin, index:v(v)	range:[-inf,0x62), keep order:true, stats:pseudo
+└─IndexRangeScan	3323.33	cop[tikv]	table:t_bin, index:v(v)	range:[-inf,"b"), keep order:true, stats:pseudo
 select v from t_bin where v < 'b' order by v;
 v
  
@@ -1927,7 +1924,7 @@ a
 explain format="brief" select v from t_bin where v < 'b' and v > ' ' order by v;
 id	estRows	task	access object	operator info
 IndexReader	250.00	root		index:IndexRangeScan
-└─IndexRangeScan	250.00	cop[tikv]	table:t_bin, index:v(v)	range:(0x20,0x62), keep order:true, stats:pseudo
+└─IndexRangeScan	250.00	cop[tikv]	table:t_bin, index:v(v)	range:(" ","b"), keep order:true, stats:pseudo
 select v from t_bin where v < 'b' and v > ' ' order by v;
 v
 a
@@ -1935,7 +1932,7 @@ explain format="brief" select id from t use index(v) where v < 'b';
 id	estRows	task	access object	operator info
 Projection	3323.33	root		expression__charset_and_collation.t.id
 └─IndexLookUp	3323.33	root		
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t, index:v(v)	range:[-inf,"b"), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t, index:v(v)	range:[-inf,"\x00B"), keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	3323.33	cop[tikv]	table:t	keep order:false, stats:pseudo
 select id from t use index(v) where v < 'b';
 id
@@ -1948,7 +1945,7 @@ explain format="brief" select id from t use index(v) where v < 'b' and v > ' ';
 id	estRows	task	access object	operator info
 Projection	250.00	root		expression__charset_and_collation.t.id
 └─IndexLookUp	250.00	root		
-  ├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t, index:v(v)	range:(" ","b"), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t, index:v(v)	range:("","\x00B"), keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	250.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select id from t use index(v) where v < 'b' and v > ' ';
 id
@@ -1960,7 +1957,7 @@ explain format="brief" select id from t_bin use index(v) where v < 'b';
 id	estRows	task	access object	operator info
 Projection	3323.33	root		expression__charset_and_collation.t_bin.id
 └─IndexLookUp	3323.33	root		
-  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t_bin, index:v(v)	range:[-inf,0x62), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	3323.33	cop[tikv]	table:t_bin, index:v(v)	range:[-inf,"b"), keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	3323.33	cop[tikv]	table:t_bin	keep order:false, stats:pseudo
 select id from t_bin use index(v) where v < 'b';
 id
@@ -1970,7 +1967,7 @@ explain format="brief" select id from t_bin use index(v) where v < 'b' and v > '
 id	estRows	task	access object	operator info
 Projection	250.00	root		expression__charset_and_collation.t_bin.id
 └─IndexLookUp	250.00	root		
-  ├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t_bin, index:v(v)	range:(0x20,0x62), keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t_bin, index:v(v)	range:(" ","b"), keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	250.00	cop[tikv]	table:t_bin	keep order:false, stats:pseudo
 select id from t_bin use index(v) where v < 'b' and v > ' ';
 id

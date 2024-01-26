@@ -98,3 +98,27 @@ alter table t1 modify a varchar(20) charset utf8 collate utf8_roman_ci;
 # mustGetUnsupportedCollation("alter table t convert to collate utf8mb4_unicode_ci", "utf8mb4_unicode_ci")
 drop database if exists ucd;
 use ddl__serial;
+
+
+# TestLocalTemporaryTableBlockedDDL
+drop table if exists t1, tmp1;
+create table t1 (id int);
+create temporary table tmp1 (id int primary key, a int unique, b int);
+--error 8200
+rename table tmp1 to tmp2;
+--error 8200
+alter table tmp1 add column c int;
+--error 8200
+alter table tmp1 add index b(b);
+--error 8200
+create index a on tmp1(b);
+--error 8200
+drop index a on tmp1;
+--error 8200
+lock tables tmp1 read;
+--error 8200
+lock tables tmp1 write;
+--error 8200
+lock tables t1 read, tmp1 read;
+--error 8200
+admin cleanup table lock tmp1;

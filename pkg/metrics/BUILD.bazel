@@ -35,7 +35,6 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/timer/metrics",
         "//pkg/util/logutil",
-        "//pkg/util/mathutil",
         "//pkg/util/promutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_prometheus_client_golang//prometheus",

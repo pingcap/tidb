@@ -152,6 +152,47 @@ func (c *hashRowContainer) GetMatchedRows(probeKey uint64, probeRow chunk.Row, h
 	return matchedRows, err
 }
 
+// GetOneMatchedRow get one matched rows from probeRow.
+func (c *hashRowContainer) GetOneMatchedRow(probeKey uint64, probeRow chunk.Row, hCtx *hashContext) (*chunk.Row, error) {
+	var err error
+	innerEntry := c.hashTable.Get(probeKey)
+	if innerEntry == nil {
+		return nil, err
+	}
+	var matchedRow chunk.Row
+
+	if c.chkBuf != nil {
+		c.chkBuf.Reset()
+	}
+	capacity := 0
+
+	for i := 0; innerEntry != nil; i, innerEntry = i+1, innerEntry.next {
+		ptr := innerEntry.ptr
+		matchedRow, c.chkBuf, err = c.rowContainer.GetRowAndAppendToChunkIfInDisk(ptr, c.chkBuf)
+		if err != nil {
+			return nil, err
+		}
+		var ok bool
+		ok, err = c.matchJoinKey(matchedRow, probeRow, hCtx)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			return &matchedRow, nil
+		}
+		atomic.AddInt64(&c.stat.probeCollision, 1)
+		if i == 0 {
+			capacity = c.chkBuf.Capacity()
+			if capacity < 128 {
+				capacity = 128
+			}
+		} else if (i+1)%capacity == 0 {
+			c.chkBuf.Reset()
+		}
+	}
+	return nil, err
+}
+
 func (c *hashRowContainer) GetAllMatchedRows(probeHCtx *hashContext, probeSideRow chunk.Row,
 	probeKeyNullBits *bitmap.ConcurrentBitmap, matched []chunk.Row, needCheckBuildColPos, needCheckProbeColPos []int, needCheckBuildTypes, needCheckProbeTypes []*types.FieldType) ([]chunk.Row, error) {
 	// for NAAJ probe row with null, we should match them with all build rows.
@@ -204,7 +245,7 @@ func (c *hashRowContainer) GetAllMatchedRows(probeHCtx *hashContext, probeSideRo
 		}
 		if probeKeyNullBits != nil && len(probeHCtx.naKeyColIdx) > 1 {
 			// check the idxs-th value of the join columns.
-			ok, err = codec.EqualChunkRow(c.sc, mayMatchedRow, needCheckBuildTypes, needCheckBuildColPos, probeSideRow, needCheckProbeTypes, needCheckProbeColPos)
+			ok, err = codec.EqualChunkRow(c.sc.TypeCtx(), mayMatchedRow, needCheckBuildTypes, needCheckBuildColPos, probeSideRow, needCheckProbeTypes, needCheckProbeColPos)
 			if err != nil {
 				return nil, err
 			}
@@ -232,7 +273,11 @@ const rowPtrSize = int64(unsafe.Sizeof(chunk.RowPtr{}))
 // h and buf.
 func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk.Row, hCtx *hashContext, matched []chunk.Row, matchedPtrs []chunk.RowPtr, needPtr bool) ([]chunk.Row, []chunk.RowPtr, error) {
 	var err error
-	innerPtrs := c.hashTable.Get(probeKey)
+	entry := c.hashTable.Get(probeKey)
+	var innerPtrs []chunk.RowPtr
+	for ; entry != nil; entry = entry.next {
+		innerPtrs = append(innerPtrs, entry.ptr)
+	}
 	if len(innerPtrs) == 0 {
 		return nil, nil, err
 	}
@@ -244,10 +289,9 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 	var (
 		matchedDataSize     = int64(cap(matched))*rowSize + int64(cap(matchedPtrs))*rowPtrSize
 		needTrackMemUsage   = cap(innerPtrs) > signalCheckpointForJoinMask
-		lastChunkBufPointer *chunk.Chunk
+		lastChunkBufPointer = c.chkBuf
 		memDelta            int64
 	)
-	c.chkBuf = nil
 	c.memTracker.Consume(-c.chkBufSizeForOneProbe)
 	if needTrackMemUsage {
 		c.memTracker.Consume(int64(cap(innerPtrs)) * rowPtrSize)
@@ -265,7 +309,7 @@ func (c *hashRowContainer) GetMatchedRowsAndPtrs(probeKey uint64, probeRow chunk
 		if err != nil {
 			return nil, nil, err
 		}
-		if needTrackMemUsage && c.chkBuf != lastChunkBufPointer && lastChunkBufPointer != nil {
+		if c.chkBuf != lastChunkBufPointer && lastChunkBufPointer != nil {
 			lastChunkSize := lastChunkBufPointer.MemoryUsage()
 			c.chkBufSizeForOneProbe += lastChunkSize
 			memDelta += lastChunkSize
@@ -337,7 +381,7 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRo
 				needCheckProbeTypes = append(needCheckProbeTypes, probeHCtx.allTypes[i])
 			}
 			// check the idxs-th value of the join columns.
-			ok, err = codec.EqualChunkRow(c.sc, mayMatchedRow, needCheckBuildTypes, needCheckBuildColPos, probeSideRow, needCheckProbeTypes, needCheckProbeColPos)
+			ok, err = codec.EqualChunkRow(c.sc.TypeCtx(), mayMatchedRow, needCheckBuildTypes, needCheckBuildColPos, probeSideRow, needCheckProbeTypes, needCheckProbeColPos)
 			if err != nil {
 				return nil, err
 			}
@@ -360,7 +404,7 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRo
 				needCheckProbeTypes = append(needCheckProbeTypes, probeHCtx.allTypes[i])
 			}
 			// check the idxs-th value of the join columns.
-			ok, err = codec.EqualChunkRow(c.sc, mayMatchedRow, needCheckBuildTypes, needCheckBuildColPos, probeSideRow, needCheckProbeTypes, needCheckProbeColPos)
+			ok, err = codec.EqualChunkRow(c.sc.TypeCtx(), mayMatchedRow, needCheckBuildTypes, needCheckBuildColPos, probeSideRow, needCheckProbeTypes, needCheckProbeColPos)
 			if err != nil {
 				return nil, err
 			}
@@ -377,11 +421,11 @@ func (c *hashRowContainer) GetNullBucketRows(probeHCtx *hashContext, probeSideRo
 // matchJoinKey checks if join keys of buildRow and probeRow are logically equal.
 func (c *hashRowContainer) matchJoinKey(buildRow, probeRow chunk.Row, probeHCtx *hashContext) (ok bool, err error) {
 	if len(c.hCtx.naKeyColIdx) > 0 {
-		return codec.EqualChunkRow(c.sc,
+		return codec.EqualChunkRow(c.sc.TypeCtx(),
 			buildRow, c.hCtx.allTypes, c.hCtx.naKeyColIdx,
 			probeRow, probeHCtx.allTypes, probeHCtx.naKeyColIdx)
 	}
-	return codec.EqualChunkRow(c.sc,
+	return codec.EqualChunkRow(c.sc.TypeCtx(),
 		buildRow, c.hCtx.allTypes, c.hCtx.keyColIdx,
 		probeRow, probeHCtx.allTypes, probeHCtx.keyColIdx)
 }
@@ -419,7 +463,7 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 	// 1: write the row data of join key to hashVals. (normal EQ key should ignore the null values.) null-EQ for Except statement is an exception.
 	for keyIdx, colIdx := range c.hCtx.keyColIdx {
 		ignoreNull := len(ignoreNulls) > keyIdx && ignoreNulls[keyIdx]
-		err := codec.HashChunkSelected(c.sc, hCtx.hashVals, chk, hCtx.allTypes[keyIdx], colIdx, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
+		err := codec.HashChunkSelected(c.sc.TypeCtx(), hCtx.hashVals, chk, hCtx.allTypes[keyIdx], colIdx, hCtx.buf, hCtx.hasNull, selected, ignoreNull)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -429,7 +473,7 @@ func (c *hashRowContainer) PutChunkSelected(chk *chunk.Chunk, selected, ignoreNu
 	hasNullMark := make([]bool, len(hCtx.hasNull))
 	for keyIdx, colIdx := range c.hCtx.naKeyColIdx {
 		// NAAJ won't ignore any null values, but collect them as one hash bucket.
-		err := codec.HashChunkSelected(c.sc, hCtx.hashVals, chk, hCtx.allTypes[keyIdx], colIdx, hCtx.buf, hCtx.hasNull, selected, false)
+		err := codec.HashChunkSelected(c.sc.TypeCtx(), hCtx.hashVals, chk, hCtx.allTypes[keyIdx], colIdx, hCtx.buf, hCtx.hasNull, selected, false)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -565,7 +609,12 @@ func (es *entryStore) GetStore() (e *entry, memDelta int64) {
 
 type baseHashTable interface {
 	Put(hashKey uint64, rowPtr chunk.RowPtr)
-	Get(hashKey uint64) (rowPtrs []chunk.RowPtr)
+	// e := Get(hashKey)
+	// for ; e != nil; e = e.next {
+	//    rowPtr := e.ptr
+	//    ...
+	// }
+	Get(hashKey uint64) *entry
 	Len() uint64
 	// GetAndCleanMemoryDelta gets and cleans the memDelta of the baseHashTable. Memory delta will be cleared after each fetch.
 	// It indicates the memory delta of the baseHashTable since the last calling GetAndCleanMemoryDelta().
@@ -611,13 +660,9 @@ func (ht *unsafeHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
 }
 
 // Get gets the values of the "key" and appends them to "values".
-func (ht *unsafeHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
+func (ht *unsafeHashTable) Get(hashKey uint64) *entry {
 	entryAddr := ht.hashMap[hashKey]
-	for entryAddr != nil {
-		rowPtrs = append(rowPtrs, entryAddr.ptr)
-		entryAddr = entryAddr.next
-	}
-	return
+	return entryAddr
 }
 
 // Len returns the number of rowPtrs in the unsafeHashTable, the number of keys may be less than Len
@@ -674,13 +719,9 @@ func (ht *concurrentMapHashTable) Put(hashKey uint64, rowPtr chunk.RowPtr) {
 }
 
 // Get gets the values of the "key" and appends them to "values".
-func (ht *concurrentMapHashTable) Get(hashKey uint64) (rowPtrs []chunk.RowPtr) {
+func (ht *concurrentMapHashTable) Get(hashKey uint64) *entry {
 	entryAddr, _ := ht.hashMap.Get(hashKey)
-	for entryAddr != nil {
-		rowPtrs = append(rowPtrs, entryAddr.ptr)
-		entryAddr = entryAddr.next
-	}
-	return
+	return entryAddr
 }
 
 // Iter gets the every value of the hash table.

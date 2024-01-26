@@ -16,16 +16,16 @@ package types_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/mock"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/stretchr/testify/require"
 )
 
 func TestTimeFormatMethod(t *testing.T) {
-	sc := mock.NewContext().GetSessionVars().StmtCtx
-	sc.IgnoreZeroInDate = true
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.IgnoreWarn)
 	tblDate := []struct {
 		Input  string
 		Format string
@@ -69,7 +69,7 @@ func TestTimeFormatMethod(t *testing.T) {
 		},
 	}
 	for i, tt := range tblDate {
-		tm, err := types.ParseTime(sc, tt.Input, mysql.TypeDatetime, 6, nil)
+		tm, err := types.ParseTime(typeCtx, tt.Input, mysql.TypeDatetime, 6)
 		require.NoErrorf(t, err, "Parse time fail: %s", tt.Input)
 
 		str, err := tm.DateFormat(tt.Format)
@@ -79,8 +79,7 @@ func TestTimeFormatMethod(t *testing.T) {
 }
 
 func TestStrToDate(t *testing.T) {
-	sc := mock.NewContext().GetSessionVars().StmtCtx
-	sc.IgnoreZeroInDate = true
+	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), time.UTC, contextutil.IgnoreWarn)
 	tests := []struct {
 		input  string
 		format string
@@ -157,9 +156,9 @@ func TestStrToDate(t *testing.T) {
 		{"30/Feb/2016 12:34:56.1234", "%d/%b/%Y %H:%i:%S.%f", types.FromDate(2016, 2, 30, 12, 34, 56, 123400)}, // Feb 30th
 	}
 	for i, tt := range tests {
-		sc.AllowInvalidDate = true
+		typeCtx = typeCtx.WithFlags(typeCtx.Flags().WithIgnoreInvalidDateErr(true))
 		var time types.Time
-		require.Truef(t, time.StrToDate(sc, tt.input, tt.format), "no.%d failed input=%s format=%s", i, tt.input, tt.format)
+		require.Truef(t, time.StrToDate(typeCtx, tt.input, tt.format), "no.%d failed input=%s format=%s", i, tt.input, tt.format)
 		require.Equalf(t, tt.expect, time.CoreTime(), "no.%d failed input=%s format=%s", i, tt.input, tt.format)
 	}
 
@@ -192,8 +191,8 @@ func TestStrToDate(t *testing.T) {
 		{"11:13:56a", "%r"},             // EOF while parsing "AM"/"PM"
 	}
 	for i, tt := range errTests {
-		sc.AllowInvalidDate = false
+		typeCtx = typeCtx.WithFlags(typeCtx.Flags().WithIgnoreInvalidDateErr(false))
 		var time types.Time
-		require.Falsef(t, time.StrToDate(sc, tt.input, tt.format), "no.%d failed input=%s format=%s", i, tt.input, tt.format)
+		require.Falsef(t, time.StrToDate(typeCtx, tt.input, tt.format), "no.%d failed input=%s format=%s", i, tt.input, tt.format)
 	}
 }

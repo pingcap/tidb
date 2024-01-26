@@ -47,7 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/sem"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1003,7 +1003,8 @@ func TestLoadDataPrivilege(t *testing.T) {
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`GRANT INSERT on *.* to 'test_load'@'localhost'`)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test_load", Hostname: "localhost"}, nil, nil, nil))
-	tk.MustExec("LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' INTO TABLE t_load")
+	err = tk.ExecToErr("LOAD DATA LOCAL INFILE '/tmp/load_data_priv.csv' INTO TABLE t_load")
+	require.ErrorContains(t, err, "reader is nil")
 
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	tk.MustExec(`GRANT INSERT on *.* to 'test_load'@'localhost'`)
@@ -1435,13 +1436,13 @@ func TestDynamicPrivsRegistration(t *testing.T) {
 	// Check that all privileges registered are assignable to users,
 	// including the recently registered ACDC_ADMIN
 	for _, priv := range privileges.GetDynamicPrivileges() {
-		sqlGrant, err := sqlexec.EscapeSQL("GRANT %n ON *.* TO privassigntest", priv)
+		sqlGrant, err := sqlescape.EscapeSQL("GRANT %n ON *.* TO privassigntest", priv)
 		require.NoError(t, err)
 		tk.MustExec(sqlGrant)
 	}
 	// Check that all privileges registered are revokable
 	for _, priv := range privileges.GetDynamicPrivileges() {
-		sqlGrant, err := sqlexec.EscapeSQL("REVOKE %n ON *.* FROM privassigntest", priv)
+		sqlGrant, err := sqlescape.EscapeSQL("REVOKE %n ON *.* FROM privassigntest", priv)
 		require.NoError(t, err)
 		tk.MustExec(sqlGrant)
 	}

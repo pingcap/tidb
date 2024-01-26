@@ -59,7 +59,7 @@ func (rs *resultReorder) completeSort(lp LogicalPlan) bool {
 		for _, col := range cols {
 			exist := false
 			for _, byItem := range sort.ByItems {
-				if col.Equal(nil, byItem.Expr) {
+				if col.EqualColumn(byItem.Expr) {
 					exist = true
 					break
 				}
@@ -89,7 +89,7 @@ func (rs *resultReorder) injectSort(lp LogicalPlan) LogicalPlan {
 	}
 	sort := LogicalSort{
 		ByItems: byItems,
-	}.Init(lp.SCtx(), lp.SelectBlockOffset())
+	}.Init(lp.SCtx(), lp.QueryBlockOffset())
 	sort.SetChildren(lp)
 	return sort
 }
@@ -107,6 +107,9 @@ func (rs *resultReorder) extractHandleCol(lp LogicalPlan) *expression.Column {
 	switch x := lp.(type) {
 	case *LogicalSelection, *LogicalLimit:
 		handleCol := rs.extractHandleCol(lp.Children()[0])
+		if handleCol == nil {
+			return nil // fail to extract handle column from the child, just return nil.
+		}
 		if x.Schema().Contains(handleCol) {
 			// some Projection Operator might be inlined, so check the column again here
 			return handleCol

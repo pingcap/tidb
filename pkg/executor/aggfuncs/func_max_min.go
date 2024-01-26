@@ -301,6 +301,26 @@ func (e *maxMin4Int) MergePartialResult(_ sessionctx.Context, src, dst PartialRe
 	return 0, nil
 }
 
+func (e *maxMin4Int) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4MaxMinInt)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinInt(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *maxMin4Int) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMin4Int) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinInt)(pr)
+	success := helper.deserializePartialResult4MaxMinInt(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type maxMin4IntSliding struct {
 	maxMin4Int
 	windowInfo
@@ -443,6 +463,26 @@ func (e *maxMin4Uint) MergePartialResult(_ sessionctx.Context, src, dst PartialR
 	return 0, nil
 }
 
+func (e *maxMin4Uint) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4MaxMinUint)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinUint(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *maxMin4Uint) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMin4Uint) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinUint)(pr)
+	success := helper.deserializePartialResult4MaxMinUint(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type maxMin4UintSliding struct {
 	maxMin4Uint
 	windowInfo
@@ -582,6 +622,26 @@ func (e *maxMin4Float32) MergePartialResult(_ sessionctx.Context, src, dst Parti
 	return 0, nil
 }
 
+func (e *maxMin4Float32) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4MaxMinFloat32)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinFloat32(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *maxMin4Float32) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMin4Float32) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinFloat32)(pr)
+	success := helper.deserializePartialResult4MaxMinFloat32(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type maxMin4Float32Sliding struct {
 	maxMin4Float32
 	windowInfo
@@ -717,6 +777,26 @@ func (e *maxMin4Float64) MergePartialResult(_ sessionctx.Context, src, dst Parti
 		p2.val, p2.isNull = p1.val, false
 	}
 	return 0, nil
+}
+
+func (e *maxMin4Float64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4MaxMinFloat64)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinFloat64(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *maxMin4Float64) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMin4Float64) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinFloat64)(pr)
+	success := helper.deserializePartialResult4MaxMinFloat64(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type maxMin4Float64Sliding struct {
@@ -866,6 +946,26 @@ func (e *maxMin4Decimal) MergePartialResult(_ sessionctx.Context, src, dst Parti
 		p2.val, p2.isNull = p1.val, false
 	}
 	return 0, nil
+}
+
+func (e *maxMin4Decimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4MaxMinDecimal)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinDecimal(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *maxMin4Decimal) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMin4Decimal) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinDecimal)(pr)
+	success := helper.deserializePartialResult4MaxMinDecimal(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type maxMin4DecimalSliding struct {
@@ -1027,6 +1127,26 @@ func (e *maxMin4String) MergePartialResult(_ sessionctx.Context, src, dst Partia
 		p2.val, p2.isNull = p1.val, false
 	}
 	return 0, nil
+}
+
+func (e *maxMin4String) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4MaxMinString)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinString(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *maxMin4String) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMin4String) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinString)(pr)
+	success := helper.deserializePartialResult4MaxMinString(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type maxMin4StringSliding struct {
@@ -1212,6 +1332,26 @@ func (e *maxMin4TimeSliding) UpdatePartialResult(sctx sessionctx.Context, rowsIn
 	return 0, nil
 }
 
+func (e *maxMin4TimeSliding) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4MaxMinTime)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinTime(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *maxMin4TimeSliding) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMin4TimeSliding) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinTime)(pr)
+	success := helper.deserializePartialResult4MaxMinTime(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 var _ SlidingWindowAggFunc = &maxMin4DurationSliding{}
 
 func (e *maxMin4TimeSliding) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
@@ -1306,6 +1446,26 @@ func (e *maxMin4Duration) MergePartialResult(_ sessionctx.Context, src, dst Part
 		p2.val, p2.isNull = p1.val, false
 	}
 	return 0, nil
+}
+
+func (e *maxMin4Duration) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4MaxMinDuration)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinDuration(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *maxMin4Duration) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMin4Duration) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinDuration)(pr)
+	success := helper.deserializePartialResult4MaxMinDuration(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }
 
 type maxMin4DurationSliding struct {
@@ -1453,6 +1613,26 @@ func (e *maxMin4JSON) MergePartialResult(_ sessionctx.Context, src, dst PartialR
 	return 0, nil
 }
 
+func (e *maxMin4JSON) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4MaxMinJSON)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinJSON(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *maxMin4JSON) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMin4JSON) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinJSON)(pr)
+	success := helper.deserializePartialResult4MaxMinJSON(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type maxMin4Enum struct {
 	baseMaxMinAggFunc
 }
@@ -1478,10 +1658,10 @@ func (e *maxMin4Enum) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialRe
 	return nil
 }
 
-func (e *maxMin4Enum) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Enum) UpdatePartialResult(ctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinEnum)(pr)
 	for _, row := range rowsInGroup {
-		d, err := e.args[0].Eval(row)
+		d, err := e.args[0].Eval(ctx, row)
 		if err != nil {
 			return memDelta, err
 		}
@@ -1520,6 +1700,26 @@ func (e *maxMin4Enum) MergePartialResult(_ sessionctx.Context, src, dst PartialR
 	return 0, nil
 }
 
+func (e *maxMin4Enum) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4MaxMinEnum)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinEnum(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *maxMin4Enum) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMin4Enum) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinEnum)(pr)
+	success := helper.deserializePartialResult4MaxMinEnum(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
+}
+
 type maxMin4Set struct {
 	baseMaxMinAggFunc
 }
@@ -1545,10 +1745,10 @@ func (e *maxMin4Set) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialRes
 	return nil
 }
 
-func (e *maxMin4Set) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *maxMin4Set) UpdatePartialResult(ctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4MaxMinSet)(pr)
 	for _, row := range rowsInGroup {
-		d, err := e.args[0].Eval(row)
+		d, err := e.args[0].Eval(ctx, row)
 		if err != nil {
 			return memDelta, err
 		}
@@ -1585,4 +1785,24 @@ func (e *maxMin4Set) MergePartialResult(_ sessionctx.Context, src, dst PartialRe
 		p2.val, p2.isNull = p1.val, false
 	}
 	return 0, nil
+}
+
+func (e *maxMin4Set) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
+	pr := (*partialResult4MaxMinSet)(partialResult)
+	resBuf := spillHelper.serializePartialResult4MaxMinSet(*pr)
+	chk.AppendBytes(e.ordinal, resBuf)
+}
+
+func (e *maxMin4Set) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
+	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
+}
+
+func (e *maxMin4Set) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
+	pr, memDelta := e.AllocPartialResult()
+	result := (*partialResult4MaxMinSet)(pr)
+	success := helper.deserializePartialResult4MaxMinSet(result)
+	if !success {
+		return nil, 0
+	}
+	return pr, memDelta
 }

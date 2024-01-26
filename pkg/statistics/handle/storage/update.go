@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/cache"
+	"github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 )
 
@@ -102,7 +103,7 @@ func DumpTableStatColSizeToKV(sctx sessionctx.Context, id int64, delta variable.
 
 // InsertExtendedStats inserts a record into mysql.stats_extended and update version in mysql.stats_meta.
 func InsertExtendedStats(sctx sessionctx.Context,
-	statsCache statsutil.StatsCache,
+	statsCache types.StatsCache,
 	statsName string, colIDs []int64, tp int, tableID int64, ifNotExists bool) (statsVer uint64, err error) {
 	slices.Sort(colIDs)
 	bytes, err := json.Marshal(colIDs)
@@ -111,13 +112,6 @@ func InsertExtendedStats(sctx sessionctx.Context,
 	}
 	strColIDs := string(bytes)
 
-	_, err = statsutil.Exec(sctx, "begin pessimistic")
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	defer func() {
-		err = statsutil.FinishTransaction(sctx, err)
-	}()
 	// No need to use `exec.ExecuteInternal` since we have acquired the lock.
 	rows, _, err := statsutil.ExecRows(sctx, "SELECT name, type, column_ids FROM mysql.stats_extended WHERE table_id = %? and status in (%?, %?)", tableID, statistics.ExtendedStatsInited, statistics.ExtendedStatsAnalyzed)
 	if err != nil {
@@ -170,13 +164,6 @@ func SaveExtendedStatsToStorage(sctx sessionctx.Context,
 		return 0, nil
 	}
 
-	_, err = statsutil.Exec(sctx, "begin pessimistic")
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	defer func() {
-		err = statsutil.FinishTransaction(sctx, err)
-	}()
 	version, err := statsutil.GetStartTS(sctx)
 	if err != nil {
 		return 0, errors.Trace(err)
@@ -208,7 +195,7 @@ func SaveExtendedStatsToStorage(sctx sessionctx.Context,
 	return statsVer, nil
 }
 
-func removeExtendedStatsItem(statsCache statsutil.StatsCache,
+func removeExtendedStatsItem(statsCache types.StatsCache,
 	tableID int64, statsName string) {
 	tbl, ok := statsCache.Get(tableID)
 	if !ok || tbl.ExtendedStats == nil || len(tbl.ExtendedStats.Stats) == 0 {

@@ -33,7 +33,10 @@ func newUnistore(opts *mockOptions) (kv.Storage, error) {
 		Client: pdClient,
 	}
 
-	kvstore, err := tikv.NewTestTiKVStore(newClientRedirector(client), pdClient, opts.clientHijacker, opts.pdClientHijacker, opts.txnLocalLatches)
+	kvstore, err := tikv.NewTestTiKVStore(
+		newClientRedirector(client), pdClient,
+		opts.clientHijacker, opts.pdClientHijacker,
+		opts.txnLocalLatches, opts.tikvOptions...)
 	if err != nil {
 		return nil, err
 	}

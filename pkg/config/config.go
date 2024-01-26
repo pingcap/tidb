@@ -241,8 +241,10 @@ type Config struct {
 	// 2. 'zone' is a special key that indicates the DC location of this tidb-server. If it is set, the value for this
 	// key will be the default value of the session variable `txn_scope` for this tidb-server.
 	Labels map[string]string `toml:"labels" json:"labels"`
-	// EnableGlobalIndex enables creating global index.
+
+	// EnableGlobalIndex is deprecated.
 	EnableGlobalIndex bool `toml:"enable-global-index" json:"enable-global-index"`
+
 	// DeprecateIntegerDisplayWidth indicates whether deprecating the max display length for integer.
 	DeprecateIntegerDisplayWidth bool `toml:"deprecate-integer-display-length" json:"deprecate-integer-display-length"`
 	// EnableEnumLengthLimit indicates whether the enum/set element length is limited.
@@ -710,6 +712,7 @@ type Performance struct {
 	// Deprecated
 	MemProfileInterval string `toml:"-" json:"-"`
 
+	// Deprecated: this config will not have any effect
 	IndexUsageSyncLease               string `toml:"index-usage-sync-lease" json:"index-usage-sync-lease"`
 	PlanReplayerGCLease               string `toml:"plan-replayer-gc-lease" json:"plan-replayer-gc-lease"`
 	GOGC                              int    `toml:"gogc" json:"gogc"`
@@ -732,6 +735,11 @@ type Performance struct {
 
 	EnableLoadFMSketch bool `toml:"enable-load-fmsketch" json:"enable-load-fmsketch"`
 
+	// LiteInitStats indicates whether to use the lite version of stats.
+	// 1. Basic stats meta data is loaded.(count, modify count, etc.)
+	// 2. Column/index stats are loaded. (only histogram)
+	// 3. TopN, Bucket, FMSketch are not loaded.
+	// The lite version of stats is enabled by default.
 	LiteInitStats bool `toml:"lite-init-stats" json:"lite-init-stats"`
 
 	// If ForceInitStats is true, when tidb starts up, it doesn't provide service until init stats is finished.
@@ -976,25 +984,23 @@ var defaultConf = Config{
 		GRPCMaxSendMsgSize:    math.MaxInt32,
 	},
 	Performance: Performance{
-		MaxMemory:             0,
-		ServerMemoryQuota:     0,
-		MemoryUsageAlarmRatio: DefMemoryUsageAlarmRatio,
-		TCPKeepAlive:          true,
-		TCPNoDelay:            true,
-		CrossJoin:             true,
-		StatsLease:            "3s",
-		StmtCountLimit:        5000,
-		PseudoEstimateRatio:   0.8,
-		ForcePriority:         "NO_PRIORITY",
-		BindInfoLease:         "3s",
-		TxnEntrySizeLimit:     DefTxnEntrySizeLimit,
-		TxnTotalSizeLimit:     DefTxnTotalSizeLimit,
-		DistinctAggPushDown:   false,
-		ProjectionPushDown:    false,
-		CommitterConcurrency:  defTiKVCfg.CommitterConcurrency,
-		MaxTxnTTL:             defTiKVCfg.MaxTxnTTL, // 1hour
-		// TODO: set indexUsageSyncLease to 60s.
-		IndexUsageSyncLease:               "0s",
+		MaxMemory:                         0,
+		ServerMemoryQuota:                 0,
+		MemoryUsageAlarmRatio:             DefMemoryUsageAlarmRatio,
+		TCPKeepAlive:                      true,
+		TCPNoDelay:                        true,
+		CrossJoin:                         true,
+		StatsLease:                        "3s",
+		StmtCountLimit:                    5000,
+		PseudoEstimateRatio:               0.8,
+		ForcePriority:                     "NO_PRIORITY",
+		BindInfoLease:                     "3s",
+		TxnEntrySizeLimit:                 DefTxnEntrySizeLimit,
+		TxnTotalSizeLimit:                 DefTxnTotalSizeLimit,
+		DistinctAggPushDown:               false,
+		ProjectionPushDown:                false,
+		CommitterConcurrency:              defTiKVCfg.CommitterConcurrency,
+		MaxTxnTTL:                         defTiKVCfg.MaxTxnTTL, // 1hour
 		GOGC:                              100,
 		EnforceMPP:                        false,
 		PlanReplayerGCLease:               "10m",
@@ -1154,6 +1160,7 @@ var removedConfig = map[string]struct{}{
 	"max-server-connections":                 {}, // use sysvar max_connections
 	"run-ddl":                                {}, // use sysvar tidb_enable_ddl
 	"instance.tidb_memory_usage_alarm_ratio": {}, // use sysvar tidb_memory_usage_alarm_ratio
+	"enable-global-index":                    {}, // use sysvar tidb_enable_global_index
 }
 
 // isAllRemovedConfigItems returns true if all the items that couldn't validate

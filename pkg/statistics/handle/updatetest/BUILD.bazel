@@ -14,6 +14,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/planner/cardinality",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/statistics/handle/autoanalyze",

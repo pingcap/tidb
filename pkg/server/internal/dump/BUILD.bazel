@@ -19,7 +19,6 @@ go_test(
     flaky = True,
     shard_count = 3,
     deps = [
-        "//pkg/sessionctx/stmtctx",
         "//pkg/types",
         "@com_github_stretchr_testify//require",
     ],

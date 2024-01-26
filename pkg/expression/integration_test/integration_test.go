@@ -43,7 +43,7 @@ import (
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
@@ -58,13 +58,13 @@ import (
 
 func TestGetLock(t *testing.T) {
 	ctx := context.Background()
-	store := testkit.CreateMockStore(t)
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
 	tk := testkit.NewTestKit(t, store)
 
 	// Increase pessimistic txn max retry count to make test more stable.
 	originCfg := config.GetGlobalConfig()
 	newCfg := *originCfg
-	newCfg.PessimisticTxn.MaxRetryCount = 2048
+	newCfg.PessimisticTxn.MaxRetryCount = 10240
 	config.StoreGlobalConfig(&newCfg)
 	defer func() {
 		config.StoreGlobalConfig(originCfg)
@@ -362,21 +362,6 @@ func TestInfoBuiltin(t *testing.T) {
 	result.Check(testkit.Rows(fmt.Sprintf("%v", ret)))
 }
 
-func TestColumnInfoModified(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	testKit := testkit.NewTestKit(t, store)
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists tab0")
-	testKit.MustExec("CREATE TABLE tab0(col0 INTEGER, col1 INTEGER, col2 INTEGER)")
-	testKit.MustExec("SELECT + - (- CASE + col0 WHEN + CAST( col0 AS SIGNED ) THEN col1 WHEN 79 THEN NULL WHEN + - col1 THEN col0 / + col0 END ) * - 16 FROM tab0")
-	ctx := testKit.Session()
-	is := domain.GetDomain(ctx).InfoSchema()
-	tbl, _ := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tab0"))
-	col := table.FindCol(tbl.Cols(), "col1")
-	require.Equal(t, mysql.TypeLong, col.GetType())
-}
-
 func TestFilterExtractFromDNF(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -415,14 +400,13 @@ func TestFilterExtractFromDNF(t *testing.T) {
 	for _, tt := range tests {
 		sql := "select * from t where " + tt.exprStr
 		sctx := tk.Session()
-		sc := sctx.GetSessionVars().StmtCtx
 		stmts, err := session.Parse(sctx, sql)
 		require.NoError(t, err, "error %v, for expr %s", err, tt.exprStr)
 		require.Len(t, stmts, 1)
 		ret := &plannercore.PreprocessorReturn{}
 		err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 		require.NoError(t, err, "error %v, for resolve name, expr %s", err, tt.exprStr)
-		p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
+		p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 		require.NoError(t, err, "error %v, for build plan, expr %s", err, tt.exprStr)
 		selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
 		conds := make([]expression.Expression, len(selection.Conditions))
@@ -431,7 +415,7 @@ func TestFilterExtractFromDNF(t *testing.T) {
 		}
 		afterFunc := expression.ExtractFiltersFromDNFs(sctx, conds)
 		sort.Slice(afterFunc, func(i, j int) bool {
-			return bytes.Compare(afterFunc[i].HashCode(sc), afterFunc[j].HashCode(sc)) < 0
+			return bytes.Compare(afterFunc[i].HashCode(), afterFunc[j].HashCode()) < 0
 		})
 		require.Equal(t, fmt.Sprintf("%s", afterFunc), tt.result, "wrong result for expr: %s", tt.exprStr)
 	}
@@ -482,7 +466,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 		return ret
 	}
 	buildCommonKeyFromData := func(tableID int64, data []types.Datum) string {
-		k, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, data...)
+		k, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, data...)
 		require.NoError(t, err)
 		h, err := kv.NewCommonHandle(k)
 		require.NoError(t, err)
@@ -509,7 +493,7 @@ func TestTiDBDecodeKeyFunc(t *testing.T) {
 	tbl, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	buildIndexKeyFromData := func(tableID, indexID int64, data []types.Datum) string {
-		k, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, data...)
+		k, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, data...)
 		require.NoError(t, err)
 		k = tablecodec.EncodeIndexSeekKey(tableID, indexID, k)
 		return hex.EncodeToString(codec.EncodeBytes(nil, k))
@@ -690,7 +674,8 @@ func TestExprPushdownBlacklist(t *testing.T) {
 	}
 
 	tk.MustExec("insert into mysql.expr_pushdown_blacklist " +
-		"values('<', 'tikv,tiflash,tidb', 'for test'),('cast', 'tiflash', 'for test'),('date_format', 'tikv', 'for test')")
+		"values('<', 'tikv,tiflash,tidb', 'for test'),('cast', 'tiflash', 'for test'),('date_format', 'tikv', 'for test')," +
+		"('Cast.CastTimeAsDuration', 'tikv', 'for test')")
 	tk.MustExec("admin reload expr_pushdown_blacklist")
 
 	tk.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
@@ -709,27 +694,19 @@ func TestExprPushdownBlacklist(t *testing.T) {
 	require.Equal(t, "eq(date_format(test.t.b, \"%m\"), \"11\"), lt(test.t.b, 1994-01-01)", fmt.Sprintf("%v", rows[0][4]))
 	require.Equal(t, "gt(cast(test.t.a, decimal(10,2) BINARY), 10.10), gt(test.t.b, 1988-01-01)", fmt.Sprintf("%v", rows[2][4]))
 
+	// CastTimeAsString pushed to TiKV but CastTimeAsDuration not pushed
+	rows = tk.MustQuery("explain format = 'brief' SELECT * FROM t WHERE CAST(b AS CHAR) = '10:00:00';").Rows()
+	require.Equal(t, "cop[tikv]", fmt.Sprintf("%v", rows[1][2]))
+	require.Equal(t, "eq(cast(test.t.b, var_string(5)), \"10:00:00\")", fmt.Sprintf("%v", rows[1][4]))
+
+	rows = tk.MustQuery("explain format = 'brief' select * from test.t where hour(b) > 10").Rows()
+	require.Equal(t, "root", fmt.Sprintf("%v", rows[0][2]))
+	require.Equal(t, "gt(hour(cast(test.t.b, time)), 10)", fmt.Sprintf("%v", rows[0][4]))
+
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = '<' and store_type = 'tikv,tiflash,tidb' and reason = 'for test'")
 	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = 'date_format' and store_type = 'tikv' and reason = 'for test'")
+	tk.MustExec("delete from mysql.expr_pushdown_blacklist where name = 'Cast.CastTimeAsDuration' and store_type = 'tikv' and reason = 'for test'")
 	tk.MustExec("admin reload expr_pushdown_blacklist")
-}
-
-func TestNotExistFunc(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-
-	// current db is empty
-	tk.MustGetErrMsg("SELECT xxx(1)", "[planner:1046]No database selected")
-	tk.MustGetErrMsg("SELECT yyy()", "[planner:1046]No database selected")
-	tk.MustGetErrMsg("SELECT T.upper(1)", "[expression:1305]FUNCTION t.upper does not exist")
-
-	// current db is not empty
-	tk.MustExec("use test")
-	tk.MustGetErrMsg("SELECT xxx(1)", "[expression:1305]FUNCTION test.xxx does not exist")
-	tk.MustGetErrMsg("SELECT yyy()", "[expression:1305]FUNCTION test.yyy does not exist")
-	tk.MustGetErrMsg("SELECT t.upper(1)", "[expression:1305]FUNCTION t.upper does not exist")
-	tk.MustGetErrMsg("SELECT timestampliteral(rand())", "[expression:1305]FUNCTION test.timestampliteral does not exist")
 }
 
 func TestDecodetoChunkReuse(t *testing.T) {
@@ -801,273 +778,6 @@ func TestIssue16697(t *testing.T) {
 			require.NotContains(t, line, "GB")
 		}
 	}
-}
-
-func TestIssue19892(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("USE test")
-	tk.MustExec("CREATE TABLE dd(a date, b datetime, c timestamp)")
-
-	// check NO_ZERO_DATE
-	{
-		tk.MustExec("SET sql_mode=''")
-		{
-			tk.MustExec("TRUNCATE TABLE dd")
-			tk.MustExec("INSERT INTO dd(a) values('0000-00-00')")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
-			tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("0000-00-00"))
-
-			tk.MustExec("TRUNCATE TABLE dd")
-			tk.MustExec("INSERT INTO dd(b) values('2000-10-01')")
-			tk.MustExec("UPDATE dd SET b = '0000-00-00'")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
-			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
-
-			tk.MustExec("TRUNCATE TABLE dd")
-			tk.MustExec("INSERT INTO dd(c) values('0000-00-00 20:00:00')")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-00-00 20:00:00' for column 'c' at row 1"))
-			tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
-
-			tk.MustExec("TRUNCATE TABLE dd")
-			tk.MustExec("INSERT INTO dd(c) values('2000-10-01 20:00:00')")
-			tk.MustExec("UPDATE dd SET c = '0000-00-00 20:00:00'")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-00-00 20:00:00'"))
-			tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
-		}
-
-		tk.MustExec("SET sql_mode='NO_ZERO_DATE'")
-		{
-			tk.MustExec("TRUNCATE TABLE dd")
-			tk.MustExec("INSERT INTO dd(b) values('0000-0-00')")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '0000-0-00' for column 'b' at row 1"))
-			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
-
-			tk.MustExec("TRUNCATE TABLE dd")
-			tk.MustExec("INSERT INTO dd(a) values('2000-10-01')")
-			tk.MustExec("UPDATE dd SET a = '0000-00-00'")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect date value: '0000-00-00'"))
-			tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("0000-00-00"))
-
-			tk.MustExec("TRUNCATE TABLE dd")
-			tk.MustExec("INSERT INTO dd(c) values('2000-10-01 10:00:00')")
-			tk.MustExec("UPDATE dd SET c = '0000-00-00 10:00:00'")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-00-00 10:00:00'"))
-			tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
-		}
-
-		tk.MustExec("SET sql_mode='NO_ZERO_DATE,STRICT_TRANS_TABLES'")
-		{
-			tk.MustExec("TRUNCATE TABLE dd")
-			tk.MustGetErrMsg("INSERT INTO dd(c) VALUES ('0000-00-00 20:00:00')", "[table:1292]Incorrect timestamp value: '0000-00-00 20:00:00' for column 'c' at row 1")
-			tk.MustExec("INSERT IGNORE INTO dd(c) VALUES ('0000-00-00 20:00:00')")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-00-00 20:00:00' for column 'c' at row 1"))
-			tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
-
-			tk.MustExec("TRUNCATE TABLE dd")
-			tk.MustExec("INSERT INTO dd(b) values('2000-10-01')")
-			tk.MustGetErrMsg("UPDATE dd SET b = '0000-00-00'", "[types:1292]Incorrect datetime value: '0000-00-00'")
-			tk.MustExec("UPDATE IGNORE dd SET b = '0000-00-00'")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '0000-00-00'"))
-			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
-
-			tk.MustExec("TRUNCATE TABLE dd")
-			tk.MustExec("INSERT INTO dd(c) values('2000-10-01 10:00:00')")
-			tk.MustGetErrMsg("UPDATE dd SET c = '0000-00-00 00:00:00'", "[types:1292]Incorrect timestamp value: '0000-00-00 00:00:00'")
-			tk.MustExec("UPDATE IGNORE dd SET c = '0000-00-00 00:00:00'")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-00-00 00:00:00'"))
-			tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
-		}
-	}
-
-	// check NO_ZERO_IN_DATE
-	{
-		tk.MustExec("SET sql_mode=''")
-		{
-			tk.MustExec("TRUNCATE TABLE dd")
-			tk.MustExec("INSERT INTO dd(a) values('2000-01-00')")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
-			tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("2000-01-00"))
-			tk.MustExec("INSERT INTO dd(a) values('2000-00-01')")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
-			tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("2000-01-00", "2000-00-01"))
-			tk.MustExec("INSERT INTO dd(a) values('0-01-02')")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
-			tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("2000-01-00", "2000-00-01", "2000-01-02"))
-
-			tk.MustExec("TRUNCATE TABLE dd")
-			tk.MustExec("INSERT INTO dd(b) values('2000-01-02')")
-			tk.MustExec("UPDATE dd SET b = '2000-00-02'")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
-			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("2000-00-02 00:00:00"))
-
-			tk.MustExec("TRUNCATE TABLE dd")
-			tk.MustExec("INSERT INTO dd(c) values('2000-01-02 20:00:00')")
-			tk.MustExec("UPDATE dd SET c = '0000-01-02 20:00:00'")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-01-02 20:00:00'"))
-			tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
-		}
-
-		tk.MustExec("SET sql_mode='NO_ZERO_IN_DATE'")
-		{
-			tk.MustExec("TRUNCATE TABLE dd")
-			tk.MustExec("INSERT INTO dd(a) values('2000-01-00')")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect date value: '2000-01-00' for column 'a' at row 1"))
-			tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("0000-00-00"))
-
-			tk.MustExec("TRUNCATE TABLE dd")
-			tk.MustExec("INSERT INTO dd(a) values('2000-01-02')")
-			tk.MustExec("UPDATE dd SET a = '2000-00-02'")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect date value: '2000-00-02'"))
-			tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("0000-00-00"))
-			tk.MustExec("UPDATE dd SET b = '2000-01-0'")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-01-0'"))
-			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
-			// consistent with Mysql8
-			tk.MustExec("UPDATE dd SET b = '0-01-02'")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
-			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("2000-01-02 00:00:00"))
-
-			tk.MustExec("TRUNCATE TABLE dd")
-			tk.MustExec("INSERT INTO dd(c) values('2000-01-02 20:00:00')")
-			tk.MustExec("UPDATE dd SET c = '2000-00-02 20:00:00'")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '2000-00-02 20:00:00'"))
-			tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
-		}
-
-		tk.MustExec("SET sql_mode='NO_ZERO_IN_DATE,STRICT_TRANS_TABLES'")
-		{
-			tk.MustExec("TRUNCATE TABLE dd")
-			tk.MustGetErrMsg("INSERT INTO dd(b) VALUES ('2000-01-00')", "[table:1292]Incorrect datetime value: '2000-01-00' for column 'b' at row 1")
-			tk.MustExec("INSERT IGNORE INTO dd(b) VALUES ('2000-00-01')")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-00-01' for column 'b' at row 1"))
-			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
-
-			tk.MustExec("TRUNCATE TABLE dd")
-			tk.MustExec("INSERT INTO dd(b) VALUES ('2000-01-02')")
-			tk.MustGetErrMsg("UPDATE dd SET b = '2000-01-00'", "[types:1292]Incorrect datetime value: '2000-01-00'")
-			tk.MustExec("UPDATE IGNORE dd SET b = '2000-01-0'")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-01-0'"))
-			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
-			tk.MustExec("UPDATE dd SET b = '0000-1-2'")
-			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-01-02 00:00:00"))
-			tk.MustGetErrMsg("UPDATE dd SET c = '0000-01-05'", "[types:1292]Incorrect timestamp value: '0000-01-05'")
-			tk.MustExec("UPDATE IGNORE dd SET c = '0000-01-5'")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-01-5'"))
-			tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
-
-			tk.MustExec("TRUNCATE TABLE dd")
-			tk.MustGetErrMsg("INSERT INTO dd(c) VALUES ('2000-01-00 20:00:00')", "[table:1292]Incorrect timestamp value: '2000-01-00 20:00:00' for column 'c' at row 1")
-			tk.MustExec("INSERT INTO dd(c) VALUES ('2000-01-02')")
-			tk.MustGetErrMsg("UPDATE dd SET c = '2000-01-00 20:00:00'", "[types:1292]Incorrect timestamp value: '2000-01-00 20:00:00'")
-			tk.MustExec("UPDATE IGNORE dd SET b = '2000-01-00'")
-			tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-01-00'"))
-			tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
-		}
-	}
-
-	// check !NO_ZERO_DATE
-	tk.MustExec("SET sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'")
-	{
-		tk.MustExec("TRUNCATE TABLE dd")
-		tk.MustExec("INSERT INTO dd(a) values('0000-00-00')")
-		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
-		tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("0000-00-00"))
-
-		tk.MustExec("TRUNCATE TABLE dd")
-		tk.MustExec("INSERT INTO dd(b) values('2000-10-01')")
-		tk.MustExec("UPDATE dd SET b = '0000-00-00'")
-		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
-		tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
-
-		tk.MustExec("TRUNCATE TABLE dd")
-		tk.MustExec("INSERT INTO dd(c) values('0000-00-00 00:00:00')")
-		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
-
-		tk.MustExec("TRUNCATE TABLE dd")
-		tk.MustExec("INSERT INTO dd(c) values('2000-10-01 10:00:00')")
-		tk.MustExec("UPDATE dd SET c = '0000-00-00 00:00:00'")
-		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
-		tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
-
-		tk.MustExec("TRUNCATE TABLE dd")
-		tk.MustGetErrMsg("INSERT INTO dd(b) VALUES ('2000-01-00')", "[table:1292]Incorrect datetime value: '2000-01-00' for column 'b' at row 1")
-		tk.MustExec("INSERT IGNORE INTO dd(b) VALUES ('2000-00-01')")
-		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-00-01' for column 'b' at row 1"))
-		tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
-
-		tk.MustExec("TRUNCATE TABLE dd")
-		tk.MustExec("INSERT INTO dd(b) VALUES ('2000-01-02')")
-		tk.MustGetErrMsg("UPDATE dd SET b = '2000-01-00'", "[types:1292]Incorrect datetime value: '2000-01-00'")
-		tk.MustExec("UPDATE IGNORE dd SET b = '2000-01-0'")
-		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-01-0'"))
-		tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
-		tk.MustExec("UPDATE dd SET b = '0000-1-2'")
-		tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-01-02 00:00:00"))
-		tk.MustGetErrMsg("UPDATE dd SET c = '0000-01-05'", "[types:1292]Incorrect timestamp value: '0000-01-05'")
-		tk.MustExec("UPDATE IGNORE dd SET c = '0000-01-5'")
-		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '0000-01-5'"))
-		tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
-
-		tk.MustExec("TRUNCATE TABLE dd")
-		tk.MustGetErrMsg("INSERT INTO dd(c) VALUES ('2000-01-00 20:00:00')", "[table:1292]Incorrect timestamp value: '2000-01-00 20:00:00' for column 'c' at row 1")
-		tk.MustExec("INSERT INTO dd(c) VALUES ('2000-01-02')")
-		tk.MustGetErrMsg("UPDATE dd SET c = '2000-01-00 20:00:00'", "[types:1292]Incorrect timestamp value: '2000-01-00 20:00:00'")
-		tk.MustExec("UPDATE IGNORE dd SET b = '2000-01-00'")
-		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect datetime value: '2000-01-00'"))
-		tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
-	}
-
-	// check !NO_ZERO_IN_DATE
-	tk.MustExec("SET sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION'")
-	{
-		tk.MustExec("TRUNCATE TABLE dd")
-		tk.MustExec("INSERT INTO dd(a) values('2000-00-10')")
-		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
-		tk.MustQuery("SELECT a FROM dd").Check(testkit.Rows("2000-00-10"))
-
-		tk.MustExec("TRUNCATE TABLE dd")
-		tk.MustExec("INSERT INTO dd(b) values('2000-10-01')")
-		tk.MustExec("UPDATE dd SET b = '2000-00-10'")
-		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows())
-		tk.MustQuery("SELECT b FROM dd").Check(testkit.Rows("2000-00-10 00:00:00"))
-
-		tk.MustExec("TRUNCATE TABLE dd")
-		tk.MustExec("INSERT INTO dd(c) values('2000-10-01 10:00:00')")
-		tk.MustGetErrMsg("UPDATE dd SET c = '2000-00-10 00:00:00'", "[types:1292]Incorrect timestamp value: '2000-00-10 00:00:00'")
-		tk.MustExec("UPDATE IGNORE dd SET c = '2000-01-00 00:00:00'")
-		tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Incorrect timestamp value: '2000-01-00 00:00:00'"))
-		tk.MustQuery("SELECT c FROM dd").Check(testkit.Rows("0000-00-00 00:00:00"))
-	}
-	tk.MustExec("drop table if exists table_20220419;")
-	tk.MustExec(`CREATE TABLE table_20220419 (
-  id bigint(20) NOT NULL AUTO_INCREMENT,
-  lastLoginDate datetime NOT NULL,
-  PRIMARY KEY (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
-	tk.MustExec("set sql_mode='';")
-	tk.MustExec("insert into table_20220419 values(1,'0000-00-00 00:00:00');")
-	tk.MustExec("set sql_mode='ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION';")
-	tk.MustGetErrMsg("insert into table_20220419(lastLoginDate) select lastLoginDate from table_20220419;", "[types:1292]Incorrect datetime value: '0000-00-00 00:00:00'")
-}
-
-func TestIssue11333(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t;")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t(col1 decimal);")
-	tk.MustExec(" insert into t values(0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000);")
-	tk.MustQuery(`select * from t;`).Check(testkit.Rows("0"))
-	tk.MustExec("create table t1(col1 decimal(65,30));")
-	tk.MustExec(" insert into t1 values(0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000);")
-	tk.MustQuery(`select * from t1;`).Check(testkit.Rows("0.000000000000000000000000000000"))
-	tk.MustQuery(`select 0.00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000;`).Check(testkit.Rows("0.000000000000000000000000000000000000000000000000000000000000000000000000"))
-	tk.MustQuery(`select 0.0000000000000000000000000000000000000000000000000000000000000000000000012;`).Check(testkit.Rows("0.000000000000000000000000000000000000000000000000000000000000000000000001"))
-	tk.MustQuery(`select 0.000000000000000000000000000000000000000000000000000000000000000000000001;`).Check(testkit.Rows("0.000000000000000000000000000000000000000000000000000000000000000000000001"))
 }
 
 func TestSecurityEnhancedMode(t *testing.T) {
@@ -2549,11 +2259,11 @@ func TestTimeBuiltin(t *testing.T) {
 		{"\"2011-11-11 10:10:10\"", "\"20\"", "DAY", "2011-12-01 10:10:10", "2011-10-22 10:10:10"},
 		{"\"2011-11-11 10:10:10\"", "19.88", "DAY", "2011-12-01 10:10:10", "2011-10-22 10:10:10"},
 		{"\"2011-11-11 10:10:10\"", "\"19.88\"", "DAY", "2011-11-30 10:10:10", "2011-10-23 10:10:10"},
-		{"\"2011-11-11 10:10:10\"", "\"prefix19suffix\"", "DAY", "2011-11-30 10:10:10", "2011-10-23 10:10:10"},
+		{"\"2011-11-11 10:10:10\"", "\"prefix19suffix\"", "DAY", "2011-11-11 10:10:10", "2011-11-11 10:10:10"},
 		{"\"2011-11-11 10:10:10\"", "\"20-11\"", "DAY", "2011-12-01 10:10:10", "2011-10-22 10:10:10"},
 		{"\"2011-11-11 10:10:10\"", "\"20,11\"", "daY", "2011-12-01 10:10:10", "2011-10-22 10:10:10"},
 		{"\"2011-11-11 10:10:10\"", "\"1000\"", "dAy", "2014-08-07 10:10:10", "2009-02-14 10:10:10"},
-		{"\"2011-11-11 10:10:10\"", "\"true\"", "Day", "2011-11-12 10:10:10", "2011-11-10 10:10:10"},
+		{"\"2011-11-11 10:10:10\"", "\"true\"", "Day", "2011-11-11 10:10:10", "2011-11-11 10:10:10"},
 		{"\"2011-11-11 10:10:10\"", "true", "Day", "2011-11-12 10:10:10", "2011-11-10 10:10:10"},
 		{"\"2011-11-11\"", "1", "DAY", "2011-11-12", "2011-11-10"},
 		{"\"2011-11-11\"", "10", "HOUR", "2011-11-11 10:00:00", "2011-11-10 14:00:00"},
@@ -2631,8 +2341,8 @@ func TestTimeBuiltin(t *testing.T) {
 		{"\"2009-01-01\"", "6/0", "HOUR_MINUTE", "<nil>", "<nil>"},
 		{"\"1970-01-01 12:00:00\"", "CAST(6/4 AS DECIMAL(3,1))", "HOUR_MINUTE", "1970-01-01 13:05:00", "1970-01-01 10:55:00"},
 		// for issue #8077
-		{"\"2012-01-02\"", "\"prefix8\"", "HOUR", "2012-01-02 08:00:00", "2012-01-01 16:00:00"},
-		{"\"2012-01-02\"", "\"prefix8prefix\"", "HOUR", "2012-01-02 08:00:00", "2012-01-01 16:00:00"},
+		{"\"2012-01-02\"", "\"prefix8\"", "HOUR", "2012-01-02 00:00:00", "2012-01-02 00:00:00"},
+		{"\"2012-01-02\"", "\"prefix8prefix\"", "HOUR", "2012-01-02 00:00:00", "2012-01-02 00:00:00"},
 		{"\"2012-01-02\"", "\"8:00\"", "HOUR", "2012-01-02 08:00:00", "2012-01-01 16:00:00"},
 		{"\"2012-01-02\"", "\"8:00:00\"", "HOUR", "2012-01-02 08:00:00", "2012-01-01 16:00:00"},
 	}

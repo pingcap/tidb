@@ -42,13 +42,22 @@ func NewMockBackendCtxMgr(sessCtxProvider func() sessionctx.Context) *MockBacken
 	}
 }
 
+// MarkJobProcessing implements BackendCtxMgr.MarkJobProcessing interface.
+func (*MockBackendCtxMgr) MarkJobProcessing(_ int64) bool {
+	return true
+}
+
+// MarkJobFinish implements BackendCtxMgr.MarkJobFinish interface.
+func (*MockBackendCtxMgr) MarkJobFinish() {
+}
+
 // CheckAvailable implements BackendCtxMgr.Available interface.
 func (m *MockBackendCtxMgr) CheckAvailable() (bool, error) {
 	return len(m.runningJobs) == 0, nil
 }
 
 // Register implements BackendCtxMgr.Register interface.
-func (m *MockBackendCtxMgr) Register(_ context.Context, _ bool, jobID int64, _ *clientv3.Client, _ string) (BackendCtx, error) {
+func (m *MockBackendCtxMgr) Register(_ context.Context, _ bool, jobID int64, _ *clientv3.Client, _ string, _ string) (BackendCtx, error) {
 	logutil.BgLogger().Info("mock backend mgr register", zap.Int64("jobID", jobID))
 	if mockCtx, ok := m.runningJobs[jobID]; ok {
 		return mockCtx, nil
@@ -220,7 +229,14 @@ func (m *MockWriter) WriteRow(_ context.Context, key, idxVal []byte, _ kv.Handle
 	if err != nil {
 		return err
 	}
-	return txn.Set(key, idxVal)
+	err = txn.Set(key, idxVal)
+	if err != nil {
+		return err
+	}
+	if MockExecAfterWriteRow != nil {
+		MockExecAfterWriteRow()
+	}
+	return nil
 }
 
 // LockForWrite implements Writer.LockForWrite interface.
@@ -232,3 +248,6 @@ func (*MockWriter) LockForWrite() func() {
 func (*MockWriter) Close(_ context.Context) error {
 	return nil
 }
+
+// MockExecAfterWriteRow is only used for test.
+var MockExecAfterWriteRow func()

@@ -1,0 +1,12 @@
+select count(*) from information_schema.inspection_rules;
+count(*)
+15
+select count(*) from information_schema.inspection_rules where type='inspection';
+count(*)
+5
+select count(*) from information_schema.inspection_rules where type='summary';
+count(*)
+10
+select count(*) from information_schema.inspection_rules where type='inspection' and type='summary';
+count(*)
+0

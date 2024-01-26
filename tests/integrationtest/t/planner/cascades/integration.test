@@ -260,3 +260,22 @@ explain select a from (select a from t where b > 2 order by a, b limit 3 offset 
 select a from (select a from t where b > 2 order by a, b limit 3 offset 1) as t1 order by a limit 2 offset 1;
 explain select * from (select * from t order by a limit 3) as t1 order by a, b limit 5;
 select * from (select * from t order by a limit 3) as t1 order by a, b limit 5;
+
+
+# TestCascadePlannerHashedPartTable
+SET SESSION tidb_opt_fix_control = '44262:ON';
+drop table if exists pt1;
+create table pt1(a bigint, b bigint) partition by hash(a) partitions 4;
+insert into pt1 values(1,10);
+insert into pt1 values(2,20);
+insert into pt1 values(3,30);
+insert into pt1 values(4,40);
+insert into pt1 values(5,50);
+set @@tidb_enable_cascades_planner = 1;
+explain select * from pt1 order by a;
+select * from pt1 order by a;
+
+set session tidb_opt_fix_control = default;
+set @@tidb_enable_cascades_planner = default;
+
+

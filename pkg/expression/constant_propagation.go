@@ -56,13 +56,13 @@ func (s *basePropConstSolver) insertCol(col *Column) {
 // tryToUpdateEQList tries to update the eqList. When the eqList has store this column with a different constant, like
 // a = 1 and a = 2, we set the second return value to false.
 func (s *basePropConstSolver) tryToUpdateEQList(col *Column, con *Constant) (bool, bool) {
-	if con.ConstItem(s.ctx.GetSessionVars().StmtCtx) && con.Value.IsNull() {
+	if con.Value.IsNull() && ConstExprConsiderPlanCache(con, s.ctx.GetSessionVars().StmtCtx.UseCache) {
 		return false, true
 	}
 	id := s.getColID(col)
 	oldCon := s.eqList[id]
 	if oldCon != nil {
-		res, err := oldCon.Value.Compare(s.ctx.GetSessionVars().StmtCtx, &con.Value, collate.GetCollator(col.GetType().GetCollate()))
+		res, err := oldCon.Value.Compare(s.ctx.GetSessionVars().StmtCtx.TypeCtx(), &con.Value, collate.GetCollator(col.GetType().GetCollate()))
 		return false, res != 0 || err != nil
 	}
 	s.eqList[id] = con
@@ -155,7 +155,7 @@ func tryToReplaceCond(ctx sessionctx.Context, src *Column, tgt *Column, cond Exp
 		return false, true, cond
 	}
 	for idx, expr := range sf.GetArgs() {
-		if src.Equal(nil, expr) {
+		if src.EqualColumn(expr) {
 			_, coll := cond.CharsetAndCollation()
 			if tgt.GetType().GetCollate() != coll {
 				continue
@@ -212,7 +212,7 @@ func (s *propConstSolver) propagateConstantEQ() {
 		}
 		for i, cond := range s.conditions {
 			if !visited[i] {
-				s.conditions[i] = ColumnSubstitute(cond, NewSchema(cols...), cons)
+				s.conditions[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
 			}
 		}
 	}
@@ -353,7 +353,7 @@ func (s *propConstSolver) solve(conditions []Expression) []Expression {
 	s.propagateConstantEQ()
 	s.propagateColumnEQ()
 	s.conditions = propagateConstantDNF(s.ctx, s.conditions)
-	s.conditions = RemoveDupExprs(s.ctx, s.conditions)
+	s.conditions = RemoveDupExprs(s.conditions)
 	return s.conditions
 }
 
@@ -388,6 +388,52 @@ func (s *propOuterJoinConstSolver) setConds2ConstFalse(filterConds bool) {
 	}
 }
 
+func (s *basePropConstSolver) dealWithPossibleHybridType(col *Column, con *Constant) (*Constant, bool) {
+	if !col.GetType().Hybrid() {
+		return con, true
+	}
+	if col.GetType().GetType() == mysql.TypeEnum {
+		d, err := con.Eval(s.ctx, chunk.Row{})
+		if err != nil {
+			return nil, false
+		}
+		if MaybeOverOptimized4PlanCache(s.ctx, []Expression{con}) {
+			s.ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("Skip plan cache since mutable constant is restored and propagated"))
+		}
+		switch d.Kind() {
+		case types.KindInt64:
+			enum, err := types.ParseEnumValue(col.GetType().GetElems(), uint64(d.GetInt64()))
+			if err != nil {
+				logutil.BgLogger().Debug("Invalid Enum parsed during constant propagation")
+				return nil, false
+			}
+			con = &Constant{
+				Value:         types.NewMysqlEnumDatum(enum),
+				RetType:       col.RetType.Clone(),
+				collationInfo: col.collationInfo,
+			}
+		case types.KindString:
+			enum, err := types.ParseEnumName(col.GetType().GetElems(), d.GetString(), d.Collation())
+			if err != nil {
+				logutil.BgLogger().Debug("Invalid Enum parsed during constant propagation")
+				return nil, false
+			}
+			con = &Constant{
+				Value:         types.NewMysqlEnumDatum(enum),
+				RetType:       col.RetType.Clone(),
+				collationInfo: col.collationInfo,
+			}
+		case types.KindMysqlEnum, types.KindMysqlSet:
+			// It's already a hybrid type. Just use it.
+		default:
+			// We skip other cases first.
+			return nil, false
+		}
+		return con, true
+	}
+	return nil, false
+}
+
 // pickEQCondsOnOuterCol picks constant equal expression from specified conditions.
 func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Constant, visited []bool, filterConds bool) map[int]*Constant {
 	var conds []Expression
@@ -420,6 +466,11 @@ func (s *propOuterJoinConstSolver) pickEQCondsOnOuterCol(retMapper map[int]*Cons
 				s.setConds2ConstFalse(filterConds)
 				return nil
 			}
+			continue
+		}
+		var valid bool
+		con, valid = s.dealWithPossibleHybridType(col, con)
+		if !valid {
 			continue
 		}
 		// Only extract `outerCol = const` expressions.
@@ -470,7 +521,7 @@ func (s *propOuterJoinConstSolver) propagateConstantEQ() {
 		}
 		for i, cond := range s.joinConds {
 			if !visited[i+lenFilters] {
-				s.joinConds[i] = ColumnSubstitute(cond, NewSchema(cols...), cons)
+				s.joinConds[i] = ColumnSubstitute(s.ctx, cond, NewSchema(cols...), cons)
 			}
 		}
 	}

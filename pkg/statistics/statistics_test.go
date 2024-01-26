@@ -180,11 +180,11 @@ func TestMergeHistogram(t *testing.T) {
 		require.Equal(t, tt.bucketNum, h.Len())
 		require.Equal(t, tt.leftNum+tt.rightNum, int64(h.TotalRowCount()))
 		expectLower := types.NewIntDatum(tt.leftLower)
-		cmp, err := h.GetLower(0).Compare(sc, &expectLower, collate.GetBinaryCollator())
+		cmp, err := h.GetLower(0).Compare(sc.TypeCtx(), &expectLower, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equal(t, 0, cmp)
 		expectUpper := types.NewIntDatum(tt.rightLower + tt.rightNum - 1)
-		cmp, err = h.GetUpper(h.Len()-1).Compare(sc, &expectUpper, collate.GetBinaryCollator())
+		cmp, err = h.GetUpper(h.Len()-1).Compare(sc.TypeCtx(), &expectUpper, collate.GetBinaryCollator())
 		require.NoError(t, err)
 		require.Equal(t, 0, cmp)
 	}
@@ -456,7 +456,7 @@ func SubTestIndexRanges() func(*testing.T) {
 
 func encodeKey(key types.Datum) types.Datum {
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
-	buf, _ := codec.EncodeKey(sc, nil, key)
+	buf, _ := codec.EncodeKey(sc.TimeZone(), nil, key)
 	return types.NewBytesDatum(buf)
 }
 
@@ -482,7 +482,7 @@ func buildIndex(sctx sessionctx.Context, numBuckets, id int64, records sqlexec.R
 		}
 		for row := it.Begin(); row != it.End(); row = it.Next() {
 			datums := RowToDatums(row, records.Fields())
-			buf, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, datums...)
+			buf, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx.TimeZone(), nil, datums...)
 			if err != nil {
 				return 0, nil, nil, errors.Trace(err)
 			}
@@ -537,7 +537,7 @@ func SubTestBuild() func(*testing.T) {
 		count = col.LessRowCount(nil, types.NewIntDatum(1))
 		require.Equal(t, 5, int(count))
 
-		colv2, topnv2, err := BuildHistAndTopN(ctx, int(bucketCount), topNCount, 2, collector, types.NewFieldType(mysql.TypeLonglong), true, nil)
+		colv2, topnv2, err := BuildHistAndTopN(ctx, int(bucketCount), topNCount, 2, collector, types.NewFieldType(mysql.TypeLonglong), true, nil, false)
 		require.NoError(t, err)
 		require.NotNil(t, topnv2.TopN)
 		// The most common one's occurrence is 9990, the second most common one's occurrence is 30.

@@ -181,6 +181,7 @@ func (w *worker) runReorgJob(reorgInfo *reorgInfo, tblInfo *model.TableInfo,
 			Warnings:      make(map[errors.ErrorID]*terror.Error),
 			WarningsCount: make(map[errors.ErrorID]int64),
 			Location:      &model.TimeZoneLocation{Name: time.UTC.String(), Offset: 0},
+			Version:       model.CurrentReorgMetaVersion,
 		}
 	}
 
@@ -604,7 +605,8 @@ func buildCommonHandleFromChunkRow(sctx *stmtctx.StatementContext, tblInfo *mode
 	tablecodec.TruncateIndexValues(tblInfo, idxInfo, datumRow)
 
 	var handleBytes []byte
-	handleBytes, err := codec.EncodeKey(sctx, nil, datumRow...)
+	handleBytes, err := codec.EncodeKey(sctx.TimeZone(), nil, datumRow...)
+	err = sctx.HandleError(err)
 	if err != nil {
 		return nil, err
 	}
@@ -892,5 +894,15 @@ func CleanupDDLReorgHandles(job *model.Job, s *sess.Session) {
 
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.
 func (r *reorgHandler) GetDDLReorgHandle(job *model.Job) (element *meta.Element, startKey, endKey kv.Key, physicalTableID int64, err error) {
-	return getDDLReorgHandle(r.s, job)
+	element, startKey, endKey, physicalTableID, err = getDDLReorgHandle(r.s, job)
+	if job.ReorgMeta != nil && job.ReorgMeta.Version == model.ReorgMetaVersion0 && err == nil {
+		logutil.BgLogger().Info("job get table range for old version ReorgMetas", zap.String("category", "ddl"),
+			zap.Int64("jobID", job.ID), zap.Int64("job ReorgMeta version", job.ReorgMeta.Version), zap.Int64("physical table ID", physicalTableID),
+			zap.String("startKey", hex.EncodeToString(startKey)),
+			zap.String("current endKey", hex.EncodeToString(endKey)),
+			zap.String("endKey next", hex.EncodeToString(endKey.Next())))
+		endKey = endKey.Next()
+	}
+
+	return
 }

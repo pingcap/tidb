@@ -187,15 +187,17 @@ func GetColumnRowCount(sctx sessionctx.Context, c *statistics.Column, ranges []*
 		if lowVal.Kind() == types.KindString {
 			lowVal.SetBytes(collate.GetCollator(lowVal.Collation()).Key(lowVal.GetString()))
 		}
-		cmp, err := lowVal.Compare(sc, &highVal, collate.GetBinaryCollator())
+		cmp, err := lowVal.Compare(sc.TypeCtx(), &highVal, collate.GetBinaryCollator())
 		if err != nil {
 			return 0, errors.Trace(err)
 		}
-		lowEncoded, err := codec.EncodeKey(sc, nil, lowVal)
+		lowEncoded, err := codec.EncodeKey(sc.TimeZone(), nil, lowVal)
+		err = sc.HandleError(err)
 		if err != nil {
 			return 0, err
 		}
-		highEncoded, err := codec.EncodeKey(sc, nil, highVal)
+		highEncoded, err := codec.EncodeKey(sc.TimeZone(), nil, highVal)
+		err = sc.HandleError(err)
 		if err != nil {
 			return 0, err
 		}
@@ -336,11 +338,13 @@ func columnBetweenRowCount(sctx sessionctx.Context, t *statistics.Table, a, b ty
 	if !ok || c.IsInvalid(sctx, t.Pseudo) {
 		return float64(t.RealtimeCount) / pseudoBetweenRate, nil
 	}
-	aEncoded, err := codec.EncodeKey(sc, nil, a)
+	aEncoded, err := codec.EncodeKey(sc.TimeZone(), nil, a)
+	err = sc.HandleError(err)
 	if err != nil {
 		return 0, err
 	}
-	bEncoded, err := codec.EncodeKey(sc, nil, b)
+	bEncoded, err := codec.EncodeKey(sc.TimeZone(), nil, b)
+	err = sc.HandleError(err)
 	if err != nil {
 		return 0, err
 	}
@@ -357,7 +361,8 @@ func ColumnEqualRowCount(sctx sessionctx.Context, t *statistics.Table, value typ
 	if !ok || c.IsInvalid(sctx, t.Pseudo) {
 		return float64(t.RealtimeCount) / pseudoEqualRate, nil
 	}
-	encodedVal, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, value)
+	encodedVal, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx.TimeZone(), nil, value)
+	err = sctx.GetSessionVars().StmtCtx.HandleError(err)
 	if err != nil {
 		return 0, err
 	}

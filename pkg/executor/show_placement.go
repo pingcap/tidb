@@ -31,12 +31,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	pd "github.com/tikv/pd/client/http"
 )
 
 type showPlacementLabelsResultBuilder struct {
@@ -61,7 +61,7 @@ func (b *showPlacementLabelsResultBuilder) AppendStoreLabels(bj types.BinaryJSON
 		return errors.New("only array or null type is allowed")
 	}
 
-	labels := make([]*helper.StoreLabel, 0, bj.GetElemCount())
+	labels := make([]*pd.StoreLabel, 0, bj.GetElemCount())
 	err = gjson.Unmarshal(data, &labels)
 	if err != nil {
 		return errors.Trace(err)

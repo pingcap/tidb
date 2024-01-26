@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math/rand"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -60,9 +61,9 @@ func genBucket4TestData(length int) []*bucket4Test {
 func genHist4Bench(t *testing.B, buckets []*bucket4Test, totColSize int64) *Histogram {
 	h := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), len(buckets), totColSize)
 	for _, bucket := range buckets {
-		lower, err := codec.EncodeKey(nil, nil, types.NewIntDatum(bucket.lower))
+		lower, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(bucket.lower))
 		require.NoError(t, err)
-		upper, err := codec.EncodeKey(nil, nil, types.NewIntDatum(bucket.upper))
+		upper, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(bucket.upper))
 		require.NoError(t, err)
 		di, du := types.NewBytesDatum(lower), types.NewBytesDatum(upper)
 		h.AppendBucketWithNDV(&di, &du, bucket.count, bucket.repeat, bucket.ndv)
@@ -81,7 +82,7 @@ func benchmarkMergePartitionHist2GlobalHist(b *testing.B, partition int) {
 	}
 	poped := make([]TopNMeta, 0, popedTopNLen)
 	for n := 0; n < popedTopNLen; n++ {
-		b, _ := codec.EncodeKey(sc, nil, types.NewIntDatum(rand.Int63n(10000)))
+		b, _ := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(rand.Int63n(10000)))
 		tmp := TopNMeta{
 			Encoded: b,
 			Count:   uint64(rand.Int63n(10000)),

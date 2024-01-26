@@ -16,15 +16,13 @@ package executor
 
 import (
 	"context"
-	"sync/atomic"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"go.uber.org/zap"
 )
 
@@ -32,19 +30,19 @@ type analyzeSaveStatsWorker struct {
 	resultsCh <-chan *statistics.AnalyzeResults
 	sctx      sessionctx.Context
 	errCh     chan<- error
-	killed    *uint32
+	killer    *sqlkiller.SQLKiller
 }
 
 func newAnalyzeSaveStatsWorker(
 	resultsCh <-chan *statistics.AnalyzeResults,
 	sctx sessionctx.Context,
 	errCh chan<- error,
-	killed *uint32) *analyzeSaveStatsWorker {
+	killer *sqlkiller.SQLKiller) *analyzeSaveStatsWorker {
 	worker := &analyzeSaveStatsWorker{
 		resultsCh: resultsCh,
 		sctx:      sctx,
 		errCh:     errCh,
-		killed:    killed,
+		killer:    killer,
 	}
 	return worker
 }
@@ -57,8 +55,8 @@ func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot b
 		}
 	}()
 	for results := range worker.resultsCh {
-		if atomic.LoadUint32(worker.killed) == 1 {
-			worker.errCh <- errors.Trace(exeerrors.ErrQueryInterrupted)
+		if err := worker.killer.HandleSignal(); err != nil {
+			worker.errCh <- err
 			return
 		}
 		statsHandle := domain.GetDomain(worker.sctx).StatsHandle()

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -56,6 +57,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/tiflash"
@@ -103,12 +105,6 @@ type RetryInfo struct {
 	autoIncrementIDs       retryInfoAutoIDs
 	autoRandomIDs          retryInfoAutoIDs
 	LastRcReadTS           uint64
-}
-
-// ReuseChunkPool save Alloc object
-type ReuseChunkPool struct {
-	mu    sync.Mutex
-	Alloc chunk.Allocator
 }
 
 // Clean does some clean work.
@@ -1080,8 +1076,8 @@ type SessionVars struct {
 	// See https://github.com/pingcap/tidb/blob/7105505a78fc886c33258caa5813baf197b15247/docs/design/2023-06-30-configurable-kv-timeout.md?plain=1#L14-L15
 	TiKVClientReadTimeout uint64
 
-	// Killed is a flag to indicate that this query is killed.
-	Killed uint32
+	// SQLKiller is a flag to indicate that this query is killed.
+	SQLKiller sqlkiller.SQLKiller
 
 	// ConnectionStatus indicates current connection status.
 	ConnectionStatus int32
@@ -1201,6 +1197,9 @@ type SessionVars struct {
 
 	// EnableClusteredIndex indicates whether to enable clustered index when creating a new table.
 	EnableClusteredIndex ClusteredIndexDefMode
+
+	// EnableGlobalIndex indicates whether we could create an global index on a partition table or not.
+	EnableGlobalIndex bool
 
 	// PresumeKeyNotExists indicates lazy existence checking is enabled.
 	PresumeKeyNotExists bool
@@ -1391,6 +1390,9 @@ type SessionVars struct {
 	// EnableNonPreparedPlanCacheForDML indicates whether to enable non-prepared plan cache for DML statements.
 	EnableNonPreparedPlanCacheForDML bool
 
+	// EnableFuzzyBinding indicates whether to enable fuzzy binding.
+	EnableFuzzyBinding bool
+
 	// PlanCacheInvalidationOnFreshStats controls if plan cache will be invalidated automatically when
 	// related stats are analyzed after the plan cache is generated.
 	PlanCacheInvalidationOnFreshStats bool
@@ -1434,6 +1436,9 @@ type SessionVars struct {
 	// AnalyzePartitionMergeConcurrency indicates concurrency for merging partition stats
 	AnalyzePartitionMergeConcurrency int
 
+	// EnableAsyncMergeGlobalStats indicates whether to enable async merge global stats
+	EnableAsyncMergeGlobalStats bool
+
 	// EnableExternalTSRead indicates whether to enable read through external ts
 	EnableExternalTSRead bool
 
@@ -1449,10 +1454,10 @@ type SessionVars struct {
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	OptPrefixIndexSingleScan bool
 
-	// ChunkPool Several chunks and columns are cached
-	ChunkPool ReuseChunkPool
-	// EnableReuseCheck indicates  request chunk whether use chunk alloc
-	EnableReuseCheck bool
+	// chunkPool Several chunks and columns are cached
+	chunkPool chunk.Allocator
+	// EnableReuseChunk indicates  request chunk whether use chunk alloc
+	EnableReuseChunk bool
 
 	// EnableAdvancedJoinHint indicates whether the join method hint is compatible with join order hint.
 	EnableAdvancedJoinHint bool
@@ -1478,6 +1483,7 @@ type SessionVars struct {
 	shardRand *rand.Rand
 
 	// Resource group name
+	// NOTE: all statement relate opeartion should use StmtCtx.ResourceGroupName instead.
 	ResourceGroupName string
 
 	// PessimisticTransactionFairLocking controls whether fair locking for pessimistic transaction
@@ -1509,6 +1515,14 @@ type SessionVars struct {
 	// If there exists an index whose estimated selectivity is smaller than this threshold, the optimizer won't
 	// use the ExpectedCnt to adjust the estimated row count for index scan.
 	OptOrderingIdxSelThresh float64
+
+	// OptOrderingIdxSelRatio is the ratio for optimizer to determine when qualified rows from filtering outside
+	// of the index will be found during the scan of an ordering index.
+	// If all filtering is applied as matching on the ordering index, this ratio will have no impact.
+	// Value < 0 disables this enhancement.
+	// Value 0 will estimate row(s) found immediately.
+	// 0 > value <= 1 applies that percentage as the estimate when rows are found. For example 0.1 = 10%.
+	OptOrderingIdxSelRatio float64
 
 	// EnableMPPSharedCTEExecution indicates whether we enable the shared CTE execution strategy on MPP side.
 	EnableMPPSharedCTEExecution bool
@@ -1555,6 +1569,13 @@ type SessionVars struct {
 	// OptObjectiveModerate: The default value. The optimizer considers the real-time stats (real-time row count, modify count).
 	// OptObjectiveDeterminate: The optimizer doesn't consider the real-time stats.
 	OptObjective string
+
+	CompressionAlgorithm int
+	CompressionLevel     int
+
+	// TxnEntrySizeLimit indicates indicates the max size of a entry in membuf. The default limit (from config) will be
+	// overwritten if this value is not 0.
+	TxnEntrySizeLimit uint64
 }
 
 // GetOptimizerFixControlMap returns the specified value of the optimizer fix control.
@@ -1593,19 +1614,13 @@ func (s *SessionVars) IsPlanReplayerCaptureEnabled() bool {
 	return s.EnablePlanReplayerCapture || s.EnablePlanReplayedContinuesCapture
 }
 
-// GetNewChunkWithCapacity Attempt to request memory from the chunk pool
-// thread safety
-func (s *SessionVars) GetNewChunkWithCapacity(fields []*types.FieldType, capacity int, maxCachesize int, pool chunk.Allocator) *chunk.Chunk {
-	if pool == nil {
-		return chunk.New(fields, capacity, maxCachesize)
+// GetChunkAllocator returns a vaid chunk allocator.
+func (s *SessionVars) GetChunkAllocator() chunk.Allocator {
+	if s.chunkPool == nil {
+		return chunk.NewEmptyAllocator()
 	}
-	s.ChunkPool.mu.Lock()
-	defer s.ChunkPool.mu.Unlock()
-	if pool.CheckReuseAllocSize() && (!s.GetUseChunkAlloc()) {
-		s.StmtCtx.SetUseChunkAlloc()
-	}
-	chk := pool.Alloc(fields, capacity, maxCachesize)
-	return chk
+
+	return s.chunkPool
 }
 
 // ExchangeChunkStatus give the status to preUseChunkAlloc
@@ -1620,35 +1635,38 @@ func (s *SessionVars) GetUseChunkAlloc() bool {
 
 // SetAlloc Attempt to set the buffer pool address
 func (s *SessionVars) SetAlloc(alloc chunk.Allocator) {
-	if !s.EnableReuseCheck {
+	if !s.EnableReuseChunk {
+		s.chunkPool = nil
 		return
 	}
-	s.ChunkPool.Alloc = alloc
+	if alloc == nil {
+		s.chunkPool = nil
+		return
+	}
+	s.chunkPool = chunk.NewReuseHookAllocator(
+		chunk.NewSyncAllocator(alloc),
+		func() {
+			s.StmtCtx.SetUseChunkAlloc()
+		},
+	)
 }
 
-// IsAllocValid check if chunk reuse is enable or ChunkPool is inused.
+// IsAllocValid check if chunk reuse is enable or chunkPool is inused.
 func (s *SessionVars) IsAllocValid() bool {
-	if !s.EnableReuseCheck {
+	if !s.EnableReuseChunk {
 		return false
 	}
-	s.ChunkPool.mu.Lock()
-	defer s.ChunkPool.mu.Unlock()
-	return s.ChunkPool.Alloc != nil
+	return s.chunkPool != nil
 }
 
-// ClearAlloc indicates stop reuse chunk
-func (s *SessionVars) ClearAlloc(alloc *chunk.Allocator, b bool) {
-	if !b {
-		s.ChunkPool.Alloc = nil
+// ClearAlloc indicates stop reuse chunk. If `hasErr` is true, it'll also recreate the `alloc` in parameter.
+func (s *SessionVars) ClearAlloc(alloc *chunk.Allocator, hasErr bool) {
+	if !hasErr {
+		s.chunkPool = nil
 		return
 	}
 
-	// If an error is reported, re-apply for alloc
-	// Prevent the goroutine left before, affecting the execution of the next sql
-	// issuse 38918
-	s.ChunkPool.mu.Lock()
-	s.ChunkPool.Alloc = nil
-	s.ChunkPool.mu.Unlock()
+	s.chunkPool = nil
 	*alloc = chunk.NewAllocator()
 }
 
@@ -1725,9 +1743,9 @@ func (s *SessionVars) RaiseWarningWhenMPPEnforced(warning string) {
 		return
 	}
 	if s.StmtCtx.InExplainStmt {
-		s.StmtCtx.AppendWarning(errors.New(warning))
+		s.StmtCtx.AppendWarning(errors.NewNoStackError(warning))
 	} else {
-		s.StmtCtx.AppendExtraWarning(errors.New(warning))
+		s.StmtCtx.AppendExtraWarning(errors.NewNoStackError(warning))
 	}
 }
 
@@ -2009,9 +2027,9 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableTiFlashReadForWriteStmt: true,
 		ForeignKeyChecks:              DefTiDBForeignKeyChecks,
 		HookContext:                   hctx,
-		EnableReuseCheck:              DefTiDBEnableReusechunk,
+		EnableReuseChunk:              DefTiDBEnableReusechunk,
 		preUseChunkAlloc:              DefTiDBUseAlloc,
-		ChunkPool:                     ReuseChunkPool{Alloc: nil},
+		chunkPool:                     nil,
 		mppExchangeCompressionMode:    DefaultExchangeCompressionMode,
 		mppVersion:                    kv.MppVersionUnspecified,
 		EnableLateMaterialization:     DefTiDBOptEnableLateMaterialization,
@@ -2019,7 +2037,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 	}
-	vars.KVVars = tikvstore.NewVariables(&vars.Killed)
+	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
+	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
 	vars.Concurrency = Concurrency{
 		indexLookupConcurrency:            DefIndexLookupConcurrency,
 		indexSerialScanConcurrency:        DefIndexSerialScanConcurrency,
@@ -2027,6 +2046,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		hashJoinConcurrency:               DefTiDBHashJoinConcurrency,
 		projectionConcurrency:             DefTiDBProjectionConcurrency,
 		distSQLScanConcurrency:            DefDistSQLScanConcurrency,
+		analyzeDistSQLScanConcurrency:     DefAnalyzeDistSQLScanConcurrency,
 		hashAggPartialConcurrency:         DefTiDBHashAggPartialConcurrency,
 		hashAggFinalConcurrency:           DefTiDBHashAggFinalConcurrency,
 		windowConcurrency:                 DefTiDBWindowConcurrency,
@@ -2062,6 +2082,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 	vars.DiskTracker = disk.NewTracker(memory.LabelForSession, -1)
 	vars.MemTracker = memory.NewTracker(memory.LabelForSession, vars.MemQuotaQuery)
 	vars.MemTracker.IsRootTrackerOfSess = true
+	vars.MemTracker.Killer = &vars.SQLKiller
 
 	for _, engine := range config.GetGlobalConfig().IsolationRead.Engines {
 		switch engine {
@@ -2594,7 +2615,7 @@ func (s *SessionVars) GetPrevStmtDigest() string {
 
 // LazyCheckKeyNotExists returns if we can lazy check key not exists.
 func (s *SessionVars) LazyCheckKeyNotExists() bool {
-	return s.PresumeKeyNotExists || (s.TxnCtx != nil && s.TxnCtx.IsPessimistic && !s.StmtCtx.DupKeyAsWarning)
+	return s.PresumeKeyNotExists || (s.TxnCtx != nil && s.TxnCtx.IsPessimistic && s.StmtCtx.ErrGroupLevel(errctx.ErrGroupDupKey) == errctx.LevelError)
 }
 
 // GetTemporaryTable returns a TempTable by tableInfo.
@@ -2729,6 +2750,9 @@ type Concurrency struct {
 	// distSQLScanConcurrency is the number of concurrent dist SQL scan worker.
 	distSQLScanConcurrency int
 
+	// analyzeDistSQLScanConcurrency is the number of concurrent dist SQL scan worker when to analyze.
+	analyzeDistSQLScanConcurrency int
+
 	// hashJoinConcurrency is the number of concurrent hash join outer worker.
 	// hashJoinConcurrency is deprecated, use ExecutorConcurrency instead.
 	hashJoinConcurrency int
@@ -2768,6 +2792,9 @@ type Concurrency struct {
 
 	// SourceAddr is the source address of request. Available in coprocessor ONLY.
 	SourceAddr net.TCPAddr
+
+	// IdleTransactionTimeout indicates the maximum time duration a transaction could be idle, unit is second.
+	IdleTransactionTimeout int
 }
 
 // SetIndexLookupConcurrency set the number of concurrent index lookup worker.
@@ -2783,6 +2810,11 @@ func (c *Concurrency) SetIndexLookupJoinConcurrency(n int) {
 // SetDistSQLScanConcurrency set the number of concurrent dist SQL scan worker.
 func (c *Concurrency) SetDistSQLScanConcurrency(n int) {
 	c.distSQLScanConcurrency = n
+}
+
+// SetAnalyzeDistSQLScanConcurrency set the number of concurrent dist SQL scan worker when to analyze.
+func (c *Concurrency) SetAnalyzeDistSQLScanConcurrency(n int) {
+	c.analyzeDistSQLScanConcurrency = n
 }
 
 // SetHashJoinConcurrency set the number of concurrent hash join outer worker.
@@ -2849,6 +2881,11 @@ func (c *Concurrency) IndexLookupJoinConcurrency() int {
 // DistSQLScanConcurrency return the number of concurrent dist SQL scan worker.
 func (c *Concurrency) DistSQLScanConcurrency() int {
 	return c.distSQLScanConcurrency
+}
+
+// AnalyzeDistSQLScanConcurrency return the number of concurrent dist SQL scan worker when to analyze.
+func (c *Concurrency) AnalyzeDistSQLScanConcurrency() int {
+	return c.analyzeDistSQLScanConcurrency
 }
 
 // HashJoinConcurrency return the number of concurrent hash join outer worker.
@@ -3085,6 +3122,14 @@ const (
 	SlowLogIsWriteCacheTable = "IsWriteCacheTable"
 	// SlowLogIsSyncStatsFailed is used to indicate whether any failure happen during sync stats
 	SlowLogIsSyncStatsFailed = "IsSyncStatsFailed"
+	// SlowLogResourceGroup is the resource group name that the current session bind.
+	SlowLogResourceGroup = "Resource_group"
+	// SlowLogRRU is the read request_unit(RU) cost
+	SlowLogRRU = "Request_unit_read"
+	// SlowLogWRU is the write request_unit(RU) cost
+	SlowLogWRU = "Request_unit_write"
+	// SlowLogWaitRUDuration is the total duration for kv requests to wait available request-units.
+	SlowLogWaitRUDuration = "Time_queued_by_rc"
 )
 
 // GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
@@ -3140,6 +3185,10 @@ type SlowQueryLogItems struct {
 	UsedStats         map[int64]*stmtctx.UsedStatsInfoForTable
 	IsSyncStatsFailed bool
 	Warnings          []JSONSQLWarnForSlowLog
+	ResourceGroupName string
+	RRU               float64
+	WRU               float64
+	WaitRUDuration    time.Duration
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -3337,6 +3386,20 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if len(logItems.BinaryPlan) != 0 {
 		writeSlowLogItem(&buf, SlowLogBinaryPlan, logItems.BinaryPlan)
 	}
+
+	if logItems.ResourceGroupName != "" {
+		writeSlowLogItem(&buf, SlowLogResourceGroup, logItems.ResourceGroupName)
+	}
+	if logItems.RRU > 0.0 {
+		writeSlowLogItem(&buf, SlowLogRRU, strconv.FormatFloat(logItems.RRU, 'f', -1, 64))
+	}
+	if logItems.WRU > 0.0 {
+		writeSlowLogItem(&buf, SlowLogWRU, strconv.FormatFloat(logItems.WRU, 'f', -1, 64))
+	}
+	if logItems.WaitRUDuration > time.Duration(0) {
+		writeSlowLogItem(&buf, SlowLogWaitRUDuration, strconv.FormatFloat(logItems.WaitRUDuration.Seconds(), 'f', -1, 64))
+	}
+
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
 	}

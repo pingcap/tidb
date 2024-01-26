@@ -74,3 +74,14 @@ set @@tidb_cost_model_version=1;
 explain select * from t where a between 1 and 5 and b != 200 and c = 20 limit 100000;
 
 
+# TestCostModelShowFormula
+drop table if exists t;
+create table t (a int);
+set @@tidb_cost_model_version=2;
+## 'true_card_cost' must work with 'explain analyze'
+--error 1105
+explain format='true_card_cost' select * from t;
+--replace_column 8 <execution_info> 9 <operator_info> 10 <memory> 11 <disk>
+explain analyze format='true_card_cost' select * from t where a<3;
+
+set @@tidb_cost_model_version=DEFAULT;

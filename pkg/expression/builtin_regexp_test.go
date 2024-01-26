@@ -237,7 +237,7 @@ func TestRegexpLike(t *testing.T) {
 		fc := funcs[ast.Regexp]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.input, tt.pattern)))
 		require.NoError(t, err)
-		match, err := evalBuiltinFunc(f, chunk.Row{})
+		match, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.err == nil {
 			require.NoError(t, err)
 			testutil.DatumEqual(t, types.NewDatum(tt.match), match, fmt.Sprintf("%v", tt))
@@ -285,7 +285,7 @@ func TestRegexpLike(t *testing.T) {
 		fc := funcs[ast.RegexpLike]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.input, tt.pattern, tt.matchType)))
 		require.NoError(t, err)
-		match, err := evalBuiltinFunc(f, chunk.Row{})
+		match, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.err == nil {
 			require.NoError(t, err)
 			testutil.DatumEqual(t, types.NewDatum(tt.match), match, fmt.Sprintf("%v", tt))
@@ -384,7 +384,7 @@ func TestRegexpSubstr(t *testing.T) {
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -433,7 +433,7 @@ func TestRegexpSubstr(t *testing.T) {
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -486,7 +486,7 @@ func TestRegexpSubstr(t *testing.T) {
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -531,7 +531,7 @@ func TestRegexpSubstr(t *testing.T) {
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -640,7 +640,7 @@ func TestRegexpInStr(t *testing.T) {
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -688,7 +688,7 @@ func TestRegexpInStr(t *testing.T) {
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -741,7 +741,7 @@ func TestRegexpInStr(t *testing.T) {
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -788,7 +788,7 @@ func TestRegexpInStr(t *testing.T) {
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -835,7 +835,7 @@ func TestRegexpInStr(t *testing.T) {
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -974,7 +974,7 @@ func TestRegexpReplace(t *testing.T) {
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -1029,7 +1029,7 @@ func TestRegexpReplace(t *testing.T) {
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -1088,7 +1088,7 @@ func TestRegexpReplace(t *testing.T) {
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -1140,7 +1140,7 @@ func TestRegexpReplace(t *testing.T) {
 			f, err := fc.getFunction(ctx, args)
 			require.NoError(t, err)
 
-			actualMatch, err := evalBuiltinFunc(f, chunk.Row{})
+			actualMatch, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 			if tt.err == nil {
 				require.NoError(t, err)
 				testutil.DatumEqual(t, types.NewDatum(expectMatch), actualMatch, fmt.Sprintf("%v", tt))
@@ -1223,4 +1223,81 @@ func TestRegexpReplaceVec(t *testing.T) {
 	}
 
 	testVectorizedBuiltinFunc(t, vecBuiltinRegexpReplaceCases)
+}
+
+func TestRegexpCache(t *testing.T) {
+	ctx := createContext(t)
+
+	// if the pattern or match type is not constant, it should not be cached
+	sig := regexpBaseFuncSig{}
+	sig.args = []Expression{&Column{}, &Column{}, &Constant{}}
+	reg, err := sig.getRegexp(ctx, "abc", "", 2)
+	require.NoError(t, err)
+	require.Equal(t, "abc", reg.String())
+
+	reg, err = sig.getRegexp(ctx, "def", "", 2)
+	require.NoError(t, err)
+	require.Equal(t, "def", reg.String())
+
+	reg, ok, err := sig.tryVecMemorizedRegexp(ctx, []*funcParam{
+		{defaultStrVal: "x"},
+		{defaultStrVal: "aaa"},
+		{defaultStrVal: ""},
+	}, 2, 1)
+	require.Nil(t, reg)
+	require.False(t, ok)
+	require.NoError(t, err)
+
+	_, ok = sig.memorizedRegexp.getCache(ctx.GetSessionVars().StmtCtx.CtxID())
+	require.False(t, ok)
+
+	sig.args = []Expression{&Column{}, &Constant{}, &Column{}}
+	reg, err = sig.getRegexp(ctx, "bbb", "", 2)
+	require.NoError(t, err)
+	require.Equal(t, "bbb", reg.String())
+
+	reg, ok, err = sig.tryVecMemorizedRegexp(ctx, []*funcParam{
+		{defaultStrVal: "x"},
+		{defaultStrVal: "aaa"},
+		{defaultStrVal: ""},
+	}, 2, 1)
+	require.Nil(t, reg)
+	require.False(t, ok)
+	require.NoError(t, err)
+
+	_, ok = sig.memorizedRegexp.getCache(ctx.GetSessionVars().StmtCtx.CtxID())
+	require.False(t, ok)
+
+	// if pattern and match type are both constant, it should be cached
+	sig = regexpBaseFuncSig{}
+	sig.args = []Expression{&Column{}, &Constant{ParamMarker: &ParamMarker{}}, &Constant{ParamMarker: &ParamMarker{}}}
+	reg, err = sig.getRegexp(ctx, "ccc", "", 2)
+	require.NoError(t, err)
+	require.Equal(t, "ccc", reg.String())
+
+	reg2, err := sig.getRegexp(ctx, "ddd", "", 2)
+	require.NoError(t, err)
+	require.Same(t, reg, reg2)
+	require.Equal(t, "ccc", reg2.String())
+
+	sig = regexpBaseFuncSig{}
+	sig.args = []Expression{&Column{}, &Constant{ParamMarker: &ParamMarker{}}, &Constant{ParamMarker: &ParamMarker{}}}
+	reg, ok, err = sig.tryVecMemorizedRegexp(ctx, []*funcParam{
+		{defaultStrVal: "x"},
+		{defaultStrVal: "ddd"},
+		{defaultStrVal: ""},
+	}, 2, 1)
+	require.Equal(t, "ddd", reg.String())
+	require.True(t, ok)
+	require.NoError(t, err)
+
+	reg2, ok, err = sig.tryVecMemorizedRegexp(ctx, []*funcParam{
+		{defaultStrVal: "x"},
+		{defaultStrVal: "eee"},
+		{defaultStrVal: ""},
+	}, 2, 1)
+	require.Same(t, reg, reg2)
+	require.Equal(t, "ddd", reg2.String())
+	require.True(t, ok)
+	require.NoError(t, err)
 }

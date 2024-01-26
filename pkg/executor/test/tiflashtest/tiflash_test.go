@@ -20,7 +20,6 @@ import (
 	"math/rand"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -37,7 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -682,7 +681,7 @@ func TestCancelMppTasks(t *testing.T) {
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
-	atomic.StoreUint32(&tk.Session().GetSessionVars().Killed, 0)
+	tk.Session().GetSessionVars().SQLKiller.Reset()
 	require.Nil(t, failpoint.Enable(hang, `return(true)`))
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
@@ -693,7 +692,7 @@ func TestCancelMppTasks(t *testing.T) {
 		require.Equal(t, int(exeerrors.ErrQueryInterrupted.Code()), int(terror.ToSQLError(errors.Cause(err).(*terror.Error)).Code))
 	}()
 	time.Sleep(1 * time.Second)
-	atomic.StoreUint32(&tk.Session().GetSessionVars().Killed, 1)
+	tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
 	wg.Wait()
 	require.Nil(t, failpoint.Disable(hang))
 }
@@ -1481,7 +1480,7 @@ func TestMPPMemoryTracker(t *testing.T) {
 	}()
 	err = tk.QueryToErr("select * from t")
 	require.NotNil(t, err)
-	require.True(t, strings.Contains(err.Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery))
+	require.True(t, exeerrors.ErrMemoryExceedForQuery.Equal(err))
 }
 
 func TestTiFlashComputeDispatchPolicy(t *testing.T) {
@@ -1736,6 +1735,42 @@ func TestMppStoreCntWithErrors(t *testing.T) {
 	require.Nil(t, failpoint.Disable(mppStoreCountPDError))
 }
 
+func TestMPP47766(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_allow_mpp=1")
+	tk.MustExec("set @@session.tidb_enforce_mpp=1")
+	tk.MustExec("set @@session.tidb_allow_tiflash_cop=off")
+
+	tk.MustExec("CREATE TABLE `traces` (" +
+		"  `test_time` timestamp NOT NULL," +
+		"  `test_time_gen` date GENERATED ALWAYS AS (date(`test_time`)) VIRTUAL," +
+		"  KEY `traces_date_idx` (`test_time_gen`)" +
+		")")
+	tk.MustExec("alter table `traces` set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "traces")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustQuery("explain select date(test_time), count(1) as test_date from `traces` group by 1").Check(testkit.Rows(
+		"Projection_4 8000.00 root  test.traces.test_time_gen->Column#5, Column#4",
+		"└─HashAgg_8 8000.00 root  group by:test.traces.test_time_gen, funcs:count(1)->Column#4, funcs:firstrow(test.traces.test_time_gen)->test.traces.test_time_gen",
+		"  └─TableReader_20 10000.00 root  MppVersion: 2, data:ExchangeSender_19",
+		"    └─ExchangeSender_19 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"      └─TableFullScan_18 10000.00 mpp[tiflash] table:traces keep order:false, stats:pseudo"))
+	tk.MustQuery("explain select /*+ read_from_storage(tiflash[traces]) */ date(test_time) as test_date, count(1) from `traces` group by 1").Check(testkit.Rows(
+		"TableReader_31 8000.00 root  MppVersion: 2, data:ExchangeSender_30",
+		"└─ExchangeSender_30 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+		"  └─Projection_5 8000.00 mpp[tiflash]  date(test.traces.test_time)->Column#5, Column#4",
+		"    └─Projection_26 8000.00 mpp[tiflash]  Column#4, test.traces.test_time",
+		"      └─HashAgg_27 8000.00 mpp[tiflash]  group by:Column#13, funcs:sum(Column#14)->Column#4, funcs:firstrow(Column#15)->test.traces.test_time",
+		"        └─ExchangeReceiver_29 8000.00 mpp[tiflash]  ",
+		"          └─ExchangeSender_28 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#13, collate: binary]",
+		"            └─HashAgg_25 8000.00 mpp[tiflash]  group by:Column#17, funcs:count(1)->Column#14, funcs:firstrow(Column#16)->Column#15",
+		"              └─Projection_32 10000.00 mpp[tiflash]  test.traces.test_time->Column#16, date(test.traces.test_time)->Column#17",
+		"                └─TableFullScan_15 10000.00 mpp[tiflash] table:traces keep order:false, stats:pseudo"))
+}
+
 func TestUnionScan(t *testing.T) {
 	store := testkit.CreateMockStore(t, withMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
@@ -1835,4 +1870,121 @@ func checkMPPInExplain(t *testing.T, tk *testkit.TestKit, sql string) {
 	}
 	res := resBuff.String()
 	require.Contains(t, res, "mpp[tiflash]")
+}
+
+func TestMPPRecovery(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+
+	checkStrs := []string{"0 0"}
+	insertStr := "insert into t values(0, 0)"
+	for i := 1; i < 1500; i++ {
+		insertStr += fmt.Sprintf(",(%d, %d)", i, i)
+		checkStrs = append(checkStrs, fmt.Sprintf("%d %d", i, i))
+	}
+	tk.MustExec(insertStr)
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	sql := "select * from t order by 1, 2"
+	const packagePath = "github.com/pingcap/tidb/pkg/executor/internal/mpp/"
+
+	require.NoError(t, failpoint.Enable(packagePath+"mpp_recovery_test_mock_enable", "return()"))
+	require.NoError(t, failpoint.Enable(packagePath+"mpp_recovery_test_ignore_recovery_err", "return()"))
+	// Test different chunk size. And force one mpp err.
+	{
+		require.NoError(t, failpoint.Enable(packagePath+"mpp_recovery_test_max_err_times", "return(1)"))
+
+		tk.MustExec("set @@tidb_max_chunk_size = default")
+		tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
+		tk.MustExec("set @@tidb_max_chunk_size = 32")
+		tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
+
+		require.NoError(t, failpoint.Disable(packagePath+"mpp_recovery_test_max_err_times"))
+	}
+
+	// Test exceeds max recovery times. Default max times is 3.
+	{
+		require.NoError(t, failpoint.Enable(packagePath+"mpp_recovery_test_max_err_times", "return(5)"))
+
+		tk.MustExec("set @@tidb_max_chunk_size = 32")
+		err := tk.QueryToErr(sql)
+		strings.Contains(err.Error(), "mock mpp err")
+
+		require.NoError(t, failpoint.Disable(packagePath+"mpp_recovery_test_max_err_times"))
+	}
+
+	{
+		// When AllowFallbackToTiKV, mpp err recovery should be disabled.
+		// So event we inject mock err multiple times, the query should be ok.
+		tk.MustExec("set @@tidb_allow_fallback_to_tikv = \"tiflash\"")
+		require.NoError(t, failpoint.Enable(packagePath+"mpp_recovery_test_max_err_times", "return(5)"))
+
+		tk.MustExec("set @@tidb_max_chunk_size = 32")
+		tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
+
+		tk.MustExec("set @@tidb_allow_fallback_to_tikv = default")
+		require.NoError(t, failpoint.Disable(packagePath+"mpp_recovery_test_max_err_times"))
+	}
+
+	// Test hold logic. Default hold 4 * MaxChunkSize rows.
+	{
+		require.NoError(t, failpoint.Enable(packagePath+"mpp_recovery_test_max_err_times", "return(0)"))
+
+		tk.MustExec("set @@tidb_max_chunk_size = 32")
+		expectedHoldSize := 2
+		require.NoError(t, failpoint.Enable(packagePath+"mpp_recovery_test_hold_size", fmt.Sprintf("1*return(%d)", expectedHoldSize)))
+		tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
+		require.NoError(t, failpoint.Disable(packagePath+"mpp_recovery_test_hold_size"))
+
+		require.NoError(t, failpoint.Disable(packagePath+"mpp_recovery_test_max_err_times"))
+	}
+	require.NoError(t, failpoint.Disable(packagePath+"mpp_recovery_test_ignore_recovery_err"))
+	require.NoError(t, failpoint.Disable(packagePath+"mpp_recovery_test_mock_enable"))
+
+	{
+		// We have 2 mock tiflash, but the table is small, so only 1 tiflash node is in computation.
+		require.NoError(t, failpoint.Enable(packagePath+"mpp_recovery_test_check_node_cnt", "return(1)"))
+
+		tk.MustExec("set @@tidb_max_chunk_size = 32")
+		tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
+
+		require.NoError(t, failpoint.Disable(packagePath+"mpp_recovery_test_check_node_cnt"))
+	}
+
+	tk.MustExec("set @@tidb_max_chunk_size = default")
+}
+
+func TestIssue50358(t *testing.T) {
+	store := testkit.CreateMockStore(t, withMockTiFlash(1))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int not null primary key, b int not null)")
+	tk.MustExec("alter table t set tiflash replica 1")
+	tb := external.GetTableByName(t, tk, "test", "t")
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("insert into t values(1,0)")
+	tk.MustExec("insert into t values(2,0)")
+
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c int not null primary key)")
+	tk.MustExec("alter table t1 set tiflash replica 1")
+	tb = external.GetTableByName(t, tk, "test", "t1")
+	err = domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	require.NoError(t, err)
+	tk.MustExec("insert into t1 values(3)")
+
+	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
+	tk.MustExec("set @@session.tidb_allow_mpp=ON")
+	for i := 0; i < 20; i++ {
+		// test if it is stable.
+		tk.MustQuery("select 8 from t join t1").Check(testkit.Rows("8", "8"))
+	}
 }

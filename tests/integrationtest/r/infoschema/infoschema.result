@@ -25,6 +25,7 @@ select count(length(query)) from information_schema.ddl_jobs;
 count(length(query))
 x
 drop table if EXISTS t1;
+drop table if EXISTS mysql.t1, mysql.t2, mysql.t3;
 create table infoschema__infoschema.t1 (id int primary key, a text);
 insert infoschema__infoschema.t1 values(1,'334'),(4,'3443435'),(5,'fdf43t536653');
 rename table infoschema__infoschema.t1 to mysql.t1;

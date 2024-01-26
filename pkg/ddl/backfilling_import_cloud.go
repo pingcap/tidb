@@ -83,11 +83,12 @@ func (m *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 			StorageURI:    m.cloudStoreURI,
 			DataFiles:     sm.DataFiles,
 			StatFiles:     sm.StatFiles,
-			MinKey:        sm.MinKey,
-			MaxKey:        sm.MaxKey,
+			StartKey:      sm.StartKey,
+			EndKey:        sm.EndKey,
 			SplitKeys:     sm.RangeSplitKeys,
 			TotalFileSize: int64(sm.TotalKVSize),
 			TotalKVCount:  0,
+			CheckHotspot:  true,
 		},
 	}, engineUUID)
 	if err != nil {
@@ -104,10 +105,5 @@ func (*cloudImportExecutor) Cleanup(ctx context.Context) error {
 
 func (*cloudImportExecutor) OnFinished(ctx context.Context, _ *proto.Subtask) error {
 	logutil.Logger(ctx).Info("cloud import executor finish subtask")
-	return nil
-}
-
-func (*cloudImportExecutor) Rollback(ctx context.Context) error {
-	logutil.Logger(ctx).Info("cloud import executor rollback subtask")
 	return nil
 }

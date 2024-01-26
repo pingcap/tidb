@@ -14,11 +14,15 @@
 package utils
 
 import (
+	"context"
 	"testing"
+	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/multierr"
 )
 
 func TestIsTypeCompatible(t *testing.T) {
@@ -135,4 +139,33 @@ func TestIsTypeCompatible(t *testing.T) {
 		target.SetDecimal(3)
 		require.True(t, IsTypeCompatible(*src, *target))
 	}
+}
+
+func TestWithCleanUp(t *testing.T) {
+	err1 := errors.New("meow?")
+	err2 := errors.New("nya?")
+
+	case1 := func() (err error) {
+		defer WithCleanUp(&err, time.Second, func(ctx context.Context) error {
+			return err1
+		})
+		return nil
+	}
+	require.ErrorIs(t, case1(), err1)
+
+	case2 := func() (err error) {
+		defer WithCleanUp(&err, time.Second, func(ctx context.Context) error {
+			return err1
+		})
+		return err2
+	}
+	require.ElementsMatch(t, []error{err1, err2}, multierr.Errors(case2()))
+
+	case3 := func() (err error) {
+		defer WithCleanUp(&err, time.Second, func(ctx context.Context) error {
+			return nil
+		})
+		return nil
+	}
+	require.NoError(t, case3())
 }

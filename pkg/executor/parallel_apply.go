@@ -20,12 +20,12 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/applycache"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -90,7 +90,7 @@ type ParallelNestedLoopApplyExec struct {
 
 // Open implements the Executor interface.
 func (e *ParallelNestedLoopApplyExec) Open(ctx context.Context) error {
-	err := e.outerExec.Open(ctx)
+	err := exec.Open(ctx, e.outerExec)
 	if err != nil {
 		return err
 	}
@@ -174,7 +174,7 @@ func (e *ParallelNestedLoopApplyExec) Close() error {
 	}
 	// Wait all workers to finish before Close() is called.
 	// Otherwise we may got data race.
-	err := e.outerExec.Close()
+	err := exec.Close(e.outerExec)
 
 	if e.RuntimeStats() != nil {
 		runtimeStats := newJoinRuntimeStats()
@@ -267,7 +267,7 @@ func (e *ParallelNestedLoopApplyExec) putResult(chk *chunk.Chunk, err error) (ex
 
 func (e *ParallelNestedLoopApplyExec) handleWorkerPanic(ctx context.Context, wg *sync.WaitGroup) {
 	if r := recover(); r != nil {
-		err := errors.Errorf("%v", r)
+		err := util.GetRecoverError(r)
 		logutil.Logger(ctx).Error("parallel nested loop join worker panicked", zap.Error(err), zap.Stack("stack"))
 		e.resultChkCh <- result{nil, err}
 	}
@@ -282,7 +282,9 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 	for _, col := range e.corCols[id] {
 		*col.Data = e.outerRow[id].GetDatum(col.Index, col.RetType)
 		if e.useCache {
-			if key, err = codec.EncodeKey(e.Ctx().GetSessionVars().StmtCtx, key, *col.Data); err != nil {
+			key, err = codec.EncodeKey(e.Ctx().GetSessionVars().StmtCtx.TimeZone(), key, *col.Data)
+			err = e.Ctx().GetSessionVars().StmtCtx.HandleError(err)
+			if err != nil {
 				return err
 			}
 		}
@@ -301,8 +303,8 @@ func (e *ParallelNestedLoopApplyExec) fetchAllInners(ctx context.Context, id int
 		}
 	}
 
-	err = e.innerExecs[id].Open(ctx)
-	defer terror.Call(e.innerExecs[id].Close)
+	err = exec.Open(ctx, e.innerExecs[id])
+	defer func() { terror.Log(exec.Close(e.innerExecs[id])) }()
 	if err != nil {
 		return err
 	}

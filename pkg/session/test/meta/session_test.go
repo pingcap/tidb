@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
@@ -71,7 +72,7 @@ func TestMetaTableRegion(t *testing.T) {
 	enableSplitTableRegionVal := atomic.LoadUint32(&ddl.EnableSplitTableRegion)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, enableSplitTableRegionVal)
-	store := testkit.CreateMockStore(t)
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
 
 	tk := testkit.NewTestKit(t, store)
 
@@ -155,9 +156,9 @@ func TestInformationSchemaCreateTime(t *testing.T) {
 	ret1 := tk.MustQuery("select create_time from information_schema.tables where table_name='t';")
 	ret2 := tk.MustQuery("show table status like 't'")
 	require.Equal(t, ret2.Rows()[0][11].(string), ret1.Rows()[0][0].(string))
-	typ1, err := types.ParseDatetime(nil, ret.Rows()[0][0].(string))
+	typ1, err := types.ParseDatetime(types.DefaultStmtNoWarningContext, ret.Rows()[0][0].(string))
 	require.NoError(t, err)
-	typ2, err := types.ParseDatetime(nil, ret1.Rows()[0][0].(string))
+	typ2, err := types.ParseDatetime(types.DefaultStmtNoWarningContext, ret1.Rows()[0][0].(string))
 	require.NoError(t, err)
 	r := typ2.Compare(typ1)
 	require.Equal(t, 1, r)
@@ -166,7 +167,7 @@ func TestInformationSchemaCreateTime(t *testing.T) {
 	ret = tk.MustQuery(`select create_time from information_schema.tables where table_name='t'`)
 	ret2 = tk.MustQuery(`show table status like 't'`)
 	require.Equal(t, ret2.Rows()[0][11].(string), ret.Rows()[0][0].(string))
-	typ3, err := types.ParseDatetime(nil, ret.Rows()[0][0].(string))
+	typ3, err := types.ParseDatetime(types.DefaultStmtNoWarningContext, ret.Rows()[0][0].(string))
 	require.NoError(t, err)
 	// Asia/Shanghai 2022-02-17 17:40:05 > Europe/Amsterdam 2022-02-17 10:40:05
 	r = typ2.Compare(typ3)

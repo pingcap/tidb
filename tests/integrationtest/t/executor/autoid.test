@@ -1,0 +1,485 @@
+# TestAutoIncrementInsertMinMax
+drop table if exists t0, t1, t2, t3, t4, t5, t6, t7, t8, t9;
+create table t0 (a tinyint signed key auto_increment) ;
+insert into t0 values (-128);
+insert into t0 values ();
+insert into t0 values (0);
+insert into t0 values ();
+insert into t0 values (127);
+-- error 1690
+insert into t0 values ();
+select * from t0 order by a;
+drop table t0;
+create table t1 (a tinyint unsigned key auto_increment) ;
+insert into t1 values (0);
+insert into t1 values ();
+insert into t1 values (127);
+insert into t1 values ();
+insert into t1 values (255);
+-- error 1690
+insert into t1 values ();
+select * from t1 order by a;
+drop table t1;
+create table t2 (a smallint signed key auto_increment) ;
+insert into t2 values (-32768);
+insert into t2 values ();
+insert into t2 values (0);
+insert into t2 values ();
+insert into t2 values (32767);
+-- error 1690
+insert into t2 values ();
+select * from t2 order by a;
+drop table t2;
+create table t3 (a smallint unsigned key auto_increment) ;
+insert into t3 values (0);
+insert into t3 values ();
+insert into t3 values (32767);
+insert into t3 values ();
+insert into t3 values (65535);
+-- error 1690
+insert into t3 values ();
+select * from t3 order by a;
+drop table t3;
+create table t4 (a mediumint signed key auto_increment) ;
+insert into t4 values (-8388608);
+insert into t4 values ();
+insert into t4 values (0);
+insert into t4 values ();
+insert into t4 values (8388607);
+-- error 1690
+insert into t4 values ();
+select * from t4 order by a;
+drop table t4;
+create table t5 (a mediumint unsigned key auto_increment) ;
+insert into t5 values (0);
+insert into t5 values ();
+insert into t5 values (8388607);
+insert into t5 values ();
+insert into t5 values (16777215);
+-- error 1690
+insert into t5 values ();
+select * from t5 order by a;
+drop table t5;
+create table t6 (a integer signed key auto_increment) ;
+insert into t6 values (-2147483648);
+insert into t6 values ();
+insert into t6 values (0);
+insert into t6 values ();
+insert into t6 values (2147483647);
+-- error 1690
+insert into t6 values ();
+select * from t6 order by a;
+drop table t6;
+create table t7 (a integer unsigned key auto_increment) ;
+insert into t7 values (0);
+insert into t7 values ();
+insert into t7 values (2147483647);
+insert into t7 values ();
+insert into t7 values (4294967295);
+-- error 1690
+insert into t7 values ();
+select * from t7 order by a;
+drop table t7;
+create table t8 (a bigint signed key auto_increment) ;
+insert into t8 values (-9223372036854775808);
+insert into t8 values ();
+insert into t8 values (0);
+insert into t8 values ();
+insert into t8 values (9223372036854775807);
+-- error 1467
+insert into t8 values ();
+select * from t8 order by a;
+drop table t8;
+create table t9 (a bigint unsigned key auto_increment) ;
+insert into t9 values (0);
+insert into t9 values ();
+insert into t9 values (9223372036854775807);
+insert into t9 values ();
+select * from t9 order by a;
+drop table t9;
+create table t0 (a tinyint signed key auto_increment) auto_id_cache 1;
+insert into t0 values (-128);
+insert into t0 values ();
+insert into t0 values (0);
+insert into t0 values ();
+insert into t0 values (127);
+-- error 1690
+insert into t0 values ();
+select * from t0 order by a;
+drop table t0;
+create table t1 (a tinyint unsigned key auto_increment) auto_id_cache 1;
+insert into t1 values (0);
+insert into t1 values ();
+insert into t1 values (127);
+insert into t1 values ();
+insert into t1 values (255);
+-- error 1690
+insert into t1 values ();
+select * from t1 order by a;
+drop table t1;
+create table t2 (a smallint signed key auto_increment) auto_id_cache 1;
+insert into t2 values (-32768);
+insert into t2 values ();
+insert into t2 values (0);
+insert into t2 values ();
+insert into t2 values (32767);
+-- error 1690
+insert into t2 values ();
+select * from t2 order by a;
+drop table t2;
+create table t3 (a smallint unsigned key auto_increment) auto_id_cache 1;
+insert into t3 values (0);
+insert into t3 values ();
+insert into t3 values (32767);
+insert into t3 values ();
+insert into t3 values (65535);
+-- error 1690
+insert into t3 values ();
+select * from t3 order by a;
+drop table t3;
+create table t4 (a mediumint signed key auto_increment) auto_id_cache 1;
+insert into t4 values (-8388608);
+insert into t4 values ();
+insert into t4 values (0);
+insert into t4 values ();
+insert into t4 values (8388607);
+-- error 1690
+insert into t4 values ();
+select * from t4 order by a;
+drop table t4;
+create table t5 (a mediumint unsigned key auto_increment) auto_id_cache 1;
+insert into t5 values (0);
+insert into t5 values ();
+insert into t5 values (8388607);
+insert into t5 values ();
+insert into t5 values (16777215);
+-- error 1690
+insert into t5 values ();
+select * from t5 order by a;
+drop table t5;
+create table t6 (a integer signed key auto_increment) auto_id_cache 1;
+insert into t6 values (-2147483648);
+insert into t6 values ();
+insert into t6 values (0);
+insert into t6 values ();
+insert into t6 values (2147483647);
+-- error 1690
+insert into t6 values ();
+select * from t6 order by a;
+drop table t6;
+create table t7 (a integer unsigned key auto_increment) auto_id_cache 1;
+insert into t7 values (0);
+insert into t7 values ();
+insert into t7 values (2147483647);
+insert into t7 values ();
+insert into t7 values (4294967295);
+-- error 1690
+insert into t7 values ();
+select * from t7 order by a;
+drop table t7;
+create table t8 (a bigint signed key auto_increment) auto_id_cache 1;
+insert into t8 values (-9223372036854775808);
+insert into t8 values ();
+insert into t8 values (0);
+insert into t8 values ();
+insert into t8 values (9223372036854775807);
+-- error 1105
+insert into t8 values ();
+select * from t8 order by a;
+drop table t8;
+create table t9 (a bigint unsigned key auto_increment) auto_id_cache 1;
+insert into t9 values (0);
+insert into t9 values ();
+insert into t9 values (9223372036854775807);
+insert into t9 values ();
+select * from t9 order by a;
+drop table t9;
+create table t0 (a tinyint signed key auto_increment) auto_id_cache 100;
+insert into t0 values (-128);
+insert into t0 values ();
+insert into t0 values (0);
+insert into t0 values ();
+insert into t0 values (127);
+-- error 1690
+insert into t0 values ();
+select * from t0 order by a;
+drop table t0;
+create table t1 (a tinyint unsigned key auto_increment) auto_id_cache 100;
+insert into t1 values (0);
+insert into t1 values ();
+insert into t1 values (127);
+insert into t1 values ();
+insert into t1 values (255);
+-- error 1690
+insert into t1 values ();
+select * from t1 order by a;
+drop table t1;
+create table t2 (a smallint signed key auto_increment) auto_id_cache 100;
+insert into t2 values (-32768);
+insert into t2 values ();
+insert into t2 values (0);
+insert into t2 values ();
+insert into t2 values (32767);
+-- error 1690
+insert into t2 values ();
+select * from t2 order by a;
+drop table t2;
+create table t3 (a smallint unsigned key auto_increment) auto_id_cache 100;
+insert into t3 values (0);
+insert into t3 values ();
+insert into t3 values (32767);
+insert into t3 values ();
+insert into t3 values (65535);
+-- error 1690
+insert into t3 values ();
+select * from t3 order by a;
+drop table t3;
+create table t4 (a mediumint signed key auto_increment) auto_id_cache 100;
+insert into t4 values (-8388608);
+insert into t4 values ();
+insert into t4 values (0);
+insert into t4 values ();
+insert into t4 values (8388607);
+-- error 1690
+insert into t4 values ();
+select * from t4 order by a;
+drop table t4;
+create table t5 (a mediumint unsigned key auto_increment) auto_id_cache 100;
+insert into t5 values (0);
+insert into t5 values ();
+insert into t5 values (8388607);
+insert into t5 values ();
+insert into t5 values (16777215);
+-- error 1690
+insert into t5 values ();
+select * from t5 order by a;
+drop table t5;
+create table t6 (a integer signed key auto_increment) auto_id_cache 100;
+insert into t6 values (-2147483648);
+insert into t6 values ();
+insert into t6 values (0);
+insert into t6 values ();
+insert into t6 values (2147483647);
+-- error 1690
+insert into t6 values ();
+select * from t6 order by a;
+drop table t6;
+create table t7 (a integer unsigned key auto_increment) auto_id_cache 100;
+insert into t7 values (0);
+insert into t7 values ();
+insert into t7 values (2147483647);
+insert into t7 values ();
+insert into t7 values (4294967295);
+-- error 1690
+insert into t7 values ();
+select * from t7 order by a;
+drop table t7;
+create table t8 (a bigint signed key auto_increment) auto_id_cache 100;
+insert into t8 values (-9223372036854775808);
+insert into t8 values ();
+insert into t8 values (0);
+insert into t8 values ();
+insert into t8 values (9223372036854775807);
+-- error 1467
+insert into t8 values ();
+select * from t8 order by a;
+drop table t8;
+create table t9 (a bigint unsigned key auto_increment) auto_id_cache 100;
+insert into t9 values (0);
+insert into t9 values ();
+insert into t9 values (9223372036854775807);
+insert into t9 values ();
+select * from t9 order by a;
+drop table t9;
+create table t10 (a integer key auto_increment) auto_id_cache 1;
+-- error 1264
+insert into t10 values (2147483648);
+-- error 1264
+insert into t10 values (-2147483649);
+
+# TestRenameTableForAutoIncrement
+drop table if exists t1, t2, t3, t11, t22, t33;
+create table t1 (id int key auto_increment);
+insert into t1 values ();
+rename table t1 to t11;
+insert into t11 values ();
+select * from t11;
+
+## auto_id_cache 1 use another implementation and do not have such bug.
+create table t2 (id int key auto_increment) auto_id_cache 1;
+insert into t2 values ();
+rename table t2 to t22;
+insert into t22 values ();
+select * from t22;
+
+create table t3 (id int key auto_increment) auto_id_cache 100;
+insert into t3 values ();
+rename table t3 to t33;
+insert into t33 values ();
+select * from t33;
+
+# TestAutoIDConstraint
+# Remove the constraint that auto id column must be defined as a key
+# See https://github.com/pingcap/tidb/issues/40580
+drop table if exists t0;
+create table t0 (id int auto_increment,k int,c char(120)) ;
+drop table if exists t1;
+create table t1 (id int auto_increment,k int,c char(120)) engine = MyISAM;
+drop table if exists t2;
+create table t2 (id int auto_increment,k int,c char(120)) engine = InnoDB;
+drop table if exists t3;
+create table t3 (id int auto_increment,k int,c char(120)) auto_id_cache 1;
+drop table if exists t4;
+create table t4 (id int auto_increment,k int,c char(120)) auto_id_cache 100;
+drop table if exists t5;
+create table t5 (id int auto_increment,k int,c char(120),PRIMARY KEY(k, id)) ;
+drop table if exists t6;
+create table t6 (id int auto_increment,k int,c char(120),PRIMARY KEY(k, id)) engine = MyISAM;
+drop table if exists t7;
+create table t7 (id int auto_increment,k int,c char(120),PRIMARY KEY(k, id)) engine = InnoDB;
+drop table if exists t8;
+create table t8 (id int auto_increment,k int,c char(120),PRIMARY KEY(k, id)) auto_id_cache 1;
+drop table if exists t9;
+create table t9 (id int auto_increment,k int,c char(120),PRIMARY KEY(k, id)) auto_id_cache 100;
+drop table if exists t10;
+create table t10 (id int auto_increment,k int,c char(120),key idx_1(id)) ;
+drop table if exists t11;
+create table t11 (id int auto_increment,k int,c char(120),key idx_1(id)) engine = MyISAM;
+drop table if exists t12;
+create table t12 (id int auto_increment,k int,c char(120),key idx_1(id)) engine = InnoDB;
+drop table if exists t13;
+create table t13 (id int auto_increment,k int,c char(120),key idx_1(id)) auto_id_cache 1;
+drop table if exists t14;
+create table t14 (id int auto_increment,k int,c char(120),key idx_1(id)) auto_id_cache 100;
+drop table if exists t15;
+create table t15 (id int auto_increment,k int,c char(120),PRIMARY KEY(`k`, `id`), key idx_1(id)) ;
+drop table if exists t16;
+create table t16 (id int auto_increment,k int,c char(120),PRIMARY KEY(`k`, `id`), key idx_1(id)) engine = MyISAM;
+drop table if exists t17;
+create table t17 (id int auto_increment,k int,c char(120),PRIMARY KEY(`k`, `id`), key idx_1(id)) engine = InnoDB;
+drop table if exists t18;
+create table t18 (id int auto_increment,k int,c char(120),PRIMARY KEY(`k`, `id`), key idx_1(id)) auto_id_cache 1;
+drop table if exists t19;
+create table t19 (id int auto_increment,k int,c char(120),PRIMARY KEY(`k`, `id`), key idx_1(id)) auto_id_cache 100;
+
+## alter table add auto id column is not supported, but cover it here to prevent regression
+create table tt1 (id int);
+-- error 8200
+alter table tt1 add column (c int auto_increment);
+
+## Cover case: create table with auto id column as key, and remove it later
+create table tt2 (id int, c int auto_increment, key c_idx(c));
+alter table tt2 drop index c_idx;
+
+# TestAlterTableAutoIDCache
+drop table if exists t_473;
+create table t_473 (id int key auto_increment);
+insert into t_473 values ();
+select * from t_473;
+show table t_473 next_row_id;
+alter table t_473 auto_id_cache = 100;
+show table t_473 next_row_id;
+insert into t_473 values ();
+select * from t_473;
+show table t_473 next_row_id;
+
+## Note that auto_id_cache=1 use a different implementation, switch between them is not allowed.
+## TODO: relax this restriction and update the test case.
+-- error 1105
+alter table t_473 auto_id_cache = 1;
+
+# TestAutoIDIncrementAndOffset There is a potential issue in MySQL: when the value of auto_increment_offset is greater
+# than that of auto_increment_increment, the value of auto_increment_offset is ignored
+# (https://dev.mysql.com/doc/refman/8.0/en/replication-options-master.html#sysvar_auto_increment_increment),
+# This issue is a flaw of the implementation of MySQL and it doesn't exist in TiDB.
+drop table if exists io;
+set auto_increment_offset = 10;
+set auto_increment_increment = 5;
+
+create table io (a int key auto_increment);
+insert into io values (null),(null),(null);
+select * from io;
+drop table io;
+create table io (a int key auto_increment) AUTO_ID_CACHE 1;
+insert into io values (null),(null),(null);
+select * from io;
+drop table io;
+
+## Test handle is PK.
+create table io (a int key auto_increment);
+set auto_increment_offset = 10;
+set auto_increment_increment = 2;
+insert into io values (),(),();
+select * from io;
+delete from io;
+set auto_increment_increment = 5;
+insert into io values (),(),();
+select * from io;
+delete from io;
+set auto_increment_increment = 10;
+insert into io values (),(),();
+select * from io;
+delete from io;
+set auto_increment_increment = 5;
+insert into io values (),(),();
+select * from io;
+drop table io;
+create table io (a int key auto_increment) AUTO_ID_CACHE 1;
+set auto_increment_offset = 10;
+set auto_increment_increment = 2;
+insert into io values (),(),();
+select * from io;
+delete from io;
+set auto_increment_increment = 5;
+insert into io values (),(),();
+select * from io;
+delete from io;
+set auto_increment_increment = 10;
+insert into io values (),(),();
+select * from io;
+delete from io;
+set auto_increment_increment = 5;
+insert into io values (),(),();
+select * from io;
+drop table io;
+
+## Test handle is not PK.
+set auto_increment_offset = 10;
+set auto_increment_increment = 2;
+create table io (a int, b int auto_increment, key(b));
+insert into io(b) values (null),(null),(null);
+select b from io;
+select _tidb_rowid from io;
+delete from io;
+set auto_increment_increment = 10;
+insert into io(b) values (null),(null),(null);
+select b from io;
+select _tidb_rowid from io;
+drop table io;
+set auto_increment_offset = 10;
+set auto_increment_increment = 2;
+create table io (a int, b int auto_increment, key(b)) AUTO_ID_CACHE 1;
+insert into io(b) values (null),(null),(null);
+select b from io;
+select _tidb_rowid from io;
+delete from io;
+set auto_increment_increment = 10;
+insert into io(b) values (null),(null),(null);
+select b from io;
+select _tidb_rowid from io;
+drop table io;
+
+set auto_increment_offset = -1;
+show warnings;
+set auto_increment_increment = -2;
+show warnings;
+show variables like 'auto_increment%';
+
+set auto_increment_offset = 65536;
+show warnings;
+set auto_increment_increment = 65536;
+show warnings;
+show variables like 'auto_increment%';
+
+set auto_increment_offset = default;
+set auto_increment_increment = default;

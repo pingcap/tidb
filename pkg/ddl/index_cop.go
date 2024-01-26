@@ -365,10 +365,9 @@ func constructTableScanPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, col
 }
 
 func extractDatumByOffsets(row chunk.Row, offsets []int, expCols []*expression.Column, buf []types.Datum) []types.Datum {
-	for _, offset := range offsets {
+	for i, offset := range offsets {
 		c := expCols[offset]
-		rowDt := row.GetDatum(offset, c.GetType())
-		buf = append(buf, rowDt)
+		row.DatumWithBuffer(offset, c.GetType(), &buf[i])
 	}
 	return buf
 }
@@ -377,7 +376,8 @@ func buildHandle(pkDts []types.Datum, tblInfo *model.TableInfo,
 	pkInfo *model.IndexInfo, stmtCtx *stmtctx.StatementContext) (kv.Handle, error) {
 	if tblInfo.IsCommonHandle {
 		tablecodec.TruncateIndexValues(tblInfo, pkInfo, pkDts)
-		handleBytes, err := codec.EncodeKey(stmtCtx, nil, pkDts...)
+		handleBytes, err := codec.EncodeKey(stmtCtx.TimeZone(), nil, pkDts...)
+		err = stmtCtx.HandleError(err)
 		if err != nil {
 			return nil, err
 		}

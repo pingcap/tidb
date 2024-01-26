@@ -313,6 +313,7 @@ func WriteInsertInCsv(
 		separator:      []byte(cfg.CsvSeparator),
 		delimiter:      []byte(cfg.CsvDelimiter),
 		lineTerminator: []byte(cfg.CsvLineTerminator),
+		binaryFormat:   DialectBinaryFormatMap[cfg.CsvOutputDialect],
 	}
 
 	// use context.Background here to make sure writerPipe can deplete all the chunks in pipeline

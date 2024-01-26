@@ -64,7 +64,7 @@ var (
 	ErrDuplicatedValueInType = dbterror.ClassTypes.NewStd(mysql.ErrDuplicatedValueInType)
 	// ErrDatetimeFunctionOverflow is returned when the calculation in datetime function cause overflow.
 	ErrDatetimeFunctionOverflow = dbterror.ClassTypes.NewStd(mysql.ErrDatetimeFunctionOverflow)
-	// ErrCastAsSignedOverflow is returned when positive out-of-range integer, and convert to it's negative complement.
+	// ErrCastAsSignedOverflow is returned when positive out-of-range integer, and convert to its negative complement.
 	ErrCastAsSignedOverflow = dbterror.ClassTypes.NewStd(mysql.ErrCastAsSignedOverflow)
 	// ErrCastNegIntAsUnsigned is returned when a negative integer be casted to an unsigned int.
 	ErrCastNegIntAsUnsigned = dbterror.ClassTypes.NewStd(mysql.ErrCastNegIntAsUnsigned)

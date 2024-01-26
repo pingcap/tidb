@@ -388,7 +388,7 @@ select * from t1;
 --sorted_result
 select c1 + 0 from t1;
 SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;
-alter table t1 add index idx(c1); ;
+alter table t1 add index idx(c1);
 --sorted_result
 select c1 + 0 from t1;
 SELECT c1 + 0, COUNT(c1) FROM t1 GROUP BY c1 order by c1;
@@ -741,15 +741,15 @@ select b like '%a' from t group by c;
 select c REGEXP '1.*' from t group by b;
 --error 1055
 select -b from t group by c;
---error 1055
+--error 8123
 select a, max(b) from t;
---error 1055
+--error 8123
 select sum(a)+b from t;
---error 1055
+--error 8123
 select count(b), c from t;
 select count(b), any_value(c) from t;
 select count(b), any_value(c) + 2 from t;
---error 1055
+--error 8123
 select distinct a, b, count(a) from t;
 select a from t group by a,b,c;
 select b from t group by b;
@@ -804,7 +804,7 @@ select * from (select * from t) as e group by b,c;
 select c from t group by c,d order by d;
 --error 1055
 select c from t group by c order by d;
---error 1055
+--error 1052
 select c from t,x group by t.c;
 set sql_mode = default;
 set @@session.tidb_enable_new_only_full_group_by_check = default;
@@ -833,3 +833,237 @@ select a from t group by ((+a));
 -- error 1055
 select a from t group by (-a);
 set sql_mode = default;
+
+# TestGroupConcatAggr
+## issue #5411
+drop table if exists test;
+create table test(id int, name int);
+insert into test values(1, 10);
+insert into test values(1, 20);
+insert into test values(1, 30);
+insert into test values(2, 20);
+insert into test values(3, 200);
+insert into test values(3, 500);
+select id, group_concat(name) from test group by id order by id;
+select id, group_concat(name SEPARATOR ';') from test group by id order by id;
+select id, group_concat(name SEPARATOR ',') from test group by id order by id;
+select id, group_concat(name SEPARATOR '%') from test group by id order by id;
+select id, group_concat(name SEPARATOR '') from test group by id order by id;
+select id, group_concat(name SEPARATOR '123') from test group by id order by id;
+select group_concat(id ORDER BY name) from (select * from test order by id, name limit 2,2) t;
+select group_concat(id ORDER BY name desc) from (select * from test order by id, name limit 2,2) t;
+select group_concat(name ORDER BY id) from (select * from test order by id, name limit 2,2) t;
+select group_concat(name ORDER BY id desc) from (select * from test order by id, name limit 2,2) t;
+select group_concat(name ORDER BY name desc SEPARATOR '++') from test;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select group_concat(distinct name order by name desc) from test;
+set session group_concat_max_len=4;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=5;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=6;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=7;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=8;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=9;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=10;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=11;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=12;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=13;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=14;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=15;
+select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=4;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=5;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=6;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=7;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=8;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=9;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=10;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=11;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=12;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=13;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=14;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=15;
+select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
+select @@warning_count;
+set session group_concat_max_len=4;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=5;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=6;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=7;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=8;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=9;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=10;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=11;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=12;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=13;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=14;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=15;
+select group_concat(distinct name order by name desc) from test;
+select @@warning_count;
+set session group_concat_max_len=default;
+
+## test varchar table
+drop table if exists test2;
+create table test2(id varchar(20), name varchar(20));
+insert into test2 select * from test;
+select group_concat(id ORDER BY name) from (select * from test2 order by id, name limit 2,2) t;
+select group_concat(id ORDER BY name desc) from (select * from test2 order by id, name limit 2,2) t;
+select group_concat(name ORDER BY id) from (select * from test2 order by id, name limit 2,2) t;
+select group_concat(name ORDER BY id desc) from (select * from test2 order by id, name limit 2,2) t;
+select group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test2;
+
+## test Position Expr
+select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY 1 desc, id SEPARATOR '++') from test;
+select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY 2 desc, name SEPARATOR '++') from test;
+-- error 1054
+select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY 3 desc, name SEPARATOR '++') from test;
+
+## test Param Marker
+prepare s1 from "select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY floor(id/?) desc, name SEPARATOR '++') from test";
+set @a=2;
+execute s1 using @a;
+prepare s1 from "select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY ? desc, name SEPARATOR '++') from test";
+set @a=2;
+execute s1 using @a;
+set @a=3;
+-- error 1054
+execute s1 using @a;
+set @a=3.0;
+execute s1 using @a;
+
+## test partition table
+drop table if exists ptest;
+CREATE TABLE ptest (id int,name int) PARTITION BY RANGE ( id ) (PARTITION `p0` VALUES LESS THAN (2), PARTITION `p1` VALUES LESS THAN (11));
+insert into ptest select * from test;
+set session tidb_opt_distinct_agg_push_down = 0;
+set session tidb_opt_agg_push_down = 0;
+select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;
+select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;
+set session tidb_opt_distinct_agg_push_down = 0;
+set session tidb_opt_agg_push_down = 1;
+select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;
+select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;
+set session tidb_opt_distinct_agg_push_down = 1;
+set session tidb_opt_agg_push_down = 0;
+select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;
+select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;
+set session tidb_opt_distinct_agg_push_down = 1;
+set session tidb_opt_agg_push_down = 1;
+select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;
+select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;
+set session tidb_opt_distinct_agg_push_down = default;
+set session tidb_opt_agg_push_down = default;
+
+## issue #9920
+select group_concat(123, null);
+
+## issue #23129
+drop table if exists t1;
+create table t1(cid int, sname varchar(100));
+insert into t1 values(1, 'Bob'), (1, 'Alice');
+insert into t1 values(3, 'Ace');
+set @@group_concat_max_len=5;
+select group_concat(sname order by sname) from t1 group by cid;
+drop table if exists t1;
+create table t1(c1 varchar(10));
+insert into t1 values('0123456789');
+insert into t1 values('12345');
+set @@group_concat_max_len=8;
+select group_concat(c1 order by c1) from t1 group by c1;
+set @@group_concat_max_len=default;
+
+# TestSelectDistinct
+drop table if exists select_distinct_test;
+create table select_distinct_test(id int not null default 1, name varchar(255), PRIMARY KEY(id));
+insert INTO select_distinct_test VALUES (1, "hello");
+insert into select_distinct_test values (2, "hello");
+begin;
+select distinct name from select_distinct_test;
+commit;
+
+# TestInjectProjBelowTopN
+drop table if exists t;
+create table t (i int);
+insert into t values (1), (1), (1),(2),(3),(2),(3),(2),(3);
+explain format = 'brief' select * from t order by i + 1;
+select * from t order by i + 1;
+explain format = 'brief' select * from t order by i + 1 limit 2;
+select * from t order by i + 1 limit 2;
+select i, i, i from t order by i + 1;
+
+# TestIssue12759HashAggCalledByApply
+insert into mysql.opt_rule_blacklist value("decorrelate");
+drop table if exists test;
+create table test (a int);
+insert into test value(1);
+select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;
+explain format = 'brief' select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;
+delete from mysql.opt_rule_blacklist where name = "decorrelate";
+admin reload opt_rule_blacklist;
+

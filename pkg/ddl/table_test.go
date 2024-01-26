@@ -143,10 +143,10 @@ func testTruncateTable(t *testing.T, ctx sessionctx.Context, store kv.Storage, d
 	return job
 }
 
-func testGetTableWithError(store kv.Storage, schemaID, tableID int64) (table.Table, error) {
+func testGetTableWithError(r autoid.Requirement, schemaID, tableID int64) (table.Table, error) {
 	var tblInfo *model.TableInfo
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
+	err := kv.RunInNewTxn(ctx, r.Store(), false, func(ctx context.Context, txn kv.Transaction) error {
 		t := meta.NewMeta(txn)
 		var err1 error
 		tblInfo, err1 = t.GetTable(schemaID, tableID)
@@ -161,7 +161,7 @@ func testGetTableWithError(store kv.Storage, schemaID, tableID int64) (table.Tab
 	if tblInfo == nil {
 		return nil, errors.New("table not found")
 	}
-	alloc := autoid.NewAllocator(store, schemaID, tblInfo.ID, false, autoid.RowIDAllocType)
+	alloc := autoid.NewAllocator(r, schemaID, tblInfo.ID, false, autoid.RowIDAllocType)
 	tbl, err := table.TableFromMeta(autoid.NewAllocators(false, alloc), tblInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -549,20 +549,31 @@ func TestRenameTableIntermediateState(t *testing.T) {
 		{"rename table db2.t to db1.t;", "insert into db1.t values(1);", "", "db1.t"},
 	}
 
+	var finishedJobID int64
 	for _, tc := range testCases {
 		hook := &callback.TestDDLCallback{Do: dom}
 		runInsert := false
+		var jobID int64 = 0
 		fn := func(job *model.Job) {
+			if job.ID <= finishedJobID {
+				// The job has been done, OnJobUpdated may be invoked later asynchronously.
+				// We should skip the done job.
+				return
+			}
 			if job.Type == model.ActionRenameTable &&
 				job.SchemaState == model.StatePublic && !runInsert && !t.Failed() {
 				_, err := tk2.Exec(tc.insertSQL)
+				// In rename table intermediate state, new table is public.
 				if len(tc.errMsg) > 0 {
+					// Old table should not be visible to DML.
 					assert.NotNil(t, err)
 					assert.Equal(t, tc.errMsg, err.Error())
 				} else {
+					// New table should be visible to DML.
 					assert.NoError(t, err)
 				}
 				runInsert = true
+				jobID = job.ID
 			}
 		}
 		hook.OnJobUpdatedExported.Store(&fn)
@@ -575,6 +586,7 @@ func TestRenameTableIntermediateState(t *testing.T) {
 			result.Check(testkit.Rows("1"))
 		}
 		tk.MustExec(fmt.Sprintf("delete from %s;", tc.finalDB))
+		finishedJobID = jobID
 	}
 	dom.DDL().SetHook(originHook)
 }

@@ -31,10 +31,10 @@ func TestColumn(t *testing.T) {
 	ctx := mock.NewContext()
 	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), UniqueID: 1}
 
-	require.True(t, col.Equal(nil, col))
-	require.False(t, col.Equal(nil, &Column{}))
+	require.True(t, col.EqualColumn(col))
+	require.False(t, col.EqualColumn(&Column{}))
 	require.False(t, col.IsCorrelated())
-	require.True(t, col.Equal(nil, col.Decorrelate(nil)))
+	require.True(t, col.EqualColumn(col.Decorrelate(nil)))
 
 	marshal, err := col.MarshalJSON()
 	require.NoError(t, err)
@@ -44,12 +44,12 @@ func TestColumn(t *testing.T) {
 	corCol := &CorrelatedColumn{Column: *col, Data: &intDatum}
 	invalidCorCol := &CorrelatedColumn{Column: Column{}}
 	schema := NewSchema(&Column{UniqueID: 1})
-	require.True(t, corCol.Equal(nil, corCol))
-	require.False(t, corCol.Equal(nil, invalidCorCol))
+	require.True(t, corCol.EqualColumn(corCol))
+	require.False(t, corCol.EqualColumn(invalidCorCol))
 	require.True(t, corCol.IsCorrelated())
-	require.False(t, corCol.ConstItem(nil))
-	require.True(t, corCol.Decorrelate(schema).Equal(nil, col))
-	require.True(t, invalidCorCol.Decorrelate(schema).Equal(nil, invalidCorCol))
+	require.Equal(t, ConstNone, corCol.ConstLevel())
+	require.True(t, col.EqualColumn(corCol.Decorrelate(schema)))
+	require.True(t, invalidCorCol.EqualColumn(invalidCorCol.Decorrelate(schema)))
 
 	intCorCol := &CorrelatedColumn{Column: Column{RetType: types.NewFieldType(mysql.TypeLonglong)},
 		Data: &intDatum}
@@ -102,12 +102,12 @@ func TestColumnHashCode(t *testing.T) {
 	col1 := &Column{
 		UniqueID: 12,
 	}
-	require.EqualValues(t, []byte{0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc}, col1.HashCode(nil))
+	require.EqualValues(t, []byte{0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0xc}, col1.HashCode())
 
 	col2 := &Column{
 		UniqueID: 2,
 	}
-	require.EqualValues(t, []byte{0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2}, col2.HashCode(nil))
+	require.EqualValues(t, []byte{0x1, 0x80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x2}, col2.HashCode())
 }
 
 func TestColumn2Expr(t *testing.T) {
@@ -118,7 +118,7 @@ func TestColumn2Expr(t *testing.T) {
 
 	exprs := Column2Exprs(cols)
 	for i := range exprs {
-		require.True(t, exprs[i].Equal(nil, cols[i]))
+		require.True(t, cols[i].EqualColumn(exprs[i]))
 	}
 }
 
@@ -127,7 +127,7 @@ func TestColInfo2Col(t *testing.T) {
 	cols := []*Column{col0, col1}
 	colInfo := &model.ColumnInfo{ID: 0}
 	res := ColInfo2Col(cols, colInfo)
-	require.True(t, res.Equal(nil, col1))
+	require.True(t, res.EqualColumn(col1))
 
 	colInfo.ID = 3
 	res = ColInfo2Col(cols, colInfo)
@@ -147,7 +147,7 @@ func TestIndexInfo2Cols(t *testing.T) {
 	resCols, lengths := IndexInfo2PrefixCols(colInfos, cols, indexInfo)
 	require.Len(t, resCols, 1)
 	require.Len(t, lengths, 1)
-	require.True(t, resCols[0].Equal(nil, col0))
+	require.True(t, resCols[0].EqualColumn(col0))
 
 	cols = []*Column{col1}
 	colInfos = []*model.ColumnInfo{colInfo1}
@@ -160,8 +160,8 @@ func TestIndexInfo2Cols(t *testing.T) {
 	resCols, lengths = IndexInfo2PrefixCols(colInfos, cols, indexInfo)
 	require.Len(t, resCols, 2)
 	require.Len(t, lengths, 2)
-	require.True(t, resCols[0].Equal(nil, col0))
-	require.True(t, resCols[1].Equal(nil, col1))
+	require.True(t, resCols[0].EqualColumn(col0))
+	require.True(t, resCols[1].EqualColumn(col1))
 }
 
 func TestColHybird(t *testing.T) {

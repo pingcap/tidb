@@ -12,6 +12,7 @@ go_library(
     deps = [
         "//pkg/config",
         "//pkg/ddl/placement",
+        "//pkg/errctx",
         "//pkg/errno",
         "//pkg/expression",
         "//pkg/infoschema",
@@ -83,7 +84,6 @@ go_test(
         "//pkg/util/collate",
         "//pkg/util/disk",
         "//pkg/util/execdetails",
-        "//pkg/util/mathutil",
         "//pkg/util/memory",
         "//pkg/util/mock",
         "//pkg/util/paging",

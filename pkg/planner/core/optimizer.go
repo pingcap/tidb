@@ -62,6 +62,8 @@ var AllowCartesianProduct = atomic.NewBool(true)
 // IsReadOnly check whether the ast.Node is a read only statement.
 var IsReadOnly func(node ast.Node, vars *variable.SessionVars) bool
 
+// Note: The order of flags is same as the order of optRule in the list.
+// Do not mess up the order.
 const (
 	flagGcSubstitute uint64 = 1 << iota
 	flagPrunColumns
@@ -172,15 +174,18 @@ type logicalOptRule interface {
 }
 
 // BuildLogicalPlanForTest builds a logical plan for testing purpose from ast.Node.
-func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node ast.Node, infoSchema infoschema.InfoSchema) (Plan, types.NameSlice, error) {
+func BuildLogicalPlanForTest(ctx context.Context, sctx sessionctx.Context, node ast.Node, infoSchema infoschema.InfoSchema) (Plan, error) {
 	sctx.GetSessionVars().PlanID.Store(0)
 	sctx.GetSessionVars().PlanColumnID.Store(0)
-	builder, _ := NewPlanBuilder().Init(sctx, infoSchema, &utilhint.BlockHintProcessor{})
+	builder, _ := NewPlanBuilder().Init(sctx, infoSchema, utilhint.NewQBHintHandler(nil))
 	p, err := builder.Build(ctx, node)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return p, p.OutputNames(), err
+	if logic, ok := p.(LogicalPlan); ok {
+		RecheckCTE(logic)
+	}
+	return p, err
 }
 
 // CheckPrivilege checks the privilege for a user.
@@ -299,22 +304,17 @@ func checkStableResultMode(sctx sessionctx.Context) bool {
 	return s.EnableStableResultMode && (!st.InInsertStmt && !st.InUpdateStmt && !st.InDeleteStmt && !st.InLoadDataStmt)
 }
 
-// DoOptimizeAndLogicAsRet optimizes a logical plan to a physical plan and return the optimized logical plan.
-func DoOptimizeAndLogicAsRet(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (LogicalPlan, PhysicalPlan, float64, error) {
+// doOptimize optimizes a logical plan into a physical plan,
+// while also returning the optimized logical plan, the final physical plan, and the cost of the final plan.
+// The returned logical plan is necessary for generating plans for Common Table Expressions (CTEs).
+func doOptimize(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	flag uint64,
+	logic LogicalPlan,
+) (LogicalPlan, PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
-	// if there is something after flagPrunColumns, do flagPrunColumnsAgain
-	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
-		flag |= flagPrunColumnsAgain
-	}
-	if checkStableResultMode(logic.SCtx()) {
-		flag |= flagStabilizeResults
-	}
-	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
-		// When we use the straight Join Order hint, we should disable the join reorder optimization.
-		flag &= ^flagJoinReOrder
-	}
-	flag |= flagCollectPredicateColumnsPoint
-	flag |= flagSyncWaitStatsLoadPoint
+	flag = adjustOptimizationFlags(flag, logic)
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
 		return nil, nil, 0, err
@@ -345,14 +345,37 @@ func DoOptimizeAndLogicAsRet(ctx context.Context, sctx sessionctx.Context, flag 
 	return logic, finalPlan, cost, nil
 }
 
+func adjustOptimizationFlags(flag uint64, logic LogicalPlan) uint64 {
+	// If there is something after flagPrunColumns, do flagPrunColumnsAgain.
+	if flag&flagPrunColumns > 0 && flag-flagPrunColumns > flagPrunColumns {
+		flag |= flagPrunColumnsAgain
+	}
+	if checkStableResultMode(logic.SCtx()) {
+		flag |= flagStabilizeResults
+	}
+	if logic.SCtx().GetSessionVars().StmtCtx.StraightJoinOrder {
+		// When we use the straight Join Order hint, we should disable the join reorder optimization.
+		flag &= ^flagJoinReOrder
+	}
+	flag |= flagCollectPredicateColumnsPoint
+	flag |= flagSyncWaitStatsLoadPoint
+
+	return flag
+}
+
 // DoOptimize optimizes a logical plan to a physical plan.
-func DoOptimize(ctx context.Context, sctx sessionctx.Context, flag uint64, logic LogicalPlan) (PhysicalPlan, float64, error) {
+func DoOptimize(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	flag uint64,
+	logic LogicalPlan,
+) (PhysicalPlan, float64, error) {
 	sessVars := sctx.GetSessionVars()
 	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		defer debugtrace.LeaveContextCommon(sctx)
 	}
-	_, finalPlan, cost, err := DoOptimizeAndLogicAsRet(ctx, sctx, flag, logic)
+	_, finalPlan, cost, err := doOptimize(ctx, sctx, flag, logic)
 	return finalPlan, cost, err
 }
 
@@ -503,12 +526,12 @@ func (p *PhysicalHashJoin) extractUsedCols(parentUsedCols []*expression.Column) 
 
 func prunePhysicalColumnForHashJoinChild(sctx sessionctx.Context, hashJoin *PhysicalHashJoin, joinUsedCols []*expression.Column, sender *PhysicalExchangeSender) error {
 	var err error
-	joinUsed := expression.GetUsedList(joinUsedCols, sender.Schema())
+	joinUsed := expression.GetUsedList(sctx, joinUsedCols, sender.Schema())
 	hashCols := make([]*expression.Column, len(sender.HashCols))
 	for i, mppCol := range sender.HashCols {
 		hashCols[i] = mppCol.Col
 	}
-	hashUsed := expression.GetUsedList(hashCols, sender.Schema())
+	hashUsed := expression.GetUsedList(sctx, hashCols, sender.Schema())
 
 	needPrune := false
 	usedExprs := make([]expression.Expression, len(sender.Schema().Columns))
@@ -526,7 +549,7 @@ func prunePhysicalColumnForHashJoinChild(sctx sessionctx.Context, hashJoin *Phys
 		ch := sender.children[0]
 		proj := PhysicalProjection{
 			Exprs: usedExprs,
-		}.Init(sctx, ch.StatsInfo(), ch.SelectBlockOffset())
+		}.Init(sctx, ch.StatsInfo(), ch.QueryBlockOffset())
 
 		proj.SetSchema(prunedSchema)
 		proj.SetChildren(ch)
@@ -608,7 +631,7 @@ func tryEnableLateMaterialization(sctx sessionctx.Context, plan PhysicalPlan) {
 	}
 	if sctx.GetSessionVars().EnableLateMaterialization && sctx.GetSessionVars().TiFlashFastScan {
 		sc := sctx.GetSessionVars().StmtCtx
-		sc.AppendWarning(errors.New("FastScan is not compatible with late materialization, late materialization is disabled"))
+		sc.AppendWarning(errors.NewNoStackError("FastScan is not compatible with late materialization, late materialization is disabled"))
 	}
 }
 
@@ -1101,9 +1124,12 @@ func enableParallelApply(sctx sessionctx.Context, plan PhysicalPlan) PhysicalPla
 		if noOrder && supportClone {
 			apply.Concurrency = sctx.GetSessionVars().ExecutorConcurrency
 		} else {
-			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("Some apply operators can not be executed in parallel"))
+			if err != nil {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("Some apply operators can not be executed in parallel: %v", err))
+			} else {
+				sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("Some apply operators can not be executed in parallel"))
+			}
 		}
-
 		// because of the limitation 3, we cannot parallelize Apply operators in this Apply's inner size,
 		// so we only invoke recursively for its outer child.
 		apply.SetChild(outerIdx, enableParallelApply(sctx, apply.Children()[outerIdx]))
@@ -1219,7 +1245,7 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 		return nil, 0, err
 	}
 	if *planCounter > 0 {
-		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("The parameter of nth_plan() is out of range"))
+		logic.SCtx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("The parameter of nth_plan() is out of range"))
 	}
 	if t.invalid() {
 		errMsg := "Can't find a proper physical plan for this query"

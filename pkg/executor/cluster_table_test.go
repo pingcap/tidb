@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"strconv"
 	"testing"
 	"time"
 
@@ -306,120 +305,6 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, insertNormalized, r.SQLDigestsMap[insertDigest.String()])
 	require.Equal(t, "", r.SQLDigestsMap[updateDigest.String()])
-}
-
-func TestFunctionDecodeSQLDigests(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	srv := createRPCServer(t, dom)
-	defer srv.Stop()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-	tk.MustExec("set global tidb_enable_stmt_summary = 1")
-	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
-	tk.MustExec("drop table if exists test_func_decode_sql_digests")
-	tk.MustExec("create table test_func_decode_sql_digests(id int primary key, v int)")
-
-	q1 := "begin"
-	norm1, digest1 := parser.NormalizeDigest(q1)
-	q2 := "select @@tidb_current_ts"
-	norm2, digest2 := parser.NormalizeDigest(q2)
-	q3 := "select id, v from test_func_decode_sql_digests where id = 1 for update"
-	norm3, digest3 := parser.NormalizeDigest(q3)
-
-	// TIDB_DECODE_SQL_DIGESTS function doesn't actually do "decoding", instead it queries `statements_summary` and it's
-	// variations for the corresponding statements.
-	// Execute the statements so that the queries will be saved into statements_summary table.
-	tk.MustExec(q1)
-	// Save the ts to query the transaction from tidb_trx.
-	ts, err := strconv.ParseUint(tk.MustQuery(q2).Rows()[0][0].(string), 10, 64)
-	require.NoError(t, err)
-	require.Greater(t, ts, uint64(0))
-	tk.MustExec(q3)
-	tk.MustExec("rollback")
-
-	// Test statements truncating.
-	decoded := fmt.Sprintf(`["%s","%s","%s"]`, norm1, norm2, norm3)
-	digests := fmt.Sprintf(`["%s","%s","%s"]`, digest1, digest2, digest3)
-	tk.MustQuery("select tidb_decode_sql_digests(?, 0)", digests).Check(testkit.Rows(decoded))
-	// The three queries are shorter than truncate length, equal to truncate length and longer than truncate length respectively.
-	tk.MustQuery("select tidb_decode_sql_digests(?, ?)", digests, len(norm2)).Check(testkit.Rows(
-		"[\"begin\",\"select @@tidb_current_ts\",\"select `id` , `v` from `...\"]"))
-
-	// Empty array.
-	tk.MustQuery("select tidb_decode_sql_digests('[]')").Check(testkit.Rows("[]"))
-
-	// NULL
-	tk.MustQuery("select tidb_decode_sql_digests(null)").Check(testkit.Rows("<nil>"))
-
-	// Array containing wrong types and not-existing digests (maps to null).
-	tk.MustQuery("select tidb_decode_sql_digests(?)", fmt.Sprintf(`["%s",1,null,"%s",{"a":1},[2],"%s","","abcde"]`, digest1, digest2, digest3)).
-		Check(testkit.Rows(fmt.Sprintf(`["%s",null,null,"%s",null,null,"%s",null,null]`, norm1, norm2, norm3)))
-
-	// Not JSON array (throws warnings)
-	tk.MustQuery(`select tidb_decode_sql_digests('{"a":1}')`).Check(testkit.Rows("<nil>"))
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1210 The argument can't be unmarshalled as JSON array: '{"a":1}'`))
-	tk.MustQuery(`select tidb_decode_sql_digests('aabbccdd')`).Check(testkit.Rows("<nil>"))
-	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1210 The argument can't be unmarshalled as JSON array: 'aabbccdd'`))
-
-	// Invalid argument count.
-	tk.MustGetErrCode("select tidb_decode_sql_digests('a', 1, 2)", 1582)
-	tk.MustGetErrCode("select tidb_decode_sql_digests()", 1582)
-}
-
-func TestFunctionDecodeSQLDigestsPrivilege(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	srv := createRPCServer(t, dom)
-	defer srv.Stop()
-
-	dropUserTk := testkit.NewTestKit(t, store)
-	require.NoError(t, dropUserTk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-
-	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-	tk.MustExec("create user 'testuser'@'localhost'")
-	defer dropUserTk.MustExec("drop user 'testuser'@'localhost'")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil, nil))
-	tk.MustGetErrMsg("select tidb_decode_sql_digests('[\"aa\"]')", "[expression:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
-
-	tk = testkit.NewTestKit(t, store)
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-	tk.MustExec("create user 'testuser2'@'localhost'")
-	defer dropUserTk.MustExec("drop user 'testuser2'@'localhost'")
-	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "testuser2", Hostname: "localhost"}, nil, nil, nil))
-	tk.MustExec("select tidb_decode_sql_digests('[\"aa\"]')")
-}
-
-func TestFunctionEncodeSQLDigest(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	srv := createRPCServer(t, dom)
-	defer srv.Stop()
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-	tk.MustExec("drop table if exists test_func_encode_sql_digest")
-	tk.MustExec("create table test_func_encode_sql_digest(id int primary key, v int)")
-
-	q1 := "begin"
-	digest1 := parser.DigestHash(q1)
-	q2 := "select @@tidb_current_ts"
-	digest2 := parser.DigestHash(q2)
-	q3 := "select id, v from test_func_decode_sql_digests where id = 1 for update"
-	digest3 := parser.DigestHash(q3)
-
-	tk.MustQuery(fmt.Sprintf("select tidb_encode_sql_digest(\"%s\")", q1)).Check(testkit.Rows(digest1.String()))
-	tk.MustQuery(fmt.Sprintf("select tidb_encode_sql_digest(\"%s\")", q2)).Check(testkit.Rows(digest2.String()))
-	tk.MustQuery(fmt.Sprintf("select tidb_encode_sql_digest(\"%s\")", q3)).Check(testkit.Rows(digest3.String()))
-
-	tk.MustQuery("select tidb_encode_sql_digest(null)").Check(testkit.Rows("<nil>"))
-	tk.MustGetErrCode("select tidb_encode_sql_digest()", 1582)
-
-	tk.MustQuery("select (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 1;')").Check(testkit.Rows("1"))
-	tk.MustQuery("select (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 1 ;')").Check(testkit.Rows("1"))
-	tk.MustQuery("select (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 2 ;')").Check(testkit.Rows("1"))
 }
 
 func prepareLogs(t *testing.T, logData []string, fileNames []string) {

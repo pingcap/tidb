@@ -154,19 +154,20 @@ func (b *builtinAesDecryptSig) Clone() builtinFunc {
 
 // evalString evals AES_DECRYPT(crypt_str, key_key).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_aes-decrypt
-func (b *builtinAesDecryptSig) evalString(row chunk.Row) (string, bool, error) {
+func (b *builtinAesDecryptSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	// According to doc: If either function argument is NULL, the function returns NULL.
-	cryptStr, isNull, err := b.args[0].EvalString(b.ctx, row)
+	cryptStr, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	keyStr, isNull, err := b.args[1].EvalString(b.ctx, row)
+	keyStr, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
 	if !b.ivRequired && len(b.args) == 3 {
+		tc := typeCtx(ctx)
 		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
+		tc.AppendWarning(errWarnOptionIgnored.FastGenByArgs("IV"))
 	}
 
 	key := encrypt.DeriveKeyMySQL([]byte(keyStr), b.keySize)
@@ -197,19 +198,19 @@ func (b *builtinAesDecryptIVSig) Clone() builtinFunc {
 
 // evalString evals AES_DECRYPT(crypt_str, key_key, iv).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_aes-decrypt
-func (b *builtinAesDecryptIVSig) evalString(row chunk.Row) (string, bool, error) {
+func (b *builtinAesDecryptIVSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	// According to doc: If either function argument is NULL, the function returns NULL.
-	cryptStr, isNull, err := b.args[0].EvalString(b.ctx, row)
+	cryptStr, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
 
-	keyStr, isNull, err := b.args[1].EvalString(b.ctx, row)
+	keyStr, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
 
-	iv, isNull, err := b.args[2].EvalString(b.ctx, row)
+	iv, isNull, err := b.args[2].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
@@ -288,19 +289,20 @@ func (b *builtinAesEncryptSig) Clone() builtinFunc {
 
 // evalString evals AES_ENCRYPT(str, key_str).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_aes-decrypt
-func (b *builtinAesEncryptSig) evalString(row chunk.Row) (string, bool, error) {
+func (b *builtinAesEncryptSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	// According to doc: If either function argument is NULL, the function returns NULL.
-	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	str, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
-	keyStr, isNull, err := b.args[1].EvalString(b.ctx, row)
+	keyStr, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
 	if !b.ivRequired && len(b.args) == 3 {
+		tc := typeCtx(ctx)
 		// For modes that do not require init_vector, it is ignored and a warning is generated if it is specified.
-		b.ctx.GetSessionVars().StmtCtx.AppendWarning(errWarnOptionIgnored.GenWithStackByArgs("IV"))
+		tc.AppendWarning(errWarnOptionIgnored.FastGenByArgs("IV"))
 	}
 
 	key := encrypt.DeriveKeyMySQL([]byte(keyStr), b.keySize)
@@ -331,19 +333,19 @@ func (b *builtinAesEncryptIVSig) Clone() builtinFunc {
 
 // evalString evals AES_ENCRYPT(str, key_str, iv).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_aes-decrypt
-func (b *builtinAesEncryptIVSig) evalString(row chunk.Row) (string, bool, error) {
+func (b *builtinAesEncryptIVSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
 	// According to doc: If either function argument is NULL, the function returns NULL.
-	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+	str, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
 
-	keyStr, isNull, err := b.args[1].EvalString(b.ctx, row)
+	keyStr, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
 
-	iv, isNull, err := b.args[2].EvalString(b.ctx, row)
+	iv, isNull, err := b.args[2].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
@@ -403,13 +405,13 @@ func (b *builtinDecodeSig) Clone() builtinFunc {
 
 // evalString evals DECODE(str, password_str).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_decode
-func (b *builtinDecodeSig) evalString(row chunk.Row) (string, bool, error) {
-	dataStr, isNull, err := b.args[0].EvalString(b.ctx, row)
+func (b *builtinDecodeSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	dataStr, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
 
-	passwordStr, isNull, err := b.args[1].EvalString(b.ctx, row)
+	passwordStr, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
@@ -466,13 +468,13 @@ func (b *builtinEncodeSig) Clone() builtinFunc {
 
 // evalString evals ENCODE(crypt_str, password_str).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_encode
-func (b *builtinEncodeSig) evalString(row chunk.Row) (string, bool, error) {
-	decodeStr, isNull, err := b.args[0].EvalString(b.ctx, row)
+func (b *builtinEncodeSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	decodeStr, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
 
-	passwordStr, isNull, err := b.args[1].EvalString(b.ctx, row)
+	passwordStr, isNull, err := b.args[1].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
@@ -527,8 +529,8 @@ func (b *builtinPasswordSig) Clone() builtinFunc {
 
 // evalString evals a builtinPasswordSig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
-func (b *builtinPasswordSig) evalString(row chunk.Row) (d string, isNull bool, err error) {
-	pass, isNull, err := b.args[0].EvalString(b.ctx, row)
+func (b *builtinPasswordSig) evalString(ctx EvalContext, row chunk.Row) (val string, isNull bool, err error) {
+	pass, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
@@ -539,7 +541,8 @@ func (b *builtinPasswordSig) evalString(row chunk.Row) (d string, isNull bool, e
 
 	// We should append a warning here because function "PASSWORD" is deprecated since MySQL 5.7.6.
 	// See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_password
-	b.ctx.GetSessionVars().StmtCtx.AppendWarning(errDeprecatedSyntaxNoReplacement.GenWithStackByArgs("PASSWORD"))
+	tc := typeCtx(ctx)
+	tc.AppendWarning(errDeprecatedSyntaxNoReplacement.FastGenByArgs("PASSWORD"))
 
 	return auth.EncodePassword(pass), false, nil
 }
@@ -574,8 +577,8 @@ func (b *builtinRandomBytesSig) Clone() builtinFunc {
 
 // evalString evals RANDOM_BYTES(len).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_random-bytes
-func (b *builtinRandomBytesSig) evalString(row chunk.Row) (string, bool, error) {
-	val, isNull, err := b.args[0].EvalInt(b.ctx, row)
+func (b *builtinRandomBytesSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	val, isNull, err := b.args[0].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
@@ -625,8 +628,8 @@ func (b *builtinMD5Sig) Clone() builtinFunc {
 
 // evalString evals a builtinMD5Sig.
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_md5
-func (b *builtinMD5Sig) evalString(row chunk.Row) (string, bool, error) {
-	arg, isNull, err := b.args[0].EvalString(b.ctx, row)
+func (b *builtinMD5Sig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	arg, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
@@ -669,8 +672,8 @@ func (b *builtinSHA1Sig) Clone() builtinFunc {
 // evalString evals SHA1(str).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_sha1
 // The value is returned as a string of 40 hexadecimal digits, or NULL if the argument was NULL.
-func (b *builtinSHA1Sig) evalString(row chunk.Row) (string, bool, error) {
-	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+func (b *builtinSHA1Sig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
@@ -745,8 +748,8 @@ func (b *builtinSM3Sig) Clone() builtinFunc {
 
 // evalString evals Sm3Hash(str).
 // The value is returned as a string of 70 hexadecimal digits, or NULL if the argument was NULL.
-func (b *builtinSM3Sig) evalString(row chunk.Row) (string, bool, error) {
-	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+func (b *builtinSM3Sig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
@@ -769,12 +772,12 @@ const (
 
 // evalString evals SHA2(str, hash_length).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_sha2
-func (b *builtinSHA2Sig) evalString(row chunk.Row) (string, bool, error) {
-	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+func (b *builtinSHA2Sig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
-	hashLength, isNull, err := b.args[1].EvalInt(b.ctx, row)
+	hashLength, isNull, err := b.args[1].EvalInt(ctx, row)
 	if isNull || err != nil {
 		return "", isNull, err
 	}
@@ -866,8 +869,8 @@ func (b *builtinCompressSig) Clone() builtinFunc {
 
 // evalString evals COMPRESS(str).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_compress
-func (b *builtinCompressSig) evalString(row chunk.Row) (string, bool, error) {
-	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+func (b *builtinCompressSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	str, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
@@ -932,9 +935,9 @@ func (b *builtinUncompressSig) Clone() builtinFunc {
 
 // evalString evals UNCOMPRESS(compressed_string).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompress
-func (b *builtinUncompressSig) evalString(row chunk.Row) (string, bool, error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-	payload, isNull, err := b.args[0].EvalString(b.ctx, row)
+func (b *builtinUncompressSig) evalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
+	tc := typeCtx(ctx)
+	payload, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return "", true, err
 	}
@@ -943,17 +946,17 @@ func (b *builtinUncompressSig) evalString(row chunk.Row) (string, bool, error) {
 	}
 	if len(payload) <= 4 {
 		// corrupted
-		sc.AppendWarning(errZlibZData)
+		tc.AppendWarning(errZlibZData)
 		return "", true, nil
 	}
 	length := binary.LittleEndian.Uint32([]byte(payload[0:4]))
 	bytes, err := inflate([]byte(payload[4:]))
 	if err != nil {
-		sc.AppendWarning(errZlibZData)
+		tc.AppendWarning(errZlibZData)
 		return "", true, nil
 	}
 	if length < uint32(len(bytes)) {
-		sc.AppendWarning(errZlibZBuf)
+		tc.AppendWarning(errZlibZBuf)
 		return "", true, nil
 	}
 	return string(bytes), false, nil
@@ -989,9 +992,9 @@ func (b *builtinUncompressedLengthSig) Clone() builtinFunc {
 
 // evalInt evals UNCOMPRESSED_LENGTH(str).
 // See https://dev.mysql.com/doc/refman/5.7/en/encryption-functions.html#function_uncompressed-length
-func (b *builtinUncompressedLengthSig) evalInt(row chunk.Row) (int64, bool, error) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-	payload, isNull, err := b.args[0].EvalString(b.ctx, row)
+func (b *builtinUncompressedLengthSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	tc := typeCtx(ctx)
+	payload, isNull, err := b.args[0].EvalString(ctx, row)
 	if isNull || err != nil {
 		return 0, true, err
 	}
@@ -1000,7 +1003,7 @@ func (b *builtinUncompressedLengthSig) evalInt(row chunk.Row) (int64, bool, erro
 	}
 	if len(payload) <= 4 {
 		// corrupted
-		sc.AppendWarning(errZlibZData)
+		tc.AppendWarning(errZlibZData)
 		return 0, false, nil
 	}
 	return int64(binary.LittleEndian.Uint32([]byte(payload)[0:4])), false, nil
@@ -1035,9 +1038,9 @@ func (b *builtinValidatePasswordStrengthSig) Clone() builtinFunc {
 
 // evalInt evals VALIDATE_PASSWORD_STRENGTH(str).
 // See https://dev.mysql.com/doc/refman/8.0/en/encryption-functions.html#function_validate-password-strength
-func (b *builtinValidatePasswordStrengthSig) evalInt(row chunk.Row) (int64, bool, error) {
-	globalVars := b.ctx.GetSessionVars().GlobalVarsAccessor
-	str, isNull, err := b.args[0].EvalString(b.ctx, row)
+func (b *builtinValidatePasswordStrengthSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	globalVars := ctx.GetSessionVars().GlobalVarsAccessor
+	str, isNull, err := b.args[0].EvalString(ctx, row)
 	if err != nil || isNull {
 		return 0, true, err
 	} else if len([]rune(str)) < 4 {
@@ -1048,11 +1051,11 @@ func (b *builtinValidatePasswordStrengthSig) evalInt(row chunk.Row) (int64, bool
 	} else if !variable.TiDBOptOn(validation) {
 		return 0, false, nil
 	}
-	return b.validateStr(str, &globalVars)
+	return b.validateStr(ctx, str, &globalVars)
 }
 
-func (b *builtinValidatePasswordStrengthSig) validateStr(str string, globalVars *variable.GlobalVarAccessor) (int64, bool, error) {
-	if warn, err := pwdValidator.ValidateUserNameInPassword(str, b.ctx.GetSessionVars()); err != nil {
+func (b *builtinValidatePasswordStrengthSig) validateStr(ctx EvalContext, str string, globalVars *variable.GlobalVarAccessor) (int64, bool, error) {
+	if warn, err := pwdValidator.ValidateUserNameInPassword(str, ctx.GetSessionVars()); err != nil {
 		return 0, true, err
 	} else if len(warn) > 0 {
 		return 0, false, nil

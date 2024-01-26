@@ -15,24 +15,38 @@
 package globalstats
 
 import (
+	"bytes"
+	"container/heap"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/bits-and-blooms/bitset"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/tiancaiamao/gp"
 )
 
 func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrapper,
 	timeZone *time.Location, version int, n uint32, isIndex bool) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
+	if statistics.CheckEmptyTopNs(wrapper.AllTopN) {
+		return nil, nil, wrapper.AllHg, nil
+	}
 	mergeConcurrency := sc.GetSessionVars().AnalyzePartitionMergeConcurrency
-	killed := &sc.GetSessionVars().Killed
+	killer := &sc.GetSessionVars().SQLKiller
+
 	// use original method if concurrency equals 1 or for version1
 	if mergeConcurrency < 2 {
-		return statistics.MergePartTopN2GlobalTopN(timeZone, version, wrapper.AllTopN, n, wrapper.AllHg, isIndex, killed)
+		if version == 1 {
+			return MergePartTopN2GlobalTopNForAnalyzeVer1(timeZone, wrapper.AllTopN, n, wrapper.AllHg, isIndex, killer)
+		}
+		return MergePartTopN2GlobalTopN(timeZone, wrapper.AllTopN, n, wrapper.AllHg, isIndex, killer)
 	}
 	batchSize := len(wrapper.AllTopN) / mergeConcurrency
 	if batchSize < 1 {
@@ -40,15 +54,24 @@ func mergeGlobalStatsTopN(gp *gp.Pool, sc sessionctx.Context, wrapper *StatsWrap
 	} else if batchSize > MaxPartitionMergeBatchSize {
 		batchSize = MaxPartitionMergeBatchSize
 	}
-	return MergeGlobalStatsTopNByConcurrency(gp, mergeConcurrency, batchSize, wrapper, timeZone, version, n, isIndex, killed)
+	return MergeGlobalStatsTopNByConcurrency(gp, mergeConcurrency, batchSize, wrapper, timeZone, version, n, isIndex, killer)
 }
 
-// MergeGlobalStatsTopNByConcurrency merge partition topN by concurrency
-// To merge global stats topn by concurrency, we will separate the partition topn in concurrency part and deal it with different worker.
-// mergeConcurrency is used to control the total concurrency of the running worker, and mergeBatchSize is sued to control
-// the partition size for each worker to solve it
-func MergeGlobalStatsTopNByConcurrency(gp *gp.Pool, mergeConcurrency, mergeBatchSize int, wrapper *StatsWrapper,
-	timeZone *time.Location, version int, n uint32, isIndex bool, killed *uint32) (*statistics.TopN,
+// MergeGlobalStatsTopNByConcurrency merge partition topN by concurrency.
+// To merge global stats topN by concurrency,
+// we will separate the partition topN in concurrency part and deal it with different worker.
+// mergeConcurrency is used to control the total concurrency of the running worker,
+// and mergeBatchSize is sued to control the partition size for each worker to solve it
+func MergeGlobalStatsTopNByConcurrency(
+	gp *gp.Pool,
+	mergeConcurrency, mergeBatchSize int,
+	wrapper *StatsWrapper,
+	timeZone *time.Location,
+	version int,
+	n uint32,
+	isIndex bool,
+	killer *sqlkiller.SQLKiller,
+) (*statistics.TopN,
 	[]statistics.TopNMeta, []*statistics.Histogram, error) {
 	if len(wrapper.AllTopN) < mergeConcurrency {
 		mergeConcurrency = len(wrapper.AllTopN)
@@ -67,12 +90,12 @@ func MergeGlobalStatsTopNByConcurrency(gp *gp.Pool, mergeConcurrency, mergeBatch
 	taskNum := len(tasks)
 	taskCh := make(chan *TopnStatsMergeTask, taskNum)
 	respCh := make(chan *TopnStatsMergeResponse, taskNum)
+	worker := NewTopnStatsMergeWorker(taskCh, respCh, wrapper, killer)
 	for i := 0; i < mergeConcurrency; i++ {
-		worker := NewTopnStatsMergeWorker(taskCh, respCh, wrapper, killed)
 		wg.Add(1)
 		gp.Go(func() {
 			defer wg.Done()
-			worker.Run(timeZone, isIndex, n, version)
+			worker.Run(timeZone, isIndex, version)
 		})
 	}
 	for _, task := range tasks {
@@ -81,8 +104,6 @@ func MergeGlobalStatsTopNByConcurrency(gp *gp.Pool, mergeConcurrency, mergeBatch
 	close(taskCh)
 	wg.Wait()
 	close(respCh)
-	resps := make([]*TopnStatsMergeResponse, 0)
-
 	// handle Error
 	hasErr := false
 	errMsg := make([]string, 0)
@@ -91,25 +112,380 @@ func MergeGlobalStatsTopNByConcurrency(gp *gp.Pool, mergeConcurrency, mergeBatch
 			hasErr = true
 			errMsg = append(errMsg, resp.Err.Error())
 		}
-		resps = append(resps, resp)
 	}
 	if hasErr {
 		return nil, nil, nil, errors.New(strings.Join(errMsg, ","))
 	}
 
 	// fetch the response from each worker and merge them into global topn stats
-	sorted := make([]statistics.TopNMeta, 0, mergeConcurrency)
-	leftTopn := make([]statistics.TopNMeta, 0)
-	for _, resp := range resps {
-		if resp.TopN != nil {
-			sorted = append(sorted, resp.TopN.TopN...)
+	counter := worker.Result()
+	numTop := len(counter)
+	sorted := make([]statistics.TopNMeta, 0, numTop)
+	for value, cnt := range counter {
+		data := hack.Slice(string(value))
+		sorted = append(sorted, statistics.TopNMeta{Encoded: data, Count: uint64(cnt)})
+	}
+	globalTopN, popedTopn := statistics.GetMergedTopNFromSortedSlice(sorted, n)
+	return globalTopN, popedTopn, wrapper.AllHg, nil
+}
+
+type histIter struct {
+	hist             *statistics.Histogram
+	totalSubstracted int64
+	curBucketPos     int
+}
+
+// remove removes the value from the histogram. The removed value is always bigger than the previous one.
+func (hi *histIter) remove(v *types.Datum) int64 {
+	for {
+		if hi.curBucketPos >= len(hi.hist.Buckets) {
+			return 0
 		}
-		leftTopn = append(leftTopn, resp.PopedTopn...)
+		// The value is smaller than the lower bound. We skip it since the histogram doesn't contain this value.
+		// This situation is not very reasonable :(
+		cmp := chunk.Compare(hi.hist.Bounds.GetRow(hi.curBucketPos*2), 0, v)
+		if cmp > 0 {
+			return 0
+		}
+		cmp = chunk.Compare(hi.hist.Bounds.GetRow(hi.curBucketPos*2+1), 0, v)
+		if cmp < 0 {
+			// This value is bigger than current bucket's upper bound, goto next bucket.
+			hi.hist.Buckets[hi.curBucketPos].Count -= hi.totalSubstracted
+			hi.curBucketPos++
+			continue
+		}
+		if cmp == 0 {
+			// This value is just the upper bound of the bucket. Remove it.
+			ret := hi.hist.Buckets[hi.curBucketPos].Repeat
+			hi.totalSubstracted += ret
+			hi.hist.Buckets[hi.curBucketPos].Repeat = 0
+			hi.hist.Buckets[hi.curBucketPos].Count -= hi.totalSubstracted
+			hi.curBucketPos++
+			return ret
+		}
+		ret := int64(hi.hist.NotNullCount() / float64(hi.hist.NDV))
+		hi.totalSubstracted += ret
+		return ret
+	}
+}
+
+// finish cleans the unfinished subtraction.
+func (hi *histIter) finish() {
+	for i := hi.curBucketPos; i < len(hi.hist.Buckets); i++ {
+		hi.hist.Buckets[i].Count -= hi.totalSubstracted
+	}
+}
+
+type heapItem struct {
+	item          *statistics.TopNMeta
+	idx           int
+	nextPosInTopN int
+}
+
+type topnHeap []*heapItem
+
+func (h topnHeap) Len() int {
+	return len(h)
+}
+
+func (h topnHeap) Less(i, j int) bool {
+	return bytes.Compare(h[i].item.Encoded, h[j].item.Encoded) < 0
+}
+
+func (h topnHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+}
+
+func (h *topnHeap) Push(x any) {
+	*h = append(*h, x.(*heapItem))
+}
+
+func (h *topnHeap) Pop() any {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[0 : n-1]
+	return x
+}
+
+type topNMeataHeap []statistics.TopNMeta
+
+func (h topNMeataHeap) Len() int {
+	return len(h)
+}
+
+func (h topNMeataHeap) Less(i, j int) bool {
+	return bytes.Compare(h[i].Encoded, h[j].Encoded) < 0
+}
+
+func (h topNMeataHeap) Swap(i, j int) {
+	h[i], h[j] = h[j], h[i]
+}
+
+func (h *topNMeataHeap) Push(x any) {
+	*h = append(*h, x.(statistics.TopNMeta))
+}
+
+func (h *topNMeataHeap) Pop() any {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[0 : n-1]
+	return x
+}
+
+// MergePartTopN2GlobalTopN is used to merge the partition-level topN to global-level topN.
+// The input parameters:
+//  1. `topNs` are the partition-level topNs to be merged.
+//  2. `n` is the size of the global-level topN.
+//     Notice: This value can be 0 and has no default value, we must explicitly specify this value.
+//  3. `hists` are the partition-level histograms.
+//     Some values not in topN may be placed in the histogram.
+//     We need it here to make the value in the global-level TopN more accurate.
+//
+// The output parameters:
+//  1. `*TopN` is the final global-level topN.
+//  2. `[]TopNMeta` is the left topN value from the partition-level TopNs,
+//     but is not placed to global-level TopN. We should put them back to histogram latter.
+//  3. `[]*Histogram` are the partition-level histograms which
+//     just delete some values when we merge the global-level topN.
+func MergePartTopN2GlobalTopN(
+	loc *time.Location,
+	topNs []*statistics.TopN,
+	n uint32,
+	hists []*statistics.Histogram,
+	isIndex bool,
+	killer *sqlkiller.SQLKiller,
+) (*statistics.TopN, []statistics.TopNMeta, []*statistics.Histogram, error) {
+	var mergingHeap topnHeap = make([]*heapItem, 0, len(topNs))
+	sumTopN := 0
+	for i, topN := range topNs {
+		if topN.Num() == 0 {
+			continue
+		}
+		sumTopN += topN.Num()
+		heap.Push(&mergingHeap, &heapItem{
+			item:          &topN.TopN[0],
+			idx:           i,
+			nextPosInTopN: 1,
+		})
+	}
+	maxPossibleAdded := make([]int64, len(hists))
+	for i, hist := range hists {
+		curMax := int64(hist.NotNullCount() / float64(hist.NDV))
+		for _, bkt := range hist.Buckets {
+			curMax = max(curMax, bkt.Repeat)
+		}
+		maxPossibleAdded[i] = curMax
+	}
+	if mergingHeap.Len() == 0 {
+		return nil, nil, hists, nil
+	}
+	histIters := make([]histIter, len(hists))
+	for i, hist := range hists {
+		histIters[i].hist = hist
+	}
+	type maintaining struct {
+		affectedTopNs *bitset.BitSet
+		item          statistics.TopNMeta
+		cleared       bool
+	}
+	cur := maintaining{
+		affectedTopNs: bitset.New(uint(len(hists))),
+		cleared:       true,
+	}
+	step := int64(0)
+	histRemoveCnt := int64(0)
+	var finalTopNs topNMeataHeap = make([]statistics.TopNMeta, 0, n+1)
+	remainedTopNs := make([]statistics.TopNMeta, 0, n)
+	skipCount := 0
+	affectedHist := make([]int, 0, len(hists))
+	for {
+		if err := killer.HandleSignal(); err != nil {
+			return nil, nil, nil, err
+		}
+		if mergingHeap.Len() == 0 {
+			break
+		}
+		step++
+		head := mergingHeap[0]
+		headTopN := head.item
+		if head.nextPosInTopN < topNs[head.idx].Num() {
+			head.item = &topNs[head.idx].TopN[head.nextPosInTopN]
+			head.nextPosInTopN++
+			heap.Fix(&mergingHeap, 0)
+		} else {
+			heap.Pop(&mergingHeap)
+		}
+		// The maintained one is cleared before. Set it and goto next round.
+		if cur.cleared {
+			cur.item.Encoded = headTopN.Encoded
+			cur.item.Count = headTopN.Count
+			cur.affectedTopNs.Set(uint(head.idx))
+			cur.cleared = false
+			continue
+		}
+		cmp := bytes.Compare(cur.item.Encoded, headTopN.Encoded)
+		cnt := headTopN.Count
+		metaHeapInit := false
+		// The heap's head move forward.
+		if cmp < 0 {
+			// Initializing the datum.
+			d, err := statistics.TopNMetaValToDatum(cur.item.Encoded, hists[0].Tp.GetType(), isIndex, loc)
+			if err != nil {
+				return nil, nil, hists, err
+			}
+			affectedHist = affectedHist[:0]
+			// The following codes might access the NextClear loop twice. Record it here for saving CPU.
+			for histPos, found := cur.affectedTopNs.NextClear(0); found; histPos, found = cur.affectedTopNs.NextClear(histPos + 1) {
+				affectedHist = append(affectedHist, int(histPos))
+			}
+			// Hacking skip.
+			if uint32(len(finalTopNs)) >= n {
+				maxPossible := int64(0)
+				for _, histPos := range affectedHist {
+					maxPossible += maxPossibleAdded[histPos]
+				}
+				// The maximum possible added value still cannot make it replace the smallest topn.
+				if maxPossible+int64(cur.item.Count) < int64(finalTopNs[0].Count) {
+					skipCount++
+					remainedTopNs = append(remainedTopNs, statistics.TopNMeta{Encoded: cur.item.Encoded, Count: cur.item.Count})
+					cur.cleared = true
+					cur.affectedTopNs.ClearAll()
+					continue
+				}
+			}
+			for _, histPos := range affectedHist {
+				histRemoveCnt++
+				// Remove the value from the hist and add it into the current maintained value.
+				cur.item.Count += uint64(histIters[histPos].remove(&d))
+			}
+			cur.item.Count += cnt
+			if metaHeapInit {
+				if finalTopNs[0].Count < cur.item.Count {
+					finalTopNs[0].Encoded = cur.item.Encoded
+					finalTopNs[0].Count = cur.item.Count
+					heap.Fix(&finalTopNs, 0)
+				}
+			} else if finalTopNs.Len() < int(n) {
+				finalTopNs = append(finalTopNs, statistics.TopNMeta{Encoded: cur.item.Encoded, Count: cur.item.Count})
+			} else {
+				heap.Init(&finalTopNs)
+				metaHeapInit = true
+			}
+			cur.cleared = true
+			cur.affectedTopNs.ClearAll()
+			continue
+		}
+		// The cmp result cannot be 1 because the value is strictly increasing.
+		// Here is cmp == 0.
+		cur.item.Count += cnt
+		cur.affectedTopNs.Set(uint(head.idx))
+	}
+	if !cur.cleared {
+		// There's uncleared item. Clear it.
+		// Initializing the datum.
+		d, err := statistics.TopNMetaValToDatum(cur.item.Encoded, hists[0].Tp.GetType(), isIndex, loc)
+		if err != nil {
+			return nil, nil, hists, err
+		}
+		for histPos, found := cur.affectedTopNs.NextClear(0); found; histPos, found = cur.affectedTopNs.NextClear(histPos + 1) {
+			// Remove the value from the hist and add it into the current maintained value.
+			cur.item.Count += uint64(histIters[histPos].remove(&d))
+		}
+		// This is the last inerstion so we don't need to maintain the heap anymore.
+		// And the slice will be sorted later, so we can use that sort to deal with the case that its length exceeds the `n`.
+		finalTopNs = append(finalTopNs, cur.item)
+	}
+	for _, iter := range histIters {
+		iter.finish()
+	}
+	statistics.SortTopnMeta(finalTopNs)
+	// The length is n+1.
+	if len(finalTopNs) > int(n) {
+		remainedTopNs = append(remainedTopNs, finalTopNs[n:]...)
+		finalTopNs = finalTopNs[:n]
+	}
+	statistics.SortTopnMeta(remainedTopNs)
+	var globalTopN statistics.TopN
+	globalTopN.TopN = finalTopNs
+	globalTopN.Sort()
+	return &globalTopN, remainedTopNs, hists, nil
+}
+
+// MergePartTopN2GlobalTopNForAnalyzeVer1 is the old implementation for the deprecated analyze_version = 1;
+func MergePartTopN2GlobalTopNForAnalyzeVer1(
+	loc *time.Location,
+	topNs []*statistics.TopN,
+	n uint32,
+	hists []*statistics.Histogram,
+	isIndex bool,
+	killer *sqlkiller.SQLKiller,
+) (*statistics.TopN, []statistics.TopNMeta, []*statistics.Histogram, error) {
+	partNum := len(topNs)
+	// Different TopN structures may hold the same value, we have to merge them.
+	counter := make(map[hack.MutableString]float64)
+	// datumMap is used to store the mapping from the string type to datum type.
+	// The datum is used to find the value in the histogram.
+	datumMap := statistics.NewDatumMapCache()
+	for _, topN := range topNs {
+		if err := killer.HandleSignal(); err != nil {
+			return nil, nil, nil, err
+		}
+		// Ignore the empty topN.
+		if topN.TotalCount() == 0 {
+			continue
+		}
+
+		for _, val := range topN.TopN {
+			encodedVal := hack.String(val.Encoded)
+			_, exists := counter[encodedVal]
+			counter[encodedVal] += float64(val.Count)
+			if exists {
+				// We have already calculated the encodedVal from the histogram, so just continue to next topN value.
+				continue
+			}
+
+			// We need to check whether the value corresponding to encodedVal is contained in other partition-level stats.
+			// 1. Check the topN first.
+			// 2. If the topN doesn't contain the value corresponding to encodedVal. We should check the histogram.
+			for j := 0; j < partNum; j++ {
+				if err := killer.HandleSignal(); err != nil {
+					return nil, nil, nil, err
+				}
+
+				if topNs[j].FindTopN(val.Encoded) != -1 {
+					continue
+				}
+				// Get the encodedVal from the hists[j]
+				datum, exists := datumMap.Get(encodedVal)
+				if !exists {
+					d, err := datumMap.Put(val, encodedVal, hists[0].Tp.GetType(), isIndex, loc)
+					if err != nil {
+						return nil, nil, nil, err
+					}
+					datum = d
+				}
+				// Get the row count which the value is equal to the encodedVal from histogram.
+				count, _ := hists[j].EqualRowCount(nil, datum, isIndex)
+				if count != 0 {
+					counter[encodedVal] += count
+					// Remove the value corresponding to encodedVal from the histogram.
+					hists[j].BinarySearchRemoveVal(statistics.TopNMeta{Encoded: datum.GetBytes(), Count: uint64(count)})
+				}
+			}
+		}
 	}
 
-	globalTopN, popedTopn := statistics.GetMergedTopNFromSortedSlice(sorted, n)
-
-	result := append(leftTopn, popedTopn...)
-	statistics.SortTopnMeta(result)
-	return globalTopN, result, wrapper.AllHg, nil
+	numTop := len(counter)
+	if numTop == 0 {
+		return nil, nil, hists, nil
+	}
+	sorted := make([]statistics.TopNMeta, 0, numTop)
+	for value, cnt := range counter {
+		data := hack.Slice(string(value))
+		sorted = append(sorted, statistics.TopNMeta{Encoded: data, Count: uint64(cnt)})
+	}
+	globalTopN, leftTopN := statistics.GetMergedTopNFromSortedSlice(sorted, n)
+	return globalTopN, leftTopN, hists, nil
 }

@@ -55,7 +55,7 @@ func TestLike(t *testing.T) {
 		fc := funcs[ast.Like]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.input, tt.pattern, int('\\'))))
 		require.NoError(t, err, comment)
-		r, err := evalBuiltinFuncConcurrent(f, chunk.Row{})
+		r, err := evalBuiltinFuncConcurrent(f, ctx, chunk.Row{})
 		require.NoError(t, err, comment)
 		testutil.DatumEqual(t, types.NewDatum(tt.match), r, comment)
 	}
@@ -87,7 +87,7 @@ func TestRegexp(t *testing.T) {
 		fc := funcs[ast.Regexp]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.input, tt.pattern)))
 		require.NoError(t, err)
-		match, err := evalBuiltinFunc(f, chunk.Row{})
+		match, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		if tt.err == nil {
 			require.NoError(t, err)
 			testutil.DatumEqual(t, types.NewDatum(tt.match), match, fmt.Sprintf("%v", tt))
@@ -142,7 +142,7 @@ func TestCILike(t *testing.T) {
 		f, err := fc.getFunction(ctx, inputs)
 		require.NoError(t, err, comment)
 		f.setCollator(collate.GetCollator("utf8mb4_general_ci"))
-		r, err := evalBuiltinFunc(f, chunk.Row{})
+		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err, comment)
 		testutil.DatumEqual(t, types.NewDatum(tt.generalMatch), r, comment)
 	}
@@ -154,7 +154,7 @@ func TestCILike(t *testing.T) {
 		f, err := fc.getFunction(ctx, inputs)
 		require.NoError(t, err, comment)
 		f.setCollator(collate.GetCollator("utf8mb4_unicode_ci"))
-		r, err := evalBuiltinFunc(f, chunk.Row{})
+		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err, comment)
 		testutil.DatumEqual(t, types.NewDatum(tt.unicodeMatch), r, comment)
 	}
@@ -166,7 +166,7 @@ func TestCILike(t *testing.T) {
 		f, err := fc.getFunction(ctx, inputs)
 		require.NoError(t, err, comment)
 		f.setCollator(collate.GetCollator("utf8mb4_0900_ai_ci"))
-		r, err := evalBuiltinFunc(f, chunk.Row{})
+		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
 		require.NoError(t, err, comment)
 		testutil.DatumEqual(t, types.NewDatum(tt.unicode0900Match), r, comment)
 	}

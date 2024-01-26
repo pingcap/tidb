@@ -36,13 +36,13 @@ func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Ex
 	if !skipCheckArgs {
 		switch strings.ToLower(name) {
 		case ast.WindowFuncNthValue:
-			val, isNull, ok := expression.GetUint64FromConstant(args[1])
+			val, isNull, ok := expression.GetUint64FromConstant(ctx, args[1])
 			// nth_value does not allow `0`, but allows `null`.
 			if !ok || (val == 0 && !isNull) {
 				return nil, nil
 			}
 		case ast.WindowFuncNtile:
-			val, isNull, ok := expression.GetUint64FromConstant(args[0])
+			val, isNull, ok := expression.GetUint64FromConstant(ctx, args[0])
 			// ntile does not allow `0`, but allows `null`.
 			if !ok || (val == 0 && !isNull) {
 				return nil, nil
@@ -51,7 +51,7 @@ func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Ex
 			if len(args) < 2 {
 				break
 			}
-			_, isNull, ok := expression.GetUint64FromConstant(args[1])
+			_, isNull, ok := expression.GetUint64FromConstant(ctx, args[1])
 			if !ok || isNull {
 				return nil, nil
 			}
@@ -125,7 +125,7 @@ func (s *WindowFuncDesc) Clone() *WindowFuncDesc {
 
 // WindowFuncToPBExpr converts aggregate function to pb.
 func WindowFuncToPBExpr(sctx sessionctx.Context, client kv.Client, desc *WindowFuncDesc) *tipb.Expr {
-	pc := expression.NewPBConverter(client, sctx.GetSessionVars().StmtCtx)
+	pc := expression.NewPBConverter(client, sctx)
 	tp := desc.GetTiPBExpr(true)
 	if !client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
 		return nil
@@ -145,7 +145,7 @@ func WindowFuncToPBExpr(sctx sessionctx.Context, client kv.Client, desc *WindowF
 // CanPushDownToTiFlash control whether a window function desc can be push down to tiflash.
 func (s *WindowFuncDesc) CanPushDownToTiFlash(ctx sessionctx.Context) bool {
 	// args
-	if !expression.CanExprsPushDown(ctx.GetSessionVars().StmtCtx, s.Args, ctx.GetClient(), kv.TiFlash) {
+	if !expression.CanExprsPushDown(ctx, s.Args, ctx.GetClient(), kv.TiFlash) {
 		return false
 	}
 	// window functions

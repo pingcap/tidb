@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
@@ -228,14 +227,14 @@ func (resp *mockResponse) Next(context.Context) (kv.ResultSubset, error) {
 	if resp.count >= resp.total {
 		return nil, nil
 	}
-	numRows := mathutil.Min(resp.batch, resp.total-resp.count)
+	numRows := min(resp.batch, resp.total-resp.count)
 	resp.count += numRows
 
 	var chunks []tipb.Chunk
 	if !canUseChunkRPC(resp.ctx) {
 		datum := types.NewIntDatum(1)
 		bytes := make([]byte, 0, 100)
-		bytes, _ = codec.EncodeValue(nil, bytes, datum, datum, datum, datum)
+		bytes, _ = codec.EncodeValue(time.UTC, bytes, datum, datum, datum, datum)
 		chunks = make([]tipb.Chunk, numRows)
 		for i := range chunks {
 			chkData := make([]byte, len(bytes))
@@ -245,7 +244,7 @@ func (resp *mockResponse) Next(context.Context) (kv.ResultSubset, error) {
 	} else {
 		chunks = make([]tipb.Chunk, 0)
 		for numRows > 0 {
-			rows := mathutil.Min(numRows, 1024)
+			rows := min(numRows, 1024)
 			numRows -= rows
 
 			colTypes := make([]*types.FieldType, 4)
