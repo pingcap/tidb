@@ -5,9 +5,12 @@ package storage
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	goerrors "errors"
 	"fmt"
+	storage2 "google.golang.org/api/storage/v1"
 	"io"
+	"net/http"
 	"os"
 	"path"
 	"strings"
@@ -425,10 +428,24 @@ func (s *GCSStorage) Reset(ctx context.Context) error {
 	for i := range s.clients {
 		i := i
 		eg.Go(func() error {
-			client, err := storage.NewClient(egCtx, s.clientOps...)
+			base := &http.Transport{
+				MaxIdleConns:        100,
+				MaxIdleConnsPerHost: 100,
+				// This disables HTTP/2 in transport.
+				TLSNextProto: make(
+					map[string]func(string, *tls.Conn) http.RoundTripper,
+				),
+			}
+			trans, err := htransport.NewTransport(egCtx, base, option.WithScopes(storage2.DevstorageFullControlScope))
 			if err != nil {
 				return errors.Trace(err)
 			}
+			c := http.Client{Transport: trans}
+			client, err := storage.NewClient(egCtx, option.WithHTTPClient(&c))
+			if err != nil {
+				return errors.Trace(err)
+			}
+
 			client.SetRetry(storage.WithErrorFunc(shouldRetry))
 			s.clients[i] = client
 			return nil
