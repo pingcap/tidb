@@ -1133,7 +1133,7 @@ func TestRead4KFiles(t *testing.T) {
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(2).
 		SetMemorySizeLimit(uint64(memSizeLimit)).
-		SetBlockSize(int(memSizeLimit)).
+		SetBlockSize(int(4*size.MB)).
 		Build(store, "/test", "0")
 
 	writer := NewEngineWriter(w)
