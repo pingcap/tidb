@@ -54,7 +54,7 @@ bin/brv4.0.8 backup db --db "$DB" -s "local://$TEST_DIR/$DB" \
 # restore db from v4.0.8 version without `newCollationEnable`
 echo "restore start ... without NewCollactionEnable in backupmeta"
 restore_fail=0
-error_str="the config 'new_collations_enabled_on_first_bootstrap' not found in backupmeta"
+error_str="the value 'new_collations_enabled_on_first_bootstrap' not found in backupmeta"
 test_log="new_collotion_enable_test.log"
 unset BR_LOG_TO_TERM
 run_br restore db --db $DB -s "local://$TEST_DIR/$DB" --pd $PD_ADDR --log-file $test_log || restore_fail=1
