@@ -19,11 +19,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-<<<<<<< HEAD:planner/core/point_get_plan.go
-=======
 	"sync"
-	"unsafe"
->>>>>>> 1c185556710 (planner: do not convert update to point get if the expr has sub-query (#47454)):pkg/planner/core/point_get_plan.go
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/config"
