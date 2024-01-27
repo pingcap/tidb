@@ -3961,6 +3961,12 @@ func TestErrorMsg(t *testing.T) {
 	_, _, err = p.Parse("create table t(f_year year(5))ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;", "", "")
 	require.EqualError(t, err, "[parser:1818]Supports only YEAR or YEAR(4) column")
 
+	_, _, err = p.Parse("create table ``.t (id int);", "", "")
+	require.EqualError(t, err, "[parser:1102]Incorrect database name ''")
+
+	_, _, err = p.Parse("create table ` `.t (id int);", "", "")
+	require.EqualError(t, err, "[parser:1102]Incorrect database name ' '")
+
 	_, _, err = p.Parse("select ifnull(a,0) & ifnull(a,0) like '55' ESCAPE '\\\\a' from t;", "", "")
 	require.EqualError(t, err, "[parser:1210]Incorrect arguments to ESCAPE")
 
