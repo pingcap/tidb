@@ -512,18 +512,18 @@ func rebuildRange(p Plan) error {
 			}
 
 			if x.PartitionDef != nil {
-				// Single column PK <=> Must be the partitioning columns!
 				if !x.TblInfo.PKIsHandle {
 					return errors.New("point get for partition table can not use plan cache, PK is not handle")
 				}
 				// Re-calculate the pruning!
-				partDef, _, _, isTableDual = getPartitionDef(sctx, x.TblInfo, []nameValuePair{{x.TblInfo.Columns[x.partitionColumnPos].Name.L, &x.TblInfo.Columns[x.partitionColumnPos].FieldType, *dVal, x.HandleConstant}})
+				colName := getPartitionColNameSimple(sctx, x.TblInfo)
+				partDef, _, _, isTableDual = getPartitionDef(sctx, x.TblInfo, colName, []nameValuePair{{colName, x.handleFieldType, *dVal, x.HandleConstant}})
 				// TODO: Support isTableDual?
 				if isTableDual {
-					return errors.New("point get for partition table can not use plan cache, could not prune")
+					return errors.New("point get for partition table can not use plan cache, could not prune (handle, TableDual)")
 				}
 				if partDef == nil {
-					return errors.New("point get for partition table can not use plan cache, could not prune")
+					return errors.New("point get for partition table can not use plan cache, could not prune (handle, no partition found)")
 				}
 				x.PartitionDef = partDef
 			}
@@ -544,19 +544,16 @@ func rebuildRange(p Plan) error {
 					}
 					x.IndexValues[i] = *dVal
 					if x.PartitionDef != nil &&
-						x.IndexInfo.Columns[i].Offset == x.partitionColumnPos {
-						// Single column PK <=> Must be the partitioning columns!
-						if !x.TblInfo.PKIsHandle {
-							return errors.New("point get for partition table can not use plan cache, PK is not handle")
-						}
+						x.partitionColumnPos == i {
 						// Re-calculate the pruning!
-						partDef, _, _, isTableDual = getPartitionDef(sctx, x.TblInfo, []nameValuePair{{x.TblInfo.Columns[x.partitionColumnPos].Name.L, &x.TblInfo.Columns[x.partitionColumnPos].FieldType, *dVal, x.IndexConstants[i]}})
+						colName := getPartitionColNameSimple(sctx, x.TblInfo)
+						partDef, _, _, isTableDual = getPartitionDef(sctx, x.TblInfo, colName, []nameValuePair{{x.IndexInfo.Columns[i].Name.L, x.ColsFieldType[i], *dVal, x.IndexConstants[i]}})
 						// TODO: Support isTableDual?
 						if isTableDual {
-							return errors.New("point get for partition table can not use plan cache, could not prune")
+							return errors.New("point get for partition table can not use plan cache, could not prune (TableDual)")
 						}
 						if partDef == nil {
-							return errors.New("point get for partition table can not use plan cache, could not prune")
+							return errors.New("point get for partition table can not use plan cache, could not prune (No partition found)")
 						}
 						if i > 0 && x.PartitionDef != partDef {
 							return errors.New("point get for partition table can not use plan cache, found multiple partitions")
@@ -677,9 +674,10 @@ func rebuildRange(p Plan) error {
 			partIDs := make([]int64, 0, len(x.Handles))
 			partDefs := make([]*model.PartitionDefinition, 0, len(x.Handles))
 			if len(x.Handles) > 0 {
+				colName := getPartitionColNameSimple(sctx, x.TblInfo)
 				pairs := []nameValuePair{{
-					colName:      x.TblInfo.Columns[x.PartitionColPos].Name.L,
-					colFieldType: &x.TblInfo.Columns[x.PartitionColPos].FieldType,
+					colName:      colName,
+					colFieldType: x.HandleType,
 				}}
 				for i := range x.Handles {
 					datum, err := x.Handles[i].Data()
@@ -689,7 +687,7 @@ func rebuildRange(p Plan) error {
 					pairs[0].value = datum[0]
 					pairs[0].con = x.HandleParams[i]
 					// TODO: handle isTableDual!
-					partDef, _, _, _ := getPartitionDef(sctx, x.TblInfo, pairs)
+					partDef, _, _, _ := getPartitionDef(sctx, x.TblInfo, colName, pairs)
 					partDefs = append(partDefs, partDef)
 					partIDs = append(partIDs, partDef.ID)
 				}
@@ -705,8 +703,9 @@ func rebuildRange(p Plan) error {
 							con:          x.IndexValueParams[i][c],
 						})
 					}
+					colName := getPartitionColNameSimple(sctx, x.TblInfo)
 					// TODO: handle isTableDual!
-					partDef, _, _, _ := getPartitionDef(sctx, x.TblInfo, pairs)
+					partDef, _, _, _ := getPartitionDef(sctx, x.TblInfo, colName, pairs)
 					// TODO: Check how partDef == nil is handled?
 					partDefs = append(partDefs, partDef)
 					partIDs = append(partIDs, partDef.ID)

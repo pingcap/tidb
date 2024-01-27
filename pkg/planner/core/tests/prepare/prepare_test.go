@@ -17,6 +17,7 @@ package prepare_test
 import (
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/util"
 	"math"
 	"math/rand"
 	"strconv"
@@ -1587,4 +1588,61 @@ func TestPrepareCacheForDynamicPartitionPruning(t *testing.T) {
 			tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable if tidb_partition_pruning_mode = 'static'"))
 		}
 	}
+}
+
+func TestHashPartitionAndPlanCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery(`select @@session.tidb_enable_prepared_plan_cache`).Check(testkit.Rows("1"))
+
+	tk.MustExec("use test")
+	//for _, pruneMode := range []string{string(variable.Static), string(variable.Dynamic)} {
+	//tk.MustExec("set @@tidb_partition_prune_mode = '" + pruneMode + "'")
+	//tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`CREATE TABLE t (b varchar(255), a int primary key, key (b)) PARTITION BY HASH (a) partitions 5`)
+	tk.MustExec(`insert into t values(0,0),(1,1),(2,2),(3,3),(4,4)`)
+	tk.MustExec(`insert into t select b + 5, a + 5 from t`)
+	tk.MustExec(`analyze table t`)
+
+	// Point get PK
+	tk.MustExec(`prepare stmt from 'select * from t where a = ?'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`set @a=1`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustExec(`set @a=2`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("2 2"))
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*util.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
+		[][]interface{}{
+			{"Point_Get_1"},
+		})
+
+	tk.MustExec(`drop table t`)
+	tk.MustExec(`CREATE TABLE t (b varchar(255), a int, key (b), unique key (a)) PARTITION BY HASH (a) partitions 5`)
+	tk.MustExec(`insert into t values(0,0),(1,1),(2,2),(3,3),(4,4)`)
+	tk.MustExec(`insert into t select b + 5, a + 5 from t`)
+	tk.MustExec(`analyze table t`)
+
+	// Point get Unique Key
+	tk.MustExec(`prepare stmt from 'select * from t where a = ?'`)
+	tk.MustExec(`set @a=1`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("1 1"))
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustExec(`set @a=2`)
+	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("2 2"))
+	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	//tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows())
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
+		[][]interface{}{
+			{"Point_Get_1"},
+		})
+
 }
