@@ -95,9 +95,9 @@ func Normalize(sql string) (result string) {
 // which removes general property of a statement but keeps specific property.
 //
 // for example: NormalizeForBinding('select 1 from b where a = 1') => 'select ? from b where a = ?'
-func NormalizeForBinding(sql string, isPlanReplayer bool) (result string) {
+func NormalizeForBinding(sql string, forPlanReplayerReload bool) (result string) {
 	d := digesterPool.Get().(*sqlDigester)
-	result = d.doNormalizeForBinding(sql, false, isPlanReplayer)
+	result = d.doNormalizeForBinding(sql, false, forPlanReplayerReload)
 	digesterPool.Put(d)
 	return
 }
@@ -176,8 +176,8 @@ func (d *sqlDigester) doNormalize(sql string, keepHint bool) (result string) {
 	return
 }
 
-func (d *sqlDigester) doNormalizeForBinding(sql string, keepHint bool, isPlanReplayer bool) (result string) {
-	d.normalize(sql, keepHint, true, isPlanReplayer)
+func (d *sqlDigester) doNormalizeForBinding(sql string, keepHint bool, forPlanReplayerReload bool) (result string) {
+	d.normalize(sql, keepHint, true, forPlanReplayerReload)
 	result = d.buffer.String()
 	d.buffer.Reset()
 	return
@@ -212,7 +212,7 @@ const (
 	genericSymbolList = -2
 )
 
-func (d *sqlDigester) normalize(sql string, keepHint bool, forBinding bool, isPlanReplayer bool) {
+func (d *sqlDigester) normalize(sql string, keepHint bool, forBinding bool, forPlanReplayerReload bool) {
 	d.lexer.reset(sql)
 	d.lexer.setKeepHint(keepHint)
 	for {
@@ -230,8 +230,8 @@ func (d *sqlDigester) normalize(sql string, keepHint bool, forBinding bool, isPl
 		}
 
 		d.reduceLit(&currTok)
-		if isPlanReplayer {
-			// Apply for plan replayer matching specific rules
+		if forPlanReplayerReload {
+			// Apply for plan replayer to match specific rules, changing IN (...) to IN (?). This can avoid plan replayer load failures caused by parse errors.
 			d.replaceSingleLiteralWithInList(&currTok)
 		} else if forBinding {
 			// Apply binding matching specific rules, IN (?) => IN ( ... ) #44298
