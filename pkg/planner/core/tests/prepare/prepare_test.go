@@ -17,7 +17,6 @@ package prepare_test
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/util"
 	"math"
 	"math/rand"
 	"strconv"
@@ -38,6 +37,7 @@ import (
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
