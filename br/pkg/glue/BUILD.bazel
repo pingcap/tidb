@@ -10,6 +10,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/br/pkg/glue",
     visibility = ["//visibility:public"],
     deps = [
+        "//br/pkg/utils",
         "//ddl",
         "//domain",
         "//kv",

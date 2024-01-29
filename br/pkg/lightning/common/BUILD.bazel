@@ -20,6 +20,7 @@ go_library(
         "//br/pkg/errors",
         "//br/pkg/httputil",
         "//br/pkg/lightning/log",
+        "//br/pkg/utils",
         "//errno",
         "//parser/model",
         "//store/driver/error",

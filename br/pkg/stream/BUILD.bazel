@@ -19,6 +19,7 @@ go_library(
         "//br/pkg/logutil",
         "//br/pkg/storage",
         "//br/pkg/streamhelper",
+        "//br/pkg/utils",
         "//kv",
         "//meta",
         "//parser/model",

@@ -29,6 +29,7 @@ go_library(
         "//br/pkg/task",
         "//br/pkg/task/operator",
         "//br/pkg/trace",
+        "//br/pkg/utils",
         "//br/pkg/version/build",
         "//config",
         "//parser/model",

@@ -15,6 +15,7 @@ go_library(
         "//br/pkg/httputil",
         "//br/pkg/logutil",
         "//br/pkg/redact",
+        "//br/pkg/utils",
         "//store/pdtypes",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
@@ -42,6 +43,7 @@ go_test(
     deps = [
         ":split",
         "//br/pkg/errors",
+        "//br/pkg/utils",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
     ],

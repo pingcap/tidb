@@ -11,6 +11,7 @@ go_library(
         "//br/pkg/glue",
         "//br/pkg/logutil",
         "//br/pkg/pdutil",
+        "//br/pkg/utils",
         "//br/pkg/version",
         "//domain",
         "//kv",
@@ -46,6 +47,7 @@ go_test(
     deps = [
         "//br/pkg/conn/util",
         "//br/pkg/pdutil",
+        "//br/pkg/utils",
         "//testkit/testsetup",
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",

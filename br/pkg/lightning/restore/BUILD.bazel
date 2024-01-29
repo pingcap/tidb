@@ -40,6 +40,7 @@ go_library(
         "//br/pkg/redact",
         "//br/pkg/storage",
         "//br/pkg/streamhelper",
+        "//br/pkg/utils",
         "//br/pkg/version",
         "//br/pkg/version/build",
         "//config",

@@ -19,6 +19,7 @@ go_library(
         "//br/pkg/lightning/verification",
         "//br/pkg/logutil",
         "//br/pkg/redact",
+        "//br/pkg/utils",
         "//expression",
         "//kv",
         "//meta/autoid",

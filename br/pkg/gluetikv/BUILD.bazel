@@ -8,6 +8,7 @@ go_library(
     deps = [
         "//br/pkg/glue",
         "//br/pkg/summary",
+        "//br/pkg/utils",
         "//br/pkg/version/build",
         "//config",
         "//domain",
