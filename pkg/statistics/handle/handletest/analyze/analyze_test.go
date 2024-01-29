@@ -40,7 +40,7 @@ func checkForGlobalStatsWithOpts(t *testing.T, dom *domain.Domain, db, tt, pp st
 			}
 		}
 	}
-	tblStats, err := dom.StatsHandle().TableStatsFromStorage(tblInfo, physicalID, true, 0)
+	tblStats, err := dom.StatsHandle().TableStatsFromStorage(tblInfo, physicalID, true)
 	require.NoError(t, err)
 
 	delta := buckets/2 + 10

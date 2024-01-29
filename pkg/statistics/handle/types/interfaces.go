@@ -250,7 +250,7 @@ type PersistFunc func(ctx context.Context, jsonTable *statsutil.JSONTable, physi
 // TODO: merge and remove some methods.
 type StatsReadWriter interface {
 	// TableStatsFromStorage loads table stats info from storage.
-	TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error)
+	TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool) (statsTbl *statistics.Table, err error)
 
 	// LoadTablePartitionStats loads partition stats info from storage.
 	LoadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error)

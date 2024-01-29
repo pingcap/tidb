@@ -415,27 +415,20 @@ func columnStatsFromStorage(sctx sessionctx.Context, row chunk.Row, table *stati
 }
 
 // TableStatsFromStorage loads table stats info from storage.
-func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *model.TableInfo, tableID int64, loadAll bool, lease time.Duration, table *statistics.Table) (_ *statistics.Table, err error) {
+func TableStatsFromStorage(sctx sessionctx.Context, tableInfo *model.TableInfo, tableID int64, loadAll bool, lease time.Duration) (_ *statistics.Table, err error) {
 	tracker := memory.NewTracker(memory.LabelForAnalyzeMemory, -1)
 	tracker.AttachTo(sctx.GetSessionVars().MemTracker)
 	defer tracker.Detach()
-	// If table stats is pseudo, we also need to copy it, since we will use the column stats when
-	// the average error rate of it is small.
-	if table == nil || snapshot > 0 {
-		histColl := statistics.HistColl{
-			PhysicalID:     tableID,
-			HavePhysicalID: true,
-			Columns:        make(map[int64]*statistics.Column, len(tableInfo.Columns)),
-			Indices:        make(map[int64]*statistics.Index, len(tableInfo.Indices)),
-		}
-		table = &statistics.Table{
-			HistColl: histColl,
-		}
-	} else {
-		// We copy it before writing to avoid race.
-		table = table.Copy()
+	histColl := statistics.HistColl{
+		PhysicalID:     tableID,
+		HavePhysicalID: true,
+		Columns:        make(map[int64]*statistics.Column, len(tableInfo.Columns)),
+		Indices:        make(map[int64]*statistics.Index, len(tableInfo.Indices)),
+		Pseudo:         false,
 	}
-	table.Pseudo = false
+	table := &statistics.Table{
+		HistColl: histColl,
+	}
 
 	realtimeCount, modidyCount, isNull, err := StatsMetaCountAndModifyCount(sctx, tableID)
 	if err != nil || isNull {
