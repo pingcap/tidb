@@ -251,13 +251,13 @@ func getTiflashHTTPAddr(host string, statusAddr string) (string, error) {
 		return "", errors.Trace(err)
 	}
 
-	var j map[string]interface{}
+	var j map[string]any
 	err = json.Unmarshal(buf.Bytes(), &j)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
 
-	engineStore, ok := j["engine-store"].(map[string]interface{})
+	engineStore, ok := j["engine-store"].(map[string]any)
 	if !ok {
 		return "", errors.New("Error json")
 	}

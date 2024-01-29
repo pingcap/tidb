@@ -2452,13 +2452,13 @@ def go_deps():
         name = "com_github_go_resty_resty_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/go-resty/resty/v2",
-        sha256 = "b245b87bbec514a6c49610d3e8e16e8e08a16949431be904203a1470b7e9e58c",
-        strip_prefix = "github.com/go-resty/resty/v2@v2.10.0",
+        sha256 = "9e6212c6a90936edadf04754df8dfa1b0b154e013bdbf75f94a105d9fa54165e",
+        strip_prefix = "github.com/go-resty/resty/v2@v2.11.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/go-resty/resty/v2/com_github_go_resty_resty_v2-v2.10.0.zip",
-            "http://ats.apps.svc/gomod/github.com/go-resty/resty/v2/com_github_go_resty_resty_v2-v2.10.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/go-resty/resty/v2/com_github_go_resty_resty_v2-v2.10.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/go-resty/resty/v2/com_github_go_resty_resty_v2-v2.10.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/go-resty/resty/v2/com_github_go_resty_resty_v2-v2.11.0.zip",
+            "http://ats.apps.svc/gomod/github.com/go-resty/resty/v2/com_github_go_resty_resty_v2-v2.11.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/go-resty/resty/v2/com_github_go_resty_resty_v2-v2.11.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/go-resty/resty/v2/com_github_go_resty_resty_v2-v2.11.0.zip",
         ],
     )
     go_repository(

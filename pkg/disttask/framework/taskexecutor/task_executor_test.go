@@ -32,7 +32,7 @@ import (
 )
 
 var (
-	unfinishedNormalSubtaskStates = []interface{}{
+	unfinishedNormalSubtaskStates = []any{
 		proto.SubtaskStatePending, proto.SubtaskStateRunning,
 	}
 )

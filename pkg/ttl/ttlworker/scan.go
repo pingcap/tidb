@@ -239,11 +239,11 @@ type ttlScanWorker struct {
 	curTask       *ttlScanTask
 	curTaskResult *ttlScanTaskExecResult
 	delCh         chan<- *ttlDeleteTask
-	notifyStateCh chan<- interface{}
+	notifyStateCh chan<- any
 	sessionPool   sessionPool
 }
 
-func newScanWorker(delCh chan<- *ttlDeleteTask, notifyStateCh chan<- interface{}, sessPool sessionPool) *ttlScanWorker {
+func newScanWorker(delCh chan<- *ttlDeleteTask, notifyStateCh chan<- any, sessPool sessionPool) *ttlScanWorker {
 	w := &ttlScanWorker{
 		delCh:         delCh,
 		notifyStateCh: notifyStateCh,

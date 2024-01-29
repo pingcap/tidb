@@ -58,19 +58,19 @@ func (root *OptimizerDebugTraceRoot) MarshalJSON() ([]byte, error) {
 // The steps field can be used to record any information, or point to another baseDebugTraceContext.
 type baseDebugTraceContext struct {
 	name      string
-	steps     []interface{}
+	steps     []any
 	parentCtx *baseDebugTraceContext
 }
 
 func (c *baseDebugTraceContext) MarshalJSON() ([]byte, error) {
-	var tmp, content interface{}
+	var tmp, content any
 	if len(c.steps) > 1 {
 		content = c.steps
 	} else if len(c.steps) == 1 {
 		content = c.steps[0]
 	}
 	if len(c.name) > 0 {
-		tmp = map[string]interface{}{
+		tmp = map[string]any{
 			c.name: content,
 		}
 	} else {
@@ -80,13 +80,13 @@ func (c *baseDebugTraceContext) MarshalJSON() ([]byte, error) {
 }
 
 // AppendStepToCurrentContext records debug information to the current context of the debug trace.
-func (root *OptimizerDebugTraceRoot) AppendStepToCurrentContext(step interface{}) {
+func (root *OptimizerDebugTraceRoot) AppendStepToCurrentContext(step any) {
 	root.currentCtx.steps = append(root.currentCtx.steps, step)
 }
 
 // AppendStepWithNameToCurrentContext records debug information and a name to the current context of the debug trace.
-func (root *OptimizerDebugTraceRoot) AppendStepWithNameToCurrentContext(step interface{}, name string) {
-	tmp := map[string]interface{}{
+func (root *OptimizerDebugTraceRoot) AppendStepWithNameToCurrentContext(step any, name string) {
+	tmp := map[string]any{
 		name: step,
 	}
 	root.currentCtx.steps = append(root.currentCtx.steps, tmp)
@@ -109,7 +109,7 @@ func GetOrInitDebugTraceRoot(sctx sessionctx.Context) *OptimizerDebugTraceRoot {
 
 // EncodeJSONCommon contains some common logic for the debug trace,
 // like disabling EscapeHTML and recording error.
-func EncodeJSONCommon(input interface{}) ([]byte, error) {
+func EncodeJSONCommon(input any) ([]byte, error) {
 	var buf bytes.Buffer
 	encoder := json.NewEncoder(&buf)
 	// If we do not set this to false, ">", "<", "&"... will be escaped to "\u003c","\u003e", "\u0026"...
@@ -149,10 +149,10 @@ func LeaveContextCommon(sctx sessionctx.Context) {
 // The names must be string, the values can be any type.
 func RecordAnyValuesWithNames(
 	s sessionctx.Context,
-	vals ...interface{},
+	vals ...any,
 ) {
 	root := GetOrInitDebugTraceRoot(s)
-	tmp := make(map[string]interface{}, len(vals)/2)
+	tmp := make(map[string]any, len(vals)/2)
 	for i := 0; i < len(vals); i += 2 {
 		str, _ := vals[i].(string)
 		val := vals[i+1]

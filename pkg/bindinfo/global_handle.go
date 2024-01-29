@@ -747,8 +747,8 @@ func (*globalBindingHandle) GetScope(_ string) variable.ScopeFlag {
 }
 
 // Stats returns the server statistics.
-func (h *globalBindingHandle) Stats(_ *variable.SessionVars) (map[string]interface{}, error) {
-	m := make(map[string]interface{})
+func (h *globalBindingHandle) Stats(_ *variable.SessionVars) (map[string]any, error) {
+	m := make(map[string]any)
 	m[lastPlanBindingUpdateTime] = h.getLastUpdateTime().String()
 	return m, nil
 }

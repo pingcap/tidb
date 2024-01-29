@@ -108,7 +108,7 @@ func TestLocalTemporaryTableUpdate(t *testing.T) {
 
 	cases := []struct {
 		sql             string
-		checkResult     interface{}
+		checkResult     any
 		additionalCheck func(error)
 	}{
 		// update with point get for primary key
@@ -161,7 +161,7 @@ func TestLocalTemporaryTableUpdate(t *testing.T) {
 		{"update /*+ use_index(tmp1, u) */ tmp1 set v=v+1000 where u>108 or u<102", checkSuccess{[]string{"1 101 2001", "9 109 2009"}, nil}, nil},
 	}
 
-	executeSQL := func(sql string, checkResult interface{}, additionalCheck func(error)) (err error) {
+	executeSQL := func(sql string, checkResult any, additionalCheck func(error)) (err error) {
 		switch check := checkResult.(type) {
 		case checkSuccess:
 			tk.MustExec(sql)

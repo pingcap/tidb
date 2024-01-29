@@ -346,11 +346,11 @@ func (h topNRows) Swap(i, j int) {
 	h.rows[i], h.rows[j] = h.rows[j], h.rows[i]
 }
 
-func (h *topNRows) Push(x interface{}) {
+func (h *topNRows) Push(x any) {
 	h.rows = append(h.rows, x.(sortRow))
 }
 
-func (h *topNRows) Pop() interface{} {
+func (h *topNRows) Pop() any {
 	n := len(h.rows)
 	x := h.rows[n-1]
 	h.rows = h.rows[:n-1]

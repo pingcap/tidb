@@ -123,7 +123,7 @@ func TryAddExtraLimit(ctx sessionctx.Context, node ast.StmtNode) ast.StmtNode {
 func Preprocess(ctx context.Context, sctx sessionctx.Context, node ast.Node, preprocessOpt ...PreprocessOpt) error {
 	v := preprocessor{
 		sctx:               sctx,
-		tableAliasInJoin:   make([]map[string]interface{}, 0),
+		tableAliasInJoin:   make([]map[string]any, 0),
 		preprocessWith:     &preprocessWith{cteCanUsed: make([]string, 0), cteBeforeOffset: make([]int, 0)},
 		staleReadProcessor: staleread.NewStaleReadProcessor(ctx, sctx),
 	}
@@ -219,7 +219,7 @@ type preprocessor struct {
 
 	// tableAliasInJoin is a stack that keeps the table alias names for joins.
 	// len(tableAliasInJoin) may bigger than 1 because the left/right child of join may be subquery that contains `JOIN`
-	tableAliasInJoin []map[string]interface{}
+	tableAliasInJoin []map[string]any
 	preprocessWith   *preprocessWith
 
 	staleReadProcessor staleread.Processor
@@ -1065,7 +1065,7 @@ func (p *preprocessor) checkDropTableNames(tables []*ast.TableName) {
 
 func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 	if p.flag&parentIsJoin == 0 {
-		p.tableAliasInJoin = append(p.tableAliasInJoin, make(map[string]interface{}))
+		p.tableAliasInJoin = append(p.tableAliasInJoin, make(map[string]any))
 	}
 	tableAliases := p.tableAliasInJoin[len(p.tableAliasInJoin)-1]
 	isOracleMode := p.sctx.GetSessionVars().SQLMode&mysql.ModeOracle != 0
@@ -1082,7 +1082,7 @@ func (p *preprocessor) checkNonUniqTableAlias(stmt *ast.Join) {
 	p.flag |= parentIsJoin
 }
 
-func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]interface{}) error {
+func isTableAliasDuplicate(node ast.ResultSetNode, tableAliases map[string]any) error {
 	if ts, ok := node.(*ast.TableSource); ok {
 		tabName := ts.AsName
 		if tabName.L == "" {

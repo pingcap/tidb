@@ -32,7 +32,7 @@ type EvalContext interface {
 	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars
 	// Value returns the value associated with this context for key.
-	Value(key fmt.Stringer) interface{}
+	Value(key fmt.Stringer) any
 	// IsDDLOwner checks whether this session is DDL owner.
 	IsDDLOwner() bool
 	// GetAdvisoryLock acquires an advisory lock (aka GET_LOCK()).

@@ -356,11 +356,11 @@ func testMergePartialResult(t *testing.T, p aggTest) {
 	require.Equalf(t, 0, result, "%v != %v", dt.String(), p.results[2])
 }
 
-func buildAggTester(funcName string, tp byte, numRows int, results ...interface{}) aggTest {
+func buildAggTester(funcName string, tp byte, numRows int, results ...any) aggTest {
 	return buildAggTesterWithFieldType(funcName, types.NewFieldType(tp), numRows, results...)
 }
 
-func buildAggTesterWithFieldType(funcName string, ft *types.FieldType, numRows int, results ...interface{}) aggTest {
+func buildAggTesterWithFieldType(funcName string, ft *types.FieldType, numRows int, results ...any) aggTest {
 	pt := aggTest{
 		dataType: ft,
 		numRows:  numRows,
@@ -448,7 +448,7 @@ func testMultiArgsMergePartialResult(t *testing.T, ctx sessionctx.Context, p mul
 }
 
 // for multiple args in aggfuncs such as json_objectagg(c1, c2)
-func buildMultiArgsAggTester(funcName string, tps []byte, rt byte, numRows int, results ...interface{}) multiArgsAggTest {
+func buildMultiArgsAggTester(funcName string, tps []byte, rt byte, numRows int, results ...any) multiArgsAggTest {
 	fts := make([]*types.FieldType, len(tps))
 	for i := 0; i < len(tps); i++ {
 		fts[i] = types.NewFieldType(tps[i])
@@ -456,7 +456,7 @@ func buildMultiArgsAggTester(funcName string, tps []byte, rt byte, numRows int, 
 	return buildMultiArgsAggTesterWithFieldType(funcName, fts, types.NewFieldType(rt), numRows, results...)
 }
 
-func buildMultiArgsAggTesterWithFieldType(funcName string, fts []*types.FieldType, rt *types.FieldType, numRows int, results ...interface{}) multiArgsAggTest {
+func buildMultiArgsAggTesterWithFieldType(funcName string, fts []*types.FieldType, rt *types.FieldType, numRows int, results ...any) multiArgsAggTest {
 	dataGens := make([]func(i int) types.Datum, len(fts))
 	for i := 0; i < len(fts); i++ {
 		dataGens[i] = getDataGenFunc(fts[i])

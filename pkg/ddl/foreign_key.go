@@ -707,7 +707,7 @@ func checkForeignKeyConstrain(w *worker, schema, table string, fkInfo *model.FKI
 
 	var buf strings.Builder
 	buf.WriteString("select 1 from %n.%n where ")
-	paramsList := make([]interface{}, 0, 4+len(fkInfo.Cols)*2)
+	paramsList := make([]any, 0, 4+len(fkInfo.Cols)*2)
 	paramsList = append(paramsList, schema, table)
 	for i, col := range fkInfo.Cols {
 		if i == 0 {

@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mock"
 )
 
-func getJSONValue(secondArg types.Datum, valueType *types.FieldType) interface{} {
+func getJSONValue(secondArg types.Datum, valueType *types.FieldType) any {
 	if valueType.GetType() == mysql.TypeString && valueType.GetCharset() == charset.CharsetBin {
 		buf := make([]byte, valueType.GetFlen())
 		copy(buf, secondArg.GetBytes())
@@ -72,8 +72,8 @@ func TestMergePartialResult4JsonObjectagg(t *testing.T) {
 	numRows := 5
 
 	for k := 0; k < len(argCombines); k++ {
-		entries1 := make(map[string]interface{})
-		entries2 := make(map[string]interface{})
+		entries1 := make(map[string]any)
+		entries2 := make(map[string]any)
 
 		fGenFunc := getDataGenFunc(argCombines[k][0])
 		sGenFunc := getDataGenFunc(argCombines[k][1])
@@ -134,7 +134,7 @@ func TestJsonObjectagg(t *testing.T) {
 	numRows := 5
 
 	for k := 0; k < len(argCombines); k++ {
-		entries := make(map[string]interface{})
+		entries := make(map[string]any)
 
 		argTypes := argCombines[k]
 		fGenFunc := getDataGenFunc(argTypes[0])
@@ -171,7 +171,7 @@ func TestMemJsonObjectagg(t *testing.T) {
 	}
 	numRows := 5
 	for k := 0; k < len(argCombines); k++ {
-		entries := make(map[string]interface{})
+		entries := make(map[string]any)
 
 		argTypes := argCombines[k]
 		fGenFunc := getDataGenFunc(types.NewFieldType(argTypes[0]))

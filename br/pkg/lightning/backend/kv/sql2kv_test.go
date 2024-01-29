@@ -52,19 +52,19 @@ func TestMarshal(t *testing.T) {
 	encoder := zapcore.NewMapObjectEncoder()
 	err := encoder.AddArray("test", lkv.RowArrayMarshaller{types.NewStringDatum("1"), nullDatum, minNotNull, types.MaxValueDatum()})
 	require.NoError(t, err)
-	require.Equal(t, encoder.Fields["test"], []interface{}{
-		map[string]interface{}{"kind": "string", "val": "1"},
-		map[string]interface{}{"kind": "null", "val": "NULL"},
-		map[string]interface{}{"kind": "min", "val": "-inf"},
-		map[string]interface{}{"kind": "max", "val": "+inf"},
+	require.Equal(t, encoder.Fields["test"], []any{
+		map[string]any{"kind": "string", "val": "1"},
+		map[string]any{"kind": "null", "val": "NULL"},
+		map[string]any{"kind": "min", "val": "-inf"},
+		map[string]any{"kind": "max", "val": "+inf"},
 	})
 
 	invalid := types.Datum{}
 	invalid.SetInterface(1)
 	err = encoder.AddArray("bad-test", lkv.RowArrayMarshaller{minNotNull, invalid})
 	require.Regexp(t, "cannot convert.*", err)
-	require.Equal(t, encoder.Fields["bad-test"], []interface{}{
-		map[string]interface{}{"kind": "min", "val": "-inf"},
+	require.Equal(t, encoder.Fields["bad-test"], []any{
+		map[string]any{"kind": "min", "val": "-inf"},
 	})
 }
 

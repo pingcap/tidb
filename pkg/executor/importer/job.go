@@ -86,7 +86,7 @@ type ImportParameters struct {
 	FileLocation string `json:"file-location"`
 	Format       string `json:"format"`
 	// only include what user specified, not include default value.
-	Options map[string]interface{} `json:"options,omitempty"`
+	Options map[string]any `json:"options,omitempty"`
 }
 
 var _ fmt.Stringer = &ImportParameters{}
@@ -327,7 +327,7 @@ func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 func GetAllViewableJobs(ctx context.Context, conn sqlexec.SQLExecutor, user string, hasSuperPriv bool) ([]*JobInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	sql := baseQuerySQL
-	args := []interface{}{}
+	args := []any{}
 	if !hasSuperPriv {
 		sql += " WHERE created_by = %?"
 		args = append(args, user)
@@ -360,7 +360,7 @@ func CancelJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64) (err 
 	sql := `UPDATE mysql.tidb_import_jobs
 			SET update_time = CURRENT_TIMESTAMP(6), status = %?, error_message = 'cancelled by user'
 			WHERE id = %? AND status IN (%?, %?);`
-	args := []interface{}{jogStatusCancelled, jobID, jobStatusPending, JobStatusRunning}
+	args := []any{jogStatusCancelled, jobID, jobStatusPending, JobStatusRunning}
 	_, err = conn.ExecuteInternal(ctx, sql, args...)
 	return err
 }

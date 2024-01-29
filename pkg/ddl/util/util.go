@@ -197,7 +197,7 @@ func LoadGlobalVars(ctx context.Context, sctx sessionctx.Context, varNames []str
 	if e, ok := sctx.(sqlexec.RestrictedSQLExecutor); ok {
 		var buf strings.Builder
 		buf.WriteString(loadGlobalVars)
-		paramNames := make([]interface{}, 0, len(varNames))
+		paramNames := make([]any, 0, len(varNames))
 		for i, name := range varNames {
 			if i > 0 {
 				buf.WriteString(", ")

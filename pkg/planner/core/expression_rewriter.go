@@ -2596,7 +2596,7 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 		return "", errors.Trace(err)
 	}
 	if handle.IsInt() {
-		ret := make(map[string]interface{})
+		ret := make(map[string]any)
 		if tbl != nil && tbl.Meta().Partition != nil {
 			ret["partition_id"] = tableID
 			tableID = tbl.Meta().ID
@@ -2636,13 +2636,13 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 		if err != nil {
 			return "", errors.Trace(err)
 		}
-		ret := make(map[string]interface{})
+		ret := make(map[string]any)
 		if tbl.Meta().Partition != nil {
 			ret["partition_id"] = tableID
 			tableID = tbl.Meta().ID
 		}
 		ret["table_id"] = tableID
-		handleRet := make(map[string]interface{})
+		handleRet := make(map[string]any)
 		for colID := range datumMap {
 			dt := datumMap[colID]
 			dtStr, err := datumToJSONObject(&dt)
@@ -2668,7 +2668,7 @@ func decodeRecordKey(key []byte, tableID int64, tbl table.Table, loc *time.Locat
 		}
 		return string(retStr), nil
 	}
-	ret := make(map[string]interface{})
+	ret := make(map[string]any)
 	ret["table_id"] = tableID
 	ret["handle"] = handle.String()
 	retStr, err := json.Marshal(ret)
@@ -2709,14 +2709,14 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 			}
 			ds = append(ds, d)
 		}
-		ret := make(map[string]interface{})
+		ret := make(map[string]any)
 		if tbl.Meta().Partition != nil {
 			ret["partition_id"] = tableID
 			tableID = tbl.Meta().ID
 		}
 		ret["table_id"] = tableID
 		ret["index_id"] = indexID
-		idxValMap := make(map[string]interface{}, len(targetIndex.Columns))
+		idxValMap := make(map[string]any, len(targetIndex.Columns))
 		for i := 0; i < len(targetIndex.Columns); i++ {
 			dtStr, err := datumToJSONObject(&ds[i])
 			if err != nil {
@@ -2735,7 +2735,7 @@ func decodeIndexKey(key []byte, tableID int64, tbl table.Table, loc *time.Locati
 	if err != nil {
 		return "", errors.Trace(errors.Errorf("invalid index key: %X", key))
 	}
-	ret := make(map[string]interface{})
+	ret := make(map[string]any)
 	ret["table_id"] = tableID
 	ret["index_id"] = indexID
 	ret["index_vals"] = strings.Join(indexValues, ", ")
@@ -2760,7 +2760,7 @@ func decodeTableKey(_ []byte, tableID int64, tbl table.Table) (string, error) {
 	return string(retStr), nil
 }
 
-func datumToJSONObject(d *types.Datum) (interface{}, error) {
+func datumToJSONObject(d *types.Datum) (any, error) {
 	if d.IsNull() {
 		return nil, nil
 	}

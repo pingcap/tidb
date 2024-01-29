@@ -87,7 +87,7 @@ func failedStoreSizeJudge(ctx context.Context, test *testing.T, need int) {
 	var l int
 	GlobalMPPFailedStoreProber.scan(ctx)
 	time.Sleep(time.Second / 10)
-	GlobalMPPFailedStoreProber.failedMPPStores.Range(func(k, v interface{}) bool {
+	GlobalMPPFailedStoreProber.failedMPPStores.Range(func(k, v any) bool {
 		l++
 		return true
 	})

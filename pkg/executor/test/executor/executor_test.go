@@ -585,7 +585,7 @@ func TestTiDBLastQueryInfo(t *testing.T) {
 	tk.MustExec("create table t (a int primary key, v int)")
 	tk.MustQuery("select json_extract(@@tidb_last_query_info, '$.start_ts'), json_extract(@@tidb_last_query_info, '$.start_ts')").Check(testkit.Rows("0 0"))
 
-	toUint64 := func(str interface{}) uint64 {
+	toUint64 := func(str any) uint64 {
 		res, err := strconv.ParseUint(str.(string), 10, 64)
 		require.NoError(t, err)
 		return res

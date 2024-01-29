@@ -377,12 +377,12 @@ type ColDesc struct {
 	Field string
 	Type  string
 	// Charset is nil if the column doesn't have a charset, or a string indicating the charset name.
-	Charset interface{}
+	Charset any
 	// Collation is nil if the column doesn't have a collation, or a string indicating the collation name.
-	Collation    interface{}
+	Collation    any
 	Null         string
 	Key          string
-	DefaultValue interface{}
+	DefaultValue any
 	Extra        string
 	Privileges   string
 	Comment      string
@@ -409,7 +409,7 @@ func NewColDesc(col *Column) *ColDesc {
 	} else if mysql.HasMultipleKeyFlag(col.GetFlag()) {
 		keyFlag = "MUL"
 	}
-	var defaultValue interface{}
+	var defaultValue any
 	if !mysql.HasNoDefaultValueFlag(col.GetFlag()) {
 		defaultValue = col.GetDefaultValue()
 		if defaultValStr, ok := defaultValue.(string); ok {
@@ -577,7 +577,7 @@ func getColDefaultExprValue(ctx expression.BuildContext, col *model.ColumnInfo, 
 	return value, nil
 }
 
-func getColDefaultValue(ctx expression.BuildContext, col *model.ColumnInfo, defaultVal interface{}, args *getColOriginDefaultValue) (types.Datum, error) {
+func getColDefaultValue(ctx expression.BuildContext, col *model.ColumnInfo, defaultVal any, args *getColOriginDefaultValue) (types.Datum, error) {
 	if defaultVal == nil {
 		return getColDefaultValueFromNil(ctx, col, args)
 	}

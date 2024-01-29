@@ -912,7 +912,7 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(ctx EvalContext, row chunk.R
 		}
 	}
 
-	var digests []interface{}
+	var digests []any
 	err = json.Unmarshal([]byte(digestsStr), &digests)
 	if err != nil {
 		const errMsgMaxLength = 32
@@ -955,7 +955,7 @@ func (b *builtinTiDBDecodeSQLDigestsSig) evalString(ctx EvalContext, row chunk.R
 	}
 
 	// Collect the result.
-	result := make([]interface{}, len(digests))
+	result := make([]any, len(digests))
 	for i, item := range digests {
 		if item == nil {
 			continue
