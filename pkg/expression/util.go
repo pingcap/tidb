@@ -1143,7 +1143,7 @@ func GetFuncArg(e Expression, idx int) Expression {
 
 // PopRowFirstArg pops the first element and returns the rest of row.
 // e.g. After this function (1, 2, 3) becomes (2, 3).
-func PopRowFirstArg(ctx sessionctx.Context, e Expression) (ret Expression, err error) {
+func PopRowFirstArg(ctx BuildContext, e Expression) (ret Expression, err error) {
 	if f, ok := e.(*ScalarFunction); ok && f.FuncName.L == ast.RowFunc {
 		args := f.GetArgs()
 		if len(args) == 2 {
@@ -1236,7 +1236,7 @@ func PosFromPositionExpr(ctx sessionctx.Context, v *ast.PositionExpr) (int, bool
 }
 
 // GetStringFromConstant gets a string value from the Constant expression.
-func GetStringFromConstant(ctx sessionctx.Context, value Expression) (string, bool, error) {
+func GetStringFromConstant(ctx BuildContext, value Expression) (string, bool, error) {
 	con, ok := value.(*Constant)
 	if !ok {
 		err := errors.Errorf("Not a Constant expression %+v", value)
@@ -1250,7 +1250,7 @@ func GetStringFromConstant(ctx sessionctx.Context, value Expression) (string, bo
 }
 
 // GetIntFromConstant gets an interger value from the Constant expression.
-func GetIntFromConstant(ctx sessionctx.Context, value Expression) (int, bool, error) {
+func GetIntFromConstant(ctx BuildContext, value Expression) (int, bool, error) {
 	str, isNull, err := GetStringFromConstant(ctx, value)
 	if err != nil || isNull {
 		return 0, true, err
@@ -1263,7 +1263,7 @@ func GetIntFromConstant(ctx sessionctx.Context, value Expression) (int, bool, er
 }
 
 // BuildNotNullExpr wraps up `not(isnull())` for given expression.
-func BuildNotNullExpr(ctx sessionctx.Context, expr Expression) Expression {
+func BuildNotNullExpr(ctx BuildContext, expr Expression) Expression {
 	isNull := NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
 	notNull := NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNull)
 	return notNull
@@ -1493,7 +1493,7 @@ func containMutableConst(ctx EvalContext, exprs []Expression) bool {
 }
 
 // RemoveMutableConst used to remove the `ParamMarker` and `DeferredExpr` in the `Constant` expr.
-func RemoveMutableConst(ctx sessionctx.Context, exprs []Expression) (err error) {
+func RemoveMutableConst(ctx BuildContext, exprs []Expression) (err error) {
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *Constant:

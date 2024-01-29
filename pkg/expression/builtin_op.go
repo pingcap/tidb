@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/opcode"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tipb/go-tipb"
@@ -64,7 +63,7 @@ type logicAndFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *logicAndFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *logicAndFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	err := c.verifyArgs(args)
 	if err != nil {
 		return nil, err
@@ -117,7 +116,7 @@ type logicOrFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *logicOrFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *logicOrFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	err := c.verifyArgs(args)
 	if err != nil {
 		return nil, err
@@ -176,7 +175,7 @@ type logicXorFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *logicXorFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *logicXorFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	err := c.verifyArgs(args)
 	if err != nil {
 		return nil, err
@@ -229,7 +228,7 @@ type bitAndFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *bitAndFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *bitAndFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	err := c.verifyArgs(args)
 	if err != nil {
 		return nil, err
@@ -270,7 +269,7 @@ type bitOrFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *bitOrFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *bitOrFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	err := c.verifyArgs(args)
 	if err != nil {
 		return nil, err
@@ -311,7 +310,7 @@ type bitXorFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *bitXorFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *bitXorFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	err := c.verifyArgs(args)
 	if err != nil {
 		return nil, err
@@ -352,7 +351,7 @@ type leftShiftFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *leftShiftFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *leftShiftFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	err := c.verifyArgs(args)
 	if err != nil {
 		return nil, err
@@ -393,7 +392,7 @@ type rightShiftFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *rightShiftFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *rightShiftFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	err := c.verifyArgs(args)
 	if err != nil {
 		return nil, err
@@ -446,7 +445,7 @@ func (c *isTrueOrFalseFunctionClass) getDisplayName() string {
 	return nameBuilder.String()
 }
 
-func (c *isTrueOrFalseFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *isTrueOrFalseFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -674,7 +673,7 @@ type bitNegFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *bitNegFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *bitNegFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -710,7 +709,7 @@ type unaryNotFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *unaryNotFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *unaryNotFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -876,7 +875,7 @@ func (c *unaryMinusFunctionClass) typeInfer(argExpr Expression) (types.EvalType,
 	return tp, overflow
 }
 
-func (c *unaryMinusFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (sig builtinFunc, err error) {
+func (c *unaryMinusFunctionClass) getFunction(ctx BuildContext, args []Expression) (sig builtinFunc, err error) {
 	if err = c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1009,7 +1008,7 @@ type isNullFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *isNullFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *isNullFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
