@@ -17,11 +17,15 @@ package hint
 import (
 	"bytes"
 	"fmt"
+	"sort"
 	"strings"
 
+	"github.com/pingcap/errors"
+	mysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
 // Hint flags listed here are used by PlanBuilder.subQueryHintFlags.
@@ -264,6 +268,183 @@ func (sh *StmtHints) Clone() *StmtHints {
 		SetVars:                        vars,
 		OriginalTableHints:             tableHints,
 	}
+}
+
+// ParseStmtHints parses statement hints.
+func ParseStmtHints(hints []*ast.TableOptimizerHint,
+	setVarHintChecker func(varName, hint string) (ok bool, warning error),
+	replicaReadFollower byte) ( // to avoid cycle import
+	stmtHints StmtHints, offs []int, warns []error) {
+	if len(hints) == 0 {
+		return
+	}
+	hintOffs := make(map[string]int, len(hints))
+	var forceNthPlan *ast.TableOptimizerHint
+	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt, straightJoinHintCnt, resourceGroupHintCnt int
+	setVars := make(map[string]string)
+	setVarsOffs := make([]int, 0, len(hints))
+	for i, hint := range hints {
+		switch hint.HintName.L {
+		case "memory_quota":
+			hintOffs[hint.HintName.L] = i
+			memoryQuotaHintCnt++
+		case "resource_group":
+			hintOffs[hint.HintName.L] = i
+			resourceGroupHintCnt++
+		case "use_toja":
+			hintOffs[hint.HintName.L] = i
+			useToJAHintCnt++
+		case "use_cascades":
+			hintOffs[hint.HintName.L] = i
+			useCascadesHintCnt++
+		case "no_index_merge":
+			hintOffs[hint.HintName.L] = i
+			noIndexMergeHintCnt++
+		case "read_consistent_replica":
+			hintOffs[hint.HintName.L] = i
+			readReplicaHintCnt++
+		case "max_execution_time":
+			hintOffs[hint.HintName.L] = i
+			maxExecutionTimeCnt++
+		case "nth_plan":
+			forceNthPlanCnt++
+			forceNthPlan = hint
+		case "straight_join":
+			hintOffs[hint.HintName.L] = i
+			straightJoinHintCnt++
+		case "set_var":
+			setVarHint := hint.HintData.(ast.HintSetVar)
+
+			// Not all session variables are permitted for use with SET_VAR
+			ok, warning := setVarHintChecker(setVarHint.VarName, hint.HintName.String())
+			if warning != nil {
+				warns = append(warns, warning)
+			}
+			if !ok {
+				continue
+			}
+
+			// If several hints with the same variable name appear in the same statement, the first one is applied and the others are ignored with a warning
+			if _, ok := setVars[setVarHint.VarName]; ok {
+				msg := fmt.Sprintf("%s(%s=%s)", hint.HintName.String(), setVarHint.VarName, setVarHint.Value)
+				warns = append(warns, ErrWarnConflictingHint.FastGenByArgs(msg))
+				continue
+			}
+			setVars[setVarHint.VarName] = setVarHint.Value
+			setVarsOffs = append(setVarsOffs, i)
+		}
+	}
+	stmtHints.OriginalTableHints = hints
+	stmtHints.SetVars = setVars
+
+	// Handle MEMORY_QUOTA
+	if memoryQuotaHintCnt != 0 {
+		memoryQuotaHint := hints[hintOffs["memory_quota"]]
+		if memoryQuotaHintCnt > 1 {
+			warn := errors.NewNoStackErrorf("MEMORY_QUOTA() is defined more than once, only the last definition takes effect: MEMORY_QUOTA(%v)", memoryQuotaHint.HintData.(int64))
+			warns = append(warns, warn)
+		}
+		// Executor use MemoryQuota <= 0 to indicate no memory limit, here use < 0 to handle hint syntax error.
+		if memoryQuota := memoryQuotaHint.HintData.(int64); memoryQuota < 0 {
+			delete(hintOffs, "memory_quota")
+			warn := errors.NewNoStackError("The use of MEMORY_QUOTA hint is invalid, valid usage: MEMORY_QUOTA(10 MB) or MEMORY_QUOTA(10 GB)")
+			warns = append(warns, warn)
+		} else {
+			stmtHints.HasMemQuotaHint = true
+			stmtHints.MemQuotaQuery = memoryQuota
+			if memoryQuota == 0 {
+				warn := errors.NewNoStackError("Setting the MEMORY_QUOTA to 0 means no memory limit")
+				warns = append(warns, warn)
+			}
+		}
+	}
+	// Handle USE_TOJA
+	if useToJAHintCnt != 0 {
+		useToJAHint := hints[hintOffs["use_toja"]]
+		if useToJAHintCnt > 1 {
+			warn := errors.NewNoStackErrorf("USE_TOJA() is defined more than once, only the last definition takes effect: USE_TOJA(%v)", useToJAHint.HintData.(bool))
+			warns = append(warns, warn)
+		}
+		stmtHints.HasAllowInSubqToJoinAndAggHint = true
+		stmtHints.AllowInSubqToJoinAndAgg = useToJAHint.HintData.(bool)
+	}
+	// Handle USE_CASCADES
+	if useCascadesHintCnt != 0 {
+		useCascadesHint := hints[hintOffs["use_cascades"]]
+		if useCascadesHintCnt > 1 {
+			warn := errors.NewNoStackErrorf("USE_CASCADES() is defined more than once, only the last definition takes effect: USE_CASCADES(%v)", useCascadesHint.HintData.(bool))
+			warns = append(warns, warn)
+		}
+		stmtHints.HasEnableCascadesPlannerHint = true
+		stmtHints.EnableCascadesPlanner = useCascadesHint.HintData.(bool)
+	}
+	// Handle NO_INDEX_MERGE
+	if noIndexMergeHintCnt != 0 {
+		if noIndexMergeHintCnt > 1 {
+			warn := errors.NewNoStackError("NO_INDEX_MERGE() is defined more than once, only the last definition takes effect")
+			warns = append(warns, warn)
+		}
+		stmtHints.NoIndexMergeHint = true
+	}
+	// Handle straight_join
+	if straightJoinHintCnt != 0 {
+		if straightJoinHintCnt > 1 {
+			warn := errors.NewNoStackError("STRAIGHT_JOIN() is defined more than once, only the last definition takes effect")
+			warns = append(warns, warn)
+		}
+		stmtHints.StraightJoinOrder = true
+	}
+	// Handle READ_CONSISTENT_REPLICA
+	if readReplicaHintCnt != 0 {
+		if readReplicaHintCnt > 1 {
+			warn := errors.NewNoStackError("READ_CONSISTENT_REPLICA() is defined more than once, only the last definition takes effect")
+			warns = append(warns, warn)
+		}
+		stmtHints.HasReplicaReadHint = true
+		stmtHints.ReplicaRead = replicaReadFollower
+	}
+	// Handle MAX_EXECUTION_TIME
+	if maxExecutionTimeCnt != 0 {
+		maxExecutionTime := hints[hintOffs["max_execution_time"]]
+		if maxExecutionTimeCnt > 1 {
+			warn := errors.NewNoStackErrorf("MAX_EXECUTION_TIME() is defined more than once, only the last definition takes effect: MAX_EXECUTION_TIME(%v)", maxExecutionTime.HintData.(uint64))
+			warns = append(warns, warn)
+		}
+		stmtHints.HasMaxExecutionTime = true
+		stmtHints.MaxExecutionTime = maxExecutionTime.HintData.(uint64)
+	}
+	// Handle RESOURCE_GROUP
+	if resourceGroupHintCnt != 0 {
+		resourceGroup := hints[hintOffs["resource_group"]]
+		if resourceGroupHintCnt > 1 {
+			warn := errors.NewNoStackErrorf("RESOURCE_GROUP() is defined more than once, only the last definition takes effect: RESOURCE_GROUP(%v)", resourceGroup.HintData.(string))
+			warns = append(warns, warn)
+		}
+		stmtHints.HasResourceGroup = true
+		stmtHints.ResourceGroup = resourceGroup.HintData.(string)
+	}
+	// Handle NTH_PLAN
+	if forceNthPlanCnt != 0 {
+		if forceNthPlanCnt > 1 {
+			warn := errors.NewNoStackErrorf("NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(%v)", forceNthPlan.HintData.(int64))
+			warns = append(warns, warn)
+		}
+		stmtHints.ForceNthPlan = forceNthPlan.HintData.(int64)
+		if stmtHints.ForceNthPlan < 1 {
+			stmtHints.ForceNthPlan = -1
+			warn := errors.NewNoStackError("the hintdata for NTH_PLAN() is too small, hint ignored")
+			warns = append(warns, warn)
+		}
+	} else {
+		stmtHints.ForceNthPlan = -1
+	}
+	for _, off := range hintOffs {
+		offs = append(offs, off)
+	}
+	offs = append(offs, setVarsOffs...)
+	// let hint is always ordered, it is convenient to human compare and test.
+	sort.Ints(offs)
+	return
 }
 
 // IndexJoinHints stores hint information about index nested loop join.
@@ -879,3 +1060,6 @@ func collectUnmatchedStorageHintWarning(tiflashTables, tikvTables []HintedTable)
 	warnings = append(warnings, errMsg)
 	return warnings
 }
+
+// ErrWarnConflictingHint is a warning error.
+var ErrWarnConflictingHint = dbterror.ClassOptimizer.NewStd(mysql.ErrWarnConflictingHint)

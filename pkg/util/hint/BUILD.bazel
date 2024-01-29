@@ -10,10 +10,12 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/hint",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/errno",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/format",
         "//pkg/parser/model",
+        "//pkg/util/dbterror",
         "//pkg/util/dbterror/plannererrors",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
