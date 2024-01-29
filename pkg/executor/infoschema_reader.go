@@ -360,8 +360,21 @@ func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas 
 
 func (e *memtableRetriever) setDataForStatistics(ctx sessionctx.Context, schemas []*model.DBInfo) {
 	checker := privilege.GetPrivilegeManager(ctx)
+	extractor, filter := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+
 	for _, schema := range schemas {
+		if filter {
+			if extractor.SkipRequest {
+				break
+			}
+			if !extractor.ApplyFilter("table_schema", schema.Name.L) {
+				continue
+			}
+		}
 		for _, table := range schema.Tables {
+			if filter && !extractor.ApplyFilter("table_name", schema.Name.L) {
+				continue
+			}
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}
@@ -458,8 +471,21 @@ func (e *memtableRetriever) setDataForStatisticsInTable(schema *model.DBInfo, ta
 func (e *memtableRetriever) setDataFromReferConst(sctx sessionctx.Context, schemas []*model.DBInfo) error {
 	checker := privilege.GetPrivilegeManager(sctx)
 	var rows [][]types.Datum
+	extractor, filter := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
 	for _, schema := range schemas {
+		if filter {
+			if extractor.SkipRequest {
+				break
+			}
+			if !extractor.ApplyFilter("table_schema", schema.Name.L) {
+				continue
+			}
+		}
+
 		for _, table := range schema.Tables {
+			if filter && !extractor.ApplyFilter("table_name", schema.Name.L) {
+				continue
+			}
 			if !table.IsBaseTable() {
 				continue
 			}
@@ -509,8 +535,18 @@ func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas [
 	if loc == nil {
 		loc = time.Local
 	}
+	extractor, filter := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	if filter && extractor.SkipRequest {
+		return nil
+	}
 	for _, schema := range schemas {
+		if filter && !extractor.ApplyFilter("table_schema", schema.Name.L) {
+			continue
+		}
 		for _, table := range schema.Tables {
+			if filter && !extractor.ApplyFilter("table_name", table.Name.L) {
+				continue
+			}
 			collation := table.Collate
 			if collation == "" {
 				collation = mysql.DefaultCollationName
@@ -1466,8 +1502,20 @@ func (e *memtableRetriever) dataForTiDBClusterInfo(ctx sessionctx.Context) error
 func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx sessionctx.Context, schemas []*model.DBInfo) {
 	checker := privilege.GetPrivilegeManager(ctx)
 	rows := make([][]types.Datum, 0, len(schemas)) // The capacity is not accurate, but it is not a big problem.
+	extractor, filter := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
 	for _, schema := range schemas {
+		if filter {
+			if extractor.SkipRequest {
+				break
+			}
+			if !extractor.ApplyFilter("table_schema", schema.Name.L) {
+				continue
+			}
+		}
 		for _, table := range schema.Tables {
+			if filter && !extractor.ApplyFilter("table_name", schema.Name.L) {
+				continue
+			}
 			if checker != nil && !checker.RequestVerification(ctx.GetSessionVars().ActiveRoles, schema.Name.L, table.Name.L, "", mysql.AllPrivMask) {
 				continue
 			}

@@ -1676,3 +1676,71 @@ func (e *TiKVRegionStatusExtractor) explainInfo(_ *PhysicalMemTable) string {
 func (e *TiKVRegionStatusExtractor) GetTablesID() []int64 {
 	return e.tablesID
 }
+
+// InfoSchemaTablesExtractor is used to extract infoSchema tables related predictions
+type InfoSchemaTablesExtractor struct {
+	extractHelper
+	initialized bool
+	// SkipRequest means the where clause always false, we don't need to request any component
+	SkipRequest bool
+
+	colNames      []string
+	ColPredicates map[string]set.StringSet
+}
+
+func (b *InfoSchemaTablesExtractor) initialize() {
+	b.colNames = []string{"table_schema", "table_name"}
+	b.ColPredicates = make(map[string]set.StringSet)
+	b.initialized = true
+}
+
+func (b *InfoSchemaTablesExtractor) Extract(_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	var resultSet set.StringSet
+	var skipRequest bool
+	if !b.initialized {
+		b.initialize()
+	}
+	remained = predicates
+	for _, colName := range b.colNames {
+		remained, skipRequest, resultSet = b.extractCol(schema, names, remained, colName, true)
+		b.ColPredicates[colName] = resultSet
+		b.SkipRequest = b.SkipRequest || skipRequest
+	}
+	return remained
+}
+
+func (b *InfoSchemaTablesExtractor) explainInfo(_ *PhysicalMemTable) string {
+	if b.SkipRequest {
+		return "skip_request:true"
+	}
+	r := new(bytes.Buffer)
+	for colName, colPredicate := range b.ColPredicates {
+		if len(colPredicate) > 0 {
+			fmt.Fprintf(r, "%s:[%s], ", colName, extractStringFromStringSet(colPredicate))
+		}
+	}
+
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
+
+// ApplyFilter use the col predicates to filter records.
+func (b *InfoSchemaTablesExtractor) ApplyFilter(colName string, any interface{}) bool {
+	if b.SkipRequest {
+		return true
+	}
+	predVals, ok := b.ColPredicates[colName]
+	val := any.(string)
+	if ok && len(predVals) > 0 {
+		return predVals.Exist(val)
+	}
+	return true
+}

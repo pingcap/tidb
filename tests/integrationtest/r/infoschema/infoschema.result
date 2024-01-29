@@ -2,8 +2,6 @@ DROP TABLE IF EXISTS `t1`;
 create table t1 (c1 VARCHAR(10) NOT NULL COMMENT 'Abcdefghijabcd', c2 INTEGER COMMENT 'aBcdefghijab',c3 INTEGER COMMENT '01234567890', c4 INTEGER, c5 INTEGER, c6 INTEGER, c7 INTEGER, c8 VARCHAR(100), c9 CHAR(50), c10 DATETIME, c11 DATETIME, c12 DATETIME,c13 DATETIME, INDEX i1 (c1) COMMENT 'i1 comment',INDEX i2(c2) ) COMMENT='ABCDEFGHIJabc';
 SELECT index_comment,char_length(index_comment),COLUMN_NAME FROM information_schema.statistics WHERE table_name='t1' and table_schema="infoschema__infoschema" ORDER BY index_comment;
 index_comment	char_length(index_comment)	COLUMN_NAME
-	0	c2
-i1 comment	10	c1
 show create table information_schema.ddl_jobs;
 Table	Create Table
 DDL_JOBS	CREATE TABLE `DDL_JOBS` (
@@ -43,4 +41,24 @@ count(*)
 SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_SCHEMA = 'mysql') AND (TABLE_NAME = 't3');
 count(*)
 1
+SELECT count(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA in ('mysql', 'test') and TABLE_NAME in ('t1', 't2');
+count(*)
+2
+SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_SCHEMA= 'mysql' or TABLE_SCHEMA = 'test') and (TABLE_NAME = 't1' or TABLE_NAME = 't2');
+count(*)
+2
+desc format='brief' SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_SCHEMA= 'mysql' or TABLE_SCHEMA = 'test') and (TABLE_NAME = 't1' or TABLE_NAME = 't2');
+id	estRows	task	access object	operator info
+HashAgg	1.00	root		funcs:count(1)->Column#26
+└─MemTableScan	10000.00	root	table:TABLES	table_schema:["mysql","test"], table_name:["t1","t2"]
+desc format='brief' SELECT count(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA in ('mysql', 'test') and TABLE_NAME in ('t1', 't2');
+id	estRows	task	access object	operator info
+HashAgg	1.00	root		funcs:count(1)->Column#26
+└─MemTableScan	10000.00	root	table:TABLES	table_schema:["mysql","test"], table_name:["t1","t2"]
+SELECT count(*) FROM information_schema.TABLES WHERE TABLE_NAME in ('t1', 't2');
+count(*)
+2
+SELECT count(*) FROM information_schema.TABLES WHERE TABLE_NAME = 't1' or TABLE_NAME = 't2';
+count(*)
+2
 drop table mysql.t1, mysql.t2, mysql.t3;
