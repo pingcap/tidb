@@ -1680,18 +1680,11 @@ func (e *TiKVRegionStatusExtractor) GetTablesID() []int64 {
 // InfoSchemaTablesExtractor is used to extract infoSchema tables related predictions
 type InfoSchemaTablesExtractor struct {
 	extractHelper
-	initialized bool
 	// SkipRequest means the where clause always false, we don't need to request any component
 	SkipRequest bool
 
 	colNames      []string
 	ColPredicates map[string]set.StringSet
-}
-
-func (b *InfoSchemaTablesExtractor) initialize() {
-	b.colNames = []string{"table_schema", "table_name"}
-	b.ColPredicates = make(map[string]set.StringSet)
-	b.initialized = true
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
@@ -1702,9 +1695,8 @@ func (b *InfoSchemaTablesExtractor) Extract(_ sessionctx.Context,
 ) (remained []expression.Expression) {
 	var resultSet set.StringSet
 	var skipRequest bool
-	if !b.initialized {
-		b.initialize()
-	}
+	b.colNames = []string{"table_schema", "table_name"}
+	b.ColPredicates = make(map[string]set.StringSet)
 	remained = predicates
 	for _, colName := range b.colNames {
 		remained, skipRequest, resultSet = b.extractCol(schema, names, remained, colName, true)
@@ -1733,15 +1725,16 @@ func (b *InfoSchemaTablesExtractor) explainInfo(_ *PhysicalMemTable) string {
 	return s
 }
 
-// ApplyFilter use the col predicates to filter records.
-func (b *InfoSchemaTablesExtractor) ApplyFilter(colName string, val any) bool {
+// Filter use the col predicates to filter records.
+func (b *InfoSchemaTablesExtractor) Filter(colName string, val any) bool {
 	if b.SkipRequest {
 		return true
 	}
 	predVals, ok := b.ColPredicates[colName]
 	valStr := val.(string)
 	if ok && len(predVals) > 0 {
-		return predVals.Exist(valStr)
+		return !predVals.Exist(valStr)
 	}
-	return true
+	// No need to filter records since no predicate for the column exists.
+	return false
 }
