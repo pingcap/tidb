@@ -76,6 +76,8 @@ type Pool interface {
 type TaskExecutor interface {
 	// Init initializes the TaskExecutor, the returned error is fatal, it will fail
 	// the task directly, so be careful what to put into it.
+	// The context passing in is Manager.ctx, don't use it to init long-running routines,
+	// as it will NOT be cancelled when the task is finished.
 	Init(context.Context) error
 	// Run runs the task with given resource, it will try to run each step one by
 	// one, if it cannot find any subtask to run for a while(10s now), it will exit,

@@ -142,7 +142,9 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 		return err
 	}
 	pdLeaderAddr := d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
-	bc, err := ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
+	// TODO: local backend should be inited when step executor is created.
+	// TODO here we have to use executor ctx to avoid it keeps running when task is canceled.
+	bc, err := ingest.LitBackCtxMgr.Register(s.BaseTaskExecutor.Ctx(), unique, job.ID, d.etcdCli, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		return errors.Trace(err)
 	}

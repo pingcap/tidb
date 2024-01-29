@@ -520,7 +520,7 @@ func (*importExecutor) GetStepExecutor(task *proto.Task, _ *execute.Summary, _ *
 
 func (e *importExecutor) Close() {
 	task := e.GetTask()
-	defer metricsManager.unregister(task.ID)
+	metricsManager.unregister(task.ID)
 	e.BaseTaskExecutor.Close()
 }
 

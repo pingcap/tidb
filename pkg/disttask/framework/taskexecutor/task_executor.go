@@ -150,6 +150,12 @@ func (*BaseTaskExecutor) Init(_ context.Context) error {
 	return nil
 }
 
+// Ctx returns the context of the task executor.
+// TODO: remove it when add-index.taskexecutor.Init don't depends on it.
+func (e *BaseTaskExecutor) Ctx() context.Context {
+	return e.ctx
+}
+
 // Run implements the TaskExecutor interface.
 func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 	var err error
@@ -191,6 +197,7 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 			continue
 		} else if !exist {
 			if noSubtaskCheckCnt >= maxChecksWhenNoSubtask {
+				e.logger.Info("no subtask to run for a while, exit")
 				break
 			}
 			checkInterval = backoffer.Backoff(noSubtaskCheckCnt)
