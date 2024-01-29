@@ -51,8 +51,8 @@ type HashAggFinalWorker struct {
 	finalResultHolderCh chan *chunk.Chunk
 	groupKeys           [][]byte
 
-	spillHelper        *parallelHashAggSpillHelper
-	isSpilledTriggered bool
+	spillHelper  *parallelHashAggSpillHelper
+	isDataInDisk bool
 
 	restoredAggResultMapperMem int64
 }
@@ -191,12 +191,12 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 
 	execStart := time.Now()
 	defer w.increaseExecTime(execStart)
-	if w.isSpilledTriggered {
+	if w.isDataInDisk {
 		for {
 			if w.checkFinishChClosed() {
 				return
 			}
-			
+
 			eof, hasError := w.restoreDataFromDisk(sctx)
 			if hasError {
 				return
@@ -251,8 +251,8 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 		}
 	})
 
-	w.isSpilledTriggered = w.spillHelper.isSpillTriggered()
-	if w.isSpilledTriggered {
+	w.isDataInDisk = !w.spillHelper.isSpilledChunksIOEmpty()
+	if w.isDataInDisk {
 		if w.spillHelper.checkError() {
 			return
 		}

@@ -313,7 +313,7 @@ func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 			mutableRow:                 chunk.MutRowFromTypes(exec.RetTypes(e)),
 			groupKeys:                  make([][]byte, 0, 8),
 			spillHelper:                e.spillHelper,
-			isSpilledTriggered:         false,
+			isDataInDisk:               false,
 			restoredAggResultMapperMem: 0,
 		}
 		// There is a bucket in the empty partialResultsMap.
@@ -408,6 +408,10 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		if e.spillHelper.isSpillTriggered() && !e.spillHelper.checkError() {
 			// Spill the remaining data
 			e.spill()
+
+			for i := range e.partialWorkers {
+				e.spillHelper.addListInDisks(e.partialWorkers[i].spilledChunksIO)
+			}
 		}
 
 		for i := range e.partialInputChs {

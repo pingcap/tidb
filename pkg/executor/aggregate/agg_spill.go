@@ -116,6 +116,17 @@ func (p *parallelHashAggSpillHelper) close() {
 	}
 }
 
+func (p *parallelHashAggSpillHelper) isSpilledChunksIOEmpty() bool {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	for i := range p.lock.spilledChunksIO {
+		if len(p.lock.spilledChunksIO[i]) > 0 {
+			return false
+		}
+	}
+	return true
+}
+
 func (p *parallelHashAggSpillHelper) getNextPartition() (int, bool) {
 	p.lock.Lock()
 	defer p.lock.Unlock()

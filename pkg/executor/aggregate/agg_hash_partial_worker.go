@@ -174,12 +174,7 @@ func (w *HashAggPartialWorker) sendDataToFinalWorkersBeforeExit(needShuffle bool
 		return
 	}
 
-	if w.spillHelper.isSpillTriggered() {
-		w.spillHelper.addListInDisks(w.spilledChunksIO)
-		return
-	}
-
-	if needShuffle {
+	if needShuffle && w.spillHelper.isSpilledChunksIOEmpty() {
 		w.shuffleIntermData(finalConcurrency)
 	}
 }
