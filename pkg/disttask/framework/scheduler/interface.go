@@ -133,9 +133,10 @@ type Extension interface {
 
 // Param is used to pass parameters when creating scheduler.
 type Param struct {
-	taskMgr TaskManager
-	nodeMgr *NodeManager
-	slotMgr *SlotManager
+	taskMgr  TaskManager
+	nodeMgr  *NodeManager
+	slotMgr  *SlotManager
+	serverID string
 }
 
 // schedulerFactoryFn is used to create a scheduler.

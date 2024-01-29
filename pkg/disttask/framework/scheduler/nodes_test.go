@@ -42,7 +42,7 @@ func TestMaintainLiveNodes(t *testing.T) {
 		{Port: 4000},
 	}
 
-	nodeMgr := newNodeManager()
+	nodeMgr := newNodeManager("")
 	ctx := context.Background()
 	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return(nil, errors.New("mock error"))
 	nodeMgr.maintainLiveNodes(ctx, mockTaskMgr)
@@ -102,7 +102,7 @@ func TestMaintainManagedNodes(t *testing.T) {
 	defer ctrl.Finish()
 	ctx := context.Background()
 	mockTaskMgr := mock.NewMockTaskManager(ctrl)
-	nodeMgr := newNodeManager()
+	nodeMgr := newNodeManager("")
 
 	slotMgr := newSlotManager()
 	mockTaskMgr.EXPECT().GetManagedNodes(gomock.Any()).Return(nil, errors.New("mock error"))
