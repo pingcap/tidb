@@ -1678,7 +1678,7 @@ func (e *TiKVRegionStatusExtractor) GetTablesID() []int64 {
 	return e.tablesID
 }
 
-// InfoSchemaTablesExtractor is used to extract infoSchema tables related predictions
+// InfoSchemaTablesExtractor is used to extract infoSchema tables related predicates.
 type InfoSchemaTablesExtractor struct {
 	extractHelper
 	// SkipRequest means the where clause always false, we don't need to request any component
