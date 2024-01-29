@@ -104,6 +104,17 @@ type KeyRange struct {
 	XXXsizecache        int32
 }
 
+func KeyRangeSliceMemUsage(k []KeyRange) int64 {
+	const sizeofKeyRange = int64(unsafe.Sizeof(*(*KeyRange)(nil)))
+
+	res := sizeofKeyRange * int64(cap(k))
+	for _, m := range k {
+		res += int64(cap(m.StartKey)) + int64(cap(m.EndKey)) + int64(cap(m.XXXunrecognized))
+	}
+
+	return res
+}
+
 // IsPoint checks if the key range represents a point.
 func (r *KeyRange) IsPoint() bool {
 	if len(r.StartKey) != len(r.EndKey) {
@@ -406,8 +417,8 @@ type strHandleVal struct {
 	val interface{}
 }
 
-const sizeofHandleMap = int64(unsafe.Sizeof(*(*HandleMap)(nil)))
-const sizeofStrHandleVal = int64(unsafe.Sizeof(*(*strHandleVal)(nil)))
+const SizeofHandleMap = int64(unsafe.Sizeof(*(*HandleMap)(nil)))
+const SizeofStrHandleVal = int64(unsafe.Sizeof(*(*strHandleVal)(nil)))
 
 // NewHandleMap creates a new map for handle.
 func NewHandleMap() *HandleMap {
@@ -444,7 +455,7 @@ func (m *HandleMap) Get(h Handle) (v interface{}, ok bool) {
 func calcStrsMemUsage(strs map[string]strHandleVal) int64 {
 	res := int64(0)
 	for key := range strs {
-		res += size.SizeOfString + int64(len(key)) + sizeofStrHandleVal
+		res += size.SizeOfString + int64(len(key)) + SizeofStrHandleVal
 	}
 	return res
 }
@@ -455,7 +466,7 @@ func calcIntsMemUsage(ints map[int64]interface{}) int64 {
 
 // MemUsage gets the memory usage.
 func (m *HandleMap) MemUsage() int64 {
-	res := sizeofHandleMap
+	res := SizeofHandleMap
 	res += int64(len(m.partitionInts)) * (size.SizeOfInt64 + size.SizeOfMap)
 	for _, v := range m.partitionInts {
 		res += calcIntsMemUsage(v)

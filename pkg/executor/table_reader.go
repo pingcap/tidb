@@ -131,8 +131,6 @@ type TableReaderExecutor struct {
 	dummy bool
 }
 
-const sizeofTableReaderExecutor = int64(unsafe.Sizeof(*(*TableReaderExecutor)(nil)))
-
 // Table implements the dataSourceExecutor interface.
 func (e *TableReaderExecutor) Table() table.Table {
 	return e.table
@@ -143,15 +141,14 @@ func (e *TableReaderExecutor) setDummy() {
 }
 
 func (e *TableReaderExecutor) memUsage() int64 {
+	const sizeofTableReaderExecutor = int64(unsafe.Sizeof(*(*TableReaderExecutor)(nil)))
+
 	res := sizeofTableReaderExecutor
 	res += size.SizeOfPointer * int64(cap(e.ranges))
 	for _, v := range e.ranges {
 		res += v.MemUsage()
 	}
-	res += int64(unsafe.Sizeof(*(*kv.KeyRange)(nil))) * int64(cap(e.kvRanges))
-	for _, m := range e.kvRanges {
-		res += int64(cap(m.StartKey)) + int64(cap(m.EndKey)) + int64(cap(m.XXXunrecognized))
-	}
+	res += kv.KeyRangeSliceMemUsage(e.kvRanges)
 	res += int64(e.dagPB.Size())
 	// TODO: add more statistics
 	return res

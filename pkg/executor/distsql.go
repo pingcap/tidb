@@ -817,7 +817,6 @@ func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookup
 		logutil.Logger(ctx).Error("build table reader from handles failed", zap.Error(err))
 		return nil, err
 	}
-
 	return tableReader, nil
 }
 
@@ -1466,12 +1465,16 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	{
 		task.memTracker = w.memTracker
 		memUsage := int64(cap(task.handles))*size.SizeOfInterface + tableReader.memUsage()
+		for _, h := range task.handles {
+			memUsage += int64(h.MemUsage())
+		}
 		if task.indexOrder != nil {
 			memUsage += task.indexOrder.MemUsage()
 		}
 		if task.duplicatedIndexOrder != nil {
 			memUsage += task.duplicatedIndexOrder.MemUsage()
 		}
+		memUsage += task.idxRows.MemoryUsage()
 		task.memUsage = memUsage
 		task.memTracker.Consume(memUsage)
 	}

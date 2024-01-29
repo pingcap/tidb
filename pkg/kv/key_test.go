@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -167,21 +168,33 @@ func TestHandleMap(t *testing.T) {
 	m := NewHandleMap()
 	h := IntHandle(1)
 
+	assert.Equal(t, SizeofHandleMap, m.MemUsage())
+
 	m.Set(h, 1)
 	v, ok := m.Get(h)
 	assert.True(t, ok)
 	assert.Equal(t, 1, v)
+
+	assert.Equal(t, SizeofHandleMap+size.SizeOfInt64+size.SizeOfInterface, m.MemUsage())
 
 	m.Delete(h)
 	v, ok = m.Get(h)
 	assert.False(t, ok)
 	assert.Nil(t, v)
 
+	assert.Equal(t, SizeofHandleMap, m.MemUsage())
+
 	ch := testutil.MustNewCommonHandle(t, 100, "abc")
 	m.Set(ch, "a")
 	v, ok = m.Get(ch)
 	assert.True(t, ok)
 	assert.Equal(t, "a", v)
+
+	{
+		key := string(ch.Encoded())
+		sz := size.SizeOfString + int64(len(key)) + SizeofStrHandleVal
+		assert.Equal(t, SizeofHandleMap+sz, m.MemUsage())
+	}
 
 	m.Delete(ch)
 	v, ok = m.Get(ch)
