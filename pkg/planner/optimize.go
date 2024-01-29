@@ -163,7 +163,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx.GetSessionVars().StmtCtx)
-	originStmtHints, _, warns := hint.ParseStmtHints(tableHints, setVarHintChecker)
+	originStmtHints, _, warns := hint.ParseStmtHints(tableHints, setVarHintChecker, byte(kv.ReplicaReadFollower))
 	sessVars.StmtCtx.StmtHints = originStmtHints
 	for _, warn := range warns {
 		sessVars.StmtCtx.AppendWarning(warn)
@@ -282,7 +282,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			}
 			metrics.BindUsageCounter.WithLabelValues(scope).Inc()
 			hint.BindHint(stmtNode, binding.Hint)
-			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetFirstTableHints(), setVarHintChecker)
+			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetFirstTableHints(), setVarHintChecker, byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints
 			// update session var by hint /set_var/
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {

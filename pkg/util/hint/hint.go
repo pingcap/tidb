@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	mysql "github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -273,7 +272,8 @@ func (sh *StmtHints) Clone() *StmtHints {
 
 // ParseStmtHints parses statement hints.
 func ParseStmtHints(hints []*ast.TableOptimizerHint,
-	setVarHintChecker func(varName, hint string) (ok bool, warning error)) (
+	setVarHintChecker func(varName, hint string) (ok bool, warning error),
+	replicaReadFollower byte) ( // to avoid cycle import
 	stmtHints StmtHints, offs []int, warns []error) {
 	if len(hints) == 0 {
 		return
@@ -401,7 +401,7 @@ func ParseStmtHints(hints []*ast.TableOptimizerHint,
 			warns = append(warns, warn)
 		}
 		stmtHints.HasReplicaReadHint = true
-		stmtHints.ReplicaRead = byte(kv.ReplicaReadFollower)
+		stmtHints.ReplicaRead = replicaReadFollower
 	}
 	// Handle MAX_EXECUTION_TIME
 	if maxExecutionTimeCnt != 0 {
