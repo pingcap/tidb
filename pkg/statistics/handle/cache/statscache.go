@@ -171,6 +171,7 @@ func (s *StatsCacheImpl) UpdateStatsCache(tables []*statistics.Table, deletedIDs
 	if enableQuota := config.GetGlobalConfig().Performance.EnableStatsCacheMemQuota; enableQuota {
 		s.Load().Update(tables, deletedIDs)
 	} else {
+		// TODO: remove this branch because we will always enable quota.
 		newCache := s.Load().CopyAndUpdate(tables, deletedIDs)
 		s.replace(newCache)
 	}
@@ -182,6 +183,7 @@ func (s *StatsCacheImpl) Close() {
 }
 
 // Clear clears this cache.
+// Create a empty cache and replace the old one.
 func (s *StatsCacheImpl) Clear() {
 	cache, err := NewStatsCache()
 	if err != nil {
