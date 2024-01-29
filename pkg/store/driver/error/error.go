@@ -118,20 +118,19 @@ func ToTiDBErr(err error) error {
 		return ErrTiFlashServerTimeout
 	}
 
-	// TODO: the definitions of the signals are in executor
 	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.QueryInterrupted}) {
-		// TODO: This error is defined here, while others are using exeerrors. Maybe unify them?
+		// TODO: This error is defined here, while others are using exeerrors as in sql killer. Maybe unify them?
 		return ErrQueryInterrupted
 	}
 	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.MaxExecTimeExceeded}) {
 		return exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
 	}
 	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.QueryMemoryExceeded}) {
-		// connection id is unkonwn in client
+		// connection id is unknown in client, which should be logged or filled by upper layers
 		return exeerrors.ErrMemoryExceedForQuery.GenWithStackByArgs(-1)
 	}
 	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.ServerMemoryExceeded}) {
-		// connection id is unknown in client
+		// connection id is unknown in client, which should be logged or filled by upper layers
 		return exeerrors.ErrMemoryExceedForInstance.GenWithStackByArgs(-1)
 	}
 
