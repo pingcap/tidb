@@ -1889,7 +1889,6 @@ func TestInformSchemaTableExtract(t *testing.T) {
 			sql:         "select * from information_schema.STATISTICS where table_name ='t' and table_schema ='A' and table_schema = 'b'",
 			skipRequest: true,
 			colPredicates: map[string]set.StringSet{
-				"table_name":   set.NewStringSet(),
 				"table_schema": set.NewStringSet(),
 			},
 		},
