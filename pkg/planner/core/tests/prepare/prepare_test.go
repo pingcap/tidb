@@ -1613,5 +1613,4 @@ func TestHashPartitionAndPlanCache(t *testing.T) {
 		[][]any{
 			{"Point_Get_1"},
 		})
-
 }
