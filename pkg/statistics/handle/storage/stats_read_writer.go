@@ -248,14 +248,9 @@ func (s *statsReadWriter) UpdateStatsMetaDelta(tableID int64, count, delta int64
 }
 
 // TableStatsFromStorage loads table stats info from storage.
-func (s *statsReadWriter) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool, snapshot uint64) (statsTbl *statistics.Table, err error) {
+func (s *statsReadWriter) TableStatsFromStorage(tableInfo *model.TableInfo, physicalID int64, loadAll bool) (statsTbl *statistics.Table, err error) {
 	err = util.CallWithSCtx(s.statsHandler.SPool(), func(sctx sessionctx.Context) error {
-		var ok bool
-		statsTbl, ok = s.statsHandler.Get(physicalID)
-		if !ok {
-			statsTbl = nil
-		}
-		statsTbl, err = TableStatsFromStorage(sctx, snapshot, tableInfo, physicalID, loadAll, s.statsHandler.Lease(), statsTbl)
+		statsTbl, err = TableStatsFromStorage(sctx, tableInfo, physicalID, loadAll, s.statsHandler.Lease())
 		return err
 	}, util.FlagWrapTxn)
 	return
@@ -343,7 +338,7 @@ func (s *statsReadWriter) SaveExtendedStatsToStorage(tableID int64, extStats *st
 
 func (s *statsReadWriter) LoadTablePartitionStats(tableInfo *model.TableInfo, partitionDef *model.PartitionDefinition) (*statistics.Table, error) {
 	var partitionStats *statistics.Table
-	partitionStats, err := s.TableStatsFromStorage(tableInfo, partitionDef.ID, true, 0)
+	partitionStats, err := s.TableStatsFromStorage(tableInfo, partitionDef.ID, true)
 	if err != nil {
 		return nil, err
 	}
@@ -578,7 +573,7 @@ func (s *statsReadWriter) tableHistoricalStatsToJSON(physicalID int64, snapshot 
 
 // TableStatsToJSON dumps statistic to json.
 func (s *statsReadWriter) TableStatsToJSON(dbName string, tableInfo *model.TableInfo, physicalID int64, snapshot uint64) (*util.JSONTable, error) {
-	tbl, err := s.TableStatsFromStorage(tableInfo, physicalID, true, snapshot)
+	tbl, err := s.TableStatsFromStorage(tableInfo, physicalID, true)
 	if err != nil || tbl == nil {
 		return nil, err
 	}

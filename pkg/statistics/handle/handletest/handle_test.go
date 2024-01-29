@@ -1121,7 +1121,7 @@ func TestLoadHistogramWithCollate(t *testing.T) {
 	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
-	_, err = h.TableStatsFromStorage(tblInfo, tblInfo.ID, true, 0)
+	_, err = h.TableStatsFromStorage(tblInfo, tblInfo.ID, true)
 	require.NoError(t, err)
 }
 
