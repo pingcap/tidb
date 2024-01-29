@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -125,7 +126,7 @@ type Engine struct {
 	importedKVCount *atomic.Int64
 }
 
-const memLimit = 12 * 1024 * 1024 * 1024
+const memLimit = 12 * units.GiB
 
 // NewExternalEngine creates an (external) engine.
 func NewExternalEngine(
