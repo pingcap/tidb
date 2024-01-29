@@ -200,14 +200,9 @@ func intestBeforePartialWorkerRun() {
 // Consume all chunks to avoid hang of fetcher
 func (w *HashAggPartialWorker) consumeAllChunksBeforeExit() {
 	for {
-		chk, ok := <-w.inputCh
+		_, ok := <-w.inputCh
 		if !ok {
 			break
-		}
-		w.chk.SwapColumns(chk)
-		w.giveBackCh <- &HashAggInput{
-			chk:        chk,
-			giveBackCh: w.inputCh,
 		}
 		w.inflightChunkSync.Done()
 	}
