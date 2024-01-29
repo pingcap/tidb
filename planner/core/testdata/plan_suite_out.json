@@ -1188,7 +1188,7 @@
       },
       {
         "SQL": "select a from t where c_str like 'abc_'",
-        "Best": "IndexReader(Index(t.c_d_e_str)[(\"abc\",\"abd\")]->Sel([like(test.t.c_str, abc_, 92)]))->Projection"
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc\",\"abd\")]->Sel([like(test.t.c_str, abc_, 92)]))->Projection"
       },
       {
         "SQL": "select a from t where c_str like 'abc%af'",
@@ -1216,7 +1216,7 @@
       },
       {
         "SQL": "select a from t where c_str like 'abc\\__'",
-        "Best": "IndexReader(Index(t.c_d_e_str)[(\"abc_\",\"abc`\")]->Sel([like(test.t.c_str, abc\\__, 92)]))->Projection"
+        "Best": "IndexReader(Index(t.c_d_e_str)[[\"abc_\",\"abc`\")]->Sel([like(test.t.c_str, abc\\__, 92)]))->Projection"
       },
       {
         "SQL": "select a from t where c_str like 123",
@@ -6941,6 +6941,104 @@
           "  ├─IndexRangeScan(Build) 10.00 cop[tikv] table:t, index:idx2(b, c) range:[2,2], keep order:false, stats:pseudo",
           "  └─Selection(Probe) 0.06 cop[tikv]  in(test.t.c, 1, 2, 3)",
           "    └─TableRowIDScan 19.99 cop[tikv] table:t keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      }
+    ]
+  },
+  {
+    "Name": "TestIssues49377Plan",
+    "Cases": [
+      {
+        "SQL": "select 1,1,1 union all ((select * from employee where dept_id = 1)  union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 );",
+        "Plan": [
+          "Union 21.00 root  ",
+          "├─Projection 1.00 root  1->Column#15, 1->Column#16, 1->Column#17",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─Projection 20.00 root  cast(Column#12, bigint(11) BINARY)->Column#15, Column#13, cast(Column#14, bigint(11) BINARY)->Column#17",
+          "  └─Sort 20.00 root  Column#12",
+          "    └─Union 20.00 root  ",
+          "      ├─TableReader 10.00 root  data:Selection",
+          "      │ └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "      └─Sort 10.00 root  test.employee.employee_id",
+          "        └─TableReader 10.00 root  data:Selection",
+          "          └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "            └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select 1,1,1 union all ((select * from employee where dept_id = 1)  union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);",
+        "Plan": [
+          "Union 2.00 root  ",
+          "├─Projection 1.00 root  1->Column#15, 1->Column#16, 1->Column#17",
+          "│ └─TableDual 1.00 root  rows:1",
+          "└─Projection 1.00 root  cast(Column#12, bigint(11) BINARY)->Column#15, Column#13, cast(Column#14, bigint(11) BINARY)->Column#17",
+          "  └─TopN 1.00 root  Column#12, offset:0, count:1",
+          "    └─Union 2.00 root  ",
+          "      ├─TopN 1.00 root  test.employee.employee_id, offset:0, count:1",
+          "      │ └─TableReader 1.00 root  data:TopN",
+          "      │   └─TopN 1.00 cop[tikv]  test.employee.employee_id, offset:0, count:1",
+          "      │     └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "      │       └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "      └─TopN 1.00 root  test.employee.employee_id, offset:0, count:1",
+          "        └─TableReader 1.00 root  data:TopN",
+          "          └─TopN 1.00 cop[tikv]  test.employee.employee_id, offset:0, count:1",
+          "            └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "              └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) limit 1);",
+        "Plan": [
+          "Union 21.00 root  ",
+          "├─TableReader 10.00 root  data:Selection",
+          "│ └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "├─Sort 10.00 root  test.employee.employee_id",
+          "│ └─TableReader 10.00 root  data:Selection",
+          "│   └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "└─Limit 1.00 root  offset:0, count:1",
+          "  └─Union 1.00 root  ",
+          "    ├─Limit 1.00 root  offset:0, count:1",
+          "    │ └─TableReader 1.00 root  data:Limit",
+          "    │   └─Limit 1.00 cop[tikv]  offset:0, count:1",
+          "    │     └─Selection 1.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "    │       └─TableFullScan 1000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "    └─TopN 1.00 root  test.employee.employee_id, offset:0, count:1",
+          "      └─TableReader 1.00 root  data:TopN",
+          "        └─TopN 1.00 cop[tikv]  test.employee.employee_id, offset:0, count:1",
+          "          └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "            └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id) union all ( select * from employee where dept_id = 1 union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);",
+        "Plan": [
+          "Union 21.00 root  ",
+          "├─TableReader 10.00 root  data:Selection",
+          "│ └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "├─Sort 10.00 root  test.employee.employee_id",
+          "│ └─TableReader 10.00 root  data:Selection",
+          "│   └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "└─TopN 1.00 root  Column#17, offset:0, count:1",
+          "  └─Union 2.00 root  ",
+          "    ├─TopN 1.00 root  test.employee.employee_id, offset:0, count:1",
+          "    │ └─TableReader 1.00 root  data:TopN",
+          "    │   └─TopN 1.00 cop[tikv]  test.employee.employee_id, offset:0, count:1",
+          "    │     └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "    │       └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo",
+          "    └─TopN 1.00 root  test.employee.employee_id, offset:0, count:1",
+          "      └─TableReader 1.00 root  data:TopN",
+          "        └─TopN 1.00 cop[tikv]  test.employee.employee_id, offset:0, count:1",
+          "          └─Selection 10.00 cop[tikv]  eq(test.employee.dept_id, 1)",
+          "            └─TableFullScan 10000.00 cop[tikv] table:employee keep order:false, stats:pseudo"
         ],
         "Warning": null
       }

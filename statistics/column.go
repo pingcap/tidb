@@ -16,7 +16,6 @@ package statistics
 
 import (
 	"math"
-	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/parser/model"
@@ -123,7 +122,9 @@ func (c *Column) IsInvalid(sctx sessionctx.Context, collPseudo bool) bool {
 		if c.IsLoadNeeded() && stmtctx != nil {
 			if stmtctx.StatsLoad.Timeout > 0 {
 				logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
-					zap.String(strconv.FormatInt(c.Info.ID, 10), c.Info.Name.O))
+					zap.Int64("table_id", c.PhysicalID),
+					zap.Int64("column_id", c.Info.ID),
+					zap.String("column_name", c.Info.Name.O))
 			}
 			// In some tests, the c.Info is not set, so we add this check here.
 			if c.Info != nil {

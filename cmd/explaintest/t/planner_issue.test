@@ -1,0 +1,10 @@
+# https://github.com/pingcap/tidb/issues/48983
+drop table if exists t1, t2;
+create table t1(a varchar(20) collate utf8mb4_bin, index ia(a));
+insert into t1 value('测试'),('测试  '),('xxx ');
+explain format = brief select *,length(a) from t1 where a like '测试 %';
+explain format = brief select *,length(a) from t1 where a like '测试';
+select *,length(a) from t1 where a like '测试 %';
+select *,length(a) from t1 where a like '测试';
+explain format = brief select * from t1 use index (ia) where a like 'xxx_';
+select * from t1 use index (ia) where a like 'xxx_';

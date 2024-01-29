@@ -61,11 +61,11 @@ type TableCommon struct {
 	// physicalTableID is a unique int64 to identify a physical table.
 	physicalTableID                 int64
 	Columns                         []*table.Column
-	PublicColumns                   []*table.Column
-	VisibleColumns                  []*table.Column
-	HiddenColumns                   []*table.Column
-	WritableColumns                 []*table.Column
-	FullHiddenColsAndVisibleColumns []*table.Column
+	publicColumns                   []*table.Column
+	visibleColumns                  []*table.Column
+	hiddenColumns                   []*table.Column
+	writableColumns                 []*table.Column
+	fullHiddenColsAndVisibleColumns []*table.Column
 	indices                         []table.Index
 	meta                            *model.TableInfo
 	allocs                          autoid.Allocators
@@ -169,11 +169,6 @@ func initTableCommon(t *TableCommon, tblInfo *model.TableInfo, physicalTableID i
 	t.allocs = allocs
 	t.meta = tblInfo
 	t.Columns = cols
-	t.PublicColumns = t.Cols()
-	t.VisibleColumns = t.VisibleCols()
-	t.HiddenColumns = t.HiddenCols()
-	t.WritableColumns = t.WritableCols()
-	t.FullHiddenColsAndVisibleColumns = t.FullHiddenColsAndVisibleCols()
 	t.recordPrefix = tablecodec.GenTableRecordPrefix(physicalTableID)
 	t.indexPrefix = tablecodec.GenTableIndexPrefix(physicalTableID)
 	if tblInfo.IsSequence() {
@@ -260,32 +255,32 @@ func (t *TableCommon) getCols(mode getColsMode) []*table.Column {
 
 // Cols implements table.Table Cols interface.
 func (t *TableCommon) Cols() []*table.Column {
-	if len(t.PublicColumns) > 0 {
-		return t.PublicColumns
+	if len(t.publicColumns) > 0 {
+		return t.publicColumns
 	}
 	return t.getCols(full)
 }
 
 // VisibleCols implements table.Table VisibleCols interface.
 func (t *TableCommon) VisibleCols() []*table.Column {
-	if len(t.VisibleColumns) > 0 {
-		return t.VisibleColumns
+	if len(t.visibleColumns) > 0 {
+		return t.visibleColumns
 	}
 	return t.getCols(visible)
 }
 
 // HiddenCols implements table.Table HiddenCols interface.
 func (t *TableCommon) HiddenCols() []*table.Column {
-	if len(t.HiddenColumns) > 0 {
-		return t.HiddenColumns
+	if len(t.hiddenColumns) > 0 {
+		return t.hiddenColumns
 	}
 	return t.getCols(hidden)
 }
 
 // WritableCols implements table WritableCols interface.
 func (t *TableCommon) WritableCols() []*table.Column {
-	if len(t.WritableColumns) > 0 {
-		return t.WritableColumns
+	if len(t.writableColumns) > 0 {
+		return t.writableColumns
 	}
 	writableColumns := make([]*table.Column, 0, len(t.Columns))
 	for _, col := range t.Columns {
@@ -304,8 +299,8 @@ func (t *TableCommon) DeletableCols() []*table.Column {
 
 // FullHiddenColsAndVisibleCols implements table FullHiddenColsAndVisibleCols interface.
 func (t *TableCommon) FullHiddenColsAndVisibleCols() []*table.Column {
-	if len(t.FullHiddenColsAndVisibleColumns) > 0 {
-		return t.FullHiddenColsAndVisibleColumns
+	if len(t.fullHiddenColsAndVisibleColumns) > 0 {
+		return t.fullHiddenColsAndVisibleColumns
 	}
 
 	cols := make([]*table.Column, 0, len(t.Columns))

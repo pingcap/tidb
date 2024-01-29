@@ -2973,8 +2973,8 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sum = "h1:tBKPWWqgWEBs04BV4UN7RhtUkZDs0oz+WyMbtRDVtL8=",
-        version = "v0.0.0-20230928035022-1bdcc25ed63c",
+        sum = "h1:ZWFeZNN+6poqqEQ3XU6M/Gw6oiNexbDD3yqIZ05GxlM=",
+        version = "v0.0.0-20240112060601-a0e3fbb1eeee",
     )
     go_repository(
         name = "com_github_pingcap_log",
@@ -4787,14 +4787,16 @@ def go_deps():
         name = "com_sourcegraph_sourcegraph_appdash",
         build_file_proto_mode = "disable_global",
         importpath = "sourcegraph.com/sourcegraph/appdash",
-        sum = "h1:ucqkfpjg9WzSUubAO62csmucvxl4/JeW3F4I4909XkM=",
+        replace = "github.com/sourcegraph/appdash",
+        sum = "h1:IJ3DuWHPTJrsqtIqjfdmPTELdTFGefvrOa2eTeRBleQ=",
         version = "v0.0.0-20190731080439-ebfcffb1b5c0",
     )
     go_repository(
         name = "com_sourcegraph_sourcegraph_appdash_data",
         build_file_proto_mode = "disable_global",
         importpath = "sourcegraph.com/sourcegraph/appdash-data",
-        sum = "h1:e1sMhtVq9AfcEy8AXNb8eSg6gbzfdpYhoNqnPJa+GzI=",
+        replace = "github.com/sourcegraph/appdash-data",
+        sum = "h1:8ZnTA26bBOoPkAbbitKPgNlpw0Bwt7ZlpYgZWHWJR/w=",
         version = "v0.0.0-20151005221446-73f23eafcf67",
     )
     go_repository(

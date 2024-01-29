@@ -3188,7 +3188,7 @@ func TestUnknowHintIgnore(t *testing.T) {
 	tk.MustExec("USE test")
 	tk.MustExec("create table t(a int)")
 	tk.MustQuery("select /*+ unknown_hint(c1)*/ 1").Check(testkit.Rows("1"))
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1064 Optimizer hint syntax error at line 1 column 23 near \"unknown_hint(c1)*/\" "))
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 8061 Optimizer hint unknown_hint is not supported by TiDB and is ignored"))
 	rs, err := tk.Exec("select 1 from /*+ test1() */ t")
 	require.NoError(t, err)
 	rs.Close()
@@ -7972,4 +7972,15 @@ func TestIssue41986(t *testing.T) {
 	tk.MustExec("insert into poi_clearing_time_topic values ('2023:08:25', 1)")
 	// shouldn't report they can't find column error and return the right result.
 	tk.MustQuery("SELECT GROUP_CONCAT(effective_date order by stlmnt_hour DESC) FROM ( SELECT (COALESCE(pct.clearing_time, 0)/3600000) AS stlmnt_hour ,COALESCE(pct.effective_date, '1970-01-01 08:00:00') AS effective_date FROM poi_clearing_time_topic pct ORDER BY pct.effective_date DESC ) a;").Check(testkit.Rows("2023-08-25 00:00:00"))
+}
+
+func TestIssue49526(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	rows := tk.MustQuery("explain select null as a union all select 'a' as a;").Rows()
+	for _, r := range rows {
+		require.NotContains(t, r[4], "from_binary")
+	}
+	tk.MustQuery("select null as a union all select 'a' as a;").Sort().Check(testkit.Rows("<nil>", "a"))
 }

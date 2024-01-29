@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/util/tracing"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
 )
 
@@ -822,6 +823,18 @@ func GetOrdinalOfRangeCond(sc *stmtctx.StatementContext, ran *ranger.Range) int 
 		}
 	}
 	return len(ran.LowVal)
+}
+
+// ReleaseAndPutToPool releases data structures of Table and put itself back to pool.
+func (t *Table) ReleaseAndPutToPool() {
+	for _, col := range t.Columns {
+		col.FMSketch.DestroyAndPutToPool()
+	}
+	maps.Clear(t.Columns)
+	for _, idx := range t.Indices {
+		idx.FMSketch.DestroyAndPutToPool()
+	}
+	maps.Clear(t.Indices)
 }
 
 // ID2UniqueID generates a new HistColl whose `Columns` is built from UniqueID of given columns.

@@ -120,3 +120,26 @@ func TestHandleErrorMsg(t *testing.T) {
 	actualResult = ec.HandleErrorMsg(msg, uuid)
 	require.Equal(t, expectedResult, actualResult)
 }
+
+func TestFailNowIf(t *testing.T) {
+	mockBO := utils.InitialRetryState(100, time.Second, time.Second)
+	err1 := errors.New("error1")
+	err2 := errors.New("error2")
+	assert := require.New(t)
+
+	bo := utils.GiveUpRetryOn(&mockBO, err1)
+
+	// Test NextBackoff with an error that is not in failedOn
+	assert.Equal(time.Second, bo.NextBackoff(err2))
+	assert.NotEqualValues(0, bo.Attempt())
+
+	annotatedErr := errors.Annotate(errors.Annotate(err1, "meow?"), "nya?")
+	assert.Equal(time.Duration(0), bo.NextBackoff(annotatedErr))
+	assert.Equal(0, bo.Attempt())
+
+	mockBO = utils.InitialRetryState(100, time.Second, time.Second)
+	bo = utils.GiveUpRetryOn(&mockBO, berrors.ErrBackupNoLeader)
+	annotatedErr = berrors.ErrBackupNoLeader.FastGen("leader is taking an adventure")
+	assert.Equal(time.Duration(0), bo.NextBackoff(annotatedErr))
+	assert.Equal(0, bo.Attempt())
+}

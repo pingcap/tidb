@@ -6820,14 +6820,17 @@ OnDuplicateKeyUpdate:
  *
  **********************************************************************************/
 ReplaceIntoStmt:
-	"REPLACE" PriorityOpt IntoOpt TableName PartitionNameListOpt InsertValues
+	"REPLACE" TableOptimizerHintsOpt PriorityOpt IntoOpt TableName PartitionNameListOpt InsertValues
 	{
-		x := $6.(*ast.InsertStmt)
+		x := $7.(*ast.InsertStmt)
+		if $2 != nil {
+			x.TableHints = $2.([]*ast.TableOptimizerHint)
+		}
 		x.IsReplace = true
-		x.Priority = $2.(mysql.PriorityEnum)
-		ts := &ast.TableSource{Source: $4.(*ast.TableName)}
+		x.Priority = $3.(mysql.PriorityEnum)
+		ts := &ast.TableSource{Source: $5.(*ast.TableName)}
 		x.Table = &ast.TableRefsClause{TableRefs: &ast.Join{Left: ts}}
-		x.PartitionNames = $5.([]model.CIStr)
+		x.PartitionNames = $6.([]model.CIStr)
 		$$ = x
 	}
 
@@ -9754,15 +9757,21 @@ SetOprStmtWoutLimitOrderBy:
 		}
 		var setOprList2 []ast.Node
 		var with2 *ast.WithClause
+		var limit2 *ast.Limit
+		var orderBy2 *ast.OrderByClause
 		switch x := $3.(*ast.SubqueryExpr).Query.(type) {
 		case *ast.SelectStmt:
 			setOprList2 = []ast.Node{x}
 			with2 = x.With
 		case *ast.SetOprStmt:
+		    // child setOprStmt's limit and order should also make sense
+		    // we should separate it out from other normal SetOprSelectList.
 			setOprList2 = x.SelectList.Selects
 			with2 = x.With
+			limit2 = x.Limit
+			orderBy2 = x.OrderBy
 		}
-		nextSetOprList := &ast.SetOprSelectList{Selects: setOprList2, With: with2}
+		nextSetOprList := &ast.SetOprSelectList{Selects: setOprList2, With: with2, Limit: limit2, OrderBy: orderBy2}
 		nextSetOprList.AfterSetOperator = $2.(*ast.SetOprType)
 		setOprList := append(setOprList1, nextSetOprList)
 		setOpr := &ast.SetOprStmt{SelectList: &ast.SetOprSelectList{Selects: setOprList}}
