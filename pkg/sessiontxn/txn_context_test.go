@@ -359,35 +359,6 @@ func TestTxnContextInPessimisticKeyConflict(t *testing.T) {
 	tk.MustExec("rollback")
 }
 
-func TestTxnContextInOptimisticRetry(t *testing.T) {
-	store, do := setupTxnContextTest(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_disable_txn_auto_retry=0")
-	se := tk.Session()
-	is1 := do.InfoSchema()
-
-	tk.MustExec("begin optimistic")
-
-	// trigger retry
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-	tk2.MustExec("update t1 set v=11 where id=1")
-	tk2.MustExec("alter table t2 add column(c1 int)")
-
-	tk.MustExec("update t1 set v=12 where id=1")
-
-	// check retry context
-	path := append([]string{"assertTxnManagerInRebuildPlan"}, normalPathRecords...)
-	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is1)
-	se.SetValue(sessiontxn.AssertTxnInfoSchemaAfterRetryKey, do.InfoSchema())
-	doWithCheckPath(t, se, path, func() {
-		tk.MustExec("commit")
-	})
-
-	tk.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 12"))
-}
-
 func TestTxnContextForHistoricalRead(t *testing.T) {
 	store, do := setupTxnContextTest(t)
 	setTxnTk := testkit.NewTestKit(t, store)

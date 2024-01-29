@@ -694,9 +694,10 @@ type Status struct {
 type Performance struct {
 	MaxProcs uint `toml:"max-procs" json:"max-procs"`
 	// Deprecated: use ServerMemoryQuota instead
-	MaxMemory           uint64  `toml:"max-memory" json:"max-memory"`
-	ServerMemoryQuota   uint64  `toml:"server-memory-quota" json:"server-memory-quota"`
-	StatsLease          string  `toml:"stats-lease" json:"stats-lease"`
+	MaxMemory         uint64 `toml:"max-memory" json:"max-memory"`
+	ServerMemoryQuota uint64 `toml:"server-memory-quota" json:"server-memory-quota"`
+	StatsLease        string `toml:"stats-lease" json:"stats-lease"`
+	// Deprecated: transaction auto retry is deprecated.
 	StmtCountLimit      uint    `toml:"stmt-count-limit" json:"stmt-count-limit"`
 	PseudoEstimateRatio float64 `toml:"pseudo-estimate-ratio" json:"pseudo-estimate-ratio"`
 	BindInfoLease       string  `toml:"bind-info-lease" json:"bind-info-lease"`
