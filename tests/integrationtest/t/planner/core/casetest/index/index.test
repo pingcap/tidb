@@ -293,5 +293,5 @@ EXPLAIN format='brief' SELECT /*+ use_index_merge(t, fpi, nslc_old, nslc) */ * F
 # TestIndexMergeSingleCaseCouldFeelIndexMergeHint
 drop table if exists t;
 CREATE TABLE t (nslc json DEFAULT NULL,fpi json DEFAULT NULL,point_of_sale_country int,KEY nslc ((cast(nslc as char(1000) array)),point_of_sale_country),KEY fpi ((cast(fpi as unsigned array))));
-explain SELECT /*+ use_index_merge(items, nslc) */ *  FROM t WHERE  57260686 member of (fpi)  AND "OC8p1763XTkt.org/s/link" member of (nslc)  LIMIT  1;
-explain SELECT /*+ use_index_merge(items, fpi) */ *  FROM t WHERE  57260686 member of (fpi)  AND "OC8p1763XTkt.org/s/link" member of (nslc)  LIMIT  1;
+explain format='brief' SELECT  /*+ use_index_merge(t, nslc) */ *  FROM t WHERE  57260686 member of (fpi)  AND "OC8p1763XTkt.org/s/link" member of (nslc)  LIMIT  1;
+explain format='brief' SELECT  /*+ use_index_merge(t, fpi) */ *  FROM t WHERE  57260686 member of (fpi)  AND "OC8p1763XTkt.org/s/link" member of (nslc)  LIMIT  1;
