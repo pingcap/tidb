@@ -75,12 +75,11 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 
 	mergeRegionSize := cfg.MergeSmallRegionSizeBytes
 	mergeRegionCount := cfg.MergeSmallRegionKeyCount
-	if mergeRegionSize == conn.DefaultMergeRegionSizeBytes &&
-		mergeRegionCount == conn.DefaultMergeRegionKeyCount {
+	if !mergeRegionSize.hasSet || !mergeRegionSize.hasSet {
 		// according to https://github.com/pingcap/tidb/issues/34167.
 		// we should get the real config from tikv to adapt the dynamic region.
 		httpCli := httputil.NewClient(mgr.GetTLSConfig())
-		mergeRegionSize, mergeRegionCount = mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
+		mergeRegionSize.value, mergeRegionCount.value, _ = mgr.GetTiKVConfigs(ctx, httpCli)
 	}
 
 	keepaliveCfg := GetKeepalive(&cfg.Config)
@@ -134,7 +133,7 @@ func RunRestoreRaw(c context.Context, g glue.Glue, cmdName string, cfg *RestoreR
 	summary.CollectInt("restore files", len(files))
 
 	ranges, _, err := restore.MergeFileRanges(
-		files, mergeRegionSize, mergeRegionCount)
+		files, mergeRegionSize.value, mergeRegionCount.value)
 	if err != nil {
 		return errors.Trace(err)
 	}

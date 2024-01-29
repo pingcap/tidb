@@ -48,6 +48,11 @@ const (
 
 	// DefaultMergeRegionKeyCount is the default region key count, 960000.
 	DefaultMergeRegionKeyCount uint64 = 960000
+
+	// DefaultImportNumThreads is the default number of threads for import.
+	// use 128 as default value, which is 8 times of the default value of tidb.
+	// we think is proper for IO-bound cases.
+	DefaultImportNumThreads uint = 128
 )
 
 type VersionCheckerType int
@@ -287,12 +292,24 @@ func (mgr *Mgr) GetTS(ctx context.Context) (uint64, error) {
 	return oracle.ComposeTS(p, l), nil
 }
 
-// GetMergeRegionSizeAndCount returns the tikv config
-// `coprocessor.region-split-size` and `coprocessor.region-split-key`.
-// returns the default config when failed.
-func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context, client *http.Client) (uint64, uint64) {
-	regionSplitSize := DefaultMergeRegionSizeBytes
-	regionSplitKeys := DefaultMergeRegionKeyCount
+func ParseImportThreadsFromConfig(resp *http.Response) (uint, error) {
+	type importer struct {
+		Threads uint `json:"num-threads"`
+	}
+
+	type config struct {
+		Import importer `json:"import"`
+	}
+	c := &config{}
+	e := json.NewDecoder(resp.Body).Decode(c)
+	if e != nil {
+		return 0, e
+	}
+
+	return c.Import.Threads, nil
+}
+
+func ParseMergeRegionSizeAndCountFromConfig(resp *http.Response) (uint64, uint64, error) {
 	type coprocessor struct {
 		RegionSplitKeys uint64 `json:"region-split-keys"`
 		RegionSplitSize string `json:"region-split-size"`
@@ -301,28 +318,49 @@ func (mgr *Mgr) GetMergeRegionSizeAndCount(ctx context.Context, client *http.Cli
 	type config struct {
 		Cop coprocessor `json:"coprocessor"`
 	}
+	c := &config{}
+	e := json.NewDecoder(resp.Body).Decode(c)
+	if e != nil {
+		return 0, 0, e
+	}
+	rs, e := units.RAMInBytes(c.Cop.RegionSplitSize)
+	if e != nil {
+		return 0, 0, e
+	}
+	urs := uint64(rs)
+	return urs, c.Cop.RegionSplitKeys, nil
+}
+
+// GetTiKVConfigs returns the tikv config
+// `coprocessor.region-split-size` and `coprocessor.region-split-key` and `import.num-threads`.
+// returns the default config when failed.
+func (mgr *Mgr) GetTiKVConfigs(ctx context.Context, client *http.Client) (uint64, uint64, uint) {
+	regionSplitSize := DefaultMergeRegionSizeBytes
+	regionSplitKeys := DefaultMergeRegionKeyCount
+	importThreads := DefaultImportNumThreads
 	err := mgr.GetConfigFromTiKV(ctx, client, func(resp *http.Response) error {
-		c := &config{}
-		e := json.NewDecoder(resp.Body).Decode(c)
+		rs, rk, e := ParseMergeRegionSizeAndCountFromConfig(resp)
 		if e != nil {
 			return e
 		}
-		rs, e := units.RAMInBytes(c.Cop.RegionSplitSize)
+		if regionSplitSize == DefaultMergeRegionSizeBytes || rs < regionSplitSize {
+			regionSplitSize = rs
+			regionSplitKeys = rk
+		}
+		n, e := ParseImportThreadsFromConfig(resp)
 		if e != nil {
+			log.Warn("meet error when parsing import num-threads, ignore it", logutil.ShortError(e))
 			return e
 		}
-		urs := uint64(rs)
-		if regionSplitSize == DefaultMergeRegionSizeBytes || urs < regionSplitSize {
-			regionSplitSize = urs
-			regionSplitKeys = c.Cop.RegionSplitKeys
-		}
+		// we use 8 times of the default value because it's an IO-bound cases.
+		importThreads = 8 * n
 		return nil
 	})
 	if err != nil {
 		log.Warn("meet error when getting config from TiKV; using default", logutil.ShortError(err))
-		return DefaultMergeRegionSizeBytes, DefaultMergeRegionKeyCount
+		return DefaultMergeRegionSizeBytes, DefaultMergeRegionKeyCount, DefaultImportNumThreads
 	}
-	return regionSplitSize, regionSplitKeys
+	return regionSplitSize, regionSplitKeys, importThreads
 }
 
 // GetConfigFromTiKV get configs from all alive tikv stores.
