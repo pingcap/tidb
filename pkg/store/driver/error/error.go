@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	tikverr "github.com/tikv/client-go/v2/error"
 	pderr "github.com/tikv/pd/client/errs"
 )
@@ -117,18 +118,19 @@ func ToTiDBErr(err error) error {
 		return ErrTiFlashServerTimeout
 	}
 
-	if stderrs.Is(err, tikverr.ErrQueryInterrupted{Signal: 1}) {
+	// TODO: the definitions of the signals are in executor
+	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.QueryInterrupted}) {
 		// TODO: This error is defined here, while others are using exeerrors. Maybe unify them?
 		return ErrQueryInterrupted
 	}
-	if stderrs.Is(err, tikverr.ErrQueryInterrupted{Signal: 2}) {
+	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.MaxExecTimeExceeded}) {
 		return exeerrors.ErrMaxExecTimeExceeded.GenWithStackByArgs()
 	}
-	if stderrs.Is(err, tikverr.ErrQueryInterrupted{Signal: 3}) {
+	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.QueryMemoryExceeded}) {
 		// connection id is unkonwn in client
 		return exeerrors.ErrMemoryExceedForQuery.GenWithStackByArgs(-1)
 	}
-	if stderrs.Is(err, tikverr.ErrQueryInterrupted{Signal: 4}) {
+	if stderrs.Is(err, tikverr.ErrQueryInterruptedWithSignal{Signal: sqlkiller.ServerMemoryExceeded}) {
 		// connection id is unknown in client
 		return exeerrors.ErrMemoryExceedForInstance.GenWithStackByArgs(-1)
 	}
