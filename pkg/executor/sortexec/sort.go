@@ -165,18 +165,17 @@ func (e *SortExec) Open(ctx context.Context) error {
 //  4. Merge sort if the count of partitions is larger than 1. If there is only one partition in step 4, it works
 //     just like in-memory sort before.
 //
-// TODO update the introduction
 // Here we explain the execution flow of the parallel sort implementation.
-// There are 2 main components:
+// There are 3 main components:
 //  1. Chunks Fetcher: Fetcher is responsible for fetching chunks from child and send them to channel.
-//  2. Parallel Sort Worker: Worker has two stage.
-//     stage 1: Worker receives a chunk from channel, sort it, append sorted rows into a slice
-//     and put this slice into a global queue which stores many slices that contains sorted rows.
-//     stage 2: Worker fetches two slices from global queue, merge them into one slice, put it into
-//     global queue and repeat the above processes until global queue has only one slice.
-//
+//  2. Parallel Sort Worker: Worker receives chunks from channel it will sort these chunks after the
+//     number of rows in these chunks exceeds limit, we call them as sorted rows after chunks are sorted.
+//     Then each worker will have several sorted rows, we use multi-way merge to sort them and each worker
+//     will have only one sorted rows in the end.
+//  3. Result Generator: Generator gets n sorted rows from n workers, it will use multi-way merge to sort
+//     these rows, once it gets the next row, it will send it into `resultChannel` and the goroutine who
+//     calls `Next()` will fetch result from `resultChannel`.
 /*
-Overview of stage 1:
                         ┌─────────┐
                         │  Child  │
                         └────▲────┘
@@ -187,7 +186,7 @@ Overview of stage 1:
                      │ Chunk Fetcher │
                      └───────┬───────┘
                              │
-                           Push
+                            Push
                              │
                              ▼
         ┌────────────────►Channel◄───────────────────┐
@@ -200,28 +199,27 @@ Overview of stage 1:
    └────┬───┘            └───┬────┘              └───┬────┘
         │                    │                       │
         │                    │                       │
-  Sort And Put         Sort And Put            Sort And Put
+       Sort                 Sort                    Sort
         │                    │                       │
         │                    │                       │
-        │             ┌──────▼────────┐              │
-        └────────────►│ Global Queue  │◄─────────────┘
-                      └───────────────┘
-Overview of stage 2:
-         ┌────────┐    ┌────────┐          ┌────────┐
-         │ Worker │    │ Worker │  ......  │ Worker │
-         └──────┬─┘    └──────┬─┘          └─┬──────┘
-           ▲    │        ▲    │              │    ▲
-           │    │        │    │              │    │
-           │    │        │    │              │    │
-           │   Put       │   Put            Put   │
-           │    │        │    │              │    │
-           │    │       Pop   │              │    │
-           │    │        │    ▼              │    │
-           │    │   ┌────┴─────────┐         │    │
-           │    └──►│              │◄────────┘    │
-           │        │ Global Queue │              │
-          Pop───────┤              ├─────────────Pop
-                    └──────────────┘
+ ┌──────┴──────┐      ┌──────┴──────┐         ┌──────┴──────┐
+ │ Sorted Rows │      │ Sorted Rows │ ......  │ Sorted Rows │
+ └──────▲──────┘      └──────▲──────┘         └──────▲──────┘
+        │                    │                       │
+	   Pull                 Pull                    Pull
+        │                    │                       │
+        └────────────────────┼───────────────────────┘
+                             │
+                     Multi-way Merge
+                             │
+                      ┌──────┴──────┐
+                      │  Generator  │
+                      └──────┬──────┘
+                             │
+							Push
+                             │
+                             ▼
+					   resultChannel
 */
 func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
