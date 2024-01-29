@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -38,9 +37,7 @@ func TestMaintainLiveNodes(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTaskExecutorNodes"))
 	})
 
-	MockServerInfo = []*infosync.ServerInfo{
-		{Port: 4000},
-	}
+	MockServerInfo.Store(&[]string{":4000"})
 
 	nodeMgr := newNodeManager("")
 	ctx := context.Background()
@@ -59,10 +56,7 @@ func TestMaintainLiveNodes(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 
 	// scale out 1 node
-	MockServerInfo = []*infosync.ServerInfo{
-		{Port: 4000},
-		{Port: 4001},
-	}
+	MockServerInfo.Store(&[]string{":4000", ":4001"})
 
 	// fail on clean
 	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]proto.ManagedNode{{ID: ":4000"}, {ID: ":4001"}, {ID: ":4002"}}, nil)
@@ -82,9 +76,7 @@ func TestMaintainLiveNodes(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 
 	// scale in 1 node
-	MockServerInfo = []*infosync.ServerInfo{
-		{Port: 4000},
-	}
+	MockServerInfo.Store(&[]string{":4000"})
 
 	mockTaskMgr.EXPECT().GetAllNodes(gomock.Any()).Return([]proto.ManagedNode{{ID: ":4000"}, {ID: ":4001"}, {ID: ":4002"}}, nil)
 	mockTaskMgr.EXPECT().DeleteDeadNodes(gomock.Any(), gomock.Any()).Return(nil)

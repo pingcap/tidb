@@ -88,7 +88,7 @@ func NewManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, 
 	if totalCPU <= 0 || totalMem <= 0 {
 		return nil, errors.Errorf("invalid cpu or memory, cpu: %d, memory: %d", totalCPU, totalMem)
 	}
-	logger.Info("build manager", zap.Int("total-cpu", totalCPU),
+	logger.Info("build task executor manager", zap.Int("total-cpu", totalCPU),
 		zap.String("total-mem", units.BytesSize(float64(totalMem))))
 	m := &Manager{
 		id:        id,
@@ -153,7 +153,7 @@ func (m *Manager) recoverMeta() (err error) {
 
 // Start starts the Manager.
 func (m *Manager) Start() error {
-	m.logger.Debug("manager start")
+	m.logger.Info("task executor manager start")
 	m.wg.Run(m.handleTasksLoop)
 	m.wg.Run(m.recoverMetaLoop)
 	return nil

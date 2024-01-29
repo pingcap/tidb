@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	llog "github.com/pingcap/tidb/br/pkg/lightning/log"
-	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
@@ -74,15 +73,14 @@ func (nm *NodeManager) maintainLiveNodesLoop(ctx context.Context, taskMgr TaskMa
 // see recoverMetaLoop in task executor for when node is inserted into dist_framework_meta.
 func (nm *NodeManager) maintainLiveNodes(ctx context.Context, taskMgr TaskManager) {
 	// Safe to discard errors since this function can be called at regular intervals.
-	serverInfos, err := GenerateTaskExecutorNodes(ctx)
+	liveExecIDs, err := GetLiveExecIDs(ctx)
 	if err != nil {
 		nm.logger.Warn("generate task executor nodes met error", llog.ShortError(err))
 		return
 	}
-	nodeChanged := len(serverInfos) != len(nm.prevLiveNodes)
-	currLiveNodes := make(map[string]struct{}, len(serverInfos))
-	for _, info := range serverInfos {
-		execID := disttaskutil.GenerateExecID(info)
+	nodeChanged := len(liveExecIDs) != len(nm.prevLiveNodes)
+	currLiveNodes := make(map[string]struct{}, len(liveExecIDs))
+	for _, execID := range liveExecIDs {
 		if _, ok := nm.prevLiveNodes[execID]; !ok {
 			nodeChanged = true
 		}
