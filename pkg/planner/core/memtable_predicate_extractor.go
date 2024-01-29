@@ -20,6 +20,7 @@ import (
 	"math"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1688,32 +1689,38 @@ type InfoSchemaTablesExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (b *InfoSchemaTablesExtractor) Extract(_ sessionctx.Context,
+func (e *InfoSchemaTablesExtractor) Extract(_ sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	var resultSet set.StringSet
-	var skipRequest bool
-	b.colNames = []string{"table_schema", "table_name"}
-	b.ColPredicates = make(map[string]set.StringSet)
+	e.colNames = []string{"table_schema", "table_name"}
+	e.ColPredicates = make(map[string]set.StringSet)
 	remained = predicates
-	for _, colName := range b.colNames {
-		remained, skipRequest, resultSet = b.extractCol(schema, names, remained, colName, true)
-		b.ColPredicates[colName] = resultSet
-		b.SkipRequest = b.SkipRequest || skipRequest
+	for _, colName := range e.colNames {
+		remained, e.SkipRequest, resultSet = e.extractCol(schema, names, remained, colName, true)
+		e.ColPredicates[colName] = resultSet
+		if e.SkipRequest {
+			break
+		}
 	}
 	return remained
 }
 
-func (b *InfoSchemaTablesExtractor) explainInfo(_ *PhysicalMemTable) string {
-	if b.SkipRequest {
+func (e *InfoSchemaTablesExtractor) explainInfo(_ *PhysicalMemTable) string {
+	if e.SkipRequest {
 		return "skip_request:true"
 	}
 	r := new(bytes.Buffer)
-	for colName, colPredicate := range b.ColPredicates {
-		if len(colPredicate) > 0 {
-			fmt.Fprintf(r, "%s:[%s], ", colName, extractStringFromStringSet(colPredicate))
+	colNames := make([]string, 0, len(e.ColPredicates))
+	for colName := range e.ColPredicates {
+		colNames = append(colNames, colName)
+	}
+	sort.Strings(colNames)
+	for _, colName := range colNames {
+		if len(e.ColPredicates[colName]) > 0 {
+			fmt.Fprintf(r, "%s:[%s], ", colName, extractStringFromStringSet(e.ColPredicates[colName]))
 		}
 	}
 
@@ -1726,11 +1733,11 @@ func (b *InfoSchemaTablesExtractor) explainInfo(_ *PhysicalMemTable) string {
 }
 
 // Filter use the col predicates to filter records.
-func (b *InfoSchemaTablesExtractor) Filter(colName string, val any) bool {
-	if b.SkipRequest {
+func (e *InfoSchemaTablesExtractor) Filter(colName string, val any) bool {
+	if e.SkipRequest {
 		return true
 	}
-	predVals, ok := b.ColPredicates[colName]
+	predVals, ok := e.ColPredicates[colName]
 	valStr := val.(string)
 	if ok && len(predVals) > 0 {
 		return !predVals.Exist(valStr)
