@@ -866,8 +866,8 @@ func (e *IndexMergeReaderExecutor) getResultTask(ctx context.Context) (*indexMer
 	return e.resultCurr, nil
 }
 
-func handleWorkerPanic(ctx context.Context, finished, limitDone <-chan struct{}, ch chan<- *indexMergeTableTask, extraNotifyCh chan bool, worker string) func(r interface{}) {
-	return func(r interface{}) {
+func handleWorkerPanic(ctx context.Context, finished, limitDone <-chan struct{}, ch chan<- *indexMergeTableTask, extraNotifyCh chan bool, worker string) func(r any) {
+	return func(r any) {
 		if worker == processWorkerType {
 			// There is only one processWorker, so it's safe to close here.
 			// No need to worry about "close on closed channel" error.
@@ -970,7 +970,7 @@ func (h handleHeap) Swap(i, j int) {
 	h.idx[i], h.idx[j] = h.idx[j], h.idx[i]
 }
 
-func (h *handleHeap) Push(x interface{}) {
+func (h *handleHeap) Push(x any) {
 	idx := x.(rowIdx)
 	h.idx = append(h.idx, idx)
 	if h.tracker != nil {
@@ -978,7 +978,7 @@ func (h *handleHeap) Push(x interface{}) {
 	}
 }
 
-func (h *handleHeap) Pop() interface{} {
+func (h *handleHeap) Pop() any {
 	idxRet := h.idx[len(h.idx)-1]
 	h.idx = h.idx[:len(h.idx)-1]
 	if h.tracker != nil {
@@ -1867,8 +1867,8 @@ func (w *indexMergeTableScanWorker) pickAndExecTask(ctx context.Context, task **
 	}
 }
 
-func (*indexMergeTableScanWorker) handleTableScanWorkerPanic(ctx context.Context, finished <-chan struct{}, task **indexMergeTableTask, worker string) func(r interface{}) {
-	return func(r interface{}) {
+func (*indexMergeTableScanWorker) handleTableScanWorkerPanic(ctx context.Context, finished <-chan struct{}, task **indexMergeTableTask, worker string) func(r any) {
+	return func(r any) {
 		if r == nil {
 			logutil.BgLogger().Debug("worker finish without panic", zap.Any("worker", worker))
 			return

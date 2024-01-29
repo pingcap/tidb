@@ -1288,6 +1288,8 @@ func TestTiDBEnableResourceControl(t *testing.T) {
 		}
 	}
 	SetGlobalResourceControl.Store(&setGlobalResourceControlFunc)
+	// Reset the switch. It may be set by other tests.
+	EnableResourceControl.Store(false)
 
 	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()

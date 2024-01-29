@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -151,7 +152,7 @@ func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSche
 		return p.StatsInfo(), nil
 	}
 	if len(childStats) > 1 {
-		err := ErrInternal.GenWithStack("LogicalPlans with more than one child should implement their own DeriveStats().")
+		err := plannererrors.ErrInternal.GenWithStack("LogicalPlans with more than one child should implement their own DeriveStats().")
 		return nil, err
 	}
 	if p.StatsInfo() != nil {

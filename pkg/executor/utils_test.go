@@ -100,26 +100,26 @@ func TestBatchRetrieverHelper(t *testing.T) {
 
 func TestEqualDatumsAsBinary(t *testing.T) {
 	tests := []struct {
-		a    []interface{}
-		b    []interface{}
+		a    []any
+		b    []any
 		same bool
 	}{
 		// Positive cases
-		{[]interface{}{1}, []interface{}{1}, true},
-		{[]interface{}{1, "aa"}, []interface{}{1, "aa"}, true},
-		{[]interface{}{1, "aa", 1}, []interface{}{1, "aa", 1}, true},
+		{[]any{1}, []any{1}, true},
+		{[]any{1, "aa"}, []any{1, "aa"}, true},
+		{[]any{1, "aa", 1}, []any{1, "aa", 1}, true},
 
 		// negative cases
-		{[]interface{}{1}, []interface{}{2}, false},
-		{[]interface{}{1, "a"}, []interface{}{1, "aaaaaa"}, false},
-		{[]interface{}{1, "aa", 3}, []interface{}{1, "aa", 2}, false},
+		{[]any{1}, []any{2}, false},
+		{[]any{1, "a"}, []any{1, "aaaaaa"}, false},
+		{[]any{1, "aa", 3}, []any{1, "aa", 2}, false},
 
 		// Corner cases
-		{[]interface{}{}, []interface{}{}, true},
-		{[]interface{}{nil}, []interface{}{nil}, true},
-		{[]interface{}{}, []interface{}{1}, false},
-		{[]interface{}{1}, []interface{}{1, 1}, false},
-		{[]interface{}{nil}, []interface{}{1}, false},
+		{[]any{}, []any{}, true},
+		{[]any{nil}, []any{nil}, true},
+		{[]any{}, []any{1}, false},
+		{[]any{1}, []any{1, 1}, false},
+		{[]any{nil}, []any{1}, false},
 	}
 	ctx := core.MockContext()
 	base := exec.NewBaseExecutor(ctx, nil, 0)

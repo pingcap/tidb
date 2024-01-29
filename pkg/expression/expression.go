@@ -46,6 +46,11 @@ const (
 // import expression and planner/core together to use EvalAstExpr
 var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
 
+// EvalAstExprWithPlanCtx evaluates ast expression directly with plan ctx
+// Note: initialized in planner/core
+// import expression and planner/core together to use EvalAstExpr
+var EvalAstExprWithPlanCtx func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
+
 // RewriteAstExpr rewrites ast expression directly.
 // Note: initialized in planner/core
 // import expression and planner/core together to use EvalAstExpr
@@ -1166,7 +1171,7 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 
 // Args2Expressions4Test converts these values to an expression list.
 // This conversion is incomplete, so only use for test.
-func Args2Expressions4Test(args ...interface{}) []Expression {
+func Args2Expressions4Test(args ...any) []Expression {
 	exprs := make([]Expression, len(args))
 	for i, v := range args {
 		d := types.NewDatum(v)

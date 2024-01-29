@@ -27,10 +27,10 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1113,10 +1113,10 @@ func TestAddForeignKey(t *testing.T) {
 		require.Equal(t, names[i], fkInfo.Name.L)
 		require.Equal(t, model.StatePublic, fkInfo.State)
 	}
-	tk.MustGetDBError("insert into t2 (id, b) values (1,1)", plannercore.ErrNoReferencedRow2)
-	tk.MustGetDBError("insert into t2 (id, c) values (1,1)", plannercore.ErrNoReferencedRow2)
-	tk.MustGetDBError("insert into t2 (id, d) values (1,1)", plannercore.ErrNoReferencedRow2)
-	tk.MustGetDBError("insert into t2 (id, e) values (1,1)", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 (id, b) values (1,1)", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 (id, c) values (1,1)", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 (id, d) values (1,1)", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 (id, e) values (1,1)", plannererrors.ErrNoReferencedRow2)
 
 	// Test add multiple foreign key constraint in one statement but failed.
 	tk.MustExec("alter table t2 drop foreign key fk")

@@ -25,13 +25,13 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -83,7 +83,7 @@ func TestPrepareStmtCommitWhenSchemaChanged(t *testing.T) {
 	tk1.MustExec("alter table t drop column b")
 	tk2.MustExec("execute stmt using @a, @a")
 	err := tk2.ExecToErr("commit")
-	require.True(t, terror.ErrorEqual(err, plannercore.ErrWrongValueCountOnRow), fmt.Sprintf("err %v", err))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrWrongValueCountOnRow), fmt.Sprintf("err %v", err))
 }
 
 func TestCommitWhenSchemaChanged(t *testing.T) {
@@ -109,7 +109,7 @@ func TestCommitWhenSchemaChanged(t *testing.T) {
 	// When tk2 commit, it will find schema already changed.
 	tk2.MustExec("insert into t values (4, 4)")
 	err := tk2.ExecToErr("commit")
-	require.True(t, terror.ErrorEqual(err, plannercore.ErrWrongValueCountOnRow), fmt.Sprintf("err %v", err))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrWrongValueCountOnRow), fmt.Sprintf("err %v", err))
 }
 
 func TestRetrySchemaChangeForEmptyChange(t *testing.T) {

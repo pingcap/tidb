@@ -173,7 +173,7 @@ func SerializeBytesBuffer(value *bytes.Buffer, buf []byte) []byte {
 }
 
 // SerializeInterface serialize interface type
-func SerializeInterface(value interface{}, buf []byte) []byte {
+func SerializeInterface(value any, buf []byte) []byte {
 	switch v := value.(type) {
 	case bool:
 		buf = append(buf, BoolType)

@@ -20,6 +20,7 @@ go_library(
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
         "//pkg/types",
+        "//pkg/util/dbterror/plannererrors",
         "//pkg/util/hint",
         "//pkg/util/intest",
         "//pkg/util/logutil",

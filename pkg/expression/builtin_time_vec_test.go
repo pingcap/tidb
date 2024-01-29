@@ -34,7 +34,7 @@ func newPeriodGener() *periodGener {
 	return &periodGener{newDefaultRandGen()}
 }
 
-func (g *periodGener) gen() interface{} {
+func (g *periodGener) gen() any {
 	return int64((g.randGen.Intn(2500)+1)*100 + g.randGen.Intn(12) + 1)
 }
 
@@ -47,7 +47,7 @@ func newUnitStrGener() *unitStrGener {
 	return &unitStrGener{newDefaultRandGen()}
 }
 
-func (g *unitStrGener) gen() interface{} {
+func (g *unitStrGener) gen() any {
 	units := []string{
 		"MICROSECOND",
 		"SECOND",
@@ -67,7 +67,7 @@ func (g *unitStrGener) gen() interface{} {
 // tzStrGener is used to generate strings which are timezones
 type tzStrGener struct{}
 
-func (g *tzStrGener) gen() interface{} {
+func (g *tzStrGener) gen() any {
 	tzs := []string{
 		"",
 		"GMT",

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -199,7 +200,7 @@ func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType 
 	if !ok {
 		db := ctx.GetSessionVars().CurrentDB
 		if db == "" {
-			return nil, errors.Trace(ErrNoDB)
+			return nil, errors.Trace(plannererrors.ErrNoDB)
 		}
 		return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", db+"."+funcName)
 	}
@@ -390,7 +391,7 @@ func (sf *ScalarFunction) Traverse(action TraverseAction) Expression {
 // Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(ctx EvalContext, row chunk.Row) (d types.Datum, err error) {
 	var (
-		res    interface{}
+		res    any
 		isNull bool
 	)
 	intest.AssertNotNil(ctx)

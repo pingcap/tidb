@@ -20,8 +20,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
 func (s *mockGCSSuite) TestImportFromSelectBasic() {
@@ -30,8 +30,8 @@ func (s *mockGCSSuite) TestImportFromSelectBasic() {
 	s.tk.MustExec("create table dst(id int, v varchar(64))")
 	s.tk.MustExec("insert into src values(4, 'aaaaaa'), (5, 'bbbbbb'), (6, 'cccccc'), (7, 'dddddd')")
 
-	s.ErrorIs(s.tk.ExecToErr(`import into dst FROM select id from src`), core.ErrWrongValueCountOnRow)
-	s.ErrorIs(s.tk.ExecToErr(`import into dst(id) FROM select * from src`), core.ErrWrongValueCountOnRow)
+	s.ErrorIs(s.tk.ExecToErr(`import into dst FROM select id from src`), plannererrors.ErrWrongValueCountOnRow)
+	s.ErrorIs(s.tk.ExecToErr(`import into dst(id) FROM select * from src`), plannererrors.ErrWrongValueCountOnRow)
 
 	s.tk.MustExec(`import into dst FROM select * from src`)
 	s.Equal(uint64(4), s.tk.Session().GetSessionVars().StmtCtx.AffectedRows())
