@@ -7,7 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/logutil",
-        "//br/pkg/utils",
         "//infoschema",
         "//parser/ast",
         "//parser/format",

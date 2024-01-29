@@ -12,7 +12,6 @@ go_library(
         "//br/pkg/logutil",
         "//br/pkg/pdutil",
         "//br/pkg/task",
-        "//br/pkg/utils",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
         "@com_github_spf13_pflag//:pflag",
