@@ -546,16 +546,12 @@ func (ds *DataSource) generateIndexMergeOnDNF4MVIndex(normalPathCnt int, filters
 			continue // not a MVIndex path
 		}
 
-<<<<<<< HEAD
-		idxCols, ok := ds.prepareCols4MVIndex(ds.possibleAccessPaths[idx].Index)
-=======
 		// for single MV index usage, if specified use the specified one, if not, all can be access and chosen by cost model.
 		if !ds.isInIndexMergeHints(ds.possibleAccessPaths[idx].Index.Name.L) {
 			continue
 		}
 
-		idxCols, ok := PrepareCols4MVIndex(ds.table.Meta(), ds.possibleAccessPaths[idx].Index, ds.TblCols)
->>>>>>> f0bd5aa2b68 (planner: fix single mv index merge case couldn't be hinted by use_index_merge (#50572))
+		idxCols, ok := ds.prepareCols4MVIndex(ds.possibleAccessPaths[idx].Index)
 		if !ok {
 			continue
 		}
@@ -637,16 +633,12 @@ func (ds *DataSource) generateIndexMerge4MVIndex(normalPathCnt int, filters []ex
 			continue // not a MVIndex path
 		}
 
-<<<<<<< HEAD
-		idxCols, ok := ds.prepareCols4MVIndex(ds.possibleAccessPaths[idx].Index)
-=======
 		// for single MV index usage, if specified use the specified one, if not, all can be access and chosen by cost model.
 		if !ds.isInIndexMergeHints(ds.possibleAccessPaths[idx].Index.Name.L) {
 			continue
 		}
 
-		idxCols, ok := PrepareCols4MVIndex(ds.table.Meta(), ds.possibleAccessPaths[idx].Index, ds.TblCols)
->>>>>>> f0bd5aa2b68 (planner: fix single mv index merge case couldn't be hinted by use_index_merge (#50572))
+		idxCols, ok := ds.prepareCols4MVIndex(ds.possibleAccessPaths[idx].Index)
 		if !ok {
 			continue
 		}
