@@ -369,7 +369,7 @@ func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
 }
 
-func makeFailpointRes(t *testing.T, v interface{}) string {
+func makeFailpointRes(t *testing.T, v any) string {
 	bytes, err := json.Marshal(v)
 	require.NoError(t, err)
 	return fmt.Sprintf("return(`%s`)", string(bytes))
@@ -438,7 +438,7 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 		gomock.All(&test.CtxMatcher{}),
 		statsutil.UseCurrentSessionOpt,
 		autoanalyze.BatchUpdateAnalyzeJobSQL,
-		[]interface{}{[]string{"1"}},
+		[]any{[]string{"1"}},
 	).Return(nil, nil, nil)
 
 	err := autoanalyze.CleanupCorruptedAnalyzeJobsOnCurrentInstance(
@@ -462,7 +462,7 @@ func TestCleanupCorruptedAnalyzeJobsOnCurrentInstance(t *testing.T) {
 		gomock.All(&test.CtxMatcher{}),
 		statsutil.UseCurrentSessionOpt,
 		autoanalyze.BatchUpdateAnalyzeJobSQL,
-		[]interface{}{[]string{"1", "3"}},
+		[]any{[]string{"1", "3"}},
 	).Return(nil, nil, nil)
 
 	// No running analyze jobs on current instance.
@@ -519,7 +519,7 @@ func TestCleanupCorruptedAnalyzeJobsOnDeadInstances(t *testing.T) {
 		gomock.All(&test.CtxMatcher{}),
 		statsutil.UseCurrentSessionOpt,
 		autoanalyze.BatchUpdateAnalyzeJobSQL,
-		[]interface{}{[]string{"2"}},
+		[]any{[]string{"2"}},
 	).Return(nil, nil, nil)
 
 	err := autoanalyze.CleanupCorruptedAnalyzeJobsOnDeadInstances(

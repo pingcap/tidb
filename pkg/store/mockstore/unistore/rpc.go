@@ -465,10 +465,10 @@ func (mockClientStream) CloseSend() error { return nil }
 func (mockClientStream) Context() context.Context { return nil }
 
 // SendMsg implements grpc.ClientStream interface
-func (mockClientStream) SendMsg(m interface{}) error { return nil }
+func (mockClientStream) SendMsg(m any) error { return nil }
 
 // RecvMsg implements grpc.ClientStream interface
-func (mockClientStream) RecvMsg(m interface{}) error { return nil }
+func (mockClientStream) RecvMsg(m any) error { return nil }
 
 type mockCopStreamClient struct {
 	mockClientStream
@@ -543,8 +543,8 @@ func (mockServerStream) SetHeader(metadata.MD) error  { return nil }
 func (mockServerStream) SendHeader(metadata.MD) error { return nil }
 func (mockServerStream) SetTrailer(metadata.MD)       {}
 func (mockServerStream) Context() context.Context     { return nil }
-func (mockServerStream) SendMsg(interface{}) error    { return nil }
-func (mockServerStream) RecvMsg(interface{}) error    { return nil }
+func (mockServerStream) SendMsg(any) error            { return nil }
+func (mockServerStream) RecvMsg(any) error            { return nil }
 
 type mockBatchCoprocessorStreamServer struct {
 	mockServerStream

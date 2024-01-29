@@ -36,7 +36,7 @@ var (
 func initWorkloadParams(ctx *SuiteContext) {
 	ctx.ctx, ctx.cancel = context.WithCancel(context.Background())
 	ctx.workload = &wCtx
-	ctx.tkPool = &sync.Pool{New: func() interface{} {
+	ctx.tkPool = &sync.Pool{New: func() any {
 		return testkit.NewTestKit(ctx.t, ctx.store)
 	}}
 }

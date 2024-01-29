@@ -115,13 +115,13 @@ type stats struct {
 
 func (s stats) GetScope(_ string) variable.ScopeFlag { return variable.DefaultStatusVarScopeFlag }
 
-func (s stats) Stats(_ *variable.SessionVars) (map[string]interface{}, error) {
-	m := make(map[string]interface{})
-	var a, b interface{}
+func (s stats) Stats(_ *variable.SessionVars) (map[string]any, error) {
+	m := make(map[string]any)
+	var a, b any
 	b = "123"
 	m["test_interface_nil"] = a
 	m["test_interface"] = b
-	m["test_interface_slice"] = []interface{}{"a", "b", "c"}
+	m["test_interface_slice"] = []any{"a", "b", "c"}
 	return m, nil
 }
 
@@ -145,7 +145,7 @@ func TestShow(t *testing.T) {
 	require.Len(t, result.Rows(), 1)
 	row := result.Rows()[0]
 	// For issue https://github.com/pingcap/tidb/issues/1061
-	expectedRow := []interface{}{
+	expectedRow := []any{
 		"SHOW_test", "CREATE TABLE `SHOW_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT '1',\n  `c4` text DEFAULT NULL,\n  `c5` tinyint(1) DEFAULT NULL,\n  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n  KEY `idx_wide_c4` (`c3`,`c4`(10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=28934 COMMENT='table_comment'"}
 	for i, r := range row {
 		require.Equal(t, expectedRow[i], r)
@@ -165,7 +165,7 @@ func TestShow(t *testing.T) {
 	result = tk.MustQuery(testSQL)
 	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
-	expectedRow = []interface{}{
+	expectedRow = []any{
 		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT '2',\n  `c` varchar(10) NOT NULL,\n  `d` time DEFAULT NULL,\n  `e` timestamp NULL DEFAULT NULL,\n  `f` timestamp NULL DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
 	for i, r := range row {
 		require.Equal(t, expectedRow[i], r)
@@ -185,7 +185,7 @@ func TestShow(t *testing.T) {
 	result = tk.MustQuery(testSQL)
 	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
-	expectedRow = []interface{}{
+	expectedRow = []any{
 		"t1", "CREATE TABLE `t1` (\n" +
 			"  `c1` tinyint(3) unsigned DEFAULT NULL,\n" +
 			"  `c2` smallint(5) unsigned DEFAULT NULL,\n" +
@@ -205,7 +205,7 @@ func TestShow(t *testing.T) {
 	result = tk.MustQuery(testSQL)
 	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
-	expectedRow = []interface{}{
+	expectedRow = []any{
 		"decimalschema", "CREATE TABLE `decimalschema` (\n" +
 			"  `c1` decimal(10,0) DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
@@ -220,7 +220,7 @@ func TestShow(t *testing.T) {
 	result = tk.MustQuery(testSQL)
 	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
-	expectedRow = []interface{}{
+	expectedRow = []any{
 		"decimalschema", "CREATE TABLE `decimalschema` (\n" +
 			"  `c1` decimal(15,0) DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
@@ -288,7 +288,7 @@ func TestShow(t *testing.T) {
 	result = tk.MustQuery(testSQL)
 	rows := result.Rows()
 	require.Len(t, rows, 1)
-	require.Equal(t, []interface{}{"SHOW_test"}, rows[0])
+	require.Equal(t, []any{"SHOW_test"}, rows[0])
 
 	var ss stats
 	variable.RegisterStatistics(ss)
@@ -403,7 +403,7 @@ func TestShow(t *testing.T) {
 	result = tk.MustQuery(testSQL)
 	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
-	expectedRow = []interface{}{
+	expectedRow = []any{
 		"show_test", "CREATE TABLE `show_test` (\n  `a` varchar(10) DEFAULT NULL COMMENT 'a\\nb\\rc	d\\0e'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='a\\nb\\rc	d\\0e'"}
 	for i, r := range row {
 		require.Equal(t, expectedRow[i], r)
@@ -419,7 +419,7 @@ func TestShow(t *testing.T) {
 	result = tk.MustQuery(testSQL)
 	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
-	expectedRow = []interface{}{
+	expectedRow = []any{
 		"show_test", "CREATE TABLE `show_test` (\n  `a` varchar(10) DEFAULT 'a\\nb\\rc	d\\0e'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
 	for i, r := range row {
 		require.Equal(t, expectedRow[i], r)
@@ -438,7 +438,7 @@ func TestShow(t *testing.T) {
 	result = tk.MustQuery(testSQL)
 	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
-	expectedRow = []interface{}{
+	expectedRow = []any{
 		"show_test", "CREATE TABLE `show_test` (\n  `a` bit(1) DEFAULT NULL,\n  `b` bit(32) DEFAULT b'0',\n  `c` bit(1) DEFAULT b'1',\n  `d` bit(10) DEFAULT b'1010'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
 	for i, r := range row {
 		require.Equal(t, expectedRow[i], r)
@@ -459,7 +459,7 @@ func TestShow(t *testing.T) {
 	result = tk.MustQuery(testSQL)
 	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
-	expectedRow = []interface{}{
+	expectedRow = []any{
 		"t",
 		"CREATE TABLE `t` (\n" +
 			"  `a` tinyint(4) DEFAULT NULL,\n" +
@@ -914,8 +914,8 @@ func TestPrepareMaxParamCountCheck(t *testing.T) {
 	require.EqualError(t, err, "[executor:1390]Prepared statement contains too many placeholders")
 }
 
-func generateBatchSQL(paramCount int) (sql string, paramSlice []interface{}) {
-	params := make([]interface{}, 0, paramCount)
+func generateBatchSQL(paramCount int) (sql string, paramSlice []any) {
+	params := make([]any, 0, paramCount)
 	placeholders := make([]string, 0, paramCount)
 	for i := 0; i < paramCount; i++ {
 		params = append(params, i)

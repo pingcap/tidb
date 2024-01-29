@@ -94,7 +94,7 @@ func TestTikvRegionPeers(t *testing.T) {
 	// mock store stats stat
 	mockAddr := strings.TrimPrefix(server.URL, "http://")
 	// mock PD API
-	router.Handle(pd.Status, fn.Wrap(func() (interface{}, error) {
+	router.Handle(pd.Status, fn.Wrap(func() (any, error) {
 		return struct {
 			Version        string `json:"version"`
 			GitHash        string `json:"git_hash"`

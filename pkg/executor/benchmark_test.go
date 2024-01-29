@@ -721,7 +721,7 @@ func benchmarkHashJoinExecWithCase(b *testing.B, casTest *hashJoinTestCase) {
 	opt1 := testutil.MockDataSourceParameters{
 		Rows: casTest.rows,
 		Ctx:  casTest.ctx,
-		GenDataFunc: func(row int, typ *types.FieldType) interface{} {
+		GenDataFunc: func(row int, typ *types.FieldType) any {
 			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
@@ -932,7 +932,7 @@ func benchmarkBuildHashTableForList(b *testing.B, casTest *hashJoinTestCase) {
 		DataSchema: expression.NewSchema(casTest.columns()...),
 		Rows:       casTest.rows,
 		Ctx:        casTest.ctx,
-		GenDataFunc: func(row int, typ *types.FieldType) interface{} {
+		GenDataFunc: func(row int, typ *types.FieldType) any {
 			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
@@ -1069,7 +1069,7 @@ func (tc IndexJoinTestCase) GetMockDataSourceOptByRows(rows int) testutil.MockDa
 		DataSchema: expression.NewSchema(tc.Columns()...),
 		Rows:       rows,
 		Ctx:        tc.Ctx,
-		GenDataFunc: func(row int, typ *types.FieldType) interface{} {
+		GenDataFunc: func(row int, typ *types.FieldType) any {
 			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
@@ -1483,7 +1483,7 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 		DataSchema: expression.NewSchema(tc.Columns()...),
 		Rows:       numOuterRows,
 		Ctx:        tc.Ctx,
-		GenDataFunc: func(row int, typ *types.FieldType) interface{} {
+		GenDataFunc: func(row int, typ *types.FieldType) any {
 			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:
 				return int64(row)
@@ -1501,7 +1501,7 @@ func newMergeJoinBenchmark(numOuterRows, numInnerDup, numInnerRedundant int) (tc
 		DataSchema: expression.NewSchema(tc.Columns()...),
 		Rows:       numInnerRows,
 		Ctx:        tc.Ctx,
-		GenDataFunc: func(row int, typ *types.FieldType) interface{} {
+		GenDataFunc: func(row int, typ *types.FieldType) any {
 			row = row / numInnerDup
 			switch typ.GetType() {
 			case mysql.TypeLong, mysql.TypeLonglong:

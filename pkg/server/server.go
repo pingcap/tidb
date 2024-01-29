@@ -132,7 +132,7 @@ type Server struct {
 	health         *uatomic.Bool
 
 	sessionMapMutex     sync.Mutex
-	internalSessions    map[interface{}]struct{}
+	internalSessions    map[any]struct{}
 	autoIDService       *autoid.Service
 	authTokenCancelFunc context.CancelFunc
 	wg                  sync.WaitGroup
@@ -242,7 +242,7 @@ func NewServer(cfg *config.Config, driver IDriver) (*Server, error) {
 		concurrentLimiter:      NewTokenLimiter(cfg.TokenLimit),
 		clients:                make(map[uint64]*clientConn),
 		ConnNumByResourceGroup: make(map[string]int),
-		internalSessions:       make(map[interface{}]struct{}, 100),
+		internalSessions:       make(map[any]struct{}, 100),
 		health:                 uatomic.NewBool(true),
 		inShutdownMode:         uatomic.NewBool(false),
 		printMDLLogTime:        time.Now(),
@@ -1004,7 +1004,7 @@ func (s *Server) GetAutoAnalyzeProcID() uint64 {
 
 // StoreInternalSession implements SessionManager interface.
 // @param addr	The address of a session.session struct variable
-func (s *Server) StoreInternalSession(se interface{}) {
+func (s *Server) StoreInternalSession(se any) {
 	s.sessionMapMutex.Lock()
 	s.internalSessions[se] = struct{}{}
 	s.sessionMapMutex.Unlock()
@@ -1012,7 +1012,7 @@ func (s *Server) StoreInternalSession(se interface{}) {
 
 // DeleteInternalSession implements SessionManager interface.
 // @param addr	The address of a session.session struct variable
-func (s *Server) DeleteInternalSession(se interface{}) {
+func (s *Server) DeleteInternalSession(se any) {
 	s.sessionMapMutex.Lock()
 	delete(s.internalSessions, se)
 	s.sessionMapMutex.Unlock()
@@ -1036,7 +1036,7 @@ func (s *Server) GetInternalSessionStartTSList() []uint64 {
 }
 
 // InternalSessionExists is used for test
-func (s *Server) InternalSessionExists(se interface{}) bool {
+func (s *Server) InternalSessionExists(se any) bool {
 	s.sessionMapMutex.Lock()
 	_, ok := s.internalSessions[se]
 	s.sessionMapMutex.Unlock()

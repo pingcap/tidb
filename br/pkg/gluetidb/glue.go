@@ -168,7 +168,7 @@ func (gs *tidbSession) Execute(ctx context.Context, sql string) error {
 	return gs.ExecuteInternal(ctx, sql)
 }
 
-func (gs *tidbSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error {
+func (gs *tidbSession) ExecuteInternal(ctx context.Context, sql string, args ...any) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	rs, err := gs.se.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
@@ -252,7 +252,7 @@ func (s *mockSession) Execute(ctx context.Context, sql string) error {
 	return s.ExecuteInternal(ctx, sql)
 }
 
-func (s *mockSession) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) error {
+func (s *mockSession) ExecuteInternal(ctx context.Context, sql string, args ...any) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnBR)
 	rs, err := s.se.ExecuteInternal(ctx, sql, args...)
 	if err != nil {

@@ -1457,20 +1457,20 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	// Test case 2: prepare/execute sql
 	cases2 := []struct {
 		prepare    string
-		args       []interface{}
+		args       []any
 		planRegexp string
 	}{
-		{prepare: "insert into t1 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
-		{prepare: "replace into t1 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
-		{prepare: "update t1 set b=a where b is null limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
-		{prepare: "delete from t1 where b = a limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
-		{prepare: "replace into t1 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
-		{prepare: "select * from t1 use index(idx) where a<?;", args: []interface{}{10}, planRegexp: ".*IndexLookUp.*"},
-		{prepare: "select * from t1 ignore index(idx) where a>?;", args: []interface{}{1000000000}, planRegexp: ".*TableReader.*"},
+		{prepare: "insert into t1 (b) values (?);", args: []any{1}, planRegexp: ""},
+		{prepare: "replace into t1 (b) values (?);", args: []any{1}, planRegexp: ""},
+		{prepare: "update t1 set b=a where b is null limit ?;", args: []any{1}, planRegexp: ".*Limit.*TableReader.*"},
+		{prepare: "delete from t1 where b = a limit ?;", args: []any{1}, planRegexp: ".*Limit.*TableReader.*"},
+		{prepare: "replace into t1 (b) values (?);", args: []any{1}, planRegexp: ""},
+		{prepare: "select * from t1 use index(idx) where a<?;", args: []any{10}, planRegexp: ".*IndexLookUp.*"},
+		{prepare: "select * from t1 ignore index(idx) where a>?;", args: []any{1000000000}, planRegexp: ".*TableReader.*"},
 		{prepare: "select /*+ HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t1.a=t2.a where t1.b is not null;", args: nil, planRegexp: ".*HashJoin.*"},
 		{prepare: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t2.a=t1.a where t1.b is not null;", args: nil, planRegexp: ".*IndexHashJoin.*"},
-		{prepare: "select * from t1 where a=?;", args: []interface{}{1}, planRegexp: ".*Point_Get.*"},
-		{prepare: "select * from t1 where a in (?,?,?,?)", args: []interface{}{1, 2, 3, 4}, planRegexp: ".*Batch_Point_Get.*"},
+		{prepare: "select * from t1 where a=?;", args: []any{1}, planRegexp: ".*Point_Get.*"},
+		{prepare: "select * from t1 where a in (?,?,?,?)", args: []any{1, 2, 3, 4}, planRegexp: ".*Batch_Point_Get.*"},
 	}
 	execFn = func(db *sql.DB) {
 		dbt := testkit.NewDBTestKit(t, db)
@@ -1499,19 +1499,19 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	// Test case 3: prepare, execute stmt using @val...
 	cases3 := []struct {
 		prepare    string
-		args       []interface{}
+		args       []any
 		planRegexp string
 	}{
-		{prepare: "insert into t2 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
-		{prepare: "update t2 set b=a where b is null limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
-		{prepare: "delete from t2 where b = a limit ?;", args: []interface{}{1}, planRegexp: ".*Limit.*TableReader.*"},
-		{prepare: "replace into t2 (b) values (?);", args: []interface{}{1}, planRegexp: ""},
-		{prepare: "select * from t2 use index(idx) where a<?;", args: []interface{}{10}, planRegexp: ".*IndexLookUp.*"},
-		{prepare: "select * from t2 ignore index(idx) where a>?;", args: []interface{}{1000000000}, planRegexp: ".*TableReader.*"},
+		{prepare: "insert into t2 (b) values (?);", args: []any{1}, planRegexp: ""},
+		{prepare: "update t2 set b=a where b is null limit ?;", args: []any{1}, planRegexp: ".*Limit.*TableReader.*"},
+		{prepare: "delete from t2 where b = a limit ?;", args: []any{1}, planRegexp: ".*Limit.*TableReader.*"},
+		{prepare: "replace into t2 (b) values (?);", args: []any{1}, planRegexp: ""},
+		{prepare: "select * from t2 use index(idx) where a<?;", args: []any{10}, planRegexp: ".*IndexLookUp.*"},
+		{prepare: "select * from t2 ignore index(idx) where a>?;", args: []any{1000000000}, planRegexp: ".*TableReader.*"},
 		{prepare: "select /*+ HASH_JOIN(t1, t2) */ * from t2 t1 join t2 t2 on t1.a=t2.a where t1.b is not null;", args: nil, planRegexp: ".*HashJoin.*"},
 		{prepare: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t2 t1 join t2 t2 on t2.a=t1.a where t1.b is not null;", args: nil, planRegexp: ".*IndexHashJoin.*"},
-		{prepare: "select * from t2 where a=?;", args: []interface{}{1}, planRegexp: ".*Point_Get.*"},
-		{prepare: "select * from t2 where a in (?,?,?,?)", args: []interface{}{1, 2, 3, 4}, planRegexp: ".*Batch_Point_Get.*"},
+		{prepare: "select * from t2 where a=?;", args: []any{1}, planRegexp: ".*Point_Get.*"},
+		{prepare: "select * from t2 where a in (?,?,?,?)", args: []any{1, 2, 3, 4}, planRegexp: ".*Batch_Point_Get.*"},
 	}
 	execFn = func(db *sql.DB) {
 		dbt := testkit.NewDBTestKit(t, db)
@@ -1886,49 +1886,49 @@ func TestTopSQLStatementStats(t *testing.T) {
 	cases3 := []struct {
 		prepare  string
 		execStmt string
-		argsGen  func(idx int) []interface{}
+		argsGen  func(idx int) []any
 	}{
 		{
 			prepare: "insert into t3 values (?, sleep(?))",
-			argsGen: func(idx int) []interface{} {
-				return []interface{}{idx, 0.1}
+			argsGen: func(idx int) []any {
+				return []any{idx, 0.1}
 			},
 		},
 		{
 			prepare: "update t3 set a = a + 1000 where a = ? and sleep(?)",
-			argsGen: func(idx int) []interface{} {
-				return []interface{}{idx, 0.1}
+			argsGen: func(idx int) []any {
+				return []any{idx, 0.1}
 			},
 		},
 		{
 			// test for point-get
 			prepare: "select a, sleep(?) from t3 where a = ?",
-			argsGen: func(idx int) []interface{} {
-				return []interface{}{0.1, idx}
+			argsGen: func(idx int) []any {
+				return []any{0.1, idx}
 			},
 		},
 		{
 			prepare: "select a, sleep(?) from t3 where b = ?",
-			argsGen: func(idx int) []interface{} {
-				return []interface{}{0.1, idx}
+			argsGen: func(idx int) []any {
+				return []any{0.1, idx}
 			},
 		},
 		{
 			prepare: "delete from t3 where sleep(?) and a = ?",
-			argsGen: func(idx int) []interface{} {
-				return []interface{}{0.1, idx}
+			argsGen: func(idx int) []any {
+				return []any{0.1, idx}
 			},
 		},
 		{
 			prepare: "insert into t3 values (?, sleep(?)) on duplicate key update b = b+1",
-			argsGen: func(idx int) []interface{} {
-				return []interface{}{idx, 0.1}
+			argsGen: func(idx int) []any {
+				return []any{idx, 0.1}
 			},
 		},
 		{
 			prepare: "set global tidb_enable_1pc = (? = sleep(?))",
-			argsGen: func(idx int) []interface{} {
-				return []interface{}{0, 0.1}
+			argsGen: func(idx int) []any {
+				return []any{0, 0.1}
 			},
 		},
 	}
@@ -2307,18 +2307,18 @@ func TestTopSQLStatementStats4(t *testing.T) {
 	cases := []struct {
 		prepare string
 		sql     string
-		args    []interface{}
+		args    []any
 	}{
 		{prepare: "select count(a+b) from stmtstats.t", sql: "select count(a+b) from stmtstats.t"},
 		{prepare: "select * from stmtstats.t where b is null", sql: "select * from stmtstats.t where b is null"},
-		{prepare: "update stmtstats.t set b = ? limit ?", sql: "update stmtstats.t set b = 1 limit 10", args: []interface{}{1, 10}},
-		{prepare: "delete from stmtstats.t limit ?", sql: "delete from stmtstats.t limit 1", args: []interface{}{1}},
+		{prepare: "update stmtstats.t set b = ? limit ?", sql: "update stmtstats.t set b = 1 limit 10", args: []any{1, 10}},
+		{prepare: "delete from stmtstats.t limit ?", sql: "delete from stmtstats.t limit 1", args: []any{1}},
 	}
 	var wg sync.WaitGroup
 	sqlDigests := map[stmtstats.BinaryDigest]string{}
 	for _, ca := range cases {
 		wg.Add(1)
-		go func(prepare string, args []interface{}) {
+		go func(prepare string, args []any) {
 			defer wg.Done()
 			db, err := sql.Open("mysql", ts.GetDSN())
 			require.NoError(t, err)

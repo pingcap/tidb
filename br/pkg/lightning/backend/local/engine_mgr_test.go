@@ -53,7 +53,7 @@ func TestEngineManager(t *testing.T) {
 	ctx := context.Background()
 	syncMapLen := func(m *sync.Map) int {
 		count := 0
-		m.Range(func(key, value interface{}) bool {
+		m.Range(func(key, value any) bool {
 			count++
 			return true
 		})

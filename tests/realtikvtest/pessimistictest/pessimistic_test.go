@@ -2434,7 +2434,7 @@ func TestIssue28011(t *testing.T) {
 	for _, tt := range []struct {
 		name      string
 		lockQuery string
-		finalRows [][]interface{}
+		finalRows [][]any
 	}{
 		{"Update", "update t set b = 'x' where a = 'a'", testkit.Rows("a x", "b y", "c z")},
 		{"BatchUpdate", "update t set b = 'x' where a in ('a', 'b', 'c')", testkit.Rows("a x", "b y", "c x")},
@@ -3019,7 +3019,7 @@ func TestLazyUniquenessCheckWithSavepoint(t *testing.T) {
 	require.ErrorContains(t, err, "savepoint is not supported in pessimistic transactions when in-place constraint check is disabled")
 }
 
-func mustExecAsync(tk *testkit.TestKit, sql string, args ...interface{}) <-chan struct{} {
+func mustExecAsync(tk *testkit.TestKit, sql string, args ...any) <-chan struct{} {
 	ch := make(chan struct{})
 	go func() {
 		defer func() { ch <- struct{}{} }()
@@ -3028,7 +3028,7 @@ func mustExecAsync(tk *testkit.TestKit, sql string, args ...interface{}) <-chan 
 	return ch
 }
 
-func mustQueryAsync(tk *testkit.TestKit, sql string, args ...interface{}) <-chan *testkit.Result {
+func mustQueryAsync(tk *testkit.TestKit, sql string, args ...any) <-chan *testkit.Result {
 	ch := make(chan *testkit.Result)
 	go func() {
 		ch <- tk.MustQuery(sql, args...)
@@ -3036,7 +3036,7 @@ func mustQueryAsync(tk *testkit.TestKit, sql string, args ...interface{}) <-chan
 	return ch
 }
 
-func mustTimeout[T interface{}](t *testing.T, ch <-chan T, timeout time.Duration) {
+func mustTimeout[T any](t *testing.T, ch <-chan T, timeout time.Duration) {
 	select {
 	case res := <-ch:
 		require.FailNow(t, fmt.Sprintf("received signal when not expected: %v", res))
@@ -3044,7 +3044,7 @@ func mustTimeout[T interface{}](t *testing.T, ch <-chan T, timeout time.Duration
 	}
 }
 
-func mustRecv[T interface{}](t *testing.T, ch <-chan T) T {
+func mustRecv[T any](t *testing.T, ch <-chan T) T {
 	select {
 	case <-time.After(time.Second):
 	case res := <-ch:

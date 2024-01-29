@@ -790,7 +790,7 @@ func TestTxnAssertion(t *testing.T) {
 			tk.MustExec("create table t(id int primary key, v int, v2 int, v3 int, v4 varchar(64), index(v2), unique index(v3), index(v4))")
 		}
 
-		var id1, id2, id3 interface{}
+		var id1, id2, id3 any
 		if useCommonHandle {
 			id1, id2, id3 = "1", "2", "3"
 		} else {

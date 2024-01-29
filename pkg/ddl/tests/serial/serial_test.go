@@ -876,7 +876,7 @@ func TestAutoRandom(t *testing.T) {
 	databaseName, tableName := "auto_random_db", "t"
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
-	assertInvalidAutoRandomErr := func(sql string, errMsg string, args ...interface{}) {
+	assertInvalidAutoRandomErr := func(sql string, errMsg string, args ...any) {
 		err := tk.ExecToErr(sql)
 		require.EqualError(t, err, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(errMsg, args...)).Error())
 	}
