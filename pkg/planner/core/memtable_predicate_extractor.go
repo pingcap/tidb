@@ -1733,14 +1733,14 @@ func (b *InfoSchemaTablesExtractor) explainInfo(_ *PhysicalMemTable) string {
 }
 
 // ApplyFilter use the col predicates to filter records.
-func (b *InfoSchemaTablesExtractor) ApplyFilter(colName string, any interface{}) bool {
+func (b *InfoSchemaTablesExtractor) ApplyFilter(colName string, val any) bool {
 	if b.SkipRequest {
 		return true
 	}
 	predVals, ok := b.ColPredicates[colName]
-	val := any.(string)
+	valStr := val.(string)
 	if ok && len(predVals) > 0 {
-		return predVals.Exist(val)
+		return predVals.Exist(valStr)
 	}
 	return true
 }

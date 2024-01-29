@@ -361,15 +361,12 @@ func (e *memtableRetriever) setDataFromSchemata(ctx sessionctx.Context, schemas 
 func (e *memtableRetriever) setDataForStatistics(ctx sessionctx.Context, schemas []*model.DBInfo) {
 	checker := privilege.GetPrivilegeManager(ctx)
 	extractor, filter := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
-
+	if filter && extractor.SkipRequest {
+		return
+	}
 	for _, schema := range schemas {
-		if filter {
-			if extractor.SkipRequest {
-				break
-			}
-			if !extractor.ApplyFilter("table_schema", schema.Name.L) {
-				continue
-			}
+		if filter && !extractor.ApplyFilter("table_schema", schema.Name.L) {
+			continue
 		}
 		for _, table := range schema.Tables {
 			if filter && !extractor.ApplyFilter("table_name", schema.Name.L) {
@@ -472,16 +469,13 @@ func (e *memtableRetriever) setDataFromReferConst(sctx sessionctx.Context, schem
 	checker := privilege.GetPrivilegeManager(sctx)
 	var rows [][]types.Datum
 	extractor, filter := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	if filter && extractor.SkipRequest {
+		return nil
+	}
 	for _, schema := range schemas {
-		if filter {
-			if extractor.SkipRequest {
-				break
-			}
-			if !extractor.ApplyFilter("table_schema", schema.Name.L) {
-				continue
-			}
+		if filter && !extractor.ApplyFilter("table_schema", schema.Name.L) {
+			continue
 		}
-
 		for _, table := range schema.Tables {
 			if filter && !extractor.ApplyFilter("table_name", schema.Name.L) {
 				continue
@@ -1503,14 +1497,12 @@ func (e *memtableRetriever) setDataFromKeyColumnUsage(ctx sessionctx.Context, sc
 	checker := privilege.GetPrivilegeManager(ctx)
 	rows := make([][]types.Datum, 0, len(schemas)) // The capacity is not accurate, but it is not a big problem.
 	extractor, filter := e.extractor.(*plannercore.InfoSchemaTablesExtractor)
+	if filter && extractor.SkipRequest {
+		return
+	}
 	for _, schema := range schemas {
-		if filter {
-			if extractor.SkipRequest {
-				break
-			}
-			if !extractor.ApplyFilter("table_schema", schema.Name.L) {
-				continue
-			}
+		if filter && !extractor.ApplyFilter("table_schema", schema.Name.L) {
+			continue
 		}
 		for _, table := range schema.Tables {
 			if filter && !extractor.ApplyFilter("table_name", schema.Name.L) {
