@@ -380,7 +380,6 @@ func TestFallBackAction(t *testing.T) {
 	}
 }
 
-// TODO close whiling running
 func TestRandomFail(t *testing.T) {
 	newRootExceedAction := new(testutil.MockActionOnExceed)
 	hardLimitBytesNum := int64(5000000)

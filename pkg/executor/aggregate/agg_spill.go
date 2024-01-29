@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/hack"
@@ -39,13 +40,13 @@ const (
 
 const (
 	// maxSpillTimes indicates how many times the data can spill at most.
-	maxSpillTimes       = 10
-	partialStageFlag    = 1
-	spilledPartitionNum = 256
-	spillTasksDoneFlag  = -1
+	maxSpillTimes = 10
 
+	// They only used for non-parallel agg spill
 	notSpillMode = 0
 	spillMode    = 1
+
+	spilledPartitionNum = 256
 
 	spillLogInfo string = "memory exceeds quota, set aggregate mode to spill-mode"
 )
@@ -56,7 +57,7 @@ type parallelHashAggSpillHelper struct {
 		waitIfInSpilling  *sync.Cond
 		nextPartitionIdx  int
 		spilledChunksIO   [][]*chunk.DataInDiskByChunks
-		status       spillStatus
+		status            spillStatus
 		memoryConsumption int64
 		memoryQuota       int64
 	}
@@ -68,9 +69,16 @@ type parallelHashAggSpillHelper struct {
 	// These agg functions are partial agg functions that are same with partial workers'.
 	// They only be used for restoring data that are spilled to disk in partial stage.
 	aggFuncsForRestoring []aggfuncs.AggFunc
+
+	getNewSpillChunkFunc func() *chunk.Chunk
+	spillChunkFieldTypes []*types.FieldType
 }
 
-func newSpillHelper(tracker *memory.Tracker, aggFuncsForRestoring []aggfuncs.AggFunc) *parallelHashAggSpillHelper {
+func newSpillHelper(
+	tracker *memory.Tracker,
+	aggFuncsForRestoring []aggfuncs.AggFunc,
+	getNewSpillChunkFunc func() *chunk.Chunk,
+	spillChunkFieldTypes []*types.FieldType) *parallelHashAggSpillHelper {
 	mu := new(sync.Mutex)
 	return &parallelHashAggSpillHelper{
 		lock: struct {
@@ -78,14 +86,14 @@ func newSpillHelper(tracker *memory.Tracker, aggFuncsForRestoring []aggfuncs.Agg
 			waitIfInSpilling  *sync.Cond
 			nextPartitionIdx  int
 			spilledChunksIO   [][]*chunk.DataInDiskByChunks
-			status       spillStatus
+			status            spillStatus
 			memoryConsumption int64
 			memoryQuota       int64
 		}{
 			Mutex:             mu,
 			waitIfInSpilling:  sync.NewCond(mu),
 			spilledChunksIO:   make([][]*chunk.DataInDiskByChunks, spilledPartitionNum),
-			status:       noSpill,
+			status:            noSpill,
 			nextPartitionIdx:  spilledPartitionNum - 1,
 			memoryConsumption: 0,
 			memoryQuota:       0,
@@ -93,6 +101,8 @@ func newSpillHelper(tracker *memory.Tracker, aggFuncsForRestoring []aggfuncs.Agg
 		memTracker:           tracker,
 		hasError:             atomic.Bool{},
 		aggFuncsForRestoring: aggFuncsForRestoring,
+		getNewSpillChunkFunc: getNewSpillChunkFunc,
+		spillChunkFieldTypes: spillChunkFieldTypes,
 	}
 }
 
@@ -135,7 +145,7 @@ func (p *parallelHashAggSpillHelper) getListInDisks(partitionNum int) []*chunk.D
 func (p *parallelHashAggSpillHelper) setInSpilling() {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	p.setIsSpillingNoLock()
+	p.lock.status = inSpilling
 	logutil.BgLogger().Info(spillLogInfo,
 		zap.Int64("consumed", p.lock.memoryConsumption),
 		zap.Int64("quota", p.lock.memoryQuota))
@@ -154,18 +164,10 @@ func (p *parallelHashAggSpillHelper) setSpillTriggered() {
 	p.lock.waitIfInSpilling.Broadcast()
 }
 
-func (p *parallelHashAggSpillHelper) isInSpillingNoLock() bool {
-	return p.lock.status == inSpilling
-}
-
 func (p *parallelHashAggSpillHelper) checkNeedSpill() bool {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 	return p.lock.status == needSpill
-}
-
-func (p *parallelHashAggSpillHelper) setIsSpillingNoLock() {
-	p.lock.status = inSpilling
 }
 
 // Return true if we successfully set flag
@@ -185,7 +187,7 @@ func (p *parallelHashAggSpillHelper) waitForTheEndOfSpill() {
 	p.lock.Lock()
 	defer p.lock.Unlock()
 
-	for p.isInSpillingNoLock() {
+	for p.lock.status == inSpilling {
 		p.lock.waitIfInSpilling.Wait()
 	}
 }

@@ -141,8 +141,11 @@ type HashAggExec struct {
 	inSpillMode uint32
 	// tmpChkForSpill is the temp chunk for spilling.
 	tmpChkForSpill *chunk.Chunk
-	// It's useful when spill is triggered and the fetcher could know when partial workers finish their works.
-	fetcherAndPartialSyncer *sync.WaitGroup
+	// The `inflightChunkSync` calls `Add(1)` when the data fetcher goroutine inserts a chunk into the channel,
+	// and `Done()` when any partial worker retrieves a chunk from the channel and updates it in the `partialResultMap`.
+	// In scenarios where it is necessary to wait for all partial workers to finish processing the inflight chunk,
+	// `inflightChunkSync` can be used for synchronization.
+	inflightChunkSync *sync.WaitGroup
 	// spillAction save the Action for spilling.
 	spillAction *AggSpillDiskAction
 	// parallelAggSpillAction save the Action for spilling of parallel aggregation.
@@ -249,13 +252,6 @@ func (e *HashAggExec) initForUnparallelExec() {
 }
 
 func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrency int, ctx sessionctx.Context) {
-	baseRetTypeNum := len(e.RetFieldTypes())
-	spillChunkFieldTypes := make([]*types.FieldType, baseRetTypeNum+1)
-	for i := 0; i < baseRetTypeNum; i++ {
-		spillChunkFieldTypes[i] = types.NewFieldType(mysql.TypeVarString)
-	}
-	spillChunkFieldTypes[baseRetTypeNum] = types.NewFieldType(mysql.TypeString)
-
 	for i := 0; i < partialConcurrency; i++ {
 		partialResultsMap := make([]aggfuncs.AggPartialResultMapper, finalConcurrency)
 		for i := 0; i < finalConcurrency; i++ {
@@ -276,14 +272,10 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			groupByItems:         e.GroupByItems,
 			chk:                  exec.TryNewCacheChunk(e.Children(0)),
 			groupKey:             make([][]byte, 0, 8),
-			getNewSpillChunkFunc: func() *chunk.Chunk {
-				return chunk.New(spillChunkFieldTypes, e.InitCap(), e.MaxChunkSize())
-			},
-			spillChunkFieldTypes:    spillChunkFieldTypes,
-			spillSerializeHelpers:   aggfuncs.NewSerializeHelper(),
-			isSpillPrepared:         false,
-			spillHelper:             e.spillHelper,
-			fetcherAndPartialSyncer: e.fetcherAndPartialSyncer,
+			serializeHelpers:     aggfuncs.NewSerializeHelper(),
+			isSpillPrepared:      false,
+			spillHelper:          e.spillHelper,
+			inflightChunkSync:    e.inflightChunkSync,
 		}
 
 		e.partialWorkers[i].partialResultNumInRow = e.partialWorkers[i].getPartialResultSliceLenConsiderByteAlign()
@@ -357,11 +349,21 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 		e.partialOutputChs[i] = make(chan *aggfuncs.AggPartialResultMapper, partialConcurrency)
 	}
 
-	e.fetcherAndPartialSyncer = &sync.WaitGroup{}
+	e.inflightChunkSync = &sync.WaitGroup{}
 
 	isTrackerEnabled := e.Ctx().GetSessionVars().TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load()
 	isParallelHashAggSpillEnabled := e.Ctx().GetSessionVars().EnableConcurrentHashaggSpill
-	e.spillHelper = newSpillHelper(e.memTracker, e.PartialAggFuncs)
+
+	baseRetTypeNum := len(e.RetFieldTypes())
+	spillChunkFieldTypes := make([]*types.FieldType, baseRetTypeNum+1)
+	for i := 0; i < baseRetTypeNum; i++ {
+		spillChunkFieldTypes[i] = types.NewFieldType(mysql.TypeVarString)
+	}
+	spillChunkFieldTypes[baseRetTypeNum] = types.NewFieldType(mysql.TypeString)
+	e.spillHelper = newSpillHelper(e.memTracker, e.PartialAggFuncs, func() *chunk.Chunk {
+		return chunk.New(spillChunkFieldTypes, e.InitCap(), e.MaxChunkSize())
+	}, spillChunkFieldTypes)
+
 	if isTrackerEnabled && isParallelHashAggSpillEnabled {
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
 		e.diskTracker.AttachTo(sessionVars.StmtCtx.DiskTracker)
@@ -401,7 +403,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		}
 
 		// Wait for the finish of all partial workers
-		e.fetcherAndPartialSyncer.Wait()
+		e.inflightChunkSync.Wait()
 
 		if e.spillHelper.isSpillTriggered() && !e.spillHelper.checkError() {
 			// Spill the remaining data
@@ -439,7 +441,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 
 		failpoint.Inject("ConsumeRandomPanic", nil)
 		e.memTracker.Consume(chk.MemoryUsage() - mSize)
-		e.fetcherAndPartialSyncer.Add(1)
+		e.inflightChunkSync.Add(1)
 		input.giveBackCh <- chk
 
 		if hasError := e.spillIfNeed(); hasError {
@@ -458,7 +460,7 @@ func (e *HashAggExec) spillIfNeed() bool {
 	}
 
 	// Wait for the finish of all partial workers
-	e.fetcherAndPartialSyncer.Wait()
+	e.inflightChunkSync.Wait()
 	e.spill()
 	return false
 }

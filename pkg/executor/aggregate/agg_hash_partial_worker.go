@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/twmb/murmur3"
@@ -62,16 +61,14 @@ type HashAggPartialWorker struct {
 	// and is reused by childExec and partial worker.
 	chk *chunk.Chunk
 
-	isSpillPrepared       bool
-	spillHelper           *parallelHashAggSpillHelper
-	tmpChksForSpill       []*chunk.Chunk
-	spillSerializeHelpers *aggfuncs.SerializeHelper
-	getNewSpillChunkFunc  func() *chunk.Chunk
-	spillChunkFieldTypes  []*types.FieldType
-	spilledChunksIO       []*chunk.DataInDiskByChunks
+	isSpillPrepared  bool
+	spillHelper      *parallelHashAggSpillHelper
+	tmpChksForSpill  []*chunk.Chunk
+	serializeHelpers *aggfuncs.SerializeHelper
+	spilledChunksIO  []*chunk.DataInDiskByChunks
 
 	// It's useful when spill is triggered and the fetcher could know when partial workers finish their works.
-	fetcherAndPartialSyncer *sync.WaitGroup
+	inflightChunkSync *sync.WaitGroup
 }
 
 func (w *HashAggPartialWorker) getChildInput() bool {
@@ -118,7 +115,7 @@ func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasE
 		return false
 	}
 
-	defer w.fetcherAndPartialSyncer.Done()
+	defer w.inflightChunkSync.Done()
 
 	execStart := time.Now()
 	if err := w.updatePartialResult(ctx, w.chk, len(w.partialResultsMap)); err != nil {
@@ -212,7 +209,7 @@ func (w *HashAggPartialWorker) consumeAllChunksBeforeExit() {
 			chk:        chk,
 			giveBackCh: w.inputCh,
 		}
-		w.fetcherAndPartialSyncer.Done()
+		w.inflightChunkSync.Done()
 	}
 }
 
@@ -326,8 +323,8 @@ func (w *HashAggPartialWorker) prepareForSpill() {
 		w.tmpChksForSpill = make([]*chunk.Chunk, spilledPartitionNum)
 		w.spilledChunksIO = make([]*chunk.DataInDiskByChunks, spilledPartitionNum)
 		for i := 0; i < spilledPartitionNum; i++ {
-			w.tmpChksForSpill[i] = w.getNewSpillChunkFunc()
-			w.spilledChunksIO[i] = chunk.NewDataInDiskByChunks(w.spillChunkFieldTypes)
+			w.tmpChksForSpill[i] = w.spillHelper.getNewSpillChunkFunc()
+			w.spilledChunksIO[i] = chunk.NewDataInDiskByChunks(w.spillHelper.spillChunkFieldTypes)
 			if w.spillHelper.diskTracker != nil {
 				w.spilledChunksIO[i].GetDiskTracker().AttachTo(w.spillHelper.diskTracker)
 			}
@@ -384,7 +381,7 @@ func (w *HashAggPartialWorker) spillDataToDiskImpl() error {
 
 			// Serialize agg meta data to the tmp chunk
 			for i, aggFunc := range w.aggFuncs {
-				aggFunc.SerializePartialResult(partialResults[i], w.tmpChksForSpill[partitionNum], w.spillSerializeHelpers)
+				aggFunc.SerializePartialResult(partialResults[i], w.tmpChksForSpill[partitionNum], w.serializeHelpers)
 			}
 
 			// Append key
