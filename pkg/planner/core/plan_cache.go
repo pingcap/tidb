@@ -513,10 +513,6 @@ func rebuildRange(p Plan) error {
 			}
 
 			if x.PartitionDef != nil {
-				if !x.TblInfo.PKIsHandle {
-					return errors.New("point get for partition table can not use plan cache, PK is not handle")
-				}
-				// Re-calculate the pruning!
 				colName := getPartitionColNameSimple(sctx, x.TblInfo)
 				partDef, _, _, isTableDual = getPartitionDef(sctx, x.TblInfo, colName, []nameValuePair{{colName, x.handleFieldType, *dVal, x.HandleConstant}})
 				// TODO: Support isTableDual?
@@ -663,12 +659,6 @@ func rebuildRange(p Plan) error {
 					x.IndexValues[i][j] = *dVal
 				}
 			}
-		}
-		if len(x.HandleParams) > 0 && len(x.IndexValueParams) > 0 {
-			panic("Both handle and index params?!?")
-		}
-		if len(x.Handles) > 0 && len(x.IndexValues) > 0 {
-			panic("Both handle and index values?!?")
 		}
 		// TODO: fix TableDual!
 		if len(x.PartitionDefs) > 0 {

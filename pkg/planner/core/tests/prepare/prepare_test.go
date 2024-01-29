@@ -1540,6 +1540,8 @@ func TestPrepareCacheForDynamicPartitionPruning(t *testing.T) {
 	tk.MustQuery(`select @@session.tidb_enable_prepared_plan_cache`).Check(testkit.Rows("1"))
 
 	tk.MustExec("use test")
+	tkExplain := testkit.NewTestKit(t, store)
+	tkExplain.MustExec("use test")
 	for _, pruneMode := range []string{string(variable.Static), string(variable.Dynamic)} {
 		tk.MustExec("set @@tidb_partition_prune_mode = '" + pruneMode + "'")
 
@@ -1551,15 +1553,37 @@ func TestPrepareCacheForDynamicPartitionPruning(t *testing.T) {
 		tk.MustExec(`set @a=111, @b=1`)
 		tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
 		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+		tkProcess := tk.Session().ShowProcess()
+		ps := []*util.ProcessInfo{tkProcess}
+		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+		explain := tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
+		if pruneMode == string(variable.Dynamic) {
+			require.Equal(t, any("IndexLookUp_10"), explain.Rows()[0][0])
+		} else {
+			require.Equal(t, any("TableDual_7"), explain.Rows()[0][0])
+		}
 		tk.MustExec(`set @a=112, @b=-5`)
 		tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows("-5 7"))
+
+		explain = tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
 		if pruneMode == string(variable.Dynamic) {
+			require.Equal(t, any("IndexLookUp_10"), explain.Rows()[0][0])
 			require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 			tk.MustQuery(`show warnings`).Check(testkit.Rows())
 		} else {
+			explain.CheckAt([]int{0},
+				[][]any{
+					{"Selection_8"},
+					{"└─Point_Get_7"},
+				})
 			require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 			tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable if tidb_partition_pruning_mode = 'static'"))
 		}
+
+		// Test TableDual
+		tk.MustExec(`set @a=113, @b=5`)
+		tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
+		require.Equal(t, pruneMode == string(variable.Dynamic), tk.Session().GetSessionVars().FoundInPlanCache)
 	}
 }
 
@@ -1608,7 +1632,6 @@ func TestHashPartitionAndPlanCache(t *testing.T) {
 	tk.MustQuery(`execute stmt using @a`).Check(testkit.Rows("2 2"))
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	//tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows())
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
 		[][]any{
 			{"Point_Get_1"},
