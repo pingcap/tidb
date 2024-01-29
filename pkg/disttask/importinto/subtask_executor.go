@@ -116,6 +116,9 @@ func postProcess(ctx context.Context, taskMeta *TaskMeta, subtaskMeta *PostProce
 		return err
 	}
 	return taskManager.WithNewSession(func(se sessionctx.Context) error {
+		distSQLScanConcurrency := se.GetSessionVars().DistSQLScanConcurrency()
+		distSQLScanConcurrency *= 10
+		se.GetSessionVars().SetDistSQLScanConcurrency(distSQLScanConcurrency)
 		return importer.VerifyChecksum(ctx, &taskMeta.Plan, localChecksum, se, logger)
 	})
 }
