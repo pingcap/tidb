@@ -50,6 +50,7 @@ import (
 	pumpcli "github.com/pingcap/tidb/pkg/tidb-binlog/pump_client"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
@@ -722,8 +723,8 @@ type SessionVars struct {
 		value string
 	}
 
-	// Status stands for the session status. e.g. in transaction or not, auto commit is on or off, and so on.
-	Status uint16
+	// status stands for the session status. e.g. in transaction or not, auto commit is on or off, and so on.
+	status atomic.Uint32
 
 	// ClientCapability is client's capability.
 	ClientCapability uint32
@@ -1671,7 +1672,7 @@ func (s *SessionVars) ClearAlloc(alloc *chunk.Allocator, hasErr bool) {
 func (s *SessionVars) GetPreparedStmtByName(stmtName string) (interface{}, error) {
 	stmtID, ok := s.PreparedStmtNameToID[stmtName]
 	if !ok {
-		return nil, ErrStmtNotFound
+		return nil, plannererrors.ErrStmtNotFound
 	}
 	return s.GetPreparedStmtByID(stmtID)
 }
@@ -1680,7 +1681,7 @@ func (s *SessionVars) GetPreparedStmtByName(stmtName string) (interface{}, error
 func (s *SessionVars) GetPreparedStmtByID(stmtID uint32) (interface{}, error) {
 	stmt, ok := s.PreparedStmts[stmtID]
 	if !ok {
-		return nil, ErrStmtNotFound
+		return nil, plannererrors.ErrStmtNotFound
 	}
 	return stmt, nil
 }
@@ -1943,7 +1944,6 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ActiveRoles:                   make([]*auth.RoleIdentity, 0, 10),
 		AutoIncrementIncrement:        DefAutoIncrementIncrement,
 		AutoIncrementOffset:           DefAutoIncrementOffset,
-		Status:                        mysql.ServerStatusAutocommit,
 		StmtCtx:                       stmtctx.NewStmtCtx(),
 		AllowAggPushDown:              false,
 		AllowCartesianBCJ:             DefOptCartesianBCJ,
@@ -2033,6 +2033,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		ResourceGroupName:             resourcegroup.DefaultResourceGroupName,
 		DefaultCollationForUTF8MB4:    mysql.DefaultCollationName,
 	}
+	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
 	vars.StmtCtx.ResourceGroupName = resourcegroup.DefaultResourceGroupName
 	vars.KVVars = tikvstore.NewVariables(&vars.SQLKiller.Signal)
 	vars.Concurrency = Concurrency{
@@ -2268,15 +2269,36 @@ func (s *SessionVars) SetLastInsertID(insertID uint64) {
 // otherwise removes the flag.
 func (s *SessionVars) SetStatusFlag(flag uint16, on bool) {
 	if on {
-		s.Status |= flag
+		for {
+			status := s.status.Load()
+			if status&uint32(flag) == uint32(flag) {
+				break
+			}
+			if s.status.CompareAndSwap(status, status|uint32(flag)) {
+				break
+			}
+		}
 		return
 	}
-	s.Status &= ^flag
+	for {
+		status := s.status.Load()
+		if status&uint32(flag) == 0 {
+			break
+		}
+		if s.status.CompareAndSwap(status, status&^uint32(flag)) {
+			break
+		}
+	}
 }
 
-// GetStatusFlag gets the session server status variable, returns true if it is on.
-func (s *SessionVars) GetStatusFlag(flag uint16) bool {
-	return s.Status&flag > 0
+// HasStatusFlag gets the session server status variable, returns true if it is on.
+func (s *SessionVars) HasStatusFlag(flag uint16) bool {
+	return s.status.Load()&uint32(flag) > 0
+}
+
+// Status returns the server status.
+func (s *SessionVars) Status() uint16 {
+	return uint16(s.status.Load())
 }
 
 // SetInTxn sets whether the session is in transaction.
@@ -2290,12 +2312,12 @@ func (s *SessionVars) SetInTxn(val bool) {
 
 // InTxn returns if the session is in transaction.
 func (s *SessionVars) InTxn() bool {
-	return s.GetStatusFlag(mysql.ServerStatusInTrans)
+	return s.HasStatusFlag(mysql.ServerStatusInTrans)
 }
 
 // IsAutocommit returns if the session is set to autocommit.
 func (s *SessionVars) IsAutocommit() bool {
-	return s.GetStatusFlag(mysql.ServerStatusAutocommit)
+	return s.HasStatusFlag(mysql.ServerStatusAutocommit)
 }
 
 // IsIsolation if true it means the transaction is at that isolation level.
@@ -2648,7 +2670,7 @@ func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sess
 
 	// Encode other session contexts.
 	sessionStates.PreparedStmtID = s.preparedStmtID
-	sessionStates.Status = s.Status
+	sessionStates.Status = s.status.Load()
 	sessionStates.CurrentDB = s.CurrentDB
 	sessionStates.LastTxnInfo = s.LastTxnInfo
 	if s.LastQueryInfo.StartTS != 0 {
@@ -2684,7 +2706,7 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 
 	// Decode other session contexts.
 	s.preparedStmtID = sessionStates.PreparedStmtID
-	s.Status = sessionStates.Status
+	s.status.Store(sessionStates.Status)
 	s.CurrentDB = sessionStates.CurrentDB
 	s.LastTxnInfo = sessionStates.LastTxnInfo
 	if sessionStates.LastQueryInfo != nil {

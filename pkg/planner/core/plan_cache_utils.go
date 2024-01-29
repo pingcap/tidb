@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -84,22 +85,22 @@ func GeneratePlanCacheStmtWithAST(ctx context.Context, sctx sessionctx.Context, 
 
 	// DDL Statements can not accept parameters
 	if _, ok := paramStmt.(ast.DDLNode); ok && len(extractor.markers) > 0 {
-		return nil, nil, 0, ErrPrepareDDL
+		return nil, nil, 0, plannererrors.ErrPrepareDDL
 	}
 
 	switch stmt := paramStmt.(type) {
 	case *ast.ImportIntoStmt, *ast.LoadDataStmt, *ast.PrepareStmt, *ast.ExecuteStmt, *ast.DeallocateStmt, *ast.NonTransactionalDMLStmt:
-		return nil, nil, 0, ErrUnsupportedPs
+		return nil, nil, 0, plannererrors.ErrUnsupportedPs
 	case *ast.SelectStmt:
 		if stmt.SelectIntoOpt != nil {
-			return nil, nil, 0, ErrUnsupportedPs
+			return nil, nil, 0, plannererrors.ErrUnsupportedPs
 		}
 	}
 
 	// Prepare parameters should NOT over 2 bytes(MaxUint16)
 	// https://dev.mysql.com/doc/internals/en/com-stmt-prepare-response.html#packet-COM_STMT_PREPARE_OK.
 	if len(extractor.markers) > math.MaxUint16 {
-		return nil, nil, 0, ErrPsManyParam
+		return nil, nil, 0, plannererrors.ErrPsManyParam
 	}
 
 	ret := &PreprocessorReturn{InfoSchema: is} // is can be nil, and
@@ -478,7 +479,7 @@ func GetPreparedStmt(stmt *ast.ExecuteStmt, vars *variable.SessionVars) (*PlanCa
 		stmt.PrepStmt = prepStmt
 		return prepStmt.(*PlanCacheStmt), nil
 	}
-	return nil, ErrStmtNotFound
+	return nil, plannererrors.ErrStmtNotFound
 }
 
 // GetMatchOpts get options to fetch plan or generate new plan

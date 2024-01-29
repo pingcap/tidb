@@ -24,10 +24,10 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -156,7 +156,7 @@ func GetJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, user str
 		return nil, err
 	}
 	if !hasSuperPriv && info.CreatedBy != user {
-		return nil, core.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
+		return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
 	}
 	return info, nil
 }

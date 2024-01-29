@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -932,11 +933,11 @@ func TestCartesianProduct(t *testing.T) {
 	tk.MustExec("create table t(c1 int)")
 	plannercore.AllowCartesianProduct.Store(false)
 	err := tk.ExecToErr("select * from t t1, t t2")
-	require.True(t, plannercore.ErrCartesianProductUnsupported.Equal(err))
+	require.True(t, plannererrors.ErrCartesianProductUnsupported.Equal(err))
 	err = tk.ExecToErr("select * from t t1 left join t t2 on 1")
-	require.True(t, plannercore.ErrCartesianProductUnsupported.Equal(err))
+	require.True(t, plannererrors.ErrCartesianProductUnsupported.Equal(err))
 	err = tk.ExecToErr("select * from t t1 right join t t2 on 1")
-	require.True(t, plannercore.ErrCartesianProductUnsupported.Equal(err))
+	require.True(t, plannererrors.ErrCartesianProductUnsupported.Equal(err))
 	plannercore.AllowCartesianProduct.Store(true)
 }
 
