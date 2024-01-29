@@ -1185,7 +1185,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 			// check left map
 			if cnt, ok := lNameMap[name.ColName.L]; ok {
 				if cnt > 1 {
-					return ErrAmbiguous.GenWithStackByArgs(name.ColName.L, "from clause")
+					return plannererrors.ErrAmbiguous.GenWithStackByArgs(name.ColName.L, "from clause")
 				}
 				commonNames = append(commonNames, name.ColName.L)
 			}
@@ -1193,7 +1193,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *LogicalJoin, leftPlan, rightPlan 
 		// check right map
 		for _, commonName := range commonNames {
 			if rNameMap[commonName] > 1 {
-				return ErrAmbiguous.GenWithStackByArgs(commonName, "from clause")
+				return plannererrors.ErrAmbiguous.GenWithStackByArgs(commonName, "from clause")
 			}
 		}
 	}
