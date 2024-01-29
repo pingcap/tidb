@@ -918,7 +918,7 @@ type LogicalAggregation struct {
 	GroupByItems []expression.Expression
 
 	// aggHints stores aggregation hint information.
-	h.AggHints
+	aggHints h.AggHints
 
 	possibleProperties [][]*expression.Column
 	inputCount         float64 // inputCount is the input count of this plan.
