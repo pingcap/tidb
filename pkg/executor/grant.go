@@ -675,7 +675,7 @@ func composeColumnPrivUpdateForGrant(ctx sessionctx.Context, sql *strings.Builde
 }
 
 // recordExists is a helper function to check if the sql returns any row.
-func recordExists(sctx sessionctx.Context, sql string, args ...interface{}) (bool, error) {
+func recordExists(sctx sessionctx.Context, sql string, args ...any) (bool, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
 	rs, err := sctx.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, args...)
 	if err != nil {

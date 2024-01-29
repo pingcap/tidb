@@ -155,7 +155,7 @@ func SelectWithRuntimeStats(ctx context.Context, sctx sessionctx.Context, kvReq 
 }
 
 // Analyze do a analyze request.
-func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{},
+func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars any,
 	isRestrict bool, stmtCtx *stmtctx.StatementContext) (SelectResult, error) {
 	ctx = WithSQLKvExecCounterInterceptor(ctx, stmtCtx)
 	kvReq.RequestSource.RequestSourceInternal = true
@@ -178,7 +178,7 @@ func Analyze(ctx context.Context, client kv.Client, kvReq *kv.Request, vars inte
 }
 
 // Checksum sends a checksum request.
-func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars interface{}) (SelectResult, error) {
+func Checksum(ctx context.Context, client kv.Client, kvReq *kv.Request, vars any) (SelectResult, error) {
 	// FIXME: As BR have dependency of `Checksum` and TiDB also introduced BR as dependency, Currently we can't edit
 	// Checksum function signature. The two-way dependence should be removed in the future.
 	resp := client.Send(ctx, kvReq, vars, &kv.ClientSendOption{})

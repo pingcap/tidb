@@ -67,25 +67,25 @@ const finishJobHistoryTemplate = `UPDATE mysql.tidb_ttl_job_history
 	    status = %?
 	WHERE job_id = %?`
 
-func updateJobCurrentStatusSQL(tableID int64, oldStatus cache.JobStatus, newStatus cache.JobStatus, jobID string) (string, []interface{}) {
-	return updateJobCurrentStatusTemplate, []interface{}{string(newStatus), tableID, string(oldStatus), jobID}
+func updateJobCurrentStatusSQL(tableID int64, oldStatus cache.JobStatus, newStatus cache.JobStatus, jobID string) (string, []any) {
+	return updateJobCurrentStatusTemplate, []any{string(newStatus), tableID, string(oldStatus), jobID}
 }
 
-func finishJobSQL(tableID int64, finishTime time.Time, summary string, jobID string) (string, []interface{}) {
-	return finishJobTemplate, []interface{}{finishTime.Format(timeFormat), summary, tableID, jobID}
+func finishJobSQL(tableID int64, finishTime time.Time, summary string, jobID string) (string, []any) {
+	return finishJobTemplate, []any{finishTime.Format(timeFormat), summary, tableID, jobID}
 }
 
-func removeTaskForJob(jobID string) (string, []interface{}) {
-	return removeTaskForJobTemplate, []interface{}{jobID}
+func removeTaskForJob(jobID string) (string, []any) {
+	return removeTaskForJobTemplate, []any{jobID}
 }
 
-func createJobHistorySQL(jobID string, tbl *cache.PhysicalTable, expire time.Time, now time.Time) (string, []interface{}) {
-	var partitionName interface{}
+func createJobHistorySQL(jobID string, tbl *cache.PhysicalTable, expire time.Time, now time.Time) (string, []any) {
+	var partitionName any
 	if tbl.Partition.O != "" {
 		partitionName = tbl.Partition.O
 	}
 
-	return createJobHistoryRowTemplate, []interface{}{
+	return createJobHistoryRowTemplate, []any{
 		jobID,
 		tbl.ID,
 		tbl.TableInfo.ID,
@@ -98,8 +98,8 @@ func createJobHistorySQL(jobID string, tbl *cache.PhysicalTable, expire time.Tim
 	}
 }
 
-func finishJobHistorySQL(jobID string, finishTime time.Time, summary *TTLSummary) (string, []interface{}) {
-	return finishJobHistoryTemplate, []interface{}{
+func finishJobHistorySQL(jobID string, finishTime time.Time, summary *TTLSummary) (string, []any) {
+	return finishJobHistoryTemplate, []any{
 		finishTime.Format(timeFormat),
 		summary.SummaryText,
 		summary.TotalRows,

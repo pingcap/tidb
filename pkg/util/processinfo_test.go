@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func MyFunc(interface{}) map[string]uint64 {
+func MyFunc(any) map[string]uint64 {
 	return nil
 }
 

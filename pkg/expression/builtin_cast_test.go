@@ -1666,28 +1666,28 @@ func TestCastBinaryStringAsJSONSig(t *testing.T) {
 func TestCastArrayFunc(t *testing.T) {
 	ctx := createContext(t)
 	tbl := []struct {
-		input            interface{}
-		expected         interface{}
+		input            any
+		expected         any
 		tp               *types.FieldType
 		success          bool
 		buildFuncSuccess bool
 	}{
 		{
-			[]interface{}{int64(-1), int64(2), int64(3)},
-			[]interface{}{int64(-1), int64(2), int64(3)},
+			[]any{int64(-1), int64(2), int64(3)},
+			[]any{int64(-1), int64(2), int64(3)},
 			types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetCharset(charset.CharsetBin).SetCollate(charset.CollationBin).SetArray(true).BuildP(),
 			true,
 			true,
 		},
 		{
-			[]interface{}{int64(-1), int64(2), int64(3)},
+			[]any{int64(-1), int64(2), int64(3)},
 			nil,
 			types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetCharset(charset.CharsetUTF8MB4).SetCollate(charset.CollationUTF8MB4).SetArray(true).BuildP(),
 			false,
 			true,
 		},
 		{
-			[]interface{}{"1"},
+			[]any{"1"},
 			nil,
 			types.NewFieldTypeBuilder().SetType(mysql.TypeLonglong).SetCharset(charset.CharsetBin).SetCollate(charset.CharsetBin).SetArray(true).BuildP(),
 			false,

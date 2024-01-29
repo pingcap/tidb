@@ -1637,7 +1637,7 @@ func NewSQLDigestTextRetriever() *SQLDigestTextRetriever {
 	}
 }
 
-func (r *SQLDigestTextRetriever) runMockQuery(data map[string]string, inValues []interface{}) (map[string]string, error) {
+func (r *SQLDigestTextRetriever) runMockQuery(data map[string]string, inValues []any) (map[string]string, error) {
 	if len(inValues) == 0 {
 		return data, nil
 	}
@@ -1654,7 +1654,7 @@ func (r *SQLDigestTextRetriever) runMockQuery(data map[string]string, inValues [
 // of the given SQL digests, if `inValues` is given, or all these mappings otherwise. If `queryGlobal` is false, it
 // queries information_schema.statements_summary and information_schema.statements_summary_history; otherwise, it
 // queries the cluster version of these two tables.
-func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, sctx EvalContext, queryGlobal bool, inValues []interface{}) (map[string]string, error) {
+func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, sctx EvalContext, queryGlobal bool, inValues []any) (map[string]string, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	// If mock data is set, query the mock data instead of the real statements_summary tables.
 	if !queryGlobal && r.mockLocalData != nil {
@@ -1714,7 +1714,7 @@ func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, sctx EvalCon
 
 	var queryResult map[string]string
 	if len(r.SQLDigestsMap) <= r.fetchAllLimit {
-		inValues := make([]interface{}, 0, len(r.SQLDigestsMap))
+		inValues := make([]any, 0, len(r.SQLDigestsMap))
 		for key := range r.SQLDigestsMap {
 			inValues = append(inValues, key)
 		}
@@ -1754,7 +1754,7 @@ func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, sctx EvalCo
 		failpoint.Return(nil)
 	})
 
-	var unknownDigests []interface{}
+	var unknownDigests []any
 	for k, v := range r.SQLDigestsMap {
 		if len(v) == 0 {
 			unknownDigests = append(unknownDigests, k)

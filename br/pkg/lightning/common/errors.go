@@ -210,7 +210,7 @@ func NormalizeError(err error) error {
 }
 
 // NormalizeOrWrapErr tries to normalize err. If the returned error is ErrUnknown, wraps it with the given rfcErr.
-func NormalizeOrWrapErr(rfcErr *errors.Error, err error, args ...interface{}) error {
+func NormalizeOrWrapErr(rfcErr *errors.Error, err error, args ...any) error {
 	if err == nil {
 		return nil
 	}

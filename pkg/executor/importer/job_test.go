@@ -74,7 +74,7 @@ func TestJobHappyPath(t *testing.T) {
 				ColumnsAndVars: "(a, b, c)",
 				SetClause:      "d = 1",
 				Format:         importer.DataFormatCSV,
-				Options: map[string]interface{}{
+				Options: map[string]any{
 					"skip_rows": float64(1), // json unmarshal will convert number to float64
 					"detached":  nil,
 				},
@@ -163,7 +163,7 @@ func TestGetAndCancelJob(t *testing.T) {
 			ColumnsAndVars: "(a, b, c)",
 			SetClause:      "d = 1",
 			Format:         importer.DataFormatCSV,
-			Options: map[string]interface{}{
+			Options: map[string]any{
 				"skip_rows": float64(1), // json unmarshal will convert number to float64
 				"detached":  nil,
 			},
@@ -294,7 +294,7 @@ func TestGetJobInfoNullField(t *testing.T) {
 			ColumnsAndVars: "(a, b, c)",
 			SetClause:      "d = 1",
 			Format:         importer.DataFormatCSV,
-			Options: map[string]interface{}{
+			Options: map[string]any{
 				"skip_rows": float64(1), // json unmarshal will convert number to float64
 				"detached":  nil,
 			},

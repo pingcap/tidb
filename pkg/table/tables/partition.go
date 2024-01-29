@@ -99,9 +99,9 @@ type partitionedTable struct {
 
 	// Only used during Reorganize partition
 	// reorganizePartitions is the currently used partitions that are reorganized
-	reorganizePartitions map[int64]interface{}
+	reorganizePartitions map[int64]any
 	// doubleWritePartitions are the partitions not visible, but we should double write to
-	doubleWritePartitions map[int64]interface{}
+	doubleWritePartitions map[int64]any
 	reorgPartitionExpr    *PartitionExpr
 }
 
@@ -120,7 +120,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 	ret.partitionExpr = partitionExpr
 	initEvalBufferType(ret)
 	ret.evalBufferPool = sync.Pool{
-		New: func() interface{} {
+		New: func() any {
 			return initEvalBuffer(ret)
 		},
 	}
@@ -157,11 +157,11 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		ret.reorganizePartitions = make(map[int64]interface{}, len(pi.AddingDefinitions))
+		ret.reorganizePartitions = make(map[int64]any, len(pi.AddingDefinitions))
 		for _, def := range pi.AddingDefinitions {
 			ret.reorganizePartitions[def.ID] = nil
 		}
-		ret.doubleWritePartitions = make(map[int64]interface{}, len(pi.DroppingDefinitions))
+		ret.doubleWritePartitions = make(map[int64]any, len(pi.DroppingDefinitions))
 		for _, def := range pi.DroppingDefinitions {
 			p, err := initPartition(ret, def)
 			if err != nil {
@@ -184,7 +184,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
-			ret.doubleWritePartitions = make(map[int64]interface{}, len(pi.AddingDefinitions))
+			ret.doubleWritePartitions = make(map[int64]any, len(pi.AddingDefinitions))
 			for _, def := range pi.AddingDefinitions {
 				ret.doubleWritePartitions[def.ID] = nil
 				p, err := initPartition(ret, def)
@@ -195,7 +195,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Part
 			}
 		}
 		if len(pi.DroppingDefinitions) > 0 {
-			ret.reorganizePartitions = make(map[int64]interface{}, len(pi.DroppingDefinitions))
+			ret.reorganizePartitions = make(map[int64]any, len(pi.DroppingDefinitions))
 			for _, def := range pi.DroppingDefinitions {
 				ret.reorganizePartitions[def.ID] = nil
 			}

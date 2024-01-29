@@ -916,7 +916,7 @@ func (e *CheckTableExec) checkIndexHandle(ctx context.Context, src *IndexLookUpE
 	return errors.Trace(err)
 }
 
-func (e *CheckTableExec) handlePanic(r interface{}) {
+func (e *CheckTableExec) handlePanic(r any) {
 	if r != nil {
 		e.retCh <- errors.Errorf("%v", r)
 	}
@@ -2016,7 +2016,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.DiskTracker.Killer = &vars.SQLKiller
 	vars.SQLKiller.Reset()
 	vars.SQLKiller.ConnID = vars.ConnectionID
-	vars.StmtCtx.TableStats = make(map[int64]interface{})
+	vars.StmtCtx.TableStats = make(map[int64]any)
 
 	isAnalyze := false
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {

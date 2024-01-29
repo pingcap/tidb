@@ -182,7 +182,7 @@ type indexJoinTestCase struct {
 	compareFilters string
 }
 
-func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase *indexJoinTestCase, msgAndArgs ...interface{}) *indexJoinBuildHelper {
+func testAnalyzeLookUpFilters(t *testing.T, testCtx *indexJoinContext, testCase *indexJoinTestCase, msgAndArgs ...any) *indexJoinBuildHelper {
 	ctx := testCtx.dataSourceNode.SCtx()
 	ctx.GetSessionVars().RangeMaxSize = testCase.rangeMaxSize
 	dataSourceNode := testCtx.dataSourceNode

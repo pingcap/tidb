@@ -87,7 +87,7 @@ func (s *tikvSnapshot) IterReverse(k kv.Key, lowerBound kv.Key) (kv.Iterator, er
 	return &tikvScanner{scanner.(*txnsnapshot.Scanner)}, err
 }
 
-func (s *tikvSnapshot) SetOption(opt int, val interface{}) {
+func (s *tikvSnapshot) SetOption(opt int, val any) {
 	switch opt {
 	case kv.IsolationLevel:
 		level := getTiKVIsolationLevel(val.(kv.IsoLevel))

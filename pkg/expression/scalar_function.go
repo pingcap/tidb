@@ -391,7 +391,7 @@ func (sf *ScalarFunction) Traverse(action TraverseAction) Expression {
 // Eval implements Expression interface.
 func (sf *ScalarFunction) Eval(ctx EvalContext, row chunk.Row) (d types.Datum, err error) {
 	var (
-		res    interface{}
+		res    any
 		isNull bool
 	)
 	intest.AssertNotNil(ctx)

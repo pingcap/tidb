@@ -677,7 +677,7 @@ func TestTTLTelemetry(t *testing.T) {
 			require.NotEqual(t, tblID, partitionID)
 		}
 
-		summary := make(map[string]interface{})
+		summary := make(map[string]any)
 		summary["total_rows"] = totalRows
 		summary["success_rows"] = totalRows - errorRows
 		summary["error_rows"] = errorRows
@@ -907,7 +907,7 @@ func TestFairLockingUsage(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk3.MustExec("begin pessimistic")
 	tk3.MustExec("update t set v = v + 1 where id = 1")
-	ch := make(chan interface{})
+	ch := make(chan any)
 	go func() {
 		tk.MustExec("update t set v = v + 1 where id = 1")
 		ch <- nil

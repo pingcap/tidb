@@ -545,7 +545,7 @@ func (b *builtinJSONObjectSig) evalJSON(ctx EvalContext, row chunk.Row) (res typ
 		err = ErrIncorrectParameterCount.GenWithStackByArgs(ast.JSONObject)
 		return res, true, err
 	}
-	jsons := make(map[string]interface{}, len(b.args)>>1)
+	jsons := make(map[string]any, len(b.args)>>1)
 	var key string
 	var value types.BinaryJSON
 	for i, arg := range b.args {
@@ -611,7 +611,7 @@ func (c *jsonArrayFunctionClass) getFunction(ctx sessionctx.Context, args []Expr
 }
 
 func (b *builtinJSONArraySig) evalJSON(ctx EvalContext, row chunk.Row) (res types.BinaryJSON, isNull bool, err error) {
-	jsons := make([]interface{}, 0, len(b.args))
+	jsons := make([]any, 0, len(b.args))
 	for _, arg := range b.args {
 		j, isNull, err := arg.EvalJSON(ctx, row)
 		if err != nil {
@@ -1128,7 +1128,7 @@ func (b *builtinJSONArrayAppendSig) appendJSONArray(res types.BinaryJSON, p stri
 		// res.Extract will return a json object instead of an array if there is an object at path pathExpr.
 		// JSON_ARRAY_APPEND({"a": "b"}, "$", {"b": "c"}) => [{"a": "b"}, {"b", "c"}]
 		// We should wrap them to a single array first.
-		obj, err = types.CreateBinaryJSONWithCheck([]interface{}{obj})
+		obj, err = types.CreateBinaryJSONWithCheck([]any{obj})
 		if err != nil {
 			return res, true, err
 		}

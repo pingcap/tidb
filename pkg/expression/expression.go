@@ -1171,7 +1171,7 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 
 // Args2Expressions4Test converts these values to an expression list.
 // This conversion is incomplete, so only use for test.
-func Args2Expressions4Test(args ...interface{}) []Expression {
+func Args2Expressions4Test(args ...any) []Expression {
 	exprs := make([]Expression, len(args))
 	for i, v := range args {
 		d := types.NewDatum(v)
