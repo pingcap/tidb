@@ -1211,7 +1211,7 @@ func TestPartitionWithVariedDataSources(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`set @pointa=%v`, rand.Intn(40000)))
 		tk.MustExec(fmt.Sprintf(`set @a0=%v, @a1=%v, @a2=%v`, rand.Intn(40000), rand.Intn(40000), rand.Intn(40000)))
 
-		var rscan, rlookup, rpoint, rbatch [][]interface{}
+		var rscan, rlookup, rpoint, rbatch [][]any
 		for id, tbl := range []string{"trangeIdx", "thashIdx", "tnormalIdx"} {
 			scan := tk.MustQuery(fmt.Sprintf(`execute stmt%v_indexscan using @mina, @maxa`, tbl)).Sort()
 			tblStr := ` table: ` + tbl + " i :" + strconv.FormatInt(int64(i), 10) + " */"
@@ -1589,7 +1589,7 @@ func TestHashPartitionAndPlanCache(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
-		[][]interface{}{
+		[][]any{
 			{"Point_Get_1"},
 		})
 
@@ -1610,7 +1610,7 @@ func TestHashPartitionAndPlanCache(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	//tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows())
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
-		[][]interface{}{
+		[][]any{
 			{"Point_Get_1"},
 		})
 
