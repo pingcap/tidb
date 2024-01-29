@@ -111,7 +111,7 @@ const SelectAnalyzeJobsSQL = `SELECT id, instance
 // BatchUpdateAnalyzeJobSQL is the SQL to update the analyze jobs to `failed` state.
 const BatchUpdateAnalyzeJobSQL = `UPDATE mysql.analyze_jobs
             SET state = 'failed',
-            fail_reason = 'TiDB Server is down when running the analyze job',
+            fail_reason = 'The TiDB Server has either shut down or the analyze query was terminated during the analyze job execution',
             process_id = NULL
             WHERE id IN (%?)`
 
