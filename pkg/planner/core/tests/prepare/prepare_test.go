@@ -1596,10 +1596,6 @@ func TestHashPartitionAndPlanCache(t *testing.T) {
 	tk.MustQuery(`select @@session.tidb_enable_prepared_plan_cache`).Check(testkit.Rows("1"))
 
 	tk.MustExec("use test")
-	//for _, pruneMode := range []string{string(variable.Static), string(variable.Dynamic)} {
-	//tk.MustExec("set @@tidb_partition_prune_mode = '" + pruneMode + "'")
-	//tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
-
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`CREATE TABLE t (b varchar(255), a int primary key, key (b)) PARTITION BY HASH (a) partitions 5`)
 	tk.MustExec(`insert into t values(0,0),(1,1),(2,2),(3,3),(4,4)`)
