@@ -917,8 +917,9 @@ type LogicalAggregation struct {
 	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
 
-	// aggHints stores aggregation hint information.
-	aggHints h.AggHints
+	// PreferAggType And PreferAggToCop stores aggregation hint information.
+	PreferAggType  uint
+	PreferAggToCop bool
 
 	possibleProperties [][]*expression.Column
 	inputCount         float64 // inputCount is the input count of this plan.
@@ -1078,7 +1079,8 @@ func (la *LogicalAggregation) CopyAggHints(agg *LogicalAggregation) {
 	// `HaveThrownWarningMessage` to avoid this. Besides, finalAgg and
 	// partialAgg (in cascades planner) should share the same hint, instead
 	// of a copy.
-	la.aggHints = agg.aggHints
+	la.PreferAggType = agg.PreferAggType
+	la.PreferAggToCop = agg.PreferAggToCop
 }
 
 // IsPartialModeAgg returns if all of the AggFuncs are partialMode.

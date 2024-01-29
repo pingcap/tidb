@@ -191,17 +191,17 @@ func (a *skewDistinctAggRewriter) rewriteSkewDistinctAgg(agg *LogicalAggregation
 
 	// now create the bottom and top aggregate operators
 	bottomAgg := LogicalAggregation{
-		AggFuncs:     bottomAggFuncs,
-		GroupByItems: bottomAggGroupbyItems,
-		aggHints:     agg.aggHints,
+		AggFuncs:      bottomAggFuncs,
+		GroupByItems:  bottomAggGroupbyItems,
+		PreferAggType: agg.PreferAggType,
 	}.Init(agg.SCtx(), agg.QueryBlockOffset())
 	bottomAgg.SetChildren(agg.children...)
 	bottomAgg.SetSchema(bottomAggSchema)
 
 	topAgg := LogicalAggregation{
-		AggFuncs:     topAggFuncs,
-		GroupByItems: agg.GroupByItems,
-		aggHints:     agg.aggHints,
+		AggFuncs:       topAggFuncs,
+		GroupByItems:   agg.GroupByItems,
+		PreferAggToCop: agg.PreferAggToCop,
 	}.Init(agg.SCtx(), agg.QueryBlockOffset())
 	topAgg.SetChildren(bottomAgg)
 	topAgg.SetSchema(topAggSchema)

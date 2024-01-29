@@ -300,14 +300,6 @@ type PlanHints struct {
 	TimeRangeHint    ast.HintTimeRange
 }
 
-// GetAggHint is to get the agg hint information.
-func (pHints *PlanHints) GetAggHint() AggHints {
-	return AggHints{
-		PreferAggType:  pHints.PreferAggType,
-		PreferAggToCop: pHints.PreferAggToCop,
-	}
-}
-
 // HintedTable indicates which table this hint should take effect on.
 type HintedTable struct {
 	DBName       model.CIStr   // the database name
@@ -361,12 +353,6 @@ func (hint *HintedIndex) IndexString() string {
 		indexListString = fmt.Sprintf(", %s", strings.Join(indexList, ", "))
 	}
 	return fmt.Sprintf("%s.%s%s", hint.DBName, hint.TblName, indexListString)
-}
-
-// AggHints stores Agg hint information.
-type AggHints struct {
-	PreferAggType  uint
-	PreferAggToCop bool
 }
 
 // IfPreferMergeJoin checks whether the join hint is merge join.
