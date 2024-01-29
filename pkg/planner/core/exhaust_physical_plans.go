@@ -3101,7 +3101,7 @@ func (la *LogicalAggregation) getEnforcedStreamAggs(prop *property.PhysicalPrope
 		if !la.canPushToCop(kv.TiKV) || !la.SCtx().GetSessionVars().AllowDistinctAggPushDown {
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
-	} else if !la.aggHints.PreferAggToCop {
+	} else if !la.PreferAggToCop {
 		taskTypes = append(taskTypes, property.RootTaskType)
 	}
 	for _, taskTp := range taskTypes {
@@ -3182,7 +3182,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 			} else if !la.distinctArgsMeetsProperty() {
 				continue
 			}
-		} else if !la.aggHints.PreferAggToCop {
+		} else if !la.PreferAggToCop {
 			taskTypes = append(taskTypes, property.RootTaskType)
 		}
 		if !la.canPushToCop(kv.TiKV) && !la.canPushToCop(kv.TiFlash) {
@@ -3208,7 +3208,7 @@ func (la *LogicalAggregation) getStreamAggs(prop *property.PhysicalProperty) []P
 	}
 	// If STREAM_AGG hint is existed, it should consider enforce stream aggregation,
 	// because we can't trust possibleChildProperty completely.
-	if (la.aggHints.PreferAggType & h.PreferStreamAgg) > 0 {
+	if (la.PreferAggType & h.PreferStreamAgg) > 0 {
 		streamAggs = append(streamAggs, la.getEnforcedStreamAggs(prop)...)
 	}
 	return streamAggs
@@ -3342,9 +3342,9 @@ func (la *LogicalAggregation) tryToGetMppHashAggs(prop *property.PhysicalPropert
 	// handle MPP Agg hints
 	var preferMode AggMppRunMode
 	var prefer bool
-	if la.aggHints.PreferAggType&h.PreferMPP1PhaseAgg > 0 {
+	if la.PreferAggType&h.PreferMPP1PhaseAgg > 0 {
 		preferMode, prefer = Mpp1Phase, true
-	} else if la.aggHints.PreferAggType&h.PreferMPP2PhaseAgg > 0 {
+	} else if la.PreferAggType&h.PreferMPP2PhaseAgg > 0 {
 		preferMode, prefer = Mpp2Phase, true
 	}
 	if prefer {
@@ -3386,7 +3386,7 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 			// if variable does allow DistinctAggPushDown, but OP itself can't be pushed down to tikv, just produce root task type.
 			taskTypes = []property.TaskType{property.RootTaskType}
 		}
-	} else if !la.aggHints.PreferAggToCop {
+	} else if !la.PreferAggToCop {
 		taskTypes = append(taskTypes, property.RootTaskType)
 	}
 	if !la.canPushToCop(kv.TiKV) && !canPushDownToTiFlash {
@@ -3397,11 +3397,11 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	} else {
 		hasMppHints := false
 		var errMsg string
-		if la.aggHints.PreferAggType&h.PreferMPP1PhaseAgg > 0 {
+		if la.PreferAggType&h.PreferMPP1PhaseAgg > 0 {
 			errMsg = "The agg can not push down to the MPP side, the MPP_1PHASE_AGG() hint is invalid"
 			hasMppHints = true
 		}
-		if la.aggHints.PreferAggType&h.PreferMPP2PhaseAgg > 0 {
+		if la.PreferAggType&h.PreferMPP2PhaseAgg > 0 {
 			errMsg = "The agg can not push down to the MPP side, the MPP_2PHASE_AGG() hint is invalid"
 			hasMppHints = true
 		}
@@ -3428,25 +3428,25 @@ func (la *LogicalAggregation) getHashAggs(prop *property.PhysicalProperty) []Phy
 	return hashAggs
 }
 
-// ResetHintIfConflicted resets the aggHints.PreferAggType if they are conflicted,
+// ResetHintIfConflicted resets the PreferAggType if they are conflicted,
 // and returns the two PreferAggType hints.
 func (la *LogicalAggregation) ResetHintIfConflicted() (preferHash bool, preferStream bool) {
-	preferHash = (la.aggHints.PreferAggType & h.PreferHashAgg) > 0
-	preferStream = (la.aggHints.PreferAggType & h.PreferStreamAgg) > 0
+	preferHash = (la.PreferAggType & h.PreferHashAgg) > 0
+	preferStream = (la.PreferAggType & h.PreferStreamAgg) > 0
 	if preferHash && preferStream {
 		la.SCtx().GetSessionVars().StmtCtx.SetHintWarning("Optimizer aggregation hints are conflicted")
-		la.aggHints.PreferAggType = 0
+		la.PreferAggType = 0
 		preferHash, preferStream = false, false
 	}
 	return
 }
 
 func (la *LogicalAggregation) exhaustPhysicalPlans(prop *property.PhysicalProperty) ([]PhysicalPlan, bool, error) {
-	if la.aggHints.PreferAggToCop {
+	if la.PreferAggToCop {
 		if !la.canPushToCop(kv.TiKV) {
 			la.SCtx().GetSessionVars().StmtCtx.SetHintWarning(
 				"Optimizer Hint AGG_TO_COP is inapplicable")
-			la.aggHints.PreferAggToCop = false
+			la.PreferAggToCop = false
 		}
 	}
 

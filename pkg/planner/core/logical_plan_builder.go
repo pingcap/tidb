@@ -261,8 +261,9 @@ func (b *PlanBuilder) buildAggregation(ctx context.Context, p LogicalPlan, aggFu
 	}
 
 	plan4Agg := LogicalAggregation{AggFuncs: make([]*aggregation.AggFuncDesc, 0, len(aggFuncList))}.Init(b.ctx, b.getSelectOffset())
-	if hint := b.TableHints(); hint != nil {
-		plan4Agg.aggHints = hint.Agg
+	if hintinfo := b.TableHints(); hintinfo != nil {
+		plan4Agg.PreferAggType = hintinfo.PreferAggType
+		plan4Agg.PreferAggToCop = hintinfo.PreferAggToCop
 	}
 	schema4Agg := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncList)+p.Schema().Len())...)
 	names := make(types.NameSlice, 0, len(aggFuncList)+p.Schema().Len())
@@ -1822,8 +1823,9 @@ func (b *PlanBuilder) buildDistinct(child LogicalPlan, length int) (*LogicalAggr
 		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, child.Schema().Len()),
 		GroupByItems: expression.Column2Exprs(child.Schema().Clone().Columns[:length]),
 	}.Init(b.ctx, child.QueryBlockOffset())
-	if hint := b.TableHints(); hint != nil {
-		plan4Agg.aggHints = hint.Agg
+	if hintinfo := b.TableHints(); hintinfo != nil {
+		plan4Agg.PreferAggType = hintinfo.PreferAggType
+		plan4Agg.PreferAggToCop = hintinfo.PreferAggToCop
 	}
 	for _, col := range child.Schema().Columns {
 		aggDesc, err := aggregation.NewAggFuncDesc(b.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)

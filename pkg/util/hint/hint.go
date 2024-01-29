@@ -474,9 +474,10 @@ type PlanHints struct {
 	HJProbe            []HintedTable  // hash_join_probe
 
 	// Hints belows are not associated with any particular table.
-	Agg              AggHints // hash_agg, merge_agg, agg_to_cop
-	PreferLimitToCop bool     // limit_to_cop
-	CTEMerge         bool     // merge
+	PreferAggType    uint // hash_agg, merge_agg, agg_to_cop and so on
+	PreferAggToCop   bool
+	PreferLimitToCop bool // limit_to_cop
+	CTEMerge         bool // merge
 	TimeRangeHint    ast.HintTimeRange
 }
 
@@ -533,12 +534,6 @@ func (hint *HintedIndex) IndexString() string {
 		indexListString = fmt.Sprintf(", %s", strings.Join(indexList, ", "))
 	}
 	return fmt.Sprintf("%s.%s%s", hint.DBName, hint.TblName, indexListString)
-}
-
-// AggHints stores Agg hint information.
-type AggHints struct {
-	PreferAggType  uint
-	PreferAggToCop bool
 }
 
 // IfPreferMergeJoin checks whether the join hint is merge join.
@@ -674,7 +669,8 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		shuffleJoinTables                                                               []HintedTable
 		indexHintList, indexMergeHintList                                               []HintedIndex
 		tiflashTables, tikvTables                                                       []HintedTable
-		aggHints                                                                        AggHints
+		preferAggType                                                                   uint
+		preferAggToCop                                                                  bool
 		timeRangeHint                                                                   ast.HintTimeRange
 		preferLimitToCop                                                                bool
 		cteMerge                                                                        bool
@@ -726,19 +722,19 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		case HintNoIndexMergeJoin:
 			noIndexMergeJoinTables = append(noIndexMergeJoinTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 		case HintMPP1PhaseAgg:
-			aggHints.PreferAggType |= PreferMPP1PhaseAgg
+			preferAggType |= PreferMPP1PhaseAgg
 		case HintMPP2PhaseAgg:
-			aggHints.PreferAggType |= PreferMPP2PhaseAgg
+			preferAggType |= PreferMPP2PhaseAgg
 		case HintHashJoinBuild:
 			hjBuildTables = append(hjBuildTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 		case HintHashJoinProbe:
 			hjProbeTables = append(hjProbeTables, tableNames2HintTableInfo(currentDB, hint.HintName.L, hint.Tables, hintProcessor, currentLevel, warnHandler)...)
 		case HintHashAgg:
-			aggHints.PreferAggType |= PreferHashAgg
+			preferAggType |= PreferHashAgg
 		case HintStreamAgg:
-			aggHints.PreferAggType |= PreferStreamAgg
+			preferAggType |= PreferStreamAgg
 		case HintAggToCop:
-			aggHints.PreferAggToCop = true
+			preferAggToCop = true
 		case HintUseIndex, HintIgnoreIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex:
 			dbName := hint.Tables[0].DBName
 			if dbName.L == "" {
@@ -841,7 +837,8 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		IndexHintList:      indexHintList,
 		TiFlashTables:      tiflashTables,
 		TiKVTables:         tikvTables,
-		Agg:                aggHints,
+		PreferAggToCop:     preferAggToCop,
+		PreferAggType:      preferAggType,
 		IndexMergeHintList: indexMergeHintList,
 		TimeRangeHint:      timeRangeHint,
 		PreferLimitToCop:   preferLimitToCop,

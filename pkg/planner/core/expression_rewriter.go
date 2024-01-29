@@ -752,8 +752,9 @@ func (er *expressionRewriter) handleCompareSubquery(ctx context.Context, planCtx
 func (er *expressionRewriter) handleOtherComparableSubq(planCtx *exprRewriterPlanCtx, lexpr, rexpr expression.Expression, np LogicalPlan, useMin bool, cmpFunc string, all, markNoDecorrelate bool) {
 	intest.AssertNotNil(planCtx)
 	plan4Agg := LogicalAggregation{}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
-	if hint := planCtx.builder.TableHints(); hint != nil {
-		plan4Agg.aggHints = hint.Agg
+	if hintinfo := planCtx.builder.TableHints(); hintinfo != nil {
+		plan4Agg.PreferAggType = hintinfo.PreferAggType
+		plan4Agg.PreferAggToCop = hintinfo.PreferAggToCop
 	}
 	plan4Agg.SetChildren(np)
 
@@ -886,8 +887,9 @@ func (er *expressionRewriter) handleNEAny(planCtx *exprRewriterPlanCtx, lexpr, r
 	plan4Agg := LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{maxFunc, countFunc},
 	}.Init(sctx, planCtx.builder.getSelectOffset())
-	if hint := planCtx.builder.TableHints(); hint != nil {
-		plan4Agg.aggHints = hint.Agg
+	if hintinfo := planCtx.builder.TableHints(); hintinfo != nil {
+		plan4Agg.PreferAggType = hintinfo.PreferAggType
+		plan4Agg.PreferAggToCop = hintinfo.PreferAggToCop
 	}
 	plan4Agg.SetChildren(np)
 	maxResultCol := &expression.Column{
@@ -925,8 +927,9 @@ func (er *expressionRewriter) handleEQAll(planCtx *exprRewriterPlanCtx, lexpr, r
 	plan4Agg := LogicalAggregation{
 		AggFuncs: []*aggregation.AggFuncDesc{firstRowFunc, countFunc},
 	}.Init(sctx, planCtx.builder.getSelectOffset())
-	if hint := planCtx.builder.TableHints(); hint != nil {
-		plan4Agg.aggHints = hint.Agg
+	if hintinfo := planCtx.builder.TableHints(); hintinfo != nil {
+		plan4Agg.PreferAggType = hintinfo.PreferAggType
+		plan4Agg.PreferAggToCop = hintinfo.PreferAggToCop
 	}
 	plan4Agg.SetChildren(np)
 	plan4Agg.names = append(plan4Agg.names, types.EmptyName)
