@@ -301,8 +301,8 @@ func (cr *chunkProcessor) encodeLoop(
 	// but since ColumnPermutation also depends on the hypothesis that the columns in one source file is the same
 	// so this should be ok.
 	var (
-		filteredColumns   []string
-		extendVals        []types.Datum
+		filteredColumns []string
+		extendVals      []types.Datum
 		// some columns should not record in checkpoint, like extra columns
 		// so we copy a new one from chunk.ColumnPermutation
 		columnPermutation = make([]int, 0, len(cr.chunk.ColumnPermutation))
