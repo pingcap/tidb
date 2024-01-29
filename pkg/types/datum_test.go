@@ -33,7 +33,7 @@ import (
 )
 
 func TestDatum(t *testing.T) {
-	values := []interface{}{
+	values := []any{
 		int64(1),
 		uint64(1),
 		1.1,
@@ -52,7 +52,7 @@ func TestDatum(t *testing.T) {
 	}
 }
 
-func testDatumToBool(t *testing.T, in interface{}, res int) {
+func testDatumToBool(t *testing.T, in any, res int) {
 	datum := NewDatum(in)
 	res64 := int64(res)
 	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
@@ -82,13 +82,13 @@ func TestToBool(t *testing.T) {
 	testDatumToBool(t, CreateBinaryJSON("aaabbb"), 1)
 	testDatumToBool(t, CreateBinaryJSON(float64(0.0)), 0)
 	testDatumToBool(t, CreateBinaryJSON(float64(3.1415)), 1)
-	testDatumToBool(t, CreateBinaryJSON([]interface{}{int64(1), int64(2)}), 1)
-	testDatumToBool(t, CreateBinaryJSON(map[string]interface{}{"ke": "val"}), 1)
+	testDatumToBool(t, CreateBinaryJSON([]any{int64(1), int64(2)}), 1)
+	testDatumToBool(t, CreateBinaryJSON(map[string]any{"ke": "val"}), 1)
 	testDatumToBool(t, CreateBinaryJSON("0000-00-00 00:00:00"), 1)
 	testDatumToBool(t, CreateBinaryJSON("0778"), 1)
 	testDatumToBool(t, CreateBinaryJSON("0000"), 1)
 	testDatumToBool(t, CreateBinaryJSON(nil), 1)
-	testDatumToBool(t, CreateBinaryJSON([]interface{}{nil}), 1)
+	testDatumToBool(t, CreateBinaryJSON([]any{nil}), 1)
 	testDatumToBool(t, CreateBinaryJSON(true), 1)
 	testDatumToBool(t, CreateBinaryJSON(false), 1)
 	testDatumToBool(t, CreateBinaryJSON(""), 1)
@@ -111,7 +111,7 @@ func TestToBool(t *testing.T) {
 	require.Error(t, err)
 }
 
-func testDatumToInt64(t *testing.T, val interface{}, expect int64) {
+func testDatumToInt64(t *testing.T, val any, expect int64) {
 	d := NewDatum(val)
 
 	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
@@ -148,7 +148,7 @@ func TestToInt64(t *testing.T) {
 	testDatumToInt64(t, v, int64(3))
 }
 
-func testDatumToUInt32(t *testing.T, val interface{}, expect uint32, hasError bool) {
+func testDatumToUInt32(t *testing.T, val any, expect uint32, hasError bool) {
 	d := NewDatum(val)
 	ctx := DefaultStmtNoWarningContext.WithFlags(DefaultStmtFlags.WithIgnoreTruncateErr(true))
 
@@ -239,16 +239,16 @@ func TestToJSON(t *testing.T) {
 	ft := NewFieldType(mysql.TypeJSON)
 	tests := []struct {
 		datum    Datum
-		expected interface{}
+		expected any
 		success  bool
 	}{
 		{NewIntDatum(1), int64(1), true},
 		{NewFloat64Datum(2), float64(2.0), true},
 		{NewStringDatum("\"hello, 世界\""), "hello, 世界", true},
-		{NewStringDatum("[1, 2, 3]"), []interface{}{int64(1), int64(2), int64(3)}, true},
-		{NewStringDatum("{}"), map[string]interface{}{}, true},
+		{NewStringDatum("[1, 2, 3]"), []any{int64(1), int64(2), int64(3)}, true},
+		{NewStringDatum("{}"), map[string]any{}, true},
 		{mustParseTimeIntoDatum("2011-11-10 11:11:11.111111", mysql.TypeTimestamp, 6), mustParseTime("2011-11-10 11:11:11.111111", mysql.TypeTimestamp, 6), true},
-		{NewStringDatum(`{"a": "9223372036854775809"}`), map[string]interface{}{"a": "9223372036854775809"}, true},
+		{NewStringDatum(`{"a": "9223372036854775809"}`), map[string]any{"a": "9223372036854775809"}, true},
 		{NewBinaryLiteralDatum([]byte{0x81}), ``, false},
 
 		// can not parse JSON from this string, so error occurs.
@@ -273,7 +273,7 @@ func TestToJSON(t *testing.T) {
 
 func TestIsNull(t *testing.T) {
 	tests := []struct {
-		data   interface{}
+		data   any
 		isnull bool
 	}{
 		{nil, true},
@@ -288,7 +288,7 @@ func TestIsNull(t *testing.T) {
 	}
 }
 
-func testIsNull(t *testing.T, data interface{}, isnull bool) {
+func testIsNull(t *testing.T, data any, isnull bool) {
 	d := NewDatum(data)
 	require.Equalf(t, isnull, d.IsNull(), "data: %v, isnull: %v", data, isnull)
 }

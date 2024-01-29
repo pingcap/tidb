@@ -1424,7 +1424,7 @@ func buildRangePartitionDefinitions(ctx sessionctx.Context, defs []*ast.Partitio
 	return definitions, nil
 }
 
-func checkPartitionValuesIsInt(ctx sessionctx.Context, defName interface{}, exprs []ast.ExprNode, tbInfo *model.TableInfo) error {
+func checkPartitionValuesIsInt(ctx sessionctx.Context, defName any, exprs []ast.ExprNode, tbInfo *model.TableInfo) error {
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	if isPartExprUnsigned(tbInfo) {
 		tp.AddFlag(mysql.UnsignedFlag)
@@ -1611,7 +1611,7 @@ func checkRangePartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 		defs = defs[:len(defs)-1]
 	}
 	isUnsigned := isPartExprUnsigned(tblInfo)
-	var prevRangeValue interface{}
+	var prevRangeValue any
 	for i := 0; i < len(defs); i++ {
 		if strings.EqualFold(defs[i].LessThan[0], partitionMaxValue) {
 			return errors.Trace(dbterror.ErrPartitionMaxvalue)
@@ -1742,7 +1742,7 @@ func formatListPartitionValue(ctx sessionctx.Context, tblInfo *model.TableInfo) 
 
 // getRangeValue gets an integer from the range value string.
 // The returned boolean value indicates whether the input string is a constant expression.
-func getRangeValue(ctx sessionctx.Context, str string, unsigned bool) (interface{}, bool, error) {
+func getRangeValue(ctx sessionctx.Context, str string, unsigned bool) (any, bool, error) {
 	// Unsigned bigint was converted to uint64 handle.
 	if unsigned {
 		if value, err := strconv.ParseUint(str, 10, 64); err == nil {
@@ -1972,7 +1972,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 			return ver, errors.Trace(err)
 		}
 		job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
-		job.Args = []interface{}{physicalTableIDs}
+		job.Args = []any{physicalTableIDs}
 		return ver, nil
 	}
 
@@ -2092,7 +2092,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		droppedDefs := tblInfo.Partition.DroppingDefinitions
 		tblInfo.Partition.DroppingDefinitions = nil
 		// used by ApplyDiff in updateSchemaVersion
-		job.CtxVars = []interface{}{physicalTableIDs}
+		job.CtxVars = []any{physicalTableIDs}
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -2105,7 +2105,7 @@ func (w *worker) onDropTablePartition(d *ddlCtx, t *meta.Meta, job *model.Job) (
 		)
 		asyncNotifyEvent(d, dropPartitionEvent)
 		// A background job will be created to delete old partition data.
-		job.Args = []interface{}{physicalTableIDs}
+		job.Args = []any{physicalTableIDs}
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
@@ -2182,7 +2182,7 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 
 		preSplitAndScatter(w.sess.Context, d.store, tblInfo, newPartitions)
 
-		job.CtxVars = []interface{}{oldIDs, newIDs}
+		job.CtxVars = []any{oldIDs, newIDs}
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -2197,7 +2197,7 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		)
 		asyncNotifyEvent(d, truncatePartitionEvent)
 		// A background job will be created to delete old partition data.
-		job.Args = []interface{}{oldIDs}
+		job.Args = []any{oldIDs}
 
 		return ver, err
 	}
@@ -2321,7 +2321,7 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		preSplitAndScatter(w.sess.Context, d.store, tblInfo, newPartitions)
 
 		// used by ApplyDiff in updateSchemaVersion
-		job.CtxVars = []interface{}{oldIDs, newIDs}
+		job.CtxVars = []any{oldIDs, newIDs}
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		if err != nil {
 			return ver, errors.Trace(err)
@@ -2335,7 +2335,7 @@ func (w *worker) onTruncateTablePartition(d *ddlCtx, t *meta.Meta, job *model.Jo
 		)
 		asyncNotifyEvent(d, truncatePartitionEvent)
 		// A background job will be created to delete old partition data.
-		job.Args = []interface{}{oldIDs}
+		job.Args = []any{oldIDs}
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
@@ -3048,7 +3048,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 				return ver, errors.Trace(err)
 			}
 		}
-		job.CtxVars = []interface{}{physicalTableIDs, newIDs}
+		job.CtxVars = []any{physicalTableIDs, newIDs}
 		ver, err = updateVersionAndTableInfo(d, t, job, tblInfo, true)
 		failpoint.Inject("reorgPartWriteReorgSchemaVersionUpdateFail", func(val failpoint.Value) {
 			if val.(bool) {
@@ -3072,7 +3072,7 @@ func (w *worker) onReorganizePartition(d *ddlCtx, t *meta.Meta, job *model.Job) 
 		}
 		asyncNotifyEvent(d, event)
 		// A background job will be created to delete old partition data.
-		job.Args = []interface{}{physicalTableIDs}
+		job.Args = []any{physicalTableIDs}
 
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
@@ -3492,7 +3492,7 @@ func bundlesForExchangeTablePartition(t *meta.Meta, pt *model.TableInfo, newPar 
 }
 
 func checkExchangePartitionRecordValidation(w *worker, ptbl, ntbl table.Table, pschemaName, nschemaName, partitionName string) error {
-	verifyFunc := func(sql string, params ...interface{}) error {
+	verifyFunc := func(sql string, params ...any) error {
 		var ctx sessionctx.Context
 		ctx, err := w.sessPool.Get()
 		if err != nil {
@@ -3536,7 +3536,7 @@ func checkExchangePartitionRecordValidation(w *worker, ptbl, ntbl table.Table, p
 
 	var buf strings.Builder
 	buf.WriteString("select 1 from %n.%n where ")
-	paramList := []interface{}{nschemaName, ntbl.Meta().Name.L}
+	paramList := []any{nschemaName, ntbl.Meta().Name.L}
 	checkNt := true
 
 	pi := pt.Partition
@@ -3651,9 +3651,9 @@ func checkExchangePartitionPlacementPolicy(t *meta.Meta, ntPPRef, ptPPRef, partP
 	return nil
 }
 
-func buildCheckSQLConditionForRangeExprPartition(pi *model.PartitionInfo, index int) (string, []interface{}) {
+func buildCheckSQLConditionForRangeExprPartition(pi *model.PartitionInfo, index int) (string, []any) {
 	var buf strings.Builder
-	paramList := make([]interface{}, 0, 2)
+	paramList := make([]any, 0, 2)
 	// Since the pi.Expr string may contain the identifier, which couldn't be escaped in our ParseWithParams(...)
 	// So we write it to the origin sql string here.
 	if index == 0 {
@@ -3674,8 +3674,8 @@ func buildCheckSQLConditionForRangeExprPartition(pi *model.PartitionInfo, index 
 	return buf.String(), paramList
 }
 
-func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, index int) (string, []interface{}) {
-	paramList := make([]interface{}, 0, 2)
+func buildCheckSQLConditionForRangeColumnsPartition(pi *model.PartitionInfo, index int) (string, []any) {
+	paramList := make([]any, 0, 2)
 	colName := pi.Columns[0].L
 	if index == 0 {
 		paramList = append(paramList, colName, driver.UnwrapFromSingleQuotes(pi.Definitions[index].LessThan[0]))

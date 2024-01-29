@@ -1346,7 +1346,8 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 				if idx == nil {
 					return nil
 				}
-				k, _, err := idx.GenIndexKey(w.idxLookup.Ctx().GetSessionVars().StmtCtx, idxRow.Values[:len(idx.Meta().Columns)], idxRow.Handle, nil)
+				sc := w.idxLookup.Ctx().GetSessionVars().StmtCtx
+				k, _, err := idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxRow.Values[:len(idx.Meta().Columns)], idxRow.Handle, nil)
 				if err != nil {
 					return nil
 				}
@@ -1373,7 +1374,7 @@ func (w *tableWorker) compareData(ctx context.Context, task *lookupTableTask, ta
 		}
 
 		if chk.NumRows() == 0 {
-			task.indexOrder.Range(func(h kv.Handle, val interface{}) bool {
+			task.indexOrder.Range(func(h kv.Handle, val any) bool {
 				idxRow := task.idxRows.GetRow(val.(int))
 				err = ir().ReportAdminCheckInconsistent(ctx, h, &consistency.RecordData{Handle: h, Values: getDatumRow(&idxRow, w.idxColTps)}, nil)
 				return false

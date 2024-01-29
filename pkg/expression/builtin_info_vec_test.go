@@ -30,7 +30,7 @@ type tidbKeyGener struct {
 	inner *defaultGener
 }
 
-func (g *tidbKeyGener) gen() interface{} {
+func (g *tidbKeyGener) gen() any {
 	tableID := g.inner.gen().(int64)
 	var result []byte
 	if rand.Intn(2) == 1 {

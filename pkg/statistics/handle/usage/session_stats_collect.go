@@ -262,7 +262,7 @@ func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
 }
 
 // NewSessionStatsItem allocates a stats collector for a session.
-func (s *statsUsageImpl) NewSessionStatsItem() interface{} {
+func (s *statsUsageImpl) NewSessionStatsItem() any {
 	return s.SessionStatsList.NewSessionStatsItem()
 }
 

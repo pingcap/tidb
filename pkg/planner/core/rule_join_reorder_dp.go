@@ -19,6 +19,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
 type joinReorderDPSolver struct {
@@ -286,5 +287,5 @@ func findNodeIndexInGroup(group []LogicalPlan, col *expression.Column) (int, err
 			return i, nil
 		}
 	}
-	return -1, ErrUnknownColumn.GenWithStackByArgs(col, "JOIN REORDER RULE")
+	return -1, plannererrors.ErrUnknownColumn.GenWithStackByArgs(col, "JOIN REORDER RULE")
 }

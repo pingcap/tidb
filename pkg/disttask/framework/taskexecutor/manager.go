@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/metrics"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -36,7 +37,9 @@ import (
 
 var (
 	// same as scheduler
-	checkTime               = 300 * time.Millisecond
+	checkInterval           = 300 * time.Millisecond
+	maxCheckInterval        = 2 * time.Second
+	maxChecksWhenNoSubtask  = 7
 	recoverMetaInterval     = 90 * time.Second
 	retrySQLTimes           = 30
 	retrySQLInterval        = 500 * time.Millisecond
@@ -168,7 +171,7 @@ func (m *Manager) Stop() {
 // NOT running by executor before mark the task as paused.
 func (m *Manager) handleTasksLoop() {
 	defer tidbutil.Recover(metrics.LabelDomain, "handleTasksLoop", m.handleTasksLoop, false)
-	ticker := time.NewTicker(checkTime)
+	ticker := time.NewTicker(checkInterval)
 	for {
 		select {
 		case <-m.ctx.Done():
@@ -182,26 +185,25 @@ func (m *Manager) handleTasksLoop() {
 }
 
 func (m *Manager) handleTasks() {
-	tasks, err := m.taskTable.GetTasksInStates(m.ctx, proto.TaskStateRunning,
-		proto.TaskStateReverting, proto.TaskStatePausing)
+	tasks, err := m.taskTable.GetTaskExecInfoByExecID(m.ctx, m.id)
 	if err != nil {
 		m.logErr(err)
 		return
 	}
 
-	executableTasks := make([]*proto.Task, 0, len(tasks))
+	executableTasks := make([]*storage.TaskExecInfo, 0, len(tasks))
 	for _, task := range tasks {
 		switch task.State {
 		case proto.TaskStateRunning, proto.TaskStateReverting:
 			if task.State == proto.TaskStateReverting {
-				m.cancelRunningSubtaskOf(task)
+				m.cancelRunningSubtaskOf(task.ID)
 			}
 			// TaskStateReverting require executor to run rollback logic.
 			if !m.isExecutorStarted(task.ID) {
 				executableTasks = append(executableTasks, task)
 			}
 		case proto.TaskStatePausing:
-			if err := m.handlePausingTask(task); err != nil {
+			if err := m.handlePausingTask(task.ID); err != nil {
 				m.logErr(err)
 			}
 		}
@@ -213,20 +215,11 @@ func (m *Manager) handleTasks() {
 }
 
 // handleExecutableTasks handles executable tasks.
-func (m *Manager) handleExecutableTasks(tasks []*proto.Task) {
-	for _, task := range tasks {
-		exist, err := m.taskTable.HasSubtasksInStates(m.ctx, m.id, task.ID, task.Step, unfinishedSubtaskStates...)
-		if err != nil {
-			m.logger.Error("check subtask exist failed", zap.Error(err))
-			m.logErr(err)
-			continue
-		}
-		if !exist {
-			continue
-		}
+func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
+	for _, task := range taskInfos {
 		m.logger.Info("detect new subtask", zap.Int64("task-id", task.ID))
 
-		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task)
+		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task.Task)
 		if len(tasksNeedFree) > 0 {
 			m.cancelTaskExecutors(tasksNeedFree)
 			// do not handle the tasks with lower priority if current task is waiting tasks free.
@@ -238,8 +231,8 @@ func (m *Manager) handleExecutableTasks(tasks []*proto.Task) {
 			continue
 		}
 		m.addHandlingTask(task.ID)
-		m.slotManager.alloc(task)
-		t := task
+		m.slotManager.alloc(task.Task)
+		t := task.Task
 		m.executorWG.RunWithLog(func() {
 			defer m.slotManager.free(t.ID)
 			m.handleExecutableTask(t)
@@ -250,28 +243,28 @@ func (m *Manager) handleExecutableTasks(tasks []*proto.Task) {
 
 // cancelRunningSubtaskOf cancels the running subtask of the task, the subtask
 // will switch to `canceled` state.
-func (m *Manager) cancelRunningSubtaskOf(task *proto.Task) {
+func (m *Manager) cancelRunningSubtaskOf(taskID int64) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
-		m.logger.Info("onCanceledTasks", zap.Int64("task-id", task.ID))
+	if cancel, ok := m.mu.handlingTasks[taskID]; ok && cancel != nil {
+		m.logger.Info("onCanceledTasks", zap.Int64("task-id", taskID))
 		// subtask needs to change its state to `canceled`.
 		cancel(ErrCancelSubtask)
 	}
 }
 
 // onPausingTasks pauses/cancels the pending/running subtasks.
-func (m *Manager) handlePausingTask(task *proto.Task) error {
+func (m *Manager) handlePausingTask(taskID int64) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	m.logger.Info("handle pausing task", zap.Int64("task-id", task.ID))
-	if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
+	m.logger.Info("handle pausing task", zap.Int64("task-id", taskID))
+	if cancel, ok := m.mu.handlingTasks[taskID]; ok && cancel != nil {
 		// cancel the task executor
 		cancel(nil)
 	}
 	// we pause subtasks belongs to this exec node even when there's no executor running.
 	// as balancer might move subtasks to this node when the executor hasn't started.
-	return m.taskTable.PauseSubtasks(m.ctx, m.id, task.ID)
+	return m.taskTable.PauseSubtasks(m.ctx, m.id, taskID)
 }
 
 // recoverMetaLoop recovers dist_framework_meta for the tidb node running the taskExecutor manager.
@@ -344,7 +337,7 @@ func (m *Manager) handleExecutableTask(task *proto.Task) {
 		case <-m.ctx.Done():
 			m.logger.Info("handleExecutableTask exit for cancel", zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type))
 			return
-		case <-time.After(checkTime):
+		case <-time.After(checkInterval):
 		}
 		failpoint.Inject("mockStopManager", func() {
 			testContexts.Store(m.id, &TestContext{make(chan struct{}), atomic.Bool{}})
@@ -372,7 +365,8 @@ func (m *Manager) handleExecutableTask(task *proto.Task) {
 			m.logErr(err)
 			return
 		} else if !exist {
-			continue
+			// TODO we can remove previous HasSubtasksInStates check if we merge it with RunStep loop.
+			return
 		}
 		stepResource := m.getStepResource(task.Concurrency)
 		m.logger.Info("execute task step with resource",

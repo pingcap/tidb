@@ -1103,3 +1103,68 @@ func TestSubtasksState(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, endTime, ts)
 }
+
+func checkBasicTaskEq(t *testing.T, expectedTask, task *proto.Task) {
+	require.Equal(t, expectedTask.ID, task.ID)
+	require.Equal(t, expectedTask.Key, task.Key)
+	require.Equal(t, expectedTask.Type, task.Type)
+	require.Equal(t, expectedTask.State, task.State)
+	require.Equal(t, expectedTask.Step, task.Step)
+	require.Equal(t, expectedTask.Priority, task.Priority)
+	require.Equal(t, expectedTask.Concurrency, task.Concurrency)
+	require.Equal(t, expectedTask.CreateTime, task.CreateTime)
+}
+
+func TestGetActiveTaskExecInfo(t *testing.T) {
+	_, tm, ctx := testutil.InitTableTest(t)
+
+	require.NoError(t, tm.InitMeta(ctx, ":4000", ""))
+	taskStates := []proto.TaskState{proto.TaskStateRunning, proto.TaskStateReverting, proto.TaskStateReverting, proto.TaskStatePausing}
+	tasks := make([]*proto.Task, 0, len(taskStates))
+	for i, expectedState := range taskStates {
+		taskID, err := tm.CreateTask(ctx, fmt.Sprintf("key-%d", i), proto.TaskTypeExample, 8, []byte(""))
+		require.NoError(t, err)
+		task, err := tm.GetTaskByID(ctx, taskID)
+		require.NoError(t, err)
+		tasks = append(tasks, task)
+		require.NoError(t, tm.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepTwo, nil))
+		task.State = expectedState
+		task.Step = proto.StepTwo
+		switch expectedState {
+		case proto.TaskStateReverting:
+			require.NoError(t, tm.RevertTask(ctx, task.ID, proto.TaskStateRunning, nil))
+		case proto.TaskStatePausing:
+			_, err = tm.PauseTask(ctx, task.Key)
+			require.NoError(t, err)
+		}
+	}
+	// mock a pending subtask of step 1, this should not happen, just for test
+	testutil.InsertSubtask(t, tm, tasks[0].ID, proto.StepOne, ":4000", []byte("test"), proto.SubtaskStatePending, proto.TaskTypeExample, 4)
+	testutil.InsertSubtask(t, tm, tasks[0].ID, proto.StepTwo, ":4000", []byte("test"), proto.SubtaskStatePending, proto.TaskTypeExample, 4)
+	testutil.InsertSubtask(t, tm, tasks[0].ID, proto.StepTwo, ":4000", []byte("test"), proto.SubtaskStateRunning, proto.TaskTypeExample, 4)
+	testutil.InsertSubtask(t, tm, tasks[0].ID, proto.StepTwo, ":4001", []byte("test"), proto.SubtaskStateSucceed, proto.TaskTypeExample, 4)
+	testutil.InsertSubtask(t, tm, tasks[0].ID, proto.StepTwo, ":4001", []byte("test"), proto.SubtaskStatePending, proto.TaskTypeExample, 4)
+	// task 1 has no subtask
+	testutil.InsertSubtask(t, tm, tasks[2].ID, proto.StepTwo, ":4001", []byte("test"), proto.SubtaskStatePending, proto.TaskTypeExample, 6)
+	testutil.InsertSubtask(t, tm, tasks[3].ID, proto.StepTwo, ":4001", []byte("test"), proto.SubtaskStateRunning, proto.TaskTypeExample, 8)
+
+	subtasks, err2 := tm.GetActiveSubtasks(ctx, 1)
+	require.NoError(t, err2)
+	_ = subtasks
+	// :4000
+	taskExecInfos, err := tm.GetTaskExecInfoByExecID(ctx, ":4000")
+	require.NoError(t, err)
+	require.Len(t, taskExecInfos, 1)
+	checkBasicTaskEq(t, tasks[0], taskExecInfos[0].Task)
+	require.Equal(t, 4, taskExecInfos[0].SubtaskConcurrency)
+	// :4001
+	taskExecInfos, err = tm.GetTaskExecInfoByExecID(ctx, ":4001")
+	require.NoError(t, err)
+	require.Len(t, taskExecInfos, 3)
+	checkBasicTaskEq(t, tasks[0], taskExecInfos[0].Task)
+	require.Equal(t, 4, taskExecInfos[0].SubtaskConcurrency)
+	checkBasicTaskEq(t, tasks[2], taskExecInfos[1].Task)
+	require.Equal(t, 6, taskExecInfos[1].SubtaskConcurrency)
+	checkBasicTaskEq(t, tasks[3], taskExecInfos[2].Task)
+	require.Equal(t, 8, taskExecInfos[2].SubtaskConcurrency)
+}

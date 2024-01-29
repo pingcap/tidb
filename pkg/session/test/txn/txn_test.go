@@ -28,8 +28,8 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -290,12 +290,12 @@ func TestAutoCommitRespectsReadOnly(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		err := tk1.ExecToErr("INSERT INTO test.auto_commit_test VALUES (SLEEP(1))")
-		require.True(t, terror.ErrorEqual(err, plannercore.ErrSQLInReadOnlyMode), fmt.Sprintf("err %v", err))
+		require.True(t, terror.ErrorEqual(err, plannererrors.ErrSQLInReadOnlyMode), fmt.Sprintf("err %v", err))
 		wg.Done()
 	}()
 	tk2.MustExec("SET GLOBAL tidb_restricted_read_only = 1")
 	err := tk2.ExecToErr("INSERT INTO test.auto_commit_test VALUES (0)") // should also be an error
-	require.True(t, terror.ErrorEqual(err, plannercore.ErrSQLInReadOnlyMode), fmt.Sprintf("err %v", err))
+	require.True(t, terror.ErrorEqual(err, plannererrors.ErrSQLInReadOnlyMode), fmt.Sprintf("err %v", err))
 	// Reset and check with the privilege to ignore the readonly flag and continue to insert.
 	wg.Wait()
 	tk1.MustExec("SET GLOBAL tidb_restricted_read_only = 0")

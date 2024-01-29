@@ -18,12 +18,16 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 )
 
 // TaskTable defines the interface to access the task table.
 type TaskTable interface {
-	GetTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
+	// GetTaskExecInfoByExecID gets all task exec infos by given execID, if there's
+	// no executable subtask on the execID for some task, it's not returned.
+	GetTaskExecInfoByExecID(ctx context.Context, execID string) ([]*storage.TaskExecInfo, error)
+	GetTasksInStates(ctx context.Context, states ...any) (task []*proto.Task, err error)
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
 	// GetSubtasksByExecIDAndStepAndStates gets all subtasks by given states and execID.
 	GetSubtasksByExecIDAndStepAndStates(ctx context.Context, execID string, taskID int64, step proto.Step, states ...proto.SubtaskState) ([]*proto.Subtask, error)

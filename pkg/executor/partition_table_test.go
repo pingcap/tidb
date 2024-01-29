@@ -1439,7 +1439,7 @@ func TestSubqueries(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		for _, op := range []string{"in", "not in"} {
 			x := rand.Intn(40000)
-			var r [][]interface{}
+			var r [][]any
 			for _, t := range []string{"tinner", "thash", "trange"} {
 				q := fmt.Sprintf(`select * from touter where touter.a %v (select %v.b from %v where %v.a > touter.b and %v.c > %v)`, op, t, t, t, t, x)
 				if r == nil {
@@ -1455,7 +1455,7 @@ func TestSubqueries(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		for _, op := range []string{"exists", "not exists"} {
 			x := rand.Intn(40000)
-			var r [][]interface{}
+			var r [][]any
 			for _, t := range []string{"tinner", "thash", "trange"} {
 				q := fmt.Sprintf(`select * from touter where %v (select %v.b from %v where %v.a > touter.b and %v.c > %v)`, op, t, t, t, t, x)
 				if r == nil {
@@ -1634,7 +1634,7 @@ func TestParallelApply(t *testing.T) {
 	aggFuncs := []string{"sum", "count", "max", "min"}
 	tbls := []string{"tinner", "thash", "trange"}
 	for i := 0; i < 50; i++ {
-		var r [][]interface{}
+		var r [][]any
 		op := ops[rand.Intn(len(ops))]
 		agg := aggFuncs[rand.Intn(len(aggFuncs))]
 		x := rand.Intn(10000)
@@ -1708,7 +1708,7 @@ func TestDirectReadingWithUnionScan(t *testing.T) {
 				sql += ` order by b`
 			}
 
-			var result [][]interface{}
+			var result [][]any
 			for _, tb := range []string{`trange`, `tnormal`, `thash`} {
 				q := fmt.Sprintf(sql, tb)
 				tk.MustHavePlan(q, `UnionScan`)
@@ -1767,7 +1767,7 @@ func TestUnsignedPartitionColumn(t *testing.T) {
 		pointCond := fmt.Sprintf("a = %v", rand.Intn(400000))
 		batchCond := fmt.Sprintf("a in (%v, %v, %v)", rand.Intn(400000), rand.Intn(400000), rand.Intn(400000))
 
-		var rScan, rPoint, rBatch [][]interface{}
+		var rScan, rPoint, rBatch [][]any
 		for tid, tbl := range []string{"tnormal_pk", "trange_pk", "thash_pk"} {
 			// unsigned + TableReader
 			scanSQL := fmt.Sprintf("select * from %v use index(primary) where %v", tbl, scanCond)
@@ -1801,7 +1801,7 @@ func TestUnsignedPartitionColumn(t *testing.T) {
 		}
 
 		lookupCond := fmt.Sprintf("a %v %v", []string{">", "<"}[rand.Intn(2)], rand.Intn(400000))
-		var rLookup [][]interface{}
+		var rLookup [][]any
 		for tid, tbl := range []string{"tnormal_uniq", "trange_uniq", "thash_uniq"} {
 			// unsigned + IndexReader
 			scanSQL := fmt.Sprintf("select a from %v use index(a) where %v", tbl, scanCond)

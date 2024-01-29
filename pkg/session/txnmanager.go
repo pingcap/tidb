@@ -314,7 +314,7 @@ func (m *txnManager) AdviseWarmup() error {
 }
 
 // AdviseOptimizeWithPlan providers optimization according to the plan
-func (m *txnManager) AdviseOptimizeWithPlan(plan interface{}) error {
+func (m *txnManager) AdviseOptimizeWithPlan(plan any) error {
 	if m.ctxProvider != nil {
 		return m.ctxProvider.AdviseOptimizeWithPlan(plan)
 	}

@@ -74,11 +74,11 @@ func (h *topNChunkHeap) Len() int {
 	return len(h.rowPtrs)
 }
 
-func (*topNChunkHeap) Push(interface{}) {
+func (*topNChunkHeap) Push(any) {
 	// Should never be called.
 }
 
-func (h *topNChunkHeap) Pop() interface{} {
+func (h *topNChunkHeap) Pop() any {
 	h.rowPtrs = h.rowPtrs[:len(h.rowPtrs)-1]
 	// We don't need the popped value, return nil to avoid memory allocation.
 	return nil
