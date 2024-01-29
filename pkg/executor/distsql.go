@@ -853,6 +853,11 @@ func (e *IndexLookUpExecutor) Close() error {
 
 // Next implements Exec Next interface.
 func (e *IndexLookUpExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
+	oriMemUsage := req.MemoryUsage()
+	defer func() {
+		e.memTracker.Consume(req.MemoryUsage() - oriMemUsage)
+	}()
+
 	if e.dummy {
 		req.Reset()
 		return nil
