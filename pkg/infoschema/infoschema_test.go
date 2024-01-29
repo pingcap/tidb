@@ -36,9 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testutil"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 func TestBasic(t *testing.T) {
@@ -851,16 +849,4 @@ func TestInfoSchemaCreateTableLike(t *testing.T) {
 	tblInfo = tbl.Meta()
 	require.Equal(t, tblInfo.Indices[0].Name.O, "idx")
 	require.Equal(t, tblInfo.Indices[0].ID, int64(1))
-}
-
-func TestYWQ(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t4(a int, INDEX i1 (a))")
-	rows := tk.MustQuery("SELECT count(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = 't4'")
-	rows = tk.MustQuery("SELECT * FROM information_schema.STATISTICS;")
-
-	logutil.BgLogger().Info("ywq test...", zap.Any("rows", rows))
 }
