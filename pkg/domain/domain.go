@@ -2487,8 +2487,28 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 	}
 }
 
+<<<<<<< HEAD
 func (do *Domain) gcAnalyzeHistory(owner owner.Manager) {
 	defer util.Recover(metrics.LabelDomain, "gcAnalyzeHistory", nil, false)
+=======
+// analyzeJobsCleanupWorker is a background worker that periodically performs two main tasks:
+//
+//  1. Garbage Collection: It removes outdated analyze jobs from the statistics handle.
+//     This operation is performed every hour and only if the current instance is the owner.
+//     Analyze jobs older than 7 days are considered outdated and are removed.
+//
+//  2. Cleanup: It cleans up corrupted analyze jobs.
+//     A corrupted analyze job is one that is in a 'pending' or 'running' state,
+//     but is associated with a TiDB instance that is either not currently running or has been restarted.
+//     Also, if the analyze job is killed by the user, it is considered corrupted.
+//     This operation is performed every 100 stats leases.
+//     It first retrieves the list of current analyze processes, then removes any analyze job
+//     that is not associated with a current process. Additionally, if the current instance is the owner,
+//     it also cleans up corrupted analyze jobs on dead instances.
+func (do *Domain) analyzeJobsCleanupWorker(owner owner.Manager) {
+	defer util.Recover(metrics.LabelDomain, "analyzeJobsCleanupWorker", nil, false)
+	// For GC.
+>>>>>>> f33418d195e (statistics: better fail reason for killed analyze job (#50780))
 	const gcInterval = time.Hour
 	statsHandle := do.StatsHandle()
 	gcTicker := time.NewTicker(gcInterval)
