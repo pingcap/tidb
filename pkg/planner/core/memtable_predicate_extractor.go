@@ -1694,6 +1694,7 @@ func (b *InfoSchemaTablesExtractor) initialize() {
 	b.initialized = true
 }
 
+// Extract implements the MemTablePredicateExtractor Extract interface
 func (b *InfoSchemaTablesExtractor) Extract(_ sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
