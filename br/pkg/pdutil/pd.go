@@ -95,6 +95,8 @@ var (
 		"shuffle-leader-scheduler":     {},
 		"shuffle-region-scheduler":     {},
 		"shuffle-hot-region-scheduler": {},
+
+		"evict-slow-store-scheduler": {},
 	}
 	expectPDCfgGenerators = map[string]pauseConfigGenerator{
 		"merge-schedule-limit": zeroPauseConfig,
