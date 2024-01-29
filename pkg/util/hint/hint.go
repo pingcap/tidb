@@ -300,10 +300,11 @@ type PlanHints struct {
 	TimeRangeHint    ast.HintTimeRange
 }
 
-func (p *PlanHints) GetAggHint() AggHints {
+// GetAggHint is to get the agg hint information.
+func (pHints *PlanHints) GetAggHint() AggHints {
 	return AggHints{
-		PreferAggType:  p.PreferAggType,
-		PreferAggToCop: p.PreferAggToCop,
+		PreferAggType:  pHints.PreferAggType,
+		PreferAggToCop: pHints.PreferAggToCop,
 	}
 }
 
