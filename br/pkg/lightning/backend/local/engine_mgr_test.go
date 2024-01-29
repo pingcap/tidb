@@ -18,6 +18,7 @@ import (
 	"context"
 	"io"
 	"os"
+	"path"
 	"sync"
 	"testing"
 
@@ -36,7 +37,7 @@ func getBackendConfig(t *testing.T) BackendConfig {
 		MemTableSize:                config.DefaultEngineMemCacheSize,
 		MaxOpenFiles:                1000,
 		DisableAutomaticCompactions: true,
-		LocalStoreDir:               t.TempDir(),
+		LocalStoreDir:               path.Join(t.TempDir(), "sorted-kv"),
 		DupeDetectEnabled:           false,
 		DuplicateDetectOpt:          common.DupDetectOpt{},
 		WorkerConcurrency:           8,
@@ -52,7 +53,7 @@ func TestEngineManager(t *testing.T) {
 	ctx := context.Background()
 	syncMapLen := func(m *sync.Map) int {
 		count := 0
-		m.Range(func(key, value interface{}) bool {
+		m.Range(func(key, value any) bool {
 			count++
 			return true
 		})

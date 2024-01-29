@@ -22,7 +22,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/task/operator"
 	"github.com/stretchr/testify/require"
@@ -83,15 +85,55 @@ func verifyLightningStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
 	pdc, err := pd.NewClient(cfg.Config.PD, pd.SecurityOption{})
 	t.NoError(err)
 	defer pdc.Close()
-	stores, err := pdc.GetAllStores(cx, pd.WithExcludeTombstone())
 	t.NoError(err)
-	s := stores[0]
-	conn, err := grpc.DialContext(cx, s.Address, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
+	region, err := pdc.GetRegion(cx, []byte("a"))
+	t.NoError(err)
+	store, err := pdc.GetStore(cx, region.Leader.StoreId)
+	t.NoError(err)
+	conn, err := grpc.DialContext(cx, store.Address, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
 	t.NoError(err)
 	ingestCli := import_sstpb.NewImportSSTClient(conn)
-	res, err := ingestCli.Ingest(cx, &import_sstpb.IngestRequest{})
+	wcli, err := ingestCli.Write(cx)
 	t.NoError(err)
-	t.NotNil(res.GetError(), "res = %s", res)
+	u := uuid.New()
+	meta := &import_sstpb.SSTMeta{
+		Uuid:        u[:],
+		RegionId:    region.Meta.GetId(),
+		RegionEpoch: region.Meta.GetRegionEpoch(),
+		Range: &import_sstpb.Range{
+			Start: []byte("a"),
+			End:   []byte("b"),
+		},
+	}
+	rpcCx := kvrpcpb.Context{
+		RegionId:    region.Meta.GetId(),
+		RegionEpoch: region.Meta.GetRegionEpoch(),
+		Peer:        region.Leader,
+	}
+	t.NoError(wcli.Send(&import_sstpb.WriteRequest{Chunk: &import_sstpb.WriteRequest_Meta{Meta: meta}, Context: &rpcCx}))
+	phy, log, err := pdc.GetTS(cx)
+	t.NoError(err)
+	wb := &import_sstpb.WriteBatch{
+		CommitTs: oracle.ComposeTS(phy, log),
+		Pairs: []*import_sstpb.Pair{
+			{Key: []byte("a1"), Value: []byte("You may wondering, why here is such a key.")},
+			{Key: []byte("a2"), Value: []byte("And what if this has been really imported?")},
+			{Key: []byte("a3"), Value: []byte("I dunno too. But we need to have a try.")},
+		},
+	}
+	t.NoError(wcli.Send(&import_sstpb.WriteRequest{Chunk: &import_sstpb.WriteRequest_Batch{Batch: wb}, Context: &rpcCx}))
+	resp, err := wcli.CloseAndRecv()
+	t.NoError(err)
+	t.Nil(resp.Error, "res = %s", resp)
+	realMeta := resp.Metas[0]
+
+	res, err := ingestCli.Ingest(cx, &import_sstpb.IngestRequest{
+		Context: &rpcCx,
+		Sst:     realMeta,
+	})
+	t.NoError(err)
+	t.Contains(res.GetError().GetMessage(), "Suspended", "res = %s", res)
+	t.NotNil(res.GetError().GetServerIsBusy(), "res = %s", res)
 }
 
 func verifySchedulersStopped(t *require.Assertions, cfg operator.PauseGcConfig) {
@@ -165,10 +207,10 @@ func TestOperator(t *testing.T) {
 		}
 	}, 10*time.Second, time.Second)
 
-	cancel()
 	verifyGCStopped(req, cfg)
 	verifyLightningStopped(req, cfg)
 	verifySchedulersStopped(req, cfg)
+	cancel()
 
 	req.Eventually(func() bool {
 		select {

@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/opcode"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
@@ -47,10 +46,56 @@ const (
 // import expression and planner/core together to use EvalAstExpr
 var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
 
+// EvalAstExprWithPlanCtx evaluates ast expression directly with plan ctx
+// Note: initialized in planner/core
+// import expression and planner/core together to use EvalAstExpr
+var EvalAstExprWithPlanCtx func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
+
 // RewriteAstExpr rewrites ast expression directly.
 // Note: initialized in planner/core
 // import expression and planner/core together to use EvalAstExpr
 var RewriteAstExpr func(sctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names types.NameSlice, allowCastArray bool) (Expression, error)
+
+// BuildOptions is used to provide optional settings to build an expression
+type BuildOptions struct {
+	// InputSchema is the input schema for expression to build
+	InputSchema *Schema
+	// InputNames is the input names for expression to build
+	InputNames types.NameSlice
+	// SourceTable is used to provide some extra column info.
+	SourceTable *model.TableInfo
+	// AllowCastArray specifies whether to allow casting to an array type.
+	AllowCastArray bool
+}
+
+// BuildOption is a function to apply optional settings
+type BuildOption func(*BuildOptions)
+
+// WithSourceTable specifies the table info to provide some extra column info when building expressions.
+// When `WithInputSchemaAndNames` is not sepecified, it also use the table info to build input schema and names.
+func WithSourceTable(tblInfo *model.TableInfo) BuildOption {
+	return func(options *BuildOptions) {
+		options.SourceTable = tblInfo
+	}
+}
+
+// WithInputSchemaAndNames specifies the input schema and names for the expression to build.
+func WithInputSchemaAndNames(schema *Schema, names types.NameSlice) BuildOption {
+	return func(options *BuildOptions) {
+		options.InputSchema = schema
+		options.InputNames = names
+	}
+}
+
+// WithAllowCastArray specifies whether to allow casting to an array type.
+func WithAllowCastArray(allow bool) BuildOption {
+	return func(options *BuildOptions) {
+		options.AllowCastArray = allow
+	}
+}
+
+// BuildExprWithAst builds an expression from an ast.
+var BuildExprWithAst func(ctx sessionctx.Context, expr ast.ExprNode, opts ...BuildOption) (Expression, error)
 
 // VecExpr contains all vectorized evaluation methods.
 type VecExpr interface {
@@ -243,6 +288,7 @@ func ExprNotNull(expr Expression) bool {
 // first returned values is false.
 func EvalBool(ctx EvalContext, exprList CNFExprs, row chunk.Row) (bool, bool, error) {
 	hasNull := false
+	tc := typeCtx(ctx)
 	for _, expr := range exprList {
 		data, err := expr.Eval(ctx, row)
 		if err != nil {
@@ -261,7 +307,7 @@ func EvalBool(ctx EvalContext, exprList CNFExprs, row chunk.Row) (bool, bool, er
 			continue
 		}
 
-		i, err := data.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		i, err := data.ToBool(tc)
 		if err != nil {
 			return false, false, err
 		}
@@ -358,7 +404,7 @@ func VecEvalBool(ctx EvalContext, exprList CNFExprs, input *chunk.Chunk, selecte
 			return nil, nil, err
 		}
 
-		err = toBool(ctx.GetSessionVars().StmtCtx, tp, eType, buf, sel, isZero)
+		err = toBool(typeCtx(ctx), tp, eType, buf, sel, isZero)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -398,7 +444,7 @@ func VecEvalBool(ctx EvalContext, exprList CNFExprs, input *chunk.Chunk, selecte
 	return selected, nulls, nil
 }
 
-func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
+func toBool(tc types.Context, tp *types.FieldType, eType types.EvalType, buf *chunk.Column, sel []int, isZero []int8) error {
 	switch eType {
 	case types.ETInt:
 		i64s := buf.Int64s()
@@ -478,14 +524,14 @@ func toBool(sc *stmtctx.StatementContext, tp *types.FieldType, eType types.EvalT
 						}
 					case mysql.TypeBit:
 						var bl types.BinaryLiteral = buf.GetBytes(i)
-						iVal, err := bl.ToInt(sc.TypeCtx())
+						iVal, err := bl.ToInt(tc)
 						if err != nil {
 							return err
 						}
 						fVal = float64(iVal)
 					}
 				} else {
-					fVal, err = types.StrToFloat(sc.TypeCtx(), sVal, false)
+					fVal, err = types.StrToFloat(tc, sVal, false)
 					if err != nil {
 						return err
 					}
@@ -804,7 +850,7 @@ func SplitDNFItems(onExpr Expression) []Expression {
 // If the Expression is a non-constant value, it means the result is unknown.
 func EvaluateExprWithNull(ctx sessionctx.Context, schema *Schema, expr Expression) Expression {
 	if MaybeOverOptimized4PlanCache(ctx, []Expression{expr}) {
-		ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.New("%v affects null check"))
+		ctx.GetSessionVars().StmtCtx.SetSkipPlanCache(errors.NewNoStackError("%v affects null check"))
 	}
 	if ctx.GetSessionVars().StmtCtx.InNullRejectCheck {
 		expr, _ = evaluateExprWithNullInNullRejectCheck(ctx, schema, expr)
@@ -1125,7 +1171,7 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 
 // Args2Expressions4Test converts these values to an expression list.
 // This conversion is incomplete, so only use for test.
-func Args2Expressions4Test(args ...interface{}) []Expression {
+func Args2Expressions4Test(args ...any) []Expression {
 	exprs := make([]Expression, len(args))
 	for i, v := range args {
 		d := types.NewDatum(v)

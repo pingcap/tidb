@@ -85,10 +85,10 @@ type Context interface {
 	GetMPPClient() kv.MPPClient
 
 	// SetValue saves a value associated with this context for key.
-	SetValue(key fmt.Stringer, value interface{})
+	SetValue(key fmt.Stringer, value any)
 
 	// Value returns the value associated with this context for key.
-	Value(key fmt.Stringer) interface{}
+	Value(key fmt.Stringer) any
 
 	// ClearValue clears the value associated with this context for key.
 	ClearValue(key fmt.Stringer)
@@ -152,8 +152,6 @@ type Context interface {
 	// GetPreparedTxnFuture returns the TxnFuture if it is valid or pending.
 	// It returns nil otherwise.
 	GetPreparedTxnFuture() TxnFuture
-	// StoreIndexUsage stores the index usage information.
-	StoreIndexUsage(tblID int64, idxID int64, rowsSelected int64)
 	// GetTxnWriteThroughputSLI returns the TxnWriteThroughputSLI.
 	GetTxnWriteThroughputSLI() *sli.TxnWriteThroughputSLI
 	// GetBuiltinFunctionUsage returns the BuiltinFunctionUsage of current Context, which is not thread safe.
@@ -183,6 +181,8 @@ type Context interface {
 	EnableSandBoxMode()
 	// DisableSandBoxMode enable the sandbox mode of this Session
 	DisableSandBoxMode()
+	// ReportUsageStats reports the usage stats to the global collector
+	ReportUsageStats()
 }
 
 // TxnFuture is an interface where implementations have a kv.Transaction field and after

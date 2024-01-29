@@ -22,7 +22,6 @@ import (
 	"io"
 	"math"
 	"net"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -73,7 +72,7 @@ import (
 
 const (
 	dialTimeout             = 5 * time.Minute
-	maxRetryTimes           = 5
+	maxRetryTimes           = 20
 	defaultRetryBackoffTime = 3 * time.Second
 	// maxWriteAndIngestRetryTimes is the max retry times for write and ingest.
 	// A large retry times is for tolerating tikv cluster failures.
@@ -517,24 +516,6 @@ func NewBackend(
 		return nil, common.NormalizeOrWrapErr(common.ErrCreatePDClient, err)
 	}
 
-	shouldCreate := true
-	if config.CheckpointEnabled {
-		if info, err := os.Stat(config.LocalStoreDir); err != nil {
-			if !os.IsNotExist(err) {
-				return nil, err
-			}
-		} else if info.IsDir() {
-			shouldCreate = false
-		}
-	}
-
-	if shouldCreate {
-		err = os.Mkdir(config.LocalStoreDir, 0o700)
-		if err != nil {
-			return nil, common.ErrInvalidSortedKVDir.Wrap(err).GenWithStackByArgs(config.LocalStoreDir)
-		}
-	}
-
 	// The following copies tikv.NewTxnClient without creating yet another pdClient.
 	spkv, err := tikvclient.NewEtcdSafePointKV(strings.Split(config.PDAddr, ","), tls.TLSConfig())
 	if err != nil {
@@ -557,8 +538,11 @@ func NewBackend(
 	if err != nil {
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
-	pdHTTPCli := pdhttp.NewClient("lightning", pdAddrs, pdhttp.WithTLSConfig(tls.TLSConfig())).
-		WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
+	pdHTTPCli := pdhttp.NewClientWithServiceDiscovery(
+		"lightning",
+		pdCli.GetServiceDiscovery(),
+		pdhttp.WithTLSConfig(tls.TLSConfig()),
+	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
 	splitCli := split.NewSplitClient(pdCli, pdHTTPCli, tls.TLSConfig(), false)
 	importClientFactory := newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
 	var writeLimiter StoreWriteLimiter
@@ -592,6 +576,27 @@ func NewBackend(
 	}
 	if err = local.checkMultiIngestSupport(ctx); err != nil {
 		return nil, common.ErrCheckMultiIngest.Wrap(err).GenWithStackByArgs()
+	}
+
+	return local, nil
+}
+
+// NewBackendForTest creates a new Backend for test.
+func NewBackendForTest(ctx context.Context, config BackendConfig, storeHelper StoreHelper) (*Backend, error) {
+	config.adjust()
+
+	logger := log.FromContext(ctx)
+	engineMgr, err := newEngineManager(config, storeHelper, logger)
+	if err != nil {
+		return nil, err
+	}
+	local := &Backend{
+		BackendConfig: config,
+		logger:        logger,
+		engineMgr:     engineMgr,
+	}
+	if m, ok := metric.GetCommonMetric(ctx); ok {
+		local.metrics = m
 	}
 
 	return local, nil
@@ -672,14 +677,6 @@ func (local *Backend) Close() {
 	local.engineMgr.close()
 	local.importClientFactory.Close()
 
-	// if checkpoint is disabled, or we finish load all data successfully, then files in this
-	// dir will be useless, so we clean up this dir and all files in it.
-	if !local.CheckpointEnabled || common.IsEmptyDir(local.LocalStoreDir) {
-		err := os.RemoveAll(local.LocalStoreDir)
-		if err != nil {
-			local.logger.Warn("remove local db file failed", zap.Error(err))
-		}
-	}
 	_ = local.tikvCli.Close()
 	local.pdHTTPCli.Close()
 	local.pdCli.Close()
@@ -1590,6 +1587,12 @@ func (local *Backend) GetTS(ctx context.Context) (physical, logical int64, err e
 // GetTiKVCodec implements StoreHelper interface.
 func (local *Backend) GetTiKVCodec() tikvclient.Codec {
 	return local.tikvCodec
+}
+
+// CloseEngineMgr close the engine manager.
+// This function is used for test.
+func (local *Backend) CloseEngineMgr() {
+	local.engineMgr.close()
 }
 
 var getSplitConfFromStoreFunc = getSplitConfFromStore

@@ -90,7 +90,7 @@ func prepareDumpingDatabases(tctx *tcontext.Context, conf *Config, db *sql.Conn)
 	if len(conf.Databases) == 0 {
 		return databases, nil
 	}
-	dbMap := make(map[string]interface{}, len(databases))
+	dbMap := make(map[string]any, len(databases))
 	for _, database := range databases {
 		dbMap[database] = struct{}{}
 	}

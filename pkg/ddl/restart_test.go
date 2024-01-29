@@ -111,7 +111,7 @@ func TestSchemaResume(t *testing.T) {
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionCreateSchema,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{dbInfo},
+		Args:       []any{dbInfo},
 	}
 	testRunInterruptedJob(t, store, dom, job)
 	testCheckSchemaState(t, store, dbInfo, model.StatePublic)
@@ -141,7 +141,7 @@ func TestStat(t *testing.T) {
 		SchemaID:   dbInfo.ID,
 		Type:       model.ActionDropSchema,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{true},
+		Args:       []any{true},
 	}
 
 	done := make(chan error, 1)
@@ -185,7 +185,7 @@ func TestTableResume(t *testing.T) {
 		TableID:    tblInfo.ID,
 		Type:       model.ActionCreateTable,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{tblInfo},
+		Args:       []any{tblInfo},
 	}
 	testRunInterruptedJob(t, store, dom, job)
 	testCheckTableState(t, store, dbInfo, tblInfo, model.StatePublic)

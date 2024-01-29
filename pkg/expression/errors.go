@@ -35,8 +35,6 @@ var (
 	ErrIncorrectType               = dbterror.ClassExpression.NewStd(mysql.ErrIncorrectType)
 	ErrInvalidTypeForJSON          = dbterror.ClassExpression.NewStd(mysql.ErrInvalidTypeForJSON)
 	ErrInvalidTableSample          = dbterror.ClassExpression.NewStd(mysql.ErrInvalidTableSample)
-	ErrInternal                    = dbterror.ClassOptimizer.NewStd(mysql.ErrInternal)
-	ErrNoDB                        = dbterror.ClassOptimizer.NewStd(mysql.ErrNoDB)
 	ErrNotSupportedYet             = dbterror.ClassExpression.NewStd(mysql.ErrNotSupportedYet)
 	ErrInvalidJSONForFuncIndex     = dbterror.ClassExpression.NewStd(mysql.ErrInvalidJSONValueForFuncIndex)
 	ErrDataOutOfRangeFuncIndex     = dbterror.ClassExpression.NewStd(mysql.ErrDataOutOfRangeFunctionalIndex)
@@ -76,20 +74,20 @@ func handleInvalidTimeError(ctx EvalContext, err error) error {
 		types.ErrDatetimeFunctionOverflow.Equal(err) || types.ErrIncorrectDatetimeValue.Equal(err)) {
 		return err
 	}
-	ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
+	ec := errCtx(ctx)
 	return ec.HandleError(err)
 }
 
 // handleDivisionByZeroError reports error or warning depend on the context.
 func handleDivisionByZeroError(ctx EvalContext) error {
-	ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
+	ec := errCtx(ctx)
 	return ec.HandleError(ErrDivisionByZero)
 }
 
 // handleAllowedPacketOverflowed reports error or warning depend on the context.
 func handleAllowedPacketOverflowed(ctx EvalContext, exprName string, maxAllowedPacketSize uint64) error {
 	err := errWarnAllowedPacketOverflowed.FastGenByArgs(exprName, maxAllowedPacketSize)
-	tc := ctx.GetSessionVars().StmtCtx.TypeCtx()
+	tc := typeCtx(ctx)
 	if f := tc.Flags(); f.TruncateAsWarning() || f.IgnoreTruncateErr() {
 		tc.AppendWarning(err)
 		return nil

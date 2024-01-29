@@ -31,8 +31,8 @@ func (sm *Manager) DelRunningTask(id int64) {
 	sm.delScheduler(id)
 }
 
-// DoCleanUpRoutine implements Scheduler.DoCleanUpRoutine interface.
-func (sm *Manager) DoCleanUpRoutine() {
+// DoCleanupRoutine implements Scheduler.DoCleanupRoutine interface.
+func (sm *Manager) DoCleanupRoutine() {
 	sm.doCleanupTask()
 }
 

@@ -135,8 +135,3 @@ func (m *mergeSortExecutor) OnFinished(ctx context.Context, subtask *proto.Subta
 	subtask.Meta = newMeta
 	return nil
 }
-
-func (*mergeSortExecutor) Rollback(ctx context.Context) error {
-	logutil.Logger(ctx).Info("merge sort executor rollback backfill add index task")
-	return nil
-}

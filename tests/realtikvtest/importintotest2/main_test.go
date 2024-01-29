@@ -45,7 +45,7 @@ var (
 	gcsEndpoint       = fmt.Sprintf(gcsEndpointFormat, gcsHost, gcsPort)
 )
 
-func TestLoadRemote(t *testing.T) {
+func TestImportInto(t *testing.T) {
 	suite.Run(t, &mockGCSSuite{})
 }
 

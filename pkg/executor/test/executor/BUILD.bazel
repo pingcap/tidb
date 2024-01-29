@@ -40,6 +40,7 @@ go_test(
         "//pkg/types",
         "//pkg/util",
         "//pkg/util/dbterror/exeerrors",
+        "//pkg/util/dbterror/plannererrors",
         "//pkg/util/memory",
         "//pkg/util/mock",
         "//pkg/util/replayer",

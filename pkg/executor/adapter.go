@@ -531,9 +531,9 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			terror.Log(err3)
 			if err3 == nil {
 				sctx.GetSessionVars().SetDistSQLScanConcurrency(int(concurrency))
+				sctx.GetSessionVars().SetIndexSerialScanConcurrency(int(concurrency))
 			}
 		}
-		sctx.GetSessionVars().SetIndexSerialScanConcurrency(1)
 		terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TxnIsolation, ast.ReadCommitted))
 		defer func() {
 			terror.Log(sctx.GetSessionVars().SetSystemVar(variable.TiDBBuildStatsConcurrency, oriStats))
@@ -1454,6 +1454,8 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 			executor_metrics.FairLockingTxnEffectiveCount.Inc()
 		}
 	}
+
+	a.Ctx.ReportUsageStats()
 }
 
 func (a *ExecStmt) recordLastQueryInfo(err error) {
@@ -2159,18 +2161,14 @@ func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	handle := sctx.Value(bindinfo.SessionBindInfoKeyType).(bindinfo.SessionBindingHandle)
 	bindings := handle.GetAllSessionBindings()
-	bindRecords := make([]bindinfo.Bindings, 0, len(bindings))
-	for _, binding := range bindings {
-		bindRecords = append(bindRecords, []bindinfo.Binding{binding})
-	}
 	dumpTask := &domain.PlanReplayerDumpTask{
 		PlanReplayerTaskKey: key,
 		StartTS:             startTS,
 		TblStats:            stmtCtx.TableStats,
-		SessionBindings:     bindRecords,
+		SessionBindings:     []bindinfo.Bindings{bindings},
 		SessionVars:         sctx.GetSessionVars(),
 		ExecStmts:           []ast.StmtNode{stmtNode},
-		DebugTrace:          []interface{}{stmtCtx.OptimizerDebugTrace},
+		DebugTrace:          []any{stmtCtx.OptimizerDebugTrace},
 		Analyze:             false,
 		IsCapture:           true,
 		IsContinuesCapture:  isContinuesCapture,

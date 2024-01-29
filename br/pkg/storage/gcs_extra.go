@@ -194,6 +194,9 @@ func (w *GCSWriter) Close() error {
 		return err
 	}
 
+	if len(w.xmlMPUParts) == 0 {
+		return nil
+	}
 	err := w.finalizeXMLMPU()
 	if err == nil {
 		return nil
