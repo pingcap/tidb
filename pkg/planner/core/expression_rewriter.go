@@ -753,10 +753,7 @@ func (er *expressionRewriter) handleOtherComparableSubq(planCtx *exprRewriterPla
 	intest.AssertNotNil(planCtx)
 	plan4Agg := LogicalAggregation{}.Init(planCtx.builder.ctx, planCtx.builder.getSelectOffset())
 	if hintinfo := planCtx.builder.TableHints(); hintinfo != nil {
-		plan4Agg.aggHints = hint.AggHints{
-			PreferAggType:  hintinfo.PreferAggType,
-			PreferAggToCop: hintinfo.PreferAggToCop,
-		}
+		plan4Agg.aggHints = hintinfo.GetAggHint()
 	}
 	plan4Agg.SetChildren(np)
 
@@ -890,10 +887,7 @@ func (er *expressionRewriter) handleNEAny(planCtx *exprRewriterPlanCtx, lexpr, r
 		AggFuncs: []*aggregation.AggFuncDesc{maxFunc, countFunc},
 	}.Init(sctx, planCtx.builder.getSelectOffset())
 	if hintinfo := planCtx.builder.TableHints(); hintinfo != nil {
-		plan4Agg.aggHints = hint.AggHints{
-			PreferAggType:  hintinfo.PreferAggType,
-			PreferAggToCop: hintinfo.PreferAggToCop,
-		}
+		plan4Agg.aggHints = hintinfo.GetAggHint()
 	}
 	plan4Agg.SetChildren(np)
 	maxResultCol := &expression.Column{
