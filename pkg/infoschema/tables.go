@@ -213,6 +213,8 @@ const (
 	TableTiDBCheckConstraints = "TIDB_CHECK_CONSTRAINTS"
 	// TableKeywords is the list of keywords.
 	TableKeywords = "KEYWORDS"
+	// TableTiDBIndexUsage is a table to show the usage stats of indexes in the current instance.
+	TableTiDBIndexUsage = "TIDB_INDEX_USAGE"
 )
 
 const (
@@ -324,6 +326,8 @@ var tableIDMap = map[string]int64{
 	TableCheckConstraints:                autoid.InformationSchemaDBID + 90,
 	TableTiDBCheckConstraints:            autoid.InformationSchemaDBID + 91,
 	TableKeywords:                        autoid.InformationSchemaDBID + 92,
+	TableTiDBIndexUsage:                  autoid.InformationSchemaDBID + 93,
+	ClusterTableTiDBIndexUsage:           autoid.InformationSchemaDBID + 94,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1670,6 +1674,23 @@ var tableKeywords = []columnInfo{
 	{name: "RESERVED", tp: mysql.TypeLong, size: 11},
 }
 
+var tableTiDBIndexUsage = []columnInfo{
+	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64},
+	{name: "TABLE_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "INDEX_NAME", tp: mysql.TypeVarchar, size: 64},
+	{name: "QUERY_TOTAL", tp: mysql.TypeLonglong, size: 21},
+	{name: "KV_REQ_TOTAL", tp: mysql.TypeLonglong, size: 21},
+	{name: "ROWS_ACCESS_TOTAL", tp: mysql.TypeLonglong, size: 21},
+	{name: "PERCENTAGE_ACCESS_0", tp: mysql.TypeLonglong, size: 21},
+	{name: "PERCENTAGE_ACCESS_0_1", tp: mysql.TypeLonglong, size: 21},
+	{name: "PERCENTAGE_ACCESS_1_10", tp: mysql.TypeLonglong, size: 21},
+	{name: "PERCENTAGE_ACCESS_10_20", tp: mysql.TypeLonglong, size: 21},
+	{name: "PERCENTAGE_ACCESS_20_50", tp: mysql.TypeLonglong, size: 21},
+	{name: "PERCENTAGE_ACCESS_50_100", tp: mysql.TypeLonglong, size: 21},
+	{name: "PERCENTAGE_ACCESS_100", tp: mysql.TypeLonglong, size: 21},
+	{name: "LAST_ACCESS_TIME", tp: mysql.TypeDatetime, size: 21},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -2210,6 +2231,7 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableCheckConstraints:                   tableCheckConstraintsCols,
 	TableTiDBCheckConstraints:               tableTiDBCheckConstraintsCols,
 	TableKeywords:                           tableKeywords,
+	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
