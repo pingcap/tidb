@@ -882,7 +882,7 @@ func TestColumnEncode(t *testing.T) {
 		decMax  = types.NewMaxOrMinDec(false, 12, 6)
 		json1   = types.CreateBinaryJSON(nil)
 		json2   = types.CreateBinaryJSON(int64(42))
-		json3   = types.CreateBinaryJSON(map[string]interface{}{"foo": "bar", "a": int64(42)})
+		json3   = types.CreateBinaryJSON(map[string]any{"foo": "bar", "a": int64(42)})
 	)
 
 	for _, tt := range []struct {

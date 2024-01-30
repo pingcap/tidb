@@ -6,7 +6,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/server/internal/testserverclient",
     visibility = ["//pkg/server:__subpackages__"],
     deps = [
-        "//pkg/config",
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/parser/mysql",

@@ -84,7 +84,7 @@ func IsStmtStaleness(sctx sessionctx.Context) bool {
 func GetExternalTimestamp(ctx context.Context, sctx sessionctx.Context) (uint64, error) {
 	// Try to get from the stmt cache to make sure this function is deterministic.
 	stmtCtx := sctx.GetSessionVars().StmtCtx
-	externalTimestamp, err := stmtCtx.GetOrEvaluateStmtCache(stmtctx.StmtExternalTSCacheKey, func() (interface{}, error) {
+	externalTimestamp, err := stmtCtx.GetOrEvaluateStmtCache(stmtctx.StmtExternalTSCacheKey, func() (any, error) {
 		return variable.GetExternalTimestamp(ctx)
 	})
 

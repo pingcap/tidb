@@ -40,7 +40,7 @@ func parseExpr(t *testing.T, expr string) ast.ExprNode {
 	return stmt.Fields.Fields[0].Expr
 }
 
-func buildExpr(t *testing.T, ctx sessionctx.Context, exprNode interface{}, opts ...expression.BuildOption) (expression.Expression, error) {
+func buildExpr(t *testing.T, ctx sessionctx.Context, exprNode any, opts ...expression.BuildOption) (expression.Expression, error) {
 	var node ast.ExprNode
 	switch x := exprNode.(type) {
 	case string:
@@ -54,7 +54,7 @@ func buildExpr(t *testing.T, ctx sessionctx.Context, exprNode interface{}, opts 
 	return expression.BuildExprWithAst(ctx, node, opts...)
 }
 
-func buildExprAndEval(t *testing.T, ctx sessionctx.Context, exprNode interface{}) types.Datum {
+func buildExprAndEval(t *testing.T, ctx sessionctx.Context, exprNode any) types.Datum {
 	expr, err := buildExpr(t, ctx, exprNode)
 	require.NoError(t, err)
 	val, err := expr.Eval(ctx, chunk.Row{})

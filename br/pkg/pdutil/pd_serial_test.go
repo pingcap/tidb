@@ -28,7 +28,7 @@ func (c *mockPDHTTPClient) SetSchedulerDelay(context.Context, string, int64) err
 	return c.err
 }
 
-func (c *mockPDHTTPClient) SetConfig(context.Context, map[string]interface{}, ...float64) error {
+func (c *mockPDHTTPClient) SetConfig(context.Context, map[string]any, ...float64) error {
 	return c.err
 }
 
@@ -56,7 +56,7 @@ func TestScheduler(t *testing.T) {
 	err = pdController.resumeSchedulerWith(ctx, []string{scheduler})
 	require.NoError(t, err)
 
-	cfg := map[string]interface{}{
+	cfg := map[string]any{
 		"max-merge-region-keys":       0,
 		"max-snapshot":                1,
 		"enable-location-replacement": false,

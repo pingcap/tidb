@@ -2089,7 +2089,7 @@ func TestGetTimezone(t *testing.T) {
 	}
 	for ith, ca := range cases {
 		idx, tzSign, tzHour, tzSep, tzMinute := types.GetTimezone(ca.input)
-		require.Equal(t, [5]interface{}{ca.idx, ca.tzSign, ca.tzHour, ca.tzSep, ca.tzMinute}, [5]interface{}{idx, tzSign, tzHour, tzSep, tzMinute}, "idx %d", ith)
+		require.Equal(t, [5]any{ca.idx, ca.tzSign, ca.tzHour, ca.tzSep, ca.tzMinute}, [5]any{idx, tzSign, tzHour, tzSep, tzMinute}, "idx %d", ith)
 	}
 }
 

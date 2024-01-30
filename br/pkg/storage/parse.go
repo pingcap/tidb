@@ -140,7 +140,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 // serialization.
 //
 // All of the URL's query parameters will be removed after calling this method.
-func ExtractQueryParameters(u *url.URL, options interface{}) {
+func ExtractQueryParameters(u *url.URL, options any) {
 	type field struct {
 		index int
 		kind  reflect.Kind

@@ -31,7 +31,7 @@ var Analyzer = &analysis.Analyzer{
 	Run:  run,
 }
 
-func run(pass *analysis.Pass) (interface{}, error) {
+func run(pass *analysis.Pass) (any, error) {
 	for _, f := range pass.Files {
 		fn := pass.Fset.PositionFor(f.Pos(), false).Filename
 		if fn != "" {

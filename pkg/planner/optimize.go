@@ -428,7 +428,7 @@ func allowInReadOnlyMode(sctx sessionctx.Context, node ast.Node) (bool, error) {
 }
 
 var planBuilderPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return core.NewPlanBuilder()
 	},
 }

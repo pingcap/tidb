@@ -46,7 +46,7 @@ type tikvTxn struct {
 	idxNameCache        map[int64]*model.TableInfo
 	snapshotInterceptor kv.SnapshotInterceptor
 	// columnMapsCache is a cache used for the mutation checker
-	columnMapsCache interface{}
+	columnMapsCache any
 }
 
 // NewTiKVTxn returns a new Transaction.
@@ -200,7 +200,7 @@ func (txn *tikvTxn) GetMemBuffer() kv.MemBuffer {
 	return newMemBuffer(txn.KVTxn.GetMemBuffer())
 }
 
-func (txn *tikvTxn) SetOption(opt int, val interface{}) {
+func (txn *tikvTxn) SetOption(opt int, val any) {
 	switch opt {
 	case kv.BinlogInfo:
 		txn.SetBinlogExecutor(&binlogExecutor{
@@ -287,7 +287,7 @@ func (txn *tikvTxn) SetOption(opt int, val interface{}) {
 	}
 }
 
-func (txn *tikvTxn) GetOption(opt int) interface{} {
+func (txn *tikvTxn) GetOption(opt int) any {
 	switch opt {
 	case kv.GuaranteeLinearizability:
 		return !txn.KVTxn.IsCasualConsistency()
@@ -305,13 +305,13 @@ func (txn *tikvTxn) GetOption(opt int) interface{} {
 }
 
 // SetVars sets variables to the transaction.
-func (txn *tikvTxn) SetVars(vars interface{}) {
+func (txn *tikvTxn) SetVars(vars any) {
 	if vs, ok := vars.(*tikv.Variables); ok {
 		txn.KVTxn.SetVars(vs)
 	}
 }
 
-func (txn *tikvTxn) GetVars() interface{} {
+func (txn *tikvTxn) GetVars() any {
 	return txn.KVTxn.GetVars()
 }
 
