@@ -269,8 +269,6 @@ func TestTaskExecutorRun(t *testing.T) {
 	mockSubtaskTable.EXPECT().HasSubtasksInStates(gomock.Any(), "id", task1.ID, task1.Step,
 		unfinishedNormalSubtaskStates...).Return(true, nil)
 	mockStepExecutor.EXPECT().Init(gomock.Any()).Return(nil)
-	mockSubtaskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(gomock.Any(), "id", task1.ID, proto.StepOne,
-		unfinishedNormalSubtaskStates...).Return(nil, nil)
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", task1.ID, proto.StepOne,
 		unfinishedNormalSubtaskStates...).Return(nil, nil)
 	mockStepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil)
