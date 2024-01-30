@@ -51,8 +51,7 @@ type HashAggFinalWorker struct {
 	finalResultHolderCh chan *chunk.Chunk
 	groupKeys           [][]byte
 
-	spillHelper  *parallelHashAggSpillHelper
-	isDataInDisk bool
+	spillHelper *parallelHashAggSpillHelper
 
 	restoredAggResultMapperMem int64
 }
@@ -191,7 +190,9 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 
 	execStart := time.Now()
 	defer w.increaseExecTime(execStart)
-	if w.isDataInDisk {
+	if w.spillHelper.isSpilledChunksIOEmpty() {
+		w.generateResultAndSend(sctx, result)
+	} else {
 		for {
 			if w.checkFinishChClosed() {
 				return
@@ -206,8 +207,6 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 			}
 			w.generateResultAndSend(sctx, result)
 		}
-	} else {
-		w.generateResultAndSend(sctx, result)
 	}
 
 	w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
@@ -251,15 +250,14 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 		}
 	})
 
-	w.isDataInDisk = !w.spillHelper.isSpilledChunksIOEmpty()
-	if w.isDataInDisk {
-		if w.spillHelper.checkError() {
-			return
-		}
-	} else {
+	if w.spillHelper.isSpilledChunksIOEmpty() {
 		err := w.consumeIntermData(ctx)
 		if err != nil {
 			w.outputCh <- &AfFinalResult{err: err}
+			return
+		}
+	} else {
+		if w.spillHelper.checkError() {
 			return
 		}
 	}

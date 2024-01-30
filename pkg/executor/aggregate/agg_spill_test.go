@@ -246,7 +246,8 @@ func getCorrecResultTest(t *testing.T, ctx *mock.Context, dataSource *testutil.M
 	aggExec.Open(tmpCtx)
 
 	for {
-		aggExec.Next(tmpCtx, chk)
+		err := aggExec.Next(tmpCtx, chk)
+		require.Equal(t, nil, err)
 		if chk.NumRows() == 0 {
 			break
 		}

@@ -165,20 +165,6 @@ func (w *HashAggPartialWorker) intestDuringPartialWorkerRun() {
 	})
 }
 
-func (w *HashAggPartialWorker) sendDataToFinalWorkersBeforeExit(needShuffle bool, finalConcurrency int, hasError bool) {
-	if w.checkFinishChClosed() {
-		return
-	}
-
-	if hasError {
-		return
-	}
-
-	if needShuffle && w.spillHelper.isSpilledChunksIOEmpty() {
-		w.shuffleIntermData(finalConcurrency)
-	}
-}
-
 func intestBeforePartialWorkerRun() {
 	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
 		if val.(bool) {
@@ -192,14 +178,22 @@ func intestBeforePartialWorkerRun() {
 	})
 }
 
-// Consume all chunks to avoid hang of fetcher
-func (w *HashAggPartialWorker) consumeAllChunksBeforeExit() {
-	for {
-		_, ok := <-w.inputCh
-		if !ok {
-			break
-		}
+func (w *HashAggPartialWorker) finalizeWorkerProcess(needShuffle bool, finalConcurrency int, hasError bool) {
+	// Consume all chunks to avoid hang of fetcher
+	for range w.inputCh {
 		w.inflightChunkSync.Done()
+	}
+
+	if w.checkFinishChClosed() {
+		return
+	}
+
+	if hasError {
+		return
+	}
+
+	if needShuffle && w.spillHelper.isSpilledChunksIOEmpty() {
+		w.shuffleIntermData(finalConcurrency)
 	}
 }
 
@@ -212,8 +206,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 			recoveryHashAgg(w.globalOutputCh, r)
 		}
 
-		w.consumeAllChunksBeforeExit()
-		w.sendDataToFinalWorkersBeforeExit(needShuffle, finalConcurrency, hasError)
+		w.finalizeWorkerProcess(needShuffle, finalConcurrency, hasError)
 
 		w.memTracker.Consume(-w.chk.MemoryUsage())
 		if w.stats != nil {

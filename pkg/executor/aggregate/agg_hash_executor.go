@@ -313,7 +313,6 @@ func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
 			mutableRow:                 chunk.MutRowFromTypes(exec.RetTypes(e)),
 			groupKeys:                  make([][]byte, 0, 8),
 			spillHelper:                e.spillHelper,
-			isDataInDisk:               false,
 			restoredAggResultMapperMem: 0,
 		}
 		// There is a bucket in the empty partialResultsMap.
@@ -355,13 +354,19 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 	isParallelHashAggSpillEnabled := e.Ctx().GetSessionVars().EnableConcurrentHashaggSpill
 
 	baseRetTypeNum := len(e.RetFieldTypes())
+
+	// Intermediate result for aggregate function also need to be spilled,
+	// so the number of spillChunkFieldTypes should be added 1.
 	spillChunkFieldTypes := make([]*types.FieldType, baseRetTypeNum+1)
 	for i := 0; i < baseRetTypeNum; i++ {
 		spillChunkFieldTypes[i] = types.NewFieldType(mysql.TypeVarString)
 	}
 	spillChunkFieldTypes[baseRetTypeNum] = types.NewFieldType(mysql.TypeString)
 	e.spillHelper = newSpillHelper(e.memTracker, e.PartialAggFuncs, func() *chunk.Chunk {
-		return chunk.New(spillChunkFieldTypes, e.InitCap(), e.MaxChunkSize())
+		chk := chunk.NewChunkFromPoolWithCapacity(spillChunkFieldTypes, e.InitCap())
+		maxChunkSize := e.MaxChunkSize()
+		chk.SetRequiredRows(maxChunkSize, maxChunkSize)
+		return chk
 	}, spillChunkFieldTypes)
 
 	if isTrackerEnabled && isParallelHashAggSpillEnabled {

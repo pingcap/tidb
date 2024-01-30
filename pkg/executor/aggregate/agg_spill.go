@@ -51,6 +51,17 @@ const (
 	spillLogInfo string = "memory exceeds quota, set aggregate mode to spill-mode"
 )
 
+type processRowContext struct {
+	ctx                    sessionctx.Context
+	chunk                  *chunk.Chunk
+	rowPos                 int
+	keyColPos              int
+	aggFuncNum             int
+	restoreadData          *aggfuncs.AggPartialResultMapper
+	partialResultsRestored [][]aggfuncs.PartialResult
+	bInMap                 *int
+}
+
 type parallelHashAggSpillHelper struct {
 	lock struct {
 		*sync.Mutex
