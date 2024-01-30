@@ -462,18 +462,13 @@ type importExecutor struct {
 }
 
 func newImportExecutor(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
+	metrics := metricsManager.getOrCreateMetrics(task.ID)
+	subCtx := metric.WithCommonMetric(ctx, metrics)
 	s := &importExecutor{
-		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, id, task, taskTable),
+		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(subCtx, id, task, taskTable),
 	}
 	s.BaseTaskExecutor.Extension = s
 	return s
-}
-
-func (s *importExecutor) RunStep(ctx context.Context, task *proto.Task, resource *proto.StepResource) error {
-	metrics := metricsManager.getOrCreateMetrics(task.ID)
-	defer metricsManager.unregister(task.ID)
-	subCtx := metric.WithCommonMetric(ctx, metrics)
-	return s.BaseTaskExecutor.RunStep(subCtx, task, resource)
 }
 
 func (*importExecutor) IsIdempotent(*proto.Subtask) bool {
@@ -486,7 +481,7 @@ func (*importExecutor) IsRetryableError(err error) bool {
 	return common.IsRetryableError(err)
 }
 
-func (*importExecutor) GetStepExecutor(_ context.Context, task *proto.Task, _ *execute.Summary, _ *proto.StepResource) (execute.StepExecutor, error) {
+func (*importExecutor) GetStepExecutor(task *proto.Task, _ *execute.Summary, _ *proto.StepResource) (execute.StepExecutor, error) {
 	taskMeta := TaskMeta{}
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
@@ -521,6 +516,12 @@ func (*importExecutor) GetStepExecutor(_ context.Context, task *proto.Task, _ *e
 	default:
 		return nil, errors.Errorf("unknown step %d for import task %d", task.Step, task.ID)
 	}
+}
+
+func (e *importExecutor) Close() {
+	task := e.GetTask()
+	metricsManager.unregister(task.ID)
+	e.BaseTaskExecutor.Close()
 }
 
 func init() {

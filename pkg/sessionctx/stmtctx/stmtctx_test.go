@@ -135,7 +135,7 @@ func TestWeakConsistencyRead(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int primary key, c int, c1 int, unique index i(c))")
 
-	execAndCheck := func(sql string, rows [][]interface{}, isolationLevel kv.IsoLevel) {
+	execAndCheck := func(sql string, rows [][]any, isolationLevel kv.IsoLevel) {
 		ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
 			require.Equal(t, req.IsolationLevel, isolationLevel)
 		})

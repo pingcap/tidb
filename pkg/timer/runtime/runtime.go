@@ -492,7 +492,7 @@ func withRecoverUntil(ctx context.Context, fn func(uint64)) {
 	for ctx.Err() == nil && !success {
 		util.WithRecovery(func() {
 			fn(i)
-		}, func(r interface{}) {
+		}, func(r any) {
 			if r == nil {
 				success = true
 			}

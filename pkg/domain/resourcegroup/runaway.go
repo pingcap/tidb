@@ -86,9 +86,9 @@ type RunawayRecord struct {
 }
 
 // GenRunawayQueriesStmt generates statement with given RunawayRecords.
-func GenRunawayQueriesStmt(records []*RunawayRecord) (string, []interface{}) {
+func GenRunawayQueriesStmt(records []*RunawayRecord) (string, []any) {
 	var builder strings.Builder
-	params := make([]interface{}, 0, len(records)*7)
+	params := make([]any, 0, len(records)*7)
 	builder.WriteString("insert into mysql.tidb_runaway_queries VALUES ")
 	for count, r := range records {
 		if count > 0 {
@@ -130,9 +130,9 @@ func writeInsert(builder *strings.Builder, tableName string) {
 }
 
 // GenInsertionStmt is used to generate insertion sql.
-func (r *QuarantineRecord) GenInsertionStmt() (string, []interface{}) {
+func (r *QuarantineRecord) GenInsertionStmt() (string, []any) {
 	var builder strings.Builder
-	params := make([]interface{}, 0, 6)
+	params := make([]any, 0, 6)
 	writeInsert(&builder, RunawayWatchTableName)
 	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ResourceGroupName)
@@ -150,9 +150,9 @@ func (r *QuarantineRecord) GenInsertionStmt() (string, []interface{}) {
 }
 
 // GenInsertionDoneStmt is used to generate insertion sql for runaway watch done record.
-func (r *QuarantineRecord) GenInsertionDoneStmt() (string, []interface{}) {
+func (r *QuarantineRecord) GenInsertionDoneStmt() (string, []any) {
 	var builder strings.Builder
-	params := make([]interface{}, 0, 9)
+	params := make([]any, 0, 9)
 	writeInsert(&builder, RunawayWatchDoneTableName)
 	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ID)
@@ -172,9 +172,9 @@ func (r *QuarantineRecord) GenInsertionDoneStmt() (string, []interface{}) {
 }
 
 // GenDeletionStmt is used to generate deletion sql.
-func (r *QuarantineRecord) GenDeletionStmt() (string, []interface{}) {
+func (r *QuarantineRecord) GenDeletionStmt() (string, []any) {
 	var builder strings.Builder
-	params := make([]interface{}, 0, 1)
+	params := make([]any, 0, 1)
 	builder.WriteString("delete from ")
 	builder.WriteString(RunawayWatchTableName)
 	builder.WriteString(" where id = %?")

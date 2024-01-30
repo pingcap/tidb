@@ -27,7 +27,7 @@ import (
 
 const (
 	// DefSliceSize represents size of an empty Slice
-	DefSliceSize = int64(unsafe.Sizeof([]interface{}{}))
+	DefSliceSize = int64(unsafe.Sizeof([]any{}))
 )
 
 var (

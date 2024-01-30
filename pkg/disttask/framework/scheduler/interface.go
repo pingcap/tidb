@@ -30,7 +30,7 @@ type TaskManager interface {
 	// The returned tasks are sorted by task order, see proto.Task, and only contains
 	// some fields, see row2TaskBasic.
 	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.Task, error)
-	GetTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
+	GetTasksInStates(ctx context.Context, states ...any) (task []*proto.Task, err error)
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
 	GCSubtasks(ctx context.Context) error
 	GetAllNodes(ctx context.Context) ([]proto.ManagedNode, error)

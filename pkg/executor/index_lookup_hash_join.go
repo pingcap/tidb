@@ -188,7 +188,7 @@ func (e *IndexNestedLoopHashJoin) startWorkers(ctx context.Context) {
 	go e.wait4JoinWorkers()
 }
 
-func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r interface{}) {
+func (e *IndexNestedLoopHashJoin) finishJoinWorkers(r any) {
 	if r != nil {
 		e.IndexLookUpJoin.finished.Store(true)
 		err := fmt.Errorf("%v", r)
@@ -666,7 +666,7 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 		func() {
 			iw.buildHashTableForOuterResult(task, h)
 		},
-		func(r interface{}) {
+		func(r any) {
 			var err error
 			if r != nil {
 				err = errors.Errorf("%v", r)

@@ -45,7 +45,7 @@ func init() {
 	util.SkipAnalyzer(Analyzer)
 }
 
-func run(pass *analysis.Pass) (interface{}, error) {
+func run(pass *analysis.Pass) (any, error) {
 	gasConfig := gosec.NewConfig()
 	enabledRules := rules.Generate(func(id string) bool {
 		if id == "G104" || id == "G103" || id == "G101" || id == "G201" {

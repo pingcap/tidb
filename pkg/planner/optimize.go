@@ -16,10 +16,8 @@ package planner
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"math/rand"
-	"sort"
 	"sync"
 	"time"
 
@@ -165,7 +163,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 	}
 
 	tableHints := hint.ExtractTableHintsFromStmtNode(node, sctx.GetSessionVars().StmtCtx)
-	originStmtHints, _, warns := handleStmtHints(tableHints)
+	originStmtHints, _, warns := hint.ParseStmtHints(tableHints, setVarHintChecker, byte(kv.ReplicaReadFollower))
 	sessVars.StmtCtx.StmtHints = originStmtHints
 	for _, warn := range warns {
 		sessVars.StmtCtx.AppendWarning(warn)
@@ -284,7 +282,7 @@ func Optimize(ctx context.Context, sctx sessionctx.Context, node ast.Node, is in
 			}
 			metrics.BindUsageCounter.WithLabelValues(scope).Inc()
 			hint.BindHint(stmtNode, binding.Hint)
-			curStmtHints, _, curWarns := handleStmtHints(binding.Hint.GetFirstTableHints())
+			curStmtHints, _, curWarns := hint.ParseStmtHints(binding.Hint.GetFirstTableHints(), setVarHintChecker, byte(kv.ReplicaReadFollower))
 			sessVars.StmtCtx.StmtHints = curStmtHints
 			// update session var by hint /set_var/
 			for name, val := range sessVars.StmtCtx.StmtHints.SetVars {
@@ -430,7 +428,7 @@ func allowInReadOnlyMode(sctx sessionctx.Context, node ast.Node) (bool, error) {
 }
 
 var planBuilderPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		return core.NewPlanBuilder()
 	},
 }
@@ -574,177 +572,16 @@ func handleInvalidBinding(ctx context.Context, sctx sessionctx.Context, level st
 	globalHandle.AddInvalidGlobalBinding(binding)
 }
 
-func handleStmtHints(hints []*ast.TableOptimizerHint) (stmtHints hint.StmtHints, offs []int, warns []error) {
-	if len(hints) == 0 {
-		return
+// setVarHintChecker checks whether the variable name in set_var hint is valid.
+func setVarHintChecker(varName, hint string) (ok bool, warning error) {
+	sysVar := variable.GetSysVar(varName)
+	if sysVar == nil { // no such a variable
+		return false, plannererrors.ErrUnresolvedHintName.FastGenByArgs(varName, hint)
 	}
-	hintOffs := make(map[string]int, len(hints))
-	var forceNthPlan *ast.TableOptimizerHint
-	var memoryQuotaHintCnt, useToJAHintCnt, useCascadesHintCnt, noIndexMergeHintCnt, readReplicaHintCnt, maxExecutionTimeCnt, forceNthPlanCnt, straightJoinHintCnt, resourceGroupHintCnt int
-	setVars := make(map[string]string)
-	setVarsOffs := make([]int, 0, len(hints))
-	for i, hint := range hints {
-		switch hint.HintName.L {
-		case "memory_quota":
-			hintOffs[hint.HintName.L] = i
-			memoryQuotaHintCnt++
-		case "resource_group":
-			hintOffs[hint.HintName.L] = i
-			resourceGroupHintCnt++
-		case "use_toja":
-			hintOffs[hint.HintName.L] = i
-			useToJAHintCnt++
-		case "use_cascades":
-			hintOffs[hint.HintName.L] = i
-			useCascadesHintCnt++
-		case "no_index_merge":
-			hintOffs[hint.HintName.L] = i
-			noIndexMergeHintCnt++
-		case "read_consistent_replica":
-			hintOffs[hint.HintName.L] = i
-			readReplicaHintCnt++
-		case "max_execution_time":
-			hintOffs[hint.HintName.L] = i
-			maxExecutionTimeCnt++
-		case "nth_plan":
-			forceNthPlanCnt++
-			forceNthPlan = hint
-		case "straight_join":
-			hintOffs[hint.HintName.L] = i
-			straightJoinHintCnt++
-		case "set_var":
-			setVarHint := hint.HintData.(ast.HintSetVar)
-
-			// Not all session variables are permitted for use with SET_VAR
-			sysVar := variable.GetSysVar(setVarHint.VarName)
-			if sysVar == nil {
-				warns = append(warns, plannererrors.ErrUnresolvedHintName.FastGenByArgs(setVarHint.VarName, hint.HintName.String()))
-				continue
-			}
-			if !sysVar.IsHintUpdatableVerfied {
-				warns = append(warns, plannererrors.ErrNotHintUpdatable.FastGenByArgs(setVarHint.VarName))
-			}
-			// If several hints with the same variable name appear in the same statement, the first one is applied and the others are ignored with a warning
-			if _, ok := setVars[setVarHint.VarName]; ok {
-				msg := fmt.Sprintf("%s(%s=%s)", hint.HintName.String(), setVarHint.VarName, setVarHint.Value)
-				warns = append(warns, plannererrors.ErrWarnConflictingHint.FastGenByArgs(msg))
-				continue
-			}
-			setVars[setVarHint.VarName] = setVarHint.Value
-			setVarsOffs = append(setVarsOffs, i)
-		}
+	if !sysVar.IsHintUpdatableVerfied {
+		warning = plannererrors.ErrNotHintUpdatable.FastGenByArgs(varName)
 	}
-	stmtHints.OriginalTableHints = hints
-	stmtHints.SetVars = setVars
-
-	// Handle MEMORY_QUOTA
-	if memoryQuotaHintCnt != 0 {
-		memoryQuotaHint := hints[hintOffs["memory_quota"]]
-		if memoryQuotaHintCnt > 1 {
-			warn := errors.NewNoStackErrorf("MEMORY_QUOTA() is defined more than once, only the last definition takes effect: MEMORY_QUOTA(%v)", memoryQuotaHint.HintData.(int64))
-			warns = append(warns, warn)
-		}
-		// Executor use MemoryQuota <= 0 to indicate no memory limit, here use < 0 to handle hint syntax error.
-		if memoryQuota := memoryQuotaHint.HintData.(int64); memoryQuota < 0 {
-			delete(hintOffs, "memory_quota")
-			warn := errors.NewNoStackError("The use of MEMORY_QUOTA hint is invalid, valid usage: MEMORY_QUOTA(10 MB) or MEMORY_QUOTA(10 GB)")
-			warns = append(warns, warn)
-		} else {
-			stmtHints.HasMemQuotaHint = true
-			stmtHints.MemQuotaQuery = memoryQuota
-			if memoryQuota == 0 {
-				warn := errors.NewNoStackError("Setting the MEMORY_QUOTA to 0 means no memory limit")
-				warns = append(warns, warn)
-			}
-		}
-	}
-	// Handle USE_TOJA
-	if useToJAHintCnt != 0 {
-		useToJAHint := hints[hintOffs["use_toja"]]
-		if useToJAHintCnt > 1 {
-			warn := errors.NewNoStackErrorf("USE_TOJA() is defined more than once, only the last definition takes effect: USE_TOJA(%v)", useToJAHint.HintData.(bool))
-			warns = append(warns, warn)
-		}
-		stmtHints.HasAllowInSubqToJoinAndAggHint = true
-		stmtHints.AllowInSubqToJoinAndAgg = useToJAHint.HintData.(bool)
-	}
-	// Handle USE_CASCADES
-	if useCascadesHintCnt != 0 {
-		useCascadesHint := hints[hintOffs["use_cascades"]]
-		if useCascadesHintCnt > 1 {
-			warn := errors.NewNoStackErrorf("USE_CASCADES() is defined more than once, only the last definition takes effect: USE_CASCADES(%v)", useCascadesHint.HintData.(bool))
-			warns = append(warns, warn)
-		}
-		stmtHints.HasEnableCascadesPlannerHint = true
-		stmtHints.EnableCascadesPlanner = useCascadesHint.HintData.(bool)
-	}
-	// Handle NO_INDEX_MERGE
-	if noIndexMergeHintCnt != 0 {
-		if noIndexMergeHintCnt > 1 {
-			warn := errors.NewNoStackError("NO_INDEX_MERGE() is defined more than once, only the last definition takes effect")
-			warns = append(warns, warn)
-		}
-		stmtHints.NoIndexMergeHint = true
-	}
-	// Handle straight_join
-	if straightJoinHintCnt != 0 {
-		if straightJoinHintCnt > 1 {
-			warn := errors.NewNoStackError("STRAIGHT_JOIN() is defined more than once, only the last definition takes effect")
-			warns = append(warns, warn)
-		}
-		stmtHints.StraightJoinOrder = true
-	}
-	// Handle READ_CONSISTENT_REPLICA
-	if readReplicaHintCnt != 0 {
-		if readReplicaHintCnt > 1 {
-			warn := errors.NewNoStackError("READ_CONSISTENT_REPLICA() is defined more than once, only the last definition takes effect")
-			warns = append(warns, warn)
-		}
-		stmtHints.HasReplicaReadHint = true
-		stmtHints.ReplicaRead = byte(kv.ReplicaReadFollower)
-	}
-	// Handle MAX_EXECUTION_TIME
-	if maxExecutionTimeCnt != 0 {
-		maxExecutionTime := hints[hintOffs["max_execution_time"]]
-		if maxExecutionTimeCnt > 1 {
-			warn := errors.NewNoStackErrorf("MAX_EXECUTION_TIME() is defined more than once, only the last definition takes effect: MAX_EXECUTION_TIME(%v)", maxExecutionTime.HintData.(uint64))
-			warns = append(warns, warn)
-		}
-		stmtHints.HasMaxExecutionTime = true
-		stmtHints.MaxExecutionTime = maxExecutionTime.HintData.(uint64)
-	}
-	// Handle RESOURCE_GROUP
-	if resourceGroupHintCnt != 0 {
-		resourceGroup := hints[hintOffs["resource_group"]]
-		if resourceGroupHintCnt > 1 {
-			warn := errors.NewNoStackErrorf("RESOURCE_GROUP() is defined more than once, only the last definition takes effect: RESOURCE_GROUP(%v)", resourceGroup.HintData.(string))
-			warns = append(warns, warn)
-		}
-		stmtHints.HasResourceGroup = true
-		stmtHints.ResourceGroup = resourceGroup.HintData.(string)
-	}
-	// Handle NTH_PLAN
-	if forceNthPlanCnt != 0 {
-		if forceNthPlanCnt > 1 {
-			warn := errors.NewNoStackErrorf("NTH_PLAN() is defined more than once, only the last definition takes effect: NTH_PLAN(%v)", forceNthPlan.HintData.(int64))
-			warns = append(warns, warn)
-		}
-		stmtHints.ForceNthPlan = forceNthPlan.HintData.(int64)
-		if stmtHints.ForceNthPlan < 1 {
-			stmtHints.ForceNthPlan = -1
-			warn := errors.NewNoStackError("the hintdata for NTH_PLAN() is too small, hint ignored")
-			warns = append(warns, warn)
-		}
-	} else {
-		stmtHints.ForceNthPlan = -1
-	}
-	for _, off := range hintOffs {
-		offs = append(offs, off)
-	}
-	offs = append(offs, setVarsOffs...)
-	// let hint is always ordered, it is convenient to human compare and test.
-	sort.Ints(offs)
-	return
+	return true, warning
 }
 
 func init() {

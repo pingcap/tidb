@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
-	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
 type aggregationPushDownSolver struct {
@@ -250,7 +249,7 @@ func (*aggregationPushDownSolver) decompose(ctx sessionctx.Context, aggFunc *agg
 // process it temporarily. If not, We will add additional group by columns and first row functions. We make a new aggregation operator.
 // If the pushed aggregation is grouped by unique key, it's no need to push it down.
 func (a *aggregationPushDownSolver) tryToPushDownAgg(oldAgg *LogicalAggregation, aggFuncs []*aggregation.AggFuncDesc, gbyCols []*expression.Column,
-	join *LogicalJoin, childIdx int, aggHints h.AggHints, blockOffset int, opt *logicalOptimizeOp) (_ LogicalPlan, err error) {
+	join *LogicalJoin, childIdx int, blockOffset int, opt *logicalOptimizeOp) (_ LogicalPlan, err error) {
 	child := join.children[childIdx]
 	if aggregation.IsAllFirstRow(aggFuncs) {
 		return child, nil
@@ -267,7 +266,7 @@ func (a *aggregationPushDownSolver) tryToPushDownAgg(oldAgg *LogicalAggregation,
 	}
 	nullGenerating := (join.JoinType == LeftOuterJoin && childIdx == 1) ||
 		(join.JoinType == RightOuterJoin && childIdx == 0)
-	agg, err := a.makeNewAgg(join.SCtx(), aggFuncs, gbyCols, aggHints, blockOffset, nullGenerating)
+	agg, err := a.makeNewAgg(join.SCtx(), aggFuncs, gbyCols, oldAgg.PreferAggType, oldAgg.PreferAggToCop, blockOffset, nullGenerating)
 	if err != nil {
 		return nil, err
 	}
@@ -327,10 +326,11 @@ func (*aggregationPushDownSolver) checkAllArgsColumn(fun *aggregation.AggFuncDes
 //  1. https://github.com/pingcap/tidb/issues/16355, push avg & distinct functions across join
 //  2. remove this method and use splitPartialAgg instead for clean code.
 func (a *aggregationPushDownSolver) makeNewAgg(ctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc,
-	gbyCols []*expression.Column, aggHints h.AggHints, blockOffset int, nullGenerating bool) (*LogicalAggregation, error) {
+	gbyCols []*expression.Column, preferAggType uint, preferAggToCop bool, blockOffset int, nullGenerating bool) (*LogicalAggregation, error) {
 	agg := LogicalAggregation{
-		GroupByItems: expression.Column2Exprs(gbyCols),
-		aggHints:     aggHints,
+		GroupByItems:   expression.Column2Exprs(gbyCols),
+		PreferAggType:  preferAggType,
+		PreferAggToCop: preferAggToCop,
 	}.Init(ctx, blockOffset)
 	aggLen := len(aggFuncs) + len(gbyCols)
 	newAggFuncDescs := make([]*aggregation.AggFuncDesc, 0, aggLen)
@@ -372,9 +372,10 @@ func (*aggregationPushDownSolver) splitPartialAgg(agg *LogicalAggregation) (push
 	agg.GroupByItems = final.GroupByItems
 
 	pushedAgg = LogicalAggregation{
-		AggFuncs:     partial.AggFuncs,
-		GroupByItems: partial.GroupByItems,
-		aggHints:     agg.aggHints,
+		AggFuncs:       partial.AggFuncs,
+		GroupByItems:   partial.GroupByItems,
+		PreferAggType:  agg.PreferAggType,
+		PreferAggToCop: agg.PreferAggToCop,
 	}.Init(agg.SCtx(), agg.QueryBlockOffset())
 	pushedAgg.SetSchema(partial.Schema)
 	return
@@ -385,9 +386,10 @@ func (*aggregationPushDownSolver) splitPartialAgg(agg *LogicalAggregation) (push
 func (*aggregationPushDownSolver) pushAggCrossUnion(agg *LogicalAggregation, unionSchema *expression.Schema, unionChild LogicalPlan) (LogicalPlan, error) {
 	ctx := agg.SCtx()
 	newAgg := LogicalAggregation{
-		AggFuncs:     make([]*aggregation.AggFuncDesc, 0, len(agg.AggFuncs)),
-		GroupByItems: make([]expression.Expression, 0, len(agg.GroupByItems)),
-		aggHints:     agg.aggHints,
+		AggFuncs:       make([]*aggregation.AggFuncDesc, 0, len(agg.AggFuncs)),
+		GroupByItems:   make([]expression.Expression, 0, len(agg.GroupByItems)),
+		PreferAggType:  agg.PreferAggType,
+		PreferAggToCop: agg.PreferAggToCop,
 	}.Init(ctx, agg.QueryBlockOffset())
 	newAgg.SetSchema(agg.schema.Clone())
 	for _, aggFunc := range agg.AggFuncs {
@@ -493,7 +495,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 					if rightInvalid {
 						rChild = join.children[1]
 					} else {
-						rChild, err = a.tryToPushDownAgg(agg, rightAggFuncs, rightGbyCols, join, 1, agg.aggHints, agg.QueryBlockOffset(), opt)
+						rChild, err = a.tryToPushDownAgg(agg, rightAggFuncs, rightGbyCols, join, 1, agg.QueryBlockOffset(), opt)
 						if err != nil {
 							return nil, err
 						}
@@ -501,7 +503,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 					if leftInvalid {
 						lChild = join.children[0]
 					} else {
-						lChild, err = a.tryToPushDownAgg(agg, leftAggFuncs, leftGbyCols, join, 0, agg.aggHints, agg.QueryBlockOffset(), opt)
+						lChild, err = a.tryToPushDownAgg(agg, leftAggFuncs, leftGbyCols, join, 0, agg.QueryBlockOffset(), opt)
 						if err != nil {
 							return nil, err
 						}
