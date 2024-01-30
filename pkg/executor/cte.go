@@ -229,9 +229,9 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 }
 
 func (p *cteProducer) closeProducer() (firstErr error) {
-	setFirstErr := func(newErr error) {
+	setFirstErr := func(newErr error, msg string) {
 		if newErr != nil {
-			logutil.BgLogger().Error("close cte producer got err", zap.Any("err", newErr))
+			logutil.BgLogger().Error("close cte producer got err", zap.Any("err", newErr), zap.Any("extra msg", msg))
 			if firstErr == nil {
 				firstErr = newErr
 			}
@@ -239,17 +239,17 @@ func (p *cteProducer) closeProducer() (firstErr error) {
 	}
 
 	err := exec.Close(p.seedExec)
-	setFirstErr(err)
+	setFirstErr(err, "close seedExec err")
 
 	if p.recursiveExec != nil {
 		err = exec.Close(p.recursiveExec)
-		setFirstErr(err)
+		setFirstErr(err, "close recursiveExec err")
 
 		// `iterInTbl` and `resTbl` are shared by multiple operators,
 		// so will be closed when the SQL finishes.
 		if p.iterOutTbl != nil {
 			err = p.iterOutTbl.DerefAndClose()
-			setFirstErr(err)
+			setFirstErr(err, "deref iterOutTbl err")
 		}
 	}
 	p.closed = true
