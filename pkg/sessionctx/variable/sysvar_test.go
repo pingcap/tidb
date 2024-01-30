@@ -1513,3 +1513,16 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 		require.Equal(t, v.initVal, initVal)
 	}
 }
+
+func TestTiDBOptTxnAutoRetry(t *testing.T) {
+	sv := GetSysVar(TiDBDisableTxnAutoRetry)
+	vars := NewSessionVars(nil)
+
+	for _, scope := range []ScopeFlag{ScopeSession, ScopeGlobal} {
+		val, err := sv.Validate(vars, "OFF", scope)
+		require.NoError(t, err)
+		require.Equal(t, "ON", val)
+		warn := vars.StmtCtx.GetWarnings()[0].Err
+		require.Equal(t, "[variable:1287]'OFF' is deprecated and will be removed in a future release. Please use ON instead", warn.Error())
+	}
+}
