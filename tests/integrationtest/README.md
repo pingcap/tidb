@@ -56,7 +56,7 @@ First, add new test query in `t/` folder.
 ```sh
 cd tests/integrationtest
 ./run-tests.sh -r [casename]
-``
+```
 It will generate result base on last execution, and then we can reuse them or open editor to do some modify.
 
 ## How to debug integration test
@@ -65,7 +65,7 @@ It will generate result base on last execution, and then we can reuse them or op
 
 1. Add or create a configurations to `.vscode/launch.json`, an example is shown below.
 
-```
+```json
 {
     "version": "0.2.0",
     "configurations": [
