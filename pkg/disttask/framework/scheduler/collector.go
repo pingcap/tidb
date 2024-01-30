@@ -23,6 +23,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// Because the exec_id of a subtask may change, after all tasks
+// are successful, subtasks will be migrated from tidb_subtask_background
+// to tidb_subtask_background_history. In the above situation,
+// the built-in collector of Prometheus needs to delete the previously
+// added metrics, which is quite troublesome.
+// Therefore, a custom collector is used.
 type collector struct {
 	subtaskInfo atomic.Pointer[[]*proto.Subtask]
 
@@ -65,9 +71,6 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 		if _, ok := subtaskCnt[subtask.TaskID][subtask.ExecID]; !ok {
 			subtaskCnt[subtask.TaskID][subtask.ExecID] = make(map[proto.SubtaskState]int)
 		}
-		if _, ok := subtaskCnt[subtask.TaskID][subtask.ExecID][subtask.State]; !ok {
-			subtaskCnt[subtask.TaskID][subtask.ExecID][subtask.State] = 0
-		}
 
 		subtaskCnt[subtask.TaskID][subtask.ExecID][subtask.State]++
 		taskType[subtask.TaskID] = subtask.Type
@@ -77,9 +80,6 @@ func (c *collector) Collect(ch chan<- prometheus.Metric) {
 	for taskID, execIDMap := range subtaskCnt {
 		for execID, stateMap := range execIDMap {
 			for state, cnt := range stateMap {
-				if cnt == 0 {
-					continue
-				}
 				ch <- prometheus.MustNewConstMetric(c.subtasks, prometheus.GaugeValue,
 					float64(cnt),
 					taskType[taskID].String(),
