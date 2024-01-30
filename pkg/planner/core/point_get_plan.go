@@ -47,6 +47,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -307,6 +308,15 @@ func (p *PointGetPlan) MemoryUsage() (sum int64) {
 	return
 }
 
+// LoadTableStats preloads the stats data for the physical table
+func (p *PointGetPlan) LoadTableStats(ctx sessionctx.Context) {
+	tableID := p.TblInfo.ID
+	if p.PartitionDef != nil {
+		tableID = p.PartitionDef.ID
+	}
+	loadTableStats(ctx, p.TblInfo, tableID)
+}
+
 // BatchPointGetPlan represents a physical plan which contains a bunch of
 // keys reference the same table and use the same `unique key`
 type BatchPointGetPlan struct {
@@ -525,6 +535,14 @@ func (p *BatchPointGetPlan) MemoryUsage() (sum int64) {
 		sum += col.MemoryUsage()
 	}
 	return
+}
+
+// LoadTableStats preloads the stats data for the physical table
+func (p *BatchPointGetPlan) LoadTableStats(ctx sessionctx.Context) {
+	// as a `BatchPointGet` can access multiple partitions, and we cannot distinguish how many rows come from each
+	// partitions in the existing statistics information, we treat all index usage through a `BatchPointGet` just
+	// like a normal global index.
+	loadTableStats(ctx, p.TblInfo, p.TblInfo.ID)
 }
 
 // PointPlanKey is used to get point plan that is pre-built for multi-statement query.
@@ -1256,7 +1274,7 @@ func checkFastPlanPrivilege(ctx sessionctx.Context, dbName, tableName string, ch
 	visitInfos := make([]visitInfo, 0, len(checkTypes))
 	for _, checkType := range checkTypes {
 		if pm != nil && !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", checkType) {
-			return ErrPrivilegeCheckFail.GenWithStackByArgs(checkType.String())
+			return plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs(checkType.String())
 		}
 		// This visitInfo is only for table lock check, so we do not need column field,
 		// just fill it empty string.

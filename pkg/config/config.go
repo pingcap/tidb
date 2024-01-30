@@ -412,7 +412,7 @@ func (b nullableBool) MarshalText() ([]byte, error) {
 
 func (b *nullableBool) UnmarshalJSON(data []byte) error {
 	var err error
-	var v interface{}
+	var v any
 	if err = json.Unmarshal(data, &v); err != nil {
 		return err
 	}
@@ -1496,7 +1496,7 @@ func GetJSONConfig() (string, error) {
 		return "", err
 	}
 
-	jsonValue := make(map[string]interface{})
+	jsonValue := make(map[string]any)
 	err = json.Unmarshal(j, &jsonValue)
 	if err != nil {
 		return "", err
@@ -1518,7 +1518,7 @@ func GetJSONConfig() (string, error) {
 			if curValue[key] == nil {
 				break
 			}
-			mapValue, ok := curValue[key].(map[string]interface{})
+			mapValue, ok := curValue[key].(map[string]any)
 			if !ok {
 				break
 			}

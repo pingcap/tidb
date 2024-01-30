@@ -61,7 +61,7 @@ func testCreateForeignKey(t *testing.T, d ddl.DDL, ctx sessionctx.Context, dbInf
 		TableID:    tblInfo.ID,
 		Type:       model.ActionAddForeignKey,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{fkInfo},
+		Args:       []any{fkInfo},
 	}
 	err := sessiontxn.NewTxn(context.Background(), ctx)
 	require.NoError(t, err)
@@ -77,7 +77,7 @@ func testDropForeignKey(t *testing.T, ctx sessionctx.Context, d ddl.DDL, dbInfo 
 		TableID:    tblInfo.ID,
 		Type:       model.ActionDropForeignKey,
 		BinlogInfo: &model.HistoryInfo{},
-		Args:       []interface{}{model.NewCIStr(foreignKeyName)},
+		Args:       []any{model.NewCIStr(foreignKeyName)},
 	}
 	ctx.SetValue(sessionctx.QueryString, "skip")
 	err := d.DoDDLJob(ctx, job)

@@ -405,7 +405,7 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 	if _, ok := noNeedCastAggFuncs[a.Name]; ok {
 		return
 	}
-	var castFunc func(ctx sessionctx.Context, expr expression.Expression) expression.Expression
+	var castFunc func(ctx expression.BuildContext, expr expression.Expression) expression.Expression
 	switch retTp := a.RetTp; retTp.EvalType() {
 	case types.ETInt:
 		castFunc = expression.WrapWithCastAsInt
@@ -416,7 +416,7 @@ func (a *baseFuncDesc) WrapCastForAggArgs(ctx sessionctx.Context) {
 	case types.ETDecimal:
 		castFunc = expression.WrapWithCastAsDecimal
 	case types.ETDatetime, types.ETTimestamp:
-		castFunc = func(ctx sessionctx.Context, expr expression.Expression) expression.Expression {
+		castFunc = func(ctx expression.BuildContext, expr expression.Expression) expression.Expression {
 			return expression.WrapWithCastAsTime(ctx, expr, retTp)
 		}
 	case types.ETDuration:

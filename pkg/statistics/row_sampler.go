@@ -105,12 +105,12 @@ func (h WeightedRowSampleHeap) Less(i, j int) bool {
 }
 
 // Push implements the Heap interface.
-func (h *WeightedRowSampleHeap) Push(i interface{}) {
+func (h *WeightedRowSampleHeap) Push(i any) {
 	*h = append(*h, i.(*ReservoirRowSampleItem))
 }
 
 // Pop implements the Heap interface.
-func (h *WeightedRowSampleHeap) Pop() interface{} {
+func (h *WeightedRowSampleHeap) Pop() any {
 	old := *h
 	n := len(old)
 	item := old[n-1]

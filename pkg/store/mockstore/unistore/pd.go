@@ -290,7 +290,7 @@ func (c *pdClient) GetRegionFromMember(ctx context.Context, key []byte, memberUR
 	return nil, nil
 }
 
-func (c *pdClient) UpdateOption(option pd.DynamicOption, value interface{}) error {
+func (c *pdClient) UpdateOption(option pd.DynamicOption, value any) error {
 	return nil
 }
 

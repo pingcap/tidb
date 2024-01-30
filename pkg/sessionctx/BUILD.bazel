@@ -12,6 +12,7 @@ go_library(
         "//pkg/parser/model",
         "//pkg/sessionctx/sessionstates",
         "//pkg/sessionctx/variable",
+        "//pkg/statistics/handle/usage/indexusage",
         "//pkg/util",
         "//pkg/util/kvcache",
         "//pkg/util/plancache",

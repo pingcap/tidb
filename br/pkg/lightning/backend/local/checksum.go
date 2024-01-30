@@ -394,11 +394,11 @@ func (m *gcTTLManager) Swap(i, j int) {
 	m.tableGCSafeTS[i], m.tableGCSafeTS[j] = m.tableGCSafeTS[j], m.tableGCSafeTS[i]
 }
 
-func (m *gcTTLManager) Push(x interface{}) {
+func (m *gcTTLManager) Push(x any) {
 	m.tableGCSafeTS = append(m.tableGCSafeTS, x.(*tableChecksumTS))
 }
 
-func (m *gcTTLManager) Pop() interface{} {
+func (m *gcTTLManager) Pop() any {
 	i := m.tableGCSafeTS[len(m.tableGCSafeTS)-1]
 	m.tableGCSafeTS = m.tableGCSafeTS[:len(m.tableGCSafeTS)-1]
 	return i

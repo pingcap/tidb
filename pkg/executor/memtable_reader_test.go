@@ -126,9 +126,9 @@ func TestTiDBClusterConfig(t *testing.T) {
 
 	// We check the counter to valid how many times request has been sent
 	var requestCounter int32
-	var mockConfig = func() (map[string]interface{}, error) {
+	var mockConfig = func() (map[string]any, error) {
 		atomic.AddInt32(&requestCounter, 1)
-		configuration := map[string]interface{}{
+		configuration := map[string]any{
 			"key1": "value1",
 			"key2": map[string]string{
 				"nest1": "n-value1",

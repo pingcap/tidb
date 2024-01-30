@@ -219,7 +219,7 @@ func (p *StalenessTxnContextProvider) AdviseWarmup() error {
 }
 
 // AdviseOptimizeWithPlan providers optimization according to the plan
-func (p *StalenessTxnContextProvider) AdviseOptimizeWithPlan(_ interface{}) error {
+func (p *StalenessTxnContextProvider) AdviseOptimizeWithPlan(_ any) error {
 	return nil
 }
 

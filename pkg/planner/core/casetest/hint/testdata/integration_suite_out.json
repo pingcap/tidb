@@ -409,7 +409,7 @@
           "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "Only one query block name is allowed in a view hint, otherwise the hint will be invalid"
+          "[planner:1815]Only one query block name is allowed in a view hint, otherwise the hint will be invalid"
         ]
       },
       {

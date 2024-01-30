@@ -16,6 +16,7 @@ go_library(
         "//pkg/parser/format",
         "//pkg/parser/model",
         "//pkg/util/dbterror",
+        "//pkg/util/dbterror/plannererrors",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",

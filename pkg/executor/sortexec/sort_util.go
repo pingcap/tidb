@@ -36,11 +36,11 @@ func (h *multiWayMerge) Len() int {
 	return len(h.elements)
 }
 
-func (*multiWayMerge) Push(interface{}) {
+func (*multiWayMerge) Push(any) {
 	// Should never be called.
 }
 
-func (h *multiWayMerge) Pop() interface{} {
+func (h *multiWayMerge) Pop() any {
 	h.elements = h.elements[:len(h.elements)-1]
 	return nil
 }
