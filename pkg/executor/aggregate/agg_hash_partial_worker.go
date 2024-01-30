@@ -269,8 +269,7 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, chk *
 	memSize := getGroupKeyMemUsage(w.groupKey)
 	w.groupKey, err = GetGroupKey(w.ctx, chk, w.groupKey, w.groupByItems)
 	failpoint.Inject("ConsumeRandomPanic", nil)
-	allMemDelta := getGroupKeyMemUsage(w.groupKey) - memSize
-	w.memTracker.Consume(allMemDelta)
+	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKey) - memSize)
 	if err != nil {
 		return err
 	}
@@ -279,6 +278,7 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, chk *
 
 	numRows := chk.NumRows()
 	rows := make([]chunk.Row, 1)
+	allMemDelta := int64(0)
 	for i := 0; i < numRows; i++ {
 		partialResult := partialResultOfEachRow[i]
 		rows[0] = chk.GetRow(i)
