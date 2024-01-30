@@ -51,15 +51,12 @@ It will identify execute plan change.
 
 ### Generate New Result from Execute
 
-First, add new test query in `t/` folder.
-
-Then run shell below. It will generate result base on last execution, and then we can reuse them or open editor to make some modifications.
+Add a new test file in `t/` folder, file name should ended with `.test`. Or add new test queries at the end of some files. Then run shell below, it will generate results based on last execution.
 
 ```sh
 cd tests/integrationtest
 ./run-tests.sh -r [casename]
 ```
-
 
 ## How to debug integration test
 
@@ -83,11 +80,9 @@ cd tests/integrationtest
 }
 ```
 
-2. To run `TiDB-Server`, you could bring up **Run and Debug** view, select the *Run and Debug* icon in the **Activity Bar** on the side of VS Code. You can also use shortcut **F5**.
+2. To run `TiDB-Server`, you could bring up **Run and Debug** view, select the **Run and Debug** icon in the **Activity Bar** on the side of VS Code. You can also use shortcut **F5**.
 
-3. Use any mysql client application you like to run SQLs in integration test, the default port is `4000` and default user is `root` without password.
-
-Taking `mysql` as an example, you can use `mysql --comments --host 127.0.0.1 --port 4000 -u root` command to do this.
+3. Use any mysql client application you like to run SQLs in integration test, the default port is `4000` and default user is `root` without password. Taking `mysql` as an example, you can use `mysql --comments --host 127.0.0.1 --port 4000 -u root` command to do this.
 
 ### Goland
 
