@@ -916,7 +916,7 @@ func (e *CheckTableExec) checkIndexHandle(ctx context.Context, src *IndexLookUpE
 	return errors.Trace(err)
 }
 
-func (e *CheckTableExec) handlePanic(r interface{}) {
+func (e *CheckTableExec) handlePanic(r any) {
 	if r != nil {
 		e.retCh <- errors.Errorf("%v", r)
 	}
@@ -1973,7 +1973,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	vars.StmtCtx.SetVarHintRestore = nil
 	var sc *stmtctx.StatementContext
-	if vars.TxnCtx.CouldRetry || mysql.HasCursorExistsFlag(vars.Status) {
+	if vars.TxnCtx.CouldRetry || vars.HasStatusFlag(mysql.ServerStatusCursorExists) {
 		// Must construct new statement context object, the retry history need context for every statement.
 		// TODO: Maybe one day we can get rid of transaction retry, then this logic can be deleted.
 		sc = stmtctx.NewStmtCtx()
@@ -2016,7 +2016,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.DiskTracker.Killer = &vars.SQLKiller
 	vars.SQLKiller.Reset()
 	vars.SQLKiller.ConnID = vars.ConnectionID
-	vars.StmtCtx.TableStats = make(map[int64]interface{})
+	vars.StmtCtx.TableStats = make(map[int64]any)
 
 	isAnalyze := false
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
@@ -2235,6 +2235,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			reuseObj = nil
 		}
 		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(reuseObj)
+
+		// also enable index usage collector
+		sc.IndexUsageCollector = ctx.NewStmtIndexUsageCollector()
 	}
 
 	sc.ForcePlanCache = fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false)
@@ -2649,7 +2652,8 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 					if idx == nil {
 						return nil
 					}
-					k, _, err := idx.GenIndexKey(w.sctx.GetSessionVars().StmtCtx, idxRow.Values[:len(idx.Meta().Columns)], idxRow.Handle, nil)
+					sc := w.sctx.GetSessionVars().StmtCtx
+					k, _, err := idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxRow.Values[:len(idx.Meta().Columns)], idxRow.Handle, nil)
 					if err != nil {
 						return nil
 					}

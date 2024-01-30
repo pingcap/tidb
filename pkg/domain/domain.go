@@ -873,11 +873,12 @@ func (do *Domain) mdlCheckLoop() {
 				// Already update, skip it.
 				continue
 			}
-			logutil.BgLogger().Info("mdl gets lock, update to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
+			logutil.BgLogger().Info("mdl gets lock, update self version to owner", zap.Int64("jobID", jobID), zap.Int64("version", ver))
 			err := do.ddl.SchemaSyncer().UpdateSelfVersion(context.Background(), jobID, ver)
 			if err != nil {
 				jobNeedToSync = true
-				logutil.BgLogger().Warn("update self version failed", zap.Error(err))
+				logutil.BgLogger().Warn("mdl gets lock, update self version to owner failed",
+					zap.Int64("jobID", jobID), zap.Int64("version", ver), zap.Error(err))
 			} else {
 				jobCache[jobID] = ver
 			}
@@ -1484,7 +1485,7 @@ func (do *Domain) InitDistTaskLoop() error {
 	}
 	managerCtx, cancel := context.WithCancel(ctx)
 	do.cancelFns = append(do.cancelFns, cancel)
-	executorManager, err := taskexecutor.NewManagerBuilder().BuildManager(managerCtx, serverID, taskManager)
+	executorManager, err := taskexecutor.NewManager(managerCtx, serverID, taskManager)
 	if err != nil {
 		return err
 	}
@@ -1522,12 +1523,7 @@ func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storag
 		if schedulerManager != nil && schedulerManager.Initialized() {
 			return
 		}
-		var err error
-		schedulerManager, err = scheduler.NewManager(ctx, taskManager, serverID)
-		if err != nil {
-			logutil.BgLogger().Error("failed to create a dist task scheduler manager", zap.Error(err))
-			return
-		}
+		schedulerManager = scheduler.NewManager(ctx, taskManager, serverID)
 		schedulerManager.Start()
 	}
 	stopSchedulerMgrIfNeeded := func() {
@@ -2493,6 +2489,7 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 //  2. Cleanup: It cleans up corrupted analyze jobs.
 //     A corrupted analyze job is one that is in a 'pending' or 'running' state,
 //     but is associated with a TiDB instance that is either not currently running or has been restarted.
+//     Also, if the analyze job is killed by the user, it is considered corrupted.
 //     This operation is performed every 100 stats leases.
 //     It first retrieves the list of current analyze processes, then removes any analyze job
 //     that is not associated with a current process. Additionally, if the current instance is the owner,

@@ -1119,7 +1119,7 @@ func TestDataCharacterSet(t *testing.T) {
 }
 
 func TestCheckpointKeepStrategy(t *testing.T) {
-	tomlCases := map[interface{}]CheckpointKeepStrategy{
+	tomlCases := map[any]CheckpointKeepStrategy{
 		true:     CheckpointRename,
 		false:    CheckpointRemove,
 		"remove": CheckpointRemove,
@@ -1298,4 +1298,17 @@ func TestAdjustConflict(t *testing.T) {
 	cfg.Conflict.Threshold = 1
 	cfg.Conflict.MaxRecordRows = 1
 	require.ErrorContains(t, cfg.Conflict.adjust(&cfg.TikvImporter, &cfg.App), `cannot record duplication (conflict.max-record-rows > 0) when use tikv-importer.backend = "tidb" and conflict.strategy = "replace"`)
+}
+
+func TestAdjustBlockSize(t *testing.T) {
+	cfg := NewConfig()
+	cfg.TikvImporter.Backend = BackendLocal
+	cfg.TikvImporter.SortedKVDir = "."
+	cfg.TiDB.DistSQLScanConcurrency = 1
+	cfg.Mydumper.SourceDir = "."
+	cfg.TikvImporter.BlockSize = 0
+
+	err := cfg.Adjust(context.Background())
+	require.Error(t, err)
+	require.Equal(t, ByteSize(16384), cfg.TikvImporter.BlockSize)
 }

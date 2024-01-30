@@ -44,6 +44,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	utilhint "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/set"
@@ -194,13 +195,13 @@ func CheckPrivilege(activeRoles []*auth.RoleIdentity, pm privilege.Manager, vs [
 		if v.privilege == mysql.ExtendedPriv {
 			if !pm.RequestDynamicVerification(activeRoles, v.dynamicPriv, v.dynamicWithGrant) {
 				if v.err == nil {
-					return ErrPrivilegeCheckFail.GenWithStackByArgs(v.dynamicPriv)
+					return plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs(v.dynamicPriv)
 				}
 				return v.err
 			}
 		} else if !pm.RequestVerification(activeRoles, v.db, v.table, v.column, v.privilege) {
 			if v.err == nil {
-				return ErrPrivilegeCheckFail.GenWithStackByArgs(v.privilege.String())
+				return plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs(v.privilege.String())
 			}
 			return v.err
 		}
@@ -321,7 +322,7 @@ func doOptimize(
 	}
 
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
-		return nil, nil, 0, errors.Trace(ErrCartesianProductUnsupported)
+		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
 	planCounter := PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
 	if planCounter == 0 {
@@ -1252,7 +1253,7 @@ func physicalOptimize(logic LogicalPlan, planCounter *PlanCounterTp) (plan Physi
 		if config.GetGlobalConfig().DisaggregatedTiFlash && !logic.SCtx().GetSessionVars().IsMPPAllowed() {
 			errMsg += ": cop and batchCop are not allowed in disaggregated tiflash mode, you should turn on tidb_allow_mpp switch"
 		}
-		return nil, 0, ErrInternal.GenWithStackByArgs(errMsg)
+		return nil, 0, plannererrors.ErrInternal.GenWithStackByArgs(errMsg)
 	}
 
 	if err = t.plan().ResolveIndices(); err != nil {
@@ -1347,6 +1348,7 @@ var DefaultDisabledLogicalRulesList *atomic.Value
 
 func init() {
 	expression.EvalAstExpr = evalAstExpr
+	expression.EvalAstExprWithPlanCtx = evalAstExprWithPlanCtx
 	expression.RewriteAstExpr = rewriteAstExpr
 	expression.BuildExprWithAst = buildExprWithAst
 	DefaultDisabledLogicalRulesList = new(atomic.Value)

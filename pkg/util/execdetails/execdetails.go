@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/influxdata/tdigest"
+	"github.com/pingcap/kvproto/pkg/resource_manager"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
@@ -609,6 +610,14 @@ func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
 		totalRows += instanceStats.rows.Load()
 	}
 	return totalRows
+}
+
+// GetTasks return total tasks of CopRuntimeStats
+func (crs *CopRuntimeStats) GetTasks() (totalTasks int32) {
+	for _, instanceStats := range crs.stats {
+		totalTasks += instanceStats.totalTasks
+	}
+	return totalTasks
 }
 
 // MergeBasicStats traverses basicCopRuntimeStats in the CopRuntimeStats and collects some useful information.
@@ -1371,4 +1380,20 @@ func getUnit(d time.Duration) time.Duration {
 		return time.Microsecond
 	}
 	return time.Nanosecond
+}
+
+// MergeTiFlashRUConsumption merge execution summaries from selectResponse into ruDetails.
+func MergeTiFlashRUConsumption(executionSummaries []*tipb.ExecutorExecutionSummary, ruDetails *util.RUDetails) error {
+	newRUDetails := util.NewRUDetails()
+	for _, summary := range executionSummaries {
+		if summary != nil && summary.GetRuConsumption() != nil {
+			tiflashRU := new(resource_manager.Consumption)
+			if err := tiflashRU.Unmarshal(summary.GetRuConsumption()); err != nil {
+				return err
+			}
+			newRUDetails.Update(tiflashRU, 0)
+		}
+	}
+	ruDetails.Merge(newRUDetails)
+	return nil
 }

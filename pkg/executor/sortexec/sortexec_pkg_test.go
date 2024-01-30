@@ -15,6 +15,7 @@
 package sortexec
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -62,12 +63,16 @@ func TestInterruptedDuringSort(t *testing.T) {
 		require.True(t, canadd)
 	}
 	var cancelTime time.Time
+	wg := sync.WaitGroup{}
+	wg.Add(1)
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 		rootTracker.Killer.SendKillSignal(sqlkiller.QueryInterrupted)
 		cancelTime = time.Now()
+		wg.Done()
 	}()
 	err := sp.sort()
+	wg.Wait()
 	cancelDuration := time.Since(cancelTime)
 	require.Less(t, cancelDuration, 1*time.Second)
 	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err))
@@ -110,12 +115,16 @@ func TestInterruptedDuringSpilling(t *testing.T) {
 	err := sp.sort()
 	require.NoError(t, err)
 	var cancelTime time.Time
+	wg := sync.WaitGroup{}
+	wg.Add(1)
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 		rootTracker.Killer.SendKillSignal(sqlkiller.QueryInterrupted)
 		cancelTime = time.Now()
+		wg.Done()
 	}()
 	err = sp.spillToDisk(rootTracker)
+	wg.Wait()
 	cancelDuration := time.Since(cancelTime)
 	require.Less(t, cancelDuration, 1*time.Second)
 	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err))

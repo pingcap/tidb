@@ -588,14 +588,14 @@ func TestInstanceConfigHasMatchingSysvar(t *testing.T) {
 	// config and sysvars. See: docs/design/2021-12-08-instance-scope.md#introduction
 	cfg, err := config.GetJSONConfig()
 	require.NoError(t, err)
-	var v interface{}
+	var v any
 	json.Unmarshal([]byte(cfg), &v)
-	data := v.(map[string]interface{})
+	data := v.(map[string]any)
 	for k, v := range data {
 		if k != "instance" {
 			continue
 		}
-		instanceSection := v.(map[string]interface{})
+		instanceSection := v.(map[string]any)
 		for instanceName := range instanceSection {
 			// Need to check there is a sysvar named instanceName.
 			sv := GetSysVar(instanceName)

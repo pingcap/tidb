@@ -22,13 +22,10 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/resourcemanager/pool/spool"
-	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cpu"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -37,9 +34,10 @@ import (
 )
 
 var (
-	executorPoolSize int32 = 4
 	// same as scheduler
-	checkTime               = 300 * time.Millisecond
+	defaultCheckInterval    = 300 * time.Millisecond
+	maxCheckInterval        = 2 * time.Second
+	maxChecksWhenNoSubtask  = 7
 	recoverMetaInterval     = 90 * time.Second
 	retrySQLTimes           = 30
 	retrySQLInterval        = 500 * time.Millisecond
@@ -49,50 +47,29 @@ var (
 	}
 )
 
-// ManagerBuilder is used to build a Manager.
-type ManagerBuilder struct {
-	newPool func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
-}
-
-// NewManagerBuilder creates a new ManagerBuilder.
-func NewManagerBuilder() *ManagerBuilder {
-	return &ManagerBuilder{
-		newPool: func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error) {
-			return spool.NewPool(name, size, component, options...)
-		},
-	}
-}
-
-// setPoolFactory sets the poolFactory to mock the Pool in unit test.
-func (b *ManagerBuilder) setPoolFactory(poolFactory func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)) {
-	b.newPool = poolFactory
-}
-
 // Manager monitors the task table and manages the taskExecutors.
 type Manager struct {
-	taskTable    TaskTable
-	executorPool Pool
-	mu           struct {
+	taskTable TaskTable
+	mu        struct {
 		sync.RWMutex
-		// taskID -> CancelCauseFunc.
-		// CancelCauseFunc is used to fast cancel the executor.Run.
-		handlingTasks map[int64]context.CancelCauseFunc
+		// taskID -> TaskExecutor.
+		taskExecutors map[int64]TaskExecutor
 	}
 	// id, it's the same as server id now, i.e. host:port.
 	id          string
 	wg          tidbutil.WaitGroupWrapper
+	executorWG  tidbutil.WaitGroupWrapper
 	ctx         context.Context
 	cancel      context.CancelFunc
 	logger      *zap.Logger
-	newPool     func(name string, size int32, component util.Component, options ...spool.Option) (Pool, error)
 	slotManager *slotManager
 
 	totalCPU int
 	totalMem int64
 }
 
-// BuildManager builds a Manager.
-func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, error) {
+// NewManager creates a new task executor Manager.
+func NewManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, error) {
 	totalMem, err := memory.MemTotal()
 	if err != nil {
 		// should not happen normally, as in main function of tidb-server, we assert
@@ -109,7 +86,6 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 		id:        id,
 		taskTable: taskTable,
 		logger:    logutil.BgLogger(),
-		newPool:   b.newPool,
 		slotManager: &slotManager{
 			taskID2Index:  make(map[int64]int),
 			executorTasks: make([]*proto.Task, 0),
@@ -119,13 +95,7 @@ func (b *ManagerBuilder) BuildManager(ctx context.Context, id string, taskTable 
 		totalMem: int64(totalMem),
 	}
 	m.ctx, m.cancel = context.WithCancel(ctx)
-	m.mu.handlingTasks = make(map[int64]context.CancelCauseFunc)
-
-	executorPool, err := m.newPool("executor_pool", executorPoolSize, util.DistTask)
-	if err != nil {
-		return nil, err
-	}
-	m.executorPool = executorPool
+	m.mu.taskExecutors = make(map[int64]TaskExecutor)
 
 	return m, nil
 }
@@ -184,7 +154,7 @@ func (m *Manager) Start() error {
 // Stop stops the Manager.
 func (m *Manager) Stop() {
 	m.cancel()
-	m.executorPool.ReleaseAndWait()
+	m.executorWG.Wait()
 	m.wg.Wait()
 }
 
@@ -198,7 +168,7 @@ func (m *Manager) Stop() {
 // NOT running by executor before mark the task as paused.
 func (m *Manager) handleTasksLoop() {
 	defer tidbutil.Recover(metrics.LabelDomain, "handleTasksLoop", m.handleTasksLoop, false)
-	ticker := time.NewTicker(checkTime)
+	ticker := time.NewTicker(defaultCheckInterval)
 	for {
 		select {
 		case <-m.ctx.Done():
@@ -212,26 +182,25 @@ func (m *Manager) handleTasksLoop() {
 }
 
 func (m *Manager) handleTasks() {
-	tasks, err := m.taskTable.GetTasksInStates(m.ctx, proto.TaskStateRunning,
-		proto.TaskStateReverting, proto.TaskStatePausing)
+	tasks, err := m.taskTable.GetTaskExecInfoByExecID(m.ctx, m.id)
 	if err != nil {
 		m.logErr(err)
 		return
 	}
 
-	executableTasks := make([]*proto.Task, 0, len(tasks))
+	executableTasks := make([]*storage.TaskExecInfo, 0, len(tasks))
 	for _, task := range tasks {
 		switch task.State {
 		case proto.TaskStateRunning, proto.TaskStateReverting:
 			if task.State == proto.TaskStateReverting {
-				m.cancelRunningSubtaskOf(task)
+				m.cancelRunningSubtaskOf(task.ID)
 			}
 			// TaskStateReverting require executor to run rollback logic.
 			if !m.isExecutorStarted(task.ID) {
 				executableTasks = append(executableTasks, task)
 			}
 		case proto.TaskStatePausing:
-			if err := m.handlePausingTask(task); err != nil {
+			if err := m.handlePausingTask(task.ID); err != nil {
 				m.logErr(err)
 			}
 		}
@@ -243,20 +212,11 @@ func (m *Manager) handleTasks() {
 }
 
 // handleExecutableTasks handles executable tasks.
-func (m *Manager) handleExecutableTasks(tasks []*proto.Task) {
-	for _, task := range tasks {
-		exist, err := m.taskTable.HasSubtasksInStates(m.ctx, m.id, task.ID, task.Step, unfinishedSubtaskStates...)
-		if err != nil {
-			m.logger.Error("check subtask exist failed", zap.Error(err))
-			m.logErr(err)
-			continue
-		}
-		if !exist {
-			continue
-		}
+func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
+	for _, task := range taskInfos {
 		m.logger.Info("detect new subtask", zap.Int64("task-id", task.ID))
 
-		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task)
+		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task.Task)
 		if len(tasksNeedFree) > 0 {
 			m.cancelTaskExecutors(tasksNeedFree)
 			// do not handle the tasks with lower priority if current task is waiting tasks free.
@@ -267,48 +227,32 @@ func (m *Manager) handleExecutableTasks(tasks []*proto.Task) {
 			m.logger.Debug("no enough slots to run task", zap.Int64("task-id", task.ID))
 			continue
 		}
-		m.addHandlingTask(task.ID)
-		m.slotManager.alloc(task)
-		t := task
-		err = m.executorPool.Run(func() {
-			defer m.slotManager.free(t.ID)
-			m.handleExecutableTask(t)
-			m.removeHandlingTask(t.ID)
-		})
-		// pool closed.
-		if err != nil {
-			m.slotManager.free(t.ID)
-			m.removeHandlingTask(task.ID)
-			m.logErr(err)
-			return
-		}
+		m.startTaskExecutor(task.Task)
 	}
 }
 
 // cancelRunningSubtaskOf cancels the running subtask of the task, the subtask
 // will switch to `canceled` state.
-func (m *Manager) cancelRunningSubtaskOf(task *proto.Task) {
+func (m *Manager) cancelRunningSubtaskOf(taskID int64) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
-		m.logger.Info("onCanceledTasks", zap.Int64("task-id", task.ID))
-		// subtask needs to change its state to `canceled`.
-		cancel(ErrCancelSubtask)
+	if executor, ok := m.mu.taskExecutors[taskID]; ok {
+		m.logger.Info("onCanceledTasks", zap.Int64("task-id", taskID))
+		executor.CancelRunningSubtask()
 	}
 }
 
 // onPausingTasks pauses/cancels the pending/running subtasks.
-func (m *Manager) handlePausingTask(task *proto.Task) error {
+func (m *Manager) handlePausingTask(taskID int64) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	m.logger.Info("handle pausing task", zap.Int64("task-id", task.ID))
-	if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
-		// cancel the task executor
-		cancel(nil)
+	m.logger.Info("handle pausing task", zap.Int64("task-id", taskID))
+	if executor, ok := m.mu.taskExecutors[taskID]; ok {
+		executor.Cancel()
 	}
 	// we pause subtasks belongs to this exec node even when there's no executor running.
 	// as balancer might move subtasks to this node when the executor hasn't started.
-	return m.taskTable.PauseSubtasks(m.ctx, m.id, task.ID)
+	return m.taskTable.PauseSubtasks(m.ctx, m.id, taskID)
 }
 
 // recoverMetaLoop recovers dist_framework_meta for the tidb node running the taskExecutor manager.
@@ -340,9 +284,8 @@ func (m *Manager) cancelTaskExecutors(tasks []*proto.Task) {
 	defer m.mu.RUnlock()
 	for _, task := range tasks {
 		m.logger.Info("cancelTasks", zap.Int64("task-id", task.ID))
-		if cancel, ok := m.mu.handlingTasks[task.ID]; ok && cancel != nil {
-			// only cancel the executor, subtask state is not changed.
-			cancel(nil)
+		if executor, ok := m.mu.taskExecutors[task.ID]; ok {
+			executor.Cancel()
 		}
 	}
 }
@@ -353,11 +296,11 @@ type TestContext struct {
 	mockDown           atomic.Bool
 }
 
-var testContexts sync.Map
+// TestContexts only used in tests.
+var TestContexts sync.Map
 
-// handleExecutableTask handles a runnable task.
-func (m *Manager) handleExecutableTask(task *proto.Task) {
-	m.logger.Info("handleExecutableTask", zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type))
+// startTaskExecutor handles a runnable task.
+func (m *Manager) startTaskExecutor(task *proto.Task) {
 	// runCtx only used in executor.Run, cancel in m.fetchAndFastCancelTasks.
 	factory := GetTaskExecutorFactory(task.Type)
 	if factory == nil {
@@ -366,71 +309,24 @@ func (m *Manager) handleExecutableTask(task *proto.Task) {
 		return
 	}
 	executor := factory(m.ctx, m.id, task, m.taskTable)
-	taskCtx, taskCancel := context.WithCancelCause(m.ctx)
-	m.registerCancelFunc(task.ID, taskCancel)
-	defer taskCancel(nil)
-	// executor should init before run()/pause()/rollback().
-	err := executor.Init(taskCtx)
+	err := executor.Init(m.ctx)
 	if err != nil {
 		m.logErrAndPersist(err, task.ID, executor)
 		return
 	}
-	defer executor.Close()
-	for {
-		select {
-		case <-m.ctx.Done():
-			m.logger.Info("handleExecutableTask exit for cancel", zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type))
-			return
-		case <-time.After(checkTime):
-		}
-		failpoint.Inject("mockStopManager", func() {
-			testContexts.Store(m.id, &TestContext{make(chan struct{}), atomic.Bool{}})
-			go func() {
-				v, ok := testContexts.Load(m.id)
-				if ok {
-					<-v.(*TestContext).TestSyncSubtaskRun
-					infosync.MockGlobalServerInfoManagerEntry.DeleteByExecID(m.id)
-					m.Stop()
-				}
-			}()
-		})
-		task, err = m.taskTable.GetTaskByID(m.ctx, task.ID)
-		if err != nil {
-			m.logErr(err)
-			return
-		}
-		if task.State != proto.TaskStateRunning && task.State != proto.TaskStateReverting {
-			m.logger.Info("handleExecutableTask exit",
-				zap.Int64("task-id", task.ID), zap.String("step", proto.Step2Str(task.Type, task.Step)), zap.Stringer("state", task.State))
-			return
-		}
-		if exist, err := m.taskTable.HasSubtasksInStates(m.ctx, m.id, task.ID, task.Step,
-			unfinishedSubtaskStates...); err != nil {
-			m.logErr(err)
-			return
-		} else if !exist {
-			continue
-		}
-		stepResource := m.getStepResource(task.Concurrency)
-		m.logger.Info("execute task step with resource",
-			zap.Int64("task-id", task.ID), zap.String("step", proto.Step2Str(task.Type, task.Step)),
-			zap.Stringer("resource", stepResource))
-		switch task.State {
-		case proto.TaskStateRunning:
-			if taskCtx.Err() != nil {
-				return
-			}
-			// use taskCtx for canceling.
-			err = executor.RunStep(taskCtx, task, stepResource)
-		case proto.TaskStateReverting:
-			// use m.ctx since this process should not be canceled.
-			// TODO: will remove it later, leave it now.
-			err = executor.Rollback(m.ctx, task)
-		}
-		if err != nil {
-			m.logger.Error("failed to handle task", zap.Error(err))
-		}
-	}
+	m.logger.Info("task executor started", zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type))
+	m.addTaskExecutor(executor)
+	m.slotManager.alloc(task)
+	resource := m.getStepResource(task.Concurrency)
+	m.executorWG.RunWithLog(func() {
+		defer func() {
+			m.logger.Info("task executor exit", zap.Int64("task-id", task.ID), zap.Stringer("type", task.Type))
+			m.slotManager.free(task.ID)
+			m.delTaskExecutor(executor)
+			executor.Close()
+		}()
+		executor.Run(resource)
+	})
 }
 
 func (m *Manager) getStepResource(concurrency int) *proto.StepResource {
@@ -441,31 +337,22 @@ func (m *Manager) getStepResource(concurrency int) *proto.StepResource {
 	}
 }
 
-// addHandlingTask adds a task to the handling task set.
-func (m *Manager) addHandlingTask(id int64) {
+func (m *Manager) addTaskExecutor(executor TaskExecutor) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.mu.handlingTasks[id] = nil
+	m.mu.taskExecutors[executor.GetTask().ID] = executor
 }
 
-// registerCancelFunc registers a cancel function for a task.
-func (m *Manager) registerCancelFunc(id int64, cancel context.CancelCauseFunc) {
+func (m *Manager) delTaskExecutor(executor TaskExecutor) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.mu.handlingTasks[id] = cancel
-}
-
-// removeHandlingTask removes a task from the handling task set.
-func (m *Manager) removeHandlingTask(id int64) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	delete(m.mu.handlingTasks, id)
+	delete(m.mu.taskExecutors, executor.GetTask().ID)
 }
 
 func (m *Manager) isExecutorStarted(taskID int64) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	_, ok := m.mu.handlingTasks[taskID]
+	_, ok := m.mu.taskExecutors[taskID]
 	return ok
 }
 
@@ -475,6 +362,8 @@ func (m *Manager) logErr(err error) {
 
 func (m *Manager) logErrAndPersist(err error, taskID int64, taskExecutor TaskExecutor) {
 	m.logErr(err)
+	// TODO we want to define err of taskexecutor.Init as fatal, but add-index have
+	// some code in Init that need retry, remove it after it's decoupled.
 	if taskExecutor != nil && taskExecutor.IsRetryableError(err) {
 		m.logger.Error("met retryable err", zap.Error(err), zap.Stack("stack"))
 		return

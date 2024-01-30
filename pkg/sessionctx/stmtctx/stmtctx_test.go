@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 )
@@ -134,7 +135,7 @@ func TestWeakConsistencyRead(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(id int primary key, c int, c1 int, unique index i(c))")
 
-	execAndCheck := func(sql string, rows [][]interface{}, isolationLevel kv.IsoLevel) {
+	execAndCheck := func(sql string, rows [][]any, isolationLevel kv.IsoLevel) {
 		ctx := context.WithValue(context.Background(), "CheckSelectRequestHook", func(req *kv.Request) {
 			require.Equal(t, req.IsolationLevel, isolationLevel)
 		})
@@ -299,7 +300,7 @@ func TestApproxRuntimeInfo(t *testing.T) {
 }
 
 func TestStmtHintsClone(t *testing.T) {
-	hints := stmtctx.StmtHints{}
+	hints := hint.StmtHints{}
 	value := reflect.ValueOf(&hints).Elem()
 	for i := 0; i < value.NumField(); i++ {
 		field := value.Field(i)

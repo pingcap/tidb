@@ -39,36 +39,44 @@ func runOneTask(ctx context.Context, t *testing.T, mgr *storage.TaskManager, tas
 	require.NoError(t, err)
 	task, err := mgr.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
+
+	checkSubtasks := func(step proto.Step, state proto.SubtaskState) {
+		subtasks, err := mgr.GetAllSubtasksByStepAndState(ctx, taskID, step, state)
+		require.NoError(t, err)
+		require.Len(t, subtasks, subtaskCnt)
+	}
 	// 1. stepOne
 	err = mgr.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepOne, nil)
 	require.NoError(t, err)
 	for i := 0; i < subtaskCnt; i++ {
-		testutil.CreateSubTask(t, mgr, taskID, proto.StepOne, ":4000", nil, proto.TaskTypeExample, 11)
+		testutil.CreateSubTask(t, mgr, taskID, proto.StepOne, ":4000", nil, proto.TaskTypeExample, 1)
 	}
+	checkSubtasks(proto.StepOne, proto.SubtaskStatePending)
 	task, err = mgr.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
 	factory := taskexecutor.GetTaskExecutorFactory(task.Type)
 	require.NotNil(t, factory)
 	executor := factory(ctx, ":4000", task, mgr)
-	require.NoError(t, executor.RunStep(ctx, task, nil))
+	executor.Run(&proto.StepResource{})
+	checkSubtasks(proto.StepOne, proto.SubtaskStateSucceed)
 	// 2. stepTwo
 	err = mgr.SwitchTaskStep(ctx, task, proto.TaskStateRunning, proto.StepTwo, nil)
 	require.NoError(t, err)
 	for i := 0; i < subtaskCnt; i++ {
 		testutil.CreateSubTask(t, mgr, taskID, proto.StepTwo, ":4000", nil, proto.TaskTypeExample, 11)
 	}
+	checkSubtasks(proto.StepTwo, proto.SubtaskStatePending)
 	task, err = mgr.GetTaskByID(ctx, taskID)
 	require.NoError(t, err)
-	require.NoError(t, executor.RunStep(ctx, task, nil))
+	executor.Run(&proto.StepResource{})
+	checkSubtasks(proto.StepTwo, proto.SubtaskStateSucceed)
 }
 
 func TestTaskExecutorBasic(t *testing.T) {
 	// must disable disttask framework to ensure the test pure.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/breakInTaskExecutorUT", "return()"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/breakInTaskExecutorUT"))
 	}()
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -81,6 +89,8 @@ func TestTaskExecutorBasic(t *testing.T) {
 	ctrl := gomock.NewController(t)
 	defer ctrl.Finish()
 	mgr := storage.NewTaskManager(pool)
+
+	taskexecutor.ReduceCheckInterval(t)
 
 	testutil.InitTaskExecutor(ctrl, func(ctx context.Context, subtask *proto.Subtask) error {
 		switch subtask.Step {

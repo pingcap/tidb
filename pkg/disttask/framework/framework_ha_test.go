@@ -16,10 +16,12 @@ package framework_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/stretchr/testify/require"
 )
@@ -32,6 +34,7 @@ func submitTaskAndCheckSuccessForHA(ctx context.Context, t *testing.T, taskKey s
 }
 
 func TestHABasic(t *testing.T) {
+	taskexecutor.TestContexts = sync.Map{}
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 4)
 	defer ctrl.Finish()
 
@@ -47,6 +50,7 @@ func TestHABasic(t *testing.T) {
 }
 
 func TestHAManyNodes(t *testing.T) {
+	taskexecutor.TestContexts = sync.Map{}
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 30)
 	defer ctrl.Finish()
 
@@ -62,6 +66,7 @@ func TestHAManyNodes(t *testing.T) {
 }
 
 func TestHAFailInDifferentStage(t *testing.T) {
+	taskexecutor.TestContexts = sync.Map{}
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 6)
 	defer ctrl.Finish()
 
@@ -82,6 +87,7 @@ func TestHAFailInDifferentStage(t *testing.T) {
 }
 
 func TestHAFailInDifferentStageManyNodes(t *testing.T) {
+	taskexecutor.TestContexts = sync.Map{}
 	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 30)
 	defer ctrl.Finish()
 

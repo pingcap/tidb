@@ -93,7 +93,7 @@ func encodeFieldTypeToLattice(ft *types.FieldType) Tuple {
 }
 
 func decodeFieldTypeFromLattice(tup Tuple) *types.FieldType {
-	lst := tup.Unwrap().([]interface{})
+	lst := tup.Unwrap().([]any)
 
 	flags := lst[fieldTypeTupleIndexFlagSingleton].(uint)
 	flags |= decodeAntiKeys(lst[fieldTypeTupleIndexFlagAntiKeys].(byte))
@@ -147,7 +147,7 @@ func (a typ) setAntiKeyFlags(flag uint) {
 	a.Tuple[fieldTypeTupleIndexFlagAntiKeys] = Byte(encodeAntiKeys(flag))
 }
 
-func (a typ) getStandardDefaultValue() interface{} {
+func (a typ) getStandardDefaultValue() any {
 	var tail string
 	if dec := a.Tuple[fieldTypeTupleIndexDec].Unwrap().(int); dec > 0 {
 		tail = "." + strings.Repeat("0", dec)
@@ -183,7 +183,7 @@ func (a typ) clone() typ {
 	return typ{Tuple: append(make(Tuple, 0, len(a.Tuple)), a.Tuple...)}
 }
 
-func (a typ) Unwrap() interface{} {
+func (a typ) Unwrap() any {
 	return decodeFieldTypeFromLattice(a.Tuple)
 }
 

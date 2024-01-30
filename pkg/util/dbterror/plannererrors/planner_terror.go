@@ -1,4 +1,4 @@
-// Copyright 2018 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core
+package plannererrors
 
 import (
 	mysql "github.com/pingcap/tidb/pkg/errno"
@@ -77,7 +77,7 @@ var (
 	ErrPrivilegeCheckFail                    = dbterror.ClassOptimizer.NewStd(mysql.ErrPrivilegeCheckFail)
 	ErrInvalidWildCard                       = dbterror.ClassOptimizer.NewStd(mysql.ErrInvalidWildCard)
 	ErrMixOfGroupFuncAndFields               = dbterror.ClassOptimizer.NewStd(mysql.ErrMixOfGroupFuncAndFieldsIncompatible)
-	errTooBigPrecision                       = dbterror.ClassExpression.NewStd(mysql.ErrTooBigPrecision)
+	ErrTooBigPrecision                       = dbterror.ClassExpression.NewStd(mysql.ErrTooBigPrecision)
 	ErrDBaccessDenied                        = dbterror.ClassOptimizer.NewStd(mysql.ErrDBaccessDenied)
 	ErrTableaccessDenied                     = dbterror.ClassOptimizer.NewStd(mysql.ErrTableaccessDenied)
 	ErrSpecificAccessDenied                  = dbterror.ClassOptimizer.NewStd(mysql.ErrSpecificAccessDenied)

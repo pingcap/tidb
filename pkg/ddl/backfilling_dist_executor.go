@@ -60,7 +60,7 @@ type BackfillSubTaskMeta struct {
 }
 
 // NewBackfillSubtaskExecutor creates a new backfill subtask executor.
-func NewBackfillSubtaskExecutor(_ context.Context, taskMeta []byte, d *ddl,
+func NewBackfillSubtaskExecutor(taskMeta []byte, d *ddl,
 	bc ingest.BackendCtx, stage proto.Step, summary *execute.Summary) (execute.StepExecutor, error) {
 	bgm := &BackfillTaskMeta{}
 	err := json.Unmarshal(taskMeta, bgm)
@@ -142,7 +142,9 @@ func (s *backfillDistExecutor) Init(ctx context.Context) error {
 		return err
 	}
 	pdLeaderAddr := d.store.(tikv.Storage).GetRegionCache().PDClient().GetLeaderAddr()
-	bc, err := ingest.LitBackCtxMgr.Register(ctx, unique, job.ID, d.etcdCli, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
+	// TODO: local backend should be inited when step executor is created.
+	// TODO here we have to use executor ctx to avoid it keeps running when task is canceled.
+	bc, err := ingest.LitBackCtxMgr.Register(s.BaseTaskExecutor.Ctx(), unique, job.ID, d.etcdCli, pdLeaderAddr, job.ReorgMeta.ResourceGroupName)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -165,10 +167,10 @@ func decodeIndexUniqueness(job *model.Job) (bool, error) {
 	return unique[0], nil
 }
 
-func (s *backfillDistExecutor) GetStepExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary, _ *proto.StepResource) (execute.StepExecutor, error) {
+func (s *backfillDistExecutor) GetStepExecutor(task *proto.Task, summary *execute.Summary, _ *proto.StepResource) (execute.StepExecutor, error) {
 	switch task.Step {
 	case proto.BackfillStepReadIndex, proto.BackfillStepMergeSort, proto.BackfillStepWriteAndIngest:
-		return NewBackfillSubtaskExecutor(ctx, task.Meta, s.d, s.backendCtx, task.Step, summary)
+		return NewBackfillSubtaskExecutor(task.Meta, s.d, s.backendCtx, task.Step, summary)
 	default:
 		return nil, errors.Errorf("unknown backfill step %d for task %d", task.Step, task.ID)
 	}

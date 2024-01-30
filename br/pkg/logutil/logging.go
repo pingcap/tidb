@@ -40,7 +40,7 @@ func (abb AbbreviatedArrayMarshaler) MarshalLogArray(encoder zapcore.ArrayEncode
 
 // AbbreviatedArray constructs a field that abbreviates an array of elements.
 func AbbreviatedArray(
-	key string, elements interface{}, marshalFunc func(interface{}) []string,
+	key string, elements any, marshalFunc func(any) []string,
 ) zap.Field {
 	return zap.Array(key, AbbreviatedArrayMarshaler(marshalFunc(elements)))
 }
@@ -275,7 +275,7 @@ func WarnTerm(message string, fields ...zap.Field) {
 }
 
 // RedactAny constructs a redacted field that carries an interface{}.
-func RedactAny(fieldKey string, key interface{}) zap.Field {
+func RedactAny(fieldKey string, key any) zap.Field {
 	if redact.NeedRedact() {
 		return zap.String(fieldKey, "?")
 	}

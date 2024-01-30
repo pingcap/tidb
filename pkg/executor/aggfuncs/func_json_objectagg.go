@@ -37,20 +37,20 @@ type jsonObjectAgg struct {
 }
 
 type partialResult4JsonObjectAgg struct {
-	entries map[string]interface{}
+	entries map[string]any
 	bInMap  int // indicate there are 2^bInMap buckets in entries.
 }
 
 func (*jsonObjectAgg) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := partialResult4JsonObjectAgg{}
-	p.entries = make(map[string]interface{})
+	p.entries = make(map[string]any)
 	p.bInMap = 0
 	return PartialResult(&p), DefPartialResult4JsonObjectAgg + (1<<p.bInMap)*hack.DefBucketMemoryUsageForMapStringToAny
 }
 
 func (*jsonObjectAgg) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4JsonObjectAgg)(pr)
-	p.entries = make(map[string]interface{})
+	p.entries = make(map[string]any)
 	p.bInMap = 0
 }
 
@@ -134,7 +134,7 @@ func (e *jsonObjectAgg) deserializeForSpill(helper *deserializeHelper) (PartialR
 	return pr, memDelta + deserializeMemDelta
 }
 
-func getRealJSONValue(value types.Datum, ft *types.FieldType) (interface{}, error) {
+func getRealJSONValue(value types.Datum, ft *types.FieldType) (any, error) {
 	realVal := value.Clone().GetValue()
 	switch value.Kind() {
 	case types.KindBinaryLiteral, types.KindMysqlBit, types.KindBytes:
@@ -180,7 +180,7 @@ func getRealJSONValue(value types.Datum, ft *types.FieldType) (interface{}, erro
 	return realVal, nil
 }
 
-func getValMemDelta(val interface{}) (memDelta int64) {
+func getValMemDelta(val any) (memDelta int64) {
 	memDelta = DefInterfaceSize
 	switch v := val.(type) {
 	case bool:

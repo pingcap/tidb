@@ -94,7 +94,7 @@ func (j *TableAnalysisJob) analyzePartitions(
 	sysProcTracker sessionctx.SysProcTracker,
 ) {
 	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
-	needAnalyzePartitionNames := make([]interface{}, 0, len(j.Partitions))
+	needAnalyzePartitionNames := make([]any, 0, len(j.Partitions))
 	for _, partition := range j.Partitions {
 		needAnalyzePartitionNames = append(needAnalyzePartitionNames, partition)
 	}
@@ -106,7 +106,7 @@ func (j *TableAnalysisJob) analyzePartitions(
 		}
 
 		sql := getPartitionSQL("analyze table %n.%n partition", "", end-start)
-		params := append([]interface{}{j.TableSchema, j.TableName}, needAnalyzePartitionNames[start:end]...)
+		params := append([]any{j.TableSchema, j.TableName}, needAnalyzePartitionNames[start:end]...)
 		exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 	}
 }
@@ -120,7 +120,7 @@ func (j *TableAnalysisJob) analyzePartitionIndexes(
 	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
 
 	for indexName, partitionNames := range j.PartitionIndexes {
-		needAnalyzePartitionNames := make([]interface{}, 0, len(partitionNames))
+		needAnalyzePartitionNames := make([]any, 0, len(partitionNames))
 		for _, partition := range partitionNames {
 			needAnalyzePartitionNames = append(needAnalyzePartitionNames, partition)
 		}
@@ -132,7 +132,7 @@ func (j *TableAnalysisJob) analyzePartitionIndexes(
 			}
 
 			sql := getPartitionSQL("analyze table %n.%n partition", " index %n", end-start)
-			params := append([]interface{}{j.TableSchema, j.TableName}, needAnalyzePartitionNames[start:end]...)
+			params := append([]any{j.TableSchema, j.TableName}, needAnalyzePartitionNames[start:end]...)
 			params = append(params, indexName)
 			exec.AutoAnalyze(sctx, statsHandle, sysProcTracker, j.TableStatsVer, sql, params...)
 		}
@@ -153,17 +153,17 @@ func getPartitionSQL(prefix, suffix string, numPartitions int) string {
 }
 
 // genSQLForAnalyzeTable generates the SQL for analyzing the specified table.
-func (j *TableAnalysisJob) genSQLForAnalyzeTable() (string, []interface{}) {
+func (j *TableAnalysisJob) genSQLForAnalyzeTable() (string, []any) {
 	sql := "analyze table %n.%n"
-	params := []interface{}{j.TableSchema, j.TableName}
+	params := []any{j.TableSchema, j.TableName}
 
 	return sql, params
 }
 
 // genSQLForAnalyzeIndex generates the SQL for analyzing the specified index.
-func (j *TableAnalysisJob) genSQLForAnalyzeIndex(index string) (string, []interface{}) {
+func (j *TableAnalysisJob) genSQLForAnalyzeIndex(index string) (string, []any) {
 	sql := "analyze table %n.%n index %n"
-	params := []interface{}{j.TableSchema, j.TableName, index}
+	params := []any{j.TableSchema, j.TableName, index}
 
 	return sql, params
 }

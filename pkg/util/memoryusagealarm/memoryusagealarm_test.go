@@ -108,7 +108,7 @@ func genMockProcessInfoList(memConsumeList []int64, startTimeList []time.Time, s
 		processInfo := util.ProcessInfo{Time: startTimeList[i],
 			StmtCtx:    stmtctx.NewStmtCtx(),
 			MemTracker: tracker,
-			StatsInfo: func(interface{}) map[string]uint64 {
+			StatsInfo: func(any) map[string]uint64 {
 				return map[string]uint64{}
 			},
 			RefCountOfStmtCtx: &stmtCtxRefCount,

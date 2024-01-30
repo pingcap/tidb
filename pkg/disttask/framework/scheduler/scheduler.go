@@ -137,7 +137,6 @@ func (s *BaseScheduler) refreshTask() error {
 	task := s.GetTask()
 	newTask, err := s.taskMgr.GetTaskByID(s.ctx, task.ID)
 	if err != nil {
-		s.logger.Error("refresh task failed", zap.Error(err))
 		return err
 	}
 	s.task.Store(newTask)
@@ -156,6 +155,12 @@ func (s *BaseScheduler) scheduleTask() {
 		case <-ticker.C:
 			err := s.refreshTask()
 			if err != nil {
+				if errors.Cause(err) == storage.ErrTaskNotFound {
+					// this can happen when task is reverted/succeed, but before
+					// we reach here, cleanup routine move it to history.
+					return
+				}
+				s.logger.Error("refresh task failed", zap.Error(err))
 				continue
 			}
 			task := *s.GetTask()
