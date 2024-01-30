@@ -65,7 +65,7 @@ cd tests/integrationtest
 
 ### Visual Studio Code
 
-1. Add or create a configurations to `.vscode/launch.json`, an example is shown below.
+1. Add or create a configurations to `.vscode/launch.json`, an example is shown below. If you want to change some configurations, such as using `TiKV` to run integration tests or others, you can modify `pkg/config/config.toml.example`.
 
 ```json
 {
@@ -83,9 +83,7 @@ cd tests/integrationtest
 }
 ```
 
-If you want to change some configurations, such as using `TiKV` to run integration tests or others, you can modify `pkg/config/config.toml.example`.
-
-2. To run `TiDB-Server`, you could bring up *Run and Debug* view, select the *Run and Debug* icon in the *Activity Bar* on the side of VS Code. You can also use shortcut *F5*.
+2. To run `TiDB-Server`, you could bring up **Run and Debug** view, select the *Run and Debug* icon in the **Activity Bar** on the side of VS Code. You can also use shortcut **F5**.
 
 3. Use any mysql client application you like to run SQLs in integration test, the default port is `4000` and default user is `root` without password.
 
