@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -70,6 +71,13 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stmtsummary"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
+)
+
+var (
+	// CreateSession will be assigned by session package.
+	CreateSession func(ctx sessionctx.Context) (sessionctx.Context, error)
+	// CloseSession will be assigned by session package.
+	CloseSession func(ctx sessionctx.Context)
 )
 
 type visitInfo struct {
@@ -4217,7 +4225,18 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.FilePriv, "", "", "", plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("FILE"))
 	}
 	tableInfo := p.Table.TableInfo
-	tableInPlan, ok := b.is.TableByID(tableInfo.ID)
+	// session ctx in planBuilder might be using stale read, so we might not be
+	// able to get the schema of the target table.
+	// this is used to support IMPORT INTO dst FROM SELECT * FROM src AS OF TIMESTAMP '2020-01-01 00:00:00'
+	// Note: we need to get p.Table when preprocessing, at that time, if the session
+	// ctx is already in stale read, we cannot get the schema of the target table.
+	// so we don't support set 'tidb_snapshot' first and then import into the target table.
+	globalSCtx, err := CreateSession(b.ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer CloseSession(globalSCtx)
+	tableInPlan, ok := sessiontxn.GetTxnManager(globalSCtx).GetTxnInfoSchema().TableByID(tableInfo.ID)
 	if !ok {
 		db := b.ctx.GetSessionVars().CurrentDB
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(db, tableInfo.Name.O)

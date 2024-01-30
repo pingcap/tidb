@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
@@ -646,7 +647,7 @@ func (gs *tidbGlue) GetDomain(_ kv.Storage) (*domain.Domain, error) {
 
 // CreateSession implements glue.Glue
 func (gs *tidbGlue) CreateSession(_ kv.Storage) (glue.Session, error) {
-	newSCtx, err := CreateSession(gs.se)
+	newSCtx, err := core.CreateSession(gs.se)
 	if err != nil {
 		return nil, err
 	}
@@ -693,13 +694,13 @@ func (*tidbGlue) GetVersion() string {
 func (gs *tidbGlue) UseOneShotSession(_ kv.Storage, _ bool, fn func(se glue.Session) error) error {
 	// In SQL backup, we don't need to close domain,
 	// but need to create an new session.
-	newSCtx, err := CreateSession(gs.se)
+	newSCtx, err := core.CreateSession(gs.se)
 	if err != nil {
 		return err
 	}
 	glueSession := &tidbGlueSession{se: newSCtx}
 	defer func() {
-		CloseSession(newSCtx)
+		core.CloseSession(newSCtx)
 		log.Info("one shot session from brie closed")
 	}()
 	return fn(glueSession)
@@ -755,7 +756,7 @@ func (gs *tidbGlueSession) CreatePlacementPolicy(_ context.Context, policy *mode
 
 // Close implements glue.Session
 func (gs *tidbGlueSession) Close() {
-	CloseSession(gs.se)
+	core.CloseSession(gs.se)
 }
 
 // GetGlobalVariables implements glue.Session.

@@ -119,10 +119,10 @@ import (
 )
 
 func init() {
-	executor.CreateSession = func(ctx sessionctx.Context) (sessionctx.Context, error) {
+	plannercore.CreateSession = func(ctx sessionctx.Context) (sessionctx.Context, error) {
 		return CreateSession(ctx.GetStore())
 	}
-	executor.CloseSession = func(ctx sessionctx.Context) {
+	plannercore.CloseSession = func(ctx sessionctx.Context) {
 		if se, ok := ctx.(types.Session); ok {
 			se.Close()
 		}

@@ -117,11 +117,11 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	}
 
 	// must use a new session to pre-check, else the stmt in show processlist will be changed.
-	newSCtx, err2 := CreateSession(e.userSctx)
+	newSCtx, err2 := plannercore.CreateSession(e.userSctx)
 	if err2 != nil {
 		return err2
 	}
-	defer CloseSession(newSCtx)
+	defer plannercore.CloseSession(newSCtx)
 	sqlExec := newSCtx.(sqlexec.SQLExecutor)
 	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
 		return err2
@@ -167,12 +167,12 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 
 	if e.controller.Detached {
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalImportInto)
-		se, err := CreateSession(e.userSctx)
+		se, err := plannercore.CreateSession(e.userSctx)
 		if err != nil {
 			return err
 		}
 		go func() {
-			defer CloseSession(se)
+			defer plannercore.CloseSession(se)
 			// error is stored in system table, so we can ignore it here
 			//nolint: errcheck
 			_ = e.doImport(ctx, se, distImporter, task)
@@ -253,12 +253,14 @@ func (e *ImportIntoExec) doImport(ctx context.Context, se sessionctx.Context, di
 
 func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	e.dataFilled = true
-	// must use a new session to pre-check, else the stmt in show processlist will be changed.
-	newSCtx, err2 := CreateSession(e.userSctx)
+	// must use a new session as:
+	// 	- pre-check will execute other sql, the stmt in show processlist will be changed.
+	// 	- userSctx might be in stale read, we cannot do write.
+	newSCtx, err2 := plannercore.CreateSession(e.userSctx)
 	if err2 != nil {
 		return err2
 	}
-	defer CloseSession(newSCtx)
+	defer plannercore.CloseSession(newSCtx)
 
 	sqlExec := newSCtx.(sqlexec.SQLExecutor)
 	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
@@ -334,7 +336,7 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 		return err
 	}
 
-	if err2 = flushStats(ctx, e.userSctx, e.importPlan.TableInfo.ID, importResult); err2 != nil {
+	if err2 = flushStats(ctx, newSCtx, e.importPlan.TableInfo.ID, importResult); err2 != nil {
 		logutil.Logger(ctx).Error("flush stats failed", zap.Error(err2))
 	}
 
