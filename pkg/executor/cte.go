@@ -232,7 +232,7 @@ func (p *cteProducer) closeProducer() (firstErr error) {
 	setFirstErr := func(newErr error) {
 		if newErr != nil {
 			logutil.BgLogger().Error("close cte producer got err", zap.Any("err", newErr))
-			if firstErr != nil {
+			if firstErr == nil {
 				firstErr = newErr
 			}
 		}
