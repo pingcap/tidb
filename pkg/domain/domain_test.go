@@ -263,7 +263,7 @@ func TestClosestReplicaReadChecker(t *testing.T) {
 	}
 	dom.sysVarCache.Unlock()
 
-	makeFailpointRes := func(v interface{}) string {
+	makeFailpointRes := func(v any) string {
 		bytes, err := json.Marshal(v)
 		require.NoError(t, err)
 		return fmt.Sprintf("return(`%s`)", string(bytes))

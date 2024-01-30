@@ -92,7 +92,7 @@ func TestUserPrivileges(t *testing.T) {
 		Username: "constraints_tester",
 		Hostname: "127.0.0.1",
 	}, nil, nil, nil))
-	constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS WHERE TABLE_NAME != 'CLUSTER_SLOW_QUERY';").Check([][]interface{}{})
+	constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS WHERE TABLE_NAME != 'CLUSTER_SLOW_QUERY';").Check([][]any{})
 
 	// test the privilege of user with privilege of mysql.gc_delete_range for information_schema.table_constraints
 	tk.MustExec("CREATE ROLE r_gc_delete_range ;")
@@ -101,7 +101,7 @@ func TestUserPrivileges(t *testing.T) {
 	constraintsTester.MustExec("set role r_gc_delete_range")
 	rows := constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='gc_delete_range';").Rows()
 	require.Greater(t, len(rows), 0)
-	constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='tables_priv';").Check([][]interface{}{})
+	constraintsTester.MustQuery("select * from information_schema.TABLE_CONSTRAINTS where TABLE_NAME='tables_priv';").Check([][]any{})
 
 	// test the privilege of new user for information_schema
 	tk.MustExec("create user tester1")
@@ -111,7 +111,7 @@ func TestUserPrivileges(t *testing.T) {
 		Username: "tester1",
 		Hostname: "127.0.0.1",
 	}, nil, nil, nil))
-	tk1.MustQuery("select * from information_schema.STATISTICS WHERE TABLE_NAME != 'CLUSTER_SLOW_QUERY';").Check([][]interface{}{})
+	tk1.MustQuery("select * from information_schema.STATISTICS WHERE TABLE_NAME != 'CLUSTER_SLOW_QUERY';").Check([][]any{})
 
 	// test the privilege of user with some privilege for information_schema
 	tk.MustExec("create user tester2")
@@ -128,7 +128,7 @@ func TestUserPrivileges(t *testing.T) {
 	rows = tk2.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='columns_priv' and COLUMN_NAME='Host';").Rows()
 	require.Greater(t, len(rows), 0)
 	tk2.MustQuery("select * from information_schema.STATISTICS where TABLE_NAME='tables_priv' and COLUMN_NAME='Host';").Check(
-		[][]interface{}{})
+		[][]any{})
 
 	// test the privilege of user with all privilege for information_schema
 	tk.MustExec("create user tester3")
@@ -296,7 +296,7 @@ func TestForAnalyzeStatus(t *testing.T) {
 	tk.MustExec("create table analyze_test (a int, b int, index idx(a))")
 	tk.MustExec("insert into analyze_test values (1,2),(3,4)")
 
-	tk.MustQuery("select distinct TABLE_NAME from information_schema.analyze_status where TABLE_NAME='analyze_test'").Check([][]interface{}{})
+	tk.MustQuery("select distinct TABLE_NAME from information_schema.analyze_status where TABLE_NAME='analyze_test'").Check([][]any{})
 	tk.MustExec("analyze table analyze_test")
 	tk.MustQuery("select distinct TABLE_NAME from information_schema.analyze_status where TABLE_NAME='analyze_test'").Check(testkit.Rows("analyze_test"))
 
@@ -308,8 +308,8 @@ func TestForAnalyzeStatus(t *testing.T) {
 		Username: "analyze_tester",
 		Hostname: "127.0.0.1",
 	}, nil, nil, nil))
-	analyzeTester.MustQuery("show analyze status").Check([][]interface{}{})
-	analyzeTester.MustQuery("select * from information_schema.ANALYZE_STATUS;").Check([][]interface{}{})
+	analyzeTester.MustQuery("show analyze status").Check([][]any{})
+	analyzeTester.MustQuery("select * from information_schema.ANALYZE_STATUS;").Check([][]any{})
 
 	// test the privilege of user with privilege of test.t1 for information_schema.analyze_status
 	tk.MustExec("create table t1 (a int, b int, index idx(a))")

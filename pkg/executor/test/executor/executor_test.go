@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tidb/pkg/util/replayer"
@@ -584,7 +585,7 @@ func TestTiDBLastQueryInfo(t *testing.T) {
 	tk.MustExec("create table t (a int primary key, v int)")
 	tk.MustQuery("select json_extract(@@tidb_last_query_info, '$.start_ts'), json_extract(@@tidb_last_query_info, '$.start_ts')").Check(testkit.Rows("0 0"))
 
-	toUint64 := func(str interface{}) uint64 {
+	toUint64 := func(str any) uint64 {
 		res, err := strconv.ParseUint(str.(string), 10, 64)
 		require.NoError(t, err)
 		return res
@@ -1775,7 +1776,7 @@ func TestUnion2(t *testing.T) {
 	terr = errors.Cause(err).(*terror.Error)
 	require.Equal(t, errors.ErrCode(mysql.ErrWrongUsage), terr.Code())
 
-	tk.MustGetDBError("(select a from t order by a) union all select a from t limit 1 union all select a from t limit 1", plannercore.ErrWrongUsage)
+	tk.MustGetDBError("(select a from t order by a) union all select a from t limit 1 union all select a from t limit 1", plannererrors.ErrWrongUsage)
 
 	tk.MustExec("(select a from t limit 1) union all select a from t limit 1")
 	tk.MustExec("(select a from t order by a) union all select a from t order by a")

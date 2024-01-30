@@ -322,7 +322,7 @@ func TestCoprocessorPagingSize(t *testing.T) {
 	// +--------------------+----------+------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
 	// 2 rows in set (0.01 sec)
 
-	getRPCNumFromExplain := func(rows [][]interface{}) (res uint64) {
+	getRPCNumFromExplain := func(rows [][]any) (res uint64) {
 		re := regexp.MustCompile("rpc_num: ([0-9]+)")
 		for _, row := range rows {
 			buf := bytes.NewBufferString("")

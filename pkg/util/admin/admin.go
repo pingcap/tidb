@@ -44,7 +44,7 @@ type RecordData struct {
 	Values []types.Datum
 }
 
-func getCount(exec sqlexec.RestrictedSQLExecutor, snapshot uint64, sql string, args ...interface{}) (int64, error) {
+func getCount(exec sqlexec.RestrictedSQLExecutor, snapshot uint64, sql string, args ...any) (int64, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnAdmin)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(snapshot)}, sql, args...)
 	if err != nil {
@@ -70,9 +70,10 @@ const (
 // otherwise it returns an error and the corresponding index's offset.
 func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
 	// Here we need check all indexes, includes invisible index
+	originOptUseInvisibleIdx := ctx.GetSessionVars().OptimizerUseInvisibleIndexes
 	ctx.GetSessionVars().OptimizerUseInvisibleIndexes = true
 	defer func() {
-		ctx.GetSessionVars().OptimizerUseInvisibleIndexes = false
+		ctx.GetSessionVars().OptimizerUseInvisibleIndexes = originOptUseInvisibleIdx
 	}()
 
 	var snapshot uint64

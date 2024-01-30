@@ -91,7 +91,12 @@ func InitLogger(cfg *Config, _ string) error {
 	} else {
 		// Only output logs of br package and main package.
 		loggerOptions = append(loggerOptions, zap.WrapCore(func(core zapcore.Core) zapcore.Core {
-			return NewFilterCore(core, "github.com/pingcap/tidb/br/", "main.main")
+			return NewFilterCore(
+				core,
+				"github.com/pingcap/tidb/br/",
+				"main.main",
+				"github.com/tikv/pd/client/http",
+			)
 		}))
 	}
 	tidbLogCfg := logutil.LogConfig{}

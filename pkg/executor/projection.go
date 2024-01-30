@@ -461,7 +461,7 @@ func (w *projectionWorker) run(ctx context.Context) {
 	}
 }
 
-func recoveryProjection(output *projectionOutput, r interface{}) {
+func recoveryProjection(output *projectionOutput, r any) {
 	if output != nil {
 		output.done <- util.GetRecoverError(r)
 	}

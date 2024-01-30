@@ -1212,7 +1212,7 @@ func (SchemaTracker) GetLease() time.Duration {
 }
 
 // Stats implements the DDL interface, it's no-op in DM's case.
-func (SchemaTracker) Stats(_ *variable.SessionVars) (map[string]interface{}, error) {
+func (SchemaTracker) Stats(_ *variable.SessionVars) (map[string]any, error) {
 	return nil, nil
 }
 

@@ -799,7 +799,7 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 		}
 		setClause = sb.String()
 	}
-	optionMap := make(map[string]interface{}, len(plan.Options))
+	optionMap := make(map[string]any, len(plan.Options))
 	for _, opt := range plan.Options {
 		if opt.Value != nil {
 			val := opt.Value.String()
@@ -1331,6 +1331,7 @@ func (e *LoadDataController) getLocalBackendCfg(pdAddr, dataDir string) local.Ba
 		KeyspaceName:                tidb.GetGlobalKeyspaceName(),
 		PausePDSchedulerScope:       config.PausePDSchedulerScopeTable,
 		DisableAutomaticCompactions: true,
+		BlockSize:                   config.DefaultBlockSize,
 	}
 	if e.IsRaftKV2 {
 		backendConfig.RaftKV2SwitchModeDuration = config.DefaultSwitchTiKVModeInterval

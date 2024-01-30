@@ -109,12 +109,12 @@ AddLoop:
 	require.NoError(t, err)
 	require.Greater(t, count, int64(0))
 
-	tk.MustQuery("select count(c4) from t2 where c4 = -1").Check([][]interface{}{
+	tk.MustQuery("select count(c4) from t2 where c4 = -1").Check([][]any{
 		{fmt.Sprintf("%v", count-int64(step))},
 	})
 
 	for i := num; i < num+step; i++ {
-		tk.MustQuery("select c4 from t2 where c4 = ?", i).Check([][]interface{}{
+		tk.MustQuery("select c4 from t2 where c4 = ?", i).Check([][]any{
 			{fmt.Sprintf("%v", i)},
 		})
 	}
@@ -152,7 +152,7 @@ AddLoop:
 	for i := num + step; i < num+step+10; i++ {
 		tk.MustExec("insert into t2 values (?, ?, ?, ?)", i, i, i, i)
 	}
-	tk.MustQuery("select count(c4) from t2 where c4 = -1").Check([][]interface{}{
+	tk.MustQuery("select count(c4) from t2 where c4 = -1").Check([][]any{
 		{fmt.Sprintf("%v", count-int64(step))},
 	})
 

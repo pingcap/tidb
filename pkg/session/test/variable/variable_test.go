@@ -380,7 +380,7 @@ func TestLastQueryInfo(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec(`prepare stmt1 from 'select * from t'`)
 	tk.MustExec("execute stmt1")
-	checkMatch := func(actual []string, expected []interface{}) bool {
+	checkMatch := func(actual []string, expected []any) bool {
 		return strings.Contains(actual[0], expected[0].(string))
 	}
 	tk.MustQuery("select @@tidb_last_query_info;").CheckWithFunc(testkit.Rows(`"ru_consumption":15`), checkMatch)
