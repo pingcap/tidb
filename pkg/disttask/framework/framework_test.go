@@ -237,7 +237,6 @@ func TestGC(t *testing.T) {
 		}
 		return historySubTasksCnt == 0
 	}, 10*time.Second, 500*time.Millisecond)
-
 }
 
 func TestFrameworkSubtaskFinishedCancel(t *testing.T) {
