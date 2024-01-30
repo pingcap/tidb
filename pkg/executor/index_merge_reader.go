@@ -86,6 +86,7 @@ const (
 //  3. if accessed, just ignore it.
 type IndexMergeReaderExecutor struct {
 	exec.BaseExecutor
+	indexUsageReporter *exec.IndexUsageReporter
 
 	table        table.Table
 	indexes      []*model.IndexInfo
@@ -909,6 +910,17 @@ func handleWorkerPanic(ctx context.Context, finished, limitDone <-chan struct{},
 func (e *IndexMergeReaderExecutor) Close() error {
 	if e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
+	}
+	if e.indexUsageReporter != nil {
+		tableID := e.table.Meta().ID
+		for _, p := range e.partialPlans {
+			is, ok := p[0].(*plannercore.PhysicalIndexScan)
+			if !ok {
+				continue
+			}
+
+			e.indexUsageReporter.ReportCopIndexUsage(tableID, is.Index.ID, is.ID())
+		}
 	}
 	if e.finished == nil {
 		return nil

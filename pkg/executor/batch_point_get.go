@@ -38,11 +38,13 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // BatchPointGetExec executes a bunch of point select queries.
 type BatchPointGetExec struct {
 	exec.BaseExecutor
+	indexUsageReporter *exec.IndexUsageReporter
 
 	tblInfo     *model.TableInfo
 	idxInfo     *model.IndexInfo
@@ -163,6 +165,13 @@ func (e *BatchPointGetExec) Close() error {
 	}
 	if e.RuntimeStats() != nil && e.snapshot != nil {
 		e.snapshot.SetOption(kv.CollectRuntimeStats, nil)
+	}
+	if e.indexUsageReporter != nil && e.idxInfo != nil {
+		kvReqTotal := e.stats.GetCmdRPCCount(tikvrpc.CmdBatchGet)
+		// We cannot distinguish how many rows are coming from each partition. Here, we record all index usages on the
+		// table itself (but not for the partition physical table), which is different from how an index usage is
+		// treated for a local index.
+		e.indexUsageReporter.ReportPointGetIndexUsage(e.tblInfo.ID, e.idxInfo.ID, e.ID(), kvReqTotal)
 	}
 	e.inited = 0
 	e.index = 0

@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -460,6 +461,11 @@ func (*Context) ReportUsageStats() {}
 
 // Close implements the sessionctx.Context interface.
 func (*Context) Close() {}
+
+// NewStmtIndexUsageCollector implements the sessionctx.Context interface
+func (*Context) NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollector {
+	return nil
+}
 
 // NewContext creates a new mocked sessionctx.Context.
 func NewContext() *Context {
