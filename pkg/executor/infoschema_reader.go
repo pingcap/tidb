@@ -516,7 +516,7 @@ func (e *memtableRetriever) setDataFromReferConst(sctx sessionctx.Context, schem
 	return nil
 }
 
-func (e *memtableRetriever) fetchColumnsFromStatsCache(table *model.TableInfo) (uint64, uint64, uint64, uint64) {
+func fetchColumnsFromStatsCache(table *model.TableInfo) (uint64, uint64, uint64, uint64) {
 	cache := cache.TableRowStatsCache
 	var rowCount, dataLength, indexLength uint64
 	if table.GetPartitionInfo() == nil {
@@ -628,7 +628,7 @@ func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas [
 
 				var rowCount, avgRowLength, dataLength, indexLength uint64
 				if useStatsCache {
-					rowCount, avgRowLength, dataLength, indexLength = e.fetchColumnsFromStatsCache(table)
+					rowCount, avgRowLength, dataLength, indexLength = fetchColumnsFromStatsCache(table)
 				}
 
 				record := types.MakeDatums(
