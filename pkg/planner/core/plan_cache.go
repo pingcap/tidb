@@ -512,13 +512,14 @@ func rebuildRange(p Plan) error {
 		}
 		var partDef *model.PartitionDefinition
 		var isTableDual bool
+		partInfo := x.TblInfo.GetPartitionInfo()
 		if x.HandleConstant != nil {
 			dVal, err := convertConstant2Datum(sctx, x.HandleConstant, x.handleFieldType)
 			if err != nil {
 				return err
 			}
 
-			if x.PartitionDef != nil {
+			if partInfo != nil {
 				colName := getPartitionColNameSimple(sctx, x.TblInfo)
 				partDef, _, _, isTableDual = getPartitionDef(sctx, x.TblInfo, colName, []nameValuePair{{colName, x.handleFieldType, *dVal, x.HandleConstant}})
 				// TODO: Support isTableDual?
@@ -539,6 +540,7 @@ func rebuildRange(p Plan) error {
 			return nil
 		}
 		if len(x.IndexConstants) > 0 {
+			x.PartitionDef = nil
 			for i, param := range x.IndexConstants {
 				if param != nil {
 					dVal, err := convertConstant2Datum(sctx, param, x.ColsFieldType[i])
@@ -546,7 +548,7 @@ func rebuildRange(p Plan) error {
 						return err
 					}
 					x.IndexValues[i] = *dVal
-					if x.PartitionDef != nil &&
+					if partInfo != nil &&
 						x.partitionColumnPos == i {
 						// Re-calculate the pruning!
 						colName := getPartitionColNameSimple(sctx, x.TblInfo)
@@ -567,7 +569,7 @@ func rebuildRange(p Plan) error {
 			}
 			return nil
 		}
-		if x.PartitionDef != nil {
+		if partInfo != nil {
 			// TODO: difference between IndexValues and handles?
 			// Re-calculate the pruning!
 			// For now, use the fully fledged pruner!
@@ -590,10 +592,10 @@ func rebuildRange(p Plan) error {
 				}
 				return errors.New("point_get cached query matches multiple partitions")
 			}
-			if parts[0] < 0 || parts[0] >= len(x.TblInfo.GetPartitionInfo().Definitions) {
+			if parts[0] < 0 || parts[0] >= len(partInfo.Definitions) {
 				return errors.New("point_get cached query matches no partitions")
 			}
-			x.PartitionDef = &x.TblInfo.GetPartitionInfo().Definitions[parts[0]]
+			x.PartitionDef = &partInfo.Definitions[parts[0]]
 		}
 		return nil
 	case *BatchPointGetPlan:
@@ -671,7 +673,7 @@ func rebuildRange(p Plan) error {
 			}
 		}
 		// TODO: fix TableDual!
-		if len(x.PartitionDefs) > 0 {
+		if {
 			partIDs := make([]int64, 0, len(x.Handles))
 			partDefs := make([]*model.PartitionDefinition, 0, len(x.Handles))
 			if len(x.Handles) > 0 {
