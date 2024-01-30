@@ -515,12 +515,53 @@ func (e *memtableRetriever) setDataFromReferConst(sctx sessionctx.Context, schem
 	return nil
 }
 
-func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas []*model.DBInfo) error {
-	// err := cache.TableRowStatsCache.Update(sctx)
-	// if err != nil {
-	// 	return err
-	// }
+func (e *memtableRetriever) fetchColumnsFromStatsCache(table *model.TableInfo) (uint64, uint64, uint64, uint64) {
+	cache := cache.TableRowStatsCache
+	var rowCount, dataLength, indexLength uint64
+	if table.GetPartitionInfo() == nil {
+		rowCount = cache.GetTableRows(table.ID)
+		dataLength, indexLength = cache.GetDataAndIndexLength(table, table.ID, rowCount)
+	} else {
+		for _, pi := range table.GetPartitionInfo().Definitions {
+			piRowCnt := cache.GetTableRows(pi.ID)
+			rowCount += piRowCnt
+			parDataLen, parIndexLen := cache.GetDataAndIndexLength(table, pi.ID, piRowCnt)
+			dataLength += parDataLen
+			indexLength += parIndexLen
+		}
+	}
+	avgRowLength := uint64(0)
+	if rowCount != 0 {
+		avgRowLength = dataLength / rowCount
+	}
 
+	if table.IsSequence() {
+		// sequence is always 1 row regardless of stats.
+		rowCount = 1
+	}
+	return rowCount, avgRowLength, dataLength, indexLength
+}
+
+func (e *memtableRetriever) updateStatsCacheIfNeed(sctx sessionctx.Context) (bool, error) {
+	for _, col := range e.columns {
+		// only the following columns need stats cahce.
+		if col.Name.O == "AVG_ROW_LENGTH" || col.Name.O == "DATA_LENGTH" || col.Name.O == "INDEX_LENGTH" || col.Name.O == "TABLE_ROWS" {
+			err := cache.TableRowStatsCache.Update(sctx)
+			logutil.BgLogger().Info("ywq test update")
+			if err != nil {
+				return false, err
+			}
+			return true, err
+		}
+	}
+	return false, nil
+}
+
+func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas []*model.DBInfo) error {
+	useStatsCache, err := e.updateStatsCacheIfNeed(sctx)
+	if err != nil {
+		return err
+	}
 	checker := privilege.GetPrivilegeManager(sctx)
 
 	var rows [][]types.Datum
@@ -560,6 +601,7 @@ func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas [
 					createOptions = "cached=on"
 				}
 				var autoIncID interface{}
+				var err error
 				hasAutoIncID, _ := infoschema.HasAutoIncrementColumn(table)
 				if hasAutoIncID {
 					autoIncID, err = getAutoIncrementID(sctx, schema, table)
@@ -567,33 +609,12 @@ func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas [
 						return err
 					}
 				}
-
-				cache := cache.TableRowStatsCache
-				var rowCount, dataLength, indexLength uint64
-				if table.GetPartitionInfo() == nil {
-					rowCount = cache.GetTableRows(table.ID)
-					dataLength, indexLength = cache.GetDataAndIndexLength(table, table.ID, rowCount)
-				} else {
-					for _, pi := range table.GetPartitionInfo().Definitions {
-						piRowCnt := cache.GetTableRows(pi.ID)
-						rowCount += piRowCnt
-						parDataLen, parIndexLen := cache.GetDataAndIndexLength(table, pi.ID, piRowCnt)
-						dataLength += parDataLen
-						indexLength += parIndexLen
-					}
-				}
-				avgRowLength := uint64(0)
-				if rowCount != 0 {
-					avgRowLength = dataLength / rowCount
-				}
 				tableType := "BASE TABLE"
 				if util.IsSystemView(schema.Name.L) {
 					tableType = "SYSTEM VIEW"
 				}
 				if table.IsSequence() {
 					tableType = "SEQUENCE"
-					// sequence is always 1 row regardless of stats.
-					rowCount = 1
 				}
 				if table.HasClusteredIndex() {
 					pkType = "CLUSTERED"
@@ -603,6 +624,12 @@ func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas [
 				if table.PlacementPolicyRef != nil {
 					policyName = table.PlacementPolicyRef.Name.O
 				}
+
+				var rowCount, avgRowLength, dataLength, indexLength uint64
+				if useStatsCache {
+					rowCount, avgRowLength, dataLength, indexLength = e.fetchColumnsFromStatsCache(table)
+				}
+
 				record := types.MakeDatums(
 					infoschema.CatalogVal, // TABLE_CATALOG
 					schema.Name.O,         // TABLE_SCHEMA
