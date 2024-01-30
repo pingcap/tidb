@@ -47,6 +47,7 @@ or
 ```sh
 make integrationtest
 ```
+
 It will identify execute plan change.
 
 ### Generate New Result from Execute
@@ -69,7 +70,7 @@ cd tests/integrationtest
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Launch Package",
+            "name": "Debug TiDB With Default Config",
             "type": "go",
             "request": "launch",
             "mode": "auto",
@@ -86,4 +87,4 @@ cd tests/integrationtest
 
 ### Goland
 
-You could follow https://pingcap.github.io/tidb-dev-guide/get-started/setup-an-ide.html#run-or-debug to run a `TiDB-Server` with or without `TiKV`. Then use any mysql client application you like to run SQLs.
+You could follow <https://pingcap.github.io/tidb-dev-guide/get-started/setup-an-ide.html#run-or-debug> to run a `TiDB-Server` with or without `TiKV`. Then use any mysql client application you like to run SQLs.
