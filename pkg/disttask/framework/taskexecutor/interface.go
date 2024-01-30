@@ -66,12 +66,37 @@ type Pool interface {
 	ReleaseAndWait()
 }
 
-// TaskExecutor is the subtask executor for a task.
+// TaskExecutor is the executor for a task.
 // Each task type should implement this interface.
+// context tree of task execution:
+//
+//	Manager.ctx
+//	└── TaskExecutor.ctx: Cancel cancels this one
+//	   └── RunStep.ctx: CancelRunningSubtask cancels this one
 type TaskExecutor interface {
+	// Init initializes the TaskExecutor, the returned error is fatal, it will fail
+	// the task directly, so be careful what to put into it.
+	// The context passing in is Manager.ctx, don't use it to init long-running routines,
+	// as it will NOT be cancelled when the task is finished.
 	Init(context.Context) error
-	RunStep(context.Context, *proto.Task, *proto.StepResource) error
-	Rollback(context.Context, *proto.Task) error
+	// Run runs the task with given resource, it will try to run each step one by
+	// one, if it cannot find any subtask to run for a while(10s now), it will exit,
+	// so manager can free and reuse the resource.
+	// we assume that all steps will have same resource usage now, will change it
+	// when we support different resource usage for different steps.
+	Run(resource *proto.StepResource)
+	// GetTask returns the task, returned value is for read only, don't change it.
+	GetTask() *proto.Task
+	// CancelRunningSubtask cancels the running subtask and change its state to `cancelled`,
+	// the task executor will keep running, so we can have a context to update the
+	// subtask state or keep handling revert logic.
+	CancelRunningSubtask()
+	// Cancel cancels the task executor, the state of running subtask is not changed.
+	// it's separated with Close as Close mostly mean will wait all resource released
+	// before return, but we only want its context cancelled and check whether it's
+	// closed later.
+	Cancel()
+	// Close closes the TaskExecutor.
 	Close()
 	IsRetryableError(err error) bool
 }
@@ -88,7 +113,7 @@ type Extension interface {
 	// Note:
 	// 1. summary is the summary manager of all subtask of the same type now.
 	// 2. should not retry the error from it.
-	GetStepExecutor(ctx context.Context, task *proto.Task, summary *execute.Summary, resource *proto.StepResource) (execute.StepExecutor, error)
+	GetStepExecutor(task *proto.Task, summary *execute.Summary, resource *proto.StepResource) (execute.StepExecutor, error)
 	// IsRetryableError returns whether the error is transient.
 	// When error is transient, the framework won't mark subtasks as failed,
 	// then the TaskExecutor can load the subtask again and redo it.
