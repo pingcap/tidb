@@ -155,7 +155,7 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 	executorWithOneMoreSubtask := make(map[string]struct{}, remainder)
 	for node, sts := range executorSubtasks {
 		if _, ok := adjustedNodeMap[node]; !ok {
-			logutil.BgLogger().Info("dead node or not have enough slots, schedule subtasks away",
+			b.logger.Info("dead node or not have enough slots, schedule subtasks away",
 				zap.Int64("task-id", taskID),
 				zap.String("node", node),
 				zap.Int("slot-capacity", b.slotMgr.getCapacity()),
