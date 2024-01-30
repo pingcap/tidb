@@ -548,7 +548,6 @@ func (e *memtableRetriever) updateStatsCacheIfNeed(sctx sessionctx.Context) (boo
 		// only the following columns need stats cahce.
 		if col.Name.O == "AVG_ROW_LENGTH" || col.Name.O == "DATA_LENGTH" || col.Name.O == "INDEX_LENGTH" || col.Name.O == "TABLE_ROWS" {
 			err := cache.TableRowStatsCache.Update(sctx)
-			logutil.BgLogger().Info("ywq test update")
 			if err != nil {
 				return false, err
 			}

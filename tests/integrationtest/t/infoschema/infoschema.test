@@ -33,7 +33,19 @@ desc format='brief' SELECT count(*) FROM information_schema.TABLES WHERE TABLE_S
 SELECT count(*) FROM information_schema.TABLES WHERE TABLE_NAME in ('t1', 't2') and TABLE_SCHEMA = 'mysql';
 SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_NAME = 't1' or TABLE_NAME = 't2') and TABLE_SCHEMA = 'mysql';
 drop table mysql.t1, mysql.t2, mysql.t3;
+
+# TestTablesColumn
 create table test.t4(a int, INDEX i1 (a));
 create table test.t5(a int, INDEX i1 (a));
+insert into test.t4 values(1);
+insert into test.t5 values(1);
 SELECT count(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = 't4';
 SELECT count(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME != 't4';
+analyze table test.t4;
+analyze table test.t5;
+select table_type from information_schema.tables where table_name='t4' or table_name = 't5';
+select table_type, table_rows from information_schema.tables where table_name ='t4' or table_name = 't5';
+select table_type, DATA_LENGTH from information_schema.tables where table_name ='t4' or table_name = 't5';
+select engine, DATA_LENGTH from information_schema.tables where table_name ='t4' or table_name = 't5';
+select TIDB_TABLE_ID, DATA_LENGTH from information_schema.tables where table_name ='t4' or table_name = 't5';
+
