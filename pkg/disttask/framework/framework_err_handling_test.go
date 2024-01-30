@@ -23,19 +23,15 @@ import (
 )
 
 func TestRetryErrOnNextSubtasksBatch(t *testing.T) {
-	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
-	defer ctrl.Finish()
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetPlanErrSchedulerExt(ctrl, testContext), testContext, nil)
-	submitTaskAndCheckSuccessForBasic(ctx, t, "key1", testContext)
-	distContext.Close()
+	c := testutil.NewTestDXFContext(t, 2)
+	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetPlanErrSchedulerExt(c.MockCtrl, c.TestContext), c.TestContext, nil)
+	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "key1", c.TestContext)
 }
 
 func TestPlanNotRetryableOnNextSubtasksBatchErr(t *testing.T) {
-	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 2)
-	defer ctrl.Finish()
+	c := testutil.NewTestDXFContext(t, 2)
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetPlanNotRetryableErrSchedulerExt(ctrl), testContext, nil)
-	task := testutil.SubmitAndWaitTask(ctx, t, "key1")
+	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetPlanNotRetryableErrSchedulerExt(c.MockCtrl), c.TestContext, nil)
+	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1")
 	require.Equal(t, proto.TaskStateFailed, task.State)
-	distContext.Close()
 }

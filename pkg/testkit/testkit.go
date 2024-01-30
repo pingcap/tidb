@@ -103,7 +103,7 @@ func NewTestKitWithSession(t testing.TB, store kv.Storage, se sessiontypes.Sessi
 
 // RefreshSession set a new session for the testkit
 func (tk *TestKit) RefreshSession() {
-	tk.session = newSession(tk.t, tk.store)
+	tk.session = NewSession(tk.t, tk.store)
 	// enforce sysvar cache loading, ref loadCommonGlobalVariableIfNeeded
 	tk.MustExec("select 3")
 }
@@ -423,7 +423,8 @@ func (tk *TestKit) MustExecToErr(sql string, args ...any) {
 	tk.require.Error(err)
 }
 
-func newSession(t testing.TB, store kv.Storage) sessiontypes.Session {
+// NewSession creates a new session environment for test.
+func NewSession(t testing.TB, store kv.Storage) sessiontypes.Session {
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)
 	se.SetConnectionID(testKitIDGenerator.Inc())

@@ -41,7 +41,7 @@ func (s *BaseScheduler) Switch2NextStep() (err error) {
 }
 
 func NewNodeManager() *NodeManager {
-	return newNodeManager()
+	return newNodeManager("")
 }
 
 func TestMain(m *testing.M) {
