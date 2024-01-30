@@ -67,35 +67,35 @@ SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_NAME = 't1' or TABLE
 count(*)
 2
 drop table mysql.t1, mysql.t2, mysql.t3;
-create table test.t4(a int, INDEX i1 (a));
-create table test.t5(a int, INDEX i1 (a));
-insert into test.t4 values(1);
-insert into test.t5 values(1);
-SELECT count(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME = 't4';
+create table infoschema__infoschema.t4(a int, INDEX i1 (a));
+create table infoschema__infoschema.t5(a int, INDEX i1 (a));
+insert into infoschema__infoschema.t4 values(1);
+insert into infoschema__infoschema.t5 values(1);
+SELECT count(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'infoschema__infoschema' AND TABLE_NAME = 't4';
 count(*)
 1
-SELECT count(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'test' AND TABLE_NAME != 't4';
+SELECT count(*) FROM information_schema.STATISTICS WHERE TABLE_SCHEMA = 'infoschema__infoschema' AND TABLE_NAME != 't4';
 count(*)
-3
-analyze table test.t4;
-analyze table test.t5;
-select table_type from information_schema.tables where table_name='t4' or table_name = 't5';
+1
+analyze table infoschema__infoschema.t4;
+analyze table infoschema__infoschema.t5;
+select table_type from information_schema.tables where table_name='t4' or table_name = 't5' and table_schema = 'infoschema__infoschema';
 table_type
 BASE TABLE
 BASE TABLE
-select table_type, table_rows from information_schema.tables where table_name ='t4' or table_name = 't5';
+select table_type, table_rows from information_schema.tables where table_name ='t4' or table_name = 't5' and table_schema = 'infoschema__infoschema';
 table_type	table_rows
 BASE TABLE	1
 BASE TABLE	1
-select table_type, DATA_LENGTH from information_schema.tables where table_name ='t4' or table_name = 't5';
+select table_type, DATA_LENGTH from information_schema.tables where table_name ='t4' or table_name = 't5' and table_schema = 'infoschema__infoschema';
 table_type	DATA_LENGTH
 BASE TABLE	8
 BASE TABLE	8
-select engine, DATA_LENGTH from information_schema.tables where table_name ='t4' or table_name = 't5';
+select engine, DATA_LENGTH from information_schema.tables where table_name ='t4' or table_name = 't5' and table_schema = 'infoschema__infoschema';
 engine	DATA_LENGTH
 InnoDB	8
 InnoDB	8
-select TIDB_TABLE_ID, DATA_LENGTH from information_schema.tables where table_name ='t4' or table_name = 't5';
+select TIDB_TABLE_ID, DATA_LENGTH from information_schema.tables where table_name ='t4' or table_name = 't5' and table_schema = 'infoschema__infoschema';
 TIDB_TABLE_ID	DATA_LENGTH
 119	8
 121	8
