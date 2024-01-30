@@ -289,7 +289,7 @@ func TestCheckpointMarshallUnmarshall(t *testing.T) {
 	ctx := context.Background()
 	fileChkp, err := NewFileCheckpointsDB(ctx, path)
 	require.NoError(t, err)
-	fileChkp.checkpoints.Checkpoints["a"] = &checkpointspb.TableCheckpointModel{
+	fileChkp.Checkpoints.Checkpoints["a"] = &checkpointspb.TableCheckpointModel{
 		Status:  uint32(CheckpointStatusLoaded),
 		Engines: map[int32]*checkpointspb.EngineCheckpointModel{},
 	}
@@ -299,7 +299,7 @@ func TestCheckpointMarshallUnmarshall(t *testing.T) {
 	fileChkp2, err := NewFileCheckpointsDB(ctx, path)
 	require.NoError(t, err)
 	// if not recover empty map explicitly, it will become nil
-	require.NotNil(t, fileChkp2.checkpoints.Checkpoints["a"].Engines)
+	require.NotNil(t, fileChkp2.Checkpoints.Checkpoints["a"].Engines)
 }
 
 func TestSeparateCompletePath(t *testing.T) {

@@ -1077,7 +1077,7 @@ func (cpdb *MySQLCheckpointsDB) Update(taskCtx context.Context, checkpointDiffs 
 // FileCheckpointsDB is a file based checkpoints DB
 type FileCheckpointsDB struct {
 	lock        sync.Mutex // we need to ensure only a thread can access to `checkpoints` at a time
-	checkpoints checkpointspb.CheckpointsModel
+	Checkpoints checkpointspb.CheckpointsModel
 	ctx         context.Context
 	path        string
 	fileName    string
@@ -1091,7 +1091,7 @@ func newFileCheckpointsDB(
 	fileName string,
 ) (*FileCheckpointsDB, error) {
 	cpdb := &FileCheckpointsDB{
-		checkpoints: checkpointspb.CheckpointsModel{
+		Checkpoints: checkpointspb.CheckpointsModel{
 			TaskCheckpoint: &checkpointspb.TaskCheckpointModel{},
 			Checkpoints:    map[string]*checkpointspb.TableCheckpointModel{},
 		},
@@ -1120,16 +1120,16 @@ func newFileCheckpointsDB(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	err = cpdb.checkpoints.Unmarshal(content)
+	err = cpdb.Checkpoints.Unmarshal(content)
 	if err != nil {
 		log.FromContext(ctx).Error("checkpoint file is broken", zap.String("path", path), zap.Error(err))
 	}
 	// FIXME: patch for empty map may need initialize manually, because currently
 	// FIXME: a map of zero size -> marshall -> unmarshall -> become nil, see checkpoint_test.go
-	if cpdb.checkpoints.Checkpoints == nil {
-		cpdb.checkpoints.Checkpoints = map[string]*checkpointspb.TableCheckpointModel{}
+	if cpdb.Checkpoints.Checkpoints == nil {
+		cpdb.Checkpoints.Checkpoints = map[string]*checkpointspb.TableCheckpointModel{}
 	}
-	for _, table := range cpdb.checkpoints.Checkpoints {
+	for _, table := range cpdb.Checkpoints.Checkpoints {
 		if table.Engines == nil {
 			table.Engines = map[int32]*checkpointspb.EngineCheckpointModel{}
 		}
@@ -1211,7 +1211,7 @@ func separateCompletePath(completePath string) (fileName string, newPath string,
 }
 
 func (cpdb *FileCheckpointsDB) save() error {
-	serialized, err := cpdb.checkpoints.Marshal()
+	serialized, err := cpdb.Checkpoints.Marshal()
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1223,7 +1223,7 @@ func (cpdb *FileCheckpointsDB) Initialize(_ context.Context, cfg *config.Config,
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 
-	cpdb.checkpoints.TaskCheckpoint = &checkpointspb.TaskCheckpointModel{
+	cpdb.Checkpoints.TaskCheckpoint = &checkpointspb.TaskCheckpointModel{
 		TaskId:       cfg.TaskID,
 		SourceDir:    cfg.Mydumper.SourceDir,
 		Backend:      cfg.TikvImporter.Backend,
@@ -1235,19 +1235,19 @@ func (cpdb *FileCheckpointsDB) Initialize(_ context.Context, cfg *config.Config,
 		LightningVer: build.ReleaseVersion,
 	}
 
-	if cpdb.checkpoints.Checkpoints == nil {
-		cpdb.checkpoints.Checkpoints = make(map[string]*checkpointspb.TableCheckpointModel)
+	if cpdb.Checkpoints.Checkpoints == nil {
+		cpdb.Checkpoints.Checkpoints = make(map[string]*checkpointspb.TableCheckpointModel)
 	}
 
 	for _, db := range dbInfo {
 		for _, table := range db.Tables {
 			tableName := common.UniqueTable(db.Name, table.Name)
-			if _, ok := cpdb.checkpoints.Checkpoints[tableName]; !ok {
+			if _, ok := cpdb.Checkpoints.Checkpoints[tableName]; !ok {
 				tableInfo, err := json.Marshal(table.Desired)
 				if err != nil {
 					return errors.Trace(err)
 				}
-				cpdb.checkpoints.Checkpoints[tableName] = &checkpointspb.TableCheckpointModel{
+				cpdb.Checkpoints.Checkpoints[tableName] = &checkpointspb.TableCheckpointModel{
 					Status:    uint32(CheckpointStatusLoaded),
 					Engines:   map[int32]*checkpointspb.EngineCheckpointModel{},
 					TableID:   table.ID,
@@ -1264,7 +1264,7 @@ func (cpdb *FileCheckpointsDB) Initialize(_ context.Context, cfg *config.Config,
 // TaskCheckpoint implements CheckpointsDB.TaskCheckpoint.
 func (cpdb *FileCheckpointsDB) TaskCheckpoint(_ context.Context) (*TaskCheckpoint, error) {
 	// this method is always called in lock
-	cp := cpdb.checkpoints.TaskCheckpoint
+	cp := cpdb.Checkpoints.TaskCheckpoint
 	if cp == nil || cp.TaskId == 0 {
 		return nil, nil
 	}
@@ -1295,7 +1295,7 @@ func (cpdb *FileCheckpointsDB) Get(_ context.Context, tableName string) (*TableC
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 
-	tableModel, ok := cpdb.checkpoints.Checkpoints[tableName]
+	tableModel, ok := cpdb.Checkpoints.Checkpoints[tableName]
 	if !ok {
 		return nil, errors.NotFoundf("checkpoint for table %s", tableName)
 	}
@@ -1364,7 +1364,7 @@ func (cpdb *FileCheckpointsDB) InsertEngineCheckpoints(_ context.Context, tableN
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 
-	tableModel := cpdb.checkpoints.Checkpoints[tableName]
+	tableModel := cpdb.Checkpoints.Checkpoints[tableName]
 	for engineID, engine := range checkpoints {
 		engineModel := &checkpointspb.EngineCheckpointModel{
 			Status: uint32(CheckpointStatusLoaded),
@@ -1405,7 +1405,7 @@ func (cpdb *FileCheckpointsDB) Update(_ context.Context, checkpointDiffs map[str
 	defer cpdb.lock.Unlock()
 
 	for tableName, cpd := range checkpointDiffs {
-		tableModel := cpdb.checkpoints.Checkpoints[tableName]
+		tableModel := cpdb.Checkpoints.Checkpoints[tableName]
 		if cpd.hasStatus {
 			tableModel.Status = uint32(cpd.status)
 		}
@@ -1801,11 +1801,11 @@ func (cpdb *FileCheckpointsDB) RemoveCheckpoint(_ context.Context, tableName str
 	defer cpdb.lock.Unlock()
 
 	if tableName == allTables {
-		cpdb.checkpoints.Reset()
+		cpdb.Checkpoints.Reset()
 		return errors.Trace(cpdb.exStorage.DeleteFile(cpdb.ctx, cpdb.fileName))
 	}
 
-	delete(cpdb.checkpoints.Checkpoints, tableName)
+	delete(cpdb.Checkpoints.Checkpoints, tableName)
 	return errors.Trace(cpdb.save())
 }
 
@@ -1825,7 +1825,7 @@ func (cpdb *FileCheckpointsDB) GetLocalStoringTables(_ context.Context) (map[str
 
 	targetTables := make(map[string][]int32)
 
-	for tableName, tableModel := range cpdb.checkpoints.Checkpoints {
+	for tableName, tableModel := range cpdb.Checkpoints.Checkpoints {
 		if tableModel.Status <= uint32(CheckpointStatusMaxInvalid) ||
 			tableModel.Status >= uint32(CheckpointStatusIndexImported) {
 			continue
@@ -1853,7 +1853,7 @@ func (cpdb *FileCheckpointsDB) IgnoreErrorCheckpoint(_ context.Context, targetTa
 	cpdb.lock.Lock()
 	defer cpdb.lock.Unlock()
 
-	for tableName, tableModel := range cpdb.checkpoints.Checkpoints {
+	for tableName, tableModel := range cpdb.Checkpoints.Checkpoints {
 		if !(targetTableName == allTables || targetTableName == tableName) {
 			continue
 		}
@@ -1876,7 +1876,7 @@ func (cpdb *FileCheckpointsDB) DestroyErrorCheckpoint(_ context.Context, targetT
 
 	var targetTables []DestroyedTableCheckpoint
 
-	for tableName, tableModel := range cpdb.checkpoints.Checkpoints {
+	for tableName, tableModel := range cpdb.Checkpoints.Checkpoints {
 		// Obtain the list of tables
 		if !(targetTableName == allTables || targetTableName == tableName) {
 			continue
@@ -1902,7 +1902,7 @@ func (cpdb *FileCheckpointsDB) DestroyErrorCheckpoint(_ context.Context, targetT
 
 	// Delete the checkpoints
 	for _, dtcp := range targetTables {
-		delete(cpdb.checkpoints.Checkpoints, dtcp.TableName)
+		delete(cpdb.Checkpoints.Checkpoints, dtcp.TableName)
 	}
 	if err := cpdb.save(); err != nil {
 		return nil, errors.Trace(err)
