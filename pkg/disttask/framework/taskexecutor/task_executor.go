@@ -211,7 +211,6 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 		case proto.TaskStateRunning:
 			err = e.RunStep(resource)
 		case proto.TaskStateReverting:
-			// use m.ctx since this process should not be canceled.
 			// TODO: will remove it later, leave it now.
 			err = e.Rollback()
 		}
