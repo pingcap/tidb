@@ -53,11 +53,13 @@ It will identify execute plan change.
 
 First, add new test query in `t/` folder.
 
+Then run shell below. It will generate result base on last execution, and then we can reuse them or open editor to make some modifications.
+
 ```sh
 cd tests/integrationtest
 ./run-tests.sh -r [casename]
 ```
-It will generate result base on last execution, and then we can reuse them or open editor to do some modify.
+
 
 ## How to debug integration test
 
@@ -81,7 +83,7 @@ It will generate result base on last execution, and then we can reuse them or op
 }
 ```
 
-If you want to change some configurations, such as using `TiKV`` to run integration tests or others, you can modify `pkg/config/config.toml.example`.
+If you want to change some configurations, such as using `TiKV` to run integration tests or others, you can modify `pkg/config/config.toml.example`.
 
 2. To run `TiDB-Server`, you could bring up *Run and Debug* view, select the *Run and Debug* icon in the *Activity Bar* on the side of VS Code. You can also use shortcut *F5*.
 
