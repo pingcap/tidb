@@ -239,8 +239,6 @@ func TestSchedulerCleanupTask(t *testing.T) {
 		proto.TaskStateSucceed).Return(tasks, nil)
 
 	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(nil)
-	// taskMgr.EXPECT().GetAllNodes(mgr.ctx).Return([]proto.ManagedNode{}, nil)
-	// taskMgr.EXPECT().GetAllSubtasks(mgr.ctx).Return([]*proto.Subtask{}, nil)
 	mgr.doCleanupTask()
 	require.True(t, ctrl.Satisfied())
 
@@ -253,8 +251,6 @@ func TestSchedulerCleanupTask(t *testing.T) {
 		proto.TaskStateReverted,
 		proto.TaskStateSucceed).Return(tasks, nil)
 	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(mockErr)
-	// taskMgr.EXPECT().GetAllNodes(mgr.ctx).Return([]proto.ManagedNode{}, nil)
-	// taskMgr.EXPECT().GetAllSubtasks(mgr.ctx).Return([]*proto.Subtask{}, nil)
 	mgr.doCleanupTask()
 	require.True(t, ctrl.Satisfied())
 
@@ -264,8 +260,6 @@ func TestSchedulerCleanupTask(t *testing.T) {
 		proto.TaskStateReverted,
 		proto.TaskStateSucceed).Return(tasks, nil)
 	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(nil)
-	// taskMgr.EXPECT().GetAllNodes(mgr.ctx).Return([]proto.ManagedNode{}, nil)
-	// taskMgr.EXPECT().GetAllSubtasks(mgr.ctx).Return([]*proto.Subtask{}, nil)
 	mgr.doCleanupTask()
 	require.True(t, ctrl.Satisfied())
 

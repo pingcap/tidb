@@ -15,29 +15,23 @@
 package scheduler
 
 import (
-	"context"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
-	"go.uber.org/zap"
 )
 
 type collector struct {
-	ctx context.Context
-	Param
+	subtaskInfo atomic.Pointer[[]*proto.Subtask]
 
 	subtasks        *prometheus.Desc
 	subtaskDuration *prometheus.Desc
 }
 
-func newCollector(ctx context.Context, param Param) *collector {
+func newCollector() *collector {
 	return &collector{
-		ctx:   ctx,
-		Param: param,
-
 		subtasks: prometheus.NewDesc(
 			"tidb_disttask_subtasks",
 			"Number of subtasks.",
@@ -59,33 +53,22 @@ func (c *collector) Describe(ch chan<- *prometheus.Desc) {
 
 // Collect implements the prometheus.Collector interface.
 func (c *collector) Collect(ch chan<- prometheus.Metric) {
-	subtasks, err := c.taskMgr.GetAllSubtasks(c.ctx)
-	if err != nil {
-		logutil.BgLogger().Warn("get all subtasks failed", zap.Error(err))
-		return
-	}
-	allNodes, err := c.taskMgr.GetAllNodes(c.ctx)
-	if err != nil {
-		logutil.BgLogger().Warn("get all nodes failed", zap.Error(err))
-		return
-	}
+	subtasks := *c.subtaskInfo.Load()
+
 	// taskID => execID => state => cnt
 	subtaskCnt := make(map[int64]map[string]map[proto.SubtaskState]int)
 	taskType := make(map[int64]proto.TaskType)
 	for _, subtask := range subtasks {
 		if _, ok := subtaskCnt[subtask.TaskID]; !ok {
-			subtaskCnt[subtask.TaskID] = make(map[string]map[proto.SubtaskState]int, len(allNodes))
-			for _, node := range allNodes {
-				subtaskCnt[subtask.TaskID][node.ID] = make(map[proto.SubtaskState]int, len(proto.AllSubtaskStates))
-				for _, state := range proto.AllSubtaskStates {
-					subtaskCnt[subtask.TaskID][node.ID][state] = 0
-				}
-			}
+			subtaskCnt[subtask.TaskID] = make(map[string]map[proto.SubtaskState]int)
 		}
 		if _, ok := subtaskCnt[subtask.TaskID][subtask.ExecID]; !ok {
-			logutil.BgLogger().Warn("the execID of subtask is not found in meta", zap.Stringer("subtask", subtask))
-			return
+			subtaskCnt[subtask.TaskID][subtask.ExecID] = make(map[proto.SubtaskState]int)
 		}
+		if _, ok := subtaskCnt[subtask.TaskID][subtask.ExecID][subtask.State]; !ok {
+			subtaskCnt[subtask.TaskID][subtask.ExecID][subtask.State] = 0
+		}
+
 		subtaskCnt[subtask.TaskID][subtask.ExecID][subtask.State]++
 		taskType[subtask.TaskID] = subtask.Type
 

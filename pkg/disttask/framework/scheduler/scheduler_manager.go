@@ -139,11 +139,7 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) *Mana
 		nodeMgr: schedulerManager.nodeMgr,
 		slotMgr: schedulerManager.slotMgr,
 	})
-	schedulerManager.collector = newCollector(schedulerManager.ctx, Param{
-		taskMgr: taskMgr,
-		nodeMgr: schedulerManager.nodeMgr,
-		slotMgr: schedulerManager.slotMgr,
-	})
+	schedulerManager.collector = newCollector()
 
 	if !intest.InTest {
 		prometheus.MustRegister(schedulerManager.collector)
@@ -163,7 +159,7 @@ func (sm *Manager) Start() {
 	sm.wg.Run(sm.scheduleTaskLoop)
 	sm.wg.Run(sm.gcSubtaskHistoryTableLoop)
 	sm.wg.Run(sm.cleanupTaskLoop)
-	// sm.wg.Run(sm.collectMetricsLoop)
+	sm.wg.Run(sm.collectLoop)
 	sm.wg.Run(func() {
 		sm.nodeMgr.maintainLiveNodesLoop(sm.ctx, sm.taskMgr)
 	})
@@ -418,4 +414,29 @@ func (sm *Manager) MockScheduler(task *proto.Task) *BaseScheduler {
 		nodeMgr: sm.nodeMgr,
 		slotMgr: sm.slotMgr,
 	})
+}
+
+func (sm *Manager) collectLoop() {
+	logutil.Logger(sm.ctx).Info("collect loop start")
+	ticker := time.NewTicker(defaultCollectMetricsInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-sm.ctx.Done():
+			logutil.BgLogger().Info("collect loop exits")
+			return
+		case <-ticker.C:
+			sm.collect()
+		}
+	}
+}
+
+func (sm *Manager) collect() {
+	subtasks, err := sm.taskMgr.GetAllSubtasks(sm.ctx)
+	if err != nil {
+		logutil.BgLogger().Warn("get all subtasks failed", zap.Error(err))
+		return
+	}
+
+	sm.collector.subtaskInfo.Store(&subtasks)
 }
