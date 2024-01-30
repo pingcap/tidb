@@ -107,7 +107,7 @@ func (nm *NodeManager) maintainLiveNodes(ctx context.Context, taskMgr TaskManage
 		return
 	}
 	nm.logger.Info("delete dead nodes from dist_framework_meta",
-		zap.Int("dead-nodes", len(deadNodes)))
+		zap.Strings("dead-nodes", deadNodes))
 	err = taskMgr.DeleteDeadNodes(ctx, deadNodes)
 	if err != nil {
 		nm.logger.Warn("delete dead nodes from dist_framework_meta failed", llog.ShortError(err))
