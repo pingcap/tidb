@@ -90,10 +90,10 @@ func TestConcurrent(t *testing.T) {
 	// Rebase to some value
 	rebaseRequest(t, cli, to, true, 666).check("")
 	checkCurrValue(t, cli, to, 666, 666)
-	// And +1 concurrently for 20 times
+	// And +1 concurrently for 30 times
 	close(notify)
 	wg.Wait()
-	// Check the result is increased by 20
+	// Check the result is increased by 30
 	checkCurrValue(t, cli, to, 666+concurrency, 666+concurrency)
 }
 
