@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
@@ -84,14 +84,17 @@ type BaseTaskExecutor struct {
 
 // NewBaseTaskExecutor creates a new BaseTaskExecutor.
 func NewBaseTaskExecutor(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) *BaseTaskExecutor {
+	logger := log.L().With(zap.Int64("task-id", task.ID), zap.String("task-type", string(task.Type)))
+	if intest.InTest {
+		logger = logger.With(zap.String("server-id", id))
+	}
 	subCtx, cancelFunc := context.WithCancel(ctx)
 	taskExecutorImpl := &BaseTaskExecutor{
 		id:        id,
 		taskTable: taskTable,
 		ctx:       subCtx,
 		cancel:    cancelFunc,
-		logger: log.L().With(zap.Int64("task-id", task.ID),
-			zap.String("task-type", string(task.Type))),
+		logger:    logger,
 	}
 	taskExecutorImpl.task.Store(task)
 	return taskExecutorImpl
@@ -453,11 +456,11 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 		if taskID, ok := val.(int); ok {
 			mgr, err := storage.GetTaskManager()
 			if err != nil {
-				logutil.BgLogger().Error("get task manager failed", zap.Error(err))
+				e.logger.Error("get task manager failed", zap.Error(err))
 			} else {
 				err = mgr.CancelTask(ctx, int64(taskID))
 				if err != nil {
-					logutil.BgLogger().Error("cancel task failed", zap.Error(err))
+					e.logger.Error("cancel task failed", zap.Error(err))
 				}
 			}
 		}

@@ -22,13 +22,14 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/metrics"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/cpu"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
@@ -70,6 +71,10 @@ type Manager struct {
 
 // NewManager creates a new task executor Manager.
 func NewManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, error) {
+	logger := log.L()
+	if intest.InTest {
+		logger = logger.With(zap.String("server-id", id))
+	}
 	totalMem, err := memory.MemTotal()
 	if err != nil {
 		// should not happen normally, as in main function of tidb-server, we assert
@@ -80,12 +85,12 @@ func NewManager(ctx context.Context, id string, taskTable TaskTable) (*Manager, 
 	if totalCPU <= 0 || totalMem <= 0 {
 		return nil, errors.Errorf("invalid cpu or memory, cpu: %d, memory: %d", totalCPU, totalMem)
 	}
-	logutil.BgLogger().Info("build manager", zap.Int("total-cpu", totalCPU),
+	logger.Info("build task executor manager", zap.Int("total-cpu", totalCPU),
 		zap.String("total-mem", units.BytesSize(float64(totalMem))))
 	m := &Manager{
 		id:        id,
 		taskTable: taskTable,
-		logger:    logutil.BgLogger(),
+		logger:    logger,
 		slotManager: &slotManager{
 			taskID2Index:  make(map[int64]int),
 			executorTasks: make([]*proto.Task, 0),
@@ -145,7 +150,7 @@ func (m *Manager) recoverMeta() (err error) {
 
 // Start starts the Manager.
 func (m *Manager) Start() error {
-	m.logger.Debug("manager start")
+	m.logger.Info("task executor manager start")
 	m.wg.Run(m.handleTasksLoop)
 	m.wg.Run(m.recoverMetaLoop)
 	return nil
