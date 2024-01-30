@@ -127,11 +127,11 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) *Mana
 	if intest.InTest {
 		logger = log.L().With(zap.String("server-id", serverID))
 	}
-	ctx, cancel := context.WithCancel(ctx)
+	subCtx, cancel := context.WithCancel(ctx)
 	slotMgr := newSlotManager()
 	nodeMgr := newNodeManager(serverID)
 	schedulerManager := &Manager{
-		ctx:      ctx,
+		ctx:      subCtx,
 		cancel:   cancel,
 		taskMgr:  taskMgr,
 		serverID: serverID,

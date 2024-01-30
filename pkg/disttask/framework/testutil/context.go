@@ -192,7 +192,7 @@ func (c *TestDXFContext) updateLiveExecIDs(newID string) {
 	scheduler.MockServerInfo.Store(&execIDs)
 }
 
-// ScaleIn scales in a tidb node, elect new owner if required.
+// ScaleIn scales in some last added tidb nodes, elect new owner if required.
 func (c *TestDXFContext) ScaleIn(nodeNum int) {
 	for i := 0; i < nodeNum; i++ {
 		c.mu.Lock()
