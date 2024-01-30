@@ -1356,11 +1356,11 @@ func (c *Conflict) adjust(i *TikvImporter, l *Lightning) error {
 				`%s cannot be used with tikv-importer.parallel-import and tikv-importer.backend = "local"`,
 				strategyConfigFrom)
 		}
-		if i.DuplicateResolution != DupeResAlgNone {
-			return common.ErrInvalidConfig.GenWithStack(
-				"%s cannot be used with tikv-importer.duplicate-resolution",
-				strategyConfigFrom)
-		}
+		//if i.DuplicateResolution != DupeResAlgNone {
+		//	return common.ErrInvalidConfig.GenWithStack(
+		//		"%s cannot be used with tikv-importer.duplicate-resolution",
+		//		strategyConfigFrom)
+		//}
 	}
 
 	if c.Threshold < 0 {
