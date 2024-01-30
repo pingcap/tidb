@@ -539,7 +539,7 @@ func fetchColumnsFromStatsCache(table *model.TableInfo) (rowCount uint64, avgRow
 		// sequence is always 1 row regardless of stats.
 		rowCount = 1
 	}
-	return rowCount, avgRowLength, dataLength, indexLength
+	return
 }
 
 func (e *memtableRetriever) updateStatsCacheIfNeed(sctx sessionctx.Context) (bool, error) {
