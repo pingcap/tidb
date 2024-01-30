@@ -51,11 +51,13 @@ func newCollector(ctx context.Context, param Param) *collector {
 	}
 }
 
+// Describe implements the prometheus.Collector interface.
 func (c *collector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.subtasks
 	ch <- c.subtaskDuration
 }
 
+// Collect implements the prometheus.Collector interface.
 func (c *collector) Collect(ch chan<- prometheus.Metric) {
 	subtasks, err := c.taskMgr.GetAllSubtasks(c.ctx)
 	if err != nil {

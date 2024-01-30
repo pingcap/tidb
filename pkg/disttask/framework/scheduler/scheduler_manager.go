@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/metrics"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
@@ -143,7 +144,10 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) *Mana
 		nodeMgr: schedulerManager.nodeMgr,
 		slotMgr: schedulerManager.slotMgr,
 	})
-	prometheus.MustRegister(schedulerManager.collector)
+
+	if !intest.InTest {
+		prometheus.MustRegister(schedulerManager.collector)
+	}
 
 	return schedulerManager
 }
