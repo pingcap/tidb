@@ -17,7 +17,6 @@ package scheduler
 import (
 	"context"
 	"slices"
-	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -28,6 +27,7 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
+	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -107,6 +107,7 @@ type Manager struct {
 	slotMgr     *SlotManager
 	nodeMgr     *NodeManager
 	balancer    *balancer
+	collector   *collector
 	initialized bool
 	// serverID, it's value is ip:port now.
 	serverID string
@@ -137,6 +138,12 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) *Mana
 		nodeMgr: schedulerManager.nodeMgr,
 		slotMgr: schedulerManager.slotMgr,
 	})
+	schedulerManager.collector = newCollector(schedulerManager.ctx, Param{
+		taskMgr: taskMgr,
+		nodeMgr: schedulerManager.nodeMgr,
+		slotMgr: schedulerManager.slotMgr,
+	})
+	prometheus.MustRegister(schedulerManager.collector)
 
 	return schedulerManager
 }
@@ -152,7 +159,7 @@ func (sm *Manager) Start() {
 	sm.wg.Run(sm.scheduleTaskLoop)
 	sm.wg.Run(sm.gcSubtaskHistoryTableLoop)
 	sm.wg.Run(sm.cleanupTaskLoop)
-	sm.wg.Run(sm.collectMetricsLoop)
+	// sm.wg.Run(sm.collectMetricsLoop)
 	sm.wg.Run(func() {
 		sm.nodeMgr.maintainLiveNodesLoop(sm.ctx, sm.taskMgr)
 	})
@@ -397,7 +404,6 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 		failpoint.Return(errors.New("transfer err"))
 	})
 
-	sm.collectMetrics()
 	return sm.taskMgr.TransferTasks2History(sm.ctx, cleanedTasks)
 }
 
@@ -408,95 +414,4 @@ func (sm *Manager) MockScheduler(task *proto.Task) *BaseScheduler {
 		nodeMgr: sm.nodeMgr,
 		slotMgr: sm.slotMgr,
 	})
-}
-
-func (sm *Manager) collectMetricsLoop() {
-	logutil.Logger(sm.ctx).Info("collect metrics loop start")
-	ticker := time.NewTicker(defaultCollectMetricsInterval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-sm.ctx.Done():
-			logutil.BgLogger().Info("collect metrics loop exits")
-			return
-		case <-ticker.C:
-			sm.collectMetrics()
-		}
-	}
-}
-
-func (sm *Manager) collectMetrics() {
-	subtasks, err := sm.taskMgr.GetAllSubtasks(sm.ctx)
-	if err != nil {
-		logutil.BgLogger().Warn("get all subtasks failed", zap.Error(err))
-		return
-	}
-	allNodes, err := sm.taskMgr.GetAllNodes(sm.ctx)
-	if err != nil {
-		logutil.BgLogger().Warn("get all nodes failed", zap.Error(err))
-		return
-	}
-	// taskID => execID => state => cnt
-	subtaskCnt := make(map[int64]map[string]map[proto.SubtaskState]int)
-	taskType := make(map[int64]proto.TaskType)
-	for _, subtask := range subtasks {
-		if _, ok := subtaskCnt[subtask.TaskID]; !ok {
-			subtaskCnt[subtask.TaskID] = make(map[string]map[proto.SubtaskState]int, len(allNodes))
-			for _, node := range allNodes {
-				subtaskCnt[subtask.TaskID][node.ID] = make(map[proto.SubtaskState]int, len(proto.AllSubtaskStates))
-				for _, state := range proto.AllSubtaskStates {
-					subtaskCnt[subtask.TaskID][node.ID][state] = 0
-				}
-			}
-		}
-		if _, ok := subtaskCnt[subtask.TaskID][subtask.ExecID]; !ok {
-			logutil.BgLogger().Warn("the execID of subtask is not found in meta", zap.Stringer("subtask", subtask))
-			return
-		}
-		subtaskCnt[subtask.TaskID][subtask.ExecID][subtask.State]++
-		taskType[subtask.TaskID] = subtask.Type
-
-		metrics.SetDistSubTaskDuration(subtask)
-
-		for _, state := range proto.AllSubtaskStates {
-			if state != proto.SubtaskStatePending && state != proto.SubtaskStateRunning {
-				continue
-			}
-
-			// exec_id maybe has been changed.
-			for _, node := range allNodes {
-				if node.ID == subtask.ExecID && subtask.State == state {
-					continue
-				}
-				metrics.DistTaskSubTaskDurationGauge.DeleteLabelValues(
-					subtask.Type.String(),
-					strconv.Itoa(int(subtask.TaskID)),
-					state.String(),
-					strconv.Itoa(int(subtask.ID)),
-					node.ID,
-				)
-			}
-		}
-	}
-	for taskID, execIDMap := range subtaskCnt {
-		for execID, stateMap := range execIDMap {
-			for state, cnt := range stateMap {
-				if cnt == 0 {
-					metrics.DistTaskSubTaskCntGauge.DeleteLabelValues(
-						taskType[taskID].String(),
-						strconv.Itoa(int(taskID)),
-						state.String(),
-						execID,
-					)
-				} else {
-					metrics.DistTaskSubTaskCntGauge.WithLabelValues(
-						taskType[taskID].String(),
-						strconv.Itoa(int(taskID)),
-						state.String(),
-						execID,
-					).Set(float64(cnt))
-				}
-			}
-		}
-	}
 }

@@ -14717,7 +14717,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(tidb_disttask_subtask_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"succeed|failed|canceled|reverted|revert_failed\"}) by (task_id, task_type)",
+              "expr": "sum(tidb_disttask_subtasks{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"succeed|failed|canceled|reverted|revert_failed\"}) by (task_id, task_type)",
               "interval": "",
               "legendFormat": "{{task_type}}-task{{task_id}}-completed",
               "queryType": "randomWalk",
@@ -14725,7 +14725,7 @@
             },
             {
               "exemplar": true,
-              "expr": "sum(tidb_disttask_subtask_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (task_id, task_type)",
+              "expr": "sum(tidb_disttask_subtasks{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (task_id, task_type)",
               "interval": "",
               "legendFormat": "{{task_type}}-task{{task_id}}-total",
               "queryType": "randomWalk",
@@ -14820,7 +14820,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(tidb_disttask_subtask_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"pending\"}) by (exec_id)",
+              "expr": "sum(tidb_disttask_subtasks{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"pending\"}) by (exec_id)",
               "interval": "",
               "legendFormat": "{{exec_id}}",
               "queryType": "randomWalk",
@@ -15178,7 +15178,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(tidb_disttask_subtask_cnt{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"pending|running|reverting|revert_pending|paused\"}) by (exec_id)",
+              "expr": "sum(tidb_disttask_subtasks{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"pending|running|reverting|revert_pending|paused\"}) by (exec_id)",
               "interval": "",
               "legendFormat": "",
               "queryType": "randomWalk",

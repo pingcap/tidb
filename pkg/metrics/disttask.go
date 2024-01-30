@@ -16,7 +16,6 @@ package metrics
 
 import (
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -67,44 +66,6 @@ func InitDistTaskMetrics() {
 			Name:      "start_time",
 			Help:      "Gauge of start_time of disttask.",
 		}, []string{lblTaskType, lblTaskStatus, lblTaskID})
-
-	DistTaskSubTaskCntGauge = NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "tidb",
-			Subsystem: "disttask",
-			Name:      "subtask_cnt",
-			Help:      "Gauge of subtask count.",
-		}, []string{lblTaskType, lblTaskID, lblTaskStatus, lblExecID})
-
-	DistTaskSubTaskDurationGauge = NewGaugeVec(
-		prometheus.GaugeOpts{
-			Namespace: "tidb",
-			Subsystem: "disttask",
-			Name:      "subtask_duration",
-			Help:      "Gauge of subtask duration.",
-		}, []string{lblTaskType, lblTaskID, lblTaskStatus, lblSubTaskID, lblExecID})
-}
-
-// SetDistSubTaskDuration set the duration of subtask.
-func SetDistSubTaskDuration(subtask *proto.Subtask) {
-	switch subtask.State {
-	case proto.SubtaskStatePending:
-		DistTaskSubTaskDurationGauge.WithLabelValues(
-			subtask.Type.String(),
-			strconv.Itoa(int(subtask.TaskID)),
-			subtask.State.String(),
-			strconv.Itoa(int(subtask.ID)),
-			subtask.ExecID,
-		).Set(time.Since(subtask.CreateTime).Seconds())
-	case proto.SubtaskStateRunning:
-		DistTaskSubTaskDurationGauge.WithLabelValues(
-			subtask.Type.String(),
-			strconv.Itoa(int(subtask.TaskID)),
-			subtask.State.String(),
-			strconv.Itoa(int(subtask.ID)),
-			subtask.ExecID,
-		).Set(time.Since(subtask.StartTime).Seconds())
-	}
 }
 
 // UpdateMetricsForAddTask update metrics when a task is added
