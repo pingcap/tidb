@@ -516,10 +516,10 @@ func (e *memtableRetriever) setDataFromReferConst(sctx sessionctx.Context, schem
 }
 
 func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas []*model.DBInfo) error {
-	err := cache.TableRowStatsCache.Update(sctx)
-	if err != nil {
-		return err
-	}
+	// err := cache.TableRowStatsCache.Update(sctx)
+	// if err != nil {
+	// 	return err
+	// }
 
 	checker := privilege.GetPrivilegeManager(sctx)
 
