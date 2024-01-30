@@ -83,8 +83,8 @@ type GlobalBindingHandle interface {
 	// Size returns the size of bind info cache.
 	Size() int
 
-	// SetBindCacheCapacity reset the capacity for the bindCache.
-	SetBindCacheCapacity(capacity int64)
+	// SetBindingCacheCapacity reset the capacity for the bindingCache.
+	SetBindingCacheCapacity(capacity int64)
 
 	// GetMemUsage returns the memory usage for the bind cache.
 	GetMemUsage() (memUsage int64)
@@ -110,7 +110,7 @@ type GlobalBindingHandle interface {
 type globalBindingHandle struct {
 	sPool SessionPool
 
-	bindingCache atomic.Pointer[bindCache]
+	bindingCache atomic.Pointer[bindingCache]
 
 	// fuzzyDigestMap is used to support fuzzy matching.
 	// fuzzyDigest is the digest calculated after eliminating all DB names, e.g. `select * from test.t` -> `select * from t` -> fuzzyDigest.
@@ -156,11 +156,11 @@ func NewGlobalBindingHandle(sPool SessionPool) GlobalBindingHandle {
 	return handle
 }
 
-func (h *globalBindingHandle) getCache() *bindCache {
+func (h *globalBindingHandle) getCache() *bindingCache {
 	return h.bindingCache.Load()
 }
 
-func (h *globalBindingHandle) setCache(c *bindCache) {
+func (h *globalBindingHandle) setCache(c *bindingCache) {
 	// TODO: update the global cache in-place instead of replacing it and remove this function.
 	h.bindingCache.Store(c)
 }
@@ -209,7 +209,7 @@ func (h *globalBindingHandle) setLastUpdateTime(t types.Time) {
 func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) {
 	var lastUpdateTime types.Time
 	var timeCondition string
-	var newCache *bindCache
+	var newCache *bindingCache
 	if fullLoad {
 		lastUpdateTime = types.ZeroTimestamp
 		timeCondition = ""
@@ -529,9 +529,9 @@ func (h *globalBindingHandle) GetAllGlobalBindings() (bindings Bindings) {
 	return h.getCache().GetAllBindings()
 }
 
-// SetBindCacheCapacity reset the capacity for the bindCache.
+// SetBindingCacheCapacity reset the capacity for the bindingCache.
 // It will not affect already cached Bindings.
-func (h *globalBindingHandle) SetBindCacheCapacity(capacity int64) {
+func (h *globalBindingHandle) SetBindingCacheCapacity(capacity int64) {
 	h.getCache().SetMemCapacity(capacity)
 }
 
@@ -611,8 +611,8 @@ func getHintsForSQL(sctx sessionctx.Context, sql string) (string, error) {
 	return chk.GetRow(0).GetString(0), nil
 }
 
-// GenerateBindSQL generates binding sqls from stmt node and plan hints.
-func GenerateBindSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string, skipCheckIfHasParam bool, defaultDB string) string {
+// GenerateBindingSQL generates binding sqls from stmt node and plan hints.
+func GenerateBindingSQL(ctx context.Context, stmtNode ast.StmtNode, planHint string, skipCheckIfHasParam bool, defaultDB string) string {
 	// If would be nil for very simple cases such as point get, we do not need to evolve for them.
 	if planHint == "" {
 		return ""
