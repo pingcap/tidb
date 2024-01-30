@@ -67,7 +67,8 @@ func TestVerifyChecksum(t *testing.T) {
 		TableInfo: &model.TableInfo{
 			Name: model.NewCIStr("tb"),
 		},
-		Checksum: config.OpLevelRequired,
+		Checksum:               config.OpLevelRequired,
+		DistSQLScanConcurrency: 50,
 	}
 	tk.MustExec("create database db")
 	tk.MustExec("create table db.tb(id int)")
@@ -75,9 +76,12 @@ func TestVerifyChecksum(t *testing.T) {
 
 	// admin checksum table always return 1, 1, 1 for memory store
 	// Checksum = required
+	backupDistScanCon := tk.Session().GetSessionVars().DistSQLScanConcurrency()
+	require.Equal(t, variable.DefDistSQLScanConcurrency, backupDistScanCon)
 	localChecksum := verify.MakeKVChecksum(1, 1, 1)
 	err := importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
 	require.NoError(t, err)
+	require.Equal(t, backupDistScanCon, tk.Session().GetSessionVars().DistSQLScanConcurrency())
 	localChecksum = verify.MakeKVChecksum(1, 2, 1)
 	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
 	require.ErrorIs(t, err, common.ErrChecksumMismatch)
