@@ -357,7 +357,7 @@ func insertJobIntoDeleteRangeTable(ctx context.Context, wrapper DelRangeExecWrap
 		}
 	case model.ActionDropIndex, model.ActionDropPrimaryKey:
 		tableID := job.TableID
-		var indexName interface{}
+		var indexName any
 		var partitionIDs []int64
 		ifExists := make([]bool, 1)
 		allIndexIDs := make([]int64, 1)
@@ -496,7 +496,7 @@ type sessionDelRangeExecWrapper struct {
 	ts   uint64
 
 	// temporary values
-	paramsList []interface{}
+	paramsList []any
 }
 
 func newDelRangeExecWrapper(sctx sessionctx.Context) DelRangeExecWrapper {
@@ -518,7 +518,7 @@ func (sdr *sessionDelRangeExecWrapper) UpdateTSOForJob() error {
 }
 
 func (sdr *sessionDelRangeExecWrapper) PrepareParamsList(sz int) {
-	sdr.paramsList = make([]interface{}, 0, sz)
+	sdr.paramsList = make([]any, 0, sz)
 }
 
 func (*sessionDelRangeExecWrapper) RewriteTableID(tableID int64) (int64, bool) {

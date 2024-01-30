@@ -241,9 +241,9 @@ func (b *builtinJSONArraySig) vectorized() bool {
 
 func (b *builtinJSONArraySig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	nr := input.NumRows()
-	jsons := make([][]interface{}, nr)
+	jsons := make([][]any, nr)
 	for i := 0; i < nr; i++ {
-		jsons[i] = make([]interface{}, 0, len(b.args))
+		jsons[i] = make([]any, 0, len(b.args))
 	}
 	for _, arg := range b.args {
 		j, err := b.bufAllocator.get()
@@ -607,9 +607,9 @@ func (b *builtinJSONObjectSig) vecEvalJSON(ctx EvalContext, input *chunk.Chunk, 
 		return err
 	}
 
-	jsons := make([]map[string]interface{}, nr)
+	jsons := make([]map[string]any, nr)
 	for i := 0; i < nr; i++ {
-		jsons[i] = make(map[string]interface{}, len(b.args)>>1)
+		jsons[i] = make(map[string]any, len(b.args)>>1)
 	}
 
 	argBuffers := make([]*chunk.Column, len(b.args))

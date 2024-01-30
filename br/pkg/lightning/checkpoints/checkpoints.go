@@ -1650,7 +1650,7 @@ func (cpdb *MySQLCheckpointsDB) DestroyErrorCheckpoint(ctx context.Context, tabl
 			DELETE FROM %[1]s.%[2]s WHERE table_name IN (SELECT table_name FROM %[1]s.%[3]s WHERE status <= ?)
 		`, cpdb.schema, CheckpointTableNameEngine, CheckpointTableNameTable)
 		deleteTableQuery = common.SprintfWithIdentifiers(`
-			DELETE FROM %s.%s status <= ?
+			DELETE FROM %s.%s WHERE status <= ?
 		`, cpdb.schema, CheckpointTableNameTable)
 		args = []any{CheckpointStatusMaxInvalid}
 	} else {

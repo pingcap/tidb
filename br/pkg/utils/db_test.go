@@ -24,7 +24,7 @@ type mockRestrictedSQLExecutor struct {
 	errHappen bool
 }
 
-func (m *mockRestrictedSQLExecutor) ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
+func (m *mockRestrictedSQLExecutor) ParseWithParams(ctx context.Context, sql string, args ...any) (ast.StmtNode, error) {
 	return nil, nil
 }
 
@@ -32,7 +32,7 @@ func (m *mockRestrictedSQLExecutor) ExecRestrictedStmt(ctx context.Context, stmt
 	return nil, nil, nil
 }
 
-func (m *mockRestrictedSQLExecutor) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
+func (m *mockRestrictedSQLExecutor) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFuncAlias, sql string, args ...any) ([]chunk.Row, []*ast.ResultField, error) {
 	if m.errHappen {
 		return nil, nil, errors.New("injected error")
 	}

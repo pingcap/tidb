@@ -370,7 +370,7 @@ func (em *ErrorManager) RecordDataConflictError(
 		if err != nil {
 			return err
 		}
-		var sqlArgs []interface{}
+		var sqlArgs []any
 		for i, conflictInfo := range conflictInfos {
 			if i > 0 {
 				sb.WriteByte(',')
@@ -432,7 +432,7 @@ func (em *ErrorManager) RecordIndexConflictError(
 		if err != nil {
 			return err
 		}
-		var sqlArgs []interface{}
+		var sqlArgs []any
 		for i, conflictInfo := range conflictInfos {
 			if i > 0 {
 				sb.WriteByte(',')
@@ -676,7 +676,7 @@ func (em *ErrorManager) ReplaceConflictKeys(
 							if err2 != nil {
 								return err2
 							}
-							var sqlArgs []interface{}
+							var sqlArgs []any
 							sb.WriteString(sqlValuesConflictErrorData)
 							sqlArgs = append(sqlArgs,
 								em.taskID,

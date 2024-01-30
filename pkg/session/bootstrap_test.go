@@ -154,7 +154,7 @@ func TestBootstrapWithError(t *testing.T) {
 		se.GetSessionVars().GlobalVarsAccessor = globalVarsAccessor
 		se.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 		se.txn.init()
-		se.mu.values = make(map[fmt.Stringer]interface{})
+		se.mu.values = make(map[fmt.Stringer]any)
 		se.SetValue(sessionctx.Initing, true)
 		err := InitDDLJobTables(store, meta.BaseDDLTableVersion)
 		require.NoError(t, err)

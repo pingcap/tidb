@@ -82,7 +82,7 @@ func getTaskManager(t *testing.T, pool *pools.ResourcePool) *storage.TaskManager
 
 // GetOneTask get a task from task table
 func GetOneTask(ctx context.Context, mgr *storage.TaskManager) (task *proto.Task, err error) {
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+storage.TaskColumns+" from mysql.tidb_global_task where state = %? limit 1", proto.TaskStatePending)
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+storage.TaskColumns+" from mysql.tidb_global_task t where state = %? limit 1", proto.TaskStatePending)
 	if err != nil {
 		return task, err
 	}
@@ -207,12 +207,12 @@ func TransferSubTasks2History(ctx context.Context, mgr *storage.TaskManager, tas
 }
 
 // GetTasksFromHistoryInStates gets the tasks in history table in the states.
-func GetTasksFromHistoryInStates(ctx context.Context, mgr *storage.TaskManager, states ...interface{}) (task []*proto.Task, err error) {
+func GetTasksFromHistoryInStates(ctx context.Context, mgr *storage.TaskManager, states ...any) (task []*proto.Task, err error) {
 	if len(states) == 0 {
 		return task, nil
 	}
 
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+storage.TaskColumns+" from mysql.tidb_global_task_history where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", states...)
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+storage.TaskColumns+" from mysql.tidb_global_task_history t where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", states...)
 	if err != nil {
 		return task, err
 	}

@@ -1094,7 +1094,7 @@ func (s *tableRestoreSuite) TestSaveStatusCheckpoint() {
 type mockPDHTTPCli struct {
 	pdhttp.Client
 	storesInfo   *pdhttp.StoresInfo
-	replicaCfg   map[string]interface{}
+	replicaCfg   map[string]any
 	emptyRegions *pdhttp.RegionsInfo
 }
 
@@ -1102,7 +1102,7 @@ func (c mockPDHTTPCli) GetStores(context.Context) (*pdhttp.StoresInfo, error) {
 	return c.storesInfo, nil
 }
 
-func (c mockPDHTTPCli) GetReplicateConfig(context.Context) (map[string]interface{}, error) {
+func (c mockPDHTTPCli) GetReplicateConfig(context.Context) (map[string]any, error) {
 	return c.replicaCfg, nil
 }
 
@@ -1113,7 +1113,7 @@ func (c mockPDHTTPCli) GetEmptyRegions(context.Context) (*pdhttp.RegionsInfo, er
 func (s *tableRestoreSuite) TestCheckClusterResource() {
 	cases := []struct {
 		mockStoreResponse   *pdhttp.StoresInfo
-		mockReplicaResponse map[string]interface{}
+		mockReplicaResponse map[string]any
 		expectMsg           string
 		expectResult        bool
 		expectErrorCount    int
@@ -1132,7 +1132,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 					},
 				},
 			},
-			map[string]interface{}{
+			map[string]any{
 				"max-replicas": 1.0,
 			},
 			"(.*)The storage space is rich(.*)",
@@ -1153,7 +1153,7 @@ func (s *tableRestoreSuite) TestCheckClusterResource() {
 					},
 				},
 			},
-			map[string]interface{}{
+			map[string]any{
 				"max-replicas": 1.0,
 			},
 			"(.*)Please increase storage(.*)",

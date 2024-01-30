@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -36,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -129,7 +129,7 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 				if !semEnabled {
 					msg = "SUPER or " + msg
 				}
-				return core.ErrSpecificAccessDenied.GenWithStackByArgs(msg)
+				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs(msg)
 			}
 		}
 	}

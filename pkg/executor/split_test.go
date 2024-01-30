@@ -163,13 +163,14 @@ func TestSplitIndex(t *testing.T) {
 	index := tables.NewIndex(tbInfo.ID, tbInfo, idxInfo)
 	for _, ca := range cases {
 		// test for minInt64 handle
-		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MinInt64), nil)
+		sc := ctx.GetSessionVars().StmtCtx
+		idxValue, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MinInt64), nil)
 		require.NoError(t, err)
 		idx := searchLessEqualIdx(valueList, idxValue)
 		require.Equal(t, idx, ca.lessEqualIdx)
 
 		// Test for max int64 handle.
-		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MaxInt64), nil)
+		idxValue, _, err = index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MaxInt64), nil)
 		require.NoError(t, err)
 		idx = searchLessEqualIdx(valueList, idxValue)
 		require.Equal(t, idx, ca.lessEqualIdx)
@@ -211,13 +212,14 @@ func TestSplitIndex(t *testing.T) {
 
 	for _, ca := range cases2 {
 		// test for minInt64 handle
-		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MinInt64), nil)
+		sc := ctx.GetSessionVars().StmtCtx
+		idxValue, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MinInt64), nil)
 		require.NoError(t, err)
 		idx := searchLessEqualIdx(valueList, idxValue)
 		require.Equal(t, idx, ca.lessEqualIdx)
 
 		// Test for max int64 handle.
-		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MaxInt64), nil)
+		idxValue, _, err = index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), []types.Datum{types.NewDatum(ca.value)}, kv.IntHandle(math.MaxInt64), nil)
 		require.NoError(t, err)
 		idx = searchLessEqualIdx(valueList, idxValue)
 		require.Equal(t, idx, ca.lessEqualIdx)
@@ -269,13 +271,14 @@ func TestSplitIndex(t *testing.T) {
 	for _, ca := range cases3 {
 		value := types.NewTime(ca.value, mysql.TypeTimestamp, types.DefaultFsp)
 		// test for min int64 handle
-		idxValue, _, err := index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, kv.IntHandle(math.MinInt64), nil)
+		sc := ctx.GetSessionVars().StmtCtx
+		idxValue, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), []types.Datum{types.NewDatum(value)}, kv.IntHandle(math.MinInt64), nil)
 		require.NoError(t, err)
 		idx := searchLessEqualIdx(valueList, idxValue)
 		require.Equal(t, idx, ca.lessEqualIdx)
 
 		// Test for max int64 handle.
-		idxValue, _, err = index.GenIndexKey(ctx.GetSessionVars().StmtCtx, []types.Datum{types.NewDatum(value)}, kv.IntHandle(math.MaxInt64), nil)
+		idxValue, _, err = index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), []types.Datum{types.NewDatum(value)}, kv.IntHandle(math.MaxInt64), nil)
 		require.NoError(t, err)
 		idx = searchLessEqualIdx(valueList, idxValue)
 		require.Equal(t, idx, ca.lessEqualIdx)

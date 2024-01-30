@@ -45,11 +45,11 @@ func (h exhaustedHeap) Swap(i, j int) {
 	h[i], h[j] = h[j], h[i]
 }
 
-func (h *exhaustedHeap) Push(x interface{}) {
+func (h *exhaustedHeap) Push(x any) {
 	*h = append(*h, x.(exhaustedHeapElem))
 }
 
-func (h *exhaustedHeap) Pop() interface{} {
+func (h *exhaustedHeap) Pop() any {
 	old := *h
 	n := len(old)
 	x := old[n-1]
