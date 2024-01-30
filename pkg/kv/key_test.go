@@ -337,6 +337,15 @@ func TestKeyRangeDefinition(t *testing.T) {
 	// And same default value.
 	require.Equal(t, (*coprocessor.KeyRange)(unsafe.Pointer(&r1)), &r2)
 	require.Equal(t, &r1, (*KeyRange)(unsafe.Pointer(&r2)))
+
+	s := []KeyRange{{
+		StartKey: []byte("s1"),
+		EndKey:   []byte("e1"),
+	}, {
+		StartKey: []byte("s2"),
+		EndKey:   []byte("e2"),
+	}}
+	require.Equal(t, int64(168), KeyRangeSliceMemUsage(s))
 }
 
 func BenchmarkIsPoint(b *testing.B) {

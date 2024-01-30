@@ -104,6 +104,7 @@ type KeyRange struct {
 	XXXsizecache        int32
 }
 
+// KeyRangeSliceMemUsage return the memory usage of []KeyRange
 func KeyRangeSliceMemUsage(k []KeyRange) int64 {
 	const sizeofKeyRange = int64(unsafe.Sizeof(*(*KeyRange)(nil)))
 
@@ -417,7 +418,10 @@ type strHandleVal struct {
 	val interface{}
 }
 
+// SizeofHandleMap presents the memory size of struct HandleMap
 const SizeofHandleMap = int64(unsafe.Sizeof(*(*HandleMap)(nil)))
+
+// SizeofStrHandleVal presents the memory size of struct strHandleVal
 const SizeofStrHandleVal = int64(unsafe.Sizeof(*(*strHandleVal)(nil)))
 
 // NewHandleMap creates a new map for handle.
