@@ -363,10 +363,7 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 	}
 	spillChunkFieldTypes[baseRetTypeNum] = types.NewFieldType(mysql.TypeString)
 	e.spillHelper = newSpillHelper(e.memTracker, e.PartialAggFuncs, func() *chunk.Chunk {
-		chk := chunk.NewChunkFromPoolWithCapacity(spillChunkFieldTypes, e.InitCap())
-		maxChunkSize := e.MaxChunkSize()
-		chk.SetRequiredRows(maxChunkSize, maxChunkSize)
-		return chk
+		return chunk.New(spillChunkFieldTypes, e.InitCap(), e.MaxChunkSize())
 	}, spillChunkFieldTypes)
 
 	if isTrackerEnabled && isParallelHashAggSpillEnabled {
