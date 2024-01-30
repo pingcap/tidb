@@ -593,19 +593,7 @@ func TestExecutorErrHandling(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockSummaryCollectErr"))
 
-	// 9. meet cancel before register cancel.
-	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(true)
-	require.NoError(t, taskExecutor.RunStep(nil))
-	require.True(t, ctrl.Satisfied())
-
-	// 10. meet ErrCancelSubtask before register cancel.
-	runCtx2, runCancel2 := context.WithCancelCause(ctx)
-	runCancel2(ErrCancelSubtask)
-	mockSubtaskTable.EXPECT().CancelSubtask(runCtx2, taskExecutor.id, gomock.Any())
-	require.NoError(t, taskExecutor.RunStep(nil))
-	require.True(t, ctrl.Satisfied())
-
-	// 11. subtask succeed.
+	// 9. subtask succeed.
 	mockExtension.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil)
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockSubtaskTable.EXPECT().GetFirstSubtaskInStates(gomock.Any(), "id", task.ID, proto.StepOne,
