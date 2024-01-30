@@ -179,6 +179,17 @@ func (e *HashAggExec) Close() error {
 		return nil
 	}
 	if e.parallelExecValid {
+		// `Close` may be called after `Open` without calling `Next` in test.
+		if !e.prepared {
+			close(e.inputCh)
+			for _, ch := range e.partialOutputChs {
+				close(ch)
+			}
+			for _, ch := range e.partialInputChs {
+				close(ch)
+			}
+			close(e.finalOutputCh)
+		}
 		close(e.finishCh)
 		for _, ch := range e.partialOutputChs {
 			channel.Clear(ch)
@@ -533,16 +544,18 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 		go e.partialWorkers[i].run(e.Ctx(), partialWorkerWaitGroup, len(e.finalWorkers))
 	}
 
-	e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
-	if partialWallTimePtr != nil {
-		atomic.AddInt64(partialWallTimePtr, int64(time.Since(partialStart)))
-	}
+	go func() {
+		e.waitPartialWorkerAndCloseOutputChs(partialWorkerWaitGroup)
+		if partialWallTimePtr != nil {
+			atomic.AddInt64(partialWallTimePtr, int64(time.Since(partialStart)))
+		}
+	}()
 
 	finalWorkerWaitGroup := &sync.WaitGroup{}
 	finalWorkerWaitGroup.Add(len(e.finalWorkers))
 	finalStart := time.Now()
 	for i := range e.finalWorkers {
-		go e.finalWorkers[i].run(e.Ctx(), finalWorkerWaitGroup)
+		go e.finalWorkers[i].run(e.Ctx(), finalWorkerWaitGroup, partialWorkerWaitGroup)
 	}
 
 	go func() {

@@ -201,6 +201,10 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 	start := time.Now()
 	hasError := false
 	needShuffle := false
+
+	// Put `waitGroup.Done()` outside of defer func(){}, in case of the panic in defer func(){}
+	// and `waitGroup.Done()` can't be called in this situation.
+	defer waitGroup.Done()
 	defer func() {
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.globalOutputCh, r)
@@ -212,7 +216,6 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		if w.stats != nil {
 			w.stats.WorkerTime += int64(time.Since(start))
 		}
-		waitGroup.Done()
 	}()
 
 	intestBeforePartialWorkerRun()
