@@ -238,19 +238,18 @@ func (p *cteProducer) closeProducer() (firstErr error) {
 		}
 	}
 
-	if err := exec.Close(p.seedExec); err != nil {
-		setFirstErr(err)
-	}
+	err := exec.Close(p.seedExec)
+	setFirstErr(err)
+
 	if p.recursiveExec != nil {
-		if err := exec.Close(p.recursiveExec); err != nil {
-			setFirstErr(err)
-		}
+		err = exec.Close(p.recursiveExec)
+		setFirstErr(err)
+
 		// `iterInTbl` and `resTbl` are shared by multiple operators,
 		// so will be closed when the SQL finishes.
 		if p.iterOutTbl != nil {
-			if err := p.iterOutTbl.DerefAndClose(); err != nil {
-				setFirstErr(err)
-			}
+			err = p.iterOutTbl.DerefAndClose()
+			setFirstErr(err)
 		}
 	}
 	p.closed = true
