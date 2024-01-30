@@ -30,7 +30,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/cteutil"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/disk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"go.uber.org/zap"
 )
 
 var _ exec.Executor = &CTEExec{}
@@ -226,24 +228,33 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 	return nil
 }
 
-func (p *cteProducer) closeProducer() (err error) {
-	if err = exec.Close(p.seedExec); err != nil {
-		return err
+func (p *cteProducer) closeProducer() (firstErr error) {
+	setFirstErr := func(newErr error) {
+		if newErr != nil {
+			logutil.BgLogger().Error("close cte producer got err", zap.Any("err", newErr))
+			if firstErr != nil {
+				firstErr = newErr
+			}
+		}
+	}
+
+	if err := exec.Close(p.seedExec); err != nil {
+		setFirstErr(err)
 	}
 	if p.recursiveExec != nil {
-		if err = exec.Close(p.recursiveExec); err != nil {
-			return err
+		if err := exec.Close(p.recursiveExec); err != nil {
+			setFirstErr(err)
 		}
 		// `iterInTbl` and `resTbl` are shared by multiple operators,
 		// so will be closed when the SQL finishes.
 		if p.iterOutTbl != nil {
-			if err = p.iterOutTbl.DerefAndClose(); err != nil {
-				return err
+			if err := p.iterOutTbl.DerefAndClose(); err != nil {
+				setFirstErr(err)
 			}
 		}
 	}
 	p.closed = true
-	return nil
+	return
 }
 
 func (p *cteProducer) getChunk(cteExec *CTEExec, req *chunk.Chunk) (err error) {
