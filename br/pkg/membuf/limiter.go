@@ -14,7 +14,12 @@
 
 package membuf
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/pingcap/log"
+	"go.uber.org/zap"
+)
 
 // Limiter will block on Acquire if the number it has acquired and not released
 // exceeds the limit.
@@ -58,7 +63,12 @@ func (l *Limiter) Release(n int) {
 
 	l.limit += n
 	if l.limit > l.initLimit {
-		panic("limit overflow")
+		log.Error(
+			"limit overflow",
+			zap.Int("limit", l.limit),
+			zap.Int("initLimit", l.initLimit),
+			zap.Stack("stack"),
+		)
 	}
 
 	for len(l.waitNums) > 0 && l.limit >= l.waitNums[0] {
