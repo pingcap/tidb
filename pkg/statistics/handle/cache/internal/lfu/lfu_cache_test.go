@@ -26,9 +26,7 @@ import (
 )
 
 var (
-	mockCMSMemoryUsage  = int64(4)
-	mockTopNMemoryUsage = int64(64)
-	mockHistMemoryUsage = int64(289)
+	mockCMSMemoryUsage = int64(4)
 )
 
 func TestLFUPutGetDel(t *testing.T) {
