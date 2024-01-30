@@ -257,10 +257,10 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 				continue
 			}
 
-			oldRecord := newCache.GetBinding(sqlDigest)
-			newRecord := removeDeletedBindings(merge(oldRecord, []Binding{binding}))
-			if len(newRecord) > 0 {
-				err = newCache.SetBinding(sqlDigest, newRecord)
+			oldBinding := newCache.GetBinding(sqlDigest)
+			newBinding := removeDeletedBindings(merge(oldBinding, []Binding{binding}))
+			if len(newBinding) > 0 {
+				err = newCache.SetBinding(sqlDigest, newBinding)
 				if err != nil {
 					// When the memory capacity of bing_cache is not enough,
 					// there will be some memory-related errors in multiple places.
@@ -270,7 +270,7 @@ func (h *globalBindingHandle) LoadFromStorageToCache(fullLoad bool) (err error) 
 			} else {
 				newCache.RemoveBinding(sqlDigest)
 			}
-			updateMetrics(metrics.ScopeGlobal, oldRecord, newCache.GetBinding(sqlDigest), true)
+			updateMetrics(metrics.ScopeGlobal, oldBinding, newCache.GetBinding(sqlDigest), true)
 		}
 		return nil
 	})
