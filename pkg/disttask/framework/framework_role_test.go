@@ -39,16 +39,15 @@ func checkSubtaskOnNodes(ctx context.Context, t *testing.T, taskID int64, expect
 }
 
 func TestRoleBasic(t *testing.T) {
-	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
-	defer ctrl.Finish()
+	c := testutil.NewTestDXFContext(t, 3)
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
-	tk := testkit.NewTestKit(t, distContext.Store)
+	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
+	tk := testkit.NewTestKit(t, c.Store)
 
 	// 1. all "" role.
-	submitTaskAndCheckSuccessForBasic(ctx, t, "😁", testContext)
+	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "😁", c.TestContext)
 
-	checkSubtaskOnNodes(ctx, t, 1, []string{":4000", ":4001", ":4002"})
+	checkSubtaskOnNodes(c.Ctx, t, 1, []string{":4000", ":4001", ":4002"})
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4000"`).Check(testkit.Rows(""))
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4001"`).Check(testkit.Rows(""))
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4002"`).Check(testkit.Rows(""))
@@ -60,29 +59,27 @@ func TestRoleBasic(t *testing.T) {
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh", "1*return()"))
 	<-scheduler.TestRefreshedChan
-	submitTaskAndCheckSuccessForBasic(ctx, t, "😊", testContext)
+	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "😊", c.TestContext)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh"))
 
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4000"`).Check(testkit.Rows("background"))
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4001"`).Check(testkit.Rows(""))
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4002"`).Check(testkit.Rows(""))
 
-	checkSubtaskOnNodes(ctx, t, 2, []string{":4000"})
+	checkSubtaskOnNodes(c.Ctx, t, 2, []string{":4000"})
 
 	// 3. 2 "background" role.
 	tk.MustExec("update mysql.dist_framework_meta set role = \"background\" where host = \":4001\"")
 	time.Sleep(5 * time.Second)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh", "1*return()"))
 	<-scheduler.TestRefreshedChan
-	submitTaskAndCheckSuccessForBasic(ctx, t, "😆", testContext)
+	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "😆", c.TestContext)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncRefresh"))
 
-	checkSubtaskOnNodes(ctx, t, 3, []string{":4000", ":4001"})
+	checkSubtaskOnNodes(c.Ctx, t, 3, []string{":4000", ":4001"})
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4000"`).Check(testkit.Rows("background"))
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4001"`).Check(testkit.Rows("background"))
 	tk.MustQuery(`select role from mysql.dist_framework_meta where host=":4002"`).Check(testkit.Rows(""))
-
-	distContext.Close()
 }
 
 func TestSetRole(t *testing.T) {

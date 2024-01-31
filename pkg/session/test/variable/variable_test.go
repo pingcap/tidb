@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -181,33 +180,6 @@ func TestCoprocessorOOMAction(t *testing.T) {
 		tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
 		se.Close()
 	}
-}
-
-func TestStatementCountLimit(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table stmt_count_limit (id int)")
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.StmtCountLimit = 3
-	})
-	tk.MustExec("set tidb_disable_txn_auto_retry = 0")
-	tk.MustExec("begin")
-	tk.MustExec("insert into stmt_count_limit values (1)")
-	tk.MustExec("insert into stmt_count_limit values (2)")
-	_, err := tk.Exec("insert into stmt_count_limit values (3)")
-	require.Error(t, err)
-
-	// begin is counted into history but this one is not.
-	tk.MustExec("SET SESSION autocommit = false")
-	tk.MustExec("insert into stmt_count_limit values (1)")
-	tk.MustExec("insert into stmt_count_limit values (2)")
-	tk.MustExec("insert into stmt_count_limit values (3)")
-	_, err = tk.Exec("insert into stmt_count_limit values (4)")
-	require.Error(t, err)
 }
 
 func TestCorrectScopeError(t *testing.T) {

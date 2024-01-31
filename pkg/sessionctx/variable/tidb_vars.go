@@ -157,6 +157,7 @@ const (
 	TiDBRetryLimit = "tidb_retry_limit"
 
 	// TiDBDisableTxnAutoRetry disables transaction auto retry.
+	// Deprecated: This variable is deprecated, please do not use this variable.
 	TiDBDisableTxnAutoRetry = "tidb_disable_txn_auto_retry"
 
 	// TiDBEnableChunkRPC enables TiDB to use Chunk format for coprocessor requests.

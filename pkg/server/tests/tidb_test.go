@@ -194,12 +194,6 @@ func TestPreparedTimestamp(t *testing.T) {
 	ts.RunTestPreparedTimestamp(t)
 }
 
-func TestConcurrentUpdate(t *testing.T) {
-	ts := createTidbTestSuite(t)
-
-	ts.RunTestConcurrentUpdate(t)
-}
-
 func TestErrorCode(t *testing.T) {
 	ts := createTidbTestSuite(t)
 
@@ -1125,11 +1119,6 @@ func TestInitConnect(t *testing.T) {
 func TestSumAvg(t *testing.T) {
 	ts := createTidbTestSuite(t)
 	ts.RunTestSumAvg(t)
-}
-
-func TestStmtCountLimit(t *testing.T) {
-	ts := createTidbTestSuite(t)
-	ts.RunTestStmtCountLimit(t)
 }
 
 func TestNullFlag(t *testing.T) {

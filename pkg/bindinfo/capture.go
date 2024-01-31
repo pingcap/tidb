@@ -174,7 +174,7 @@ func (h *globalBindingHandle) CaptureBaselines() {
 		if r := h.getCache().GetBinding(digest.String()); HasAvailableBinding(r) {
 			continue
 		}
-		bindSQL := GenerateBindSQL(context.TODO(), stmt, bindableStmt.PlanHint, true, dbName)
+		bindSQL := GenerateBindingSQL(context.TODO(), stmt, bindableStmt.PlanHint, true, dbName)
 		if bindSQL == "" {
 			continue
 		}

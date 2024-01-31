@@ -29,7 +29,7 @@ import (
 var (
 	// ConcurrentReaderBufferSizePerConc is the buffer size for concurrent reader per
 	// concurrency.
-	ConcurrentReaderBufferSizePerConc = int(4 * size.MB)
+	ConcurrentReaderBufferSizePerConc = int(2 * size.MB)
 	readAllDataConcThreshold          = uint64(16)
 )
 
@@ -307,6 +307,8 @@ func (r *byteReader) reload() error {
 		case io.ErrUnexpectedEOF:
 			// The last batch.
 			r.curBuf[0] = r.curBuf[0][:n]
+		case context.Canceled:
+			return err
 		default:
 			r.logger.Warn("other error during read", zap.Error(err))
 			return err
