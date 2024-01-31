@@ -341,7 +341,7 @@ func checkRowForExchangePartition(sctx sessionctx.Context, row []types.Datum, tb
 	}
 	if variable.EnableCheckConstraint.Load() {
 		type CheckConstraintTable interface {
-			CheckRowConstraint(sctx sessionctx.Context, rowToCheck []types.Datum) error
+			CheckRowConstraint(ctx expression.EvalContext, rowToCheck []types.Datum) error
 		}
 		cc, ok := pt.(CheckConstraintTable)
 		if !ok {

@@ -35,6 +35,7 @@ go_library(
         "//pkg/util/timeutil",
         "//pkg/util/tracing",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_tipb//go-binlog",
         "@org_uber_go_zap//:zap",
     ],
 )

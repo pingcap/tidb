@@ -23,14 +23,17 @@ import (
 	"time"
 
 	mysql "github.com/pingcap/tidb/pkg/errno"
+	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	"github.com/pingcap/tipb/go-binlog"
 )
 
 // Type is used to distinguish between different tables that store data in different ways.
@@ -171,6 +174,22 @@ type columnAPI interface {
 	FullHiddenColsAndVisibleCols() []*Column
 }
 
+type MutateContext interface {
+	expression.BuildContext
+	// GetDomainInfoSchema returns the latest information schema in domain
+	// Different with `domain.InfoSchema()`, the information schema returned by this method
+	// includes the temporary table definitions stored in session
+	GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion
+	GetSessionVars() *variable.SessionVars
+	// Txn returns the current transaction which is created before executing a statement.
+	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
+	// If the active parameter is true, call this function will wait for the pending txn
+	// to become valid.
+	Txn(active bool) (kv.Transaction, error)
+	// StmtGetMutation gets the binlog mutation for current statement.
+	StmtGetMutation(int64) *binlog.TableMutation
+}
+
 // Table is used to retrieve and modify rows in table.
 type Table interface {
 	columnAPI
@@ -185,16 +204,16 @@ type Table interface {
 	IndexPrefix() kv.Key
 
 	// AddRecord inserts a row which should contain only public columns
-	AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...AddRecordOption) (recordID kv.Handle, err error)
+	AddRecord(ctx MutateContext, r []types.Datum, opts ...AddRecordOption) (recordID kv.Handle, err error)
 
 	// UpdateRecord updates a row which should contain only writable columns.
-	UpdateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, currData, newData []types.Datum, touched []bool) error
+	UpdateRecord(gctx context.Context, ctx MutateContext, h kv.Handle, currData, newData []types.Datum, touched []bool) error
 
 	// RemoveRecord removes a row in the table.
-	RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error
+	RemoveRecord(ctx MutateContext, h kv.Handle, r []types.Datum) error
 
 	// Allocators returns all allocators.
-	Allocators(ctx sessionctx.Context) autoid.Allocators
+	Allocators(ctx MutateContext) autoid.Allocators
 
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo
@@ -249,11 +268,11 @@ type PhysicalTable interface {
 type PartitionedTable interface {
 	Table
 	GetPartition(physicalID int64) PhysicalTable
-	GetPartitionByRow(sessionctx.Context, []types.Datum) (PhysicalTable, error)
+	GetPartitionByRow(expression.BuildContext, []types.Datum) (PhysicalTable, error)
 	GetAllPartitionIDs() []int64
 	GetPartitionColumnIDs() []int64
 	GetPartitionColumnNames() []model.CIStr
-	CheckForExchangePartition(ctx sessionctx.Context, pi *model.PartitionInfo, r []types.Datum, partID, ntID int64) error
+	CheckForExchangePartition(ctx expression.BuildContext, pi *model.PartitionInfo, r []types.Datum, partID, ntID int64) error
 }
 
 // TableFromMeta builds a table.Table from *model.TableInfo.
