@@ -544,3 +544,16 @@ func TestUserVarConcurrently(t *testing.T) {
 	wg.Wait()
 	cancel()
 }
+
+func TestSetStatus(t *testing.T) {
+	sv := variable.NewSessionVars(nil)
+	require.True(t, sv.IsAutocommit())
+	sv.SetStatusFlag(mysql.ServerStatusInTrans, true)
+	require.True(t, sv.InTxn())
+	sv.SetStatusFlag(mysql.ServerStatusCursorExists, true)
+	require.True(t, sv.InTxn())
+	sv.SetStatusFlag(mysql.ServerStatusInTrans, false)
+	require.True(t, sv.HasStatusFlag(mysql.ServerStatusCursorExists))
+	require.False(t, sv.InTxn())
+	require.Equal(t, mysql.ServerStatusAutocommit|mysql.ServerStatusCursorExists, sv.Status())
+}

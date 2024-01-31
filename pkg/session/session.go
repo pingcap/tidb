@@ -92,6 +92,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
@@ -161,7 +162,7 @@ type session struct {
 
 	mu struct {
 		sync.RWMutex
-		values map[fmt.Stringer]interface{}
+		values map[fmt.Stringer]any
 	}
 
 	currentCtx  context.Context // only use for runtime.trace, Please NEVER use it.
@@ -213,7 +214,7 @@ type session struct {
 	sandBoxMode bool
 }
 
-var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
+var parserPool = &sync.Pool{New: func() any { return parser.New() }}
 
 // AddTableLock adds table lock to the session lock map.
 func (s *session) AddTableLock(locks []model.TableLockTpInfo) {
@@ -321,7 +322,7 @@ func (s *session) cleanRetryInfo() {
 }
 
 func (s *session) Status() uint16 {
-	return s.sessionVars.Status
+	return s.sessionVars.Status()
 }
 
 func (s *session) LastInsertID() uint64 {
@@ -430,7 +431,7 @@ func (s *session) FieldList(tableName string) ([]*ast.ResultField, error) {
 				u = user.AuthUsername
 				h = user.AuthHostname
 			}
-			return nil, plannercore.ErrTableaccessDenied.GenWithStackByArgs("SELECT", u, h, tableName)
+			return nil, plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", u, h, tableName)
 		}
 	}
 	table, err := is.TableByName(dbName, tName)
@@ -472,7 +473,7 @@ func (s *session) TxnInfo() *txninfo.TxnInfo {
 	txnInfo.Username = processInfo.User
 	txnInfo.CurrentDB = processInfo.DB
 	txnInfo.RelatedTableIDs = make(map[int64]struct{})
-	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, value interface{}) bool {
+	s.GetSessionVars().GetRelatedTableForMDL().Range(func(key, value any) bool {
 		txnInfo.RelatedTableIDs[key.(int64)] = struct{}{}
 		return true
 	})
@@ -508,7 +509,7 @@ func (s *session) doCommit(ctx context.Context) error {
 		roles := s.sessionVars.ActiveRoles
 		if pm != nil && !pm.HasExplicitlyGrantedDynamicPrivilege(roles, "RESTRICTED_REPLICA_WRITER_ADMIN", false) {
 			s.RollbackTxn(ctx)
-			return plannercore.ErrSQLInReadOnlyMode
+			return plannererrors.ErrSQLInReadOnlyMode
 		}
 	}
 	err := s.checkPlacementPolicyBeforeCommit()
@@ -619,7 +620,7 @@ func (s *session) doCommit(ctx context.Context) error {
 }
 
 type cachedTableRenewLease struct {
-	tables map[int64]interface{}
+	tables map[int64]any
 	lease  []uint64 // Lease for each visited cached tables.
 	exit   chan struct{}
 }
@@ -679,7 +680,7 @@ func (s *session) handleAssertionFailure(ctx context.Context, err error) error {
 		return newErr
 	}
 
-	var decodeFunc func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]interface{})
+	var decodeFunc func(kv.Key, *kvrpcpb.MvccGetByKeyResponse, map[string]any)
 	// if it's a record key or an index key, decode it
 	if infoSchema, ok := s.sessionVars.TxnCtx.InfoSchema.(infoschema.InfoSchema); ok &&
 		infoSchema != nil && (tablecodec.IsRecordKey(key) || tablecodec.IsIndexKey(key)) {
@@ -944,7 +945,7 @@ func (s *session) tryReplaceWriteConflictError(oldErr error) (newErr error) {
 }
 
 // precondition: is != nil
-func addTableNameInTableIDField(tableIDField interface{}, is infoschema.InfoSchema) (enhancedMsg string, done bool) {
+func addTableNameInTableIDField(tableIDField any, is infoschema.InfoSchema) (enhancedMsg string, done bool) {
 	keyTableID, ok := tableIDField.(string)
 	if !ok {
 		return "", false
@@ -1037,11 +1038,11 @@ func (s *session) GetMPPClient() kv.MPPClient {
 func (s *session) String() string {
 	// TODO: how to print binded context in values appropriately?
 	sessVars := s.sessionVars
-	data := map[string]interface{}{
+	data := map[string]any{
 		"id":         sessVars.ConnectionID,
 		"user":       sessVars.User,
 		"currDBName": sessVars.CurrentDB,
-		"status":     sessVars.Status,
+		"status":     sessVars.Status(),
 		"strictMode": sessVars.SQLMode.HasStrictMode(),
 	}
 	if s.txn.Valid() {
@@ -1558,9 +1559,12 @@ func (s *session) UpdateProcessInfo() {
 	if pi == nil || pi.CurTxnStartTS != 0 {
 		return
 	}
+	// do not modify this two fields in place, see issue: issues/50607
+	shallowCP := pi.Clone()
 	// Update the current transaction start timestamp.
-	pi.CurTxnStartTS = s.sessionVars.TxnCtx.StartTS
-	pi.CurTxnCreateTime = s.sessionVars.TxnCtx.CreateTime
+	shallowCP.CurTxnStartTS = s.sessionVars.TxnCtx.StartTS
+	shallowCP.CurTxnCreateTime = s.sessionVars.TxnCtx.CreateTime
+	s.processInfo.Store(shallowCP)
 }
 
 func (s *session) getOomAlarmVariablesInfo() util.OOMAlarmVariablesInfo {
@@ -1583,7 +1587,7 @@ func (s *session) ClearDiskFullOpt() {
 	s.diskFullOpt = kvrpcpb.DiskFullOpt_NotAllowedOnFull
 }
 
-func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (rs sqlexec.RecordSet, err error) {
+func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
 	origin := s.sessionVars.InRestrictedSQL
 	s.sessionVars.InRestrictedSQL = true
 	defer func() {
@@ -1674,7 +1678,7 @@ func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error)
 
 // ParseWithParams parses a query string, with arguments, to raw ast.StmtNode.
 // Note that it will not do escaping if no variable arguments are passed.
-func (s *session) ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error) {
+func (s *session) ParseWithParams(ctx context.Context, sql string, args ...any) (ast.StmtNode, error) {
 	var err error
 	if len(args) > 0 {
 		sql, err = sqlescape.EscapeSQL(sql, args...)
@@ -1838,7 +1842,7 @@ func (s *session) DisableSandBoxMode() {
 
 // ParseWithParams4Test wrapper (s *session) ParseWithParams for test
 func ParseWithParams4Test(ctx context.Context, s types.Session,
-	sql string, args ...interface{}) (ast.StmtNode, error) {
+	sql string, args ...any) (ast.StmtNode, error) {
 	return s.(*session).ParseWithParams(ctx, sql, args)
 }
 
@@ -1957,9 +1961,7 @@ func (s *session) getInternalSession(execOption sqlexec.ExecOption) (*session, f
 	if cache := s.sessionVars.InspectionTableCache; cache != nil {
 		se.sessionVars.InspectionTableCache = cache
 	}
-	if ok := s.sessionVars.OptimizerUseInvisibleIndexes; ok {
-		se.sessionVars.OptimizerUseInvisibleIndexes = true
-	}
+	se.sessionVars.OptimizerUseInvisibleIndexes = s.sessionVars.OptimizerUseInvisibleIndexes
 
 	if execOption.SnapshotTS != 0 {
 		if err := se.sessionVars.SetSystemVar(variable.TiDBSnapshot, strconv.FormatUint(execOption.SnapshotTS, 10)); err != nil {
@@ -2033,7 +2035,7 @@ func (s *session) withRestrictedSQLExecutor(ctx context.Context, opts []sqlexec.
 	return fn(ctx, se)
 }
 
-func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFuncAlias, sql string, params ...interface{}) ([]chunk.Row, []*ast.ResultField, error) {
+func (s *session) ExecRestrictedSQL(ctx context.Context, opts []sqlexec.OptionFuncAlias, sql string, params ...any) ([]chunk.Row, []*ast.ResultField, error) {
 	return s.withRestrictedSQLExecutor(ctx, opts, func(ctx context.Context, se *session) ([]chunk.Row, []*ast.ResultField, error) {
 		stmt, err := se.ParseWithParams(ctx, sql, params...)
 		if err != nil {
@@ -2501,7 +2503,7 @@ func (s *session) PrepareStmt(sql string) (stmtID uint32, paramCount int, fields
 func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, params []expression.Expression) (sqlexec.RecordSet, error) {
 	prepStmt, err := s.sessionVars.GetPreparedStmtByID(stmtID)
 	if err != nil {
-		err = plannercore.ErrStmtNotFound
+		err = plannererrors.ErrStmtNotFound
 		logutil.Logger(ctx).Error("prepared statement not found", zap.Uint32("stmtID", stmtID))
 		return nil, err
 	}
@@ -2519,7 +2521,7 @@ func (s *session) ExecutePreparedStmt(ctx context.Context, stmtID uint32, params
 func (s *session) DropPreparedStmt(stmtID uint32) error {
 	vars := s.sessionVars
 	if _, ok := vars.PreparedStmts[stmtID]; !ok {
-		return plannercore.ErrStmtNotFound
+		return plannererrors.ErrStmtNotFound
 	}
 	vars.RetryInfo.DroppedPreparedStmtIDs = append(vars.RetryInfo.DroppedPreparedStmtIDs, stmtID)
 	return nil
@@ -2534,13 +2536,13 @@ func (s *session) Txn(active bool) (kv.Transaction, error) {
 	return &s.txn, err
 }
 
-func (s *session) SetValue(key fmt.Stringer, value interface{}) {
+func (s *session) SetValue(key fmt.Stringer, value any) {
 	s.mu.Lock()
 	s.mu.values[key] = value
 	s.mu.Unlock()
 }
 
-func (s *session) Value(key fmt.Stringer) interface{} {
+func (s *session) Value(key fmt.Stringer) any {
 	s.mu.RLock()
 	value := s.mu.values[key]
 	s.mu.RUnlock()
@@ -3578,7 +3580,7 @@ func createSessionWithOpt(store kv.Storage, opt *Opt) (*session, error) {
 	if opt != nil && opt.PreparedPlanCache != nil {
 		s.sessionPlanCache = opt.PreparedPlanCache
 	}
-	s.mu.values = make(map[fmt.Stringer]interface{})
+	s.mu.values = make(map[fmt.Stringer]any)
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 	s.advisoryLocks = make(map[string]*advisoryLock)
 
@@ -3635,7 +3637,7 @@ func CreateSessionWithDomain(store kv.Storage, dom *domain.Domain) (*session, er
 		sessionStatesHandlers: make(map[sessionstates.SessionStateType]sessionctx.SessionStatesHandler),
 	}
 	s.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
-	s.mu.values = make(map[fmt.Stringer]interface{})
+	s.mu.values = make(map[fmt.Stringer]any)
 	s.lockedTables = make(map[int64]model.TableLockTpInfo)
 	domain.BindDomain(s, dom)
 	// session implements variable.GlobalVarAccessor. Bind it to ctx.
@@ -3832,7 +3834,7 @@ func (s *session) ShowProcess() *util.ProcessInfo {
 }
 
 // GetStartTSFromSession returns the startTS in the session `se`
-func GetStartTSFromSession(se interface{}) (startTS, processInfoID uint64) {
+func GetStartTSFromSession(se any) (startTS, processInfoID uint64) {
 	tmp, ok := se.(*session)
 	if !ok {
 		logutil.BgLogger().Error("GetStartTSFromSession failed, can't transform to session struct")

@@ -18,6 +18,7 @@ import (
 	"context"
 	"strconv"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/distsql"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -129,6 +130,9 @@ func (e *ChecksumTableExec) checksumWorker(taskCh <-chan *checksumTask, resultCh
 }
 
 func (e *ChecksumTableExec) handleChecksumRequest(req *kv.Request) (resp *tipb.ChecksumResponse, err error) {
+	if err = e.Ctx().GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+		return nil, err
+	}
 	ctx := distsql.WithSQLKvExecCounterInterceptor(context.TODO(), e.Ctx().GetSessionVars().StmtCtx)
 	res, err := distsql.Checksum(ctx, e.Ctx().GetClient(), req, e.Ctx().GetSessionVars().KVVars)
 	if err != nil {
@@ -138,6 +142,7 @@ func (e *ChecksumTableExec) handleChecksumRequest(req *kv.Request) (resp *tipb.C
 		if err1 := res.Close(); err1 != nil {
 			err = err1
 		}
+		failpoint.Inject("afterHandleChecksumRequest", nil)
 	}()
 
 	resp = &tipb.ChecksumResponse{}
@@ -155,6 +160,9 @@ func (e *ChecksumTableExec) handleChecksumRequest(req *kv.Request) (resp *tipb.C
 			return nil, err
 		}
 		updateChecksumResponse(resp, checksum)
+		if err = e.Ctx().GetSessionVars().SQLKiller.HandleSignal(); err != nil {
+			return nil, err
+		}
 	}
 
 	return resp, nil

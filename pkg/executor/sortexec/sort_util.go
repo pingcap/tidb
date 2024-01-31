@@ -63,11 +63,11 @@ func (h *multiWayMergeImpl) Len() int {
 	return len(h.elements)
 }
 
-func (*multiWayMergeImpl) Push(interface{}) {
+func (*multiWayMergeImpl) Push(any) {
 	// Should never be called.
 }
 
-func (h *multiWayMergeImpl) Pop() interface{} {
+func (h *multiWayMergeImpl) Pop() any {
 	h.elements = h.elements[:len(h.elements)-1]
 	return nil
 }
@@ -88,7 +88,7 @@ func newMultiWayMerger(
 		sortedRowsIters: sortedRowsIters,
 		multiWayMerge: &multiWayMergeImpl{
 			lessRowFunction: lessRowFunction,
-			elements:        make([]rowWithPartition, len(sortedRowsIters)),
+			elements:        make([]rowWithPartition, 0, len(sortedRowsIters)),
 		},
 	}
 }

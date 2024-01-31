@@ -851,7 +851,8 @@ const (
 
 	// TiDBOptAdvancedJoinHint indicates whether the join method hint is compatible with join order hint.
 	TiDBOptAdvancedJoinHint = "tidb_opt_advanced_join_hint"
-
+	// TiDBOptUseInvisibleIndexes indicates whether to use invisible indexes.
+	TiDBOptUseInvisibleIndexes = "tidb_opt_use_invisible_indexes"
 	// TiDBAnalyzePartitionConcurrency indicates concurrency for save/read partitions stats in Analyze
 	TiDBAnalyzePartitionConcurrency = "tidb_analyze_partition_concurrency"
 	// TiDBMergePartitionStatsConcurrency indicates the concurrency when merge partition stats into global stats

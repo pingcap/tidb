@@ -47,7 +47,9 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -102,7 +104,7 @@ type PointGetPlan struct {
 	// Please see comments in PhysicalPlan for details.
 	probeParents []PhysicalPlan
 	// stmtHints should restore in executing context.
-	stmtHints *stmtctx.StmtHints
+	stmtHints *hint.StmtHints
 }
 
 func (p *PointGetPlan) getEstRowCountForDisplay() float64 {
@@ -740,7 +742,7 @@ func newBatchPointGetPlan(
 		}
 	}
 	for _, idxInfo := range tbl.Indices {
-		if !idxInfo.Unique || idxInfo.State != model.StatePublic || idxInfo.Invisible || idxInfo.MVIndex ||
+		if !idxInfo.Unique || idxInfo.State != model.StatePublic || (idxInfo.Invisible && !ctx.GetSessionVars().OptimizerUseInvisibleIndexes) || idxInfo.MVIndex ||
 			!indexIsAvailableByHints(idxInfo, indexHints) {
 			continue
 		}
@@ -1135,7 +1137,7 @@ func checkTblIndexForPointPlan(ctx sessionctx.Context, tblName *ast.TableName, s
 		dbName = ctx.GetSessionVars().CurrentDB
 	}
 	for _, idxInfo := range tbl.Indices {
-		if !idxInfo.Unique || idxInfo.State != model.StatePublic || idxInfo.Invisible || idxInfo.MVIndex ||
+		if !idxInfo.Unique || idxInfo.State != model.StatePublic || (idxInfo.Invisible && !ctx.GetSessionVars().OptimizerUseInvisibleIndexes) || idxInfo.MVIndex ||
 			!indexIsAvailableByHints(idxInfo, tblName.IndexHints) {
 			continue
 		}
@@ -1255,7 +1257,7 @@ func checkFastPlanPrivilege(ctx sessionctx.Context, dbName, tableName string, ch
 	visitInfos := make([]visitInfo, 0, len(checkTypes))
 	for _, checkType := range checkTypes {
 		if pm != nil && !pm.RequestVerification(ctx.GetSessionVars().ActiveRoles, dbName, tableName, "", checkType) {
-			return ErrPrivilegeCheckFail.GenWithStackByArgs(checkType.String())
+			return plannererrors.ErrPrivilegeCheckFail.GenWithStackByArgs(checkType.String())
 		}
 		// This visitInfo is only for table lock check, so we do not need column field,
 		// just fill it empty string.

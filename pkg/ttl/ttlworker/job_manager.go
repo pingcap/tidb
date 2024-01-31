@@ -64,16 +64,16 @@ const ttlJobHistoryGCTemplate = `DELETE FROM mysql.tidb_ttl_job_history WHERE cr
 
 const timeFormat = time.DateTime
 
-func insertNewTableIntoStatusSQL(tableID int64, parentTableID int64) (string, []interface{}) {
-	return insertNewTableIntoStatusTemplate, []interface{}{tableID, parentTableID}
+func insertNewTableIntoStatusSQL(tableID int64, parentTableID int64) (string, []any) {
+	return insertNewTableIntoStatusTemplate, []any{tableID, parentTableID}
 }
 
-func setTableStatusOwnerSQL(uuid string, tableID int64, jobStart time.Time, now time.Time, currentJobTTLExpire time.Time, id string) (string, []interface{}) {
-	return setTableStatusOwnerTemplate, []interface{}{uuid, id, jobStart.Format(timeFormat), now.Format(timeFormat), currentJobTTLExpire.Format(timeFormat), now.Format(timeFormat), tableID}
+func setTableStatusOwnerSQL(uuid string, tableID int64, jobStart time.Time, now time.Time, currentJobTTLExpire time.Time, id string) (string, []any) {
+	return setTableStatusOwnerTemplate, []any{uuid, id, jobStart.Format(timeFormat), now.Format(timeFormat), currentJobTTLExpire.Format(timeFormat), now.Format(timeFormat), tableID}
 }
 
-func updateHeartBeatSQL(tableID int64, now time.Time, id string) (string, []interface{}) {
-	return updateHeartBeatTemplate, []interface{}{now.Format(timeFormat), tableID, id}
+func updateHeartBeatSQL(tableID int64, now time.Time, id string) (string, []any) {
+	return updateHeartBeatTemplate, []any{now.Format(timeFormat), tableID, id}
 }
 
 // JobManager schedules and manages the ttl jobs on this instance

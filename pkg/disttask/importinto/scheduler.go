@@ -496,7 +496,7 @@ func createTableIndexes(ctx context.Context, executor storage.SessionExecutor, t
 }
 
 // TODO: return the result of sql.
-func executeSQL(ctx context.Context, executor storage.SessionExecutor, logger *zap.Logger, sql string, args ...interface{}) (err error) {
+func executeSQL(ctx context.Context, executor storage.SessionExecutor, logger *zap.Logger, sql string, args ...any) (err error) {
 	logger.Info("execute sql", zap.String("sql", sql), zap.Any("args", args))
 	return executor.WithNewSession(func(se sessionctx.Context) error {
 		_, err := se.(sqlexec.SQLExecutor).ExecuteInternal(ctx, sql, args...)

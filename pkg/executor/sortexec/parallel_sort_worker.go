@@ -43,11 +43,11 @@ type parallelSortWorker struct {
 	totalMemoryUsage int64
 
 	spillHelper *parallelSortSpillHelper
-	batchRows   []chunk.Row
 
 	localSortedRows    []*chunk.Iterator4Slice
 	sortedRowsIter     *chunk.Iterator4Slice
 	maxSortedRowsLimit int
+	batchRows          []chunk.Row
 	merger             *multiWayMerger
 }
 
@@ -62,6 +62,7 @@ func newParallelSortWorker(
 	sortedRowsIter *chunk.Iterator4Slice,
 	maxChunkSize int,
 	spillHelper *parallelSortSpillHelper) *parallelSortWorker {
+	maxSortedRowsLimit := maxChunkSize * 30
 	return &parallelSortWorker{
 		workerIDForTest:        workerIDForTest,
 		lessRowFunc:            lessRowFunc,
@@ -72,9 +73,9 @@ func newParallelSortWorker(
 		timesOfRowCompare:      0,
 		memTracker:             memTracker,
 		sortedRowsIter:         sortedRowsIter,
-		maxSortedRowsLimit:     maxChunkSize * 30,
+		maxSortedRowsLimit:     maxSortedRowsLimit,
 		spillHelper:            spillHelper,
-		batchRows:              make([]chunk.Row, 0, maxChunkSize*30),
+		batchRows:              make([]chunk.Row, 0, maxSortedRowsLimit),
 	}
 }
 
@@ -92,12 +93,12 @@ func (p *parallelSortWorker) injectFailPointForParallelSortWorker() {
 	})
 }
 
-func (p *parallelSortWorker) multiWayMergeSortedRows() []chunk.Row {
+func (p *parallelSortWorker) multiWayMergeLocalSortedRows() []chunk.Row {
 	totalRowNum := 0
 	for _, rows := range p.localSortedRows {
 		totalRowNum += rows.Len()
 	}
-	resultRows := make([]chunk.Row, 0, totalRowNum)
+	resultSortedRows := make([]chunk.Row, 0, totalRowNum)
 	p.merger = newMultiWayMerger(p.localSortedRows, p.lessRowFunc)
 	p.merger.init()
 
@@ -106,10 +107,9 @@ func (p *parallelSortWorker) multiWayMergeSortedRows() []chunk.Row {
 		if row.IsEmpty() {
 			break
 		}
-		resultRows = append(resultRows, row)
+		resultSortedRows = append(resultSortedRows, row)
 	}
-
-	return resultRows
+	return resultSortedRows
 }
 
 func (p *parallelSortWorker) sortBatchRows(batchRows []chunk.Row) {
@@ -123,7 +123,7 @@ func (p *parallelSortWorker) sortLocalRows() []chunk.Row {
 		p.sortBatchRows(p.batchRows)
 	}
 
-	return p.multiWayMergeSortedRows()
+	return p.multiWayMergeLocalSortedRows()
 }
 
 // Fetching a bunch of chunks from chunkChannel and sort them.

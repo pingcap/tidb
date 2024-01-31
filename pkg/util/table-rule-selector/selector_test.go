@@ -84,8 +84,8 @@ type testSelectorSuite struct {
 
 	removeCases []string //schema, table, schema, table ...
 
-	expectedSchemaRules map[string][]interface{}
-	expectedTableRules  map[string]map[string][]interface{}
+	expectedSchemaRules map[string][]any
+	expectedTableRules  map[string]map[string][]any
 }
 
 func TestSelector(t *testing.T) {
@@ -187,7 +187,7 @@ func testReplace(t *testing.T, s Selector) {
 		replacedRule = &dummyRule{"replace"}
 	)
 	for schema := range ts.expectedSchemaRules {
-		ts.expectedSchemaRules[schema] = []interface{}{replacedRule}
+		ts.expectedSchemaRules[schema] = []any{replacedRule}
 		// to prevent it doesn't exist
 		err = s.Insert(schema, "", replacedRule, Replace)
 		require.NoError(t, err)
@@ -247,19 +247,19 @@ func testMatch(t *testing.T, s Selector) {
 	require.EqualValues(t, trie.cache, cache)
 }
 
-func testGenerateExpectedRules() (map[string][]interface{}, map[string]map[string][]interface{}) {
-	schemaRules := make(map[string][]interface{})
-	tableRules := make(map[string]map[string][]interface{})
+func testGenerateExpectedRules() (map[string][]any, map[string]map[string][]any) {
+	schemaRules := make(map[string][]any)
+	tableRules := make(map[string]map[string][]any)
 	for schema, tables := range ts.tables {
 		_, ok := tableRules[schema]
 		if !ok {
-			tableRules[schema] = make(map[string][]interface{})
+			tableRules[schema] = make(map[string][]any)
 		}
 		for _, table := range tables {
 			if len(table) == 0 {
-				schemaRules[schema] = []interface{}{&dummyRule{quoteSchemaTable(schema, "")}}
+				schemaRules[schema] = []any{&dummyRule{quoteSchemaTable(schema, "")}}
 			} else {
-				tableRules[schema][table] = []interface{}{&dummyRule{quoteSchemaTable(schema, table)}}
+				tableRules[schema][table] = []any{&dummyRule{quoteSchemaTable(schema, table)}}
 			}
 		}
 	}

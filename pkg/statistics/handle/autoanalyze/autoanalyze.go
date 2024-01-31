@@ -486,7 +486,7 @@ func tryAutoAnalyzeTable(
 	statsTbl *statistics.Table,
 	ratio float64,
 	sql string,
-	params ...interface{},
+	params ...any,
 ) bool {
 	// 1. If the statistics are either not loaded or are classified as pseudo, there is no need for analyze
 	// 2. If the table is too small, we don't want to waste time to analyze it.
@@ -595,7 +595,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 ) bool {
 	tableStatsVer := sctx.GetSessionVars().AnalyzeVersion
 	analyzePartitionBatchSize := int(variable.AutoAnalyzePartitionBatchSize.Load())
-	needAnalyzePartitionNames := make([]interface{}, 0, len(partitionDefs))
+	needAnalyzePartitionNames := make([]any, 0, len(partitionDefs))
 
 	for _, def := range partitionDefs {
 		partitionStatsTbl := partitionStats[def.ID]
@@ -653,7 +653,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 
 			// Do batch analyze for partitions.
 			sql := getSQL("analyze table %n.%n partition", "", end-start)
-			params := append([]interface{}{db, tblInfo.Name.O}, needAnalyzePartitionNames[start:end]...)
+			params := append([]any{db, tblInfo.Name.O}, needAnalyzePartitionNames[start:end]...)
 
 			statslogutil.StatsLogger().Info(
 				"auto analyze triggered",
@@ -691,7 +691,7 @@ func tryAutoAnalyzePartitionTableInDynamicMode(
 				}
 
 				sql := getSQL("analyze table %n.%n partition", " index %n", end-start)
-				params := append([]interface{}{db, tblInfo.Name.O}, needAnalyzePartitionNames[start:end]...)
+				params := append([]any{db, tblInfo.Name.O}, needAnalyzePartitionNames[start:end]...)
 				params = append(params, idx.Name.O)
 				statslogutil.StatsLogger().Info("auto analyze for unanalyzed",
 					zap.String("database", db),

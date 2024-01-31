@@ -215,7 +215,7 @@ func (r *RouteTable) FetchExtendColumn(schema, table, source string) ([]string, 
 	return cols, vals
 }
 
-func extractVal(s string, ext interface{}) string {
+func extractVal(s string, ext any) string {
 	var params []string
 	switch e := ext.(type) {
 	case *router.TableExtractor:

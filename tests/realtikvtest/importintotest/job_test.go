@@ -35,14 +35,14 @@ import (
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/tikv/client-go/v2/util"
 )
 
-func (s *mockGCSSuite) compareJobInfoWithoutTime(jobInfo *importer.JobInfo, row []interface{}) {
+func (s *mockGCSSuite) compareJobInfoWithoutTime(jobInfo *importer.JobInfo, row []any) {
 	s.Equal(strconv.Itoa(int(jobInfo.ID)), row[0])
 
 	urlExpected, err := url.Parse(jobInfo.Parameters.FileLocation)
@@ -148,7 +148,7 @@ func (s *mockGCSSuite) TestShowJob() {
 	s.Equal(result2, rows)
 
 	// show import jobs with root
-	checkJobsMatch := func(rows [][]interface{}) {
+	checkJobsMatch := func(rows [][]any) {
 		s.GreaterOrEqual(len(rows), 2) // other cases may create import jobs
 		var matched int
 		for _, r := range rows {
@@ -449,7 +449,7 @@ func (s *mockGCSSuite) TestCancelJob() {
 
 	// cancel a job created by test_cancel_job1 using test_cancel_job2, should fail
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "test_cancel_job2", Hostname: "localhost"}, nil, nil, nil))
-	s.ErrorIs(s.tk.ExecToErr(fmt.Sprintf("cancel import job %d", jobID1)), core.ErrSpecificAccessDenied)
+	s.ErrorIs(s.tk.ExecToErr(fmt.Sprintf("cancel import job %d", jobID1)), plannererrors.ErrSpecificAccessDenied)
 	// cancel by root, should pass privilege check
 	s.NoError(s.tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost"}, nil, nil, nil))
 	s.ErrorIs(s.tk.ExecToErr(fmt.Sprintf("cancel import job %d", jobID1)), exeerrors.ErrLoadDataInvalidOperation)

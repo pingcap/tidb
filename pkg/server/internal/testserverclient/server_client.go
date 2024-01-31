@@ -386,11 +386,11 @@ func (cli *TestServerClient) RunTestLoadDataWithSelectIntoOutfile(t *testing.T) 
 		dbt.MustExec("create table t1 (i int, r real, d decimal(10, 5), s varchar(100), dt datetime, ts timestamp, j json)")
 		dbt.MustExec(fmt.Sprintf("load data local infile %q into table t1 with thread=1", outfile))
 
-		fetchResults := func(table string) [][]interface{} {
-			var res [][]interface{}
+		fetchResults := func(table string) [][]any {
+			var res [][]any
 			row := dbt.MustQuery("select * from " + table + " order by i")
 			for row.Next() {
-				r := make([]interface{}, 7)
+				r := make([]any, 7)
 				require.NoError(t, row.Scan(&r[0], &r[1], &r[2], &r[3], &r[4], &r[5], &r[6]))
 				res = append(res, r)
 			}
@@ -831,7 +831,7 @@ func (*TestServerClient) Rows(t *testing.T, rows *sql.Rows) []string {
 		cols, err := rows.Columns()
 		require.NoError(t, err)
 		rawResult := make([][]byte, len(cols))
-		dest := make([]interface{}, len(cols))
+		dest := make([]any, len(cols))
 		for i := range rawResult {
 			dest[i] = &rawResult[i]
 		}

@@ -83,8 +83,8 @@ func TestGetTimeValue(t *testing.T) {
 	require.NoError(t, err)
 
 	tbls := []struct {
-		Expr interface{}
-		Ret  interface{}
+		Expr any
+		Ret  any
 	}{
 		{"2012-12-12 00:00:00", "2012-12-12 00:00:00"},
 		{ast.CurrentTimestamp, time.Unix(1234, 0).Format(types.TimeFormat)},
@@ -110,7 +110,7 @@ func TestGetTimeValue(t *testing.T) {
 	}
 
 	errTbl := []struct {
-		Expr interface{}
+		Expr any
 	}{
 		{"2012-13-12 00:00:00"},
 		{ast.NewValueExpr("2012-13-12 00:00:00", charset.CharsetUTF8MB4, charset.CollationUTF8MB4)},

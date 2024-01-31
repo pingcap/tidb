@@ -70,6 +70,7 @@ import (
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
+	"github.com/tikv/pd/client/retry"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/atomic"
 	"go.uber.org/multierr"
@@ -366,7 +367,11 @@ func NewImportControllerWithPauser(
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		pdHTTPCli = pdhttp.NewClient("lightning", addrs, pdhttp.WithTLSConfig(tls.TLSConfig()))
+		pdHTTPCli = pdhttp.NewClientWithServiceDiscovery(
+			"lightning",
+			pdCli.GetServiceDiscovery(),
+			pdhttp.WithTLSConfig(tls.TLSConfig()),
+		).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
 
 		if cfg.TikvImporter.DuplicateResolution != config.DupeResAlgNone {
 			if err := tikv.CheckTiKVVersion(ctx, pdHTTPCli, minTiKVVersionForDuplicateResolution, maxTiKVVersionForDuplicateResolution); err != nil {

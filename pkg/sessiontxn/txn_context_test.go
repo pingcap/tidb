@@ -94,7 +94,7 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain) {
 }
 
 func checkAssertRecordExits(t *testing.T, se sessionctx.Context, name string) {
-	records, ok := se.Value(sessiontxn.AssertRecordsKey).(map[string]interface{})
+	records, ok := se.Value(sessiontxn.AssertRecordsKey).(map[string]any)
 	require.True(t, ok, fmt.Sprintf("'%s' not in record, maybe failpoint not enabled?", name))
 	_, ok = records[name]
 	require.True(t, ok, fmt.Sprintf("'%s' not in record", name))

@@ -81,7 +81,7 @@ func RunWithRetry(retryCnt int, backoff uint64, f func() (bool, error)) (err err
 //
 //	exec:      execute logic function.
 //	recoverFn: handler will be called after recover and before dump stack, passing `nil` means noop.
-func WithRecovery(exec func(), recoverFn func(r interface{})) {
+func WithRecovery(exec func(), recoverFn func(r any)) {
 	defer func() {
 		r := recover()
 		if recoverFn != nil {
@@ -445,15 +445,15 @@ func init() {
 }
 
 // GetSequenceByName could be used in expression package without import cycle problem.
-var GetSequenceByName func(is interface{}, schema, sequence model.CIStr) (SequenceTable, error)
+var GetSequenceByName func(is any, schema, sequence model.CIStr) (SequenceTable, error)
 
 // SequenceTable is implemented by tableCommon,
 // and it is specialised in handling sequence operation.
 // Otherwise calling table will cause import cycle problem.
 type SequenceTable interface {
 	GetSequenceID() int64
-	GetSequenceNextVal(ctx interface{}, dbName, seqName string) (int64, error)
-	SetSequenceVal(ctx interface{}, newVal int64, dbName, seqName string) (int64, bool, error)
+	GetSequenceNextVal(ctx any, dbName, seqName string) (int64, error)
+	SetSequenceVal(ctx any, newVal int64, dbName, seqName string) (int64, bool, error)
 }
 
 // LoadTLSCertificates loads CA/KEY/CERT for special paths.
