@@ -239,7 +239,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(StatsHealthyGauge)
 	prometheus.MustRegister(StatsDeltaLoadHistogram)
 	prometheus.MustRegister(StatsDeltaUpdateHistogram)
-	prometheus.MustRegister(StatsLoadObjectGauge)
+	prometheus.MustRegister(StatsLoadObjectHistogram)
 	prometheus.MustRegister(TxnStatusEnteringCounter)
 	prometheus.MustRegister(TxnDurationHistogram)
 	prometheus.MustRegister(LastCheckpoint)
