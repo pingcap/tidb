@@ -65,7 +65,11 @@ func (c *collector) Describe(ch chan<- *prometheus.Desc) {
 
 // Collect implements the prometheus.Collector interface.
 func (c *collector) Collect(ch chan<- prometheus.Metric) {
-	subtasks := *c.subtaskInfo.Load()
+	p := c.subtaskInfo.Load()
+	if p == nil {
+		return
+	}
+	subtasks := *p
 
 	// taskID => execID => state => cnt
 	subtaskCnt := make(map[int64]map[string]map[proto.SubtaskState]int)
