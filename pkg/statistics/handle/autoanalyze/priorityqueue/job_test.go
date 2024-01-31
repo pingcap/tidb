@@ -267,3 +267,40 @@ func TestIsValidToAnalyze(t *testing.T) {
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", startTime)
 	require.True(t, job.IsValidToAnalyze(sctx))
 }
+
+func TestIsValidToAnalyzeForPartitionedTba(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(session.CreateAnalyzeJobs)
+	job := &TableAnalysisJob{
+		TableSchema: "example_schema",
+		TableName:   "example_table",
+		Weight:      2,
+		Partitions:  []string{"p0", "p1"},
+	}
+	initJobs(tk)
+	insertMultipleFinishedJobs(tk, job.TableName, "p0")
+
+	se := tk.Session()
+	sctx := se.(sessionctx.Context)
+	require.True(t, job.IsValidToAnalyze(sctx))
+
+	// Insert some failed jobs.
+	// Just failed.
+	now := tk.MustQuery("select now()").Rows()[0][0].(string)
+	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "p0", now)
+	require.False(t, job.IsValidToAnalyze(sctx))
+	// Failed 1 second ago.
+	startTime := tk.MustQuery("select now() - interval 1 second").Rows()[0][0].(string)
+	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "p0", startTime)
+	require.False(t, job.IsValidToAnalyze(sctx))
+	// Failed long long ago.
+	startTime = tk.MustQuery("select now() - interval 300 day").Rows()[0][0].(string)
+	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "p0", startTime)
+	require.True(t, job.IsValidToAnalyze(sctx))
+	// Smaller start time for p1.
+	startTime = tk.MustQuery("select now() - interval 1 second").Rows()[0][0].(string)
+	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "p1", startTime)
+	require.False(t, job.IsValidToAnalyze(sctx))
+}

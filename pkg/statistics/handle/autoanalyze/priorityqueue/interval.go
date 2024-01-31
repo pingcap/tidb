@@ -63,14 +63,21 @@ const lastFailedDurationQueryForTable = `
 // We pick the minimum duration of all failed analyses because we want to be conservative.
 const lastFailedDurationQueryForPartition = `
 	SELECT
-		MIN(TIMESTAMPDIFF(SECOND, start_time, CURRENT_TIMESTAMP)) AS min_duration
-	FROM
-		mysql.analyze_jobs
-	WHERE
-		table_schema = %? AND
-		table_name = %? AND
-		state = 'failed' AND
-		partition_name IN (%?);
+		MIN(TIMESTAMPDIFF(SECOND, aj.start_time, CURRENT_TIMESTAMP)) AS min_duration
+	FROM (
+		SELECT
+			MAX(id) AS max_id
+		FROM
+			mysql.analyze_jobs
+		WHERE
+			table_schema = %?
+			AND table_name = %?
+			AND state = 'failed'
+			AND partition_name IN (%?)
+		GROUP BY
+			partition_name
+	) AS latest_failures
+	JOIN mysql.analyze_jobs aj ON aj.id = latest_failures.max_id;
 `
 
 // getAverageAnalysisDuration returns the average duration of the last 5 successful analyses for each specified partition.
