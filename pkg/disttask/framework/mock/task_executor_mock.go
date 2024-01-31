@@ -486,9 +486,9 @@ func (m *MockExtension) GetStepExecutor(arg0 *proto.Task, arg1 *proto.StepResour
 }
 
 // GetStepExecutor indicates an expected call of GetStepExecutor.
-func (mr *MockExtensionMockRecorder) GetStepExecutor(arg0, arg1, arg2 any) *gomock.Call {
+func (mr *MockExtensionMockRecorder) GetStepExecutor(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
-	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetStepExecutor", reflect.TypeOf((*MockExtension)(nil).GetStepExecutor), arg0, arg1, arg2)
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "GetStepExecutor", reflect.TypeOf((*MockExtension)(nil).GetStepExecutor), arg0, arg1)
 }
 
 // IsIdempotent mocks base method.
