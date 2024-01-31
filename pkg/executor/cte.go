@@ -93,6 +93,9 @@ func (e *CTEExec) Open(ctx context.Context) (err error) {
 			return err
 		}
 	}
+	if e.producer.openErr != nil {
+		return e.producer.openErr
+	}
 	if !e.producer.opened {
 		if err = e.producer.openProducer(ctx, e); err != nil {
 			return err
@@ -113,8 +116,18 @@ func (e *CTEExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	return e.producer.getChunk(e, req)
 }
 
+func setFirstErr(firstErr error, newErr error, msg string) error {
+	if newErr != nil {
+		logutil.BgLogger().Error("cte got error", zap.Any("err", newErr), zap.Any("extra msg", msg))
+		if firstErr == nil {
+			firstErr = newErr
+		}
+	}
+	return firstErr
+}
+
 // Close implements the Executor interface.
-func (e *CTEExec) Close() (err error) {
+func (e *CTEExec) Close() (firstErr error) {
 	func() {
 		e.producer.resTbl.Lock()
 		defer e.producer.resTbl.Unlock()
@@ -130,13 +143,13 @@ func (e *CTEExec) Close() (err error) {
 			// It means you can still read resTbl after call closeProducer().
 			// You can even call all three functions(openProducer/produce/closeProducer) in CTEExec.Next().
 			// Separating these three function calls is only to follow the abstraction of the volcano model.
-			err = e.producer.closeProducer()
+			err := e.producer.closeProducer()
+			firstErr = setFirstErr(firstErr, err, "close cte producer error")
 		}
 	}()
-	if err != nil {
-		return err
-	}
-	return e.BaseExecutor.Close()
+	err := e.BaseExecutor.Close()
+	firstErr = setFirstErr(firstErr, err, "close cte children error")
+	return
 }
 
 func (e *CTEExec) reset() {
@@ -146,9 +159,15 @@ func (e *CTEExec) reset() {
 }
 
 type cteProducer struct {
+	// opened should be false when not open or open fail(a.k.a. openErr != nil)
 	opened   bool
 	produced bool
 	closed   bool
+
+	// cteProducer is shared by multiple operators, so if the first operator tries to open
+	// and got error, the second should return open error directly instead of open again.
+	// Otherwise there may be resource leak because Close() only clean resource for the last Open().
+	openErr error
 
 	ctx sessionctx.Context
 
@@ -183,6 +202,14 @@ type cteProducer struct {
 }
 
 func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err error) {
+	defer func() {
+		p.openErr = err
+		if err == nil {
+			p.opened = true
+		} else {
+			p.opened = false
+		}
+	}()
 	if p.seedExec == nil {
 		return errors.New("seedExec for CTEExec is nil")
 	}
@@ -190,11 +217,8 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 		return err
 	}
 
-	if p.memTracker != nil {
-		p.memTracker.Reset()
-	} else {
-		p.memTracker = memory.NewTracker(cteExec.ID(), -1)
-	}
+	p.resetTracker()
+	p.memTracker = memory.NewTracker(cteExec.ID(), -1)
 	p.diskTracker = disk.NewTracker(cteExec.ID(), -1)
 	p.memTracker.AttachTo(p.ctx.GetSessionVars().StmtCtx.MemTracker)
 	p.diskTracker.AttachTo(p.ctx.GetSessionVars().StmtCtx.DiskTracker)
@@ -224,34 +248,25 @@ func (p *cteProducer) openProducer(ctx context.Context, cteExec *CTEExec) (err e
 			p.hCtx.keyColIdx[i] = i
 		}
 	}
-	p.opened = true
 	return nil
 }
 
 func (p *cteProducer) closeProducer() (firstErr error) {
-	setFirstErr := func(newErr error, msg string) {
-		if newErr != nil {
-			logutil.BgLogger().Error("close cte producer got err", zap.Any("err", newErr), zap.Any("extra msg", msg))
-			if firstErr == nil {
-				firstErr = newErr
-			}
-		}
-	}
-
 	err := exec.Close(p.seedExec)
-	setFirstErr(err, "close seedExec err")
+	firstErr = setFirstErr(firstErr, err, "close seedExec err")
 
 	if p.recursiveExec != nil {
 		err = exec.Close(p.recursiveExec)
-		setFirstErr(err, "close recursiveExec err")
+		firstErr = setFirstErr(firstErr, err, "close recursiveExec err")
 
 		// `iterInTbl` and `resTbl` are shared by multiple operators,
 		// so will be closed when the SQL finishes.
 		if p.iterOutTbl != nil {
 			err = p.iterOutTbl.DerefAndClose()
-			setFirstErr(err, "deref iterOutTbl err")
+			firstErr = setFirstErr(firstErr, err, "deref iterOutTbl err")
 		}
 	}
+	p.resetTracker()
 	p.closed = true
 	return
 }
@@ -496,8 +511,20 @@ func (p *cteProducer) reset() {
 	p.hashTbl = nil
 
 	p.opened = false
+	p.openErr = nil
 	p.produced = false
 	p.closed = false
+}
+
+func (p *cteProducer) resetTracker() {
+	if p.memTracker != nil {
+		p.memTracker.Reset()
+		p.memTracker = nil
+	}
+	if p.diskTracker != nil {
+		p.diskTracker.Reset()
+		p.diskTracker = nil
+	}
 }
 
 func (p *cteProducer) reopenTbls() (err error) {
