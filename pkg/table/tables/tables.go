@@ -1738,36 +1738,17 @@ func OverflowShardBits(recordID int64, shardRowIDBits uint64, typeBitsLength uin
 func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 	if ctx == nil {
 		return t.allocs
-	} else if ctx.GetSessionVars().IDAllocator == nil {
-		// Use an independent allocator for global temporary tables.
-		if t.meta.TempTableType == model.TempTableGlobal {
-			if alloc := ctx.GetSessionVars().GetTemporaryTable(t.meta).GetAutoIDAllocator(); alloc != nil {
-				return autoid.NewAllocators(false, alloc)
-			}
-			// If the session is not in a txn, for example, in "show create table", use the original allocator.
-			// Otherwise the would be a nil pointer dereference.
-		}
-		return t.allocs
 	}
 
-	// Replace the row id allocator with the one in session variables.
-	sessAlloc := ctx.GetSessionVars().IDAllocator
-	allocs := t.allocs.Allocs
-	retAllocs := make([]autoid.Allocator, 0, len(allocs))
-	copy(retAllocs, allocs)
-
-	overwritten := false
-	for i, a := range retAllocs {
-		if a.GetType() == autoid.RowIDAllocType {
-			retAllocs[i] = sessAlloc
-			overwritten = true
-			break
+	// Use an independent allocator for global temporary tables.
+	if t.meta.TempTableType == model.TempTableGlobal {
+		if alloc := ctx.GetSessionVars().GetTemporaryTable(t.meta).GetAutoIDAllocator(); alloc != nil {
+			return autoid.NewAllocators(false, alloc)
 		}
+		// If the session is not in a txn, for example, in "show create table", use the original allocator.
+		// Otherwise the would be a nil pointer dereference.
 	}
-	if !overwritten {
-		retAllocs = append(retAllocs, sessAlloc)
-	}
-	return autoid.NewAllocators(t.allocs.SepAutoInc, retAllocs...)
+	return t.allocs
 }
 
 // Type implements table.Table Type interface.
