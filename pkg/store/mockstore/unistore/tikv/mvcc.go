@@ -418,7 +418,7 @@ func (store *MVCCStore) PessimisticRollbackWithScanFirst(reqCtx *requestCtx, req
 	if len(req.Keys) > 0 {
 		return errors.Errorf("pessimistic rollback request invalid: there should be no input lock keys but got %v", len(req.Keys))
 	}
-	locks, err := store.ScanPessimisticLocks(reqCtx, req.StartVersion, req.ForUpdateTs)
+	locks, err := store.scanPessimisticLocks(reqCtx, req.StartVersion, req.ForUpdateTs)
 	if err != nil {
 		return err
 	}
@@ -1445,8 +1445,8 @@ func (store *MVCCStore) appendScannedLock(locks []*kvrpcpb.LockInfo, it *locksto
 	return locks
 }
 
-// ScanPessimisticLocks returns matching pessimistic locks.
-func (store *MVCCStore) ScanPessimisticLocks(reqCtx *requestCtx, startTS uint64, forUpdateTS uint64) ([]*kvrpcpb.LockInfo, error) {
+// scanPessimisticLocks returns matching pessimistic locks.
+func (store *MVCCStore) scanPessimisticLocks(reqCtx *requestCtx, startTS uint64, forUpdateTS uint64) ([]*kvrpcpb.LockInfo, error) {
 	var locks []*kvrpcpb.LockInfo
 	it := store.lockStore.NewIterator()
 	for it.Seek(reqCtx.regCtx.RawStart()); it.Valid(); it.Next() {
