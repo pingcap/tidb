@@ -35,7 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
@@ -84,14 +84,17 @@ type BaseTaskExecutor struct {
 
 // NewBaseTaskExecutor creates a new BaseTaskExecutor.
 func NewBaseTaskExecutor(ctx context.Context, id string, task *proto.Task, taskTable TaskTable) *BaseTaskExecutor {
+	logger := log.L().With(zap.Int64("task-id", task.ID), zap.String("task-type", string(task.Type)))
+	if intest.InTest {
+		logger = logger.With(zap.String("server-id", id))
+	}
 	subCtx, cancelFunc := context.WithCancel(ctx)
 	taskExecutorImpl := &BaseTaskExecutor{
 		id:        id,
 		taskTable: taskTable,
 		ctx:       subCtx,
 		cancel:    cancelFunc,
-		logger: log.L().With(zap.Int64("task-id", task.ID),
-			zap.String("task-type", string(task.Type))),
+		logger:    logger,
 	}
 	taskExecutorImpl.task.Store(task)
 	return taskExecutorImpl
@@ -119,6 +122,14 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 			e.logger.Error("get subtasks failed", zap.Error(err))
 			continue
 		}
+		if ctx.Err() != nil {
+			// workaround for https://github.com/pingcap/tidb/issues/50089
+			// timeline to trigger this:
+			// 	- this routine runs GetSubtasksByExecIDAndStepAndStates
+			// 	- outer runSubtask finishes and cancel check-context
+			// 	- GetSubtasksByExecIDAndStepAndStates returns with no err and no result
+			return
+		}
 		if len(subtasks) == 0 {
 			e.logger.Info("subtask is scheduled away, cancel running")
 			// cancels runStep, but leave the subtask state unchanged.
@@ -140,6 +151,9 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 		if len(extraRunningSubtasks) > 0 {
 			if err = e.taskTable.RunningSubtasksBack2Pending(ctx, extraRunningSubtasks); err != nil {
 				e.logger.Error("update running subtasks back to pending failed", zap.Error(err))
+			} else {
+				e.logger.Info("update extra running subtasks back to pending",
+					zap.Stringers("subtasks", extraRunningSubtasks))
 			}
 		}
 	}
@@ -453,11 +467,11 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 		if taskID, ok := val.(int); ok {
 			mgr, err := storage.GetTaskManager()
 			if err != nil {
-				logutil.BgLogger().Error("get task manager failed", zap.Error(err))
+				e.logger.Error("get task manager failed", zap.Error(err))
 			} else {
 				err = mgr.CancelTask(ctx, int64(taskID))
 				if err != nil {
-					logutil.BgLogger().Error("cancel task failed", zap.Error(err))
+					e.logger.Error("cancel task failed", zap.Error(err))
 				}
 			}
 		}

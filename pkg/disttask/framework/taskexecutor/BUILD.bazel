@@ -26,7 +26,7 @@ go_library(
         "//pkg/util/backoff",
         "//pkg/util/cpu",
         "//pkg/util/gctuner",
-        "//pkg/util/logutil",
+        "//pkg/util/intest",
         "//pkg/util/memory",
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
