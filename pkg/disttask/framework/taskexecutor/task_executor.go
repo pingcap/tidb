@@ -44,6 +44,10 @@ var (
 	// checkBalanceSubtaskInterval is the default check interval for checking
 	// subtasks balance to/away from this node.
 	checkBalanceSubtaskInterval = 2 * time.Second
+
+	// updateSubtaskSummaryInterval is the interval for updating the subtask summary to
+	// subtask table.
+	updateSubtaskSummaryInterval = 3 * time.Second
 )
 
 var (
@@ -156,6 +160,37 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 					zap.Stringers("subtasks", extraRunningSubtasks))
 			}
 		}
+	}
+}
+
+func (e *BaseTaskExecutor) collectRealtimeSummary(ctx context.Context, stepExecutor execute.StepExecutor) {
+	taskMgr, ok := e.taskTable.(*storage.TaskManager)
+	if !ok {
+		return
+	}
+	if stepExecutor.RealtimeSummary() == nil {
+		// Step executor does not support realtime summary.
+		return
+	}
+	ticker := time.NewTicker(updateSubtaskSummaryInterval)
+	defer ticker.Stop()
+	bgCtx := context.Background()
+	curSubtaskID := e.currSubtaskID.Load()
+	update := func() {
+		summary := stepExecutor.RealtimeSummary()
+		err := taskMgr.UpdateSubtaskRowCount(bgCtx, curSubtaskID, summary.RowCount)
+		if err != nil {
+			e.logger.Info("update subtask row count failed", zap.Error(err))
+		}
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			update()
+			return
+		case <-ticker.C:
+		}
+		update()
 	}
 }
 
@@ -288,13 +323,7 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 		stepLogger.End(zap.InfoLevel, resErr)
 	}()
 
-	summary, cleanup, err := runSummaryCollectLoop(runStepCtx, task, e.taskTable)
-	if err != nil {
-		e.onError(err)
-		return e.getError()
-	}
-	defer cleanup()
-	stepExecutor, err := e.GetStepExecutor(task, summary, resource)
+	stepExecutor, err := e.GetStepExecutor(task, resource)
 	if err != nil {
 		e.onError(err)
 		return e.getError()
@@ -398,11 +427,13 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 		wg.RunWithLog(func() {
 			e.checkBalanceSubtask(checkCtx)
 		})
+		wg.RunWithLog(func() {
+			e.collectRealtimeSummary(checkCtx, stepExecutor)
+		})
 		defer func() {
 			checkCancel()
 			wg.Wait()
 		}()
-
 		return stepExecutor.RunSubtask(ctx, subtask)
 	}()
 	failpoint.Inject("MockRunSubtaskCancel", func(val failpoint.Value) {
@@ -568,31 +599,6 @@ func (e *BaseTaskExecutor) refreshTask() error {
 	}
 	e.task.Store(newTask)
 	return nil
-}
-
-func runSummaryCollectLoop(
-	ctx context.Context,
-	task *proto.Task,
-	taskTable TaskTable,
-) (summary *execute.Summary, cleanup func(), err error) {
-	failpoint.Inject("mockSummaryCollectErr", func() {
-		failpoint.Return(nil, func() {}, errors.New("summary collect err"))
-	})
-	taskMgr, ok := taskTable.(*storage.TaskManager)
-	if !ok {
-		return nil, func() {}, nil
-	}
-	opt, ok := taskTypes[task.Type]
-	if !ok {
-		return nil, func() {}, errors.Errorf("taskExecutor option for type %s not found", task.Type)
-	}
-	if opt.Summary != nil {
-		go opt.Summary.UpdateRowCountLoop(ctx, taskMgr)
-		return opt.Summary, func() {
-			opt.Summary.PersistRowCount(ctx, taskMgr)
-		}, nil
-	}
-	return nil, func() {}, nil
 }
 
 func (e *BaseTaskExecutor) registerRunStepCancelFunc(cancel context.CancelCauseFunc) {

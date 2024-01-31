@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
@@ -661,20 +660,7 @@ func TestExecutorErrHandling(t *testing.T) {
 	require.NoError(t, taskExecutor.RunStep(nil))
 	require.True(t, ctrl.Satisfied())
 
-	// 9. runSummaryCollectLoop meet retryable error.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockSummaryCollectErr", "return()"))
-	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(true)
-	require.NoError(t, taskExecutor.RunStep(nil))
-	require.True(t, ctrl.Satisfied())
-
-	// 10. runSummaryCollectLoop meet non retryable error.
-	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false)
-	mockSubtaskTable.EXPECT().FailSubtask(taskExecutor.ctx, taskExecutor.id, gomock.Any(), gomock.Any())
-	require.NoError(t, taskExecutor.RunStep(nil))
-	require.True(t, ctrl.Satisfied())
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockSummaryCollectErr"))
-
-	// 13. subtask succeed.
+	// 9. subtask succeed.
 	mockExtension.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any(), gomock.Any()).Return(mockSubtaskExecutor, nil)
 	mockSubtaskExecutor.EXPECT().Init(gomock.Any()).Return(nil)
 	mockSubtaskTable.EXPECT().GetSubtasksByExecIDAndStepAndStates(
