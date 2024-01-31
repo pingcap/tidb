@@ -47,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
@@ -4225,19 +4224,22 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.FilePriv, "", "", "", plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("FILE"))
 	}
 	tableInfo := p.Table.TableInfo
-	// session ctx in planBuilder might be using stale read, so we might not be
-	// able to get the schema of the target table.
-	// this is used to support IMPORT INTO dst FROM SELECT * FROM src AS OF TIMESTAMP '2020-01-01 00:00:00'
-	// Note: we need to get p.Table when preprocessing, at that time, if the session
-	// ctx is already in stale read, we cannot get the schema of the target table.
-	// so we don't support set 'tidb_snapshot' first and then import into the target table.
-	globalSCtx, err := CreateSession(b.ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer CloseSession(globalSCtx)
-	tableInPlan, ok := sessiontxn.GetTxnManager(globalSCtx).GetTxnInfoSchema().TableByID(tableInfo.ID)
+	// we use the latest IS to support IMPORT INTO dst FROM SELECT * FROM src AS OF TIMESTAMP '2020-01-01 00:00:00'
+	// Note: we need to get p.Table when preprocessing, at that time, IS of session
+	// transaction is used, if the session ctx is already in stale read, we might
+	// not get the schema or get a stale schema of the target table, so we don't
+	// support set 'tidb_snapshot' first and then import into the target table.
+	//
+	// tidb_read_staleness can be used to do stale read too, it's allowed as long as
+	// tableInfo.ID matches with the latest schema.
+	latestIS := b.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	tableInPlan, ok := latestIS.TableByID(tableInfo.ID)
 	if !ok {
+		// adaptor.handleNoDelayExecutor has a similar check, but we want to give
+		// a more specific error message here.
+		if b.ctx.GetSessionVars().SnapshotTS != 0 {
+			return nil, errors.New("can not execute IMPORT statement when 'tidb_snapshot' is set")
+		}
 		db := b.ctx.GetSessionVars().CurrentDB
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(db, tableInfo.Name.O)
 	}
