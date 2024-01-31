@@ -1075,9 +1075,13 @@ func (e *aggExec) processAllRows() (*chunk.Chunk, error) {
 
 	chk := chunk.NewChunkWithCapacity(e.fieldTypes, 0)
 
-	for i, gk := range e.groupKeys {
+	if len(e.groupKeys) == 0 {
+		// empty set, no data in agg OP.
+		// fill a mock Contexts here, to let agg get default aggregated result.
+		// like count(empty-set) = 0, sum(empty-set) = null
 		newRow := chunk.MutRowFromTypes(e.fieldTypes)
-		aggCtxs := e.getContexts(gk)
+		// empty context key
+		aggCtxs := e.getContexts([]byte{})
 		for i, agg := range e.aggExprs {
 			result := agg.GetResult(aggCtxs[i])
 			if e.fieldTypes[i].GetType() == mysql.TypeLonglong && result.Kind() == types.KindMysqlDecimal {
@@ -1089,10 +1093,27 @@ func (e *aggExec) processAllRows() (*chunk.Chunk, error) {
 			}
 			newRow.SetDatum(i, result)
 		}
-		if len(e.groupByRows) > 0 {
-			newRow.ShallowCopyPartialRow(len(e.aggExprs), e.groupByRows[i])
-		}
 		chk.AppendRow(newRow.ToRow())
+	} else {
+		for i, gk := range e.groupKeys {
+			newRow := chunk.MutRowFromTypes(e.fieldTypes)
+			aggCtxs := e.getContexts(gk)
+			for i, agg := range e.aggExprs {
+				result := agg.GetResult(aggCtxs[i])
+				if e.fieldTypes[i].GetType() == mysql.TypeLonglong && result.Kind() == types.KindMysqlDecimal {
+					var err error
+					result, err = result.ConvertTo(e.sctx.GetSessionVars().StmtCtx.TypeCtx(), e.fieldTypes[i])
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
+				}
+				newRow.SetDatum(i, result)
+			}
+			if len(e.groupByRows) > 0 {
+				newRow.ShallowCopyPartialRow(len(e.aggExprs), e.groupByRows[i])
+			}
+			chk.AppendRow(newRow.ToRow())
+		}
 	}
 	e.execSummary.updateOnlyRows(chk.NumRows())
 	return chk, nil
