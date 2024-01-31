@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -233,4 +234,22 @@ func TestAnalyzePartitionIndexes(t *testing.T) {
 	// Check the result of analyze index.
 	require.NotNil(t, tblStats.Indices[1])
 	require.True(t, tblStats.Indices[1].IsAnalyzed())
+}
+
+func TestIsValidToAnalyze(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(session.CreateAnalyzeJobs)
+	initJobs(tk)
+	insertMultipleFinishedJobs(tk, "example_table1", "")
+
+	job := &TableAnalysisJob{
+		TableSchema: "example_schema",
+		TableName:   "example_table1",
+		Weight:      2,
+	}
+	se := tk.Session()
+	sctx := se.(sessionctx.Context)
+	require.True(t, job.IsValidToAnalyze(sctx))
 }

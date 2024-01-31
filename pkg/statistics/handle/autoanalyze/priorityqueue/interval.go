@@ -21,6 +21,9 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
 )
 
+// noRecord is used to indicate that there is no related record in mysql.analyze_jobs.
+const noRecord = 0
+
 const avgDurationQueryForTable = `
 	SELECT AVG(TIMESTAMPDIFF(SECOND, start_time, end_time)) AS avg_duration
 	FROM (
@@ -86,17 +89,17 @@ func getAverageAnalysisDuration(
 
 	rows, _, err := util.ExecRows(sctx, query, params...)
 	if err != nil {
-		return 0, err
+		return noRecord, err
 	}
 
 	// NOTE: if there are no successful analyses, we return 0.
 	if len(rows) == 0 || rows[0].IsNull(0) {
-		return 0, nil
+		return noRecord, nil
 	}
 	avgDuration := rows[0].GetMyDecimal(0)
 	duration, err := avgDuration.ToFloat64()
 	if err != nil {
-		return 0, err
+		return noRecord, err
 	}
 
 	return time.Duration(duration) * time.Second, nil
@@ -121,12 +124,12 @@ func getLastFailedAnalysisDuration(
 
 	rows, _, err := util.ExecRows(sctx, query, params...)
 	if err != nil {
-		return 0, err
+		return noRecord, err
 	}
 
 	// NOTE: if there are no failed analyses, we return 0.
 	if len(rows) == 0 || rows[0].IsNull(0) {
-		return 0, nil
+		return noRecord, nil
 	}
 	lastFailedDuration := rows[0].GetUint64(0)
 
