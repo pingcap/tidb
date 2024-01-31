@@ -220,6 +220,7 @@ func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subt
 
 	sharedVars.mu.Lock()
 	defer sharedVars.mu.Unlock()
+	// TODO(lance6716):
 	subtaskMeta.Checksum.Sum = sharedVars.Checksum.Sum()
 	subtaskMeta.Checksum.KVs = sharedVars.Checksum.SumKVS()
 	subtaskMeta.Checksum.Size = sharedVars.Checksum.SumSize()

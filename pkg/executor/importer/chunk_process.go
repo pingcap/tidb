@@ -89,6 +89,7 @@ func (b *deliverKVBatch) add(kvs *kv.Pairs) {
 			b.dataKVs.Pairs = append(b.dataKVs.Pairs, pair)
 			b.dataChecksum.UpdateOne(pair)
 		} else {
+			// TODO(lance6716): separate each index
 			b.indexKVs.Pairs = append(b.indexKVs.Pairs, pair)
 			b.indexChecksum.UpdateOne(pair)
 		}
@@ -252,7 +253,7 @@ type baseChunkProcessor struct {
 func (p *baseChunkProcessor) Process(ctx context.Context) (err error) {
 	task := log.BeginTask(p.logger, "process chunk")
 	defer func() {
-		logFields := append(p.enc.summaryFields(), p.deliver.logFields()...)
+		logFields := append(p.enc.summaryFields(), p.deliver.summaryFields()...)
 		logFields = append(logFields, zap.Stringer("type", p.sourceType))
 		task.End(zap.ErrorLevel, err, logFields...)
 		if metrics, ok := metric.GetCommonMetric(ctx); ok && err == nil {
@@ -423,7 +424,7 @@ func (p *dataDeliver) deliverLoop(ctx context.Context) error {
 	return nil
 }
 
-func (p *dataDeliver) logFields() []zap.Field {
+func (p *dataDeliver) summaryFields() []zap.Field {
 	return []zap.Field{
 		zap.Duration("deliverDur", p.deliverTotalDur),
 		zap.Object("checksum", &p.checksum),
@@ -574,11 +575,6 @@ func newQueryChunkProcessor(
 // IndexRouteWriter is a writer for index when using global sort.
 // we route kvs of different index to different writer in order to make
 // merge sort easier, else kv data of all subtasks will all be overlapped.
-//
-// drawback of doing this is that the number of writers need to open will be
-// index-count * encode-concurrency, when the table has many indexes, and each
-// writer will take 256MiB buffer on default.
-// this will take a lot of memory, or even OOM.
 type IndexRouteWriter struct {
 	writers       map[int64]*external.Writer
 	logger        *zap.Logger

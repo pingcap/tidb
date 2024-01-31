@@ -29,8 +29,7 @@ func ProcessChunk(
 	ctx context.Context,
 	chunk *checkpoints.ChunkCheckpoint,
 	tableImporter *TableImporter,
-	dataEngine,
-	indexEngine *backend.OpenedEngine,
+	dataEngine, indexEngine *backend.OpenedEngine,
 	progress *Progress,
 	logger *zap.Logger,
 ) error {
@@ -66,11 +65,11 @@ func ProcessChunk(
 		}
 	}()
 
-	return ProcessChunkWith(ctx, chunk, tableImporter, dataWriter, indexWriter, progress, logger)
+	return ProcessChunkWithWriter(ctx, chunk, tableImporter, dataWriter, indexWriter, progress, logger)
 }
 
-// ProcessChunkWith processes a chunk, and write kv pairs to dataWriter and indexWriter.
-func ProcessChunkWith(
+// ProcessChunkWithWriter processes a chunk, and write kv pairs to dataWriter and indexWriter.
+func ProcessChunkWithWriter(
 	ctx context.Context,
 	chunk *checkpoints.ChunkCheckpoint,
 	tableImporter *TableImporter,

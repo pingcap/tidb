@@ -75,7 +75,7 @@ func (e *importMinimalTaskExecutor) Run(ctx context.Context, dataWriter, indexWr
 			return err
 		}
 	} else {
-		if err := importer.ProcessChunkWith(ctx, &chunkCheckpoint, sharedVars.TableImporter, dataWriter, indexWriter, sharedVars.Progress, logger); err != nil {
+		if err := importer.ProcessChunkWithWriter(ctx, &chunkCheckpoint, sharedVars.TableImporter, dataWriter, indexWriter, sharedVars.Progress, logger); err != nil {
 			return err
 		}
 	}

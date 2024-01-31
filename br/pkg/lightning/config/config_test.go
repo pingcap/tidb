@@ -31,7 +31,6 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"github.com/pingcap/tidb/br/pkg/lightning/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1221,35 +1220,22 @@ func TestCreateSeveralConfigsWithDifferentFilters(t *testing.T) {
 		[mydumper]
 		filter = ["db1.tbl1", "db2.*", "!db2.tbl1"]
 	`)))
-	require.Equal(t, 3, len(cfg1.Mydumper.Filter))
-	require.True(t, common.StringSliceEqual(
-		cfg1.Mydumper.Filter,
-		[]string{"db1.tbl1", "db2.*", "!db2.tbl1"},
-	))
-	require.True(t, common.StringSliceEqual(GetDefaultFilter(), originalDefaultCfg))
+	require.Equal(t, []string{"db1.tbl1", "db2.*", "!db2.tbl1"}, cfg1.Mydumper.Filter)
+	require.Equal(t, GetDefaultFilter(), originalDefaultCfg)
 
 	cfg2 := NewConfig()
-	require.True(t, common.StringSliceEqual(
-		cfg2.Mydumper.Filter,
-		originalDefaultCfg,
-	))
-	require.True(t, common.StringSliceEqual(GetDefaultFilter(), originalDefaultCfg))
+	require.Equal(t, originalDefaultCfg, cfg2.Mydumper.Filter)
+	require.Equal(t, GetDefaultFilter(), originalDefaultCfg)
 
 	gCfg1, err := LoadGlobalConfig([]string{"-f", "db1.tbl1", "-f", "db2.*", "-f", "!db2.tbl1"}, nil)
 	require.NoError(t, err)
-	require.True(t, common.StringSliceEqual(
-		gCfg1.Mydumper.Filter,
-		[]string{"db1.tbl1", "db2.*", "!db2.tbl1"},
-	))
-	require.True(t, common.StringSliceEqual(GetDefaultFilter(), originalDefaultCfg))
+	require.Equal(t, []string{"db1.tbl1", "db2.*", "!db2.tbl1"}, gCfg1.Mydumper.Filter)
+	require.Equal(t, GetDefaultFilter(), originalDefaultCfg)
 
 	gCfg2, err := LoadGlobalConfig([]string{}, nil)
 	require.NoError(t, err)
-	require.True(t, common.StringSliceEqual(
-		gCfg2.Mydumper.Filter,
-		originalDefaultCfg,
-	))
-	require.True(t, common.StringSliceEqual(GetDefaultFilter(), originalDefaultCfg))
+	require.Equal(t, originalDefaultCfg, gCfg2.Mydumper.Filter)
+	require.Equal(t, GetDefaultFilter(), originalDefaultCfg)
 }
 
 func TestCompressionType(t *testing.T) {
