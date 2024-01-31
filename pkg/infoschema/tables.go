@@ -230,6 +230,60 @@ const (
 	DataLockWaitsColumnSQLDigestText = "SQL_DIGEST_TEXT"
 )
 
+// IsMemtable check if the table is stored in memory.
+func IsMemtable(tableName string) bool {
+	_, ok := memtableMap[tableName]
+	return ok
+}
+
+var memtableMap = map[string]int64{
+	TableSchemata:                           autoid.InformationSchemaDBID + 1,
+	TableStatistics:                         autoid.InformationSchemaDBID + 5,
+	TableTables:                             autoid.InformationSchemaDBID + 2,
+	TableReferConst:                         autoid.InformationSchemaDBID + 13,
+	TableSequences:                          autoid.InformationSchemaDBID + 58,
+	TablePartitions:                         autoid.InformationSchemaDBID + 11,
+	TableClusterInfo:                        autoid.InformationSchemaDBID + 42,
+	TableAnalyzeStatus:                      autoid.InformationSchemaDBID + 38,
+	TableTiDBIndexes:                        autoid.InformationSchemaDBID + 34,
+	TableViews:                              autoid.InformationSchemaDBID + 23,
+	TableEngines:                            autoid.InformationSchemaDBID + 22,
+	TableCharacterSets:                      autoid.InformationSchemaDBID + 6,
+	TableCollations:                         autoid.InformationSchemaDBID + 7,
+	TableKeyColumn:                          autoid.InformationSchemaDBID + 12,
+	TableMetricTables:                       autoid.InformationSchemaDBID + 54,
+	TableProfiling:                          autoid.InformationSchemaDBID + 10,
+	TableCollationCharacterSetApplicability: autoid.InformationSchemaDBID + 32,
+	TableProcesslist:                        autoid.InformationSchemaDBID + 33,
+	ClusterTableProcesslist:                 autoid.InformationSchemaDBID + 47,
+	TableUserPrivileges:                     autoid.InformationSchemaDBID + 18,
+	TableTiKVRegionStatus:                   autoid.InformationSchemaDBID + 39,
+	TableTiDBHotRegions:                     autoid.InformationSchemaDBID + 36,
+	TableConstraints:                        autoid.InformationSchemaDBID + 16,
+	TableSessionVar:                         autoid.InformationSchemaDBID + 14,
+	TableTiDBServersInfo:                    autoid.InformationSchemaDBID + 41,
+	TableTiFlashReplica:                     autoid.InformationSchemaDBID + 45,
+	TableTiKVStoreStatus:                    autoid.InformationSchemaDBID + 37,
+	TableClientErrorsSummaryGlobal:          autoid.InformationSchemaDBID + 67,
+	TableClientErrorsSummaryByUser:          autoid.InformationSchemaDBID + 68,
+	TableClientErrorsSummaryByHost:          autoid.InformationSchemaDBID + 69,
+	TableAttributes:                         autoid.InformationSchemaDBID + 77,
+	TablePlacementPolicies:                  autoid.InformationSchemaDBID + 79,
+	TableTrxSummary:                         autoid.InformationSchemaDBID + 80,
+	ClusterTableTrxSummary:                  autoid.InformationSchemaDBID + 81,
+	TableVariablesInfo:                      autoid.InformationSchemaDBID + 82,
+	TableUserAttributes:                     autoid.InformationSchemaDBID + 83,
+	TableMemoryUsage:                        autoid.InformationSchemaDBID + 84,
+	TableMemoryUsageOpsHistory:              autoid.InformationSchemaDBID + 85,
+	ClusterTableMemoryUsage:                 autoid.InformationSchemaDBID + 86,
+	ClusterTableMemoryUsageOpsHistory:       autoid.InformationSchemaDBID + 87,
+	TableResourceGroups:                     autoid.InformationSchemaDBID + 88,
+	TableRunawayWatches:                     autoid.InformationSchemaDBID + 89,
+	TableCheckConstraints:                   autoid.InformationSchemaDBID + 90,
+	TableTiDBCheckConstraints:               autoid.InformationSchemaDBID + 91,
+	TableKeywords:                           autoid.InformationSchemaDBID + 92,
+}
+
 var tableIDMap = map[string]int64{
 	TableSchemata:                           autoid.InformationSchemaDBID + 1,
 	TableTables:                             autoid.InformationSchemaDBID + 2,

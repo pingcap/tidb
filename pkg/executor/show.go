@@ -2002,6 +2002,15 @@ func (e *ShowExec) appendRow(row []interface{}) {
 }
 
 func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
+	tb, err := e.getTable()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	if infoschema.IsMemtable(tb.Meta().Name.O) {
+		return nil
+	}
+
 	store := e.Ctx().GetStore()
 	tikvStore, ok := store.(helper.Storage)
 	if !ok {
@@ -2010,11 +2019,6 @@ func (e *ShowExec) fetchShowTableRegions(ctx context.Context) error {
 	splitStore, ok := store.(kv.SplittableStore)
 	if !ok {
 		return nil
-	}
-
-	tb, err := e.getTable()
-	if err != nil {
-		return errors.Trace(err)
 	}
 
 	physicalIDs := []int64{}

@@ -432,3 +432,7 @@ set @@session.default_collation_for_utf8mb4=default;
 DROP TABLE IF EXISTS `t`;
 CREATE TABLE `t` (a BIGINT PRIMARY KEY AUTO_RANDOM(2), b INT) PRE_SPLIT_REGIONS=4;
 SHOW CREATE TABLE `t`;
+
+# TestShowMemoryTablesRegions
+show table information_schema.tables regions;
+show table information_schema.TIDB_INDEXES regions;
