@@ -56,6 +56,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -797,7 +798,7 @@ func (e *IndexLookUpExecutor) startTableWorker(ctx context.Context, workCh <-cha
 	}
 }
 
-func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookupTableTask) (exec.Executor, error) {
+func (e *IndexLookUpExecutor) buildTableReader(ctx context.Context, task *lookupTableTask) (*TableReaderExecutor, error) {
 	table := e.table
 	if e.partitionTableMode && task.partitionTable != nil {
 		table = task.partitionTable
@@ -1474,10 +1475,22 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		return w.compareData(ctx, task, tableReader)
 	}
 
-	task.memTracker = w.memTracker
-	memUsage := int64(cap(task.handles) * 8)
-	task.memUsage = memUsage
-	task.memTracker.Consume(memUsage)
+	{
+		task.memTracker = w.memTracker
+		memUsage := int64(cap(task.handles))*size.SizeOfInterface + tableReader.memUsage()
+		for _, h := range task.handles {
+			memUsage += int64(h.MemUsage())
+		}
+		if task.indexOrder != nil {
+			memUsage += task.indexOrder.MemUsage()
+		}
+		if task.duplicatedIndexOrder != nil {
+			memUsage += task.duplicatedIndexOrder.MemUsage()
+		}
+		memUsage += task.idxRows.MemoryUsage()
+		task.memUsage = memUsage
+		task.memTracker.Consume(memUsage)
+	}
 	handleCnt := len(task.handles)
 	task.rows = make([]chunk.Row, 0, handleCnt)
 	for {
@@ -1490,9 +1503,11 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 		if chk.NumRows() == 0 {
 			break
 		}
-		memUsage = chk.MemoryUsage()
-		task.memUsage += memUsage
-		task.memTracker.Consume(memUsage)
+		{
+			memUsage := chk.MemoryUsage()
+			task.memUsage += memUsage
+			task.memTracker.Consume(memUsage)
+		}
 		iter := chunk.NewIterator4Chunk(chk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			task.rows = append(task.rows, row)
@@ -1500,9 +1515,11 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 	}
 
 	defer trace.StartRegion(ctx, "IndexLookUpTableCompute").End()
-	memUsage = int64(cap(task.rows)) * int64(unsafe.Sizeof(chunk.Row{}))
-	task.memUsage += memUsage
-	task.memTracker.Consume(memUsage)
+	{
+		memUsage := int64(cap(task.rows)) * int64(unsafe.Sizeof(chunk.Row{}))
+		task.memUsage += memUsage
+		task.memTracker.Consume(memUsage)
+	}
 	if w.keepOrder {
 		task.rowIdx = make([]int, 0, len(task.rows))
 		for i := range task.rows {
@@ -1513,9 +1530,11 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 			rowIdx, _ := task.indexOrder.Get(handle)
 			task.rowIdx = append(task.rowIdx, rowIdx.(int))
 		}
-		memUsage = int64(cap(task.rowIdx) * 4)
-		task.memUsage += memUsage
-		task.memTracker.Consume(memUsage)
+		{
+			memUsage := int64(cap(task.rowIdx) * int(size.SizeOfInt))
+			task.memUsage += memUsage
+			task.memTracker.Consume(memUsage)
+		}
 		sort.Sort(task)
 	}
 
