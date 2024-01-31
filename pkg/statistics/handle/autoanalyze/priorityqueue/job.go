@@ -16,6 +16,7 @@ package priorityqueue
 
 import (
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -82,7 +83,15 @@ func getPartitionNames(partitionIndexes map[string][]string) []string {
 }
 
 func isValidToAnalyze(sctx sessionctx.Context, schema, table, partition string) bool {
-	lastFailedAnalysisDuration, err := getLastFailedAnalysisDuration(sctx, schema, table, partition)
+	var (
+		lastFailedAnalysisDuration time.Duration
+		err                        error
+	)
+	if partition == "" {
+		lastFailedAnalysisDuration, err = getLastFailedAnalysisDuration(sctx, schema, table)
+	} else {
+		lastFailedAnalysisDuration, err = getLastFailedAnalysisDuration(sctx, schema, table, partition)
+	}
 	if err != nil {
 		statslogutil.StatsLogger().Warn(
 			"Fail to get last failed analysis duration",
@@ -94,7 +103,14 @@ func isValidToAnalyze(sctx sessionctx.Context, schema, table, partition string) 
 		return false
 	}
 
-	averageAnalysisDuration, err := getAverageAnalysisDuration(sctx, schema, table, partition)
+	var (
+		averageAnalysisDuration time.Duration
+	)
+	if partition == "" {
+		averageAnalysisDuration, err = getAverageAnalysisDuration(sctx, schema, table)
+	} else {
+		averageAnalysisDuration, err = getAverageAnalysisDuration(sctx, schema, table, partition)
+	}
 	if err != nil {
 		statslogutil.StatsLogger().Warn(
 			"Fail to get average analysis duration",
@@ -111,7 +127,7 @@ func isValidToAnalyze(sctx sessionctx.Context, schema, table, partition string) 
 	onlyFailedAnalysis := lastFailedAnalysisDuration != noRecord && averageAnalysisDuration == noRecord
 	meetSkipCondition := lastFailedAnalysisDuration != noRecord &&
 		lastFailedAnalysisDuration < 2*averageAnalysisDuration
-	if onlyFailedAnalysis || meetSkipCondition {
+	if lastFailedAnalysisDuration == justFailed || onlyFailedAnalysis || meetSkipCondition {
 		statslogutil.StatsLogger().Info(
 			"Skip analysis because the last failed analysis duration is less than 2 times the average analysis duration",
 			zap.String("schema", schema),

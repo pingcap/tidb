@@ -241,15 +241,29 @@ func TestIsValidToAnalyze(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec(session.CreateAnalyzeJobs)
-	initJobs(tk)
-	insertMultipleFinishedJobs(tk, "example_table1", "")
-
 	job := &TableAnalysisJob{
 		TableSchema: "example_schema",
 		TableName:   "example_table1",
 		Weight:      2,
 	}
+	initJobs(tk)
+	insertMultipleFinishedJobs(tk, job.TableName, "")
+
 	se := tk.Session()
 	sctx := se.(sessionctx.Context)
+	require.True(t, job.IsValidToAnalyze(sctx))
+
+	// Insert some failed jobs.
+	// Just failed.
+	now := tk.MustQuery("select now()").Rows()[0][0].(string)
+	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", now)
+	require.False(t, job.IsValidToAnalyze(sctx))
+	// Failed 1 second ago.
+	startTime := tk.MustQuery("select now() - interval 1 second").Rows()[0][0].(string)
+	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", startTime)
+	require.False(t, job.IsValidToAnalyze(sctx))
+	// Failed long long ago.
+	startTime = tk.MustQuery("select now() - interval 300 day").Rows()[0][0].(string)
+	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", startTime)
 	require.True(t, job.IsValidToAnalyze(sctx))
 }

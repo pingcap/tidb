@@ -320,3 +320,68 @@ func insertFailedJob(
 		)
 	}
 }
+
+func insertFailedJobWithStartTime(
+	tk *testkit.TestKit,
+	dbName string,
+	tableName string,
+	partitionName string,
+	startTime string,
+) {
+	if partitionName == "" {
+		tk.MustExec(`
+	INSERT INTO mysql.analyze_jobs (
+		table_schema,
+		table_name,
+		job_info,
+		start_time,
+		end_time,
+		state,
+		fail_reason,
+		instance
+	) VALUES (
+		?,
+		?,
+		'Job information for failed job',
+		?,
+		'2024-01-01 10:00:00',
+		'failed',
+		'Some reason for failure',
+		'example_instance'
+	);
+		`,
+			dbName,
+			tableName,
+			startTime,
+		)
+	} else {
+		tk.MustExec(`
+	INSERT INTO mysql.analyze_jobs (
+		table_schema,
+		table_name,
+		partition_name,
+		job_info,
+		start_time,
+		end_time,
+		state,
+		fail_reason,
+		instance
+	) VALUES (
+		?,
+		?,
+		?,
+		'Job information for failed job',
+		?,
+		'2024-01-01 10:00:00',
+		'failed',
+		'Some reason for failure',
+		'example_instance'
+	);
+		`,
+			dbName,
+			tableName,
+			partitionName,
+			startTime,
+		)
+	}
+}

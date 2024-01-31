@@ -22,7 +22,10 @@ import (
 )
 
 // noRecord is used to indicate that there is no related record in mysql.analyze_jobs.
-const noRecord = 0
+const noRecord = -1
+
+// justFailed is used to indicate that the last analysis has just failed.
+const justFailed = 0
 
 const avgDurationQueryForTable = `
 	SELECT AVG(TIMESTAMPDIFF(SECOND, start_time, end_time)) AS avg_duration
@@ -132,6 +135,9 @@ func getLastFailedAnalysisDuration(
 		return noRecord, nil
 	}
 	lastFailedDuration := rows[0].GetUint64(0)
+	if lastFailedDuration == 0 {
+		return justFailed, nil
+	}
 
 	return time.Duration(lastFailedDuration) * time.Second, nil
 }
