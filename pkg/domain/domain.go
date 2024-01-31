@@ -1875,7 +1875,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 		defer util.Recover(metrics.LabelDomain, "globalBindHandleWorkerLoop", nil, false)
 
 		bindWorkerTicker := time.NewTicker(bindinfo.Lease)
-		gcBindTicker := time.NewTicker(24 * time.Hour)
+		gcBindTicker := time.NewTicker(1000 * bindinfo.Lease)
 		defer func() {
 			bindWorkerTicker.Stop()
 			gcBindTicker.Stop()
