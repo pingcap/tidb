@@ -46,19 +46,19 @@ func NewRefresher(
 }
 
 func (r *Refresher) pickOneTableForAnalysisByPriority() {
+	se, err := r.statsHandle.SPool().Get()
+	if err != nil {
+		statslogutil.StatsLogger().Error(
+			"Get session context failed",
+			zap.Error(err),
+		)
+		return
+	}
+	defer r.statsHandle.SPool().Put(se)
+	sctx := se.(sessionctx.Context)
 	// Pick the table with the highest weight.
 	for r.jobs.Len() > 0 {
 		job := heap.Pop(r.jobs).(*priorityqueue.TableAnalysisJob)
-		se, err := r.statsHandle.SPool().Get()
-		if err != nil {
-			statslogutil.StatsLogger().Error(
-				"Get session context failed",
-				zap.Error(err),
-			)
-			continue
-		}
-		defer r.statsHandle.SPool().Put(se)
-		sctx := se.(sessionctx.Context)
 		if !job.IsValidToAnalyze(
 			sctx,
 		) {
