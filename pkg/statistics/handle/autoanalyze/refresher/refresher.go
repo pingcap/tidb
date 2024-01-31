@@ -82,5 +82,7 @@ func (r *Refresher) pickOneTableForAnalysisByPriority() {
 				zap.Error(err),
 			)
 		}
+		// Only analyze one table each time.
+		return
 	}
 }
