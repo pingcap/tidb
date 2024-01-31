@@ -6,7 +6,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/store/helper",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/parser/model",
         "//pkg/store/driver/error",

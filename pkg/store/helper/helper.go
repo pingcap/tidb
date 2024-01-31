@@ -28,7 +28,6 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -677,6 +676,7 @@ func (*Helper) FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBInfo
 // Assuming tables or indices key ranges never intersect.
 // Regions key ranges can intersect.
 func (h *Helper) GetRegionsTableInfo(regionsInfo *pd.RegionsInfo, schemas []*model.DBInfo) map[int64][]TableInfo {
+	schemas = h.FilterMemDBs(schemas)
 	tables := h.GetTablesInfoWithKeyRange(schemas)
 
 	regions := make([]*pd.RegionInfo, 0, len(regionsInfo.Regions))
@@ -719,10 +719,6 @@ func (*Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoWit
 	tables := []TableInfoWithKeyRange{}
 	for _, db := range schemas {
 		for _, table := range db.Tables {
-			// memtable should not have region info.
-			if infoschema.IsMemtable(table.Name.O) {
-				continue
-			}
 			if table.Partition != nil {
 				for i := range table.Partition.Definitions {
 					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], nil))
