@@ -64,7 +64,7 @@ func (w *HashAggFinalWorker) getInputFromDisk(sctx sessionctx.Context) (ret aggf
 
 func (w *HashAggFinalWorker) getPartialInput() (input *aggfuncs.AggPartialResultMapper, ok bool) {
 	waitStart := time.Now()
-	defer w.increaseWaitTime(waitStart)
+	defer updateWaitTime(w.stats, waitStart)
 	select {
 	case <-w.finishCh:
 		return nil, false
@@ -81,19 +81,6 @@ func (w *HashAggFinalWorker) initBInMap() {
 	mapLen := len(w.partialResultMap)
 	for mapLen > (1<<w.BInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
 		w.BInMap++
-	}
-}
-
-func (w *HashAggFinalWorker) increaseWaitTime(waitStart time.Time) {
-	if w.stats != nil {
-		w.stats.WaitTime += int64(time.Since(waitStart))
-	}
-}
-
-func (w *HashAggFinalWorker) increaseExecTime(execStart time.Time) {
-	if w.stats != nil {
-		w.stats.ExecTime += int64(time.Since(execStart))
-		w.stats.TaskNum++
 	}
 }
 
@@ -124,7 +111,7 @@ func (w *HashAggFinalWorker) mergeInputIntoResultMap(sctx sessionctx.Context, in
 		}
 	}
 	w.memTracker.Consume(allMemDelta)
-	w.increaseExecTime(execStart)
+	updateExecTime(w.stats, execStart)
 	return nil
 }
 
@@ -165,10 +152,6 @@ func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, resu
 		}
 
 		if result.IsFull() {
-			if w.checkFinishChClosed() {
-				return
-			}
-
 			w.outputCh <- &AfFinalResult{chk: result, giveBackCh: w.finalResultHolderCh}
 			result, finished = w.receiveFinalResultHolder()
 			if finished {
@@ -181,7 +164,7 @@ func (w *HashAggFinalWorker) generateResultAndSend(sctx sessionctx.Context, resu
 func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 	waitStart := time.Now()
 	result, finished := w.receiveFinalResultHolder()
-	w.increaseWaitTime(waitStart)
+	updateWaitTime(w.stats, waitStart)
 	if finished {
 		return
 	}
@@ -189,7 +172,7 @@ func (w *HashAggFinalWorker) sendFinalResult(sctx sessionctx.Context) {
 	failpoint.Inject("ConsumeRandomPanic", nil)
 
 	execStart := time.Now()
-	defer w.increaseExecTime(execStart)
+	updateExecTime(w.stats, execStart)
 	if w.spillHelper.isSpilledChunksIOEmpty() {
 		w.generateResultAndSend(sctx, result)
 	} else {
@@ -246,11 +229,7 @@ func (w *HashAggFinalWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGro
 
 	partialWorkerWaiter.Wait()
 
-	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
-		if val.(bool) {
-			intestBeforeFinalWorkerStart()
-		}
-	})
+	intestBeforeFinalWorkerStart()
 
 	if w.spillHelper.isSpilledChunksIOEmpty() {
 		err := w.consumeIntermData(ctx)
@@ -270,19 +249,21 @@ func (w *HashAggFinalWorker) cleanup(start time.Time, waitGroup *sync.WaitGroup)
 	if r := recover(); r != nil {
 		recoveryHashAgg(w.outputCh, r)
 	}
-	if w.stats != nil {
-		w.stats.WorkerTime += int64(time.Since(start))
-	}
+	updateWorkerTime(w.stats, start)
 	waitGroup.Done()
 }
 
 func intestBeforeFinalWorkerStart() {
-	num := rand.Intn(50)
-	if num == 0 {
-		panic("Intest panic: final worker is panicked before start")
-	} else if num == 1 {
-		time.Sleep(1 * time.Millisecond)
-	}
+	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
+		if val.(bool) {
+			num := rand.Intn(50)
+			if num == 0 {
+				panic("Intest panic: final worker is panicked before start")
+			} else if num == 1 {
+				time.Sleep(1 * time.Millisecond)
+			}
+		}
+	})
 }
 
 func (w *HashAggFinalWorker) intestDuringFinalWorkerRun(err *error) {

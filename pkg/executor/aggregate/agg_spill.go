@@ -42,25 +42,10 @@ const (
 	// maxSpillTimes indicates how many times the data can spill at most.
 	maxSpillTimes = 10
 
-	// They only used for non-parallel agg spill
-	notSpillMode = 0
-	spillMode    = 1
-
 	spilledPartitionNum = 256
 
 	spillLogInfo string = "memory exceeds quota, set aggregate mode to spill-mode"
 )
-
-type processRowContext struct {
-	ctx                    sessionctx.Context
-	chunk                  *chunk.Chunk
-	rowPos                 int
-	keyColPos              int
-	aggFuncNum             int
-	restoreadData          *aggfuncs.AggPartialResultMapper
-	partialResultsRestored [][]aggfuncs.PartialResult
-	bInMap                 *int
-}
 
 type parallelHashAggSpillHelper struct {
 	lock struct {
@@ -91,7 +76,7 @@ func newSpillHelper(
 	getNewSpillChunkFunc func() *chunk.Chunk,
 	spillChunkFieldTypes []*types.FieldType) *parallelHashAggSpillHelper {
 	mu := new(sync.Mutex)
-	return &parallelHashAggSpillHelper{
+	helper := &parallelHashAggSpillHelper{
 		lock: struct {
 			*sync.Mutex
 			waitIfInSpilling  *sync.Cond
@@ -115,6 +100,9 @@ func newSpillHelper(
 		getNewSpillChunkFunc: getNewSpillChunkFunc,
 		spillChunkFieldTypes: spillChunkFieldTypes,
 	}
+
+	
+	return helper
 }
 
 func (p *parallelHashAggSpillHelper) close() {
@@ -247,6 +235,17 @@ func (p *parallelHashAggSpillHelper) restoreOnePartition(ctx sessionctx.Context)
 	return restoredData, restoredMem, nil
 }
 
+type processRowContext struct {
+	ctx                    sessionctx.Context
+	chunk                  *chunk.Chunk
+	rowPos                 int
+	keyColPos              int
+	aggFuncNum             int
+	restoreadData          *aggfuncs.AggPartialResultMapper
+	partialResultsRestored [][]aggfuncs.PartialResult
+	bInMap                 *int
+}
+
 func (p *parallelHashAggSpillHelper) restoreFromOneSpillFile(ctx sessionctx.Context, restoreadData *aggfuncs.AggPartialResultMapper, diskIO *chunk.DataInDiskByChunks, bInMap *int) (totalMemDelta int64, totalExpandMem int64, err error) {
 	chunkNum := diskIO.NumChunks()
 	aggFuncNum := len(p.aggFuncsForRestoring)
@@ -320,10 +319,6 @@ func (p *parallelHashAggSpillHelper) processRow(context *processRowContext) (tot
 	return totalMemDelta, expandMem, nil
 }
 
-func isInSpillMode(inSpillMode *uint32) bool {
-	return atomic.LoadUint32(inSpillMode) == spillMode
-}
-
 // Guarantee that processed data is at least 20% of the threshold, to avoid spilling too frequently.
 func hasEnoughDataToSpill(aggTracker *memory.Tracker, passedInTracker *memory.Tracker) bool {
 	return aggTracker.BytesConsumed() >= passedInTracker.GetBytesLimit()/5
@@ -340,13 +335,13 @@ type AggSpillDiskAction struct {
 
 // Action set HashAggExec spill mode.
 func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
-	if !isInSpillMode(&a.e.inSpillMode) && hasEnoughDataToSpill(a.e.memTracker, t) && a.spillTimes < maxSpillTimes {
+	if atomic.LoadUint32(&a.e.inSpillMode) == 0 && hasEnoughDataToSpill(a.e.memTracker, t) && a.spillTimes < maxSpillTimes {
 		a.spillTimes++
 		logutil.BgLogger().Info(spillLogInfo,
 			zap.Uint32("spillTimes", a.spillTimes),
 			zap.Int64("consumed", t.BytesConsumed()),
 			zap.Int64("quota", t.GetBytesLimit()))
-		atomic.StoreUint32(&a.e.inSpillMode, spillMode)
+			atomic.StoreUint32(&a.e.inSpillMode, 1)
 		memory.QueryForceDisk.Add(1)
 		return
 	}

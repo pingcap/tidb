@@ -231,7 +231,7 @@ func initCtx(ctx *mock.Context, newRootExceedAction *testutil.MockActionOnExceed
 	ctx.GetSessionVars().MaxChunkSize = chkSize
 	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSession, hardLimitBytesNum)
 	ctx.GetSessionVars().TrackAggregateMemoryUsage = true
-	ctx.GetSessionVars().EnableConcurrentHashaggSpill = true
+	ctx.GetSessionVars().EnableParallelHashaggSpill = true
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 	ctx.GetSessionVars().MemTracker.SetActionOnExceed(newRootExceedAction)

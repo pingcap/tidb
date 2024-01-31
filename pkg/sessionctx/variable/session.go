@@ -1308,8 +1308,8 @@ type SessionVars struct {
 	// StatsLoadSyncWait indicates how long to wait for stats load before timeout.
 	StatsLoadSyncWait int64
 
-	// EnableConcurrentHashaggSpill indicates if parallel hash agg could spill.
-	EnableConcurrentHashaggSpill bool
+	// EnableParallelHashaggSpill indicates if parallel hash agg could spill.
+	EnableParallelHashaggSpill bool
 
 	// SysdateIsNow indicates whether Sysdate is an alias of Now function
 	SysdateIsNow bool

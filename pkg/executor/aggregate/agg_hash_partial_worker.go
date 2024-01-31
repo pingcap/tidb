@@ -88,19 +88,6 @@ func (w *HashAggPartialWorker) getChildInput() bool {
 	return true
 }
 
-func (w *HashAggPartialWorker) updateWaitTime(startTime time.Time) {
-	if w.stats != nil {
-		w.stats.WaitTime += int64(time.Since(startTime))
-	}
-}
-
-func (w *HashAggPartialWorker) updateExecTime(startTime time.Time) {
-	if w.stats != nil {
-		w.stats.ExecTime += int64(time.Since(startTime))
-		w.stats.TaskNum++
-	}
-}
-
 func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasError *bool, needShuffle *bool) bool {
 	if w.spillHelper.checkError() {
 		*hasError = true
@@ -109,7 +96,7 @@ func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasE
 
 	waitStart := time.Now()
 	ok := w.getChildInput()
-	w.updateWaitTime(waitStart)
+	updateWaitTime(w.stats, waitStart)
 
 	if !ok {
 		return false
@@ -123,7 +110,7 @@ func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasE
 		w.processError(err)
 		return false
 	}
-	w.updateExecTime(execStart)
+	updateExecTime(w.stats, execStart)
 
 	// The intermData can be promised to be not empty if reaching here,
 	// so we set needShuffle to be true.
@@ -213,9 +200,7 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 		w.finalizeWorkerProcess(needShuffle, finalConcurrency, hasError)
 
 		w.memTracker.Consume(-w.chk.MemoryUsage())
-		if w.stats != nil {
-			w.stats.WorkerTime += int64(time.Since(start))
-		}
+		updateWorkerTime(w.stats, start)
 	}()
 
 	intestBeforePartialWorkerRun()
@@ -328,16 +313,15 @@ func (w *HashAggPartialWorker) spillDataToDisk() error {
 }
 
 func (w *HashAggPartialWorker) spillDataToDiskImpl() error {
-	defer func() {
-		if r := recover(); r != nil {
-			recoveryHashAgg(w.globalOutputCh, r)
-		}
-	}()
 	if len(w.partialResultsMap) == 0 {
 		return nil
 	}
 
 	defer func() {
+		if r := recover(); r != nil {
+			recoveryHashAgg(w.globalOutputCh, r)
+		}
+
 		// Clear the partialResultsMap
 		w.partialResultsMap = make([]aggfuncs.AggPartialResultMapper, len(w.partialResultsMap))
 		for i := range w.partialResultsMap {

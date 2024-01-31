@@ -2215,7 +2215,7 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableConcurrentHashaggSpill, Value: BoolToOnOff(DefTiDBEnableConcurrentHashaggSpill), Type: TypeBool,
 		SetSession: func(vars *SessionVars, s string) error {
-			vars.EnableConcurrentHashaggSpill = TiDBOptOn(s)
+			vars.EnableParallelHashaggSpill = TiDBOptOn(s)
 			return nil
 		},
 	},

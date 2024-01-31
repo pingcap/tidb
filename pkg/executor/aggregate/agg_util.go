@@ -248,3 +248,22 @@ func failpointError() error {
 	})
 	return err
 }
+
+func updateWaitTime(stats *AggWorkerStat, startTime time.Time) {
+	if stats != nil {
+		stats.WaitTime += int64(time.Since(startTime))
+	}
+}
+
+func updateWorkerTime(stats *AggWorkerStat, startTime time.Time) {
+	if stats != nil {
+		stats.WorkerTime += int64(time.Since(startTime))
+	}
+}
+
+func updateExecTime(stats *AggWorkerStat, startTime time.Time) {
+	if stats != nil {
+		stats.ExecTime += int64(time.Since(startTime))
+		stats.TaskNum++
+	}
+}
