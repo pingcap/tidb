@@ -242,7 +242,7 @@ func TestBalanceOneTask(t *testing.T) {
 			slotMgr.updateCapacity(16)
 			b := newBalancer(Param{
 				taskMgr: mockTaskMgr,
-				nodeMgr: newNodeManager(),
+				nodeMgr: newNodeManager(""),
 				slotMgr: slotMgr,
 			})
 			b.currUsedSlots = c.initUsedSlots
@@ -263,7 +263,7 @@ func TestBalanceOneTask(t *testing.T) {
 		slotMgr.updateCapacity(16)
 		b := newBalancer(Param{
 			taskMgr: mockTaskMgr,
-			nodeMgr: newNodeManager(),
+			nodeMgr: newNodeManager(""),
 			slotMgr: slotMgr,
 		})
 		require.ErrorContains(t, b.balanceSubtasks(ctx, mockScheduler, []string{"tidb1"}), "mock error")
@@ -286,7 +286,7 @@ func TestBalanceOneTask(t *testing.T) {
 		slotMgr.updateCapacity(16)
 		b := newBalancer(Param{
 			taskMgr: mockTaskMgr,
-			nodeMgr: newNodeManager(),
+			nodeMgr: newNodeManager(""),
 			slotMgr: slotMgr,
 		})
 		require.ErrorContains(t, b.balanceSubtasks(ctx, mockScheduler, []string{"tidb1"}), "mock error")

@@ -181,7 +181,7 @@ func TestSlotManagerUpdate(t *testing.T) {
 	defer ctrl.Finish()
 	ctx := context.Background()
 
-	nodeMgr := newNodeManager()
+	nodeMgr := newNodeManager("")
 	taskMgr := mock.NewMockTaskManager(ctrl)
 	nodeMgr.managedNodes.Store(&[]string{"tidb-1", "tidb-2", "tidb-3"})
 	taskMgr.EXPECT().GetUsedSlotsOnNodes(gomock.Any()).Return(map[string]int{

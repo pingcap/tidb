@@ -410,10 +410,8 @@ func (local *Backend) BatchSplitRegions(
 			// Wait for a while until the regions successfully splits.
 			ok, err2 := local.hasRegion(ctx, region.Region.Id)
 			if !ok || err2 != nil {
-				if err2 == nil {
-					log.FromContext(ctx).Warn("split region failed", zap.Uint64("regionID", region.Region.Id))
-				} else {
-					log.FromContext(ctx).Warn("split region failed", zap.Uint64("regionID", region.Region.Id), zap.Error(err2))
+				if err2 != nil {
+					log.FromContext(ctx).Warn("split region failed with error", zap.Uint64("regionID", region.Region.Id), zap.Error(err2))
 				}
 				retryRegions = append(retryRegions, region)
 				continue

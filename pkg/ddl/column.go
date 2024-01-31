@@ -491,7 +491,7 @@ func getModifyColumnInfo(t *meta.Meta, job *model.Job) (*model.DBInfo, *model.Ta
 // Otherwise we set the zero value as original default value.
 // Besides, in insert & update records, we have already implement using the casted value of relative column to insert
 // rather than the original default value.
-func GetOriginDefaultValueForModifyColumn(sessCtx sessionctx.Context, changingCol, oldCol *model.ColumnInfo) (interface{}, error) {
+func GetOriginDefaultValueForModifyColumn(sessCtx sessionctx.Context, changingCol, oldCol *model.ColumnInfo) (any, error) {
 	var err error
 	originDefVal := oldCol.GetOriginDefaultValue()
 	if originDefVal != nil {
@@ -658,7 +658,7 @@ func rollbackModifyColumnJobWithData(d *ddlCtx, t *meta.Meta, tblInfo *model.Tab
 	}
 	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	// Reconstruct the job args to add the temporary index ids into delete range table.
-	job.Args = []interface{}{changingIdxIDs, getPartitionIDs(tblInfo)}
+	job.Args = []any{changingIdxIDs, getPartitionIDs(tblInfo)}
 	return ver, nil
 }
 
@@ -793,7 +793,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Finish this job.
 		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 		// Refactor the job args to add the old index ids into delete range table.
-		job.Args = []interface{}{rmIdxIDs, getPartitionIDs(tblInfo)}
+		job.Args = []any{rmIdxIDs, getPartitionIDs(tblInfo)}
 		modifyColumnEvent := statsutil.NewModifyColumnEvent(
 			tblInfo,
 			[]*model.ColumnInfo{changingCol},
@@ -1110,14 +1110,14 @@ func (w *worker) updatePhysicalTableRow(t table.Table, reorgInfo *reorgInfo) err
 }
 
 // TestReorgGoroutineRunning is only used in test to indicate the reorg goroutine has been started.
-var TestReorgGoroutineRunning = make(chan interface{})
+var TestReorgGoroutineRunning = make(chan any)
 
 // updateCurrentElement update the current element for reorgInfo.
 func (w *worker) updateCurrentElement(t table.Table, reorgInfo *reorgInfo) error {
 	failpoint.Inject("mockInfiniteReorgLogic", func(val failpoint.Value) {
 		//nolint:forcetypeassert
 		if val.(bool) {
-			a := new(interface{})
+			a := new(any)
 			TestReorgGoroutineRunning <- a
 			for {
 				time.Sleep(30 * time.Millisecond)
@@ -1583,7 +1583,7 @@ func (w *worker) doModifyColumn(
 
 	job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
 	// For those column-type-change type which doesn't need reorg data, we should also mock the job args for delete range.
-	job.Args = []interface{}{[]int64{}, []int64{}}
+	job.Args = []any{[]int64{}, []int64{}}
 	return ver, nil
 }
 
@@ -1754,7 +1754,7 @@ func checkForNullValue(ctx context.Context, sctx sessionctx.Context, isDataTrunc
 	}
 	var buf strings.Builder
 	buf.WriteString("select 1 from %n.%n where ")
-	paramsList := make([]interface{}, 0, 2+len(oldCols))
+	paramsList := make([]any, 0, 2+len(oldCols))
 	paramsList = append(paramsList, schema.L, table.L)
 	for i, col := range oldCols {
 		if i == 0 {
@@ -1907,7 +1907,7 @@ func rollbackModifyColumnJob(d *ddlCtx, t *meta.Meta, tblInfo *model.TableInfo, 
 	}
 	job.FinishTableJob(model.JobStateRollbackDone, model.StateNone, ver, tblInfo)
 	// For those column-type-change type which doesn't need reorg data, we should also mock the job args for delete range.
-	job.Args = []interface{}{[]int64{}, []int64{}}
+	job.Args = []any{[]int64{}, []int64{}}
 	return ver, nil
 }
 
@@ -1944,7 +1944,7 @@ func modifyColsFromNull2NotNull(w *worker, dbInfo *model.DBInfo, tblInfo *model.
 	return nil
 }
 
-func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (interface{}, error) {
+func generateOriginDefaultValue(col *model.ColumnInfo, ctx sessionctx.Context) (any, error) {
 	var err error
 	odValue := col.GetDefaultValue()
 	if odValue == nil && mysql.HasNotNullFlag(col.GetFlag()) {

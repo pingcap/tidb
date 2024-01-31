@@ -19,6 +19,7 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/prefetch"
 	"github.com/spf13/pflag"
 	"go.uber.org/atomic"
@@ -416,6 +417,8 @@ skipHandleCred:
 
 // Reset resets the GCS storage.
 func (s *GCSStorage) Reset(ctx context.Context) error {
+	logutil.Logger(ctx).Info("resetting gcs storage")
+
 	for _, client := range s.clients {
 		_ = client.Close()
 	}
@@ -451,6 +454,10 @@ func shouldRetry(err error) bool {
 		return true
 	}
 
+	if err == nil {
+		return false
+	}
+
 	// workaround for https://github.com/googleapis/google-cloud-go/issues/7440
 	if e := (http2.StreamError{}); goerrors.As(err, &e) {
 		if e.Code == http2.ErrCodeInternal {
@@ -467,7 +474,22 @@ func shouldRetry(err error) bool {
 		}
 	}
 
-	if err != nil {
+	errMsg := err.Error()
+	// workaround for strange unknown errors
+	retryableErrMsg := []string{
+		"http2: client connection force closed via ClientConn.Close",
+		"broken pipe",
+	}
+
+	for _, msg := range retryableErrMsg {
+		if strings.Contains(errMsg, msg) {
+			log.Warn("retrying gcs request", zap.Error(err))
+			return true
+		}
+	}
+
+	// just log the new unknown error, in case we can add it to this function
+	if !goerrors.Is(err, context.Canceled) {
 		log.Warn("other error when requesting gcs",
 			zap.Error(err),
 			zap.String("info", fmt.Sprintf("type: %T, value: %#v", err, err)))

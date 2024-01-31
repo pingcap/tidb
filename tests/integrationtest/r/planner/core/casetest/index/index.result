@@ -837,17 +837,19 @@ IndexMerge	0.01	root		type: intersection, limit embedded(offset:0, count:10)
 └─TableRowIDScan(Probe)	0.01	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 CREATE TABLE t (nslc json DEFAULT NULL,fpi json DEFAULT NULL,point_of_sale_country int,KEY nslc ((cast(nslc as char(1000) array)),point_of_sale_country),KEY fpi ((cast(fpi as unsigned array))));
-explain SELECT /*+ use_index_merge(items, nslc) */ *  FROM t WHERE  57260686 member of (fpi)  AND "OC8p1763XTkt.org/s/link" member of (nslc)  LIMIT  1;
+explain format='brief' SELECT  /*+ use_index_merge(t, nslc) */ *  FROM t WHERE  57260686 member of (fpi)  AND "OC8p1763XTkt.org/s/link" member of (nslc)  LIMIT  1;
 id	estRows	task	access object	operator info
-Limit_10	0.01	root		offset:0, count:1
-└─IndexMerge_35	0.01	root		type: union
-  ├─IndexRangeScan_32(Build)	10.00	cop[tikv]	table:t, index:fpi(cast(`fpi` as unsigned array))	range:[57260686,57260686], keep order:false, stats:pseudo
-  └─Selection_34(Probe)	0.01	cop[tikv]		json_memberof(cast("OC8p1763XTkt.org/s/link", json BINARY), planner__core__casetest__index__index.t.nslc)
-    └─TableRowIDScan_33	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain SELECT /*+ use_index_merge(items, fpi) */ *  FROM t WHERE  57260686 member of (fpi)  AND "OC8p1763XTkt.org/s/link" member of (nslc)  LIMIT  1;
+Limit	0.01	root		offset:0, count:1
+└─IndexMerge	0.01	root		type: union
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:nslc(cast(`nslc` as char(1000) array), point_of_sale_country)	range:["OC8p1763XTkt.org/s/link","OC8p1763XTkt.org/s/link"], keep order:false, stats:pseudo
+  └─Limit(Probe)	0.01	cop[tikv]		offset:0, count:1
+    └─Selection	0.01	cop[tikv]		json_memberof(cast(57260686, json BINARY), planner__core__casetest__index__index.t.fpi)
+      └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='brief' SELECT  /*+ use_index_merge(t, fpi) */ *  FROM t WHERE  57260686 member of (fpi)  AND "OC8p1763XTkt.org/s/link" member of (nslc)  LIMIT  1;
 id	estRows	task	access object	operator info
-Limit_10	0.01	root		offset:0, count:1
-└─IndexMerge_35	0.01	root		type: union
-  ├─IndexRangeScan_32(Build)	10.00	cop[tikv]	table:t, index:fpi(cast(`fpi` as unsigned array))	range:[57260686,57260686], keep order:false, stats:pseudo
-  └─Selection_34(Probe)	0.01	cop[tikv]		json_memberof(cast("OC8p1763XTkt.org/s/link", json BINARY), planner__core__casetest__index__index.t.nslc)
-    └─TableRowIDScan_33	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Limit	0.01	root		offset:0, count:1
+└─IndexMerge	0.01	root		type: union
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:fpi(cast(`fpi` as unsigned array))	range:[57260686,57260686], keep order:false, stats:pseudo
+  └─Limit(Probe)	0.01	cop[tikv]		offset:0, count:1
+    └─Selection	0.01	cop[tikv]		json_memberof(cast("OC8p1763XTkt.org/s/link", json BINARY), planner__core__casetest__index__index.t.nslc)
+      └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo

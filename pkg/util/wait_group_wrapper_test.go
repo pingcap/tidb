@@ -56,7 +56,7 @@ func TestWaitGroupWrapperRunWithRecover(t *testing.T) {
 	for i := int32(0); i < expect; i++ {
 		wg.RunWithRecover(func() {
 			panic("test1")
-		}, func(r interface{}) {
+		}, func(r any) {
 			val.Inc()
 		})
 	}
@@ -68,7 +68,7 @@ func TestWaitGroupWrapperRunWithRecover(t *testing.T) {
 	for i := int32(0); i < expect; i++ {
 		wg2.RunWithRecover(func() {
 			panic("test1")
-		}, func(r interface{}) {
+		}, func(r any) {
 			val.Inc()
 		}, fmt.Sprintf("test_%v", i))
 	}

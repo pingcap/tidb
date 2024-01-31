@@ -67,7 +67,7 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(testmain.WrapTestingM(m, callback), opts...)
 }
 
-func match(t *testing.T, row []types.Datum, expected ...interface{}) {
+func match(t *testing.T, row []types.Datum, expected ...any) {
 	require.Len(t, row, len(expected))
 	for i := range row {
 		if _, ok := expected[i].(time.Time); ok {

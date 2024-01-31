@@ -19,9 +19,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/executor/importer"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
@@ -74,7 +74,7 @@ func TestJobHappyPath(t *testing.T) {
 				ColumnsAndVars: "(a, b, c)",
 				SetClause:      "d = 1",
 				Format:         importer.DataFormatCSV,
-				Options: map[string]interface{}{
+				Options: map[string]any{
 					"skip_rows": float64(1), // json unmarshal will convert number to float64
 					"detached":  nil,
 				},
@@ -163,7 +163,7 @@ func TestGetAndCancelJob(t *testing.T) {
 			ColumnsAndVars: "(a, b, c)",
 			SetClause:      "d = 1",
 			Format:         importer.DataFormatCSV,
-			Options: map[string]interface{}{
+			Options: map[string]any{
 				"skip_rows": float64(1), // json unmarshal will convert number to float64
 				"detached":  nil,
 			},
@@ -246,7 +246,7 @@ func TestGetAndCancelJob(t *testing.T) {
 	_, err = importer.GetJob(ctx, conn, 999999999, jobInfo.CreatedBy, false)
 	require.ErrorIs(t, err, exeerrors.ErrLoadDataJobNotFound)
 	_, err = importer.GetJob(ctx, conn, jobID2, "aaa", false)
-	require.ErrorIs(t, err, core.ErrSpecificAccessDenied)
+	require.ErrorIs(t, err, plannererrors.ErrSpecificAccessDenied)
 	_, err = importer.GetJob(ctx, conn, jobID2, "aaa", true)
 	require.NoError(t, err)
 
@@ -294,7 +294,7 @@ func TestGetJobInfoNullField(t *testing.T) {
 			ColumnsAndVars: "(a, b, c)",
 			SetClause:      "d = 1",
 			Format:         importer.DataFormatCSV,
-			Options: map[string]interface{}{
+			Options: map[string]any{
 				"skip_rows": float64(1), // json unmarshal will convert number to float64
 				"detached":  nil,
 			},

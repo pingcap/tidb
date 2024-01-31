@@ -135,7 +135,7 @@ func (r *Rule) Reset(dbName, tableName, partName string, ids ...int64) *Rule {
 		r.Labels = append(r.Labels, pd.RegionLabel{Key: partitionKey, Value: partName})
 	}
 	r.RuleType = ruleType
-	dataSlice := make([]interface{}, 0, len(ids))
+	dataSlice := make([]any, 0, len(ids))
 	slices.Sort(ids)
 	for i := 0; i < len(ids); i++ {
 		data := map[string]string{

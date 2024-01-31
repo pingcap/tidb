@@ -42,9 +42,9 @@ const (
 	TaskColumns = basicTaskColumns + `, t.start_time, t.state_update_time, t.meta, t.dispatcher_id, t.error`
 	// InsertTaskColumns is the columns used in insert task.
 	InsertTaskColumns   = `task_key, type, state, priority, concurrency, step, meta, create_time`
-	basicSubtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time, ordinal`
+	basicSubtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time, ordinal, start_time`
 	// SubtaskColumns is the columns for subtask.
-	SubtaskColumns = basicSubtaskColumns + `, start_time, state_update_time, meta, summary`
+	SubtaskColumns = basicSubtaskColumns + `, state_update_time, meta, summary`
 	// InsertSubtaskColumns is the columns used in insert subtask.
 	InsertSubtaskColumns = `step, task_key, exec_id, meta, state, type, concurrency, ordinal, create_time, checkpoint, summary`
 )
@@ -178,7 +178,7 @@ func (mgr *TaskManager) WithNewTxn(ctx context.Context, fn func(se sessionctx.Co
 }
 
 // ExecuteSQLWithNewSession executes one SQL with new session.
-func (mgr *TaskManager) ExecuteSQLWithNewSession(ctx context.Context, sql string, args ...interface{}) (rs []chunk.Row, err error) {
+func (mgr *TaskManager) ExecuteSQLWithNewSession(ctx context.Context, sql string, args ...any) (rs []chunk.Row, err error) {
 	err = mgr.WithNewSession(func(se sessionctx.Context) error {
 		rs, err = sqlexec.ExecSQL(ctx, se, sql, args...)
 		return err
@@ -280,7 +280,7 @@ func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID stri
 }
 
 // GetTasksInStates gets the tasks in the states(order by priority asc, create_time acs, id asc).
-func (mgr *TaskManager) GetTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error) {
+func (mgr *TaskManager) GetTasksInStates(ctx context.Context, states ...any) (task []*proto.Task, err error) {
 	if len(states) == 0 {
 		return task, nil
 	}
@@ -355,7 +355,7 @@ func (mgr *TaskManager) GetTaskByKeyWithHistory(ctx context.Context, key string)
 
 // GetSubtasksByExecIDAndStepAndStates gets all subtasks by given states on one node.
 func (mgr *TaskManager) GetSubtasksByExecIDAndStepAndStates(ctx context.Context, execID string, taskID int64, step proto.Step, states ...proto.SubtaskState) ([]*proto.Subtask, error) {
-	args := []interface{}{execID, taskID, step}
+	args := []any{execID, taskID, step}
 	for _, state := range states {
 		args = append(args, state)
 	}
@@ -375,7 +375,7 @@ func (mgr *TaskManager) GetSubtasksByExecIDAndStepAndStates(ctx context.Context,
 
 // GetFirstSubtaskInStates gets the first subtask by given states.
 func (mgr *TaskManager) GetFirstSubtaskInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...proto.SubtaskState) (*proto.Subtask, error) {
-	args := []interface{}{tidbID, taskID, step}
+	args := []any{tidbID, taskID, step}
 	for _, state := range states {
 		args = append(args, state)
 	}
@@ -503,7 +503,7 @@ func (mgr *TaskManager) GetSubtaskErrors(ctx context.Context, taskID int64) ([]e
 
 // HasSubtasksInStates checks if there are subtasks in the states.
 func (mgr *TaskManager) HasSubtasksInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...proto.SubtaskState) (bool, error) {
-	args := []interface{}{tidbID, taskID, step}
+	args := []any{tidbID, taskID, step}
 	for _, state := range states {
 		args = append(args, state)
 	}
@@ -607,7 +607,7 @@ func (*TaskManager) insertSubtasks(ctx context.Context, se sessionctx.Context, s
 	var (
 		sb         strings.Builder
 		markerList = make([]string, 0, len(subtasks))
-		args       = make([]interface{}, 0, len(subtasks)*7)
+		args       = make([]any, 0, len(subtasks)*7)
 	)
 	sb.WriteString(`insert into mysql.tidb_background_subtask(` + InsertSubtaskColumns + `) values `)
 	for _, subtask := range subtasks {
@@ -727,6 +727,22 @@ func (mgr *TaskManager) GetSubtasksWithHistory(ctx context.Context, taskID int64
 	subtasks := make([]*proto.Subtask, 0, len(rs))
 	for _, r := range rs {
 		subtasks = append(subtasks, Row2SubTask(r))
+	}
+	return subtasks, nil
+}
+
+// GetAllSubtasks gets all subtasks with basic columns.
+func (mgr *TaskManager) GetAllSubtasks(ctx context.Context) ([]*proto.Subtask, error) {
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select `+basicSubtaskColumns+` from mysql.tidb_background_subtask`)
+	if err != nil {
+		return nil, err
+	}
+	if len(rs) == 0 {
+		return nil, nil
+	}
+	subtasks := make([]*proto.Subtask, 0, len(rs))
+	for _, r := range rs {
+		subtasks = append(subtasks, row2BasicSubTask(r))
 	}
 	return subtasks, nil
 }
