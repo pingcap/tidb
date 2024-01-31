@@ -152,8 +152,8 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) *Mana
 	}
 	schedulerManager.mu.schedulerMap = make(map[int64]Scheduler)
 
-	if !intest.InTest {
-		prometheus.MustRegister(schedulerManager.collector)
+	if err := prometheus.Register(schedulerManager.collector); err != nil {
+		logger.Warn("register collector failed", zap.Error(err))
 	}
 
 	return schedulerManager
