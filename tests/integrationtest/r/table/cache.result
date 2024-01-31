@@ -274,3 +274,30 @@ f1	f2	f3	f4
 1	0	3	NULL
 alter table cache_add_column nocache;
 drop table cache_add_column;
+drop table if exists t,t2;
+create table t (pad varchar(200));
+insert into t values (repeat('x', 200));
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+insert into t select * from t;
+create table t2 like t;
+alter table t2 cache;
+insert into t2 select * from t;
+insert into t2 select * from t;
+insert into t2 select * from t;
+insert into t2 select * from t;
+insert into t2 select * from t;
+Error 8242 (HY000): 'table too large' is unsupported on cache tables.

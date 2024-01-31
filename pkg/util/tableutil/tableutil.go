@@ -19,6 +19,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 )
 
+// Sizer is the interface for table that implements the Get/Set size operation.
+type Sizer interface {
+	GetSize() int64
+	SetSize(int64)
+}
+
 // TempTable is used to store transaction-specific or session-specific information for global / local temporary tables.
 // For example, stats and autoID should have their own copies of data, instead of being shared by all sessions.
 type TempTable interface {
@@ -35,8 +41,7 @@ type TempTable interface {
 	// Define the return type as interface{} here to avoid cycle imports.
 	GetStats() any
 
-	GetSize() int64
-	SetSize(int64)
+	Sizer
 
 	GetMeta() *model.TableInfo
 }
