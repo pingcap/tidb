@@ -237,7 +237,7 @@ func initCtx(ctx *mock.Context, newRootExceedAction *testutil.MockActionOnExceed
 	ctx.GetSessionVars().MemTracker.SetActionOnExceed(newRootExceedAction)
 }
 
-func getCorrecResultTest(t *testing.T, ctx *mock.Context, dataSource *testutil.MockDataSource, result map[string]float64) {
+func executeCorrecResultTest(t *testing.T, ctx *mock.Context, dataSource *testutil.MockDataSource, result map[string]float64) {
 	aggExec := buildHashAggExecutor(t, ctx, dataSource)
 	dataSource.PrepareChunks()
 	tmpCtx := context.Background()
@@ -368,7 +368,7 @@ func TestGetCorrectResult(t *testing.T) {
 	}()
 
 	for i := 0; i < 5; i++ {
-		getCorrecResultTest(t, ctx, dataSource, result)
+		executeCorrecResultTest(t, ctx, dataSource, result)
 	}
 	require.Equal(t, 0, newRootExceedAction.GetTriggeredNum())
 	finished.Store(true)

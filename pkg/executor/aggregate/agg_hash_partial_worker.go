@@ -189,9 +189,6 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 	hasError := false
 	needShuffle := false
 
-	// Put `waitGroup.Done()` outside of defer func(){}, in case of the panic in defer func(){}
-	// and `waitGroup.Done()` can't be called in this situation.
-	defer waitGroup.Done()
 	defer func() {
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.globalOutputCh, r)
@@ -201,6 +198,9 @@ func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitG
 
 		w.memTracker.Consume(-w.chk.MemoryUsage())
 		updateWorkerTime(w.stats, start)
+
+		// We must ensure that there is no panic before `waitGroup.Done()` or there will be hang
+		waitGroup.Done()
 	}()
 
 	intestBeforePartialWorkerRun()
