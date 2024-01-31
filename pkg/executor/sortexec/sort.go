@@ -398,6 +398,7 @@ func (e *SortExec) generateResultInMemory() bool {
 	resBuf := make([]rowWithError, 0, maxChunkSize)
 	var row chunk.Row
 	for {
+		resBuf = resBuf[:0]
 		for i := 0; i < maxChunkSize; i++ {
 			row = e.Parallel.merger.next()
 			if row.IsEmpty() {
@@ -417,7 +418,7 @@ func (e *SortExec) generateResultInMemory() bool {
 			case e.Parallel.resultChannel <- row:
 			}
 		}
-		resBuf = resBuf[:0]
+
 		injectParallelSortRandomFail()
 
 		if e.Parallel.spillHelper.isSpillNeeded() {
