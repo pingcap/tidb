@@ -1417,6 +1417,12 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 	return nil
 }
 
+// CreateSession will be assigned by session package.
+var CreateSession func(ctx sessionctx.Context) (sessionctx.Context, error)
+
+// CloseSession will be assigned by session package.
+var CloseSession func(ctx sessionctx.Context)
+
 // InsertRuntimeStat record the stat about insert and check
 type InsertRuntimeStat struct {
 	*execdetails.BasicRuntimeStats

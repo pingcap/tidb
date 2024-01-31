@@ -117,11 +117,11 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 	}
 
 	// must use a new session to pre-check, else the stmt in show processlist will be changed.
-	newSCtx, err2 := plannercore.CreateSession(e.userSctx)
+	newSCtx, err2 := CreateSession(e.userSctx)
 	if err2 != nil {
 		return err2
 	}
-	defer plannercore.CloseSession(newSCtx)
+	defer CloseSession(newSCtx)
 	sqlExec := newSCtx.(sqlexec.SQLExecutor)
 	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {
 		return err2
@@ -167,12 +167,12 @@ func (e *ImportIntoExec) Next(ctx context.Context, req *chunk.Chunk) (err error)
 
 	if e.controller.Detached {
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalImportInto)
-		se, err := plannercore.CreateSession(e.userSctx)
+		se, err := CreateSession(e.userSctx)
 		if err != nil {
 			return err
 		}
 		go func() {
-			defer plannercore.CloseSession(se)
+			defer CloseSession(se)
 			// error is stored in system table, so we can ignore it here
 			//nolint: errcheck
 			_ = e.doImport(ctx, se, distImporter, task)
@@ -256,11 +256,11 @@ func (e *ImportIntoExec) importFromSelect(ctx context.Context) error {
 	// must use a new session as:
 	// 	- pre-check will execute other sql, the stmt in show processlist will be changed.
 	// 	- userSctx might be in stale read, we cannot do write.
-	newSCtx, err2 := plannercore.CreateSession(e.userSctx)
+	newSCtx, err2 := CreateSession(e.userSctx)
 	if err2 != nil {
 		return err2
 	}
-	defer plannercore.CloseSession(newSCtx)
+	defer CloseSession(newSCtx)
 
 	sqlExec := newSCtx.(sqlexec.SQLExecutor)
 	if err2 = e.controller.CheckRequirements(ctx, sqlExec); err2 != nil {

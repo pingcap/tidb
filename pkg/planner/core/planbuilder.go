@@ -72,13 +72,6 @@ import (
 	"go.uber.org/zap"
 )
 
-var (
-	// CreateSession will be assigned by session package.
-	CreateSession func(ctx sessionctx.Context) (sessionctx.Context, error)
-	// CloseSession will be assigned by session package.
-	CloseSession func(ctx sessionctx.Context)
-)
-
 type visitInfo struct {
 	privilege        mysql.PrivilegeType
 	db               string
