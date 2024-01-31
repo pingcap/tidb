@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	_ "net/http/pprof"
 	"sync"
 	"time"
 
