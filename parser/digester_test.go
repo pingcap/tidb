@@ -73,6 +73,31 @@ func TestNormalize(t *testing.T) {
 		require.Equal(t, normalized, normalized2)
 		require.Equalf(t, digest.String(), digest2.String(), "%+v", test)
 	}
+<<<<<<< HEAD:parser/digester_test.go
+=======
+
+	tests_for_binding_specific_rules := []struct {
+		input  string
+		expect string
+	}{
+		// Binding specific rules
+		// IN (Lit) => IN ( ... ) #44298
+		{"select * from t where a in (1)", "select * from `t` where `a` in ( ... )"},
+		{"select * from t where (a, b) in ((1, 1))", "select * from `t` where ( `a` , `b` ) in ( ( ... ) )"},
+		{"select * from t where (a, b) in ((1, 1), (2, 2))", "select * from `t` where ( `a` , `b` ) in ( ( ... ) )"},
+		{"select * from t where a in(1, 2)", "select * from `t` where `a` in ( ... )"},
+		{"select * from t where a in(1, 2, 3)", "select * from `t` where `a` in ( ... )"},
+	}
+	for _, test := range tests_for_binding_specific_rules {
+		normalized := parser.NormalizeForBinding(test.input, false)
+		digest := parser.DigestNormalized(normalized)
+		require.Equal(t, test.expect, normalized)
+
+		normalized2, digest2 := parser.NormalizeDigestForBinding(test.input)
+		require.Equal(t, normalized, normalized2)
+		require.Equalf(t, digest.String(), digest2.String(), "%+v", test)
+	}
+>>>>>>> c76fe3ff97d (plan replayer: fix cannot load bindings when the statement contains in (...) (#50762)):pkg/parser/digester_test.go
 }
 
 func TestNormalizeKeepHint(t *testing.T) {

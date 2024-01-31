@@ -2549,7 +2549,231 @@ func upgradeToVer146(s Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_history ADD INDEX idx_create_time (create_time)", dbterror.ErrDupKeyName)
 }
 
+<<<<<<< HEAD:session/bootstrap.go
 func writeOOMAction(s Session) {
+=======
+func upgradeToVer167(s sessiontypes.Session, ver int64) {
+	if ver >= version167 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `step` INT AFTER `id`", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer168(s sessiontypes.Session, ver int64) {
+	if ver >= version168 {
+		return
+	}
+	mustExecute(s, CreateImportJobs)
+}
+
+func upgradeToVer169(s sessiontypes.Session, ver int64) {
+	if ver >= version169 {
+		return
+	}
+	mustExecute(s, CreateRunawayTable)
+}
+
+func upgradeToVer170(s sessiontypes.Session, ver int64) {
+	if ver >= version170 {
+		return
+	}
+	mustExecute(s, CreateTimers)
+}
+
+func upgradeToVer171(s sessiontypes.Session, ver int64) {
+	if ver >= version171 {
+		return
+	}
+	mustExecute(s, "ALTER TABLE mysql.tidb_runaway_queries CHANGE COLUMN `tidb_server` `tidb_server` varchar(512)")
+}
+
+func upgradeToVer172(s sessiontypes.Session, ver int64) {
+	if ver >= version172 {
+		return
+	}
+	mustExecute(s, "DROP TABLE IF EXISTS mysql.tidb_runaway_quarantined_watch")
+	mustExecute(s, CreateRunawayWatchTable)
+	mustExecute(s, CreateDoneRunawayWatchTable)
+}
+
+func upgradeToVer173(s sessiontypes.Session, ver int64) {
+	if ver >= version173 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `summary` JSON", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer174(s sessiontypes.Session, ver int64) {
+	if ver >= version174 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `step` INT AFTER `id`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `error` BLOB", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history DROP INDEX `namespace`", dbterror.ErrCantDropFieldOrKey)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD INDEX `idx_task_key`(`task_key`)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD INDEX `idx_state_update_time`(`state_update_time`)", dbterror.ErrDupKeyName)
+}
+
+// upgradeToVer175 updates normalized bindings of `in (?)` to `in (...)` to solve
+// the issue #44298 that bindings for `in (?)` can't work for `in (?, ?, ?)`.
+// After this update, multiple bindings may have the same `original_sql`, but it's OK, and
+// for safety, don't remove duplicated bindings when upgrading.
+func upgradeToVer175(s sessiontypes.Session, ver int64) {
+	if ver >= version175 {
+		return
+	}
+
+	var err error
+	mustExecute(s, "BEGIN PESSIMISTIC")
+	defer func() {
+		if err != nil {
+			mustExecute(s, "ROLLBACK")
+			return
+		}
+		mustExecute(s, "COMMIT")
+	}()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
+	rs, err := s.ExecuteInternal(ctx, "SELECT original_sql, bind_sql FROM mysql.bind_info WHERE source != 'builtin'")
+	if err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer175 error", zap.Error(err))
+		return
+	}
+	req := rs.NewChunk(nil)
+	updateStmts := make([]string, 0, 4)
+	for {
+		err = rs.Next(ctx, req)
+		if err != nil {
+			logutil.BgLogger().Fatal("upgradeToVer175 error", zap.Error(err))
+			return
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		for i := 0; i < req.NumRows(); i++ {
+			originalNormalizedSQL, bindSQL := req.GetRow(i).GetString(0), req.GetRow(i).GetString(1)
+			newNormalizedSQL := parser.NormalizeForBinding(bindSQL, false)
+			// update `in (?)` to `in (...)`
+			if originalNormalizedSQL == newNormalizedSQL {
+				continue // no need to update
+			}
+			// must run those update statements outside this loop, otherwise may cause some concurrency problems,
+			// since the current statement over this session has not been finished yet.
+			updateStmts = append(updateStmts, fmt.Sprintf("UPDATE mysql.bind_info SET original_sql='%s' WHERE original_sql='%s'", newNormalizedSQL, originalNormalizedSQL))
+		}
+		req.Reset()
+	}
+	if err := rs.Close(); err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer175 error", zap.Error(err))
+	}
+	for _, updateStmt := range updateStmts {
+		mustExecute(s, updateStmt)
+	}
+}
+
+func upgradeToVer176(s sessiontypes.Session, ver int64) {
+	if ver >= version176 {
+		return
+	}
+	mustExecute(s, CreateGlobalTaskHistory)
+}
+
+func upgradeToVer177(s sessiontypes.Session, ver int64) {
+	if ver >= version177 {
+		return
+	}
+	// ignore error when upgrading from v7.4 to higher version.
+	doReentrantDDL(s, CreateDistFrameworkMeta, infoschema.ErrTableExists)
+	err := s.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.TiDBEnableAsyncMergeGlobalStats, variable.Off)
+	if err != nil {
+		logutil.BgLogger().Fatal("upgradeToVer177 error", zap.Error(err))
+	}
+}
+
+// writeDDLTableVersion writes mDDLTableVersion into mysql.tidb
+func writeDDLTableVersion(s sessiontypes.Session) {
+	var err error
+	var ddlTableVersion meta.DDLTableVersion
+	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap), s.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
+		t := meta.NewMeta(txn)
+		ddlTableVersion, err = t.CheckDDLTableVersion()
+		return err
+	})
+	terror.MustNil(err)
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, "DDL Table Version. Do not delete.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
+		mysql.SystemDB,
+		mysql.TiDBTable,
+		tidbDDLTableVersion,
+		ddlTableVersion,
+		ddlTableVersion,
+	)
+}
+
+func upgradeToVer178(s sessiontypes.Session, ver int64) {
+	if ver >= version178 {
+		return
+	}
+	writeDDLTableVersion(s)
+}
+
+func upgradeToVer179(s sessiontypes.Session, ver int64) {
+	if ver >= version179 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.global_variables MODIFY COLUMN `VARIABLE_VALUE` varchar(16383)")
+}
+
+func upgradeToVer180(s sessiontypes.Session, ver int64) {
+	if ver >= version180 {
+		return
+	}
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `priority` INT DEFAULT 1 AFTER `state`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `create_time` TIMESTAMP AFTER `priority`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `priority` INT DEFAULT 1 AFTER `state`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `create_time` TIMESTAMP AFTER `priority`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `concurrency` INT AFTER `checkpoint`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `create_time` TIMESTAMP AFTER `concurrency`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD COLUMN `ordinal` int AFTER `meta`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `concurrency` INT AFTER `checkpoint`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `create_time` TIMESTAMP AFTER `concurrency`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `end_time` TIMESTAMP AFTER `state_update_time`", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask_history ADD COLUMN `ordinal` int AFTER `meta`", infoschema.ErrColumnExists)
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD INDEX idx_exec_id(exec_id)", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_background_subtask ADD UNIQUE INDEX uk_task_key_step_ordinal(task_key, step, ordinal)", dbterror.ErrDupKeyName)
+
+	doReentrantDDL(s, "ALTER TABLE mysql.dist_framework_meta ADD COLUMN `cpu_count` INT DEFAULT 0 AFTER `role`", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer181(s sessiontypes.Session, ver int64) {
+	if ver >= version181 {
+		return
+	}
+	sql := fmt.Sprintf("INSERT HIGH_PRIORITY IGNORE INTO %s.%s VALUES('%s', '%s')",
+		mysql.SystemDB, mysql.GlobalVariablesTable,
+		variable.TiDBTxnMode, variable.OptimisticTxnMode)
+	mustExecute(s, sql)
+}
+
+func upgradeToVer182(s sessiontypes.Session, ver int64) {
+	if ver >= version182 {
+		return
+	}
+	doReentrantDDL(s, CreateRequestUnitByGroupTable)
+}
+
+func upgradeToVer183(s sessiontypes.Session, ver int64) {
+	if ver >= version183 {
+		return
+	}
+	doReentrantDDL(s, CreateMDLView)
+}
+
+func writeOOMAction(s sessiontypes.Session) {
+>>>>>>> c76fe3ff97d (plan replayer: fix cannot load bindings when the statement contains in (...) (#50762)):pkg/session/bootstrap.go
 	comment := "oom-action is `log` by default in v3.0.x, `cancel` by default in v4.0.11+"
 	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, %?) ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
 		mysql.SystemDB, mysql.TiDBTable, tidbDefOOMAction, variable.OOMActionLog, comment, variable.OOMActionLog,

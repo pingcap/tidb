@@ -1075,7 +1075,11 @@ func (b *PlanBuilder) buildSetBindingStatusPlan(v *ast.SetBindingStmt) (Plan, er
 	if v.OriginNode != nil {
 		p = &SQLBindPlan{
 			SQLBindOp:    OpSetBindingStatus,
+<<<<<<< HEAD:planner/core/planbuilder.go
 			NormdOrigSQL: parser.Normalize(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text())),
+=======
+			NormdOrigSQL: parser.NormalizeForBinding(utilparser.RestoreWithDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB, v.OriginNode.Text()), false),
+>>>>>>> c76fe3ff97d (plan replayer: fix cannot load bindings when the statement contains in (...) (#50762)):pkg/planner/core/planbuilder.go
 			Db:           utilparser.GetDefaultDB(v.OriginNode, b.ctx.GetSessionVars().CurrentDB),
 		}
 	} else if v.SQLDigest != "" {
