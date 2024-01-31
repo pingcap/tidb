@@ -887,8 +887,9 @@ func (t *TableCommon) AddRecord(sctx table.MutateContext, r []types.Datum, opts 
 			// The reserved ID could be used in the future within this statement, by the
 			// following AddRecord() operation.
 			// Make the IDs continuous benefit for the performance of TiKV.
-			stmtCtx := sctx.GetSessionVars().StmtCtx
-			stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = allocHandleIDs(ctx, sctx, t, uint64(opt.ReserveAutoID))
+			sessVars := sctx.GetSessionVars()
+			stmtCtx := sessVars.StmtCtx
+			stmtCtx.BaseRowID, stmtCtx.MaxRowID, err = allocHandleIDs(ctx, sessVars, sctx, t, uint64(opt.ReserveAutoID))
 			if err != nil {
 				return nil, err
 			}
@@ -1684,9 +1685,11 @@ func GetColDefaultValue(ctx sessionctx.Context, col *table.Column, defaultVals [
 
 // AllocHandle allocate a new handle.
 // A statement could reserve some ID in the statement context, try those ones first.
-func AllocHandle(ctx context.Context, sctx table.MutateContext, t table.Table) (kv.Handle, error) {
-	if sctx != nil {
-		if stmtCtx := sctx.GetSessionVars().StmtCtx; stmtCtx != nil {
+func AllocHandle(ctx context.Context, mctx table.MutateContext, t table.Table) (kv.Handle, error) {
+	var actx table.AllocatorContext
+	if mctx != nil {
+		actx = mctx.GetSessionVars()
+		if stmtCtx := mctx.GetSessionVars().StmtCtx; stmtCtx != nil {
 			// First try to alloc if the statement has reserved auto ID.
 			if stmtCtx.BaseRowID < stmtCtx.MaxRowID {
 				stmtCtx.BaseRowID++
@@ -1695,13 +1698,13 @@ func AllocHandle(ctx context.Context, sctx table.MutateContext, t table.Table) (
 		}
 	}
 
-	_, rowID, err := allocHandleIDs(ctx, sctx, t, 1)
+	_, rowID, err := allocHandleIDs(ctx, actx, mctx, t, 1)
 	return kv.IntHandle(rowID), err
 }
 
-func allocHandleIDs(ctx context.Context, sctx table.MutateContext, t table.Table, n uint64) (int64, int64, error) {
+func allocHandleIDs(ctx context.Context, actx table.AllocatorContext, mctx table.MutateContext, t table.Table, n uint64) (int64, int64, error) {
 	meta := t.Meta()
-	base, maxID, err := t.Allocators(sctx).Get(autoid.RowIDAllocType).Alloc(ctx, n, 1, 1)
+	base, maxID, err := t.Allocators(actx).Get(autoid.RowIDAllocType).Alloc(ctx, n, 1, 1)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -1718,7 +1721,7 @@ func allocHandleIDs(ctx context.Context, sctx table.MutateContext, t table.Table
 			// shard = 0010000000000000000000000000000000000000000000000000000000000000
 			return 0, 0, autoid.ErrAutoincReadFailed
 		}
-		shard := sctx.GetSessionVars().GetCurrentShard(int(n))
+		shard := mctx.GetSessionVars().GetCurrentShard(int(n))
 		base = shardFmt.Compose(shard, base)
 		maxID = shardFmt.Compose(shard, maxID)
 	}
@@ -1736,15 +1739,17 @@ func OverflowShardBits(recordID int64, shardRowIDBits uint64, typeBitsLength uin
 }
 
 // Allocators implements table.Table Allocators interface.
-func (t *TableCommon) Allocators(ctx table.MutateContext) autoid.Allocators {
+func (t *TableCommon) Allocators(ctx table.AllocatorContext) autoid.Allocators {
 	if ctx == nil {
 		return t.allocs
 	}
 
 	// Use an independent allocator for global temporary tables.
 	if t.meta.TempTableType == model.TempTableGlobal {
-		if alloc := ctx.GetSessionVars().GetTemporaryTable(t.meta).GetAutoIDAllocator(); alloc != nil {
-			return autoid.NewAllocators(false, alloc)
+		if tbl := ctx.GetTemporaryTable(t.meta); tbl != nil {
+			if alloc := tbl.GetAutoIDAllocator(); alloc != nil {
+				return autoid.NewAllocators(false, alloc)
+			}
 		}
 		// If the session is not in a txn, for example, in "show create table", use the original allocator.
 		// Otherwise the would be a nil pointer dereference.

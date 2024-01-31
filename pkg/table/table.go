@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/tableutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-binlog"
 )
@@ -174,12 +175,10 @@ type columnAPI interface {
 	FullHiddenColsAndVisibleCols() []*Column
 }
 
+// MutateContext is used to when mutating a table.
 type MutateContext interface {
 	expression.BuildContext
-	// GetDomainInfoSchema returns the latest information schema in domain
-	// Different with `domain.InfoSchema()`, the information schema returned by this method
-	// includes the temporary table definitions stored in session
-	GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion
+	// GetSessionVars returns the session variables.
 	GetSessionVars() *variable.SessionVars
 	// Txn returns the current transaction which is created before executing a statement.
 	// The returned kv.Transaction is not nil, but it maybe pending or invalid.
@@ -188,6 +187,14 @@ type MutateContext interface {
 	Txn(active bool) (kv.Transaction, error)
 	// StmtGetMutation gets the binlog mutation for current statement.
 	StmtGetMutation(int64) *binlog.TableMutation
+	// GetDomainInfoSchema returns the latest information schema in domain
+	GetDomainInfoSchema() sessionctx.InfoschemaMetaVersion
+}
+
+// AllocatorContext is used to provide context for method `table.Allocators`.
+type AllocatorContext interface {
+	// GetTemporaryTable returns some runtime information for temporary tables to allocate IDs.
+	GetTemporaryTable(tbl *model.TableInfo) tableutil.TempTable
 }
 
 // Table is used to retrieve and modify rows in table.
@@ -213,7 +220,7 @@ type Table interface {
 	RemoveRecord(ctx MutateContext, h kv.Handle, r []types.Datum) error
 
 	// Allocators returns all allocators.
-	Allocators(ctx MutateContext) autoid.Allocators
+	Allocators(ctx AllocatorContext) autoid.Allocators
 
 	// Meta returns TableInfo.
 	Meta() *model.TableInfo
@@ -231,7 +238,7 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 	defer r.End()
 	increment := sctx.GetSessionVars().AutoIncrementIncrement
 	offset := sctx.GetSessionVars().AutoIncrementOffset
-	alloc := t.Allocators(sctx).Get(autoid.AutoIncrementType)
+	alloc := t.Allocators(sctx.GetSessionVars()).Get(autoid.AutoIncrementType)
 	_, max, err := alloc.Alloc(ctx, uint64(1), int64(increment), int64(offset))
 	if err != nil {
 		return 0, err
@@ -244,7 +251,7 @@ func AllocAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Conte
 func AllocBatchAutoIncrementValue(ctx context.Context, t Table, sctx sessionctx.Context, N int) (firstID int64, increment int64, err error) {
 	increment = int64(sctx.GetSessionVars().AutoIncrementIncrement)
 	offset := int64(sctx.GetSessionVars().AutoIncrementOffset)
-	alloc := t.Allocators(sctx).Get(autoid.AutoIncrementType)
+	alloc := t.Allocators(sctx.GetSessionVars()).Get(autoid.AutoIncrementType)
 	min, max, err := alloc.Alloc(ctx, uint64(N), increment, offset)
 	if err != nil {
 		return min, max, err

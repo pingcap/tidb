@@ -2296,7 +2296,7 @@ func (it *infoschemaTable) UpdateRecord(gctx context.Context, ctx table.MutateCo
 }
 
 // Allocators implements table.Table Allocators interface.
-func (it *infoschemaTable) Allocators(_ table.MutateContext) autoid.Allocators {
+func (it *infoschemaTable) Allocators(_ table.AllocatorContext) autoid.Allocators {
 	return autoid.Allocators{}
 }
 
@@ -2384,7 +2384,7 @@ func (vt *VirtualTable) UpdateRecord(ctx context.Context, sctx table.MutateConte
 }
 
 // Allocators implements table.Table Allocators interface.
-func (vt *VirtualTable) Allocators(_ table.MutateContext) autoid.Allocators {
+func (vt *VirtualTable) Allocators(_ table.AllocatorContext) autoid.Allocators {
 	return autoid.Allocators{}
 }
 
