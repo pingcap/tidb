@@ -93,6 +93,8 @@ func (s *mockGCSSuite) TestWriteAfterImportFromSelect() {
 
 func (s *mockGCSSuite) TestImportFromSelectStaleRead() {
 	s.prepareAndUseDB("from_select")
+	// set tidb_snapshot might fail without this, not familiar about this part.
+	s.tk.MustExec(`replace into mysql.tidb(variable_name, variable_value) values ('tikv_gc_safe_point', '20240131-00:00:00.000 +0800')`)
 	s.tk.MustExec("create table src(id int, v varchar(64))")
 	s.tk.MustExec("insert into src values(1, 'a')")
 	time.Sleep(100 * time.Millisecond)
