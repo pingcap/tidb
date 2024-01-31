@@ -37,7 +37,7 @@ func TestGetAverageAnalysisDuration(t *testing.T) {
 		"example_schema", "example_table", "example_partition",
 	)
 	require.NoError(t, err)
-	require.Equal(t, time.Duration(0), avgDuration)
+	require.Equal(t, time.Duration(noRecord), avgDuration)
 
 	initJobs(tk)
 
@@ -102,7 +102,7 @@ func TestGetLastFailedAnalysisDuration(t *testing.T) {
 		"example_schema", "example_table", "example_partition",
 	)
 	require.NoError(t, err)
-	require.Equal(t, time.Duration(0), lastFailedDuration)
+	require.Equal(t, time.Duration(noRecord), lastFailedDuration)
 	initJobs(tk)
 
 	// Partitioned table.
