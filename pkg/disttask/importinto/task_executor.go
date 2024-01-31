@@ -180,7 +180,7 @@ outer:
 	return pipeline.Close()
 }
 
-func (s *importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+func (*importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return nil
 }
 
@@ -394,7 +394,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	return localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 }
 
-func (s *writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+func (*writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 	return nil
 }
 
