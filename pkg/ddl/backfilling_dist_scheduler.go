@@ -323,8 +323,7 @@ func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool
 	avgTasksPerInstance := totalRegionCnt / instanceCnt
 	if useLocalDisk {
 		// Make subtask large enough to reduce the overhead of local/global flush.
-		avgTasksPerDisk := int(int64(variable.DDLDiskQuota.Load()) / int64(config.SplitRegionSize))
-		regionBatch = min(avgTasksPerDisk, avgTasksPerInstance)
+		regionBatch = avgTasksPerInstance
 	} else {
 		regionBatch = min(100, avgTasksPerInstance)
 	}
