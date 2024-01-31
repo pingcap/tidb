@@ -977,6 +977,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 		return err
 	}
 	defer utils.WithCleanUp(&err, 10*time.Second, func(ctx context.Context) error {
+		//nolint:all_revive
 		return storage.UnlockRemote(ctx, extStorage, truncateLockPath)
 	})
 
