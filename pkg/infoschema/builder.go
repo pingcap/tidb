@@ -194,15 +194,15 @@ type Builder struct {
 
 // ApplyDiff applies SchemaDiff to the new InfoSchema.
 // Return the detail updated table IDs that are produced from SchemaDiff and an error.
-func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff, schemaTS uint64) ([]int64, error) {
+func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	b.is.schemaMetaVersion = diff.Version
 	switch diff.Type {
 	case model.ActionCreateSchema:
-		return nil, b.applyCreateSchema(m, diff, schemaTS)
+		return nil, b.applyCreateSchema(m, diff)
 	case model.ActionDropSchema:
 		return b.applyDropSchema(diff.SchemaID), nil
 	case model.ActionRecoverSchema:
-		return b.applyRecoverSchema(m, diff, schemaTS)
+		return b.applyRecoverSchema(m, diff)
 	case model.ActionModifySchemaCharsetAndCollate:
 		return nil, b.applyModifySchemaCharsetAndCollate(m, diff)
 	case model.ActionModifySchemaDefaultPlacement:
@@ -220,26 +220,26 @@ func (b *Builder) ApplyDiff(m *meta.Meta, diff *model.SchemaDiff, schemaTS uint6
 	case model.ActionDropResourceGroup:
 		return b.applyDropResourceGroup(m, diff), nil
 	case model.ActionTruncateTablePartition, model.ActionTruncateTable:
-		return b.applyTruncateTableOrPartition(m, diff, schemaTS)
+		return b.applyTruncateTableOrPartition(m, diff)
 	case model.ActionDropTable, model.ActionDropTablePartition:
-		return b.applyDropTableOrPartition(m, diff, schemaTS)
+		return b.applyDropTableOrPartition(m, diff)
 	case model.ActionRecoverTable:
-		return b.applyRecoverTable(m, diff, schemaTS)
+		return b.applyRecoverTable(m, diff)
 	case model.ActionCreateTables:
-		return b.applyCreateTables(m, diff, schemaTS)
+		return b.applyCreateTables(m, diff)
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
-		return b.applyReorganizePartition(m, diff, schemaTS)
+		return b.applyReorganizePartition(m, diff)
 	case model.ActionExchangeTablePartition:
-		return b.applyExchangeTablePartition(m, diff, schemaTS)
+		return b.applyExchangeTablePartition(m, diff)
 	case model.ActionFlashbackCluster:
 		return []int64{-1}, nil
 	default:
-		return b.applyDefaultAction(m, diff, schemaTS)
+		return b.applyDefaultAction(m, diff)
 	}
 }
 
-func (b *Builder) applyCreateTables(m *meta.Meta, diff *model.SchemaDiff, schemaTS uint64) ([]int64, error) {
+func (b *Builder) applyCreateTables(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	tblIDs := make([]int64, 0, len(diff.AffectedOpts))
 	if diff.AffectedOpts != nil {
 		for _, opt := range diff.AffectedOpts {
@@ -251,7 +251,7 @@ func (b *Builder) applyCreateTables(m *meta.Meta, diff *model.SchemaDiff, schema
 				OldSchemaID: opt.OldSchemaID,
 				OldTableID:  opt.OldTableID,
 			}
-			affectedIDs, err := b.ApplyDiff(m, affectedDiff, schemaTS)
+			affectedIDs, err := b.ApplyDiff(m, affectedDiff)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -261,8 +261,8 @@ func (b *Builder) applyCreateTables(m *meta.Meta, diff *model.SchemaDiff, schema
 	return tblIDs, nil
 }
 
-func (b *Builder) applyTruncateTableOrPartition(m *meta.Meta, diff *model.SchemaDiff, schemaTS uint64) ([]int64, error) {
-	tblIDs, err := b.applyTableUpdate(m, diff, schemaTS)
+func (b *Builder) applyTruncateTableOrPartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	tblIDs, err := b.applyTableUpdate(m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -285,8 +285,8 @@ func (b *Builder) applyTruncateTableOrPartition(m *meta.Meta, diff *model.Schema
 	return tblIDs, nil
 }
 
-func (b *Builder) applyDropTableOrPartition(m *meta.Meta, diff *model.SchemaDiff, schemaTS uint64) ([]int64, error) {
-	tblIDs, err := b.applyTableUpdate(m, diff, schemaTS)
+func (b *Builder) applyDropTableOrPartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	tblIDs, err := b.applyTableUpdate(m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -298,8 +298,8 @@ func (b *Builder) applyDropTableOrPartition(m *meta.Meta, diff *model.SchemaDiff
 	return tblIDs, nil
 }
 
-func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff, schemaTS uint64) ([]int64, error) {
-	tblIDs, err := b.applyTableUpdate(m, diff, schemaTS)
+func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	tblIDs, err := b.applyTableUpdate(m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -315,10 +315,10 @@ func (b *Builder) applyReorganizePartition(m *meta.Meta, diff *model.SchemaDiff,
 	return tblIDs, nil
 }
 
-func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDiff, schemaTS uint64) ([]int64, error) {
+func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	// It is not in StatePublic.
 	if diff.OldTableID == diff.TableID && diff.OldSchemaID == diff.SchemaID {
-		ntIDs, err := b.applyTableUpdate(m, diff, schemaTS)
+		ntIDs, err := b.applyTableUpdate(m, diff)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -336,7 +336,7 @@ func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDi
 			OldTableID:  ptID,
 			OldSchemaID: ptSchemaID,
 		}
-		ptIDs, err := b.applyTableUpdate(m, ptDiff, schemaTS)
+		ptIDs, err := b.applyTableUpdate(m, ptDiff)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -369,7 +369,7 @@ func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDi
 		currDiff.OldTableID = ntID
 		currDiff.OldSchemaID = ntSchemaID
 	}
-	ntIDs, err := b.applyTableUpdate(m, currDiff, schemaTS)
+	ntIDs, err := b.applyTableUpdate(m, currDiff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -380,7 +380,7 @@ func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDi
 	currDiff.SchemaID = ptSchemaID
 	currDiff.OldTableID = ptID
 	currDiff.OldSchemaID = ptSchemaID
-	ptIDs, err := b.applyTableUpdate(m, currDiff, schemaTS)
+	ptIDs, err := b.applyTableUpdate(m, currDiff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -393,8 +393,8 @@ func (b *Builder) applyExchangeTablePartition(m *meta.Meta, diff *model.SchemaDi
 	return append(ptIDs, ntIDs...), nil
 }
 
-func (b *Builder) applyRecoverTable(m *meta.Meta, diff *model.SchemaDiff, schemaTS uint64) ([]int64, error) {
-	tblIDs, err := b.applyTableUpdate(m, diff, schemaTS)
+func (b *Builder) applyRecoverTable(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	tblIDs, err := b.applyTableUpdate(m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -439,8 +439,8 @@ func updateAutoIDForExchangePartition(store kv.Storage, ptSchemaID, ptID, ntSche
 	return err
 }
 
-func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff, schemaTS uint64) ([]int64, error) {
-	tblIDs, err := b.applyTableUpdate(m, diff, schemaTS)
+func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
+	tblIDs, err := b.applyTableUpdate(m, diff)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -455,7 +455,7 @@ func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff, schem
 			OldSchemaID: opt.OldSchemaID,
 			OldTableID:  opt.OldTableID,
 		}
-		affectedIDs, err := b.ApplyDiff(m, affectedDiff, schemaTS)
+		affectedIDs, err := b.ApplyDiff(m, affectedDiff)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -465,7 +465,7 @@ func (b *Builder) applyDefaultAction(m *meta.Meta, diff *model.SchemaDiff, schem
 	return tblIDs, nil
 }
 
-func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff, schemaTS uint64) ([]int64, error) {
+func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	roDBInfo, ok := b.is.SchemaByID(diff.SchemaID)
 	if !ok {
 		return nil, ErrDatabaseNotExists.GenWithStackByArgs(
@@ -559,7 +559,7 @@ func (b *Builder) applyTableUpdate(m *meta.Meta, diff *model.SchemaDiff, schemaT
 	if tableIDIsValid(newTableID) {
 		// All types except DropTableOrView.
 		var err error
-		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, allocs, diff.Type, tblIDs, schemaTS)
+		tblIDs, err = b.applyCreateTable(m, dbInfo, newTableID, allocs, diff.Type, tblIDs, diff.Version)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -671,7 +671,7 @@ func (b *Builder) applyAlterPolicy(m *meta.Meta, diff *model.SchemaDiff) ([]int6
 	return []int64{}, nil
 }
 
-func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff, schemaTS uint64) error {
+func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error {
 	di, err := m.GetDatabase(diff.SchemaID)
 	if err != nil {
 		return errors.Trace(err)
@@ -684,7 +684,7 @@ func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff, schema
 		)
 	}
 	b.is.schemaMap[di.Name.L] = &schemaTables{dbInfo: di, tables: make(map[string]table.Table)}
-	b.infoData.addDB(schemaTS, di)
+	// b.infoData.addDB(schemaTS, di)
 	return nil
 }
 
@@ -758,7 +758,7 @@ func (b *Builder) applyDropSchema(schemaID int64) []int64 {
 	return tableIDs
 }
 
-func (b *Builder) applyRecoverSchema(m *meta.Meta, diff *model.SchemaDiff, schemaTS uint64) ([]int64, error) {
+func (b *Builder) applyRecoverSchema(m *meta.Meta, diff *model.SchemaDiff) ([]int64, error) {
 	if di, ok := b.is.SchemaByID(diff.SchemaID); ok {
 		return nil, ErrDatabaseExists.GenWithStackByArgs(
 			fmt.Sprintf("(Schema ID %d)", di.ID),
@@ -772,7 +772,7 @@ func (b *Builder) applyRecoverSchema(m *meta.Meta, diff *model.SchemaDiff, schem
 		dbInfo: di,
 		tables: make(map[string]table.Table, len(diff.AffectedOpts)),
 	}
-	return b.applyCreateTables(m, diff, schemaTS)
+	return b.applyCreateTables(m, diff)
 }
 
 func (b *Builder) copySortedTablesBucket(bucketIdx int) {
@@ -782,7 +782,7 @@ func (b *Builder) copySortedTablesBucket(bucketIdx int) {
 	b.is.sortedTablesBuckets[bucketIdx] = newSortedTables
 }
 
-func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, allocs autoid.Allocators, tp model.ActionType, affected []int64, schemaTS uint64) ([]int64, error) {
+func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID int64, allocs autoid.Allocators, tp model.ActionType, affected []int64, schemaVersion int64) ([]int64, error) {
 	tblInfo, err := m.GetTable(dbInfo.ID, tableID)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -873,7 +873,7 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 		dbID:      dbInfo.ID,
 		tableName: tblInfo.Name.L,
 		tableID:   tblInfo.ID,
-		schemaTS:  schemaTS,
+		schemaVersion:  schemaVersion,
 	}, tbl)
 	slices.SortFunc(b.is.sortedTablesBuckets[bucketIdx], func(i, j table.Table) int {
 		return cmp.Compare(i.Meta().ID, j.Meta().ID)
@@ -1049,7 +1049,7 @@ func (b *Builder) getSchemaAndCopyIfNecessary(dbName string) *model.DBInfo {
 }
 
 // InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo, all placement rules, and schema version.
-func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64, schemaTS uint64) (*Builder, error) {
+func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64) (*Builder, error) {
 	info := b.is
 	info.schemaMetaVersion = schemaVersion
 	// build the policies.
@@ -1070,20 +1070,20 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 	}
 
 	for _, di := range dbInfos {
-		err := b.createSchemaTablesForDB(di, b.tableFromMeta, schemaTS)
+		err := b.createSchemaTablesForDB(di, b.tableFromMeta, schemaVersion)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		b.infoData.addDB(schemaTS, di)
+		// b.infoData.addDB(schemaTS, di)
 	}
 
 	// Initialize virtual tables.
 	for _, driver := range drivers {
-		err := b.createSchemaTablesForDB(driver.DBInfo, driver.TableFromMeta, schemaTS)
+		err := b.createSchemaTablesForDB(driver.DBInfo, driver.TableFromMeta, schemaVersion)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		b.infoData.addDB(schemaTS, driver.DBInfo)
+		// b.infoData.addDB(schemaTS, driver.DBInfo)
 	}
 
 	// Sort all tables by `ID`
@@ -1117,7 +1117,7 @@ func (b *Builder) tableFromMeta(alloc autoid.Allocators, tblInfo *model.TableInf
 
 type tableFromMetaFunc func(alloc autoid.Allocators, tblInfo *model.TableInfo) (table.Table, error)
 
-func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableFromMetaFunc, schemaTS uint64) error {
+func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableFromMetaFunc, schemaVersion int64) error {
 	schTbls := &schemaTables{
 		dbInfo: di,
 		tables: make(map[string]table.Table, len(di.Tables)),
@@ -1144,7 +1144,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 			dbID:      di.ID,
 			tableName: t.Name.L,
 			tableID:   t.ID,
-			schemaTS:  schemaTS,
+			schemaVersion:  schemaVersion,
 		}, tbl)
 		if tblInfo := tbl.Meta(); tblInfo.TempTableType != model.TempTableNone {
 			b.addTemporaryTable(tblInfo.ID)

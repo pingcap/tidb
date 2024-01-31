@@ -122,29 +122,29 @@ func (proxy *infoschemaProxy) TableByName(schema, table model.CIStr) (t table.Ta
 	return t, err
 }
 
-func (proxy *infoschemaProxy) SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool) {
-	val, ok := proxy.v2.SchemaByTable(tableInfo)
-	if ok {
-		return val, ok
-	}
-	val, ok = proxy.InfoSchema.SchemaByTable(tableInfo)
-	if ok {
-		fmt.Println("fuck, inconsistent schema by table ===", tableInfo.Name.L, tableInfo.ID)
-	}
-	return val, ok
-}
+// func (proxy *infoschemaProxy) SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool) {
+// 	val, ok := proxy.v2.SchemaByTable(tableInfo)
+// 	if ok {
+// 		return val, ok
+// 	}
+// 	val, ok = proxy.InfoSchema.SchemaByTable(tableInfo)
+// 	if ok {
+// 		fmt.Println("fuck, inconsistent schema by table ===", tableInfo.Name.L, tableInfo.ID)
+// 	}
+// 	return val, ok
+// }
 
-func (proxy *infoschemaProxy) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
-	val, ok = proxy.v2.SchemaByName(schema)
-	if ok {
-		return val, ok
-	}
-	val, ok = proxy.InfoSchema.SchemaByName(schema)
-	if ok {
-		fmt.Println("fuck, inconsistent schema by name ===", schema)
-	}
-	return val, ok
-}
+// func (proxy *infoschemaProxy) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
+// 	val, ok = proxy.v2.SchemaByName(schema)
+// 	if ok {
+// 		return val, ok
+// 	}
+// 	val, ok = proxy.InfoSchema.SchemaByName(schema)
+// 	if ok {
+// 		fmt.Println("fuck, inconsistent schema by name ===", schema)
+// 	}
+// 	return val, ok
+// }
 
 // GetLatest gets the newest information schema.
 func (h *InfoCache) GetLatest() InfoSchema {
