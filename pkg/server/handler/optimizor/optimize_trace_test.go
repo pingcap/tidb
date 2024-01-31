@@ -52,7 +52,7 @@ func TestDumpOptimizeTraceAPI(t *testing.T) {
 	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	go func() {
-		err := server.Run()
+		err := server.Run(dom)
 		require.NoError(t, err)
 	}()
 	client.WaitUntilServerOnline()
