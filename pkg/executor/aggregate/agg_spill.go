@@ -101,7 +101,6 @@ func newSpillHelper(
 		spillChunkFieldTypes: spillChunkFieldTypes,
 	}
 
-	
 	return helper
 }
 
@@ -341,7 +340,7 @@ func (a *AggSpillDiskAction) Action(t *memory.Tracker) {
 			zap.Uint32("spillTimes", a.spillTimes),
 			zap.Int64("consumed", t.BytesConsumed()),
 			zap.Int64("quota", t.GetBytesLimit()))
-			atomic.StoreUint32(&a.e.inSpillMode, 1)
+		atomic.StoreUint32(&a.e.inSpillMode, 1)
 		memory.QueryForceDisk.Add(1)
 		return
 	}
