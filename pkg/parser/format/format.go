@@ -34,7 +34,7 @@ const (
 // Formatter is an io.Writer extended formatter by a fmt.Printf like function Format.
 type Formatter interface {
 	io.Writer
-	Format(format string, args ...interface{}) (n int, errno error)
+	Format(format string, args ...any) (n int, errno error)
 }
 
 type indentFormatter struct {
@@ -82,7 +82,7 @@ func IndentFormatter(w io.Writer, indent string) Formatter {
 	return &indentFormatter{w, []byte(indent), 0, stBOL}
 }
 
-func (f *indentFormatter) format(flat bool, format string, args ...interface{}) (n int, errno error) {
+func (f *indentFormatter) format(flat bool, format string, args ...any) (n int, errno error) {
 	var buf = make([]byte, 0)
 	for i := 0; i < len(format); i++ {
 		c := format[i]
@@ -161,7 +161,7 @@ func (f *indentFormatter) format(flat bool, format string, args ...interface{}) 
 }
 
 // Format implements Format interface.
-func (f *indentFormatter) Format(format string, args ...interface{}) (n int, errno error) {
+func (f *indentFormatter) Format(format string, args ...any) (n int, errno error) {
 	return f.format(false, format, args...)
 }
 
@@ -187,7 +187,7 @@ func FlatFormatter(w io.Writer) Formatter {
 }
 
 // Format implements Format interface.
-func (f *flatFormatter) Format(format string, args ...interface{}) (n int, errno error) {
+func (f *flatFormatter) Format(format string, args ...any) (n int, errno error) {
 	return (*indentFormatter)(f).format(true, format, args...)
 }
 
@@ -448,7 +448,7 @@ func (ctx *RestoreCtx) WritePlain(plainText string) {
 }
 
 // WritePlainf write the plain text into writer without any handling.
-func (ctx *RestoreCtx) WritePlainf(format string, a ...interface{}) {
+func (ctx *RestoreCtx) WritePlainf(format string, a ...any) {
 	fmt.Fprintf(ctx.In, format, a...)
 }
 
