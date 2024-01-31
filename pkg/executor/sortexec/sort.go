@@ -444,7 +444,9 @@ func (e *SortExec) generateResult() {
 				disk.Close()
 			}
 		}
+		e.Parallel.mergerLock.Lock()
 		e.Parallel.merger = nil
+		e.Parallel.mergerLock.Unlock()
 	}()
 
 	if e.Parallel.spillHelper.isSpillTriggered() {
