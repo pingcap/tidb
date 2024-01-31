@@ -269,10 +269,11 @@ func TestGetConnOnCanceledContext(t *testing.T) {
 
 func TestGetMergeRegionSizeAndCount(t *testing.T) {
 	cases := []struct {
-		stores          []*metapb.Store
-		content         []string
-		regionSplitSize uint64
-		regionSplitKeys uint64
+		stores              []*metapb.Store
+		content             []string
+		importNumGoroutines uint
+		regionSplitSize     uint64
+		regionSplitKeys     uint64
 	}{
 		{
 			stores: []*metapb.Store{
@@ -289,8 +290,9 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 			},
 			content: []string{""},
 			// no tikv detected in this case
-			regionSplitSize: DefaultMergeRegionSizeBytes,
-			regionSplitKeys: DefaultMergeRegionKeyCount,
+			importNumGoroutines: DefaultImportNumGoroutines,
+			regionSplitSize:     DefaultMergeRegionSizeBytes,
+			regionSplitKeys:     DefaultMergeRegionKeyCount,
 		},
 		{
 			stores: []*metapb.Store{
@@ -321,8 +323,9 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 				"",
 			},
 			// no tikv detected in this case
-			regionSplitSize: DefaultMergeRegionSizeBytes,
-			regionSplitKeys: DefaultMergeRegionKeyCount,
+			importNumGoroutines: DefaultImportNumGoroutines,
+			regionSplitSize:     DefaultMergeRegionSizeBytes,
+			regionSplitKeys:     DefaultMergeRegionKeyCount,
 		},
 		{
 			stores: []*metapb.Store{
@@ -338,8 +341,10 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 				},
 			},
 			content: []string{
-				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 1, \"region-split-size\": \"1MiB\"}}",
+				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 1, \"region-split-size\": \"1MiB\"}, \"import\": {\"num-threads\": 6}}",
 			},
+			// the number of import goroutines is 8 times than import.num-threads.
+			importNumGoroutines: 48,
 			// one tikv detected in this case we are not update default size and keys because they are too small.
 			regionSplitSize: 1 * units.MiB,
 			regionSplitKeys: 1,
@@ -358,8 +363,9 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 				},
 			},
 			content: []string{
-				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 10000000, \"region-split-size\": \"1GiB\"}}",
+				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 10000000, \"region-split-size\": \"1GiB\"}, import\": {\"num-threads\": 128}}",
 			},
+			importNumGoroutines: 1024,
 			// one tikv detected in this case and we update with new size and keys.
 			regionSplitSize: 1 * units.GiB,
 			regionSplitKeys: 10000000,
@@ -388,12 +394,13 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 				},
 			},
 			content: []string{
-				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 10000000, \"region-split-size\": \"1GiB\"}}",
-				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 12000000, \"region-split-size\": \"900MiB\"}}",
+				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 10000000, \"region-split-size\": \"1GiB\"}, import\": {\"num-threads\": 128}}",
+				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 12000000, \"region-split-size\": \"900MiB\"}, import\": {\"num-threads\": 12}}",
 			},
 			// two tikv detected in this case and we choose the small one.
-			regionSplitSize: 900 * units.MiB,
-			regionSplitKeys: 12000000,
+			importNumGoroutines: 96,
+			regionSplitSize:     900 * units.MiB,
+			regionSplitKeys:     12000000,
 		},
 	}
 
@@ -420,8 +427,9 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 		httpCli := mockServer.Client()
 		mgr := &Mgr{PdController: &pdutil.PdController{}}
 		mgr.PdController.SetPDClient(pdCli)
-		rs, rk := mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
+		rs, rk, threads := mgr.GetTiKVConfigs(ctx, httpCli)
 		require.Equal(t, ca.regionSplitSize, rs)
+		require.Equal(t, ca.importNumGoroutines, threads)
 		require.Equal(t, ca.regionSplitKeys, rk)
 		mockServer.Close()
 	}

@@ -136,7 +136,7 @@ func (cfg *RestoreCommonConfig) adjust() {
 		cfg.Granularity = string(restore.FineGrained)
 	}
 	if cfg.ConcurrencyPerStore.hasSet {
-		cfg.ConcurrencyPerStore.value = conn.DefaultImportNumThreads
+		cfg.ConcurrencyPerStore.value = conn.DefaultImportNumGoroutines
 	}
 }
 
@@ -721,13 +721,13 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 	mergeRegionSize := cfg.MergeSmallRegionSizeBytes
 	mergeRegionCount := cfg.MergeSmallRegionKeyCount
-	importNumThreads := cfg.ConcurrencyPerStore
+	importNumGoroutines := cfg.ConcurrencyPerStore
 
-	if !mergeRegionSize.hasSet || !mergeRegionCount.hasSet || !importNumThreads.hasSet {
+	if !mergeRegionSize.hasSet || !mergeRegionCount.hasSet || !importNumGoroutines.hasSet {
 		// according to https://github.com/pingcap/tidb/issues/34167.
 		// we should get the real config from tikv to adapt the dynamic region.
 		httpCli := httputil.NewClient(mgr.GetTLSConfig())
-		mergeRegionSize.value, mergeRegionCount.value, importNumThreads.value = mgr.GetTiKVConfigs(ctx, httpCli)
+		mergeRegionSize.value, mergeRegionCount.value, importNumGoroutines.value = mgr.GetTiKVConfigs(ctx, httpCli)
 	}
 
 	keepaliveCfg.PermitWithoutStream = true
@@ -739,7 +739,7 @@ func runRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 		false,
 	)
 	// using tikv config to set the concurrency-per-store for client.
-	client.SetConcurrencyPerStore(importNumThreads.value)
+	client.SetConcurrencyPerStore(importNumGoroutines.value)
 	err = configureRestoreClient(ctx, client, cfg)
 	if err != nil {
 		return errors.Trace(err)

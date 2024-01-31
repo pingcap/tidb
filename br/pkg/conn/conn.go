@@ -49,10 +49,10 @@ const (
 	// DefaultMergeRegionKeyCount is the default region key count, 960000.
 	DefaultMergeRegionKeyCount uint64 = 960000
 
-	// DefaultImportNumThreads is the default number of threads for import.
+	// DefaultImportNumGoroutines is the default number of threads for import.
 	// use 128 as default value, which is 8 times of the default value of tidb.
 	// we think is proper for IO-bound cases.
-	DefaultImportNumThreads uint = 128
+	DefaultImportNumGoroutines uint = 128
 )
 
 type VersionCheckerType int
@@ -337,7 +337,7 @@ func ParseMergeRegionSizeAndCountFromConfig(resp *http.Response) (uint64, uint64
 func (mgr *Mgr) GetTiKVConfigs(ctx context.Context, client *http.Client) (uint64, uint64, uint) {
 	regionSplitSize := DefaultMergeRegionSizeBytes
 	regionSplitKeys := DefaultMergeRegionKeyCount
-	importThreads := DefaultImportNumThreads
+	importGoroutines := DefaultImportNumGoroutines
 	err := mgr.GetConfigFromTiKV(ctx, client, func(resp *http.Response) error {
 		rs, rk, e := ParseMergeRegionSizeAndCountFromConfig(resp)
 		if e != nil {
@@ -353,14 +353,16 @@ func (mgr *Mgr) GetTiKVConfigs(ctx context.Context, client *http.Client) (uint64
 			return e
 		}
 		// we use 8 times of the default value because it's an IO-bound cases.
-		importThreads = 8 * n
+		if n > 0 && n*8 < importGoroutines {
+			importGoroutines = n * 8
+		}
 		return nil
 	})
 	if err != nil {
 		log.Warn("meet error when getting config from TiKV; using default", logutil.ShortError(err))
-		return DefaultMergeRegionSizeBytes, DefaultMergeRegionKeyCount, DefaultImportNumThreads
+		return DefaultMergeRegionSizeBytes, DefaultMergeRegionKeyCount, DefaultImportNumGoroutines
 	}
-	return regionSplitSize, regionSplitKeys, importThreads
+	return regionSplitSize, regionSplitKeys, importGoroutines
 }
 
 // GetConfigFromTiKV get configs from all alive tikv stores.
