@@ -438,6 +438,8 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 	})
 
 	val := s.getAlloc(req.DbID, req.TblID, req.IsUnsigned)
+	val.Lock()
+	defer val.Unlock()
 
 	if req.N == 0 {
 		if val.base != 0 {
@@ -467,9 +469,6 @@ func (s *Service) allocAutoID(ctx context.Context, req *autoid.AutoIDRequest) (*
 			Max: currentEnd,
 		}, nil
 	}
-
-	val.Lock()
-	defer val.Unlock()
 
 	var min, max int64
 	var err error
@@ -531,6 +530,9 @@ func (s *Service) Rebase(ctx context.Context, req *autoid.RebaseRequest) (*autoi
 	}
 
 	val := s.getAlloc(req.DbID, req.TblID, req.IsUnsigned)
+	val.Lock()
+	defer val.Unlock()
+
 	if req.Force {
 		err := val.forceRebase(ctx, s.store, req.DbID, req.TblID, req.Base, req.IsUnsigned)
 		if err != nil {
