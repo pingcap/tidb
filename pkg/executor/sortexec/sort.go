@@ -454,9 +454,19 @@ func (e *SortExec) generateResult() {
 
 	spillTriggered := e.generateResultInMemory()
 	if spillTriggered {
-		// TODO trigger spill
+		err := e.spillSortedRowsInMemory()
+		if err != nil {
+			e.Parallel.resultChannel <- rowWithError{err: err}
+			return
+		}
 		e.generateResultWhenSpillTriggered()
 	}
+}
+
+func (e *SortExec) spillSortedRowsInMemory() error {
+	merger := newMultiWayMerger(e.Parallel.sortedRowsIters, e.lessRow)
+	merger.init()
+	return e.Parallel.spillHelper.spillImpl(merger)
 }
 
 func (e *SortExec) initExternalSorting() error {

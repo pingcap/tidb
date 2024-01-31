@@ -128,7 +128,9 @@ func (p *parallelSortSpillHelper) spill() error {
 	defer p.cond.Broadcast()
 	defer p.setNotSpilled()
 
-	return p.spillImpl(sortedRowsIters)
+	merger := newMultiWayMerger(sortedRowsIters, p.lessRowFunc)
+	merger.init()
+	return p.spillImpl(merger)
 }
 
 func (p *parallelSortSpillHelper) releaseMemory() {
@@ -150,7 +152,7 @@ func (p *parallelSortSpillHelper) spillTmpSpillChunk(inDisk *chunk.DataInDiskByC
 	return nil
 }
 
-func (p *parallelSortSpillHelper) spillImpl(sortedRowsIters []*chunk.Iterator4Slice) error {
+func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 	p.tmpSpillChunk.Reset()
 	inDisk := chunk.NewDataInDiskByChunks(p.fieldTypes)
 	inDisk.GetDiskTracker().AttachTo(p.sortExec.diskTracker)
@@ -158,8 +160,7 @@ func (p *parallelSortSpillHelper) spillImpl(sortedRowsIters []*chunk.Iterator4Sl
 	spilledRowChannel := make(chan chunk.Row, 10000)
 	go func() {
 		defer close(spilledRowChannel)
-		merger := newMultiWayMerger(sortedRowsIters, p.lessRowFunc)
-		merger.init()
+
 		for {
 			row := merger.next()
 			if row.IsEmpty() {
