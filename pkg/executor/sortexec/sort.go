@@ -288,16 +288,28 @@ func (e *SortExec) generateResultWithKWayMerge() {
 	}
 	e.Parallel.merger.init()
 
+	maxChunkSize := e.MaxChunkSize()
+	resBuf := make([]chunk.Row, 0, maxChunkSize)
 	for {
-		row := e.Parallel.merger.next()
-		if row.IsEmpty() {
+		resBuf = resBuf[:0]
+		for i := 0; i < maxChunkSize; i++ {
+			row := e.Parallel.merger.next()
+			if row.IsEmpty() {
+				break
+			}
+			resBuf = append(resBuf, row)
+		}
+
+		if len(resBuf) == 0 {
 			break
 		}
 
-		select {
-		case <-e.finishCh:
-			return
-		case e.Parallel.resultChannel <- row:
+		for _, row := range resBuf {
+			select {
+			case <-e.finishCh:
+				return
+			case e.Parallel.resultChannel <- row:
+			}
 		}
 
 		injectParallelSortRandomFail()
