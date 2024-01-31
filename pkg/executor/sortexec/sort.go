@@ -310,7 +310,7 @@ func (e *SortExec) generateResultWhenSpillTriggeredWithMulWayMerge() error {
 	inDiskNum := len(e.Parallel.spillHelper.sortedRowsInDisk)
 	multiWayMerge := &multiWayMergeImpl{
 		lessRowFunction: e.lessRow,
-		elements:        make([]rowWithPartition, inDiskNum),
+		elements:        make([]rowWithPartition, 0, inDiskNum),
 	}
 
 	cursors := make([]*dataCursor, 0, inDiskNum)
