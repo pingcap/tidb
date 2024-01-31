@@ -49,6 +49,7 @@ func InitTaskExecutor(ctrl *gomock.Controller, runSubtaskFn func(ctx context.Con
 	mockStepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
 		runSubtaskFn,
 	).AnyTimes()
+	mockStepExecutor.EXPECT().RealtimeSummary().Return(nil).AnyTimes()
 
 	mockExtension := GetMockTaskExecutorExtension(ctrl, mockStepExecutor)
 	taskexecutor.RegisterTaskType(proto.TaskTypeExample,
