@@ -16,7 +16,6 @@ package priorityqueue
 
 import (
 	"strings"
-	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -60,13 +59,11 @@ func (j *TableAnalysisJob) IsValidToAnalyze(
 		// Any partition is invalid to analyze, the whole table is invalid to analyze.
 		// Because we need to analyze partitions in batch mode.
 		partitions := append(j.Partitions, getPartitionNames(j.PartitionIndexes)...)
-		for _, partition := range partitions {
-			if !isValidToAnalyze(sctx, j.TableSchema, j.TableName, partition) {
-				return false
-			}
+		if !isValidToAnalyze(sctx, j.TableSchema, j.TableName, partitions...) {
+			return false
 		}
 	} else {
-		if !isValidToAnalyze(sctx, j.TableSchema, j.TableName, "") {
+		if !isValidToAnalyze(sctx, j.TableSchema, j.TableName) {
 			return false
 		}
 	}
@@ -82,41 +79,26 @@ func getPartitionNames(partitionIndexes map[string][]string) []string {
 	return names
 }
 
-func isValidToAnalyze(sctx sessionctx.Context, schema, table, partition string) bool {
-	var (
-		lastFailedAnalysisDuration time.Duration
-		err                        error
-	)
-	if partition == "" {
-		lastFailedAnalysisDuration, err = getLastFailedAnalysisDuration(sctx, schema, table)
-	} else {
-		lastFailedAnalysisDuration, err = getLastFailedAnalysisDuration(sctx, schema, table, partition)
-	}
+func isValidToAnalyze(sctx sessionctx.Context, schema, table string, partitionNames ...string) bool {
+	lastFailedAnalysisDuration, err := getLastFailedAnalysisDuration(sctx, schema, table, partitionNames...)
 	if err != nil {
 		statslogutil.StatsLogger().Warn(
 			"Fail to get last failed analysis duration",
 			zap.String("schema", schema),
 			zap.String("table", table),
-			zap.String("partition", partition),
+			zap.Strings("partitions", partitionNames),
 			zap.Error(err),
 		)
 		return false
 	}
 
-	var (
-		averageAnalysisDuration time.Duration
-	)
-	if partition == "" {
-		averageAnalysisDuration, err = getAverageAnalysisDuration(sctx, schema, table)
-	} else {
-		averageAnalysisDuration, err = getAverageAnalysisDuration(sctx, schema, table, partition)
-	}
+	averageAnalysisDuration, err := getAverageAnalysisDuration(sctx, schema, table, partitionNames...)
 	if err != nil {
 		statslogutil.StatsLogger().Warn(
 			"Fail to get average analysis duration",
 			zap.String("schema", schema),
 			zap.String("table", table),
-			zap.String("partition", partition),
+			zap.Strings("partitions", partitionNames),
 			zap.Error(err),
 		)
 		return false
@@ -132,7 +114,7 @@ func isValidToAnalyze(sctx sessionctx.Context, schema, table, partition string) 
 			"Skip analysis because the last failed analysis duration is less than 2 times the average analysis duration",
 			zap.String("schema", schema),
 			zap.String("table", table),
-			zap.String("partition", partition),
+			zap.Strings("partitions", partitionNames),
 			zap.Duration("lastFailedAnalysisDuration", lastFailedAnalysisDuration),
 			zap.Duration("averageAnalysisDuration", averageAnalysisDuration),
 		)
