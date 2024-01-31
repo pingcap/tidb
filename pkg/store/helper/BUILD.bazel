@@ -34,7 +34,7 @@ go_test(
     ],
     embed = [":helper"],
     flaky = True,
-    shard_count = 6,
+    shard_count = 5,
     deps = [
         "//pkg/parser/model",
         "//pkg/store/mockstore",
