@@ -113,16 +113,16 @@ func (e *ChecksumTableExec) Next(_ context.Context, req *chunk.Chunk) error {
 
 func (e *ChecksumTableExec) buildTasks() ([]*checksumTask, error) {
 	allTasks := make([][]*checksumTask, 0, len(e.tables))
-	taskLen := 0
+	taskCnt := 0
 	for _, t := range e.tables {
 		tasks, err := t.buildTasks(e.Ctx())
 		if err != nil {
 			return nil, err
 		}
 		allTasks = append(allTasks, tasks)
-		taskLen += len(tasks)
+		taskCnt += len(tasks)
 	}
-	ret := make([]*checksumTask, 0, taskLen)
+	ret := make([]*checksumTask, 0, taskCnt)
 	for _, task := range allTasks {
 		ret = append(ret, task...)
 	}
