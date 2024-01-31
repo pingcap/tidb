@@ -48,74 +48,107 @@ var (
 	MinDeliverRowCnt = 4096
 )
 
-type deliveredRow struct {
-	kvs *kv.Pairs // if kvs is nil, this indicated we've got the last message.
-	// offset is the end offset in data file after encode this row.
+type rowToEncode struct {
+	row   []types.Datum
+	rowID int64
+	// endOffset represents the offset after the current row in encode reader.
+	// it will be negative if the data source is not file.
+	endOffset int64
+	resetFn   func()
+}
+
+type encodeReaderFn func(ctx context.Context) (data rowToEncode, closed bool, err error)
+
+func parserEncodeReader(parser mydump.Parser) encodeReaderFn {
+
+}
+
+type encodedRow struct {
+	// kvs will be nil if we've got the last message.
+	kvs *kv.Pairs
+	// offset is the end offset in data file after encode this row. When the data
+	// source is query, it's always < 0.
 	offset int64
 }
 
-type deliverKVBatch struct {
-	dataKVs  kv.Pairs
-	indexKVs kv.Pairs
+type encodedKVGroupBatch struct {
+	dataKVs  []common.KvPair
+	indexKVs map[int64][]common.KvPair // indexID -> pairs
+	bytesBuf *kv.BytesBuf
+	memBuf   *kv.MemBuf
 
 	dataChecksum  *verify.KVChecksum
-	indexChecksum *verify.KVChecksum
+	indexChecksum map[int64]*verify.KVChecksum // indexID -> checksum
 
 	codec tikv.Codec
 }
 
-func newDeliverKVBatch(codec tikv.Codec) *deliverKVBatch {
-	return &deliverKVBatch{
+func newEncodedKVGroupBatch(codec tikv.Codec) *encodedKVGroupBatch {
+	return &encodedKVGroupBatch{
 		dataChecksum:  verify.NewKVChecksumWithKeyspace(codec),
-		indexChecksum: verify.NewKVChecksumWithKeyspace(codec),
+		indexChecksum: make(map[int64]*verify.KVChecksum, 8),
 		codec:         codec,
 	}
 }
 
-func (b *deliverKVBatch) reset() {
-	b.dataKVs.Clear()
-	b.indexKVs.Clear()
-	b.dataChecksum = verify.NewKVChecksumWithKeyspace(b.codec)
-	b.indexChecksum = verify.NewKVChecksumWithKeyspace(b.codec)
-}
-
-func (b *deliverKVBatch) size() uint64 {
-	return b.dataChecksum.SumSize() + b.indexChecksum.SumSize()
-}
-
-func (b *deliverKVBatch) add(kvs *kv.Pairs) {
+// add must be called with `kvs` from the same session for a encodedKVGroupBatch.
+func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
 	for _, pair := range kvs.Pairs {
 		if tablecodec.IsRecordKey(pair.Key) {
-			b.dataKVs.Pairs = append(b.dataKVs.Pairs, pair)
+			b.dataKVs = append(b.dataKVs, pair)
 			b.dataChecksum.UpdateOne(pair)
 		} else {
-			// TODO(lance6716): separate each index
-			b.indexKVs.Pairs = append(b.indexKVs.Pairs, pair)
-			b.indexChecksum.UpdateOne(pair)
+			indexID, err := tablecodec.DecodeIndexID(pair.Key)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			b.indexKVs[indexID] = append(b.indexKVs[indexID], pair)
+			if _, ok := b.indexChecksum[indexID]; !ok {
+				b.indexChecksum[indexID] = verify.NewKVChecksumWithKeyspace(b.codec)
+			}
+			b.indexChecksum[indexID].UpdateOne(pair)
 		}
 	}
 
-	// the related buf is shared, so we only need to set it into one of the kvs so it can be released
+	// the related buf is shared, so we only need to record any one of them.
 	if kvs.BytesBuf != nil {
-		b.dataKVs.BytesBuf = kvs.BytesBuf
-		b.dataKVs.MemBuf = kvs.MemBuf
+		b.bytesBuf = kvs.BytesBuf
+		b.memBuf = kvs.MemBuf
 	}
+	return nil
 }
 
-type chunkEncoder interface {
-	init() error
-	encodeLoop(ctx context.Context) error
-	summaryFields() []zap.Field
+func (b *encodedKVGroupBatch) size() uint64 {
+	ret := b.dataChecksum.SumSize()
+	for _, c := range b.indexChecksum {
+		ret += c.SumSize()
+	}
+	return ret
 }
 
-// fileChunkEncoder encode data chunk(either a data file or part of a file).
-type fileChunkEncoder struct {
-	parser    mydump.Parser
+func (b *encodedKVGroupBatch) reset() {
+	// mimic kv.Pairs.Clear
+	b.dataKVs = b.dataKVs[:0]
+	for i := range b.indexKVs {
+		b.indexKVs[i] = b.indexKVs[i][:0]
+	}
+	b.memBuf.Recycle(b.bytesBuf)
+	b.bytesBuf = nil
+	b.memBuf = nil
+
+	b.dataChecksum = verify.NewKVChecksumWithKeyspace(b.codec)
+	b.indexChecksum = make(map[int64]*verify.KVChecksum, len(b.indexChecksum))
+}
+
+// chunkEncoder encodes data from readFn and sends encoded data to sendFn.
+type chunkEncoder struct {
+	readFn func(ctx context.Context) (data rowToEncode, closed bool, err error)
+	sendFn func(ctx context.Context, kvs []encodedRow) error
+
 	chunkInfo *checkpoints.ChunkCheckpoint
 	logger    *zap.Logger
 	encoder   KVEncoder
 	kvCodec   tikv.Codec
-	sendFn    func(ctx context.Context, kvs []deliveredRow) error
 
 	// startOffset is the offset of current source file reader. it might be
 	// larger than the pos that has been parsed due to reader buffering.
@@ -126,19 +159,7 @@ type fileChunkEncoder struct {
 	encodeTotalDur time.Duration
 }
 
-var _ chunkEncoder = (*fileChunkEncoder)(nil)
-
-func (p *fileChunkEncoder) init() error {
-	// we might skip N rows or start from checkpoint
-	offset, err := p.parser.ScannedPos()
-	if err != nil {
-		return errors.Trace(err)
-	}
-	p.startOffset = offset
-	return nil
-}
-
-func (p *fileChunkEncoder) encodeLoop(ctx context.Context) error {
+func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 	var err error
 	reachEOF := false
 	prevOffset, currOffset := p.startOffset, p.startOffset
@@ -158,7 +179,7 @@ func (p *fileChunkEncoder) encodeLoop(ctx context.Context) error {
 		}
 		var readDur, encodeDur time.Duration
 		canDeliver := false
-		rowBatch := make([]deliveredRow, 0, MinDeliverRowCnt)
+		rowBatch := make([]encodedRow, 0, MinDeliverRowCnt)
 		var rowCount, kvSize uint64
 	outLoop:
 		for !canDeliver {
@@ -193,7 +214,7 @@ func (p *fileChunkEncoder) encodeLoop(ctx context.Context) error {
 				return err
 			}
 
-			rowBatch = append(rowBatch, deliveredRow{kvs: kvs, offset: currOffset})
+			rowBatch = append(rowBatch, encodedRow{kvs: kvs, offset: currOffset})
 			kvSize += kvs.Size()
 			rowCount++
 			// pebble cannot allow > 4.0G kv in one batch.
@@ -229,11 +250,21 @@ func (p *fileChunkEncoder) encodeLoop(ctx context.Context) error {
 	return nil
 }
 
-func (p *fileChunkEncoder) summaryFields() []zap.Field {
+func (p *chunkEncoder) summaryFields() []zap.Field {
 	return []zap.Field{
 		zap.Duration("readDur", p.readTotalDur),
 		zap.Duration("encodeDur", p.encodeTotalDur),
 	}
+}
+
+func (p *fileChunkEncoder) init() error {
+	// we might skip N rows or start from checkpoint
+	offset, err := p.parser.ScannedPos()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	p.startOffset = offset
+	return nil
 }
 
 // ChunkProcessor is used to process a chunk of data, include encode data to KV
@@ -295,7 +326,7 @@ func NewFileChunkProcessor(
 		logger:        chunkLogger,
 		kvCodec:       kvCodec,
 		diskQuotaLock: diskQuotaLock,
-		kvsCh:         make(chan []deliveredRow, maxKVQueueSize),
+		kvsCh:         make(chan []encodedRow, maxKVQueueSize),
 		dataWriter:    dataWriter,
 		indexWriter:   indexWriter,
 	}
@@ -318,7 +349,7 @@ func NewFileChunkProcessor(
 type dataDeliver struct {
 	logger        *zap.Logger
 	kvCodec       tikv.Codec
-	kvsCh         chan []deliveredRow
+	kvsCh         chan []encodedRow
 	diskQuotaLock *syncutil.RWMutex
 	dataWriter    backend.EngineWriter
 	indexWriter   backend.EngineWriter
@@ -331,7 +362,7 @@ func (p *dataDeliver) encodeDone() {
 	close(p.kvsCh)
 }
 
-func (p *dataDeliver) sendEncodedData(ctx context.Context, kvs []deliveredRow) error {
+func (p *dataDeliver) sendEncodedData(ctx context.Context, kvs []encodedRow) error {
 	select {
 	case p.kvsCh <- kvs:
 		return nil
@@ -341,7 +372,7 @@ func (p *dataDeliver) sendEncodedData(ctx context.Context, kvs []deliveredRow) e
 }
 
 func (p *dataDeliver) deliverLoop(ctx context.Context) error {
-	kvBatch := newDeliverKVBatch(p.kvCodec)
+	kvBatch := newEncodedKVGroupBatch(p.kvCodec)
 
 	var (
 		dataKVBytesHist, indexKVBytesHist prometheus.Observer
@@ -437,7 +468,7 @@ type queryChunkEncoder struct {
 	chunkInfo *checkpoints.ChunkCheckpoint
 	logger    *zap.Logger
 	encoder   KVEncoder
-	sendFn    func(ctx context.Context, kvs []deliveredRow) error
+	sendFn    func(ctx context.Context, kvs []encodedRow) error
 
 	// total duration takes by read/encode/deliver.
 	readTotalDur   time.Duration
@@ -464,7 +495,7 @@ func (e *queryChunkEncoder) encodeLoop(ctx context.Context) error {
 	for !reachEOF {
 		var readDur, encodeDur time.Duration
 		canDeliver := false
-		rowBatch := make([]deliveredRow, 0, MinDeliverRowCnt)
+		rowBatch := make([]encodedRow, 0, MinDeliverRowCnt)
 		var rowCount, kvSize uint64
 	outLoop:
 		for !canDeliver {
@@ -496,7 +527,7 @@ func (e *queryChunkEncoder) encodeLoop(ctx context.Context) error {
 				return err
 			}
 
-			rowBatch = append(rowBatch, deliveredRow{kvs: kvs})
+			rowBatch = append(rowBatch, encodedRow{kvs: kvs})
 			kvSize += kvs.Size()
 			rowCount++
 			// pebble cannot allow > 4.0G kv in one batch.
@@ -553,7 +584,7 @@ func newQueryChunkProcessor(
 		logger:        chunkLogger,
 		kvCodec:       kvCodec,
 		diskQuotaLock: diskQuotaLock,
-		kvsCh:         make(chan []deliveredRow, maxKVQueueSize),
+		kvsCh:         make(chan []encodedRow, maxKVQueueSize),
 		dataWriter:    dataWriter,
 		indexWriter:   indexWriter,
 	}
