@@ -237,8 +237,11 @@ func initCtx(ctx *mock.Context, newRootExceedAction *testutil.MockActionOnExceed
 	ctx.GetSessionVars().MemTracker.SetActionOnExceed(newRootExceedAction)
 }
 
-func executeCorrecResultTest(t *testing.T, ctx *mock.Context, dataSource *testutil.MockDataSource, result map[string]float64) {
-	aggExec := buildHashAggExecutor(t, ctx, dataSource)
+// select t0, sum(t1) from t group by t0;
+func executeCorrecResultTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggExec, dataSource *testutil.MockDataSource, result map[string]float64) {
+	if aggExec == nil {
+		aggExec = buildHashAggExecutor(t, ctx, dataSource)
+	}
 	dataSource.PrepareChunks()
 	tmpCtx := context.Background()
 	chk := exec.NewFirstChunk(aggExec)
@@ -295,9 +298,11 @@ func fallBackActionTest(t *testing.T) {
 	require.Less(t, 0, newRootExceedAction.GetTriggeredNum())
 }
 
-func randomFailTest(t *testing.T, ctx *mock.Context, dataSource *testutil.MockDataSource) {
+func randomFailTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggExec, dataSource *testutil.MockDataSource) {
+	if aggExec == nil {
+		aggExec = buildHashAggExecutor(t, ctx, dataSource)
+	}
 	dataSource.PrepareChunks()
-	aggExec := buildHashAggExecutor(t, ctx, dataSource)
 	tmpCtx := context.Background()
 	chk := exec.NewFirstChunk(aggExec)
 	aggExec.Open(tmpCtx)
@@ -367,9 +372,12 @@ func TestGetCorrectResult(t *testing.T) {
 		wg.Done()
 	}()
 
+	aggExec := buildHashAggExecutor(t, ctx, dataSource)
 	for i := 0; i < 5; i++ {
-		executeCorrecResultTest(t, ctx, dataSource, result)
+		executeCorrecResultTest(t, ctx, nil, dataSource, result)
+		executeCorrecResultTest(t, ctx, aggExec, dataSource, result)
 	}
+
 	require.Equal(t, 0, newRootExceedAction.GetTriggeredNum())
 	finished.Store(true)
 	wg.Wait()
@@ -412,8 +420,10 @@ func TestRandomFail(t *testing.T) {
 	}()
 
 	// Test is successful when all sqls are not hung
-	for i := 0; i < 50; i++ {
-		randomFailTest(t, ctx, dataSource)
+	aggExec := buildHashAggExecutor(t, ctx, dataSource)
+	for i := 0; i < 30; i++ {
+		randomFailTest(t, ctx, nil, dataSource)
+		randomFailTest(t, ctx, aggExec, dataSource)
 	}
 
 	finishChan.Store(true)

@@ -257,9 +257,9 @@ func intestBeforeFinalWorkerStart() {
 	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
 		if val.(bool) {
 			num := rand.Intn(50)
-			if num == 0 {
+			if num < 3 {
 				panic("Intest panic: final worker is panicked before start")
-			} else if num == 1 {
+			} else if num < 6 {
 				time.Sleep(1 * time.Millisecond)
 			}
 		}

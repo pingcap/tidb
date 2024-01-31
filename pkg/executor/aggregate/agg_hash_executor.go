@@ -119,7 +119,7 @@ type HashAggExec struct {
 	// we can remove this attribute.
 	IsUnparallelExec  bool
 	parallelExecValid bool
-	prepared          bool
+	prepared          atomic.Bool
 	executed          bool
 
 	memTracker  *memory.Tracker // track memory usage.
@@ -180,7 +180,7 @@ func (e *HashAggExec) Close() error {
 	}
 	if e.parallelExecValid {
 		// `Close` may be called after `Open` without calling `Next` in test.
-		if !e.prepared {
+		if !e.prepared.Load() {
 			close(e.inputCh)
 			for _, ch := range e.partialOutputChs {
 				close(ch)
@@ -220,7 +220,8 @@ func (e *HashAggExec) Open(ctx context.Context) error {
 	if err := e.BaseExecutor.Open(ctx); err != nil {
 		return err
 	}
-	e.prepared = false
+
+	e.prepared.Store(false)
 
 	if e.memTracker != nil {
 		e.memTracker.Reset()
@@ -576,9 +577,8 @@ func (e *HashAggExec) prepare4ParallelExec(ctx context.Context) {
 // 2. partial worker receives the input data, updates the partial results, and shuffle the partial results to the final workers.
 // 3. final worker receives partial results from all the partial workers, evaluates the final results and sends the final results to the main thread.
 func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error {
-	if !e.prepared {
+	if e.prepared.CompareAndSwap(false, true) {
 		e.prepare4ParallelExec(ctx)
-		e.prepared = true
 	}
 
 	failpoint.Inject("parallelHashAggError", func(val failpoint.Value) {
@@ -619,7 +619,7 @@ func (e *HashAggExec) parallelExec(ctx context.Context, chk *chunk.Chunk) error 
 func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) error {
 	chk.Reset()
 	for {
-		if e.prepared {
+		if e.prepared.Load() {
 			// Since we return e.MaxChunkSize() rows every time, so we should not traverse
 			// `groupSet` because of its randomness.
 			for ; e.cursor4GroupKey < len(e.groupKeys); e.cursor4GroupKey++ {
@@ -653,7 +653,7 @@ func (e *HashAggExec) unparallelExec(ctx context.Context, chk *chunk.Chunk) erro
 			e.memTracker.Consume(e.groupSet.Insert(""))
 			e.groupKeys = append(e.groupKeys, "")
 		}
-		e.prepared = true
+		e.prepared.Store(true)
 	}
 }
 
@@ -663,7 +663,7 @@ func (e *HashAggExec) resetSpillMode() {
 	e.groupSet, setSize = set.NewStringSetWithMemoryUsage()
 	e.partialResultMap = make(aggfuncs.AggPartialResultMapper)
 	e.bInMap = 0
-	e.prepared = false
+	e.prepared.Store(false)
 	e.executed = e.numOfSpilledChks == e.dataInDisk.NumChunks() // No data is spilling again, all data have been processed.
 	e.numOfSpilledChks = e.dataInDisk.NumChunks()
 	e.memTracker.ReplaceBytesUsed(setSize)

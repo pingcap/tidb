@@ -940,8 +940,8 @@ const (
 	// Please see comments of SessionVars.OptObjective for details.
 	TiDBOptObjective = "tidb_opt_objective"
 
-	// TiDBEnableConcurrentHashaggSpill is the name of the `tidb_enable_concurrent_hashagg_spill` system variable
-	TiDBEnableConcurrentHashaggSpill = "tidb_enable_concurrent_hashagg_spill"
+	// TiDBEnableParallelHashaggSpill is the name of the `tidb_enable_concurrent_hashagg_spill` system variable
+	TiDBEnableParallelHashaggSpill = "tidb_enable_concurrent_hashagg_spill"
 
 	// TiDBTxnEntrySizeLimit indicates the max size of a entry in membuf.
 	TiDBTxnEntrySizeLimit = "tidb_txn_entry_size_limit"
