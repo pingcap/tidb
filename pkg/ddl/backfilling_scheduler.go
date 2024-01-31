@@ -507,10 +507,7 @@ func (*ingestBackfillScheduler) expectedWorkerSize() (readerSize int, writerSize
 
 func expectedIngestWorkerCnt() (readerCnt, writerCnt int) {
 	workerCnt := int(variable.GetDDLReorgWorkerCounter())
-	readerCnt = min(workerCnt/2, maxBackfillWorkerSize)
-	readerCnt = max(readerCnt, 1)
-	writerCnt = min(workerCnt/2+2, maxBackfillWorkerSize)
-	return readerCnt, writerCnt
+	return workerCnt, workerCnt
 }
 
 func (w *addIndexIngestWorker) HandleTask(rs IndexRecordChunk, _ func(workerpool.None)) {
