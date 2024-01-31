@@ -23,6 +23,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+var subtaskCollector = newCollector()
+
+func init() {
+	prometheus.MustRegister(subtaskCollector)
+}
+
 // Because the exec_id of a subtask may change, after all tasks
 // are successful, subtasks will be migrated from tidb_subtask_background
 // to tidb_subtask_background_history. In the above situation,

@@ -28,7 +28,6 @@ import (
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
-	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
 
@@ -108,7 +107,6 @@ type Manager struct {
 	slotMgr     *SlotManager
 	nodeMgr     *NodeManager
 	balancer    *balancer
-	collector   *collector
 	initialized bool
 	// serverID, it's value is ip:port now.
 	serverID string
@@ -146,15 +144,10 @@ func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) *Mana
 			slotMgr:  slotMgr,
 			serverID: serverID,
 		}),
-		collector: newCollector(),
-		logger:    logger,
-		finishCh:  make(chan struct{}, proto.MaxConcurrentTask),
+		logger:   logger,
+		finishCh: make(chan struct{}, proto.MaxConcurrentTask),
 	}
 	schedulerManager.mu.schedulerMap = make(map[int64]Scheduler)
-
-	if err := prometheus.Register(schedulerManager.collector); err != nil {
-		logger.Warn("register collector failed", zap.Error(err))
-	}
 
 	return schedulerManager
 }
@@ -451,5 +444,5 @@ func (sm *Manager) collect() {
 		return
 	}
 
-	sm.collector.subtaskInfo.Store(&subtasks)
+	subtaskCollector.subtaskInfo.Store(&subtasks)
 }
