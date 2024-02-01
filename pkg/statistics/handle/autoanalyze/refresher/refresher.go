@@ -45,7 +45,7 @@ func NewRefresher(
 	return r, nil
 }
 
-func (r *Refresher) pickOneTableForAnalysisByPriority() {
+func (r *Refresher) pickOneTableAndAnalyzeByPriority() {
 	se, err := r.statsHandle.SPool().Get()
 	if err != nil {
 		statslogutil.StatsLogger().Error(
