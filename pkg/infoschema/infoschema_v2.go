@@ -312,6 +312,36 @@ func (is *infoschemaV2) SchemaByTable(tableInfo *model.TableInfo) (val *model.DB
 	return is.SchemaByID(tableInfo.DBID)
 }
 
+func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) {
+	dbInfo, ok := is.SchemaByName(schema)
+	if !ok {
+		fmt.Println("is this expected??")
+		return
+	}
+	snapshot := is.r.Store().GetSnapshot(kv.NewVersion(is.ts))
+	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when
+	// the meta region leader is slow.
+	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
+	m := meta.NewSnapshotMeta(snapshot)
+	tblInfos, err := m.ListSimpleTables(dbInfo.ID)
+	if err != nil {
+		if meta.ErrDBNotExists.Equal(err) {
+			return nil
+		}
+		panic(err)
+	}
+	tables = make([]table.Table, 0, len(tblInfos))
+	for _, tblInfo := range tblInfos {
+		tbl, ok := is.TableByID(tblInfo.ID)
+		if !ok {
+			fmt.Println("what happen?")
+			continue
+		}
+		tables = append(tables, tbl)
+	}
+	return
+}
+
 func loadTableInfo(r autoid.Requirement, infoData *InfoSchemaData, tblID, dbID int64, ts uint64) (table.Table, error) {
 	snapshot := r.Store().GetSnapshot(kv.NewVersion(ts))
 	// Using the KV timeout read feature to address the issue of potential DDL lease expiration when

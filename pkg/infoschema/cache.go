@@ -98,6 +98,19 @@ type infoschemaProxy struct {
 	InfoSchema
 }
 
+
+func (proxy *infoschemaProxy) SchemaTables(schema model.CIStr) (tables []table.Table) {
+	tables = proxy.v2.SchemaTables(schema)
+	if len(tables) > 0 {
+		return tables
+	}
+	tables = proxy.InfoSchema.SchemaTables(schema)
+	if len(tables) > 0 {
+		fmt.Println("fuck, inconsistent SchemaTables() ===", schema.L)
+	}
+	return tables
+}
+
 func (proxy *infoschemaProxy) TableByID(id int64) (val table.Table, ok bool) {
 	val, ok = proxy.v2.TableByID(id)
 	if ok {
