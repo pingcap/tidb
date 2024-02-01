@@ -139,6 +139,7 @@ func (b *encodedKVGroupBatch) reset() {
 
 func newEncodedKVGroupBatch(codec tikv.Codec) *encodedKVGroupBatch {
 	return &encodedKVGroupBatch{
+		indexKVs:      make(map[int64][]common.KvPair, 8),
 		dataChecksum:  verify.NewKVChecksumWithKeyspace(codec),
 		indexChecksum: make(map[int64]*verify.KVChecksum, 8),
 		codec:         codec,
