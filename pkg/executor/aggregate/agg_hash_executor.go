@@ -153,7 +153,8 @@ type HashAggExec struct {
 	// spillHelper helps to carry out the spill action
 	spillHelper *parallelHashAggSpillHelper
 	// isChildDrained indicates whether the all data from child has been taken out.
-	isChildDrained bool
+	isChildDrained  bool
+	setActionBefore bool
 }
 
 // Close implements the Executor Close interface.
@@ -259,7 +260,10 @@ func (e *HashAggExec) initForUnparallelExec() {
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
 		e.diskTracker.AttachTo(vars.StmtCtx.DiskTracker)
 		e.dataInDisk.GetDiskTracker().AttachTo(e.diskTracker)
-		vars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
+		if !e.setActionBefore {
+			vars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
+			e.setActionBefore = true
+		}
 	}
 }
 
