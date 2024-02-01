@@ -163,29 +163,22 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 	}
 }
 
-func (e *BaseTaskExecutor) collectRealtimeSummary(ctx context.Context, stepExecutor execute.StepExecutor) {
-	taskMgr, ok := e.taskTable.(*storage.TaskManager)
-	if !ok {
-		return
-	}
-	if stepExecutor.RealtimeSummary() == nil {
-		// Step executor does not support realtime summary.
-		return
-	}
+func (e *BaseTaskExecutor) updateSubtaskSummaryLoop(
+	checkCtx, runStepCtx context.Context, stepExec execute.StepExecutor) {
+	taskMgr := e.taskTable.(*storage.TaskManager)
 	ticker := time.NewTicker(updateSubtaskSummaryInterval)
 	defer ticker.Stop()
-	bgCtx := context.Background()
 	curSubtaskID := e.currSubtaskID.Load()
 	update := func() {
-		summary := stepExecutor.RealtimeSummary()
-		err := taskMgr.UpdateSubtaskRowCount(bgCtx, curSubtaskID, summary.RowCount)
+		summary := stepExec.RealtimeSummary()
+		err := taskMgr.UpdateSubtaskRowCount(runStepCtx, curSubtaskID, summary.RowCount)
 		if err != nil {
 			e.logger.Info("update subtask row count failed", zap.Error(err))
 		}
 	}
 	for {
 		select {
-		case <-ctx.Done():
+		case <-checkCtx.Done():
 			update()
 			return
 		case <-ticker.C:
@@ -418,6 +411,11 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 	return e.getError()
 }
 
+func hasRealtimeSummary(e *BaseTaskExecutor, stepExecutor execute.StepExecutor) bool {
+	_, ok := e.taskTable.(*storage.TaskManager)
+	return ok && stepExecutor.RealtimeSummary() != nil
+}
+
 func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.StepExecutor, subtask *proto.Subtask) {
 	err := func() error {
 		e.currSubtaskID.Store(subtask.ID)
@@ -427,9 +425,12 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 		wg.RunWithLog(func() {
 			e.checkBalanceSubtask(checkCtx)
 		})
-		wg.RunWithLog(func() {
-			e.collectRealtimeSummary(checkCtx, stepExecutor)
-		})
+
+		if hasRealtimeSummary(e, stepExecutor) {
+			wg.RunWithLog(func() {
+				e.updateSubtaskSummaryLoop(checkCtx, ctx, stepExecutor)
+			})
+		}
 		defer func() {
 			checkCancel()
 			wg.Wait()
