@@ -79,6 +79,7 @@ func (r *Refresher) pickOneTableForAnalysisByPriority() {
 		if err != nil {
 			statslogutil.StatsLogger().Error(
 				"Execute auto analyze job failed",
+				zap.Any("job", job),
 				zap.Error(err),
 			)
 		}
