@@ -759,10 +759,7 @@ func (c *reverseFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	bitColumnArgs := false
-	if col, ok := args[0].(*Column); ok && col.RetType.GetType() == mysql.TypeBit {
-		bitColumnArgs = true
-	}
+	bitTypeFlag := types.IsTypeBit(args[0].GetType())
 	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, types.ETString)
 	if err != nil {
 		return nil, err
@@ -772,7 +769,7 @@ func (c *reverseFunctionClass) getFunction(ctx sessionctx.Context, args []Expres
 	bf.tp.SetFlen(args[0].GetType().GetFlen())
 	addBinFlag(bf.tp)
 	var sig builtinFunc
-	if types.IsBinaryStr(argTp) || bitColumnArgs {
+	if types.IsBinaryStr(argTp) || bitTypeFlag {
 		sig = &builtinReverseSig{bf}
 		sig.setPbCode(tipb.ScalarFuncSig_Reverse)
 	} else {
