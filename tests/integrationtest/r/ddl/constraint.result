@@ -720,7 +720,6 @@ insert into t values(1), (2), (3);
 alter table t add constraint check(a < 2);
 Error 3819 (HY000): Check constraint 't_chk_1' is violated.
 alter table t add constraint check(a < 2) not enforced;
-Error 3819 (HY000): Check constraint 't_chk_1' is violated.
 drop table if exists t;
 set @@global.tidb_enable_check_constraint = 1;
 create table t(a int not null check(a>0), b int, constraint haha check(a < b), check(a<b+1));
@@ -788,5 +787,36 @@ t	CREATE TABLE `t` (
   `b` int(11) DEFAULT NULL,
 CONSTRAINT `haha` CHECK ((`a` < `b`)) /*!80016 NOT ENFORCED */,
 CONSTRAINT `t_chk_1` CHECK ((`a` > 0))
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+set @@global.tidb_enable_check_constraint = 1;
+CREATE TABLE `t` (`a` int(11) DEFAULT NULL);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+insert t values(1);
+select * from t;
+a
+1
+alter table t ADD CONSTRAINT chk CHECK (a > 1) ENFORCED;
+Error 3819 (HY000): Check constraint 'chk' is violated.
+alter table t ADD CONSTRAINT chk CHECK (a > 1) ENFORCED;
+Error 3819 (HY000): Check constraint 'chk' is violated.
+alter table t ADD CONSTRAINT chk CHECK (a > 1) NOT ENFORCED;
+ALTER TABLE t ALTER CONSTRAINT chk ENFORCED;
+Error 3819 (HY000): Check constraint 'chk' is violated.
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL,
+CONSTRAINT `chk` CHECK ((`a` > 1)) /*!80016 NOT ENFORCED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+alter table t drop CONSTRAINT chk;
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `a` int(11) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 set @@global.tidb_enable_check_constraint = 0;

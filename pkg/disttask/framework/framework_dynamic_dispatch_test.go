@@ -58,8 +58,8 @@ func (dsp *testDynamicDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ di
 	return nil, nil
 }
 
-func (*testDynamicDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-	return nil, nil
+func (*testDynamicDispatcherExt) OnDone(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) error {
+	return nil
 }
 
 func (dsp *testDynamicDispatcherExt) GetNextStep(task *proto.Task) proto.Step {

@@ -63,12 +63,12 @@ func (p *planErrDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispatch
 	return nil, nil
 }
 
-func (p *planErrDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
+func (p *planErrDispatcherExt) OnDone(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) error {
 	if p.callTime == 1 {
 		p.callTime++
-		return nil, errors.New("not retryable err")
+		return errors.New("not retryable err")
 	}
-	return []byte("planErrTask"), nil
+	return nil
 }
 
 func (*planErrDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {
@@ -101,8 +101,8 @@ func (p *planNotRetryableErrDispatcherExt) OnNextSubtasksBatch(_ context.Context
 	return nil, errors.New("not retryable err")
 }
 
-func (*planNotRetryableErrDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-	return nil, errors.New("not retryable err")
+func (*planNotRetryableErrDispatcherExt) OnDone(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) error {
+	return nil
 }
 
 func (*planNotRetryableErrDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {

@@ -130,6 +130,7 @@ func TestDispatcherExtLocalSort(t *testing.T) {
 	require.Len(t, subtaskMetas, 0)
 	task.Step = ext.GetNextStep(task)
 	require.Equal(t, proto.StepDone, task.Step)
+	require.NoError(t, ext.OnDone(ctx, d, task))
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "finished", gotJobInfo.Status)
@@ -142,14 +143,29 @@ func TestDispatcherExtLocalSort(t *testing.T) {
 	bs, err = logicalPlan.ToTaskMeta()
 	require.NoError(t, err)
 	task.Meta = bs
-	// Set step to StepPostProcess to skip the rollback sql.
-	task.Step = importinto.StepPostProcess
 	require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepImporting))
-	_, err = ext.OnErrStage(ctx, d, task, []error{errors.New("test")})
+	task.Error = errors.New("met error")
+	require.NoError(t, ext.OnDone(ctx, d, task))
 	require.NoError(t, err)
 	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
 	require.NoError(t, err)
 	require.Equal(t, "failed", gotJobInfo.Status)
+
+	// create another job, start it, and cancel it.
+	jobID, err = importer.CreateJob(ctx, conn, "test", "t", 1,
+		"root", &importer.ImportParameters{}, 123)
+	require.NoError(t, err)
+	logicalPlan.JobID = jobID
+	bs, err = logicalPlan.ToTaskMeta()
+	require.NoError(t, err)
+	task.Meta = bs
+	require.NoError(t, importer.StartJob(ctx, conn, jobID, importer.JobStepImporting))
+	task.Error = errors.New("cancelled by user")
+	require.NoError(t, ext.OnDone(ctx, d, task))
+	require.NoError(t, err)
+	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
+	require.NoError(t, err)
+	require.Equal(t, "cancelled", gotJobInfo.Status)
 }
 
 func TestDispatcherExtGlobalSort(t *testing.T) {
@@ -345,7 +361,4 @@ func TestDispatcherExtGlobalSort(t *testing.T) {
 	require.Len(t, subtaskMetas, 0)
 	task.Step = ext.GetNextStep(task)
 	require.Equal(t, proto.StepDone, task.Step)
-	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
-	require.NoError(t, err)
-	require.Equal(t, "finished", gotJobInfo.Status)
 }

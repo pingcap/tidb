@@ -25,3 +25,25 @@ func TestTaskStep(t *testing.T) {
 	require.Equal(t, int64(-1), int64(StepInit))
 	require.Equal(t, int64(-2), int64(StepDone))
 }
+
+func TestTaskIsDone(t *testing.T) {
+	cases := []struct {
+		state TaskState
+		done  bool
+	}{
+		{TaskStatePending, false},
+		{TaskStateRunning, false},
+		{TaskStateSucceed, true},
+		{TaskStateReverting, false},
+		{TaskStateFailed, true},
+		{TaskStateRevertFailed, false},
+		{TaskStateCancelling, false},
+		{TaskStateCanceled, false},
+		{TaskStatePausing, false},
+		{TaskStatePaused, false},
+		{TaskStateReverted, true},
+	}
+	for _, c := range cases {
+		require.Equal(t, c.done, (&Task{State: c.state}).IsDone())
+	}
+}

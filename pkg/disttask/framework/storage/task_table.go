@@ -37,7 +37,11 @@ import (
 	"go.uber.org/zap"
 )
 
-const defaultSubtaskKeepDays = 14
+const (
+	defaultSubtaskKeepDays = 14
+
+	subtaskColumns = `id, step, task_key, type, exec_id, state, start_time, state_update_time, meta, summary`
+)
 
 // SessionExecutor defines the interface for executing SQLs in a session.
 type SessionExecutor interface {
@@ -118,8 +122,8 @@ func row2GlobeTask(r chunk.Row) *proto.Task {
 		stdErr := errors.Normalize("")
 		err := stdErr.UnmarshalJSON(errBytes)
 		if err != nil {
-			logutil.BgLogger().Error("unmarshal error", zap.Error(err))
-			task.Error = err
+			logutil.BgLogger().Error("unmarshal task error", zap.Error(err))
+			task.Error = errors.New(string(errBytes))
 		} else {
 			task.Error = stdErr
 		}
@@ -318,33 +322,31 @@ func (stm *TaskManager) GetGlobalTaskByKeyWithHistory(ctx context.Context, key s
 
 // row2SubTask converts a row to a subtask.
 func row2SubTask(r chunk.Row) *proto.Subtask {
+	tid, err := strconv.Atoi(r.GetString(2))
+	if err != nil {
+		logutil.BgLogger().Warn("unexpected task ID", zap.String("task ID", r.GetString(3)))
+	}
 	// subtask defines start/update time as bigint, to ensure backward compatible,
 	// we keep it that way, and we convert it here.
 	var startTime, updateTime time.Time
-	if !r.IsNull(10) {
-		ts := r.GetInt64(10)
-		startTime = time.Unix(ts, 0)
+	if !r.IsNull(6) {
+		startTime = time.Unix(r.GetInt64(6), 0)
 	}
-	if !r.IsNull(11) {
-		ts := r.GetInt64(11)
-		updateTime = time.Unix(ts, 0)
+	if !r.IsNull(7) {
+		updateTime = time.Unix(r.GetInt64(7), 0)
 	}
 	task := &proto.Subtask{
 		ID:          r.GetInt64(0),
 		Step:        proto.Step(r.GetInt64(1)),
-		Type:        proto.Int2Type(int(r.GetInt64(5))),
-		SchedulerID: r.GetString(6),
-		State:       proto.TaskState(r.GetString(8)),
-		Meta:        r.GetBytes(12),
-		Summary:     r.GetString(14),
+		TaskID:      int64(tid),
+		Type:        proto.Int2Type(int(r.GetInt64(3))),
+		SchedulerID: r.GetString(4),
+		State:       proto.TaskState(r.GetString(5)),
+		Meta:        r.GetBytes(8),
+		Summary:     r.GetJSON(9).String(),
 		StartTime:   startTime,
 		UpdateTime:  updateTime,
 	}
-	tid, err := strconv.Atoi(r.GetString(3))
-	if err != nil {
-		logutil.BgLogger().Warn("unexpected task ID", zap.String("task ID", r.GetString(3)))
-	}
-	task.TaskID = int64(tid)
 	return task
 }
 
@@ -370,7 +372,7 @@ func (stm *TaskManager) AddNewSubTask(ctx context.Context, globalTaskID int64, s
 func (stm *TaskManager) GetSubtasksInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...interface{}) ([]*proto.Subtask, error) {
 	args := []interface{}{tidbID, taskID, step}
 	args = append(args, states...)
-	rs, err := stm.executeSQLWithNewSession(ctx, `select * from mysql.tidb_background_subtask
+	rs, err := stm.executeSQLWithNewSession(ctx, `select `+subtaskColumns+` from mysql.tidb_background_subtask
 		where exec_id = %? and task_key = %? and step = %?
 		and state in (`+strings.Repeat("%?,", len(states)-1)+"%?)", args...)
 	if err != nil {
@@ -388,7 +390,7 @@ func (stm *TaskManager) GetSubtasksInStates(ctx context.Context, tidbID string, 
 func (stm *TaskManager) GetFirstSubtaskInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...interface{}) (*proto.Subtask, error) {
 	args := []interface{}{tidbID, taskID, step}
 	args = append(args, states...)
-	rs, err := stm.executeSQLWithNewSession(ctx, `select * from mysql.tidb_background_subtask
+	rs, err := stm.executeSQLWithNewSession(ctx, `select `+subtaskColumns+` from mysql.tidb_background_subtask
 		where exec_id = %? and task_key = %? and step = %?
 		and state in (`+strings.Repeat("%?,", len(states)-1)+"%?) limit 1", args...)
 	if err != nil {
@@ -424,13 +426,13 @@ func (stm *TaskManager) UpdateErrorToSubtask(ctx context.Context, tidbID string,
 // PrintSubtaskInfo log the subtask info by taskKey. Only used for UT.
 func (stm *TaskManager) PrintSubtaskInfo(ctx context.Context, taskID int64) {
 	rs, _ := stm.executeSQLWithNewSession(ctx,
-		"select * from mysql.tidb_background_subtask_history where task_key = %?", taskID)
+		`select `+subtaskColumns+`, error from mysql.tidb_background_subtask_history where task_key = %?`, taskID)
 	rs2, _ := stm.executeSQLWithNewSession(ctx,
-		"select * from mysql.tidb_background_subtask where task_key = %?", taskID)
+		`select `+subtaskColumns+`, error from mysql.tidb_background_subtask where task_key = %?`, taskID)
 	rs = append(rs, rs2...)
 
 	for _, r := range rs {
-		errBytes := r.GetBytes(13)
+		errBytes := r.GetBytes(10)
 		var err error
 		if len(errBytes) > 0 {
 			stdErr := errors.Normalize("")
@@ -447,7 +449,7 @@ func (stm *TaskManager) PrintSubtaskInfo(ctx context.Context, taskID int64) {
 
 // GetSucceedSubtasksByStep gets the subtask in the success state.
 func (stm *TaskManager) GetSucceedSubtasksByStep(ctx context.Context, taskID int64, step proto.Step) ([]*proto.Subtask, error) {
-	rs, err := stm.executeSQLWithNewSession(ctx, `select * from mysql.tidb_background_subtask
+	rs, err := stm.executeSQLWithNewSession(ctx, `select `+subtaskColumns+` from mysql.tidb_background_subtask
 		where task_key = %? and state = %? and step = %?`,
 		taskID, proto.TaskStateSucceed, step)
 	if err != nil {
@@ -554,7 +556,9 @@ func (stm *TaskManager) StartSubtask(ctx context.Context, subtaskID int64) error
 
 // StartManager insert the manager information into dist_framework_meta.
 func (stm *TaskManager) StartManager(ctx context.Context, tidbID string, role string) error {
-	_, err := stm.executeSQLWithNewSession(ctx, `replace into mysql.dist_framework_meta values(%?, %?, DEFAULT)`, tidbID, role)
+	_, err := stm.executeSQLWithNewSession(ctx, `insert into mysql.dist_framework_meta(host, role, keyspace_id)
+	SELECT %?, %?,-1
+    WHERE NOT EXISTS (SELECT 1 FROM mysql.dist_framework_meta WHERE host = %?)`, tidbID, role, tidbID)
 	return err
 }
 
@@ -887,7 +891,7 @@ func (stm *TaskManager) GetSubtasksForImportInto(ctx context.Context, taskID int
 	)
 	err = stm.WithNewTxn(ctx, func(se sessionctx.Context) error {
 		rs, err = ExecSQL(ctx, se,
-			"select * from mysql.tidb_background_subtask where task_key = %? and step = %?",
+			`select `+subtaskColumns+` from mysql.tidb_background_subtask where task_key = %? and step = %?`,
 			taskID, step,
 		)
 		if err != nil {
@@ -897,7 +901,7 @@ func (stm *TaskManager) GetSubtasksForImportInto(ctx context.Context, taskID int
 		// To avoid the situation that the subtasks has been `TransferSubTasks2History`
 		// when the user show import jobs, we need to check the history table.
 		rsFromHistory, err := ExecSQL(ctx, se,
-			"select * from mysql.tidb_background_subtask_history where task_key = %? and step = %?",
+			`select `+subtaskColumns+` from mysql.tidb_background_subtask_history where task_key = %? and step = %?`,
 			taskID, step,
 		)
 		if err != nil {

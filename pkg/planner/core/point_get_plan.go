@@ -1657,7 +1657,7 @@ func buildPointUpdatePlan(ctx sessionctx.Context, pointPlan PhysicalPlan, dbName
 		VirtualAssignmentsOffset:  len(orderedList),
 	}.Init(ctx)
 	updatePlan.names = pointPlan.OutputNames()
-	is := ctx.GetInfoSchema().(infoschema.InfoSchema)
+	is := sessiontxn.GetTxnManager(ctx).GetTxnInfoSchema()
 	t, _ := is.TableByID(tbl.ID)
 	updatePlan.tblID2Table = map[int64]table.Table{
 		tbl.ID: t,
@@ -1864,9 +1864,14 @@ func getPartitionInfo(ctx sessionctx.Context, tbl *model.TableInfo, pairs []name
 	case model.PartitionTypeKey:
 		// The key partition table supports FastPlan when it contains only one partition column
 		if len(pi.Columns) == 1 {
+			// We need to change the partition column index!
+			col := &expression.Column{}
+			*col = *partitionExpr.KeyPartCols[0]
+			col.Index = 0
+			pe := &tables.ForKeyPruning{KeyPartCols: []*expression.Column{col}}
 			for i, pair := range pairs {
 				if pi.Columns[0].L == pair.colName {
-					pos, err := partitionExpr.LocateKeyPartition(pi.Num, []types.Datum{pair.value})
+					pos, err := pe.LocateKeyPartition(pi.Num, []types.Datum{pair.value})
 					if err != nil {
 						return nil, 0, 0, false
 					}

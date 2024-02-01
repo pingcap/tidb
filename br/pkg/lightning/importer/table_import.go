@@ -72,6 +72,7 @@ type TableImporter struct {
 	logger    log.Logger
 	kvStore   tidbkv.Storage
 	etcdCli   *clientv3.Client
+	autoidCli *autoid.ClientDiscover
 
 	// dupIgnoreRows tracks the rowIDs of rows that are duplicated and should be ignored.
 	dupIgnoreRows extsort.ExternalSorter
@@ -96,6 +97,7 @@ func NewTableImporter(
 	if err != nil {
 		return nil, errors.Annotatef(err, "failed to tables.TableFromMeta %s", tableName)
 	}
+	autoidCli := autoid.NewClientDiscover(etcdCli)
 
 	return &TableImporter{
 		tableName:     tableName,
@@ -106,6 +108,7 @@ func NewTableImporter(
 		alloc:         idAlloc,
 		kvStore:       kvStore,
 		etcdCli:       etcdCli,
+		autoidCli:     autoidCli,
 		logger:        logger.With(zap.String("table", tableName)),
 		ignoreColumns: ignoreColumns,
 	}, nil
@@ -329,9 +332,9 @@ func (tr *TableImporter) Store() tidbkv.Storage {
 	return tr.kvStore
 }
 
-// GetEtcdClient implements the autoid.Requirement interface.
-func (tr *TableImporter) GetEtcdClient() *clientv3.Client {
-	return tr.etcdCli
+// AutoIDClient implements the autoid.Requirement interface.
+func (tr *TableImporter) AutoIDClient() *autoid.ClientDiscover {
+	return tr.autoidCli
 }
 
 // RebaseChunkRowIDs rebase the row id of the chunks.
