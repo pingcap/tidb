@@ -1,7 +1,7 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "framework_test",
+    name = "tests_test",
     timeout = "short",
     srcs = [
         "framework_err_handling_test.go",
@@ -12,7 +12,6 @@ go_test(
         "framework_test.go",
     ],
     flaky = True,
-    race = "off",
     shard_count = 26,
     deps = [
         "//pkg/disttask/framework/handle",
