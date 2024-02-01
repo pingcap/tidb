@@ -467,7 +467,7 @@ func TestErrorBind(t *testing.T) {
 	rs.Close()
 
 	dom.BindHandle().DropInvalidGlobalBinding()
-
+	tk.MustExec("admin reload bindings")
 	rs, err = tk.Exec("show global bindings")
 	require.NoError(t, err)
 	chk := rs.NewChunk(nil)
