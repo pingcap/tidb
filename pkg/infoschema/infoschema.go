@@ -36,25 +36,25 @@ import (
 // InfoSchema is read-only, and the returned value is a copy.
 // TODO: add more methods to retrieve tables and columns.
 type InfoSchema interface {
-	    SchemaByName(schema model.CIStr) (*model.DBInfo, bool)
+	SchemaByName(schema model.CIStr) (*model.DBInfo, bool)
 	SchemaExists(schema model.CIStr) bool
-	    TableByName(schema, table model.CIStr) (table.Table, error)
+	TableByName(schema, table model.CIStr) (table.Table, error)
 	TableExists(schema, table model.CIStr) bool
 	SchemaByID(id int64) (*model.DBInfo, bool)
-	    SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool)
+	SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool)
 	PolicyByName(name model.CIStr) (*model.PolicyInfo, bool)
 	ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool)
 	TableByID(id int64) (table.Table, bool)
 	AllocByID(id int64) (autoid.Allocators, bool)
-    AllSchemaNames() []string
+	AllSchemaNames() []string
 	AllSchemas() []*model.DBInfo
 	Clone() (result []*model.DBInfo)
 	SchemaTables(schema model.CIStr) []table.Table
 	SchemaMetaVersion() int64
 	// TableIsView indicates whether the schema.table is a view.
-    TableIsView(schema, table model.CIStr) bool
+	TableIsView(schema, table model.CIStr) bool
 	// TableIsSequence indicates whether the schema.table is a sequence.
-    TableIsSequence(schema, table model.CIStr) bool
+	TableIsSequence(schema, table model.CIStr) bool
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
 	// PlacementBundleByPhysicalTableID is used to get a rule bundle.
 	PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool)

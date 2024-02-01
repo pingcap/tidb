@@ -684,7 +684,7 @@ func (b *Builder) applyCreateSchema(m *meta.Meta, diff *model.SchemaDiff) error 
 		)
 	}
 	b.is.schemaMap[di.Name.L] = &schemaTables{dbInfo: di, tables: make(map[string]table.Table)}
-	// b.infoData.addDB(schemaTS, di)
+	b.infoData.addDB(diff.Version, di)
 	return nil
 }
 
@@ -869,11 +869,11 @@ func (b *Builder) applyCreateTable(m *meta.Meta, dbInfo *model.DBInfo, tableID i
 	bucketIdx := tableBucketIdx(tableID)
 	b.is.sortedTablesBuckets[bucketIdx] = append(b.is.sortedTablesBuckets[bucketIdx], tbl)
 	b.infoData.add(Item{
-		dbName:    dbInfo.Name.L,
-		dbID:      dbInfo.ID,
-		tableName: tblInfo.Name.L,
-		tableID:   tblInfo.ID,
-		schemaVersion:  schemaVersion,
+		dbName:        dbInfo.Name.L,
+		dbID:          dbInfo.ID,
+		tableName:     tblInfo.Name.L,
+		tableID:       tblInfo.ID,
+		schemaVersion: schemaVersion,
 	}, tbl)
 	slices.SortFunc(b.is.sortedTablesBuckets[bucketIdx], func(i, j table.Table) int {
 		return cmp.Compare(i.Meta().ID, j.Meta().ID)
@@ -1074,7 +1074,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// b.infoData.addDB(schemaTS, di)
+		b.infoData.addDB(schemaVersion, di)
 	}
 
 	// Initialize virtual tables.
@@ -1083,7 +1083,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		// b.infoData.addDB(schemaTS, driver.DBInfo)
+		b.infoData.addDB(schemaVersion, driver.DBInfo)
 	}
 
 	// Sort all tables by `ID`
@@ -1140,11 +1140,11 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 			b.is.sortedTablesBuckets[tableBucketIdx(t.ID)] = append(sortedTbls, tbl)
 		}
 		b.infoData.add(Item{
-			dbName:    di.Name.L,
-			dbID:      di.ID,
-			tableName: t.Name.L,
-			tableID:   t.ID,
-			schemaVersion:  schemaVersion,
+			dbName:        di.Name.L,
+			dbID:          di.ID,
+			tableName:     t.Name.L,
+			tableID:       t.ID,
+			schemaVersion: schemaVersion,
 		}, tbl)
 		if tblInfo := tbl.Meta(); tblInfo.TempTableType != model.TempTableNone {
 			b.addTemporaryTable(tblInfo.ID)

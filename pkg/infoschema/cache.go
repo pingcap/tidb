@@ -21,8 +21,8 @@ import (
 	"sync"
 
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
-	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -122,29 +122,29 @@ func (proxy *infoschemaProxy) TableByName(schema, table model.CIStr) (t table.Ta
 	return t, err
 }
 
-// func (proxy *infoschemaProxy) SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool) {
-// 	val, ok := proxy.v2.SchemaByTable(tableInfo)
-// 	if ok {
-// 		return val, ok
-// 	}
-// 	val, ok = proxy.InfoSchema.SchemaByTable(tableInfo)
-// 	if ok {
-// 		fmt.Println("fuck, inconsistent schema by table ===", tableInfo.Name.L, tableInfo.ID)
-// 	}
-// 	return val, ok
-// }
+func (proxy *infoschemaProxy) SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool) {
+	val, ok := proxy.v2.SchemaByTable(tableInfo)
+	if ok {
+		return val, ok
+	}
+	val, ok = proxy.InfoSchema.SchemaByTable(tableInfo)
+	if ok {
+		fmt.Println("fuck, inconsistent schema by table ===", tableInfo.Name.L, tableInfo.ID)
+	}
+	return val, ok
+}
 
-// func (proxy *infoschemaProxy) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
-// 	val, ok = proxy.v2.SchemaByName(schema)
-// 	if ok {
-// 		return val, ok
-// 	}
-// 	val, ok = proxy.InfoSchema.SchemaByName(schema)
-// 	if ok {
-// 		fmt.Println("fuck, inconsistent schema by name ===", schema)
-// 	}
-// 	return val, ok
-// }
+func (proxy *infoschemaProxy) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
+	val, ok = proxy.v2.SchemaByName(schema)
+	if ok {
+		return val, ok
+	}
+	val, ok = proxy.InfoSchema.SchemaByName(schema)
+	if ok {
+		fmt.Println("fuck, inconsistent schema by name ===", schema)
+	}
+	return val, ok
+}
 
 // GetLatest gets the newest information schema.
 func (h *InfoCache) GetLatest() InfoSchema {
@@ -159,6 +159,7 @@ func (h *InfoCache) GetLatest() InfoSchema {
 				ts:             math.MaxUint64,
 				r:              h.r,
 				InfoSchemaData: h.Data,
+				schemaVersion: h.cache[0].infoschema.SchemaMetaVersion(),
 			},
 			InfoSchema: h.cache[0].infoschema,
 		}

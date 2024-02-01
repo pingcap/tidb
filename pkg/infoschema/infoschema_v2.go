@@ -2,8 +2,8 @@ package infoschema
 
 import (
 	"fmt"
-	"sync"
 	"math"
+	"sync"
 
 	"github.com/dgraph-io/ristretto"
 	"github.com/pingcap/errors"
@@ -17,16 +17,16 @@ import (
 )
 
 type Item struct {
-	dbName    string
-	dbID      int64
-	tableName string
-	tableID   int64
-	schemaVersion  int64
+	dbName        string
+	dbID          int64
+	tableName     string
+	tableID       int64
+	schemaVersion int64
 }
 
 type schemaItem struct {
-	schemaVersion uint64
-	dbInfo *model.DBInfo
+	schemaVersion int64
+	dbInfo        *model.DBInfo
 }
 
 func (si *schemaItem) Name() string {
@@ -35,7 +35,7 @@ func (si *schemaItem) Name() string {
 
 type VersionAndTimestamp struct {
 	schemaVersion int64
-	timestamp uint64
+	timestamp     uint64
 }
 
 type InfoSchemaData struct {
@@ -43,21 +43,23 @@ type InfoSchemaData struct {
 	//
 	// If the schema version +1 but a specific table does not change, the old record is
 	// kept and no new {dbName, tableName, tableID} => schemaVersion+1 record been added.
-	// 
+	//
 	// It means as long as we can find a item in it, the item is available, even through the
 	// schema version maybe smaller than required.
+	//
+	// *IMPORTANT RESTRICTION*: Do we have the full data in memory? NO!
 	name2id *btree.BTreeG[Item]
 
 	// For the TableByID API, sorted by {tableID}
 	// To reload model.TableInfo, we need both table ID and database ID for meta kv API.
-	// It provide the tableID => databaseID mapping.
-	byID *btree.BTreeG[Item]
+	// It provides the tableID => databaseID mapping.
+	//
+	// *IMPORTANT RESTRICTION*: Do we have the full data in memory? NO!
+	// But this mapping should be synced with name2id.
+	byID  *btree.BTreeG[Item]
+	cache *ristretto.Cache // {id, schemaVersion} => table.Table
 
-	cache  *ristretto.Cache // {id, schemaVersion} => table.Table
-
-	// For the SchemaByName API, {dbName, model.DBInfo} => schemaVersion
-	// In the future, the model.DBInfo do not contain all the model.TableInfo, we should iterate
-	// name2id to get the tables.
+	// For the SchemaByName API
 	schemaMap *btree.BTreeG[schemaItem]
 
 	// sorted by both SchemaVersion and timestamp in descending order, assume they have same order
@@ -104,18 +106,18 @@ func (isd *InfoSchemaData) getVersionByTSNoLock(ts uint64) (int64, bool) {
 }
 
 type cacheKey struct {
-	tableID  int64
+	tableID       int64
 	schemaVersion int64
 }
 
-func keyToHash(key interface{}) (uint64, uint64) {
+func keyToHash(key any) (uint64, uint64) {
 	k := key.(cacheKey)
 	return uint64(k.tableID), uint64(k.schemaVersion)
 }
 
 func NewInfoSchemaData() (*InfoSchemaData, error) {
 	cache, err := ristretto.NewCache(&ristretto.Config{
-		NumCounters: 50000,   // this means at most 10,000 items, recommand num is 10x items
+		NumCounters: 50000, // this means at most 10,000 items, recommand num is 10x items
 		// TODO: change the cost to size based and provide configuration.
 		MaxCost:     5000, // if we measure one partition cost as 1, at most 10,000 partitions.
 		BufferItems: 64,
@@ -125,9 +127,9 @@ func NewInfoSchemaData() (*InfoSchemaData, error) {
 		return nil, errors.Trace(err)
 	}
 	return &InfoSchemaData{
-		cache:  cache,
-		byID:   btree.NewBTreeG[Item](compareByID),
-		name2id: btree.NewBTreeG[Item](compareByName),
+		cache:     cache,
+		byID:      btree.NewBTreeG[Item](compareByID),
+		name2id:   btree.NewBTreeG[Item](compareByName),
 		schemaMap: btree.NewBTreeG[schemaItem](compareBySchema),
 	}, nil
 }
@@ -142,9 +144,10 @@ func (isd *InfoSchemaData) add(item Item, tbl table.Table) {
 	isd.cache.Set(cacheKey{item.tableID, item.schemaVersion}, tbl, cacheTableCost(tbl))
 }
 
-// func (isd *InfoSchemaData) addDB(schemaVersion uint64, dbInfo *model.DBInfo) {
-// 	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
-// }
+func (isd *InfoSchemaData) addDB(schemaVersion int64, dbInfo *model.DBInfo) {
+	fmt.Println("=== addDB ===", dbInfo.Name.L, schemaVersion)
+	isd.schemaMap.Set(schemaItem{schemaVersion: schemaVersion, dbInfo: dbInfo})
+}
 
 func compareByID(a, b Item) bool {
 	if a.tableID < b.tableID {
@@ -186,11 +189,11 @@ func compareBySchema(a, b schemaItem) bool {
 }
 
 type infoschemaV2 struct {
-	r  autoid.Requirement
-	ts uint64
+	r             autoid.Requirement
+	ts            uint64
 	schemaVersion int64
 	*InfoSchemaData
-} 
+}
 
 func search(bt *btree.BTreeG[Item], schemaVersion int64, end Item, eq func(a, b *Item) bool) (Item, bool) {
 	var ok bool
@@ -206,10 +209,10 @@ func search(bt *btree.BTreeG[Item], schemaVersion int64, end Item, eq func(a, b 
 			return true
 		}
 		// schema version of the items should <= query's schema version.
-		if !ok {// The first one found.
+		if !ok { // The first one found.
 			ok = true
 			itm = item
-		} else {// The latest one
+		} else { // The latest one
 			if item.schemaVersion > itm.schemaVersion {
 				itm = item
 			}
@@ -231,7 +234,7 @@ func (is *infoschemaV2) TableByID(id int64) (val table.Table, ok bool) {
 		return tbl.(table.Table), true
 	}
 
-	eq := func(a, b *Item) bool {return a.tableID == b.tableID}
+	eq := func(a, b *Item) bool { return a.tableID == b.tableID }
 	itm, ok := search(is.byID, is.schemaVersion, Item{tableID: id, dbID: math.MaxInt64}, eq)
 	if !ok {
 		return nil, ok
@@ -250,7 +253,7 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 		return nil, errors.New("not support yet")
 	}
 
-	eq := func(a, b *Item) bool {return a.dbName == b.dbName && a.tableName == b.tableName}
+	eq := func(a, b *Item) bool { return a.dbName == b.dbName && a.tableName == b.tableName }
 	itm, ok := search(is.name2id, is.schemaVersion, Item{dbName: schema.L, tableName: tbl.L, tableID: math.MaxInt64}, eq)
 	if !ok {
 		// TODO: in the future, this may happen and we need to check tikv to see whether table exists.
@@ -272,60 +275,42 @@ func (is *infoschemaV2) TableByName(schema, tbl model.CIStr) (t table.Table, err
 	return ret, nil
 }
 
-// func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
-// 	// Find the first item whose schemaVersion is smaller than ts.
-// 	var dbInfo model.DBInfo
-// 	dbInfo.Name = schema
-// 	is.schemaMap.Descend(schemaItem{dbInfo: &dbInfo, schemaVersion: math.MaxUint64}, func(item schemaItem) bool {
-// 		if item.Name() != schema.L {
-// 			ok = false
-// 			return false
-// 		}
-// 		if item.schemaVersion <= is.ts {
-// 			ok = true
-// 			val = item.dbInfo
-// 			return false
-// 		}
-// 		return true
-// 	})
-// 	return
-// }
+func (is *infoschemaV2) SchemaByName(schema model.CIStr) (val *model.DBInfo, ok bool) {
+	var dbInfo model.DBInfo
+	dbInfo.Name = schema
+	is.schemaMap.Descend(schemaItem{dbInfo: &dbInfo, schemaVersion: math.MaxInt64}, func(item schemaItem) bool {
+		if item.Name() != schema.L {
+			ok = false
+			return false
+		}
+		// fmt.Println("schema by name .... search ==", item.dbInfo.Name.L, item.schemaVersion, is.schemaVersion)
+		if item.schemaVersion <= is.schemaVersion {
+			ok = true
+			val = item.dbInfo
+			return false
+		}
+		return true
+	})
+	return
+}
 
-// func (is *infoschemaV2) SchemaByTable(tableInfo *model.TableInfo) (val *model.DBInfo, ok bool) {
-// 	var itm Item
-// 	// Find the first item whose schemaVersion is smaller than ts.
-// 	is.byID.Descend(Item{tableID: tableInfo.ID, schemaVersion: math.MaxUint64}, func(item Item) bool {
-// 		if item.tableID != tableInfo.ID {
-// 			ok = false
-// 			return false
-// 		}
-// 		if item.schemaVersion <= is.ts {
-// 			ok = true
-// 			itm = item
-// 			return false
-// 		}
-// 		return true
-// 	})
-// 	if !ok {
-// 		return nil, ok
-// 	}
+func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
+	var ok bool
+	var dbInfo *model.DBInfo
+	is.schemaMap.Scan(func(item schemaItem) bool {
+		if item.dbInfo.ID == id {
+			ok = true
+			dbInfo = item.dbInfo
+			return false
+		}
+		return true
+	})
+	return dbInfo, ok
+}
 
-// 	var dbInfo model.DBInfo
-// 	dbInfo.Name.L = itm.dbName
-// 	is.schemaMap.Descend(schemaItem{dbInfo: &dbInfo, schemaVersion: math.MaxUint64}, func(item schemaItem) bool {
-// 		if item.Name() != itm.dbName {
-// 			ok = false
-// 			return false
-// 		}
-// 		if item.schemaVersion <= is.ts {
-// 			ok = true
-// 			val = item.dbInfo
-// 			return false
-// 		}
-// 		return true
-// 	})
-// 	return
-// }
+func (is *infoschemaV2) SchemaByTable(tableInfo *model.TableInfo) (val *model.DBInfo, ok bool) {
+	return is.SchemaByID(tableInfo.DBID)
+}
 
 func loadTableInfo(r autoid.Requirement, infoData *InfoSchemaData, tblID, dbID int64, ts uint64) (table.Table, error) {
 	snapshot := r.Store().GetSnapshot(kv.NewVersion(ts))
@@ -335,14 +320,14 @@ func loadTableInfo(r autoid.Requirement, infoData *InfoSchemaData, tblID, dbID i
 	m := meta.NewSnapshotMeta(snapshot)
 
 	// Try to avoid repeated concurrency loading.
-	res, err, _ := sf.Do(fmt.Sprintf("%d-%d", dbID, tblID), func() (interface{}, error) {
+	res, err, _ := sf.Do(fmt.Sprintf("%d-%d", dbID, tblID), func() (any, error) {
 		return m.GetTable(dbID, tblID)
 	})
 	if err != nil {
 		// TODO???
 		panic(err)
 	}
-	tblInfo := res.(*model.TableInfo)  // TODO: it could be missing!!!
+	tblInfo := res.(*model.TableInfo) // TODO: it could be missing!!!
 
 	ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
 	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
