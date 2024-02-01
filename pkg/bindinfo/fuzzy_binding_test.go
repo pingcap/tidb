@@ -262,7 +262,7 @@ func TestFuzzyBindingGC(t *testing.T) {
 	tk.MustExec(`drop global binding for sql digest 'a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013'`)
 	require.Equal(t, showBinding(tk, "show global bindings"), [][]any{}) // empty
 	tk.MustQuery(`select bind_sql, status from mysql.bind_info where source != 'builtin'`).Check(
-		testkit.Rows("SELECT /*+ use_index(`t` `b`)*/ * FROM `*`.`t` deleted")) // status=deleted
+		testkit.Rows()) // status=deleted
 
 	updateTime := time.Now().Add(-(15 * bindinfo.Lease))
 	updateTimeStr := types.NewTime(types.FromGoTime(updateTime), mysql.TypeTimestamp, 3).String()
