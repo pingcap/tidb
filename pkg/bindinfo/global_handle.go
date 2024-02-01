@@ -23,7 +23,6 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -292,16 +291,12 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindi
 		if err = lockBindInfoTable(sctx); err != nil {
 			return err
 		}
-
-		now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
-
 		_, err = exec(sctx, `DELETE FROM mysql.bind_info WHERE original_sql = %?`,
 			binding.OriginalSQL)
 		if err != nil {
-			log.Error("fuck", zap.Error(err))
 			return err
 		}
-
+		now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
 		binding.CreateTime = now
 		binding.UpdateTime = now
 

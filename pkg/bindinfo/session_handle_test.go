@@ -231,19 +231,21 @@ func TestBaselineDBLowerCase(t *testing.T) {
 		"select * from `spm` . `t` SPM",
 	))
 	tk.MustExec("admin reload bindings")
+
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `spm` . `t`", rows[0][0])
+	require.Equal(t, "select * from `spm` . `t`", rows[0][1])
 	// default_db should have lower case.
 	require.Equal(t, "spm", rows[0][2])
 	tk.MustExec("create global binding for select * from t using select * from t")
+	tk.MustExec("admin reload bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `spm` . `t`", rows[0][0])
 	// default_db should have lower case.
 	require.Equal(t, "spm", rows[0][2])
 	tk.MustQuery("select original_sql, default_db, status from mysql.bind_info where original_sql = 'select * from `spm` . `t`'").Check(testkit.Rows(
-		"select * from `spm` . `t` SPM deleted",
 		"select * from `spm` . `t` spm enabled",
 	))
 }
