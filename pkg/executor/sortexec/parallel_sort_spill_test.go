@@ -44,8 +44,6 @@ func oneSpillCase(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sortC
 	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
 
-// oneSpillAndAllDataInDiskCase(t, ctx, sortCase)
-// multiSpillCase(t, ctx, sortCase, false)
 // inMemoryThenSpillCase(t, ctx, sortCase)
 func TestParallelSortSpillDisk(t *testing.T) {
 	sortexec.SetSmallSpillChunkSizeForTest()

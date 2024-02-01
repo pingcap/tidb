@@ -91,8 +91,6 @@ type SortExec struct {
 
 		spillHelper *parallelSortSpillHelper
 		spillAction *parallelSortSpillAction
-
-		actionSetBefore bool
 	}
 
 	enableTmpStorageOnOOM bool
@@ -179,12 +177,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 			e.Parallel.sortedRowsIters[i] = chunk.NewIterator4Slice(nil)
 		}
 		if e.enableTmpStorageOnOOM {
-			if e.Parallel.actionSetBefore {
-				e.Ctx().GetSessionVars().MemTracker.SetActionOnExceed(e.Parallel.spillAction)
-			} else {
-				e.Parallel.actionSetBefore = true
-				e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.Parallel.spillAction)
-			}
+			e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.Parallel.spillAction)
 		}
 	}
 
