@@ -389,7 +389,7 @@ func inferCollation(exprs ...Expression) *ExprCollation {
 		if arg.GetType().EvalType() == types.ETJson {
 			argCharset, argCollation = charset.CharsetUTF8MB4, charset.CollationUTF8MB4
 		} else if types.IsTypeBit(arg.GetType()) {
-			argCharset, argCharset = charset.CharsetBin, charset.CollationBin
+			argCharset, argCollation = charset.CharsetBin, charset.CollationBin
 		}
 		// If one of the arguments is binary charset, we allow it can be used with other charsets.
 		// If they have the same coercibility, let the binary charset one to be the winner because binary has more precedence.
