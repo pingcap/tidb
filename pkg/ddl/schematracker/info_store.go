@@ -127,15 +127,6 @@ func (i *InfoStore) DeleteTable(schema, table model.CIStr) error {
 	return nil
 }
 
-// AllSchemaNames returns all the schemas' names.
-func (i *InfoStore) AllSchemaNames() []string {
-	names := make([]string, 0, len(i.dbs))
-	for name := range i.dbs {
-		names = append(names, name)
-	}
-	return names
-}
-
 // AllTableNamesOfSchema return all table names of a schema.
 func (i *InfoStore) AllTableNamesOfSchema(schema model.CIStr) ([]string, error) {
 	schemaKey := i.ciStr2Key(schema)
@@ -170,16 +161,6 @@ func (i InfoStoreAdaptor) SchemaByName(schema model.CIStr) (*model.DBInfo, bool)
 func (i InfoStoreAdaptor) TableExists(schema, table model.CIStr) bool {
 	tableInfo, _ := i.inner.TableByName(schema, table)
 	return tableInfo != nil
-}
-
-// TableIsView implements the InfoSchema interface.
-// nolint:unused
-func (i InfoStoreAdaptor) TableIsView(schema, table model.CIStr) bool {
-	tableInfo, _ := i.inner.TableByName(schema, table)
-	if tableInfo == nil {
-		return false
-	}
-	return tableInfo.IsView()
 }
 
 // TableByName implements the InfoSchema interface.
