@@ -265,6 +265,9 @@ type RowData struct {
 	// Data stores the result of Encode. However, it mostly acts as a buffer for encoding columns on checksum
 	// calculation.
 	Data []byte
+
+	// loc is used to convert Timestamp value to UTC for checksum calculation.
+	Loc *time.Location
 }
 
 // Len implements sort.Interface for RowData.
@@ -292,12 +295,12 @@ func (r *RowData) Encode(loc *time.Location) ([]byte, error) {
 }
 
 // Checksum calculates the checksum of columns. Callers should make sure columns are sorted by id.
-func (r *RowData) Checksum(loc *time.Location) (checksum uint32, err error) {
+func (r *RowData) Checksum() (checksum uint32, err error) {
 	for _, col := range r.Cols {
 		if len(r.Data) > 0 {
 			r.Data = r.Data[:0]
 		}
-		r.Data, err = col.Encode(loc, r.Data)
+		r.Data, err = col.Encode(r.Loc, r.Data)
 		if err != nil {
 			return 0, err
 		}
