@@ -187,6 +187,26 @@ type chunkEncoder struct {
 	indexChecksum map[int64]*verify.KVChecksum // indexID -> checksum
 }
 
+func newChunkEncoder(
+	chunk *checkpoints.ChunkCheckpoint,
+	readFn encodeReaderFn,
+	sendFn func(ctx context.Context, batch *encodedKVGroupBatch) error,
+	logger *zap.Logger,
+	encoder KVEncoder,
+	kvCodec tikv.Codec,
+) *chunkEncoder {
+	return &chunkEncoder{
+		chunkInfo:     chunk,
+		readFn:        readFn,
+		sendFn:        sendFn,
+		logger:        logger,
+		encoder:       encoder,
+		kvCodec:       kvCodec,
+		dataChecksum:  verify.NewKVChecksumWithKeyspace(kvCodec),
+		indexChecksum: make(map[int64]*verify.KVChecksum, 8),
+	}
+}
+
 func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 	var (
 		encodedBytesCounter, encodedRowsCounter prometheus.Counter
@@ -367,14 +387,14 @@ func NewFileChunkProcessor(
 	return &baseChunkProcessor{
 		sourceType: DataSourceTypeFile,
 		deliver:    deliver,
-		enc: &chunkEncoder{
-			chunkInfo: chunk,
-			logger:    chunkLogger,
-			encoder:   encoder,
-			kvCodec:   kvCodec,
-			readFn:    parserEncodeReader(parser, chunk.Chunk.EndOffset, chunk.GetKey()),
-			sendFn:    deliver.sendEncodedData,
-		},
+		enc: newChunkEncoder(
+			chunk,
+			parserEncodeReader(parser, chunk.Chunk.EndOffset, chunk.GetKey()),
+			deliver.sendEncodedData,
+			chunkLogger,
+			encoder,
+			kvCodec,
+		),
 		logger:    chunkLogger,
 		chunkInfo: chunk,
 	}
@@ -516,13 +536,14 @@ func newQueryChunkProcessor(
 	return &baseChunkProcessor{
 		sourceType: DataSourceTypeQuery,
 		deliver:    deliver,
-		enc: &chunkEncoder{
-			chunkInfo: chunk,
-			logger:    chunkLogger,
-			encoder:   encoder,
-			readFn:    queryRowEncodeReader(rowCh),
-			sendFn:    deliver.sendEncodedData,
-		},
+		enc: newChunkEncoder(
+			chunk,
+			queryRowEncodeReader(rowCh),
+			deliver.sendEncodedData,
+			chunkLogger,
+			encoder,
+			kvCodec,
+		),
 		logger:    chunkLogger,
 		chunkInfo: chunk,
 	}
