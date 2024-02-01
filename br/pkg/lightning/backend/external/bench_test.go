@@ -16,6 +16,7 @@ package external
 
 import (
 	"context"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"io"
@@ -31,6 +32,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/felixge/fgprof"
+	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -1178,6 +1180,18 @@ func TestReadAllDataLargeFiles(t *testing.T) {
 	intest.AssertNoError(err)
 	intest.Assert(len(dataFiles) == 2)
 
-	_ = statFiles
-	//err := readAllData(ctx, store, dataFiles, statFiles)
+	// choose thw two key so that
+	startKey, err := hex.DecodeString("00000001000000000000")
+	intest.AssertNoError(err)
+	endKey, err := hex.DecodeString("00a00000000000000000")
+	intest.AssertNoError(err)
+	bufPool := membuf.NewPool(
+		membuf.WithBlockNum(0),
+		membuf.WithBlockSize(ConcurrentReaderBufferSizePerConc),
+	)
+	output := &memKVsAndBuffers{}
+	now := time.Now()
+	err = readAllData(ctx, store, dataFiles, statFiles, startKey, endKey, bufPool, output)
+	t.Logf("read all data cost: %s", time.Since(now))
+	intest.AssertNoError(err)
 }
