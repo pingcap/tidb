@@ -8,11 +8,7 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
     shard_count = 50,
-=======
-    shard_count = 49,
->>>>>>> 1a5a72aaf84 (planner: do not remove the first row func if it is a constant (#50020))
     deps = [
         "//pkg/config",
         "//pkg/ddl",
