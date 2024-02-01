@@ -56,6 +56,8 @@ var (
 
 	// TestSyncChan is used to sync the test.
 	TestSyncChan = make(chan struct{})
+	// MockTiDBDown is used to mock TiDB node down, return true if it's chosen.
+	MockTiDBDown func(execID string, task *proto.Task) bool
 )
 
 // BaseTaskExecutor is the base implementation of TaskExecutor.
@@ -343,6 +345,8 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 				e.markErrorHandled()
 				break
 			}
+			e.logger.Info("subtask in running state and is idempotent",
+				zap.Int64("subtask-id", subtask.ID))
 		} else {
 			// subtask.State == proto.SubtaskStatePending
 			err := e.startSubtask(runStepCtx, subtask.ID)
@@ -413,6 +417,11 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 		return
 	}
 
+	failpoint.Inject("mockTiDBShutdown", func() {
+		if MockTiDBDown(e.id, e.GetTask()) {
+			failpoint.Return()
+		}
+	})
 	failpoint.Inject("mockTiDBDown", func(val failpoint.Value) {
 		e.logger.Info("trigger mockTiDBDown")
 		if e.id == val.(string) || e.id == ":4001" || e.id == ":4002" {
@@ -501,7 +510,7 @@ func (e *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execu
 func (e *BaseTaskExecutor) Rollback() error {
 	task := e.task.Load()
 	e.resetError()
-	e.logger.Info("taskExecutor rollback a step", zap.String("step", proto.Step2Str(task.Type, task.Step)))
+	e.logger.Info("task reverting, cancel unfinished subtasks")
 
 	// We should cancel all subtasks before rolling back
 	for {

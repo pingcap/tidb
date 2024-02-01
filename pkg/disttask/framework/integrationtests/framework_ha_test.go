@@ -16,6 +16,7 @@ package integrationtests_test
 
 import (
 	"context"
+	"math"
 	"sync"
 	"testing"
 
@@ -23,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,35 +36,23 @@ func submitTaskAndCheckSuccessForHA(ctx context.Context, t *testing.T, taskKey s
 }
 
 func TestHABasic(t *testing.T) {
-	taskexecutor.TestContexts = sync.Map{}
-	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 4)
-	defer ctrl.Finish()
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBShutdown", "return()")
+	c := testutil.NewDXFContextWithRandomNodes(t, 4, 15)
+	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockHATestSchedulerExt(c.MockCtrl), c.TestContext, nil)
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestSchedulerExt(ctrl), testContext, nil)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor", "return()"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager", "4*return()"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown", "return(\":4000\")"))
-	submitTaskAndCheckSuccessForHA(ctx, t, "😊", testContext)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor"))
-	distContext.Close()
-}
-
-func TestHAManyNodes(t *testing.T) {
-	taskexecutor.TestContexts = sync.Map{}
-	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 30)
-	defer ctrl.Finish()
-
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestSchedulerExt(ctrl), testContext, nil)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor", "return()"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager", "30*return()"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown", "return(\":4000\")"))
-	submitTaskAndCheckSuccessForHA(ctx, t, "😊", testContext)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor"))
-	distContext.Close()
+	// we keep [1, 10] nodes running, as we only have 10 subtask at stepOne
+	keepCount := int(math.Min(float64(c.NodeCount()-1), float64(c.Rand.Intn(10)+1)))
+	nodeNeedDown := c.GetRandNodeIDs(c.NodeCount() - keepCount)
+	t.Logf("started %d nodes, and we keep %d nodes, nodes that need shutdown: %v", c.NodeCount(), keepCount, nodeNeedDown)
+	taskexecutor.MockTiDBDown = func(execID string, _ *proto.Task) bool {
+		// leave :4003 running
+		if _, ok := nodeNeedDown[execID]; ok {
+			c.AsyncShutdown(execID)
+			return true
+		}
+		return false
+	}
+	submitTaskAndCheckSuccessForHA(c.Ctx, t, "😊", c.TestContext)
 }
 
 func TestHAFailInDifferentStage(t *testing.T) {
