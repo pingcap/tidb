@@ -18,6 +18,7 @@ import (
 	"container/heap"
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -41,7 +42,7 @@ type SortExec struct {
 	exec.BaseExecutor
 
 	ByItems    []*plannerutil.ByItems
-	fetched    bool
+	fetched    atomic.Bool
 	ExecSchema *expression.Schema
 
 	// keyColumns is the column index of the by items.
@@ -80,18 +81,18 @@ type SortExec struct {
 		fetcherAndWorkerSyncer *sync.WaitGroup
 		workers                []*parallelSortWorker
 
-		errRWLock *sync.RWMutex
-		err       error
-
 		// Each worker will put their results into the given iter
 		sortedRowsIters []*chunk.Iterator4Slice
 		merger          *multiWayMerger
-		mergerLock      *sync.Mutex
 
 		resultChannel chan rowWithError
 
+		closeSync chan struct{}
+
 		spillHelper *parallelSortSpillHelper
 		spillAction *parallelSortSpillAction
+
+		actionSetBefore bool
 	}
 
 	enableTmpStorageOnOOM bool
@@ -109,6 +110,11 @@ func (e *SortExec) Close() error {
 			partition.close()
 		}
 	} else {
+		if e.fetched.CompareAndSwap(false, true) {
+			close(e.Parallel.resultChannel)
+			close(e.Parallel.chunkChannel)
+		}
+
 		for {
 			_, ok := <-e.Parallel.chunkChannel
 			if !ok {
@@ -116,9 +122,21 @@ func (e *SortExec) Close() error {
 			}
 			e.Parallel.fetcherAndWorkerSyncer.Done()
 		}
-		e.Parallel.mergerLock.Lock()
+
+		<-e.Parallel.closeSync
+
+		// Ensure that `generateResult()` has exited,
+		// or data race may happen as `generateResult()`
+		// will use `e.Parallel.workers` and `e.Parallel.merger`.
+		<-e.Parallel.resultChannel
+		for i := range e.Parallel.workers {
+			e.Parallel.workers[i].batchRows = nil
+			e.Parallel.workers[i].localSortedRows = nil
+			e.Parallel.workers[i].sortedRowsIter = nil
+			e.Parallel.workers[i].merger = nil
+			e.Parallel.workers[i].memTracker.ReplaceBytesUsed(0)
+		}
 		e.Parallel.merger = nil
-		e.Parallel.mergerLock.Unlock()
 	}
 
 	if e.memTracker != nil {
@@ -130,7 +148,7 @@ func (e *SortExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *SortExec) Open(ctx context.Context) error {
-	e.fetched = false
+	e.fetched.Store(false)
 	e.enableTmpStorageOnOOM = variable.EnableTmpStorageOnOOM.Load()
 	e.finishCh = make(chan struct{}, 1)
 
@@ -146,27 +164,30 @@ func (e *SortExec) Open(ctx context.Context) error {
 	e.IsUnparallel = !e.Ctx().GetSessionVars().EnableParallelSort
 	if e.IsUnparallel {
 		e.Unparallel.Idx = 0
+		e.Unparallel.sortPartitions = e.Unparallel.sortPartitions[:0]
 	} else {
 		e.Parallel.workers = make([]*parallelSortWorker, e.Ctx().GetSessionVars().ExecutorConcurrency)
 		e.Parallel.chunkChannel = make(chan *chunkWithMemoryUsage, e.Ctx().GetSessionVars().ExecutorConcurrency)
 		e.Parallel.fetcherAndWorkerSyncer = &sync.WaitGroup{}
-		e.Parallel.errRWLock = &sync.RWMutex{}
-		e.Parallel.err = nil
 		e.Parallel.sortedRowsIters = make([]*chunk.Iterator4Slice, len(e.Parallel.workers))
 		e.Parallel.resultChannel = make(chan rowWithError, e.MaxChunkSize())
+		e.Parallel.closeSync = make(chan struct{})
 		e.Parallel.merger = newMultiWayMerger(e.Parallel.sortedRowsIters, e.lessRow)
-		e.Parallel.mergerLock = &sync.Mutex{}
-		e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh, e.lessRow)
+		e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh, e.lessRow, e.Parallel.resultChannel)
 		e.Parallel.spillAction = newParallelSortSpillDiskAction(e.Parallel.spillHelper)
 		for i := range e.Parallel.sortedRowsIters {
 			e.Parallel.sortedRowsIters[i] = chunk.NewIterator4Slice(nil)
 		}
 		if e.enableTmpStorageOnOOM {
-			e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.Parallel.spillAction)
+			if e.Parallel.actionSetBefore {
+				e.Ctx().GetSessionVars().MemTracker.SetActionOnExceed(e.Parallel.spillAction)
+			} else {
+				e.Parallel.actionSetBefore = true
+				e.Ctx().GetSessionVars().MemTracker.FallbackOldAndSetNewAction(e.Parallel.spillAction)
+			}
 		}
 	}
 
-	e.Unparallel.sortPartitions = e.Unparallel.sortPartitions[:0]
 	return exec.Open(ctx, e.Children(0))
 }
 
@@ -236,17 +257,16 @@ func (e *SortExec) Open(ctx context.Context) error {
 					   resultChannel
 */
 func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
-	req.Reset()
-	if !e.fetched {
+	if e.fetched.CompareAndSwap(false, true) {
 		e.initCompareFuncs()
 		e.buildKeyColumns()
 		err := e.fetchChunks(ctx)
 		if err != nil {
 			return err
 		}
-		e.fetched = true
 	}
 
+	req.Reset()
 	if e.IsUnparallel {
 		return e.appendResultToChunkInUnparallelMode(req)
 	}
@@ -386,8 +406,6 @@ func (e *SortExec) generateResultWhenSpillTriggered() {
 
 // Return true when spill is triggered
 func (e *SortExec) generateResultInMemory() bool {
-	e.Parallel.mergerLock.Lock()
-	defer e.Parallel.mergerLock.Unlock()
 	if e.Parallel.merger == nil {
 		// Sort has been closed
 		return false
@@ -427,12 +445,17 @@ func (e *SortExec) generateResultInMemory() bool {
 	}
 }
 
-func (e *SortExec) generateResult() {
+func (e *SortExec) generateResult(waitGroups ...*util.WaitGroupWrapper) {
+	for _, waitGroup := range waitGroups {
+		waitGroup.Wait()
+	}
+	close(e.Parallel.closeSync)
+
 	defer func() {
 		if r := recover(); r != nil {
 			err := util.GetRecoverError(r)
-			logutil.BgLogger().Error("parallel sort panicked", zap.Error(err), zap.Stack("stack"))
 			e.Parallel.resultChannel <- rowWithError{err: err}
+			logutil.BgLogger().Error("parallel sort panicked", zap.Error(err), zap.Stack("stack"))
 		}
 
 		close(e.Parallel.resultChannel)
@@ -444,9 +467,7 @@ func (e *SortExec) generateResult() {
 				disk.Close()
 			}
 		}
-		e.Parallel.mergerLock.Lock()
 		e.Parallel.merger = nil
-		e.Parallel.mergerLock.Unlock()
 	}()
 
 	if e.Parallel.spillHelper.isSpillTriggered() {
@@ -693,26 +714,14 @@ func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
 	})
 
 	for i := range e.Parallel.workers {
-		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.chunkChannel, e.Parallel.fetcherAndWorkerSyncer, e.processErrorForParallel, e.finishCh, e.memTracker, e.Parallel.sortedRowsIters[i], e.MaxChunkSize(), e.Parallel.spillHelper)
+		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.chunkChannel, e.Parallel.fetcherAndWorkerSyncer, e.Parallel.resultChannel, e.finishCh, e.memTracker, e.Parallel.sortedRowsIters[i], e.MaxChunkSize(), e.Parallel.spillHelper)
 		worker := e.Parallel.workers[i]
 		workersWaiter.Run(func() {
 			worker.run()
 		})
 	}
 
-	workersWaiter.Wait()
-	err := e.checkErrorForParallel()
-	if err != nil {
-		return err
-	}
-	fetcherWaiter.Wait()
-
-	err = e.checkErrorForParallel()
-	if err != nil {
-		return err
-	}
-
-	go e.generateResult()
+	go e.generateResult(&workersWaiter, &fetcherWaiter)
 	return nil
 }
 
@@ -736,21 +745,22 @@ func (e *SortExec) checkSpillAndExecute() error {
 func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
-			processPanicAndLog(e.processErrorForParallel, r)
+			processPanicAndLog(e.Parallel.resultChannel, r)
 		}
 
-		close(e.Parallel.chunkChannel)
-
-		// Wait for the finish of all workers
 		e.Parallel.fetcherAndWorkerSyncer.Wait()
 		_ = e.spillRemainingRowsWhenNeeded()
+
+		// We must place it after the spill as workers will process its received
+		// chunks after channel is closed and this will cause data race.
+		close(e.Parallel.chunkChannel)
 	}()
 
 	for {
 		chk := exec.TryNewCacheChunk(e.Children(0))
 		err := exec.Next(ctx, e.Children(0), chk)
 		if err != nil {
-			e.processErrorForParallel(err)
+			e.Parallel.resultChannel <- rowWithError{err: err}
 			return
 		}
 
@@ -780,25 +790,6 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 			return
 		}
 		injectParallelSortRandomFail()
-	}
-}
-
-func (e *SortExec) checkErrorForParallel() error {
-	err := e.Parallel.spillHelper.checkSpillError()
-	if err != nil {
-		return err
-	}
-
-	e.Parallel.errRWLock.RLock()
-	defer e.Parallel.errRWLock.RUnlock()
-	return e.Parallel.err
-}
-
-func (e *SortExec) processErrorForParallel(err error) {
-	e.Parallel.errRWLock.Lock()
-	defer e.Parallel.errRWLock.Unlock()
-	if e.Parallel.err == nil {
-		e.Parallel.err = err
 	}
 }
 

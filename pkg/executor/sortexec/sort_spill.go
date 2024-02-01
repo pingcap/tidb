@@ -22,6 +22,8 @@ import (
 	"go.uber.org/zap"
 )
 
+const spillInfo = "memory exceeds quota, spill to disk now."
+
 // sortPartitionSpillDiskAction implements memory.ActionOnExceed for chunk.List. If
 // the memory quota of a query is exceeded, sortPartitionSpillDiskAction.Action is
 // triggered.
@@ -54,8 +56,7 @@ func (s *sortPartitionSpillDiskAction) executeAction(t *memory.Tracker) memory.A
 	if !s.partition.isSpillTriggeredNoLock() && s.partition.hasEnoughDataToSpill() {
 		s.once.Do(func() {
 			go func() {
-				logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
-					zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
+				logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
 				err := s.partition.spillToDisk()
 				if err != nil {
 					s.partition.setError(err)
@@ -108,7 +109,7 @@ func (s *parallelSortSpillAction) Action(t *memory.Tracker) {
 		// However, out of some reasons, we have to directly return before the finish of
 		// sort operation executed in spill as sort will retrigger the action and lead to dead lock.
 		s.spillHelper.setNeedSpillNoLock()
-		logutil.BgLogger().Info("memory exceeds quota, spill to disk now.",
-			zap.Int64("consumed", t.BytesConsumed()), zap.Int64("quota", t.GetBytesLimit()))
+		s.spillHelper.bytesConsumed.Store(t.BytesConsumed())
+		s.spillHelper.bytesLimit.Store(t.GetBytesLimit())
 	}
 }

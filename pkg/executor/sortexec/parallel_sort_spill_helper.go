@@ -16,32 +16,38 @@ package sortexec
 
 import (
 	"sync"
+	"sync/atomic"
 
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 type parallelSortSpillHelper struct {
 	cond             *sync.Cond
 	spillStatus      int
 	sortedRowsInDisk []*chunk.DataInDiskByChunks
-	spillError       error
 	sortExec         *SortExec
 
-	lessRowFunc func(chunk.Row, chunk.Row) int
-	finishCh    chan struct{}
+	lessRowFunc   func(chunk.Row, chunk.Row) int
+	errOutputChan chan rowWithError
+	finishCh      chan struct{}
 
 	fieldTypes    []*types.FieldType
 	tmpSpillChunk *chunk.Chunk
+
+	bytesConsumed atomic.Int64
+	bytesLimit    atomic.Int64
 }
 
-func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldType, finishCh chan struct{}, lessRowFunc func(chunk.Row, chunk.Row) int) *parallelSortSpillHelper {
+func newParallelSortSpillHelper(sortExec *SortExec, fieldTypes []*types.FieldType, finishCh chan struct{}, lessRowFunc func(chunk.Row, chunk.Row) int, errOutputChan chan rowWithError) *parallelSortSpillHelper {
 	return &parallelSortSpillHelper{
 		cond:          sync.NewCond(new(sync.Mutex)),
 		spillStatus:   notSpilled,
-		spillError:    nil,
 		sortExec:      sortExec,
 		lessRowFunc:   lessRowFunc,
+		errOutputChan: errOutputChan,
 		finishCh:      finishCh,
 		fieldTypes:    fieldTypes,
 		tmpSpillChunk: chunk.NewChunkWithCapacity(fieldTypes, spillChunkSize),
@@ -66,18 +72,6 @@ func (p *parallelSortSpillHelper) isSpillTriggered() bool {
 	p.cond.L.Lock()
 	defer p.cond.L.Unlock()
 	return len(p.sortedRowsInDisk) > 0
-}
-
-func (p *parallelSortSpillHelper) checkSpillError() error {
-	p.cond.L.Lock()
-	defer p.cond.L.Unlock()
-	return p.spillError
-}
-
-func (p *parallelSortSpillHelper) setSpillError(err error) {
-	p.cond.L.Lock()
-	defer p.cond.L.Unlock()
-	p.spillError = err
 }
 
 func (p *parallelSortSpillHelper) setInSpilling() {
@@ -111,7 +105,7 @@ func (p *parallelSortSpillHelper) spill() error {
 		go func(idx int) {
 			defer func() {
 				if r := recover(); r != nil {
-					processPanicAndLog(p.setSpillError, r)
+					processPanicAndLog(p.errOutputChan, r)
 				}
 				workerWaiter.Done()
 			}()
@@ -127,6 +121,11 @@ func (p *parallelSortSpillHelper) spill() error {
 	// Spill is done, broadcast to wake up all sleep goroutines
 	defer p.cond.Broadcast()
 	defer p.setNotSpilled()
+
+	totalRows := 0
+	for i := range sortedRowsIters {
+		totalRows += sortedRowsIters[i].Len()
+	}
 
 	merger := newMultiWayMerger(sortedRowsIters, p.lessRowFunc)
 	merger.init()
@@ -145,7 +144,7 @@ func (p *parallelSortSpillHelper) releaseMemory() {
 func (p *parallelSortSpillHelper) spillTmpSpillChunk(inDisk *chunk.DataInDiskByChunks) error {
 	err := inDisk.Add(p.tmpSpillChunk)
 	if err != nil {
-		p.setSpillError(err)
+		p.errOutputChan <- rowWithError{err: err}
 		return err
 	}
 	p.tmpSpillChunk.Reset()
@@ -153,6 +152,7 @@ func (p *parallelSortSpillHelper) spillTmpSpillChunk(inDisk *chunk.DataInDiskByC
 }
 
 func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
+	logutil.BgLogger().Info(spillInfo, zap.Int64("consumed", p.bytesConsumed.Load()), zap.Int64("quota", p.bytesLimit.Load()))
 	p.tmpSpillChunk.Reset()
 	inDisk := chunk.NewDataInDiskByChunks(p.fieldTypes)
 	inDisk.GetDiskTracker().AttachTo(p.sortExec.diskTracker)

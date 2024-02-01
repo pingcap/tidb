@@ -26,16 +26,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func oneSpillCase(t *testing.T, ctx *mock.Context, sortCase *testutil.SortCase) {
+func oneSpillCase(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource) {
 	ctx.GetSessionVars().InitChunkSize = 32
 	ctx.GetSessionVars().MaxChunkSize = 32
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 100000)
-	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
-	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-	ctx.GetSessionVars().EnableParallelSort = true
-	schema := expression.NewSchema(sortCase.Columns()...)
-	dataSource := buildDataSource(ctx, sortCase, schema)
-	exe := buildSortExec(ctx, sortCase, dataSource)
+	if exe == nil {
+		exe = buildSortExec(ctx, sortCase, dataSource)
+	}
+	dataSource.PrepareChunks()
 	resultChunks := executeSortExecutor(t, exe)
 
 	require.True(t, exe.IsSpillTriggeredInParallelSortForTest())
@@ -58,8 +55,17 @@ func TestParallelSortSpillDisk(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
 
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 100000)
+	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+	ctx.GetSessionVars().EnableParallelSort = true
+
+	schema := expression.NewSchema(sortCase.Columns()...)
+	dataSource := buildDataSource(ctx, sortCase, schema)
+	exe := buildSortExec(ctx, sortCase, dataSource)
 	for i := 0; i < 10; i++ {
-		oneSpillCase(t, ctx, sortCase)
+		oneSpillCase(t, ctx, nil, sortCase, schema, dataSource)
+		oneSpillCase(t, ctx, exe, sortCase, schema, dataSource)
 	}
 }
 
