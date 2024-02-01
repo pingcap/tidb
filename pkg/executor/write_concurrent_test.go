@@ -40,15 +40,15 @@ func TestBatchInsertWithOnDuplicate(t *testing.T) {
 		3,
 		2,
 		// prepare data for each loop.
-		func(ctx context.Context, tk *testkit.AsyncTestKit, concurrent int, currentLoop int) [][][]interface{} {
-			var ii [][][]interface{}
+		func(ctx context.Context, tk *testkit.AsyncTestKit, concurrent int, currentLoop int) [][][]any {
+			var ii [][][]any
 			for i := 0; i < concurrent; i++ {
-				ii = append(ii, [][]interface{}{permInt(7)})
+				ii = append(ii, [][]any{permInt(7)})
 			}
 			return ii
 		},
 		// concurrent execute logic.
-		func(ctx context.Context, tk *testkit.AsyncTestKit, input [][]interface{}) {
+		func(ctx context.Context, tk *testkit.AsyncTestKit, input [][]any) {
 			tk.MustExec(ctx, "set @@session.tidb_batch_insert=1")
 			tk.MustExec(ctx, "set @@session.tidb_dml_batch_size=1")
 			_, _ = tk.Exec(ctx, "insert ignore into duplicate_test(k1) values (?),(?),(?),(?),(?),(?),(?)", input[0]...)
@@ -60,9 +60,9 @@ func TestBatchInsertWithOnDuplicate(t *testing.T) {
 		})
 }
 
-func permInt(n int) []interface{} {
+func permInt(n int) []any {
 	randPermSlice := rand.Perm(n)
-	v := make([]interface{}, 0, len(randPermSlice))
+	v := make([]any, 0, len(randPermSlice))
 	for _, i := range randPermSlice {
 		v = append(v, i)
 	}

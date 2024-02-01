@@ -163,11 +163,11 @@ func (t trivialFlushStream) Context() context.Context {
 	return t.cx
 }
 
-func (t trivialFlushStream) SendMsg(m interface{}) error {
+func (t trivialFlushStream) SendMsg(m any) error {
 	return nil
 }
 
-func (t trivialFlushStream) RecvMsg(m interface{}) error {
+func (t trivialFlushStream) RecvMsg(m any) error {
 	return nil
 }
 

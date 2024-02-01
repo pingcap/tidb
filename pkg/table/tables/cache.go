@@ -252,7 +252,7 @@ func (c *cachedTable) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 func txnCtxAddCachedTable(sctx sessionctx.Context, tid int64, handle *cachedTable) {
 	txnCtx := sctx.GetSessionVars().TxnCtx
 	if txnCtx.CachedTables == nil {
-		txnCtx.CachedTables = make(map[int64]interface{})
+		txnCtx.CachedTables = make(map[int64]any)
 	}
 	if _, ok := txnCtx.CachedTables[tid]; !ok {
 		txnCtx.CachedTables[tid] = handle

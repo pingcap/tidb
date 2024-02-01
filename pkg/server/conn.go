@@ -2676,8 +2676,8 @@ func (cc *clientConn) Flush(ctx context.Context) error {
 type compressionStats struct{}
 
 // Stats returns the connection statistics.
-func (*compressionStats) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
-	m := make(map[string]interface{}, 3)
+func (*compressionStats) Stats(vars *variable.SessionVars) (map[string]any, error) {
+	m := make(map[string]any, 3)
 
 	switch vars.CompressionAlgorithm {
 	case mysql.CompressionNone:

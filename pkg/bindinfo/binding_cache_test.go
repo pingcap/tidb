@@ -29,11 +29,11 @@ func TestBindCache(t *testing.T) {
 	bindCache := newBindCache()
 
 	value := make([]Bindings, 3)
-	key := make([]bindCacheKey, 3)
+	key := make([]bindingCacheKey, 3)
 	var bigKey string
 	for i := 0; i < 3; i++ {
 		cacheKey := strings.Repeat(strconv.Itoa(i), 50)
-		key[i] = bindCacheKey(hack.Slice(cacheKey))
+		key[i] = bindingCacheKey(hack.Slice(cacheKey))
 		value[i] = []Binding{{OriginalSQL: cacheKey}}
 		bigKey += cacheKey
 
@@ -66,7 +66,7 @@ func TestBindCache(t *testing.T) {
 	result = bindCache.get(key[1])
 	require.NotNil(t, result)
 
-	bigBindCacheKey := bindCacheKey(hack.Slice(bigKey))
+	bigBindCacheKey := bindingCacheKey(hack.Slice(bigKey))
 	bigBindCacheValue := []Binding{{OriginalSQL: strings.Repeat("x", 100)}}
 	require.Equal(t, int64(266), calcBindCacheKVMem(bigBindCacheKey, bigBindCacheValue))
 	ok, err = bindCache.set(bigBindCacheKey, bigBindCacheValue)

@@ -698,7 +698,7 @@ func TestCaptureWildcardFilter(t *testing.T) {
 		}
 
 		tk.MustExec("admin capture bindings")
-		var rows [][]interface{}
+		var rows [][]any
 		require.Eventually(t, func() bool {
 			rows = tk.MustQuery("show global bindings").Sort().Rows()
 			return len(rows) == len(dbTbls)

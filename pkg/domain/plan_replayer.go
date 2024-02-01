@@ -567,7 +567,7 @@ type PlanReplayerDumpTask struct {
 	replayer.PlanReplayerTaskKey
 
 	// tmp variables stored during the query
-	TblStats map[int64]interface{}
+	TblStats map[int64]any
 
 	// variables used to dump the plan
 	StartTS           uint64
@@ -577,7 +577,7 @@ type PlanReplayerDumpTask struct {
 	ExecStmts         []ast.StmtNode
 	Analyze           bool
 	HistoricalStatsTS uint64
-	DebugTrace        []interface{}
+	DebugTrace        []any
 
 	FileName string
 	Zf       *os.File

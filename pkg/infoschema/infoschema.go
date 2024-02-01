@@ -46,15 +46,15 @@ type InfoSchema interface {
 	ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool)
 	TableByID(id int64) (table.Table, bool)
 	AllocByID(id int64) (autoid.Allocators, bool)
-	AllSchemaNames() []string
+    AllSchemaNames() []string
 	AllSchemas() []*model.DBInfo
 	Clone() (result []*model.DBInfo)
 	SchemaTables(schema model.CIStr) []table.Table
 	SchemaMetaVersion() int64
 	// TableIsView indicates whether the schema.table is a view.
-	TableIsView(schema, table model.CIStr) bool
+    TableIsView(schema, table model.CIStr) bool
 	// TableIsSequence indicates whether the schema.table is a sequence.
-	TableIsSequence(schema, table model.CIStr) bool
+    TableIsSequence(schema, table model.CIStr) bool
 	FindTableByPartitionID(partitionID int64) (table.Table, *model.DBInfo, *model.PartitionDefinition)
 	// PlacementBundleByPhysicalTableID is used to get a rule bundle.
 	PlacementBundleByPhysicalTableID(id int64) (*placement.Bundle, bool)
@@ -392,7 +392,7 @@ func init() {
 		Tables:  infoSchemaTables,
 	}
 	RegisterVirtualTable(infoSchemaDB, createInfoSchemaTable)
-	util.GetSequenceByName = func(is interface{}, schema, sequence model.CIStr) (util.SequenceTable, error) {
+	util.GetSequenceByName = func(is any, schema, sequence model.CIStr) (util.SequenceTable, error) {
 		return GetSequenceByName(is.(InfoSchema), schema, sequence)
 	}
 	mock.MockInfoschema = func(tbList []*model.TableInfo) sessionctx.InfoschemaMetaVersion {

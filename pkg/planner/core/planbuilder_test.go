@@ -394,7 +394,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 }
 
 //go:linkname valueInterface reflect.valueInterface
-func valueInterface(v reflect.Value, safe bool) interface{}
+func valueInterface(v reflect.Value, safe bool) any
 
 func typeName(t reflect.Type) string {
 	path := t.String()

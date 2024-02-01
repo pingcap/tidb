@@ -207,7 +207,7 @@ func TransferSubTasks2History(ctx context.Context, mgr *storage.TaskManager, tas
 }
 
 // GetTasksFromHistoryInStates gets the tasks in history table in the states.
-func GetTasksFromHistoryInStates(ctx context.Context, mgr *storage.TaskManager, states ...interface{}) (task []*proto.Task, err error) {
+func GetTasksFromHistoryInStates(ctx context.Context, mgr *storage.TaskManager, states ...any) (task []*proto.Task, err error) {
 	if len(states) == 0 {
 		return task, nil
 	}

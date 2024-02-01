@@ -1288,6 +1288,8 @@ func TestTiDBEnableResourceControl(t *testing.T) {
 		}
 	}
 	SetGlobalResourceControl.Store(&setGlobalResourceControlFunc)
+	// Reset the switch. It may be set by other tests.
+	EnableResourceControl.Store(false)
 
 	vars := NewSessionVars(nil)
 	mock := NewMockGlobalAccessor4Tests()
@@ -1509,5 +1511,18 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 	for _, v := range vars {
 		initVal := GlobalSystemVariableInitialValue(v.name, v.val)
 		require.Equal(t, v.initVal, initVal)
+	}
+}
+
+func TestTiDBOptTxnAutoRetry(t *testing.T) {
+	sv := GetSysVar(TiDBDisableTxnAutoRetry)
+	vars := NewSessionVars(nil)
+
+	for _, scope := range []ScopeFlag{ScopeSession, ScopeGlobal} {
+		val, err := sv.Validate(vars, "OFF", scope)
+		require.NoError(t, err)
+		require.Equal(t, "ON", val)
+		warn := vars.StmtCtx.GetWarnings()[0].Err
+		require.Equal(t, "[variable:1287]'OFF' is deprecated and will be removed in a future release. Please use ON instead", warn.Error())
 	}
 }

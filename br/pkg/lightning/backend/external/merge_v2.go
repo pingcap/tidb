@@ -129,7 +129,7 @@ func MergeOverlappingFilesV2(
 			logutil.Logger(ctx).Warn("read all data failed", zap.Error(err1))
 			return
 		}
-		loaded.build()
+		loaded.build(ctx)
 		readTime := time.Since(now)
 		now = time.Now()
 		sorty.MaxGor = uint64(concurrency)

@@ -73,6 +73,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/cteutil"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -476,7 +477,7 @@ func buildIndexLookUpChecker(b *executorBuilder, p *plannercore.PhysicalIndexLoo
 		colNames = append(colNames, is.Columns[i].Name.L)
 	}
 	if cols, missingColOffset := table.FindColumns(e.table.Cols(), colNames, true); missingColOffset >= 0 {
-		b.err = plannercore.ErrUnknownColumn.GenWithStack("Unknown column %s", is.Columns[missingColOffset].Name.O)
+		b.err = plannererrors.ErrUnknownColumn.GenWithStack("Unknown column %s", is.Columns[missingColOffset].Name.O)
 	} else {
 		e.idxTblCols = cols
 	}
@@ -1021,7 +1022,7 @@ func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Execut
 		return nil
 	}
 	if !tbl.Meta().IsBaseTable() {
-		b.err = plannercore.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "LOAD")
+		b.err = plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "LOAD")
 		return nil
 	}
 
@@ -1054,7 +1055,7 @@ func (b *executorBuilder) buildLoadData(v *plannercore.LoadData) exec.Executor {
 		return nil
 	}
 	if !tbl.Meta().IsBaseTable() {
-		b.err = plannercore.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "LOAD")
+		b.err = plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "LOAD")
 		return nil
 	}
 
@@ -2571,13 +2572,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
-	var concurrency int
-	if b.ctx.GetSessionVars().InRestrictedSQL {
-		// In restricted SQL, we use the default value of IndexSerialScanConcurrency. it is copied from tidb_sysproc_scan_concurrency.
-		concurrency = b.ctx.GetSessionVars().IndexSerialScanConcurrency()
-	} else {
-		concurrency = b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
-	}
+	concurrency := b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,
@@ -3578,7 +3573,7 @@ func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table
 		return nil, false, nil, nil
 	}
 	if lookUpContent[0].keyColIDs == nil {
-		return nil, false, nil, plannercore.ErrInternal.GenWithStack("cannot get column IDs when dynamic pruning")
+		return nil, false, nil, plannererrors.ErrInternal.GenWithStack("cannot get column IDs when dynamic pruning")
 	}
 	keyColOffsets := getPartitionKeyColOffsets(lookUpContent[0].keyColIDs, partitionTbl)
 	if len(keyColOffsets) == 0 {
@@ -3638,28 +3633,30 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 		return nil, err
 	}
 	paging := b.ctx.GetSessionVars().EnablePaging
+
 	e := &IndexReaderExecutor{
-		BaseExecutor:     exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		dagPB:            dagReq,
-		startTS:          startTS,
-		txnScope:         b.txnScope,
-		readReplicaScope: b.readReplicaScope,
-		isStaleness:      b.isStaleness,
-		netDataSize:      v.GetNetDataSize(),
-		physicalTableID:  physicalTableID,
-		table:            tbl,
-		index:            is.Index,
-		keepOrder:        is.KeepOrder,
-		desc:             is.Desc,
-		columns:          is.Columns,
-		byItems:          is.ByItems,
-		paging:           paging,
-		corColInFilter:   b.corColInDistPlan(v.IndexPlans),
-		corColInAccess:   b.corColInAccess(v.IndexPlans[0]),
-		idxCols:          is.IdxCols,
-		colLens:          is.IdxColLens,
-		plans:            v.IndexPlans,
-		outputColumns:    v.OutputColumns,
+		BaseExecutor:       exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		indexUsageReporter: b.buildIndexUsageReporter(v),
+		dagPB:              dagReq,
+		startTS:            startTS,
+		txnScope:           b.txnScope,
+		readReplicaScope:   b.readReplicaScope,
+		isStaleness:        b.isStaleness,
+		netDataSize:        v.GetNetDataSize(),
+		physicalTableID:    physicalTableID,
+		table:              tbl,
+		index:              is.Index,
+		keepOrder:          is.KeepOrder,
+		desc:               is.Desc,
+		columns:            is.Columns,
+		byItems:            is.ByItems,
+		paging:             paging,
+		corColInFilter:     b.corColInDistPlan(v.IndexPlans),
+		corColInAccess:     b.corColInAccess(v.IndexPlans[0]),
+		idxCols:            is.IdxCols,
+		colLens:            is.IdxColLens,
+		plans:              v.IndexPlans,
+		outputColumns:      v.OutputColumns,
 	}
 
 	for _, col := range v.OutputColumns {
@@ -3826,28 +3823,29 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	}
 
 	e := &IndexLookUpExecutor{
-		BaseExecutor:      exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		dagPB:             indexReq,
-		startTS:           startTS,
-		table:             tbl,
-		index:             is.Index,
-		keepOrder:         is.KeepOrder,
-		byItems:           is.ByItems,
-		desc:              is.Desc,
-		tableRequest:      tableReq,
-		columns:           ts.Columns,
-		indexPaging:       indexPaging,
-		dataReaderBuilder: readerBuilder,
-		corColInIdxSide:   b.corColInDistPlan(v.IndexPlans),
-		corColInTblSide:   b.corColInDistPlan(v.TablePlans),
-		corColInAccess:    b.corColInAccess(v.IndexPlans[0]),
-		idxCols:           is.IdxCols,
-		colLens:           is.IdxColLens,
-		idxPlans:          v.IndexPlans,
-		tblPlans:          v.TablePlans,
-		PushedLimit:       v.PushedLimit,
-		idxNetDataSize:    v.GetAvgTableRowSize(),
-		avgRowSize:        v.GetAvgTableRowSize(),
+		BaseExecutor:       exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		indexUsageReporter: b.buildIndexUsageReporter(v),
+		dagPB:              indexReq,
+		startTS:            startTS,
+		table:              tbl,
+		index:              is.Index,
+		keepOrder:          is.KeepOrder,
+		byItems:            is.ByItems,
+		desc:               is.Desc,
+		tableRequest:       tableReq,
+		columns:            ts.Columns,
+		indexPaging:        indexPaging,
+		dataReaderBuilder:  readerBuilder,
+		corColInIdxSide:    b.corColInDistPlan(v.IndexPlans),
+		corColInTblSide:    b.corColInDistPlan(v.TablePlans),
+		corColInAccess:     b.corColInAccess(v.IndexPlans[0]),
+		idxCols:            is.IdxCols,
+		colLens:            is.IdxColLens,
+		idxPlans:           v.IndexPlans,
+		tblPlans:           v.TablePlans,
+		PushedLimit:        v.PushedLimit,
+		idxNetDataSize:     v.GetAvgTableRowSize(),
+		avgRowSize:         v.GetAvgTableRowSize(),
 	}
 
 	if v.ExtraHandleCol != nil {
@@ -3987,8 +3985,10 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	}
 
 	paging := b.ctx.GetSessionVars().EnablePaging
+
 	e := &IndexMergeReaderExecutor{
 		BaseExecutor:             exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		indexUsageReporter:       b.buildIndexUsageReporter(v),
 		dagPBs:                   partialReqs,
 		startTS:                  startTS,
 		table:                    tblInfo,
@@ -4014,6 +4014,27 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	collectTable := false
 	e.tableRequest.CollectRangeCounts = &collectTable
 	return e, nil
+}
+
+type tableStatsPreloader interface {
+	LoadTableStats(sessionctx.Context)
+}
+
+func (b *executorBuilder) buildIndexUsageReporter(plan tableStatsPreloader) (indexUsageReporter *exec.IndexUsageReporter) {
+	sc := b.ctx.GetSessionVars().StmtCtx
+	if b.ctx.GetSessionVars().StmtCtx.IndexUsageCollector != nil &&
+		sc.RuntimeStatsColl != nil {
+		// Preload the table stats. If the statement is a point-get or execute, the planner may not have loaded the
+		// stats.
+		plan.LoadTableStats(b.ctx)
+
+		statsMap := sc.GetUsedStatsInfo(false)
+		indexUsageReporter = exec.NewIndexUsageReporter(
+			sc.IndexUsageCollector,
+			sc.RuntimeStatsColl, statsMap)
+	}
+
+	return indexUsageReporter
 }
 
 func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) exec.Executor {
@@ -5012,20 +5033,21 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 
 	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
 	e := &BatchPointGetExec{
-		BaseExecutor: exec.NewBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
-		tblInfo:      plan.TblInfo,
-		idxInfo:      plan.IndexInfo,
-		rowDecoder:   decoder,
-		keepOrder:    plan.KeepOrder,
-		desc:         plan.Desc,
-		lock:         plan.Lock,
-		waitTime:     plan.LockWaitTime,
-		partExpr:     plan.PartitionExpr,
-		partPos:      plan.PartitionColPos,
-		planPhysIDs:  plan.PartitionIDs,
-		singlePart:   plan.SinglePart,
-		partTblID:    plan.PartTblID,
-		columns:      plan.Columns,
+		BaseExecutor:       exec.NewBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
+		indexUsageReporter: b.buildIndexUsageReporter(plan),
+		tblInfo:            plan.TblInfo,
+		idxInfo:            plan.IndexInfo,
+		rowDecoder:         decoder,
+		keepOrder:          plan.KeepOrder,
+		desc:               plan.Desc,
+		lock:               plan.Lock,
+		waitTime:           plan.LockWaitTime,
+		partExpr:           plan.PartitionExpr,
+		partPos:            plan.PartitionColPos,
+		planPhysIDs:        plan.PartitionIDs,
+		singlePart:         plan.SinglePart,
+		partTblID:          plan.PartTblID,
+		columns:            plan.Columns,
 	}
 
 	e.snapshot, err = b.getSnapshot()

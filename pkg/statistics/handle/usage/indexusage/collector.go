@@ -232,3 +232,38 @@ func (s *SessionIndexUsageCollector) Flush() {
 	s.collector.SendDeltaSync(s.indexUsage)
 	s.indexUsage = make(indexUsage)
 }
+
+// StmtIndexUsageCollector removes the duplicates index for recording `QueryTotal` in session collector
+type StmtIndexUsageCollector struct {
+	recordedIndex    map[GlobalIndexID]struct{}
+	sessionCollector *SessionIndexUsageCollector
+	sync.Mutex
+}
+
+// NewStmtIndexUsageCollector creates a new StmtIndexUsageCollector.
+func NewStmtIndexUsageCollector(sessionCollector *SessionIndexUsageCollector) *StmtIndexUsageCollector {
+	return &StmtIndexUsageCollector{
+		recordedIndex:    make(map[GlobalIndexID]struct{}),
+		sessionCollector: sessionCollector,
+	}
+}
+
+// Update updates the index usage in the internal session collector. The `sample.QueryTotal` will be modified according
+// to whether this index has been recorded in this statement usage collector.
+func (s *StmtIndexUsageCollector) Update(tableID int64, indexID int64, sample Sample) {
+	// The session index usage collector and the map inside cannot be updated concurrently. However, for executors with
+	// multiple workers, it's possible for them to be closed (and update stats) at the same time, so a lock is needed
+	// here.
+	s.Lock()
+	defer s.Unlock()
+
+	idxID := GlobalIndexID{IndexID: indexID, TableID: tableID}
+	if _, ok := s.recordedIndex[idxID]; !ok {
+		sample.QueryTotal = 1
+		s.recordedIndex[idxID] = struct{}{}
+	} else {
+		sample.QueryTotal = 0
+	}
+
+	s.sessionCollector.Update(tableID, indexID, sample)
+}

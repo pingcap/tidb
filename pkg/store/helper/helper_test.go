@@ -153,6 +153,7 @@ func createMockStore(t *testing.T) (store helper.Storage) {
 			mockstore.BootstrapWithMultiRegions(c, []byte("x"))
 		}),
 		mockstore.WithTiKVOptions(tikv.WithPDHTTPClient("store-helper-test", pdAddrs)),
+		mockstore.WithPDAddr(pdAddrs),
 	)
 	require.NoError(t, err)
 

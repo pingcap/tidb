@@ -1738,36 +1738,17 @@ func OverflowShardBits(recordID int64, shardRowIDBits uint64, typeBitsLength uin
 func (t *TableCommon) Allocators(ctx sessionctx.Context) autoid.Allocators {
 	if ctx == nil {
 		return t.allocs
-	} else if ctx.GetSessionVars().IDAllocator == nil {
-		// Use an independent allocator for global temporary tables.
-		if t.meta.TempTableType == model.TempTableGlobal {
-			if alloc := ctx.GetSessionVars().GetTemporaryTable(t.meta).GetAutoIDAllocator(); alloc != nil {
-				return autoid.NewAllocators(false, alloc)
-			}
-			// If the session is not in a txn, for example, in "show create table", use the original allocator.
-			// Otherwise the would be a nil pointer dereference.
-		}
-		return t.allocs
 	}
 
-	// Replace the row id allocator with the one in session variables.
-	sessAlloc := ctx.GetSessionVars().IDAllocator
-	allocs := t.allocs.Allocs
-	retAllocs := make([]autoid.Allocator, 0, len(allocs))
-	copy(retAllocs, allocs)
-
-	overwritten := false
-	for i, a := range retAllocs {
-		if a.GetType() == autoid.RowIDAllocType {
-			retAllocs[i] = sessAlloc
-			overwritten = true
-			break
+	// Use an independent allocator for global temporary tables.
+	if t.meta.TempTableType == model.TempTableGlobal {
+		if alloc := ctx.GetSessionVars().GetTemporaryTable(t.meta).GetAutoIDAllocator(); alloc != nil {
+			return autoid.NewAllocators(false, alloc)
 		}
+		// If the session is not in a txn, for example, in "show create table", use the original allocator.
+		// Otherwise the would be a nil pointer dereference.
 	}
-	if !overwritten {
-		retAllocs = append(retAllocs, sessAlloc)
-	}
-	return autoid.NewAllocators(t.allocs.SepAutoInc, retAllocs...)
+	return t.allocs
 }
 
 // Type implements table.Table Type interface.
@@ -2048,7 +2029,7 @@ func (s *sequenceCommon) GetSequenceBaseEndRound() (int64, int64, int64) {
 // GetSequenceNextVal implements util.SequenceTable GetSequenceNextVal interface.
 // Caching the sequence value in table, we can easily be notified with the cache empty,
 // and write the binlogInfo in table level rather than in allocator.
-func (t *TableCommon) GetSequenceNextVal(ctx interface{}, dbName, seqName string) (nextVal int64, err error) {
+func (t *TableCommon) GetSequenceNextVal(ctx any, dbName, seqName string) (nextVal int64, err error) {
 	seq := t.sequence
 	if seq == nil {
 		// TODO: refine the error.
@@ -2131,7 +2112,7 @@ func (t *TableCommon) GetSequenceNextVal(ctx interface{}, dbName, seqName string
 
 // SetSequenceVal implements util.SequenceTable SetSequenceVal interface.
 // The returned bool indicates the newVal is already under the base.
-func (t *TableCommon) SetSequenceVal(ctx interface{}, newVal int64, dbName, seqName string) (int64, bool, error) {
+func (t *TableCommon) SetSequenceVal(ctx any, newVal int64, dbName, seqName string) (int64, bool, error) {
 	seq := t.sequence
 	if seq == nil {
 		// TODO: refine the error.
@@ -2380,7 +2361,7 @@ func (t *TemporaryTable) GetModified() bool {
 }
 
 // GetStats is implemented from TempTable.GetStats.
-func (t *TemporaryTable) GetStats() interface{} {
+func (t *TemporaryTable) GetStats() any {
 	return t.stats
 }
 

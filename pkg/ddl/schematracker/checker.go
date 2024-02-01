@@ -491,7 +491,7 @@ func (d *Checker) GetLease() time.Duration {
 }
 
 // Stats implements the DDL interface.
-func (d *Checker) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
+func (d *Checker) Stats(vars *variable.SessionVars) (map[string]any, error) {
 	return d.realDDL.Stats(vars)
 }
 

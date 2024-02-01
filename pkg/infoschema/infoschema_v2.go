@@ -55,7 +55,9 @@ type InfoSchemaData struct {
 
 	cache  *ristretto.Cache // {id, schemaVersion} => table.Table
 
-	// For the SchemaByName API, {dbName, schemaVersion} => model.DBInfo
+	// For the SchemaByName API, {dbName, model.DBInfo} => schemaVersion
+	// In the future, the model.DBInfo do not contain all the model.TableInfo, we should iterate
+	// name2id to get the tables.
 	schemaMap *btree.BTreeG[schemaItem]
 
 	// sorted by both SchemaVersion and timestamp in descending order, assume they have same order

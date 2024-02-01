@@ -268,7 +268,7 @@ type Session struct {
 	txn  transaction
 	Vars *variable.SessionVars
 	// currently, we only set `CommonAddRecordCtx`
-	values map[fmt.Stringer]interface{}
+	values map[fmt.Stringer]any
 }
 
 // NewSessionCtx creates a new trimmed down Session matching the options.
@@ -279,7 +279,7 @@ func NewSessionCtx(options *encode.SessionOptions, logger log.Logger) sessionctx
 // NewSession creates a new trimmed down Session matching the options.
 func NewSession(options *encode.SessionOptions, logger log.Logger) *Session {
 	s := &Session{
-		values: make(map[fmt.Stringer]interface{}, 1),
+		values: make(map[fmt.Stringer]any, 1),
 	}
 	sqlMode := options.SQLMode
 	vars := variable.NewSessionVars(s)
@@ -354,12 +354,12 @@ func (se *Session) GetSessionVars() *variable.SessionVars {
 }
 
 // SetValue saves a value associated with this context for key.
-func (se *Session) SetValue(key fmt.Stringer, value interface{}) {
+func (se *Session) SetValue(key fmt.Stringer, value any) {
 	se.values[key] = value
 }
 
 // Value returns the value associated with this context for key.
-func (se *Session) Value(key fmt.Stringer) interface{} {
+func (se *Session) Value(key fmt.Stringer) any {
 	return se.values[key]
 }
 

@@ -91,7 +91,7 @@ func DebugTraceReceivedCommand(s sessionctx.Context, cmd byte, stmtNode ast.Stmt
 			binaryParams, _ = execStmt.BinaryArgs.([]expression.Expression)
 		}
 	}
-	useCursor := mysql.HasCursorExistsFlag(sessionVars.Status)
+	useCursor := sessionVars.HasStatusFlag(mysql.ServerStatusCursorExists)
 	// If none of them needs record, we don't need a executeInfo.
 	if binaryParams == nil && planCacheStmt == nil && !useCursor {
 		return

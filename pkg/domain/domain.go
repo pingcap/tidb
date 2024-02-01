@@ -1068,7 +1068,14 @@ const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool wil
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
 func NewDomain(store kv.Storage, ddlLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
+	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
+		store:             store,
+		exit:              make(chan struct{}),
+		sysSessionPool:    newSessionPool(capacity, factory),
+		statsLease:        statsLease,
+		slowQuery:         newTopNSlowQueries(config.GetGlobalConfig().InMemSlowQueryTopNNum, time.Hour*24*7, config.GetGlobalConfig().InMemSlowQueryRecentNum),
+		dumpFileGcChecker: &dumpFileGcChecker{gcLease: dumpFileGcLease, paths: []string{replayer.GetPlanReplayerDirName(), GetOptimizerTraceDirName(), GetExtractTaskDirName()}},
 		mdlCheckTableInfo: &mdlCheckTableInfo{
 			mu:         sync.Mutex{},
 			jobsVerMap: make(map[int64]int64),
@@ -2483,6 +2490,7 @@ func (do *Domain) autoAnalyzeWorker(owner owner.Manager) {
 //  2. Cleanup: It cleans up corrupted analyze jobs.
 //     A corrupted analyze job is one that is in a 'pending' or 'running' state,
 //     but is associated with a TiDB instance that is either not currently running or has been restarted.
+//     Also, if the analyze job is killed by the user, it is considered corrupted.
 //     This operation is performed every 100 stats leases.
 //     It first retrieves the list of current analyze processes, then removes any analyze job
 //     that is not associated with a current process. Additionally, if the current instance is the owner,

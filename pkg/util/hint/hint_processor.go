@@ -19,18 +19,16 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
 var supportedHintNameForInsertStmt = map[string]struct{}{}
-var errWarnConflictingHint = dbterror.ClassUtil.NewStd(errno.ErrWarnConflictingHint)
 
 func init() {
 	supportedHintNameForInsertStmt["memory_quota"] = struct{}{}
@@ -75,7 +73,7 @@ func setTableHints4StmtNode(node ast.Node, hints []*ast.TableOptimizerHint) {
 }
 
 // ExtractTableHintsFromStmtNode extracts table hints from this node.
-func ExtractTableHintsFromStmtNode(node ast.Node, warnHandler func(warning error)) []*ast.TableOptimizerHint {
+func ExtractTableHintsFromStmtNode(node ast.Node, warnHandler hintWarnHandler) []*ast.TableOptimizerHint {
 	switch x := node.(type) {
 	case *ast.SelectStmt:
 		return x.TableHints
@@ -106,7 +104,7 @@ func ExtractTableHintsFromStmtNode(node ast.Node, warnHandler func(warning error
 
 // checkInsertStmtHintDuplicated check whether existed the duplicated hints in both insertStmt and its selectStmt.
 // If existed, it would send a warning message.
-func checkInsertStmtHintDuplicated(node ast.Node, warnHandler func(warning error)) {
+func checkInsertStmtHintDuplicated(node ast.Node, warnHandler hintWarnHandler) {
 	switch x := node.(type) {
 	case *ast.InsertStmt:
 		if len(x.TableHints) > 0 {
@@ -127,7 +125,7 @@ func checkInsertStmtHintDuplicated(node ast.Node, warnHandler func(warning error
 				}
 				if duplicatedHint != nil {
 					hint := fmt.Sprintf("%s(`%v`)", duplicatedHint.HintName.O, duplicatedHint.HintData)
-					warnHandler(errWarnConflictingHint.FastGenByArgs(hint))
+					warnHandler.SetHintWarningFromError(plannererrors.ErrWarnConflictingHint.FastGenByArgs(hint))
 				}
 			}
 		}

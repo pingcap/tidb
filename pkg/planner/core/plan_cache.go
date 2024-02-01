@@ -38,6 +38,7 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -94,7 +95,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 
 	// step 1: check parameter number
 	if len(stmtAst.Params) != len(params) {
-		return errors.Trace(ErrWrongParamCount)
+		return errors.Trace(plannererrors.ErrWrongParamCount)
 	}
 
 	// step 2: set parameter values
@@ -120,7 +121,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		ret := &PreprocessorReturn{InfoSchema: is}
 		err := Preprocess(ctx, sctx, stmtAst.Stmt, InPrepare, WithPreprocessorReturn(ret))
 		if err != nil {
-			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
+			return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
 		stmtAst.SchemaVersion = is.SchemaMetaVersion()
 	}

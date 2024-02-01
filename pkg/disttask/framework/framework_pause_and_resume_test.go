@@ -41,44 +41,42 @@ func CheckSubtasksState(ctx context.Context, t *testing.T, taskID int64, state p
 }
 
 func TestFrameworkPauseAndResume(t *testing.T) {
-	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 3)
-	defer ctrl.Finish()
+	c := testutil.NewTestDXFContext(t, 3)
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockBasicSchedulerExt(ctrl), testContext, nil)
+	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockBasicSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	// 1. schedule and pause one running task.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pauseTaskAfterRefreshTask", "2*return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterResume", "return()"))
-	task1 := testutil.SubmitAndWaitTask(ctx, t, "key1")
+	task1 := testutil.SubmitAndWaitTask(c.Ctx, t, "key1")
 	require.Equal(t, proto.TaskStatePaused, task1.State)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pauseTaskAfterRefreshTask"))
 	// 4 subtask scheduled.
-	require.NoError(t, handle.ResumeTask(ctx, "key1"))
+	require.NoError(t, handle.ResumeTask(c.Ctx, "key1"))
 	<-scheduler.TestSyncChan
-	testutil.WaitTaskDoneOrPaused(ctx, t, task1.Key)
-	CheckSubtasksState(ctx, t, 1, proto.SubtaskStateSucceed, 4)
+	testutil.WaitTaskDoneOrPaused(c.Ctx, t, task1.Key)
+	CheckSubtasksState(c.Ctx, t, 1, proto.SubtaskStateSucceed, 4)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterResume"))
 
 	mgr, err := storage.GetTaskManager()
 	require.NoError(t, err)
-	errs, err := mgr.GetSubtaskErrors(ctx, 1)
+	errs, err := mgr.GetSubtaskErrors(c.Ctx, 1)
 	require.NoError(t, err)
 	require.Empty(t, errs)
 
 	// 2. pause pending task.
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pausePendingTask", "2*return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterResume", "1*return()"))
-	task2 := testutil.SubmitAndWaitTask(ctx, t, "key2")
+	task2 := testutil.SubmitAndWaitTask(c.Ctx, t, "key2")
 	require.Equal(t, proto.TaskStatePaused, task2.State)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/pausePendingTask"))
 	// 4 subtask scheduled.
-	require.NoError(t, handle.ResumeTask(ctx, "key2"))
+	require.NoError(t, handle.ResumeTask(c.Ctx, "key2"))
 	<-scheduler.TestSyncChan
-	testutil.WaitTaskDoneOrPaused(ctx, t, task2.Key)
-	CheckSubtasksState(ctx, t, 1, proto.SubtaskStateSucceed, 4)
+	testutil.WaitTaskDoneOrPaused(c.Ctx, t, task2.Key)
+	CheckSubtasksState(c.Ctx, t, 1, proto.SubtaskStateSucceed, 4)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/syncAfterResume"))
 
-	errs, err = mgr.GetSubtaskErrors(ctx, 1)
+	errs, err = mgr.GetSubtaskErrors(c.Ctx, 1)
 	require.NoError(t, err)
 	require.Empty(t, errs)
-	distContext.Close()
 }
