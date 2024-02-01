@@ -303,9 +303,6 @@ type TestContext struct {
 	mockDown           atomic.Bool
 }
 
-// TestContexts only used in tests.
-var TestContexts sync.Map
-
 // startTaskExecutor handles a runnable task.
 func (m *Manager) startTaskExecutor(task *proto.Task) {
 	// runCtx only used in executor.Run, cancel in m.fetchAndFastCancelTasks.

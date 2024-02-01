@@ -350,6 +350,11 @@ func (c *TestDXFContext) electIfNeeded() {
 	c.T.Logf("new owner elected, id = %s, newOwnerIdx = %d", ownerNode.id, newOwnerIdx)
 }
 
+// WaitAsyncOperations waits all async operations to finish.
+func (c *TestDXFContext) WaitAsyncOperations() {
+	c.wg.Wait()
+}
+
 func (c *TestDXFContext) close() {
 	c.wg.Wait()
 	c.mu.Lock()

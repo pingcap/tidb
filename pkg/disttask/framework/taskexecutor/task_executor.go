@@ -185,16 +185,6 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 			return
 		case <-time.After(checkInterval):
 		}
-		failpoint.Inject("mockStopManager", func() {
-			TestContexts.Store(e.id, &TestContext{make(chan struct{}), atomic.Bool{}})
-			go func() {
-				v, ok := TestContexts.Load(e.id)
-				if ok {
-					<-v.(*TestContext).TestSyncSubtaskRun
-					infosync.MockGlobalServerInfoManagerEntry.DeleteByExecID(e.id)
-				}
-			}()
-		})
 		if err = e.refreshTask(); err != nil {
 			if errors.Cause(err) == storage.ErrTaskNotFound {
 				return
@@ -362,15 +352,6 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 			}
 		}
 
-		failpoint.Inject("mockCleanExecutor", func() {
-			v, ok := TestContexts.Load(e.id)
-			if ok {
-				if v.(*TestContext).mockDown.Load() {
-					failpoint.Break()
-				}
-			}
-		})
-
 		failpoint.Inject("cancelBeforeRunSubtask", func() {
 			runStepCancel(nil)
 		})
@@ -420,30 +401,6 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 	failpoint.Inject("mockTiDBShutdown", func() {
 		if MockTiDBDown(e.id, e.GetTask()) {
 			failpoint.Return()
-		}
-	})
-	failpoint.Inject("mockTiDBDown", func(val failpoint.Value) {
-		e.logger.Info("trigger mockTiDBDown")
-		if e.id == val.(string) || e.id == ":4001" || e.id == ":4002" {
-			v, ok := TestContexts.Load(e.id)
-			if ok {
-				v.(*TestContext).TestSyncSubtaskRun <- struct{}{}
-				v.(*TestContext).mockDown.Store(true)
-				e.logger.Info("mockTiDBDown")
-				time.Sleep(2 * time.Second)
-				failpoint.Return()
-			}
-		}
-	})
-	failpoint.Inject("mockTiDBDown2", func() {
-		if e.id == ":4003" && subtask.Step == proto.StepTwo {
-			v, ok := TestContexts.Load(e.id)
-			if ok {
-				v.(*TestContext).TestSyncSubtaskRun <- struct{}{}
-				v.(*TestContext).mockDown.Store(true)
-				time.Sleep(2 * time.Second)
-				return
-			}
 		}
 	})
 

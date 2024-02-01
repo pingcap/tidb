@@ -17,7 +17,6 @@ package integrationtests_test
 import (
 	"context"
 	"math"
-	"sync"
 	"testing"
 
 	"github.com/pingcap/failpoint"
@@ -35,7 +34,7 @@ func submitTaskAndCheckSuccessForHA(ctx context.Context, t *testing.T, taskKey s
 	})
 }
 
-func TestHABasic(t *testing.T) {
+func TestHANodeRandomShutdown(t *testing.T) {
 	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBShutdown", "return()")
 	c := testutil.NewDXFContextWithRandomNodes(t, 4, 15)
 	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockHATestSchedulerExt(c.MockCtrl), c.TestContext, nil)
@@ -45,7 +44,6 @@ func TestHABasic(t *testing.T) {
 	nodeNeedDown := c.GetRandNodeIDs(c.NodeCount() - keepCount)
 	t.Logf("started %d nodes, and we keep %d nodes, nodes that need shutdown: %v", c.NodeCount(), keepCount, nodeNeedDown)
 	taskexecutor.MockTiDBDown = func(execID string, _ *proto.Task) bool {
-		// leave :4003 running
 		if _, ok := nodeNeedDown[execID]; ok {
 			c.AsyncShutdown(execID)
 			return true
@@ -53,48 +51,37 @@ func TestHABasic(t *testing.T) {
 		return false
 	}
 	submitTaskAndCheckSuccessForHA(c.Ctx, t, "😊", c.TestContext)
+	c.WaitAsyncOperations()
+	require.Equal(t, keepCount, c.NodeCount())
 }
 
-func TestHAFailInDifferentStage(t *testing.T) {
-	taskexecutor.TestContexts = sync.Map{}
-	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 6)
-	defer ctrl.Finish()
+func TestHARandomShutdownInDifferentStep(t *testing.T) {
+	testkit.EnableFailPoint(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBShutdown", "return()")
+	c := testutil.NewDXFContextWithRandomNodes(t, 6, 15)
 
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestSchedulerExt(ctrl), testContext, nil)
-	// stage1 : server num from 6 to 3.
-	// stage2 : server num from 3 to 2.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor", "return()"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager", "6*return()"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown", "return(\":4000\")"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown2", "return()"))
-
-	submitTaskAndCheckSuccessForHA(ctx, t, "😊", testContext)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown2"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor"))
-	distContext.Close()
-}
-
-func TestHAFailInDifferentStageManyNodes(t *testing.T) {
-	taskexecutor.TestContexts = sync.Map{}
-	ctx, ctrl, testContext, distContext := testutil.InitTestContext(t, 30)
-	defer ctrl.Finish()
-
-	testutil.RegisterTaskMeta(t, ctrl, testutil.GetMockHATestSchedulerExt(ctrl), testContext, nil)
-	// stage1 : server num from 30 to 27.
-	// stage2 : server num from 27 to 26.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor", "return()"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager", "30*return()"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown", "return(\":4000\")"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown2", "return()"))
-
-	submitTaskAndCheckSuccessForHA(ctx, t, "😊", testContext)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockTiDBDown2"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockStopManager"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/mockCleanExecutor"))
-	distContext.Close()
+	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetMockHATestSchedulerExt(c.MockCtrl), c.TestContext, nil)
+	// they might overlap, but will leave at least 2 nodes running
+	nodeNeedDownAtStepOne := c.GetRandNodeIDs(c.NodeCount()/2 - 1)
+	nodeNeedDownAtStepTwo := c.GetRandNodeIDs(c.NodeCount()/2 - 1)
+	t.Logf("started %d nodes, shutdown nodes at step 1: %v, shutdown nodes at step 2: %v",
+		c.NodeCount(), nodeNeedDownAtStepOne, nodeNeedDownAtStepTwo)
+	taskexecutor.MockTiDBDown = func(execID string, task *proto.Task) bool {
+		var targetNodes map[string]struct{}
+		switch task.Step {
+		case proto.StepOne:
+			targetNodes = nodeNeedDownAtStepOne
+		case proto.StepTwo:
+			targetNodes = nodeNeedDownAtStepTwo
+		default:
+			return false
+		}
+		if _, ok := targetNodes[execID]; ok {
+			c.AsyncShutdown(execID)
+			return true
+		}
+		return false
+	}
+	submitTaskAndCheckSuccessForHA(c.Ctx, t, "😊", c.TestContext)
 }
 
 func TestHAReplacedButRunning(t *testing.T) {
