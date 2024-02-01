@@ -216,7 +216,7 @@ func TestTLSVerify(t *testing.T) {
 	defer server.Close()
 	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	go func() {
-		err := server.Run(ts.Domain)
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
