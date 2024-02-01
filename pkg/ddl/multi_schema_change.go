@@ -46,6 +46,7 @@ func (d *ddl) MultiSchemaChange(ctx sessionctx.Context, ti ast.Ident) error {
 		MultiSchemaInfo: ctx.GetSessionVars().StmtCtx.MultiSchemaInfo,
 		ReorgMeta:       nil,
 		CDCWriteSource:  ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:         ctx.GetSessionVars().SQLMode,
 	}
 	if containsDistTaskSubJob(subJobs) {
 		job.ReorgMeta, err = newReorgMetaFromVariables(job, ctx)

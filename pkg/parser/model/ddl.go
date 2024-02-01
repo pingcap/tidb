@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 )
 
@@ -570,6 +571,9 @@ type Job struct {
 	// LocalMode indicates whether the job is running in local TiDB.
 	// Only happens when tidb_ddl_version = 2.
 	LocalMode bool `json:"local_mode"`
+
+	// SQLMode for parse ddl query
+	SQLMode mysql.SQLMode `json:"sql_mode"`
 }
 
 // InvolvingSchemaInfo returns the schema info involved in the job.
