@@ -486,7 +486,6 @@ select * from `bindinfo__bind_test` . `t`	SELECT * FROM `bindinfo__bind_test`.`t
 create global binding for select * from t using select * from t;
 select original_sql, status from mysql.bind_info where original_sql like '%bindinfo__bind_test%';
 original_sql	status
-select * from `bindinfo__bind_test` . `t`	deleted
 select * from `bindinfo__bind_test` . `t`	enabled
 show global bindings where original_sql like '%bindinfo__bind_test%';
 Original_sql	Bind_sql	Default_db	Status	Create_time	Update_time	Charset	Collation	Source	Sql_digest	Plan_digest
