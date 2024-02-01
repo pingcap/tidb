@@ -443,7 +443,7 @@ func TestReloadTLS(t *testing.T) {
 	server.SetDomain(ts.Domain)
 	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	go func() {
-		err := server.Run(ts.Domain)
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
@@ -594,7 +594,7 @@ func TestStatusAPIWithTLSCNCheck(t *testing.T) {
 	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	cli.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	go func() {
-		err := server.Run(ts.Domain)
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	defer server.Close()
@@ -652,7 +652,7 @@ func TestTLSAuto(t *testing.T) {
 	server.SetDomain(ts.Domain)
 	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	go func() {
-		err := server.Run(ts.Domain)
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
