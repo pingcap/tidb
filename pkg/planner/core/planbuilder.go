@@ -4219,7 +4219,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 	tableInfo := p.Table.TableInfo
 	// we use the latest IS to support IMPORT INTO dst FROM SELECT * FROM src AS OF TIMESTAMP '2020-01-01 00:00:00'
 	// Note: we need to get p.Table when preprocessing, at that time, IS of session
-	// transaction is used, if the session ctx is already in stale read, we might
+	// transaction is used, if the session ctx is already in snapshot read using tidb_snapshot, we might
 	// not get the schema or get a stale schema of the target table, so we don't
 	// support set 'tidb_snapshot' first and then import into the target table.
 	//
