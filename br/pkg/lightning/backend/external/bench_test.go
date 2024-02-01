@@ -363,8 +363,7 @@ func writeExternalOneFile(s *writeTestSuite) {
 	}
 	cleanOldFiles(ctx, s.store, filePath)
 	builder := NewWriterBuilder().
-		SetMemorySizeLimit(uint64(s.memoryLimit)).
-		SetOnCloseFunc(s.onClose)
+		SetMemorySizeLimit(uint64(s.memoryLimit))
 
 	if s.beforeCreateWriter != nil {
 		s.beforeCreateWriter()
@@ -372,13 +371,21 @@ func writeExternalOneFile(s *writeTestSuite) {
 	writer := builder.BuildOneFile(
 		s.store, filePath, "writerID")
 	intest.AssertNoError(writer.Init(ctx, 20*1024*1024))
+	var minKey, maxKey []byte
+
 	key, val, _ := s.source.next()
+	minKey = key
 	for key != nil {
+		maxKey = key
 		err := writer.WriteRow(ctx, key, val)
 		intest.AssertNoError(err)
 		key, val, _ = s.source.next()
 	}
 	intest.AssertNoError(writer.Close(ctx))
+	s.onClose(&WriterSummary{
+		Min: minKey,
+		Max: maxKey,
+	})
 	if s.afterWriterClose != nil {
 		s.afterWriterClose()
 	}
