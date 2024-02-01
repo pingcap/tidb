@@ -295,8 +295,8 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindi
 		now := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 3)
 
 		updateTs := now.String()
-		_, err = exec(sctx, `UPDATE mysql.bind_info SET status = %?, update_time = %? WHERE original_sql = %? AND update_time < %?`,
-			deleted, updateTs, binding.OriginalSQL, updateTs)
+		_, err = exec(sctx, `DELETE FROM mysql.bind_info WHERE original_sql = %? AND update_time < %?`,
+			binding.OriginalSQL, updateTs)
 		if err != nil {
 			return err
 		}
