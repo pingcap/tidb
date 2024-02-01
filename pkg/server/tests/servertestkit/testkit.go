@@ -31,13 +31,13 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
-	"github.com/pingcap/tidb/pkg/util/topsql/collector/mock"
 	mockTopSQLTraceCPU "github.com/pingcap/tidb/pkg/util/topsql/collector/mock"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
 )
 
+// TidbTestSuite is a test suite for tidb
 type TidbTestSuite struct {
 	*testserverclient.TestServerClient
 	Tidbdrv *server2.TiDBDriver
@@ -46,6 +46,7 @@ type TidbTestSuite struct {
 	Store   kv.Storage
 }
 
+// CreateTidbTestSuite creates a test suite for tidb
 func CreateTidbTestSuite(t *testing.T) *TidbTestSuite {
 	cfg := util2.NewTestConfig()
 	cfg.Port = 0
@@ -56,6 +57,7 @@ func CreateTidbTestSuite(t *testing.T) *TidbTestSuite {
 	return CreateTidbTestSuiteWithCfg(t, cfg)
 }
 
+// CreateTidbTestSuiteWithCfg creates a test suite for tidb with config
 func CreateTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *TidbTestSuite {
 	ts := &TidbTestSuite{TestServerClient: testserverclient.NewTestServerClient()}
 
@@ -100,10 +102,7 @@ type tidbTestTopSQLSuite struct {
 	*TidbTestSuite
 }
 
-func (s tidbTestTopSQLSuite) TestCase(t *testing.T, mc *mock.TopSQLCollector, fn func(db *sql.DB), check func()) {
-
-}
-
+// CreateTidbTestTopSQLSuite creates a test suite for top-sql test.
 func CreateTidbTestTopSQLSuite(t *testing.T) *tidbTestTopSQLSuite {
 	base := CreateTidbTestSuite(t)
 
@@ -132,6 +131,7 @@ func CreateTidbTestTopSQLSuite(t *testing.T) *tidbTestTopSQLSuite {
 	return ts
 }
 
+// RestCase is to reset the top-sql state and run the test case.
 func (ts *tidbTestTopSQLSuite) RestCase(t *testing.T, mc *mockTopSQLTraceCPU.TopSQLCollector, execFn func(db *sql.DB), checkFn func()) {
 	var wg sync.WaitGroup
 	ctx, cancel := context.WithCancel(context.Background())
