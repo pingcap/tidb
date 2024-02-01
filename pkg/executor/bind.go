@@ -117,7 +117,7 @@ func (e *SQLBindExec) setBindingStatusByDigest() error {
 	return err
 }
 
-func (e *SQLBindExec) createSQLBind() (err error) {
+func (e *SQLBindExec) createSQLBind() error {
 	// For audit log, SQLBindExec execute "explain" statement internally, save and recover stmtctx
 	// is necessary to avoid 'create binding' been recorded as 'explain'.
 	saveStmtCtx := e.Ctx().GetSessionVars().StmtCtx
