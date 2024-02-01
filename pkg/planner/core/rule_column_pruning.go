@@ -286,21 +286,10 @@ func (p *LogicalUnionAll) PruneColumns(parentUsedCols []*expression.Column, opt 
 	}
 
 	prunedColumns := make([]*expression.Column, 0)
-<<<<<<< HEAD
-	if hasBeenUsed {
-		// keep the schema of LogicalUnionAll same as its children's
-		used := expression.GetUsedList(p.children[0].Schema().Columns, p.schema)
-		for i := len(used) - 1; i >= 0; i-- {
-			if !used[i] {
-				prunedColumns = append(prunedColumns, p.schema.Columns[i])
-				p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
-			}
-=======
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] {
 			prunedColumns = append(prunedColumns, p.schema.Columns[i])
 			p.schema.Columns = append(p.schema.Columns[:i], p.schema.Columns[i+1:]...)
->>>>>>> 8583ab53209 (planner: fix possible inconsistent output cols among union's children (#48775))
 		}
 	}
 	appendColumnPruneTraceStep(p, prunedColumns, opt)
