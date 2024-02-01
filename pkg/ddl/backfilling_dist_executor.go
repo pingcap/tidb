@@ -58,10 +58,11 @@ type BackfillSubTaskMeta struct {
 	RowEnd   []byte `json:"row_end"`
 
 	// Used by global sort write & ingest step.
-	RangeSplitKeys [][]byte                 `json:"range_split_keys,omitempty"`
-	DataFiles      []string                 `json:"data_files,omitempty"`
-	StatFiles      []string                 `json:"stat_files,omitempty"`
-	MetaGroups     []*external.SortedKVMeta `json:"meta_groups,omitempty"`
+	RangeSplitKeys [][]byte `json:"range_split_keys,omitempty"`
+	DataFiles      []string `json:"data_files,omitempty"`
+	StatFiles      []string `json:"stat_files,omitempty"`
+	// Each group of MetaGroups represents a different index kvs meta.
+	MetaGroups []*external.SortedKVMeta `json:"meta_groups,omitempty"`
 }
 
 // NewBackfillSubtaskExecutor creates a new backfill subtask executor.

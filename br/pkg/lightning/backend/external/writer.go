@@ -172,6 +172,8 @@ func (b *WriterBuilder) SetBlockSize(blockSize int) *WriterBuilder {
 
 // SetGroupOffset set the group offset of a writer.
 // This can be used to group the summaries from different writers.
+// For example, for adding multiple indexes with multi-schema-change,
+// we use to distinguish the summaries from different indexes.
 func (b *WriterBuilder) SetGroupOffset(offset int) *WriterBuilder {
 	b.groupOffset = offset
 	return b

@@ -339,7 +339,18 @@ func generateGlobalSortIngestPlan(
 	step proto.Step,
 	logger *zap.Logger,
 ) ([][]byte, error) {
-	kvMetaGroups, err := getSummaryFromLastStep(taskHandle, task.ID, step, logger)
+	var kvMetaGroups []*external.SortedKVMeta
+	err := forEachBackfillSubtaskMeta(taskHandle, task.ID, step, func(subtask *BackfillSubTaskMeta) {
+		if kvMetaGroups == nil {
+			kvMetaGroups = make([]*external.SortedKVMeta, len(subtask.MetaGroups))
+		}
+		for i, cur := range subtask.MetaGroups {
+			if kvMetaGroups[i] == nil {
+				kvMetaGroups[i] = &external.SortedKVMeta{}
+			}
+			kvMetaGroups[i].Merge(cur)
+		}
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -348,7 +359,12 @@ func generateGlobalSortIngestPlan(
 		return nil, err
 	}
 	metaArr := make([][]byte, 0, 16)
-	for _, g := range kvMetaGroups {
+	for i, g := range kvMetaGroups {
+		if g == nil {
+			logger.Error("meet empty kv group when getting subtask summary",
+				zap.Int64("taskID", task.ID))
+			return nil, errors.Errorf("subtask kv group %d is empty", i)
+		}
 		newMeta, err := splitSubtaskMetaForOneKVMetaGroup(ctx, store, g, cloudStorageURI, int64(len(instanceIDs)), logger)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -432,20 +448,23 @@ func generateMergePlan(
 ) ([][]byte, error) {
 	// check data files overlaps,
 	// if data files overlaps too much, we need a merge step.
-	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.BackfillStepReadIndex)
+	multiStats := make([]external.MultipleFilesStat, 0, 100)
+	var kvMetaGroups []*external.SortedKVMeta
+	err := forEachBackfillSubtaskMeta(taskHandle, task.ID, proto.BackfillStepReadIndex,
+		func(subtask *BackfillSubTaskMeta) {
+			if kvMetaGroups == nil {
+				kvMetaGroups = make([]*external.SortedKVMeta, len(subtask.MetaGroups))
+			}
+			for i, g := range subtask.MetaGroups {
+				if kvMetaGroups[i] == nil {
+					kvMetaGroups[i] = &external.SortedKVMeta{}
+				}
+				kvMetaGroups[i].Merge(g)
+				multiStats = append(multiStats, g.MultipleFilesStats...)
+			}
+		})
 	if err != nil {
 		return nil, err
-	}
-	multiStats := make([]external.MultipleFilesStat, 0, 100)
-	for _, bs := range subTaskMetas {
-		var subtask BackfillSubTaskMeta
-		err = json.Unmarshal(bs, &subtask)
-		if err != nil {
-			return nil, err
-		}
-		for _, g := range subtask.MetaGroups {
-			multiStats = append(multiStats, g.MultipleFilesStats...)
-		}
 	}
 	if skipMergeSort(multiStats) {
 		logger.Info("skip merge sort")
@@ -453,12 +472,13 @@ func generateMergePlan(
 	}
 
 	// generate merge sort plan.
-	kvMetaGroups, err := getSummaryFromLastStep(taskHandle, task.ID, proto.BackfillStepReadIndex, logger)
-	if err != nil {
-		return nil, err
-	}
 	dataFiles := make([]string, 0, 1000)
-	for _, g := range kvMetaGroups {
+	for i, g := range kvMetaGroups {
+		if g == nil {
+			logger.Error("meet empty kv group when getting subtask summary",
+				zap.Int64("taskID", task.ID))
+			return nil, errors.Errorf("subtask kv group %d is empty", i)
+		}
 		for _, m := range g.MultipleFilesStats {
 			for _, filePair := range m.Filenames {
 				dataFiles = append(dataFiles, filePair[0])
@@ -531,41 +551,23 @@ func getRangeSplitter(
 		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange, true)
 }
 
-func getSummaryFromLastStep(
+func forEachBackfillSubtaskMeta(
 	taskHandle diststorage.TaskHandle,
 	gTaskID int64,
 	step proto.Step,
-	logger *zap.Logger,
-) ([]*external.SortedKVMeta, error) {
+	fn func(subtask *BackfillSubTaskMeta),
+) error {
 	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(gTaskID, step)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return errors.Trace(err)
 	}
-	var kvMetaGroups []*external.SortedKVMeta
 	for _, subTaskMeta := range subTaskMetas {
 		var subtask BackfillSubTaskMeta
 		err := json.Unmarshal(subTaskMeta, &subtask)
 		if err != nil {
-			return nil, errors.Trace(err)
+			return errors.Trace(err)
 		}
-		if kvMetaGroups == nil {
-			kvMetaGroups = make([]*external.SortedKVMeta, len(subtask.MetaGroups))
-		}
-
-		for i, cur := range subtask.MetaGroups {
-			if kvMetaGroups[i] == nil {
-				kvMetaGroups[i] = &external.SortedKVMeta{}
-			}
-			kvMetaGroups[i].Merge(cur)
-		}
+		fn(&subtask)
 	}
-	for i, g := range kvMetaGroups {
-		if g == nil {
-			logger.Error("meet empty kv group when getting subtask summary",
-				zap.Int64("taskID", gTaskID),
-				zap.Int("previousSubtaskCnt", len(subTaskMetas)))
-			return nil, errors.Errorf("subtask kv group %d is empty", i)
-		}
-	}
-	return kvMetaGroups, nil
+	return nil
 }
