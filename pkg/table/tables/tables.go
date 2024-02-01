@@ -561,7 +561,7 @@ func (t *TableCommon) UpdateRecord(ctx context.Context, sctx sessionctx.Context,
 	adjustRowValuesBuf(writeBufs, len(row))
 	key := t.RecordKey(h)
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
-	checksums, writeBufs.RowValBuf = t.calcChecksums(sctx, h, checksumData, writeBufs.RowValBuf)
+	checksums, writeBufs.RowValBuf = t.calcChecksums(sc.TimeZone(), sctx, h, checksumData, writeBufs.RowValBuf)
 	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
 	err = sc.HandleError(err)
 	if err != nil {
@@ -1001,7 +1001,7 @@ func (t *TableCommon) AddRecord(sctx sessionctx.Context, r []types.Datum, opts .
 	logutil.BgLogger().Debug("addRecord",
 		zap.Stringer("key", key))
 	sc, rd := sessVars.StmtCtx, &sessVars.RowEncoder
-	checksums, writeBufs.RowValBuf = t.calcChecksums(sctx, recordID, checksumData, writeBufs.RowValBuf)
+	checksums, writeBufs.RowValBuf = t.calcChecksums(sc.TimeZone(), sctx, recordID, checksumData, writeBufs.RowValBuf)
 	writeBufs.RowValBuf, err = tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, writeBufs.RowValBuf, writeBufs.AddRowValues, rd, checksums...)
 	err = sc.HandleError(err)
 	if err != nil {
@@ -1819,7 +1819,7 @@ func (t *TableCommon) initChecksumData(sctx sessionctx.Context, h kv.Handle) [][
 // and it will be reset for each col, so do NOT pass a buf that contains data you may use later. If the capacity of
 // `buf` is enough, it gets returned directly, otherwise a new bytes with larger capacity will be returned, and you can
 // hold the returned buf for later use (to avoid memory allocation).
-func (t *TableCommon) calcChecksums(sctx sessionctx.Context, h kv.Handle, data [][]rowcodec.ColData, buf []byte) ([]uint32, []byte) {
+func (t *TableCommon) calcChecksums(loc *time.Location, sctx sessionctx.Context, h kv.Handle, data [][]rowcodec.ColData, buf []byte) ([]uint32, []byte) {
 	if len(data) == 0 {
 		return nil, buf
 	}
@@ -1829,7 +1829,7 @@ func (t *TableCommon) calcChecksums(sctx sessionctx.Context, h kv.Handle, data [
 		if !sort.IsSorted(row) {
 			sort.Sort(row)
 		}
-		checksum, err := row.Checksum()
+		checksum, err := row.Checksum(loc)
 		buf = row.Data
 		if err != nil {
 			logWithContext(sctx, logutil.BgLogger().Error,
