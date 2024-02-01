@@ -465,9 +465,6 @@ type KvPair struct {
 	// often set to the file offset of the KvPair in the source file or the record
 	// handle.
 	RowID []byte
-	// IndexIDOfKey will be the index ID if the key is index key, or -1 if it's a
-	// record key.
-	IndexIDOfKey int64
 }
 
 // EncodeIntRowIDToBuf encodes an int64 row id to a buffer.

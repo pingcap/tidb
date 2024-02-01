@@ -92,6 +92,29 @@ func parserEncodeReader(parser mydump.Parser, endOffset int64, filename string) 
 	}
 }
 
+// queryRowEncodeReader wraps a QueryRow channel as a encodeReaderFn.
+func queryRowEncodeReader(rowCh <-chan QueryRow) encodeReaderFn {
+	return func(ctx context.Context) (data rowToEncode, closed bool, err error) {
+		select {
+		case <-ctx.Done():
+			err = ctx.Err()
+			return
+		case row, ok := <-rowCh:
+			if !ok {
+				closed = true
+				return
+			}
+			data = rowToEncode{
+				row:       row.Data,
+				rowID:     row.ID,
+				endOffset: -1,
+				resetFn:   func() {},
+			}
+			return
+		}
+	}
+}
+
 type encodedKVGroupBatch struct {
 	dataKVs  []common.KvPair
 	indexKVs map[int64][]common.KvPair // indexID -> pairs
@@ -284,7 +307,7 @@ type ChunkProcessor interface {
 
 type baseChunkProcessor struct {
 	sourceType DataSourceType
-	enc        chunkEncoder
+	enc        *chunkEncoder
 	deliver    *dataDeliver
 	logger     *zap.Logger
 	chunkInfo  *checkpoints.ChunkCheckpoint
@@ -337,19 +360,19 @@ func NewFileChunkProcessor(
 		logger:        chunkLogger,
 		kvCodec:       kvCodec,
 		diskQuotaLock: diskQuotaLock,
-		kvBatch:       make(chan []encodedRow, maxKVQueueSize),
+		kvBatch:       make(chan *encodedKVGroupBatch, maxKVQueueSize),
 		dataWriter:    dataWriter,
 		indexWriter:   indexWriter,
 	}
 	return &baseChunkProcessor{
 		sourceType: DataSourceTypeFile,
 		deliver:    deliver,
-		enc: &fileChunkEncoder{
-			parser:    parser,
+		enc: &chunkEncoder{
 			chunkInfo: chunk,
 			logger:    chunkLogger,
 			encoder:   encoder,
 			kvCodec:   kvCodec,
+			readFn:    parserEncodeReader(parser, chunk.Chunk.EndOffset, chunk.GetKey()),
 			sendFn:    deliver.sendEncodedData,
 		},
 		logger:    chunkLogger,
@@ -417,13 +440,13 @@ func (p *dataDeliver) deliverLoop(ctx context.Context) error {
 			defer p.diskQuotaLock.RUnlock()
 
 			start := time.Now()
-			if err := p.dataWriter.AppendRows(ctx, nil, kvBatch.dataKVs); err != nil {
+			if err := p.dataWriter.AppendRows(ctx, nil, kv.MakeRowsFromKvPairs(kvBatch.dataKVs)); err != nil {
 				if !common.IsContextCanceledError(err) {
 					p.logger.Error("write to data engine failed", log.ShortError(err))
 				}
 				return errors.Trace(err)
 			}
-			if err := p.indexWriter.AppendRows(ctx, nil, &kvBatch.indexKVs); err != nil {
+			if err := p.indexWriter.AppendRows(ctx, nil, kv.GroupedPairs(kvBatch.indexKVs)); err != nil {
 				if !common.IsContextCanceledError(err) {
 					p.logger.Error("write to index engine failed", log.ShortError(err))
 				}
@@ -465,107 +488,6 @@ func (p *dataDeliver) summaryFields() []zap.Field {
 	}
 }
 
-// fileChunkEncoder encode data chunk(either a data file or part of a file).
-type queryChunkEncoder struct {
-	rowCh     chan QueryRow
-	chunkInfo *checkpoints.ChunkCheckpoint
-	logger    *zap.Logger
-	encoder   KVEncoder
-	sendFn    func(ctx context.Context, kvs []encodedRow) error
-
-	// total duration takes by read/encode/deliver.
-	readTotalDur   time.Duration
-	encodeTotalDur time.Duration
-}
-
-var _ chunkEncoder = (*queryChunkEncoder)(nil)
-
-func (*queryChunkEncoder) init() error {
-	return nil
-}
-
-// TODO logic is very similar to fileChunkEncoder, consider merge them.
-func (e *queryChunkEncoder) encodeLoop(ctx context.Context) error {
-	var err error
-	reachEOF := false
-	var encodedRowsCounter prometheus.Counter
-	metrics, _ := metric.GetCommonMetric(ctx)
-	if metrics != nil {
-		// table name doesn't matter here, all those metrics will have task-id label.
-		encodedRowsCounter = metrics.RowsCounter.WithLabelValues(metric.StateRestored, "")
-	}
-
-	for !reachEOF {
-		var readDur, encodeDur time.Duration
-		canDeliver := false
-		rowBatch := make([]encodedRow, 0, MinDeliverRowCnt)
-		var rowCount, kvSize uint64
-	outLoop:
-		for !canDeliver {
-			readDurStart := time.Now()
-			var (
-				lastRow QueryRow
-				rowID   int64
-				ok      bool
-			)
-			select {
-			case lastRow, ok = <-e.rowCh:
-				if !ok {
-					reachEOF = true
-					break outLoop
-				}
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-			readDur += time.Since(readDurStart)
-			encodeDurStart := time.Now()
-			// sql -> kv
-			kvs, encodeErr := e.encoder.Encode(lastRow.Data, lastRow.ID)
-			encodeDur += time.Since(encodeDurStart)
-
-			if encodeErr != nil {
-				err = common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(e.chunkInfo.GetKey(), rowID)
-			}
-			if err != nil {
-				return err
-			}
-
-			rowBatch = append(rowBatch, encodedRow{kvs: kvs})
-			kvSize += kvs.Size()
-			rowCount++
-			// pebble cannot allow > 4.0G kv in one batch.
-			// we will meet pebble panic when import sql file and each kv has the size larger than 4G / maxKvPairsCnt.
-			// so add this check.
-			if kvSize >= MinDeliverBytes || len(rowBatch) >= MinDeliverRowCnt {
-				canDeliver = true
-			}
-		}
-
-		e.encodeTotalDur += encodeDur
-		e.readTotalDur += readDur
-		if metrics != nil {
-			metrics.RowEncodeSecondsHistogram.Observe(encodeDur.Seconds())
-			metrics.RowReadSecondsHistogram.Observe(readDur.Seconds())
-			encodedRowsCounter.Add(float64(rowCount))
-		}
-
-		if len(rowBatch) > 0 {
-			if err = e.sendFn(ctx, rowBatch); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-func (e *queryChunkEncoder) summaryFields() []zap.Field {
-	return []zap.Field{
-		zap.Duration("readDur", e.readTotalDur),
-		zap.Duration("encodeDur", e.encodeTotalDur),
-	}
-}
-
 // QueryRow is a row from query result.
 type QueryRow struct {
 	ID   int64
@@ -587,18 +509,18 @@ func newQueryChunkProcessor(
 		logger:        chunkLogger,
 		kvCodec:       kvCodec,
 		diskQuotaLock: diskQuotaLock,
-		kvBatch:       make(chan []encodedRow, maxKVQueueSize),
+		kvBatch:       make(chan *encodedKVGroupBatch, maxKVQueueSize),
 		dataWriter:    dataWriter,
 		indexWriter:   indexWriter,
 	}
 	return &baseChunkProcessor{
 		sourceType: DataSourceTypeQuery,
 		deliver:    deliver,
-		enc: &queryChunkEncoder{
-			rowCh:     rowCh,
+		enc: &chunkEncoder{
 			chunkInfo: chunk,
 			logger:    chunkLogger,
 			encoder:   encoder,
+			readFn:    queryRowEncodeReader(rowCh),
 			sendFn:    deliver.sendEncodedData,
 		},
 		logger:    chunkLogger,
@@ -626,24 +548,23 @@ func NewIndexRouteWriter(logger *zap.Logger, writerFactory func(int64) *external
 
 // AppendRows implements backend.EngineWriter interface.
 func (w *IndexRouteWriter) AppendRows(ctx context.Context, _ []string, rows encode.Rows) error {
-	kvs := kv.Rows2KvPairs(rows)
-	if len(kvs) == 0 {
-		return nil
+	groupedKvs, ok := rows.(kv.GroupedPairs)
+	if !ok {
+		return errors.Errorf("invalid kv pairs type for IndexRouteWriter: %T", rows)
 	}
-	for _, item := range kvs {
-		indexID, err := tablecodec.DecodeIndexID(item.Key)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		writer, ok := w.writers[indexID]
-		if !ok {
-			writer = w.writerFactory(indexID)
-			w.writers[indexID] = writer
-		}
-		if err = writer.WriteRow(ctx, item.Key, item.Val, nil); err != nil {
-			return errors.Trace(err)
+	for indexID, kvs := range groupedKvs {
+		for _, item := range kvs {
+			writer, ok := w.writers[indexID]
+			if !ok {
+				writer = w.writerFactory(indexID)
+				w.writers[indexID] = writer
+			}
+			if err := writer.WriteRow(ctx, item.Key, item.Val, nil); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
+
 	return nil
 }
 
