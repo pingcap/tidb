@@ -112,7 +112,7 @@ type dateTimeGenerWithFsp struct {
 	fsp int
 }
 
-func (g *dateTimeGenerWithFsp) gen() interface{} {
+func (g *dateTimeGenerWithFsp) gen() any {
 	result := g.defaultGener.gen()
 	if t, ok := result.(types.Time); ok {
 		t.SetFsp(g.fsp)
@@ -123,7 +123,7 @@ func (g *dateTimeGenerWithFsp) gen() interface{} {
 
 type randJSONDuration struct{}
 
-func (g *randJSONDuration) gen() interface{} {
+func (g *randJSONDuration) gen() any {
 	d := types.Duration{
 		Duration: time.Duration(rand.Intn(12))*time.Hour + time.Duration(rand.Intn(60))*time.Minute + time.Duration(rand.Intn(60))*time.Second + time.Duration(rand.Intn(1000))*time.Millisecond,
 		Fsp:      3}
@@ -132,7 +132,7 @@ func (g *randJSONDuration) gen() interface{} {
 
 type datetimeJSONGener struct{}
 
-func (g *datetimeJSONGener) gen() interface{} {
+func (g *datetimeJSONGener) gen() any {
 	year := rand.Intn(2200)
 	month := rand.Intn(10) + 1
 	day := rand.Intn(20) + 1

@@ -341,7 +341,7 @@ func checkAddPublic(sctx sessionctx.Context, writeOnlyTable, publicTable table.T
 }
 
 func checkResult(ctx sessionctx.Context, t table.Table, cols []*table.Column, rows [][]string) error {
-	var gotRows [][]interface{}
+	var gotRows [][]any
 	err := tables.IterRecords(t, ctx, cols, func(_ kv.Handle, data []types.Datum, cols []*table.Column) (bool, error) {
 		gotRows = append(gotRows, datumsToInterfaces(data))
 		return true, nil
@@ -357,8 +357,8 @@ func checkResult(ctx sessionctx.Context, t table.Table, cols []*table.Column, ro
 	return nil
 }
 
-func datumsToInterfaces(datums []types.Datum) []interface{} {
-	ifs := make([]interface{}, 0, len(datums))
+func datumsToInterfaces(datums []types.Datum) []any {
+	ifs := make([]any, 0, len(datums))
 	for _, d := range datums {
 		ifs = append(ifs, d.GetValue())
 	}

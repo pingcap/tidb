@@ -354,7 +354,7 @@ func generateGlobalSortIngestPlan(
 	if err != nil {
 		return nil, err
 	}
-	instanceIDs, err := scheduler.GenerateTaskExecutorNodes(ctx)
+	instanceIDs, err := scheduler.GetLiveExecIDs(ctx)
 	if err != nil {
 		return nil, err
 	}

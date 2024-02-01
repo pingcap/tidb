@@ -207,7 +207,7 @@ outside:
 }
 
 // QueryRow executes a query that is expected to return at most one row.
-func (t SQLWithRetry) QueryRow(ctx context.Context, purpose string, query string, dest ...interface{}) error {
+func (t SQLWithRetry) QueryRow(ctx context.Context, purpose string, query string, dest ...any) error {
 	logger := t.Logger
 	if !t.HideQueryLog {
 		logger = logger.With(zap.String("query", query))
@@ -239,7 +239,7 @@ func (t SQLWithRetry) QueryStringRows(ctx context.Context, purpose string, query
 		}
 		for rows.Next() {
 			row := make([]string, len(colNames))
-			refs := make([]interface{}, 0, len(row))
+			refs := make([]any, 0, len(row))
 			for i := range row {
 				refs = append(refs, &row[i])
 			}
@@ -284,7 +284,7 @@ func (t SQLWithRetry) Transact(ctx context.Context, purpose string, action func(
 }
 
 // Exec executes a single SQL with optional retry.
-func (t SQLWithRetry) Exec(ctx context.Context, purpose string, query string, args ...interface{}) error {
+func (t SQLWithRetry) Exec(ctx context.Context, purpose string, query string, args ...any) error {
 	logger := t.Logger
 	if !t.HideQueryLog {
 		logger = logger.With(zap.String("query", query), zap.Reflect("args", args))
@@ -419,7 +419,7 @@ func SchemaExists(ctx context.Context, db utils.QueryExecutor, schema string) (b
 //		return errors.Trace(err)
 //	}
 //	fmt.Println(resp.IP)
-func GetJSON(ctx context.Context, client *http.Client, url string, v interface{}) error {
+func GetJSON(ctx context.Context, client *http.Client, url string, v any) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return errors.Trace(err)

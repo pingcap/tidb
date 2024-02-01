@@ -724,7 +724,7 @@ func setGlobalVars() {
 	}
 
 	// Disable automaxprocs log
-	nopLog := func(string, ...interface{}) {}
+	nopLog := func(string, ...any) {}
 	_, err := maxprocs.Set(maxprocs.Logger(nopLog))
 	terror.MustNil(err)
 	// We should respect to user's settings in config file.

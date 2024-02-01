@@ -19,6 +19,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -213,4 +214,46 @@ func BenchmarkIndexCollector(b *testing.B) {
 	b.Run("Report per 8 ops", func(b *testing.B) {
 		benchmarkIndexCollector(b, 8)
 	})
+}
+
+func TestStmtIndexUsageCollector(t *testing.T) {
+	iuc := NewCollector()
+	iuc.StartWorker()
+	defer iuc.Close()
+	sessionCollector := iuc.SpawnSessionCollector()
+
+	statementCollector := NewStmtIndexUsageCollector(sessionCollector)
+	statementCollector.Update(1, 1, NewSample(10, 0, 0, 0))
+	sessionCollector.Flush()
+	require.Eventuallyf(t, func() bool {
+		return iuc.GetIndexUsage(1, 1) != Sample{}
+	}, time.Second, time.Millisecond, "wait for report")
+	require.Equal(t, iuc.GetIndexUsage(1, 1).QueryTotal, uint64(1))
+
+	// duplicated index will be ignored
+	statementCollector.Update(1, 1, NewSample(10, 0, 0, 0))
+	sessionCollector.Flush()
+	require.Eventuallyf(t, func() bool {
+		iu := iuc.GetIndexUsage(1, 1)
+		emptySample := Sample{}
+		if iu != emptySample {
+			return iu.QueryTotal == 1
+		}
+		return false
+	}, time.Second, time.Millisecond, "wait for report")
+
+	statementCollector.Update(1, 2, NewSample(10, 0, 0, 0))
+	sessionCollector.Flush()
+	require.Eventuallyf(t, func() bool {
+		return iuc.GetIndexUsage(1, 2) != Sample{}
+	}, time.Second, time.Millisecond, "wait for report")
+	require.Equal(t, iuc.GetIndexUsage(1, 2).QueryTotal, uint64(1))
+
+	// `queryTotal` will be 1, even if it's set 0
+	statementCollector.Update(1, 3, NewSample(0, 0, 0, 0))
+	sessionCollector.Flush()
+	require.Eventuallyf(t, func() bool {
+		return iuc.GetIndexUsage(1, 3) != Sample{}
+	}, time.Second, time.Millisecond, "wait for report")
+	require.Equal(t, iuc.GetIndexUsage(1, 3).QueryTotal, uint64(1))
 }

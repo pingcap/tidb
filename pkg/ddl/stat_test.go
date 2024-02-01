@@ -164,7 +164,7 @@ func buildCreateIdxJob(dbInfo *model.DBInfo, tblInfo *model.TableInfo, unique bo
 		TableID:    tblInfo.ID,
 		Type:       model.ActionAddIndex,
 		BinlogInfo: &model.HistoryInfo{},
-		Args: []interface{}{unique, model.NewCIStr(indexName),
+		Args: []any{unique, model.NewCIStr(indexName),
 			[]*ast.IndexPartSpecification{{
 				Column: &ast.ColumnName{Name: model.NewCIStr(colName)},
 				Length: types.UnspecifiedLength}}},

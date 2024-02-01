@@ -157,6 +157,7 @@ const (
 	TiDBRetryLimit = "tidb_retry_limit"
 
 	// TiDBDisableTxnAutoRetry disables transaction auto retry.
+	// Deprecated: This variable is deprecated, please do not use this variable.
 	TiDBDisableTxnAutoRetry = "tidb_disable_txn_auto_retry"
 
 	// TiDBEnableChunkRPC enables TiDB to use Chunk format for coprocessor requests.
@@ -851,7 +852,8 @@ const (
 
 	// TiDBOptAdvancedJoinHint indicates whether the join method hint is compatible with join order hint.
 	TiDBOptAdvancedJoinHint = "tidb_opt_advanced_join_hint"
-
+	// TiDBOptUseInvisibleIndexes indicates whether to use invisible indexes.
+	TiDBOptUseInvisibleIndexes = "tidb_opt_use_invisible_indexes"
 	// TiDBAnalyzePartitionConcurrency indicates concurrency for save/read partitions stats in Analyze
 	TiDBAnalyzePartitionConcurrency = "tidb_analyze_partition_concurrency"
 	// TiDBMergePartitionStatsConcurrency indicates the concurrency when merge partition stats into global stats

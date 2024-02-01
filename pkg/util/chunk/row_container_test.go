@@ -533,13 +533,17 @@ func TestInterruptedDuringSpilling(t *testing.T) {
 	for i := 0; i < 102400; i++ {
 		rc.Add(chk)
 	}
+	wg := sync.WaitGroup{}
+	wg.Add(1)
 	var cancelTime time.Time
 	go func() {
 		time.Sleep(200 * time.Millisecond)
 		rootTracker.Killer.SendKillSignal(sqlkiller.QueryInterrupted)
 		cancelTime = time.Now()
+		wg.Done()
 	}()
 	rc.spillToDisk(nil)
+	wg.Wait()
 	cancelDuration := time.Since(cancelTime)
 	require.Less(t, cancelDuration, 1*time.Second)
 }

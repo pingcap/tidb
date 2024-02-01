@@ -90,7 +90,7 @@ func BenchmarkGenerateIndexKV(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		buf = buf[:0]
-		iter := index.GenIndexKVIter(sctx, idxDt, handle, nil)
+		iter := index.GenIndexKVIter(sctx.ErrCtx(), sctx.TimeZone(), idxDt, handle, nil)
 		_, _, _, err = iter.Next(buf, nil)
 		if err != nil {
 			break

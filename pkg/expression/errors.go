@@ -35,8 +35,6 @@ var (
 	ErrIncorrectType               = dbterror.ClassExpression.NewStd(mysql.ErrIncorrectType)
 	ErrInvalidTypeForJSON          = dbterror.ClassExpression.NewStd(mysql.ErrInvalidTypeForJSON)
 	ErrInvalidTableSample          = dbterror.ClassExpression.NewStd(mysql.ErrInvalidTableSample)
-	ErrInternal                    = dbterror.ClassOptimizer.NewStd(mysql.ErrInternal)
-	ErrNoDB                        = dbterror.ClassOptimizer.NewStd(mysql.ErrNoDB)
 	ErrNotSupportedYet             = dbterror.ClassExpression.NewStd(mysql.ErrNotSupportedYet)
 	ErrInvalidJSONForFuncIndex     = dbterror.ClassExpression.NewStd(mysql.ErrInvalidJSONValueForFuncIndex)
 	ErrDataOutOfRangeFuncIndex     = dbterror.ClassExpression.NewStd(mysql.ErrDataOutOfRangeFunctionalIndex)

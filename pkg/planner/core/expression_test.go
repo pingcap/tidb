@@ -40,7 +40,7 @@ func parseExpr(t *testing.T, expr string) ast.ExprNode {
 	return stmt.Fields.Fields[0].Expr
 }
 
-func buildExpr(t *testing.T, ctx sessionctx.Context, exprNode interface{}, opts ...expression.BuildOption) (expression.Expression, error) {
+func buildExpr(t *testing.T, ctx sessionctx.Context, exprNode any, opts ...expression.BuildOption) (expression.Expression, error) {
 	var node ast.ExprNode
 	switch x := exprNode.(type) {
 	case string:
@@ -54,7 +54,7 @@ func buildExpr(t *testing.T, ctx sessionctx.Context, exprNode interface{}, opts 
 	return expression.BuildExprWithAst(ctx, node, opts...)
 }
 
-func buildExprAndEval(t *testing.T, ctx sessionctx.Context, exprNode interface{}) types.Datum {
+func buildExprAndEval(t *testing.T, ctx sessionctx.Context, exprNode any) types.Datum {
 	expr, err := buildExpr(t, ctx, exprNode)
 	require.NoError(t, err)
 	val, err := expr.Eval(ctx, chunk.Row{})
@@ -461,4 +461,8 @@ func TestBuildExpression(t *testing.T) {
 	// subquery not supported
 	_, err = buildExpr(t, ctx, "a + (select b from t)", expression.WithSourceTable(tbl))
 	require.EqualError(t, err, "node '*ast.SubqueryExpr' is not allowed when building an expression without planner")
+
+	// param marker not supported
+	_, err = buildExpr(t, ctx, "a + ?", expression.WithSourceTable(tbl))
+	require.EqualError(t, err, "node '*driver.ParamMarkerExpr' is not allowed when building an expression without planner")
 }

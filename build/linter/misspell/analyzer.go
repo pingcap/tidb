@@ -44,7 +44,7 @@ type Misspell struct {
 	IgnoreWords []string `mapstructure:"ignore-words"`
 }
 
-func run(pass *analysis.Pass) (interface{}, error) {
+func run(pass *analysis.Pass) (any, error) {
 	r := misspell.Replacer{
 		Replacements: misspell.DictMain,
 	}

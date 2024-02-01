@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -459,7 +458,7 @@ func TestGetDefaultValue(t *testing.T) {
 	}
 
 	exp := expression.EvalAstExpr
-	expression.EvalAstExpr = func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error) {
+	expression.EvalAstExpr = func(sctx expression.BuildContext, expr ast.ExprNode) (types.Datum, error) {
 		return types.NewIntDatum(1), nil
 	}
 	defer func() {

@@ -278,7 +278,7 @@ func (fkc *FKCheckExec) buildCheckKeyFromFKValue(sc *stmtctx.StatementContext, v
 		}
 		return key, true, nil
 	}
-	key, distinct, err := fkc.Idx.GenIndexKey(sc, vals, nil, nil)
+	key, distinct, err := fkc.Idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), vals, nil, nil)
 	if err != nil {
 		return nil, false, err
 	}

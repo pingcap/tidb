@@ -70,7 +70,7 @@ type SessionStates struct {
 	SystemVars           map[string]string            `json:"sys-vars,omitempty"`
 	PreparedStmts        map[uint32]*PreparedStmtInfo `json:"prepared-stmts,omitempty"`
 	PreparedStmtID       uint32                       `json:"prepared-stmt-id,omitempty"`
-	Status               uint16                       `json:"status,omitempty"`
+	Status               uint32                       `json:"status,omitempty"`
 	CurrentDB            string                       `json:"current-db,omitempty"`
 	LastTxnInfo          string                       `json:"txn-info,omitempty"`
 	LastQueryInfo        *QueryInfo                   `json:"query-info,omitempty"`

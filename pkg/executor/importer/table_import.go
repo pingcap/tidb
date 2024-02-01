@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/util"
@@ -902,9 +903,25 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 		distSQLScanConcurrencyFactor = 1
 		remoteChecksum               *local.RemoteChecksum
 		txnErr                       error
+		doneCh                       = make(chan struct{})
 	)
+	checkCtx, cancel := context.WithCancel(ctx)
+	defer func() {
+		cancel()
+		<-doneCh
+	}()
 
-	ctx = util.WithInternalSourceType(ctx, tidbkv.InternalImportInto)
+	go func() {
+		<-checkCtx.Done()
+		se.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+		close(doneCh)
+	}()
+
+	distSQLScanConcurrencyBak := se.GetSessionVars().DistSQLScanConcurrency()
+	defer func() {
+		se.GetSessionVars().SetDistSQLScanConcurrency(distSQLScanConcurrencyBak)
+	}()
+	ctx = util.WithInternalSourceType(checkCtx, tidbkv.InternalImportInto)
 	for i := 0; i < maxErrorRetryCount; i++ {
 		txnErr = func() error {
 			// increase backoff weight
@@ -912,11 +929,9 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 				logger.Warn("set tidb_backoff_weight failed", zap.Error(err))
 			}
 
-			distSQLScanConcurrency := se.GetSessionVars().DistSQLScanConcurrency()
-			se.GetSessionVars().SetDistSQLScanConcurrency(mathutil.Max(distSQLScanConcurrency/distSQLScanConcurrencyFactor, local.MinDistSQLScanConcurrency))
-			defer func() {
-				se.GetSessionVars().SetDistSQLScanConcurrency(distSQLScanConcurrency)
-			}()
+			newConcurrency := mathutil.Max(plan.DistSQLScanConcurrency/distSQLScanConcurrencyFactor, local.MinDistSQLScanConcurrency)
+			logger.Info("checksum with adjusted distsql scan concurrency", zap.Int("concurrency", newConcurrency))
+			se.GetSessionVars().SetDistSQLScanConcurrency(newConcurrency)
 
 			// TODO: add resource group name
 

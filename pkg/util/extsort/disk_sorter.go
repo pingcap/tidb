@@ -413,11 +413,11 @@ func (h mergingIterHeap) Less(i, j int) bool {
 	return bytes.Compare(h[i].UnsafeKey(), h[j].UnsafeKey()) < 0
 }
 
-func (h *mergingIterHeap) Push(x interface{}) {
+func (h *mergingIterHeap) Push(x any) {
 	*h = append(*h, x.(mergingIterItem))
 }
 
-func (h *mergingIterHeap) Pop() interface{} {
+func (h *mergingIterHeap) Pop() any {
 	old := *h
 	n := len(old)
 	x := old[n-1]

@@ -32,7 +32,7 @@ type EvalContext interface {
 	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars
 	// Value returns the value associated with this context for key.
-	Value(key fmt.Stringer) interface{}
+	Value(key fmt.Stringer) any
 	// IsDDLOwner checks whether this session is DDL owner.
 	IsDDLOwner() bool
 	// GetAdvisoryLock acquires an advisory lock (aka GET_LOCK()).
@@ -74,4 +74,16 @@ func warningCount(ctx EvalContext) int {
 
 func truncateWarnings(ctx EvalContext, start int) []stmtctx.SQLWarn {
 	return ctx.GetSessionVars().StmtCtx.TruncateWarnings(start)
+}
+
+// BuildContext is used to build an expression
+type BuildContext interface {
+	EvalContext
+	// GetSessionVars gets the session variables.
+	GetSessionVars() *variable.SessionVars
+	// SetValue saves a value associated with this context for key.
+	SetValue(key fmt.Stringer, value any)
+	// BuiltinFunctionUsageInc increase the counting of each builtin function usage
+	// Notice that this is a thread safe function
+	BuiltinFunctionUsageInc(scalarFuncSigName string)
 }

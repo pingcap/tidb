@@ -304,7 +304,7 @@ func TestTableRowIDShardingInfo(t *testing.T) {
 	tk.MustExec("DROP DATABASE IF EXISTS `sharding_info_test_db`")
 	tk.MustExec("CREATE DATABASE `sharding_info_test_db`")
 
-	assertShardingInfo := func(tableName string, expectInfo interface{}) {
+	assertShardingInfo := func(tableName string, expectInfo any) {
 		querySQL := fmt.Sprintf("select tidb_row_id_sharding_info from information_schema.tables where table_schema = 'sharding_info_test_db' and table_name = '%s'", tableName)
 		info := tk.MustQuery(querySQL).Rows()[0][0]
 		if expectInfo == nil {
@@ -325,7 +325,7 @@ func TestTableRowIDShardingInfo(t *testing.T) {
 	tk.MustExec("CREATE VIEW `sharding_info_test_db`.`tv` AS select 1")
 	assertShardingInfo("tv", nil)
 
-	testFunc := func(dbName string, expectInfo interface{}) {
+	testFunc := func(dbName string, expectInfo any) {
 		dbInfo := model.DBInfo{Name: model.NewCIStr(dbName)}
 		tableInfo := model.TableInfo{}
 
@@ -361,7 +361,7 @@ func TestSlowQuery(t *testing.T) {
 	slowLogFileName := "tidb_slow.log"
 	internal.PrepareSlowLogfile(t, slowLogFileName)
 	defer func() { require.NoError(t, os.Remove(slowLogFileName)) }()
-	expectedRes := [][]interface{}{
+	expectedRes := [][]any{
 		{"2019-02-12 19:33:56.571953",
 			"406315658548871171",
 			"root",

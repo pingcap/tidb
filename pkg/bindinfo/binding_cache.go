@@ -25,33 +25,33 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
-// bindCache uses the LRU cache to store the bindings.
+// bindingCache uses the LRU cache to store the bindings.
 // The key of the LRU cache is original sql, the value is a slice of Bindings.
-// Note: The bindCache should be accessed with lock.
-type bindCache struct {
+// Note: The bindingCache should be accessed with lock.
+type bindingCache struct {
 	lock        sync.Mutex
 	cache       *kvcache.SimpleLRUCache
 	memCapacity int64
 	memTracker  *memory.Tracker // track memory usage.
 }
 
-type bindCacheKey string
+type bindingCacheKey string
 
-func (key bindCacheKey) Hash() []byte {
+func (key bindingCacheKey) Hash() []byte {
 	return hack.Slice(string(key))
 }
 
-func calcBindCacheKVMem(key bindCacheKey, value Bindings) int64 {
+func calcBindCacheKVMem(key bindingCacheKey, value Bindings) int64 {
 	var valMem int64
 	valMem += int64(value.size())
 	return int64(len(key.Hash())) + valMem
 }
 
-func newBindCache() *bindCache {
-	// since bindCache controls the memory usage by itself, set the capacity of
+func newBindCache() *bindingCache {
+	// since bindingCache controls the memory usage by itself, set the capacity of
 	// the underlying LRUCache to max to close its memory control
 	cache := kvcache.NewSimpleLRUCache(mathutil.MaxUint, 0, 0)
-	c := bindCache{
+	c := bindingCache{
 		cache:       cache,
 		memCapacity: variable.MemQuotaBindingCache.Load(),
 		memTracker:  memory.NewTracker(memory.LabelForBindCache, -1),
@@ -60,10 +60,10 @@ func newBindCache() *bindCache {
 }
 
 // get gets a cache item according to cache key. It's not thread-safe.
-// Note: Only other functions of the bindCache file can use this function.
+// Note: Only other functions of the bindingCache file can use this function.
 // Don't use this function directly in other files in bindinfo package.
 // The return value is not read-only, but it is only can be used in other functions which are also in the bind_cache.go.
-func (c *bindCache) get(key bindCacheKey) Bindings {
+func (c *bindingCache) get(key bindingCacheKey) Bindings {
 	value, hit := c.cache.Get(key)
 	if !hit {
 		return nil
@@ -73,9 +73,9 @@ func (c *bindCache) get(key bindCacheKey) Bindings {
 }
 
 // set inserts an item to the cache. It's not thread-safe.
-// Only other functions of the bindCache can use this function.
+// Only other functions of the bindingCache can use this function.
 // The set operation will return error message when the memory usage of binding_cache exceeds its capacity.
-func (c *bindCache) set(key bindCacheKey, value Bindings) (ok bool, err error) {
+func (c *bindingCache) set(key bindingCacheKey, value Bindings) (ok bool, err error) {
 	mem := calcBindCacheKVMem(key, value)
 	if mem > c.memCapacity { // ignore this kv pair if its size is too large
 		err = errors.New("The memory usage of all available bindings exceeds the cache's mem quota. As a result, all available bindings cannot be held on the cache. Please increase the value of the system variable 'tidb_mem_quota_binding_cache' and execute 'admin reload bindings' to ensure that all bindings exist in the cache and can be used normally")
@@ -92,7 +92,7 @@ func (c *bindCache) set(key bindCacheKey, value Bindings) (ok bool, err error) {
 		if !evicted {
 			return
 		}
-		c.memTracker.Consume(-calcBindCacheKVMem(evictedKey.(bindCacheKey), evictedValue.(Bindings)))
+		c.memTracker.Consume(-calcBindCacheKVMem(evictedKey.(bindingCacheKey), evictedValue.(Bindings)))
 	}
 	c.memTracker.Consume(mem)
 	c.cache.Put(key, value)
@@ -101,8 +101,8 @@ func (c *bindCache) set(key bindCacheKey, value Bindings) (ok bool, err error) {
 }
 
 // delete remove an item from the cache. It's not thread-safe.
-// Only other functions of the bindCache can use this function.
-func (c *bindCache) delete(key bindCacheKey) bool {
+// Only other functions of the bindingCache can use this function.
+func (c *bindingCache) delete(key bindingCacheKey) bool {
 	bindings := c.get(key)
 	if bindings != nil {
 		mem := calcBindCacheKVMem(key, bindings)
@@ -116,16 +116,16 @@ func (c *bindCache) delete(key bindCacheKey) bool {
 // GetBinding gets the Bindings from the cache.
 // The return value is not read-only, but it shouldn't be changed in the caller functions.
 // The function is thread-safe.
-func (c *bindCache) GetBinding(sqlDigest string) Bindings {
+func (c *bindingCache) GetBinding(sqlDigest string) Bindings {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	return c.get(bindCacheKey(sqlDigest))
+	return c.get(bindingCacheKey(sqlDigest))
 }
 
-// GetAllBindings return all the bindings from the bindCache.
+// GetAllBindings return all the bindings from the bindingCache.
 // The return value is not read-only, but it shouldn't be changed in the caller functions.
 // The function is thread-safe.
-func (c *bindCache) GetAllBindings() Bindings {
+func (c *bindingCache) GetAllBindings() Bindings {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	values := c.cache.Values()
@@ -138,25 +138,25 @@ func (c *bindCache) GetAllBindings() Bindings {
 
 // SetBinding sets the Bindings to the cache.
 // The function is thread-safe.
-func (c *bindCache) SetBinding(sqlDigest string, meta Bindings) (err error) {
+func (c *bindingCache) SetBinding(sqlDigest string, meta Bindings) (err error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	cacheKey := bindCacheKey(sqlDigest)
+	cacheKey := bindingCacheKey(sqlDigest)
 	_, err = c.set(cacheKey, meta)
 	return
 }
 
 // RemoveBinding removes the Bindings which has same originSQL with specified Bindings.
 // The function is thread-safe.
-func (c *bindCache) RemoveBinding(sqlDigest string) {
+func (c *bindingCache) RemoveBinding(sqlDigest string) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
-	c.delete(bindCacheKey(sqlDigest))
+	c.delete(bindingCacheKey(sqlDigest))
 }
 
 // SetMemCapacity sets the memory capacity for the cache.
 // The function is thread-safe.
-func (c *bindCache) SetMemCapacity(capacity int64) {
+func (c *bindingCache) SetMemCapacity(capacity int64) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	// Only change the capacity size without affecting the cached bindings
@@ -165,7 +165,7 @@ func (c *bindCache) SetMemCapacity(capacity int64) {
 
 // GetMemUsage get the memory Usage for the cache.
 // The function is thread-safe.
-func (c *bindCache) GetMemUsage() int64 {
+func (c *bindingCache) GetMemUsage() int64 {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	return c.memTracker.BytesConsumed()
@@ -173,15 +173,15 @@ func (c *bindCache) GetMemUsage() int64 {
 
 // GetMemCapacity get the memory capacity for the cache.
 // The function is thread-safe.
-func (c *bindCache) GetMemCapacity() int64 {
+func (c *bindingCache) GetMemCapacity() int64 {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	return c.memCapacity
 }
 
-// Copy copies a new bindCache from the origin cache.
+// Copy copies a new bindingCache from the origin cache.
 // The function is thread-safe.
-func (c *bindCache) Copy() (newCache *bindCache, err error) {
+func (c *bindingCache) Copy() (newCache *bindingCache, err error) {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	newCache = newBindCache()
@@ -190,7 +190,7 @@ func (c *bindCache) Copy() (newCache *bindCache, err error) {
 	}
 	keys := c.cache.Keys()
 	for _, key := range keys {
-		cacheKey := key.(bindCacheKey)
+		cacheKey := key.(bindingCacheKey)
 		v := c.get(cacheKey)
 		if _, err := newCache.set(cacheKey, v); err != nil {
 			return nil, err
@@ -199,7 +199,7 @@ func (c *bindCache) Copy() (newCache *bindCache, err error) {
 	return newCache, err
 }
 
-func (c *bindCache) Size() int {
+func (c *bindingCache) Size() int {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 	return c.cache.Size()

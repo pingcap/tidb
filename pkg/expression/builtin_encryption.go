@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -107,7 +106,7 @@ type aesDecryptFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *aesDecryptFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *aesDecryptFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, c.verifyArgs(args)
 	}
@@ -242,7 +241,7 @@ type aesEncryptFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *aesEncryptFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *aesEncryptFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, c.verifyArgs(args)
 	}
@@ -377,7 +376,7 @@ type decodeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *decodeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *decodeFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -424,7 +423,7 @@ type desDecryptFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *desDecryptFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *desDecryptFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "DES_DECRYPT")
 }
 
@@ -432,7 +431,7 @@ type desEncryptFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *desEncryptFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *desEncryptFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "DES_ENCRYPT")
 }
 
@@ -440,7 +439,7 @@ type encodeFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *encodeFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *encodeFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -487,7 +486,7 @@ type encryptFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *encryptFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *encryptFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "ENCRYPT")
 }
 
@@ -495,7 +494,7 @@ type oldPasswordFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *oldPasswordFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *oldPasswordFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "OLD_PASSWORD")
 }
 
@@ -503,7 +502,7 @@ type passwordFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *passwordFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *passwordFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -551,7 +550,7 @@ type randomBytesFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *randomBytesFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *randomBytesFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -599,7 +598,7 @@ type md5FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *md5FunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *md5FunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -642,7 +641,7 @@ type sha1FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *sha1FunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *sha1FunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -689,7 +688,7 @@ type sha2FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *sha2FunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *sha2FunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -720,7 +719,7 @@ type sm3FunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *sm3FunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *sm3FunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -837,7 +836,7 @@ type compressFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *compressFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *compressFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -908,7 +907,7 @@ type uncompressFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *uncompressFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *uncompressFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -966,7 +965,7 @@ type uncompressedLengthFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *uncompressedLengthFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *uncompressedLengthFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -1013,7 +1012,7 @@ type validatePasswordStrengthFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *validatePasswordStrengthFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
+func (c *validatePasswordStrengthFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}

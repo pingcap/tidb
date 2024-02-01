@@ -1437,57 +1437,22 @@ func SendBackup(
 	var errReset error
 	var errBackup error
 
-	for retry := 0; retry < backupRetryTimes; retry++ {
-		logutil.CL(ctx).Info("try backup",
-			zap.Int("retry time", retry),
-		)
+	retry := -1
+	return utils.WithRetry(ctx, func() error {
+		retry += 1
+		if retry != 0 {
+			client, errReset = resetFn()
+			if errReset != nil {
+				return errors.Annotatef(errReset, "failed to reset backup connection on store:%d "+
+					"please check the tikv status", storeID)
+			}
+		}
+		logutil.CL(ctx).Info("try backup", zap.Int("retry time", retry))
 		errBackup = doSendBackup(ctx, client, req, respFn)
 		if errBackup != nil {
-			if isRetryableError(errBackup) {
-				time.Sleep(3 * time.Second)
-				client, errReset = resetFn()
-				if errReset != nil {
-					return errors.Annotatef(errReset, "failed to reset backup connection on store:%d "+
-						"please check the tikv status", storeID)
-				}
-				continue
-			}
-			logutil.CL(ctx).Error("fail to backup", zap.Uint64("StoreID", storeID), zap.Int("retry", retry))
 			return berrors.ErrFailedToConnect.Wrap(errBackup).GenWithStack("failed to create backup stream to store %d", storeID)
 		}
-		// finish backup
-		break
-	}
-	return nil
-}
 
-// gRPC communication cancelled with connection closing
-const (
-	gRPC_Cancel = "the client connection is closing"
-)
-
-// isRetryableError represents whether we should retry reset grpc connection.
-func isRetryableError(err error) bool {
-	// some errors can be retried
-	// https://github.com/pingcap/tidb/issues/34350
-	switch status.Code(err) {
-	case codes.Unavailable, codes.DeadlineExceeded,
-		codes.ResourceExhausted, codes.Aborted, codes.Internal:
-		{
-			log.Warn("backup met some errors, these errors can be retry 5 times", zap.Error(err))
-			return true
-		}
-	}
-
-	// At least, there are two possible cancel() call,
-	// one from backup range, another from gRPC, here we retry when gRPC cancel with connection closing
-	if status.Code(err) == codes.Canceled {
-		if s, ok := status.FromError(err); ok {
-			if strings.Contains(s.Message(), gRPC_Cancel) {
-				log.Warn("backup met grpc cancel error, this errors can be retry 5 times", zap.Error(err))
-				return true
-			}
-		}
-	}
-	return false
+		return nil
+	}, utils.NewBackupSSTBackoffer())
 }
