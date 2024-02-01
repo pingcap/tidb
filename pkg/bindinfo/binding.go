@@ -205,9 +205,7 @@ func merge(lBindings, rBindings Bindings) Bindings {
 
 func removeDeletedBindings(br Bindings) Bindings {
 	result := make(Bindings, 0, len(br))
-	for _, binding := range br {
-		result = append(result, binding)
-	}
+	result = append(result, br...)
 	return result
 }
 
