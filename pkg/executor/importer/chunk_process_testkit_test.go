@@ -132,7 +132,10 @@ func TestFileChunkProcess(t *testing.T) {
 			}).AnyTimes()
 		indexWriter.EXPECT().AppendRows(gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
 			func(ctx context.Context, columnNames []string, rows encode.Rows) error {
-				indexKVCnt += len(rows.(*kv.Pairs).Pairs)
+				group := rows.(kv.GroupedPairs)
+				for _, pairs := range group {
+					indexKVCnt += len(pairs)
+				}
 				return nil
 			}).AnyTimes()
 
