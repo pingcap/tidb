@@ -275,11 +275,17 @@ type writeTestSuite struct {
 	memoryLimit        int
 	beforeCreateWriter func()
 	afterWriterClose   func()
+
+	optionalFilePath string
+	onClose          OnCloseFunc
 }
 
 func writePlainFile(s *writeTestSuite) {
 	ctx := context.Background()
 	filePath := "/test/writer"
+	if s.optionalFilePath != "" {
+		filePath = s.optionalFilePath
+	}
 	_ = s.store.DeleteFile(ctx, filePath)
 	buf := make([]byte, s.memoryLimit)
 	offset := 0
@@ -324,9 +330,13 @@ func cleanOldFiles(ctx context.Context, store storage.ExternalStorage, subDir st
 func writeExternalFile(s *writeTestSuite) {
 	ctx := context.Background()
 	filePath := "/test/writer"
+	if s.optionalFilePath != "" {
+		filePath = s.optionalFilePath
+	}
 	cleanOldFiles(ctx, s.store, filePath)
 	builder := NewWriterBuilder().
-		SetMemorySizeLimit(uint64(s.memoryLimit))
+		SetMemorySizeLimit(uint64(s.memoryLimit)).
+		SetOnCloseFunc(s.onClose)
 
 	if s.beforeCreateWriter != nil {
 		s.beforeCreateWriter()
@@ -348,9 +358,13 @@ func writeExternalFile(s *writeTestSuite) {
 func writeExternalOneFile(s *writeTestSuite) {
 	ctx := context.Background()
 	filePath := "/test/writer"
+	if s.optionalFilePath != "" {
+		filePath = s.optionalFilePath
+	}
 	cleanOldFiles(ctx, s.store, filePath)
 	builder := NewWriterBuilder().
-		SetMemorySizeLimit(uint64(s.memoryLimit))
+		SetMemorySizeLimit(uint64(s.memoryLimit)).
+		SetOnCloseFunc(s.onClose)
 
 	if s.beforeCreateWriter != nil {
 		s.beforeCreateWriter()
@@ -1119,4 +1133,44 @@ func TestReadStatFile(t *testing.T) {
 			zap.Int("prop size", int(prop.size)),
 			zap.Int("prop keys", int(prop.keys)))
 	}
+}
+
+func TestReadAllDataLargeFiles(t *testing.T) {
+	ctx := context.Background()
+	store := openTestingStorage(t)
+
+	// ~ 100B * 20M = 2GB
+	source := newAscendingKeyAsyncSource(20*1024*1024, 10, 90, nil)
+	// ~ 1KB * 2M = 2GB
+	source2 := newAscendingKeyAsyncSource(2*1024*1024, 10, 990, nil)
+	var minKey, maxKey kv.Key
+	recordMinMax := func(s *WriterSummary) {
+		minKey = s.Min
+		maxKey = s.Max
+	}
+	suite := &writeTestSuite{
+		store:            store,
+		source:           source,
+		memoryLimit:      256 * 1024 * 1024,
+		optionalFilePath: "/test/file",
+		onClose:          recordMinMax,
+	}
+	suite2 := &writeTestSuite{
+		store:            store,
+		source:           source2,
+		memoryLimit:      256 * 1024 * 1024,
+		optionalFilePath: "/test/file2",
+		onClose:          recordMinMax,
+	}
+	writeExternalOneFile(suite)
+	t.Logf("minKey: %s, maxKey: %s", minKey, maxKey)
+	writeExternalOneFile(suite2)
+	t.Logf("minKey: %s, maxKey: %s", minKey, maxKey)
+
+	dataFiles, statFiles, err := GetAllFileNames(ctx, store, "")
+	intest.AssertNoError(err)
+	intest.Assert(len(dataFiles) == 2)
+
+	_ = statFiles
+	//err := readAllData(ctx, store, dataFiles, statFiles)
 }
