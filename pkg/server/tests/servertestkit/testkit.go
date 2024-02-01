@@ -23,15 +23,15 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
-	server2 "github.com/pingcap/tidb/pkg/server"
+	"github.com/pingcap/tidb/pkg/server"
 	"github.com/pingcap/tidb/pkg/server/internal/testserverclient"
 	"github.com/pingcap/tidb/pkg/server/internal/testutil"
-	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
+	"github.com/pingcap/tidb/pkg/server/internal/util"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/cpuprofile"
-	mockTopSQLTraceCPU "github.com/pingcap/tidb/pkg/util/topsql/collector/mock"
+	"github.com/pingcap/tidb/pkg/util/topsql/collector/mock"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
 	"github.com/stretchr/testify/require"
 	"go.opencensus.io/stats/view"
@@ -40,15 +40,15 @@ import (
 // TidbTestSuite is a test suite for tidb
 type TidbTestSuite struct {
 	*testserverclient.TestServerClient
-	Tidbdrv *server2.TiDBDriver
-	Server  *server2.Server
+	Tidbdrv *server.TiDBDriver
+	Server  *server.Server
 	Domain  *domain.Domain
 	Store   kv.Storage
 }
 
 // CreateTidbTestSuite creates a test suite for tidb
 func CreateTidbTestSuite(t *testing.T) *TidbTestSuite {
-	cfg := util2.NewTestConfig()
+	cfg := util.NewTestConfig()
 	cfg.Port = 0
 	cfg.Status.ReportStatus = true
 	cfg.Status.StatusPort = 0
@@ -68,9 +68,9 @@ func CreateTidbTestSuiteWithCfg(t *testing.T, cfg *config.Config) *TidbTestSuite
 	require.NoError(t, err)
 	ts.Domain, err = session.BootstrapSession(ts.Store)
 	require.NoError(t, err)
-	ts.Tidbdrv = server2.NewTiDBDriver(ts.Store)
+	ts.Tidbdrv = server.NewTiDBDriver(ts.Store)
 
-	server, err := server2.NewServer(cfg, ts.Tidbdrv)
+	server, err := server.NewServer(cfg, ts.Tidbdrv)
 	require.NoError(t, err)
 	ts.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	ts.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
@@ -132,7 +132,7 @@ func CreateTidbTestTopSQLSuite(t *testing.T) *tidbTestTopSQLSuite {
 }
 
 // RestCase is to reset the top-sql state and run the test case.
-func (ts *tidbTestTopSQLSuite) RestCase(t *testing.T, mc *mockTopSQLTraceCPU.TopSQLCollector, execFn func(db *sql.DB), checkFn func()) {
+func (ts *tidbTestTopSQLSuite) RestCase(t *testing.T, mc *mock.TopSQLCollector, execFn func(db *sql.DB), checkFn func()) {
 	var wg sync.WaitGroup
 	ctx, cancel := context.WithCancel(context.Background())
 	wg.Add(1)
