@@ -2953,7 +2953,7 @@ func TestProxyProtocolWithIpNoFallbackable(t *testing.T) {
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
 	go func() {
-		err := server.Run(ts.Domain)
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 1000)
