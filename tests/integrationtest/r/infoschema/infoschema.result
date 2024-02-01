@@ -95,3 +95,15 @@ select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4
 engine	DATA_LENGTH
 InnoDB	8
 InnoDB	8
+select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or upper(table_name) = 'T5') and table_schema = 'infoschema__infoschema';
+engine	DATA_LENGTH
+explain select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or upper(table_name) = 'T5') and table_schema = 'infoschema__infoschema';
+id	estRows	task	access object	operator info
+MemTableScan_5	10000.00	root	table:TABLES	table_name:["t4","t5"], table_schema:["infoschema__infoschema"]
+select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or lower(table_name) = 't5') and  upper(table_schema) = 'INFOSCHEMA__INFOSCHEMA';
+engine	DATA_LENGTH
+InnoDB	8
+InnoDB	8
+explain select engine, DATA_LENGTH from information_schema.tables where (table_name ='t4' or lower(table_name) = 't5') and  upper(table_schema) = 'INFOSCHEMA__INFOSCHEMA';
+id	estRows	task	access object	operator info
+MemTableScan_5	10000.00	root	table:TABLES	table_name:["t4","t5"], table_schema:["infoschema__infoschema"]

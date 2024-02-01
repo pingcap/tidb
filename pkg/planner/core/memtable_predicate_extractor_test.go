@@ -1569,6 +1569,14 @@ func TestColumns(t *testing.T) {
 		skipRequest        bool
 	}{
 		{
+			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where lower(column_name)=lower('T');`,
+			columnName: set.NewStringSet(),
+		},
+		{
+			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where column_name=lower('T');`,
+			columnName: set.NewStringSet("t"),
+		},
+		{
 			sql:        `select * from INFORMATION_SCHEMA.COLUMNS where column_name='T';`,
 			columnName: set.NewStringSet("t"),
 		},
@@ -1822,7 +1830,31 @@ func TestInformSchemaTableExtract(t *testing.T) {
 		colPredicates map[string]set.StringSet
 	}{
 		{
-			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_name='T';`,
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where lower(table_name)='T';`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name":   set.NewStringSet("t"),
+				"table_schema": set.NewStringSet(),
+			},
+		},
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where table_name=lower('T');`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name":   set.NewStringSet("t"),
+				"table_schema": set.NewStringSet(),
+			},
+		},
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where lower(table_name)=lower('T');`,
+			skipRequest: false,
+			colPredicates: map[string]set.StringSet{
+				"table_name":   set.NewStringSet("t"),
+				"table_schema": set.NewStringSet(),
+			},
+		},
+		{
+			sql:         `select * from INFORMATION_SCHEMA.TABLES where upper(table_name)=upper('T');`,
 			skipRequest: false,
 			colPredicates: map[string]set.StringSet{
 				"table_name":   set.NewStringSet("t"),
