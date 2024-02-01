@@ -37,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
@@ -68,7 +67,6 @@ func NewClonableExprNode(ctor func() ast.ExprNode, internal ast.ExprNode) *Clona
 
 // Clone makes a "copy" of internal ast.ExprNode by reconstructing it.
 func (n *ClonableExprNode) Clone() ast.ExprNode {
-	intest.AssertNotNil(n.ctor)
 	if n.ctor == nil {
 		return n.internal
 	}
