@@ -1180,7 +1180,7 @@ func TestReadAllDataLargeFiles(t *testing.T) {
 	intest.AssertNoError(err)
 	intest.Assert(len(dataFiles) == 2)
 
-	// choose thw two key so that
+	// choose the two keys so that expected concurrency is 579 and 19
 	startKey, err := hex.DecodeString("00000001000000000000")
 	intest.AssertNoError(err)
 	endKey, err := hex.DecodeString("00a00000000000000000")

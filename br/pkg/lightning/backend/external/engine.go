@@ -223,7 +223,9 @@ func getFilesReadConcurrency(
 	startOffs, endOffs := offsets[0], offsets[1]
 	for i := range statsFiles {
 		result[i] = (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
-		result[i] = max(result[i], 1)
+		// let the stat internals cover the [startKey, endKey) since seekPropsOffsets
+		// always return an offset that is less than or equal to the key.
+		result[i] += 1
 		if result[i] > 1 {
 			logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
 				zap.String("filename", statsFiles[i]),

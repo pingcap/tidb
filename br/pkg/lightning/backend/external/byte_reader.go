@@ -31,7 +31,6 @@ var (
 	// concurrency.
 	ConcurrentReaderBufferSizePerConc = int(2 * size.MB)
 	readAllDataConcThreshold          = uint64(16)
-	readAllDataConcThreshold2         = uint64(512)
 )
 
 // byteReader provides structured reading on a byte stream of external storage.
