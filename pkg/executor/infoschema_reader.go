@@ -542,25 +542,18 @@ func fetchColumnsFromStatsCache(table *model.TableInfo) (rowCount uint64, avgRow
 	return
 }
 
-func (e *memtableRetriever) updateStatsCacheIfNeed(sctx sessionctx.Context) (bool, error) {
+func (e *memtableRetriever) updateStatsCacheIfNeed(sctx sessionctx.Context) bool {
 	for _, col := range e.columns {
 		// only the following columns need stats cahce.
 		if col.Name.O == "AVG_ROW_LENGTH" || col.Name.O == "DATA_LENGTH" || col.Name.O == "INDEX_LENGTH" || col.Name.O == "TABLE_ROWS" {
-			err := cache.TableRowStatsCache.Update(sctx)
-			if err != nil {
-				return false, err
-			}
-			return true, err
+			return true
 		}
 	}
-	return false, nil
+	return false
 }
 
 func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas []*model.DBInfo) error {
-	useStatsCache, err := e.updateStatsCacheIfNeed(sctx)
-	if err != nil {
-		return err
-	}
+	useStatsCache := e.updateStatsCacheIfNeed(sctx)
 	checker := privilege.GetPrivilegeManager(sctx)
 
 	var rows [][]types.Datum
@@ -626,6 +619,11 @@ func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas [
 
 				var rowCount, avgRowLength, dataLength, indexLength uint64
 				if useStatsCache {
+					logutil.BgLogger().Info("ywq test update by id", zap.Any("table id", table.ID), zap.Any("name", table.Name.L))
+					err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
+					if err != nil {
+						return err
+					}
 					rowCount, avgRowLength, dataLength, indexLength = fetchColumnsFromStatsCache(table)
 				}
 
