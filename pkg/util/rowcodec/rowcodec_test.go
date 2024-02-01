@@ -1177,15 +1177,11 @@ func TestRowChecksum(t *testing.T) {
 		{"unordered", []rowcodec.ColData{col3, col1, col4, col2}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			row := rowcodec.RowData{
-				tt.cols,
-				buf,
-				time.Local,
-			}
+			row := rowcodec.RowData{tt.cols, buf}
 			if !sort.IsSorted(row) {
 				sort.Sort(row)
 			}
-			checksum, err := row.Checksum()
+			checksum, err := row.Checksum(time.Local)
 			require.NoError(t, err)
 			raw, err := row.Encode(time.Local)
 			require.NoError(t, err)
