@@ -41,7 +41,6 @@ type InfoSchema interface {
 	TableByName(schema, table model.CIStr) (table.Table, error)
 	TableExists(schema, table model.CIStr) bool
 	SchemaByID(id int64) (*model.DBInfo, bool)
-	SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool)
 	PolicyByName(name model.CIStr) (*model.PolicyInfo, bool)
 	ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool)
 	TableByID(id int64) (table.Table, bool)
@@ -265,18 +264,11 @@ func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
 	return nil, false
 }
 
-func (is *infoSchema) SchemaByTable(tableInfo *model.TableInfo) (val *model.DBInfo, ok bool) {
+func SchemaByTable(is InfoSchema, tableInfo *model.TableInfo) (val *model.DBInfo, ok bool) {
 	if tableInfo == nil {
 		return nil, false
 	}
-	for _, v := range is.schemaMap {
-		if tbl, ok := v.tables[tableInfo.Name.L]; ok {
-			if tbl.Meta().ID == tableInfo.ID {
-				return v.dbInfo, true
-			}
-		}
-	}
-	return nil, false
+	return is.SchemaByID(tableInfo.DBID)
 }
 
 func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
@@ -734,7 +726,7 @@ func (ts *SessionExtendedInfoSchema) SchemaByTable(tableInfo *model.TableInfo) (
 		}
 	}
 
-	return ts.InfoSchema.SchemaByTable(tableInfo)
+	return SchemaByTable(ts.InfoSchema, tableInfo)
 }
 
 // UpdateTableInfo implements InfoSchema.SchemaByTable.

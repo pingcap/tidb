@@ -546,7 +546,7 @@ func (p *preprocessor) checkBindGrammar(originNode, hintedNode ast.StmtNode, def
 			return
 		}
 		tableInfo := tbl.Meta()
-		dbInfo, _ := p.ensureInfoSchema().SchemaByTable(tableInfo)
+		dbInfo, _ := infoschema.SchemaByTable(p.ensureInfoSchema(), tableInfo)
 		tn.TableInfo = tableInfo
 		tn.DBInfo = dbInfo
 	}
@@ -1575,7 +1575,7 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 	}
 
 	tableInfo := table.Meta()
-	dbInfo, _ := p.ensureInfoSchema().SchemaByTable(tableInfo)
+	dbInfo, _ := infoschema.SchemaByTable(p.ensureInfoSchema(), tableInfo)
 	// tableName should be checked as sequence object.
 	if p.flag&inSequenceFunction > 0 {
 		if !tableInfo.IsSequence() {
@@ -1891,7 +1891,7 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 			logutil.BgLogger().Error("InfoSchema is not SessionExtendedInfoSchema", zap.Stack("stack"))
 			return nil, errors.New("InfoSchema is not SessionExtendedInfoSchema")
 		}
-		db, _ := domainSchema.SchemaByTable(tbl.Meta())
+		db, _ := infoschema.SchemaByTable(domainSchema, tbl.Meta())
 		err = se.UpdateTableInfo(db, tbl)
 		if err != nil {
 			return nil, err

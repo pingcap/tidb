@@ -55,7 +55,7 @@ func (h *ddlHandlerImpl) onTruncatePartitions(t *util.DDLEvent) error {
 
 		if count != 0 {
 			is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-			globalTableSchema, ok := is.SchemaByTable(globalTableInfo)
+			globalTableSchema, ok := infoschema.SchemaByTable(is, globalTableInfo)
 			if !ok {
 				return errors.Errorf("schema not found for table %s", globalTableInfo.Name.O)
 			}
