@@ -658,4 +658,23 @@ show create table t;
 # _, err = tk.Exec("alter table t alter constraint haha enforced")
 # require.Errorf(t, err, "[table:3819]Check constraint 'haha' is violated.")
 
+# Related issue TiDB#47567, #47631 and #47632.
+# TestCheckConstraintIssue47567
+drop table if exists t;
+set @@global.tidb_enable_check_constraint = 1;
+CREATE TABLE `t` (`a` int(11) DEFAULT NULL);
+show create table t;
+insert t values(1);
+select * from t;
+-- error 3940
+alter table t ADD CONSTRAINT chk CHECK (a > 1) ENFORCED;
+-- error 3940
+alter table t ADD CONSTRAINT chk CHECK (a > 1) ENFORCED;
+alter table t ADD CONSTRAINT chk CHECK (a > 1) NOT ENFORCED;
+-- error 3940
+ALTER TABLE t ALTER CONSTRAINT chk ENFORCED;
+show create table t;
+alter table t drop CONSTRAINT chk;
+show create table t;
+
 set @@global.tidb_enable_check_constraint = 0;

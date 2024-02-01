@@ -144,13 +144,15 @@ func TestSubTaskTable(t *testing.T) {
 
 	subtask, err := sm.GetFirstSubtaskInStates(ctx, "tidb1", 1, proto.StepInit, proto.TaskStatePending)
 	require.NoError(t, err)
-	require.Equal(t, proto.TaskTypeExample, subtask.Type)
+	require.Equal(t, proto.StepInit, subtask.Step)
 	require.Equal(t, int64(1), subtask.TaskID)
+	require.Equal(t, proto.TaskTypeExample, subtask.Type)
 	require.Equal(t, proto.TaskStatePending, subtask.State)
 	require.Equal(t, "tidb1", subtask.SchedulerID)
 	require.Equal(t, []byte("test"), subtask.Meta)
 	require.Zero(t, subtask.StartTime)
 	require.Zero(t, subtask.UpdateTime)
+	require.Equal(t, "{}", subtask.Summary)
 
 	subtask2, err := sm.GetFirstSubtaskInStates(ctx, "tidb1", 1, proto.StepInit, proto.TaskStatePending, proto.TaskStateReverted)
 	require.NoError(t, err)
@@ -424,37 +426,32 @@ func TestDistFrameworkMeta(t *testing.T) {
 	defer pool.Close()
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "table_test")
-
 	require.NoError(t, sm.StartManager(ctx, ":4000", "background"))
 	require.NoError(t, sm.StartManager(ctx, ":4001", ""))
 	require.NoError(t, sm.StartManager(ctx, ":4002", ""))
-	require.NoError(t, sm.StartManager(ctx, ":4002", "background"))
+	require.NoError(t, sm.StartManager(ctx, ":4003", "background"))
+	require.NoError(t, sm.StartManager(ctx, ":4003", ""))
+	// :4003 won't change from "background" to "" since already have 4003 with ""
 
 	allNodes, err := sm.GetAllNodes(ctx)
 	require.NoError(t, err)
-	require.Equal(t, []string{":4000", ":4001", ":4002"}, allNodes)
+	require.Equal(t, []string{":4000", ":4001", ":4002", ":4003"}, allNodes)
 
 	nodes, err := sm.GetNodesByRole(ctx, "background")
 	require.NoError(t, err)
 	require.Equal(t, map[string]bool{
-		":4000": true,
-		":4002": true,
+		":4003": true,
 	}, nodes)
 
 	nodes, err = sm.GetNodesByRole(ctx, "")
 	require.NoError(t, err)
 	require.Equal(t, map[string]bool{
+		":4000": true,
 		":4001": true,
-	}, nodes)
-
-	require.NoError(t, sm.CleanUpMeta(ctx, []string{":4000"}))
-	nodes, err = sm.GetNodesByRole(ctx, "background")
-	require.NoError(t, err)
-	require.Equal(t, map[string]bool{
 		":4002": true,
 	}, nodes)
 
-	require.NoError(t, sm.CleanUpMeta(ctx, []string{":4002"}))
+	require.NoError(t, sm.CleanUpMeta(ctx, []string{":4003"}))
 	nodes, err = sm.GetNodesByRole(ctx, "background")
 	require.NoError(t, err)
 	require.Equal(t, map[string]bool{}, nodes)

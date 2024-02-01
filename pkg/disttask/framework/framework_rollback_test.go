@@ -54,8 +54,8 @@ func (dsp *rollbackDispatcherExt) OnNextSubtasksBatch(_ context.Context, _ dispa
 	return nil, nil
 }
 
-func (*rollbackDispatcherExt) OnErrStage(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task, _ []error) (meta []byte, err error) {
-	return []byte("rollbacktask1"), nil
+func (*rollbackDispatcherExt) OnDone(_ context.Context, _ dispatcher.TaskHandle, _ *proto.Task) error {
+	return nil
 }
 
 func (*rollbackDispatcherExt) GetEligibleInstances(_ context.Context, _ *proto.Task) ([]*infosync.ServerInfo, bool, error) {

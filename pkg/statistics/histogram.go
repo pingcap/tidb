@@ -34,12 +34,13 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
@@ -1180,6 +1181,9 @@ func newbucket4MergingForRecycle() *bucket4Merging {
 
 func releasebucket4MergingForRecycle(b *bucket4Merging) {
 	b.disjointNDV = 0
+	b.Repeat = 0
+	b.NDV = 0
+	b.Count = 0
 	bucket4MergingPool.Put(b)
 }
 
@@ -1259,7 +1263,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 	// illegal order.
 	if upperCompare < 0 {
 		err := errors.Errorf("illegal bucket order")
-		logutil.BgLogger().Warn("fail to mergeBucketNDV", zap.String("category", "stats"), zap.Error(err))
+		statslogutil.StatsLogger().Warn("fail to mergeBucketNDV", zap.Error(err))
 		return nil, err
 	}
 	//  ___right_|
@@ -1275,7 +1279,7 @@ func mergeBucketNDV(sc *stmtctx.StatementContext, left *bucket4Merging, right *b
 		// illegal order.
 		if lowerCompare < 0 {
 			err := errors.Errorf("illegal bucket order")
-			logutil.BgLogger().Warn("fail to mergeBucketNDV", zap.String("category", "stats"), zap.Error(err))
+			statslogutil.StatsLogger().Warn("fail to mergeBucketNDV", zap.Error(err))
 			return nil, err
 		}
 		// |___right___|
@@ -1367,6 +1371,9 @@ func mergePartitionBuckets(sc *stmtctx.StatementContext, buckets []*bucket4Mergi
 	right := buckets[len(buckets)-1].Clone()
 
 	totNDV := int64(0)
+	intest.Assert(res.Count == 0, "Count in the new bucket4Merging should be 0")
+	intest.Assert(res.Repeat == 0, "Repeat in the new bucket4Merging should be 0")
+	intest.Assert(res.NDV == 0, "NDV in the new bucket4Merging bucket4Merging should be 0")
 	for i := len(buckets) - 1; i >= 0; i-- {
 		totNDV += buckets[i].NDV
 		res.Count += buckets[i].Count
@@ -1469,7 +1476,7 @@ func MergePartitionHist2GlobalHist(sc *stmtctx.StatementContext, hists []*Histog
 	tail := 0
 	for i := range buckets {
 		if buckets[i].Count != 0 {
-			buckets[tail] = buckets[i]
+			buckets[tail], buckets[i] = buckets[i], buckets[tail]
 			tail++
 		}
 	}

@@ -31,7 +31,7 @@ import (
 
 func wrapAsSCtx(exec *mock.MockRestrictedSQLExecutor) sessionctx.Context {
 	sctx := mockctx.NewContext()
-	sctx.SetValue(mock.MockRestrictedSQLExecutorKey{}, exec)
+	sctx.SetValue(mock.RestrictedSQLExecutorKey{}, exec)
 	return sctx
 }
 
