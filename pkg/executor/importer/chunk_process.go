@@ -128,6 +128,9 @@ type encodedKVGroupBatch struct {
 }
 
 func (b *encodedKVGroupBatch) reset() {
+	if b.memBuf == nil {
+		return
+	}
 	// mimic kv.Pairs.Clear
 	b.memBuf.Recycle(b.bytesBuf)
 	b.bytesBuf = nil
@@ -162,7 +165,7 @@ func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
 	}
 
 	// the related buf is shared, so we only need to record any one of them.
-	if b.bytesBuf == nil {
+	if b.bytesBuf == nil && kvs.BytesBuf != nil {
 		b.bytesBuf = kvs.BytesBuf
 		b.memBuf = kvs.MemBuf
 	}
