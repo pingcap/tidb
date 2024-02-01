@@ -1053,7 +1053,6 @@ const (
 	ErrLoadDataInvalidURI                  = 8158
 	ErrLoadDataCantAccess                  = 8159
 	ErrLoadDataCantRead                    = 8160
-	ErrLoadDataPhysicalImportTableNotEmpty = 8161
 	ErrLoadDataWrongFormatConfig           = 8162
 	ErrUnknownOption                       = 8163
 	ErrInvalidOptionVal                    = 8164
