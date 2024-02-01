@@ -536,7 +536,7 @@ func TestStatusAPIWithTLS(t *testing.T) {
 	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	cli.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	go func() {
-		err := server.Run(ts.Domain)
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
