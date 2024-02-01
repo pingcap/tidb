@@ -183,11 +183,12 @@ func checksumTable(ctx context.Context, executor storage.SessionExecutor, taskMe
 			if err := setBackoffWeight(se, taskMeta, logger); err != nil {
 				logger.Warn("set tidb_backoff_weight failed", zap.Error(err))
 			}
-
-			distSQLScanConcurrency := se.GetSessionVars().DistSQLScanConcurrency()
-			se.GetSessionVars().SetDistSQLScanConcurrency(mathutil.Max(distSQLScanConcurrency/distSQLScanConcurrencyFactor, local.MinDistSQLScanConcurrency))
+			distSQLScanConcurrencyBak := se.GetSessionVars().DistSQLScanConcurrency()
+			newConcurrency := mathutil.Max(taskMeta.Plan.DistSQLScanConcurrency/distSQLScanConcurrencyFactor, local.MinDistSQLScanConcurrency)
+			se.GetSessionVars().SetDistSQLScanConcurrency(newConcurrency)
+			logger.Info("checksum with adjusted distsql scan concurrency", zap.Int("concurrency", newConcurrency))
 			defer func() {
-				se.GetSessionVars().SetDistSQLScanConcurrency(distSQLScanConcurrency)
+				se.GetSessionVars().SetDistSQLScanConcurrency(distSQLScanConcurrencyBak)
 			}()
 
 			// TODO: add resource group name
