@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -127,7 +128,7 @@ type LogicalJoin struct {
 	StraightJoin  bool
 
 	// hintInfo stores the join algorithm hint information specified by client.
-	hintInfo            *h.TableHintInfo
+	hintInfo            *h.PlanHints
 	preferJoinType      uint
 	preferJoinOrder     bool
 	leftPreferJoinType  uint
@@ -728,7 +729,7 @@ func (p *LogicalExpand) resolveGroupingFuncArgsInGroupBy(groupingFuncArgs []expr
 				}
 			}
 			if !find {
-				return nil, ErrFieldInGroupingNotGroupBy.GenWithStackByArgs(fmt.Sprintf("#%d", argIdx))
+				return nil, plannererrors.ErrFieldInGroupingNotGroupBy.GenWithStackByArgs(fmt.Sprintf("#%d", argIdx))
 			}
 		}
 	}
@@ -916,8 +917,9 @@ type LogicalAggregation struct {
 	AggFuncs     []*aggregation.AggFuncDesc
 	GroupByItems []expression.Expression
 
-	// aggHints stores aggregation hint information.
-	aggHints h.AggHintInfo
+	// PreferAggType And PreferAggToCop stores aggregation hint information.
+	PreferAggType  uint
+	PreferAggToCop bool
 
 	possibleProperties [][]*expression.Column
 	inputCount         float64 // inputCount is the input count of this plan.
@@ -1077,7 +1079,8 @@ func (la *LogicalAggregation) CopyAggHints(agg *LogicalAggregation) {
 	// `HaveThrownWarningMessage` to avoid this. Besides, finalAgg and
 	// partialAgg (in cascades planner) should share the same hint, instead
 	// of a copy.
-	la.aggHints = agg.aggHints
+	la.PreferAggType = agg.PreferAggType
+	la.PreferAggToCop = agg.PreferAggToCop
 }
 
 // IsPartialModeAgg returns if all of the AggFuncs are partialMode.
@@ -1407,12 +1410,17 @@ type LogicalUnionScan struct {
 	handleCols HandleCols
 }
 
+// GetAllConds Exported for unit test.
+func (ds *DataSource) GetAllConds() []expression.Expression {
+	return ds.allConds
+}
+
 // DataSource represents a tableScan without condition push down.
 type DataSource struct {
 	logicalSchemaProducer
 
 	astIndexHints []*ast.IndexHint
-	IndexHints    []h.IndexHintInfo
+	IndexHints    []h.HintedIndex
 	table         table.Table
 	tableInfo     *model.TableInfo
 	Columns       []*model.ColumnInfo
@@ -1420,7 +1428,7 @@ type DataSource struct {
 
 	TableAsName *model.CIStr
 	// indexMergeHints are the hint for indexmerge.
-	indexMergeHints []h.IndexHintInfo
+	indexMergeHints []h.HintedIndex
 	// pushedDownConds are the conditions that will be pushed down to coprocessor.
 	pushedDownConds []expression.Expression
 	// allConds contains all the filters on this table. For now it's maintained
@@ -1912,10 +1920,10 @@ type LogicalTopN struct {
 
 	ByItems []*util.ByItems
 	// PartitionBy is used for extended TopN to consider K heaps. Used by rule_derive_topn_from_window
-	PartitionBy []property.SortItem // This is used for enhanced topN optimization
-	Offset      uint64
-	Count       uint64
-	limitHints  h.LimitHintInfo
+	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
+	Offset           uint64
+	Count            uint64
+	PreferLimitToCop bool
 }
 
 // GetPartitionBy returns partition by fields
@@ -1941,11 +1949,11 @@ func (lt *LogicalTopN) isLimit() bool {
 type LogicalLimit struct {
 	logicalSchemaProducer
 
-	PartitionBy []property.SortItem // This is used for enhanced topN optimization
-	Offset      uint64
-	Count       uint64
-	limitHints  h.LimitHintInfo
-	IsPartial   bool
+	PartitionBy      []property.SortItem // This is used for enhanced topN optimization
+	Offset           uint64
+	Count            uint64
+	PreferLimitToCop bool
+	IsPartial        bool
 }
 
 // GetPartitionBy returns partition by fields

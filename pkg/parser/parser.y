@@ -1003,6 +1003,7 @@ import (
 	CallStmt                   "CALL statement"
 	IndexAdviseStmt            "INDEX ADVISE statement"
 	ImportIntoStmt             "IMPORT INTO statement"
+	ImportFromSelectStmt       "SELECT statement of IMPORT INTO"
 	KillStmt                   "Kill statement"
 	LoadDataStmt               "Load data statement"
 	LoadStatsStmt              "Load statistic statement"
@@ -1546,6 +1547,7 @@ import (
 	EncryptionOpt     "Encryption option 'Y' or 'N'"
 	FirstOrNext       "FIRST or NEXT"
 	RowOrRows         "ROW or ROWS"
+	Replica           "{REPLICA | SLAVE}"
 
 %type	<ident>
 	Identifier                      "identifier or unreserved keyword"
@@ -8787,7 +8789,12 @@ TableName:
 	}
 |	Identifier '.' Identifier
 	{
-		$$ = &ast.TableName{Schema: model.NewCIStr($1), Name: model.NewCIStr($3)}
+		schema := $1
+		if isInCorrectIdentifierName(schema) {
+			yylex.AppendError(ErrWrongDBName.GenWithStackByArgs(schema))
+			return 1
+		}
+		$$ = &ast.TableName{Schema: model.NewCIStr(schema), Name: model.NewCIStr($3)}
 	}
 |	'*' '.' Identifier
 	{
@@ -11355,6 +11362,15 @@ ShowStmt:
 			Tp: ast.ShowBinlogStatus,
 		}
 	}
+|	"SHOW" Replica "STATUS"
+	// From MySQL 8.0.22, use SHOW REPLICA STATUS in place of SHOW SLAVE STATUS,
+	// which is deprecated from that release. In releases before MySQL 8.0.22,
+	// use SHOW SLAVE STATUS.
+	{
+		$$ = &ast.ShowStmt{
+			Tp: ast.ShowReplicaStatus,
+		}
+	}
 |	"SHOW" OptFull "PROCESSLIST"
 	{
 		$$ = &ast.ShowStmt{
@@ -11830,6 +11846,10 @@ ShowTableAliasOpt:
 		$$ = $2.(*ast.TableName)
 	}
 
+Replica:
+	"REPLICA"
+|	"SLAVE"
+
 FlushStmt:
 	"FLUSH" NoWriteToBinLogAliasOpt FlushOption
 	{
@@ -12126,6 +12146,7 @@ ExplainableStmt:
 		$$ = sel
 	}
 |	AlterTableStmt
+|	ImportIntoStmt
 
 StatementList:
 	Statement
@@ -14605,6 +14626,54 @@ ImportIntoStmt:
 			Format:             $8.(*string),
 			Options:            $9.([]*ast.LoadDataOpt),
 		}
+	}
+|	"IMPORT" "INTO" TableName ColumnNameOrUserVarListOptWithBrackets LoadDataSetSpecOpt "FROM" ImportFromSelectStmt LoadDataOptionListOpt
+	/* LoadDataSetSpecOpt is used to avoid shift/reduce conflict, we don't support it actually */
+	{
+		st := &ast.ImportIntoStmt{
+			Table:              $3.(*ast.TableName),
+			ColumnsAndUserVars: $4.([]*ast.ColumnNameOrUserVar),
+			Select:             $7.(ast.ResultSetNode),
+			Options:            $8.([]*ast.LoadDataOpt),
+		}
+		for _, cu := range st.ColumnsAndUserVars {
+			if cu.ColumnName == nil {
+				yylex.AppendError(yylex.Errorf("Cannot use user variable(%s) in IMPORT INTO FROM SELECT statement.", cu.UserVar.Name))
+				return 1
+			}
+		}
+		if $5.([]*ast.Assignment) != nil {
+			yylex.AppendError(yylex.Errorf("Cannot use SET clause in IMPORT INTO FROM SELECT statement."))
+			return 1
+		}
+		$$ = st
+	}
+
+ImportFromSelectStmt:
+	SelectStmt
+	{
+		$$ = $1
+	}
+|	SetOprStmt
+	{
+		$$ = $1
+	}
+|	SelectStmtWithClause
+	{
+		$$ = $1
+	}
+|	SubSelect
+	{
+		var sel ast.ResultSetNode
+		switch x := $1.(*ast.SubqueryExpr).Query.(type) {
+		case *ast.SelectStmt:
+			x.IsInBraces = true
+			sel = x
+		case *ast.SetOprStmt:
+			x.IsInBraces = true
+			sel = x
+		}
+		$$ = sel.(ast.StmtNode)
 	}
 
 /*********************************************************************

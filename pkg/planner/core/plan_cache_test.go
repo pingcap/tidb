@@ -286,7 +286,7 @@ func TestInvalidRange(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
-		[][]interface{}{{"TableDual_5"}}) // use TableDual directly instead of TableFullScan
+		[][]any{{"TableDual_5"}}) // use TableDual directly instead of TableFullScan
 
 	tk.MustExec("execute st using @l, @r")
 	tk.MustExec("execute st using @l, @r")
@@ -319,7 +319,7 @@ func TestIssue40093(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
-		[][]interface{}{
+		[][]any{
 			{"Projection_9"},
 			{"└─HashJoin_21"},
 			{"  ├─IndexReader_26(Build)"},
@@ -351,7 +351,7 @@ func TestIssue38205(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
-		[][]interface{}{
+		[][]any{
 			{"IndexJoin_10"},
 			{"├─TableReader_19(Build)"},
 			{"│ └─Selection_18"},
@@ -385,6 +385,25 @@ func TestIssue49736(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
+func TestIssue49736Partition(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int) partition by hash(a) partitions 4")
+	tk.MustExec(`analyze table t`)
+	tk.MustExec(`prepare st from 'select * from t where a=?'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable"))
+
+	tk.MustExec(`set @@tidb_opt_fix_control = "49736:ON"`)
+	tk.MustExec(`prepare st from 'select * from t where a=?'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 force plan-cache: may use risky cached plan: query accesses partitioned tables is un-cacheable"))
+	tk.MustExec(`set @a=1`)
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows())
+	tk.MustExec(`execute st using @a`)
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+}
+
 func TestIssue40224(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -399,7 +418,7 @@ func TestIssue40224(t *testing.T) {
 	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
-		[][]interface{}{
+		[][]any{
 			{"IndexReader_6"},
 			{"└─IndexRangeScan_5"}, // range scan not full scan
 		})
@@ -411,7 +430,7 @@ func TestIssue40224(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // cacheable for INT
 	tk.MustExec("execute st using @a, @b")
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckAt([]int{0},
-		[][]interface{}{
+		[][]any{
 			{"IndexReader_6"},
 			{"└─IndexRangeScan_5"}, // range scan not full scan
 		})
@@ -1252,6 +1271,21 @@ func TestBuiltinFuncFlen(t *testing.T) {
 			r1.Sort().Check(r2.Sort().Rows())
 		}
 	}
+}
+
+func TestWarningWithDisablePlanCacheStmt(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int) partition by hash(a) partitions 4;")
+	tk.MustExec("analyze table t;")
+	tk.MustExec("prepare st from 'select * from t';")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable"))
+	tk.MustExec("execute st;")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable"))
+	tk.MustExec("execute st;")
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: query accesses partitioned tables is un-cacheable"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 }
 
 func BenchmarkPlanCacheBindingMatch(b *testing.B) {

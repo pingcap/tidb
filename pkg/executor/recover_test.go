@@ -555,7 +555,7 @@ func TestFlashbackSchema(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
 	}()
 
-	store := testkit.CreateMockStore(t)
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_flashback")

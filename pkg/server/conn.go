@@ -1260,7 +1260,7 @@ func (cc *clientConn) dispatch(ctx context.Context, data []byte) error {
 	cfg := config.GetGlobalConfig()
 	if cfg.OpenTracing.Enable {
 		var r tracing.Region
-		r, ctx = tracing.StartRegionEx(ctx, "server.dispatch")
+		r, ctx = tracing.StartRegionWithNewRootSpan(ctx, "server.dispatch")
 		defer r.End()
 	}
 
@@ -1848,8 +1848,8 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		var tableID int64
 		switch v := p.(type) {
 		case *plannercore.PointGetPlan:
-			if v.PartitionInfo != nil {
-				tableID = v.PartitionInfo.ID
+			if v.PartitionDef != nil {
+				tableID = v.PartitionDef.ID
 			} else {
 				tableID = v.TblInfo.ID
 			}
@@ -1865,12 +1865,12 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 				rowKeys = append(rowKeys, tablecodec.EncodeRowKeyWithHandle(tableID, v.Handle))
 			}
 		case *plannercore.BatchPointGetPlan:
-			if v.PartitionInfos != nil && len(v.PartitionIDs) == 0 {
+			if v.PartitionDefs != nil && len(v.PartitionIDs) == 0 {
 				// skip when PartitionIDs is not initialized.
 				return nil
 			}
 			getPhysID := func(i int) int64 {
-				if v.PartitionInfos == nil {
+				if v.PartitionDefs == nil {
 					return v.TblInfo.ID
 				}
 				return v.PartitionIDs[i]
@@ -2676,8 +2676,8 @@ func (cc *clientConn) Flush(ctx context.Context) error {
 type compressionStats struct{}
 
 // Stats returns the connection statistics.
-func (*compressionStats) Stats(vars *variable.SessionVars) (map[string]interface{}, error) {
-	m := make(map[string]interface{}, 3)
+func (*compressionStats) Stats(vars *variable.SessionVars) (map[string]any, error) {
+	m := make(map[string]any, 3)
 
 	switch vars.CompressionAlgorithm {
 	case mysql.CompressionNone:

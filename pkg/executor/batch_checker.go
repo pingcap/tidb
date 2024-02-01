@@ -100,8 +100,11 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	if p, ok := t.(table.PartitionedTable); ok {
 		t, err = p.GetPartitionByRow(ctx, row)
 		if err != nil {
-			if terr, ok := errors.Cause(err).(*terror.Error); ctx.GetSessionVars().StmtCtx.IgnoreNoPartition && ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
-				ctx.GetSessionVars().StmtCtx.AppendWarning(err)
+			if terr, ok := errors.Cause(err).(*terror.Error); ok && (terr.Code() == errno.ErrNoPartitionForGivenValue || terr.Code() == errno.ErrRowDoesNotMatchGivenPartitionSet) {
+				ec := ctx.GetSessionVars().StmtCtx.ErrCtx()
+				if err = ec.HandleError(terr); err != nil {
+					return nil, err
+				}
 				result = append(result, toBeCheckedRow{ignored: true})
 				return result, nil
 			}
@@ -190,7 +193,8 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		}
 		// Pass handle = 0 to GenIndexKey,
 		// due to we only care about distinct key.
-		iter := v.GenIndexKVIter(ctx.GetSessionVars().StmtCtx, colVals, kv.IntHandle(0), nil)
+		sc := ctx.GetSessionVars().StmtCtx
+		iter := v.GenIndexKVIter(sc.ErrCtx(), sc.TimeZone(), colVals, kv.IntHandle(0), nil)
 		for iter.Valid() {
 			key, _, distinct, err1 := iter.Next(nil, nil)
 			if err1 != nil {

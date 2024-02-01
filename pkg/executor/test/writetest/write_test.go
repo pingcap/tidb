@@ -238,7 +238,7 @@ func TestIssue18681(t *testing.T) {
 	deleteSQL := "delete from load_data_test"
 	selectSQL := "select bin(a), bin(b), bin(c), bin(d) from load_data_test;"
 	levels := ctx.GetSessionVars().StmtCtx.ErrLevels()
-	ctx.GetSessionVars().StmtCtx.DupKeyAsWarning = true
+	levels[errctx.ErrGroupDupKey] = errctx.LevelWarn
 	levels[errctx.ErrGroupBadNull] = errctx.LevelWarn
 
 	sc := ctx.GetSessionVars().StmtCtx
@@ -325,11 +325,6 @@ func TestLatch(t *testing.T) {
 	tk1.MustExec("update t set id = id + 1")
 	tk2.MustExec("update t set id = id + 1")
 	tk1.MustGetDBError("commit", kv.ErrWriteConflictInTiDB)
-
-	tk1.MustExec("set @@tidb_disable_txn_auto_retry = 0")
-	tk1.MustExec("update t set id = id + 1")
-	tk2.MustExec("update t set id = id + 1")
-	tk1.MustExec("commit")
 }
 
 func TestReplaceLog(t *testing.T) {

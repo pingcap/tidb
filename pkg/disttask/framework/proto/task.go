@@ -20,42 +20,37 @@ import (
 
 // task state machine
 //
-//		                            ┌────────┐
-//		                ┌───────────│resuming│◄────────┐
-//		                │           └────────┘         │
-//		┌──────┐        │           ┌───────┐       ┌──┴───┐
-//		│failed│        │ ┌────────►│pausing├──────►│paused│
-//		└──────┘        │ │         └───────┘       └──────┘
-//		   ▲            ▼ │
-//		┌──┴────┐     ┌───┴───┐     ┌────────┐
-//		│pending├────►│running├────►│succeed │
-//		└──┬────┘     └──┬┬───┘     └────────┘
-//		   │             ││         ┌─────────┐     ┌────────┐
-//		   │             │└────────►│reverting├────►│reverted│
-//		   │             ▼          └────┬────┘     └────────┘
-//		   │          ┌──────────┐    ▲  │          ┌─────────────┐
-//		   └─────────►│cancelling├────┘  └─────────►│revert_failed│
-//		              └──────────┘                  └─────────────┘
-//	 1. succeed:		pending -> running -> succeed
-//	 2. failed:			pending -> running -> reverting -> reverted/revert_failed, pending -> failed
-//	 3. canceled:		pending -> running -> cancelling -> reverting -> reverted/revert_failed
-//	 3. pause/resume:	pending -> running -> pausing -> paused -> running
+// Note: if a task fails during running, it will end with `reverted` state.
+// The `failed` state is used to mean the framework cannot run the task, such as
+// invalid task type, scheduler init error(fatal), etc.
 //
-// TODO: we don't have revert_failed task for now.
+//	                            ┌────────┐
+//	                ┌───────────│resuming│◄────────┐
+//	                │           └────────┘         │
+//	┌──────┐        │           ┌───────┐       ┌──┴───┐
+//	│failed│        │ ┌────────►│pausing├──────►│paused│
+//	└──────┘        │ │         └───────┘       └──────┘
+//	   ▲            ▼ │
+//	┌──┴────┐     ┌───┴───┐     ┌────────┐
+//	│pending├────►│running├────►│succeed │
+//	└──┬────┘     └──┬┬───┘     └────────┘
+//	   │             ││         ┌─────────┐     ┌────────┐
+//	   │             │└────────►│reverting├────►│reverted│
+//	   │             ▼          └─────────┘     └────────┘
+//	   │          ┌──────────┐    ▲
+//	   └─────────►│cancelling├────┘
+//	              └──────────┘
 const (
-	TaskStatePending       TaskState = "pending"
-	TaskStateRunning       TaskState = "running"
-	TaskStateSucceed       TaskState = "succeed"
-	TaskStateReverting     TaskState = "reverting"
-	TaskStateFailed        TaskState = "failed"
-	TaskStateRevertFailed  TaskState = "revert_failed"
-	TaskStateCancelling    TaskState = "cancelling"
-	TaskStateCanceled      TaskState = "canceled"
-	TaskStatePausing       TaskState = "pausing"
-	TaskStatePaused        TaskState = "paused"
-	TaskStateResuming      TaskState = "resuming"
-	TaskStateRevertPending TaskState = "revert_pending"
-	TaskStateReverted      TaskState = "reverted"
+	TaskStatePending    TaskState = "pending"
+	TaskStateRunning    TaskState = "running"
+	TaskStateSucceed    TaskState = "succeed"
+	TaskStateFailed     TaskState = "failed"
+	TaskStateReverting  TaskState = "reverting"
+	TaskStateReverted   TaskState = "reverted"
+	TaskStateCancelling TaskState = "cancelling"
+	TaskStatePausing    TaskState = "pausing"
+	TaskStatePaused     TaskState = "paused"
+	TaskStateResuming   TaskState = "resuming"
 )
 
 type (
@@ -63,8 +58,6 @@ type (
 	TaskState string
 	// TaskType is the type of task.
 	TaskType string
-	// Step is the step of task.
-	Step int64
 )
 
 func (t TaskType) String() string {
@@ -74,17 +67,6 @@ func (t TaskType) String() string {
 func (s TaskState) String() string {
 	return string(s)
 }
-
-// TaskStep is the step of task.
-// DO NOT change the value of the constants, will break backward compatibility.
-// successfully task MUST go from StepInit to business steps, then StepDone.
-const (
-	StepInit  Step = -1
-	StepDone  Step = -2
-	StepOne   Step = 1
-	StepTwo   Step = 2
-	StepThree Step = 3
-)
 
 const (
 	// TaskIDLabelName is the label name of task id.
@@ -147,37 +129,4 @@ func (t *Task) Compare(other *Task) int {
 		return 1
 	}
 	return int(t.ID - other.ID)
-}
-
-const (
-	// TaskTypeExample is TaskType of Example.
-	TaskTypeExample TaskType = "Example"
-	// ImportInto is TaskType of ImportInto.
-	ImportInto TaskType = "ImportInto"
-	// Backfill is TaskType of add index Backfilling process.
-	Backfill TaskType = "backfill"
-)
-
-// Type2Int converts task type to int.
-func Type2Int(t TaskType) int {
-	switch t {
-	case TaskTypeExample:
-		return 1
-	case ImportInto:
-		return 2
-	default:
-		return 0
-	}
-}
-
-// Int2Type converts int to task type.
-func Int2Type(i int) TaskType {
-	switch i {
-	case 1:
-		return TaskTypeExample
-	case 2:
-		return ImportInto
-	default:
-		return ""
-	}
 }

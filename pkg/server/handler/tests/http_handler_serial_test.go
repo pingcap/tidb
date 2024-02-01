@@ -641,7 +641,7 @@ func TestTTL(t *testing.T) {
 		require.Fail(t, "timeout for waiting job finished")
 	}
 
-	doTrigger := func(db, tb string) (map[string]interface{}, error) {
+	doTrigger := func(db, tb string) (map[string]any, error) {
 		resp, err := ts.PostStatus(fmt.Sprintf("/test/ttl/trigger/%s/%s", db, tb), "application/json", nil)
 		if err != nil {
 			return nil, err
@@ -658,7 +658,7 @@ func TestTTL(t *testing.T) {
 			return nil, errors.Errorf("http status: %s, %s", resp.Status, body)
 		}
 
-		var obj map[string]interface{}
+		var obj map[string]any
 		require.NoError(t, json.Unmarshal(body, &obj))
 		return obj, nil
 	}

@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/disttask/framework/proto",
+        "//pkg/disttask/framework/taskexecutor/execute",
         "@org_uber_go_mock//gomock",
     ],
 )

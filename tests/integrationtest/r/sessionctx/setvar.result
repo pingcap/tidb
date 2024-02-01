@@ -1597,6 +1597,26 @@ set @@tidb_opt_ordering_index_selectivity_threshold=default;
 select @@tidb_opt_ordering_index_selectivity_threshold;
 @@tidb_opt_ordering_index_selectivity_threshold
 0
+select /*+ set_var(tidb_opt_ordering_index_selectivity_ratio=-1) */ @@tidb_opt_ordering_index_selectivity_ratio;
+@@tidb_opt_ordering_index_selectivity_ratio
+-1
+select @@tidb_opt_ordering_index_selectivity_ratio;
+@@tidb_opt_ordering_index_selectivity_ratio
+-1
+set @@tidb_opt_ordering_index_selectivity_ratio=default;
+select @@tidb_opt_ordering_index_selectivity_ratio;
+@@tidb_opt_ordering_index_selectivity_ratio
+-1
+select /*+ set_var(tidb_opt_ordering_index_selectivity_ratio=1) */ @@tidb_opt_ordering_index_selectivity_ratio;
+@@tidb_opt_ordering_index_selectivity_ratio
+1
+select @@tidb_opt_ordering_index_selectivity_ratio;
+@@tidb_opt_ordering_index_selectivity_ratio
+-1
+set @@tidb_opt_ordering_index_selectivity_ratio=default;
+select @@tidb_opt_ordering_index_selectivity_ratio;
+@@tidb_opt_ordering_index_selectivity_ratio
+-1
 select /*+ set_var(tidb_opt_enable_mpp_shared_cte_execution=0) */ @@tidb_opt_enable_mpp_shared_cte_execution;
 @@tidb_opt_enable_mpp_shared_cte_execution
 0
@@ -1630,6 +1650,36 @@ select /*+ set_var(max_execution_time=100) */ @@max_execution_time;
 select @@max_execution_time;
 @@max_execution_time
 1000
+select @@tidb_max_chunk_size;
+@@tidb_max_chunk_size
+32
+select /*+ set_var(tidb_max_chunk_size=32) */ @@tidb_max_chunk_size;
+@@tidb_max_chunk_size
+32
+select @@tidb_max_chunk_size;
+@@tidb_max_chunk_size
+32
+select @@tidb_init_chunk_size;
+@@tidb_init_chunk_size
+1
+select /*+ set_var(tidb_init_chunk_size=3) */ @@tidb_init_chunk_size;
+@@tidb_init_chunk_size
+3
+select @@tidb_init_chunk_size;
+@@tidb_init_chunk_size
+1
+select /*+ set_var(tidb_opt_use_invisible_indexes=on) */ @@tidb_opt_use_invisible_indexes;
+@@tidb_opt_use_invisible_indexes
+1
+select @@tidb_opt_use_invisible_indexes;
+@@tidb_opt_use_invisible_indexes
+0
+select /*+ set_var(tidb_opt_use_invisible_indexes=off) */ @@tidb_opt_use_invisible_indexes;
+@@tidb_opt_use_invisible_indexes
+0
+select @@tidb_opt_use_invisible_indexes;
+@@tidb_opt_use_invisible_indexes
+0
 set @@global.max_execution_time=1000;
 select @@max_execution_time;
 @@max_execution_time

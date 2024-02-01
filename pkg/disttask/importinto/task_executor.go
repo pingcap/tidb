@@ -46,7 +46,7 @@ import (
 )
 
 // importStepExecutor is a executor for import step.
-// SubtaskExecutor is equivalent to a Lightning instance.
+// StepExecutor is equivalent to a Lightning instance.
 type importStepExecutor struct {
 	taskID        int64
 	taskMeta      *TaskMeta
@@ -180,6 +180,10 @@ outer:
 	return pipeline.Close()
 }
 
+func (*importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+	return nil
+}
+
 func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
 	var subtaskMeta ImportStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
@@ -251,14 +255,8 @@ func (s *importStepExecutor) Cleanup(_ context.Context) (err error) {
 	return s.tableImporter.Close()
 }
 
-func (s *importStepExecutor) Rollback(context.Context) error {
-	// TODO: add rollback
-	s.logger.Info("rollback")
-	return nil
-}
-
 type mergeSortStepExecutor struct {
-	taskexecutor.EmptySubtaskExecutor
+	taskexecutor.EmptyStepExecutor
 	taskID     int64
 	taskMeta   *TaskMeta
 	logger     *zap.Logger
@@ -269,7 +267,7 @@ type mergeSortStepExecutor struct {
 	partSize            int64
 }
 
-var _ execute.SubtaskExecutor = &mergeSortStepExecutor{}
+var _ execute.StepExecutor = &mergeSortStepExecutor{}
 
 func (m *mergeSortStepExecutor) Init(ctx context.Context) error {
 	controller, err := buildController(&m.taskMeta.Plan, m.taskMeta.Stmt)
@@ -323,7 +321,7 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		1*size.MB,
 		8*1024,
 		onClose,
-		int(m.taskMeta.Plan.ThreadCnt),
+		m.taskMeta.Plan.ThreadCnt,
 		false)
 }
 
@@ -349,7 +347,7 @@ type writeAndIngestStepExecutor struct {
 	tableImporter *importer.TableImporter
 }
 
-var _ execute.SubtaskExecutor = &writeAndIngestStepExecutor{}
+var _ execute.StepExecutor = &writeAndIngestStepExecutor{}
 
 func (e *writeAndIngestStepExecutor) Init(ctx context.Context) error {
 	tableImporter, err := getTableImporter(ctx, e.taskID, e.taskMeta)
@@ -396,7 +394,11 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	return localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 }
 
-func (e *writeAndIngestStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
+func (*writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+	return nil
+}
+
+func (e *writeAndIngestStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
 	var subtaskMeta WriteIngestStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
@@ -410,6 +412,10 @@ func (e *writeAndIngestStepExecutor) OnFinished(_ context.Context, subtask *prot
 	localBackend := e.tableImporter.Backend()
 	_, kvCount := localBackend.GetExternalEngineKVStatistics(engineUUID)
 	subtaskMeta.Result.LoadedRowCnt = uint64(kvCount)
+	err := localBackend.CleanupEngine(ctx, engineUUID)
+	if err != nil {
+		e.logger.Warn("failed to cleanup engine", zap.Error(err))
+	}
 
 	newMeta, err := json.Marshal(subtaskMeta)
 	if err != nil {
@@ -424,23 +430,18 @@ func (e *writeAndIngestStepExecutor) Cleanup(_ context.Context) (err error) {
 	return e.tableImporter.Close()
 }
 
-func (e *writeAndIngestStepExecutor) Rollback(context.Context) error {
-	e.logger.Info("rollback")
-	return nil
-}
-
 type postProcessStepExecutor struct {
-	taskexecutor.EmptySubtaskExecutor
+	taskexecutor.EmptyStepExecutor
 	taskID   int64
 	taskMeta *TaskMeta
 	logger   *zap.Logger
 }
 
-var _ execute.SubtaskExecutor = &postProcessStepExecutor{}
+var _ execute.StepExecutor = &postProcessStepExecutor{}
 
 // NewPostProcessStepExecutor creates a new post process step executor.
 // exported for testing.
-func NewPostProcessStepExecutor(taskID int64, taskMeta *TaskMeta, logger *zap.Logger) execute.SubtaskExecutor {
+func NewPostProcessStepExecutor(taskID int64, taskMeta *TaskMeta, logger *zap.Logger) execute.StepExecutor {
 	return &postProcessStepExecutor{
 		taskID:   taskID,
 		taskMeta: taskMeta,
@@ -469,18 +470,13 @@ type importExecutor struct {
 }
 
 func newImportExecutor(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
+	metrics := metricsManager.getOrCreateMetrics(task.ID)
+	subCtx := metric.WithCommonMetric(ctx, metrics)
 	s := &importExecutor{
-		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, id, task.ID, taskTable),
+		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(subCtx, id, task, taskTable),
 	}
 	s.BaseTaskExecutor.Extension = s
 	return s
-}
-
-func (s *importExecutor) Run(ctx context.Context, task *proto.Task) error {
-	metrics := metricsManager.getOrCreateMetrics(task.ID)
-	defer metricsManager.unregister(task.ID)
-	subCtx := metric.WithCommonMetric(ctx, metrics)
-	return s.BaseTaskExecutor.Run(subCtx, task)
 }
 
 func (*importExecutor) IsIdempotent(*proto.Subtask) bool {
@@ -493,7 +489,7 @@ func (*importExecutor) IsRetryableError(err error) bool {
 	return common.IsRetryableError(err)
 }
 
-func (*importExecutor) GetSubtaskExecutor(_ context.Context, task *proto.Task, _ *execute.Summary) (execute.SubtaskExecutor, error) {
+func (*importExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource) (execute.StepExecutor, error) {
 	taskMeta := TaskMeta{}
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
@@ -501,34 +497,39 @@ func (*importExecutor) GetSubtaskExecutor(_ context.Context, task *proto.Task, _
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", proto.ImportInto),
 		zap.Int64("task-id", task.ID),
-		zap.String("step", stepStr(task.Step)),
+		zap.String("step", proto.Step2Str(task.Type, task.Step)),
 	)
-	logger.Info("create step executor")
 
 	switch task.Step {
-	case StepImport, StepEncodeAndSort:
+	case proto.ImportStepImport, proto.ImportStepEncodeAndSort:
 		return &importStepExecutor{
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
 		}, nil
-	case StepMergeSort:
+	case proto.ImportStepMergeSort:
 		return &mergeSortStepExecutor{
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
 		}, nil
-	case StepWriteAndIngest:
+	case proto.ImportStepWriteAndIngest:
 		return &writeAndIngestStepExecutor{
 			taskID:   task.ID,
 			taskMeta: &taskMeta,
 			logger:   logger,
 		}, nil
-	case StepPostProcess:
+	case proto.ImportStepPostProcess:
 		return NewPostProcessStepExecutor(task.ID, &taskMeta, logger), nil
 	default:
 		return nil, errors.Errorf("unknown step %d for import task %d", task.Step, task.ID)
 	}
+}
+
+func (e *importExecutor) Close() {
+	task := e.GetTask()
+	metricsManager.unregister(task.ID)
+	e.BaseTaskExecutor.Close()
 }
 
 func init() {

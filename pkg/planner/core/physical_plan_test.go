@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -213,7 +214,7 @@ func TestIndexLookupCartesianJoin(t *testing.T) {
 
 	warnings := tk.Session().GetSessionVars().StmtCtx.GetWarnings()
 	lastWarn := warnings[len(warnings)-1]
-	err = core.ErrInternal.GenWithStack("TIDB_INLJ hint is inapplicable without column equal ON condition")
+	err = plannererrors.ErrInternal.GenWithStack("TIDB_INLJ hint is inapplicable without column equal ON condition")
 	require.True(t, terror.ErrorEqual(err, lastWarn.Err))
 }
 

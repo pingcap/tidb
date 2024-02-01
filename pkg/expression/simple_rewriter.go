@@ -24,11 +24,12 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 // ParseSimpleExprWithTableInfo parses simple expression string to Expression.
 // The expression string must only reference the column in table Info.
-func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableInfo *model.TableInfo) (Expression, error) {
+func ParseSimpleExprWithTableInfo(ctx BuildContext, exprStr string, tableInfo *model.TableInfo) (Expression, error) {
 	if len(exprStr) == 0 {
 		return nil, nil
 	}
@@ -36,9 +37,7 @@ func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableI
 	var stmts []ast.StmtNode
 	var err error
 	var warns []error
-	if p, ok := ctx.(interface {
-		ParseSQL(context.Context, string, ...parser.ParseParam) ([]ast.StmtNode, []error, error)
-	}); ok {
+	if p, ok := ctx.(sqlexec.SQLParser); ok {
 		stmts, warns, err = p.ParseSQL(context.Background(), exprStr)
 	} else {
 		stmts, warns, err = parser.New().ParseSQL(exprStr)
@@ -51,7 +50,7 @@ func ParseSimpleExprWithTableInfo(ctx sessionctx.Context, exprStr string, tableI
 		return nil, errors.Trace(err)
 	}
 	expr := stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr
-	return RewriteSimpleExprWithTableInfo(ctx, tableInfo, expr, false)
+	return BuildExprWithAst(ctx, expr, WithSourceTable(tableInfo))
 }
 
 // ParseSimpleExprCastWithTableInfo parses simple expression string to Expression.

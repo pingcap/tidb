@@ -269,7 +269,7 @@ func TestNewFullTableBundles(t *testing.T) {
 	}))
 }
 
-func (s *metaBundleSuite) checkTwoJSONObjectEquals(t *testing.T, expected interface{}, got interface{}) {
+func (s *metaBundleSuite) checkTwoJSONObjectEquals(t *testing.T, expected any, got any) {
 	expectedJSON, err := json.Marshal(expected)
 	require.NoError(t, err)
 	expectedStr := string(expectedJSON)

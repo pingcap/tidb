@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -459,15 +458,23 @@ func TestGetDefaultValue(t *testing.T) {
 	}
 
 	exp := expression.EvalAstExpr
-	expression.EvalAstExpr = func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error) {
+	expression.EvalAstExpr = func(sctx expression.BuildContext, expr ast.ExprNode) (types.Datum, error) {
 		return types.NewIntDatum(1), nil
 	}
 	defer func() {
 		expression.EvalAstExpr = exp
 	}()
 
+	defaultMode, err := mysql.GetSQLMode(mysql.DefaultSQLMode)
+	require.NoError(t, err)
+	require.True(t, defaultMode.HasStrictMode())
 	for _, tt := range tests {
 		sc := ctx.GetSessionVars().StmtCtx
+		if tt.strict {
+			ctx.GetSessionVars().SQLMode = defaultMode
+		} else {
+			ctx.GetSessionVars().SQLMode = mysql.DelSQLMode(defaultMode, mysql.ModeStrictAllTables|mysql.ModeStrictTransTables)
+		}
 		levels := sc.ErrLevels()
 		levels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !tt.strict)
 		sc.SetErrLevels(levels)
@@ -485,6 +492,11 @@ func TestGetDefaultValue(t *testing.T) {
 
 	for _, tt := range tests {
 		sc := ctx.GetSessionVars().StmtCtx
+		if tt.strict {
+			ctx.GetSessionVars().SQLMode = defaultMode
+		} else {
+			ctx.GetSessionVars().SQLMode = mysql.DelSQLMode(defaultMode, mysql.ModeStrictAllTables|mysql.ModeStrictTransTables)
+		}
 		levels := sc.ErrLevels()
 		levels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !tt.strict)
 		sc.SetErrLevels(levels)

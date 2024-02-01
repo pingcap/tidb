@@ -31,14 +31,16 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/resourcegroup"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/linter/constructor"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -168,7 +170,7 @@ type StatementContext struct {
 	errCtx errctx.Context
 
 	// Set the following variables before execution
-	StmtHints
+	hint.StmtHints
 
 	// IsDDLJobInQueue is used to mark whether the DDL job is put into the queue.
 	// If IsDDLJobInQueue is true, it means the DDL job is in the queue of storage, and it can be handled by the DDL worker.
@@ -185,14 +187,12 @@ type StatementContext struct {
 	InCreateOrAlterStmt    bool
 	InSetSessionStatesStmt bool
 	InPreparedPlanBuilding bool
-	DupKeyAsWarning        bool
 	InShowWarning          bool
 	UseCache               bool
 	ForcePlanCache         bool // force the optimizer to use plan cache even if there is risky optimization, see #49736.
 	CacheType              PlanCacheType
 	BatchCheck             bool
 	InNullRejectCheck      bool
-	IgnoreNoPartition      bool
 	IgnoreExplainIDSuffix  bool
 	MultiSchemaInfo        *model.MultiSchemaInfo
 	// If the select statement was like 'select * from t as of timestamp ...' or in a stale read transaction
@@ -258,15 +258,16 @@ type StatementContext struct {
 	DiskTracker  *disk.Tracker
 	// per statement resource group name
 	// hint /* +ResourceGroup(name) */ can change the statement group name
-	ResourceGroupName string
-	RunawayChecker    *resourcegroup.RunawayChecker
-	IsTiFlash         atomic2.Bool
-	RuntimeStatsColl  *execdetails.RuntimeStatsColl
-	TableIDs          []int64
-	IndexNames        []string
-	StmtType          string
-	OriginalSQL       string
-	digestMemo        struct {
+	ResourceGroupName   string
+	RunawayChecker      *resourcegroup.RunawayChecker
+	IsTiFlash           atomic2.Bool
+	RuntimeStatsColl    *execdetails.RuntimeStatsColl
+	IndexUsageCollector *indexusage.StmtIndexUsageCollector
+	TableIDs            []int64
+	IndexNames          []string
+	StmtType            string
+	OriginalSQL         string
+	digestMemo          struct {
 		sync.Once
 		normalized string
 		digest     *parser.Digest
@@ -289,9 +290,9 @@ type StatementContext struct {
 	binaryPlan     string
 	// To avoid cycle import, we use interface{} for the following two fields.
 	// flatPlan should be a *plannercore.FlatPhysicalPlan if it's not nil
-	flatPlan interface{}
+	flatPlan any
 	// plan should be a plannercore.Plan if it's not nil
-	plan interface{}
+	plan any
 
 	Tables                []TableEntry
 	PointExec             bool  // for point update cached execution, Constant expression need to set "paramMarker"
@@ -309,12 +310,12 @@ type StatementContext struct {
 	// https://github.com/pingcap/tidb/issues/36159
 	stmtCache struct {
 		mu   sync.Mutex
-		data map[StmtCacheKey]interface{}
+		data map[StmtCacheKey]any
 	}
 
 	// Map to store all CTE storages of current SQL.
 	// Will clean up at the end of the execution.
-	CTEStorageMap interface{}
+	CTEStorageMap any
 
 	SetVarHintRestore map[string]string
 
@@ -343,7 +344,7 @@ type StatementContext struct {
 	OptimizerCETrace       []*tracing.CETraceRecord
 
 	EnableOptimizerDebugTrace bool
-	OptimizerDebugTrace       interface{}
+	OptimizerDebugTrace       any
 
 	// WaitLockLeaseTime is the duration of cached table read lease expiration time.
 	WaitLockLeaseTime time.Duration
@@ -416,7 +417,7 @@ type StatementContext struct {
 	}
 
 	// TableStats stores the visited runtime table stats by table id during query
-	TableStats map[int64]interface{}
+	TableStats map[int64]any
 	// useChunkAlloc indicates whether statement use chunk alloc
 	useChunkAlloc bool
 	// Check if TiFlash read engine is removed due to strict sql mode.
@@ -498,8 +499,12 @@ func (sc *StatementContext) SetErrLevels(otherLevels errctx.LevelMap) {
 
 // ErrLevels returns the current `errctx.LevelMap`
 func (sc *StatementContext) ErrLevels() errctx.LevelMap {
-	ec := sc.ErrCtx()
-	return ec.LevelMap()
+	return sc.errCtx.LevelMap()
+}
+
+// ErrGroupLevel returns the error level for the given error group
+func (sc *StatementContext) ErrGroupLevel(group errctx.ErrGroup) errctx.Level {
+	return sc.errCtx.LevelForGroup(group)
 }
 
 // TypeFlags returns the type flags
@@ -539,77 +544,6 @@ func (sc *StatementContext) HandleErrorWithAlias(internalErr, err, warnErr error
 	return errCtx.HandleErrorWithAlias(internalErr, err, warnErr)
 }
 
-// StmtHints are SessionVars related sql hints.
-type StmtHints struct {
-	// Hint Information
-	MemQuotaQuery           int64
-	MaxExecutionTime        uint64
-	ReplicaRead             byte
-	AllowInSubqToJoinAndAgg bool
-	NoIndexMergeHint        bool
-	StraightJoinOrder       bool
-	// EnableCascadesPlanner is use cascades planner for a single query only.
-	EnableCascadesPlanner bool
-	// ForceNthPlan indicates the PlanCounterTp number for finding physical plan.
-	// -1 for disable.
-	ForceNthPlan  int64
-	ResourceGroup string
-
-	// Hint flags
-	HasAllowInSubqToJoinAndAggHint bool
-	HasMemQuotaHint                bool
-	HasReplicaReadHint             bool
-	HasMaxExecutionTime            bool
-	HasEnableCascadesPlannerHint   bool
-	HasResourceGroup               bool
-	SetVars                        map[string]string
-
-	// the original table hints
-	OriginalTableHints []*ast.TableOptimizerHint
-}
-
-// TaskMapNeedBackUp indicates that whether we need to back up taskMap during physical optimizing.
-func (sh *StmtHints) TaskMapNeedBackUp() bool {
-	return sh.ForceNthPlan != -1
-}
-
-// Clone the StmtHints struct and returns the pointer of the new one.
-func (sh *StmtHints) Clone() *StmtHints {
-	var (
-		vars       map[string]string
-		tableHints []*ast.TableOptimizerHint
-	)
-	if len(sh.SetVars) > 0 {
-		vars = make(map[string]string, len(sh.SetVars))
-		for k, v := range sh.SetVars {
-			vars[k] = v
-		}
-	}
-	if len(sh.OriginalTableHints) > 0 {
-		tableHints = make([]*ast.TableOptimizerHint, len(sh.OriginalTableHints))
-		copy(tableHints, sh.OriginalTableHints)
-	}
-	return &StmtHints{
-		MemQuotaQuery:                  sh.MemQuotaQuery,
-		MaxExecutionTime:               sh.MaxExecutionTime,
-		ReplicaRead:                    sh.ReplicaRead,
-		AllowInSubqToJoinAndAgg:        sh.AllowInSubqToJoinAndAgg,
-		NoIndexMergeHint:               sh.NoIndexMergeHint,
-		StraightJoinOrder:              sh.StraightJoinOrder,
-		EnableCascadesPlanner:          sh.EnableCascadesPlanner,
-		ForceNthPlan:                   sh.ForceNthPlan,
-		ResourceGroup:                  sh.ResourceGroup,
-		HasAllowInSubqToJoinAndAggHint: sh.HasAllowInSubqToJoinAndAggHint,
-		HasMemQuotaHint:                sh.HasMemQuotaHint,
-		HasReplicaReadHint:             sh.HasReplicaReadHint,
-		HasMaxExecutionTime:            sh.HasMaxExecutionTime,
-		HasEnableCascadesPlannerHint:   sh.HasEnableCascadesPlannerHint,
-		HasResourceGroup:               sh.HasResourceGroup,
-		SetVars:                        vars,
-		OriginalTableHints:             tableHints,
-	}
-}
-
 // StmtCacheKey represents the key type in the StmtCache.
 type StmtCacheKey int
 
@@ -623,11 +557,11 @@ const (
 )
 
 // GetOrStoreStmtCache gets the cached value of the given key if it exists, otherwise stores the value.
-func (sc *StatementContext) GetOrStoreStmtCache(key StmtCacheKey, value interface{}) interface{} {
+func (sc *StatementContext) GetOrStoreStmtCache(key StmtCacheKey, value any) any {
 	sc.stmtCache.mu.Lock()
 	defer sc.stmtCache.mu.Unlock()
 	if sc.stmtCache.data == nil {
-		sc.stmtCache.data = make(map[StmtCacheKey]interface{})
+		sc.stmtCache.data = make(map[StmtCacheKey]any)
 	}
 	if _, ok := sc.stmtCache.data[key]; !ok {
 		sc.stmtCache.data[key] = value
@@ -636,11 +570,11 @@ func (sc *StatementContext) GetOrStoreStmtCache(key StmtCacheKey, value interfac
 }
 
 // GetOrEvaluateStmtCache gets the cached value of the given key if it exists, otherwise calculate the value.
-func (sc *StatementContext) GetOrEvaluateStmtCache(key StmtCacheKey, valueEvaluator func() (interface{}, error)) (interface{}, error) {
+func (sc *StatementContext) GetOrEvaluateStmtCache(key StmtCacheKey, valueEvaluator func() (any, error)) (any, error) {
 	sc.stmtCache.mu.Lock()
 	defer sc.stmtCache.mu.Unlock()
 	if sc.stmtCache.data == nil {
-		sc.stmtCache.data = make(map[StmtCacheKey]interface{})
+		sc.stmtCache.data = make(map[StmtCacheKey]any)
 	}
 	if _, ok := sc.stmtCache.data[key]; !ok {
 		value, err := valueEvaluator()
@@ -663,7 +597,7 @@ func (sc *StatementContext) ResetInStmtCache(key StmtCacheKey) {
 func (sc *StatementContext) ResetStmtCache() {
 	sc.stmtCache.mu.Lock()
 	defer sc.stmtCache.mu.Unlock()
-	sc.stmtCache.data = make(map[StmtCacheKey]interface{})
+	sc.stmtCache.data = make(map[StmtCacheKey]any)
 }
 
 // SQLDigest gets normalized and digest for provided sql.
@@ -693,22 +627,22 @@ func (sc *StatementContext) GetPlanDigest() (normalized string, planDigest *pars
 }
 
 // GetPlan gets the plan field of stmtctx
-func (sc *StatementContext) GetPlan() interface{} {
+func (sc *StatementContext) GetPlan() any {
 	return sc.plan
 }
 
 // SetPlan sets the plan field of stmtctx
-func (sc *StatementContext) SetPlan(plan interface{}) {
+func (sc *StatementContext) SetPlan(plan any) {
 	sc.plan = plan
 }
 
 // GetFlatPlan gets the flatPlan field of stmtctx
-func (sc *StatementContext) GetFlatPlan() interface{} {
+func (sc *StatementContext) GetFlatPlan() any {
 	return sc.flatPlan
 }
 
 // SetFlatPlan sets the flatPlan field of stmtctx
-func (sc *StatementContext) SetFlatPlan(flat interface{}) {
+func (sc *StatementContext) SetFlatPlan(flat any) {
 	sc.flatPlan = flat
 }
 
@@ -815,7 +749,28 @@ func (sc *StatementContext) SetSkipPlanCache(reason error) {
 		sc.AppendWarning(errors.NewNoStackErrorf("force plan-cache: may use risky cached plan: %s", reason.Error()))
 		return
 	}
+	sc.setSkipPlanCache(reason)
+}
 
+// SetHintWarning sets the hint warning and records the reason.
+func (sc *StatementContext) SetHintWarning(reason string) {
+	sc.AppendWarning(plannererrors.ErrInternal.FastGen(reason))
+}
+
+// SetHintWarningFromError sets the hint warning and records the reason.
+func (sc *StatementContext) SetHintWarningFromError(reason error) {
+	sc.AppendWarning(reason)
+}
+
+// ForceSetSkipPlanCache sets to skip the plan cache and records the reason.
+func (sc *StatementContext) ForceSetSkipPlanCache(reason error) {
+	if sc.CacheType == DefaultNoCache {
+		return
+	}
+	sc.setSkipPlanCache(reason)
+}
+
+func (sc *StatementContext) setSkipPlanCache(reason error) {
 	sc.UseCache = false
 	switch sc.CacheType {
 	case DefaultNoCache:

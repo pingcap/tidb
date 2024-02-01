@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
+	"github.com/felixge/fgprof"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -273,7 +274,6 @@ type writeTestSuite struct {
 	source             kvSource
 	memoryLimit        int
 	beforeCreateWriter func()
-	beforeWriterClose  func()
 	afterWriterClose   func()
 }
 
@@ -305,9 +305,6 @@ func writePlainFile(s *writeTestSuite) {
 		key, val, _ = s.source.next()
 	}
 	flush(writer)
-	if s.beforeWriterClose != nil {
-		s.beforeWriterClose()
-	}
 	err = writer.Close(ctx)
 	intest.AssertNoError(err)
 	if s.afterWriterClose != nil {
@@ -341,9 +338,6 @@ func writeExternalFile(s *writeTestSuite) {
 		intest.AssertNoError(err)
 		key, val, h = s.source.next()
 	}
-	if s.beforeWriterClose != nil {
-		s.beforeWriterClose()
-	}
 	err := writer.Close(ctx)
 	intest.AssertNoError(err)
 	if s.afterWriterClose != nil {
@@ -370,13 +364,44 @@ func writeExternalOneFile(s *writeTestSuite) {
 		intest.AssertNoError(err)
 		key, val, _ = s.source.next()
 	}
-	if s.beforeWriterClose != nil {
-		s.beforeWriterClose()
-	}
 	intest.AssertNoError(writer.Close(ctx))
 	if s.afterWriterClose != nil {
 		s.afterWriterClose()
 	}
+}
+
+func recordHeapForMaxInUse(filename string) (chan struct{}, *sync.WaitGroup) {
+	doneCh := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
+	maxInUse := uint64(0)
+	go func() {
+		defer wg.Done()
+
+		var m runtime.MemStats
+		ticker := time.NewTicker(300 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-doneCh:
+				return
+			case <-ticker.C:
+				runtime.ReadMemStats(&m)
+				if m.HeapInuse <= maxInUse {
+					continue
+				}
+				maxInUse = m.HeapInuse
+				file, err := os.Create(filename)
+				intest.AssertNoError(err)
+				err = pprof.WriteHeapProfile(file)
+				intest.AssertNoError(err)
+				err = file.Close()
+				intest.AssertNoError(err)
+			}
+		}
+	}()
+	return doneCh, &wg
 }
 
 // TestCompareWriter should be run like
@@ -389,35 +414,39 @@ func TestCompareWriter(t *testing.T) {
 	seed := time.Now().Nanosecond()
 	t.Logf("random seed: %d", seed)
 	var (
+		err     error
 		now     time.Time
 		elapsed time.Duration
-		file    *os.File
-		err     error
+
+		fileCPU       *os.File
+		cpuProfCloser func() error
+
+		filenameHeap   string
+		heapProfDoneCh chan struct{}
+		heapWg         *sync.WaitGroup
 	)
 	beforeTest := func() {
 		testIdx++
-		file, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", testIdx))
+		fileCPU, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", testIdx))
 		intest.AssertNoError(err)
-		err = pprof.StartCPUProfile(file)
-		intest.AssertNoError(err)
+		cpuProfCloser = fgprof.Start(fileCPU, fgprof.FormatPprof)
+
+		filenameHeap = fmt.Sprintf("heap-profile-%d.prof", testIdx)
+		heapProfDoneCh, heapWg = recordHeapForMaxInUse(filenameHeap)
+
 		now = time.Now()
-	}
-	beforeClose := func() {
-		file, err = os.Create(fmt.Sprintf("heap-profile-%d.prof", testIdx))
-		intest.AssertNoError(err)
-		// check heap profile to see the memory usage is expected
-		err = pprof.WriteHeapProfile(file)
-		intest.AssertNoError(err)
 	}
 	afterClose := func() {
 		elapsed = time.Since(now)
-		pprof.StopCPUProfile()
+		err = cpuProfCloser()
+		intest.AssertNoError(err)
+		close(heapProfDoneCh)
+		heapWg.Wait()
 	}
 
 	suite := &writeTestSuite{
 		memoryLimit:        memoryLimit,
 		beforeCreateWriter: beforeTest,
-		beforeWriterClose:  beforeClose,
 		afterWriterClose:   afterClose,
 	}
 
@@ -473,7 +502,6 @@ type readTestSuite struct {
 	memoryLimit        int
 	mergeIterHotspot   bool
 	beforeCreateReader func()
-	beforeReaderClose  func()
 	afterReaderClose   func()
 }
 
@@ -488,24 +516,19 @@ func readFileSequential(t *testing.T, s *readTestSuite) {
 	}
 	var totalFileSize atomic.Int64
 	startTime := time.Now()
-	for i, file := range files {
+	for _, file := range files {
 		reader, err := s.store.Open(ctx, file, nil)
 		intest.AssertNoError(err)
-		var size int
+		var sz int
 		for {
 			n, err := reader.Read(buf)
-			size += n
+			sz += n
 			if err != nil {
 				break
 			}
 		}
 		intest.Assert(err == io.EOF)
-		totalFileSize.Add(int64(size))
-		if i == len(files)-1 {
-			if s.beforeReaderClose != nil {
-				s.beforeReaderClose()
-			}
-		}
+		totalFileSize.Add(int64(sz))
 		err = reader.Close()
 		intest.AssertNoError(err)
 	}
@@ -528,7 +551,6 @@ func readFileConcurrently(t *testing.T, s *readTestSuite) {
 	conc := min(s.concurrency, len(files))
 	var eg errgroup.Group
 	eg.SetLimit(conc)
-	var once sync.Once
 
 	if s.beforeCreateReader != nil {
 		s.beforeCreateReader()
@@ -541,21 +563,16 @@ func readFileConcurrently(t *testing.T, s *readTestSuite) {
 			buf := make([]byte, s.memoryLimit/conc)
 			reader, err := s.store.Open(ctx, file, nil)
 			intest.AssertNoError(err)
-			var size int
+			var sz int
 			for {
 				n, err := reader.Read(buf)
-				size += n
+				sz += n
 				if err != nil {
 					break
 				}
 			}
 			intest.Assert(err == io.EOF)
-			totalFileSize.Add(int64(size))
-			once.Do(func() {
-				if s.beforeReaderClose != nil {
-					s.beforeReaderClose()
-				}
-			})
+			totalFileSize.Add(int64(sz))
 			err = reader.Close()
 			intest.AssertNoError(err)
 			return nil
@@ -639,11 +656,6 @@ func readMergeIter(t *testing.T, s *readTestSuite) {
 	kvCnt := 0
 	for iter.Next() {
 		kvCnt++
-		if kvCnt == s.totalKVCnt/2 {
-			if s.beforeReaderClose != nil {
-				s.beforeReaderClose()
-			}
-		}
 		totalSize += len(iter.Key()) + len(iter.Value()) + lengthBytes*2
 	}
 	intest.Assert(kvCnt == s.totalKVCnt)
@@ -669,30 +681,36 @@ func TestCompareReaderEvenlyDistributedContent(t *testing.T) {
 	kvCnt, _, _ := createEvenlyDistributedFiles(store, fileSize, fileCnt, subDir)
 	memoryLimit := 64 * 1024 * 1024
 	fileIdx := 0
+
 	var (
+		err     error
 		now     time.Time
 		elapsed time.Duration
-		file    *os.File
-		err     error
+
+		fileCPU       *os.File
+		cpuProfCloser func() error
+
+		filenameHeap   string
+		heapProfDoneCh chan struct{}
+		heapWg         *sync.WaitGroup
 	)
 	beforeTest := func() {
 		fileIdx++
-		file, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", fileIdx))
+		fileCPU, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", fileIdx))
 		intest.AssertNoError(err)
-		err = pprof.StartCPUProfile(file)
-		intest.AssertNoError(err)
+		cpuProfCloser = fgprof.Start(fileCPU, fgprof.FormatPprof)
+
+		filenameHeap = fmt.Sprintf("heap-profile-%d.prof", fileIdx)
+		heapProfDoneCh, heapWg = recordHeapForMaxInUse(filenameHeap)
+
 		now = time.Now()
-	}
-	beforeClose := func() {
-		file, err = os.Create(fmt.Sprintf("heap-profile-%d.prof", fileIdx))
-		intest.AssertNoError(err)
-		// check heap profile to see the memory usage is expected
-		err = pprof.WriteHeapProfile(file)
-		intest.AssertNoError(err)
 	}
 	afterClose := func() {
 		elapsed = time.Since(now)
-		pprof.StopCPUProfile()
+		err = cpuProfCloser()
+		intest.AssertNoError(err)
+		close(heapProfDoneCh)
+		heapWg.Wait()
 	}
 
 	suite := &readTestSuite{
@@ -701,7 +719,6 @@ func TestCompareReaderEvenlyDistributedContent(t *testing.T) {
 		concurrency:        100,
 		memoryLimit:        memoryLimit,
 		beforeCreateReader: beforeTest,
-		beforeReaderClose:  beforeClose,
 		afterReaderClose:   afterClose,
 		subDir:             subDir,
 	}
@@ -804,33 +821,39 @@ func TestReadMergeIterWithoutCheckHotspot(t *testing.T) {
 func testCompareReaderWithContent(
 	t *testing.T,
 	createFn func(store storage.ExternalStorage, fileSize int, fileCount int, objectPrefix string) (int, kv.Key, kv.Key),
-	fn func(t *testing.T, suite *readTestSuite)) {
+	fn func(t *testing.T, suite *readTestSuite),
+) {
 	store := openTestingStorage(t)
 	kvCnt := 0
 	if !*skipCreate {
 		kvCnt, _, _ = createFn(store, *fileSize, *fileCount, *objectPrefix)
 	}
 	fileIdx := 0
+
 	var (
-		file *os.File
-		err  error
+		err error
+
+		fileCPU       *os.File
+		cpuProfCloser func() error
+
+		filenameHeap   string
+		heapProfDoneCh chan struct{}
+		heapWg         *sync.WaitGroup
 	)
 	beforeTest := func() {
 		fileIdx++
-		file, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", fileIdx))
+		fileCPU, err = os.Create(fmt.Sprintf("cpu-profile-%d.prof", fileIdx))
 		intest.AssertNoError(err)
-		err = pprof.StartCPUProfile(file)
-		intest.AssertNoError(err)
-	}
-	beforeClose := func() {
-		file, err = os.Create(fmt.Sprintf("heap-profile-%d.prof", fileIdx))
-		intest.AssertNoError(err)
-		// check heap profile to see the memory usage is expected
-		err = pprof.WriteHeapProfile(file)
-		intest.AssertNoError(err)
+		cpuProfCloser = fgprof.Start(fileCPU, fgprof.FormatPprof)
+
+		filenameHeap = fmt.Sprintf("heap-profile-%d.prof", fileIdx)
+		heapProfDoneCh, heapWg = recordHeapForMaxInUse(filenameHeap)
 	}
 	afterClose := func() {
-		pprof.StopCPUProfile()
+		err = cpuProfCloser()
+		intest.AssertNoError(err)
+		close(heapProfDoneCh)
+		heapWg.Wait()
 	}
 
 	suite := &readTestSuite{
@@ -839,7 +862,6 @@ func testCompareReaderWithContent(
 		concurrency:        *concurrency,
 		memoryLimit:        *memoryLimit,
 		beforeCreateReader: beforeTest,
-		beforeReaderClose:  beforeClose,
 		afterReaderClose:   afterClose,
 		subDir:             *objectPrefix,
 	}
@@ -1087,7 +1109,6 @@ func TestReadStatFile(t *testing.T) {
 	store := openTestingStorage(t)
 	rd, _ := newStatsReader(ctx, store, *fileName, 4096)
 	for {
-
 		prop, err := rd.nextProp()
 		if err == io.EOF {
 			break

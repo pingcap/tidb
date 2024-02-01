@@ -325,7 +325,7 @@
           "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
+          "[planner:1815]leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
       {
@@ -347,7 +347,7 @@
           "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "[planner:1815]We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid"
+          "[planner:1815]leading hint is inapplicable, check if the leading hint table is valid"
         ]
       },
       {
@@ -409,7 +409,7 @@
           "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "Warn": [
-          "Only one query block name is allowed in a view hint, otherwise the hint will be invalid"
+          "[planner:1815]Only one query block name is allowed in a view hint, otherwise the hint will be invalid"
         ]
       },
       {
@@ -1860,6 +1860,45 @@
           "  └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
+      }
+    ]
+  },
+  {
+    "Name": "TestHints",
+    "Cases": [
+      {
+        "SQL": "select * from t1, t2, t3 union all select /*+ leading(t3, t2) */ * from t1, t2, t3 union all select * from t1, t2, t3",
+        "Plan": [
+          "Union 3000000000000.00 root  ",
+          "├─HashJoin 1000000000000.00 root  CARTESIAN inner join",
+          "│ ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "│ └─HashJoin(Probe) 100000000.00 root  CARTESIAN inner join",
+          "│   ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│   │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│   └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "├─Projection 1000000000000.00 root  test.t1.a->Column#19, test.t2.a->Column#20, test.t3.a->Column#21",
+          "│ └─HashJoin 1000000000000.00 root  CARTESIAN inner join",
+          "│   ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│   │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "│   └─HashJoin(Probe) 100000000.00 root  CARTESIAN inner join",
+          "│     ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│     │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "│     └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "│       └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "└─HashJoin 1000000000000.00 root  CARTESIAN inner join",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 100000000.00 root  CARTESIAN inner join",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": [
+          "Warning 1815 leading hint is inapplicable, check if the leading hint table has join conditions with other tables"
+        ]
       }
     ]
   }

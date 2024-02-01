@@ -22,6 +22,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/bindinfo/internal"
+	"github.com/pingcap/tidb/pkg/bindinfo/norm"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -329,14 +330,11 @@ func TestBindingSource(t *testing.T) {
 	tk.MustExec("create global binding for select * from t where a > 10 using select * from t ignore index(idx_a) where a > 10")
 	bindHandle := dom.BindHandle()
 	stmt, _, _ := internal.UtilNormalizeWithDefaultDB(t, "select * from t where a > ?")
-	_, fuzzyDigest := bindinfo.NormalizeStmtForFuzzyBinding(stmt)
-	bindData, err := bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
-	require.NoError(t, err)
-	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` > ?", bindData.OriginalSQL)
-	require.Len(t, bindData.Bindings, 1)
-	bind := bindData.Bindings[0]
-	require.Equal(t, bindinfo.Manual, bind.Source)
+	_, fuzzyDigest := norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+	binding, matched := bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	require.True(t, matched)
+	require.Equal(t, "select * from `test` . `t` where `a` > ?", binding.OriginalSQL)
+	require.Equal(t, bindinfo.Manual, binding.Source)
 
 	// Test Source for captured sqls
 	stmtsummary.StmtSummaryByDigestMap.Clear()
@@ -351,14 +349,11 @@ func TestBindingSource(t *testing.T) {
 	tk.MustExec("admin capture bindings")
 	bindHandle.CaptureBaselines()
 	stmt, _, _ = internal.UtilNormalizeWithDefaultDB(t, "select * from t where a < ?")
-	_, fuzzyDigest = bindinfo.NormalizeStmtForFuzzyBinding(stmt)
-	bindData, err = bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
-	require.NoError(t, err)
-	require.NotNil(t, bindData)
-	require.Equal(t, "select * from `test` . `t` where `a` < ?", bindData.OriginalSQL)
-	require.Len(t, bindData.Bindings, 1)
-	bind = bindData.Bindings[0]
-	require.Equal(t, bindinfo.Capture, bind.Source)
+	_, fuzzyDigest = norm.NormalizeStmtForBinding(stmt, norm.WithFuzz(true))
+	binding, matched = bindHandle.MatchGlobalBinding(tk.Session(), fuzzyDigest, bindinfo.CollectTableNames(stmt))
+	require.True(t, matched)
+	require.Equal(t, "select * from `test` . `t` where `a` < ?", binding.OriginalSQL)
+	require.Equal(t, bindinfo.Capture, binding.Source)
 }
 
 func TestCapturedBindingCharset(t *testing.T) {
@@ -703,7 +698,7 @@ func TestCaptureWildcardFilter(t *testing.T) {
 		}
 
 		tk.MustExec("admin capture bindings")
-		var rows [][]interface{}
+		var rows [][]any
 		require.Eventually(t, func() bool {
 			rows = tk.MustQuery("show global bindings").Sort().Rows()
 			return len(rows) == len(dbTbls)

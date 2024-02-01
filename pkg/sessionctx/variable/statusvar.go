@@ -31,7 +31,7 @@ var DefaultStatusVarScopeFlag = ScopeGlobal | ScopeSession
 // StatusVal is the value of the corresponding status variable.
 type StatusVal struct {
 	Scope ScopeFlag
-	Value interface{}
+	Value any
 }
 
 // Statistics is the interface of statistics.
@@ -39,7 +39,7 @@ type Statistics interface {
 	// GetScope gets the status variables scope.
 	GetScope(status string) ScopeFlag
 	// Stats returns the statistics status variables.
-	Stats(*SessionVars) (map[string]interface{}, error)
+	Stats(*SessionVars) (map[string]any, error)
 }
 
 // RegisterStatistics registers statistics.
@@ -122,9 +122,8 @@ var tlsCiphers = []uint16{
 var tlsSupportedCiphers string
 
 // Taken from https://github.com/openssl/openssl/blob/c784a838e0947fcca761ee62def7d077dc06d37f/include/openssl/ssl.h#L141 .
+// Update: remove tlsv1.0 and v1.1 support
 var tlsVersionString = map[uint16]string{
-	tls.VersionTLS10: "TLSv1",
-	tls.VersionTLS11: "TLSv1.1",
 	tls.VersionTLS12: "TLSv1.2",
 	tls.VersionTLS13: "TLSv1.3",
 }
@@ -143,8 +142,8 @@ func (s defaultStatusStat) GetScope(status string) ScopeFlag {
 	return defaultStatus[status].Scope
 }
 
-func (s defaultStatusStat) Stats(vars *SessionVars) (map[string]interface{}, error) {
-	statusVars := make(map[string]interface{}, len(defaultStatus))
+func (s defaultStatusStat) Stats(vars *SessionVars) (map[string]any, error) {
+	statusVars := make(map[string]any, len(defaultStatus))
 
 	for name, v := range defaultStatus {
 		statusVars[name] = v.Value

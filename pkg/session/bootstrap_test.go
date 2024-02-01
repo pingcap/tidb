@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -153,7 +154,7 @@ func TestBootstrapWithError(t *testing.T) {
 		se.GetSessionVars().GlobalVarsAccessor = globalVarsAccessor
 		se.functionUsageMu.builtinFunctionUsage = make(telemetry.BuiltinFunctionsUsage)
 		se.txn.init()
-		se.mu.values = make(map[fmt.Stringer]interface{})
+		se.mu.values = make(map[fmt.Stringer]any)
 		se.SetValue(sessionctx.Initing, true)
 		err := InitDDLJobTables(store, meta.BaseDDLTableVersion)
 		require.NoError(t, err)
@@ -334,6 +335,19 @@ func TestUpgrade(t *testing.T) {
 	require.Equal(t, 1, req.NumRows())
 	require.Equal(t, "False", req.GetRow(0).GetString(0))
 	require.NoError(t, r.Close())
+
+	r = MustExecToRecodeSet(t, se2, "admin show ddl jobs 1000;")
+	req = r.NewChunk(nil)
+	err = r.Next(ctx, req)
+	require.NoError(t, err)
+	rowCnt := req.NumRows()
+	for i := 0; i < rowCnt; i++ {
+		jobType := req.GetRow(i).GetString(3) // get job type.
+		// Should not use multi-schema change in bootstrap DDL because the job arguments may be changed.
+		require.False(t, strings.Contains(jobType, "multi-schema"))
+	}
+	require.NoError(t, r.Close())
+
 	dom.Close()
 }
 
@@ -516,15 +530,6 @@ func TestStmtSummary(t *testing.T) {
 	row := req.GetRow(0)
 	require.Equal(t, []byte("ON"), row.GetBytes(0))
 	require.NoError(t, r.Close())
-}
-
-type bindTestStruct struct {
-	originText   string
-	bindText     string
-	db           string
-	originWithDB string
-	bindWithDB   string
-	deleteText   string
 }
 
 func TestUpdateDuplicateBindInfo(t *testing.T) {

@@ -38,6 +38,7 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/kvcache"
 	utilpc "github.com/pingcap/tidb/pkg/util/plancache"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -94,7 +95,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 
 	// step 1: check parameter number
 	if len(stmtAst.Params) != len(params) {
-		return errors.Trace(ErrWrongParamCount)
+		return errors.Trace(plannererrors.ErrWrongParamCount)
 	}
 
 	// step 2: set parameter values
@@ -120,7 +121,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 		ret := &PreprocessorReturn{InfoSchema: is}
 		err := Preprocess(ctx, sctx, stmtAst.Stmt, InPrepare, WithPreprocessorReturn(ret))
 		if err != nil {
-			return ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
+			return plannererrors.ErrSchemaChanged.GenWithStack("Schema change caused error: %s", err.Error())
 		}
 		stmtAst.SchemaVersion = is.SchemaMetaVersion()
 	}
@@ -163,8 +164,8 @@ func GetPlanFromSessionPlanCache(ctx context.Context, sctx sessionctx.Context,
 		cacheEnabled = sctx.GetSessionVars().EnablePreparedPlanCache
 	}
 	stmtCtx.UseCache = stmt.StmtCacheable && cacheEnabled
-	if !stmt.StmtCacheable && stmt.UncacheableReason != "" {
-		stmtCtx.SetSkipPlanCache(errors.New(stmt.UncacheableReason))
+	if stmt.UncacheableReason != "" {
+		stmtCtx.ForceSetSkipPlanCache(errors.NewNoStackError(stmt.UncacheableReason))
 	}
 
 	var bindSQL string
@@ -488,7 +489,7 @@ func rebuildRange(p Plan) error {
 		}
 		// The code should never run here as long as we're not using point get for partition table.
 		// And if we change the logic one day, here work as defensive programming to cache the error.
-		if x.PartitionInfo != nil {
+		if x.PartitionDef != nil {
 			// TODO: relocate the partition after rebuilding range to make PlanCache support PointGet
 			return errors.New("point get for partition table can not use plan cache")
 		}

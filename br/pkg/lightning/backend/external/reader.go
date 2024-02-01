@@ -32,7 +32,7 @@ import (
 
 func readAllData(
 	ctx context.Context,
-	storage storage.ExternalStorage,
+	store storage.ExternalStorage,
 	dataFiles, statsFiles []string,
 	startKey, endKey []byte,
 	bufPool *membuf.Pool,
@@ -46,12 +46,25 @@ func readAllData(
 		zap.Binary("end-key", endKey),
 	)
 	defer func() {
+		if err != nil {
+			output.keysPerFile = nil
+			output.valuesPerFile = nil
+			for _, b := range output.memKVBuffers {
+				b.Destroy()
+			}
+			output.memKVBuffers = nil
+		} else {
+			// try to fix a bug that the memory is retained in http2 package
+			if gcs, ok := store.(*storage.GCSStorage); ok {
+				err = gcs.Reset(ctx)
+			}
+		}
 		task.End(zap.ErrorLevel, err)
 	}()
 
 	concurrences, startOffsets, err := getFilesReadConcurrency(
 		ctx,
-		storage,
+		store,
 		statsFiles,
 		startKey,
 		endKey,
@@ -67,13 +80,14 @@ func readAllData(
 		return err
 	}
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
-	// TODO(lance6716): limit the concurrency of eg to 30 does not help
+	// limit the concurrency to avoid open too many connections at the same time
+	eg.SetLimit(1000)
 	for i := range dataFiles {
 		i := i
 		eg.Go(func() error {
 			err2 := readOneFile(
 				egCtx,
-				storage,
+				store,
 				dataFiles[i],
 				startKey,
 				endKey,
@@ -126,6 +140,7 @@ func readOneFile(
 	keys := make([][]byte, 0, 1024)
 	values := make([][]byte, 0, 1024)
 	size := 0
+	droppedSize := 0
 
 	for {
 		k, v, err := rd.nextKV()
@@ -136,6 +151,7 @@ func readOneFile(
 			return err
 		}
 		if bytes.Compare(k, startKey) < 0 {
+			droppedSize += len(k) + len(v)
 			continue
 		}
 		if bytes.Compare(k, endKey) >= 0 {
@@ -149,10 +165,11 @@ func readOneFile(
 	}
 	readAndSortDurHist.Observe(time.Since(ts).Seconds())
 	output.mu.Lock()
-	output.keys = append(output.keys, keys...)
-	output.values = append(output.values, values...)
+	output.keysPerFile = append(output.keysPerFile, keys)
+	output.valuesPerFile = append(output.valuesPerFile, values)
 	output.memKVBuffers = append(output.memKVBuffers, memBuf)
 	output.size += size
+	output.droppedSizePerFile = append(output.droppedSizePerFile, droppedSize)
 	output.mu.Unlock()
 	return nil
 }

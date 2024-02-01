@@ -73,7 +73,7 @@ func writeError(w http.ResponseWriter, err error) {
 	terror.Log(errors.Trace(err))
 }
 
-func writeData(w http.ResponseWriter, data interface{}) {
+func writeData(w http.ResponseWriter, data any) {
 	js, err := json.MarshalIndent(data, "", " ")
 	if err != nil {
 		writeError(w, err)
@@ -834,7 +834,7 @@ func getSchemaTablesStorageInfo(h *SchemaStorageHandler, schema *model.CIStr, ta
 
 	sctx := s.(sessionctx.Context)
 	condition := make([]string, 0)
-	params := make([]interface{}, 0)
+	params := make([]any, 0)
 
 	if schema != nil {
 		condition = append(condition, `TABLE_SCHEMA = %?`)
@@ -1453,7 +1453,7 @@ func (h RegionHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 				writeError(w, err)
 				return
 			}
-			writeData(w, map[string]interface{}{
+			writeData(w, map[string]any{
 				"write": hotWrite,
 				"read":  hotRead,
 			})
@@ -1556,7 +1556,7 @@ func parseQuery(query string, m url.Values, shouldUnescape bool) error {
 
 // ServeHTTP handles request of list a table's regions.
 func (h MvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
-	var data interface{}
+	var data any
 	params := mux.Vars(req)
 	var err error
 	switch h.op {
@@ -1589,7 +1589,7 @@ func (h MvccTxnHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 // handleMvccGetByIdx gets MVCC info by an index key.
-func (h MvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url.Values) (interface{}, error) {
+func (h MvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url.Values) (any, error) {
 	dbName := params[handler.DBName]
 	tableName := params[handler.TableName]
 
@@ -1619,7 +1619,7 @@ func (h MvccTxnHandler) handleMvccGetByIdx(params map[string]string, values url.
 	return h.GetMvccByIdxValue(idx, values, idxCols, handle)
 }
 
-func (h MvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.Values) (interface{}, error) {
+func (h MvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.Values) (any, error) {
 	dbName := params[handler.DBName]
 	tableName := params[handler.TableName]
 	tb, err := h.GetTable(dbName, tableName)
@@ -1650,7 +1650,7 @@ func (h MvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.
 	}
 
 	respValue := resp.Value
-	var result interface{} = resp
+	var result any = resp
 	if respValue.Info != nil {
 		datas := make(map[string]map[string]string)
 		for _, w := range respValue.Info.Writes {
@@ -1666,7 +1666,7 @@ func (h MvccTxnHandler) handleMvccGetByKey(params map[string]string, values url.
 		}
 
 		if len(datas) > 0 {
-			re := map[string]interface{}{
+			re := map[string]any{
 				"key":  resp.Key,
 				"info": respValue.Info,
 				"data": datas,
@@ -1696,7 +1696,7 @@ func (MvccTxnHandler) decodeMvccData(bs []byte, colMap map[int64]*types.FieldTyp
 	return record, err
 }
 
-func (h *MvccTxnHandler) handleMvccGetByTxn(params map[string]string) (interface{}, error) {
+func (h *MvccTxnHandler) handleMvccGetByTxn(params map[string]string) (any, error) {
 	startTS, err := strconv.ParseInt(params[handler.StartTS], 0, 64)
 	if err != nil {
 		return nil, errors.Trace(err)

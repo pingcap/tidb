@@ -38,6 +38,7 @@ type TopNExec struct {
 	rowPtrs []chunk.RowPtr
 
 	chkHeap *topNChunkHeap
+	Idx     int
 }
 
 // topNChunkHeap implements heap.Interface.
@@ -73,11 +74,11 @@ func (h *topNChunkHeap) Len() int {
 	return len(h.rowPtrs)
 }
 
-func (*topNChunkHeap) Push(interface{}) {
+func (*topNChunkHeap) Push(any) {
 	// Should never be called.
 }
 
-func (h *topNChunkHeap) Pop() interface{} {
+func (h *topNChunkHeap) Pop() any {
 	h.rowPtrs = h.rowPtrs[:len(h.rowPtrs)-1]
 	// We don't need the popped value, return nil to avoid memory allocation.
 	return nil
@@ -85,13 +86,6 @@ func (h *topNChunkHeap) Pop() interface{} {
 
 func (h *topNChunkHeap) Swap(i, j int) {
 	h.rowPtrs[i], h.rowPtrs[j] = h.rowPtrs[j], h.rowPtrs[i]
-}
-
-// keyColumnsLess is the less function for key columns.
-func (e *TopNExec) keyColumnsLess(i, j chunk.RowPtr) bool {
-	rowI := e.rowChunks.GetRow(i)
-	rowJ := e.rowChunks.GetRow(j)
-	return e.lessRow(rowI, rowJ)
 }
 
 func (e *TopNExec) keyColumnsCompare(i, j chunk.RowPtr) int {

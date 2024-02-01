@@ -179,6 +179,8 @@ func (c *storeCollector) sendPendingRequests(ctx context.Context) error {
 	}
 	cps, err := cli.GetLastFlushTSOfRegion(ctx, &c.currentRequest)
 	if err != nil {
+		// try disable connection cache if met error
+		_ = c.service.ClearCache(ctx, c.storeID)
 		return err
 	}
 	metrics.GetCheckpointBatchSize.WithLabelValues("checkpoint").Observe(float64(len(c.currentRequest.GetRegions())))

@@ -339,7 +339,7 @@ type columnInfo struct {
 	// flag represent NotNull, Unsigned, PriKey flags etc.
 	flag uint
 	// deflt is default value
-	deflt interface{}
+	deflt any
 	// comment for the column
 	comment string
 	// enumElems represent all possible literal string values of an enum column
@@ -1018,7 +1018,7 @@ var tableAnalyzeStatusCols = []columnInfo{
 	{name: "FAIL_REASON", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength},
 	{name: "INSTANCE", tp: mysql.TypeVarchar, size: 512},
 	{name: "PROCESS_ID", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
-	{name: "REMAINING_SECONDS", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
+	{name: "REMAINING_SECONDS", tp: mysql.TypeVarchar, size: 512},
 	{name: "PROGRESS", tp: mysql.TypeDouble, size: 22, decimal: 6},
 	{name: "ESTIMATED_TOTAL_ROWS", tp: mysql.TypeLonglong, size: 64, flag: mysql.UnsignedFlag},
 }
@@ -1679,7 +1679,7 @@ var tableKeywords = []columnInfo{
 //
 // The returned nil indicates that sharding information is not suitable for the table(for example, when the table is a View).
 // This function is exported for unit test.
-func GetShardingInfo(dbInfo *model.DBInfo, tableInfo *model.TableInfo) interface{} {
+func GetShardingInfo(dbInfo *model.DBInfo, tableInfo *model.TableInfo) any {
 	if dbInfo == nil || tableInfo == nil || tableInfo.IsView() || util.IsMemOrSysDB(dbInfo.Name.L) {
 		return nil
 	}
@@ -2281,22 +2281,22 @@ func (it *infoschemaTable) IndexPrefix() kv.Key {
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (it *infoschemaTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+func (it *infoschemaTable) AddRecord(ctx table.MutateContext, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	return nil, table.ErrUnsupportedOp
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (it *infoschemaTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error {
+func (it *infoschemaTable) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []types.Datum) error {
 	return table.ErrUnsupportedOp
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
-func (it *infoschemaTable) UpdateRecord(gctx context.Context, ctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
+func (it *infoschemaTable) UpdateRecord(gctx context.Context, ctx table.MutateContext, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
 }
 
 // Allocators implements table.Table Allocators interface.
-func (it *infoschemaTable) Allocators(_ sessionctx.Context) autoid.Allocators {
+func (it *infoschemaTable) Allocators(_ table.AllocatorContext) autoid.Allocators {
 	return autoid.Allocators{}
 }
 
@@ -2369,22 +2369,22 @@ func (vt *VirtualTable) IndexPrefix() kv.Key {
 }
 
 // AddRecord implements table.Table AddRecord interface.
-func (vt *VirtualTable) AddRecord(ctx sessionctx.Context, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
+func (vt *VirtualTable) AddRecord(ctx table.MutateContext, r []types.Datum, opts ...table.AddRecordOption) (recordID kv.Handle, err error) {
 	return nil, table.ErrUnsupportedOp
 }
 
 // RemoveRecord implements table.Table RemoveRecord interface.
-func (vt *VirtualTable) RemoveRecord(ctx sessionctx.Context, h kv.Handle, r []types.Datum) error {
+func (vt *VirtualTable) RemoveRecord(ctx table.MutateContext, h kv.Handle, r []types.Datum) error {
 	return table.ErrUnsupportedOp
 }
 
 // UpdateRecord implements table.Table UpdateRecord interface.
-func (vt *VirtualTable) UpdateRecord(ctx context.Context, sctx sessionctx.Context, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
+func (vt *VirtualTable) UpdateRecord(ctx context.Context, sctx table.MutateContext, h kv.Handle, oldData, newData []types.Datum, touched []bool) error {
 	return table.ErrUnsupportedOp
 }
 
 // Allocators implements table.Table Allocators interface.
-func (vt *VirtualTable) Allocators(_ sessionctx.Context) autoid.Allocators {
+func (vt *VirtualTable) Allocators(_ table.AllocatorContext) autoid.Allocators {
 	return autoid.Allocators{}
 }
 
