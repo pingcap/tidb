@@ -131,8 +131,8 @@ func CreateTidbTestTopSQLSuite(t *testing.T) *tidbTestTopSQLSuite {
 	return ts
 }
 
-// RestCase is to reset the top-sql state and run the test case.
-func (ts *tidbTestTopSQLSuite) RestCase(t *testing.T, mc *mock.TopSQLCollector, execFn func(db *sql.DB), checkFn func()) {
+// TestCase is to run the test case for top-sql test.
+func (ts *tidbTestTopSQLSuite) TestCase(t *testing.T, mc *mock.TopSQLCollector, execFn func(db *sql.DB), checkFn func()) {
 	var wg sync.WaitGroup
 	ctx, cancel := context.WithCancel(context.Background())
 	wg.Add(1)
