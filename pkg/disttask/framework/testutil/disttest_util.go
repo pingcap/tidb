@@ -96,6 +96,7 @@ func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, mockSchedul
 			testContext.CollectSubtask(subtask)
 			return nil
 		}).AnyTimes()
+	mockExecutor.EXPECT().RealtimeSummary().Return(nil).AnyTimes()
 	mockExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockExtension.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
 	mockExtension.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any()).Return(mockExecutor, nil).AnyTimes()
