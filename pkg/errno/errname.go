@@ -1071,6 +1071,12 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrLoadDataInvalidOperation:         mysql.Message("The current job status cannot perform the operation. %s", nil),
 	ErrLoadDataLocalUnsupportedOption:   mysql.Message("Unsupported option for LOAD DATA LOCAL INFILE: %s", nil),
 	ErrLoadDataPreCheckFailed:           mysql.Message("PreCheck failed: %s", nil),
+<<<<<<< HEAD
+=======
+	ErrMemoryExceedForQuery:             mysql.Message("Your query has been cancelled due to exceeding the allowed memory limit for a single SQL query. Please try narrowing your query scope or increase the tidb_mem_quota_query limit and try again.[conn=%d]", nil),
+	ErrMemoryExceedForInstance:          mysql.Message("Your query has been cancelled due to exceeding the allowed memory limit for the tidb-server instance and this query is currently using the most memory. Please try narrowing your query scope or increase the tidb_server_memory_limit and try again.[conn=%d]", nil),
+	ErrHTTPServiceError:                 mysql.Message("HTTP request failed with status %s", nil),
+>>>>>>> 5bc70a9f6c2 (errno: add test to check every errcode has its message (#49774))
 
 	ErrWarnOptimizerHintInvalidInteger:  mysql.Message("integer value is out of range in '%s'", nil),
 	ErrWarnOptimizerHintUnsupportedHint: mysql.Message("Optimizer hint %s is not supported by TiDB and is ignored", nil),
