@@ -239,7 +239,6 @@ func TestBaselineDBLowerCase(t *testing.T) {
 	// default_db should have lower case.
 	require.Equal(t, "spm", rows[0][2])
 	tk.MustExec("create global binding for select * from t using select * from t")
-	tk.MustExec("admin reload bindings")
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 1)
 	require.Equal(t, "select * from `spm` . `t`", rows[0][0])

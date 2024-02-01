@@ -282,6 +282,7 @@ func (h *globalBindingHandle) CreateGlobalBinding(sctx sessionctx.Context, bindi
 	}
 	defer func() {
 		if err == nil {
+			h.bindingCache.Load().RemoveBinding(binding.SQLDigest)
 			err = h.LoadFromStorageToCache(false)
 		}
 	}()
