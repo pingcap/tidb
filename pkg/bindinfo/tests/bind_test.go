@@ -659,9 +659,7 @@ func TestGCBindRecord(t *testing.T) {
 
 	tk.MustExec("drop global binding for select * from t where a = 1")
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
-	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows(
-		"deleted",
-	))
+	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows())
 	require.NoError(t, h.GCGlobalBinding())
 	tk.MustQuery("show global bindings").Check(testkit.Rows())
 	tk.MustQuery("select status from mysql.bind_info where original_sql = 'select * from `test` . `t` where `a` = ?'").Check(testkit.Rows())
