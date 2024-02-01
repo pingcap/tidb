@@ -398,7 +398,7 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 	return e.getError()
 }
 
-func hasRealtimeSummary(e *BaseTaskExecutor, stepExecutor execute.StepExecutor) bool {
+func (e *BaseTaskExecutor) hasRealtimeSummary(stepExecutor execute.StepExecutor) bool {
 	_, ok := e.taskTable.(*storage.TaskManager)
 	return ok && stepExecutor.RealtimeSummary() != nil
 }
@@ -413,7 +413,7 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 			e.checkBalanceSubtask(checkCtx)
 		})
 
-		if hasRealtimeSummary(e, stepExecutor) {
+		if e.hasRealtimeSummary(stepExecutor) {
 			wg.RunWithLog(func() {
 				e.updateSubtaskSummaryLoop(checkCtx, ctx, stepExecutor)
 			})
