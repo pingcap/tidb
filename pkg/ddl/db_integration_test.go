@@ -1565,6 +1565,8 @@ func TestDefaultColumnWithRand(t *testing.T) {
 	tk.MustGetErrCode("alter table t add column c2 double default (rand(2))", errno.ErrBinlogUnsafeSystemFunction)
 	tk.MustGetErrCode("alter table t add column c3 int default ((rand()))", errno.ErrBinlogUnsafeSystemFunction)
 	tk.MustGetErrCode("alter table t add column c4 int default (((rand(3))))", errno.ErrBinlogUnsafeSystemFunction)
+	// TODO:
+	tk.MustGetErrCode("alter table t add column c4 int default (((rand(3))))", errno.ErrBinlogUnsafeSystemFunction)
 
 	// insert records
 	tk.MustExec("insert into t(c) values (1),(2),(3)")

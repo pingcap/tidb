@@ -3959,6 +3959,13 @@ BuiltinFunction:
 			Args:   $3.([]ast.ExprNode),
 		}
 	}
+|	"REPLACE" '(' ExpressionListOpt ')'
+	{
+		$$ = &ast.FuncCallExpr{
+			FnName: model.NewCIStr($1),
+			Args:   $3.([]ast.ExprNode),
+		}
+	}
 
 NowSymOptionFractionParentheses:
 	'(' NowSymOptionFractionParentheses ')'
