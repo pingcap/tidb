@@ -384,7 +384,7 @@ func TestErrorNoRollback(t *testing.T) {
 	server.SetDomain(ts.Domain)
 	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	go func() {
-		err := server.Run(ts.Domain)
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	defer server.Close()
