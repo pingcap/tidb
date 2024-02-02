@@ -353,7 +353,7 @@ func TestIssue50926(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
-	tk.MustExec("create or replace algorithm=undefined view v (a,b) AS select 1 as a, json_object('k', '0') as b from t")
+	tk.MustExec("create or replace definer='root'@'localhost' view v (a,b) AS select 1 as a, json_object('k', '0') as b from t")
 	tk.MustQuery("select sum(json_extract(b, '$.path')) from v group by a").Check(testkit.Rows()) // no error
 }
 
