@@ -150,12 +150,12 @@ func TestBasic(t *testing.T) {
 	require.False(t, ok)
 	require.Nil(t, schema)
 
-	schema, ok = is.SchemaByTable(tblInfo)
+	schema, ok = infoschema.SchemaByTable(is, tblInfo)
 	require.True(t, ok)
 	require.NotNil(t, schema)
 
 	noexistTblInfo := &model.TableInfo{ID: 12345, Name: tblInfo.Name}
-	schema, ok = is.SchemaByTable(noexistTblInfo)
+	schema, ok = infoschema.SchemaByTable(is, noexistTblInfo)
 	require.False(t, ok)
 	require.Nil(t, schema)
 
