@@ -50,7 +50,6 @@ func TestAddAndDropColumn(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t2 (c1 int, c2 int, c3 int)")
-	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
 
 	// ==========
 	// ADD COLUMN

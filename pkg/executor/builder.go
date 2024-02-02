@@ -1016,13 +1016,15 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 }
 
 func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Executor {
-	tbl, ok := b.is.TableByID(v.Table.TableInfo.ID)
+	// see planBuilder.buildImportInto for detail why we use the latest schema here.
+	latestIS := b.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	tbl, ok := latestIS.TableByID(v.Table.TableInfo.ID)
 	if !ok {
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
 	}
 	if !tbl.Meta().IsBaseTable() {
-		b.err = plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "LOAD")
+		b.err = plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "IMPORT")
 		return nil
 	}
 
@@ -2572,13 +2574,7 @@ func (b *executorBuilder) buildAnalyzeIndexPushdown(task plannercore.AnalyzeInde
 	failpoint.Inject("injectAnalyzeSnapshot", func(val failpoint.Value) {
 		startTS = uint64(val.(int))
 	})
-	var concurrency int
-	if b.ctx.GetSessionVars().InRestrictedSQL {
-		// In restricted SQL, we use the default value of IndexSerialScanConcurrency. it is copied from tidb_sysproc_scan_concurrency.
-		concurrency = b.ctx.GetSessionVars().IndexSerialScanConcurrency()
-	} else {
-		concurrency = b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
-	}
+	concurrency := b.ctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
 	base := baseAnalyzeExec{
 		ctx:         b.ctx,
 		tableID:     task.TableID,

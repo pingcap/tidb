@@ -40,8 +40,6 @@ type LFU struct {
 	closeOnce    sync.Once
 }
 
-var testMode = false
-
 // NewLFU creates a new LFU cache.
 func NewLFU(totalMemCost int64) (*LFU, error) {
 	cost, err := adjustMemCost(totalMemCost)
@@ -64,8 +62,8 @@ func NewLFU(totalMemCost int64) (*LFU, error) {
 			OnEvict:            result.onEvict,
 			OnExit:             result.onExit,
 			OnReject:           result.onReject,
-			IgnoreInternalCost: testMode,
-			Metrics:            testMode,
+			IgnoreInternalCost: intest.InTest,
+			Metrics:            intest.InTest,
 		},
 	)
 	if err != nil {

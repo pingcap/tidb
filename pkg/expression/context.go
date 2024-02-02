@@ -82,7 +82,7 @@ type BuildContext interface {
 	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars
 	// SetValue saves a value associated with this context for key.
-	SetValue(key fmt.Stringer, value interface{})
+	SetValue(key fmt.Stringer, value any)
 	// BuiltinFunctionUsageInc increase the counting of each builtin function usage
 	// Notice that this is a thread safe function
 	BuiltinFunctionUsageInc(scalarFuncSigName string)
