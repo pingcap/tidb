@@ -417,13 +417,21 @@ func (s *Server) reportConfig() {
 }
 
 // Run runs the server.
+<<<<<<< HEAD
 func (s *Server) Run() error {
 	metrics.ServerEventCounter.WithLabelValues(metrics.EventStart).Inc()
+=======
+func (s *Server) Run(dom *domain.Domain) error {
+	metrics.ServerEventCounter.WithLabelValues(metrics.ServerStart).Inc()
+>>>>>>> b7ce2393300 (*: force_init_stats doesn't block http api's startup (#50853))
 	s.reportConfig()
 
 	// Start HTTP API to report tidb info such as TPS.
 	if s.cfg.Status.ReportStatus {
 		s.startStatusHTTP()
+	}
+	if config.GetGlobalConfig().Performance.ForceInitStats && dom != nil {
+		<-dom.StatsHandle().InitStatsDone
 	}
 	// If error should be reported and exit the server it can be sent on this
 	// channel. Otherwise, end with sending a nil error to signal "done"
