@@ -33,6 +33,7 @@ import (
 const defaultFailedAnalysisWaitTime = 30 * time.Minute
 
 // TableAnalysisJob defines the structure for table analysis job information.
+// TODO: add stringer for TableAnalysisJob.
 type TableAnalysisJob struct {
 	// Only set when partitions's indexes need to be analyzed.
 	PartitionIndexes map[string][]string
