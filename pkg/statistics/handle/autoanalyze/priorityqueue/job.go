@@ -56,6 +56,7 @@ func (j *TableAnalysisJob) IsValidToAnalyze(
 	sctx sessionctx.Context,
 ) (bool, string) {
 	// No need to analyze this table.
+	// TODO: Usually, we should not put this kind of table into the queue.
 	if j.Weight == 0 {
 		return false, "weight is 0"
 	}
@@ -65,11 +66,20 @@ func (j *TableAnalysisJob) IsValidToAnalyze(
 		// Any partition is invalid to analyze, the whole table is invalid to analyze.
 		// Because we need to analyze partitions in batch mode.
 		partitions := append(j.Partitions, getPartitionNames(j.PartitionIndexes)...)
-		if valid, failReason := isValidToAnalyze(sctx, j.TableSchema, j.TableName, partitions...); !valid {
+		if valid, failReason := isValidToAnalyze(
+			sctx,
+			j.TableSchema,
+			j.TableName,
+			partitions...,
+		); !valid {
 			return false, failReason
 		}
 	} else {
-		if valid, failReason := isValidToAnalyze(sctx, j.TableSchema, j.TableName); !valid {
+		if valid, failReason := isValidToAnalyze(
+			sctx,
+			j.TableSchema,
+			j.TableName,
+		); !valid {
 			return false, failReason
 		}
 	}
@@ -90,7 +100,8 @@ func isValidToAnalyze(
 	schema, table string,
 	partitionNames ...string,
 ) (bool, string) {
-	lastFailedAnalysisDuration, err := getLastFailedAnalysisDuration(sctx, schema, table, partitionNames...)
+	lastFailedAnalysisDuration, err :=
+		getLastFailedAnalysisDuration(sctx, schema, table, partitionNames...)
 	if err != nil {
 		statslogutil.StatsLogger().Warn(
 			"Fail to get last failed analysis duration",
@@ -102,7 +113,8 @@ func isValidToAnalyze(
 		return false, fmt.Sprintf("fail to get last failed analysis duration: %v", err)
 	}
 
-	averageAnalysisDuration, err := getAverageAnalysisDuration(sctx, schema, table, partitionNames...)
+	averageAnalysisDuration, err :=
+		getAverageAnalysisDuration(sctx, schema, table, partitionNames...)
 	if err != nil {
 		statslogutil.StatsLogger().Warn(
 			"Fail to get average analysis duration",
