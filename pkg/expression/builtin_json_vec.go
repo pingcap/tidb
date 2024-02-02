@@ -842,12 +842,6 @@ func (b *builtinJSONLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 			if result.IsNull(i) {
 				continue
 			}
-			jsonItem := jsonBuf.GetJSON(i)
-
-			if jsonItem.TypeCode != types.JSONTypeCodeObject && jsonItem.TypeCode != types.JSONTypeCodeArray {
-				resI64s[i] = 1
-				continue
-			}
 
 			pathExpr, err := types.ParseJSONPathExpr(pathBuf.GetString(i))
 			if err != nil {
@@ -857,6 +851,11 @@ func (b *builtinJSONLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 				return types.ErrInvalidJSONPathMultipleSelection
 			}
 
+			jsonItem := jsonBuf.GetJSON(i)
+			if jsonItem.TypeCode != types.JSONTypeCodeObject && jsonItem.TypeCode != types.JSONTypeCodeArray {
+				resI64s[i] = 1
+				continue
+			}
 			obj, exists := jsonItem.Extract([]types.JSONPathExpression{pathExpr})
 			if !exists {
 				result.SetNull(i, true)

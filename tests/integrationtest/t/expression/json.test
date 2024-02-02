@@ -255,6 +255,10 @@ select
 		json_length(null, 'fdfd'),
 		json_length('{}', null),
 		json_length('1', null);
+-- error 3143
+select json_length('{}', 'fsdfds');
+-- error 3143
+select json_length('1', 'fsdfds');
 # issue 16267
 select json_array(922337203685477580) =  json_array(922337203685477581);
 
