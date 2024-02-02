@@ -204,6 +204,7 @@ func (e *HashAggExec) Close() error {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
 		e.parallelExecValid = false
+		e.parallelAggSpillAction.SetFinished()
 		e.parallelAggSpillAction = nil
 		e.spillHelper.close()
 	}

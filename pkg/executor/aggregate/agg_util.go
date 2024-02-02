@@ -227,12 +227,12 @@ func (e *HashAggExec) ActionSpill() memory.ActionOnExceed {
 		}
 		return e.spillAction
 	}
-	if e.parallelAggSpillAction == nil {
-		e.parallelAggSpillAction = &ParallelAggSpillDiskAction{
-			e:           e,
-			spillHelper: e.spillHelper,
-		}
+
+	e.parallelAggSpillAction = &ParallelAggSpillDiskAction{
+		e:           e,
+		spillHelper: e.spillHelper,
 	}
+
 	return e.parallelAggSpillAction
 }
 
