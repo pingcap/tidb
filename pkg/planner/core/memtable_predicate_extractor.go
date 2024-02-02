@@ -98,7 +98,7 @@ func (extractHelper) extractColInConsExpr(extractCols map[int64]*types.FieldName
 	return name.ColName.L, results
 }
 
-func (e *extractHelper) extractColBinaryOpConsExpr(extractCols map[int64]*types.FieldName, supportLower bool, expr *expression.ScalarFunction) (string, []types.Datum) {
+func (helper *extractHelper) extractColBinaryOpConsExpr(extractCols map[int64]*types.FieldName, supportLower bool, expr *expression.ScalarFunction) (string, []types.Datum) {
 	args := expr.GetArgs()
 	var col *expression.Column
 	var colIdx int
@@ -155,11 +155,11 @@ func (e *extractHelper) extractColBinaryOpConsExpr(extractCols map[int64]*types.
 			return "", nil
 		}
 		if scalar.FuncName.L == "lower" {
-			e.lowerOrUpper = make(map[string]bool)
-			e.lowerOrUpper[name.ColName.L] = true
+			helper.lowerOrUpper = make(map[string]bool)
+			helper.lowerOrUpper[name.ColName.L] = true
 		} else if scalar.FuncName.L == "upper" {
-			e.lowerOrUpper = make(map[string]bool)
-			e.lowerOrUpper[name.ColName.L] = false
+			helper.lowerOrUpper = make(map[string]bool)
+			helper.lowerOrUpper[name.ColName.L] = false
 		} else {
 			return "", nil
 		}
