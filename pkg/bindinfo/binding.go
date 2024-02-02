@@ -205,7 +205,12 @@ func merge(lBindings, rBindings Bindings) Bindings {
 
 func removeDeletedBindings(br Bindings) Bindings {
 	result := make(Bindings, 0, len(br))
-	result = append(result, br...)
+	for _, binding := range br {
+		// `deleted` status is deprecated, it will not create. but it will appoint from the old tidb cluster.
+		if binding.Status != deleted {
+			result = append(result, binding)
+		}
+	}
 	return result
 }
 
