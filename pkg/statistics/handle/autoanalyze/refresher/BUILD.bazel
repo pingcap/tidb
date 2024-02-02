@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "refresher",
+    srcs = ["refresher.go"],
+    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/refresher",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/sessionctx",
+        "//pkg/statistics/handle/autoanalyze/priorityqueue",
+        "//pkg/statistics/handle/logutil",
+        "//pkg/statistics/handle/types",
+        "@org_uber_go_zap//:zap",
+    ],
+)
