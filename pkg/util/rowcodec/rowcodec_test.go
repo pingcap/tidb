@@ -1096,7 +1096,7 @@ func TestColumnEncode(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			col := rowcodec.ColData{&model.ColumnInfo{FieldType: *tt.typ}, &tt.dat}
-			raw, err := col.Encode(buf[:0])
+			raw, err := col.Encode(time.Local, buf[:0])
 			if tt.ok {
 				require.NoError(t, err)
 				if len(tt.raw) == 0 {
@@ -1145,7 +1145,7 @@ func TestColumnEncode(t *testing.T) {
 			ft := types.NewFieldType(typ)
 			dat := types.NewDatum(nil)
 			col := rowcodec.ColData{&model.ColumnInfo{FieldType: *ft}, &dat}
-			raw, err := col.Encode(nil)
+			raw, err := col.Encode(time.Local, nil)
 			require.NoError(t, err)
 			require.Len(t, raw, 0)
 		}
@@ -1161,7 +1161,10 @@ func TestRowChecksum(t *testing.T) {
 	col2 := rowcodec.ColData{&model.ColumnInfo{ID: 2, FieldType: *typ2}, &dat2}
 	typ3 := types.NewFieldType(mysql.TypeVarchar)
 	dat3 := types.NewDatum("foobar")
-	col3 := rowcodec.ColData{&model.ColumnInfo{ID: 2, FieldType: *typ3}, &dat3}
+	col3 := rowcodec.ColData{&model.ColumnInfo{ID: 3, FieldType: *typ3}, &dat3}
+	typ4 := types.NewFieldType(mysql.TypeTimestamp)
+	dat4 := types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 6))
+	col4 := rowcodec.ColData{&model.ColumnInfo{ID: 4, FieldType: *typ4}, &dat4}
 	buf := make([]byte, 0, 64)
 	for _, tt := range []struct {
 		name string
@@ -1170,17 +1173,17 @@ func TestRowChecksum(t *testing.T) {
 		{"nil", nil},
 		{"empty", []rowcodec.ColData{}},
 		{"nullonly", []rowcodec.ColData{col1}},
-		{"ordered", []rowcodec.ColData{col1, col2, col3}},
-		{"unordered", []rowcodec.ColData{col3, col1, col2}},
+		{"ordered", []rowcodec.ColData{col1, col2, col3, col4}},
+		{"unordered", []rowcodec.ColData{col3, col1, col4, col2}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			row := rowcodec.RowData{tt.cols, buf}
 			if !sort.IsSorted(row) {
 				sort.Sort(row)
 			}
-			checksum, err := row.Checksum()
+			checksum, err := row.Checksum(time.Local)
 			require.NoError(t, err)
-			raw, err := row.Encode()
+			raw, err := row.Encode(time.Local)
 			require.NoError(t, err)
 			require.Equal(t, crc32.ChecksumIEEE(raw), checksum)
 		})
