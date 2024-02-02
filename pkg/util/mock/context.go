@@ -68,18 +68,18 @@ type wrapTxn struct {
 }
 
 // SetOption implements the interface.
-func (txn *wrapTxn) SetOption(_ int, _ any) {}
+func (*wrapTxn) SetOption(_ int, _ any) {}
 
 // SetDiskFullOpt implements the interface.
-func (txn *wrapTxn) SetDiskFullOpt(level kvrpcpb.DiskFullOpt) {}
+func (*wrapTxn) SetDiskFullOpt(_ kvrpcpb.DiskFullOpt) {}
 
 // Get implements the interface.
-func (txn *wrapTxn) Get(ctx context.Context, k kv.Key) ([]byte, error) {
+func (*wrapTxn) Get(_ context.Context, _ kv.Key) ([]byte, error) {
 	return []byte{}, nil
 }
 
 // StartTS implements the interface.
-func (txn *wrapTxn) StartTS() uint64 {
+func (*wrapTxn) StartTS() uint64 {
 	return 0
 }
 
