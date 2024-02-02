@@ -852,10 +852,6 @@ func (b *builtinJSONLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 			}
 
 			jsonItem := jsonBuf.GetJSON(i)
-			if jsonItem.TypeCode != types.JSONTypeCodeObject && jsonItem.TypeCode != types.JSONTypeCodeArray {
-				resI64s[i] = 1
-				continue
-			}
 			obj, exists := jsonItem.Extract([]types.JSONPathExpression{pathExpr})
 			if !exists {
 				result.SetNull(i, true)

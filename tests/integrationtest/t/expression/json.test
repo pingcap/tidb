@@ -254,7 +254,8 @@ select
 		json_length(null, '$'),
 		json_length(null, 'fdfd'),
 		json_length('{}', null),
-		json_length('1', null);
+		json_length('1', '$.a'),
+		json_length('{}', '$.a');
 -- error 3143
 select json_length('{}', 'fsdfds');
 -- error 3143
