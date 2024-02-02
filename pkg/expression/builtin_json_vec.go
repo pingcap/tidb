@@ -814,6 +814,9 @@ func (b *builtinJSONLengthSig) vectorized() bool {
 func (b *builtinJSONLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	nr := input.NumRows()
 
+	result.ResizeInt64(nr, false)
+	resI64s := result.Int64s()
+
 	jsonBuf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
@@ -822,8 +825,7 @@ func (b *builtinJSONLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 	if err := b.args[0].VecEvalJSON(ctx, input, jsonBuf); err != nil {
 		return err
 	}
-	result.ResizeInt64(nr, false)
-	resI64s := result.Int64s()
+	result.MergeNulls(jsonBuf)
 
 	if len(b.args) == 2 {
 		pathBuf, err := b.bufAllocator.get()
@@ -834,8 +836,8 @@ func (b *builtinJSONLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 		if err := b.args[1].VecEvalString(ctx, input, pathBuf); err != nil {
 			return err
 		}
+		result.MergeNulls(pathBuf)
 
-		result.MergeNulls(jsonBuf)
 		for i := 0; i < nr; i++ {
 			if result.IsNull(i) {
 				continue
@@ -844,11 +846,6 @@ func (b *builtinJSONLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 
 			if jsonItem.TypeCode != types.JSONTypeCodeObject && jsonItem.TypeCode != types.JSONTypeCodeArray {
 				resI64s[i] = 1
-				continue
-			}
-
-			if pathBuf.IsNull(i) {
-				result.SetNull(i, true)
 				continue
 			}
 
@@ -872,7 +869,6 @@ func (b *builtinJSONLengthSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 			resI64s[i] = int64(obj.GetElemCount())
 		}
 	} else {
-		result.MergeNulls(jsonBuf)
 		for i := 0; i < nr; i++ {
 			if result.IsNull(i) {
 				continue
