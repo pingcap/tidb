@@ -10,6 +10,7 @@ updates:
     allow:
       - dependency-name: "golang.org/*"
       - dependency-name: "github.com/golangci/golangci-lint"
+      - dependency-name: "github.com/mgechev/revive"
       - dependency-name: "github.com/prometheus/*"
       - dependency-name: "go.uber.org/*"
     open-pull-requests-limit: 2
