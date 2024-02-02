@@ -474,6 +474,7 @@ func NewContext() *Context {
 		values: make(map[fmt.Stringer]any),
 		ctx:    ctx,
 		cancel: cancel,
+		txn:    wrapTxn{},
 	}
 	vars := variable.NewSessionVars(sctx)
 	sctx.sessionVars = vars
