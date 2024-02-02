@@ -206,7 +206,7 @@ func TestRangeTreeMerge(t *testing.T) {
 		}
 		rangeTree.Update(item)
 	}
-	sortedRanges := rangeTree.Merge(10, 10)
+	sortedRanges := rangeTree.MergedRanges(10, 10)
 	require.Equal(t, 1000, len(sortedRanges))
 	for i, rg := range sortedRanges {
 		require.Equal(t, encodeTableRecord(tablePrefix, uint64(i)*10), rg.StartKey)

@@ -208,14 +208,11 @@ func (rangeTree *RangeTree) InsertRange(rg Range) *Range {
 	return out.(*Range)
 }
 
-func (rangeTree *RangeTree) Merge(splitSizeBytes, splitKeyCount uint64) []Range {
+// MergedRanges output the sortedRanges having merged according to given `splitSizeBytes` and `splitKeyCount`.
+func (rangeTree *RangeTree) MergedRanges(splitSizeBytes, splitKeyCount uint64) []Range {
 	var mergeTargetIndex int = -1
 	sortedRanges := make([]Range, 0, rangeTree.Len())
 	rangeTree.Ascend(func(item btree.Item) bool {
-		if item == nil {
-			return false
-		}
-
 		rg := item.(*Range)
 		if mergeTargetIndex < 0 || !NeedsMerge(&sortedRanges[mergeTargetIndex], rg, splitSizeBytes, splitKeyCount) {
 			// unintialized or the sortedRanges[mergeTargetIndex] does not need to merged

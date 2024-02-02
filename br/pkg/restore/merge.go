@@ -89,7 +89,7 @@ func MergeFileRanges(
 		}
 	}
 
-	sortedRanges := rangeTree.Merge(splitSizeBytes, splitKeyCount)
+	sortedRanges := rangeTree.MergedRanges(splitSizeBytes, splitKeyCount)
 	regionBytesAvg := totalBytes / uint64(totalRegions)
 	regionKeysAvg := totalKvs / uint64(totalRegions)
 	mergedRegionBytesAvg := totalBytes / uint64(len(sortedRanges))
