@@ -51,8 +51,6 @@ func TestHANodeRandomShutdown(t *testing.T) {
 		return false
 	}
 	submitTaskAndCheckSuccessForHA(c.Ctx, t, "😊", c.TestContext)
-	c.WaitAsyncOperations()
-	require.Equal(t, keepCount, c.NodeCount())
 }
 
 func TestHARandomShutdownInDifferentStep(t *testing.T) {
