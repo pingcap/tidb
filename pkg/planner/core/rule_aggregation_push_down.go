@@ -560,7 +560,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 				for _, gbyItem := range agg.GroupByItems {
 					_, failed, groupBy := expression.ColumnSubstituteImpl(ctx, gbyItem, proj.schema, proj.Exprs, true)
 					if failed {
-						return p, nil
+						noSideEffects = false
 					}
 					newGbyItems = append(newGbyItems, groupBy)
 					if ExprsHasSideEffects(newGbyItems) {
@@ -579,7 +579,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 						for _, arg := range aggFunc.Args {
 							_, failed, newArg := expression.ColumnSubstituteImpl(ctx, arg, proj.schema, proj.Exprs, true)
 							if failed {
-								return p, nil
+								noSideEffects = false
 							}
 							newArgs = append(newArgs, newArg)
 						}
@@ -595,7 +595,7 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 							for _, oby := range aggFunc.OrderByItems {
 								_, failed, byItem := expression.ColumnSubstituteImpl(ctx, oby.Expr, proj.schema, proj.Exprs, true)
 								if failed {
-									return p, nil
+									noSideEffects = false
 								}
 								newOrderByItems = append(newOrderByItems, byItem)
 							}
