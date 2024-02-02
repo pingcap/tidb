@@ -404,7 +404,7 @@ func TestTableFromMeta(t *testing.T) {
 	require.NoError(t, err)
 
 	maxID := 1<<(64-15-1) - 1
-	err = tb.Allocators(tk.Session()).Get(autoid.RowIDAllocType).Rebase(context.Background(), int64(maxID), false)
+	err = tb.Allocators(tk.Session().GetSessionVars()).Get(autoid.RowIDAllocType).Rebase(context.Background(), int64(maxID), false)
 	require.NoError(t, err)
 
 	_, err = tables.AllocHandle(context.Background(), tk.Session(), tb)

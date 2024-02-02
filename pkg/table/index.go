@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 )
 
@@ -77,9 +76,9 @@ type Index interface {
 	// TableMeta returns TableInfo
 	TableMeta() *model.TableInfo
 	// Create supports insert into statement.
-	Create(ctx sessionctx.Context, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...CreateIdxOptFunc) (kv.Handle, error)
+	Create(ctx MutateContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...CreateIdxOptFunc) (kv.Handle, error)
 	// Delete supports delete from statement.
-	Delete(ctx sessionctx.Context, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error
+	Delete(ctx MutateContext, txn kv.Transaction, indexedValues []types.Datum, h kv.Handle) error
 	// GenIndexKVIter generate index key and value for multi-valued index, use iterator to reduce the memory allocation.
 	GenIndexKVIter(ec errctx.Context, loc *time.Location, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum) IndexKVGenerator
 	// Exist supports check index exists or not.

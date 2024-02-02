@@ -180,6 +180,10 @@ outer:
 	return pipeline.Close()
 }
 
+func (*importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+	return nil
+}
+
 func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
 	var subtaskMeta ImportStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
@@ -390,6 +394,10 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	return localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 }
 
+func (*writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+	return nil
+}
+
 func (e *writeAndIngestStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
 	var subtaskMeta WriteIngestStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
@@ -481,7 +489,7 @@ func (*importExecutor) IsRetryableError(err error) bool {
 	return common.IsRetryableError(err)
 }
 
-func (*importExecutor) GetStepExecutor(task *proto.Task, _ *execute.Summary, _ *proto.StepResource) (execute.StepExecutor, error) {
+func (*importExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource) (execute.StepExecutor, error) {
 	taskMeta := TaskMeta{}
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)

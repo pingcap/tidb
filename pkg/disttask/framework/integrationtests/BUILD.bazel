@@ -1,7 +1,7 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "framework_test",
+    name = "integrationtests_test",
     timeout = "short",
     srcs = [
         "framework_err_handling_test.go",

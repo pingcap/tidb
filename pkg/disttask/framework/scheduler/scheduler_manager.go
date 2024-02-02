@@ -37,7 +37,8 @@ var (
 	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
 	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
 	// DefaultCleanUpInterval is the interval of cleanup routine.
-	DefaultCleanUpInterval = 10 * time.Minute
+	DefaultCleanUpInterval        = 10 * time.Minute
+	defaultCollectMetricsInterval = 5 * time.Second
 )
 
 // WaitTaskFinished is used to sync the test.
@@ -162,6 +163,7 @@ func (sm *Manager) Start() {
 	sm.wg.Run(sm.scheduleTaskLoop)
 	sm.wg.Run(sm.gcSubtaskHistoryTableLoop)
 	sm.wg.Run(sm.cleanupTaskLoop)
+	sm.wg.Run(sm.collectLoop)
 	sm.wg.Run(func() {
 		sm.nodeMgr.maintainLiveNodesLoop(sm.ctx, sm.taskMgr)
 	})
@@ -418,4 +420,29 @@ func (sm *Manager) MockScheduler(task *proto.Task) *BaseScheduler {
 		slotMgr:  sm.slotMgr,
 		serverID: sm.serverID,
 	})
+}
+
+func (sm *Manager) collectLoop() {
+	sm.logger.Info("collect loop start")
+	ticker := time.NewTicker(defaultCollectMetricsInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-sm.ctx.Done():
+			sm.logger.Info("collect loop exits")
+			return
+		case <-ticker.C:
+			sm.collect()
+		}
+	}
+}
+
+func (sm *Manager) collect() {
+	subtasks, err := sm.taskMgr.GetAllSubtasks(sm.ctx)
+	if err != nil {
+		sm.logger.Warn("get all subtasks failed", zap.Error(err))
+		return
+	}
+
+	subtaskCollector.subtaskInfo.Store(&subtasks)
 }

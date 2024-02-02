@@ -15,8 +15,9 @@
 package core
 
 import (
+	"cmp"
 	"math"
-	"sort"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 )
@@ -57,8 +58,8 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []LogicalPlan, tracer *joi
 		}
 	}
 	// Sort plans by cost
-	sort.SliceStable(s.curJoinGroup, func(i, j int) bool {
-		return s.curJoinGroup[i].cumCost < s.curJoinGroup[j].cumCost
+	slices.SortStableFunc(s.curJoinGroup, func(i, j *jrNode) int {
+		return cmp.Compare(i.cumCost, j.cumCost)
 	})
 
 	// joinNodeNum indicates the number of join nodes except leading join nodes in the current join group
