@@ -170,7 +170,7 @@ func TestSocketForwarding(t *testing.T) {
 	server.SetDomain(ts.Domain)
 	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	go func() {
-		err := server.Run(ts.Domain)
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
@@ -202,7 +202,7 @@ func TestSocket(t *testing.T) {
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
 	go func() {
-		err := server.Run(ts.Domain)
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
@@ -238,7 +238,7 @@ func TestSocketAndIp(t *testing.T) {
 	server.SetDomain(ts.Domain)
 	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	go func() {
-		err := server.Run(ts.Domain)
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	cli.WaitUntilServerCanConnect()
@@ -402,7 +402,7 @@ func TestOnlySocket(t *testing.T) {
 	require.NoError(t, err)
 	server.SetDomain(ts.Domain)
 	go func() {
-		err := server.Run(ts.Domain)
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	time.Sleep(time.Millisecond * 100)
@@ -2147,7 +2147,7 @@ func TestLocalhostClientMapping(t *testing.T) {
 	server.SetDomain(ts.Domain)
 	cli.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	go func() {
-		err := server.Run(ts.Domain)
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	defer server.Close()
