@@ -54,7 +54,7 @@ func TestInfoStoreLowerCaseTableNames(t *testing.T) {
 	require.True(t, infoschema.ErrTableNotExists.Equal(err))
 	require.Nil(t, got2)
 
-	schemaNames := AllSchemaNames(is)
+	schemaNames := is.AllSchemaNames()
 	require.Equal(t, []string{dbName.O}, schemaNames)
 	_, err = is.AllTableNamesOfSchema(model.NewCIStr("wrong-db"))
 	require.Error(t, err)
@@ -82,7 +82,7 @@ func TestInfoStoreLowerCaseTableNames(t *testing.T) {
 	require.NotNil(t, got2)
 	require.Equal(t, tableName, got2.Name)
 
-	schemaNames = AllSchemaNames(is)
+	schemaNames = is.AllSchemaNames()
 	require.Equal(t, []string{dbName.L}, schemaNames)
 	_, err = is.AllTableNamesOfSchema(model.NewCIStr("wrong-db"))
 	require.Error(t, err)
@@ -108,7 +108,7 @@ func TestInfoStoreDeleteTables(t *testing.T) {
 	err = is.PutTable(dbName1, tableInfo2)
 	require.NoError(t, err)
 
-	schemaNames := AllSchemaNames(is)
+	schemaNames := is.AllSchemaNames()
 	require.Equal(t, []string{dbName1.O}, schemaNames)
 	tableNames, err := is.AllTableNamesOfSchema(dbName1)
 	require.NoError(t, err)
@@ -127,7 +127,7 @@ func TestInfoStoreDeleteTables(t *testing.T) {
 	err = is.PutTable(dbName2, tableInfo1)
 	require.NoError(t, err)
 
-	schemaNames = AllSchemaNames(is)
+	schemaNames = is.AllSchemaNames()
 	sort.Strings(schemaNames)
 	require.Equal(t, []string{dbName1.O, dbName2.O}, schemaNames)
 	tableNames, err = is.AllTableNamesOfSchema(dbName2)
@@ -149,6 +149,6 @@ func TestInfoStoreDeleteTables(t *testing.T) {
 	_, err = is.TableByName(dbName1, tableName1)
 	require.True(t, infoschema.ErrDatabaseNotExists.Equal(err))
 
-	schemaNames = AllSchemaNames(is)
+	schemaNames = is.AllSchemaNames()
 	require.Equal(t, []string{dbName2.O}, schemaNames)
 }

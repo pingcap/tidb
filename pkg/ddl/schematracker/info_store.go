@@ -127,6 +127,15 @@ func (i *InfoStore) DeleteTable(schema, table model.CIStr) error {
 	return nil
 }
 
+// AllSchemaNames returns all the schemas' names.
+func (i *InfoStore) AllSchemaNames() []string {
+	names := make([]string, 0, len(i.dbs))
+	for name := range i.dbs {
+		names = append(names, name)
+	}
+	return names
+}
+
 // AllTableNamesOfSchema return all table names of a schema.
 func (i *InfoStore) AllTableNamesOfSchema(schema model.CIStr) ([]string, error) {
 	schemaKey := i.ciStr2Key(schema)
