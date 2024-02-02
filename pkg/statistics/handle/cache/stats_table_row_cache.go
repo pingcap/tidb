@@ -77,29 +77,33 @@ func (c *StatsTableRowCache) GetColLength(id tableHistID) uint64 {
 	return c.colLength[id]
 }
 
+func (c *StatsTableRowCache) updateDirtyIDs(sctx sessionctx.Context) error {
+	if len(c.dirtyIDs) > 0 {
+		tableRows, err := getRowCountTables(sctx, c.dirtyIDs...)
+		if err != nil {
+			return err
+		}
+		for id, tr := range tableRows {
+			c.tableRows[id] = tr
+		}
+		colLength, err := getColLengthTables(sctx, c.dirtyIDs...)
+		if err != nil {
+			return err
+		}
+		for id, cl := range colLength {
+			c.colLength[id] = cl
+		}
+		c.dirtyIDs = c.dirtyIDs[:0]
+	}
+	return nil
+}
+
 // UpdateByID tries to update the cache by table id.
 func (c *StatsTableRowCache) UpdateByID(sctx sessionctx.Context, id int64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if time.Since(c.modifyTime) < tableStatsCacheExpiry {
-		if len(c.dirtyIDs) > 0 {
-			tableRows, err := getRowCountTables(sctx, c.dirtyIDs...)
-			if err != nil {
-				return err
-			}
-			for id, tr := range tableRows {
-				c.tableRows[id] = tr
-			}
-			colLength, err := getColLengthTables(sctx, c.dirtyIDs...)
-			if err != nil {
-				return err
-			}
-			for id, cl := range colLength {
-				c.colLength[id] = cl
-			}
-			c.dirtyIDs = c.dirtyIDs[:0]
-		}
-		return nil
+		return c.updateDirtyIDs(sctx)
 	}
 	tableRows, err := getRowCountTables(sctx, id)
 	if err != nil {
@@ -122,24 +126,8 @@ func (c *StatsTableRowCache) Update(sctx sessionctx.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if time.Since(c.modifyTime) < tableStatsCacheExpiry {
-		if len(c.dirtyIDs) > 0 {
-			tableRows, err := getRowCountTables(sctx, c.dirtyIDs...)
-			if err != nil {
-				return err
-			}
-			for id, tr := range tableRows {
-				c.tableRows[id] = tr
-			}
-			colLength, err := getColLengthTables(sctx, c.dirtyIDs...)
-			if err != nil {
-				return err
-			}
-			for id, cl := range colLength {
-				c.colLength[id] = cl
-			}
-			c.dirtyIDs = c.dirtyIDs[:0]
-		}
-		return nil
+		return c.updateDirtyIDs(sctx)
+
 	}
 	tableRows, err := getRowCountTables(sctx)
 	if err != nil {
