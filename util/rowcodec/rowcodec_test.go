@@ -876,6 +876,10 @@ func TestColumnEncode(t *testing.T) {
 	encodeBytes := func(v []byte) []byte {
 		return append(binary.LittleEndian.AppendUint32(nil, uint32(len(v))), v...)
 	}
+	convertTZ := func(ts types.Time) types.Time {
+		require.NoError(t, ts.ConvertTimeZone(time.Local, time.UTC))
+		return ts
+	}
 	var (
 		buf     = make([]byte, 0, 128)
 		intZero = 0
@@ -995,25 +999,25 @@ func TestColumnEncode(t *testing.T) {
 		{
 			"timestamp", types.NewFieldType(mysql.TypeTimestamp),
 			types.NewTimeDatum(types.NewTime(ct, mysql.TypeTimestamp, 3)),
-			encodeBytes([]byte(types.NewTime(ct, mysql.TypeTimestamp, 3).String())),
+			encodeBytes([]byte(convertTZ(types.NewTime(ct, mysql.TypeTimestamp, 3)).String())),
 			true,
 		},
 		{
 			"timestamp/zero", types.NewFieldType(mysql.TypeTimestamp),
 			types.NewTimeDatum(types.ZeroTimestamp),
-			encodeBytes([]byte(types.ZeroTimestamp.String())),
+			encodeBytes([]byte(convertTZ(types.ZeroTimestamp).String())),
 			true,
 		},
 		{
 			"timestamp/min", types.NewFieldType(mysql.TypeTimestamp),
 			types.NewTimeDatum(types.MinTimestamp),
-			encodeBytes([]byte(types.MinTimestamp.String())),
+			encodeBytes([]byte(convertTZ(types.MinTimestamp).String())),
 			true,
 		},
 		{
 			"timestamp/max", types.NewFieldType(mysql.TypeTimestamp),
 			types.NewTimeDatum(types.MaxTimestamp),
-			encodeBytes([]byte(types.MaxTimestamp.String())),
+			encodeBytes([]byte(convertTZ(types.MaxTimestamp).String())),
 			true,
 		},
 		{
