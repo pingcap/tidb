@@ -397,6 +397,7 @@ func TestRandomFail(t *testing.T) {
 	initCtx(ctx, newRootExceedAction, hardLimitBytesNum, 32)
 
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/enableAggSpillIntest", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", `return(true)`)
 	rowNum := 100000 + rand.Intn(100000)
 	ndv := 50000 + rand.Intn(50000)
 	col1, col2 := generateData(rowNum, ndv)
