@@ -320,7 +320,9 @@ func generateNonPartitionPlan(
 func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool) int {
 	var regionBatch int
 	avgTasksPerInstance := (totalRegionCnt + instanceCnt - 1) / instanceCnt // ceiling
-	if !useLocalDisk {
+	if useLocalDisk {
+		regionBatch = avgTasksPerInstance
+	} else {
 		// For cloud storage, each subtask should contain no more than 100 regions.
 		regionBatch = min(100, avgTasksPerInstance)
 	}
