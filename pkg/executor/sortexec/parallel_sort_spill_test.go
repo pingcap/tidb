@@ -26,9 +26,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+var hardLimit = int64(100000)
+
 func oneSpillCase(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource) {
-	ctx.GetSessionVars().InitChunkSize = 32
-	ctx.GetSessionVars().MaxChunkSize = 32
 	if exe == nil {
 		exe = buildSortExec(ctx, sortCase, dataSource)
 	}
@@ -44,7 +44,22 @@ func oneSpillCase(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sortC
 	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
 }
 
-// inMemoryThenSpillCase(t, ctx, sortCase)
+func inMemoryThenSpill(t *testing.T, ctx *mock.Context, exe *sortexec.SortExec, sortCase *testutil.SortCase, schema *expression.Schema, dataSource *testutil.MockDataSource) {
+	if exe == nil {
+		exe = buildSortExec(ctx, sortCase, dataSource)
+	}
+	dataSource.PrepareChunks()
+	resultChunks := executeSortExecutorAndManullyTriggerSpill(t, exe, hardLimit, ctx.GetSessionVars().StmtCtx.MemTracker)
+
+	require.True(t, exe.IsSpillTriggeredInParallelSortForTest())
+	require.Equal(t, int64(sortCase.Rows), exe.GetSpilledRowNumInParallelSortForTest())
+
+	err := exe.Close()
+	require.NoError(t, err)
+
+	require.True(t, checkCorrectness(schema, exe, dataSource, resultChunks))
+}
+
 func TestParallelSortSpillDisk(t *testing.T) {
 	sortexec.SetSmallSpillChunkSizeForTest()
 	ctx := mock.NewContext()
@@ -53,7 +68,9 @@ func TestParallelSortSpillDisk(t *testing.T) {
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SlowSomeWorkers", `return(true)`)
 	failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/SignalCheckpointForSort", `return(true)`)
 
-	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, 100000)
+	ctx.GetSessionVars().InitChunkSize = 32
+	ctx.GetSessionVars().MaxChunkSize = 32
+	ctx.GetSessionVars().MemTracker = memory.NewTracker(memory.LabelForSQLText, hardLimit)
 	ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
 	ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
 	ctx.GetSessionVars().EnableParallelSort = true
@@ -64,6 +81,8 @@ func TestParallelSortSpillDisk(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		oneSpillCase(t, ctx, nil, sortCase, schema, dataSource)
 		oneSpillCase(t, ctx, exe, sortCase, schema, dataSource)
+		inMemoryThenSpill(t, ctx, nil, sortCase, schema, dataSource)
+		inMemoryThenSpill(t, ctx, exe, sortCase, schema, dataSource)
 	}
 }
 

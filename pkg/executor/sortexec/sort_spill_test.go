@@ -197,6 +197,7 @@ func executeSortExecutorAndManullyTriggerSpill(t *testing.T, exe *sortexec.SortE
 			tracker.Consume(hardLimit)
 			// Wait for spill
 			time.Sleep(10 * time.Millisecond)
+			tracker.Consume(-hardLimit)
 		}
 
 		if chk.NumRows() == 0 {

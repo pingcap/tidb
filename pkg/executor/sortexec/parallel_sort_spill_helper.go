@@ -144,7 +144,6 @@ func (p *parallelSortSpillHelper) releaseMemory() {
 func (p *parallelSortSpillHelper) spillTmpSpillChunk(inDisk *chunk.DataInDiskByChunks) error {
 	err := inDisk.Add(p.tmpSpillChunk)
 	if err != nil {
-		p.errOutputChan <- rowWithError{err: err}
 		return err
 	}
 	p.tmpSpillChunk.Reset()
@@ -187,8 +186,10 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 					}
 				}
 
-				p.sortedRowsInDisk = append(p.sortedRowsInDisk, inDisk)
-				p.releaseMemory()
+				if inDisk.NumRows() > 0 {
+					p.sortedRowsInDisk = append(p.sortedRowsInDisk, inDisk)
+					p.releaseMemory()
+				}
 				return nil
 			}
 		}

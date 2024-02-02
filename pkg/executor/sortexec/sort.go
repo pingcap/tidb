@@ -743,7 +743,10 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 		}
 
 		e.Parallel.fetcherAndWorkerSyncer.Wait()
-		_ = e.spillRemainingRowsWhenNeeded()
+		err := e.spillRemainingRowsWhenNeeded()
+		if err != nil {
+			e.Parallel.resultChannel <- rowWithError{err: err}
+		}
 
 		// We must place it after the spill as workers will process its received
 		// chunks after channel is closed and this will cause data race.
@@ -781,6 +784,7 @@ func (e *SortExec) fetchChunksFromChild(ctx context.Context) {
 
 		err = e.checkSpillAndExecute()
 		if err != nil {
+			e.Parallel.resultChannel <- rowWithError{err: err}
 			return
 		}
 		injectParallelSortRandomFail()
