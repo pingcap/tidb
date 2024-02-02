@@ -87,10 +87,6 @@ const (
 	// loaclWorker is the worker who handles the operation in local TiDB.
 	// currently it only handle CreateTable job of TiDBDDLV2.
 	localWorker workerType = 2
-	// waitDependencyJobInterval is the interval when the dependency job doesn't be done.
-	waitDependencyJobInterval = 200 * time.Millisecond
-	// noneDependencyJob means a job has no dependency-job.
-	noneDependencyJob = 0
 )
 
 // worker is used for handling DDL jobs.
@@ -849,6 +845,9 @@ func (w *JobContext) setDDLLabelForDiagnosis(jobType model.ActionType) {
 }
 
 func (w *worker) HandleJobDone(d *ddlCtx, job *model.Job, t *meta.Meta) error {
+	if err := w.checkOwnerBeforeCommit(); err != nil {
+		return err
+	}
 	err := w.finishDDLJob(t, job)
 	if err != nil {
 		w.sess.Rollback()
@@ -942,6 +941,11 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 		return 0, err
 	}
 
+	if err = w.checkOwnerBeforeCommit(); err != nil {
+		d.unlockSchemaVersion(job.ID)
+		return 0, err
+	}
+
 	if runJobErr != nil && !job.IsRollingback() && !job.IsRollbackDone() {
 		// If the running job meets an error
 		// and the job state is rolling back, it means that we have already handled this error.
@@ -987,6 +991,16 @@ func (w *worker) HandleDDLJobTable(d *ddlCtx, job *model.Job) (int64, error) {
 	}
 
 	return schemaVer, nil
+}
+
+func (w *worker) checkOwnerBeforeCommit() error {
+	if !w.ddlCtx.isOwner() && w.tp != localWorker {
+		// Since this TiDB instance is not a DDL owner anymore,
+		// it should not commit any transaction.
+		w.sess.Rollback()
+		return dbterror.ErrNotOwner
+	}
+	return nil
 }
 
 // HandleDDLJobV2 handles v2 ddl job.
@@ -1364,7 +1378,7 @@ func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion in
 	}()
 
 	if latestSchemaVersion == 0 {
-		logutil.Logger(d.ctx).Info("schema version doesn't change", zap.String("category", "ddl"))
+		logutil.Logger(d.ctx).Info("schema version doesn't change", zap.String("category", "ddl"), zap.Int64("jobID", job.ID))
 		return nil
 	}
 
@@ -1381,10 +1395,24 @@ func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion in
 		}
 	}
 
+	return checkAllVersions(d, job, latestSchemaVersion, timeStart)
+}
+
+func checkAllVersions(d *ddlCtx, job *model.Job, latestSchemaVersion int64, timeStart time.Time) error {
+	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
+		if val.(bool) {
+			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
+				panic("check down before update global version failed")
+			}
+			mockDDLErrOnce = -1
+		}
+	})
+
 	// OwnerCheckAllVersions returns only when all TiDB schemas are synced(exclude the isolated TiDB).
-	err = d.schemaSyncer.OwnerCheckAllVersions(d.ctx, job.ID, latestSchemaVersion)
+	err := d.schemaSyncer.OwnerCheckAllVersions(d.ctx, job.ID, latestSchemaVersion)
 	if err != nil {
-		logutil.Logger(d.ctx).Info("wait latest schema version encounter error", zap.String("category", "ddl"), zap.Int64("ver", latestSchemaVersion), zap.Error(err))
+		logutil.Logger(d.ctx).Info("wait latest schema version encounter error", zap.String("category", "ddl"), zap.Int64("ver", latestSchemaVersion),
+			zap.Int64("jobID", job.ID), zap.Duration("take time", time.Since(timeStart)), zap.Error(err))
 		return err
 	}
 	logutil.Logger(d.ctx).Info("wait latest schema version changed(get the metadata lock if tidb_enable_metadata_lock is true)", zap.String("category", "ddl"),
@@ -1396,27 +1424,8 @@ func waitSchemaChanged(d *ddlCtx, waitTime time.Duration, latestSchemaVersion in
 
 // waitSchemaSyncedForMDL likes waitSchemaSynced, but it waits for getting the metadata lock of the latest version of this DDL.
 func waitSchemaSyncedForMDL(d *ddlCtx, job *model.Job, latestSchemaVersion int64) error {
-	failpoint.Inject("checkDownBeforeUpdateGlobalVersion", func(val failpoint.Value) {
-		if val.(bool) {
-			if mockDDLErrOnce > 0 && mockDDLErrOnce != latestSchemaVersion {
-				panic("check down before update global version failed")
-			}
-			mockDDLErrOnce = -1
-		}
-	})
-
 	timeStart := time.Now()
-	// OwnerCheckAllVersions returns only when all TiDB schemas are synced(exclude the isolated TiDB).
-	err := d.schemaSyncer.OwnerCheckAllVersions(d.ctx, job.ID, latestSchemaVersion)
-	if err != nil {
-		logutil.Logger(d.ctx).Info("wait latest schema version encounter error", zap.String("category", "ddl"), zap.Int64("ver", latestSchemaVersion), zap.Error(err))
-		return err
-	}
-	logutil.Logger(d.ctx).Info("wait latest schema version changed(get the metadata lock if tidb_enable_metadata_lock is true)", zap.String("category", "ddl"),
-		zap.Int64("ver", latestSchemaVersion),
-		zap.Duration("take time", time.Since(timeStart)),
-		zap.String("job", job.String()))
-	return nil
+	return checkAllVersions(d, job, latestSchemaVersion, timeStart)
 }
 
 // waitSchemaSynced handles the following situation:
@@ -1435,7 +1444,7 @@ func waitSchemaSynced(d *ddlCtx, job *model.Job, waitTime time.Duration) error {
 	m := meta.NewSnapshotMeta(snapshot)
 	latestSchemaVersion, err := m.GetSchemaVersionWithNonEmptyDiff()
 	if err != nil {
-		logutil.Logger(d.ctx).Warn("get global version failed", zap.String("category", "ddl"), zap.Error(err))
+		logutil.Logger(d.ctx).Warn("get global version failed", zap.String("category", "ddl"), zap.Int64("jobID", job.ID), zap.Error(err))
 		return err
 	}
 

@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/br/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/br/pkg/lightning/config"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
@@ -76,8 +77,8 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 	logger := logutil.BgLogger().With(
 		zap.Stringer("type", task.Type),
 		zap.Int64("task-id", task.ID),
-		zap.String("curr-step", StepStr(task.Step)),
-		zap.String("next-step", StepStr(nextStep)),
+		zap.String("curr-step", proto.Step2Str(task.Type, task.Step)),
+		zap.String("next-step", proto.Step2Str(task.Type, nextStep)),
 	)
 	var backfillMeta BackfillTaskMeta
 	if err := json.Unmarshal(task.Meta, &backfillMeta); err != nil {
@@ -92,12 +93,12 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 
 	// TODO: use planner.
 	switch nextStep {
-	case StepReadIndex:
+	case proto.BackfillStepReadIndex:
 		if tblInfo.Partition != nil {
 			return generatePartitionPlan(tblInfo)
 		}
 		return generateNonPartitionPlan(sch.d, tblInfo, job, sch.GlobalSort, len(execIDs))
-	case StepMergeSort:
+	case proto.BackfillStepMergeSort:
 		res, err := generateMergePlan(taskHandle, task, logger)
 		if err != nil {
 			return nil, err
@@ -109,11 +110,11 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 			}
 		}
 		return res, nil
-	case StepWriteAndIngest:
+	case proto.BackfillStepWriteAndIngest:
 		if sch.GlobalSort {
-			prevStep := StepReadIndex
+			prevStep := proto.BackfillStepReadIndex
 			if backfillMeta.UseMergeSort {
-				prevStep = StepMergeSort
+				prevStep = proto.BackfillStepMergeSort
 			}
 
 			failpoint.Inject("mockWriteIngest", func() {
@@ -127,9 +128,9 @@ func (sch *BackfillingSchedulerExt) OnNextSubtasksBatch(
 			})
 			return generateGlobalSortIngestPlan(
 				ctx,
+				sch.d.store.(kv.StorageWithPD),
 				taskHandle,
 				task,
-				job.ID,
 				backfillMeta.CloudStorageURI,
 				prevStep,
 				logger)
@@ -153,15 +154,15 @@ func updateMeta(task *proto.Task, taskMeta *BackfillTaskMeta) error {
 func (sch *BackfillingSchedulerExt) GetNextStep(task *proto.Task) proto.Step {
 	switch task.Step {
 	case proto.StepInit:
-		return StepReadIndex
-	case StepReadIndex:
+		return proto.BackfillStepReadIndex
+	case proto.BackfillStepReadIndex:
 		if sch.GlobalSort {
-			return StepMergeSort
+			return proto.BackfillStepMergeSort
 		}
 		return proto.StepDone
-	case StepMergeSort:
-		return StepWriteAndIngest
-	case StepWriteAndIngest:
+	case proto.BackfillStepMergeSort:
+		return proto.BackfillStepWriteAndIngest
+	case proto.BackfillStepWriteAndIngest:
 		return proto.StepDone
 	default:
 		return proto.StepDone
@@ -333,9 +334,9 @@ func calculateRegionBatch(totalRegionCnt int, instanceCnt int, useLocalDisk bool
 
 func generateGlobalSortIngestPlan(
 	ctx context.Context,
+	store kv.StorageWithPD,
 	taskHandle diststorage.TaskHandle,
 	task *proto.Task,
-	jobID int64,
 	cloudStorageURI string,
 	step proto.Step,
 	logger *zap.Logger,
@@ -348,12 +349,12 @@ func generateGlobalSortIngestPlan(
 		// Skip global sort for empty table.
 		return nil, nil
 	}
-	instanceIDs, err := scheduler.GenerateTaskExecutorNodes(ctx)
+	instanceIDs, err := scheduler.GetLiveExecIDs(ctx)
 	if err != nil {
 		return nil, err
 	}
 	splitter, err := getRangeSplitter(
-		ctx, cloudStorageURI, jobID, int64(totalSize), int64(len(instanceIDs)), multiFileStat, logger)
+		ctx, store, cloudStorageURI, int64(totalSize), int64(len(instanceIDs)), multiFileStat, logger)
 	if err != nil {
 		return nil, err
 	}
@@ -414,7 +415,7 @@ func generateMergePlan(
 ) ([][]byte, error) {
 	// check data files overlaps,
 	// if data files overlaps too much, we need a merge step.
-	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, StepReadIndex)
+	subTaskMetas, err := taskHandle.GetPreviousSubtaskMetas(task.ID, proto.BackfillStepReadIndex)
 	if err != nil {
 		return nil, err
 	}
@@ -433,7 +434,7 @@ func generateMergePlan(
 	}
 
 	// generate merge sort plan.
-	_, _, _, multiFileStat, err := getSummaryFromLastStep(taskHandle, task.ID, StepReadIndex)
+	_, _, _, multiFileStat, err := getSummaryFromLastStep(taskHandle, task.ID, proto.BackfillStepReadIndex)
 	if err != nil {
 		return nil, err
 	}
@@ -468,8 +469,8 @@ func generateMergePlan(
 
 func getRangeSplitter(
 	ctx context.Context,
+	store kv.StorageWithPD,
 	cloudStorageURI string,
-	jobID int64,
 	totalSize int64,
 	instanceCnt int64,
 	multiFileStat []external.MultipleFilesStat,
@@ -486,21 +487,24 @@ func getRangeSplitter(
 
 	rangeGroupSize := totalSize / instanceCnt
 	rangeGroupKeys := int64(math.MaxInt64)
-	bcCtx, ok := ingest.LitBackCtxMgr.Load(jobID)
-	if !ok {
-		return nil, errors.Errorf("backend context not found")
-	}
 
-	local := bcCtx.GetLocalBackend()
-	if local == nil {
-		return nil, errors.Errorf("local backend not found")
+	var maxSizePerRange = int64(config.SplitRegionSize)
+	var maxKeysPerRange = int64(config.SplitRegionKeys)
+	if store != nil {
+		pdCli := store.GetPDClient()
+		tls, err := ingest.NewDDLTLS()
+		if err == nil {
+			size, keys, err := local.GetRegionSplitSizeKeys(ctx, pdCli, tls)
+			if err == nil {
+				maxSizePerRange = max(maxSizePerRange, size)
+				maxKeysPerRange = max(maxKeysPerRange, keys)
+			} else {
+				logger.Warn("fail to get region split keys and size", zap.Error(err))
+			}
+		} else {
+			logger.Warn("fail to get region split keys and size", zap.Error(err))
+		}
 	}
-	maxSizePerRange, maxKeysPerRange, err := local.GetRegionSplitSizeKeys(ctx)
-	if err != nil {
-		logger.Warn("fail to get region split keys and size", zap.Error(err))
-	}
-	maxSizePerRange = max(maxSizePerRange, int64(config.SplitRegionSize))
-	maxKeysPerRange = max(maxKeysPerRange, int64(config.SplitRegionKeys))
 
 	return external.NewRangeSplitter(ctx, multiFileStat, extStore,
 		rangeGroupSize, rangeGroupKeys, maxSizePerRange, maxKeysPerRange, true)
@@ -542,22 +546,4 @@ func getSummaryFromLastStep(
 		multiFileStat = append(multiFileStat, subtask.MultipleFilesStats...)
 	}
 	return startKey, endKey, totalKVSize, multiFileStat, nil
-}
-
-// StepStr convert proto.Step to string.
-func StepStr(step proto.Step) string {
-	switch step {
-	case proto.StepInit:
-		return "init"
-	case StepReadIndex:
-		return "read-index"
-	case StepMergeSort:
-		return "merge-sort"
-	case StepWriteAndIngest:
-		return "write&ingest"
-	case proto.StepDone:
-		return "done"
-	default:
-		return "unknown"
-	}
 }

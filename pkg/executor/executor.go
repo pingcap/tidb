@@ -298,7 +298,7 @@ func (e *ShowNextRowIDExec) Next(_ context.Context, req *chunk.Chunk) error {
 	}
 	tblMeta := tbl.Meta()
 
-	allocators := tbl.Allocators(e.Ctx())
+	allocators := tbl.Allocators(e.Ctx().GetSessionVars())
 	for _, alloc := range allocators.Allocs {
 		nextGlobalID, err := alloc.NextGlobalAutoID()
 		if err != nil {
@@ -916,7 +916,7 @@ func (e *CheckTableExec) checkIndexHandle(ctx context.Context, src *IndexLookUpE
 	return errors.Trace(err)
 }
 
-func (e *CheckTableExec) handlePanic(r interface{}) {
+func (e *CheckTableExec) handlePanic(r any) {
 	if r != nil {
 		e.retCh <- errors.Errorf("%v", r)
 	}
@@ -1460,7 +1460,7 @@ func init() {
 	plannercore.EvalSubqueryFirstRow = func(ctx context.Context, p plannercore.PhysicalPlan, is infoschema.InfoSchema, sctx sessionctx.Context) ([]types.Datum, error) {
 		defer func(begin time.Time) {
 			s := sctx.GetSessionVars()
-			s.StmtCtx.SetSkipPlanCache(errors.New("query has uncorrelated sub-queries is un-cacheable"))
+			s.StmtCtx.SetSkipPlanCache(errors.NewNoStackError("query has uncorrelated sub-queries is un-cacheable"))
 			s.RewritePhaseInfo.PreprocessSubQueries++
 			s.RewritePhaseInfo.DurationPreprocessSubQuery += time.Since(begin)
 		}(time.Now())
@@ -1973,7 +1973,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	}
 	vars.StmtCtx.SetVarHintRestore = nil
 	var sc *stmtctx.StatementContext
-	if vars.TxnCtx.CouldRetry || mysql.HasCursorExistsFlag(vars.Status) {
+	if vars.TxnCtx.CouldRetry || vars.HasStatusFlag(mysql.ServerStatusCursorExists) {
 		// Must construct new statement context object, the retry history need context for every statement.
 		// TODO: Maybe one day we can get rid of transaction retry, then this logic can be deleted.
 		sc = stmtctx.NewStmtCtx()
@@ -2016,7 +2016,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	vars.DiskTracker.Killer = &vars.SQLKiller
 	vars.SQLKiller.Reset()
 	vars.SQLKiller.ConnID = vars.ConnectionID
-	vars.StmtCtx.TableStats = make(map[int64]interface{})
+	vars.StmtCtx.TableStats = make(map[int64]any)
 
 	isAnalyze := false
 	if execStmt, ok := s.(*ast.ExecuteStmt); ok {
@@ -2105,6 +2105,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	// pushing them down to TiKV as flags.
 
 	sc.InRestrictedSQL = vars.InRestrictedSQL
+	strictSQLMode := vars.SQLMode.HasStrictMode()
 
 	errLevels := sc.ErrLevels()
 	errLevels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
@@ -2121,31 +2122,31 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		// For insert statement (not for update statement), disabling the StrictSQLMode
 		// should make TruncateAsWarning and DividedByZeroAsWarning,
 		// but should not make DupKeyAsWarning.
-		sc.DupKeyAsWarning = stmt.IgnoreErr
 		if stmt.IgnoreErr {
+			errLevels[errctx.ErrGroupDupKey] = errctx.LevelWarn
 			errLevels[errctx.ErrGroupAutoIncReadFailed] = errctx.LevelWarn
 			errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
 		}
-		errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !vars.StrictSQLMode || stmt.IgnoreErr)
+		errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !strictSQLMode || stmt.IgnoreErr)
 		errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
 			!vars.SQLMode.HasErrorForDivisionByZeroMode(),
-			!vars.StrictSQLMode || stmt.IgnoreErr,
+			!strictSQLMode || stmt.IgnoreErr,
 		)
 		sc.Priority = stmt.Priority
 		sc.SetTypeFlags(sc.TypeFlags().
-			WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr).
+			WithTruncateAsWarning(!strictSQLMode || stmt.IgnoreErr).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
 			WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() ||
-				!vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode || stmt.IgnoreErr ||
+				!vars.SQLMode.HasNoZeroDateMode() || !strictSQLMode || stmt.IgnoreErr ||
 				vars.SQLMode.HasAllowInvalidDatesMode()))
 	case *ast.CreateTableStmt, *ast.AlterTableStmt:
 		sc.InCreateOrAlterStmt = true
 		sc.SetTypeFlags(sc.TypeFlags().
-			WithTruncateAsWarning(!vars.StrictSQLMode).
+			WithTruncateAsWarning(!strictSQLMode).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
-			WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() || !vars.StrictSQLMode ||
+			WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() || !strictSQLMode ||
 				vars.SQLMode.HasAllowInvalidDatesMode()).
-			WithIgnoreZeroDateErr(!vars.SQLMode.HasNoZeroDateMode() || !vars.StrictSQLMode))
+			WithIgnoreZeroDateErr(!vars.SQLMode.HasNoZeroDateMode() || !strictSQLMode))
 
 	case *ast.LoadDataStmt:
 		sc.InLoadDataStmt = true
@@ -2234,6 +2235,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			reuseObj = nil
 		}
 		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(reuseObj)
+
+		// also enable index usage collector
+		sc.IndexUsageCollector = ctx.NewStmtIndexUsageCollector()
 	}
 
 	sc.ForcePlanCache = fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false)
@@ -2257,41 +2261,43 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 // ResetUpdateStmtCtx resets statement context for UpdateStmt.
 func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars *variable.SessionVars) {
+	strictSQLMode := vars.SQLMode.HasStrictMode()
 	sc.InUpdateStmt = true
 	errLevels := sc.ErrLevels()
-	sc.DupKeyAsWarning = stmt.IgnoreErr
-	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !vars.StrictSQLMode || stmt.IgnoreErr)
+	errLevels[errctx.ErrGroupDupKey] = errctx.ResolveErrLevel(false, stmt.IgnoreErr)
+	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !strictSQLMode || stmt.IgnoreErr)
 	errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
 		!vars.SQLMode.HasErrorForDivisionByZeroMode(),
-		!vars.StrictSQLMode || stmt.IgnoreErr,
+		!strictSQLMode || stmt.IgnoreErr,
 	)
 	errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.ResolveErrLevel(false, stmt.IgnoreErr)
 	sc.SetErrLevels(errLevels)
 	sc.Priority = stmt.Priority
 	sc.SetTypeFlags(sc.TypeFlags().
-		WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr).
+		WithTruncateAsWarning(!strictSQLMode || stmt.IgnoreErr).
 		WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
 		WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() ||
-			!vars.StrictSQLMode || stmt.IgnoreErr || vars.SQLMode.HasAllowInvalidDatesMode()))
+			!strictSQLMode || stmt.IgnoreErr || vars.SQLMode.HasAllowInvalidDatesMode()))
 }
 
 // ResetDeleteStmtCtx resets statement context for DeleteStmt.
 func ResetDeleteStmtCtx(sc *stmtctx.StatementContext, stmt *ast.DeleteStmt, vars *variable.SessionVars) {
+	strictSQLMode := vars.SQLMode.HasStrictMode()
 	sc.InDeleteStmt = true
 	errLevels := sc.ErrLevels()
-	sc.DupKeyAsWarning = stmt.IgnoreErr
-	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !vars.StrictSQLMode || stmt.IgnoreErr)
+	errLevels[errctx.ErrGroupDupKey] = errctx.ResolveErrLevel(false, stmt.IgnoreErr)
+	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !strictSQLMode || stmt.IgnoreErr)
 	errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
 		!vars.SQLMode.HasErrorForDivisionByZeroMode(),
-		!vars.StrictSQLMode || stmt.IgnoreErr,
+		!strictSQLMode || stmt.IgnoreErr,
 	)
 	sc.SetErrLevels(errLevels)
 	sc.Priority = stmt.Priority
 	sc.SetTypeFlags(sc.TypeFlags().
-		WithTruncateAsWarning(!vars.StrictSQLMode || stmt.IgnoreErr).
+		WithTruncateAsWarning(!strictSQLMode || stmt.IgnoreErr).
 		WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
 		WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() ||
-			!vars.StrictSQLMode || stmt.IgnoreErr || vars.SQLMode.HasAllowInvalidDatesMode()))
+			!strictSQLMode || stmt.IgnoreErr || vars.SQLMode.HasAllowInvalidDatesMode()))
 }
 
 func setOptionForTopSQL(sc *stmtctx.StatementContext, snapshot kv.Snapshot) {
@@ -2646,7 +2652,8 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 					if idx == nil {
 						return nil
 					}
-					k, _, err := idx.GenIndexKey(w.sctx.GetSessionVars().StmtCtx, idxRow.Values[:len(idx.Meta().Columns)], idxRow.Handle, nil)
+					sc := w.sctx.GetSessionVars().StmtCtx
+					k, _, err := idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxRow.Values[:len(idx.Meta().Columns)], idxRow.Handle, nil)
 					if err != nil {
 						return nil
 					}

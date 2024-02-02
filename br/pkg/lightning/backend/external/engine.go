@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/cockroachdb/pebble"
+	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -54,6 +55,39 @@ type memKVsAndBuffers struct {
 	values       [][]byte
 	memKVBuffers []*membuf.Buffer
 	size         int
+	droppedSize  int
+
+	// temporary fields to store KVs to reduce slice allocations.
+	keysPerFile        [][][]byte
+	valuesPerFile      [][][]byte
+	droppedSizePerFile []int
+}
+
+func (b *memKVsAndBuffers) build(ctx context.Context) {
+	sumKVCnt := 0
+	for _, keys := range b.keysPerFile {
+		sumKVCnt += len(keys)
+	}
+	b.droppedSize = 0
+	for _, size := range b.droppedSizePerFile {
+		b.droppedSize += size
+	}
+	b.droppedSizePerFile = nil
+
+	logutil.Logger(ctx).Info("building memKVsAndBuffers",
+		zap.Int("sumKVCnt", sumKVCnt),
+		zap.Int("droppedSize", b.droppedSize))
+
+	b.keys = make([][]byte, 0, sumKVCnt)
+	b.values = make([][]byte, 0, sumKVCnt)
+	for i := range b.keysPerFile {
+		b.keys = append(b.keys, b.keysPerFile[i]...)
+		b.keysPerFile[i] = nil
+		b.values = append(b.values, b.valuesPerFile[i]...)
+		b.valuesPerFile[i] = nil
+	}
+	b.keysPerFile = nil
+	b.valuesPerFile = nil
 }
 
 // Engine stored sorted key/value pairs in an external storage.
@@ -92,7 +126,7 @@ type Engine struct {
 	importedKVCount *atomic.Int64
 }
 
-const memLimit = 16 * 1024 * 1024 * 1024
+const memLimit = 12 * units.GiB
 
 // NewExternalEngine creates an (external) engine.
 func NewExternalEngine(
@@ -182,23 +216,22 @@ func getFilesReadConcurrency(
 	startKey, endKey []byte,
 ) ([]uint64, []uint64, error) {
 	result := make([]uint64, len(statsFiles))
-	startOffs, err := seekPropsOffsets(ctx, startKey, statsFiles, storage, false)
+	offsets, err := seekPropsOffsets(ctx, []kv.Key{startKey, endKey}, statsFiles, storage, false)
 	if err != nil {
 		return nil, nil, err
 	}
-	endOffs, err := seekPropsOffsets(ctx, endKey, statsFiles, storage, false)
-	if err != nil {
-		return nil, nil, err
-	}
+	startOffs, endOffs := offsets[0], offsets[1]
 	for i := range statsFiles {
 		result[i] = (endOffs[i] - startOffs[i]) / uint64(ConcurrentReaderBufferSizePerConc)
 		result[i] = max(result[i], 1)
-		logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
-			zap.String("filename", statsFiles[i]),
-			zap.Uint64("startOffset", startOffs[i]),
-			zap.Uint64("endOffset", endOffs[i]),
-			zap.Uint64("expected concurrency", result[i]),
-		)
+		if result[i] > 1 {
+			logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
+				zap.String("filename", statsFiles[i]),
+				zap.Uint64("startOffset", startOffs[i]),
+				zap.Uint64("endOffset", endOffs[i]),
+				zap.Uint64("expected concurrency", result[i]),
+			)
+		}
 	}
 	return result, startOffs, nil
 }
@@ -225,10 +258,14 @@ func (e *Engine) loadBatchRegionData(ctx context.Context, startKey, endKey []byt
 	if err != nil {
 		return err
 	}
+	e.memKVsAndBuffers.build(ctx)
+
 	readSecond := time.Since(readStart).Seconds()
 	readDurHist.Observe(readSecond)
 	logutil.Logger(ctx).Info("reading external storage in loadBatchRegionData",
-		zap.Duration("cost time", time.Since(readStart)))
+		zap.Duration("cost time", time.Since(readStart)),
+		zap.Int("droppedSize", e.memKVsAndBuffers.droppedSize))
+
 	sortStart := time.Now()
 	oldSortyGor := sorty.MaxGor
 	sorty.MaxGor = uint64(e.workerConcurrency * 2)
@@ -293,9 +330,8 @@ func (e *Engine) LoadIngestData(
 	regionRanges []common.Range,
 	outCh chan<- common.DataAndRange,
 ) error {
-	// currently we assume the region size is 96MB and will download 96MB*40 = 3.8GB
-	// data at once
-	regionBatchSize := 40
+	// try to make every worker busy for each batch
+	regionBatchSize := e.workerConcurrency
 	failpoint.Inject("LoadIngestDataBatchSize", func(val failpoint.Value) {
 		regionBatchSize = val.(int)
 	})
@@ -338,11 +374,11 @@ func (e *Engine) createMergeIter(ctx context.Context, start kv.Key) (*MergeKVIte
 		logger.Info("no stats files",
 			zap.String("startKey", hex.EncodeToString(start)))
 	} else {
-		offs, err := seekPropsOffsets(ctx, start, e.statsFiles, e.storage, e.checkHotspot)
+		offs, err := seekPropsOffsets(ctx, []kv.Key{start}, e.statsFiles, e.storage, e.checkHotspot)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		offsets = offs
+		offsets = offs[0]
 		logger.Debug("seek props offsets",
 			zap.Uint64s("offsets", offsets),
 			zap.String("startKey", hex.EncodeToString(start)),
@@ -411,6 +447,7 @@ func (e *Engine) Close() error {
 		e.bufPool.Destroy()
 		e.bufPool = nil
 	}
+	e.storage.Close()
 	return nil
 }
 
@@ -645,6 +682,8 @@ func (m *MemoryIngestData) IncRef() {
 // DecRef implements IngestData.DecRef.
 func (m *MemoryIngestData) DecRef() {
 	if m.refCnt.Dec() == 0 {
+		m.keys = nil
+		m.values = nil
 		for _, b := range m.memBuf {
 			b.Destroy()
 		}

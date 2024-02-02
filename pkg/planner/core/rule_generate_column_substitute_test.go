@@ -251,12 +251,13 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 		"(tai.a='%s' AND tai.b='%s') OR" +
 		"(tai.a='%s' AND tai.b='%s') OR" +
 		"(tai.a='%s' AND tai.b='%s')"
-	addresses := make([]interface{}, 0, 90)
+	addresses := make([]any, 0, 90)
 	for i := 0; i < 80; i++ {
 		addresses = append(addresses, "0x6ab6Bf9117A8A9dd5a2FF203aa8a22457162fC510x6ab6Bf9117A8A9dd5a2FF203aa8a22457162fC510x6ab6Bf9117A8A9dd5a2FF203aa8a22457162fC510x6ab6Bf9117A8A9dd5a2FF203aa8a22457162fC51")
 	}
 	condition = fmt.Sprintf(condition, addresses...)
 	s := core.CreatePlannerSuite(tk.Session(), is)
+	defer s.Close()
 	ctx := context.Background()
 	sql := "select * from tai where " + condition
 	fmt.Println(sql)

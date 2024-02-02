@@ -1327,7 +1327,7 @@ func TestStalePrepare(t *testing.T) {
 	require.Nil(t, err)
 	tk.MustExec("prepare stmt from \"select * from t as of timestamp now(3) - interval 1000 microsecond order by id asc\"")
 
-	var expected [][]interface{}
+	var expected [][]any
 	for i := 0; i < 20; i++ {
 		tk.MustExec("insert into t values(?)", i)
 		time.Sleep(2 * time.Millisecond) // sleep 2ms to ensure staleread_ts > commit_ts.

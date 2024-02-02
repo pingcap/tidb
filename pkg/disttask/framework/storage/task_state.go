@@ -24,7 +24,7 @@ import (
 
 // CancelTask cancels task.
 func (mgr *TaskManager) CancelTask(ctx context.Context, taskID int64) error {
-	_, err := mgr.executeSQLWithNewSession(ctx,
+	_, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`update mysql.tidb_global_task
 		 set state = %?, 
 			 state_update_time = CURRENT_TIMESTAMP()
@@ -47,7 +47,7 @@ func (*TaskManager) CancelTaskByKeySession(ctx context.Context, se sessionctx.Co
 
 // FailTask implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) FailTask(ctx context.Context, taskID int64, currentState proto.TaskState, taskErr error) error {
-	_, err := mgr.executeSQLWithNewSession(ctx,
+	_, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`update mysql.tidb_global_task
 		 set state = %?,
 			 error = %?,
@@ -59,9 +59,22 @@ func (mgr *TaskManager) FailTask(ctx context.Context, taskID int64, currentState
 	return err
 }
 
+// RevertTask implements the scheduler.TaskManager interface.
+func (mgr *TaskManager) RevertTask(ctx context.Context, taskID int64, taskState proto.TaskState, taskErr error) error {
+	_, err := mgr.ExecuteSQLWithNewSession(ctx, `
+		update mysql.tidb_global_task
+		set state = %?,
+			error = %?,
+			state_update_time = CURRENT_TIMESTAMP()
+		where id = %? and state = %?`,
+		proto.TaskStateReverting, serializeErr(taskErr), taskID, taskState,
+	)
+	return err
+}
+
 // RevertedTask implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) RevertedTask(ctx context.Context, taskID int64) error {
-	_, err := mgr.executeSQLWithNewSession(ctx,
+	_, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`update mysql.tidb_global_task
 		 set state = %?,
 			 state_update_time = CURRENT_TIMESTAMP(),
@@ -99,11 +112,10 @@ func (mgr *TaskManager) PauseTask(ctx context.Context, taskKey string) (bool, er
 
 // PausedTask update the task state from pausing to paused.
 func (mgr *TaskManager) PausedTask(ctx context.Context, taskID int64) error {
-	_, err := mgr.executeSQLWithNewSession(ctx,
+	_, err := mgr.ExecuteSQLWithNewSession(ctx,
 		`update mysql.tidb_global_task
 		 set state = %?,
-			 state_update_time = CURRENT_TIMESTAMP(),
-			 end_time = CURRENT_TIMESTAMP()
+			 state_update_time = CURRENT_TIMESTAMP()
 		 where id = %? and state = %?`,
 		proto.TaskStatePaused, taskID, proto.TaskStatePausing,
 	)
@@ -133,6 +145,18 @@ func (mgr *TaskManager) ResumeTask(ctx context.Context, taskKey string) (bool, e
 		return found, err
 	}
 	return found, nil
+}
+
+// ResumedTask implements the scheduler.TaskManager interface.
+func (mgr *TaskManager) ResumedTask(ctx context.Context, taskID int64) error {
+	_, err := mgr.ExecuteSQLWithNewSession(ctx, `
+		update mysql.tidb_global_task
+		set state = %?,
+			state_update_time = CURRENT_TIMESTAMP()
+		where id = %? and state = %?`,
+		proto.TaskStateRunning, taskID, proto.TaskStateResuming,
+	)
+	return err
 }
 
 // SucceedTask update task state from running to succeed.

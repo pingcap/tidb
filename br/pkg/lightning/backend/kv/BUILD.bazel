@@ -70,7 +70,6 @@ go_test(
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/planner/core",
-        "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/table",
         "//pkg/table/tables",

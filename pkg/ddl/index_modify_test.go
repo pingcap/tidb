@@ -277,9 +277,9 @@ LOOP:
 	keys = append(keys, otherKeys...)
 
 	// test index key
-	expectedRows := make([][]interface{}, 0, len(keys))
+	expectedRows := make([][]any, 0, len(keys))
 	for _, key := range keys {
-		expectedRows = append(expectedRows, []interface{}{fmt.Sprintf("%v", key)})
+		expectedRows = append(expectedRows, []any{fmt.Sprintf("%v", key)})
 	}
 	tk.MustQuery(fmt.Sprintf("select c1 from test_add_index where c3 >= %d order by c1", start)).Check(expectedRows)
 	tk.MustExec("admin check table test_add_index")

@@ -24,6 +24,7 @@ go_library(
         "//pkg/planner/util",
         "//pkg/sessionctx",
         "//pkg/types",
+        "//pkg/util/dbterror/plannererrors",
         "//pkg/util/ranger",
         "//pkg/util/set",
     ],

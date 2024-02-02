@@ -30,23 +30,29 @@ type TaskManager interface {
 	// The returned tasks are sorted by task order, see proto.Task, and only contains
 	// some fields, see row2TaskBasic.
 	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.Task, error)
-	GetTasksInStates(ctx context.Context, states ...interface{}) (task []*proto.Task, err error)
+	// GetAllSubtasks gets all subtasks with basic columns.
+	GetAllSubtasks(ctx context.Context) ([]*proto.Subtask, error)
+	GetTasksInStates(ctx context.Context, states ...any) (task []*proto.Task, err error)
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
-	UpdateTaskAndAddSubTasks(ctx context.Context, task *proto.Task, subtasks []*proto.Subtask, prevState proto.TaskState) (bool, error)
 	GCSubtasks(ctx context.Context) error
 	GetAllNodes(ctx context.Context) ([]proto.ManagedNode, error)
 	DeleteDeadNodes(ctx context.Context, nodes []string) error
+	// TransferTasks2History transfer tasks, and it's related subtasks to history tables.
 	TransferTasks2History(ctx context.Context, tasks []*proto.Task) error
 	// CancelTask updated task state to canceling.
 	CancelTask(ctx context.Context, taskID int64) error
 	// FailTask updates task state to Failed and updates task error.
 	FailTask(ctx context.Context, taskID int64, currentState proto.TaskState, taskErr error) error
+	// RevertTask updates task state to reverting, and task error.
+	RevertTask(ctx context.Context, taskID int64, taskState proto.TaskState, taskErr error) error
 	// RevertedTask updates task state to reverted.
 	RevertedTask(ctx context.Context, taskID int64) error
 	// PauseTask updated task state to pausing.
 	PauseTask(ctx context.Context, taskKey string) (bool, error)
 	// PausedTask updated task state to paused.
 	PausedTask(ctx context.Context, taskID int64) error
+	// ResumedTask updated task state from resuming to running.
+	ResumedTask(ctx context.Context, taskID int64) error
 	// SucceedTask updates a task to success state.
 	SucceedTask(ctx context.Context, taskID int64) error
 	// SwitchTaskStep switches the task to the next step and add subtasks in one
@@ -72,18 +78,16 @@ type TaskManager interface {
 	// GetSubtaskCntGroupByStates returns the count of subtasks of some step group by state.
 	GetSubtaskCntGroupByStates(ctx context.Context, taskID int64, step proto.Step) (map[proto.SubtaskState]int64, error)
 	ResumeSubtasks(ctx context.Context, taskID int64) error
-	CollectSubTaskError(ctx context.Context, taskID int64) ([]error, error)
-	TransferSubTasks2History(ctx context.Context, taskID int64) error
+	GetSubtaskErrors(ctx context.Context, taskID int64) ([]error, error)
 	UpdateSubtasksExecIDs(ctx context.Context, subtasks []*proto.Subtask) error
 	// GetManagedNodes returns the nodes managed by dist framework and can be used
 	// to execute tasks. If there are any nodes with background role, we use them,
 	// else we use nodes without role.
 	// returned nodes are sorted by node id(host:port).
 	GetManagedNodes(ctx context.Context) ([]proto.ManagedNode, error)
-	GetTaskExecutorIDsByTaskID(ctx context.Context, taskID int64) ([]string, error)
-	GetSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.TaskState) ([]*proto.Subtask, error)
-	GetSubtasksByExecIdsAndStepAndState(ctx context.Context, tidbIDs []string, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error)
-	GetTaskExecutorIDsByTaskIDAndStep(ctx context.Context, taskID int64, step proto.Step) ([]string, error)
+
+	// GetAllSubtasksByStepAndState gets all subtasks by given states for one step.
+	GetAllSubtasksByStepAndState(ctx context.Context, taskID int64, step proto.Step, state proto.SubtaskState) ([]*proto.Subtask, error)
 
 	WithNewSession(fn func(se sessionctx.Context) error) error
 	WithNewTxn(ctx context.Context, fn func(se sessionctx.Context) error) error
@@ -131,9 +135,10 @@ type Extension interface {
 
 // Param is used to pass parameters when creating scheduler.
 type Param struct {
-	taskMgr TaskManager
-	nodeMgr *NodeManager
-	slotMgr *SlotManager
+	taskMgr  TaskManager
+	nodeMgr  *NodeManager
+	slotMgr  *SlotManager
+	serverID string
 }
 
 // schedulerFactoryFn is used to create a scheduler.

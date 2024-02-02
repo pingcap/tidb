@@ -228,6 +228,9 @@ func (l *LocalStorage) Rename(_ context.Context, oldFileName, newFileName string
 	return errors.Trace(os.Rename(filepath.Join(l.base, oldFileName), filepath.Join(l.base, newFileName)))
 }
 
+// Close implements ExternalStorage interface.
+func (*LocalStorage) Close() {}
+
 func pathExists(_path string) (bool, error) {
 	_, err := os.Stat(_path)
 	if err != nil {

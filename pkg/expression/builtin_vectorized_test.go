@@ -283,7 +283,7 @@ func (p *mockBuiltinDouble) vecEvalTime(ctx EvalContext, input *chunk.Chunk, res
 		if err != nil {
 			return err
 		}
-		if ts[i], err = ts[i].Add(ctx.GetSessionVars().StmtCtx.TypeCtx(), d); err != nil {
+		if ts[i], err = ts[i].Add(typeCtx(ctx), d); err != nil {
 			return err
 		}
 	}
@@ -375,7 +375,7 @@ func (p *mockBuiltinDouble) evalTime(ctx EvalContext, row chunk.Row) (types.Time
 	if err != nil {
 		return types.ZeroTime, false, err
 	}
-	v, err = v.Add(ctx.GetSessionVars().StmtCtx.TypeCtx(), d)
+	v, err = v.Add(typeCtx(ctx), d)
 	return v, isNull, err
 }
 

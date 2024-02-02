@@ -16,7 +16,7 @@ package core
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -456,10 +456,8 @@ func (f *FlatPhysicalPlan) flattenForeignKeyChecksAndCascadesMap(childCtx *opera
 	for tid := range fkChecksMap {
 		tids = append(tids, tid)
 	}
-	// Sort by table id for explain result stable.
-	sort.Slice(tids, func(i, j int) bool {
-		return tids[i] < tids[j]
-	})
+	// sort by table id for explain result stable.
+	slices.Sort(tids)
 	for i, tid := range tids {
 		target, childIdxs = f.flattenForeignKeyChecksAndCascades(childCtx, target, childIdxs, fkChecksMap[tid], nil, len(fkCascadesMap) == 0 && i == len(tids)-1)
 	}
@@ -467,9 +465,7 @@ func (f *FlatPhysicalPlan) flattenForeignKeyChecksAndCascadesMap(childCtx *opera
 	for tid := range fkCascadesMap {
 		tids = append(tids, tid)
 	}
-	sort.Slice(tids, func(i, j int) bool {
-		return tids[i] < tids[j]
-	})
+	slices.Sort(tids)
 	for i, tid := range tids {
 		target, childIdxs = f.flattenForeignKeyChecksAndCascades(childCtx, target, childIdxs, nil, fkCascadesMap[tid], i == len(tids)-1)
 	}

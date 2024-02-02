@@ -218,14 +218,14 @@ func (e *BaseKVEncoder) ProcessColDatum(col *table.Column, rowID int64, inputDat
 		meta := e.Table.Meta()
 		shardFmt := autoid.NewShardIDFormat(&col.FieldType, meta.AutoRandomBits, meta.AutoRandomRangeBits)
 		// this allocator is the same as the allocator in table importer, i.e. PanickingAllocators. below too.
-		alloc := e.Table.Allocators(e.SessionCtx).Get(autoid.AutoRandomType)
+		alloc := e.Table.Allocators(e.SessionCtx.GetSessionVars()).Get(autoid.AutoRandomType)
 		if err := alloc.Rebase(context.Background(), value.GetInt64()&shardFmt.IncrementalMask(), false); err != nil {
 			return value, errors.Trace(err)
 		}
 	}
 	if IsAutoIncCol(col.ToInfo()) {
 		// same as RowIDAllocType, since SepAutoInc is always false when initializing allocators of Table.
-		alloc := e.Table.Allocators(e.SessionCtx).Get(autoid.AutoIncrementType)
+		alloc := e.Table.Allocators(e.SessionCtx.GetSessionVars()).Get(autoid.AutoIncrementType)
 		if err := alloc.Rebase(context.Background(), GetAutoRecordID(value, &col.FieldType), false); err != nil {
 			return value, errors.Trace(err)
 		}

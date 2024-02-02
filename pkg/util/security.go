@@ -94,7 +94,7 @@ func ToTLSConfigWithVerify(caPath, certPath, keyPath string, verifyCN []string) 
 	}
 	/* #nosec G402 */
 	tlsCfg := &tls.Config{
-		MinVersion:   tls.VersionTLS10,
+		MinVersion:   tls.VersionTLS12,
 		Certificates: certificates,
 		RootCAs:      certPool,
 		ClientCAs:    certPool,
@@ -183,7 +183,7 @@ func NewTLSConfig(opts ...TLSConfigOption) (*tls.Config, error) {
 
 	/* #nosec G402 */
 	tlsCfg := &tls.Config{
-		MinVersion:         tls.VersionTLS10,
+		MinVersion:         tls.VersionTLS12,
 		InsecureSkipVerify: true,
 		NextProtos:         []string{"h2", "http/1.2"}, // specify `h2` to let Go use HTTP/2.
 	}

@@ -144,7 +144,7 @@ func debugTraceGetRowCountInput(
 var GetTblInfoForUsedStatsByPhysicalID func(sctx sessionctx.Context, id int64) (fullName string, tblInfo *model.TableInfo)
 
 // recordUsedItemStatsStatus only records un-FullLoad item load status during user query
-func recordUsedItemStatsStatus(sctx sessionctx.Context, stats interface{}, tableID, id int64) {
+func recordUsedItemStatsStatus(sctx sessionctx.Context, stats any, tableID, id int64) {
 	// Sometimes we try to use stats on _tidb_rowid (id == -1), which must be empty, we ignore this case here.
 	if id <= 0 {
 		return
@@ -207,9 +207,10 @@ func recordUsedItemStatsStatus(sctx sessionctx.Context, stats interface{}, table
 // ceTraceRange appends a list of ranges and related information into CE trace
 func ceTraceRange(sctx sessionctx.Context, tableID int64, colNames []string, ranges []*ranger.Range, tp string, rowCount uint64) {
 	sc := sctx.GetSessionVars().StmtCtx
+	tc := sc.TypeCtx()
 	allPoint := true
 	for _, ran := range ranges {
-		if !ran.IsPointNullable(sctx) {
+		if !ran.IsPointNullable(tc) {
 			allPoint = false
 			break
 		}

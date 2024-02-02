@@ -40,8 +40,7 @@ func TestHandle(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
 	})
 
-	ctx := context.Background()
-	ctx = util.WithInternalSourceType(ctx, "handle_test")
+	ctx := util.WithInternalSourceType(context.Background(), "handle_test")
 
 	store := testkit.CreateMockStore(t)
 	gtk := testkit.NewTestKit(t, store)
@@ -87,6 +86,15 @@ func TestHandle(t *testing.T) {
 	// pause and resume task.
 	require.NoError(t, handle.PauseTask(ctx, "2"))
 	require.NoError(t, handle.ResumeTask(ctx, "2"))
+
+	// submit task with same key
+	task, err = handle.SubmitTask(ctx, "3", proto.TaskTypeExample, 2, proto.EmptyMeta)
+	require.NoError(t, err)
+	require.Equal(t, int64(3), task.ID)
+	require.NoError(t, mgr.TransferTasks2History(ctx, []*proto.Task{task}))
+	task, err = handle.SubmitTask(ctx, "3", proto.TaskTypeExample, 2, proto.EmptyMeta)
+	require.Nil(t, task)
+	require.Error(t, storage.ErrTaskAlreadyExists, err)
 }
 
 func TestRunWithRetry(t *testing.T) {

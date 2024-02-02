@@ -38,6 +38,9 @@ var (
 	DumpStatsDeltaRatio = 1 / 10000.0
 	// dumpStatsMaxDuration is the max duration since last update.
 	dumpStatsMaxDuration = time.Hour
+
+	// batchInsertSize is the batch size used by internal SQL to insert values to some system table.
+	batchInsertSize = 10
 )
 
 // needDumpStatsDelta checks whether to dump stats delta.
@@ -259,7 +262,7 @@ func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
 }
 
 // NewSessionStatsItem allocates a stats collector for a session.
-func (s *statsUsageImpl) NewSessionStatsItem() interface{} {
+func (s *statsUsageImpl) NewSessionStatsItem() any {
 	return s.SessionStatsList.NewSessionStatsItem()
 }
 

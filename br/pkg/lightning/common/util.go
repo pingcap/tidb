@@ -207,7 +207,7 @@ outside:
 }
 
 // QueryRow executes a query that is expected to return at most one row.
-func (t SQLWithRetry) QueryRow(ctx context.Context, purpose string, query string, dest ...interface{}) error {
+func (t SQLWithRetry) QueryRow(ctx context.Context, purpose string, query string, dest ...any) error {
 	logger := t.Logger
 	if !t.HideQueryLog {
 		logger = logger.With(zap.String("query", query))
@@ -239,7 +239,7 @@ func (t SQLWithRetry) QueryStringRows(ctx context.Context, purpose string, query
 		}
 		for rows.Next() {
 			row := make([]string, len(colNames))
-			refs := make([]interface{}, 0, len(row))
+			refs := make([]any, 0, len(row))
 			for i := range row {
 				refs = append(refs, &row[i])
 			}
@@ -284,7 +284,7 @@ func (t SQLWithRetry) Transact(ctx context.Context, purpose string, action func(
 }
 
 // Exec executes a single SQL with optional retry.
-func (t SQLWithRetry) Exec(ctx context.Context, purpose string, query string, args ...interface{}) error {
+func (t SQLWithRetry) Exec(ctx context.Context, purpose string, query string, args ...any) error {
 	logger := t.Logger
 	if !t.HideQueryLog {
 		logger = logger.With(zap.String("query", query), zap.Reflect("args", args))
@@ -311,6 +311,26 @@ func UniqueTable(schema string, table string) string {
 	builder.WriteByte('.')
 	WriteMySQLIdentifier(&builder, table)
 	return builder.String()
+}
+
+func escapeIdentifiers(identifier []string) []any {
+	escaped := make([]any, len(identifier))
+	for i, id := range identifier {
+		escaped[i] = EscapeIdentifier(id)
+	}
+	return escaped
+}
+
+// SprintfWithIdentifiers escapes the identifiers and sprintf them. The input
+// identifiers must not be escaped.
+func SprintfWithIdentifiers(format string, identifiers ...string) string {
+	return fmt.Sprintf(format, escapeIdentifiers(identifiers)...)
+}
+
+// FprintfWithIdentifiers escapes the identifiers and fprintf them. The input
+// identifiers must not be escaped.
+func FprintfWithIdentifiers(w io.Writer, format string, identifiers ...string) (int, error) {
+	return fmt.Fprintf(w, format, escapeIdentifiers(identifiers)...)
 }
 
 // EscapeIdentifier quote and escape an sql identifier
@@ -399,7 +419,7 @@ func SchemaExists(ctx context.Context, db utils.QueryExecutor, schema string) (b
 //		return errors.Trace(err)
 //	}
 //	fmt.Println(resp.IP)
-func GetJSON(ctx context.Context, client *http.Client, url string, v interface{}) error {
+func GetJSON(ctx context.Context, client *http.Client, url string, v any) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return errors.Trace(err)
@@ -525,11 +545,11 @@ loop:
 }
 
 // BuildDropIndexSQL builds the SQL statement to drop index.
-func BuildDropIndexSQL(tableName string, idxInfo *model.IndexInfo) string {
+func BuildDropIndexSQL(dbName, tableName string, idxInfo *model.IndexInfo) string {
 	if idxInfo.Primary {
-		return fmt.Sprintf("ALTER TABLE %s DROP PRIMARY KEY", tableName)
+		return SprintfWithIdentifiers("ALTER TABLE %s.%s DROP PRIMARY KEY", dbName, tableName)
 	}
-	return fmt.Sprintf("ALTER TABLE %s DROP INDEX %s", tableName, EscapeIdentifier(idxInfo.Name.O))
+	return SprintfWithIdentifiers("ALTER TABLE %s.%s DROP INDEX %s", dbName, tableName, idxInfo.Name.O)
 }
 
 // BuildAddIndexSQL builds the SQL statement to create missing indexes.

@@ -10,7 +10,7 @@ go_test(
     ],
     flaky = True,
     race = "on",
-    shard_count = 31,
+    shard_count = 28,
     deps = [
         "//pkg/config",
         "//pkg/ddl/testutil",
@@ -34,6 +34,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/testsetup",
         "//pkg/testkit/testutil",
+        "//pkg/util/dbterror/plannererrors",
         "//pkg/util/gcutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",

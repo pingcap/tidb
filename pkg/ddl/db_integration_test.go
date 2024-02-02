@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -51,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -2547,43 +2547,43 @@ func TestAvoidCreateViewOnLocalTemporaryTable(t *testing.T) {
 
 	checkCreateView := func() {
 		err := tk.ExecToErr("create view v1 as select * from tt1")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		tk.MustGetErrMsg("select * from v1", "[schema:1146]Table 'test.v1' doesn't exist")
 
 		err = tk.ExecToErr("create view v1 as select * from (select * from tt1) as tt")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		tk.MustGetErrMsg("select * from v1", "[schema:1146]Table 'test.v1' doesn't exist")
 
 		err = tk.ExecToErr("create view v2 as select * from tt0 union select * from tt1")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		err = tk.ExecToErr("select * from v2")
 		require.Error(t, err)
 		require.Equal(t, "[schema:1146]Table 'test.v2' doesn't exist", err.Error())
 
 		err = tk.ExecToErr("create view v3 as select * from tt0, tt1 where tt0.a = tt1.a")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		err = tk.ExecToErr("select * from v3")
 		require.Error(t, err)
 		require.Equal(t, "[schema:1146]Table 'test.v3' doesn't exist", err.Error())
 
 		err = tk.ExecToErr("create view v4 as select a, (select count(1) from tt1 where tt1.a = tt0.a) as tt1a from tt0")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		tk.MustGetErrMsg("select * from v4", "[schema:1146]Table 'test.v4' doesn't exist")
 
 		err = tk.ExecToErr("create view v5 as select a, (select count(1) from tt1 where tt1.a = 1) as tt1a from tt0")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		tk.MustGetErrMsg("select * from v5", "[schema:1146]Table 'test.v5' doesn't exist")
 
 		err = tk.ExecToErr("create view v6 as select * from tt0 where tt0.a=(select max(tt1.b) from tt1)")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		tk.MustGetErrMsg("select * from v6", "[schema:1146]Table 'test.v6' doesn't exist")
 
 		err = tk.ExecToErr("create view v7 as select * from tt0 where tt0.b=(select max(tt1.b) from tt1 where tt0.a=tt1.a)")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 		tk.MustGetErrMsg("select * from v7", "[schema:1146]Table 'test.v7' doesn't exist")
 
 		err = tk.ExecToErr("create or replace view v0 as select * from tt1")
-		require.True(t, core.ErrViewSelectTemporaryTable.Equal(err))
+		require.True(t, plannererrors.ErrViewSelectTemporaryTable.Equal(err))
 	}
 
 	checkCreateView()

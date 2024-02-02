@@ -16,10 +16,18 @@ package proto
 
 import (
 	"fmt"
+	"sync/atomic"
 	"time"
+
+	"github.com/docker/go-units"
 )
 
 // subtask state machine for normal subtask:
+//
+// NOTE: `running` -> `pending` only happens when some node is taken as dead, so
+// its running subtask is balanced to other node, and the subtask is idempotent,
+// we do this to make the subtask can be scheduled to other node again, it's NOT
+// a normal state transition.
 //
 //	               ┌──────────────┐
 //	               │          ┌───┴──┐
@@ -27,38 +35,31 @@ import (
 //	               ▼ │        └──────┘
 //	┌───────┐    ┌───┴───┐    ┌───────┐
 //	│pending├───►│running├───►│succeed│
-//	└───────┘    └───┬───┘    └───────┘
-//	                 │        ┌──────┐
-//	                 ├───────►│failed│
+//	└───────┘    └┬──┬───┘    └───────┘
+//	     ▲        │  │        ┌──────┐
+//	     └────────┘  ├───────►│failed│
 //	                 │        └──────┘
 //	                 │        ┌────────┐
 //	                 └───────►│canceled│
 //	                          └────────┘
-//
-// for reverting subtask:
-//
-//	┌──────────────┐    ┌─────────┐   ┌─────────┐
-//	│revert_pending├───►│reverting├──►│ reverted│
-//	└──────────────┘    └────┬────┘   └─────────┘
-//	                         │         ┌─────────────┐
-//	                         └────────►│revert_failed│
-//	                                   └─────────────┘
-//	 1. succeed/failed:	pending -> running -> succeed/failed
-//	 2. canceled:		pending -> running -> canceled
-//	 3. rollback:		revert_pending -> reverting -> reverted/revert_failed
-//	 4. pause/resume:	pending -> running -> paused -> running
 const (
-	SubtaskStatePending       SubtaskState = "pending"
-	SubtaskStateRunning       SubtaskState = "running"
-	SubtaskStateSucceed       SubtaskState = "succeed"
-	SubtaskStateFailed        SubtaskState = "failed"
-	SubtaskStateCanceled      SubtaskState = "canceled"
-	SubtaskStatePaused        SubtaskState = "paused"
-	SubtaskStateRevertPending SubtaskState = "revert_pending"
-	SubtaskStateReverting     SubtaskState = "reverting"
-	SubtaskStateReverted      SubtaskState = "reverted"
-	SubtaskStateRevertFailed  SubtaskState = "revert_failed"
+	SubtaskStatePending  SubtaskState = "pending"
+	SubtaskStateRunning  SubtaskState = "running"
+	SubtaskStateSucceed  SubtaskState = "succeed"
+	SubtaskStateFailed   SubtaskState = "failed"
+	SubtaskStateCanceled SubtaskState = "canceled"
+	SubtaskStatePaused   SubtaskState = "paused"
 )
+
+// AllSubtaskStates is all subtask state.
+var AllSubtaskStates = []SubtaskState{
+	SubtaskStatePending,
+	SubtaskStateRunning,
+	SubtaskStateSucceed,
+	SubtaskStateFailed,
+	SubtaskStateCanceled,
+	SubtaskStatePaused,
+}
 
 type (
 	// SubtaskState is the state of subtask.
@@ -109,8 +110,8 @@ func (t *Subtask) String() string {
 
 // IsDone checks if the subtask is done.
 func (t *Subtask) IsDone() bool {
-	return t.State == SubtaskStateSucceed || t.State == SubtaskStateReverted || t.State == SubtaskStateCanceled ||
-		t.State == SubtaskStateFailed || t.State == SubtaskStateRevertFailed
+	return t.State == SubtaskStateSucceed || t.State == SubtaskStateCanceled ||
+		t.State == SubtaskStateFailed
 }
 
 // NewSubtask create a new subtask.
@@ -125,4 +126,57 @@ func NewSubtask(step Step, taskID int64, tp TaskType, execID string, concurrency
 		Ordinal:     ordinal,
 	}
 	return s
+}
+
+// Allocatable is a resource with capacity that can be allocated, it's routine safe.
+type Allocatable struct {
+	capacity int64
+	used     atomic.Int64
+}
+
+// NewAllocatable creates a new Allocatable.
+func NewAllocatable(capacity int64) *Allocatable {
+	return &Allocatable{capacity: capacity}
+}
+
+// Capacity returns the capacity of the Allocatable.
+func (a *Allocatable) Capacity() int64 {
+	return a.capacity
+}
+
+// Used returns the used resource of the Allocatable.
+func (a *Allocatable) Used() int64 {
+	return a.used.Load()
+}
+
+// Alloc allocates v from the Allocatable.
+func (a *Allocatable) Alloc(n int64) bool {
+	for {
+		used := a.used.Load()
+		if used+n > a.capacity {
+			return false
+		}
+		if a.used.CompareAndSwap(used, used+n) {
+			return true
+		}
+	}
+}
+
+// Free frees v from the Allocatable.
+func (a *Allocatable) Free(n int64) {
+	a.used.Add(-n)
+}
+
+// StepResource is the max resource that a task step can use.
+// it's also the max resource that a subtask can use, as we run subtasks of task
+// step in sequence.
+type StepResource struct {
+	CPU *Allocatable
+	Mem *Allocatable
+}
+
+// String implements Stringer interface.
+func (s *StepResource) String() string {
+	return fmt.Sprintf("[CPU=%d, Mem=%s]", s.CPU.Capacity(),
+		units.BytesSize(float64(s.Mem.Capacity())))
 }

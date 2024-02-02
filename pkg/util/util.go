@@ -34,8 +34,8 @@ import (
 
 // SliceToMap converts slice to map
 // nolint:unused
-func SliceToMap(slice []string) map[string]interface{} {
-	sMap := make(map[string]interface{})
+func SliceToMap(slice []string) map[string]any {
+	sMap := make(map[string]any)
 	for _, str := range slice {
 		sMap[str] = struct{}{}
 	}
@@ -43,8 +43,8 @@ func SliceToMap(slice []string) map[string]interface{} {
 }
 
 // StringsToInterfaces converts string slice to interface slice
-func StringsToInterfaces(strs []string) []interface{} {
-	is := make([]interface{}, 0, len(strs))
+func StringsToInterfaces(strs []string) []any {
+	is := make([]any, 0, len(strs))
 	for _, str := range strs {
 		is = append(is, str)
 	}
@@ -66,7 +66,7 @@ func StringsToInterfaces(strs []string) []interface{} {
 //	fmt.Println(resp.IP)
 //
 // nolint:unused
-func GetJSON(client *http.Client, url string, v interface{}) error {
+func GetJSON(client *http.Client, url string, v any) error {
 	resp, err := client.Get(url)
 	if err != nil {
 		return errors.Trace(err)
@@ -298,9 +298,11 @@ func IsInCorrectIdentifierName(name string) bool {
 }
 
 // GetRecoverError gets the error from recover.
-func GetRecoverError(r interface{}) error {
+func GetRecoverError(r any) error {
 	if err, ok := r.(error); ok {
-		return err
+		// Runtime panic also implements error interface.
+		// So do not forget to add stack info for it.
+		return errors.Trace(err)
 	}
 	return errors.Errorf("%v", r)
 }
