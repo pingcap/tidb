@@ -1264,10 +1264,7 @@ func columnDefToCol(ctx sessionctx.Context, offset int, colDef *ast.ColumnDef, o
 	return col, constraints, nil
 }
 
-func verifyAndRestoreFuncCall(expr *ast.FuncCallExpr) (string, error) {
-	if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
-		return "", errors.Trace(err)
-	}
+func restoreFuncCall(expr *ast.FuncCallExpr) (string, error) {
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
 		format.RestoreSpacesAroundBinaryOperation
@@ -1303,28 +1300,41 @@ func getFuncCallDefaultValue(col *table.Column, option *ast.ColumnOption, expr *
 		}
 		return str, true, nil
 	case ast.Rand, ast.UUID, ast.UUIDToBin:
-		str, err := verifyAndRestoreFuncCall(expr)
+		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
+			return nil, false, errors.Trace(err)
+		}
+		str, err := restoreFuncCall(expr)
 		if err != nil {
 			return nil, false, errors.Trace(err)
 		}
 		col.DefaultIsExpr = true
 		return str, false, nil
 	case ast.Replace:
-		// REPLACE(UPPER(UUID()), '-', '')
+		// Support REPLACE(UPPER(UUID()), '-', '').
 		if err := expression.VerifyArgsWrapper(expr.FnName.L, len(expr.Args)); err != nil {
 			return nil, false, errors.Trace(err)
 		}
-		if upperFunc, ok := expr.Args[0].(*ast.FuncCallExpr); ok && upperFunc.FnName.L == ast.Upper {
+		funcCall := expr.Args[0]
+		// Support REPLACE(CONVERT(UPPER(UUID()) USING UTF8MB4), '-', ''))
+		if convertFunc, ok := funcCall.(*ast.FuncCallExpr); ok && convertFunc.FnName.L == ast.Convert {
+			if err := expression.VerifyArgsWrapper(convertFunc.FnName.L, len(convertFunc.Args)); err != nil {
+				return nil, false, errors.Trace(err)
+			}
+			funcCall = convertFunc.Args[0]
+		}
+		if upperFunc, ok := funcCall.(*ast.FuncCallExpr); ok && upperFunc.FnName.L == ast.Upper {
 			if err := expression.VerifyArgsWrapper(upperFunc.FnName.L, len(upperFunc.Args)); err != nil {
 				return nil, false, errors.Trace(err)
 			}
 			if uuidFunc, ok := upperFunc.Args[0].(*ast.FuncCallExpr); ok && uuidFunc.FnName.L == ast.UUID {
-				str, err := verifyAndRestoreFuncCall(uuidFunc)
+				if err := expression.VerifyArgsWrapper(uuidFunc.FnName.L, len(uuidFunc.Args)); err != nil {
+					return nil, false, errors.Trace(err)
+				}
+				str, err := restoreFuncCall(expr)
 				if err != nil {
 					return nil, false, errors.Trace(err)
 				}
 				col.DefaultIsExpr = true
-				logutil.BgLogger().Warn("xxx-------------------", zap.String("expr", str))
 				return str, false, nil
 			}
 		}
