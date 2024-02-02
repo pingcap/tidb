@@ -359,9 +359,6 @@ func (h *globalBindingHandle) DropGlobalBinding(sqlDigest string) (deletedRows u
 		if err == nil {
 			err = h.LoadFromStorageToCache(false)
 		}
-		if err == nil {
-			h.bindingCache.Load().RemoveBinding(sqlDigest)
-		}
 	}()
 	return h.dropGlobalBinding(sqlDigest)
 }
