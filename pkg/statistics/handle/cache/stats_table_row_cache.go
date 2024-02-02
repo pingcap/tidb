@@ -127,7 +127,6 @@ func (c *StatsTableRowCache) Update(sctx sessionctx.Context) error {
 	defer c.mu.Unlock()
 	if time.Since(c.modifyTime) < tableStatsCacheExpiry {
 		return c.updateDirtyIDs(sctx)
-
 	}
 	tableRows, err := getRowCountTables(sctx)
 	if err != nil {
