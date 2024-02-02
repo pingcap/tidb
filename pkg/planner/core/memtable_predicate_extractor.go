@@ -67,6 +67,7 @@ type MemTablePredicateExtractor interface {
 // define an individual struct instead of a bunch of un-exported functions
 // to avoid polluting the global scope of current package.
 type extractHelper struct {
+	// when supportLower, we store the function for the lower(col) or upper(col)
 	lowerOrUpper map[string]bool
 }
 
@@ -112,6 +113,9 @@ func (e *extractHelper) extractColBinaryOpConsExpr(extractCols map[int64]*types.
 		}
 	}
 	var scalar *expression.ScalarFunction
+	// when supportLower, we can support cases like
+	// lower(colName)='xxx'
+	// or upper(colName)='xxx.
 	if supportLower {
 		var isScalar bool
 		for i := 0; i < 2; i++ {
@@ -135,7 +139,7 @@ func (e *extractHelper) extractColBinaryOpConsExpr(extractCols map[int64]*types.
 		}
 	}
 
-	// pretty hack..
+	// check the scalar function is lower or upper
 	if scalar != nil {
 		args := scalar.GetArgs()
 		if len(args) != 1 {
@@ -1802,9 +1806,8 @@ func (e *InfoSchemaTablesExtractor) Filter(colName string, val string) bool {
 				valStr = strings.ToUpper(val)
 			}
 			return !predVals.Exist(valStr)
-		} else {
-			return !predVals.Exist(val)
 		}
+		return !predVals.Exist(val)
 	}
 	// No need to filter records since no predicate for the column exists.
 	return false

@@ -77,6 +77,7 @@ func (c *StatsTableRowCache) GetColLength(id tableHistID) uint64 {
 	return c.colLength[id]
 }
 
+// UpdateByID tries to update the cache by table id.
 func (c *StatsTableRowCache) UpdateByID(sctx sessionctx.Context, id int64) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
