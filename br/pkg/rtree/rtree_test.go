@@ -202,7 +202,7 @@ func TestRangeTreeMerge(t *testing.T) {
 					TotalBytes: 1,
 				},
 			},
-			Size: uint64(i),
+			Size: i,
 		}
 		rangeTree.Update(item)
 	}
