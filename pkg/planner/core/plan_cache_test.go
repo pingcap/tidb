@@ -1345,9 +1345,7 @@ func TestPreparedPlanCachePartitions(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	//tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
 
-	//tk.MustExec(`create table t (a int primary key)`)
 	tk.MustExec(`create table t (a int primary key, b varchar(255)) partition by hash(a) partitions 3`)
 	tk.MustExec(`insert into t values (1,"a"),(2,"b"),(3,"c"),(4,"d"),(5,"e"),(6,"f")`)
 	tk.MustExec(`analyze table t`)
@@ -1438,10 +1436,9 @@ func TestNonPreparedPlanCachePartitionIndex(t *testing.T) {
 		"├─IndexRangeScan_5(Build) 3.00 cop[tikv] table:t, index:PRIMARY(a) range:[1,1], [3,3], [4,4], keep order:false",
 		"└─TableRowIDScan_6(Probe) 3.00 cop[tikv] table:t keep order:false"))
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	// TODO: Wait for #50210 to be merged
-	//tk.MustQuery(`explain format='plan_cache' select * from t where a = 2`).Check(testkit.Rows("abc 2"))
-	//require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
-	//tk.MustQuery(`select * from t where a = 2`).Check(testkit.Rows("abc 2"))
+	tk.MustQuery(`explain format='plan_cache' select * from t where a = 2`).Check(testkit.Rows("Point_Get_1 1.00 root table:t, partition:p1, index:PRIMARY(a) "))
+	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
+	tk.MustQuery(`select * from t where a = 2`).Check(testkit.Rows("abc 2"))
 	tk.MustExec(`create table tk (a int primary key nonclustered, b varchar(255), key (b)) partition by key (a) partitions 3`)
 	tk.MustExec(`insert into tk select a, b from t`)
 	tk.MustExec(`analyze table tk`)
