@@ -58,7 +58,6 @@ go_test(
     srcs = [
         "cop_handler_test.go",
         "main_test.go",
-        "mpp_exec_test.go",
     ],
     embed = [":cophandler"],
     flaky = True,
