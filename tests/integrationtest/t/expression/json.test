@@ -248,7 +248,13 @@ select
 		json_length('[]'),
 		json_length('{"a": 1}'),
 		json_length('{"a": 1, "b": 2}'),
-		json_length('[1, 2, 3]');
+		json_length('[1, 2, 3]'),
+		json_length('{}', '$'),
+		json_length('1', '$'),
+		json_length(null, '$'),
+		json_length(null, 'fdfd'),
+		json_length('{}', null),
+		json_length('1', null);
 # issue 16267
 select json_array(922337203685477580) =  json_array(922337203685477581);
 
