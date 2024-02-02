@@ -251,21 +251,59 @@ func TestIsValidToAnalyze(t *testing.T) {
 
 	se := tk.Session()
 	sctx := se.(sessionctx.Context)
-	require.True(t, job.IsValidToAnalyze(sctx))
+	valid, failReason := job.IsValidToAnalyze(sctx)
+	require.True(t, valid)
+	require.Equal(t, "", failReason)
 
 	// Insert some failed jobs.
 	// Just failed.
 	now := tk.MustQuery("select now()").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", now)
-	require.False(t, job.IsValidToAnalyze(sctx))
+	valid, failReason = job.IsValidToAnalyze(sctx)
+	require.False(t, valid)
+	require.Equal(t, "last analysis just failed", failReason)
 	// Failed 1 second ago.
 	startTime := tk.MustQuery("select now() - interval 1 second").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", startTime)
-	require.False(t, job.IsValidToAnalyze(sctx))
+	valid, failReason = job.IsValidToAnalyze(sctx)
+	require.False(t, valid)
+	require.Equal(t, "last failed analysis duration is less than 2 times the average analysis duration", failReason)
 	// Failed long long ago.
 	startTime = tk.MustQuery("select now() - interval 300 day").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", startTime)
-	require.True(t, job.IsValidToAnalyze(sctx))
+	valid, failReason = job.IsValidToAnalyze(sctx)
+	require.True(t, valid)
+	require.Equal(t, "", failReason)
+}
+
+func TestIsValidToAnalyzeWhenOnlyHasFailedAnalysisRecords(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(session.CreateAnalyzeJobs)
+	job := &TableAnalysisJob{
+		TableSchema: "example_schema",
+		TableName:   "example_table1",
+		Weight:      2,
+	}
+	se := tk.Session()
+	sctx := se.(sessionctx.Context)
+	valid, failReason := job.IsValidToAnalyze(sctx)
+	require.True(t, valid)
+	require.Equal(t, "", failReason)
+	// Failed long long ago.
+	startTime := tk.MustQuery("select now() - interval 30 day").Rows()[0][0].(string)
+	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", startTime)
+	valid, failReason = job.IsValidToAnalyze(sctx)
+	require.True(t, valid)
+	require.Equal(t, "", failReason)
+
+	// Failed recently.
+	tenSecondsAgo := tk.MustQuery("select now() - interval 10 second").Rows()[0][0].(string)
+	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "", tenSecondsAgo)
+	valid, failReason = job.IsValidToAnalyze(sctx)
+	require.False(t, valid)
+	require.Equal(t, "last failed analysis duration is less than 30m0s", failReason)
 }
 
 func TestIsValidToAnalyzeForPartitionedTba(t *testing.T) {
@@ -284,23 +322,33 @@ func TestIsValidToAnalyzeForPartitionedTba(t *testing.T) {
 
 	se := tk.Session()
 	sctx := se.(sessionctx.Context)
-	require.True(t, job.IsValidToAnalyze(sctx))
+	valid, failReason := job.IsValidToAnalyze(sctx)
+	require.True(t, valid)
+	require.Equal(t, "", failReason)
 
 	// Insert some failed jobs.
 	// Just failed.
 	now := tk.MustQuery("select now()").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "p0", now)
-	require.False(t, job.IsValidToAnalyze(sctx))
+	valid, failReason = job.IsValidToAnalyze(sctx)
+	require.False(t, valid)
+	require.Equal(t, "last analysis just failed", failReason)
 	// Failed 1 second ago.
 	startTime := tk.MustQuery("select now() - interval 1 second").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "p0", startTime)
-	require.False(t, job.IsValidToAnalyze(sctx))
+	valid, failReason = job.IsValidToAnalyze(sctx)
+	require.False(t, valid)
+	require.Equal(t, "last failed analysis duration is less than 2 times the average analysis duration", failReason)
 	// Failed long long ago.
 	startTime = tk.MustQuery("select now() - interval 300 day").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "p0", startTime)
-	require.True(t, job.IsValidToAnalyze(sctx))
+	valid, failReason = job.IsValidToAnalyze(sctx)
+	require.True(t, valid)
+	require.Equal(t, "", failReason)
 	// Smaller start time for p1.
 	startTime = tk.MustQuery("select now() - interval 1 second").Rows()[0][0].(string)
 	insertFailedJobWithStartTime(tk, job.TableSchema, job.TableName, "p1", startTime)
-	require.False(t, job.IsValidToAnalyze(sctx))
+	valid, failReason = job.IsValidToAnalyze(sctx)
+	require.False(t, valid)
+	require.Equal(t, "last failed analysis duration is less than 2 times the average analysis duration", failReason)
 }

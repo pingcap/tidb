@@ -59,11 +59,12 @@ func (r *Refresher) pickOneTableAndAnalyzeByPriority() {
 	// Pick the table with the highest weight.
 	for r.jobs.Len() > 0 {
 		job := heap.Pop(r.jobs).(*priorityqueue.TableAnalysisJob)
-		if !job.IsValidToAnalyze(
+		if valid, failReason := job.IsValidToAnalyze(
 			sctx,
-		) {
+		); !valid {
 			statslogutil.StatsLogger().Info(
 				"Table is not ready to analyze",
+				zap.String("failReason", failReason),
 				zap.Any("job", job),
 			)
 			continue
