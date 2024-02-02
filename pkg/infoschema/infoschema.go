@@ -291,6 +291,7 @@ func (is *infoSchema) AllocByID(id int64) (autoid.Allocators, bool) {
 	return tbl.Allocators(nil), true
 }
 
+// AllSchemaNames returns all the schemas' names.
 func AllSchemaNames(is InfoSchema) (names []string) {
 	schemas := is.AllSchemas()
 	for _, v := range schemas {
