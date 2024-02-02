@@ -619,7 +619,6 @@ func (e *memtableRetriever) setDataFromTables(sctx sessionctx.Context, schemas [
 
 				var rowCount, avgRowLength, dataLength, indexLength uint64
 				if useStatsCache {
-					logutil.BgLogger().Info("ywq test update by id", zap.Any("table id", table.ID), zap.Any("name", table.Name.L))
 					err := cache.TableRowStatsCache.UpdateByID(sctx, table.ID)
 					if err != nil {
 						return err

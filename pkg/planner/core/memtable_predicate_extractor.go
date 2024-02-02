@@ -1764,7 +1764,16 @@ func (e *InfoSchemaTablesExtractor) explainInfo(_ *PhysicalMemTable) string {
 	sort.Strings(colNames)
 	for _, colName := range colNames {
 		if len(e.ColPredicates[colName]) > 0 {
-			fmt.Fprintf(r, "%s:[%s], ", colName, extractStringFromStringSet(e.ColPredicates[colName]))
+			lower, ok := e.lowerOrUpper[colName]
+			if ok {
+				if lower {
+					fmt.Fprintf(r, "lower(%s):[%s], ", colName, extractStringFromStringSet(e.ColPredicates[colName]))
+				} else {
+					fmt.Fprintf(r, "upper(%s):[%s], ", colName, extractStringFromStringSet(e.ColPredicates[colName]))
+				}
+			} else {
+				fmt.Fprintf(r, "%s:[%s], ", colName, extractStringFromStringSet(e.ColPredicates[colName]))
+			}
 		}
 	}
 

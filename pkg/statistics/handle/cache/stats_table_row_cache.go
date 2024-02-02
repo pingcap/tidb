@@ -116,45 +116,6 @@ func (c *StatsTableRowCache) UpdateByID(sctx sessionctx.Context, id int64) error
 	return nil
 }
 
-// Update tries to update the cache.
-func (c *StatsTableRowCache) Update(sctx sessionctx.Context) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if time.Since(c.modifyTime) < tableStatsCacheExpiry {
-		if len(c.dirtyIDs) > 0 {
-			tableRows, err := getRowCountTables(sctx, c.dirtyIDs...)
-			if err != nil {
-				return err
-			}
-			for id, tr := range tableRows {
-				c.tableRows[id] = tr
-			}
-			colLength, err := getColLengthTables(sctx, c.dirtyIDs...)
-			if err != nil {
-				return err
-			}
-			for id, cl := range colLength {
-				c.colLength[id] = cl
-			}
-			c.dirtyIDs = c.dirtyIDs[:0]
-		}
-		return nil
-	}
-	tableRows, err := getRowCountTables(sctx)
-	if err != nil {
-		return err
-	}
-	colLength, err := getColLengthTables(sctx)
-	if err != nil {
-		return err
-	}
-	c.tableRows = tableRows
-	c.colLength = colLength
-	c.modifyTime = time.Now()
-	c.dirtyIDs = c.dirtyIDs[:0]
-	return nil
-}
-
 func getRowCountTables(sctx sessionctx.Context, tableIDs ...int64) (map[int64]uint64, error) {
 	var rows []chunk.Row
 	var err error
