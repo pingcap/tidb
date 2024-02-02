@@ -294,11 +294,8 @@ go_test(
         "batch_point_get_test.go",
         "benchmark_test.go",
         "brie_test.go",
-<<<<<<< HEAD
-        "charset_test.go",
-=======
         "brie_utils_test.go",
->>>>>>> 8709bb53df5 (brie: support batch ddl for sql restore (#49089))
+        "charset_test.go",
         "chunk_size_control_test.go",
         "cluster_table_test.go",
         "compact_table_test.go",
