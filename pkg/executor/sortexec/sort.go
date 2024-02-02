@@ -135,6 +135,7 @@ func (e *SortExec) Close() error {
 			e.Parallel.workers[i].memTracker.ReplaceBytesUsed(0)
 		}
 		e.Parallel.merger = nil
+		e.Parallel.spillAction.SetFinished()
 	}
 
 	if e.memTracker != nil {
