@@ -149,21 +149,18 @@ func (e *EC2Session) CreateSnapshots(backupInfo *config.EBSBasedBRMeta) (map[str
 				resp, err := e.createSnapshotsWithRetry(context.TODO(), &createSnapshotInput)
 
 				if err != nil {
-					if aErr, ok := err.(awserr.Error); ok {
-						if aErr.Code() == "TagLimitExceeded" {
-							log.Warn("tag number exceeds AWS limitation during snapshots, retry without tagging")
-							createSnapshotInput.SetTagSpecifications(nil)
-							resp, err = e.createSnapshotsWithRetry(context.TODO(), &createSnapshotInput)
-							if err != nil {
-								return errors.Trace(err)
-							}
-						} else {
-							return errors.Trace(err)
-						}
-					} else {
+					if aErr, ok := err.(awserr.Error); !ok || aErr.Code() != "TagLimitExceeded" {
+						return errors.Trace(err)
+					}
+
+					log.Warn("tag number exceeds AWS limitation during snapshots, retry without tagging")
+					createSnapshotInput.SetTagSpecifications(nil)
+					resp, err = e.createSnapshotsWithRetry(context.TODO(), &createSnapshotInput)
+					if err != nil {
 						return errors.Trace(err)
 					}
 				}
+
 				fillResult(resp)
 				return nil
 			})
@@ -622,18 +619,14 @@ func (e *EC2Session) CreateVolumes(meta *config.EBSBasedBRMeta, volumeType strin
 
 				newVol, err := e.ec2.CreateVolume(&req)
 				if err != nil {
-					if aErr, ok := err.(awserr.Error); ok {
-						if aErr.Code() == "TagLimitExceeded" {
-							log.Warn("tag number exceeds AWS limitation, retry without tagging", zap.String("from_snapshot", oldVol.SnapshotID))
-							req.SetTagSpecifications(nil)
-							newVol, err = e.ec2.CreateVolume(&req)
-							if err != nil {
-								return errors.Trace(err)
-							}
-						} else {
-							return errors.Trace(err)
-						}
-					} else {
+					if aErr, ok := err.(awserr.Error); !ok || aErr.Code() != "TagLimitExceeded" {
+						return errors.Trace(err)
+					}
+
+					log.Warn("tag number exceeds AWS limitation, retry without tagging", zap.String("from_snapshot", oldVol.SnapshotID))
+					req.SetTagSpecifications(nil)
+					newVol, err = e.ec2.CreateVolume(&req)
+					if err != nil {
 						return errors.Trace(err)
 					}
 				}
