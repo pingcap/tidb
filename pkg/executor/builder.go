@@ -4022,21 +4022,8 @@ type tableStatsPreloader interface {
 	LoadTableStats(sessionctx.Context)
 }
 
-func (b *executorBuilder) buildIndexUsageReporter(plan tableStatsPreloader) (indexUsageReporter *exec.IndexUsageReporter) {
-	sc := b.ctx.GetSessionVars().StmtCtx
-	if b.ctx.GetSessionVars().StmtCtx.IndexUsageCollector != nil &&
-		sc.RuntimeStatsColl != nil {
-		// Preload the table stats. If the statement is a point-get or execute, the planner may not have loaded the
-		// stats.
-		plan.LoadTableStats(b.ctx)
-
-		statsMap := sc.GetUsedStatsInfo(false)
-		indexUsageReporter = exec.NewIndexUsageReporter(
-			sc.IndexUsageCollector,
-			sc.RuntimeStatsColl, statsMap)
-	}
-
-	return indexUsageReporter
+func (*executorBuilder) buildIndexUsageReporter(_ tableStatsPreloader) (indexUsageReporter *exec.IndexUsageReporter) {
+	return nil
 }
 
 func (b *executorBuilder) buildIndexMergeReader(v *plannercore.PhysicalIndexMergeReader) exec.Executor {
