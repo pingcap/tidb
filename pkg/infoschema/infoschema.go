@@ -41,7 +41,6 @@ type InfoSchema interface {
 	TableByName(schema, table model.CIStr) (table.Table, error)
 	TableExists(schema, table model.CIStr) bool
 	SchemaByID(id int64) (*model.DBInfo, bool)
-	SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool)
 	PolicyByName(name model.CIStr) (*model.PolicyInfo, bool)
 	ResourceGroupByName(name model.CIStr) (*model.ResourceGroupInfo, bool)
 	TableByID(id int64) (table.Table, bool)
@@ -128,13 +127,14 @@ func MockInfoSchema(tbList []*model.TableInfo) InfoSchema {
 	result.resourceGroupMap = make(map[string]*model.ResourceGroupInfo)
 	result.ruleBundleMap = make(map[int64]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
-	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
+	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test"), Tables: tbList}
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
 		tables: make(map[string]table.Table),
 	}
 	result.schemaMap["test"] = tableNames
 	for _, tb := range tbList {
+		tb.DBID = dbInfo.ID
 		tbl := table.MockTableFromMeta(tb)
 		tableNames.tables[tb.Name.L] = tbl
 		bucketIdx := tableBucketIdx(tb.ID)
@@ -156,13 +156,14 @@ func MockInfoSchemaWithSchemaVer(tbList []*model.TableInfo, schemaVer int64) Inf
 	result.resourceGroupMap = make(map[string]*model.ResourceGroupInfo)
 	result.ruleBundleMap = make(map[int64]*placement.Bundle)
 	result.sortedTablesBuckets = make([]sortedTables, bucketCount)
-	dbInfo := &model.DBInfo{ID: 0, Name: model.NewCIStr("test"), Tables: tbList}
+	dbInfo := &model.DBInfo{ID: 1, Name: model.NewCIStr("test"), Tables: tbList}
 	tableNames := &schemaTables{
 		dbInfo: dbInfo,
 		tables: make(map[string]table.Table),
 	}
 	result.schemaMap["test"] = tableNames
 	for _, tb := range tbList {
+		tb.DBID = dbInfo.ID
 		tbl := table.MockTableFromMeta(tb)
 		tableNames.tables[tb.Name.L] = tbl
 		bucketIdx := tableBucketIdx(tb.ID)
@@ -262,18 +263,12 @@ func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
 	return nil, false
 }
 
-func (is *infoSchema) SchemaByTable(tableInfo *model.TableInfo) (val *model.DBInfo, ok bool) {
+// SchemaByTable get a table's schema name
+func SchemaByTable(is InfoSchema, tableInfo *model.TableInfo) (val *model.DBInfo, ok bool) {
 	if tableInfo == nil {
 		return nil, false
 	}
-	for _, v := range is.schemaMap {
-		if tbl, ok := v.tables[tableInfo.Name.L]; ok {
-			if tbl.Meta().ID == tableInfo.ID {
-				return v.dbInfo, true
-			}
-		}
-	}
-	return nil, false
+	return is.SchemaByID(tableInfo.DBID)
 }
 
 func (is *infoSchema) TableByID(id int64) (val table.Table, ok bool) {
@@ -369,6 +364,7 @@ func init() {
 	infoSchemaTables := make([]*model.TableInfo, 0, len(tableNameToColumns))
 	for name, cols := range tableNameToColumns {
 		tableInfo := buildTableMeta(name, cols)
+		tableInfo.DBID = dbID
 		infoSchemaTables = append(infoSchemaTables, tableInfo)
 		var ok bool
 		tableInfo.ID, ok = tableIDMap[tableInfo.Name.O]
@@ -591,7 +587,6 @@ func (is *SessionTables) TableByID(id int64) (tbl table.Table, ok bool) {
 // AddTable add a table
 func (is *SessionTables) AddTable(db *model.DBInfo, tbl table.Table) error {
 	schemaTables := is.ensureSchema(db)
-
 	tblMeta := tbl.Meta()
 	if _, ok := schemaTables.tables[tblMeta.Name.L]; ok {
 		return ErrTableExists.GenWithStackByArgs(tblMeta.Name)
@@ -603,6 +598,10 @@ func (is *SessionTables) AddTable(db *model.DBInfo, tbl table.Table) error {
 
 	schemaTables.tables[tblMeta.Name.L] = tbl
 	is.idx2table[tblMeta.ID] = tbl
+
+	if tblMeta.DBID == 0 {
+		tblMeta.DBID = db.ID
+	}
 
 	return nil
 }
@@ -624,6 +623,7 @@ func (is *SessionTables) RemoveTable(schema, table model.CIStr) (exist bool) {
 	if len(tbls.tables) == 0 {
 		delete(is.schemaMap, schema.L)
 	}
+	oldTable.Meta().DBID = 0
 	return true
 }
 
@@ -632,17 +632,11 @@ func (is *SessionTables) Count() int {
 	return len(is.idx2table)
 }
 
-// SchemaByTable get a table's schema name
-func (is *SessionTables) SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool) {
-	if tableInfo == nil {
-		return nil, false
-	}
-
+// SchemaByID get a table's schema from the schema ID.
+func (is *SessionTables) SchemaByID(id int64) (*model.DBInfo, bool) {
 	for _, v := range is.schemaMap {
-		if tbl, ok := v.tables[tableInfo.Name.L]; ok {
-			if tbl.Meta().ID == tableInfo.ID {
-				return v.dbInfo, true
-			}
+		if v.dbInfo.ID == id {
+			return v.dbInfo, true
 		}
 	}
 
@@ -715,25 +709,22 @@ func (ts *SessionExtendedInfoSchema) TableByID(id int64) (table.Table, bool) {
 	return ts.InfoSchema.TableByID(id)
 }
 
-// SchemaByTable implements InfoSchema.SchemaByTable, it returns a stale DBInfo even if it's dropped.
-func (ts *SessionExtendedInfoSchema) SchemaByTable(tableInfo *model.TableInfo) (*model.DBInfo, bool) {
-	if tableInfo == nil {
-		return nil, false
-	}
-
+// SchemaByID implements InfoSchema.SchemaByID, it returns a stale DBInfo even if it's dropped.
+func (ts *SessionExtendedInfoSchema) SchemaByID(id int64) (*model.DBInfo, bool) {
 	if ts.LocalTemporaryTables != nil {
-		if db, ok := ts.LocalTemporaryTables.SchemaByTable(tableInfo); ok {
+		if db, ok := ts.LocalTemporaryTables.SchemaByID(id); ok {
 			return db, true
 		}
 	}
 
 	if ts.MdlTables != nil {
-		if tbl, ok := ts.MdlTables.SchemaByTable(tableInfo); ok {
+		if tbl, ok := ts.MdlTables.SchemaByID(id); ok {
 			return tbl, true
 		}
 	}
 
-	return ts.InfoSchema.SchemaByTable(tableInfo)
+	ret, ok := ts.InfoSchema.SchemaByID(id)
+	return ret, ok
 }
 
 // UpdateTableInfo implements InfoSchema.SchemaByTable.

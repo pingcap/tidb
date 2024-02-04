@@ -61,6 +61,7 @@ func Init() {
 			for i, c := range meta.Columns {
 				c.ID = int64(i) + 1
 			}
+			meta.DBID = dbID
 		}
 		dbInfo := &model.DBInfo{
 			ID:      dbID,

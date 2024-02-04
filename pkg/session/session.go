@@ -964,7 +964,7 @@ func addTableNameInTableIDField(tableIDField any, is infoschema.InfoSchema) (enh
 	if !ok {
 		tableName = "unknown"
 	} else {
-		dbInfo, ok := is.SchemaByTable(tbl.Meta())
+		dbInfo, ok := infoschema.SchemaByTable(is, tbl.Meta())
 		if !ok {
 			tableName = "unknown." + tbl.Meta().Name.String()
 		} else {

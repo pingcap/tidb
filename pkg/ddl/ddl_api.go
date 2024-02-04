@@ -6568,7 +6568,7 @@ func (d *ddl) UpdateTableReplicaInfo(ctx sessionctx.Context, physicalID int64, a
 		return nil
 	}
 
-	db, ok := is.SchemaByTable(tbInfo)
+	db, ok := infoschema.SchemaByTable(is, tbInfo)
 	if !ok {
 		return infoschema.ErrDatabaseNotExists.GenWithStack("Database of table `%s` does not exist.", tb.Meta().Name)
 	}
