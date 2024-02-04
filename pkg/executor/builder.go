@@ -1016,13 +1016,15 @@ func (b *executorBuilder) buildInsert(v *plannercore.Insert) exec.Executor {
 }
 
 func (b *executorBuilder) buildImportInto(v *plannercore.ImportInto) exec.Executor {
-	tbl, ok := b.is.TableByID(v.Table.TableInfo.ID)
+	// see planBuilder.buildImportInto for detail why we use the latest schema here.
+	latestIS := b.ctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	tbl, ok := latestIS.TableByID(v.Table.TableInfo.ID)
 	if !ok {
 		b.err = errors.Errorf("Can not get table %d", v.Table.TableInfo.ID)
 		return nil
 	}
 	if !tbl.Meta().IsBaseTable() {
-		b.err = plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "LOAD")
+		b.err = plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(tbl.Meta().Name.O, "IMPORT")
 		return nil
 	}
 

@@ -308,9 +308,9 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 	return dbInfo, ok
 }
 
-func (is *infoschemaV2) SchemaByTable(tableInfo *model.TableInfo) (val *model.DBInfo, ok bool) {
-	return is.SchemaByID(tableInfo.DBID)
-}
+// func (is *infoschemaV2) SchemaByTable(tableInfo *model.TableInfo) (val *model.DBInfo, ok bool) {
+// 	return is.SchemaByID(tableInfo.DBID)
+// }
 
 func (is *infoschemaV2) SchemaTables(schema model.CIStr) (tables []table.Table) {
 	dbInfo, ok := is.SchemaByName(schema)

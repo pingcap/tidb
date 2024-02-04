@@ -15,16 +15,25 @@
 package priorityqueue
 
 import (
+	"fmt"
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"go.uber.org/zap"
 )
 
+// defaultFailedAnalysisWaitTime is the default wait time for the next analysis after a failed analysis.
+// NOTE: this is only used when the average analysis duration is not available.(No successful analysis before)
+const defaultFailedAnalysisWaitTime = 30 * time.Minute
+
 // TableAnalysisJob defines the structure for table analysis job information.
+// TODO: add stringer for TableAnalysisJob.
 type TableAnalysisJob struct {
 	// Only set when partitions's indexes need to be analyzed.
 	PartitionIndexes map[string][]string
@@ -38,6 +47,128 @@ type TableAnalysisJob struct {
 	TableStatsVer    int
 	ChangePercentage float64
 	Weight           float64
+}
+
+// IsValidToAnalyze checks whether the table is valid to analyze.
+// It checks the last failed analysis duration and the average analysis duration.
+// If the last failed analysis duration is less than 2 times the average analysis duration,
+// we skip this table to avoid too much failed analysis.
+func (j *TableAnalysisJob) IsValidToAnalyze(
+	sctx sessionctx.Context,
+) (bool, string) {
+	// No need to analyze this table.
+	// TODO: Usually, we should not put this kind of table into the queue.
+	if j.Weight == 0 {
+		return false, "weight is 0"
+	}
+
+	// Check whether the table or partition is valid to analyze.
+	if len(j.Partitions) > 0 || len(j.PartitionIndexes) > 0 {
+		// Any partition is invalid to analyze, the whole table is invalid to analyze.
+		// Because we need to analyze partitions in batch mode.
+		partitions := append(j.Partitions, getPartitionNames(j.PartitionIndexes)...)
+		if valid, failReason := isValidToAnalyze(
+			sctx,
+			j.TableSchema,
+			j.TableName,
+			partitions...,
+		); !valid {
+			return false, failReason
+		}
+	} else {
+		if valid, failReason := isValidToAnalyze(
+			sctx,
+			j.TableSchema,
+			j.TableName,
+		); !valid {
+			return false, failReason
+		}
+	}
+
+	return true, ""
+}
+
+func getPartitionNames(partitionIndexes map[string][]string) []string {
+	names := make([]string, 0, len(partitionIndexes))
+	for _, partitionNames := range partitionIndexes {
+		names = append(names, partitionNames...)
+	}
+	return names
+}
+
+func isValidToAnalyze(
+	sctx sessionctx.Context,
+	schema, table string,
+	partitionNames ...string,
+) (bool, string) {
+	lastFailedAnalysisDuration, err :=
+		getLastFailedAnalysisDuration(sctx, schema, table, partitionNames...)
+	if err != nil {
+		statslogutil.StatsLogger().Warn(
+			"Fail to get last failed analysis duration",
+			zap.String("schema", schema),
+			zap.String("table", table),
+			zap.Strings("partitions", partitionNames),
+			zap.Error(err),
+		)
+		return false, fmt.Sprintf("fail to get last failed analysis duration: %v", err)
+	}
+
+	averageAnalysisDuration, err :=
+		getAverageAnalysisDuration(sctx, schema, table, partitionNames...)
+	if err != nil {
+		statslogutil.StatsLogger().Warn(
+			"Fail to get average analysis duration",
+			zap.String("schema", schema),
+			zap.String("table", table),
+			zap.Strings("partitions", partitionNames),
+			zap.Error(err),
+		)
+		return false, fmt.Sprintf("fail to get average analysis duration: %v", err)
+	}
+
+	// Last analysis just failed, we should not analyze it again.
+	if lastFailedAnalysisDuration == justFailed {
+		// The last analysis failed, we should not analyze it again.
+		statslogutil.StatsLogger().Info(
+			"Skip analysis because the last analysis just failed",
+			zap.String("schema", schema),
+			zap.String("table", table),
+			zap.Strings("partitions", partitionNames),
+		)
+		return false, "last analysis just failed"
+	}
+
+	// Failed analysis duration is less than 2 times the average analysis duration.
+	// Skip this table to avoid too much failed analysis.
+	onlyFailedAnalysis := lastFailedAnalysisDuration != noRecord && averageAnalysisDuration == noRecord
+	if onlyFailedAnalysis && lastFailedAnalysisDuration < defaultFailedAnalysisWaitTime {
+		statslogutil.StatsLogger().Info(
+			fmt.Sprintf("Skip analysis because the last failed analysis duration is less than %v", defaultFailedAnalysisWaitTime),
+			zap.String("schema", schema),
+			zap.String("table", table),
+			zap.Strings("partitions", partitionNames),
+			zap.Duration("lastFailedAnalysisDuration", lastFailedAnalysisDuration),
+			zap.Duration("averageAnalysisDuration", averageAnalysisDuration),
+		)
+		return false, fmt.Sprintf("last failed analysis duration is less than %v", defaultFailedAnalysisWaitTime)
+	}
+	// Failed analysis duration is less than 2 times the average analysis duration.
+	meetSkipCondition := lastFailedAnalysisDuration != noRecord &&
+		lastFailedAnalysisDuration < 2*averageAnalysisDuration
+	if meetSkipCondition {
+		statslogutil.StatsLogger().Info(
+			"Skip analysis because the last failed analysis duration is less than 2 times the average analysis duration",
+			zap.String("schema", schema),
+			zap.String("table", table),
+			zap.Strings("partitions", partitionNames),
+			zap.Duration("lastFailedAnalysisDuration", lastFailedAnalysisDuration),
+			zap.Duration("averageAnalysisDuration", averageAnalysisDuration),
+		)
+		return false, "last failed analysis duration is less than 2 times the average analysis duration"
+	}
+
+	return true, ""
 }
 
 // Execute executes the analyze statement.

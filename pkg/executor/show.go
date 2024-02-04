@@ -430,7 +430,7 @@ func moveInfoSchemaToFront(dbs []string) {
 }
 
 func (e *ShowExec) fetchShowDatabases() error {
-	dbs := e.is.AllSchemaNames()
+	dbs := infoschema.AllSchemaNames(e.is)
 	checker := privilege.GetPrivilegeManager(e.Ctx())
 	slices.Sort(dbs)
 	var (
@@ -1424,7 +1424,7 @@ func (e *ShowExec) fetchShowCreateTable() error {
 	tableInfo := tb.Meta()
 	var buf bytes.Buffer
 	// TODO: let the result more like MySQL.
-	if err = constructResultOfShowCreateTable(e.Ctx(), &e.DBName, tableInfo, tb.Allocators(e.Ctx()), &buf); err != nil {
+	if err = constructResultOfShowCreateTable(e.Ctx(), &e.DBName, tableInfo, tb.Allocators(e.Ctx().GetSessionVars()), &buf); err != nil {
 		return err
 	}
 	if tableInfo.IsView() {
