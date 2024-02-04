@@ -456,6 +456,12 @@ func (c *Context) SetInfoSchema(is sessionctx.InfoschemaMetaVersion) {
 	c.is = is
 }
 
+// ResetSessionAndStmtTimeZone resets the timezone for session and statement.
+func (c *Context) ResetSessionAndStmtTimeZone(tz *time.Location) {
+	c.GetSessionVars().TimeZone = tz
+	c.GetSessionVars().StmtCtx.SetTimeZone(tz)
+}
+
 // ReportUsageStats implements the sessionctx.Context interface.
 func (*Context) ReportUsageStats() {}
 
@@ -479,6 +485,7 @@ func NewContext() *Context {
 	sctx.sessionVars = vars
 	vars.InitChunkSize = 2
 	vars.MaxChunkSize = 32
+	vars.TimeZone = time.UTC
 	vars.StmtCtx.SetTimeZone(time.UTC)
 	vars.MemTracker.SetBytesLimit(-1)
 	vars.DiskTracker.SetBytesLimit(-1)
