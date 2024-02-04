@@ -87,7 +87,7 @@ func convertOuter2InnerJoins(p *LogicalJoin, predicates []expression.Expression)
 		if expression.ExprFromSchema(expr, outerTable.Schema()) {
 			continue
 		}
-		isOk := isNullFiltered(p.SCtx(), innerTable.Schema(), expr)
+		isOk := isNullFiltered(p.self.SCtx(), innerTable.Schema(), expr)
 		if isOk {
 			canBeSimplified = true
 			break
