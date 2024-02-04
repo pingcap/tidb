@@ -49,6 +49,7 @@ go_test(
 
 go_test(
     name = "sortexec_test",
+    timeout = "short",
     srcs = [
         "benchmark_test.go",
         "parallel_sort_test.go",
@@ -57,6 +58,8 @@ go_test(
         "sortexec_pkg_test.go",
     ],
     embed = [":sortexec"],
+    flaky = True,
+    shard_count = 6,
     deps = [
         "//pkg/config",
         "//pkg/executor/internal/exec",

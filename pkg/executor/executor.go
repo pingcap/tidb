@@ -298,7 +298,7 @@ func (e *ShowNextRowIDExec) Next(_ context.Context, req *chunk.Chunk) error {
 	}
 	tblMeta := tbl.Meta()
 
-	allocators := tbl.Allocators(e.Ctx())
+	allocators := tbl.Allocators(e.Ctx().GetSessionVars())
 	for _, alloc := range allocators.Allocs {
 		nextGlobalID, err := alloc.NextGlobalAutoID()
 		if err != nil {
@@ -2235,6 +2235,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			reuseObj = nil
 		}
 		sc.RuntimeStatsColl = execdetails.NewRuntimeStatsColl(reuseObj)
+
+		// also enable index usage collector
+		sc.IndexUsageCollector = ctx.NewStmtIndexUsageCollector()
 	}
 
 	sc.ForcePlanCache = fixcontrol.GetBoolWithDefault(vars.OptimizerFixControl, fixcontrol.Fix49736, false)

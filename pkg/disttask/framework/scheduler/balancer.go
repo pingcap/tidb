@@ -19,9 +19,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/log"
+	llog "github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -40,15 +41,20 @@ var (
 // the task and try next one.
 type balancer struct {
 	Param
-
+	logger *zap.Logger
 	// a helper temporary map to record the used slots of each node during balance
 	// to avoid passing it around.
 	currUsedSlots map[string]int
 }
 
 func newBalancer(param Param) *balancer {
+	logger := log.L()
+	if intest.InTest {
+		logger = log.L().With(zap.String("server-id", param.serverID))
+	}
 	return &balancer{
 		Param:         param,
+		logger:        logger,
 		currUsedSlots: make(map[string]int),
 	}
 }
@@ -77,8 +83,8 @@ func (b *balancer) balance(ctx context.Context, sm *Manager) {
 	schedulers := sm.getSchedulers()
 	for _, sch := range schedulers {
 		if err := b.balanceSubtasks(ctx, sch, managedNodes); err != nil {
-			logutil.Logger(ctx).Warn("failed to balance subtasks",
-				zap.Int64("task-id", sch.GetTask().ID), log.ShortError(err))
+			b.logger.Warn("failed to balance subtasks",
+				zap.Int64("task-id", sch.GetTask().ID), llog.ShortError(err))
 			return
 		}
 	}
@@ -149,6 +155,11 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 	executorWithOneMoreSubtask := make(map[string]struct{}, remainder)
 	for node, sts := range executorSubtasks {
 		if _, ok := adjustedNodeMap[node]; !ok {
+			b.logger.Info("dead node or not have enough slots, schedule subtasks away",
+				zap.Int64("task-id", taskID),
+				zap.String("node", node),
+				zap.Int("slot-capacity", b.slotMgr.getCapacity()),
+				zap.Int("used-slots", b.currUsedSlots[node]))
 			// dead node or not have enough slots
 			subtasksNeedSchedule = append(subtasksNeedSchedule, sts...)
 			delete(executorSubtasks, node)
@@ -200,7 +211,7 @@ func (b *balancer) doBalanceSubtasks(ctx context.Context, taskID int64, eligible
 	if err = b.taskMgr.UpdateSubtasksExecIDs(ctx, subtasksNeedSchedule); err != nil {
 		return err
 	}
-	logutil.BgLogger().Info("balance subtasks", zap.Stringers("subtasks", subtasksNeedSchedule))
+	b.logger.Info("balance subtasks", zap.Stringers("subtasks", subtasksNeedSchedule))
 	return nil
 }
 

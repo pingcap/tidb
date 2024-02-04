@@ -103,7 +103,7 @@ func updateRecord(
 				if err != nil {
 					return false, err
 				}
-				if err = t.Allocators(sctx).Get(autoid.AutoIncrementType).Rebase(ctx, recordID, true); err != nil {
+				if err = t.Allocators(sctx.GetSessionVars()).Get(autoid.AutoIncrementType).Rebase(ctx, recordID, true); err != nil {
 					return false, err
 				}
 			}
@@ -306,7 +306,7 @@ func rebaseAutoRandomValue(
 	shardFmt := autoid.NewShardIDFormat(&col.FieldType, tableInfo.AutoRandomBits, tableInfo.AutoRandomRangeBits)
 	// Set bits except incremental_bits to zero.
 	recordID = recordID & shardFmt.IncrementalMask()
-	return t.Allocators(sctx).Get(autoid.AutoRandomType).Rebase(ctx, recordID, true)
+	return t.Allocators(sctx.GetSessionVars()).Get(autoid.AutoRandomType).Rebase(ctx, recordID, true)
 }
 
 // resetErrDataTooLong reset ErrDataTooLong error msg.
@@ -341,7 +341,7 @@ func checkRowForExchangePartition(sctx sessionctx.Context, row []types.Datum, tb
 	}
 	if variable.EnableCheckConstraint.Load() {
 		type CheckConstraintTable interface {
-			CheckRowConstraint(sctx sessionctx.Context, rowToCheck []types.Datum) error
+			CheckRowConstraint(ctx expression.EvalContext, rowToCheck []types.Datum) error
 		}
 		cc, ok := pt.(CheckConstraintTable)
 		if !ok {
