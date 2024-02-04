@@ -1902,6 +1902,8 @@ func TestGetFracIndex(t *testing.T) {
 		{"2019.01.01 00:00:00", -1},
 		{"2019.01.01 00:00:00.1", 19},
 		{"12345.6", 5},
+		{"2020-01-01 12:00:00.123456 +0600 PST", 19},
+		{"2020-01-01 12:00:00.123456 -0600 PST", 19},
 	}
 	for _, testCase := range testCases {
 		index := types.GetFracIndex(testCase.str)
