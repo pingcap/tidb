@@ -873,3 +873,12 @@ HashJoin	1.22	root		inner join, equal:[eq(issue42135.tx1.id, issue42135.tx2.id) 
   └─TableReader	9.99	root		data:Selection
     └─Selection	9.99	cop[tikv]		eq(issue42135.tx2.rid, "1"), not(isnull(issue42135.tx2.id))
       └─TableFullScan	10000.00	cop[tikv]	table:tx2, partition:p2	keep order:false, stats:pseudo
+create table t (a varchar(255), b int primary key nonclustered, key (a)) partition by key(b) partitions 3;
+insert into t values ('Ab', 1),('abc',2),('BC',3),('AC',4),('BA',5),('cda',6);
+analyze table t;
+select * from t where b = 2 and a like 'abc';
+a	b
+abc	2
+select * from t where b = 2;
+a	b
+abc	2

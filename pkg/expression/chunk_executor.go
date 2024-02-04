@@ -15,6 +15,7 @@
 package expression
 
 import (
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -179,7 +180,11 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 				if result.IsNull(i) {
 					buf.AppendNull()
 				} else {
-					buf.AppendEnum(types.Enum{Value: 0, Name: result.GetString(i)})
+					enum, err := types.ParseEnumName(ft.GetElems(), result.GetString(i), ft.GetCollate())
+					if err != nil {
+						return errors.Errorf("Wrong enum value parsed during evaluation")
+					}
+					buf.AppendEnum(enum)
 				}
 			}
 			output.SetCol(colIdx, buf)
@@ -191,7 +196,11 @@ func evalOneVec(ctx sessionctx.Context, expr Expression, input *chunk.Chunk, out
 				if result.IsNull(i) {
 					buf.AppendNull()
 				} else {
-					buf.AppendSet(types.Set{Value: 0, Name: result.GetString(i)})
+					set, err := types.ParseSetName(ft.GetElems(), result.GetString(i), ft.GetCollate())
+					if err != nil {
+						return errors.Errorf("Wrong set value parsed during evaluation")
+					}
+					buf.AppendSet(set)
 				}
 			}
 			output.SetCol(colIdx, buf)
