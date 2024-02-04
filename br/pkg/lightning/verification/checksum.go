@@ -244,7 +244,7 @@ func (c *KVGroupChecksum) GetInnerChecksums() map[int64]*KVChecksum {
 
 // MergeGroup merges all groups of this checksum into a single KVChecksum.
 func (c *KVGroupChecksum) MergeGroup() KVChecksum {
-	merged := NewKVChecksumWithKeyspace(c.codec)
+	merged := NewKVChecksum(0)
 	for _, cksum := range c.m {
 		merged.Add(cksum)
 	}

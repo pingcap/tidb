@@ -224,10 +224,12 @@ func TestPostProcess(t *testing.T) {
 	logger := zap.NewExample()
 
 	// verify checksum failed
-	localChecksum := verify.MakeKVChecksum(1, 2, 1)
+	localChecksum := verify.NewKVGroupChecksumForAdd()
+	localChecksum.AddRawGroup(verify.DataKVGroupAsIndexID, 1, 2, 1)
 	require.ErrorIs(t, importer.PostProcess(ctx, tk.Session(), nil, plan, localChecksum, logger), common.ErrChecksumMismatch)
 	// success
-	localChecksum = verify.MakeKVChecksum(1, 1, 1)
+	localChecksum = verify.NewKVGroupChecksumForAdd()
+	localChecksum.AddRawGroup(verify.DataKVGroupAsIndexID, 1, 1, 1)
 	require.NoError(t, importer.PostProcess(ctx, tk.Session(), nil, plan, localChecksum, logger))
 	// get KV store failed
 	importer.GetKVStore = func(path string, tls kvconfig.Security) (kv.Storage, error) {
