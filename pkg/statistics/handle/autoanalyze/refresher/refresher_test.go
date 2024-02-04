@@ -15,7 +15,6 @@
 package refresher
 
 import (
-	"container/heap"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -54,7 +53,7 @@ func TestPickOneTableAndAnalyzeByPriority(t *testing.T) {
 		ChangePercentage: 0.5,
 		Weight:           1,
 	}
-	heap.Push(r.jobs, job)
+	r.jobs.Push(job)
 	r.pickOneTableAndAnalyzeByPriority()
 	// The table is analyzed.
 	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)

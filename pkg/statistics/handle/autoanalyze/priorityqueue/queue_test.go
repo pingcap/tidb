@@ -28,7 +28,7 @@ func TestAnalysisQueue(t *testing.T) {
 	job3 := &TableAnalysisJob{Weight: 15}
 
 	// Create an empty priority queue
-	queue := AnalysisQueue{}
+	queue := analysisQueueInner{}
 
 	// Push items into the queue
 	heap.Push(&queue, job1)
@@ -48,7 +48,7 @@ func TestAnalysisQueue(t *testing.T) {
 
 func TestPushPop(t *testing.T) {
 	// Test Push and Pop operations together
-	queue := AnalysisQueue{}
+	queue := analysisQueueInner{}
 	heap.Push(&queue, &TableAnalysisJob{Weight: 10})
 	heap.Push(&queue, &TableAnalysisJob{Weight: 5})
 

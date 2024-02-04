@@ -15,8 +15,6 @@
 package refresher
 
 import (
-	"container/heap"
-
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -29,7 +27,7 @@ type Refresher struct {
 	statsHandle    statstypes.StatsHandle
 	sysProcTracker sessionctx.SysProcTracker
 
-	jobs *priorityqueue.AnalysisQueue
+	jobs *priorityqueue.AnalysisPriorityQueue
 }
 
 // NewRefresher creates a new Refresher and starts the goroutine.
@@ -40,7 +38,7 @@ func NewRefresher(
 	r := &Refresher{
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,
-		jobs:           priorityqueue.NewAnalysisQueue(),
+		jobs:           priorityqueue.NewAnalysisPriorityQueue(),
 	}
 
 	return r, nil
@@ -59,7 +57,7 @@ func (r *Refresher) pickOneTableAndAnalyzeByPriority() {
 	sctx := se.(sessionctx.Context)
 	// Pick the table with the highest weight.
 	for r.jobs.Len() > 0 {
-		job := heap.Pop(r.jobs).(*priorityqueue.TableAnalysisJob)
+		job := r.jobs.Pop()
 		if valid, failReason := job.IsValidToAnalyze(
 			sctx,
 		); !valid {
