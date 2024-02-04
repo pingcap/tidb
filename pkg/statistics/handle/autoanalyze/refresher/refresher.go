@@ -64,13 +64,13 @@ func (r *Refresher) pickOneTableAndAnalyzeByPriority() {
 			statslogutil.StatsLogger().Info(
 				"Table is not ready to analyze",
 				zap.String("failReason", failReason),
-				zap.Any("job", job),
+				zap.Stringer("job", job),
 			)
 			continue
 		}
 		statslogutil.StatsLogger().Info(
 			"Auto analyze triggered",
-			zap.Any("job", job),
+			zap.Stringer("job", job),
 		)
 		err = job.Execute(
 			r.statsHandle,
@@ -79,7 +79,7 @@ func (r *Refresher) pickOneTableAndAnalyzeByPriority() {
 		if err != nil {
 			statslogutil.StatsLogger().Error(
 				"Execute auto analyze job failed",
-				zap.Any("job", job),
+				zap.Stringer("job", job),
 				zap.Error(err),
 			)
 		}
