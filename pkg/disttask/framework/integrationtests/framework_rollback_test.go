@@ -12,26 +12,25 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package framework_test
+package integrationtests
 
 import (
 	"testing"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/stretchr/testify/require"
 )
 
-func TestRetryErrOnNextSubtasksBatch(t *testing.T) {
+func TestFrameworkRollback(t *testing.T) {
 	c := testutil.NewTestDXFContext(t, 2)
-	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetPlanErrSchedulerExt(c.MockCtrl, c.TestContext), c.TestContext, nil)
-	submitTaskAndCheckSuccessForBasic(c.Ctx, t, "key1", c.TestContext)
-}
+	testutil.RegisterRollbackTaskMeta(t, c.MockCtrl, testutil.GetMockRollbackSchedulerExt(c.MockCtrl), c.TestContext)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/cancelTaskAfterRefreshTask", "2*return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/cancelTaskAfterRefreshTask"))
+	}()
 
-func TestPlanNotRetryableOnNextSubtasksBatchErr(t *testing.T) {
-	c := testutil.NewTestDXFContext(t, 2)
-
-	testutil.RegisterTaskMeta(t, c.MockCtrl, testutil.GetPlanNotRetryableErrSchedulerExt(c.MockCtrl), c.TestContext, nil)
 	task := testutil.SubmitAndWaitTask(c.Ctx, t, "key1")
-	require.Equal(t, proto.TaskStateFailed, task.State)
+	require.Equal(t, proto.TaskStateReverted, task.State)
 }

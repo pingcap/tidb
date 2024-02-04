@@ -96,10 +96,10 @@ func (ran *Range) Clone() *Range {
 
 // IsPoint returns if the range is a point.
 func (ran *Range) IsPoint(sctx sessionctx.Context) bool {
-	return ran.isPoint(sctx.GetSessionVars().StmtCtx, sctx.GetSessionVars().RegardNULLAsPoint)
+	return ran.isPoint(sctx.GetSessionVars().StmtCtx.TypeCtx(), sctx.GetSessionVars().RegardNULLAsPoint)
 }
 
-func (ran *Range) isPoint(stmtCtx *stmtctx.StatementContext, regardNullAsPoint bool) bool {
+func (ran *Range) isPoint(tc types.Context, regardNullAsPoint bool) bool {
 	if len(ran.LowVal) != len(ran.HighVal) {
 		return false
 	}
@@ -109,7 +109,7 @@ func (ran *Range) isPoint(stmtCtx *stmtctx.StatementContext, regardNullAsPoint b
 		if a.Kind() == types.KindMinNotNull || b.Kind() == types.KindMaxValue {
 			return false
 		}
-		cmp, err := a.Compare(stmtCtx.TypeCtx(), &b, ran.Collators[i])
+		cmp, err := a.Compare(tc, &b, ran.Collators[i])
 		if err != nil {
 			return false
 		}
@@ -127,14 +127,14 @@ func (ran *Range) isPoint(stmtCtx *stmtctx.StatementContext, regardNullAsPoint b
 }
 
 // IsPointNonNullable returns if the range is a point without NULL.
-func (ran *Range) IsPointNonNullable(sctx sessionctx.Context) bool {
-	return ran.isPoint(sctx.GetSessionVars().StmtCtx, false)
+func (ran *Range) IsPointNonNullable(tc types.Context) bool {
+	return ran.isPoint(tc, false)
 }
 
 // IsPointNullable returns if the range is a point.
 // TODO: unify the parameter type with IsPointNullable and IsPoint
-func (ran *Range) IsPointNullable(sctx sessionctx.Context) bool {
-	return ran.isPoint(sctx.GetSessionVars().StmtCtx, true)
+func (ran *Range) IsPointNullable(tc types.Context) bool {
+	return ran.isPoint(tc, true)
 }
 
 // IsFullRange check if the range is full scan range

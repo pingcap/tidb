@@ -46,8 +46,8 @@ type readIndexExecutor struct {
 
 	cloudStorageURI string
 
-	bc      ingest.BackendCtx
-	summary *execute.Summary
+	bc          ingest.BackendCtx
+	curRowCount *atomic.Int64
 
 	subtaskSummary sync.Map // subtaskID => readIndexSummary
 }
@@ -67,7 +67,6 @@ func newReadIndexExecutor(
 	ptbl table.PhysicalTable,
 	jc *JobContext,
 	bc ingest.BackendCtx,
-	summary *execute.Summary,
 	cloudStorageURI string,
 ) *readIndexExecutor {
 	return &readIndexExecutor{
@@ -77,8 +76,8 @@ func newReadIndexExecutor(
 		ptbl:            ptbl,
 		jc:              jc,
 		bc:              bc,
-		summary:         summary,
 		cloudStorageURI: cloudStorageURI,
+		curRowCount:     &atomic.Int64{},
 	}
 }
 
@@ -117,13 +116,13 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 
 	opCtx := NewOperatorCtx(ctx)
 	defer opCtx.Cancel()
-	totalRowCount := &atomic.Int64{}
+	r.curRowCount.Store(0)
 
 	var pipe *operator.AsyncPipeline
 	if len(r.cloudStorageURI) > 0 {
-		pipe, err = r.buildExternalStorePipeline(opCtx, subtask.ID, sessCtx, tbl, startKey, endKey, totalRowCount)
+		pipe, err = r.buildExternalStorePipeline(opCtx, subtask.ID, sessCtx, tbl, startKey, endKey, r.curRowCount)
 	} else {
-		pipe, err = r.buildLocalStorePipeline(opCtx, sessCtx, tbl, startKey, endKey, totalRowCount)
+		pipe, err = r.buildLocalStorePipeline(opCtx, sessCtx, tbl, startKey, endKey, r.curRowCount)
 	}
 	if err != nil {
 		return err
@@ -142,8 +141,13 @@ func (r *readIndexExecutor) RunSubtask(ctx context.Context, subtask *proto.Subta
 	}
 
 	r.bc.ResetWorkers(r.job.ID)
-	r.summary.UpdateRowCount(subtask.ID, totalRowCount.Load())
 	return nil
+}
+
+func (r *readIndexExecutor) RealtimeSummary() *execute.SubtaskSummary {
+	return &execute.SubtaskSummary{
+		RowCount: r.curRowCount.Load(),
+	}
 }
 
 func (*readIndexExecutor) Cleanup(ctx context.Context) error {

@@ -207,9 +207,10 @@ func recordUsedItemStatsStatus(sctx sessionctx.Context, stats any, tableID, id i
 // ceTraceRange appends a list of ranges and related information into CE trace
 func ceTraceRange(sctx sessionctx.Context, tableID int64, colNames []string, ranges []*ranger.Range, tp string, rowCount uint64) {
 	sc := sctx.GetSessionVars().StmtCtx
+	tc := sc.TypeCtx()
 	allPoint := true
 	for _, ran := range ranges {
-		if !ran.IsPointNullable(sctx) {
+		if !ran.IsPointNullable(tc) {
 			allPoint = false
 			break
 		}

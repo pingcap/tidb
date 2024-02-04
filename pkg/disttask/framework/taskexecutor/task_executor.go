@@ -43,6 +43,10 @@ var (
 	// checkBalanceSubtaskInterval is the default check interval for checking
 	// subtasks balance to/away from this node.
 	checkBalanceSubtaskInterval = 2 * time.Second
+
+	// updateSubtaskSummaryInterval is the interval for updating the subtask summary to
+	// subtask table.
+	updateSubtaskSummaryInterval = 3 * time.Second
 )
 
 var (
@@ -56,6 +60,8 @@ var (
 
 	// TestSyncChan is used to sync the test.
 	TestSyncChan = make(chan struct{})
+	// MockTiDBDown is used to mock TiDB node down, return true if it's chosen.
+	MockTiDBDown func(execID string, task *proto.Task) bool
 )
 
 // BaseTaskExecutor is the base implementation of TaskExecutor.
@@ -158,6 +164,30 @@ func (e *BaseTaskExecutor) checkBalanceSubtask(ctx context.Context) {
 	}
 }
 
+func (e *BaseTaskExecutor) updateSubtaskSummaryLoop(
+	checkCtx, runStepCtx context.Context, stepExec execute.StepExecutor) {
+	taskMgr := e.taskTable.(*storage.TaskManager)
+	ticker := time.NewTicker(updateSubtaskSummaryInterval)
+	defer ticker.Stop()
+	curSubtaskID := e.currSubtaskID.Load()
+	update := func() {
+		summary := stepExec.RealtimeSummary()
+		err := taskMgr.UpdateSubtaskRowCount(runStepCtx, curSubtaskID, summary.RowCount)
+		if err != nil {
+			e.logger.Info("update subtask row count failed", zap.Error(err))
+		}
+	}
+	for {
+		select {
+		case <-checkCtx.Done():
+			update()
+			return
+		case <-ticker.C:
+		}
+		update()
+	}
+}
+
 // Init implements the TaskExecutor interface.
 func (*BaseTaskExecutor) Init(_ context.Context) error {
 	return nil
@@ -183,16 +213,6 @@ func (e *BaseTaskExecutor) Run(resource *proto.StepResource) {
 			return
 		case <-time.After(checkInterval):
 		}
-		failpoint.Inject("mockStopManager", func() {
-			TestContexts.Store(e.id, &TestContext{make(chan struct{}), atomic.Bool{}})
-			go func() {
-				v, ok := TestContexts.Load(e.id)
-				if ok {
-					<-v.(*TestContext).TestSyncSubtaskRun
-					infosync.MockGlobalServerInfoManagerEntry.DeleteByExecID(e.id)
-				}
-			}()
-		})
 		if err = e.refreshTask(); err != nil {
 			if errors.Cause(err) == storage.ErrTaskNotFound {
 				return
@@ -287,13 +307,7 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 		stepLogger.End(zap.InfoLevel, resErr)
 	}()
 
-	summary, cleanup, err := runSummaryCollectLoop(runStepCtx, task, e.taskTable)
-	if err != nil {
-		e.onError(err)
-		return e.getError()
-	}
-	defer cleanup()
-	stepExecutor, err := e.GetStepExecutor(task, summary, resource)
+	stepExecutor, err := e.GetStepExecutor(task, resource)
 	if err != nil {
 		e.onError(err)
 		return e.getError()
@@ -343,6 +357,8 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 				e.markErrorHandled()
 				break
 			}
+			e.logger.Info("subtask in running state and is idempotent",
+				zap.Int64("subtask-id", subtask.ID))
 		} else {
 			// subtask.State == proto.SubtaskStatePending
 			err := e.startSubtask(runStepCtx, subtask.ID)
@@ -358,15 +374,6 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 			}
 		}
 
-		failpoint.Inject("mockCleanExecutor", func() {
-			v, ok := TestContexts.Load(e.id)
-			if ok {
-				if v.(*TestContext).mockDown.Load() {
-					failpoint.Break()
-				}
-			}
-		})
-
 		failpoint.Inject("cancelBeforeRunSubtask", func() {
 			runStepCancel(nil)
 		})
@@ -374,6 +381,11 @@ func (e *BaseTaskExecutor) runStep(resource *proto.StepResource) (resErr error) 
 		e.runSubtask(runStepCtx, stepExecutor, subtask)
 	}
 	return e.getError()
+}
+
+func (e *BaseTaskExecutor) hasRealtimeSummary(stepExecutor execute.StepExecutor) bool {
+	_, ok := e.taskTable.(*storage.TaskManager)
+	return ok && stepExecutor.RealtimeSummary() != nil
 }
 
 func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.StepExecutor, subtask *proto.Subtask) {
@@ -385,11 +397,16 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 		wg.RunWithLog(func() {
 			e.checkBalanceSubtask(checkCtx)
 		})
+
+		if e.hasRealtimeSummary(stepExecutor) {
+			wg.RunWithLog(func() {
+				e.updateSubtaskSummaryLoop(checkCtx, ctx, stepExecutor)
+			})
+		}
 		defer func() {
 			checkCancel()
 			wg.Wait()
 		}()
-
 		return stepExecutor.RunSubtask(ctx, subtask)
 	}()
 	failpoint.Inject("MockRunSubtaskCancel", func(val failpoint.Value) {
@@ -413,28 +430,9 @@ func (e *BaseTaskExecutor) runSubtask(ctx context.Context, stepExecutor execute.
 		return
 	}
 
-	failpoint.Inject("mockTiDBDown", func(val failpoint.Value) {
-		e.logger.Info("trigger mockTiDBDown")
-		if e.id == val.(string) || e.id == ":4001" || e.id == ":4002" {
-			v, ok := TestContexts.Load(e.id)
-			if ok {
-				v.(*TestContext).TestSyncSubtaskRun <- struct{}{}
-				v.(*TestContext).mockDown.Store(true)
-				e.logger.Info("mockTiDBDown")
-				time.Sleep(2 * time.Second)
-				failpoint.Return()
-			}
-		}
-	})
-	failpoint.Inject("mockTiDBDown2", func() {
-		if e.id == ":4003" && subtask.Step == proto.StepTwo {
-			v, ok := TestContexts.Load(e.id)
-			if ok {
-				v.(*TestContext).TestSyncSubtaskRun <- struct{}{}
-				v.(*TestContext).mockDown.Store(true)
-				time.Sleep(2 * time.Second)
-				return
-			}
+	failpoint.Inject("mockTiDBShutdown", func() {
+		if MockTiDBDown(e.id, e.GetTask()) {
+			failpoint.Return()
 		}
 	})
 
@@ -501,7 +499,7 @@ func (e *BaseTaskExecutor) onSubtaskFinished(ctx context.Context, executor execu
 func (e *BaseTaskExecutor) Rollback() error {
 	task := e.task.Load()
 	e.resetError()
-	e.logger.Info("taskExecutor rollback a step", zap.String("step", proto.Step2Str(task.Type, task.Step)))
+	e.logger.Info("task reverting, cancel unfinished subtasks")
 
 	// We should cancel all subtasks before rolling back
 	for {
@@ -555,31 +553,6 @@ func (e *BaseTaskExecutor) refreshTask() error {
 	}
 	e.task.Store(newTask)
 	return nil
-}
-
-func runSummaryCollectLoop(
-	ctx context.Context,
-	task *proto.Task,
-	taskTable TaskTable,
-) (summary *execute.Summary, cleanup func(), err error) {
-	failpoint.Inject("mockSummaryCollectErr", func() {
-		failpoint.Return(nil, func() {}, errors.New("summary collect err"))
-	})
-	taskMgr, ok := taskTable.(*storage.TaskManager)
-	if !ok {
-		return nil, func() {}, nil
-	}
-	opt, ok := taskTypes[task.Type]
-	if !ok {
-		return nil, func() {}, errors.Errorf("taskExecutor option for type %s not found", task.Type)
-	}
-	if opt.Summary != nil {
-		go opt.Summary.UpdateRowCountLoop(ctx, taskMgr)
-		return opt.Summary, func() {
-			opt.Summary.PersistRowCount(ctx, taskMgr)
-		}, nil
-	}
-	return nil, func() {}, nil
 }
 
 func (e *BaseTaskExecutor) registerRunStepCancelFunc(cancel context.CancelCauseFunc) {

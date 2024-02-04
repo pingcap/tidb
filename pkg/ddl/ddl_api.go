@@ -3994,7 +3994,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	}
 
 	if !force {
-		newBaseTemp, err := adjustNewBaseToNextGlobalID(ctx, t, tp, newBase)
+		newBaseTemp, err := adjustNewBaseToNextGlobalID(ctx.GetSessionVars(), t, tp, newBase)
 		if err != nil {
 			return err
 		}
@@ -4021,7 +4021,7 @@ func (d *ddl) RebaseAutoID(ctx sessionctx.Context, ident ast.Ident, newBase int6
 	return errors.Trace(err)
 }
 
-func adjustNewBaseToNextGlobalID(ctx sessionctx.Context, t table.Table, tp autoid.AllocatorType, newBase int64) (int64, error) {
+func adjustNewBaseToNextGlobalID(ctx table.AllocatorContext, t table.Table, tp autoid.AllocatorType, newBase int64) (int64, error) {
 	alloc := t.Allocators(ctx).Get(tp)
 	if alloc == nil {
 		return newBase, nil
@@ -7081,7 +7081,7 @@ func ExtractTblInfos(is infoschema.InfoSchema, oldIdent, newIdent ast.Ident, isA
 		return nil, 0, nil
 	}
 	//View can be renamed only in the same schema. Compatible with mysql
-	if is.TableIsView(oldIdent.Schema, oldIdent.Name) {
+	if infoschema.TableIsView(is, oldIdent.Schema, oldIdent.Name) {
 		if oldIdent.Schema != newIdent.Schema {
 			return nil, 0, infoschema.ErrForbidSchemaChange.GenWithStackByArgs(oldIdent.Schema, newIdent.Schema)
 		}

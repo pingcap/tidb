@@ -20,6 +20,7 @@ import (
 	"math"
 	"regexp"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1675,4 +1676,71 @@ func (e *TiKVRegionStatusExtractor) explainInfo(_ *PhysicalMemTable) string {
 // GetTablesID returns TablesID
 func (e *TiKVRegionStatusExtractor) GetTablesID() []int64 {
 	return e.tablesID
+}
+
+// InfoSchemaTablesExtractor is used to extract infoSchema tables related predicates.
+type InfoSchemaTablesExtractor struct {
+	extractHelper
+	// SkipRequest means the where clause always false, we don't need to request any component
+	SkipRequest bool
+
+	colNames      []string
+	ColPredicates map[string]set.StringSet
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *InfoSchemaTablesExtractor) Extract(_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	var resultSet set.StringSet
+	e.colNames = []string{"table_schema", "table_name"}
+	e.ColPredicates = make(map[string]set.StringSet)
+	remained = predicates
+	for _, colName := range e.colNames {
+		remained, e.SkipRequest, resultSet = e.extractCol(schema, names, remained, colName, true)
+		e.ColPredicates[colName] = resultSet
+		if e.SkipRequest {
+			break
+		}
+	}
+	return remained
+}
+
+func (e *InfoSchemaTablesExtractor) explainInfo(_ *PhysicalMemTable) string {
+	if e.SkipRequest {
+		return "skip_request:true"
+	}
+	r := new(bytes.Buffer)
+	colNames := make([]string, 0, len(e.ColPredicates))
+	for colName := range e.ColPredicates {
+		colNames = append(colNames, colName)
+	}
+	sort.Strings(colNames)
+	for _, colName := range colNames {
+		if len(e.ColPredicates[colName]) > 0 {
+			fmt.Fprintf(r, "%s:[%s], ", colName, extractStringFromStringSet(e.ColPredicates[colName]))
+		}
+	}
+
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
+
+// Filter use the col predicates to filter records.
+func (e *InfoSchemaTablesExtractor) Filter(colName string, val string) bool {
+	if e.SkipRequest {
+		return true
+	}
+	predVals, ok := e.ColPredicates[colName]
+	if ok && len(predVals) > 0 {
+		return !predVals.Exist(val)
+	}
+	// No need to filter records since no predicate for the column exists.
+	return false
 }
