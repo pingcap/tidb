@@ -554,7 +554,16 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 				noSideEffects := true
 				newGbyItems := make([]expression.Expression, 0, len(agg.GroupByItems))
 				for _, gbyItem := range agg.GroupByItems {
+<<<<<<< HEAD
 					newGbyItems = append(newGbyItems, expression.ColumnSubstitute(gbyItem, proj.schema, proj.Exprs))
+=======
+					_, failed, groupBy := expression.ColumnSubstituteImpl(ctx, gbyItem, proj.schema, proj.Exprs, true)
+					if failed {
+						noSideEffects = false
+						break
+					}
+					newGbyItems = append(newGbyItems, groupBy)
+>>>>>>> a0296bebe39 (planner: stop pushing Agg down through Projection if substitution fail (#50932))
 					if ExprsHasSideEffects(newGbyItems) {
 						noSideEffects = false
 						break
@@ -569,7 +578,16 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 						oldAggFuncsArgs = append(oldAggFuncsArgs, aggFunc.Args)
 						newArgs := make([]expression.Expression, 0, len(aggFunc.Args))
 						for _, arg := range aggFunc.Args {
+<<<<<<< HEAD
 							newArgs = append(newArgs, expression.ColumnSubstitute(arg, proj.schema, proj.Exprs))
+=======
+							_, failed, newArg := expression.ColumnSubstituteImpl(ctx, arg, proj.schema, proj.Exprs, true)
+							if failed {
+								noSideEffects = false
+								break
+							}
+							newArgs = append(newArgs, newArg)
+>>>>>>> a0296bebe39 (planner: stop pushing Agg down through Projection if substitution fail (#50932))
 						}
 						if ExprsHasSideEffects(newArgs) {
 							noSideEffects = false
@@ -581,7 +599,16 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 							oldAggOrderItems = append(oldAggOrderItems, aggFunc.OrderByItems)
 							newOrderByItems := make([]expression.Expression, 0, len(aggFunc.OrderByItems))
 							for _, oby := range aggFunc.OrderByItems {
+<<<<<<< HEAD
 								newOrderByItems = append(newOrderByItems, expression.ColumnSubstitute(oby.Expr, proj.schema, proj.Exprs))
+=======
+								_, failed, byItem := expression.ColumnSubstituteImpl(ctx, oby.Expr, proj.schema, proj.Exprs, true)
+								if failed {
+									noSideEffects = false
+									break
+								}
+								newOrderByItems = append(newOrderByItems, byItem)
+>>>>>>> a0296bebe39 (planner: stop pushing Agg down through Projection if substitution fail (#50932))
 							}
 							if ExprsHasSideEffects(newOrderByItems) {
 								noSideEffects = false
@@ -600,6 +627,9 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 					}
 				}
 				for i, funcsArgs := range oldAggFuncsArgs {
+					if !noSideEffects {
+						break
+					}
 					for j := range funcsArgs {
 						if oldAggFuncsArgs[i][j].GetType().EvalType() != newAggFuncsArgs[i][j].GetType().EvalType() {
 							noSideEffects = false
@@ -615,9 +645,6 @@ func (a *aggregationPushDownSolver) aggPushDown(p LogicalPlan, opt *logicalOptim
 							noSideEffects = false
 							break
 						}
-					}
-					if !noSideEffects {
-						break
 					}
 				}
 				if noSideEffects {
