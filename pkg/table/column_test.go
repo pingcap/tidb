@@ -421,7 +421,7 @@ func TestGetDefaultValue(t *testing.T) {
 				FieldType:          tp3,
 				OriginDefaultValue: timestampValueUTC.String(),
 				DefaultValue:       timestampValueUTC.String(),
-				Version:            2,
+				Version:            model.ColumnInfoVersion2,
 			},
 			true,
 			types.NewDatum(timestampValue),
