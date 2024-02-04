@@ -25,7 +25,8 @@ import (
 
 var ecmaTable = crc64.MakeTable(crc64.ECMA)
 
-// KVChecksum is the checksum of a collection of key-value pairs.
+// KVChecksum is the checksum of a collection of key-value pairs. The zero value
+// of KVChecksum is a checksum for empty content and zero keyspace.
 type KVChecksum struct {
 	base      uint64
 	prefixLen int
@@ -126,4 +127,137 @@ func (c *KVChecksum) MarshalLogObject(encoder zapcore.ObjectEncoder) error {
 func (c *KVChecksum) MarshalJSON() ([]byte, error) {
 	result := fmt.Sprintf(`{"checksum":%d,"size":%d,"kvs":%d}`, c.checksum, c.bytes, c.kvs)
 	return []byte(result), nil
+}
+
+// KVGroupChecksum is KVChecksum(s) each for a data KV group or index KV groups.
+type KVGroupChecksum struct {
+	m     map[int64]*KVChecksum
+	codec tikv.Codec
+}
+
+// DataKVGroupAsIndexID represents the index ID for data KV group.
+const DataKVGroupAsIndexID = -1
+
+// NewKVGroupChecksumWithKeyspace creates a new KVGroupChecksum with the given
+// keyspace.
+func NewKVGroupChecksumWithKeyspace(k tikv.Codec) *KVGroupChecksum {
+	m := make(map[int64]*KVChecksum, 8)
+	m[DataKVGroupAsIndexID] = NewKVChecksumWithKeyspace(k)
+	return &KVGroupChecksum{m: m, codec: k}
+}
+
+// NewKVGroupChecksumForAdd creates a new KVGroupChecksum and it can't be used
+// with UpdateOneDataKV or UpdateOneIndexKV.
+func NewKVGroupChecksumForAdd() *KVGroupChecksum {
+	m := make(map[int64]*KVChecksum, 8)
+	m[DataKVGroupAsIndexID] = NewKVChecksum(0)
+	return &KVGroupChecksum{m: m}
+}
+
+// UpdateOneDataKV updates the checksum with a single data(record) key-value
+// pair. It will not check the key-value pair's key is a real data key again.
+func (c *KVGroupChecksum) UpdateOneDataKV(kv common.KvPair) {
+	c.m[DataKVGroupAsIndexID].UpdateOne(kv)
+}
+
+// UpdateOneIndexKV updates the checksum with a single index key-value pair. It
+// will not check the key-value pair's key is a real index key of that index ID
+// again.
+func (c *KVGroupChecksum) UpdateOneIndexKV(indexID int64, kv common.KvPair) {
+	cksum := c.m[indexID]
+	if cksum == nil {
+		cksum = NewKVChecksumWithKeyspace(c.codec)
+		c.m[indexID] = cksum
+	}
+	cksum.UpdateOne(kv)
+}
+
+// Add adds the checksum of another KVGroupChecksum.
+func (c *KVGroupChecksum) Add(other *KVGroupChecksum) {
+	for id, cksum := range other.m {
+		thisCksum := c.m[id]
+		if thisCksum == nil {
+			if c.codec == nil {
+				thisCksum = NewKVChecksum(0)
+			} else {
+				thisCksum = NewKVChecksumWithKeyspace(c.codec)
+			}
+			c.m[id] = thisCksum
+		}
+		thisCksum.Add(cksum)
+	}
+}
+
+// AddRawGroup adds the raw information of a KV group.
+func (c *KVGroupChecksum) AddRawGroup(id int64, bytes, kvs, checksum uint64) {
+	oneGroup, ok := c.m[id]
+	if !ok {
+		if c.codec == nil {
+			oneGroup = NewKVChecksum(0)
+		} else {
+			oneGroup = NewKVChecksumWithKeyspace(c.codec)
+		}
+		c.m[id] = oneGroup
+	}
+	tmp := MakeKVChecksum(bytes, kvs, checksum)
+	oneGroup.Add(&tmp)
+}
+
+// DataAndIndexSumSize returns the total size of data KV pairs and index KV pairs.
+func (c *KVGroupChecksum) DataAndIndexSumSize() (dataSize, indexSize uint64) {
+	for id, cksum := range c.m {
+		if id == DataKVGroupAsIndexID {
+			dataSize = cksum.SumSize()
+		} else {
+			indexSize += cksum.SumSize()
+		}
+	}
+	return
+}
+
+// DataAndIndexSumKVS returns the total number of data KV pairs and index KV pairs.
+func (c *KVGroupChecksum) DataAndIndexSumKVS() (dataKVS, indexKVS uint64) {
+	for id, cksum := range c.m {
+		if id == DataKVGroupAsIndexID {
+			dataKVS = cksum.SumKVS()
+		} else {
+			indexKVS += cksum.SumKVS()
+		}
+	}
+	return
+}
+
+// GetInnerChecksums returns a cloned map of index ID to its KVChecksum.
+func (c *KVGroupChecksum) GetInnerChecksums() map[int64]*KVChecksum {
+	m := make(map[int64]*KVChecksum, len(c.m))
+	for id, cksum := range c.m {
+		m[id] = &KVChecksum{
+			base:      cksum.base,
+			prefixLen: cksum.prefixLen,
+			bytes:     cksum.bytes,
+			kvs:       cksum.kvs,
+			checksum:  cksum.checksum,
+		}
+	}
+	return m
+}
+
+// MergeGroup merges all groups of this checksum into a single KVChecksum.
+func (c *KVGroupChecksum) MergeGroup() KVChecksum {
+	merged := NewKVChecksum(0)
+	for _, cksum := range c.m {
+		merged.Add(cksum)
+	}
+	return *merged
+}
+
+// MarshalLogObject implements the zapcore.ObjectMarshaler interface.
+func (c *KVGroupChecksum) MarshalLogObject(encoder zapcore.ObjectEncoder) error {
+	for id, cksum := range c.m {
+		err := encoder.AddObject(fmt.Sprintf("id=%d", id), cksum)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
