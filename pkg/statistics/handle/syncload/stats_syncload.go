@@ -198,8 +198,8 @@ func (s *statsSyncLoad) SubLoadWorker(sctx sessionctx.Context, exit chan struct{
 				return
 			default:
 				// To avoid the thundering herd effect
-				// Everyone tries to retry a large number of requests simultaneously when a problem occurs.
-				r := rand.Intn(200)
+				// thundering herd effect: Everyone tries to retry a large number of requests simultaneously when a problem occurs.
+				r := rand.Intn(500)
 				time.Sleep(s.statsHandle.Lease()/10 + time.Duration(r)*time.Microsecond)
 				continue
 			}
