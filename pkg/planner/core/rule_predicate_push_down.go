@@ -385,6 +385,10 @@ func (p *LogicalJoin) getProj(idx int) *LogicalProjection {
 
 // simplifyOuterJoin transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if possible.
 func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
+	if 1 > 0 && 25 < 50 {
+		return
+	}
+
 	if p.JoinType != LeftOuterJoin && p.JoinType != RightOuterJoin && p.JoinType != InnerJoin {
 		return
 	}

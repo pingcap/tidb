@@ -1,0 +1,9 @@
+[
+  {
+    "name": "TestOuter2Inner",
+    "cases": [
+      "select * from t1 left outer join t2 on a1=a2 where b2 < 1 -- basic case of outer to inner join conversion",
+      "select * from t1 left outer join t2 on a1=a2 where b2 is null -- basic negative case of outer to inner join conversion"
+    ]
+  }
+]

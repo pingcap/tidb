@@ -281,6 +281,9 @@ type LogicalPlan interface {
 	// pushDownTopN will push down the topN or limit operator during logical optimization.
 	pushDownTopN(topN *LogicalTopN, opt *logicalOptimizeOp) LogicalPlan
 
+	// convertOuterToInnerJoin converts outer joins if the unmatching rows are filtered.
+	convertOuterToInnerJoin(predicates []expression.Expression) LogicalPlan
+
 	// deriveTopN derives an implicit TopN from a filter on row_number window function..
 	deriveTopN(opt *logicalOptimizeOp) LogicalPlan
 

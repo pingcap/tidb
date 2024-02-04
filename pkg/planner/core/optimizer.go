@@ -78,6 +78,7 @@ const (
 	flagMaxMinEliminate
 	flagConstantPropagation
 	flagPredicatePushDown
+	flagConvertOuterToInnerJoin
 	flagEliminateOuterJoin
 	flagPartitionProcessor
 	flagCollectPredicateColumnsPoint
@@ -105,6 +106,7 @@ var optRuleList = []logicalOptRule{
 	&maxMinEliminator{},
 	&constantPropagationSolver{},
 	&ppdSolver{},
+	&convertOuterToInnerJoin{},
 	&outerJoinEliminator{},
 	&partitionProcessor{},
 	&collectPredicateColumnsPoint{},
@@ -1170,7 +1172,7 @@ func logicalOptimize(ctx context.Context, flag uint64, logic LogicalPlan) (Logic
 		// The order of flags is same as the order of optRule in the list.
 		// We use a bitmask to record which opt rules should be used. If the i-th bit is 1, it means we should
 		// apply i-th optimizing rule.
-		if flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule) {
+		if (flag&(1<<uint(i)) == 0 || isLogicalRuleDisabled(rule)) && (rule.name() != "convert_outer_to_inner_joins") {
 			continue
 		}
 		opt.appendBeforeRuleOptimize(i, rule.name(), logic)
