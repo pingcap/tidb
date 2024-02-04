@@ -176,6 +176,12 @@ func (sm *Manager) Start() {
 	sm.initialized = true
 }
 
+// Cancel cancels the scheduler manager.
+// used in test to simulate tidb node shutdown.
+func (sm *Manager) Cancel() {
+	sm.cancel()
+}
+
 // Stop the schedulerManager.
 func (sm *Manager) Stop() {
 	sm.cancel()
