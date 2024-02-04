@@ -40,6 +40,7 @@ func NewRefresher(
 	r := &Refresher{
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,
+		jobs:           priorityqueue.NewAnalysisQueue(),
 	}
 
 	return r, nil

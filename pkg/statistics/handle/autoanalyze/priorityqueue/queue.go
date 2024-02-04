@@ -17,6 +17,10 @@ package priorityqueue
 // An AnalysisQueue implements heap.Interface and holds TableAnalysisJobs.
 type AnalysisQueue []*TableAnalysisJob
 
+func NewAnalysisQueue() *AnalysisQueue {
+	return &AnalysisQueue{}
+}
+
 // Implement the sort.Interface methods for the priority queue.
 
 func (aq AnalysisQueue) Len() int { return len(aq) }
