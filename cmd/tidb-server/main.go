@@ -375,6 +375,7 @@ func setCPUAffinity() {
 		os.Exit(1)
 	}
 	if len(cpu) < runtime.GOMAXPROCS(0) {
+		log.Info("cpu number less than maxprocs", zap.Int("cpu number ", len(cpu)), zap.Int("maxprocs", runtime.GOMAXPROCS(0)))
 		runtime.GOMAXPROCS(len(cpu))
 	}
 }
