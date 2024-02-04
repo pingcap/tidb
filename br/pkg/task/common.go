@@ -65,7 +65,6 @@ const (
 	flagRateLimitUnit       = "ratelimit-unit"
 	flagConcurrency         = "concurrency"
 	flagChecksum            = "checksum"
-	flagLoadStats           = "load-stats"
 	flagFilter              = "filter"
 	flagCaseSensitive       = "case-sensitive"
 	flagRemoveTiFlash       = "remove-tiflash"
@@ -213,7 +212,6 @@ type Config struct {
 	TableConcurrency    uint      `json:"table-concurrency" toml:"table-concurrency"`
 	Concurrency         uint32    `json:"concurrency" toml:"concurrency"`
 	Checksum            bool      `json:"checksum" toml:"checksum"`
-	LoadStats           bool      `json:"load-stats" toml:"load-stats"`
 	SendCreds           bool      `json:"send-credentials-to-tikv" toml:"send-credentials-to-tikv"`
 	// LogProgress is true means the progress bar is printed to the log instead of stdout.
 	LogProgress bool `json:"log-progress" toml:"log-progress"`
@@ -276,7 +274,6 @@ func DefineCommonFlags(flags *pflag.FlagSet) {
 
 	flags.Uint64(flagRateLimit, unlimited, "The rate limit of the task, MB/s per node")
 	flags.Bool(flagChecksum, true, "Run checksum at end of task")
-	flags.Bool(flagLoadStats, true, "Run load stats at end of task")
 	flags.Bool(flagRemoveTiFlash, true,
 		"Remove TiFlash replicas before backup or restore, for unsupported versions of TiFlash")
 
@@ -513,9 +510,6 @@ func (cfg *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	if cfg.ChecksumConcurrency, err = flags.GetUint(flagChecksumConcurrency); err != nil {
-		return errors.Trace(err)
-	}
-	if cfg.LoadStats, err = flags.GetBool(flagLoadStats); err != nil {
 		return errors.Trace(err)
 	}
 
