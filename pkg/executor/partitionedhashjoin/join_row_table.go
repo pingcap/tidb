@@ -15,26 +15,24 @@
 package partitionedhashjoin
 
 import (
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
 	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
 const SizeOfNextPtr = int(unsafe.Sizeof(*new(unsafe.Pointer)))
-const SizeOfHashValue = int(unsafe.Sizeof(uint64(0)))
 
 type rowTableSegment struct {
 	/*
 	   The row storage used in hash join, the layout is
-	   |---------------------|--------------------|-----------------|----------------------|-------------------------------|
-	              |                     |                  |                   |                           |
-	              V                     V                  V                   V                           V
-	        next_row_ptr            hash_value         null_map     serialized_key/key_length           row_data
+	   |---------------------|-----------------|----------------------|-------------------------------|
+	              |                   |                   |                           |
+	              V                   V                   V                           V
+	        next_row_ptr          null_map     serialized_key/key_length           row_data
 	   next_row_ptr: the ptr to link to the next row, used in hash table build, it will make all the rows of the same hash value a linked list
-	   hash_value: the hash value of the join keys for current row, used in hash table build
 	   null_map(optional): null_map actually includes two parts: the null_flag for each column in current row, the used_flag which is used in
 	                       right semi/outer join. This field is optional, if all the column from build side is not null and used_flag is not used
 	                       this field is not needed.
@@ -53,6 +51,7 @@ type rowTableSegment struct {
 	   * join key is not inlined + no other conditions: columns that will be used as join output
 	*/
 	rawData         []byte           // the chunk of memory to save the row data
+	hashValues      []uint64         // the hash value of each rows
 	rowLocations    []unsafe.Pointer // the start address of each row
 	validJoinKeyPos []int            // the pos of rows that need to be inserted into hash table, used in hash table build
 }
@@ -63,14 +62,6 @@ func (rts *rowTableSegment) rowCount() int64 {
 
 func (rts *rowTableSegment) validKeyCount() int64 {
 	return int64(len(rts.validJoinKeyPos))
-}
-
-func setHashValue(rowStart unsafe.Pointer, hashValue uint64) {
-	*(*uint64)(unsafe.Add(rowStart, SizeOfNextPtr)) = hashValue
-}
-
-func getHashValue(rowStart unsafe.Pointer) uint64 {
-	return *(*uint64)(unsafe.Add(rowStart, SizeOfNextPtr))
 }
 
 func setNextRowOffset(rowStart unsafe.Pointer, nextRowOffset unsafe.Pointer) {
