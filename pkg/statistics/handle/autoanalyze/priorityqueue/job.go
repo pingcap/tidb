@@ -319,22 +319,23 @@ func (j *TableAnalysisJob) genSQLForAnalyzeIndex(index string) (string, []any) {
 
 	return sql, params
 }
+
 func (j *TableAnalysisJob) String() string {
 	analyzeType := j.getAnalyzeType()
 	switch analyzeType {
 	case analyzeTable:
-		return fmt.Sprintf(`TableAnalysisJob: Analyze table %s.%s, tableID: %d, tableStatsVer: %d, weight: %.4f`,
-			j.TableSchema, j.TableName, j.TableID, j.TableStatsVer, j.Weight)
+		return fmt.Sprintf(`TableAnalysisJob: {AnalyzeType: table, Schema: %s, Table: %s, TableID: %d, TableStatsVer: %d, ChangePercentage: %.2f, Weight: %.4f}`,
+			j.TableSchema, j.TableName, j.TableID, j.TableStatsVer, j.ChangePercentage, j.Weight)
 	case analyzeIndex:
-		return fmt.Sprintf(`TableAnalysisJob: Analyze index %s on table %s.%s, tableID: %d, tableStatsVer: %d, weight: %.4f`,
-			strings.Join(j.Indexes, ", "), j.TableSchema, j.TableName, j.TableID, j.TableStatsVer, j.Weight)
+		return fmt.Sprintf(`TableAnalysisJob: {AnalyzeType: index, Indexes: %s, Schema: %s, Table: %s, TableID: %d, TableStatsVer: %d, ChangePercentage: %.2f, Weight: %.4f}`,
+			strings.Join(j.Indexes, ", "), j.TableSchema, j.TableName, j.TableID, j.TableStatsVer, j.ChangePercentage, j.Weight)
 	case analyzePartition:
-		return fmt.Sprintf(`TableAnalysisJob: Analyze partitions %s on table %s.%s, tableID: %d, tableStatsVer: %d, weight: %.4f`,
-			strings.Join(j.Partitions, ", "), j.TableSchema, j.TableName, j.TableID, j.TableStatsVer, j.Weight)
+		return fmt.Sprintf(`TableAnalysisJob: {AnalyzeType: partition, Partitions: %s, Schema: %s, Table: %s, TableID: %d, TableStatsVer: %d, ChangePercentage: %.2f, Weight: %.4f}`,
+			strings.Join(j.Partitions, ", "), j.TableSchema, j.TableName, j.TableID, j.TableStatsVer, j.ChangePercentage, j.Weight)
 	case analyzePartitionIndex:
-		return fmt.Sprintf(`TableAnalysisJob: Analyze partition indexes %v on table %s.%s, tableID: %d, tableStatsVer: %d, weight: %.4f`,
-			j.PartitionIndexes, j.TableSchema, j.TableName, j.TableID, j.TableStatsVer, j.Weight)
+		return fmt.Sprintf(`TableAnalysisJob: {AnalyzeType: partitionIndex, PartitionIndexes: %v, Schema: %s, Table: %s, TableID: %d, TableStatsVer: %d, ChangePercentage: %.2f, Weight: %.4f}`,
+			j.PartitionIndexes, j.TableSchema, j.TableName, j.TableID, j.TableStatsVer, j.ChangePercentage, j.Weight)
 	default:
-		return "TableAnalysisJob: Unknown analyze type"
+		return "TableAnalysisJob: {AnalyzeType: unknown}"
 	}
 }
