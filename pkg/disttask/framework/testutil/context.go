@@ -103,7 +103,7 @@ func newTestDXFContext(t *testing.T) *TestDXFContext {
 
 func (c *TestDXFContext) init(nodeNum int) {
 	// make test faster
-	ReduceCheckInterval(c.T)
+	reduceCheckInterval(c.T)
 	// all nodes are isometric with 16 CPUs
 	testkit.EnableFailPoint(c.T, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
 	testkit.EnableFailPoint(c.T, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
@@ -425,8 +425,7 @@ func getTaskStepKey(id int64, step proto.Step) string {
 	return fmt.Sprintf("%d/%d", id, step)
 }
 
-// ReduceCheckInterval reduce the check interval for test.
-func ReduceCheckInterval(t *testing.T) {
+func reduceCheckInterval(t *testing.T) {
 	schedulerMgrCheckIntervalBak := scheduler.CheckTaskRunningInterval
 	schedulerCheckIntervalBak := scheduler.CheckTaskFinishedInterval
 	checkIntervalBak := taskexecutor.DefaultCheckInterval

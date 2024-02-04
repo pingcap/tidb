@@ -90,7 +90,7 @@ func TestTaskExecutorBasic(t *testing.T) {
 	defer ctrl.Finish()
 	mgr := storage.NewTaskManager(pool)
 
-	testutil.ReduceCheckInterval(t)
+	taskexecutor.ReduceCheckInterval(t)
 
 	testutil.InitTaskExecutor(ctrl, func(ctx context.Context, subtask *proto.Subtask) error {
 		switch subtask.Step {

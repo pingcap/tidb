@@ -51,10 +51,10 @@ func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, schedulerExt schedu
 				}
 				return nil
 			}).AnyTimes()
-		mockStepExecutor.EXPECT().RealtimeSummary().Return(nil).AnyTimes()
 	} else {
 		mockStepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(runSubtaskFn).AnyTimes()
 	}
+	mockStepExecutor.EXPECT().RealtimeSummary().Return(nil).AnyTimes()
 	executorExt.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
 	executorExt.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any()).Return(mockStepExecutor, nil).AnyTimes()
 	executorExt.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
