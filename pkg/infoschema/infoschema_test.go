@@ -15,7 +15,6 @@
 package infoschema_test
 
 import (
-	"fmt"
 	"context"
 	"encoding/json"
 	"strings"
@@ -153,7 +152,6 @@ func TestBasic(t *testing.T) {
 	require.Nil(t, schema)
 
 	schema, ok = infoschema.SchemaByTable(is, tblInfo)
-	fmt.Println("=================", tblInfo.DBID)
 	require.True(t, ok)
 	require.NotNil(t, schema)
 
@@ -631,7 +629,6 @@ func TestLocalTemporaryTables(t *testing.T) {
 			require.Nil(t, got)
 			require.False(t, ok)
 		} else {
-			fmt.Println("db not null==, but got is null", db.Name.L, tb.Name.L)
 			require.NotNil(t, got)
 			require.Equal(t, db.Name.L, got.Name.L)
 			require.True(t, ok)
@@ -693,11 +690,6 @@ func TestLocalTemporaryTables(t *testing.T) {
 		)
 
 		assertTableByID(sc, p.tb.Meta().ID, p.db, p.tb)
-
-		fmt.Println("handling ---", dbName, tbName)
-		fmt.Println("p.tb.Meta()", p.tb.Meta().DBID, p.tb.Meta().Name.L, p.db.ID)
-		
-
 		assertSchemaByTable(sc, p.db, p.tb.Meta())
 	}
 
@@ -744,7 +736,6 @@ func TestLocalTemporaryTables(t *testing.T) {
 	// test non exist table schemaByTable
 	assertSchemaByTable(sc, nil, tb11.Meta())
 	assertSchemaByTable(sc, nil, tb22.Meta())
-	// assertSchemaByTable(sc, nil, nil)
 
 	// test SessionExtendedInfoSchema
 	dbTest := createNewSchemaInfo("test")
@@ -804,7 +795,6 @@ func TestLocalTemporaryTables(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, db1.Name.L, info.Name.L)
 	// SchemaByTable returns nil when the schema is not in the infoSchema and the table is an non-existing normal table.
-	fmt.Println("!!!!!!!!!!!!", normalTbTestC.Meta().DBID, normalTbTestC.Meta().Name.L)
 	info, ok = is.SchemaByID(normalTbTestC.Meta().DBID)
 	require.False(t, ok)
 	require.Nil(t, info)
