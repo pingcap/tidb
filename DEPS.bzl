@@ -2924,13 +2924,13 @@ def go_deps():
         name = "com_github_golangci_gofmt",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/golangci/gofmt",
-        sha256 = "a60cb0138a40d62b71333b964a9b89af6c94a86bf3a44e707f0ddcc8bf33de29",
-        strip_prefix = "github.com/golangci/gofmt@v0.0.0-20231018234816-f50ced29576e",
+        sha256 = "ffca3283ab68db353f1e8e312c9d178cc6384db4179c5f214e553fe60380f68d",
+        strip_prefix = "github.com/golangci/gofmt@v0.0.0-20231019111953-be8c47862aaa",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/golangci/gofmt/com_github_golangci_gofmt-v0.0.0-20231018234816-f50ced29576e.zip",
-            "http://ats.apps.svc/gomod/github.com/golangci/gofmt/com_github_golangci_gofmt-v0.0.0-20231018234816-f50ced29576e.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/golangci/gofmt/com_github_golangci_gofmt-v0.0.0-20231018234816-f50ced29576e.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/golangci/gofmt/com_github_golangci_gofmt-v0.0.0-20231018234816-f50ced29576e.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/golangci/gofmt/com_github_golangci_gofmt-v0.0.0-20231019111953-be8c47862aaa.zip",
+            "http://ats.apps.svc/gomod/github.com/golangci/gofmt/com_github_golangci_gofmt-v0.0.0-20231019111953-be8c47862aaa.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/golangci/gofmt/com_github_golangci_gofmt-v0.0.0-20231019111953-be8c47862aaa.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/golangci/gofmt/com_github_golangci_gofmt-v0.0.0-20231019111953-be8c47862aaa.zip",
         ],
     )
     go_repository(
@@ -7071,13 +7071,13 @@ def go_deps():
         name = "com_github_timakin_bodyclose",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/timakin/bodyclose",
-        sha256 = "0d3122d8d014d1d279f064b8affbaa0c4b24b196111cdd889221d57f7beda7a9",
-        strip_prefix = "github.com/timakin/bodyclose@v0.0.0-20230421092635-574207250966",
+        sha256 = "3de254c19ef794681171109fb1776bdbb927dd857f314ce49ebcc18e61ea404f",
+        strip_prefix = "github.com/timakin/bodyclose@v0.0.0-20240125160201-f835fa56326a",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/timakin/bodyclose/com_github_timakin_bodyclose-v0.0.0-20230421092635-574207250966.zip",
-            "http://ats.apps.svc/gomod/github.com/timakin/bodyclose/com_github_timakin_bodyclose-v0.0.0-20230421092635-574207250966.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/timakin/bodyclose/com_github_timakin_bodyclose-v0.0.0-20230421092635-574207250966.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/timakin/bodyclose/com_github_timakin_bodyclose-v0.0.0-20230421092635-574207250966.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/timakin/bodyclose/com_github_timakin_bodyclose-v0.0.0-20240125160201-f835fa56326a.zip",
+            "http://ats.apps.svc/gomod/github.com/timakin/bodyclose/com_github_timakin_bodyclose-v0.0.0-20240125160201-f835fa56326a.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/timakin/bodyclose/com_github_timakin_bodyclose-v0.0.0-20240125160201-f835fa56326a.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/timakin/bodyclose/com_github_timakin_bodyclose-v0.0.0-20240125160201-f835fa56326a.zip",
         ],
     )
     go_repository(
