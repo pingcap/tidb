@@ -24,6 +24,7 @@ import (
 	mockexecute "github.com/pingcap/tidb/pkg/disttask/framework/mock/execute"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 	"google.golang.org/grpc/codes"
@@ -244,7 +245,7 @@ func TestTaskExecutorRun(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 
 	task1.State = proto.TaskStateRunning
-	ReduceCheckInterval(t)
+	testutil.ReduceCheckInterval(t)
 
 	// GetTaskByID error, should continue
 	mockSubtaskTable.EXPECT().GetTaskByID(gomock.Any(), task1.ID).Return(nil, errors.New("mock err"))

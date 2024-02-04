@@ -32,8 +32,9 @@ import (
 )
 
 var (
-	// checkTaskRunningInterval is the interval for loading tasks.
-	checkTaskRunningInterval = 3 * time.Second
+	// CheckTaskRunningInterval is the interval for loading tasks.
+	// It is exported for testing.
+	CheckTaskRunningInterval = 3 * time.Second
 	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
 	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
 	// DefaultCleanUpInterval is the interval of cleanup routine.
@@ -200,7 +201,7 @@ func (sm *Manager) Initialized() bool {
 // scheduleTaskLoop schedules the tasks.
 func (sm *Manager) scheduleTaskLoop() {
 	sm.logger.Info("schedule task loop start")
-	ticker := time.NewTicker(checkTaskRunningInterval)
+	ticker := time.NewTicker(CheckTaskRunningInterval)
 	defer ticker.Stop()
 	for {
 		select {
