@@ -28,6 +28,15 @@ import (
 	"go.uber.org/zap"
 )
 
+type analyzeType string
+
+const (
+	analyzeTable          analyzeType = "analyzeTable"
+	analyzeIndex          analyzeType = "analyzeIndex"
+	analyzePartition      analyzeType = "analyzePartition"
+	analyzePartitionIndex analyzeType = "analyzePartitionIndex"
+)
+
 // defaultFailedAnalysisWaitTime is the default wait time for the next analysis after a failed analysis.
 // NOTE: this is only used when the average analysis duration is not available.(No successful analysis before)
 const defaultFailedAnalysisWaitTime = 30 * time.Minute
@@ -183,15 +192,28 @@ func (j *TableAnalysisJob) Execute(
 }
 
 func (j *TableAnalysisJob) analyze(sctx sessionctx.Context, statsHandle statstypes.StatsHandle, sysProcTracker sessionctx.SysProcTracker) {
+	switch j.getAnalyzeType() {
+	case analyzeTable:
+		j.analyzeTable(sctx, statsHandle, sysProcTracker)
+	case analyzeIndex:
+		j.analyzeIndexes(sctx, statsHandle, sysProcTracker)
+	case analyzePartition:
+		j.analyzePartitions(sctx, statsHandle, sysProcTracker)
+	case analyzePartitionIndex:
+		j.analyzePartitionIndexes(sctx, statsHandle, sysProcTracker)
+	}
+}
+
+func (j *TableAnalysisJob) getAnalyzeType() analyzeType {
 	switch {
 	case len(j.PartitionIndexes) > 0:
-		j.analyzePartitionIndexes(sctx, statsHandle, sysProcTracker)
+		return analyzePartitionIndex
 	case len(j.Partitions) > 0:
-		j.analyzePartitions(sctx, statsHandle, sysProcTracker)
+		return analyzePartition
 	case len(j.Indexes) > 0:
-		j.analyzeIndexes(sctx, statsHandle, sysProcTracker)
+		return analyzeIndex
 	default:
-		j.analyzeTable(sctx, statsHandle, sysProcTracker)
+		return analyzeTable
 	}
 }
 
@@ -297,4 +319,23 @@ func (j *TableAnalysisJob) genSQLForAnalyzeIndex(index string) (string, []any) {
 	params := []any{j.TableSchema, j.TableName, index}
 
 	return sql, params
+}
+func (j *TableAnalysisJob) String() string {
+	analyzeType := j.getAnalyzeType()
+	switch analyzeType {
+	case analyzeTable:
+		return fmt.Sprintf(`TableAnalysisJob: Analyze table %s.%s, tableID: %d, tableStatsVer: %d, weight: %.4f`,
+			j.TableSchema, j.TableName, j.TableID, j.TableStatsVer, j.Weight)
+	case analyzeIndex:
+		return fmt.Sprintf(`TableAnalysisJob: Analyze index %s on table %s.%s, tableID: %d, tableStatsVer: %d, weight: %.4f`,
+			strings.Join(j.Indexes, ", "), j.TableSchema, j.TableName, j.TableID, j.TableStatsVer, j.Weight)
+	case analyzePartition:
+		return fmt.Sprintf(`TableAnalysisJob: Analyze partitions %s on table %s.%s, tableID: %d, tableStatsVer: %d, weight: %.4f`,
+			strings.Join(j.Partitions, ", "), j.TableSchema, j.TableName, j.TableID, j.TableStatsVer, j.Weight)
+	case analyzePartitionIndex:
+		return fmt.Sprintf(`TableAnalysisJob: Analyze partition indexes %v on table %s.%s, tableID: %d, tableStatsVer: %d, weight: %.4f`,
+			j.PartitionIndexes, j.TableSchema, j.TableName, j.TableID, j.TableStatsVer, j.Weight)
+	default:
+		return "TableAnalysisJob: Unknown analyze type"
+	}
 }

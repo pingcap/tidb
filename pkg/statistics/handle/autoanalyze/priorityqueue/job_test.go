@@ -352,3 +352,64 @@ func TestIsValidToAnalyzeForPartitionedTba(t *testing.T) {
 	require.False(t, valid)
 	require.Equal(t, "last failed analysis duration is less than 2 times the average analysis duration", failReason)
 }
+
+func TestStringer(t *testing.T) {
+	tests := []struct {
+		name string
+		job  *TableAnalysisJob
+		want string
+	}{
+		{
+			name: "analyze table",
+			job: &TableAnalysisJob{
+				TableID:       1,
+				TableSchema:   "test_schema",
+				TableName:     "test_table",
+				TableStatsVer: 1,
+				Weight:        1.999999,
+			},
+			want: "TableAnalysisJob: Analyze table test_schema.test_table, tableID: 1, tableStatsVer: 1, weight: 2.0000",
+		},
+		{
+			name: "analyze table index",
+			job: &TableAnalysisJob{
+				TableID:       2,
+				TableSchema:   "test_schema",
+				TableName:     "test_table",
+				Indexes:       []string{"idx"},
+				TableStatsVer: 1,
+				Weight:        1.999999,
+			},
+			want: "TableAnalysisJob: Analyze index idx on table test_schema.test_table, tableID: 2, tableStatsVer: 1, weight: 2.0000",
+		},
+		{
+			name: "analyze partitions",
+			job: &TableAnalysisJob{
+				TableID:       3,
+				TableSchema:   "test_schema",
+				TableName:     "test_table",
+				Partitions:    []string{"p0", "p1"},
+				TableStatsVer: 1,
+				Weight:        1.999999,
+			},
+			want: "TableAnalysisJob: Analyze partitions p0, p1 on table test_schema.test_table, tableID: 3, tableStatsVer: 1, weight: 2.0000",
+		},
+		{
+			name: "analyze partition indexes",
+			job: &TableAnalysisJob{
+				TableID:     4,
+				TableSchema: "test_schema",
+				TableName:   "test_table",
+				PartitionIndexes: map[string][]string{
+					"idx": {"p0", "p1"},
+				},
+				TableStatsVer: 1,
+				Weight:        1.999999,
+			},
+			want: "TableAnalysisJob: Analyze partition indexes map[idx:[p0 p1]] on table test_schema.test_table, tableID: 4, tableStatsVer: 1, weight: 2.0000",
+		},
+	}
+	for _, tt := range tests {
+		require.Equal(t, tt.want, tt.job.String())
+	}
+}
