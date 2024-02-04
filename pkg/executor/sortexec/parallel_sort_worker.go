@@ -33,7 +33,7 @@ type parallelSortWorker struct {
 	lessRowFunc func(chunk.Row, chunk.Row) int
 
 	chunkChannel chan *chunk.Chunk
-	processError func(error)
+	errOutputChan chan rowWithError
 	finishCh     chan struct{}
 
 	timesOfRowCompare uint
@@ -51,7 +51,7 @@ func newParallelSortWorker(
 	workerIDForTest int,
 	lessRowFunc func(chunk.Row, chunk.Row) int,
 	chunkChannel chan *chunk.Chunk,
-	processError func(error),
+	errOutputChan chan rowWithError,
 	finishCh chan struct{},
 	memTracker *memory.Tracker,
 	sortedRowsIter *chunk.Iterator4Slice,
@@ -61,7 +61,7 @@ func newParallelSortWorker(
 		workerIDForTest:    workerIDForTest,
 		lessRowFunc:        lessRowFunc,
 		chunkChannel:       chunkChannel,
-		processError:       processError,
+		errOutputChan:       errOutputChan,
 		finishCh:           finishCh,
 		timesOfRowCompare:  0,
 		memTracker:         memTracker,
@@ -176,7 +176,7 @@ func (p *parallelSortWorker) keyColumnsLess(i, j chunk.Row) int {
 func (p *parallelSortWorker) run() {
 	defer func() {
 		if r := recover(); r != nil {
-			processPanicAndLog(p.processError, r)
+			processPanicAndLog(p.errOutputChan, r)
 		}
 	}()
 

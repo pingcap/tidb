@@ -102,10 +102,15 @@ func (m *multiWayMerger) next() chunk.Row {
 	return chunk.Row{}
 }
 
-func processPanicAndLog(processError func(error), r interface{}) {
+func processPanicAndLog(errOutputChan chan rowWithError, r interface{}) {
 	err := util.GetRecoverError(r)
-	processError(err)
+	errOutputChan <- rowWithError{err: err}
 	logutil.BgLogger().Error("parallel sort panicked", zap.Error(err), zap.Stack("stack"))
+}
+
+type rowWithError struct {
+	row chunk.Row
+	err error
 }
 
 func injectParallelSortRandomFail() {
