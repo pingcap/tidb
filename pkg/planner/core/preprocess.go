@@ -488,6 +488,7 @@ func (p *preprocessor) tableByName(tn *ast.TableName) (table.Table, error) {
 	}
 
 	tbl, err := is.TableByName(sName, tn.Name)
+	fmt.Println("table not exist?? tn === ", tn.Name)
 	if err != nil {
 		// We should never leak that the table doesn't exist (i.e. attachplannererrors.ErrTableNotExists)
 		// unless we know that the user has permissions to it, should it exist.
@@ -1576,6 +1577,9 @@ func (p *preprocessor) handleTableName(tn *ast.TableName) {
 
 	tableInfo := table.Meta()
 	dbInfo, _ := infoschema.SchemaByTable(p.ensureInfoSchema(), tableInfo)
+	if dbInfo == nil {
+		fmt.Println("schema by table get nollllll dbinfo for .....", tableInfo.Name.L, tableInfo.ID)
+	}
 	// tableName should be checked as sequence object.
 	if p.flag&inSequenceFunction > 0 {
 		if !tableInfo.IsSequence() {
@@ -1892,6 +1896,9 @@ func tryLockMDLAndUpdateSchemaIfNecessary(sctx sessionctx.Context, dbName model.
 			return nil, errors.New("InfoSchema is not SessionExtendedInfoSchema")
 		}
 		db, _ := infoschema.SchemaByTable(domainSchema, tbl.Meta())
+		if db == nil {
+			fmt.Println("fuck ... schema by table get null ---", tbl.Meta().Name.L)
+		}
 		err = se.UpdateTableInfo(db, tbl)
 		if err != nil {
 			return nil, err
