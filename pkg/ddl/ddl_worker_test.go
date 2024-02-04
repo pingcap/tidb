@@ -313,7 +313,7 @@ func TestUsingReorgCtx(t *testing.T) {
 	wg.Run(func() {
 		jobID := int64(1)
 		for i := 0; i < 500; i++ {
-			d.(ddl.DDLForTest).NewReorgCtx(jobID, 0)
+			d.(ddl.DDLForTest).NewReorgCtx(jobID, model.JobStateRunning, 0)
 			d.(ddl.DDLForTest).GetReorgCtx(jobID).IsReorgCanceled()
 			d.(ddl.DDLForTest).RemoveReorgCtx(jobID)
 		}
@@ -321,7 +321,7 @@ func TestUsingReorgCtx(t *testing.T) {
 	wg.Run(func() {
 		jobID := int64(1)
 		for i := 0; i < 500; i++ {
-			d.(ddl.DDLForTest).NewReorgCtx(jobID, 0)
+			d.(ddl.DDLForTest).NewReorgCtx(jobID, model.JobStateRunning, 0)
 			d.(ddl.DDLForTest).GetReorgCtx(jobID).IsReorgCanceled()
 			d.(ddl.DDLForTest).RemoveReorgCtx(jobID)
 		}

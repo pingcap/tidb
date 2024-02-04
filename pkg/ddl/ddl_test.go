@@ -40,7 +40,7 @@ import (
 type DDLForTest interface {
 	// SetInterceptor sets the interceptor.
 	SetInterceptor(h Interceptor)
-	NewReorgCtx(jobID int64, rowCount int64) *reorgCtx
+	NewReorgCtx(jobID int64, jobState model.JobState, rowCount int64) *reorgCtx
 	GetReorgCtx(jobID int64) *reorgCtx
 	RemoveReorgCtx(id int64)
 }
@@ -59,8 +59,8 @@ func (rc *reorgCtx) IsReorgCanceled() bool {
 }
 
 // NewReorgCtx exports for testing.
-func (d *ddl) NewReorgCtx(jobID int64, rowCount int64) *reorgCtx {
-	return d.newReorgCtx(jobID, rowCount)
+func (d *ddl) NewReorgCtx(jobID int64, jobState model.JobState, rowCount int64) *reorgCtx {
+	return d.newReorgCtx(jobID, jobState, rowCount)
 }
 
 // GetReorgCtx exports for testing.
