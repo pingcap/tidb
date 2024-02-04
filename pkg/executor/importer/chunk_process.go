@@ -122,9 +122,7 @@ type encodedKVGroupBatch struct {
 	bytesBuf *kv.BytesBuf
 	memBuf   *kv.MemBuf
 
-	dataChecksum  *verify.KVChecksum
-	indexChecksum map[int64]*verify.KVChecksum // indexID -> checksum
-	codec         tikv.Codec
+	groupChecksum *verify.KVGroupChecksum
 }
 
 func (b *encodedKVGroupBatch) reset() {
@@ -140,9 +138,7 @@ func (b *encodedKVGroupBatch) reset() {
 func newEncodedKVGroupBatch(codec tikv.Codec) *encodedKVGroupBatch {
 	return &encodedKVGroupBatch{
 		indexKVs:      make(map[int64][]common.KvPair, 8),
-		dataChecksum:  verify.NewKVChecksumWithKeyspace(codec),
-		indexChecksum: make(map[int64]*verify.KVChecksum, 8),
-		codec:         codec,
+		groupChecksum: verify.NewKVGroupChecksumWithKeyspace(codec),
 	}
 }
 
@@ -151,17 +147,13 @@ func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
 	for _, pair := range kvs.Pairs {
 		if tablecodec.IsRecordKey(pair.Key) {
 			b.dataKVs = append(b.dataKVs, pair)
-			b.dataChecksum.UpdateOne(pair)
+			b.groupChecksum.UpdateOneDataKV(pair)
 		} else {
 			indexID, err := tablecodec.DecodeIndexID(pair.Key)
 			if err != nil {
 				return errors.Trace(err)
 			}
-			b.indexKVs[indexID] = append(b.indexKVs[indexID], pair)
-			if _, ok := b.indexChecksum[indexID]; !ok {
-				b.indexChecksum[indexID] = verify.NewKVChecksumWithKeyspace(b.codec)
-			}
-			b.indexChecksum[indexID].UpdateOne(pair)
+			b.groupChecksum.UpdateOneIndexKV(indexID, pair)
 		}
 	}
 
@@ -178,7 +170,7 @@ type chunkEncoder struct {
 	readFn encodeReaderFn
 	sendFn func(ctx context.Context, batch *encodedKVGroupBatch) error
 
-	chunkInfo *checkpoints.ChunkCheckpoint
+	chunkName string
 	logger    *zap.Logger
 	encoder   KVEncoder
 	kvCodec   tikv.Codec
@@ -187,12 +179,11 @@ type chunkEncoder struct {
 	readTotalDur   time.Duration
 	encodeTotalDur time.Duration
 
-	dataChecksum  *verify.KVChecksum
-	indexChecksum map[int64]*verify.KVChecksum // indexID -> checksum
+	groupChecksum *verify.KVGroupChecksum
 }
 
 func newChunkEncoder(
-	chunk *checkpoints.ChunkCheckpoint,
+	chunkName string,
 	readFn encodeReaderFn,
 	sendFn func(ctx context.Context, batch *encodedKVGroupBatch) error,
 	logger *zap.Logger,
@@ -200,14 +191,13 @@ func newChunkEncoder(
 	kvCodec tikv.Codec,
 ) *chunkEncoder {
 	return &chunkEncoder{
-		chunkInfo:     chunk,
+		chunkName:     chunkName,
 		readFn:        readFn,
 		sendFn:        sendFn,
 		logger:        logger,
 		encoder:       encoder,
 		kvCodec:       kvCodec,
-		dataChecksum:  verify.NewKVChecksumWithKeyspace(kvCodec),
-		indexChecksum: make(map[int64]*verify.KVChecksum, 8),
+		groupChecksum: verify.NewKVGroupChecksumWithKeyspace(kvCodec),
 	}
 }
 
@@ -257,13 +247,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 			}
 		}
 
-		p.dataChecksum.Add(kvGroupBatch.dataChecksum)
-		for indexID, c := range kvGroupBatch.indexChecksum {
-			if _, ok := p.indexChecksum[indexID]; !ok {
-				p.indexChecksum[indexID] = verify.NewKVChecksumWithKeyspace(p.kvCodec)
-			}
-			p.indexChecksum[indexID].Add(c)
-		}
+		p.groupChecksum.Add(kvGroupBatch.groupChecksum)
 
 		if err := p.sendFn(ctx, kvGroupBatch); err != nil {
 			return err
@@ -296,7 +280,7 @@ func (p *chunkEncoder) encodeLoop(ctx context.Context) error {
 		data.resetFn()
 		if encodeErr != nil {
 			// todo: record and ignore encode error if user set max-errors param
-			return common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(p.chunkInfo.GetKey(), data.endOffset)
+			return common.ErrEncodeKV.Wrap(encodeErr).GenWithStackByArgs(p.chunkName, data.endOffset)
 		}
 		encodeDur += time.Since(encodeDurStart)
 
@@ -330,11 +314,11 @@ type ChunkProcessor interface {
 }
 
 type baseChunkProcessor struct {
-	sourceType DataSourceType
-	enc        *chunkEncoder
-	deliver    *dataDeliver
-	logger     *zap.Logger
-	chunkInfo  *checkpoints.ChunkCheckpoint
+	sourceType    DataSourceType
+	enc           *chunkEncoder
+	deliver       *dataDeliver
+	logger        *zap.Logger
+	groupChecksum *verify.KVGroupChecksum
 }
 
 func (p *baseChunkProcessor) Process(ctx context.Context) (err error) {
@@ -358,11 +342,9 @@ func (p *baseChunkProcessor) Process(ctx context.Context) (err error) {
 	})
 
 	err2 := group.Wait()
-	p.chunkInfo.Checksum.Add(p.enc.dataChecksum)
-	task.Info("data group checksum", zap.Object("checksum", p.enc.dataChecksum))
-	for indexID, c := range p.enc.indexChecksum {
-		p.chunkInfo.Checksum.Add(c)
-		task.Info("index group checksum", zap.Int64("indexID", indexID), zap.Object("checksum", c))
+	// in some unit tests it's nil
+	if c := p.groupChecksum; c != nil {
+		c.Add(p.enc.groupChecksum)
 	}
 	return err2
 }
@@ -378,6 +360,7 @@ func NewFileChunkProcessor(
 	diskQuotaLock *syncutil.RWMutex,
 	dataWriter backend.EngineWriter,
 	indexWriter backend.EngineWriter,
+	groupChecksum *verify.KVGroupChecksum,
 ) ChunkProcessor {
 	chunkLogger := logger.With(zap.String("key", chunk.GetKey()))
 	deliver := &dataDeliver{
@@ -392,15 +375,15 @@ func NewFileChunkProcessor(
 		sourceType: DataSourceTypeFile,
 		deliver:    deliver,
 		enc: newChunkEncoder(
-			chunk,
+			chunk.GetKey(),
 			parserEncodeReader(parser, chunk.Chunk.EndOffset, chunk.GetKey()),
 			deliver.sendEncodedData,
 			chunkLogger,
 			encoder,
 			kvCodec,
 		),
-		logger:    chunkLogger,
-		chunkInfo: chunk,
+		logger:        chunkLogger,
+		groupChecksum: groupChecksum,
 	}
 }
 
@@ -482,16 +465,10 @@ func (p *dataDeliver) deliverLoop(ctx context.Context) error {
 			if metrics != nil {
 				metrics.BlockDeliverSecondsHistogram.Observe(deliverDur.Seconds())
 
-				dataSize := kvBatch.dataChecksum.SumSize()
+				dataSize, indexSize := kvBatch.groupChecksum.DataAndIndexSumSize()
+				dataKVCnt, indexKVCnt := kvBatch.groupChecksum.DataAndIndexSumKVS()
 				dataKVBytesHist.Observe(float64(dataSize))
-				dataKVPairsHist.Observe(float64(kvBatch.dataChecksum.SumKVS()))
-
-				indexSize := uint64(0)
-				indexKVCnt := uint64(0)
-				for _, c := range kvBatch.indexChecksum {
-					indexSize += c.SumSize()
-					indexKVCnt += c.SumKVS()
-				}
+				dataKVPairsHist.Observe(float64(dataKVCnt))
 				indexKVBytesHist.Observe(float64(indexSize))
 				indexKVPairsHist.Observe(float64(indexKVCnt))
 				deliverBytesCounter.Add(float64(dataSize + indexSize))
@@ -522,13 +499,14 @@ func newQueryChunkProcessor(
 	rowCh chan QueryRow,
 	encoder KVEncoder,
 	kvCodec tikv.Codec,
-	chunk *checkpoints.ChunkCheckpoint,
 	logger *zap.Logger,
 	diskQuotaLock *syncutil.RWMutex,
 	dataWriter backend.EngineWriter,
 	indexWriter backend.EngineWriter,
+	groupChecksum *verify.KVGroupChecksum,
 ) ChunkProcessor {
-	chunkLogger := logger.With(zap.String("key", chunk.GetKey()))
+	chunkName := "import-from-select"
+	chunkLogger := logger.With(zap.String("key", chunkName))
 	deliver := &dataDeliver{
 		logger:        chunkLogger,
 		kvCodec:       kvCodec,
@@ -541,15 +519,15 @@ func newQueryChunkProcessor(
 		sourceType: DataSourceTypeQuery,
 		deliver:    deliver,
 		enc: newChunkEncoder(
-			chunk,
+			chunkName,
 			queryRowEncodeReader(rowCh),
 			deliver.sendEncodedData,
 			chunkLogger,
 			encoder,
 			kvCodec,
 		),
-		logger:    chunkLogger,
-		chunkInfo: chunk,
+		logger:        chunkLogger,
+		groupChecksum: groupChecksum,
 	}
 }
 
