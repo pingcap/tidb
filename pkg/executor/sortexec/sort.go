@@ -247,10 +247,10 @@ func (e *SortExec) Open(ctx context.Context) error {
                       │  Generator  │
                       └──────┬──────┘
                              │
-							Push
+                            Push
                              │
                              ▼
-					   resultChannel
+                       resultChannel
 */
 func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.fetched.CompareAndSwap(false, true) {
