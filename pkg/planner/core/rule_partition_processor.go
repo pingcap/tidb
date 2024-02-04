@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
@@ -120,12 +121,12 @@ type partitionTable interface {
 
 func generateHashPartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo, columns []*expression.Column, names types.NameSlice) (expression.Expression, error) {
 	schema := expression.NewSchema(columns...)
-	exprs, err := expression.ParseSimpleExprsWithNames(ctx, pi.Expr, schema, names)
+	expr, err := util.ParseExprWithPlanCtx(ctx, pi.Expr, schema, names)
 	if err != nil {
 		return nil, err
 	}
-	exprs[0].HashCode()
-	return exprs[0], nil
+	expr.HashCode()
+	return expr, nil
 }
 
 func getPartColumnsForHashPartition(hashExpr expression.Expression) ([]*expression.Column, []int) {
@@ -1048,11 +1049,10 @@ func (s *partitionProcessor) processListPartition(ds *DataSource, pi *model.Part
 func makePartitionByFnCol(sctx sessionctx.Context, columns []*expression.Column, names types.NameSlice, partitionExpr string) (*expression.Column, *expression.ScalarFunction, monotoneMode, error) {
 	monotonous := monotoneModeInvalid
 	schema := expression.NewSchema(columns...)
-	tmp, err := expression.ParseSimpleExprsWithNames(sctx, partitionExpr, schema, names)
+	partExpr, err := util.ParseExprWithPlanCtx(sctx, partitionExpr, schema, names)
 	if err != nil {
 		return nil, nil, monotonous, err
 	}
-	partExpr := tmp[0]
 	var col *expression.Column
 	var fn *expression.ScalarFunction
 	switch raw := partExpr.(type) {

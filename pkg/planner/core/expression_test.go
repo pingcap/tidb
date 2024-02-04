@@ -40,22 +40,40 @@ func parseExpr(t *testing.T, expr string) ast.ExprNode {
 	return stmt.Fields.Fields[0].Expr
 }
 
-func buildExpr(t *testing.T, ctx sessionctx.Context, exprNode any, opts ...expression.BuildOption) (expression.Expression, error) {
+func buildExpr(t *testing.T, ctx sessionctx.Context, exprNode any, opts ...expression.BuildOption) (expression.Expression, expression.Expression, error) {
 	var node ast.ExprNode
+	var expr2 expression.Expression
+	var err2 error
+	parse := false
 	switch x := exprNode.(type) {
 	case string:
+		parse = true
 		node = parseExpr(t, x)
+		expr2, err2 = expression.ParseSimpleExpr(ctx, x, opts...)
 	case ast.ExprNode:
 		node = x
 	default:
 		require.FailNow(t, "invalid input type: %T", x)
 	}
 
-	return expression.BuildExprWithAst(ctx, node, opts...)
+	expr, err := expression.BuildSimpleExpr(ctx, node, opts...)
+	if err != nil {
+		require.Nil(t, expr)
+		if parse {
+			require.Nil(t, expr2)
+			require.EqualError(t, err2, err.Error())
+		}
+	} else {
+		require.NotNil(t, expr)
+		if parse {
+			expr.Equal(ctx, expr2)
+		}
+	}
+	return expr, expr2, err
 }
 
 func buildExprAndEval(t *testing.T, ctx sessionctx.Context, exprNode any) types.Datum {
-	expr, err := buildExpr(t, ctx, exprNode)
+	expr, _, err := buildExpr(t, ctx, exprNode)
 	require.NoError(t, err)
 	val, err := expr.Eval(ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -410,7 +428,7 @@ func TestBuildExpression(t *testing.T) {
 	schema := expression.NewSchema(cols...)
 
 	// normal build
-	expr, err := buildExpr(t, ctx, "(1+a)*(3+b)", expression.WithSourceTable(tbl))
+	expr, expr2, err := buildExpr(t, ctx, "(1+a)*(3+b)", expression.WithTableInfo("", tbl))
 	require.NoError(t, err)
 	val, _, err := expr.EvalInt(ctx, chunk.MutRowFromValues("", 1, 2).ToRow())
 	require.NoError(t, err)
@@ -418,23 +436,30 @@ func TestBuildExpression(t *testing.T) {
 	val, _, err = expr.EvalInt(ctx, chunk.MutRowFromValues("", 3, 4).ToRow())
 	require.NoError(t, err)
 	require.Equal(t, int64(28), val)
-	expr, err = buildExpr(t, ctx, "(1+a)*(3+b)", expression.WithInputSchemaAndNames(schema, names))
+	val, _, err = expr2.EvalInt(ctx, chunk.MutRowFromValues("", 1, 2).ToRow())
+	require.NoError(t, err)
+	require.Equal(t, int64(10), val)
+	val, _, err = expr2.EvalInt(ctx, chunk.MutRowFromValues("", 3, 4).ToRow())
+	require.NoError(t, err)
+	require.Equal(t, int64(28), val)
+
+	expr, _, err = buildExpr(t, ctx, "(1+a)*(3+b)", expression.WithInputSchemaAndNames(schema, names, nil))
 	require.NoError(t, err)
 	val, _, err = expr.EvalInt(ctx, chunk.MutRowFromValues("", 1, 2).ToRow())
 	require.NoError(t, err)
 	require.Equal(t, int64(10), val)
 
 	// build expression without enough columns
-	_, err = buildExpr(t, ctx, "1+a")
+	_, _, err = buildExpr(t, ctx, "1+a")
 	require.EqualError(t, err, "[planner:1054]Unknown column 'a' in 'expression'")
-	_, err = buildExpr(t, ctx, "(1+a)*(3+b+c)", expression.WithSourceTable(tbl))
+	_, _, err = buildExpr(t, ctx, "(1+a)*(3+b+c)", expression.WithTableInfo("", tbl))
 	require.EqualError(t, err, "[planner:1054]Unknown column 'c' in 'expression'")
 
 	// cast to array not supported by default
-	_, err = buildExpr(t, ctx, "cast(1 as signed array)")
+	_, _, err = buildExpr(t, ctx, "cast(1 as signed array)")
 	require.EqualError(t, err, "[expression:1235]This version of TiDB doesn't yet support 'Use of CAST( .. AS .. ARRAY) outside of functional index in CREATE(non-SELECT)/ALTER TABLE or in general expressions'")
 	// use WithAllowCastArray to allow casting to array
-	expr, err = buildExpr(t, ctx, `cast(json_extract('{"a": [1, 2, 3]}', '$.a') as signed array)`, expression.WithAllowCastArray(true))
+	expr, _, err = buildExpr(t, ctx, `cast(json_extract('{"a": [1, 2, 3]}', '$.a') as signed array)`, expression.WithAllowCastArray(true))
 	require.NoError(t, err)
 	j, _, err := expr.EvalJSON(ctx, chunk.Row{})
 	require.NoError(t, err)
@@ -442,27 +467,46 @@ func TestBuildExpression(t *testing.T) {
 	require.Equal(t, "[1, 2, 3]", j.String())
 
 	// default expr
-	expr, err = buildExpr(t, ctx, "default(id)", expression.WithSourceTable(tbl))
+	expr, _, err = buildExpr(t, ctx, "default(id)", expression.WithTableInfo("", tbl))
 	require.NoError(t, err)
 	s, _, err := expr.EvalString(ctx, chunk.MutRowFromValues("", 1, 2).ToRow())
 	require.NoError(t, err)
 	require.Equal(t, 36, len(s), s)
 
-	expr, err = buildExpr(t, ctx, "default(b)", expression.WithSourceTable(tbl))
+	expr, _, err = buildExpr(t, ctx, "default(id)", expression.WithInputSchemaAndNames(schema, names, tbl))
+	require.NoError(t, err)
+	s, _, err = expr.EvalString(ctx, chunk.MutRowFromValues("", 1, 2).ToRow())
+	require.NoError(t, err)
+	require.Equal(t, 36, len(s), s)
+
+	expr, _, err = buildExpr(t, ctx, "default(b)", expression.WithTableInfo("", tbl))
 	require.NoError(t, err)
 	d, err := expr.Eval(ctx, chunk.MutRowFromValues("", 1, 2).ToRow())
 	require.NoError(t, err)
 	require.Equal(t, types.NewDatum(int64(123)), d)
 
+	// WithCastExprTo
+	expr, _, err = buildExpr(t, ctx, "1+2+3")
+	require.NoError(t, err)
+	require.Equal(t, mysql.TypeLonglong, expr.GetType().GetType())
+	castTo := types.NewFieldType(mysql.TypeVarchar)
+	expr, _, err = buildExpr(t, ctx, "1+2+3", expression.WithCastExprTo(castTo))
+	require.NoError(t, err)
+	require.Equal(t, mysql.TypeVarchar, expr.GetType().GetType())
+	v, err := expr.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, types.KindString, v.Kind())
+	require.Equal(t, "6", v.GetString())
+
 	// should report error for default expr when source table not provided
-	_, err = buildExpr(t, ctx, "default(b)", expression.WithInputSchemaAndNames(schema, names))
+	_, _, err = buildExpr(t, ctx, "default(b)", expression.WithInputSchemaAndNames(schema, names, nil))
 	require.EqualError(t, err, "Unsupported expr *ast.DefaultExpr when source table not provided")
 
 	// subquery not supported
-	_, err = buildExpr(t, ctx, "a + (select b from t)", expression.WithSourceTable(tbl))
+	_, _, err = buildExpr(t, ctx, "a + (select b from t)", expression.WithTableInfo("", tbl))
 	require.EqualError(t, err, "node '*ast.SubqueryExpr' is not allowed when building an expression without planner")
 
 	// param marker not supported
-	_, err = buildExpr(t, ctx, "a + ?", expression.WithSourceTable(tbl))
+	_, _, err = buildExpr(t, ctx, "a + ?", expression.WithTableInfo("", tbl))
 	require.EqualError(t, err, "node '*driver.ParamMarkerExpr' is not allowed when building an expression without planner")
 }
