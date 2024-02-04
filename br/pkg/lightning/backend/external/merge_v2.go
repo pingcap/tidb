@@ -77,10 +77,7 @@ func MergeOverlappingFilesV2(
 		SetPropKeysDistance(propKeysDist).
 		SetPropSizeDistance(propSizeDist).
 		SetOnCloseFunc(onClose).
-		BuildOneFile(
-			store,
-			newFilePrefix,
-			writerID)
+		BuildOneFile(store, newFilePrefix, writerID)
 	defer func() {
 		err = splitter.Close()
 		if err != nil {
@@ -102,7 +99,6 @@ func MergeOverlappingFilesV2(
 	loaded := &memKVsAndBuffers{}
 	curStart := kv.Key(startKey).Clone()
 	var curEnd kv.Key
-	var maxKey, minKey kv.Key
 
 	for {
 		endKeyOfGroup, dataFilesOfGroup, statFilesOfGroup, _, err1 := splitter.SplitOneRangesGroup()
@@ -159,10 +155,6 @@ func MergeOverlappingFilesV2(
 			zap.Duration("write time", writeTime),
 			zap.Int("key len", len(loaded.keys)))
 
-		if len(minKey) == 0 {
-			minKey = kv.Key(loaded.keys[0]).Clone()
-		}
-		maxKey = kv.Key(loaded.keys[len(loaded.keys)-1]).Clone()
 		curStart = curEnd.Clone()
 		loaded.keys = nil
 		loaded.values = nil
@@ -171,22 +163,6 @@ func MergeOverlappingFilesV2(
 		if len(endKeyOfGroup) == 0 {
 			break
 		}
-	}
-
-	var stat MultipleFilesStat
-	stat.Filenames = append(stat.Filenames,
-		[2]string{writer.dataFile, writer.statFile})
-
-	stat.build([]kv.Key{minKey}, []kv.Key{curEnd})
-	if onClose != nil {
-		onClose(&WriterSummary{
-			WriterID:           writer.writerID,
-			Seq:                0,
-			Min:                minKey,
-			Max:                maxKey,
-			TotalSize:          writer.totalSize,
-			MultipleFilesStats: []MultipleFilesStat{stat},
-		})
 	}
 	return
 }

@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
+	brlogutil "github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -308,8 +309,8 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	logger.Info("merge sort partSize", zap.String("size", units.BytesSize(float64(m.partSize))))
 
-	return external.MergeOverlappingFiles(
-		ctx,
+	err = external.MergeOverlappingFiles(
+		logutil.WithFields(ctx, zap.String("kv-group", sm.KVGroup), zap.Int64("subtask-id", subtask.ID)),
 		sm.DataFiles,
 		m.controller.GlobalSortStore,
 		m.partSize,
@@ -323,6 +324,15 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		onClose,
 		m.taskMeta.Plan.ThreadCnt,
 		false)
+	logger.Info(
+		"merge sort finished",
+		zap.String("kv-group", sm.KVGroup),
+		zap.Uint64("total-kv-size", m.subtaskSortedKVMeta.TotalKVSize),
+		zap.Uint64("total-kv-count", m.subtaskSortedKVMeta.TotalKVCnt),
+		brlogutil.Key("start-key", m.subtaskSortedKVMeta.StartKey),
+		brlogutil.Key("end-key", m.subtaskSortedKVMeta.EndKey),
+	)
+	return err
 }
 
 func (m *mergeSortStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
