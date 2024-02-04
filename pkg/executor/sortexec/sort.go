@@ -231,8 +231,7 @@ func (e *SortExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	if e.IsUnparallel {
 		return e.appendResultToChunkInUnparallelMode(req)
 	}
-	e.appendResultToChunkInParallelMode(req)
-	return nil
+	return e.appendResultToChunkInParallelMode(req)
 }
 
 func (e *SortExec) appendResultToChunkInParallelMode(req *chunk.Chunk) error {
