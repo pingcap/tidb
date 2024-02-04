@@ -37,7 +37,7 @@ go_test(
     timeout = "short",
     srcs = ["sort_test.go"],
     flaky = True,
-    shard_count = 8,
+    shard_count = 10,
     deps = [
         "//pkg/config",
         "//pkg/sessionctx/variable",
@@ -50,6 +50,7 @@ go_test(
 
 go_test(
     name = "sortexec_test",
+    timeout = "short",
     srcs = [
         "benchmark_test.go",
         "parallel_sort_spill_test.go",
@@ -59,6 +60,8 @@ go_test(
         "sortexec_pkg_test.go",
     ],
     embed = [":sortexec"],
+    flaky = True,
+    shard_count = 6,
     deps = [
         "//pkg/config",
         "//pkg/executor/internal/exec",

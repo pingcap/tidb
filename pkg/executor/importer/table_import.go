@@ -917,6 +917,10 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 		close(doneCh)
 	}()
 
+	distSQLScanConcurrencyBak := se.GetSessionVars().DistSQLScanConcurrency()
+	defer func() {
+		se.GetSessionVars().SetDistSQLScanConcurrency(distSQLScanConcurrencyBak)
+	}()
 	ctx = util.WithInternalSourceType(checkCtx, tidbkv.InternalImportInto)
 	for i := 0; i < maxErrorRetryCount; i++ {
 		txnErr = func() error {
@@ -925,11 +929,9 @@ func checksumTable(ctx context.Context, se sessionctx.Context, plan *Plan, logge
 				logger.Warn("set tidb_backoff_weight failed", zap.Error(err))
 			}
 
-			distSQLScanConcurrency := se.GetSessionVars().DistSQLScanConcurrency()
-			se.GetSessionVars().SetDistSQLScanConcurrency(mathutil.Max(distSQLScanConcurrency/distSQLScanConcurrencyFactor, local.MinDistSQLScanConcurrency))
-			defer func() {
-				se.GetSessionVars().SetDistSQLScanConcurrency(distSQLScanConcurrency)
-			}()
+			newConcurrency := mathutil.Max(plan.DistSQLScanConcurrency/distSQLScanConcurrencyFactor, local.MinDistSQLScanConcurrency)
+			logger.Info("checksum with adjusted distsql scan concurrency", zap.Int("concurrency", newConcurrency))
+			se.GetSessionVars().SetDistSQLScanConcurrency(newConcurrency)
 
 			// TODO: add resource group name
 

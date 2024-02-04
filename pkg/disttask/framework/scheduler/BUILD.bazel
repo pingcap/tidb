@@ -4,6 +4,7 @@ go_library(
     name = "scheduler",
     srcs = [
         "balancer.go",
+        "collector.go",
         "interface.go",
         "nodes.go",
         "scheduler.go",
@@ -32,6 +33,7 @@ go_library(
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_log//:log",
+        "@com_github_prometheus_client_golang//prometheus",
         "@org_uber_go_zap//:zap",
     ],
 )

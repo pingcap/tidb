@@ -21,11 +21,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/metrics"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"go.uber.org/zap"
 )
@@ -36,7 +37,8 @@ var (
 	// defaultHistorySubtaskTableGcInterval is the interval of gc history subtask table.
 	defaultHistorySubtaskTableGcInterval = 24 * time.Hour
 	// DefaultCleanUpInterval is the interval of cleanup routine.
-	DefaultCleanUpInterval = 10 * time.Minute
+	DefaultCleanUpInterval        = 10 * time.Minute
+	defaultCollectMetricsInterval = 5 * time.Second
 )
 
 // WaitTaskFinished is used to sync the test.
@@ -108,6 +110,7 @@ type Manager struct {
 	initialized bool
 	// serverID, it's value is ip:port now.
 	serverID string
+	logger   *zap.Logger
 
 	finishCh chan struct{}
 
@@ -121,20 +124,30 @@ type Manager struct {
 
 // NewManager creates a scheduler struct.
 func NewManager(ctx context.Context, taskMgr TaskManager, serverID string) *Manager {
+	logger := log.L()
+	if intest.InTest {
+		logger = log.L().With(zap.String("server-id", serverID))
+	}
+	subCtx, cancel := context.WithCancel(ctx)
+	slotMgr := newSlotManager()
+	nodeMgr := newNodeManager(serverID)
 	schedulerManager := &Manager{
+		ctx:      subCtx,
+		cancel:   cancel,
 		taskMgr:  taskMgr,
 		serverID: serverID,
-		slotMgr:  newSlotManager(),
-		nodeMgr:  newNodeManager(),
+		slotMgr:  slotMgr,
+		nodeMgr:  nodeMgr,
+		balancer: newBalancer(Param{
+			taskMgr:  taskMgr,
+			nodeMgr:  nodeMgr,
+			slotMgr:  slotMgr,
+			serverID: serverID,
+		}),
+		logger:   logger,
+		finishCh: make(chan struct{}, proto.MaxConcurrentTask),
 	}
-	schedulerManager.ctx, schedulerManager.cancel = context.WithCancel(ctx)
 	schedulerManager.mu.schedulerMap = make(map[int64]Scheduler)
-	schedulerManager.finishCh = make(chan struct{}, proto.MaxConcurrentTask)
-	schedulerManager.balancer = newBalancer(Param{
-		taskMgr: taskMgr,
-		nodeMgr: schedulerManager.nodeMgr,
-		slotMgr: schedulerManager.slotMgr,
-	})
 
 	return schedulerManager
 }
@@ -150,6 +163,7 @@ func (sm *Manager) Start() {
 	sm.wg.Run(sm.scheduleTaskLoop)
 	sm.wg.Run(sm.gcSubtaskHistoryTableLoop)
 	sm.wg.Run(sm.cleanupTaskLoop)
+	sm.wg.Run(sm.collectLoop)
 	sm.wg.Run(func() {
 		sm.nodeMgr.maintainLiveNodesLoop(sm.ctx, sm.taskMgr)
 	})
@@ -160,6 +174,12 @@ func (sm *Manager) Start() {
 		sm.balancer.balanceLoop(sm.ctx, sm)
 	})
 	sm.initialized = true
+}
+
+// Cancel cancels the scheduler manager.
+// used in test to simulate tidb node shutdown.
+func (sm *Manager) Cancel() {
+	sm.cancel()
 }
 
 // Stop the schedulerManager.
@@ -179,13 +199,13 @@ func (sm *Manager) Initialized() bool {
 
 // scheduleTaskLoop schedules the tasks.
 func (sm *Manager) scheduleTaskLoop() {
-	logutil.BgLogger().Info("schedule task loop start")
+	sm.logger.Info("schedule task loop start")
 	ticker := time.NewTicker(checkTaskRunningInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-sm.ctx.Done():
-			logutil.BgLogger().Info("schedule task loop exits", zap.Error(sm.ctx.Err()), zap.Int64("interval", int64(checkTaskRunningInterval)/1000000))
+			sm.logger.Info("schedule task loop exits")
 			return
 		case <-ticker.C:
 		case <-handle.TaskChangedCh:
@@ -193,14 +213,14 @@ func (sm *Manager) scheduleTaskLoop() {
 
 		taskCnt := sm.getSchedulerCount()
 		if taskCnt >= proto.MaxConcurrentTask {
-			logutil.BgLogger().Info("scheduled tasks reached limit",
+			sm.logger.Debug("scheduled tasks reached limit",
 				zap.Int("current", taskCnt), zap.Int("max", proto.MaxConcurrentTask))
 			continue
 		}
 
 		tasks, err := sm.taskMgr.GetTopUnfinishedTasks(sm.ctx)
 		if err != nil {
-			logutil.BgLogger().Warn("get unfinished tasks failed", zap.Error(err))
+			sm.logger.Warn("get unfinished tasks failed", zap.Error(err))
 			continue
 		}
 
@@ -214,7 +234,7 @@ func (sm *Manager) scheduleTaskLoop() {
 			// this should not happen normally, unless user modify system table
 			// directly.
 			if getSchedulerFactory(task.Type) == nil {
-				logutil.BgLogger().Warn("unknown task type", zap.Int64("task-id", task.ID),
+				sm.logger.Warn("unknown task type", zap.Int64("task-id", task.ID),
 					zap.Stringer("task-type", task.Type))
 				sm.failTask(task.ID, task.State, errors.New("unknown task type"))
 				continue
@@ -226,7 +246,7 @@ func (sm *Manager) scheduleTaskLoop() {
 		}
 
 		if err = sm.slotMgr.update(sm.ctx, sm.nodeMgr, sm.taskMgr); err != nil {
-			logutil.BgLogger().Warn("update used slot failed", zap.Error(err))
+			sm.logger.Warn("update used slot failed", zap.Error(err))
 			continue
 		}
 		for _, task := range schedulableTasks {
@@ -248,7 +268,7 @@ func (sm *Manager) scheduleTaskLoop() {
 
 func (sm *Manager) failTask(id int64, currState proto.TaskState, err error) {
 	if err2 := sm.taskMgr.FailTask(sm.ctx, id, currState, err); err2 != nil {
-		logutil.BgLogger().Warn("failed to update task state to failed",
+		sm.logger.Warn("failed to update task state to failed",
 			zap.Int64("task-id", id), zap.Error(err2))
 	}
 }
@@ -263,20 +283,20 @@ func (sm *Manager) gcSubtaskHistoryTableLoop() {
 		<-WaitTaskFinished
 	})
 
-	logutil.BgLogger().Info("subtask table gc loop start")
+	sm.logger.Info("subtask table gc loop start")
 	ticker := time.NewTicker(historySubtaskTableGcInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-sm.ctx.Done():
-			logutil.BgLogger().Info("subtask history table gc loop exits", zap.Error(sm.ctx.Err()))
+			sm.logger.Info("subtask history table gc loop exits")
 			return
 		case <-ticker.C:
 			err := sm.taskMgr.GCSubtasks(sm.ctx)
 			if err != nil {
-				logutil.BgLogger().Warn("subtask history table gc failed", zap.Error(err))
+				sm.logger.Warn("subtask history table gc failed", zap.Error(err))
 			} else {
-				logutil.BgLogger().Info("subtask history table gc success")
+				sm.logger.Info("subtask history table gc success")
 			}
 		}
 	}
@@ -285,46 +305,47 @@ func (sm *Manager) gcSubtaskHistoryTableLoop() {
 func (sm *Manager) startScheduler(basicTask *proto.Task, reservedExecID string) {
 	task, err := sm.taskMgr.GetTaskByID(sm.ctx, basicTask.ID)
 	if err != nil {
-		logutil.BgLogger().Error("get task failed", zap.Int64("task-id", basicTask.ID), zap.Error(err))
+		sm.logger.Error("get task failed", zap.Int64("task-id", basicTask.ID), zap.Error(err))
 		return
 	}
 
 	schedulerFactory := getSchedulerFactory(task.Type)
 	scheduler := schedulerFactory(sm.ctx, task, Param{
-		taskMgr: sm.taskMgr,
-		nodeMgr: sm.nodeMgr,
-		slotMgr: sm.slotMgr,
+		taskMgr:  sm.taskMgr,
+		nodeMgr:  sm.nodeMgr,
+		slotMgr:  sm.slotMgr,
+		serverID: sm.serverID,
 	})
 	if err = scheduler.Init(); err != nil {
-		logutil.BgLogger().Error("init scheduler failed", zap.Error(err))
+		sm.logger.Error("init scheduler failed", zap.Error(err))
 		sm.failTask(task.ID, task.State, err)
 		return
 	}
 	sm.addScheduler(task.ID, scheduler)
 	sm.slotMgr.reserve(basicTask, reservedExecID)
-	// Using the pool with block, so it wouldn't return an error.
+	sm.logger.Info("task scheduler started", zap.Int64("task-id", task.ID))
 	sm.schedulerWG.RunWithLog(func() {
 		defer func() {
 			scheduler.Close()
 			sm.delScheduler(task.ID)
 			sm.slotMgr.unReserve(basicTask, reservedExecID)
 			handle.NotifyTaskChange()
+			sm.logger.Info("task scheduler exist", zap.Int64("task-id", task.ID))
 		}()
 		metrics.UpdateMetricsForRunTask(task)
 		scheduler.ScheduleTask()
-		logutil.BgLogger().Info("task finished", zap.Int64("task-id", task.ID))
 		sm.finishCh <- struct{}{}
 	})
 }
 
 func (sm *Manager) cleanupTaskLoop() {
-	logutil.BgLogger().Info("cleanup loop start")
+	sm.logger.Info("cleanup loop start")
 	ticker := time.NewTicker(DefaultCleanUpInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-sm.ctx.Done():
-			logutil.BgLogger().Info("cleanup loop exits", zap.Error(sm.ctx.Err()))
+			sm.logger.Info("cleanup loop exits")
 			return
 		case <-sm.finishCh:
 			sm.doCleanupTask()
@@ -349,29 +370,29 @@ func (sm *Manager) doCleanupTask() {
 		proto.TaskStateSucceed,
 	)
 	if err != nil {
-		logutil.BgLogger().Warn("cleanup routine failed", zap.Error(err))
+		sm.logger.Warn("get task in states failed", zap.Error(err))
 		return
 	}
 	if len(tasks) == 0 {
 		return
 	}
-	logutil.BgLogger().Info("cleanup routine start")
+	sm.logger.Info("cleanup routine start")
 	err = sm.cleanupFinishedTasks(tasks)
 	if err != nil {
-		logutil.BgLogger().Warn("cleanup routine failed", zap.Error(err))
+		sm.logger.Warn("cleanup routine failed", zap.Error(err))
 		return
 	}
 	failpoint.Inject("WaitCleanUpFinished", func() {
 		WaitCleanUpFinished <- struct{}{}
 	})
-	logutil.BgLogger().Info("cleanup routine success")
+	sm.logger.Info("cleanup routine success")
 }
 
 func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 	cleanedTasks := make([]*proto.Task, 0)
 	var firstErr error
 	for _, task := range tasks {
-		logutil.BgLogger().Info("cleanup task", zap.Int64("task-id", task.ID))
+		sm.logger.Info("cleanup task", zap.Int64("task-id", task.ID))
 		cleanupFactory := getSchedulerCleanUpFactory(task.Type)
 		if cleanupFactory != nil {
 			cleanup := cleanupFactory()
@@ -387,7 +408,7 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 		}
 	}
 	if firstErr != nil {
-		logutil.BgLogger().Warn("cleanup routine failed", zap.Error(errors.Trace(firstErr)))
+		sm.logger.Warn("cleanup routine failed", zap.Error(errors.Trace(firstErr)))
 	}
 
 	failpoint.Inject("mockTransferErr", func() {
@@ -400,8 +421,34 @@ func (sm *Manager) cleanupFinishedTasks(tasks []*proto.Task) error {
 // MockScheduler mock one scheduler for one task, only used for tests.
 func (sm *Manager) MockScheduler(task *proto.Task) *BaseScheduler {
 	return NewBaseScheduler(sm.ctx, task, Param{
-		taskMgr: sm.taskMgr,
-		nodeMgr: sm.nodeMgr,
-		slotMgr: sm.slotMgr,
+		taskMgr:  sm.taskMgr,
+		nodeMgr:  sm.nodeMgr,
+		slotMgr:  sm.slotMgr,
+		serverID: sm.serverID,
 	})
+}
+
+func (sm *Manager) collectLoop() {
+	sm.logger.Info("collect loop start")
+	ticker := time.NewTicker(defaultCollectMetricsInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-sm.ctx.Done():
+			sm.logger.Info("collect loop exits")
+			return
+		case <-ticker.C:
+			sm.collect()
+		}
+	}
+}
+
+func (sm *Manager) collect() {
+	subtasks, err := sm.taskMgr.GetAllSubtasks(sm.ctx)
+	if err != nil {
+		sm.logger.Warn("get all subtasks failed", zap.Error(err))
+		return
+	}
+
+	subtaskCollector.subtaskInfo.Store(&subtasks)
 }

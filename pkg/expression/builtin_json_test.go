@@ -647,8 +647,8 @@ func TestJSONLength(t *testing.T) {
 		{[]any{`-1`}, 1, true},
 		{[]any{`1.1`}, 1, true},
 		{[]any{`"1"`}, 1, true},
-		{[]any{`"1"`, "$.a"}, 1, true},
-		{[]any{`null`, "$.a"}, 1, true},
+		{[]any{`"1"`, "$.a"}, nil, true},
+		{[]any{`null`, "$.a"}, nil, true},
 		// Tests nil arguments
 		{[]any{nil}, nil, true},
 		{[]any{nil, "a"}, nil, true},

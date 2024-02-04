@@ -153,8 +153,9 @@ func (s *partitionProcessor) getUsedHashPartitions(ctx sessionctx.Context,
 	}
 	ranges := detachedResult.Ranges
 	used := make([]int, 0, len(ranges))
+	tc := ctx.GetSessionVars().StmtCtx.TypeCtx()
 	for _, r := range ranges {
-		if !r.IsPointNullable(ctx) {
+		if !r.IsPointNullable(tc) {
 			// processing hash partition pruning. eg:
 			// create table t2 (a int, b bigint, index (a), index (b)) partition by hash(a) partitions 10;
 			// desc select * from t2 where t2.a between 10 and 15;
@@ -269,8 +270,9 @@ func (s *partitionProcessor) getUsedKeyPartitions(ctx sessionctx.Context,
 	ranges := detachedResult.Ranges
 	used := make([]int, 0, len(ranges))
 
+	tc := ctx.GetSessionVars().StmtCtx.TypeCtx()
 	for _, r := range ranges {
-		if !r.IsPointNullable(ctx) {
+		if !r.IsPointNullable(tc) {
 			if len(partCols) == 1 && partCols[0].RetType.EvalType() == types.ETInt {
 				col := partCols[0]
 				posHigh, highIsNull, err := col.EvalInt(ctx, chunk.MutRowFromDatums(r.HighVal).ToRow())
@@ -642,14 +644,15 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 	}
 
 	sc := l.ctx.GetSessionVars().StmtCtx
+	tc, ec := sc.TypeCtx(), sc.ErrCtx()
 	helper := tables.NewListPartitionLocationHelper()
 	for _, r := range ranges {
 		if len(r.LowVal) != 1 || len(r.HighVal) != 1 {
 			return nil, true, nil
 		}
 		var locations []tables.ListPartitionLocation
-		if r.IsPointNullable(l.ctx) {
-			location, err := colPrune.LocatePartition(sc, r.HighVal[0])
+		if r.IsPointNullable(tc) {
+			location, err := colPrune.LocatePartition(tc, ec, r.HighVal[0])
 			if types.ErrOverflow.Equal(err) {
 				return nil, true, nil // return full-scan if over-flow
 			}
@@ -671,7 +674,7 @@ func (l *listPartitionPruner) locateColumnPartitionsByCondition(cond expression.
 			}
 			locations = append(locations, location)
 		} else {
-			locations, err = colPrune.LocateRanges(sc, r, l.listPrune.GetDefaultIdx())
+			locations, err = colPrune.LocateRanges(tc, ec, r, l.listPrune.GetDefaultIdx())
 			if types.ErrOverflow.Equal(err) {
 				return nil, true, nil // return full-scan if over-flow
 			}
@@ -748,8 +751,9 @@ func (l *listPartitionPruner) findUsedListPartitions(conds []expression.Expressi
 		return nil, err
 	}
 	used := make(map[int]struct{}, len(ranges))
+	tc := l.ctx.GetSessionVars().StmtCtx.TypeCtx()
 	for _, r := range ranges {
-		if !r.IsPointNullable(l.ctx) {
+		if !r.IsPointNullable(tc) {
 			return l.fullRange, nil
 		}
 		if len(r.HighVal) != len(exprCols) {

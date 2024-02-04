@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/statistics/handle/usage/indexusage"
 	"github.com/pingcap/tidb/pkg/types"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -257,15 +258,16 @@ type StatementContext struct {
 	DiskTracker  *disk.Tracker
 	// per statement resource group name
 	// hint /* +ResourceGroup(name) */ can change the statement group name
-	ResourceGroupName string
-	RunawayChecker    *resourcegroup.RunawayChecker
-	IsTiFlash         atomic2.Bool
-	RuntimeStatsColl  *execdetails.RuntimeStatsColl
-	TableIDs          []int64
-	IndexNames        []string
-	StmtType          string
-	OriginalSQL       string
-	digestMemo        struct {
+	ResourceGroupName   string
+	RunawayChecker      *resourcegroup.RunawayChecker
+	IsTiFlash           atomic2.Bool
+	RuntimeStatsColl    *execdetails.RuntimeStatsColl
+	IndexUsageCollector *indexusage.StmtIndexUsageCollector
+	TableIDs            []int64
+	IndexNames          []string
+	StmtType            string
+	OriginalSQL         string
+	digestMemo          struct {
 		sync.Once
 		normalized string
 		digest     *parser.Digest

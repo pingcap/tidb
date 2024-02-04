@@ -3051,7 +3051,9 @@ func CreateSessionWithOpt(store kv.Storage, opt *Opt) (types.Session, error) {
 	// which periodically updates stats using the collected data.
 	if do.StatsHandle() != nil && do.StatsUpdating() {
 		s.statsCollector = do.StatsHandle().NewSessionStatsItem().(*usage.SessionStatsItem)
-		s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
+		if config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load() {
+			s.idxUsageCollector = do.StatsHandle().NewSessionIndexUsageCollector()
+		}
 	}
 
 	return s, nil
@@ -3602,7 +3604,7 @@ func attachStatsCollector(s *session, dom *domain.Domain) *session {
 		if s.statsCollector == nil {
 			s.statsCollector = dom.StatsHandle().NewSessionStatsItem().(*usage.SessionStatsItem)
 		}
-		if s.idxUsageCollector == nil {
+		if s.idxUsageCollector == nil && config.GetGlobalConfig().Instance.EnableCollectExecutionInfo.Load() {
 			s.idxUsageCollector = dom.StatsHandle().NewSessionIndexUsageCollector()
 		}
 	}
@@ -4362,6 +4364,16 @@ func (s *session) setRequestSource(ctx context.Context, stmtLabel string, stmtNo
 		"the `RequestSourceTypeKey` is missing in the context",
 		zap.Bool("internal", s.isInternal()),
 		zap.String("sql", stmtNode.Text()))
+}
+
+// NewStmtIndexUsageCollector creates a new `*indexusage.StmtIndexUsageCollector` based on the internal session index
+// usage collector
+func (s *session) NewStmtIndexUsageCollector() *indexusage.StmtIndexUsageCollector {
+	if s.idxUsageCollector == nil {
+		return nil
+	}
+
+	return indexusage.NewStmtIndexUsageCollector(s.idxUsageCollector)
 }
 
 // RemoveLockDDLJobs removes the DDL jobs which doesn't get the metadata lock from job2ver.

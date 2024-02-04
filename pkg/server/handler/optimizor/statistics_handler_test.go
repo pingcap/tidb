@@ -59,7 +59,7 @@ func TestDumpStatsAPI(t *testing.T) {
 	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	client.WaitUntilServerOnline()
