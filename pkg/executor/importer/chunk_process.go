@@ -153,6 +153,7 @@ func (b *encodedKVGroupBatch) add(kvs *kv.Pairs) error {
 			if err != nil {
 				return errors.Trace(err)
 			}
+			b.indexKVs[indexID] = append(b.indexKVs[indexID], pair)
 			b.groupChecksum.UpdateOneIndexKV(indexID, pair)
 		}
 	}
