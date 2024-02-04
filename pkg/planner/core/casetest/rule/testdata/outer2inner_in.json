@@ -3,7 +3,11 @@
     "name": "TestOuter2Inner",
     "cases": [
       "select * from t1 left outer join t2 on a1=a2 where b2 < 1 -- basic case of outer to inner join conversion",
-      "select * from t1 left outer join t2 on a1=a2 where b2 is null -- basic negative case of outer to inner join conversion"
+      "select * from t1 left outer join t2 on a1=a2 where b2 is not null -- basic case of not null",
+      "select * from t1 left outer join t2 on a1=a2 where not(b2 is null) -- another form of basic case of not null",
+      "select * from t1 left outer join t2 on a1=a2 where b2 is null -- basic negative case of outer to inner join conversion",
+      "select * from t1 left outer join t2 on a1=a2 where not(b2 is not null) -- nested 'not' negative case",
+      "select * from t1 left outer join t2 on a1=a2 where not(not(b2 is null)) -- nested 'not' negative case"
     ]
   }
 ]

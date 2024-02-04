@@ -83,11 +83,7 @@ func convertOuter2InnerJoins(p *LogicalJoin, predicates []expression.Expression)
 	// then simplify embedding outer join.
 	canBeSimplified := false
 	for _, expr := range predicates {
-		// avoid the case where the expr only refers to the schema of outerTable
-		if expression.ExprFromSchema(expr, outerTable.Schema()) {
-			continue
-		}
-		isOk := isNullFiltered(p.self.SCtx(), innerTable.Schema(), expr)
+		isOk := isNullFiltered(p.self.SCtx(), innerTable.Schema(), expr, outerTable.Schema())
 		if isOk {
 			canBeSimplified = true
 			break
@@ -98,12 +94,40 @@ func convertOuter2InnerJoins(p *LogicalJoin, predicates []expression.Expression)
 	}
 }
 
-// isNullFiltered check whether a condition is null-rejected
+func isNullFiltered(ctx sessionctx.Context, innerSchema *expression.Schema, predicate expression.Expression, outerSchema *expression.Schema) bool {
+	// avoid the case where the predicate only refers to the schema of outerTable
+	if expression.ExprFromSchema(predicate, outerSchema) {
+		return false
+	}
+
+	switch expr := predicate.(type) {
+	case *expression.ScalarFunction:
+		if expr.FuncName.L == ast.LogicAnd {
+			if isNullFiltered(ctx, innerSchema, expr.GetArgs()[0], outerSchema) {
+				return true
+			} else {
+				return isNullFiltered(ctx, innerSchema, expr.GetArgs()[1], outerSchema)
+			}
+		} else if expr.FuncName.L == ast.LogicOr {
+			if !(isNullFiltered(ctx, innerSchema, expr.GetArgs()[0], outerSchema)) {
+				return false
+			} else {
+				return isNullFiltered(ctx, innerSchema, expr.GetArgs()[1], outerSchema)
+			}
+		} else {
+			return isNullFilteredOneExpr(ctx, innerSchema, expr)
+		}
+	default:
+		return isNullFilteredOneExpr(ctx, innerSchema, expr)
+	}
+}
+
+// isNullFilteredOneExpr check whether a condition is null-rejected
 // A condition would be null-rejected in one of following cases:
 // If it is a predicate containing a reference to an inner table that evaluates to UNKNOWN or FALSE when one of its arguments is NULL.
 // If it is a conjunction containing a null-rejected condition as a conjunct.
 // If it is a disjunction of null-rejected conditions.
-func isNullFiltered(ctx sessionctx.Context, schema *expression.Schema, expr expression.Expression) bool {
+func isNullFilteredOneExpr(ctx sessionctx.Context, schema *expression.Schema, expr expression.Expression) bool {
 	expr = expression.PushDownNot(ctx, expr)
 	if expression.ContainOuterNot(expr) {
 		return false
@@ -114,10 +138,6 @@ func isNullFiltered(ctx sessionctx.Context, schema *expression.Schema, expr expr
 		sc.InNullRejectCheck = false
 	}()
 	for _, cond := range expression.SplitCNFItems(expr) {
-		if isNullFilteredSpecialCase(ctx, schema, expr) {
-			return true
-		}
-
 		result := expression.EvaluateExprWithNull(ctx, schema, cond)
 		x, ok := result.(*expression.Constant)
 		if !ok {
@@ -127,47 +147,6 @@ func isNullFiltered(ctx sessionctx.Context, schema *expression.Schema, expr expr
 			return true
 		} else if isTrue, err := x.Value.ToBool(sc.TypeCtxOrDefault()); err == nil && isTrue == 0 {
 			return true
-		}
-	}
-	return false
-}
-
-// isNullFilteredSpecialCase handles some null-rejected cases specially, since the current in
-// EvaluateExprWithNull is too strict for some cases, e.g. #49616.
-func isNullFilteredSpecialCase(ctx sessionctx.Context, schema *expression.Schema, expr expression.Expression) bool {
-	return isNullFilteredSpecialCase1(ctx, schema, expr) // only 1 case now
-}
-
-// isNullFilteredSpecialCase1 is mainly for #49616.
-// Case1 specially handles `null-rejected OR (null-rejected AND {others})`, then no matter what the result
-// of `{others}` is (True, False or Null), the result of this predicate is null, so this predicate is null-rejected.
-func isNullFilteredSpecialCase1(ctx sessionctx.Context, schema *expression.Schema, expr expression.Expression) bool {
-	isFunc := func(e expression.Expression, lowerFuncName string) *expression.ScalarFunction {
-		f, ok := e.(*expression.ScalarFunction)
-		if !ok {
-			return nil
-		}
-		if f.FuncName.L == lowerFuncName {
-			return f
-		}
-		return nil
-	}
-	orFunc := isFunc(expr, ast.LogicOr)
-	if orFunc == nil {
-		return false
-	}
-	for i := 0; i < 2; i++ {
-		andFunc := isFunc(orFunc.GetArgs()[i], ast.LogicAnd)
-		if andFunc == nil {
-			continue
-		}
-		if !isNullFiltered(ctx, schema, orFunc.GetArgs()[1-i]) {
-			continue // the other side should be null-rejected: null-rejected OR (... AND ...)
-		}
-		for _, andItem := range expression.SplitCNFItems(andFunc) {
-			if isNullFiltered(ctx, schema, andItem) {
-				return true // hit the case in the comment: null-rejected OR (null-rejected AND ...)
-			}
 		}
 	}
 	return false
