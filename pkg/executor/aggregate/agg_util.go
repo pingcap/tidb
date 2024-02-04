@@ -217,23 +217,27 @@ func (w *AggWorkerStat) Clone() *AggWorkerStat {
 	}
 }
 
-// ActionSpill returns an action for spilling intermediate data for hashAgg.
-func (e *HashAggExec) ActionSpill() memory.ActionOnExceed {
-	if e.IsUnparallelExec {
-		if e.spillAction == nil {
-			e.spillAction = &AggSpillDiskAction{
-				e: e,
-			}
-		}
-		return e.spillAction
+func (e *HashAggExec) actionSpillForUnparallel() memory.ActionOnExceed {
+	e.spillAction = &AggSpillDiskAction{
+		e: e,
 	}
+	return e.spillAction
+}
 
+func (e *HashAggExec) actionSpillForParallel() memory.ActionOnExceed {
 	e.parallelAggSpillAction = &ParallelAggSpillDiskAction{
 		e:           e,
 		spillHelper: e.spillHelper,
 	}
-
 	return e.parallelAggSpillAction
+}
+
+// ActionSpill returns an action for spilling intermediate data for hashAgg.
+func (e *HashAggExec) ActionSpill() memory.ActionOnExceed {
+	if e.IsUnparallelExec {
+		return e.actionSpillForUnparallel()
+	}
+	return e.actionSpillForParallel()
 }
 
 func failpointError() error {

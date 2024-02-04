@@ -153,8 +153,7 @@ type HashAggExec struct {
 	// spillHelper helps to carry out the spill action
 	spillHelper *parallelHashAggSpillHelper
 	// isChildDrained indicates whether the all data from child has been taken out.
-	isChildDrained  bool
-	setActionBefore bool
+	isChildDrained bool
 }
 
 // Close implements the Executor Close interface.
@@ -171,6 +170,9 @@ func (e *HashAggExec) Close() error {
 		}
 		if e.dataInDisk != nil {
 			e.dataInDisk.Close()
+		}
+		if e.spillAction != nil {
+			e.spillAction.SetFinished()
 		}
 		e.spillAction, e.tmpChkForSpill = nil, nil
 		err := e.BaseExecutor.Close()
@@ -204,9 +206,11 @@ func (e *HashAggExec) Close() error {
 			e.memTracker.ReplaceBytesUsed(0)
 		}
 		e.parallelExecValid = false
-		e.parallelAggSpillAction.SetFinished()
-		e.parallelAggSpillAction = nil
-		e.spillHelper.close()
+		if e.parallelAggSpillAction != nil {
+			e.parallelAggSpillAction.SetFinished()
+			e.parallelAggSpillAction = nil
+			e.spillHelper.close()
+		}
 	}
 	return e.BaseExecutor.Close()
 }
@@ -261,10 +265,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
 		e.diskTracker.AttachTo(vars.StmtCtx.DiskTracker)
 		e.dataInDisk.GetDiskTracker().AttachTo(e.diskTracker)
-		if !e.setActionBefore {
-			vars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
-			e.setActionBefore = true
-		}
+		vars.MemTracker.FallbackOldAndSetNewActionForSoftLimit(e.ActionSpill())
 	}
 }
 
@@ -424,7 +425,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		// Wait for the finish of all partial workers
 		e.inflightChunkSync.Wait()
 
-		if e.spillHelper.isSpillTriggered() && !e.spillHelper.checkError() {
+		if !e.spillHelper.isNoSpill() && !e.spillHelper.checkError() {
 			// Spill the remaining data
 			e.spill()
 
@@ -822,5 +823,10 @@ func (e *HashAggExec) initRuntimeStats() {
 
 // IsSpillTriggeredForTest is for test.
 func (e *HashAggExec) IsSpillTriggeredForTest() bool {
-	return e.spillHelper.isSpillTriggered()
+	for i := range e.spillHelper.lock.spilledChunksIO {
+		if len(e.spillHelper.lock.spilledChunksIO[i]) > 0 {
+			return true
+		}
+	}
+	return false
 }

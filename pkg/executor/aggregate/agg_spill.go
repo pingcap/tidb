@@ -160,10 +160,10 @@ func (p *parallelHashAggSpillHelper) setInSpilling() {
 		zap.Int64("quota", p.lock.memoryQuota))
 }
 
-func (p *parallelHashAggSpillHelper) isSpillTriggered() bool {
+func (p *parallelHashAggSpillHelper) isNoSpill() bool {
 	p.lock.Lock()
 	defer p.lock.Unlock()
-	return p.lock.status != noSpill
+	return p.lock.status == noSpill
 }
 
 func (p *parallelHashAggSpillHelper) setSpillTriggered() {

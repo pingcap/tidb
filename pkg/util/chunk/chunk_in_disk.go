@@ -21,7 +21,6 @@ import (
 	"strconv"
 	"unsafe"
 
-	"github.com/pingcap/errors"
 	errors2 "github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -333,7 +332,7 @@ func injectChunkInDiskRandomError() error {
 		if val.(bool) {
 			randNum := rand.Int31n(10000)
 			if randNum < 3 {
-				err = errors.New("random error is triggered")
+				err = errors2.New("random error is triggered")
 			}
 		}
 	})
