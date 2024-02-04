@@ -52,12 +52,12 @@ type TestDXFContext struct {
 	TaskMgr     *storage.TaskManager
 	MockCtrl    *gomock.Controller
 	TestContext *TestContext
+	Rand        *rand.Rand
 
 	idAllocator atomic.Int32
 	// in real case, when node scale in/out, the node might use the same IP or host name
 	// such as using K8S, so we use this to simulate this case.
 	nodeIDPool chan string
-	rand       *rand.Rand
 	wg         tidbutil.WaitGroupWrapper
 	mu         struct {
 		sync.RWMutex
@@ -68,62 +68,70 @@ type TestDXFContext struct {
 	}
 }
 
+// NewDXFContextWithRandomNodes creates a new TestDXFContext with random number
+// of nodes in range [minCnt, maxCnt].
+func NewDXFContextWithRandomNodes(t *testing.T, minCnt, maxCnt int) *TestDXFContext {
+	c := newTestDXFContext(t)
+	nodeNum := c.Rand.Intn(maxCnt-minCnt+1) + minCnt
+	t.Logf("dxf context with random node num: %d", nodeNum)
+	c.init(nodeNum)
+	return c
+}
+
 // NewTestDXFContext creates a new TestDXFContext.
 func NewTestDXFContext(t *testing.T, nodeNum int) *TestDXFContext {
+	c := newTestDXFContext(t)
+	c.init(nodeNum)
+	return c
+}
+
+func newTestDXFContext(t *testing.T) *TestDXFContext {
+	seed := time.Now().UnixNano()
+	t.Log("dxf context seed:", seed)
+	c := &TestDXFContext{
+		T: t,
+		TestContext: &TestContext{
+			subtasksHasRun: make(map[string]map[int64]struct{}),
+		},
+		Rand:       rand.New(rand.NewSource(seed)),
+		nodeIDPool: make(chan string, 100),
+	}
+	c.mu.ownerIndices = make(map[string]int)
+	c.mu.nodeIndices = make(map[string]int)
+	return c
+}
+
+func (c *TestDXFContext) init(nodeNum int) {
 	// all nodes are isometric with 16 CPUs
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTaskExecutorNodes", "return()"))
-	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/MockDisableDistTask"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTaskExecutorNodes"))
-	})
-	store := testkit.CreateMockStore(t)
+	testkit.EnableFailPoint(c.T, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
+	testkit.EnableFailPoint(c.T, "github.com/pingcap/tidb/pkg/domain/MockDisableDistTask", "return(true)")
+	testkit.EnableFailPoint(c.T, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mockTaskExecutorNodes", "return()")
+	store := testkit.CreateMockStore(c.T)
 	pool := pools.NewResourcePool(func() (pools.Resource, error) {
-		return testkit.NewSession(t, store), nil
+		return testkit.NewSession(c.T, store), nil
 	}, 10, 10, time.Second)
-	t.Cleanup(func() {
+	c.T.Cleanup(func() {
 		pool.Close()
 	})
 	taskManager := storage.NewTaskManager(pool)
 	storage.SetTaskManager(taskManager)
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, kv.InternalDistTask)
+	ctrl := gomock.NewController(c.T)
+	c.Store = store
+	c.Ctx = ctx
+	c.TaskMgr = taskManager
+	c.MockCtrl = ctrl
 
-	seed := time.Now().UnixNano()
-	t.Log("dxf context seed:", seed)
-	ctrl := gomock.NewController(t)
-	c := &TestDXFContext{
-		T:        t,
-		Store:    store,
-		Ctx:      ctx,
-		TaskMgr:  taskManager,
-		MockCtrl: ctrl,
-		TestContext: &TestContext{
-			subtasksHasRun: make(map[string]map[int64]struct{}),
-		},
-		nodeIDPool: make(chan string, 100),
-		rand:       rand.New(rand.NewSource(seed)),
+	for i := 0; i < nodeNum; i++ {
+		c.ScaleOutBy(c.getNodeID(), false)
 	}
-	c.mu.ownerIndices = make(map[string]int)
-	c.mu.nodeIndices = make(map[string]int, nodeNum)
-	c.init(nodeNum)
+	c.electIfNeeded()
 
-	t.Cleanup(func() {
+	c.T.Cleanup(func() {
 		ctrl.Finish()
 		c.close()
 	})
-
-	return c
-}
-
-// init initializes the context with nodeNum tidb nodes.
-// The last node is the owner.
-func (c *TestDXFContext) init(nodeNum int) {
-	for i := 0; i < nodeNum; i++ {
-		c.ScaleOutBy(c.getNodeID(), i == nodeNum-1)
-	}
 }
 
 func (c *TestDXFContext) getNodeID() string {
@@ -153,7 +161,6 @@ func (c *TestDXFContext) ScaleOut(nodeNum int) {
 // ScaleOutBy scales out a tidb node by id, and set it as owner if required.
 func (c *TestDXFContext) ScaleOutBy(id string, owner bool) {
 	c.T.Logf("scale out node of id = %s, owner = %t", id, owner)
-	c.updateLiveExecIDs(id)
 	exeMgr, err := taskexecutor.NewManager(c.Ctx, id, c.TaskMgr)
 	require.NoError(c.T, err)
 	require.NoError(c.T, exeMgr.InitMeta())
@@ -171,23 +178,22 @@ func (c *TestDXFContext) ScaleOutBy(id string, owner bool) {
 	}
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.mu.nodes = append(c.mu.nodes, node)
 	c.mu.nodeIndices[id] = len(c.mu.nodes) - 1
 	if owner {
 		c.mu.ownerIndices[id] = len(c.mu.nodes) - 1
 	}
+	c.mu.Unlock()
+
+	c.updateLiveExecIDs()
 }
 
-func (c *TestDXFContext) updateLiveExecIDs(newID string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+func (c *TestDXFContext) updateLiveExecIDs() {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	execIDs := make([]string, 0, len(c.mu.nodes)+1)
 	for _, n := range c.mu.nodes {
 		execIDs = append(execIDs, n.id)
-	}
-	if len(newID) > 0 {
-		execIDs = append(execIDs, newID)
 	}
 	scheduler.MockServerInfo.Store(&execIDs)
 }
@@ -195,13 +201,13 @@ func (c *TestDXFContext) updateLiveExecIDs(newID string) {
 // ScaleIn scales in some last added tidb nodes, elect new owner if required.
 func (c *TestDXFContext) ScaleIn(nodeNum int) {
 	for i := 0; i < nodeNum; i++ {
-		c.mu.Lock()
+		c.mu.RLock()
 		if len(c.mu.nodes) == 0 {
-			c.mu.Unlock()
+			c.mu.RUnlock()
 			return
 		}
 		node := c.mu.nodes[len(c.mu.nodes)-1]
-		c.mu.Unlock()
+		c.mu.RUnlock()
 
 		c.ScaleInBy(node.id)
 	}
@@ -213,18 +219,23 @@ func (c *TestDXFContext) ScaleInBy(id string) {
 	idx, ok := c.mu.nodeIndices[id]
 	if !ok {
 		c.mu.Unlock()
+		c.T.Logf("scale in failed, cannot find node %s", id)
 		return
 	}
 	node := c.mu.nodes[idx]
 	c.mu.nodes = append(c.mu.nodes[:idx], c.mu.nodes[idx+1:]...)
-	delete(c.mu.nodeIndices, id)
-	if node.owner {
-		delete(c.mu.ownerIndices, id)
+	c.mu.nodeIndices = make(map[string]int, len(c.mu.nodes))
+	c.mu.ownerIndices = make(map[string]int, len(c.mu.nodes))
+	for i, n := range c.mu.nodes {
+		c.mu.nodeIndices[n.id] = i
+		if n.owner {
+			c.mu.ownerIndices[n.id] = i
+		}
 	}
 	c.recycleNodeID(id)
 	c.mu.Unlock()
 
-	c.updateLiveExecIDs("")
+	c.updateLiveExecIDs()
 
 	c.T.Logf("scale in node of id = %s, owner = %t", node.id, node.owner)
 	node.exeMgr.Stop()
@@ -242,9 +253,11 @@ func (c *TestDXFContext) AsyncChangeOwner() {
 
 // ChangeOwner resigns all current owners and changes the owner of the cluster to random node.
 func (c *TestDXFContext) ChangeOwner() {
+	c.T.Logf("changing owner")
 	c.mu.Lock()
 	if len(c.mu.nodes) == 0 {
 		c.mu.Unlock()
+		c.T.Logf("there no node, cannot change owner")
 		return
 	}
 	for _, idx := range c.mu.ownerIndices {
@@ -256,6 +269,67 @@ func (c *TestDXFContext) ChangeOwner() {
 	c.mu.Unlock()
 
 	c.electIfNeeded()
+}
+
+// AsyncShutdown shutdown node asynchronously.
+func (c *TestDXFContext) AsyncShutdown(id string) {
+	c.T.Logf("shuting down node of id %s", id)
+	// as this code is run inside a fail-point, so we cancel them first, then
+	// wait them asynchronously.
+	node := c.getNode(id)
+	if node == nil {
+		return
+	}
+	node.exeMgr.Cancel()
+	if node.owner {
+		node.schMgr.Cancel()
+	}
+	c.wg.RunWithLog(func() {
+		c.ScaleInBy(id)
+	})
+}
+
+// GetRandNodeIDs returns `limit` random node ids.
+// if limit > len(nodes), return all nodes.
+func (c *TestDXFContext) GetRandNodeIDs(limit int) map[string]struct{} {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if len(c.mu.nodes) == 0 {
+		return nil
+	}
+	cloneSlice := make([]*tidbNode, len(c.mu.nodes))
+	copy(cloneSlice, c.mu.nodes)
+	rand.Shuffle(len(cloneSlice), func(i, j int) {
+		cloneSlice[i], cloneSlice[j] = cloneSlice[j], cloneSlice[i]
+	})
+
+	if limit > len(c.mu.nodes) {
+		limit = len(c.mu.nodes)
+	}
+	ids := make(map[string]struct{}, limit)
+	for i := 0; i < limit; i++ {
+		ids[cloneSlice[i].id] = struct{}{}
+	}
+	return ids
+}
+
+// NodeCount returns the number of nodes.
+func (c *TestDXFContext) NodeCount() int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.mu.nodes)
+}
+
+func (c *TestDXFContext) getNode(id string) *tidbNode {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	idx, ok := c.mu.nodeIndices[id]
+	if !ok {
+		c.T.Logf("cannot find node of id %s", id)
+		return nil
+	}
+	clone := *c.mu.nodes[idx]
+	return &clone
 }
 
 func (c *TestDXFContext) electIfNeeded() {
@@ -274,6 +348,11 @@ func (c *TestDXFContext) electIfNeeded() {
 	c.mu.Unlock()
 
 	c.T.Logf("new owner elected, id = %s, newOwnerIdx = %d", ownerNode.id, newOwnerIdx)
+}
+
+// WaitAsyncOperations waits all async operations to finish.
+func (c *TestDXFContext) WaitAsyncOperations() {
+	c.wg.Wait()
 }
 
 func (c *TestDXFContext) close() {

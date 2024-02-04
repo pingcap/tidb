@@ -13,6 +13,7 @@ import (
 	reflect "reflect"
 
 	proto "github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	execute "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -79,6 +80,20 @@ func (m *MockStepExecutor) OnFinished(arg0 context.Context, arg1 *proto.Subtask)
 func (mr *MockStepExecutorMockRecorder) OnFinished(arg0, arg1 any) *gomock.Call {
 	mr.mock.ctrl.T.Helper()
 	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "OnFinished", reflect.TypeOf((*MockStepExecutor)(nil).OnFinished), arg0, arg1)
+}
+
+// RealtimeSummary mocks base method.
+func (m *MockStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+	m.ctrl.T.Helper()
+	ret := m.ctrl.Call(m, "RealtimeSummary")
+	ret0, _ := ret[0].(*execute.SubtaskSummary)
+	return ret0
+}
+
+// RealtimeSummary indicates an expected call of RealtimeSummary.
+func (mr *MockStepExecutorMockRecorder) RealtimeSummary() *gomock.Call {
+	mr.mock.ctrl.T.Helper()
+	return mr.mock.ctrl.RecordCallWithMethodType(mr.mock, "RealtimeSummary", reflect.TypeOf((*MockStepExecutor)(nil).RealtimeSummary))
 }
 
 // RunSubtask mocks base method.

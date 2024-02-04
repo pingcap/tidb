@@ -53,7 +53,7 @@ func TestIndexUsageReporter(t *testing.T) {
 	// For PointGet and BatchPointGet
 	planID := 3
 	runtimeStatsColl.GetBasicRuntimeStats(planID).Record(time.Second, 2024)
-	reporter.ReportPointGetIndexUsage(tableID, indexID, planID, 1)
+	reporter.ReportPointGetIndexUsage(tableID, tableID, indexID, planID, 1)
 
 	require.Eventually(t, func() bool {
 		tk.Session().ReportUsageStats()
@@ -73,7 +73,7 @@ func TestIndexUsageReporter(t *testing.T) {
 		ExecutorId:      &executorID,
 		Concurrency:     &zero,
 	})
-	reporter.ReportCopIndexUsage(tableID, indexID, planID)
+	reporter.ReportCopIndexUsage(tableID, tableID, indexID, planID)
 
 	require.Eventually(t, func() bool {
 		tk.Session().ReportUsageStats()
@@ -88,7 +88,7 @@ func TestIndexUsageReporter(t *testing.T) {
 	}
 	planID = 4
 	runtimeStatsColl.GetBasicRuntimeStats(planID).Record(time.Second, 2024)
-	reporter.ReportPointGetIndexUsage(tableID, indexID, planID, 1)
+	reporter.ReportPointGetIndexUsage(tableID, tableID, indexID, planID, 1)
 
 	require.Eventually(t, func() bool {
 		tk.Session().ReportUsageStats()
@@ -299,10 +299,6 @@ partition p3 values less than MAXVALUE)`)
 
 	table, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	var pids []int64
-	for i := 0; i < 4; i++ {
-		pids = append(pids, table.Meta().Partition.GetPartitionIDByName(fmt.Sprintf("p%d", i)))
-	}
 	idx1ID := int64(0)
 	for _, idx := range table.Indices() {
 		if idx.Meta().Name.L == "idx_1" {
@@ -324,11 +320,11 @@ partition p3 values less than MAXVALUE)`)
 			"select id_1 from t where id_1 >= 30",
 			"PartitionUnion",
 			[]indexStatsExpect{
-				{pids[2], idx1ID, []indexusage.Sample{
+				{table.Meta().ID, idx1ID, []indexusage.Sample{
 					indexusage.NewSample(1, 1, 20, 30),
 				}},
-				{pids[3], idx1ID, []indexusage.Sample{
-					indexusage.NewSample(1, 1, 50, 50),
+				{table.Meta().ID, idx1ID, []indexusage.Sample{
+					indexusage.NewSample(0, 1, 50, 50),
 				}},
 			},
 		},
@@ -337,7 +333,7 @@ partition p3 values less than MAXVALUE)`)
 			"select id_1 from t where id_1 - 95 >= 0 and id_1 >= 90",
 			"IndexReader",
 			[]indexStatsExpect{
-				{pids[3], idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 10, 50)}},
+				{table.Meta().ID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 10, 50)}},
 			},
 		},
 		// PointGet in a partition
@@ -345,7 +341,7 @@ partition p3 values less than MAXVALUE)`)
 			"select * from t where id_1 = 1",
 			"Point_Get",
 			[]indexStatsExpect{
-				{pids[0], idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 10)}},
+				{table.Meta().ID, idx1ID, []indexusage.Sample{indexusage.NewSample(1, 1, 1, 10)}},
 			},
 		},
 		// BatchPointGet in a partition

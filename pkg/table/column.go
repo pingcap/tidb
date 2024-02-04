@@ -326,10 +326,11 @@ func handleZeroDatetime(sessVars *variable.SessionVars, col *model.ColumnInfo, c
 // If the handle of err is changed latter, the behavior of forceIgnoreTruncate also need to change.
 // TODO: change the third arg to TypeField. Not pass ColumnInfo.
 func CastValue(sctx sessionctx.Context, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
-	return castValue(sctx.GetSessionVars(), val, col, returnErr, forceIgnoreTruncate)
+	return CastColumnValue(sctx.GetSessionVars(), val, col, returnErr, forceIgnoreTruncate)
 }
 
-func castValue(vars *variable.SessionVars, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
+// CastColumnValue casts a value based on column type.
+func CastColumnValue(vars *variable.SessionVars, val types.Datum, col *model.ColumnInfo, returnErr, forceIgnoreTruncate bool) (casted types.Datum, err error) {
 	sc := vars.StmtCtx
 	casted, err = val.ConvertTo(sc.TypeCtx(), &col.FieldType)
 	// TODO: make sure all truncate errors are handled by ConvertTo.
@@ -524,7 +525,7 @@ type getColOriginDefaultValue struct {
 }
 
 // GetColOriginDefaultValue gets default value of the column from original default value.
-func GetColOriginDefaultValue(ctx sessionctx.Context, col *model.ColumnInfo) (types.Datum, error) {
+func GetColOriginDefaultValue(ctx expression.BuildContext, col *model.ColumnInfo) (types.Datum, error) {
 	return getColDefaultValue(ctx, col, col.GetOriginDefaultValue(), nil)
 }
 
@@ -570,7 +571,7 @@ func getColDefaultExprValue(ctx expression.BuildContext, col *model.ColumnInfo, 
 		return types.Datum{}, err
 	}
 	// Check the evaluated data type by cast.
-	value, err := castValue(ctx.GetSessionVars(), d, col, false, false)
+	value, err := CastColumnValue(ctx.GetSessionVars(), d, col, false, false)
 	if err != nil {
 		return types.Datum{}, err
 	}
@@ -585,7 +586,7 @@ func getColDefaultValue(ctx expression.BuildContext, col *model.ColumnInfo, defa
 	switch col.GetType() {
 	case mysql.TypeTimestamp, mysql.TypeDate, mysql.TypeDatetime:
 	default:
-		value, err := castValue(ctx.GetSessionVars(), types.NewDatum(defaultVal), col, false, false)
+		value, err := CastColumnValue(ctx.GetSessionVars(), types.NewDatum(defaultVal), col, false, false)
 		if err != nil {
 			return types.Datum{}, err
 		}

@@ -226,12 +226,10 @@ func (s *BaseScheduler) scheduleTask() {
 				s.logger.Info("schedule task meet err, reschedule it", zap.Error(err))
 			}
 
-			failpoint.Inject("mockOwnerChange", func(val failpoint.Value) {
-				if val.(bool) {
-					s.logger.Info("mockOwnerChange called")
-					MockOwnerChange()
-					time.Sleep(time.Second)
-				}
+			failpoint.Inject("mockOwnerChange", func() {
+				s.logger.Info("mockOwnerChange called")
+				MockOwnerChange()
+				time.Sleep(time.Second)
 			})
 		}
 	}

@@ -37,7 +37,7 @@ func GetMockStepExecutor(ctrl *gomock.Controller) *mockexecute.MockStepExecutor 
 func GetMockTaskExecutorExtension(ctrl *gomock.Controller, mockStepExecutor *mockexecute.MockStepExecutor) *mock.MockExtension {
 	mockExtension := mock.NewMockExtension(ctrl)
 	mockExtension.EXPECT().
-		GetStepExecutor(gomock.Any(), gomock.Any(), gomock.Any()).
+		GetStepExecutor(gomock.Any(), gomock.Any()).
 		Return(mockStepExecutor, nil).AnyTimes()
 	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
 	return mockExtension
@@ -49,6 +49,7 @@ func InitTaskExecutor(ctrl *gomock.Controller, runSubtaskFn func(ctx context.Con
 	mockStepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
 		runSubtaskFn,
 	).AnyTimes()
+	mockStepExecutor.EXPECT().RealtimeSummary().Return(nil).AnyTimes()
 
 	mockExtension := GetMockTaskExecutorExtension(ctrl, mockStepExecutor)
 	taskexecutor.RegisterTaskType(proto.TaskTypeExample,

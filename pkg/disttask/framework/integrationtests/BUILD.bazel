@@ -1,7 +1,7 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "framework_test",
+    name = "integrationtests_test",
     timeout = "short",
     srcs = [
         "framework_err_handling_test.go",
@@ -10,10 +10,11 @@ go_test(
         "framework_role_test.go",
         "framework_rollback_test.go",
         "framework_test.go",
+        "main_test.go",
     ],
     flaky = True,
     race = "off",
-    shard_count = 26,
+    shard_count = 22,
     deps = [
         "//pkg/disttask/framework/handle",
         "//pkg/disttask/framework/proto",
@@ -22,8 +23,10 @@ go_test(
         "//pkg/disttask/framework/taskexecutor",
         "//pkg/disttask/framework/testutil",
         "//pkg/testkit",
+        "//pkg/testkit/testsetup",
         "//pkg/util",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
+        "@org_uber_go_goleak//:goleak",
     ],
 )

@@ -18,10 +18,13 @@ import (
 	"bytes"
 	"cmp"
 	"fmt"
+	"math/rand"
 	"slices"
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -33,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/memory"
 	"go.uber.org/zap"
 )
 
@@ -213,12 +217,57 @@ func (w *AggWorkerStat) Clone() *AggWorkerStat {
 	}
 }
 
-// ActionSpill returns a AggSpillDiskAction for spilling intermediate data for hashAgg.
-func (e *HashAggExec) ActionSpill() *AggSpillDiskAction {
-	if e.spillAction == nil {
-		e.spillAction = &AggSpillDiskAction{
-			e: e,
-		}
+func (e *HashAggExec) actionSpillForUnparallel() memory.ActionOnExceed {
+	e.spillAction = &AggSpillDiskAction{
+		e: e,
 	}
 	return e.spillAction
+}
+
+func (e *HashAggExec) actionSpillForParallel() memory.ActionOnExceed {
+	e.parallelAggSpillAction = &ParallelAggSpillDiskAction{
+		e:           e,
+		spillHelper: e.spillHelper,
+	}
+	return e.parallelAggSpillAction
+}
+
+// ActionSpill returns an action for spilling intermediate data for hashAgg.
+func (e *HashAggExec) ActionSpill() memory.ActionOnExceed {
+	if e.IsUnparallelExec {
+		return e.actionSpillForUnparallel()
+	}
+	return e.actionSpillForParallel()
+}
+
+func failpointError() error {
+	var err error
+	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
+		if val.(bool) {
+			num := rand.Intn(1000)
+			if num < 3 {
+				err = errors.Errorf("Random fail is triggered in ParallelAggSpillDiskAction")
+			}
+		}
+	})
+	return err
+}
+
+func updateWaitTime(stats *AggWorkerStat, startTime time.Time) {
+	if stats != nil {
+		stats.WaitTime += int64(time.Since(startTime))
+	}
+}
+
+func updateWorkerTime(stats *AggWorkerStat, startTime time.Time) {
+	if stats != nil {
+		stats.WorkerTime += int64(time.Since(startTime))
+	}
+}
+
+func updateExecTime(stats *AggWorkerStat, startTime time.Time) {
+	if stats != nil {
+		stats.ExecTime += int64(time.Since(startTime))
+		stats.TaskNum++
+	}
 }
