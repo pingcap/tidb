@@ -64,7 +64,7 @@ func (st *subTable) build(threadSafe bool, startSegmentIndex int, segmentStep in
 	for i := startSegmentIndex; i < len(st.rowData.segments); i += segmentStep {
 		for index := range st.rowData.segments[i].validJoinKeyPos {
 			rowAddress := st.rowData.segments[i].rowLocations[index]
-			hashValue := getHashValue(rowAddress)
+			hashValue := st.rowData.segments[i].hashValues[index]
 			pos := hashValue & st.posMask
 			updateHashValue(pos, rowAddress)
 		}
