@@ -261,6 +261,7 @@ func (is *infoSchema) SchemaByID(id int64) (val *model.DBInfo, ok bool) {
 	return nil, false
 }
 
+// SchemaByTable get a table's schema name
 func SchemaByTable(is InfoSchema, tableInfo *model.TableInfo) (val *model.DBInfo, ok bool) {
 	if tableInfo == nil {
 		return nil, false
@@ -629,7 +630,7 @@ func (is *SessionTables) Count() int {
 	return len(is.idx2table)
 }
 
-// SchemaByTable get a table's schema name
+// SchemaByID get a table's schema from the schema ID.
 func (is *SessionTables) SchemaByID(id int64) (*model.DBInfo, bool) {
 	for _, v := range is.schemaMap {
 		if v.dbInfo.ID == id {
@@ -706,7 +707,7 @@ func (ts *SessionExtendedInfoSchema) TableByID(id int64) (table.Table, bool) {
 	return ts.InfoSchema.TableByID(id)
 }
 
-// SchemaByTable implements InfoSchema.SchemaByTable, it returns a stale DBInfo even if it's dropped.
+// SchemaByID implements InfoSchema.SchemaByID, it returns a stale DBInfo even if it's dropped.
 func (ts *SessionExtendedInfoSchema) SchemaByID(id int64) (*model.DBInfo, bool) {
 	if ts.LocalTemporaryTables != nil {
 		if db, ok := ts.LocalTemporaryTables.SchemaByID(id); ok {
