@@ -590,7 +590,7 @@ func GetFracIndex(s string) (index int) {
 	}
 	index = -1
 	for i := end; i >= 0; i-- {
-		if s[i] != '+' && s[i] != '-' && unicode.IsPunct(rune(s[i])) {
+		if s[i] != '+' && s[i] != '-' && isPunctuation(s[i]) {
 			if s[i] == '.' {
 				index = i
 			}
