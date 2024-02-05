@@ -17,6 +17,7 @@ package expression
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/pingcap/tipb/go-tipb"
 	"strings"
 	"testing"
 
@@ -28,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/mock"
-	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -636,6 +636,11 @@ func TestExprPushDownToFlash(t *testing.T) {
 
 	// CastDecimalAsInt
 	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeLonglong), decimalColumn)
+	require.NoError(t, err)
+	exprs = append(exprs, function)
+
+	// CastDecimalAsDouble
+	function, err = NewFunction(mock.NewContext(), ast.Cast, types.NewFieldType(mysql.TypeDouble), decimalColumn)
 	require.NoError(t, err)
 	exprs = append(exprs, function)
 
