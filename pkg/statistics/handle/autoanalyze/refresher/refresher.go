@@ -15,8 +15,6 @@
 package refresher
 
 import (
-	"container/heap"
-
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
@@ -29,7 +27,7 @@ type Refresher struct {
 	statsHandle    statstypes.StatsHandle
 	sysProcTracker sessionctx.SysProcTracker
 
-	jobs *priorityqueue.AnalysisQueue
+	jobs *priorityqueue.AnalysisPriorityQueue
 }
 
 // NewRefresher creates a new Refresher and starts the goroutine.
@@ -40,6 +38,7 @@ func NewRefresher(
 	r := &Refresher{
 		statsHandle:    statsHandle,
 		sysProcTracker: sysProcTracker,
+		jobs:           priorityqueue.NewAnalysisPriorityQueue(),
 	}
 
 	return r, nil
@@ -58,20 +57,20 @@ func (r *Refresher) pickOneTableAndAnalyzeByPriority() {
 	sctx := se.(sessionctx.Context)
 	// Pick the table with the highest weight.
 	for r.jobs.Len() > 0 {
-		job := heap.Pop(r.jobs).(*priorityqueue.TableAnalysisJob)
+		job := r.jobs.Pop()
 		if valid, failReason := job.IsValidToAnalyze(
 			sctx,
 		); !valid {
 			statslogutil.StatsLogger().Info(
 				"Table is not ready to analyze",
 				zap.String("failReason", failReason),
-				zap.Any("job", job),
+				zap.Stringer("job", job),
 			)
 			continue
 		}
 		statslogutil.StatsLogger().Info(
 			"Auto analyze triggered",
-			zap.Any("job", job),
+			zap.Stringer("job", job),
 		)
 		err = job.Execute(
 			r.statsHandle,
@@ -80,7 +79,7 @@ func (r *Refresher) pickOneTableAndAnalyzeByPriority() {
 		if err != nil {
 			statslogutil.StatsLogger().Error(
 				"Execute auto analyze job failed",
-				zap.Any("job", job),
+				zap.Stringer("job", job),
 				zap.Error(err),
 			)
 		}

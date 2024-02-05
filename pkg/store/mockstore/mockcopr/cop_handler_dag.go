@@ -467,6 +467,7 @@ func flagsAndTzToSessionContext(flags uint64, tz *time.Location) sessionctx.Cont
 	sc := stmtctx.NewStmtCtx()
 	sc.InitFromPBFlagAndTz(flags, tz)
 	sctx.GetSessionVars().StmtCtx = sc
+	sctx.GetSessionVars().TimeZone = tz
 	return sctx
 }
 

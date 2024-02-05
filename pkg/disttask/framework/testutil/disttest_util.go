@@ -29,9 +29,14 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
+// RegisterTaskMetaWithDXFCtx initialize mock components for dist task.
+func RegisterTaskMetaWithDXFCtx(c *TestDXFContext, schedulerExt scheduler.Extension, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) {
+	RegisterTaskMeta(c.T, c.MockCtrl, schedulerExt, c.TestContext, runSubtaskFn)
+}
+
 // RegisterTaskMeta initialize mock components for dist task.
-func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, schedulerHandle scheduler.Extension, testContext *TestContext, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) {
-	mockExtension := mock.NewMockExtension(ctrl)
+func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, schedulerExt scheduler.Extension, testContext *TestContext, runSubtaskFn func(ctx context.Context, subtask *proto.Subtask) error) {
+	executorExt := mock.NewMockExtension(ctrl)
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
 	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
 	mockStepExecutor := GetMockStepExecutor(ctrl)
@@ -46,17 +51,17 @@ func RegisterTaskMeta(t *testing.T, ctrl *gomock.Controller, schedulerHandle sch
 				}
 				return nil
 			}).AnyTimes()
-		mockStepExecutor.EXPECT().RealtimeSummary().Return(nil).AnyTimes()
 	} else {
 		mockStepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(runSubtaskFn).AnyTimes()
 	}
-	mockExtension.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
-	mockExtension.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any()).Return(mockStepExecutor, nil).AnyTimes()
-	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
-	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, schedulerHandle)
+	mockStepExecutor.EXPECT().RealtimeSummary().Return(nil).AnyTimes()
+	executorExt.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
+	executorExt.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any()).Return(mockStepExecutor, nil).AnyTimes()
+	executorExt.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
+	registerTaskMetaInner(t, proto.TaskTypeExample, schedulerExt, executorExt, mockCleanupRountine)
 }
 
-func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, mockExtension taskexecutor.Extension, mockCleanup scheduler.CleanUpRoutine, schedulerHandle scheduler.Extension) {
+func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, schedulerExt scheduler.Extension, executorExt taskexecutor.Extension, mockCleanup scheduler.CleanUpRoutine) {
 	t.Cleanup(func() {
 		scheduler.ClearSchedulerFactory()
 		scheduler.ClearSchedulerCleanUpFactory()
@@ -65,7 +70,7 @@ func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, mockExtension 
 	scheduler.RegisterSchedulerFactory(taskType,
 		func(ctx context.Context, task *proto.Task, param scheduler.Param) scheduler.Scheduler {
 			baseScheduler := scheduler.NewBaseScheduler(ctx, task, param)
-			baseScheduler.Extension = schedulerHandle
+			baseScheduler.Extension = schedulerExt
 			return baseScheduler
 		})
 
@@ -77,37 +82,37 @@ func registerTaskMetaInner(t *testing.T, taskType proto.TaskType, mockExtension 
 	taskexecutor.RegisterTaskType(taskType,
 		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
 			s := taskexecutor.NewBaseTaskExecutor(ctx, id, task, taskTable)
-			s.Extension = mockExtension
+			s.Extension = executorExt
 			return s
 		},
 	)
 }
 
 // RegisterRollbackTaskMeta register rollback task meta.
-func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, mockScheduler scheduler.Extension, testContext *TestContext) {
-	mockExtension := mock.NewMockExtension(ctrl)
-	mockExecutor := mockexecute.NewMockStepExecutor(ctrl)
+func RegisterRollbackTaskMeta(t *testing.T, ctrl *gomock.Controller, schedulerExt scheduler.Extension, testContext *TestContext) {
+	executorExt := mock.NewMockExtension(ctrl)
+	stepExecutor := mockexecute.NewMockStepExecutor(ctrl)
 	mockCleanupRountine := mock.NewMockCleanUpRoutine(ctrl)
 	mockCleanupRountine.EXPECT().CleanUp(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	mockExecutor.EXPECT().Init(gomock.Any()).Return(nil).AnyTimes()
-	mockExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil).AnyTimes()
-	mockExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
+	stepExecutor.EXPECT().Init(gomock.Any()).Return(nil).AnyTimes()
+	stepExecutor.EXPECT().Cleanup(gomock.Any()).Return(nil).AnyTimes()
+	stepExecutor.EXPECT().RunSubtask(gomock.Any(), gomock.Any()).DoAndReturn(
 		func(_ context.Context, subtask *proto.Subtask) error {
 			testContext.CollectSubtask(subtask)
 			return nil
 		}).AnyTimes()
-	mockExecutor.EXPECT().RealtimeSummary().Return(nil).AnyTimes()
-	mockExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
-	mockExtension.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
-	mockExtension.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any()).Return(mockExecutor, nil).AnyTimes()
-	mockExtension.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
+	stepExecutor.EXPECT().RealtimeSummary().Return(nil).AnyTimes()
+	stepExecutor.EXPECT().OnFinished(gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	executorExt.EXPECT().IsIdempotent(gomock.Any()).Return(true).AnyTimes()
+	executorExt.EXPECT().GetStepExecutor(gomock.Any(), gomock.Any()).Return(stepExecutor, nil).AnyTimes()
+	executorExt.EXPECT().IsRetryableError(gomock.Any()).Return(false).AnyTimes()
 
-	registerTaskMetaInner(t, proto.TaskTypeExample, mockExtension, mockCleanupRountine, mockScheduler)
+	registerTaskMetaInner(t, proto.TaskTypeExample, schedulerExt, executorExt, mockCleanupRountine)
 }
 
 // SubmitAndWaitTask schedule one task.
-func SubmitAndWaitTask(ctx context.Context, t *testing.T, taskKey string) *proto.Task {
-	_, err := handle.SubmitTask(ctx, taskKey, proto.TaskTypeExample, 1, nil)
+func SubmitAndWaitTask(ctx context.Context, t *testing.T, taskKey string, concurrency int) *proto.Task {
+	_, err := handle.SubmitTask(ctx, taskKey, proto.TaskTypeExample, concurrency, nil)
 	require.NoError(t, err)
 	return WaitTaskDoneOrPaused(ctx, t, taskKey)
 }
