@@ -419,11 +419,6 @@ func MergePartTopN2GlobalTopN(
 		iter.finish()
 	}
 	statistics.SortTopnMeta(finalTopNs)
-	// The length is n+1.
-	if len(finalTopNs) > int(n) {
-		remainedTopNs = append(remainedTopNs, finalTopNs[n:]...)
-		finalTopNs = finalTopNs[:n]
-	}
 	statistics.SortTopnMeta(remainedTopNs)
 	var globalTopN statistics.TopN
 	globalTopN.TopN = finalTopNs
