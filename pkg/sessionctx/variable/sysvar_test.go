@@ -1416,7 +1416,7 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 
 	// Set to s3, should fail
 	err = mock.SetGlobalSysVar(ctx, TiDBCloudStorageURI, "s3://blackhole")
-	require.ErrorContains(t, err, "bucket blackhole")
+	require.Error(t, err, "unreachable storage URI")
 
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
@@ -1511,5 +1511,18 @@ func TestGlobalSystemVariableInitialValue(t *testing.T) {
 	for _, v := range vars {
 		initVal := GlobalSystemVariableInitialValue(v.name, v.val)
 		require.Equal(t, v.initVal, initVal)
+	}
+}
+
+func TestTiDBOptTxnAutoRetry(t *testing.T) {
+	sv := GetSysVar(TiDBDisableTxnAutoRetry)
+	vars := NewSessionVars(nil)
+
+	for _, scope := range []ScopeFlag{ScopeSession, ScopeGlobal} {
+		val, err := sv.Validate(vars, "OFF", scope)
+		require.NoError(t, err)
+		require.Equal(t, "ON", val)
+		warn := vars.StmtCtx.GetWarnings()[0].Err
+		require.Equal(t, "[variable:1287]'OFF' is deprecated and will be removed in a future release. Please use ON instead", warn.Error())
 	}
 }

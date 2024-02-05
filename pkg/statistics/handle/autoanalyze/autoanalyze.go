@@ -111,7 +111,7 @@ const SelectAnalyzeJobsSQL = `SELECT id, instance
 // BatchUpdateAnalyzeJobSQL is the SQL to update the analyze jobs to `failed` state.
 const BatchUpdateAnalyzeJobSQL = `UPDATE mysql.analyze_jobs
             SET state = 'failed',
-            fail_reason = 'TiDB Server is down when running the analyze job',
+            fail_reason = 'The TiDB Server has either shut down or the analyze query was terminated during the analyze job execution',
             process_id = NULL
             WHERE id IN (%?)`
 
@@ -358,7 +358,7 @@ func RandomPickOneTableAndTryAutoAnalyze(
 	start, end time.Time,
 ) bool {
 	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
-	dbs := is.AllSchemaNames()
+	dbs := infoschema.AllSchemaNames(is)
 	// Shuffle the database and table slice to randomize the order of analyzing tables.
 	rd := rand.New(rand.NewSource(time.Now().UnixNano())) // #nosec G404
 	rd.Shuffle(len(dbs), func(i, j int) {

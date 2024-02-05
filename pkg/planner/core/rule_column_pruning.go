@@ -396,7 +396,8 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column, opt 
 		infoschema.ClusterTableTiDBTrx,
 		infoschema.TableDataLockWaits,
 		infoschema.TableDeadlocks,
-		infoschema.ClusterTableDeadlocks:
+		infoschema.ClusterTableDeadlocks,
+		infoschema.TableTables:
 	default:
 		return nil
 	}

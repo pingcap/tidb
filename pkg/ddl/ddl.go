@@ -742,7 +742,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	taskexecutor.RegisterTaskType(proto.Backfill,
 		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
 			return newBackfillDistExecutor(ctx, id, task, taskTable, d)
-		}, taskexecutor.WithSummary,
+		},
 	)
 
 	scheduler.RegisterSchedulerFactory(proto.Backfill,

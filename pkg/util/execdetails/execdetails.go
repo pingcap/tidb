@@ -612,6 +612,14 @@ func (crs *CopRuntimeStats) GetActRows() (totalRows int64) {
 	return totalRows
 }
 
+// GetTasks return total tasks of CopRuntimeStats
+func (crs *CopRuntimeStats) GetTasks() (totalTasks int32) {
+	for _, instanceStats := range crs.stats {
+		totalTasks += instanceStats.totalTasks
+	}
+	return totalTasks
+}
+
 // MergeBasicStats traverses basicCopRuntimeStats in the CopRuntimeStats and collects some useful information.
 func (crs *CopRuntimeStats) MergeBasicStats() (procTimes Percentile[Duration], totalTime time.Duration, totalTasks, totalLoops, totalThreads int32, totalTiFlashScanContext TiFlashScanContext) {
 	totalTiFlashScanContext = TiFlashScanContext{}

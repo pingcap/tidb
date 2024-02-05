@@ -18,8 +18,10 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
@@ -87,4 +89,68 @@ func (s *mockGCSSuite) TestWriteAfterImportFromSelect() {
 	s.tk.MustExec("create table dt(id int, v varchar(64))")
 	s.tk.MustExec("insert into dt values(4, 'aaaaaa'), (5, 'bbbbbb'), (6, 'cccccc'), (7, 'dddddd')")
 	s.testWriteAfterImport(`import into t FROM select * from from_select.dt`, importer.DataSourceTypeQuery)
+}
+
+func (s *mockGCSSuite) TestImportFromSelectStaleRead() {
+	s.prepareAndUseDB("from_select")
+	// set tidb_snapshot might fail without this, not familiar about this part.
+	s.tk.MustExec(`replace into mysql.tidb(variable_name, variable_value) values ('tikv_gc_safe_point', '20240131-00:00:00.000 +0800')`)
+	s.tk.MustExec("create table src(id int, v varchar(64))")
+	s.tk.MustExec("insert into src values(1, 'a')")
+	time.Sleep(100 * time.Millisecond)
+	now := s.tk.MustQuery("select now(6)").Rows()[0][0].(string)
+	time.Sleep(100 * time.Millisecond)
+	s.tk.MustExec("insert into src values(2, 'b')")
+	s.tk.MustQuery("select * from src").Check(testkit.Rows("1 a", "2 b"))
+	staleReadSQL := fmt.Sprintf("select * from src as of timestamp '%s'", now)
+	s.tk.MustQuery(staleReadSQL).Check(testkit.Rows("1 a"))
+	s.tk.MustExec("create table dst(id int, v varchar(64))")
+
+	//
+	// in below cases, dst table not exists at time 'now'
+	//
+	// using set tidb_snapshot
+	s.tk.MustExec("set tidb_snapshot = '" + now + "'")
+	s.ErrorIs(s.tk.ExecToErr("import into dst from "+staleReadSQL), infoschema.ErrTableNotExists)
+	s.ErrorIs(s.tk.ExecToErr("import into dst from select * from src"), infoschema.ErrTableNotExists)
+	// using AS OF TIMESTAMP
+	s.tk.MustExec("set tidb_snapshot = ''")
+	s.tk.MustExec("import into dst from " + staleReadSQL)
+	s.tk.MustQuery("select * from dst").Check(testkit.Rows("1 a"))
+
+	//
+	// in below cases, table exists at time 'now', and it's the latest version too.
+	//
+	s.tk.MustExec("truncate table dst")
+	time.Sleep(100 * time.Millisecond)
+	now = s.tk.MustQuery("select now(6)").Rows()[0][0].(string)
+	time.Sleep(100 * time.Millisecond)
+	staleReadSQL = fmt.Sprintf("select * from src as of timestamp '%s'", now)
+	s.tk.MustExec("insert into src values(3, 'c')")
+	s.tk.MustQuery("select * from src").Check(testkit.Rows("1 a", "2 b", "3 c"))
+	// using set tidb_snapshot
+	s.tk.MustExec("set tidb_snapshot = '" + now + "'")
+	s.ErrorContains(s.tk.ExecToErr("import into dst from "+staleReadSQL),
+		"can not execute write statement when 'tidb_snapshot' is set")
+	s.ErrorContains(s.tk.ExecToErr("import into dst from select * from src"),
+		"can not execute write statement when 'tidb_snapshot' is set")
+	// using AS OF TIMESTAMP
+	s.tk.MustExec("set tidb_snapshot = ''")
+	s.tk.MustExec("import into dst from " + staleReadSQL)
+	s.tk.MustQuery("select * from dst").Check(testkit.Rows("1 a", "2 b"))
+
+	//
+	// in below cases, table exists at time 'now', and it's NOT the latest version.
+	//
+	s.tk.MustExec("truncate table dst")
+	// using set tidb_snapshot
+	s.tk.MustExec("set tidb_snapshot = '" + now + "'")
+	s.ErrorContains(s.tk.ExecToErr("import into dst from "+staleReadSQL),
+		"can not execute IMPORT statement when 'tidb_snapshot' is set")
+	s.ErrorContains(s.tk.ExecToErr("import into dst from select * from src"),
+		"can not execute IMPORT statement when 'tidb_snapshot' is set")
+	// using AS OF TIMESTAMP
+	s.tk.MustExec("set tidb_snapshot = ''")
+	s.tk.MustExec("import into dst from " + staleReadSQL)
+	s.tk.MustQuery("select * from dst").Check(testkit.Rows("1 a", "2 b"))
 }

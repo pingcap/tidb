@@ -30,6 +30,8 @@ type TaskManager interface {
 	// The returned tasks are sorted by task order, see proto.Task, and only contains
 	// some fields, see row2TaskBasic.
 	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.Task, error)
+	// GetAllSubtasks gets all subtasks with basic columns.
+	GetAllSubtasks(ctx context.Context) ([]*proto.Subtask, error)
 	GetTasksInStates(ctx context.Context, states ...any) (task []*proto.Task, err error)
 	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
 	GCSubtasks(ctx context.Context) error
@@ -133,9 +135,10 @@ type Extension interface {
 
 // Param is used to pass parameters when creating scheduler.
 type Param struct {
-	taskMgr TaskManager
-	nodeMgr *NodeManager
-	slotMgr *SlotManager
+	taskMgr  TaskManager
+	nodeMgr  *NodeManager
+	slotMgr  *SlotManager
+	serverID string
 }
 
 // schedulerFactoryFn is used to create a scheduler.
