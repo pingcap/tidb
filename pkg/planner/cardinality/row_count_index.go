@@ -484,7 +484,11 @@ func expBackoffEstimation(sctx sessionctx.Context, idx *statistics.Index, coll *
 	// Do not allow the exponential backoff to go below the available index bound. If the number of predicates
 	// is less than the number of index columns - use 90% of the bound to differentiate a subset from full index match.
 	// If there is an individual column selectivity that goes below this bound, use that selectivity only.
-	idxLowBound := max(1/float64(idx.NDV), 1/float64(coll.RealtimeCount))
+	histNDV := coll.RealtimeCount
+	if idx.NDV > 0 {
+		histNDV = idx.NDV
+	}
+	idxLowBound := 1 / float64(min(histNDV, coll.RealtimeCount))
 	if l < len(idx.Info.Columns) {
 		idxLowBound /= 0.9
 	}
