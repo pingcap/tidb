@@ -995,6 +995,7 @@ type aggExec struct {
 
 	groupByRows  []chunk.Row
 	groupByTypes []*types.FieldType
+	DefaultVal   *chunk.Chunk
 
 	processed bool
 }
@@ -1039,6 +1040,29 @@ func (e *aggExec) getContexts(groupKey []byte) []*aggregation.AggEvaluateContext
 	return aggCtxs
 }
 
+// processAllRows handles the aggregation logic inside.
+// Special case for first_row in scalar agg case:
+// 1: If all the aggregation functions are first_row/any_value, we should fill nothing, and let it empty.
+// 2: If there exists some other non-first-value aggregations, we should fill the default value for both of them.
+//
+// mysql> select any_value(a) from (select * from t3) s;
+// Empty set (0.01 sec)
+//
+// mysql> select count(a) from (select * from t3) s;
+// +----------+
+// | count(a) |
+// +----------+
+// |        0 |
+// +----------+
+// 1 row in set (0.01 sec)
+//
+// mysql> select count(a), any_value(a) from (select * from t3) s;
+// +----------+--------------+
+// | count(a) | any_value(a) |
+// +----------+--------------+
+// |        0 |         NULL |
+// +----------+--------------+
+// 1 row in set (0.01 sec)
 func (e *aggExec) processAllRows() (*chunk.Chunk, error) {
 	for {
 		chk, err := e.children[0].next()
@@ -1075,24 +1099,36 @@ func (e *aggExec) processAllRows() (*chunk.Chunk, error) {
 
 	chk := chunk.NewChunkWithCapacity(e.fieldTypes, 0)
 
-	for i, gk := range e.groupKeys {
-		newRow := chunk.MutRowFromTypes(e.fieldTypes)
-		aggCtxs := e.getContexts(gk)
-		for i, agg := range e.aggExprs {
-			result := agg.GetResult(aggCtxs[i])
-			if e.fieldTypes[i].GetType() == mysql.TypeLonglong && result.Kind() == types.KindMysqlDecimal {
-				var err error
-				result, err = result.ConvertTo(e.sctx.GetSessionVars().StmtCtx.TypeCtx(), e.fieldTypes[i])
-				if err != nil {
-					return nil, errors.Trace(err)
+	// where len(e.groupKeys) equals to 0, that means there is no data in the below child source.
+	// And when e.DefaultVal is not nil, it means it's a scalar agg. Some default value should be
+	// filled.
+	// In the contrary with those even without group by items, the whole data(not empty) will be
+	// seen as one group, and classified into that group with key built as "". So its groupKeys here
+	// is not the size of 0.
+	// 1: len(e.groupKeys) == 0 indicates whether the source data is equal to empty-set.
+	// 2: e.DefaultVal != nil indicates whether this aggregate is a scalar aggregation.
+	if len(e.groupKeys) == 0 && e.DefaultVal != nil {
+		chk.Append(e.DefaultVal, 0, 1)
+	} else {
+		for i, gk := range e.groupKeys {
+			newRow := chunk.MutRowFromTypes(e.fieldTypes)
+			aggCtxs := e.getContexts(gk)
+			for i, agg := range e.aggExprs {
+				result := agg.GetResult(aggCtxs[i])
+				if e.fieldTypes[i].GetType() == mysql.TypeLonglong && result.Kind() == types.KindMysqlDecimal {
+					var err error
+					result, err = result.ConvertTo(e.sctx.GetSessionVars().StmtCtx.TypeCtx(), e.fieldTypes[i])
+					if err != nil {
+						return nil, errors.Trace(err)
+					}
 				}
+				newRow.SetDatum(i, result)
 			}
-			newRow.SetDatum(i, result)
+			if len(e.groupByRows) > 0 {
+				newRow.ShallowCopyPartialRow(len(e.aggExprs), e.groupByRows[i])
+			}
+			chk.AppendRow(newRow.ToRow())
 		}
-		if len(e.groupByRows) > 0 {
-			newRow.ShallowCopyPartialRow(len(e.aggExprs), e.groupByRows[i])
-		}
-		chk.AppendRow(newRow.ToRow())
 	}
 	e.execSummary.updateOnlyRows(chk.NumRows())
 	return chk, nil
