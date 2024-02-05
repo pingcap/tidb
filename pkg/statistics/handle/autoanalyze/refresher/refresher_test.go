@@ -28,8 +28,10 @@ func TestPickOneTableAndAnalyzeByPriority(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("create table t (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
-	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+	tk.MustExec("create table t1 (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
+	tk.MustExec("create table t2 (a int, b int, index idx(a)) partition by range (a) (partition p0 values less than (2), partition p1 values less than (4))")
+	tk.MustExec("insert into t1 values (1, 1), (2, 2), (3, 3)")
+	tk.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3)")
 
 	handle := dom.StatsHandle()
 	sysProcTracker := dom.SysProcTracker()
@@ -39,23 +41,43 @@ func TestPickOneTableAndAnalyzeByPriority(t *testing.T) {
 	r.pickOneTableAndAnalyzeByPriority()
 	// The table is not analyzed.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
+	tbl1, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t1"))
 	require.NoError(t, err)
-	pid := tbl.Meta().GetPartitionInfo().Definitions[0].ID
-	tblStats := handle.GetPartitionStats(tbl.Meta(), pid)
-	require.True(t, tblStats.Pseudo)
+	pid1 := tbl1.Meta().GetPartitionInfo().Definitions[0].ID
+	tblStats1 := handle.GetPartitionStats(tbl1.Meta(), pid1)
+	require.True(t, tblStats1.Pseudo)
 
 	// Add a job to the queue.
-	job := &priorityqueue.TableAnalysisJob{
-		TableID:          tbl.Meta().ID,
+	job1 := &priorityqueue.TableAnalysisJob{
+		TableID:          tbl1.Meta().ID,
 		TableSchema:      "test",
-		TableName:        "t",
+		TableName:        "t1",
 		ChangePercentage: 0.5,
 		Weight:           1,
 	}
-	r.jobs.Push(job)
+	r.jobs.Push(job1)
+	tbl2, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t2"))
+	require.NoError(t, err)
+	job2 := &priorityqueue.TableAnalysisJob{
+		TableID:          tbl2.Meta().ID,
+		TableSchema:      "test",
+		TableName:        "t2",
+		ChangePercentage: 0.5,
+		Weight:           0.9,
+	}
+	r.jobs.Push(job2)
 	r.pickOneTableAndAnalyzeByPriority()
 	// The table is analyzed.
-	tblStats = handle.GetPartitionStats(tbl.Meta(), pid)
-	require.False(t, tblStats.Pseudo)
+	tblStats1 = handle.GetPartitionStats(tbl1.Meta(), pid1)
+	require.False(t, tblStats1.Pseudo)
+	// t2 is not analyzed.
+	pid2 := tbl2.Meta().GetPartitionInfo().Definitions[0].ID
+	tblStats2 := handle.GetPartitionStats(tbl2.Meta(), pid2)
+	require.True(t, tblStats2.Pseudo)
+	// Do one more round.
+	r.pickOneTableAndAnalyzeByPriority()
+	// t2 is analyzed.
+	pid2 = tbl2.Meta().GetPartitionInfo().Definitions[0].ID
+	tblStats2 = handle.GetPartitionStats(tbl2.Meta(), pid2)
+	require.False(t, tblStats2.Pseudo)
 }
