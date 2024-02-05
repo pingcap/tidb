@@ -16,7 +16,6 @@ package expression
 
 import (
 	"fmt"
-	"github.com/pingcap/tipb/go-tipb"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
