@@ -410,7 +410,10 @@ func MergePartTopN2GlobalTopN(
 	}
 	{
 		// Next val and the position is useless
-		checkTheCurAndMoveForward(&cur.item, 0)
+		err := checkTheCurAndMoveForward(&cur.item, 0)
+		if err != nil {
+			return nil, nil, nil, err
+		}
 	}
 	for _, iter := range histIters {
 		iter.finish()
