@@ -75,7 +75,7 @@ func (*wrapTxn) SetDiskFullOpt(_ kvrpcpb.DiskFullOpt) {}
 
 // Get implements the interface.
 func (*wrapTxn) Get(_ context.Context, _ kv.Key) ([]byte, error) {
-	return []byte{}, nil
+	return []byte{}, kv.ErrNotExist
 }
 
 // StartTS implements the interface.
