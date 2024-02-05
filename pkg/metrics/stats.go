@@ -33,7 +33,6 @@ var (
 	StatsHealthyGauge         *prometheus.GaugeVec
 	StatsDeltaLoadHistogram   prometheus.Histogram
 	StatsDeltaUpdateHistogram prometheus.Histogram
-	StatsLoadObjectHistogram  *prometheus.HistogramVec
 
 	HistoricalStatsCounter        *prometheus.CounterVec
 	PlanReplayerTaskCounter       *prometheus.CounterVec
@@ -155,10 +154,4 @@ func InitStatsMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 24), // 10ms ~ 24h
 		},
 	)
-	StatsLoadObjectHistogram = NewHistogramVec(prometheus.HistogramOpts{
-		Namespace: "tidb",
-		Subsystem: "statistics",
-		Name:      "stats_delta_update_objects_per_job",
-		Help:      "Histogram of statistics' background loading job's affected objects",
-	}, []string{LblType})
 }

@@ -22,9 +22,6 @@ import (
 // statistics metrics vars
 var (
 	StatsHealthyGauges         []prometheus.Gauge
-	StatsLoadObjectTableHist   prometheus.Observer
-	StatsLoadObjectColumHist   prometheus.Observer
-	StatsLoadObjectIndexHist   prometheus.Observer
 
 	DumpHistoricalStatsSuccessCounter prometheus.Counter
 	DumpHistoricalStatsFailedCounter  prometheus.Counter
@@ -44,9 +41,6 @@ func InitMetricsVars() {
 		// [0,100] should always be the last
 		metrics.StatsHealthyGauge.WithLabelValues("[0,100]"),
 	}
-	StatsLoadObjectTableHist = metrics.StatsLoadObjectHistogram.WithLabelValues("table")
-	StatsLoadObjectColumHist = metrics.StatsLoadObjectHistogram.WithLabelValues("column")
-	StatsLoadObjectIndexHist = metrics.StatsLoadObjectHistogram.WithLabelValues("index")
 
 	DumpHistoricalStatsSuccessCounter = metrics.HistoricalStatsCounter.WithLabelValues("dump", "success")
 	DumpHistoricalStatsFailedCounter = metrics.HistoricalStatsCounter.WithLabelValues("dump", "fail")

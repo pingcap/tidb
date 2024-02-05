@@ -82,8 +82,6 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 
 	tables := make([]*statistics.Table, 0, len(rows))
 	deletedTableIDs := make([]int64, 0, len(rows))
-	columnCount := float64(0)
-	indexCount := float64(0)
 
 	for _, row := range rows {
 		version := row.GetUint64(0)
@@ -131,13 +129,7 @@ func (s *StatsCacheImpl) Update(is infoschema.InfoSchema) error {
 		tbl.Name = util.GetFullTableName(is, tableInfo)
 		tbl.TblInfoUpdateTS = tableInfo.UpdateTS
 		tables = append(tables, tbl)
-		columnCount += float64(len(tbl.Columns))
-		indexCount += float64(len(tbl.Indices))
 	}
-	logutil.BgLogger().Warn("Stats update happens", zap.Int("affected tables", len(tables)), zap.Float64("affected columns", columnCount), zap.Float64("affected indexes", indexCount))
-	handle_metrics.StatsLoadObjectTableHist.Observe(float64(len(tables)))
-	handle_metrics.StatsLoadObjectColumHist.Observe(columnCount)
-	handle_metrics.StatsLoadObjectIndexHist.Observe(indexCount)
 
 	s.UpdateStatsCache(tables, deletedTableIDs)
 	dur := time.Since(start)
