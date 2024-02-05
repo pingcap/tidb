@@ -35,9 +35,13 @@ import (
 )
 
 var (
-	// same as scheduler
-	defaultCheckInterval    = 300 * time.Millisecond
-	maxCheckInterval        = 2 * time.Second
+	// DefaultCheckInterval is the default interval to check whether there are tasks
+	// or subtasks to run.
+	// exported for testing.
+	DefaultCheckInterval = 300 * time.Millisecond
+	// MaxCheckInterval is the max interval to check whether there are subtasks to run.
+	// exported for testing.
+	MaxCheckInterval        = 2 * time.Second
 	maxChecksWhenNoSubtask  = 7
 	recoverMetaInterval     = 90 * time.Second
 	retrySQLTimes           = 30
@@ -175,7 +179,7 @@ func (m *Manager) Stop() {
 // NOT running by executor before mark the task as paused.
 func (m *Manager) handleTasksLoop() {
 	defer tidbutil.Recover(metrics.LabelDomain, "handleTasksLoop", m.handleTasksLoop, false)
-	ticker := time.NewTicker(defaultCheckInterval)
+	ticker := time.NewTicker(DefaultCheckInterval)
 	for {
 		select {
 		case <-m.ctx.Done():
@@ -221,8 +225,6 @@ func (m *Manager) handleTasks() {
 // handleExecutableTasks handles executable tasks.
 func (m *Manager) handleExecutableTasks(taskInfos []*storage.TaskExecInfo) {
 	for _, task := range taskInfos {
-		m.logger.Info("handle executable task", zap.Int64("task-id", task.ID))
-
 		canAlloc, tasksNeedFree := m.slotManager.canAlloc(task.Task)
 		if len(tasksNeedFree) > 0 {
 			m.cancelTaskExecutors(tasksNeedFree)
