@@ -1548,8 +1548,9 @@ func TestPrepareCacheForDynamicPartitionPruning(t *testing.T) {
 		tk.MustExec(`CREATE TABLE t (a int(16), b bigint, UNIQUE KEY (a)) PARTITION BY RANGE (a) (PARTITION P0 VALUES LESS THAN (0))`)
 		tk.MustExec(`insert into t values(-5, 7)`)
 		tk.MustExec(`analyze table t`)
-		tk.MustExec(`prepare stmt from 'select * from t where b < ? and a = ?'`)
-		tk.MustExec(`set @a=111, @b=1`)
+		tk.MustExec(`prepare stmt from 'select * from t where a = ? and b < ?'`)
+		tk.MustExec(`set @a=1, @b=111`)
+		// Note that this is not matching any partition!
 		tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
 		require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 		tkProcess := tk.Session().ShowProcess()
@@ -1561,7 +1562,7 @@ func TestPrepareCacheForDynamicPartitionPruning(t *testing.T) {
 		} else {
 			require.Equal(t, "TableDual_7", explain.Rows()[0][0])
 		}
-		tk.MustExec(`set @a=112, @b=-5`)
+		tk.MustExec(`set @a=-5, @b=112`)
 		tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows("-5 7"))
 
 		explain = tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID))
@@ -1580,7 +1581,7 @@ func TestPrepareCacheForDynamicPartitionPruning(t *testing.T) {
 		}
 
 		// Test TableDual
-		tk.MustExec(`set @a=113, @b=5`)
+		tk.MustExec(`set @b=5, @a=113`)
 		tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
 		require.Equal(t, pruneMode == string(variable.Dynamic), tk.Session().GetSessionVars().FoundInPlanCache)
 	}

@@ -16,7 +16,6 @@ package core
 
 import (
 	"context"
-	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/bindinfo"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -587,8 +587,7 @@ func rebuildRange(p Plan) error {
 			if len(parts) != 1 {
 				if len(parts) == 0 {
 					// TODO: Handle this, turn it into TableDual!
-					// Maybe change check from x.PartitionInfo to tbl.GetPartitionedTable() instead?
-					return errors.New("not matching any partition")
+					return errors.New("not matching any partitions")
 				}
 				return errors.New("point_get cached query matches multiple partitions")
 			}
@@ -673,7 +672,7 @@ func rebuildRange(p Plan) error {
 			}
 		}
 		// TODO: fix TableDual!
-		if {
+		if x.TblInfo.GetPartitionInfo() != nil {
 			partIDs := make([]int64, 0, len(x.Handles))
 			partDefs := make([]*model.PartitionDefinition, 0, len(x.Handles))
 			if len(x.Handles) > 0 {
@@ -690,7 +689,10 @@ func rebuildRange(p Plan) error {
 					pairs[0].value = datum[0]
 					pairs[0].con = x.HandleParams[i]
 					// TODO: handle isTableDual!
-					partDef, _, _, _ := getPartitionDef(sctx, x.TblInfo, colName, pairs)
+					partDef, _, _, isTableDual := getPartitionDef(sctx, x.TblInfo, colName, pairs)
+					if partDef == nil || isTableDual {
+						return errors.New("not matching any partitions")
+					}
 					partDefs = append(partDefs, partDef)
 					partIDs = append(partIDs, partDef.ID)
 				}
@@ -708,8 +710,10 @@ func rebuildRange(p Plan) error {
 					}
 					colName := getPartitionColNameSimple(sctx, x.TblInfo)
 					// TODO: handle isTableDual!
-					partDef, _, _, _ := getPartitionDef(sctx, x.TblInfo, colName, pairs)
-					// TODO: Check how partDef == nil is handled?
+					partDef, _, _, isTableDual := getPartitionDef(sctx, x.TblInfo, colName, pairs)
+					if partDef == nil || isTableDual {
+						return errors.New("not matching any partitions")
+					}
 					partDefs = append(partDefs, partDef)
 					partIDs = append(partIDs, partDef.ID)
 				}
