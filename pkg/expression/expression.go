@@ -44,12 +44,58 @@ const (
 // EvalAstExpr evaluates ast expression directly.
 // Note: initialized in planner/core
 // import expression and planner/core together to use EvalAstExpr
-var EvalAstExpr func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
+var EvalAstExpr func(ctx BuildContext, expr ast.ExprNode) (types.Datum, error)
+
+// EvalAstExprWithPlanCtx evaluates ast expression directly with plan ctx
+// Note: initialized in planner/core
+// import expression and planner/core together to use EvalAstExpr
+var EvalAstExprWithPlanCtx func(sctx sessionctx.Context, expr ast.ExprNode) (types.Datum, error)
 
 // RewriteAstExpr rewrites ast expression directly.
 // Note: initialized in planner/core
 // import expression and planner/core together to use EvalAstExpr
 var RewriteAstExpr func(sctx sessionctx.Context, expr ast.ExprNode, schema *Schema, names types.NameSlice, allowCastArray bool) (Expression, error)
+
+// BuildOptions is used to provide optional settings to build an expression
+type BuildOptions struct {
+	// InputSchema is the input schema for expression to build
+	InputSchema *Schema
+	// InputNames is the input names for expression to build
+	InputNames types.NameSlice
+	// SourceTable is used to provide some extra column info.
+	SourceTable *model.TableInfo
+	// AllowCastArray specifies whether to allow casting to an array type.
+	AllowCastArray bool
+}
+
+// BuildOption is a function to apply optional settings
+type BuildOption func(*BuildOptions)
+
+// WithSourceTable specifies the table info to provide some extra column info when building expressions.
+// When `WithInputSchemaAndNames` is not sepecified, it also use the table info to build input schema and names.
+func WithSourceTable(tblInfo *model.TableInfo) BuildOption {
+	return func(options *BuildOptions) {
+		options.SourceTable = tblInfo
+	}
+}
+
+// WithInputSchemaAndNames specifies the input schema and names for the expression to build.
+func WithInputSchemaAndNames(schema *Schema, names types.NameSlice) BuildOption {
+	return func(options *BuildOptions) {
+		options.InputSchema = schema
+		options.InputNames = names
+	}
+}
+
+// WithAllowCastArray specifies whether to allow casting to an array type.
+func WithAllowCastArray(allow bool) BuildOption {
+	return func(options *BuildOptions) {
+		options.AllowCastArray = allow
+	}
+}
+
+// BuildExprWithAst builds an expression from an ast.
+var BuildExprWithAst func(ctx BuildContext, expr ast.ExprNode, opts ...BuildOption) (Expression, error)
 
 // VecExpr contains all vectorized evaluation methods.
 type VecExpr interface {
@@ -688,7 +734,7 @@ func EvalExpr(ctx EvalContext, expr Expression, evalType types.EvalType, input *
 }
 
 // composeConditionWithBinaryOp composes condition with binary operator into a balance deep tree, which benefits a lot for pb decoder/encoder.
-func composeConditionWithBinaryOp(ctx sessionctx.Context, conditions []Expression, funcName string) Expression {
+func composeConditionWithBinaryOp(ctx BuildContext, conditions []Expression, funcName string) Expression {
 	length := len(conditions)
 	if length == 0 {
 		return nil
@@ -704,12 +750,12 @@ func composeConditionWithBinaryOp(ctx sessionctx.Context, conditions []Expressio
 }
 
 // ComposeCNFCondition composes CNF items into a balance deep CNF tree, which benefits a lot for pb decoder/encoder.
-func ComposeCNFCondition(ctx sessionctx.Context, conditions ...Expression) Expression {
+func ComposeCNFCondition(ctx BuildContext, conditions ...Expression) Expression {
 	return composeConditionWithBinaryOp(ctx, conditions, ast.LogicAnd)
 }
 
 // ComposeDNFCondition composes DNF items into a balance deep DNF tree.
-func ComposeDNFCondition(ctx sessionctx.Context, conditions ...Expression) Expression {
+func ComposeDNFCondition(ctx BuildContext, conditions ...Expression) Expression {
 	return composeConditionWithBinaryOp(ctx, conditions, ast.LogicOr)
 }
 
@@ -949,7 +995,7 @@ func TableInfo2SchemaAndNames(ctx sessionctx.Context, dbName model.CIStr, tbl *m
 // ColumnInfos2ColumnsAndNames converts the ColumnInfo to the *Column and NameSlice.
 // This function is **unsafe** to be called concurrently, unless the `IgnoreTruncate` has been set to `true`. The only
 // known case which will call this function concurrently is `CheckTableExec`. Ref #18408 and #42341.
-func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
+func ColumnInfos2ColumnsAndNames(ctx BuildContext, dbName, tblName model.CIStr, colInfos []*model.ColumnInfo, tblInfo *model.TableInfo) ([]*Column, types.NameSlice, error) {
 	columns := make([]*Column, 0, len(colInfos))
 	names := make([]*types.FieldName, 0, len(colInfos))
 	for i, col := range colInfos {
@@ -991,7 +1037,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
-			e, err := RewriteAstExpr(ctx, expr, mockSchema, names, true)
+			e, err := BuildExprWithAst(ctx, expr, WithInputSchemaAndNames(mockSchema, names), WithSourceTable(tblInfo), WithAllowCastArray(true))
 			if err != nil {
 				return nil, nil, errors.Trace(err)
 			}
@@ -1008,7 +1054,7 @@ func ColumnInfos2ColumnsAndNames(ctx sessionctx.Context, dbName, tblName model.C
 }
 
 // NewValuesFunc creates a new values function.
-func NewValuesFunc(ctx sessionctx.Context, offset int, retTp *types.FieldType) *ScalarFunction {
+func NewValuesFunc(ctx BuildContext, offset int, retTp *types.FieldType) *ScalarFunction {
 	fc := &valuesFunctionClass{baseFunctionClass{ast.Values, 0, 0}, offset, retTp}
 	bt, err := fc.getFunction(ctx, nil)
 	terror.Log(err)
@@ -1032,7 +1078,7 @@ func IsBinaryLiteral(expr Expression) bool {
 // 2. keepNull is false and arg is null, the istrue function returns 0.
 // The `wrapForInt` indicates whether we need to wrapIsTrue for non-logical Expression with int type.
 // TODO: remove this function. ScalarFunction should be newed in one place.
-func wrapWithIsTrue(ctx sessionctx.Context, keepNull bool, arg Expression, wrapForInt bool) (Expression, error) {
+func wrapWithIsTrue(ctx BuildContext, keepNull bool, arg Expression, wrapForInt bool) (Expression, error) {
 	if arg.GetType().EvalType() == types.ETInt {
 		if !wrapForInt {
 			return arg, nil
@@ -1125,7 +1171,7 @@ func PropagateType(evalType types.EvalType, args ...Expression) {
 
 // Args2Expressions4Test converts these values to an expression list.
 // This conversion is incomplete, so only use for test.
-func Args2Expressions4Test(args ...interface{}) []Expression {
+func Args2Expressions4Test(args ...any) []Expression {
 	exprs := make([]Expression, len(args))
 	for i, v := range args {
 		d := types.NewDatum(v)

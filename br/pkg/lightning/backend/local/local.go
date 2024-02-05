@@ -538,8 +538,11 @@ func NewBackend(
 	if err != nil {
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
-	pdHTTPCli := pdhttp.NewClient("lightning", pdAddrs, pdhttp.WithTLSConfig(tls.TLSConfig())).
-		WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
+	pdHTTPCli := pdhttp.NewClientWithServiceDiscovery(
+		"lightning",
+		pdCli.GetServiceDiscovery(),
+		pdhttp.WithTLSConfig(tls.TLSConfig()),
+	).WithBackoffer(retry.InitialBackoffer(time.Second, time.Second, pdutil.PDRequestRetryTime*time.Second))
 	splitCli := split.NewSplitClient(pdCli, pdHTTPCli, tls.TLSConfig(), false)
 	importClientFactory := newImportClientFactoryImpl(splitCli, tls, config.MaxConnPerStore, config.ConnCompressType)
 	var writeLimiter StoreWriteLimiter

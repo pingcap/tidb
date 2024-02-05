@@ -32,7 +32,7 @@ import (
 
 func readAllData(
 	ctx context.Context,
-	storage storage.ExternalStorage,
+	store storage.ExternalStorage,
 	dataFiles, statsFiles []string,
 	startKey, endKey []byte,
 	bufPool *membuf.Pool,
@@ -46,7 +46,6 @@ func readAllData(
 		zap.Binary("end-key", endKey),
 	)
 	defer func() {
-		task.End(zap.ErrorLevel, err)
 		if err != nil {
 			output.keysPerFile = nil
 			output.valuesPerFile = nil
@@ -54,12 +53,18 @@ func readAllData(
 				b.Destroy()
 			}
 			output.memKVBuffers = nil
+		} else {
+			// try to fix a bug that the memory is retained in http2 package
+			if gcs, ok := store.(*storage.GCSStorage); ok {
+				err = gcs.Reset(ctx)
+			}
 		}
+		task.End(zap.ErrorLevel, err)
 	}()
 
 	concurrences, startOffsets, err := getFilesReadConcurrency(
 		ctx,
-		storage,
+		store,
 		statsFiles,
 		startKey,
 		endKey,
@@ -82,7 +87,7 @@ func readAllData(
 		eg.Go(func() error {
 			err2 := readOneFile(
 				egCtx,
-				storage,
+				store,
 				dataFiles[i],
 				startKey,
 				endKey,

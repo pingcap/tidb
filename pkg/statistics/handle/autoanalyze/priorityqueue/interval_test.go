@@ -37,7 +37,7 @@ func TestGetAverageAnalysisDuration(t *testing.T) {
 		"example_schema", "example_table", "example_partition",
 	)
 	require.NoError(t, err)
-	require.Equal(t, time.Duration(0), avgDuration)
+	require.Equal(t, time.Duration(noRecord), avgDuration)
 
 	initJobs(tk)
 
@@ -102,7 +102,7 @@ func TestGetLastFailedAnalysisDuration(t *testing.T) {
 		"example_schema", "example_table", "example_partition",
 	)
 	require.NoError(t, err)
-	require.Equal(t, time.Duration(0), lastFailedDuration)
+	require.Equal(t, time.Duration(noRecord), lastFailedDuration)
 	initJobs(tk)
 
 	// Partitioned table.
@@ -317,6 +317,71 @@ func insertFailedJob(
 			dbName,
 			tableName,
 			partitionName,
+		)
+	}
+}
+
+func insertFailedJobWithStartTime(
+	tk *testkit.TestKit,
+	dbName string,
+	tableName string,
+	partitionName string,
+	startTime string,
+) {
+	if partitionName == "" {
+		tk.MustExec(`
+	INSERT INTO mysql.analyze_jobs (
+		table_schema,
+		table_name,
+		job_info,
+		start_time,
+		end_time,
+		state,
+		fail_reason,
+		instance
+	) VALUES (
+		?,
+		?,
+		'Job information for failed job',
+		?,
+		'2024-01-01 10:00:00',
+		'failed',
+		'Some reason for failure',
+		'example_instance'
+	);
+		`,
+			dbName,
+			tableName,
+			startTime,
+		)
+	} else {
+		tk.MustExec(`
+	INSERT INTO mysql.analyze_jobs (
+		table_schema,
+		table_name,
+		partition_name,
+		job_info,
+		start_time,
+		end_time,
+		state,
+		fail_reason,
+		instance
+	) VALUES (
+		?,
+		?,
+		?,
+		'Job information for failed job',
+		?,
+		'2024-01-01 10:00:00',
+		'failed',
+		'Some reason for failure',
+		'example_instance'
+	);
+		`,
+			dbName,
+			tableName,
+			partitionName,
+			startTime,
 		)
 	}
 }

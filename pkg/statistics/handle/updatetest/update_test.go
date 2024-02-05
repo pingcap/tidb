@@ -921,12 +921,12 @@ func TestDumpColumnStatsUsage(t *testing.T) {
 	// t1.a is collected as predicate column
 	rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
 	require.Len(t, rows, 1)
-	require.Equal(t, []interface{}{"test", "t1", "", "a"}, rows[0][:4])
+	require.Equal(t, []any{"test", "t1", "", "a"}, rows[0][:4])
 	require.True(t, rows[0][4].(string) != "<nil>")
 	require.True(t, rows[0][5].(string) == "<nil>")
 	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't2'").Rows()
 	require.Len(t, rows, 1)
-	require.Equal(t, []interface{}{"test", "t2", "", "b"}, rows[0][:4])
+	require.Equal(t, []any{"test", "t2", "", "b"}, rows[0][:4])
 	require.True(t, rows[0][4].(string) != "<nil>")
 	require.True(t, rows[0][5].(string) == "<nil>")
 
@@ -937,10 +937,10 @@ func TestDumpColumnStatsUsage(t *testing.T) {
 	// Check both of them behave as expected.
 	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
 	require.Len(t, rows, 2)
-	require.Equal(t, []interface{}{"test", "t1", "", "a"}, rows[0][:4])
+	require.Equal(t, []any{"test", "t1", "", "a"}, rows[0][:4])
 	require.True(t, rows[0][4].(string) != "<nil>")
 	require.True(t, rows[0][5].(string) != "<nil>")
-	require.Equal(t, []interface{}{"test", "t1", "", "b"}, rows[1][:4])
+	require.Equal(t, []any{"test", "t1", "", "b"}, rows[1][:4])
 	require.True(t, rows[1][4].(string) != "<nil>")
 	require.True(t, rows[1][5].(string) != "<nil>")
 
@@ -953,7 +953,7 @@ func TestDumpColumnStatsUsage(t *testing.T) {
 		require.NoError(t, h.DumpColStatsUsageToKV())
 		rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't3'").Rows()
 		require.Len(t, rows, 1)
-		require.Equal(t, []interface{}{"test", "t3", "global", "a"}, rows[0][:4])
+		require.Equal(t, []any{"test", "t3", "global", "a"}, rows[0][:4])
 		require.True(t, rows[0][4].(string) != "<nil>")
 		require.True(t, rows[0][5].(string) == "<nil>")
 	}
@@ -966,12 +966,12 @@ func TestDumpColumnStatsUsage(t *testing.T) {
 	require.NoError(t, h.DumpColStatsUsageToKV())
 	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
 	require.Len(t, rows, 1)
-	require.Equal(t, []interface{}{"test", "t1", "", "b"}, rows[0][:4])
+	require.Equal(t, []any{"test", "t1", "", "b"}, rows[0][:4])
 	require.True(t, rows[0][4].(string) != "<nil>")
 	require.True(t, rows[0][5].(string) == "<nil>")
 	rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't2'").Rows()
 	require.Len(t, rows, 1)
-	require.Equal(t, []interface{}{"test", "t2", "", "a"}, rows[0][:4])
+	require.Equal(t, []any{"test", "t2", "", "a"}, rows[0][:4])
 	require.True(t, rows[0][4].(string) != "<nil>")
 	require.True(t, rows[0][5].(string) == "<nil>")
 }
@@ -1001,7 +1001,7 @@ func TestCollectPredicateColumnsFromExecute(t *testing.T) {
 			require.NoError(t, h.DumpColStatsUsageToKV())
 			rows := tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
 			require.Len(t, rows, 1)
-			require.Equal(t, []interface{}{"test", "t1", "", "a"}, rows[0][:4])
+			require.Equal(t, []any{"test", "t1", "", "a"}, rows[0][:4])
 			require.True(t, rows[0][4].(string) != "<nil>")
 			require.True(t, rows[0][5].(string) == "<nil>")
 
@@ -1018,7 +1018,7 @@ func TestCollectPredicateColumnsFromExecute(t *testing.T) {
 				require.NoError(t, h.DumpColStatsUsageToKV())
 				rows = tk.MustQuery("show column_stats_usage where db_name = 'test' and table_name = 't1'").Rows()
 				require.Len(t, rows, 1)
-				require.Equal(t, []interface{}{"test", "t1", "", "a"}, rows[0][:4])
+				require.Equal(t, []any{"test", "t1", "", "a"}, rows[0][:4])
 				require.True(t, rows[0][4].(string) != "<nil>")
 				require.True(t, rows[0][5].(string) == "<nil>")
 			}

@@ -338,14 +338,14 @@ func Event(ctx context.Context, event string) {
 }
 
 // Eventf records event in current tracing span with format support.
-func Eventf(ctx context.Context, format string, args ...interface{}) {
+func Eventf(ctx context.Context, format string, args ...any) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span.LogFields(tlog.String(TraceEventKey, fmt.Sprintf(format, args...)))
 	}
 }
 
 // SetTag sets tag kv-pair in current tracing span
-func SetTag(ctx context.Context, key string, value interface{}) {
+func SetTag(ctx context.Context, key string, value any) {
 	if span := opentracing.SpanFromContext(ctx); span != nil && span.Tracer() != nil {
 		span.SetTag(key, value)
 	}

@@ -67,7 +67,8 @@ func TestVerifyChecksum(t *testing.T) {
 		TableInfo: &model.TableInfo{
 			Name: model.NewCIStr("tb"),
 		},
-		Checksum: config.OpLevelRequired,
+		Checksum:               config.OpLevelRequired,
+		DistSQLScanConcurrency: 50,
 	}
 	tk.MustExec("create database db")
 	tk.MustExec("create table db.tb(id int)")
@@ -75,12 +76,54 @@ func TestVerifyChecksum(t *testing.T) {
 
 	// admin checksum table always return 1, 1, 1 for memory store
 	// Checksum = required
+	backupDistScanCon := tk.Session().GetSessionVars().DistSQLScanConcurrency()
+	require.Equal(t, variable.DefDistSQLScanConcurrency, backupDistScanCon)
 	localChecksum := verify.MakeKVChecksum(1, 1, 1)
 	err := importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
 	require.NoError(t, err)
+	require.Equal(t, backupDistScanCon, tk.Session().GetSessionVars().DistSQLScanConcurrency())
 	localChecksum = verify.MakeKVChecksum(1, 2, 1)
 	err = importer.VerifyChecksum(ctx, plan, localChecksum, tk.Session(), logutil.BgLogger())
 	require.ErrorIs(t, err, common.ErrChecksumMismatch)
+
+	// check a slow checksum can be canceled
+	plan2 := &importer.Plan{
+		DBName: "db",
+		TableInfo: &model.TableInfo{
+			Name: model.NewCIStr("tb2"),
+		},
+		Checksum: config.OpLevelRequired,
+	}
+	tk.MustExec(`
+		create table db.tb2(
+			id int,
+			index idx1(id),
+			index idx2(id),
+			index idx3(id),
+			index idx4(id),
+			index idx5(id),
+			index idx6(id),
+			index idx7(id),
+			index idx8(id),
+			index idx9(id),
+			index idx10(id)
+		)`)
+	tk.MustExec("insert into db.tb2 values(1)")
+	backup, err := tk.Session().GetSessionVars().GetSessionOrGlobalSystemVar(ctx, variable.TiDBChecksumTableConcurrency)
+	require.NoError(t, err)
+	err = tk.Session().GetSessionVars().SetSystemVar(variable.TiDBChecksumTableConcurrency, "1")
+	require.NoError(t, err)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/afterHandleChecksumRequest", `sleep(1000)`))
+
+	ctx2, cancel := context.WithTimeout(ctx, time.Second)
+	defer cancel()
+	err = importer.VerifyChecksum(ctx2, plan2, localChecksum, tk.Session(), logutil.BgLogger())
+	require.ErrorContains(t, err, "Query execution was interrupted")
+
+	err = tk.Session().GetSessionVars().SetSystemVar(variable.TiDBChecksumTableConcurrency, backup)
+	require.NoError(t, err)
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/afterHandleChecksumRequest"))
+
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum", `3*return(true)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/importer/errWhenChecksum"))
@@ -213,7 +256,7 @@ func TestPostProcess(t *testing.T) {
 	require.NoError(t, importer.PostProcess(ctx, tk.Session(), map[autoid.AllocatorType]int64{
 		autoid.RowIDAllocType: 123,
 	}, plan, localChecksum, logger))
-	allocators := table.Allocators(tk.Session())
+	allocators := table.Allocators(tk.Session().GetSessionVars())
 	nextGlobalAutoID, err := allocators.Get(autoid.RowIDAllocType).NextGlobalAutoID()
 	require.NoError(t, err)
 	require.Equal(t, int64(124), nextGlobalAutoID)

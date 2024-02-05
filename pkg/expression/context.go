@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // EvalContext is used to evaluate an expression
@@ -32,7 +33,7 @@ type EvalContext interface {
 	// GetSessionVars gets the session variables.
 	GetSessionVars() *variable.SessionVars
 	// Value returns the value associated with this context for key.
-	Value(key fmt.Stringer) interface{}
+	Value(key fmt.Stringer) any
 	// IsDDLOwner checks whether this session is DDL owner.
 	IsDDLOwner() bool
 	// GetAdvisoryLock acquires an advisory lock (aka GET_LOCK()).
@@ -55,10 +56,6 @@ func sqlMode(ctx EvalContext) mysql.SQLMode {
 	return ctx.GetSessionVars().SQLMode
 }
 
-func strictMode(ctx EvalContext) bool {
-	return ctx.GetSessionVars().StrictSQLMode
-}
-
 func typeCtx(ctx EvalContext) types.Context {
 	return ctx.GetSessionVars().StmtCtx.TypeCtx()
 }
@@ -68,7 +65,11 @@ func errCtx(ctx EvalContext) errctx.Context {
 }
 
 func location(ctx EvalContext) *time.Location {
-	tc := ctx.GetSessionVars().StmtCtx.TypeCtx()
+	vars := ctx.GetSessionVars()
+	sc := vars.StmtCtx
+	tc := sc.TypeCtx()
+	intest.Assert(vars.Location() == sc.TimeZone())
+	intest.Assert(sc.TimeZone() == tc.Location())
 	return tc.Location()
 }
 
@@ -78,4 +79,16 @@ func warningCount(ctx EvalContext) int {
 
 func truncateWarnings(ctx EvalContext, start int) []stmtctx.SQLWarn {
 	return ctx.GetSessionVars().StmtCtx.TruncateWarnings(start)
+}
+
+// BuildContext is used to build an expression
+type BuildContext interface {
+	EvalContext
+	// GetSessionVars gets the session variables.
+	GetSessionVars() *variable.SessionVars
+	// SetValue saves a value associated with this context for key.
+	SetValue(key fmt.Stringer, value any)
+	// BuiltinFunctionUsageInc increase the counting of each builtin function usage
+	// Notice that this is a thread safe function
+	BuiltinFunctionUsageInc(scalarFuncSigName string)
 }

@@ -412,6 +412,24 @@ func (store *MVCCStore) checkExtraTxnStatus(reqCtx *requestCtx, key []byte, star
 	return extraTxnStatus{commitTS: userMeta.CommitTS()}
 }
 
+// PessimisticRollbackWithScanFirst is used to scan the region first to collect related pessimistic locks and
+// then pessimistic rollback them.
+func (store *MVCCStore) PessimisticRollbackWithScanFirst(reqCtx *requestCtx, req *kvrpcpb.PessimisticRollbackRequest) error {
+	if len(req.Keys) > 0 {
+		return errors.Errorf("pessimistic rollback request invalid: there should be no input lock keys but got %v", len(req.Keys))
+	}
+	locks, err := store.scanPessimisticLocks(reqCtx, req.StartVersion, req.ForUpdateTs)
+	if err != nil {
+		return err
+	}
+	keys := make([][]byte, 0, len(locks))
+	for _, lock := range locks {
+		keys = append(keys, lock.Key)
+	}
+	req.Keys = keys
+	return store.PessimisticRollback(reqCtx, req)
+}
+
 // PessimisticRollback implements the MVCCStore interface.
 func (store *MVCCStore) PessimisticRollback(reqCtx *requestCtx, req *kvrpcpb.PessimisticRollbackRequest) error {
 	keys := sortKeys(req.Keys)
@@ -1425,6 +1443,22 @@ func (store *MVCCStore) appendScannedLock(locks []*kvrpcpb.LockInfo, it *locksto
 		locks = append(locks, lock.ToLockInfo(append([]byte{}, it.Key()...)))
 	}
 	return locks
+}
+
+// scanPessimisticLocks returns matching pessimistic locks.
+func (store *MVCCStore) scanPessimisticLocks(reqCtx *requestCtx, startTS uint64, forUpdateTS uint64) ([]*kvrpcpb.LockInfo, error) {
+	var locks []*kvrpcpb.LockInfo
+	it := store.lockStore.NewIterator()
+	for it.Seek(reqCtx.regCtx.RawStart()); it.Valid(); it.Next() {
+		if exceedEndKey(it.Key(), reqCtx.regCtx.RawEnd()) {
+			return locks, nil
+		}
+		lock := mvcc.DecodeLock(it.Value())
+		if lock.Op == uint8(kvrpcpb.Op_PessimisticLock) && lock.StartTS == startTS && lock.ForUpdateTS <= forUpdateTS {
+			locks = append(locks, lock.ToLockInfo(append([]byte{}, it.Key()...)))
+		}
+	}
+	return locks, nil
 }
 
 // ScanLock implements the MVCCStore interface.

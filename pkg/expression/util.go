@@ -409,6 +409,7 @@ func SetExprColumnInOperand(expr Expression) Expression {
 
 // ColumnSubstitute substitutes the columns in filter to expressions in select fields.
 // e.g. select * from (select b as a from t) k where a < 10 => select * from (select b as a from t where b < 10) k.
+// TODO: remove this function and only use ColumnSubstituteImpl since this function swallows the error, which seems unsafe.
 func ColumnSubstitute(ctx sessionctx.Context, expr Expression, schema *Schema, newExprs []Expression) Expression {
 	_, _, resExpr := ColumnSubstituteImpl(ctx, expr, schema, newExprs, false)
 	return resExpr
@@ -1143,7 +1144,7 @@ func GetFuncArg(e Expression, idx int) Expression {
 
 // PopRowFirstArg pops the first element and returns the rest of row.
 // e.g. After this function (1, 2, 3) becomes (2, 3).
-func PopRowFirstArg(ctx sessionctx.Context, e Expression) (ret Expression, err error) {
+func PopRowFirstArg(ctx BuildContext, e Expression) (ret Expression, err error) {
 	if f, ok := e.(*ScalarFunction); ok && f.FuncName.L == ast.RowFunc {
 		args := f.GetArgs()
 		if len(args) == 2 {
@@ -1236,7 +1237,7 @@ func PosFromPositionExpr(ctx sessionctx.Context, v *ast.PositionExpr) (int, bool
 }
 
 // GetStringFromConstant gets a string value from the Constant expression.
-func GetStringFromConstant(ctx sessionctx.Context, value Expression) (string, bool, error) {
+func GetStringFromConstant(ctx BuildContext, value Expression) (string, bool, error) {
 	con, ok := value.(*Constant)
 	if !ok {
 		err := errors.Errorf("Not a Constant expression %+v", value)
@@ -1250,7 +1251,7 @@ func GetStringFromConstant(ctx sessionctx.Context, value Expression) (string, bo
 }
 
 // GetIntFromConstant gets an interger value from the Constant expression.
-func GetIntFromConstant(ctx sessionctx.Context, value Expression) (int, bool, error) {
+func GetIntFromConstant(ctx BuildContext, value Expression) (int, bool, error) {
 	str, isNull, err := GetStringFromConstant(ctx, value)
 	if err != nil || isNull {
 		return 0, true, err
@@ -1263,7 +1264,7 @@ func GetIntFromConstant(ctx sessionctx.Context, value Expression) (int, bool, er
 }
 
 // BuildNotNullExpr wraps up `not(isnull())` for given expression.
-func BuildNotNullExpr(ctx sessionctx.Context, expr Expression) Expression {
+func BuildNotNullExpr(ctx BuildContext, expr Expression) Expression {
 	isNull := NewFunctionInternal(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), expr)
 	notNull := NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), isNull)
 	return notNull
@@ -1493,7 +1494,7 @@ func containMutableConst(ctx EvalContext, exprs []Expression) bool {
 }
 
 // RemoveMutableConst used to remove the `ParamMarker` and `DeferredExpr` in the `Constant` expr.
-func RemoveMutableConst(ctx sessionctx.Context, exprs []Expression) (err error) {
+func RemoveMutableConst(ctx BuildContext, exprs []Expression) (err error) {
 	for _, expr := range exprs {
 		switch v := expr.(type) {
 		case *Constant:
@@ -1637,7 +1638,7 @@ func NewSQLDigestTextRetriever() *SQLDigestTextRetriever {
 	}
 }
 
-func (r *SQLDigestTextRetriever) runMockQuery(data map[string]string, inValues []interface{}) (map[string]string, error) {
+func (r *SQLDigestTextRetriever) runMockQuery(data map[string]string, inValues []any) (map[string]string, error) {
 	if len(inValues) == 0 {
 		return data, nil
 	}
@@ -1654,7 +1655,7 @@ func (r *SQLDigestTextRetriever) runMockQuery(data map[string]string, inValues [
 // of the given SQL digests, if `inValues` is given, or all these mappings otherwise. If `queryGlobal` is false, it
 // queries information_schema.statements_summary and information_schema.statements_summary_history; otherwise, it
 // queries the cluster version of these two tables.
-func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, sctx EvalContext, queryGlobal bool, inValues []interface{}) (map[string]string, error) {
+func (r *SQLDigestTextRetriever) runFetchDigestQuery(ctx context.Context, sctx EvalContext, queryGlobal bool, inValues []any) (map[string]string, error) {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	// If mock data is set, query the mock data instead of the real statements_summary tables.
 	if !queryGlobal && r.mockLocalData != nil {
@@ -1714,7 +1715,7 @@ func (r *SQLDigestTextRetriever) RetrieveLocal(ctx context.Context, sctx EvalCon
 
 	var queryResult map[string]string
 	if len(r.SQLDigestsMap) <= r.fetchAllLimit {
-		inValues := make([]interface{}, 0, len(r.SQLDigestsMap))
+		inValues := make([]any, 0, len(r.SQLDigestsMap))
 		for key := range r.SQLDigestsMap {
 			inValues = append(inValues, key)
 		}
@@ -1754,7 +1755,7 @@ func (r *SQLDigestTextRetriever) RetrieveGlobal(ctx context.Context, sctx EvalCo
 		failpoint.Return(nil)
 	})
 
-	var unknownDigests []interface{}
+	var unknownDigests []any
 	for k, v := range r.SQLDigestsMap {
 		if len(v) == 0 {
 			unknownDigests = append(unknownDigests, k)

@@ -314,7 +314,7 @@ func buildConstraintInfo(tblInfo *model.TableInfo, dependedCols []model.CIStr, c
 	// Restore check constraint expression to string.
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
-		format.RestoreSpacesAroundBinaryOperation
+		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutTableName
 	restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
 
 	sb.Reset()

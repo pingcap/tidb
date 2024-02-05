@@ -2330,7 +2330,7 @@ func (b *builtinCharSig) vecEvalString(ctx EvalContext, input *chunk.Chunk, resu
 	}
 	encBuf := &bytes.Buffer{}
 	enc := charset.FindEncoding(b.tp.GetCharset())
-	hasStrictMode := strictMode(ctx)
+	hasStrictMode := sqlMode(ctx).HasStrictMode()
 	for i := 0; i < n; i++ {
 		bigints = bigints[0:0]
 		for j := 0; j < l-1; j++ {

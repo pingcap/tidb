@@ -17,6 +17,6 @@ go_test(
     srcs = ["collector_test.go"],
     embed = [":indexusage"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 4,
     deps = ["@com_github_stretchr_testify//require"],
 )

@@ -74,7 +74,7 @@ type StatsUsage interface {
 
 	// NewSessionStatsItem allocates a stats collector for a session.
 	// TODO: use interface{} to avoid cycle import, remove this interface{}.
-	NewSessionStatsItem() interface{}
+	NewSessionStatsItem() any
 
 	// ResetSessionStatsList resets the sessions stats list.
 	ResetSessionStatsList()
@@ -411,7 +411,7 @@ type StatsGlobal interface {
 		physicalID int64,
 		isIndex bool,
 		histIDs []int64,
-	) (globalStats interface{}, err error)
+	) (globalStats any, err error)
 }
 
 // DDL is used to handle ddl events.

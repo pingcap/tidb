@@ -242,7 +242,7 @@ func TestBalanceOneTask(t *testing.T) {
 			slotMgr.updateCapacity(16)
 			b := newBalancer(Param{
 				taskMgr: mockTaskMgr,
-				nodeMgr: newNodeManager(),
+				nodeMgr: newNodeManager(""),
 				slotMgr: slotMgr,
 			})
 			b.currUsedSlots = c.initUsedSlots
@@ -263,7 +263,7 @@ func TestBalanceOneTask(t *testing.T) {
 		slotMgr.updateCapacity(16)
 		b := newBalancer(Param{
 			taskMgr: mockTaskMgr,
-			nodeMgr: newNodeManager(),
+			nodeMgr: newNodeManager(""),
 			slotMgr: slotMgr,
 		})
 		require.ErrorContains(t, b.balanceSubtasks(ctx, mockScheduler, []string{"tidb1"}), "mock error")
@@ -286,7 +286,7 @@ func TestBalanceOneTask(t *testing.T) {
 		slotMgr.updateCapacity(16)
 		b := newBalancer(Param{
 			taskMgr: mockTaskMgr,
-			nodeMgr: newNodeManager(),
+			nodeMgr: newNodeManager(""),
 			slotMgr: slotMgr,
 		})
 		require.ErrorContains(t, b.balanceSubtasks(ctx, mockScheduler, []string{"tidb1"}), "mock error")
@@ -368,8 +368,7 @@ func TestBalanceMultipleTasks(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	manager, err := NewManager(ctx, mockTaskMgr, "1")
-	require.NoError(t, err)
+	manager := NewManager(ctx, mockTaskMgr, "1")
 	manager.slotMgr.updateCapacity(16)
 	manager.nodeMgr.managedNodes.Store(&[]string{"tidb1", "tidb2", "tidb3"})
 	b := newBalancer(Param{

@@ -186,7 +186,7 @@ func TestDisableFold(t *testing.T) {
 		rewriter := builder.getExpressionRewriter(context.TODO(), nil)
 		require.NotNil(t, rewriter)
 		require.Equal(t, 0, rewriter.disableFoldCounter)
-		rewrittenExpression, _, err := builder.rewriteExprNode(rewriter, expr, true)
+		rewrittenExpression, _, err := rewriteExprNode(rewriter, expr, true)
 		require.NoError(t, err)
 		require.Equal(t, 0, rewriter.disableFoldCounter)
 		builder.rewriterCounter--
@@ -394,7 +394,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 }
 
 //go:linkname valueInterface reflect.valueInterface
-func valueInterface(v reflect.Value, safe bool) interface{}
+func valueInterface(v reflect.Value, safe bool) any
 
 func typeName(t reflect.Type) string {
 	path := t.String()

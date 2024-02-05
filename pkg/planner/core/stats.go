@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -151,7 +152,7 @@ func (p *baseLogicalPlan) DeriveStats(childStats []*property.StatsInfo, selfSche
 		return p.StatsInfo(), nil
 	}
 	if len(childStats) > 1 {
-		err := ErrInternal.GenWithStack("LogicalPlans with more than one child should implement their own DeriveStats().")
+		err := plannererrors.ErrInternal.GenWithStack("LogicalPlans with more than one child should implement their own DeriveStats().")
 		return nil, err
 	}
 	if p.StatsInfo() != nil {
@@ -218,7 +219,7 @@ func init() {
 	cardinality.GetTblInfoForUsedStatsByPhysicalID = getTblInfoForUsedStatsByPhysicalID
 }
 
-// getTblInfoForUsedStatsByPhysicalID get table name, partition name and TableInfo that will be used to record used stats.
+// getTblInfoForUsedStatsByPhysicalID get table name, partition name and HintedTable that will be used to record used stats.
 func getTblInfoForUsedStatsByPhysicalID(sctx sessionctx.Context, id int64) (fullName string, tblInfo *model.TableInfo) {
 	fullName = "tableID " + strconv.FormatInt(id, 10)
 
@@ -1066,4 +1067,26 @@ func (p *LogicalCTETable) DeriveStats(_ []*property.StatsInfo, _ *expression.Sch
 func (p *LogicalSequence) DeriveStats(childStats []*property.StatsInfo, _ *expression.Schema, _ []*expression.Schema, _ [][]*expression.Column) (*property.StatsInfo, error) {
 	p.SetStats(childStats[len(childStats)-1])
 	return p.StatsInfo(), nil
+}
+
+// loadTableStats loads the stats of the table and store it in the statement `UsedStatsInfo` if it didn't exist
+func loadTableStats(ctx sessionctx.Context, tblInfo *model.TableInfo, pid int64) {
+	statsRecord := ctx.GetSessionVars().StmtCtx.GetUsedStatsInfo(true)
+	if _, ok := statsRecord[pid]; ok {
+		return
+	}
+
+	tableStats := getStatsTable(ctx, tblInfo, pid)
+	name, _ := getTblInfoForUsedStatsByPhysicalID(ctx, pid)
+
+	statsRecord[pid] = &stmtctx.UsedStatsInfoForTable{
+		Name:          name,
+		TblInfo:       tblInfo,
+		RealtimeCount: tableStats.HistColl.RealtimeCount,
+		ModifyCount:   tableStats.HistColl.ModifyCount,
+		Version:       tableStats.Version,
+	}
+	if tableStats.Pseudo {
+		statsRecord[pid].Version = statistics.PseudoVersion
+	}
 }

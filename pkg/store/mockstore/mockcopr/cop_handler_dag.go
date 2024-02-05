@@ -325,7 +325,7 @@ func (h coprHandler) getAggInfo(ctx *dagContext, executor *tipb.Executor) ([]agg
 	var relatedColOffsets []int
 	for _, expr := range executor.Aggregation.AggFunc {
 		var aggExpr aggregation.Aggregation
-		aggExpr, err = aggregation.NewDistAggFunc(expr, ctx.evalCtx.fieldTps, ctx.evalCtx.sctx)
+		aggExpr, _, err = aggregation.NewDistAggFunc(expr, ctx.evalCtx.fieldTps, ctx.evalCtx.sctx)
 		if err != nil {
 			return nil, nil, nil, errors.Trace(err)
 		}
@@ -467,6 +467,7 @@ func flagsAndTzToSessionContext(flags uint64, tz *time.Location) sessionctx.Cont
 	sc := stmtctx.NewStmtCtx()
 	sc.InitFromPBFlagAndTz(flags, tz)
 	sctx.GetSessionVars().StmtCtx = sc
+	sctx.GetSessionVars().TimeZone = tz
 	return sctx
 }
 
@@ -491,10 +492,10 @@ func (mockClientStream) CloseSend() error { return nil }
 func (mockClientStream) Context() context.Context { return nil }
 
 // SendMsg implements grpc.ClientStream interface
-func (mockClientStream) SendMsg(m interface{}) error { return nil }
+func (mockClientStream) SendMsg(m any) error { return nil }
 
 // RecvMsg implements grpc.ClientStream interface
-func (mockClientStream) RecvMsg(m interface{}) error { return nil }
+func (mockClientStream) RecvMsg(m any) error { return nil }
 
 type mockBathCopErrClient struct {
 	mockClientStream

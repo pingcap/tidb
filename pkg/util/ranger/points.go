@@ -21,7 +21,6 @@ import (
 	"sort"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
@@ -30,13 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
-)
-
-// Error instances.
-var (
-	ErrUnsupportedType = dbterror.ClassOptimizer.NewStd(errno.ErrUnsupportedType)
 )
 
 // RangeType is alias for int.
@@ -643,12 +637,12 @@ func (r *builder) buildFromIn(
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
-			r.err = ErrUnsupportedType.GenWithStack("expr:%v is not constant", e)
+			r.err = plannererrors.ErrUnsupportedType.GenWithStack("expr:%v is not constant", e)
 			return getFullRange(), hasNull
 		}
 		dt, err := v.Eval(r.sctx, chunk.Row{})
 		if err != nil {
-			r.err = ErrUnsupportedType.GenWithStack("expr:%v is not evaluated", e)
+			r.err = plannererrors.ErrUnsupportedType.GenWithStack("expr:%v is not evaluated", e)
 			return getFullRange(), hasNull
 		}
 		if dt.IsNull() {
@@ -942,7 +936,7 @@ func (r *builder) buildFromNot(
 		return retRangePoints
 	case ast.Like:
 		// Pattern not like is not supported.
-		r.err = ErrUnsupportedType.GenWithStack("NOT LIKE is not supported.")
+		r.err = plannererrors.ErrUnsupportedType.GenWithStack("NOT LIKE is not supported.")
 		return getFullRange()
 	case ast.IsNull:
 		startPoint := &point{value: types.MinNotNullDatum(), start: true}

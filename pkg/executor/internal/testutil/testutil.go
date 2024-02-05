@@ -39,7 +39,7 @@ import (
 type MockDataSourceParameters struct {
 	Ctx         sessionctx.Context
 	DataSchema  *expression.Schema
-	GenDataFunc func(row int, typ *types.FieldType) interface{}
+	GenDataFunc func(row int, typ *types.FieldType) any
 	Ndvs        []int
 	Orders      []bool
 	Rows        int
@@ -55,7 +55,7 @@ type MockDataSource struct {
 }
 
 // GenColDatums get column datums
-func (mds *MockDataSource) GenColDatums(col int) (results []interface{}) {
+func (mds *MockDataSource) GenColDatums(col int) (results []any) {
 	typ := mds.RetFieldTypes()[col]
 	order := false
 	if col < len(mds.P.Orders) {
@@ -66,7 +66,7 @@ func (mds *MockDataSource) GenColDatums(col int) (results []interface{}) {
 	if col < len(mds.P.Ndvs) {
 		ndv = mds.P.Ndvs[col]
 	}
-	results = make([]interface{}, 0, rows)
+	results = make([]any, 0, rows)
 	if ndv == 0 {
 		if mds.P.GenDataFunc == nil {
 			for i := 0; i < rows; i++ {
@@ -79,7 +79,7 @@ func (mds *MockDataSource) GenColDatums(col int) (results []interface{}) {
 		}
 	} else {
 		datumSet := make(map[string]bool, ndv)
-		datums := make([]interface{}, 0, ndv)
+		datums := make([]any, 0, ndv)
 		for len(datums) < ndv {
 			d := mds.RandDatum(typ)
 			str := fmt.Sprintf("%v", d)
@@ -118,7 +118,7 @@ func (mds *MockDataSource) GenColDatums(col int) (results []interface{}) {
 }
 
 // RandDatum rand datum
-func (*MockDataSource) RandDatum(typ *types.FieldType) interface{} {
+func (*MockDataSource) RandDatum(typ *types.FieldType) any {
 	val, _ := rand.Int(rand.Reader, big.NewInt(1000000))
 	switch typ.GetType() {
 	case mysql.TypeLong, mysql.TypeLonglong:
@@ -236,7 +236,7 @@ func BuildMockDataSource(opt MockDataSourceParameters) *MockDataSource {
 		Chunks:       nil,
 	}
 	rTypes := exec.RetTypes(m)
-	colData := make([][]interface{}, len(rTypes))
+	colData := make([][]any, len(rTypes))
 	for i := 0; i < len(rTypes); i++ {
 		colData[i] = m.GenColDatums(i)
 	}

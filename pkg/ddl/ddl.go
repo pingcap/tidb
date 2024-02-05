@@ -235,7 +235,7 @@ type DDL interface {
 	// GetLease returns current schema lease time.
 	GetLease() time.Duration
 	// Stats returns the DDL statistics.
-	Stats(vars *variable.SessionVars) (map[string]interface{}, error)
+	Stats(vars *variable.SessionVars) (map[string]any, error)
 	// GetScope gets the status variables scope.
 	GetScope(status string) variable.ScopeFlag
 	// Stop stops DDL worker.
@@ -618,14 +618,14 @@ func (dc *ddlCtx) notifyReorgWorkerJobStateChange(job *model.Job) {
 }
 
 // EnableTiFlashPoll enables TiFlash poll loop aka PollTiFlashReplicaStatus.
-func EnableTiFlashPoll(d interface{}) {
+func EnableTiFlashPoll(d any) {
 	if dd, ok := d.(*ddl); ok {
 		dd.enableTiFlashPoll.Store(true)
 	}
 }
 
 // DisableTiFlashPoll disables TiFlash poll loop aka PollTiFlashReplicaStatus.
-func DisableTiFlashPoll(d interface{}) {
+func DisableTiFlashPoll(d any) {
 	if dd, ok := d.(*ddl); ok {
 		dd.enableTiFlashPoll.Store(false)
 	}
@@ -742,7 +742,7 @@ func newDDL(ctx context.Context, options ...Option) *ddl {
 	taskexecutor.RegisterTaskType(proto.Backfill,
 		func(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
 			return newBackfillDistExecutor(ctx, id, task, taskTable, d)
-		}, taskexecutor.WithSummary,
+		},
 	)
 
 	scheduler.RegisterSchedulerFactory(proto.Backfill,

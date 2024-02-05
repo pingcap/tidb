@@ -1377,7 +1377,7 @@ func TestGCPlacementRules(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/mockHistoryJobForGC"))
 	}()
 
-	gcPlacementRuleCache := make(map[int64]interface{})
+	gcPlacementRuleCache := make(map[int64]any)
 	deletePlacementRuleCounter := 0
 	require.NoError(t, failpoint.EnableWith("github.com/pingcap/tidb/pkg/store/gcworker/gcDeletePlacementRuleCounter", "return", func() error {
 		deletePlacementRuleCounter++
@@ -1406,7 +1406,7 @@ func TestGCPlacementRules(t *testing.T) {
 	dr := util.DelRangeTask{JobID: 1, ElementID: 10}
 	err = s.gcWorker.doGCPlacementRules(createSession(s.store), 1, dr, gcPlacementRuleCache)
 	require.NoError(t, err)
-	require.Equal(t, map[int64]interface{}{10: struct{}{}}, gcPlacementRuleCache)
+	require.Equal(t, map[int64]any{10: struct{}{}}, gcPlacementRuleCache)
 	require.Equal(t, 1, deletePlacementRuleCounter)
 
 	// check bundle deleted after gc
@@ -1418,7 +1418,7 @@ func TestGCPlacementRules(t *testing.T) {
 	// gc the same table id repeatedly
 	err = s.gcWorker.doGCPlacementRules(createSession(s.store), 1, dr, gcPlacementRuleCache)
 	require.NoError(t, err)
-	require.Equal(t, map[int64]interface{}{10: struct{}{}}, gcPlacementRuleCache)
+	require.Equal(t, map[int64]any{10: struct{}{}}, gcPlacementRuleCache)
 	require.Equal(t, 1, deletePlacementRuleCounter)
 }
 

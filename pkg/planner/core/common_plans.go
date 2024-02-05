@@ -1411,7 +1411,7 @@ func IsPointGetWithPKOrUniqueKeyByAutoCommit(ctx sessionctx.Context, p Plan) (bo
 		if !ok {
 			return false, nil
 		}
-		isPointRange := len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPointNonNullable(ctx)
+		isPointRange := len(tableScan.Ranges) == 1 && tableScan.Ranges[0].IsPointNonNullable(ctx.GetSessionVars().StmtCtx.TypeCtx())
 		if !isPointRange {
 			return false, nil
 		}
