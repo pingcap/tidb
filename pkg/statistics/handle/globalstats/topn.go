@@ -17,6 +17,7 @@ package globalstats
 import (
 	"bytes"
 	"container/heap"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -150,7 +151,11 @@ func (hi *histIter) remove(v *types.Datum) int64 {
 		cmp = chunk.Compare(hi.hist.Bounds.GetRow(hi.curBucketPos*2+1), 0, v)
 		if cmp < 0 {
 			// This value is bigger than current bucket's upper bound, goto next bucket.
-			hi.hist.Buckets[hi.curBucketPos].Count -= hi.totalSubstracted
+			if hi.hist.Buckets[hi.curBucketPos].Count < hi.totalSubstracted {
+				hi.hist.Buckets[hi.curBucketPos].Count = 0
+			} else {
+				hi.hist.Buckets[hi.curBucketPos].Count -= hi.totalSubstracted
+			}
 			hi.curBucketPos++
 			continue
 		}
@@ -163,7 +168,8 @@ func (hi *histIter) remove(v *types.Datum) int64 {
 			hi.curBucketPos++
 			return ret
 		}
-		ret := int64(hi.hist.NotNullCount() / float64(hi.hist.NDV))
+		// The value falls in the current bucket.
+		ret := int64(math.Max(hi.hist.NotNullCount()-float64(hi.totalSubstracted), 0) / float64(hi.hist.NDV))
 		hi.totalSubstracted += ret
 		return ret
 	}
@@ -172,6 +178,11 @@ func (hi *histIter) remove(v *types.Datum) int64 {
 // finish cleans the unfinished subtraction.
 func (hi *histIter) finish() {
 	for i := hi.curBucketPos; i < len(hi.hist.Buckets); i++ {
+		// Avoid the negative.
+		if hi.hist.Buckets[i].Count < hi.totalSubstracted {
+			hi.hist.Buckets[i].Count = 0
+			continue
+		}
 		hi.hist.Buckets[i].Count -= hi.totalSubstracted
 	}
 }
@@ -215,7 +226,7 @@ func (h topNMeataHeap) Len() int {
 }
 
 func (h topNMeataHeap) Less(i, j int) bool {
-	return bytes.Compare(h[i].Encoded, h[j].Encoded) < 0
+	return h[i].Count < h[j].Count
 }
 
 func (h topNMeataHeap) Swap(i, j int) {
@@ -288,11 +299,9 @@ func MergePartTopN2GlobalTopN(
 	type maintaining struct {
 		affectedTopNs *bitset.BitSet
 		item          statistics.TopNMeta
-		cleared       bool
 	}
 	cur := maintaining{
 		affectedTopNs: bitset.New(uint(len(hists))),
-		cleared:       true,
 	}
 	step := int64(0)
 	histRemoveCnt := int64(0)
@@ -300,6 +309,66 @@ func MergePartTopN2GlobalTopN(
 	remainedTopNs := make([]statistics.TopNMeta, 0, n)
 	skipCount := 0
 	affectedHist := make([]int, 0, len(hists))
+	firstTime := true
+	checkTheCurAndMoveForward := func(nextVal *statistics.TopNMeta, position uint) error {
+		// It's perf-sensitive path. Don't use defer.
+		// Initializing the datum.
+		d, err := statistics.TopNMetaValToDatum(cur.item.Encoded, hists[0].Tp.GetType(), isIndex, loc)
+		if err != nil {
+			return err
+		}
+		affectedHist = affectedHist[:0]
+		// The following codes might access the NextClear loop twice. Record it here for saving CPU.
+		for histPos, found := cur.affectedTopNs.NextClear(0); found; histPos, found = cur.affectedTopNs.NextClear(histPos + 1) {
+			affectedHist = append(affectedHist, int(histPos))
+		}
+		// Hacking skip.
+		if uint32(len(finalTopNs)) >= n {
+			maxPossible := int64(0)
+			for _, histPos := range affectedHist {
+				maxPossible += maxPossibleAdded[histPos]
+			}
+			// The maximum possible added value still cannot make it replace the smallest topn.
+			if maxPossible+int64(cur.item.Count) < int64(finalTopNs[0].Count) {
+				skipCount++
+				remainedTopNs = append(remainedTopNs, statistics.TopNMeta{Encoded: cur.item.Encoded, Count: cur.item.Count})
+				// Set the cur maintained to the next value.
+				cur.item.Encoded = nextVal.Encoded
+				cur.item.Count = nextVal.Count
+				cur.affectedTopNs.ClearAll()
+				cur.affectedTopNs.Set(position)
+				return nil
+			}
+		}
+		for _, histPos := range affectedHist {
+			histRemoveCnt++
+			// Remove the value from the hist and add it into the current maintained value.
+			cur.item.Count += uint64(histIters[histPos].remove(&d))
+		}
+		// Size reaches the n, maintaining the heap.
+		if finalTopNs.Len() == int(n) {
+			if finalTopNs[0].Count < cur.item.Count {
+				remainedTopNs = append(remainedTopNs, finalTopNs[0])
+				finalTopNs[0].Encoded = cur.item.Encoded
+				finalTopNs[0].Count = cur.item.Count
+				heap.Fix(&finalTopNs, 0)
+			} else {
+				remainedTopNs = append(remainedTopNs, cur.item)
+			}
+		} else {
+			// Otherwise the heap is not fulfilled.
+			finalTopNs = append(finalTopNs, statistics.TopNMeta{Encoded: cur.item.Encoded, Count: cur.item.Count})
+			if finalTopNs.Len() == int(n) {
+				heap.Init(&finalTopNs)
+			}
+		}
+		// Set the cur maintained to the next value.
+		cur.item.Encoded = nextVal.Encoded
+		cur.item.Count = nextVal.Count
+		cur.affectedTopNs.ClearAll()
+		cur.affectedTopNs.Set(position)
+		return nil
+	}
 	for {
 		if err := killer.HandleSignal(); err != nil {
 			return nil, nil, nil, err
@@ -317,85 +386,31 @@ func MergePartTopN2GlobalTopN(
 		} else {
 			heap.Pop(&mergingHeap)
 		}
-		// The maintained one is cleared before. Set it and goto next round.
-		if cur.cleared {
+		// Init the cur when we first enter the heap.
+		if firstTime {
 			cur.item.Encoded = headTopN.Encoded
 			cur.item.Count = headTopN.Count
 			cur.affectedTopNs.Set(uint(head.idx))
-			cur.cleared = false
+			firstTime = false
 			continue
 		}
 		cmp := bytes.Compare(cur.item.Encoded, headTopN.Encoded)
-		cnt := headTopN.Count
-		metaHeapInit := false
 		// The heap's head move forward.
 		if cmp < 0 {
-			// Initializing the datum.
-			d, err := statistics.TopNMetaValToDatum(cur.item.Encoded, hists[0].Tp.GetType(), isIndex, loc)
+			err := checkTheCurAndMoveForward(headTopN, uint(head.idx))
 			if err != nil {
-				return nil, nil, hists, err
+				return nil, nil, nil, err
 			}
-			affectedHist = affectedHist[:0]
-			// The following codes might access the NextClear loop twice. Record it here for saving CPU.
-			for histPos, found := cur.affectedTopNs.NextClear(0); found; histPos, found = cur.affectedTopNs.NextClear(histPos + 1) {
-				affectedHist = append(affectedHist, int(histPos))
-			}
-			// Hacking skip.
-			if uint32(len(finalTopNs)) >= n {
-				maxPossible := int64(0)
-				for _, histPos := range affectedHist {
-					maxPossible += maxPossibleAdded[histPos]
-				}
-				// The maximum possible added value still cannot make it replace the smallest topn.
-				if maxPossible+int64(cur.item.Count) < int64(finalTopNs[0].Count) {
-					skipCount++
-					remainedTopNs = append(remainedTopNs, statistics.TopNMeta{Encoded: cur.item.Encoded, Count: cur.item.Count})
-					cur.cleared = true
-					cur.affectedTopNs.ClearAll()
-					continue
-				}
-			}
-			for _, histPos := range affectedHist {
-				histRemoveCnt++
-				// Remove the value from the hist and add it into the current maintained value.
-				cur.item.Count += uint64(histIters[histPos].remove(&d))
-			}
-			cur.item.Count += cnt
-			if metaHeapInit {
-				if finalTopNs[0].Count < cur.item.Count {
-					finalTopNs[0].Encoded = cur.item.Encoded
-					finalTopNs[0].Count = cur.item.Count
-					heap.Fix(&finalTopNs, 0)
-				}
-			} else if finalTopNs.Len() < int(n) {
-				finalTopNs = append(finalTopNs, statistics.TopNMeta{Encoded: cur.item.Encoded, Count: cur.item.Count})
-			} else {
-				heap.Init(&finalTopNs)
-				metaHeapInit = true
-			}
-			cur.cleared = true
-			cur.affectedTopNs.ClearAll()
 			continue
 		}
 		// The cmp result cannot be 1 because the value is strictly increasing.
 		// Here is cmp == 0.
-		cur.item.Count += cnt
+		cur.item.Count += headTopN.Count
 		cur.affectedTopNs.Set(uint(head.idx))
 	}
-	if !cur.cleared {
-		// There's uncleared item. Clear it.
-		// Initializing the datum.
-		d, err := statistics.TopNMetaValToDatum(cur.item.Encoded, hists[0].Tp.GetType(), isIndex, loc)
-		if err != nil {
-			return nil, nil, hists, err
-		}
-		for histPos, found := cur.affectedTopNs.NextClear(0); found; histPos, found = cur.affectedTopNs.NextClear(histPos + 1) {
-			// Remove the value from the hist and add it into the current maintained value.
-			cur.item.Count += uint64(histIters[histPos].remove(&d))
-		}
-		// This is the last inerstion so we don't need to maintain the heap anymore.
-		// And the slice will be sorted later, so we can use that sort to deal with the case that its length exceeds the `n`.
-		finalTopNs = append(finalTopNs, cur.item)
+	{
+		// Next val and the position is useless
+		checkTheCurAndMoveForward(&cur.item, 0)
 	}
 	for _, iter := range histIters {
 		iter.finish()
