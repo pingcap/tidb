@@ -5765,8 +5765,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		return nil, err
 	}
 
-	var tableList []*ast.TableName
-	tableList = ExtractTableList(update.TableRefs.TableRefs, false)
+	tableList := ExtractTableList(update.TableRefs.TableRefs, false)
 	for _, t := range tableList {
 		dbName := t.Schema.L
 		if dbName == "" {
@@ -7277,7 +7276,7 @@ func (e *tableListExtractor) Enter(n ast.Node) (_ ast.Node, skipChildren bool) {
 	return n, false
 }
 
-func (e *tableListExtractor) Leave(n ast.Node) (_ ast.Node, ok bool) {
+func (*tableListExtractor) Leave(n ast.Node) (ast.Node, bool) {
 	return n, true
 }
 
