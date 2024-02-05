@@ -16,10 +16,21 @@ package taskexecutor
 
 import (
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"go.uber.org/goleak"
 )
+
+func ReduceCheckInterval(t *testing.T) {
+	checkIntervalBak := DefaultCheckInterval
+	maxIntervalBak := MaxCheckInterval
+	t.Cleanup(func() {
+		DefaultCheckInterval = checkIntervalBak
+		MaxCheckInterval = maxIntervalBak
+	})
+	MaxCheckInterval, DefaultCheckInterval = time.Millisecond, time.Millisecond
+}
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()

@@ -82,7 +82,7 @@ func getTaskManager(t *testing.T, pool *pools.ResourcePool) *storage.TaskManager
 
 // GetOneTask get a task from task table
 func GetOneTask(ctx context.Context, mgr *storage.TaskManager) (task *proto.Task, err error) {
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+storage.TaskColumns+" from mysql.tidb_global_task where state = %? limit 1", proto.TaskStatePending)
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+storage.TaskColumns+" from mysql.tidb_global_task t where state = %? limit 1", proto.TaskStatePending)
 	if err != nil {
 		return task, err
 	}
@@ -173,10 +173,12 @@ func GetSubtaskEndTime(ctx context.Context, mgr *storage.TaskManager, subtaskID 
 	return time.Time{}, nil
 }
 
-// GetSubtaskNodes gets subtasks running nodes for one task for test.
+// GetSubtaskNodes gets nodes that are running or have run the task for test.
 func GetSubtaskNodes(ctx context.Context, mgr *storage.TaskManager, taskID int64) ([]string, error) {
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`select distinct(exec_id) from mysql.tidb_background_subtask where task_key=%?`, taskID)
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `
+		select distinct(exec_id) from mysql.tidb_background_subtask where task_key=%?
+		union
+		select distinct(exec_id) from mysql.tidb_background_subtask_history where task_key=%?`, taskID, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -207,12 +209,12 @@ func TransferSubTasks2History(ctx context.Context, mgr *storage.TaskManager, tas
 }
 
 // GetTasksFromHistoryInStates gets the tasks in history table in the states.
-func GetTasksFromHistoryInStates(ctx context.Context, mgr *storage.TaskManager, states ...interface{}) (task []*proto.Task, err error) {
+func GetTasksFromHistoryInStates(ctx context.Context, mgr *storage.TaskManager, states ...any) (task []*proto.Task, err error) {
 	if len(states) == 0 {
 		return task, nil
 	}
 
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+storage.TaskColumns+" from mysql.tidb_global_task_history where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", states...)
+	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+storage.TaskColumns+" from mysql.tidb_global_task_history t where state in ("+strings.Repeat("%?,", len(states)-1)+"%?)", states...)
 	if err != nil {
 		return task, err
 	}

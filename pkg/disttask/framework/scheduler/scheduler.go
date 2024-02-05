@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/backoff"
+	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -51,7 +52,9 @@ const (
 )
 
 var (
-	checkTaskFinishedInterval = 500 * time.Millisecond
+	// CheckTaskFinishedInterval is the interval for scheduler.
+	// exported for testing.
+	CheckTaskFinishedInterval = 500 * time.Millisecond
 	nonRetrySQLTime           = 1
 	// RetrySQLTimes is the max retry times when executing SQL.
 	RetrySQLTimes = 30
@@ -99,12 +102,15 @@ var MockOwnerChange func()
 
 // NewBaseScheduler creates a new BaseScheduler.
 func NewBaseScheduler(ctx context.Context, task *proto.Task, param Param) *BaseScheduler {
+	logger := log.L().With(zap.Int64("task-id", task.ID), zap.Stringer("task-type", task.Type))
+	if intest.InTest {
+		logger = logger.With(zap.String("server-id", param.serverID))
+	}
 	s := &BaseScheduler{
-		ctx:   ctx,
-		Param: param,
-		logger: log.L().With(zap.Int64("task-id", task.ID),
-			zap.Stringer("task-type", task.Type)),
-		rand: rand.New(rand.NewSource(time.Now().UnixNano())),
+		ctx:    ctx,
+		Param:  param,
+		logger: logger,
+		rand:   rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	s.task.Store(task)
 	return s
@@ -137,7 +143,6 @@ func (s *BaseScheduler) refreshTask() error {
 	task := s.GetTask()
 	newTask, err := s.taskMgr.GetTaskByID(s.ctx, task.ID)
 	if err != nil {
-		s.logger.Error("refresh task failed", zap.Error(err))
 		return err
 	}
 	s.task.Store(newTask)
@@ -146,7 +151,7 @@ func (s *BaseScheduler) refreshTask() error {
 
 // scheduleTask schedule the task execution step by step.
 func (s *BaseScheduler) scheduleTask() {
-	ticker := time.NewTicker(checkTaskFinishedInterval)
+	ticker := time.NewTicker(CheckTaskFinishedInterval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -156,6 +161,12 @@ func (s *BaseScheduler) scheduleTask() {
 		case <-ticker.C:
 			err := s.refreshTask()
 			if err != nil {
+				if errors.Cause(err) == storage.ErrTaskNotFound {
+					// this can happen when task is reverted/succeed, but before
+					// we reach here, cleanup routine move it to history.
+					return
+				}
+				s.logger.Error("refresh task failed", zap.Error(err))
 				continue
 			}
 			task := *s.GetTask()
@@ -217,12 +228,10 @@ func (s *BaseScheduler) scheduleTask() {
 				s.logger.Info("schedule task meet err, reschedule it", zap.Error(err))
 			}
 
-			failpoint.Inject("mockOwnerChange", func(val failpoint.Value) {
-				if val.(bool) {
-					s.logger.Info("mockOwnerChange called")
-					MockOwnerChange()
-					time.Sleep(time.Second)
-				}
+			failpoint.Inject("mockOwnerChange", func() {
+				s.logger.Info("mockOwnerChange called")
+				MockOwnerChange()
+				time.Sleep(time.Second)
 			})
 		}
 	}
@@ -486,13 +495,25 @@ func (s *BaseScheduler) handlePlanErr(err error) error {
 }
 
 // MockServerInfo exported for scheduler_test.go
-var MockServerInfo []*infosync.ServerInfo
+var MockServerInfo atomic.Pointer[[]string]
 
-// GenerateTaskExecutorNodes generate a eligible TiDB nodes.
-func GenerateTaskExecutorNodes(ctx context.Context) (serverNodes []*infosync.ServerInfo, err error) {
+// GetLiveExecIDs returns all live executor node IDs.
+func GetLiveExecIDs(ctx context.Context) ([]string, error) {
 	failpoint.Inject("mockTaskExecutorNodes", func() {
-		failpoint.Return(MockServerInfo, nil)
+		failpoint.Return(*MockServerInfo.Load(), nil)
 	})
+	serverInfos, err := generateTaskExecutorNodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	execIDs := make([]string, 0, len(serverInfos))
+	for _, info := range serverInfos {
+		execIDs = append(execIDs, disttaskutil.GenerateExecID(info))
+	}
+	return execIDs, nil
+}
+
+func generateTaskExecutorNodes(ctx context.Context) (serverNodes []*infosync.ServerInfo, err error) {
 	var serverInfos map[string]*infosync.ServerInfo
 	_, etcd := ctx.Value("etcd").(bool)
 	if intest.InTest && !etcd {

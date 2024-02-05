@@ -363,7 +363,7 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	require.True(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
 }
 
-func hasPseudoStats(rows [][]interface{}) bool {
+func hasPseudoStats(rows [][]any) bool {
 	for i := range rows {
 		if strings.Contains(rows[i][4].(string), "stats:pseudo") {
 			return true

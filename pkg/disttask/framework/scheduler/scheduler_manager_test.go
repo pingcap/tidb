@@ -74,7 +74,7 @@ func TestCleanUpRoutine(t *testing.T) {
 		err = mgr.UpdateSubtaskStateAndError(ctx, ":4000", int64(i), proto.SubtaskStateSucceed, nil)
 		require.NoError(t, err)
 	}
-	sch.DoCleanUpRoutine()
+	sch.DoCleanupRoutine()
 	require.Eventually(t, func() bool {
 		tasks, err := testutil.GetTasksFromHistoryInStates(ctx, mgr, proto.TaskStateSucceed)
 		require.NoError(t, err)

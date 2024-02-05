@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/sessiontxn/isolation"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testfork"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 )
@@ -208,84 +207,6 @@ func TestOptimisticHandleError(t *testing.T) {
 			checkTS()
 		}
 	}
-}
-
-func TestOptimisticProviderInitialize(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	setTxnTk := testkit.NewTestKit(t, store)
-	setTxnTk.MustExec("set global tidb_txn_mode=''")
-	testfork.RunTest(t, func(t *testfork.T) {
-		clearScopeSettings := forkScopeSettings(t, store)
-		defer clearScopeSettings()
-
-		tk := testkit.NewTestKit(t, store)
-		defer tk.MustExec("rollback")
-
-		se := tk.Session()
-
-		// begin outside a txn
-		assert := activeOptimisticTxnAssert(t, se, true)
-		tk.MustExec("begin")
-		assert.Check(t)
-
-		// begin in a txn
-		assert = activeOptimisticTxnAssert(t, se, true)
-		tk.MustExec("begin")
-		assert.Check(t)
-
-		// begin outside a txn when tidb_disable_txn_auto_retry=0
-		tk.MustExec("set @@tidb_disable_txn_auto_retry=0")
-		tk.MustExec("rollback")
-		assert = activeOptimisticTxnAssert(t, se, true)
-		assert.couldRetry = true
-		tk.MustExec("begin")
-		assert.Check(t)
-
-		// START TRANSACTION WITH CAUSAL CONSISTENCY ONLY
-		assert = activeOptimisticTxnAssert(t, se, true)
-		assert.causalConsistencyOnly = true
-		assert.couldRetry = true
-		tk.MustExec("START TRANSACTION WITH CAUSAL CONSISTENCY ONLY")
-		assert.Check(t)
-
-		// EnterNewTxnDefault will create an active txn, but not explicit
-		assert = activeOptimisticTxnAssert(t, se, false)
-		require.NoError(t, sessiontxn.GetTxnManager(se).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
-			Type:    sessiontxn.EnterNewTxnDefault,
-			TxnMode: ast.Optimistic,
-		}))
-		assert.Check(t)
-
-		tk.MustExec("rollback")
-		require.NoError(t, sessiontxn.GetTxnManager(se).EnterNewTxn(context.TODO(), &sessiontxn.EnterNewTxnRequest{
-			Type: sessiontxn.EnterNewTxnDefault,
-		}))
-		assert.Check(t)
-
-		// non-active txn and then active it
-		disableTxnAutoRetry := true
-		if testfork.PickEnum(t, "enableTxnAutoRetry", "") != "" {
-			disableTxnAutoRetry = false
-		}
-		autocommit := true
-		if testfork.PickEnum(t, "noAutocommit", "") != "" {
-			autocommit = false
-		}
-		tk.MustExec("rollback")
-		defer tk.MustExec("rollback")
-		tk.MustExec(fmt.Sprintf("set @@autocommit=%v", autocommit))
-		tk.MustExec(fmt.Sprintf("set @@tidb_disable_txn_auto_retry=%v", disableTxnAutoRetry))
-		assert = inactiveOptimisticTxnAssert(se)
-		assertAfterActive := activeOptimisticTxnAssert(t, se, !autocommit)
-		assertAfterActive.couldRetry = autocommit || !disableTxnAutoRetry
-		require.NoError(t, se.PrepareTxnCtx(context.TODO()))
-		provider := assert.CheckAndGetProvider(t)
-		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
-		ts, err := provider.GetStmtReadTS()
-		require.NoError(t, err)
-		assertAfterActive.Check(t)
-		require.Equal(t, ts, se.GetSessionVars().TxnCtx.StartTS)
-	})
 }
 
 func TestTidbSnapshotVarInOptimisticTxn(t *testing.T) {

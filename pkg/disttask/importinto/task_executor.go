@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/lightning/log"
 	"github.com/pingcap/tidb/br/pkg/lightning/metric"
 	"github.com/pingcap/tidb/br/pkg/lightning/verification"
+	brlogutil "github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
 	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
@@ -180,6 +181,10 @@ outer:
 	return pipeline.Close()
 }
 
+func (*importStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+	return nil
+}
+
 func (s *importStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
 	var subtaskMeta ImportStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
@@ -304,8 +309,8 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 
 	logger.Info("merge sort partSize", zap.String("size", units.BytesSize(float64(m.partSize))))
 
-	return external.MergeOverlappingFiles(
-		ctx,
+	err = external.MergeOverlappingFiles(
+		logutil.WithFields(ctx, zap.String("kv-group", sm.KVGroup), zap.Int64("subtask-id", subtask.ID)),
 		sm.DataFiles,
 		m.controller.GlobalSortStore,
 		m.partSize,
@@ -319,6 +324,15 @@ func (m *mergeSortStepExecutor) RunSubtask(ctx context.Context, subtask *proto.S
 		onClose,
 		m.taskMeta.Plan.ThreadCnt,
 		false)
+	logger.Info(
+		"merge sort finished",
+		zap.String("kv-group", sm.KVGroup),
+		zap.Uint64("total-kv-size", m.subtaskSortedKVMeta.TotalKVSize),
+		zap.Uint64("total-kv-count", m.subtaskSortedKVMeta.TotalKVCnt),
+		brlogutil.Key("start-key", m.subtaskSortedKVMeta.StartKey),
+		brlogutil.Key("end-key", m.subtaskSortedKVMeta.EndKey),
+	)
+	return err
 }
 
 func (m *mergeSortStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
@@ -390,7 +404,11 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	return localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 }
 
-func (e *writeAndIngestStepExecutor) OnFinished(_ context.Context, subtask *proto.Subtask) error {
+func (*writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
+	return nil
+}
+
+func (e *writeAndIngestStepExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
 	var subtaskMeta WriteIngestStepMeta
 	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
 		return errors.Trace(err)
@@ -404,6 +422,10 @@ func (e *writeAndIngestStepExecutor) OnFinished(_ context.Context, subtask *prot
 	localBackend := e.tableImporter.Backend()
 	_, kvCount := localBackend.GetExternalEngineKVStatistics(engineUUID)
 	subtaskMeta.Result.LoadedRowCnt = uint64(kvCount)
+	err := localBackend.CleanupEngine(ctx, engineUUID)
+	if err != nil {
+		e.logger.Warn("failed to cleanup engine", zap.Error(err))
+	}
 
 	newMeta, err := json.Marshal(subtaskMeta)
 	if err != nil {
@@ -458,18 +480,13 @@ type importExecutor struct {
 }
 
 func newImportExecutor(ctx context.Context, id string, task *proto.Task, taskTable taskexecutor.TaskTable) taskexecutor.TaskExecutor {
+	metrics := metricsManager.getOrCreateMetrics(task.ID)
+	subCtx := metric.WithCommonMetric(ctx, metrics)
 	s := &importExecutor{
-		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(ctx, id, task, taskTable),
+		BaseTaskExecutor: taskexecutor.NewBaseTaskExecutor(subCtx, id, task, taskTable),
 	}
 	s.BaseTaskExecutor.Extension = s
 	return s
-}
-
-func (s *importExecutor) RunStep(ctx context.Context, task *proto.Task, resource *proto.StepResource) error {
-	metrics := metricsManager.getOrCreateMetrics(task.ID)
-	defer metricsManager.unregister(task.ID)
-	subCtx := metric.WithCommonMetric(ctx, metrics)
-	return s.BaseTaskExecutor.RunStep(subCtx, task, resource)
 }
 
 func (*importExecutor) IsIdempotent(*proto.Subtask) bool {
@@ -482,7 +499,7 @@ func (*importExecutor) IsRetryableError(err error) bool {
 	return common.IsRetryableError(err)
 }
 
-func (*importExecutor) GetStepExecutor(_ context.Context, task *proto.Task, _ *execute.Summary, _ *proto.StepResource) (execute.StepExecutor, error) {
+func (*importExecutor) GetStepExecutor(task *proto.Task, _ *proto.StepResource) (execute.StepExecutor, error) {
 	taskMeta := TaskMeta{}
 	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
 		return nil, errors.Trace(err)
@@ -517,6 +534,12 @@ func (*importExecutor) GetStepExecutor(_ context.Context, task *proto.Task, _ *e
 	default:
 		return nil, errors.Errorf("unknown step %d for import task %d", task.Step, task.ID)
 	}
+}
+
+func (e *importExecutor) Close() {
+	task := e.GetTask()
+	metricsManager.unregister(task.ID)
+	e.BaseTaskExecutor.Close()
 }
 
 func init() {

@@ -59,7 +59,7 @@ func TestDumpStatsAPI(t *testing.T) {
 	client.Port = testutil.GetPortFromTCPAddr(server.ListenAddr())
 	client.StatusPort = testutil.GetPortFromTCPAddr(server.StatusListenerAddr())
 	go func() {
-		err := server.Run()
+		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
 	client.WaitUntilServerOnline()
@@ -279,7 +279,7 @@ func checkData(t *testing.T, path string, client *testserverclient.TestServerCli
 	require.True(t, rows.Next(), "unexpected data")
 	var dbName, tableName string
 	var modifyCount, count int64
-	var other interface{}
+	var other any
 	err = rows.Scan(&dbName, &tableName, &other, &other, &modifyCount, &count)
 	require.NoError(t, err)
 	require.Equal(t, "tidb", dbName)

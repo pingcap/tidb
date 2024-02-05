@@ -863,6 +863,10 @@ func TestColumnEncode(t *testing.T) {
 	encodeBytes := func(v []byte) []byte {
 		return append(binary.LittleEndian.AppendUint32(nil, uint32(len(v))), v...)
 	}
+	convertTZ := func(ts types.Time) types.Time {
+		require.NoError(t, ts.ConvertTimeZone(time.Local, time.UTC))
+		return ts
+	}
 	var (
 		buf     = make([]byte, 0, 128)
 		intZero = 0
@@ -882,7 +886,7 @@ func TestColumnEncode(t *testing.T) {
 		decMax  = types.NewMaxOrMinDec(false, 12, 6)
 		json1   = types.CreateBinaryJSON(nil)
 		json2   = types.CreateBinaryJSON(int64(42))
-		json3   = types.CreateBinaryJSON(map[string]interface{}{"foo": "bar", "a": int64(42)})
+		json3   = types.CreateBinaryJSON(map[string]any{"foo": "bar", "a": int64(42)})
 	)
 
 	for _, tt := range []struct {
@@ -982,25 +986,25 @@ func TestColumnEncode(t *testing.T) {
 		{
 			"timestamp", types.NewFieldType(mysql.TypeTimestamp),
 			types.NewTimeDatum(types.NewTime(ct, mysql.TypeTimestamp, 3)),
-			encodeBytes([]byte(types.NewTime(ct, mysql.TypeTimestamp, 3).String())),
+			encodeBytes([]byte(convertTZ(types.NewTime(ct, mysql.TypeTimestamp, 3)).String())),
 			true,
 		},
 		{
 			"timestamp/zero", types.NewFieldType(mysql.TypeTimestamp),
 			types.NewTimeDatum(types.ZeroTimestamp),
-			encodeBytes([]byte(types.ZeroTimestamp.String())),
+			encodeBytes([]byte(convertTZ(types.ZeroTimestamp).String())),
 			true,
 		},
 		{
 			"timestamp/min", types.NewFieldType(mysql.TypeTimestamp),
 			types.NewTimeDatum(types.MinTimestamp),
-			encodeBytes([]byte(types.MinTimestamp.String())),
+			encodeBytes([]byte(convertTZ(types.MinTimestamp).String())),
 			true,
 		},
 		{
 			"timestamp/max", types.NewFieldType(mysql.TypeTimestamp),
 			types.NewTimeDatum(types.MaxTimestamp),
-			encodeBytes([]byte(types.MaxTimestamp.String())),
+			encodeBytes([]byte(convertTZ(types.MaxTimestamp).String())),
 			true,
 		},
 		{
@@ -1096,7 +1100,7 @@ func TestColumnEncode(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			col := rowcodec.ColData{&model.ColumnInfo{FieldType: *tt.typ}, &tt.dat}
-			raw, err := col.Encode(buf[:0])
+			raw, err := col.Encode(time.Local, buf[:0])
 			if tt.ok {
 				require.NoError(t, err)
 				if len(tt.raw) == 0 {
@@ -1145,7 +1149,7 @@ func TestColumnEncode(t *testing.T) {
 			ft := types.NewFieldType(typ)
 			dat := types.NewDatum(nil)
 			col := rowcodec.ColData{&model.ColumnInfo{FieldType: *ft}, &dat}
-			raw, err := col.Encode(nil)
+			raw, err := col.Encode(time.Local, nil)
 			require.NoError(t, err)
 			require.Len(t, raw, 0)
 		}
@@ -1161,7 +1165,10 @@ func TestRowChecksum(t *testing.T) {
 	col2 := rowcodec.ColData{&model.ColumnInfo{ID: 2, FieldType: *typ2}, &dat2}
 	typ3 := types.NewFieldType(mysql.TypeVarchar)
 	dat3 := types.NewDatum("foobar")
-	col3 := rowcodec.ColData{&model.ColumnInfo{ID: 2, FieldType: *typ3}, &dat3}
+	col3 := rowcodec.ColData{&model.ColumnInfo{ID: 3, FieldType: *typ3}, &dat3}
+	typ4 := types.NewFieldType(mysql.TypeTimestamp)
+	dat4 := types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, 6))
+	col4 := rowcodec.ColData{&model.ColumnInfo{ID: 4, FieldType: *typ4}, &dat4}
 	buf := make([]byte, 0, 64)
 	for _, tt := range []struct {
 		name string
@@ -1170,17 +1177,17 @@ func TestRowChecksum(t *testing.T) {
 		{"nil", nil},
 		{"empty", []rowcodec.ColData{}},
 		{"nullonly", []rowcodec.ColData{col1}},
-		{"ordered", []rowcodec.ColData{col1, col2, col3}},
-		{"unordered", []rowcodec.ColData{col3, col1, col2}},
+		{"ordered", []rowcodec.ColData{col1, col2, col3, col4}},
+		{"unordered", []rowcodec.ColData{col3, col1, col4, col2}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			row := rowcodec.RowData{tt.cols, buf}
 			if !sort.IsSorted(row) {
 				sort.Sort(row)
 			}
-			checksum, err := row.Checksum()
+			checksum, err := row.Checksum(time.Local)
 			require.NoError(t, err)
-			raw, err := row.Encode()
+			raw, err := row.Encode(time.Local)
 			require.NoError(t, err)
 			require.Equal(t, crc32.ChecksumIEEE(raw), checksum)
 		})

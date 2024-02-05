@@ -126,7 +126,7 @@ func (tc *TLS) WrapListener(l net.Listener) net.Listener {
 }
 
 // GetJSON performs a GET request to the given path and unmarshals the response
-func (tc *TLS) GetJSON(ctx context.Context, path string, v interface{}) error {
+func (tc *TLS) GetJSON(ctx context.Context, path string, v any) error {
 	return GetJSON(ctx, tc.client, tc.url+path, v)
 }
 

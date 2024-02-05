@@ -20,20 +20,21 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/lightning/log"
-	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/log"
+	llog "github.com/pingcap/tidb/br/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
 var (
 	// liveNodesCheckInterval is the tick interval of fetching all server infos from etcs.
-	nodesCheckInterval = 2 * checkTaskFinishedInterval
+	nodesCheckInterval = 2 * CheckTaskFinishedInterval
 )
 
 // NodeManager maintains live TiDB nodes in the cluster, and maintains the nodes
 // managed by the framework.
 type NodeManager struct {
+	logger *zap.Logger
 	// prevLiveNodes is used to record the live nodes in last checking.
 	prevLiveNodes map[string]struct{}
 	// managedNodes is the cached nodes managed by the framework.
@@ -41,8 +42,13 @@ type NodeManager struct {
 	managedNodes atomic.Pointer[[]string]
 }
 
-func newNodeManager() *NodeManager {
+func newNodeManager(serverID string) *NodeManager {
+	logger := log.L()
+	if intest.InTest {
+		logger = log.L().With(zap.String("server-id", serverID))
+	}
 	nm := &NodeManager{
+		logger:        logger,
 		prevLiveNodes: make(map[string]struct{}),
 	}
 	managedNodes := make([]string, 0, 10)
@@ -67,15 +73,14 @@ func (nm *NodeManager) maintainLiveNodesLoop(ctx context.Context, taskMgr TaskMa
 // see recoverMetaLoop in task executor for when node is inserted into dist_framework_meta.
 func (nm *NodeManager) maintainLiveNodes(ctx context.Context, taskMgr TaskManager) {
 	// Safe to discard errors since this function can be called at regular intervals.
-	serverInfos, err := GenerateTaskExecutorNodes(ctx)
+	liveExecIDs, err := GetLiveExecIDs(ctx)
 	if err != nil {
-		logutil.BgLogger().Warn("generate task executor nodes met error", log.ShortError(err))
+		nm.logger.Warn("generate task executor nodes met error", llog.ShortError(err))
 		return
 	}
-	nodeChanged := len(serverInfos) != len(nm.prevLiveNodes)
-	currLiveNodes := make(map[string]struct{}, len(serverInfos))
-	for _, info := range serverInfos {
-		execID := disttaskutil.GenerateExecID(info)
+	nodeChanged := len(liveExecIDs) != len(nm.prevLiveNodes)
+	currLiveNodes := make(map[string]struct{}, len(liveExecIDs))
+	for _, execID := range liveExecIDs {
 		if _, ok := nm.prevLiveNodes[execID]; !ok {
 			nodeChanged = true
 		}
@@ -87,7 +92,7 @@ func (nm *NodeManager) maintainLiveNodes(ctx context.Context, taskMgr TaskManage
 
 	oldNodes, err := taskMgr.GetAllNodes(ctx)
 	if err != nil {
-		logutil.BgLogger().Warn("get all nodes met error", log.ShortError(err))
+		nm.logger.Warn("get all nodes met error", llog.ShortError(err))
 		return
 	}
 
@@ -101,11 +106,11 @@ func (nm *NodeManager) maintainLiveNodes(ctx context.Context, taskMgr TaskManage
 		nm.prevLiveNodes = currLiveNodes
 		return
 	}
-	logutil.BgLogger().Info("delete dead nodes from dist_framework_meta",
-		zap.Int("dead-nodes", len(deadNodes)))
+	nm.logger.Info("delete dead nodes from dist_framework_meta",
+		zap.Strings("dead-nodes", deadNodes))
 	err = taskMgr.DeleteDeadNodes(ctx, deadNodes)
 	if err != nil {
-		logutil.BgLogger().Warn("delete dead nodes from dist_framework_meta failed", log.ShortError(err))
+		nm.logger.Warn("delete dead nodes from dist_framework_meta failed", llog.ShortError(err))
 		return
 	}
 	nm.prevLiveNodes = currLiveNodes
@@ -131,7 +136,7 @@ var TestRefreshedChan = make(chan struct{})
 func (nm *NodeManager) refreshManagedNodes(ctx context.Context, taskMgr TaskManager, slotMgr *SlotManager) {
 	newNodes, err := taskMgr.GetManagedNodes(ctx)
 	if err != nil {
-		logutil.BgLogger().Warn("get managed nodes met error", log.ShortError(err))
+		nm.logger.Warn("get managed nodes met error", llog.ShortError(err))
 		return
 	}
 	nodeIDs := make([]string, 0, len(newNodes))

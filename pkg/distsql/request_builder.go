@@ -339,7 +339,7 @@ func (builder *RequestBuilder) SetTiDBServerID(serverID uint64) *RequestBuilder 
 
 // SetFromInfoSchema sets the following fields from infoSchema:
 // "bundles"
-func (builder *RequestBuilder) SetFromInfoSchema(pis interface{}) *RequestBuilder {
+func (builder *RequestBuilder) SetFromInfoSchema(pis any) *RequestBuilder {
 	is, ok := pis.(infoschema.InfoSchema)
 	if !ok {
 		return builder

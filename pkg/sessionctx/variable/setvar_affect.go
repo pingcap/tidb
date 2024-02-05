@@ -53,6 +53,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	"tidb_opt_disk_factor":                            {},
 	"tidb_opt_concurrency_factor":                     {},
 	"tidb_opt_force_inline_cte":                       {},
+	"tidb_opt_use_invisible_indexes":                  {},
 	"tidb_index_join_batch_size":                      {},
 	"tidb_index_lookup_size":                          {},
 	"tidb_index_serial_scan_concurrency":              {},

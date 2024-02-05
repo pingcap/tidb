@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/pingcap/tipb/go-tipb"
@@ -885,7 +886,7 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			sql: "select 1, * from t",
-			err: ErrInvalidWildCard,
+			err: plannererrors.ErrInvalidWildCard,
 		},
 		{
 			sql: "select *, 1 from t",
@@ -897,7 +898,7 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			sql: "select 1 from t t1, t t2 where t1.a > all((select a) union (select a))",
-			err: ErrAmbiguous,
+			err: plannererrors.ErrAmbiguous,
 		},
 		{
 			sql: "insert into t set a = 1, b = a + 1",
@@ -909,43 +910,43 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			sql: "select a, b, c from t order by 0",
-			err: ErrUnknownColumn,
+			err: plannererrors.ErrUnknownColumn,
 		},
 		{
 			sql: "select a, b, c from t order by 4",
-			err: ErrUnknownColumn,
+			err: plannererrors.ErrUnknownColumn,
 		},
 		{
 			sql: "select a as c1, b as c1 from t order by c1",
-			err: ErrAmbiguous,
+			err: plannererrors.ErrAmbiguous,
 		},
 		{
 			sql: "(select a as b, b from t) union (select a, b from t) order by b",
-			err: ErrAmbiguous,
+			err: plannererrors.ErrAmbiguous,
 		},
 		{
 			sql: "(select a as b, b from t) union (select a, b from t) order by a",
-			err: ErrUnknownColumn,
+			err: plannererrors.ErrUnknownColumn,
 		},
 		{
 			sql: "select * from t t1 use index(x)",
-			err: ErrKeyDoesNotExist,
+			err: plannererrors.ErrKeyDoesNotExist,
 		},
 		{
 			sql: "select a from t having c2",
-			err: ErrUnknownColumn,
+			err: plannererrors.ErrUnknownColumn,
 		},
 		{
 			sql: "select a from t group by c2 + 1 having c2",
-			err: ErrUnknownColumn,
+			err: plannererrors.ErrUnknownColumn,
 		},
 		{
 			sql: "select a as b, b from t having b",
-			err: ErrAmbiguous,
+			err: plannererrors.ErrAmbiguous,
 		},
 		{
 			sql: "select a + 1 from t having a",
-			err: ErrUnknownColumn,
+			err: plannererrors.ErrUnknownColumn,
 		},
 		{ // issue (#20509)
 			sql: "select * from t left join t2 on t.a=t2.a having not (t.a <=> t2.a)",
@@ -953,7 +954,7 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			sql: "select a from t having sum(avg(a))",
-			err: ErrInvalidGroupFuncUse,
+			err: plannererrors.ErrInvalidGroupFuncUse,
 		},
 		{
 			sql: "select concat(c_str, d_str) from t group by `concat(c_str, d_str)`",
@@ -961,7 +962,7 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			sql: "select concat(c_str, d_str) from t group by `concat(c_str,d_str)`",
-			err: ErrUnknownColumn,
+			err: plannererrors.ErrUnknownColumn,
 		},
 		{
 			sql: "select a from t b having b.a",
@@ -977,11 +978,11 @@ func TestValidate(t *testing.T) {
 		},
 		{
 			sql: "select a+1 from t having t.a",
-			err: ErrUnknownColumn,
+			err: plannererrors.ErrUnknownColumn,
 		},
 		{
 			sql: "update T_StateNoneColumn set c = 1 where a = 1",
-			err: ErrUnknownColumn,
+			err: plannererrors.ErrUnknownColumn,
 		},
 	}
 
@@ -1400,85 +1401,85 @@ func TestVisitInfo(t *testing.T) {
 		{
 			sql: "flush privileges",
 			ans: []visitInfo{
-				{mysql.ReloadPriv, "", "", "", ErrSpecificAccessDenied, false, "", false},
+				{mysql.ReloadPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "", false},
 			},
 		},
 		{
 			sql: "SET GLOBAL wait_timeout=12345",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "SYSTEM_VARIABLES_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "SYSTEM_VARIABLES_ADMIN", false},
 			},
 		},
 		{
 			sql: "create placement policy x LEARNERS=1",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "PLACEMENT_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "PLACEMENT_ADMIN", false},
 			},
 		},
 		{
 			sql: "drop placement policy if exists x",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "PLACEMENT_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "PLACEMENT_ADMIN", false},
 			},
 		},
 		{
 			sql: "BACKUP DATABASE test TO 'local:///tmp/a'",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "BACKUP_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "BACKUP_ADMIN", false},
 			},
 		},
 		{
 			sql: "RESTORE DATABASE test FROM 'local:///tmp/a'",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "RESTORE_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "RESTORE_ADMIN", false},
 			},
 		},
 		{
 			sql: "SHOW BACKUPS",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "BACKUP_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "BACKUP_ADMIN", false},
 			},
 		},
 		{
 			sql: "SHOW RESTORES",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "RESTORE_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "RESTORE_ADMIN", false},
 			},
 		},
 		{
 			sql: "GRANT rolename TO user1",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "ROLE_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "ROLE_ADMIN", false},
 			},
 		},
 		{
 			sql: "REVOKE rolename FROM user1",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "ROLE_ADMIN", false},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "ROLE_ADMIN", false},
 			},
 		},
 		{
 			sql: "GRANT BACKUP_ADMIN ON *.* TO user1",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "BACKUP_ADMIN", true},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "BACKUP_ADMIN", true},
 			},
 		},
 		{
 			sql: "GRANT BACKUP_ADMIN ON *.* TO user1 WITH GRANT OPTION",
 			ans: []visitInfo{
-				{mysql.ExtendedPriv, "", "", "", ErrSpecificAccessDenied, false, "BACKUP_ADMIN", true},
+				{mysql.ExtendedPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "BACKUP_ADMIN", true},
 			},
 		},
 		{
 			sql: "RENAME USER user1 to user1_tmp",
 			ans: []visitInfo{
-				{mysql.CreateUserPriv, "", "", "", ErrSpecificAccessDenied, false, "", false},
+				{mysql.CreateUserPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "", false},
 			},
 		},
 		{
 			sql: "SHOW CONFIG",
 			ans: []visitInfo{
-				{mysql.ConfigPriv, "", "", "", ErrSpecificAccessDenied, false, "", false},
+				{mysql.ConfigPriv, "", "", "", plannererrors.ErrSpecificAccessDenied, false, "", false},
 			},
 		},
 	}

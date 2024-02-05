@@ -56,7 +56,7 @@ type SessionBindingHandle interface {
 
 // sessionBindingHandle is used to handle all session sql bind operations.
 type sessionBindingHandle struct {
-	ch *bindCache
+	ch *bindingCache
 }
 
 // NewSessionBindingHandle creates a new SessionBindingHandle.

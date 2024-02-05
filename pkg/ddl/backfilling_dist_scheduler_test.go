@@ -20,7 +20,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/docker/go-units"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/lightning/backend/external"
@@ -32,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -115,21 +113,19 @@ func TestBackfillingSchedulerLocalMode(t *testing.T) {
 func TestCalculateRegionBatch(t *testing.T) {
 	// Test calculate in cloud storage.
 	batchCnt := ddl.CalculateRegionBatchForTest(100, 8, false)
-	require.Equal(t, 12, batchCnt)
+	require.Equal(t, 13, batchCnt)
 	batchCnt = ddl.CalculateRegionBatchForTest(2, 8, false)
 	require.Equal(t, 1, batchCnt)
 	batchCnt = ddl.CalculateRegionBatchForTest(8, 8, false)
 	require.Equal(t, 1, batchCnt)
 
 	// Test calculate in local storage.
-	variable.DDLDiskQuota.Store(96 * units.MiB * 1000)
 	batchCnt = ddl.CalculateRegionBatchForTest(100, 8, true)
-	require.Equal(t, 12, batchCnt)
+	require.Equal(t, 13, batchCnt)
 	batchCnt = ddl.CalculateRegionBatchForTest(2, 8, true)
 	require.Equal(t, 1, batchCnt)
-	variable.DDLDiskQuota.Store(96 * units.MiB * 2)
 	batchCnt = ddl.CalculateRegionBatchForTest(24, 8, true)
-	require.Equal(t, 2, batchCnt)
+	require.Equal(t, 3, batchCnt)
 }
 
 func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
@@ -144,8 +140,7 @@ func TestBackfillingSchedulerGlobalSortMode(t *testing.T) {
 	ctx = util.WithInternalSourceType(ctx, "handle")
 	mgr := storage.NewTaskManager(pool)
 	storage.SetTaskManager(mgr)
-	schManager, err := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
-	require.NoError(t, err)
+	schManager := scheduler.NewManager(util.WithInternalSourceType(ctx, "scheduler"), mgr, "host:port")
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t1(id bigint auto_random primary key)")

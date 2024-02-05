@@ -637,19 +637,6 @@ func TestLockTables(t *testing.T) {
 	tk.MustGetErrMsg("commit",
 		"previous statement: insert into t1 set a=1: [domain:8028]Information schema is changed during the execution of the statement(for example, table definition may be updated by other DDL ran in parallel). If you see this error often, try increasing `tidb_max_delta_schema_count`. [try again later]")
 
-	// Test lock table by other session in transaction and commit with retry.
-	tk.MustExec("unlock tables")
-	tk2.MustExec("unlock tables")
-	tk.MustExec("set @@session.tidb_disable_txn_auto_retry=0")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t1 set a=1")
-	tk2.MustExec("lock tables t1 write")
-	tk.MustGetDBError("commit", infoschema.ErrTableLocked)
-
-	// Test for lock the same table multiple times.
-	tk2.MustExec("lock tables t1 write")
-	tk2.MustExec("lock tables t1 write, t2 read")
-
 	// Test lock tables and drop tables
 	tk.MustExec("unlock tables")
 	tk2.MustExec("unlock tables")
