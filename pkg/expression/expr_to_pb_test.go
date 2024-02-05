@@ -17,7 +17,6 @@ package expression
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/pingcap/tipb/go-tipb"
 	"strings"
 	"testing"
 
