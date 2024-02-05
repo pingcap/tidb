@@ -226,14 +226,12 @@ func getFilesReadConcurrency(
 		// let the stat internals cover the [startKey, endKey) since seekPropsOffsets
 		// always return an offset that is less than or equal to the key.
 		result[i] += 1
-		if result[i] > 1 {
-			logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
-				zap.String("filename", statsFiles[i]),
-				zap.Uint64("startOffset", startOffs[i]),
-				zap.Uint64("endOffset", endOffs[i]),
-				zap.Uint64("expected concurrency", result[i]),
-			)
-		}
+		logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
+			zap.String("filename", statsFiles[i]),
+			zap.Uint64("startOffset", startOffs[i]),
+			zap.Uint64("endOffset", endOffs[i]),
+			zap.Uint64("expected concurrency", result[i]),
+		)
 	}
 	return result, startOffs, nil
 }
